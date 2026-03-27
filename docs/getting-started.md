@@ -19,6 +19,23 @@ claude plugin marketplace add greglas75/zuvo-marketplace
 claude plugin install zuvo
 ```
 
+### Enable auto-updates
+
+After installing, enable automatic updates so new skills and fixes arrive automatically:
+
+```
+/plugin
+→ Select zuvo-marketplace
+→ Enable auto-update
+```
+
+Without auto-update, you can update manually anytime:
+
+```bash
+claude plugin marketplace update greglas75/zuvo-marketplace
+claude plugin update zuvo
+```
+
 ### Local development
 
 ```bash

@@ -16,6 +16,23 @@ claude plugin marketplace add greglas75/zuvo-marketplace
 claude plugin install zuvo
 ```
 
+### Enable auto-updates
+
+After installing, enable automatic updates so you always get the latest skills:
+
+```
+/plugin
+→ Select zuvo-marketplace
+→ Enable auto-update
+```
+
+### Updating manually
+
+```bash
+claude plugin marketplace update greglas75/zuvo-marketplace
+claude plugin update zuvo
+```
+
 ### Local development
 
 ```bash
@@ -69,6 +86,27 @@ User: "Add user export with CSV download"
 | Design | design, design-review, ui-design-team |
 | Testing | write-tests, fix-tests, write-e2e, tests-performance |
 | Utility | docs, presentation, backlog |
+
+## Documentation
+
+- [Getting Started](docs/getting-started.md)
+- [Pipeline](docs/pipeline.md) — brainstorm → plan → execute
+- [All 33 Skills](docs/skills.md)
+- [Quality Gates](docs/quality-gates.md) — CQ1-CQ22 + Q1-Q17
+- [CodeSift Integration](docs/codesift-integration.md)
+- [Configuration](docs/configuration.md)
+
+## For maintainers
+
+Release a new version:
+
+```bash
+./scripts/release.sh patch "fix: description"
+./scripts/release.sh minor "feat: description"
+./scripts/release.sh major "breaking: description"
+```
+
+This bumps version, pushes plugin + tags, updates marketplace SHA, and pushes marketplace.
 
 ## License
 
