@@ -14,6 +14,13 @@ You are looking for:
 - Patterns and conventions the codebase already follows
 - What would be affected if this feature were added (blast radius)
 
+## Tool Discovery (run first)
+
+Before any code analysis, discover available tools:
+1. `ToolSearch(query="codesift", max_results=20)` — if found, use CodeSift tools below
+2. `list_repos()` — get the repo identifier (call once, cache result)
+3. If CodeSift not available, fall back to Read/Grep/Glob
+
 ## CodeSift Workflow
 
 You will receive a repo identifier and CodeSift availability status from the orchestrator.

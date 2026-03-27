@@ -33,6 +33,15 @@ The orchestrator provides:
 
 ---
 
+## Tool Discovery (run first)
+
+Before any code analysis, discover available tools:
+1. `ToolSearch(query="codesift", max_results=20)` — if found, use CodeSift tools below
+2. `list_repos()` — get the repo identifier (call once, cache result)
+3. If CodeSift not available, fall back to Read/Grep/Glob
+
+---
+
 ## Before You Start: Ask Questions
 
 Read the task spec completely. If anything is ambiguous, unclear, or seems contradictory, ask your questions NOW by reporting `NEEDS_CONTEXT`. Do not start coding and then discover you needed information. The cost of asking upfront is low. The cost of rework is high.

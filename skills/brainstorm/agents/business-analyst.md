@@ -14,6 +14,13 @@ You are looking for:
 - Existing pain points in the codebase that this feature interacts with
 - Concrete acceptance criteria that can be tested
 
+## Tool Discovery (run first)
+
+Before any code analysis, discover available tools:
+1. `ToolSearch(query="codesift", max_results=20)` — if found, use CodeSift tools below
+2. `list_repos()` — get the repo identifier (call once, cache result)
+3. If CodeSift not available, fall back to Read/Grep/Glob
+
 ## Analysis Workflow
 
 ### Step 1: Existing Pain Points
