@@ -6,8 +6,22 @@ Auto-activating, multi-agent skill ecosystem for Claude Code.
 
 ## Install
 
+### Via marketplace (recommended)
+
 ```bash
-claude --plugin-dir /path/to/zuvo
+# Add the Zuvo marketplace (one-time)
+claude plugin marketplace add greglas75/zuvo-marketplace
+
+# Install the plugin
+claude plugin install zuvo
+```
+
+### Local development
+
+```bash
+# Clone and load for a single session
+git clone https://github.com/greglas75/zuvo.git
+claude --plugin-dir ./zuvo
 ```
 
 ## What's inside
