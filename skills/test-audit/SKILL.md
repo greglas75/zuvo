@@ -410,6 +410,17 @@ After presenting the report, the user may request fixes:
 | Coverage gaps (methods untested) | Write missing tests | `zuvo:write-tests [path]` |
 | Test infra issues (runner config) | Optimize runner | `zuvo:tests-performance` |
 
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+- SKILL: `test-audit`
+- CQ_SCORE: `-`
+- Q_SCORE: average Q score across all audited test files (e.g., `12/17`)
+- VERDICT: PASS if no Tier D, WARN if Tier C exists, FAIL if Tier D exists
+- TASKS: number of test files audited
+- DURATION: mode label (e.g., `quick`, `deep`)
+- NOTES: tier distribution summary (e.g., `A:8 B:6 C:2 D:0`)
+
 ---
 
 ## Execution Notes

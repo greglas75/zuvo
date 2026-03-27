@@ -224,6 +224,17 @@ The approved plan document at `docs/specs/YYYY-MM-DD-<topic>-plan.md`.
 
 This artifact is the prerequisite for `zuvo:execute`. When the user is ready to implement, they invoke `zuvo:execute` and it picks up this plan automatically.
 
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+- SKILL: `plan`
+- CQ_SCORE: `-`
+- Q_SCORE: `-`
+- VERDICT: PASS if plan approved, ABORTED if rejected
+- TASKS: number of tasks in the plan
+- DURATION: `3-phase`
+- NOTES: plan topic + task count (e.g., `user-export — 8 tasks`)
+
 ---
 
 ## Progress Tracking

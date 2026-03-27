@@ -427,6 +427,17 @@ After the report, propose what to do next:
 | Only Tier B/C with varied issues | "Fix top 3 critical gate failures" | Highest ROI |
 | All Tier A | No action needed | Everything is production-ready |
 
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+- SKILL: `code-audit`
+- CQ_SCORE: average CQ score across all audited files (e.g., `15/22`)
+- Q_SCORE: `-`
+- VERDICT: PASS if no Tier D, WARN if Tier C exists, FAIL if Tier D exists
+- TASKS: number of files audited
+- DURATION: mode label (e.g., `quick`, `deep`)
+- NOTES: tier distribution summary (e.g., `A:12 B:5 C:3 D:1`)
+
 ---
 
 ## Execution Notes

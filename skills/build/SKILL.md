@@ -458,6 +458,17 @@ Next steps:
 ----------------------------------------------------
 ```
 
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+- SKILL: `build`
+- CQ_SCORE: from Phase 3.3 / Phase 4.2 CQ Auditor
+- Q_SCORE: from Phase 3.5 / Phase 4.1 Test Quality Auditor
+- VERDICT: PASS/WARN/FAIL from Phase 4.4 Execution Checklist
+- TASKS: number of files created + modified
+- DURATION: `5-phase`
+- NOTES: feature description from arguments
+
 ---
 
 ## Flag Reference

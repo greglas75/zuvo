@@ -487,6 +487,17 @@ Next steps:
 ----------------------------------------------------
 ```
 
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+- SKILL: `debug`
+- CQ_SCORE: from Phase 4.6 CQ self-eval on production fix
+- Q_SCORE: from Phase 4.5 Q self-eval on regression test
+- VERDICT: PASS if verification passes, FAIL if root cause unresolved
+- TASKS: number of files fixed
+- DURATION: mode label (e.g., `standard`, `regression-bisect`)
+- NOTES: 1-line root cause summary
+
 ---
 
 ## Tips for Better Input

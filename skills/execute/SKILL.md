@@ -334,6 +334,17 @@ If the current working directory is inside a git worktree (check `git worktree l
 
 "Execution is complete. You are working in a worktree. Run `zuvo:worktree` to finish — merge, push as PR, keep, or discard."
 
+### Run Log
+
+Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+- SKILL: `execute`
+- CQ_SCORE: average CQ score across all completed tasks (or `-` if none)
+- Q_SCORE: average Q score across all completed tasks (or `-` if none)
+- VERDICT: PASS if all tasks completed, WARN if any skipped, FAIL if any blocked
+- TASKS: number of tasks completed
+- DURATION: `N-tasks`
+- NOTES: plan name + completion summary (e.g., `user-export — 7/8 tasks`)
+
 ---
 
 ## Mandatory Protocols

@@ -726,3 +726,16 @@ No audit. Show unreviewed commits:
 2. Walk the last N commits (default 100), check each against the set
 3. Print the unreviewed commits and a summary: `Total: N | Reviewed: X | Unreviewed: Y`
 4. STOP.
+
+---
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+- SKILL: `review`
+- CQ_SCORE: from CQ1-CQ22 evaluation (or `-` for TIER 0 / utility modes)
+- Q_SCORE: from Q1-Q17 evaluation (or `-` if no test files in diff)
+- VERDICT: PASS/WARN/BLOCK from Phase 3 report verdict
+- TASKS: number of files reviewed
+- DURATION: tier label (e.g., `tier-2`, `batch-N`)
+- NOTES: change intent + scope summary

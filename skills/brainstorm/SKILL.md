@@ -244,3 +244,14 @@ Update the spec status from "Draft" to "Approved" when the user approves.
 The deliverable of `zuvo:brainstorm` is an approved spec document at `docs/specs/YYYY-MM-DD-<topic>-spec.md` with status "Approved".
 
 The next step is `zuvo:plan`, which reads this spec and produces an implementation plan. Remind the user of this when brainstorm completes. Do not auto-invoke `zuvo:plan` -- let the user decide when to proceed.
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+- SKILL: `brainstorm`
+- CQ_SCORE: `-`
+- Q_SCORE: `-`
+- VERDICT: PASS if spec approved, ABORTED if rejected
+- TASKS: `-`
+- DURATION: `3-phase`
+- NOTES: spec topic (e.g., `user-notifications`)

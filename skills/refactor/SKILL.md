@@ -473,6 +473,17 @@ Commit: [hash] -- [message]
 ------------------------------------
 ```
 
+### Run Log
+
+Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+- SKILL: `refactor`
+- CQ_SCORE: CQ post-audit score (e.g., `18/18`)
+- Q_SCORE: Q score from test evaluation (or `-` if VERIFY_COMPILATION)
+- VERDICT: PASS/WARN/FAIL based on CQ post-audit vs pre-audit
+- TASKS: number of files modified + created
+- DURATION: ETAP stage reached (e.g., `etap-2`)
+- NOTES: refactoring type + target file
+
 ---
 
 ## Batch Mode (batch <file>)
