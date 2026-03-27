@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Zuvo SessionStart hook
+# Reads the meta-skill router (using-zuvo) and injects it as session context
+# so the agent knows about available skills from the first message.
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Resolve paths
+# ---------------------------------------------------------------------------
+HOOKS_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_DIR="$(cd "${HOOKS_DIR}/.." && pwd)"
+
+ROUTER_FILE="${PLUGIN_DIR}/skills/using-zuvo/SKILL.md"
+
+# ---------------------------------------------------------------------------
+# Read the meta-skill router content
+# ---------------------------------------------------------------------------
+router_content=$(cat "$ROUTER_FILE" 2>&1 || echo "Failed to read using-zuvo skill")
+
+# ---------------------------------------------------------------------------
+# JSON-safe escaping via parameter substitution
+# Order matters: backslashes first, then the rest.
+# ---------------------------------------------------------------------------
+json_escape() {
+    local val="$1"
+    val="${val//\\/\\\\}"
+    val="${val//\"/\\\"}"
+    val="${val//$'\n'/\\n}"
+    val="${val//$'\r'/\\r}"
+    val="${val//$'\t'/\\t}"
+    val="${val//$'\b'/\\b}"
+    val="${val//$'\f'/\\f}"
+    printf '%s' "$val"
+}
+
+escaped_router=$(json_escape "$router_content")
+
+# ---------------------------------------------------------------------------
+# Build the context payload
+# ---------------------------------------------------------------------------
+payload="<IMPORTANT>\nYou have zuvo skills installed.\n\nBelow is the zuvo meta-skill router. It tells you which skill to invoke for any given task. For all skills listed here, use the Skill tool to invoke them.\n\n${escaped_router}\n</IMPORTANT>"
+
+# ---------------------------------------------------------------------------
+# Platform detection and JSON output
+#
+# Cursor sets CURSOR_PLUGIN_ROOT (and may also set CLAUDE_PLUGIN_ROOT).
+# Claude Code sets only CLAUDE_PLUGIN_ROOT.
+# Emit exactly one format to prevent duplicate context injection.
+#
+# Uses printf rather than heredocs to avoid a bash 5.3+ heredoc expansion
+# hang with large variable content.
+# ---------------------------------------------------------------------------
+if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
+    # Cursor platform
+    printf '{\n  "additional_context": "%s"\n}\n' "$payload"
+elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+    # Claude Code platform
+    printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$payload"
+else
+    # Unknown platform — use the simpler format as fallback
+    printf '{\n  "additional_context": "%s"\n}\n' "$payload"
+fi
+
+exit 0
