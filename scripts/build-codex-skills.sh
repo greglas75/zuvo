@@ -233,9 +233,12 @@ transform_skill_for_codex() {
     BEGIN { in_fm=0; past_fm=0; skip_section=0; in_code=0; in_spawn=0; agent="" }
 
     # --- Frontmatter: keep name, description, user-invocable ---
-    /^---$/ && !in_fm && !past_fm { in_fm=1; print; next }
-    /^---$/ && in_fm { in_fm=0; past_fm=1; print; next }
-    in_fm && /^(name|description|user-invocable):/ { print; next }
+    /^---$/ && !in_fm && !past_fm { in_fm=1; in_desc=0; print; next }
+    /^---$/ && in_fm { in_fm=0; past_fm=1; in_desc=0; print; next }
+    in_fm && /^(name|user-invocable):/ { in_desc=0; print; next }
+    in_fm && /^description:/ { in_desc=1; print; next }
+    in_fm && in_desc && /^[[:space:]]/ { print; next }
+    in_fm && in_desc && !/^[[:space:]]/ { in_desc=0 }
     in_fm { next }
 
     # --- Skip sections: Progress Tracking, Model Routing, Path Resolution ---
