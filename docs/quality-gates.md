@@ -139,6 +139,23 @@ Adding a WHERE clause, null guard, try/catch, or type annotation is never "out o
 
 ---
 
+## Test anti-patterns (AP1-AP29)
+
+Test audits check for 29 anti-patterns in addition to the Q1-Q17 gates. These are common structural problems that reduce test value:
+
+| Range | Coverage |
+|-------|----------|
+| AP1-AP18 | Core anti-patterns: skip in new tests, mock-as-implementation, tautological tests, leaking state, .toBeDefined-only, etc. |
+| AP25 | `expect(x.length).toBe(N)` instead of `.toHaveLength(N)` — worse error messages, masks missing property (Q4) |
+| AP26 | Real timers in time-dependent tests without `useFakeTimers` — causes flaky tests |
+| AP27 | `expect(x.length).toBeGreaterThan(0)` when exact fixture count is known — masks off-by-one and duplicates (Q4/Q15) |
+| AP28 | Persistent `it.skip`/`describe.skip` without backlog tracking — dead code and coverage gaps |
+| AP29 | Mock return value echoed in assertion — proves mock setup, not production logic (Q17). Most common audit failure. |
+
+Full AP definitions with detection heuristics and fix guidance are in `rules/testing.md`.
+
+---
+
 ## Where to find the full definitions
 
 - **CQ details, scoring rules, evidence examples:** `rules/cq-checklist.md`

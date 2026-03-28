@@ -241,6 +241,12 @@ If any of these appear in the test file, the corresponding Q gate scores 0 with 
 | All `toHaveBeenCalledWith` args are literals from mock setup | Q17 | Echo, not computed verification |
 | `expect(spy).toHaveBeenCalled()` without `CalledWith` checking args | Q15 | Proves call happened, not correctness |
 | Assertion expected value is copy-paste of implementation logic | Q17 | Tautological oracle (P-70) |
+| `assertIsBool`/`assertIsInt`/`assertIsString`/`assertIsArray` as sole assertion | Q15 | Accepts both correct and incorrect values — type check, not value check |
+| `assertInstanceOf` as sole assertion (except factory/DI resolution tests) | Q15 | Proves object exists, not that it works |
+| `assertTrue(true)` or `$this->assertTrue(true)` as primary assertion | Q15, Q17 | Always-true — passes regardless of production behavior |
+| `markTestSkipped` + TODO comment with no real assertion | Q7, Q11, Q15 | Stub test — inflates coverage metrics with zero value |
+| Test file named `FooTest` but >50% of assertions test a different class | Q17 | Wrong class under test |
+| `canConnectToDb()` guard wrapping most tests in a unit test file | Q11 | Mixing unit and integration concerns — choose one strategy |
 
 ---
 

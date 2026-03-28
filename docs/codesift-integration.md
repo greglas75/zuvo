@@ -37,6 +37,14 @@ When skills dispatch sub-agents, each agent receives the CodeSift availability s
 | Trace HTTP route to handler | `trace_route` |
 | Search by meaning (not keyword) | `codebase_retrieval` with `type: "semantic"` |
 | Batch multiple queries | `codebase_retrieval` with mixed query types |
+| Jump to symbol definition | `go_to_definition` (LSP-backed when available) |
+| Get function return/param types | `get_type_info` (LSP hover) |
+| Cross-file rename | `rename_symbol` (type-safe, updates imports) |
+| Find unused exports | `find_dead_code` |
+| Detect anti-patterns | `search_patterns` (empty-catch, etc.) |
+| Git churn hotspots | `analyze_hotspots` |
+| Find past conversation about code | `find_conversations_for_symbol` |
+| Search conversation history | `search_conversations` |
 
 ### After editing files
 
@@ -58,6 +66,11 @@ When CodeSift is unavailable, skills fall back to built-in tools with reduced ca
 | `trace_route` | Grep for route + manual tracing | Slower, misses indirect handlers |
 | `impact_analysis` | Grep for imports of changed files | No transitive dependency detection |
 | `analyze_hotspots` | Skipped | No git churn analysis |
+| `go_to_definition` | `search_symbols` + guess | Less precise jump |
+| `get_type_info` | Read file + parse manually | Slower |
+| `rename_symbol` | Manual Edit in each file | Error-prone, misses imports |
+| `search_conversations` | Not possible | No conversation history access |
+| `find_conversations_for_symbol` | Not possible | No cross-reference |
 
 Skills still produce useful output in degraded mode, but analysis depth is reduced. Audit skills lose their advanced analysis capabilities (duplication detection, complexity ranking, call chain tracing), and pipeline agents have less context to work with.
 
