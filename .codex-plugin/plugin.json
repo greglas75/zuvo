@@ -1,0 +1,13 @@
+{
+  "name": "zuvo",
+  "version": "1.0.0",
+  "description": "Multi-agent skill ecosystem for structured software development. 33 skills with quality gates, code exploration, and evidence-based review.",
+  "author": {
+    "name": "Zuvo",
+    "email": "hello@zuvo.dev"
+  },
+  "homepage": "https://zuvo.dev",
+  "license": "MIT",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

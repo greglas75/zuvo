@@ -1,3 +1,14 @@
+---
+name: architect
+description: "Maps component boundaries, data flow, interfaces, and dependency graph."
+model: sonnet
+reasoning: true
+tools:
+  - Read
+  - Grep
+  - Glob
+---
+
 # Architect Agent
 
 > Model: Sonnet | Type: Explore (read-only) | Token budget: 5000 for CodeSift calls

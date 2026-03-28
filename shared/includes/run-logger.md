@@ -41,6 +41,20 @@ echo "2026-03-27T14:30:00\tbuild\tmy-project\t18/22\t15/17\tPASS\t4\t5-phase\tad
 
 Or if Bash is unavailable, use Write tool to append.
 
+## Environment-Aware Log Path
+
+The log path depends on the execution environment:
+
+| Environment | Log path | Reason |
+|-------------|----------|--------|
+| Claude Code | `~/.zuvo/runs.log` | Persistent home directory |
+| Codex CLI (local) | `~/.zuvo/runs.log` | Real home directory |
+| Codex App (cloud) | `memory/zuvo-runs.log` | Home is ephemeral |
+| Write fails | Skip silently | Do not error on logging failure |
+
+Detection: if the environment variable `CODEX_WORKSPACE` is set or
+`~/.zuvo/` is not writable, use the project-local path.
+
 ## What NOT to Log
 
 - Do not log failed skill invocations (wrong skill routed, user cancelled immediately)

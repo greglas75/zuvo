@@ -1,3 +1,13 @@
+---
+name: qa-engineer
+description: "Assesses testability, identifies risk areas, pre-checks quality gates."
+model: sonnet
+tools:
+  - Read
+  - Grep
+  - Glob
+---
+
 # QA Engineer Agent
 
 > Model: Sonnet | Type: Explore (read-only) | Token budget: 5000 for CodeSift calls

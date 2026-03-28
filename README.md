@@ -41,6 +41,29 @@ git clone https://github.com/greglas75/zuvo.git
 claude --plugin-dir ./zuvo
 ```
 
+### Codex (experimental)
+
+Build the Codex distribution:
+
+```bash
+bash scripts/build-codex-skills.sh
+```
+
+Then copy to your Codex skills directory:
+
+```bash
+cp -r dist/codex/skills/* ~/.codex/skills/
+cp dist/codex/agents/*.toml ~/.codex/agents/
+```
+
+Optional: add CodeSift MCP to your `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.codesift]
+command = "npx"
+args = ["-y", "codesift-mcp"]
+```
+
 ## What's inside
 
 - **Pipeline skills** — `zuvo:brainstorm` → `zuvo:plan` → `zuvo:execute` with multi-agent code exploration, quality gates, and evidence-based review

@@ -1,3 +1,12 @@
+---
+name: plan-reviewer
+description: "Validates plan task ordering, dependency correctness, and spec coverage."
+model: sonnet
+reasoning: true
+tools:
+  - Read
+---
+
 # Plan Reviewer Agent
 
 > Model: Sonnet | Type: Explore (read-only)

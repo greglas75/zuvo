@@ -2,6 +2,7 @@
 name: quality-reviewer
 description: "Evaluates code quality (CQ1-CQ22) and test quality (Q1-Q17) on implemented code. Read-only. Enforces critical gates."
 model: sonnet
+reasoning: true
 tools:
   - Read
   - Grep

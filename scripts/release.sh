@@ -37,6 +37,12 @@ echo "Bumping: ${CURRENT_VERSION} → ${NEW_VERSION}"
 # --- Step 2: Update version in plugin files ---
 sed -i '' "s/\"version\": \"${CURRENT_VERSION}\"/\"version\": \"${NEW_VERSION}\"/" "$ZUVO_DIR/package.json"
 sed -i '' "s/\"version\": \"${CURRENT_VERSION}\"/\"version\": \"${NEW_VERSION}\"/" "$ZUVO_DIR/.claude-plugin/plugin.json"
+sed -i '' "s/\"version\": \"${CURRENT_VERSION}\"/\"version\": \"${NEW_VERSION}\"/" "$ZUVO_DIR/.codex-plugin/plugin.json"
+
+# --- Step 2b: Validate Codex build ---
+echo "Building Codex distribution..."
+bash "$ZUVO_DIR/scripts/build-codex-skills.sh" "$ZUVO_DIR" || { echo "Codex build failed! Aborting release."; exit 1; }
+echo ""
 
 # --- Step 3: Commit + push zuvo ---
 cd "$ZUVO_DIR"

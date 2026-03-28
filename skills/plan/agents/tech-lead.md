@@ -1,3 +1,13 @@
+---
+name: tech-lead
+description: "Selects patterns, libraries, makes implementation decisions based on architecture."
+model: sonnet
+tools:
+  - Read
+  - Grep
+  - Glob
+---
+
 # Tech Lead Agent
 
 > Model: Sonnet | Type: Explore (read-only) | Token budget: 5000 for CodeSift calls

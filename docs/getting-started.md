@@ -45,6 +45,32 @@ claude --plugin-dir ./zuvo
 
 This loads the plugin for the current session only. Useful for testing changes before publishing.
 
+### Codex (experimental)
+
+Zuvo can also run on OpenAI Codex. The SKILL.md format is natively compatible (agentskills.io open standard).
+
+```bash
+# Build the Codex-adapted skills
+bash scripts/build-codex-skills.sh
+
+# Install to your Codex environment
+cp -r dist/codex/skills/* ~/.codex/skills/
+cp dist/codex/agents/*.toml ~/.codex/agents/
+```
+
+Optional: bundle CodeSift MCP for deep code analysis:
+
+```toml
+# Add to ~/.codex/config.toml
+[mcp_servers.codesift]
+command = "npx"
+args = ["-y", "codesift-mcp"]
+```
+
+Skills are invoked with `$skill-name` (Codex convention) instead of `/skill-name`. The skill router auto-discovers skills via description matching.
+
+On Codex App (async mode), interactive skills like brainstorm run autonomously with `[AUTO-DECISION]` annotations. Review the generated spec before proceeding to plan.
+
 ## What happens at session start
 
 When you start a Claude Code session with Zuvo installed:

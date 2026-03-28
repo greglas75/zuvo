@@ -95,3 +95,27 @@ When a skill needs user input (confirmation, choice between options):
 - **Codex / Cursor:** `AskUserQuestion` is not available. Proceed with the safest default choice. Document which default was chosen and why.
 
 Hard rule: Never push to a remote repository without explicit user confirmation, regardless of environment. If `AskUserQuestion` is unavailable, skip the push step entirely and inform the user that pushing is a separate manual step.
+
+## Codex Execution Modes
+
+| Capability | Codex CLI | Codex App |
+|-----------|-----------|-----------|
+| User interaction mid-task | Yes (Enter/Tab) | Async (submit message) |
+| Approval modes | untrusted/on-request/never | Implicit auto-approve |
+| File system | Local with sandbox | Cloud container (12h cache) |
+| Home directory | Real `~` | Ephemeral `~` |
+| Network | Configurable | Restricted |
+
+## Interaction Defaults (non-interactive environments only)
+
+These defaults activate when the skill cannot ask the user a question
+(Codex App async mode, Cursor, Antigravity). They do NOT apply to
+Codex CLI or Claude Code, where the user is present.
+
+| Gate | Default | Annotation |
+|------|---------|------------|
+| Plan/spec approval | Proceed | `[AUTO-APPROVED on Codex]` |
+| Commit | Commit, NEVER push | -- |
+| Dependency unavailable | Log + skip task + continue | Summary at end |
+| Clarifying question | Best-judgment | `[AUTO-DECISION]` |
+| FINISH mode choices | Skip; instruct user to run manually | -- |
