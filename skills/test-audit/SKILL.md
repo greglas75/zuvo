@@ -60,7 +60,7 @@ Read `{plugin_root}/shared/includes/env-compat.md` for agent dispatch patterns, 
 
 Read `{plugin_root}/shared/includes/codesift-setup.md` for the full initialization sequence.
 
-**Summary:** `ToolSearch(query="codesift")` at skill start. If found, `list_repos()` once. Use CodeSift for file discovery and production code analysis. If unavailable, fall back to standard tools.
+**Summary:** Run the CodeSift setup from `codesift-setup.md` at skill start. Use CodeSift for file discovery and production code analysis when available. If unavailable, fall back to standard tools.
 
 ### CodeSift Optimizations
 

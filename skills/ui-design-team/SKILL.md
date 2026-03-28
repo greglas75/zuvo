@@ -87,7 +87,7 @@ Store detection results -- agents reference them for stack-specific guidance.
 
 1. Read the component/page code being reviewed
 2. Read token/theme file (if detected) -- agents need actual values
-3. Read project CLAUDE.md (if exists) -- project-specific conventions
+3. Read project AGENTS.md or CLAUDE.md (if either exists) -- project-specific conventions
 4. Screenshot if `--screenshot` or if chrome-devtools available (375px + 1024px)
 5. Note the component type: page, component, layout, widget, dashboard, form
 

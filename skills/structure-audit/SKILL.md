@@ -44,7 +44,7 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 
 Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
 
-**Summary:** Call `ToolSearch(query="codesift")` at skill start. If found, call `list_repos()` once, note the repo identifier. CodeSift tools are the primary analysis engine for SA8 (dead code), SA9 (complexity), SA10 (duplication), and SA13 (hotspots). If not found, fall back to CLI tools and grep heuristics.
+**Summary:** Run the CodeSift setup from `codesift-setup.md` at skill start. CodeSift tools are the primary analysis engine for SA8 (dead code), SA9 (complexity), SA10 (duplication), and SA13 (hotspots). If unavailable, fall back to CLI tools and grep heuristics.
 
 ---
 

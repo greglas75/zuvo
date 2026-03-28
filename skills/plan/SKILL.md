@@ -52,7 +52,7 @@ Where `{plugin_root}` is resolved per `env-compat.md` (e.g., `CLAUDE_PLUGIN_ROOT
 **If 1-2 files missing:** Proceed in degraded mode. Note which files are unavailable in the final output.
 **If 3+ files missing:** Stop. The plugin installation is incomplete.
 
-Execute the CodeSift setup procedure from `codesift-setup.md`: `ToolSearch(query="codesift")`, then `list_repos()` once. Note the repo identifier for agent dispatches.
+Execute the CodeSift setup procedure from `codesift-setup.md`. Note the repo identifier for agent dispatches when CodeSift is available.
 
 ---
 
@@ -150,7 +150,7 @@ Write the plan document to `docs/specs/YYYY-MM-DD-<topic>-plan.md` using today's
 **Files:** [list of files to create or modify, with full paths]
 **Complexity:** standard | complex
 **Dependencies:** none | Task N, Task M
-**Model routing:** Sonnet | Opus
+**Execution routing:** default implementation tier | deep implementation tier
 
 - [ ] RED: Write failing test
   ```[language]
@@ -175,7 +175,7 @@ Write the plan document to `docs/specs/YYYY-MM-DD-<topic>-plan.md` using today's
 3. **Exact verification:** The Verify step includes the shell command to run and what the output should look like. No vague "tests should pass" — specify the command and expected result.
 4. **Commit messages:** Describe the behavior added ("add order validation that rejects negative quantities"), not the files changed ("update order.service.ts").
 5. **Dependencies:** A task can only depend on tasks with a lower number. No circular dependencies. Minimize dependencies — prefer independent tasks that can run in any order.
-6. **Complexity rating:** `standard` means 1-3 files, clear spec, no architecture decisions. `complex` means 4+ files, design pattern selection, or cross-cutting concerns. The complexity rating determines which model the execute phase will use: Sonnet for standard, Opus for complex.
+6. **Complexity rating:** `standard` means 1-3 files, clear spec, no architecture decisions. `complex` means 4+ files, design pattern selection, or cross-cutting concerns. The complexity rating determines which implementation tier the execute phase will use: default for standard, deep for complex.
 7. **File limits:** No single file should exceed 300 lines (services) or 200 lines (components). If the plan would create a file larger than this, split the task.
 8. **Test files:** Every task that creates production code must include a test file. The test file appears in the Files list alongside the production file.
 

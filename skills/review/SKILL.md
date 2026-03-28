@@ -166,7 +166,7 @@ FIX-ALL mode is forbidden when any of: TIER 3, DB migration changes, security/au
 
 Follow `codesift-setup.md`:
 
-1. `ToolSearch(query="codesift", max_results=20)` to discover availability
+1. Check whether CodeSift tools are available in the current environment
 2. `list_repos()` once to cache the repo identifier
 3. If not indexed: `index_folder(path=<project_root>)`
 
@@ -241,7 +241,7 @@ Refer to `env-compat.md` for the correct dispatch pattern per environment.
 
 #### Agent 1: Behavior Auditor
 
-**Model:** Sonnet (TIER 2 new files or TIER 3 standard). Opus when TIER 3 AND (15+ files OR security/money risk signals).
+**Execution profile:** default analysis tier for TIER 2 new files or normal TIER 3 runs. Escalate to the deep tier when TIER 3 also includes 15+ files or security/money risk signals.
 
 **Type:** Explore (read-only)
 
@@ -261,7 +261,7 @@ Refer to `env-compat.md` for the correct dispatch pattern per environment.
 
 #### Agent 2: Structure Auditor
 
-**Model:** Sonnet
+**Execution profile:** default analysis tier
 
 **Type:** Explore (read-only)
 
@@ -280,7 +280,7 @@ Refer to `env-compat.md` for the correct dispatch pattern per environment.
 
 #### Agent 3: CQ Auditor
 
-**Model:** Sonnet
+**Execution profile:** default analysis tier
 
 **Type:** Explore (read-only)
 
@@ -366,7 +366,7 @@ After the audit produces a list of candidate findings, score each one before inc
 
 **TIER 2+:** Dispatch a Confidence Re-Scorer agent:
 
-**Model:** Haiku (fast, low-cost)
+**Execution profile:** lightweight analysis tier
 
 **Type:** Explore (read-only)
 
@@ -484,7 +484,7 @@ NEXT STEPS -- say one of these:
 
 If the report has QUESTIONS FOR AUTHOR, pause before executing fixes:
 
-1. Surface each question to the user (max 4 at a time via `AskUserQuestion` if available, otherwise print them inline).
+1. Surface each question to the user (max 4 at a time if interactive; otherwise print them inline and proceed with the safest default).
 2. Incorporate answers -- update severity if answers change the picture.
 3. Then proceed to execute if requested.
 
@@ -559,7 +559,7 @@ git commit -m "review-fix: [brief description]"
 git tag review-YYYY-MM-DD-[short-slug]
 ```
 
-If `AskUserQuestion` is available, confirm before committing. If not available (Codex, Cursor), commit automatically but do NOT push.
+If the environment supports confirmation, confirm before committing. If not (for example Codex App async or Cursor), commit automatically but do NOT push.
 
 ### Post-Execute
 

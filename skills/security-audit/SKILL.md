@@ -58,7 +58,7 @@ Read `{plugin_root}/shared/includes/env-compat.md` for agent dispatch, path reso
 
 Read `{plugin_root}/shared/includes/codesift-setup.md` for the full initialization sequence.
 
-**Summary:** `ToolSearch(query="codesift")` at skill start. If found, `list_repos()` once. Use CodeSift for all code analysis. If unavailable, fall back to grep/find.
+**Summary:** Run the CodeSift setup from `codesift-setup.md` at skill start. Use CodeSift for all code analysis when available. If unavailable, fall back to grep/find.
 
 ### CodeSift Optimizations
 
@@ -500,6 +500,6 @@ Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
 - Use **Sonnet** for QUICK/LIGHT/STANDARD tiers
 - Use **Opus** for DEEP tier
 - Phase 3 dimensions (S1/S2/S3/S9) can parallelize with up to 4 Task agents in Claude Code
-- Read the project's CLAUDE.md first for stack-specific conventions
+- Read the project's AGENTS.md or CLAUDE.md first for stack-specific conventions
 - QUICK mode skips full mandatory reads (inline output only)
 - Estimated durations: QUICK ~3 min, LIGHT ~10 min, STANDARD ~20 min, DEEP ~30 min

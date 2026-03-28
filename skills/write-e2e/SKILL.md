@@ -75,9 +75,9 @@ CORE FILES LOADED:
 
 Check tool availability once at start:
 
-1. **CodeSift:** `ToolSearch(query="codesift", max_results=5)`. If found, call `list_repos()`. If not found, fall back to Grep + Glob.
+1. **CodeSift:** Check whether CodeSift tools are available in the current environment. If available, use them. Otherwise fall back to Grep + Glob.
 
-2. **Playwright MCP:** `ToolSearch(query="+playwright browser", max_results=5)`. If found, set `PLAYWRIGHT_AVAILABLE=true`. If not found and `--live` was requested, warn and fall back to code-only mode.
+2. **Playwright browser tooling:** Check whether browser automation tools are available in the current environment. If available, set `PLAYWRIGHT_AVAILABLE=true`. If not and `--live` was requested, warn and fall back to code-only mode.
 
 Print status:
 

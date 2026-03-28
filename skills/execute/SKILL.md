@@ -78,7 +78,7 @@ Read the spec alongside the plan. Spec reviewers will need it to verify complian
 
 Before dispatching any agent, detect the project stack:
 
-1. Check project `CLAUDE.md` for a declared tech stack
+1. Check project `AGENTS.md` or `CLAUDE.md` for a declared tech stack
 2. If absent, check config files (`tsconfig.json`, `package.json`, `pyproject.toml`, `composer.json`, etc.)
 3. Load the matching rules file path for the implementer: `rules/typescript.md`, `rules/react-nextjs.md`, `rules/nestjs.md`, `rules/python.md`
 
@@ -90,7 +90,7 @@ Record the detected stack. Pass it to every implementer dispatch.
 
 Before the first agent dispatch:
 
-1. `ToolSearch(query="codesift", max_results=20)`
+1. Check whether CodeSift tools are available in the current environment
 2. If available: `list_repos()` once, cache the result
 3. Record `CODESIFT_AVAILABLE=true|false`
 4. If unavailable: warn the user once — "CodeSift not available. Reviewers will use Grep/Read for verification, which is less thorough."

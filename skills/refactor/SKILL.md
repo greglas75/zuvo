@@ -128,7 +128,7 @@ Print: `STACK: [language] | RUNNER: [test runner]`
 
 Follow `codesift-setup.md`:
 
-1. `ToolSearch(query="codesift", max_results=20)` to discover availability
+1. Check whether CodeSift tools are available in the current environment
 2. `list_repos()` once to cache the repo identifier
 3. If not indexed: `index_folder(path=<project_root>)`
 
@@ -252,7 +252,7 @@ Dispatch two agents in parallel (background) to inform the plan:
 
 #### Agent 1: Dependency Mapper
 
-**Model:** Sonnet
+**Execution profile:** default analysis tier
 
 **Type:** Explore (read-only)
 
@@ -268,7 +268,7 @@ Dispatch two agents in parallel (background) to inform the plan:
 
 #### Agent 2: Existing Code Scanner
 
-**Model:** Haiku (fast, low-cost)
+**Execution profile:** lightweight analysis tier
 
 **Type:** Explore (read-only)
 
@@ -405,7 +405,7 @@ Run the full verification suite:
 
 After the lead's post-audit, dispatch an independent CQ Auditor agent to verify the results.
 
-**Model:** Sonnet
+**Execution profile:** default analysis tier
 
 **Type:** Explore (read-only)
 
@@ -649,5 +649,5 @@ Progress tracking:
 - **Codex / Cursor:** Print inline: `STEP: ETAP-1A [START]` ... `STEP: ETAP-1A [DONE]`
 
 User interaction:
-- **Claude Code:** Use `AskUserQuestion` for approval gates.
-- **Codex / Cursor:** `AskUserQuestion` not available. At approval stops, proceed with the safest default and document the choice.
+- **Interactive environments:** Ask the user at approval gates.
+- **Non-interactive environments:** At approval stops, proceed with the safest default and document the choice.

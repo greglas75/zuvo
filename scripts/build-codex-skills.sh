@@ -98,6 +98,10 @@ replace_claude_refs() {
     -e 's/\*\*Sonnet\*\*/\*\*gpt-5.4\*\*/g' \
     -e 's/\*\*Opus\*\*/\*\*gpt-5.3-codex\*\*/g' \
     -e 's/\*\*Haiku\*\*/\*\*gpt-5.4-mini\*\*/g' \
+    -e 's/\*\*Model:\*\* Sonnet/\*\*Model:\*\* gpt-5.4/g' \
+    -e 's/\*\*Model:\*\* Opus/\*\*Model:\*\* gpt-5.3-codex/g' \
+    -e 's/\*\*Model:\*\* Haiku/\*\*Model:\*\* gpt-5.4-mini/g' \
+    -e 's/\*\*Model routing:\*\* Sonnet | Opus/\*\*Model routing:\*\* gpt-5.4 | gpt-5.3-codex/g' \
     -e 's/model: Sonnet/model: gpt-5.4/g' \
     -e 's/model: Opus/model: gpt-5.3-codex/g' \
     -e 's/model: Haiku/model: gpt-5.4-mini/g' \
@@ -112,6 +116,15 @@ replace_claude_refs() {
     -e 's/Use Sonnet for/Use gpt-5.4 for/g' \
     -e 's/Use Opus for/Use gpt-5.3-codex for/g' \
     -e 's/Use Haiku for/Use gpt-5.4-mini for/g' \
+    -e 's/Sonnet for standard/gpt-5.4 for standard/g' \
+    -e 's/Opus for complex/gpt-5.3-codex for complex/g' \
+    -e 's/Opus when TIER/gpt-5.3-codex when TIER/g' \
+    -e 's/Sonnet (TIER/gpt-5.4 (TIER/g' \
+    -e 's/Haiku (fast, low-cost)/gpt-5.4-mini (fast, low-cost)/g' \
+    -e 's/Model: Sonnet/Model: gpt-5.4/g' \
+    -e 's/Model: Opus/Model: gpt-5.3-codex/g' \
+    -e 's/Model: Haiku/Model: gpt-5.4-mini/g' \
+    -e 's/Sonnet, Explore/gpt-5.4, Explore/g' \
     -e 's/always Sonnet/always gpt-5.4/g' \
     -e 's/-> Sonnet/-> gpt-5.4/g' \
     -e 's/-> Opus/-> gpt-5.3-codex/g' \
@@ -470,6 +483,7 @@ if [ -d "$PLUGIN_DIR/shared/includes" ]; then
     cat "$f" \
       | replace_paths \
       | strip_tool_names \
+      | replace_claude_refs \
       | normalize_unicode > "$DIST/shared/includes/$(basename "$f")"
   done
   echo "  + shared/includes/ ($(ls "$PLUGIN_DIR"/shared/includes/*.md 2>/dev/null | wc -l | tr -d ' ') files)"
@@ -672,7 +686,7 @@ if [ -n "$tool_refs" ]; then
 fi
 
 # Check for untransformed ~/.claude/ paths
-bad_paths=$(grep -rln '~/.claude/' "$DIST" 2>/dev/null || true)
+bad_paths=$(grep -rlnE '(~/.claude/|\.claude/)' "$DIST" 2>/dev/null || true)
 
 if [ -n "$bad_paths" ]; then
   echo "  ERROR: Untransformed ~/.claude/ paths found:"
@@ -723,7 +737,7 @@ if [ -n "$cpr_refs" ]; then
 fi
 
 # Check for residual CLAUDE.md references
-claude_md_refs=$(grep -rln 'CLAUDE\.md' "$DIST"/skills/*/SKILL.md 2>/dev/null || true)
+claude_md_refs=$(grep -rln 'CLAUDE\.md' "$DIST"/skills "$DIST"/shared 2>/dev/null || true)
 if [ -n "$claude_md_refs" ]; then
   echo "  WARN: Residual CLAUDE.md references (should be AGENTS.md):"
   echo "$claude_md_refs" | while IFS= read -r f; do
@@ -733,9 +747,9 @@ if [ -n "$claude_md_refs" ]; then
 fi
 
 # Check for residual Claude model names in skill prose
-model_refs=$(grep -rn '\*\*Sonnet\*\*\|\*\*Opus\*\*\|\*\*Haiku\*\*\|model: Sonnet\|model: Opus\|model: Haiku\|Use Sonnet\|Use Opus\|Use Haiku' "$DIST"/skills/*/SKILL.md 2>/dev/null || true)
-if [ -n "$model_refs" ]; then
-  echo "  WARN: Residual Claude model names (Sonnet/Opus/Haiku) in skills:"
+model_refs=$(grep -rn '\*\*Sonnet\*\*\|\*\*Opus\*\*\|\*\*Haiku\*\*\|\*\*Model:\*\* Sonnet\|\*\*Model:\*\* Opus\|\*\*Model:\*\* Haiku\|Model: Sonnet\|Model: Opus\|Model: Haiku\|model: Sonnet\|model: Opus\|model: Haiku\|Use Sonnet\|Use Opus\|Use Haiku\|Sonnet (TIER\|Haiku (fast, low-cost)\|Opus when TIER' "$DIST"/skills "$DIST"/shared 2>/dev/null || true)
+  if [ -n "$model_refs" ]; then
+  echo "  WARN: Residual Claude model names (Sonnet/Opus/Haiku) in skills/shared:"
   echo "$model_refs" | head -5 | while IFS= read -r line; do
     echo "    $line"
   done

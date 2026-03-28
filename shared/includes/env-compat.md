@@ -6,12 +6,12 @@
 
 | Capability | Claude Code | Codex | Cursor |
 |-----------|-------------|-------|--------|
-| Sub-agent dispatch | `Task` tool — parallel, model-routed | TOML agents in `~/.codex/agents/` — parallel, sandboxed | Not available — single-agent only |
+| Sub-agent dispatch | `Task` tool — parallel, model-routed | Native agents / TOML agents in `~/.codex/agents/` — parallel, sandboxed | Not available — single-agent only |
 | Concurrency | Unrestricted background tasks | Capped at `max_threads: 6` | Sequential execution only |
-| Model selection | `model: "sonnet"` / `"opus"` / `"haiku"` | Fixed per TOML config (`gpt-5.4`, `gpt-5.4-mini`) | Uses whichever model is active — routing ignored |
-| Progress reporting | `TaskCreate` / `TaskUpdate` for structured tracking | Inline print: `STEP: [name] [START\|DONE]` | Inline print: `STEP: [name] [START\|DONE]` |
-| User interaction | `AskUserQuestion` for confirmations and choices | Not available — use safest default | Not available — use safest default |
-| Agent instructions | Sub-process via Task tool reads agent markdown | TOML config points to `agents/*.md` for instructions | Read `agents/*.md` yourself, execute sequentially |
+| Model selection | Explicit per task dispatch | Fixed per TOML config or session model | Uses whichever model is active — routing ignored |
+| Progress reporting | Structured task updates | Inline progress or native status updates | Inline print: `STEP: [name] [START\|DONE]` |
+| User interaction | Native interactive prompts | Codex CLI: ask inline. Codex App async: safest default. | Not available — use safest default |
+| Agent instructions | Sub-process via Task tool reads agent markdown | Agent config points to `agents/*.md` for instructions | Read `agents/*.md` yourself, execute sequentially |
 
 ## Path Resolution
 
@@ -46,7 +46,7 @@ Task(
 - `type: "Code"` — implementation (agent can create and edit files)
 - Multiple agents can run in parallel when their work is independent
 
-### Codex (TOML agents)
+### Codex (native/TOML agents)
 
 Agents are defined as TOML configs in `~/.codex/agents/`. The TOML specifies name, model, sandbox mode, and a pointer to the instruction file:
 
@@ -80,7 +80,7 @@ Use structured progress when available, inline text when not:
 # If TaskCreate is available (Claude Code):
 TaskCreate with full phase list, update status as you go
 
-# If TaskCreate is NOT available (Codex, Cursor):
+# If structured task updates are NOT available (Codex, Cursor):
 STEP: Phase 1 — Code Exploration [START]
 ... analysis work ...
 STEP: Phase 1 — Code Exploration [DONE]
@@ -91,10 +91,11 @@ STEP: Phase 2 — Design Dialogue [START]
 
 When a skill needs user input (confirmation, choice between options):
 
-- **Claude Code:** Use `AskUserQuestion` — present options clearly, wait for response
-- **Codex / Cursor:** `AskUserQuestion` is not available. Proceed with the safest default choice. Document which default was chosen and why.
+- **Claude Code:** Use the platform's interactive question/approval mechanism.
+- **Codex CLI:** Ask inline in the current conversation when clarification is necessary.
+- **Codex App async / Cursor:** Proceed with the safest default choice and document which default was chosen and why.
 
-Hard rule: Never push to a remote repository without explicit user confirmation, regardless of environment. If `AskUserQuestion` is unavailable, skip the push step entirely and inform the user that pushing is a separate manual step.
+Hard rule: Never push to a remote repository without explicit user confirmation, regardless of environment. If the current environment cannot confirm interactively, skip the push step entirely and state that pushing is a separate manual step.
 
 ## Codex Execution Modes
 

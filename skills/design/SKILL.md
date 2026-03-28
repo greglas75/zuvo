@@ -115,7 +115,7 @@ cat .interface-design/system.md 2>/dev/null
 
 ### Step 3: Intent Questions
 
-Present three questions (use `AskUserQuestion` if available, otherwise print and wait):
+Present three questions. If the environment is interactive, ask inline; otherwise make the safest reasonable decision and annotate it.
 
 **Q1: Who is the person using this?**
 Not "users" -- specific context. Example: "Marketing manager reviewing campaign performance before Monday standup."

@@ -53,7 +53,7 @@ Dispatch three agents in **parallel** (background). Each agent investigates one 
 
 Follow the instructions in `codesift-setup.md`:
 
-1. `ToolSearch(query="codesift", max_results=20)` to discover availability
+1. Check whether CodeSift tools are available in the current environment
 2. `list_repos()` once to get the repo identifier
 3. If not indexed: `index_folder(path=<project_root>)`
 4. Pass the repo identifier and CodeSift availability status to each agent

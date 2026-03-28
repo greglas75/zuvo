@@ -41,7 +41,7 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 
 Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
 
-**Summary:** Call `ToolSearch(query="codesift")` at skill start. If found, call `list_repos()` once. Use CodeSift for structured data discovery, meta tag pattern search, and component analysis. Fall back to Grep/Read/Glob if unavailable.
+**Summary:** Run the CodeSift setup from `codesift-setup.md` at skill start. Use CodeSift for structured data discovery, meta tag pattern search, and component analysis when available. Fall back to Grep/Read/Glob if unavailable.
 
 ---
 

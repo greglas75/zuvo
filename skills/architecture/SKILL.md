@@ -64,7 +64,7 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 
 | Input | Detected Mode |
 |-------|---------------|
-| _(empty)_ | Ask user. If `AskUserQuestion` not available, default to `--mode review .` |
+| _(empty)_ | Ask the user if interactive. Otherwise default to `--mode review .` |
 | `review [path]` | Review mode |
 | "should we use X or Y" | ADR mode |
 | "design a system for" | Design mode |
@@ -98,7 +98,7 @@ Read actual files before any assessment. Never write a review from memory.
 2. Directory tree (top 2 levels) -- module boundaries
 3. Entry points: `main.ts`, `app.module.ts`, `index.ts`, `server.ts`
 4. Key domain files: services, controllers, models (sample, not all)
-5. `README.md`, `CLAUDE.md`, any `docs/` folder
+5. `README.md`, `AGENTS.md`, `CLAUDE.md`, any `docs/` folder
 6. **Test infrastructure** -- runner config, test locations, coverage config
 
 #### Test discovery (MANDATORY for A6 scoring)

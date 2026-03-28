@@ -108,7 +108,7 @@ Run the full test suite 3 times. The first run warms caches; use the median of a
 | Jest | `npx jest --json` | JSON includes testResults[].perfStats |
 | pytest | `python -m pytest --durations=0 -q` | --durations=0 lists all test times |
 
-Redirect stderr to `.claude/tests-performance.stderr.log` for diagnostic review.
+Redirect stderr to `memory/tests-performance.stderr.log` for diagnostic review. Create `memory/` first if needed.
 
 ### Baseline Summary
 
@@ -129,7 +129,7 @@ If stddev exceeds 15% of median, mark as UNSTABLE with warning.
 
 ### Save Baseline
 
-Save to `.claude/tests-performance-baseline.<runner>.json` in the project root. If `.claude/` does not exist, create it.
+Save to `memory/tests-performance-baseline.<runner>.json` in the project root. If `memory/` does not exist, create it.
 
 **If argument is `baseline`: stop here. Print baseline summary and exit.**
 
@@ -254,7 +254,7 @@ TP4 (worker strategy):
 
 **Only runs when argument is `verify` or after applying changes from Phase 4.**
 
-Re-run the test suite with the same protocol as Phase 1 (3 runs, median). Load the saved baseline from `.claude/tests-performance-baseline.<runner>.json`.
+Re-run the test suite with the same protocol as Phase 1 (3 runs, median). Load the saved baseline from `memory/tests-performance-baseline.<runner>.json`.
 
 Compare:
 

@@ -4,19 +4,11 @@
 
 ## Step 1: Discover Availability
 
-At the start of any skill that analyzes code, check for CodeSift:
+At the start of any skill that analyzes code, check whether CodeSift MCP tools are available in the current environment.
 
-```
-ToolSearch(query="codesift", max_results=20)
-```
-
-If no results, try the legacy name:
-
-```
-ToolSearch(query="jcodemunch", max_results=20)
-```
-
-If neither is found, CodeSift is unavailable. Skip to the Degraded Mode section below.
+- **Claude Code / environments with tool discovery:** look for `codesift`, then the legacy name `jcodemunch`.
+- **Codex:** if CodeSift is configured, use the `mcp__codesift__*` tools directly.
+- **If neither path is available:** CodeSift is unavailable. Skip to the Degraded Mode section below.
 
 ## Step 2: Initialize (Once Per Session)
 

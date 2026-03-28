@@ -60,7 +60,7 @@ Read `{plugin_root}/shared/includes/env-compat.md` for agent dispatch patterns, 
 
 Read `{plugin_root}/shared/includes/codesift-setup.md` for the full initialization sequence.
 
-**Summary:** `ToolSearch(query="codesift")` at skill start. If found, `list_repos()` once, note the repo ID. Use CodeSift tools for all discovery and analysis. If not found, fall back to Grep/Read/Glob and inform the user once.
+**Summary:** Run the CodeSift setup from `codesift-setup.md` at skill start. Use CodeSift tools for all discovery and analysis when available. If not found, fall back to Grep/Read/Glob and inform the user once.
 
 After editing any file: `index_file(path="/absolute/path/to/file")`
 
@@ -445,5 +445,5 @@ Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
 - Use **Sonnet** for all batch agents in QUICK and STANDARD modes
 - Use **Opus** for DEEP mode batch agents
 - Process batches sequentially in Cursor/Codex. Claude Code may parallelize with up to 6 Task agents.
-- Read the project's CLAUDE.md first for stack-specific conventions
+- Read the project's AGENTS.md or CLAUDE.md first for stack-specific conventions
 - Estimated durations: QUICK ~2 min for 50 files, DEEP ~15 min for 50 files

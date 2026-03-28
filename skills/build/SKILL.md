@@ -30,7 +30,7 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 
 Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
 
-**Summary:** Call `ToolSearch(query="codesift")` at skill start. If found, call `list_repos()` once, note the repo identifier. Use CodeSift tools in all subsequent phases. If not found, fall back to Grep/Read/Glob and notify the user once that code exploration will be less thorough.
+**Summary:** Run the CodeSift setup from `codesift-setup.md` at skill start. Use CodeSift tools in all subsequent phases when available. If not, fall back to Grep/Read/Glob and notify the user once that code exploration will be less thorough.
 
 After editing any file, update the index: `index_file(path="/absolute/path/to/file")`
 
@@ -67,7 +67,7 @@ Where `{plugin_root}` is resolved per `env-compat.md` (e.g., `CLAUDE_PLUGIN_ROOT
 
 ## Phase 0: Project Context
 
-1. Read the project's `CLAUDE.md` and any rules directory for conventions
+1. Read the project's `AGENTS.md` or `CLAUDE.md` and any rules directory for conventions
 2. Detect the tech stack from config files (`package.json`, `tsconfig.json`, `pyproject.toml`, etc.)
 3. If the stack triggers a conditional rule file (TypeScript, React, NestJS, Python), read it from `{plugin_root}/rules/`
 4. Read `memory/backlog.md` if it exists -- check for open items related to the feature area
@@ -240,7 +240,7 @@ Implement the feature according to the plan.
 Rules:
 - Touch only ALLOWED files. If a dependency forces a change outside the scope fence, log the expansion with justification. Structural splits (extracting helpers to respect file limits) auto-expand. Anything else requires user approval.
 - Keep business logic in services, not in components or route handlers.
-- Follow project conventions from CLAUDE.md and the rules directory.
+- Follow project conventions from AGENTS.md or CLAUDE.md and the rules directory.
 - After writing each file, check its line count against limits. Split immediately if approaching the threshold.
 
 **When dispatching write sub-agents** (if parallelizing implementation across multiple agents), every agent prompt must include:

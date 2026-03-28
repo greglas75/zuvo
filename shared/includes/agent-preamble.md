@@ -15,9 +15,10 @@
    Findings without evidence are discarded. "I believe there may be an issue" is not a finding.
 
 3. **Read project conventions first.** Before starting analysis, check for:
-   - `CLAUDE.md` in the project root — contains project-specific rules and architecture
-   - `.claude/rules/` directory — contains additional project conventions
-   - If either exists, read them. Project conventions override general rules when they conflict.
+   - `AGENTS.md` in the project root — preferred project-specific instructions file
+   - `CLAUDE.md` in the project root — legacy project-specific rules and architecture
+   - `rules/` or `.claude/rules/` directory — additional project conventions
+   - If any exist, read them. Project conventions override general rules when they conflict.
 
 4. **Respect confidence levels.** Rate each finding with a confidence percentage:
    - **51-100%** — Report directly. You have strong evidence.

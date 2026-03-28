@@ -42,7 +42,7 @@ Read `{plugin_root}/shared/includes/env-compat.md` for agent dispatch patterns, 
 
 Read `{plugin_root}/shared/includes/codesift-setup.md` for the full initialization sequence.
 
-**Summary:** `ToolSearch(query="codesift")` at skill start. If found, `list_repos()` once. Use CodeSift tools for endpoint discovery and handler inspection. If unavailable, fall back to grep/find scripts.
+**Summary:** Run the CodeSift setup from `codesift-setup.md` at skill start. Use CodeSift tools for endpoint discovery and handler inspection when available. If unavailable, fall back to grep/find scripts.
 
 ### CodeSift Optimizations
 
@@ -396,5 +396,5 @@ Full protocol: `{plugin_root}/shared/includes/backlog-protocol.md`.
 - Use **Sonnet** for LIGHT/STANDARD tiers
 - Use **Opus** for DEEP tier
 - Process controllers sequentially. Claude Code may parallelize with up to 6 Task agents.
-- Read the project's CLAUDE.md first for stack-specific conventions
+- Read the project's AGENTS.md or CLAUDE.md first for stack-specific conventions
 - Estimated durations: LIGHT ~3-5 min, STANDARD ~8-10 min, DEEP ~15-20 min

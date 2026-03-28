@@ -26,7 +26,7 @@ Detect mode automatically:
 Check these sources in order. Use the first match:
 
 1. **Existing convention** -- Run `ls -d .worktrees 2>/dev/null`. If `.worktrees/` exists at repo root, use it.
-2. **CLAUDE.md preference** -- Search project CLAUDE.md for a `worktree` or `worktrees` section that declares a preferred directory path.
+2. **Project instructions preference** -- Search project `AGENTS.md` or `CLAUDE.md` for a `worktree` or `worktrees` section that declares a preferred directory path.
 3. **Ask the user** -- Present two options:
    - `.worktrees/` (recommended, keeps repo root clean)
    - Custom path

@@ -82,14 +82,14 @@ Default: all views, code-only, with cross-view analysis.
 
 | Check | How | If missing |
 |-------|-----|------------|
-| chrome-devtools MCP | `ToolSearch` for chrome-devtools | Skip visual, run code-only audit |
+| chrome-devtools MCP | Check whether chrome-devtools tooling is available | Skip visual, run code-only audit |
 | Dev server running | `curl -sI [url] | head -1` | STOP -- suggest: `npm run dev` |
 
 ### Optional
 
 | Check | How | If missing |
 |-------|-----|------------|
-| mcp-accessibility-scanner | `ToolSearch` for accessibility-scanner | DX15-DX17 use manual ARIA grep |
+| mcp-accessibility-scanner | Check whether accessibility-scanner tooling is available | DX15-DX17 use manual ARIA grep |
 | Tailwind config | `cat tailwind.config.* 2>/dev/null` | DX2-DX4 token checks adapt |
 | Design system artifacts | `cat .interface-design/system.json 2>/dev/null` | Structural-only audit (no craft validation) |
 
