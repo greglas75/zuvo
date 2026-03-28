@@ -22,3 +22,4 @@ Commits pending review. Auto-managed:
 - 92d4486 (2026-03-28) docs: add docs-website-sync spec and plan
 - c3f9221 (2026-03-28) docs: update review queue + refine docs-website-sync spec/plan
 - 7faba95 (2026-03-28) docs: update review queue
+- c1bf282 (2026-03-28) feat: add 26 Semgrep/CodeSift/frequency patterns + AP25-AP29 to rules
