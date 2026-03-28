@@ -116,8 +116,25 @@ CORE FILES LOADED:
 1. Read project CLAUDE.md and `.claude/rules/` for conventions (test runner, file locations, mock patterns)
 2. Detect stack from config files: `package.json`, `tsconfig.json`, `pyproject.toml`
 3. Note domain-specific test patterns needed (NestJS controllers, Redux slices, etc.)
-4. Read `memory/backlog.md` if it exists -- check for related open items in target files
-5. Read `memory/coverage.md` if it exists -- use as cached state to skip re-scanning known files
+4. **Discover existing test patterns in the project (MANDATORY for non-trivial code):**
+   Search for how THIS project already tests hard-to-mock code. Reuse established patterns.
+   ```
+   Search for:
+   - Integration tests with DB: grep for transaction, beginTransaction, rollBack, fixtures, $this->tester->create
+   - Reflection-based mocking: grep for ReflectionClass, ReflectionProperty, disableOriginalConstructor
+   - Factory helpers: grep for createMock.*willReturnCallback, getMockBuilder
+   - DI container overrides: grep for TestingModule, overrideProvider, useValue
+   ```
+   Log:
+   ```
+   PROJECT TEST PATTERNS:
+     DB integration: [file:line — describe pattern] or "none found"
+     Reflection mocking: [file:line — describe pattern] or "none found"
+     Factory helpers: [file:line — describe pattern] or "none found"
+   ```
+   **These patterns are your toolkit.** When Phase 1.5b classifies a file as NEEDS_INTEGRATION, use the pattern you found here.
+5. Read `memory/backlog.md` if it exists -- check for related open items in target files
+6. Read `memory/coverage.md` if it exists -- use as cached state to skip re-scanning known files
    - If `memory/` directory does not exist, create it: `mkdir -p memory`
    - If `memory/coverage.md` does not exist, create it with an empty table header
 
@@ -233,6 +250,37 @@ For each file:
 
 6. If time-dependent code is found (`Date.now()`, `setTimeout`, `setInterval`), flag: `FAKE TIMERS REQUIRED`
 
+### Phase 1.5b: Testability Decision (MANDATORY — BLOCKING)
+
+**After classifying complexity, decide HOW to test each file.** This prevents agents from writing `assertIsBool`/`markTestSkipped` stubs when code is hard to mock.
+
+For each file, classify testability:
+
+| Classification | Signal | Strategy |
+|---------------|--------|----------|
+| **UNIT_MOCKABLE** | All deps injected, no static DB/ORM calls | Standard unit test with mocks |
+| **UNIT_REFLECTION** | Protected/private properties, constructor does DI but also creates internal deps | Partial mock + `disableOriginalConstructor()` + inject via reflection (use project pattern from Phase 0 step 4) |
+| **NEEDS_INTEGRATION** | Static ORM calls (`Model::findOne`, `Model::find`), framework singletons, global state | Integration test with real DB -- use project's DB test pattern (transaction rollback, fixture helpers) |
+| **MIXED** | Some methods unit-testable, some need DB | Split: unit tests for injectable methods, integration tests for static-call methods |
+
+**Detection rules:**
+- Static ORM/AR: `ClassName::findOne`, `::find`, `::findAll`, `DB::table`, `Yii::$app->db` → NEEDS_INTEGRATION
+- Constructor injection with `$this->dep = $dep` → UNIT_MOCKABLE or UNIT_REFLECTION
+- Both in same file → MIXED (decide per method)
+
+**HARD RULES:**
+1. **NEVER write `assertIsBool`/`assertIsInt`/`assertInstanceOf` as sole assertion when real testing is possible.** If reaching for these → wrong testability decision → go back and choose NEEDS_INTEGRATION.
+2. **NEVER write `markTestSkipped` + TODO comment as a test.** Either write the real test (integration if needed) or skip the file and add a backlog item.
+3. **NEVER write `assertTrue(true)` as a real assertion.** Only valid for "verify no exception thrown".
+4. **Test file MUST test the class it's named after.** `FooServiceTest` tests `FooService`, not `BarHelper` constants.
+
+Log per file:
+```
+[path]: TESTABILITY = [UNIT_MOCKABLE | UNIT_REFLECTION | NEEDS_INTEGRATION | MIXED]
+  Static calls: [list or "none"]
+  Project pattern to use: [from Phase 0 step 4]
+```
+
 ---
 
 ## Phase 2: Plan
@@ -264,6 +312,7 @@ Rules:
 ### Strategy Per File
 
 For each file, state:
+- **Testability: [UNIT_MOCKABLE | UNIT_REFLECTION | NEEDS_INTEGRATION | MIXED]** (from Phase 1.5b -- MANDATORY)
 - Complexity classification (from Phase 1.5)
 - Code type (from Code-Type Gate)
 - Target test count with math: `[code type]: [units] x [factor] = [minimum]`
@@ -285,6 +334,20 @@ For each file, state:
 ## Phase 3: Write Tests
 
 For each target file in the plan, write the test file following the plan exactly.
+
+### Pre-Write Blocklist (BLOCKING — check BEFORE writing a single line)
+
+Before writing, verify you are NOT about to produce any of these. If you catch yourself reaching for one, STOP and reconsider testability classification:
+
+| Blocked Pattern | Why | Do Instead |
+|----------------|-----|------------|
+| `assertIsBool` / `assertIsInt` / `assertIsString` as sole assertion | Tests TYPE not VALUE — accepts both correct and wrong results | `assertEquals`/`assertFalse`/`assertTrue` with specific expected value |
+| `assertInstanceOf` as sole assertion (except factory/DI tests) | Existence test, not behavior | Test a method call and verify its output |
+| `markTestSkipped('Requires database')` + no real assertion | Stub test, inflates coverage with zero value | Write integration test with transaction rollback, or skip file + backlog item |
+| `assertTrue(true)` as primary assertion | Always-true, passes regardless of production behavior | Let test pass naturally (no exception = pass) or use `expectNotToPerformAssertions()` |
+| TODO comment as test body ("With DB fixtures: create X, verify Y") | Recipe, not a test | Write the actual test or add backlog item |
+| Testing a different class than the test file name | `FooServiceTest` testing `BarHelper` constants | Create `BarHelperTest` for BarHelper |
+| `canConnectToDb()` guard wrapping most tests | Mixing unit and integration | Choose one strategy per file |
 
 ### Writing Protocol
 
