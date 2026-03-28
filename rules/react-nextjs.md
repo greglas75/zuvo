@@ -268,6 +268,81 @@ const sorted = [...items].sort((a, b) => a.name.localeCompare(b.name));
 const sorted = items.toSorted((a, b) => a.name.localeCompare(b.name));
 ```
 
+## Conditional hook calls -- hooks must be called unconditionally
+
+```tsx
+// NEVER -- hook inside condition (React breaks)
+function UserProfile({ userId }) {
+  if (!userId) return null;
+  const [user, setUser] = useState(null);  // called conditionally!
+  useEffect(() => { fetchUser(userId); }, [userId]);
+}
+
+// ALWAYS -- hooks first, conditions after
+function UserProfile({ userId }) {
+  const [user, setUser] = useState(null);
+  useEffect(() => {
+    if (userId) fetchUser(userId);
+  }, [userId]);
+  if (!userId) return null;
+}
+```
+
+## Missing key or index as key -- use stable identifier
+
+```tsx
+// NEVER -- no key, or array index as key
+{items.map((item) => <ItemCard item={item} />)}
+{items.map((item, index) => <ItemCard key={index} item={item} />)}
+
+// ALWAYS -- stable unique ID from data
+{items.map((item) => <ItemCard key={item.id} item={item} />)}
+```
+
+## Uncontrolled to controlled input -- don't mix
+
+```tsx
+// NEVER -- start uncontrolled then switch to controlled
+function Form() {
+  const [name, setName] = useState();  // undefined = uncontrolled initially
+  return <input value={name} onChange={e => setName(e.target.value)} />;
+}
+
+// ALWAYS -- initialize with empty string for controlled
+function Form() {
+  const [name, setName] = useState('');  // '' = controlled from start
+  return <input value={name} onChange={e => setName(e.target.value)} />;
+}
+```
+
+## Direct state mutation -- always create new reference
+
+```tsx
+// NEVER -- mutate state directly
+const [items, setItems] = useState([]);
+items.push(newItem);           // mutates existing array
+setItems(items);               // React won't re-render (same reference)
+
+// ALWAYS -- new array/object
+setItems(prev => [...prev, newItem]);
+// OR for objects:
+setUser(prev => ({ ...prev, name: newName }));
+```
+
+## Render function must return -- missing return in JSX
+
+```tsx
+// NEVER -- .map callback without return (renders undefined)
+{items.map(item => {
+  <li>{item.name}</li>      // missing return!
+})}
+
+// ALWAYS -- arrow return or explicit return
+{items.map(item => (
+  <li key={item.id}>{item.name}</li>
+))}
+```
+
 ## Tailwind CSS (when used)
 
 - Design tokens in `tailwind.config` — no magic values (`bg-[#3b82f6]`)

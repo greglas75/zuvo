@@ -130,3 +130,103 @@ src/
     ├── test_services/
     └── conftest.py  # Shared fixtures
 ```
+
+---
+
+## Defensive Patterns
+
+### Mutable default argument -- use None sentinel
+```python
+# NEVER -- mutable default shared across calls
+def add_item(item, items=[]):
+    items.append(item)
+    return items           # second call sees first call's data!
+
+# ALWAYS -- None sentinel
+def add_item(item, items=None):
+    if items is None:
+        items = []
+    items.append(item)
+    return items
+```
+
+### Bare except -- catch specific exceptions
+```python
+# NEVER -- bare except catches SystemExit, KeyboardInterrupt
+try:
+    process(data)
+except:              # catches EVERYTHING, even Ctrl+C
+    pass
+
+# ALWAYS -- catch specific
+try:
+    process(data)
+except (ValueError, KeyError) as e:
+    logger.error(f"Processing failed: {e}")
+```
+
+### f-string in logging -- use lazy % formatting
+```python
+# NEVER -- f-string always evaluated (even if log level filtered)
+logger.debug(f"Processing {len(items)} items with config {config}")
+
+# ALWAYS -- lazy formatting (evaluated only if level active)
+logger.debug("Processing %d items with config %s", len(items), config)
+```
+
+### Assert in production -- use proper validation
+```python
+# NEVER -- assert disabled with python -O (production flag)
+assert user is not None, "User required"
+assert len(items) > 0
+
+# ALWAYS -- explicit check that runs in production
+if user is None:
+    raise ValueError("User required")
+if not items:
+    raise ValueError("Items cannot be empty")
+```
+
+### Global variable mutation -- pass as parameter
+```python
+# NEVER -- modifying module-level mutable
+_cache = {}
+def get_value(key):
+    global _cache
+    if key not in _cache:
+        _cache[key] = expensive_lookup(key)
+    return _cache[key]
+
+# ALWAYS -- functools.lru_cache or class with instance state
+from functools import lru_cache
+
+@lru_cache(maxsize=128)
+def get_value(key):
+    return expensive_lookup(key)
+```
+
+### String concatenation in loop -- use join
+```python
+# NEVER -- O(n^2) string concatenation
+result = ""
+for line in lines:
+    result += line + "\n"    # creates new string every iteration
+
+# ALWAYS -- join (O(n))
+result = "\n".join(lines)
+```
+
+### Unused import -- remove
+```python
+# NEVER -- imports that aren't used
+import os
+import json
+from typing import List, Dict, Optional
+
+def greet(name: str) -> str:  # only str used
+    return f"Hello {name}"
+
+# ALWAYS -- import only what's needed
+def greet(name: str) -> str:
+    return f"Hello {name}"
+```
