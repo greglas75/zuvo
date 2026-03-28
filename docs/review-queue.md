@@ -18,3 +18,5 @@ Commits pending review. Auto-managed:
 - 88a6d97 (2026-03-28) feat: add 16 defensive code patterns to CQ rules
 - 1df1411 (2026-03-28) feat: add defensive patterns for PHP, Python, and React
 - e66787a (2026-03-28) docs: update CodeSift tools, quality gates AP25-29, pattern count
+- 37cfebd (2026-03-28) feat: update write-tests skill + review queue
+- 92d4486 (2026-03-28) docs: add docs-website-sync spec and plan

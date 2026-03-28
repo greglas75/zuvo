@@ -49,39 +49,35 @@ Data flow: `zuvo-plugin/rules/` (authoritative) → `zuvo-plugin/docs/` → `REA
 
 ---
 
-### Task 2: Cherry-pick AP25/AP27/AP29 into rules/test-quality-rules.md
+### Task 2: Add AP25/AP27/AP29 to rules/test-quality-rules.md
 
 **Files:** `rules/test-quality-rules.md`
-**Complexity:** complex (must preserve zuvo framing)
+**Complexity:** standard
 **Dependencies:** none
 
-- [ ] Diff: compare toolkit vs zuvo versions
-- [ ] Zuvo file has different title ("Test Quality Standards"), simplified descriptions. Preserve framing.
-- [ ] Cherry-pick: Add 3 new auto-fail entries to the auto-fail patterns table:
+- [ ] Add 3 new auto-fail entries to the auto-fail patterns table (in zuvo "Test Quality Standards" style):
   - AP25: `expect(x.length).toBe(N)` instead of `.toHaveLength(N)` (Q4)
   - AP27: `expect(x.length).toBeGreaterThan(0)` when fixture count known (Q4, Q15)
   - AP29: Mock return value echoed in assertion (Q17)
 - [ ] Verify: `grep -c "AP25\|AP27\|AP29" rules/test-quality-rules.md` — expected: 3+ matches
-- [ ] Verify: `head -1 rules/test-quality-rules.md` — should still say "Test Quality Standards"
+- [ ] Verify: `head -1 rules/test-quality-rules.md` — still says "Test Quality Standards"
 - [ ] Commit: `docs: add AP25/AP27/AP29 auto-fail entries to test-quality-rules.md`
 
 ---
 
-### Task 3: Cherry-pick Semgrep patterns into stack-specific rules
+### Task 3: Add Semgrep patterns to stack-specific rules
 
 **Files:** `rules/react-nextjs.md`, `rules/nestjs.md`, `rules/python.md`
-**Complexity:** complex (3 files, each with zuvo-specific framing)
+**Complexity:** complex (3 files, each with its own framing)
 **Dependencies:** none
 
-For each file:
-- [ ] Diff toolkit vs zuvo version to see framing differences
-- [ ] Cherry-pick ONLY the new Semgrep-derived sections (added 2026-03-28), adapted to zuvo style:
-  - `react-nextjs.md`: postMessage origin, innerHTML via DOM
-  - `nestjs.md`: Dynamic require, FS dynamic paths, HTTPS, TLS bypass
-  - `python.md`: Open redirect (Flask), defusedxml, credential logging
+For each file, add new pattern sections in zuvo style:
+- [ ] `react-nextjs.md`: Add postMessage origin, innerHTML via DOM
+- [ ] `nestjs.md`: Add Dynamic require, FS dynamic paths, HTTPS, TLS bypass
+- [ ] `python.md`: Add Open redirect (Flask), defusedxml, credential logging
 - [ ] Verify: `grep "Semgrep" rules/react-nextjs.md rules/nestjs.md rules/python.md` — each should have section header
-- [ ] Verify: first heading of each file preserved (zuvo titles, not toolkit titles)
-- [ ] Commit: `docs: cherry-pick Semgrep patterns into react/nestjs/python rules`
+- [ ] Verify: first heading of each file preserved (zuvo titles)
+- [ ] Commit: `docs: add Semgrep-derived patterns to react/nestjs/python rules`
 
 ---
 
@@ -91,8 +87,8 @@ For each file:
 **Complexity:** standard
 **Dependencies:** none
 
-- [ ] Source of truth: toolkit file is `/Users/greglas/DEV/claude-code-toolkit/test-patterns.md` (root, NOT `rules/test-patterns.md`)
-- [ ] Compare AP tables: toolkit's `test-patterns.md` AP deductions table vs zuvo's `rules/testing.md` AP deductions table
+- [ ] Reference: the AP definitions (AP25, AP27, AP28, AP29) are documented in the spec and plan for this task
+- [ ] Compare: check zuvo's `rules/testing.md` AP deductions table for existing entries
 - [ ] Add missing entries: AP25, AP27, AP28, AP29 (adapted to zuvo style)
 - [ ] Add Red Flags entries: mock-to-assertion ratio, CalledWith ratio, cross-file correlation, AP29 input echo
 - [ ] Verify: `grep -c "AP25\|AP27\|AP28\|AP29" rules/testing.md` — expected: 4+ matches
@@ -106,7 +102,7 @@ For each file:
 **Complexity:** standard
 **Dependencies:** Task 1-4 (rules must be synced first so counts are accurate)
 
-- [ ] Fix agent count: "12 pipeline agents across brainstorm, plan, and execute" (NOT "10 + 2 design-team")
+- [ ] Fix agent count: "11 dispatched agents + 1 main-agent synthesis role across brainstorm, plan, and execute"
 - [ ] Add platform status after "What's inside" section:
   ```markdown
   ## Platform support
@@ -118,7 +114,7 @@ For each file:
   | Cursor | Limited (sequential fallback) |
   ```
 - [ ] Add changelog link to Documentation section
-- [ ] Verify: `grep "12 pipeline" README.md && grep "Changelog" README.md && grep "Experimental" README.md`
+- [ ] Verify: `grep "11 dispatched" README.md && grep "Changelog" README.md && grep "Experimental" README.md`
 - [ ] Commit: `docs: README — fix agent count, add platform status, changelog link`
 
 ---
@@ -175,7 +171,7 @@ Extract from existing artifacts:
 
 - [ ] Write "When NOT to use Zuvo":
   - One-line fixes — just do it directly
-  - Non-code tasks — Claude handles natively
+  - Non-code tasks — your coding agent handles these natively
   - Projects under 5 files — overhead exceeds benefit
   - Go, Rust, Java — no bundled rules yet
 
@@ -215,7 +211,7 @@ Extract from existing artifacts:
 **Complexity:** standard
 **Dependencies:** Task 6, 7, 8
 
-- [ ] Fix agent count everywhere: "12 pipeline agents" with per-skill breakdown (brainstorm 4, plan 5, execute 3)
+- [ ] Fix agent count everywhere: "11 dispatched agents + 1 main-agent synthesis role" with per-skill breakdown (brainstorm 4, plan 4 dispatched + team-lead instructions, execute 3)
 - [ ] Clarify "commercial add-ons": if nothing is paid, state "100% open-source, MIT licensed." If there IS a commercial plan, describe it honestly.
 - [ ] Replace "Read the docs" with deep links to specific pages
 - [ ] Add working links: changelog (GitHub releases), privacy, community
@@ -256,8 +252,10 @@ Groups A and B can run in parallel. Group B does NOT block release.
 
 | Finding | Fix |
 |---------|-----|
-| P1: Wrong agent breakdown ("10 + 2 design-team") | Fixed: "12 pipeline agents: brainstorm(4) + plan(5) + execute(3)" |
+| P1: Wrong agent breakdown ("10 + 2 design-team") | R1: "12 pipeline agents" → R2: "11 dispatched + 1 main-agent role" (team-lead is instructions, not spawned) |
 | P1: Synthetic examples and unverified numbers | Fixed: All snippets from existing repo files. No invented data. Scan numbers only if scan data is published. |
-| P1: Blind `cp` destroys zuvo-adapted framing | Fixed: Cherry-pick approach. Diff first, preserve zuvo titles/style, add only new content. |
-| P2: Wrong upstream path for test-patterns.md | Fixed: Explicit path `/Users/greglas/DEV/claude-code-toolkit/test-patterns.md` (root) |
+| P1: Blind `cp` destroys zuvo-adapted framing | R1: cherry-pick → R2: write directly into zuvo files (no upstream dependency) |
+| P1: toolkit as upstream source of truth | Fixed R2: Zuvo rules/ is authoritative. No data flow from external repo. |
+| P2: Wrong upstream path for test-patterns.md | Fixed: AP definitions taken from spec/plan, not external file. |
 | P2: Release before website | Fixed: Release is repo-only. Website is separate deploy, explicitly decoupled. |
+| P2: "Claude handles natively" (platform-specific) | Fixed: "your coding agent handles these natively" (platform-neutral) |

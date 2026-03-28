@@ -11,31 +11,30 @@
 Three documentation surfaces are out of sync:
 
 1. **Repo docs** (`docs/`) — just updated with AP25-AP29, 40+ CQ patterns, new CodeSift tools, quality gates section
-2. **Rules files** (`rules/`) — stale copies from toolkit, missing Semgrep/CodeSift/frequency-derived patterns added 2026-03-28
+2. **Rules files** (`rules/`) — missing new Semgrep/CodeSift/frequency-derived patterns identified 2026-03-28
 3. **Website** (zuvo.dev) — lacks concrete evidence, real examples, and the specificity that the product itself delivers
 
 Additionally, Codex review identified structural gaps in the website that reduce credibility with technical users.
 
 ---
 
-## D1: Rules Sync Strategy
+## D1: Rules Update Strategy
 
-**Decision:** Copy updated rules from `claude-code-toolkit/rules/` to `zuvo-plugin/rules/` on each release.
+**Decision:** Add new patterns (from Semgrep/CodeSift/frequency analysis, 2026-03-28) directly to zuvo's rule files. Zuvo rules/ is the authoritative source.
 
-**Stale files (toolkit has newer versions):**
+**Files needing new patterns:**
 
-| File | Toolkit changes (2026-03-28) | Zuvo status |
-|------|------------------------------|-------------|
-| `cq-patterns.md` | +9 Semgrep patterns, +2 CodeSift patterns, +1 frequency pattern, +2 Docker patterns, strengthened Error narrowing + Config boundary | Stale (Mar 27) |
-| `test-quality-rules.md` | +3 auto-fail entries (AP25, AP27, AP29) | Stale (Mar 27) |
-| `react-nextjs.md` | +2 Semgrep patterns (postMessage, innerHTML) | Stale (Mar 27) |
-| `nestjs.md` | +4 Semgrep patterns (dynamic require, FS paths, HTTPS, TLS) | Stale (Mar 27) |
-| `python.md` | +3 Semgrep patterns (open redirect, defusedxml, credential logging) | Stale (Mar 27) |
+| File | New patterns to add | Current status |
+|------|---------------------|----------------|
+| `cq-patterns.md` | +9 Semgrep (secrets, path traversal, RegExp, prototype pollution, GCM, SRI, child process), +2 CodeSift (as-any bypass, console.log), +1 frequency (throw consistency), +2 Docker (USER, privileges), strengthened Error narrowing + Config boundary | Pending |
+| `test-quality-rules.md` | +3 auto-fail entries (AP25, AP27, AP29) | Pending |
+| `react-nextjs.md` | +2 Semgrep patterns (postMessage, innerHTML) | Pending |
+| `nestjs.md` | +4 Semgrep patterns (dynamic require, FS paths, HTTPS, TLS) | Pending |
+| `python.md` | +3 Semgrep patterns (open redirect, defusedxml, credential logging) | Pending |
+| `testing.md` | +4 AP entries (AP25, AP27, AP28, AP29), +4 Red Flags | Pending |
 
-**Not in zuvo-plugin but exists in toolkit:**
-- `php-yii2.md` (+8 Semgrep patterns) — conditional rule, loaded by stack detection. Not bundled in zuvo currently.
-
-**Testing.md** (test-patterns.md in toolkit = testing.md in zuvo): AP25, AP27-AP29 were added to toolkit's `test-patterns.md`. Need to check if zuvo's `testing.md` has the same AP table.
+**Not bundled currently:**
+- PHP/Yii2 patterns (+8 Semgrep) — deferred, not enough PHP projects using zuvo yet.
 
 ---
 
@@ -125,11 +124,11 @@ After all changes, `release.sh` updates marketplace SHA automatically. No manual
 ## Affected Files
 
 ### Repo (zuvo-plugin)
-- `rules/cq-patterns.md` — sync from toolkit
-- `rules/test-quality-rules.md` — sync from toolkit
-- `rules/react-nextjs.md` — sync from toolkit
-- `rules/nestjs.md` — sync from toolkit
-- `rules/python.md` — sync from toolkit
+- `rules/cq-patterns.md` — add new patterns
+- `rules/test-quality-rules.md` — add AP25/AP27/AP29 auto-fail entries
+- `rules/react-nextjs.md` — add Semgrep patterns
+- `rules/nestjs.md` — add Semgrep patterns
+- `rules/python.md` — add Semgrep patterns
 - `README.md` — agent count, platform status, changelog link
 - `docs/` — already updated (this session)
 
@@ -141,7 +140,7 @@ After all changes, `release.sh` updates marketplace SHA automatically. No manual
 
 ## Acceptance Criteria
 
-1. All `rules/` files in zuvo-plugin match toolkit versions (byte-identical or zuvo-adapted)
+1. All `rules/` files in zuvo-plugin contain the new patterns identified in this session
 2. `docs/` references (pattern counts, AP ranges, tool lists) match actual rules content
 3. README agent count matches website and docs
 4. Website has: real output section, start-here paths, product anatomy, platform status, when-not-to-use, optional deps, end-to-end example
