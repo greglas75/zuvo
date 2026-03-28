@@ -248,7 +248,8 @@ transform_skill_for_codex() {
     # --- Frontmatter: keep name, description, user-invocable ---
     /^---$/ && !in_fm && !past_fm { in_fm=1; in_desc=0; print; next }
     /^---$/ && in_fm { in_fm=0; past_fm=1; in_desc=0; print; next }
-    in_fm && /^(name|user-invocable):/ { in_desc=0; print; next }
+    in_fm && /^name:/ { in_desc=0; sub(/^name: */, "name: zuvo-"); print; next }
+    in_fm && /^user-invocable:/ { in_desc=0; print; next }
     in_fm && /^description:/ { in_desc=1; print; next }
     in_fm && in_desc && /^[[:space:]]/ { print; next }
     in_fm && in_desc && !/^[[:space:]]/ { in_desc=0 }
