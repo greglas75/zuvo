@@ -66,6 +66,7 @@ Located in `rules/`. These are reference files that skills load when performing 
 | `react-nextjs.md` | React and Next.js patterns and conventions |
 | `nestjs.md` | NestJS-specific patterns and conventions |
 | `python.md` | Python-specific patterns and conventions |
+| `php.md` | PHP patterns: type juggling, SQL injection, SSRF, file uploads, multi-tenant isolation, CSRF, Semgrep-derived (unserialize, exec, eval, mcrypt, unlink, FTP, open redirect) |
 
 ## Stack detection
 
@@ -78,6 +79,7 @@ Skills that need stack-specific rules detect the project's tech stack from confi
 | `package.json` with `next` in deps | Next.js | `react-nextjs.md` |
 | `package.json` with `@nestjs/core` in deps | NestJS | `nestjs.md` |
 | `pyproject.toml` or `.py` files | Python | `python.md` |
+| `composer.json` or `.php` files | PHP | `php.md` |
 | `vitest.config.*` or `vitest` in devDeps | Vitest | Test runner detection |
 | `jest.config.*` or `jest` in devDeps | Jest | Test runner detection |
 | `prisma/schema.prisma` | Prisma ORM | ORM detection for DB audit |

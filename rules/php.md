@@ -95,3 +95,195 @@ $label = match($status) {
     default => 'Unknown',
 };
 ```
+
+---
+
+## Semgrep-Derived Patterns
+
+### unserialize -- use json_decode instead
+```php
+// NEVER -- unserialize with user input (RCE risk)
+$data = unserialize($_POST['data']);
+// ALWAYS -- JSON or allowed_classes restriction
+$data = json_decode($_POST['data'], true);
+// If unserialize needed: unserialize($data, ['allowed_classes' => false]);
+```
+
+### exec/shell_exec -- avoid or escapeshellarg
+```php
+// NEVER -- user input in exec without escaping
+exec("convert " . $filename . " output.png");
+// ALWAYS -- escapeshellarg per argument
+exec("convert " . escapeshellarg($filename) . " output.png");
+```
+
+### eval -- never use
+```php
+// NEVER
+eval($userCode);
+$result = eval('return ' . $expression . ';');
+// ALWAYS -- use structured alternatives (match/switch, Symfony ExpressionLanguage)
+```
+
+### md5 loose equality -- use strict comparison
+```php
+// NEVER -- loose comparison enables type juggling bypass
+if (md5($input) == $storedHash) { /* auth */ }
+// ALWAYS -- strict comparison + timing-safe
+if (hash_equals($storedHash, md5($input))) { /* auth */ }
+// Better: use password_hash/password_verify instead of md5
+```
+
+### mcrypt -- use openssl or sodium
+```php
+// NEVER -- mcrypt is removed since PHP 7.2
+mcrypt_encrypt(MCRYPT_RIJNDAEL_128, $key, $data, MCRYPT_MODE_CBC, $iv);
+// ALWAYS -- openssl or sodium
+openssl_encrypt($data, 'aes-256-cbc', $key, 0, $iv);
+```
+
+### unlink -- validate path before delete
+```php
+// NEVER -- user-controlled path in unlink
+unlink($uploadDir . '/' . $_GET['file']);
+// ALWAYS -- basename + realpath guard
+$safePath = realpath($uploadDir . '/' . basename($_GET['file']));
+if ($safePath && str_starts_with($safePath, $uploadDir)) {
+    unlink($safePath);
+}
+```
+
+### FTP -- use SFTP/SCP
+```php
+// NEVER -- plaintext FTP
+ftp_connect($host);
+// ALWAYS -- SFTP via ssh2 or phpseclib
+$sftp = new \phpseclib3\Net\SFTP($host);
+```
+
+### Open redirect -- validate redirect URL
+```php
+// NEVER -- redirect to user-supplied URL
+return $this->redirect($request->get('returnUrl'));
+// ALWAYS -- allowlist or relative-only
+$url = $request->get('returnUrl', '/');
+if (!str_starts_with($url, '/') || str_starts_with($url, '//')) {
+    $url = '/';
+}
+return $this->redirect($url);
+```
+
+---
+
+## SSRF Prevention (curl / Guzzle / file_get_contents)
+
+Any code making HTTP requests to user-supplied URLs must apply all three layers:
+
+**Layer 1: Protocol allowlist**
+```php
+$scheme = strtolower(parse_url($userInput, PHP_URL_SCHEME));
+if (!in_array($scheme, ['https', 'http'], true)) {
+    throw new \InvalidArgumentException("Protocol not allowed: $scheme");
+}
+```
+
+**Layer 2: Private IP range block (after DNS resolution)**
+```php
+$host = gethostbyname(parse_url($userInput, PHP_URL_HOST));
+$blocked = ['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16'];
+// Block loopback, private, and link-local (metadata services)
+```
+
+**Layer 3: Timeout on all outbound requests**
+```php
+$client = new \GuzzleHttp\Client([
+    'timeout' => 5, 'connect_timeout' => 2,
+    'allow_redirects' => ['max' => 3, 'strict' => true],
+]);
+```
+
+---
+
+## File Upload Security
+
+```php
+// Size limit in server code, not just nginx
+['file', 'file', 'maxSize' => 10 * 1024 * 1024, 'extensions' => ['jpg', 'png', 'pdf'],
+    'checkExtensionByMimeType' => true];
+
+// MIME sniffing -- read magic bytes, don't trust Content-Type
+$finfo = new \finfo(FILEINFO_MIME_TYPE);
+$mime = $finfo->file($file->tempName);
+
+// Storage outside webroot, random filename
+$safeName = bin2hex(random_bytes(16)) . '.' . $file->extension;
+$file->saveAs($storagePath . $safeName);  // NOT @webroot
+
+// Block executable extensions even if MIME looks OK
+$blocked = ['php', 'php3', 'phtml', 'phar', 'asp', 'sh', 'exe', 'bat'];
+```
+
+---
+
+## Multi-Tenant Isolation
+
+Every query on tenant-scoped resources must include a tenant/owner filter at the query level. Access control alone is NOT sufficient.
+
+```php
+// NEVER -- guard only, no query filter
+$this->checkPermission('view-order');
+return Order::findOne($id);  // returns ANY order
+
+// ALWAYS -- guard + query filter
+return Order::find()
+    ->where(['id' => $id])
+    ->andWhere(['userId' => $currentUserId])
+    ->one() ?? throw new ForbiddenHttpException();
+```
+
+---
+
+## Bounded Queries
+
+```php
+// NEVER -- unbounded ->all() on list endpoints
+$orders = Order::find()->where(['status' => 'active'])->all();
+
+// ALWAYS -- paginate
+$query = Order::find()->where(['status' => 'active']);
+$pages = new Pagination(['totalCount' => $query->count(), 'pageSize' => 50]);
+$orders = $query->offset($pages->offset)->limit($pages->limit)->all();
+```
+
+---
+
+## Transaction Rules
+
+```php
+// Side effects AFTER commit, never inside transaction
+$transaction = Yii::$app->db->beginTransaction();
+try {
+    $order->save(false);
+    $transaction->commit();
+} catch (\Exception $e) {
+    $transaction->rollBack();
+    throw $e;
+}
+// Safe: only reached if commit succeeded
+Yii::$app->queue->push(new SendConfirmationJob(['orderId' => $order->id]));
+```
+
+---
+
+## Session / CSRF Security
+
+```php
+// Cookie settings
+'session' => [
+    'cookieParams' => ['httponly' => true, 'secure' => YII_ENV_PROD, 'samesite' => 'Lax'],
+],
+'request' => [
+    'enableCsrfValidation' => true,  // never disable globally
+    'cookieValidationKey' => getenv('COOKIE_KEY'),  // never hardcode
+],
+```
