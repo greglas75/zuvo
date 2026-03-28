@@ -257,6 +257,17 @@ When evaluating hooks (`use*.ts` files) against CQ1-CQ22:
 - **CQ14:** Similar async patterns (abort + fetch + state) across effects are scaffolding. Flag only when the business logic inside is duplicated.
 - **CQ16:** Storing or passing monetary fields without arithmetic = N/A. `toFixed()` during computation = FAIL.
 
+## Array.sort() mutation -- copy before sorting
+
+```typescript
+// NEVER — .sort() mutates original array (React state mutation!)
+const sorted = items.sort((a, b) => a.name.localeCompare(b.name));
+// ALWAYS — spread to copy first
+const sorted = [...items].sort((a, b) => a.name.localeCompare(b.name));
+// OR: toSorted() in modern environments
+const sorted = items.toSorted((a, b) => a.name.localeCompare(b.name));
+```
+
 ## Tailwind CSS (when used)
 
 - Design tokens in `tailwind.config` — no magic values (`bg-[#3b82f6]`)

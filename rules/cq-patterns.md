@@ -334,3 +334,170 @@ const adjacency = buildAdjacencyIndex(index.symbols); // every call!
 // ALWAYS — cache keyed by version, invalidate on change
 const cache = new Map(); if (!cache.has(key)) cache.set(key, buildAdjacencyIndex(symbols)); return cache.get(key);
 ```
+
+### Identical conditions in if/else-if — copy-paste bug
+```typescript
+// NEVER — same condition checked twice (second branch unreachable)
+if (status === 'active') { activate(); }
+else if (status === 'active') { reactivate(); }  // dead branch
+// ALWAYS — each condition unique
+if (status === 'active') { activate(); }
+else if (status === 'pending') { reactivate(); }
+```
+
+### Identical expressions on both sides of operator
+```typescript
+// NEVER — always true/false/zero (wrong variable)
+if (a === a) { ... }           // always true
+const diff = price - price;     // always 0
+return left && left;            // redundant
+// ALWAYS — each side different
+if (a === b) { ... }
+const diff = price - discount;
+```
+
+### Collection accessed when empty
+```typescript
+// NEVER — read from array before populating it
+const items: string[] = [];
+console.log(items[0]);          // always undefined
+items.push('first');
+// ALWAYS — populate before access
+const items: string[] = [];
+items.push('first');
+console.log(items[0]);
+```
+
+### Loop with at most one iteration — disguised if
+```typescript
+// NEVER — loop that always breaks/returns on first iteration
+for (const item of items) {
+  return item.name;             // always returns first
+}
+// ALWAYS — direct access, no loop pretense
+return items[0]?.name;
+```
+
+### Ignored return value of pure function
+```typescript
+// NEVER — pure methods called for side effects they don't have
+items.filter(i => i.active);     // result discarded
+str.toUpperCase();               // result discarded
+arr.map(x => x * 2);            // result discarded
+// ALWAYS — use the return value
+const active = items.filter(i => i.active);
+const upper = str.toUpperCase();
+```
+
+### Non-existent operators =+, =-, =!
+```typescript
+// NEVER — typo: intended += but wrote =+
+total =+ price;                  // assigns +price (unary plus), doesn't add
+// ALWAYS — correct compound assignment
+total += price;
+```
+
+### Cognitive complexity — max 15 per function
+```typescript
+// NEVER — nested conditions + loops (cognitive complexity ~25)
+function processOrder(order, user, config) {
+  if (order.status === 'new') {
+    for (const item of order.items) {
+      if (item.stock > 0) {
+        if (user.isPremium || config.allowBackorder) { /* deep nesting */ }
+      }
+    }
+  }
+}
+// ALWAYS — extract, flatten, early return (target: <=15)
+function processOrder(order, user, config) {
+  if (order.status !== 'new') return;
+  const processable = order.items.filter(i => i.stock > 0);
+  for (const item of processable) {
+    processItem(item, user, config);  // complexity moved to focused function
+  }
+}
+```
+
+### Collapsible if — merge nested single-condition ifs
+```typescript
+// NEVER — nested ifs with no else
+if (user) {
+  if (user.isActive) { doSomething(); }
+}
+// ALWAYS — merge with && or optional chaining
+if (user?.isActive) { doSomething(); }
+```
+
+### Identical functions — extract shared implementation
+```typescript
+// NEVER — two functions with identical body (copy-paste debt)
+function getActiveUsers(org) {
+  return prisma.user.findMany({ where: { orgId: org.id, active: true } });
+}
+function getEnabledUsers(org) {
+  return prisma.user.findMany({ where: { orgId: org.id, active: true } });
+}
+// ALWAYS — one function, clear name
+function getActiveUsersByOrg(orgId: string) {
+  return prisma.user.findMany({ where: { orgId, active: true } });
+}
+```
+
+### Duplicated string literals — extract to constant
+```typescript
+// NEVER — same string literal 3+ times
+throw new Error('Survey not found');       // handler A
+throw new Error('Survey not found');       // handler B
+logger.warn('Survey not found');            // handler C
+// ALWAYS — named constant
+const SURVEY_NOT_FOUND = 'Survey not found';
+throw new NotFoundException(SURVEY_NOT_FOUND);
+```
+
+### Nested template literals — extract to variable
+```typescript
+// NEVER — template inside template (hard to read)
+const msg = `Hello ${user.name}, your order #${`ORD-${order.id}`} is ready`;
+// ALWAYS — extract inner template
+const orderId = `ORD-${order.id}`;
+const msg = `Hello ${user.name}, your order #${orderId} is ready`;
+```
+
+### Boolean literal in comparison — simplify
+```typescript
+// NEVER — comparing to true/false
+if (isActive === true) { ... }
+if (isValid === false) { ... }
+return result ? true : false;
+// ALWAYS — direct boolean
+if (isActive) { ... }
+if (!isValid) { ... }
+return result;
+```
+
+### Useless post-increment before return
+```typescript
+// NEVER — post-increment result is discarded
+function count(items) {
+  let total = 0;
+  for (const item of items) { total++; }
+  return total++;    // returns total BEFORE increment, increment is wasted
+}
+// ALWAYS — no post-increment on return
+function count(items) {
+  let total = 0;
+  for (const item of items) { total++; }
+  return total;
+}
+```
+
+### Commented-out code — delete or restore
+```typescript
+// NEVER — dead code in comments (git has history)
+// const oldPrice = calculateLegacyPrice(item);
+// if (oldPrice > threshold) { applyDiscount(item); }
+const newPrice = calculatePrice(item);
+// ALWAYS — clean code, use git blame if you need history
+const price = calculatePrice(item);
+```
