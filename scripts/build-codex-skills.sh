@@ -91,6 +91,37 @@ strip_tool_names() {
     -e 's/ToolSearch/MCP tool check/g'
 }
 
+# --- Replace Claude-specific model names and references ---
+# Replaces model names in prose (not frontmatter) and CLAUDE.md references.
+replace_claude_refs() {
+  sed \
+    -e 's/\*\*Sonnet\*\*/\*\*gpt-5.4\*\*/g' \
+    -e 's/\*\*Opus\*\*/\*\*gpt-5.3-codex\*\*/g' \
+    -e 's/\*\*Haiku\*\*/\*\*gpt-5.4-mini\*\*/g' \
+    -e 's/model: Sonnet/model: gpt-5.4/g' \
+    -e 's/model: Opus/model: gpt-5.3-codex/g' \
+    -e 's/model: Haiku/model: gpt-5.4-mini/g' \
+    -e 's/model: "sonnet"/model: "gpt-5.4"/g' \
+    -e 's/model: "opus"/model: "gpt-5.3-codex"/g' \
+    -e 's/model: "haiku"/model: "gpt-5.4-mini"/g' \
+    -e 's/| Sonnet |/| gpt-5.4 |/g' \
+    -e 's/| Opus |/| gpt-5.3-codex |/g' \
+    -e 's/| Haiku |/| gpt-5.4-mini |/g' \
+    -e 's/(model: sonnet)/(model: gpt-5.4)/g' \
+    -e 's/(model: haiku)/(model: gpt-5.4-mini)/g' \
+    -e 's/Use Sonnet for/Use gpt-5.4 for/g' \
+    -e 's/Use Opus for/Use gpt-5.3-codex for/g' \
+    -e 's/Use Haiku for/Use gpt-5.4-mini for/g' \
+    -e 's/always Sonnet/always gpt-5.4/g' \
+    -e 's/-> Sonnet/-> gpt-5.4/g' \
+    -e 's/-> Opus/-> gpt-5.3-codex/g' \
+    -e 's/-> Haiku/-> gpt-5.4-mini/g' \
+    -e 's/Sonnet implementer/gpt-5.4 implementer/g' \
+    -e 's/CLAUDE\.md/AGENTS.md/g' \
+    -e 's/`\.claude\/rules\/`/`rules\/`/g' \
+    -e 's/\.claude\/skills\//skills\//g'
+}
+
 # --- Strip Team/Multi-Agent Sections from Protocols (reusable) ---
 strip_team_sections() {
   awk '
@@ -375,6 +406,7 @@ transform_skill_for_codex() {
       }
       { print }
     ' \
+    | replace_claude_refs \
     | normalize_unicode > "$dst"
 }
 
@@ -408,6 +440,7 @@ adapt_agent_for_codex() {
   ' "$src" \
     | replace_paths \
     | strip_tool_names \
+    | replace_claude_refs \
     | normalize_unicode > "$dst"
 }
 
@@ -421,6 +454,7 @@ for f in "$PLUGIN_DIR"/rules/*.md; do
   [ -f "$f" ] && cat "$f" \
     | replace_paths \
     | strip_tool_names \
+    | replace_claude_refs \
     | normalize_unicode > "$DIST/rules/$(basename "$f")"
 done
 echo "  + rules/ ($(ls "$PLUGIN_DIR"/rules/*.md 2>/dev/null | wc -l | tr -d ' ') files)"
@@ -683,6 +717,26 @@ if [ -n "$cpr_refs" ]; then
     echo "    $(echo "$f" | sed "s|$DIST/||")"
   done
   errors=$((errors + 1))
+fi
+
+# Check for residual CLAUDE.md references
+claude_md_refs=$(grep -rln 'CLAUDE\.md' "$DIST"/skills/*/SKILL.md 2>/dev/null || true)
+if [ -n "$claude_md_refs" ]; then
+  echo "  WARN: Residual CLAUDE.md references (should be AGENTS.md):"
+  echo "$claude_md_refs" | while IFS= read -r f; do
+    echo "    $(echo "$f" | sed "s|$DIST/||")"
+  done
+  warnings=$((warnings + 1))
+fi
+
+# Check for residual Claude model names in skill prose
+model_refs=$(grep -rn '\*\*Sonnet\*\*\|\*\*Opus\*\*\|\*\*Haiku\*\*\|model: Sonnet\|model: Opus\|model: Haiku\|Use Sonnet\|Use Opus\|Use Haiku' "$DIST"/skills/*/SKILL.md 2>/dev/null || true)
+if [ -n "$model_refs" ]; then
+  echo "  WARN: Residual Claude model names (Sonnet/Opus/Haiku) in skills:"
+  echo "$model_refs" | head -5 | while IFS= read -r line; do
+    echo "    $line"
+  done
+  warnings=$((warnings + 1))
 fi
 
 # TOML validation: no CC model names in generated TOMLs
