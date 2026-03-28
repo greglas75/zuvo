@@ -349,3 +349,29 @@ setUser(prev => ({ ...prev, name: newName }));
 - Cap at ~15 utility classes inline — extract component if more
 - Mobile-first breakpoints (`w-full md:w-1/2 lg:w-1/3`)
 - Use `cn()` utility for conditional class merging
+
+---
+
+## Semgrep-Derived Patterns
+
+### postMessage — restrict origin
+```typescript
+// NEVER — wildcard origin or no origin check
+window.postMessage(data, '*');
+window.addEventListener('message', (e) => handleMessage(e.data));
+// ALWAYS — specific origin on send, validate on receive
+window.postMessage(data, 'https://app.example.com');
+window.addEventListener('message', (e) => {
+  if (e.origin !== 'https://app.example.com') return;
+  handleMessage(e.data);
+});
+```
+
+### innerHTML via DOM — use textContent or React state
+```typescript
+// NEVER — document.write or innerHTML with variable
+document.getElementById('result').innerHTML = userContent;
+// ALWAYS — textContent (no HTML parsing) or React state
+document.getElementById('result').textContent = userContent;
+// In React: just use state -> {content}
+```

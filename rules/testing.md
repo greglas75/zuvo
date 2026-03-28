@@ -272,6 +272,65 @@ expect(calcTotal(100, 2)).toBe(100 * 2 * 1.1);
 expect(calcTotal(100, 2)).toBe(220); // from pricing spec: "10% tax on subtotal"
 ```
 
+**9. Raw .length instead of .toHaveLength (AP25)**
+```typescript
+// FORBIDDEN — worse error messages, masks missing property
+expect(result.issues.length).toBe(3);
+expect(result.password.length).toBe(12);
+// FIX
+expect(result.issues).toHaveLength(3);
+expect(result.password).toHaveLength(12);
+```
+
+**10. Vague quantity on known fixture (AP27)**
+```typescript
+// FORBIDDEN — test knows fixture output but asserts "at least one"
+expect(result.errors.length).toBeGreaterThan(0);
+// FIX — assert exact count
+expect(result.errors).toHaveLength(2);
+```
+
+**11. Mock return echoed in assertion (AP29)**
+```typescript
+// FORBIDDEN — proves mock setup, not production logic
+mockService.findOne.mockResolvedValue(testData[0]);
+const result = await controller.getOne('123');
+expect(result.id).toBe(testData[0].id);  // echo
+// FIX — assert computed/transformed value
+expect(result.cpiAfterDiscount).toBe(2.25); // 2.5 * 0.9
+```
+
+**12. Persistent skip without tracking (AP28)**
+```typescript
+// FORBIDDEN — dead code, coverage gap, untracked debt
+it.skip('NEG-1: seed.ts no longer defines createOptions locally', () => { ... });
+describe.skip('FeedbackService', () => { /* 200 lines never run */ });
+// FIX — remove, unskip, or add backlog reference
+// SKIP: [JIRA-123] blocked by migration, expires 2026-04-15
+```
+
+## Red Flags -- Quick Heuristics
+
+These indicators correlate with low test quality. Use as pre-screening before full Q1-Q17 evaluation.
+
+| Indicator | Avg Score | What it signals |
+|-----------|-----------|-----------------|
+| 0 CalledWith in entire file | 2.6/10 | Almost certainly Tier C/D |
+| 4+ CalledWith assertions | 8.4/10 | Likely Tier A/B |
+| Factory functions (`makeX()`) | 8.4/10 | Strongest single quality predictor |
+| `toBeTruthy()` as sole assertion | 2.5/10 | No real verification |
+| Fixture:assertion ratio > 20:1 | 2.3/10 | Auto Tier-D |
+| Tests calling `__privateMethod()` | 3.0/10 | Coupled to implementation |
+| `expect(x.length).toBe(N)` not `.toHaveLength(N)` | 4.5/10 | AP25: worse error messages |
+| `expect(x.length).toBeGreaterThan(0)` on known fixture | 4.0/10 | AP27: vague quantity, masks bugs |
+| Mock return echoed in assertion | 2.8/10 | AP29: input echo, Q17 failure |
+| Mock-to-assertion ratio > 2.0 | 4.0/10 | More mock setup than assertions |
+| 0 CalledWith AND >3 bare toHaveBeenCalled() | 3.0/10 | Q15 failure predictor |
+| BOTH bare toHaveBeenCalled() AND toBeDefined() in same file | 5.5/10 | Either alone avg 9/17, both avg 5.5/17 |
+| `describe.skip`/`it.skip` without ticket or expiry | 5.0/10 | AP28: persistent dead code |
+
+---
+
 ## Refactoring and Tests
 
 1. **Before:** run existing tests to establish a passing baseline

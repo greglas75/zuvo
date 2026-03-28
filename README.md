@@ -2,7 +2,7 @@
 
 Auto-activating, multi-agent skill ecosystem for Claude Code.
 
-33 skills, 12 specialized agents, quality gates, and structured workflows — all in one plugin.
+33 skills, 11 dispatched agents + 1 synthesis role, quality gates, and structured workflows — all in one plugin.
 
 ## Install
 
@@ -72,6 +72,14 @@ args = ["-y", "codesift-mcp"]
 - **CodeSift integration** — deep code understanding via semantic search, community detection, call chain tracing, and complexity analysis
 - **Quality gates** — CQ1-CQ22 (code quality) and Q1-Q17 (test quality) with evidence requirements and N/A abuse prevention
 
+## Platform support
+
+| Platform | Status |
+|----------|--------|
+| Claude Code | Stable |
+| Codex | Experimental |
+| Cursor | Limited (sequential fallback) |
+
 ## Pipeline
 
 ```
@@ -118,6 +126,7 @@ User: "Add user export with CSV download"
 - [Quality Gates](docs/quality-gates.md) — CQ1-CQ22 + Q1-Q17
 - [CodeSift Integration](docs/codesift-integration.md)
 - [Configuration](docs/configuration.md)
+- [Changelog](https://github.com/greglas75/zuvo/releases)
 
 ## For maintainers
 

@@ -247,6 +247,9 @@ If any of these appear in the test file, the corresponding Q gate scores 0 with 
 | `markTestSkipped` + TODO comment with no real assertion | Q7, Q11, Q15 | Stub test — inflates coverage metrics with zero value |
 | Test file named `FooTest` but >50% of assertions test a different class | Q17 | Wrong class under test |
 | `canConnectToDb()` guard wrapping most tests in a unit test file | Q11 | Mixing unit and integration concerns — choose one strategy |
+| `expect(x.length).toBe(N)` instead of `expect(x).toHaveLength(N)` | Q4 | AP25: `.length` produces "expected 3 to be 2" vs `.toHaveLength` produces "expected array of length 3 to have length 2". Fails silently if property is missing. |
+| `expect(x.length).toBeGreaterThan(0)` when fixture count is known | Q4, Q15 | AP27: test knows exact fixture output but asserts "at least one" — masks duplicates, off-by-one, partial failures. Fix: `expect(x).toHaveLength(2)`. |
+| Mock returns `X`, test asserts `result.field === X.field` (no transformation) | Q17 | AP29: input echo — most common Q17 failure. Proves mock setup works, not production logic. Fix: assert a computed/transformed value. |
 
 ---
 

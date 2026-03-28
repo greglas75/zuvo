@@ -28,12 +28,15 @@ throw 'failed'; .catch(() => undefined); try { return fetchData(); } catch { /* 
 throw new Error('Order creation failed', { cause: err }); try { return await fetchData(); } catch (e) { handleError(e); }
 ```
 
-### Type-safe error narrowing
+### Type-safe error narrowing with consistent naming
 ```typescript
-// NEVER — `as Error` crashes if err is string/number/null
+// NEVER — `as Error` crashes if err is string/number/null; inconsistent naming across repo
 } catch (err) { this.logger.error('Failed', { error: (err as Error).message }); }
-// ALWAYS — narrow with instanceof, fallback to String()
+} catch (e) { ... }     // file B uses `e`
+} catch (error) { ... }  // file C uses `error`
+// ALWAYS — always `err: unknown`, narrow with instanceof, fallback to String()
 } catch (err: unknown) { const msg = err instanceof Error ? err.message : String(err); this.logger.error('Failed', { error: msg }); }
+// Convention: one name everywhere — `err`. Not e/error/ex/er.
 ```
 
 ### Context-aware error strategy (CQ8)
@@ -244,10 +247,13 @@ try { await saveOrder(data); } catch (err) { logger.error('Failed', { orderId })
 
 ### Typed config from env at bootstrap
 ```typescript
-// NEVER — business logic reads raw env; fallback hides misconfig
-const url = process.env.WORKER_API_URL || '';
-// ALWAYS — validate at bootstrap, inject typed config
+// NEVER — process.env scattered across services (untestable, no validation)
+const apiUrl = process.env.API_URL;            // service A
+const secret = process.env.JWT_SECRET;          // service B
+if (process.env.NODE_ENV === 'production') {}   // service C
+// ALWAYS — one config module, validated at startup, injected everywhere
 const env = EnvSchema.parse(process.env); function createSender(config: SenderConfig) { /* ... */ }
+// NestJS: use ConfigService with validation — see nestjs.md
 ```
 
 ### UTC-canonical time handling
@@ -500,4 +506,132 @@ function count(items) {
 const newPrice = calculatePrice(item);
 // ALWAYS — clean code, use git blame if you need history
 const price = calculatePrice(item);
+```
+
+---
+
+## Security and Infrastructure Patterns
+
+### No hardcoded secrets in source
+```typescript
+// NEVER — hardcoded secrets in source or committed .env
+const API_KEY = "sk-abc123...";
+SUPABASE_KEY=eyJhbGc...  // .env committed to git
+// ALWAYS — runtime env, .env in .gitignore
+const apiKey = process.env.API_KEY;
+// .env.example with empty values only
+```
+
+### Path traversal — validate before join/resolve
+```typescript
+// NEVER — user input directly in path.join
+const file = path.join(uploadDir, req.params.filename);
+// ALWAYS — normalize + startsWith guard
+const safePath = path.normalize(path.join(baseDir, userInput));
+if (!safePath.startsWith(baseDir)) throw new Error('Path traversal blocked');
+```
+
+### Non-literal RegExp — escape user input
+```typescript
+// NEVER — user input directly in RegExp constructor (ReDoS risk)
+const regex = new RegExp(userInput);
+// ALWAYS — escape special chars or use literal
+const escaped = userInput.replace(/[.*+?^{}()|[\]\\]/g, '\\$&');
+const regex = new RegExp(escaped);
+```
+
+### Prototype pollution — guard dynamic property assignment
+```typescript
+// NEVER — unchecked bracket assignment in loop
+for (const [key, val] of Object.entries(input)) { target[key] = val; }
+// ALWAYS — hasOwnProperty guard or Object.create(null)
+const safe = Object.create(null);
+for (const [key, val] of Object.entries(input)) {
+  if (key !== '__proto__' && key !== 'constructor') safe[key] = val;
+}
+```
+
+### GCM decryption needs authTagLength
+```typescript
+// NEVER — GCM decipher without expected tag length
+const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+// ALWAYS — specify authTagLength to prevent tag truncation attacks
+const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv, { authTagLength: 16 });
+```
+
+### External scripts need subresource integrity
+```html
+<!-- NEVER — CDN script without integrity check -->
+<script src="https://cdn.example.com/lib.js"></script>
+<!-- ALWAYS — subresource integrity hash -->
+<script src="https://cdn.example.com/lib.js"
+  integrity="sha384-abc123..." crossorigin="anonymous"></script>
+```
+
+### Child process — avoid shell: true
+```typescript
+// NEVER — shell: true enables injection
+execSync(`convert ${userFile} output.png`);
+spawn('cmd', args, { shell: true });
+// ALWAYS — array args, no shell
+execFileSync('convert', [userFile, 'output.png']);
+spawn('cmd', args); // shell defaults to false
+```
+
+### as any bypass — extend types instead
+```typescript
+// NEVER — cast to any to access/delete fields
+const val = (pricing as any)[field] as number;
+delete (postData as any).translatedLanguage;
+// ALWAYS — extend interface or use Omit/Pick/destructure
+const val = pricing[field as keyof Pricing];
+const { translatedLanguage, ...postData } = rawData;
+```
+
+### Structured logger over console.log
+```typescript
+// NEVER — raw console in services/controllers
+console.log('Creating prompt...');
+console.log('API Call:', { url, body });
+// ALWAYS — structured logger with level + context
+logger.info('Creating prompt', { requestId, promptType });
+logger.debug('API call', { url, method: 'POST' });
+```
+
+### Typed exceptions over generic Error
+```typescript
+// NEVER — generic Error in framework services
+throw new Error('User not found');
+throw new Error('Invalid input');
+// ALWAYS — typed exception with HTTP semantics
+throw new NotFoundException(`User ${id} not found`);
+throw new BadRequestException('Survey title is required');
+// Non-NestJS: extend a base AppError with code field
+```
+
+---
+
+## Docker and Infrastructure
+
+### Dockerfile — always set non-root USER
+```dockerfile
+# NEVER — run as root
+FROM node:20
+COPY . .
+CMD ["node", "server.js"]
+# ALWAYS — non-root user
+FROM node:20
+RUN addgroup --system app && adduser --system --ingroup app app
+USER app
+COPY --chown=app:app . .
+CMD ["node", "server.js"]
+```
+
+### Container — drop privileges
+```yaml
+# ALWAYS — in docker-compose or k8s
+security_context:
+  run_as_non_root: true
+  read_only_root_filesystem: true
+  allow_privilege_escalation: false
 ```

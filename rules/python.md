@@ -230,3 +230,37 @@ def greet(name: str) -> str:  # only str used
 def greet(name: str) -> str:
     return f"Hello {name}"
 ```
+
+---
+
+## Semgrep-Derived Patterns
+
+### Open redirect -- validate redirect URL (Flask)
+```python
+# NEVER -- redirect to user input
+return redirect(request.args.get('next'))
+# ALWAYS -- validate against allowlist
+from urllib.parse import urlparse
+next_url = request.args.get('next', '/')
+if urlparse(next_url).netloc != '':
+    next_url = '/'
+return redirect(next_url)
+```
+
+### XML parsing -- use defusedxml
+```python
+# NEVER -- stdlib xml is XXE vulnerable
+import xml.etree.ElementTree as ET
+tree = ET.parse(user_file)
+# ALWAYS -- defusedxml
+import defusedxml.ElementTree as ET
+tree = ET.parse(user_file)
+```
+
+### Credential logging -- mask sensitive data
+```python
+# NEVER -- logging secrets
+logger.info(f"Connecting with token={api_token}")
+# ALWAYS -- mask or omit
+logger.info(f"Connecting with token=***{api_token[-4:]}")
+```

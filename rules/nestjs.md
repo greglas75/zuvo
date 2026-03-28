@@ -153,3 +153,45 @@ private toListItem(row: OrderRow): OrderListItem {
 - Domain errors extend `HttpException` or use exception filters.
 - Global exception filter: map Prisma error codes to HTTP status (`P2002` → 409, `P2025` → 404).
 - Never expose Prisma error details in API responses — map to user-friendly messages.
+
+---
+
+## Semgrep-Derived Patterns
+
+### Dynamic require — use static import or allowlist
+```typescript
+// NEVER — dynamic require with variable (code injection risk)
+const mod = require(userInput);
+// ALWAYS — static import or allowlist
+import { handler } from './handlers/index';
+const allowed = { csv: csvHandler, json: jsonHandler };
+const handler = allowed[format] ?? defaultHandler;
+```
+
+### FS with dynamic paths — validate basePath
+```typescript
+// NEVER — user-controlled path in fs operations
+fs.readFileSync(path.join('uploads', req.body.filename));
+// ALWAYS — resolve + startsWith check
+const resolved = path.resolve(UPLOAD_DIR, filename);
+if (!resolved.startsWith(UPLOAD_DIR)) throw new ForbiddenException();
+fs.readFileSync(resolved);
+```
+
+### HTTP server — use HTTPS in production
+```typescript
+// NEVER — plain HTTP in production
+http.createServer(app).listen(3000);
+// ALWAYS — HTTPS or behind TLS-terminating proxy
+https.createServer({ key, cert }, app).listen(443);
+// OR: document that TLS terminates at load balancer/proxy
+```
+
+### TLS bypass — never disable certificate verification
+```typescript
+// NEVER — disables all TLS validation
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+const agent = new https.Agent({ rejectUnauthorized: false });
+// ALWAYS — use proper certs, even in dev
+// If self-signed needed for dev, use NODE_EXTRA_CA_CERTS env
+```

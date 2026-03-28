@@ -21,3 +21,4 @@ Commits pending review. Auto-managed:
 - 37cfebd (2026-03-28) feat: update write-tests skill + review queue
 - 92d4486 (2026-03-28) docs: add docs-website-sync spec and plan
 - c3f9221 (2026-03-28) docs: update review queue + refine docs-website-sync spec/plan
+- 7faba95 (2026-03-28) docs: update review queue
