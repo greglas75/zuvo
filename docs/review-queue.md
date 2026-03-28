@@ -20,3 +20,4 @@ Commits pending review. Auto-managed:
 - e66787a (2026-03-28) docs: update CodeSift tools, quality gates AP25-29, pattern count
 - 37cfebd (2026-03-28) feat: update write-tests skill + review queue
 - 92d4486 (2026-03-28) docs: add docs-website-sync spec and plan
+- c3f9221 (2026-03-28) docs: update review queue + refine docs-website-sync spec/plan
