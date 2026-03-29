@@ -1,0 +1,226 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: db-audit
+  title: "DB Audit — 60+ database checks across 12 dimensions"
+  description: "Database audit with 60+ checks across 12 dimensions: N+1 queries, missing indexes, transaction safety, connection pooling, and SQL injection detection."
+  category: audit
+  og_image: /og/skills/db-audit.png
+
+seo:
+  target_queries:
+    - "database audit n+1 query detection prisma typeorm"
+    - "missing index detection orm audit"
+    - "connection pool misconfiguration serverless audit"
+    - "sql injection detection orm code review"
+    - "transaction safety audit multi-table mutations"
+  canonical: /en/skills/db-audit
+
+stats:
+  - label: "Total Checks"
+    value: "60+"
+    detail: "across DB1-DB12"
+  - label: "Dimensions"
+    value: "12"
+    detail: "DB1-DB12"
+  - label: "Critical Gates"
+    value: "4"
+    detail: "DB1 (N+1), DB4 (no pooling), DB5 (no transactions), DB12 (SQL injection)"
+  - label: "Max Score"
+    value: "104"
+    detail: "weighted sum across all 12 dimensions"
+  - label: "Supported ORMs"
+    value: "6+"
+    detail: "Prisma, TypeORM, Drizzle, Sequelize, Django ORM, SQLAlchemy"
+
+problem: |
+  Database problems are invisible until they become incidents. An N+1 query that fetches 1 record in development fetches 10,000 in production. A service that opens a new database client per request exhausts the connection pool under load. A multi-table mutation without a transaction leaves the database in a partially written state when an error occurs mid-write. `zuvo:db-audit` reads your ORM code, schema, and migration files to find these patterns before they cause downtime — and maps each finding to the exact file and line.
+
+how_it_works:
+  - step: "Stack detection"
+    description: "The skill auto-detects ORM (Prisma, TypeORM, Drizzle, Sequelize, Django, SQLAlchemy, raw SQL), database engine (PostgreSQL, MySQL, SQLite, MongoDB), and deployment type (Serverless, Container, Traditional) from config signals. Detection results are printed before analysis begins."
+  - step: "Schema analysis"
+    description: "The schema file (prisma/schema.prisma, models.py, entity files, etc.) is inventoried: model count, fields per model, relations, indexes, unique constraints, nullable fields, and enum vs string usage. Migration files are scanned for unsafe DDL operations (blocking index creation, type changes on populated columns)."
+  - step: "Code-level analysis (DB1-DB12)"
+    description: "Three parallel agents cover the 12 dimensions: Schema Analyst (DB2, DB3, DB6), Query Scanner (DB1, DB5, DB8, DB9), and Infrastructure Auditor (DB4, DB7, DB10, DB11, DB12). Each agent checks ORM-specific anti-patterns for the detected ORM."
+  - step: "Cross-dimension correlation"
+    description: "Compound patterns are flagged: N+1 on an unindexed column (DB1+DB2), unbounded query without cache on a large table (DB1+DB7+DB11), external API call inside a transaction without timeout (DB5+DB4), serverless deployment without external pooler and multiple client instances (DB4+deployment)."
+  - step: "Live analysis (optional)"
+    description: "When --live <conn> is provided, the skill executes read-only EXPLAIN and pg_stat_statements queries to surface actual slow queries, unused indexes by idx_scan=0, cache hit ratio, and table bloat. Live mode is strictly opt-in and read-only."
+
+output:
+  artifact: "audits/db-audit-YYYY-MM-DD.md"
+  format: "Markdown report with dimension score table, critical gate status, model inventory, severity-sorted findings, cross-cutting compound patterns, and top 5 action items."
+  sections:
+    - "Metadata (ORM, engine, deployment, scope)"
+    - "Executive Summary (weighted score, grade, finding counts)"
+    - "Dimension Scores (DB1-DB12 with max per dimension)"
+    - "Critical Gate Status"
+    - "Model Inventory"
+    - "Findings (sorted by CRITICAL → HIGH → MEDIUM → LOW)"
+    - "Cross-Cutting Patterns"
+    - "Top 5 Action Items"
+    - "Backlog Entries"
+
+examples:
+  - title: "Full project audit"
+    type: invocation
+    command: "zuvo:db-audit full"
+    result: "Runs all 12 dimensions: schema analysis, code-level checks for the detected ORM, and cross-dimension correlation. Produces scored report with model inventory."
+  - title: "Query pattern check only"
+    type: invocation
+    command: "zuvo:db-audit --queries"
+    result: "Runs DB1 (query patterns), DB8 (query optimization), and DB9 (ORM anti-patterns) only. Fast scope for checking a new feature before merge."
+  - title: "N+1 query pattern detected (DB1 critical gate)"
+    type: before_after
+    gate: "DB1"
+    before:
+      language: typescript
+      code: |
+        async function getOrdersWithItems(orgId: string) {
+          const orders = await prisma.order.findMany({ where: { orgId } });
+          for (const order of orders) {
+            order.items = await prisma.orderItem.findMany({
+              where: { orderId: order.id },
+            });
+          }
+          return orders;
+        }
+    after:
+      language: typescript
+      code: |
+        async function getOrdersWithItems(orgId: string) {
+          return prisma.order.findMany({
+            where: { orgId },
+            include: { items: true },
+          });
+        }
+    explanation: "DB1 N+1 is a critical gate. The before version issues 1 + N queries (one findMany plus one per order). Prisma's include collapses this to 2 queries via a JOIN. The audit flags the loop at file:line and suggests the include pattern."
+  - title: "Live analysis: unused indexes"
+    type: invocation
+    command: "zuvo:db-audit --live postgres://readonly@db:5432/prod"
+    result: "Queries pg_stat_user_indexes for idx_scan=0 entries, pg_stat_statements for the top 20 slowest queries, and reports cache hit ratio. All queries are read-only SELECTs and EXPLAINs."
+
+when_to_use: "Run `zuvo:db-audit` before a release, after adding new models or queries, when API latency increases unexpectedly, after a scaling incident, or as a periodic health check. Use --queries for a fast pre-merge check on a single service file."
+
+when_not_to_use: "For general code quality issues in service files, use `zuvo:code-audit`. For full-stack performance analysis (bundles, rendering, API latency at the application layer), use `zuvo:performance-audit`. For SQL injection and security-only review with attack path analysis, use `zuvo:security-audit`."
+
+related_skills:
+  - slug: performance-audit
+    relation: "full-stack perf audit including query latency in the broader context"
+  - slug: security-audit
+    relation: "deep SQL injection and data access control analysis"
+  - slug: code-audit
+    relation: "production file quality (CQ9 transactions, CQ7 bounded queries) that overlaps with DB safety"
+  - slug: refactor
+    relation: "refactor service files to fix N+1 or ORM anti-patterns found here"
+  - slug: backlog
+    relation: "HIGH+ findings are persisted to memory/backlog.md as prioritized items"
+
+faq:
+  - q: "What does zuvo:db-audit check?"
+    a: "It audits 12 dimensions: query patterns including N+1 and raw SQL safety (DB1), index strategy including missing FK indexes and composite coverage (DB2), schema design including normalization and enum usage (DB3), connection management and pooling (DB4), transaction safety for multi-table mutations (DB5), migration safety for non-blocking DDL (DB6), caching layer (DB7), query optimization including pagination and LIKE patterns (DB8), ORM-specific anti-patterns for the detected ORM (DB9), observability and slow query logging (DB10), data lifecycle and archival (DB11), and database security including SQL injection and least-privilege (DB12)."
+  - q: "How is zuvo:db-audit different from zuvo:performance-audit?"
+    a: "zuvo:db-audit focuses exclusively on the database layer: schema design, query patterns, connection management, transactions, migrations, and DB security. zuvo:performance-audit covers the full stack: bundle sizes, rendering, Web Vitals, API latency, memory usage, and backend runtime — with database query patterns as one of 12 dimensions. If your problem is specifically database-related, db-audit gives deeper coverage."
+  - q: "What ORMs are supported?"
+    a: "Prisma, TypeORM, Drizzle, Sequelize, Knex, Django ORM, SQLAlchemy, and raw SQL clients (pg, mysql2). ORM-specific anti-patterns in DB9 are tailored to the detected ORM — Prisma checks for $queryRawUnsafe and missing select on deep includes, Django checks for missing select_related/prefetch_related, SQLAlchemy checks for missing yield_per on large result sets."
+  - q: "Is the audit safe to run on a production database?"
+    a: "The code-level audit (Phases 1-2) requires no database connection at all — it reads source files only. Live mode (--live) is strictly opt-in and executes only SELECT and EXPLAIN queries. No INSERT, UPDATE, DELETE, CREATE, ALTER, or DROP statements are ever issued. A read-only database user is recommended."
+  - q: "What are the 4 critical gates?"
+    a: "DB1 (N+1 query in a hot code path), DB4 (no connection pooling — new client per request), DB5 (multi-table mutations without a wrapping transaction), and DB12 (SQL injection via string concatenation or $queryRawUnsafe). Any critical gate scoring 0 overrides the overall grade to FAIL regardless of the total weighted score."
+
+arguments:
+  - flag: "(empty) or full"
+    description: "Audit all 12 dimensions across the project (default)"
+  - flag: "[path]"
+    description: "Scope audit to a specific directory or module"
+  - flag: "[file]"
+    description: "Deep audit of a single file (all applicable dimensions)"
+  - flag: "--schema"
+    description: "Schema analysis only: DB2 (indexes), DB3 (schema design), DB6 (migration safety)"
+  - flag: "--queries"
+    description: "Query pattern analysis only: DB1 (patterns), DB8 (optimization), DB9 (ORM anti-patterns)"
+  - flag: "--connections"
+    description: "Connection and pool management only: DB4"
+  - flag: "--live <conn>"
+    description: "Enable Phase 3: connect to the database with a read-only connection string for EXPLAIN and pg_stat_statements analysis"
+
+checks:
+  sections:
+    - name: "Database Dimensions"
+      id_range: "DB1-DB12"
+      count: 12
+      items:
+        - id: "DB1"
+          name: "Query patterns — N+1, SELECT *, bulk operations, raw SQL parameterization"
+          critical: true
+        - id: "DB4"
+          name: "Connection management — pooling configured, singleton client, serverless pooler"
+          critical: true
+        - id: "DB5"
+          name: "Transaction safety — multi-table mutations wrapped, no external API calls inside transaction"
+          critical: true
+        - id: "DB12"
+          name: "Database security — SQL injection, least privilege, SSL/TLS, PII encryption"
+          critical: true
+        - id: "DB2"
+          name: "Index strategy — FK indexes, composite indexes for query patterns, unused indexes"
+          critical: false
+        - id: "DB3"
+          name: "Schema design — normalization, enum usage, timestamps, naming conventions"
+          critical: false
+        - id: "DB6"
+          name: "Migration safety — CONCURRENTLY for index creation, reversibility, type changes"
+          critical: false
+        - id: "DB9"
+          name: "ORM-specific anti-patterns tailored to detected ORM"
+          critical: false
+
+frameworks:
+  - Prisma
+  - TypeORM
+  - Drizzle
+  - Sequelize
+  - Knex
+  - Django ORM
+  - SQLAlchemy
+  - PostgreSQL (raw)
+  - MySQL (raw)
+  - MongoDB (Mongoose)
+  - Serverless (Vercel, Cloudflare Workers, AWS Lambda)
+
+modes: null
+
+agents:
+  - name: "Schema Analyst"
+    role: "Audits DB2 (index strategy), DB3 (schema design), and DB6 (migration safety) from schema and migration files."
+  - name: "Query Scanner"
+    role: "Audits DB1 (query patterns), DB5 (transaction safety), DB8 (query optimization), and DB9 (ORM anti-patterns) from service and repository files."
+  - name: "Infrastructure Auditor"
+    role: "Audits DB4 (connections), DB7 (caching), DB10 (observability), DB11 (data lifecycle), and DB12 (security) from configuration and service files."
+
+benchmarks:
+  - claim: "DB1 and DB12 are critical gates: an N+1 in a hot path or any SQL injection pattern scores 0 and overrides the overall grade to FAIL."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 4.4 Scoring: 'DB1=0 (N+1 in hot path) -> FAIL; DB12=0 (SQL injection) -> FAIL'"
+  - claim: "Live mode executes only SELECT and EXPLAIN queries — no DDL or DML. A read-only connection is sufficient."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md GATE 2: 'Only SELECT and EXPLAIN queries are permitted'"
+  - claim: "The serverless compound pattern (no external pooler + multiple client instances on Lambda/Worker) triggers a CRITICAL finding combining DB4 and deployment context."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 4.3 Cross-Dimension Correlations: 'Serverless + no external pooler + multiple client instances'"
+
+comparison_table:
+  columns: ["Capability", "Manual ORM Review", "Database Profiler (pg_stat_statements)", "zuvo:db-audit"]
+  rows:
+    - ["N+1 detection", "Code reading", "Slow queries in production only", "DB1: static code analysis, all query patterns"]
+    - ["Missing FK index detection", "Schema reading", "Unused indexes (idx_scan=0)", "DB2: schema cross-referenced with query patterns"]
+    - ["Serverless pooler check", "Config review", "Not available", "DB4: deployment type + pool config correlation"]
+    - ["Transaction safety", "Code reading", "Not available", "DB5: multi-table write detection without wrapping transaction"]
+    - ["Migration safety", "Manual review", "Not available", "DB6: blocking DDL patterns in migration files"]
+    - ["ORM anti-patterns", "Documentation lookup", "Not available", "DB9: ORM-specific patterns for detected ORM"]
+    - ["Requires running database", "No", "Yes (production)", "No (code only) / Yes (--live, read-only)"]

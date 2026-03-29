@@ -1,0 +1,182 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: plan
+  title: "Plan — TDD Task Decomposition from Approved Design Specs"
+  description: "3 sequential agents analyze your spec and produce a TDD task plan with exact code, verification commands, and 2-tier complexity ratings."
+  category: pipeline
+  og_image: /og/skills/plan.png
+
+seo:
+  target_queries:
+    - "TDD task breakdown from design specification"
+    - "AI implementation plan generator for software features"
+    - "automated architecture analysis before coding"
+    - "sequential agent planning Claude Code"
+    - "convert approved spec to ordered coding tasks"
+  canonical: /en/skills/plan
+
+stats:
+  - label: Sequential Agents
+    value: "3"
+    detail: Architect, Tech Lead, QA Engineer
+  - label: Prerequisite
+    value: spec
+    detail: Approved docs/specs/*-spec.md required
+  - label: Output Artifact
+    value: plan
+    detail: docs/specs/YYYY-MM-DD-<topic>-plan.md
+  - label: Task Complexity Tiers
+    value: "2"
+    detail: standard (Sonnet) and complex (Opus) routing
+  - label: Review Iterations
+    value: "3"
+    detail: Automated plan reviewer before user approval
+
+problem: |
+  An approved design spec describes what to build but not how to build it safely. Without an implementation plan, developers jump directly into code, miss dependencies between tasks, and discover architectural surprises mid-implementation. zuvo:plan bridges the gap: 3 sequential agents analyze your spec from 3 perspectives — architecture boundaries, technical pattern selection, and testability — then decompose the work into TDD tasks with exact code and verification commands. Nothing is ambiguous when implementation starts.
+
+how_it_works:
+  - step: "Hard Gate: Spec Required"
+    description: "zuvo:plan searches for an approved spec at docs/specs/*-spec.md. If none exists, it automatically redirects to zuvo:brainstorm. If multiple specs exist, you choose which one to plan against. The spec is the source of truth for all planning decisions."
+  - step: "Phase 1A: Architect Analysis"
+    description: "The Architect agent reads the spec and maps component boundaries, data flow, interfaces, dependency graph, and produces a Mermaid architecture diagram. This report is the terrain map that subsequent agents use."
+  - step: "Phase 1B: Tech Lead Analysis"
+    description: "The Tech Lead agent receives the spec and the Architect's report, then selects specific patterns and libraries, makes build-vs-reuse decisions, and defines the file structure. Output is a Technical Decisions Report with trade-offs."
+  - step: "Phase 1C: QA Engineer Analysis"
+    description: "The QA Engineer receives all prior reports and assesses testability for each component, flags CQ risk areas, and defines the test strategy. Sequential order is mandatory — QA assessments must be grounded in finalized architecture and tech decisions."
+  - step: "Phase 2: Team Lead Synthesis + Plan Document"
+    description: "You (the main agent acting as Team Lead) synthesize all 3 reports into an ordered TDD task list. Each task includes exact RED (failing test) and GREEN (minimal implementation) code, a shell verification command with expected output, a commit message, complexity rating, and dependency links. The plan is written to docs/specs/YYYY-MM-DD-<topic>-plan.md."
+  - step: "Phase 3: Plan Review + User Approval"
+    description: "A Plan Reviewer agent verifies the plan against the spec (up to 3 iterations). After automated approval, you review the task count, complexity breakdown, open issues, and assumptions before the plan is locked."
+
+output:
+  artifact: "docs/specs/YYYY-MM-DD-<topic>-plan.md"
+  format: "A structured Markdown plan with architecture summary, technical decisions, quality strategy, and an ordered TDD task list. Each task contains exact test code, implementation code, a verification shell command, a commit message, complexity rating, and dependency declarations."
+  sections:
+    - "Architecture Summary (condensed from Architect)"
+    - "Technical Decisions (condensed from Tech Lead)"
+    - "Quality Strategy (condensed from QA Engineer)"
+    - "Task Breakdown (Task 1..N with RED/GREEN/Verify/Commit steps)"
+
+examples:
+  - title: "Task entry in the generated plan"
+    type: output_sample
+    sample:
+      language: markdown
+      code: |
+        ### Task 3: Add order status change event emission
+        **Files:** src/services/order.service.ts, src/services/order.service.spec.ts
+        **Complexity:** standard
+        **Dependencies:** Task 1, Task 2
+        **Execution routing:** default implementation tier
+
+        - [ ] RED: Write failing test
+          ```typescript
+          it('emits ORDER_STATUS_CHANGED when order transitions to shipped', async () => {
+            const eventSpy = jest.spyOn(eventEmitter, 'emit');
+            await orderService.markShipped(orderId);
+            expect(eventSpy).toHaveBeenCalledWith('ORDER_STATUS_CHANGED', { orderId, status: 'shipped' });
+          });
+          ```
+        - [ ] GREEN: Implement minimum code to pass
+          ```typescript
+          async markShipped(orderId: string): Promise<Order> {
+            const order = await this.db.order.update({ where: { id: orderId }, data: { status: 'shipped' } });
+            this.eventEmitter.emit('ORDER_STATUS_CHANGED', { orderId, status: 'shipped' });
+            return order;
+          }
+          ```
+        - [ ] Verify: `npx vitest run src/services/order.service.spec.ts`
+          Expected: 3 passed, 0 failed
+        - [ ] Commit: `feat(order): emit ORDER_STATUS_CHANGED event on shipped transition`
+    explanation: "Every task contains copy-pasteable code for both the failing test and the minimum implementation, with an exact verification command and expected output — no ambiguity for the implementer."
+
+  - title: "Invoking plan against a specific spec"
+    type: invocation
+    command: "zuvo:plan docs/specs/2026-03-28-order-notifications-spec.md"
+    result: |
+      STEP: Phase 1.1 — Architect Analysis [START]
+      Dispatching Architect agent (Sonnet, Explore, token budget 5000)...
+      STEP: Phase 1.1 — Architect Analysis [DONE]
+      STEP: Phase 1.2 — Tech Lead Analysis [START]
+      ...
+      Plan written to: docs/specs/2026-03-29-order-notifications-plan.md
+      Tasks: 8 (5 standard, 3 complex) | Reviewer: APPROVED (iteration 1)
+
+when_to_use: |
+  Use zuvo:plan when an approved spec exists at docs/specs/*-spec.md and implementation has not yet started. It is the second stage of the brainstorm → plan → execute pipeline. The prerequisite is a spec with Status: Approved produced by zuvo:brainstorm. The output plan is the prerequisite for zuvo:execute.
+
+when_not_to_use: |
+  If no spec exists, zuvo:plan will redirect you to zuvo:brainstorm automatically — there is nothing to plan against. For small 1-5 file features that do not need a formal spec, use zuvo:build instead, which handles planning inline as part of the feature development workflow. Do not invoke zuvo:plan to revise already-running implementations; use zuvo:execute's per-task flow instead.
+
+related_skills:
+  - slug: brainstorm
+    relation: "prior pipeline stage — produces the approved spec that zuvo:plan requires"
+  - slug: execute
+    relation: "next pipeline stage — consumes the plan document to drive TDD implementation"
+  - slug: build
+    relation: "alternative for scoped 1-5 file features that do not need a separate plan document"
+  - slug: architecture
+    relation: "for system-level ADR creation that may inform spec writing before planning"
+  - slug: write-tests
+    relation: "if existing code lacks tests before planning begins, write-tests can establish a baseline"
+
+faq:
+  - q: "What does zuvo:plan produce?"
+    a: "It produces a plan document at docs/specs/YYYY-MM-DD-<topic>-plan.md. The plan contains an architecture summary, technical decisions, quality strategy, and an ordered TDD task list. Each task includes exact failing test code, minimum implementation code, a shell verification command with expected output, a commit message, a complexity rating, and dependency declarations."
+  - q: "Why does zuvo:plan use 3 sequential agents instead of parallel?"
+    a: "The sequential order is intentional: the Tech Lead's pattern selection must be grounded in the Architect's component boundaries, and the QA Engineer's testability assessment must be grounded in finalized technical decisions. Parallel dispatch would produce reports that contradict each other, requiring a fourth synthesis step that costs more tokens than the sequential approach."
+  - q: "How long does zuvo:plan take to run?"
+    a: "A typical plan for a medium feature takes 3 sequential agent runs plus plan writing and review, totaling roughly 10-20 minutes of calendar time. Complex features with many architectural decisions take longer. Each agent is budget-limited to 5000 CodeSift tokens to prevent runaway analysis."
+  - q: "What if the spec is ambiguous when planning?"
+    a: "zuvo:plan does not guess. If a spec section is ambiguous, it asks you to clarify before making planning decisions that depend on the answer. The CONTRACT is updated with your answers and the plan proceeds. Ambiguity discovered after planning starts is surfaced immediately rather than silently resolved."
+  - q: "What frameworks and languages does zuvo:plan support?"
+    a: "zuvo:plan detects the project stack from config files (tsconfig.json, package.json, pyproject.toml, composer.json) and loads the corresponding rules (TypeScript, React/Next.js, NestJS, Python). The generated task code, verification commands, and commit messages are all tailored to the detected stack and test runner."
+
+arguments:
+  - flag: "<spec-path>"
+    description: "Optional path to a specific spec document, e.g., zuvo:plan docs/specs/my-spec.md. If omitted, the skill searches docs/specs/*-spec.md automatically."
+
+checks: null
+
+frameworks:
+  - TypeScript
+  - JavaScript
+  - Python
+  - React / Next.js
+  - NestJS
+  - PHP
+
+modes: null
+
+agents:
+  - name: Architect
+    role: "Maps component boundaries, data flow, interfaces, dependency graph, and produces a Mermaid architecture diagram from the spec document."
+  - name: Tech Lead
+    role: "Selects specific patterns and libraries, makes build-vs-reuse decisions, and defines the file structure based on the Architect's report."
+  - name: QA Engineer
+    role: "Assesses testability for each component, flags CQ risk areas, and defines the test strategy based on all prior agent reports."
+  - name: Plan Reviewer
+    role: "Automated reviewer that verifies the plan against the spec for coverage, completeness, and TDD compliance — up to 3 iterations before user approval."
+
+benchmarks:
+  - claim: "3 sequential agents, each receiving the output of prior agents as input context"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 1 — sequential dispatch with explicit prior-agent context passing"
+  - claim: "Each task scoped to 2-5 minutes of implementation work"
+    type: speed
+    verifiable: true
+    source: "SKILL.md Task Authoring Rules — rule 1: scope per task"
+  - claim: "Tasks with 4+ files or cross-cutting concerns rated complex and routed to Opus"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Task Authoring Rules — rule 6 + execute SKILL.md model routing"
+  - claim: "Up to 3 automated plan review iterations before user sees the document"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 3: Review Loop — maximum 3 review iterations"
+
+comparison_table: null

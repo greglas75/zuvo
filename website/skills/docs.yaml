@@ -1,0 +1,169 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: docs
+  title: "Docs — Source-verified documentation for 5 output types"
+  description: "Write or update README, API reference, runbook, onboarding guide, or changelog from actual codebase analysis. Every claim traces to a source file."
+  category: utility
+  og_image: /og/skills/docs.png
+
+seo:
+  target_queries:
+    - "generate readme from codebase automatically"
+    - "auto generate api reference documentation typescript"
+    - "write developer runbook from source code"
+    - "update stale documentation ai agent"
+    - "generate changelog from git history"
+  canonical: /en/skills/docs
+
+stats:
+  - label: "Output Types"
+    value: "5"
+    detail: "README, API reference, runbook, onboarding guide, changelog"
+  - label: "Update Modes"
+    value: "2"
+    detail: "generate (new) or update (patch stale sections)"
+  - label: "Evidence Map"
+    value: "required"
+    detail: "Every section traces back to the source file it documents"
+  - label: "Package Managers"
+    value: "8"
+    detail: "pnpm, yarn, bun, npm, poetry, pip, go, cargo, composer"
+
+problem: |
+  Documentation drifts the moment code changes. Commands in the README stop working. API reference describes endpoints that were renamed. Onboarding guides point to files that were moved. Most teams tolerate stale docs because keeping them current takes more time than they seem worth. `zuvo:docs` reads the actual source files before writing a single sentence. Commands come from package.json scripts. API shapes come from route handlers and DTO schemas. Env vars come from .env.example. The output includes an Evidence Map linking every section to its source — so the next update is fast because you know exactly what to re-verify.
+
+how_it_works:
+  - step: "Read source files first"
+    description: "For every output type, reads the relevant source before writing. README reads package.json and the main entry point. API reference reads route/controller files, DTO schemas, and auth guard files. Runbook reads the service code being documented. Onboarding reads docker-compose, CI config, and existing onboarding docs."
+  - step: "Stack-aware command detection"
+    description: "Detects the project's package manager from lockfile (pnpm-lock.yaml, yarn.lock, bun.lockb, package-lock.json) and uses the exact script names from package.json or Makefile. Never hardcodes npm when the project uses pnpm."
+  - step: "Write with the Evidence Map"
+    description: "Produces the document with an embedded Evidence Map in an HTML comment. Every section with factual claims lists its source file and line range. Sections without a verified source are marked with a TODO comment rather than left as unchecked assertions."
+  - step: "Command validation gate"
+    description: "Extracts all shell commands from the generated document, checks each against its source (package.json scripts, Makefile targets), and fixes mismatches before output. A command that does not match an actual script is corrected, not left as-is."
+  - step: "Update mode: patch stale sections only"
+    description: "In update mode, extracts every factual claim from the existing doc, verifies each against the source (verified / stale / unverifiable), and patches only stale sections. Verified claims are left unchanged. If more than 50% of claims are stale, suggests a full rewrite instead."
+
+output:
+  artifact: "README.md / docs/api/*.md / docs/runbooks/*.md / docs/onboarding.md / CHANGELOG.md"
+  format: "Markdown document with embedded Evidence Map in HTML comment linking each section to its source file and line range."
+  sections:
+    - "Quick Start (stack-aware commands, verified against package.json)"
+    - "Configuration table (env vars from .env.example)"
+    - "Project Structure (from actual directory listing)"
+    - "API endpoints (from route/controller source)"
+    - "Evidence Map (hidden section linking claims to sources)"
+
+examples:
+  - title: "Generate a README for a NestJS service"
+    type: invocation
+    command: "zuvo:docs readme src/payments/"
+    result: "Reads package.json, src/payments/ entry point, and existing README. Produces Quick Start using the detected package manager (pnpm/yarn/etc.), Configuration table from .env.example, Project Structure from actual directory listing, and API section linked to controller files. Includes Evidence Map in HTML comment."
+  - title: "Update a stale README without rewriting it"
+    type: invocation
+    command: "zuvo:docs update README.md"
+    result: "Extracts all factual claims (commands, file paths, env vars, endpoints). Verifies each against source files. Reports: '3 sections unchanged, 2 updated (install command changed to pnpm, DB_PORT env var added), 1 unverifiable (external service URL — TODO added)'. Patches only stale sections."
+  - title: "Generate a changelog from git history"
+    type: invocation
+    command: "zuvo:docs changelog v1.2.0..v1.3.0"
+    result: "Uses git-cliff if available, otherwise parses git log for the range. Groups commits by conventional prefix (feat/fix/refactor). Reads diffs for cryptic commit messages and adds one-line context. Highlights breaking changes."
+
+when_to_use: "Use `zuvo:docs` when onboarding a new developer to the project, before a release, after a major refactor that invalidated existing docs, or whenever a README starts accumulating TODO comments. Use `update` mode for incremental maintenance — it is faster and safer than a full rewrite."
+
+when_not_to_use: "For architecture diagrams or system design documents, use `zuvo:architecture`. For inline code comments and JSDoc, this skill is out of scope. For product-facing user documentation (help centers, marketing pages), this skill is designed for developer-facing technical docs only."
+
+related_skills:
+  - slug: architecture
+    relation: "system architecture docs and ADRs (out of scope for zuvo:docs)"
+  - slug: release-docs
+    relation: "release notes and changelog for a specific release"
+  - slug: review
+    relation: "review the generated documentation before publishing"
+
+faq:
+  - q: "What does zuvo:docs do that a doc template or AI text generator doesn't?"
+    a: "Every claim in the output is traced to a source file before it is written. Commands come from package.json scripts — not assumed. Env vars come from .env.example — not invented. API shapes come from route handler return types — not guessed. The Evidence Map embedded in each document makes the next update auditable: you know exactly which source file to re-read when a section goes stale."
+  - q: "How does update mode work?"
+    a: "Update mode extracts every factual claim from the existing document as a checklist item (commands, paths, env vars, endpoints, architecture descriptions), verifies each against its source file, and patches only the stale ones. Verified claims are left exactly as written. If more than 50% of claims are stale, the skill suggests a full rewrite rather than patching."
+  - q: "How does zuvo:docs detect the right package manager?"
+    a: "It checks for lockfiles in order: pnpm-lock.yaml, yarn.lock, bun.lockb, package-lock.json. For Python it checks for pyproject.toml (poetry) or requirements.txt (pip). For Go, Cargo.toml, and composer.json, it uses the corresponding tools. The commands in the output use the exact script names from package.json or Makefile — never generic substitutes."
+  - q: "Can zuvo:docs generate API documentation for REST APIs?"
+    a: "Yes. In `api [path]` mode, it reads route/controller files to discover endpoints, DTO/schema files for request and response shapes, and auth guard files for authentication requirements. Every endpoint in the output includes its HTTP method, path, auth requirement, request parameters, response 200 shape, and error codes — all from the source code."
+  - q: "How does zuvo:docs handle a missing changelog tool like git-cliff?"
+    a: "If git-cliff is not available (checked via npx git-cliff --version), the skill falls back to parsing git log --oneline --no-merges for the target range. It classifies commits by conventional commit prefix (feat/fix/refactor/docs/chore), groups related commits, reads diffs for cryptic messages, and highlights breaking changes."
+
+arguments:
+  - flag: "_(empty)_"
+    description: "Update README.md if it exists, generate one if not. In non-interactive environments, defaults to update mode."
+  - flag: "readme [path]"
+    description: "Write or update README for the module at [path]"
+  - flag: "api [path]"
+    description: "Generate API reference from route/controller files at [path]"
+  - flag: "runbook [topic]"
+    description: "Write an operational runbook for a specific process or service"
+  - flag: "onboarding"
+    description: "Write a developer onboarding guide for the project"
+  - flag: "update [file]"
+    description: "Verify all claims in an existing doc and patch stale sections only (never rewrites from scratch)"
+  - flag: "changelog"
+    description: "Generate CHANGELOG.md from git history (uses git-cliff if available)"
+  - flag: "changelog [range]"
+    description: "Generate changelog for a specific version range (e.g., v1.2.0..v1.3.0)"
+
+checks: null
+
+frameworks:
+  - TypeScript / JavaScript (npm, pnpm, yarn, bun)
+  - Python (poetry, pip)
+  - Go (go mod)
+  - Rust (cargo)
+  - PHP (composer)
+  - NestJS
+  - Next.js
+  - Any framework (framework-agnostic output)
+
+modes:
+  - name: "readme"
+    description: "Write or update README with Quick Start, Configuration, Project Structure, and API sections."
+  - name: "api"
+    description: "Generate API reference with endpoints, auth requirements, request/response shapes, and error codes from source."
+  - name: "runbook"
+    description: "Write operational runbook with When-to-use, Prerequisites, Steps, Verification, Rollback, and Escalation sections."
+  - name: "onboarding"
+    description: "Write developer onboarding guide with Environment Setup, Key Systems, Common Tasks, and Who-to-Ask."
+  - name: "update"
+    description: "Patch stale sections in an existing doc. Extracts claims, verifies each against source, patches stale only."
+  - name: "changelog"
+    description: "Generate CHANGELOG.md from git history using git-cliff or git log fallback."
+
+agents: null
+
+benchmarks:
+  - claim: "Every generated document includes an Evidence Map linking each section to its source file and line range — sections without a verified source get a TODO comment."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Evidence Map section"
+  - claim: "Command validation gate extracts all shell commands from generated docs and checks each against package.json scripts before output."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Command Validation Gate section"
+  - claim: "8 package manager variants auto-detected: pnpm, yarn, bun, npm, poetry, pip, go, cargo, composer."
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Stack-Aware Commands table"
+  - claim: "Update mode patches only stale sections — verified claims are left unchanged. Suggests full rewrite if >50% of claims are stale."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Mode: Update (Staleness Check)"
+
+comparison_table:
+  columns: ["Capability", "Manual documentation", "AI text generation", "zuvo:docs"]
+  rows:
+    - ["Commands verified against package.json", "Developer effort", "None", "Command validation gate"]
+    - ["Env vars sourced from .env.example", "Developer effort", "None", "Reads .env.example directly"]
+    - ["Evidence Map linking sections to source", "None", "None", "Embedded per section"]
+    - ["Stale section detection", "None", "None", "update mode claim-by-claim verification"]
+    - ["Package manager auto-detection", "Developer effort", "None", "8 lockfile patterns"]
+    - ["API shapes from source code", "Developer effort", "Generated/guessed", "Route + DTO + guard files"]

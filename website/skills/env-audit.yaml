@@ -1,0 +1,208 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: env-audit
+  title: "Env Audit — 8-Dimension Environment Variable Completeness and Secret Safety Check"
+  description: "Env var audit: 8 dimensions (ENV1-ENV8) — completeness, startup validation, secret exposure, env parity, and type safety. 3 critical gates."
+  category: audit
+  og_image: /og/skills/env-audit.png
+
+seo:
+  target_queries:
+    - "check environment variables missing from env.example"
+    - "find hardcoded API keys committed to git"
+    - "startup validation for missing environment variables Node.js"
+    - "environment parity check dev staging production"
+    - "NEXT_PUBLIC secret exposure client bundle"
+  canonical: /en/skills/env-audit
+
+stats:
+  - label: "Dimensions"
+    value: "8"
+    detail: "ENV1-ENV8"
+  - label: "Critical Gates"
+    value: "3"
+    detail: "ENV1, ENV3, ENV4"
+  - label: "Max Score"
+    value: "80"
+    detail: "Sum of all dimension maxes"
+  - label: "Execution"
+    value: "Single-pass"
+    detail: "No sub-agents needed"
+
+problem: |
+  Environment variable management is easy to neglect: `.env.example` drifts from the code, secrets sneak into client bundles via NEXT_PUBLIC_ prefixes, and apps start without validation only to crash when an env var is first accessed — not at boot.
+  These issues cause production incidents, onboarding friction, and security breaches that are expensive to recover from.
+  zuvo:env-audit performs a single-pass cross-reference of code usage against every config source (`.env*`, Docker Compose, CI files) and flags missing documentation, missing validation, and secret exposure before they reach production.
+
+how_it_works:
+  - step: "Phase 0 — Detect & Build Inventory"
+    description: "Detects stack (Node.js, Vite, Next.js, Python, Cloudflare Workers, Docker Compose) and identifies the correct env access patterns to search for. Builds a comprehensive inventory by cross-referencing variables defined in .env* files, accessed in code, and declared in Docker Compose or CI config."
+  - step: "Phase 1 — 8-Dimension Analysis"
+    description: "Single-pass evaluation of ENV1-ENV8. ENV1 compares used-vs-documented sets in both directions. ENV3 checks for validation libraries (Zod, Joi, Pydantic, envalid) and fail-fast patterns. ENV4 checks .gitignore, git history, client-side exposure, hardcoded secrets, and .dockerignore."
+  - step: "Phase 2 — Scoring"
+    description: "Sums dimension scores against the 80-point maximum. Critical gates: ENV1=0 (no .env.example or multiple critical vars undocumented), ENV3=0 (no validation), ENV4=0 (secrets committed or in client bundle) trigger FAIL regardless of total."
+  - step: "Phase 3 — Report & Variable Coverage Matrix"
+    description: "Writes report to audits/env-audit-[date].md. Includes a Variable Coverage Matrix listing each discovered var with .env.example status, code usage count, validation status, type, default, and secret flag. All actual env values replaced with *** in output."
+
+output:
+  artifact: "audits/env-audit-YYYY-MM-DD.md"
+  format: "Markdown report with variable coverage matrix, dimension scores, all findings sorted by severity, and a remediation roadmap (quick wins / short-term / medium-term)."
+  sections:
+    - "Metadata (stack, config sources, var counts)"
+    - "Executive summary with score and health grade"
+    - "Dimension scores (ENV1-ENV8)"
+    - "Variable Coverage Matrix"
+    - "Findings sorted by severity"
+    - "Remediation roadmap"
+
+examples:
+  - title: "Full project env audit"
+    type: invocation
+    command: "zuvo:env-audit full"
+    result: "Scans entire project. Builds variable inventory across all .env* files, code, and Docker Compose. Scores ENV1-ENV8 and writes report with Variable Coverage Matrix."
+  - title: "Secrets-only focus"
+    type: invocation
+    command: "zuvo:env-audit --secrets-only"
+    result: "ENV4 only: checks .gitignore, git ls-files for committed .env, NEXT_PUBLIC_*KEY patterns, hardcoded secret patterns in code, and .dockerignore. Fast focused check pre-deploy."
+  - title: "Boolean truthy gotcha finding"
+    type: before_after
+    gate: "ENV6"
+    before:
+      language: typescript
+      code: |
+        if (process.env.FEATURE_FLAG) {
+          enableFeature();
+        }
+    after:
+      language: typescript
+      code: |
+        if (process.env.FEATURE_FLAG === 'true') {
+          enableFeature();
+        }
+    explanation: "ENV6 flags boolean truthy gotcha: any non-empty string evaluates to true in JavaScript, so FEATURE_FLAG='false' still enables the feature. Fix: explicit string comparison or schema-parsed boolean."
+
+when_to_use: |
+  Run after adding new environment variables, before production deploys, when debugging config-related incidents, and when onboarding a new environment.
+  Use as a periodic check to prevent .env.example drift and catch accidentally committed secrets before they reach git history.
+
+when_not_to_use: |
+  For secret scanning in source code beyond env var patterns, use zuvo:security-audit (S7).
+  For CI pipeline configuration, use zuvo:ci-audit.
+  For infrastructure-level secret management (Vault, AWS SSM), this skill analyzes code references only — not the secret manager itself.
+
+related_skills:
+  - slug: security-audit
+    relation: "Overlap — S7 (secret scanning) extends ENV4 to include gitleaks and broader patterns"
+  - slug: ci-audit
+    relation: "Complement — CI5 (secret handling in pipelines) completes the secret exposure picture"
+  - slug: code-audit
+    relation: "Complement — CQ patterns for config module boundary and process.env scattering"
+
+faq:
+  - q: "What does zuvo:env-audit check?"
+    a: "It audits 8 dimensions across 80 points: ENV1 (are all used vars in .env.example?), ENV2 (stale vars in .env.example not used in code), ENV3 (does the app validate and fail fast on missing vars?), ENV4 (secrets not in git, not in client bundles), ENV5 (dev/staging/prod have the same var set), ENV6 (type-safe env access, no boolean truthy gotchas), ENV7 (no secret defaults like JWT_SECRET ?? 'default'), and ENV8 (inline comments and required/optional markers in .env.example)."
+  - q: "How is env-audit different from security-audit?"
+    a: "env-audit specializes in environment variable management: completeness, documentation, startup validation, type safety, and parity across environments. security-audit S7 covers secret scanning more broadly (gitleaks, client-side exposure, git history) but does not audit validation patterns, env parity, or .env.example documentation. For a full picture, run both."
+  - q: "How long does zuvo:env-audit take?"
+    a: "env-audit is single-pass with no sub-agents — typically 3-5 minutes for a medium-sized project. The --secrets-only and --parity flags scope to a single dimension and complete faster still."
+  - q: "Will env-audit show me the actual secret values?"
+    a: "No. Gate 2 replaces all env var values with *** in the report. Only variable names, file locations, and structural issues are reported. .env.example placeholder values are shown as-is since they contain no real secrets."
+  - q: "Which stacks and frameworks does env-audit support?"
+    a: "Node.js (process.env), Vite (import.meta.env.VITE_*), Next.js (process.env.NEXT_PUBLIC_*), Python (os.environ, os.getenv, Pydantic BaseSettings), Cloudflare Workers (env.VAR bindings), and Docker Compose environment: directives. NestJS ConfigModule.forRoot() and ConfigService patterns are specifically checked for ENV3."
+
+arguments:
+  - flag: "(empty) or full"
+    description: "All 8 dimensions, scope = project root."
+  - flag: "[path]"
+    description: "Scope to a directory (monorepo package or module)."
+  - flag: "--secrets-only"
+    description: "ENV4 only — focus on secret exposure."
+  - flag: "--parity"
+    description: "ENV5 only — compare environment configurations across .env* files."
+
+checks:
+  sections:
+    - name: "Completeness & Validation"
+      id_range: "ENV1-ENV3"
+      count: 3
+      items:
+        - id: ENV1
+          name: "Variable completeness — all used vars in .env.example, no stale entries"
+          critical: true
+        - id: ENV2
+          name: "Unused variables — vars in .env.example never imported in code"
+          critical: false
+        - id: ENV3
+          name: "Startup validation — Zod/Joi/Pydantic validates all vars; app fails fast"
+          critical: true
+    - name: "Secret Safety"
+      id_range: "ENV4"
+      count: 1
+      items:
+        - id: ENV4
+          name: "Secret exposure — .env not in git, no API keys in NEXT_PUBLIC_*, no hardcoded secrets"
+          critical: true
+    - name: "Consistency & Safety"
+      id_range: "ENV5-ENV7"
+      count: 3
+      items:
+        - id: ENV5
+          name: "Environment parity — same var set across dev/staging/production"
+          critical: false
+        - id: ENV6
+          name: "Type safety — central config module, no boolean truthy gotchas, parsed numbers"
+          critical: false
+        - id: ENV7
+          name: "Default values — dev-friendly defaults OK; no defaults on secrets"
+          critical: false
+    - name: "Documentation"
+      id_range: "ENV8"
+      count: 1
+      items:
+        - id: ENV8
+          name: "Documentation — inline comments, required/optional markers in .env.example"
+          critical: false
+
+frameworks:
+  - Node.js
+  - Vite
+  - Next.js
+  - NestJS
+  - Python / FastAPI / Django
+  - Cloudflare Workers
+  - Docker Compose
+
+modes: null
+
+agents: null
+
+benchmarks:
+  - claim: "Single-pass execution with no sub-agents — typically 3-5 minutes"
+    type: speed
+    verifiable: true
+    source: "SKILL.md — Execution Notes"
+  - claim: "3 critical gates: ENV1, ENV3, ENV4 — any scoring 0 triggers FAIL"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md — Phase 2 critical gates"
+  - claim: "Detects boolean truthy gotcha: if (process.env.FLAG) is always true for any non-empty string"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md — ENV6 check table and Execution Notes"
+  - claim: "Variable Coverage Matrix: each var reported with .env.example status, validation, type, default, secret flag"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md — Phase 3 report structure, Variable Coverage Matrix"
+
+comparison_table:
+  columns: ["Capability", "grep / manual", "zuvo:security-audit S7", "zuvo:env-audit"]
+  rows:
+    - [".env.example completeness check", "Manual diff", "Not produced", "ENV1 — bidirectional diff"]
+    - ["Startup validation check", "Not produced", "Not produced", "ENV3 — library detection + fail-fast patterns"]
+    - ["Boolean truthy gotcha", "Not produced", "Not produced", "ENV6 — explicit pattern check"]
+    - ["Secret in client bundle (NEXT_PUBLIC_)", "grep manually", "Phase 1.3 check", "ENV4 — dedicated check"]
+    - [".env in .gitignore", "Manual", "gitleaks-based", "ENV4 — gitignore + git ls-files"]
+    - ["Env parity (dev vs prod)", "Manual", "Not produced", "ENV5 — cross-.env* comparison"]
+    - ["Variable coverage matrix", "Not produced", "Not produced", "Full matrix per discovered var"]

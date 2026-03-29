@@ -1,0 +1,239 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: seo-fix
+  title: "seo-fix — Apply SEO Audit Fixes by Safety Tier"
+  description: "Apply seo-audit findings by safety tier. 21+ fix types, 3 frameworks (Astro/Next.js/Hugo). SAFE auto-applied, MODERATE validated, DANGEROUS requires --all."
+  category: audit
+  og_image: /og/skills/seo-fix.png
+
+seo:
+  target_queries:
+    - "apply SEO audit fixes automatically Astro Next.js Hugo"
+    - "safe moderate dangerous SEO fix tiers automation"
+    - "fix sitemap json-ld og-tags robots.txt Claude Code"
+    - "seo-audit findings apply fixes with build verification"
+    - "SEO fix script Astro sitemap json-ld meta tags"
+  canonical: /en/skills/seo-fix
+
+stats:
+  - label: Fix Types
+    value: "21+"
+    detail: "sitemap, json-ld, og-tags, robots, llms.txt, headers, canonical, font-display, lang, alt-text, viewport"
+  - label: Safety Tiers
+    value: "3"
+    detail: "SAFE (auto) / MODERATE (validated) / DANGEROUS (manual)"
+  - label: Frameworks
+    value: "3"
+    detail: "Astro, Next.js, Hugo"
+  - label: Verdicts
+    value: "4"
+    detail: "FIXED / NEEDS_REVIEW / MANUAL / SKIPPED"
+
+problem: |
+  Running `zuvo:seo-audit` produces a findings report — but applying those fixes safely is
+  still manual, error-prone, and time-consuming. `zuvo:seo-fix` reads the audit JSON and
+  applies the fixes that are safe to automate (SAFE and optionally MODERATE), generates
+  exact diffs for DANGEROUS changes (canonical rewrites) that require human sign-off, and
+  runs a build verification after each batch to catch regressions. It tells you the estimated
+  score improvement before you commit to a re-audit.
+
+how_it_works:
+  - step: Load Findings
+    description: "Finds the latest seo-audit JSON in audit-results/, warns if it is older than 24 hours, and prints a tiered summary: SAFE / MODERATE / DANGEROUS / SKIP / INSUFFICIENT DATA counts."
+  - step: Detect Framework and Targets
+    description: "Reuses seo-audit stack detection. Maps each finding's fix_type to a framework-specific template (e.g., sitemap-add for Astro installs @astrojs/sitemap; for Next.js creates app/sitemap.ts). Classifies each fix by safety tier."
+  - step: Apply Fixes
+    description: "Applies fixes in tier order: SAFE (auto-applied), MODERATE (applied with validation — robots.txt Googlebot check, JSON-LD schema.org fields, OG image absolute URL), DANGEROUS (generates diff + risk explanation only, unless --all). Build verification runs after each batch."
+  - step: Verify
+    description: "If a build tool is detected (astro build, next build, hugo), runs a full build after fixes. A build failure triggers a revert of the last fix. Re-runs critical gate checks (CG1-CG6) on modified files."
+  - step: Report and Update Backlog
+    description: "Prints the SEO FIX REPORT with per-finding verdicts, estimated before/after score, and next steps. Updates memory/backlog.md: removes FIXED items, increments NEEDS_REVIEW seen count, adds MANUAL and SKIP items."
+
+output:
+  artifact: "audit-results/seo-fix-YYYY-MM-DD.md and audit-results/seo-fix-YYYY-MM-DD.json"
+  format: SEO FIX REPORT block with per-finding status (FIXED/NEEDS_REVIEW/MANUAL/SKIPPED), estimated score improvement, and next steps.
+  sections:
+    - "Findings summary (total / fixed / needs review / manual / skipped)"
+    - "Estimated score (before → after)"
+    - "FIXED (auto-applied) — file and line reference"
+    - "FIXED (validated) — validation outcome"
+    - "NEEDS_REVIEW — warning explanation"
+    - "MANUAL — exact diff and risk explanation"
+    - "SKIPPED — reason (no template or INSUFFICIENT DATA)"
+    - "Next steps"
+
+examples:
+  - title: "Apply SAFE fixes from latest audit"
+    type: invocation
+    command: "zuvo:seo-fix"
+    result: |
+      SEO FIX REPORT -- zuvo.dev
+      ----
+      Findings: 13 total | 5 fixed | 2 needs review | 2 manual | 4 skipped
+      Score:    53 -> 72 (estimated, re-audit for exact)
+      ----
+      FIXED (auto-applied):
+        F2: Added llms.txt                     public/llms.txt (new)
+        F5: Added security headers             public/_headers (new)
+        F8: Added font-display: swap           src/styles/global.css:14
+        F9: Added lang="en" to <html>          src/layouts/Layout.astro:1
+        F11: Added viewport meta tag           src/layouts/Layout.astro:7
+
+  - title: "Apply SAFE and MODERATE fixes"
+    type: invocation
+    command: "zuvo:seo-fix --auto"
+    result: "Applies all SAFE fixes plus MODERATE fixes (sitemap integration, JSON-LD, OG tags, robots.txt) with validation. DANGEROUS fixes (canonical) still reported only."
+
+  - title: "Dry run to preview all tiers"
+    type: invocation
+    command: "zuvo:seo-fix --dry-run"
+    result: "Shows every fix that would be applied at each tier with target files and expected changes — without modifying any file."
+
+  - title: "Apply a specific dangerous fix with confirmation"
+    type: invocation
+    command: "zuvo:seo-fix --finding F7 --all"
+    result: "Targets finding F7 (canonical-fix, DANGEROUS), shows the exact diff and risk, and requires explicit user confirmation before applying."
+
+when_to_use: |
+  Run `zuvo:seo-fix` after `zuvo:seo-audit` produces findings. It is the fix-application
+  complement to the audit: seo-audit identifies what is broken, seo-fix applies the fixes
+  that are safe to automate. Use default mode for the first pass (SAFE only), then
+  `--auto` for MODERATE fixes after reviewing the SAFE results.
+
+when_not_to_use: |
+  Do not use `zuvo:seo-fix` as a substitute for `zuvo:seo-audit` — it requires an audit JSON
+  to exist and warns if it is older than 24 hours. For discovering SEO issues (audit findings
+  vs apply fixes), run `zuvo:seo-audit` first. seo-fix does not handle content writing, image
+  generation, WordPress plugin configuration, React SPA SEO, redirects, or noindex management.
+
+related_skills:
+  - slug: seo-audit
+    relation: "Prerequisite — seo-fix reads the JSON produced by seo-audit (audit findings vs apply fixes)"
+  - slug: backlog
+    relation: "seo-fix updates memory/backlog.md — adds MANUAL/SKIP items, removes FIXED items"
+  - slug: deploy
+    relation: "Deploy after seo-fix for framework build verification in production"
+
+faq:
+  - q: "What does zuvo:seo-fix apply automatically?"
+    a: "SAFE fixes are auto-applied: llms.txt creation, security headers (_headers or vercel.json), font-display: swap, lang attribute on <html>, alt text on decorative images, and viewport meta tag. These carry zero structural risk. MODERATE and DANGEROUS fixes require --auto or --all flags respectively."
+  - q: "How is zuvo:seo-fix different from zuvo:seo-audit?"
+    a: "zuvo:seo-audit scans your codebase and produces a JSON findings file with issue descriptions and scores. zuvo:seo-fix reads that JSON and applies the fixes — it does not discover issues. The intended workflow is audit first, then fix. If the audit JSON is older than 24 hours, seo-fix warns and recommends re-running the audit."
+  - q: "What are the 3 safety tiers in zuvo:seo-fix?"
+    a: "SAFE: structural changes only (new files, attribute additions) — auto-applied with no confirmation. MODERATE: changes that require validation (sitemap integration needs a site URL, OG image must be an absolute URL, robots.txt must not block Googlebot after the fix) — applied with automated checks. DANGEROUS: canonical URL configuration — applied only with --all flag plus explicit user confirmation per finding, because wrong canonical URLs can deindex pages."
+  - q: "Which frameworks does zuvo:seo-fix support?"
+    a: "Astro, Next.js, and Hugo have full template coverage for all applicable fix types. Universal (*) templates cover llms.txt, font-display, lang attribute, alt text, and viewport across any framework. WordPress and React SPAs without SSR are explicitly out of scope — seo-fix warns and skips those fix types."
+  - q: "Does zuvo:seo-fix verify the build after applying fixes?"
+    a: "Yes — if a build tool is detected (astro build, next build, hugo), a full build runs after each fix batch. A build failure triggers a revert of the last applied fix. This is Gate 2 and is non-negotiable. MODERATE fixes also include framework-specific validation (e.g., Googlebot access check on robots.txt rewrites)."
+
+arguments:
+  - flag: "(default)"
+    description: "Read latest seo-audit JSON, apply SAFE fixes only, report MODERATE and DANGEROUS"
+  - flag: "--auto"
+    description: "Apply SAFE and MODERATE fixes automatically (DANGEROUS still reported only)"
+  - flag: "--all"
+    description: "Apply all tiers including DANGEROUS — requires explicit user confirmation per dangerous fix"
+  - flag: "--dry-run"
+    description: "Show what would be fixed at each tier without modifying any file"
+  - flag: "--finding F1,F3"
+    description: "Apply only the specified finding IDs by number"
+  - flag: "--category sitemap,json-ld"
+    description: "Apply only fixes of the specified fix_type categories"
+  - flag: "[json-path]"
+    description: "Use a specific audit JSON file instead of the latest in audit-results/"
+
+checks:
+  sections:
+    - name: "SAFE Fixes (auto-applied)"
+      id_range: "SAFE tier"
+      count: 6
+      items:
+        - id: "llms-txt-add"
+          name: "Create public/llms.txt with site structure"
+          critical: false
+        - id: "headers-add"
+          name: "Add security headers (_headers, vercel.json, netlify.toml)"
+          critical: false
+        - id: "font-display-add"
+          name: "Add font-display: swap to @font-face declarations"
+          critical: false
+        - id: "lang-attr-add"
+          name: "Add lang attribute to <html> element"
+          critical: false
+        - id: "alt-text-add"
+          name: "Add empty alt to decorative images"
+          critical: false
+        - id: "viewport-add"
+          name: "Add <meta name=viewport> to layout head"
+          critical: false
+    - name: "MODERATE Fixes (with validation)"
+      id_range: "MODERATE tier"
+      count: 4
+      items:
+        - id: "sitemap-add"
+          name: "Add sitemap integration or file (framework-specific)"
+          critical: false
+        - id: "json-ld-add"
+          name: "Add JSON-LD structured data to layout head"
+          critical: false
+        - id: "meta-og-add"
+          name: "Add missing Open Graph meta tags"
+          critical: false
+        - id: "robots-fix"
+          name: "Create or fix robots.txt (verified: Googlebot must not be blocked)"
+          critical: true
+    - name: "DANGEROUS Fixes (manual only)"
+      id_range: "DANGEROUS tier"
+      count: 1
+      items:
+        - id: "canonical-fix"
+          name: "Configure canonical URL (wrong canonical can deindex pages)"
+          critical: true
+
+frameworks:
+  - Astro
+  - Next.js
+  - Hugo
+  - Universal (llms.txt, font-display, lang, alt-text, viewport)
+
+modes:
+  - name: default
+    description: "SAFE fixes only. MODERATE and DANGEROUS are reported with recommendations."
+  - name: "--auto"
+    description: "SAFE + MODERATE fixes. Includes validation steps per fix type. DANGEROUS still reported only."
+  - name: "--all"
+    description: "All tiers including DANGEROUS. Each DANGEROUS fix requires explicit user confirmation. --all flag must be passed."
+  - name: "--dry-run"
+    description: "Read-only preview of all fixes across all tiers. No files modified."
+
+agents: null
+
+benchmarks:
+  - claim: "21+ fix types across 3 safety tiers covering the most common seo-audit findings"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 1 Template Registry and Safety Classification tables"
+  - claim: "3 primary frameworks with full template coverage — Astro, Next.js, Hugo"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 1 Template Registry"
+  - claim: "Build verification gate after every fix batch — failure reverts last fix"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 3 Verify and Safety Gates GATE 2"
+  - claim: "DANGEROUS fixes (canonical-fix) never auto-applied — require --all flag plus per-finding user confirmation"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Safety Gates GATE 1"
+
+comparison_table:
+  columns: ["Capability", "Manual SEO fix", "Yoast/SEO plugin", "zuvo:seo-fix"]
+  rows:
+    - ["Reads structured audit findings", "No", "No", "Yes — seo-audit JSON"]
+    - ["Safety tier classification", "Manual judgment", "No", "Yes — SAFE/MODERATE/DANGEROUS"]
+    - ["Build verification after each batch", "Manual", "No", "Yes — reverts on failure"]
+    - ["Framework-specific templates", "Manual", "Plugin-only (WP)", "Yes — Astro, Next.js, Hugo"]
+    - ["Estimated score before re-audit", "No", "No", "Yes — printed in report"]
+    - ["DANGEROUS fix diffs with risk", "No", "No", "Yes — exact diff + explanation"]

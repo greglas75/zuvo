@@ -1,0 +1,231 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: api-audit
+  title: "API Audit — 10-Dimension Endpoint Integrity Check with Auth Matrix"
+  description: "API integrity audit: 10 dimensions (D1-D10) — validation, pagination, errors, caching, HTTP semantics, N+1 waterfalls, rate limiting, and auth matrix."
+  category: audit
+  og_image: /og/skills/api-audit.png
+
+seo:
+  target_queries:
+    - "API endpoint audit NestJS FastAPI validation coverage"
+    - "find unbounded database queries in REST API"
+    - "check missing auth on API endpoints TypeScript"
+    - "API overfetching N+1 waterfall detection"
+    - "OpenAPI contract stability breaking change detection"
+  canonical: /en/skills/api-audit
+
+stats:
+  - label: "Dimensions"
+    value: "10"
+    detail: "D1-D10 (+D11 optional)"
+  - label: "Critical Gates"
+    value: "3"
+    detail: "D1=0, D9<8, D3<3+>10K rows"
+  - label: "Tiers"
+    value: "3"
+    detail: "LIGHT / STANDARD / DEEP"
+  - label: "Max Parallel Agents"
+    value: "6"
+    detail: "One agent per controller batch"
+  - label: "Est. Time (STANDARD)"
+    value: "~10 min"
+
+problem: |
+  API layers accumulate debt in ways that don't surface in single-file code review: validation missing on some endpoints but not others, pagination absent from one controller while enforced in another, money fields inconsistently represented across the system.
+  zuvo:api-audit evaluates every endpoint against 10 weighted dimensions, computes violation ratios (not just counts), and performs cross-cutting analysis that no per-file checker can reproduce — contract consistency, auth matrix, and money field audit across the entire API surface.
+
+how_it_works:
+  - step: "Phase 0 — Detection & Endpoint Inventory"
+    description: "Detects stack (NestJS, Cloudflare Workers, FastAPI, React Query, raw fetch/axios), selects tier (LIGHT/STANDARD/DEEP) based on endpoint count and risk signals, builds a complete endpoint inventory. If an OpenAPI spec exists, uses it as primary inventory with grep as fallback."
+  - step: "Phase 1 — Dimension Analysis"
+    description: "Evaluates all D1-D11 dimensions against every endpoint in scope. Endpoints are batched by controller/module; up to 6 parallel agents in Claude Code, sequential in other environments. Each dimension receives a violation ratio (N of M endpoints) alongside its score."
+  - step: "Phase 2 — GET Probing (STANDARD+ tier)"
+    description: "With a confirmed non-production BASE_URL and user-provided auth token, probes each list endpoint with curl: response size, HTTP status, cache headers, rate-limit headers. Rate-capped at 5 req/s. Scrubs all responses before recording."
+  - step: "Phase 3 — Cross-Cutting Analysis"
+    description: "Contract consistency (same entity from different endpoints), money field representation audit (integer-cents vs float, currency co-location), auth matrix (endpoint × role), and payload size flagging (>100KB list views, >3-level nested relations)."
+  - step: "Phase 4 — Report"
+    description: "Writes scored report to audits/api-audit-[date].md. Includes dimension scores with violation ratios, all findings in API-N format, cross-cutting analysis, and top 5 recommendations by effort + impact."
+
+output:
+  artifact: "audits/api-audit-YYYY-MM-DD.md"
+  format: "Markdown report with dimension score table (violation ratios), auth matrix, cross-cutting analysis, all findings in API-N format with code evidence, and ranked recommendations."
+  sections:
+    - "Metadata (stack, tier, endpoint count, probing status)"
+    - "Score summary (D1-D11 with violation ratios)"
+    - "Critical findings"
+    - "All findings by dimension"
+    - "Cross-cutting analysis (contract, money, auth matrix, payload)"
+    - "Recommendations (top 5 by effort + impact)"
+    - "CQ overlap notes"
+
+examples:
+  - title: "Full project audit with probing"
+    type: invocation
+    command: "zuvo:api-audit full"
+    result: "Audits all endpoints across D1-D10. Selects tier based on endpoint count. Writes scored report with auth matrix and cross-cutting analysis."
+  - title: "Static-only audit of a specific module"
+    type: invocation
+    command: "zuvo:api-audit src/orders --static"
+    result: "Audits endpoints in src/orders without any HTTP requests. Suitable when no running server is available. Skips Phase 2 entirely."
+  - title: "Missing validation finding"
+    type: before_after
+    gate: "D1"
+    before:
+      language: typescript
+      code: |
+        @Post('/orders')
+        async create(@Body() body: any) {
+          return this.ordersService.create(body);
+        }
+    after:
+      language: typescript
+      code: |
+        @Post('/orders')
+        @UsePipes(new ValidationPipe({ whitelist: true }))
+        async create(@Body() dto: CreateOrderDto) {
+          return this.ordersService.create(dto);
+        }
+    explanation: "D1 flags endpoints accepting untyped `any` body. Fix: typed DTO with ValidationPipe (NestJS) or Zod schema parsing at the route handler."
+
+when_to_use: |
+  Run as a periodic API layer health check, before major releases, after adding new endpoints, and when investigating overfetching or waterfall performance issues.
+  Also appropriate after merging microservices or changing shared entity shapes — to catch contract drift across the API surface.
+
+when_not_to_use: |
+  For single-file code review, use zuvo:review.
+  For refactoring specific endpoints, use zuvo:refactor.
+  For broad security posture across 14 dimensions (not just auth), use zuvo:security-audit.
+  For feature development with new endpoints, use zuvo:build.
+
+related_skills:
+  - slug: security-audit
+    relation: "Superset for security — S4/S5 auth checks overlap with D9; security-audit adds OWASP Top 10"
+  - slug: code-audit
+    relation: "Complement — CQ3 (validation), CQ7 (pagination), CQ19 (response shape) overlap"
+  - slug: performance-audit
+    relation: "Complement — D7 API waterfall maps to frontend data fetching performance"
+  - slug: docs
+    relation: "Follow-up — D10 undocumented endpoints route to zuvo:docs api"
+
+faq:
+  - q: "What does zuvo:api-audit check?"
+    a: "It evaluates 10 dimensions: D1 (input validation and type safety), D2 (payload efficiency and data contracts), D3 (pagination and unbounded queries), D4 (error handling standardization), D5 (caching and HTTP headers), D6 (HTTP semantics correctness), D7 (N+1 API waterfall patterns), D8 (rate limiting and throttling), D9 (authentication and authorization), and D10 (documentation). D11 (contract stability via oasdiff) activates when an OpenAPI spec exists."
+  - q: "How does api-audit differ from security-audit?"
+    a: "api-audit focuses on API contract integrity — validation completeness, pagination, payload efficiency, HTTP semantics, and documentation. security-audit covers the broader security posture: injection, XSS, SSRF, multi-tenant isolation, secrets, and infrastructure. D9 in api-audit and S4/S5 in security-audit overlap on auth coverage; use api-audit for API-layer health and security-audit when you need the full OWASP picture."
+  - q: "How long does zuvo:api-audit take?"
+    a: "LIGHT tier (single module, <10 endpoints) takes ~3-5 minutes. STANDARD tier (full service, 10-50 endpoints) takes ~8-10 minutes. DEEP tier (cross-service, >50 endpoints, pre-release) takes ~15-20 minutes."
+  - q: "Does api-audit make HTTP requests to my API?"
+    a: "Only in STANDARD+ tier and only with your explicit confirmation of a non-production BASE_URL and auth token you provide. Production domains are refused. Use --static to skip Phase 2 entirely and keep the audit code-only."
+  - q: "What frameworks does api-audit support?"
+    a: "Full analysis for NestJS controllers, Cloudflare Workers, FastAPI routers, and frontend call patterns (React Query, raw fetch/axios). Endpoint discovery uses stack-specific grep patterns when CodeSift is unavailable. The OpenAPI/Swagger spec, if present, is used as primary inventory."
+
+arguments:
+  - flag: "full"
+    description: "Audit all endpoints in the project."
+  - flag: "[path]"
+    description: "Audit endpoints in a specific directory or module."
+  - flag: "--static"
+    description: "Static analysis only — skip Phase 2 GET probing. Use when no running server is available."
+
+checks:
+  sections:
+    - name: "Validation & Payload"
+      id_range: "D1-D2"
+      count: 2
+      items:
+        - id: D1
+          name: "Input validation and type safety — schema on every request body and query param"
+          critical: true
+        - id: D2
+          name: "Payload efficiency — no overfetching, consistent field shapes, integer-cents for money"
+          critical: false
+    - name: "Pagination & Errors"
+      id_range: "D3-D4"
+      count: 2
+      items:
+        - id: D3
+          name: "Pagination and unbounded queries — take/limit enforced on list endpoints"
+          critical: true
+        - id: D4
+          name: "Error handling standardization — consistent error shape across all endpoints"
+          critical: false
+    - name: "HTTP Layer"
+      id_range: "D5-D8"
+      count: 4
+      items:
+        - id: D5
+          name: "Caching and HTTP headers — Cache-Control, ETag, Vary correctness"
+          critical: false
+        - id: D6
+          name: "HTTP semantics — correct status codes, idempotent methods, safe GET"
+          critical: false
+        - id: D7
+          name: "N+1 API waterfall — client-side request chains that could be a single call"
+          critical: false
+        - id: D8
+          name: "Rate limiting and throttling — present on public and mutation endpoints"
+          critical: false
+    - name: "Auth & Docs"
+      id_range: "D9-D11"
+      count: 3
+      items:
+        - id: D9
+          name: "Authentication and authorization — auth on all mutations, defense in depth"
+          critical: true
+        - id: D10
+          name: "Documentation — all endpoints in OpenAPI spec, DEEP tier only"
+          critical: false
+        - id: D11
+          name: "Contract stability — breaking changes detected via oasdiff (requires OpenAPI spec)"
+          critical: false
+
+frameworks:
+  - NestJS
+  - Cloudflare Workers
+  - FastAPI
+  - React Query
+  - Express
+
+modes:
+  - name: LIGHT
+    description: "Single module, <10 endpoints. D1, D2, D3, D4, D9 only. Static analysis."
+  - name: STANDARD
+    description: "Full service, 10-50 endpoints. D1-D9 (+D11 if spec). Static + GET probing."
+  - name: DEEP
+    description: "Cross-service, >50 endpoints. All D1-D11. Static + GET + response analysis."
+
+agents:
+  - name: "Controller Batch Agent"
+    role: "Audits one controller or module: evaluates D1-D9 for each endpoint, scores violation ratios, outputs finding list."
+
+benchmarks:
+  - claim: "STANDARD tier covers a 10-50 endpoint service in ~8-10 minutes"
+    type: speed
+    verifiable: true
+    source: "SKILL.md — Execution Notes, STANDARD tier duration"
+  - claim: "Up to 6 parallel controller-batch agents in Claude Code"
+    type: speed
+    verifiable: true
+    source: "SKILL.md — Phase 1 Execution section"
+  - claim: "Violation ratio reported per dimension (e.g., 3/18 endpoints lack validation = 17%)"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md — Phase 1, evidence ratio scoring table"
+  - claim: "D11 contract stability check requires OpenAPI spec; activates automatically when spec found"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md — Phase 1, D11 activation note"
+
+comparison_table:
+  columns: ["Capability", "Manual Review", "zuvo:code-audit", "zuvo:api-audit"]
+  rows:
+    - ["Endpoint inventory", "Not produced", "Not produced", "Complete list with method + risk signals"]
+    - ["Violation ratios", "Not produced", "Per-file evidence", "N of M endpoints per dimension"]
+    - ["Auth coverage matrix", "Not produced", "CQ4 per file", "Endpoint × role matrix"]
+    - ["Money field consistency", "Ad hoc", "CQ16 per file", "Cross-endpoint audit for mixed representations"]
+    - ["Contract stability (oasdiff)", "Manual diff", "Not produced", "D11 with OpenAPI spec"]
+    - ["Cross-cutting contract drift", "Not produced", "Not produced", "Phase 3 — same entity, different shapes"]
+    - ["GET probing", "curl manually", "Not possible", "Phase 2 with confirmed non-prod URL"]

@@ -1,0 +1,160 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: backlog
+  title: "Backlog — Tech Debt Persistence Layer for Zuvo Findings"
+  description: "Tech debt backlog manager: 8 operations, auto-populated by 10+ audit skills. Priority score formula (Impact + Risk) × (6 − Effort), range 2-50."
+  category: utility
+  og_image: /og/skills/backlog.png
+
+seo:
+  target_queries:
+    - "track technical debt from code audit"
+    - "tech debt backlog management developer tool"
+    - "prioritize technical debt by risk and impact"
+    - "how to manage AI audit findings"
+  canonical: /en/skills/backlog
+
+stats:
+  - label: "Operations"
+    value: "8"
+    detail: "add, list, fix, wontfix, delete, stats, prioritize, suggest"
+  - label: "Categories"
+    value: "6"
+    detail: "Code, Test, Architecture, Dependency, Documentation, Infrastructure"
+  - label: "Severity Levels"
+    value: "4"
+    detail: "CRITICAL, HIGH, MEDIUM, LOW"
+  - label: "Priority Formula"
+    value: "1"
+    detail: "(Impact + Risk) × (6 − Effort) — range 2-50"
+
+problem: |
+  Audit skills generate dozens of findings per run. Without a persistent store,
+  findings are reviewed once and forgotten — the same issues surface in the next
+  audit cycle with no record of what was decided or why. zuvo:backlog is the
+  persistence layer for the entire zuvo skill ecosystem: audit skills write
+  findings to it automatically, developers mark items resolved or wontfix,
+  and the `prioritize` and `suggest` commands turn accumulated debt into an
+  actionable batch-fix plan. It keeps decision history intact, deduplicates
+  re-discovered issues, and routes each item to the right remediation skill.
+
+how_it_works:
+  - step: "Auto-populated by Audit Skills"
+    description: "Skills like zuvo:code-audit, zuvo:test-audit, zuvo:review, and zuvo:seo-audit write HIGH+ findings to memory/backlog.md automatically when --persist-backlog is enabled. Each item gets a fingerprint to prevent duplicate entries."
+  - step: "Add and Manage Items"
+    description: "Developers add items manually using natural language: `zuvo:backlog add race condition in payout.service.ts`. The skill infers severity, category, and file path, then deduplicates against existing fingerprints."
+  - step: "List and Filter"
+    description: "View all OPEN items, filter by category (code/test/arch/dep/doc/infra), or show all including RESOLVED and WONTFIX history."
+  - step: "Prioritize"
+    description: "Scores each OPEN item using (Impact + Risk) × (6 − Effort). With CodeSift available, blast radius is calculated from reference counts, improving Impact and Risk scores."
+  - step: "Suggest Batch Actions"
+    description: "Groups items by pattern — 3+ items with the same CQ gate failure, 3+ test anti-patterns, or a hotspot module — and proposes the right remediation skill command."
+
+output:
+  artifact: "memory/backlog.md"
+  format: "Markdown table in memory/backlog.md. All operations modify this file in place. Status changes (fix, wontfix) preserve history; delete removes rows."
+  sections:
+    - "Open items table (ID, Severity, File, Problem, Seen)"
+    - "Stats view (counts by severity and category)"
+    - "Prioritized ranking with scores"
+    - "Batch fix suggestions"
+
+examples:
+  - title: "Adding and listing backlog items"
+    type: invocation
+    command: "zuvo:backlog add race condition in OrderService.claim() — missing idempotency guard"
+    result: |
+      Added B-7:
+        File:     src/services/order.service.ts
+        Problem:  Race condition in claim() — missing idempotency guard
+        Severity: HIGH (inferred from "race condition")
+        Category: Code
+        Source:   manual
+        Seen:     1x
+
+      TECH DEBT BACKLOG — my-project
+      -----
+      | ID   | Severity | File                     | Problem                            | Seen |
+      |------|----------|--------------------------|------------------------------------|------|
+      | B-7  | HIGH     | order.service.ts         | Race condition in claim()          | 1x   |
+      | B-3  | MEDIUM   | auth.service.ts          | catch(err: any) — 3 occurrences    | 4x   |
+      -----
+      OPEN: 2 items (C: 0, H: 1, M: 1, L: 0)
+
+when_to_use: "Use after any audit skill run to persist findings. Use `prioritize` before a sprint to rank what to fix next. Use `suggest` to identify whether a batch fix command (`zuvo:fix-tests`, `zuvo:refactor`) is more efficient than item-by-item fixes."
+
+when_not_to_use: "For actually fixing issues, use the recommended skill from `suggest` output — backlog manages tracking, not implementation. For active development tasks, use `zuvo:build` or `zuvo:refactor` directly."
+
+related_skills:
+  - slug: code-audit
+    relation: "Primary source of Code category backlog items — writes HIGH+ CQ findings"
+  - slug: test-audit
+    relation: "Primary source of Test category backlog items — writes AP pattern findings"
+  - slug: review
+    relation: "Writes review findings to backlog when reviewing uncommitted changes"
+  - slug: fix-tests
+    relation: "Recommended next step when 3+ Test items share the same anti-pattern"
+  - slug: refactor
+    relation: "Recommended next step when 3+ items cluster in the same module"
+
+faq:
+  - q: "What does zuvo:backlog do?"
+    a: "It maintains a persistent Markdown table at memory/backlog.md that tracks technical debt items across the project. Items can be added manually or written automatically by audit skills. The backlog supports 8 operations: add, list, fix, wontfix, delete, stats, prioritize, and suggest."
+  - q: "How is backlog different from a GitHub Issues list?"
+    a: "GitHub Issues track product bugs and features. zuvo:backlog tracks technical debt specifically — CQ gate failures, test anti-patterns, architectural concerns — with severity, category, fingerprints for deduplication, and a prioritization formula tuned to engineering risk. It lives in the repo alongside the code and is written to directly by audit skills without requiring a GitHub connection."
+  - q: "How long does a backlog operation take?"
+    a: "Most operations (list, add, fix, wontfix, stats) complete instantly — they read or write a single Markdown file. The `prioritize` command takes longer when CodeSift is available because it counts symbol references to calculate blast radius. The `suggest` command may scan for undiscovered TODO/FIXME markers across the codebase."
+  - q: "Does backlog auto-fix anything?"
+    a: "No — backlog tracks and prioritizes debt but never modifies source code. The `suggest` output proposes the right remediation command (e.g., `zuvo:fix-tests --pattern P-41 src/`) but does not run it. This keeps the tracking layer separate from the execution layer."
+  - q: "How does deduplication work?"
+    a: "Each item has a fingerprint in the format file|rule_id|signature. When an audit skill re-discovers the same issue, it increments the Seen counter rather than creating a duplicate row. Manual adds use the format file|manual|first-3-words-slugified. Fingerprints are case-insensitive and strip leading ./ from paths."
+
+arguments:
+  - flag: "(empty) or list"
+    description: "Show all OPEN items as a summary table"
+  - flag: "list category:[x]"
+    description: "Filter OPEN items by category: code, test, arch, dep, doc, or infra"
+  - flag: "list all"
+    description: "Show all items including RESOLVED and WONTFIX"
+  - flag: "add [description]"
+    description: "Parse natural language description, infer severity/category, and append to backlog"
+  - flag: "fix B-{N}"
+    description: "Mark item as RESOLVED (preserves row for history)"
+  - flag: "wontfix B-{N} [reason]"
+    description: "Mark item as WONTFIX and append reason to Problem column"
+  - flag: "delete B-{N}"
+    description: "Remove item after confirmation (--force skips prompt)"
+  - flag: "delete all-resolved"
+    description: "Remove all RESOLVED and WONTFIX items after confirmation"
+  - flag: "stats"
+    description: "Show item counts by severity, category, and top files"
+  - flag: "prioritize"
+    description: "Score and rank all OPEN items using (Impact + Risk) × (6 − Effort)"
+  - flag: "suggest"
+    description: "Group items by pattern and propose batch fix commands"
+
+checks: null
+
+frameworks: []
+
+modes: null
+
+agents: null
+
+benchmarks:
+  - claim: "Priority formula (Impact + Risk) × (6 − Effort) produces scores from 2 (low priority) to 50 (fix immediately)"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Prioritize section — scoring formula and dimension table"
+  - claim: "Growth control: when RESOLVED + WONTFIX items exceed 50, oldest RESOLVED items are pruned automatically"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Resolving Items — Growth control rule"
+  - claim: "8 distinct operations supported: add, list, fix, wontfix, delete, stats, prioritize, suggest"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Argument Parsing table"
+
+comparison_table: null

@@ -1,0 +1,252 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: review
+  title: "Review — 4-tier diff review with confidence-scored findings"
+  description: "Structured code review with 3 audit agents, a 0-100 confidence gate, and 4 severity tiers. Evaluates diffs of any size with CQ1-CQ22 and Q1-Q17 gates."
+  category: task
+  og_image: /og/skills/review.png
+
+seo:
+  target_queries:
+    - "automated code review pr diff analysis"
+    - "cq1-cq22 code quality gate evaluation typescript"
+    - "confidence scored code review findings"
+    - "code review with parallel audit agents"
+    - "auto fix code review findings after audit"
+  canonical: /en/skills/review
+
+stats:
+  - label: "Review Tiers"
+    value: "4"
+    detail: "NANO (<15L), LIGHT (15-100L), STANDARD (100-500L), DEEP (>500L)"
+  - label: "Audit Agents"
+    value: "3"
+    detail: "Behavior Auditor, Structure Auditor, CQ Auditor (TIER 3)"
+  - label: "Confidence Gate"
+    value: "0-100"
+    detail: "Findings below 26 discarded; 26-50 sent to backlog only"
+  - label: "Quality Gates"
+    value: "22 + 17"
+    detail: "CQ1-CQ22 for production code, Q1-Q17 for test files"
+  - label: "Modes"
+    value: "8"
+    detail: "REPORT, FIX-ALL, FIX-BLOCKING, --thorough, batch, tag, mark-reviewed, status"
+
+problem: |
+  Manual code review is inconsistent — the same diff gets deep scrutiny on a Monday and a quick skim on a Friday. Reviewers miss error handling gaps, skip test files, and leave subjective comments that clog the backlog. `zuvo:review` applies the same 22 quality gates, 17 test gates, and confidence scoring to every diff, regardless of size. Findings below 26/100 confidence are discarded before you see them. MUST-FIX issues are always backed by file:line evidence. And the skill can apply fixes immediately, verify the test suite, and commit — all without a separate step.
+
+how_it_works:
+  - step: "Triage and tier selection"
+    description: "Runs git diff --stat to count lines and files changed. Filters out noise (locks, dist, snapshots). Checks for 7 risk signals (DB migration, auth changes, API contract changes, money logic, new production files, 500+ lines, AI-generated patterns). Selects TIER 0-3 based on size and signal count."
+  - step: "Pre-audit setup"
+    description: "Initializes CodeSift to get the repo identifier. For TIER 2+, runs hotspot detection (analyze_hotspots) to flag high-churn files in the diff, and blast radius analysis (impact_analysis) to find callers of changed symbols up to 2 levels deep."
+  - step: "Audit (parallel agents for TIER 2-3)"
+    description: "TIER 3 dispatches all 3 agents in parallel: Behavior Auditor (logic, error handling, race conditions), Structure Auditor (naming, imports, SRP, file limits), and CQ Auditor (independent CQ1-CQ22 evaluation). TIER 2 adds a Behavior Auditor for new production files. TIER 0-1 runs the lead inline."
+  - step: "Confidence gate"
+    description: "Every candidate finding is scored 0-100. Scores 0-25 are discarded. Scores 26-50 are dropped from the report and persisted to the backlog for later tracking. Only scores 51-100 appear in the final report."
+  - step: "Report, fix, and tag"
+    description: "Findings are grouped into MUST-FIX, RECOMMENDED, and NIT. FIX-ALL or FIX-BLOCKING mode applies fixes, runs tests, and commits. Every reviewed commit gets a reviewed/ git tag so zuvo:review status can track coverage."
+
+output:
+  artifact: "memory/backlog.md"
+  format: "Markdown code review report with verdict (PASS/WARN/BLOCK), severity summary, findings with file:line evidence, quality wins, and NEXT STEPS block. Backlog items persisted to memory/backlog.md."
+  sections:
+    - "Review header (tier, audit mode, change intent)"
+    - "Triage result (risk signals, tier selection)"
+    - "VERDICT — PASS / WARN / BLOCK with score"
+    - "MUST-FIX / RECOMMENDED / NIT findings with evidence"
+    - "CQ1-CQ22 evaluation per production file"
+    - "Q1-Q17 evaluation per test file"
+    - "QUESTIONS FOR AUTHOR"
+    - "QUALITY WINS"
+    - "NEXT STEPS block"
+
+examples:
+  - title: "Review uncommitted changes and auto-fix MUST-FIX issues"
+    type: invocation
+    command: "zuvo:review blocking"
+    result: "Triages all uncommitted changes, selects a tier, runs the appropriate audit depth, confidence-gates all findings, then applies every MUST-FIX fix, runs the test suite, and commits. RECOMMENDED and NIT items are reported but not applied and are persisted to the backlog."
+  - title: "Multi-pass thorough review of a large PR"
+    type: invocation
+    command: "zuvo:review HEAD~5 --thorough"
+    result: "Runs 3 independent audit passes over the last 5 commits in different file orders, then applies majority voting: 3/3 agreement keeps the finding, 1/3 agreement downgrades it one severity tier. Produces a synthesis report with pass-agreement metadata."
+  - title: "Missing orgId filter — MUST-FIX finding"
+    type: before_after
+    gate: "CQ4"
+    before:
+      language: typescript
+      code: |
+        // No orgId filter — returns data for all organizations
+        async listOrders(surveyId: string) {
+          return this.prisma.order.findMany({ where: { surveyId } });
+        }
+    after:
+      language: typescript
+      code: |
+        // Defense-in-depth: guard AND query filter
+        async listOrders(surveyId: string, orgId: string) {
+          return this.prisma.order.findMany({
+            where: { surveyId, organizationId: orgId }
+          });
+        }
+    explanation: "CQ4 (auth guard + query filter) is a critical gate. A guard at the controller level is not sufficient — the service query must also filter by organizationId. This finding is always MUST-FIX with confidence 90+ because it can return other tenants' data."
+
+when_to_use: "Use `zuvo:review` before pushing any non-trivial change. Run `zuvo:review staged` during development to catch issues before committing. Use `zuvo:review new` to review all commits since the last review session. Use `zuvo:review batch commits.md` to process a queue of commits for a release."
+
+when_not_to_use: "For auditing all production files in a codebase (not just a diff), use `zuvo:code-audit`. For auditing all test files in the suite, use `zuvo:test-audit`. For fixing the same anti-pattern across many test files, use `zuvo:fix-tests`. `zuvo:review` is diff-scoped — it examines what changed, not the entire codebase."
+
+related_skills:
+  - slug: code-audit
+    relation: "full-codebase quality audit vs. per-diff review"
+  - slug: receive-review
+    relation: "counterpart for processing incoming review feedback"
+  - slug: fix-tests
+    relation: "batch repair test anti-patterns surfaced during review"
+  - slug: write-tests
+    relation: "write missing tests flagged by the review"
+  - slug: backlog
+    relation: "dropped and unfixed findings are persisted here"
+
+faq:
+  - q: "What does zuvo:review check that a linter or static analysis tool doesn't?"
+    a: "Linters check syntax and style. zuvo:review evaluates 22 behavioral quality gates (CQ1-CQ22) including multi-tenant data isolation (CQ4), timing-safe secret comparison (CQ5), user-input cap enforcement (CQ6), and error strategy match (CQ8). It also traces blast radius for changed symbols, detects tautological mocks in test files, and confidence-scores every finding to filter out false positives."
+  - q: "How is zuvo:review different from zuvo:code-audit?"
+    a: "zuvo:review is scoped to a diff — it examines what changed in a PR or commit range. zuvo:code-audit is a mass audit of every production file in the codebase. For pre-merge review, use zuvo:review. For a periodic quality sweep of the entire repo, use zuvo:code-audit."
+  - q: "What is the confidence gate and why does it matter?"
+    a: "Every finding is scored 0-100. Scores below 26 are discarded (likely hallucinations or false positives). Scores 26-50 are removed from the report but persisted to the backlog so they are not lost. Only findings scoring 51+ appear in the report. This means the MUST-FIX items you see are likely real — not theoretical concerns about code that never runs."
+  - q: "How long does a review take?"
+    a: "TIER 0 (under 15 lines) takes under 30 seconds. TIER 1 (15-100 lines) takes 1-2 minutes. TIER 2 (100-500 lines) takes 3-5 minutes with the Behavior Auditor agent. TIER 3 (500+ lines) takes 8-15 minutes with all 3 audit agents in parallel. --thorough adds roughly 2× to any tier."
+  - q: "Can zuvo:review apply fixes automatically?"
+    a: "Yes. Running `zuvo:review fix` applies every reported finding, runs the test suite, and commits the result. `zuvo:review blocking` applies only MUST-FIX items. FIX-ALL is blocked for TIER 3 diffs and diffs with DB migrations, auth changes, API contract changes, or payment logic — those require targeted fixes."
+
+arguments:
+  - flag: "_(empty)_"
+    description: "Review all uncommitted changes (REPORT mode)"
+  - flag: "staged"
+    description: "Review only staged changes"
+  - flag: "new"
+    description: "Review all commits since the last reviewed commit"
+  - flag: "HEAD~N"
+    description: "Review the last N commits"
+  - flag: "abc123..def456"
+    description: "Review a specific commit range"
+  - flag: "[path]"
+    description: "Scope review to a specific file or directory (uncommitted changes)"
+  - flag: "fix"
+    description: "Apply all findings automatically after the audit"
+  - flag: "blocking"
+    description: "Apply MUST-FIX findings only"
+  - flag: "--thorough"
+    description: "Run 3 independent passes with majority voting (automatic for >500 line diffs)"
+  - flag: "batch [file]"
+    description: "Process a queue of commits: review, fix, tag each entry without interactive stops"
+  - flag: "tag"
+    description: "Clean the review backlog by removing already-merged commits (no audit)"
+  - flag: "status"
+    description: "Show unreviewed commit count and list (no audit)"
+
+checks:
+  sections:
+    - name: "Production Code Quality Gates"
+      id_range: "CQ1-CQ22"
+      count: 22
+      items:
+        - id: "CQ3"
+          name: "All parameters validated — including string params"
+          critical: true
+        - id: "CQ4"
+          name: "Auth guard AND query filter — defense in depth"
+          critical: true
+        - id: "CQ5"
+          name: "Secret comparison uses timing-safe equality"
+          critical: true
+        - id: "CQ6"
+          name: "User-provided limit capped with Math.min"
+          critical: true
+        - id: "CQ8"
+          name: "Error strategy matches business impact — not copy-paste catch"
+          critical: true
+        - id: "CQ14"
+          name: "Guard/decorator logic extracted — no copy-paste across controllers"
+          critical: true
+    - name: "Test File Quality Gates"
+      id_range: "Q1-Q17"
+      count: 17
+      items:
+        - id: "Q7"
+          name: "At least one error path test present"
+          critical: true
+        - id: "Q11"
+          name: "All code branches exercised"
+          critical: true
+        - id: "Q13"
+          name: "Tests import actual production function"
+          critical: true
+        - id: "Q15"
+          name: "Content assertions present — not just shape"
+          critical: true
+        - id: "Q17"
+          name: "Assertions verify computed output, not input echo"
+          critical: true
+
+frameworks:
+  - TypeScript
+  - JavaScript
+  - React (TSX/JSX)
+  - Next.js
+  - NestJS
+  - Python
+  - PHP
+  - Vitest
+  - Jest
+  - Prisma
+
+modes:
+  - name: "REPORT"
+    description: "Audit and present findings. Wait for user decision before applying any fix."
+  - name: "FIX-ALL"
+    description: "Apply all findings automatically after the audit. Blocked for TIER 3 and high-risk diffs."
+  - name: "FIX-BLOCKING"
+    description: "Apply MUST-FIX findings only."
+  - name: "--thorough"
+    description: "3-pass multi-pass review with majority voting. Automatic for diffs over 500 lines."
+  - name: "batch"
+    description: "Process a queue of commits non-interactively: review, fix, tag each in sequence."
+
+agents:
+  - name: "Behavior Auditor"
+    role: "Examines logic correctness, error handling paths, edge cases, async safety, and race conditions in changed production files. Reports BEHAV-N findings."
+  - name: "Structure Auditor"
+    role: "Checks naming, imports, circular dependencies, file and function size limits, SRP violations, and coupling. Reports STRUCT-N findings."
+  - name: "CQ Auditor"
+    role: "Independently evaluates CQ1-CQ22 from scratch on the full source of each changed production file — does not inherit the lead's scores. Flags N/A abuse (>60% N/A)."
+
+benchmarks:
+  - claim: "Confidence gate filters findings into 3 buckets: discard (0-25), backlog-only (26-50), report (51-100)."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 2: Confidence Gate — Disposition table"
+  - claim: "7 risk signals escalate the review tier: DB migration, auth changes, API contract changes, money logic, new production files, 500+ lines, AI-generated patterns."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Tier System: Risk Signals section"
+  - claim: "Multi-pass (--thorough) runs 3 independent passes in different file orders; findings seen in only 1 of 3 passes are downgraded one severity tier."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Multi-Pass Review: Majority Voting table"
+  - claim: "Every reviewed commit receives a reviewed/ git tag, enabling zuvo:review status to report unreviewed commit counts."
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 3: Tag Reviewed Commits"
+
+comparison_table:
+  columns: ["Capability", "Manual PR review", "GitHub Copilot review", "zuvo:review"]
+  rows:
+    - ["Consistent depth across all diffs", "Reviewer-dependent", "Varies", "Same 22+17 gates every time"]
+    - ["Confidence scoring", "None", "None", "0-100 per finding, discard below 26"]
+    - ["Blast radius analysis", "None", "None", "impact_analysis traces callers 2 levels deep"]
+    - ["Multi-tenant isolation check (CQ4)", "Reviewer-dependent", "None", "Critical gate, always MUST-FIX"]
+    - ["Auto-fix with test verification", "None", "None", "fix / blocking modes"]
+    - ["Commit tagging for review tracking", "None", "None", "reviewed/ git tags per commit"]

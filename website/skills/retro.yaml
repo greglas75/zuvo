@@ -1,0 +1,177 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: retro
+  title: "retro — Engineering Retrospective from Git Metrics and Backlog"
+  description: "Generate an engineering retrospective from git metrics, backlog state, and skill trends. Report includes 3+ actionable items and delta vs prior retro."
+  category: release
+  og_image: /og/skills/retro.png
+
+seo:
+  target_queries:
+    - "engineering retrospective from git metrics automation"
+    - "deployment frequency lead time churn hotspots git report"
+    - "post-release retrospective backlog health Claude Code"
+    - "git churn hotspots actionable items report"
+    - "automated retro skill usage trends CQ scores"
+  canonical: /en/skills/retro
+
+stats:
+  - label: Phases
+    value: "6"
+    detail: "Window → Git Metrics → Backlog → Skill Trends → Actions → Report"
+  - label: Actionable Items
+    value: "3+"
+    detail: "Minimum 3, derived from data (churn, backlog, quality scores)"
+  - label: Git Metrics
+    value: "3"
+    detail: "Deployment frequency, change lead time, churn hotspots"
+  - label: Report Format
+    value: "Markdown"
+    detail: "audit-results/retro-YYYY-MM-DD.md"
+
+problem: |
+  Release retrospectives are skipped because they take too long to prepare manually.
+  Gathering deployment frequency, identifying churn hotspots, cross-referencing backlog
+  items, and deriving actionable improvements from data typically takes an hour. `zuvo:retro`
+  automates all of it: it reads git history, the project backlog, and the skill usage log,
+  then produces a narrative report with specific, data-backed actionable items and a delta
+  comparison against the prior retro.
+
+how_it_works:
+  - step: Window Detection
+    description: "Resolves the retrospective window from (in priority order): explicit range argument, --since tag, memory/last-ship.json range field, the last 2 git tags, or a HEAD~30 fallback. Counts commits to detect insufficient history (< 10 commits triggers qualitative-only mode)."
+  - step: Git Metrics
+    description: "Computes 3 DORA-adjacent metrics: deployment frequency (git tags in window), change lead time (earliest commit to tag date), and churn hotspots (top 5 most-changed files with commit counts)."
+  - step: Backlog Health
+    description: "Reads memory/backlog.md and counts open, critical, resolved-in-window, and added-in-window items. Identifies the oldest unresolved item by age in days."
+  - step: Skill Usage Trends
+    description: "Reads ~/.zuvo/runs.log, filters to the current project and window, and aggregates most-used skills, average CQ/Q scores, and pass/fail ratios."
+  - step: Actionable Items
+    description: "Derives at least 3 specific items from the data with exact zuvo commands: high-churn files without tests → zuvo:write-tests, instability → zuvo:refactor, critical backlog → zuvo:backlog fix, low CQ/Q scores → zuvo:code-audit or zuvo:write-tests."
+  - step: Report and Output
+    description: "Writes audit-results/retro-YYYY-MM-DD.md with all sections. Compares against the most recent prior retro file for delta metrics. Prints the RETRO COMPLETE terminal block."
+
+output:
+  artifact: "audit-results/retro-YYYY-MM-DD.md"
+  format: Structured markdown report with shipping velocity, churn table, backlog health, quality trends, actionable items, and prior retro comparison.
+  sections:
+    - "Summary (tweetable one-liner)"
+    - "Shipping Velocity (frequency, lead time, commit count)"
+    - "Churn Hotspots (top 5 files with test coverage flag)"
+    - "Backlog Health (open / critical / added / resolved counts)"
+    - "Quality Trends (CQ/Q scores, most-used skills, pass/fail ratio)"
+    - "Actionable Items (3+ with specific zuvo commands)"
+    - "Comparison vs Prior Retro (delta table)"
+
+examples:
+  - title: "Post-release retro"
+    type: invocation
+    command: "zuvo:retro"
+    result: |
+      RETRO COMPLETE
+        Window:      v1.1.0..v1.2.0 (14 days, 47 commits)
+        Releases:    2 in period (frequency: 1 per week)
+        Lead time:   avg 3.2 days (branch create → tag)
+        Hotspots:    src/orders/service.ts (12 changes), src/auth/guard.ts (8 changes)
+        Backlog:     +5 added, -3 resolved, 12 open (2 critical)
+        Report:      audit-results/retro-2026-03-29.md
+
+        Actions:
+        1. zuvo:write-tests src/orders/ — high-churn (12 changes), no test file found
+        2. zuvo:refactor src/auth/guard.ts — 8 changes suggest instability
+        3. zuvo:backlog fix BD-007 — critical debt item open 21 days
+
+  - title: "Explicit range retro"
+    type: invocation
+    command: "zuvo:retro v1.0.0..v1.2.0"
+    result: "Runs the full retrospective for the specified git range instead of auto-detecting from last-ship.json or git tags."
+
+  - title: "Scoped to a monorepo package"
+    type: invocation
+    command: "zuvo:retro --path packages/api"
+    result: "Scopes all git log commands to packages/api/ — required when a monorepo is detected without a --path argument. Without --path on a detected monorepo, retro stops and lists the available packages."
+
+when_to_use: |
+  Run `zuvo:retro` as the final step of the release flow: ship → deploy → canary →
+  release-docs → retro. Also run it periodically (sprint boundary, monthly) to track
+  engineering health trends. The delta comparison against prior retros accumulates into a
+  longitudinal quality record without any manual bookkeeping.
+
+when_not_to_use: |
+  Do not use `zuvo:retro` to fix issues — it is read-only and produces a report with
+  suggested commands. Execute the suggested zuvo commands separately (e.g., `zuvo:write-tests`,
+  `zuvo:refactor`, `zuvo:backlog fix`). For a live backlog view without a full retro, use
+  `zuvo:backlog` directly.
+
+related_skills:
+  - slug: ship
+    relation: "ship establishes the git range and last-ship.json that retro reads"
+  - slug: deploy
+    relation: "deploy completes the release that retro analyses"
+  - slug: canary
+    relation: "canary performance data contributes to quality trends in retro"
+  - slug: release-docs
+    relation: "release-docs precedes retro in the release flow"
+  - slug: backlog
+    relation: "retro reads memory/backlog.md and suggests zuvo:backlog commands for critical items"
+
+faq:
+  - q: "What does zuvo:retro measure?"
+    a: "3 DORA-adjacent git metrics (deployment frequency, change lead time, churn hotspots), backlog health (open/critical/resolved item counts, oldest unresolved item age), and skill usage trends from ~/.zuvo/runs.log (CQ scores, Q scores, pass/fail ratios). All metrics are derived from local data — no external services required."
+  - q: "How does zuvo:retro differ from manually reviewing git log?"
+    a: "It automates the full analysis pipeline: window detection, metric calculation, backlog cross-reference, quality score aggregation, and actionable item derivation — then formats everything into a structured Markdown report with a delta comparison against the prior retro. A manual review produces none of the structured output, comparison table, or specific zuvo commands."
+  - q: "How long does zuvo:retro take?"
+    a: "Typically under 60 seconds for a 30-day window. Git commands (log, diff, tag) run locally. The bottleneck is reading and parsing backlog.md and runs.log — both are local files. Large repos with thousands of commits in the window may take a few minutes for the churn hotspot calculation."
+  - q: "What are the actionable items in a retro report?"
+    a: "At least 3 items, each with a specific file or backlog ID and a specific zuvo command. Derived from data: high-churn files without tests → zuvo:write-tests, churn instability → zuvo:refactor, critical backlog items → zuvo:backlog fix, low average CQ or Q scores → zuvo:code-audit or zuvo:write-tests. If fewer than 3 can be derived from data, baseline audit commands are added."
+  - q: "Does zuvo:retro work on monorepos?"
+    a: "Yes, with --path. If retro detects monorepo signals (turbo.json, nx.json, pnpm-workspace.yaml) and no --path is provided, it stops immediately and lists the available packages. Provide --path packages/api (or any package directory) to scope all git log commands to that directory."
+
+arguments:
+  - flag: "(no flags)"
+    description: "Auto-detect window from memory/last-ship.json or last two git tags"
+  - flag: "<range>"
+    description: "Explicit git range (e.g., v1.0.0..v1.2.0)"
+  - flag: "--since <tag>"
+    description: "Start of retrospective window through HEAD (open-ended)"
+  - flag: "--path <dir>"
+    description: "Scope git analysis to a subdirectory (required for monorepos)"
+
+checks: null
+
+frameworks:
+  - Any (language-agnostic git analysis)
+
+modes:
+  - name: full
+    description: "All 6 phases: window detection, git metrics, backlog health, skill trends, actionable items, report. Requires at least 10 commits in the window."
+  - name: qualitative-only
+    description: "Triggered by E13 (< 10 commits). Skips git metrics (Phase 1) and skill trends (Phase 3). Backlog health and actionable items still produced."
+
+agents: null
+
+benchmarks:
+  - claim: "Minimum 3 actionable items per report — each with a specific file/ID and exact zuvo command"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 4 derivation rules"
+  - claim: "3 DORA-adjacent metrics computed: deployment frequency, change lead time, top-5 churn hotspots"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 1"
+  - claim: "Delta comparison vs prior retro built from audit-results/retro-*.md files — longitudinal tracking without external tooling"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 5 Prior Retro Comparison"
+
+comparison_table:
+  columns: ["Capability", "Manual retrospective", "DORA dashboard (external)", "zuvo:retro"]
+  rows:
+    - ["Git churn hotspots", "Manual git log", "No", "Yes — top 5 with test flag"]
+    - ["Backlog health cross-reference", "Manual", "No", "Yes — open/critical/resolved counts"]
+    - ["Skill usage trends", "No", "No", "Yes — from ~/.zuvo/runs.log"]
+    - ["Prior retro delta comparison", "Manual", "Yes (SLA)", "Yes — from local retro files"]
+    - ["Actionable items with commands", "Manual", "No", "Yes — 3+ with specific zuvo commands"]
+    - ["Works without external services", "Yes", "No", "Yes — all local data"]

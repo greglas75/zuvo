@@ -1,0 +1,212 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: execute
+  title: "Execute — TDD Pipeline Orchestration with Dual-Review Quality Gates"
+  description: "Drives a plan to completion task-by-task with 2 review gates per task. CQ1-CQ22 + Q1-Q17 quality checks. Deferred findings persisted to backlog."
+  category: pipeline
+  og_image: /og/skills/execute.png
+
+seo:
+  target_queries:
+    - "automated TDD implementation pipeline Claude Code"
+    - "code quality gates per task during implementation"
+    - "spec review and quality review before commit"
+    - "execute implementation plan with dual review agents"
+    - "backlog persistence during feature development"
+  canonical: /en/skills/execute
+
+stats:
+  - label: Prerequisite
+    value: plan
+    detail: Approved docs/specs/*-plan.md required
+  - label: Review Gates per Task
+    value: "2"
+    detail: Spec Reviewer (compliance) + Quality Reviewer (CQ/Q gates)
+  - label: Quality Checks
+    value: "39"
+    detail: CQ1-CQ22 on production code, Q1-Q17 on test code
+  - label: Critical Gates
+    value: "11"
+    detail: CQ3/4/5/6/8/14 + Q7/11/13/15/17 — any failure blocks commit
+  - label: Max Retry Loops
+    value: "3"
+    detail: Per review type per task, then escalated to user
+
+problem: |
+  Having an approved plan is not enough — implementation without automated checkpoints produces code that drifts from the spec, skips quality standards under time pressure, and accumulates silent technical debt. zuvo:execute is the orchestration layer that prevents this: it processes each plan task through a mandatory 9-step cycle including TDD implementation, independent spec compliance review, and independent code quality review. No task reaches a commit without passing both gates. Findings that cannot be fixed immediately are persisted to the backlog rather than silently dropped.
+
+how_it_works:
+  - step: "Hard Gate: Plan Required"
+    description: "zuvo:execute searches for docs/specs/*-plan.md. If none exists, it redirects to zuvo:plan. The plan is parsed to extract the full task list with files, complexity ratings, TDD steps, and dependency order."
+  - step: "Artifact Detection"
+    description: "The skill reads both the spec and plan documents, and checks memory/backlog.md for existing tech debt relevant to the files being touched. Reviewers use the spec to verify compliance."
+  - step: "Task Execution Loop (9 steps per task)"
+    description: "For each task in dependency order: (1) mark in-progress, (2) dispatch implementer (Sonnet for standard tasks, Opus for complex), (3) handle DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED status, (4) dispatch Spec Reviewer, (5) handle COMPLIANT / ISSUES FOUND verdict, (6) dispatch Quality Reviewer, (7) handle PASS / FAIL verdict, (8) mark completed with scores, (9) update CodeSift index."
+  - step: "Dual Review Gates"
+    description: "The Spec Reviewer reads actual code independently (not the implementer's report) and verifies compliance with the plan. The Quality Reviewer runs CQ1-CQ22 on production files and Q1-Q17 on test files. Both reviewers operate at up to 3 re-dispatch iterations per task before escalating to you."
+  - step: "Backlog Persistence and Final Summary"
+    description: "Findings accepted as-is, implementer scope concerns, and deferred quality issues are all persisted to memory/backlog.md with fingerprints and deduplication. The final report shows task-by-task CQ and Q scores, all files changed, and backlog items added."
+
+output:
+  artifact: "Committed code per task + memory/backlog.md (updated) + execution summary"
+  format: "A task-by-task completion report with status, CQ score, Q score, and notes for each task; a full list of files changed across all tasks; and a list of backlog items added during execution."
+  sections:
+    - "Per-task status (COMPLETED / SKIPPED / BLOCKED)"
+    - "CQ score (out of 22) per task"
+    - "Q score (out of 17) per task"
+    - "Files changed across all tasks"
+    - "Backlog items added during execution"
+
+examples:
+  - title: "Per-task progress output during execution"
+    type: output_sample
+    sample:
+      language: markdown
+      code: |
+        --- Task 3/8: Add order status event emission ---
+        Status: IN_PROGRESS
+        Complexity: standard
+        Files: src/services/order.service.ts, src/services/order.service.spec.ts
+
+        [implementer dispatched — Sonnet — status: DONE]
+        [spec reviewer dispatched — COMPLIANT (iteration 1)]
+        [quality reviewer dispatched — PASS (CQ: 20/22, Q: 16/17)]
+
+        --- Task 3/8: Add order status event emission ---
+        Status: COMPLETED
+        Files changed: src/services/order.service.ts, src/services/order.service.spec.ts
+        Spec review: COMPLIANT (iteration 1)
+        Quality review: PASS (CQ: 20/22, Q: 16/17)
+    explanation: "Every task produces a structured status block. CQ and Q scores are surfaced per task so quality degradation is visible before it accumulates across the feature."
+
+  - title: "Handling a BLOCKED task"
+    type: output_sample
+    sample:
+      language: markdown
+      code: |
+        --- Task 5/8: Integrate with email notification service ---
+        Status: BLOCKED
+        Reason: Implementer cannot determine the correct email service injection pattern —
+                EmailService is injected differently in test vs production context.
+
+        Options:
+        1. Provide context — share the injection pattern from AGENTS.md or similar
+        2. Skip this task — mark SKIPPED, continue with Task 6
+        3. Abort pipeline — stop execution, preserve completed tasks 1-4
+    explanation: "BLOCKED tasks are never silently skipped. You always receive the reason and 3 explicit options. Completed tasks are preserved regardless of your choice."
+
+when_to_use: |
+  Use zuvo:execute when an approved plan document exists at docs/specs/*-plan.md produced by zuvo:plan. It is the final stage of the brainstorm → plan → execute pipeline. The prerequisite is the plan artifact; the output is committed, quality-reviewed code for each task in the plan. You can also invoke zuvo:execute mid-pipeline to resume after a session interruption — it detects which tasks are already completed and continues from where it left off.
+
+when_not_to_use: |
+  If no plan exists, zuvo:execute will redirect you to zuvo:plan automatically. For small 1-5 file features that do not need the full pipeline, use zuvo:build instead — it combines planning, implementation, and quality review in a single skill without requiring a separate plan document. For fixing a specific bug rather than implementing a planned feature, use zuvo:debug.
+
+related_skills:
+  - slug: plan
+    relation: "prior pipeline stage — produces the plan document that zuvo:execute requires"
+  - slug: brainstorm
+    relation: "first pipeline stage — produces the spec that informed the plan"
+  - slug: build
+    relation: "alternative for 1-5 file features without a separate plan document"
+  - slug: review
+    relation: "optional post-execution review to catch anything the dual-review gates missed"
+  - slug: backlog
+    relation: "deferred findings from execution are persisted here; use backlog to manage them"
+  - slug: worktree
+    relation: "if executing inside a git worktree, zuvo:worktree handles merge/PR/cleanup afterward"
+
+faq:
+  - q: "What does zuvo:execute do for each task?"
+    a: "Each task goes through a 9-step cycle: mark in-progress, dispatch implementer, handle implementer status (DONE / BLOCKED / NEEDS_CONTEXT), dispatch Spec Reviewer, handle compliance verdict, dispatch Quality Reviewer, handle quality verdict, mark completed with scores, update the CodeSift index. Both reviewers operate independently — the Spec Reviewer reads actual code, not the implementer's report."
+  - q: "How is zuvo:execute different from zuvo:build?"
+    a: "zuvo:execute is a pipeline orchestrator — it processes tasks from an existing plan document produced by zuvo:plan. It does not write code itself; it dispatches implementer agents. zuvo:build is a standalone feature development skill for 1-5 file changes that handles planning, implementation, and quality review in a single workflow without requiring a pre-existing plan document."
+  - q: "What happens when a quality review fails?"
+    a: "The implementer is re-dispatched with the reviewer's findings (file:line references for each failing gate). This loop repeats up to 3 times. After 3 iterations with unresolved failures, both positions are presented to you — the failing gates, what the implementer has done, and whether the issues are fixable or represent a design disagreement. You decide: accept as-is (with backlog entry), require a fix, or provide guidance."
+  - q: "What quality gates does zuvo:execute enforce?"
+    a: "The Quality Reviewer runs CQ1-CQ22 on production code and Q1-Q17 on test code. Critical gates are CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 (production) and Q7, Q11, Q13, Q15, Q17 (tests). Any critical gate failure blocks the task from completing — not just from committing — until either fixed or explicitly accepted by you with a backlog entry."
+  - q: "What frameworks and languages does zuvo:execute support?"
+    a: "zuvo:execute detects the project stack from config files and passes the correct rules file (TypeScript, React/Next.js, NestJS, Python) to each implementer agent. The implementer agents produce stack-appropriate code, tests, and verification commands. All 39 quality gates (CQ1-CQ22 + Q1-Q17) apply regardless of stack."
+
+arguments:
+  - flag: "<plan-path>"
+    description: "Optional path to a specific plan document, e.g., zuvo:execute docs/specs/my-plan.md. If omitted, the skill searches docs/specs/*-plan.md automatically."
+
+checks:
+  sections:
+    - name: "Production Code Quality"
+      id_range: "CQ1-CQ22"
+      count: 22
+      items:
+        - id: CQ3
+          name: "Input validation at boundaries"
+          critical: true
+        - id: CQ4
+          name: "Auth guard paired with query filter"
+          critical: true
+        - id: CQ5
+          name: "No PII in logs"
+          critical: true
+        - id: CQ6
+          name: "User-provided limits capped"
+          critical: true
+        - id: CQ8
+          name: "Infrastructure errors handled with timeout"
+          critical: true
+        - id: CQ14
+          name: "No duplicated logic blocks"
+          critical: true
+    - name: "Test Code Quality"
+      id_range: "Q1-Q17"
+      count: 17
+      items:
+        - id: Q7
+          name: "Error paths have dedicated tests"
+          critical: true
+        - id: Q11
+          name: "All branches exercised"
+          critical: true
+        - id: Q13
+          name: "Tests import real production code"
+          critical: true
+        - id: Q15
+          name: "Assertions verify values, not just shape"
+          critical: true
+        - id: Q17
+          name: "Expected values from spec, not copied from implementation"
+          critical: true
+
+frameworks:
+  - TypeScript
+  - JavaScript
+  - Python
+  - React / Next.js
+  - NestJS
+  - PHP
+
+modes: null
+
+agents:
+  - name: Implementer
+    role: "Writes production code and tests following the plan's TDD steps. Routed to Sonnet for standard tasks and Opus for complex tasks (4+ files or architecture decisions)."
+  - name: Spec Reviewer
+    role: "Read-only agent that independently verifies implemented code against the plan and spec. Does not receive the implementer's self-report."
+  - name: Quality Reviewer
+    role: "Read-only agent that runs CQ1-CQ22 on production files and Q1-Q17 on test files, producing FIX-NOW, CRITICAL-BLOCKED, and DEFER classifications."
+
+benchmarks:
+  - claim: "2 independent review agents run on every task — spec compliance and quality gates are separate concerns"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Steps 4-7 — Spec Reviewer and Quality Reviewer dispatched independently per task"
+  - claim: "Findings above 25% confidence are persisted to backlog — zero silent discards"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Backlog Persistence — confidence routing 0-25 discard, 26-50 backlog, 51+ report"
+  - claim: "Maximum 3 retry iterations per review type per task before user escalation"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Retry Limits Summary table"
+
+comparison_table: null

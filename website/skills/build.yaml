@@ -1,0 +1,254 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: build
+  title: "Build — Scoped Feature Development with Parallel Blast Radius Analysis"
+  description: "1-5 file features with parallel blast radius + duplication scanning, CQ1-CQ22 and Q1-Q17 quality gates, and backlog persistence."
+  category: task
+  og_image: /og/skills/build.png
+
+seo:
+  target_queries:
+    - "scoped feature development with code quality gates"
+    - "blast radius analysis before adding new feature"
+    - "prevent code duplication when building features"
+    - "automated CQ quality gates for TypeScript features"
+    - "1-5 file feature implementation Claude Code"
+  canonical: /en/skills/build
+
+stats:
+  - label: Parallel Analysis Agents
+    value: "2"
+    detail: Blast Radius Mapper + Existing Code Scanner
+  - label: Quality Gates
+    value: "39"
+    detail: CQ1-CQ22 production + Q1-Q17 test code
+  - label: Critical Gates
+    value: "11"
+    detail: CQ3/4/5/6/8/14 + Q7/11/13/15/17 — any failure blocks commit
+  - label: Scope
+    value: "1-5"
+    detail: Files — use zuvo:brainstorm pipeline for larger scope
+  - label: Audit Agents
+    value: "2"
+    detail: Independent CQ Auditor + Test Quality Auditor after implementation
+
+problem: |
+  Adding a new feature without understanding its blast radius leads to broken callers, duplicated utility functions, and technical debt that compounds over time. Most developers skip the analysis phase under time pressure, only to spend twice as long debugging regressions. zuvo:build enforces a systematic approach: two parallel analysis agents map the impact and check for duplication before a plan is written, two independent audit agents verify quality after code is written, and all deferred findings are persisted to the backlog rather than silently dropped.
+
+how_it_works:
+  - step: "Phase 0: Project Context"
+    description: "The skill reads AGENTS.md or CLAUDE.md for project conventions, detects the tech stack, loads the matching rules (TypeScript, NestJS, Python, etc.), and checks memory/backlog.md for open items related to the feature area."
+  - step: "Phase 1: Parallel Analysis"
+    description: "2 agents run simultaneously in the background: the Blast Radius Mapper traces all importers and callers of the target files, flags widely-imported modules (5+ importers) as high-risk, and identifies test coverage gaps. The Existing Code Scanner searches for overlapping services, helpers, and patterns to prevent building what already exists."
+  - step: "Phase 2: Implementation Plan"
+    description: "A plan is written incorporating agent results: Feature Summary, Scope Fence (exact allowed/forbidden files), Blast Radius from Agent 1, Duplication Check from Agent 2, Implementation Steps, Test Strategy, File Size Check, and Open Questions. You review and approve before Phase 3 starts (unless --auto flag is passed)."
+  - step: "Phase 3: Implement + Self-Evaluate"
+    description: "Code is written following the scope fence. After each production file, CQ1-CQ22 self-evaluation runs with evidence for every critical gate. Tests are written per the test strategy, followed by Q1-Q17 self-evaluation. Critical gate violations are fixed before writing tests."
+  - step: "Phase 4: Independent Audit + Verify"
+    description: "A CQ Auditor agent and Test Quality Auditor agent run in parallel, independently reviewing the full files (not just diffs). All test, type, and lint commands are run. FIX-NOW items are applied immediately; CRITICAL-BLOCKED items block commit; DEFER items go to the backlog."
+  - step: "Phase 5: Backlog Persistence + Commit"
+    description: "All deferred findings are persisted to memory/backlog.md with fingerprints and deduplication. Only the explicitly scoped files are staged (never git add -A). A build tag is created for clean rollback, and next-step suggestions are printed."
+
+output:
+  artifact: "Committed code + memory/backlog.md (updated)"
+  format: "A BUILD COMPLETE summary with feature description, file counts, test results, verification status, CQ/Q scores, backlog items, commit hash, and tag name."
+  sections:
+    - "Files created and modified"
+    - "Test results (all passing)"
+    - "Verification (tests / types / lint)"
+    - "CQ score across production files"
+    - "Q score across test files"
+    - "Backlog items persisted"
+    - "Commit hash and tag"
+
+examples:
+  - title: "Blast Radius Report from Phase 1"
+    type: output_sample
+    sample:
+      language: markdown
+      code: |
+        BLAST RADIUS REPORT
+        Files analyzed: 2
+        Direct dependents:
+          src/controllers/order.controller.ts: OrderService.create
+          src/modules/checkout/checkout.service.ts: OrderService.findByUser
+          src/modules/checkout/checkout.service.spec.ts: (test coverage)
+        Test coverage: order.service.ts ✓ (order.service.spec.ts), order-helpers.ts ✗ (no tests)
+        High-risk items: order.service.ts (7 importers — widely imported)
+        Recommendation: Add tests for order-helpers.ts before modifying. Be cautious with
+                        OrderService public interface changes — 7 consumers.
+    explanation: "The blast radius report surfaces hidden dependencies before any code is written. The test coverage gap for order-helpers.ts is flagged so the plan can include writing those tests first."
+
+  - title: "Build with auto flags for CI/scripted use"
+    type: invocation
+    command: "zuvo:build add CSV export for order history --auto --auto-commit"
+    result: |
+      STACK: TypeScript/NestJS | RUNNER: vitest
+      BACKLOG: none
+      [Dispatching blast radius + duplication agents in parallel...]
+      [Plan auto-approved — --auto flag]
+      [Implementation complete — 3 files created, 2 modified]
+      [CQ Auditor: PASS 21/22 | Test Auditor: PASS 16/17]
+      [Auto-committing — --auto-commit flag]
+      BUILD COMPLETE — commit: a3f92b1 — tag: build-2026-03-29-csv-export
+
+  - title: "Critical gate failure blocks commit"
+    type: before_after
+    before:
+      language: typescript
+      code: |
+        // CQ6 FAIL: user-provided limit passed uncapped
+        async listOrders(userId: string, limit: number) {
+          return this.db.order.findMany({ where: { userId }, take: limit });
+        }
+    after:
+      language: typescript
+      code: |
+        // CQ6 PASS: limit capped with Math.min
+        const MAX_PAGE_SIZE = 100;
+        async listOrders(userId: string, limit = 20) {
+          const take = Math.min(limit, MAX_PAGE_SIZE);
+          return this.db.order.findMany({ where: { userId }, take });
+        }
+    gate: CQ6
+    explanation: "CQ6 (user-provided limits uncapped) is a critical gate. The CQ Auditor flags it as CRITICAL-BLOCKED and the implementer fixes it before the commit is allowed."
+
+when_to_use: |
+  Use zuvo:build for concrete features affecting 1-5 files where the approach is already clear. It is the right tool when you want quality enforcement without the full brainstorm → plan → execute pipeline overhead. If you are touching more than 5 files or the correct design approach is unclear, start with zuvo:brainstorm instead.
+
+when_not_to_use: |
+  For bug investigation and fixes, use zuvo:debug — build is not designed for root cause analysis. For structural reorganization (extracting methods, splitting god classes, breaking circular dependencies), use zuvo:refactor. For features spanning more than 5 files or when the design needs exploration, use the zuvo:brainstorm → zuvo:plan → zuvo:execute pipeline. For code review without implementing new features, use zuvo:review.
+
+related_skills:
+  - slug: brainstorm
+    relation: "use first when the feature scope exceeds 5 files or the design approach is unclear"
+  - slug: refactor
+    relation: "for restructuring existing code without adding new features"
+  - slug: debug
+    relation: "for bug investigation — build is for new feature implementation"
+  - slug: review
+    relation: "optional post-build review with independent audit agents"
+  - slug: backlog
+    relation: "deferred CQ/Q findings from build are persisted here"
+
+faq:
+  - q: "What does zuvo:build check during implementation?"
+    a: "After writing each production file, build runs CQ1-CQ22 self-evaluation with evidence for every critical gate. After writing tests, it runs Q1-Q17 self-evaluation. Then two independent agents run in parallel: a CQ Auditor reads the full production files and a Test Quality Auditor reads the full test files. FIX-NOW items are applied before commit; DEFER items go to the backlog."
+  - q: "How is zuvo:build different from the brainstorm/plan/execute pipeline?"
+    a: "zuvo:build is a self-contained 5-phase workflow for features affecting 1-5 files where the approach is already clear. The full pipeline (brainstorm → plan → execute) is for larger features requiring upfront design exploration, architecture analysis, and a formal spec document. Build skips spec production and operates directly from your feature description."
+  - q: "How long does a zuvo:build session take?"
+    a: "The two parallel Phase 1 analysis agents run in the background while the plan is being written, adding minimal latency. Total time depends on feature complexity: a small 2-3 file feature typically takes 5-10 minutes; a 5-file feature with complex logic takes 15-25 minutes. Both independent audit agents in Phase 4 run in parallel."
+  - q: "Can zuvo:build auto-approve the plan and commit?"
+    a: "Yes — pass --auto to skip Phase 2 plan approval and --auto-commit to skip Phase 5 commit confirmation. Both can be combined. All analysis agents and quality gates run regardless of these flags — they only skip the interactive confirmation steps, not the quality enforcement."
+  - q: "What frameworks does zuvo:build support?"
+    a: "zuvo:build detects the stack from config files and loads the matching rules. Supported: TypeScript, JavaScript, Python, React/Next.js, NestJS, PHP. The quality gate criteria (CQ1-CQ22, Q1-Q17) are language-independent; the generated code, verification commands, and test patterns are stack-specific."
+
+arguments:
+  - flag: "<feature description>"
+    description: "What to build, passed as free text, e.g., zuvo:build add CSV export for order history."
+  - flag: "--auto"
+    description: "Skip user approval of the implementation plan in Phase 2. All agents and quality gates still run."
+  - flag: "--auto-commit"
+    description: "Commit staged changes without asking for confirmation in Phase 5. Can be combined with --auto."
+
+checks:
+  sections:
+    - name: "Production Code Quality"
+      id_range: "CQ1-CQ22"
+      count: 22
+      items:
+        - id: CQ3
+          name: "Input validation at entry points"
+          critical: true
+        - id: CQ4
+          name: "Auth guard paired with query filter"
+          critical: true
+        - id: CQ5
+          name: "No PII in logs or error messages"
+          critical: true
+        - id: CQ6
+          name: "User-provided limits capped with Math.min"
+          critical: true
+        - id: CQ8
+          name: "Infrastructure errors handled with timeout/fallback"
+          critical: true
+        - id: CQ14
+          name: "No duplicated logic blocks"
+          critical: true
+        - id: CQ16
+          name: "Money calculations use integer-cents arithmetic"
+          critical: false
+        - id: CQ19
+          name: "API responses do not leak internal fields"
+          critical: false
+    - name: "Test Code Quality"
+      id_range: "Q1-Q17"
+      count: 17
+      items:
+        - id: Q7
+          name: "Error paths have dedicated tests"
+          critical: true
+        - id: Q11
+          name: "All branches exercised"
+          critical: true
+        - id: Q13
+          name: "Tests import real production code"
+          critical: true
+        - id: Q15
+          name: "Assertions verify values, not just shape"
+          critical: true
+        - id: Q17
+          name: "Expected values from spec, not copied from implementation"
+          critical: true
+
+frameworks:
+  - TypeScript
+  - JavaScript
+  - Python
+  - React / Next.js
+  - NestJS
+  - PHP
+
+modes:
+  - name: "--auto"
+    description: "Skip plan approval gate in Phase 2. Quality gates and audit agents run regardless."
+  - name: "--auto-commit"
+    description: "Skip commit confirmation in Phase 5. Can be combined with --auto."
+
+agents:
+  - name: Blast Radius Mapper
+    role: "Traces all importers and callers of target files, flags widely-imported modules (5+ importers), and identifies test coverage gaps. Runs on Sonnet in Phase 1 (parallel)."
+  - name: Existing Code Scanner
+    role: "Searches for overlapping services, helpers, and patterns that would be duplicated by the planned feature. Runs on Haiku in Phase 1 (parallel)."
+  - name: Test Quality Auditor
+    role: "Read-only agent that independently verifies test files against Q1-Q17 gates in Phase 4 (parallel with CQ Auditor)."
+  - name: CQ Auditor
+    role: "Read-only agent that independently verifies full production files against CQ1-CQ22 gates in Phase 4 (parallel with Test Quality Auditor)."
+
+benchmarks:
+  - claim: "2 analysis agents run in parallel in the background while the plan is being written"
+    type: speed
+    verifiable: true
+    source: "SKILL.md Phase 1 — both agents dispatched with run_in_background:true"
+  - claim: "Files staged explicitly by name — git add -A is never used"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 5.2 — git add [explicit file list — never -A or .]"
+  - claim: "Build tag created after every commit for clean rollback to git revert HEAD"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 5.3 — git tag build-[YYYY-MM-DD]-[short-slug]"
+
+comparison_table:
+  columns: ["Capability", "Direct Coding", "zuvo:build"]
+  rows:
+    - ["Pre-implementation blast radius", "None", "Blast Radius Mapper agent"]
+    - ["Duplication check", "None", "Existing Code Scanner agent"]
+    - ["Scope fence enforcement", "None", "ALLOWED / FORBIDDEN file list"]
+    - ["CQ1-CQ22 self-eval", "Optional", "Mandatory with critical gate blocking"]
+    - ["Q1-Q17 self-eval", "Optional", "Mandatory with critical gate blocking"]
+    - ["Independent post-implementation audit", "None", "CQ Auditor + Test Quality Auditor"]
+    - ["Deferred findings", "Forgotten", "Persisted to memory/backlog.md"]
+    - ["File size enforcement", "None", "Checked against file-limits.md per file"]

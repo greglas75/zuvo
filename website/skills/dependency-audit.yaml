@@ -1,0 +1,235 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: dependency-audit
+  title: "Dependency Audit — 10-Dimension Supply Chain and Internal Coupling Check"
+  description: "Dependency audit for Node.js/TypeScript: 10 dimensions — CVEs, dead deps, GPL licenses, circular imports, arch violations, and 6-month change coupling."
+  category: audit
+  og_image: /og/skills/dependency-audit.png
+
+seo:
+  target_queries:
+    - "find unused npm dependencies TypeScript project"
+    - "circular dependency detection NestJS Next.js"
+    - "GPL license in production Node.js dependency audit"
+    - "architecture boundary violation import layer check"
+    - "dependency coupling instability metrics TypeScript"
+  canonical: /en/skills/dependency-audit
+
+stats:
+  - label: "Dimensions"
+    value: "10"
+    detail: "D1-D10"
+  - label: "Critical Gates"
+    value: "4"
+    detail: "D1, D4, D6, D8"
+  - label: "Supported Package Managers"
+    value: "4"
+    detail: "npm, pnpm, yarn, bun"
+  - label: "Internal Coupling Dims"
+    value: "5"
+    detail: "D6-D10"
+
+problem: |
+  External dependencies accumulate CVEs, abandoned packages, and GPL licenses silently over months.
+  Internal dependencies accumulate circular imports, architecture boundary violations, and barrel files that defeat tree-shaking — often introduced by well-intentioned refactoring.
+  Most tools check either external dependencies (npm audit) or internal coupling (dep-cruiser), but not both together.
+  zuvo:dependency-audit combines both in 10 scored dimensions, applies false-positive filters for known safe patterns, and produces a "Delete These Tomorrow" list of unused deps removable with zero code changes.
+
+how_it_works:
+  - step: "Phase 0 — Preflight"
+    description: "Locates package.json, detects package manager (npm/pnpm/yarn/bun), detects framework (Next.js, NestJS, Vite, Express) for D8 layer rules, and checks tool availability: PM built-ins, npx knip, npx license-checker, npx depcruise, npx madge."
+  - step: "Phase 1 — Data Collection"
+    description: "Collects PM audit output (CVEs), PM outdated output (version lag), lockfile analysis (install scripts, git deps, integrity), manifest analysis (specifier types, overrides). Builds internal dependency graph via dep-cruiser, madge, or grep fallback."
+  - step: "Phase 2 — Dimension Analysis"
+    description: "When parallel dispatch is available, runs 3 agents simultaneously: Supply Chain Scanner (D1, D4), Coupling Analyzer (D6, D7, D8, D9), Freshness Checker (D2, D3, D5). D10 (change coupling via git log) runs in the lead agent."
+  - step: "Phase 3 — Verification & Scoring"
+    description: "Applies false-positive filters (well-known build tools with install scripts, knip-missed framework plugins, type-only cycles). Scores D1-D10 with N/A handling for dimensions with insufficient data. 4 critical gates: D1, D4, D6, D8."
+  - step: "Phase 4 — Report"
+    description: "Writes to audits/dependency-audit-[date].md. Includes dimension score table with tool used per dimension, critical gate status, Delete These Tomorrow list, cross-cutting patterns (e.g., barrel causing circular deps), and remediation roadmap."
+
+output:
+  artifact: "audits/dependency-audit-YYYY-MM-DD.md"
+  format: "Markdown report with dimension scores (tool used per dim), critical gate status, Delete These Tomorrow list, cross-cutting patterns table, all findings by severity, and remediation roadmap."
+  sections:
+    - "Metadata (PM, scope, dep counts)"
+    - "Executive summary with grade"
+    - "Dimension scores with tool used"
+    - "Critical gate status (D1, D4, D6, D8)"
+    - "Delete These Tomorrow"
+    - "Findings sorted by severity"
+    - "Cross-cutting patterns"
+    - "Remediation roadmap"
+
+examples:
+  - title: "Full project audit"
+    type: invocation
+    command: "zuvo:dependency-audit full"
+    result: "Audits all 10 dimensions. Detects PM, builds dependency graph, runs 3 parallel agents, applies false-positive filters. Writes report with Delete These Tomorrow list and critical gate status."
+  - title: "Supply chain only — CVEs and licenses"
+    type: invocation
+    command: "zuvo:dependency-audit --supply-chain"
+    result: "D1 only: runs npm/pnpm audit, checks install scripts, git dependencies, lockfile integrity. Fast pre-release CVE check."
+  - title: "Coupling analysis only"
+    type: invocation
+    command: "zuvo:dependency-audit --coupling"
+    result: "D6-D9: circular dependency detection, instability metrics, architecture boundary violations, barrel file health. Useful after a refactoring to verify coupling was improved."
+  - title: "Architecture boundary violation"
+    type: before_after
+    gate: "D8"
+    before:
+      language: typescript
+      code: |
+        // components/OrderCard.tsx
+        import { db } from '@/lib/db/prisma';
+        const order = await db.order.findUnique({ where: { id } });
+    after:
+      language: typescript
+      code: |
+        // components/OrderCard.tsx
+        import { getOrder } from '@/lib/services/orders';
+        const order = await getOrder(id);
+    explanation: "D8 flags UI components importing directly from the data layer — a layer violation. Fix: route through a service layer. In Next.js, server components are the server layer and are exempt."
+
+when_to_use: |
+  Run before releases, after adding many dependencies, as a periodic health check, and after monorepo restructuring.
+  Also appropriate before lock-in reviews when evaluating vendor SDK dependency spread across the codebase.
+
+when_not_to_use: |
+  For code quality patterns (null checks, error handling, atomicity), use zuvo:code-audit or zuvo:review.
+  For database-specific issues (queries, indexes, schema), use zuvo:db-audit.
+  For full-stack performance (rendering, bundle size, Web Vitals), use zuvo:performance-audit.
+  For OWASP security posture beyond CVEs, use zuvo:security-audit.
+  This skill is Node.js/TypeScript only — Python, Go, Rust, and Java are not supported.
+
+related_skills:
+  - slug: security-audit
+    relation: "Overlap — S11 (dependency CVEs) is a subset of D1; security-audit adds OWASP dimensions"
+  - slug: refactor
+    relation: "Follow-up — fix circular deps (D6), boundary violations (D8), barrel issues (D9)"
+  - slug: structure-audit
+    relation: "Complement — SA dimensions cover directory structure; D8-D9 cover import-level coupling"
+  - slug: performance-audit
+    relation: "Overlap — D5 (bundle weight) maps to bundle size and tree-shaking performance dimensions"
+
+faq:
+  - q: "What does zuvo:dependency-audit check?"
+    a: "It audits 10 dimensions: D1 (supply chain CVEs, install scripts, lockfile integrity), D2 (freshness — major version lag, abandoned packages), D3 (dead/unused deps via knip), D4 (license compliance — GPL in production), D5 (bundle weight — heavy deps with lighter alternatives), D6 (circular dependencies), D7 (instability metrics — fan-in/fan-out via dep-cruiser), D8 (architecture boundary violations), D9 (barrel file health), and D10 (change coupling via 6-month git log analysis)."
+  - q: "How does dependency-audit handle missing tools?"
+    a: "It degrades gracefully per dimension. dep-cruiser provides the richest D6/D7 analysis; madge is the fallback; grep-based import scanning is always available. knip handles D3 (dead deps) when available; grep cross-referencing is the fallback. D5 uses the Bundlephobia API for triage. Use --no-api to skip external API calls in air-gapped environments."
+  - q: "What are the 4 critical gates?"
+    a: "D1=0 (known exploit-grade CVE in production), D4=0 (GPL/AGPL in production closed-source app), D6=0 (runtime circular dependency causing initialization bug), and D8=0 (secret leaked to client bundle). Any of these triggers a FAIL grade regardless of the total score."
+  - q: "How long does dependency-audit take?"
+    a: "A typical medium-size project takes 5-10 minutes with parallel agents. Focused flags like --supply-chain or --dead complete faster. D10 (change coupling) requires 3+ months of git history and may add a minute for large repos."
+  - q: "Which package managers does dependency-audit support?"
+    a: "npm, pnpm, Yarn (Classic 1.x and Berry 2+), and Bun. Package manager detection is automatic. npm query selectors are npm-specific; pnpm/yarn/bun fall back to lockfile grep analysis. Yarn version detection is critical because Classic and Berry have different command syntax."
+
+arguments:
+  - flag: "(empty) or full"
+    description: "All 10 dimensions, scope = project root."
+  - flag: "[path]"
+    description: "Scope to a package or directory. External dims (D1-D5) require a package.json above the path."
+  - flag: "--supply-chain"
+    description: "D1 only — CVEs, install scripts, lockfile integrity."
+  - flag: "--coupling"
+    description: "D6, D7, D8, D9 only — circular deps, metrics, architecture, barrels."
+  - flag: "--dead"
+    description: "D3 only — unused production dependencies."
+  - flag: "--bundle"
+    description: "D5 only — bundle weight and tree-shaking impact."
+  - flag: "--lock-in"
+    description: "D7 with vendor lock-in focus — SDK spread across files."
+  - flag: "--no-api"
+    description: "Skip Bundlephobia and OpenSSF API calls for air-gapped environments."
+
+checks:
+  sections:
+    - name: "External Dependency Health"
+      id_range: "D1-D5"
+      count: 5
+      items:
+        - id: D1
+          name: "Supply chain — CVEs, install scripts, git deps, lockfile integrity"
+          critical: true
+        - id: D2
+          name: "Freshness — major version lag, abandoned packages, deprecated deps"
+          critical: false
+        - id: D3
+          name: "Dead dependencies — unused production deps, phantom deps, duplicates"
+          critical: false
+        - id: D4
+          name: "License compliance — GPL/AGPL in production, unknown licenses"
+          critical: true
+        - id: D5
+          name: "Bundle weight — heavy deps with lighter alternatives, tree-shaking support"
+          critical: false
+    - name: "Internal Coupling"
+      id_range: "D6-D10"
+      count: 5
+      items:
+        - id: D6
+          name: "Circular dependencies — runtime cycles causing initialization bugs"
+          critical: true
+        - id: D7
+          name: "Coupling metrics — instability score, fan-in/fan-out, vendor lock-in spread"
+          critical: false
+        - id: D8
+          name: "Architecture boundary violations — layer rules, secret in client bundle"
+          critical: true
+        - id: D9
+          name: "Barrel file health — export * scope, circular risk, tree-shake impact"
+          critical: false
+        - id: D10
+          name: "Change coupling — files that always change together (6-month git history)"
+          critical: false
+
+frameworks:
+  - npm
+  - pnpm
+  - Yarn Classic (1.x)
+  - Yarn Berry (2+)
+  - Bun
+  - Next.js
+  - NestJS
+  - Vite
+  - Express
+
+modes: null
+
+agents:
+  - name: "Supply Chain Scanner"
+    role: "Audits D1 (CVEs, install scripts, lockfile) and D4 (license compliance)."
+  - name: "Coupling Analyzer"
+    role: "Audits D6 (circular deps), D7 (instability metrics), D8 (architecture boundaries), D9 (barrels) using dep-cruiser or madge output."
+  - name: "Freshness Checker"
+    role: "Audits D2 (freshness), D3 (dead deps via knip), D5 (bundle weight via Bundlephobia)."
+
+benchmarks:
+  - claim: "4 critical gates: D1 (CVE), D4 (GPL), D6 (circular dep), D8 (secret in client) — any triggers FAIL"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md — Phase 3, critical gates"
+  - claim: "Produces a Delete These Tomorrow list of unused deps removable with zero code changes"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md — Phase 4 report structure"
+  - claim: "D10 change coupling analyzes last 6 months of git history to find co-change clusters"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md — D10 analysis, git log command"
+  - claim: "Graceful degradation: dep-cruiser → madge → grep-based import graph for D6-D9"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md — Phase 0.4 tool availability, 1.2 internal dependency graph"
+
+comparison_table:
+  columns: ["Capability", "npm audit alone", "dep-cruiser alone", "zuvo:dependency-audit"]
+  rows:
+    - ["CVE scanning", "Yes (D1)", "No", "Yes (D1) with reachability context"]
+    - ["License compliance", "Partial (advisories)", "No", "D4 — GPL/unknown/conflict detection"]
+    - ["Dead dependency detection", "No", "No", "D3 via knip with fallback"]
+    - ["Circular dependencies", "No", "Yes", "D6 with false-positive filter"]
+    - ["Architecture boundary violations", "No", "Yes (with config)", "D8 with framework-aware layer rules"]
+    - ["Change coupling analysis", "No", "No", "D10 via git log (6 months)"]
+    - ["Barrel file health", "No", "Partial", "D9 — scope, cycles, tree-shake impact"]

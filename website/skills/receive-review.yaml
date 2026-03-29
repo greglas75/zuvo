@@ -1,0 +1,124 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: receive-review
+  title: "Receive Review — 6-step protocol for acting on code review feedback"
+  description: "Process PR review comments with technical rigor. 6-step protocol: read, understand, verify code, evaluate, respond, implement — 1 item at a time."
+  category: utility
+  og_image: /og/skills/receive-review.png
+
+seo:
+  target_queries:
+    - "how to respond to code review comments systematically"
+    - "process pr feedback with ai agent"
+    - "handle code review pushback technical reasoning"
+    - "act on reviewer suggestions one at a time"
+    - "address pr comments and run tests automatically"
+  canonical: /en/skills/receive-review
+
+stats:
+  - label: "Protocol Steps"
+    value: "6"
+    detail: "READ, UNDERSTAND, VERIFY, EVALUATE, RESPOND, IMPLEMENT"
+  - label: "Processing Order"
+    value: "prioritized"
+    detail: "Correctness → security → error handling → API → performance → clarity"
+  - label: "Fix Granularity"
+    value: "1 at a time"
+    detail: "Sequential verified fixes — never batched into one large change"
+  - label: "Trust Levels"
+    value: "3"
+    detail: "User (high), external reviewer (standard), automated tool (skeptical)"
+
+problem: |
+  Acting on review comments is easy to do badly. Items get batched into one large change, tests break in ways that are hard to trace, and fixes are applied without verifying the reviewer's premise against the actual code. Some suggestions are wrong — the reviewer saw a stale diff, misread the control flow, or proposed an abstraction that already exists. `zuvo:receive-review` processes each item through the same 6-step protocol: read the full feedback, restate the concern in your own words, verify the code the comment refers to, evaluate whether to fix or push back, formulate a precise response, and implement one fix at a time with test verification.
+
+how_it_works:
+  - step: "READ — enumerate all items before acting"
+    description: "Reads the complete review without acting on any item. If it is a PR thread, reads every comment in the thread (not just the latest). Numbers each distinct action item and outputs the list."
+  - step: "UNDERSTAND — restate in your own words"
+    description: "For each item, restates what the reviewer is asking for to demonstrate the concern is understood. Identifies whether it is a request for a specific change, a question, or a style preference. If the intent is genuinely unclear, asks for clarification before proceeding."
+  - step: "VERIFY — read the actual code"
+    description: "Reads the file at the referenced line plus surrounding context (full function, imports, callers). Determines the current behavior from the code — not from the reviewer's description of it. Catches stale diff references, wrong line numbers, and misread logic before accepting the reviewer's conclusion."
+  - step: "EVALUATE — fix or push back with technical evidence"
+    description: "Makes a binary judgment: fix (real bug, clear improvement, aligns with patterns) or push back (breaks callers, YAGNI, technically incorrect, conflicts with existing architecture). Every pushback requires a specific technical reason with evidence."
+  - step: "RESPOND — two formats only"
+    description: "Outputs either 'Fixed. [what changed and why]' or 'Pushing back: [technical reason with evidence]'. Forbidden responses include performative agreement ('Great point!', 'You're absolutely right!'). The response must demonstrate that code was read and the concern was understood."
+  - step: "IMPLEMENT — one fix at a time with test verification"
+    description: "Applies each fix sequentially. After each fix: runs affected tests, verifies the fix addresses the reviewer's concern, and writes a test for any new branch or error path introduced. Never batches all fixes into one large change."
+
+output:
+  artifact: "inline (no file artifact)"
+  format: "Console summary with fixed items (file:line + what changed), pushed-back items (technical reason), test results, and new tests added."
+  sections:
+    - "Review items identified (numbered list)"
+    - "Per-item UNDERSTAND / VERIFY / EVALUATE reasoning"
+    - "Fixed / Pushed back completion summary"
+    - "New tests added"
+    - "Test results (N passing, 0 failing)"
+
+examples:
+  - title: "Process a list of PR review comments"
+    type: invocation
+    command: "zuvo:receive-review"
+    result: "Reads all review items from the conversation, numbers them, processes each through the 6-step protocol in priority order (correctness first, clarity last), and outputs a summary: N items processed, M fixed, K pushed back, tests passing."
+  - title: "Pushback example — suggestion breaks a caller"
+    type: invocation
+    command: "zuvo:receive-review"
+    result: "For an item where the reviewer's suggestion would change a 200 response to 404 on an empty collection, the skill reads the caller (DataGrid.tsx:47), confirms it treats 404 as a fatal error, and outputs: 'Pushing back: this endpoint returns 200 with empty array by contract — DataGrid.tsx:47 treats 404 as fatal and would break the dashboard view.'"
+
+when_to_use: "Use `zuvo:receive-review` after receiving PR feedback, after a team review session, or when an automated tool (linter, SAST, AI reviewer) produces a list of findings. It is the counterpart to `zuvo:review` — `zuvo:review` is for when you are the reviewer, `zuvo:receive-review` is for when you are on the receiving end."
+
+when_not_to_use: "For performing the initial code review yourself (generating findings from a diff), use `zuvo:review`. For mass repair of the same anti-pattern across many files without per-item reasoning, use `zuvo:fix-tests`."
+
+related_skills:
+  - slug: review
+    relation: "counterpart — use when you are the reviewer generating findings"
+  - slug: fix-tests
+    relation: "batch repair test patterns surfaced by the review"
+  - slug: write-tests
+    relation: "write tests for new branches introduced by review fixes"
+
+faq:
+  - q: "What does zuvo:receive-review do that a 'just apply these comments' instruction doesn't?"
+    a: "The VERIFY step reads the actual code at the referenced line before accepting the reviewer's premise. Reviewers sometimes reference stale diffs, misread control flow, or suggest changes that break callers. The skill catches these cases and pushes back with evidence rather than silently applying a fix that introduces a regression."
+  - q: "How does zuvo:receive-review handle pushback?"
+    a: "The EVALUATE step makes a binary judgment for each item. Push back when the suggestion breaks existing functionality (traced to callers), violates YAGNI, is technically incorrect for this language or framework version, or conflicts with an architecture decision already made. Every pushback includes a specific technical reason — 'Pushing back: [reason with evidence]', not 'I disagree'."
+  - q: "How does trust level change the behavior?"
+    a: "User feedback (high trust) is implemented after understanding without second-guessing. External reviewer feedback (standard trust) triggers extra verification of factual claims against the code. Automated tool findings (skeptical trust) are verified against the code and tested — automated tools flag patterns, not bugs, and may be intentional."
+  - q: "Why are fixes applied one at a time instead of batched?"
+    a: "Sequential fixes prevent cascading errors where fix #3 breaks what fix #1 corrected. Each fix is followed by a test run before moving to the next item. If a fix introduces a new branch or error path, a test is written before proceeding. Batching obscures which fix caused which failure."
+  - q: "What happens after all items are processed?"
+    a: "The skill produces a completion summary: total items processed, fixed items with file:line and description of change, pushed-back items with technical reason, final test results, and any new tests added. If a fix introduced test gaps, those are listed separately."
+
+arguments: []
+
+checks: null
+
+frameworks:
+  - TypeScript
+  - JavaScript
+  - Python
+  - PHP
+  - Any (framework-agnostic protocol)
+
+modes: null
+
+agents: null
+
+benchmarks:
+  - claim: "6 steps executed sequentially per review item — VERIFY step reads actual code at the referenced line before applying any fix."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Step 3: VERIFY"
+  - claim: "Forbidden responses list includes 6 performative phrases ('Great point!', 'Good catch!', etc.) that signal compliance rather than comprehension."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Step 5: RESPOND — Forbidden Responses"
+  - claim: "Processing priority: correctness bugs first, then security, error handling, API contract, performance, clarity — so critical items are fixed even if the session is interrupted."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Ordering section"
+
+comparison_table: null

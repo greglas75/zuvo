@@ -1,0 +1,226 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: tests-performance
+  title: "Tests Performance — 17-Check Test Suite Speed Audit"
+  description: "Test suite speed audit: 17-check runner config (TP1-TP17), baseline timing, 6 slow-test categories, impact-ranked fix plan. Jest, Vitest, pytest."
+  category: audit
+  og_image: /og/skills/tests-performance.png
+
+seo:
+  target_queries:
+    - "how to speed up Jest Vitest test suite"
+    - "slow test suite optimization checklist"
+    - "vitest jest runner configuration performance"
+    - "reduce CI test time Node.js"
+    - "pytest slow test suite investigation"
+  canonical: /en/skills/tests-performance
+
+stats:
+  - label: "TP Checks"
+    value: "17"
+    detail: "TP1-TP17 runner configuration checklist"
+  - label: "Slow Patterns"
+    value: "6"
+    detail: "SETUP_HEAVY, REAL_TIMERS, DOM_HEAVY, LARGE_FIXTURES, SEQUENTIAL_ASYNC, RECOMPUTATION"
+  - label: "Runners"
+    value: "3"
+    detail: "Jest, Vitest, pytest"
+  - label: "Audit Modes"
+    value: "5"
+    detail: "full, baseline, verify, --no-run, --path"
+
+problem: |
+  Slow test suites silently erode developer productivity. A 5-minute test run
+  discourages tight feedback loops; a 15-minute CI gate blocks deployments.
+  Most slowdowns have two root causes: suboptimal runner configuration (wrong
+  transformer, wrong concurrency strategy, no caching) and slow individual tests
+  (real timers, heavy setup, sequential async that could parallelize). Without
+  a measured baseline and a ranked action plan, teams either accept the slowness
+  or make random changes that don't move the needle. zuvo:tests-performance
+  establishes a baseline, audits configuration, classifies slow tests, and
+  produces a ranked action plan ordered by expected speedup.
+
+how_it_works:
+  - step: "Runner Detection"
+    description: "Detects Jest, Vitest, or pytest from config files. Reads the config file in full to record current vs. optimal values for all 17 TP items."
+  - step: "Baseline Measurement"
+    description: "Runs the full suite 3 times (or 2 for suites over 60 seconds). Records median, min, max, stddev, and the top 5 slowest files. Saves to memory/tests-performance-baseline.<runner>.json."
+  - step: "Config Audit (TP1-TP17)"
+    description: "Scores each of the 17 configuration checks as optimal (1), suboptimal (0), or N/A. TP8 (coverage thresholds) and TP10 (fail-fast) are governance items excluded from the speed score."
+  - step: "Slow Test Classification"
+    description: "Reads the top 10 slowest test files. Classifies each into one of 6 categories (SETUP_HEAVY, REAL_TIMERS, DOM_HEAVY, LARGE_FIXTURES, SEQUENTIAL_ASYNC, RECOMPUTATION) and proposes the specific fix."
+  - step: "Impact-Ranked Action Plan"
+    description: "Ranks all findings by expected speedup. Provides the exact config diff for each change and a safe rollout sequence (zero-risk changes first, side-effect-risk changes last)."
+
+output:
+  artifact: "memory/tests-performance-baseline.<runner>.json"
+  format: "Console-formatted completion report plus a saved JSON baseline. Config diffs provided inline. No markdown report file — findings are presented in the conversation."
+  sections:
+    - "Baseline measurement (median, stability, top 5 slowest files)"
+    - "TP1-TP17 config audit table"
+    - "Slow test classification (top 10 files)"
+    - "Action plan ranked by expected impact"
+    - "Rollout sequence with exact config diffs"
+    - "Completion summary"
+
+examples:
+  - title: "Fixing slow Jest transformer (TP1)"
+    type: before_after
+    gate: "TP1"
+    before:
+      language: javascript
+      code: |
+        // jest.config.js — default Babel transformer
+        module.exports = {
+          transform: {
+            '^.+\\.[tj]sx?$': 'babel-jest',
+          },
+        };
+    after:
+      language: javascript
+      code: |
+        // jest.config.js — SWC transformer (40-70% faster transforms)
+        module.exports = {
+          transform: {
+            '^.+\\.[tj]sx?$': ['@swc/jest'],
+          },
+        };
+    explanation: "TP1: switching from babel-jest to @swc/jest eliminates the Babel compilation overhead. Expected impact: 40-70% faster transform phase, which typically accounts for 30-50% of total suite time."
+  - title: "Action plan output"
+    type: output_sample
+    sample:
+      language: text
+      code: |
+        ACTION PLAN (ranked by expected impact)
+        -----
+          #  Type    TP   Change                          Impact
+          1  config  TP1  Switch to @swc/jest             40-70% faster transforms
+          2  config  TP2  Set env: 'node' globally        20-40% on non-DOM files
+          3  config  TP4  Set maxWorkers: '50%'           10-30% total suite
+          4  config  TP9  Enable cache: true              5-20% on re-runs
+          5  code    --   Extract shared setup in auth/   ~4s (top-5 slow file)
+
+          Excluded from ranking (governance/economics):
+            TP8  Coverage thresholds: not set (no speed impact)
+            TP10 Fail-fast: not set (only helps on red suites)
+        -----
+    explanation: "Config changes always appear before code changes in the ranking. Each entry includes the exact change needed and the expected speedup range."
+
+when_to_use: "Run when the test suite feels slow, after adding many tests, before CI optimization, or when developer feedback loops feel sluggish. Use `baseline` mode to capture timing before applying changes, then `verify` to confirm improvement."
+
+when_not_to_use: "For flaky tests or tests that produce incorrect results, use `zuvo:fix-tests`. For CI pipeline optimization beyond test execution (caching, parallelism, artifact management), use `zuvo:ci-audit`. For test correctness and coverage quality, use `zuvo:test-audit`."
+
+related_skills:
+  - slug: ci-audit
+    relation: "CI pipeline optimization — the outer layer around test execution speed"
+  - slug: fix-tests
+    relation: "Fixes flaky or incorrect tests — the quality counterpart to this speed audit"
+  - slug: test-audit
+    relation: "Test quality audit (Q1-Q17) — correctness and coverage, not speed"
+  - slug: backlog
+    relation: "Track unresolved slow-test patterns as backlog items"
+
+faq:
+  - q: "What does zuvo:tests-performance check?"
+    a: "It checks 17 runner configuration items (TP1-TP17) covering transformer choice, test environment, worker strategy, caching, test collection scope, coverage tool, and more. It also measures actual test timing and classifies the top 10 slowest files into 6 slow-pattern categories. TP8 (coverage thresholds) and TP10 (fail-fast) are governance items scored separately, not included in the speed ranking."
+  - q: "How is tests-performance different from ci-audit?"
+    a: "zuvo:tests-performance focuses exclusively on test execution speed: runner config, slow test patterns, and the action plan to reduce wall-clock time. zuvo:ci-audit covers the full CI pipeline — caching, parallelism, artifact management, secret handling, conditional execution, and cost. Use tests-performance first to fix the test runner, then ci-audit for the pipeline wrapper."
+  - q: "How long does a tests-performance audit take?"
+    a: "The baseline measurement runs the suite 3 times plus config analysis — typically 5-20 minutes depending on suite size. Use `--no-run` to skip test execution and audit only the config in under a minute. For suites over 60 seconds, the baseline uses 2 runs (1 warmup + 1 measured) instead of 3."
+  - q: "Can tests-performance auto-fix the config?"
+    a: "No — it provides the exact config diff for each change but does not apply them automatically. Config changes can break test isolation in non-obvious ways (especially TP5 isolate:false), so each change should be applied and verified individually using the `verify` mode to confirm the speedup."
+  - q: "What test runners are supported?"
+    a: "Jest, Vitest, and pytest. The audit is runner-specific: Jest-specific advice (like @swc/jest transformer) is never applied to Vitest projects, and Vitest-specific options (like pool: 'threads') are not surfaced for Jest. For monorepos with multiple runners, use `--path <dir>` to scope each audit separately."
+
+arguments:
+  - flag: "(empty)"
+    description: "Full audit: baseline measurement + config audit (TP1-TP17) + slow test scan + action plan"
+  - flag: "baseline"
+    description: "Phase 1 only — measure and save baseline timing, then stop"
+  - flag: "verify"
+    description: "Phase 5 only — re-measure and compare to saved baseline to confirm improvement"
+  - flag: "--no-run"
+    description: "Skip test execution — audit configuration only (useful when suite is too slow to run)"
+  - flag: "--path <dir>"
+    description: "Scope runner detection and test execution to a specific directory (monorepo use)"
+
+checks:
+  sections:
+    - name: "Runner Configuration"
+      id_range: "TP1-TP17"
+      count: 17
+      items:
+        - id: "TP1"
+          name: "Transform efficiency (SWC or esbuild over Babel)"
+          critical: true
+        - id: "TP2"
+          name: "Default test environment set to node globally"
+          critical: false
+        - id: "TP3"
+          name: "DOM engine: happy-dom instead of jsdom (Vitest only)"
+          critical: false
+        - id: "TP4"
+          name: "Worker/concurrency strategy configured"
+          critical: true
+        - id: "TP5"
+          name: "Test isolation: isolate:false for side-effect-free suites (Vitest only)"
+          critical: false
+        - id: "TP6"
+          name: "Test timeout at or below 10 seconds"
+          critical: false
+        - id: "TP7"
+          name: "Separate configs for unit/integration/e2e"
+          critical: false
+        - id: "TP8"
+          name: "Coverage thresholds set [governance — excluded from speed score]"
+          critical: false
+        - id: "TP9"
+          name: "Cache enabled and persisted across runs"
+          critical: false
+        - id: "TP14"
+          name: "Coverage tool: v8 (fast) over istanbul (accurate but slower)"
+          critical: false
+        - id: "TP17"
+          name: "Type checking runs separately from test execution"
+          critical: false
+
+frameworks:
+  - "Jest"
+  - "Vitest"
+  - "pytest"
+
+modes:
+  - name: "full"
+    description: "Baseline + config audit + slow scan + action plan (default)"
+  - name: "baseline"
+    description: "Measure and save baseline timing only"
+  - name: "verify"
+    description: "Re-measure and compare to saved baseline"
+  - name: "--no-run"
+    description: "Config audit only — skips test execution entirely"
+  - name: "--path <dir>"
+    description: "Scope to a specific directory (monorepo packages)"
+
+agents: null
+
+benchmarks:
+  - claim: "17 configuration checks (TP1-TP17) scored as optimal, suboptimal, or N/A"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 2 TP Checklist table"
+  - claim: "Switching from babel-jest to @swc/jest delivers 40-70% faster transform phase (TP1)"
+    type: speed
+    verifiable: false
+    source: "SKILL.md Phase 4 Action Plan impact range for TP1"
+  - claim: "Baseline uses median of 3 runs; suites over 60 seconds use 2 runs (never a single measurement)"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 1 — 'Slow suite escape hatch' rule"
+  - claim: "Top 10 slowest test files classified into 6 categories: SETUP_HEAVY, REAL_TIMERS, DOM_HEAVY, LARGE_FIXTURES, SEQUENTIAL_ASYNC, RECOMPUTATION"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 3.1 classification table"
+
+comparison_table: null

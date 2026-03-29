@@ -1,0 +1,172 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: brainstorm
+  title: "Brainstorm — Multi-Agent Design Exploration Before Code"
+  description: "3 parallel agents explore your codebase, research solutions, and produce an approved design spec before any code is written. Prevents rework."
+  category: pipeline
+  og_image: /og/skills/brainstorm.png
+
+seo:
+  target_queries:
+    - "AI feature design spec generator from codebase"
+    - "multi-agent software planning tool Claude Code"
+    - "generate design specification before coding"
+    - "prevent rework with upfront design exploration"
+    - "automated codebase research before feature development"
+  canonical: /en/skills/brainstorm
+
+stats:
+  - label: Parallel Agents
+    value: "3"
+    detail: Code Explorer, Domain Researcher, Business Analyst
+  - label: Design Phases
+    value: "4"
+    detail: Context, Clarification, Approaches, Section-by-Section Approval
+  - label: Output Artifact
+    value: spec
+    detail: docs/specs/YYYY-MM-DD-<topic>-spec.md
+  - label: Spec Review Iterations
+    value: "3"
+    detail: Automated spec reviewer before user sees the doc
+  - label: Approval Steps
+    value: "5"
+    detail: Overall approach, data model, API surface, integrations, edge cases
+
+problem: |
+  Starting to code before you understand the problem produces rework. Developers build the wrong abstraction, discover edge cases mid-implementation, or duplicate functionality that already exists in the codebase. A 30-minute design conversation prevents days of refactoring — but without structure, that conversation stays superficial. zuvo:brainstorm runs 3 parallel agents to surface everything relevant (existing code, prior art, business edge cases) before a single line is written, then guides you through a systematic design dialogue to produce a locked, approved spec.
+
+how_it_works:
+  - step: "Phase 0: Scope Check"
+    description: "The skill assesses whether the request is a single concern or spans multiple subsystems. If multiple subsystems are detected, it asks you to pick one — each subsystem gets its own spec to prevent vague designs that cannot drive implementation."
+  - step: "Phase 1: Parallel Agent Dispatch"
+    description: "3 agents run simultaneously: the Code Explorer maps relevant modules, blast radius, and existing patterns in your codebase; the Domain Researcher investigates external libraries, APIs, and prior art; the Business Analyst identifies edge cases, existing pain points, and acceptance criteria candidates."
+  - step: "Phase 2: Design Dialogue"
+    description: "Findings are summarized by dimension, then you answer 2-5 targeted clarifying questions (one at a time, with trade-off options). The skill proposes 2-3 named design approaches with files affected, trade-offs, and a recommended choice."
+  - step: "Phase 2: Section-by-Section Approval"
+    description: "The design is walked through in 5 sections — overall approach, data model, API surface, integration points, edge case handling — with your sign-off required on each before moving forward."
+  - step: "Phase 3: Spec Document + Automated Review"
+    description: "The spec is written to docs/specs/YYYY-MM-DD-<topic>-spec.md, then reviewed by a Spec Reviewer agent checking for completeness, YAGNI violations, ambiguity, and scope gaps. Up to 3 automated iterations before user approval locks the status as Approved."
+
+output:
+  artifact: "docs/specs/YYYY-MM-DD-<topic>-spec.md"
+  format: "A structured Markdown spec with status Approved, covering problem statement, design decisions, solution overview, data model, API surface, integration points, edge cases, acceptance criteria, out-of-scope list, and open questions."
+  sections:
+    - "Problem Statement"
+    - "Design Decisions"
+    - "Solution Overview"
+    - "Detailed Design (Data Model, API Surface, Integration Points)"
+    - "Edge Cases"
+    - "Acceptance Criteria"
+    - "Out of Scope"
+    - "Open Questions"
+
+examples:
+  - title: "Starting the pipeline for a new notifications feature"
+    type: invocation
+    command: "zuvo:brainstorm add real-time notifications for order status changes"
+    result: |
+      Scope detected: single concern (notification delivery for order events).
+      Dispatching 3 agents in parallel...
+
+      WHAT EXISTS IN CODEBASE: notification.service.ts already handles email. WebSocket module is present but unused. Order events fire via EventEmitter.
+      EXTERNAL RESEARCH: Socket.io, SSE, and Supabase Realtime are established approaches for this stack.
+      BUSINESS ANALYSIS: Edge cases include offline users, duplicate events, notification fatigue.
+
+      Question 1: The codebase already has a WebSocket module in src/ws/. Should this feature use it, or is this better served by SSE given the read-only nature of status updates? (A) Use WebSocket — bidirectional for future use, (B) Use SSE — simpler, one-directional, less overhead.
+
+  - title: "Approved spec ready for planning"
+    type: output_sample
+    sample:
+      language: markdown
+      code: |
+        # Order Status Notifications — Design Specification
+
+        > **Date:** 2026-03-29
+        > **Status:** Approved
+        > **Author:** zuvo:brainstorm
+
+        ## Problem Statement
+        Users discover order status changes only by refreshing the page...
+
+        ## Acceptance Criteria
+        1. Status changes appear within 2 seconds without page refresh
+        2. Notification persists for 5 seconds then auto-dismisses
+        3. Works when user has multiple tabs open (no duplicates)
+    explanation: "The approved spec becomes the input artifact for zuvo:plan. Nothing is built until this document exists with Status: Approved."
+
+when_to_use: |
+  Use zuvo:brainstorm when you want to create a new feature, add significant functionality, or redesign a subsystem — especially when the feature touches multiple parts of the project or when the right approach is not yet obvious. It is the first stage of the brainstorm → plan → execute pipeline. The prerequisite is a user request; the output is an approved spec that unlocks zuvo:plan.
+
+when_not_to_use: |
+  For small, self-contained changes to 1-5 files where the approach is clear, use zuvo:build instead — it skips spec production and goes straight to implementation with quality gates. For features where a spec already exists and you are ready to plan implementation tasks, skip brainstorm and start with zuvo:plan. If you already have an approved plan and want to start coding, go directly to zuvo:execute.
+
+related_skills:
+  - slug: plan
+    relation: "next pipeline stage — consumes the approved spec to produce an ordered TDD task plan"
+  - slug: execute
+    relation: "final pipeline stage — executes the plan produced by zuvo:plan"
+  - slug: build
+    relation: "alternative for small-scope features where upfront spec production would be overkill"
+  - slug: architecture
+    relation: "complements brainstorm for system-level design decisions and ADR creation"
+  - slug: backlog
+    relation: "open questions and deferred design decisions from brainstorm can be tracked in the backlog"
+
+faq:
+  - q: "What does zuvo:brainstorm produce?"
+    a: "It produces an approved design specification document at docs/specs/YYYY-MM-DD-<topic>-spec.md. The spec includes a problem statement, design decisions, solution overview, data model, API surface, integration points, edge cases, acceptance criteria, and out-of-scope boundaries. Status is set to Approved only after you sign off on every section."
+  - q: "How is zuvo:brainstorm different from zuvo:build?"
+    a: "zuvo:brainstorm is for full design exploration when the right approach is not obvious — it runs 3 research agents, conducts a design dialogue, and produces a spec document. zuvo:build is for implementing a concrete, scoped change (1-5 files) where you already know what to build. Think of brainstorm as the design phase and build as the coding phase."
+  - q: "How long does a brainstorm session take?"
+    a: "A typical brainstorm session takes 15-30 minutes of calendar time. Phase 1 (3 parallel agents) runs in the background while you review findings, Phase 2 involves 2-5 clarifying questions, and Phase 3 produces and reviews the spec document. Complex subsystems with many integration points take longer."
+  - q: "Can zuvo:brainstorm handle multiple unrelated features at once?"
+    a: "No — by design. If you describe multiple subsystems, brainstorm asks you to pick one. Each subsystem gets its own spec. Trying to brainstorm everything at once produces vague specs that cannot drive implementation. Run brainstorm once per cohesive feature area."
+  - q: "What happens if a brainstorm agent fails?"
+    a: "If one of the 3 parallel agents fails, brainstorm proceeds with the two successful reports and notes the gap. If two or more agents fail, you are informed and can choose to continue with limited context or investigate the failures first. The skill never silently continues with missing research."
+
+arguments:
+  - flag: "<feature description>"
+    description: "The feature or system to explore. Passed as free text after the skill name, e.g., zuvo:brainstorm add payment retry logic."
+
+checks: null
+
+frameworks: []
+
+modes: null
+
+agents:
+  - name: Code Explorer
+    role: "Maps relevant modules, patterns, blast radius, and similar existing code in your codebase using CodeSift analysis tools."
+  - name: Domain Researcher
+    role: "Investigates external libraries, APIs, established patterns, and prior art relevant to the requested feature."
+  - name: Business Analyst
+    role: "Identifies edge cases, existing pain points, and acceptance criteria candidates from a product and user perspective."
+  - name: Spec Reviewer
+    role: "Automated reviewer that checks the draft spec for completeness, consistency, YAGNI violations, ambiguity, and scope gaps — up to 3 iterations before user review."
+
+benchmarks:
+  - claim: "3 research agents run in parallel before any design decisions are made"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 1: Agent Dispatch — 3 agents dispatched with run_in_background"
+  - claim: "Up to 3 automated spec review iterations before the document reaches the user"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 3, Step 3: Iteration Loop — Maximum 3 iterations"
+  - claim: "Design is approved in 5 discrete sections, not as a single all-or-nothing decision"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 2, Step 4: Section-by-Section Approval — 5 sections listed"
+
+comparison_table:
+  columns: ["Capability", "Ad-hoc Planning", "zuvo:brainstorm"]
+  rows:
+    - ["Codebase research before design", "Manual grep/read", "3 parallel agents (CodeSift-backed)"]
+    - ["External library research", "Developer memory", "Domain Researcher agent"]
+    - ["Design options presented", "Varies", "2-3 named approaches with trade-offs"]
+    - ["Spec format", "None / informal", "Structured Markdown with acceptance criteria"]
+    - ["Automated spec review", "None", "Spec Reviewer agent, up to 3 iterations"]
+    - ["Output artifact", "None", "docs/specs/YYYY-MM-DD-<topic>-spec.md (Approved)"]
+    - ["Pipeline handoff to plan", "Manual", "Explicit — zuvo:plan reads the spec automatically"]

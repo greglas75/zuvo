@@ -1,0 +1,190 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: ship
+  title: "ship — Pre-merge Release Pipeline in 5 Phases"
+  description: "Run tests, auto-scaled code review, version bump, changelog, git tag, and push — all in 1 command. Scales review depth across 4 levels by diff LOC."
+  category: release
+  og_image: /og/skills/ship.png
+
+seo:
+  target_queries:
+    - "automate version bump and changelog before merge"
+    - "pre-merge release pipeline Claude Code"
+    - "auto-scale code review by diff size git"
+    - "conventional commits version bump automation"
+    - "git tag and push release workflow CLI"
+  canonical: /en/skills/ship
+
+stats:
+  - label: Phases
+    value: "5"
+    detail: "Pre-flight → Tests → Review → Bump → Tag+Push"
+  - label: Review Depths
+    value: "4"
+    detail: "none / light / full / full+coverage"
+  - label: Ecosystems
+    value: "6+"
+    detail: "Node, Python, Rust, Go, PHP, Generic"
+  - label: Flags
+    value: "7"
+    detail: "--fast, --full, --no-bump, --no-tag, --dry-run, patch/minor/major"
+
+problem: |
+  Shipping a release manually is error-prone: teams forget to bump the version, skip the
+  changelog, or push without running tests. Review depth is often either too heavy for small
+  fixes or too shallow for large changes. `zuvo:ship` automates the entire pre-merge pipeline
+  and scales review effort to the actual diff size — no more over- or under-reviewing.
+
+how_it_works:
+  - step: Pre-flight
+    description: Detects branch context (direct flow on main/master vs PR flow on feature branches), checks GitHub CLI availability, and verifies there are commits since the last tag.
+  - step: Tests
+    description: Auto-detects the test runner (npm, pytest, cargo, composer, make) and runs the full suite. Stops on failure — never auto-overrides failing tests in non-interactive environments.
+  - step: Review Scaling
+    description: Computes diff LOC since last tag and dispatches the appropriate review depth — fast path (<20 LOC), light agent (20-100), full review (100+), or full+coverage (300+). Override with --fast or --full.
+  - step: Version Bump
+    description: Detects the version file (package.json, pyproject.toml, Cargo.toml, VERSION, etc.), infers bump type from conventional commits, updates the file, and generates or updates CHANGELOG.md.
+  - step: Stage, Tag, Push
+    description: Stages only the version file, CHANGELOG.md, and memory/last-ship.json by explicit name (never git add -A). Creates the git tag and pushes — or opens a PR on feature branches.
+
+output:
+  artifact: "memory/last-ship.json"
+  format: JSON file recording version, tag, flow, diff LOC, review depth, PR number, and push status.
+  sections:
+    - "Version transition (previousVersion → version)"
+    - "Flow type (direct or pr)"
+    - "Review depth (none / light / full / full+coverage)"
+    - "Diff LOC and tag push status"
+    - "SHIP COMPLETE terminal summary block"
+
+examples:
+  - title: "Default ship on a feature branch"
+    type: invocation
+    command: "zuvo:ship"
+    result: |
+      SHIP COMPLETE
+        Branch:      feat/new-api
+        Flow:        pr (#42)
+        Version:     1.2.0 → 1.2.1
+        Tag:         v1.2.1
+        Diff:        87 LOC (light path)
+        Tests:       PASS (214 passed, 0 failed)
+        Review:      light (review-light agent)
+        Changelog:   CHANGELOG.md updated
+        Push:        origin/feat/new-api ✓
+        PR:          #42
+        Artifact:    memory/last-ship.json written
+
+        Next: zuvo:deploy (when ready)
+
+  - title: "Force a minor bump, skip tag"
+    type: invocation
+    command: "zuvo:ship minor --no-tag"
+    result: "Bumps to next minor version, commits changelog, pushes — no git tag created. Useful for pre-release staging branches."
+
+  - title: "Dry run before executing"
+    type: invocation
+    command: "zuvo:ship --dry-run"
+    result: "Prints the full plan — branch, flow, diff LOC, review depth, bump type, files to stage, tag name, push target — without executing anything."
+
+when_to_use: |
+  Run `zuvo:ship` when you are ready to cut a release from your current branch. It is the
+  first step of the release flow: ship → deploy → canary → release-docs → retro. Use it
+  before merging to prepare the version bump, changelog, and tag.
+
+when_not_to_use: |
+  Do not use `zuvo:ship` to deploy to production — that is `zuvo:deploy` (post-merge deploy
+  with platform detection and health check). For per-PR code review without releasing, use
+  `zuvo:review`. For post-deploy monitoring, use `zuvo:canary`.
+
+related_skills:
+  - slug: deploy
+    relation: "Next step after ship — merges PR and deploys to production"
+  - slug: canary
+    relation: "Post-deploy monitoring after deploy completes"
+  - slug: release-docs
+    relation: "Syncs documentation after the release range is established"
+  - slug: retro
+    relation: "Engineering retrospective driven by the git range ship produces"
+  - slug: review
+    relation: "Full per-PR code review dispatched by ship at 100+ LOC"
+
+faq:
+  - q: "What does zuvo:ship do exactly?"
+    a: "zuvo:ship runs a 5-phase pre-merge release pipeline: pre-flight checks, test suite, auto-scaled code review, version bump with changelog, and git tag + push (or PR creation). It handles branch detection automatically — direct push on main/master, PR on feature branches."
+  - q: "How is zuvo:ship different from zuvo:deploy?"
+    a: "zuvo:ship is pre-merge: it prepares the release commit (tests, bump, changelog, tag) and pushes or opens a PR. zuvo:deploy is post-merge: it merges the PR, waits for CI, triggers the platform deploy (Vercel, Fly, Netlify, etc.), and runs a health check. Ship then deploy."
+  - q: "How long does zuvo:ship take?"
+    a: "Fast path (< 20 LOC diff) takes roughly the length of your test suite plus a few seconds. The full path (300+ LOC) adds zuvo:review and optionally zuvo:design-review, which adds 1-3 minutes depending on diff size."
+  - q: "Can zuvo:ship auto-detect the bump type?"
+    a: "Yes — if 50%+ of commits in the release range follow conventional commit format (feat:, fix:, BREAKING CHANGE:), ship auto-computes the bump. Otherwise it asks interactively, or defaults to patch with an [AUTO-DECISION] annotation in non-interactive environments."
+  - q: "What version file formats does zuvo:ship support?"
+    a: "package.json (Node.js), pyproject.toml (Python), Cargo.toml (Rust), go.mod (Go, tags only), composer.json (PHP), and a generic VERSION file. If no version file is found, ship offers to create one or skip versioning."
+
+arguments:
+  - flag: "(no flags)"
+    description: "Auto-scaled pipeline based on diff LOC since last tag"
+  - flag: "--fast"
+    description: "Force fast path — tests + bump + push only, skip all review"
+  - flag: "--full"
+    description: "Force full pipeline — tests + review + design-review + coverage + bump + push"
+  - flag: "--no-bump"
+    description: "Skip version bumping (useful for hotfixes and chore commits)"
+  - flag: "--no-tag"
+    description: "Skip git tag creation"
+  - flag: "--dry-run"
+    description: "Print what would happen at each phase without executing anything"
+  - flag: "patch / minor / major"
+    description: "Explicit bump type — overrides auto-detection from conventional commits"
+
+checks: null
+
+frameworks:
+  - Node.js (package.json)
+  - Python (pyproject.toml)
+  - Rust (Cargo.toml)
+  - Go (go.mod, tags only)
+  - PHP (composer.json)
+  - Generic (VERSION file)
+
+modes:
+  - name: fast
+    description: "Tests + bump + push only. No review agents dispatched. Use for small chores and hotfixes."
+  - name: auto-scaled
+    description: "Default. Review depth determined by diff LOC: none / light / full / full+coverage."
+  - name: full
+    description: "Maximum pipeline: review-light + zuvo:review + zuvo:design-review (if frontend files changed) + coverage-check."
+  - name: dry-run
+    description: "Read-only. Prints the full execution plan for each phase without writing or pushing anything."
+
+agents:
+  - name: review-light
+    role: "Fast diff scan dispatched for 20-100 LOC diffs — returns PASS or BLOCK verdict with blocker list."
+  - name: coverage-check
+    role: "Checks changed production files for test coverage gaps — dispatched at 300+ LOC or --full; informational only, never blocks ship."
+
+benchmarks:
+  - claim: "4 review depth levels scale to diff size — fast path skips review entirely for < 20 LOC changes"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 2 review threshold table"
+  - claim: "6+ version file ecosystems supported — Node, Python, Rust, Go, PHP, Generic"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 3 version file detection table"
+  - claim: "Stages exactly 3 files by explicit name — never git add -A or git add ."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Safety Rules + Phase 4 step 1"
+
+comparison_table:
+  columns: ["Capability", "Manual release", "npm version + git tag", "zuvo:ship"]
+  rows:
+    - ["Test gate", "Varies", "No", "Yes — blocks on failure"]
+    - ["Review scaling", "No", "No", "Yes — 4 depth levels by LOC"]
+    - ["Changelog generation", "Manual", "No", "Yes — Keep-a-Changelog format"]
+    - ["Branch detection (direct vs PR)", "Manual", "No", "Yes — auto-detects"]
+    - ["Bump type from commits", "Manual", "No", "Yes — conventional commits"]
+    - ["Non-interactive safe mode", "N/A", "N/A", "Yes — AUTO-DECISION annotations"]

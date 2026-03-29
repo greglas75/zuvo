@@ -1,0 +1,201 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: fix-tests
+  title: "Fix Tests — Batch repair for 21 test anti-patterns"
+  description: "Batch repair test quality issues. Detects 21 anti-patterns across a test suite, fixes 1 pattern at a time with production context, and verifies tests pass."
+  category: task
+  og_image: /og/skills/fix-tests.png
+
+seo:
+  target_queries:
+    - "batch fix test anti-patterns typescript vitest"
+    - "fix tautological mocks test suite automatically"
+    - "repair redux test loading-only assertions"
+    - "fix toHaveBeenCalled without CalledWith tests"
+    - "autofix nestjs controller test passthrough pattern"
+  canonical: /en/skills/fix-tests
+
+stats:
+  - label: "Supported Anti-Patterns"
+    value: "21"
+    detail: "P-40–P-70, AP2–AP21, G-43, NestJS-P3, Q3-Q17 variants"
+  - label: "Processing Batch Size"
+    value: "5"
+    detail: "Files processed per batch to prevent cascading errors"
+  - label: "Modes"
+    value: "4"
+    detail: "--triage, --pattern [ID], --dry-run, --bundle-gates"
+  - label: "Production Context"
+    value: "per file"
+    detail: "Each fix is derived from reading the real production counterpart"
+
+problem: |
+  After mass test generation or a major refactor, the same anti-pattern often appears across dozens of files. Fixing them one by one is time-consuming and inconsistent — each manual fix produces a slightly different style. `zuvo:fix-tests` detects the pattern across the entire suite, reads the production counterpart for every affected file, rewrites broken assertions with production-derived values, and verifies the suite still passes. One pattern per run, applied everywhere.
+
+how_it_works:
+  - step: "Triage scan"
+    description: "Scans all test files for every supported anti-pattern and reports hit counts per pattern. In triage mode, shows the full report and asks which patterns to fix. In --pattern mode, proceeds directly to the named pattern."
+  - step: "Identify affected files and production counterparts"
+    description: "Collects exact file paths for the chosen pattern. For each test file, finds its production counterpart by path convention (e.g., profileSlice.test.ts maps to profileSlice.ts). Files without a production counterpart are marked ORPHAN and skipped for patterns that require context."
+  - step: "Read production context"
+    description: "Extracts the information needed for the fix from the production file. For P-41 (loading-only assertions), reads all state interface fields. For AP10 (delegation-only mocks), reads service method signatures and return types. For P-40 (wrong initial state), reads the exact initialState shape."
+  - step: "Batch fix"
+    description: "Groups files into batches of 5. For each batch, rewrites broken assertions using production-derived values, preserves surrounding test structure, and never appends old and new assertions side by side. With --bundle-gates, also fixes adjacent Q7 (missing error paths) and Q12 (missing symmetry) violations."
+  - step: "Verify and report"
+    description: "Runs the modified test files to confirm all tests pass. Distinguishes between fix errors (incorrect assertion) and real production bugs discovered by the stronger assertion. Reports fixed count, skipped count, and any production bugs found — then persists bugs to the backlog."
+
+output:
+  artifact: "memory/fix-tests-progress.md"
+  format: "Test files modified in-place; progress tracked in memory/fix-tests-progress.md with pattern, files found, fixed, skipped, and needs-review counts."
+  sections:
+    - "FIX-TESTS summary per pattern (fixed, skipped, needs review)"
+    - "FIX-TESTS SESSION COMPLETE summary (all patterns)"
+    - "Production bugs discovered during fixing"
+    - "Backlog items for unfixable files"
+
+examples:
+  - title: "AP10 delegation-only mock — before and after fix"
+    type: before_after
+    gate: "AP10"
+    before:
+      language: typescript
+      code: |
+        it("delegates to inventory service", async () => {
+          const reserveSpy = vi.fn();
+          await orderService.createOrder("usr_1", items, { reserve: reserveSpy });
+          expect(reserveSpy).toHaveBeenCalled();
+        });
+    after:
+      language: typescript
+      code: |
+        it("delegates to inventory service with correct arguments", async () => {
+          const reserveSpy = vi.fn().mockResolvedValue(reservedItems);
+          const result = await orderService.createOrder("usr_1", items, { reserve: reserveSpy });
+          expect(reserveSpy).toHaveBeenCalledWith(items);
+          expect(result.items).toEqual(reservedItems);
+        });
+    explanation: "AP10 (delegation-only) verifies a mock was called but checks no arguments and no return value. The fix adds toHaveBeenCalledWith with the actual parameter (items, read from the production method signature) and a behavioral assertion on result.items — both derived from reading the production code."
+  - title: "Triage the full test suite for anti-patterns"
+    type: invocation
+    command: "zuvo:fix-tests --triage"
+    result: "Scans all test files and reports hit counts per pattern (e.g., AP10: 14 files, P-41: 6 files, Q7-API: 8 files). Asks which patterns to fix before making any changes."
+
+when_to_use: "Use `zuvo:fix-tests` when `zuvo:test-audit` or `zuvo:triage` reveals the same anti-pattern across 10+ test files. It is designed for batch repair — one pattern, applied everywhere — not for one-off fixes. Run `--triage` first to see which patterns have the highest hit counts."
+
+when_not_to_use: "For writing tests from scratch on uncovered production files, use `zuvo:write-tests`. For auditing test quality without fixing, use `zuvo:test-audit` — it diagnoses the full suite and tells you which patterns to address before you commit to fixing them. For reviewing specific test changes in a PR diff, use `zuvo:review`."
+
+related_skills:
+  - slug: test-audit
+    relation: "diagnose which anti-patterns to fix before running fix-tests"
+  - slug: write-tests
+    relation: "write new tests for files with no coverage at all"
+  - slug: review
+    relation: "review the diff after batch repairs are applied"
+  - slug: backlog
+    relation: "production bugs discovered during fixing are persisted here"
+
+faq:
+  - q: "What does zuvo:fix-tests do that find-and-replace can't?"
+    a: "Each fix is derived from reading the actual production counterpart. For AP10, the replacement assertion uses the real parameter types and return values from the production method — not a generic placeholder. Find-and-replace produces syntactically correct but semantically wrong assertions because it has no knowledge of what the code under test actually does."
+  - q: "How is zuvo:fix-tests different from zuvo:test-audit?"
+    a: "zuvo:test-audit diagnoses your test suite across all 17 quality gates and 26 anti-patterns and produces a tiered report. zuvo:fix-tests takes one specific anti-pattern (e.g., AP10 across 30 files) and repairs it. The intended workflow is: audit first to understand the problem, then fix to repair it systematically."
+  - q: "What happens when zuvo:fix-tests discovers a production bug?"
+    a: "Occasionally a stronger assertion reveals that the production code has a real bug — for example, a method returning the wrong type when given empty input. The skill distinguishes this from a broken fix by checking whether the assertion is logically correct for the production code. Real bugs are noted in the report and persisted to memory/backlog.md, not auto-fixed."
+  - q: "Can zuvo:fix-tests handle E2E anti-patterns?"
+    a: "Yes. P-63 (silent E2E conditionals — if(isVisible()) guards that silently skip assertions) and P-43 (getByTestId overuse where semantic queries are available) both apply to E2E tests and are supported patterns. They are mechanical fixes that do not require production context, so they work even on orphan test files."
+  - q: "What frameworks and test runners does zuvo:fix-tests support?"
+    a: "The skill supports Vitest and Jest for TypeScript/JavaScript, with domain-specific patterns for NestJS controllers (NestJS-P3, Q17-passthrough) and Redux slices (P-40, P-41, P-44, G-43). Language-specific patterns for Python (pytest) are not yet supported."
+
+arguments:
+  - flag: "--triage"
+    description: "Scan all anti-patterns, report hit counts, ask which to fix (default with no arguments)"
+  - flag: "--pattern [ID]"
+    description: "Fix the named pattern across all matching test files (e.g., --pattern AP10)"
+  - flag: "--pattern [ID] [path]"
+    description: "Fix the named pattern scoped to a specific directory"
+  - flag: "--dry-run"
+    description: "Show triage counts and affected file list without modifying anything"
+  - flag: "--bundle-gates"
+    description: "After fixing the target pattern, also fix adjacent Q7 (missing error paths) and Q12 (missing symmetry) violations in modified files"
+
+checks:
+  sections:
+    - name: "Supported Anti-Patterns"
+      id_range: "P-40 through P-70, AP2 through AP21"
+      count: 21
+      items:
+        - id: "AP10"
+          name: "Delegation-only — toHaveBeenCalled() with no CalledWith or return-value check"
+          critical: false
+        - id: "P-41"
+          name: "Loading-only assertions — only checks state.loading, not payload fields"
+          critical: false
+        - id: "AP14"
+          name: "toBeDefined sole assertion — passes for any non-undefined value"
+          critical: false
+        - id: "P-44"
+          name: "Missing rejected state — async thunk has no mockRejectedValue path"
+          critical: false
+        - id: "NestJS-P3"
+          name: "Self-mock — spyOn on the service under test instead of its dependencies"
+          critical: false
+        - id: "Q17-passthrough"
+          name: "No arg verification — controller tests check return value but not service CalledWith"
+          critical: false
+        - id: "AP2"
+          name: "Conditional assertions — if(x) { expect(...) } silently skips when condition is false"
+          critical: false
+        - id: "P-64"
+          name: "Hardcoded credentials — passwords or secrets as string literals in test files"
+          critical: false
+
+frameworks:
+  - TypeScript
+  - JavaScript
+  - Vitest
+  - Jest
+  - NestJS
+  - Redux Toolkit
+  - React (TSX/JSX)
+  - Playwright (P-63, P-43)
+
+modes:
+  - name: "--triage"
+    description: "Scan all anti-patterns, report counts per pattern, ask which to fix."
+  - name: "--pattern [ID]"
+    description: "Skip triage, fix the named pattern immediately across all or scoped files."
+  - name: "--dry-run"
+    description: "Show what would change without modifying any files."
+  - name: "--bundle-gates"
+    description: "Fix target pattern plus adjacent Q7 and Q12 violations in the same pass."
+
+agents: null
+
+benchmarks:
+  - claim: "21 supported anti-pattern IDs across P-*, AP*, G-*, NestJS-P*, and Q*-variant checks."
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Supported Patterns table"
+  - claim: "Files are processed in batches of 5 to prevent cascading errors where fix N breaks what fix N-1 corrected."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Step 4: Batch Fix"
+  - claim: "Every rewritten assertion must reference real fields, real types, and real behaviors from the production code — not generic placeholders."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Fix Principles: 'Use production-derived values'"
+  - claim: "Orphan test files (no matching production source) are skipped for 16 patterns that require production context, and processed for 5 mechanical patterns that do not."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Step 2: Identify Affected Files"
+
+comparison_table:
+  columns: ["Capability", "Manual repair", "Linter / ESLint", "zuvo:fix-tests"]
+  rows:
+    - ["Production-context-aware assertion rewriting", "Reviewer effort", "None", "Reads production source per file"]
+    - ["Batch repair across entire suite", "Manual, inconsistent", "None", "Batches of 5, one pattern at a time"]
+    - ["Production bug discovery", "Incidental", "None", "Flagged when stronger assertion fails"]
+    - ["Pattern coverage", "Reviewer-dependent", "Style rules only", "21 semantic test anti-patterns"]
+    - ["Verification after fix", "Manual", "Lint only", "Test suite run after each batch"]

@@ -1,0 +1,216 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: debug
+  title: "Debug — 5-Phase Bug Investigation with Regression Bisect"
+  description: "5-phase debug framework: reproduce, narrow, diagnose, fix, verify. Automated git bisect for regressions. CQ1-CQ22 on fixes, Q1-Q17 on regression tests."
+  category: task
+  og_image: /og/skills/debug.png
+
+seo:
+  target_queries:
+    - "systematic bug investigation framework Claude Code"
+    - "automated git bisect for regressions AI"
+    - "root cause analysis debugging workflow"
+    - "debug flaky tests race conditions structured approach"
+    - "regression test after bug fix quality gates"
+  canonical: /en/skills/debug
+
+stats:
+  - label: Debug Phases
+    value: "5"
+    detail: "Reproduce, Narrow, Diagnose, Fix, Verify (+ Phase R: Regression Bisect)"
+  - label: Error Playbooks
+    value: "6"
+    detail: "undefined/null, wrong value, permission denied, timeout, flaky, dev/prod mismatch"
+  - label: Stack Diagnostic Sequences
+    value: "4"
+    detail: "API/Backend, Frontend/UI, Database/Performance, Async/Flaky"
+  - label: Quality Gates on Fix
+    value: "22"
+    detail: "CQ1-CQ22 on production code changes"
+  - label: Quality Gates on Regression Test
+    value: "17"
+    detail: "Q1-Q17 on the regression test written after the fix"
+
+problem: |
+  Most debugging sessions waste time because they skip the basics: confirming the bug is reproducible before investigating, establishing a baseline before applying fixes, or testing hypotheses in order of likelihood. The result is a fix that addresses a symptom while the root cause remains. zuvo:debug enforces a structured 5-phase process that prevents this — starting from confirmed reproduction, narrowing the search space systematically, forming and testing at most 3 hypotheses, and verifying the fix against both targeted tests and the full suite. For regressions, automated git bisect finds the breaking commit so the root cause is clear from the diff.
+
+how_it_works:
+  - step: "Phase 1: Reproduce"
+    description: "Establish the expected vs. actual behavior, exact reproduction steps, scope (always/intermittent/conditional), and timeline (recent deploy, config change, dependency update). Inconsistent reproduction flags potential race conditions or environment-dependent issues before investigation begins."
+  - step: "Phase 1.5: Minimal Reproduction"
+    description: "A stack trace proves an error happened once — it does not prove it is reproducible now. This phase verifies the error can be triggered on the current codebase. If the error cannot be reproduced, the trace may be from a different state (stale data, previous deploy). Only confirmed reproduction proceeds to Phase 2."
+  - step: "Phase 2: Narrow"
+    description: "Determine whether this is a new regression or pre-existing issue. Run existing tests for the affected area and record the baseline. Then reduce the search space through 5 ordered techniques: full stack trace analysis, log review, recent commit inspection (with CodeSift changed_symbols and diff_outline), environment comparison, and binary search on the code path."
+  - step: "Phase 3: Diagnose"
+    description: "Trace the execution path from entry point to failure using call chain analysis (CodeSift trace_call_chain and get_context_bundle). Form at most 3 hypotheses ordered by likelihood. Test each with specific evidence. If 2 hypotheses fail, re-read the code path from scratch rather than guessing in the same direction. The root cause is the specific line, condition, or assumption that fails — not a symptom."
+  - step: "Phase 4: Fix and Verify"
+    description: "Apply the minimal fix targeting the root cause. Run targeted tests, then the full suite compared against the Phase 2 baseline. Re-run the original reproduction to confirm it is resolved. Write a regression test that recreates the exact bug condition and would have caught it if written before the original code. Run CQ1-CQ22 on the fix and Q1-Q17 on the regression test."
+  - step: "Phase R: Regression Bisect (alternative for confirmed regressions)"
+    description: "When the user says 'this used to work', write a reproducer test that fails on HEAD, verify it passes on a known-good commit, then run git bisect automatically. The first bad commit is identified with up to 20 steps. After bisect, the breaking change is visible from the diff, making root cause typically obvious. Phase R joins Phase 4 for the fix and verification."
+
+output:
+  artifact: "Bug fix committed + regression test file + debug report"
+  format: "A structured Debug Report with reproduction details, hypothesis table, root cause statement, fix applied, defense-in-depth additions, verification results, and the regression test. Regression bisect mode produces an additional Breaking Commit section."
+  sections:
+    - "Reproduction (expected / actual / steps / scope / baseline)"
+    - "Diagnosis (hypothesis table with evidence and verdict)"
+    - "Root Cause (file:line, 1-3 sentence explanation)"
+    - "Fix Applied (before/after code)"
+    - "Defense-in-Depth (guards added at which layers)"
+    - "Verification (targeted / full suite / reproduction resolved / CQ / Q)"
+    - "Regression Test"
+
+examples:
+  - title: "Debug report for a permission bug"
+    type: output_sample
+    sample:
+      language: markdown
+      code: |
+        ## Debug Report: Order history visible across organizations
+
+        ### Reproduction
+        - **Expected:** /api/orders returns only the authenticated user's orders
+        - **Actual:** Orders from all organizations are returned
+        - **Steps:** GET /api/orders with valid JWT for org-A returns orders from org-B
+        - **Scope:** Always — all authenticated users
+        - **Baseline:** 2 passing, 1 failing (order.controller.spec.ts:89)
+
+        ### Diagnosis
+        | # | Hypothesis | Evidence | Verdict |
+        |---|-----------|----------|---------|
+        | 1 | Missing orgId filter in Prisma query | order.service.ts:47 — findMany with only userId | CONFIRMED |
+        | 2 | Auth guard not applied to route | @UseGuards(JwtAuthGuard) present on line 12 | RULED OUT |
+
+        **Root Cause:** order.service.findAll() filters by userId but not organizationId.
+        File: src/services/order.service.ts:47
+
+        ### Fix Applied
+        ```typescript
+        // Before:
+        findMany({ where: { userId } })
+        // After (CQ4 — auth guard + query filter defense in depth):
+        findMany({ where: { userId, organizationId: orgId } })
+        ```
+    explanation: "The hypothesis table forces explicit evidence for each theory. CONFIRMED and RULED OUT verdicts distinguish root cause from symptoms. CQ4 is cited directly in the fix comment."
+
+  - title: "Regression bisect invocation"
+    type: invocation
+    command: "zuvo:debug --regression the CSV export stopped working after last week's merge"
+    result: |
+      Phase R: Regression Bisect
+      Writing reproducer test: __bisect_test.ts
+      Reproducer confirmed failing on HEAD.
+      Good commit auto-detected: HEAD~8 (test passes)
+      Running git bisect start HEAD HEAD~8...
+      git bisect run: npx vitest run __bisect_test.ts --reporter=verbose
+      Bisect complete in 4 steps (8 commits searched).
+
+      Breaking commit: 7d3f891 — feat: normalize order export fields
+      Author: dev@example.com (2026-03-22)
+      Root cause: exportFields.map() received undefined when order.metadata was null —
+                  the normalization step added a null check for some fields but missed metadata.
+
+  - title: "Defense-in-depth additions after a null crash"
+    type: before_after
+    before:
+      language: typescript
+      code: |
+        // Phase 3 diagnosis: crashes when order.metadata is null
+        const exportValue = order.metadata.exportConfig.fields.join(',');
+    after:
+      language: typescript
+      code: |
+        // Entry validation guard (layer 1)
+        if (!order.metadata?.exportConfig?.fields?.length) {
+          logger.warn('Order missing exportConfig', { orderId: order.id });
+          return '';
+        }
+        const exportValue = order.metadata.exportConfig.fields.join(',');
+    explanation: "Defense-in-depth adds guards at multiple layers after the fix. The minimal fix addresses the null crash; the entry validation guard prevents the same class of bug from propagating silently in the future."
+
+when_to_use: |
+  Use zuvo:debug for any bug, error, or unexpected behavior that needs investigation: production errors with stack traces, failing tests with unclear causes, flaky tests, behavioral regressions, performance bugs with a specific problematic operation, and permission or data isolation issues. Pass --regression or describe it as 'this used to work' to trigger automated git bisect.
+
+when_not_to_use: |
+  For broad code quality sweeps without a specific bug, use zuvo:code-audit. For general review of recently written code, use zuvo:review. For performance analysis without a specific buggy operation, use zuvo:performance-audit. For structural reorganization of working code, use zuvo:refactor. If the bug is clearly in a specific location and you already know the fix, use zuvo:build instead.
+
+related_skills:
+  - slug: review
+    relation: "optional post-fix review — verify the fix quality with independent audit agents"
+  - slug: refactor
+    relation: "if debugging reveals structural issues that require reorganization beyond the bug fix"
+  - slug: build
+    relation: "when the fix requires adding new functionality rather than correcting existing behavior"
+  - slug: backlog
+    relation: "unrelated code smells discovered during debugging are persisted here rather than fixed in-session"
+  - slug: write-tests
+    relation: "if debugging reveals broad test coverage gaps, write-tests can address them systematically"
+
+faq:
+  - q: "What does zuvo:debug do?"
+    a: "It runs a structured 5-phase investigation: (1) confirm the bug is reproducible, (2) establish a baseline and narrow the search space, (3) form and test hypotheses in order of likelihood with actual evidence, (4) apply the minimal fix and verify with targeted tests + full suite + original reproduction, (5) write a regression test and run CQ1-CQ22 on the fix and Q1-Q17 on the regression test. Phase R replaces phases 1-3 with automated git bisect for confirmed regressions."
+  - q: "How does the regression bisect work?"
+    a: "When --regression is passed or the issue sounds like a behavioral regression, zuvo:debug writes a minimal reproducer test that fails on HEAD, verifies it passes on a known-good commit, then runs git bisect automatically. Bisect terminates after the first bad commit is identified (guardrail: abort after 20 steps if the range is too wide). The breaking commit's diff typically makes the root cause obvious, so investigation skips straight to fixing."
+  - q: "How is zuvo:debug different from just reading the code?"
+    a: "zuvo:debug enforces several anti-shortcuts: it verifies a stack trace is reproducible before investigating (Phase 1.5), establishes a test baseline before applying fixes (Phase 2.0), limits hypotheses to 3 ordered by likelihood (Phase 3), and re-reads the code path from scratch if 2 hypotheses fail rather than guessing in the same direction. Most debugging time waste comes from skipping these steps."
+  - q: "What quality gates apply to the debug output?"
+    a: "The production fix is evaluated against CQ1-CQ22 (critical gates: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14). The regression test is evaluated against Q1-Q17 (critical gates: Q7, Q11, Q13, Q15, Q17). Any critical gate failure must be fixed. Defense-in-depth additions (entry validation, business logic invariants, debug instrumentation) are applied at whichever layers are appropriate for the bug class."
+  - q: "What happens when a bug is intermittent or flaky?"
+    a: "zuvo:debug flags intermittent reproduction after Phase 1.5 (run 3 times to confirm flakiness) and applies the Async/Flaky diagnostic sequence in Phase 3: confirm frequency over 5 runs, check for shared mutable state between tests, check timing assumptions, check execution-order dependencies, and check resource cleanup (ports, connections, file handles). Race conditions are treated as a separate bug class from functional bugs."
+
+arguments:
+  - flag: "<error message or description>"
+    description: "The bug to investigate. Accepts an error message, stack trace, code snippet, or description. Determines the starting phase automatically."
+  - flag: "--regression"
+    description: "Trigger Phase R (Regression Bisect) instead of the standard phases 1-3. Also auto-triggered by words like 'bisect', 'regression', or 'this used to work'."
+
+checks: null
+
+frameworks:
+  - TypeScript
+  - JavaScript
+  - Python
+  - React / Next.js
+  - NestJS
+  - PHP
+
+modes:
+  - name: "standard"
+    description: "5-phase investigation: reproduce → narrow → diagnose → fix → verify. Used when the bug is present or the cause is unknown."
+  - name: "regression-bisect"
+    description: "Phase R replaces phases 1-3 with automated git bisect to identify the breaking commit, then joins Phase 4 for fix and verification."
+
+agents: null
+
+benchmarks:
+  - claim: "Maximum 3 hypotheses formed in Phase 3, ordered by likelihood with specific evidence"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 3: Diagnose — 'Form hypotheses (max 3) — ordered by likelihood. Test each hypothesis.'"
+  - claim: "Regression bisect aborts after 20 steps to prevent runaway analysis on wide commit ranges"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase R.3 Guardrails — 'If bisect exceeds 20 steps: the range is too wide. Abort with git bisect reset'"
+  - claim: "6 error type playbooks cover the most common root cause categories"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 3 Error-Type Playbooks table — 6 rows"
+  - claim: "Defense-in-depth adds guards at 4 layers: entry validation, business logic, environment, debug instrumentation"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 4.7 Defense-in-Depth table — 4 rows"
+
+comparison_table:
+  columns: ["Capability", "Ad-hoc Debugging", "zuvo:debug"]
+  rows:
+    - ["Reproducibility verification", "Skipped under pressure", "Phase 1.5 — mandatory before narrowing"]
+    - ["Baseline test state recorded", "Rarely", "Phase 2.0 — before any changes"]
+    - ["Hypothesis testing", "Unbounded guessing", "Max 3, ordered by likelihood, evidence required"]
+    - ["Regression root cause", "Manual git log inspection", "Automated git bisect via Phase R"]
+    - ["Fix quality gates", "None", "CQ1-CQ22 on production fix"]
+    - ["Regression test quality", "Optional", "Q1-Q17 — critical gates block commit"]
+    - ["Defense-in-depth", "Ad-hoc", "4 explicit layers with bug-class playbooks"]
+    - ["Unrelated findings", "Fixed or forgotten", "Persisted to memory/backlog.md"]

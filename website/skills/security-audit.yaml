@@ -1,0 +1,252 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: security-audit
+  title: "Security Audit — 14-Dimension OWASP Application Security Assessment"
+  description: "Audits 14 security dimensions (S1-S14) covering OWASP Top 10, auth, multi-tenant isolation, secrets, and infra. 3-tier confidence model filters noise."
+  category: audit
+  og_image: /og/skills/security-audit.png
+
+seo:
+  target_queries:
+    - "automated application security audit tool"
+    - "OWASP Top 10 static analysis for NestJS"
+    - "how to find injection vulnerabilities in TypeScript codebase"
+    - "multi-tenant isolation security check"
+    - "security posture assessment vs penetration test"
+  canonical: /en/skills/security-audit
+
+stats:
+  - label: "Dimensions"
+    value: "14"
+    detail: "S1-S14"
+  - label: "Confidence Tiers"
+    value: "3"
+    detail: "HIGH / MEDIUM / LOW filtering"
+  - label: "Attack Paths"
+    value: "3"
+    detail: "Top attack chains constructed per run"
+  - label: "Modes"
+    value: "4"
+    detail: "QUICK / LIGHT / STANDARD / DEEP"
+  - label: "Est. Time (STANDARD)"
+    value: "~20 min"
+
+problem: |
+  Most codebases accumulate security debt silently — unguarded mutations, secrets in client bundles, missing tenant isolation.
+  Manual code review catches isolated issues but misses cross-endpoint patterns like defense-in-depth gaps and attack path composition.
+  Running a linter or Semgrep alone produces noisy results with no confidence weighting, so high-priority issues get buried.
+  zuvo:security-audit scores 14 dimensions, filters findings through a 3-tier confidence model, and constructs the top 3 attack paths so you see the actual risk, not just a raw list.
+
+how_it_works:
+  - step: "Phase 0 — Detection & Scope"
+    description: "Detects stack (NestJS, Next.js, FastAPI, Django, Flask), loads stack-specific rules, checks tool availability (Semgrep, gitleaks), and selects tier (QUICK/LIGHT/STANDARD/DEEP) based on codebase size and risk signals."
+  - step: "Phase 1-2 — Dependency & Static Analysis"
+    description: "Runs npm/pip audit for CVEs, scans for hardcoded secrets via gitleaks or grep, checks security headers and transport config, validates file upload defenses and path traversal guards."
+  - step: "Phase 3-7 — Code Pattern & Architecture Audit"
+    description: "Audits S1-S14 across injection, XSS, SSRF, authentication, authorization, multi-tenant isolation, business logic, and infrastructure. Phase 3 parallelizes 4 agents for S1/S2/S3/S9. Auth audit (Phase 4) always runs sequentially for cross-endpoint accuracy."
+  - step: "Phase 8 — Live Probing (optional)"
+    description: "With --live-url on a staging or localhost target, probes security headers, CORS config, error disclosure, and unprotected endpoints. Refuses to run against production. Rate-capped at 2 req/s."
+  - step: "Phase 9-10 — Reconciliation, Attack Paths & Report"
+    description: "Reconciles all findings against exclusion lists and framework mitigations, constructs top 3 attack paths, computes dual scores (static posture + runtime exploitability), and writes the full report to audits/."
+
+output:
+  artifact: "audits/security-audit-YYYY-MM-DD.md"
+  format: "Markdown report with executive summary, S1-S14 dimension scores, auth coverage matrix, top 3 attack paths, all findings (CRITICAL → HIGH → MEDIUM → Needs Verification), and a remediation roadmap."
+  sections:
+    - "Metadata and threat model"
+    - "Executive summary with dual scores"
+    - "S1-S14 dimension scores"
+    - "Auth coverage matrix"
+    - "Top 3 attack paths"
+    - "All findings (SEC-NNN format)"
+    - "Dependency vulnerabilities"
+    - "Infrastructure findings"
+    - "Defense gap analysis"
+    - "Remediation roadmap (immediate / short-term / medium-term)"
+
+examples:
+  - title: "Full project audit"
+    type: invocation
+    command: "zuvo:security-audit full"
+    result: "Audits entire project across all 14 dimensions. Selects STANDARD or DEEP tier based on endpoint count. Writes to audits/security-audit-[date].md."
+  - title: "Quick pre-release check"
+    type: invocation
+    command: "zuvo:security-audit --quick"
+    result: "QUICK mode: secrets scan (S7) + auth coverage (S4) + critical gates only. Completes in ~3 minutes. Ideal for CI gate before release."
+  - title: "Live header and CORS verification"
+    type: invocation
+    command: "zuvo:security-audit full --live-url https://staging.example.com"
+    result: "Adds Phase 8 runtime probing against staging URL. Upgrades header scores from static estimates to runtime-confirmed values. Checks CORS misconfiguration and error disclosure."
+
+when_to_use: |
+  Run before releases, after adding auth or payment flows, after security incidents, and as a quarterly health check.
+  Use when onboarding a new codebase and you need a broad risk picture before drilling into specifics.
+  Also appropriate when zuvo:review flags scattered security concerns and you need a cross-endpoint assessment.
+
+when_not_to_use: |
+  For single-file code review, use zuvo:review instead.
+  For API contract integrity (validation, pagination, error shapes), use zuvo:api-audit.
+  For exploit verification with source-to-sink tracing and runtime PoC, use zuvo:pentest — security-audit produces a static posture assessment, not exploit proof.
+  For environment variable secret exposure specifically, use zuvo:env-audit.
+
+related_skills:
+  - slug: pentest
+    relation: "Follow-up — verify exploitability of HIGH/CRITICAL findings with source-to-sink traces"
+  - slug: api-audit
+    relation: "Complement — API contract and validation coverage across endpoints"
+  - slug: env-audit
+    relation: "Complement — deep dive into secret exposure and env var management"
+  - slug: code-audit
+    relation: "Overlap — CQ4/CQ5 defense-in-depth and secret logging checks"
+  - slug: dependency-audit
+    relation: "Overlap — CVE and supply chain coverage within S11"
+
+faq:
+  - q: "What does zuvo:security-audit check?"
+    a: "It audits 14 dimensions (S1-S14) mapped to OWASP Top 10 2021: injection, XSS, SSRF, authentication, authorization, multi-tenant isolation, secrets, security headers, input validation, file upload, dependencies, logging, business logic, and infrastructure. Every finding is filtered through a 3-tier confidence model — only HIGH confidence findings appear in the main report."
+  - q: "How is security-audit different from pentest?"
+    a: "security-audit is a static posture assessment: it reads code, config, and dependency manifests to score 14 dimensions and identify gaps. zuvo:pentest is exploit verification: it traces specific source-to-sink paths and optionally sends targeted probes to confirm whether a finding is actually exploitable. Run security-audit first, then pentest to verify the highest-severity findings."
+  - q: "How long does zuvo:security-audit take?"
+    a: "QUICK mode (~3 min) covers secrets and auth critical gates only. LIGHT (~10 min) covers a single module. STANDARD (~20 min) covers a full service with 5-30 endpoints. DEEP (~30 min) adds business logic, infrastructure, and live probing — required for payment or auth services."
+  - q: "Can security-audit auto-fix issues?"
+    a: "No. security-audit is read-only and produces a report with remediation guidance per finding. To fix injection or auth gap findings, use zuvo:refactor on the flagged files. To fix hardcoded secrets, rotate them immediately and add a pre-commit gitleaks hook."
+  - q: "Which frameworks does security-audit support?"
+    a: "Full analysis for NestJS, Express, Next.js, FastAPI, Django, and Flask. Stack detection runs automatically and loads framework-specific rules. Other stacks still receive analysis for patterns that apply framework-agnostically (secrets, headers, dependencies, infrastructure)."
+
+arguments:
+  - flag: "[path]"
+    description: "Audit a specific directory or module instead of the full project."
+  - flag: "full"
+    description: "Audit the entire project across all applicable dimensions."
+  - flag: "--live-url <url>"
+    description: "Enable Phase 8 live probing against the specified non-production URL."
+  - flag: "--static"
+    description: "Static analysis only — skip Phase 8 even if --live-url is present."
+  - flag: "--quick"
+    description: "QUICK mode: secrets + auth coverage + critical gates only (~3 min)."
+  - flag: "--persist-backlog"
+    description: "Emit backlog entries for CRITICAL/HIGH findings to memory/backlog.md."
+
+checks:
+  sections:
+    - name: "Injection & Input"
+      id_range: "S1, S9"
+      count: 2
+      items:
+        - id: S1
+          name: "SQL / NoSQL / command injection — parameterization and sink coverage"
+          critical: true
+        - id: S9
+          name: "Input validation — schema completeness at all entry points"
+          critical: true
+    - name: "Client-Side"
+      id_range: "S2-S3"
+      count: 2
+      items:
+        - id: S2
+          name: "XSS — dangerouslySetInnerHTML, document.write, template sinks"
+          critical: true
+        - id: S3
+          name: "SSRF — user-controlled URLs to fetch/http.get sinks"
+          critical: true
+    - name: "Authentication & Authorization"
+      id_range: "S4-S6"
+      count: 3
+      items:
+        - id: S4
+          name: "Authentication — JWT config, session storage, missing auth on mutations"
+          critical: true
+        - id: S5
+          name: "Authorization — defense in depth: guard + query-level tenant/user filter"
+          critical: true
+        - id: S6
+          name: "Multi-tenant isolation — tenant ID source, cross-tenant cache/queue vectors"
+          critical: false
+    - name: "Secrets & Transport"
+      id_range: "S7-S8"
+      count: 2
+      items:
+        - id: S7
+          name: "Secrets — hardcoded keys, client-side exposure, git history"
+          critical: true
+        - id: S8
+          name: "Security headers — CSP, HSTS, X-Frame-Options, Helmet config"
+          critical: false
+    - name: "Infrastructure & Supply Chain"
+      id_range: "S10-S14"
+      count: 5
+      items:
+        - id: S10
+          name: "File upload — filename validation, path traversal defenses"
+          critical: false
+        - id: S11
+          name: "Dependency CVEs and supply chain — npm/pip audit, install scripts"
+          critical: false
+        - id: S12
+          name: "Logging — no secrets in logs, no stack traces to clients"
+          critical: false
+        - id: S13
+          name: "Business logic — TOCTOU, price-from-client, state machine bypass"
+          critical: false
+        - id: S14
+          name: "Infrastructure — Docker USER, CI secret injection, K8s pod security"
+          critical: false
+
+frameworks:
+  - NestJS
+  - Express
+  - Next.js
+  - FastAPI
+  - Django
+  - Flask
+
+modes:
+  - name: QUICK
+    description: "Secrets scan (S7) + auth coverage (S4) + critical gates only. ~3 min."
+  - name: LIGHT
+    description: "Single module, <5 endpoints. Phases 0-4, 9-10. ~10 min."
+  - name: STANDARD
+    description: "Full service, 5-30 endpoints. Phases 0-7, 9-10. ~20 min."
+  - name: DEEP
+    description: "Pre-release, >30 endpoints, payments or auth. All phases. ~30 min."
+
+agents:
+  - name: "Injection Agent (PT1/S1)"
+    role: "Traces user input to query/exec/eval sinks; checks parameterization defenses."
+  - name: "XSS Agent (S2)"
+    role: "Traces input to innerHTML/dangerouslySetInnerHTML/template sinks; checks output encoding."
+  - name: "SSRF Agent (S3)"
+    role: "Traces user-controlled URLs to fetch/http.get; checks URL allowlists."
+  - name: "Validation Agent (S9)"
+    role: "Audits schema completeness at all API entry points."
+
+benchmarks:
+  - claim: "QUICK mode covers secrets + auth critical gates in ~3 minutes"
+    type: speed
+    verifiable: true
+    source: "SKILL.md — Execution Notes, QUICK tier duration"
+  - claim: "STANDARD mode covers 14 dimensions for a 5-30 endpoint service in ~20 minutes"
+    type: speed
+    verifiable: true
+    source: "SKILL.md — Execution Notes, STANDARD tier duration"
+  - claim: "Phase 3 parallelizes up to 4 agents for S1/S2/S3/S9 simultaneously"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md — Phase 3, parallel agent dispatch"
+  - claim: "3-tier confidence model: LOW findings excluded entirely, MEDIUM in separate section"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md — introduction and Phase 9.1 reconciliation"
+
+comparison_table:
+  columns: ["Capability", "Manual Review", "Semgrep Alone", "zuvo:security-audit"]
+  rows:
+    - ["Injection sink detection", "Ad hoc", "Pattern match", "Pattern match + attacker-control verification"]
+    - ["Auth coverage matrix", "Manual", "Not produced", "Built per endpoint with evidence"]
+    - ["Multi-tenant isolation check", "Manual", "Not produced", "Phase 5 dedicated pass"]
+    - ["Confidence filtering", "Reviewer judgment", "No tiers", "3-tier: HIGH/MEDIUM/LOW"]
+    - ["Attack path construction", "Not produced", "Not produced", "Top 3 attack chains per run"]
+    - ["Live header verification", "curl manually", "Not possible", "Phase 8 with --live-url flag"]
+    - ["Dual scores (static + runtime)", "Not produced", "Not produced", "Both scores in executive summary"]

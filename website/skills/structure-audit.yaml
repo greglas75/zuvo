@@ -1,0 +1,207 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: structure-audit
+  title: "Structure Audit — 13-dimension codebase organization health check"
+  description: "Structural health check across 13 dimensions: naming, file size, dead code, duplication, circular deps, and git hotspots. Scored A–D with SQALE debt ratio."
+  category: audit
+  og_image: /og/skills/structure-audit.png
+
+seo:
+  target_queries:
+    - "codebase structure audit dead code detection"
+    - "circular dependency detection typescript project"
+    - "god module detection oversized files audit"
+    - "git hotspot analysis technical debt"
+    - "barrel export hygiene dead exports knip"
+  canonical: /en/skills/structure-audit
+
+stats:
+  - label: "Dimensions"
+    value: "13"
+    detail: "SA1-SA13"
+  - label: "Critical Gates"
+    value: "3"
+    detail: "SA6 (layer violations), SA7 (god files), SA8 (circular deps)"
+  - label: "Scoring Scale"
+    value: "0–3"
+    detail: "per dimension; normalized to 0–100"
+  - label: "SQALE Debt"
+    value: "5"
+    detail: "levels (A–E) based on remediation-minute ratio"
+  - label: "Primary Tools"
+    value: "5+"
+    detail: "CodeSift, cloc, knip, dep-cruiser, jscpd, git mining"
+
+problem: |
+  Structural problems compound quietly: a few oversized files become god modules, barrel exports accumulate dead re-exports, and circular dependencies make testing impossible. By the time developers feel the friction, the debt is months deep and hard to locate. `zuvo:structure-audit` quantifies every structural dimension with tool evidence — not opinions — so you know exactly where to refactor before the codebase becomes unmaintainable.
+
+how_it_works:
+  - step: "Stack detection and scope bounding"
+    description: "The skill detects the language, framework, and monorepo layout from config files. It builds a canonical code file list used as the single source of truth for all downstream tools, preventing each tool from scanning different scopes."
+  - step: "Tool execution"
+    description: "External tools run in parallel: cloc for file size distribution (SA7), CodeSift or knip for dead code (SA5/SA8), dep-cruiser for layer violations and circular deps (SA6/SA8), and CodeSift or jscpd for duplication (SA10). Tool outputs feed directly into dimension scores."
+  - step: "Git mining for hotspots (SA13)"
+    description: "The last 6 months of git history is analyzed for change frequency, temporal coupling (files that co-change without a direct import), shotgun surgery patterns, and developer congestion on unhealthy files."
+  - step: "Structural analysis"
+    description: "Grep and Read-based analysis evaluates directory pattern consistency (SA1), naming conventions (SA2), folder depth (SA3), colocation (SA4), barrel export hygiene (SA5), separation of concerns (SA6), root organization (SA11), and documentation structure (SA12)."
+  - step: "Scoring and action plan"
+    description: "Each SA1-SA13 dimension is scored 0-3. The normalized total determines the letter grade (A-D). A SQALE debt ratio is computed from remediation minutes. Cross-cutting compound risk patterns (structural bottleneck, hidden coupling, untestable hotspot) are flagged separately."
+
+output:
+  artifact: "audit-results/structure-audit-YYYY-MM-DD.md"
+  format: "Markdown report with per-dimension score table, critical gate status, SQALE debt ratio, tool output summaries, compound risk patterns, hotspot table, and prioritized top-5 action items."
+  sections:
+    - "META (stack, scope, tool inventory, LOC count)"
+    - "Score Table (SA1-SA13 with scores and gate status)"
+    - "Critical Gates (SA6/SA7/SA8)"
+    - "Grade and SQALE Debt Ratio"
+    - "Tool Outputs Summary"
+    - "Findings (sorted by severity with effort estimates)"
+    - "Cross-Cutting Compound Risk Patterns"
+    - "Hotspot Analysis (SA13)"
+    - "Top 5 Action Items"
+
+examples:
+  - title: "Full project audit"
+    type: invocation
+    command: "zuvo:structure-audit full"
+    result: "Runs all 13 dimensions across the project. Outputs a scored report with letter grade, SQALE debt ratio, and top 5 action items within ~3 minutes for a medium-sized project."
+  - title: "Targeted dead code scan"
+    type: invocation
+    command: "zuvo:structure-audit --dead-code"
+    result: "Runs SA5 (barrel exports) and SA8 (dead code) only. Lists unused exports with file:line and confidence level. Use as a pre-refactor cleanup step."
+  - title: "Git hotspot analysis"
+    type: invocation
+    command: "zuvo:structure-audit --hotspots"
+    result: "Runs SA13 only: top-changed files in the last 6 months cross-referenced with complexity scores. Returns temporal coupling pairs and developer congestion findings."
+  - title: "ORM import inside a React component (SA6 violation)"
+    type: output_sample
+    sample:
+      language: markdown
+      code: |
+        ### SA6 — Separation of Concerns: FAIL (Critical Gate)
+
+        Finding: ORM import in UI component
+        File: src/components/UserList.tsx:12
+        Evidence: `import { prisma } from "@/lib/prisma"` in .tsx file
+        Severity: CRITICAL
+        Fix: Move DB call to a server action or API route; pass data as props
+    explanation: "SA6 is a critical gate. Any confirmed ORM import in a component (not a server action or RSC) sets the gate to 0 and overrides the overall grade to FAIL regardless of the total score."
+
+when_to_use: "Use `zuvo:structure-audit` as a periodic health check, before a major refactor, when onboarding to an unfamiliar codebase, or after a sprint of rapid feature work to assess accumulated structural debt."
+
+when_not_to_use: "For per-file code quality issues (empty catch, float-for-money), use `zuvo:code-audit`. For SOLID violations, circular dependency root-cause analysis, or system design decisions, use `zuvo:architecture`. For runtime performance issues, use `zuvo:performance-audit`."
+
+related_skills:
+  - slug: architecture
+    relation: "deeper analysis of circular deps and layer violations flagged in SA6/SA8"
+  - slug: refactor
+    relation: "use after audit to split god modules (SA7) or extract duplicated logic (SA10)"
+  - slug: code-audit
+    relation: "per-file code quality to complement structural metrics"
+  - slug: performance-audit
+    relation: "runtime performance implications of hotspots found in SA13"
+  - slug: backlog
+    relation: "HIGH/CRITICAL findings are automatically persisted to the project backlog"
+
+faq:
+  - q: "What does zuvo:structure-audit check?"
+    a: "It audits 13 measurable dimensions: directory organization (SA1), file naming conventions (SA2), folder depth and nesting (SA3), colocation of tests and types (SA4), barrel export hygiene (SA5), separation of concerns such as ORM imports in UI (SA6), file size distribution and god modules (SA7), dead code and circular dependencies (SA8), cyclomatic complexity distribution (SA9), code duplication (SA10), root configuration organization (SA11), documentation structure (SA12), and git hotspots (SA13)."
+  - q: "How is zuvo:structure-audit different from zuvo:architecture?"
+    a: "zuvo:structure-audit is quantitative and tool-driven: it measures dimensions with actual tool output (cloc, knip, jscpd, git log) and produces a scored report. zuvo:architecture is analytical: it assesses design patterns, SOLID compliance, architectural style, and produces architecture maps and ADRs. Structure audit answers 'what is the current state of the codebase?' — architecture answers 'is the design correct?'"
+  - q: "Which external tools does the audit require?"
+    a: "cloc is the only hard dependency (for SA7 file size distribution). knip, dep-cruiser, and jscpd are optional fallbacks for dead code, circular deps, and duplication respectively — CodeSift handles those when available. Git mining (SA13) requires a git repository with at least 3 months of history."
+  - q: "What is the SQALE debt ratio?"
+    a: "SQALE (Software Quality Assessment based on Lifecycle Expectations) estimates total remediation effort in minutes, then divides by total lines-of-code times 30. A ratio under 5% is grade A, over 50% is grade E. It gives a single number to track structural health over time."
+  - q: "Can the audit auto-fix anything?"
+    a: "With --fix, the skill can delete unused files (high-confidence dead code only), append missing .gitignore patterns, and rename obvious convention violations with git mv. It will never auto-split oversized files (use zuvo:refactor) or restructure directories (requires design decisions)."
+
+arguments:
+  - flag: "full"
+    description: "Audit all 13 dimensions across the project (default)"
+  - flag: "[path]"
+    description: "Scope audit to a specific directory"
+  - flag: "--naming"
+    description: "Naming conventions only (SA2)"
+  - flag: "--size"
+    description: "File size distribution only (SA7)"
+  - flag: "--dead-code"
+    description: "Dead code and barrel export analysis (SA5 + SA8)"
+  - flag: "--duplication"
+    description: "Code duplication only (SA10)"
+  - flag: "--hotspots"
+    description: "Git-based hotspot analysis only (SA13)"
+  - flag: "--quick"
+    description: "Skip external tooling and git mining; runs SA1-SA8, SA11-SA12 only (SA9/SA10/SA13 = N/A)"
+  - flag: "--fix"
+    description: "Auto-fix high-confidence issues after the audit: delete unused exports, add .gitignore patterns, rename naming violations"
+
+checks:
+  sections:
+    - name: "Structural Dimensions"
+      id_range: "SA1-SA13"
+      count: 13
+      items:
+        - id: "SA6"
+          name: "Separation of concerns — ORM in UI, controller-to-controller imports, fetch in components"
+          critical: true
+        - id: "SA7"
+          name: "File size distribution — god module detection using per-category limits"
+          critical: true
+        - id: "SA8"
+          name: "Dead code and circular dependencies in core production modules"
+          critical: true
+        - id: "SA1"
+          name: "Directory pattern consistency — no mixed layer + feature at same level"
+          critical: false
+        - id: "SA2"
+          name: "File naming conventions — mixed kebab/camel/pascal in same directory"
+          critical: false
+        - id: "SA10"
+          name: "Code duplication — clone blocks over 10 lines"
+          critical: false
+        - id: "SA13"
+          name: "Git hotspots — high churn + high complexity files, temporal coupling"
+          critical: false
+        - id: "SA5"
+          name: "Barrel exports — god barrels with 30+ exports, unused re-exports"
+          critical: false
+
+frameworks:
+  - TypeScript
+  - JavaScript
+  - React / Next.js
+  - NestJS
+  - Python
+  - PHP
+  - Monorepo (Turborepo, Nx, pnpm workspaces)
+
+modes: null
+
+agents: null
+
+benchmarks:
+  - claim: "cloc per-file output feeds SA7 file size classification with 1.2x tolerance factor applied per category limit."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 3 section 3.7: '1.2x tolerance factor, compare to category limit from file-limits.md'"
+  - claim: "SA13 git mining analyzes the last 6 months of commit history for change frequency and temporal coupling."
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 2 section 2.1: 'git log --since=\"6 months ago\"'"
+  - claim: "SQALE debt ratio maps remediation effort: LOW=5min, MEDIUM=15min, HIGH=30min, CRITICAL=60min per finding divided by total LOC * 30."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 4 section 4.5 SQALE Debt Ratio"
+
+comparison_table:
+  columns: ["Capability", "Manual Review", "ESLint + custom rules", "zuvo:structure-audit"]
+  rows:
+    - ["God module detection", "Visual inspection", "File length rule only", "SA7: per-category limits + god module pattern"]
+    - ["Circular dependency detection", "Mental model", "dep-cruiser (JS/TS)", "SA8: dep-cruiser or CodeSift, verified"]
+    - ["Git hotspot identification", "git log reading", "Not available", "SA13: churn × complexity with temporal coupling"]
+    - ["Dead export detection", "Not feasible", "knip (JS/TS only)", "SA5/SA8: CodeSift or knip with confidence level"]
+    - ["Compound risk patterns", "Not feasible", "Not available", "6 cross-cutting patterns (structural bottleneck, etc.)"]
+    - ["Output", "Ad-hoc notes", "Violation list", "Scored SA1-SA13 with letter grade + SQALE ratio"]

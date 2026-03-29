@@ -1,0 +1,210 @@
+schema_version: 1
+
+last_synced: "2026-03-29"
+
+meta:
+  slug: ui-design-team
+  title: "ui-design-team — 4-Agent UI Review with UX, Visual, i18n, and A11y Perspectives"
+  description: "Run 4 specialist agents on any UI component: UX, Visual Designer, i18n QA, and A11y/Perf Auditor. Each scores independently across 16 categories."
+  category: design
+  og_image: /og/skills/ui-design-team.png
+
+seo:
+  target_queries:
+    - "multi-agent ui code review accessibility i18n"
+    - "automated accessibility and i18n audit react component"
+    - "ux visual design review for tailwind components"
+    - "claude code ui review 4 perspectives"
+    - "rtl support audit ui component tool"
+  canonical: /en/skills/ui-design-team
+
+stats:
+  - label: "Specialist Agents"
+    value: "4"
+    detail: "UX Researcher, Visual Designer, i18n QA, A11y/Perf Auditor"
+  - label: "Scoring Categories"
+    value: "16"
+    detail: "4 areas per agent, each scored 1-5"
+  - label: "i18n Test Languages"
+    value: "5"
+    detail: "Polish, German, Arabic (RTL), Japanese, Thai"
+  - label: "Priority Tiers"
+    value: "3"
+    detail: "P0 blocking, P1 important, P2 backlog"
+  - label: "Stacks Supported"
+    value: "5"
+    detail: "Tailwind, CSS-in-JS tokens, vanilla, styled-components, Astro"
+
+problem: |
+  No single reviewer catches every category of UI problem simultaneously. UX issues hide behind visually
+  polished code. i18n breakages only appear with long German strings or Arabic RTL. Accessibility violations
+  require WCAG knowledge that most engineers lack. Running these checks manually is slow, inconsistent, and
+  usually skipped. `/ui-design-team` dispatches 4 specialist agents in parallel, each scoring from its own
+  expertise, so no category is deprioritized.
+
+how_it_works:
+  - step: "Stack Detection"
+    description: "Auto-detects styling approach (Tailwind, css-in-js-tokens, vanilla, CSS-in-JS) and framework (React, Astro, Next.js, vanilla). Agents use stack-specific guidance throughout."
+  - step: "Context Gathering"
+    description: "Reads component code, token/theme file, project CLAUDE.md or AGENTS.md. Optionally captures screenshots at 375px and 1024px if --screenshot is passed."
+  - step: "4 Specialist Agent Dispatch"
+    description: "UX Researcher, Visual Designer, i18n QA, and A11y/Perf Auditor run in parallel (Claude Code) or sequentially (Codex/Cursor). Each scores 4 categories independently."
+  - step: "Synthesis"
+    description: "Lead Designer produces a summary table, detects systematic issues (3+ agents flagging same concern), and builds a prioritized fix list (P0/P1/P2) with exact code for the detected stack."
+  - step: "Apply Fixes"
+    description: "With --fix flag, Lead Designer applies the top 3 P0 fixes immediately. Without --fix, presents the list for user review."
+
+output:
+  artifact: "Report in conversation (no file written unless --fix modifies source files)"
+  format: "Summary score table (5 agents × 4 categories), systematic issue detection, prioritized fix list with stack-specific code, optional verification screenshots."
+  sections:
+    - "Score Summary Table (UX / Visual / i18n / A11y / Perf)"
+    - "Systematic Issues (if 3+ agents agree)"
+    - "P0 — Blocking fixes with exact code"
+    - "P1 — Important fixes with exact code"
+    - "P2 — Backlog items"
+    - "Next-Action Routing"
+
+examples:
+  - title: "Review a component with auto-fix"
+    type: invocation
+    command: "zuvo:ui-design-team src/components/CampaignCard.tsx --fix"
+    result: |
+      Stack detected: tailwind (React, Tailwind v3)
+      Token file: src/styles/tokens.ts
+
+      Agent scores:
+                      UX    Visual  i18n   A11y   Perf   AVG
+      Cognitive Load  4/5
+      Token Compliance       3/5
+      Text Overflow                  2/5
+      Semantic HTML                         3/5
+      Bundle Impact                                4/5
+      OVERALL         4      3       2      3      4     3.2/5
+
+      SYSTEMATIC ISSUES: 2 agents flagged missing focus indicators.
+
+      P0 — BLOCKING:
+        1. [i18n] Button label clips at 150% (German) — file:line 42
+           FIX: Remove fixed width, use min-width
+        2. [A11y] Missing aria-label on icon button — file:line 67
+           FIX: Add aria-label="Close notification"
+        3. [Visual] Hardcoded color #3B82F6 — file:line 23
+           FIX: Replace with bg-blue-500
+
+      Applied 3 P0 fixes.
+
+  - title: "Mobile-focused review"
+    type: invocation
+    command: "zuvo:ui-design-team src/pages/Dashboard.tsx --mobile --screenshot"
+    result: |
+      Screenshot captured at 375px and 1024px.
+      Stack: astro-tailwind
+
+      UX (mobile): touch targets below 44px on 3 interactive elements.
+      Visual: 2 arbitrary Tailwind values flagged.
+      i18n: RTL layout breaks at 375px — flex-direction not mirrored.
+      A11y: heading hierarchy skips h2 → h4.
+
+      P0: 4 blocking issues listed with exact fixes for astro-tailwind stack.
+
+when_to_use: |
+  Use `/ui-design-team` when you want deep qualitative critique of a specific component or page from
+  multiple specialist angles simultaneously — especially before merging UI-heavy PRs, after building
+  a new component with `/design`, or when a11y/i18n issues are suspected but unclear where.
+
+when_not_to_use: |
+  For codebase-wide consistency audit across all UI files, use `zuvo:design-review` instead — it runs
+  DX1-DX20 checks at scale. For creating or improving UI with a design system, use `zuvo:design`.
+  For general code quality (not visual/UX), use `zuvo:review`.
+
+related_skills:
+  - slug: design-review
+    relation: "Codebase-wide DX1-DX20 consistency audit — use when /ui-design-team finds systematic issues across multiple files"
+  - slug: design
+    relation: "Design system creation — run /design first, then /ui-design-team to validate the output"
+  - slug: review
+    relation: "Code quality audit for the same component files"
+  - slug: write-tests
+    relation: "After /ui-design-team fixes a11y issues, write tests to prevent regression"
+
+faq:
+  - q: "What does zuvo:ui-design-team check that zuvo:design-review does not?"
+    a: "zuvo:ui-design-team runs qualitative agent perspectives — a UX Researcher scoring cognitive load, a Visual Designer flagging every hardcoded token, an i18n QA testing with German/Arabic/Thai strings, and an A11y auditor tracing WCAG criterion numbers. zuvo:design-review runs a structured DX1-DX20 checklist across the whole codebase. They are complementary: use /ui-design-team for deep critique of a specific component, /design-review for broad consistency across all views."
+  - q: "How is zuvo:ui-design-team different from zuvo:design?"
+    a: "zuvo:design creates UI — it builds components and design systems. zuvo:ui-design-team reviews existing UI — it dispatches 4 agents to score what is already built. Use /design to create, then /ui-design-team or /design-review to audit."
+  - q: "How long does a full ui-design-team review take?"
+    a: "In Claude Code with parallel dispatch, all 4 agents run simultaneously and the full report including synthesis takes 2-4 minutes per component. In sequential environments (Codex, Cursor), agents run one at a time and take approximately 4-8 minutes."
+  - q: "Does zuvo:ui-design-team auto-fix issues?"
+    a: "Only with the --fix flag, which applies the top 3 P0 blocking fixes directly. P1 and P2 issues are always presented as a list for user review. This prevents automated changes to P1+ items that may require design judgment."
+  - q: "What frameworks and stacks does zuvo:ui-design-team support?"
+    a: "Supports React, Next.js, Astro, and vanilla HTML/CSS. Styling stacks detected automatically: Tailwind v3/v4, css-in-js-tokens, styled-components, and vanilla CSS. Each agent adapts its guidance and fix code to the detected stack."
+
+arguments:
+  - flag: "[file/path]"
+    description: "Component file or directory to review. Defaults to component currently in context."
+  - flag: "--screenshot"
+    description: "Capture chrome-devtools screenshot at 375px and 1024px before agents run."
+  - flag: "--mobile"
+    description: "Focus agents on 375px mobile viewport. Agents score mobile-first."
+  - flag: "--fix"
+    description: "After report, Lead Designer applies top 3 P0 priority fixes immediately."
+
+checks: null
+
+frameworks:
+  - React
+  - Next.js
+  - Astro
+  - Vanilla HTML/CSS
+  - Tailwind v3
+  - Tailwind v4
+  - styled-components
+  - CSS-in-JS tokens
+
+modes:
+  - name: "--screenshot"
+    description: "Visual context mode — captures browser screenshots before agent dispatch."
+  - name: "--mobile"
+    description: "Mobile-first mode — agents score at 375px viewport, touch target rules enforced."
+  - name: "--fix"
+    description: "Auto-fix mode — applies top 3 P0 blocking fixes after report."
+
+agents:
+  - name: "UX Researcher"
+    role: "Scores cognitive load, interaction quality, mobile usability at 375px, and performance perception — 4 categories, 1-5 each."
+  - name: "Visual Designer"
+    role: "Audits token/variable compliance, visual hierarchy, interaction states (all 5 required), and spacing rhythm — flags every hardcoded value with exact replacement."
+  - name: "i18n and Multilingual QA"
+    role: "Tests text overflow with German (150% length), Arabic RTL, Japanese CJK, and Thai scripts — scores text overflow, RTL support, character sets, and hardcoded strings."
+  - name: "Accessibility and Performance Auditor"
+    role: "Checks semantic HTML/ARIA, keyboard navigation, visual accessibility (WCAG contrast ratios), and performance (bundle impact, render performance, Core Web Vitals risk)."
+  - name: "Lead Designer"
+    role: "Synthesizes all 4 agent reports into a summary table, detects systematic issues, produces P0/P1/P2 fix list with exact stack-specific code."
+
+benchmarks:
+  - claim: "16 scoring categories total — 4 per agent, each rated 1-5"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Agent 1-4 scoring sections"
+  - claim: "5 benchmark languages tested by i18n agent: Polish, German, Arabic, Japanese, Thai"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Agent 3 — i18n benchmark strings"
+  - claim: "Every interactive element must have all 5 states: default, hover, active/pressed, focus-visible, disabled"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Agent 2 — Interaction States"
+  - claim: "P0 issues require flagging by 2+ agents OR any WCAG A violation OR any layout break at 375px"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Step 3 — P0 definition"
+
+comparison_table:
+  columns: ["Capability", "Manual Review", "ESLint + axe-core", "zuvo:ui-design-team"]
+  rows:
+    - ["UX cognitive load scoring", "Depends on reviewer", "No", "Yes — structured 4-area scoring"]
+    - ["i18n RTL and long-string testing", "Rarely done", "No", "Yes — 5 benchmark languages"]
+    - ["WCAG criterion citations", "Inconsistent", "Partial (axe-core)", "Yes — criterion number per finding"]
+    - ["Stack-specific fix code", "No", "No", "Yes — Tailwind / CSS-in-JS / vanilla variants"]
+    - ["Systematic issue detection", "No", "No", "Yes — flags when 3+ agents agree"]

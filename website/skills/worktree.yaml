@@ -1,0 +1,178 @@
+schema_version: 1
+
+last_synced: "2026-03-29"
+
+meta:
+  slug: worktree
+  title: "worktree — Safe Branch Isolation Before Risky Operations"
+  description: "Create or finish git worktrees with 2 modes and 4 finish options. Verifies baseline tests, gitignore coverage, and dependency setup in under 60 seconds."
+  category: utility
+  og_image: /og/skills/worktree.png
+
+seo:
+  target_queries:
+    - "git worktree automation claude code"
+    - "isolate feature branch before risky refactor"
+    - "git worktree create and cleanup workflow"
+    - "safe git branch isolation with dependency setup"
+    - "finish git worktree merge or pull request"
+  canonical: /en/skills/worktree
+
+stats:
+  - label: "Modes"
+    value: "2"
+    detail: "CREATE and FINISH"
+  - label: "Finish Options"
+    value: "4"
+    detail: "Merge, Push+PR, Keep, Discard"
+  - label: "Safety Rules"
+    value: "7"
+    detail: "No force-push, no main deletion, tests before merge"
+  - label: "Package Managers"
+    value: "10"
+    detail: "npm, yarn, pnpm, bun, pip, poetry, cargo, go, bundle, composer"
+
+problem: |
+  Working directly on a branch in the main checkout risks contaminating ongoing work with experimental
+  changes, and makes it hard to switch context cleanly. Git worktrees solve this by placing each branch
+  in its own directory — but setting one up correctly (gitignore, dependency install, baseline tests)
+  takes multiple manual steps that are easy to skip. `/worktree` automates the full CREATE-to-FINISH
+  lifecycle with safety checks at every step.
+
+how_it_works:
+  - step: "Mode Detection"
+    description: "Automatically detects whether the current directory is inside a worktree (FINISH) or the main checkout (CREATE). Respects explicit user override."
+  - step: "CREATE — Directory + gitignore"
+    description: "Checks for an existing .worktrees/ convention or CLAUDE.md preference. Adds the worktree directory to .gitignore if not already covered and commits the change."
+  - step: "CREATE — Branch + Setup"
+    description: "Creates the worktree on a new branch, then auto-detects the dependency system (10 package managers supported) and runs the appropriate install command."
+  - step: "CREATE — Baseline Verification"
+    description: "Runs the project's test suite to establish a green baseline. Reports pass/fail count. Pre-existing failures are surfaced before any work begins."
+  - step: "FINISH — State Summary"
+    description: "Reports branch name, commits ahead of base, and uncommitted changes. Blocks all finish options if uncommitted changes exist."
+  - step: "FINISH — Completion"
+    description: "User selects 1 of 4 options: Merge Locally (runs tests, merges, removes worktree), Push+PR (pushes, creates gh pr, removes worktree), Keep As-Is (preserves everything), or Discard (requires typed confirmation)."
+
+output:
+  artifact: "No file artifact — worktree lifecycle managed in-place"
+  format: "Structured status report printed after CREATE and after each FINISH option. Source files modified only by Merge (git merge) or Discard (worktree + branch deletion)."
+  sections:
+    - "Worktree path, branch, base branch, short hash"
+    - "Dependency setup result"
+    - "Baseline test pass/fail count"
+    - "FINISH state summary (commits ahead, clean/dirty)"
+    - "Completion report (merge result, PR URL, or preserved path)"
+
+examples:
+  - title: "Create a worktree for a new feature"
+    type: invocation
+    command: "zuvo:worktree"
+    result: |
+      Mode: CREATE (current dir is main checkout)
+      Directory: .worktrees/ (existing convention detected)
+      .gitignore: already covers .worktrees/ ✓
+      Branch: feat/user-notifications
+
+      Running: npm ci
+      Dependencies installed.
+
+      Running: npm test
+      Baseline: 142/142 passing ✓
+
+      Worktree created.
+        Path:   /Users/dev/myapp/.worktrees/feat/user-notifications
+        Branch: feat/user-notifications
+        Base:   main @ a4ed959
+        Setup:  npm ci (142 packages)
+        Tests:  142 / 142 passing
+
+  - title: "Finish work with a Pull Request"
+    type: invocation
+    command: "zuvo:worktree finish"
+    result: |
+      Mode: FINISH
+      Branch: feat/user-notifications
+      Base: main
+      Commits ahead: 3
+      Status: clean ✓
+
+      Options:
+        1. Merge Locally
+        2. Push + Pull Request  ← selected
+        3. Keep As-Is
+        4. Discard
+
+      Running tests: 145/145 passing ✓
+      Pushed feat/user-notifications to origin.
+      PR created: https://github.com/org/repo/pull/47
+
+      PR created: https://github.com/org/repo/pull/47. Worktree removed. Branch preserved on remote.
+
+when_to_use: |
+  Use `/worktree` at the start of a plan execution (`zuvo:execute`) to isolate work from the main
+  checkout, before any risky refactor spanning multiple files, or whenever you want a clean environment
+  to verify a green baseline before modifying code. Also use it to cleanly wrap up work — push a PR,
+  merge locally, or discard an experiment.
+
+when_not_to_use: |
+  For executing an implementation plan itself, use `zuvo:execute` — `/worktree` only sets up the
+  isolation environment. For branch strategy decisions or multi-repo workflows, use `zuvo:architecture`.
+  For small single-file changes where isolation overhead is unnecessary, work directly on your branch.
+
+related_skills:
+  - slug: execute
+    relation: "Typical pairing — /worktree creates the isolated branch environment that /execute implements into"
+  - slug: build
+    relation: "Use /worktree before /build for multi-file features to prevent contaminating main"
+  - slug: refactor
+    relation: "Create a worktree before large refactors to allow safe rollback"
+  - slug: review
+    relation: "Run /review in the worktree before choosing the Push+PR finish option"
+
+faq:
+  - q: "What does zuvo:worktree do in CREATE mode?"
+    a: "It creates a git worktree on a new branch, ensures the directory is covered by .gitignore, runs dependency installation for the detected package manager, and verifies a green test baseline — all in one step. The result is a ready-to-work isolated environment with a known clean state."
+  - q: "How is zuvo:worktree different from running git worktree add manually?"
+    a: "Manual git worktree skips gitignore coverage, dependency setup, and baseline verification. /worktree automates all 3, handles 10 package managers, reports pre-existing test failures before you start work, and provides a structured FINISH workflow with 4 completion options including PR creation."
+  - q: "How long does zuvo:worktree CREATE take?"
+    a: "Typically under 60 seconds: branch creation is instant, dependency install matches your package manager speed (npm ci on a cached node_modules is under 10 seconds), and baseline test run time depends on your suite size."
+  - q: "What happens if I have uncommitted changes when I run FINISH?"
+    a: "All 4 FINISH options are blocked until uncommitted changes are resolved. /worktree will report the uncommitted file count and ask you to commit or stash before proceeding. This prevents accidental work loss across all completion paths."
+  - q: "Can zuvo:worktree push to a protected main branch?"
+    a: "No — a safety rule prevents creating a worktree directly on main or master without explicit typed confirmation. Force-push is also blocked regardless of branch. For normal feature branches, Option 2 (Push+PR) pushes and opens a PR without force-pushing."
+
+arguments:
+  - flag: "(no arguments)"
+    description: "Auto-detect mode: CREATE if in main checkout, FINISH if already inside a worktree."
+  - flag: "create"
+    description: "Explicitly run CREATE mode regardless of current directory."
+  - flag: "finish"
+    description: "Explicitly run FINISH mode. Prompts for completion option (Merge/PR/Keep/Discard)."
+
+checks: null
+
+frameworks: []
+
+modes:
+  - name: "CREATE"
+    description: "Set up a new worktree: directory check, gitignore, branch creation, dependency install, baseline test."
+  - name: "FINISH"
+    description: "Complete work in current worktree: summarize state, choose from Merge / Push+PR / Keep / Discard."
+
+agents: null
+
+benchmarks:
+  - claim: "10 package managers supported for automatic dependency setup"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Step 4 — dependency system detection table"
+  - claim: "7 safety rules enforced: no force-push, no main deletion, test before merge, typed confirmation for discard"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Safety Rules section"
+  - claim: "4 finish options: Merge Locally, Push+PR, Keep As-Is, Discard"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md FINISH Mode — Option 1-4"
+
+comparison_table: null

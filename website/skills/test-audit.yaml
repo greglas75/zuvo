@@ -1,0 +1,233 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: test-audit
+  title: "Test Audit — Q1-Q17 quality triage for test suites"
+  description: "Batch audit test files against 17 quality gates and 26 anti-patterns. Detects orphan tests, phantom mocks, untested methods. Tiered A/B/C/D output."
+  category: audit
+  og_image: /og/skills/test-audit.png
+
+seo:
+  target_queries:
+    - "test quality audit q1-q17 checklist"
+    - "detect phantom mocks unit tests"
+    - "find untested public methods typescript"
+    - "tautological mock anti-pattern tests"
+    - "batch test file review tiered output"
+  canonical: /en/skills/test-audit
+
+stats:
+  - label: "Quality Gates"
+    value: "17"
+    detail: "Q1-Q17 binary checklist"
+  - label: "Anti-Patterns"
+    value: "26"
+    detail: "AP1-AP26"
+  - label: "Critical Gates"
+    value: "5"
+    detail: "Q7, Q11, Q13, Q15, Q17 — any fail caps tier at B"
+  - label: "Output Tiers"
+    value: "4"
+    detail: "A (no action) through D (delete and rewrite)"
+  - label: "PASS threshold"
+    value: "82%"
+    detail: "of applicable gates must pass for Tier A"
+
+problem: |
+  Test suites degrade silently. Files accumulate tautological mocks that test nothing, copy-pasted fixtures with no assertions, and branches that are never exercised — all while the test count climbs and coverage percentages look healthy. When something breaks, these tests give no signal. `zuvo:test-audit` pairs each test file with its production source, checks every public method for coverage, and assigns a tier so you know exactly which tests are worth keeping and which need a rewrite.
+
+how_it_works:
+  - step: "Discovery and pairing"
+    description: "The skill locates all test files, pairs each with its production source by path convention or symbol lookup, and flags orphan tests (test files with no matching production file)."
+  - step: "Red-flag pre-scan"
+    description: "Before the full checklist, each batch agent scans for instant Tier-D triggers: zero expect() calls (AP13), fixture:assertion ratio >20:1 (AP16), and 50%+ tests using toBeTruthy()/toBeDefined() as sole assertion (AP14)."
+  - step: "Production code analysis"
+    description: "The agent reads the production file to extract the public API surface, branch map, error handling points, and complexity class (THIN/STANDARD/COMPLEX). This sets the expected test count and edge case scope."
+  - step: "Q1-Q17 evaluation"
+    description: "Every applicable gate is scored binary (1/0). Phantom mock detection runs in parallel: each mocked module is checked against what the production code actually calls."
+  - step: "Aggregate and coverage registry"
+    description: "Results roll up to a tier distribution, critical gate failure table, and untested method inventory. The coverage registry (memory/coverage.md) is updated and findings are persisted to the backlog."
+
+output:
+  artifact: "audits/test-quality-audit-YYYY-MM-DD.md"
+  format: "Markdown report with tier distribution, critical gate failures, untested public methods, anti-pattern hotspots, and per-file score blocks."
+  sections:
+    - "Summary by Tier (A/B/C/D and ORPHAN counts)"
+    - "Critical Gate Failures (Q7/Q11/Q13/Q15/Q17)"
+    - "Red Flag Summary (Auto Tier-D)"
+    - "Untested Public Methods"
+    - "Top Failed Questions (frequency ranking)"
+    - "Anti-pattern Hot Spots"
+    - "Per-file detail blocks"
+
+examples:
+  - title: "Audit all tests in quick mode"
+    type: invocation
+    command: "zuvo:test-audit all --quick"
+    result: "Scans every test file, pairs each with its source, and returns tier distribution plus top failing gates in ~2 minutes for 50 files. No per-gate evidence."
+  - title: "Deep audit on a single test file"
+    type: invocation
+    command: "zuvo:test-audit src/services/order.test.ts"
+    result: "Full Q1-Q17 evidence with phantom mock list, untested methods, and a fix plan for the specific file."
+  - title: "Tautological mock — AP10 auto-detected"
+    type: before_after
+    gate: "AP10"
+    before:
+      language: typescript
+      code: |
+        it("calls the logger", async () => {
+          const logSpy = vi.fn();
+          await processOrder({ logger: logSpy }, orderId);
+          expect(logSpy).toHaveBeenCalled();
+        });
+    after:
+      language: typescript
+      code: |
+        it("logs order ID after processing", async () => {
+          const logSpy = vi.fn();
+          const result = await processOrder({ logger: logSpy }, "ord_123");
+          expect(result.status).toBe("processed");
+          expect(logSpy).toHaveBeenCalledWith("order processed", { orderId: "ord_123" });
+        });
+    explanation: "AP10 is a tautological mock: the test calls a mock and only verifies the mock was called, with no assertion on production output. The fix adds a behavioral assertion (result.status) and a CalledWith check on the exact arguments."
+
+when_to_use: "Run `zuvo:test-audit` after mass test writing, when test failures are hard to diagnose, before a release, or when coverage numbers look healthy but regressions keep slipping through. Use `--quick` for a fast sweep and `--deep` when you need the full evidence trail."
+
+when_not_to_use: "For writing new tests for untested code, use `zuvo:write-tests`. For fixing the same anti-pattern across many test files in batch, use `zuvo:fix-tests` — it is designed to repair a specific pattern (e.g., AP10 across 30 files) rather than diagnose. For single-file PR review, use `zuvo:review`."
+
+related_skills:
+  - slug: write-tests
+    relation: "write new tests for gaps surfaced by the audit"
+  - slug: fix-tests
+    relation: "batch repair a specific anti-pattern across many files"
+  - slug: code-audit
+    relation: "parallel audit for production file quality (CQ1-CQ22)"
+  - slug: review
+    relation: "per-diff review vs. full test suite batch audit"
+  - slug: tests-performance
+    relation: "follow up on slow test suite identified here"
+
+faq:
+  - q: "What does zuvo:test-audit check that code coverage tools don't?"
+    a: "Coverage tools report which lines were executed. zuvo:test-audit checks whether tests actually verify computed output (Q17), exercise error paths (Q7), use exact matchers (Q4), and avoid tautological mocks that execute code without asserting behavior (AP10). A file can have 100% line coverage and still score Tier D."
+  - q: "How is zuvo:test-audit different from zuvo:fix-tests?"
+    a: "zuvo:test-audit diagnoses the quality of your test suite across all 17 gates and 26 anti-patterns, then produces a tiered report. zuvo:fix-tests takes a specific anti-pattern (e.g., AP10 tautological mocks) and batch-repairs it across all affected files. Audit first, then fix."
+  - q: "How long does a test audit take?"
+    a: "Quick mode processes ~50 test files in about 2 minutes. Deep mode with full evidence takes roughly 10 minutes for the same scope. The skill auto-switches to quick if file count exceeds 50 and --deep was not specified."
+  - q: "Can zuvo:test-audit handle E2E test files?"
+    a: "E2E tests are excluded by default (*/e2e/*, *.e2e.*) because Q1-Q17 were designed for unit and integration tests. Pass --include-e2e to include them; expect some gates to be N/A for pure smoke tests."
+  - q: "What is a phantom mock?"
+    a: "A phantom mock is a module mocked in the test that the production code under test never actually calls. Phantom mocks add noise to test setup, create false confidence, and break when the real import path changes. The audit lists all phantom mocks per file in the report."
+
+arguments:
+  - flag: "all"
+    description: "Audit every test file in the project"
+  - flag: "[path]"
+    description: "Audit test files under a specific directory"
+  - flag: "[file]"
+    description: "Audit a single test file with full evidence (forces deep mode)"
+  - flag: "--deep"
+    description: "Collect evidence and fix recommendations for every file"
+  - flag: "--quick"
+    description: "Binary pass/fail only, skip evidence; auto-enabled for >50 files"
+  - flag: "--include-e2e"
+    description: "Include E2E test files in scope (excluded by default)"
+  - flag: "--details"
+    description: "Save per-file reports to audits/test-audit-details/"
+  - flag: "--commit=ask|auto|off"
+    description: "Commit behavior after the optional post-audit fix workflow (default: ask)"
+
+checks:
+  sections:
+    - name: "Quality Gates"
+      id_range: "Q1-Q17"
+      count: 17
+      items:
+        - id: "Q7"
+          name: "At least one error path test present"
+          critical: true
+        - id: "Q11"
+          name: "All code branches exercised"
+          critical: true
+        - id: "Q13"
+          name: "Tests import actual production function (not a stub)"
+          critical: true
+        - id: "Q15"
+          name: "Content/value assertions present — not just shape or count"
+          critical: true
+        - id: "Q17"
+          name: "Assertions verify computed output, not input echo"
+          critical: true
+        - id: "Q3"
+          name: "Every mock has CalledWith and not.toHaveBeenCalled checks"
+          critical: false
+        - id: "Q4"
+          name: "Assertions use exact matchers (toEqual/toBe, not toBeTruthy)"
+          critical: false
+        - id: "Q6"
+          name: "Mock state is fresh per test — beforeEach reset, no shared mutable state"
+          critical: false
+    - name: "Anti-Patterns"
+      id_range: "AP1-AP26"
+      count: 26
+      items:
+        - id: "AP13"
+          name: "Test with zero expect() calls — AUTO TIER-D"
+          critical: true
+        - id: "AP16"
+          name: "Fixture:assertion ratio greater than 20:1 — AUTO TIER-D"
+          critical: true
+        - id: "AP14"
+          name: "toBeTruthy()/toBeDefined() as sole assertion on complex object — AUTO TIER-D"
+          critical: true
+        - id: "AP10"
+          name: "Tautological mock — calls mock, verifies mock called, no production output check"
+          critical: false
+        - id: "AP26"
+          name: "Real timers in time-dependent tests without useFakeTimers"
+          critical: false
+        - id: "AP2"
+          name: "Conditional assertions (if/else inside test body)"
+          critical: false
+
+frameworks:
+  - TypeScript
+  - JavaScript
+  - React (TSX/JSX)
+  - Python (pytest)
+  - Vitest
+  - Jest
+  - NestJS
+  - Next.js
+
+modes: null
+
+agents:
+  - name: "Batch Audit Agent"
+    role: "Evaluates a batch of 8-10 test files paired with their production sources against Q1-Q17 and AP1-AP26."
+
+benchmarks:
+  - claim: "Quick mode audits 50 test files in approximately 2 minutes."
+    type: speed
+    verifiable: true
+    source: "SKILL.md Execution Notes: 'QUICK ~2 min for 50 files'"
+  - claim: "Deep mode audits 50 test files in approximately 10 minutes with full per-gate evidence."
+    type: speed
+    verifiable: true
+    source: "SKILL.md Execution Notes: 'DEEP ~10 min for 50 files'"
+  - claim: "Files with zero expect() calls, fixture:assertion ratio >20:1, or 50%+ toBeTruthy-only assertions are auto-classified Tier D without running the full Q1-Q17 checklist."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Agent Prompt — RED FLAG PRE-SCAN section"
+
+comparison_table:
+  columns: ["Capability", "Coverage Tool (Istanbul/nyc)", "Manual Review", "zuvo:test-audit"]
+  rows:
+    - ["Tautological mock detection", "No — lines executed", "Reviewer-dependent", "AP10 binary check"]
+    - ["Phantom mock detection", "No", "Reviewer-dependent", "Per-file phantom mock list"]
+    - ["Untested public methods", "Line coverage only", "Reviewer-dependent", "Explicit method-by-method gap list"]
+    - ["Error path coverage", "No", "Reviewer-dependent", "Q7 critical gate"]
+    - ["Input-echo vs. computed output", "No", "Reviewer-dependent", "Q17 critical gate"]
+    - ["Scope", "Per-run aggregate", "Changed files only", "Entire test suite, batched"]
+    - ["Output", "Coverage percentage", "Review comments", "Tiered A/B/C/D with gap list"]

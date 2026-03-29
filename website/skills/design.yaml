@@ -1,0 +1,216 @@
+schema_version: 1
+
+last_synced: "2026-03-29"
+
+meta:
+  slug: design
+  title: "design — Intent-First UI Design with Traceable Decisions"
+  description: "Build UI with conscious design decisions across 4 craft tests. Persists system.md + system.json in .interface-design/ for cross-session consistency."
+  category: design
+  og_image: /og/skills/design.png
+
+seo:
+  target_queries:
+    - "how to generate a design system with claude"
+    - "ai ui design system generation from existing code"
+    - "intent-first ui design workflow"
+    - "extract design tokens from existing react codebase"
+    - "design system persistence across sessions claude code"
+  canonical: /en/skills/design
+
+stats:
+  - label: "Craft Tests"
+    value: "4"
+    detail: "Swap, Squint, Signature, Token"
+  - label: "Persist Gate"
+    value: "3/4"
+    detail: "craft tests must pass before saving"
+  - label: "Modes"
+    value: "6"
+    detail: "init, improve, extract, status, --quick, --dry-run"
+  - label: "Artifacts"
+    value: "2"
+    detail: "system.md + system.json"
+  - label: "Token Sources"
+    value: "10"
+    detail: "industry domain presets supported"
+
+problem: |
+  Most AI-generated UI looks generic because every visual choice defaults to the nearest safe option.
+  Without a persistent design system, each new component re-invents colors, spacing, and motion from
+  scratch — producing incoherent interfaces. The `/design` skill forces every decision to trace from
+  user intent through domain exploration to specific token values, then persists those decisions so
+  future sessions build on the same foundation.
+
+how_it_works:
+  - step: "Intent Exploration"
+    description: "3 structured questions (who, what, how it feels) capture INTENT. Every downstream decision traces back to these answers."
+  - step: "Domain Analysis"
+    description: "Produces 5+ domain concepts, 5+ color-world associations, 1 signature element, and 3 defaults to avoid — matched to 10 industry patterns."
+  - step: "Direction Selection"
+    description: "Selects or blends a design direction (Calm Authority, Energetic Efficiency, Warm Guidance, Precise Control). User confirms before build."
+  - step: "Per-Component Construction"
+    description: "Each component declares a mandatory checkpoint: intent, palette, depth, surfaces, typography, spacing, motion, and responsive behavior — then builds with those decisions applied."
+  - step: "Craft Validation"
+    description: "4 tests (Swap, Squint, Signature, Token) run after build. At least 3/4 must pass before persisting. Results saved to .interface-design/craft-validation-YYYY-MM-DD.md."
+  - step: "Persist"
+    description: "Writes system.md (human-readable) and system.json (machine-readable) to .interface-design/. Future sessions load these instead of re-exploring."
+
+output:
+  artifact: ".interface-design/system.md + .interface-design/system.json"
+  format: "Design system with Direction, Domain, Tokens, Motion, Patterns, and Decisions sections — plus a per-session craft validation report."
+  sections:
+    - "Direction / Intent"
+    - "Domain Concepts + Color World"
+    - "Token System (color, spacing, radius, typography, motion)"
+    - "Component Checkpoints"
+    - "Craft Validation Report"
+    - "Decisions Log"
+
+examples:
+  - title: "Initialize a design system for a SaaS dashboard"
+    type: invocation
+    command: "zuvo:design init"
+    result: |
+      Phase 1: No existing system.md found. Proceeding to intent exploration.
+
+      Q1: Who is the person using this?
+      → Marketing manager reviewing campaign performance before Monday standup.
+
+      Q2: What must they accomplish?
+      → Scan 20 campaigns, compare week-over-week, flag underperformers, share report.
+
+      Q3: How should this feel?
+      → Selected: "Energetic Efficiency" — fast, snappy, dense with info.
+
+      Domain: SaaS Dashboard
+      Signature: Micro-progress indicators on every data row.
+      Defaults to avoid: card-heavy layout, blue-on-white enterprise grey, empty state illustrations.
+
+      Craft validation: 4/4 PASS
+      Saved: .interface-design/system.md + system.json
+
+  - title: "Extract implicit design system from existing codebase"
+    type: invocation
+    command: "zuvo:design extract src/components"
+    result: |
+      Scanned 47 UI files.
+      Colors found: 12 unique values → 4 canonical tokens proposed.
+      Spacing values: 8 variants → normalized to 4px grid (4, 8, 16, 24, 32, 48).
+      Border radii: 5 values → 2 canonical (4px component, 8px card).
+      Closest direction: "Calm Authority"
+
+      Mutations vs Standard table generated.
+      system.md proposed — awaiting approval.
+
+  - title: "Build a component in --quick mode"
+    type: invocation
+    command: "zuvo:design --quick NotificationBanner"
+    result: |
+      Design system loaded: Calm Authority, 24 tokens, 8 patterns.
+      Building NotificationBanner...
+      Auto-gates: touch targets 48px ✓, no hardcoded colors ✓, no hardcoded spacing ✓
+      system.md updated.
+
+when_to_use: |
+  Use `/design` when creating new UI from scratch, improving existing components with a unified visual direction,
+  or extracting an implicit design system from undocumented code. Run `init` first on any new project to establish
+  tokens before building individual components.
+
+when_not_to_use: |
+  For auditing existing UI against a checklist, use `zuvo:design-review` instead — it runs DX1-DX20 checks
+  without creating new components. For multi-perspective qualitative critique (UX, visual, i18n, a11y scored
+  independently), use `zuvo:ui-design-team`. For general code quality of UI files, use `zuvo:review`.
+
+related_skills:
+  - slug: design-review
+    relation: "Consumes system.json artifacts produced by /design; runs DX1-DX20 structural audit"
+  - slug: ui-design-team
+    relation: "Multi-agent qualitative review — complements /design's craft validation with 4 specialist perspectives"
+  - slug: review
+    relation: "Code quality audit for the same files /design builds"
+  - slug: build
+    relation: "Feature development workflow — use /design before /build when UI is part of the scope"
+  - slug: refactor
+    relation: "Use /design extract before refactoring fragmented UI code into a coherent system"
+
+faq:
+  - q: "What does zuvo:design actually create?"
+    a: "It creates two artifacts in .interface-design/: system.md (human-readable design system with direction, tokens, and decisions) and system.json (machine-readable for programmatic token matching). It also builds the component code and saves a craft validation report with per-test evidence."
+  - q: "How is zuvo:design different from zuvo:design-review?"
+    a: "zuvo:design creates new UI and design systems — it's a builder. zuvo:design-review audits existing UI against the DX1-DX20 checklist — it's an auditor. They are complementary: /design recommends running /design-review on completed components."
+  - q: "How long does a full zuvo:design init take?"
+    a: "Roughly 3-5 minutes for a complete init with domain exploration, direction selection, and one component with craft validation. The --quick mode skips craft validation and runs in under a minute for subsequent components once system.md exists."
+  - q: "Can zuvo:design work on projects without an existing design system?"
+    a: "Yes — that is the primary use case for init and extract modes. init builds a design system from scratch guided by intent exploration. extract reverse-engineers one from existing code by cataloging actual token usage and mapping it to a canonical system."
+  - q: "What frontend frameworks does zuvo:design support?"
+    a: "It adapts to whatever the project uses — React, Next.js, Vue, Svelte, Astro, and vanilla HTML/CSS. Tailwind v3, Tailwind v4, styled-components, CSS modules, and CSS-in-JS token files are each handled with stack-specific output."
+
+arguments:
+  - flag: "init"
+    description: "Full flow: intent exploration, domain analysis, direction selection, system.md creation."
+  - flag: "[component]"
+    description: "Build a specific named component within an existing design system."
+  - flag: "improve [path]"
+    description: "Analyze existing UI at path, propose unified direction, apply improvements."
+  - flag: "extract [path]"
+    description: "Extract implicit design patterns from existing code into a proposed system.md."
+  - flag: "status"
+    description: "Show current design system state: personality, token count, pattern count, last updated."
+  - flag: "--quick [component]"
+    description: "Fast path: load system.md, build component, auto-save. Skips craft validation but enforces minimum gates."
+  - flag: "--dry-run"
+    description: "Preview: run all phases but do not write files. Shows diff of proposed changes. Combinable with --quick."
+
+checks: null
+
+frameworks:
+  - React
+  - Next.js
+  - Vue
+  - Svelte
+  - Astro
+  - Vanilla HTML/CSS
+  - Tailwind v3
+  - Tailwind v4
+  - styled-components
+  - CSS modules
+
+modes:
+  - name: "init"
+    description: "Full initialization flow from intent to persisted design system."
+  - name: "improve"
+    description: "Analyze and improve existing UI files with a unified design direction."
+  - name: "extract"
+    description: "Reverse-engineer an implicit design system from existing code."
+  - name: "status"
+    description: "Display current design system summary without modifying anything."
+  - name: "--quick"
+    description: "Bypass craft validation for fast component builds on established systems."
+  - name: "--dry-run"
+    description: "Preview all proposed changes without writing any files."
+
+agents: null
+
+benchmarks:
+  - claim: "4 craft tests (Swap, Squint, Signature, Token) must achieve 3/4 pass before persisting"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 5 — Craft Validation, Step 7 persist gate"
+  - claim: "5 touchpoints required to pass the Signature Test"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Step 7 — Signature Test definition"
+  - claim: "Supports 10 industry domain patterns with presets"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 3 Step 4 — domain pattern list"
+
+comparison_table:
+  columns: ["Capability", "Manual CSS", "Design Token Library", "zuvo:design"]
+  rows:
+    - ["Traces decisions to user intent", "No", "No", "Yes — every token tied to intent answer"]
+    - ["Persists system across sessions", "No", "Partial (token file only)", "Yes — system.md + system.json"]
+    - ["Craft validation tests", "Manual", "None", "4 automated tests with pass/fail evidence"]
+    - ["Adapts to detected stack", "No", "No", "Yes — Tailwind, CSS-in-JS, vanilla, etc."]
+    - ["Reverse-engineers existing code", "No", "No", "Yes — extract mode with mutations table"]

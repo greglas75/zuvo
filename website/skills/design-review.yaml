@@ -1,0 +1,249 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: design-review
+  title: "Design Review — DX1-DX20 UI/UX consistency audit with WCAG checks"
+  description: "Audit frontend views against 20 DX checks and 12 anti-patterns. Detects missing loading/error states, a11y gaps, and design system drift. 4 critical gates."
+  category: audit
+  og_image: /og/skills/design-review.png
+
+seo:
+  target_queries:
+    - "frontend design consistency audit loading error states"
+    - "wcag accessibility audit react components"
+    - "design system adoption rate check shadcn"
+    - "missing loading state detection next.js components"
+    - "ui ux anti-pattern audit dx1-dx20"
+  canonical: /en/skills/design-review
+
+stats:
+  - label: "DX Checks"
+    value: "20"
+    detail: "DX1-DX20"
+  - label: "Anti-Patterns"
+    value: "12"
+    detail: "DAP1-DAP12"
+  - label: "Critical Gates"
+    value: "4"
+    detail: "DX6 (loading), DX7 (error), DX10 (destructive confirm), DX20 (shared components)"
+  - label: "PASS threshold"
+    value: "80%"
+    detail: "of applicable DX checks"
+  - label: "Visual Mode"
+    value: "3"
+    detail: "breakpoints captured (1440 / 768 / 375)"
+
+problem: |
+  Frontend views accumulate invisible debt: a form that has no loading state hangs silently on slow connections, a delete button with no confirmation loses user data, a one-off component built to match a Figma mockup diverges from the design system the moment the system evolves. `zuvo:design-review` audits every view in the codebase for state completeness, accessibility, and design system adoption — so you fix the gaps before users hit them, not after.
+
+how_it_works:
+  - step: "Design system detection"
+    description: "The skill auto-detects the design system (shadcn/ui, Radix, Material UI, Mantine, Chakra, Headless UI, or custom) and CSS framework from package.json. For Next.js App Router, it builds a boundary map of loading.tsx/error.tsx co-location."
+  - step: "View discovery"
+    description: "Page-level and feature-level components are found and classified as PAGE, FEATURE, or SHARED. Files are capped at 30 by default (configurable with --max-files)."
+  - step: "Batch code audit (DX1-DX20)"
+    description: "Grep commands collect project-wide signals (ARIA attributes, hardcoded colors, loading/error patterns, confirmation dialogs) as PROJECT_CONTEXT. Per-view scoring evaluates all 20 checks plus DAP anti-pattern detection. Views with >8 files are dispatched in batches of 4."
+  - step: "Cross-view analysis"
+    description: "After per-view scoring, the skill checks for component consistency (same purpose, different implementations), state coverage gaps across all views, off-scale token values, icon library fragmentation, and shared component adoption rate."
+  - step: "Visual and accessibility audit (visual mode)"
+    description: "In visual mode, chrome-devtools captures screenshots at 3 breakpoints. When mcp-accessibility-scanner is available, axe-core runs per route for WCAG violations and keyboard audit for tab order and focus traps. axe-core results override grep-based a11y checks."
+
+output:
+  artifact: "audit-results/design-review-YYYY-MM-DD.md"
+  format: "Markdown report with per-view DX1-DX20 scores, critical gate status, state coverage matrix (views × states), anti-pattern summary, and prioritized action plan."
+  sections:
+    - "Header (design system, CSS framework, mode)"
+    - "Executive Summary (average score, tier distribution)"
+    - "Critical Gate Summary (DX6/DX7/DX10/DX20 per view)"
+    - "State Coverage Matrix (loading/error/empty/success per view)"
+    - "Per-View Scores (DX1-DX20 with tier)"
+    - "Cross-View Analysis"
+    - "Anti-Pattern Summary (DAP occurrences)"
+    - "Craft Validation Results (if design system artifacts exist)"
+    - "Action Plan"
+    - "Accessibility Summary (visual mode only)"
+
+examples:
+  - title: "Quick code-only audit"
+    type: invocation
+    command: "zuvo:design-review --quick"
+    result: "Scores DX1-DX20 for all frontend views. Skips cross-view analysis. Returns critical gate failures and tier distribution in under 2 minutes."
+  - title: "Full visual audit with WCAG scan"
+    type: invocation
+    command: "zuvo:design-review visual --url http://localhost:3000"
+    result: "Runs code audit plus chrome-devtools screenshots at 3 breakpoints and axe-core accessibility scan per route. axe-core results override DX15-DX17 grep-based checks."
+  - title: "Missing loading state — DX6 critical gate failure"
+    type: before_after
+    gate: "DX6"
+    before:
+      language: typescript
+      code: |
+        export function UserList() {
+          const { data } = useQuery({ queryKey: ["users"], queryFn: fetchUsers });
+          return <ul>{data?.map(u => <li key={u.id}>{u.name}</li>)}</ul>;
+        }
+    after:
+      language: typescript
+      code: |
+        export function UserList() {
+          const { data, isPending, isError } = useQuery({ queryKey: ["users"], queryFn: fetchUsers });
+          if (isPending) return <Skeleton rows={5} />;
+          if (isError) return <ErrorState retry={() => refetch()} />;
+          return <ul>{data.map(u => <li key={u.id}>{u.name}</li>)}</ul>;
+        }
+    explanation: "DX6 (loading state) and DX7 (error state) are critical gates. Both missing caps the view at Tier D. With --fix-critical, the skill wraps the component with the loading and error states automatically."
+  - title: "Loop mode — audit, fix, re-audit"
+    type: invocation
+    command: "zuvo:design-review loop"
+    result: "Full audit → auto-fix DX6/DX7/DX10/DX20 critical failures → quick re-audit → delta summary showing before/after average score and gates fixed."
+
+when_to_use: "Run `zuvo:design-review` after adding new views, when UI feels inconsistent across pages, before a design system adoption push, or as part of release readiness checks. Use visual mode when you need WCAG compliance evidence or cross-breakpoint consistency verification."
+
+when_not_to_use: "For creating new UI components or establishing a design system, use `zuvo:design`. For a qualitative multi-perspective review (UX researcher, visual designer, i18n/a11y specialist), use `zuvo:ui-design-team`. For production code quality issues (empty catch, unbounded queries), use `zuvo:code-audit`."
+
+related_skills:
+  - slug: design
+    relation: "create the design system artifacts that design-review can validate"
+  - slug: ui-design-team
+    relation: "4-perspective qualitative review (UX, visual, i18n, a11y) for deeper coverage"
+  - slug: code-audit
+    relation: "production code quality that runs alongside design health"
+  - slug: refactor
+    relation: "restructure components after DAP anti-patterns are identified"
+  - slug: write-tests
+    relation: "write behavioral tests for UI state coverage gaps found here"
+
+faq:
+  - q: "What does zuvo:design-review check?"
+    a: "It audits 20 DX checks: layout structure (DX1), design token usage for color/spacing/typography (DX2-DX4), component composition (DX5), loading/error/empty/success states (DX6-DX9), destructive action confirmation (DX10), form validation (DX11), keyboard navigation (DX12), responsive behavior (DX13), focus management (DX14), ARIA roles (DX15), color contrast (DX16), screen reader announcements (DX17), interaction pattern consistency (DX18), animation timing (DX19), and shared component library adoption (DX20)."
+  - q: "How is zuvo:design-review different from zuvo:design?"
+    a: "zuvo:design creates: it produces intent-first design decisions, a component library, and persists a design system to .interface-design/. zuvo:design-review audits: it checks existing views against the design system, measures state completeness, and finds accessibility gaps. Design creates; design-review validates."
+  - q: "How is zuvo:design-review different from zuvo:ui-design-team?"
+    a: "zuvo:design-review is a code-based audit: it reads component source to score DX1-DX20 systematically. zuvo:ui-design-team dispatches 4 specialist agents (UX researcher, visual designer, i18n QA, a11y/performance auditor) for a qualitative multi-perspective review. Design-review is faster and more systematic; ui-design-team provides richer qualitative depth."
+  - q: "What are the 4 critical gates?"
+    a: "DX6 (loading state for async operations), DX7 (error state with recovery action), DX10 (destructive actions require confirmation dialog), and DX20 (shared component library in use). Any critical gate failing caps the view at Tier D. With --fix-critical, the skill auto-applies these 4 fixes: loading wrappers, error boundaries, confirmation dialogs, and shared component substitutions."
+  - q: "What frameworks and design systems does it support?"
+    a: "All React-based frameworks are supported (Next.js App Router and Pages Router, Remix, Vite + React). shadcn/ui, Radix UI, Material UI, Mantine, Chakra UI, and Headless UI are auto-detected. Tailwind CSS, CSS Modules, CSS-in-JS, and CSS Variables are all supported. Vue SFCs are supported with adjusted grep patterns."
+
+arguments:
+  - flag: "(empty)"
+    description: "Audit all frontend views in src/ (auto-discover), code-only mode"
+  - flag: "[path]"
+    description: "Audit views in a specific directory"
+  - flag: "[file]"
+    description: "Deep audit of a single component"
+  - flag: "visual"
+    description: "Enable visual audit via chrome-devtools — screenshots at 3 breakpoints and axe-core WCAG scan (requires running dev server)"
+  - flag: "--quick"
+    description: "DX checklist only, skip cross-view analysis"
+  - flag: "--fix-critical"
+    description: "After audit, auto-fix DX6/DX7/DX10/DX20 critical gate failures (UI/states layer only)"
+  - flag: "--dry-run"
+    description: "With --fix-critical: list planned edits without applying"
+  - flag: "--max-files [N]"
+    description: "Cap audit to N files (default: 30)"
+  - flag: "--url [url]"
+    description: "Dev server URL for visual audit (default: http://localhost:3000)"
+  - flag: "loop"
+    description: "Full cycle: audit, fix critical gates, re-audit quick, print delta"
+  - flag: "--from-ui-team"
+    description: "Skip visual re-scan (already captured by ui-design-team), focus on DX1-DX20 code scoring"
+
+checks:
+  sections:
+    - name: "DX Checks"
+      id_range: "DX1-DX20"
+      count: 20
+      items:
+        - id: "DX6"
+          name: "Loading state present for all async operations"
+          critical: true
+        - id: "DX7"
+          name: "Error state present with a recovery action"
+          critical: true
+        - id: "DX10"
+          name: "Destructive actions require explicit confirmation"
+          critical: true
+        - id: "DX20"
+          name: "Uses shared component library — no one-off reimplementations"
+          critical: true
+        - id: "DX8"
+          name: "Empty state present for collections"
+          critical: false
+        - id: "DX15"
+          name: "ARIA roles on all interactive elements"
+          critical: false
+        - id: "DX16"
+          name: "Color contrast — text 4.5:1, UI elements 3:1"
+          critical: false
+        - id: "DX13"
+          name: "Responsive behavior present for mobile breakpoints"
+          critical: false
+    - name: "Anti-Patterns"
+      id_range: "DAP1-DAP12"
+      count: 12
+      items:
+        - id: "DAP1"
+          name: "Prop drilling through 3+ component levels"
+          critical: false
+        - id: "DAP6"
+          name: "Modal without escape-to-close handler"
+          critical: false
+        - id: "DAP10"
+          name: "Color used as the sole differentiator for status"
+          critical: false
+        - id: "DAP11"
+          name: "Duplicate component — same purpose, different implementation across views"
+          critical: false
+        - id: "DAP12"
+          name: "Animations without prefers-reduced-motion support"
+          critical: false
+
+frameworks:
+  - React
+  - Next.js (App Router and Pages Router)
+  - Remix
+  - Vue
+  - shadcn/ui
+  - Radix UI
+  - Material UI
+  - Mantine
+  - Chakra UI
+  - Tailwind CSS
+  - CSS Modules
+
+modes:
+  - name: "code"
+    description: "Default mode. Reads component source to score DX1-DX20. Fast, no running server required."
+  - name: "visual"
+    description: "Adds chrome-devtools screenshots at 1440/768/375 breakpoints and axe-core WCAG scan per route. Requires dev server and chrome-devtools MCP."
+
+agents:
+  - name: "Batch View Auditor"
+    role: "Evaluates a batch of 4 frontend views against DX1-DX20 and DAP1-DAP12, produces per-view score blocks with critical gate evidence."
+
+benchmarks:
+  - claim: "Critical gate auto-fix (--fix-critical) touches only the UI/states layer — loading wrappers, error boundaries, confirmation dialogs, component imports. Business logic is never modified."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 5: 'Auto-fix touches ONLY the UI/states layer'"
+  - claim: "axe-core results override grep-based DX15-DX17 scores when mcp-accessibility-scanner is available."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 3.2: 'axe-core results override grep-based checks: DX15-DX17 scores come from axe-core when scanner ran'"
+  - claim: "State coverage matrix checks 4 states (loading/error/empty/success) per view and identifies gaps across the full view inventory."
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Report Sections: 'State Coverage Matrix -- views x states (loading/error/empty/success). Gaps?'"
+
+comparison_table:
+  columns: ["Capability", "Manual Review", "zuvo:ui-design-team", "zuvo:design-review"]
+  rows:
+    - ["Loading/error state detection", "Visual inspection", "Qualitative per-view", "DX6/DX7 binary gate, per-view"]
+    - ["Design token usage", "Eyeball check", "Visual designer perspective", "Grep for off-scale hex/px values"]
+    - ["ARIA/a11y compliance", "Manual check", "Accessibility specialist", "DX15-DX17 via grep or axe-core"]
+    - ["Shared component adoption rate", "Not tracked", "Noted qualitatively", "Percentage metric with component list"]
+    - ["State coverage matrix", "Not available", "Not available", "views × 4 states grid with gap markers"]
+    - ["Speed", "Hours", "15-30 min (4 agents)", "2-5 min (code) / 10-15 min (visual)"]
+    - ["Auto-fix", "Manual", "Not available", "--fix-critical patches DX6/DX7/DX10/DX20"]

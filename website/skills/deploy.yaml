@@ -1,0 +1,177 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: deploy
+  title: "deploy — Post-merge Production Deploy with Health Check"
+  description: "Merge PR, detect platform (6 supported), wait for CI, deploy, run health check, offer rollback on failure — 7-phase automated deploy pipeline."
+  category: release
+  og_image: /og/skills/deploy.png
+
+seo:
+  target_queries:
+    - "automate production deploy after PR merge Claude Code"
+    - "deploy to Vercel Fly Netlify Railway from Claude Code"
+    - "post-merge CI wait health check rollback automation"
+    - "platform auto-detection Vercel Fly Railway deploy script"
+    - "Claude Code deploy skill git PR merge production"
+  canonical: /en/skills/deploy
+
+stats:
+  - label: Phases
+    value: "7"
+    detail: "Ship state → Pre-merge → Merge → Platform → CI wait → Deploy → Health"
+  - label: Platforms
+    value: "6"
+    detail: "Vercel, Fly.io, Netlify, Railway, Render, GitHub Actions"
+  - label: CI Timeout
+    value: "15m"
+    detail: "Polls every 30s; presents 3 options on timeout"
+  - label: Health Threshold
+    value: "10s"
+    detail: "HTTP 200 + response < 10s = PASS"
+
+problem: |
+  After merging a PR, teams still have to manually check CI, trigger deploys on the right
+  platform, and verify the production URL is responding. Rollback commands are forgotten or
+  looked up under pressure. `zuvo:deploy` reads the state written by `zuvo:ship`, merges the
+  PR, waits for CI, runs the platform-specific deploy, and checks production health — offering
+  a rollback command if anything goes wrong.
+
+how_it_works:
+  - step: Read Ship State
+    description: Reads memory/last-ship.json (written by zuvo:ship) to get version, tag, flow type, and PR number. Falls back to the latest git tag if the file is absent.
+  - step: Pre-merge Checks
+    description: "PR flow only: verifies the PR is open, has no merge conflicts, and all required CI checks pass. Warns if the base branch CI is already failing."
+  - step: Merge
+    description: "PR flow only: squash-merges the PR and deletes the source branch. Records the merge commit SHA for CI matching in the next phase."
+  - step: Platform Detection
+    description: Scans the project root for platform config files in priority order (vercel.json, fly.toml, netlify.toml, railway.json, render.yaml, .github/workflows). Verifies the CLI is installed and records the deploy + rollback commands.
+  - step: CI Wait
+    description: Finds the CI run for the merge SHA and polls every 30 seconds (up to 15 minutes). On timeout offers wait / skip / abort options.
+  - step: Deploy
+    description: Runs the platform-specific deploy command (vercel --prod, fly deploy, netlify deploy --prod, etc.) and waits for it to complete.
+  - step: Health Check
+    description: "Calls the production URL with curl. Interprets results: HTTP 200 + < 10s = PASS, >= 10s = WARN, non-200 = FAIL. On FAIL, prints the platform rollback command — never auto-executes."
+
+output:
+  artifact: "~/.zuvo/runs.log (appended)"
+  format: Terminal DEPLOY COMPLETE block with version, platform, CI verdict, deploy status, health result, and production URL.
+  sections:
+    - "Platform detection result (config file + deploy CLI)"
+    - "CI wait outcome (PASS / SKIP / TIMEOUT)"
+    - "Deploy verdict (SUCCESS / PARTIAL / FAILED)"
+    - "Health check result (HTTP status + response time)"
+    - "Rollback command (on FAIL)"
+
+examples:
+  - title: "Default deploy after zuvo:ship"
+    type: invocation
+    command: "zuvo:deploy"
+    result: |
+      DEPLOY COMPLETE
+        Version:     v1.2.1
+        Platform:    vercel (detected from vercel.json)
+        CI:          PASS
+        Deploy:      SUCCESS
+        Health:      PASS (HTTP 200, 0.8s)
+        URL:         https://myapp.vercel.app
+
+        Next: zuvo:canary https://myapp.vercel.app (optional monitoring)
+
+  - title: "Override production URL for health check"
+    type: invocation
+    command: "zuvo:deploy --url https://myapp.com"
+    result: "Deploys normally but uses the provided URL for the health check instead of the auto-detected platform URL."
+
+  - title: "Deploy specific PR"
+    type: invocation
+    command: "zuvo:deploy #47"
+    result: "Overrides the PR number from last-ship.json and merges PR #47 instead. Useful when deploying a different PR than the one ship recorded."
+
+when_to_use: |
+  Run `zuvo:deploy` after `zuvo:ship` has prepared the release commit and tag. It is the second
+  step of the release flow: ship → deploy → canary → release-docs → retro. Use it when you are
+  ready to merge to the default branch and push the release to production.
+
+when_not_to_use: |
+  Do not use `zuvo:deploy` to prepare the release commit — that is `zuvo:ship` (pre-merge: tests,
+  version bump, changelog, tag). For post-deploy monitoring over a configurable duration, run
+  `zuvo:canary` after deploy completes. For canary analysis only (no deploy), use `zuvo:canary`
+  directly with a URL.
+
+related_skills:
+  - slug: ship
+    relation: "Prerequisite — ship prepares the release commit and tag that deploy consumes"
+  - slug: canary
+    relation: "Post-deploy monitoring — run after deploy reports SUCCESS"
+  - slug: release-docs
+    relation: "Diff-driven doc sync — run after deploy to update docs for the release"
+  - slug: retro
+    relation: "Engineering retrospective — uses the git range established by ship and deploy"
+
+faq:
+  - q: "What does zuvo:deploy do after a PR merge?"
+    a: "zuvo:deploy reads the state from memory/last-ship.json, verifies the PR is mergeable, squash-merges it, waits for CI (up to 15 minutes), runs the platform deploy command, and checks the production URL. It outputs a DEPLOY COMPLETE block with every step's verdict."
+  - q: "How is zuvo:deploy different from zuvo:ship?"
+    a: "zuvo:ship is pre-merge: it runs tests, bumps the version, writes the changelog, creates a tag, and pushes or opens a PR. zuvo:deploy is post-merge: it merges the PR, waits for CI, runs the actual deploy to Vercel/Fly/Netlify/etc., and checks production health. Ship produces the release; deploy delivers it."
+  - q: "Which deployment platforms does zuvo:deploy support?"
+    a: "6 platforms are auto-detected: Vercel (vercel.json or .vercel/), Fly.io (fly.toml), Netlify (netlify.toml), Railway (railway.json or railway.toml), Render (render.yaml), and GitHub Actions (.github/workflows/). If no platform is detected, a manual deployment checklist is printed."
+  - q: "How long does zuvo:deploy wait for CI?"
+    a: "Up to 15 minutes, polling every 30 seconds. On timeout (interactive): choose wait 15 more minutes, skip CI check, or abort. On timeout (non-interactive): AUTO-DECISION proceeds to deploy with an annotation."
+  - q: "Does zuvo:deploy auto-rollback on failure?"
+    a: "No — rollback is never automatic. If the health check fails, deploy prints the exact platform rollback command and asks the user to execute it. This is a hard safety rule: NEVER auto-rollback without user consent."
+
+arguments:
+  - flag: "(no flags)"
+    description: "Auto-detect from memory/last-ship.json or latest git tag"
+  - flag: "--url <url>"
+    description: "Override production URL for the health check"
+  - flag: "--skip-ci-wait"
+    description: "Skip CI polling and proceed directly to deploy"
+  - flag: "--skip-health"
+    description: "Skip health check after deploy"
+  - flag: "#<number>"
+    description: "Specify a PR number to merge, overriding last-ship.json"
+
+checks: null
+
+frameworks:
+  - Vercel
+  - Fly.io
+  - Netlify
+  - Railway
+  - Render
+  - GitHub Actions
+
+modes:
+  - name: pr-flow
+    description: "Activated when last-ship.json records flow=pr. Runs pre-merge checks, merges the PR, then continues to CI wait and deploy."
+  - name: direct-flow
+    description: "Activated when last-ship.json records flow=direct. Skips merge phases; reads the merge commit from the current branch HEAD and proceeds to CI wait."
+
+agents: null
+
+benchmarks:
+  - claim: "6 deployment platforms auto-detected from project root config files"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 3 Platform Detection"
+  - claim: "CI polling at 30-second intervals with a 15-minute timeout before presenting options"
+    type: speed
+    verifiable: true
+    source: "SKILL.md Phase 4 CI Wait"
+  - claim: "Health check threshold: HTTP 200 + response time < 10s = PASS"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 6 step 3"
+
+comparison_table:
+  columns: ["Capability", "Manual deploy", "Platform CLI alone", "zuvo:deploy"]
+  rows:
+    - ["Reads ship state automatically", "No", "No", "Yes — memory/last-ship.json"]
+    - ["Pre-merge conflict check", "Manual", "No", "Yes — blocks on conflicts"]
+    - ["CI wait with timeout handling", "Manual", "No", "Yes — 15m, 30s poll"]
+    - ["Platform auto-detection", "Manual", "N/A", "Yes — 6 platforms"]
+    - ["Post-deploy health check", "Manual", "No", "Yes — HTTP 200 + latency"]
+    - ["Rollback command on failure", "Manual lookup", "No", "Yes — printed, not auto-run"]

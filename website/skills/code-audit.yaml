@@ -1,0 +1,234 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: code-audit
+  title: "Code Audit — batch quality triage across 22 gates"
+  description: "Audit every production file against CQ1-CQ22 quality gates and 14 anti-patterns. Tiered A/B/C/D output with 4 critical gates and a prioritized fix plan."
+  category: audit
+  og_image: /og/skills/code-audit.png
+
+seo:
+  target_queries:
+    - "automated code quality audit typescript"
+    - "batch code review cq1 cq22 checklist"
+    - "detect hardcoded secrets production code"
+    - "unbounded queries code review tool"
+    - "production code tier classification audit"
+  canonical: /en/skills/code-audit
+
+stats:
+  - label: "Quality Gates"
+    value: "22"
+    detail: "CQ1-CQ22 binary checklist"
+  - label: "Anti-Patterns"
+    value: "14"
+    detail: "CAP1-CAP14"
+  - label: "Critical Gates"
+    value: "4"
+    detail: "CQ3, CQ4, CQ5, CQ6 — any fail caps tier at C"
+  - label: "Output Tiers"
+    value: "4"
+    detail: "A (production-ready) through D (immediate fix)"
+  - label: "Batch Size"
+    value: "6–10"
+    detail: "files per agent batch"
+
+problem: |
+  Production codebases accumulate quality debt silently. A single unvalidated input, hardcoded credential, or empty catch block can sit in a service file for months before it causes an incident. Manual code review catches some issues during PRs, but it rarely covers the entire codebase systematically. `zuvo:code-audit` runs every production file through a consistent 22-gate binary checklist so nothing falls through the cracks — and surfaces the worst files first.
+
+how_it_works:
+  - step: "Discovery and classification"
+    description: "The skill locates all production files, excludes tests and build artifacts, then classifies each file by type (SERVICE, CONTROLLER, GUARD, HOOK, ORM, etc.) to activate the relevant conditional gates."
+  - step: "Red-flag pre-scan"
+    description: "Before the full checklist, each batch agent scans for instant Tier-D triggers: hardcoded secrets, SQL string concatenation, eval() with dynamic input, and dangerouslySetInnerHTML without sanitization."
+  - step: "CQ1-CQ22 evaluation"
+    description: "Every applicable gate is scored binary (1/0/N/A). CodeSift pre-populates CQ8 (empty catch), CQ13 (dead code), and CQ14 (duplicated logic) with deterministic tool-verified findings when available."
+  - step: "Aggregate and cross-file analysis"
+    description: "Results are aggregated into a tier distribution table. Cross-file checks detect inconsistent transaction usage, validation chain gaps, and project-wide money-handling drift."
+  - step: "Execution plan"
+    description: "A prioritized fix plan (P0 blockers → P1 high-risk → P2 maintenance) maps each issue to its file and line with estimated effort. Findings are persisted to the project backlog."
+
+output:
+  artifact: "audits/code-quality-audit-YYYY-MM-DD.md"
+  format: "Markdown report with summary tier table, critical gate failures, anti-pattern hotspots, per-file scores, cross-file issues, and a ranked execution plan."
+  sections:
+    - "Summary by Tier (A/B/C/D counts and percentages)"
+    - "Summary by Code Type (SERVICE, CONTROLLER, etc.)"
+    - "Critical Gate Failures"
+    - "Red Flag Summary (Auto Tier-D)"
+    - "Top Failed CQs (frequency ranking)"
+    - "Anti-pattern Hot Spots"
+    - "Per-file detail blocks"
+    - "Cross-File Issues"
+    - "Recommended Execution Plan"
+
+examples:
+  - title: "Audit all files in quick mode"
+    type: invocation
+    command: "zuvo:code-audit all --quick"
+    result: "Scans every production file at 10 files/batch. Returns tier distribution and top CQ failures in ~2 minutes for 50 files. No per-gate evidence — use for triage."
+  - title: "Deep dive on a service directory"
+    type: invocation
+    command: "zuvo:code-audit src/services --deep"
+    result: "Full CQ1-CQ22 evidence for every service file. Outputs per-gate rationale at file:line format and a fix plan. Takes ~5 minutes for 20 files."
+  - title: "Hardcoded secret auto-flagged Tier D"
+    type: before_after
+    gate: "CAP5"
+    before:
+      language: typescript
+      code: |
+        const STRIPE_KEY = "sk_live_abc123xyz";
+        export async function charge(amount: number) {
+          return stripe.charges.create({ amount, currency: "usd" });
+        }
+    after:
+      language: typescript
+      code: |
+        const STRIPE_KEY = process.env.STRIPE_SECRET_KEY;
+        if (!STRIPE_KEY) throw new Error("STRIPE_SECRET_KEY is required");
+        export async function charge(amount: number) {
+          return stripe.charges.create({ amount, currency: "usd" });
+        }
+    explanation: "CAP5 triggers AUTO TIER-D. The skill flags exact file:line, skips the full CQ checklist, and puts the file at the top of the P0 fix queue."
+
+when_to_use: "Run `zuvo:code-audit` periodically (before releases, after adding many files, or when onboarding a new codebase). It is designed for batch triage — not for reviewing a single diff or a new feature. Use `--quick` for a fast health check and `--deep` when you need evidence before a major refactor."
+
+when_not_to_use: "For per-PR or per-diff review, use `zuvo:review` instead — it focuses on changes, not the entire codebase. For test file quality, use `zuvo:test-audit`. For architectural concerns (circular deps, layer violations), use `zuvo:structure-audit` or `zuvo:architecture`."
+
+related_skills:
+  - slug: review
+    relation: "per-diff PR review vs. full-codebase batch audit"
+  - slug: test-audit
+    relation: "parallel audit for test file quality (Q1-Q17)"
+  - slug: refactor
+    relation: "use after audit to fix Tier C/D files"
+  - slug: structure-audit
+    relation: "structural metrics (file size, dead code, duplication) that complement CQ scoring"
+  - slug: security-audit
+    relation: "deep OWASP audit for CAP5-CAP8 red flags surfaced here"
+
+faq:
+  - q: "What does zuvo:code-audit check that ESLint doesn't?"
+    a: "ESLint checks syntax and style rules. zuvo:code-audit checks behavioral correctness: are multi-table mutations in transactions (CQ9)? Are guards reinforced by query-level ownership filters (CQ4)? Is money arithmetic done with integer-cents rather than floats (CQ16)? These require reading code intent across multiple lines — something lint rules cannot express."
+  - q: "How is zuvo:code-audit different from zuvo:review?"
+    a: "zuvo:review evaluates a diff (uncommitted changes, a PR, or a commit range) for one feature or fix. zuvo:code-audit sweeps the entire codebase in batches — it is designed to find debt that accumulated over months, not just what changed today."
+  - q: "How long does a code audit take?"
+    a: "Quick mode processes ~50 files in about 2 minutes using 10 files/batch. Deep mode with full evidence takes roughly 15 minutes for the same scope. Auditing a single file with `zuvo:code-audit [file]` forces deep mode and typically returns in under a minute."
+  - q: "Can zuvo:code-audit auto-fix issues it finds?"
+    a: "No — the audit is strictly read-only. It generates a prioritized fix plan pointing to exact file:line locations. For structural fixes (extracting duplicated logic, splitting god files), the plan will suggest `zuvo:refactor`. For systematic patterns across many files, `zuvo:fix-tests` handles the test equivalent."
+  - q: "What frameworks and languages does it support?"
+    a: "The CQ1-CQ22 checklist applies to any language. ORM-specific checks (CQ9, CQ17, CQ20) auto-activate when Prisma, TypeORM, SQLAlchemy, or Django is detected. React-specific gates (CQ22 for cleanup, CQ13 for dead exports) activate on .tsx/.jsx files. Python, PHP, and Go are supported with adjusted heuristics."
+
+arguments:
+  - flag: "all"
+    description: "Audit every production file in the project (default scope)"
+  - flag: "[path]"
+    description: "Audit production files under a specific directory"
+  - flag: "[file]"
+    description: "Audit a single file with full evidence (forces --deep mode)"
+  - flag: "--deep"
+    description: "Collect per-gate evidence and fix recommendations for every file; uses Opus-class model for batch agents"
+  - flag: "--quick"
+    description: "Binary pass/fail only, no evidence; 10 files/batch; ~2 min for 50 files"
+  - flag: "--services"
+    description: "Restrict scope to service and business logic files"
+  - flag: "--controllers"
+    description: "Restrict scope to controller, handler, and route files"
+
+checks:
+  sections:
+    - name: "Quality Gates"
+      id_range: "CQ1-CQ22"
+      count: 22
+      items:
+        - id: "CQ3"
+          name: "Boundary validation complete — required fields, format/range, runtime schema"
+          critical: true
+        - id: "CQ4"
+          name: "Guards reinforced by query-level filtering — guard is NOT the sole defense"
+          critical: true
+        - id: "CQ5"
+          name: "No sensitive data in logs, errors, or API responses"
+          critical: true
+        - id: "CQ6"
+          name: "No unbounded memory from external data — pagination or streaming present"
+          critical: true
+        - id: "CQ8"
+          name: "Infrastructure failures handled — timeouts on outbound calls, no empty catch"
+          critical: true
+        - id: "CQ14"
+          name: "No duplicated logic blocks over 10 lines"
+          critical: true
+        - id: "CQ9"
+          name: "Multi-table mutations wrapped in transactions"
+          critical: false
+        - id: "CQ16"
+          name: "Money fields use exact arithmetic — no float for prices or discounts"
+          critical: false
+    - name: "Anti-Patterns"
+      id_range: "CAP1-CAP14"
+      count: 14
+      items:
+        - id: "CAP5"
+          name: "Hardcoded secret (API key, password, token in source) — AUTO TIER-D"
+          critical: true
+        - id: "CAP6"
+          name: "dangerouslySetInnerHTML without DOMPurify — AUTO TIER-D"
+          critical: true
+        - id: "CAP7"
+          name: "eval() or new Function() with dynamic input — AUTO TIER-D"
+          critical: true
+        - id: "CAP8"
+          name: "SQL string concatenation with user input — AUTO TIER-D"
+          critical: true
+        - id: "CAP1"
+          name: "Empty catch block"
+          critical: false
+        - id: "CAP11"
+          name: "parseFloat or Number() on a money field"
+          critical: false
+
+frameworks:
+  - TypeScript
+  - JavaScript
+  - React (TSX/JSX)
+  - Python
+  - PHP
+  - NestJS
+  - Next.js
+  - Prisma
+  - TypeORM
+  - SQLAlchemy
+  - Django ORM
+
+modes: null
+
+agents:
+  - name: "Batch Audit Agent"
+    role: "Evaluates a batch of 6-10 production files against CQ1-CQ22 and CAP1-CAP14, produces per-file tier blocks with evidence."
+
+benchmarks:
+  - claim: "Quick mode audits 50 files in approximately 2 minutes using 10-file batches."
+    type: speed
+    verifiable: true
+    source: "SKILL.md Execution Notes: 'QUICK ~2 min for 50 files'"
+  - claim: "Deep mode audits 50 files in approximately 15 minutes with full per-gate evidence."
+    type: speed
+    verifiable: true
+    source: "SKILL.md Execution Notes: 'DEEP ~15 min for 50 files'"
+  - claim: "CodeSift pre-scan deterministically pre-populates 3 of 22 CQ checks (CQ8, CQ13, CQ14) before LLM evaluation."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md CodeSift-Accelerated Discovery section"
+
+comparison_table:
+  columns: ["Capability", "ESLint", "Manual PR Review", "zuvo:code-audit"]
+  rows:
+    - ["Hardcoded secrets detection", "Plugin required", "Reviewer-dependent", "CAP5 — AUTO TIER-D"]
+    - ["Multi-table transaction check", "Not expressible", "Reviewer-dependent", "CQ9 binary gate"]
+    - ["Guard + query-level ownership check", "Not expressible", "Reviewer-dependent", "CQ4 critical gate"]
+    - ["Float-for-money detection", "Not expressible", "Reviewer-dependent", "CQ16 conditional gate"]
+    - ["Scope", "Per-file, per-rule", "Changed files only", "Entire codebase, batched"]
+    - ["Output format", "Rule violations list", "Review comments", "Tiered A/B/C/D with execution plan"]
+    - ["Backlog persistence", "No", "No", "Findings written to memory/backlog.md"]

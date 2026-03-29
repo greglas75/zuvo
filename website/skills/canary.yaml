@@ -1,0 +1,171 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: canary
+  title: "canary — Post-deploy Production Monitoring with Browser or HTTP Mode"
+  description: "Monitor production after deploy for 1–30 minutes. Captures console errors, load time, and screenshots (browser mode). 3 verdicts: HEALTHY/DEGRADED/BROKEN."
+  category: release
+  og_image: /og/skills/canary.png
+
+seo:
+  target_queries:
+    - "post-deploy monitoring browser console errors Claude Code"
+    - "production health check after deployment automation"
+    - "canary monitoring configurable duration Playwright"
+    - "HEALTHY DEGRADED BROKEN verdict after deploy"
+    - "HTTP health check polling after deployment"
+  canonical: /en/skills/canary
+
+stats:
+  - label: Duration Range
+    value: "1–30m"
+    detail: "Default: 10 minutes"
+  - label: Default Interval
+    value: "60s"
+    detail: "Configurable with --interval"
+  - label: Verdicts
+    value: "3"
+    detail: "HEALTHY / DEGRADED / BROKEN"
+  - label: Modes
+    value: "2"
+    detail: "full (Playwright/Chrome) or degraded (HTTP-only)"
+
+problem: |
+  After a successful deploy it is easy to assume production is healthy — until users start
+  reporting errors. `zuvo:canary` fills the gap between deploy completion and confident
+  release sign-off by actively monitoring the production URL for console errors, slow
+  responses, and HTTP failures over a configurable window. When browser tools (Playwright or
+  Chrome DevTools) are available it captures screenshots and console error streams; otherwise
+  it falls back to HTTP-only checks automatically.
+
+how_it_works:
+  - step: Setup
+    description: Validates the required URL argument, detects whether browser MCP tools (Playwright or Chrome DevTools) are available, and parses duration/interval arguments. Forces one-shot mode in non-interactive environments.
+  - step: Platform Context
+    description: Optionally reads the platform detection include to surface supplementary health commands (e.g., fly status) alongside the HTTP check.
+  - step: Monitoring Loop
+    description: "Runs check cycles at the configured interval for the full duration. Full mode: navigate URL, check HTTP status, capture console errors, measure load time, take screenshot. Degraded mode: curl HTTP status + response time only."
+  - step: Output
+    description: Determines the verdict from cumulative results (HEALTHY / DEGRADED / BROKEN), compares performance against prior canary runs, and prints the CANARY COMPLETE block. Suggests zuvo:deploy rollback if BROKEN.
+
+output:
+  artifact: "audit-results/canary-{ISO-timestamp}/check-N.png (full mode only)"
+  format: CANARY COMPLETE terminal block with URL, duration, check count, console error tally, avg response time, baseline comparison, and verdict.
+  sections:
+    - "Mode (full / degraded)"
+    - "Console error and warning counts"
+    - "Average response time with baseline delta"
+    - "Screenshots directory (full mode)"
+    - "Verdict (HEALTHY / DEGRADED / BROKEN)"
+    - "Rollback suggestion (BROKEN only)"
+
+examples:
+  - title: "10-minute monitor after deploy"
+    type: invocation
+    command: "zuvo:canary https://myapp.com"
+    result: |
+      CANARY COMPLETE
+        URL:         https://myapp.com
+        Duration:    10m (10 checks)
+        Mode:        full (Playwright available)
+        Console:     0 errors, 2 warnings
+        Performance: avg 0.9s (baseline: 1.1s, -18%)
+        Screenshots: audit-results/canary-2026-03-29T1430/
+        Verdict:     HEALTHY
+
+  - title: "Quick single check"
+    type: invocation
+    command: "zuvo:canary https://myapp.com --quick"
+    result: "Runs exactly 1 check cycle and exits. Useful in CI pipelines or non-interactive environments."
+
+  - title: "30-minute monitor with custom error threshold"
+    type: invocation
+    command: "zuvo:canary https://myapp.com --duration 30m --max-errors 1"
+    result: "Monitors for 30 minutes. Any single console error triggers a BROKEN verdict instead of the default threshold of 3."
+
+when_to_use: |
+  Run `zuvo:canary` immediately after `zuvo:deploy` reports SUCCESS to confirm production
+  is stable. It is the third step of the release flow: ship → deploy → canary → release-docs
+  → retro. Also useful as a standalone smoke test on any URL — no prior deploy required.
+
+when_not_to_use: |
+  Do not use `zuvo:canary` as a substitute for `zuvo:deploy`'s built-in health check — that
+  check is a single-shot gate inside the deploy pipeline. `zuvo:canary` is for sustained
+  post-deploy observation. For production metrics over days or weeks, use your observability
+  platform (Datadog, Sentry, etc.) rather than repeated canary runs.
+
+related_skills:
+  - slug: deploy
+    relation: "Precedes canary — deploy completes and suggests running canary for monitoring"
+  - slug: ship
+    relation: "ship → deploy → canary is the full release flow"
+  - slug: retro
+    relation: "Canary performance data feeds into the quality trends section of retro"
+  - slug: release-docs
+    relation: "Run release-docs after canary confirms HEALTHY to sync documentation"
+
+faq:
+  - q: "What does zuvo:canary check during monitoring?"
+    a: "In full mode (Playwright or Chrome DevTools available): HTTP status, console error count, page load time, and screenshots per check cycle. In degraded mode (HTTP-only): HTTP status and response time via curl. Both modes produce a HEALTHY / DEGRADED / BROKEN verdict."
+  - q: "How is zuvo:canary different from zuvo:deploy's health check?"
+    a: "zuvo:deploy runs a single-shot health check as the final gate of the deploy pipeline — it verifies the URL responds with HTTP 200 in under 10 seconds. zuvo:canary runs a sustained monitoring loop (1–30 minutes, configurable interval), capturing console errors and screenshots over time. Use deploy for the gate, canary for observation."
+  - q: "How long does zuvo:canary run?"
+    a: "Default is 10 minutes with 60-second intervals (10 checks). Configure with --duration (range 1m–30m) and --interval. Pass --quick for a single check. In non-interactive environments (Codex, Cursor), one-shot mode is forced automatically."
+  - q: "Does zuvo:canary require Playwright or Chrome DevTools?"
+    a: "No — it degrades gracefully. If no browser MCP tools are detected, canary runs in HTTP-only (degraded) mode using curl, which checks HTTP status and response time. Console errors and screenshots are unavailable in degraded mode."
+  - q: "What happens when canary reports BROKEN?"
+    a: "The CANARY COMPLETE block prints a rollback suggestion pointing to zuvo:deploy rollback and the platform-specific rollback command if a platform was detected in Phase 1. Rollback is never executed automatically — the user decides."
+
+arguments:
+  - flag: "<url>"
+    description: "Production URL to monitor (REQUIRED)"
+  - flag: "--duration <time>"
+    description: "Monitoring duration in minutes (range: 1m–30m, default: 10m)"
+  - flag: "--interval <time>"
+    description: "Check interval in seconds (default: 60s)"
+  - flag: "--quick"
+    description: "Single health check only — no loop"
+  - flag: "--max-errors <n>"
+    description: "Console error count threshold for BROKEN verdict (default: 3)"
+
+checks: null
+
+frameworks:
+  - Playwright (MCP)
+  - Chrome DevTools (MCP)
+  - HTTP-only (curl fallback)
+
+modes:
+  - name: full
+    description: "Browser-based checks via Playwright or Chrome DevTools MCP tools. Captures HTTP status, console errors, load time, and screenshots per cycle."
+  - name: degraded
+    description: "HTTP-only checks via curl when no browser MCP tools are detected. HTTP status and response time only — no console errors or screenshots."
+  - name: quick
+    description: "One-shot mode: single check cycle, then exit. Forced in non-interactive environments (Codex, Cursor)."
+
+agents: null
+
+benchmarks:
+  - claim: "2 operating modes — full (browser + console + screenshots) and degraded (HTTP-only curl) with automatic fallback"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 0 Step 2 and Phase 2 Check Cycle sections"
+  - claim: "3 verdict levels — HEALTHY, DEGRADED, BROKEN — based on cumulative error count vs --max-errors threshold"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 3 Step 1"
+  - claim: "Configurable duration 1–30 minutes with 60-second default interval"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Argument Parsing + Phase 0 Step 4"
+
+comparison_table:
+  columns: ["Capability", "curl one-liner", "Uptime monitor (external)", "zuvo:canary"]
+  rows:
+    - ["Console error capture", "No", "No", "Yes (full mode)"]
+    - ["Screenshots per check", "No", "No", "Yes (full mode)"]
+    - ["Configurable duration/interval", "No", "Yes", "Yes (1-30m)"]
+    - ["Baseline comparison", "No", "Yes (SLA)", "Yes (prior canary runs)"]
+    - ["Rollback suggestion on failure", "No", "No", "Yes (BROKEN verdict)"]
+    - ["Works without browser tools", "Yes", "N/A", "Yes (degraded mode)"]

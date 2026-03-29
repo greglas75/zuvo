@@ -1,0 +1,209 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: architecture
+  title: "Architecture — review, ADR, and system design in 9 dimensions"
+  description: "Architecture review across 9 dimensions (A1-A9), ADR creation, or system design from requirements. Weighted 0-3 per dimension, 27-point total."
+  category: audit
+  og_image: /og/skills/architecture.png
+
+seo:
+  target_queries:
+    - "architecture review typescript codebase a1-a9"
+    - "architecture decision record adr generator"
+    - "system design document ai assistant"
+    - "detect god class circular dependencies architecture"
+    - "layered architecture review fan-in fan-out metrics"
+  canonical: /en/skills/architecture
+
+stats:
+  - label: "Dimensions"
+    value: "9"
+    detail: "A1-A9 scored 0–3 each"
+  - label: "Modes"
+    value: "3"
+    detail: "review, adr, design"
+  - label: "Critical Gate"
+    value: "A1–A4"
+    detail: "any = 0 caps verdict at Significant Issues"
+  - label: "Max Score"
+    value: "27"
+    detail: "weighted total — A1..A9 sum"
+  - label: "Healthy Threshold"
+    value: "80%"
+    detail: "21/27 or higher"
+
+problem: |
+  Architecture problems rarely announce themselves. A service that imports another service's controller, a domain model that reaches into the infrastructure layer, a god module with 20 responsibilities — these patterns look like local decisions but cause cascading fragility. By the time teams notice the pain, tracing a bug through 5 layers of circular imports requires a whiteboard session. `zuvo:architecture` makes the structure visible: it maps modules, measures instability indices, detects hidden temporal coupling, and scores the result so you know where to act first.
+
+how_it_works:
+  - step: "Mode selection"
+    description: "The skill selects one of three modes based on the --mode flag or inferred intent: review (audit an existing codebase), adr (document a technical decision), or design (produce a design document from requirements)."
+  - step: "Read and map (review mode)"
+    description: "Key files are read in order: package.json / pyproject.toml for stack, directory tree for module boundaries, entry points, domain samples, and test infrastructure. Architecture style is detected (layered, feature-based, hexagonal, etc.) with confidence scoring."
+  - step: "Structural metrics (review mode)"
+    description: "Quantitative metrics are gathered before qualitative scoring: dependency cycles, cross-module fan-in/fan-out per module, module LOC, instability index (I = fan-out / (fan-in + fan-out)), and git temporal coupling. These prevent subjective drift and provide evidence for each score."
+  - step: "Score A1-A9 (review mode)"
+    description: "Each dimension is scored 0-3 with a one-line evidence statement and confidence level (HIGH/MEDIUM/LOW). A reconciliation step removes contradictions between the metrics section and dimension evidence before the report is written."
+  - step: "ADR or design document (other modes)"
+    description: "ADR mode evaluates 2+ options across complexity, cost, scalability, team familiarity, maintenance burden, and lock-in. Design mode produces a 6-step document: requirements, high-level design, deep dive, scale/reliability, rollout/migration, and trade-offs."
+
+output:
+  artifact: "audit-results/architecture-review-YYYY-MM-DD.md"
+  format: "Markdown report (review) or docs/adr/[N]-[slug].md (ADR) or docs/design/[slug].md (design document)."
+  sections:
+    - "Architecture Style (detected style + confidence)"
+    - "Architecture Map (ASCII component diagram with data flow)"
+    - "Structural Metrics (fan-in/fan-out per module, instability index, temporal coupling)"
+    - "Dimension Scores (A1-A9 with evidence and confidence)"
+    - "Critical Issues"
+    - "Needs-Work Items"
+    - "Strengths"
+    - "Recommendations (prioritized by impact)"
+
+examples:
+  - title: "Review the src/ directory"
+    type: invocation
+    command: "zuvo:architecture --mode review src/"
+    result: "Reads the source tree, computes structural metrics, scores A1-A9, and saves a full report to audit-results/. Includes an ASCII module map and temporal coupling table."
+  - title: "Create an ADR for a queue technology choice"
+    type: invocation
+    command: "zuvo:architecture --mode adr"
+    result: "Interactively gathers the decision context, evaluates Kafka vs SQS vs RabbitMQ across 6 dimensions, and saves a formatted ADR to docs/adr/."
+  - title: "Design a new notification service"
+    type: invocation
+    command: "zuvo:architecture --mode design"
+    result: "Captures functional and non-functional requirements, produces a high-level component diagram, data model, API design, rollout plan, and trade-off table saved to docs/design/."
+  - title: "Instability index violation surfaced"
+    type: output_sample
+    sample:
+      language: markdown
+      code: |
+        ### Structural Metrics
+
+        | Module       | LOC  | Fan-in | Fan-out | Instability | Notes                      |
+        |--------------|------|--------|---------|-------------|----------------------------|
+        | auth/         | 820  | 12     | 1       | 0.08        | Stable — OK                |
+        | shared/utils/ | 1240 | 0      | 8       | 1.00        | Maximally unstable; should be stable |
+        | domain/       | 3100 | 2      | 11      | 0.85        | High instability on domain core — A3 = 1 |
+
+        A3 finding: domain/ imports infra layer (database client). Domain modules should have near-zero fan-out to infrastructure.
+    explanation: "The instability index I = fan-out / (fan-in + fan-out). Stable modules (I < 0.3) should be abstract. Unstable modules (I > 0.7) should be concrete. domain/ is both concrete and highly unstable — a dependency direction violation (A3 = 1)."
+
+when_to_use: "Use `zuvo:architecture` before a major refactor, when onboarding to an unfamiliar service, when something feels structurally wrong but you cannot point to it, or when making a significant technical decision that should be documented. Run review mode on the whole codebase or a specific path."
+
+when_not_to_use: "For per-file code quality issues (CQ1-CQ22), use `zuvo:code-audit`. For quantitative structural metrics without design-pattern context (dead code, naming, file sizes), use `zuvo:structure-audit`. For individual file refactoring, use `zuvo:refactor`. For security vulnerabilities, use `zuvo:security-audit`."
+
+related_skills:
+  - slug: structure-audit
+    relation: "structural metrics (SA1-SA13) that complement architecture dimension scores"
+  - slug: refactor
+    relation: "implement fixes for A1-A4 critical issues identified in review"
+  - slug: code-audit
+    relation: "per-file quality audit — parallel to architectural health"
+  - slug: backlog
+    relation: "critical and needs-work items are persisted to the project backlog after every mode"
+  - slug: design
+    relation: "design mode produces artifacts that design-review can later audit"
+
+faq:
+  - q: "What does zuvo:architecture review check?"
+    a: "It scores 9 dimensions: modularity and coupling (A1), layer discipline (A2), dependency direction inward from domain to infra (A3), SRP and anti-patterns like god classes (A4), horizontal scalability and shared mutable state (A5), testability and test coverage of core logic (A6), observability with structured logging and correlation IDs (A7), security boundaries at the layer level (A8), and SOLID compliance (A9)."
+  - q: "How is zuvo:architecture different from zuvo:structure-audit?"
+    a: "zuvo:structure-audit measures structural health with tools: it counts dead exports, measures file sizes, runs jscpd for duplication, and produces a SQALE debt score. zuvo:architecture reasons about design quality: it assesses whether layering is respected, whether the dependency direction is correct, whether modules have the right responsibilities. They complement each other — run structure-audit for metrics, architecture for meaning."
+  - q: "How long does an architecture review take?"
+    a: "For a medium codebase (20-50 modules), expect 5-10 minutes. The skill reads key files, computes metrics with git and static tools, scores A1-A9 with evidence, and writes the report. Scoped reviews (--mode review src/payments/) are faster."
+  - q: "What is the instability index and why does it matter?"
+    a: "Instability I = fan-out / (fan-in + fan-out), where fan-in is the number of other modules that depend on this module and fan-out is the number of modules this module depends on. A module with I ≈ 0 is maximally stable (many dependents, few dependencies) and should contain stable abstractions. A module with I ≈ 1 is maximally unstable and should be concrete and easily replaceable. Violations — a stable domain module with high fan-out to infrastructure — indicate A3 dependency direction problems."
+  - q: "What goes into an ADR?"
+    a: "An ADR captures: the specific decision question, context and forces at play, at least 2 options evaluated across complexity/cost/scalability/team familiarity/maintenance/lock-in, a trade-off synthesis, the decision rationale, consequences (easier/harder), a revisit trigger, and action items. It is saved to docs/adr/ with a sequential number and slug."
+
+arguments:
+  - flag: "--mode review [path]"
+    description: "Architecture review — scan and score the codebase at the given path (default: project root)"
+  - flag: "--mode adr"
+    description: "Create or update an Architecture Decision Record for a technical choice"
+  - flag: "--mode design"
+    description: "Produce a system design document from requirements"
+
+checks:
+  sections:
+    - name: "Architecture Dimensions"
+      id_range: "A1-A9"
+      count: 9
+      items:
+        - id: "A1"
+          name: "Modularity — clear boundaries, low coupling, high cohesion"
+          critical: true
+        - id: "A2"
+          name: "Layering — no DB in controllers, no domain logic in repositories"
+          critical: true
+        - id: "A3"
+          name: "Dependency direction — dependencies point inward; domain independent of infrastructure"
+          critical: true
+        - id: "A4"
+          name: "SRP and anti-patterns — no god classes/modules"
+          critical: true
+        - id: "A5"
+          name: "Scalability — horizontal scaling possible, no shared mutable state"
+          critical: false
+        - id: "A6"
+          name: "Testability — tests exist, core logic isolated from I/O"
+          critical: false
+        - id: "A7"
+          name: "Observability — structured logging, metrics, correlation IDs"
+          critical: false
+        - id: "A8"
+          name: "Security boundary — auth/authz at layer boundary, input validated at entry"
+          critical: false
+        - id: "A9"
+          name: "SOLID compliance — OCP, LSP, ISP, DIP assessment"
+          critical: false
+
+frameworks:
+  - TypeScript
+  - JavaScript
+  - Python
+  - PHP
+  - NestJS
+  - Next.js
+  - Django
+  - FastAPI
+  - Monorepo (Turborepo, Nx)
+
+modes:
+  - name: "review"
+    description: "Audit an existing codebase: map modules, compute structural metrics, score A1-A9, produce a report with prioritized recommendations."
+  - name: "adr"
+    description: "Create an Architecture Decision Record: evaluate options, compare trade-offs, document the decision with context and consequences."
+  - name: "design"
+    description: "Design a new system from requirements: high-level design, data model, API contracts, scale plan, rollout strategy, and trade-off table."
+
+agents:
+  - name: "Architecture Review Agent"
+    role: "Reads the codebase structure, computes structural metrics, and scores A1-A9 with evidence and confidence levels."
+
+benchmarks:
+  - claim: "Weighted total score A1-A9 × 3 max each = 27 points; normalized to percentage. Healthy threshold is ≥80% (21/27)."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Step 3: 'A_total = sum(A1..A9) / 27 * 100%'"
+  - claim: "Any A1-A4 dimension scoring 0 caps the architecture verdict at Significant Issues regardless of total score."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Step 3: 'Critical gate: Any A1-A4 = 0 caps the verdict'"
+  - claim: "Fan-in/fan-out counts cross-module imports only; internal subdirectory imports do not count toward the instability calculation."
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Step 2.5: 'count cross-module imports only. Internal subdir imports DO NOT count.'"
+
+comparison_table:
+  columns: ["Capability", "Manual Architecture Review", "Static Analysis (madge)", "zuvo:architecture"]
+  rows:
+    - ["Layer violation detection", "Expert opinion", "Import graph only", "A2: confirmed via import + type classification"]
+    - ["Instability index", "Manual calculation", "Fan count only", "Computed per module with violation flags"]
+    - ["Temporal coupling (hidden deps)", "Not feasible", "Not available", "Git co-change analysis in Step 2.5"]
+    - ["ADR creation", "Ad-hoc doc", "Not available", "Structured 6-dimension evaluation with trade-off synthesis"]
+    - ["System design document", "Manual", "Not available", "6-step template: requirements through rollout"]
+    - ["Output", "Meeting notes / doc", "Dependency graph image", "Scored report with evidence + recommended next actions"]

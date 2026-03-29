@@ -2,8 +2,8 @@
 
 **Spec:** docs/specs/2026-03-29-skill-seo-pages-spec.md
 **Created:** 2026-03-29
-**Tasks:** 9
-**Estimated complexity:** 1 standard (schema) + 6 standard (YAML batches) + 1 standard (validation script) + 1 standard (final validation)
+**Tasks:** 10
+**Estimated complexity:** 1 standard (schema) + 7 standard (YAML batches) + 1 standard (validation script) + 1 standard (final validation)
 
 ## Architecture Summary
 
@@ -29,18 +29,16 @@
 - **Stat accuracy** spot-checked against SKILL.md during generation
 - **Validation script** gates the final commit
 
-## Slug Allow-List (33 skills)
+## Slug Allow-List (39 skills)
 
 ```
-api-audit, architecture, backlog, brainstorm, build, ci-audit, code-audit,
-db-audit, debug, dependency-audit, design, design-review, docs, env-audit,
-execute, fix-tests, pentest, performance-audit, plan, presentation,
-receive-review, refactor, review, security-audit, seo-audit, structure-audit,
-test-audit, tests-performance, ui-design-team, using-zuvo, worktree,
-write-e2e, write-tests
+api-audit, architecture, backlog, brainstorm, build, canary, ci-audit,
+code-audit, db-audit, debug, deploy, dependency-audit, design, design-review,
+docs, env-audit, execute, fix-tests, pentest, performance-audit, plan,
+presentation, receive-review, refactor, release-docs, retro, review,
+security-audit, seo-audit, seo-fix, ship, structure-audit, test-audit,
+tests-performance, ui-design-team, using-zuvo, worktree, write-e2e, write-tests
 ```
-
-Skills excluded: `seo-fix` (sub-skill), `retro`, `ship`, `canary` (no SKILL.md / not in routing table).
 
 ---
 
@@ -216,11 +214,36 @@ For each skill in this batch:
 
 ---
 
-### Task 8: Create validation script
+### Task 8: Generate Batch 7 — Release skills (5 skills) + seo-fix
+
+**Files:** `website/skills/{ship,deploy,canary,release-docs,retro,seo-fix}.yaml`
+**Complexity:** standard
+**Dependencies:** Task 1
+**Model routing:** Sonnet
+
+For each skill in this batch:
+- [ ] Read `skills/{slug}/SKILL.md` in full
+- [ ] Generate YAML:
+  - ship: Pre-merge release pipeline (tests, review, version bump, changelog, tag, push/PR). Category: `release`.
+  - deploy: Post-merge production deploy. Platform detection (Vercel/Fly/Netlify/Railway/Render/GHA). Category: `release`.
+  - canary: Post-deploy monitoring (browser or HTTP mode, console errors, performance, configurable duration). Category: `release`.
+  - release-docs: Diff-driven documentation sync after release. Category: `release`.
+  - retro: Engineering retrospective from git metrics (deploy frequency, lead time, churn, backlog health). Category: `release`.
+  - seo-fix: Apply fixes from seo-audit findings. Safety tiers (SAFE/MODERATE/DANGEROUS). Category: `audit`.
+- [ ] Each release skill page must show the release flow: ship → deploy → canary → release-docs → retro (current skill highlighted)
+- [ ] Disambiguation FAQ: ship vs deploy ("pre-merge vs post-merge"), seo-audit vs seo-fix ("audit findings vs apply fixes")
+- [ ] Set `last_synced` to today's date on each file
+- [ ] Populate `seo.target_queries` with 3-5 long-tail keywords per skill
+- [ ] Verify: all 6 files exist, unique titles
+- [ ] Commit: `feat: add SEO data for release skills and seo-fix (6 files)`
+
+---
+
+### Task 9: Create validation script
 
 **Files:** `scripts/validate-skill-pages.sh`
 **Complexity:** standard
-**Dependencies:** Tasks 2-7 (needs YAML files to exist)
+**Dependencies:** Tasks 2-8 (needs YAML files to exist)
 **Model routing:** Sonnet
 
 - [ ] Write a bash script that validates all 33 YAML files:
@@ -230,7 +253,7 @@ For each skill in this batch:
 
   ERRORS=0
   SKILLS_DIR="website/skills"
-  EXPECTED_COUNT=33
+  EXPECTED_COUNT=39
 
   # 1. Count files (excluding _schema.yaml)
   ACTUAL=$(ls "$SKILLS_DIR"/*.yaml 2>/dev/null | grep -v _schema | wc -l | tr -d ' ')
@@ -274,7 +297,7 @@ For each skill in this batch:
   fi
 
   # 5. Check cross-reference slugs are in allow-list
-  ALLOW_LIST="api-audit architecture backlog brainstorm build ci-audit code-audit db-audit debug dependency-audit design design-review docs env-audit execute fix-tests pentest performance-audit plan presentation receive-review refactor review security-audit seo-audit structure-audit test-audit tests-performance ui-design-team using-zuvo worktree write-e2e write-tests"
+  ALLOW_LIST="api-audit architecture backlog brainstorm build canary ci-audit code-audit db-audit debug deploy dependency-audit design design-review docs env-audit execute fix-tests pentest performance-audit plan presentation receive-review refactor release-docs retro review security-audit seo-audit seo-fix ship structure-audit test-audit tests-performance ui-design-team using-zuvo worktree write-e2e write-tests"
 
   for f in "$SKILLS_DIR"/*.yaml; do
     [[ "$f" == *"_schema"* ]] && continue
@@ -328,11 +351,11 @@ For each skill in this batch:
 
 ---
 
-### Task 9: Final cross-validation and commit
+### Task 10: Final cross-validation
 
 **Files:** none (validation only)
 **Complexity:** standard
-**Dependencies:** Tasks 2-8
+**Dependencies:** Tasks 2-9
 **Model routing:** Sonnet
 
 - [ ] Run `bash scripts/validate-skill-pages.sh` — must PASS
@@ -346,6 +369,9 @@ For each skill in this batch:
   - write-tests ↔ write-e2e
   - design ↔ design-review ↔ ui-design-team
   - test-audit ↔ fix-tests
+  - seo-audit ↔ seo-fix
+  - ship ↔ deploy
 - [ ] Verify pipeline skills (brainstorm, plan, execute) reference prerequisite/output artifacts
+- [ ] Verify release skills (ship, deploy, canary, release-docs, retro) show the release flow
 - [ ] Verify utility skills (backlog, worktree, presentation, receive-review, docs, using-zuvo) use workflow-position framing
 - [ ] Commit: (no commit — validation only, all files already committed in prior tasks)

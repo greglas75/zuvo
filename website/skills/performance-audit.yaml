@@ -1,0 +1,279 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: performance-audit
+  title: "Performance Audit — 12-Dimension Full-Stack Speed Analysis"
+  description: "Full-stack perf audit: 12 dimensions with Impact Models, savings estimates, and confidence tiers. Covers Web Vitals, N+1 queries, bundle size, concurrency."
+  category: audit
+  og_image: /og/skills/performance-audit.png
+
+seo:
+  target_queries:
+    - "full stack performance audit tool"
+    - "how to find N+1 queries in production"
+    - "web vitals LCP INP audit checklist"
+    - "bundle size analysis Next.js Vite"
+    - "Node.js event loop blocking detection"
+  canonical: /en/skills/performance-audit
+
+stats:
+  - label: "Dimensions"
+    value: "12"
+    detail: "D1-D12: rendering to concurrency"
+  - label: "Critical Gate"
+    value: "1"
+    detail: "D7=0 (N+1 in hot path) triggers FAIL"
+  - label: "Audit Profiles"
+    value: "5"
+    detail: "Full-stack, backend, frontend, bundle, static"
+  - label: "Impact Models"
+    value: "4"
+    detail: "Estimated savings, blast radius, effort, confidence"
+  - label: "Confidence Tiers"
+    value: "4"
+    detail: "FULL / STANDARD / PARTIAL / MINIMAL"
+
+problem: |
+  Performance problems in production are rarely obvious from code review alone.
+  A slow API call, an N+1 query, or a 600 KB JavaScript bundle each degrade user
+  experience in different ways and require different fixes. Without structured
+  measurement and Impact Models, teams optimize the wrong things — spending hours
+  on low-value micro-optimizations while critical database bottlenecks go unnoticed.
+  zuvo:performance-audit provides a systematic, evidence-based analysis across the
+  entire stack, so every optimization decision is backed by data.
+
+how_it_works:
+  - step: "Stack Detection and Profile Selection"
+    description: "Detects frontend framework, bundler, backend runtime, ORM, and deployment model. Selects one of 5 audit profiles (A-E) to activate the right dimensions for the project."
+  - step: "Hot Path Identification"
+    description: "Discovers API handlers, page components, middleware, and queue workers. Ranks entry points by expected traffic so analysis focuses on code that actually matters."
+  - step: "12-Dimension Analysis"
+    description: "Dispatches 3 parallel agents (Frontend, Backend, Data Layer) when supported. Each dimension scored 0 to its max weight. D7 is a critical gate: a score of 0 triggers an audit FAIL."
+  - step: "Impact Model Generation"
+    description: "Every finding above LOW severity gets an Impact Model: estimated savings, blast radius, effort (S/M/L), and confidence tier (HIGH requires profiler/Lighthouse data)."
+  - step: "Roadmap and Backlog"
+    description: "Findings sorted into Quick Wins, Short-term, Medium-term, and Long-term. HIGH+ findings are proposed as backlog entries for zuvo:backlog."
+
+output:
+  artifact: "audits/performance-audit-YYYY-MM-DD.md"
+  format: "Markdown report with dimension score table, severity-sorted findings, Impact Models, cross-cutting patterns, and a prioritized optimization roadmap."
+  sections:
+    - "Metadata (stack, profile, audit tier)"
+    - "Executive Summary with grade (A-D)"
+    - "Dimension Scores (D1-D12 table)"
+    - "Critical Gates"
+    - "Findings sorted by priority score"
+    - "Cross-Cutting Patterns"
+    - "Optimization Roadmap (Quick Wins through Long-term)"
+    - "Prerequisites for Higher Confidence"
+
+examples:
+  - title: "N+1 query in hot-path list endpoint"
+    type: before_after
+    gate: "D7"
+    before:
+      language: typescript
+      code: |
+        async listOrders(userId: string) {
+          const orders = await db.order.findMany({ where: { userId } });
+          for (const order of orders) {
+            order.items = await db.orderItem.findMany({ where: { orderId: order.id } });
+          }
+          return orders;
+        }
+    after:
+      language: typescript
+      code: |
+        async listOrders(userId: string) {
+          return db.order.findMany({
+            where: { userId },
+            include: { items: true },
+          });
+        }
+    explanation: "D7 critical gate: query inside a loop causes N+1 database calls. Eager loading with `include` reduces N+1 to a single JOIN. Impact Model: ~200ms saved per request at 100 rps."
+  - title: "Impact Model output sample"
+    type: output_sample
+    sample:
+      language: text
+      code: |
+        FINDING: P-D7-01 CRITICAL database — N+1 in OrderService.listOrders()
+          File: src/services/order.service.ts:34
+          Impact Model:
+            Estimated savings: ~180ms / request (6 DB round-trips → 1)
+            Blast radius:      ~1,200 requests/hour (order list page)
+            Effort:            S — add `include: { items: true }` to findMany
+            Confidence:        MEDIUM (heuristic, no EXPLAIN ANALYZE available)
+            Priority score:    Impact / Effort = 9
+    explanation: "Every HIGH+ finding includes a structured Impact Model so the team can prioritize by data, not instinct."
+
+when_to_use: "Run before major releases, after heavy feature work, when users report slowness, or as a periodic health check (every 1-3 months). Use `--backend` or `--frontend` flags to scope to a specific layer when time is limited."
+
+when_not_to_use: "For code correctness and style issues, use `zuvo:review` or `zuvo:code-audit`. For security vulnerabilities, use `zuvo:security-audit`. For test suite speed, use `zuvo:tests-performance`. For database schema health beyond query patterns, use `zuvo:db-audit`."
+
+related_skills:
+  - slug: db-audit
+    relation: "Deep database audit covering indexes, schema, and connection pooling beyond D7"
+  - slug: code-audit
+    relation: "Code quality gates including unbounded queries (CQ7) and missing limits (CQ6)"
+  - slug: tests-performance
+    relation: "Test suite speed optimization — parallel skill for CI pipeline performance"
+  - slug: backlog
+    relation: "Receives HIGH+ findings as tracked backlog items for follow-up"
+  - slug: refactor
+    relation: "Recommended next step for CRITICAL findings in D7 or D11"
+
+faq:
+  - q: "What does zuvo:performance-audit check?"
+    a: "It checks 12 dimensions: rendering performance, bundle size, asset optimization, API/network patterns, algorithm complexity, memory management, database queries (N+1, unbounded), caching strategy, framework-specific patterns, Web Vitals (LCP/INP/CLS), backend runtime (sync I/O), and concurrency (fan-out limiting). Each dimension has a weighted score and D7 is a critical gate."
+  - q: "How is performance-audit different from db-audit?"
+    a: "zuvo:performance-audit covers the full stack with D7 providing a focused N+1 and unbounded-query check. zuvo:db-audit goes deeper on the database layer: 60+ checks across 12 dimensions including indexes, schema design, connection pooling, migrations, and ORM-specific patterns. Run performance-audit first; use db-audit when D7 findings need deeper investigation."
+  - q: "How long does a performance-audit take?"
+    a: "Code inspection (PARTIAL tier) completes in a few minutes. A FULL audit with Lighthouse and bundle analyzer may take 5-15 minutes depending on project size. The `--frontend` or `--backend` flags cut scope in half. Monorepo projects use Profile E and audit each package individually."
+  - q: "Does performance-audit auto-fix issues?"
+    a: "No — the audit is strictly read-only. It produces findings with Impact Models and a prioritized roadmap. For CRITICAL findings, it recommends the next action (e.g., `zuvo:refactor [file]` for D11 sync I/O). The fix step is intentionally separate to keep audit results verifiable."
+  - q: "What frameworks and languages are supported?"
+    a: "Frontend: Next.js, Vite/React, SvelteKit, Vue, Angular. Backend: NestJS, Express, FastAPI, Gin. ORMs: Prisma, TypeORM, SQLAlchemy, Mongoose. Deployment: Serverless (Vercel/Netlify), Cloudflare Workers, containers, AWS Lambda. Framework-specific pathologies are detected per stack in D9."
+
+arguments:
+  - flag: "(empty) or full"
+    description: "Full audit across all applicable dimensions for the entire project"
+  - flag: "[path]"
+    description: "Scope the audit to a specific directory or module"
+  - flag: "[file]"
+    description: "Deep single-file audit focused on algorithms, memory, and complexity"
+  - flag: "--frontend"
+    description: "Dimensions D1-D3 and D10 only (rendering, bundles, assets, Web Vitals)"
+  - flag: "--backend"
+    description: "Dimensions D4-D5 and D7-D8, D11-D12 only (API, algorithms, DB, caching, runtime, concurrency)"
+  - flag: "--db"
+    description: "Dimension D7 only — database queries and schema patterns"
+  - flag: "--bundle"
+    description: "Dimension D2 only — bundle weight analysis"
+
+checks:
+  sections:
+    - name: "Rendering Performance"
+      id_range: "D1"
+      count: 4
+      items:
+        - id: "D1-1"
+          name: "Unnecessary re-renders"
+          critical: false
+        - id: "D1-2"
+          name: "Virtualization for large lists"
+          critical: false
+        - id: "D1-3"
+          name: "Route-level code splitting"
+          critical: false
+        - id: "D1-4"
+          name: "Server components for data fetching"
+          critical: false
+    - name: "Bundle Size"
+      id_range: "D2"
+      count: 4
+      items:
+        - id: "D2-1"
+          name: "Total JS bundle under 200 KB gzipped"
+          critical: true
+        - id: "D2-2"
+          name: "Tree shaking enabled"
+          critical: false
+        - id: "D2-3"
+          name: "No duplicate dependencies"
+          critical: false
+        - id: "D2-4"
+          name: "Dynamic imports for heavy features"
+          critical: false
+    - name: "Database Performance"
+      id_range: "D7"
+      count: 4
+      items:
+        - id: "D7-1"
+          name: "No N+1 queries in hot paths"
+          critical: true
+        - id: "D7-2"
+          name: "Unbounded queries have LIMIT"
+          critical: true
+        - id: "D7-3"
+          name: "Index coverage on filter/sort columns"
+          critical: false
+        - id: "D7-4"
+          name: "Connection pooling configured"
+          critical: false
+    - name: "Web Vitals"
+      id_range: "D10"
+      count: 3
+      items:
+        - id: "D10-1"
+          name: "LCP < 2.5s"
+          critical: false
+        - id: "D10-2"
+          name: "INP < 200ms"
+          critical: false
+        - id: "D10-3"
+          name: "CLS < 0.1"
+          critical: false
+
+frameworks:
+  - "Next.js"
+  - "React"
+  - "SvelteKit"
+  - "Vue"
+  - "NestJS"
+  - "Express"
+  - "FastAPI"
+  - "Gin"
+  - "Prisma"
+  - "TypeORM"
+  - "SQLAlchemy"
+
+modes:
+  - name: "full"
+    description: "All applicable dimensions across the entire project (default)"
+  - name: "--frontend"
+    description: "Rendering, bundles, assets, and Web Vitals only (D1-D3, D10)"
+  - name: "--backend"
+    description: "API, algorithms, database, caching, runtime, and concurrency only"
+  - name: "--db"
+    description: "Database dimension only — fastest targeted check for D7 findings"
+  - name: "--bundle"
+    description: "Bundle weight analysis only — useful after dependency changes"
+
+agents:
+  - name: "Frontend Analyst"
+    role: "Evaluates D1 (rendering), D2 (bundles), D3 (assets), and D10 (Web Vitals)"
+  - name: "Backend Analyst"
+    role: "Evaluates D4 (API/network), D5 (algorithms), D11 (runtime), and D12 (concurrency)"
+  - name: "Data Layer Analyst"
+    role: "Evaluates D6 (memory), D7 (database), D8 (caching), and D9 (framework-specific)"
+
+benchmarks:
+  - claim: "Audit covers 12 weighted dimensions with a max score of 100 points"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 2 dimension table — weights sum to 100 (D1:12, D2:12, D3:8, D4:10, D5:10, D6:10, D7:12, D8:8, D9:8, D10:10, D11:6, D12:6)"
+  - claim: "D7=0 (N+1 in hot path) overrides total score to FAIL regardless of other dimension scores"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 2 D7 section — 'Critical gate: D7=0 triggers audit FAIL'"
+  - claim: "4 audit confidence tiers based on available tooling: FULL, STANDARD, PARTIAL, MINIMAL"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 0.4 Audit Confidence Tier table"
+  - claim: "Impact Models include 4 fields: estimated savings, blast radius, effort, and confidence level"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 3.2 Impact Model Format"
+
+comparison_table:
+  columns: ["Capability", "Manual Code Review", "Lighthouse Only", "zuvo:performance-audit"]
+  rows:
+    - ["Database N+1 detection", "Depends on reviewer", "No", "Yes — D7 critical gate"]
+    - ["Bundle size analysis", "No", "Partial (total size)", "Yes — D2 with tree-shaking check"]
+    - ["Web Vitals measurement", "No", "Yes (live URL required)", "Yes — code patterns + optional Lighthouse"]
+    - ["Impact Model per finding", "No", "No", "Yes — savings estimate + confidence tier"]
+    - ["Algorithm complexity (O(n²))", "Depends on reviewer", "No", "Yes — D5 hot path scan"]
+    - ["Backend runtime (sync I/O)", "Depends on reviewer", "No", "Yes — D11"]
+    - ["Concurrency fan-out", "Depends on reviewer", "No", "Yes — D12"]
+    - ["Prioritized roadmap", "No", "No", "Yes — Quick Wins through Long-term"]

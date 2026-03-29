@@ -1,0 +1,170 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: release-docs
+  title: "release-docs — Diff-driven Documentation Sync After Release"
+  description: "Sync docs after a release using git diff. Updates only docs whose source changed across 12 file types. Detects doc debt. --dry-run supported."
+  category: release
+  og_image: /og/skills/release-docs.png
+
+seo:
+  target_queries:
+    - "auto-sync documentation after release git diff"
+    - "update only changed docs after release changelog automation"
+    - "diff-driven documentation update CI pipeline"
+    - "documentation debt detection after code changes"
+    - "release documentation automation Claude Code"
+  canonical: /en/skills/release-docs
+
+stats:
+  - label: Phases
+    value: "5"
+    detail: "Range → Diff → Changelog → Doc Updates → Debt Detection"
+  - label: Source File Types
+    value: "12"
+    detail: ".ts, .tsx, .js, .jsx, .py, .php, .go, .rs, .java, .rb, .swift, .kt"
+  - label: Output Formats
+    value: "3"
+    detail: "Changelog, updated .md/.mdx/.rst, debt report"
+  - label: Range Detection
+    value: "3"
+    detail: "Explicit arg, last-ship.json, or git tags fallback"
+
+problem: |
+  After shipping a release, documentation drifts silently. Updating every doc is wasteful;
+  updating none creates stale references. `zuvo:release-docs` takes the middle path: it diffs
+  the release range to find which source files changed, then updates only the documentation
+  files whose content references those modules. Files whose source did not change are skipped.
+  Undocumented changed files are flagged as documentation debt rather than silently ignored.
+
+how_it_works:
+  - step: Determine Range
+    description: "Resolves the git range from (in priority order): explicit argument, memory/last-ship.json range field, or the two most recent git tags. In non-interactive environments with no derivable range, exits with PASS."
+  - step: Diff Analysis
+    description: "Runs git diff --name-only against the range. Classifies files as source, doc, config, or other. Identifies docs-adjacent source files — those where a corresponding .md file in the repo references the module name."
+  - step: Changelog
+    description: "Delegates to zuvo:docs changelog for the range. Handles git-cliff detection, conventional commit classification, Keep-a-Changelog format, and fallback to raw git log."
+  - step: Doc Updates
+    description: "Invokes zuvo:docs update for each documentation file whose source files changed. Every claim added or modified must reference a source file — claims without traceable references are flagged."
+  - step: Debt Detection
+    description: "Identifies source files that changed but have no corresponding documentation. Reports them as doc debt (informational — does not change PASS/FAIL verdict)."
+
+output:
+  artifact: "CHANGELOG.md (updated), modified .md/.mdx/.rst files"
+  format: RELEASE-DOCS COMPLETE terminal block listing docs updated, skipped, and debt found.
+  sections:
+    - "Range resolved"
+    - "Changelog update (Added / Fixed / Changed counts)"
+    - "Docs updated (list of modified files)"
+    - "Docs skipped (no source changes)"
+    - "Debt found (undocumented changed files)"
+
+examples:
+  - title: "Sync docs after zuvo:ship"
+    type: invocation
+    command: "zuvo:release-docs"
+    result: |
+      RELEASE-DOCS COMPLETE
+        Range:        v1.2.0..v1.2.1
+        Changelog:    CHANGELOG.md updated (Added: 2, Fixed: 1, Changed: 0)
+        Docs updated: docs/auth.md, docs/api-reference.md
+        Docs skipped: docs/onboarding.md, docs/deployment.md
+        Debt found:   1 file(s) (src/payments/service.ts)
+        Verdict:      PASS
+
+  - title: "Dry run to preview changes"
+    type: invocation
+    command: "zuvo:release-docs --dry-run"
+    result: "Prints the list of source files that would trigger updates and the doc files that would be modified — without writing anything."
+
+  - title: "Explicit range"
+    type: invocation
+    command: "zuvo:release-docs v1.1.0..v1.2.0"
+    result: "Uses the provided git range instead of reading memory/last-ship.json. Useful for retroactively syncing docs for a prior release."
+
+when_to_use: |
+  Run `zuvo:release-docs` after `zuvo:canary` confirms production is HEALTHY. It is the
+  fourth step of the release flow: ship → deploy → canary → release-docs → retro. Use it any
+  time you want to sync documentation to a git range without manually identifying which docs
+  need updating.
+
+when_not_to_use: |
+  Do not use `zuvo:release-docs` for authoring new documentation from scratch — that is
+  `zuvo:docs`. For documentation that is entirely manual (runbooks, architecture decision
+  records), write it directly; release-docs only updates docs whose source has a traceable
+  link to the changed files. Do not run release-docs before deploying — the release range
+  must be finalized first.
+
+related_skills:
+  - slug: ship
+    relation: "ship writes memory/last-ship.json with the range that release-docs reads"
+  - slug: deploy
+    relation: "deploy confirms the release is live before docs are synced"
+  - slug: canary
+    relation: "run after canary confirms HEALTHY — fourth step of the release flow"
+  - slug: docs
+    relation: "release-docs delegates changelog and doc update logic to zuvo:docs"
+  - slug: retro
+    relation: "retro follows release-docs as the final step of the release flow"
+
+faq:
+  - q: "What does zuvo:release-docs update?"
+    a: "Only documentation files whose corresponding source files changed in the release range. It runs git diff --name-only against the range, identifies source files (.ts, .py, .go, etc.), finds .md/.mdx/.rst files in the repo that reference those modules, and updates only those. Files with no source changes are skipped."
+  - q: "How is zuvo:release-docs different from zuvo:docs?"
+    a: "zuvo:docs is a general-purpose documentation skill — it can write READMEs, API references, runbooks, and changelogs from scratch or on demand. zuvo:release-docs is release-scoped: it uses a git diff to determine exactly which docs need updating and calls zuvo:docs internally for the actual writing. Use release-docs as part of the release flow; use docs for standalone authoring."
+  - q: "How does zuvo:release-docs determine which docs to update?"
+    a: "It uses a docs-adjacent heuristic: a source file at src/auth/ is considered docs-adjacent if any .md file in the repo mentions the module name. When in doubt it includes the file (false positives cause minor extra work; false negatives miss updates). The --dry-run flag shows the full list before any files are written."
+  - q: "What is documentation debt in release-docs?"
+    a: "Source files that changed in the release range but have no corresponding documentation file referencing their module or directory. These are logged as debt items — informational only, they don't change the PASS verdict. The debt list feeds naturally into the next zuvo:retro run."
+  - q: "Can zuvo:release-docs run without a prior zuvo:ship?"
+    a: "Yes — pass an explicit git range (e.g., v1.1.0..v1.2.0) to bypass last-ship.json entirely. Without an explicit range and no last-ship.json, it falls back to the two most recent git tags. In non-interactive environments where no range can be derived, it exits cleanly with PASS."
+
+arguments:
+  - flag: "(no flags)"
+    description: "Auto-detect range from memory/last-ship.json or the two most recent git tags"
+  - flag: "<range>"
+    description: "Explicit git range (e.g., v1.1.0..v1.2.0)"
+  - flag: "--dry-run"
+    description: "Show proposed changes without writing any files"
+
+checks: null
+
+frameworks:
+  - Any (language-agnostic diff analysis)
+  - git-cliff (changelog, optional)
+  - Keep-a-Changelog format (fallback)
+
+modes:
+  - name: auto
+    description: "Reads range from memory/last-ship.json or derives from git tags. Full 5-phase execution."
+  - name: explicit-range
+    description: "Uses the provided git range argument. Skips last-ship.json lookup."
+  - name: dry-run
+    description: "Read-only. Prints the source files that would trigger updates and the doc files that would be modified. No writes."
+
+agents: null
+
+benchmarks:
+  - claim: "12 source file extensions classified as docs-adjacent triggers — .ts, .tsx, .js, .jsx, .py, .php, .go, .rs, .java, .rb, .swift, .kt"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 1 step 2"
+  - claim: "3 range detection strategies — explicit arg, last-ship.json, git tags fallback"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 0 steps 1-3"
+  - claim: "Iron rule: every documentation claim must reference a source file (file:function:line) — flagged if zuvo:docs produces an untraced claim"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 3 step 3"
+
+comparison_table:
+  columns: ["Capability", "Manual doc update", "git log + grep", "zuvo:release-docs"]
+  rows:
+    - ["Identifies which docs need updating", "Manual judgment", "Manual", "Yes — diff-based heuristic"]
+    - ["Skips unchanged docs", "Often missed", "No", "Yes — explicitly tracked"]
+    - ["Changelog generation", "Manual", "No", "Yes — delegates to zuvo:docs"]
+    - ["Documentation debt detection", "No", "No", "Yes — logged as debt items"]
+    - ["Dry-run preview", "No", "No", "Yes — --dry-run flag"]
+    - ["Non-interactive safe mode", "N/A", "N/A", "Yes — exits PASS with annotation"]

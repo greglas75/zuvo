@@ -1,0 +1,215 @@
+schema_version: 1
+
+last_synced: "2026-03-29"
+
+meta:
+  slug: presentation
+  title: "presentation — Generate PPTX Slides from a Topic or Markdown File"
+  description: "Generate professional PowerPoint decks using python-pptx. 10 slide types, 3 color themes, 16:9 widescreen layout. From topic or markdown in 1 command."
+  category: utility
+  og_image: /og/skills/presentation.png
+
+seo:
+  target_queries:
+    - "generate powerpoint from markdown python-pptx claude"
+    - "create pptx slides from topic with ai"
+    - "automate powerpoint generation python script"
+    - "convert markdown to presentation slides"
+    - "claude code presentation generator dark corporate theme"
+  canonical: /en/skills/presentation
+
+stats:
+  - label: "Slide Types"
+    value: "10"
+    detail: "TITLE, SECTION, CONTENT, TWO_COLUMN, QUOTE, METRICS, TIMELINE, IMAGE_PLACEHOLDER, SUMMARY, CLOSING"
+  - label: "Color Themes"
+    value: "3"
+    detail: "light, dark, corporate"
+  - label: "Default Slide Count"
+    value: "10"
+    detail: "Override with --slides N"
+  - label: "Languages"
+    value: "any"
+    detail: "Matches topic input language via --lang"
+  - label: "Output Format"
+    value: "PPTX"
+    detail: "16:9 widescreen, 13.333 × 7.5 inches"
+
+problem: |
+  Building a slide deck manually is time-consuming even when the content is already written.
+  Converting a documentation file or audit report into a presentation requires restructuring content
+  into slide-sized chunks, applying consistent typography, choosing layouts, and writing speaker notes —
+  work that is mechanical but still takes 30-60 minutes. `/presentation` automates the full pipeline:
+  content planning, outline approval, theme application, and PPTX generation via python-pptx — all
+  from a single command.
+
+how_it_works:
+  - step: "Argument Parsing"
+    description: "Determines source (topic string or file path), target slide count, theme, output path, and language from the invocation arguments."
+  - step: "Content Planning"
+    description: "For a topic: generates a structured outline with typed slides (TITLE, CONTENT, METRICS, etc.), max 6 bullets per slide. For a file: maps markdown headings and lists to slide types."
+  - step: "Outline Approval"
+    description: "Prints the full outline for review. --outline-only stops here. Interactive mode asks Proceed/Edit/Cancel. Non-interactive mode proceeds automatically."
+  - step: "Theme Configuration"
+    description: "Applies selected color theme (light/dark/corporate) with typography constants: Calibri 36pt Bold for titles, 16pt for bullets, 48pt Bold for metrics, 24pt Italic for quotes."
+  - step: "PPTX Generation"
+    description: "Writes scripts/generate_presentation.py with theme constants, helper functions, and per-slide-type builder functions. Executes the script and verifies slide count."
+  - step: "Output Summary"
+    description: "Reports file path, slide count, theme, file size, and a slide-by-slide overview. The generated script is preserved for re-generation and manual editing."
+
+output:
+  artifact: "./[topic-slug].pptx (default) or --out [path]"
+  format: "PPTX file plus scripts/generate_presentation.py for re-generation. Summary printed with slide overview and post-generation tips."
+  sections:
+    - "File path and size"
+    - "Slide count and theme"
+    - "Slide-by-slide overview (type + title)"
+    - "Script location for re-generation"
+    - "Post-generation tips (modify, add images, change theme)"
+
+examples:
+  - title: "Generate a Q1 review deck"
+    type: invocation
+    command: "zuvo:presentation \"Q1 2026 Product Review\" --theme corporate"
+    result: |
+      Planning outline from topic: "Q1 2026 Product Review"
+
+      Outline (10 slides):
+        1. TITLE       — Q1 2026 Product Review
+        2. SECTION     — Highlights
+        3. METRICS     — Key Numbers
+        4. CONTENT     — Feature Releases
+        5. TWO_COLUMN  — Goals vs Actuals
+        6. SECTION     — Challenges
+        7. CONTENT     — Issues and Mitigations
+        8. TIMELINE    — Q2 Roadmap
+        9. SUMMARY     — Key Takeaways
+       10. CLOSING     — Questions & Next Steps
+
+      Proceed? → y
+
+      Generated: scripts/generate_presentation.py
+      Executed successfully.
+
+      PRESENTATION CREATED
+      File:   ./q1-2026-product-review.pptx
+      Slides: 10
+      Theme:  corporate
+      Size:   84 KB
+
+  - title: "Build slides from an architecture doc with outline-only preview"
+    type: invocation
+    command: "zuvo:presentation from docs/architecture.md --slides 8 --outline-only"
+    result: |
+      Reading: docs/architecture.md (6 sections, 2 tables, 1 code block)
+
+      Mapped outline (8 slides):
+        1. TITLE       — System Architecture
+        2. SECTION     — Overview
+        3. CONTENT     — Core Components
+        4. TWO_COLUMN  — Before / After (from table)
+        5. CONTENT     — Data Flow
+        6. CONTENT     — Security Model (code block as monospace note)
+        7. METRICS     — Performance Targets
+        8. SUMMARY     — Key Decisions
+
+      --outline-only: stopping here. Run without --outline-only to generate PPTX.
+
+  - title: "Dark theme deck in Polish"
+    type: invocation
+    command: "zuvo:presentation \"Wyniki Audytu Bezpieczenstwa\" --theme dark --lang pl --slides 12"
+    result: |
+      Language: Polish (pl)
+      Theme: dark (#1A1A2E background, #4DA6FF accent)
+      Target: 12 slides
+
+      Generated: ./wyniki-audytu-bezpieczenstwa.pptx
+      Slides: 12 | Size: 91 KB
+
+when_to_use: |
+  Use `/presentation` when you need to convert an audit report, architecture document, or topic summary
+  into a slide deck. It fits naturally at the end of a `/security-audit`, `/performance-audit`, or
+  `/architecture` workflow — take the output file and pass it with `from [file]` to generate stakeholder
+  slides automatically.
+
+when_not_to_use: |
+  For editing an existing PPTX file, open it in PowerPoint directly — `/presentation` creates new files
+  from scratch and does not parse existing PPTX. For complex data visualizations like charts or graphs,
+  use the generated script as a starting point and add chart code manually with python-pptx's chart API.
+  For rich web-based slide formats (Reveal.js, MDX Deck), use `/docs` instead.
+
+related_skills:
+  - slug: docs
+    relation: "Use /docs to generate the source markdown; then pass it to /presentation with 'from [file]'"
+  - slug: security-audit
+    relation: "Pass audit output to /presentation to generate stakeholder-ready security review slides"
+  - slug: performance-audit
+    relation: "Convert performance audit findings into METRICS and TWO_COLUMN slides for engineering reviews"
+  - slug: architecture
+    relation: "Architecture decision records from /architecture become TIMELINE and CONTENT slides"
+
+faq:
+  - q: "What does zuvo:presentation generate?"
+    a: "It generates a PPTX file using python-pptx plus a scripts/generate_presentation.py script. The script embeds your content and theme constants so you can re-run it to regenerate slides after edits, or modify it directly to customize layouts beyond what the skill generates."
+  - q: "How is zuvo:presentation different from pasting content into Google Slides?"
+    a: "zuvo:presentation applies consistent typography rules (6 slide types with defined font sizes), enforces content quality rules (max 6 bullets, max 15 words per bullet, visual variety), and generates speaker notes automatically. The Python script is a reproducible artifact — change the theme or content and re-run in seconds."
+  - q: "How long does zuvo:presentation take to generate a 10-slide deck?"
+    a: "Content planning and script generation take under 30 seconds. Script execution via python-pptx is typically under 5 seconds. Total time from command to PPTX file is usually under 1 minute, not counting outline review time in interactive mode."
+  - q: "Can zuvo:presentation generate slides in languages other than English?"
+    a: "Yes — use --lang [code] to set the content language. The skill matches the language of the topic input by default, so passing a Polish topic generates Polish slides without the flag. All text content, bullets, and speaker notes will be in the specified language."
+  - q: "What Python dependency is required?"
+    a: "python-pptx is the only required dependency. Install with pip install python-pptx. If it is not installed, the skill prints the install command and stops before generating any files."
+
+arguments:
+  - flag: "[topic]"
+    description: "Topic string to plan an outline from scratch and generate slides."
+  - flag: "from [file]"
+    description: "Build slides from an existing markdown or text file."
+  - flag: "--slides N"
+    description: "Target slide count (default: 10)."
+  - flag: "--theme dark|light|corporate"
+    description: "Color theme for the deck (default: corporate)."
+  - flag: "--out [path]"
+    description: "Output PPTX file path (default: ./[topic-slug].pptx)."
+  - flag: "--outline-only"
+    description: "Generate and print the outline for approval without creating a PPTX file."
+  - flag: "--lang [code]"
+    description: "Content language code, e.g. pl, de, ja (default: matches topic input language)."
+
+checks: null
+
+frameworks:
+  - python-pptx
+
+modes:
+  - name: "[topic]"
+    description: "Plan outline from scratch using the topic string, then generate slides."
+  - name: "from [file]"
+    description: "Map markdown/text sections to slide types, then generate slides."
+  - name: "--outline-only"
+    description: "Planning preview mode — print outline and stop without generating PPTX."
+
+agents: null
+
+benchmarks:
+  - claim: "10 slide types supported: TITLE, SECTION, CONTENT, TWO_COLUMN, QUOTE, METRICS, TIMELINE, IMAGE_PLACEHOLDER, SUMMARY, CLOSING"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 1 Step 1.2 — slide types table"
+  - claim: "3 color themes with defined hex values: light (#FFFFFF/#0066CC), dark (#1A1A2E/#4DA6FF), corporate (#FFFFFF/#1A365D)"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 2 — Color Themes table"
+  - claim: "Content quality rules enforce max 6 bullets per slide and max 15 words per bullet"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Content Quality Rules — rules 1 and 2"
+
+comparison_table:
+  columns: ["Capability", "Manual PowerPoint", "reveal.js", "zuvo:presentation"]
+  rows:
+    - ["Source: markdown or text file", "Manual copy-paste", "Yes (MDX)", "Yes — from [file] mode"]
+    - ["Reproducible via script", "No", "Yes (source code)", "Yes — generate_presentation.py"]
+    - ["Speaker notes auto-generated", "Manual", "Manual", "Yes — from content planning"]
+    - ["10 typed slide layouts", "Manual", "Partial", "Yes — enforced structure rules"]
+    - ["Output format", "PPTX", "HTML", "PPTX (PowerPoint-compatible)"]

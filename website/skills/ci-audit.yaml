@@ -1,0 +1,216 @@
+schema_version: 1
+last_synced: "2026-03-29"
+
+meta:
+  slug: ci-audit
+  title: "CI Audit — 10-Dimension Pipeline Speed, Security, and Reliability Check"
+  description: "CI/CD audit: 10 dimensions (CI1-CI10) — caching, parallelism, secret handling, action pinning, Docker builds, test coverage gate, and pipeline speed."
+  category: audit
+  og_image: /og/skills/ci-audit.png
+
+seo:
+  target_queries:
+    - "GitHub Actions pipeline slow caching optimization"
+    - "pin GitHub Actions to commit SHA security"
+    - "find hardcoded secrets in GitHub Actions workflow"
+    - "CI pipeline parallelism matrix strategy optimization"
+    - "test coverage gate CI fail below threshold"
+  canonical: /en/skills/ci-audit
+
+stats:
+  - label: "Dimensions"
+    value: "10"
+    detail: "CI1-CI10"
+  - label: "Critical Gates"
+    value: "3"
+    detail: "CI5, CI6 (GHA only), CI9"
+  - label: "Primary Platform"
+    value: "GitHub Actions"
+    detail: "Full 10-dimension coverage"
+  - label: "Execution"
+    value: "Single-pass"
+    detail: "No sub-agents needed"
+
+problem: |
+  CI pipelines accumulate technical debt in three categories: speed (no caching, no parallelism, sequential jobs), security (unpinned third-party actions, secrets interpolated in run scripts), and reliability (no test coverage gate, no job timeouts, stale artifact retention).
+  Each category is easy to miss in isolation — a security review misses the speed debt, an optimization pass misses the pinning gaps.
+  zuvo:ci-audit audits all 10 dimensions in a single pass, distinguishes GitHub Actions full coverage from GitLab CI/CircleCI partial coverage, and produces an optimization roadmap sorted by effort and impact.
+
+how_it_works:
+  - step: "Phase 0 — Detect & Inventory"
+    description: "Detects CI platform from file signals (.github/workflows/, .gitlab-ci.yml, .circleci/config.yml), builds workflow inventory listing all jobs with trigger events. GitHub Actions receives full 10-dimension coverage; GitLab CI and CircleCI receive CI1-CI5, CI7-CI10 (CI6 scored N/A)."
+  - step: "Phase 1 — 10-Dimension Analysis"
+    description: "Single-pass evaluation across CI1 (caching strategy), CI2 (parallelism and matrix), CI3 (conditional execution and concurrency), CI4 (artifact management), CI5 (secret handling), CI6 (action pinning), CI7 (timeouts), CI8 (Docker optimization), CI9 (test integration and coverage gate), CI10 (critical path depth and pipeline speed)."
+  - step: "Phase 2 — Scoring"
+    description: "CI6 scored N/A for non-GitHub Actions platforms; CI8 scored N/A when no Docker. Score = sum / applicable_max × 100. Critical gates: CI5=0 (hardcoded secrets or secrets logged), CI6=0 (unverified actions from unknown sources, GHA only), CI9=0 (no tests in CI)."
+  - step: "Phase 3 — Report"
+    description: "Writes to audits/ci-audit-[date].md. Includes dimension scores, findings sorted by severity, and optimization roadmap (quick wins < 1 hour, short-term 1 day, medium-term 1 week). Validates that finding counts match executive summary."
+
+output:
+  artifact: "audits/ci-audit-YYYY-MM-DD.md"
+  format: "Markdown report with platform metadata, dimension scores, all findings by severity, and optimization roadmap sorted into quick wins / short-term / medium-term buckets."
+  sections:
+    - "Metadata (platform, scope, workflow count, job count)"
+    - "Executive summary with score and health grade"
+    - "Dimension scores (CI1-CI10)"
+    - "Findings sorted by severity"
+    - "Optimization roadmap"
+
+examples:
+  - title: "Full pipeline audit"
+    type: invocation
+    command: "zuvo:ci-audit full"
+    result: "Auto-detects CI platform, audits all applicable dimensions, writes report with optimization roadmap. Includes critical gate status for CI5, CI6, CI9."
+  - title: "Speed-only audit"
+    type: invocation
+    command: "zuvo:ci-audit --speed-only"
+    result: "CI1, CI7, CI9, CI10 only — caching, timeouts, test integration, and pipeline critical path depth. Fastest path to identifying where minutes are being lost."
+  - title: "Security-only audit"
+    type: invocation
+    command: "zuvo:ci-audit --security-only"
+    result: "CI5 and CI6 only — secret handling and action pinning. Ideal for a security-focused CI review before release hardening."
+  - title: "Coverage gate vs coverage reporting"
+    type: before_after
+    gate: "CI9"
+    before:
+      language: yaml
+      code: |
+        - name: Upload coverage
+          uses: codecov/codecov-action@v3
+          with:
+            token: ${{ secrets.CODECOV_TOKEN }}
+    after:
+      language: yaml
+      code: |
+        - name: Run tests with coverage
+          run: npm test -- --coverage --coverageThreshold='{"global":{"lines":80}}'
+        - name: Upload coverage
+          uses: codecov/codecov-action@v3
+          with:
+            token: ${{ secrets.CODECOV_TOKEN }}
+    explanation: "CI9 distinguishes coverage reporting (codecov action alone) from a coverage gate (threshold that fails the build). Only a threshold in the test command or Jest config constitutes a gate."
+
+when_to_use: |
+  Run after changing CI workflows, when pipelines are slow or costs are high, before release hardening, and as a quarterly CI health check.
+  Also appropriate when onboarding a new project and you want to establish a CI baseline before optimizing.
+
+when_not_to_use: |
+  For application security scanning (not pipeline security), use zuvo:security-audit.
+  For test file quality and anti-patterns, use zuvo:test-audit.
+  For test runner configuration and slow test detection, use zuvo:tests-performance.
+  ci-audit reads CI config files only — it does not run pipelines or trigger builds.
+
+related_skills:
+  - slug: security-audit
+    relation: "Complement — CI5/CI6 pipeline security; security-audit covers application-level OWASP"
+  - slug: env-audit
+    relation: "Complement — CI5 secret handling in workflows; env-audit covers .env and startup validation"
+  - slug: test-audit
+    relation: "Complement — CI9 verifies tests exist in CI; test-audit audits test file quality"
+  - slug: tests-performance
+    relation: "Follow-up — CI9 flags slow or absent test steps; tests-performance optimizes the runner"
+
+faq:
+  - q: "What does zuvo:ci-audit check?"
+    a: "It audits 10 dimensions: CI1 (caching strategy — dependency and build cache with lockfile-hashed keys), CI2 (parallelism — matrix strategy, fan-out/fan-in), CI3 (conditional execution — path filters, concurrency cancellation), CI4 (artifact management — retention and scope), CI5 (secret handling — env block vs run interpolation, OIDC), CI6 (action pinning — SHA pins for third-party actions, Dependabot), CI7 (timeouts — every job has timeout-minutes), CI8 (Docker optimization — multi-stage builds, .dockerignore, layer caching), CI9 (test integration — tests present in CI with a coverage threshold gate), CI10 (pipeline speed — critical path depth and stale run cancellation)."
+  - q: "How does ci-audit handle GitLab CI and CircleCI?"
+    a: "GitLab CI and CircleCI receive analysis for CI1-CI5 and CI7-CI10 using adapted patterns. CI6 (action pinning) is a GitHub Actions-specific concept and is scored N/A for other platforms. CI8 checks Dockerfile optimization regardless of platform. Unsupported checks within a dimension are also scored N/A."
+  - q: "How long does zuvo:ci-audit take?"
+    a: "ci-audit is single-pass with no sub-agents — typically 3-6 minutes depending on the number of workflow files. --speed-only and --security-only flags scope to 4 and 2 dimensions respectively, completing faster."
+  - q: "What is the difference between coverage reporting and a coverage gate?"
+    a: "Coverage reporting (Codecov, Coveralls) uploads data for visibility but does not fail the build. A coverage gate is a threshold that causes the CI job to exit non-zero when coverage drops below the minimum — for example, --coverageThreshold in Jest config or fail_under in Python coverage. CI9 only counts the latter as a gate."
+  - q: "What is action pinning and why does CI6 require SHA pins?"
+    a: "GitHub Actions pinned to a branch tag (actions/checkout@main) or semver tag (actions/checkout@v4) can be silently updated by the publisher, introducing malicious code into your pipeline. SHA pinning (actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683) freezes the exact commit — it cannot change without you noticing. Dependabot can automate SHA updates for first-party and verified actions."
+
+arguments:
+  - flag: "(empty) or full"
+    description: "All 10 dimensions, auto-detect CI config from project root."
+  - flag: "[path]"
+    description: "Audit a specific workflow file or CI config directory."
+  - flag: "--speed-only"
+    description: "CI1, CI7, CI9, CI10 only — focus on pipeline duration."
+  - flag: "--security-only"
+    description: "CI5, CI6 only — focus on secret handling and action pinning."
+
+checks:
+  sections:
+    - name: "Speed"
+      id_range: "CI1-CI3, CI10"
+      count: 4
+      items:
+        - id: CI1
+          name: "Caching strategy — dependency cache with lockfile-hashed keys, build cache"
+          critical: false
+        - id: CI2
+          name: "Parallelism — independent jobs run simultaneously, matrix strategy"
+          critical: false
+        - id: CI3
+          name: "Conditional execution — path filters, concurrency cancellation, reusable workflows"
+          critical: false
+        - id: CI10
+          name: "Pipeline speed — critical path depth ≤3, stale run cancellation"
+          critical: false
+    - name: "Security"
+      id_range: "CI5-CI6"
+      count: 2
+      items:
+        - id: CI5
+          name: "Secret handling — env block (not run interpolation), OIDC, minimal permissions"
+          critical: true
+        - id: CI6
+          name: "Action pinning — SHA pins for third-party actions, Dependabot (GitHub Actions only)"
+          critical: true
+    - name: "Reliability"
+      id_range: "CI4, CI7-CI9"
+      count: 4
+      items:
+        - id: CI4
+          name: "Artifact management — selective uploads, retention policy, download scope"
+          critical: false
+        - id: CI7
+          name: "Timeouts — every job has timeout-minutes configured"
+          critical: false
+        - id: CI8
+          name: "Docker optimization — multi-stage builds, .dockerignore, pinned base images (N/A if no Docker)"
+          critical: false
+        - id: CI9
+          name: "Test integration — tests in CI with a coverage threshold gate (not just reporting)"
+          critical: true
+
+frameworks:
+  - GitHub Actions
+  - GitLab CI
+  - CircleCI
+
+modes: null
+
+agents: null
+
+benchmarks:
+  - claim: "CI9 distinguishes coverage gate from coverage reporting — only a build-failing threshold counts"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md — CI9 coverage gate detection note"
+  - claim: "CI6 requires SHA pinning for all third-party GitHub Actions — tag-pinned actions flagged"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md — CI6 check table"
+  - claim: "3 critical gates: CI5=0 (secrets in run scripts), CI6=0 (unknown source actions, GHA), CI9=0 (no tests in CI)"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md — Phase 2 critical gates"
+  - claim: "Single-pass execution, no sub-agents — typically 3-6 minutes"
+    type: speed
+    verifiable: true
+    source: "SKILL.md — Execution Notes"
+
+comparison_table:
+  columns: ["Capability", "Manual Workflow Review", "GitHub Actions Linter", "zuvo:ci-audit"]
+  rows:
+    - ["Cache key quality (lockfile hash)", "Ad hoc", "Not checked", "CI1 — hashFiles pattern check"]
+    - ["Secret interpolation in run:", "Ad hoc", "Not checked", "CI5 — env block vs inline detection"]
+    - ["SHA pinning for third-party actions", "Ad hoc", "Not checked", "CI6 — explicit pinning audit"]
+    - ["Coverage gate vs reporting", "Ad hoc", "Not checked", "CI9 — threshold detection"]
+    - ["Critical path depth estimation", "Not produced", "Not produced", "CI10 — needs: chain tracing"]
+    - ["Docker multi-stage and .dockerignore", "Ad hoc", "Not checked", "CI8 — dedicated dimension"]
+    - ["Optimization roadmap", "Not produced", "Not produced", "Quick wins / short-term / medium-term"]
