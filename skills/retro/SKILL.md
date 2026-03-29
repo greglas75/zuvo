@@ -85,13 +85,21 @@ Run these commands against the resolved `<range>` (append `-- <path>` if `--path
 
 Count **release tags** within the window, not arbitrary tags.
 
-Priority:
-1. Tags referenced by `memory/last-ship.json` (`newTag`, `previousTag`) when available
-2. Tags matching a release pattern such as `v*` or `release-*`
+**Counting method:**
+```bash
+git tag --sort=creatordate --merged HEAD | grep -E '^v[0-9]' | while read tag; do
+  TAG_DATE=$(git log -1 --format="%ai" "$tag")
+  # keep only tags whose date falls within the window
+done
+```
+
+Priority for identifying release tags:
+1. Tags matching a semver-like pattern (`v*.*.*`, `v[0-9]*`)
+2. Tags referenced by `memory/last-ship.json` (`newTag`, `previousTag`) — cross-reference, not sole source
 3. If no release tag pattern can be identified, report:
    `Deployment frequency unavailable — no reliable release tag pattern detected`
 
-Ignore unrelated tags (experimental, package-local, scratch tags).
+Ignore unrelated tags (experimental, package-local, scratch tags). `memory/last-ship.json` covers only the most recent release; for multi-release windows, the git tag scan is the primary data source.
 
 ### Release Cycle Span
 
@@ -264,7 +272,7 @@ If E13 (insufficient history) was triggered, show:
 RETRO COMPLETE [QUALITATIVE ONLY — <10 commits in window]
   Window:      HEAD~30..HEAD (fallback — fewer than 10 commits found)
   Backlog:     +N added, -N resolved, N open (N critical)
-  Report:      audit-results/retro-YYYY-MM-DD.md
+  Report:      audit-results/retro-YYYY-MM-DD-<suffix>.md
 
   Actions:
   1. [derived from backlog only]

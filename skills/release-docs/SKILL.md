@@ -70,26 +70,18 @@ CORE FILES LOADED:
    - **Priority 2: Frontmatter.** If doc files have `sources:` in their YAML frontmatter (e.g., `sources: [src/auth/*]`), use those globs to match changed source files.
    - **Priority 3: Name heuristic** (fallback). `src/auth/` is docs-adjacent if `docs/auth.md` or any `*auth*` file in `docs/` exists, or if any `.md` file mentions the module name.
    - If in doubt, include the file — false positives cause minor extra work; false negatives miss documentation updates.
-4. If no docs-adjacent source files changed: print "No documentation updates required for this release." Exit with PASS verdict.
-5. If `--dry-run` is set: print the list of source files that would trigger doc updates and the doc files that would be updated, then exit without writing anything.
+4. **Build the `DOCS_SKIPPED` list:** For all doc files known through Priority 1 or Priority 2 mappings whose corresponding source files did NOT change in this range, add them to `DOCS_SKIPPED`. This list is used in the Phase 5 output. If no docs-map or frontmatter mappings exist, set `DOCS_SKIPPED` to `"—"`.
+5. If no docs-adjacent source files changed: print "No documentation updates required for this release." Proceed to Phase 2 (changelog verification) and then to Phase 5 output with PASS verdict.
+6. If `--dry-run` is set: print the list of source files that would trigger doc updates and the doc files that would be updated, then exit without writing anything.
 
 ---
 
-## Phase 2: Changelog
+## Phase 2: Verify Changelog
 
-Invoke the docs skill to generate the changelog for the release range:
+**`zuvo:ship` is the sole owner of `CHANGELOG.md`.** This skill does NOT generate or modify the changelog — ship already did that during the release commit.
 
-```
-Skill(skill="zuvo:docs", args="changelog <range>")
-```
-
-This delegates all changelog logic to `zuvo:docs`, which handles:
-- git-cliff detection and usage
-- Conventional commit classification (Added / Changed / Fixed / Removed)
-- Keep-a-Changelog format
-- Fallback to raw git log when git-cliff is unavailable
-
-Record the outcome (changelog updated, entries count by type) for the output block.
+1. Verify that `CHANGELOG.md` contains an entry for the current release version. If not, log a warning: "Changelog entry missing for this release — was `zuvo:ship` run with `--no-bump`?"
+2. Record the changelog state (present/missing, entry count by type if present) for the output block.
 
 ---
 
@@ -134,7 +126,7 @@ Print the RELEASE-DOCS COMPLETE block:
 ```
 RELEASE-DOCS COMPLETE
   Range:        <range>
-  Changelog:    CHANGELOG.md updated (Added: N, Fixed: N, Changed: N)
+  Changelog:    present (Added: N, Fixed: N, Changed: N) / missing — run zuvo:ship
   Docs updated: <list of doc files updated, or "none">
   Docs skipped: <list of known doc files (from docs-map/frontmatter) with no source changes, or "—" if no mapping exists>
   Debt found:   N file(s) (<list of undocumented files>) / none

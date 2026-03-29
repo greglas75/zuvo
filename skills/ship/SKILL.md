@@ -60,7 +60,12 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
    git branch --show-current
    ```
    - If on `main`, `master`, `trunk`, or `develop`: **direct flow** (tag + push to current branch).
-   - If on any other branch: **PR flow** (push branch + create PR targeting the default branch).
+   - If on any other branch: **PR flow** (push branch + create PR targeting the default branch). Detect the default branch for `targetBranch`:
+     ```bash
+     TARGET_BRANCH=$(gh repo view --json defaultBranchRef -q '.defaultBranchRef.name' 2>/dev/null \
+       || git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' \
+       || echo main)
+     ```
 
 2. **Check GitHub CLI availability:**
    ```bash
@@ -257,7 +262,7 @@ Write the artifact **after** commit/tag/push decisions are complete:
   "releaseCommitSha": "<RELEASE_SHA>",
   "range": "<baseSha>..<releaseCommitSha>",
   "branch": "<current-branch>",
-  "targetBranch": "<target-branch-or-null>",
+  "targetBranch": "<TARGET_BRANCH>" or null,
   "flow": "direct" or "pr",
   "pr": <number-or-null>,
   "date": "<ISO-8601>",
@@ -272,6 +277,7 @@ Write the artifact **after** commit/tag/push decisions are complete:
 Field notes:
 - `releaseCommitSha` is the immutable release commit SHA.
 - `range` is always SHA-based and stable.
+- `targetBranch`: set to `TARGET_BRANCH` (detected default branch) in PR flow, `null` in direct flow.
 - `memory/last-ship.json` is local runtime state for downstream skills; it is not committed.
 
 ---

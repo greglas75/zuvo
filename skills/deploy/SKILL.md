@@ -140,21 +140,21 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
    - Step 4: GHA-only special case — parse workflow YAML.
    - Step 5: Render special case — no CLI, prompt for webhook URL.
 
-2. **Record the detection result:**
+2. **Record the full detection result** (all fields from platform-detection.md output object):
    ```
-   platform:    "<detected platform>"
-   cli:         "<deploy command>" or null
-   healthCmd:   "<health check command>" or null
-   rollbackCmd: "<rollback command>" or null
+   platform:     "<detected platform>"
+   cli:          "<deploy command>" or null
+   cliAvailable: true | false
+   deployMode:   "cli" | "webhook" | "manual"
+   healthCmd:    "<health check command>" or null
+   rollbackCmd:  "<rollback command>" or null
    ```
 
 3. **Print the result to the user:** "Detected platform: **<platform>** (from `<config-file>`)"
 
-4. **If a platform was detected but `cli` is `null`:**
-   - Treat the platform as known but not automatically deployable in this environment.
-   - Print platform-specific manual deployment instructions.
-   - Set deploy verdict to `PARTIAL`.
-   - Skip Phases 4, 5, and 6 — proceed directly to Phase 7 output.
+4. **If `cliAvailable` is `false`** (platform detected but CLI not installed):
+   - If `deployMode` is `"webhook"`: prompt for webhook URL and trigger it. Proceed to Phase 6 (health check).
+   - If `deployMode` is `"manual"`: print platform-specific manual deployment instructions. Set deploy verdict to `PARTIAL`. Skip Phases 4, 5, and 6 — proceed directly to Phase 7 output.
 
 5. **If no platform detected (E9):** Print a manual deployment checklist:
    ```

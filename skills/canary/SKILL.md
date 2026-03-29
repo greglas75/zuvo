@@ -96,7 +96,7 @@ If `--quick` is passed, or non-interactive environment was detected AND no `--du
 
 ### Loop mode
 
-Otherwise: run one check cycle every `--interval` seconds, for the total `--duration`. Track cumulative error count across all checks.
+Otherwise: run one check cycle every `--interval` seconds, for the total `--duration`. Track cumulative error count across all checks. Store all individual response times in an array for p95 computation in Phase 3.
 
 ### Check Cycle — Full Mode (Playwright or Chrome DevTools available)
 
@@ -166,11 +166,16 @@ If verdict is BROKEN:
    ```
    Rollback command (<platform>): <rollbackCmd>
    ```
-2. If no platform was detected, print the git-native fallback:
-   ```
-   Rollback (git-native): git revert <merge-sha> && git push
-   ```
-3. Do NOT reference `zuvo:deploy rollback` — that interface does not exist. Always print the concrete command.
+2. If no platform was detected, attempt git-native rollback:
+   - Read `memory/last-ship.json` and extract `releaseCommitSha`. If available:
+     ```
+     Rollback (git-native): git revert <releaseCommitSha> && git push
+     ```
+   - If `memory/last-ship.json` is not available or `releaseCommitSha` is missing:
+     ```
+     Rollback: identify the release commit SHA manually and run: git revert <sha> && git push
+     ```
+3. Do NOT reference `zuvo:deploy rollback` — that interface does not exist. Always print the concrete command with a real SHA, not a placeholder.
 
 ### Step 3: Write Summary and Baseline Comparison
 
@@ -182,7 +187,7 @@ After all checks complete, write `audit-results/canary-<ISO-timestamp>/summary.j
   "mode": "full" or "degraded",
   "checks": <N>,
   "avgResponseTime": <seconds>,
-  "p95ResponseTime": <seconds>,
+  "p95ResponseTime": <seconds>,  // computed from stored response times array: sort ascending, take value at index ceil(0.95 * N) - 1
   "consoleErrors": <N>,
   "consoleWarnings": <N>,
   "verdict": "HEALTHY" or "DEGRADED" or "BROKEN",
