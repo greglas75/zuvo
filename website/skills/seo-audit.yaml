@@ -129,7 +129,7 @@ related_skills:
 
 faq:
   - q: "What does zuvo:seo-audit check?"
-    a: "It evaluates 13 dimensions: meta tags (D1), Open Graph/social (D2), structured data/JSON-LD (D3), sitemaps (D4), robots and crawler policy (D5), image optimization (D6), content quality (D7), Core Web Vitals (D8), GEO/AI readiness (D9), answer-first content (D10), technical SEO (D11), hreflang/i18n (D12), and page experience (D13). Six critical gates must pass before any score-based optimization is relevant."
+    a: "It evaluates 13 dimensions: meta tags (D1), Open Graph/social (D2), structured data/JSON-LD (D3), sitemaps (D4), robots and crawler policy (D5), image optimization (D6), internal linking (D7), Core Web Vitals (D8), content quality (D9), GEO/AI readiness (D10), technical SEO (D11), hreflang/i18n (D12), and page experience (D13). Six critical gates must pass before any score-based optimization is relevant."
   - q: "How is seo-audit different from running Lighthouse?"
     a: "Lighthouse measures live-site performance and accessibility but cannot inspect source code for structural issues like client-side JSON-LD injection, sitemap configuration, hreflang correctness, or AI crawler policy. zuvo:seo-audit works primarily on source code and config files, making it useful before deployment. Lighthouse is complementary — use `--live-url` to add live CWV measurement on top of the code audit."
   - q: "How long does an seo-audit take?"
@@ -149,7 +149,7 @@ arguments:
   - flag: "--quick"
     description: "Critical gates only (CG1-CG6) — fast pass/fail check"
   - flag: "--content-only"
-    description: "Content-focused audit: D7 (content quality), D9 (GEO), D10 (answer-first)"
+    description: "Content-focused audit: D7 (internal linking), D9 (content quality), D10 (GEO/AI readiness)"
   - flag: "--geo"
     description: "GEO-focused audit: D3 (structured data), D5 (AI crawlers), D9 (GEO readiness), D10 (answer-first content)"
   - flag: "--persist-backlog"
@@ -181,7 +181,7 @@ checks:
           critical: true
     - name: "Structured Data"
       id_range: "D3"
-      count: 5
+      count: 4
       items:
         - id: "D3-1"
           name: "JSON-LD present on key page types"
@@ -195,32 +195,29 @@ checks:
         - id: "D3-4"
           name: "No duplicate schema blocks"
           critical: false
-        - id: "D3-5"
-          name: "BreadcrumbList on nested pages"
-          critical: false
     - name: "GEO / AI Readiness"
-      id_range: "D9"
+      id_range: "D10"
       count: 7
       items:
-        - id: "D9-1"
+        - id: "D10-1"
           name: "llms.txt present and valid"
           critical: false
-        - id: "D9-2"
+        - id: "D10-2"
           name: "AI crawler policy intentional"
           critical: false
-        - id: "D9-3"
+        - id: "D10-3"
           name: "Content chunkable (clear H2/H3 structure)"
           critical: false
-        - id: "D9-4"
+        - id: "D10-4"
           name: "Structured HTML (lists, tables, definition lists)"
           critical: false
-        - id: "D9-5"
+        - id: "D10-5"
           name: "Citation-ready (author, date, sources visible)"
           critical: false
-        - id: "D9-6"
+        - id: "D10-6"
           name: "E-E-A-T signals present"
           critical: false
-        - id: "D9-7"
+        - id: "D10-7"
           name: "Content freshness signals"
           critical: false
 
@@ -248,7 +245,7 @@ agents:
   - name: "SEO Technical Agent"
     role: "Evaluates D1 (meta tags), D4 (sitemaps), D5 (robots/crawlers), D11 (technical SEO), D12 (hreflang), D13 (page experience)"
   - name: "SEO Content Agent"
-    role: "Evaluates D7 (content quality), D9 (GEO readiness), D10 (answer-first content)"
+    role: "Evaluates D7 (internal linking), D9 (content quality), D10 (GEO/AI readiness)"
   - name: "SEO Assets Agent"
     role: "Evaluates D2 (Open Graph/social), D3 (structured data/JSON-LD), D6 (image optimization), D8 (Core Web Vitals)"
 

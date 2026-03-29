@@ -40,6 +40,8 @@ Fix-capable audits MAY include these additional fields:
 | `findings[].fix_params` | object | Framework-specific parameters for the template |
 | `summary` | object | Aggregated counts: `findings_count`, `quick_wins`, `fixable` |
 
+**Nullability:** `findings[].fix_type`, `findings[].fix_safety`, and `findings[].fix_params` may be `null` for findings without an auto-fix template. Consumers MUST check for null.
+
 ## JSON Example
 
 ```json

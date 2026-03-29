@@ -22,15 +22,19 @@ Evaluate content SEO dimensions: D7 (Internal Linking), D9 (Content Quality), D1
 Read before any work begins:
 
 1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
+2. `{plugin_root}/shared/includes/seo-check-registry.md` -- canonical check slugs
+
+Read `../../../shared/includes/seo-check-registry.md` for canonical check slugs. Use ONLY slugs from this registry in findings[].check.
 
 Print the checklist:
 
 ```
 CORE FILES LOADED:
-  1. codesift-setup.md   -- [READ | MISSING -> STOP]
+  1. codesift-setup.md        -- [READ | MISSING -> STOP]
+  2. seo-check-registry.md    -- [READ | MISSING -> STOP]
 ```
 
-If the file is missing, STOP.
+If any file is missing, STOP.
 
 ---
 
@@ -48,6 +52,10 @@ If the file is missing, STOP.
 - **content_format:** string (`markdown` | `database` | `none`)
 - **file_paths:** string[] (content directory paths, markdown/HTML pages, page list)
 - **codesift_repo:** string | null (repo identifier if CodeSift available)
+- **mode:** string (`full` | `quick` | `content-only` | `geo`)
+- **selected_dimensions:** string[] (e.g., `["D7", "D9", "D10"]`)
+
+**Mode-aware filtering:** Skip any dimension NOT in `selected_dimensions`. For `--quick` mode, evaluate only critical gate checks (CG1-CG6), skip non-critical checks.
 
 ---
 
@@ -270,6 +278,8 @@ For each check that results in FAIL or PARTIAL, produce a finding object:
 - fix_safety: null
 - fix_params: null
 ```
+
+Set `fix_type`, `fix_safety`, and `fix_params` to `null` for findings without an auto-fix template.
 
 Use `INSUFFICIENT DATA` when static analysis cannot determine the check result and no live verification is available.
 

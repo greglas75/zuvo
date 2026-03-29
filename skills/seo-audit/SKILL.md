@@ -24,6 +24,7 @@ Read these files before any work begins:
 2. `{plugin_root}/shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
 3. `{plugin_root}/shared/includes/seo-fix-registry.md` -- Canonical fix_type, safety, params (before Phase 6.2 JSON output)
 4. `{plugin_root}/shared/includes/audit-output-schema.md` -- JSON output contract (before Phase 6.2)
+5. `{plugin_root}/shared/includes/seo-check-registry.md` -- Canonical check slugs (agents MUST use)
 
 Print the checklist:
 
@@ -33,6 +34,7 @@ CORE FILES LOADED:
   2. env-compat.md         -- [READ | MISSING -> STOP]
   3. seo-fix-registry.md   -- [READ | MISSING -> STOP]
   4. audit-output-schema.md -- [READ | MISSING -> STOP]
+  5. seo-check-registry.md  -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.
@@ -178,6 +180,19 @@ Dispatch 3 agents in parallel. Each agent evaluates its assigned dimensions inde
 | B (Content) | `agents/seo-content.md` | D7, D9, D10 | Content files, markdown/HTML pages |
 | C (Assets) | `agents/seo-assets.md` | D2, D3, D6, D8 | Layout templates, asset files, build config |
 
+### Mode-aware dimension filtering
+
+Based on the mode from Phase 0, determine which agents to dispatch:
+
+| Mode | Agents dispatched | Dimensions active |
+|------|-------------------|-------------------|
+| `full` (default) | All 3 | D1-D13 |
+| `--quick` | Technical only (for CG1-CG6) | CG gates only, no dimension scoring |
+| `--content-only` | Content only | D7, D9, D10 |
+| `--geo` | Content + Assets (partial) | D3, D5, D9, D10 |
+
+Pass `mode` and `selected_dimensions` to each dispatched agent as input parameters. Agents MUST skip dimensions not in their `selected_dimensions` list.
+
 ### Agent dispatch
 
 Refer to `../../shared/includes/env-compat.md` for dispatch patterns per environment.
@@ -189,19 +204,19 @@ Agent 1: SEO Technical (Group A)
   model: "sonnet"
   type: "Explore"
   instructions: read agents/seo-technical.md
-  input: detected_stack, [config file paths from Phase 0], codesift_repo
+  input: detected_stack, [config file paths from Phase 0], codesift_repo, mode, selected_dimensions
 
 Agent 2: SEO Content (Group B)
   model: "sonnet"
   type: "Explore"
   instructions: read agents/seo-content.md
-  input: detected_stack, [content directory paths], codesift_repo
+  input: detected_stack, [content directory paths], codesift_repo, mode, selected_dimensions
 
 Agent 3: SEO Assets (Group C)
   model: "sonnet"
   type: "Explore"
   instructions: read agents/seo-assets.md
-  input: detected_stack, [layout/template paths], codesift_repo
+  input: detected_stack, [layout/template paths], codesift_repo, mode, selected_dimensions
 ```
 
 **Codex:** Define TOML agents per env-compat.md patterns. Each agent runs in read-only sandbox.
@@ -252,6 +267,10 @@ For fix_type identifiers and safety classifications, agents MUST use `../../shar
 
 **D13 — Monitoring (advisory checks):**
 - "Search Console setup indicators" is advisory only — cannot be confirmed from repo in most cases. Score as INSUFFICIENT DATA in code-only mode unless verification meta tag or DNS TXT record is present in config.
+
+**D11 — Security and Technical (CG3 + CG4):**
+- CG3 (HTTPS active): In code-only mode, report INSUFFICIENT DATA unless deploy config explicitly proves TLS (e.g., `vercel.json` with forceSSL, `netlify.toml` with force_ssl, Cloudflare always-HTTPS). Absence of `http://` refs is not proof of HTTPS.
+- CG4 (Canonical present): Check for `<link rel="canonical">` or framework equivalent (Next.js `alternates.canonical`, Astro canonical in layout) at layout/template level. Must be a real check with evidence, not inferred from "no canonical issues found".
 
 ### CodeSift query patterns (when available)
 
@@ -310,7 +329,7 @@ All 6 gates MUST have explicit status:
 ```
 CG1: Sitemap exists                    -- from D4
 CG2: Googlebot not blocked             -- from D5
-CG3: HTTPS active                      -- from D11
+CG3: HTTPS active                      -- from D11 (code-only: INSUFFICIENT DATA unless deploy config like `vercel.json`, `netlify.toml`, or force-https proves TLS)
 CG4: Canonical tags present            -- from D11
 CG5: JSON-LD server-side rendered      -- from D3
 CG6: AI crawler policy conscious       -- from D5
@@ -544,6 +563,8 @@ Serialize from Phase 4 scoring results:
   }
 }
 ```
+
+**Nullability:** `findings[].fix_type`, `findings[].fix_safety`, and `findings[].fix_params` are nullable. Set to `null` for findings that have no auto-fix template (content quality, E-E-A-T, etc.). Consumers MUST check for null before using these fields.
 
 The `findings[].fix_type`, `findings[].fix_safety`, and `findings[].fix_params` fields enable `zuvo:seo-fix` to apply automated fixes without re-scanning the codebase.
 

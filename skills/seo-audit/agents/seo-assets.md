@@ -22,15 +22,19 @@ Evaluate asset and structured data dimensions: D2 (Open Graph & Social), D3 (JSO
 Read before any work begins:
 
 1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
+2. `{plugin_root}/shared/includes/seo-check-registry.md` -- canonical check slugs
+
+Read `../../../shared/includes/seo-check-registry.md` for canonical check slugs. Use ONLY slugs from this registry in findings[].check.
 
 Print the checklist:
 
 ```
 CORE FILES LOADED:
-  1. codesift-setup.md   -- [READ | MISSING -> STOP]
+  1. codesift-setup.md        -- [READ | MISSING -> STOP]
+  2. seo-check-registry.md    -- [READ | MISSING -> STOP]
 ```
 
-If the file is missing, STOP.
+If any file is missing, STOP.
 
 ---
 
@@ -47,6 +51,10 @@ If the file is missing, STOP.
 - **detected_stack:** string (`astro` | `nextjs` | `hugo` | `wordpress` | `react` | `html`)
 - **file_paths:** string[] (layout/template paths, asset file paths, build config)
 - **codesift_repo:** string | null (repo identifier if CodeSift available)
+- **mode:** string (`full` | `quick` | `content-only` | `geo`)
+- **selected_dimensions:** string[] (e.g., `["D2", "D3", "D6", "D8"]`)
+
+**Mode-aware filtering:** Skip any dimension NOT in `selected_dimensions`. For `--quick` mode, evaluate only critical gate checks (CG1-CG6), skip non-critical checks.
 
 ---
 
@@ -374,10 +382,12 @@ For each check that results in FAIL or PARTIAL, produce a finding object:
 - evidence: string        # file:line or descriptive text
 - file: string | null     # file path where issue was found
 - line: number | null     # line number if applicable
-- fix_type: string        # from registry (see below)
-- fix_safety: SAFE | MODERATE | DANGEROUS
-- fix_params: object      # framework-specific parameters for the fix
+- fix_type: string | null  # from registry (see below); null for findings without an auto-fix template
+- fix_safety: SAFE | MODERATE | DANGEROUS | null  # null for findings without an auto-fix template
+- fix_params: object | null  # framework-specific parameters for the fix; null for findings without an auto-fix template
 ```
+
+Set `fix_type`, `fix_safety`, and `fix_params` to `null` for findings without an auto-fix template.
 
 Use `INSUFFICIENT DATA` when static analysis cannot determine the check result and no live verification is available.
 

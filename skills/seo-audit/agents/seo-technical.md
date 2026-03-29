@@ -19,15 +19,19 @@ Evaluate technical SEO dimensions: D1 (Meta Tags), D4 (Sitemap), D5 (AI Crawlers
 
 Read before starting:
 1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery
+2. `{plugin_root}/shared/includes/seo-check-registry.md` -- canonical check slugs
+
+Read `../../../shared/includes/seo-check-registry.md` for canonical check slugs. Use ONLY slugs from this registry in findings[].check.
 
 Print the checklist:
 
 ```
 CORE FILES LOADED:
-  1. codesift-setup.md   -- [READ | MISSING -> STOP]
+  1. codesift-setup.md        -- [READ | MISSING -> STOP]
+  2. seo-check-registry.md    -- [READ | MISSING -> STOP]
 ```
 
-If the file is missing, STOP.
+If any file is missing, STOP.
 
 ## Setup
 
@@ -42,6 +46,10 @@ If the file is missing, STOP.
 - **detected_stack:** string (`astro` | `nextjs` | `hugo` | `wordpress` | `react` | `html`)
 - **file_paths:** string[] (config files, robots.txt, head templates, sitemap configs)
 - **codesift_repo:** string | null (repo identifier if CodeSift available)
+- **mode:** string (`full` | `quick` | `content-only` | `geo`)
+- **selected_dimensions:** string[] (e.g., `["D1", "D4", "D5", "D11", "D12", "D13"]`)
+
+**Mode-aware filtering:** Skip any dimension NOT in `selected_dimensions`. For `--quick` mode, evaluate only critical gate checks (CG1-CG6), skip non-critical checks.
 
 ---
 
@@ -174,13 +182,14 @@ Check for HTTPS enforcement, security headers, canonical URL patterns, and stagi
 
 **Checks:**
 
-1. **HTTPS active** -- no hardcoded `http://` URLs in templates/config (except localhost) (**Critical Gate CG3**)
+1. **HTTPS active** -- no hardcoded `http://` URLs in templates/config (except localhost) (**Critical Gate CG3**). In code-only mode: if no deploy config proves TLS (vercel.json forceSSL, netlify.toml force_ssl, Cloudflare config), report INSUFFICIENT DATA. Absence of http:// refs alone does not prove HTTPS.
 2. **No mixed content** -- all resource URLs use HTTPS or protocol-relative paths
 3. **Security headers configured** -- check for CSP, X-Frame-Options, X-Content-Type-Options, Strict-Transport-Security
-4. **Canonical URL patterns** -- canonical URLs use consistent scheme (always https://) and domain (www vs non-www)
-5. **noindex on staging** -- staging/preview/draft pages have `<meta name="robots" content="noindex">`
-6. **No sensitive paths exposed** -- admin/internal paths disallowed in robots.txt or protected
-7. **Clean URL structure** -- no query params in canonical URLs, no session IDs in URLs
+4. **Canonical tag present (CG4):** Check for `<link rel="canonical">` or framework equivalent at layout/template level. Next.js: `alternates.canonical` in metadata. Astro: canonical in layout head. Hugo: `.Permalink` in head partial. Must find real evidence -- "no issues found" is not evidence.
+5. **Canonical URL patterns** -- canonical URLs use consistent scheme (always https://) and domain (www vs non-www)
+6. **noindex on staging** -- staging/preview/draft pages have `<meta name="robots" content="noindex">`
+7. **No sensitive paths exposed** -- admin/internal paths disallowed in robots.txt or protected
+8. **Clean URL structure** -- no query params in canonical URLs, no session IDs in URLs
 
 **Framework-specific search patterns:**
 
@@ -314,10 +323,12 @@ For each check that results in FAIL or PARTIAL, produce a finding object:
 - evidence: string        # file:line or descriptive text
 - file: string | null     # file path where issue was found
 - line: number | null     # line number if applicable
-- fix_type: string        # from registry (see below)
-- fix_safety: SAFE | MODERATE | DANGEROUS
-- fix_params: object      # framework-specific parameters for the fix
+- fix_type: string | null  # from registry (see below); null for findings without an auto-fix template
+- fix_safety: SAFE | MODERATE | DANGEROUS | null  # null for findings without an auto-fix template
+- fix_params: object | null  # framework-specific parameters for the fix; null for findings without an auto-fix template
 ```
+
+Set `fix_type`, `fix_safety`, and `fix_params` to `null` for findings without an auto-fix template.
 
 Use `INSUFFICIENT DATA` when static analysis cannot determine the check result and no live verification is available.
 
