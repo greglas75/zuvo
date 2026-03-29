@@ -13,6 +13,8 @@
 | User interaction | Native interactive prompts | Codex CLI: ask inline. Codex App async: safest default. | Not available — use safest default |
 | Agent instructions | Sub-process via Task tool reads agent markdown | Agent config points to `agents/*.md` for instructions | Read `agents/*.md` yourself, execute sequentially |
 
+**Note:** Some skills use **inline prompt dispatch** — agent instructions are embedded in the SKILL.md itself, not in separate `agents/*.md` files. For these skills, the dispatch pattern simplifies to: Claude Code spawns via Task/Agent tool with the inline prompt; Codex spawns ad-hoc or executes inline if only TOML-registered agents are supported; Cursor always executes inline. The per-environment table above still governs concurrency, model selection, and progress reporting.
+
 ## Path Resolution
 
 All paths are relative to the Zuvo plugin root. The plugin root is determined by:

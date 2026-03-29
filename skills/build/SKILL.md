@@ -34,11 +34,7 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 - Plan approval and commit confirmation follow env-compat rules for the detected environment.
 - `--auto` and `--auto-commit` flags are additive overrides on top of env-compat defaults (they loosen, never tighten).
 
-**Agent dispatch model:** This skill embeds all agent prompts inline. There are no separate `agents/*.md` files for build. How dispatch works per environment:
-
-- **Claude Code:** Use the Task tool (or Agent tool) with the inline prompt from Phase 1b / Phase 4.1 directly.
-- **Codex:** If Codex supports ad-hoc agent spawn with inline instructions, use that. If it requires TOML-registered agents, the lead agent must execute the analysis inline (same as Cursor fallback).
-- **Cursor:** No agent spawning. Execute each agent's analysis yourself in the current context, using the same prompt and output format.
+**Agent dispatch model:** This skill uses **inline prompt dispatch** (see env-compat.md). Agent instructions are embedded in Phase 1b and Phase 4.1 — there are no separate `agents/*.md` files for build.
 
 ## CodeSift Integration
 
@@ -153,9 +149,9 @@ Before any agent dispatch, establish the scope manually:
 2. **Quick dependency check.** For each candidate file that already exists, run one of:
    - CodeSift: `find_references(repo, symbol_name)` for key exports
    - Fallback: `grep` for import statements referencing the file
-3. **Hotspot detection.** Check if candidate files are churn hotspots:
+3. **Hotspot detection.** Check if candidate files are churn hotspots (top 10 most-changed files in the project over the last 90 days):
    - CodeSift: `analyze_hotspots(repo, since_days=90)` — flag any candidate in the top 10
-   - Fallback: `git log --oneline --since="90 days ago" -- {each candidate file} | wc -l` for all candidates, then rank by commit count — flag the top 10 across the project. A candidate file is a hotspot if it appears in that top 10.
+   - Fallback: run `git log --name-only --format="" --since="90 days ago" | sort | uniq -c | sort -rn | head -20` to get the project-wide top 20 by commit count, then check if any candidate file appears in that list
 4. **Risk signal scan.** Check the candidate files against the risk signals list (including hotspot results from step 3). Update the tier if signals change.
 
 Output:
@@ -210,7 +206,7 @@ No agent dispatch. The lead performs a quick overlap search during Phase 1b:
 
 1. For each new function/component/service planned, run:
    - CodeSift: `search_symbols(repo, "{name}", include_source=true, detail_level="compact")` + `codebase_retrieval(repo, queries=[{type:"semantic", query:"{what this function does}"}])`
-   - Fallback: `grep -rn "{name}\|{synonym}" --include="*.ts" --include="*.py"` in the project
+   - Fallback: `grep -rn "{name}\|{synonym}"` with `--include` matching the detected stack extensions (e.g., `*.ts *.tsx` for TypeScript, `*.py` for Python, `*.go` for Go, `*.java` for Java — use the extensions from Phase 0 stack detection)
 2. If any match has >70% name or purpose overlap, flag it as a reuse candidate.
 3. Include results in Phase 2 plan section "4. Duplication Check" (not "N/A").
 
@@ -321,7 +317,7 @@ Before writing code, verify:
 Implement per the plan.
 
 Rules:
-- Touch only files in the scope fence. If a dependency forces a change outside, log the expansion with justification. Structural splits auto-expand. Anything else requires user approval.
+- Touch only files in the scope fence. If a dependency forces a change outside, log the expansion with justification. Structural splits (file-limits.md thresholds) may auto-expand up to +2 production files; beyond +2, ask the user. Any non-structural expansion requires user approval.
 - Follow project conventions from CLAUDE.md and rules directory.
 - After each file, check line count against limits. Split immediately if approaching threshold.
 
@@ -515,13 +511,19 @@ Next steps:
 
 ## Run Log
 
-Log this run per `shared/includes/run-logger.md`:
-- SKILL: `build`
-- CQ_SCORE: from Phase 3.3 (LIGHT: `critical-only`, STANDARD+: `N/22`)
-- Q_SCORE: from Phase 3.5 (LIGHT: `critical-only`, STANDARD+: `N/17`)
-- VERDICT: PASS/WARN/FAIL from Phase 4.3
-- TASKS: number of production files created + modified
-- NOTES: `[TIER] feature description`
+Append one TSV line to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`. All fields are mandatory:
+
+| Field | Value |
+|-------|-------|
+| DATE | ISO 8601 timestamp |
+| SKILL | `build` |
+| PROJECT | Project directory basename (from `pwd`) |
+| CQ_SCORE | LIGHT: `critical-only`, STANDARD+: `N/22` |
+| Q_SCORE | LIGHT: `critical-only`, STANDARD+: `N/17` |
+| VERDICT | PASS / WARN / FAIL from Phase 4.3 |
+| TASKS | Number of production files created + modified |
+| DURATION | `light` / `standard` / `deep` (matching the tier) |
+| NOTES | `[TIER] feature description` (max 80 chars) |
 
 ---
 
