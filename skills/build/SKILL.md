@@ -21,6 +21,7 @@ Parse `$ARGUMENTS` for these flags:
 | `--auto` | Auto-approve the implementation plan (skip Phase 2 user confirmation) |
 | `--auto-commit` | Commit staged changes without asking (skip Phase 4 confirmation) |
 | `--tag` | Create a `build-YYYY-MM-DD-slug` rollback tag after commit |
+| `--deep` | Force DEEP tier regardless of file count or risk signals |
 | _(remaining text)_ | The feature description |
 
 Flags can be combined: `zuvo:build add CSV export --auto --auto-commit --tag`
@@ -32,6 +33,8 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 **Interaction behavior is governed entirely by env-compat.md.** This skill does not override env-compat defaults. Specifically:
 - Plan approval and commit confirmation follow env-compat rules for the detected environment.
 - `--auto` and `--auto-commit` flags are additive overrides on top of env-compat defaults (they loosen, never tighten).
+
+**Agent dispatch model:** This skill uses inline prompt dispatch — agent instructions are embedded in the skill file, not in separate `agents/*.md` files. In all environments (Claude Code, Codex, Cursor), dispatch agents using the inline prompts in Phase 1b and Phase 4.1. There are no external agent files to reference. Codex TOML agent configs are not required for this skill.
 
 ## CodeSift Integration
 
@@ -84,12 +87,17 @@ Check for these in the feature description and target files:
 |-----------|------|
 | 1-2 production files, 0 risk signals | **LIGHT** |
 | 3-5 production files, OR 1 risk signal | **STANDARD** |
-| 5 production files AND 2+ risk signals | **DEEP** |
+| 2+ risk signals (any file count) | **DEEP** |
 
-**Overrides:**
-- `--deep` flag forces DEEP regardless of signals.
-- Any auth + money combination forces DEEP.
-- Config-only changes (env vars, CI, Dockerfile) with no production code: cap at LIGHT.
+**Forced DEEP** (regardless of file count or other signals):
+- `--deep` flag
+- Touches auth/authorization AND any other risk signal
+- Touches payment/money AND any other risk signal
+- Touches database schema or migrations
+- Feature involves concurrency or race conditions
+
+**Cap at LIGHT:**
+- Config-only changes (env vars, CI, Dockerfile) with no production code
 
 ### Tier Capabilities
 
@@ -102,7 +110,7 @@ Check for these in the feature description and target files:
 | Test quality self-eval (Q1-Q17) | Inline check | Full Q1-Q17 | Full Q1-Q17 |
 | Independent CQ Auditor agent | No | No | Yes |
 | Independent Test Auditor agent | No | No | Yes |
-| Verification commands | Tests only | Tests + types | Tests + types + lint |
+| Verification commands | Tests + types (if checker exists) | Tests + types | Tests + types + lint |
 
 Print the tier after assignment:
 
@@ -141,7 +149,10 @@ Before any agent dispatch, establish the scope manually:
 2. **Quick dependency check.** For each candidate file that already exists, run one of:
    - CodeSift: `find_references(repo, symbol_name)` for key exports
    - Fallback: `grep` for import statements referencing the file
-3. **Risk signal scan.** Check the candidate files against the risk signals list. Update the tier if signals change.
+3. **Hotspot detection.** Check if candidate files are churn hotspots:
+   - CodeSift: `analyze_hotspots(repo, since_days=90)` — flag any candidate in the top 10
+   - Fallback: `git log --oneline --since="90 days ago" -- {file} | wc -l` — flag if >15 commits
+4. **Risk signal scan.** Check the candidate files against the risk signals list (including hotspot results from step 3). Update the tier if signals change.
 
 Output:
 ```
@@ -401,8 +412,8 @@ Run stack-appropriate checks:
 
 | Tier | Required checks |
 |------|----------------|
-| LIGHT | Tests |
-| STANDARD | Tests + types (`tsc --noEmit` / `mypy` / etc.) |
+| LIGHT | Tests + types if a type checker exists (`tsc --noEmit` / `mypy` / `pyright`) |
+| STANDARD | Tests + types |
 | DEEP | Tests + types + lint |
 
 All must pass. If any fails, fix and re-run.
@@ -420,8 +431,8 @@ EXECUTION VERIFICATION
 [ALL] [ ] SCOPE: No unplanned features or refactoring
 [ALL] [ ] TESTS: Test suite green
 [ALL] [ ] CQ CRITICAL: All critical gates pass (with evidence)
+[ALL] [ ] TYPES: Type checker passes (if checker exists; skip with note if none)
 [STD+] [ ] CQ FULL: CQ1-CQ22 self-eval, scores + evidence
-[STD+] [ ] TYPES: Type checker passes
 [STD+] [ ] Q FULL: Q1-Q17 self-eval on each test file
 [DEEP] [ ] LINT: Linter passes
 [DEEP] [ ] CQ AUDITOR: Agent returned, FIX-NOW items applied
@@ -436,10 +447,12 @@ Collect findings from all sources (self-eval, auditors, verification warnings).
 For each item, persist to `memory/backlog.md`:
 
 ```markdown
-- B-{N} | {file}:{line} | {rule-id} | {one-line description} | source:build | {date}
+- B-{N} | {file}:{line} | {rule-id} | {description} | seen:1 | confidence:{0-100} | source:build | {date}
 ```
 
-Deduplicate: if the same `file|rule-id` combo exists, increment count instead of adding a new entry. Discard findings with confidence < 25 (likely false positives). Zero silent discards — if discarded, log why.
+**Dedup:** If the same `file|rule-id` combo exists, increment `seen:N` and update the date. Do not add a duplicate entry.
+**Discard:** If confidence < 25, do not persist. Instead append one line to the build output: `DISCARDED: {file}:{rule-id} — confidence {N}, reason: {why}`.
+**Disposition:** Items with confidence 25-50 are tracked. Items with confidence 51+ are actionable.
 
 ### 4.5 Stage and Commit
 
