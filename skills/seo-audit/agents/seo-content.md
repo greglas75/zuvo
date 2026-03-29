@@ -55,9 +55,11 @@ If the file is missing, STOP.
 
 ### D7 -- Internal Linking
 
-#### D7.1 Orphan Pages
+#### D7.1 Potential Orphan Pages
 
-Scan for pages that have no internal links pointing to them.
+Scan for pages that may have no internal links pointing to them.
+
+**Important:** In code-only mode, orphan detection is limited to static analysis of link targets vs. known routes. Report as POTENTIAL_RISK, not definitive FAIL. Full orphan confirmation requires live crawl.
 
 **With CodeSift:**
 ```
@@ -69,11 +71,11 @@ search_text(repo, "href=", file_pattern="*.{astro,html,tsx,jsx,md,mdx}")
 Grep for href= patterns across template and content files
 ```
 
-Collect all internal link targets. Compare against the list of all pages/routes. Any page not referenced by at least one internal link is an orphan.
+Collect all internal link targets. Compare against the list of all pages/routes. Any page not referenced by at least one internal link is a potential orphan.
 
 - PASS: All public pages have at least one internal link pointing to them
-- PARTIAL: 1-3 orphan pages found
-- FAIL: 4+ orphan pages, or key landing pages are orphans
+- PARTIAL (POTENTIAL_RISK): 1-3 pages with no detected internal links (may be linked dynamically)
+- FAIL (POTENTIAL_RISK): 4+ pages with no detected internal links, or key landing pages appear unlinked. Note: confirm with live crawl before treating as definitive.
 
 #### D7.2 Navigation Patterns
 
@@ -170,17 +172,20 @@ Compare for exact or near-duplicates
 
 ### D10 -- GEO/AI Readiness
 
-#### D10.1 llms.txt File
+#### D10.1 llms.txt Content Quality
 
-Check for the presence and quality of an `llms.txt` file at the project root or public directory.
+Evaluate the content quality and structure of `llms.txt` -- if the file exists. Presence detection belongs to D5 in the technical agent; this check evaluates content only.
 
-- File exists at root or in public/static directory
+If no llms.txt file exists, report N/A for this check (do not FAIL -- presence is D5's responsibility).
+
+If the file exists, evaluate:
 - Contains structured information about the site's purpose and content
 - Includes key topics, content types, and preferred citation format
+- Well-organized with clear sections
 
-- PASS: llms.txt exists with structured, informative content
+- PASS: llms.txt has structured, informative content with clear sections
 - PARTIAL: llms.txt exists but is minimal or incomplete
-- FAIL: No llms.txt file found
+- N/A: No llms.txt file found (presence is checked in D5)
 
 #### D10.2 Semantic HTML
 
@@ -238,6 +243,12 @@ Check that content indicates when it was created and last updated.
 
 ---
 
+## Fix Registry Reference
+
+For fix_type identifiers and safety classifications, use `../../../shared/includes/seo-fix-registry.md` as the canonical registry. Do not invent fix_type values not listed there.
+
+---
+
 ## Finding Output Format
 
 For each check that results in FAIL or PARTIAL, produce a finding object:
@@ -268,21 +279,20 @@ All findings from this agent have `fix_type: null` because content improvements 
 
 ## Dimension Output Format
 
+Return raw check statuses only (PASS/PARTIAL/FAIL/INSUFFICIENT DATA). The main agent calculates all numeric scores in Phase 4. Do NOT calculate dimension scores (e.g., `score = checks_passed / checks_total`) in this agent.
+
 For each dimension, return a structured summary:
 
 ```
 ### D[N] -- [Dimension Name]
-Score: [checks_passed]/[checks_total] ([percentage]%)
 
 | Check | Status | Evidence |
 |-------|--------|----------|
-| [check name] | PASS/PARTIAL/FAIL | [file:line or description] |
+| [check name] | PASS/PARTIAL/FAIL/INSUFFICIENT DATA | [file:line or description] |
 | ... | ... | ... |
 
 Findings: [list of FAIL and PARTIAL findings in the format above]
 ```
-
-Score calculation per dimension: `(checks_passed / checks_total) * 100`. PARTIAL counts as 0.5.
 
 ---
 
@@ -310,18 +320,15 @@ Return your complete analysis in this format:
 (none -- Content agent owns no critical gates)
 
 ### D7 -- Internal Linking
-Score: [N]/[total] ([pct]%)
-[check table]
+[check table with raw statuses]
 [findings]
 
 ### D9 -- Content Quality
-Score: [N]/[total] ([pct]%)
-[check table]
+[check table with raw statuses]
 [findings]
 
 ### D10 -- GEO/AI Readiness
-Score: [N]/[total] ([pct]%)
-[check table]
+[check table with raw statuses]
 [findings]
 ```
 
@@ -336,4 +343,4 @@ Score: [N]/[total] ([pct]%)
 - Calculate priority for every finding: `(seo_impact * 0.4) + (business_impact * 0.4) + ((4 - effort) * 0.2)`.
 - Content quality checks (D9) require reading actual content files. Do not score from file names alone.
 - For D10 checks, evaluate source code and templates -- not a live site.
-- Report facts, not assumptions. If you cannot find evidence for a check, report it as FAIL with "not found in source" evidence, not as PASS.
+- Report facts, not assumptions. FAIL only when absence in source is itself valid evidence (e.g., no content files = thin content FAIL). When static analysis is genuinely inconclusive, report INSUFFICIENT DATA.

@@ -60,7 +60,7 @@ Search for title tags, meta descriptions, viewport tags, and heading hierarchy. 
 5. **Unique titles** -- no duplicate `<title>` values across pages/templates
 6. **Title length** -- between 30-60 characters (check templates for dynamic titles)
 7. **Meta description length** -- between 120-160 characters
-8. **Canonical tag present** -- `<link rel="canonical" ...>` on all public pages (evaluated under D11, Critical Gate CG4)
+8. **Canonical tag present** -- Referential check only -- not scored in D1. Canonical scoring and CG4 evaluation happen in D11.
 
 **Framework-specific search patterns:**
 
@@ -140,7 +140,7 @@ Check robots.txt for Googlebot access and AI crawler policies. Verify conscious 
 4. **AI crawler policy -- ClaudeBot** -- explicit `User-agent: ClaudeBot` rule
 5. **AI crawler policy -- Perplexitybot** -- explicit `User-agent: Perplexitybot` rule
 6. **AI crawler policy -- Google-Extended** -- explicit `User-agent: Google-Extended` rule
-7. **AI crawler policy conscious** -- at least one AI crawler has an explicit policy (not default/absent) (**Critical Gate CG6**)
+7. **AI crawler policy conscious** -- Conscious decision = explicit Allow or Disallow for at least 3 of these bots: GPTBot, ClaudeBot, PerplexityBot, Google-Extended, CCBot. OR a Content-Signal header with ai-train directive. Default/absent robots.txt = FAIL (not conscious). (**Critical Gate CG6**)
 8. **llms.txt exists** -- `llms.txt` file present for AI-readable site summary
 9. **Crawl-delay appropriate** -- no excessive `Crawl-delay` that would slow indexing
 10. **No broad Disallow** -- `Disallow: /` not set for `User-agent: *` (would block all crawlers)
@@ -259,7 +259,7 @@ Check for analytics integration, Search Console setup indicators, and error repo
 
 1. **Analytics integration** -- Google Analytics (GA4), Plausible, Fathom, Umami, or similar present
 2. **Analytics loads correctly** -- script tag or integration config is valid (not commented out, not dev-only)
-3. **Search Console verification** -- `<meta name="google-site-verification" ...>` or DNS/file verification indicator
+3. **Search Console verification** -- `<meta name="google-site-verification" ...>` or DNS/file verification indicator. **Advisory rule:** if no meta tag, DNS TXT record, or verification file found in source, report INSUFFICIENT DATA, not FAIL. This check is advisory in code-only mode.
 4. **Structured error reporting** -- error tracking (Sentry, LogRocket, etc.) or custom error page with reporting
 5. **404 page exists** -- custom 404 page configured
 6. **Performance monitoring** -- CWV measurement or RUM (Real User Monitoring) integration
@@ -288,6 +288,12 @@ Grep for google-site-verification in head templates
 Grep for sentry or error tracking integrations
 Glob for 404 page files (404.html, 404.astro, not-found.tsx)
 ```
+
+---
+
+## Fix Registry Reference
+
+For fix_type identifiers and safety classifications, use `../../../shared/includes/seo-fix-registry.md` as the canonical registry. Do not invent fix_type values not listed there.
 
 ---
 
@@ -345,15 +351,16 @@ Use `INSUFFICIENT DATA` when static analysis cannot determine the check result a
 
 ## Dimension Output Format
 
+Return raw check statuses only (PASS/PARTIAL/FAIL/INSUFFICIENT DATA). The main agent calculates all numeric scores in Phase 4. Do NOT calculate dimension scores (e.g., `score = checks_passed / checks_total`) in this agent.
+
 For each dimension, return a structured summary:
 
 ```
 ### D[N] -- [Dimension Name]
-Score: [checks_passed]/[checks_total] ([percentage]%)
 
 | Check | Status | Evidence |
 |-------|--------|----------|
-| [check name] | PASS/PARTIAL/FAIL | [file:line or description] |
+| [check name] | PASS/PARTIAL/FAIL/INSUFFICIENT DATA | [file:line or description] |
 | ... | ... | ... |
 
 Findings: [list of FAIL and PARTIAL findings in the format above]
@@ -363,15 +370,15 @@ Findings: [list of FAIL and PARTIAL findings in the format above]
 
 ## Critical Gates Evaluated by This Agent
 
-This agent evaluates these critical gates and must report explicit PASS/FAIL with evidence for each:
+This agent evaluates these critical gates and must report explicit PASS | FAIL | INSUFFICIENT DATA with evidence for each:
 
-| Gate | Description | Source | PASS Criteria |
-|------|------------|--------|---------------|
-| **CG1** | Sitemap exists | D4 | sitemap.xml file or generation config found |
-| **CG2** | Googlebot not blocked | D5 | No `Disallow: /` for Googlebot or `User-agent: *` |
-| **CG3** | HTTPS active | D11 | No hardcoded `http://` URLs in templates/config (excluding localhost) |
-| **CG4** | Canonical tags present | D11 | `<link rel="canonical">` found in layout/head template |
-| **CG6** | AI crawler policy conscious | D5 | At least one AI crawler (GPTBot, ClaudeBot, etc.) has explicit Allow/Disallow |
+| Gate | Description | Source | PASS Criteria | INSUFFICIENT DATA Criteria |
+|------|------------|--------|---------------|---------------------------|
+| **CG1** | Sitemap exists | D4 | sitemap.xml file or generation config found | -- |
+| **CG2** | Googlebot not blocked | D5 | No `Disallow: /` for Googlebot or `User-agent: *` | -- |
+| **CG3** | HTTPS active | D11 | No hardcoded `http://` URLs in templates/config (excluding localhost) | In code-only mode if no mixed content found but no live verification available to confirm HTTPS enforcement |
+| **CG4** | Canonical tags present | D11 | `<link rel="canonical">` found in layout/head template | -- |
+| **CG6** | AI crawler policy conscious | D5 | Explicit Allow or Disallow for at least 3 of: GPTBot, ClaudeBot, PerplexityBot, Google-Extended, CCBot. OR Content-Signal header with ai-train directive. | -- |
 
 Note: CG5 (JSON-LD SSR) is evaluated by the Assets agent (D3), not this agent.
 
@@ -387,40 +394,34 @@ Return your complete analysis in this format:
 ### Critical Gates
 | Gate | Status | Evidence |
 |------|--------|----------|
-| CG1 | PASS/FAIL | [evidence] |
-| CG2 | PASS/FAIL | [evidence] |
-| CG3 | PASS/FAIL | [evidence] |
-| CG4 | PASS/FAIL | [evidence] |
-| CG6 | PASS/FAIL | [evidence] |
+| CG1 | PASS/FAIL/INSUFFICIENT DATA | [evidence] |
+| CG2 | PASS/FAIL/INSUFFICIENT DATA | [evidence] |
+| CG3 | PASS/FAIL/INSUFFICIENT DATA | [evidence] |
+| CG4 | PASS/FAIL/INSUFFICIENT DATA | [evidence] |
+| CG6 | PASS/FAIL/INSUFFICIENT DATA | [evidence] |
 
 ### D1 -- Meta Tags and On-Page SEO
-Score: [N]/[total] ([pct]%)
-[check table]
+[check table with raw statuses]
 [findings]
 
 ### D4 -- Sitemap
-Score: [N]/[total] ([pct]%)
-[check table]
+[check table with raw statuses]
 [findings]
 
 ### D5 -- AI Crawlers and Crawlability
-Score: [N]/[total] ([pct]%)
-[check table]
+[check table with raw statuses]
 [findings]
 
 ### D11 -- Security and Technical
-Score: [N]/[total] ([pct]%)
-[check table]
+[check table with raw statuses]
 [findings]
 
 ### D12 -- Internationalization
-Score: [N]/[total] ([pct]%)
-[check table]
+[check table with raw statuses]
 [findings]
 
 ### D13 -- Monitoring
-Score: [N]/[total] ([pct]%)
-[check table]
+[check table with raw statuses]
 [findings]
 ```
 
@@ -433,4 +434,4 @@ Score: [N]/[total] ([pct]%)
 - Every FAIL and PARTIAL finding must have file:line evidence or an explicit "INSUFFICIENT DATA" note.
 - Mark checks as N/A when they genuinely do not apply (e.g., D12 hreflang on a monolingual site). Do not mark checks as N/A to avoid effort.
 - Calculate priority for every finding: `(seo_impact * 0.4) + (business_impact * 0.4) + ((4 - effort) * 0.2)`.
-- Report facts, not assumptions. If you cannot find evidence for a check, report it as FAIL with "not found in source" evidence, not as PASS.
+- Report facts, not assumptions. If you cannot find evidence for a check, report INSUFFICIENT DATA when static analysis is genuinely inconclusive. Report FAIL only when absence in source is itself valid evidence (e.g., no sitemap config anywhere = FAIL).

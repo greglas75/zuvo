@@ -104,10 +104,25 @@ WP=$(find . -maxdepth 3 -name "wp-config.php" 2>/dev/null | wc -l)
 REACT=$(rg -l "from ['\"]react['\"]" . -g '*.tsx' -g '*.jsx' 2>/dev/null | head -5 | wc -l || grep -rl "from 'react'" . --include="*.tsx" --include="*.jsx" 2>/dev/null | head -5 | wc -l || true)
 ```
 
-Also detect:
-- **Content format:** markdown (content/posts/blog directories), database-driven, or none
-- **SEO files:** robots.txt, sitemap*, llms.txt
-- **Deploy platform:** Netlify, Vercel, Cloudflare, Apache, Nginx
+Also detect (with heuristics):
+
+**Content format:**
+- `markdown` — directories named `content/`, `posts/`, `blog/`, `pages/` containing `*.md` or `*.mdx`
+- `database` — WordPress detected, or CMS config found (e.g., `strapi`, `payload`, `sanity`)
+- `none` — no content directories found
+
+**SEO files:**
+- `robots.txt` — check `public/robots.txt`, `static/robots.txt`, or framework route (`src/pages/robots.txt.ts`, `app/robots.ts`)
+- `sitemap` — check `public/sitemap*.xml`, framework config (`@astrojs/sitemap` in config, `app/sitemap.ts`), or generated output
+- `llms.txt` — check `public/llms.txt`
+
+**Deploy platform:**
+- `vercel.json` or `.vercel/` → Vercel
+- `netlify.toml` or `_headers` + `_redirects` → Netlify
+- `wrangler.toml` or `_worker.js` → Cloudflare
+- `.htaccess` → Apache
+- `nginx.conf` or `/etc/nginx/` refs → Nginx
+- None detected → Unknown
 
 Store results:
 ```
@@ -206,6 +221,52 @@ After all agents complete:
 4. Evaluate critical gates: CG1-CG4, CG6 from Technical agent; CG5 from Assets agent
 5. If any dimension is missing (agent failed): mark as "INSUFFICIENT DATA" in scoring
 
+**Agent vs main scoring boundary:** Agents return raw check statuses (PASS/PARTIAL/FAIL/INSUFFICIENT DATA) per check. The main agent calculates all numeric scores in Phase 4 using the status-to-value mapping. Agents do NOT calculate dimension scores themselves.
+
+### Dimension constraints (normative -- agents MUST follow)
+
+For fix_type identifiers and safety classifications, agents MUST use `../../shared/includes/seo-fix-registry.md` as the canonical source.
+
+**D5 — AI crawler policy:**
+- Minimum bots to evaluate: GPTBot, ClaudeBot, PerplexityBot, Google-Extended, CCBot
+- "Conscious decision" = explicit Allow or Disallow for at least 3 of these bots, OR a Content-Signal header with ai-train directive. Default/absent robots.txt = FAIL (not conscious)
+- llms.txt in D5: check **presence and crawler accessibility only** (is it served? is it blocked?)
+
+**D7 — Internal linking (code-only caveat):**
+- In code-only mode, orphan detection is limited to static analysis (route files without inbound `<a>` or `<Link>` references). Report as "potential orphan risk", not definitive orphan.
+- Full orphan confirmation requires live crawl or route graph analysis (--live-url mode).
+
+**D9 — Content quality (measurable heuristics):**
+- Thin content: word count < 300 per page (count in markdown body or text nodes)
+- Answer-first: summary or lead sentence within first 120 words of main content
+- Heading structure: H2/H3 sections <= 300 words each (chunkability for AI extraction)
+
+**D10 — GEO/AI readiness:**
+- llms.txt in D10: evaluate **content quality and structure** (not presence — that's D5)
+- E-E-A-T signals: check for `author`, `datePublished`, `dateModified` fields in frontmatter/schema, plus citation/source references
+- Freshness: lastmod in sitemap, dateModified in content, git commit age as fallback
+
+**D13 — Monitoring (advisory checks):**
+- "Search Console setup indicators" is advisory only — cannot be confirmed from repo in most cases. Score as INSUFFICIENT DATA in code-only mode unless verification meta tag or DNS TXT record is present in config.
+
+### CodeSift query patterns (when available)
+
+Use these specific queries for SEO-relevant searches:
+
+```
+search_text(repo, "canonical", file_pattern="*.{astro,tsx,html,php}")
+search_text(repo, "application/ld+json", file_pattern="*.{astro,tsx,html}")
+search_text(repo, "og:image", file_pattern="*.{astro,tsx,html}")
+search_text(repo, "robots", file_pattern="*.{txt,ts,js,toml,yaml}")
+search_text(repo, "sitemap", file_pattern="*.{ts,js,mjs,toml,yaml}")
+search_text(repo, "hreflang", file_pattern="*.{astro,tsx,html}")
+search_text(repo, "noindex", file_pattern="*.{astro,tsx,html,ts}")
+search_text(repo, "font-display", file_pattern="*.css")
+search_text(repo, "llms.txt")
+```
+
+For framework-specific deep analysis, see agent instruction files which contain per-framework search patterns (Next.js Metadata API, Astro frontmatter, Hugo partials, WordPress hooks).
+
 ---
 
 ## Phase 3: Live Audit (only if --live-url)
@@ -263,7 +324,26 @@ CG6: AI crawler policy conscious       -- from D5
 
 ### 4.2 Dimension Scores
 
-Per-dimension: `score = (sum of check scores / count of applicable checks) * 100`
+**Check status → numeric value:**
+
+| Status | Value | Notes |
+|--------|-------|-------|
+| PASS | 1.0 | Evidence confirms check passes |
+| PARTIAL | 0.5 | Partially satisfied or minor issues |
+| FAIL | 0.0 | Evidence confirms check fails |
+| INSUFFICIENT DATA | excluded | Not counted in denominator |
+
+Per-dimension: `score = (sum of check values / count of non-excluded checks) * 100`
+
+**N/A rules per dimension (exclude from overall score):**
+
+| Dimension | N/A when |
+|-----------|----------|
+| D6 (Images) | No `<img>` elements in codebase |
+| D7 (Internal Linking) | Single-page site (no subpages) |
+| D12 (Internationalization) | Single-language site (no hreflang, no i18n config) |
+| D13 (Monitoring) | Static export with no analytics config — mark as advisory |
+| D9 (Content Quality) | No content corpus (no markdown/blog/pages directories) |
 
 ### 4.3 Overall Score
 
@@ -292,7 +372,11 @@ A (>= 85): Production-ready SEO+GEO. Strong across all dimensions.
 B (70-84): Good foundation. Optimization opportunities identified.
 C (50-69): Significant gaps. Prioritized fixes needed before scaling.
 D (< 50):  Major issues. SEO/GEO blocking growth.
-FAIL:      Any critical gate = 0. Must fix before any other optimization.
+
+Result overrides:
+- Any critical gate = FAIL -> result = "FAIL" (regardless of tier)
+- Any critical gate = INSUFFICIENT DATA -> result = "PROVISIONAL"
+Tier is always calculated from score: A/B/C/D.
 ```
 
 ---
@@ -301,11 +385,13 @@ FAIL:      Any critical gate = 0. Must fix before any other optimization.
 
 Before generating the report, verify:
 
-1. **Count Consistency:** Total checks = sum of all dimension checks
+1. **Count Consistency:** Total checks = sum of all dimension checks. No check counted twice.
 2. **Score Math:** Recalculate overall from dimension scores * weights. Must match within 0.1.
 3. **Critical Gate Completeness:** All 6 gates have explicit PASS/FAIL/INSUFFICIENT DATA with evidence.
 4. **Evidence Completeness:** Every FAIL finding has file:line or INSUFFICIENT DATA note.
 5. **Priority Math:** Verify 3D priority calculation `(SEO * 0.4) + (Business * 0.4) + ((4 - Effort) * 0.2)`.
+6. **Finding Numbering:** F-IDs are sequential (F1, F2, ...) with no gaps or duplicates.
+7. **Summary Consistency:** findings_count in executive summary matches actual finding count in report body.
 
 Fix any discrepancies before presenting to user.
 
@@ -338,7 +424,26 @@ Health scale: HEALTHY (80+), NEEDS ATTENTION (60-79), AT RISK (40-59), CRITICAL 
 8. **Content Report** -- articles scanned, word counts, answer-first percentage (if content scanned)
 9. **GEO Readiness Panel** -- 7 dimensions (llms.txt, AI crawlers, chunkowability, structured HTML, citation readiness, E-E-A-T, freshness)
 10. **Manual Check Recommendations** -- informational only, not scored
-11. **CI-Parseable Summary** -- `SEO-AUDIT-RESULT: PASS|FAIL score=NN tier=X critical=none|CG-N`
+11. **CI-Parseable Summary** -- `SEO-AUDIT-RESULT: PASS|FAIL|PROVISIONAL score=NN tier=X critical=none|CG-N`
+
+### Finding Format (stable across runs)
+
+Every finding in the execution plan uses this structure:
+
+```
+[F-ID] [Dimension] [Severity] [Confidence]
+  Issue: [one-line description]
+  Evidence: [file:line or "code-only inference"]
+  Why it matters: [SEO/GEO/business impact in one sentence]
+  Fix: [actionable instruction]
+  Priority: [N.N] (SEO=[1-3] × Biz=[1-3] × Effort=[1-3])
+
+Confidence scale:
+  HIGH   = direct source evidence (file:line confirms the finding)
+  MEDIUM = inferred from config or indirect signals
+  LOW    = heuristic or absence-based (e.g., file not found)
+See also `../../shared/includes/seo-fix-registry.md` for the canonical confidence definitions.
+```
 
 ### 3D Priority Calculation
 
@@ -354,6 +459,14 @@ Range: 1.0 - 3.0
 Quick Win = Priority >= 2.0 AND Effort = EASY
 ```
 
+**Assignment rubric (to ensure consistent scoring):**
+
+| Factor | 3 (HIGH) | 2 (MEDIUM) | 1 (LOW) |
+|--------|----------|------------|---------|
+| SEO Impact | Blocks indexation, rich results, or crawlability (CG fail) | Degrades ranking signals or social sharing | Cosmetic or minor optimization |
+| Business Impact | Affects homepage, landing pages, or money pages | Affects secondary pages or non-revenue content | Affects low-traffic or internal pages |
+| Fix Effort | 1-2 files, config change or additive insert | 3-5 files, template modification, testing needed | 6+ files, architecture change, or content creation |
+
 ### Save Report
 
 ```bash
@@ -362,9 +475,11 @@ mkdir -p audit-results
 
 Save to: `audit-results/seo-audit-YYYY-MM-DD.md`
 
-Auto-increment if a report for today already exists.
+Auto-increment if a report for today already exists: `seo-audit-YYYY-MM-DD-2.md`, `seo-audit-YYYY-MM-DD-3.md`, etc.
 
 ### Phase 6.2: JSON Output
+
+Before generating JSON, read `../../shared/includes/audit-output-schema.md` for the schema contract. For `fix_type` values and safety classifications, reference `../../shared/includes/seo-fix-registry.md`.
 
 After saving the markdown report, also save structured JSON findings for downstream consumption by `zuvo:seo-fix` and CI pipelines.
 
@@ -387,7 +502,7 @@ Serialize from Phase 4 scoring results:
   "result": "[PASS, FAIL, or PROVISIONAL from critical gate evaluation]",
   "score": {
     "overall": [0-100],
-    "tier": "[A/B/C/D/FAIL]",
+    "tier": "[A/B/C/D]",
     "sub_scores": {
       "seo": [0-100],
       "geo": [0-100],
@@ -395,7 +510,8 @@ Serialize from Phase 4 scoring results:
     }
   },
   "critical_gates": [
-    { "id": "CG1", "name": "Sitemap exists", "status": "PASS|FAIL", "evidence": "..." }
+    { "id": "CG1", "name": "Sitemap exists", "status": "PASS|FAIL", "evidence": "..." },
+    { "id": "CG3", "name": "HTTPS active", "status": "INSUFFICIENT DATA", "evidence": "Code-only mode, cannot verify HTTPS" }
   ],
   "findings": [
     {

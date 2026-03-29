@@ -351,6 +351,12 @@ Framework-specific:
 
 ---
 
+## Fix Registry Reference
+
+For fix_type identifiers and safety classifications, use `../../../shared/includes/seo-fix-registry.md` as the canonical registry. Do not invent fix_type values not listed there.
+
+---
+
 ## Finding Output Format
 
 For each check that results in FAIL or PARTIAL, produce a finding object:
@@ -390,31 +396,30 @@ Use `INSUFFICIENT DATA` when static analysis cannot determine the check result a
 
 ## Dimension Output Format
 
+Return raw check statuses only (PASS/PARTIAL/FAIL/INSUFFICIENT DATA). The main agent calculates all numeric scores in Phase 4. Do NOT calculate dimension scores (e.g., `score = checks_passed / checks_total`) in this agent.
+
 For each dimension, return a structured summary:
 
 ```
 ### D[N] -- [Dimension Name]
-Score: [checks_passed]/[checks_total] ([percentage]%)
 
 | Check | Status | Evidence |
 |-------|--------|----------|
-| [check name] | PASS/PARTIAL/FAIL | [file:line or description] |
+| [check name] | PASS/PARTIAL/FAIL/INSUFFICIENT DATA | [file:line or description] |
 | ... | ... | ... |
 
 Findings: [list of FAIL and PARTIAL findings in the format above]
 ```
 
-Score calculation per dimension: `(checks_passed / checks_total) * 100`. PARTIAL counts as 0.5.
-
 ---
 
 ## Critical Gates Evaluated by This Agent
 
-This agent evaluates one critical gate and must report explicit PASS/FAIL with evidence:
+This agent evaluates one critical gate and must report explicit PASS | FAIL | INSUFFICIENT DATA with evidence:
 
-| Gate | Description | Source | PASS Criteria |
-|------|------------|--------|---------------|
-| **CG5** | JSON-LD server-side rendered | D3 | JSON-LD present in server-rendered HTML, not injected client-side |
+| Gate | Description | Source | PASS Criteria | INSUFFICIENT DATA Criteria |
+|------|------------|--------|---------------|---------------------------|
+| **CG5** | JSON-LD server-side rendered | D3 | JSON-LD present in server-rendered HTML, not injected client-side | If static analysis cannot determine whether JSON-LD is server-rendered (e.g., framework uses client-side rendering and no live fetch available), report INSUFFICIENT DATA |
 
 **CG5 = FAIL means the overall audit result is FAIL regardless of score.**
 
@@ -434,26 +439,22 @@ Return your complete analysis in this format:
 ### Critical Gates
 | Gate | Status | Evidence |
 |------|--------|----------|
-| CG5 | PASS/FAIL | [evidence] |
+| CG5 | PASS/FAIL/INSUFFICIENT DATA | [evidence] |
 
 ### D2 -- Open Graph and Social
-Score: [N]/[total] ([pct]%)
-[check table]
+[check table with raw statuses]
 [findings]
 
 ### D3 -- Structured Data (JSON-LD)
-Score: [N]/[total] ([pct]%)
-[check table]
+[check table with raw statuses]
 [findings]
 
 ### D6 -- Images
-Score: [N]/[total] ([pct]%)
-[check table]
+[check table with raw statuses]
 [findings]
 
 ### D8 -- Performance (Code-Level)
-Score: [N]/[total] ([pct]%)
-[check table]
+[check table with raw statuses]
 [findings]
 ```
 
@@ -469,4 +470,4 @@ Score: [N]/[total] ([pct]%)
 - For D3 server-side rendering verification: if the rendering context cannot be determined from source alone (e.g., custom build pipeline), mark as INSUFFICIENT DATA and recommend live verification with `--live-url`.
 - When checking image dimensions (D2.6), note that actual dimension verification may require live audit. Code-level checks should look for dimension meta tags and image file analysis where possible.
 - For D8 checks, evaluate source code patterns only. Actual performance measurement requires live audit mode.
-- Report facts, not assumptions. If you cannot find evidence for a check, report it as FAIL with "not found in source" evidence, not as PASS.
+- Report facts, not assumptions. FAIL only when absence in source is itself valid evidence (e.g., no JSON-LD script tags anywhere = FAIL). When static analysis is genuinely inconclusive, report INSUFFICIENT DATA.
