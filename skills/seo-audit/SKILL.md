@@ -2,7 +2,7 @@
 name: seo-audit
 description: >
   SEO/GEO site audit covering 13 dimensions with 6 critical gates. Scans source
-  code, templates, and config files for 200+ checks across meta tags, structured
+  code, templates, and config files across meta tags, structured
   data, AI crawlers, content quality, GEO readiness, performance, and optional
   live Core Web Vitals. Framework-aware: Astro, Next.js, Hugo, WordPress, React,
   plain HTML. Flags: full (default), [path], --live-url <url>, --quick,
@@ -54,7 +54,7 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 | No --live-url | Proceed (code read only) | N/A |
 | --live-url localhost | Proceed | Proceed freely (GET/HEAD only) |
 | --live-url staging | Proceed | Confirm with user, then proceed |
-| --live-url production | Proceed | WARN: "This appears to be production. Consider staging/localhost." |
+| --live-url production | Proceed | Confirm with user, then proceed. Default to code-only if confirmation is unavailable. |
 
 **Rate limiting (live audit):** Max 2 requests/second internal, 1 req/s external. 3 consecutive 429s triggers a 30s pause. 3 consecutive 5xx results halt the live audit.
 
@@ -62,7 +62,11 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 
 ### GATE 2 -- Read-Only Audit
 
-This audit is read-only against source code. Sole allowed write target: `audit-results/` for the report file.
+This audit is read-only against source code.
+
+**Allowed write targets:**
+- `audit-results/` for the report file (`.md` and `.json`)
+- `memory/backlog.md` only when `--persist-backlog` is explicitly enabled
 
 **FORBIDDEN:**
 - Writing to any source/production file
@@ -81,9 +85,9 @@ This audit is read-only against source code. Sole allowed write target: `audit-r
 | `[path]` | Audit specific directory or module |
 | `--live-url <url>` | Code audit + live audit (CWV, broken links, rendered DOM) |
 | `--quick` | Critical gates only -- fast pass/fail (CG1-CG6) |
-| `--content-only` | Content and GEO dimensions only (D7, D9, D10, D13) |
-| `--geo` | GEO-focused: content + structured data + technical (D5 only) |
-| `--persist-backlog` | Write HIGH/CRITICAL findings to `memory/backlog.md` |
+| `--content-only` | Content-focused audit: D7, D9, D10 |
+| `--geo` | GEO-focused audit: D3, D5, D9, D10 |
+| `--persist-backlog` | Persist prioritized findings to `memory/backlog.md` |
 
 Default: `full` (no `--live-url`).
 
@@ -92,12 +96,12 @@ Default: `full` (no `--live-url`).
 Detect the web framework from project config files:
 
 ```bash
-# Web framework detection
-ASTRO=$(find . -name "astro.config.*" -maxdepth 3 2>/dev/null | wc -l)
-NEXT=$(find . -name "next.config.*" -maxdepth 3 2>/dev/null | wc -l)
-HUGO=$(find . -name "hugo.toml" -o -name "hugo.yaml" -maxdepth 2 2>/dev/null | wc -l)
-WP=$(find . -name "wp-config.php" -maxdepth 3 2>/dev/null | wc -l)
-REACT=$(grep -rl "from 'react'" . --include="*.tsx" --include="*.jsx" 2>/dev/null | head -5 | wc -l || true)
+# Portable web framework detection (BSD/GNU compatible)
+ASTRO=$(find . -maxdepth 3 -name "astro.config.*" 2>/dev/null | wc -l)
+NEXT=$(find . -maxdepth 3 -name "next.config.*" 2>/dev/null | wc -l)
+HUGO=$(find . -maxdepth 2 \( -name "hugo.toml" -o -name "hugo.yaml" \) 2>/dev/null | wc -l)
+WP=$(find . -maxdepth 3 -name "wp-config.php" 2>/dev/null | wc -l)
+REACT=$(rg -l "from ['\"]react['\"]" . -g '*.tsx' -g '*.jsx' 2>/dev/null | head -5 | wc -l || grep -rl "from 'react'" . --include="*.tsx" --include="*.jsx" 2>/dev/null | head -5 | wc -l || true)
 ```
 
 Also detect:
@@ -143,75 +147,64 @@ Set availability flags and proceed.
 
 ---
 
-## Phase 2: Code Audit (13 Dimensions)
+## Phase 2: Code Audit (Parallel Agent Dispatch)
 
-Run all applicable dimensions based on the selected mode. For each check, record PASS, PARTIAL, or FAIL with file:line evidence.
+Dispatch 3 agents in parallel. Each agent evaluates its assigned dimensions independently.
 
-### D1 -- Meta Tags and On-Page SEO
+### Dimension grouping
 
-Search for title tags, meta descriptions, viewport tags, heading hierarchy. Framework-specific patterns:
-- **Next.js:** Check `metadata` exports in layout.tsx/page.tsx, or `<Head>` usage
-- **Astro:** Check frontmatter and `<head>` in layout components
-- **Hugo:** Check baseof.html and partial templates
-- **WordPress:** Check theme functions.php and SEO plugin config
+| Group | Agent | Dimensions | Shared data |
+|-------|-------|-----------|-------------|
+| A (Technical) | `agents/seo-technical.md` | D1, D4, D5, D11, D12, D13 | Config files, robots.txt, head templates |
+| B (Content) | `agents/seo-content.md` | D7, D9, D10 | Content files, markdown/HTML pages |
+| C (Assets) | `agents/seo-assets.md` | D2, D3, D6, D8 | Layout templates, asset files, build config |
 
-### D2 -- Open Graph and Social
+### Agent dispatch
 
-Check og:title, og:description, og:image, og:type, twitter:card tags. Verify images have correct dimensions (1200x630 for OG).
+Refer to `../../shared/includes/env-compat.md` for dispatch patterns per environment.
 
-### D3 -- Structured Data (JSON-LD)
+**Claude Code:** Use the Agent tool to run all three in parallel:
 
-Search for JSON-LD script tags. Verify server-side rendering (not client-only injection). Check schema types match page content. Validate required properties per schema.org type.
+```
+Agent 1: SEO Technical (Group A)
+  model: "sonnet"
+  type: "Explore"
+  instructions: read agents/seo-technical.md
+  input: detected_stack, [config file paths from Phase 0], codesift_repo
 
-**Critical gate CG5:** JSON-LD must be server-side rendered (present in initial HTML, not injected by JavaScript).
+Agent 2: SEO Content (Group B)
+  model: "sonnet"
+  type: "Explore"
+  instructions: read agents/seo-content.md
+  input: detected_stack, [content directory paths], codesift_repo
 
-### D4 -- Sitemap
+Agent 3: SEO Assets (Group C)
+  model: "sonnet"
+  type: "Explore"
+  instructions: read agents/seo-assets.md
+  input: detected_stack, [layout/template paths], codesift_repo
+```
 
-Check for sitemap.xml generation. Verify it covers all public routes. Check for lastmod dates and changefreq values.
+**Codex:** Define TOML agents per env-compat.md patterns. Each agent runs in read-only sandbox.
 
-**Critical gate CG1:** Sitemap must exist and be accessible.
+**Cursor:** No agent dispatch. Execute each agent's analysis sequentially yourself, maintaining identical output format.
 
-### D5 -- AI Crawlers and Crawlability
+### Waiting for results
 
-Check robots.txt for Googlebot access. Check for AI crawler policies (GPTBot, ClaudeBot, Perplexitybot). Verify conscious decisions (explicit allow/disallow, not default). Check for llms.txt file.
+Collect all 3 agent reports before proceeding to Phase 3 (live audit) or Phase 4 (scoring).
 
-**Critical gates:**
-- **CG2:** Googlebot not blocked in robots.txt
-- **CG6:** AI crawler policy is a conscious decision (not default/absent)
+If an agent fails or times out:
+- Retry once with same inputs
+- If retry fails: log the error, proceed with results from successful agents, note the gap in the report
 
-### D6 -- Images
+### Merge logic (before Phase 4)
 
-Check for alt text on images. Verify modern formats (WebP, AVIF). Check lazy loading on below-fold images. Verify width/height attributes prevent CLS.
-
-### D7 -- Internal Linking
-
-Check for orphan pages (no internal links pointing to them). Verify consistent navigation patterns. Check for broken internal link patterns in code.
-
-### D8 -- Performance (code-level)
-
-Check for render-blocking resources. Verify font loading strategy (font-display: swap). Check image optimization (next/image, astro:image, srcset). Check for excessive JavaScript bundle indicators.
-
-### D9 -- Content Quality
-
-Scan content files for word count (thin content < 300 words). Check for answer-first structure. Verify heading hierarchy within content. Check for duplicate title patterns.
-
-### D10 -- GEO/AI Readiness
-
-Check for llms.txt file. Verify structured HTML (semantic elements, clear hierarchy). Check content "chunkowability" for AI extraction. Assess E-E-A-T signals (author info, dates, citations).
-
-### D11 -- Security and Technical
-
-**Critical gate CG3:** HTTPS active (check for mixed content, http:// references).
-
-Check for security headers configuration. Verify canonical URL patterns. Check for noindex on staging/preview environments.
-
-### D12 -- Internationalization
-
-Check for hreflang tags. Verify language attribute on html element. Check for locale-specific URL patterns.
-
-### D13 -- Monitoring
-
-Check for analytics integration. Verify Search Console setup indicators. Check for structured error reporting.
+After all agents complete:
+1. Concatenate findings arrays from all 3 agents
+2. Assign sequential finding IDs (F1, F2, F3, ...) across the merged list
+3. Each agent returns per-dimension scores -- pass through unchanged to Phase 4 scoring
+4. Evaluate critical gates: CG1-CG4, CG6 from Technical agent; CG5 from Assets agent
+5. If any dimension is missing (agent failed): mark as "INSUFFICIENT DATA" in scoring
 
 ---
 
@@ -223,9 +216,15 @@ Check for analytics integration. Verify Search Console setup indicators. Check f
 
 Measure LCP, CLS, and INP using the available tool chain. Record measurement source (Lighthouse, Performance API, or N/A).
 
-### 3.2 Rendered DOM Verification
+### 3.2 Source and Rendered Verification
 
-Verify that JSON-LD is present in rendered DOM (not just source). Check that meta tags are rendered correctly. Verify OG images are accessible.
+Verify JSON-LD and meta tags in both:
+1. **Initial HTML source / raw response body** -- fetch without JS execution (curl or equivalent). This is the SSR proof for CG5.
+2. **Rendered DOM after page execution** -- confirms tags are visible post-hydration.
+
+**Rendered DOM alone is NOT sufficient evidence for CG5.** JSON-LD injected client-side only after hydration = CG5 FAIL.
+
+Also check that meta tags are rendered correctly and OG images are accessible.
 
 ### 3.3 Broken Link Check
 
@@ -241,18 +240,26 @@ If browser tools available, capture screenshots at 3 breakpoints (1440, 768, 375
 
 ### 4.1 Evaluate Critical Gates
 
-All 6 gates MUST have explicit PASS/FAIL:
+All 6 gates MUST have explicit status:
 
 ```
 CG1: Sitemap exists                    -- from D4
 CG2: Googlebot not blocked             -- from D5
 CG3: HTTPS active                      -- from D11
-CG4: Canonical tags present            -- from D1
+CG4: Canonical tags present            -- from D11
 CG5: JSON-LD server-side rendered      -- from D3
 CG6: AI crawler policy conscious       -- from D5
 ```
 
-**Any critical gate = 0 means overall result is FAIL regardless of score.**
+**Critical gate statuses:**
+- `PASS` -- evidence confirms gate is satisfied
+- `FAIL` -- evidence confirms gate is not satisfied
+- `INSUFFICIENT DATA` -- static analysis is inconclusive and no live verification is available
+
+**Scoring rules:**
+- Any critical gate = `FAIL` -> overall result = `FAIL` regardless of score
+- Any critical gate = `INSUFFICIENT DATA` -> overall result = `PROVISIONAL` until live/source verification is completed
+- `PROVISIONAL` does not block CI gates (it is not a FAIL) but flags incomplete assurance
 
 ### 4.2 Dimension Scores
 
@@ -296,7 +303,7 @@ Before generating the report, verify:
 
 1. **Count Consistency:** Total checks = sum of all dimension checks
 2. **Score Math:** Recalculate overall from dimension scores * weights. Must match within 0.1.
-3. **Critical Gate Completeness:** All 6 gates have explicit PASS/FAIL with evidence.
+3. **Critical Gate Completeness:** All 6 gates have explicit PASS/FAIL/INSUFFICIENT DATA with evidence.
 4. **Evidence Completeness:** Every FAIL finding has file:line or INSUFFICIENT DATA note.
 5. **Priority Math:** Verify 3D priority calculation `(SEO * 0.4) + (Business * 0.4) + ((4 - Effort) * 0.2)`.
 
@@ -313,7 +320,7 @@ SEO/GEO AUDIT -- [project name]
 ----
 SEO:     [N]/100  [HEALTHY / NEEDS ATTENTION / AT RISK / CRITICAL]
 GEO:     [N]/100  [same scale]
-Content: [N]/100  [same scale]
+Tech:    [N]/100  [same scale]
 ----
 ```
 
@@ -357,6 +364,68 @@ Save to: `audit-results/seo-audit-YYYY-MM-DD.md`
 
 Auto-increment if a report for today already exists.
 
+### Phase 6.2: JSON Output
+
+After saving the markdown report, also save structured JSON findings for downstream consumption by `zuvo:seo-fix` and CI pipelines.
+
+**File:** `audit-results/seo-audit-YYYY-MM-DD.json`
+
+Auto-increment with `-N` suffix if same-day file exists (same convention as `.md`).
+
+**Schema:** See `../../shared/includes/audit-output-schema.md` for the full schema definition.
+
+Serialize from Phase 4 scoring results:
+
+```json
+{
+  "version": "1.0",
+  "skill": "seo-audit",
+  "timestamp": "[current ISO 8601]",
+  "project": "[working directory absolute path]",
+  "args": "[arguments from Phase 0]",
+  "stack": "[detected stack from Phase 0]",
+  "result": "[PASS, FAIL, or PROVISIONAL from critical gate evaluation]",
+  "score": {
+    "overall": [0-100],
+    "tier": "[A/B/C/D/FAIL]",
+    "sub_scores": {
+      "seo": [0-100],
+      "geo": [0-100],
+      "tech": [0-100]
+    }
+  },
+  "critical_gates": [
+    { "id": "CG1", "name": "Sitemap exists", "status": "PASS|FAIL", "evidence": "..." }
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "dimension": "D4",
+      "check": "sitemap-exists",
+      "status": "FAIL",
+      "severity": "HIGH",
+      "seo_impact": 3,
+      "business_impact": 3,
+      "effort": 1,
+      "priority": 2.8,
+      "evidence": "...",
+      "file": null,
+      "line": null,
+      "fix_type": "sitemap-add",
+      "fix_safety": "MODERATE",
+      "fix_params": { "framework": "astro", "site_url": "https://example.com" }
+    }
+  ],
+  "summary": {
+    "findings_count": { "total": 13, "critical": 3, "high": 4, "medium": 4, "low": 2 },
+    "quick_wins": 6,
+    "fixable": { "safe": 5, "moderate": 4, "dangerous": 2, "no_template": 2 }
+  }
+}
+```
+
+The `findings[].fix_type`, `findings[].fix_safety`, and `findings[].fix_params` fields enable `zuvo:seo-fix` to apply automated fixes without re-scanning the codebase.
+
 ---
 
 ## Phase 7: Backlog and Next Steps
@@ -365,9 +434,12 @@ Auto-increment if a report for today already exists.
 
 **Activated with `--persist-backlog` flag.**
 
-Emit entries to `memory/backlog.md` for findings with Priority >= 2.0 or SEO Impact = HIGH:
-- Fingerprint format: `file|dimension|check-id`
-- Deduplicate against existing entries
+Emit entries to `memory/backlog.md` for findings that meet at least one condition:
+- Priority >= 2.0
+- Any Critical Gate = FAIL
+
+Fingerprint format: `file|dimension|check-id`
+Deduplicate against existing entries.
 
 ### Next-Action Routing
 

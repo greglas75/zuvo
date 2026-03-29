@@ -41,6 +41,7 @@ Do this on every message. Not just the first one.
 | Write unit/integration tests for existing code | `zuvo:write-tests` |
 | Write end-to-end tests (Playwright) | `zuvo:write-e2e` |
 | Fix systematic test anti-patterns across files | `zuvo:fix-tests` |
+| Fix SEO audit findings, apply SEO fixes | `zuvo:seo-fix` |
 
 ### Priority 3 — Audit (analysis and reporting)
 
@@ -74,6 +75,16 @@ Do this on every message. Not just the first one.
 | Respond to code review feedback | `zuvo:receive-review` |
 | Isolate work in a git worktree | `zuvo:worktree` |
 
+### Priority 5 — Release (post-code lifecycle)
+
+| User intent | Skill |
+|-------------|-------|
+| Ship a release, push code, create PR, bump version | `zuvo:ship` |
+| Deploy to production, merge PR, verify health | `zuvo:deploy` |
+| Monitor production after deploy, check for regressions | `zuvo:canary` |
+| Sync documentation with a release | `zuvo:release-docs` |
+| Engineering retrospective, shipping velocity | `zuvo:retro` |
+
 ---
 
 ## Pipeline Enforcement
@@ -106,6 +117,7 @@ When a message could match multiple skills, use priority order:
 2. **Task** — If the intent matches a specific task skill, use it.
 3. **Audit** — If the user asks for analysis or a report, use the matching audit skill.
 4. **Utility** — Backlog, docs, presentations, worktree management.
+5. **Release** — Ship, deploy, monitor, document, reflect.
 
 Within the same priority level, pick the most specific match. "Review my API endpoints" matches `zuvo:api-audit` (more specific) over `zuvo:review` (general code review).
 

@@ -1,6 +1,6 @@
 # Skills Reference
 
-Zuvo includes 33 skills organized into 6 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
+Zuvo includes 38 skills organized into 7 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
 
 ---
 
@@ -86,6 +86,18 @@ Scoped task execution for common development work.
 
 ---
 
+## Release Skills
+
+| Skill | Description | When to use | Key flags |
+|-------|-------------|-------------|-----------|
+| `zuvo:ship` | Pre-merge release pipeline with auto-scaled review by diff size. Tests, version bump, changelog, tag, push or PR. | Code is ready to ship | `--fast`, `--full`, `--no-bump`, `--dry-run`, `patch`/`minor`/`major` |
+| `zuvo:deploy` | Platform-aware deployment with health check and rollback. Detects Vercel, Fly, Netlify, Railway, GHA. | After ship, ready for production | `--url`, `--skip-ci-wait`, `--skip-health`, `#<number>` |
+| `zuvo:canary` | Post-deploy monitoring with browser or HTTP mode. Configurable duration and interval. | After deploy, to verify production health | `--duration`, `--interval`, `--quick`, `--max-errors` |
+| `zuvo:release-docs` | Diff-driven documentation sync. Delegates to zuvo:docs for changelog and staleness fixing. | After shipping, to keep docs current | `--dry-run`, `<range>` |
+| `zuvo:retro` | Engineering retrospective from git metrics. Deployment frequency, lead time, churn, backlog health. | Periodically, or after a release cycle | `--since`, `--path`, `<range>` |
+
+---
+
 ## Utility Skills
 
 | Skill | Description | When to use | Key flags |
@@ -108,5 +120,6 @@ Scoped task execution for common development work.
 | Structure/SEO/Arch | 3 |
 | Design | 3 |
 | Testing | 4 |
+| Release | 5 |
 | Utility | 4 |
-| **Total** | **33** |
+| **Total** | **38** |

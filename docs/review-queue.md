@@ -25,3 +25,4 @@ Commits pending review. Auto-managed:
 - c1bf282 (2026-03-28) feat: add 26 Semgrep/CodeSift/frequency patterns + AP25-AP29 to rules
 - 12e42bd (2026-03-28) release: v1.0.1 — feat: add 26 patterns + AP25-AP29, fix agent count, platform status
 - a4ed959 (2026-03-28) feat: add PHP rules — 8 Semgrep patterns + SSRF, file upload, multi-tenant, CSRF
+- 883cbb9 (2026-03-28) docs: update review queue

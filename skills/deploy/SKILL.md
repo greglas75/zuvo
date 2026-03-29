@@ -1,0 +1,229 @@
+---
+name: deploy
+description: >
+  Deploy to production and verify health. Reads ship state, merges PR if applicable,
+  detects platform (Vercel/Fly/Netlify/Railway/Render/GHA), waits for CI, triggers
+  deploy, runs health check, offers rollback on failure.
+  Flags: --url, --skip-ci-wait, --skip-health, #<number>.
+---
+
+# zuvo:deploy
+
+Deploy to production and verify health. Merge, deploy, check, rollback if needed.
+
+## Argument Parsing
+
+Parse `$ARGUMENTS` for these flags:
+
+| Argument | Effect |
+|----------|--------|
+| _(no flags)_ | Auto-detect from `memory/last-ship.json` or git tags |
+| `--url <url>` | Override production URL for health check |
+| `--skip-ci-wait` | Don't wait for CI (manual check) |
+| `--skip-health` | Skip health check after deploy |
+| `#<number>` | Specific PR number to merge (overrides last-ship.json PR) |
+
+Flags can be combined: `zuvo:deploy --url https://myapp.com --skip-ci-wait`
+
+## Mandatory File Loading
+
+Read each file below using the Read tool. Print the checklist with status before proceeding. Do not proceed from memory.
+
+```
+CORE FILES LOADED:
+  1. ../../shared/includes/env-compat.md          — READ/MISSING
+  2. ../../shared/includes/run-logger.md           — READ/MISSING
+  3. ../../shared/includes/platform-detection.md   — READ/MISSING
+```
+
+If any file is missing: proceed in degraded mode. Note which files are unavailable in the Phase 7 output.
+
+---
+
+## SAFETY RULES
+
+**Read these before executing any phase. Violations are non-recoverable.**
+
+1. **NEVER** use `git push --force` or `git push -f`. Under no circumstances.
+2. **NEVER** auto-rollback without user consent. Always present the rollback command and let the user decide whether to execute it.
+3. **NEVER** push to a remote repository without explicit user confirmation. In non-interactive environments (Codex, Cursor): skip the push step entirely and state that pushing is a separate manual step (per env-compat.md hard rule).
+
+---
+
+## Phase 0: Read Ship State
+
+1. **Read `memory/last-ship.json`** if it exists. Extract: `version`, `tag`, `range`, `flow` (`"direct"` or `"pr"`), `pr` (number or null), `tagPushed` (boolean).
+   - If `tagPushed` is `false` (E15/DD7 — tag created locally but not pushed):
+     - **Interactive (Claude Code, Codex CLI):** Ask: "Tag `v<version>` was created locally but not pushed. Push now?" If yes: `git push origin v<version>`. If no: continue.
+     - **Non-interactive (Codex App, Cursor):** `[AUTO-DECISION]: tag push skipped in non-interactive environment. Push manually: git push origin v<version>`
+
+2. **If `memory/last-ship.json` does not exist:** fall back to `git describe --tags --abbrev=0`. Use the result as the version/tag. Set `flow` to `"direct"`, `pr` to `null`.
+
+3. **If `#<number>` argument was provided:** override the PR number, regardless of `last-ship.json`. Set `flow` to `"pr"`.
+
+---
+
+## Phase 1: Pre-merge Checks (PR flow only)
+
+**Skip this entire phase if `flow` is `"direct"`.**
+
+1. **Verify PR exists and is open:** `gh pr view <number> --json state`
+   - If state is not `"OPEN"`: STOP. "PR #<number> is not open (state: <state>). Cannot deploy a closed or merged PR."
+
+2. **Check mergeability (E8):** `gh pr view <number> --json mergeable`
+   - If not mergeable: STOP. "PR #<number> has merge conflicts. Resolve conflicts and re-run `zuvo:deploy`."
+
+3. **Check base branch CI status (E7):** `gh run list --branch main --limit 1 --json status,conclusion`
+   - If failing: WARN. "CI is currently failing on the base branch (not caused by your changes). Proceed with merge anyway, or investigate first?" In non-interactive: `[AUTO-DECISION]: base CI failing, proceeding with merge`.
+
+4. **Check PR CI status:** `gh pr checks <number> --json name,state,conclusion`
+   - Required checks failing: STOP. "Required CI checks are failing on PR #<number>."
+   - Checks pending: proceed to Phase 2 (CI wait handles it after merge).
+   - All checks pass: proceed to Phase 2.
+
+---
+
+## Phase 2: Merge (PR flow only)
+
+**Skip this entire phase if `flow` is `"direct"`.**
+
+1. **Merge the PR:** `gh pr merge <number> --squash --delete-branch`
+
+2. **If merge fails:** STOP. Do not retry. "Merge failed for PR #<number>. Investigate the error above and retry manually."
+
+3. **Record the merge commit SHA** for CI matching in Phase 4: `git fetch origin main && git rev-parse origin/main`
+
+---
+
+## Phase 3: Platform Detection
+
+1. **Read `../../shared/includes/platform-detection.md`** and follow the 5-step detection algorithm described there:
+   - Step 1: Scan project root for platform config files in priority order.
+   - Step 2: If multiple detected, use first match; log all.
+   - Step 3: Verify CLI installed (`which <cli>`). Downgrade to unknown if missing.
+   - Step 4: GHA-only special case — parse workflow YAML.
+   - Step 5: Render special case — no CLI, prompt for webhook URL.
+
+2. **Record the detection result:**
+   ```
+   platform:    "<detected platform>"
+   cli:         "<deploy command>" or null
+   healthCmd:   "<health check command>" or null
+   rollbackCmd: "<rollback command>" or null
+   ```
+
+3. **Print the result to the user:** "Detected platform: **<platform>** (from `<config-file>`)"
+
+4. **If no platform detected (E9):** Print a manual deployment checklist:
+   ```
+   No deployment platform detected. Manual deployment required:
+     1. Verify the merge commit is on the target branch
+     2. Deploy using your project's deployment process
+     3. Verify production health at your production URL
+     4. Run: zuvo:canary <url> (optional post-deploy monitoring)
+   ```
+   Set deploy verdict to `PARTIAL`. Skip Phases 4, 5, and 6 — proceed directly to Phase 7 output.
+
+---
+
+## Phase 4: CI Wait
+
+**If `--skip-ci-wait` was passed:** skip this phase. Print: "CI wait skipped (--skip-ci-wait flag)."
+
+1. **Find the CI run:** `gh run list --branch main --limit 5 --json headSha,status,conclusion,databaseId`
+
+2. **Match by SHA** from the merge commit (Phase 2 step 3) or the latest commit on main (direct flow).
+
+3. **If already complete:** `conclusion: "success"` — proceed. `conclusion: "failure"` — STOP. "CI failed after merge. Investigate before deploying."
+
+4. **If still in progress:** poll every 30 seconds with `gh run view <run-id> --json status,conclusion`.
+
+5. **Timeout: 15 minutes.** If CI has not completed:
+   - **Interactive environment:** Present 3 options:
+     - **(A)** Wait 15 more minutes
+     - **(B)** Skip CI check and proceed to deploy
+     - **(C)** Abort deployment
+   - **Non-interactive environment:** `[AUTO-DECISION]: CI wait timeout after 15m. Proceeding to deploy.`
+
+---
+
+## Phase 5: Deploy
+
+1. **Run the deploy command** from the platform detection result (e.g., `vercel --prod`, `fly deploy`, `netlify deploy --prod`).
+
+2. **Wait for deployment to complete:**
+   - **Vercel / Netlify:** Wait 60 seconds (auto-deploy on push).
+   - **Fly.io:** Poll `fly status --app <app>` until running.
+   - **GitHub Actions:** Poll `gh run view <run-id>` until complete.
+   - **Railway:** `railway status` or wait 60 seconds.
+
+3. **If deploy fails:** STOP. Print error. Offer rollback (do NOT auto-execute):
+   ```
+   Deploy command failed. To rollback:
+     <rollbackCmd from platform detection>
+   Run this command to rollback, or investigate further.
+   ```
+
+---
+
+## Phase 6: Health Check
+
+**If `--skip-health` was passed:** skip this phase. Print: "Health check skipped (--skip-health flag)."
+
+1. **Determine the production URL:**
+   - `--url <url>` provided: use it.
+   - Platform has a known URL (from detection, config, or deploy output): use it.
+   - Otherwise: ask the user. Non-interactive: `[AUTO-DECISION]: no production URL available, skipping health check`.
+
+2. **Run the health check:** `curl -s -o /dev/null -w "%{http_code} %{time_total}" <url>`
+
+3. **Interpret the result:**
+   - **HTTP 200 + time < 10s:** PASS.
+   - **HTTP 200 + time >= 10s:** WARN. "Response is slow (<time>s). Consider investigating."
+   - **HTTP non-200:** FAIL.
+
+4. **If FAIL (E10):** Present rollback option. Do NOT auto-execute.
+   ```
+   Health check FAILED (HTTP <status>, <time>s).
+   To rollback, run:
+     <rollbackCmd from platform detection>
+   Run this command to rollback, or investigate further.
+   ```
+
+---
+
+## Phase 7: Output
+
+### 1. Print DEPLOY COMPLETE block
+
+```
+DEPLOY COMPLETE
+  Version:     v<version>
+  Platform:    <platform> (detected from <config-file>)
+  CI:          PASS / SKIP / TIMEOUT (<details>)
+  Deploy:      SUCCESS / PARTIAL / FAILED
+  Health:      PASS / WARN / FAIL / SKIP (HTTP <status>, <time>s)
+  URL:         <production-url>
+
+  Next: zuvo:canary <url> (optional monitoring)
+```
+
+### 2. Run logger
+
+Append a run log entry per `../../shared/includes/run-logger.md`:
+
+```
+<ISO-8601>\tdeploy\t<project>\t-\t-\t<PASS|WARN|PARTIAL|FAIL>\t-\t7-phase\tv<version> <platform> <health-verdict>
+```
+
+---
+
+## Edge Cases Summary
+
+| Edge | Scenario | Handling |
+|------|----------|----------|
+| E7 | CI failing on base branch | WARN — user decides whether to proceed with merge |
+| E8 | PR has merge conflicts | STOP — "Resolve conflicts and re-run zuvo:deploy" |
+| E9 | No deployment platform detected | Manual checklist, set verdict to PARTIAL, skip Phases 4-6 |
+| E10 | Health check fails after deploy | Offer rollback command, do NOT auto-execute |
+| E15/DD7 | `tagPushed: false` in last-ship.json | Push tag first (interactive confirmation) or skip (non-interactive) |
