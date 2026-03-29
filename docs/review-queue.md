@@ -35,3 +35,9 @@ Commits pending review. Auto-managed:
 - 4b57242 (2026-03-29) fix: merge logic contradiction + add fix-output-schema.md
 - f071a3e (2026-03-29) fix: rewrite build skill — tiered workflow, executable agents, env-compat alignment
 - 55e8b35 (2026-03-29) fix: build skill round 2 — tiering, hotspots, types, backlog, agent dispatch
+- 258fcdd (2026-03-29) fix: release pipeline contract overhaul — ship/deploy/canary/retro/release-docs
+- f022e68 (2026-03-29) fix: build skill round 3 — agent model, hotspots, scope cap, duplication
+- 54bb4de (2026-03-29) fix: close cross-skill contract gaps — range-suffix, branch, field names
+- 15d564c (2026-03-29) fix: build skill round 4 — env-compat alignment, global hotspots, run log
+- fff62f9 (2026-03-29) fix: close remaining cross-skill contracts
+- ee064aa (2026-03-29) feat: canonical check registry, mode routing, CG3/CG4 fixes, public docs sync

@@ -41,7 +41,7 @@ If any file is missing, STOP. Do not proceed from memory.
 | File | Load when | Skip when |
 |------|-----------|-----------|
 | `{plugin_root}/rules/testing.md` | Before ETAP-1B (test writing phase) | Test mode is RUN_EXISTING or VERIFY_COMPILATION |
-| `{plugin_root}/rules/test-quality-rules.md` | Before ETAP-1B when writing new tests | Test mode is not WRITE_NEW or IMPROVE_TESTS |
+| `{plugin_root}/rules/test-quality-rules.md` | Before ETAP-1B when test mode is WRITE_NEW or IMPROVE_TESTS | Test mode is RUN_EXISTING or VERIFY_COMPILATION |
 | `{plugin_root}/rules/file-limits.md` | Phase 0 (stack detection) | If unavailable, use defaults: 300L service, 200L component |
 | `{plugin_root}/rules/security.md` | When refactoring touches auth, input validation, or secrets | No security-sensitive code in scope |
 
@@ -77,7 +77,10 @@ $ARGUMENTS = other         -> task description, FULL mode
 "continue <path>"          -> RESUME: user passes readable file path (e.g., src/services/order.service.ts), skill computes hash internally to find .zuvo/contracts/refactor-{hash}.json
 ```
 
-Control flags can combine with modes: `zuvo:refactor standard no-commit` runs STANDARD mode without committing.
+**Flag priority rules:**
+- `continue` has highest priority: it overrides the execution mode (the mode is restored from the contract state file). All other flags except `no-commit` are ignored when `continue` is active. Example: `zuvo:refactor standard continue` ignores `standard` and resumes from the contract's recorded mode.
+- `no-commit` and `plan-only` combine freely with any mode: `zuvo:refactor standard no-commit` runs STANDARD mode without committing.
+- `plan-only` and `continue` are mutually exclusive (continue resumes past the plan phase).
 
 ### Mode Comparison
 
@@ -98,7 +101,7 @@ For small, low-risk refactors.
 
 **Auto-detection criteria:** File <=120L, <=1 file changed, type is one of EXTRACT_METHODS / SIMPLIFY / RENAME_MOVE / DELETE_DEAD, no GOD_CLASS or security or API or migration involvement.
 
-**Flow:** Stack detect -> Type detect -> Inline CQ audit -> Plan -> Baseline tests -> Execute -> Verify (tsc + tests + CQ self-eval) -> Commit.
+**Flow:** Stack detect -> Type detect -> Inline CQ audit -> Quick Plan (inline scope + extraction list, no approval stop) -> Baseline tests -> Execute -> Verify (tsc + tests + CQ self-eval) -> Commit.
 
 Skips: sub-agents, backup branch, contract state file, multi-phase ETAP, backlog, metrics, all approval stops.
 
@@ -319,6 +322,8 @@ Update this file after each ETAP stage completes. If the session is interrupted,
 
 Refer to `env-compat.md` for the correct dispatch pattern per environment.
 
+The orchestrator passes the following to each agent: **target file**, **CODESIFT_AVAILABLE** flag, and **repo identifier** (from the orchestrator's own `list_repos()` call in Phase 0). Agents must NOT call `list_repos()` themselves — the orchestrator owns that call.
+
 Dispatch two agents in parallel (background) to inform the plan:
 
 #### Agent 1: Dependency Mapper
@@ -357,7 +362,7 @@ Produce the refactoring plan incorporating sub-agent results (when available):
 2. **Extraction list** -- For each function or block to extract: source location, destination, new signature.
 3. **Dependency impact** -- From the Dependency Mapper: which files need import updates, which tests need adjustment.
 4. **Existing code reuse** -- From the Existing Code Scanner: existing utilities that can replace planned extractions.
-5. **Test discovery** -- Before routing, find and evaluate existing tests:
+5. **Test discovery** -- Before routing, find and evaluate existing tests. **Skip this step entirely if the target is a type file or config file** (route directly to VERIFY_COMPILATION at step 6, priority 1).
 
    ```
    TEST DISCOVERY: [target file]
@@ -604,7 +609,7 @@ Process a queue of files through the full ETAP pipeline autonomously. Zero inter
    - `hotspot_rank` = file's rank in `analyze_hotspots`, normalized to 0–1
    - `cq_gap` = `1 - (cq_score / cq_applicable)` (e.g., 11/18 = gap 0.39)
 
-   If CodeSift pre-scan is unavailable: `PriorityScore = cq_gap` (fallback).
+   If CodeSift pre-scan is unavailable: `PriorityScore = cq_gap` (fallback). The queue is still sorted by PriorityScore descending even when using the fallback formula.
 
 5. Rewrite the queue file with enriched format, sorted by PriorityScore descending:
 

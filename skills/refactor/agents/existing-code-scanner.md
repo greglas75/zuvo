@@ -23,12 +23,12 @@ The orchestrator provides:
 3. **CODESIFT_AVAILABLE** — whether CodeSift MCP tools are accessible
 4. **Repo identifier** — for CodeSift calls (if available)
 
-## Tool Discovery (run first)
+## Tool Selection
 
-Before any code analysis, discover available tools:
-1. Check whether CodeSift tools are available in the current environment. If so, use the CodeSift tools below.
-2. `list_repos()` — get the repo identifier (call once, cache result)
-3. If CodeSift not available, fall back to Read/Grep/Glob
+The orchestrator provides CODESIFT_AVAILABLE and repo identifier. Do NOT call `list_repos()` — the orchestrator already did.
+
+- If CODESIFT_AVAILABLE: use CodeSift tools below with the provided repo identifier.
+- If not available: fall back to Read/Grep/Glob.
 
 ## CodeSift Workflow
 
