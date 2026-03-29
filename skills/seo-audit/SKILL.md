@@ -219,7 +219,7 @@ If an agent fails or times out:
 After all agents complete:
 1. Concatenate findings arrays from all 3 agents
 2. Assign stable finding IDs using format `{dimension}-{check}` (e.g., `D4-sitemap-exists`, `D3-json-ld-ssr`). These IDs are deterministic across runs for the same codebase — unlike sequential F1/F2 which shift when findings change. Also assign display-order numbers (F1, F2, ...) for human-readable reports, but `--finding` filtering in seo-fix uses the stable ID.
-3. Each agent returns per-dimension scores -- pass through unchanged to Phase 4 scoring
+3. Each agent returns raw check statuses per dimension -- main agent calculates numeric scores in Phase 4
 4. Evaluate critical gates: CG1-CG4, CG6 from Technical agent; CG5 from Assets agent
 5. If any dimension is missing (agent failed): mark as "INSUFFICIENT DATA" in scoring
 
