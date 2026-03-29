@@ -10,7 +10,7 @@ A tiered workflow for implementing new features with bounded scope. Ceremony sca
 **Scope:** Features affecting 1-5 production files. Test files, backlog entries, and run-log do not count toward the file limit.
 **Out of scope:** Bug investigation (`zuvo:debug`), structural reorganization (`zuvo:refactor`), code review (`zuvo:review`), multi-file features with unclear scope (`zuvo:brainstorm` pipeline).
 
-**Scope expansion:** If implementation reveals that the feature requires >5 production files, STOP. Ask the user: continue as build (with justification) or escalate to `zuvo:brainstorm`? Structural splits (extracting helpers to respect file limits) auto-expand without asking.
+**Scope expansion:** If implementation reveals that the feature requires >5 production files, STOP. Ask the user: continue as build (with justification) or escalate to `zuvo:brainstorm`? Structural splits (extracting helpers to respect file-limits.md thresholds) may auto-expand up to +2 production files without asking. Beyond +2, ask the user.
 
 ## Argument Parsing
 
@@ -34,7 +34,11 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 - Plan approval and commit confirmation follow env-compat rules for the detected environment.
 - `--auto` and `--auto-commit` flags are additive overrides on top of env-compat defaults (they loosen, never tighten).
 
-**Agent dispatch model:** This skill uses inline prompt dispatch — agent instructions are embedded in the skill file, not in separate `agents/*.md` files. In all environments (Claude Code, Codex, Cursor), dispatch agents using the inline prompts in Phase 1b and Phase 4.1. There are no external agent files to reference. Codex TOML agent configs are not required for this skill.
+**Agent dispatch model:** This skill embeds all agent prompts inline. There are no separate `agents/*.md` files for build. How dispatch works per environment:
+
+- **Claude Code:** Use the Task tool (or Agent tool) with the inline prompt from Phase 1b / Phase 4.1 directly.
+- **Codex:** If Codex supports ad-hoc agent spawn with inline instructions, use that. If it requires TOML-registered agents, the lead agent must execute the analysis inline (same as Cursor fallback).
+- **Cursor:** No agent spawning. Execute each agent's analysis yourself in the current context, using the same prompt and output format.
 
 ## CodeSift Integration
 
@@ -44,7 +48,7 @@ After editing any file, update the index: `index_file(path="/absolute/path/to/fi
 
 ## Mandatory File Reading
 
-Before starting work, read each file below using the Read tool. Print the checklist with status.
+Before starting work, read each file below. Print the checklist with status.
 
 ```
 CORE FILES LOADED:
@@ -104,7 +108,7 @@ Check for these in the feature description and target files:
 | Capability | LIGHT | STANDARD | DEEP |
 |-----------|-------|----------|------|
 | Discovery pass (Phase 1a) | Yes | Yes | Yes |
-| Analysis agents (Phase 1b) | No | Blast Radius only | Blast Radius + Duplication Scanner |
+| Analysis agents (Phase 1b) | No | Blast Radius agent + inline duplication check | Blast Radius + Duplication Scanner agents |
 | Implementation plan | Inline, brief | Full plan with all sections | Full plan with all sections |
 | CQ self-eval (CQ1-CQ22) | Critical gates only | Full CQ1-CQ22 | Full CQ1-CQ22 |
 | Test quality self-eval (Q1-Q17) | Inline check | Full Q1-Q17 | Full Q1-Q17 |
@@ -151,7 +155,7 @@ Before any agent dispatch, establish the scope manually:
    - Fallback: `grep` for import statements referencing the file
 3. **Hotspot detection.** Check if candidate files are churn hotspots:
    - CodeSift: `analyze_hotspots(repo, since_days=90)` — flag any candidate in the top 10
-   - Fallback: `git log --oneline --since="90 days ago" -- {file} | wc -l` — flag if >15 commits
+   - Fallback: `git log --oneline --since="90 days ago" -- {each candidate file} | wc -l` for all candidates, then rank by commit count — flag the top 10 across the project. A candidate file is a hotspot if it appears in that top 10.
 4. **Risk signal scan.** Check the candidate files against the risk signals list (including hotspot results from step 3). Update the tier if signals change.
 
 Output:
@@ -199,6 +203,18 @@ Dispatch with:
   High-risk: [widely-imported or shared files]
   Recommendation: [what to test extra carefully]"
 ```
+
+#### Inline Duplication Check (STANDARD only)
+
+No agent dispatch. The lead performs a quick overlap search during Phase 1b:
+
+1. For each new function/component/service planned, run:
+   - CodeSift: `search_symbols(repo, "{name}", include_source=true, detail_level="compact")` + `codebase_retrieval(repo, queries=[{type:"semantic", query:"{what this function does}"}])`
+   - Fallback: `grep -rn "{name}\|{synonym}" --include="*.ts" --include="*.py"` in the project
+2. If any match has >70% name or purpose overlap, flag it as a reuse candidate.
+3. Include results in Phase 2 plan section "4. Duplication Check" (not "N/A").
+
+This is lighter than the DEEP agent but catches the most common case: AI rewriting an existing helper.
 
 #### Existing Code Scanner (DEEP only)
 
@@ -269,7 +285,7 @@ FORBIDDEN: files outside these lists, unrelated improvements, opportunistic refa
 [From Blast Radius Mapper, or Phase 1a discovery if STANDARD without agent yet]
 
 ## 4. Duplication Check
-[From Existing Code Scanner if DEEP, otherwise "N/A — STANDARD tier"]
+[From inline check (STANDARD) or Existing Code Scanner agent (DEEP)]
 
 ## 5. Implementation Steps
 [Ordered list with file paths and what changes in each]
