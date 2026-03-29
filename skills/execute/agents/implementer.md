@@ -128,7 +128,7 @@ This is the verification protocol in action. "Should work" is not evidence. "Exi
 
 Do NOT commit. Stage your changes and run verification. The orchestrator will commit after review gates pass.
 
-Stage all files (test and production) that you created or modified for this task. The orchestrator handles the actual commit after spec review and quality review both pass.
+Stage only the files listed in the task's **Files** field (test and production). Do NOT stage unrelated changes in the working tree. The orchestrator handles the actual commit after spec review and quality review both pass.
 
 ---
 

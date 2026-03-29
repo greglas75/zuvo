@@ -42,12 +42,12 @@ If no URL argument is provided, STOP immediately:
 URL is required. Usage: zuvo:canary https://myapp.com
 ```
 
-### Step 2: Detect Browser Tools
+### Step 2: Detect Browser Capability
 
-Use `ToolSearch` to check for `mcp__playwright__*` or `mcp__chrome-devtools__*` tools:
+Check whether the current environment exposes browser automation tools compatible with Playwright or Chrome DevTools.
 
-- If found: set `MODE=full` (browser-based checks available)
-- If not found: set `MODE=degraded`. Print:
+- If browser tooling is available: set `MODE=full`.
+- If not: set `MODE=degraded` and print:
 
   ```
   [DEGRADED: no browser tools] — running HTTP-only checks. Console errors and screenshots unavailable.
@@ -105,9 +105,11 @@ Otherwise: run one check cycle every `--interval` seconds, for the total `--dura
    - Chrome DevTools: `mcp__chrome-devtools__navigate_page(url=<url>)`
 
 2. Check HTTP status by reading the main document request from network logs:
-   - Playwright: `mcp__playwright__browser_network_requests()` — find the document request, check its status.
-   - Chrome DevTools: `mcp__chrome-devtools__list_network_requests()` — find the document request, check its status.
-   - If network request data is unavailable: fall back to checking navigation success (no error = assume 200).
+   - Playwright: inspect the main document request and read its status.
+   - Chrome DevTools: inspect the main document request and read its status.
+   - If browser network data is unavailable: run a degraded-mode `curl` request against the same URL for status verification.
+   - **Do not** assume navigation success means HTTP 200.
+
    Expect 200. Non-200 = CRITICAL alert.
 
 3. Capture console errors:

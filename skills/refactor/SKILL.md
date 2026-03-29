@@ -4,9 +4,9 @@ description: >
   Structured refactoring runner with ETAP workflow, resumable CONTRACT, and
   batch processing. Use when restructuring code, extracting methods, splitting
   files, breaking circular dependencies, or cleaning up god classes. NOT for
-  new features (use zuvo:build). Modes: full (default), auto (skip test
-  approval), quick (small scope), standard (moderate, no agents), plan-only,
-  continue (resume CONTRACT), batch <file> (queue processing).
+  new features (use zuvo:build). Execution modes: full (default), auto (skip
+  test approval), quick (small scope), standard (moderate, no agents), batch
+  <file> (queue processing). Control flags: plan-only, no-commit, continue.
 ---
 
 # zuvo:refactor
@@ -74,7 +74,7 @@ $ARGUMENTS = other         -> task description, FULL mode
 "no-commit"                -> Apply to current mode: skip auto-commits (show diff + proposed message)
 "plan-only"                -> Apply to current mode: ETAP-1A only, stop after plan
 "continue"                 -> RESUME: scan .zuvo/contracts/refactor-*.json, resume active contract
-"continue <path>"          -> RESUME: load contract for specific target by hash
+"continue <path>"          -> RESUME: user passes readable file path (e.g., src/services/order.service.ts), skill computes hash internally to find .zuvo/contracts/refactor-{hash}.json
 ```
 
 Control flags can combine with modes: `zuvo:refactor standard no-commit` runs STANDARD mode without committing.
@@ -147,7 +147,8 @@ If the user passed an explicit mode (`full`, `quick`, `standard`, `auto`, `batch
    Otherwise: record selected_mode in contract state file.
 ```
 
-The user can override auto-detection at the plan approval stop by saying "use full" or "use quick".
+The user can override auto-detection at the plan approval stop by saying "use full" or "use quick". Override is only possible in modes that have a plan approval stop (standard, full, auto). In quick and batch modes there is no approval stop, so no override opportunity.
+This applies only to modes with a plan approval stop (standard, full, auto).
 
 ---
 
@@ -279,7 +280,7 @@ Where `{target-hash}` is the first 8 chars of SHA-1 of the relative target path 
 
 **Resume contract:**
 
-- `continue <path>`: compute target hash, load `.zuvo/contracts/refactor-{hash}.json` directly.
+- `continue <path>`: the user passes the readable target file path (e.g., `zuvo:refactor continue src/services/order.service.ts`). The skill computes the hash internally from the relative path and loads `.zuvo/contracts/refactor-{hash}.json`.
 - `continue` (no argument): scan `.zuvo/contracts/refactor-*.json` for files with `stage != "COMPLETE"`.
   - **0 active:** print "No active refactoring contracts found." and stop.
   - **1 active:** resume it automatically.
@@ -363,14 +364,14 @@ Produce the refactoring plan incorporating sub-agent results (when available):
    -----------------------------------------------
    Test file:  [path or NONE]
    Found via:  [co-located .test.* / .spec.* / __tests__/* / grep import]
-   Q-triage:   Q7=[0|1] Q11=[0|1] Q13=[0|1] | Total: N/17
+   Q-triage:   Q7=[0|1] Q11=[0|1] Q13=[0|1]
    -----------------------------------------------
    ```
 
    Steps:
    a. Search for test file: co-located `.test.*` / `.spec.*`, `__tests__/` directory, grep for imports of target
-   b. If test file found: read it, run quick Q-audit on 3 critical gates (Q7=error-path coverage, Q11=branch coverage, Q13=imports actual production function) + compute total Q score
-   c. Record `test_audit_before` in contract state: `{ "test_file": "...", "q7": 0|1, "q11": 0|1, "q13": 0|1, "q_total": N }`
+   b. If test file found: read it, run quick Q-audit on 3 critical gates only (Q7=error-path coverage, Q11=branch coverage, Q13=imports actual production function). This is a partial triage, not a full Q1-Q17 audit.
+   c. Record `test_audit_before` in contract state: `{ "test_file": "...", "q7": 0|1, "q11": 0|1, "q13": 0|1 }`
    d. If no test file found: record `{ "test_file": null }`
 
 6. **Test mode routing** -- Route based on test discovery results. Evaluate top-to-bottom, first match wins:
@@ -379,8 +380,8 @@ Produce the refactoring plan incorporating sub-agent results (when available):
 |----------|-----------|-----------|
 | 1 | Target is a type file (`.d.ts`, `.types.ts`) or config (`.config.*`, `.*rc`) | VERIFY_COMPILATION |
 | 2 | No test file found (test_file = null) | WRITE_NEW |
-| 3 | Test found AND Q7=1 AND Q11=1 AND Q13=1 AND q_total >= 14 | RUN_EXISTING |
-| 4 | Test found AND (Q7=0 OR Q11=0 OR Q13=0 OR q_total < 14) | IMPROVE_TESTS |
+| 3 | Test found AND Q7=1 AND Q11=1 AND Q13=1 | RUN_EXISTING |
+| 4 | Test found AND (Q7=0 OR Q11=0 OR Q13=0) | IMPROVE_TESTS |
 
 Note: priority 1 (VERIFY_COMPILATION) is checked **before** test discovery runs. If the target is a type/config file, skip test discovery entirely.
 

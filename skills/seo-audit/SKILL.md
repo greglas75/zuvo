@@ -23,6 +23,7 @@ Read these files before any work begins:
 1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
 2. `{plugin_root}/shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
 3. `{plugin_root}/shared/includes/seo-fix-registry.md` -- Canonical fix_type, safety, params (before Phase 6.2 JSON output)
+4. `{plugin_root}/shared/includes/audit-output-schema.md` -- JSON output contract (before Phase 6.2)
 
 Print the checklist:
 
@@ -30,7 +31,8 @@ Print the checklist:
 CORE FILES LOADED:
   1. codesift-setup.md     -- [READ | MISSING -> STOP]
   2. env-compat.md         -- [READ | MISSING -> STOP]
-  3. seo-fix-registry.md   -- [READ | MISSING -> WARN] (needed for JSON fix fields)
+  3. seo-fix-registry.md   -- [READ | MISSING -> STOP]
+  4. audit-output-schema.md -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.

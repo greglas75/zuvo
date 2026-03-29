@@ -77,6 +77,11 @@ Read the plan document. Extract the task list. Each task has:
 
 If the plan document is missing any of these fields for a task, ask the user to clarify before starting execution.
 
+Verify the plan status:
+- If the plan header does NOT include `status: Approved`, stop with `BLOCKED_PLAN_NOT_APPROVED`.
+- Print: "Plan is not approved. Review and set status to Approved before running execute."
+Return `{ status: "BLOCKED_PLAN_NOT_APPROVED", next: "approve plan" }`.
+
 ---
 
 ## Artifact Detection
@@ -154,7 +159,9 @@ Files: [list from plan]
 
 ### Step 2: Dispatch Implementer
 
-Spawn the implementer agent using Task tool.
+Dispatch per environment:
+- **Claude Code:** use the Task tool.
+- **Codex:** use native agents in `~/.codex/agents/` (see `env-compat.md`).
 
 **Model routing** (set by the plan author in task metadata):
 - `**Complexity:** standard` (1-3 files, clear spec) -> Sonnet
@@ -222,7 +229,9 @@ If the user picks option 1, re-dispatch the implementer with the provided contex
 
 ### Step 4: Dispatch Spec Reviewer
 
-Spawn the spec reviewer agent (always Sonnet, read-only).
+Dispatch per environment:
+- **Claude Code:** use the Task tool.
+- **Codex:** use native agents in `~/.codex/agents/`.
 
 **Provide to the agent:**
 - The task spec from the plan
@@ -252,7 +261,9 @@ The user decides: accept the implementation, accept the reviewer's position, or 
 
 ### Step 6: Dispatch Quality Reviewer
 
-Spawn the quality reviewer agent (always Sonnet, read-only).
+Dispatch per environment:
+- **Claude Code:** use the Task tool.
+- **Codex:** use native agents in `~/.codex/agents/`.
 
 **Provide to the agent:**
 - The list of production files created or modified by the implementer

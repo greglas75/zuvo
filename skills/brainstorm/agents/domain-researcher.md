@@ -4,6 +4,9 @@ description: "Researches libraries, APIs, established approaches, and prior art.
 model: sonnet
 tools:
   - Read
+  - Grep
+  - Glob
+  - Bash
 ---
 
 # Domain Researcher Agent

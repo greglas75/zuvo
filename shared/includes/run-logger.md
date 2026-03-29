@@ -8,7 +8,18 @@ Log at the END of every skill run, after all work is done. One line per run.
 
 ## Log File
 
-Append to `~/.zuvo/runs.log`. Create the directory and file if they don't exist.
+Use an environment-aware log path:
+
+- Claude Code: `~/.zuvo/runs.log`
+- Codex CLI (local): `~/.zuvo/runs.log`
+- Codex App (cloud): `memory/zuvo-runs.log`
+- If `~/.zuvo/` is not writable: use the project-local fallback path
+
+Detection:
+- if `CODEX_WORKSPACE` is set, or
+- if `~/.zuvo/` is not writable
+
+then use the project-local path.
 
 ## Format
 
@@ -32,28 +43,22 @@ DATE\tSKILL\tPROJECT\tCQ_SCORE\tQ_SCORE\tVERDICT\tTASKS\tDURATION\tNOTES
 
 ## How to Log
 
-At the end of the skill, append one line:
-
-```bash
-mkdir -p ~/.zuvo
-echo "2026-03-27T14:30:00\tbuild\tmy-project\t18/22\t15/17\tPASS\t4\t5-phase\tadded user export" >> ~/.zuvo/runs.log
-```
+At the end of the skill, resolve the log path first, then append one line.
+Do not hardcode `~/.zuvo/runs.log` in skills that run in multiple environments.
 
 Or if Bash is unavailable, use Write tool to append.
 
-## Environment-Aware Log Path
+## Path Resolution (reference)
 
-The log path depends on the execution environment:
+See the environment-aware log path table in the "Log File" section above. The canonical resolution logic:
 
-| Environment | Log path | Reason |
-|-------------|----------|--------|
-| Claude Code | `~/.zuvo/runs.log` | Persistent home directory |
-| Codex CLI (local) | `~/.zuvo/runs.log` | Real home directory |
-| Codex App (cloud) | `memory/zuvo-runs.log` | Home is ephemeral |
-| Write fails | Skip silently | Do not error on logging failure |
-
-Detection: if the environment variable `CODEX_WORKSPACE` is set or
-`~/.zuvo/` is not writable, use the project-local path.
+```bash
+if [ -n "$CODEX_WORKSPACE" ] || ! mkdir -p ~/.zuvo 2>/dev/null; then
+  LOG_PATH="memory/zuvo-runs.log"
+else
+  LOG_PATH="$HOME/.zuvo/runs.log"
+fi
+```
 
 ## What NOT to Log
 

@@ -33,3 +33,5 @@ Commits pending review. Auto-managed:
 - 4d6ed17 (2026-03-29) fix: pipeline contract — stable finding IDs, version handshake, PROVISIONAL handling, unified fingerprints
 - 60e78e1 (2026-03-29) fix: single source of truth — remove local registries, stable IDs in examples, dispatch terminology
 - 4b57242 (2026-03-29) fix: merge logic contradiction + add fix-output-schema.md
+- f071a3e (2026-03-29) fix: rewrite build skill — tiered workflow, executable agents, env-compat alignment
+- 55e8b35 (2026-03-29) fix: build skill round 2 — tiering, hotspots, types, backlog, agent dispatch

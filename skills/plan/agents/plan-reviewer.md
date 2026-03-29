@@ -67,12 +67,13 @@ Are the tasks properly sized and ordered?
 Does every task follow the RED-GREEN-Verify-Commit structure?
 
 - Every task that creates production code must have a RED step with a failing test
-- Every RED step must include actual test code (not a description)
-- Every GREEN step must include actual production code (not a description)
+- Every RED step must include test intent, target assertions, and test file path
+- Every GREEN step must include implementation targets: symbols to add/change, invariants, and interfaces
+- If a scaffold snippet is included, it must be ≤20 LOC and only to clarify non-obvious patterns
 - Every Verify step must include an exact shell command and expected output
 - Every Commit step must include a behavior-describing commit message
 
-A task with a vague RED step ("write tests for the service") is a FAIL. The test code must be present.
+A task with a vague RED step ("write tests for the service") is a FAIL. The test intent and assertions must be explicit.
 
 ### 5. CQ Gate Awareness
 
@@ -90,7 +91,7 @@ Does the plan respect file size constraints?
 - Components: maximum 200 lines per file
 - If a task's GREEN step would produce a file exceeding these limits, the task should be split
 
-Verify by estimating the size of each task's production code. If the code in the GREEN step is already close to the limit and the file is new, it will likely grow further during later tasks — flag this as a risk.
+Verify by estimating the size from the described targets. If the targets imply a file near the limit and the file is new, flag this as a risk.
 
 ### 7. Buildability
 

@@ -58,6 +58,8 @@ Before dispatching agents, assess the scope of what the user is asking for:
 - **Single concern** (one feature, one module, one workflow): proceed normally.
 - **Multiple subsystems** (e.g., "rebuild the entire backend"): decompose first. Ask the user to pick one subsystem to brainstorm. Each subsystem gets its own spec. Trying to brainstorm everything at once produces vague specs that cannot drive implementation.
 
+**Async mode:** If multiple subsystems are detected and you cannot ask the user, pick a single subsystem to scope as an `[AUTO-DECISION]`. Explain why that subsystem is the highest leverage and list the alternatives you deferred.
+
 Tell the user which scope you detected and why.
 
 ---
@@ -185,7 +187,7 @@ Spec document structure:
 ```markdown
 # <Feature Name> -- Design Specification
 
-> **spec_id:** YYYY-MM-DD-<topic>
+> **spec_id:** YYYY-MM-DD-<topic>-<HHMM>
 > **topic:** <human-readable feature name>
 > **status:** Draft | Reviewed | Approved
 > **created_at:** YYYY-MM-DDTHH:MM:SSZ
@@ -193,7 +195,7 @@ Spec document structure:
 > **approval_mode:** interactive | async
 > **author:** zuvo:brainstorm
 
-`spec_id` is the sole linking key for `zuvo:plan` and `zuvo:execute`. Do not change it after creation. Downstream skills match by `spec_id`, never by filename.
+`spec_id` is the sole linking key for `zuvo:plan` and `zuvo:execute`. Do not change it after creation. Downstream skills match by `spec_id`, never by filename. The `<HHMM>` suffix prevents collisions when multiple specs are created on the same day.
 
 ## Problem Statement
 
@@ -277,7 +279,10 @@ Update spec: `status: Approved`, `approved_at: <now>`, `approval_mode: interacti
 
 ## Output
 
-The deliverable of `zuvo:brainstorm` is an approved spec document at `docs/specs/YYYY-MM-DD-<topic>-spec.md` with status "Approved".
+The deliverable of `zuvo:brainstorm` is a spec document at `docs/specs/YYYY-MM-DD-<topic>-spec.md`.
+
+- **Interactive mode:** status is "Approved" after explicit user approval.
+- **Async mode:** status is "Reviewed" (not approved). The user must explicitly approve before running `zuvo:plan`.
 
 The next step is `zuvo:plan`, which reads this spec and produces an implementation plan. Remind the user of this when brainstorm completes. Do not auto-invoke `zuvo:plan` -- let the user decide when to proceed.
 

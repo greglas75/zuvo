@@ -95,7 +95,13 @@ For each documentation file whose corresponding source files changed:
    Skill(skill="zuvo:docs", args="update <doc-file>")
    ```
 2. `zuvo:docs update` handles staleness detection and targeted section updates.
-3. **Iron rule:** Every documentation claim added or modified must reference a source file (file path, function name, or line reference). If `zuvo:docs` produces a claim without a traceable source reference, flag it and request a correction before accepting the update. Source references use `file_path:line_number` or `file_path:function_name` format — these go in the commit/PR description for traceability, not in the user-facing documentation itself.
+3. **Iron rule:** Every documentation claim added or modified must reference a source file (file path, function name, or line reference). If `zuvo:docs` produces a claim without traceable evidence, flag it and request a correction before accepting the update.
+
+   Write the evidence trail to:
+   `audit-results/release-docs-sources-<range-suffix>.md`
+
+   Use one line per claim in this format:
+   - `<doc-file>` → `<claim summary>` → `<source-file:line>` or `<source-file:function>`
 
 If multiple doc files need updating, invoke `zuvo:docs update` for each in sequence.
 
@@ -103,10 +109,14 @@ If multiple doc files need updating, invoke `zuvo:docs update` for each in seque
 
 ## Phase 4: Debt Detection
 
-1. For each source file that changed in the diff, check whether any documentation file in the project references that source file's module, directory, or exported symbols.
-2. A source file is **undocumented** if no `.md` or `.mdx` file in the project mentions its module or directory name.
-3. For each undocumented changed file: log it as documentation debt.
-4. Documentation debt is informational — it does not change the PASS/FAIL verdict unless explicitly flagged.
+1. Reuse the **same mapping priority order** from Phase 1:
+   - `docs/docs-map.yaml`
+   - `sources:` YAML frontmatter
+   - name heuristic (fallback only)
+2. A changed source file is **documented** if it resolves to at least one documentation file through Priority 1 or Priority 2.
+3. If only the fallback heuristic matches, mark the result as **low-confidence** and report it separately.
+4. A source file is **undocumented** only when no explicit mapping or frontmatter source rule matches it.
+5. Documentation debt is informational unless explicitly flagged by the user.
 
 ---
 
@@ -121,6 +131,7 @@ RELEASE-DOCS COMPLETE
   Docs updated: <list of doc files updated, or "none">
   Docs skipped: <list of doc files with no source changes>
   Debt found:   N file(s) (<list of undocumented files>) / none
+  Evidence:     audit-results/release-docs-sources-<range-suffix>.md
   Verdict:      PASS
 ```
 

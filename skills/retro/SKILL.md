@@ -83,13 +83,15 @@ Run these commands against the resolved `<range>` (append `-- <path>` if `--path
 
 ### Deployment Frequency
 
-Count git tags within the window:
-```bash
-git tag --sort=-creatordate --merged HEAD | while read tag; do
-  git log -1 --format="%ci" "$tag"
-done
-```
-Filter to tags within the window date range. Report as: N releases in period (frequency: 1 per X days/weeks).
+Count **release tags** within the window, not arbitrary tags.
+
+Priority:
+1. Tags referenced by `memory/last-ship.json` (`newTag`, `previousTag`) when available
+2. Tags matching a release pattern such as `v*` or `release-*`
+3. If no release tag pattern can be identified, report:
+   `Deployment frequency unavailable — no reliable release tag pattern detected`
+
+Ignore unrelated tags (experimental, package-local, scratch tags).
 
 ### Release Cycle Span
 
@@ -172,7 +174,13 @@ If fewer than 3 items can be derived from the data, supplement with: "Run `zuvo:
 
 ### Write Report File
 
-Create `audit-results/retro-YYYY-MM-DD-<range-suffix>.md` (use today's date; `<range-suffix>` is the range with `/` and `..` replaced by `_`, e.g., `retro-2026-03-29-v1.1.0_v1.2.0.md`). This prevents collisions when running retro multiple times on the same day for different ranges. If `audit-results/` does not exist, create it.
+Create the report using a readable suffix:
+- Prefer tag-based names when `previousTag` / `newTag` are known:
+  `audit-results/retro-YYYY-MM-DD-<previousTag>_<newTag>.md`
+- Otherwise fall back to a shortened SHA-based suffix:
+  `audit-results/retro-YYYY-MM-DD-<baseSha7>_<releaseSha7>.md`
+
+This prevents collisions and keeps filenames readable. If `audit-results/` does not exist, create it.
 
 Use this exact structure:
 

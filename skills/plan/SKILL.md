@@ -24,6 +24,11 @@ Before doing anything else, locate the spec:
 
 Once a spec is found, read it in full. This is the source of truth for all planning decisions.
 
+Verify the spec status:
+- If `status: Approved` is NOT set in the spec header, stop with `BLOCKED_SPEC_NOT_APPROVED`.
+- Print: "Spec is not approved. Review and set status to Approved before planning."
+Return `{ status: "BLOCKED_SPEC_NOT_APPROVED", next: "approve spec" }`.
+
 ---
 
 ## Artifact Detection
@@ -31,7 +36,7 @@ Once a spec is found, read it in full. This is the source of truth for all plann
 Check if a plan already exists for this spec:
 
 1. `Glob("docs/specs/*-plan.md")` — look for existing plans
-2. If a matching plan exists, determine the match by reading the plan's `**Spec:**` field and comparing it to the spec path. If the `**Spec:**` field contains a `Spec ID`, match by that ID.
+2. If a matching plan exists, determine the match by reading the plan's `**spec_id:**` field and comparing it to the spec's `spec_id`. Matching is ONLY by `spec_id`, never by filename or path.
 3. If no plan exists, proceed to Phase 1
 
 ---
@@ -134,6 +139,7 @@ Write the plan document to `docs/specs/YYYY-MM-DD-<topic>-plan.md` using today's
 **Spec:** [path to spec document]
 **spec_id:** [spec_id from the spec's header]
 **plan_revision:** 1
+**status:** Draft | Reviewed | Approved
 **Created:** [date]
 **Tasks:** [count]
 **Estimated complexity:** [standard/complex mix summary]

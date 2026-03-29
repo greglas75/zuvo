@@ -54,7 +54,7 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 
 ## Phase 0: Read Ship State
 
-1. **Read `memory/last-ship.json`** if it exists. Extract: `version`, `newTag`, `previousTag`, `baseSha`, `headSha`, `range` (SHA-based), `flow` (`"direct"` or `"pr"`), `pr` (number or null), `targetBranch`, `tagPushed` (boolean), `pushed` (boolean). If the artifact uses legacy fields (`tag` instead of `newTag`, version-based `range`), fall back to those with a warning.
+1. **Read `memory/last-ship.json`** if it exists. Extract: `version`, `newTag`, `previousTag`, `baseSha`, `releaseCommitSha`, `range` (SHA-based), `flow` (`"direct"` or `"pr"`), `pr` (number or null), `targetBranch`, `tagPushed` (boolean), `pushed` (boolean). If the artifact uses legacy fields (`tag` instead of `newTag`, `headSha` instead of `releaseCommitSha`, version-based `range`), fall back to those with a warning.
    - If `pushed` is `false` (commit/branch was not pushed to remote):
      - **Interactive:** Ask: "Release commit was not pushed. Push `<branch>` to origin now?" If yes: `git push origin <branch>`. If no: STOP — cannot deploy unpushed code.
      - **Non-interactive:** STOP. Print: `Cannot deploy — release commit was not pushed. Run manually: git push origin <branch>`
@@ -75,6 +75,18 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
    ```
    - Use `targetBranch` from `last-ship.json` if available; otherwise use `DEFAULT_BRANCH`.
    - If `gh auth status` fails or `gh` is not installed: set `GH_AVAILABLE=false`. PR merge, CI checks, and GHA deploy will be skipped with manual instructions printed instead.
+
+5. **If `GH_AVAILABLE=false`:**
+   - If `flow` is `"pr"`: STOP automated PR deployment. Print:
+     ```
+     GitHub CLI unavailable — cannot inspect, merge, or verify PR flow automatically.
+     Manual steps:
+       1. Verify PR #<number> is approved and mergeable
+       2. Merge it manually into <default-branch>
+       3. Re-run `zuvo:deploy` after merge, or deploy manually on your platform
+     ```
+     Set deploy verdict to `PARTIAL` and proceed directly to Phase 7 output.
+   - If `flow` is `"direct"`: skip automated CI wait unless the platform is `github-actions`. Print a warning that CI verification is manual in this run.
 
 ---
 
@@ -124,7 +136,7 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 1. **Read `../../shared/includes/platform-detection.md`** and follow the 5-step detection algorithm described there:
    - Step 1: Scan project root for platform config files in priority order.
    - Step 2: If multiple detected, use first match; log all.
-   - Step 3: Verify CLI installed (`which <cli>`). Downgrade to unknown if missing.
+   - Step 3: Verify CLI availability. If missing, keep platform but set `cli: null`.
    - Step 4: GHA-only special case — parse workflow YAML.
    - Step 5: Render special case — no CLI, prompt for webhook URL.
 
@@ -138,7 +150,13 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 
 3. **Print the result to the user:** "Detected platform: **<platform>** (from `<config-file>`)"
 
-4. **If no platform detected (E9):** Print a manual deployment checklist:
+4. **If a platform was detected but `cli` is `null`:**
+   - Treat the platform as known but not automatically deployable in this environment.
+   - Print platform-specific manual deployment instructions.
+   - Set deploy verdict to `PARTIAL`.
+   - Skip Phases 4, 5, and 6 — proceed directly to Phase 7 output.
+
+5. **If no platform detected (E9):** Print a manual deployment checklist:
    ```
    No deployment platform detected. Manual deployment required:
      1. Verify the merge commit is on the target branch
@@ -153,6 +171,8 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 ## Phase 4: CI Wait
 
 **If `--skip-ci-wait` was passed:** skip this phase. Print: "CI wait skipped (--skip-ci-wait flag)."
+
+**If `GH_AVAILABLE=false`:** Skip this phase. Print: "gh CLI unavailable — cannot check CI status. Verify CI manually before proceeding."
 
 1. **Find the CI run:** `gh run list --branch <default-branch> --limit 5 --json headSha,status,conclusion,databaseId`
 
@@ -199,20 +219,25 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
    - Platform has a known URL (from detection, config, or deploy output): use it.
    - Otherwise: ask the user. Non-interactive: `[AUTO-DECISION]: no production URL available, skipping health check`.
 
-2. **Run the health check:**
+2. **Build a normalized `healthUrl`:**
+   - If `--health-path` is omitted: use `<url>`.
+   - If `--health-path` is a full URL: use it verbatim.
+   - Otherwise join `<url>` and `--health-path` with exactly one slash.
+   - **Never** concatenate blindly; normalize duplicate or missing slashes first.
+
+3. **Run the health check:**
    ```bash
-   curl -s -o /dev/null -w "%{http_code} %{time_total}" <url><health-path>
+   curl -s -o /dev/null -w "%{http_code} %{time_total}" <healthUrl>
    ```
-   - If `--health-path` was provided: append it to the URL (e.g., `<url>/health`). Default: `/` (root).
    - Run up to 3 attempts with 5-second intervals on non-200 responses (transient failures during deploy rollout are common).
    - If `--expect-status` was provided: use that instead of 200.
 
-3. **Interpret the result** (from the last successful attempt, or last attempt if all failed):
+4. **Interpret the result** (from the last successful attempt, or last attempt if all failed):
    - **Expected status + time < 10s:** PASS.
    - **Expected status + time >= 10s:** WARN. "Response is slow (<time>s). Consider investigating."
    - **Non-expected status after 3 attempts:** FAIL.
 
-4. **If FAIL (E10):** Present rollback option. Do NOT auto-execute.
+5. **If FAIL (E10):** Present rollback option. Do NOT auto-execute.
    ```
    Health check FAILED (HTTP <status>, <time>s).
    To rollback, run:
