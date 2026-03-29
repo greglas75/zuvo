@@ -3,8 +3,8 @@ last_synced: "2026-03-29"
 
 meta:
   slug: refactor
-  title: "Refactor — ETAP Workflow with Resumable CONTRACT and GOD_CLASS Protocol"
-  description: "Structured refactoring: 5 modes, 10 types, resumable CONTRACT.json, GOD_CLASS protocol at 600 lines, CQ before/after scoring on all 22 gates."
+  title: "Refactor — ETAP Workflow with Resumable Contract State and GOD_CLASS Protocol"
+  description: "Structured refactoring: 5 execution modes, 3 control flags, 10 types, per-target contract state files, GOD_CLASS protocol at 600 lines, CQ before/after scoring on all 22 gates."
   category: task
   og_image: /og/skills/refactor.png
 
@@ -21,38 +21,38 @@ stats:
   - label: Refactor Types
     value: "10"
     detail: "EXTRACT_METHODS, SPLIT_FILE, BREAK_CIRCULAR, MOVE, RENAME_MOVE, INTRODUCE_INTERFACE, FIX_ERROR_HANDLING, DELETE_DEAD, SIMPLIFY, IMPROVE_TESTS"
-  - label: Modes
+  - label: Execution Modes
     value: "5"
     detail: "quick, standard, full, auto, batch"
+  - label: Control Flags
+    value: "3"
+    detail: "no-commit, plan-only, continue — modify behavior of any execution mode"
   - label: GOD_CLASS Threshold
     value: "600"
     detail: "lines + 5 responsibilities triggers extended splitting protocol"
-  - label: Batch Processing
-    value: "N"
-    detail: "Queue file with zero interactive stops, one commit per file"
   - label: Quality Gates
     value: "22"
     detail: "CQ1-CQ22 printed all 22 gates before and after for every file"
 
 problem: |
-  Unstructured refactoring is how regressions happen: developers extract methods without updating tests, split files without auditing each new module, or stop halfway through a god class and leave it worse than before. zuvo:refactor prevents this with the ETAP workflow (Evaluate, Test, Act, Prove), a resumable CONTRACT.json that survives session crashes, and a GOD_CLASS protocol that extracts one responsibility at a time with test verification after each extraction. CQ scores are printed for all 22 gates before and after — the post-audit score must never be lower than the pre-audit score.
+  Unstructured refactoring is how regressions happen: developers extract methods without updating tests, split files without auditing each new module, or stop halfway through a god class and leave it worse than before. zuvo:refactor prevents this with the ETAP workflow (Evaluate, Test, Act, Prove), per-target contract state files that survive session crashes (including batch mode with multiple targets), and a GOD_CLASS protocol that extracts one responsibility at a time with test verification after each extraction. CQ scores are printed for all 22 gates before and after — the post-audit score must never be lower than the pre-audit score.
 
 how_it_works:
   - step: "Phase 0: Stack Detection + Pre-Scan"
     description: "The skill detects the tech stack, runs CodeSift complexity analysis, hotspot detection, clone detection, and dead code scanning on the target file. Pre-scan results feed the plan: clone blocks become extraction candidates, dead exports get deleted before refactoring, and hotspot confirmation validates the refactor is high-value."
   - step: "Phase 1: Type Detection + CQ Pre-Audit"
     description: "The refactor type is auto-detected from keywords (extract, split, circular, rename, etc.) or from file characteristics. GOD_CLASS is always checked afterward — files over 600 lines with 5+ responsibilities are escalated automatically. CQ1-CQ22 pre-audit is printed with all 22 gates. Critical failures become fix targets."
-  - step: "Phase 2: CONTRACT + Sub-Agent Planning (ETAP-1A)"
-    description: "A CONTRACT.json is created at the project root with the target file, type, mode, CQ before score, scope fence, and backup branch. Two agents run in parallel: Dependency Mapper traces all importers and callers; Existing Code Scanner checks for utilities that could replace planned extractions. The plan is produced from these inputs and you approve it before execution."
+  - step: "Phase 2: Contract State + Sub-Agent Planning (ETAP-1A)"
+    description: "A per-target contract state file is created at .zuvo/contracts/ with the target file, type, mode, CQ before score, scope fence, and backup branch. Two agents run in parallel: Dependency Mapper traces all importers and callers; Existing Code Scanner checks for utilities that could replace planned extractions. The plan is produced from these inputs and you approve it before execution."
   - step: "Phase 3: Test Handling (ETAP-1B)"
     description: "Test mode is selected based on existing test quality: RUN_EXISTING (comprehensive tests present), WRITE_NEW (no tests), IMPROVE_TESTS (weak tests), or VERIFY_COMPILATION (type/config files). New tests establish a behavioral baseline before any code is moved."
   - step: "Phase 4: Execution (ETAP-2) + CQ Post-Audit"
     description: "Changes are applied one extraction at a time, with test verification after each step. Every created and modified file gets a full CQ1-CQ22 post-audit — not just the orchestrator. The post-audit score must not regress below the pre-audit score. An independent CQ Auditor agent verifies the results."
-  - step: "Phase 5: Commit + Backlog + CONTRACT Completion"
-    description: "Specific files from the scope fence are staged and committed. Deferred findings go to memory/backlog.md. The CONTRACT.json is updated to COMPLETE with the post-audit scores and commit hash. If the session was interrupted, zuvo:refactor continue resumes from the last recorded stage."
+  - step: "Phase 5: Commit + Backlog + Contract Completion"
+    description: "Specific files from the scope fence are staged and committed. Deferred findings go to memory/backlog.md. The contract state file is updated to COMPLETE with the post-audit scores and commit hash. If the session was interrupted, zuvo:refactor continue resumes from the last recorded stage."
 
 output:
-  artifact: "Committed refactored code + CONTRACT.json (completed) + memory/backlog.md (updated)"
+  artifact: "Committed refactored code + contract state file (completed) + memory/backlog.md (updated)"
   format: "A REFACTORING COMPLETE summary with type, target file, files modified/created, CQ before/after scores, test status, and commit hash."
   sections:
     - "CQ pre-audit (all 22 gates)"
@@ -112,9 +112,10 @@ examples:
     result: |
       # Refactor Batch — 2026-03-29T10:15:00
       # Total: 5 | Completed: 0 | Failed: 0 | Pending: 5
+      # PriorityScore = 0.4*complexity + 0.3*hotspot + 0.3*cq_gap
 
-      - [ ] src/services/pricing.service.ts | EXTRACT_METHODS | CQ: 11/18 | Score: 0.61
       - [ ] src/services/notification.ts    | FIX_ERROR_HANDLING | CQ: 13/18 | Score: 0.72
+      - [ ] src/services/pricing.service.ts | EXTRACT_METHODS | CQ: 11/18 | Score: 0.61
       ...
 
       [Processing pricing.service.ts — full ETAP pipeline, no stops...]
@@ -142,31 +143,39 @@ faq:
   - q: "What refactoring types does zuvo:refactor support?"
     a: "10 types are auto-detected from keywords: EXTRACT_METHODS, SPLIT_FILE, BREAK_CIRCULAR, MOVE, RENAME_MOVE, INTRODUCE_INTERFACE, FIX_ERROR_HANDLING, DELETE_DEAD, SIMPLIFY, and IMPROVE_TESTS (for test files). GOD_CLASS is a special escalation that overrides the detected type when a file exceeds 600 lines and has 5+ distinct responsibilities."
   - q: "How is zuvo:refactor different from just editing files manually?"
-    a: "zuvo:refactor enforces 4 structural guarantees manual editing lacks: (1) a CQ pre-audit with all 22 gates before changes, (2) a behavioral baseline via existing or new tests, (3) an independent CQ Auditor agent that catches N/A abuse and rubber-stamped gates after changes, and (4) a post-audit score that must not regress below the pre-audit score. The CONTRACT.json also survives session crashes."
+    a: "zuvo:refactor enforces 4 structural guarantees manual editing lacks: (1) a CQ pre-audit with all 22 gates before changes, (2) a behavioral baseline via existing or new tests, (3) an independent CQ Auditor agent that catches N/A abuse and rubber-stamped gates after changes, and (4) a post-audit score that must not regress below the pre-audit score. The per-target contract state file also survives session crashes."
   - q: "What is the GOD_CLASS protocol?"
     a: "When a file exceeds 600 lines AND has 5+ distinct responsibilities, zuvo:refactor escalates to the GOD_CLASS protocol. Responsibilities are mapped and ordered by their number of internal dependencies — the group with fewest dependencies is extracted first. Each extraction creates one new module, updates imports, runs the full test suite, and commits before the next extraction begins. This prevents the common mistake of extracting everything at once and ending up with broken imports and failing tests."
   - q: "Can a refactoring session be interrupted and resumed?"
-    a: "Yes — this is the purpose of CONTRACT.json. The file is created at the project root when a refactoring begins and records the current ETAP stage, CQ scores, scope fence, and backup branch. Running zuvo:refactor continue loads the CONTRACT and resumes from the last recorded stage. The CONTRACT is marked COMPLETE only when the session finishes cleanly."
+    a: "Yes — each refactoring creates a per-target contract state file at .zuvo/contracts/ that records the current ETAP stage, CQ scores, scope fence, and backup branch. Running zuvo:refactor continue scans for active contracts: if one is found it resumes automatically; if multiple are found you pick from a numbered list. You can also pass a specific target: zuvo:refactor continue src/services/order.service.ts. In batch mode, each file has its own contract so multiple targets never overwrite each other. The contract is marked COMPLETE only when the session finishes cleanly."
   - q: "How does batch mode work?"
     a: "zuvo:refactor batch <queue-file> processes a list of files through the full ETAP pipeline autonomously with zero interactive stops. Each file gets a CQ pre-audit, full refactoring, CQ post-audit, and one commit. The queue file is updated with results: [x] for completed (with before/after scores and commit hash), [!] for failures (with reason and partial progress). Running the command again on the same queue file skips completed and failed entries."
 
 arguments:
-  - flag: "(none)"
-    description: "Full mode — interactive approval gates at plan and test phases."
+  - flag: "(none) or full"
+    description: "Full mode (default) — sub-agents, backup branch, approval gates at plan and test phases."
+    type: mode
   - flag: "auto"
     description: "Skip the test-phase approval gate. Plan approval gate is still required."
+    type: mode
   - flag: "quick"
-    description: "Lightweight mode for small refactors — no sub-agents, no CONTRACT.json, no backlog. Auto-selected for files under 120 lines with low-risk types."
+    description: "Lightweight mode for small refactors — no sub-agents, no contract state, no backlog. Auto-selected for files under 120 lines with low-risk types."
+    type: mode
   - flag: "standard"
-    description: "CONTRACT + ETAP stages but no sub-agents. Auto-selected for 120-400 line files with non-GOD_CLASS types."
-  - flag: "no-commit"
-    description: "Full mode but show git diff and proposed message instead of committing. User controls git history."
-  - flag: "plan-only"
-    description: "Stop after ETAP-1A — produce the plan without executing it."
-  - flag: "continue"
-    description: "Load CONTRACT.json and resume from the last recorded ETAP stage."
+    description: "Contract state + ETAP stages but no sub-agents. Auto-selected for 120-400 line files with non-GOD_CLASS types."
+    type: mode
   - flag: "batch <file>"
     description: "Process a queue file of files through the full pipeline with zero interactive stops."
+    type: mode
+  - flag: "no-commit"
+    description: "Show git diff and proposed message instead of committing. Combines with any mode."
+    type: control
+  - flag: "plan-only"
+    description: "Stop after ETAP-1A — produce the plan without executing it. Combines with any mode."
+    type: control
+  - flag: "continue [path]"
+    description: "Scan .zuvo/contracts/ for active contracts. If one found, resume automatically. If multiple, list candidates and prompt. With a path argument, resume that specific target directly."
+    type: control
 
 checks: null
 
@@ -176,15 +185,14 @@ frameworks:
   - Python
   - React / Next.js
   - NestJS
-  - PHP
 
 modes:
   - name: "quick"
-    description: "For files under 120 lines with low-risk types. No sub-agents, CONTRACT.json, or backlog. Inline CQ audit."
+    description: "For files under 120 lines with low-risk types. No sub-agents, contract state, or backlog. Inline CQ audit."
   - name: "standard"
-    description: "For 120-400 line files. CONTRACT.json, ETAP stages, inline CQ before/after. No sub-agents."
+    description: "For 120-400 line files. Contract state file, ETAP stages, inline CQ before/after. No sub-agents."
   - name: "full"
-    description: "Default. Sub-agents, backup branch, CONTRACT.json, ETAP-1A + 1B + 2, agent-verified CQ, backlog."
+    description: "Default. Sub-agents, backup branch, contract state file, ETAP-1A + 1B + 2, agent-verified CQ, backlog."
   - name: "auto"
     description: "Full mode minus the test-phase approval stop. Still requires plan approval."
   - name: "batch"
@@ -221,7 +229,7 @@ comparison_table:
   rows:
     - ["CQ pre-audit before changes", "None", "All 22 gates printed with fix targets"]
     - ["Behavioral baseline", "Developer's responsibility", "Existing tests verified / new tests written"]
-    - ["Session crash recovery", "None", "CONTRACT.json resumes from last ETAP stage"]
+    - ["Session crash recovery", "None", "Per-target contract state file resumes from last ETAP stage"]
     - ["GOD_CLASS decomposition", "Ad-hoc, error-prone", "One extraction at a time with test verification"]
     - ["Independent post-audit", "None", "CQ Auditor agent — catches rubber-stamped gates"]
     - ["CQ regression detection", "None", "Post-audit must not be lower than pre-audit"]

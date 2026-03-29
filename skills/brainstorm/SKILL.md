@@ -34,6 +34,23 @@ CORE FILES LOADED:
 
 If any required file is missing, STOP. Do not proceed from memory.
 
+## Interaction Modes
+
+Detect the environment per `env-compat.md`:
+
+**Interactive mode (Claude Code CLI, Codex CLI):**
+- Ask clarifying questions one at a time (Phase 2, Step 2)
+- Present approaches and get section-by-section approval (Phase 2, Steps 3-4)
+- User explicitly approves the spec before status changes to "Approved"
+
+**Async mode (Codex App, Cursor, any non-interactive environment):**
+- Skip clarifying questions -- make best-judgment decisions
+- Annotate every decision as `[AUTO-DECISION]` with rationale and alternatives
+- Produce the complete spec in one pass
+- Set status to `Reviewed` (NOT `Approved`) -- user must explicitly approve after review
+- Set `approval_mode: async`, `approved_at: null`
+- Do NOT auto-transition to `zuvo:plan`
+
 ## Scope Check
 
 Before dispatching agents, assess the scope of what the user is asking for:
@@ -87,10 +104,19 @@ Agent 3: Business Analyst
 
 ### Waiting for Results
 
-Collect all three reports before proceeding to Phase 2. If an agent returns BLOCKED or fails:
+Collect all three reports before proceeding to Phase 2. Agent roles have different criticality:
 
-- **One agent fails:** Proceed with the two successful reports. Note the gap.
-- **Two or more fail:** Inform the user. Ask whether to continue with limited context or investigate the failures.
+**Required agents** (failure = degraded spec):
+- Code Explorer -- without codebase context, design decisions are blind
+- Business Analyst -- without edge cases, the spec will miss critical scenarios
+
+**Optional agent:**
+- Domain Researcher -- external context enriches the spec but is not essential
+
+**Failure handling:**
+- **Required agent fails:** Retry once. If still fails, proceed but set spec status to "Draft (incomplete -- missing [agent name] analysis)". Note the gap in the spec's Problem Statement. Do NOT auto-approve a spec with missing required analysis.
+- **Optional agent fails:** Proceed normally. Note "Domain research unavailable" in the spec.
+- **Two or more required agents fail:** STOP. Inform the user. Ask whether to continue with severely limited context or investigate the failures.
 
 ---
 
@@ -110,13 +136,15 @@ Keep the summary concise. The user does not need the raw agent reports.
 
 ### Step 2: Clarifying Questions
 
-Ask questions **one at a time**. Do not dump a list of 10 questions. Each question should:
+**In interactive mode:** Ask questions **one at a time**. Do not dump a list of 10 questions. Each question should:
 
 - Reference specific findings from the agents (e.g., "The codebase already has a notification service in `src/services/notification.ts`. Should this feature integrate with it or use a separate channel?")
 - Offer multiple-choice answers when possible (A/B/C with brief trade-offs)
 - Explain why the answer matters for the design
 
 Continue asking until you have enough information to propose approaches. Typical count: 2-5 questions. Stop sooner if the scope is clear.
+
+**In async mode:** Make best-judgment decisions for each question you would have asked. Annotate every decision as `[AUTO-DECISION]` with rationale and the alternatives you considered. Proceed directly to proposing approaches.
 
 ### Step 3: Propose Approaches
 
@@ -157,9 +185,15 @@ Spec document structure:
 ```markdown
 # <Feature Name> -- Design Specification
 
-> **Date:** YYYY-MM-DD
-> **Status:** Draft
-> **Author:** zuvo:brainstorm
+> **spec_id:** YYYY-MM-DD-<topic>
+> **topic:** <human-readable feature name>
+> **status:** Draft | Reviewed | Approved
+> **created_at:** YYYY-MM-DDTHH:MM:SSZ
+> **approved_at:** null | YYYY-MM-DDTHH:MM:SSZ
+> **approval_mode:** interactive | async
+> **author:** zuvo:brainstorm
+
+`spec_id` is the sole linking key for `zuvo:plan` and `zuvo:execute`. Do not change it after creation. Downstream skills match by `spec_id`, never by filename.
 
 ## Problem Statement
 
@@ -229,13 +263,15 @@ The reviewer checks for completeness, consistency, YAGNI violations, ambiguity, 
 
 ### Step 4: User Approval
 
-Present the final spec to the user. The user may:
+**In interactive mode:** Present the final spec to the user. The user may:
 
 - **Approve** -- spec is locked. Proceed to `zuvo:plan` when ready.
 - **Request changes** -- revise the spec, re-run reviewer if changes are significant.
 - **Reject** -- start over or abandon.
 
-Update the spec status from "Draft" to "Approved" when the user approves.
+Update spec: `status: Approved`, `approved_at: <now>`, `approval_mode: interactive`.
+
+**In async mode:** Set status to `Reviewed`. Set `approved_at: null`. Print: "Spec in Reviewed status. Review all [AUTO-DECISION] annotations, then change status to Approved and set approved_at before running zuvo:plan."
 
 ---
 

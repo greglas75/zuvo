@@ -46,7 +46,7 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 
 **Read these before executing any phase. Violations are non-recoverable.**
 
-1. **NEVER** use `git add -A` or `git add .`. Stage ONLY these files by explicit name: the version file(s), `CHANGELOG.md`, and `memory/last-ship.json`.
+1. **NEVER** use `git add -A` or `git add .`. Stage ONLY files that were actually generated or modified: `memory/last-ship.json` (always), the version file (only if bump was performed), and `CHANGELOG.md` (only if created/updated).
 2. **NEVER** push to a remote repository without explicit user confirmation. In non-interactive environments (Codex, Cursor): skip the push step entirely.
 3. **NEVER** push tags without interactive confirmation. In non-interactive environments (Codex, Cursor): skip `git push --tags`, write `tagPushed: false` in `memory/last-ship.json`.
 4. **Default to `patch`** bump with `[AUTO-DECISION]` annotation in non-interactive environments when the user cannot be asked for bump type.
@@ -98,10 +98,10 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 
 1. **Compute diff LOC.** Count insertions + deletions since the last tag:
    ```bash
-   COMMIT_COUNT=$(git log $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD~10)..HEAD --oneline | wc -l | tr -d ' ')
-   git diff --stat HEAD~${COMMIT_COUNT} | tail -1
+   BASE_REF=$(git describe --tags --abbrev=0 2>/dev/null || echo HEAD~10)
+   git diff --stat ${BASE_REF}..HEAD | tail -1
    ```
-   Extract the total insertions + deletions number as `DIFF_LOC`.
+   Extract the total insertions + deletions number as `DIFF_LOC`. Uses the tag ref directly — `HEAD~N` is fragile with merge commits and non-linear history.
 
 2. **Apply review threshold** (per DD4), unless overridden by `--fast` or `--full`:
 
@@ -189,80 +189,121 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 
 ---
 
-## Phase 4: Stage, Tag, Push
+## Phase 4: Artifact, Stage, Commit, Tag, Push
 
-1. **Stage files by explicit name:**
-   ```bash
-   git add <version-file> CHANGELOG.md memory/last-ship.json
-   ```
-   **NEVER** use `git add -A` or `git add .`. Only stage the version file(s), `CHANGELOG.md`, and `memory/last-ship.json`.
+### Step 1: Write `memory/last-ship.json`
 
-2. **Commit:**
-   ```bash
-   git commit -m "release: v<version>"
-   ```
+Compute values before writing:
+- `BASE_REF`: the tag or ref used as the diff base (from Phase 2).
+- `baseSha`: `git rev-parse ${BASE_REF}`
 
-3. **Tag** (unless `--no-tag` was passed):
-   ```bash
-   git tag v<version>
-   ```
-
-4. **Push** (branch-aware):
-
-   - **Direct flow (on main/master/trunk/develop):**
-     ```bash
-     git push origin <branch>
-     git push --tags
-     ```
-     Requires explicit user confirmation before each push command. In non-interactive environments: push the commit but skip `git push --tags`. Write `tagPushed: false` in the artifact.
-
-   - **PR flow (on feature branch):**
-     ```bash
-     git push -u origin <branch>
-     ```
-     Then, if `GH_AVAILABLE=true`:
-     ```bash
-     gh pr create --title "Release v<version>" --body "<changelog excerpt>"
-     ```
-     If `GH_AVAILABLE=false` (E3): skip PR creation. Print manual instructions:
-     ```
-     gh unavailable — create PR manually:
-       gh pr create --title "Release v<version>"
-     ```
-
-   - **Non-interactive environments (E15):** Push the commit. Skip `git push --tags`. Write `tagPushed: false` in the artifact.
-
----
-
-## Phase 5: Artifact + Output
-
-### 1. Write `memory/last-ship.json`
+Write the artifact (headSha will be updated after commit in step 3):
 
 ```json
 {
   "version": "<new-version>",
   "previousVersion": "<old-version>",
-  "tag": "v<new-version>",
-  "range": "v<old-version>..v<new-version>",
+  "newTag": "v<new-version>",
+  "previousTag": "<BASE_REF>",
+  "baseSha": "<sha-of-BASE_REF>",
+  "headSha": "<placeholder-until-commit>",
+  "range": "<baseSha>..<headSha>",
   "branch": "<current-branch>",
   "targetBranch": "<target-branch-or-null>",
   "flow": "direct" or "pr",
   "pr": <number-or-null>,
-  "sha": "<commit-sha>",
   "date": "<ISO-8601>",
   "tests": "pass",
   "reviewDepth": "<none|light|full|full+coverage>",
   "diffLOC": <number>,
-  "tagPushed": true or false
+  "tagPushed": false,
+  "pushed": false
 }
 ```
 
 Field notes:
-- `targetBranch`: set to the PR base branch in PR flow, `null` in direct flow.
+- `previousTag`: the actual git tag or ref used as diff base, not a version-derived string.
+- `baseSha` / `headSha`: exact SHAs so downstream skills (release-docs, retro) can use `git diff <baseSha>..<headSha>` reliably.
+- `range`: SHA-based, not version-based. Downstream skills must not rely on `v<old>..v<new>`.
+- `targetBranch`: the PR base branch in PR flow, `null` in direct flow.
 - `pr`: the PR number returned by `gh pr create`, `null` if direct flow or `gh` unavailable.
-- `tagPushed`: `false` when tag push was skipped (non-interactive env or `--no-tag`), `true` otherwise.
+- `tagPushed`: `false` when tag push was skipped (non-interactive env or `--no-tag`).
+- `pushed`: `false` when ALL remote pushes were skipped (non-interactive env).
 
-### 2. Print SHIP COMPLETE block
+### Step 2: Stage files
+
+Stage **only** files that were actually generated or modified:
+
+```bash
+git add memory/last-ship.json
+
+# Only if bump was performed (--no-bump was NOT set):
+git add <version-file>
+
+# Only if CHANGELOG.md was created or updated in Phase 3:
+git add CHANGELOG.md
+```
+
+**NEVER** use `git add -A` or `git add .`. If `--no-bump` was set, do not stage a version file.
+
+### Step 3: Commit
+
+```bash
+git commit -m "release: v<version>"
+```
+
+After commit, update `headSha` and `range` in `memory/last-ship.json` with the actual commit SHA:
+```bash
+HEAD_SHA=$(git rev-parse HEAD)
+```
+Then restage and amend: `git add memory/last-ship.json && git commit --amend --no-edit`
+
+### Step 4: Tag (unless `--no-tag`)
+
+```bash
+git tag v<version>
+```
+
+### Step 5: Push
+
+**Non-interactive environments (Codex App, Cursor):** Skip ALL remote pushes. Set `pushed: false` and `tagPushed: false` in the artifact. Print the exact manual commands:
+```
+[NON-INTERACTIVE] Remote push skipped. Run manually:
+  git push origin <branch>
+  git push origin v<version>
+```
+
+**Interactive environments (Claude Code, Codex CLI):**
+
+- **Direct flow (on main/master/trunk/develop):**
+  Requires explicit user confirmation before each push command:
+  ```bash
+  git push origin <branch>
+  git push origin v<version>   # only if tag was created
+  ```
+  Update artifact: `pushed: true`, `tagPushed: true` (or `false` if `--no-tag`).
+
+- **PR flow (on feature branch):**
+  Requires explicit user confirmation:
+  ```bash
+  git push -u origin <branch>
+  ```
+  Then, if `GH_AVAILABLE=true`:
+  ```bash
+  gh pr create --title "Release v<version>" --body "<changelog excerpt>"
+  ```
+  If `GH_AVAILABLE=false` (E3): skip PR creation. Print manual instructions:
+  ```
+  gh unavailable — create PR manually:
+    gh pr create --title "Release v<version>"
+  ```
+  Update artifact: `pushed: true`, `pr: <number-or-null>`.
+
+---
+
+## Phase 5: Output
+
+### 1. Print SHIP COMPLETE block
 
 ```
 SHIP COMPLETE
@@ -281,7 +322,7 @@ SHIP COMPLETE
   Next: zuvo:deploy (when ready)
 ```
 
-### 3. Run logger
+### 2. Run logger
 
 Append a run log entry per `../../shared/includes/run-logger.md`:
 

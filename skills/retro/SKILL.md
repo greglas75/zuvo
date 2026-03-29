@@ -2,7 +2,7 @@
 name: retro
 description: >
   Engineering retrospective from git metrics. Reports deployment frequency,
-  change lead time, churn hotspots, backlog health. Outputs narrative report
+  release cycle span, churn hotspots, backlog health. Outputs narrative report
   with 3+ actionable items. Flags: --since, --path, explicit range argument.
 ---
 
@@ -46,7 +46,7 @@ Determine the retrospective window in this priority order:
 
 1. **Explicit argument** — if `<range>` was provided (e.g., `v1.0.0..v1.2.0`), use it directly.
 2. **`--since <tag>`** — if provided, window is `<tag>..HEAD`. No `--until` flag is defined.
-3. **`memory/last-ship.json`** — read the file if it exists. Use the `range` field (e.g., `"v1.1.0..v1.2.0"`).
+3. **`memory/last-ship.json`** — read the file if it exists. Use the `range` field (SHA-based, e.g., `"abc1234..def5678"`). If the artifact uses a legacy version-based range, fall back to it.
 4. **Last two git tags** — run `git describe --tags --abbrev=0` twice (with `--exclude` on first result) to derive `<prev-tag>..<latest-tag>`.
 5. **Fallback** — if fewer than two tags exist, use the last 30 commits: derive range as `HEAD~30..HEAD`.
 
@@ -66,7 +66,12 @@ Check for monorepo signals in the project root:
 - `nx.json`
 - `pnpm-workspace.yaml`
 
-If any of these files exist AND no `--path` argument was provided: **stop immediately** and list the detected packages (from `turbo.json` `packages` field, `nx.json` `projects`, or `pnpm-workspace.yaml` `packages`). Ask the user to re-run with `--path <package-dir>`.
+If any of these files exist AND no `--path` argument was provided:
+1. First, try auto-detection: run `git diff --name-only <range>` and extract unique top-level directories matching workspace package paths.
+2. If only ONE package was touched: auto-scope to that package with `[AUTO-DECISION]: scoped to <package>`.
+3. If multiple packages were touched:
+   - **Interactive:** list the affected packages and ask the user to pick one or confirm full-repo analysis.
+   - **Non-interactive:** `[AUTO-DECISION]: monorepo detected, analyzing all affected packages. Results may be noisy — re-run with --path for focused analysis.` Proceed with full-repo analysis.
 
 If `--path` was provided: scope all `git log` commands with `-- <path>` and note the scope in the report.
 
@@ -86,13 +91,13 @@ done
 ```
 Filter to tags within the window date range. Report as: N releases in period (frequency: 1 per X days/weeks).
 
-### Change Lead Time
+### Release Cycle Span
 
-Estimate average time from first commit in a branch to the tag date:
+Estimate the time span covered by the release window:
 ```bash
 git log --format="%ai %H" <range>
 ```
-Use the earliest commit date in the window as the window start. Use the tag date as the end. Report as: avg N days (branch create → tag). Note: this is an approximation; exact branch creation dates require reflog.
+Use the earliest commit date in the window as the start and the latest tag date as the end. Report as: N days (earliest commit → latest tag). Note: this is the window span, not per-PR lead time — exact branch-to-merge lead time requires per-PR analysis with `gh pr list`.
 
 ### Churn Hotspots
 
@@ -113,7 +118,7 @@ If the file **does not exist**: note "No backlog tracked. Run `zuvo:review` or `
 If the file **exists**, count:
 - **Open items** — rows where Status = `OPEN`
 - **Critical items** — OPEN rows where Severity = `CRITICAL`
-- **Resolved in window** — rows where Status = `RESOLVED` and Added date falls within the window
+- **Resolved in window** — rows where Status = `RESOLVED` and the Resolved/Updated date (not Added date) falls within the window. If backlog.md has no Resolved date column, skip this metric and note: "Resolved-in-window metric unavailable — backlog lacks Resolved date column."
 - **Added in window** — rows where Added date falls within the retrospective window
 
 Also identify the oldest unresolved item (earliest Added date among OPEN rows) and report its ID and age in days.
@@ -122,9 +127,9 @@ Also identify the oldest unresolved item (earliest Added date among OPEN rows) a
 
 ## Phase 3: Skill Usage Trends
 
-Read `~/.zuvo/runs.log` if it exists.
+Read the skill usage log using the environment-aware path from `run-logger.md` (primary: `~/.zuvo/runs.log`, Codex App fallback: `memory/zuvo-runs.log`).
 
-If the file **does not exist**: note "No skill usage history found." Skip this section.
+If the file **does not exist** at either path: note "No skill usage history found." Skip this section.
 
 If the file **exists**, parse each line as TSV with this column order:
 ```
@@ -167,7 +172,7 @@ If fewer than 3 items can be derived from the data, supplement with: "Run `zuvo:
 
 ### Write Report File
 
-Create `audit-results/retro-YYYY-MM-DD.md` (use today's date). If `audit-results/` does not exist, create it.
+Create `audit-results/retro-YYYY-MM-DD-<range-suffix>.md` (use today's date; `<range-suffix>` is the range with `/` and `..` replaced by `_`, e.g., `retro-2026-03-29-v1.1.0_v1.2.0.md`). This prevents collisions when running retro multiple times on the same day for different ranges. If `audit-results/` does not exist, create it.
 
 Use this exact structure:
 
@@ -180,7 +185,7 @@ Use this exact structure:
 ## Shipping Velocity
 - **Window:** <range> (<N> days, <N> commits)
 - **Deployment frequency:** N releases in period (frequency: 1 per X days)
-- **Change lead time:** avg N days (branch create → tag)
+- **Release cycle span:** N days (earliest commit → latest tag)
 - **Commits:** N total, N/day average
 
 ## Churn Hotspots
@@ -219,7 +224,7 @@ Check for existing `audit-results/retro-*.md` files. If one or more exist, compa
 | Metric | Prior | Current | Delta |
 |--------|-------|---------|-------|
 | Deployment frequency | N/period | N/period | +/-N |
-| Avg lead time | N days | N days | +/-N days |
+| Release cycle span | N days | N days | +/-N days |
 | Open backlog items | N | N | +/-N |
 | Avg CQ score | N/22 | N/22 | +/-N |
 | Avg Q score | N/17 | N/17 | +/-N |
@@ -234,10 +239,10 @@ Print the RETRO COMPLETE block after writing the report:
 RETRO COMPLETE
   Window:      v1.1.0..v1.2.0 (14 days, 47 commits)
   Releases:    2 in period (frequency: 1 per week)
-  Lead time:   avg 3.2 days (branch create → tag)
+  Cycle span:  14 days (earliest commit → latest tag)
   Hotspots:    src/orders/service.ts (12 changes), src/auth/guard.ts (8 changes)
   Backlog:     +5 added, -3 resolved, 12 open (2 critical)
-  Report:      audit-results/retro-2026-03-28.md
+  Report:      audit-results/retro-2026-03-28-v1.1.0_v1.2.0.md
 
   Actions:
   1. zuvo:write-tests src/orders/ — high-churn, low coverage
@@ -261,7 +266,7 @@ RETRO COMPLETE [QUALITATIVE ONLY — <10 commits in window]
 
 ## Phase 6: Run Log
 
-Append to `~/.zuvo/runs.log` per `../../shared/includes/run-logger.md`.
+Append run log entry per `../../shared/includes/run-logger.md`. Use the environment-aware log path (do NOT hardcode `~/.zuvo/runs.log`).
 
 | Field | Value |
 |-------|-------|

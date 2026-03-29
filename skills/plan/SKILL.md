@@ -17,9 +17,10 @@ Before doing anything else, locate the spec:
 2. Otherwise, search: `Glob("docs/specs/*-spec.md")`
 3. If multiple specs exist, present the list and ask the user which one to plan against
 4. If no spec is found:
-   - Tell the user: "No spec document found in `docs/specs/`. A spec is required before planning. Starting `zuvo:brainstorm` to create one."
-   - Invoke `Skill(skill="zuvo:brainstorm")`
-   - Stop here. Do not continue with planning.
+   - Set status to `BLOCKED_MISSING_SPEC`
+   - Print: "No spec document found in `docs/specs/`. A spec is required before planning."
+   - Print: "Next action: run `zuvo:brainstorm` to create one."
+   - Stop. Return `{ status: "BLOCKED_MISSING_SPEC", next: "zuvo:brainstorm" }`. Do not auto-invoke brainstorm.
 
 Once a spec is found, read it in full. This is the source of truth for all planning decisions.
 
@@ -30,7 +31,7 @@ Once a spec is found, read it in full. This is the source of truth for all plann
 Check if a plan already exists for this spec:
 
 1. `Glob("docs/specs/*-plan.md")` — look for existing plans
-2. If a matching plan exists (same date prefix or topic), ask the user: "A plan already exists at `<path>`. Do you want to (a) revise it, (b) replace it, or (c) use a different spec?"
+2. If a matching plan exists, determine the match by reading the plan's `**Spec:**` field and comparing it to the spec path. If the `**Spec:**` field contains a `Spec ID`, match by that ID.
 3. If no plan exists, proceed to Phase 1
 
 ---
@@ -131,6 +132,8 @@ Write the plan document to `docs/specs/YYYY-MM-DD-<topic>-plan.md` using today's
 # Implementation Plan: [Feature Name]
 
 **Spec:** [path to spec document]
+**spec_id:** [spec_id from the spec's header]
+**plan_revision:** 1
 **Created:** [date]
 **Tasks:** [count]
 **Estimated complexity:** [standard/complex mix summary]
@@ -152,16 +155,12 @@ Write the plan document to `docs/specs/YYYY-MM-DD-<topic>-plan.md` using today's
 **Dependencies:** none | Task N, Task M
 **Execution routing:** default implementation tier | deep implementation tier
 
-- [ ] RED: Write failing test
-  ```[language]
-  [exact test code]
-  ```
-- [ ] GREEN: Implement minimum code to pass
-  ```[language]
-  [exact production code]
-  ```
+- [ ] RED: [test goal — what behavior to assert, which file, which assertions]
+- [ ] GREEN: [implementation targets — symbols to add/change, invariants, interfaces]
+  [Optional: scaffold snippet ≤20 LOC if pattern is non-obvious]
 - [ ] Verify: `[exact shell command]`
   Expected: [exact expected output or pattern]
+- [ ] Acceptance: [which spec AC this task satisfies]
 - [ ] Commit: `[commit message describing behavior added]`
 
 ### Task 2: [...]
@@ -171,7 +170,7 @@ Write the plan document to `docs/specs/YYYY-MM-DD-<topic>-plan.md` using today's
 ### Task Authoring Rules
 
 1. **Scope per task:** Each task should take 2-5 minutes to implement. If a task would take longer, split it.
-2. **Exact code:** RED and GREEN steps include the actual code to write, not descriptions of code. The implementer should be able to copy-paste these into files.
+2. **Task intent over exact code:** RED steps include: test intent, target assertions, and file path. GREEN steps include: symbols to add/change, invariants to maintain, and interfaces to implement. Include scaffold code or snippets (≤20 lines) when the pattern is non-obvious. Do NOT write the full implementation — that is the implementer's job. The plan specifies WHAT and WHY, the implementer decides HOW.
 3. **Exact verification:** The Verify step includes the shell command to run and what the output should look like. No vague "tests should pass" — specify the command and expected result.
 4. **Commit messages:** Describe the behavior added ("add order validation that rejects negative quantities"), not the files changed ("update order.service.ts").
 5. **Dependencies:** A task can only depend on tasks with a lower number. No circular dependencies. Minimize dependencies — prefer independent tasks that can run in any order.
@@ -207,14 +206,17 @@ Read `agents/plan-reviewer.md` for full instructions.
 
 ### User Approval
 
-After the reviewer approves (or after 3 iterations with user override):
+The plan follows a strict state machine:
 
-Present the final plan to the user. Highlight:
-- Total task count and estimated complexity breakdown
-- Any open issues from the reviewer that were not resolved
-- Any assumptions made during planning
+```
+Draft → Reviewed (by plan reviewer) → Approved (by user only)
+```
 
-The user must confirm before this plan is considered approved. The plan is not final until the user says so.
+**Interactive mode:** Present the final plan. The user must explicitly approve. Update status to "Approved" only on user confirmation.
+
+**Async mode (Codex App, Cursor):** The plan reviewer's APPROVED verdict moves the plan to "Reviewed" status (NOT "Approved"). Print: "Plan is in Reviewed status. Review the task breakdown and change status to Approved before running zuvo:execute."
+
+`zuvo:execute` MUST check for "Approved" status. It will not start from "Draft" or "Reviewed".
 
 ---
 

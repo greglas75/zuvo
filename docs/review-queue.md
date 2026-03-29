@@ -26,3 +26,10 @@ Commits pending review. Auto-managed:
 - 12e42bd (2026-03-28) release: v1.0.1 — feat: add 26 patterns + AP25-AP29, fix agent count, platform status
 - a4ed959 (2026-03-28) feat: add PHP rules — 8 Semgrep patterns + SSRF, file upload, multi-tenant, CSRF
 - 883cbb9 (2026-03-28) docs: update review queue
+- 855ccfd (2026-03-29) release: v1.1.0 — feat: audit-to-fix pipeline, parallel seo-audit, release skills
+- 38d3c5b (2026-03-29) fix: add frontmatter to ship agent files for Codex build compatibility
+- 3653d02 (2026-03-29) feat: add 39 SEO skill page data files + validation script
+- 54056b2 (2026-03-29) fix: sync seo-audit ↔ agents ↔ seo-fix contracts, add shared fix registry
+- 4d6ed17 (2026-03-29) fix: pipeline contract — stable finding IDs, version handshake, PROVISIONAL handling, unified fingerprints
+- 60e78e1 (2026-03-29) fix: single source of truth — remove local registries, stable IDs in examples, dispatch terminology
+- 4b57242 (2026-03-29) fix: merge logic contradiction + add fix-output-schema.md

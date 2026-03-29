@@ -21,6 +21,8 @@ Parse `$ARGUMENTS` for these flags:
 | `--url <url>` | Override production URL for health check |
 | `--skip-ci-wait` | Don't wait for CI (manual check) |
 | `--skip-health` | Skip health check after deploy |
+| `--health-path <path>` | Path to check instead of root (e.g., `/health`, `/api/status`) |
+| `--expect-status <code>` | Expected HTTP status code (default: 200) |
 | `#<number>` | Specific PR number to merge (overrides last-ship.json PR) |
 
 Flags can be combined: `zuvo:deploy --url https://myapp.com --skip-ci-wait`
@@ -52,14 +54,27 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 
 ## Phase 0: Read Ship State
 
-1. **Read `memory/last-ship.json`** if it exists. Extract: `version`, `tag`, `range`, `flow` (`"direct"` or `"pr"`), `pr` (number or null), `tagPushed` (boolean).
-   - If `tagPushed` is `false` (E15/DD7 — tag created locally but not pushed):
-     - **Interactive (Claude Code, Codex CLI):** Ask: "Tag `v<version>` was created locally but not pushed. Push now?" If yes: `git push origin v<version>`. If no: continue.
-     - **Non-interactive (Codex App, Cursor):** `[AUTO-DECISION]: tag push skipped in non-interactive environment. Push manually: git push origin v<version>`
+1. **Read `memory/last-ship.json`** if it exists. Extract: `version`, `newTag`, `previousTag`, `baseSha`, `headSha`, `range` (SHA-based), `flow` (`"direct"` or `"pr"`), `pr` (number or null), `targetBranch`, `tagPushed` (boolean), `pushed` (boolean). If the artifact uses legacy fields (`tag` instead of `newTag`, version-based `range`), fall back to those with a warning.
+   - If `pushed` is `false` (commit/branch was not pushed to remote):
+     - **Interactive:** Ask: "Release commit was not pushed. Push `<branch>` to origin now?" If yes: `git push origin <branch>`. If no: STOP — cannot deploy unpushed code.
+     - **Non-interactive:** STOP. Print: `Cannot deploy — release commit was not pushed. Run manually: git push origin <branch>`
+   - If `tagPushed` is `false` (tag created locally but not pushed):
+     - **Interactive:** Ask: "Tag `v<version>` was created locally but not pushed. Push now?" If yes: `git push origin v<version>`. If no: continue.
+     - **Non-interactive:** `[AUTO-DECISION]: tag push skipped in non-interactive environment. Push manually: git push origin v<version>`
 
 2. **If `memory/last-ship.json` does not exist:** fall back to `git describe --tags --abbrev=0`. Use the result as the version/tag. Set `flow` to `"direct"`, `pr` to `null`.
 
 3. **If `#<number>` argument was provided:** override the PR number, regardless of `last-ship.json`. Set `flow` to `"pr"`.
+
+4. **Detect default branch and check GitHub CLI:**
+   ```bash
+   DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef -q '.defaultBranchRef.name' 2>/dev/null \
+     || git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' \
+     || echo main)
+   gh auth status
+   ```
+   - Use `targetBranch` from `last-ship.json` if available; otherwise use `DEFAULT_BRANCH`.
+   - If `gh auth status` fails or `gh` is not installed: set `GH_AVAILABLE=false`. PR merge, CI checks, and GHA deploy will be skipped with manual instructions printed instead.
 
 ---
 
@@ -73,7 +88,7 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 2. **Check mergeability (E8):** `gh pr view <number> --json mergeable`
    - If not mergeable: STOP. "PR #<number> has merge conflicts. Resolve conflicts and re-run `zuvo:deploy`."
 
-3. **Check base branch CI status (E7):** `gh run list --branch main --limit 1 --json status,conclusion`
+3. **Check base branch CI status (E7):** `gh run list --branch <default-branch> --limit 1 --json status,conclusion`
    - If failing: WARN. "CI is currently failing on the base branch (not caused by your changes). Proceed with merge anyway, or investigate first?" In non-interactive: `[AUTO-DECISION]: base CI failing, proceeding with merge`.
 
 4. **Check PR CI status:** `gh pr checks <number> --json name,state,conclusion`
@@ -87,11 +102,20 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 
 **Skip this entire phase if `flow` is `"direct"`.**
 
-1. **Merge the PR:** `gh pr merge <number> --squash --delete-branch`
+1. **Confirmation gate:** Merging is irreversible. Require explicit confirmation before proceeding:
+   - **Interactive (Claude Code, Codex CLI):** Ask: "Ready to merge PR #<number> into <default-branch> via squash? This cannot be undone."
+   - **Non-interactive (Codex App, Cursor):** Skip merge entirely. Print:
+     ```
+     [NON-INTERACTIVE] Merge skipped — requires interactive confirmation.
+     Run manually: gh pr merge <number> --squash --delete-branch
+     ```
+     Set deploy verdict to `PARTIAL`. Skip Phases 3-6 — proceed to Phase 7 output.
 
-2. **If merge fails:** STOP. Do not retry. "Merge failed for PR #<number>. Investigate the error above and retry manually."
+2. **Merge the PR:** `gh pr merge <number> --squash --delete-branch`
 
-3. **Record the merge commit SHA** for CI matching in Phase 4: `git fetch origin main && git rev-parse origin/main`
+3. **If merge fails:** STOP. Do not retry. "Merge failed for PR #<number>. Investigate the error above and retry manually."
+
+4. **Record the merge commit SHA** for CI matching in Phase 4: `git fetch origin <default-branch> && git rev-parse origin/<default-branch>`
 
 ---
 
@@ -130,9 +154,9 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 
 **If `--skip-ci-wait` was passed:** skip this phase. Print: "CI wait skipped (--skip-ci-wait flag)."
 
-1. **Find the CI run:** `gh run list --branch main --limit 5 --json headSha,status,conclusion,databaseId`
+1. **Find the CI run:** `gh run list --branch <default-branch> --limit 5 --json headSha,status,conclusion,databaseId`
 
-2. **Match by SHA** from the merge commit (Phase 2 step 3) or the latest commit on main (direct flow).
+2. **Match by SHA** from the merge commit (Phase 2 step 4) or the latest commit on the default branch (direct flow).
 
 3. **If already complete:** `conclusion: "success"` — proceed. `conclusion: "failure"` — STOP. "CI failed after merge. Investigate before deploying."
 
@@ -175,12 +199,18 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
    - Platform has a known URL (from detection, config, or deploy output): use it.
    - Otherwise: ask the user. Non-interactive: `[AUTO-DECISION]: no production URL available, skipping health check`.
 
-2. **Run the health check:** `curl -s -o /dev/null -w "%{http_code} %{time_total}" <url>`
+2. **Run the health check:**
+   ```bash
+   curl -s -o /dev/null -w "%{http_code} %{time_total}" <url><health-path>
+   ```
+   - If `--health-path` was provided: append it to the URL (e.g., `<url>/health`). Default: `/` (root).
+   - Run up to 3 attempts with 5-second intervals on non-200 responses (transient failures during deploy rollout are common).
+   - If `--expect-status` was provided: use that instead of 200.
 
-3. **Interpret the result:**
-   - **HTTP 200 + time < 10s:** PASS.
-   - **HTTP 200 + time >= 10s:** WARN. "Response is slow (<time>s). Consider investigating."
-   - **HTTP non-200:** FAIL.
+3. **Interpret the result** (from the last successful attempt, or last attempt if all failed):
+   - **Expected status + time < 10s:** PASS.
+   - **Expected status + time >= 10s:** WARN. "Response is slow (<time>s). Consider investigating."
+   - **Non-expected status after 3 attempts:** FAIL.
 
 4. **If FAIL (E10):** Present rollback option. Do NOT auto-execute.
    ```

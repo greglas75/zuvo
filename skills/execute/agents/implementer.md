@@ -124,9 +124,11 @@ Run the verification command specified in the plan's Verify step. Read the full 
 
 This is the verification protocol in action. "Should work" is not evidence. "Exited 0, 47 passed, 0 failed" is evidence.
 
-### Phase 5: COMMIT
+### Phase 5: STAGE (do NOT commit)
 
-Create a commit with the message specified in the plan's Commit step. The commit must include both test and production files. Do not commit test and production code separately.
+Do NOT commit. Stage your changes and run verification. The orchestrator will commit after review gates pass.
+
+Stage all files (test and production) that you created or modified for this task. The orchestrator handles the actual commit after spec review and quality review both pass.
 
 ---
 
@@ -166,7 +168,7 @@ When you finish (or cannot finish), report exactly one of these statuses:
 
 ### DONE
 
-Everything in the task spec is implemented, tested, verified, and committed. All self-review checks pass.
+Everything in the task spec is implemented, tested, verified, and staged. All self-review checks pass. The orchestrator will commit after review gates pass.
 
 ```
 STATUS: DONE
@@ -174,7 +176,7 @@ Files created: [list]
 Files modified: [list]
 Tests: [count] new, [count] total passing
 Verification: [command] exited [code], [summary]
-Commit: [hash] [message]
+Staged: [list of staged files]
 ```
 
 ### DONE_WITH_CONCERNS
@@ -187,7 +189,7 @@ Files created: [list]
 Files modified: [list]
 Tests: [count] new, [count] total passing
 Verification: [command] exited [code], [summary]
-Commit: [hash] [message]
+Staged: [list of staged files]
 
 CONCERNS:
 1. [category: correctness|scope|style] — [description]
@@ -236,13 +238,13 @@ Be precise. "How does auth work?" is too vague. "What is the return type of `aut
 
 ## CodeSift Index Update
 
-After every file you create or modify, update the CodeSift index:
+After creating or modifying any file, update the CodeSift index immediately:
 
 ```
-index_file(path="/absolute/path/to/file")
+index_file(path="/absolute/path/to/changed/file")
 ```
 
-This takes 9ms and keeps the index accurate for reviewers who will search your code immediately after you finish.
+This is the implementer's responsibility — the orchestrator does NOT re-index. Keeping the index current during implementation ensures that subsequent CodeSift queries (by reviewers or later tasks) see the latest code.
 
 ---
 
@@ -253,6 +255,6 @@ This takes 9ms and keeps the index accurate for reviewers who will search your c
 - Do not modify files outside the scope defined in the task spec without reporting it as a concern.
 - Do not suppress or ignore test failures. Every failure must be addressed or reported.
 - Do not use `any` in TypeScript. Use `unknown` and narrow.
-- Do not commit code that has known failing tests.
+- Do not stage code that has known failing tests.
 - Do not ask questions after you have already started coding. Ask first, code second.
 - Do not trust your memory of file contents. Read files fresh before modifying them.

@@ -33,7 +33,7 @@ CORE FILES LOADED:
 ## Phase 0: Determine Range
 
 1. If an explicit `<range>` argument was provided: use it. Skip remaining steps in this phase.
-2. Else if `memory/last-ship.json` exists: read the `range` field (e.g., `"v1.1.0..v1.2.0"`). Use it.
+2. Else if `memory/last-ship.json` exists: read the `range` field (SHA-based, e.g., `"abc1234..def5678"`) and use it directly for `git diff`. Also read `previousTag` and `newTag` for display in the output block. If the artifact uses a legacy version-based range (e.g., `"v1.1.0..v1.2.0"`), fall back to it but log: "Warning: legacy version-based range — consider re-running zuvo:ship for SHA-based artifact."
 3. Else: derive from git tags.
    - Run `git describe --tags --abbrev=0` to get the latest tag.
    - Run `git describe --tags --abbrev=0 <latest-tag>^` to get the previous tag.
@@ -52,9 +52,16 @@ CORE FILES LOADED:
    - **Doc files:** `.md`, `.mdx`, `.rst`, `.txt`
    - **Config files:** `.json`, `.yaml`, `.toml`, `.yml`
    - **Other:** images, binaries, lock files, etc.
-3. Determine "docs-adjacent" source files: source files in directories that have corresponding documentation. Detection heuristic:
-   - `src/auth/` has a doc-adjacent match if `docs/auth.md` or any `*auth*` file in `docs/` exists.
-   - A changed source file at `src/<module>/` is docs-adjacent if any `.md` file in the repo mentions the module name (search for the basename).
+3. Determine "docs-adjacent" source files using this priority order:
+   - **Priority 1: Explicit mapping.** If `docs/docs-map.yaml` exists, use it:
+     ```yaml
+     # docs-map.yaml — maps source paths to documentation files
+     src/auth/: docs/authentication.md
+     src/orders/: [docs/orders.md, docs/api/orders-api.md]
+     ```
+     Source files matching a key are docs-adjacent to the mapped doc files.
+   - **Priority 2: Frontmatter.** If doc files have `sources:` in their YAML frontmatter (e.g., `sources: [src/auth/*]`), use those globs to match changed source files.
+   - **Priority 3: Name heuristic** (fallback). `src/auth/` is docs-adjacent if `docs/auth.md` or any `*auth*` file in `docs/` exists, or if any `.md` file mentions the module name.
    - If in doubt, include the file — false positives cause minor extra work; false negatives miss documentation updates.
 4. If no docs-adjacent source files changed: print "No documentation updates required for this release." Exit with PASS verdict.
 5. If `--dry-run` is set: print the list of source files that would trigger doc updates and the doc files that would be updated, then exit without writing anything.
@@ -88,7 +95,7 @@ For each documentation file whose corresponding source files changed:
    Skill(skill="zuvo:docs", args="update <doc-file>")
    ```
 2. `zuvo:docs update` handles staleness detection and targeted section updates.
-3. **Iron rule:** Every documentation claim added or modified must reference a source file (file path, function name, or line reference). If `zuvo:docs` produces a claim without a traceable source reference, flag it and request a correction before accepting the update.
+3. **Iron rule:** Every documentation claim added or modified must reference a source file (file path, function name, or line reference). If `zuvo:docs` produces a claim without a traceable source reference, flag it and request a correction before accepting the update. Source references use `file_path:line_number` or `file_path:function_name` format — these go in the commit/PR description for traceability, not in the user-facing documentation itself.
 
 If multiple doc files need updating, invoke `zuvo:docs update` for each in sequence.
 
@@ -119,9 +126,8 @@ RELEASE-DOCS COMPLETE
 
 If `--dry-run` was set and execution reached this phase (only on early exits), annotate the block with `[DRY RUN — no files written]`.
 
-Append run log entry per `../../shared/includes/run-logger.md`:
+Append run log entry per `../../shared/includes/run-logger.md`. Use the environment-aware log path from run-logger.md (do NOT hardcode `~/.zuvo/runs.log`):
 
-```bash
-mkdir -p ~/.zuvo
-echo "<ISO-timestamp>\trelease-docs\t<project-basename>\t-\t-\tPASS\t-\t5-phase\tdocs synced for <range>" >> ~/.zuvo/runs.log
+```
+<ISO-timestamp>\trelease-docs\t<project-basename>\t-\t-\tPASS\t-\t5-phase\tdocs synced for <range>
 ```

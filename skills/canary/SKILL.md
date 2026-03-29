@@ -55,13 +55,14 @@ Use `ToolSearch` to check for `mcp__playwright__*` or `mcp__chrome-devtools__*` 
 
 ### Step 3: Check Environment (per env-compat.md)
 
-If running in Codex or Cursor (non-interactive environment):
+If running in a non-interactive environment (Codex App, Cursor):
 
-- Force `--quick` behavior (single check, no polling loop).
+- Default to `--quick` behavior (single check) **only if** no `--duration` was explicitly passed.
+- If the user explicitly passed `--duration`: honor it — run the full monitoring loop. Non-interactive environments can execute timed loops; the limitation is user interaction, not execution duration.
 - Print:
 
   ```
-  [AUTO-DECISION]: one-shot mode — polling loop not available in this environment.
+  [AUTO-DECISION]: defaulting to one-shot mode. Pass --duration to enable monitoring loop.
   ```
 
 ### Step 4: Parse Arguments
@@ -91,7 +92,7 @@ If a platform is detected, note its health check command. This is supplementary 
 
 ### One-shot mode
 
-If `--quick` is passed, or non-interactive environment was detected in Phase 0: run exactly ONE check cycle, then proceed to Phase 3.
+If `--quick` is passed, or non-interactive environment was detected AND no `--duration` was explicitly provided: run exactly ONE check cycle, then proceed to Phase 3.
 
 ### Loop mode
 
@@ -103,7 +104,11 @@ Otherwise: run one check cycle every `--interval` seconds, for the total `--dura
    - Playwright: `mcp__playwright__browser_navigate(url=<url>)`
    - Chrome DevTools: `mcp__chrome-devtools__navigate_page(url=<url>)`
 
-2. Check HTTP status: expect 200. Non-200 = CRITICAL alert.
+2. Check HTTP status by reading the main document request from network logs:
+   - Playwright: `mcp__playwright__browser_network_requests()` — find the document request, check its status.
+   - Chrome DevTools: `mcp__chrome-devtools__list_network_requests()` — find the document request, check its status.
+   - If network request data is unavailable: fall back to checking navigation success (no error = assume 200).
+   Expect 200. Non-200 = CRITICAL alert.
 
 3. Capture console errors:
    - Playwright: `mcp__playwright__browser_console_messages()`
@@ -153,17 +158,37 @@ After all check cycles complete, assess the cumulative results:
 
 ### Step 2: Rollback Suggestion (BROKEN verdict only)
 
-If verdict is BROKEN, print:
+If verdict is BROKEN:
 
+1. If a platform was detected in Phase 1 and it has a `rollbackCmd`, print the platform-specific rollback command:
+   ```
+   Rollback command (<platform>): <rollbackCmd>
+   ```
+2. If no platform was detected, print the git-native fallback:
+   ```
+   Rollback (git-native): git revert <merge-sha> && git push
+   ```
+3. Do NOT reference `zuvo:deploy rollback` — that interface does not exist. Always print the concrete command.
+
+### Step 3: Write Summary and Baseline Comparison
+
+After all checks complete, write `audit-results/canary-<ISO-timestamp>/summary.json`:
+
+```json
+{
+  "url": "<url>",
+  "mode": "full" or "degraded",
+  "checks": <N>,
+  "avgResponseTime": <seconds>,
+  "p95ResponseTime": <seconds>,
+  "consoleErrors": <N>,
+  "consoleWarnings": <N>,
+  "verdict": "HEALTHY" or "DEGRADED" or "BROKEN",
+  "date": "<ISO-8601>"
+}
 ```
-Suggested next step: zuvo:deploy rollback — revert to previous stable deployment.
-```
 
-Also reference the platform-specific rollback command from Phase 1 if a platform was detected.
-
-### Step 3: Baseline Comparison
-
-Check if prior canary runs exist in `audit-results/canary-*/`. If found, compare average response time against the prior run's average and compute a percentage delta for the performance line.
+Check if prior canary runs exist in `audit-results/canary-*/summary.json`. If found, compare `avgResponseTime` and `consoleErrors` against the most recent prior run and compute percentage deltas for the Performance line.
 
 If no prior run exists, omit the baseline comparison from the Performance line.
 
@@ -191,7 +216,7 @@ Append a run log entry per `../../shared/includes/run-logger.md`.
 | # | Condition | Handling |
 |---|---|---|
 | E11 | No browser MCP tools available | Degraded mode — HTTP-only. Annotate `[DEGRADED: no browser tools]`. |
-| E12 | Non-interactive environment (Codex, Cursor) | Force one-shot mode. Annotate `[AUTO-DECISION]: one-shot mode`. |
+| E12 | Non-interactive environment (Codex, Cursor) | Default to one-shot mode unless `--duration` is explicitly passed. Annotate `[AUTO-DECISION]: defaulting to one-shot mode`. |
 | — | URL is missing | STOP with "URL is required" message. |
 | — | Duration outside 1m–30m | STOP with range validation error. |
 | — | First canary run (no baseline) | Omit baseline comparison from Performance line. |

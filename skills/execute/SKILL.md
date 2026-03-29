@@ -15,6 +15,23 @@ Your role is coordination: dispatch agents, interpret their status reports, hand
 
 Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
 
+## Execution Modes
+
+Detect the environment per `env-compat.md`:
+
+**Multi-agent mode (Claude Code, Codex):**
+Dispatch implementer, spec-reviewer, and quality-reviewer as separate agents. This is the default described in the execution loop below.
+
+**Single-agent mode (Cursor, or when agent dispatch is unavailable):**
+Execute all three roles yourself in sequential passes with explicit checkpoints:
+
+1. **Implementer pass:** Write the code following the task spec. Run verification. Print: `[CHECKPOINT: implementation complete, switching to spec review]`
+2. **Spec reviewer pass:** Re-read the task spec and the code you just wrote. Compare independently. Do NOT trust your implementation pass — review as if seeing the code for the first time. Print findings.
+3. **Quality reviewer pass:** Run CQ1-CQ22 on production files, Q1-Q17 on test files. Print scores.
+4. **Commit** (if both reviews pass)
+
+The checkpoint markers ensure role separation even within a single agent context.
+
 ## Mandatory File Loading
 
 Before starting work, read each file below using the Read tool. Print the checklist with status. Do not proceed from memory.
@@ -115,8 +132,9 @@ For each task in the plan:
 5. HANDLE spec reviewer verdict
 6. DISPATCH quality reviewer agent
 7. HANDLE quality reviewer verdict
-8. MARK task as completed
-9. UPDATE CodeSift index
+8. COMMIT (orchestrator commits, not implementer)
+9. MARK task as completed
+10. UPDATE CodeSift index
 ```
 
 Detailed steps follow.
@@ -194,6 +212,14 @@ Provide three options:
 
 If the user picks option 1, re-dispatch the implementer with the provided context. If the user picks option 2, mark the task as SKIPPED and note it in the final report. If the user picks option 3, proceed directly to the final summary.
 
+**Async mode (Codex App, Cursor — no AskUserQuestion):**
+- Set task to BLOCKED
+- Propagate BLOCKED_BY_DEPENDENCY to dependent tasks (per Dependency State Contract)
+- Continue executing any PENDING tasks that are NOT blocked by this dependency
+- Include all BLOCKED tasks with their blockers in the final summary
+- Do NOT wait inline — the pipeline continues on independent branches
+- Print: `[AUTO-DECISION]: Task N blocked. Continuing with independent tasks. Review BLOCKED tasks in the final summary.`
+
 ### Step 4: Dispatch Spec Reviewer
 
 Spawn the spec reviewer agent (always Sonnet, read-only).
@@ -239,7 +265,7 @@ The quality reviewer runs CQ1-CQ22 on production code and Q1-Q17 on test code. I
 
 #### PASS
 
-Proceed to completion (step 8).
+Proceed to commit (step 8).
 
 #### FAIL
 
@@ -254,7 +280,16 @@ Read the failure details. Each failure has a gate ID, file:line reference, and w
 
 The user decides: accept as-is (with backlog entry), require fix, or provide guidance.
 
-### Step 8: Mark Completed
+### Step 8: Commit
+
+Only after both spec review (COMPLIANT) and quality review (PASS), the orchestrator creates the commit:
+
+1. Stage only the files listed in the task's "Files" field: `git add <file1> <file2> ...`
+2. Never use `git add -A` or `git add .`
+3. Commit with the message from the task's Commit step
+4. The implementer does NOT commit — it only writes files and runs verification
+
+### Step 9: Mark Completed
 
 Print to the user:
 
@@ -266,15 +301,41 @@ Spec review: COMPLIANT (iteration [N])
 Quality review: PASS (CQ: [score]/22, Q: [score]/17)
 ```
 
-### Step 9: Update CodeSift Index
+### Step 10: Verify CodeSift Index
 
-For every file that was created or modified during this task:
+The implementer updates the CodeSift index after each file change (see implementer.md). The orchestrator does NOT re-index — it only verifies the index is current by spot-checking one changed file:
 
+```
+search_symbols(repo, "<symbol from changed file>", detail_level="compact")
+```
+
+If the symbol is not found, re-index the file as a fallback:
 ```
 index_file(path="/absolute/path/to/changed/file")
 ```
 
-This keeps the CodeSift index current for subsequent tasks and reviewers.
+---
+
+## Dependency State Contract
+
+Each task has one of these states:
+
+| State | Meaning |
+|-------|---------|
+| PENDING | Not yet started |
+| IN_PROGRESS | Currently being executed |
+| COMPLETED | All review gates passed, committed |
+| SKIPPED | User chose to skip (via BLOCKED options) |
+| BLOCKED | Hard blocker, awaiting user decision |
+| BLOCKED_BY_DEPENDENCY | A prerequisite task is BLOCKED |
+| SKIPPED_BY_DEPENDENCY | A prerequisite task is SKIPPED |
+
+**Propagation rules:**
+- When a task transitions to BLOCKED, all dependent tasks transition to BLOCKED_BY_DEPENDENCY.
+- When a task transitions to SKIPPED, all dependent tasks transition to SKIPPED_BY_DEPENDENCY.
+- A BLOCKED_BY_DEPENDENCY task cannot be started without explicit user override.
+- If the user provides an override ("proceed despite missing dependency"), the task transitions back to PENDING and can be dispatched.
+- In the final summary, BLOCKED_BY_DEPENDENCY tasks are listed separately from BLOCKED tasks.
 
 ---
 
@@ -385,7 +446,7 @@ From `shared/includes/backlog-protocol.md`: every finding with confidence above 
 
 ## What You Must NOT Do
 
-- Do not write code yourself. Dispatch agents for all implementation work.
+- In multi-agent mode: do not write code yourself. Dispatch agents for all implementation work. In single-agent mode: write code yourself but follow the checkpoint protocol (Execution Modes section).
 - Do not skip spec review or quality review. Both are mandatory for every task.
 - Do not silently skip BLOCKED tasks. Always present to the user with options.
 - Do not proceed past a critical gate failure without user authorization.

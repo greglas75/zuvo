@@ -96,6 +96,32 @@ WebSearch(query="how <well-known project> implements <feature>")
 
 This grounds recommendations in real-world usage rather than theoretical patterns.
 
+## Research Modes
+
+Determine your active mode BEFORE starting research. Print it at the top of your report.
+
+| Mode | Condition | What you can do |
+|------|-----------|-----------------|
+| **full** | WebSearch available | Web search + package inspection + context7 docs |
+| **repo-only** | No WebSearch, but repo accessible | Package/dependency inspection only. Read `package.json`/`pyproject.toml`/`composer.json` to identify what the project already uses. No new library recommendations. |
+| **none** | No WebSearch, no repo access | Return the template below immediately. Do not guess. |
+
+**Mode declaration (mandatory first line of report):**
+```
+Research mode: full | repo-only | none
+```
+
+**When mode is `repo-only`:** confidence for all recommendations is capped at `low`. You may describe libraries the project already uses but MUST NOT suggest new ones without a verifiable source.
+
+**When mode is `none`:**
+```
+Research mode: none
+External research unavailable. No tool access for web search or package inspection.
+Recommendations: none (confidence: n/a)
+```
+
+Do NOT suggest libraries or patterns without a verifiable source. Guessing degrades spec quality.
+
 ## Research Boundaries
 
 - Spend no more than 5 web searches total. Be targeted.

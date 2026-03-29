@@ -56,23 +56,34 @@ ETAP-1B: test-quality-rules.md -- READ
 
 ## Argument Parsing
 
+### Execution Modes (mutually exclusive)
+
 ```
 $ARGUMENTS = empty         -> FULL mode (approval gates at plan + test phase)
+$ARGUMENTS = "full"        -> FULL mode (explicit)
 $ARGUMENTS = "auto"        -> AUTO mode (approval gate at plan only)
-$ARGUMENTS = "quick"       -> QUICK mode (lightweight, no agents)
-$ARGUMENTS = "standard"    -> STANDARD mode (CONTRACT + ETAP, no agents)
-$ARGUMENTS = "no-commit"   -> FULL mode but skip auto-commits (show diff + proposed message)
-$ARGUMENTS = "plan-only"   -> PLAN mode (ETAP-1A only, stop after plan)
-$ARGUMENTS = "continue"    -> RESUME mode (load CONTRACT.json, resume where interrupted)
+$ARGUMENTS = "quick"       -> QUICK mode (lightweight, no agents, no stops)
+$ARGUMENTS = "standard"    -> STANDARD mode (contract state + ETAP, no agents)
 $ARGUMENTS = "batch <file>"-> BATCH mode (process queue file, zero stops)
 $ARGUMENTS = other         -> task description, FULL mode
 ```
+
+### Control Flags (modify behavior of the selected mode)
+
+```
+"no-commit"                -> Apply to current mode: skip auto-commits (show diff + proposed message)
+"plan-only"                -> Apply to current mode: ETAP-1A only, stop after plan
+"continue"                 -> RESUME: scan .zuvo/contracts/refactor-*.json, resume active contract
+"continue <path>"          -> RESUME: load contract for specific target by hash
+```
+
+Control flags can combine with modes: `zuvo:refactor standard no-commit` runs STANDARD mode without committing.
 
 ### Mode Comparison
 
 | Aspect | quick | standard | full | auto | batch |
 |--------|-------|----------|------|------|-------|
-| CONTRACT.json | No | Yes | Yes | Yes | Per-file |
+| Contract state file | No | Yes | Yes | Yes | Per-file |
 | Sub-agents | None | None | 2-6 | 2-6 | 2-6 |
 | ETAP stages | Inline | 1A + 2 | 1A + 1B + 2 | 1A + 1B + 2 | 1A + 1B + 2 |
 | CQ before/after | Quick eval | Printed | Agent-verified | Agent-verified | Agent-verified |
@@ -87,9 +98,9 @@ For small, low-risk refactors.
 
 **Auto-detection criteria:** File <=120L, <=1 file changed, type is one of EXTRACT_METHODS / SIMPLIFY / RENAME_MOVE / DELETE_DEAD, no GOD_CLASS or security or API or migration involvement.
 
-**Flow:** Stack detect -> Type detect -> Inline CQ audit -> Plan -> STOP for approval -> Baseline tests -> Execute -> Verify (tsc + tests + CQ self-eval) -> Commit.
+**Flow:** Stack detect -> Type detect -> Inline CQ audit -> Plan -> Baseline tests -> Execute -> Verify (tsc + tests + CQ self-eval) -> Commit.
 
-Skips: sub-agents, backup branch, CONTRACT.json, multi-phase ETAP, backlog, metrics.
+Skips: sub-agents, backup branch, contract state file, multi-phase ETAP, backlog, metrics, all approval stops.
 
 ### STANDARD Mode
 
@@ -97,13 +108,46 @@ For moderate refactors that need structure but not full agent overhead.
 
 **Auto-detection criteria:** File 120-400L, 1-3 files changed, type is NOT GOD_CLASS / security / API-contract / migration.
 
-**Flow:** Stack detect -> Type detect -> CQ pre-audit (inline) -> CONTRACT.json -> ETAP-1A plan -> APPROVAL STOP -> Baseline tests -> Execute -> CQ post-audit (inline) -> Verify -> Commit.
+**Flow:** Stack detect -> Type detect -> CQ pre-audit (inline) -> contract state file -> ETAP-1A plan -> APPROVAL STOP -> Baseline tests -> Execute -> CQ post-audit (inline) -> Verify -> Commit.
 
-Includes: CONTRACT.json for resumability, CQ before/after scoring, ETAP stages. Skips: sub-agents, backup branch, backlog, ETAP-1B test rewrite.
+Includes: contract state file for resumability, CQ before/after scoring, ETAP stages. Skips: sub-agents, backup branch, backlog, ETAP-1B test rewrite.
 
 ### no-commit Mode
 
 Identical to FULL except: after execution, show `git diff --staged` and a proposed commit message. The user controls git history.
+
+---
+
+## Mode Resolution (when no explicit mode given)
+
+If the user passed an explicit mode (`full`, `quick`, `standard`, `auto`, `batch`), use it. Otherwise, resolve the mode **after** reading the target file (requires line count and type):
+
+```
+1. Read target file -> count lines, detect type (Phase 1)
+2. Apply auto-detection criteria:
+
+   QUICK if ALL:
+     - lines <= 120
+     - scope <= 1 file
+     - type in {EXTRACT_METHODS, SIMPLIFY, RENAME_MOVE, DELETE_DEAD}
+     - NOT GOD_CLASS, NOT security/API/migration involvement
+
+   STANDARD if ALL:
+     - lines 121-400
+     - scope 1-3 files
+     - type NOT in {GOD_CLASS, security, API-contract, migration}
+
+   FULL otherwise (default)
+
+3. Print resolution:
+   MODE RESOLUTION: [selected_mode]
+   Reason: [criteria matched] (e.g., "142L, EXTRACT_METHODS, 2 files -> STANDARD")
+
+4. If selected_mode is QUICK: skip contract state file creation (QUICK has no contract).
+   Otherwise: record selected_mode in contract state file.
+```
+
+The user can override auto-detection at the plan approval stop by saying "use full" or "use quick".
 
 ---
 
@@ -132,7 +176,7 @@ Follow `codesift-setup.md`:
 2. `list_repos()` once to cache the repo identifier
 3. If not indexed: `index_folder(path=<project_root>)`
 
-### Pre-Scan (TIER 2+ modes, CodeSift available)
+### Pre-Scan (STANDARD, FULL, AUTO, BATCH modes; skipped in QUICK)
 
 Run 4 analysis calls to understand WHAT to refactor before planning HOW:
 
@@ -159,7 +203,7 @@ Feed pre-scan data into the extraction plan:
 - Highest-complexity functions -> prioritize splitting these first
 - Hotspot confirmation -> validates this refactor is high-value
 
-If CodeSift not available or mode is QUICK: skip pre-scan.
+If CodeSift not available: skip pre-scan. If mode is QUICK: skip pre-scan.
 
 ---
 
@@ -222,23 +266,49 @@ Display detected type and wait for confirmation (unless AUTO or BATCH mode).
 
 ## Phase 2: CONTRACT and Planning (ETAP-1A)
 
-### CONTRACT.json
+### CONTRACT State File
 
-Create a resumable state file at the project root. If `continue` mode is used, load this file and resume from the recorded stage.
+Create a resumable state file per target. The path is scoped so batch mode can track multiple targets without overwriting:
+
+| Mode | Contract path |
+|------|---------------|
+| Single-file (full/standard/auto) | `.zuvo/contracts/refactor-{target-hash}.json` |
+| Batch | `.zuvo/contracts/refactor-{target-hash}.json` (one per queue entry) |
+
+Where `{target-hash}` is the first 8 chars of SHA-1 of the relative target path (e.g., `sha1("src/services/order.service.ts")[:8]`).
+
+**Resume contract:**
+
+- `continue <path>`: compute target hash, load `.zuvo/contracts/refactor-{hash}.json` directly.
+- `continue` (no argument): scan `.zuvo/contracts/refactor-*.json` for files with `stage != "COMPLETE"`.
+  - **0 active:** print "No active refactoring contracts found." and stop.
+  - **1 active:** resume it automatically.
+  - **2+ active:** print a numbered list of candidates (file, type, stage, last modified) and ask the user to pick one. Do NOT auto-pick "most recent".
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "file": "src/services/order.service.ts",
   "type": "EXTRACT_METHODS",
   "mode": "full",
   "stage": "ETAP-1A",
+  "queue_file": null,
+  "queue_entry": null,
   "cq_before": { "score": "11/18", "critical_failures": ["CQ4", "CQ5"] },
   "scope_fence": ["src/services/order.service.ts", "src/services/order-helpers.ts"],
   "backup_branch": "backup/refactor-order-service-2026-03-27",
   "plan": {},
   "test_mode": "",
   "progress": []
+}
+```
+
+In batch mode, `queue_file` and `queue_entry` are set so resume can map back to the queue:
+
+```json
+{
+  "queue_file": "refactor-queue.md",
+  "queue_entry": 3
 }
 ```
 
@@ -286,16 +356,35 @@ Produce the refactoring plan incorporating sub-agent results (when available):
 2. **Extraction list** -- For each function or block to extract: source location, destination, new signature.
 3. **Dependency impact** -- From the Dependency Mapper: which files need import updates, which tests need adjustment.
 4. **Existing code reuse** -- From the Existing Code Scanner: existing utilities that can replace planned extractions.
-5. **Test mode routing** -- Determine how tests should be handled:
+5. **Test discovery** -- Before routing, find and evaluate existing tests:
 
-| Condition | Test mode |
-|-----------|-----------|
-| Target has comprehensive tests (Q7=1, Q11=1, Q13=1) | RUN_EXISTING |
-| Target has tests but they are weak (Q score <14) | IMPROVE_TESTS |
-| Target has no tests | WRITE_NEW |
-| Target is a type file or config | VERIFY_COMPILATION |
+   ```
+   TEST DISCOVERY: [target file]
+   -----------------------------------------------
+   Test file:  [path or NONE]
+   Found via:  [co-located .test.* / .spec.* / __tests__/* / grep import]
+   Q-triage:   Q7=[0|1] Q11=[0|1] Q13=[0|1] | Total: N/17
+   -----------------------------------------------
+   ```
 
-6. **CQ gate targets** -- Which CQ failures from the pre-audit should be fixed during this refactoring.
+   Steps:
+   a. Search for test file: co-located `.test.*` / `.spec.*`, `__tests__/` directory, grep for imports of target
+   b. If test file found: read it, run quick Q-audit on 3 critical gates (Q7=error-path coverage, Q11=branch coverage, Q13=imports actual production function) + compute total Q score
+   c. Record `test_audit_before` in contract state: `{ "test_file": "...", "q7": 0|1, "q11": 0|1, "q13": 0|1, "q_total": N }`
+   d. If no test file found: record `{ "test_file": null }`
+
+6. **Test mode routing** -- Route based on test discovery results. Evaluate top-to-bottom, first match wins:
+
+| Priority | Condition | Test mode |
+|----------|-----------|-----------|
+| 1 | Target is a type file (`.d.ts`, `.types.ts`) or config (`.config.*`, `.*rc`) | VERIFY_COMPILATION |
+| 2 | No test file found (test_file = null) | WRITE_NEW |
+| 3 | Test found AND Q7=1 AND Q11=1 AND Q13=1 AND q_total >= 14 | RUN_EXISTING |
+| 4 | Test found AND (Q7=0 OR Q11=0 OR Q13=0 OR q_total < 14) | IMPROVE_TESTS |
+
+Note: priority 1 (VERIFY_COMPILATION) is checked **before** test discovery runs. If the target is a type/config file, skip test discovery entirely.
+
+7. **CQ gate targets** -- Which CQ failures from the pre-audit should be fixed during this refactoring.
 
 ### Questions Gate
 
@@ -430,9 +519,9 @@ git commit -m "refactor([scope]): [description of what changed]"
 
 In no-commit mode: show `git diff --staged` and the proposed message instead.
 
-### Update CONTRACT
+### Update Contract State
 
-Mark the CONTRACT as completed:
+Mark the contract as completed:
 
 ```json
 {
@@ -452,10 +541,13 @@ index_file(path="/absolute/path/to/changed-file.ts")
 
 ### Backlog Persistence (FULL and AUTO modes)
 
+Read `{plugin_root}/shared/includes/backlog-protocol.md` before persisting.
+
 Persist any deferred findings to `memory/backlog.md`:
 - CQ Auditor DEFER items
 - Issues identified but out of scope for this refactoring
-- Deduplicate by fingerprint
+
+**Fingerprint contract:** `file|rule-id|signature` (e.g., `order.service.ts|CQ8|no-try-catch`). Source: `zuvo:refactor` or `zuvo:refactor/cq-auditor` for agent findings. Deduplicate by exact fingerprint match per `backlog-protocol.md`.
 
 ### Post-Completion Summary
 
@@ -475,7 +567,7 @@ Commit: [hash] -- [message]
 
 ### Run Log
 
-Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+Log this run per `{plugin_root}/shared/includes/run-logger.md` using the environment-resolved path (see run-logger.md § Environment-Aware Log Path):
 - SKILL: `refactor`
 - CQ_SCORE: CQ post-audit score (e.g., `18/18`)
 - Q_SCORE: Q score from test evaluation (or `-` if VERIFY_COMPILATION)
@@ -500,26 +592,40 @@ Process a queue of files through the full ETAP pipeline autonomously. Zero inter
    - Bare file paths: process (first run)
 2. Validate each file exists. Non-existent files: mark `[!] FILE NOT FOUND`, skip.
 3. For each pending file: quick CQ1-CQ22 pre-scan, detect type.
-4. Rewrite the queue file with enriched format:
+4. Compute **PriorityScore** for ordering (range 0.00–1.00):
+
+   ```
+   PriorityScore = 0.4 * complexity_rank + 0.3 * hotspot_rank + 0.3 * cq_gap
+   ```
+
+   Where:
+   - `complexity_rank` = file's rank in `analyze_complexity` top-10, normalized to 0–1 (rank 1 = 1.0, not in top 10 = 0.0)
+   - `hotspot_rank` = file's rank in `analyze_hotspots`, normalized to 0–1
+   - `cq_gap` = `1 - (cq_score / cq_applicable)` (e.g., 11/18 = gap 0.39)
+
+   If CodeSift pre-scan is unavailable: `PriorityScore = cq_gap` (fallback).
+
+5. Rewrite the queue file with enriched format, sorted by PriorityScore descending:
 
 ```markdown
 # Refactor Batch -- YYYY-MM-DDTHH:MM:SS
 # Total: N | Completed: 0 | Failed: 0 | Pending: N
+# PriorityScore = 0.4*complexity + 0.3*hotspot + 0.3*cq_gap
 
 - [ ] path/to/file.ts | EXTRACT_METHODS | CQ: 11/18 | Score: 0.61
 ```
 
-5. Proceed immediately (no approval stop).
+6. Proceed immediately (no approval stop).
 
 ### Per-File Pipeline
 
 For each `[ ]` entry, run the LITERAL ETAP pipeline -- not a shortcut:
 
-**Pipeline enforcement:** "Full pipeline" means running ETAP-1A -> 1B -> 2 -> Phase 4-5 as defined in this skill. "Read file, fix obvious things, commit" is a shortcut that violates batch mode. Every file gets: CONTRACT.json, CQ BEFORE eval, fixes, CQ AFTER eval, sub-agents (in FULL modes), one commit.
+**Pipeline enforcement:** "Full pipeline" means running ETAP-1A -> 1B -> 2 -> Phase 4-5 as defined in this skill. "Read file, fix obvious things, commit" is a shortcut that violates batch mode. Every file gets: its own contract state file (`.zuvo/contracts/refactor-{target-hash}.json`), CQ BEFORE eval, fixes, CQ AFTER eval, sub-agents (in FULL modes), one commit.
 
 **Steps (ALL mandatory, in order):**
 
-1. **ETAP-1A:** Read file -> CQ1-CQ22 BEFORE (print ALL 22 gates) -> type detect -> scope freeze -> CONTRACT.json
+1. **ETAP-1A:** Read file -> CQ1-CQ22 BEFORE (print ALL 22 gates) -> type detect -> scope freeze -> create contract state file
 2. **ETAP-1B:** Write/verify tests per test mode routing
 3. **ETAP-2:** Execute fixes per CONTRACT -> verify (type check + tests)
 4. **Post-Audit:** Run sub-agents (Dependency Mapper, Existing Code Scanner, CQ Auditor). Apply FIX-NOW items from CQ Auditor. Print CQ1-CQ22 AFTER (all 22 gates).
@@ -629,7 +735,7 @@ After each extraction, check:
 
 When the target is a test file:
 
-1. **ETAP-1A:** Run Q1-Q17 self-eval to identify gaps. Classify each gap. Record the BEFORE score in CONTRACT.
+1. **ETAP-1A:** Run Q1-Q17 self-eval to identify gaps. Classify each gap. Record the BEFORE score in the contract state file.
 2. **ETAP-1B:** Structural cleanup (test organization, describe blocks, mock setup). Commit.
 3. **ETAP-2:** Assertion strengthening (exact values, error path tests, branch coverage). Re-score Q1-Q17. Commit.
 4. **Gate:** Score must improve by at least 2 points, or reach 15+/17.
