@@ -54,7 +54,7 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 
 ## Phase 0: Read Ship State
 
-1. **Read `memory/last-ship.json`** if it exists. Extract: `version`, `newTag`, `previousTag`, `baseSha`, `releaseCommitSha`, `range` (SHA-based), `flow` (`"direct"` or `"pr"`), `pr` (number or null), `targetBranch`, `tagPushed` (boolean), `pushed` (boolean). If the artifact uses legacy fields (`tag` instead of `newTag`, `headSha` instead of `releaseCommitSha`, version-based `range`), fall back to those with a warning.
+1. **Read `memory/last-ship.json`** if it exists. Extract: `version`, `newTag`, `previousTag`, `baseSha`, `releaseCommitSha`, `range` (SHA-based), `branch`, `flow` (`"direct"` or `"pr"`), `pr` (number or null), `targetBranch`, `tagPushed` (boolean), `pushed` (boolean). If the artifact uses legacy fields (`tag` instead of `newTag`, `headSha` instead of `releaseCommitSha`, version-based `range`), fall back to those with a warning. If `branch` is missing, detect it via `git branch --show-current`.
    - If `pushed` is `false` (commit/branch was not pushed to remote):
      - **Interactive:** Ask: "Release commit was not pushed. Push `<branch>` to origin now?" If yes: `git push origin <branch>`. If no: STOP — cannot deploy unpushed code.
      - **Non-interactive:** STOP. Print: `Cannot deploy — release commit was not pushed. Run manually: git push origin <branch>`
@@ -86,7 +86,7 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
        3. Re-run `zuvo:deploy` after merge, or deploy manually on your platform
      ```
      Set deploy verdict to `PARTIAL` and proceed directly to Phase 7 output.
-   - If `flow` is `"direct"`: skip automated CI wait unless the platform is `github-actions`. Print a warning that CI verification is manual in this run.
+   - If `flow` is `"direct"`: CI wait (Phase 4) will be skipped — platform detection is not yet available at this point, so assume CI check is manual. Print a warning that CI verification is manual in this run.
 
 ---
 

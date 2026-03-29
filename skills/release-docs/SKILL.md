@@ -30,7 +30,7 @@ CORE FILES LOADED:
 
 ---
 
-## Phase 0: Determine Range
+## Phase 0: Determine Range and Suffix
 
 1. If an explicit `<range>` argument was provided: use it. Skip remaining steps in this phase.
 2. Else if `memory/last-ship.json` exists: read the `range` field (SHA-based, e.g., `"abc1234..def5678"`) and use it directly for `git diff`. Also read `previousTag` and `newTag` for display in the output block. If the artifact uses a legacy version-based range (e.g., `"v1.1.0..v1.2.0"`), fall back to it but log: "Warning: legacy version-based range — consider re-running zuvo:ship for SHA-based artifact."
@@ -41,6 +41,13 @@ CORE FILES LOADED:
 4. If no range can be derived after the above steps:
    - Interactive environments: ask the user to provide a range explicitly.
    - Non-interactive environments (Codex App, Cursor): print `[AUTO-DECISION]: no range derivable. Skipping documentation sync.` and exit with PASS verdict.
+
+5. **Compute `RANGE_SUFFIX`** for use in evidence and output paths:
+   - If `previousTag` and `newTag` are available: `RANGE_SUFFIX = "<previousTag>_<newTag>"` (e.g., `v1.1.0_v1.2.0`)
+   - Else if range contains tags: extract them (e.g., `v1.1.0..v1.2.0` → `v1.1.0_v1.2.0`)
+   - Else: use short SHAs from the range (e.g., `abc1234_def5678`)
+
+   All downstream references to `<range-suffix>` use this computed value.
 
 ---
 
@@ -129,7 +136,7 @@ RELEASE-DOCS COMPLETE
   Range:        <range>
   Changelog:    CHANGELOG.md updated (Added: N, Fixed: N, Changed: N)
   Docs updated: <list of doc files updated, or "none">
-  Docs skipped: <list of doc files with no source changes>
+  Docs skipped: <list of known doc files (from docs-map/frontmatter) with no source changes, or "—" if no mapping exists>
   Debt found:   N file(s) (<list of undocumented files>) / none
   Evidence:     audit-results/release-docs-sources-<range-suffix>.md
   Verdict:      PASS

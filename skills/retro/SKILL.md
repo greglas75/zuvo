@@ -177,8 +177,8 @@ If fewer than 3 items can be derived from the data, supplement with: "Run `zuvo:
 Create the report using a readable suffix:
 - Prefer tag-based names when `previousTag` / `newTag` are known:
   `audit-results/retro-YYYY-MM-DD-<previousTag>_<newTag>.md`
-- Otherwise fall back to a shortened SHA-based suffix:
-  `audit-results/retro-YYYY-MM-DD-<baseSha7>_<releaseSha7>.md`
+- Otherwise fall back to a shortened SHA-based suffix (first 7 chars of `baseSha` and `releaseCommitSha` from `last-ship.json`):
+  `audit-results/retro-YYYY-MM-DD-<baseSha7>_<releaseCommitSha7>.md`
 
 This prevents collisions and keeps filenames readable. If `audit-results/` does not exist, create it.
 

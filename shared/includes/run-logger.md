@@ -69,18 +69,22 @@ fi
 
 ## Reading the Log
 
-Users can view their history:
+Users can view their history. Use the resolved log path (see "Log File" above):
 
 ```bash
+# Resolve path first (same logic as writing)
+LOG_PATH="$HOME/.zuvo/runs.log"
+[ -n "$CODEX_WORKSPACE" ] && LOG_PATH="memory/zuvo-runs.log"
+
 # Last 20 runs
-tail -20 ~/.zuvo/runs.log
+tail -20 "$LOG_PATH"
 
 # Runs for a specific project
-grep "tgm-survey" ~/.zuvo/runs.log
+grep "tgm-survey" "$LOG_PATH"
 
 # Only failures
-grep "FAIL" ~/.zuvo/runs.log
+grep "FAIL" "$LOG_PATH"
 
 # CQ scores over time
-grep "build" ~/.zuvo/runs.log | cut -f4
+grep "build" "$LOG_PATH" | cut -f4
 ```
