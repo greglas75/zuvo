@@ -216,7 +216,7 @@ If an agent fails or times out:
 
 After all agents complete:
 1. Concatenate findings arrays from all 3 agents
-2. Assign sequential finding IDs (F1, F2, F3, ...) across the merged list
+2. Assign stable finding IDs using format `{dimension}-{check}` (e.g., `D4-sitemap-exists`, `D3-json-ld-ssr`). These IDs are deterministic across runs for the same codebase — unlike sequential F1/F2 which shift when findings change. Also assign display-order numbers (F1, F2, ...) for human-readable reports, but `--finding` filtering in seo-fix uses the stable ID.
 3. Each agent returns per-dimension scores -- pass through unchanged to Phase 4 scoring
 4. Evaluate critical gates: CG1-CG4, CG6 from Technical agent; CG5 from Assets agent
 5. If any dimension is missing (agent failed): mark as "INSUFFICIENT DATA" in scoring
@@ -554,8 +554,8 @@ Emit entries to `memory/backlog.md` for findings that meet at least one conditio
 - Priority >= 2.0
 - Any Critical Gate = FAIL
 
-Fingerprint format: `file|dimension|check-id`
-Deduplicate against existing entries.
+Fingerprint format: `{file}|{dimension}|{check}` (e.g., `public/robots.txt|D5|robots-googlebot`).
+Same format used by seo-fix for backlog updates. Deduplicate against existing entries.
 
 ### Next-Action Routing
 

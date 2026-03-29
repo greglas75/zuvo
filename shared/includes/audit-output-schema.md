@@ -26,7 +26,7 @@ Every audit skill MUST emit these fields:
 | `score.overall` | number | Numeric score (0-100) |
 | `score.tier` | string | Letter tier (`"A"`, `"B"`, `"C"`, `"D"`) |
 | `critical_gates` | array | `[{ id, name, status, evidence }]` |
-| `findings` | array | `[{ id, dimension, check, status, severity, priority, evidence, file, line }]` -- `status` is `"PASS"`, `"PARTIAL"`, `"FAIL"`, or `"INSUFFICIENT DATA"` |
+| `findings` | array | `[{ id, dimension, check, status, severity, priority, evidence, file, line }]` -- `id` is stable format `{dimension}-{check}` (e.g., `D4-sitemap-exists`). `status` is `"PASS"`, `"PARTIAL"`, `"FAIL"`, or `"INSUFFICIENT DATA"` |
 
 ## Optional Fields
 

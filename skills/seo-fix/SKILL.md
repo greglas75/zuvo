@@ -86,7 +86,7 @@ Before modifying any file, check for uncommitted changes in that file (`git diff
 | `--auto` | Apply SAFE + MODERATE fixes automatically (skip DANGEROUS) |
 | `--all` | Apply all fixes including DANGEROUS (requires confirmation per fix) |
 | `--dry-run` | Show what would be fixed, change nothing |
-| `--finding F1,F3` | Fix specific findings by ID |
+| `--finding D4-sitemap-exists,D3-json-ld-ssr` | Fix specific findings by stable ID (also accepts F1,F3 display IDs) |
 | `--fix-type sitemap-add,json-ld-add` | Fix specific fix_type categories |
 | `[json-path]` | Use specific JSON file instead of latest |
 
@@ -102,17 +102,31 @@ Note: `--fix-type` matches against `findings[].fix_type` field. For convenience 
 2. Otherwise: glob `audit-results/seo-audit-*.json`, parse `timestamp` from each, select most recent by timestamp (not filename)
 3. If no JSON found: "No audit JSON found. Run `zuvo:seo-audit` first." STOP.
 
-### 0.2 Validate schema
+### 0.2 Validate schema and version
 
-Validate required fields. If any missing, STOP with "Invalid audit JSON: missing field [X]":
+**Version handshake:** Check `version` field. Supported versions: `"1.0"`, `"1.1"` (minor bumps are backward compatible). If major version differs (e.g., `"2.0"`): STOP with "Unsupported audit schema version [X]. Update zuvo:seo-fix."
+
+**Required fields.** If any missing, STOP with "Invalid audit JSON: missing field [X]":
 
 ```
 Required: version, skill, timestamp, result, score.overall
 Required array: findings[]
-Required per finding: id, dimension, status, fix_type, fix_safety, fix_params
+Required per finding: id, dimension, check, status, fix_type, fix_safety, fix_params
 ```
 
-### 0.3 Check freshness
+Note: `id` should be the stable finding ID (`{dimension}-{check}`, e.g., `D4-sitemap-exists`). Sequential display IDs (F1, F2) are also accepted but `--finding` filtering prefers stable IDs.
+
+### 0.3 Check result and freshness
+
+**PROVISIONAL audit handling:** If `result` = `"PROVISIONAL"` (audit has INSUFFICIENT DATA gates):
+- Default mode and `--dry-run`: proceed normally, SAFE fixes are still safe regardless of incomplete gates
+- `--auto` mode: restrict to SAFE fixes only (do not auto-apply MODERATE). Warn: "Audit is PROVISIONAL — restricting to SAFE fixes. Re-run seo-audit with --live-url for full coverage."
+- `--all` mode: require confirmation per fix (same as DANGEROUS gate)
+
+**Freshness check:**
+Read `timestamp` field. Calculate age.
+- If <=24h: proceed
+- If >24h: apply GATE 3 (stale audit protection)
 
 Read `timestamp` field. Calculate age.
 - If <=24h: proceed
@@ -396,9 +410,9 @@ Per `shared/includes/backlog-protocol.md`:
 | NO_TEMPLATE | Add as OPEN with category `seo-manual` |
 | INSUFFICIENT DATA | Do not add (unconfirmed issue) |
 
-**Fingerprint format:** `{file}|{dimension}|{fix_type}`
+**Fingerprint format:** `{file}|{dimension}|{check}`
 
-Where `dimension` is the raw value from findings (e.g., `D4`, `D11` — no extra `D` prefix). Example: `astro.config.mjs|D4|sitemap-add`.
+Same format as seo-audit backlog persistence. Uses the stable check ID from the finding (e.g., `sitemap-exists`, `json-ld-ssr`), NOT the fix_type. Example: `astro.config.mjs|D4|sitemap-exists`.
 
 ### 5.2 Save report
 
