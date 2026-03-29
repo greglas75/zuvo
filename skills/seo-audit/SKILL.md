@@ -22,13 +22,15 @@ Read these files before any work begins:
 
 1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
 2. `{plugin_root}/shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
+3. `{plugin_root}/shared/includes/seo-fix-registry.md` -- Canonical fix_type, safety, params (before Phase 6.2 JSON output)
 
 Print the checklist:
 
 ```
 CORE FILES LOADED:
-  1. codesift-setup.md   -- [READ | MISSING -> STOP]
-  2. env-compat.md       -- [READ | MISSING -> STOP]
+  1. codesift-setup.md     -- [READ | MISSING -> STOP]
+  2. env-compat.md         -- [READ | MISSING -> STOP]
+  3. seo-fix-registry.md   -- [READ | MISSING -> WARN] (needed for JSON fix fields)
 ```
 
 If any file is missing, STOP.
@@ -178,7 +180,7 @@ Dispatch 3 agents in parallel. Each agent evaluates its assigned dimensions inde
 
 Refer to `../../shared/includes/env-compat.md` for dispatch patterns per environment.
 
-**Claude Code:** Use the Agent tool to run all three in parallel:
+**Claude Code:** Use the Task tool to run all three in parallel:
 
 ```
 Agent 1: SEO Technical (Group A)
@@ -515,7 +517,8 @@ Serialize from Phase 4 scoring results:
   ],
   "findings": [
     {
-      "id": "F1",
+      "id": "D4-sitemap-exists",
+      "display_id": "F1",
       "dimension": "D4",
       "check": "sitemap-exists",
       "status": "FAIL",

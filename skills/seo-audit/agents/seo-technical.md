@@ -321,31 +321,9 @@ For each check that results in FAIL or PARTIAL, produce a finding object:
 
 Use `INSUFFICIENT DATA` when static analysis cannot determine the check result and no live verification is available.
 
-### fix_type Registry (Technical Agent)
+### Fix Registry
 
-| fix_type | Description | Typical fix_safety |
-|----------|------------|-------------------|
-| `title-add` | Add missing `<title>` tag | SAFE |
-| `meta-description-add` | Add missing meta description | SAFE |
-| `viewport-add` | Add viewport meta tag | SAFE |
-| `canonical-add` | Add `<link rel="canonical">` | SAFE |
-| `canonical-fix` | Fix inconsistent canonical URL pattern | MODERATE |
-| `heading-fix` | Fix heading hierarchy (h1 count, skipped levels) | MODERATE |
-| `sitemap-add` | Add sitemap generation | SAFE |
-| `sitemap-fix` | Fix sitemap configuration (missing lastmod, routes) | SAFE |
-| `sitemap-robots-ref` | Add Sitemap: directive to robots.txt | SAFE |
-| `robots-fix` | Fix robots.txt directives | MODERATE |
-| `robots-ai-policy` | Add AI crawler policies to robots.txt | SAFE |
-| `llms-txt-add` | Create llms.txt file | SAFE |
-| `headers-add` | Add security headers to deploy config | MODERATE |
-| `https-fix` | Fix mixed content / hardcoded http:// URLs | MODERATE |
-| `noindex-staging` | Add noindex to staging/preview environments | SAFE |
-| `lang-attr-add` | Add lang attribute to `<html>` | SAFE |
-| `hreflang-add` | Add hreflang tags for multi-language sites | MODERATE |
-| `analytics-add` | Add analytics integration | MODERATE |
-| `search-console-add` | Add Search Console verification | SAFE |
-| `error-page-add` | Add custom 404 page | SAFE |
-| `monitoring-add` | Add performance/error monitoring | MODERATE |
+For canonical fix_type identifiers, safety classifications, and fix_params schema, read `../../../shared/includes/seo-fix-registry.md`. Do not define local fix_type values -- use only those listed in the shared registry.
 
 ---
 

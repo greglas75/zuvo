@@ -66,7 +66,8 @@ Fix-capable audits MAY include these additional fields:
   ],
   "findings": [
     {
-      "id": "F1",
+      "id": "D4-sitemap-exists",
+      "display_id": "F1",
       "dimension": "D4",
       "check": "sitemap-exists",
       "status": "FAIL",

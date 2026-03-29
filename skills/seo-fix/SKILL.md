@@ -74,7 +74,7 @@ Build failure → rollback (see Phase 3 rollback model).
 
 ### GATE 5 -- Dirty File Check
 
-Before modifying any file, check for uncommitted changes in that file (`git diff --name-only`). If the file has uncommitted changes unrelated to this fix run, mark finding as `NEEDS_REVIEW` instead of modifying.
+Before modifying any file, check for uncommitted changes in that file (`git diff --name-only`). If the file has uncommitted changes, mark finding as `NEEDS_REVIEW` instead of modifying.
 
 ---
 
@@ -128,10 +128,6 @@ Read `timestamp` field. Calculate age.
 - If <=24h: proceed
 - If >24h: apply GATE 3 (stale audit protection)
 
-Read `timestamp` field. Calculate age.
-- If <=24h: proceed
-- If >24h: apply GATE 3 (stale audit protection)
-
 ### 0.4 Print summary
 
 ```
@@ -166,77 +162,37 @@ Detect output directory for static files:
 - Hugo: `static/`
 - Unknown: search for `public/` or `static/`, default to `public/`
 
-### 1.2 Template Registry
+### 1.2 Fix Registry (shared contract)
 
-| fix_type | Framework | Template | Target Priority |
-|----------|-----------|----------|-----------------|
-| `sitemap-add` | astro | Add `@astrojs/sitemap` to integrations, ensure `site:` set | 1. `astro.config.mjs` (existing) |
-| `sitemap-add` | nextjs | Create `app/sitemap.ts` with route export | 1. `app/sitemap.ts` (new) |
-| `sitemap-add` | hugo | Add `[sitemap]` config | 1. `hugo.toml` (existing) |
-| `json-ld-add` | astro | Add `<script type="application/ld+json" set:html={...} />` | 1. Existing layout `<head>` component |
-| `json-ld-add` | nextjs | Add JSON-LD script to layout | 1. `app/layout.tsx` for sitewide schema. 2. Specific `page.tsx` for page-level schema (per `schema_types` param) |
-| `json-ld-add` | hugo | Create `layouts/partials/json-ld.html`, include in head | 1. `layouts/partials/json-ld.html` (new) |
-| `meta-og-add` | astro | Add `<meta property="og:*">` tags | 1. Existing BaseHead/head component |
-| `meta-og-add` | nextjs | Add to metadata API | 1. Existing `generateMetadata()`. 2. Existing `metadata` export. 3. `app/layout.tsx` fallback |
-| `meta-og-add` | hugo | Add OG meta tags to head partial | 1. Existing `opengraph.html` partial. 2. `layouts/partials/head.html` |
-| `robots-fix` | astro | Fix `public/robots.txt` or `src/pages/robots.txt.ts` | 1. Existing robots file. 2. `public/robots.txt` (new) |
-| `robots-fix` | nextjs | Create/fix robots config | 1. Existing `app/robots.ts`. 2. `app/robots.ts` (new) |
-| `robots-fix` | hugo | Fix robots config | 1. `hugo.toml` + `layouts/robots.txt` |
-| `llms-txt-add` | astro | Create llms.txt in static output dir | 1. `public/llms.txt` |
-| `llms-txt-add` | nextjs | Create llms.txt in static output dir | 1. `public/llms.txt` |
-| `llms-txt-add` | hugo | Create llms.txt in static output dir | 1. `static/llms.txt` |
-| `headers-add` | cloudflare | Create `_headers` file | 1. Existing `public/_headers` (append). 2. `public/_headers` (new) |
-| `headers-add` | vercel | Add headers config | 1. Existing `vercel.json` headers. 2. Existing `next.config.js` headers(). 3. `vercel.json` (new). If ambiguous → NEEDS_REVIEW |
-| `headers-add` | netlify | Create `_headers` or add to `netlify.toml` | 1. Existing `public/_headers`. 2. Existing `netlify.toml` [[headers]]. 3. `public/_headers` (new) |
-| `canonical-fix` | astro | Set `site:` in config, add canonical link | `astro.config.mjs` + layout |
-| `canonical-fix` | nextjs | Add `alternates.canonical` to metadata | `app/layout.tsx` |
-| `canonical-fix` | hugo | Verify `baseURL`, add canonical link | `hugo.toml` + head partial |
-| `font-display-add` | * | Add `font-display: swap` to `@font-face` | CSS files with `@font-face` |
-| `lang-attr-add` | * | Add `lang` attribute to `<html>` | Layout/template files |
-| `alt-text-add` | * | Add `alt=""` to decorative images | Component files with `<img>` |
-| `viewport-add` | * | Add `<meta name="viewport">` to head | Layout head |
+Read `{plugin_root}/shared/includes/seo-fix-registry.md` for the canonical:
+- Template registry (fix_type → framework → target file priority)
+- Safety classification (per framework, with context-aware upgrade rules)
+- Fix parameters schema (required and optional params per fix_type)
 
-**Not in registry (manual recommendations only):**
-- `hreflang-add` — DANGEROUS, requires locale strategy decisions. Appears in report as MANUAL.
-- `noindex-change` — DANGEROUS, platform-dependent. Manual only.
-- `redirect-add` — DANGEROUS, HTTP-level config. Manual only.
-- Content/E-E-A-T fixes — OUT_OF_SCOPE, requires human writing.
+The shared registry is the single source of truth. Do not override safety classifications locally.
 
-### 1.3 Safety Classification (per framework, context-aware)
+**Template target priorities (framework-specific):**
 
-| fix_type | astro | nextjs | hugo | * (universal) |
-|----------|-------|--------|------|---------------|
-| `llms-txt-add` | SAFE | SAFE | SAFE | SAFE |
-| `headers-add` | SAFE | SAFE | SAFE | SAFE |
-| `font-display-add` | SAFE | SAFE | SAFE | SAFE |
-| `lang-attr-add` | SAFE | SAFE | SAFE | SAFE |
-| `alt-text-add` | SAFE | SAFE | SAFE | SAFE |
-| `viewport-add` | SAFE | SAFE | SAFE | SAFE |
-| `sitemap-add` | MODERATE (pkg) | MODERATE (new file) | SAFE (config) | -- |
-| `json-ld-add` | MODERATE | MODERATE | MODERATE | -- |
-| `meta-og-add` | MODERATE | MODERATE | MODERATE | -- |
-| `robots-fix` | MODERATE | MODERATE | MODERATE | -- |
-| `canonical-fix` | DANGEROUS | DANGEROUS | DANGEROUS | -- |
+The shared registry lists fix_types and safety. The TARGET FILE PRIORITY (which file to modify first) is skill-specific context that lives here:
 
-**Context-aware safety upgrade:** If the target file already contains related directives (e.g., existing `_headers` with CSP, existing `robots.txt` with custom rules), upgrade safety one tier: SAFE → MODERATE, MODERATE → DANGEROUS. This prevents blind overwriting of intentional config.
+| fix_type | astro target priority | nextjs target priority | hugo target priority |
+|----------|-----------------------|------------------------|----------------------|
+| `json-ld-add` | Existing layout `<head>` | Sitewide: `app/layout.tsx`. Page-level: specific `page.tsx` | `layouts/partials/json-ld.html` |
+| `meta-og-add` | Existing BaseHead/head component | 1. `generateMetadata()`. 2. `metadata` export. 3. `app/layout.tsx` | 1. `opengraph.html` partial. 2. `head.html` |
+| `headers-add` | Cloudflare: `public/_headers`. Vercel: existing config first. Netlify: `_headers` or `netlify.toml` | Same, prefer existing mechanism | Same |
+| `llms-txt-add` | `public/llms.txt` | `public/llms.txt` | `static/llms.txt` |
 
-**Dependency-touching fixes:** If a fix requires installing a package (e.g., `sitemap-add` on Astro needs `@astrojs/sitemap`), classify as NEEDS_REVIEW regardless of base safety. Present install command to user for confirmation.
+All other fix_types: target file is deterministic from framework (single obvious location per the shared registry).
 
-### 1.4 Fix Parameters Schema
+**Additional seo-fix rules (not in shared registry):**
+- Context-aware safety upgrade: if target file has existing related config, upgrade one tier (SAFE→MODERATE, MODERATE→DANGEROUS)
+- Dependency-touching fixes (e.g., `sitemap-add` on Astro needs `@astrojs/sitemap`): classify as NEEDS_REVIEW regardless of base safety
+- `lang-attr-add`: if locale not derivable → NEEDS_REVIEW (do not default to en)
+- `alt-text-add`: only images with decorative signals (role="presentation", aria-hidden, class icon/decoration). Others → NEEDS_REVIEW
+- `viewport-add`: dedup scan before adding. Never duplicate.
 
-| fix_type | Required params | Optional params | Notes |
-|----------|-----------------|-----------------|-------|
-| `sitemap-add` | `framework` | `site_url` | If `site_url` null and not in config → NEEDS_REVIEW |
-| `json-ld-add` | `framework`, `schema_types` | `org_name`, `site_name` | Sitewide schemas (WebSite, Organization) → root layout. Page schemas → specific page file |
-| `meta-og-add` | `framework`, `missing_tags` | `site_url`, `default_image` | `missing_tags`: e.g., `["og:locale", "twitter:image"]` |
-| `robots-fix` | `framework`, `issue` | `current_rules` | `issue`: "missing", "malformed", or "blocking-googlebot" |
-| `llms-txt-add` | -- | `site_name`, `pages` | Output path: `public/llms.txt` (Astro/Next) or `static/llms.txt` (Hugo) |
-| `headers-add` | `platform` | -- | Precedence: existing project mechanism first, then platform-native config |
-| `canonical-fix` | `framework` | `site_url` | DANGEROUS. `site_url` REQUIRED — if missing, mark NEEDS_REVIEW |
-| `font-display-add` | -- | `font_files` | Universal. `font_files`: paths to CSS with @font-face |
-| `lang-attr-add` | -- | `locale` | If `locale` not derivable from config → NEEDS_REVIEW (do not default to `en`) |
-| `alt-text-add` | -- | `image_files` | Only images with explicit decorative signals: `role="presentation"`, `aria-hidden="true"`, class containing `icon`/`decoration`. All others → NEEDS_REVIEW |
-| `viewport-add` | -- | -- | Before adding: dedup scan. If viewport meta already exists anywhere in layout chain, skip or replace (never duplicate) |
+**Not in registry (manual only):**
+- `hreflang-add`, `noindex-change`, `redirect-add` -- listed in shared registry as non-fixable
 
 ---
 
@@ -446,7 +402,7 @@ Same format as seo-audit backlog persistence. Uses the stable check ID from the 
   },
   "actions": [
     {
-      "finding_id": "F1",
+      "finding_id": "D4-sitemap-exists",
       "fix_type": "sitemap-add",
       "status": "FIXED",
       "file": "astro.config.mjs",

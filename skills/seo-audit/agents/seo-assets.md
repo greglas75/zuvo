@@ -381,16 +381,9 @@ For each check that results in FAIL or PARTIAL, produce a finding object:
 
 Use `INSUFFICIENT DATA` when static analysis cannot determine the check result and no live verification is available.
 
-### fix_type Registry (Assets Agent)
+### Fix Registry
 
-| fix_type | Description | Typical fix_safety |
-|----------|------------|-------------------|
-| `meta-og-add` | Add or fix Open Graph meta tags in layout/template | SAFE |
-| `json-ld-add` | Add or fix JSON-LD structured data | SAFE |
-| `json-ld-fix` | Fix JSON-LD schema type or missing required properties | MODERATE |
-| `font-display-add` | Add `font-display: swap` to @font-face declarations | SAFE |
-| `alt-text-add` | Add alt attributes to img tags | SAFE |
-| `viewport-add` | Add viewport meta tag or fix render-blocking resources | SAFE |
+For canonical fix_type identifiers, safety classifications, and fix_params schema, read `../../../shared/includes/seo-fix-registry.md`. Do not define local fix_type values -- use only those listed in the shared registry.
 
 ---
 
