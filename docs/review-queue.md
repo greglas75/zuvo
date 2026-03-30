@@ -50,3 +50,4 @@ Commits pending review. Auto-managed:
 - 2496452 (2026-03-30) fix: remove .mcp.json — CodeSift already in user MCPs, plugin copy causes duplicate failure
 - e02132c (2026-03-30) feat: add D5/llms-full-txt-present check to seo-audit, harden ship review gates
 - ce85125 (2026-03-30) feat: add dev-push.sh — one command for push + marketplace + SHA sync + install
+- 237f37f (2026-03-30) fix: remove mcpServers from codex plugin.json — was causing plugin:zuvo:codesift failure

@@ -53,10 +53,15 @@ install_claude() {
     DIR_NAME=$(basename "$CACHE_DIR")
     echo "  Syncing: $DIR_NAME"
 
-    # Copy skills (new + updated)
+    # Copy skills (new + updated) — use rsync to preserve directory structure
     for skill_dir in "$ZUVO_DIR"/skills/*/; do
-      cp -r "$skill_dir" "$CACHE_DIR/skills/"
+      skill_name=$(basename "$skill_dir")
+      mkdir -p "$CACHE_DIR/skills/$skill_name"
+      cp -r "$skill_dir"* "$CACHE_DIR/skills/$skill_name/" 2>/dev/null || true
     done
+    # Clean up any orphan files at skills/ root level (not in a skill subdirectory)
+    rm -f "$CACHE_DIR/skills/SKILL.md" 2>/dev/null || true
+    rm -rf "$CACHE_DIR/skills/agents" 2>/dev/null || true
 
     # Copy shared includes
     if [[ -d "$ZUVO_DIR/shared/includes" ]] && [[ -d "$CACHE_DIR/shared/includes" ]]; then
