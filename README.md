@@ -8,6 +8,8 @@ Auto-activating, multi-agent skill ecosystem for Claude Code and Codex.
 
 ### Claude Code (recommended)
 
+> Requires Claude Code 1.0.33+. Check with `claude --version`, update with `claude update`.
+
 ```bash
 # Add the Zuvo marketplace (one-time)
 claude plugin marketplace add greglas75/zuvo-marketplace
@@ -119,11 +121,11 @@ args = ["-y", "codesift-mcp"]
 | Core | build, review, refactor, debug |
 | Code audits | code-audit, test-audit, api-audit, security-audit, pentest |
 | Infra audits | performance-audit, db-audit, dependency-audit, ci-audit, env-audit |
-| Structure | structure-audit, seo-audit, architecture |
+| Structure | structure-audit, seo-audit, seo-fix, architecture |
 | Design | design, design-review, ui-design-team |
 | Testing | write-tests, fix-tests, write-e2e, tests-performance |
 | Release | ship, deploy, canary, release-docs, retro |
-| Utility | docs, presentation, backlog |
+| Utility | docs, presentation, backlog, using-zuvo |
 
 ## Documentation
 

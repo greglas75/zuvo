@@ -11,6 +11,8 @@
 
 ### Via marketplace (recommended)
 
+> **Requires Claude Code 1.0.33+.** Check with `claude --version`, update with `claude update` or `npm update -g @anthropic-ai/claude-code`.
+
 ```bash
 # Add the Zuvo marketplace (one-time)
 claude plugin marketplace add greglas75/zuvo-marketplace
