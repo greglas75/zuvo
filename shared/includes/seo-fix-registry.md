@@ -12,7 +12,7 @@
 | `json-ld-add` | Add JSON-LD structured data to layout | Yes |
 | `meta-og-add` | Add missing OG/social meta tags | Yes |
 | `robots-fix` | Fix robots.txt (missing, malformed, blocking) | Yes |
-| `llms-txt-add` | Create llms.txt for AI discovery | Yes |
+| `llms-txt-add` | Create llms.txt (index) + llms-full.txt (aggregated content) for AI discovery | Yes |
 | `headers-add` | Add security headers via platform config | Yes |
 | `canonical-fix` | Fix canonical URL configuration | Yes (DANGEROUS) |
 | `font-display-add` | Add font-display: swap to @font-face | Yes |
@@ -53,7 +53,7 @@ Base safety — may be upgraded one tier by seo-fix if target file has existing 
 | `json-ld-add` | `framework`, `schema_types` | `org_name`, `site_name` |
 | `meta-og-add` | `framework`, `missing_tags` | `site_url`, `default_image` |
 | `robots-fix` | `framework`, `issue` | `current_rules` |
-| `llms-txt-add` | -- | `site_name`, `pages` |
+| `llms-txt-add` | -- | `site_name`, `pages`, `content_dirs` |
 | `headers-add` | `platform` | -- |
 | `canonical-fix` | `framework` | `site_url` |
 | `font-display-add` | -- | `font_files` |

@@ -180,7 +180,7 @@ The shared registry lists fix_types and safety. The TARGET FILE PRIORITY (which 
 | `json-ld-add` | Existing layout `<head>` | Sitewide: `app/layout.tsx`. Page-level: specific `page.tsx` | `layouts/partials/json-ld.html` |
 | `meta-og-add` | Existing BaseHead/head component | 1. `generateMetadata()`. 2. `metadata` export. 3. `app/layout.tsx` | 1. `opengraph.html` partial. 2. `head.html` |
 | `headers-add` | Cloudflare: `public/_headers`. Vercel: existing config first. Netlify: `_headers` or `netlify.toml` | Same, prefer existing mechanism | Same |
-| `llms-txt-add` | `public/llms.txt` | `public/llms.txt` | `static/llms.txt` |
+| `llms-txt-add` | `public/llms.txt` + `public/llms-full.txt` | `public/llms.txt` + `public/llms-full.txt` | `static/llms.txt` + `static/llms-full.txt` |
 
 All other fix_types: target file is deterministic from framework (single obvious location per the shared registry).
 
@@ -190,6 +190,31 @@ All other fix_types: target file is deterministic from framework (single obvious
 - `lang-attr-add`: if locale not derivable → NEEDS_REVIEW (do not default to en)
 - `alt-text-add`: only images with decorative signals (role="presentation", aria-hidden, class icon/decoration). Others → NEEDS_REVIEW
 - `viewport-add`: dedup scan before adding. Never duplicate.
+
+**`llms-txt-add` generation logic (two files):**
+
+1. **`llms.txt` (index):** Generate from project metadata:
+   ```markdown
+   # {site_name}
+   > {one-line description from package.json or README first paragraph}
+
+   ## Docs
+   - [{title}]({path}): {first sentence of file}
+   ```
+   Sources for pages: `docs/*.md`, `content/**/*.md`, `README.md`, sitemap routes. Each entry = title + path + first meaningful sentence.
+
+2. **`llms-full.txt` (aggregated content):** Concatenate actual content from existing files:
+   - Scan: `README.md`, `docs/*.md`, `content/**/*.md`, `pages/**/*.md` (ordered by importance)
+   - For each file: extract title (H1 or frontmatter title) + full markdown body
+   - Join with `---` separator between sections
+   - Prepend same header as llms.txt (`# {site_name}\n> {description}`)
+   - If no content files found: skip llms-full.txt, note in report "No content files to aggregate for llms-full.txt"
+   - Max size: cap at 100KB (truncate with "... [truncated, see full docs at {url}]")
+
+3. **Validation:** After generating:
+   - Both files must be valid markdown (no broken syntax)
+   - llms.txt links must point to paths that exist in the project
+   - llms-full.txt must have substantive content (not just headers)
 
 **Not in registry (manual only):**
 - `hreflang-add`, `noindex-change`, `redirect-add` -- listed in shared registry as non-fixable
