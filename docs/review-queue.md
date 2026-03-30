@@ -53,3 +53,4 @@ Commits pending review. Auto-managed:
 - 237f37f (2026-03-30) fix: remove mcpServers from codex plugin.json — was causing plugin:zuvo:codesift failure
 - 64604a4 (2026-03-30) fix: install.sh — preserve skill subdirectory structure, clean orphan files from cache
 - 77c5134 (2026-03-30) docs: add dev-push.sh as recommended workflow in CLAUDE.md
+- 3b6879a (2026-03-30) docs: add troubleshooting for stale SHA to README + getting-started
