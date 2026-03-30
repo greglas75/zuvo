@@ -60,7 +60,7 @@ Scoped task execution for common development work.
 | Skill | Description | When to use | Key flags |
 |-------|-------------|-------------|-----------|
 | `zuvo:structure-audit` | Codebase organization across 13 dimensions (SA1-SA13): naming, depth, colocation, file size, dead code, complexity, duplication, hotspots. Tool-driven with CodeSift primary and CLI fallbacks. | When codebase feels messy, before major restructuring | `full`, `[path]`, `--naming`, `--size`, `--dead-code`, `--duplication`, `--hotspots`, `--quick`, `--fix` |
-| `zuvo:seo-audit` | SEO/GEO audit across 13 dimensions with 6 critical gates. 58 checks across 13 dimensions on meta tags, structured data, AI crawlers, content, performance. Framework-aware. | Before launches, when SEO ranking drops | `full`, `[path]`, `--live-url <url>`, `--quick`, `--content-only`, `--geo`, `--persist-backlog` |
+| `zuvo:seo-audit` | SEO/GEO audit across 13 dimensions with 6 critical gates. 59 checks across 13 dimensions on meta tags, structured data, AI crawlers, content, performance. Framework-aware. | Before launches, when SEO ranking drops | `full`, `[path]`, `--live-url <url>`, `--quick`, `--content-only`, `--geo`, `--persist-backlog` |
 | `zuvo:seo-fix` | Apply SEO audit fixes with 3-tier safety model (SAFE/MODERATE/DANGEROUS). Reads audit JSON, applies framework-specific templates. | After seo-audit, to auto-fix findings | `--auto`, `--all`, `--dry-run`, `--fix-type`, `--finding` |
 | `zuvo:architecture` | Three modes: review existing architecture (A1-A9), create ADRs, or design new systems. Uses CodeSift for module discovery and dependency mapping. | Architecture health check, documenting decisions, system design | `--mode review [path]`, `--mode adr`, `--mode design` |
 

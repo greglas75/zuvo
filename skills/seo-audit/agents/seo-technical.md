@@ -150,13 +150,14 @@ Check robots.txt for Googlebot access and AI crawler policies. Verify conscious 
 6. **AI crawler policy -- Google-Extended** -- explicit `User-agent: Google-Extended` rule
 7. **AI crawler policy conscious** -- Conscious decision = explicit Allow or Disallow for at least 3 of these bots: GPTBot, ClaudeBot, PerplexityBot, Google-Extended, CCBot. OR a Content-Signal header with ai-train directive. Default/absent robots.txt = FAIL (not conscious). (**Critical Gate CG6**)
 8. **llms.txt exists** -- `llms.txt` file present for AI-readable site summary
-9. **Crawl-delay appropriate** -- no excessive `Crawl-delay` that would slow indexing
-10. **No broad Disallow** -- `Disallow: /` not set for `User-agent: *` (would block all crawlers)
+9. **llms-full.txt exists** -- `llms-full.txt` companion file present. llms.txt is the brief index; llms-full.txt contains comprehensive content for AI consumption. Absence when llms.txt exists = FAIL with fix_type `llms-txt-add`.
+10. **Crawl-delay appropriate** -- no excessive `Crawl-delay` that would slow indexing
+11. **No broad Disallow** -- `Disallow: /` not set for `User-agent: *` (would block all crawlers)
 
 **Search strategy:**
 ```
 Read robots.txt (typically public/robots.txt or static/robots.txt)
-Glob for llms.txt in root, public, and static directories
+Glob for llms.txt and llms-full.txt in root, public, and static directories
 ```
 
 Parse robots.txt line-by-line:

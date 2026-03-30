@@ -53,6 +53,7 @@
 | `robots-googlebot` | Googlebot not blocked | CG2 | `robots-fix` |
 | `robots-ai-policy` | Conscious AI crawler policy (3+ bots) | CG6 | null |
 | `llms-txt-present` | llms.txt exists and accessible | -- | `llms-txt-add` |
+| `llms-full-txt-present` | llms-full.txt exists (companion to llms.txt index) | -- | `llms-txt-add` |
 | `crawl-delay` | No excessive crawl-delay | -- | null |
 
 ## D6 — Images
@@ -137,7 +138,7 @@
 | D2 | 6 |
 | D3 | 4 |
 | D4 | 4 |
-| D5 | 5 |
+| D5 | 6 |
 | D6 | 4 |
 | D7 | 3 |
 | D8 | 4 |
@@ -146,5 +147,5 @@
 | D11 | 6 |
 | D12 | 3 |
 | D13 | 3 |
-| **Total** | **58** |
+| **Total** | **59** |
 | Critical gates | 6 (CG1-CG6) |

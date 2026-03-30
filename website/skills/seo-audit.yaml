@@ -4,7 +4,7 @@ last_synced: "2026-03-29"
 meta:
   slug: seo-audit
   title: "SEO Audit — 13-Dimension Code + GEO Readiness Analysis"
-  description: "SEO/GEO audit: 13 dimensions, 6 critical gates, 58 checks across 13 dimensions. JSON-LD SSR, AI crawlers, Core Web Vitals. Supports Astro, Next.js, Hugo, WordPress."
+  description: "SEO/GEO audit: 13 dimensions, 6 critical gates, 59 checks across 13 dimensions. JSON-LD SSR, AI crawlers, Core Web Vitals. Supports Astro, Next.js, Hugo, WordPress."
   category: audit
   og_image: /og/skills/seo-audit.png
 
@@ -25,8 +25,8 @@ stats:
     value: "6"
     detail: "CG1-CG6: sitemap, Googlebot, HTTPS, canonical, JSON-LD SSR, AI crawlers"
   - label: "Checks"
-    value: "58"
-    detail: "58 checks across 13 dimensions"
+    value: "59"
+    detail: "59 checks across 13 dimensions"
   - label: "Sub-scores"
     value: "3"
     detail: "SEO, GEO, and Tech scores each /100"

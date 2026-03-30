@@ -42,3 +42,9 @@ Commits pending review. Auto-managed:
 - fff62f9 (2026-03-29) fix: close remaining cross-skill contracts
 - ee064aa (2026-03-29) feat: canonical check registry, mode routing, CG3/CG4 fixes, public docs sync
 - 44e96f8 (2026-03-29) fix: update refactor skill + agents, update review queue
+- eb460c5 (2026-03-30) fix: .mcp.json schema (add mcpServers wrapper), update review queue
+- 6879fa1 (2026-03-30) docs: sync skill counts to 39, add seo-fix to docs, fix seo-audit check count
+- 136c2ad (2026-03-30) fix: D10 llms-txt-quality check — index-only = PARTIAL, not PASS
+- 9ed0496 (2026-03-30) feat: llms-txt-add generates both llms.txt + llms-full.txt
+- 3a38cc0 (2026-03-30) fix: add version requirement to install instructions, fix skill counts
+- 2496452 (2026-03-30) fix: remove .mcp.json — CodeSift already in user MCPs, plugin copy causes duplicate failure

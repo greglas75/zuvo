@@ -50,6 +50,8 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 2. **NEVER** push to a remote repository without explicit user confirmation. In non-interactive environments (Codex, Cursor): skip the push step entirely.
 3. **NEVER** push tags without interactive confirmation. In non-interactive environments (Codex, Cursor): skip `git push --tags`, write `tagPushed: false` in `memory/last-ship.json`.
 4. **Default to `patch`** bump with `[AUTO-DECISION]` annotation in non-interactive environments when the user cannot be asked for bump type.
+5. **NEVER** propose skipping, downgrading, or shortcutting the review threshold from Phase 2. The threshold table is MANDATORY — the agent does not get to override it based on effort estimates ("this would take hours"), prior pipeline claims ("execute already reviewed"), or diff complexity ("most of this is boilerplate"). Only the `--fast` flag explicitly passed by the user can skip review. If you catch yourself thinking "this is too much review for this release" — that is exactly when the review is most needed.
+6. **NEVER** claim that prior pipeline steps (zuvo:execute, zuvo:plan) substitute for ship review. Execute reviews individual tasks during implementation. Ship reviews the integrated whole. These are different scopes — one does not replace the other.
 
 ---
 
@@ -108,7 +110,9 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
    ```
    Extract the total insertions + deletions number as `DIFF_LOC`. Uses the tag ref directly — `HEAD~N` is fragile with merge commits and non-linear history.
 
-2. **Apply review threshold** (per DD4), unless overridden by `--fast` or `--full`:
+   **Diff scope is the entire release.** `DIFF_LOC` includes ALL changes since the last tag — not just "your feature." If the diff is 4000 LOC because 3000 LOC of other work landed too, the review covers ALL 4000 LOC. Do not rationalize a smaller scope by counting only "feature commits."
+
+2. **Apply review threshold (MANDATORY).** These thresholds are non-negotiable (see Safety Rule 5). Only `--fast` or `--full` flags can override them:
 
    | Diff LOC | Review actions |
    |----------|----------------|
@@ -117,9 +121,11 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
    | 100+ | Dispatch `review-light` + invoke `zuvo:review` as inline agent + invoke `zuvo:design-review` if frontend files changed (`.tsx`, `.jsx`, `.css`, `.scss`, `.html`) |
    | 300+ | All of the above + dispatch `coverage-check` agent (read `skills/ship/agents/coverage-check.md`) |
 
-   **Flag overrides:**
-   - `--fast`: always use fast path regardless of diff size.
+   **Flag overrides (user-provided ONLY — agent must NEVER self-apply):**
+   - `--fast`: always use fast path regardless of diff size. Must be in `$ARGUMENTS` from the user's invocation.
    - `--full`: always use 300+ path (all reviews + coverage check) regardless of diff size.
+
+   **Anti-rationalization:** If the diff is 300+ LOC and `--fast` was NOT passed, you MUST run the full pipeline. Do not propose "fast path because it's late / it's too big / execute already reviewed / most changes are trivial." The threshold exists precisely for large releases where the temptation to skip is strongest.
 
 3. **Agent dispatch — review-light:**
    - Read `skills/ship/agents/review-light.md` for the agent's instructions.
