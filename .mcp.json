@@ -1,8 +1,10 @@
 {
-  "codesift": {
-    "command": "npx",
-    "args": ["-y", "codesift-mcp"],
-    "startup_timeout_sec": 30,
-    "tool_timeout_sec": 60
+  "mcpServers": {
+    "codesift": {
+      "command": "npx",
+      "args": ["-y", "codesift-mcp"],
+      "startup_timeout_sec": 30,
+      "tool_timeout_sec": 60
+    }
   }
 }

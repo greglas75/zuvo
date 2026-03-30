@@ -41,3 +41,4 @@ Commits pending review. Auto-managed:
 - 15d564c (2026-03-29) fix: build skill round 4 — env-compat alignment, global hotspots, run log
 - fff62f9 (2026-03-29) fix: close remaining cross-skill contracts
 - ee064aa (2026-03-29) feat: canonical check registry, mode routing, CG3/CG4 fixes, public docs sync
+- 44e96f8 (2026-03-29) fix: update refactor skill + agents, update review queue
