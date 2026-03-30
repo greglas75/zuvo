@@ -94,7 +94,7 @@
 
 | check_slug | Check | CG? | fix_type |
 |------------|-------|-----|----------|
-| `llms-txt-quality` | llms.txt content quality (if file exists; presence is D5) | -- | null |
+| `llms-txt-quality` | llms.txt content quality: substantive content vs index-only, llms-full.txt companion, content depth (3+ paragraphs). Index-only = PARTIAL. | -- | null |
 | `semantic-html` | Semantic elements (main, nav, section) | -- | null |
 | `chunkability` | Content chunkable for AI extraction | -- | null |
 | `eeat-signals` | E-E-A-T: author, datePublished, dateModified, citations | -- | null |

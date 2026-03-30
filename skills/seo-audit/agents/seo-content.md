@@ -182,18 +182,28 @@ Compare for exact or near-duplicates
 
 #### D10.1 llms.txt Content Quality
 
-Evaluate the content quality and structure of `llms.txt` -- if the file exists. Presence detection belongs to D5 in the technical agent; this check evaluates content only.
+Evaluate the **content quality** of `llms.txt` -- not just existence or structure. Presence detection belongs to D5 in the technical agent; this check evaluates whether the file actually gives AI bots useful content to work with.
 
 If no llms.txt file exists, report N/A for this check (do not FAIL -- presence is D5's responsibility).
 
-If the file exists, evaluate:
-- Contains structured information about the site's purpose and content
-- Includes key topics, content types, and preferred citation format
-- Well-organized with clear sections
+If the file exists, evaluate these criteria:
 
-- PASS: llms.txt has structured, informative content with clear sections
-- PARTIAL: llms.txt exists but is minimal or incomplete
+1. **Substantive content vs link index:** Does the file contain actual extractable information (what the product/site does, how it works, key concepts) or is it just a list of URLs with one-line labels? A pure link index forces AI bots to still parse HTML pages — it defeats the purpose of llms.txt.
+
+2. **llms-full.txt companion:** Per the llms.txt spec, `llms.txt` is a summary/index and `llms-full.txt` is the detailed version with full extractable content. Check if `llms-full.txt` exists alongside `llms.txt`. If only the index exists without the full version, AI bots get no real content.
+
+3. **Content depth:** Does the file answer basic questions an AI would need? ("What is [product]?", "How does it work?", "Who is it for?", "Key features", "Pricing model"). Minimum: 3+ substantive paragraphs beyond just links.
+
+4. **Structure quality:** Clear markdown sections, H2/H3 hierarchy, descriptions longer than one line per entry.
+
+**Scoring:**
+
+- PASS: llms.txt has substantive multi-paragraph content that an AI bot could use to generate a useful summary WITHOUT visiting the site. OR llms.txt is a well-structured index AND llms-full.txt exists with detailed content.
+- PARTIAL: llms.txt exists and has some structure, but is index-only (links + one-liners) without llms-full.txt. AI bots get file paths but no real content. OR llms-full.txt exists but is thin.
+- FAIL: llms.txt exists but contains only URLs with no descriptions, or is effectively empty.
 - N/A: No llms.txt file found (presence is checked in D5)
+
+**Common false-PASS to watch for:** A file with correct markdown syntax and sections but where every section is just `- [Page Title](/path): One sentence description`. This is an INDEX, not content. Score as PARTIAL with finding: "llms.txt is an index-only file with links but no extractable content. No llms-full.txt exists. AI bots must still parse HTML to understand the site."
 
 #### D10.2 Semantic HTML
 
