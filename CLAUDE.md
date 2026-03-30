@@ -28,6 +28,22 @@ claude plugin update zuvo@zuvo-marketplace
 # Then restart Claude Code
 ```
 
+### One-command dev workflow (RECOMMENDED)
+
+```bash
+./scripts/dev-push.sh "description"
+```
+
+This does EVERYTHING in one command:
+1. `git add -A` + commit with your message
+2. `git push origin main`
+3. Update marketplace SHA → push marketplace
+4. Update `installed_plugins.json` SHA (fixes the stale SHA problem)
+5. Copy files to Claude Code cache (all directories)
+6. Build + install to Codex
+
+After running: **just restart Claude Code**. No uninstall/install needed.
+
 ### For end users (marketplace release)
 
 ```bash
@@ -40,6 +56,7 @@ This does everything: version bump, commit, push, tag, marketplace SHA update. U
 
 | What you want | Command |
 |---------------|---------|
+| Push + sync everything (dev) | `./scripts/dev-push.sh "description"` then restart Claude/Codex |
 | Test changes locally (dev) | `./scripts/install.sh` then restart Claude/Codex |
 | Release to users | `./scripts/release.sh patch "msg"` |
 | Verify release works | `claude plugin uninstall zuvo@zuvo-marketplace && claude plugin install zuvo` then new session |
