@@ -8,6 +8,5 @@
   },
   "homepage": "https://zuvo.dev",
   "license": "MIT",
-  "skills": "./skills/",
-  "mcpServers": "./.mcp.json"
+  "skills": "./skills/"
 }

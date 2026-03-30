@@ -49,3 +49,4 @@ Commits pending review. Auto-managed:
 - 3a38cc0 (2026-03-30) fix: add version requirement to install instructions, fix skill counts
 - 2496452 (2026-03-30) fix: remove .mcp.json — CodeSift already in user MCPs, plugin copy causes duplicate failure
 - e02132c (2026-03-30) feat: add D5/llms-full-txt-present check to seo-audit, harden ship review gates
+- ce85125 (2026-03-30) feat: add dev-push.sh — one command for push + marketplace + SHA sync + install
