@@ -54,3 +54,4 @@ Commits pending review. Auto-managed:
 - 64604a4 (2026-03-30) fix: install.sh — preserve skill subdirectory structure, clean orphan files from cache
 - 77c5134 (2026-03-30) docs: add dev-push.sh as recommended workflow in CLAUDE.md
 - 3b6879a (2026-03-30) docs: add troubleshooting for stale SHA to README + getting-started
+- 1d531e9 (2026-03-30) fix: sync plugin descriptions to 39 skills + 20 agents
