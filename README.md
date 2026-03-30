@@ -37,13 +37,21 @@ cd zuvo
 ### Claude Code
 
 ```bash
-claude plugin update zuvo
+claude plugin marketplace update zuvo-marketplace
+claude plugin update zuvo@zuvo-marketplace
 ```
 
 Or enable auto-updates:
 ```
 /plugin → Select zuvo-marketplace → Enable auto-update
 ```
+
+**If skills don't appear after update** (known Claude Code cache issue):
+```bash
+claude plugin uninstall zuvo@zuvo-marketplace
+claude plugin install zuvo
+```
+Then start a new session.
 
 ### Codex
 

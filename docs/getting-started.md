@@ -34,9 +34,16 @@ After installing, enable automatic updates so new skills and fixes arrive automa
 Without auto-update, you can update manually anytime:
 
 ```bash
-claude plugin marketplace update greglas75/zuvo-marketplace
-claude plugin update zuvo
+claude plugin marketplace update zuvo-marketplace
+claude plugin update zuvo@zuvo-marketplace
 ```
+
+**If skills don't appear after update** (known Claude Code cache issue):
+```bash
+claude plugin uninstall zuvo@zuvo-marketplace
+claude plugin install zuvo
+```
+Then start a new session. This is a Claude Code plugin cache bug, not a zuvo bug — it sometimes keeps a stale SHA in `installed_plugins.json`.
 
 ### Local development
 

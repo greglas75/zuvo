@@ -52,3 +52,4 @@ Commits pending review. Auto-managed:
 - ce85125 (2026-03-30) feat: add dev-push.sh — one command for push + marketplace + SHA sync + install
 - 237f37f (2026-03-30) fix: remove mcpServers from codex plugin.json — was causing plugin:zuvo:codesift failure
 - 64604a4 (2026-03-30) fix: install.sh — preserve skill subdirectory structure, clean orphan files from cache
+- 77c5134 (2026-03-30) docs: add dev-push.sh as recommended workflow in CLAUDE.md
