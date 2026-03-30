@@ -2,7 +2,7 @@
 
 Auto-activating, multi-agent skill ecosystem for Claude Code and Codex.
 
-38 skills, 16 dispatched agents, quality gates, and structured workflows — all in one plugin.
+39 skills, 16 dispatched agents, quality gates, and structured workflows — all in one plugin.
 
 ## Install
 
@@ -97,7 +97,7 @@ args = ["-y", "codesift-mcp"]
 ## What's inside
 
 - **Pipeline skills** — `zuvo:brainstorm` → `zuvo:plan` → `zuvo:execute` with multi-agent exploration, quality gates, and evidence-based review
-- **32 task skills** — build, review, refactor, debug, 19 audits, design, docs, ship, deploy, canary, retro, and more
+- **35 task skills** — build, review, refactor, debug, 19 audits, design, docs, ship, deploy, canary, retro, and more
 - **Release pipeline** — `zuvo:ship` → `zuvo:deploy` → `zuvo:canary` for the full post-code lifecycle
 - **Auto-activation** — routing engine matches your intent to the right skill automatically
 - **CodeSift integration** — semantic search, community detection, call chain tracing, complexity analysis
@@ -127,7 +127,7 @@ args = ["-y", "codesift-mcp"]
 
 ## Documentation
 
-- [All 38 Skills](docs/skills.md)
+- [All 39 Skills](docs/skills.md)
 - [Pipeline](docs/pipeline.md) — brainstorm → plan → execute
 - [Quality Gates](docs/quality-gates.md) — CQ1-CQ22 + Q1-Q17
 - [CodeSift Integration](docs/codesift-integration.md)

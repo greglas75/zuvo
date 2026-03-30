@@ -1,7 +1,7 @@
 {
   "name": "zuvo",
   "version": "1.1.0",
-  "description": "Multi-agent skill ecosystem for structured software development. Provides auto-activating pipeline skills (brainstorm, plan, execute) and 32 domain-specific task skills with quality gates, code exploration, and evidence-based review.",
+  "description": "Multi-agent skill ecosystem for structured software development. Provides auto-activating pipeline skills (brainstorm, plan, execute) and 35 domain-specific task skills with quality gates, code exploration, and evidence-based review.",
   "type": "module",
   "license": "MIT",
   "keywords": [

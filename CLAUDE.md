@@ -78,7 +78,7 @@ This does: version bump → commit → push → tag → update marketplace SHA �
 ## File structure
 
 ```
-skills/<name>/SKILL.md          — skill definitions (38 total)
+skills/<name>/SKILL.md          — skill definitions (39 total)
 skills/<name>/agents/<name>.md  — sub-agent instructions
 shared/includes/*.md            — shared procedural includes (codesift-setup, env-compat, etc.)
 rules/*.md                      — code quality rules (cq-patterns, testing, security)
@@ -104,7 +104,7 @@ Every SKILL.md follows this structure:
 
 Reference: `skills/build/SKILL.md` is the canonical template.
 
-## Skill categories (38 total)
+## Skill categories (39 total)
 
 | Category | Count | Skills |
 |----------|-------|--------|
@@ -112,7 +112,7 @@ Reference: `skills/build/SKILL.md` is the canonical template.
 | Core | 4 | build, review, refactor, debug |
 | Code/Test audits | 5 | code-audit, test-audit, api-audit, security-audit, pentest |
 | Infra audits | 5 | performance-audit, db-audit, dependency-audit, ci-audit, env-audit |
-| Structure/SEO/Arch | 3 | structure-audit, seo-audit, architecture |
+| Structure/SEO/Arch | 4 | structure-audit, seo-audit, seo-fix, architecture |
 | Design | 3 | design, design-review, ui-design-team |
 | Testing | 4 | write-tests, fix-tests, write-e2e, tests-performance |
 | Release | 5 | ship, deploy, canary, release-docs, retro |

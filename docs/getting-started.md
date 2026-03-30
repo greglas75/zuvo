@@ -78,7 +78,7 @@ When you start a Claude Code session with Zuvo installed:
 1. The `SessionStart` hook fires (defined in `hooks/hooks.json`)
 2. The hook script (`hooks/session-start`) reads the skill router from `skills/using-zuvo/SKILL.md`
 3. The router content is injected as session context via `hookSpecificOutput`
-4. Claude now knows about all 33 skills and will auto-route your requests to the right skill
+4. Claude now knows about all 39 skills and will auto-route your requests to the right skill
 
 You do not need to type skill names. The router matches your intent to skills automatically. Saying "review my changes" activates `zuvo:review`. Saying "add a notification feature" activates `zuvo:brainstorm` or `zuvo:build` depending on scope.
 
