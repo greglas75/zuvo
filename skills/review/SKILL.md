@@ -28,6 +28,7 @@ CORE FILES LOADED:
   2. env-compat.md       -- [READ | MISSING -> STOP]
   3. quality-gates.md    -- [READ | MISSING -> STOP]
   4. cq-patterns.md      -- [READ | MISSING -> STOP]
+  5. auto-docs.md        -- [READ | MISSING -> WARN]
 ```
 
 If any file is missing, STOP. Do not proceed from memory.
@@ -726,6 +727,19 @@ No audit. Show unreviewed commits:
 2. Walk the last N commits (default 100), check each against the set
 3. Print the unreviewed commits and a summary: `Total: N | Reviewed: X | Unreviewed: Y`
 4. STOP.
+
+---
+
+## Auto-Docs
+
+After printing the REVIEW COMPLETE block, update project documentation per `shared/includes/auto-docs.md`:
+
+- **In FIX mode only:**
+  - **project-journal.md**: Log the fixes applied, scope, verdict.
+  - **api-changelog.md**: Update if any fix changed API endpoints or schemas.
+- **In REPORT mode:** Skip auto-docs (no code changes made).
+
+Use context from the review findings and applied fixes — do not re-read source files. If auto-docs fails, log a warning and proceed to Run Log.
 
 ---
 

@@ -32,6 +32,7 @@ CORE FILES LOADED:
   3. quality-gates.md    -- [READ | MISSING -> STOP]
   4. cq-patterns.md      -- [READ | MISSING -> STOP]
   5. cq-checklist.md     -- [READ | MISSING -> STOP]
+  6. auto-docs.md        -- [READ | MISSING -> WARN]
 ```
 
 If any file is missing, STOP. Do not proceed from memory.
@@ -570,6 +571,16 @@ Tests: [status]
 Commit: [hash] -- [message]
 ------------------------------------
 ```
+
+### Auto-Docs
+
+After printing the REFACTORING COMPLETE block, update project documentation per `shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the refactoring type, target files, CQ before→after scores.
+- **architecture.md**: Update if file splits, module extractions, or structural changes occurred.
+- **api-changelog.md**: Update if refactoring changed any API endpoints or contract shapes.
+
+Use context from ETAP phases — do not re-read source files. If auto-docs fails, log a warning and proceed to Run Log.
 
 ### Run Log
 

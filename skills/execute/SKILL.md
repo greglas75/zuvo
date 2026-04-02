@@ -43,6 +43,7 @@ CORE FILES LOADED:
   3. {plugin_root}/shared/includes/quality-gates.md          -- READ/MISSING
   4. {plugin_root}/shared/includes/verification-protocol.md  -- READ/MISSING
   5. {plugin_root}/shared/includes/tdd-protocol.md           -- READ/MISSING
+  6. {plugin_root}/shared/includes/auto-docs.md              -- READ/MISSING
 ```
 
 Where `{plugin_root}` is resolved per `env-compat.md` (e.g., `CLAUDE_PLUGIN_ROOT` in Claude Code).
@@ -405,6 +406,16 @@ For each finding:
 If the current working directory is inside a git worktree (check `git worktree list`), suggest:
 
 "Execution is complete. You are working in a worktree. Run `zuvo:worktree` to finish — merge, push as PR, keep, or discard."
+
+### Auto-Docs
+
+After printing the EXECUTION COMPLETE block, update project documentation per `shared/includes/auto-docs.md`:
+
+- **project-journal.md**: One entry per completed task (task name, files changed, CQ/Q scores, concerns).
+- **architecture.md**: Update if any task introduced new components, services, or changed module structure.
+- **api-changelog.md**: Update if any task added/modified/removed API endpoints or schemas.
+
+Use per-task context already gathered during execution — do not re-read source files. If auto-docs fails, log a warning and proceed to Run Log.
 
 ### Run Log
 

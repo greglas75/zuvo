@@ -51,6 +51,7 @@ CORE FILES LOADED:
   2. {plugin_root}/shared/includes/env-compat.md       -- READ/MISSING
   3. {plugin_root}/shared/includes/quality-gates.md    -- READ/MISSING
   4. {plugin_root}/shared/includes/tdd-protocol.md     -- READ/MISSING
+  5. {plugin_root}/shared/includes/auto-docs.md        -- READ/MISSING
 ```
 
 Where `{plugin_root}` is resolved per `env-compat.md` (e.g., `CLAUDE_PLUGIN_ROOT` in Claude Code).
@@ -231,6 +232,17 @@ Draft → Reviewed (by plan reviewer) → Approved (by user only)
 The approved plan document at `docs/specs/YYYY-MM-DD-<topic>-plan.md`.
 
 This artifact is the prerequisite for `zuvo:execute`. When the user is ready to implement, they invoke `zuvo:execute` and it picks up this plan automatically.
+
+## Auto-Docs
+
+After printing the PLAN COMPLETE block, update project documentation per `shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the plan topic, task count, architectural decisions.
+- **architecture.md**: Update if the plan introduces new components or changes module structure.
+
+Use context from the plan document and agent reports — do not re-read source files. If auto-docs fails, log a warning and proceed to Run Log.
+
+---
 
 ## Run Log
 

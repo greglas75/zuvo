@@ -30,6 +30,7 @@ CORE FILES LOADED:
   1. codesift-setup.md   -- READ
   2. env-compat.md       -- READ
   3. cq-patterns.md      -- READ
+  4. auto-docs.md        -- READ
 ```
 
 If any required file is missing, STOP. Do not proceed from memory.
@@ -285,6 +286,17 @@ The deliverable of `zuvo:brainstorm` is a spec document at `docs/specs/YYYY-MM-D
 - **Async mode:** status is "Reviewed" (not approved). The user must explicitly approve before running `zuvo:plan`.
 
 The next step is `zuvo:plan`, which reads this spec and produces an implementation plan. Remind the user of this when brainstorm completes. Do not auto-invoke `zuvo:plan` -- let the user decide when to proceed.
+
+## Auto-Docs
+
+After printing the SPEC COMPLETE block, update project documentation per `shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the spec topic, decisions made, approval status.
+- **architecture.md**: Update if the spec introduces new components, services, or structural decisions.
+
+Use context from the spec document and agent reports — do not re-read source files. If auto-docs fails, log a warning and proceed to Run Log.
+
+---
 
 ## Run Log
 

@@ -50,6 +50,7 @@ Before starting work, read each file below. Print the checklist with status.
 CORE FILES LOADED:
   1. {plugin_root}/rules/cq-patterns.md           -- READ/MISSING
   2. {plugin_root}/rules/file-limits.md            -- READ/MISSING
+  3. {plugin_root}/shared/includes/auto-docs.md    -- READ/MISSING
 ```
 
 Where `{plugin_root}` is resolved per `env-compat.md`.
@@ -508,6 +509,18 @@ Next steps:
   git push origin [branch] — push when ready
 ----------------------------------------------------
 ```
+
+## Auto-Docs
+
+After printing the BUILD COMPLETE block, update project documentation per `shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the feature built, tier, files changed, quality scores.
+- **architecture.md**: Update if new component/module/service was created or module structure changed.
+- **api-changelog.md**: Update if any API endpoints, schemas, or contracts were added/modified.
+
+Use context already gathered during the build — do not re-read source files. If auto-docs fails, log a warning and proceed to Run Log.
+
+---
 
 ## Run Log
 

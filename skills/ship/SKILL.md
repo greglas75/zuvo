@@ -36,6 +36,7 @@ CORE FILES LOADED:
   1. ../../shared/includes/env-compat.md     — READ/MISSING
   2. ../../shared/includes/codesift-setup.md — READ/MISSING
   3. ../../shared/includes/run-logger.md     — READ/MISSING
+  4. ../../shared/includes/auto-docs.md      — READ/MISSING
 ```
 
 If any file is missing: proceed in degraded mode. Note which files are unavailable in the Phase 5 output.
@@ -311,7 +312,17 @@ SHIP COMPLETE
 
 Render each line conditionally based on actual outcomes (`pushed`, `tagPushed`, `--no-tag` flag). Do not show success indicators for actions that were skipped.
 
-### 2. Run logger
+### 2. Auto-Docs
+
+After printing the SHIP COMPLETE block, update project documentation per `../../shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the release (version, tag, flow, review depth, diff LOC).
+- **README.md**: Update version number/badge if present. Update features list if new user-facing features since last ship.
+- **CHANGELOG.md**: Only if ship's Phase 3 skipped changelog generation.
+
+Use context from the ship artifact (`memory/last-ship.json`) and Phase 2-4 data — do not re-read source files. If auto-docs fails, log a warning and proceed to Run Log.
+
+### 3. Run logger
 
 Append a run log entry per `../../shared/includes/run-logger.md`:
 

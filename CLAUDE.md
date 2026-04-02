@@ -97,7 +97,7 @@ This does: version bump → commit → push → tag → update marketplace SHA �
 ```
 skills/<name>/SKILL.md          — skill definitions (39 total)
 skills/<name>/agents/<name>.md  — sub-agent instructions
-shared/includes/*.md            — shared procedural includes (codesift-setup, env-compat, etc.)
+shared/includes/*.md            — shared procedural includes (codesift-setup, env-compat, auto-docs, etc.)
 rules/*.md                      — code quality rules (cq-patterns, testing, security)
 scripts/install.sh              — local install to Claude + Codex
 scripts/release.sh              — release to marketplace
@@ -117,7 +117,8 @@ Every SKILL.md follows this structure:
 4. Mandatory File Loading checklist (shared includes via `../../shared/includes/`)
 5. Numbered phases (Phase 0, 1, 2...)
 6. Named output block (e.g., `SHIP COMPLETE`)
-7. Run log append via `../../shared/includes/run-logger.md`
+7. Auto-docs update via `../../shared/includes/auto-docs.md` (updates project-journal, architecture, api-changelog)
+8. Run log append via `../../shared/includes/run-logger.md`
 
 Reference: `skills/build/SKILL.md` is the canonical template.
 
