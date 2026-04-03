@@ -363,12 +363,15 @@ Score every question individually. Never group or estimate.
 | Q15 | **CRITICAL** — Assertions verify content/values, not just counts or shape? |
 | Q16 | Cross-cutting isolation: change to A verified not to affect B? |
 | Q17 | **CRITICAL** — Assertions verify computed output, not input echo? Expected values from spec/manual calc, not copied from implementation (P-70). |
+| Q18 | No flaky tests? Tests don't depend on timing (`setTimeout`, `Date.now`), ordering (shared state between tests), or external state (network, filesystem, env vars). Non-deterministic inputs are seeded or controlled. |
+| Q19 | Test isolation? Each test runs independently — no shared mutable state between tests. `beforeEach` resets state. Tests pass in any order. Parallel-safe. |
+| Q20 | Performance regression coverage? Critical operations have baseline benchmarks. Test fails if operation exceeds 2x baseline. At minimum: measure and document, even without hard gate. |
 
-**N/A handling:** Q3/Q5/Q6 = 1 (N/A) for pure functions with zero mocks. Q16 = 1 (N/A) for simple single-responsibility units.
+**N/A handling:** Q3/Q5/Q6 = 1 (N/A) for pure functions with zero mocks. Q16 = 1 (N/A) for simple single-responsibility units. Q18/Q19 = always active for test files with >1 test. Q20 = N/A for non-performance-critical code.
 
 **Critical gate:** Q7, Q11, Q13, Q15, Q17 — any scored 0 caps the result at FIX regardless of total.
 
-**Scoring:** Total count of yes answers (N/A counts as 1). 14+ = PASS, 9-13 = FIX (fix worst gap, re-score), below 9 = BLOCK (rewrite).
+**Scoring:** Total count of yes answers (N/A counts as 1). 16+ out of 20 = PASS, 12-15 = FIX (fix worst gap, re-score), below 12 = BLOCK (rewrite).
 
 **Output format:**
 ```

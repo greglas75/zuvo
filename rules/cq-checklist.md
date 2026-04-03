@@ -32,6 +32,9 @@ Each gate is scored 1 (pass with evidence), 0 (fail or unproven), or N/A (precon
 | CQ20 | Contract | Single canonical source per data point? No dual fields stored independently for the same concept? |
 | CQ21 | Concurrency | No time-of-check-to-time-of-use races? Mutations idempotent or CAS-protected? No shared mutable state? |
 | CQ22 | Resources | All listeners, timers, and observers cleaned up on unmount/destroy? No stale closures in callbacks? |
+| CQ23 | Data | Cache entries have TTL or explicit invalidation? No stale-forever entries? Cache key includes all relevant dimensions (userId, locale, version)? |
+| CQ24 | Hygiene | Feature flags cleaned up after rollout (>30 days = stale)? No dead flag branches? Flag evaluation short-circuits correctly? Extends CQ13. |
+| CQ25 | Contract | API changes are backward-compatible (additive only) or have documented deprecation path? No silent breaking changes? New required fields have defaults? |
 
 ---
 
@@ -45,13 +48,15 @@ Each gate is scored 1 (pass with evidence), 0 (fail or unproven), or N/A (precon
 - **CQ20** — critical when payload contains `*_id` + `*_name` pairs or number + string-with-currency for the same field
 - **CQ21** — critical when concurrent mutations target the same resource. Not critical for read-only paths.
 - **CQ22** — critical when code creates subscriptions, timers, or observers. Not critical for stateless handlers.
+- **CQ23** — critical when code uses caching (Redis, in-memory, CDN). Not critical for cache-free code.
+- **CQ25** — critical when code modifies a public API consumed by external clients. Not critical for internal-only code.
 
 When a conditional gate is active and scored 0: FAIL.
 
 **Thresholds:**
-- **PASS:** 18+ out of 22 AND every active critical gate = 1
-- **CONDITIONAL PASS:** 16-17 AND every active critical gate = 1
-- **FAIL:** any active critical gate = 0, OR total below 16
+- **PASS:** 20+ out of 25 AND every active critical gate = 1
+- **CONDITIONAL PASS:** 18-19 AND every active critical gate = 1
+- **FAIL:** any active critical gate = 0, OR total below 18
 
 ---
 
