@@ -1,0 +1,155 @@
+schema_version: 1
+last_synced: "2026-04-03"
+
+meta:
+  slug: explain
+  title: "Explain — Visual Code Explanation with Mermaid Diagrams"
+  description: "Generate visual explanations of code through Mermaid diagrams and annotated walkthroughs. Four modes: flow (execution paths), deps (dependency graphs), arch (architecture maps), data (data flow diagrams). Supports audience targeting (dev, new, manager) and configurable depth."
+  category: utility
+  og_image: /og/skills/explain.png
+
+seo:
+  target_queries:
+    - "generate Mermaid diagrams from code automatically"
+    - "visual code explanation tool for onboarding"
+    - "architecture diagram generator from codebase AI"
+    - "dependency graph visualization Claude Code"
+    - "explain code to non-technical stakeholders"
+  canonical: /en/skills/explain
+
+stats:
+  - label: Diagram Types
+    value: "4"
+    detail: "Flow (sequence/flowchart), Deps (dependency graph), Arch (architecture map), Data (data flow diagram)"
+  - label: Audience Levels
+    value: "3"
+    detail: "dev (full technical detail), new (simplified for newcomers), manager (business-level overview)"
+  - label: Output Format
+    value: "Mermaid"
+    detail: "Renders in GitHub, VS Code, and most Markdown viewers — no external tools required"
+
+problem: |
+  Understanding complex code requires building a mental model of execution paths, dependencies, and data flows — a process that can take hours of reading through files. Visual diagrams make these relationships instantly clear, but creating them manually is tedious and they go stale immediately. zuvo:explain generates accurate Mermaid diagrams directly from the codebase, with annotated walkthroughs tailored to the audience. New team members get simplified explanations, managers get business-level overviews, and developers get full technical detail with file references and edge case documentation.
+
+how_it_works:
+  - step: "Phase 0: Understand Target"
+    description: "Resolve the user's input to a concrete code location (file, function, directory, or model). Determine the diagram mode — explicitly provided or inferred from the target type. Gather context using CodeSift (trace_call_chain, detect_communities, find_references) or fallback to grep and file reading."
+  - step: "Phase 1: Analyze Structure"
+    description: "Map relationships relevant to the chosen mode. For flow: trace execution paths, decision points, async boundaries, and side effects. For deps: list imports and reverse dependencies, group by layer. For arch: map directory structure with purpose annotations, cross-module dependencies. For data: trace from input to validation to storage to output. Classify complexity as SIMPLE, MEDIUM, or COMPLEX."
+  - step: "Phase 2: Generate Diagrams"
+    description: "Produce Mermaid diagrams using real names from the codebase (not generic placeholders). Flow mode generates sequence diagrams for multi-actor flows or flowcharts for single-function branching. Deps mode generates dependency graphs with direct and reverse dependencies. Arch mode generates architecture maps with module boundaries. Data mode generates data flow diagrams from input to persistence."
+  - step: "Phase 3: Annotated Walkthrough"
+    description: "Write a step-by-step explanation adapted to the audience level. Dev: file references, edge cases, key code snippets. New: plain language, analogies, no jargon. Manager: business actions, data flow in non-technical terms, user impact."
+  - step: "Phase 4: Save or Display"
+    description: "If --save is provided, write a Markdown file with embedded Mermaid blocks, walkthrough, and metadata. Otherwise print directly to console. For COMPLEX targets, generate a high-level overview plus detail sub-diagrams and suggest targeted follow-ups."
+
+output:
+  artifact: "Mermaid diagram(s) + annotated walkthrough"
+  format: "Markdown with embedded Mermaid blocks, optionally saved to a file. Includes diagram, step-by-step walkthrough, and complexity metadata."
+  sections:
+    - "Diagram (Mermaid block — sequence, flowchart, graph, or data flow)"
+    - "Walkthrough (annotated steps adapted to audience level)"
+    - "Metadata (complexity, node count, source files)"
+
+examples:
+  - title: "Explain a payment flow for a new developer"
+    type: invocation
+    command: "zuvo:explain flow src/services/order.ts:createOrder --audience new"
+    result: |
+      TARGET RESOLVED
+        Subject:    src/services/order.ts:createOrder
+        Mode:       flow
+        Depth:      2
+        Audience:   new
+        CodeSift:   available
+
+      EXPLANATION COMPLETE
+        Target:      src/services/order.ts:createOrder
+        Type:        flow (sequence diagram)
+        Complexity:  MEDIUM (8 nodes, 2 async boundaries)
+        Diagram:     Mermaid sequenceDiagram (24 lines)
+        Walkthrough: 6 steps, audience: new
+        Saved:       printed to console
+
+  - title: "Architecture map saved to file"
+    type: invocation
+    command: "zuvo:explain arch src/modules/payments --audience manager --save docs/explanations/payments.md"
+    result: |
+      EXPLANATION COMPLETE
+        Target:      src/modules/payments
+        Type:        arch (architecture map)
+        Complexity:  COMPLEX (18 nodes, 3 service boundaries)
+        Diagram:     Mermaid graph TB (42 lines) + 2 detail sub-diagrams
+        Walkthrough: 8 steps, audience: manager
+        Saved:       docs/explanations/payments.md
+
+  - title: "Dependency graph output sample"
+    type: output_sample
+    sample:
+      language: mermaid
+      code: |
+        graph TD
+            subgraph "Direct dependencies"
+                Target["auth.service.ts"]
+                Target --> JwtUtils["jwt-utils.ts"]
+                Target --> UserRepo["user.repository.ts"]
+                Target --> Config["auth.config.ts"]
+            end
+
+            subgraph "Reverse dependencies (importers)"
+                AuthController["auth.controller.ts"] --> Target
+                AuthGuard["auth.guard.ts"] --> Target
+                UserService["user.service.ts"] --> Target
+            end
+
+            style Target fill:#f9f,stroke:#333,stroke-width:2px
+    explanation: "Dependency graphs use real file names from the codebase. The target is highlighted with Mermaid styling. Direct dependencies flow downward, reverse dependencies (importers) flow inward."
+
+when_to_use: |
+  Use zuvo:explain when you need to understand how code works visually: onboarding onto a new codebase, explaining a complex flow to a teammate, preparing a technical presentation, documenting architecture for stakeholders, or tracing how data moves through the system. Choose the mode based on what you need to understand: flow for execution paths, deps for import relationships, arch for module structure, data for data lifecycle.
+
+when_not_to_use: |
+  For generating project documentation (README, API docs), use zuvo:docs. For architecture decision records and structural analysis, use zuvo:architecture. For reviewing code quality or recent changes, use zuvo:design-review. zuvo:explain produces visual explanations, not assessments or recommendations.
+
+related_skills:
+  - slug: docs
+    relation: "zuvo:docs generates project documentation; zuvo:explain generates visual explanations of specific code paths"
+  - slug: architecture
+    relation: "zuvo:architecture produces architecture decision records; zuvo:explain produces visual architecture maps"
+  - slug: design-review
+    relation: "zuvo:design-review evaluates design quality; zuvo:explain visualizes how the design works"
+
+faq:
+  - q: "What diagram types does zuvo:explain produce?"
+    a: "Four types: flow (sequence diagrams or flowcharts for execution paths), deps (dependency graphs showing imports and importers), arch (architecture maps with module boundaries and cross-module dependencies), and data (data flow diagrams from input to storage to output). The type is chosen explicitly or inferred from the target."
+  - q: "What are the audience levels?"
+    a: "Three levels: dev (full technical detail with file references, edge cases, and code snippets), new (simplified language with analogies, no jargon), and manager (business-level overview with user impact, no code references). Default is dev."
+  - q: "Where do the diagrams render?"
+    a: "Mermaid diagrams render natively in GitHub README and PR descriptions, VS Code with the Mermaid extension, Notion, Confluence, and most modern Markdown viewers. No external tools or accounts are required."
+  - q: "What happens with very complex code?"
+    a: "If the target has more than 15 nodes (classified as COMPLEX), zuvo:explain generates a high-level overview diagram first, then detail sub-diagrams for each major section. It also suggests targeted follow-up commands to explore specific areas at depth."
+  - q: "Can I save the output to a file?"
+    a: "Yes, use --save [path] to write a Markdown file with embedded Mermaid blocks, the annotated walkthrough, and metadata (complexity, node count, source files). Without --save, everything is printed to the console."
+
+arguments:
+  - flag: "flow [function/endpoint]"
+    description: "Generate an execution flow diagram (sequence diagram or flowchart) for a function, endpoint, or event handler."
+  - flag: "deps [file/module]"
+    description: "Generate a dependency graph showing what the target imports and what imports the target."
+  - flag: "arch [directory]"
+    description: "Generate an architecture map of a directory showing module boundaries, cross-module dependencies, and external integrations."
+  - flag: "data [model/entity]"
+    description: "Generate a data flow diagram showing how data moves from input through validation, business logic, and storage to output."
+  - flag: "--depth [N]"
+    description: "How many levels deep to trace callers, callees, or importers. Default: 2."
+  - flag: "--audience [dev/new/manager]"
+    description: "Detail level for the annotated walkthrough. dev=full detail, new=simplified, manager=high-level. Default: dev."
+  - flag: "--save [path]"
+    description: "Save explanation to file as Markdown with embedded Mermaid. Default: print to console."
+
+checks: null
+frameworks: [TypeScript, JavaScript, Python, React / Next.js]
+modes: null
+agents: null
+benchmarks: null
+comparison_table: null

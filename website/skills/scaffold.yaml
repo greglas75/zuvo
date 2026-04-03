@@ -1,0 +1,148 @@
+schema_version: 1
+last_synced: "2026-04-03"
+
+meta:
+  slug: scaffold
+  title: "Scaffold — Pattern-Based Code Generation"
+  description: "Generates new modules, components, endpoints, and services by detecting existing patterns in the codebase. Finds a canonical example, extracts structural conventions, and replicates them — ensuring every new file matches project style exactly."
+  category: task
+  og_image: /og/skills/scaffold.png
+
+seo:
+  target_queries:
+    - "code scaffolding from existing patterns Claude Code"
+    - "generate component matching project conventions AI"
+    - "pattern-based code generation from codebase examples"
+    - "scaffold endpoint service model from canonical template"
+    - "automated module generation project style detection"
+  canonical: /en/skills/scaffold
+
+stats:
+  - label: Supported Types
+    value: "8"
+    detail: "component, endpoint, service, model, hook, middleware, page, worker"
+  - label: Phases
+    value: "4"
+    detail: "Detect Project Patterns, Analyze Pattern, Generate, Validate"
+  - label: Auto-Detected Conventions
+    value: "6"
+    detail: "File naming, file location, import style, export style, test co-location, naming convention"
+
+problem: |
+  Creating new modules, components, or endpoints is repetitive work where every developer does it slightly differently. Copy-pasting an existing file and modifying it leads to stale references, wrong import paths, and inconsistent patterns. Generic scaffolding tools use fixed templates that do not match the project's actual conventions. zuvo:scaffold solves this by finding the best existing example of the requested type in the codebase, extracting its structural pattern (naming, imports, exports, test co-location, error handling), and generating new files that match exactly. The result is a new module that looks like it was written by the same developer who wrote the rest of the project.
+
+how_it_works:
+  - step: "Phase 0: Detect Project Patterns"
+    description: "Read project context (CLAUDE.md, config files, tech stack). Search the codebase for existing examples of the requested type using CodeSift or grep. Select the canonical example — the single best file based on recency, completeness, simplicity, and size."
+  - step: "Phase 1: Analyze Pattern"
+    description: "Read the canonical example fully. Extract structural elements: file header, type definitions, main export, internal helpers, error handling, export style, boilerplate. Detect conventions: file naming, file location, import style, export style, test co-location, naming convention. Read the test pattern if tests will be generated."
+  - step: "Phase 2: Generate"
+    description: "Plan files to create (main, test, types, barrel update). Generate the main file by copying the structural skeleton from the canonical example, replacing specifics with the new name, resolving imports, and injecting TODO placeholders. Generate the test file using the detected test pattern. Update barrel files if they exist. If --dry-run: print the plan and stop."
+  - step: "Phase 3: Validate"
+    description: "Run the type checker on generated files. Verify conventions match (file location, naming, export style, import style). Run generated tests. Perform CQ spot-check (CQ1, CQ3, CQ5, CQ6, CQ8, CQ14). Stage and commit."
+
+output:
+  artifact: "Scaffolded module files committed + test file + convention verification"
+  format: "A structured SCAFFOLD COMPLETE block listing the type, name, canonical pattern source, generated file paths, convention summary, test results, CQ spot-check, and commit hash."
+  sections:
+    - "Type and name"
+    - "Canonical pattern source"
+    - "Generated files (main, test, types, barrel)"
+    - "Convention verification"
+    - "Test results"
+    - "CQ spot-check"
+    - "Next steps"
+
+examples:
+  - title: "Scaffold complete block for a React component"
+    type: output_sample
+    sample:
+      language: markdown
+      code: |
+        SCAFFOLD COMPLETE
+        ----------------------------------------------------
+        Type:       component
+        Name:       UserProfile
+        Pattern:    src/components/Dashboard.tsx (canonical)
+        Generated:
+          src/components/UserProfile.tsx (main)
+          src/components/__tests__/UserProfile.test.tsx (test)
+        Convention: PascalCase, co-located __tests__, absolute imports ✓
+        Tests:      3 passing, 1 skipped (placeholder logic)
+        CQ:         CQ1 CQ3 CQ5 CQ6 CQ8 CQ14 — all pass
+        Commit:     a1b2c3d — scaffold: add component UserProfile
+
+        Next steps:
+          Implement TODO placeholders in src/components/UserProfile.tsx
+          zuvo:build UserProfile  — flesh out the implementation
+          zuvo:review src/components/UserProfile.tsx  — review after implementation
+        ----------------------------------------------------
+    explanation: "The output shows which canonical file was used as the pattern source, the detected conventions, and that one test was skipped because it depends on placeholder logic being implemented."
+
+  - title: "Scaffold invocation with dry-run"
+    type: invocation
+    command: "zuvo:scaffold endpoint /api/orders --dry-run"
+    result: |
+      SCAFFOLD DRY RUN COMPLETE
+      ----------------------------------------------------
+      Type:       endpoint
+      Name:       /api/orders
+      Pattern:    src/app/api/products/route.ts (canonical)
+      Would generate:
+        src/app/api/orders/route.ts (main)
+        src/app/api/orders/__tests__/route.test.ts (test)
+      Convention: kebab-case dirs, named exports, co-located tests
+
+      Run without --dry-run to create these files.
+      ----------------------------------------------------
+
+when_to_use: |
+  Use zuvo:scaffold when creating new modules that should follow existing project patterns: new React components, API endpoints, services, database models, hooks, middleware, pages, or background workers. Especially valuable when onboarding to a new codebase where you want generated code to match established conventions exactly.
+
+when_not_to_use: |
+  For implementing business logic inside an already-created module, use zuvo:build. For creating an entirely new design system or component library from scratch, use zuvo:design. For refactoring existing code to match a new pattern, use zuvo:refactor. For project initialization (no existing patterns to detect), scaffold has limited value — use zuvo:build or manual setup.
+
+related_skills:
+  - slug: build
+    relation: "use build after scaffolding to flesh out TODO placeholders with real implementation logic"
+  - slug: design
+    relation: "use design for creating design systems or UI patterns from scratch — scaffold replicates existing patterns"
+  - slug: write-tests
+    relation: "use write-tests if scaffold's auto-generated tests need broader coverage after implementation"
+
+faq:
+  - q: "What does zuvo:scaffold do?"
+    a: "It finds the best existing example of the requested type in your codebase (component, endpoint, service, etc.), extracts its structural pattern (naming, imports, exports, test structure), and generates new files that match exactly. The result looks like it was written by the same developer who wrote the rest of the project."
+  - q: "What if there are no existing examples of the requested type?"
+    a: "Scaffold warns you and asks: provide an example file path, or generate from framework conventions only. Without a canonical example, it falls back to standard framework patterns and the project's detected conventions (from CLAUDE.md, config files, etc.)."
+  - q: "What types does scaffold support?"
+    a: "Eight types: component (React/Vue/Svelte/Astro), endpoint/route (REST, tRPC, GraphQL), service (business logic class/module), model/entity (Prisma, TypeORM, Mongoose, SQLAlchemy, Drizzle), hook/composable (React hook, Vue composable), middleware (Express/Koa/Fastify/Next.js), page (Next.js/Nuxt/SvelteKit/Astro), and worker/job (background job, queue worker, cron handler)."
+  - q: "Does --dry-run write any files?"
+    a: "No. --dry-run stops after the file plan (Phase 2.1) and prints what would be created without writing anything to disk. No commit, no auto-docs, no run log."
+  - q: "How does scaffold pick the canonical example?"
+    a: "It searches for 2-3 existing files of the requested type, then selects the best one based on: recency (prefer recently created files), completeness (has types, error handling, tests), simplicity (not overly complex or special-cased), and size (within file-limits thresholds)."
+
+arguments:
+  - flag: "<type> <name>"
+    description: "Required. The type to scaffold and the name. Types: component, endpoint, service, model, hook, middleware, page, worker. Example: 'component UserProfile', 'endpoint /api/orders'."
+  - flag: "--dry-run"
+    description: "Preview the generation plan without writing any files to disk. Stops after Phase 2.1."
+  - flag: "--with-test"
+    description: "Generate a test file alongside the main file. This is the default behavior."
+  - flag: "--no-test"
+    description: "Skip test file generation. Only the main module file is created."
+  - flag: "--minimal"
+    description: "Bare minimum output — no boilerplate comments, no JSDoc, no section headers. Only functional code."
+
+checks: null
+
+frameworks:
+  - TypeScript
+  - JavaScript
+  - Python
+  - React / Next.js
+
+modes: null
+agents: null
+benchmarks: null
+comparison_table: null

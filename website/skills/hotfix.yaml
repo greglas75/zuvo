@@ -1,0 +1,165 @@
+schema_version: 1
+last_synced: "2026-04-03"
+
+meta:
+  slug: hotfix
+  title: "Hotfix — Fast-Track Production Fix Pipeline"
+  description: "Streamlined 4-phase pipeline for critical production bugs: triage, locate, fix, verify & ship. Enforces 5 safety-critical CQ gates while keeping ceremony minimal. Scoped to 1-3 production files."
+  category: task
+  og_image: /og/skills/hotfix.png
+
+seo:
+  target_queries:
+    - "fast production bug fix pipeline Claude Code"
+    - "emergency hotfix workflow with safety gates"
+    - "automated hotfix branch creation AI"
+    - "production fix minimal ceremony quality checks"
+    - "cherry-pick hotfix deployment pipeline"
+  canonical: /en/skills/hotfix
+
+stats:
+  - label: Phases
+    value: "4"
+    detail: "Triage, Locate & Understand, Fix, Verify & Ship"
+  - label: CQ Critical Gates
+    value: "5"
+    detail: "CQ3 (Boundary Validation), CQ5 (Error Propagation), CQ8 (Infrastructure Errors), CQ10 (Security Boundaries), CQ14 (No Duplicated Logic)"
+  - label: Max Production Files
+    value: "3"
+    detail: "Scope guard enforced — anything larger redirects to zuvo:debug + zuvo:build"
+
+problem: |
+  Production bugs demand speed, but speed without safety nets turns a bad situation into a worse one. Manual emergency fixes skip tests, skip reviews, and introduce new regressions under pressure. A regular zuvo:build or zuvo:debug workflow has too much ceremony for a 2 AM outage. zuvo:hotfix bridges the gap — it creates a hotfix branch, locates the root cause fast, applies the smallest possible fix with a regression test, and runs only the 5 CQ gates that matter most for emergency changes (boundary validation, error propagation, infrastructure errors, security boundaries, no duplicated logic). The result is a fix that ships fast but does not make things worse.
+
+how_it_works:
+  - step: "Phase 0: Triage"
+    description: "Parse the bug description (error message, stack trace, Sentry link, or plain text). Auto-detect the base branch, create a hotfix branch (hotfix/YYYY-MM-DD-slug), and quick-scan project context (CLAUDE.md, test runner, recent activity). Target: under 30 seconds."
+  - step: "Phase 1: Locate & Understand"
+    description: "Find the failure point using the input (stack trace, error string search, or behavioral trace). Read the affected function and immediate callers. Identify the specific root cause line/condition. Enforce scope guard: 1-3 production files proceed, >3 files stops and recommends zuvo:debug."
+  - step: "Phase 2: Fix"
+    description: "Apply the minimal surgical fix — no opportunistic cleanup, no refactoring. Write a targeted regression test that recreates the exact bug condition. Run tests (full suite by default, affected-only with --no-test). Run abbreviated CQ self-evaluation: CQ3, CQ5, CQ8, CQ10, CQ14 with file:function:line evidence. Any gate failure must be fixed before proceeding."
+  - step: "Phase 3: Verify & Ship"
+    description: "Fresh regression test run, final test confirmation, stage explicit files, commit with fix: prefix. Offer next steps: cherry-pick, PR creation, or push. If --deploy was passed, suggest zuvo:deploy after merge."
+
+output:
+  artifact: "Hotfix committed on dedicated branch + regression test + CQ gate results"
+  format: "A structured HOTFIX COMPLETE block with branch name, root cause, fix location, test path, file counts, abbreviated CQ results, test status, and next steps."
+  sections:
+    - "Branch and root cause summary"
+    - "Fix location (file:line with description)"
+    - "Regression test path"
+    - "CQ critical gates (CQ3, CQ5, CQ8, CQ10, CQ14)"
+    - "Test results (full suite or affected-only)"
+    - "Next steps (cherry-pick / PR / deploy)"
+
+examples:
+  - title: "Hotfix complete block for a null crash fix"
+    type: output_sample
+    sample:
+      language: markdown
+      code: |
+        HOTFIX COMPLETE
+        ----------------------------------------------------
+        Branch:     hotfix/2026-04-03-payment-null-crash
+        Root cause: PaymentService.process() — null check missing on discount field
+        Fix:        src/services/payment.service.ts:47 — added null guard on discount
+        Test:       src/services/payment.hotfix.test.ts
+        Files:      1 production, 1 test
+        CQ (critical): CQ3[✓] CQ5[✓] CQ8[N/A] CQ10[✓] CQ14[✓]
+        Tests:      PASS — 42 tests
+        Status:     ready to cherry-pick
+
+        Next steps:
+          zuvo:review src/services/payment.service.ts  — independent review
+          zuvo:deploy                                   — deploy when merged
+        ----------------------------------------------------
+    explanation: "The output shows the abbreviated CQ check (5 gates instead of 22), the hotfix branch naming convention, and clear next steps for shipping the fix."
+
+  - title: "Hotfix invocation with flags"
+    type: invocation
+    command: "zuvo:hotfix payment null crash on discounted orders --from release/2.1 --deploy"
+    result: |
+      Phase 0: Triage
+        Bug:         payment null crash on discounted orders
+        Base:        release/2.1
+        Branch:      hotfix/2026-04-03-payment-null-crash-on-discounted
+        Test runner: vitest
+
+      Phase 1: Locate & Understand
+        ROOT CAUSE: PaymentService.process() — null check missing on discount field
+        AFFECTED FILES: src/services/payment.service.ts (1 production file)
+
+      Phase 2: Fix applied, regression test written, CQ gates passed
+      Phase 3: All tests passing, committed, deploy flag set
+
+when_to_use: |
+  Use zuvo:hotfix when production is broken and you need a targeted fix fast: user-facing errors in production, payment or auth failures, crashes affecting a known 1-3 file scope, or any critical bug where the regular build/debug workflow has too much ceremony. Combine with --deploy to chain into deployment after merge.
+
+when_not_to_use: |
+  If the bug requires investigation and the root cause is unclear, use zuvo:debug first. If the fix touches more than 3 production files, the scope is too large for a hotfix — use zuvo:debug for investigation then zuvo:build for the fix. For non-critical bugs that can wait for a normal release cycle, use zuvo:ship. For feature work disguised as a fix, use zuvo:build.
+
+related_skills:
+  - slug: debug
+    relation: "use debug first when the root cause is unclear or investigation is needed before fixing"
+  - slug: build
+    relation: "use build when the fix requires new functionality or touches more than 3 files"
+  - slug: deploy
+    relation: "chain with --deploy flag to deploy the hotfix after merge"
+  - slug: review
+    relation: "optional post-fix review for independent quality verification"
+
+faq:
+  - q: "How is zuvo:hotfix different from zuvo:debug?"
+    a: "zuvo:debug is a 5-phase investigation framework for when you do not know the root cause. zuvo:hotfix assumes you have a clear bug description and need to fix it fast — it skips broad investigation, enforces a 1-3 file scope limit, and runs only 5 safety-critical CQ gates instead of the full 22. If hotfix discovers the scope exceeds 3 files, it recommends switching to zuvo:debug."
+  - q: "Why is there a 3-file limit on production changes?"
+    a: "Hotfixes trade ceremony for speed. A fix touching more than 3 production files is not a hotfix — it is a multi-file change that needs proper investigation, broader testing, and full CQ evaluation. The scope guard prevents emergency pressure from turning a targeted fix into an unreviewed refactor."
+  - q: "Which CQ gates does hotfix check and why?"
+    a: "Hotfix runs CQ3 (boundary validation — hotfixes often add guards), CQ5 (error propagation — fix must not swallow errors), CQ8 (infrastructure errors — I/O timeout handling), CQ10 (security boundaries — no weakened auth/authz), and CQ14 (no duplicated logic — no copy-paste fixes). These are the gates most likely to catch a bad emergency fix."
+  - q: "What does --no-test do?"
+    a: "--no-test skips the full test suite and runs only the regression test and tests in the same file/module as the fix. It is for true emergencies only — a warning is printed reminding you to run full tests before merging. All 5 CQ safety gates still run regardless of this flag."
+  - q: "Can I deploy directly from a hotfix?"
+    a: "Pass --deploy and zuvo:hotfix will suggest running zuvo:deploy after the fix is merged. The hotfix itself does not push or deploy — it commits on a hotfix branch and offers cherry-pick, PR creation, or push as next steps."
+
+arguments:
+  - flag: "--from [branch]"
+    description: "Base branch for the hotfix. Default: auto-detect main/master. Use when hotfixing a release branch (e.g., --from release/2.1)."
+  - flag: "--deploy"
+    description: "After merge confirmation, suggest running zuvo:deploy. Does not auto-deploy — prompts as a next step."
+  - flag: "--no-test"
+    description: "Skip the full test suite. Run only the regression test and tests in the same module as the fix. For true emergencies only. CQ gates still run."
+
+checks: null
+
+frameworks:
+  - TypeScript
+  - JavaScript
+  - Python
+  - React / Next.js
+
+modes: null
+agents: null
+
+benchmarks:
+  - claim: "Scope guard enforces maximum 3 production files — exceeding triggers a stop-and-redirect"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 1.4 Scope Guard — '>3 files: STOP'"
+  - claim: "5 safety-critical CQ gates run on every hotfix regardless of flags"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 2.4 CQ Self-Evaluation — CQ3, CQ5, CQ8, CQ10, CQ14"
+  - claim: "Phase 0 Triage targets under 30 seconds for branch creation and context scanning"
+    type: speed
+    verifiable: true
+    source: "SKILL.md Phase 0 — 'This phase should take under 30 seconds'"
+
+comparison_table:
+  columns: ["Capability", "Manual Emergency Fix", "zuvo:hotfix"]
+  rows:
+    - ["Branch management", "Ad-hoc or forgotten", "Auto-created hotfix/YYYY-MM-DD-slug from correct base"]
+    - ["Scope control", "None — fix sprawls under pressure", "Hard limit: 1-3 production files with scope guard"]
+    - ["Regression test", "Skipped under time pressure", "Mandatory — recreates exact bug condition"]
+    - ["Safety checks", "None or informal", "5 critical CQ gates with file:function:line evidence"]
+    - ["Test execution", "Skipped or partial", "Full suite by default, affected-only with --no-test"]
+    - ["Deployment path", "Manual git commands", "Offers cherry-pick, PR, or push with optional --deploy chain"]
+    - ["Audit trail", "Commit message only", "Run log + project journal + session memory update"]

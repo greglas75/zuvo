@@ -1,0 +1,145 @@
+schema_version: 1
+last_synced: "2026-04-03"
+
+meta:
+  slug: incident
+  title: "Incident — Production Post-Mortem & Root Cause Analysis"
+  description: "Structured 6-phase incident post-mortem: gather evidence from git history, error traces, and deployment markers, build a chronological timeline, perform 5-Whys root cause analysis, assess impact with severity classification (SEV1-SEV3), generate a full incident report, and create prevention action items."
+  category: utility
+  og_image: /og/skills/incident.png
+
+seo:
+  target_queries:
+    - "automated incident post-mortem from git history"
+    - "5 whys root cause analysis tool for production incidents"
+    - "structured post-mortem report generator AI"
+    - "incident timeline builder from deployment history"
+    - "production outage analysis with action items"
+  canonical: /en/skills/incident
+
+stats:
+  - label: Phases
+    value: "6"
+    detail: "Evidence gathering, Timeline, Root Cause (5 Whys), Impact Assessment, Report Generation, Prevention"
+  - label: RCA Method
+    value: "5 Whys"
+    detail: "Each 'why' must be backed by evidence from git history, error traces, or config changes"
+  - label: Action Items Output
+    value: "P0-P2"
+    detail: "Prioritized action items persisted to backlog with owner, due date, and status tracking"
+
+problem: |
+  Post-mortems are typically written days or weeks after an incident, reconstructed from memory rather than from data. Evidence is scattered across git logs, error monitoring, deployment pipelines, and Slack threads. The result is an incomplete timeline, a vague root cause statement, and action items that never get tracked. zuvo:incident solves this by collecting evidence programmatically from git history, deployment markers, error traces, and configuration diffs — then building a chronological timeline, applying the 5-Whys technique with evidence at every level, and producing a complete incident report with prioritized action items that are automatically persisted to the project backlog.
+
+how_it_works:
+  - step: "Phase 0: Gather Evidence"
+    description: "Collect from all available sources within the investigation window: git commit history, deployment markers (tags, CI/CD artifacts), error context from stack traces, code changes via CodeSift (or git diff fallback), and configuration changes across env files, YAML, and TOML."
+  - step: "Phase 1: Build Timeline"
+    description: "Construct a chronological timeline from all evidence sources using git timestamps, tag dates, and CI/CD run times. Events are classified as CODE_CHANGE, DEPLOYMENT, ERROR, CONFIG_CHANGE, or REPORT, and expressed relative to incident declaration (T-0). Identifies the suspect window between last known-good state and first error."
+  - step: "Phase 2: Root Cause Analysis (5 Whys)"
+    description: "Apply the 5-Whys technique starting from the user-visible symptom. Each 'why' must be supported by evidence from Phase 0 and Phase 1. Classify findings into root cause, contributing factors, and detection gaps. Stop before 5 if deeper analysis would be speculative."
+  - step: "Phase 3: Impact Assessment"
+    description: "Assess impact across five dimensions: duration (time to first error, detection gap, time to resolution), user impact, data impact (corruption, loss, exposure), financial impact, and severity classification (SEV1/SEV2/SEV3). Validates user-provided severity against evidence."
+  - step: "Phase 4: Generate Incident Report"
+    description: "Write a full incident report to docs/incidents/ with summary, timeline table, root cause with commit references, contributing factors, detection gaps, impact assessment, resolution details, prioritized action items (P0-P2), and lessons learned (what went well, what went poorly, what to change)."
+  - step: "Phase 5: Create Prevention Items"
+    description: "Persist all open action items to memory/backlog.md as high-severity entries with deduplication. Suggest follow-up skills: zuvo:build for code fixes, zuvo:write-tests for test gaps, zuvo:code-audit for broader review, zuvo:security-audit for security implications."
+
+output:
+  artifact: "Incident report document + backlog action items"
+  format: "A structured Markdown incident report saved to docs/incidents/YYYY-MM-DD-slug.md with timeline, 5-Whys analysis, impact assessment, resolution details, and prioritized action items."
+  sections:
+    - "Summary (what happened, what was affected, how it was resolved)"
+    - "Timeline (chronological event table with T-0 relative timestamps)"
+    - "Root Cause (5-Whys analysis with evidence, commit and file references)"
+    - "Contributing Factors and Detection Gaps"
+    - "Impact Assessment (duration, users, data, financial, severity)"
+    - "Resolution (fix description, commit, type, permanence)"
+    - "Action Items (P0-P2 with owner, due date, status)"
+    - "Lessons Learned (what went well / poorly / to change)"
+
+examples:
+  - title: "Incident report completion block"
+    type: output_sample
+    sample:
+      language: text
+      code: |
+        INCIDENT REPORT COMPLETE
+        ----------------------------------------------------
+        Report:      docs/incidents/2026-04-01-payment-null-discount.md
+        Severity:    SEV2
+        Root cause:  Missing null check in discount calculation (commit abc123)
+        Duration:    18 hours (12-hour detection gap)
+        Impact:      ~2,400 users affected
+        Actions:     4 items added to backlog (1 already resolved)
+        Resolution:  resolved
+
+        Next steps:
+          zuvo:build add null-safety guard to discount module
+          zuvo:write-tests src/services/payment — add regression test coverage
+          zuvo:code-audit src/services/payment — review affected code paths
+        ----------------------------------------------------
+    explanation: "The completion block summarizes the incident with severity, root cause, duration, impact, and actionable next steps using other zuvo skills."
+
+  - title: "Timeline reconstruction from evidence"
+    type: output_sample
+    sample:
+      language: text
+      code: |
+        INCIDENT TIMELINE
+        ----------------------------------------------------
+          [T-48h] CODE_CHANGE  commit abc123 — "Add discount calculation" (author: dev1)
+          [T-36h] CODE_CHANGE  commit def456 — "Update payment error handling" (author: dev2)
+          [T-24h] DEPLOYMENT   tag v1.4.2 deployed to production
+          [T-18h] CONFIG_CHANGE .env.production — added DISCOUNT_ENABLED=true
+          [T-12h] ERROR        First error: NullPointerException in PaymentService.calculateTotal()
+          [T-6h]  ERROR        Error rate spikes 10x — 2,400 occurrences in 6 hours
+          [T-2h]  REPORT       User reports: "Payment fails for discounted orders"
+          [T-0]   REPORT       Incident declared
+        ----------------------------------------------------
+    explanation: "The timeline is built from git history, deployment tags, config diffs, and error traces. Events are expressed relative to incident declaration (T-0) for quick comprehension."
+
+when_to_use: |
+  Use zuvo:incident after any production incident, outage, data corruption or loss event, performance degradation event, or security breach with production impact. Best run while evidence is fresh — within hours of resolution, not weeks later. Provide the error message, stack trace, or issue tracker ID for the most accurate analysis. Specify --since to narrow the investigation window if you know approximately when the problem started.
+
+when_not_to_use: |
+  For active debugging of a live issue, use zuvo:debug — it focuses on finding and fixing the bug in real time. For general code review, use zuvo:review. For performance optimization without a specific incident, use zuvo:performance-audit. For security posture assessment without a specific breach, use zuvo:security-audit.
+
+related_skills:
+  - slug: hotfix
+    relation: "when the incident requires an immediate production fix before the full post-mortem"
+  - slug: debug
+    relation: "for active debugging of live issues — zuvo:incident is for after the fact"
+  - slug: write-tests
+    relation: "to fill test gaps identified in the incident's contributing factors and action items"
+  - slug: backlog
+    relation: "action items from the incident are persisted to the backlog for tracking"
+
+faq:
+  - q: "What does zuvo:incident do?"
+    a: "It runs a structured 6-phase post-mortem: (0) gather evidence from git history, deployment markers, error traces, and config changes, (1) build a chronological timeline, (2) perform 5-Whys root cause analysis with evidence at every level, (3) assess impact across duration, users, data, financial, and severity dimensions, (4) generate a full incident report, (5) create prevention action items and persist them to the backlog."
+  - q: "How does the 5-Whys analysis work?"
+    a: "Starting from the user-visible symptom, each 'why' must be supported by actual evidence — file references, commit hashes, error messages, or config changes. The analysis stops before 5 if going deeper would be speculative. Findings are classified into root cause (the actual bug), contributing factors (process gaps that allowed it to ship), and detection gaps (why monitoring did not catch it sooner)."
+  - q: "What severity levels does zuvo:incident support?"
+    a: "Three levels: SEV1 (full outage, data loss, or security breach affecting all users), SEV2 (degraded service or partial outage affecting a subset), SEV3 (minor issue with limited impact, caught early). Severity can be provided via --severity or auto-classified from evidence during Phase 3."
+  - q: "Do I need to provide the --since flag?"
+    a: "No. If omitted, the investigation window defaults to 24 hours before the current time. Providing --since (as a date, commit hash, or relative like '3d' or '48h') narrows the window and produces a more focused analysis. Mentioning recent deployments or feature flag changes in the description also helps."
+  - q: "Where is the incident report saved?"
+    a: "By default to docs/incidents/YYYY-MM-DD-slug.md, where the slug is derived from the incident description. Use --output to specify a custom path. Action items are also persisted to memory/backlog.md."
+
+arguments:
+  - flag: "<description or error>"
+    description: "Incident description, error message, stack trace, or issue tracker ID (e.g., Sentry issue). Determines the investigation focus."
+  - flag: "--since [date/commit]"
+    description: "Start of investigation window. Accepts a date, commit hash, or relative time ('3d', '48h'). Default: 24 hours before current time."
+  - flag: "--severity [SEV1/SEV2/SEV3]"
+    description: "Incident severity level. If not provided, auto-classified from evidence during Phase 3 impact assessment."
+  - flag: "--output [path]"
+    description: "Save report to specific path. Default: docs/incidents/YYYY-MM-DD-slug.md."
+
+checks: null
+frameworks: [TypeScript, JavaScript, Python, React / Next.js]
+modes: null
+agents: null
+benchmarks: null
+comparison_table: null
