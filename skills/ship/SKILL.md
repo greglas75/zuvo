@@ -33,11 +33,11 @@ Read each file below using the Read tool. Print the checklist with status before
 
 ```
 CORE FILES LOADED:
-  1. ../../shared/includes/env-compat.md     — READ/MISSING
-  2. ../../shared/includes/codesift-setup.md — READ/MISSING
-  3. ../../shared/includes/run-logger.md     — READ/MISSING
-  4. ../../shared/includes/auto-docs.md      — READ/MISSING
-  5. ../../shared/includes/session-memory.md — READ/MISSING
+  1. {plugin_root}/shared/includes/env-compat.md     — READ/MISSING
+  2. {plugin_root}/shared/includes/codesift-setup.md — READ/MISSING
+  3. {plugin_root}/shared/includes/run-logger.md     — READ/MISSING
+  4. {plugin_root}/shared/includes/auto-docs.md      — READ/MISSING
+  5. {plugin_root}/shared/includes/session-memory.md — READ/MISSING
 ```
 
 If any file is missing: proceed in degraded mode. Note which files are unavailable in the Phase 5 output.
@@ -315,7 +315,7 @@ Render each line conditionally based on actual outcomes (`pushed`, `tagPushed`, 
 
 ### 2. Auto-Docs
 
-After printing the SHIP COMPLETE block, update project documentation per `../../shared/includes/auto-docs.md`:
+After printing the SHIP COMPLETE block, update project documentation per `{plugin_root}/shared/includes/auto-docs.md`:
 
 - **project-journal.md**: Log the release (version, tag, flow, review depth, diff LOC).
 - **README.md**: Update version number/badge if present. Update features list if new user-facing features since last ship.
@@ -325,7 +325,7 @@ Use context from the ship artifact (`memory/last-ship.json`) and Phase 2-4 data 
 
 ### 3. Session Memory
 
-After Auto-Docs, update `memory/project-state.md` per `../../shared/includes/session-memory.md`:
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
 
 - **Recent Activity**: Prepend entry with version change, flow, review depth.
 - **Last Release**: Overwrite from `memory/last-ship.json`.
@@ -335,7 +335,7 @@ If `memory/project-state.md` doesn't exist, create it (full Tech Stack detection
 
 ### 4. Run logger
 
-Append a run log entry per `../../shared/includes/run-logger.md`:
+Append a run log entry per `{plugin_root}/shared/includes/run-logger.md`:
 
 ```
 <ISO-8601>\tship\t<project>\t-\t-\t<PASS|WARN|ABORTED>\t-\t5-phase\tv<old>→v<new> <flow> <reviewDepth>

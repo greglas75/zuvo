@@ -31,9 +31,9 @@ All paths are relative to the Zuvo plugin root. The plugin root is determined by
 | Codex | `~/.codex/skills/` (installed) | `{root}/skills/` | `{root}/rules/` |
 | Cursor | `.cursor/plugins/zuvo/` or marketplace install path | `{root}/skills/` | `{root}/rules/` |
 
-When referencing shared includes from a skill, use relative paths from the skill's location:
-- From `skills/review/SKILL.md` to shared: `../../shared/includes/codesift-setup.md`
-- From `skills/build/agents/blast-radius.md` to shared: `../../../shared/includes/agent-preamble.md`
+When referencing shared includes from a skill or agent, use `{plugin_root}` tokens:
+- From any skill: `{plugin_root}/shared/includes/codesift-setup.md`
+- From any agent: `{plugin_root}/shared/includes/agent-preamble.md`
 
 ## Agent Dispatch Patterns
 

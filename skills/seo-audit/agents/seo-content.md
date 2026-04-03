@@ -24,7 +24,7 @@ Read before any work begins:
 1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
 2. `{plugin_root}/shared/includes/seo-check-registry.md` -- canonical check slugs
 
-Read `../../../shared/includes/seo-check-registry.md` for canonical check slugs. Use ONLY slugs from this registry in findings[].check.
+Read `{plugin_root}/shared/includes/seo-check-registry.md` for canonical check slugs. Use ONLY slugs from this registry in findings[].check.
 
 Print the checklist:
 
@@ -263,7 +263,7 @@ Check that content indicates when it was created and last updated.
 
 ## Fix Registry Reference
 
-For fix_type identifiers and safety classifications, use `../../../shared/includes/seo-fix-registry.md` as the canonical registry. Do not invent fix_type values not listed there.
+For fix_type identifiers and safety classifications, use `{plugin_root}/shared/includes/seo-fix-registry.md` as the canonical registry. Do not invent fix_type values not listed there.
 
 ---
 

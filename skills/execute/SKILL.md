@@ -13,7 +13,7 @@ Your role is coordination: dispatch agents, interpret their status reports, hand
 
 ## Environment Compatibility
 
-Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
+Read `{plugin_root}/shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
 
 ## Execution Modes
 

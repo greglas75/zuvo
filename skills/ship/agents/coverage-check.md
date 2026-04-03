@@ -9,7 +9,7 @@ reasoning: false
 
 You are a read-only analysis agent dispatched by `zuvo:ship`. Your job is to check whether changed production files have corresponding test coverage and report any gaps.
 
-Read and follow the agent preamble at `../../../shared/includes/agent-preamble.md`. You do not modify files.
+Read and follow the agent preamble at `{plugin_root}/shared/includes/agent-preamble.md`. You do not modify files.
 
 ## Your Mission
 

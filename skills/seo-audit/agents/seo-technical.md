@@ -21,7 +21,7 @@ Read before starting:
 1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery
 2. `{plugin_root}/shared/includes/seo-check-registry.md` -- canonical check slugs
 
-Read `../../../shared/includes/seo-check-registry.md` for canonical check slugs. Use ONLY slugs from this registry in findings[].check.
+Read `{plugin_root}/shared/includes/seo-check-registry.md` for canonical check slugs. Use ONLY slugs from this registry in findings[].check.
 
 Print the checklist:
 
@@ -303,7 +303,7 @@ Glob for 404 page files (404.html, 404.astro, not-found.tsx)
 
 ## Fix Registry Reference
 
-For fix_type identifiers and safety classifications, use `../../../shared/includes/seo-fix-registry.md` as the canonical registry. Do not invent fix_type values not listed there.
+For fix_type identifiers and safety classifications, use `{plugin_root}/shared/includes/seo-fix-registry.md` as the canonical registry. Do not invent fix_type values not listed there.
 
 ---
 
@@ -335,7 +335,7 @@ Use `INSUFFICIENT DATA` when static analysis cannot determine the check result a
 
 ### Fix Registry
 
-For canonical fix_type identifiers, safety classifications, and fix_params schema, read `../../../shared/includes/seo-fix-registry.md`. Do not define local fix_type values -- use only those listed in the shared registry.
+For canonical fix_type identifiers, safety classifications, and fix_params schema, read `{plugin_root}/shared/includes/seo-fix-registry.md`. Do not define local fix_type values -- use only those listed in the shared registry.
 
 ---
 

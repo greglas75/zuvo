@@ -33,9 +33,9 @@ Read each file below using the Read tool. Print the checklist with status before
 
 ```
 CORE FILES LOADED:
-  1. ../../shared/includes/env-compat.md          — READ/MISSING
-  2. ../../shared/includes/run-logger.md           — READ/MISSING
-  3. ../../shared/includes/platform-detection.md   — READ/MISSING
+  1. {plugin_root}/shared/includes/env-compat.md          — READ/MISSING
+  2. {plugin_root}/shared/includes/run-logger.md           — READ/MISSING
+  3. {plugin_root}/shared/includes/platform-detection.md   — READ/MISSING
 ```
 
 If any file is missing: proceed in degraded mode. Note which files are unavailable in the Phase 7 output.
@@ -133,7 +133,7 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 
 ## Phase 3: Platform Detection
 
-1. **Read `../../shared/includes/platform-detection.md`** and follow the 5-step detection algorithm described there:
+1. **Read `{plugin_root}/shared/includes/platform-detection.md`** and follow the 5-step detection algorithm described there:
    - Step 1: Scan project root for platform config files in priority order.
    - Step 2: If multiple detected, use first match; log all.
    - Step 3: Verify CLI availability. If missing, keep platform but set `cli: null`.
@@ -265,7 +265,7 @@ DEPLOY COMPLETE
 
 ### 2. Run logger
 
-Append a run log entry per `../../shared/includes/run-logger.md`:
+Append a run log entry per `{plugin_root}/shared/includes/run-logger.md`:
 
 ```
 <ISO-8601>\tdeploy\t<project>\t-\t-\t<PASS|WARN|PARTIAL|FAIL>\t-\t7-phase\tv<version> <platform> <health-verdict>

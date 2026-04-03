@@ -26,14 +26,14 @@ Generate an engineering retrospective from git history, backlog state, and skill
 
 ## Environment Compatibility
 
-Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
+Read `{plugin_root}/shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
 
 ## Mandatory File Loading
 
 ```
 CORE FILES LOADED:
-  1. ../../shared/includes/env-compat.md    -- READ
-  2. ../../shared/includes/run-logger.md    -- READ
+  1. {plugin_root}/shared/includes/env-compat.md    -- READ
+  2. {plugin_root}/shared/includes/run-logger.md    -- READ
 ```
 
 Both files must be read before proceeding. If either is missing, note "DEGRADED -- [file] unavailable" in the report and continue with reduced capability.
@@ -282,7 +282,7 @@ RETRO COMPLETE [QUALITATIVE ONLY — <10 commits in window]
 
 ## Phase 6: Run Log
 
-Append run log entry per `../../shared/includes/run-logger.md`. Use the environment-aware log path (do NOT hardcode `~/.zuvo/runs.log`).
+Append run log entry per `{plugin_root}/shared/includes/run-logger.md`. Use the environment-aware log path (do NOT hardcode `~/.zuvo/runs.log`).
 
 | Field | Value |
 |-------|-------|

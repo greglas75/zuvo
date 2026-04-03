@@ -34,11 +34,11 @@ If any file is missing, STOP.
 
 ## Environment Compatibility
 
-Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
+Read `{plugin_root}/shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
 
 ## CodeSift Integration
 
-Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
+Read `{plugin_root}/shared/includes/codesift-setup.md` for the full initialization sequence.
 
 **Mode 1 (review) CodeSift advantages:**
 - `get_knowledge_map(repo, depth=2)` -- module relationships in one call

@@ -26,8 +26,8 @@ Before starting any phase, read these shared includes:
 
 ```
 INCLUDES LOADED:
-  1. ../../shared/includes/env-compat.md     — READ
-  2. ../../shared/includes/run-logger.md     — READ
+  1. {plugin_root}/shared/includes/env-compat.md     — READ
+  2. {plugin_root}/shared/includes/run-logger.md     — READ
 ```
 
 ---
@@ -82,7 +82,7 @@ Defaults:
 
 ## Phase 1: Platform Context (optional)
 
-Read `../../shared/includes/platform-detection.md` and follow the detection algorithm.
+Read `{plugin_root}/shared/includes/platform-detection.md` and follow the detection algorithm.
 
 If a platform is detected, note its health check command. This is supplementary — the primary check is always the URL-based approach in Phase 2. Platform detection may provide additional commands (e.g., `fly status`) that can supplement the HTTP check.
 
@@ -214,7 +214,7 @@ CANARY COMPLETE
 
 ### Step 5: Append Run Log
 
-Append a run log entry per `../../shared/includes/run-logger.md`.
+Append a run log entry per `{plugin_root}/shared/includes/run-logger.md`.
 
 ---
 

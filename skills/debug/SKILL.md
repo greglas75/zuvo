@@ -26,11 +26,11 @@ Parse `$ARGUMENTS` to determine the starting phase:
 
 ## Environment Compatibility
 
-Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
+Read `{plugin_root}/shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
 
 ## CodeSift Integration
 
-Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
+Read `{plugin_root}/shared/includes/codesift-setup.md` for the full initialization sequence.
 
 **Key tools for debugging:**
 
@@ -223,7 +223,7 @@ Compare with the Phase 2.0 baseline. No new failures should appear. If new failu
 
 Re-run the exact reproduction from Phase 1 or Phase 1.5. If the bug still occurs, the root cause diagnosis was wrong. Return to Phase 3.
 
-Read `../../shared/includes/verification-protocol.md` -- no completion claims without fresh evidence.
+Read `{plugin_root}/shared/includes/verification-protocol.md` -- no completion claims without fresh evidence.
 
 ### 4.5 Write Regression Test
 
@@ -234,7 +234,7 @@ Write a test that:
 
 Run Q1-Q17 self-evaluation on the regression test. Read `{plugin_root}/rules/testing.md` for the full protocol.
 
-Condensed reference: `../../shared/includes/quality-gates.md`
+Condensed reference: `{plugin_root}/shared/includes/quality-gates.md`
 
 - Score each gate individually (1/0, N/A counts as 1 but needs justification)
 - Critical gates: Q7, Q11, Q13, Q15, Q17 -- any = 0 means fix the test

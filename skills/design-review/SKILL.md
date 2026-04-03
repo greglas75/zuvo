@@ -35,11 +35,11 @@ If any file is missing, STOP.
 
 ## Environment Compatibility
 
-Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
+Read `{plugin_root}/shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
 
 ## CodeSift Integration
 
-Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
+Read `{plugin_root}/shared/includes/codesift-setup.md` for the full initialization sequence.
 
 **Design-review CodeSift usage:**
 - `get_file_tree(repo, path_prefix="src/components/ui")` -- UI component inventory with symbol counts

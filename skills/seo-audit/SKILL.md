@@ -41,11 +41,11 @@ If any file is missing, STOP.
 
 ## Environment Compatibility
 
-Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
+Read `{plugin_root}/shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
 
 ## CodeSift Integration
 
-Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
+Read `{plugin_root}/shared/includes/codesift-setup.md` for the full initialization sequence.
 
 **Summary:** Run the CodeSift setup from `codesift-setup.md` at skill start. Use CodeSift for structured data discovery, meta tag pattern search, and component analysis when available. Fall back to Grep/Read/Glob if unavailable.
 
@@ -195,7 +195,7 @@ Pass `mode` and `selected_dimensions` to each dispatched agent as input paramete
 
 ### Agent dispatch
 
-Refer to `../../shared/includes/env-compat.md` for dispatch patterns per environment.
+Refer to `{plugin_root}/shared/includes/env-compat.md` for dispatch patterns per environment.
 
 **Claude Code:** Use the Task tool to run all three in parallel:
 
@@ -244,7 +244,7 @@ After all agents complete:
 
 ### Dimension constraints (normative -- agents MUST follow)
 
-For fix_type identifiers and safety classifications, agents MUST use `../../shared/includes/seo-fix-registry.md` as the canonical source.
+For fix_type identifiers and safety classifications, agents MUST use `{plugin_root}/shared/includes/seo-fix-registry.md` as the canonical source.
 
 **D5 — AI crawler policy:**
 - Minimum bots to evaluate: GPTBot, ClaudeBot, PerplexityBot, Google-Extended, CCBot
@@ -465,7 +465,7 @@ Confidence scale:
   HIGH   = direct source evidence (file:line confirms the finding)
   MEDIUM = inferred from config or indirect signals
   LOW    = heuristic or absence-based (e.g., file not found)
-See also `../../shared/includes/seo-fix-registry.md` for the canonical confidence definitions.
+See also `{plugin_root}/shared/includes/seo-fix-registry.md` for the canonical confidence definitions.
 ```
 
 ### 3D Priority Calculation
@@ -502,7 +502,7 @@ Auto-increment if a report for today already exists: `seo-audit-YYYY-MM-DD-2.md`
 
 ### Phase 6.2: JSON Output
 
-Before generating JSON, read `../../shared/includes/audit-output-schema.md` for the schema contract. For `fix_type` values and safety classifications, reference `../../shared/includes/seo-fix-registry.md`.
+Before generating JSON, read `{plugin_root}/shared/includes/audit-output-schema.md` for the schema contract. For `fix_type` values and safety classifications, reference `{plugin_root}/shared/includes/seo-fix-registry.md`.
 
 After saving the markdown report, also save structured JSON findings for downstream consumption by `zuvo:seo-fix` and CI pipelines.
 
@@ -510,7 +510,7 @@ After saving the markdown report, also save structured JSON findings for downstr
 
 Auto-increment with `-N` suffix if same-day file exists (same convention as `.md`).
 
-**Schema:** See `../../shared/includes/audit-output-schema.md` for the full schema definition.
+**Schema:** See `{plugin_root}/shared/includes/audit-output-schema.md` for the full schema definition.
 
 Serialize from Phase 4 scoring results:
 

@@ -28,7 +28,7 @@ Flags can be combined: `zuvo:build add CSV export --auto --auto-commit --tag`
 
 ## Environment Compatibility
 
-Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
+Read `{plugin_root}/shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
 
 **Interaction behavior is governed entirely by env-compat.md.** This skill does not override env-compat defaults. Specifically:
 - Plan approval and commit confirmation follow env-compat rules for the detected environment.
@@ -38,7 +38,7 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 
 ## CodeSift Integration
 
-Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
+Read `{plugin_root}/shared/includes/codesift-setup.md` for the full initialization sequence.
 
 After editing any file, update the index: `index_file(path="/absolute/path/to/file")`
 
@@ -327,7 +327,7 @@ Rules:
 
 **LIGHT tier:** Check critical gates only (CQ3, CQ4, CQ5, CQ6, CQ8, CQ14) + any conditional gates activated by context (CQ16/CQ19/CQ20/CQ21/CQ22). Provide evidence for each. Fix any gate = 0.
 
-**STANDARD and DEEP tiers:** Read `{plugin_root}/rules/cq-checklist.md`. Run full CQ1-CQ22 on every production file written or modified. Condensed reference: `../../shared/includes/quality-gates.md`.
+**STANDARD and DEEP tiers:** Read `{plugin_root}/rules/cq-checklist.md`. Run full CQ1-CQ22 on every production file written or modified. Condensed reference: `{plugin_root}/shared/includes/quality-gates.md`.
 
 - Score each gate (1 = satisfied, 0 = violated, N/A = not applicable)
 - Static critical gates: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 — any = 0 means FIX before tests
@@ -432,7 +432,7 @@ Run stack-appropriate checks:
 
 All must pass. If any fails, fix and re-run.
 
-Read `../../shared/includes/verification-protocol.md` — no completion claims without fresh evidence.
+Read `{plugin_root}/shared/includes/verification-protocol.md` — no completion claims without fresh evidence.
 
 ### 4.3 Execution Checklist
 

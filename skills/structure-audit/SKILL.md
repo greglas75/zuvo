@@ -38,11 +38,11 @@ If file 1 or 2 is missing, STOP.
 
 ## Environment Compatibility
 
-Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
+Read `{plugin_root}/shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
 
 ## CodeSift Integration
 
-Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
+Read `{plugin_root}/shared/includes/codesift-setup.md` for the full initialization sequence.
 
 **Summary:** Run the CodeSift setup from `codesift-setup.md` at skill start. CodeSift tools are the primary analysis engine for SA8 (dead code), SA9 (complexity), SA10 (duplication), and SA13 (hotspots). If unavailable, fall back to CLI tools and grep heuristics.
 

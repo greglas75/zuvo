@@ -400,7 +400,7 @@ Same format as seo-audit backlog persistence. Uses the stable check ID from the 
 1. Save markdown report to `audit-results/seo-fix-YYYY-MM-DD.md`
    Auto-increment: `-2.md`, `-3.md` if same-day file exists.
 
-2. Save fix JSON to `audit-results/seo-fix-YYYY-MM-DD.json` (schema: `../../shared/includes/fix-output-schema.md`):
+2. Save fix JSON to `audit-results/seo-fix-YYYY-MM-DD.json` (schema: `{plugin_root}/shared/includes/fix-output-schema.md`):
 
 ```json
 {

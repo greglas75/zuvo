@@ -16,8 +16,8 @@ Read these files before proceeding:
 
 ```
 CORE FILES LOADED:
-  1. ../../shared/includes/env-compat.md    — READ
-  2. ../../shared/includes/run-logger.md    — READ
+  1. {plugin_root}/shared/includes/env-compat.md    — READ
+  2. {plugin_root}/shared/includes/run-logger.md    — READ
 ```
 
 ## Argument Parsing
@@ -136,7 +136,7 @@ RELEASE-DOCS COMPLETE
 
 If `--dry-run` was set and execution reached this phase (only on early exits), annotate the block with `[DRY RUN — no files written]`.
 
-Append run log entry per `../../shared/includes/run-logger.md`. Use the environment-aware log path from run-logger.md (do NOT hardcode `~/.zuvo/runs.log`):
+Append run log entry per `{plugin_root}/shared/includes/run-logger.md`. Use the environment-aware log path from run-logger.md (do NOT hardcode `~/.zuvo/runs.log`):
 
 ```
 <ISO-timestamp>\trelease-docs\t<project-basename>\t-\t-\tPASS\t-\t5-phase\tdocs synced for <range>
