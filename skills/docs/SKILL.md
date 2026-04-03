@@ -87,6 +87,7 @@ Read every file below before starting. Print the checklist.
 CORE FILES LOADED:
   1. {plugin_root}/shared/includes/auto-docs.md       -- [READ | MISSING]
   2. {plugin_root}/shared/includes/session-memory.md   -- [READ | MISSING]
+  3. {plugin_root}/rules/changelog.md                  -- [READ | MISSING]
 ```
 
 ## Mandatory Source Reading

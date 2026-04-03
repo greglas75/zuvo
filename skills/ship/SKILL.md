@@ -38,6 +38,7 @@ CORE FILES LOADED:
   3. {plugin_root}/shared/includes/run-logger.md     — READ/MISSING
   4. {plugin_root}/shared/includes/auto-docs.md      — READ/MISSING
   5. {plugin_root}/shared/includes/session-memory.md — READ/MISSING
+  6. {plugin_root}/rules/changelog.md               — READ/MISSING
 ```
 
 If any file is missing: proceed in degraded mode. Note which files are unavailable in the Phase 5 output.
@@ -175,8 +176,8 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 
 4. **Apply the bump** to the detected version file. Read the current version, increment the appropriate segment, write back.
 
-5. **Generate or update CHANGELOG.md:**
-   - If `CHANGELOG.md` exists: prepend a new section at the top (below the header).
+5. **Generate or update CHANGELOG.md** (see `{plugin_root}/rules/changelog.md` for full style guide):
+   - If `CHANGELOG.md` exists: prepend a new section at the top (below the header). If an `[Unreleased]` section exists, rename it to the new version and create a fresh `[Unreleased]`.
    - If `CHANGELOG.md` does not exist (E6): create it from scratch with the Keep-a-Changelog header:
      ```markdown
      # Changelog
@@ -185,20 +186,41 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 
      The format is based on [Keep a Changelog](https://keepachangelog.com/).
      ```
-   - New section format:
+   - New section format (section order is mandatory — omit empty sections):
      ```markdown
      ## [<version>] — YYYY-MM-DD
 
+     ### Breaking
+     - <only if BREAKING CHANGE: in commit body or !: suffix — include migration instructions>
+
      ### Added
-     - ...
+     - <from feat: commits>
 
      ### Changed
-     - ...
+     - <from refactor:, perf:, and non-conventional commits>
 
      ### Fixed
-     - ...
+     - <from fix: commits>
+
+     ### Deprecated
+     - <if any deprecation notices in commits>
+
+     ### Security
+     - <from security-related fixes>
      ```
-   - Group commit messages under the appropriate heading (Added for `feat:`, Fixed for `fix:`, Changed for everything else). If commits are not conventional, list all under Changed.
+   - Group commits by conventional prefix. Skip `docs:`, `chore:`, `test:`, `ci:` (not user-facing).
+   - If commits are not conventional, list all under Changed.
+   - **Breaking changes** get their own section at the top with migration instructions.
+   - **Entries must be user-facing** — use plain language, not file paths or function names.
+   - Reference issue/PR numbers where available: `Add user export (#134)`.
+
+6. **Validate changelog entry:**
+   - All commits in range represented (or intentionally skipped — docs/chore/test/ci)
+   - Section order correct (Breaking → Added → Changed → Fixed → Deprecated → Security)
+   - No empty sections
+   - Breaking changes have migration instructions
+   - Valid Markdown syntax
+   - If validation fails: fix inline, do not ask user.
 
 ---
 
