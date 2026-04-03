@@ -28,6 +28,8 @@ CORE FILES LOADED:
   2. {plugin_root}/rules/security.md                -- READ/MISSING
   3. {plugin_root}/shared/includes/env-compat.md    -- READ/MISSING
   4. {plugin_root}/shared/includes/codesift-setup.md -- READ/MISSING
+  5. {plugin_root}/shared/includes/auto-docs.md    -- READ/MISSING
+  6. {plugin_root}/shared/includes/session-memory.md -- READ/MISSING
 ```
 
 Where `{plugin_root}` resolves per `env-compat.md`.
@@ -398,6 +400,22 @@ Full protocol: `{plugin_root}/shared/includes/backlog-protocol.md`.
 - Process controllers sequentially. Claude Code may parallelize with up to 6 Task agents.
 - Read the project's AGENTS.md or CLAUDE.md first for stack-specific conventions
 - Estimated durations: LIGHT ~3-5 min, STANDARD ~8-10 min, DEEP ~15-20 min
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the API audit scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with API audit summary and verdict.
 
 ---
 

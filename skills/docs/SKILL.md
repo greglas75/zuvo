@@ -79,6 +79,16 @@ If commands come from package.json scripts or Makefile targets, use the exact sc
 
 ---
 
+## Mandatory File Loading
+
+Read every file below before starting. Print the checklist.
+
+```
+CORE FILES LOADED:
+  1. {plugin_root}/shared/includes/auto-docs.md       -- [READ | MISSING]
+  2. {plugin_root}/shared/includes/session-memory.md   -- [READ | MISSING]
+```
+
 ## Mandatory Source Reading
 
 For every doc type, read the relevant source files before writing anything:
@@ -328,6 +338,24 @@ If target file exists, ask before overwriting (except in update mode). Non-inter
 2. Write for the reader. README is for someone who just found the repo. Runbook is for someone at 2am.
 3. Start with the most useful information. Quick Start before architecture details.
 4. Stale docs are worse than no docs. Mark uncertainty with TODO rather than leaving wrong information.
+
+---
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the documentation generation scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with documentation generation summary and verdict.
 
 ---
 

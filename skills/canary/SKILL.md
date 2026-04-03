@@ -28,6 +28,8 @@ Before starting any phase, read these shared includes:
 INCLUDES LOADED:
   1. {plugin_root}/shared/includes/env-compat.md     — READ
   2. {plugin_root}/shared/includes/run-logger.md     — READ
+  3. {plugin_root}/shared/includes/auto-docs.md      — READ/MISSING
+  4. {plugin_root}/shared/includes/session-memory.md  — READ/MISSING
 ```
 
 ---
@@ -228,3 +230,25 @@ Append a run log entry per `{plugin_root}/shared/includes/run-logger.md`.
 | — | Duration outside 1m–30m | STOP with range validation error. |
 | — | First canary run (no baseline) | Omit baseline comparison from Performance line. |
 | — | Screenshot directory doesn't exist | Create `audit-results/canary-{ISO-timestamp}/` before writing. |
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the canary monitoring scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with canary monitoring summary and verdict.
+
+---
+
+## Run Log
+
+Log this run to `memory/zuvo-runs.log` per `{plugin_root}/shared/includes/run-logger.md`.

@@ -28,6 +28,8 @@ Print the checklist:
 CORE FILES LOADED:
   1. codesift-setup.md   -- [READ | MISSING -> STOP]
   2. env-compat.md       -- [READ | MISSING -> STOP]
+  3. {plugin_root}/shared/includes/auto-docs.md    -- READ/MISSING
+  4. {plugin_root}/shared/includes/session-memory.md -- READ/MISSING
 ```
 
 If any file is missing, STOP.
@@ -445,6 +447,22 @@ After completing any mode, persist actionable items to `memory/backlog.md`:
 **Design mode:** Open questions, scale triggers, rollout risks.
 
 Zero risks may be silently discarded. If the output has consequences, questions, or risks, they must reach the backlog.
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the architecture review scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with architecture review summary and verdict.
 
 ---
 

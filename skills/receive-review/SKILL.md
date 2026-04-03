@@ -11,6 +11,16 @@ Protocol for responding to code review feedback. Every review comment gets the s
 
 ---
 
+## Mandatory File Loading
+
+Read every file below before starting. Print the checklist.
+
+```
+CORE FILES LOADED:
+  1. {plugin_root}/shared/includes/auto-docs.md       -- [READ | MISSING]
+  2. {plugin_root}/shared/includes/session-memory.md   -- [READ | MISSING]
+```
+
 ## The 6-Step Protocol
 
 Process each review item through all six steps before moving to the next item.
@@ -205,6 +215,24 @@ Tests: [N] passing
 Commit: [hash] — [message]
 ----------------------------------------------------
 ```
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the review response scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with review response summary and verdict.
+
+---
 
 ## Run Log
 

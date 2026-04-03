@@ -37,6 +37,21 @@ Add, list, and manage backlog items. The backlog tracks technical debt discovere
 
 ---
 
+## Mandatory File Loading
+
+Read these files before any work begins:
+
+1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
+2. `{plugin_root}/shared/includes/auto-docs.md` -- Auto-docs update protocol
+3. `{plugin_root}/shared/includes/session-memory.md` -- Session memory update protocol
+
+```
+CORE FILES LOADED:
+  1. codesift-setup.md     -- [READ | MISSING -> STOP]
+  2. auto-docs.md          -- [READ | MISSING -> SKIP auto-docs]
+  3. session-memory.md     -- [READ | MISSING -> SKIP session memory]
+```
+
 ## CodeSift Integration
 
 Read `{plugin_root}/shared/includes/codesift-setup.md` for initialization.
@@ -274,3 +289,32 @@ When `memory/backlog.md` does not exist, create it from this template:
 | ID | Status | Fingerprint | File | Problem | Severity | Category | Source | Seen | Added |
 |----|--------|-------------|------|---------|----------|----------|--------|------|-------|
 ```
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the backlog management scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with backlog management summary and verdict.
+
+---
+
+## Run Log
+
+Log this run to `memory/zuvo-runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+- SKILL: `backlog`
+- CQ_SCORE: `-`
+- Q_SCORE: `-`
+- VERDICT: PASS if backlog operation completed
+- TASKS: number of items affected
+- DURATION: `-`
+- NOTES: operation summary (max 80 chars)

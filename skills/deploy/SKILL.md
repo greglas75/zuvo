@@ -36,6 +36,8 @@ CORE FILES LOADED:
   1. {plugin_root}/shared/includes/env-compat.md          — READ/MISSING
   2. {plugin_root}/shared/includes/run-logger.md           — READ/MISSING
   3. {plugin_root}/shared/includes/platform-detection.md   — READ/MISSING
+  4. {plugin_root}/shared/includes/auto-docs.md            — READ/MISSING
+  5. {plugin_root}/shared/includes/session-memory.md       — READ/MISSING
 ```
 
 If any file is missing: proceed in degraded mode. Note which files are unavailable in the Phase 7 output.
@@ -282,3 +284,25 @@ Append a run log entry per `{plugin_root}/shared/includes/run-logger.md`:
 | E9 | No deployment platform detected | Manual checklist, set verdict to PARTIAL, skip Phases 4-6 |
 | E10 | Health check fails after deploy | Offer rollback command, do NOT auto-execute |
 | E15/DD7 | `tagPushed: false` in last-ship.json | Push tag first (interactive confirmation) or skip (non-interactive) |
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the deployment scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with deployment summary and verdict.
+
+---
+
+## Run Log
+
+Log this run to `memory/zuvo-runs.log` per `{plugin_root}/shared/includes/run-logger.md`.

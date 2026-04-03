@@ -44,6 +44,8 @@ CORE FILES LOADED:
   1. {plugin_root}/shared/includes/codesift-setup.md   -- [READ | MISSING -> STOP]
   2. {plugin_root}/shared/includes/env-compat.md        -- [READ | MISSING -> STOP]
   3. {plugin_root}/rules/cq-patterns.md                 -- [READ | MISSING -> STOP]
+  4. {plugin_root}/shared/includes/auto-docs.md          -- READ/MISSING
+  5. {plugin_root}/shared/includes/session-memory.md     -- READ/MISSING
 ```
 
 If any file is MISSING, STOP. Do not proceed from memory.
@@ -434,6 +436,22 @@ Score >= 85%                -> schedule next audit in 3 months
   fallback
 - `--no-api` flag skips Bundlephobia and OpenSSF calls for air-gapped or
   rate-limited environments
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the dependency audit scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with dependency audit summary and verdict.
 
 ---
 

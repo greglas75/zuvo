@@ -212,6 +212,22 @@ These apply across both modes:
 
 ---
 
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the worktree operation scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with worktree operation summary and verdict.
+
+---
+
 ## Run Log
 
 Log this run to `memory/zuvo-runs.log` per `shared/includes/run-logger.md`:

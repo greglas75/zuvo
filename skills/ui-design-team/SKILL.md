@@ -29,9 +29,16 @@ Print the checklist:
 CORE FILES LOADED:
   1. codesift-setup.md   -- [READ | MISSING -> STOP]
   2. env-compat.md       -- [READ | MISSING -> STOP]
+  3. auto-docs.md        -- [READ | MISSING -> SKIP auto-docs]
+  4. session-memory.md   -- [READ | MISSING -> SKIP session memory]
 ```
 
-If any file is missing, STOP.
+Also read these shared includes (non-blocking if missing):
+
+3. `{plugin_root}/shared/includes/auto-docs.md` -- Auto-docs update protocol
+4. `{plugin_root}/shared/includes/session-memory.md` -- Session memory update protocol
+
+If any REQUIRED file is missing, STOP.
 
 ## Environment Compatibility
 
@@ -345,6 +352,22 @@ Before committing any UI change, verify:
 | A11y score < 3/5 | Accessibility remediation | Direct fix with WCAG reference |
 | i18n score < 3/5 | i18n infrastructure | Direct fix (logical properties, i18n keys) |
 | Multiple P0 issues | Full redesign | `zuvo:design improve [path]` |
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the UI design team review scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with UI design team review summary and verdict.
 
 ---
 

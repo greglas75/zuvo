@@ -35,6 +35,8 @@ CORE FILES LOADED:
   1. {plugin_root}/shared/includes/codesift-setup.md   -- [READ | MISSING -> STOP]
   2. {plugin_root}/shared/includes/env-compat.md        -- [READ | MISSING -> STOP]
   3. {plugin_root}/rules/cq-patterns.md                 -- [READ | MISSING -> STOP]
+  4. {plugin_root}/shared/includes/auto-docs.md         -- [READ | MISSING]
+  5. {plugin_root}/shared/includes/session-memory.md    -- [READ | MISSING]
 ```
 
 If any file is MISSING, STOP. Do not proceed from memory.
@@ -540,6 +542,24 @@ Score >= 85%             -> schedule next audit in 3 months
   Model are informational only
 - Confidence levels are strict: only profiler/Lighthouse/EXPLAIN output earns
   HIGH confidence; code inspection maxes out at MEDIUM
+
+---
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the performance audit scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with performance audit summary and verdict.
 
 ---
 

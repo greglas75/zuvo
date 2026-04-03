@@ -67,6 +67,8 @@ CORE FILES LOADED:
   1. {plugin_root}/rules/cq-patterns.md            -- [READ | MISSING -> STOP]
   2. {plugin_root}/rules/file-limits.md             -- [READ | MISSING -> STOP]
   3. {plugin_root}/rules/testing.md                 -- [READ | MISSING -> STOP]
+  4. {plugin_root}/shared/includes/auto-docs.md     -- [READ | MISSING -> SKIP auto-docs]
+  5. {plugin_root}/shared/includes/session-memory.md -- [READ | MISSING -> SKIP session memory]
 ```
 
 ---
@@ -373,6 +375,22 @@ Human review recommended before committing.
 5. Never generate auth fixture if the login strategy is ambiguous.
 6. In monorepo, require scope to one app root.
 7. Prefer sensible defaults over interactive questions.
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the E2E test generation scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with E2E test generation summary and verdict.
 
 ---
 

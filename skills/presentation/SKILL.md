@@ -17,6 +17,16 @@ Generate professional PPTX presentations from a topic description, outline, or e
 **Scope:** Generating slide decks from topics or content files.
 **Out of scope:** Editing existing PPTX files, complex data visualizations (charts, graphs), image generation.
 
+## Mandatory File Loading
+
+Read every file below before starting. Print the checklist.
+
+```
+CORE FILES LOADED:
+  1. {plugin_root}/shared/includes/auto-docs.md       -- [READ | MISSING]
+  2. {plugin_root}/shared/includes/session-memory.md   -- [READ | MISSING]
+```
+
 ## Argument Parsing
 
 | Argument | Behavior |
@@ -242,6 +252,24 @@ Output: [file path]
 Format: [pptx / markdown]
 ----------------------------------------------------
 ```
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the presentation creation scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with presentation creation summary and verdict.
+
+---
 
 ## Run Log
 

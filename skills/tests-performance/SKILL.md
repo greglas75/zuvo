@@ -41,6 +41,23 @@ Measurement-driven optimization of the test suite. Establishes a baseline, audit
 
 Read `{plugin_root}/shared/includes/env-compat.md` for progress tracking and user interaction patterns.
 
+## Mandatory File Loading
+
+Read these files before any work begins:
+
+1. `{plugin_root}/shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
+2. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
+3. `{plugin_root}/shared/includes/auto-docs.md` -- Auto-docs update protocol
+4. `{plugin_root}/shared/includes/session-memory.md` -- Session memory update protocol
+
+```
+CORE FILES LOADED:
+  1. env-compat.md         -- [READ | MISSING -> STOP]
+  2. codesift-setup.md     -- [READ | MISSING -> STOP]
+  3. auto-docs.md          -- [READ | MISSING -> SKIP auto-docs]
+  4. session-memory.md     -- [READ | MISSING -> SKIP session memory]
+```
+
 ## CodeSift Integration
 
 Read `{plugin_root}/shared/includes/codesift-setup.md` for initialization.
@@ -289,6 +306,22 @@ TESTS-PERFORMANCE COMPLETE
   Top impact:  [description of #1 change] -> expected [P]% improvement
 -----
 ```
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the test performance audit scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with test performance audit summary and verdict.
 
 ---
 

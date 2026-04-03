@@ -18,6 +18,8 @@ Read these files before proceeding:
 CORE FILES LOADED:
   1. {plugin_root}/shared/includes/env-compat.md    — READ
   2. {plugin_root}/shared/includes/run-logger.md    — READ
+  3. {plugin_root}/shared/includes/auto-docs.md     — READ/MISSING
+  4. {plugin_root}/shared/includes/session-memory.md — READ/MISSING
 ```
 
 ## Argument Parsing
@@ -135,6 +137,24 @@ RELEASE-DOCS COMPLETE
 ```
 
 If `--dry-run` was set and execution reached this phase (only on early exits), annotate the block with `[DRY RUN — no files written]`.
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the release docs sync scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with release docs sync summary and verdict.
+
+---
 
 Append run log entry per `{plugin_root}/shared/includes/run-logger.md`. Use the environment-aware log path from run-logger.md (do NOT hardcode `memory/zuvo-runs.log`):
 

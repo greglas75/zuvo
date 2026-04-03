@@ -89,6 +89,8 @@ Before starting, read the applicable files:
 CORE FILES LOADED:
   1. {plugin_root}/rules/testing.md                -- [READ | MISSING -> STOP]
   2. {plugin_root}/shared/includes/quality-gates.md -- [READ | MISSING -> STOP]
+  3. {plugin_root}/shared/includes/auto-docs.md    -- [READ | MISSING]
+  4. {plugin_root}/shared/includes/session-memory.md -- [READ | MISSING]
 ```
 
 **Conditional (loaded when the pattern requires domain knowledge):**
@@ -256,6 +258,24 @@ Total files:     [N] fixed, [N] skipped
 Bugs discovered: [N] (see backlog)
 -----
 ```
+
+---
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the test fix scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with test fix summary and verdict.
 
 ---
 

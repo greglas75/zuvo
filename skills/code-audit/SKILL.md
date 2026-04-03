@@ -45,6 +45,8 @@ CORE FILES LOADED:
   3. {plugin_root}/rules/security.md            -- READ/MISSING
   4. {plugin_root}/rules/file-limits.md         -- READ/MISSING
   5. {plugin_root}/shared/includes/env-compat.md -- READ/MISSING
+  6. {plugin_root}/shared/includes/auto-docs.md    -- READ/MISSING
+  7. {plugin_root}/shared/includes/session-memory.md -- READ/MISSING
 ```
 
 Where `{plugin_root}` resolves per `env-compat.md`.
@@ -426,6 +428,22 @@ After the report, propose what to do next:
 | Structural issues (wrong layers, circular deps) | `zuvo:architecture review [path]` | Needs architectural view first |
 | Only Tier B/C with varied issues | "Fix top 3 critical gate failures" | Highest ROI |
 | All Tier A | No action needed | Everything is production-ready |
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the code audit scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with code audit summary and verdict.
+
+---
 
 ## Run Log
 

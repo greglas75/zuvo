@@ -29,6 +29,8 @@ CORE FILES LOADED:
   1. {plugin_root}/shared/includes/codesift-setup.md   -- [READ | MISSING -> STOP]
   2. {plugin_root}/shared/includes/env-compat.md        -- [READ | MISSING -> STOP]
   3. {plugin_root}/rules/cq-patterns.md                 -- [READ | MISSING -> STOP]
+  4. {plugin_root}/shared/includes/auto-docs.md          -- READ/MISSING
+  5. {plugin_root}/shared/includes/session-memory.md     -- READ/MISSING
 ```
 
 If any file is MISSING, STOP. Do not proceed from memory.
@@ -536,6 +538,22 @@ Multiple dimensions fail  -> zuvo:review [path]
   ORM-specific)
 - Live analysis (Phase 3) is strictly opt-in and read-only
 - Prisma does not use down migrations -- do not flag this as an issue
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the database audit scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with database audit summary and verdict.
 
 ---
 

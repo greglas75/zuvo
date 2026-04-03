@@ -33,6 +33,16 @@ CORE FILES LOADED:
 
 If any file is missing, STOP.
 
+Also read these shared includes (non-blocking if missing):
+
+4. `{plugin_root}/shared/includes/auto-docs.md` -- Auto-docs update protocol
+5. `{plugin_root}/shared/includes/session-memory.md` -- Session memory update protocol
+
+```
+  4. auto-docs.md          -- [READ | MISSING -> SKIP auto-docs]
+  5. session-memory.md     -- [READ | MISSING -> SKIP session memory]
+```
+
 ## Safety Gates (NON-NEGOTIABLE)
 
 ### GATE 1 -- Write Scope
@@ -438,6 +448,22 @@ Same format as seo-audit backlog persistence. Uses the stable check ID from the 
   "build_result": "PASS"
 }
 ```
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the SEO fix scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with SEO fix summary and verdict.
 
 ---
 

@@ -46,6 +46,8 @@ CORE FILES LOADED:
   1. {plugin_root}/rules/testing.md              -- READ/MISSING
   2. {plugin_root}/rules/test-quality-rules.md   -- READ/MISSING
   3. {plugin_root}/shared/includes/env-compat.md -- READ/MISSING
+  4. {plugin_root}/shared/includes/auto-docs.md    -- READ/MISSING
+  5. {plugin_root}/shared/includes/session-memory.md -- READ/MISSING
 ```
 
 Where `{plugin_root}` resolves per `env-compat.md`.
@@ -409,6 +411,22 @@ After presenting the report, the user may request fixes:
 | Tier B-C with Q7=0 | Add error tests | `zuvo:write-tests [path]` |
 | Coverage gaps (methods untested) | Write missing tests | `zuvo:write-tests [path]` |
 | Test infra issues (runner config) | Optimize runner | `zuvo:tests-performance` |
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the test audit scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with test audit summary and verdict.
+
+---
 
 ## Run Log
 

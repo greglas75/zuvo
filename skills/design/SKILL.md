@@ -29,6 +29,8 @@ Print the checklist:
 CORE FILES LOADED:
   1. codesift-setup.md   -- [READ | MISSING -> STOP]
   2. env-compat.md       -- [READ | MISSING -> STOP]
+  3. {plugin_root}/shared/includes/auto-docs.md    -- READ/MISSING
+  4. {plugin_root}/shared/includes/session-memory.md -- READ/MISSING
 ```
 
 If any file is missing, STOP.
@@ -291,6 +293,22 @@ This skill produces two artifacts in `.interface-design/`:
 - Every choice traceable. If asked "why this color?" trace to intent -> domain -> token.
 - Build for the detected stack. Adapt to what exists in the project.
 - When improving existing UI, preserve all functionality. Only change visual/interaction design.
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the design scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with design summary and verdict.
 
 ---
 

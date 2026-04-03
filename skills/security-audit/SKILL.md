@@ -41,6 +41,8 @@ CORE FILES LOADED:
   2. {plugin_root}/rules/security.md                -- READ/MISSING
   3. {plugin_root}/shared/includes/env-compat.md    -- READ/MISSING
   4. {plugin_root}/shared/includes/codesift-setup.md -- READ/MISSING
+  5. {plugin_root}/shared/includes/auto-docs.md     -- READ/MISSING
+  6. {plugin_root}/shared/includes/session-memory.md -- READ/MISSING
 ```
 
 **Stage 2 -- Before Phase 10 (report writing):**
@@ -481,6 +483,24 @@ Full protocol: `{plugin_root}/shared/includes/backlog-protocol.md`.
 | Multi-tenant gaps (S6<5) | `zuvo:code-audit [services]` -- audit query-level isolation |
 | Header/transport gaps (S8) | Quick config fix -- add Helmet/CSP/HSTS |
 | All dimensions >= 8 | No urgent action. Schedule next audit in 90 days. |
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the security audit scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with security audit summary and verdict.
+
+---
 
 ## Run Log
 

@@ -34,6 +34,8 @@ Read `{plugin_root}/shared/includes/env-compat.md` for agent dispatch patterns, 
 CORE FILES LOADED:
   1. {plugin_root}/shared/includes/env-compat.md    -- READ
   2. {plugin_root}/shared/includes/run-logger.md    -- READ
+  3. {plugin_root}/shared/includes/auto-docs.md     -- READ/MISSING
+  4. {plugin_root}/shared/includes/session-memory.md -- READ/MISSING
 ```
 
 Both files must be read before proceeding. If either is missing, note "DEGRADED -- [file] unavailable" in the report and continue with reduced capability.
@@ -277,6 +279,24 @@ RETRO COMPLETE [QUALITATIVE ONLY — <10 commits in window]
   Actions:
   1. [derived from backlog only]
 ```
+
+---
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the retrospective scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with retrospective summary and verdict.
 
 ---
 

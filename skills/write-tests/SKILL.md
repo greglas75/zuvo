@@ -99,6 +99,8 @@ CORE FILES LOADED:
   2. {plugin_root}/rules/test-quality-rules.md     -- [READ | MISSING -> STOP]
   3. {plugin_root}/rules/file-limits.md            -- [READ | MISSING -> STOP]
   4. {plugin_root}/shared/includes/quality-gates.md -- [READ | MISSING -> STOP]
+  5. {plugin_root}/shared/includes/auto-docs.md     -- [READ | MISSING -> SKIP auto-docs]
+  6. {plugin_root}/shared/includes/session-memory.md -- [READ | MISSING -> SKIP session memory]
 ```
 
 ### Conditional Files (loaded when needed)
@@ -442,6 +444,22 @@ Read `memory/coverage.md`. If UNCOVERED or PARTIAL files remain, go back to Phas
 3. Test what the code OWNS, mock what it DELEGATES.
 4. Fake timers for time-dependent code. Real implementations for pure functions.
 5. Quality gates are not optional. Q1-Q17 evaluation happens on every test file, every time.
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the test generation scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with test generation summary and verdict.
 
 ---
 

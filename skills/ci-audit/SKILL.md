@@ -31,6 +31,8 @@ Read every file below before starting. Print the checklist.
 CORE FILES LOADED:
   1. {plugin_root}/shared/includes/codesift-setup.md   -- [READ | MISSING -> STOP]
   2. {plugin_root}/shared/includes/env-compat.md        -- [READ | MISSING -> STOP]
+  3. {plugin_root}/shared/includes/auto-docs.md          -- READ/MISSING
+  4. {plugin_root}/shared/includes/session-memory.md     -- READ/MISSING
 ```
 
 If any file is MISSING, STOP. Do not proceed from memory.
@@ -356,6 +358,22 @@ Score >= 80%             -> schedule next audit in 3 months
   with actual run durations
 - CodeSift is not heavily used in this skill (CI files are YAML, not code),
   but `codesift-setup.md` is still loaded for consistency with other audit skills
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the CI/CD audit scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with CI/CD audit summary and verdict.
 
 ---
 

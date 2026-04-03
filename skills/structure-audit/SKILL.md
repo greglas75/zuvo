@@ -36,6 +36,16 @@ CORE FILES LOADED:
 
 If file 1 or 2 is missing, STOP.
 
+Also read these shared includes (non-blocking if missing):
+
+4. `{plugin_root}/shared/includes/auto-docs.md` -- Auto-docs update protocol
+5. `{plugin_root}/shared/includes/session-memory.md` -- Session memory update protocol
+
+```
+  4. auto-docs.md          -- [READ | MISSING -> SKIP auto-docs]
+  5. session-memory.md     -- [READ | MISSING -> SKIP session memory]
+```
+
 ## Environment Compatibility
 
 Read `{plugin_root}/shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
@@ -480,6 +490,22 @@ Confirm each fix with the user before executing.
 | SA13 Hot file (high churn + complexity) | Refactor hot file | `zuvo:refactor [file]` |
 | SA7 God module detected | Split oversized file | `zuvo:refactor [file]` |
 | SA6 Layer violations | Architecture analysis | `zuvo:architecture --mode review` |
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the structure audit scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with structure audit summary and verdict.
 
 ---
 

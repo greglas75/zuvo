@@ -35,6 +35,8 @@ CORE FILES LOADED:
   3. seo-fix-registry.md   -- [READ | MISSING -> STOP]
   4. audit-output-schema.md -- [READ | MISSING -> STOP]
   5. seo-check-registry.md  -- [READ | MISSING -> STOP]
+  6. auto-docs.md           -- [READ | MISSING]
+  7. session-memory.md      -- [READ | MISSING]
 ```
 
 If any file is missing, STOP.
@@ -593,6 +595,24 @@ Same format used by seo-fix for backlog updates. Deduplicate against existing en
 | Content < 300 words avg | Expand thin content | Content quality drives all signals |
 | D3 < 50 (Structured Data) | Add/fix JSON-LD schemas | Schema markup boosts citations |
 | Tier A (>= 85) | Periodic re-audit or add --live-url for CWV data | Maintain and measure |
+
+---
+
+---
+
+## Auto-Docs
+
+After completing the skill output, update per `{plugin_root}/shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the SEO audit scope, key findings, and verdict.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `{plugin_root}/shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with SEO audit summary and verdict.
 
 ---
 
