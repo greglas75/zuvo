@@ -1,14 +1,68 @@
 # Session Memory Protocol
 
-> Shared include — maintains `memory/project-state.md` so that every new session starts with full project context. Updated by skills after each run, read by `hooks/session-start` on session init.
+> Shared include — maintains project context across sessions. Static context lives in the project's `CLAUDE.md`, dynamic state in `memory/project-state.md`. Updated by skills after each run, read on session init.
 
 ## Purpose
 
-When Claude Code, Cursor, or Codex restarts, the agent loses all conversation context. This protocol persists a **project state snapshot** to disk so the next session can restore it instantly.
+When Claude Code, Cursor, or Codex restarts, the agent loses all conversation context. This protocol splits project knowledge into two layers:
 
-## File: `memory/project-state.md`
+| Layer | File | Content | Updated |
+|-------|------|---------|---------|
+| **Static** | `CLAUDE.md` (project) | Tech stack, conventions, architecture decisions | Rarely (on `ship`, `init`, or major changes) |
+| **Dynamic** | `memory/project-state.md` | Recent activity, active work, backlog counts | Every skill run |
 
-Single file, overwritten (not appended) after each skill run. Max ~200 lines.
+Static context loads automatically (CLAUDE.md is always injected). Dynamic state is loaded by `hooks/session-start`.
+
+---
+
+## Static Layer: CLAUDE.md Proposals
+
+When a skill detects new **stable project facts**, it proposes additions to the project's `CLAUDE.md` (NOT the plugin's CLAUDE.md). These are facts that won't change between sessions:
+
+### What goes in CLAUDE.md (static)
+
+```markdown
+## Tech Stack
+
+| Layer | Technology | Config |
+|-------|-----------|--------|
+| Language | TypeScript | tsconfig.json |
+| Framework | Next.js 14 | next.config.js |
+| Database | PostgreSQL | prisma/schema.prisma |
+| Testing | Jest + Playwright | jest.config.ts |
+| CI/CD | GitHub Actions | .github/workflows/ |
+| Package Manager | pnpm | pnpm-lock.yaml |
+
+## Conventions
+
+- Component pattern: function components with arrow syntax
+- Styling: Tailwind v4, no inline styles
+- API: tRPC for internal, REST for external
+- Naming: kebab-case files, PascalCase components
+
+## Key Decisions
+
+| Date | Decision | Why |
+|------|----------|-----|
+| 2026-04-03 | CSV export (not XLSX) | No binary dependency |
+| 2026-04-01 | tRPC for internal APIs | Type safety |
+| 2026-03-28 | PostgreSQL over MongoDB | Relational + ACID |
+```
+
+### When to propose CLAUDE.md updates
+
+- **First run** (no Tech Stack section in CLAUDE.md): Detect stack, write full section.
+- **`ship` skill**: Append Key Decisions accumulated since last release.
+- **`architecture` skill**: Update Conventions section if patterns changed.
+- **Any skill** detecting a new dependency/tool: Add row to Tech Stack.
+
+**Process**: Read CLAUDE.md → check if section exists → if missing or outdated, append/patch. Never remove existing content. Print: `CLAUDE.md: proposed [section] update` (or `CLAUDE.md: already current`).
+
+---
+
+## Dynamic Layer: memory/project-state.md
+
+Single file, overwritten (not appended) after each skill run. **Max ~80 lines** — only dynamic data.
 
 ### Format
 
@@ -17,36 +71,21 @@ Single file, overwritten (not appended) after each skill run. Max ~200 lines.
 
 > Auto-maintained by zuvo skills. Last updated: YYYY-MM-DD HH:MM by zuvo:<skill>.
 
-## Tech Stack
-
-| Layer | Technology | Config file |
-|-------|-----------|-------------|
-| Language | TypeScript | tsconfig.json |
-| Framework | Next.js 14 | next.config.js |
-| Database | PostgreSQL | prisma/schema.prisma |
-| Testing | Jest + Playwright | jest.config.ts, playwright.config.ts |
-| CI/CD | GitHub Actions | .github/workflows/ |
-| Package Manager | pnpm | pnpm-lock.yaml |
-
-## Project Summary
-
-<2-3 sentences describing what this project is and does>
-
 ## Recent Activity
 
 | When | Skill | What | Verdict |
 |------|-------|------|---------|
 | 2026-04-03 14:30 | build | Added user export CSV feature | PASS CQ:19/22 |
 | 2026-04-03 11:00 | review | Reviewed auth module (3 files) | WARN — 2 NITs |
-| 2026-04-02 16:45 | refactor | Extracted payment logic from OrderService | PASS CQ:20/22 |
-| 2026-04-02 10:00 | brainstorm | Spec: notification system redesign | PASS |
-| 2026-04-01 15:30 | ship | v1.3.0 → v1.4.0, direct flow | PASS |
+| 2026-04-02 16:45 | refactor | Extracted payment logic | PASS CQ:20/22 |
+| 2026-04-02 10:00 | brainstorm | Spec: notification redesign | PASS |
+| 2026-04-01 15:30 | ship | v1.3.0 → v1.4.0 | PASS |
 
 ## Active Work
 
 - **In progress:** [branch name] — [what's being worked on]
-- **Pending plan:** [spec path] — [status: Approved/Reviewed]
-- **Open PR:** #[number] — [title] (if known)
+- **Pending plan:** [spec path] — [status]
+- **Open PR:** #[number] — [title]
 
 ## Backlog Summary
 
@@ -55,122 +94,152 @@ Single file, overwritten (not appended) after each skill run. Max ~200 lines.
 | high | 3 |
 | medium | 7 |
 | low | 12 |
-| Total open | 22 |
+| Total | 22 |
 
-Top 3 high-severity items:
-1. [B-14] order.service.ts — Missing error handling on payment call (CQ8)
-2. [B-21] auth.middleware.ts — No rate limiting on login endpoint (Security)
-3. [B-9] db/migrations/ — Index missing on orders.user_id (Performance)
-
-## Key Decisions
-
-| Date | Decision | Context |
-|------|----------|---------|
-| 2026-04-03 | Use CSV for export (not XLSX) | Simpler, no binary dependency |
-| 2026-04-01 | Migrate from REST to tRPC for internal APIs | Type safety, less boilerplate |
-| 2026-03-28 | PostgreSQL over MongoDB | Relational data, ACID transactions needed |
+Top 3 high-severity:
+1. [B-14] order.service.ts — Missing error handling on payment call
+2. [B-21] auth.middleware.ts — No rate limiting on login endpoint
+3. [B-9] db/migrations/ — Index missing on orders.user_id
 
 ## Last Release
 
-- **Version:** 1.4.0 (tag: v1.4.0)
+- **Version:** 1.4.0
 - **Date:** 2026-04-01
 - **Branch:** main
-- **Review depth:** full
 ```
+
+---
+
+## CodeSift Fingerprint (optional)
+
+When CodeSift is available, use it for faster and cheaper context gathering instead of reading config files:
+
+| Need | CodeSift call | Replaces |
+|------|--------------|----------|
+| Project structure | `get_file_tree(repo, path_prefix="src")` | `find src -type f` |
+| Module map | `detect_communities(repo)` | Manual grep for imports |
+| Component inventory | `search_symbols(repo, query="", kind="function", file_pattern="*.tsx")` | Scanning files one by one |
+| Complexity hotspots | `analyze_complexity(repo)` | Reading + counting |
+| Dependency graph | `get_file_outline(repo, "package.json")` | `cat package.json` |
+
+### CodeSift fingerprint flow
+
+```
+if CodeSift available:
+  tree = get_file_tree(repo, path_prefix="src")           # ~50 tokens
+  outline = get_file_outline(repo, "package.json")         # ~30 tokens
+  communities = detect_communities(repo)                   # ~80 tokens
+  → Use these for Tech Stack detection (propose to CLAUDE.md)
+  → Use communities for Project Summary
+else:
+  Fall back to traditional config file reading
+```
+
+This saves **300-800 tokens per session** compared to reading full config files.
+
+---
 
 ## When to Update
 
-Update `memory/project-state.md` at the END of every skill run, after Auto-Docs and before Run Log. This is the LAST write operation before logging.
+Update `memory/project-state.md` at the END of every skill run, after Auto-Docs and before Run Log.
 
 ## What Each Skill Updates
 
-### First run on a new project (file doesn't exist)
+### First run on a new project
 
-If `memory/project-state.md` does not exist, the current skill MUST create it by:
+If `memory/project-state.md` does not exist:
 
-1. **Tech Stack detection** (one-time, then cached):
-   - Scan project root for config files: `package.json`, `tsconfig.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `composer.json`, `Gemfile`, `pom.xml`, `build.gradle`
-   - Detect framework from config: Next.js, Django, Rails, FastAPI, Express, Spring, etc.
-   - Detect test framework: Jest, Vitest, pytest, go test, RSpec, JUnit, etc.
-   - Detect CI: `.github/workflows/`, `.gitlab-ci.yml`, `Jenkinsfile`, etc.
-   - Detect package manager: npm/pnpm/yarn/bun/pip/poetry/cargo/go/composer
-   - Detect database from config/schema files
+1. **Tech Stack detection** → propose to project CLAUDE.md (not project-state.md):
+   - Scan for config files (or use CodeSift fingerprint if available)
+   - Detect framework, test runner, CI, package manager, database
+   - Write `## Tech Stack` section to CLAUDE.md
 
-2. **Project Summary**: Read README.md (first 50 lines) or main config file. Write 2-3 sentence description.
-
-3. **Initialize all sections** with current data (or "none" if empty).
+2. **Initialize project-state.md** with dynamic sections only:
+   - Recent Activity: current skill run
+   - Active Work: from git branch
+   - Backlog Summary: zeros or from backlog.md
+   - Last Release: from last-ship.json or "none"
 
 ### Subsequent runs (file exists)
 
-**Read the file first.** Then patch only the sections that changed:
+**Read the file first.** Then patch only changed sections:
 
 | Section | Updated by | How |
 |---------|-----------|-----|
-| Tech Stack | Any skill (if new dependency detected) | Add row, don't remove existing |
-| Project Summary | Only if empty or obviously wrong | Patch, not rewrite |
-| Recent Activity | ALL skills | Prepend new entry, keep max 5, drop oldest |
+| Recent Activity | ALL skills | Prepend entry, keep max 5, drop oldest |
 | Active Work | build, execute, plan, brainstorm | Update branch/PR/spec info |
 | Backlog Summary | Skills that write to backlog | Recount from `memory/backlog.md` |
-| Key Decisions | brainstorm, plan, architecture | Append new decision, keep max 10 |
 | Last Release | ship only | Overwrite from `memory/last-ship.json` |
+
+### CLAUDE.md updates (static, rare)
+
+| Section | Updated by | Trigger |
+|---------|-----------|---------|
+| Tech Stack | Any skill | New dependency/tool detected |
+| Conventions | architecture, design | Pattern change |
+| Key Decisions | brainstorm, plan, architecture, ship | New architectural decision |
 
 ### Update rules
 
-- **Recent Activity**: Maximum 5 entries. Newest at top. One entry per skill run. Format: `| YYYY-MM-DD HH:MM | skill | one-line summary | verdict + score |`
-- **Active Work**: Detect from `git branch --show-current`, `git log --oneline -1`, check for open specs in `docs/specs/`. Clear completed items.
-- **Backlog Summary**: Count rows in `memory/backlog.md` grouped by severity. List top 3 high-severity items with their IDs.
-- **Key Decisions**: Only add genuinely new decisions (architectural, technology, design choices). Skip implementation details. Max 10 entries, drop oldest when exceeded.
-- **Last Release**: Copy from `memory/last-ship.json` if it exists. Show version, date, branch, review depth.
+- **Recent Activity**: Max 5 entries. Newest at top. One entry per skill run.
+- **Active Work**: From `git branch --show-current` + `git log --oneline -1`. Clear completed items.
+- **Backlog Summary**: Count from `memory/backlog.md`. Top 3 high-severity with IDs.
+- **Last Release**: From `memory/last-ship.json`. Version, date, branch.
+- **Key Decisions** (CLAUDE.md): Only architectural/technology choices. Max 10, drop oldest.
 
 ## Execution Steps
 
-### Step 1: Check if file exists
+### Step 1: Check files
 
 ```
 if memory/project-state.md exists:
   READ it → use as base for patching
 else:
-  Run full Tech Stack detection + Project Summary
-  Initialize all sections from scratch
+  Detect Tech Stack → propose to CLAUDE.md
+  Initialize project-state.md with dynamic sections
 ```
 
-### Step 2: Update applicable sections
+### Step 2: Update dynamic state
 
-Based on the current skill and its completion data, update only the relevant sections (see table above).
+Based on the current skill and its output, update only relevant sections of `memory/project-state.md`.
 
-### Step 3: Write the file
+### Step 3: Check CLAUDE.md (if applicable)
 
-Overwrite `memory/project-state.md` with the updated content. This is NOT append — it's a full rewrite of the state snapshot.
+If current skill detected new static facts (new dependency, new decision, new convention):
+- Read project CLAUDE.md
+- Propose addition (append, never remove)
+- Print: `CLAUDE.md: updated [section]` or `CLAUDE.md: already current`
 
-### Step 4: Print confirmation
+### Step 4: Write and confirm
+
+Overwrite `memory/project-state.md`. Print:
 
 ```
-SESSION-MEMORY: project-state.md updated
+SESSION-MEMORY: project-state.md updated (N lines)
 ```
 
-One line. If update fails, log warning and proceed to Run Log.
+If update fails, log warning and proceed to Run Log.
 
 ## Reading on Session Start
 
-The `hooks/session-start` script reads `memory/project-state.md` (if it exists) and injects its content alongside the skill routing table. This gives every new session:
+`hooks/session-start` reads `memory/project-state.md` (if it exists) and injects alongside the routing table. Combined with CLAUDE.md (auto-injected), every new session gets:
 
-1. **Routing table** (what skills are available — existing)
-2. **Project context** (what this project is, what's been happening — NEW)
-
-If the file doesn't exist (first ever skill run), session starts without project context. The first skill run will create it.
+1. **Static context** (CLAUDE.md): tech stack, conventions, decisions
+2. **Dynamic state** (project-state.md): recent activity, active work, backlog
+3. **Routing table**: available skills
 
 ## Error Handling
 
-- **File write fails**: Log `SESSION-MEMORY: could not update project-state.md — <reason>`. Proceed to Run Log.
-- **Backlog file missing**: Set all counts to 0, note "backlog not initialized".
-- **No git available**: Skip Active Work branch detection, note "git unavailable".
-- **File corrupted**: Recreate from scratch (full Tech Stack detection).
+- **File write fails**: Log warning, proceed to Run Log.
+- **Backlog missing**: Set counts to 0.
+- **No git**: Skip Active Work branch detection.
+- **File corrupted**: Recreate from scratch.
+- **CLAUDE.md not writable**: Skip static update, log warning.
 
 ## What NOT to Do
 
 - Do not include code snippets, file contents, or sensitive data.
-- Do not include full backlog — only summary counts and top 3 high-severity.
-- Do not include full project-journal — only last 5 entries in Recent Activity.
+- Do not duplicate static info (Tech Stack, Decisions) in project-state.md — it belongs in CLAUDE.md.
 - Do not block skill completion if session memory update fails.
-- Do not update Tech Stack on every run — only add new discoveries, never remove.
-- Do not exceed 200 lines in project-state.md. Keep it concise.
+- Do not exceed 80 lines in project-state.md.
+- Do not modify the plugin's CLAUDE.md — only the project's CLAUDE.md.
