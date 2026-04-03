@@ -36,8 +36,11 @@ Do this on every message. Not just the first one.
 |-------------|-------|
 | Build a small feature (1-5 files, clear scope) | `zuvo:build` |
 | Fix a bug, investigate an error, diagnose a problem | `zuvo:debug` |
+| Emergency production fix, critical hotfix | `zuvo:hotfix` |
 | Refactor, extract, split, move, rename, simplify | `zuvo:refactor` |
 | Review code, check changes, audit a PR | `zuvo:review` |
+| Generate new component, endpoint, service, model from existing patterns | `zuvo:scaffold` |
+| Database migration, framework upgrade, dependency major bump | `zuvo:migrate` |
 | Write unit/integration tests for existing code | `zuvo:write-tests` |
 | Write end-to-end tests (Playwright) | `zuvo:write-e2e` |
 | Fix systematic test anti-patterns across files | `zuvo:fix-tests` |
@@ -60,6 +63,7 @@ Do this on every message. Not just the first one.
 | Audit SEO and structured data | `zuvo:seo-audit` |
 | Audit codebase structure and organization | `zuvo:structure-audit` |
 | Review architecture, create ADR | `zuvo:architecture` |
+| STRIDE threat modeling, attack surface mapping | `zuvo:threat-model` |
 | Review UI/UX consistency and accessibility | `zuvo:design-review` |
 | Design new UI (components, layouts, systems) | `zuvo:design` |
 | UI design with multi-agent team | `zuvo:ui-design-team` |
@@ -71,6 +75,8 @@ Do this on every message. Not just the first one.
 |-------------|-------|
 | View or manage tech debt backlog | `zuvo:backlog` |
 | Write documentation | `zuvo:docs` |
+| Explain code visually (flow diagram, dependency graph, architecture map) | `zuvo:explain` |
+| Production incident post-mortem, root cause analysis | `zuvo:incident` |
 | Create a presentation | `zuvo:presentation` |
 | Respond to code review feedback | `zuvo:receive-review` |
 | Isolate work in a git worktree | `zuvo:worktree` |

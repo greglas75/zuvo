@@ -95,7 +95,7 @@ This does: version bump → commit → push → tag → update marketplace SHA �
 ## File structure
 
 ```
-skills/<name>/SKILL.md          — skill definitions (39 total)
+skills/<name>/SKILL.md          — skill definitions (45 total)
 skills/<name>/agents/<name>.md  — sub-agent instructions
 shared/includes/*.md            — shared procedural includes (codesift-setup, env-compat, auto-docs, etc.)
 rules/*.md                      — code quality rules (cq-patterns, testing, security)
@@ -115,28 +115,28 @@ Every SKILL.md follows this structure:
 1. YAML frontmatter: `name` (kebab-case), `description` (one paragraph)
 2. H1 heading: `# zuvo:<name>`
 3. Argument Parsing table
-4. Mandatory File Loading checklist (shared includes via `../../shared/includes/`)
+4. Mandatory File Loading checklist (shared includes via `{plugin_root}/shared/includes/`)
 5. Numbered phases (Phase 0, 1, 2...)
 6. Named output block (e.g., `SHIP COMPLETE`)
-7. Auto-docs update via `../../shared/includes/auto-docs.md` (updates project-journal, architecture, api-changelog)
-8. Session memory update via `../../shared/includes/session-memory.md` (updates memory/project-state.md)
-9. Run log append via `../../shared/includes/run-logger.md`
+7. Auto-docs update via `{plugin_root}/shared/includes/auto-docs.md` (updates project-journal, architecture, api-changelog)
+8. Session memory update via `{plugin_root}/shared/includes/session-memory.md` (updates memory/project-state.md)
+9. Run log append via `{plugin_root}/shared/includes/run-logger.md`
 
 Reference: `skills/build/SKILL.md` is the canonical template.
 
-## Skill categories (39 total)
+## Skill categories (45 total)
 
 | Category | Count | Skills |
 |----------|-------|--------|
 | Pipeline | 5 | brainstorm, plan, execute, worktree, receive-review |
-| Core | 4 | build, review, refactor, debug |
+| Core | 7 | build, review, refactor, debug, hotfix, scaffold, migrate |
 | Code/Test audits | 5 | code-audit, test-audit, api-audit, security-audit, pentest |
 | Infra audits | 5 | performance-audit, db-audit, dependency-audit, ci-audit, env-audit |
-| Structure/SEO/Arch | 4 | structure-audit, seo-audit, seo-fix, architecture |
+| Structure/SEO/Arch | 5 | structure-audit, seo-audit, seo-fix, architecture, threat-model |
 | Design | 3 | design, design-review, ui-design-team |
 | Testing | 4 | write-tests, fix-tests, write-e2e, tests-performance |
 | Release | 5 | ship, deploy, canary, release-docs, retro |
-| Utility | 4 | docs, presentation, backlog, using-zuvo |
+| Utility | 6 | docs, presentation, backlog, explain, incident, using-zuvo |
 
 ## Common tasks
 
