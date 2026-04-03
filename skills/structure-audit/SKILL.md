@@ -485,7 +485,7 @@ Confirm each fix with the user before executing.
 
 ## Run Log
 
-Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+Log this run to `memory/zuvo-runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
 - SKILL: `structure-audit`
 - CQ_SCORE: `-`
 - Q_SCORE: `-`

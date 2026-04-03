@@ -245,7 +245,7 @@ Format: [pptx / markdown]
 
 ## Run Log
 
-Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+Log this run to `memory/zuvo-runs.log` per `shared/includes/run-logger.md`:
 - SKILL: `presentation`
 - CQ_SCORE: `-`
 - Q_SCORE: `-`

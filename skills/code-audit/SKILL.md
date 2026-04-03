@@ -429,7 +429,7 @@ After the report, propose what to do next:
 
 ## Run Log
 
-Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+Log this run to `memory/zuvo-runs.log` per `shared/includes/run-logger.md`:
 - SKILL: `code-audit`
 - CQ_SCORE: average CQ score across all audited files (e.g., `15/22`)
 - Q_SCORE: `-`

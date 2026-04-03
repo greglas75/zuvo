@@ -137,7 +137,7 @@ Also identify the oldest unresolved item (earliest Added date among OPEN rows) a
 
 ## Phase 3: Skill Usage Trends
 
-Read the skill usage log using the environment-aware path from `run-logger.md` (primary: `~/.zuvo/runs.log`, Codex App fallback: `memory/zuvo-runs.log`).
+Read the skill usage log from `memory/zuvo-runs.log`.
 
 If the file **does not exist** at either path: note "No skill usage history found." Skip this section.
 
@@ -282,7 +282,7 @@ RETRO COMPLETE [QUALITATIVE ONLY — <10 commits in window]
 
 ## Phase 6: Run Log
 
-Append run log entry per `{plugin_root}/shared/includes/run-logger.md`. Use the environment-aware log path (do NOT hardcode `~/.zuvo/runs.log`).
+Append run log entry per `{plugin_root}/shared/includes/run-logger.md`. Log to `memory/zuvo-runs.log`.
 
 | Field | Value |
 |-------|-------|

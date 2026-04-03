@@ -450,7 +450,7 @@ Zero risks may be silently discarded. If the output has consequences, questions,
 
 ## Run Log
 
-Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+Log this run to `memory/zuvo-runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
 - SKILL: `architecture`
 - CQ_SCORE: `-`
 - Q_SCORE: `-`

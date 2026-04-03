@@ -538,7 +538,7 @@ If `memory/project-state.md` doesn't exist, create it (full Tech Stack detection
 
 ## Run Log
 
-Append one TSV line to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`. All fields are mandatory:
+Append one TSV line to `memory/zuvo-runs.log` per `shared/includes/run-logger.md`. All fields are mandatory:
 
 | Field | Value |
 |-------|-------|

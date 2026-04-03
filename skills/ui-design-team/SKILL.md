@@ -350,7 +350,7 @@ Before committing any UI change, verify:
 
 ## Run Log
 
-Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+Log this run to `memory/zuvo-runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
 - SKILL: `ui-design-team`
 - CQ_SCORE: `-`
 - Q_SCORE: `-`

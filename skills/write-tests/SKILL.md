@@ -447,7 +447,7 @@ Read `memory/coverage.md`. If UNCOVERED or PARTIAL files remain, go back to Phas
 
 ## Run Log
 
-Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+Log this run to `memory/zuvo-runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
 - SKILL: `write-tests`
 - CQ_SCORE: `-`
 - Q_SCORE: `Q score from written tests`

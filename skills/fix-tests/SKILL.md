@@ -261,7 +261,7 @@ Bugs discovered: [N] (see backlog)
 
 ## Run Log
 
-Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+Log this run to `memory/zuvo-runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
 - SKILL: `fix-tests`
 - CQ_SCORE: `-`
 - Q_SCORE: `Q score from fixed tests`

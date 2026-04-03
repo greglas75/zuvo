@@ -208,7 +208,7 @@ Commit: [hash] — [message]
 
 ## Run Log
 
-Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+Log this run to `memory/zuvo-runs.log` per `shared/includes/run-logger.md`:
 - SKILL: `receive-review`
 - CQ_SCORE: `-`
 - Q_SCORE: `-`

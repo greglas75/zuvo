@@ -443,7 +443,7 @@ Same format as seo-audit backlog persistence. Uses the stable check ID from the 
 
 ## Run Log
 
-Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+Log this run to `memory/zuvo-runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
 - SKILL: `seo-fix`
 - CQ_SCORE: `-`
 - Q_SCORE: `-`

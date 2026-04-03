@@ -541,7 +541,7 @@ Multiple dimensions fail  -> zuvo:review [path]
 
 ## Run Log
 
-Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+Log this run to `memory/zuvo-runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
 - SKILL: `db-audit`
 - CQ_SCORE: `-`
 - Q_SCORE: `-`

@@ -294,7 +294,7 @@ TESTS-PERFORMANCE COMPLETE
 
 ## Run Log
 
-Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+Log this run to `memory/zuvo-runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
 - SKILL: `tests-performance`
 - CQ_SCORE: `-`
 - Q_SCORE: `Q score or -`

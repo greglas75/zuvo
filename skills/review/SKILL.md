@@ -758,7 +758,7 @@ If `memory/project-state.md` doesn't exist, create it (full Tech Stack detection
 
 ## Run Log
 
-Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+Log this run to `memory/zuvo-runs.log` per `shared/includes/run-logger.md`:
 - SKILL: `review`
 - CQ_SCORE: from CQ1-CQ22 evaluation (or `-` for TIER 0 / utility modes)
 - Q_SCORE: from Q1-Q17 evaluation (or `-` if no test files in diff)

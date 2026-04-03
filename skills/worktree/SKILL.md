@@ -214,7 +214,7 @@ These apply across both modes:
 
 ## Run Log
 
-Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+Log this run to `memory/zuvo-runs.log` per `shared/includes/run-logger.md`:
 - SKILL: `worktree`
 - CQ_SCORE: `-`
 - Q_SCORE: `-`

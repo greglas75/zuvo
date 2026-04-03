@@ -8,18 +8,13 @@ Log at the END of every skill run, after all work is done. One line per run.
 
 ## Log File
 
-Use an environment-aware log path:
+Always use the **project-local** path:
 
-- Claude Code: `~/.zuvo/runs.log`
-- Codex CLI (local): `~/.zuvo/runs.log`
-- Codex App (cloud): `memory/zuvo-runs.log`
-- If `~/.zuvo/` is not writable: use the project-local fallback path
+```
+memory/zuvo-runs.log
+```
 
-Detection:
-- if `CODEX_WORKSPACE` is set, or
-- if `~/.zuvo/` is not writable
-
-then use the project-local path.
+This keeps logs per-project (consistent with `memory/project-state.md`) and works on all platforms (Claude Code, Codex CLI, Codex App, Cursor).
 
 ## Format
 
@@ -43,22 +38,9 @@ DATE\tSKILL\tPROJECT\tCQ_SCORE\tQ_SCORE\tVERDICT\tTASKS\tDURATION\tNOTES
 
 ## How to Log
 
-At the end of the skill, resolve the log path first, then append one line.
-Do not hardcode `~/.zuvo/runs.log` in skills that run in multiple environments.
+At the end of the skill, append one line to `memory/zuvo-runs.log`.
 
-Or if Bash is unavailable, use Write tool to append.
-
-## Path Resolution (reference)
-
-See the environment-aware log path table in the "Log File" section above. The canonical resolution logic:
-
-```bash
-if [ -n "$CODEX_WORKSPACE" ] || ! mkdir -p ~/.zuvo 2>/dev/null; then
-  LOG_PATH="memory/zuvo-runs.log"
-else
-  LOG_PATH="$HOME/.zuvo/runs.log"
-fi
-```
+Create the `memory/` directory if it doesn't exist. Use Bash `mkdir -p memory` or Write tool.
 
 ## What NOT to Log
 
@@ -69,22 +51,15 @@ fi
 
 ## Reading the Log
 
-Users can view their history. Use the resolved log path (see "Log File" above):
+Users can view their history:
 
 ```bash
-# Resolve path first (same logic as writing)
-LOG_PATH="$HOME/.zuvo/runs.log"
-[ -n "$CODEX_WORKSPACE" ] && LOG_PATH="memory/zuvo-runs.log"
-
 # Last 20 runs
-tail -20 "$LOG_PATH"
-
-# Runs for a specific project
-grep "tgm-survey" "$LOG_PATH"
+tail -20 memory/zuvo-runs.log
 
 # Only failures
-grep "FAIL" "$LOG_PATH"
+grep "FAIL" memory/zuvo-runs.log
 
 # CQ scores over time
-grep "build" "$LOG_PATH" | cut -f4
+grep "build" memory/zuvo-runs.log | cut -f4
 ```

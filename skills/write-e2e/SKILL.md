@@ -378,7 +378,7 @@ Human review recommended before committing.
 
 ## Run Log
 
-Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+Log this run to `memory/zuvo-runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
 - SKILL: `write-e2e`
 - CQ_SCORE: `-`
 - Q_SCORE: `Q score from written tests`

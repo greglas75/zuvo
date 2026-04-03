@@ -484,7 +484,7 @@ Full protocol: `{plugin_root}/shared/includes/backlog-protocol.md`.
 
 ## Run Log
 
-Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+Log this run to `memory/zuvo-runs.log` per `shared/includes/run-logger.md`:
 - SKILL: `security-audit`
 - CQ_SCORE: `-`
 - Q_SCORE: `-`

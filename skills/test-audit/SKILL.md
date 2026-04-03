@@ -412,7 +412,7 @@ After presenting the report, the user may request fixes:
 
 ## Run Log
 
-Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+Log this run to `memory/zuvo-runs.log` per `shared/includes/run-logger.md`:
 - SKILL: `test-audit`
 - CQ_SCORE: `-`
 - Q_SCORE: average Q score across all audited test files (e.g., `12/17`)

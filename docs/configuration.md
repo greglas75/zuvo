@@ -49,7 +49,7 @@ Located in `shared/includes/`. These are protocol files loaded by skills at runt
 | `verification-protocol.md` | 5-step verification protocol: IDENTIFY, RUN, READ, VERIFY, CLAIM. Ensures no completion claims without fresh evidence from the actual system. |
 | `agent-preamble.md` | Standard rules for read-only audit agents: never modify files, every finding requires evidence (file:line), confidence levels (0-25% discard, 26-50% backlog, 51-100% report), structured output format. |
 | `backlog-protocol.md` | How skills persist findings to `memory/backlog.md`: fingerprint-based deduplication, confidence routing, severity tracking, resolution cleanup. |
-| `run-logger.md` | Centralized skill usage log protocol: append-only writes to `~/.zuvo/runs.log`, Codex path fallback (`~/.codex/zuvo/runs.log`), structured fields (timestamp, skill, env, project). |
+| `run-logger.md` | Centralized skill usage log protocol: append-only writes to `memory/zuvo-runs.log`, Codex path fallback (`~/.codex/zuvo/runs.log`), structured fields (timestamp, skill, env, project). |
 | `auto-docs.md` | Automatic documentation protocol: updates `docs/project-journal.md`, `docs/architecture.md`, and `docs/api-changelog.md` after skill completion. Used by 8 core skills (brainstorm, plan, execute, build, refactor, review, debug, ship). |
 | `session-memory.md` | Session persistence protocol: maintains `memory/project-state.md` with tech stack, recent activity, active work, backlog summary, key decisions, and last release. Read by `hooks/session-start` on every new session to restore project context. |
 | `codex-agent-registry.md` | TOML generation manifest: agent naming, model mapping, thread/depth limits. Used by `scripts/build-codex-skills.sh`. |

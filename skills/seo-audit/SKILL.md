@@ -598,7 +598,7 @@ Same format used by seo-fix for backlog updates. Deduplicate against existing en
 
 ## Run Log
 
-Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+Log this run to `memory/zuvo-runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
 - SKILL: `seo-audit`
 - CQ_SCORE: `-`
 - Q_SCORE: `-`

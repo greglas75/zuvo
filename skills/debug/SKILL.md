@@ -514,7 +514,7 @@ If `memory/project-state.md` doesn't exist, create it (full Tech Stack detection
 
 ## Run Log
 
-Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+Log this run to `memory/zuvo-runs.log` per `shared/includes/run-logger.md`:
 - SKILL: `debug`
 - CQ_SCORE: from Phase 4.6 CQ self-eval on production fix
 - Q_SCORE: from Phase 4.5 Q self-eval on regression test

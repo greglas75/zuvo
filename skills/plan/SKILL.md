@@ -259,7 +259,7 @@ If `memory/project-state.md` doesn't exist, create it (full Tech Stack detection
 
 ## Run Log
 
-Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+Log this run to `memory/zuvo-runs.log` per `shared/includes/run-logger.md`:
 - SKILL: `plan`
 - CQ_SCORE: `-`
 - Q_SCORE: `-`
