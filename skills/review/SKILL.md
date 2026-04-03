@@ -17,7 +17,7 @@ Read these files before doing anything else:
 
 1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
 2. `{plugin_root}/shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
-3. `{plugin_root}/shared/includes/quality-gates.md` -- CQ1-CQ22 and Q1-Q17 condensed reference
+3. `{plugin_root}/shared/includes/quality-gates.md` -- CQ1-CQ28 and Q1-Q19 condensed reference
 4. `{plugin_root}/rules/cq-patterns.md` -- NEVER/ALWAYS code pairs for pattern recognition
 
 Print the checklist:
@@ -115,9 +115,10 @@ If ALL changed files are noise, print "Only noise files changed (locks, snapshot
 | Capability | TIER 0 | TIER 1 | TIER 2 | TIER 3 |
 |-----------|--------|--------|--------|--------|
 | Inline diff scan | Yes | Yes | Yes | Yes |
-| CQ1-CQ22 evaluation | Skip | Yes | Yes | Yes |
-| Q1-Q17 on test files | Skip | If present | Yes | Yes |
+| CQ1-CQ28 evaluation | Skip | Yes | Yes | Yes |
+| Q1-Q19 on test files | Skip | If present | Yes | Yes |
 | Audit agents | None | None | Behavior (if new files) | All 3 |
+| Adversarial review | Skip | Skip | If 3+ prod files | Yes |
 | Confidence re-scoring | Inline | Inline | Agent | Agent |
 | Hotspot detection | Skip | Skip | Yes | Yes |
 | Multi-pass (--thorough) | Refused | Optional | Optional | Automatic if >500L |
@@ -205,8 +206,9 @@ Print a step header before each audit stage:
 STEP: Triage [DONE]
 STEP: Scope Fence
 STEP: Audit (Behavior + Structure + CQ agents)
-STEP: CQ1-CQ22
-STEP: Q1-Q17 per test file
+STEP: CQ1-CQ28
+STEP: Q1-Q19 per test file
+STEP: Adversarial Review (TIER 2+ only)
 STEP: Confidence Gate
 STEP: Report
 ```
@@ -284,7 +286,7 @@ Refer to `env-compat.md` for the correct dispatch pattern per environment.
 
 **Type:** Explore (read-only)
 
-**Focus:** Independent CQ1-CQ22 evaluation. Does NOT trust the lead's CQ scores -- performs its own assessment from scratch. Catches N/A abuse (>60% N/A triggers a flag and demands justification for each). Reports findings with file:line evidence.
+**Focus:** Independent CQ1-CQ28 evaluation. Does NOT trust the lead's CQ scores -- performs its own assessment from scratch. Catches N/A abuse (>60% N/A triggers a flag and demands justification for each). Reports findings with file:line evidence.
 
 **Input:**
 - Full source of each changed production file (not just the diff -- the auditor needs complete context)
@@ -321,7 +323,7 @@ When no agents are dispatched, the lead performs all analysis directly:
 
 ### CQ Self-Evaluation (TIER 1+)
 
-For each changed production file, run CQ1-CQ22. Print ALL 22 gates -- not just failures. The user needs to verify that gates scored as 1 are genuinely satisfied, not rubber-stamped.
+For each changed production file, run CQ1-CQ28. Print ALL 28 gates -- not just failures. The user needs to verify that gates scored as 1 are genuinely satisfied, not rubber-stamped.
 
 ```
 CQ EVAL: order.service.ts (185L)
@@ -334,9 +336,9 @@ Critical gates: CQ4=0(no orgId filter:87) CQ8=0(empty catch:102)
 
 CQ critical gate failures (CQ3, CQ4, CQ5, CQ6, CQ8, CQ14) always produce MUST-FIX findings.
 
-### Q1-Q17 Evaluation (when test files in diff)
+### Q1-Q19 Evaluation (when test files in diff)
 
-For each test file in the diff, run Q1-Q17 and print:
+For each test file in the diff, run Q1-Q19 and print:
 
 ```
 Q EVAL: order.service.spec.ts
@@ -623,6 +625,82 @@ Proceed to the Confidence Gate with the synthesized findings.
 
 ---
 
+## Adversarial Review Pass (TIER 2+)
+
+After the standard audit completes (Phase 1) and before the Confidence Gate (Phase 2), run an adversarial review pass. This pass uses a different analytical persona to catch blind spots that the primary reviewer shares with the code author.
+
+### When It Runs
+
+| Condition | Adversarial pass |
+|-----------|-----------------|
+| TIER 0-1 | Skip |
+| TIER 2 | Run if 3+ production files changed |
+| TIER 3 | Always run |
+| `--thorough` | Always run (integrated into multi-pass as Pass 4) |
+
+### How It Works
+
+Dispatch an **Adversarial Auditor** agent with a deliberately different analytical frame:
+
+**Execution profile:** default analysis tier
+
+**Type:** Explore (read-only)
+
+**Persona instructions (included in agent prompt):**
+> You are a hostile code reviewer. Assume the author (an AI) has systematic blind spots.
+> Your job is to find ways this code could break in production.
+> Focus on what other reviewers are likely to MISS, not what they already found.
+> Specifically hunt for:
+> 1. Edge cases the author didn't consider (timezone, unicode, concurrent access, empty collections)
+> 2. Assumptions that are true in tests but false in production (network latency, partial failures, clock skew)
+> 3. Security paths that bypass the happy path (auth token expired mid-request, race between check and use)
+> 4. Silent failures (catch blocks that swallow errors, promises without rejection handlers)
+> 5. Data integrity issues (partial writes without rollback, cache inconsistency with DB)
+> Do NOT repeat findings from the primary audit. Only report NEW issues.
+
+**Input:**
+- Production code diff (same as primary audit)
+- The primary audit's finding IDs (so the adversarial agent avoids duplicates)
+- Detected tech stack
+- Change intent
+
+**Output format:**
+```
+ADVERSARIAL FINDINGS:
+ADV-1 [severity] [description]
+  File: [path:line]
+  Attack vector: [how this breaks in production]
+  Confidence: [0-100]
+ADV-2 ...
+```
+
+### Result Merging
+
+After the adversarial pass completes:
+
+1. Deduplicate against primary audit findings (same file:line + same issue = drop)
+2. Findings that survive dedup are added to the candidate list with an `[ADV]` tag
+3. All ADV findings proceed through the standard Confidence Gate in Phase 2
+4. In the final report, ADV findings are marked: `R-N [MUST-FIX] [ADV] Description...`
+
+### Multi-Pass Integration
+
+When `--thorough` is active, the adversarial pass becomes **Pass 4** in the multi-pass pipeline:
+
+| Pass | File order | Rationale |
+|------|-----------|-----------|
+| Pass 1 | Alphabetical | Baseline reading order |
+| Pass 2 | Reverse dependency | Bottom-up data flow reasoning |
+| Pass 3 | Risk score descending | Hotspots while fresh |
+| **Pass 4** | **Risk score descending** | **Adversarial persona — what breaks in production?** |
+
+Majority voting applies across all 4 passes:
+- 4/4 or 3/4: KEEP at original tier + boost confidence by 15
+- 2/4: KEEP at original tier
+- 1/4: DOWNGRADE one tier
+
+---
+
 ## Batch Mode (batch <file>)
 
 Process a queue of commits through review, fix, and tag -- one commit at a time, zero interactive stops.
@@ -656,7 +734,7 @@ For each `[ ]` entry:
 
 1. **Read the diff** -- `git diff <hash>~1..<hash>`. Actually read the code. Classifying by commit message alone is not a review.
 2. **Triage** -- Determine tier and risk signals. If TIER 3, mark `[!] TIER 3: needs dedicated zuvo:review` and skip.
-3. **Audit at full depth per tier** -- TIER 0 gets a diff scan with 1+ CQ observation. TIER 1 gets CQ self-eval on production files. TIER 2 gets the complete step sequence including CQ1-CQ22 and Q1-Q17.
+3. **Audit at full depth per tier** -- TIER 0 gets a diff scan with 1+ CQ observation. TIER 1 gets CQ self-eval on production files. TIER 2 gets the complete step sequence including CQ1-CQ28 and Q1-Q19.
 4. **Fix** -- Apply all fixes (FIX-ALL mode active). If fixes break tests, revert and mark `[!]`.
 5. **Tag** -- `git tag -f reviewed/<short-hash> <full-hash>`. Non-negotiable.
 6. **Clean backlog** -- Remove the hash from `memory/backlog.md`.
@@ -733,8 +811,8 @@ No audit. Show unreviewed commits:
 
 Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
 - SKILL: `review`
-- CQ_SCORE: from CQ1-CQ22 evaluation (or `-` for TIER 0 / utility modes)
-- Q_SCORE: from Q1-Q17 evaluation (or `-` if no test files in diff)
+- CQ_SCORE: from CQ1-CQ28 evaluation (or `-` for TIER 0 / utility modes)
+- Q_SCORE: from Q1-Q19 evaluation (or `-` if no test files in diff)
 - VERDICT: PASS/WARN/BLOCK from Phase 3 report verdict
 - TASKS: number of files reviewed
 - DURATION: tier label (e.g., `tier-2`, `batch-N`)

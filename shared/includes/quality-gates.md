@@ -1,18 +1,18 @@
 # Quality Gates — Quick Reference
 
-> Summary of CQ1-CQ22 (code quality) and Q1-Q17 (test quality) gates for agent use.
+> Summary of CQ1-CQ28 (code quality) and Q1-Q19 (test quality) gates for agent use.
 
-This is a condensed reference. Full details, evidence examples, and N/A rules are in `rules/cq-checklist.md` (code) and `rules/testing.md` (tests). Agents should read the full files when performing detailed evaluations.
+This is a condensed reference. Full details, evidence examples, and N/A rules are in `rules/cq-checklist.md` (code) and `rules/testing.md` (tests). Agents should read the full files when performing detailed evaluations. CQ23-CQ28 and Q18-Q19 were added in v1.3.0.
 
-## CQ1-CQ22: Code Quality Gates
+## CQ1-CQ28: Code Quality Gates
 
 | # | Category | What it checks |
 |---|----------|---------------|
 | CQ1 | Types | No loose strings/numbers where unions fit. No `==`/`!=`. |
-| CQ2 | Types | Public functions have explicit return types. No implicit `any`. |
+| CQ2 | Types | Public functions have explicit return types. No implicit `any`. No `as unknown as X`. No unjustified `!`. |
 | CQ3 | Validation | Boundary inputs validated: required fields, format/range, runtime schema. |
 | CQ4 | Security | Auth guards backed by query-level filtering. Guard alone is not enough. |
-| CQ5 | Security | No PII in logs, error messages, response bodies, headers, or query params. |
+| CQ5 | Security | No PII in logs (ALL outputs including structured logger), error messages, response bodies, headers, or query params. |
 | CQ6 | Resources | No unbounded memory from external data. Pagination or streaming enforced. |
 | CQ7 | Resources | DB queries bounded with LIMIT/cursor. List endpoints return slim payloads. |
 | CQ8 | Errors | Infrastructure failures handled. Timeouts on outbound calls. `response.ok` checked. No empty catch blocks. |
@@ -20,7 +20,7 @@ This is a condensed reference. Full details, evidence examples, and N/A rules ar
 | CQ10 | Data | Nullable values guarded. No `.find()` without null check. No unsafe `as`/`!`. |
 | CQ11 | Structure | File and function sizes within limits. No deep nesting (>4). Max 5 params. |
 | CQ12 | Structure | No magic strings or numbers. Named constants used. |
-| CQ13 | Hygiene | No dead code, no TODO without ticket, no stale flags, no mixed logging. |
+| CQ13 | Hygiene | No dead code, no TODO without ticket, no stale flags (>30d = stale), no mixed logging. |
 | CQ14 | Hygiene | No duplicated logic (blocks >10 lines repeated, or same pattern 5+ times). |
 | CQ15 | Async | Every async call awaited or has `.catch()`. `return await` in try/catch. |
 | CQ16 | Data | Money uses integer-cents or Decimal. No float arithmetic on currency. |
@@ -28,8 +28,14 @@ This is a condensed reference. Full details, evidence examples, and N/A rules ar
 | CQ18 | Data | Cross-system consistency handled. Partial sync failures addressed. |
 | CQ19 | Contract | API request and response validated by runtime schema. |
 | CQ20 | Contract | Single canonical source per data point. No dual fields stored independently. |
-| CQ21 | Concurrency | No TOCTOU races. Mutations idempotent or CAS-protected. |
+| CQ21 | Concurrency | No TOCTOU races. Mutations idempotent or CAS-protected. Mutating endpoints safe to retry (idempotency key). |
 | CQ22 | Resources | Listeners, timers, observers cleaned up on unmount. No stale closures. |
+| CQ23 | Resources | Cache has TTL or explicit invalidation. No stale-forever entries. |
+| CQ24 | Contract | API changes additive only. Breaking changes have deprecation path. |
+| CQ25 | Structure | New code follows existing project patterns. No special snowflakes. |
+| CQ26 | Observability | Structured logger with context (requestId, userId), not plain console.log. |
+| CQ27 | Observability | Log levels correct. `error` for infrastructure failures only, not validation. |
+| CQ28 | Resilience | Timeout hierarchy correct: client < server < DB. |
 
 ### Critical Gates (Static)
 
@@ -48,14 +54,17 @@ These become critical only when the code context activates them:
 | CQ20 | Payload contains `*_id` + `*_name` pairs or number + currency-string |
 | CQ21 | Concurrent mutations on the same resource |
 | CQ22 | Code creates subscriptions, timers, or observers |
+| CQ23 | Code uses Redis, Memcached, or in-memory caching |
+| CQ24 | Code modifies existing API endpoint signatures |
+| CQ28 | Code defines timeouts at 2+ architectural layers |
 
 ### CQ Scoring
 
 | Result | Criteria |
 |--------|---------|
-| PASS | Score >= 18/22 AND all active critical gates = 1 |
-| CONDITIONAL PASS | Score 16-17/22 AND all active critical gates = 1 |
-| FAIL | Any active critical gate = 0, OR total score < 16 |
+| PASS | Score >= 24/28 AND all active critical gates = 1 |
+| CONDITIONAL PASS | Score 22-23/28 AND all active critical gates = 1 |
+| FAIL | Any active critical gate = 0, OR total score < 22 |
 
 ### CQ Evidence Format
 
@@ -72,11 +81,11 @@ No evidence = score is 0. Vague claims ("errors handled") are not evidence.
 
 ### N/A Abuse Rule
 
-If more than 60% of gates (14+) are scored N/A, flag the evaluation as "low-signal audit" and justify each N/A individually. N/A counts as 1 for scoring but requires a one-sentence explanation.
+If more than 60% of gates (17+) are scored N/A, flag the evaluation as "low-signal audit" and justify each N/A individually. N/A counts as 1 for scoring but requires a one-sentence explanation.
 
 ---
 
-## Q1-Q17: Test Quality Gates
+## Q1-Q19: Test Quality Gates
 
 | # | What it checks |
 |---|---------------|
@@ -97,6 +106,8 @@ If more than 60% of gates (14+) are scored N/A, flag the evaluation as "low-sign
 | Q15 | Assertions verify content and values, not just counts or shapes |
 | Q16 | Cross-cutting isolation: changes to A verified not to affect B |
 | Q17 | Assertions verify computed output, not input echo. Expected values from spec, not copied from implementation. |
+| Q18 | No flaky signals: no `Date.now()` without fake timers, no `setTimeout` for timing, no `Math.random()` without seed, no execution-order dependence. |
+| Q19 | Tests fully isolated: no shared mutable state between tests, each test runs independently in any order. |
 
 ### Critical Gates
 
@@ -108,15 +119,15 @@ These are always critical. If any scores 0, the evaluation is capped at FIX:
 
 | Result | Criteria |
 |--------|---------|
-| PASS | Score >= 14/17, all critical gates = 1 |
-| FIX | Score 9-13/17, or any critical gate = 0 — fix worst gaps, re-score |
-| REWRITE | Score < 9 — tests need fundamental rework |
+| PASS | Score >= 16/19, all critical gates = 1 |
+| FIX | Score 10-15/19, or any critical gate = 0 — fix worst gaps, re-score |
+| REWRITE | Score < 10 — tests need fundamental rework |
 
 ### Q Evidence Format
 
 ```
-Self-eval: Q1=1 Q2=1 Q3=0 Q4=1 Q5=1 Q6=1 Q7=1 Q8=0 Q9=1 Q10=1 Q11=1 Q12=0 Q13=1 Q14=1 Q15=1 Q16=1 Q17=1
-  Score: 14/17 → PASS | Critical gate: Q7=1 Q11=1 Q13=1 Q15=1 Q17=1 → PASS
+Self-eval: Q1=1 Q2=1 Q3=0 Q4=1 Q5=1 Q6=1 Q7=1 Q8=0 Q9=1 Q10=1 Q11=1 Q12=0 Q13=1 Q14=1 Q15=1 Q16=1 Q17=1 Q18=1 Q19=1
+  Score: 16/19 → PASS | Critical gate: Q7=1 Q11=1 Q13=1 Q15=1 Q17=1 → PASS
 ```
 
 ---

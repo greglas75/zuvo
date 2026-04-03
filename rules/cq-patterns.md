@@ -508,6 +508,70 @@ const newPrice = calculatePrice(item);
 const price = calculatePrice(item);
 ```
 
+### Cache with TTL — never store without expiration (CQ23)
+```typescript
+// NEVER — cache entry lives forever, stale data served indefinitely
+await redis.set(`user:${id}`, JSON.stringify(user));
+const cache = new Map(); cache.set(key, value); // no eviction
+// ALWAYS — TTL on every cache entry; in-memory caches need max size
+await redis.set(`user:${id}`, JSON.stringify(user), 'EX', 3600);
+const cache = new LRUCache({ max: 1000, ttl: 1000 * 60 * 15 });
+```
+
+### API backward compatibility — additive changes only (CQ24)
+```typescript
+// NEVER — remove or rename field without deprecation
+// v1: { userId: string, name: string }
+// v2: { id: string, fullName: string }  // breaks all clients
+// ALWAYS — add new fields, deprecate old ones, remove after migration
+// v2: { userId: string, id: string, name: string, fullName: string }
+// v3 (after migration window): { id: string, fullName: string }
+```
+
+### Pattern consistency — follow existing conventions (CQ25)
+```typescript
+// NEVER — different error handling pattern in new endpoint vs existing
+// Existing: throw new NotFoundException(...)
+// New endpoint: return res.status(404).json({ error: 'not found' })
+// ALWAYS — match the existing project pattern
+throw new NotFoundException(`Order ${id} not found`); // same as every other endpoint
+```
+
+### Structured logging with context (CQ26)
+```typescript
+// NEVER — plain text logs without context
+console.log('Processing order');
+console.log('Error:', error.message);
+// ALWAYS — structured logger with correlation IDs
+this.logger.info('Processing order', { requestId, orderId, userId });
+this.logger.error('Order processing failed', { requestId, orderId, error: err.message });
+```
+
+### Correct log levels (CQ27)
+```typescript
+// NEVER — validation failure as error (it's expected business logic)
+this.logger.error('Invalid email format', { email: input.email });
+// NEVER — stack trace as info
+this.logger.info('Something went wrong', { stack: err.stack });
+// ALWAYS — match severity to situation
+this.logger.warn('Invalid email format', { requestId }); // expected, recoverable
+this.logger.error('Database connection lost', { error: err.message }); // infrastructure, unrecoverable
+```
+
+### Timeout hierarchy — client < server < DB (CQ28)
+```typescript
+// NEVER — client waits longer than server (gets a connection reset instead of proper error)
+// Client: fetch(url, { signal: AbortSignal.timeout(30_000) })
+// Server: server.setTimeout(10_000)
+// DB: statement_timeout = '5s'
+// ALWAYS — outer layer times out first, gets a meaningful error
+// Client: 10s → Server: 30s → DB: 60s
+// Client timeout < Server timeout < DB timeout
+fetch(url, { signal: AbortSignal.timeout(10_000) }); // client: 10s
+// server.setTimeout(30_000);  // server: 30s
+// SET statement_timeout = '60s';  // DB: 60s
+```
+
 ---
 
 ## Security and Infrastructure Patterns

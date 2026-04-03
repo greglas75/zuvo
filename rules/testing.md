@@ -36,7 +36,7 @@ When formulating a plan, it MUST include a Test Strategy containing:
 2. **Key patterns** to apply (G-/P- IDs from pattern lookup)
 3. **Test files** to create or modify (paths and scope)
 4. **Critical scenarios** (error paths, edge cases, infra failures)
-5. **Self-eval target**: minimum 14/17
+5. **Self-eval target**: minimum 16/19
 
 A plan without a Test Strategy is incomplete.
 
@@ -328,6 +328,9 @@ These indicators correlate with low test quality. Use as pre-screening before fu
 | 0 CalledWith AND >3 bare toHaveBeenCalled() | 3.0/10 | Q15 failure predictor |
 | BOTH bare toHaveBeenCalled() AND toBeDefined() in same file | 5.5/10 | Either alone avg 9/17, both avg 5.5/17 |
 | `describe.skip`/`it.skip` without ticket or expiry | 5.0/10 | AP28: persistent dead code |
+| `Date.now()` or `new Date()` without `vi.useFakeTimers`/`jest.useFakeTimers` | 4.5/10 | Q18: flaky timing dependency |
+| `setTimeout`/`sleep` used for async synchronization in tests | 3.5/10 | Q18: flaky test, use `waitFor`/`findBy` instead |
+| Module-level `let` mutated across tests without `beforeEach` reset | 4.0/10 | Q19: shared mutable state, test ordering dependency |
 
 ---
 
@@ -342,7 +345,7 @@ These indicators correlate with low test quality. Use as pre-screening before fu
 
 Score every question individually. Never group or estimate.
 
-**17 binary gates (1 = YES, 0 = NO):**
+**19 binary gates (1 = YES, 0 = NO):**
 
 | # | Gate |
 |---|------|
@@ -363,17 +366,19 @@ Score every question individually. Never group or estimate.
 | Q15 | **CRITICAL** — Assertions verify content/values, not just counts or shape? |
 | Q16 | Cross-cutting isolation: change to A verified not to affect B? |
 | Q17 | **CRITICAL** — Assertions verify computed output, not input echo? Expected values from spec/manual calc, not copied from implementation (P-70). |
+| Q18 | No flaky test signals? No `Date.now()` without fake timers, no `setTimeout` for timing, no `Math.random()` without seed, no reliance on execution order, no real network calls? |
+| Q19 | Tests fully isolated? No shared mutable state between tests (global variables, module-level `let`, database rows without cleanup)? Each test can run independently in any order? |
 
-**N/A handling:** Q3/Q5/Q6 = 1 (N/A) for pure functions with zero mocks. Q16 = 1 (N/A) for simple single-responsibility units.
+**N/A handling:** Q3/Q5/Q6 = 1 (N/A) for pure functions with zero mocks. Q16 = 1 (N/A) for simple single-responsibility units. Q18 = 1 (N/A) for pure synchronous tests with no timing or randomness. Q19 = 1 (N/A) for single-test files.
 
 **Critical gate:** Q7, Q11, Q13, Q15, Q17 — any scored 0 caps the result at FIX regardless of total.
 
-**Scoring:** Total count of yes answers (N/A counts as 1). 14+ = PASS, 9-13 = FIX (fix worst gap, re-score), below 9 = BLOCK (rewrite).
+**Scoring:** Total count of yes answers (N/A counts as 1). 16+ = PASS, 10-15 = FIX (fix worst gap, re-score), below 10 = BLOCK (rewrite).
 
 **Output format:**
 ```
-Self-eval: Q1=1 Q2=1 Q3=0 Q4=1 Q5=1 Q6=1 Q7=1 Q8=0 Q9=1 Q10=1 Q11=1 Q12=0 Q13=1 Q14=1 Q15=1 Q16=1 Q17=1
-  Score: 14/17 → PASS | Critical gate: Q7=1 Q11=1 Q13=1 Q15=1 Q17=1 → PASS
+Self-eval: Q1=1 Q2=1 Q3=0 Q4=1 Q5=1 Q6=1 Q7=1 Q8=0 Q9=1 Q10=1 Q11=1 Q12=0 Q13=1 Q14=1 Q15=1 Q16=1 Q17=1 Q18=1 Q19=1
+  Score: 16/19 → PASS | Critical gate: Q7=1 Q11=1 Q13=1 Q15=1 Q17=1 → PASS
 ```
 
 ## Post-Test Mutation Check (mandatory)
@@ -396,7 +401,7 @@ Before declaring a task complete, verify every item:
 
 - [ ] New code has tests (if production files > 0 and test files = 0 → write tests)
 - [ ] Tests pass locally (run the test command, do not assume)
-- [ ] Self-eval 14/17+ with all critical gates passing (Q7 + Q11 + Q13 + Q15 + Q17)
+- [ ] Self-eval 16/19+ with all critical gates passing (Q7 + Q11 + Q13 + Q15 + Q17)
 - [ ] Oracle check: no expected values copied from implementation (P-70)
 - [ ] Mutation check: M1-M5 all caught
 - [ ] Coverage did not decrease

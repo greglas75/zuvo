@@ -118,8 +118,8 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
    |----------|----------------|
    | < 20 | **Fast path** — skip review entirely |
    | 20 - 100 | Dispatch `review-light` agent (read `skills/ship/agents/review-light.md`) |
-   | 100+ | Dispatch `review-light` + invoke `zuvo:review` as inline agent + invoke `zuvo:design-review` if frontend files changed (`.tsx`, `.jsx`, `.css`, `.scss`, `.html`) |
-   | 300+ | All of the above + dispatch `coverage-check` agent (read `skills/ship/agents/coverage-check.md`) |
+   | 100+ | Dispatch `review-light` + invoke `zuvo:review` as inline agent (includes adversarial review pass at TIER 2+) + invoke `zuvo:design-review` if frontend files changed (`.tsx`, `.jsx`, `.css`, `.scss`, `.html`) |
+   | 300+ | All of the above + dispatch `coverage-check` agent (read `skills/ship/agents/coverage-check.md`). `zuvo:review` runs at TIER 3 with automatic adversarial pass. |
 
    **Flag overrides (user-provided ONLY — agent must NEVER self-apply):**
    - `--fast`: always use fast path regardless of diff size. Must be in `$ARGUMENTS` from the user's invocation.
@@ -140,7 +140,7 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 5. **Record review depth** for the artifact:
    - `"none"` — fast path, no review performed
    - `"light"` — review-light agent only
-   - `"full"` — review-light + zuvo:review (+ design-review if applicable)
+   - `"full"` — review-light + zuvo:review with adversarial pass (+ design-review if applicable)
    - `"full+coverage"` — full + coverage-check agent
 
 ---

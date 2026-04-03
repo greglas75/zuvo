@@ -137,6 +137,7 @@ For each task in the plan:
 5. HANDLE spec reviewer verdict
 6. DISPATCH quality reviewer agent
 7. HANDLE quality reviewer verdict
+7b. DISPATCH adversarial reviewer (complex tasks only)
 8. COMMIT (orchestrator commits, not implementer)
 9. MARK task as completed
 10. UPDATE CodeSift index
@@ -291,9 +292,47 @@ Read the failure details. Each failure has a gate ID, file:line reference, and w
 
 The user decides: accept as-is (with backlog entry), require fix, or provide guidance.
 
+### Step 7b: Dispatch Adversarial Reviewer (complex tasks only)
+
+**When to run:** Only for tasks marked `**Complexity:** complex` in the plan (4+ files, architecture decisions). Skip for `standard` complexity tasks.
+
+**Purpose:** Catch blind spots shared between the implementer and quality reviewer. The adversarial reviewer assumes the code was written by an AI with systematic blind spots and hunts for production failure scenarios.
+
+Dispatch per environment:
+- **Claude Code:** use the Task tool.
+- **Codex:** use native agents in `~/.codex/agents/`.
+
+**Provide to the agent:**
+- The list of production files created or modified
+- The quality reviewer's CQ scores (so the adversarial agent focuses on areas NOT flagged)
+- Detected tech stack
+
+**Persona instructions (included in agent prompt):**
+> You are a hostile code reviewer. Assume the author (an AI) has systematic blind spots.
+> Focus on what the quality reviewer is likely to MISS:
+> 1. Edge cases: timezone, unicode, concurrent access, empty collections
+> 2. Production vs test assumptions: network latency, partial failures, clock skew
+> 3. Security paths that bypass the happy path
+> 4. Silent failures: catch blocks that swallow errors, unhandled promise rejections
+> 5. Data integrity: partial writes without rollback, cache inconsistency
+> Report only NEW findings not covered by the quality reviewer's CQ gates.
+
+**Handling the verdict:**
+
+#### NO ISSUES
+Proceed to commit (step 8).
+
+#### ISSUES FOUND
+Read the issue list. Each issue has a file:line reference.
+
+- **Critical findings** (would cause production incident): re-dispatch the implementer to fix, then re-run quality reviewer on the fix. Do NOT re-run adversarial reviewer.
+- **Non-critical findings** (code smell, potential improvement): note in the task result, persist to backlog. Proceed to commit.
+
+**Limit:** No iteration loop. The adversarial reviewer runs once. If it finds critical issues that the implementer fixes, only the quality reviewer re-validates.
+
 ### Step 8: Commit
 
-Only after both spec review (COMPLIANT) and quality review (PASS), the orchestrator creates the commit:
+Only after spec review (COMPLIANT), quality review (PASS), and adversarial review (NO ISSUES or non-critical only), the orchestrator creates the commit:
 
 1. Stage only the files listed in the task's "Files" field: `git add <file1> <file2> ...`
 2. Never use `git add -A` or `git add .`
@@ -309,7 +348,8 @@ Print to the user:
 Status: COMPLETED
 Files changed: [list]
 Spec review: COMPLIANT (iteration [N])
-Quality review: PASS (CQ: [score]/22, Q: [score]/17)
+Quality review: PASS (CQ: [score]/28, Q: [score]/19)
+Adversarial review: [PASS / N findings (N critical) / SKIPPED (standard complexity)]
 ```
 
 ### Step 10: Verify CodeSift Index
@@ -434,8 +474,8 @@ From `shared/includes/tdd-protocol.md`: no production code without a failing tes
 ### Quality Gates
 
 From `shared/includes/quality-gates.md`:
-- CQ1-CQ22 on production code (critical gates: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14)
-- Q1-Q17 on test code (critical gates: Q7, Q11, Q13, Q15, Q17)
+- CQ1-CQ28 on production code (critical gates: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 + conditional: CQ16, CQ19-CQ24, CQ28)
+- Q1-Q19 on test code (critical gates: Q7, Q11, Q13, Q15, Q17)
 - Any critical gate = 0 -> FAIL, regardless of total score
 
 ### Backlog Protocol

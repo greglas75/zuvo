@@ -4,17 +4,17 @@ Run after writing production code, before writing tests. Companion patterns are 
 
 ---
 
-## 22 Evaluation Gates
+## 28 Evaluation Gates
 
 Each gate is scored 1 (pass with evidence), 0 (fail or unproven), or N/A (precondition inactive, justify in one sentence).
 
 | # | Domain | Gate |
 |---|--------|------|
 | CQ1 | Types | Unions, enums, or branded types used where plain `string`/`number` is too loose? No `==`/`!=` loose equality? |
-| CQ2 | Types | Explicit return types on all public functions? No implicit `any` anywhere? |
+| CQ2 | Types | Explicit return types on all public functions? No implicit `any` anywhere? No `as unknown as X` casts? No `!` non-null assertions without justification? |
 | CQ3 | Validation | **CRITICAL** — Input validated at every boundary? (a) required fields enforced, (b) format/range/allowlist applied, (c) runtime schema at entry point? |
 | CQ4 | Security | **CRITICAL** — Auth guards paired with query-level tenant scoping? Guard alone is insufficient — `organizationId` must appear in service WHERE clauses. If any public method requires orgId, all must (or document exemptions). |
-| CQ5 | Security | **CRITICAL** — Zero sensitive data in logs, errors, response bodies (including stack traces gated by NODE_ENV), headers, or query params? No raw `dangerouslySetInnerHTML`? (Header like `x-modified-by: user@email.com` = violation; `stack: err.stack` in non-dev response = violation.) |
+| CQ5 | Security | **CRITICAL** — Zero sensitive data in logs (ALL log outputs including structured logger), errors, response bodies (including stack traces gated by NODE_ENV), headers, or query params? No raw `dangerouslySetInnerHTML`? (Header like `x-modified-by: user@email.com` = violation; `stack: err.stack` in non-dev response = violation; `logger.info('User login', { email })` = violation.) |
 | CQ6 | Resources | **CRITICAL** — No unbounded memory growth from external data? Pagination, streaming, or batching used? |
 | CQ7 | Resources | All database queries bounded (LIMIT / cursor)? List responses return slim payloads (`select` fields)? |
 | CQ8 | Errors | **CRITICAL** — Infrastructure failures handled? No empty `catch {}`. Timeouts on outbound calls. `response.ok` checked before `.json()`. `return await` inside try/catch. No infra details leaked. Frontend: `AbortSignal.timeout()` on every fetch. Node.js `execFile`/`exec` with callback: use `promisify(execFile)` or wrap in try/catch (sync throw before spawn = callback never fires = hang). |
@@ -22,7 +22,7 @@ Each gate is scored 1 (pass with evidence), 0 (fail or unproven), or N/A (precon
 | CQ10 | Data | Nullable values guarded before access? No unsafe `.find()` without null check? No unvalidated `as Type` / `!` non-null assertion? |
 | CQ11 | Structure | **File** within its type limit (service 300-450L, component 200-300L, hook 250L, util 100L)? **Functions** within limits (public 50L, private 30L, handler 25L, $tx 60L, useEffect 20L)? No deeper than 4 nesting levels? 5 params max? **Hard gate: file exceeding 2x the type limit = automatic CQ11 FAIL.** |
 | CQ12 | Structure | No magic strings or numbers? No index-based mapping (`row[0]`)? Named constants in use? |
-| CQ13 | Hygiene | No dead code (unreachable branches, unused exports)? No TODO without a ticket reference? No stale feature flags? No mixed `console.*` and structured logger in same file? **Note: commented-out old implementations and debug leftovers are dead code. Explanatory comments, API examples, and documented workarounds are NOT.** |
+| CQ13 | Hygiene | No dead code (unreachable branches, unused exports)? No TODO without a ticket reference? No stale feature flags (>30 days since full rollout = stale)? No mixed `console.*` and structured logger in same file? **Note: commented-out old implementations and debug leftovers are dead code. Explanatory comments, API examples, and documented workarounds are NOT.** |
 | CQ14 | Hygiene | **CRITICAL** — No duplicated logic? (a) block exceeding 10 lines repeated, OR (b) same structural pattern appearing 5+ times? |
 | CQ15 | Async | Every async call awaited or explicitly fire-and-forget with `.catch()`? `return await` used inside try/catch? No `await` inside `Promise.all()` argument list? |
 | CQ16 | Data | Monetary values use exact arithmetic (integer-cents, Decimal.js)? No `toFixed()` during computation? **Scope: actual currency amounts only.** Indices, ratios, scores = N/A. |
@@ -30,8 +30,14 @@ Each gate is scored 1 (pass with evidence), 0 (fail or unproven), or N/A (precon
 | CQ18 | Data | Cross-system consistency maintained? Multi-store operations handle partial failures? |
 | CQ19 | Contract | API request AND response shapes validated by runtime schema? No hope-based typing? |
 | CQ20 | Contract | Single canonical source per data point? No dual fields stored independently for the same concept? |
-| CQ21 | Concurrency | No time-of-check-to-time-of-use races? Mutations idempotent or CAS-protected? No shared mutable state? |
+| CQ21 | Concurrency | No time-of-check-to-time-of-use races? Mutations idempotent or CAS-protected? Mutating API endpoints safe to retry (idempotency key or CAS guard)? No shared mutable state? |
 | CQ22 | Resources | All listeners, timers, and observers cleaned up on unmount/destroy? No stale closures in callbacks? |
+| CQ23 | Resources | Cache entries have TTL or explicit invalidation? No stale-forever entries? Redis `SET` without `EX`/`PX` = violation. In-memory cache without eviction policy = violation. |
+| CQ24 | Contract | API changes are additive only (new optional fields, new endpoints)? Removing or renaming fields has a deprecation path with migration guide? Breaking changes without versioning or deprecation = violation. |
+| CQ25 | Structure | New endpoint/component/service follows existing project patterns? Same naming convention, same file structure, same error handling approach as existing code? "Special snowflake" = violation. |
+| CQ26 | Observability | Log statements use structured logger with context (requestId, userId, traceId), not plain `console.log` strings? Every service/controller uses the project's standard logger. |
+| CQ27 | Observability | Log levels used correctly? `logger.error` reserved for unrecoverable failures and infrastructure errors, not validation failures or expected business conditions. `logger.warn` for recoverable but unexpected situations. Validation failure logged as `error` = violation. Stack trace logged as `info` = violation. |
+| CQ28 | Resilience | Client timeout < server timeout < DB timeout (not inverted)? If code defines timeouts at multiple layers, verify the hierarchy is correct. Inverted timeout hierarchy = violation. |
 
 ---
 
@@ -45,13 +51,18 @@ Each gate is scored 1 (pass with evidence), 0 (fail or unproven), or N/A (precon
 - **CQ20** — critical when payload contains `*_id` + `*_name` pairs or number + string-with-currency for the same field
 - **CQ21** — critical when concurrent mutations target the same resource. Not critical for read-only paths.
 - **CQ22** — critical when code creates subscriptions, timers, or observers. Not critical for stateless handlers.
+- **CQ23** — critical when code uses Redis, Memcached, or in-memory caching. Not critical for code without caching.
+- **CQ24** — critical when code modifies existing API endpoint signatures (request/response shapes, route paths). Not critical for new endpoints.
+- **CQ28** — critical when code defines timeouts at 2+ architectural layers (client, server, DB).
+
+**Always-on non-critical gates (new):** CQ25, CQ26, CQ27 — scored normally. Failure is a deduction, not an auto-FAIL.
 
 When a conditional gate is active and scored 0: FAIL.
 
 **Thresholds:**
-- **PASS:** 18+ out of 22 AND every active critical gate = 1
-- **CONDITIONAL PASS:** 16-17 AND every active critical gate = 1
-- **FAIL:** any active critical gate = 0, OR total below 16
+- **PASS:** 24+ out of 28 AND every active critical gate = 1
+- **CONDITIONAL PASS:** 22-23 AND every active critical gate = 1
+- **FAIL:** any active critical gate = 0, OR total below 22
 
 ---
 
@@ -146,7 +157,14 @@ N/A scores count as 1 in the total but require justification. Excessive N/A usag
 | CQ21 | Read-only, single-user, no contested resources | "Low traffic" — races happen at any traffic level |
 | CQ22 | Pure sync, stateless, no subscriptions | "One listener" — 1 listener x 1000 mounts = 1000 listeners |
 
-**Abuse check:** If 14+ gates are N/A, justify each one, flag the audit as low-signal, and do not count it toward aggregate metrics.
+| CQ23 | No caching in this code path | "Small data" — if cache exists, TTL applies |
+| CQ24 | New endpoint only, no existing clients | "Internal API" — if any client calls it, backward compat applies |
+| CQ25 | Single file change, no pattern to compare | "It's better this way" — consistency > preference |
+| CQ26 | Pure computation, zero I/O, zero logging | "We log elsewhere" — if file has logger calls, it applies |
+| CQ27 | No log statements in changed code | "It's just a warning" — if logger.error exists, check its usage |
+| CQ28 | Single-layer timeout, no hierarchy to check | "Defaults are fine" — if multiple layers define timeouts, check order |
+
+**Abuse check:** If 17+ gates are N/A, justify each one, flag the audit as low-signal, and do not count it toward aggregate metrics.
 
 ---
 
@@ -170,9 +188,9 @@ CQ=0 found →
 ### Output Format
 
 ```
-Code quality self-eval: CQ1=1 CQ2=1 CQ3=1 CQ4=1 CQ5=1 CQ6=1 CQ7=1 CQ8=0 CQ9=1 CQ10=1 CQ11=1 CQ12=0 CQ13=1 CQ14=1 CQ15=1 CQ16=1 CQ17=1 CQ18=1 CQ19=1 CQ20=1 CQ21=1 CQ22=1
-  Score: 20/22 → FAIL | Critical gate: CQ8=0 → FAIL
-  Evidence: CQ3=schema(dto:12) CQ4=guard+filter(service:45) CQ8=FAIL CQ14=compared(service:all)
+Code quality self-eval: CQ1=1 CQ2=1 CQ3=1 CQ4=1 CQ5=1 CQ6=1 CQ7=1 CQ8=0 CQ9=1 CQ10=1 CQ11=1 CQ12=0 CQ13=1 CQ14=1 CQ15=1 CQ16=1 CQ17=1 CQ18=1 CQ19=1 CQ20=1 CQ21=1 CQ22=1 CQ23=N/A CQ24=N/A CQ25=1 CQ26=1 CQ27=1 CQ28=N/A
+  Score: 24/26 applicable → FAIL | Critical gate: CQ8=0 → FAIL
+  Evidence: CQ3=schema(dto:12) CQ4=guard+filter(service:45) CQ8=FAIL CQ14=compared(service:all) CQ25=follows existing pattern CQ26=structured logger with requestId
   Fix: CQ8 — add try/catch at service.ts:88
 ```
 
@@ -237,11 +255,11 @@ const result = await Promise.race([
 
 | Code Type | Focus CQs | Common Failures |
 |-----------|-----------|-----------------|
-| **SERVICE** | CQ1,3,4,8,14,16,17,18,20,21 | Status as string, no validation, guard without filter, unhandled DB errors, duplication, float money, N+1, multi-store sync, dual fields, TOCTOU |
-| **CONTROLLER** | CQ3,4,5,12,13,19 | Missing DTO, auth bypass, PII in error, magic codes, dead endpoints, no response schema |
-| **REACT** | CQ6,10,11,13,15,22 | Unbounded list, null crash, oversized file, dead code, dropped promise, listener leak |
-| **ORM/DB** | CQ6,7,9,10,17,20 | Unbounded findMany, no LIMIT, wrong delete order, null column, N+1, dual fields |
-| **ORCHESTRATOR** | CQ6,8,9,14,15,17,18,21 | All IDs in memory, no error handling, no tx, duplication, dropped promises, N+1, sync, TOCTOU |
+| **SERVICE** | CQ1,3,4,8,14,16,17,18,20,21,23,26,27 | Status as string, no validation, guard without filter, unhandled DB errors, duplication, float money, N+1, multi-store sync, dual fields, TOCTOU, stale cache, unstructured logs, wrong log level |
+| **CONTROLLER** | CQ3,4,5,12,13,19,24,25 | Missing DTO, auth bypass, PII in error, magic codes, dead endpoints, no response schema, breaking API change, inconsistent pattern |
+| **REACT** | CQ6,10,11,13,15,22,25 | Unbounded list, null crash, oversized file, dead code, dropped promise, listener leak, inconsistent component pattern |
+| **ORM/DB** | CQ6,7,9,10,17,20,23 | Unbounded findMany, no LIMIT, wrong delete order, null column, N+1, dual fields, stale cache |
+| **ORCHESTRATOR** | CQ6,8,9,14,15,17,18,21,28 | All IDs in memory, no error handling, no tx, duplication, dropped promises, N+1, sync, TOCTOU, inverted timeouts |
 | **HOOK** | CQ6,8,10,11,15,22 | Unbounded spread, no AbortController, nullable fields, oversized body, dropped promise, no cleanup |
 | **PURE** | CQ1,2,10,12,16 | Stringly-typed, no return type, null edge case, magic numbers, float money |
 
