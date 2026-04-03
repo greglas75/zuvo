@@ -122,20 +122,21 @@ When CodeSift is available, use it for faster and cheaper context gathering inst
 | Complexity hotspots | `analyze_complexity(repo)` | Reading + counting |
 | Dependency graph | `get_file_outline(repo, "package.json")` | `cat package.json` |
 
-### CodeSift fingerprint flow
+### CodeSift fingerprint flow (first run only)
+
+CodeSift is only used during the **one-time** Tech Stack detection (when CLAUDE.md has no `## Tech Stack` section yet). Once written to CLAUDE.md, detection never runs again.
 
 ```
-if CodeSift available:
+if CLAUDE.md already has ## Tech Stack:
+  SKIP — nothing to detect
+else if CodeSift available:
   tree = get_file_tree(repo, path_prefix="src")           # ~50 tokens
   outline = get_file_outline(repo, "package.json")         # ~30 tokens
   communities = detect_communities(repo)                   # ~80 tokens
-  → Use these for Tech Stack detection (propose to CLAUDE.md)
-  → Use communities for Project Summary
+  → Write Tech Stack + Project Summary to CLAUDE.md
 else:
-  Fall back to traditional config file reading
+  Fall back to traditional config file reading → write to CLAUDE.md
 ```
-
-This saves **300-800 tokens per session** compared to reading full config files.
 
 ---
 
@@ -149,10 +150,10 @@ Update `memory/project-state.md` at the END of every skill run, after Auto-Docs 
 
 If `memory/project-state.md` does not exist:
 
-1. **Tech Stack detection** → propose to project CLAUDE.md (not project-state.md):
-   - Scan for config files (or use CodeSift fingerprint if available)
-   - Detect framework, test runner, CI, package manager, database
-   - Write `## Tech Stack` section to CLAUDE.md
+1. **Tech Stack detection** (one-time, then never again):
+   - Check if project CLAUDE.md already has `## Tech Stack` → if yes, SKIP detection entirely
+   - If no Tech Stack in CLAUDE.md: detect and write it (using CodeSift or config file scanning)
+   - This runs **once per project lifetime**, not per session
 
 2. **Initialize project-state.md** with dynamic sections only:
    - Recent Activity: current skill run
@@ -195,8 +196,9 @@ If `memory/project-state.md` does not exist:
 if memory/project-state.md exists:
   READ it → use as base for patching
 else:
-  Detect Tech Stack → propose to CLAUDE.md
-  Initialize project-state.md with dynamic sections
+  if CLAUDE.md has NO ## Tech Stack section:
+    Detect stack (one-time) → write to CLAUDE.md
+  Initialize project-state.md with dynamic sections only
 ```
 
 ### Step 2: Update dynamic state
