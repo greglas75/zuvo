@@ -674,14 +674,39 @@ ADV-1 [severity] [description]
 ADV-2 ...
 ```
 
+### Cross-Provider Review (after adversarial agent)
+
+After the internal adversarial agent completes, attempt a cross-provider review using a different AI model. Read `{plugin_root}/shared/includes/cross-provider-review.md` for full protocol.
+
+**Execution:**
+
+```bash
+SCRIPT_PATH="${PLUGIN_ROOT}/scripts/adversarial-review.sh"
+if [[ -x "$SCRIPT_PATH" ]]; then
+  git diff ${REVIEWED_FROM}..${REVIEWED_THROUGH} | "$SCRIPT_PATH" > /tmp/cross-review.md
+fi
+```
+
+**If the script is available and succeeds:**
+1. Parse the output for CRITICAL / WARNING / INFO findings
+2. Tag findings as `[CROSS:<provider>]` (e.g., `[CROSS:gemini]`)
+3. Merge with internal adversarial findings — deduplicate by file:line
+4. CRITICAL cross-provider findings become MUST-FIX
+5. WARNING become RECOMMENDED
+6. INFO become NIT
+
+**If the script is not available or fails:**
+Print: `[CROSS-REVIEW] No external provider available. Using internal adversarial pass only.`
+Continue with internal adversarial findings only. Do NOT block the pipeline.
+
 ### Result Merging
 
-After the adversarial pass completes:
+After both the internal adversarial pass and cross-provider review complete:
 
 1. Deduplicate against primary audit findings (same file:line + same issue = drop)
-2. Findings that survive dedup are added to the candidate list with an `[ADV]` tag
-3. All ADV findings proceed through the standard Confidence Gate in Phase 2
-4. In the final report, ADV findings are marked: `R-N [MUST-FIX] [ADV] Description...`
+2. Findings that survive dedup are added to the candidate list with an `[ADV]` or `[CROSS]` tag
+3. All ADV and CROSS findings proceed through the standard Confidence Gate in Phase 2
+4. In the final report, findings are marked: `R-N [MUST-FIX] [ADV] Description...` or `R-N [MUST-FIX] [CROSS:gemini] Description...`
 
 ### Multi-Pass Integration
 

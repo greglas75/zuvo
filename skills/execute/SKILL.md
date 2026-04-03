@@ -330,6 +330,21 @@ Read the issue list. Each issue has a file:line reference.
 
 **Limit:** No iteration loop. The adversarial reviewer runs once. If it finds critical issues that the implementer fixes, only the quality reviewer re-validates.
 
+#### Cross-Provider Review (after adversarial agent)
+
+After the internal adversarial agent completes (or instead of it if the task is `standard` complexity but touches security/auth/payment files), run a cross-provider review. Read `{plugin_root}/shared/includes/cross-provider-review.md` for the full protocol.
+
+```bash
+SCRIPT_PATH="${PLUGIN_ROOT}/scripts/adversarial-review.sh"
+if [[ -x "$SCRIPT_PATH" ]]; then
+  "$SCRIPT_PATH" --files "[list of modified production files]" > /tmp/cross-review.md
+fi
+```
+
+If available: parse findings, tag as `[CROSS:<provider>]`, treat CRITICAL as blockers (re-dispatch implementer), treat WARNING/INFO as backlog items.
+
+If not available: print `[CROSS-REVIEW] No external provider available.` and continue. This is an enhancement, not a gate.
+
 ### Step 8: Commit
 
 Only after spec review (COMPLIANT), quality review (PASS), and adversarial review (NO ISSUES or non-critical only), the orchestrator creates the commit:

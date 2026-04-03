@@ -340,6 +340,23 @@ If `--details` flag: also save per-file reports to `audits/test-audit-details/`
 rm -rf audits/.test-audit-batch
 ```
 
+## Phase 3b: Cross-Provider Review (--deep only)
+
+In `--deep` mode, run a cross-provider adversarial review on the lowest-quality test files (Tier C and D). Read `{plugin_root}/shared/includes/cross-provider-review.md` for the full protocol.
+
+**Execution:**
+
+```bash
+SCRIPT_PATH="${PLUGIN_ROOT}/scripts/adversarial-review.sh"
+if [[ -x "$SCRIPT_PATH" ]]; then
+  "$SCRIPT_PATH" --files "[space-separated list of Tier C and D test files]" > /tmp/test-audit-cross.md
+fi
+```
+
+**If available:** Parse findings, tag as `[CROSS:<provider>]`, add to the per-file audit results. Cross-provider findings that identify tautological oracles (Q17) or flaky patterns (Q18) are especially valuable — different models detect different forms of test tautology.
+
+**If not available:** Print `[CROSS-REVIEW] No external provider available.` Continue normally.
+
 ## Phase 4: Coverage Registry Update
 
 Read `memory/coverage.md`. If it does not exist, create it now.

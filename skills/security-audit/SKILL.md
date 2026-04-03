@@ -394,6 +394,30 @@ Build summary table: input validation coverage, auth coverage, authZ depth (CQ4)
 
 ---
 
+## Phase 9b: Cross-Provider Security Review
+
+Security audits benefit the most from cross-provider review — different models have different knowledge of vulnerability patterns. Run this on ALL security audits (not just `--deep`). Read `{plugin_root}/shared/includes/cross-provider-review.md` for the full protocol.
+
+**Execution:**
+
+```bash
+SCRIPT_PATH="${PLUGIN_ROOT}/scripts/adversarial-review.sh"
+if [[ -x "$SCRIPT_PATH" ]]; then
+  # Send all security-relevant files (auth, middleware, controllers, config)
+  "$SCRIPT_PATH" --files "[auth files, middleware, controllers, env config]" > /tmp/security-cross.md
+fi
+```
+
+**If available and succeeds:**
+- Parse findings — CRITICAL findings from a cross-provider security review have HIGH credibility
+- Cross-provider findings that identify auth bypass paths, SSRF vectors, or injection points are added to the attack path analysis (9.3)
+- Tag all findings as `[CROSS:<provider>]`
+- Add a `## Cross-Provider Security Findings` section before the main report
+
+**If not available:** Print `[CROSS-REVIEW] No external provider available. Internal analysis only.` Continue normally. For security audits, strongly recommend the user installs at least one cross-provider tool.
+
+---
+
 ## Phase 10: Report and Backlog
 
 ### 10.1 Score Calculation

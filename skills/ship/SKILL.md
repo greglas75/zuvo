@@ -132,12 +132,27 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
    - Provide the git diff as input.
    - If the agent returns verdict `BLOCK`: pause. Show the blocker list. Ask the user to fix the issues or explicitly override. In non-interactive environments: stop and print `SHIP PAUSED: review blockers found`.
 
-4. **Agent dispatch — coverage-check** (300+ LOC or `--full` only):
+4. **Cross-provider review** (100+ LOC, after zuvo:review completes):
+
+   After `zuvo:review` returns its verdict, run a cross-provider adversarial review. Read `{plugin_root}/shared/includes/cross-provider-review.md` for the protocol.
+
+   ```bash
+   SCRIPT_PATH="${PLUGIN_ROOT}/scripts/adversarial-review.sh"
+   if [[ -x "$SCRIPT_PATH" ]]; then
+     "$SCRIPT_PATH" --diff "${BASE_REF}" > /tmp/ship-cross-review.md
+   fi
+   ```
+
+   - If CRITICAL findings: pause. Show the findings alongside zuvo:review's report. Ask the user to fix or override.
+   - If WARNING/INFO only: include in the ship report as informational. Do not block.
+   - If script unavailable: print `[CROSS-REVIEW] No external provider available.` Continue.
+
+5. **Agent dispatch — coverage-check** (300+ LOC or `--full` only):
    - Read `skills/ship/agents/coverage-check.md` for the agent's instructions.
    - Provide the list of changed production files (exclude test files).
    - The coverage-check verdict is **informational only** — it never blocks ship.
 
-5. **Record review depth** for the artifact:
+6. **Record review depth** for the artifact:
    - `"none"` — fast path, no review performed
    - `"light"` — review-light agent only
    - `"full"` — review-light + zuvo:review with adversarial pass (+ design-review if applicable)

@@ -362,6 +362,28 @@ After per-file scoring, run these cross-cutting checks:
 
 Add findings under a `## Cross-File Issues` section.
 
+## Phase 3b: Cross-Provider Review (--deep only)
+
+In `--deep` mode, run a cross-provider adversarial review on the highest-risk files (Tier C and D). Read `{plugin_root}/shared/includes/cross-provider-review.md` for the full protocol.
+
+**Execution:**
+
+```bash
+SCRIPT_PATH="${PLUGIN_ROOT}/scripts/adversarial-review.sh"
+if [[ -x "$SCRIPT_PATH" ]]; then
+  # Review Tier C+D files only (highest risk)
+  "$SCRIPT_PATH" --files "[space-separated list of Tier C and D files]" > /tmp/code-audit-cross.md
+fi
+```
+
+**If available and succeeds:**
+- Parse CRITICAL/WARNING findings
+- Tag as `[CROSS:<provider>]`
+- Merge into the per-file findings — CRITICAL findings upgrade a file's priority in the execution plan
+- Add a `## Cross-Provider Findings` section to the report
+
+**If not available:** Print `[CROSS-REVIEW] No external provider available.` Continue normally. This is an enhancement, not a gate.
+
 ## Phase 4: Report and Execution Plan
 
 Save the report to: `audits/code-quality-audit-[date].md`
