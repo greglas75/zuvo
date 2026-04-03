@@ -1,0 +1,25 @@
+{
+  "name": "zuvo",
+  "displayName": "Zuvo",
+  "description": "Multi-agent skill ecosystem for structured software development. 39 skills and 20 specialized agents with quality gates, code exploration, and evidence-based review.",
+  "version": "1.1.0",
+  "author": {
+    "name": "Zuvo"
+  },
+  "homepage": "https://zuvo.dev",
+  "license": "MIT",
+  "keywords": [
+    "cursor",
+    "plugin",
+    "multi-agent",
+    "skills",
+    "code-quality",
+    "tdd",
+    "code-review",
+    "refactoring",
+    "software-development",
+    "pipeline"
+  ],
+  "skills": "./skills/",
+  "rules": "./rules/"
+}

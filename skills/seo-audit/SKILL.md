@@ -221,7 +221,7 @@ Agent 3: SEO Assets (Group C)
 
 **Codex:** Define TOML agents per env-compat.md patterns. Each agent runs in read-only sandbox.
 
-**Cursor:** No agent dispatch. Execute each agent's analysis sequentially yourself, maintaining identical output format.
+**Cursor 3+:** Dispatch subagents in parallel (up to 4). **Cursor <3.0:** No agent dispatch. Execute each agent's analysis sequentially yourself, maintaining identical output format.
 
 ### Waiting for results
 

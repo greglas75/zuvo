@@ -601,7 +601,7 @@ Run 3 independent review passes. Each pass receives the same diff but examines f
 
 **Claude Code:** Dispatch 3 agents in parallel via the Task tool. Each agent performs a full audit pass independently.
 
-**Codex / Cursor:** Execute 3 passes sequentially, maintaining separate finding lists per pass.
+**Codex / Cursor 3+:** Dispatch 3 agents in parallel per `env-compat.md` dispatch patterns. **Cursor <3.0:** Execute 3 passes sequentially, maintaining separate finding lists per pass.
 
 ### Majority Voting
 

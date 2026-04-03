@@ -103,7 +103,7 @@ Agent 3: Business Analyst
   input: user request + repo identifier + CodeSift availability
 ```
 
-**Codex / Cursor:** Follow the patterns in `env-compat.md`. On Cursor, execute each agent's analysis sequentially yourself, maintaining the same output format.
+**Codex / Cursor:** Follow the patterns in `env-compat.md`. On Cursor 3+, dispatch subagents in parallel (up to 4). On Cursor <3.0, execute each agent's analysis sequentially yourself, maintaining the same output format.
 
 ### Waiting for Results
 

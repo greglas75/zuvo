@@ -97,7 +97,7 @@ Store detection results -- agents reference them for stack-specific guidance.
 
 Each agent receives: source code, detected stack info, token file contents, screenshots (if available).
 
-In environments supporting parallel dispatch (Claude Code), run all 4 simultaneously. In sequential environments (Codex, Cursor), execute each agent's analysis in order.
+In environments supporting parallel dispatch (Claude Code, Codex, Cursor 3+), run all 4 simultaneously per `env-compat.md` dispatch patterns. In sequential environments (Cursor <3.0), execute each agent's analysis in order.
 
 ### Agent 1: UX Researcher
 

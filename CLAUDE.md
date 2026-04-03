@@ -105,6 +105,7 @@ scripts/build-codex-skills.sh   — build Codex distribution (called by install.
 docs/                           — documentation (skills.md, pipeline.md, etc.)
 .claude-plugin/plugin.json      — Claude Code plugin manifest
 .codex-plugin/plugin.json       — Codex plugin manifest
+.cursor-plugin/plugin.json      — Cursor plugin manifest
 package.json                    — version metadata only (no npm)
 ```
 
