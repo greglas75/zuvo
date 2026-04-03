@@ -1,0 +1,153 @@
+schema_version: 1
+last_synced: "2026-04-03"
+
+meta:
+  slug: threat-model
+  title: "Threat Model — STRIDE Analysis from Code"
+  description: "Proactive threat identification from actual codebase analysis using the STRIDE framework. Maps attack surfaces, trust boundaries, and data flows, then systematically evaluates Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, and Elevation of Privilege per component. Produces a ranked threat report with Mermaid data flow diagrams and actionable mitigations."
+  category: audit
+  og_image: /og/skills/threat-model.png
+
+seo:
+  target_queries:
+    - "STRIDE threat modeling from codebase automatically"
+    - "attack surface mapping tool for code AI"
+    - "automated threat model generator with data flow diagrams"
+    - "proactive security analysis STRIDE framework Claude Code"
+    - "trust boundary analysis from source code"
+  canonical: /en/skills/threat-model
+
+stats:
+  - label: STRIDE Categories
+    value: "6"
+    detail: "Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege"
+  - label: Phases
+    value: "6"
+    detail: "Attack Surface Mapping, Data Flow Analysis, STRIDE Analysis, Risk Assessment, Report Generation, Action Items"
+  - label: Risk Levels
+    value: "4"
+    detail: "CRITICAL (immediate action), HIGH (this sprint), MEDIUM (next sprint), LOW (document and monitor)"
+
+problem: |
+  Threat modeling is traditionally done on whiteboards or in documents disconnected from the actual codebase. The result is a model that goes stale the moment code changes — trust boundaries shift, new entry points are added, and data flows evolve without the threat model being updated. zuvo:threat-model solves this by analyzing the actual code to map attack surfaces, trace data flows across trust boundaries, and systematically evaluate STRIDE threats per component. Every threat is backed by code evidence (file references, line numbers), and the output includes Mermaid data flow diagrams that can be regenerated as the codebase evolves.
+
+how_it_works:
+  - step: "Phase 0: Map Attack Surface"
+    description: "Systematically identify all components that interact with external actors or handle sensitive data: API endpoints, file uploads, webhooks, CLI commands, background jobs, SSR entry points. Catalog data stores (databases, caches, file storage, session stores), external integrations (auth providers, payment, email, analytics), trust boundaries (unauthenticated to authenticated, user to admin, client to server), and sensitive data types (PII, credentials, financial, health)."
+  - step: "Phase 1: Data Flow Analysis"
+    description: "Identify 3-7 critical data flows (authentication, primary business flow, payment, user data, admin operations). Trace each from entry point through validation, processing, storage, and output, noting trust boundary crossings. Generate Mermaid data flow diagrams with protocol, trust level, and data sensitivity annotations on each edge."
+  - step: "Phase 2: STRIDE Analysis"
+    description: "Evaluate all 6 STRIDE categories for each entry point and component. Produce a per-component STRIDE matrix showing threat status. For each identified threat, document the scenario, code evidence, likelihood, impact, risk level, and specific mitigation with code reference. Depth scales from quick (top 5 entry points) to standard (all entry points) to deep (full matrix with diagrams)."
+  - step: "Phase 3: Risk Assessment"
+    description: "Score each threat on a likelihood-by-impact matrix producing CRITICAL, HIGH, MEDIUM, or LOW risk levels. Group threats by risk level with specific remediation guidance: CRITICAL includes exact code fix locations and effort estimates, HIGH includes mitigation approach and CQ gate references, MEDIUM includes recommendations, LOW is documented for monitoring."
+  - step: "Phase 4: Generate Report"
+    description: "Save a structured threat model report to docs/threat-model.md with executive summary, attack surface table, data flow diagrams (Mermaid), STRIDE matrix, threat details grouped by risk level, mitigations summary with priority and effort estimates, and ordered recommendations."
+  - step: "Phase 5: Create Action Items"
+    description: "Persist CRITICAL and HIGH threats to memory/backlog.md as high-severity entries. Suggest the appropriate remediation skill for each threat type: zuvo:hotfix for simple code fixes, zuvo:security-audit then zuvo:build for missing validation, zuvo:architecture for architecture gaps, zuvo:pentest for deeper testing, zuvo:write-tests for missing security tests."
+
+output:
+  artifact: "Threat model report + Mermaid data flow diagrams + backlog action items"
+  format: "A structured Markdown threat model saved to docs/threat-model.md with attack surface inventory, data flow diagrams, STRIDE matrix, ranked threat details, and mitigations summary."
+  sections:
+    - "Executive Summary (overall risk posture, critical findings, top recommendation)"
+    - "Attack Surface (entry points, data stores, external services, trust boundaries)"
+    - "Data Flow Diagrams (Mermaid DFDs with trust boundaries and data sensitivity)"
+    - "STRIDE Matrix (per-component threat evaluation table)"
+    - "Threat Details (grouped by CRITICAL, HIGH, MEDIUM, LOW with code evidence)"
+    - "Mitigations Summary (priority, effort, recommended skill for each)"
+    - "Recommendations (ordered security improvements)"
+
+examples:
+  - title: "Threat model completion block"
+    type: output_sample
+    sample:
+      language: text
+      code: |
+        ----------------------------------------------------
+        THREAT MODEL COMPLETE
+          Scope:       full project
+          Depth:       standard
+          Surface:     12 entry points, 3 data stores, 5 external services
+          Threats:     2 CRITICAL, 4 HIGH, 6 MEDIUM, 3 LOW
+          Report:      docs/threat-model.md
+          Diagrams:    3 data flow diagrams (Mermaid)
+          Backlog:     6 items added
+          Top threat:  Price tampering — server uses client-provided price (order.controller.ts:45)
+        ----------------------------------------------------
+    explanation: "The completion block summarizes the full threat model scope, threat counts by risk level, and highlights the highest-risk finding with a code reference."
+
+  - title: "STRIDE matrix output sample"
+    type: output_sample
+    sample:
+      language: text
+      code: |
+        STRIDE MATRIX
+        Component              S    T    R    I    D    E    Risk
+        ─────────────────────────────────────────────────────────
+        POST /api/auth/login   ⚠️    ✅   ⚠️    ✅   ⚠️    ✅   HIGH
+        GET  /api/users/:id    ✅   ✅   ✅   ⚠️    ✅   ⚠️    MEDIUM
+        POST /api/orders       ✅   ⚠️    ⚠️    ⚠️    ✅   ✅   MEDIUM
+        POST /api/admin/users  ⚠️    ⚠️    ✅   ✅   ✅   ⚠️    HIGH
+        WebSocket /ws/chat     ⚠️    ⚠️    ⚠️    ✅   ⚠️    ✅   HIGH
+    explanation: "The STRIDE matrix evaluates each entry point against all 6 threat categories. Warning markers indicate identified threats that need detailed analysis. Overall risk is derived from the combination of threat count and severity."
+
+  - title: "Standard invocation with focus"
+    type: invocation
+    command: "zuvo:threat-model src/modules/payments --focus api --depth deep --diagram"
+    result: |
+      THREAT MODEL COMPLETE
+        Scope:       src/modules/payments
+        Depth:       deep
+        Surface:     5 entry points, 2 data stores, 2 external services
+        Threats:     1 CRITICAL, 3 HIGH, 2 MEDIUM, 1 LOW
+        Report:      docs/threat-model.md
+        Diagrams:    2 data flow diagrams (Mermaid)
+        Backlog:     4 items added
+        Top threat:  Missing input validation on payment amount (payment.controller.ts:32)
+
+when_to_use: |
+  Use zuvo:threat-model before launching a new feature or service to identify security risks proactively, during security reviews or compliance preparation, after adding new entry points or trust boundaries, when onboarding security-sensitive integrations (payment, auth, PII handling), or periodically to ensure the threat model stays current with the codebase. Use --focus to scope to a specific domain (auth, data, api, infra) and --depth to control analysis thoroughness.
+
+when_not_to_use: |
+  For active exploitation testing of known vulnerabilities, use zuvo:pentest. For scanning existing code for security anti-patterns and known vulnerabilities, use zuvo:security-audit. For general code review, use zuvo:review. For architecture decision records without a security focus, use zuvo:architecture. zuvo:threat-model identifies what COULD be broken; zuvo:pentest tests what IS broken; zuvo:security-audit checks for known bad patterns.
+
+related_skills:
+  - slug: security-audit
+    relation: "zuvo:security-audit scans for known vulnerability patterns; zuvo:threat-model identifies potential threats from architecture and data flows"
+  - slug: pentest
+    relation: "zuvo:pentest actively tests for exploitable vulnerabilities; zuvo:threat-model identifies theoretical attack vectors"
+  - slug: hotfix
+    relation: "for immediate remediation of CRITICAL threats identified in the threat model"
+  - slug: architecture
+    relation: "zuvo:architecture documents structural decisions; threat model findings may require architecture-level changes"
+
+faq:
+  - q: "What is STRIDE and how does zuvo:threat-model use it?"
+    a: "STRIDE is a threat classification framework: Spoofing (impersonation), Tampering (data modification), Repudiation (deniability of actions), Information Disclosure (data leaks), Denial of Service (availability disruption), and Elevation of Privilege (unauthorized access). zuvo:threat-model evaluates each entry point and component against all 6 categories, producing a matrix that highlights where threats exist with code-backed evidence."
+  - q: "What are the depth levels?"
+    a: "Three levels: quick (top 5 highest-risk entry points, 2-3 flows, threat per component without evidence), standard (all entry points, 3-5 flows, threats with code evidence), and deep (all entry points plus background jobs, all flows, full STRIDE matrix with mitigations and Mermaid diagrams). Default is standard."
+  - q: "How are risk levels determined?"
+    a: "Each threat is scored on a likelihood-by-impact matrix. High likelihood + critical impact = CRITICAL. The four risk levels determine action priority: CRITICAL requires immediate action with specific code fix locations, HIGH should be addressed this sprint, MEDIUM planned for next sprint, LOW documented and monitored."
+  - q: "What does --focus do?"
+    a: "It scopes the analysis to a specific threat domain: auth (emphasis on Spoofing and Elevation of Privilege — token handling, session management, password storage, OAuth, MFA), data (Tampering and Information Disclosure — encryption, access controls, data retention, GDPR), api (Spoofing, Tampering, Information Disclosure — input validation, rate limiting, auth coverage, response filtering), infra (Denial of Service and Tampering — DDoS protection, config secrets, container security, supply chain)."
+  - q: "Does zuvo:threat-model generate diagrams?"
+    a: "Yes. With the --diagram flag (or automatically at --depth deep), it generates Mermaid data flow diagrams showing trust boundaries, data sensitivity annotations, and protocol labels on each edge. These render in GitHub, VS Code, and most Markdown viewers."
+
+arguments:
+  - flag: "<path or module>"
+    description: "Scope the threat model to a specific directory or module. If omitted, models the entire project."
+  - flag: "--focus [auth|data|api|infra]"
+    description: "Focus on a specific threat domain, emphasizing relevant STRIDE categories for that domain."
+  - flag: "--depth [quick|standard|deep]"
+    description: "Analysis depth. quick: top 5 entry points. standard: all entry points with evidence. deep: full matrix with diagrams. Default: standard."
+  - flag: "--output [path]"
+    description: "Save report to specific path. Default: docs/threat-model.md."
+  - flag: "--diagram"
+    description: "Generate Mermaid data flow diagrams with trust boundaries and data sensitivity annotations. Enabled by default at --depth deep."
+
+checks: null
+frameworks: [TypeScript, JavaScript, Python, React / Next.js]
+modes: null
+agents: null
+benchmarks: null
+comparison_table: null
