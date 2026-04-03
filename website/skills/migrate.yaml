@@ -1,0 +1,216 @@
+schema_version: 1
+last_synced: "2026-04-03"
+
+meta:
+  slug: migrate
+  title: "Migrate — Database, Framework & API Migration Runner"
+  description: "Structured migration runner for database schema changes, framework/library major upgrades, and API version transitions. Auto-detects ORM or migration tool, generates forward and rollback migrations, applies codemods, and verifies safety with a pre-flight checklist."
+  category: task
+  og_image: /og/skills/migrate.png
+
+seo:
+  target_queries:
+    - "database migration runner with rollback Claude Code"
+    - "framework major upgrade codemod automation AI"
+    - "API version migration with deprecation layer"
+    - "safe database schema migration ORM detection"
+    - "structured migration workflow safety checklist"
+  canonical: /en/skills/migrate
+
+stats:
+  - label: Migration Modes
+    value: "3"
+    detail: "db (schema migrations), upgrade (dependency major bumps), api (versioned endpoint transitions)"
+  - label: Supported ORMs
+    value: "8"
+    detail: "Prisma, TypeORM, Knex, Django, Alembic (SQLAlchemy), Rails, Drizzle, Raw SQL"
+  - label: Safety Checks
+    value: "7"
+    detail: "Backward compatible, rollback tested, zero-downtime, data preserved, indexes added, constraints have defaults, consumer notification"
+
+problem: |
+  Migrations are high-risk operations where mistakes are costly and hard to reverse. Database schema changes can lock tables, lose data, or break rollbacks. Framework upgrades introduce breaking API changes scattered across dozens of files. API version transitions require deprecation layers, consumer notification, and parallel endpoint support. Developers handling these manually forget rollback scripts, miss index additions, skip safety checks, and ship migrations that work forward but cannot be reversed. zuvo:migrate enforces a structured 4-phase process: detect the project's migration tooling automatically, analyze impact with risk classification, generate migration artifacts in the project's native format (with rollback), and verify safety with a pre-flight checklist covering backward compatibility, zero-downtime, data preservation, and consumer notification.
+
+how_it_works:
+  - step: "Phase 0: Detect Migration Context"
+    description: "Read project context and auto-detect the ORM or migration framework from config files (Prisma, TypeORM, Knex, Django, Alembic, Rails, Drizzle, or raw SQL). Gather mode-specific context: current schema state for db mode, current package version and breaking changes for upgrade mode, or API version strategy and route definitions for api mode."
+  - step: "Phase 1: Analyze Impact"
+    description: "Assess the migration's impact. For db: classify each change as addition, modification, or deletion and flag destructive operations. For upgrade: find all usages of breaking APIs and classify as auto-fixable, manual-fix, or removed. For api: map all endpoints and classify as unchanged, modified, deprecated, or new. Assign risk level (LOW/MEDIUM/HIGH) based on destructiveness and scope."
+  - step: "Phase 2: Generate Migration"
+    description: "Generate migration files in the project's native format. For db: create forward migration with indexes, constraints, and defaults, plus rollback if --rollback and data script if --data. For upgrade: update manifest, apply codemods for breaking changes, flag manual fixes. For api: create versioned route structure, copy and modify endpoints, add deprecation headers, generate migration guide."
+  - step: "Phase 3: Verify"
+    description: "Run mode-specific verification: type checker, test suite, migration apply in preview mode, rollback apply. Report pass/fail for each check."
+  - step: "Phase 4: Safety Checklist"
+    description: "Evaluate 7 safety checks: backward compatible, rollback tested, zero-downtime possible, data preserved, indexes added, constraints have defaults, consumer notification. Print warnings for unchecked items with specific recommendations. Stage and commit."
+
+output:
+  artifact: "Migration files committed + rollback (if --rollback) + safety checklist + verification results"
+  format: "A structured MIGRATION COMPLETE block with migration type, file paths, impact summary, risk level, rollback path, test results, verification matrix, safety score, and framework-specific deploy commands."
+  sections:
+    - "Type and framework"
+    - "Migration file paths"
+    - "Impact summary (files affected, changes)"
+    - "Risk level with reason"
+    - "Rollback path"
+    - "Verification matrix (types, tests, apply, rollback)"
+    - "Safety checklist score"
+    - "Next steps (framework-specific deploy commands)"
+
+examples:
+  - title: "Migration complete block for a database schema change"
+    type: output_sample
+    sample:
+      language: markdown
+      code: |
+        MIGRATION COMPLETE
+        ----------------------------------------------------
+        Type:       db (Prisma)
+        Migration:  prisma/migrations/20260403120000_add_user_preferences/migration.sql
+        Impact:     2 files affected, 1 table added, 2 columns added
+        Risk:       LOW (additive only — new table with defaults)
+        Rollback:   prisma/migrations/20260403120000_add_user_preferences/rollback.sql
+        Tests:      passing
+        Verify:     types PASS | tests PASS | apply PASS | rollback PASS
+        Safety:     7/7 checks passed
+        Commit:     f4e5d6c -- migrate: db add user_preferences table with indexes
+
+        Next steps:
+          npx prisma migrate deploy                -- apply to production
+          zuvo:review prisma/migrations/            -- independent review
+          git push origin feature/user-preferences  -- push when ready
+        ----------------------------------------------------
+    explanation: "The output shows a LOW risk additive migration with all safety checks passing. The framework-specific deploy command (prisma migrate deploy) is included in next steps."
+
+  - title: "Framework upgrade invocation"
+    type: invocation
+    command: "zuvo:migrate upgrade next 15 --dry-run"
+    result: |
+      MIGRATION CONTEXT
+        Mode:       upgrade
+        Framework:  Next.js
+        Current:    14.2.3
+        Target:     15.x (latest)
+        Tool:       pnpm
+        Directory:  package.json
+
+      IMPACT ANALYSIS
+        Mode:       upgrade
+        Files:      23 files affected
+        Changes:    8 auto-fixable, 12 manual-fix, 3 removed
+        Risk:       HIGH (>10 files affected, removed APIs)
+        Reason:     3 APIs removed in Next.js 15, 12 call sites need manual review
+
+      DRY RUN — no files modified. Run without --dry-run to proceed.
+
+  - title: "API version migration with deprecation layer"
+    type: before_after
+    before:
+      language: typescript
+      code: |
+        // routes/v1/orders.ts — current version
+        router.get('/api/v1/orders', getOrders);
+        router.post('/api/v1/orders', createOrder);
+    after:
+      language: typescript
+      code: |
+        // routes/v2/orders.ts — new version with schema changes
+        router.get('/api/v2/orders', getOrdersV2);
+        router.post('/api/v2/orders', createOrderV2);
+
+        // routes/v1/orders.ts — deprecated with headers
+        router.get('/api/v1/orders', deprecationMiddleware('2026-07-01'), getOrders);
+        router.post('/api/v1/orders', deprecationMiddleware('2026-07-01'), createOrder);
+    explanation: "API mode creates new versioned endpoints and adds deprecation middleware to old endpoints with a sunset date. A migration guide document is also generated."
+
+when_to_use: |
+  Use zuvo:migrate for any operation that changes database schemas (new tables, columns, indexes, constraints), upgrades frameworks or libraries across major versions (Next.js 14 to 15, Django 4 to 5), or transitions API versions with backward compatibility requirements. Especially valuable for high-risk migrations where rollback safety, zero-downtime, and data preservation matter.
+
+when_not_to_use: |
+  For general database performance analysis without schema changes, use zuvo:db-audit. For deploying already-created migrations to production, use zuvo:deploy. For checking dependency versions without upgrading, use zuvo:dependency-audit. For general refactoring that does not cross a version boundary, use zuvo:refactor. For feature implementation that happens to include a migration, use zuvo:build and handle the migration as part of the build.
+
+related_skills:
+  - slug: db-audit
+    relation: "use db-audit to analyze database performance, query patterns, and indexing before deciding what schema changes to make"
+  - slug: deploy
+    relation: "use deploy to apply the generated migration to production environments after review"
+  - slug: dependency-audit
+    relation: "use dependency-audit to check for outdated dependencies and security vulnerabilities before deciding on upgrades"
+  - slug: review
+    relation: "use review for independent quality verification of generated migration files before deploying"
+
+faq:
+  - q: "What does zuvo:migrate do?"
+    a: "It runs a structured 4-phase migration workflow: (0) auto-detect the project's ORM or migration framework, (1) analyze impact and classify risk, (2) generate migration files in the project's native format with rollback, (3) verify safety with type checking, tests, migration preview, and a 7-point safety checklist. It supports three modes: db for schema changes, upgrade for major dependency bumps, and api for versioned endpoint transitions."
+  - q: "How does zuvo:migrate detect which ORM or migration tool to use?"
+    a: "It scans for config files: prisma/schema.prisma for Prisma, ormconfig.ts for TypeORM, knexfile.ts for Knex, manage.py with Django imports for Django, alembic.ini for Alembic, db/migrate/ with Gemfile for Rails, drizzle.config.ts for Drizzle, or a migrations/ directory with raw SQL files. If none are detected, it asks you for the migration format."
+  - q: "What does --dry-run do?"
+    a: "--dry-run stops after Phase 1 (impact analysis) and prints the migration plan without generating or executing any files. No files are written, no commit is made. Use it to preview the scope and risk before committing to the migration."
+  - q: "What does the safety checklist cover?"
+    a: "Seven checks: backward compatibility (data survives rollback), rollback tested (down migration works), zero-downtime possible (no table locks on large tables), data preserved (no destructive DROP without backup), indexes added for new queries, constraints have defaults (NOT NULL columns have DEFAULT), and consumer notification (API clients informed of changes). Each unchecked item produces a specific warning with recommendations."
+  - q: "Can I generate just the rollback without running the forward migration?"
+    a: "Pass --rollback to generate the down/rollback migration alongside the forward migration. The rollback is generated explicitly even if the framework auto-generates reversible migrations, so you can review exactly what will happen on rollback."
+
+arguments:
+  - flag: "db [description]"
+    description: "Database schema migration mode. Provide a description of the schema change (e.g., 'add user preferences table'). Generates migration in the project's native ORM format."
+  - flag: "upgrade [package] [target-version]"
+    description: "Framework/library major upgrade mode. Specify the package and target version (e.g., 'next 15'). Applies codemods for breaking changes and flags manual fixes."
+  - flag: "api [version-spec]"
+    description: "API version transition mode. Specify the version transition (e.g., 'v1->v2'). Creates versioned route structure with deprecation layer."
+  - flag: "--dry-run"
+    description: "Preview the migration plan and impact analysis without generating or executing files. Stops after Phase 1."
+  - flag: "--rollback"
+    description: "Generate an explicit rollback (down) migration alongside the forward migration."
+  - flag: "--data"
+    description: "Include a data transformation script alongside schema changes. Generates a separate file that runs after the schema migration."
+
+checks: null
+
+frameworks:
+  - TypeScript
+  - JavaScript
+  - Python
+  - React / Next.js
+  - Django
+  - Rails
+  - Go
+
+modes:
+  - name: "db"
+    description: "Database schema migration — generates forward and rollback migrations in the project's native ORM format (Prisma, TypeORM, Knex, Django, Alembic, Rails, Drizzle, or raw SQL)."
+  - name: "upgrade"
+    description: "Framework/library major upgrade — updates manifest, applies codemods for breaking changes, flags items requiring manual intervention."
+  - name: "api"
+    description: "API version transition — creates versioned route structure, adds deprecation headers to old endpoints, generates migration guide document."
+
+agents: null
+
+benchmarks:
+  - claim: "Auto-detects 8 ORM and migration frameworks from project config files"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 0.1 — detection table with 8 framework rows (Prisma, TypeORM, Knex, Django, Alembic, Rails, Drizzle, Raw SQL)"
+  - claim: "7-point safety checklist covers backward compatibility, rollback, zero-downtime, data preservation, indexes, constraints, and consumer notification"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 4 Safety Checklist — 7 checklist items"
+  - claim: "Risk classification distinguishes LOW (additive), MEDIUM (modifications), and HIGH (destructive or >10 files) migrations"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 1.2 Risk Assessment — 3 risk levels with specific criteria"
+  - claim: "--dry-run stops after impact analysis without writing any files"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 1 — 'If --dry-run: Print the impact analysis and STOP. Do not proceed to Phase 2.'"
+
+comparison_table:
+  columns: ["Capability", "Manual Migration", "zuvo:migrate"]
+  rows:
+    - ["ORM/tool detection", "Developer remembers which tool", "Auto-detected from 8 config file patterns"]
+    - ["Impact analysis", "Mental estimate", "Classified changes with risk level (LOW/MEDIUM/HIGH)"]
+    - ["Rollback generation", "Often forgotten", "Explicit --rollback flag, verified in Phase 3"]
+    - ["Breaking change detection", "Read changelog manually", "Automated codemod + manual-fix classification"]
+    - ["Safety verification", "Ad-hoc or skipped", "7-point checklist with specific warnings"]
+    - ["Data preservation", "Hope for the best", "Destructive operations flagged, --data for transformations"]
+    - ["API deprecation", "Manual headers and docs", "Deprecation middleware + sunset headers + migration guide"]
+    - ["Audit trail", "Commit message only", "Run log + project journal + architecture update"]
