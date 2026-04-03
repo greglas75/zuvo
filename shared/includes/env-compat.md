@@ -7,7 +7,7 @@
 | Capability | Claude Code | Codex | Cursor 3+ |
 |-----------|-------------|-------|-----------|
 | Sub-agent dispatch | `Task` / `Agent` tool — parallel, model-routed | Native agents / TOML agents in `~/.codex/agents/` — parallel, sandboxed | Subagents in `.cursor/agents/` — parallel via worktrees |
-| Concurrency | Up to 7 parallel subagents | Capped at `max_threads: 6` | Up to 4 parallel subagents |
+| Concurrency | Up to 7 parallel subagents | Capped at `max_threads: 6` | Up to 8 parallel agents (10 workers/user, 50/team enterprise) |
 | Model selection | Explicit per task dispatch | Fixed per TOML config or session model | Per-agent frontmatter (`model: inherit\|fast\|<id>`) |
 | Progress reporting | Structured task updates | Inline progress or native status updates | Inline print: `STEP: [name] [START\|DONE]` |
 | User interaction | Native interactive prompts | Codex CLI: ask inline. Codex App async: safest default. | Interactive in Agent tabs, safest default in background agents |
@@ -116,7 +116,7 @@ is_background: false
 | `readonly` | `true` / `false` | Read-only agents cannot modify files |
 | `is_background` | `true` / `false` | Run in cloud VM with worktree isolation |
 
-**Dispatch:** Skills can reference subagents by name. Cursor spawns them in parallel (up to 4 concurrent). Each subagent gets its own context and tool access.
+**Dispatch:** Skills can reference subagents by name. Cursor spawns them in parallel (up to 8 concurrent, 10 workers per user). Each subagent gets its own context and tool access.
 
 **Worktree isolation:** Background agents (`is_background: true`) automatically run in isolated git worktrees. Foreground subagents share the workspace — coordinate to avoid file conflicts.
 
@@ -144,7 +144,7 @@ When a skill needs to dispatch N agents:
    → NO: continue
 
 3. Is subagent dispatch available? (Cursor 3+)
-   → YES: Dispatch up to 4 concurrent subagents
+   → YES: Dispatch up to 8 concurrent subagents
    → NO: continue
 
 4. Fallback (Cursor <3.0, unknown environment)

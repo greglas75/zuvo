@@ -765,7 +765,7 @@ Refer to `env-compat.md` for dispatch patterns:
 
 - **Claude Code:** Use the Task tool for parallel agent dispatch. Set model and type per agent.
 - **Codex:** Agents are TOML configs. Skills reference agents by name.
-- **Cursor 3+:** Dispatch subagents in parallel (up to 4 concurrent) via `.cursor/agents/` with `readonly: true` for analysis agents.
+- **Cursor 3+:** Dispatch subagents in parallel (up to 8 concurrent) via `.cursor/agents/` with `readonly: true` for analysis agents.
 - **Cursor <3.0:** No agent spawning. Execute each agent's analysis sequentially yourself, maintaining the same output format and quality standards.
 
 Progress tracking:

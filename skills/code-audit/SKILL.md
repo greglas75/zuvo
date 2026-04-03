@@ -444,6 +444,6 @@ Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
 
 - Use **Sonnet** for all batch agents in QUICK and STANDARD modes
 - Use **Opus** for DEEP mode batch agents
-- Claude Code may parallelize with up to 7 Task agents. Codex up to 6. Cursor 3+ up to 4 subagents. Cursor <3.0: process batches sequentially.
+- Claude Code may parallelize with up to 7 Task agents. Codex up to 6. Cursor 3+ up to 8 subagents. Cursor <3.0: process batches sequentially.
 - Read the project's AGENTS.md or CLAUDE.md first for stack-specific conventions
 - Estimated durations: QUICK ~2 min for 50 files, DEEP ~15 min for 50 files
