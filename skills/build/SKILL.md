@@ -51,6 +51,7 @@ CORE FILES LOADED:
   1. {plugin_root}/rules/cq-patterns.md           -- READ/MISSING
   2. {plugin_root}/rules/file-limits.md            -- READ/MISSING
   3. {plugin_root}/shared/includes/auto-docs.md    -- READ/MISSING
+  4. {plugin_root}/shared/includes/session-memory.md -- READ/MISSING
 ```
 
 Where `{plugin_root}` is resolved per `env-compat.md`.
@@ -519,6 +520,19 @@ After printing the BUILD COMPLETE block, update project documentation per `share
 - **api-changelog.md**: Update if any API endpoints, schemas, or contracts were added/modified.
 
 Use context already gathered during the build — do not re-read source files. If auto-docs fails, log a warning and proceed to Run Log.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with feature description, tier, CQ score, verdict.
+- **Active Work**: Update current branch and work-in-progress.
+- **Backlog Summary**: Recount if backlog items were persisted during this build.
+- **Tech Stack**: Add new discoveries if build introduced new dependencies.
+
+If `memory/project-state.md` doesn't exist, create it (full Tech Stack detection + all sections).
 
 ---
 

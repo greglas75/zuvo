@@ -44,6 +44,7 @@ CORE FILES LOADED:
   4. {plugin_root}/shared/includes/verification-protocol.md  -- READ/MISSING
   5. {plugin_root}/shared/includes/tdd-protocol.md           -- READ/MISSING
   6. {plugin_root}/shared/includes/auto-docs.md              -- READ/MISSING
+  7. {plugin_root}/shared/includes/session-memory.md         -- READ/MISSING
 ```
 
 Where `{plugin_root}` is resolved per `env-compat.md` (e.g., `CLAUDE_PLUGIN_ROOT` in Claude Code).
@@ -416,6 +417,17 @@ After printing the EXECUTION COMPLETE block, update project documentation per `s
 - **api-changelog.md**: Update if any task added/modified/removed API endpoints or schemas.
 
 Use per-task context already gathered during execution — do not re-read source files. If auto-docs fails, log a warning and proceed to Run Log.
+
+### Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with task completion summary, average CQ/Q scores.
+- **Active Work**: Update with remaining tasks or clear if all completed.
+- **Backlog Summary**: Recount if any findings were persisted.
+- **Key Decisions**: Append any architectural decisions made during execution.
+
+If `memory/project-state.md` doesn't exist, create it (full Tech Stack detection + all sections).
 
 ### Run Log
 

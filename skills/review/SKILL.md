@@ -29,6 +29,7 @@ CORE FILES LOADED:
   3. quality-gates.md    -- [READ | MISSING -> STOP]
   4. cq-patterns.md      -- [READ | MISSING -> STOP]
   5. auto-docs.md        -- [READ | MISSING -> WARN]
+  6. session-memory.md   -- [READ | MISSING -> WARN]
 ```
 
 If any file is missing, STOP. Do not proceed from memory.
@@ -740,6 +741,18 @@ After printing the REVIEW COMPLETE block, update project documentation per `shar
 - **In REPORT mode:** Skip auto-docs (no code changes made).
 
 Use context from the review findings and applied fixes — do not re-read source files. If auto-docs fails, log a warning and proceed to Run Log.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with review scope, tier, verdict, issue counts.
+- **Backlog Summary**: Recount if findings were persisted during this review.
+- In REPORT mode: update activity only. In FIX mode: also update Active Work.
+
+If `memory/project-state.md` doesn't exist, create it (full Tech Stack detection + all sections).
 
 ---
 

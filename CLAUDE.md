@@ -119,7 +119,8 @@ Every SKILL.md follows this structure:
 5. Numbered phases (Phase 0, 1, 2...)
 6. Named output block (e.g., `SHIP COMPLETE`)
 7. Auto-docs update via `../../shared/includes/auto-docs.md` (updates project-journal, architecture, api-changelog)
-8. Run log append via `../../shared/includes/run-logger.md`
+8. Session memory update via `../../shared/includes/session-memory.md` (updates memory/project-state.md)
+9. Run log append via `../../shared/includes/run-logger.md`
 
 Reference: `skills/build/SKILL.md` is the canonical template.
 

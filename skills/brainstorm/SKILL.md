@@ -31,6 +31,7 @@ CORE FILES LOADED:
   2. env-compat.md       -- READ
   3. cq-patterns.md      -- READ
   4. auto-docs.md        -- READ
+  5. session-memory.md   -- READ
 ```
 
 If any required file is missing, STOP. Do not proceed from memory.
@@ -295,6 +296,18 @@ After printing the SPEC COMPLETE block, update project documentation per `shared
 - **architecture.md**: Update if the spec introduces new components, services, or structural decisions.
 
 Use context from the spec document and agent reports — do not re-read source files. If auto-docs fails, log a warning and proceed to Run Log.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with spec topic and approval status.
+- **Active Work**: Add pending spec path if approved.
+- **Key Decisions**: Append architectural/design decisions from the spec.
+
+If `memory/project-state.md` doesn't exist, create it (full Tech Stack detection + all sections).
 
 ---
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Zuvo SessionStart hook
-# Reads the meta-skill router (using-zuvo) and injects it as session context
-# so the agent knows about available skills from the first message.
+# Reads the meta-skill router (using-zuvo) and project state snapshot,
+# then injects both as session context so the agent knows about available
+# skills AND project context from the first message.
 
 set -euo pipefail
 
@@ -13,10 +14,21 @@ PLUGIN_DIR="$(cd "${HOOKS_DIR}/.." && pwd)"
 
 ROUTER_FILE="${PLUGIN_DIR}/skills/using-zuvo/SKILL.md"
 
+# Project state lives in the PROJECT directory (cwd), not the plugin directory
+PROJECT_STATE="memory/project-state.md"
+
 # ---------------------------------------------------------------------------
 # Read the meta-skill router content
 # ---------------------------------------------------------------------------
 router_content=$(cat "$ROUTER_FILE" 2>&1 || echo "Failed to read using-zuvo skill")
+
+# ---------------------------------------------------------------------------
+# Read project state if it exists (session persistence)
+# ---------------------------------------------------------------------------
+project_state=""
+if [ -f "$PROJECT_STATE" ]; then
+    project_state=$(cat "$PROJECT_STATE" 2>/dev/null || true)
+fi
 
 # ---------------------------------------------------------------------------
 # JSON-safe escaping via parameter substitution
@@ -40,6 +52,12 @@ escaped_router=$(json_escape "$router_content")
 # Build the context payload
 # ---------------------------------------------------------------------------
 payload="<IMPORTANT>\nYou have zuvo skills installed.\n\nBelow is the zuvo meta-skill router. It tells you which skill to invoke for any given task. For all skills listed here, use the Skill tool to invoke them.\n\n${escaped_router}\n</IMPORTANT>"
+
+# Append project state if available
+if [ -n "$project_state" ]; then
+    escaped_state=$(json_escape "$project_state")
+    payload="${payload}\n\n<PROJECT-STATE>\nBelow is the persistent project state from previous zuvo sessions. Use this context to understand the project, recent work, active tasks, and key decisions. Do not ask the user for information that is already here.\n\n${escaped_state}\n</PROJECT-STATE>"
+fi
 
 # ---------------------------------------------------------------------------
 # Platform detection and JSON output

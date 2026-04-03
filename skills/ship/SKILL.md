@@ -37,6 +37,7 @@ CORE FILES LOADED:
   2. ../../shared/includes/codesift-setup.md — READ/MISSING
   3. ../../shared/includes/run-logger.md     — READ/MISSING
   4. ../../shared/includes/auto-docs.md      — READ/MISSING
+  5. ../../shared/includes/session-memory.md — READ/MISSING
 ```
 
 If any file is missing: proceed in degraded mode. Note which files are unavailable in the Phase 5 output.
@@ -322,7 +323,17 @@ After printing the SHIP COMPLETE block, update project documentation per `../../
 
 Use context from the ship artifact (`memory/last-ship.json`) and Phase 2-4 data — do not re-read source files. If auto-docs fails, log a warning and proceed to Run Log.
 
-### 3. Run logger
+### 3. Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `../../shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with version change, flow, review depth.
+- **Last Release**: Overwrite from `memory/last-ship.json`.
+- **Active Work**: Clear completed branch/PR info.
+
+If `memory/project-state.md` doesn't exist, create it (full Tech Stack detection + all sections).
+
+### 4. Run logger
 
 Append a run log entry per `../../shared/includes/run-logger.md`:
 

@@ -52,6 +52,7 @@ CORE FILES LOADED:
   3. {plugin_root}/shared/includes/quality-gates.md    -- READ/MISSING
   4. {plugin_root}/shared/includes/tdd-protocol.md     -- READ/MISSING
   5. {plugin_root}/shared/includes/auto-docs.md        -- READ/MISSING
+  6. {plugin_root}/shared/includes/session-memory.md   -- READ/MISSING
 ```
 
 Where `{plugin_root}` is resolved per `env-compat.md` (e.g., `CLAUDE_PLUGIN_ROOT` in Claude Code).
@@ -241,6 +242,18 @@ After printing the PLAN COMPLETE block, update project documentation per `shared
 - **architecture.md**: Update if the plan introduces new components or changes module structure.
 
 Use context from the plan document and agent reports — do not re-read source files. If auto-docs fails, log a warning and proceed to Run Log.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with plan topic and task count.
+- **Active Work**: Add plan path with approval status.
+- **Key Decisions**: Append architectural decisions from the plan.
+
+If `memory/project-state.md` doesn't exist, create it (full Tech Stack detection + all sections).
 
 ---
 
