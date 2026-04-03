@@ -56,6 +56,7 @@ Do this on every message. Not just the first one.
 | Audit security (OWASP, auth, secrets) | `zuvo:security-audit` |
 | Run penetration test | `zuvo:pentest` |
 | Audit performance | `zuvo:performance-audit` |
+| Run load tests, stress tests, performance baselines | `zuvo:load-test` |
 | Audit database (queries, schema, indexes) | `zuvo:db-audit` |
 | Audit dependencies (outdated, vulnerable, unused) | `zuvo:dependency-audit` |
 | Audit CI/CD pipelines | `zuvo:ci-audit` |
@@ -63,6 +64,7 @@ Do this on every message. Not just the first one.
 | Audit SEO and structured data | `zuvo:seo-audit` |
 | Audit codebase structure and organization | `zuvo:structure-audit` |
 | Review architecture, create ADR | `zuvo:architecture` |
+| Audit regulatory compliance (GDPR, PCI-DSS, HIPAA, SOC 2) | `zuvo:compliance-audit` |
 | STRIDE threat modeling, attack surface mapping | `zuvo:threat-model` |
 | Review UI/UX consistency and accessibility | `zuvo:design-review` |
 | Design new UI (components, layouts, systems) | `zuvo:design` |
