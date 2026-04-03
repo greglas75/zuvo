@@ -593,3 +593,16 @@ Same format used by seo-fix for backlog updates. Deduplicate against existing en
 | Content < 300 words avg | Expand thin content | Content quality drives all signals |
 | D3 < 50 (Structured Data) | Add/fix JSON-LD schemas | Schema markup boosts citations |
 | Tier A (>= 85) | Periodic re-audit or add --live-url for CWV data | Maintain and measure |
+
+---
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+- SKILL: `seo-audit`
+- CQ_SCORE: `-`
+- Q_SCORE: `-`
+- VERDICT: PASS/WARN/FAIL from findings
+- TASKS: number of pages audited
+- DURATION: `-`
+- NOTES: scope summary (max 80 chars)

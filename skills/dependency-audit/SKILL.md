@@ -434,3 +434,16 @@ Score >= 85%                -> schedule next audit in 3 months
   fallback
 - `--no-api` flag skips Bundlephobia and OpenSSF calls for air-gapped or
   rate-limited environments
+
+---
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+- SKILL: `dependency-audit`
+- CQ_SCORE: `-`
+- Q_SCORE: `-`
+- VERDICT: PASS/WARN/FAIL from findings
+- TASKS: number of dependencies audited
+- DURATION: `-`
+- NOTES: scope summary (max 80 chars)

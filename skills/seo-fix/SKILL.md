@@ -438,3 +438,16 @@ Same format as seo-audit backlog persistence. Uses the stable check ID from the 
   "build_result": "PASS"
 }
 ```
+
+---
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+- SKILL: `seo-fix`
+- CQ_SCORE: `-`
+- Q_SCORE: `-`
+- VERDICT: PASS/WARN/FAIL from fix results
+- TASKS: number of fixes applied
+- DURATION: `-`
+- NOTES: fix summary (max 80 chars)

@@ -458,7 +458,7 @@ EXECUTION VERIFICATION
 
 Collect findings from all sources (self-eval, auditors, verification warnings).
 
-For each item, persist to `memory/backlog.md`:
+For each item, persist to `memory/backlog.md` per `{plugin_root}/shared/includes/backlog-protocol.md`:
 
 ```markdown
 - B-{N} | {file}:{line} | {rule-id} | {description} | seen:1 | confidence:{0-100} | source:build | {date}

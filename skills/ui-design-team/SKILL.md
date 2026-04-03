@@ -345,3 +345,16 @@ Before committing any UI change, verify:
 | A11y score < 3/5 | Accessibility remediation | Direct fix with WCAG reference |
 | i18n score < 3/5 | i18n infrastructure | Direct fix (logical properties, i18n keys) |
 | Multiple P0 issues | Full redesign | `zuvo:design improve [path]` |
+
+---
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+- SKILL: `ui-design-team`
+- CQ_SCORE: `-`
+- Q_SCORE: `-`
+- VERDICT: PASS if review complete
+- TASKS: number of components reviewed
+- DURATION: `-`
+- NOTES: scope summary (max 80 chars)

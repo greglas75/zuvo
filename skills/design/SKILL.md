@@ -291,3 +291,16 @@ This skill produces two artifacts in `.interface-design/`:
 - Every choice traceable. If asked "why this color?" trace to intent -> domain -> token.
 - Build for the detected stack. Adapt to what exists in the project.
 - When improving existing UI, preserve all functionality. Only change visual/interaction design.
+
+---
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+- SKILL: `design`
+- CQ_SCORE: `-`
+- Q_SCORE: `-`
+- VERDICT: PASS if design system generated
+- TASKS: -
+- DURATION: `-`
+- NOTES: design system scope (max 80 chars)

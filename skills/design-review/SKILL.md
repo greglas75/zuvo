@@ -354,3 +354,16 @@ With artifacts = adds craft validation + intent-aware token matching.
 | 3+ DX failures in same component | Full multi-agent review | `zuvo:ui-design-team [path]` |
 | DAP anti-patterns found | Refactor component | `zuvo:refactor [component]` |
 | No design system detected | Bootstrap design system | `zuvo:design extract [path]` |
+
+---
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+- SKILL: `design-review`
+- CQ_SCORE: `DX score or -`
+- Q_SCORE: `-`
+- VERDICT: PASS/WARN/FAIL from DX gates
+- TASKS: number of views reviewed
+- DURATION: `-`
+- NOTES: scope summary (max 80 chars)

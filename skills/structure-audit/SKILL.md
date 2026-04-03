@@ -480,3 +480,16 @@ Confirm each fix with the user before executing.
 | SA13 Hot file (high churn + complexity) | Refactor hot file | `zuvo:refactor [file]` |
 | SA7 God module detected | Split oversized file | `zuvo:refactor [file]` |
 | SA6 Layer violations | Architecture analysis | `zuvo:architecture --mode review` |
+
+---
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+- SKILL: `structure-audit`
+- CQ_SCORE: `-`
+- Q_SCORE: `-`
+- VERDICT: PASS/WARN/FAIL from findings
+- TASKS: number of files analyzed
+- DURATION: `-`
+- NOTES: scope summary (max 80 chars)

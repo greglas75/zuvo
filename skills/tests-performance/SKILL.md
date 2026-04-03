@@ -289,3 +289,16 @@ TESTS-PERFORMANCE COMPLETE
   Top impact:  [description of #1 change] -> expected [P]% improvement
 -----
 ```
+
+---
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+- SKILL: `tests-performance`
+- CQ_SCORE: `-`
+- Q_SCORE: `Q score or -`
+- VERDICT: PASS/WARN/FAIL from findings
+- TASKS: number of test suites analyzed
+- DURATION: `-`
+- NOTES: scope summary (max 80 chars)

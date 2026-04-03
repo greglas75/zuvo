@@ -356,3 +356,16 @@ Score >= 80%             -> schedule next audit in 3 months
   with actual run durations
 - CodeSift is not heavily used in this skill (CI files are YAML, not code),
   but `codesift-setup.md` is still loaded for consistency with other audit skills
+
+---
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+- SKILL: `ci-audit`
+- CQ_SCORE: `-`
+- Q_SCORE: `-`
+- VERDICT: PASS/WARN/FAIL from findings
+- TASKS: number of pipelines audited
+- DURATION: `-`
+- NOTES: scope summary (max 80 chars)

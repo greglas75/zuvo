@@ -442,3 +442,16 @@ Read `memory/coverage.md`. If UNCOVERED or PARTIAL files remain, go back to Phas
 3. Test what the code OWNS, mock what it DELEGATES.
 4. Fake timers for time-dependent code. Real implementations for pure functions.
 5. Quality gates are not optional. Q1-Q17 evaluation happens on every test file, every time.
+
+---
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+- SKILL: `write-tests`
+- CQ_SCORE: `-`
+- Q_SCORE: `Q score from written tests`
+- VERDICT: PASS if tests generated and passing
+- TASKS: number of test files created
+- DURATION: `-`
+- NOTES: scope summary (max 80 chars)

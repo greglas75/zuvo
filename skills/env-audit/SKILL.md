@@ -363,3 +363,16 @@ Score >= 80%                     -> schedule next audit in 3 months
   grep), but `codesift-setup.md` is loaded for consistency
 - The boolean truthy gotcha (`if (process.env.FLAG)` -- always true for any
   non-empty string) is a common source of production bugs; flag it prominently
+
+---
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+- SKILL: `env-audit`
+- CQ_SCORE: `-`
+- Q_SCORE: `-`
+- VERDICT: PASS/WARN/FAIL from findings
+- TASKS: number of environments audited
+- DURATION: `-`
+- NOTES: scope summary (max 80 chars)

@@ -373,3 +373,16 @@ Human review recommended before committing.
 5. Never generate auth fixture if the login strategy is ambiguous.
 6. In monorepo, require scope to one app root.
 7. Prefer sensible defaults over interactive questions.
+
+---
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+- SKILL: `write-e2e`
+- CQ_SCORE: `-`
+- Q_SCORE: `Q score from written tests`
+- VERDICT: PASS if tests generated and passing
+- TASKS: number of test files created
+- DURATION: `-`
+- NOTES: scope summary (max 80 chars)

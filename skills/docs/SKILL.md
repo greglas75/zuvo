@@ -328,3 +328,16 @@ If target file exists, ask before overwriting (except in update mode). Non-inter
 2. Write for the reader. README is for someone who just found the repo. Runbook is for someone at 2am.
 3. Start with the most useful information. Quick Start before architecture details.
 4. Stale docs are worse than no docs. Mark uncertainty with TODO rather than leaving wrong information.
+
+---
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+- SKILL: `docs`
+- CQ_SCORE: `-`
+- Q_SCORE: `-`
+- VERDICT: PASS if documentation generated
+- TASKS: -
+- DURATION: `-`
+- NOTES: doc type and target (max 80 chars)

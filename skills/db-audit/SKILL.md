@@ -536,3 +536,16 @@ Multiple dimensions fail  -> zuvo:review [path]
   ORM-specific)
 - Live analysis (Phase 3) is strictly opt-in and read-only
 - Prisma does not use down migrations -- do not flag this as an issue
+
+---
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+- SKILL: `db-audit`
+- CQ_SCORE: `-`
+- Q_SCORE: `-`
+- VERDICT: PASS/WARN/FAIL from findings
+- TASKS: number of tables/queries audited
+- DURATION: `-`
+- NOTES: scope summary (max 80 chars)

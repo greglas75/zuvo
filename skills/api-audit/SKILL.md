@@ -398,3 +398,16 @@ Full protocol: `{plugin_root}/shared/includes/backlog-protocol.md`.
 - Process controllers sequentially. Claude Code may parallelize with up to 6 Task agents.
 - Read the project's AGENTS.md or CLAUDE.md first for stack-specific conventions
 - Estimated durations: LIGHT ~3-5 min, STANDARD ~8-10 min, DEEP ~15-20 min
+
+---
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+- SKILL: `api-audit`
+- CQ_SCORE: `-`
+- Q_SCORE: `-`
+- VERDICT: PASS/WARN/FAIL from audit findings
+- TASKS: number of endpoints audited
+- DURATION: `-`
+- NOTES: scope summary (max 80 chars)

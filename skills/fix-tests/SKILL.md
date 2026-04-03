@@ -256,3 +256,16 @@ Total files:     [N] fixed, [N] skipped
 Bugs discovered: [N] (see backlog)
 -----
 ```
+
+---
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+- SKILL: `fix-tests`
+- CQ_SCORE: `-`
+- Q_SCORE: `Q score from fixed tests`
+- VERDICT: PASS if all tests fixed, WARN if partial
+- TASKS: number of test files fixed
+- DURATION: `-`
+- NOTES: fix summary (max 80 chars)

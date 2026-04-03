@@ -540,3 +540,16 @@ Score >= 85%             -> schedule next audit in 3 months
   Model are informational only
 - Confidence levels are strict: only profiler/Lighthouse/EXPLAIN output earns
   HIGH confidence; code inspection maxes out at MEDIUM
+
+---
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+- SKILL: `performance-audit`
+- CQ_SCORE: `-`
+- Q_SCORE: `-`
+- VERDICT: PASS/WARN/FAIL from findings
+- TASKS: number of hotspots analyzed
+- DURATION: `-`
+- NOTES: scope summary (max 80 chars)

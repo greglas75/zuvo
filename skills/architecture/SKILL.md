@@ -445,3 +445,16 @@ After completing any mode, persist actionable items to `memory/backlog.md`:
 **Design mode:** Open questions, scale triggers, rollout risks.
 
 Zero risks may be silently discarded. If the output has consequences, questions, or risks, they must reach the backlog.
+
+---
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `{plugin_root}/shared/includes/run-logger.md`:
+- SKILL: `architecture`
+- CQ_SCORE: `-`
+- Q_SCORE: `-`
+- VERDICT: PASS if analysis complete
+- TASKS: number of components documented
+- DURATION: `-`
+- NOTES: scope summary (max 80 chars)
