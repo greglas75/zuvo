@@ -209,3 +209,16 @@ These apply across both modes:
 5. **Always confirm before discard.** Option 4 requires typed confirmation. No shortcuts.
 6. **Uncommitted changes block FINISH.** All four finish options require a clean working tree. Prompt the user to commit or stash first.
 7. **Report, do not assume.** When detecting base branches, test runners, or setup commands, report what was detected and what will run before running it.
+
+---
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+- SKILL: `worktree`
+- CQ_SCORE: `-`
+- Q_SCORE: `-`
+- VERDICT: PASS if worktree operation completed, ABORTED if user cancelled
+- TASKS: `-`
+- DURATION: mode label (`start` or `finish-N`)
+- NOTES: branch name + operation (e.g., `feature/export — merged to main`)

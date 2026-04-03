@@ -19,6 +19,8 @@ zuvo-plugin/
       agents/            # Agent instruction files (pipeline skills only)
   .codex-plugin/
     plugin.json          # Codex plugin manifest (name, version, skills path)
+  .cursor-plugin/
+    plugin.json          # Cursor plugin manifest (name, version, skills, rules)
   .mcp.json              # Optional CodeSift MCP config for Codex
   dist/
     codex/               # Build output (gitignored) — Codex-adapted skills + TOMLs
@@ -30,7 +32,7 @@ zuvo-plugin/
 
 Zuvo uses a single `SessionStart` hook. It fires when you start a Claude Code session (or clear/compact the context).
 
-**What it does:** Reads the `using-zuvo` skill router and injects it as session context so Claude knows about all 33 skills from the first message. The router handles auto-activation -- matching your intent to the right skill without explicit commands.
+**What it does:** Reads the `using-zuvo` skill router and the project state snapshot (`memory/project-state.md`), then injects both as session context so Claude knows about all 39 skills and the project's recent history from the first message. The router handles auto-activation -- matching your intent to the right skill without explicit commands.
 
 **Platform detection:** The hook detects whether it is running in Claude Code (`CLAUDE_PLUGIN_ROOT`), Cursor (`CURSOR_PLUGIN_ROOT`), or an unknown environment, and emits the correct JSON format for each.
 
@@ -48,7 +50,14 @@ Located in `shared/includes/`. These are protocol files loaded by skills at runt
 | `agent-preamble.md` | Standard rules for read-only audit agents: never modify files, every finding requires evidence (file:line), confidence levels (0-25% discard, 26-50% backlog, 51-100% report), structured output format. |
 | `backlog-protocol.md` | How skills persist findings to `memory/backlog.md`: fingerprint-based deduplication, confidence routing, severity tracking, resolution cleanup. |
 | `run-logger.md` | Centralized skill usage log protocol: append-only writes to `~/.zuvo/runs.log`, Codex path fallback (`~/.codex/zuvo/runs.log`), structured fields (timestamp, skill, env, project). |
+| `auto-docs.md` | Automatic documentation protocol: updates `docs/project-journal.md`, `docs/architecture.md`, and `docs/api-changelog.md` after skill completion. Used by 8 core skills (brainstorm, plan, execute, build, refactor, review, debug, ship). |
+| `session-memory.md` | Session persistence protocol: maintains `memory/project-state.md` with tech stack, recent activity, active work, backlog summary, key decisions, and last release. Read by `hooks/session-start` on every new session to restore project context. |
 | `codex-agent-registry.md` | TOML generation manifest: agent naming, model mapping, thread/depth limits. Used by `scripts/build-codex-skills.sh`. |
+| `platform-detection.md` | Deployment platform detection: scan for Vercel, Fly.io, Netlify, Railway, Render, GitHub Actions config files. Provides deploy CLI, health check, and rollback commands. Used by deploy and canary skills. |
+| `audit-output-schema.md` | Structured output format for all audit skill findings: severity, confidence, evidence, recommendation fields. |
+| `fix-output-schema.md` | Structured output format for fix operations: before/after, verification status, commit reference. |
+| `seo-check-registry.md` | Registry of 74 SEO checks organized by category. Used by seo-audit skill and its agents. |
+| `seo-fix-registry.md` | Fix templates and patterns for SEO issues. Used by seo-fix skill. |
 
 ## Bundled rules
 
@@ -113,8 +122,9 @@ Zuvo adapts to three environments:
 
 | Environment | Agent dispatch | Concurrency | User interaction |
 |-------------|---------------|-------------|-----------------|
-| **Claude Code** | Task tool (parallel, model-routed) | Unrestricted | AskUserQuestion |
+| **Claude Code** | Task/Agent tool (parallel, model-routed) | Up to 7 subagents | AskUserQuestion |
 | **Codex** | TOML agents (parallel, sandboxed) | Capped at 6 threads | Not available (safest default) |
-| **Cursor** | Sequential (no spawning) | Sequential only | Not available (safest default) |
+| **Cursor 3+** | Subagents (parallel, worktree-isolated) | Up to 8 subagents | Interactive in Agent tabs |
+| **Cursor <3.0** | Sequential fallback (no spawning) | Sequential only | Not available (safest default) |
 
 All skills produce identical output regardless of environment. The execution strategy adapts, but quality gates and evidence requirements remain the same.

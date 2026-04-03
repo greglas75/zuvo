@@ -56,6 +56,8 @@ CORE FILES LOADED:
   2. {plugin_root}/rules/cq-checklist.md           -- READ/MISSING (CQ1-CQ22 scoring and evidence)
   3. {plugin_root}/rules/testing.md                -- READ/MISSING (Q1-Q17 for regression test)
   4. {plugin_root}/rules/test-quality-rules.md     -- READ/MISSING (edge cases, mock safety)
+  5. {plugin_root}/shared/includes/auto-docs.md    -- READ/MISSING
+  6. {plugin_root}/shared/includes/session-memory.md -- READ/MISSING
 ```
 
 Where `{plugin_root}` is resolved per `env-compat.md`.
@@ -486,6 +488,29 @@ Next steps:
   git commit -m "fix: [issue summary]"
 ----------------------------------------------------
 ```
+
+## Auto-Docs
+
+After printing the DEBUG COMPLETE block, update project documentation per `shared/includes/auto-docs.md`:
+
+- **project-journal.md**: Log the bug description, root cause, fix applied, defense guards added.
+- **api-changelog.md**: Update if the fix changed any API endpoint behavior or error responses.
+
+Use context from the debug report — do not re-read source files. If auto-docs fails, log a warning and proceed.
+
+---
+
+## Session Memory
+
+After Auto-Docs, update `memory/project-state.md` per `shared/includes/session-memory.md`:
+
+- **Recent Activity**: Prepend entry with bug summary, root cause, CQ/Q scores, verdict.
+- **Active Work**: Update current branch.
+- **Backlog Summary**: Recount if unrelated findings were persisted during debug.
+
+If `memory/project-state.md` doesn't exist, create it (full Tech Stack detection + all sections).
+
+---
 
 ## Run Log
 

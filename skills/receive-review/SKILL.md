@@ -190,3 +190,29 @@ If any fix introduced new tests, list them separately:
 New tests added:
   - <test file>: <test name>
 ```
+
+---
+
+## Output
+
+```
+REVIEW RESPONSE COMPLETE
+----------------------------------------------------
+Comments addressed: [N]
+Fixes applied: [N]
+Pushed back: [N] (with rationale)
+Tests: [N] passing
+Commit: [hash] — [message]
+----------------------------------------------------
+```
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+- SKILL: `receive-review`
+- CQ_SCORE: `-`
+- Q_SCORE: `-`
+- VERDICT: PASS if all comments addressed, WARN if any pushed back
+- TASKS: number of review comments processed
+- DURATION: `-`
+- NOTES: `N fixed, M pushed back` (max 80 chars)

@@ -228,3 +228,28 @@ To modify:
 | Output path not writable | Fall back to ./presentation.pptx |
 | Script execution fails | Show error, keep script for debugging |
 | `from [file]` -- file not found | Print error, ask for correct path |
+
+---
+
+## Output
+
+```
+PRESENTATION COMPLETE
+----------------------------------------------------
+Topic: [topic]
+Slides: [N]
+Output: [file path]
+Format: [pptx / markdown]
+----------------------------------------------------
+```
+
+## Run Log
+
+Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
+- SKILL: `presentation`
+- CQ_SCORE: `-`
+- Q_SCORE: `-`
+- VERDICT: PASS if presentation generated, FAIL if generation failed
+- TASKS: number of slides
+- DURATION: `-`
+- NOTES: topic summary (max 80 chars)
