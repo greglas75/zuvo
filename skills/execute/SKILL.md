@@ -25,10 +25,12 @@ Dispatch implementer, spec-reviewer, and quality-reviewer as separate agents. Th
 **Single-agent mode (Cursor, or when agent dispatch is unavailable):**
 Execute all three roles yourself in sequential passes with explicit checkpoints:
 
-1. **Implementer pass:** Write the code following the task spec. Run verification. Print: `[CHECKPOINT: implementation complete, switching to spec review]`
-2. **Spec reviewer pass:** Re-read the task spec and the code you just wrote. Compare independently. Do NOT trust your implementation pass — review as if seeing the code for the first time. Print findings.
-3. **Quality reviewer pass:** Run CQ1-CQ22 on production files, Q1-Q17 on test files. Print scores.
-4. **Commit** (if both reviews pass)
+1. **Pre-write contracts:** For complex tasks, fill the code contract (from `code-contract.md`) before writing production code, and the test contract (from `test-contract.md`) before writing tests. Print: `[CHECKPOINT: contracts complete, starting implementation]`
+2. **Implementer pass:** Write the code following the task spec and contracts. Run verification. Print: `[CHECKPOINT: implementation complete, switching to spec review]`
+3. **Spec reviewer pass:** Re-read the task spec and the code you just wrote. Compare independently. Do NOT trust your implementation pass — review as if seeing the code for the first time. Print findings.
+4. **Quality reviewer pass:** Run CQ1-CQ28 on production files, Q1-Q19 on test files. Run anti-tautology checks on test files. Print scores.
+5. **Independent test auditor pass:** Re-read tests as if seeing them for the first time. Compare Q scores with self-eval. Print: `[CHECKPOINT: independent test audit complete]`
+6. **Commit** (if all reviews pass)
 
 The checkpoint markers ensure role separation even within a single agent context.
 
@@ -43,6 +45,8 @@ CORE FILES LOADED:
   3. {plugin_root}/shared/includes/quality-gates.md          -- READ/MISSING
   4. {plugin_root}/shared/includes/verification-protocol.md  -- READ/MISSING
   5. {plugin_root}/shared/includes/tdd-protocol.md           -- READ/MISSING
+  6. {plugin_root}/shared/includes/code-contract.md          -- READ/MISSING
+  7. {plugin_root}/shared/includes/test-contract.md          -- READ/MISSING
 ```
 
 Where `{plugin_root}` is resolved per `env-compat.md` (e.g., `CLAUDE_PLUGIN_ROOT` in Claude Code).
@@ -175,6 +179,7 @@ Dispatch per environment:
 - `CODESIFT_AVAILABLE` and repo identifier
 - The spec document path (for reference)
 - Context from any previously completed tasks that this task depends on
+- For complex tasks: instruct the agent to fill the **pre-write code contract** (from `shared/includes/code-contract.md`) before writing production code, and the **pre-write test contract** (from `shared/includes/test-contract.md`) before writing tests. The contracts must be printed as output for the quality reviewer to verify.
 
 ### Step 3: Handle Implementer Status
 
@@ -271,7 +276,7 @@ Dispatch per environment:
 - The list of test files created or modified by the implementer
 - `CODESIFT_AVAILABLE` and repo identifier
 
-The quality reviewer runs CQ1-CQ22 on production code and Q1-Q17 on test code. It also checks file size limits.
+The quality reviewer runs CQ1-CQ28 on production code and Q1-Q19 on test code. It also checks file size limits. For complex tasks, it verifies the test contract was filled correctly (all branches listed, no implementation-derived expected values, all mutations have catching tests).
 
 ### Step 7: Handle Quality Reviewer Verdict
 
@@ -432,8 +437,8 @@ Print a completion report:
 ### Task Results
 | # | Task | Status | CQ Score | Q Score | Notes |
 |---|------|--------|----------|---------|-------|
-| 1 | [name] | COMPLETED | 19/22 | 15/17 | — |
-| 2 | [name] | COMPLETED | 20/22 | 14/17 | Concern: [brief] |
+| 1 | [name] | COMPLETED | 25/28 | 17/19 | — |
+| 2 | [name] | COMPLETED | 26/28 | 16/19 | Concern: [brief] |
 | 3 | [name] | SKIPPED | — | — | Blocker: [brief] |
 
 ### Files Changed

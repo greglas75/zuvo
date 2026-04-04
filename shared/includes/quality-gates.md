@@ -95,7 +95,7 @@ If more than 60% of gates (17+) are scored N/A, flag the evaluation as "low-sign
 | Q4 | Assertions use exact values (`toEqual`/`toBe`), not loose checks (`toBeTruthy`) |
 | Q5 | Mocks are properly typed (no `as any` or `as never`) |
 | Q6 | Mock state reset between tests (proper `beforeEach`, no shared mutable state) |
-| Q7 | At least one error path test (throws, rejects, or returns error) |
+| Q7 | Every error-throwing path tested with specific error type AND message (not just "at least one") |
 | Q8 | Null, undefined, and empty inputs tested where applicable |
 | Q9 | Repeated setup (3+ tests) extracted to helper or factory |
 | Q10 | No magic values — test data is self-documenting |

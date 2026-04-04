@@ -58,6 +58,8 @@ Where `{plugin_root}` is resolved per `env-compat.md`.
 - `{plugin_root}/rules/cq-checklist.md` — read at CQ self-eval time (STANDARD+)
 - `{plugin_root}/rules/testing.md` — read before writing tests (all tiers)
 - `{plugin_root}/rules/test-quality-rules.md` — read before writing tests (STANDARD+)
+- `{plugin_root}/shared/includes/code-contract.md` — read before writing production code (STANDARD+)
+- `{plugin_root}/shared/includes/test-contract.md` — read before writing tests (STANDARD+)
 
 **If any CORE file missing:** Proceed in degraded mode. Note in Phase 4 output.
 
@@ -106,10 +108,12 @@ Check for these in the feature description and target files:
 | Discovery pass (Phase 1a) | Yes | Yes | Yes |
 | Analysis agents (Phase 1b) | No | Blast Radius agent + inline duplication check | Blast Radius + Duplication Scanner agents |
 | Implementation plan | Inline, brief | Full plan with all sections | Full plan with all sections |
-| CQ self-eval (CQ1-CQ22) | Critical gates only | Full CQ1-CQ22 | Full CQ1-CQ22 |
-| Test quality self-eval (Q1-Q17) | Inline check | Full Q1-Q17 | Full Q1-Q17 |
+| CQ self-eval (CQ1-CQ28) | Critical gates only | Full CQ1-CQ28 | Full CQ1-CQ28 |
+| Test quality self-eval (Q1-Q19) | Inline check | Full Q1-Q19 | Full Q1-Q19 |
+| Pre-write code contract | No | Yes | Yes |
+| Pre-write test contract | No | Yes | Yes |
 | Independent CQ Auditor agent | No | No | Yes |
-| Independent Test Auditor agent | No | No | Yes |
+| Independent Test Auditor agent | No | Yes (when dispatch available) | Yes |
 | Verification commands | Tests + types (if checker exists) | Tests + types | Tests + types + lint |
 
 Print the tier after assignment:
@@ -316,6 +320,22 @@ Before writing code, verify:
 
 Implement per the plan.
 
+**STANDARD and DEEP tiers — Pre-Write Code Contract (MANDATORY):**
+
+Before writing each production file, read `{plugin_root}/shared/includes/code-contract.md` and fill the complete contract:
+
+1. **INPUTS AND VALIDATION** — every input with validation strategy
+2. **ERROR PATHS** — every failure mode with handling strategy and business impact
+3. **NULL AND OPTIONAL HANDLING** — every nullable value with explicit guard
+4. **RESOURCE MANAGEMENT** — every resource with cleanup and bounding
+5. **SECURITY CHECKLIST** — auth, authZ, PII, injection
+6. **PATTERN COMPLIANCE** — existing project patterns identified
+7. **FUNCTION SIGNATURES** — public API drafted with error conditions
+
+The contract prevents the most common CQ failures (CQ3, CQ8, CQ10, CQ22, CQ25) by catching them BEFORE code is written, not after.
+
+**LIGHT tier:** Skip the formal contract. Critical CQ gates still apply at self-eval time.
+
 Rules:
 - Touch only files in the scope fence. If a dependency forces a change outside, log the expansion with justification. Structural splits (file-limits.md thresholds) may auto-expand up to +2 production files; beyond +2, ask the user. Any non-structural expansion requires user approval.
 - Follow project conventions from CLAUDE.md and rules directory.
@@ -325,7 +345,7 @@ Rules:
 
 **LIGHT tier:** Check critical gates only (CQ3, CQ4, CQ5, CQ6, CQ8, CQ14) + any conditional gates activated by context (CQ16/CQ19/CQ20/CQ21/CQ22). Provide evidence for each. Fix any gate = 0.
 
-**STANDARD and DEEP tiers:** Read `{plugin_root}/rules/cq-checklist.md`. Run full CQ1-CQ22 on every production file written or modified. Condensed reference: `../../shared/includes/quality-gates.md`.
+**STANDARD and DEEP tiers:** Read `{plugin_root}/rules/cq-checklist.md`. Run full CQ1-CQ28 on every production file written or modified. Condensed reference: `../../shared/includes/quality-gates.md`.
 
 - Score each gate (1 = satisfied, 0 = violated, N/A = not applicable)
 - Static critical gates: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 — any = 0 means FIX before tests
@@ -338,6 +358,21 @@ Fix all critical gate violations before writing tests.
 ### 3.4 Write Tests
 
 Read `{plugin_root}/rules/testing.md` before writing tests. For STANDARD+, also read `{plugin_root}/rules/test-quality-rules.md`.
+
+**STANDARD and DEEP tiers — Pre-Write Test Contract (MANDATORY):**
+
+Before writing tests for each production file, read `{plugin_root}/shared/includes/test-contract.md` and fill the complete contract:
+
+1. **BRANCHES** — exhaustive list from production code (every if/else, switch, try/catch, early return)
+2. **ERROR PATHS** — every throw/reject/error return with specific type and message
+3. **EXPECTED VALUES** — source of every planned assertion (reject implementation-derived values)
+4. **MOCK INVENTORY** — every mock with justification
+5. **MUTATION TARGETS** — M1-M5 mapped to specific catching tests
+6. **TEST OUTLINE** — describe/it structure traced to branches and error paths
+
+The contract prevents weak tests at the source: missing branches, tautological oracles, unnecessary mocks, and shallow error testing.
+
+**LIGHT tier:** Skip the formal contract. Critical Q gates (Q7, Q11, Q13, Q15, Q17) still apply at self-eval time.
 
 Requirements:
 - New functions, components, endpoints, and hooks need tests.
@@ -355,9 +390,20 @@ When claiming an exemption, cite the covering test: `[exempt: covered by integra
 
 ### 3.5 Test Quality Self-Evaluation
 
-**LIGHT tier:** Inline check — verify Q7 (error path), Q11 (branches), Q13 (real imports), Q15 (value assertions), Q17 (oracle independence). Fix any = 0.
+**LIGHT tier:** Inline check — verify Q7 (error path — every error-throwing path with specific type+message), Q11 (branches), Q13 (real imports), Q15 (value assertions), Q17 (oracle independence). Fix any = 0.
 
-**STANDARD and DEEP tiers:** Run full Q1-Q17 on every test file. Score threshold: >= 14 = PASS, 9-13 = FIX worst gaps, < 9 = REWRITE. Provide evidence for critical gates (Q7, Q11, Q13, Q15, Q17).
+**STANDARD and DEEP tiers:** Run full Q1-Q19 on every test file. Score threshold: >= 16 = PASS, 10-15 = FIX worst gaps, < 10 = REWRITE. Provide evidence for critical gates (Q7, Q11, Q13, Q15, Q17).
+
+**Anti-Tautology Check (STANDARD+):** After self-eval, run the anti-tautology automation from `rules/testing.md`:
+1. Grep for echo patterns (mock-return-echoed-in-assertion)
+2. Verify expected value sources (spec-derived, not implementation-derived)
+3. Run with `--coverage` if runner supports it — check branch coverage >= 70%
+
+**Independent Test Auditor (STANDARD+ when sub-agent dispatch available):**
+
+Spawn a Test Quality Auditor (Sonnet, Explore) to independently verify Q1-Q19 scores. The auditor receives: production file, test file, and the test contract. Auditor's score wins ties — self-evaluation is biased toward the author.
+
+In single-agent mode: perform the audit as a separate pass with checkpoint: `[CHECKPOINT: switching to independent test auditor role]`.
 
 Proceed to Phase 4 when self-evaluations pass.
 
@@ -444,8 +490,10 @@ EXECUTION VERIFICATION
 [ALL] [ ] TESTS: Test suite green
 [ALL] [ ] CQ CRITICAL: All critical gates pass (with evidence)
 [ALL] [ ] TYPES: Type checker passes (if checker exists; skip with note if none)
-[STD+] [ ] CQ FULL: CQ1-CQ22 self-eval, scores + evidence
-[STD+] [ ] Q FULL: Q1-Q17 self-eval on each test file
+[STD+] [ ] CQ FULL: CQ1-CQ28 self-eval, scores + evidence
+[STD+] [ ] Q FULL: Q1-Q19 self-eval on each test file
+[STD+] [ ] ANTI-TAUTOLOGY: Automated echo pattern check passed
+[STD+] [ ] TEST AUDITOR: Independent auditor score matches self-eval (±1)
 [DEEP] [ ] LINT: Linter passes
 [DEEP] [ ] CQ AUDITOR: Agent returned, FIX-NOW items applied
 [DEEP] [ ] TEST AUDITOR: Agent returned with PASS
@@ -497,8 +545,8 @@ Tier: [LIGHT / STANDARD / DEEP]
 Files created: [N] | Files modified: [N]
 Tests: [N files], all passing
 Verification: tests PASS [| types PASS] [| lint PASS]
-CQ: [critical gates PASS | score/22 on N files]
-Q: [critical gates PASS | score/17 on N test files]
+CQ: [critical gates PASS | score/28 on N files]
+Q: [critical gates PASS | score/19 on N test files]
 Backlog: [N items persisted | "none"]
 Commit: [hash] — [message]
 [Tag: [tag name]]
@@ -518,8 +566,8 @@ Append one TSV line to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`. A
 | DATE | ISO 8601 timestamp |
 | SKILL | `build` |
 | PROJECT | Project directory basename (from `pwd`) |
-| CQ_SCORE | LIGHT: `critical-only`, STANDARD+: `N/22` |
-| Q_SCORE | LIGHT: `critical-only`, STANDARD+: `N/17` |
+| CQ_SCORE | LIGHT: `critical-only`, STANDARD+: `N/28` |
+| Q_SCORE | LIGHT: `critical-only`, STANDARD+: `N/19` |
 | VERDICT | PASS / WARN / FAIL from Phase 4.3 |
 | TASKS | Number of production files created + modified |
 | DURATION | `light` / `standard` / `deep` (matching the tier) |

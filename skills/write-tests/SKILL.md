@@ -3,14 +3,14 @@ name: write-tests
 description: >
   Write tests for existing production code. Scans coverage gaps, classifies
   code types (11 categories), selects patterns per type, and writes tests
-  with Q1-Q17 quality gates. Supports single file, directory, and auto-loop
+  with Q1-Q19 quality gates. Supports single file, directory, and auto-loop
   modes. Modes: [path] (specific target), auto (discover and loop until
   done), --dry-run (preview plan without writing).
 ---
 
 # zuvo:write-tests — Test Writing Workflow
 
-Generate high-quality tests for production code that lacks coverage. Analyzes each target file, classifies its code type, selects the correct test patterns, and writes tests that pass Q1-Q17 gates.
+Generate high-quality tests for production code that lacks coverage. Analyzes each target file, classifies its code type, selects the correct test patterns, and writes tests that pass Q1-Q19 gates.
 
 **Scope:** Existing production files with missing or partial test coverage.
 **Out of scope:** New feature tests during development (use `zuvo:build`), mass repair of the same anti-pattern across many files (use `zuvo:fix-tests`), auditing existing test quality without writing (use `zuvo:test-audit`).
@@ -83,7 +83,7 @@ If no external loop or hook is installed, fall back to self-loop (same as Claude
 |-------|---------|-------|------|-------|
 | Coverage Scanner | Inventory production files, find untested exports, rank by risk | Haiku | Explore | 1 (background) |
 | Pattern Selector | Read target files, classify code types, select G-*/P-* patterns | Haiku | Explore | 1 (background) |
-| Test Quality Auditor | Run Q1-Q17 on written tests, produce evidence-backed score | Sonnet | Explore | 4 (after writing) |
+| Test Quality Auditor | Run Q1-Q19 on written tests, produce evidence-backed score | Sonnet | Explore | 4 (MANDATORY on STANDARD+) |
 
 All agents are read-only (Explore type).
 
@@ -95,10 +95,11 @@ Before starting any work, read each file below. Print the checklist. If any REQU
 
 ```
 CORE FILES LOADED:
-  1. {plugin_root}/rules/testing.md                -- [READ | MISSING -> STOP]
-  2. {plugin_root}/rules/test-quality-rules.md     -- [READ | MISSING -> STOP]
-  3. {plugin_root}/rules/file-limits.md            -- [READ | MISSING -> STOP]
-  4. {plugin_root}/shared/includes/quality-gates.md -- [READ | MISSING -> STOP]
+  1. {plugin_root}/rules/testing.md                  -- [READ | MISSING -> STOP]
+  2. {plugin_root}/rules/test-quality-rules.md       -- [READ | MISSING -> STOP]
+  3. {plugin_root}/rules/file-limits.md              -- [READ | MISSING -> STOP]
+  4. {plugin_root}/shared/includes/quality-gates.md  -- [READ | MISSING -> STOP]
+  5. {plugin_root}/shared/includes/test-contract.md  -- [READ | MISSING -> STOP]
 ```
 
 ### Conditional Files (loaded when needed)
@@ -335,6 +336,23 @@ For each file, state:
 
 For each target file in the plan, write the test file following the plan exactly.
 
+### Pre-Write Test Contract (MANDATORY — fill BEFORE writing a single line)
+
+Read `{plugin_root}/shared/includes/test-contract.md` for the full protocol.
+
+For each production file being tested, fill the complete test contract:
+
+1. **BRANCHES** — exhaustive list from production code (every if/else, switch, try/catch, early return)
+2. **ERROR PATHS** — every throw, reject, error return with specific type and message
+3. **EXPECTED VALUES** — source of every planned assertion value (reject implementation-derived values)
+4. **MOCK INVENTORY** — every mock with justification (reject unnecessary mocks)
+5. **MUTATION TARGETS** — M1-M5 mapped to specific catching tests
+6. **TEST OUTLINE** — describe/it structure traced to branches and error paths
+
+**Verification before proceeding:** Every branch has a test, every error path has a test, no expected value is sourced from implementation output, all mutations have catching tests.
+
+If the contract reveals fewer tests than the Code-Type Gate minimum, expand the outline.
+
 ### Pre-Write Blocklist (BLOCKING — check BEFORE writing a single line)
 
 Before writing, verify you are NOT about to produce any of these. If you catch yourself reaching for one, STOP and reconsider testability classification:
@@ -387,21 +405,46 @@ Execute the test suite:
 
 All new tests must pass. Pre-existing failures from Phase 0.5 are ignored. If new tests fail, fix them before proceeding.
 
-### 4.2 Q1-Q17 Self-Evaluation
+### 4.2 Anti-Tautology Check (MANDATORY)
 
-Run the Q1-Q17 checklist against every written or modified test file. Print the scorecard:
+Run the automated anti-tautology checks from `rules/testing.md` → "Anti-Tautology Automation" section:
+
+1. **Grep for echo patterns** — search test files for mock-return-echoed-in-assertion patterns
+2. **Verify expected value sources** — for every `toBe()`/`toEqual()`, confirm the value is spec-derived, not implementation-derived
+3. **Coverage report** — run with `--coverage` if runner supports it. Check branch coverage >= 70%.
+
+Any tautological oracle found = Q17 violation. Fix before proceeding.
+
+### 4.3 Q1-Q19 Self-Evaluation
+
+Run the Q1-Q19 checklist against every written or modified test file. Print the scorecard:
 
 ```
 Self-eval: Q1=1 Q2=1 Q3=0 Q4=1 ...
-  Score: [N]/17 -> PASS | FIX | REWRITE
+  Score: [N]/19 -> PASS | FIX | REWRITE
   Critical gates: Q7=[0|1] Q11=[0|1] Q13=[0|1] Q15=[0|1] Q17=[0|1]
 ```
 
-Any critical gate at 0: fix immediately and re-score. Target: PASS (14+/17 with all critical gates satisfied).
+Any critical gate at 0: fix immediately and re-score. Target: PASS (16+/19 with all critical gates satisfied).
 
-### 4.3 Test Quality Auditor (Optional Agent)
+### 4.4 Test Quality Auditor (MANDATORY on STANDARD+ complexity)
 
-If sub-agent dispatch is available, spawn the Test Quality Auditor (Sonnet, Explore) to independently verify Q1-Q17 scores with evidence. Compare the agent's scores with the self-evaluation. Discrepancies are resolved by checking the evidence.
+Spawn the Test Quality Auditor (Sonnet, Explore) to independently verify Q1-Q19 scores with evidence.
+
+| File complexity | Auditor requirement |
+|-----------------|-------------------|
+| THIN | Optional — self-eval sufficient |
+| STANDARD | **Mandatory** — independent auditor required |
+| COMPLEX | **Mandatory** — independent auditor required |
+
+The auditor receives:
+- The production file
+- The test file
+- The test contract (from Phase 3)
+
+Compare the auditor's scores with self-evaluation. **Any discrepancy of 2+ points** on a single gate must be resolved by checking evidence. The auditor's score wins ties — self-evaluation is biased toward the author.
+
+If sub-agent dispatch is unavailable (single-agent mode): perform the audit as a separate pass with an explicit checkpoint: `[CHECKPOINT: switching to independent test auditor role]`. Re-read tests as if seeing them for the first time.
 
 ---
 
@@ -424,7 +467,7 @@ WRITE-TESTS COMPLETE
 -----
 Files tested:  [N] ([M] new, [K] extended, [J] fixed)
 Tests written: [N] (target: [M], actual: [N])
-Q gates:       [N]/17 avg (critical gates: all pass)
+Q gates:       [N]/19 avg (critical gates: all pass)
 Failures:      [pre-existing: N, new: 0]
 -----
 ```
@@ -441,4 +484,5 @@ Read `memory/coverage.md`. If UNCOVERED or PARTIAL files remain, go back to Phas
 2. Test depth matches file complexity. A 25-line wrapper does not need 30 edge-case tests.
 3. Test what the code OWNS, mock what it DELEGATES.
 4. Fake timers for time-dependent code. Real implementations for pure functions.
-5. Quality gates are not optional. Q1-Q17 evaluation happens on every test file, every time.
+5. Quality gates are not optional. Q1-Q19 evaluation happens on every test file, every time.
+6. Pre-write contract prevents weak tests at the source. Post-write auditing catches what slips through.

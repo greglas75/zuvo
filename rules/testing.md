@@ -355,7 +355,7 @@ Score every question individually. Never group or estimate.
 | Q4 | Known-data assertions use exact values (`toEqual`/`toBe`, not `toBeTruthy`)? |
 | Q5 | Mocks are typed (not `as any`/`as never`)? |
 | Q6 | Mock state is fresh per test (proper `beforeEach`, no shared mutable)? |
-| Q7 | **CRITICAL** — At least one error path test (throws/rejects/returns error)? |
+| Q7 | **CRITICAL** — Every error-throwing path tested with specific error type AND message? (not just "at least one") |
 | Q8 | Null/undefined/empty inputs tested where applicable? |
 | Q9 | Repeated setup (3+ tests) extracted to helper/factory? |
 | Q10 | No magic values — test data is self-documenting? |
@@ -394,6 +394,63 @@ After writing tests, mentally apply these 5 mutations to the production code. Fo
 | M5 | Change the error message/type | An error test asserts the specific message? |
 
 If any mutation would go undetected, add a targeted test before continuing.
+
+## Anti-Tautology Automation (mandatory after writing tests)
+
+After writing tests, run these automated checks to catch tautological oracles (Q17/P-70) that self-evaluation misses.
+
+### Step 1: Grep for echo patterns
+
+Run these searches against every new/modified test file. Any match is a Q17 violation that must be fixed.
+
+```bash
+# Pattern 1: expect(fn(X)).toBe(X) — input echoed as expected value
+# Look for: same literal appears in both function call and assertion
+grep -n 'expect.*(\(.*\)).*toBe(\1)' [test-file]
+
+# Pattern 2: Mock return value echoed in assertion
+# Look for: mockResolvedValue(X) ... expect(result).toBe(X) or toEqual(X)
+# Manual check: for each mockResolvedValue/mockReturnValue, search if the same
+# value appears in a toBe/toEqual within the same test block
+
+# Pattern 3: Variable assigned then immediately asserted
+# Look for: const x = 'foo'; ... expect(result.x).toBe('foo')
+# This is only a violation if 'foo' came from the mock, not from a spec
+```
+
+### Step 2: Verify expected value sources
+
+For every `toBe()` and `toEqual()` assertion in the new tests, ask:
+
+1. **Where did this expected value come from?**
+   - Spec/requirements document → OK
+   - Manual calculation with comment explaining the math → OK
+   - Fixture data defined in the test → OK (if the test verifies transformation, not pass-through)
+   - **Copied from running the production code** → VIOLATION — replace with spec-derived value
+   - **Same value as mock return** → VIOLATION unless testing transformation of that value
+
+2. **Would changing the implementation change this expected value?**
+   - YES and the test would still be correct → OK (testing behavior)
+   - YES and the test would be wrong → VIOLATION (testing implementation)
+
+### Step 3: Coverage report (when runner supports it)
+
+After tests pass, run with coverage to verify branch coverage:
+
+```bash
+# Node.js (Jest/Vitest)
+[runner] --coverage [test-file]
+
+# Python (pytest)
+pytest --cov=[module] --cov-branch [test-file]
+```
+
+Check that:
+- Statement coverage >= 80% for the target production file
+- Branch coverage >= 70% for the target production file
+- Any uncovered branches are documented with justification
+
+If coverage runner is not available, skip this step (informational, not blocking).
 
 ## Completion Checklist (do not skip)
 
