@@ -1,6 +1,6 @@
 # Skills Reference
 
-Zuvo includes 39 skills organized into 9 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
+Zuvo includes 47 skills organized into 9 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
 
 ---
 
@@ -28,6 +28,9 @@ Scoped task execution for common development work.
 | `zuvo:review` | Structured code review with parallel audit agents, confidence-scored triage, and optional auto-fix. Tiered output: MUST-FIX / RECOMMENDED / NIT. | After coding, before push | Scope: `staged`, `HEAD~N`, `[path]`, `[commit range]`. Modes: `fix`, `blocking`, `tag`, `batch` |
 | `zuvo:refactor` | ETAP workflow (Evaluate, Test, Act, Prove) with resumable CONTRACT and batch processing. | Extracting, splitting, moving, renaming, simplifying code | Modes: `full`, `auto`, `quick`, `standard`, `plan-only`, `continue`, `batch <file>` |
 | `zuvo:debug` | Five-phase bug investigation: reproduce, narrow, diagnose, fix, verify. Produces structured report with root cause analysis and regression test. | Any bug, error, or unexpected behavior | `--regression` (git bisect) |
+| `zuvo:hotfix` | Fast-track production fix pipeline. Creates hotfix branch, locates root cause, applies minimal fix with regression test, cherry-pick or PR. Maximum 3 files. | Critical production bug, emergency fix | `--from [branch]`, `--deploy`, `--no-test` |
+| `zuvo:scaffold` | Generate new modules/components/endpoints by detecting existing patterns in the codebase and replicating them. | Creating new files following established patterns | `--dry-run`, `--with-test`, `--no-test`, `--minimal` |
+| `zuvo:migrate` | Database schema migration, framework/library upgrade, or API versioning. Supports Prisma, TypeORM, Knex, Django, Alembic, Rails, Drizzle, raw SQL. | DB migration, major dependency upgrade, API version bump | `db`, `upgrade`, `api`, `--dry-run`, `--rollback`, `--data` |
 
 ---
 
@@ -52,10 +55,11 @@ Scoped task execution for common development work.
 | `zuvo:dependency-audit` | Dependency health and coupling across 10 dimensions: supply chain, freshness, dead deps, licenses, bundle weight, circular deps, architecture violations. | Before releases, when adding major dependencies | `full`, `[path]`, `--supply-chain`, `--coupling`, `--dead`, `--bundle`, `--lock-in` |
 | `zuvo:ci-audit` | CI/CD pipeline optimization across 10 dimensions (CI1-CI10): caching, parallelism, secrets, action pinning, Docker, test integration. Primary: GitHub Actions. | After changing CI workflows, when pipelines are slow | `full`, `[path]`, `--speed-only`, `--security-only` |
 | `zuvo:env-audit` | Environment config across 8 dimensions (ENV1-ENV8): completeness, unused vars, validation, secret exposure, parity, type safety. | After adding env vars, before deploy, config-related debugging | `full`, `[path]`, `--secrets-only`, `--parity` |
+| `zuvo:load-test` | Dynamic performance testing under load. Generates and runs k6/Artillery/Playwright load test scripts. 5 scenarios: smoke, load, stress, spike, soak. | API load testing, performance baseline, stress testing | `--tool`, `--scenario`, `--users`, `--duration`, `--baseline`, `--compare` |
 
 ---
 
-## Audit Skills -- Structure and SEO
+## Audit Skills -- Structure, SEO, and Security
 
 | Skill | Description | When to use | Key flags |
 |-------|-------------|-------------|-----------|
@@ -63,6 +67,8 @@ Scoped task execution for common development work.
 | `zuvo:seo-audit` | SEO/GEO audit across 13 dimensions with 6 critical gates. 74 checks across 13 dimensions on meta tags, structured data, AI crawlers, content, performance. Framework-aware. | Before launches, when SEO ranking drops | `full`, `[path]`, `--live-url <url>`, `--quick`, `--content-only`, `--geo`, `--persist-backlog` |
 | `zuvo:seo-fix` | Apply SEO audit fixes with 3-tier safety model (SAFE/MODERATE/DANGEROUS). Reads audit JSON, applies framework-specific templates. | After seo-audit, to auto-fix findings | `--auto`, `--all`, `--dry-run`, `--fix-type`, `--finding` |
 | `zuvo:architecture` | Three modes: review existing architecture (A1-A9), create ADRs, or design new systems. Uses CodeSift for module discovery and dependency mapping. | Architecture health check, documenting decisions, system design | `--mode review [path]`, `--mode adr`, `--mode design` |
+| `zuvo:threat-model` | STRIDE-based threat modeling from code analysis. Maps attack surface, traces data flows, evaluates threats per component. | Proactive threat identification, security planning | `--focus`, `--depth`, `--diagram`, `--output` |
+| `zuvo:compliance-audit` | Regulatory compliance audit: GDPR (G1-G12), PCI-DSS (P1-P8), HIPAA (H1-H8), SOC 2 (SC1-SC8). | Regulatory compliance checking from code | `gdpr`, `pci-dss`, `hipaa`, `soc2`, `--depth`, `--output` |
 
 ---
 
@@ -106,6 +112,8 @@ Scoped task execution for common development work.
 | `zuvo:backlog` | Manage tech debt backlog. Supports add, list, fix, wontfix, delete, prioritize, and suggest. Used by audit and review skills to persist findings. | Viewing or managing accumulated tech debt | `list [category]`, `add [desc]`, `fix B-{N}`, `wontfix B-{N}`, `stats`, `prioritize`, `suggest` |
 | `zuvo:docs` | Write and update documentation from actual codebase analysis. README, API reference, runbook, onboarding guide, changelog. Update mode patches stale sections. | After building features, when docs are outdated | `readme [path]`, `api [path]`, `runbook [topic]`, `onboarding`, `update [file]`, `changelog [range]` |
 | `zuvo:presentation` | Generate PowerPoint (PPTX) presentations using python-pptx. Consistent theming, speaker notes, visual variety. | Creating slide decks | `[topic]`, `from [file]`, `--slides N`, `--theme dark\|light\|corporate`, `--outline-only` |
+| `zuvo:explain` | Visual code explanations with Mermaid diagrams: flow, dependency graph, architecture map, data flow. Adapts to audience (dev, new, manager). | Understanding complex code, onboarding, documentation | `flow`, `deps`, `arch`, `data`, `--depth`, `--audience`, `--save` |
+| `zuvo:incident` | Production incident post-mortem. Builds timeline from git/deploys/errors, 5-Whys root cause analysis, impact assessment, generates report with action items. | Post-mortem, incident analysis, prevention planning | `--since`, `--severity`, `--output` |
 | `zuvo:using-zuvo` | Meta-skill router, always loaded at session start. Routes user intent to the correct skill. | Automatic -- you never invoke this directly |
 
 ---
@@ -115,12 +123,12 @@ Scoped task execution for common development work.
 | Category | Count |
 |----------|-------|
 | Pipeline | 5 |
-| Core | 4 |
+| Core | 7 |
 | Code/Test audits | 5 |
-| Infra audits | 5 |
-| Structure/SEO/Arch | 4 |
+| Infra audits | 6 |
+| Structure/SEO/Arch | 6 |
 | Design | 3 |
 | Testing | 4 |
 | Release | 5 |
-| Utility | 4 |
-| **Total** | **39** |
+| Utility | 6 |
+| **Total** | **47** |

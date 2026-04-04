@@ -32,7 +32,7 @@ zuvo-plugin/
 
 Zuvo uses a single `SessionStart` hook. It fires when you start a Claude Code session (or clear/compact the context).
 
-**What it does:** Reads the `using-zuvo` skill router and the project state snapshot (`memory/project-state.md`), then injects both as session context so Claude knows about all 39 skills and the project's recent history from the first message. The router handles auto-activation -- matching your intent to the right skill without explicit commands.
+**What it does:** Reads the `using-zuvo` skill router and the project state snapshot (`memory/project-state.md`), then injects both as session context so Claude knows about all 47 skills and the project's recent history from the first message. The router handles auto-activation -- matching your intent to the right skill without explicit commands.
 
 **Platform detection:** The hook detects whether it is running in Claude Code (`CLAUDE_PLUGIN_ROOT`), Cursor (`CURSOR_PLUGIN_ROOT`), or an unknown environment, and emits the correct JSON format for each.
 
@@ -44,20 +44,22 @@ Located in `shared/includes/`. These are protocol files loaded by skills at runt
 |------|---------|
 | `env-compat.md` | Environment compatibility: how skills adapt to Claude Code, Codex, and Cursor. Covers agent dispatch patterns, path resolution, progress tracking, and user interaction per platform. |
 | `codesift-setup.md` | CodeSift discovery, initialization, and tool selection guide. Includes the full tool mapping table and degraded mode fallbacks. See [codesift-integration.md](codesift-integration.md). |
-| `quality-gates.md` | Quick reference for CQ1-CQ22 and Q1-Q17 gates. Condensed version for agent use. Full details in the rules directory. See [quality-gates.md](quality-gates.md). |
+| `quality-gates.md` | Quick reference for CQ1-CQ25 and Q1-Q20 gates. Condensed version for agent use. Full details in the rules directory. See [quality-gates.md](quality-gates.md). |
 | `tdd-protocol.md` | TDD cycle enforcement: RED (failing test), GREEN (minimal code), REFACTOR. Red flag table for common violations. Used by pipeline execute and build skills. |
 | `verification-protocol.md` | 5-step verification protocol: IDENTIFY, RUN, READ, VERIFY, CLAIM. Ensures no completion claims without fresh evidence from the actual system. |
 | `agent-preamble.md` | Standard rules for read-only audit agents: never modify files, every finding requires evidence (file:line), confidence levels (0-25% discard, 26-50% backlog, 51-100% report), structured output format. |
 | `backlog-protocol.md` | How skills persist findings to `memory/backlog.md`: fingerprint-based deduplication, confidence routing, severity tracking, resolution cleanup. |
-| `run-logger.md` | Centralized skill usage log protocol: append-only writes to `memory/zuvo-runs.log`, Codex path fallback (`~/.codex/zuvo/runs.log`), structured fields (timestamp, skill, env, project). |
-| `auto-docs.md` | Automatic documentation protocol: updates `docs/project-journal.md`, `docs/architecture.md`, and `docs/api-changelog.md` after skill completion. Used by 8 core skills (brainstorm, plan, execute, build, refactor, review, debug, ship). |
-| `session-memory.md` | Session persistence protocol: maintains `memory/project-state.md` with tech stack, recent activity, active work, backlog summary, key decisions, and last release. Read by `hooks/session-start` on every new session to restore project context. |
+| `run-logger.md` | Centralized skill usage log protocol: append-only writes to `memory/zuvo-runs.log` (project-local), Codex path fallback (`~/.codex/zuvo/runs.log`), structured fields (timestamp, skill, env, project). |
+| `auto-docs.md` | Automatic documentation protocol: updates `docs/project-journal.md`, `docs/architecture.md`, and `docs/api-changelog.md` after skill completion. Used by all 47 skills. |
+| `session-memory.md` | Session persistence protocol: maintains `memory/project-state.md` with dynamic state (recent activity, active work, backlog summary, key decisions, last release). Static tech stack lives in `CLAUDE.md`. Read by `hooks/session-start` on every new session to restore project context. |
 | `codex-agent-registry.md` | TOML generation manifest: agent naming, model mapping, thread/depth limits. Used by `scripts/build-codex-skills.sh`. |
 | `platform-detection.md` | Deployment platform detection: scan for Vercel, Fly.io, Netlify, Railway, Render, GitHub Actions config files. Provides deploy CLI, health check, and rollback commands. Used by deploy and canary skills. |
 | `audit-output-schema.md` | Structured output format for all audit skill findings: severity, confidence, evidence, recommendation fields. |
 | `fix-output-schema.md` | Structured output format for fix operations: before/after, verification status, commit reference. |
 | `seo-check-registry.md` | Registry of 74 SEO checks organized by category. Used by seo-audit skill and its agents. |
 | `seo-fix-registry.md` | Fix templates and patterns for SEO issues. Used by seo-fix skill. |
+| `skill-chain.md` | Skill chaining protocol: formal artifact handoff between skills, predefined chains (build→review→ship, incident→hotfix→deploy), chain state persistence. |
+| `progress-streaming.md` | Progress streaming standard: `[ZUVO:skill:phase]` format, item progress, agent dispatch tracking, environment-aware verbosity. |
 
 ## Bundled rules
 
@@ -65,9 +67,9 @@ Located in `rules/`. These are reference files that skills load when performing 
 
 | File | Scope |
 |------|-------|
-| `cq-checklist.md` | Full CQ1-CQ22 gate definitions, scoring thresholds, evidence standards, N/A rules |
+| `cq-checklist.md` | Full CQ1-CQ25 gate definitions, scoring thresholds, evidence standards, N/A rules |
 | `cq-patterns.md` | NEVER/ALWAYS code pairs for 40+ patterns (atomicity, idempotency, errors, money, lookups, cleanup, secrets, path traversal, prototype pollution, Docker, etc.) |
-| `testing.md` | Q1-Q17 gate definitions, test quality scoring, pattern selection |
+| `testing.md` | Q1-Q20 gate definitions, test quality scoring, pattern selection |
 | `test-quality-rules.md` | Edge case checklists, mock safety rules, auto-fail patterns, assertion strength |
 | `security.md` | XSS, SSRF, injection, auth patterns for security-sensitive code |
 | `file-limits.md` | File and function size limits by type (service, component, hook, util, handler) |
@@ -76,6 +78,10 @@ Located in `rules/`. These are reference files that skills load when performing 
 | `nestjs.md` | NestJS-specific patterns and conventions |
 | `python.md` | Python-specific patterns and conventions |
 | `php.md` | PHP patterns: type juggling, SQL injection, SSRF, file uploads, multi-tenant isolation, CSRF, Semgrep-derived (unserialize, exec, eval, mcrypt, unlink, FTP, open redirect) |
+| `changelog.md` | Changelog style guide: Keep-a-Changelog format, Breaking section handling, conventional commit classification, Unreleased section, validation checklist. |
+| `observability-checklist.md` | OBS1-OBS8 quality gates: structured logging, error tracking, health endpoints, metrics, tracing, alerting, log levels, log safety. |
+| `resilience-checklist.md` | RES1-RES6 quality gates: circuit breaker, retry with backoff, graceful degradation, timeout hierarchy, bulkhead isolation, idempotency. |
+| `dx-checklist.md` | DX1-DX8 quality gates: onboarding time, error messages, type safety, debuggability, config docs, consistency, test readability, migration path. |
 
 ## Stack detection
 
