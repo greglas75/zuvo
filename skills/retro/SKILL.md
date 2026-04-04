@@ -171,8 +171,8 @@ Generate **at least 3** specific, actionable items. Each item must:
 2. **Churn instability** — for files with N ≥ 5 changes that already have tests: `zuvo:refactor <file>` with reason "N changes suggest instability or unclear responsibilities".
 3. **Critical backlog items** — for each OPEN CRITICAL item: `zuvo:backlog fix <ID>` with reason "critical debt item open N days".
 4. **Old open items** — if oldest open item is > 14 days: `zuvo:backlog prioritize` with reason "oldest item open N days, prioritization overdue".
-5. **Low CQ scores** — if average CQ score < 16/22: `zuvo:code-audit <top-churn-directory>` with reason "CQ average N/22 below threshold".
-6. **Low Q scores** — if average Q score < 12/17: `zuvo:write-tests <top-churn-directory>` with reason "Q average N/17 suggests test quality gaps".
+5. **Low CQ scores** — if average CQ score < 22/28: `zuvo:code-audit <top-churn-directory>` with reason "CQ average N/28 below threshold".
+6. **Low Q scores** — if average Q score < 14/19: `zuvo:write-tests <top-churn-directory>` with reason "Q average N/19 suggests test quality gaps".
 
 If fewer than 3 items can be derived from the data, supplement with: "Run `zuvo:code-audit .` to establish a quality baseline" or "Run `zuvo:test-audit .` to identify test gaps."
 
@@ -219,8 +219,8 @@ Use this exact structure:
 - **Oldest unresolved:** [item ID] — open N days
 
 ## Quality Trends
-- **CQ scores:** avg N/22 ([N runs in period], or "no runs.log data")
-- **Q scores:** avg N/17 ([N runs in period], or "no runs.log data")
+- **CQ scores:** avg N/28 ([N runs in period], or "no runs.log data")
+- **Q scores:** avg N/19 ([N runs in period], or "no runs.log data")
 - **Most-used skills:** [skill1 (N runs), skill2 (N runs)]
 - **Pass/fail ratio:** N PASS, N WARN, N FAIL
 
@@ -242,8 +242,8 @@ Check for existing `audit-results/retro-*.md` files. If one or more exist, compa
 | Deployment frequency | N/period | N/period | +/-N |
 | Release cycle span | N days | N days | +/-N days |
 | Open backlog items | N | N | +/-N |
-| Avg CQ score | N/22 | N/22 | +/-N |
-| Avg Q score | N/17 | N/17 | +/-N |
+| Avg CQ score | N/28 | N/28 | +/-N |
+| Avg Q score | N/19 | N/19 | +/-N |
 
 If no prior retro exists: note "First retro — run again next period for trends."
 

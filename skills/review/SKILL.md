@@ -329,7 +329,7 @@ For each changed production file, run CQ1-CQ28. Print ALL 28 gates -- not just f
 CQ EVAL: order.service.ts (185L)
 CQ1=1 CQ2=1 CQ3=1 CQ4=0 CQ5=1 CQ6=1 CQ7=1 CQ8=0 CQ9=N/A CQ10=1
 CQ11=1 CQ12=0 CQ13=1 CQ14=1 CQ15=1 CQ16=N/A CQ17=1 CQ18=N/A CQ19=1
-CQ20=N/A CQ21=1 CQ22=N/A
+CQ20=N/A CQ21=1 CQ22=N/A CQ23=N/A CQ24=N/A CQ25=1 CQ26=N/A CQ27=N/A CQ28=N/A
 Score: 15/17 applicable -> CONDITIONAL PASS
 Critical gates: CQ4=0(no orgId filter:87) CQ8=0(empty catch:102)
 ```

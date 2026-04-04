@@ -1,6 +1,6 @@
 # Test Quality Standards
 
-Applies to every test-writing workflow. Read before producing any test. Companion to `testing.md` Q1-Q17 evaluation.
+Applies to every test-writing workflow. Read before producing any test. Companion to `testing.md` Q1-Q19 evaluation.
 
 ---
 
@@ -216,7 +216,7 @@ Rate each assertion by its detection power:
 
 ## Self-Eval Evidence Requirements
 
-Score inflation is the top quality problem. Agents score 17/17 when the real score is 8/17. Every critical gate scored as 1 must include a proof line. Without proof, score 0.
+Score inflation is the top quality problem. Agents score 19/19 when the real score is 8/19. Every critical gate scored as 1 must include a proof line. Without proof, score 0.
 
 | Q | Proof required |
 |---|---------------|

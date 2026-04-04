@@ -1,11 +1,11 @@
 ---
 name: test-audit
-description: "Batch audit of test files against Q1-Q17 quality gates and AP1-AP26 anti-patterns. Detects orphan tests, phantom mocks, untested public methods. Tiered output (A/B/C/D) with critical gate enforcement and optional post-audit fix workflow. Flags: zuvo:test-audit all | [path] | [file] | --deep | --quick | --include-e2e | --details | --commit=ask|auto|off"
+description: "Batch audit of test files against Q1-Q19 quality gates and AP1-AP29 anti-patterns. Detects orphan tests, phantom mocks, untested public methods. Tiered output (A/B/C/D) with critical gate enforcement and optional post-audit fix workflow. Flags: zuvo:test-audit all | [path] | [file] | --deep | --quick | --include-e2e | --details | --commit=ask|auto|off"
 ---
 
 # zuvo:test-audit — Test Quality Triage
 
-Systematic evaluation of unit and integration test files through the Q1-Q17 binary checklist and AP anti-pattern catalog. Each test file is paired with its production source, scored against behavioral coverage standards, and assigned a tier.
+Systematic evaluation of unit and integration test files through the Q1-Q19 binary checklist and AP anti-pattern catalog. Each test file is paired with its production source, scored against behavioral coverage standards, and assigned a tier.
 
 **Scope:** Unit and integration tests only. E2E tests (`*/e2e/*`, `*.e2e.*`) are excluded by default. Use `--include-e2e` to include them.
 
@@ -134,7 +134,7 @@ Split grouped files into batches of 8-10. For each batch, spawn a Task agent or 
 ### Agent Prompt (provided to each batch agent)
 
 ```
-You are a test quality auditor. Evaluate each test file below against Q1-Q17.
+You are a test quality auditor. Evaluate each test file below against Q1-Q19.
 
 RED FLAG PRE-SCAN (do FIRST, before full evaluation):
 - Tests with zero expect() calls (AP13) -> AUTO TIER-D. RTL exception: getByRole/getByText/getByLabelText are implicit assertions.
@@ -173,7 +173,7 @@ Q3:  Every mock has CalledWith + not.toHaveBeenCalled?
 Q4:  Assertions use exact matchers (toEqual/toBe, not toBeTruthy)?
 Q5:  Mocks are typed (no `as any`)?
 Q6:  Mock state fresh per test (beforeEach, no shared mutable)?
-Q7:  CRITICAL -- At least one error path test?
+Q7:  CRITICAL -- Every error-throwing path tested with specific type+message?
 Q8:  Null/empty/edge inputs tested?
 Q9:  Repeated setup (3+ tests) extracted to helper/factory?
 Q10: No magic values -- test data is self-documenting?
@@ -248,8 +248,8 @@ Tier: [A/B/C/D]
 Top 3 gaps: [brief]
 
 TIER CLASSIFICATION:
-  A (>=14, critical gate PASS): No action needed
-  B (9-13, or critical gate FAIL with score >=9): Fix gaps -- 2-5 targeted fixes
+  A (>=16, critical gate PASS): No action needed
+  B (10-15, or critical gate FAIL with score >=10): Fix gaps -- 2-5 targeted fixes
   C (5-8): Major rewrite needed
   D (<5 or AUTO TIER-D red flag): Delete and rewrite from scratch
 
@@ -294,8 +294,8 @@ Total tests: [count from test runner]
 
 | Tier | Count | % | Action |
 |------|-------|---|--------|
-| A (>=14) | [N] | [%] | No action |
-| B (9-13) | [N] | [%] | Fix gaps |
+| A (>=16) | [N] | [%] | No action |
+| B (10-15) | [N] | [%] | Fix gaps |
 | C (5-8) | [N] | [%] | Major rewrite |
 | D (<5 or red flag) | [N] | [%] | Delete + rewrite |
 | ORPHAN | [N] | [%] | Verify or delete |
@@ -365,8 +365,8 @@ For each audited test file, find its production file row in coverage.md:
 
 | Audit Tier | Coverage Status | Rationale |
 |-----------|----------------|-----------|
-| A (>=14, gate PASS) | COVERED | Tests are solid |
-| B (9-13 or gate FAIL >=9) | PARTIAL-QUALITY | Has tests but quality issues |
+| A (>=16, gate PASS) | COVERED | Tests are solid |
+| B (10-15 or gate FAIL >=10) | PARTIAL-QUALITY | Has tests but quality issues |
 | C (5-8) | PARTIAL-QUALITY | Major quality gaps |
 | D (<5 or red flag) | PARTIAL | Effectively untested |
 
@@ -412,7 +412,7 @@ After presenting the report, the user may request fixes:
    - Only test files modified (no production code changes)
    - Full test suite green
    - All modified test files <= 400 lines
-   - Q1-Q17 self-eval on each fixed file
+   - Q1-Q19 self-eval on each fixed file
    - Tier improvement confirmed (D->C+, C->B+, B->A)
 4. **Commit** -- behavior per `--commit` flag (ask/auto/off)
 5. **Re-audit** -- optionally re-run on fixed files to verify improvement
@@ -421,7 +421,7 @@ After presenting the report, the user may request fixes:
 
 | Finding | Action | Command |
 |---------|--------|---------|
-| Tier D files (score < 9) | Rewrite tests | `zuvo:write-tests [path]` |
+| Tier D files (score < 10) | Rewrite tests | `zuvo:write-tests [path]` |
 | Same AP across 10+ files | Batch fix | `zuvo:fix-tests --pattern [AP-ID]` |
 | Tier B-C with Q7=0 | Add error tests | `zuvo:write-tests [path]` |
 | Coverage gaps (methods untested) | Write missing tests | `zuvo:write-tests [path]` |
@@ -432,7 +432,7 @@ After presenting the report, the user may request fixes:
 Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
 - SKILL: `test-audit`
 - CQ_SCORE: `-`
-- Q_SCORE: average Q score across all audited test files (e.g., `12/17`)
+- Q_SCORE: average Q score across all audited test files (e.g., `14/19`)
 - VERDICT: PASS if no Tier D, WARN if Tier C exists, FAIL if Tier D exists
 - TASKS: number of test files audited
 - DURATION: mode label (e.g., `quick`, `deep`)

@@ -430,9 +430,9 @@ Dispatch with:
 
   Tasks:
   1. Read each test file completely.
-  2. Run Q1-Q17 evaluation with evidence.
+  2. Run Q1-Q19 evaluation with evidence.
   3. Check for auto-fail patterns: empty bodies, assertions on mock inputs, tests passing with implementation deleted, toBeTruthy on objects.
-  4. Report PASS (>= 14, all critical gates), FIX (gaps identified), or BLOCK (< 9).
+  4. Report PASS (>= 16, all critical gates), FIX (gaps identified), or BLOCK (< 10).
 
   Read {plugin_root}/rules/testing.md and {plugin_root}/rules/test-quality-rules.md."
 ```
@@ -452,7 +452,7 @@ Dispatch with:
 
   Tasks:
   1. Read each file completely.
-  2. Run CQ1-CQ22 with file:function:line evidence.
+  2. Run CQ1-CQ28 with file:function:line evidence.
   3. Classify: FIX-NOW (< 5 min), CRITICAL-BLOCKED (critical gate failure), DEFER (backlog).
   4. Check file sizes against limits.
 

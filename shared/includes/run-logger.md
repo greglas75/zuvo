@@ -34,8 +34,8 @@ DATE\tSKILL\tPROJECT\tCQ_SCORE\tQ_SCORE\tVERDICT\tTASKS\tDURATION\tNOTES
 | DATE | ISO 8601 timestamp | `2026-03-27T14:30:00` |
 | SKILL | Skill name without namespace | `build` |
 | PROJECT | Project directory basename | `tgm-survey-platform` |
-| CQ_SCORE | CQ score if evaluated, `-` if not | `18/22` |
-| Q_SCORE | Q score if evaluated, `-` if not | `15/17` |
+| CQ_SCORE | CQ score if evaluated, `-` if not | `24/28` |
+| Q_SCORE | Q score if evaluated, `-` if not | `16/19` |
 | VERDICT | PASS, WARN, FAIL, BLOCKED, ABORTED, or `-` | `PASS` |
 | TASKS | Number of tasks completed (for pipeline/build), `-` for audits | `4` |
 | DURATION | Phases completed or task count | `5-phase` |

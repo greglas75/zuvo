@@ -53,8 +53,8 @@ These files are needed during Phase 4 self-evaluations. Read them before writing
 ```
 CORE FILES LOADED:
   1. {plugin_root}/rules/cq-patterns.md           -- READ/MISSING (CQ self-eval on production fix)
-  2. {plugin_root}/rules/cq-checklist.md           -- READ/MISSING (CQ1-CQ22 scoring and evidence)
-  3. {plugin_root}/rules/testing.md                -- READ/MISSING (Q1-Q17 for regression test)
+  2. {plugin_root}/rules/cq-checklist.md           -- READ/MISSING (CQ1-CQ28 scoring and evidence)
+  3. {plugin_root}/rules/testing.md                -- READ/MISSING (Q1-Q19 for regression test)
   4. {plugin_root}/rules/test-quality-rules.md     -- READ/MISSING (edge cases, mock safety)
 ```
 
@@ -230,21 +230,21 @@ Write a test that:
 2. Asserts the correct behavior (the bug no longer occurs)
 3. Would have caught this bug if it had existed before the original code was written
 
-Run Q1-Q17 self-evaluation on the regression test. Read `{plugin_root}/rules/testing.md` for the full protocol.
+Run Q1-Q19 self-evaluation on the regression test. Read `{plugin_root}/rules/testing.md` for the full protocol.
 
 Condensed reference: `../../shared/includes/quality-gates.md`
 
 - Score each gate individually (1/0, N/A counts as 1 but needs justification)
 - Critical gates: Q7, Q11, Q13, Q15, Q17 -- any = 0 means fix the test
-- Threshold: >= 14 PASS, 9-13 FIX (address worst gaps), < 9 REWRITE
+- Threshold: >= 16 PASS, 9-15 FIX (address worst gaps), < 9 REWRITE
 
 ### 4.6 CQ Self-Evaluation (on production code changes)
 
-Run CQ1-CQ22 on each modified production file. Read `{plugin_root}/rules/cq-checklist.md` for the full protocol.
+Run CQ1-CQ28 on each modified production file. Read `{plugin_root}/rules/cq-checklist.md` for the full protocol.
 
 - Static critical gates: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 -- any = 0 means FAIL
-- Conditional gates: CQ16 (money), CQ19 (API boundary), CQ20 (dual fields), CQ21 (concurrency), CQ22 (subscriptions) -- activated by code context
-- Threshold: >= 18 PASS, 16-17 CONDITIONAL PASS, < 16 FAIL
+- Conditional gates: CQ16 (money), CQ19 (API boundary), CQ20 (dual fields), CQ21 (concurrency), CQ22 (subscriptions), CQ23-CQ28 -- activated by code context
+- Threshold: >= 24 PASS, 22-23 CONDITIONAL PASS, < 22 FAIL
 - Provide file:function:line evidence for every critical gate scored as 1
 
 ### 4.7 Defense-in-Depth
@@ -408,8 +408,8 @@ File: [file:line]
 - Targeted tests: PASS ([N] tests)
 - Full suite: PASS (no new failures vs baseline)
 - Original reproduction: RESOLVED
-- CQ self-eval: [score]/22
-- Regression test Q self-eval: [score]/17
+- CQ self-eval: [score]/28
+- Regression test Q self-eval: [score]/19
 
 ### Side Effects
 [Any other paths affected, or "None -- change is isolated to [scope]"]
@@ -457,8 +457,8 @@ it('should [describe the bug scenario]', () => {
 - Targeted tests: PASS ([N] tests)
 - Full suite: PASS (no new failures)
 - Original reproduction: RESOLVED
-- CQ self-eval: [score]/22
-- Regression test Q self-eval: [score]/17
+- CQ self-eval: [score]/28
+- Regression test Q self-eval: [score]/19
 ```
 
 ---
@@ -477,7 +477,7 @@ Breaking commit: [hash -- message] (regression mode only)
 Files fixed: [list]
 Regression test: [test file path]
 Verification: targeted PASS | full suite PASS | repro RESOLVED
-CQ: [score]/22 | Q: [score]/17
+CQ: [score]/28 | Q: [score]/19
 Confidence: HIGH / MEDIUM / LOW
 Backlog: [N items added | "none"]
 

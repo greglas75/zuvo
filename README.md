@@ -111,7 +111,7 @@ args = ["-y", "codesift-mcp"]
 - **Release pipeline** — `zuvo:ship` → `zuvo:deploy` → `zuvo:canary` for the full post-code lifecycle
 - **Auto-activation** — routing engine matches your intent to the right skill automatically
 - **CodeSift integration** — semantic search, community detection, call chain tracing, complexity analysis
-- **Quality gates** — CQ1-CQ22 (code quality) and Q1-Q17 (test quality)
+- **Quality gates** — CQ1-CQ28 (code quality) and Q1-Q19 (test quality)
 
 ## Platform support
 
@@ -139,7 +139,7 @@ args = ["-y", "codesift-mcp"]
 
 - [All 39 Skills](docs/skills.md)
 - [Pipeline](docs/pipeline.md) — brainstorm → plan → execute
-- [Quality Gates](docs/quality-gates.md) — CQ1-CQ22 + Q1-Q17
+- [Quality Gates](docs/quality-gates.md) — CQ1-CQ28 + Q1-Q19
 - [CodeSift Integration](docs/codesift-integration.md)
 - [Configuration](docs/configuration.md)
 - [Changelog](https://github.com/greglas75/zuvo/releases)

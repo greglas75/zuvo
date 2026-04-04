@@ -35,8 +35,8 @@ Scoped task execution for common development work.
 
 | Skill | Description | When to use | Key flags |
 |-------|-------------|-------------|-----------|
-| `zuvo:code-audit` | Batch audit against CQ1-CQ22 gates and CAP1-CAP14 anti-patterns. Tiered output (A/B/C/D) with evidence-backed scoring. | Periodic health check, before releases, after adding many files | `all`, `[path]`, `[file]`, `--deep`, `--quick`, `--services`, `--controllers` |
-| `zuvo:test-audit` | Batch audit against Q1-Q17 gates and AP1-AP29 anti-patterns. Detects orphan tests, phantom mocks, untested public methods, input echo assertions, weak matchers. | After mass test writing, when test quality is uncertain | `all`, `[path]`, `[file]`, `--deep`, `--quick`, `--include-e2e`, `--details` |
+| `zuvo:code-audit` | Batch audit against CQ1-CQ28 gates and CAP1-CAP14 anti-patterns. Tiered output (A/B/C/D) with evidence-backed scoring. | Periodic health check, before releases, after adding many files | `all`, `[path]`, `[file]`, `--deep`, `--quick`, `--services`, `--controllers` |
+| `zuvo:test-audit` | Batch audit against Q1-Q19 gates and AP1-AP29 anti-patterns. Detects orphan tests, phantom mocks, untested public methods, input echo assertions, weak matchers. | After mass test writing, when test quality is uncertain | `all`, `[path]`, `[file]`, `--deep`, `--quick`, `--include-e2e`, `--details` |
 | `zuvo:api-audit` | API endpoint integrity across 10 dimensions (D1-D10): validation, payloads, pagination, errors, caching, auth, rate limiting, docs. | Before releases, after adding endpoints | `full`, `[path]`, `--static` |
 | `zuvo:security-audit` | OWASP Top 10, auth/authz, secrets, injection, multi-tenant isolation, infrastructure. Sentry 3-tier confidence model. 14 dimensions (S1-S14). | Before releases, after auth/payment changes, quarterly | `[path]`, `full`, `--live-url <url>`, `--static`, `--quick`, `--persist-backlog` |
 | `zuvo:pentest` | Hybrid white-box + black-box penetration testing (PT1-PT7). Source-to-sink tracing with optional runtime exploit verification. | After security-audit flags issues, before releases, CMS testing | `[path]`, `--url <url>`, `--from-audit <dir>`, `--cms <type>`, `--quick`, `--verify-live` |
@@ -80,7 +80,7 @@ Scoped task execution for common development work.
 
 | Skill | Description | When to use | Key flags |
 |-------|-------------|-------------|-----------|
-| `zuvo:write-tests` | Write tests for existing production code. Scans coverage gaps, classifies code types (11 categories), selects patterns per type, enforces Q1-Q17 gates. | Existing code lacking tests | `[path]`, `auto` (discover and loop), `--dry-run` |
+| `zuvo:write-tests` | Write tests for existing production code. Scans coverage gaps, classifies code types (11 categories), selects patterns per type, enforces Q1-Q19 gates. | Existing code lacking tests | `[path]`, `auto` (discover and loop), `--dry-run` |
 | `zuvo:fix-tests` | Batch repair of systematic test anti-patterns. Targets one pattern at a time across all matching files with production context. | Same anti-pattern across many test files | `--triage`, `--pattern [ID] [path]`, `--dry-run`, `--bundle-gates` |
 | `zuvo:write-e2e` | Generate Playwright E2E tests from codebase analysis. Discovers routes, scores flows by criticality, generates .spec.ts with page objects and quality gates. | Web apps needing browser-level test coverage | `[path]`, `--live`, `--auto`, `--flows`, `--max-flows N`, `--dry-run` |
 | `zuvo:tests-performance` | Test suite speed audit. Measures baseline, audits runner config (TP1-TP17), identifies slow tests, ranks fixes by impact. | When test suite feels slow, after adding many tests | `full`, `baseline`, `verify`, `--no-run`, `--path <dir>` |
