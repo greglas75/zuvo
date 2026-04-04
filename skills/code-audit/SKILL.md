@@ -1,11 +1,11 @@
 ---
 name: code-audit
-description: "Batch audit of production files against CQ1-CQ22 quality gates and CAP1-CAP14 anti-patterns. Tiered output (A/B/C/D), critical gate enforcement, evidence-backed scoring, cross-file pattern analysis, and prioritized execution plan. Flags: zuvo:code-audit all | [path] | [file] | --deep | --quick | --services | --controllers"
+description: "Batch audit of production files against CQ1-CQ25 quality gates and CAP1-CAP14 anti-patterns. Tiered output (A/B/C/D), critical gate enforcement, evidence-backed scoring, cross-file pattern analysis, and prioritized execution plan. Flags: zuvo:code-audit all | [path] | [file] | --deep | --quick | --services | --controllers"
 ---
 
 # zuvo:code-audit — Production Code Quality Triage
 
-Systematic evaluation of production source files through the CQ1-CQ22 binary checklist and CAP anti-pattern catalog. Every file receives a tier classification based on its score, critical gate status, and detected anti-patterns. The output is a prioritized report with actionable fix plans.
+Systematic evaluation of production source files through the CQ1-CQ25 binary checklist and CAP anti-pattern catalog. Every file receives a tier classification based on its score, critical gate status, and detected anti-patterns. The output is a prioritized report with actionable fix plans.
 
 **When to use:** Periodic health checks, before major releases, after adding many production files, when onboarding a new codebase, when code quality feels inconsistent.
 **Out of scope:** Single-file code review (use `zuvo:review`), refactoring (use `zuvo:refactor`), test quality assessment (use `zuvo:test-audit`), feature development (use `zuvo:build`).
@@ -76,7 +76,7 @@ When CodeSift is available, run these checks before the manual CQ evaluation to 
 
 TOOL_VERIFIED findings have deterministic HIGH confidence and bypass the confidence gate. They go directly to the report.
 
-Manual CQ1-CQ22 evaluation still runs for all 22 gates. CodeSift pre-scan accelerates 3 of 22 checks.
+Manual CQ1-CQ25 evaluation still runs for all 22 gates. CodeSift pre-scan accelerates 3 of 22 checks.
 
 ### Degraded Mode (CodeSift unavailable)
 
@@ -156,7 +156,7 @@ If `semgrep` is installed and the project has `.semgrep/` config:
 npx semgrep --config .semgrep/ --json --quiet 2>/dev/null
 ```
 
-Semgrep findings auto-score the matching CQ as 0 for affected files (deterministic = HIGH confidence). Exception: CQ4 findings from semgrep need dataflow verification before auto-scoring. LLM evaluation still runs full CQ1-CQ22 but skips deep analysis on CQs already flagged.
+Semgrep findings auto-score the matching CQ as 0 for affected files (deterministic = HIGH confidence). Exception: CQ4 findings from semgrep need dataflow verification before auto-scoring. LLM evaluation still runs full CQ1-CQ25 but skips deep analysis on CQs already flagged.
 
 If semgrep unavailable: skip silently. This enhances the audit but does not gate it.
 
@@ -169,13 +169,13 @@ Split files into batches of 6-8 (10 in `--quick` mode). For each batch, spawn a 
 ### Agent Prompt (provided to each batch agent)
 
 ```
-You are a production code quality auditor. Evaluate each file below against the CQ1-CQ22 binary checklist.
+You are a production code quality auditor. Evaluate each file below against the CQ1-CQ25 binary checklist.
 
 PROJECT_CONTEXT:
 [INSERT: global error handler info, or "No global error handler detected"]
 
 RED FLAG PRE-SCAN (do this FIRST, before full checklist):
-Scan for these. If any found, use TIER-D SHORT FORMAT and skip full CQ1-CQ22:
+Scan for these. If any found, use TIER-D SHORT FORMAT and skip full CQ1-CQ25:
 - Hardcoded secret (API key, password, token in source) -> AUTO TIER-D
 - SQL string concatenation with user input -> AUTO TIER-D
 - eval() / new Function() with non-literal input -> AUTO TIER-D

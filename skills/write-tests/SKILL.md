@@ -3,14 +3,14 @@ name: write-tests
 description: >
   Write tests for existing production code. Scans coverage gaps, classifies
   code types (11 categories), selects patterns per type, and writes tests
-  with Q1-Q17 quality gates. Supports single file, directory, and auto-loop
+  with Q1-Q20 quality gates. Supports single file, directory, and auto-loop
   modes. Modes: [path] (specific target), auto (discover and loop until
   done), --dry-run (preview plan without writing).
 ---
 
 # zuvo:write-tests — Test Writing Workflow
 
-Generate high-quality tests for production code that lacks coverage. Analyzes each target file, classifies its code type, selects the correct test patterns, and writes tests that pass Q1-Q17 gates.
+Generate high-quality tests for production code that lacks coverage. Analyzes each target file, classifies its code type, selects the correct test patterns, and writes tests that pass Q1-Q20 gates.
 
 **Scope:** Existing production files with missing or partial test coverage.
 **Out of scope:** New feature tests during development (use `zuvo:build`), mass repair of the same anti-pattern across many files (use `zuvo:fix-tests`), auditing existing test quality without writing (use `zuvo:test-audit`).
@@ -83,7 +83,7 @@ If no external loop or hook is installed, fall back to self-loop (same as Claude
 |-------|---------|-------|------|-------|
 | Coverage Scanner | Inventory production files, find untested exports, rank by risk | Haiku | Explore | 1 (background) |
 | Pattern Selector | Read target files, classify code types, select G-*/P-* patterns | Haiku | Explore | 1 (background) |
-| Test Quality Auditor | Run Q1-Q17 on written tests, produce evidence-backed score | Sonnet | Explore | 4 (after writing) |
+| Test Quality Auditor | Run Q1-Q20 on written tests, produce evidence-backed score | Sonnet | Explore | 4 (after writing) |
 
 All agents are read-only (Explore type).
 
@@ -389,9 +389,9 @@ Execute the test suite:
 
 All new tests must pass. Pre-existing failures from Phase 0.5 are ignored. If new tests fail, fix them before proceeding.
 
-### 4.2 Q1-Q17 Self-Evaluation
+### 4.2 Q1-Q20 Self-Evaluation
 
-Run the Q1-Q17 checklist against every written or modified test file. Print the scorecard:
+Run the Q1-Q20 checklist against every written or modified test file. Print the scorecard:
 
 ```
 Self-eval: Q1=1 Q2=1 Q3=0 Q4=1 ...
@@ -403,7 +403,7 @@ Any critical gate at 0: fix immediately and re-score. Target: PASS (14+/17 with 
 
 ### 4.3 Test Quality Auditor (Optional Agent)
 
-If sub-agent dispatch is available, spawn the Test Quality Auditor (Sonnet, Explore) to independently verify Q1-Q17 scores with evidence. Compare the agent's scores with the self-evaluation. Discrepancies are resolved by checking the evidence.
+If sub-agent dispatch is available, spawn the Test Quality Auditor (Sonnet, Explore) to independently verify Q1-Q20 scores with evidence. Compare the agent's scores with the self-evaluation. Discrepancies are resolved by checking the evidence.
 
 ---
 
@@ -443,7 +443,7 @@ Read `memory/coverage.md`. If UNCOVERED or PARTIAL files remain, go back to Phas
 2. Test depth matches file complexity. A 25-line wrapper does not need 30 edge-case tests.
 3. Test what the code OWNS, mock what it DELEGATES.
 4. Fake timers for time-dependent code. Real implementations for pure functions.
-5. Quality gates are not optional. Q1-Q17 evaluation happens on every test file, every time.
+5. Quality gates are not optional. Q1-Q20 evaluation happens on every test file, every time.
 
 ---
 

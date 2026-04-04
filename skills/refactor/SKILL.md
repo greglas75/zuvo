@@ -19,9 +19,9 @@ Read these files before any work begins:
 
 1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
 2. `{plugin_root}/shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
-3. `{plugin_root}/shared/includes/quality-gates.md` -- CQ1-CQ22 and Q1-Q17 condensed reference
+3. `{plugin_root}/shared/includes/quality-gates.md` -- CQ1-CQ25 and Q1-Q20 condensed reference
 4. `{plugin_root}/rules/cq-patterns.md` -- NEVER/ALWAYS code pairs
-5. `{plugin_root}/rules/cq-checklist.md` -- Full CQ1-CQ22 evaluation criteria and evidence standards
+5. `{plugin_root}/rules/cq-checklist.md` -- Full CQ1-CQ25 evaluation criteria and evidence standards
 
 Print the checklist:
 
@@ -217,7 +217,7 @@ If CodeSift not available: skip pre-scan. If mode is QUICK: skip pre-scan.
 
 ### Test File Auto-Detection
 
-If the target is a test file (`.test.*`, `.spec.*`, `__tests__/*`), auto-set type to IMPROVE_TESTS. Skip keyword detection and use Q1-Q17 as the primary audit framework.
+If the target is a test file (`.test.*`, `.spec.*`, `__tests__/*`), auto-set type to IMPROVE_TESTS. Skip keyword detection and use Q1-Q20 as the primary audit framework.
 
 ### Keyword-Based Detection (production files)
 
@@ -252,7 +252,7 @@ The GOD_CLASS protocol uses iterative decomposition: extract one responsibility 
 
 ### CQ Pre-Audit
 
-Before displaying the plan, run CQ1-CQ22 on the target file. Print ALL 22 gates:
+Before displaying the plan, run CQ1-CQ25 on the target file. Print ALL 22 gates:
 
 ```
 CQ PRE-AUDIT: [filename] ([N]L)
@@ -377,7 +377,7 @@ Produce the refactoring plan incorporating sub-agent results (when available):
 
    Steps:
    a. Search for test file: co-located `.test.*` / `.spec.*`, `__tests__/` directory, grep for imports of target
-   b. If test file found: read it, run quick Q-audit on 3 critical gates only (Q7=error-path coverage, Q11=branch coverage, Q13=imports actual production function). This is a partial triage, not a full Q1-Q17 audit.
+   b. If test file found: read it, run quick Q-audit on 3 critical gates only (Q7=error-path coverage, Q11=branch coverage, Q13=imports actual production function). This is a partial triage, not a full Q1-Q20 audit.
    c. Record `test_audit_before` in contract state: `{ "test_file": "...", "q7": 0|1, "q11": 0|1, "q13": 0|1 }`
    d. If no test file found: record `{ "test_file": null }`
 
@@ -423,10 +423,10 @@ ETAP-1B: test-quality-rules.md -- READ (WRITE_NEW or IMPROVE_TESTS only)
 
 **RUN_EXISTING:** Run the existing test suite. Verify all tests pass. This establishes the behavioral baseline. If any test fails, investigate before proceeding -- the refactoring must not start from a broken state.
 
-**WRITE_NEW:** Write tests for the target file before refactoring. The tests capture the current behavior so that the refactoring can be verified against them. Apply Q1-Q17 self-eval on the new tests.
+**WRITE_NEW:** Write tests for the target file before refactoring. The tests capture the current behavior so that the refactoring can be verified against them. Apply Q1-Q20 self-eval on the new tests.
 
 **IMPROVE_TESTS:** When the refactoring type is IMPROVE_TESTS (target is a test file):
-1. Run Q1-Q17 self-eval on the existing tests to identify gaps
+1. Run Q1-Q20 self-eval on the existing tests to identify gaps
 2. Classify gaps and plan improvements
 3. Execute structural cleanup first, then assertion strengthening
 4. Re-score -- gate: improvement of at least 2 points (or reach 15+/17)
@@ -468,12 +468,12 @@ Run CQ self-eval on EACH extracted module, not just the orchestrator. The bugs m
 
 **Procedure:**
 1. List ALL files created or modified during the refactoring
-2. Run CQ1-CQ22 self-eval on EACH file
+2. Run CQ1-CQ25 self-eval on EACH file
 3. Any CQ critical gate failure (CQ3/4/5/6/8/14 = 0) in ANY module blocks the commit
 
 ### CQ Post-Audit
 
-After execution completes, run CQ1-CQ22 on every modified and created file. Print ALL 22 gates for each file:
+After execution completes, run CQ1-CQ25 on every modified and created file. Print ALL 22 gates for each file:
 
 ```
 CQ POST-AUDIT: order.service.ts (132L)
@@ -496,7 +496,7 @@ Run the full verification suite:
 2. Full test suite
 3. Lint (if configured)
 4. CQ self-eval on all modified files
-5. Q1-Q17 on all modified test files
+5. Q1-Q20 on all modified test files
 
 ### Independent CQ Auditor (FULL and AUTO modes)
 
@@ -506,7 +506,7 @@ After the lead's post-audit, dispatch an independent CQ Auditor agent to verify 
 
 **Type:** Explore (read-only)
 
-**Task:** Run CQ1-CQ22 independently on ALL files created or modified during the refactoring. Does NOT trust the lead's scores. Catches N/A abuse and rubber-stamped gates. Returns findings that must be addressed before committing.
+**Task:** Run CQ1-CQ25 independently on ALL files created or modified during the refactoring. Does NOT trust the lead's scores. Catches N/A abuse and rubber-stamped gates. Returns findings that must be addressed before committing.
 
 **Input:** Full source of each file, CQ checklist reference, CQ patterns reference, tech stack.
 
@@ -619,7 +619,7 @@ Process a queue of files through the full ETAP pipeline autonomously. Zero inter
    - `- [ ]`: process (pending)
    - Bare file paths: process (first run)
 2. Validate each file exists. Non-existent files: mark `[!] FILE NOT FOUND`, skip.
-3. For each pending file: quick CQ1-CQ22 pre-scan, detect type.
+3. For each pending file: quick CQ1-CQ25 pre-scan, detect type.
 4. Compute **PriorityScore** for ordering (range 0.00–1.00):
 
    ```
@@ -653,17 +653,17 @@ For each `[ ]` entry, run the LITERAL ETAP pipeline -- not a shortcut:
 
 **Steps (ALL mandatory, in order):**
 
-1. **ETAP-1A:** Read file -> CQ1-CQ22 BEFORE (print ALL 22 gates) -> type detect -> scope freeze -> create contract state file
+1. **ETAP-1A:** Read file -> CQ1-CQ25 BEFORE (print ALL 22 gates) -> type detect -> scope freeze -> create contract state file
 2. **ETAP-1B:** Write/verify tests per test mode routing
 3. **ETAP-2:** Execute fixes per CONTRACT -> verify (type check + tests)
-4. **Post-Audit:** Run sub-agents (Dependency Mapper, Existing Code Scanner, CQ Auditor). Apply FIX-NOW items from CQ Auditor. Print CQ1-CQ22 AFTER (all 22 gates).
+4. **Post-Audit:** Run sub-agents (Dependency Mapper, Existing Code Scanner, CQ Auditor). Apply FIX-NOW items from CQ Auditor. Print CQ1-CQ25 AFTER (all 22 gates).
 5. **Commit:** ONE commit for this file only. `git add` only files within this file's scope fence.
 6. **Queue update:** Update the line with CQ before/after scores and commit hash.
 7. **Backlog:** Persist any DEFER items.
 
 ### CQ Before/After (Non-Negotiable)
 
-Every file in the batch gets a full CQ1-CQ22 evaluation, even if the agent believes it is already fixed. No file gets `[x]` without proof.
+Every file in the batch gets a full CQ1-CQ25 evaluation, even if the agent believes it is already fixed. No file gets `[x]` without proof.
 
 ```
 - [x] path | TYPE | CQ: 12/18->17/18 | CQ3,CQ21 fixed | commit: abc1234
@@ -763,9 +763,9 @@ After each extraction, check:
 
 When the target is a test file:
 
-1. **ETAP-1A:** Run Q1-Q17 self-eval to identify gaps. Classify each gap. Record the BEFORE score in the contract state file.
+1. **ETAP-1A:** Run Q1-Q20 self-eval to identify gaps. Classify each gap. Record the BEFORE score in the contract state file.
 2. **ETAP-1B:** Structural cleanup (test organization, describe blocks, mock setup). Commit.
-3. **ETAP-2:** Assertion strengthening (exact values, error path tests, branch coverage). Re-score Q1-Q17. Commit.
+3. **ETAP-2:** Assertion strengthening (exact values, error path tests, branch coverage). Re-score Q1-Q20. Commit.
 4. **Gate:** Score must improve by at least 2 points, or reach 15+/17.
 
 ---

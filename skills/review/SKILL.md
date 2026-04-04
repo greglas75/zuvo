@@ -17,7 +17,7 @@ Read these files before doing anything else:
 
 1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
 2. `{plugin_root}/shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
-3. `{plugin_root}/shared/includes/quality-gates.md` -- CQ1-CQ22 and Q1-Q17 condensed reference
+3. `{plugin_root}/shared/includes/quality-gates.md` -- CQ1-CQ25 and Q1-Q20 condensed reference
 4. `{plugin_root}/rules/cq-patterns.md` -- NEVER/ALWAYS code pairs for pattern recognition
 
 Print the checklist:
@@ -117,8 +117,8 @@ If ALL changed files are noise, print "Only noise files changed (locks, snapshot
 | Capability | TIER 0 | TIER 1 | TIER 2 | TIER 3 |
 |-----------|--------|--------|--------|--------|
 | Inline diff scan | Yes | Yes | Yes | Yes |
-| CQ1-CQ22 evaluation | Skip | Yes | Yes | Yes |
-| Q1-Q17 on test files | Skip | If present | Yes | Yes |
+| CQ1-CQ25 evaluation | Skip | Yes | Yes | Yes |
+| Q1-Q20 on test files | Skip | If present | Yes | Yes |
 | Audit agents | None | None | Behavior (if new files) | All 3 |
 | Confidence re-scoring | Inline | Inline | Agent | Agent |
 | Hotspot detection | Skip | Skip | Yes | Yes |
@@ -207,8 +207,8 @@ Print a step header before each audit stage:
 STEP: Triage [DONE]
 STEP: Scope Fence
 STEP: Audit (Behavior + Structure + CQ agents)
-STEP: CQ1-CQ22
-STEP: Q1-Q17 per test file
+STEP: CQ1-CQ25
+STEP: Q1-Q20 per test file
 STEP: Confidence Gate
 STEP: Report
 ```
@@ -286,7 +286,7 @@ Refer to `env-compat.md` for the correct dispatch pattern per environment.
 
 **Type:** Explore (read-only)
 
-**Focus:** Independent CQ1-CQ22 evaluation. Does NOT trust the lead's CQ scores -- performs its own assessment from scratch. Catches N/A abuse (>60% N/A triggers a flag and demands justification for each). Reports findings with file:line evidence.
+**Focus:** Independent CQ1-CQ25 evaluation. Does NOT trust the lead's CQ scores -- performs its own assessment from scratch. Catches N/A abuse (>60% N/A triggers a flag and demands justification for each). Reports findings with file:line evidence.
 
 **Input:**
 - Full source of each changed production file (not just the diff -- the auditor needs complete context)
@@ -323,7 +323,7 @@ When no agents are dispatched, the lead performs all analysis directly:
 
 ### CQ Self-Evaluation (TIER 1+)
 
-For each changed production file, run CQ1-CQ22. Print ALL 22 gates -- not just failures. The user needs to verify that gates scored as 1 are genuinely satisfied, not rubber-stamped.
+For each changed production file, run CQ1-CQ25. Print ALL 22 gates -- not just failures. The user needs to verify that gates scored as 1 are genuinely satisfied, not rubber-stamped.
 
 ```
 CQ EVAL: order.service.ts (185L)
@@ -336,9 +336,9 @@ Critical gates: CQ4=0(no orgId filter:87) CQ8=0(empty catch:102)
 
 CQ critical gate failures (CQ3, CQ4, CQ5, CQ6, CQ8, CQ14) always produce MUST-FIX findings.
 
-### Q1-Q17 Evaluation (when test files in diff)
+### Q1-Q20 Evaluation (when test files in diff)
 
-For each test file in the diff, run Q1-Q17 and print:
+For each test file in the diff, run Q1-Q20 and print:
 
 ```
 Q EVAL: order.service.spec.ts
@@ -658,7 +658,7 @@ For each `[ ]` entry:
 
 1. **Read the diff** -- `git diff <hash>~1..<hash>`. Actually read the code. Classifying by commit message alone is not a review.
 2. **Triage** -- Determine tier and risk signals. If TIER 3, mark `[!] TIER 3: needs dedicated zuvo:review` and skip.
-3. **Audit at full depth per tier** -- TIER 0 gets a diff scan with 1+ CQ observation. TIER 1 gets CQ self-eval on production files. TIER 2 gets the complete step sequence including CQ1-CQ22 and Q1-Q17.
+3. **Audit at full depth per tier** -- TIER 0 gets a diff scan with 1+ CQ observation. TIER 1 gets CQ self-eval on production files. TIER 2 gets the complete step sequence including CQ1-CQ25 and Q1-Q20.
 4. **Fix** -- Apply all fixes (FIX-ALL mode active). If fixes break tests, revert and mark `[!]`.
 5. **Tag** -- `git tag -f reviewed/<short-hash> <full-hash>`. Non-negotiable.
 6. **Clean backlog** -- Remove the hash from `memory/backlog.md`.
@@ -760,8 +760,8 @@ If `memory/project-state.md` doesn't exist, create it (full Tech Stack detection
 
 Log this run to `memory/zuvo-runs.log` per `shared/includes/run-logger.md`:
 - SKILL: `review`
-- CQ_SCORE: from CQ1-CQ22 evaluation (or `-` for TIER 0 / utility modes)
-- Q_SCORE: from Q1-Q17 evaluation (or `-` if no test files in diff)
+- CQ_SCORE: from CQ1-CQ25 evaluation (or `-` for TIER 0 / utility modes)
+- Q_SCORE: from Q1-Q20 evaluation (or `-` if no test files in diff)
 - VERDICT: PASS/WARN/BLOCK from Phase 3 report verdict
 - TASKS: number of files reviewed
 - DURATION: tier label (e.g., `tier-2`, `batch-N`)

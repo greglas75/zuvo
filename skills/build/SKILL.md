@@ -108,8 +108,8 @@ Check for these in the feature description and target files:
 | Discovery pass (Phase 1a) | Yes | Yes | Yes |
 | Analysis agents (Phase 1b) | No | Blast Radius agent + inline duplication check | Blast Radius + Duplication Scanner agents |
 | Implementation plan | Inline, brief | Full plan with all sections | Full plan with all sections |
-| CQ self-eval (CQ1-CQ22) | Critical gates only | Full CQ1-CQ22 | Full CQ1-CQ22 |
-| Test quality self-eval (Q1-Q17) | Inline check | Full Q1-Q17 | Full Q1-Q17 |
+| CQ self-eval (CQ1-CQ25) | Critical gates only | Full CQ1-CQ25 | Full CQ1-CQ25 |
+| Test quality self-eval (Q1-Q20) | Inline check | Full Q1-Q20 | Full Q1-Q20 |
 | Independent CQ Auditor agent | No | No | Yes |
 | Independent Test Auditor agent | No | No | Yes |
 | Verification commands | Tests + types (if checker exists) | Tests + types | Tests + types + lint |
@@ -327,7 +327,7 @@ Rules:
 
 **LIGHT tier:** Check critical gates only (CQ3, CQ4, CQ5, CQ6, CQ8, CQ14) + any conditional gates activated by context (CQ16/CQ19/CQ20/CQ21/CQ22). Provide evidence for each. Fix any gate = 0.
 
-**STANDARD and DEEP tiers:** Read `{plugin_root}/rules/cq-checklist.md`. Run full CQ1-CQ22 on every production file written or modified. Condensed reference: `{plugin_root}/shared/includes/quality-gates.md`.
+**STANDARD and DEEP tiers:** Read `{plugin_root}/rules/cq-checklist.md`. Run full CQ1-CQ25 on every production file written or modified. Condensed reference: `{plugin_root}/shared/includes/quality-gates.md`.
 
 - Score each gate (1 = satisfied, 0 = violated, N/A = not applicable)
 - Static critical gates: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 — any = 0 means FIX before tests
@@ -359,7 +359,7 @@ When claiming an exemption, cite the covering test: `[exempt: covered by integra
 
 **LIGHT tier:** Inline check — verify Q7 (error path), Q11 (branches), Q13 (real imports), Q15 (value assertions), Q17 (oracle independence). Fix any = 0.
 
-**STANDARD and DEEP tiers:** Run full Q1-Q17 on every test file. Score threshold: >= 14 = PASS, 9-13 = FIX worst gaps, < 9 = REWRITE. Provide evidence for critical gates (Q7, Q11, Q13, Q15, Q17).
+**STANDARD and DEEP tiers:** Run full Q1-Q20 on every test file. Score threshold: >= 14 = PASS, 9-13 = FIX worst gaps, < 9 = REWRITE. Provide evidence for critical gates (Q7, Q11, Q13, Q15, Q17).
 
 Proceed to Phase 4 when self-evaluations pass.
 
@@ -386,7 +386,7 @@ Dispatch with:
 
   Tasks:
   1. Read each test file completely.
-  2. Run Q1-Q17 evaluation with evidence.
+  2. Run Q1-Q20 evaluation with evidence.
   3. Check for auto-fail patterns: empty bodies, assertions on mock inputs, tests passing with implementation deleted, toBeTruthy on objects.
   4. Report PASS (>= 14, all critical gates), FIX (gaps identified), or BLOCK (< 9).
 
@@ -408,7 +408,7 @@ Dispatch with:
 
   Tasks:
   1. Read each file completely.
-  2. Run CQ1-CQ22 with file:function:line evidence.
+  2. Run CQ1-CQ25 with file:function:line evidence.
   3. Classify: FIX-NOW (< 5 min), CRITICAL-BLOCKED (critical gate failure), DEFER (backlog).
   4. Check file sizes against limits.
 
@@ -446,8 +446,8 @@ EXECUTION VERIFICATION
 [ALL] [ ] TESTS: Test suite green
 [ALL] [ ] CQ CRITICAL: All critical gates pass (with evidence)
 [ALL] [ ] TYPES: Type checker passes (if checker exists; skip with note if none)
-[STD+] [ ] CQ FULL: CQ1-CQ22 self-eval, scores + evidence
-[STD+] [ ] Q FULL: Q1-Q17 self-eval on each test file
+[STD+] [ ] CQ FULL: CQ1-CQ25 self-eval, scores + evidence
+[STD+] [ ] Q FULL: Q1-Q20 self-eval on each test file
 [DEEP] [ ] LINT: Linter passes
 [DEEP] [ ] CQ AUDITOR: Agent returned, FIX-NOW items applied
 [DEEP] [ ] TEST AUDITOR: Agent returned with PASS

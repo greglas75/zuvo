@@ -146,4 +146,4 @@ Reference: `skills/build/SKILL.md` is the canonical template.
 | Edit a skill | Edit the SKILL.md, then `./scripts/install.sh` |
 | Test changes locally | `./scripts/install.sh` then restart Claude/Codex |
 | Release to users | `./scripts/release.sh patch "description"` |
-| Add a shared include | Create in `shared/includes/`, reference via `../../shared/includes/` from skills |
+| Add a shared include | Create in `shared/includes/`, reference via `{plugin_root}/shared/includes/` from skills |

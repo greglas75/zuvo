@@ -1,11 +1,11 @@
 ---
 name: test-audit
-description: "Batch audit of test files against Q1-Q17 quality gates and AP1-AP26 anti-patterns. Detects orphan tests, phantom mocks, untested public methods. Tiered output (A/B/C/D) with critical gate enforcement and optional post-audit fix workflow. Flags: zuvo:test-audit all | [path] | [file] | --deep | --quick | --include-e2e | --details | --commit=ask|auto|off"
+description: "Batch audit of test files against Q1-Q20 quality gates and AP1-AP26 anti-patterns. Detects orphan tests, phantom mocks, untested public methods. Tiered output (A/B/C/D) with critical gate enforcement and optional post-audit fix workflow. Flags: zuvo:test-audit all | [path] | [file] | --deep | --quick | --include-e2e | --details | --commit=ask|auto|off"
 ---
 
 # zuvo:test-audit — Test Quality Triage
 
-Systematic evaluation of unit and integration test files through the Q1-Q17 binary checklist and AP anti-pattern catalog. Each test file is paired with its production source, scored against behavioral coverage standards, and assigned a tier.
+Systematic evaluation of unit and integration test files through the Q1-Q20 binary checklist and AP anti-pattern catalog. Each test file is paired with its production source, scored against behavioral coverage standards, and assigned a tier.
 
 **Scope:** Unit and integration tests only. E2E tests (`*/e2e/*`, `*.e2e.*`) are excluded by default. Use `--include-e2e` to include them.
 
@@ -136,7 +136,7 @@ Split grouped files into batches of 8-10. For each batch, spawn a Task agent or 
 ### Agent Prompt (provided to each batch agent)
 
 ```
-You are a test quality auditor. Evaluate each test file below against Q1-Q17.
+You are a test quality auditor. Evaluate each test file below against Q1-Q20.
 
 RED FLAG PRE-SCAN (do FIRST, before full evaluation):
 - Tests with zero expect() calls (AP13) -> AUTO TIER-D. RTL exception: getByRole/getByText/getByLabelText are implicit assertions.
@@ -397,7 +397,7 @@ After presenting the report, the user may request fixes:
    - Only test files modified (no production code changes)
    - Full test suite green
    - All modified test files <= 400 lines
-   - Q1-Q17 self-eval on each fixed file
+   - Q1-Q20 self-eval on each fixed file
    - Tier improvement confirmed (D->C+, C->B+, B->A)
 4. **Commit** -- behavior per `--commit` flag (ask/auto/off)
 5. **Re-audit** -- optionally re-run on fixed files to verify improvement

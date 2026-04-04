@@ -27,7 +27,7 @@ Execute all three roles yourself in sequential passes with explicit checkpoints:
 
 1. **Implementer pass:** Write the code following the task spec. Run verification. Print: `[CHECKPOINT: implementation complete, switching to spec review]`
 2. **Spec reviewer pass:** Re-read the task spec and the code you just wrote. Compare independently. Do NOT trust your implementation pass — review as if seeing the code for the first time. Print findings.
-3. **Quality reviewer pass:** Run CQ1-CQ22 on production files, Q1-Q17 on test files. Print scores.
+3. **Quality reviewer pass:** Run CQ1-CQ25 on production files, Q1-Q20 on test files. Print scores.
 4. **Commit** (if both reviews pass)
 
 The checkpoint markers ensure role separation even within a single agent context.
@@ -272,7 +272,7 @@ Dispatch per environment:
 - The list of test files created or modified by the implementer
 - `CODESIFT_AVAILABLE` and repo identifier
 
-The quality reviewer runs CQ1-CQ22 on production code and Q1-Q17 on test code. It also checks file size limits.
+The quality reviewer runs CQ1-CQ25 on production code and Q1-Q20 on test code. It also checks file size limits.
 
 ### Step 7: Handle Quality Reviewer Verdict
 
@@ -457,8 +457,8 @@ From `shared/includes/tdd-protocol.md`: no production code without a failing tes
 ### Quality Gates
 
 From `shared/includes/quality-gates.md`:
-- CQ1-CQ22 on production code (critical gates: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14)
-- Q1-Q17 on test code (critical gates: Q7, Q11, Q13, Q15, Q17)
+- CQ1-CQ25 on production code (critical gates: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14)
+- Q1-Q20 on test code (critical gates: Q7, Q11, Q13, Q15, Q17)
 - Any critical gate = 0 -> FAIL, regardless of total score
 
 ### Backlog Protocol

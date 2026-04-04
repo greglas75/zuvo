@@ -1,10 +1,10 @@
 # Quality Gates — Quick Reference
 
-> Summary of CQ1-CQ22 (code quality) and Q1-Q17 (test quality) gates for agent use.
+> Summary of CQ1-CQ25 (code quality) and Q1-Q20 (test quality) gates for agent use.
 
 This is a condensed reference. Full details, evidence examples, and N/A rules are in `rules/cq-checklist.md` (code) and `rules/testing.md` (tests). Agents should read the full files when performing detailed evaluations.
 
-## CQ1-CQ22: Code Quality Gates
+## CQ1-CQ25: Code Quality Gates
 
 | # | Category | What it checks |
 |---|----------|---------------|
@@ -30,6 +30,9 @@ This is a condensed reference. Full details, evidence examples, and N/A rules ar
 | CQ20 | Contract | Single canonical source per data point. No dual fields stored independently. |
 | CQ21 | Concurrency | No TOCTOU races. Mutations idempotent or CAS-protected. |
 | CQ22 | Resources | Listeners, timers, observers cleaned up on unmount. No stale closures. |
+| CQ23 | Data | Cache entries have TTL or explicit invalidation. No stale-forever. |
+| CQ24 | Hygiene | Feature flags cleaned up after rollout (>30 days = stale). |
+| CQ25 | Contract | API changes backward-compatible or have documented deprecation path. |
 
 ### Critical Gates (Static)
 
@@ -48,14 +51,16 @@ These become critical only when the code context activates them:
 | CQ20 | Payload contains `*_id` + `*_name` pairs or number + currency-string |
 | CQ21 | Concurrent mutations on the same resource |
 | CQ22 | Code creates subscriptions, timers, or observers |
+| CQ23 | Code uses caching (Redis, in-memory, CDN) |
+| CQ25 | Code modifies a public API consumed by external clients |
 
 ### CQ Scoring
 
 | Result | Criteria |
 |--------|---------|
-| PASS | Score >= 18/22 AND all active critical gates = 1 |
-| CONDITIONAL PASS | Score 16-17/22 AND all active critical gates = 1 |
-| FAIL | Any active critical gate = 0, OR total score < 16 |
+| PASS | Score >= 20/25 AND all active critical gates = 1 |
+| CONDITIONAL PASS | Score 18-19/25 AND all active critical gates = 1 |
+| FAIL | Any active critical gate = 0, OR total score < 18 |
 
 ### CQ Evidence Format
 
@@ -76,7 +81,7 @@ If more than 60% of gates (14+) are scored N/A, flag the evaluation as "low-sign
 
 ---
 
-## Q1-Q17: Test Quality Gates
+## Q1-Q20: Test Quality Gates
 
 | # | What it checks |
 |---|---------------|
@@ -97,6 +102,9 @@ If more than 60% of gates (14+) are scored N/A, flag the evaluation as "low-sign
 | Q15 | Assertions verify content and values, not just counts or shapes |
 | Q16 | Cross-cutting isolation: changes to A verified not to affect B |
 | Q17 | Assertions verify computed output, not input echo. Expected values from spec, not copied from implementation. |
+| Q18 | No flaky tests — no timing dependencies, no ordering dependencies, no external state. |
+| Q19 | Test isolation — no shared mutable state between tests. Each test independent. |
+| Q20 | Performance regression — critical operations have baseline benchmarks. |
 
 ### Critical Gates
 
@@ -108,9 +116,9 @@ These are always critical. If any scores 0, the evaluation is capped at FIX:
 
 | Result | Criteria |
 |--------|---------|
-| PASS | Score >= 14/17, all critical gates = 1 |
-| FIX | Score 9-13/17, or any critical gate = 0 — fix worst gaps, re-score |
-| REWRITE | Score < 9 — tests need fundamental rework |
+| PASS | Score >= 16/20, all critical gates = 1 |
+| FIX | Score 12-15/20, or any critical gate = 0 — fix worst gaps, re-score |
+| REWRITE | Score < 12 — tests need fundamental rework |
 
 ### Q Evidence Format
 
