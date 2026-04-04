@@ -641,7 +641,7 @@ For each `[ ]` entry, run the LITERAL ETAP pipeline -- not a shortcut:
 
 ### CQ Before/After (Non-Negotiable)
 
-Every file in the batch gets a full CQ1-CQ22 evaluation, even if the agent believes it is already fixed. No file gets `[x]` without proof.
+Every file in the batch gets a full CQ1-CQ28 evaluation, even if the agent believes it is already fixed. No file gets `[x]` without proof.
 
 ```
 - [x] path | TYPE | CQ: 12/18->17/18 | CQ3,CQ21 fixed | commit: abc1234
@@ -741,10 +741,10 @@ After each extraction, check:
 
 When the target is a test file:
 
-1. **ETAP-1A:** Run Q1-Q17 self-eval to identify gaps. Classify each gap. Record the BEFORE score in the contract state file.
+1. **ETAP-1A:** Run Q1-Q19 self-eval to identify gaps. Classify each gap. Record the BEFORE score in the contract state file.
 2. **ETAP-1B:** Structural cleanup (test organization, describe blocks, mock setup). Commit.
-3. **ETAP-2:** Assertion strengthening (exact values, error path tests, branch coverage). Re-score Q1-Q17. Commit.
-4. **Gate:** Score must improve by at least 2 points, or reach 15+/17.
+3. **ETAP-2:** Assertion strengthening (exact values, error path tests, branch coverage). Re-score Q1-Q19. Commit.
+4. **Gate:** Score must improve by at least 2 points, or reach 16+/19.
 
 ---
 
