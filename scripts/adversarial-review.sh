@@ -357,25 +357,37 @@ PROVIDER_TIMEOUT="${ZUVO_REVIEW_TIMEOUT:-120}"
 
 run_provider() {
   local p="$1"
-  local result=""
+  local tmpfile
+  tmpfile=$(mktemp)
 
-  # Run directly (foreground) — timeout via watchdog in background
-  local watchdog_pid=""
-  ( sleep "$PROVIDER_TIMEOUT" && kill -TERM $$ 2>/dev/null ) &
-  watchdog_pid=$!
+  # Run provider in background subshell with timeout
+  (
+    case "$p" in
+      gemini|gemini-npx) run_gemini ;;
+      codex|codex-app)   run_codex ;;
+      ollama)            run_ollama ;;
+      *) exit 1 ;;
+    esac
+  ) > "$tmpfile" 2>/dev/null &
+  local provider_pid=$!
 
-  case "$p" in
-    gemini|gemini-npx) result=$(run_gemini 2>/dev/null) || true ;;
-    codex|codex-app)   result=$(run_codex 2>/dev/null) || true ;;
-    ollama)            result=$(run_ollama 2>/dev/null) || true ;;
-    *) kill "$watchdog_pid" 2>/dev/null; return 1 ;;
-  esac
+  # Wait with poll-based timeout (kills only provider, not parent)
+  local elapsed=0
+  while kill -0 "$provider_pid" 2>/dev/null; do
+    sleep 2
+    elapsed=$((elapsed + 2))
+    if [[ $elapsed -ge $PROVIDER_TIMEOUT ]]; then
+      kill "$provider_pid" 2>/dev/null
+      wait "$provider_pid" 2>/dev/null
+      echo "  TIMEOUT after ${PROVIDER_TIMEOUT}s" >&2
+      rm -f "$tmpfile"
+      return 1
+    fi
+  done
 
-  # Cancel watchdog
-  kill "$watchdog_pid" 2>/dev/null
-  wait "$watchdog_pid" 2>/dev/null 2>&1
-
-  echo "$result"
+  wait "$provider_pid" 2>/dev/null
+  cat "$tmpfile"
+  rm -f "$tmpfile"
 }
 
 display_name() {
@@ -388,6 +400,8 @@ display_name() {
 ALL_RESULTS=""
 PROVIDERS_USED=""
 PROVIDER_COUNT=0
+JSON_TMPDIR=$(mktemp -d)
+trap 'rm -rf "$JSON_TMPDIR"' EXIT
 
 for p in $PROVIDERS; do
   local_display=$(display_name "$p")
@@ -399,8 +413,8 @@ for p in $PROVIDERS; do
     PROVIDER_COUNT=$((PROVIDER_COUNT + 1))
     PROVIDERS_USED="${PROVIDERS_USED:+$PROVIDERS_USED, }$local_display"
 
-    # Store per-provider result for JSON multi mode
-    eval "RESULT_${local_display}='$(echo "$RESULT" | sed "s/'/'\\\\''/g")'"
+    # Store per-provider result for JSON multi mode (temp file, no eval)
+    echo "$RESULT" > "$JSON_TMPDIR/result_${local_display}.txt"
 
     if [[ "$MULTI_MODE" == "multi" ]]; then
       # Accumulate results from all providers
@@ -458,8 +472,15 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
       local_display=$(display_name "$p")
       if echo "$PROVIDERS_USED" | grep -q "$local_display"; then
         if [[ "$first" != "true" ]]; then echo ","; fi
-        # Extract this provider's result from stored per-provider results
-        echo "    \"$local_display\": $(eval echo "\$RESULT_${local_display}" 2>/dev/null || echo '{"findings":[]}')"
+        # Read from temp file (no eval — safe from injection)
+        local result_file="$JSON_TMPDIR/result_${local_display}.txt"
+        if [[ -f "$result_file" ]]; then
+          # Strip markdown fences that LLMs sometimes wrap JSON in
+          printf '    "%s": ' "$local_display"
+          sed 's/^```json//; s/^```//; /^$/d' "$result_file"
+        else
+          echo "    \"$local_display\": {\"findings\":[]}"
+        fi
         first=false
       fi
     done
