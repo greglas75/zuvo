@@ -132,8 +132,11 @@ detect_providers() {
     providers="gemini-npx"
   fi
 
+  # Codex: check direct command, then macOS app bundle
   if command -v codex &>/dev/null; then
     providers="$providers codex"
+  elif [[ -x "/Applications/Codex.app/Contents/Resources/codex" ]]; then
+    providers="$providers codex-app"
   fi
 
   if command -v ollama &>/dev/null && curl -s http://localhost:11434/api/tags &>/dev/null; then
@@ -189,13 +192,18 @@ run_gemini() {
 }
 
 run_codex() {
-  local model_flag=""
-  if [[ -n "$CODEX_MODEL" ]]; then
-    model_flag="-m $CODEX_MODEL"
+  local codex_cmd="codex"
+  if ! command -v codex &>/dev/null; then
+    codex_cmd="/Applications/Codex.app/Contents/Resources/codex"
   fi
 
-  # Use codex exec in read-only sandbox
-  echo "$REVIEW_PROMPT" | codex exec --sandbox read-only $model_flag - 2>/dev/null
+  local model_flag=""
+  if [[ -n "$CODEX_MODEL" ]]; then
+    model_flag="-c model=\"$CODEX_MODEL\""
+  fi
+
+  # Use codex exec with the review prompt (read-only sandbox)
+  echo "$REVIEW_PROMPT" | $codex_cmd exec $model_flag -
 }
 
 run_ollama() {
@@ -230,11 +238,12 @@ DISPLAY_PROVIDER=""
 
 for p in $PROVIDERS; do
   local_display="${p/gemini-npx/gemini}"
+  local_display="${local_display/codex-app/codex}"
   echo "  Trying: $local_display..." >&2
 
   case "$p" in
     gemini|gemini-npx) RESULT=$(run_gemini 2>/dev/null) || true ;;
-    codex)             RESULT=$(run_codex 2>/dev/null) || true ;;
+    codex|codex-app)   RESULT=$(run_codex 2>/dev/null) || true ;;
     ollama)            RESULT=$(run_ollama 2>/dev/null) || true ;;
     *)
       echo "  WARN: Unknown provider '$p', skipping." >&2
