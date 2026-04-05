@@ -251,11 +251,20 @@ detect_providers() {
     providers="gemini-npx"
   fi
 
-  # Codex: check direct command, then macOS app bundle
+  # Codex: MCP (fast, ~25s) > CLI exec (slow, ~90s+)
+  local codex_bin=""
   if command -v codex &>/dev/null; then
-    providers="$providers codex"
+    codex_bin="codex"
   elif [[ -x "/Applications/Codex.app/Contents/Resources/codex" ]]; then
-    providers="$providers codex-app"
+    codex_bin="/Applications/Codex.app/Contents/Resources/codex"
+  fi
+  if [[ -n "$codex_bin" ]]; then
+    # Prefer MCP if mcp-server subcommand exists
+    if "$codex_bin" mcp-server --help &>/dev/null 2>&1; then
+      providers="$providers codex-mcp"
+    else
+      providers="$providers codex-app"
+    fi
   fi
 
   # Cursor Agent CLI
@@ -323,22 +332,82 @@ run_gemini() {
   printf '%s\n' "$result"
 }
 
-run_codex() {
+run_codex_mcp() {
+  # Codex MCP server — JSON-RPC over stdio. ~3x faster than CLI exec.
   local codex_cmd="codex"
   if ! command -v codex &>/dev/null; then
     codex_cmd="/Applications/Codex.app/Contents/Resources/codex"
   fi
 
-  # Build args as array to prevent injection via CODEX_MODEL
+  # Escape prompt for JSON embedding
+  local prompt_json
+  prompt_json=$(printf '%s' "$REVIEW_PROMPT" | jq -Rs '.')
+
+  local init_msg='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"adversarial-review","version":"1.0"}}}'
+  local call_msg
+  call_msg=$(printf '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"codex","arguments":{"prompt":%s,"sandbox":"read-only"}}}' "$prompt_json")
+
+  # Use FIFO so we can read response as it arrives (not after sleep)
+  local mcp_dir
+  mcp_dir=$(mktemp -d)
+  mkfifo "$mcp_dir/input"
+
+  # Start MCP server with FIFO input, capture output to file
+  "$codex_cmd" mcp-server < "$mcp_dir/input" > "$mcp_dir/output" 2>/dev/null &
+  local mcp_pid=$!
+
+  # Send init, wait, send tool call
+  {
+    printf '%s\n' "$init_msg"
+    sleep 1
+    printf '%s\n' "$call_msg"
+    # Keep FIFO open until we're done reading
+    sleep "$PROVIDER_TIMEOUT"
+  } > "$mcp_dir/input" &
+  local writer_pid=$!
+
+  # Poll for result (id:2 with "result" key)
+  local elapsed=0
+  while [[ $elapsed -lt $PROVIDER_TIMEOUT ]]; do
+    if grep -q '"id":2.*"result"' "$mcp_dir/output" 2>/dev/null; then
+      break
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+
+  # Cleanup processes (suppress "Terminated" messages)
+  { kill "$writer_pid" "$mcp_pid" 2>/dev/null; wait "$writer_pid" "$mcp_pid" 2>/dev/null; } 2>/dev/null
+
+  # Extract result
+  local text=""
+  if [[ -f "$mcp_dir/output" ]]; then
+    text=$(grep '"id":2' "$mcp_dir/output" 2>/dev/null | grep '"result"' | jq -r '.result.content[0].text // empty' 2>/dev/null)
+  fi
+
+  rm -rf "$mcp_dir"
+
+  if [[ -z "$text" ]]; then
+    return 1
+  fi
+  printf '%s\n' "$text"
+}
+
+run_codex() {
+  # Legacy CLI exec — fallback if MCP not available
+  local codex_cmd="codex"
+  if ! command -v codex &>/dev/null; then
+    codex_cmd="/Applications/Codex.app/Contents/Resources/codex"
+  fi
+
   local -a codex_args=(exec --sandbox read-only)
   if [[ -n "$CODEX_MODEL" ]]; then
-    # Sanitize: allow only alphanumeric, dots, hyphens, underscores
     local safe_model
     safe_model=$(printf '%s' "$CODEX_MODEL" | tr -cd 'a-zA-Z0-9._-')
     codex_args+=(-c "model=$safe_model")
   fi
 
-  echo "$REVIEW_PROMPT" | "$codex_cmd" "${codex_args[@]}" -
+  printf '%s' "$REVIEW_PROMPT" | "$codex_cmd" "${codex_args[@]}" -
 }
 
 run_ollama() {
@@ -394,6 +463,7 @@ run_provider() {
   (
     case "$p" in
       gemini|gemini-npx) run_gemini ;;
+      codex-mcp)         run_codex_mcp ;;
       codex|codex-app)   run_codex ;;
       cursor)            run_cursor ;;
       ollama)            run_ollama ;;
@@ -424,6 +494,7 @@ run_provider() {
 display_name() {
   local p="$1"
   p="${p/gemini-npx/gemini}"
+  p="${p/codex-mcp/codex}"
   p="${p/codex-app/codex}"
   echo "$p"
 }
