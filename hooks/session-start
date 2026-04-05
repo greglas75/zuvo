@@ -39,7 +39,7 @@ escaped_router=$(json_escape "$router_content")
 # ---------------------------------------------------------------------------
 # Build the context payload
 # ---------------------------------------------------------------------------
-payload="<IMPORTANT>\nYou have zuvo skills installed.\n\nBelow is the zuvo meta-skill router. It tells you which skill to invoke for any given task. For all skills listed here, use the Skill tool to invoke them.\n\n${escaped_router}\n</IMPORTANT>"
+payload="<IMPORTANT>\nYou’ve got zuvo skills installed.\n\nBelow is the zuvo meta-skill router. It tells you which skill to invoke for any given task. For all skills listed here, use the Skill tool to invoke them.\n\n${escaped_router}\n</IMPORTANT>"
 
 # ---------------------------------------------------------------------------
 # Platform detection and JSON output
