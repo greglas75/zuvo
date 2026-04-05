@@ -103,7 +103,15 @@ install_codex() {
 
   # Step 1: Build
   echo "  Building Codex distribution..."
-  bash "$ZUVO_DIR/scripts/build-codex-skills.sh" "$ZUVO_DIR" > /dev/null 2>&1
+  local build_log
+  build_log=$(mktemp)
+  if ! bash "$ZUVO_DIR/scripts/build-codex-skills.sh" "$ZUVO_DIR" > "$build_log" 2>&1; then
+    fail "Build failed. Build output:"
+    cat "$build_log" >&2
+    rm -f "$build_log"
+    return 1
+  fi
+  rm -f "$build_log"
   DIST="$ZUVO_DIR/dist/codex"
 
   if [[ ! -d "$DIST/skills" ]]; then
@@ -157,7 +165,15 @@ install_cursor() {
 
   # Step 1: Build
   echo "  Building Cursor distribution..."
-  bash "$ZUVO_DIR/scripts/build-cursor-skills.sh" "$ZUVO_DIR" > /dev/null 2>&1
+  local build_log
+  build_log=$(mktemp)
+  if ! bash "$ZUVO_DIR/scripts/build-cursor-skills.sh" "$ZUVO_DIR" > "$build_log" 2>&1; then
+    fail "Build failed. Build output:"
+    cat "$build_log" >&2
+    rm -f "$build_log"
+    return 1
+  fi
+  rm -f "$build_log"
   DIST="$ZUVO_DIR/dist/cursor"
 
   if [[ ! -d "$DIST/skills" ]]; then

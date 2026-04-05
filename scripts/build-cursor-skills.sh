@@ -91,7 +91,6 @@ strip_tool_names() {
 # Only change structural references.
 replace_cursor_refs() {
   sed \
-    -e 's/CLAUDE\.md/CLAUDE.md/g' \
     -e 's/`\.claude\/rules\/`/`rules\/`/g' \
     -e 's/\.claude\/skills\//skills\//g'
 }
@@ -243,6 +242,8 @@ transform_skill_for_cursor() {
     | normalize_unicode \
     | sed \
       -e "s|skills/${skill}/agents/\([a-z][-a-z]*\)\.md|~/.cursor/agents/${prefix}-\1.md|g" \
+      -e "s|skills/dependency-audit/agents/\([a-z][-a-z]*\)\.md|~/.cursor/agents/dep-audit-\1.md|g" \
+      -e "s|skills/write-e2e/agents/\([a-z][-a-z]*\)\.md|~/.cursor/agents/e2e-\1.md|g" \
       -e "s|skills/\([a-z][-a-z]*\)/agents/\([a-z][-a-z]*\)\.md|~/.cursor/agents/\1-\2.md|g" \
     | sed \
       -e "s|^\(agents/\)\([a-z][-a-z]*\)\.md|~/.cursor/agents/${prefix}-\2.md|g" \
@@ -266,9 +267,9 @@ adapt_agent_for_cursor() {
   prefix=$(get_skill_prefix "$skill")
   local full_name="${prefix}-${agent_name}"
 
-  # Detect if agent has write tools
+  # Detect if agent has write tools (scan full frontmatter block)
   local has_write
-  has_write=$(head -30 "$src" | grep -cE "^\s+- (Write|Edit)" || true)
+  has_write=$(awk '/^---$/{n++; if(n==2) exit} n==1{print}' "$src" | grep -cE "^\s+- (Write|Edit)" || true)
 
   local readonly_val
   if [ "$has_write" -gt 0 ]; then

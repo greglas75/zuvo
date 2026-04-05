@@ -1,6 +1,6 @@
 # Zuvo
 
-Auto-activating, multi-agent skill ecosystem for Claude Code and Codex.
+Auto-activating, multi-agent skill ecosystem for Claude Code, Codex, and Cursor.
 
 39 skills, 20 specialized agents, quality gates, and structured workflows — all in one plugin.
 
@@ -26,7 +26,15 @@ cd zuvo
 ./scripts/install.sh codex
 ```
 
-### Both (for plugin developers)
+### Cursor
+
+```bash
+git clone https://github.com/greglas75/zuvo.git
+cd zuvo
+./scripts/install.sh cursor
+```
+
+### All platforms (for plugin developers)
 
 ```bash
 ./scripts/install.sh
@@ -53,35 +61,29 @@ claude plugin install zuvo
 ```
 Then start a new session.
 
-### Codex
+### Codex / Cursor
 
 ```bash
 cd /path/to/zuvo
 git pull
-./scripts/install.sh codex
-```
-
-### Both
-
-```bash
-cd /path/to/zuvo
-git pull
-./scripts/install.sh
+./scripts/install.sh codex   # or: cursor, all
 ```
 
 ## What `install.sh` does
 
-One script, two platforms:
+One script, three platforms:
 
 | Platform | What it does |
 |----------|-------------|
 | Claude Code | Copies source files to plugin cache (`~/.claude/plugins/cache/...`) |
 | Codex | Builds adapted distribution (path replacement, unicode normalization, TOML agent generation) then copies to `~/.codex/skills/` + `~/.codex/agents/` |
+| Cursor | Builds adapted distribution (Cursor v3 agent frontmatter, flat agents with skill prefixes) then copies to `~/.cursor/skills/` + `~/.cursor/agents/` |
 
 ```bash
-./scripts/install.sh          # both platforms
+./scripts/install.sh          # all platforms (default)
 ./scripts/install.sh claude   # Claude Code only
 ./scripts/install.sh codex    # Codex only
+./scripts/install.sh cursor   # Cursor only
 ```
 
 ## Local development
@@ -119,7 +121,7 @@ args = ["-y", "codesift-mcp"]
 |----------|--------|---------|
 | Claude Code | Stable | `claude plugin install zuvo` |
 | Codex | Experimental | `./scripts/install.sh codex` |
-| Cursor | Limited (sequential fallback) | `claude --plugin-dir ./zuvo` |
+| Cursor | Stable (v3 sub-agents) | `./scripts/install.sh cursor` |
 
 ## Skills
 
@@ -161,7 +163,7 @@ This bumps version, commits, pushes, tags, updates marketplace SHA.
 ./scripts/install.sh
 ```
 
-This syncs source to Claude Code cache + Codex. No git push, no marketplace update.
+This syncs source to Claude Code cache + Codex + Cursor. No git push, no marketplace update.
 
 ### What `package.json` is for
 

@@ -13,7 +13,7 @@ Markdown. Shell scripts in `scripts/`. That's it.
 ### For yourself (dev testing, no marketplace push)
 
 ```bash
-./scripts/install.sh          # copies to Claude Code cache + Codex
+./scripts/install.sh          # copies to Claude Code cache + Codex + Cursor
 ```
 
 Then restart Claude Code / Codex.
@@ -57,7 +57,7 @@ This does everything: version bump, commit, push, tag, marketplace SHA update. U
 | What you want | Command |
 |---------------|---------|
 | Push + sync everything (dev) | `./scripts/dev-push.sh "description"` then restart Claude/Codex |
-| Test changes locally (dev) | `./scripts/install.sh` then restart Claude/Codex |
+| Test changes locally (dev) | `./scripts/install.sh` then restart Claude/Codex/Cursor |
 | Release to users | `./scripts/release.sh patch "msg"` |
 | Verify release works | `claude plugin uninstall zuvo@zuvo-marketplace && claude plugin install zuvo` then new session |
 | User first install | `claude plugin marketplace add greglas75/zuvo-marketplace && claude plugin install zuvo` |
@@ -78,10 +78,13 @@ This is a Claude Code plugin cache bug, not a zuvo bug. It creates multiple cach
 |----------|--------|
 | Claude Code | Copies source → ALL directories under `~/.claude/plugins/cache/zuvo-marketplace/zuvo/` (see below) |
 | Codex | Runs `build-codex-skills.sh` (path replacement, unicode normalization, TOML agent generation) → copies to `~/.codex/skills/` + `~/.codex/agents/` + `~/.codex/shared/` |
+| Cursor | Runs `build-cursor-skills.sh` (Cursor v3 agent frontmatter, flat agents with skill prefixes, max 4 parallel) → copies to `~/.cursor/skills/` + `~/.cursor/agents/` + `~/.cursor/shared/` |
 
 **Claude Code cache gotcha:** Claude Code creates TWO cache directories — one named by version (`1.0.0/`) and one named by git SHA (`564a269.../`). It may load from EITHER. `install.sh` syncs to ALL directories. Never copy manually to just one.
 
 Codex requires a BUILD step because it uses different paths (`~/.codex/` not `../../shared/`) and needs TOML agent registration files.
+
+Cursor requires a BUILD step because it uses flat agent files in `~/.cursor/agents/` with Cursor v3 frontmatter (`model: inherit`, `readonly: true/false`) instead of Claude Code's `tools:` list.
 
 ## How to release (for end users via marketplace)
 
@@ -99,9 +102,10 @@ skills/<name>/SKILL.md          — skill definitions (39 total)
 skills/<name>/agents/<name>.md  — sub-agent instructions
 shared/includes/*.md            — shared procedural includes (codesift-setup, env-compat, etc.)
 rules/*.md                      — code quality rules (cq-patterns, testing, security)
-scripts/install.sh              — local install to Claude + Codex
+scripts/install.sh              — local install to Claude + Codex + Cursor
 scripts/release.sh              — release to marketplace
 scripts/build-codex-skills.sh   — build Codex distribution (called by install.sh)
+scripts/build-cursor-skills.sh  — build Cursor v3 distribution (called by install.sh)
 docs/                           — documentation (skills.md, pipeline.md, etc.)
 .claude-plugin/plugin.json      — Claude Code plugin manifest
 .codex-plugin/plugin.json       — Codex plugin manifest
