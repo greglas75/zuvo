@@ -167,6 +167,15 @@ Before writing ANY code, verify:
 
 Tests are part of implementation, not a follow-up. NEVER ask "should I write tests?" — the answer is always yes. NEVER say "implementation complete" when test files = 0.
 
+**Additional rules:**
+- **No direct EnterPlanMode** for features touching 3+ files — use `zuvo:build` instead (includes planning WITH analysis sub-agents).
+- **CQ self-eval for direct coding** (1-2 files, no skill): still run CQ1-CQ28 on each production file before writing tests.
+- **/review before push**: after any non-trivial implementation, run `zuvo:review` before pushing.
+
+## Skill File Loading
+
+When executing ANY skill that specifies a file loading checklist: **Read each listed file from disk using the Read tool** — "I already know the content" is NOT valid. Print the checklist with status before proceeding. If any REQUIRED file is missing, STOP.
+
 ## Stack Detection
 
 Detect the project's tech stack to know which rules to Read when writing code directly (without a skill):

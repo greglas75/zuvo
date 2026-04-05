@@ -103,6 +103,27 @@ Default to `L1` for read-only analysis. Use `L0` only when you need exact source
 - `token_budget=3000` — let CodeSift pack as many results as fit within a token limit
 - `file_pattern="*.service.ts"` — restrict search scope, halves token cost
 
+## ALWAYS / NEVER Rules
+
+**ALWAYS:**
+- `semantic_search` or `codebase_retrieval(type:"semantic")` for conceptual questions
+- `trace_route` FIRST for any API endpoint — NEVER multiple search_text + trace_call_chain
+- `detect_communities` BEFORE `get_knowledge_map` — NEVER knowledge_map without communities first
+- `index_file(path)` after editing — NEVER index_folder (9ms vs 3-8s)
+- `include_source=true` on search_symbols
+- `get_symbols` (batch) for 2+ symbols — NEVER sequential get_symbol
+- Batch 3+ searches into `codebase_retrieval`
+- `search_conversations` when encountering error/bug that may have been solved before
+- `search_text(ranked=true)` when you need to know WHICH FUNCTION contains a match
+- `discover_tools` + `describe_tools` when you need a tool not in ListTools
+
+**NEVER:**
+- `index_folder` if repo already in list_repos — file watcher auto-updates
+- `list_repos` more than once per session
+- Manual Edit multiple files for rename — use rename_symbol
+- Read entire file for return type — use get_type_info
+- index worktrees — use the main repo index
+
 ## Degraded Mode (CodeSift Unavailable)
 
 When CodeSift is not available, fall back to built-in tools:
