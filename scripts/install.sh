@@ -120,26 +120,52 @@ install_codex() {
   fi
   ok "Build complete"
 
-  # Step 2: Copy skills
+  # Step 2: Clean old toolkit symlinks (from claude-code-toolkit era)
+  local old_codex_links=(
+    "$HOME/.codex/CLAUDE.md"
+    "$HOME/.codex/skill-workflows.md"
+    "$HOME/.codex/refactoring-protocol.md"
+    "$HOME/.codex/review-protocol.md"
+    "$HOME/.codex/agent-instructions.md"
+    "$HOME/.codex/test-patterns.md"
+    "$HOME/.codex/test-patterns-catalog.md"
+    "$HOME/.codex/test-patterns-nestjs.md"
+    "$HOME/.codex/test-patterns-redux.md"
+    "$HOME/.codex/test-patterns-yii2.md"
+    "$HOME/.codex/conditional-rules"
+    "$HOME/.codex/refactoring-examples"
+  )
+  local cleaned=0
+  for link in "${old_codex_links[@]}"; do
+    if [[ -L "$link" ]]; then
+      rm "$link"
+      cleaned=$((cleaned + 1))
+    fi
+  done
+  if [[ "$cleaned" -gt 0 ]]; then
+    ok "Cleaned $cleaned old toolkit symlinks"
+  fi
+
+  # Step 3: Copy skills
   cp -r "$DIST"/skills/* "$HOME/.codex/skills/"
   SKILL_COUNT=$(ls -d "$HOME/.codex/skills"/*/ 2>/dev/null | wc -l | tr -d ' ')
   ok "Skills installed ($SKILL_COUNT total)"
 
-  # Step 3: Copy agents (TOML configs)
+  # Step 4: Copy agents (TOML configs)
   if [[ -d "$DIST/agents" ]] && ls "$DIST"/agents/*.toml &>/dev/null; then
     cp "$DIST"/agents/*.toml "$HOME/.codex/agents/"
     AGENT_COUNT=$(ls "$HOME/.codex/agents"/*.toml 2>/dev/null | wc -l | tr -d ' ')
     ok "Agent TOMLs installed ($AGENT_COUNT total)"
   fi
 
-  # Step 4: Copy shared includes
+  # Step 5: Copy shared includes
   if [[ -d "$DIST/shared" ]]; then
     mkdir -p "$HOME/.codex/shared/includes"
     cp -r "$DIST"/shared/* "$HOME/.codex/shared/"
     ok "Shared includes installed"
   fi
 
-  # Step 5: Copy rules
+  # Step 6: Copy rules
   if [[ -d "$DIST/rules" ]]; then
     mkdir -p "$HOME/.codex/rules"
     cp -r "$DIST"/rules/* "$HOME/.codex/rules/"
