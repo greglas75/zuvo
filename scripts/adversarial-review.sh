@@ -22,7 +22,7 @@ set -euo pipefail
 
 OLLAMA_MODEL="${ZUVO_OLLAMA_MODEL:-qwen2.5-coder:32b}"
 CODEX_MODEL="${ZUVO_CODEX_MODEL:-}"
-GEMINI_MODEL="${ZUVO_GEMINI_MODEL:-gemini-2.5-pro}"
+GEMINI_MODEL="${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}"
 
 # ─── Argument parsing ───────────────────────────────────────────
 
