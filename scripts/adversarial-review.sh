@@ -378,7 +378,7 @@ echo "CROSS-PROVIDER REVIEW" >&2
 echo "  Input: ${#INPUT} chars" >&2
 echo "  Review: $REVIEW_MODE | Output: $OUTPUT_FORMAT | Dispatch: $MULTI_MODE" >&2
 
-PROVIDER_TIMEOUT="${ZUVO_REVIEW_TIMEOUT:-120}"
+PROVIDER_TIMEOUT="${ZUVO_REVIEW_TIMEOUT:-300}"
 
 run_provider() {
   local p="$1"
