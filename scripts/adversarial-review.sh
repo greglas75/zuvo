@@ -27,6 +27,7 @@ GEMINI_MODEL="${ZUVO_GEMINI_MODEL:-}"
 # ─── Argument parsing ───────────────────────────────────────────
 
 PROVIDER=""
+MULTI_MODE=""  # empty = auto (multi if 2+ available), "single" = first-success only
 DIFF_REF=""
 FILES=""
 INPUT_MODE="stdin"  # stdin | diff | files
@@ -34,11 +35,18 @@ INPUT_MODE="stdin"  # stdin | diff | files
 while [[ $# -gt 0 ]]; do
   case $1 in
     --provider)  PROVIDER="$2"; shift 2 ;;
+    --multi)     MULTI_MODE="multi"; shift ;;
+    --single)    MULTI_MODE="single"; shift ;;
     --diff)      DIFF_REF="$2"; INPUT_MODE="diff"; shift 2 ;;
     --files)     FILES="$2"; INPUT_MODE="files"; shift 2 ;;
     --model)     OLLAMA_MODEL="$2"; shift 2 ;;
     --help|-h)
-      echo "Usage: adversarial-review.sh [--provider gemini|codex|ollama] [--diff REF] [--files \"file1 file2\"] [--model MODEL]"
+      echo "Usage: adversarial-review.sh [--provider P] [--multi|--single] [--diff REF] [--files \"f1 f2\"] [--model M]"
+      echo ""
+      echo "Modes:"
+      echo "  (default)   Multi-provider: run ALL available providers for maximum coverage"
+      echo "  --single    First-success: stop after the first provider that returns results"
+      echo "  --provider  Force a specific provider (gemini, codex, ollama)"
       echo ""
       echo "Pipe a diff via stdin, or use --diff/--files to specify input."
       echo ""
@@ -181,14 +189,13 @@ run_gemini() {
     model_flag="--model $GEMINI_MODEL"
   fi
 
-  local gemini_cmd="gemini"
-  if ! command -v gemini &>/dev/null; then
-    gemini_cmd="npx --yes @google/gemini-cli"
-  fi
-
   # -p/--prompt takes the prompt as argument (not stdin)
   # --sandbox for safety
-  $gemini_cmd -p "$REVIEW_PROMPT" --sandbox $model_flag
+  if command -v gemini &>/dev/null; then
+    gemini -p "$REVIEW_PROMPT" --sandbox $model_flag
+  else
+    npx --yes @google/gemini-cli -p "$REVIEW_PROMPT" --sandbox $model_flag
+  fi
 }
 
 run_codex() {
@@ -197,13 +204,15 @@ run_codex() {
     codex_cmd="/Applications/Codex.app/Contents/Resources/codex"
   fi
 
-  local model_flag=""
+  # Build args as array to prevent injection via CODEX_MODEL
+  local -a codex_args=(exec --sandbox read-only)
   if [[ -n "$CODEX_MODEL" ]]; then
-    model_flag="-c model=\"$CODEX_MODEL\""
+    # Sanitize: strip quotes and special chars
+    local safe_model="${CODEX_MODEL//[\"\'\\]/}"
+    codex_args+=(-c "model=\"$safe_model\"")
   fi
 
-  # Use codex exec with the review prompt (read-only sandbox)
-  echo "$REVIEW_PROMPT" | $codex_cmd exec $model_flag -
+  echo "$REVIEW_PROMPT" | "$codex_cmd" "${codex_args[@]}" -
 }
 
 run_ollama() {
@@ -228,38 +237,74 @@ run_ollama() {
   echo "$REVIEW_PROMPT" | ollama run "$model" --nowordwrap 2>/dev/null
 }
 
-# ─── Execute (try providers in order, fall through on failure) ──
+# ─── Determine mode ────────────────────────────────────────────
+
+# If --provider is set, always single. Otherwise: default is multi.
+if [[ -n "$PROVIDER" ]]; then
+  MULTI_MODE="single"
+elif [[ -z "$MULTI_MODE" ]]; then
+  MULTI_MODE="multi"
+fi
+
+# ─── Execute ───────────────────────────────────────────────────
 
 echo "CROSS-PROVIDER REVIEW" >&2
 echo "  Input: ${#INPUT} chars" >&2
+echo "  Mode: $MULTI_MODE" >&2
 
-RESULT=""
-DISPLAY_PROVIDER=""
+run_provider() {
+  local p="$1"
+  case "$p" in
+    gemini|gemini-npx) run_gemini 2>/dev/null ;;
+    codex|codex-app)   run_codex 2>/dev/null ;;
+    ollama)            run_ollama 2>/dev/null ;;
+    *) return 1 ;;
+  esac
+}
+
+display_name() {
+  local p="$1"
+  p="${p/gemini-npx/gemini}"
+  p="${p/codex-app/codex}"
+  echo "$p"
+}
+
+ALL_RESULTS=""
+PROVIDERS_USED=""
+PROVIDER_COUNT=0
 
 for p in $PROVIDERS; do
-  local_display="${p/gemini-npx/gemini}"
-  local_display="${local_display/codex-app/codex}"
-  echo "  Trying: $local_display..." >&2
+  local_display=$(display_name "$p")
+  echo "  Running: $local_display..." >&2
 
-  case "$p" in
-    gemini|gemini-npx) RESULT=$(run_gemini 2>/dev/null) || true ;;
-    codex|codex-app)   RESULT=$(run_codex 2>/dev/null) || true ;;
-    ollama)            RESULT=$(run_ollama 2>/dev/null) || true ;;
-    *)
-      echo "  WARN: Unknown provider '$p', skipping." >&2
-      continue
-      ;;
-  esac
+  RESULT=$(run_provider "$p") || true
 
   if [[ -n "$RESULT" ]]; then
-    DISPLAY_PROVIDER="$local_display"
-    break
+    PROVIDER_COUNT=$((PROVIDER_COUNT + 1))
+    PROVIDERS_USED="${PROVIDERS_USED:+$PROVIDERS_USED, }$local_display"
+
+    if [[ "$MULTI_MODE" == "multi" ]]; then
+      # Accumulate results from all providers
+      upper_display=$(echo "$local_display" | tr '[:lower:]' '[:upper:]')
+      ALL_RESULTS="${ALL_RESULTS}
+
+###############################################################
+###   REVIEW BY: ${upper_display}
+###############################################################
+
+$RESULT
+"
+    else
+      # Single mode: stop at first success
+      ALL_RESULTS="$RESULT"
+      break
+    fi
   else
-    echo "  WARN: $local_display failed or returned empty. Trying next..." >&2
+    echo "  WARN: $local_display failed or returned empty." >&2
   fi
 done
 
-if [[ -z "$RESULT" ]]; then
+if [[ -z "$ALL_RESULTS" ]]; then
   echo "ERROR: All providers failed. Tried: $PROVIDERS" >&2
   exit 2
 fi
@@ -270,13 +315,11 @@ cat <<HEADER
 ===============================================================
 CROSS-PROVIDER ADVERSARIAL REVIEW
 ===============================================================
-Provider: $DISPLAY_PROVIDER
+Providers: $PROVIDERS_USED ($PROVIDER_COUNT total)
 Input size: ${#INPUT} chars
 Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 ===============================================================
-
-$RESULT
-
+$ALL_RESULTS
 ===============================================================
 END OF CROSS-PROVIDER REVIEW
 ===============================================================
