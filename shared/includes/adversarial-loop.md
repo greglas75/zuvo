@@ -46,8 +46,10 @@ Count changed lines. Check for high-risk file patterns.
 
 ```
 CHANGED_LINES = count insertions + deletions from git diff --staged --stat
-HIGH_RISK = diff contains patterns: auth, guard, token, session, payment, billing,
+HIGH_RISK = diff content contains: auth, guard, token, session, payment, billing,
             charge, migration, schema, encrypt, decrypt, hash, secret, password, pii
+         OR file paths match: */migrations/*, schema.prisma, *.sql, */auth/*,
+            */payment/*, */billing/*, */crypto/*
 
 IF CHANGED_LINES < 30 AND NOT HIGH_RISK:
   Skip adversarial. Set ADVERSARIAL_RESULT = "skipped (diff < 30 lines, no high-risk signals)"
@@ -186,7 +188,7 @@ Read and execute `{plugin_root}/shared/includes/adversarial-loop.md`.
 Set ADVERSARIAL_MODE to "test".
 ```
 
-### /execute — after Step 7 (quality reviewer), before confidence gate
+### /execute — after Step 7 (Phase 2 — not yet integrated)
 
 ```
 Step 7: Quality review passes
@@ -195,11 +197,11 @@ Step 7: Quality review passes
   -> Present results
 ```
 
-### /write-e2e — after all e2e tests written and passing
+### /write-e2e (Phase 2 — not yet integrated)
 
 Same as /write-tests, ADVERSARIAL_MODE = "test".
 
-### /refactor — after ETAP-2 (execution), before CQ audit
+### /refactor (Phase 2 — not yet integrated)
 
 ```
 ETAP-2: Refactoring applied, tests pass

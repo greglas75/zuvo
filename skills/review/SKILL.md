@@ -682,18 +682,18 @@ After the internal adversarial agent completes, **run** a cross-provider review 
 
 **Execution:**
 
-```bash
-SCRIPT_PATH="${PLUGIN_ROOT}/scripts/adversarial-review.sh"
-if [[ -x "$SCRIPT_PATH" ]]; then
-  # TIER 3: multi-provider for maximum coverage
-  # TIER 1-2: single provider for speed
-  if [[ "$TIER" -ge 3 ]]; then
-    git diff ${REVIEWED_FROM}..${REVIEWED_THROUGH} | "$SCRIPT_PATH" --multi
-  else
-    git diff ${REVIEWED_FROM}..${REVIEWED_THROUGH} | "$SCRIPT_PATH" --single
-  fi
-fi
+Run `{plugin_root}/scripts/adversarial-review.sh` on the reviewed diff. Dispatch as parallel Agent tasks — one per provider — for maximum speed:
+
+- **TIER 1-2:** Dispatch 2 agents in parallel (Gemini + Codex), merge results
+- **TIER 3:** Dispatch 3 agents in parallel (Gemini + Codex + Cursor), merge results
+
 ```
+Agent 1: git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review.sh --provider gemini
+Agent 2: git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review.sh --provider codex-app
+Agent 3 (TIER 3 only): git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review.sh --provider cursor
+```
+
+All agents run with `run_in_background: true`. Merge results before the Confidence Gate. If a provider fails or times out, continue with the others.
 
 **If the script is available and succeeds:**
 1. Parse the output for CRITICAL / WARNING / INFO findings

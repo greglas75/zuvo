@@ -261,9 +261,8 @@ detect_providers() {
     providers="$providers cursor"
   fi
 
-  if command -v ollama &>/dev/null && curl -s http://localhost:11434/api/tags &>/dev/null; then
-    providers="$providers ollama"
-  fi
+  # Ollama: disabled by default (too slow for review loops).
+  # Use --provider ollama to force it.
 
   echo "$providers"
 }
@@ -303,13 +302,20 @@ run_gemini() {
     model_flag="--model $GEMINI_MODEL"
   fi
 
-  # -p/--prompt takes the prompt as argument (not stdin)
-  # --sandbox for safety
+  # Write prompt to temp file, pass via stdin (avoids ARG_MAX on large diffs)
+  local prompt_file
+  prompt_file=$(mktemp)
+  echo "$REVIEW_PROMPT" > "$prompt_file"
+
+  local result
   if command -v gemini &>/dev/null; then
-    gemini -p "$REVIEW_PROMPT" --sandbox $model_flag
+    result=$(gemini -p "Review the code below." --sandbox $model_flag < "$prompt_file")
   else
-    npx --yes @google/gemini-cli -p "$REVIEW_PROMPT" --sandbox $model_flag
+    result=$(npx --yes @google/gemini-cli -p "Review the code below." --sandbox $model_flag < "$prompt_file")
   fi
+
+  rm -f "$prompt_file"
+  echo "$result"
 }
 
 run_codex() {
