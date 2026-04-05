@@ -66,11 +66,28 @@ If script not found or not executable: skip, note in output, proceed normally.
 
 ```bash
 git add -A
-git diff --staged | "$SCRIPT_PATH" --single --json --mode {MODE}
 ```
 
-**Flags:**
-- `--single` — first available provider only (speed in write loop; /review and /ship use --multi)
+Detect available providers, then randomly select 2 for dispatch. This ensures different model combinations across runs, maximizing blind-spot coverage over time.
+
+```
+Available providers (check in order): gemini, codex-app, cursor
+Select 2 at random from those available.
+If only 1 available: use that one.
+If 0 available: skip adversarial, note in output.
+```
+
+Dispatch selected providers in parallel as background Agent tasks — merge results:
+
+```
+Agent 1: git diff --staged | "$SCRIPT_PATH" --provider {RANDOM_PROVIDER_1} --json --mode {MODE}
+Agent 2: git diff --staged | "$SCRIPT_PATH" --provider {RANDOM_PROVIDER_2} --json --mode {MODE}
+```
+
+Both run with `run_in_background: true`. Merge findings from both before applying fix policy. If one provider fails or times out, continue with the other.
+
+**Flags per agent:**
+- `--provider X` — one specific provider per agent (parallel, not sequential)
 - `--json` — machine-readable for parsing
 - `--mode` — set by calling skill
 
@@ -98,7 +115,7 @@ For each finding:
 If Step 3 fixed any CRITICAL or WARNING findings:
 
 1. Stage fixes: `git add -A`
-2. Re-run: `git diff --staged | "$SCRIPT_PATH" --single --json --mode {MODE}`
+2. Re-run: dispatch 2 agents again (same as Step 2), merge results
 3. If new CRITICAL: fix and STOP (no third iteration)
 4. If only WARNING/INFO: add to known concerns, do not fix
 
