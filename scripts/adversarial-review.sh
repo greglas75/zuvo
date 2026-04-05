@@ -122,27 +122,34 @@ $INPUT"
 
 # ─── Provider detection ─────────────────────────────────────────
 
-detect_provider() {
-  if [[ -n "$PROVIDER" ]]; then
-    echo "$PROVIDER"
-    return
+detect_providers() {
+  # Returns space-separated list of available providers in priority order
+  local providers=""
+
+  if command -v gemini &>/dev/null; then
+    providers="gemini"
+  elif command -v npx &>/dev/null && npx --yes @google/gemini-cli --version &>/dev/null 2>&1; then
+    providers="gemini-npx"
   fi
 
-  # Priority: Gemini (free) > Codex (sub or API) > Ollama (local)
-  if command -v gemini &>/dev/null; then
-    echo "gemini"
-  elif command -v codex &>/dev/null; then
-    echo "codex"
-  elif command -v ollama &>/dev/null && curl -s http://localhost:11434/api/tags &>/dev/null; then
-    echo "ollama"
-  else
-    echo ""
+  if command -v codex &>/dev/null; then
+    providers="$providers codex"
   fi
+
+  if command -v ollama &>/dev/null && curl -s http://localhost:11434/api/tags &>/dev/null; then
+    providers="$providers ollama"
+  fi
+
+  echo "$providers"
 }
 
-DETECTED=$(detect_provider)
+if [[ -n "$PROVIDER" ]]; then
+  PROVIDERS="$PROVIDER"
+else
+  PROVIDERS=$(detect_providers)
+fi
 
-if [[ -z "$DETECTED" ]]; then
+if [[ -z "$PROVIDERS" ]]; then
   cat >&2 <<'EOF'
 ERROR: No cross-provider review tool found.
 
@@ -171,7 +178,14 @@ run_gemini() {
     model_flag="--model $GEMINI_MODEL"
   fi
 
-  echo "$REVIEW_PROMPT" | gemini -p $model_flag 2>/dev/null
+  local gemini_cmd="gemini"
+  if ! command -v gemini &>/dev/null; then
+    gemini_cmd="npx --yes @google/gemini-cli"
+  fi
+
+  # -p/--prompt takes the prompt as argument (not stdin)
+  # --sandbox for safety
+  $gemini_cmd -p "$REVIEW_PROMPT" --sandbox $model_flag
 }
 
 run_codex() {
@@ -185,35 +199,59 @@ run_codex() {
 }
 
 run_ollama() {
-  # Check if model is available
-  if ! ollama list 2>/dev/null | grep -q "$OLLAMA_MODEL"; then
-    echo "Pulling $OLLAMA_MODEL (first run only)..." >&2
-    ollama pull "$OLLAMA_MODEL" >&2
+  # Check if preferred model is available, fall back to any available coding model
+  local model="$OLLAMA_MODEL"
+  if ! ollama list 2>/dev/null | grep -q "$model"; then
+    # Try common coding models in order
+    for fallback in "qwen2.5-coder:14b" "qwen2.5-coder:7b" "mistral-small" "mistral"; do
+      if ollama list 2>/dev/null | grep -q "$fallback"; then
+        echo "  NOTE: $model not found, using $fallback" >&2
+        model="$fallback"
+        break
+      fi
+    done
+    # If still not found, try to pull the preferred model
+    if ! ollama list 2>/dev/null | grep -q "$model"; then
+      echo "  Pulling $model (first run only)..." >&2
+      ollama pull "$model" >&2
+    fi
   fi
 
-  echo "$REVIEW_PROMPT" | ollama run "$OLLAMA_MODEL" 2>/dev/null
+  echo "$REVIEW_PROMPT" | ollama run "$model" --nowordwrap 2>/dev/null
 }
 
-# ─── Execute ────────────────────────────────────────────────────
+# ─── Execute (try providers in order, fall through on failure) ──
 
 echo "CROSS-PROVIDER REVIEW" >&2
-echo "  Provider: $DETECTED" >&2
 echo "  Input: ${#INPUT} chars" >&2
-echo "  Running..." >&2
 
 RESULT=""
-case "$DETECTED" in
-  gemini)  RESULT=$(run_gemini) ;;
-  codex)   RESULT=$(run_codex) ;;
-  ollama)  RESULT=$(run_ollama) ;;
-  *)
-    echo "ERROR: Unknown provider '$DETECTED'. Use: gemini, codex, ollama" >&2
-    exit 2
-    ;;
-esac
+DISPLAY_PROVIDER=""
+
+for p in $PROVIDERS; do
+  local_display="${p/gemini-npx/gemini}"
+  echo "  Trying: $local_display..." >&2
+
+  case "$p" in
+    gemini|gemini-npx) RESULT=$(run_gemini 2>/dev/null) || true ;;
+    codex)             RESULT=$(run_codex 2>/dev/null) || true ;;
+    ollama)            RESULT=$(run_ollama 2>/dev/null) || true ;;
+    *)
+      echo "  WARN: Unknown provider '$p', skipping." >&2
+      continue
+      ;;
+  esac
+
+  if [[ -n "$RESULT" ]]; then
+    DISPLAY_PROVIDER="$local_display"
+    break
+  else
+    echo "  WARN: $local_display failed or returned empty. Trying next..." >&2
+  fi
+done
 
 if [[ -z "$RESULT" ]]; then
-  echo "ERROR: Provider '$DETECTED' returned empty response." >&2
+  echo "ERROR: All providers failed. Tried: $PROVIDERS" >&2
   exit 2
 fi
 
@@ -223,7 +261,7 @@ cat <<HEADER
 ===============================================================
 CROSS-PROVIDER ADVERSARIAL REVIEW
 ===============================================================
-Provider: $DETECTED
+Provider: $DISPLAY_PROVIDER
 Input size: ${#INPUT} chars
 Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 ===============================================================
