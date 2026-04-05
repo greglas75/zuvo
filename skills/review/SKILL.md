@@ -118,7 +118,7 @@ If ALL changed files are noise, print "Only noise files changed (locks, snapshot
 | CQ1-CQ28 evaluation | Skip | Yes | Yes | Yes |
 | Q1-Q19 on test files | Skip | If present | Yes | Yes |
 | Audit agents | None | None | Behavior (if new files) | All 3 |
-| Adversarial review | Skip | Skip | If 3+ prod files | Yes |
+| Adversarial review | Skip | If risk signal | Yes (single) | Yes (multi) |
 | Confidence re-scoring | Inline | Inline | Agent | Agent |
 | Hotspot detection | Skip | Skip | Yes | Yes |
 | Multi-pass (--thorough) | Refused | Optional | Optional | Automatic if >500L |
@@ -625,18 +625,20 @@ Proceed to the Confidence Gate with the synthesized findings.
 
 ---
 
-## Adversarial Review Pass (TIER 2+)
+## Adversarial Review Pass (TIER 1+)
 
-After the standard audit completes (Phase 1) and before the Confidence Gate (Phase 2), run an adversarial review pass. This pass uses a different analytical persona to catch blind spots that the primary reviewer shares with the code author.
+After the standard audit completes (Phase 1) and before the Confidence Gate (Phase 2), run an adversarial review pass. This uses a DIFFERENT AI model to catch blind spots that the primary reviewer shares with the code author. **This is NOT optional when conditions are met — run it automatically.**
 
 ### When It Runs
 
 | Condition | Adversarial pass |
 |-----------|-----------------|
-| TIER 0-1 | Skip |
-| TIER 2 | Run if 3+ production files changed |
-| TIER 3 | Always run |
-| `--thorough` | Always run (integrated into multi-pass as Pass 4) |
+| TIER 0 | Skip |
+| TIER 1 + risk signal (auth, payment, crypto, migration, PII) | **Run** (single provider) |
+| TIER 1, no risk signals | Skip |
+| TIER 2 | **Run** (single provider) |
+| TIER 3 | **Run** (multi provider) |
+| `--thorough` | **Run** (integrated into multi-pass as Pass 4) |
 
 ### How It Works
 
@@ -676,14 +678,20 @@ ADV-2 ...
 
 ### Cross-Provider Review (after adversarial agent)
 
-After the internal adversarial agent completes, attempt a cross-provider review using a different AI model. Read `{plugin_root}/shared/includes/cross-provider-review.md` for full protocol.
+After the internal adversarial agent completes, **run** a cross-provider review using a different AI model. This is NOT optional — execute automatically. Read `{plugin_root}/shared/includes/cross-provider-review.md` for full protocol.
 
 **Execution:**
 
 ```bash
 SCRIPT_PATH="${PLUGIN_ROOT}/scripts/adversarial-review.sh"
 if [[ -x "$SCRIPT_PATH" ]]; then
-  git diff ${REVIEWED_FROM}..${REVIEWED_THROUGH} | "$SCRIPT_PATH" > /tmp/cross-review.md
+  # TIER 3: multi-provider for maximum coverage
+  # TIER 1-2: single provider for speed
+  if [[ "$TIER" -ge 3 ]]; then
+    git diff ${REVIEWED_FROM}..${REVIEWED_THROUGH} | "$SCRIPT_PATH" --multi
+  else
+    git diff ${REVIEWED_FROM}..${REVIEWED_THROUGH} | "$SCRIPT_PATH" --single
+  fi
 fi
 ```
 

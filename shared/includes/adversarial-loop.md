@@ -63,6 +63,7 @@ SCRIPT_PATH="{plugin_root}/scripts/adversarial-review.sh"
 If script not found or not executable: skip, note in output, proceed normally.
 
 ```bash
+git add -A
 git diff --staged | "$SCRIPT_PATH" --single --json --mode {MODE}
 ```
 
