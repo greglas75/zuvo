@@ -22,7 +22,7 @@ set -euo pipefail
 
 OLLAMA_MODEL="${ZUVO_OLLAMA_MODEL:-qwen2.5-coder:32b}"
 CODEX_MODEL="${ZUVO_CODEX_MODEL:-}"
-GEMINI_MODEL="${ZUVO_GEMINI_MODEL:-}"
+GEMINI_MODEL="${ZUVO_GEMINI_MODEL:-gemini-2.5-pro}"
 
 # ─── Argument parsing ───────────────────────────────────────────
 
@@ -247,6 +247,11 @@ detect_providers() {
     providers="$providers codex-app"
   fi
 
+  # Cursor Agent CLI
+  if command -v agent &>/dev/null; then
+    providers="$providers cursor"
+  fi
+
   if command -v ollama &>/dev/null && curl -s http://localhost:11434/api/tags &>/dev/null; then
     providers="$providers ollama"
   fi
@@ -338,6 +343,11 @@ run_ollama() {
   echo "$REVIEW_PROMPT" | ollama run "$model" --nowordwrap 2>/dev/null
 }
 
+run_cursor() {
+  # Cursor Agent CLI — uses Composer 2 model from subscription
+  agent --print --output-format text "$REVIEW_PROMPT"
+}
+
 # ─── Determine mode ────────────────────────────────────────────
 
 # If --provider is set, always single. Otherwise: default is multi.
@@ -365,6 +375,7 @@ run_provider() {
     case "$p" in
       gemini|gemini-npx) run_gemini ;;
       codex|codex-app)   run_codex ;;
+      cursor)            run_cursor ;;
       ollama)            run_ollama ;;
       *) exit 1 ;;
     esac
