@@ -1,18 +1,20 @@
 #!/bin/bash
-# Install zuvo to Claude Code and/or Codex from source.
+# Install zuvo to Claude Code, Codex, and/or Cursor from source.
 # Usage:
-#   ./scripts/install.sh          # install to both
+#   ./scripts/install.sh          # install to all
 #   ./scripts/install.sh claude   # Claude Code only
 #   ./scripts/install.sh codex    # Codex only
+#   ./scripts/install.sh cursor   # Cursor only
 #
 # What it does:
 #   Claude Code: copies source files to plugin cache
 #   Codex:       runs build-codex-skills.sh, then copies dist to ~/.codex/
+#   Cursor:      runs build-cursor-skills.sh, then copies dist to ~/.cursor/
 
 set -euo pipefail
 
 ZUVO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-TARGET="${1:-both}"
+TARGET="${1:-all}"
 
 # --- Colors ---
 GREEN='\033[0;32m'
@@ -24,14 +26,14 @@ ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
 warn() { echo -e "  ${YELLOW}!${NC} $1"; }
 fail() { echo -e "  ${RED}✗${NC} $1"; }
 
-# ═══════════════════════════════════════════════════════
+# =======================================
 # CLAUDE CODE
-# ═══════════════════════════════════════════════════════
+# =======================================
 install_claude() {
   echo ""
-  echo "══════════════════════════════════════"
+  echo "======================================"
   echo "  CLAUDE CODE"
-  echo "══════════════════════════════════════"
+  echo "======================================"
 
   # Find the cache directory
   CACHE_BASE="$HOME/.claude/plugins/cache/zuvo-marketplace/zuvo"
@@ -53,13 +55,13 @@ install_claude() {
     DIR_NAME=$(basename "$CACHE_DIR")
     echo "  Syncing: $DIR_NAME"
 
-    # Copy skills (new + updated) — use rsync to preserve directory structure
+    # Copy skills (new + updated)
     for skill_dir in "$ZUVO_DIR"/skills/*/; do
       skill_name=$(basename "$skill_dir")
       mkdir -p "$CACHE_DIR/skills/$skill_name"
       cp -r "$skill_dir"* "$CACHE_DIR/skills/$skill_name/" 2>/dev/null || true
     done
-    # Clean up any orphan files at skills/ root level (not in a skill subdirectory)
+    # Clean up any orphan files at skills/ root level
     rm -f "$CACHE_DIR/skills/SKILL.md" 2>/dev/null || true
     rm -rf "$CACHE_DIR/skills/agents" 2>/dev/null || true
 
@@ -79,23 +81,23 @@ install_claude() {
     fi
 
     SKILL_COUNT=$(ls -d "$CACHE_DIR/skills"/*/ 2>/dev/null | wc -l | tr -d ' ')
-    ok "$DIR_NAME — $SKILL_COUNT skills"
+    ok "$DIR_NAME -- $SKILL_COUNT skills"
   done
 
   ok "Claude Code updated"
 }
 
-# ═══════════════════════════════════════════════════════
+# =======================================
 # CODEX
-# ═══════════════════════════════════════════════════════
+# =======================================
 install_codex() {
   echo ""
-  echo "══════════════════════════════════════"
+  echo "======================================"
   echo "  CODEX"
-  echo "══════════════════════════════════════"
+  echo "======================================"
 
   if [[ ! -d "$HOME/.codex" ]]; then
-    warn "~/.codex not found — Codex not installed. Skipping."
+    warn "~/.codex not found -- Codex not installed. Skipping."
     return 0
   fi
 
@@ -105,7 +107,7 @@ install_codex() {
   DIST="$ZUVO_DIR/dist/codex"
 
   if [[ ! -d "$DIST/skills" ]]; then
-    fail "Build failed — no dist/codex/skills/ produced"
+    fail "Build failed -- no dist/codex/skills/ produced"
     return 1
   fi
   ok "Build complete"
@@ -139,23 +141,108 @@ install_codex() {
   ok "Codex updated"
 }
 
-# ═══════════════════════════════════════════════════════
+# =======================================
+# CURSOR
+# =======================================
+install_cursor() {
+  echo ""
+  echo "======================================"
+  echo "  CURSOR"
+  echo "======================================"
+
+  if [[ ! -d "$HOME/.cursor" ]]; then
+    warn "~/.cursor not found -- Cursor not installed. Skipping."
+    return 0
+  fi
+
+  # Step 1: Build
+  echo "  Building Cursor distribution..."
+  bash "$ZUVO_DIR/scripts/build-cursor-skills.sh" "$ZUVO_DIR" > /dev/null 2>&1
+  DIST="$ZUVO_DIR/dist/cursor"
+
+  if [[ ! -d "$DIST/skills" ]]; then
+    fail "Build failed -- no dist/cursor/skills/ produced"
+    return 1
+  fi
+  ok "Build complete"
+
+  # Step 2: Clean old toolkit symlinks (from claude-code-toolkit era)
+  local old_symlinks=(
+    "$HOME/.cursor/CLAUDE.md"
+    "$HOME/.cursor/skill-workflows.md"
+    "$HOME/.cursor/refactoring-protocol.md"
+    "$HOME/.cursor/review-protocol.md"
+    "$HOME/.cursor/test-patterns.md"
+    "$HOME/.cursor/test-patterns-catalog.md"
+    "$HOME/.cursor/test-patterns-nestjs.md"
+    "$HOME/.cursor/test-patterns-redux.md"
+    "$HOME/.cursor/test-patterns-yii2.md"
+    "$HOME/.cursor/agent-instructions.md"
+  )
+  local cleaned=0
+  for link in "${old_symlinks[@]}"; do
+    if [[ -L "$link" ]]; then
+      rm "$link"
+      cleaned=$((cleaned + 1))
+    fi
+  done
+  if [[ "$cleaned" -gt 0 ]]; then
+    ok "Cleaned $cleaned old toolkit symlinks"
+  fi
+
+  # Step 3: Copy skills (do NOT touch skills-cursor/ -- those are Cursor built-in)
+  mkdir -p "$HOME/.cursor/skills"
+  for skill_dir in "$DIST"/skills/*/; do
+    skill_name=$(basename "$skill_dir")
+    mkdir -p "$HOME/.cursor/skills/$skill_name"
+    cp -r "$skill_dir"* "$HOME/.cursor/skills/$skill_name/" 2>/dev/null || true
+  done
+  SKILL_COUNT=$(ls -d "$DIST/skills"/*/ 2>/dev/null | wc -l | tr -d ' ')
+  ok "Skills installed ($SKILL_COUNT total)"
+
+  # Step 4: Copy agents (flat .md files with skill-prefixed names)
+  mkdir -p "$HOME/.cursor/agents"
+  if ls "$DIST"/agents/*.md &>/dev/null; then
+    cp "$DIST"/agents/*.md "$HOME/.cursor/agents/"
+    AGENT_COUNT=$(ls "$DIST"/agents/*.md 2>/dev/null | wc -l | tr -d ' ')
+    ok "Agents installed ($AGENT_COUNT total)"
+  fi
+
+  # Step 5: Copy shared includes
+  if [[ -d "$DIST/shared" ]]; then
+    mkdir -p "$HOME/.cursor/shared/includes"
+    cp -r "$DIST"/shared/* "$HOME/.cursor/shared/"
+    ok "Shared includes installed"
+  fi
+
+  # Step 6: Copy rules
+  if [[ -d "$DIST/rules" ]]; then
+    mkdir -p "$HOME/.cursor/rules"
+    cp -r "$DIST"/rules/* "$HOME/.cursor/rules/"
+    ok "Rules installed"
+  fi
+
+  ok "Cursor updated"
+}
+
+# =======================================
 # MAIN
-# ═══════════════════════════════════════════════════════
+# =======================================
 VERSION=$(grep '"version"' "$ZUVO_DIR/package.json" | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
 echo "Installing zuvo v${VERSION} from $ZUVO_DIR"
 
 case "$TARGET" in
   claude) install_claude ;;
   codex)  install_codex ;;
-  both)   install_claude; install_codex ;;
-  *)      echo "Usage: $0 [claude|codex|both]"; exit 1 ;;
+  cursor) install_cursor ;;
+  both|all) install_claude; install_codex; install_cursor ;;
+  *)      echo "Usage: $0 [claude|codex|cursor|all]"; exit 1 ;;
 esac
 
 echo ""
-echo "══════════════════════════════════════"
+echo "======================================"
 echo "  DONE"
-echo "══════════════════════════════════════"
+echo "======================================"
 echo ""
-echo "  Restart Claude Code / Codex to pick up changes."
+echo "  Restart Claude Code / Codex / Cursor to pick up changes."
 echo ""
