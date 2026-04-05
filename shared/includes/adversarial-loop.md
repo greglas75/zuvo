@@ -65,7 +65,7 @@ SCRIPT_PATH="{plugin_root}/scripts/adversarial-review.sh"
 If script not found or not executable: skip, note in output, proceed normally.
 
 ```bash
-git add -A
+git add -u  # only tracked files — never stage untracked secrets/env files
 ```
 
 Detect available providers, then randomly select 2 for dispatch. This ensures different model combinations across runs, maximizing blind-spot coverage over time.
@@ -114,9 +114,9 @@ For each finding:
 
 If Step 3 fixed any CRITICAL or WARNING findings:
 
-1. Stage fixes: `git add -A`
+1. Stage fixes: `git add -u  # only tracked files — never stage untracked secrets/env files`
 2. Re-run: dispatch 2 agents again (same as Step 2), merge results
-3. If new CRITICAL: fix and STOP (no third iteration)
+3. If new CRITICAL found in re-run: do NOT attempt another fix. Add to "known concerns" and STOP. (Prevents shipping unvalidated fixes.)
 4. If only WARNING/INFO: add to known concerns, do not fix
 
 **Hard limit: 2 total adversarial calls per task.** No third run. Prevents infinite loop.

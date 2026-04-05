@@ -112,12 +112,14 @@ if [[ -z "$INPUT" ]]; then
   exit 2
 fi
 
-# Truncate very large diffs to avoid token limits (at line boundary, not mid-char)
+# Truncate very large diffs to avoid token limits (SIGPIPE-safe, line boundary)
 if [[ ${#INPUT} -gt 15000 ]]; then
-  INPUT=$(echo "$INPUT" | head -c 15000 | sed '$ s/[^\n]*$//')
+  INPUT=$(printf '%s' "$INPUT" | head -c 15000 || true)
+  # Trim to last complete line
+  INPUT="${INPUT%$'\n'*}"
   INPUT="${INPUT}
 
-... [TRUNCATED at ${#INPUT} chars — diff exceeds 15K. Review focused on first portion.]"
+... [TRUNCATED — diff exceeds 15K chars. Review focused on first portion.]"
 fi
 
 # ─── Language/framework detection ──────────────────────────────
@@ -305,17 +307,20 @@ run_gemini() {
   # Write prompt to temp file, pass via stdin (avoids ARG_MAX on large diffs)
   local prompt_file
   prompt_file=$(mktemp)
-  echo "$REVIEW_PROMPT" > "$prompt_file"
+  trap 'rm -f "$prompt_file"' RETURN
+  printf '%s\n' "$REVIEW_PROMPT" > "$prompt_file"
 
-  local result
+  local result status=0
   if command -v gemini &>/dev/null; then
-    result=$(gemini -p "Review the code below." --sandbox $model_flag < "$prompt_file")
+    result=$(gemini -p "Review the code below." --sandbox $model_flag < "$prompt_file") || status=$?
   else
-    result=$(npx --yes @google/gemini-cli -p "Review the code below." --sandbox $model_flag < "$prompt_file")
+    result=$(npx --yes @google/gemini-cli -p "Review the code below." --sandbox $model_flag < "$prompt_file") || status=$?
   fi
 
-  rm -f "$prompt_file"
-  echo "$result"
+  if [[ $status -ne 0 || -z "$result" ]]; then
+    return 1
+  fi
+  printf '%s\n' "$result"
 }
 
 run_codex() {
