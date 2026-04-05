@@ -185,10 +185,16 @@ esac
 OUTPUT_INSTRUCTION="OUTPUT FORMAT:
 For each issue found, report:
   SEVERITY: CRITICAL | WARNING | INFO
+  CONFIDENCE: high | medium | low
   FILE: path:line (if identifiable from the diff)
   ISSUE: One-line description
   ATTACK VECTOR: How this breaks in production
   SUGGESTED FIX: Brief fix description
+
+Confidence guide:
+  high   = deterministic bug, provable from the diff alone
+  medium = plausible issue, depends on runtime context not visible in diff
+  low    = speculative concern, may be a false positive
 
 If no issues found, say: NO ISSUES FOUND."
 
@@ -198,6 +204,7 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
   "findings": [
     {
       "severity": "CRITICAL|WARNING|INFO",
+      "confidence": "high|medium|low",
       "file": "path:line",
       "issue": "one-line description",
       "attack_vector": "how this breaks in production",
@@ -205,6 +212,8 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     }
   ]
 }
+
+Confidence: high = deterministic bug provable from diff, medium = plausible but context-dependent, low = speculative.
 
 If no issues found, respond: {"findings": []}'
 fi

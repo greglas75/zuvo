@@ -500,7 +500,16 @@ EXECUTION VERIFICATION
 ----------------------------------------------------
 ```
 
-### 4.4 Backlog Persistence
+### 4.4 Adversarial Loop
+
+Read and execute `{plugin_root}/shared/includes/adversarial-loop.md`.
+
+Set variables:
+- **ADVERSARIAL_MODE:** `code` (override to `security` if diff touches auth, payment, crypto, PII, or migration files)
+
+This runs a cross-provider adversarial review (Gemini, Codex, Cursor, or Ollama) on staged changes. Fix CRITICAL findings before proceeding. The adversarial loop is a second opinion, not a gate — see the include for full protocol, fix policy, and presentation rules.
+
+### 4.5 Backlog Persistence
 
 Collect findings from all sources (self-eval, auditors, verification warnings).
 
@@ -514,7 +523,7 @@ For each item, persist to `memory/backlog.md`:
 **Discard:** If confidence < 25, do not persist. Instead append one line to the build output: `DISCARDED: {file}:{rule-id} — confidence {N}, reason: {why}`.
 **Disposition:** Items with confidence 25-50 are tracked. Items with confidence 51+ are actionable.
 
-### 4.5 Stage and Commit
+### 4.6 Stage and Commit
 
 Stage exactly the files created or modified:
 
