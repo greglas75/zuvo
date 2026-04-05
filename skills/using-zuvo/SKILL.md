@@ -181,6 +181,10 @@ Detect the project's tech stack to know which rules to Read when writing code di
 
 When writing security-sensitive code (auth, input, API): Read `{plugin_root}/rules/security.md`.
 
+## Session Startup
+
+At the start of every session, Read `{plugin_root}/rules/cq-patterns-core.md` — defensive coding patterns (error handling, security, data integrity, resource safety). This is a lightweight summary; skills load the full version when needed.
+
 ---
 
 ## Invocation Format
