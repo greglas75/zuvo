@@ -154,6 +154,35 @@ The only valid reason to skip a skill is when the task falls within the boundary
 
 ---
 
+## Quality Gates (applies to ALL coding — with or without a skill)
+
+Before writing ANY code, verify:
+
+| # | Gate | Trigger | Action |
+|---|------|---------|--------|
+| G1 | **New code → tests** | Any new `.ts`/`.tsx`/`.py`/`.php` file | Write tests BEFORE or WITH the code. Zero exceptions. |
+| G2 | **3+ files → /build** | Feature touches 3+ files | Use `zuvo:build`, NOT direct coding. |
+| G3 | **CQ self-eval** | Any production code written | Read `{plugin_root}/rules/cq-checklist.md`. Run CQ1-CQ28. Print score. |
+| G4 | **Test self-eval** | Any test code written | Read `{plugin_root}/rules/testing.md`. Run Q1-Q19. Print score. |
+
+Tests are part of implementation, not a follow-up. NEVER ask "should I write tests?" — the answer is always yes. NEVER say "implementation complete" when test files = 0.
+
+## Stack Detection
+
+Detect the project's tech stack to know which rules to Read when writing code directly (without a skill):
+
+| Signal | Rule to Read |
+|--------|-------------|
+| `tsconfig.json` or `.ts`/`.tsx` files | `{plugin_root}/rules/typescript.md` |
+| `package.json` with `react` or `next` | `{plugin_root}/rules/react-nextjs.md` |
+| `package.json` with `@nestjs/core` | `{plugin_root}/rules/nestjs.md` |
+| `pyproject.toml`, `.py` files | `{plugin_root}/rules/python.md` |
+| `composer.json` with PHP framework | `{plugin_root}/rules/php.md` |
+
+When writing security-sensitive code (auth, input, API): Read `{plugin_root}/rules/security.md`.
+
+---
+
 ## Invocation Format
 
 Use the Skill tool with the `zuvo:` namespace prefix:
