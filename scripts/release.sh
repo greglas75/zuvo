@@ -38,6 +38,8 @@ echo "Bumping: ${CURRENT_VERSION} → ${NEW_VERSION}"
 sed -i '' "s/\"version\": \"${CURRENT_VERSION}\"/\"version\": \"${NEW_VERSION}\"/" "$ZUVO_DIR/package.json"
 sed -i '' "s/\"version\": \"${CURRENT_VERSION}\"/\"version\": \"${NEW_VERSION}\"/" "$ZUVO_DIR/.claude-plugin/plugin.json"
 sed -i '' "s/\"version\": \"${CURRENT_VERSION}\"/\"version\": \"${NEW_VERSION}\"/" "$ZUVO_DIR/.codex-plugin/plugin.json"
+# Update version banner in skill router (visible at session start)
+sed -i '' "s/Zuvo v${CURRENT_VERSION}/Zuvo v${NEW_VERSION}/" "$ZUVO_DIR/skills/using-zuvo/SKILL.md"
 
 # --- Step 2b: Validate Codex build ---
 echo "Building Codex distribution..."

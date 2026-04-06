@@ -3,6 +3,8 @@ name: using-zuvo
 description: "ALWAYS LOADED — Zuvo skill router. Injected at session start. Determines which zuvo skill to invoke for the current task."
 ---
 
+> **Zuvo v1.2.2** | 39 skills | 4 adversarial providers | CQ1-CQ28 + Q1-Q19
+
 # Zuvo Skill Router
 
 You have access to the Zuvo skill ecosystem. Before acting on any user request, check the routing table below. If a skill matches, invoke it using the Skill tool. Do not implement the task yourself when a skill exists for it.
