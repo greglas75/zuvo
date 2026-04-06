@@ -389,13 +389,8 @@ detect_providers() {
   fi
   [[ -n "$codex_bin" ]] && providers="codex-fast"
 
-  # 2. gemini — CLI with MCP disabled (~11s). Prefer global install.
-  if command -v gemini &>/dev/null; then
-    providers="$providers gemini"
-  elif command -v npx &>/dev/null && [[ -d "$(npm root -g 2>/dev/null)/@google/gemini-cli" ]] 2>/dev/null; then
-    # npx can run it from global cache (no network fetch)
-    providers="$providers gemini"
-  fi
+  # 2. gemini — requires global install: npm install -g @google/gemini-cli
+  command -v gemini &>/dev/null && providers="$providers gemini"
 
   # 3. cursor-agent — headless print mode (~11s)
   command -v cursor-agent &>/dev/null && providers="$providers cursor-agent"
@@ -484,9 +479,7 @@ run_gemini() {
   local prompt_file="$JSON_TMPDIR/gemini_prompt.txt"
   printf '%s\n' "$REVIEW_PROMPT" > "$prompt_file"
 
-  # Prefer global install, fallback to npx (npx check moved to detect_providers)
   local gemini_cmd="gemini"
-  command -v gemini &>/dev/null || gemini_cmd="npx --yes @google/gemini-cli"
 
   # -p "" triggers headless mode; actual prompt is piped via stdin
   local result status=0
