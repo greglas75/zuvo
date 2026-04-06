@@ -254,8 +254,10 @@ detect_providers() {
   fi
   [[ -n "$codex_bin" ]] && providers="codex-fast"
 
-  # 2. gemini — CLI with MCP disabled (~11s)
-  command -v gemini &>/dev/null && providers="$providers gemini"
+  # 2. gemini — CLI with MCP disabled (~11s). Check global install, then npx.
+  if command -v gemini &>/dev/null || npx --yes @google/gemini-cli --version &>/dev/null 2>&1; then
+    providers="$providers gemini"
+  fi
 
   # 3. claude — CLI with opposite model (10-30s)
   command -v claude &>/dev/null && providers="$providers claude"
@@ -304,14 +306,20 @@ fi
 # ─── Provider execution ─────────────────────────────────────────
 
 run_codex_fast() {
+  # Codex exec with minimal config — copy auth but skip MCP servers (4.5-23s vs 25-30s)
   local codex_cmd
   codex_cmd=$(command -v codex || echo "/Applications/Codex.app/Contents/Resources/codex")
+  local real_home="${CODEX_HOME:-$HOME/.codex}"
   local tmp_home="$JSON_TMPDIR/codex_home"
   mkdir -p "$tmp_home"
 
-  CODEX_HOME="$tmp_home" timeout "$PROVIDER_TIMEOUT" \
-    "$codex_cmd" exec --sandbox read-only --model gpt-5.4 \
-    -m "$REVIEW_PROMPT" 2>/dev/null || return 1
+  # Copy auth (required) but create empty config (no MCP servers)
+  [[ -f "$real_home/auth.json" ]] && cp "$real_home/auth.json" "$tmp_home/"
+  echo 'model = "gpt-5.4"' > "$tmp_home/config.toml"
+
+  printf '%s' "$REVIEW_PROMPT" \
+    | CODEX_HOME="$tmp_home" timeout "$PROVIDER_TIMEOUT" \
+      "$codex_cmd" exec --sandbox read-only 2>/dev/null || return 1
 }
 
 run_claude() {
@@ -334,8 +342,11 @@ run_gemini() {
   local prompt_file="$JSON_TMPDIR/gemini_prompt.txt"
   printf '%s\n' "$REVIEW_PROMPT" > "$prompt_file"
 
+  local gemini_cmd="gemini"
+  command -v gemini &>/dev/null || gemini_cmd="npx --yes @google/gemini-cli"
+
   local result status=0
-  result=$(timeout "$PROVIDER_TIMEOUT" gemini \
+  result=$(timeout "$PROVIDER_TIMEOUT" $gemini_cmd \
     --allowed-mcp-server-names __NONE__ \
     --model "$model" \
     -p "Review the code below." < "$prompt_file" 2>/dev/null) || status=$?
