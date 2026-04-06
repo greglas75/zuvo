@@ -20,19 +20,19 @@ set -euo pipefail
 
 # ─── Configuration ──────────────────────────────────────────────
 
-CODEX_MODEL="${ZUVO_CODEX_MODEL:-}"
 GEMINI_MODEL="${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}"
 
 # ─── Argument parsing ───────────────────────────────────────────
 
 PROVIDER=""
 MULTI_MODE=""  # empty = auto (multi if 2+ available), "single" = first-success only
-REVIEW_MODE="code"  # code | test | security
+REVIEW_MODE="code"  # code | test | security | spec | plan | audit | tests
 OUTPUT_FORMAT="text"  # text | json
 CONTEXT_HINT=""
 DIFF_REF=""
 FILES=""
 INPUT_MODE="stdin"  # stdin | diff | files
+DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -44,6 +44,7 @@ while [[ $# -gt 0 ]]; do
     --context)   CONTEXT_HINT="$2"; shift 2 ;;
     --diff)      DIFF_REF="$2"; INPUT_MODE="diff"; shift 2 ;;
     --files)     FILES="$2"; INPUT_MODE="files"; shift 2 ;;
+    --dry-run)   DRY_RUN=true; shift ;;
     --help|-h)
       cat <<'HELP'
 Usage: adversarial-review.sh [OPTIONS] [--diff REF] [--files "f1 f2"]
@@ -65,6 +66,7 @@ Review modes:
 Output:
   --json           Machine-readable JSON (for agent-in-the-loop)
   --context "..."  Add context hint (e.g. "NestJS auth middleware")
+  --dry-run        Print the prompt that would be sent, then exit (debug)
 
 Input:
   --diff REF       Review diff from REF to HEAD
@@ -74,7 +76,6 @@ Input:
 Environment variables:
   ZUVO_REVIEW_PROVIDER     Force provider
   ZUVO_REVIEW_TIMEOUT      Per-provider timeout in seconds (default: 300)
-  ZUVO_CODEX_MODEL         Codex model override
   ZUVO_GEMINI_MODEL        Gemini CLI model (default: gemini-3.1-pro-preview)
   ZUVO_GEMINI_API_MODEL    Gemini API model (default: gemini-3.1-pro-preview)
   GEMINI_API_KEY           Required for gemini-api provider
@@ -94,17 +95,20 @@ PROVIDER="${PROVIDER:-${ZUVO_REVIEW_PROVIDER:-}}"
 collect_input() {
   case "$INPUT_MODE" in
     stdin)
-      cat
+      # Timeout after 10s if nothing arrives on stdin (prevents blocking forever)
+      timeout 10 cat || true
       ;;
     diff)
       git diff "$DIFF_REF"..HEAD 2>/dev/null || git diff "$DIFF_REF"
       ;;
     files)
-      for f in $FILES; do
+      # Support space-separated and newline-separated file lists
+      while IFS= read -r f || [[ -n "$f" ]]; do
+        [[ -z "$f" ]] && continue
         echo "=== FILE: $f ==="
         cat "$f" 2>/dev/null || echo "(file not found)"
         echo ""
-      done
+      done <<< "$FILES"
       ;;
   esac
 }
@@ -128,6 +132,28 @@ if [[ ${#INPUT} -gt $MAX_CHARS ]]; then
   INPUT="${INPUT}
 
 ... [TRUNCATED — input exceeds ${MAX_CHARS} chars. Review focused on first portion.]"
+fi
+
+# ─── Min-size threshold for document modes (check early, before prompt build) ──
+
+if [[ "$REVIEW_MODE" == "spec" ]]; then
+  word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
+  if [[ "$word_count" -lt 200 ]]; then
+    echo "Adversarial review: skipped (spec too short for meaningful review — ${word_count} words, minimum 200)" >&2
+    exit 0
+  fi
+elif [[ "$REVIEW_MODE" == "plan" ]]; then
+  task_count=$(printf '%s' "$INPUT" | grep -c '^### Task' || true)
+  if [[ "$task_count" -lt 3 ]]; then
+    echo "Adversarial review: skipped (plan too short — ${task_count} tasks, minimum 3)" >&2
+    exit 0
+  fi
+elif [[ "$REVIEW_MODE" =~ ^(audit|tests)$ ]]; then
+  word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
+  if [[ "$word_count" -lt 500 ]]; then
+    echo "Adversarial review: skipped (report too short for meaningful review — ${word_count} words, minimum 500)" >&2
+    exit 0
+  fi
 fi
 
 # ─── Language/framework detection ──────────────────────────────
@@ -332,28 +358,6 @@ Focus on what a DIFFERENT reviewer with DIFFERENT blind spots would find.
 $INPUT"
 fi
 
-# ─── Min-size threshold for document modes ─────────────────────
-
-if [[ "$REVIEW_MODE" == "spec" ]]; then
-  word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
-  if [[ "$word_count" -lt 200 ]]; then
-    echo "Adversarial review: skipped (spec too short for meaningful review — ${word_count} words, minimum 200)" >&2
-    exit 0
-  fi
-elif [[ "$REVIEW_MODE" == "plan" ]]; then
-  task_count=$(printf '%s' "$INPUT" | grep -c '^### Task' || true)
-  if [[ "$task_count" -lt 3 ]]; then
-    echo "Adversarial review: skipped (plan too short — ${task_count} tasks, minimum 3)" >&2
-    exit 0
-  fi
-elif [[ "$REVIEW_MODE" =~ ^(audit|tests)$ ]]; then
-  word_count=$(printf '%s' "$INPUT" | wc -w | tr -d ' ')
-  if [[ "$word_count" -lt 500 ]]; then
-    echo "Adversarial review: skipped (report too short for meaningful review — ${word_count} words, minimum 500)" >&2
-    exit 0
-  fi
-fi
-
 # ─── Provider detection ─────────────────────────────────────────
 
 detect_providers() {
@@ -369,8 +373,11 @@ detect_providers() {
   fi
   [[ -n "$codex_bin" ]] && providers="codex-fast"
 
-  # 2. gemini — CLI with MCP disabled (~11s). Check global install, then npx.
-  if command -v gemini &>/dev/null || npx --yes @google/gemini-cli --version &>/dev/null 2>&1; then
+  # 2. gemini — CLI with MCP disabled (~11s). Prefer global install.
+  if command -v gemini &>/dev/null; then
+    providers="$providers gemini"
+  elif command -v npx &>/dev/null && [[ -d "$(npm root -g 2>/dev/null)/@google/gemini-cli" ]] 2>/dev/null; then
+    # npx can run it from global cache (no network fetch)
     providers="$providers gemini"
   fi
 
@@ -457,10 +464,11 @@ run_cursor_agent() {
 run_gemini() {
   local model="${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}"
 
-  # Write prompt to temp file, pass via stdin (avoids ARG_MAX on large diffs)
+  # Write full prompt to temp file, pass via stdin with -p flag (headless mode)
   local prompt_file="$JSON_TMPDIR/gemini_prompt.txt"
   printf '%s\n' "$REVIEW_PROMPT" > "$prompt_file"
 
+  # Prefer global install, fallback to npx (npx check moved to detect_providers)
   local gemini_cmd="gemini"
   command -v gemini &>/dev/null || gemini_cmd="npx --yes @google/gemini-cli"
 
@@ -468,7 +476,7 @@ run_gemini() {
   result=$(timeout "$PROVIDER_TIMEOUT" $gemini_cmd \
     --allowed-mcp-server-names __NONE__ \
     --model "$model" \
-    -p "Review the code below." < "$prompt_file" 2>/dev/null) || status=$?
+    -p < "$prompt_file" 2>/dev/null) || status=$?
 
   if [[ $status -ne 0 || -z "$result" ]]; then
     return 1
@@ -485,14 +493,11 @@ run_gemini_api() {
   model=$(printf '%s' "${ZUVO_GEMINI_API_MODEL:-gemini-3.1-pro-preview}" | tr -cd 'a-zA-Z0-9._-')
 
   # Build JSON payload via temp file (avoids ARG_MAX on large prompts)
-  local payload_file
-  payload_file=$(mktemp)
-  trap 'rm -f "$payload_file"' RETURN
-
+  local payload_file="$JSON_TMPDIR/gemini_api_payload.json"
   printf '%s' "$REVIEW_PROMPT" | jq -Rs '{contents:[{parts:[{text:.}]}]}' > "$payload_file"
 
   local response
-  response=$(curl -sf --max-time 120 \
+  response=$(curl -sf --max-time "$PROVIDER_TIMEOUT" \
     "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent" \
     -H "x-goog-api-key: $GEMINI_API_KEY" \
     -H "Content-Type: application/json" \
@@ -536,6 +541,17 @@ dispatch_provider() {
 
 # ─── Execute ───────────────────────────────────────────────────
 
+# ─── Dry run ───────────────────────────────────────────────────
+
+if [[ "$DRY_RUN" == "true" ]]; then
+  echo "=== DRY RUN — prompt that would be sent ===" >&2
+  echo "Mode: $REVIEW_MODE | Input: ${#INPUT} chars | Format: $OUTPUT_FORMAT" >&2
+  echo "Providers: $PROVIDERS" >&2
+  echo "===" >&2
+  printf '%s\n' "$REVIEW_PROMPT"
+  exit 0
+fi
+
 echo "CROSS-PROVIDER REVIEW" >&2
 echo "  Input: ${#INPUT} chars" >&2
 echo "  Review: $REVIEW_MODE | Output: $OUTPUT_FORMAT | Dispatch: $MULTI_MODE" >&2
@@ -543,6 +559,7 @@ echo "  Review: $REVIEW_MODE | Output: $OUTPUT_FORMAT | Dispatch: $MULTI_MODE" >
 # ─── Preflight checks ──────────────────────────────────────────
 
 command -v timeout &>/dev/null || { echo "ERROR: GNU timeout required. Install: brew install coreutils" >&2; exit 1; }
+command -v jq &>/dev/null || { echo "ERROR: jq required. Install: brew install jq" >&2; exit 1; }
 
 PROVIDER_TIMEOUT="${ZUVO_REVIEW_TIMEOUT:-300}"
 
@@ -641,7 +658,12 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     if [[ -s "$result_file" ]]; then
       # Strip markdown fences that LLMs sometimes wrap JSON in
       cleaned=$(sed 's/^```json//; s/^```//; /^$/d' "$result_file")
-      json_results=$(printf '%s' "$json_results" | jq --arg k "$p" --arg v "$cleaned" '. + {($k): $v}')
+      # Try to parse as JSON object; if invalid, store as string
+      if printf '%s' "$cleaned" | jq . &>/dev/null 2>&1; then
+        json_results=$(printf '%s' "$json_results" | jq --argjson v "$(printf '%s' "$cleaned")" --arg k "$p" '. + {($k): $v}')
+      else
+        json_results=$(printf '%s' "$json_results" | jq --arg k "$p" --arg v "$cleaned" '. + {($k): $v}')
+      fi
     fi
   done
 
