@@ -26,6 +26,7 @@ Read these files before any work begins:
 5. `../../shared/includes/fix-output-schema.md` -- JSON report contract
 6. `../../shared/includes/seo-bot-registry.md` -- Canonical AI/search bot policy taxonomy for robots fixes
 7. `../../shared/includes/run-logger.md` -- Run logging contract
+8. `../../shared/includes/verification-protocol.md` -- Fresh-evidence rules for build and endpoint verification
 
 Print the checklist:
 
@@ -38,6 +39,7 @@ CORE FILES LOADED:
   5. fix-output-schema.md  -- [READ | MISSING -> STOP]
   6. seo-bot-registry.md   -- [READ | MISSING -> STOP]
   7. ../../shared/includes/run-logger.md -- [READ | MISSING -> STOP]
+  8. ../../shared/includes/verification-protocol.md -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.
@@ -82,6 +84,12 @@ After applying fixes, run build verification. Detect build command from project:
 1. `package.json` scripts: `build`, `astro build`, `next build`
 2. Hugo: `hugo` binary
 3. If no build command found: skip build verification, note in report
+
+Build verification claims follow `verification-protocol.md`:
+- Capture stdout/stderr **and the process exit code**
+- Treat `exit code != 0` as a build failure even if logs contain optimistic lines
+  such as `Completed`, `Built`, or similar
+- Only report `build_result: PASS` when the detected build exits with code `0`
 
 Build failure → rollback (see Phase 3 rollback model).
 
@@ -254,6 +262,9 @@ All other fix_types: target file is deterministic from framework (single obvious
    - Both files must be valid markdown (no broken syntax)
    - llms.txt links must point to paths that exist in the project
    - llms-full.txt must have substantive content (not just headers)
+   - When a framework exposes a static asset directory (`public/` or
+     `static/`), write both files there. Do **not** prefer a route file such as
+     `src/pages/llms-full.txt.ts` when the static target exists.
 
 **Not in registry (manual only):**
 - `hreflang-add`, `noindex-change`, `redirect-add` -- listed in shared registry as non-fixable
@@ -340,7 +351,21 @@ Detect project build command:
 2. Hugo: check for `hugo` binary
 3. If no build command detected: skip, note "No build verification available" in report
 
-Run detected build command.
+Run the detected build command and record:
+1. Exact command executed
+2. Full exit code
+3. Whether verification is build-only or build + artifact/endpoint checks
+
+Hard rules:
+- `build_result: PASS` requires `exit code = 0`
+- `build_result: FAIL` for any non-zero exit code, even if the log contains
+  success-looking markers
+- For fixes that create or expose public artifacts/endpoints (`llms.txt`,
+  `llms-full.txt`, `robots.txt`, `sitemap.xml`), do a post-build existence
+  check. Prefer inspecting the built output directory; if that is not
+  deterministically available, use a local preview/HTTP probe instead.
+- If a built artifact is missing, empty, or the endpoint returns `404`, the
+  action cannot stay `VERIFIED`
 
 ### 3.2 Rollback model
 
@@ -348,6 +373,9 @@ Run detected build command.
 - Before each file modification, snapshot is saved (Phase 2.0)
 - If build fails: identify which file(s) caused the failure
 - Rollback that file to snapshot, re-run build
+- If build passes but a required artifact/endpoint check fails (for example
+  `/llms-full.txt` returns `404` or the built file is absent), rollback the
+  related fix or downgrade it to `NEEDS_REVIEW` with `verification="FAILED"`
 - If still failing: rollback all files from current batch, mark remaining findings as `NEEDS_REVIEW`
 - If build passes after selective rollback: keep successful fixes, report rolled-back ones
 
@@ -357,6 +385,7 @@ For each fix_type applied, run a targeted mini-check (not full cross-file audit)
 
 | fix_type | Re-check |
 |----------|----------|
+| `llms-txt-add` | Confirm `llms.txt` exists at the static target, and if `llms-full.txt` was generated, verify the built artifact or local preview response for `/llms-full.txt` is non-empty and not `404` |
 | `sitemap-add` | Verify sitemap config exists in framework config (CG1 proxy) and note whether `lastmod` strategy still needs manual review |
 | `json-ld-add` | Grep for `application/ld+json` in target file (CG5 proxy) and confirm raw-source visibility is plausible |
 | `schema-cleanup` | Confirm duplicate schema blocks were reduced and no exact duplicates remain |
@@ -366,7 +395,13 @@ For each fix_type applied, run a targeted mini-check (not full cross-file audit)
 | `canonical-fix` | Grep for `rel="canonical"` or `alternates.canonical` (CG4 proxy) |
 | Others | Grep for injected content in target file |
 
-Mark re-checks as `VERIFIED` or `ESTIMATED` (if full runtime check not possible in code-only mode).
+Verification semantics:
+- `VERIFIED`: build exited `0` (when a build exists) and the targeted re-check
+  passed, including artifact/endpoint checks for generated public files
+- `ESTIMATED`: source-level mutation looks correct, but no deterministic
+  artifact/endpoint check was possible after a successful build
+- `FAILED`: the re-check or artifact/endpoint check failed; do not leave the
+  action reported as a clean success
 
 ---
 
@@ -402,7 +437,7 @@ Build:    [PASS | FAIL (rolled back N fixes) | NOT VERIFIED]
 ----
 
 FIXED (auto-applied):
-  F2: Added llms.txt + llms-full companion        public/llms.txt (new)        [VERIFIED] ~10 min
+  F2: Added llms.txt + llms-full companion        public/llms.txt + public/llms-full.txt (new)  [VERIFIED] ~10 min
   F5: Added baseline security headers             public/_headers (new)        [VERIFIED] ~15 min
   F8: Added font-display: swap                    src/styles/global.css:14     [VERIFIED] ~5 min
 

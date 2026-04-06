@@ -178,8 +178,19 @@ contains related config or conflicting implementations.
   - Always create a minimal, spec-compliant `llms.txt`
   - Create `llms-full.txt` only when real content can be aggregated from repo
     sources
+  - When the framework exposes a static asset directory (`public/` or
+    `static/`), place `llms.txt` and `llms-full.txt` there instead of using a
+    route handler fallback
+  - `VERIFIED` requires a successful build (`exit code 0`) when a build command
+    exists, plus a post-build artifact or local-preview check confirming that
+    `/llms.txt` and any generated `/llms-full.txt` return content and do not
+    resolve as `404`
   - If no content corpus exists, do not fail proposal compliance solely because
     `llms-full.txt` is absent
+- Caveats:
+  - A source file that looks correct is not enough. If the built artifact is
+    missing or the endpoint responds with `404`, downgrade to
+    `NEEDS_REVIEW` or mark verification as failed.
 
 ## Confidence Scale
 

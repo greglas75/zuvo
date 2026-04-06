@@ -112,3 +112,5 @@ Commits pending review. Auto-managed:
 - 38f3329 (2026-04-06) fix: simplify adversarial dispatch — one Bash call, script handles everything
 - abb4961 (2026-04-06) release: v1.2.3 — fix: simplified adversarial dispatch + bin wrapper
 - 7d95244 (2026-04-06) fix: install.sh creates cache dir for current version if missing
+- dd4815f (2026-04-06) release: v1.2.4 — fix: install.sh auto-creates cache dir for new versions
+- b877544 (2026-04-06) fix: 11 hardening fixes for adversarial-review.sh

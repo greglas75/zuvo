@@ -27,7 +27,7 @@ Auto-increment with `-2`, `-3` suffix if same-day file exists.
 | `summary` | object | Counts: `total`, `fixed`, `needs_review`, `manual`, `out_of_scope`, `no_template`, `insufficient_data` |
 | `actions` | array | `[{ finding_id, fix_type, status, file, verification }]` |
 | `files_modified` | array | List of file paths changed |
-| `build_result` | string | `"PASS"`, `"FAIL"`, or `"NOT_VERIFIED"` |
+| `build_result` | string | `"PASS"`, `"FAIL"`, or `"NOT_VERIFIED"` — `"PASS"` requires the detected build command to exit `0` |
 
 ## Actions Array
 
@@ -39,7 +39,7 @@ Each entry in `actions[]`:
 | `fix_type` | string | From shared seo-fix-registry.md |
 | `status` | string | `"FIXED"`, `"NEEDS_REVIEW"`, `"MANUAL"`, `"OUT_OF_SCOPE"`, `"NO_TEMPLATE"`, `"INSUFFICIENT_DATA"`, or `"NEEDS_PARAMS"` |
 | `file` | string or null | File modified (null if no change) |
-| `verification` | string or null | `"VERIFIED"` (re-check passed), `"ESTIMATED"` (no runtime check), `"FAILED"` (re-check failed, rolled back), or `null` when no verification ran because the action remained manual/review-only |
+| `verification` | string or null | `"VERIFIED"` (re-check passed; when a build exists this also requires `exit code 0` plus any required artifact/endpoint checks), `"ESTIMATED"` (no deterministic runtime/artifact check), `"FAILED"` (re-check failed, rolled back, or built endpoint/artifact still missing/404), or `null` when no verification ran because the action remained manual/review-only |
 | `eta_minutes` | number or null | Estimated effort or review time for this action |
 | `manual_checks` | array or null | Human follow-up checks still required |
 | `estimated_time` | string or null | Human-readable time band such as `"<30 minutes"` or `"1-4 hours"` |
