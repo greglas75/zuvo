@@ -122,3 +122,5 @@ Commits pending review. Auto-managed:
 - 6752f3a (2026-04-06) fix: timeout 180s (was 300s), remove npx gemini fallback
 - 32aa9a6 (2026-04-06) release: v1.2.7 — fix: timeout 180s, clean gemini detection
 - 9295f4b (2026-04-06) fix: meta-review inverted logic, preflight before dry-run, --files docs
+- 04e3756 (2026-04-06) release: v1.2.8 — fix: meta-review logic, preflight ordering, files docs
+- c737dbe (2026-04-06) feat: inline adversarial commands in 14 skills — no more "read include"
