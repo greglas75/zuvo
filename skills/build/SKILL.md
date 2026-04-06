@@ -50,6 +50,7 @@ Before starting work, read each file below. Print the checklist with status.
 CORE FILES LOADED:
   1. {plugin_root}/rules/cq-patterns.md           -- READ/MISSING
   2. {plugin_root}/rules/file-limits.md            -- READ/MISSING
+  3. {plugin_root}/shared/includes/run-logger.md   -- READ/MISSING
 ```
 
 Where `{plugin_root}` is resolved per `env-compat.md`.
@@ -560,27 +561,22 @@ Backlog: [N items persisted | "none"]
 Commit: [hash] — [message]
 [Tag: [tag name]]
 
+Run: <ISO-8601-Z>\tbuild\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+VERDICT: PASS / WARN / FAIL / BLOCKED / ABORTED only.
+CQ: LIGHT → `critical-only`, STANDARD+ → `N/28`.
+Q: LIGHT → `critical-only`, STANDARD+ → `N/19`.
+TASKS: number of production files created + modified.
+DURATION: `light` / `standard` / `deep` (tier label).
+NOTES: `[TIER] feature description` (max 80 chars).
+
 Next steps:
   zuvo:review [files]      — independent review
   git push origin [branch] — push when ready
 ----------------------------------------------------
 ```
-
-## Run Log
-
-Append one TSV line to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`. All fields are mandatory:
-
-| Field | Value |
-|-------|-------|
-| DATE | ISO 8601 timestamp |
-| SKILL | `build` |
-| PROJECT | Project directory basename (from `pwd`) |
-| CQ_SCORE | LIGHT: `critical-only`, STANDARD+: `N/28` |
-| Q_SCORE | LIGHT: `critical-only`, STANDARD+: `N/19` |
-| VERDICT | PASS / WARN / FAIL from Phase 4.3 |
-| TASKS | Number of production files created + modified |
-| DURATION | `light` / `standard` / `deep` (matching the tier) |
-| NOTES | `[TIER] feature description` (max 80 chars) |
 
 ---
 

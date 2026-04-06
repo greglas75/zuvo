@@ -22,6 +22,7 @@ Before starting any work, read these files and confirm they loaded:
 1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and initialization
 2. `{plugin_root}/shared/includes/env-compat.md` -- Agent dispatch patterns per environment
 3. `{plugin_root}/rules/cq-patterns.md` -- NEVER/ALWAYS code pairs (informs design decisions)
+4. `{plugin_root}/shared/includes/run-logger.md` -- Run logging protocol
 
 Print the checklist:
 
@@ -30,6 +31,7 @@ CORE FILES LOADED:
   1. codesift-setup.md   -- READ
   2. env-compat.md       -- READ
   3. cq-patterns.md      -- READ
+  4. run-logger.md       -- READ
 ```
 
 If any required file is missing, STOP. Do not proceed from memory.
@@ -286,13 +288,8 @@ The deliverable of `zuvo:brainstorm` is a spec document at `docs/specs/YYYY-MM-D
 
 The next step is `zuvo:plan`, which reads this spec and produces an implementation plan. Remind the user of this when brainstorm completes. Do not auto-invoke `zuvo:plan` -- let the user decide when to proceed.
 
-## Run Log
+```
+Run: <ISO-8601-Z>	brainstorm	<project>	-	-	<VERDICT>	-	3-phase	<NOTES>	<BRANCH>	<SHA7>
+```
 
-Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
-- SKILL: `brainstorm`
-- CQ_SCORE: `-`
-- Q_SCORE: `-`
-- VERDICT: PASS if spec approved, ABORTED if rejected
-- TASKS: `-`
-- DURATION: `3-phase`
-- NOTES: spec topic (e.g., `user-notifications`)
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.

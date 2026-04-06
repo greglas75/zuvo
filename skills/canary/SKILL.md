@@ -214,7 +214,14 @@ CANARY COMPLETE
 
 ### Step 5: Append Run Log
 
-Append a run log entry per `../../shared/includes/run-logger.md`.
+```
+Run: <ISO-8601-Z>\tcanary\t<project>\t-\t-\t<VERDICT>\t-\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+VERDICT mapping: HEALTHY → PASS, DEGRADED → WARN, BROKEN → FAIL.
+DURATION: resolved monitoring duration (e.g., `one-shot`, `10m`, `30m`).
+```
 
 ---
 

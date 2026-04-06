@@ -32,6 +32,7 @@ CORE FILES LOADED:
   1. codesift-setup.md   -- [READ | MISSING -> STOP]
   2. env-compat.md       -- [READ | MISSING -> STOP]
   3. file-limits.md      -- [READ | MISSING -> use defaults: 300L service, 200L component]
+  4. run-logger.md       -- [READ | MISSING -> STOP]
 ```
 
 If file 1 or 2 is missing, STOP.
@@ -480,3 +481,17 @@ Confirm each fix with the user before executing.
 | SA13 Hot file (high churn + complexity) | Refactor hot file | `zuvo:refactor [file]` |
 | SA7 God module detected | Split oversized file | `zuvo:refactor [file]` |
 | SA6 Layer violations | Architecture analysis | `zuvo:architecture --mode review` |
+
+---
+
+## STRUCTURE-AUDIT COMPLETE
+
+Grade: [A/B/C/D/FAIL] | Score: [N] / [MAX]
+Mode: [FULL/LIMITED/NO-CODE] | Stack: [detected]
+Dimensions: [N scored] | Critical gates: [PASS/FAIL]
+Findings: [N critical] / [N total]
+Run: <ISO-8601-Z>	structure-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+ critical).

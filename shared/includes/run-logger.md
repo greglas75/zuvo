@@ -1,6 +1,6 @@
 # Run Logger
 
-> Shared include — referenced by skills that should log their execution.
+> Shared include — referenced by all skills that log their execution.
 
 ## When to Log
 
@@ -13,52 +13,102 @@ Use an environment-aware log path:
 - Claude Code: `~/.zuvo/runs.log`
 - Codex CLI (local): `~/.zuvo/runs.log`
 - Codex App (cloud): `memory/zuvo-runs.log`
-- If `~/.zuvo/` is not writable: use the project-local fallback path
 
 Detection:
-- if `CODEX_WORKSPACE` is set, or
-- if `~/.zuvo/` is not writable
-
-then use the project-local path.
-
-## Format
-
-Single-line TSV (tab-separated), one entry per run:
-
-```
-DATE\tSKILL\tPROJECT\tCQ_SCORE\tQ_SCORE\tVERDICT\tTASKS\tDURATION\tNOTES
-```
-
-| Field | Value | Example |
-|-------|-------|---------|
-| DATE | ISO 8601 timestamp | `2026-03-27T14:30:00` |
-| SKILL | Skill name without namespace | `build` |
-| PROJECT | Project directory basename | `tgm-survey-platform` |
-| CQ_SCORE | CQ score if evaluated, `-` if not | `24/28` |
-| Q_SCORE | Q score if evaluated, `-` if not | `16/19` |
-| VERDICT | PASS, WARN, FAIL, BLOCKED, ABORTED, or `-` | `PASS` |
-| TASKS | Number of tasks completed (for pipeline/build), `-` for audits | `4` |
-| DURATION | Phases completed or task count | `5-phase` |
-| NOTES | One-line summary, max 80 chars | `added user export with CSV` |
-
-## How to Log
-
-At the end of the skill, resolve the log path first, then append one line.
-Do not hardcode `~/.zuvo/runs.log` in skills that run in multiple environments.
-
-Or if Bash is unavailable, use Write tool to append.
-
-## Path Resolution (reference)
-
-See the environment-aware log path table in the "Log File" section above. The canonical resolution logic:
 
 ```bash
-if [ -n "$CODEX_WORKSPACE" ] || ! mkdir -p ~/.zuvo 2>/dev/null; then
+if [ -n "$CODEX_WORKSPACE" ] || ! mkdir -p ~/.zuvo 2>/dev/null || ! test -w ~/.zuvo; then
   LOG_PATH="memory/zuvo-runs.log"
 else
   LOG_PATH="$HOME/.zuvo/runs.log"
 fi
 ```
+
+## Field Resolution
+
+Resolve these values before composing the log line:
+
+```bash
+# PROJECT — worktree-safe, falls back to pwd for non-git directories
+PROJECT=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+
+# BRANCH — current git branch, or - if not in a git repo
+BRANCH=$(git branch --show-current 2>/dev/null || echo "-")
+
+# HEAD_SHA7 — short commit hash, or - if not in a git repo
+HEAD_SHA7=$(git rev-parse --short HEAD 2>/dev/null || echo "-")
+
+# DATE — UTC ISO 8601 with Z suffix
+DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+```
+
+## Format
+
+Single-line TSV (tab-separated), 11 fields per entry:
+
+```
+DATE\tSKILL\tPROJECT\tCQ_SCORE\tQ_SCORE\tVERDICT\tTASKS\tDURATION\tNOTES\tBRANCH\tHEAD_SHA7
+```
+
+| # | Field | Value | Example |
+|---|-------|-------|---------|
+| 1 | DATE | ISO 8601 UTC with Z suffix | `2026-04-05T18:45:00Z` |
+| 2 | SKILL | Skill name without `zuvo:` prefix | `build` |
+| 3 | PROJECT | Git root directory basename (see Field Resolution) | `tgm-survey-platform` |
+| 4 | CQ_SCORE | `N/28`, `N-critical` (audits), or `-` | `22/28` |
+| 5 | Q_SCORE | `N/19`, `N-total` (audits), or `-` | `16/19` |
+| 6 | VERDICT | `PASS`, `WARN`, `FAIL`, `BLOCKED`, or `ABORTED` only | `PASS` |
+| 7 | TASKS | Number of tasks completed, or `-` | `4` |
+| 8 | DURATION | `N-phase`, `N-tasks`, `tier-N`, or skill-specific label | `standard` |
+| 9 | NOTES | One-line summary, max 80 chars, no tabs | `added user export CSV` |
+| 10 | BRANCH | Current git branch (see Field Resolution) | `main` |
+| 11 | HEAD_SHA7 | Short commit hash (see Field Resolution) | `a3f7b2c` |
+
+**Backward compatibility:** Fields 1-9 are unchanged from v1. Existing `cut -f1-9` queries continue to work. Fields 10-11 are additive.
+
+## Log-in-Output Pattern
+
+**Do NOT use a trailing `## Run Log` section.** Instead, embed the log line as a required field inside the skill's named output block.
+
+### How it works
+
+Each skill has a named output block (e.g., `BUILD COMPLETE`, `REVIEW COMPLETE`). The `Run:` line is a mandatory field inside that block — the block is not complete without it.
+
+### Example (build skill)
+
+```markdown
+## BUILD COMPLETE
+
+Feature: user export to CSV
+Tier: STANDARD | Files: 3 created + 2 modified
+CQ: 22/28 | Q: 15/19
+Verdict: PASS
+Run: 2026-04-05T14:30:00Z	build	zuvo-plugin	22/28	15/19	PASS	4	standard	user export CSV	main	a3f7b2c
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved above.
+```
+
+### Template format
+
+Each skill's SKILL.md includes a literal template with placeholders:
+
+```
+Run: <ISO-8601-Z>\t<skill>\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>
+```
+
+The LLM fills in the placeholders when generating the output block, then appends the resulting line to the log file.
+
+## VERDICT Vocabulary
+
+Only these 5 values are valid. Skills with non-standard internal vocabularies must map to these:
+
+| Standard | Meaning |
+|----------|---------|
+| `PASS` | Skill completed successfully |
+| `WARN` | Completed with non-critical issues |
+| `FAIL` | Critical issues found or skill failed |
+| `BLOCKED` | Could not proceed due to hard blocker |
+| `ABORTED` | User cancelled or skill rejected |
 
 ## What NOT to Log
 
@@ -69,13 +119,9 @@ fi
 
 ## Reading the Log
 
-Users can view their history. Use the resolved log path (see "Log File" above):
+Resolve the log path first (same logic as writing), then query:
 
 ```bash
-# Resolve path first (same logic as writing)
-LOG_PATH="$HOME/.zuvo/runs.log"
-[ -n "$CODEX_WORKSPACE" ] && LOG_PATH="memory/zuvo-runs.log"
-
 # Last 20 runs
 tail -20 "$LOG_PATH"
 
@@ -85,6 +131,9 @@ grep "tgm-survey" "$LOG_PATH"
 # Only failures
 grep "FAIL" "$LOG_PATH"
 
-# CQ scores over time
+# CQ scores over time for build
 grep "build" "$LOG_PATH" | cut -f4
+
+# Branch distribution
+grep "zuvo-plugin" "$LOG_PATH" | cut -f10 | sort | uniq -c | sort -rn
 ```

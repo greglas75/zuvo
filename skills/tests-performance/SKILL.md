@@ -41,6 +41,10 @@ Measurement-driven optimization of the test suite. Establishes a baseline, audit
 
 Read `{plugin_root}/shared/includes/env-compat.md` for progress tracking and user interaction patterns.
 
+## Run Logging
+
+Read `{plugin_root}/shared/includes/run-logger.md` for log format and file path resolution.
+
 ## CodeSift Integration
 
 Read `{plugin_root}/shared/includes/codesift-setup.md` for initialization.
@@ -287,5 +291,12 @@ TESTS-PERFORMANCE COMPLETE
   Slow tests:  [N] files classified
   Action plan: [N] items ([M] config, [K] code)
   Top impact:  [description of #1 change] -> expected [P]% improvement
+  Run: <ISO-8601-Z>	tests-performance	<project>	-	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
 -----
 ```
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+`<DURATION>`: use `full` (full audit) or `baseline` (baseline-only run).
+`<Q>`: TP score as `N/17`, or `-` for baseline-only.
+`<TASKS>`: number of action plan items.

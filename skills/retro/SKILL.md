@@ -141,10 +141,16 @@ Read the skill usage log using the environment-aware path from `run-logger.md` (
 
 If the file **does not exist** at either path: note "No skill usage history found." Skip this section.
 
-If the file **exists**, parse each line as TSV with this column order:
-```
-DATE  SKILL  PROJECT  CQ_SCORE  Q_SCORE  VERDICT  TASKS  DURATION  NOTES
-```
+If the file **exists**, parse each line by splitting on tab characters (`\t`):
+
+- **Lines with 10 tab characters (11 fields):** populate all fields:
+  ```
+  DATE  SKILL  PROJECT  CQ_SCORE  Q_SCORE  VERDICT  TASKS  DURATION  NOTES  BRANCH  HEAD_SHA7
+  ```
+- **Lines with 8 tab characters (9 fields):** populate the first 9 fields as above, treat BRANCH and HEAD_SHA7 as `-`
+- **Lines that match neither pattern** (e.g., pipe-delimited legacy entries like `2026-03-31T05:20:44Z | SKILL: brainstorm | ...`): skip silently
+
+**DATE parsing:** handle both `T...Z` (with Z suffix) and `T...` (without Z) formats as UTC.
 
 Filter to entries where:
 - `PROJECT` matches the current project directory basename
@@ -155,6 +161,7 @@ From the filtered entries, aggregate:
 - **Average CQ score** — parse `CQ_SCORE` field, skip `-` entries, average the numerator/denominator separately
 - **Average Q score** — same approach as CQ
 - **Pass/fail ratio** — count PASS vs FAIL vs WARN verdicts
+- **Branch distribution:** [branch: N runs, ...] (e.g., `main: 8, feature/x: 2`) — only display when at least one 11-field entry exists in the filtered window
 
 ---
 
@@ -264,6 +271,10 @@ RETRO COMPLETE
   1. zuvo:write-tests src/orders/ — high-churn, low coverage
   2. zuvo:refactor src/auth/guard.ts — 8 changes suggest instability
   3. zuvo:backlog fix BD-007 — critical debt item open 21 days
+
+  Run: <ISO-8601-Z>	retro	<project>	-	-	<VERDICT>	-	6-phase	<NOTES>	<BRANCH>	<SHA7>
+
+  After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 ```
 
 If E13 (insufficient history) was triggered, show:
@@ -276,20 +287,9 @@ RETRO COMPLETE [QUALITATIVE ONLY — <10 commits in window]
 
   Actions:
   1. [derived from backlog only]
+
+  Run: <ISO-8601-Z>	retro	<project>	-	-	<VERDICT>	-	qualitative	<NOTES>	<BRANCH>	<SHA7>
+
+  After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 ```
 
----
-
-## Phase 6: Run Log
-
-Append run log entry per `../../shared/includes/run-logger.md`. Use the environment-aware log path (do NOT hardcode `~/.zuvo/runs.log`).
-
-| Field | Value |
-|-------|-------|
-| SKILL | `retro` |
-| CQ_SCORE | `-` (no production code evaluated) |
-| Q_SCORE | `-` (no tests evaluated) |
-| VERDICT | `PASS` if report written, `WARN` if qualitative-only (E13), `ABORTED` if stopped for monorepo (E14) |
-| TASKS | Number of actionable items generated |
-| DURATION | `6-phase` or `qualitative` (E13) |
-| NOTES | One-line summary, e.g., `v1.1.0..v1.2.0, 47 commits, 3 actions` |

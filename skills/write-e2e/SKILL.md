@@ -67,6 +67,7 @@ CORE FILES LOADED:
   1. {plugin_root}/rules/cq-patterns.md            -- [READ | MISSING -> STOP]
   2. {plugin_root}/rules/file-limits.md             -- [READ | MISSING -> STOP]
   3. {plugin_root}/rules/testing.md                 -- [READ | MISSING -> STOP]
+  4. {plugin_root}/shared/includes/run-logger.md    -- [READ | MISSING -> STOP]
 ```
 
 ---
@@ -358,9 +359,16 @@ Files created:      [X] (.spec.ts) + [Y] (pages/fixtures)
 Quality gates:      [N]/[N] passed ([M] auto-fixed)
 TestID suggestions: [P] elements in [Q] files
 Validation:         [N/M passed | skipped (no --live)]
+Run: <ISO-8601-Z>	write-e2e	<project>	-	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
 -----
 Human review recommended before committing.
 ```
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+`<DURATION>`: use `N-flows` (number of flows generated).
+`<Q>`: quality gate score if evaluated, otherwise `-`.
+`<TASKS>`: number of spec files created.
 
 ---
 

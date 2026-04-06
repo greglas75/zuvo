@@ -261,14 +261,12 @@ DEPLOY COMPLETE
   URL:         <production-url>
 
   Next: zuvo:canary <url> (optional monitoring)
-```
 
-### 2. Run logger
+Run: <ISO-8601-Z>\tdeploy\t<project>\t-\t-\t<VERDICT>\t-\t7-phase\t<NOTES>\t<BRANCH>\t<SHA7>
 
-Append a run log entry per `../../shared/includes/run-logger.md`:
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 
-```
-<ISO-8601>\tdeploy\t<project>\t-\t-\t<PASS|WARN|PARTIAL|FAIL>\t-\t7-phase\tv<version> <platform> <health-verdict>
+VERDICT mapping: successful deploy → PASS, PARTIAL → WARN, failed → FAIL, cancelled → ABORTED.
 ```
 
 ---

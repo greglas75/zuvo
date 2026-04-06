@@ -9,6 +9,10 @@ description: >
 
 Protocol for responding to code review feedback. Every review comment gets the same structured treatment: understand it, verify it against the actual code, decide whether to fix or push back, then implement precisely.
 
+## Run Logging
+
+Read `{plugin_root}/shared/includes/run-logger.md` for log format and file path resolution.
+
 ---
 
 ## The 6-Step Protocol
@@ -182,7 +186,12 @@ Pushed back:
   3. [file:line] <reason>
 
 Tests: N passing, 0 failing.
+Run: <ISO-8601-Z>	receive-review	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
 ```
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+`<DURATION>`: use `N-comments` (number of review items processed).
 
 If any fix introduced new tests, list them separately:
 

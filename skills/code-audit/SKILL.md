@@ -45,6 +45,7 @@ CORE FILES LOADED:
   3. {plugin_root}/rules/security.md            -- READ/MISSING
   4. {plugin_root}/rules/file-limits.md         -- READ/MISSING
   5. {plugin_root}/shared/includes/env-compat.md -- READ/MISSING
+  6. {plugin_root}/shared/includes/run-logger.md -- READ/MISSING
 ```
 
 Where `{plugin_root}` resolves per `env-compat.md`.
@@ -417,6 +418,14 @@ If `--deep` mode: also save per-file detail to `audits/code-audit-details/[filen
 
 | CQ/CAP | Before | After | Files affected |
 |--------|--------|-------|----------------|
+
+## CODE AUDIT COMPLETE
+
+Run: <ISO-8601-Z>\tcode-audit\t<project>\t<N-critical>\t<N-total>\t<VERDICT>\t-\t<N>-dimensions\t<NOTES>\t<BRANCH>\t<SHA7>
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+ critical).
 ```
 
 ## Phase 5: Backlog Persistence
@@ -448,19 +457,6 @@ After the report, propose what to do next:
 | Structural issues (wrong layers, circular deps) | `zuvo:architecture review [path]` | Needs architectural view first |
 | Only Tier B/C with varied issues | "Fix top 3 critical gate failures" | Highest ROI |
 | All Tier A | No action needed | Everything is production-ready |
-
-## Run Log
-
-Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
-- SKILL: `code-audit`
-- CQ_SCORE: average CQ score across all audited files (e.g., `21/28`)
-- Q_SCORE: `-`
-- VERDICT: PASS if no Tier D, WARN if Tier C exists, FAIL if Tier D exists
-- TASKS: number of files audited
-- DURATION: mode label (e.g., `quick`, `deep`)
-- NOTES: tier distribution summary (e.g., `A:12 B:5 C:3 D:1`)
-
----
 
 ## Execution Notes
 

@@ -29,6 +29,7 @@ Print the checklist:
 CORE FILES LOADED:
   1. codesift-setup.md   -- [READ | MISSING -> STOP]
   2. env-compat.md       -- [READ | MISSING -> STOP]
+  3. {plugin_root}/shared/includes/run-logger.md -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.
@@ -341,6 +342,25 @@ This skill reads design system artifacts produced by `zuvo:design`:
 
 No artifacts = purely structural audit (DX1-DX20 only).
 With artifacts = adds craft validation + intent-aware token matching.
+
+---
+
+## Completion
+
+After completing the audit, print:
+
+```
+DESIGN-REVIEW COMPLETE
+-----
+Views audited: [N]
+Avg DX score:  [N]%
+Run: <ISO-8601-Z>	design-review	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
+-----
+```
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+`<DURATION>`: use `N-dimensions` (number of DX dimensions scored, typically 20).
 
 ---
 

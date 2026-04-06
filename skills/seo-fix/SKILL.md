@@ -4,7 +4,8 @@ description: >
   Apply fixes from seo-audit findings. Reads audit JSON, classifies fixes by
   safety tier (SAFE/MODERATE/DANGEROUS), applies templates per framework.
   Supports Astro, Next.js, Hugo. Modes: default (SAFE only), --auto (SAFE+MODERATE),
-  --all (all tiers, requires confirmation), --dry-run, --finding F1,F3, --fix-type sitemap-add.
+  --all (all tiers, requires confirmation), --dry-run, --finding F1,F3,
+  --fix-type sitemap-add,robots-fix,schema-cleanup.
 ---
 
 # zuvo:seo-fix — Apply SEO Audit Fixes
@@ -12,7 +13,7 @@ description: >
 Read seo-audit JSON findings. Plan patches per finding. Validate each patch. Apply by safety tier. Verify build. Report.
 
 **Scope:** Post-audit fix application for SEO findings.
-**Out of scope:** Content writing, image generation, WordPress plugin config, React SPA fixes, redirects, noindex management, hreflang management.
+**Out of scope:** Content writing, image generation, WordPress plugin config, React SPA fixes, redirects, noindex management, hreflang management. Out-of-scope content findings may still emit an advisory content scaffold.
 
 ## Mandatory File Loading
 
@@ -21,6 +22,9 @@ Read these files before any work begins:
 1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
 2. `{plugin_root}/shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
 3. `{plugin_root}/shared/includes/backlog-protocol.md` -- Backlog fingerprint dedup and update
+4. `{plugin_root}/shared/includes/seo-fix-registry.md` -- Canonical fix_type, safety, eta, and manual verification rules
+5. `{plugin_root}/shared/includes/fix-output-schema.md` -- JSON report contract
+6. `{plugin_root}/shared/includes/seo-bot-registry.md` -- Canonical AI/search bot policy taxonomy for robots fixes
 
 Print the checklist:
 
@@ -29,9 +33,17 @@ CORE FILES LOADED:
   1. codesift-setup.md     -- [READ | MISSING -> STOP]
   2. env-compat.md         -- [READ | MISSING -> STOP]
   3. backlog-protocol.md   -- [READ | MISSING -> STOP]
+  4. seo-fix-registry.md   -- [READ | MISSING -> STOP]
+  5. fix-output-schema.md  -- [READ | MISSING -> STOP]
+  6. seo-bot-registry.md   -- [READ | MISSING -> STOP]
+  7. {plugin_root}/shared/includes/run-logger.md -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.
+
+If native agent dispatch is unavailable, execute the workflow sequentially
+yourself, preserve the same validation checkpoints, and note the fallback mode
+in the final fix report.
 
 ## Safety Gates (NON-NEGOTIABLE)
 
@@ -169,6 +181,10 @@ Read `{plugin_root}/shared/includes/seo-fix-registry.md` for the canonical:
 - Safety classification (per framework, with context-aware upgrade rules)
 - Fix parameters schema (required and optional params per fix_type)
 
+Read `{plugin_root}/shared/includes/seo-bot-registry.md` when planning or
+validating `robots-fix`. Read `{plugin_root}/shared/includes/fix-output-schema.md`
+before writing the final JSON report.
+
 The shared registry is the single source of truth. Do not override safety classifications locally.
 
 **Template target priorities (framework-specific):**
@@ -178,6 +194,7 @@ The shared registry lists fix_types and safety. The TARGET FILE PRIORITY (which 
 | fix_type | astro target priority | nextjs target priority | hugo target priority |
 |----------|-----------------------|------------------------|----------------------|
 | `json-ld-add` | Existing layout `<head>` | Sitewide: `app/layout.tsx`. Page-level: specific `page.tsx` | `layouts/partials/json-ld.html` |
+| `schema-cleanup` | Existing layout or page-level JSON-LD block with duplicate/spam evidence | Existing `app/layout.tsx` or conflicting page-level JSON-LD block | Existing partial or page template with duplicate JSON-LD evidence |
 | `meta-og-add` | Existing BaseHead/head component | 1. `generateMetadata()`. 2. `metadata` export. 3. `app/layout.tsx` | 1. `opengraph.html` partial. 2. `head.html` |
 | `headers-add` | Cloudflare: `public/_headers`. Vercel: existing config first. Netlify: `_headers` or `netlify.toml` | Same, prefer existing mechanism | Same |
 | `llms-txt-add` | `public/llms.txt` + `public/llms-full.txt` | `public/llms.txt` + `public/llms-full.txt` | `static/llms.txt` + `static/llms-full.txt` |
@@ -190,6 +207,27 @@ All other fix_types: target file is deterministic from framework (single obvious
 - `lang-attr-add`: if locale not derivable → NEEDS_REVIEW (do not default to en)
 - `alt-text-add`: only images with decorative signals (role="presentation", aria-hidden, class icon/decoration). Others → NEEDS_REVIEW
 - `viewport-add`: dedup scan before adding. Never duplicate.
+- `robots-fix`: if Cloudflare, WAF, CDN, or another edge/network provider is
+  detected or strongly suspected, do not auto-claim success from a file-level
+  patch alone. Escalate to `NEEDS_REVIEW` with `network_override_risk=true`.
+  Generated policy must cover all canonical bot keys from
+  `seo-bot-registry.md`, grouped by tier with explanatory comments:
+  training defaults to `Disallow`, search/retrieval/user-proxy defaults to
+  `Allow`, unless the source audit explicitly recommends a different conscious
+  policy.
+- `json-ld-add`: if existing schema is duplicated, spam-like, or already dense,
+  reroute to `schema-cleanup` or `NEEDS_REVIEW` before adding more JSON-LD.
+- `schema-cleanup`: exact duplicates may be cleaned automatically; conflicting
+  non-identical blocks remain `NEEDS_REVIEW`.
+- `meta-og-add`: normalize `og:type` by page class while preserving intentional
+  page-specific overrides when evidence is clear.
+- `sitemap-add`: if an existing sitemap has stale or uniform `lastmod` values,
+  treat it as `NEEDS_REVIEW` instead of silently preserving a misleading sitemap.
+- `headers-add`: use the baseline header set from the shared registry and prefer
+  report-only CSP unless a stronger existing CSP is already present.
+  Baseline means HSTS, `X-Content-Type-Options`, `Referrer-Policy`,
+  `Permissions-Policy`, and `Content-Security-Policy-Report-Only` unless the
+  target platform already exposes a stronger equivalent.
 
 **`llms-txt-add` generation logic (two files):**
 
@@ -219,6 +257,13 @@ All other fix_types: target file is deterministic from framework (single obvious
 **Not in registry (manual only):**
 - `hreflang-add`, `noindex-change`, `redirect-add` -- listed in shared registry as non-fixable
 
+**Advisory content scaffold:**
+- For out-of-scope content quality findings, seo-fix may emit a structured
+  content scaffold instead of mutating content files:
+  - suggested H2/H3 outline
+  - target word-count band
+  - answer-first opener template
+
 ---
 
 ## Phase 2: Apply Fixes (plan → validate → apply)
@@ -239,9 +284,11 @@ For each SAFE finding:
 2. **Validate:**
    - File parse: target file is readable and has expected structure
    - Dedup: the fix content does not already exist in the file (e.g., viewport meta already present)
+   - For `headers-add`, preserve stronger existing policy and append only the
+     missing baseline headers
    - If existing related content found → upgrade to MODERATE (context-aware safety)
 3. **Apply:** Edit the file. One edit per file (batch if multiple findings target same file).
-4. Record: `{ finding_id, action, file, status: "FIXED" }`
+4. Record: `{ finding_id, action, file, status: "FIXED", eta_minutes, manual_checks, risk_notes, network_override_risk }`
 
 ### 2.2 MODERATE fixes (applied with 3-layer validation)
 
@@ -251,18 +298,23 @@ For each MODERATE finding:
    - **File parse:** target file is syntactically valid (JSON, JSX, TOML, HTML)
    - **Framework convention:** fix follows framework idiom (e.g., Next.js uses Metadata API, not manual `<meta>` tags)
    - **Finding-specific check:**
-     - Sitemap: `site` URL is configured in framework config
-     - JSON-LD: schema properties match schema.org required fields for declared type
-     - Meta tags: image URLs are absolute (not relative), og:image dimensions noted
-     - Robots.txt: Googlebot is NOT blocked after fix (re-check CG2 logic)
+    - Sitemap: `site` URL is configured in framework config
+    - Sitemap: if an existing sitemap has stale `lastmod` values, downgrade to `NEEDS_REVIEW`
+    - JSON-LD: schema properties match schema.org required fields for declared type and do not layer on top of duplicate/spam-like blocks
+    - `schema-cleanup`: remove exact duplicates only; conflicting blocks or spam-like long descriptions stay `NEEDS_REVIEW`
+    - Meta tags: image URLs are absolute (not relative), og:image dimensions noted, `og:type` matches page class
+    - Robots.txt: Googlebot is NOT blocked after fix, AI policy is explicit for relevant bot keys, and Cloudflare/network overrides are surfaced as review risk
 3. **Apply:** If all 3 layers pass, apply patch. If any layer fails: revert, mark `NEEDS_REVIEW`.
-4. Record: `{ finding_id, action, file, status: "FIXED" | "NEEDS_REVIEW", validation_result }`
+4. Record: `{ finding_id, action, file, status: "FIXED" | "NEEDS_REVIEW", validation_result, eta_minutes, manual_checks, risk_notes, network_override_risk }`
 
 ### 2.3 INSUFFICIENT DATA findings
 
 Split into two categories:
-- **Cannot confirm bug** (e.g., "HTTPS active" inconclusive in code-only): SKIP. Cannot fix what is not confirmed broken.
-- **Cannot determine params** (e.g., locale unknown but fix is otherwise safe): offer `--dry-run` suggestion with placeholder params. Mark as `NEEDS_PARAMS`.
+- **Cannot confirm bug** (e.g., "HTTPS active" inconclusive in code-only):
+  `INSUFFICIENT_DATA`. Cannot fix what is not confirmed broken.
+- **Cannot determine params** (e.g., locale unknown but fix is otherwise safe):
+  offer `--dry-run` suggestion with placeholder params. Mark as
+  `NEEDS_PARAMS` with explicit manual checks.
 
 ### 2.4 DANGEROUS fixes (gated by GATE 2)
 
@@ -304,9 +356,12 @@ For each fix_type applied, run a targeted mini-check (not full cross-file audit)
 
 | fix_type | Re-check |
 |----------|----------|
-| `sitemap-add` | Verify sitemap config exists in framework config (CG1 proxy) |
-| `json-ld-add` | Grep for `application/ld+json` in target file (CG5 proxy) |
-| `robots-fix` | Parse robots.txt, confirm Googlebot not blocked (CG2 proxy) |
+| `sitemap-add` | Verify sitemap config exists in framework config (CG1 proxy) and note whether `lastmod` strategy still needs manual review |
+| `json-ld-add` | Grep for `application/ld+json` in target file (CG5 proxy) and confirm raw-source visibility is plausible |
+| `schema-cleanup` | Confirm duplicate schema blocks were reduced and no exact duplicates remain |
+| `robots-fix` | Parse robots.txt, confirm Googlebot not blocked (CG2 proxy), and keep `network_override_risk=true` when Cloudflare or another edge layer may still override behavior |
+| `meta-og-add` | Confirm `og:image` is absolute and `og:type` matches the resolved page class |
+| `headers-add` | Confirm the baseline header set is present in the chosen host config |
 | `canonical-fix` | Grep for `rel="canonical"` or `alternates.canonical` (CG4 proxy) |
 | Others | Grep for injected content in target file |
 
@@ -321,58 +376,86 @@ Mark re-checks as `VERIFIED` or `ESTIMATED` (if full runtime check not possible 
 `estimated_after_score` is calculated by:
 1. Take all findings from audit JSON
 2. For findings confirmed FIXED: change status from FAIL to PASS
-3. For findings with NEEDS_REVIEW/MANUAL/SKIP: keep original status
-4. For INSUFFICIENT DATA findings: keep excluded
+3. For findings with `NEEDS_REVIEW`, `MANUAL`, `OUT_OF_SCOPE`,
+   `NO_TEMPLATE`, or `INSUFFICIENT_DATA`: keep original status
+4. For `INSUFFICIENT DATA` findings: keep excluded
 5. Recalculate dimension scores and overall using same weights as seo-audit Phase 4
 6. Do NOT simulate benefits of unverified fixes
 
 ### 4.2 Report template
 
+Estimated effort rubric: `EASY = <30min`, `MEDIUM = 1-4h`, `HARD = 1+ day`.
+
+Report outputs must carry the expanded v1.1 semantics:
+- `estimated_time` for each action or roll-up
+- `manual_checks` for remaining platform validation
+- `policy_notes` for strategy or platform caveats
+- `advisory_scaffolds` for non-mutating content follow-up
+
 ```
 SEO FIX REPORT -- [project name]
 ----
-Findings: 13 total | 7 fixed | 2 needs review | 1 manual | 1 out of scope | 1 no template | 1 insufficient data
+Findings: 16 total | 6 fixed | 2 needs review | 1 needs params | 1 manual | 2 out of scope | 1 no template | 1 insufficient data
 Score:    53 -> 74 (estimated from confirmed fixes only)
 Build:    [PASS | FAIL (rolled back N fixes) | NOT VERIFIED]
 ----
 
 FIXED (auto-applied):
-  F2: Added llms.txt                              public/llms.txt (new)        [VERIFIED]
-  F5: Added security headers                      public/_headers (new)        [VERIFIED]
-  F8: Added font-display: swap                    src/styles/global.css:14     [VERIFIED]
+  F2: Added llms.txt + llms-full companion        public/llms.txt (new)        [VERIFIED] ~10 min
+  F5: Added baseline security headers             public/_headers (new)        [VERIFIED] ~15 min
+  F8: Added font-display: swap                    src/styles/global.css:14     [VERIFIED] ~5 min
 
 FIXED (validated):
-  F1: Added @astrojs/sitemap integration           astro.config.mjs:3,8        [VERIFIED]
-  F3: Added JSON-LD (WebSite + Organization)       src/layouts/Layout.astro:12  [VERIFIED]
+  F1: Added @astrojs/sitemap integration           astro.config.mjs:3,8         [VERIFIED] ~20 min
+  F3: Added JSON-LD (WebSite + Organization)       src/layouts/Layout.astro:12  [VERIFIED] ~30 min
+  F4: Cleaned duplicate Article schema             src/layouts/Layout.astro:18  [VERIFIED] ~35 min
 
 NEEDS REVIEW:
-  F4: robots.txt fix                               public/robots.txt
-      Reason: existing rules modified — verify Googlebot access
+  F5: robots.txt fix                               public/robots.txt
+      Reason: Cloudflare or another edge layer may override robots.txt
+      Manual checks: Dashboard AI bot controls, curl -A 'GPTBot' -I, curl -A 'Googlebot' -I
   F6: OG image meta                                src/layouts/Layout.astro
-      Reason: og:image uses relative path — provide absolute URL
-  F9: lang attribute                               src/layouts/Layout.astro
+      Reason: og:image uses relative path or `og:type` does not match page class
+  F9: Existing sitemap metadata                    public/sitemap.xml
+      Reason: `lastmod` values are stale/uniform — review generation strategy before trusting the file
+  F10: lang attribute                              src/layouts/Layout.astro
       Reason: locale not derivable from config — specify locale
 
+NEEDS_PARAMS:
+  F11: Locale-dependent sitemap target             astro.config.mjs
+      Reason: `site_url` or locale mapping must be supplied before mutation
+
 MANUAL (DANGEROUS — user action required):
-  F7: Canonical URL configuration
+  F12: Canonical URL configuration
       Risk: wrong canonical can deindex pages
       Suggested diff: [exact diff]
 
 OUT OF SCOPE:
-  F12: Content quality < 300 words                 Requires human writing
-  F13: E-E-A-T author information                  Requires real author data
+  F13: Content quality gap                         Requires human writing
+  F14: E-E-A-T author information                  Requires real author data
+
+ADVISORY CONTENT SCAFFOLD:
+  F13: Suggested H2 outline, target word band, and answer-first opener template
+      Reason: content scaffold is advisory only and does not mutate content files
 
 NO TEMPLATE:
-  F10: hreflang tags                               DANGEROUS — requires locale strategy
+  F15: hreflang tags                               DANGEROUS — requires locale strategy
 
 INSUFFICIENT DATA:
-  F11: HTTPS verification                          Requires live audit
+  F16: HTTPS verification                          Requires live audit
+
+Run: <ISO-8601-Z>	seo-fix	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
 
 NEXT STEPS:
   1. Review NEEDS_REVIEW items above
-  2. Apply MANUAL fixes if appropriate: zuvo:seo-fix --finding F7 --all
-  3. Re-audit for exact score: zuvo:seo-audit
+  2. Supply missing params for NEEDS PARAMS items, then rerun with `--fix-type` or `--finding`
+  3. Apply MANUAL fixes if appropriate: zuvo:seo-fix --finding F12 --all
+  4. Re-audit for exact score: zuvo:seo-audit
 ```
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+`<DURATION>`: use `N-fixes` (number of findings fixed).
 
 ---
 
@@ -404,7 +487,7 @@ Same format as seo-audit backlog persistence. Uses the stable check ID from the 
 
 ```json
 {
-  "version": "1.0",
+  "version": "1.1",
   "skill": "seo-fix",
   "timestamp": "[current ISO 8601]",
   "project": "[working directory]",
@@ -431,8 +514,31 @@ Same format as seo-audit backlog persistence. Uses the stable check ID from the 
       "fix_type": "sitemap-add",
       "status": "FIXED",
       "file": "astro.config.mjs",
-      "verification": "VERIFIED"
+      "verification": "VERIFIED",
+      "eta_minutes": 20,
+      "estimated_time": "<30 minutes",
+      "manual_checks": null,
+      "policy_notes": [
+        "Keep sitemap host aligned with the canonical root"
+      ],
+      "advisory_scaffolds": null,
+      "risk_notes": [],
+      "network_override_risk": false
     }
+  ],
+  "manual_checks": [
+    "Confirm edge-layer bot controls do not override file-level crawler policy"
+  ],
+  "estimated_time": {
+    "easy": 1,
+    "medium": 0,
+    "hard": 0
+  },
+  "policy_notes": [
+    "Training bots may remain blocked while user-proxy bots stay allowed"
+  ],
+  "advisory_scaffolds": [
+    "Provide a human-written outline for thin content findings instead of auto-writing copy"
   ],
   "files_modified": ["astro.config.mjs", "src/layouts/Layout.astro", "public/llms.txt"],
   "build_result": "PASS"

@@ -19,6 +19,7 @@ Read these files before doing anything else:
 2. `{plugin_root}/shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
 3. `{plugin_root}/shared/includes/quality-gates.md` -- CQ1-CQ28 and Q1-Q19 condensed reference
 4. `{plugin_root}/rules/cq-patterns.md` -- NEVER/ALWAYS code pairs for pattern recognition
+5. `{plugin_root}/shared/includes/run-logger.md` -- Log-in-Output run logging
 
 Print the checklist:
 
@@ -28,6 +29,7 @@ CORE FILES LOADED:
   2. env-compat.md       -- [READ | MISSING -> STOP]
   3. quality-gates.md    -- [READ | MISSING -> STOP]
   4. cq-patterns.md      -- [READ | MISSING -> STOP]
+  5. run-logger.md       -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP. Do not proceed from memory.
@@ -415,8 +417,8 @@ The report contains these sections in order:
 
 1. **META** -- date, intent, tier, audit mode (SOLO/TEAM), agents used, confidence method
 2. **SCOPE FENCE** -- files that were examined, files that were excluded
-3. **VERDICT** -- PASS / WARN / BLOCK with score
-4. **SEVERITY SUMMARY** -- `MUST-FIX: N | RECOMMENDED: N | NIT: N` (MUST-FIX > 0 means verdict is BLOCK)
+3. **VERDICT** -- PASS / WARN / BLOCKED with score
+4. **SEVERITY SUMMARY** -- `MUST-FIX: N | RECOMMENDED: N | NIT: N` (MUST-FIX > 0 means verdict is BLOCKED)
 5. **CHANGE SUMMARY** -- what the diff does in plain language
 6. **SKIPPED STEPS** -- which audit steps were skipped and why (tier-based or conditional)
 7. **VERIFICATION PASSED** -- what checks passed cleanly
@@ -469,17 +471,25 @@ After the report, ALWAYS print actionable options so the user knows what to do:
 ```
 ------------------------------------
 REVIEW COMPLETE -- PASS, no issues found.
+Run: <ISO-8601-Z>	review	<project>	<CQ>	<Q>	PASS	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
 ------------------------------------
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 ```
 
 **If issues found:**
 ```
 ------------------------------------
+REVIEW COMPLETE -- <VERDICT>, <N> issues found.
+Run: <ISO-8601-Z>	review	<project>	<CQ>	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
+
 NEXT STEPS -- say one of these:
   "fix"         -> apply ALL fixes from this report
   "blocking"    -> apply MUST-FIX only
   "skip"        -> keep report, don't fix
 ------------------------------------
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 ```
 
 ### Questions Gate (after report, before execute)
@@ -837,16 +847,3 @@ No audit. Show unreviewed commits:
 2. Walk the last N commits (default 100), check each against the set
 3. Print the unreviewed commits and a summary: `Total: N | Reviewed: X | Unreviewed: Y`
 4. STOP.
-
----
-
-## Run Log
-
-Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
-- SKILL: `review`
-- CQ_SCORE: from CQ1-CQ28 evaluation (or `-` for TIER 0 / utility modes)
-- Q_SCORE: from Q1-Q19 evaluation (or `-` if no test files in diff)
-- VERDICT: PASS/WARN/BLOCK from Phase 3 report verdict
-- TASKS: number of files reviewed
-- DURATION: tier label (e.g., `tier-2`, `batch-N`)
-- NOTES: change intent + scope summary

@@ -100,6 +100,7 @@ CORE FILES LOADED:
   3. {plugin_root}/rules/file-limits.md              -- [READ | MISSING -> STOP]
   4. {plugin_root}/shared/includes/quality-gates.md  -- [READ | MISSING -> STOP]
   5. {plugin_root}/shared/includes/test-contract.md  -- [READ | MISSING -> STOP]
+  6. {plugin_root}/shared/includes/run-logger.md     -- [READ | MISSING -> STOP]
 ```
 
 ### Conditional Files (loaded when needed)
@@ -478,8 +479,15 @@ Files tested:  [N] ([M] new, [K] extended, [J] fixed)
 Tests written: [N] (target: [M], actual: [N])
 Q gates:       [N]/19 avg (critical gates: all pass)
 Failures:      [pre-existing: N, new: 0]
+Run: <ISO-8601-Z>	write-tests	<project>	-	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
 -----
 ```
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+`<DURATION>`: use `N-files` (number of files tested) or `auto-loop` (auto mode with looping).
+`<Q>`: Q gate average as `N/19`.
+`<TASKS>`: number of test files written/modified.
 
 ### 5.4 Auto-Loop Check (auto mode only)
 

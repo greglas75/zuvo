@@ -29,6 +29,7 @@ Print the checklist:
 CORE FILES LOADED:
   1. codesift-setup.md   -- [READ | MISSING -> STOP]
   2. env-compat.md       -- [READ | MISSING -> STOP]
+  3. {plugin_root}/shared/includes/run-logger.md -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.
@@ -313,6 +314,25 @@ padding: spacing[4],
 If `--fix` flag: apply the top 3 P0 fixes directly. Otherwise: present the fix list for review.
 
 After applying fixes, if browser tools available, capture verification screenshots at 375px and 1024px.
+
+---
+
+## Completion
+
+After the Lead Designer synthesis, print:
+
+```
+UI-DESIGN-TEAM COMPLETE
+-----
+Perspectives: [N] agents
+P0 fixes:     [N]
+Run: <ISO-8601-Z>	ui-design-team	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
+-----
+```
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+`<DURATION>`: use `N-perspectives` (number of specialist agents that ran).
 
 ---
 

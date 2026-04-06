@@ -56,6 +56,7 @@ CORE FILES LOADED:
   2. {plugin_root}/rules/cq-checklist.md           -- READ/MISSING (CQ1-CQ28 scoring and evidence)
   3. {plugin_root}/rules/testing.md                -- READ/MISSING (Q1-Q19 for regression test)
   4. {plugin_root}/rules/test-quality-rules.md     -- READ/MISSING (edge cases, mock safety)
+  5. {plugin_root}/shared/includes/run-logger.md   -- READ/MISSING (run logging)
 ```
 
 Where `{plugin_root}` is resolved per `env-compat.md`.
@@ -481,22 +482,22 @@ CQ: [score]/28 | Q: [score]/19
 Confidence: HIGH / MEDIUM / LOW
 Backlog: [N items added | "none"]
 
+Run: <ISO-8601-Z>\tdebug\t<project>\t<CQ>\t<Q>\t<VERDICT>\t-\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+VERDICT: PASS / WARN / FAIL / BLOCKED / ABORTED only.
+CQ: from Phase 4.6 CQ self-eval on production fix (`N/28`).
+Q: from Phase 4.5 Q self-eval on regression test (`N/19`).
+TASKS: `-` (debug does not track task count).
+DURATION: mode label (e.g., `standard`, `regression-bisect`).
+NOTES: 1-line root cause summary (max 80 chars).
+
 Next steps:
   zuvo:review [fixed-files]  -- verify fix quality
   git commit -m "fix: [issue summary]"
 ----------------------------------------------------
 ```
-
-## Run Log
-
-Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
-- SKILL: `debug`
-- CQ_SCORE: from Phase 4.6 CQ self-eval on production fix
-- Q_SCORE: from Phase 4.5 Q self-eval on regression test
-- VERDICT: PASS if verification passes, FAIL if root cause unresolved
-- TASKS: number of files fixed
-- DURATION: mode label (e.g., `standard`, `regression-bisect`)
-- NOTES: 1-line root cause summary
 
 ---
 

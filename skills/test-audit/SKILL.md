@@ -46,6 +46,7 @@ CORE FILES LOADED:
   1. {plugin_root}/rules/testing.md              -- READ/MISSING
   2. {plugin_root}/rules/test-quality-rules.md   -- READ/MISSING
   3. {plugin_root}/shared/includes/env-compat.md -- READ/MISSING
+  4. {plugin_root}/shared/includes/run-logger.md -- READ/MISSING
 ```
 
 Where `{plugin_root}` resolves per `env-compat.md`.
@@ -427,16 +428,13 @@ After presenting the report, the user may request fixes:
 | Coverage gaps (methods untested) | Write missing tests | `zuvo:write-tests [path]` |
 | Test infra issues (runner config) | Optimize runner | `zuvo:tests-performance` |
 
-## Run Log
+## TEST AUDIT COMPLETE
 
-Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
-- SKILL: `test-audit`
-- CQ_SCORE: `-`
-- Q_SCORE: average Q score across all audited test files (e.g., `14/19`)
-- VERDICT: PASS if no Tier D, WARN if Tier C exists, FAIL if Tier D exists
-- TASKS: number of test files audited
-- DURATION: mode label (e.g., `quick`, `deep`)
-- NOTES: tier distribution summary (e.g., `A:8 B:6 C:2 D:0`)
+Run: <ISO-8601-Z>\ttest-audit\t<project>\t<N-critical>\t<N-total>\t<VERDICT>\t-\t<N>-dimensions\t<NOTES>\t<BRANCH>\t<SHA7>
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+ critical).
 
 ---
 

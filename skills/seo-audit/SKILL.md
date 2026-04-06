@@ -6,7 +6,9 @@ description: >
   data, AI crawlers, content quality, GEO readiness, performance, and optional
   live Core Web Vitals. Framework-aware: Astro, Next.js, Hugo, WordPress, React,
   plain HTML. Flags: full (default), [path], --live-url <url>, --quick,
-  --content-only, --geo, --persist-backlog.
+  --content-only, --geo, --profile <marketing|docs|blog|ecommerce|app-shell>,
+  --content-profile auto|marketing|docs|blog|ecommerce|app-shell,
+  --live-sample-bots <default|all|bot1,bot2>, --persist-backlog.
 ---
 
 # zuvo:seo-audit — SEO/GEO Site Audit
@@ -22,9 +24,12 @@ Read these files before any work begins:
 
 1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
 2. `{plugin_root}/shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
-3. `{plugin_root}/shared/includes/seo-fix-registry.md` -- Canonical fix_type, safety, params (before Phase 6.2 JSON output)
-4. `{plugin_root}/shared/includes/audit-output-schema.md` -- JSON output contract (before Phase 6.2)
-5. `{plugin_root}/shared/includes/seo-check-registry.md` -- Canonical check slugs (agents MUST use)
+3. `{plugin_root}/shared/includes/seo-bot-registry.md` -- Canonical AI/search bot taxonomy and live-probe scope
+4. `{plugin_root}/shared/includes/seo-page-profile-registry.md` -- Profile-aware D9/D10 thresholds and downgrades
+5. `{plugin_root}/shared/includes/seo-fix-registry.md` -- Canonical fix_type, safety, params (before Phase 6.2 JSON output)
+6. `{plugin_root}/shared/includes/audit-output-schema.md` -- JSON output contract (before Phase 6.2)
+7. `{plugin_root}/shared/includes/seo-check-registry.md` -- Canonical check slugs and enforcement layers (agents MUST use)
+8. `{plugin_root}/shared/includes/run-logger.md` -- Run logging contract
 
 Print the checklist:
 
@@ -32,9 +37,12 @@ Print the checklist:
 CORE FILES LOADED:
   1. codesift-setup.md     -- [READ | MISSING -> STOP]
   2. env-compat.md         -- [READ | MISSING -> STOP]
-  3. seo-fix-registry.md   -- [READ | MISSING -> STOP]
-  4. audit-output-schema.md -- [READ | MISSING -> STOP]
-  5. seo-check-registry.md  -- [READ | MISSING -> STOP]
+  3. seo-bot-registry.md   -- [READ | MISSING -> STOP]
+  4. seo-page-profile-registry.md -- [READ | MISSING -> STOP]
+  5. seo-fix-registry.md   -- [READ | MISSING -> STOP]
+  6. audit-output-schema.md -- [READ | MISSING -> STOP]
+  7. seo-check-registry.md  -- [READ | MISSING -> STOP]
+  8. run-logger.md           -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.
@@ -93,6 +101,9 @@ This audit is read-only against source code.
 | `--quick` | Critical gates only -- fast pass/fail (CG1-CG6) |
 | `--content-only` | Content-focused audit: D7, D9, D10 |
 | `--geo` | GEO-focused audit: D3, D5, D9, D10 |
+| `--profile <marketing|docs|blog|ecommerce|app-shell>` | Canonical flag for overriding the D9/D10 content heuristics profile |
+| `--content-profile auto|marketing|docs|blog|ecommerce|app-shell` | Legacy alias for `--profile`; accept for backward compatibility |
+| `--live-sample-bots <default|all|bot1,bot2>` | In live mode, probe representative bots or an explicit subset from `seo-bot-registry.md` and emit a Bot Policy Matrix |
 | `--persist-backlog` | Persist prioritized findings to `memory/backlog.md` |
 
 Default: `full` (no `--live-url`).
@@ -121,6 +132,7 @@ Also detect (with heuristics):
 - `robots.txt` — check `public/robots.txt`, `static/robots.txt`, or framework route (`src/pages/robots.txt.ts`, `app/robots.ts`)
 - `sitemap` — check `public/sitemap*.xml`, framework config (`@astrojs/sitemap` in config, `app/sitemap.ts`), or generated output
 - `llms.txt` — check `public/llms.txt`
+- `llms-full.txt` — check `public/llms-full.txt` or framework-equivalent static output
 
 **Deploy platform:**
 - `vercel.json` or `.vercel/` → Vercel
@@ -134,12 +146,13 @@ Store results:
 ```
 DETECTED_STACK = [astro | nextjs | hugo | wordpress | react | html]
 CONTENT_FORMAT = [markdown | database | none]
+CONTENT_PROFILE = [auto | marketing | docs | blog | ecommerce | app-shell]
 ```
 
 Print:
 ```
-Stack: [framework] | Content: [format] | Deploy: [platform]
-SEO files: robots.txt [found/MISSING] | sitemap [found/MISSING] | llms.txt [found/MISSING]
+Stack: [framework] | Content: [format] | Profile: [profile] | Deploy: [platform]
+SEO files: robots.txt [found/MISSING] | sitemap [found/MISSING] | llms.txt [found/MISSING] | llms-full.txt [found/MISSING]
 Mode: [full/quick/content-only/geo] | Live: [url or "code-only"]
 ```
 
@@ -166,6 +179,13 @@ For each missing tool that is relevant, inform the user of the capability gap an
 
 Set availability flags and proceed.
 
+If `--live-sample-bots` is set:
+- `default` = probe one bot per class (`training`, `search`/`retrieval`,
+  `user-proxy`) using `seo-bot-registry.md`
+- `all` = probe every `live_test=yes` bot from the registry
+- `bot1,bot2` = only probe canonical `bot_key` values explicitly listed by the
+  user
+
 ---
 
 ## Phase 2: Code Audit (Parallel Agent Dispatch)
@@ -187,11 +207,13 @@ Based on the mode from Phase 0, determine which agents to dispatch:
 | Mode | Agents dispatched | Dimensions active |
 |------|-------------------|-------------------|
 | `full` (default) | All 3 | D1-D13 |
-| `--quick` | Technical only (for CG1-CG6) | CG gates only, no dimension scoring |
+| `--quick` | Technical + Assets | Blocking gates only (CG1-CG6), no non-blocking dimension scoring |
 | `--content-only` | Content only | D7, D9, D10 |
-| `--geo` | Content + Assets (partial) | D3, D5, D9, D10 |
+| `--geo` | Technical + Content + Assets | D3, D5, D9, D10 |
 
-Pass `mode` and `selected_dimensions` to each dispatched agent as input parameters. Agents MUST skip dimensions not in their `selected_dimensions` list.
+Pass `mode`, `selected_dimensions`, and `content_profile` to each dispatched
+agent as input parameters. Agents MUST skip dimensions not in their
+`selected_dimensions` list.
 
 ### Agent dispatch
 
@@ -204,24 +226,28 @@ Agent 1: SEO Technical (Group A)
   model: "sonnet"
   type: "Explore"
   instructions: read agents/seo-technical.md
-  input: detected_stack, [config file paths from Phase 0], codesift_repo, mode, selected_dimensions
+  input: detected_stack, [config file paths from Phase 0], codesift_repo, mode, selected_dimensions, content_profile
 
 Agent 2: SEO Content (Group B)
   model: "sonnet"
   type: "Explore"
   instructions: read agents/seo-content.md
-  input: detected_stack, [content directory paths], codesift_repo, mode, selected_dimensions
+  input: detected_stack, [content directory paths], codesift_repo, mode, selected_dimensions, content_profile
 
 Agent 3: SEO Assets (Group C)
   model: "sonnet"
   type: "Explore"
   instructions: read agents/seo-assets.md
-  input: detected_stack, [layout/template paths], codesift_repo, mode, selected_dimensions
+  input: detected_stack, [layout/template paths], codesift_repo, mode, selected_dimensions, content_profile
 ```
 
 **Codex:** Define TOML agents per env-compat.md patterns. Each agent runs in read-only sandbox.
 
 **Cursor:** No agent dispatch. Execute each agent's analysis sequentially yourself, maintaining identical output format.
+
+If native agent dispatch is unavailable, run the three agent analyses
+sequentially yourself, preserve the same report sections, and note the fallback
+mode in the final audit header.
 
 ### Waiting for results
 
@@ -237,33 +263,63 @@ After all agents complete:
 1. Concatenate findings arrays from all 3 agents
 2. Assign stable finding IDs using format `{dimension}-{check}` (e.g., `D4-sitemap-exists`, `D3-json-ld-ssr`). These IDs are deterministic across runs for the same codebase — unlike sequential F1/F2 which shift when findings change. Also assign display-order numbers (F1, F2, ...) for human-readable reports, but `--finding` filtering in seo-fix uses the stable ID.
 3. Each agent returns raw check statuses per dimension -- main agent calculates numeric scores in Phase 4
-4. Evaluate critical gates: CG1-CG4, CG6 from Technical agent; CG5 from Assets agent
+4. Evaluate critical gates: CG1-CG4, CG6 from blocking Technical checks; CG5 from blocking Assets checks
 5. If any dimension is missing (agent failed): mark as "INSUFFICIENT DATA" in scoring
 
 **Agent vs main scoring boundary:** Agents return raw check statuses (PASS/PARTIAL/FAIL/INSUFFICIENT DATA) per check. The main agent calculates all numeric scores in Phase 4 using the status-to-value mapping. Agents do NOT calculate dimension scores themselves.
 
 ### Dimension constraints (normative -- agents MUST follow)
 
+#### Enforcement model (normative)
+
+Read `../../shared/includes/seo-check-registry.md` as the single source of truth
+for `owner_agent`, `layer`, `enforcement`, and `evidence_mode`.
+
+- `blocking`: can produce overall `FAIL` or `PROVISIONAL`
+- `scored`: affects dimension and overall scores, but cannot alone flip the
+  overall result
+- `advisory`: prioritized and reported, but excluded from pass/fail logic
+
+Only `blocking` checks may produce overall `FAIL` or `PROVISIONAL`. Heuristic,
+advisory, or content-inaccessible findings must never create a blocking result
+without direct evidence.
+
 For fix_type identifiers and safety classifications, agents MUST use `../../shared/includes/seo-fix-registry.md` as the canonical source.
 
 **D5 — AI crawler policy:**
-- Minimum bots to evaluate: GPTBot, ClaudeBot, PerplexityBot, Google-Extended, CCBot
-- "Conscious decision" = explicit Allow or Disallow for at least 3 of these bots, OR a Content-Signal header with ai-train directive. Default/absent robots.txt = FAIL (not conscious)
-- llms.txt in D5: check **presence and crawler accessibility only** (is it served? is it blocked?)
+- Use `../../shared/includes/seo-bot-registry.md` for the canonical live sample
+  order and class semantics
+- "Conscious decision" = explicit, non-contradictory policy for relevant bots or
+  bot classes, with evidence that policy is intentional rather than accidental
+- Deep robots analysis must look for problematic rules such as `/*.js*`,
+  `/*.pdf$`, and `/*.feed*`
+- When code suggests Cloudflare, WAF, CDN, or host-layer overrides, the result
+  may be `PROVISIONAL` or `INSUFFICIENT DATA` until live probing confirms policy
+- llms.txt in D5: check **presence and crawler accessibility only** (is it
+  served? is it blocked?)
 
 **D7 — Internal linking (code-only caveat):**
 - In code-only mode, orphan detection is limited to static analysis (route files without inbound `<a>` or `<Link>` references). Report as "potential orphan risk", not definitive orphan.
 - Full orphan confirmation requires live crawl or route graph analysis (--live-url mode).
 
 **D9 — Content quality (measurable heuristics):**
-- Thin content: word count < 300 per page (count in markdown body or text nodes)
-- Answer-first: summary or lead sentence within first 120 words of main content
-- Heading structure: H2/H3 sections <= 300 words each (chunkability for AI extraction)
+- Use `../../shared/includes/seo-page-profile-registry.md` as the D9 default
+  contract
+- Thin-content thresholds are profile-aware, not globally fixed at 300 words
+- If content is CMS-backed or inaccessible from the repo, downgrade to
+  `advisory`, `N/A`, or `INSUFFICIENT DATA`, not hard failure
+- Answer-first and chunkability must follow the active profile rather than a
+  universal requirement
 
 **D10 — GEO/AI readiness:**
-- llms.txt in D10: evaluate **content quality and structure** (not presence — that's D5)
+- llms.txt in D10: evaluate **content quality and structure** (not presence —
+  that's D5)
+- Separate llms proposal compliance from best-practice richness:
+  `llms.txt` presence/access belongs to D5, while `llms-full.txt` quality and
+  companion richness belong to D10
 - E-E-A-T signals: check for `author`, `datePublished`, `dateModified` fields in frontmatter/schema, plus citation/source references
-- Freshness: lastmod in sitemap, dateModified in content, git commit age as fallback
+- Freshness is heuristic and should remain `advisory` unless direct blocking
+  evidence exists elsewhere
 
 **D13 — Monitoring (advisory checks):**
 - "Search Console setup indicators" is advisory only — cannot be confirmed from repo in most cases. Score as INSUFFICIENT DATA in code-only mode unless verification meta tag or DNS TXT record is present in config.
@@ -310,11 +366,27 @@ Verify JSON-LD and meta tags in both:
 
 Also check that meta tags are rendered correctly and OG images are accessible.
 
-### 3.3 Broken Link Check
+### 3.3 Live Bot Matrix Sampling
+
+When `--live-sample-bots` is provided, or when live mode already has enough
+coverage to test representative bots safely, sample up to N bots from
+`seo-bot-registry.md` using HEAD/GET requests with spoofed user-agents.
+
+For each sampled bot, record:
+- bot key and class
+- verification mode (`source`, `live`, `merged`)
+- response status code
+- whether robots policy and live behavior agree
+- any Cloudflare / WAF / CDN override suspicion
+
+If live bot probing is unavailable, emit a Bot Policy Matrix from source-only
+evidence and mark live-dependent rows as `PROVISIONAL`.
+
+### 3.4 Broken Link Check
 
 Check up to 50 internal links and 100 external links. Record status codes.
 
-### 3.4 Visual Verification
+### 3.5 Visual Verification
 
 If browser tools available, capture screenshots at 3 breakpoints (1440, 768, 375). Check for mobile rendering issues.
 
@@ -341,9 +413,12 @@ CG6: AI crawler policy conscious       -- from D5
 - `INSUFFICIENT DATA` -- static analysis is inconclusive and no live verification is available
 
 **Scoring rules:**
-- Any critical gate = `FAIL` -> overall result = `FAIL` regardless of score
-- Any critical gate = `INSUFFICIENT DATA` -> overall result = `PROVISIONAL` until live/source verification is completed
+- Any blocking critical gate = `FAIL` -> overall result = `FAIL` regardless of score
+- Any blocking critical gate = `INSUFFICIENT DATA` -> overall result = `PROVISIONAL` until live/source verification is completed
 - `PROVISIONAL` does not block CI gates (it is not a FAIL) but flags incomplete assurance
+- Only `blocking` checks and critical gates control `FAIL` vs `PROVISIONAL`.
+  `scored` and `advisory` findings may lower scores, but they never override the
+  overall result on their own.
 
 ### 4.2 Dimension Scores
 
@@ -397,8 +472,8 @@ C (50-69): Significant gaps. Prioritized fixes needed before scaling.
 D (< 50):  Major issues. SEO/GEO blocking growth.
 
 Result overrides:
-- Any critical gate = FAIL -> result = "FAIL" (regardless of tier)
-- Any critical gate = INSUFFICIENT DATA -> result = "PROVISIONAL"
+- Any blocking critical gate = FAIL -> result = "FAIL" (regardless of tier)
+- Any blocking critical gate = INSUFFICIENT DATA -> result = "PROVISIONAL"
 Tier is always calculated from score: A/B/C/D.
 ```
 
@@ -415,6 +490,7 @@ Before generating the report, verify:
 5. **Priority Math:** Verify 3D priority calculation `(SEO * 0.4) + (Business * 0.4) + ((4 - Effort) * 0.2)`.
 6. **Finding Numbering:** F-IDs are sequential (F1, F2, ...) with no gaps or duplicates.
 7. **Summary Consistency:** findings_count in executive summary matches actual finding count in report body.
+8. **Blocking Semantics:** Only checks marked `blocking` in `seo-check-registry.md` are allowed to create overall `FAIL` or `PROVISIONAL`.
 
 Fix any discrepancies before presenting to user.
 
@@ -437,17 +513,21 @@ Health scale: HEALTHY (80+), NEEDS ATTENTION (60-79), AT RISK (40-59), CRITICAL 
 
 ### Full Report Sections
 
-1. **Header** -- project, date, stack, mode (code / code+live)
-2. **Critical Gates** -- 6 gates, PASS/FAIL with evidence
+1. **Header** -- project, date, stack, mode (code / code+live), content profile
+2. **Critical Gates** -- 6 gates, PASS/FAIL/INSUFFICIENT DATA with evidence
 3. **Dimension Scores** -- D1-D13 table with score, weight, weighted contribution
 4. **Overall Score + Tier**
 5. **Sub-Scores** -- SEO, GEO, Tech (each /100)
-6. **Quick Wins** -- findings with Priority >= 2.0 AND Effort = EASY
-7. **Full Execution Plan** -- all findings sorted by priority descending
-8. **Content Report** -- articles scanned, word counts, answer-first percentage (if content scanned)
-9. **GEO Readiness Panel** -- 7 dimensions (llms.txt, AI crawlers, chunkowability, structured HTML, citation readiness, E-E-A-T, freshness)
-10. **Manual Check Recommendations** -- informational only, not scored
-11. **CI-Parseable Summary** -- `SEO-AUDIT-RESULT: PASS|FAIL|PROVISIONAL score=NN tier=X critical=none|CG-N`
+6. **Strengths** -- explicit PASS findings worth preserving
+7. **Bot Policy Matrix** -- source/live/merged bot evidence with per-bot status
+8. **Source vs Render Diff** -- raw response vs rendered DOM mismatches for JSON-LD and meta tags
+9. **Quick Wins** -- findings with Priority >= 2.0 AND Effort = EASY
+10. **Full Execution Plan** -- all findings sorted by priority descending
+11. **Content Table** -- per-page/content-type coverage, word counts, answer-first rate (if content scanned)
+12. **GEO Readiness Panel** -- 7 dimensions (llms.txt, AI crawlers, chunkability, structured HTML, citation readiness, E-E-A-T, freshness)
+13. **Fix Coverage Summary** -- safe/moderate/dangerous/no-template counts from the shared fix registry
+14. **Manual Check Recommendations** -- informational only, not scored
+15. **CI-Parseable Summary** -- `SEO-AUDIT-RESULT: PASS|FAIL|PROVISIONAL score=NN tier=X critical=none|CG-N`
 
 ### Finding Format (stable across runs)
 
@@ -460,6 +540,9 @@ Every finding in the execution plan uses this structure:
   Why it matters: [SEO/GEO/business impact in one sentence]
   Fix: [actionable instruction]
   Priority: [N.N] (SEO=[1-3] × Biz=[1-3] × Effort=[1-3])
+  Enforcement: [blocking | scored | advisory]
+  Layer: [core | hygiene | geo | visibility-deferred]
+  ETA: [minutes or "n/a"]
 
 Confidence scale:
   HIGH   = direct source evidence (file:line confirms the finding)
@@ -516,7 +599,7 @@ Serialize from Phase 4 scoring results:
 
 ```json
 {
-  "version": "1.0",
+  "version": "1.1",
   "skill": "seo-audit",
   "timestamp": "[current ISO 8601]",
   "project": "[working directory absolute path]",
@@ -544,16 +627,29 @@ Serialize from Phase 4 scoring results:
       "check": "sitemap-exists",
       "status": "FAIL",
       "severity": "HIGH",
+      "enforcement": "blocking",
+      "layer": "core",
       "seo_impact": 3,
       "business_impact": 3,
       "effort": 1,
       "priority": 2.8,
+      "confidence_reason": "No sitemap config or generated sitemap found in source tree",
       "evidence": "...",
       "file": null,
       "line": null,
       "fix_type": "sitemap-add",
       "fix_safety": "MODERATE",
-      "fix_params": { "framework": "astro", "site_url": "https://example.com" }
+      "fix_params": { "framework": "astro", "site_url": "https://example.com" },
+      "eta_minutes": 15,
+      "bot_scope": null
+    }
+  ],
+  "bot_matrix": [
+    {
+      "bot_key": "gptbot",
+      "status": "BLOCKED",
+      "evidence": "public/robots.txt:12",
+      "verification_mode": "code"
     }
   ],
   "summary": {
@@ -593,3 +689,17 @@ Same format used by seo-fix for backlog updates. Deduplicate against existing en
 | Content < 300 words avg | Expand thin content | Content quality drives all signals |
 | D3 < 50 (Structured Data) | Add/fix JSON-LD schemas | Schema markup boosts citations |
 | Tier A (>= 85) | Periodic re-audit or add --live-url for CWV data | Maintain and measure |
+
+---
+
+## SEO-AUDIT COMPLETE
+
+Overall: [N]/100 -- Tier [A/B/C/D] | Result: [PASS/FAIL/PROVISIONAL]
+SEO: [N]/100 | GEO: [N]/100 | Tech: [N]/100
+Critical gates: [N PASS] / [N FAIL] / [N INSUFFICIENT DATA]
+Findings: [N critical] / [N total]
+Run: <ISO-8601-Z>	seo-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+ critical).

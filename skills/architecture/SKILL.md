@@ -28,6 +28,7 @@ Print the checklist:
 CORE FILES LOADED:
   1. codesift-setup.md   -- [READ | MISSING -> STOP]
   2. env-compat.md       -- [READ | MISSING -> STOP]
+  3. {plugin_root}/shared/includes/run-logger.md -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.
@@ -433,6 +434,24 @@ Designing a new service, API, or subsystem from requirements.
 ```
 
 Save to: `docs/design/[slug].md`
+
+---
+
+## Completion
+
+After completing any mode, print the completion block:
+
+```
+ARCHITECTURE COMPLETE
+-----
+Mode:   [review | adr | design]
+Run: <ISO-8601-Z>	architecture	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
+-----
+```
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+`<DURATION>`: use the mode label (`review`, `adr`, or `design`).
 
 ---
 

@@ -46,6 +46,7 @@ CORE FILES LOADED:
 **Stage 2 -- Before Phase 10 (report writing):**
 ```
   5. {plugin_root}/shared/includes/backlog-protocol.md -- READ/MISSING
+  6. {plugin_root}/shared/includes/run-logger.md       -- READ/MISSING
 ```
 
 Stage 2 deferred to save ~300 lines of upfront context.
@@ -506,16 +507,13 @@ Full protocol: `{plugin_root}/shared/includes/backlog-protocol.md`.
 | Header/transport gaps (S8) | Quick config fix -- add Helmet/CSP/HSTS |
 | All dimensions >= 8 | No urgent action. Schedule next audit in 90 days. |
 
-## Run Log
+## SECURITY AUDIT COMPLETE
 
-Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
-- SKILL: `security-audit`
-- CQ_SCORE: `-`
-- Q_SCORE: `-`
-- VERDICT: health grade from Phase 10.1 (HEALTHY/NEEDS ATTENTION/AT RISK/CRITICAL)
-- TASKS: number of endpoints audited
-- DURATION: tier label (e.g., `quick`, `standard`, `deep`)
-- NOTES: static posture score + finding counts (e.g., `72% — C:1 H:3 M:5`)
+Run: <ISO-8601-Z>\tsecurity-audit\t<project>\t-\t-\t<VERDICT>\t-\t<N>-dimensions\t<NOTES>\t<BRANCH>\t<SHA7>
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+VERDICT mapping: HEALTHY -> PASS, NEEDS ATTENTION -> WARN, AT RISK or CRITICAL -> FAIL.
 
 ---
 

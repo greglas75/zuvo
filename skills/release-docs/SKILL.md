@@ -136,8 +136,10 @@ RELEASE-DOCS COMPLETE
 
 If `--dry-run` was set and execution reached this phase (only on early exits), annotate the block with `[DRY RUN — no files written]`.
 
-Append run log entry per `../../shared/includes/run-logger.md`. Use the environment-aware log path from run-logger.md (do NOT hardcode `~/.zuvo/runs.log`):
+After the output block, print and append the run log line:
 
 ```
-<ISO-timestamp>\trelease-docs\t<project-basename>\t-\t-\tPASS\t-\t5-phase\tdocs synced for <range>
+Run: <ISO-8601-Z>\trelease-docs\t<project>\t-\t-\t<VERDICT>\t-\t5-phase\t<NOTES>\t<BRANCH>\t<SHA7>
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 ```

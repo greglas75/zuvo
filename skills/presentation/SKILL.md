@@ -17,6 +17,10 @@ Generate professional PPTX presentations from a topic description, outline, or e
 **Scope:** Generating slide decks from topics or content files.
 **Out of scope:** Editing existing PPTX files, complex data visualizations (charts, graphs), image generation.
 
+## Run Logging
+
+Read `{plugin_root}/shared/includes/run-logger.md` for log format and file path resolution.
+
 ## Argument Parsing
 
 | Argument | Behavior |
@@ -194,8 +198,13 @@ Slide overview:
   ...
 
 Script: scripts/generate_presentation.py
+Run: <ISO-8601-Z>	presentation	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
 -----
 ```
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+`<DURATION>`: use `N-slides` (number of slides generated).
 
 ### Post-Generation Tips
 

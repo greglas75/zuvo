@@ -59,6 +59,10 @@ Read `{plugin_root}/shared/includes/codesift-setup.md` for initialization.
 
 ---
 
+## Run Logging
+
+Read `{plugin_root}/shared/includes/run-logger.md` for log format and file path resolution.
+
 ## Stack-Aware Commands (Required)
 
 Before writing any doc with shell commands, detect the project's package manager and tooling. Never hardcode `npm` -- use what the project actually uses.
@@ -319,6 +323,24 @@ Command validation:
 | changelog | `./CHANGELOG.md` |
 
 If target file exists, ask before overwriting (except in update mode). Non-interactive environments default to update mode.
+
+---
+
+## Completion
+
+After completing any mode, print:
+
+```
+DOCS COMPLETE
+-----
+Mode:  [readme | api | runbook | onboarding | update | changelog]
+Run: <ISO-8601-Z>	docs	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
+-----
+```
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+`<DURATION>`: use the mode label (`readme`, `api`, `runbook`, `onboarding`, `changelog`, or `update`).
 
 ---
 

@@ -29,6 +29,7 @@ Print the checklist:
 CORE FILES LOADED:
   1. codesift-setup.md   -- [READ | MISSING -> STOP]
   2. env-compat.md       -- [READ | MISSING -> STOP]
+  3. {plugin_root}/shared/includes/run-logger.md -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.
@@ -281,6 +282,24 @@ This skill produces two artifacts in `.interface-design/`:
 
 **No artifacts:** `zuvo:design-review` runs purely structural (DX1-DX20).
 **With artifacts:** adds craft validation + intent-aware token matching.
+
+---
+
+## Completion
+
+After completing any mode, print:
+
+```
+DESIGN COMPLETE
+-----
+Mode: [init | component | improve | extract]
+Run: <ISO-8601-Z>	design	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
+-----
+```
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+`<DURATION>`: use `init`, `component`, `improve`, or `extract`.
 
 ---
 

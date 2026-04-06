@@ -22,6 +22,7 @@ Read these files before any work begins:
 3. `{plugin_root}/shared/includes/quality-gates.md` -- CQ1-CQ28 and Q1-Q19 condensed reference
 4. `{plugin_root}/rules/cq-patterns.md` -- NEVER/ALWAYS code pairs
 5. `{plugin_root}/rules/cq-checklist.md` -- Full CQ1-CQ28 evaluation criteria and evidence standards
+6. `{plugin_root}/shared/includes/run-logger.md` -- Run logging protocol
 
 Print the checklist:
 
@@ -32,6 +33,7 @@ CORE FILES LOADED:
   3. quality-gates.md    -- [READ | MISSING -> STOP]
   4. cq-patterns.md      -- [READ | MISSING -> STOP]
   5. cq-checklist.md     -- [READ | MISSING -> STOP]
+  6. run-logger.md       -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP. Do not proceed from memory.
@@ -568,19 +570,19 @@ Files created: [N]
 CQ: [before score] -> [after score]
 Tests: [status]
 Commit: [hash] -- [message]
+
+Run: <ISO-8601-Z>\trefactor\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+VERDICT: PASS / WARN / FAIL / BLOCKED / ABORTED only.
+CQ: CQ post-audit score (e.g., `18/18`).
+Q: Q score from test evaluation (or `-` if VERIFY_COMPILATION).
+TASKS: number of files modified + created.
+DURATION: ETAP stage reached (e.g., `etap-2`).
+NOTES: refactoring type + target file (max 80 chars).
 ------------------------------------
 ```
-
-### Run Log
-
-Log this run per `{plugin_root}/shared/includes/run-logger.md` using the environment-resolved path (see run-logger.md § Environment-Aware Log Path):
-- SKILL: `refactor`
-- CQ_SCORE: CQ post-audit score (e.g., `18/18`)
-- Q_SCORE: Q score from test evaluation (or `-` if VERIFY_COMPILATION)
-- VERDICT: PASS/WARN/FAIL based on CQ post-audit vs pre-audit
-- TASKS: number of files modified + created
-- DURATION: ETAP stage reached (e.g., `etap-2`)
-- NOTES: refactoring type + target file
 
 ---
 
@@ -701,6 +703,16 @@ Session-crash safe: uncommitted files stay `[ ]`, resume picks them up.
 BATCH COMPLETE
 Total: N | Completed: X | Failed: Y | Skipped: Z
 Queue: [path to queue file]
+
+Run: <ISO-8601-Z>\trefactor\t<project>\t<CQ>\t-\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+VERDICT: PASS / WARN / FAIL / BLOCKED / ABORTED only.
+CQ: aggregate CQ score across batch (e.g., `avg 16/18`), or `-` if mixed.
+TASKS: number of files completed in batch.
+DURATION: `batch-N` where N is total queue entries.
+NOTES: `batch X/N completed Y failed` (max 80 chars).
 ```
 
 ---

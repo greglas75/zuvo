@@ -89,6 +89,7 @@ Before starting, read the applicable files:
 CORE FILES LOADED:
   1. {plugin_root}/rules/testing.md                -- [READ | MISSING -> STOP]
   2. {plugin_root}/shared/includes/quality-gates.md -- [READ | MISSING -> STOP]
+  3. {plugin_root}/shared/includes/run-logger.md    -- [READ | MISSING -> STOP]
 ```
 
 **Conditional (loaded when the pattern requires domain knowledge):**
@@ -254,5 +255,12 @@ FIX-TESTS SESSION COMPLETE
 Patterns fixed:  [list]
 Total files:     [N] fixed, [N] skipped
 Bugs discovered: [N] (see backlog)
+Run: <ISO-8601-Z>	fix-tests	<project>	-	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
 -----
 ```
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+`<DURATION>`: use `N-patterns` (number of patterns fixed) or `triage` (triage-only run).
+`<Q>`: Q score if Q gates were evaluated, otherwise `-`.
+`<TASKS>`: number of files fixed.

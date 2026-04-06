@@ -37,6 +37,10 @@ Add, list, and manage backlog items. The backlog tracks technical debt discovere
 
 ---
 
+## Run Logging
+
+Read `{plugin_root}/shared/includes/run-logger.md` for log format and file path resolution.
+
 ## CodeSift Integration
 
 Read `{plugin_root}/shared/includes/codesift-setup.md` for initialization.
@@ -259,6 +263,24 @@ Hotspot: offer.service.ts (6 items) -> zuvo:refactor src/offer/offer.service.ts
 | dep | Dependency | Outdated libraries, CVEs, unmaintained packages |
 | doc | Documentation | Missing runbooks, outdated READMEs |
 | infra | Infrastructure | Manual deploys, no monitoring, missing IaC |
+
+---
+
+## Completion
+
+After completing any action, print:
+
+```
+BACKLOG COMPLETE
+-----
+Action: [list | add | fix | wontfix | delete | stats | prioritize | suggest]
+Run: <ISO-8601-Z>	backlog	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
+-----
+```
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+`<DURATION>`: use the action label (`list`, `add`, `fix`, `wontfix`, `delete`, `stats`, `prioritize`, or `suggest`).
 
 ---
 

@@ -28,6 +28,7 @@ CORE FILES LOADED:
   2. {plugin_root}/rules/security.md                -- READ/MISSING
   3. {plugin_root}/shared/includes/env-compat.md    -- READ/MISSING
   4. {plugin_root}/shared/includes/codesift-setup.md -- READ/MISSING
+  5. {plugin_root}/shared/includes/run-logger.md    -- READ/MISSING
 ```
 
 Where `{plugin_root}` resolves per `env-compat.md`.
@@ -388,6 +389,20 @@ Full protocol: `{plugin_root}/shared/includes/backlog-protocol.md`.
 | D1+D9 both critical | Fix D9 first -- security before correctness |
 | D11=0 (breaking change) | Fix breaking changes before release |
 | All dimensions >= 8 | No action needed. Schedule next audit in 30 days. |
+
+---
+
+## API-AUDIT COMPLETE
+
+Score: [N] / [max] -- [grade]
+Tier: [LIGHT/STANDARD/DEEP]
+Dimensions: [N scored] | Critical gates: [PASS/FAIL]
+Findings: [N critical] / [N total]
+Run: <ISO-8601-Z>	api-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+ critical).
 
 ---
 

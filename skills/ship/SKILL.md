@@ -322,14 +322,10 @@ SHIP COMPLETE
   Artifact:    memory/last-ship.json written locally
 
   Next: zuvo:deploy (when ready)
+
+Run: <ISO-8601-Z>\tship\t<project>\t-\t-\t<VERDICT>\t-\t5-phase\t<NOTES>\t<BRANCH>\t<SHA7>
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 ```
 
 Render each line conditionally based on actual outcomes (`pushed`, `tagPushed`, `--no-tag` flag). Do not show success indicators for actions that were skipped.
-
-### 2. Run logger
-
-Append a run log entry per `../../shared/includes/run-logger.md`:
-
-```
-<ISO-8601>\tship\t<project>\t-\t-\t<PASS|WARN|ABORTED>\t-\t5-phase\tv<old>→v<new> <flow> <reviewDepth>
-```

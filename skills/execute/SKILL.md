@@ -47,6 +47,7 @@ CORE FILES LOADED:
   5. {plugin_root}/shared/includes/tdd-protocol.md           -- READ/MISSING
   6. {plugin_root}/shared/includes/code-contract.md          -- READ/MISSING
   7. {plugin_root}/shared/includes/test-contract.md          -- READ/MISSING
+  8. {plugin_root}/shared/includes/run-logger.md             -- READ/MISSING
 ```
 
 Where `{plugin_root}` is resolved per `env-compat.md` (e.g., `CLAUDE_PLUGIN_ROOT` in Claude Code).
@@ -466,16 +467,11 @@ If the current working directory is inside a git worktree (check `git worktree l
 
 "Execution is complete. You are working in a worktree. Run `zuvo:worktree` to finish — merge, push as PR, keep, or discard."
 
-### Run Log
+```
+Run: <ISO-8601-Z>	execute	<project>	<CQ>	<Q>	<VERDICT>	<TASKS>	<N>-tasks	<NOTES>	<BRANCH>	<SHA7>
+```
 
-Log this run to `~/.zuvo/runs.log` per `shared/includes/run-logger.md`:
-- SKILL: `execute`
-- CQ_SCORE: average CQ score across all completed tasks (or `-` if none)
-- Q_SCORE: average Q score across all completed tasks (or `-` if none)
-- VERDICT: PASS if all tasks completed, WARN if any skipped, FAIL if any blocked
-- TASKS: number of tasks completed
-- DURATION: `N-tasks`
-- NOTES: plan name + completion summary (e.g., `user-export — 7/8 tasks`)
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 
 ---
 

@@ -29,6 +29,7 @@ CORE FILES LOADED:
   1. {plugin_root}/shared/includes/codesift-setup.md   -- [READ | MISSING -> STOP]
   2. {plugin_root}/shared/includes/env-compat.md        -- [READ | MISSING -> STOP]
   3. {plugin_root}/rules/cq-patterns.md                 -- [READ | MISSING -> STOP]
+  4. {plugin_root}/shared/includes/run-logger.md        -- [READ | MISSING -> STOP]
 ```
 
 If any file is MISSING, STOP. Do not proceed from memory.
@@ -522,6 +523,20 @@ DB9 ORM anti-patterns     -> zuvo:refactor [service file]
 Multiple dimensions fail  -> zuvo:review [path]
 ------------------------------------
 ```
+
+---
+
+## DB-AUDIT COMPLETE
+
+Score: [N] / [MAX] -- [grade]
+ORM: [detected] | Engine: [detected]
+Dimensions: [N scored] | Critical gates: [PASS/FAIL]
+Findings: [N critical] / [N total]
+Run: <ISO-8601-Z>	db-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>
+
+After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+
+VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+ critical).
 
 ---
 
