@@ -43,8 +43,21 @@ install_claude() {
     return 1
   fi
 
-  # Claude Code creates TWO cache dirs: a version dir (1.0.0) and a SHA dir (564a269...).
-  # It may load from EITHER one. We must sync to ALL of them.
+  # Ensure a cache dir exists for the CURRENT version
+  local current_version="$VERSION"
+  if [[ ! -d "$CACHE_BASE/$current_version" ]]; then
+    echo "  Creating cache dir for v${current_version}..."
+    mkdir -p "$CACHE_BASE/$current_version"
+    # Bootstrap directory structure
+    mkdir -p "$CACHE_BASE/$current_version/skills"
+    mkdir -p "$CACHE_BASE/$current_version/shared/includes"
+    mkdir -p "$CACHE_BASE/$current_version/rules"
+    mkdir -p "$CACHE_BASE/$current_version/scripts"
+    mkdir -p "$CACHE_BASE/$current_version/bin"
+    mkdir -p "$CACHE_BASE/$current_version/docs"
+  fi
+
+  # Sync to ALL existing cache dirs (Claude Code may have version + SHA dirs)
   CACHE_DIRS=$(ls -d "$CACHE_BASE"/*/ 2>/dev/null)
   if [[ -z "$CACHE_DIRS" ]]; then
     fail "No cache directories in $CACHE_BASE"
