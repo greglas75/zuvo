@@ -55,12 +55,16 @@ install_claude() {
     DIR_NAME=$(basename "$CACHE_DIR")
     echo "  Syncing: $DIR_NAME"
 
-    # Copy skills (new + updated)
+    # Copy skills (new + updated), resolve {plugin_root} to actual cache path
     for skill_dir in "$ZUVO_DIR"/skills/*/; do
       skill_name=$(basename "$skill_dir")
       mkdir -p "$CACHE_DIR/skills/$skill_name"
       cp -r "$skill_dir"* "$CACHE_DIR/skills/$skill_name/" 2>/dev/null || true
     done
+    # Replace {plugin_root} placeholder with actual resolved path in all skill files
+    local resolved_root="${CACHE_DIR%/}"
+    find "$CACHE_DIR/skills" -name "*.md" -exec \
+      sed -i '' "s|{plugin_root}|${resolved_root}|g" {} + 2>/dev/null || true
     # Clean up any orphan files at skills/ root level
     rm -f "$CACHE_DIR/skills/SKILL.md" 2>/dev/null || true
     rm -rf "$CACHE_DIR/skills/agents" 2>/dev/null || true
