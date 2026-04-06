@@ -75,6 +75,13 @@ install_claude() {
       cp "$ZUVO_DIR"/rules/*.md "$CACHE_DIR/rules/" 2>/dev/null || true
     fi
 
+    # Copy scripts (adversarial-review.sh, etc.)
+    if [[ -d "$ZUVO_DIR/scripts" ]]; then
+      mkdir -p "$CACHE_DIR/scripts"
+      cp "$ZUVO_DIR"/scripts/*.sh "$CACHE_DIR/scripts/" 2>/dev/null || true
+      chmod +x "$CACHE_DIR"/scripts/*.sh 2>/dev/null || true
+    fi
+
     # Copy docs (if dir exists in cache)
     if [[ -d "$CACHE_DIR/docs" ]]; then
       cp -r "$ZUVO_DIR"/docs/*.md "$CACHE_DIR/docs/" 2>/dev/null || true
