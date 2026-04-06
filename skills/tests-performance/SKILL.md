@@ -39,15 +39,15 @@ Measurement-driven optimization of the test suite. Establishes a baseline, audit
 
 ## Environment Compatibility
 
-Read `{plugin_root}/shared/includes/env-compat.md` for progress tracking and user interaction patterns.
+Read `../../shared/includes/env-compat.md` for progress tracking and user interaction patterns.
 
 ## Run Logging
 
-Read `{plugin_root}/shared/includes/run-logger.md` for log format and file path resolution.
+Read `../../shared/includes/run-logger.md` for log format and file path resolution.
 
 ## CodeSift Integration
 
-Read `{plugin_root}/shared/includes/codesift-setup.md` for initialization.
+Read `../../shared/includes/codesift-setup.md` for initialization.
 
 **Key tools for this skill:**
 

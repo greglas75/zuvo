@@ -162,8 +162,8 @@ Before writing ANY code, verify:
 |---|------|---------|--------|
 | G1 | **New code → tests** | Any new `.ts`/`.tsx`/`.py`/`.php` file | Write tests BEFORE or WITH the code. Zero exceptions. |
 | G2 | **3+ files → /build** | Feature touches 3+ files | Use `zuvo:build`, NOT direct coding. |
-| G3 | **CQ self-eval** | Any production code written | Read `{plugin_root}/rules/cq-checklist.md`. Run CQ1-CQ28. Print score. |
-| G4 | **Test self-eval** | Any test code written | Read `{plugin_root}/rules/testing.md`. Run Q1-Q19. Print score. |
+| G3 | **CQ self-eval** | Any production code written | Read `../../rules/cq-checklist.md`. Run CQ1-CQ28. Print score. |
+| G4 | **Test self-eval** | Any test code written | Read `../../rules/testing.md`. Run Q1-Q19. Print score. |
 
 Tests are part of implementation, not a follow-up. NEVER ask "should I write tests?" — the answer is always yes. NEVER say "implementation complete" when test files = 0.
 
@@ -182,17 +182,17 @@ Detect the project's tech stack to know which rules to Read when writing code di
 
 | Signal | Rule to Read |
 |--------|-------------|
-| `tsconfig.json` or `.ts`/`.tsx` files | `{plugin_root}/rules/typescript.md` |
-| `package.json` with `react` or `next` | `{plugin_root}/rules/react-nextjs.md` |
-| `package.json` with `@nestjs/core` | `{plugin_root}/rules/nestjs.md` |
-| `pyproject.toml`, `.py` files | `{plugin_root}/rules/python.md` |
-| `composer.json` with PHP framework | `{plugin_root}/rules/php.md` |
+| `tsconfig.json` or `.ts`/`.tsx` files | `../../rules/typescript.md` |
+| `package.json` with `react` or `next` | `../../rules/react-nextjs.md` |
+| `package.json` with `@nestjs/core` | `../../rules/nestjs.md` |
+| `pyproject.toml`, `.py` files | `../../rules/python.md` |
+| `composer.json` with PHP framework | `../../rules/php.md` |
 
-When writing security-sensitive code (auth, input, API): Read `{plugin_root}/rules/security.md`.
+When writing security-sensitive code (auth, input, API): Read `../../rules/security.md`.
 
 ## Session Startup
 
-At the start of every session, Read `{plugin_root}/rules/cq-patterns-core.md` — defensive coding patterns (error handling, security, data integrity, resource safety). This is a lightweight summary; skills load the full version when needed.
+At the start of every session, Read `../../rules/cq-patterns-core.md` — defensive coding patterns (error handling, security, data integrity, resource safety). This is a lightweight summary; skills load the full version when needed.
 
 ---
 

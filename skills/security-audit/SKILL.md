@@ -37,27 +37,27 @@ Read in two stages to reduce upfront cost.
 
 ```
 CORE FILES LOADED:
-  1. {plugin_root}/rules/cq-checklist.md            -- READ/MISSING
-  2. {plugin_root}/rules/security.md                -- READ/MISSING
-  3. {plugin_root}/shared/includes/env-compat.md    -- READ/MISSING
-  4. {plugin_root}/shared/includes/codesift-setup.md -- READ/MISSING
+  1. ../../rules/cq-checklist.md            -- READ/MISSING
+  2. ../../rules/security.md                -- READ/MISSING
+  3. ../../shared/includes/env-compat.md    -- READ/MISSING
+  4. ../../shared/includes/codesift-setup.md -- READ/MISSING
 ```
 
 **Stage 2 -- Before Phase 10 (report writing):**
 ```
-  5. {plugin_root}/shared/includes/backlog-protocol.md -- READ/MISSING
-  6. {plugin_root}/shared/includes/run-logger.md       -- READ/MISSING
+  5. ../../shared/includes/backlog-protocol.md -- READ/MISSING
+  6. ../../shared/includes/run-logger.md       -- READ/MISSING
 ```
 
 Stage 2 deferred to save ~300 lines of upfront context.
 
 ## Environment Compatibility
 
-Read `{plugin_root}/shared/includes/env-compat.md` for agent dispatch, path resolution, and progress tracking.
+Read `../../shared/includes/env-compat.md` for agent dispatch, path resolution, and progress tracking.
 
 ## CodeSift Integration
 
-Read `{plugin_root}/shared/includes/codesift-setup.md` for the full initialization sequence.
+Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
 
 **Summary:** Run the CodeSift setup from `codesift-setup.md` at skill start. Use CodeSift for all code analysis when available. If unavailable, fall back to grep/find.
 
@@ -131,13 +131,13 @@ Run a detection script covering backend frameworks (NestJS, Express, Next.js, Fa
 
 ### 0.2 Load Stack-Specific Rules
 
-Based on detection, load the applicable conditional rules from `{plugin_root}/rules/`:
+Based on detection, load the applicable conditional rules from `../../rules/`:
 
 | Stack | Load |
 |-------|------|
-| Next.js | `{plugin_root}/rules/react-nextjs.md` |
-| NestJS | `{plugin_root}/rules/nestjs.md` |
-| Python (FastAPI/Django/Flask) | `{plugin_root}/rules/python.md` |
+| Next.js | `../../rules/react-nextjs.md` |
+| NestJS | `../../rules/nestjs.md` |
+| Python (FastAPI/Django/Flask) | `../../rules/python.md` |
 
 Load ALL that match. Most projects have 2-3 applicable stacks.
 
@@ -397,7 +397,7 @@ Build summary table: input validation coverage, auth coverage, authZ depth (CQ4)
 
 ## Phase 9b: Cross-Provider Security Review
 
-Security audits benefit the most from cross-provider review — different models have different knowledge of vulnerability patterns. Run this on ALL security audits (not just `--deep`). Read `{plugin_root}/shared/includes/cross-provider-review.md` for the full protocol.
+Security audits benefit the most from cross-provider review — different models have different knowledge of vulnerability patterns. Run this on ALL security audits (not just `--deep`). Read `../../shared/includes/cross-provider-review.md` for the full protocol.
 
 **Execution:**
 
@@ -494,7 +494,7 @@ When active, persist CRITICAL and HIGH findings to `memory/backlog.md`:
 
 Fingerprint: `file|dimension|endpoint`. Prevents duplicate entries across audits.
 
-Full protocol: `{plugin_root}/shared/includes/backlog-protocol.md`.
+Full protocol: `../../shared/includes/backlog-protocol.md`.
 
 ### 10.5 Next-Action Routing
 

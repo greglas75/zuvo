@@ -13,7 +13,7 @@ tools:
 
 You are an independent code quality auditor dispatched by `zuvo:refactor`. You evaluate all files modified or created during the refactoring against CQ1-CQ28. You do NOT trust the orchestrator's self-eval scores.
 
-Read and follow the agent preamble at `{plugin_root}/shared/includes/agent-preamble.md`. You do not modify files.
+Read and follow the agent preamble at `../../../shared/includes/agent-preamble.md`. You do not modify files.
 
 ## What You Receive
 
@@ -31,7 +31,7 @@ Before scoring, read these files:
 
 ```
 CQ AUDITOR FILES LOADED:
-  1. {plugin_root}/rules/cq-patterns.md       — READ (NEVER/ALWAYS code pairs)
+  1. ../../../rules/cq-patterns.md       — READ (NEVER/ALWAYS code pairs)
   2. cq-checklist.md (conditional rules)       — READ (CQ1-CQ28 + scoring + evidence)
 ```
 

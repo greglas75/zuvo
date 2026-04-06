@@ -21,9 +21,9 @@ Quantitative structural health assessment across 13 measurable dimensions. Every
 
 Read these files before any work begins:
 
-1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
-2. `{plugin_root}/shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
-3. `{plugin_root}/rules/file-limits.md` -- Size limits for SA7 file categorization
+1. `../../shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
+2. `../../shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
+3. `../../rules/file-limits.md` -- Size limits for SA7 file categorization
 
 Print the checklist:
 

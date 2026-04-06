@@ -40,13 +40,13 @@ Defaults: `MAX_FLOWS=20`, `LIVE=false`, `AUTO=false`, `DRY_RUN=false`, `FLOWS_ON
 
 ## Environment Compatibility
 
-Read `{plugin_root}/shared/includes/env-compat.md` for agent dispatch and path resolution.
+Read `../../shared/includes/env-compat.md` for agent dispatch and path resolution.
 
 Non-interactive environments (Codex, Cursor) always behave as `--auto`.
 
 ## CodeSift Integration
 
-Read `{plugin_root}/shared/includes/codesift-setup.md` for initialization.
+Read `../../shared/includes/codesift-setup.md` for initialization.
 
 **Key tools for this skill:**
 
@@ -64,10 +64,10 @@ Read `{plugin_root}/shared/includes/codesift-setup.md` for initialization.
 
 ```
 CORE FILES LOADED:
-  1. {plugin_root}/rules/cq-patterns.md            -- [READ | MISSING -> STOP]
-  2. {plugin_root}/rules/file-limits.md             -- [READ | MISSING -> STOP]
-  3. {plugin_root}/rules/testing.md                 -- [READ | MISSING -> STOP]
-  4. {plugin_root}/shared/includes/run-logger.md    -- [READ | MISSING -> STOP]
+  1. ../../rules/cq-patterns.md            -- [READ | MISSING -> STOP]
+  2. ../../rules/file-limits.md             -- [READ | MISSING -> STOP]
+  3. ../../rules/testing.md                 -- [READ | MISSING -> STOP]
+  4. ../../shared/includes/run-logger.md    -- [READ | MISSING -> STOP]
 ```
 
 ---

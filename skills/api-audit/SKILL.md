@@ -24,24 +24,23 @@ Read these files from disk before starting. Print the checklist. Do not proceed 
 
 ```
 CORE FILES LOADED:
-  1. {plugin_root}/rules/cq-checklist.md            -- READ/MISSING
-  2. {plugin_root}/rules/security.md                -- READ/MISSING
-  3. {plugin_root}/shared/includes/env-compat.md    -- READ/MISSING
-  4. {plugin_root}/shared/includes/codesift-setup.md -- READ/MISSING
-  5. {plugin_root}/shared/includes/run-logger.md    -- READ/MISSING
+  1. ../../rules/cq-checklist.md            -- READ/MISSING
+  2. ../../rules/security.md                -- READ/MISSING
+  3. ../../shared/includes/env-compat.md    -- READ/MISSING
+  4. ../../shared/includes/codesift-setup.md -- READ/MISSING
+  5. ../../shared/includes/run-logger.md    -- READ/MISSING
 ```
 
-Where `{plugin_root}` resolves per `env-compat.md`.
 
 **If any file is missing:** Stop. The audit requires the full rule set to score correctly.
 
 ## Environment Compatibility
 
-Read `{plugin_root}/shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking.
+Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking.
 
 ## CodeSift Integration
 
-Read `{plugin_root}/shared/includes/codesift-setup.md` for the full initialization sequence.
+Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
 
 **Summary:** Run the CodeSift setup from `codesift-setup.md` at skill start. Use CodeSift tools for endpoint discovery and handler inspection when available. If unavailable, fall back to grep/find scripts.
 
@@ -376,7 +375,7 @@ When active, persist findings (confidence 26+) to `memory/backlog.md`:
 2. Fingerprint: `file|dimension|endpoint-signature`. Dedup: existing = increment `Seen`.
 3. Delete resolved items. Confidence 0-25 = DISCARD.
 
-Full protocol: `{plugin_root}/shared/includes/backlog-protocol.md`.
+Full protocol: `../../shared/includes/backlog-protocol.md`.
 
 ## Phase 6: Next-Action Routing
 

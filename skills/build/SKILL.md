@@ -48,19 +48,18 @@ Before starting work, read each file below. Print the checklist with status.
 
 ```
 CORE FILES LOADED:
-  1. {plugin_root}/rules/cq-patterns.md           -- READ/MISSING
-  2. {plugin_root}/rules/file-limits.md            -- READ/MISSING
-  3. {plugin_root}/shared/includes/run-logger.md   -- READ/MISSING
+  1. ../../rules/cq-patterns.md           -- READ/MISSING
+  2. ../../rules/file-limits.md            -- READ/MISSING
+  3. ../../shared/includes/run-logger.md   -- READ/MISSING
 ```
 
-Where `{plugin_root}` is resolved per `env-compat.md`.
 
 **Deferred loading (read when the tier activates them):**
-- `{plugin_root}/rules/cq-checklist.md` — read at CQ self-eval time (STANDARD+)
-- `{plugin_root}/rules/testing.md` — read before writing tests (all tiers)
-- `{plugin_root}/rules/test-quality-rules.md` — read before writing tests (STANDARD+)
-- `{plugin_root}/shared/includes/code-contract.md` — read before writing production code (STANDARD+)
-- `{plugin_root}/shared/includes/test-contract.md` — read before writing tests (STANDARD+)
+- `../../rules/cq-checklist.md` — read at CQ self-eval time (STANDARD+)
+- `../../rules/testing.md` — read before writing tests (all tiers)
+- `../../rules/test-quality-rules.md` — read before writing tests (STANDARD+)
+- `../../shared/includes/code-contract.md` — read before writing production code (STANDARD+)
+- `../../shared/includes/test-contract.md` — read before writing tests (STANDARD+)
 
 **If any CORE file missing:** Proceed in degraded mode. Note in Phase 4 output.
 
@@ -129,7 +128,7 @@ BUILD TIER: STANDARD (3 files, 1 risk signal: shared utility)
 
 1. Read the project's `CLAUDE.md` and any rules directory for conventions
 2. Detect the tech stack from config files (`package.json`, `tsconfig.json`, `pyproject.toml`, etc.)
-3. If the stack triggers a conditional rule file (TypeScript, React, NestJS, Python), read it from `{plugin_root}/rules/`
+3. If the stack triggers a conditional rule file (TypeScript, React, NestJS, Python), read it from `../../rules/`
 4. Read `memory/backlog.md` if it exists — check for open items related to the feature area
 
 Output:
@@ -323,7 +322,7 @@ Implement per the plan.
 
 **STANDARD and DEEP tiers — Pre-Write Code Contract (MANDATORY):**
 
-Before writing each production file, read `{plugin_root}/shared/includes/code-contract.md` and fill the complete contract:
+Before writing each production file, read `../../shared/includes/code-contract.md` and fill the complete contract:
 
 1. **INPUTS AND VALIDATION** — every input with validation strategy
 2. **ERROR PATHS** — every failure mode with handling strategy and business impact
@@ -346,7 +345,7 @@ Rules:
 
 **LIGHT tier:** Check critical gates only (CQ3, CQ4, CQ5, CQ6, CQ8, CQ14) + any conditional gates activated by context (CQ16/CQ19/CQ20/CQ21/CQ22). Provide evidence for each. Fix any gate = 0.
 
-**STANDARD and DEEP tiers:** Read `{plugin_root}/rules/cq-checklist.md`. Run full CQ1-CQ28 on every production file written or modified. Condensed reference: `../../shared/includes/quality-gates.md`.
+**STANDARD and DEEP tiers:** Read `../../rules/cq-checklist.md`. Run full CQ1-CQ28 on every production file written or modified. Condensed reference: `../../shared/includes/quality-gates.md`.
 
 - Score each gate (1 = satisfied, 0 = violated, N/A = not applicable)
 - Static critical gates: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 — any = 0 means FIX before tests
@@ -358,11 +357,11 @@ Fix all critical gate violations before writing tests.
 
 ### 3.4 Write Tests
 
-Read `{plugin_root}/rules/testing.md` before writing tests. For STANDARD+, also read `{plugin_root}/rules/test-quality-rules.md`.
+Read `../../rules/testing.md` before writing tests. For STANDARD+, also read `../../rules/test-quality-rules.md`.
 
 **STANDARD and DEEP tiers — Pre-Write Test Contract (MANDATORY):**
 
-Before writing tests for each production file, read `{plugin_root}/shared/includes/test-contract.md` and fill the complete contract:
+Before writing tests for each production file, read `../../shared/includes/test-contract.md` and fill the complete contract:
 
 1. **BRANCHES** — exhaustive list from production code (every if/else, switch, try/catch, early return)
 2. **ERROR PATHS** — every throw/reject/error return with specific type and message
@@ -435,7 +434,7 @@ Dispatch with:
   3. Check for auto-fail patterns: empty bodies, assertions on mock inputs, tests passing with implementation deleted, toBeTruthy on objects.
   4. Report PASS (>= 16, all critical gates), FIX (gaps identified), or BLOCK (< 10).
 
-  Read {plugin_root}/rules/testing.md and {plugin_root}/rules/test-quality-rules.md."
+  Read ../../rules/testing.md and ../../rules/test-quality-rules.md."
 ```
 
 #### CQ Auditor
@@ -457,7 +456,7 @@ Dispatch with:
   3. Classify: FIX-NOW (< 5 min), CRITICAL-BLOCKED (critical gate failure), DEFER (backlog).
   4. Check file sizes against limits.
 
-  Read {plugin_root}/rules/cq-patterns.md and {plugin_root}/rules/cq-checklist.md."
+  Read ../../rules/cq-patterns.md and ../../rules/cq-checklist.md."
 ```
 
 Handle auditor results:
@@ -503,7 +502,7 @@ EXECUTION VERIFICATION
 
 ### 4.4 Adversarial Loop
 
-Read and execute `{plugin_root}/shared/includes/adversarial-loop.md`.
+Read and execute `../../shared/includes/adversarial-loop.md`.
 
 Set variables:
 - **ADVERSARIAL_MODE:** `code` (override to `security` if diff touches auth, payment, crypto, PII, or migration files)

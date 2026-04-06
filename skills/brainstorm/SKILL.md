@@ -19,10 +19,10 @@ Understand the problem thoroughly. Design a solution collaboratively. Write a sp
 
 Before starting any work, read these files and confirm they loaded:
 
-1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and initialization
-2. `{plugin_root}/shared/includes/env-compat.md` -- Agent dispatch patterns per environment
-3. `{plugin_root}/rules/cq-patterns.md` -- NEVER/ALWAYS code pairs (informs design decisions)
-4. `{plugin_root}/shared/includes/run-logger.md` -- Run logging protocol
+1. `../../shared/includes/codesift-setup.md` -- CodeSift discovery and initialization
+2. `../../shared/includes/env-compat.md` -- Agent dispatch patterns per environment
+3. `../../rules/cq-patterns.md` -- NEVER/ALWAYS code pairs (informs design decisions)
+4. `../../shared/includes/run-logger.md` -- Run logging protocol
 
 Print the checklist:
 

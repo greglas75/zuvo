@@ -17,12 +17,12 @@ A senior architect executing a structured refactoring workflow. Every refactorin
 
 Read these files before any work begins:
 
-1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
-2. `{plugin_root}/shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
-3. `{plugin_root}/shared/includes/quality-gates.md` -- CQ1-CQ28 and Q1-Q19 condensed reference
-4. `{plugin_root}/rules/cq-patterns.md` -- NEVER/ALWAYS code pairs
-5. `{plugin_root}/rules/cq-checklist.md` -- Full CQ1-CQ28 evaluation criteria and evidence standards
-6. `{plugin_root}/shared/includes/run-logger.md` -- Run logging protocol
+1. `../../shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
+2. `../../shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
+3. `../../shared/includes/quality-gates.md` -- CQ1-CQ28 and Q1-Q19 condensed reference
+4. `../../rules/cq-patterns.md` -- NEVER/ALWAYS code pairs
+5. `../../rules/cq-checklist.md` -- Full CQ1-CQ28 evaluation criteria and evidence standards
+6. `../../shared/includes/run-logger.md` -- Run logging protocol
 
 Print the checklist:
 
@@ -42,10 +42,10 @@ If any file is missing, STOP. Do not proceed from memory.
 
 | File | Load when | Skip when |
 |------|-----------|-----------|
-| `{plugin_root}/rules/testing.md` | Before ETAP-1B (test writing phase) | Test mode is RUN_EXISTING or VERIFY_COMPILATION |
-| `{plugin_root}/rules/test-quality-rules.md` | Before ETAP-1B when test mode is WRITE_NEW or IMPROVE_TESTS | Test mode is RUN_EXISTING or VERIFY_COMPILATION |
-| `{plugin_root}/rules/file-limits.md` | Phase 0 (stack detection) | If unavailable, use defaults: 300L service, 200L component |
-| `{plugin_root}/rules/security.md` | When refactoring touches auth, input validation, or secrets | No security-sensitive code in scope |
+| `../../rules/testing.md` | Before ETAP-1B (test writing phase) | Test mode is RUN_EXISTING or VERIFY_COMPILATION |
+| `../../rules/test-quality-rules.md` | Before ETAP-1B when test mode is WRITE_NEW or IMPROVE_TESTS | Test mode is RUN_EXISTING or VERIFY_COMPILATION |
+| `../../rules/file-limits.md` | Phase 0 (stack detection) | If unavailable, use defaults: 300L service, 200L component |
+| `../../rules/security.md` | When refactoring touches auth, input validation, or secrets | No security-sensitive code in scope |
 
 Print status when loading each conditional file:
 
@@ -165,10 +165,10 @@ Detect the project's tech stack from config files:
 
 | Signal | Stack | Rules to load |
 |--------|-------|--------------|
-| `tsconfig.json` | TypeScript | `{plugin_root}/rules/typescript.md` |
-| `package.json` with `next` | Next.js | `{plugin_root}/rules/react-nextjs.md` |
-| `package.json` with `@nestjs/core` | NestJS | `{plugin_root}/rules/nestjs.md` |
-| `pyproject.toml` or `.py` files | Python | `{plugin_root}/rules/python.md` |
+| `tsconfig.json` | TypeScript | `../../rules/typescript.md` |
+| `package.json` with `next` | Next.js | `../../rules/react-nextjs.md` |
+| `package.json` with `@nestjs/core` | NestJS | `../../rules/nestjs.md` |
+| `pyproject.toml` or `.py` files | Python | `../../rules/python.md` |
 | `vitest.config.*` | Vitest test runner | |
 | `jest.config.*` | Jest test runner | |
 
@@ -549,7 +549,7 @@ index_file(path="/absolute/path/to/changed-file.ts")
 
 ### Backlog Persistence (FULL and AUTO modes)
 
-Read `{plugin_root}/shared/includes/backlog-protocol.md` before persisting.
+Read `../../shared/includes/backlog-protocol.md` before persisting.
 
 Persist any deferred findings to `memory/backlog.md`:
 - CQ Auditor DEFER items

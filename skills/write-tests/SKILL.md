@@ -40,11 +40,11 @@ Parse `$ARGUMENTS` as: `[path | auto] [--dry-run]`
 
 ## Environment Compatibility
 
-Read `{plugin_root}/shared/includes/env-compat.md` for agent dispatch, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
+Read `../../shared/includes/env-compat.md` for agent dispatch, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
 
 ## CodeSift Integration
 
-Read `{plugin_root}/shared/includes/codesift-setup.md` for initialization.
+Read `../../shared/includes/codesift-setup.md` for initialization.
 
 **Key tools for this skill:**
 
@@ -95,20 +95,20 @@ Before starting any work, read each file below. Print the checklist. If any REQU
 
 ```
 CORE FILES LOADED:
-  1. {plugin_root}/rules/testing.md                  -- [READ | MISSING -> STOP]
-  2. {plugin_root}/rules/test-quality-rules.md       -- [READ | MISSING -> STOP]
-  3. {plugin_root}/rules/file-limits.md              -- [READ | MISSING -> STOP]
-  4. {plugin_root}/shared/includes/quality-gates.md  -- [READ | MISSING -> STOP]
-  5. {plugin_root}/shared/includes/test-contract.md  -- [READ | MISSING -> STOP]
-  6. {plugin_root}/shared/includes/run-logger.md     -- [READ | MISSING -> STOP]
+  1. ../../rules/testing.md                  -- [READ | MISSING -> STOP]
+  2. ../../rules/test-quality-rules.md       -- [READ | MISSING -> STOP]
+  3. ../../rules/file-limits.md              -- [READ | MISSING -> STOP]
+  4. ../../shared/includes/quality-gates.md  -- [READ | MISSING -> STOP]
+  5. ../../shared/includes/test-contract.md  -- [READ | MISSING -> STOP]
+  6. ../../shared/includes/run-logger.md     -- [READ | MISSING -> STOP]
 ```
 
 ### Conditional Files (loaded when needed)
 
 | File | Load when | Skip when |
 |------|-----------|-----------|
-| `{plugin_root}/rules/cq-patterns.md` | Target has test files with production patterns to validate | No production patterns in scope |
-| `{plugin_root}/rules/security.md` | Code type is CONTROLLER, GUARD, or API-CALL | Not security-sensitive code |
+| `../../rules/cq-patterns.md` | Target has test files with production patterns to validate | No production patterns in scope |
+| `../../rules/security.md` | Code type is CONTROLLER, GUARD, or API-CALL | Not security-sensitive code |
 | Domain test patterns (NestJS, Redux, etc.) | Pattern Selector detects domain code | No domain-specific code detected |
 
 ---
@@ -339,7 +339,7 @@ For each target file in the plan, write the test file following the plan exactly
 
 ### Pre-Write Test Contract (MANDATORY — fill BEFORE writing a single line)
 
-Read `{plugin_root}/shared/includes/test-contract.md` for the full protocol.
+Read `../../shared/includes/test-contract.md` for the full protocol.
 
 For each production file being tested, fill the complete test contract:
 
@@ -449,7 +449,7 @@ If sub-agent dispatch is unavailable (single-agent mode): perform the audit as a
 
 ### 4.5 Adversarial Loop
 
-Read and execute `{plugin_root}/shared/includes/adversarial-loop.md`.
+Read and execute `../../shared/includes/adversarial-loop.md`.
 
 Set variables:
 - **ADVERSARIAL_MODE:** `test`
@@ -466,7 +466,7 @@ Write results to `memory/coverage.md`. Each file gets a row: file path, coverage
 
 ### 5.2 Backlog Persistence
 
-Read `{plugin_root}/shared/includes/backlog-protocol.md`.
+Read `../../shared/includes/backlog-protocol.md`.
 
 Persist any issues discovered but not fixed (quality problems in production code, architectural concerns noticed during testing) to `memory/backlog.md`.
 

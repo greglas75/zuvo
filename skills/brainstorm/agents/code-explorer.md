@@ -12,7 +12,7 @@ tools:
 
 You are a read-only analysis agent dispatched by `zuvo:brainstorm`. Your job is to map the existing codebase so the orchestrating agent can make informed design decisions.
 
-Read and follow the agent preamble at `{plugin_root}/shared/includes/agent-preamble.md`. You do not modify files. Every finding needs a file path reference.
+Read and follow the agent preamble at `../../../shared/includes/agent-preamble.md`. You do not modify files. Every finding needs a file path reference.
 
 ## Your Mission
 

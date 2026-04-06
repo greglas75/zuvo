@@ -22,14 +22,14 @@ Hybrid code-level and optional live site audit for search engine optimization an
 
 Read these files before any work begins:
 
-1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
-2. `{plugin_root}/shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
-3. `{plugin_root}/shared/includes/seo-bot-registry.md` -- Canonical AI/search bot taxonomy and live-probe scope
-4. `{plugin_root}/shared/includes/seo-page-profile-registry.md` -- Profile-aware D9/D10 thresholds and downgrades
-5. `{plugin_root}/shared/includes/seo-fix-registry.md` -- Canonical fix_type, safety, params (before Phase 6.2 JSON output)
-6. `{plugin_root}/shared/includes/audit-output-schema.md` -- JSON output contract (before Phase 6.2)
-7. `{plugin_root}/shared/includes/seo-check-registry.md` -- Canonical check slugs and enforcement layers (agents MUST use)
-8. `{plugin_root}/shared/includes/run-logger.md` -- Run logging contract
+1. `../../shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
+2. `../../shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
+3. `../../shared/includes/seo-bot-registry.md` -- Canonical AI/search bot taxonomy and live-probe scope
+4. `../../shared/includes/seo-page-profile-registry.md` -- Profile-aware D9/D10 thresholds and downgrades
+5. `../../shared/includes/seo-fix-registry.md` -- Canonical fix_type, safety, params (before Phase 6.2 JSON output)
+6. `../../shared/includes/audit-output-schema.md` -- JSON output contract (before Phase 6.2)
+7. `../../shared/includes/seo-check-registry.md` -- Canonical check slugs and enforcement layers (agents MUST use)
+8. `../../shared/includes/run-logger.md` -- Run logging contract
 
 Print the checklist:
 

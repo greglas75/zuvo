@@ -134,7 +134,7 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 
 4. **Cross-provider review** (100+ LOC, after zuvo:review completes):
 
-   After `zuvo:review` returns its verdict, run a cross-provider adversarial review. Read `{plugin_root}/shared/includes/cross-provider-review.md` for the protocol.
+   After `zuvo:review` returns its verdict, run a cross-provider adversarial review. Read `../../shared/includes/cross-provider-review.md` for the protocol.
 
    ```bash
    SCRIPT_PATH="${PLUGIN_ROOT}/scripts/adversarial-review.sh"

@@ -43,23 +43,22 @@ Read these files from disk before starting. Print the checklist. Do not proceed 
 
 ```
 CORE FILES LOADED:
-  1. {plugin_root}/rules/testing.md              -- READ/MISSING
-  2. {plugin_root}/rules/test-quality-rules.md   -- READ/MISSING
-  3. {plugin_root}/shared/includes/env-compat.md -- READ/MISSING
-  4. {plugin_root}/shared/includes/run-logger.md -- READ/MISSING
+  1. ../../rules/testing.md              -- READ/MISSING
+  2. ../../rules/test-quality-rules.md   -- READ/MISSING
+  3. ../../shared/includes/env-compat.md -- READ/MISSING
+  4. ../../shared/includes/run-logger.md -- READ/MISSING
 ```
 
-Where `{plugin_root}` resolves per `env-compat.md`.
 
 **If any file is missing:** Stop. The quality gate definitions are required for scoring.
 
 ## Environment Compatibility
 
-Read `{plugin_root}/shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking.
+Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking.
 
 ## CodeSift Integration
 
-Read `{plugin_root}/shared/includes/codesift-setup.md` for the full initialization sequence.
+Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
 
 **Summary:** Run the CodeSift setup from `codesift-setup.md` at skill start. Use CodeSift for file discovery and production code analysis when available. If unavailable, fall back to standard tools.
 
@@ -343,7 +342,7 @@ rm -rf audits/.test-audit-batch
 
 ## Phase 3b: Cross-Provider Review (--deep only)
 
-In `--deep` mode, run a cross-provider adversarial review on the lowest-quality test files (Tier C and D). Read `{plugin_root}/shared/includes/cross-provider-review.md` for the full protocol.
+In `--deep` mode, run a cross-provider adversarial review on the lowest-quality test files (Tier C and D). Read `../../shared/includes/cross-provider-review.md` for the full protocol.
 
 **Execution:**
 
@@ -383,7 +382,7 @@ Persist findings to `memory/backlog.md`:
 2. Fingerprint each finding: `file|Q/AP-id|signature`. Dedup: existing = increment `Seen`.
 3. Delete resolved items.
 
-Full protocol: `{plugin_root}/shared/includes/backlog-protocol.md`.
+Full protocol: `../../shared/includes/backlog-protocol.md`.
 
 **What to persist:**
 - **Tier C/D files:** all findings. Source: `test-audit/{date}`. Category: Test.

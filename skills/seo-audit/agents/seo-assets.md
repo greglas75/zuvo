@@ -21,9 +21,9 @@ Evaluate asset and structured data dimensions: D2 (Open Graph & Social), D3 (JSO
 
 Read before any work begins:
 
-1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
-2. `{plugin_root}/shared/includes/seo-check-registry.md` -- canonical check slugs
-3. `{plugin_root}/shared/includes/seo-fix-registry.md` -- canonical fix_type and safety mappings
+1. `../../../shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
+2. `../../../shared/includes/seo-check-registry.md` -- canonical check slugs
+3. `../../../shared/includes/seo-fix-registry.md` -- canonical fix_type and safety mappings
 
 Read `../../../shared/includes/seo-check-registry.md` for canonical check slugs. Use ONLY slugs from this registry in findings[].check.
 Read `../../../shared/includes/seo-fix-registry.md` before assigning fix_type, fix_safety, or fix_params.

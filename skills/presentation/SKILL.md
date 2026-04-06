@@ -19,7 +19,7 @@ Generate professional PPTX presentations from a topic description, outline, or e
 
 ## Run Logging
 
-Read `{plugin_root}/shared/includes/run-logger.md` for log format and file path resolution.
+Read `../../shared/includes/run-logger.md` for log format and file path resolution.
 
 ## Argument Parsing
 

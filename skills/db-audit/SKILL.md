@@ -26,10 +26,10 @@ Read every file below before starting. Print the checklist.
 
 ```
 CORE FILES LOADED:
-  1. {plugin_root}/shared/includes/codesift-setup.md   -- [READ | MISSING -> STOP]
-  2. {plugin_root}/shared/includes/env-compat.md        -- [READ | MISSING -> STOP]
-  3. {plugin_root}/rules/cq-patterns.md                 -- [READ | MISSING -> STOP]
-  4. {plugin_root}/shared/includes/run-logger.md        -- [READ | MISSING -> STOP]
+  1. ../../shared/includes/codesift-setup.md   -- [READ | MISSING -> STOP]
+  2. ../../shared/includes/env-compat.md        -- [READ | MISSING -> STOP]
+  3. ../../rules/cq-patterns.md                 -- [READ | MISSING -> STOP]
+  4. ../../shared/includes/run-logger.md        -- [READ | MISSING -> STOP]
 ```
 
 If any file is MISSING, STOP. Do not proceed from memory.

@@ -40,17 +40,16 @@ Before starting work, read each file below using the Read tool. Print the checkl
 
 ```
 CORE FILES LOADED:
-  1. {plugin_root}/shared/includes/env-compat.md            -- READ/MISSING
-  2. {plugin_root}/shared/includes/codesift-setup.md         -- READ/MISSING
-  3. {plugin_root}/shared/includes/quality-gates.md          -- READ/MISSING
-  4. {plugin_root}/shared/includes/verification-protocol.md  -- READ/MISSING
-  5. {plugin_root}/shared/includes/tdd-protocol.md           -- READ/MISSING
-  6. {plugin_root}/shared/includes/code-contract.md          -- READ/MISSING
-  7. {plugin_root}/shared/includes/test-contract.md          -- READ/MISSING
-  8. {plugin_root}/shared/includes/run-logger.md             -- READ/MISSING
+  1. ../../shared/includes/env-compat.md            -- READ/MISSING
+  2. ../../shared/includes/codesift-setup.md         -- READ/MISSING
+  3. ../../shared/includes/quality-gates.md          -- READ/MISSING
+  4. ../../shared/includes/verification-protocol.md  -- READ/MISSING
+  5. ../../shared/includes/tdd-protocol.md           -- READ/MISSING
+  6. ../../shared/includes/code-contract.md          -- READ/MISSING
+  7. ../../shared/includes/test-contract.md          -- READ/MISSING
+  8. ../../shared/includes/run-logger.md             -- READ/MISSING
 ```
 
-Where `{plugin_root}` is resolved per `env-compat.md` (e.g., `CLAUDE_PLUGIN_ROOT` in Claude Code).
 
 **If 1-2 files missing:** Proceed in degraded mode. Note which files are unavailable in the final summary.
 **If 3+ files missing:** Stop. The plugin installation is incomplete.
@@ -338,7 +337,7 @@ Read the issue list. Each issue has a file:line reference.
 
 #### Cross-Provider Review (after adversarial agent)
 
-After the internal adversarial agent completes (or instead of it if the task is `standard` complexity but touches security/auth/payment files), run a cross-provider review. Read `{plugin_root}/shared/includes/cross-provider-review.md` for the full protocol.
+After the internal adversarial agent completes (or instead of it if the task is `standard` complexity but touches security/auth/payment files), run a cross-provider review. Read `../../shared/includes/cross-provider-review.md` for the full protocol.
 
 ```bash
 SCRIPT_PATH="${PLUGIN_ROOT}/scripts/adversarial-review.sh"

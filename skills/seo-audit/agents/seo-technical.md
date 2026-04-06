@@ -18,9 +18,9 @@ Evaluate technical SEO dimensions: D1 (Meta Tags), D4 (Sitemap), D5 (AI Crawlers
 ## Mandatory File Loading
 
 Read before starting:
-1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery
-2. `{plugin_root}/shared/includes/seo-check-registry.md` -- canonical check slugs
-3. `{plugin_root}/shared/includes/seo-bot-registry.md` -- canonical AI/search bot taxonomy
+1. `../../../shared/includes/codesift-setup.md` -- CodeSift discovery
+2. `../../../shared/includes/seo-check-registry.md` -- canonical check slugs
+3. `../../../shared/includes/seo-bot-registry.md` -- canonical AI/search bot taxonomy
 
 Read `../../../shared/includes/seo-check-registry.md` for canonical check slugs. Use ONLY slugs from this registry in findings[].check.
 Read `../../../shared/includes/seo-bot-registry.md` for canonical bot keys. Use ONLY bot keys from this registry in bot-matrix evidence.

@@ -19,8 +19,8 @@ Three modes for architecture work: audit an existing codebase structure, documen
 
 Read these files before any work begins:
 
-1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
-2. `{plugin_root}/shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
+1. `../../shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
+2. `../../shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
 
 Print the checklist:
 
@@ -28,7 +28,7 @@ Print the checklist:
 CORE FILES LOADED:
   1. codesift-setup.md   -- [READ | MISSING -> STOP]
   2. env-compat.md       -- [READ | MISSING -> STOP]
-  3. {plugin_root}/shared/includes/run-logger.md -- [READ | MISSING -> STOP]
+  3. ../../shared/includes/run-logger.md -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.

@@ -19,13 +19,13 @@ Read seo-audit JSON findings. Plan patches per finding. Validate each patch. App
 
 Read these files before any work begins:
 
-1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
-2. `{plugin_root}/shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
-3. `{plugin_root}/shared/includes/backlog-protocol.md` -- Backlog fingerprint dedup and update
-4. `{plugin_root}/shared/includes/seo-fix-registry.md` -- Canonical fix_type, safety, eta, and manual verification rules
-5. `{plugin_root}/shared/includes/fix-output-schema.md` -- JSON report contract
-6. `{plugin_root}/shared/includes/seo-bot-registry.md` -- Canonical AI/search bot policy taxonomy for robots fixes
-7. `{plugin_root}/shared/includes/run-logger.md` -- Run logging contract
+1. `../../shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
+2. `../../shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
+3. `../../shared/includes/backlog-protocol.md` -- Backlog fingerprint dedup and update
+4. `../../shared/includes/seo-fix-registry.md` -- Canonical fix_type, safety, eta, and manual verification rules
+5. `../../shared/includes/fix-output-schema.md` -- JSON report contract
+6. `../../shared/includes/seo-bot-registry.md` -- Canonical AI/search bot policy taxonomy for robots fixes
+7. `../../shared/includes/run-logger.md` -- Run logging contract
 
 Print the checklist:
 
@@ -37,7 +37,7 @@ CORE FILES LOADED:
   4. seo-fix-registry.md   -- [READ | MISSING -> STOP]
   5. fix-output-schema.md  -- [READ | MISSING -> STOP]
   6. seo-bot-registry.md   -- [READ | MISSING -> STOP]
-  7. {plugin_root}/shared/includes/run-logger.md -- [READ | MISSING -> STOP]
+  7. ../../shared/includes/run-logger.md -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.
@@ -177,13 +177,13 @@ Detect output directory for static files:
 
 ### 1.2 Fix Registry (shared contract)
 
-Read `{plugin_root}/shared/includes/seo-fix-registry.md` for the canonical:
+Read `../../shared/includes/seo-fix-registry.md` for the canonical:
 - Template registry (fix_type → framework → target file priority)
 - Safety classification (per framework, with context-aware upgrade rules)
 - Fix parameters schema (required and optional params per fix_type)
 
-Read `{plugin_root}/shared/includes/seo-bot-registry.md` when planning or
-validating `robots-fix`. Read `{plugin_root}/shared/includes/fix-output-schema.md`
+Read `../../shared/includes/seo-bot-registry.md` when planning or
+validating `robots-fix`. Read `../../shared/includes/fix-output-schema.md`
 before writing the final JSON report.
 
 The shared registry is the single source of truth. Do not override safety classifications locally.

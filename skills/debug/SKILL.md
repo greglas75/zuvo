@@ -52,14 +52,13 @@ These files are needed during Phase 4 self-evaluations. Read them before writing
 
 ```
 CORE FILES LOADED:
-  1. {plugin_root}/rules/cq-patterns.md           -- READ/MISSING (CQ self-eval on production fix)
-  2. {plugin_root}/rules/cq-checklist.md           -- READ/MISSING (CQ1-CQ28 scoring and evidence)
-  3. {plugin_root}/rules/testing.md                -- READ/MISSING (Q1-Q19 for regression test)
-  4. {plugin_root}/rules/test-quality-rules.md     -- READ/MISSING (edge cases, mock safety)
-  5. {plugin_root}/shared/includes/run-logger.md   -- READ/MISSING (run logging)
+  1. ../../rules/cq-patterns.md           -- READ/MISSING (CQ self-eval on production fix)
+  2. ../../rules/cq-checklist.md           -- READ/MISSING (CQ1-CQ28 scoring and evidence)
+  3. ../../rules/testing.md                -- READ/MISSING (Q1-Q19 for regression test)
+  4. ../../rules/test-quality-rules.md     -- READ/MISSING (edge cases, mock safety)
+  5. ../../shared/includes/run-logger.md   -- READ/MISSING (run logging)
 ```
 
-Where `{plugin_root}` is resolved per `env-compat.md`.
 
 **If any file is missing:** Run self-evaluation using the embedded minimal checklist below. Note "DEGRADED -- [file] unavailable" in the debug report.
 
@@ -231,7 +230,7 @@ Write a test that:
 2. Asserts the correct behavior (the bug no longer occurs)
 3. Would have caught this bug if it had existed before the original code was written
 
-Run Q1-Q19 self-evaluation on the regression test. Read `{plugin_root}/rules/testing.md` for the full protocol.
+Run Q1-Q19 self-evaluation on the regression test. Read `../../rules/testing.md` for the full protocol.
 
 Condensed reference: `../../shared/includes/quality-gates.md`
 
@@ -241,7 +240,7 @@ Condensed reference: `../../shared/includes/quality-gates.md`
 
 ### 4.6 CQ Self-Evaluation (on production code changes)
 
-Run CQ1-CQ28 on each modified production file. Read `{plugin_root}/rules/cq-checklist.md` for the full protocol.
+Run CQ1-CQ28 on each modified production file. Read `../../rules/cq-checklist.md` for the full protocol.
 
 - Static critical gates: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 -- any = 0 means FAIL
 - Conditional gates: CQ16 (money), CQ19 (API boundary), CQ20 (dual fields), CQ21 (concurrency), CQ22 (subscriptions), CQ23-CQ28 -- activated by code context

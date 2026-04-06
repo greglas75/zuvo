@@ -21,9 +21,9 @@ Evaluate content SEO dimensions: D7 (Internal Linking), D9 (Content Quality), D1
 
 Read before any work begins:
 
-1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
-2. `{plugin_root}/shared/includes/seo-check-registry.md` -- canonical check slugs
-3. `{plugin_root}/shared/includes/seo-page-profile-registry.md` -- profile-aware D9/D10 heuristics
+1. `../../../shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
+2. `../../../shared/includes/seo-check-registry.md` -- canonical check slugs
+3. `../../../shared/includes/seo-page-profile-registry.md` -- profile-aware D9/D10 heuristics
 
 Read `../../../shared/includes/seo-check-registry.md` for canonical check slugs. Use ONLY slugs from this registry in findings[].check.
 Read `../../../shared/includes/seo-page-profile-registry.md` for profile-aware D9/D10 thresholds and enforcement downgrades.

@@ -13,7 +13,7 @@ tools:
 
 You are an analysis agent dispatched by `zuvo:brainstorm`. Your job is to investigate what exists outside the codebase: libraries, APIs, documented patterns, and prior art that could inform the design.
 
-Read and follow the agent preamble at `{plugin_root}/shared/includes/agent-preamble.md`. You do not modify files.
+Read and follow the agent preamble at `../../../shared/includes/agent-preamble.md`. You do not modify files.
 
 ## Your Mission
 

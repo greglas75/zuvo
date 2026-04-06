@@ -60,11 +60,11 @@ Default with no arguments: `--triage`.
 
 ## Environment Compatibility
 
-Read `{plugin_root}/shared/includes/env-compat.md` for agent dispatch, path resolution, and progress tracking.
+Read `../../shared/includes/env-compat.md` for agent dispatch, path resolution, and progress tracking.
 
 ## CodeSift Integration
 
-Read `{plugin_root}/shared/includes/codesift-setup.md` for initialization.
+Read `../../shared/includes/codesift-setup.md` for initialization.
 
 **Key tools for this skill:**
 
@@ -87,9 +87,9 @@ Before starting, read the applicable files:
 
 ```
 CORE FILES LOADED:
-  1. {plugin_root}/rules/testing.md                -- [READ | MISSING -> STOP]
-  2. {plugin_root}/shared/includes/quality-gates.md -- [READ | MISSING -> STOP]
-  3. {plugin_root}/shared/includes/run-logger.md    -- [READ | MISSING -> STOP]
+  1. ../../rules/testing.md                -- [READ | MISSING -> STOP]
+  2. ../../shared/includes/quality-gates.md -- [READ | MISSING -> STOP]
+  3. ../../shared/includes/run-logger.md    -- [READ | MISSING -> STOP]
 ```
 
 **Conditional (loaded when the pattern requires domain knowledge):**
@@ -241,7 +241,7 @@ Update `memory/fix-tests-progress.md` with the results.
 
 ### Backlog Persistence
 
-Read `{plugin_root}/shared/includes/backlog-protocol.md`.
+Read `../../shared/includes/backlog-protocol.md`.
 
 Persist any production bugs discovered during fixing, or files that could not be fixed automatically, to `memory/backlog.md`.
 

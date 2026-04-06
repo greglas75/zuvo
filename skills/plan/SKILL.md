@@ -47,14 +47,13 @@ Before starting work, read each file below using the Read tool. Print the checkl
 
 ```
 CORE FILES LOADED:
-  1. {plugin_root}/shared/includes/codesift-setup.md  -- READ/MISSING
-  2. {plugin_root}/shared/includes/env-compat.md       -- READ/MISSING
-  3. {plugin_root}/shared/includes/quality-gates.md    -- READ/MISSING
-  4. {plugin_root}/shared/includes/tdd-protocol.md     -- READ/MISSING
-  5. {plugin_root}/shared/includes/run-logger.md       -- READ/MISSING
+  1. ../../shared/includes/codesift-setup.md  -- READ/MISSING
+  2. ../../shared/includes/env-compat.md       -- READ/MISSING
+  3. ../../shared/includes/quality-gates.md    -- READ/MISSING
+  4. ../../shared/includes/tdd-protocol.md     -- READ/MISSING
+  5. ../../shared/includes/run-logger.md       -- READ/MISSING
 ```
 
-Where `{plugin_root}` is resolved per `env-compat.md` (e.g., `CLAUDE_PLUGIN_ROOT` in Claude Code).
 
 **If 1-2 files missing:** Proceed in degraded mode. Note which files are unavailable in the final output.
 **If 3+ files missing:** Stop. The plugin installation is incomplete.

@@ -38,11 +38,11 @@ Generate or update documentation by reading the actual codebase -- not from temp
 
 ## Environment Compatibility
 
-Read `{plugin_root}/shared/includes/env-compat.md` for user interaction patterns.
+Read `../../shared/includes/env-compat.md` for user interaction patterns.
 
 ## CodeSift Integration
 
-Read `{plugin_root}/shared/includes/codesift-setup.md` for initialization.
+Read `../../shared/includes/codesift-setup.md` for initialization.
 
 **Key tools for this skill:**
 
@@ -61,7 +61,7 @@ Read `{plugin_root}/shared/includes/codesift-setup.md` for initialization.
 
 ## Run Logging
 
-Read `{plugin_root}/shared/includes/run-logger.md` for log format and file path resolution.
+Read `../../shared/includes/run-logger.md` for log format and file path resolution.
 
 ## Stack-Aware Commands (Required)
 

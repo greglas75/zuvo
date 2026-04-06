@@ -15,11 +15,11 @@ Triage the diff, audit it through independent lenses, confidence-score every fin
 
 Read these files before doing anything else:
 
-1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
-2. `{plugin_root}/shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
-3. `{plugin_root}/shared/includes/quality-gates.md` -- CQ1-CQ28 and Q1-Q19 condensed reference
-4. `{plugin_root}/rules/cq-patterns.md` -- NEVER/ALWAYS code pairs for pattern recognition
-5. `{plugin_root}/shared/includes/run-logger.md` -- Log-in-Output run logging
+1. `../../shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
+2. `../../shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
+3. `../../shared/includes/quality-gates.md` -- CQ1-CQ28 and Q1-Q19 condensed reference
+4. `../../rules/cq-patterns.md` -- NEVER/ALWAYS code pairs for pattern recognition
+5. `../../shared/includes/run-logger.md` -- Log-in-Output run logging
 
 Print the checklist:
 
@@ -38,9 +38,9 @@ If any file is missing, STOP. Do not proceed from memory.
 
 | File | Load when | Skip when |
 |------|-----------|-----------|
-| `{plugin_root}/rules/cq-checklist.md` | TIER 1+ (full CQ detail needed) | TIER 0 |
-| `{plugin_root}/rules/testing.md` | Diff contains test files (`*.test.*`, `*.spec.*`) | No test files in diff |
-| `{plugin_root}/rules/security.md` | Triage flags security signals, or TIER 3 | TIER 0-2 with no security signals |
+| `../../rules/cq-checklist.md` | TIER 1+ (full CQ detail needed) | TIER 0 |
+| `../../rules/testing.md` | Diff contains test files (`*.test.*`, `*.spec.*`) | No test files in diff |
+| `../../rules/security.md` | Triage flags security signals, or TIER 3 | TIER 0-2 with no security signals |
 
 Print loaded conditional files after triage completes:
 
@@ -688,11 +688,11 @@ ADV-2 ...
 
 ### Cross-Provider Review (after adversarial agent)
 
-After the internal adversarial agent completes, **run** a cross-provider review using a different AI model. This is NOT optional — execute automatically. Read `{plugin_root}/shared/includes/cross-provider-review.md` for full protocol.
+After the internal adversarial agent completes, **run** a cross-provider review using a different AI model. This is NOT optional — execute automatically. Read `../../shared/includes/cross-provider-review.md` for full protocol.
 
 **Execution:**
 
-Run `{plugin_root}/scripts/adversarial-review.sh` on the reviewed diff. Dispatch as parallel Agent tasks — one per provider — for maximum speed:
+Run `../../scripts/adversarial-review.sh` on the reviewed diff. Dispatch as parallel Agent tasks — one per provider — for maximum speed:
 
 - **TIER 1-2:** Dispatch 2 agents in parallel (codex-fast + gemini), merge results
 - **TIER 3:** Dispatch 3 agents in parallel (codex-fast + gemini + claude), merge results
