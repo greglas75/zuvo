@@ -8,6 +8,70 @@
 - **Bash** available (macOS/Linux native; Windows requires Git Bash or WSL)
 - **Optional:** [codesift-mcp](https://github.com/nicobailey/codesift-mcp) for deep code exploration (semantic search, call chain tracing, complexity analysis). Zuvo works without it but runs in degraded mode.
 
+## Adversarial review providers (optional but recommended)
+
+Zuvo uses cross-model adversarial review — a different AI reviews code written by your primary AI. Install one or more providers for best results. More providers = more diverse blind-spot coverage.
+
+### Codex CLI (fastest — 5-23s)
+
+```bash
+npm install -g @openai/codex
+codex auth login          # login with your ChatGPT account
+```
+
+Requires a ChatGPT Plus/Pro/Team subscription.
+
+### Gemini CLI (free — 11s)
+
+```bash
+npm install -g @google/gemini-cli
+gemini                    # first run: opens browser, login with Google account
+```
+
+Free tier — no credit card required.
+
+### Cursor Agent CLI (11s)
+
+```bash
+# Comes with Cursor IDE — install from https://cursor.com
+# Verify:
+cursor-agent --version
+```
+
+No separate login needed if Cursor is already authenticated.
+
+### Claude CLI
+
+Already installed if you use Claude Code. No extra setup.
+
+```bash
+claude --version          # verify it works
+```
+
+### Gemini API (alternative — 15-60s, no CLI needed)
+
+```bash
+# Get a free API key from https://aistudio.google.com
+export GEMINI_API_KEY=your_key_here
+# Add to ~/.zshrc or ~/.bashrc to persist
+```
+
+Free tier: 250 requests/day, 10 RPM.
+
+### What Zuvo auto-detects
+
+Zuvo automatically detects which providers are available and uses them in priority order:
+
+| Priority | Provider | Detection |
+|----------|----------|-----------|
+| 1 | codex-fast | `codex` binary in PATH or Codex.app installed |
+| 2 | cursor-agent | `cursor-agent` binary in PATH |
+| 3 | gemini | `gemini` binary in PATH (or available via npx) |
+| 4 | claude | `claude` binary in PATH |
+| 5 | gemini-api | `GEMINI_API_KEY` environment variable set |
+
+You don't need all of them. Even one provider gives you cross-model review. Two or more providers run in parallel for diverse coverage.
+
 ## Install
 
 > **Requires Claude Code 1.0.33+.** Check with `claude --version`, update with `claude update` or `npm update -g @anthropic-ai/claude-code`.
