@@ -269,11 +269,6 @@ detect_providers() {
     fi
   fi
 
-  # Cursor Agent CLI
-  if command -v agent &>/dev/null; then
-    providers="$providers cursor"
-  fi
-
   # Ollama: disabled by default (too slow for review loops).
   # Use --provider ollama to force it.
 
@@ -469,11 +464,6 @@ run_ollama() {
   echo "$REVIEW_PROMPT" | ollama run "$model" --nowordwrap 2>/dev/null
 }
 
-run_cursor() {
-  # Cursor Agent CLI — uses Composer 2 model from subscription
-  agent --print --output-format text "$REVIEW_PROMPT"
-}
-
 # ─── Determine mode ────────────────────────────────────────────
 
 # If --provider is set, always single. Otherwise: default is multi.
@@ -503,7 +493,6 @@ run_provider() {
       gemini|gemini-npx) run_gemini ;;
       codex-mcp)         run_codex_mcp ;;
       codex|codex-app)   run_codex ;;
-      cursor)            run_cursor ;;
       ollama)            run_ollama ;;
       *) exit 1 ;;
     esac
