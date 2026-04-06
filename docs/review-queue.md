@@ -103,3 +103,5 @@ Commits pending review. Auto-managed:
 - a77fb01 (2026-04-06) fix: add explicit plugin_root resolution instructions to env-compat.md
 - 8c93ae6 (2026-04-06) fix: install.sh resolves {plugin_root} to absolute paths in skill files
 - 453cc0e (2026-04-06) fix: replace {plugin_root} with relative paths in all 44 skill files
+- b6db4f9 (2026-04-06) release: v1.2.1 — fix: resolve {plugin_root} paths for all users
+- 98dc413 (2026-04-06) fix: remove contradictory 30-line threshold from adversarial-loop.md
