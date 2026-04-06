@@ -23,8 +23,10 @@ Read before any work begins:
 
 1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
 2. `{plugin_root}/shared/includes/seo-check-registry.md` -- canonical check slugs
+3. `{plugin_root}/shared/includes/seo-fix-registry.md` -- canonical fix_type and safety mappings
 
 Read `../../../shared/includes/seo-check-registry.md` for canonical check slugs. Use ONLY slugs from this registry in findings[].check.
+Read `../../../shared/includes/seo-fix-registry.md` before assigning fix_type, fix_safety, or fix_params.
 
 Print the checklist:
 
@@ -32,6 +34,7 @@ Print the checklist:
 CORE FILES LOADED:
   1. codesift-setup.md        -- [READ | MISSING -> STOP]
   2. seo-check-registry.md    -- [READ | MISSING -> STOP]
+  3. seo-fix-registry.md      -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.
@@ -110,8 +113,13 @@ Search for `og:image` meta tag.
 
 Search for `og:type` meta tag.
 
-- Verify it is set appropriately per page type (e.g., "website" for homepage, "article" for blog posts)
+- Verify it is set appropriately per page type
 - Check for dynamic og:type based on page context
+- Default routing rules:
+  - Homepage / index / landing pages -> `website`
+  - Blog posts / articles / news routes -> `article`
+  - Generic marketing, docs, and app shell routes -> `website`
+- If a homepage is explicitly tagged `article`, treat it as FAIL, not PARTIAL
 
 - PASS: og:type present and varies by page type
 - PARTIAL: og:type present but hardcoded to one value for all pages
@@ -161,7 +169,7 @@ Grep for application/ld+json across all template and page files
 - PASS: JSON-LD found in layout or per-page templates
 - FAIL: No JSON-LD script tags found anywhere
 
-#### D3.2 Server-Side Rendering Verification (CRITICAL GATE CG5)
+#### D3.2 Source vs Render Verification (CRITICAL GATE CG5)
 
 Verify that JSON-LD is rendered server-side (present in initial HTML), not injected client-side via JavaScript.
 
@@ -186,7 +194,10 @@ Verify that JSON-LD is rendered server-side (present in initial HTML), not injec
 - `FAIL` -- JSON-LD is injected client-side only after hydration
 - `INSUFFICIENT DATA` -- static analysis is inconclusive and no live/source fetch is available
 
-Rendered DOM alone is NOT sufficient evidence for CG5. Must verify presence in template source or raw response body.
+Rendered DOM alone is NOT sufficient evidence for CG5. The raw response body or
+template source is the source of truth. If a live audit exists, compare raw
+response vs rendered DOM and note any mismatch in a "Source vs Render Diff"
+evidence note.
 
 #### D3.3 Schema Types Match Content
 
@@ -221,6 +232,27 @@ For each JSON-LD block, verify required properties are present:
 - PASS: All required properties present for each schema type
 - PARTIAL: Most required properties present, 1-2 missing non-critical ones
 - FAIL: Key required properties missing (e.g., Article without author or datePublished)
+
+#### D3.5 Duplicate JSON-LD and Spam Signals
+
+Check for duplicate schema blocks and spam-like schema payloads.
+
+- Count JSON-LD blocks per page/template
+- Flag exact duplicate blocks or repeated duplicate `@type` payloads
+- Flag suspiciously long schema fields that look like body dumps
+  (for example `description` containing article-scale prose rather than a
+  concise summary)
+- Treat description fields longer than `500` characters as spam signals that
+  should be routed to `schema-cleanup` or manual review before any additive
+  JSON-LD recommendation
+- If the page already has multiple JSON-LD blocks and a new structured data
+  recommendation would add more, route the finding to `schema-cleanup` rather
+  than `json-ld-add`
+
+- PASS: No duplicate schema blocks and no obvious spam signals
+- PARTIAL: Multiple schema blocks exist but appear intentional and non-duplicative
+- FAIL: Duplicate schema blocks, repeated duplicate `@type`, or spam-like field
+  payloads are present
 
 ---
 
@@ -379,15 +411,25 @@ For each check that results in FAIL or PARTIAL, produce a finding object:
 - business_impact: 1-3    # 1=LOW, 2=MEDIUM, 3=HIGH
 - effort: 1-3             # 1=EASY, 2=MEDIUM, 3=HARD
 - priority: number        # (seo_impact * 0.4) + (business_impact * 0.4) + ((4 - effort) * 0.2)
+- enforcement: blocking | scored | advisory
+- layer: core | hygiene | geo | visibility-deferred
 - evidence: string        # file:line or descriptive text
+- confidence_reason: string | null
 - file: string | null     # file path where issue was found
 - line: number | null     # line number if applicable
 - fix_type: string | null  # from registry (see below); null for findings without an auto-fix template
 - fix_safety: SAFE | MODERATE | DANGEROUS | null  # null for findings without an auto-fix template
 - fix_params: object | null  # framework-specific parameters for the fix; null for findings without an auto-fix template
+- eta_minutes: number | null
+- bot_scope: string[] | null
 ```
 
-Set `fix_type`, `fix_safety`, and `fix_params` to `null` for findings without an auto-fix template.
+Set `fix_type`, `fix_safety`, and `fix_params` to `null` for findings without
+an auto-fix template.
+
+When D3 evidence shows duplicate or spam-like JSON-LD, prefer
+`fix_type: schema-cleanup` over `json-ld-add`. Do not recommend additive
+structured data when cleanup is clearly required first.
 
 Use `INSUFFICIENT DATA` when static analysis cannot determine the check result and no live verification is available.
 
@@ -422,7 +464,7 @@ This agent evaluates one critical gate and must report explicit PASS | FAIL | IN
 
 | Gate | Description | Source | PASS Criteria | INSUFFICIENT DATA Criteria |
 |------|------------|--------|---------------|---------------------------|
-| **CG5** | JSON-LD server-side rendered | D3 | JSON-LD present in server-rendered HTML, not injected client-side | If static analysis cannot determine whether JSON-LD is server-rendered (e.g., framework uses client-side rendering and no live fetch available), report INSUFFICIENT DATA |
+| **CG5** | JSON-LD server-side rendered | D3 | JSON-LD present in template source or raw response body, not only in rendered DOM | If static analysis cannot determine whether JSON-LD is server-rendered (e.g., framework uses client-side rendering and no live fetch available), report INSUFFICIENT DATA |
 
 **CG5 = FAIL means the overall audit result is FAIL regardless of score.**
 
@@ -451,6 +493,9 @@ Return your complete analysis in this format:
 ### D3 -- Structured Data (JSON-LD)
 [check table with raw statuses]
 [findings]
+
+### Source vs Render Diff
+[only when live evidence exists; compare raw response vs rendered DOM for JSON-LD and key meta tags]
 
 ### D6 -- Images
 [check table with raw statuses]

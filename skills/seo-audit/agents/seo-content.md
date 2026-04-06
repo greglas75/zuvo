@@ -23,8 +23,10 @@ Read before any work begins:
 
 1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
 2. `{plugin_root}/shared/includes/seo-check-registry.md` -- canonical check slugs
+3. `{plugin_root}/shared/includes/seo-page-profile-registry.md` -- profile-aware D9/D10 heuristics
 
 Read `../../../shared/includes/seo-check-registry.md` for canonical check slugs. Use ONLY slugs from this registry in findings[].check.
+Read `../../../shared/includes/seo-page-profile-registry.md` for profile-aware D9/D10 thresholds and enforcement downgrades.
 
 Print the checklist:
 
@@ -32,6 +34,7 @@ Print the checklist:
 CORE FILES LOADED:
   1. codesift-setup.md        -- [READ | MISSING -> STOP]
   2. seo-check-registry.md    -- [READ | MISSING -> STOP]
+  3. seo-page-profile-registry.md -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.
@@ -50,10 +53,13 @@ If any file is missing, STOP.
 
 - **detected_stack:** string (`astro` | `nextjs` | `hugo` | `wordpress` | `react` | `html`)
 - **content_format:** string (`markdown` | `database` | `none`)
+- **content_profile:** string (`auto` | `marketing` | `docs` | `blog` | `ecommerce` | `app-shell`)
 - **file_paths:** string[] (content directory paths, markdown/HTML pages, page list)
 - **codesift_repo:** string | null (repo identifier if CodeSift available)
 - **mode:** string (`full` | `quick` | `content-only` | `geo`)
 - **selected_dimensions:** string[] (e.g., `["D7", "D9", "D10"]`)
+- **content_profile_reason:** string | null (why the dispatcher chose the active
+  profile when `content_profile != auto`)
 
 **Mode-aware filtering:** Skip any dimension NOT in `selected_dimensions`. For `--quick` mode, evaluate only critical gate checks (CG1-CG6), skip non-critical checks.
 
@@ -119,6 +125,16 @@ Search for link patterns in code that could produce broken links.
 
 ### D9 -- Content Quality
 
+Use `seo-page-profile-registry.md` as the default D9 contract.
+
+- If `content_profile = app-shell`, most D9 checks should resolve to `N/A`.
+- If `content_format = database` and repo content is inaccessible, downgrade D9
+  to `advisory` or `N/A`, not hard failure.
+- Never treat one universal word-count threshold as canonical. Use the active
+  profile threshold and mention the chosen profile in evidence.
+- State the chosen page profile in the dimension summary, including the
+  dispatcher hint when present.
+
 #### D9.1 Thin Content Detection
 
 Scan content files (markdown, HTML pages) for word count.
@@ -128,12 +144,13 @@ For each content file:
   1. Read the file
   2. Strip frontmatter, HTML tags, code blocks
   3. Count words in remaining text
-  4. Flag if < 300 words
+  4. Flag if below the active profile threshold
 ```
 
-- PASS: All content pages >= 300 words (or justified short pages like landing pages)
-- PARTIAL: 1-3 thin content pages (< 300 words)
-- FAIL: 4+ thin content pages, or primary landing pages are thin
+- PASS: Content pages meet the active profile threshold
+- PARTIAL: 1-3 pages miss the active threshold or rely on weak filler structure
+- FAIL: Multiple primary pages miss the active threshold for the page profile
+- N/A: Active profile or inaccessible content source downgrades the check
 
 #### D9.2 Answer-First Structure
 
@@ -146,6 +163,7 @@ Check whether content pages lead with a direct answer or summary before detailed
 - PASS: Content pages lead with answer/summary before deep content
 - PARTIAL: Some pages have answer-first structure, others bury the answer
 - FAIL: Content consistently buries the key answer below fold or after long intros
+- N/A: Active profile does not require answer-first structure
 
 #### D9.3 Heading Hierarchy
 
@@ -180,6 +198,17 @@ Compare for exact or near-duplicates
 
 ### D10 -- GEO/AI Readiness
 
+Treat D10 as the `llms-best-practice` and content-extraction layer. Minimal
+proposal compliance for `llms.txt` and optional `llms-full.txt` presence lives
+in D5 as `llms-spec-compliance`.
+
+- If `content_profile = app-shell`, most D10 checks should resolve to
+  `advisory`.
+- If `content_format = database` and repo content is inaccessible, downgrade D10
+  to `advisory` or `N/A`, not hard failure.
+- Re-state the active page profile in the D10 summary so the scoring downgrade
+  is explicit and reviewable.
+
 #### D10.1 llms.txt Content Quality
 
 Evaluate the **content quality** of `llms.txt` -- not just existence or structure. Presence detection belongs to D5 in the technical agent; this check evaluates whether the file actually gives AI bots useful content to work with.
@@ -190,7 +219,10 @@ If the file exists, evaluate these criteria:
 
 1. **Substantive content vs link index:** Does the file contain actual extractable information (what the product/site does, how it works, key concepts) or is it just a list of URLs with one-line labels? A pure link index forces AI bots to still parse HTML pages — it defeats the purpose of llms.txt.
 
-2. **llms-full.txt companion:** Per the llms.txt spec, `llms.txt` is a summary/index and `llms-full.txt` is the detailed version with full extractable content. Check if `llms-full.txt` exists alongside `llms.txt`. If only the index exists without the full version, AI bots get no real content.
+2. **llms-full.txt companion:** Treat `llms-full.txt` as a Zuvo best-practice
+   richness companion, not as the minimal proposal itself. If only a minimal
+   `llms.txt` exists, proposal compliance may still be met even when this
+   quality check is only PARTIAL.
 
 3. **Content depth:** Does the file answer basic questions an AI would need? ("What is [product]?", "How does it work?", "Who is it for?", "Key features", "Pricing model"). Minimum: 3+ substantive paragraphs beyond just links.
 
@@ -199,11 +231,15 @@ If the file exists, evaluate these criteria:
 **Scoring:**
 
 - PASS: llms.txt has substantive multi-paragraph content that an AI bot could use to generate a useful summary WITHOUT visiting the site. OR llms.txt is a well-structured index AND llms-full.txt exists with detailed content.
-- PARTIAL: llms.txt exists and has some structure, but is index-only (links + one-liners) without llms-full.txt. AI bots get file paths but no real content. OR llms-full.txt exists but is thin.
+- PARTIAL: llms.txt exists and has some structure, but is index-only (links + one-liners) without a rich companion. AI bots get file paths but no real content. OR llms-full.txt exists but is thin.
 - FAIL: llms.txt exists but contains only URLs with no descriptions, or is effectively empty.
 - N/A: No llms.txt file found (presence is checked in D5)
 
-**Common false-PASS to watch for:** A file with correct markdown syntax and sections but where every section is just `- [Page Title](/path): One sentence description`. This is an INDEX, not content. Score as PARTIAL with finding: "llms.txt is an index-only file with links but no extractable content. No llms-full.txt exists. AI bots must still parse HTML to understand the site."
+**Common false-PASS to watch for:** A file with correct markdown syntax and
+sections but where every section is just `- [Page Title](/path): One sentence
+description`. This is an INDEX, not substantive content. Score as PARTIAL and
+note that proposal compliance may still be met while best-practice quality is
+not.
 
 #### D10.2 Semantic HTML
 
@@ -265,6 +301,13 @@ Check that content indicates when it was created and last updated.
 
 For fix_type identifiers and safety classifications, use `../../../shared/includes/seo-fix-registry.md` as the canonical registry. Do not invent fix_type values not listed there.
 
+For out-of-scope D9/D10 findings, include a **content scaffold advisory** after
+the
+finding details when possible:
+- suggested H2/H3 outline
+- target word count band per section
+- answer-first opener pattern
+
 ---
 
 ## Finding Output Format
@@ -276,7 +319,11 @@ For each check that results in FAIL or PARTIAL, produce a finding object:
 - dimension: string       # e.g. "D7"
 - check: string           # e.g. "orphan-pages"
 - status: PASS | PARTIAL | FAIL | INSUFFICIENT DATA
+- enforcement: blocking | scored | advisory
+- layer: core | hygiene | geo | visibility-deferred
 - severity: HIGH | MEDIUM | LOW
+- confidence_reason: string | null
+- eta_minutes: number | null
 - seo_impact: 1-3         # 1=LOW, 2=MEDIUM, 3=HIGH
 - business_impact: 1-3    # 1=LOW, 2=MEDIUM, 3=HIGH
 - effort: 1-3             # 1=EASY, 2=MEDIUM, 3=HARD
@@ -293,7 +340,9 @@ Set `fix_type`, `fix_safety`, and `fix_params` to `null` for findings without an
 
 Use `INSUFFICIENT DATA` when static analysis cannot determine the check result and no live verification is available.
 
-All findings from this agent have `fix_type: null` because content improvements require human judgment and cannot be auto-fixed.
+All findings from this agent have `fix_type: null` because content improvements
+require human judgment and cannot be auto-fixed. Content scaffold advisory
+blocks are allowed, but they are not mutating fixes.
 
 ---
 
@@ -363,4 +412,7 @@ Return your complete analysis in this format:
 - Calculate priority for every finding: `(seo_impact * 0.4) + (business_impact * 0.4) + ((4 - effort) * 0.2)`.
 - Content quality checks (D9) require reading actual content files. Do not score from file names alone.
 - For D10 checks, evaluate source code and templates -- not a live site.
-- Report facts, not assumptions. FAIL only when absence in source is itself valid evidence (e.g., no content files = thin content FAIL). When static analysis is genuinely inconclusive, report INSUFFICIENT DATA.
+- Report facts, not assumptions. Missing repo content is not automatic thin
+  content FAIL. When static analysis is genuinely inconclusive, or when profile
+  rules downgrade the check, report `INSUFFICIENT DATA`, `advisory`, or `N/A`
+  explicitly.

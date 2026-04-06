@@ -20,8 +20,10 @@ Evaluate technical SEO dimensions: D1 (Meta Tags), D4 (Sitemap), D5 (AI Crawlers
 Read before starting:
 1. `{plugin_root}/shared/includes/codesift-setup.md` -- CodeSift discovery
 2. `{plugin_root}/shared/includes/seo-check-registry.md` -- canonical check slugs
+3. `{plugin_root}/shared/includes/seo-bot-registry.md` -- canonical AI/search bot taxonomy
 
 Read `../../../shared/includes/seo-check-registry.md` for canonical check slugs. Use ONLY slugs from this registry in findings[].check.
+Read `../../../shared/includes/seo-bot-registry.md` for canonical bot keys. Use ONLY bot keys from this registry in bot-matrix evidence.
 
 Print the checklist:
 
@@ -29,6 +31,7 @@ Print the checklist:
 CORE FILES LOADED:
   1. codesift-setup.md        -- [READ | MISSING -> STOP]
   2. seo-check-registry.md    -- [READ | MISSING -> STOP]
+  3. seo-bot-registry.md      -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.
@@ -138,33 +141,71 @@ Read robots.txt for Sitemap: directive
 
 ### D5 -- AI Crawlers and Crawlability
 
-Check robots.txt for Googlebot access and AI crawler policies. Verify conscious decisions about crawler access.
+Use the canonical D5 checks from `seo-check-registry.md` together with the
+canonical bot list from `seo-bot-registry.md`.
 
-**Checks:**
+**Canonical checks:**
 
-1. **robots.txt exists** -- file present in public/root directory
-2. **Googlebot not blocked** -- no `Disallow: /` for `User-agent: Googlebot` or `User-agent: *` (**Critical Gate CG2**)
-3. **AI crawler policy -- GPTBot** -- explicit `User-agent: GPTBot` rule (Allow or Disallow)
-4. **AI crawler policy -- ClaudeBot** -- explicit `User-agent: ClaudeBot` rule
-5. **AI crawler policy -- Perplexitybot** -- explicit `User-agent: Perplexitybot` rule
-6. **AI crawler policy -- Google-Extended** -- explicit `User-agent: Google-Extended` rule
-7. **AI crawler policy conscious** -- Conscious decision = explicit Allow or Disallow for at least 3 of these bots: GPTBot, ClaudeBot, PerplexityBot, Google-Extended, CCBot. OR a Content-Signal header with ai-train directive. Default/absent robots.txt = FAIL (not conscious). (**Critical Gate CG6**)
-8. **llms.txt exists** -- `llms.txt` file present for AI-readable site summary
-9. **llms-full.txt exists** -- `llms-full.txt` companion file present. llms.txt is the brief index; llms-full.txt contains comprehensive content for AI consumption. Absence when llms.txt exists = FAIL with fix_type `llms-txt-add`.
-10. **Crawl-delay appropriate** -- no excessive `Crawl-delay` that would slow indexing
-11. **No broad Disallow** -- `Disallow: /` not set for `User-agent: *` (would block all crawlers)
+1. `robots-exists`
+2. `robots-googlebot` (**Critical Gate CG2**)
+3. `robots-ai-policy` (**Critical Gate CG6**)
+4. `bot-policy-matrix`
+5. `cloudflare-override-risk`
+6. `robots-js-block`
+7. `robots-pdf-block`
+8. `robots-feed-block`
+9. `llms-txt-present`
+10. `llms-full-txt-present`
+11. `crawl-delay`
+
+**Evaluation rules:**
+
+- Build a **Bot Policy Matrix** for the relevant bots in
+  `seo-bot-registry.md`. Each row must include:
+  - `bot_key`
+  - `tier`
+  - `status`: `ALLOW`, `BLOCKED`, `MISSING_POLICY`, `UNKNOWN`, or `NEEDS_LIVE_CHECK`
+  - `evidence`
+  - `verification_mode`: `code`, `live`, or `proxy`
+- Treat `robots-ai-policy` as a consciousness and consistency check, not as an
+  ideology check. Users may intentionally allow or disallow training, search,
+  retrieval, or user-proxy bots.
+- Emit the canonical D5 slugs from `seo-check-registry.md` directly in findings:
+  - `bot-policy-matrix` when the matrix is incomplete or contradictory
+  - `cloudflare-override-risk` when edge controls may invalidate file-based
+    policy
+  - `robots-js-block`, `robots-pdf-block`, `robots-feed-block` for deep robots
+    sub-risks
+- Keep **llms proposal compliance** separate from **llms content quality**:
+  presence/accessibility of `llms.txt` and optional `llms-full.txt` companion
+  belongs here; substantive usefulness belongs to the Content agent.
+- Deep robots heuristics are part of the evidence set. Flag:
+  - `Disallow: /*.js*` as render-blocking risk
+  - `Disallow: /*.pdf$` as document access risk
+  - `Disallow: /*.feed*` as feed discovery risk
+- Host or edge controls may override file-based robots policy. If deploy hints
+  suggest Cloudflare, WAF, CDN, or similar controls, add a
+  `confidence_reason`, emit the `cloudflare-override-risk` evidence row, and be
+  prepared to return `INSUFFICIENT DATA` or `NEEDS_LIVE_CHECK` evidence instead
+  of a false PASS.
 
 **Search strategy:**
 ```
 Read robots.txt (typically public/robots.txt or static/robots.txt)
+Read ../../../shared/includes/seo-bot-registry.md
 Glob for llms.txt and llms-full.txt in root, public, and static directories
+Inspect wrangler.toml, _headers, netlify.toml, vercel.json for host-layer hints
 ```
 
 Parse robots.txt line-by-line:
 - Extract all `User-agent` blocks
 - For each block, check `Allow` and `Disallow` directives
 - Flag any `Disallow: /` on `User-agent: *` or `User-agent: Googlebot`
-- Check whether AI crawlers (GPTBot, ClaudeBot, Perplexitybot, Google-Extended) have explicit entries
+- Cross-reference user-agent tokens from `seo-bot-registry.md`
+- Record bots that inherit only a wildcard rule with no explicit conscious
+  policy note
+- Preserve registry tier semantics exactly: `training`, `search`, `retrieval`,
+  `user-proxy`
 
 **Framework-specific notes:**
 
@@ -316,7 +357,11 @@ For each check that results in FAIL or PARTIAL, produce a finding object:
 - dimension: string       # e.g. "D1"
 - check: string           # e.g. "meta-description-present"
 - status: PASS | PARTIAL | FAIL | INSUFFICIENT DATA
+- enforcement: blocking | scored | advisory
+- layer: core | hygiene | geo | visibility-deferred
 - severity: HIGH | MEDIUM | LOW
+- confidence_reason: string | null
+- eta_minutes: number | null
 - seo_impact: 1-3         # 1=LOW, 2=MEDIUM, 3=HIGH
 - business_impact: 1-3    # 1=LOW, 2=MEDIUM, 3=HIGH
 - effort: 1-3             # 1=EASY, 2=MEDIUM, 3=HARD
@@ -324,6 +369,7 @@ For each check that results in FAIL or PARTIAL, produce a finding object:
 - evidence: string        # file:line or descriptive text
 - file: string | null     # file path where issue was found
 - line: number | null     # line number if applicable
+- bot_scope: string[] | null  # relevant bot_key values when the finding is bot-policy related
 - fix_type: string | null  # from registry (see below); null for findings without an auto-fix template
 - fix_safety: SAFE | MODERATE | DANGEROUS | null  # null for findings without an auto-fix template
 - fix_params: object | null  # framework-specific parameters for the fix; null for findings without an auto-fix template
@@ -368,7 +414,7 @@ This agent evaluates these critical gates and must report explicit PASS | FAIL |
 | **CG2** | Googlebot not blocked | D5 | No `Disallow: /` for Googlebot or `User-agent: *` | -- |
 | **CG3** | HTTPS active | D11 | No hardcoded `http://` URLs in templates/config (excluding localhost) | In code-only mode if no mixed content found but no live verification available to confirm HTTPS enforcement |
 | **CG4** | Canonical tags present | D11 | `<link rel="canonical">` found in layout/head template | -- |
-| **CG6** | AI crawler policy conscious | D5 | Explicit Allow or Disallow for at least 3 of: GPTBot, ClaudeBot, PerplexityBot, Google-Extended, CCBot. OR Content-Signal header with ai-train directive. | -- |
+| **CG6** | AI crawler policy conscious | D5 | Explicit, non-contradictory policy for relevant bots from `seo-bot-registry.md`, with at least 3 named bots or a documented tier-based strategy plus evidence. | When code suggests host-layer overrides or policy cannot be trusted without live probing |
 
 Note: CG5 (JSON-LD SSR) is evaluated by the Assets agent (D3), not this agent.
 
@@ -389,6 +435,11 @@ Return your complete analysis in this format:
 | CG3 | PASS/FAIL/INSUFFICIENT DATA | [evidence] |
 | CG4 | PASS/FAIL/INSUFFICIENT DATA | [evidence] |
 | CG6 | PASS/FAIL/INSUFFICIENT DATA | [evidence] |
+
+### Bot Policy Matrix
+| Bot | Tier | Status | Evidence | Verification |
+|-----|------|--------|----------|--------------|
+| [bot_key] | training/search/retrieval/user-proxy | ALLOW/BLOCKED/MISSING_POLICY/UNKNOWN/NEEDS_LIVE_CHECK | [evidence] | code/live/proxy |
 
 ### D1 -- Meta Tags and On-Page SEO
 [check table with raw statuses]

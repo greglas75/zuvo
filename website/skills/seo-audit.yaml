@@ -1,10 +1,10 @@
 schema_version: 1
-last_synced: "2026-03-29"
+last_synced: "2026-04-05"
 
 meta:
   slug: seo-audit
   title: "SEO Audit — 13-Dimension Code + GEO Readiness Analysis"
-  description: "SEO/GEO audit: 13 dimensions, 6 critical gates, 59 checks across 13 dimensions. JSON-LD SSR, AI crawlers, Core Web Vitals. Supports Astro, Next.js, Hugo, WordPress."
+  description: "SEO/GEO audit: 13 dimensions, 6 critical gates, 66 checks, bot matrix, source-vs-render diff, JSON-LD SSR. Astro, Next.js, Hugo."
   category: audit
   og_image: /og/skills/seo-audit.png
 
@@ -20,13 +20,16 @@ seo:
 stats:
   - label: "Dimensions"
     value: "13"
-    detail: "D1-D13: meta tags through internationalization"
+    detail: "D1-D13: meta, schema, crawlability, content, monitoring"
   - label: "Critical Gates"
     value: "6"
     detail: "CG1-CG6: sitemap, Googlebot, HTTPS, canonical, JSON-LD SSR, AI crawlers"
   - label: "Checks"
-    value: "59"
-    detail: "59 checks across 13 dimensions"
+    value: "66"
+    detail: "66 canonical checks across 13 dimensions"
+  - label: "Bot Profiles"
+    value: "15"
+    detail: "Training, search, retrieval, and user-proxy bots"
   - label: "Sub-scores"
     value: "3"
     detail: "SEO, GEO, and Tech scores each /100"
@@ -41,33 +44,39 @@ problem: |
   drive traffic, GEO readiness — llms.txt, AI crawler policies, citation-friendly
   content structure — has become equally critical. zuvo:seo-audit examines source
   code, templates, and config files systematically across 13 dimensions, with 6
-  critical gates that must pass before any other optimization is worth pursuing.
+  critical gates, a 15-bot policy matrix, source-vs-render verification for
+  JSON-LD, and profile-aware content heuristics that avoid false FAILs on app
+  shells or CMS-backed content.
 
 how_it_works:
   - step: "Stack Detection and Argument Parsing"
-    description: "Detects framework (Astro, Next.js, Hugo, WordPress, React, or plain HTML), content format, SEO files (robots.txt, sitemap, llms.txt), and deploy platform. Parses flags to set audit mode."
+    description: "Detects framework (Astro, Next.js, Hugo, WordPress, React, or plain HTML), content format, SEO files (robots.txt, sitemap, llms.txt, llms-full.txt), deploy platform, and optional content profile overrides."
   - step: "Parallel Agent Dispatch"
-    description: "Dispatches 3 agents in parallel: SEO Technical (D1, D4, D5, D11-D13), SEO Content (D7, D9, D10), and SEO Assets (D2, D3, D6, D8). Results are merged before scoring."
+    description: "Dispatches owner-correct agents in parallel: SEO Technical (D1, D4, D5, D11-D13), SEO Content (D7, D9, D10), and SEO Assets (D2, D3, D6, D8). `--quick` uses Technical + Assets because CG5 belongs to Assets; `--geo` uses all 3 agents because D5 belongs to Technical."
   - step: "Optional Live Audit"
-    description: "When --live-url is provided, adds Core Web Vitals measurement, rendered DOM verification, broken link detection, and visual screenshots at 3 breakpoints."
+    description: "When --live-url is provided, adds Core Web Vitals measurement, raw-response vs rendered-DOM verification, broken link detection, optional per-bot live sampling, and screenshots at 3 breakpoints."
   - step: "Critical Gate Evaluation"
-    description: "All 6 critical gates are evaluated with explicit PASS/FAIL/INSUFFICIENT DATA status. Any FAIL overrides the overall result to FAIL regardless of dimension scores."
+    description: "All 6 critical gates are evaluated with explicit PASS/FAIL/INSUFFICIENT DATA status. Only blocking checks can create FAIL or PROVISIONAL; advisory heuristics never do."
   - step: "3D Priority Scoring and Report"
-    description: "Each finding scored on SEO Impact, Business Impact, and Fix Effort. Quick Wins (Priority >= 2.0 + EASY effort) are surfaced separately. Report saved as Markdown + JSON."
+    description: "Each finding is scored on SEO Impact, Business Impact, and Fix Effort. Strengths, Bot Policy Matrix, Source vs Render Diff, Content Table, GEO panel, and Fix Coverage Summary are saved in Markdown plus JSON v1.1."
 
 output:
   artifact: "audit-results/seo-audit-YYYY-MM-DD.md"
-  format: "Markdown report plus machine-readable JSON. Includes critical gate status, dimension scores (D1-D13), sub-scores (SEO/GEO/Tech each /100), full findings with 3D priority, GEO Readiness Panel, and CI-parseable summary line."
+  format: "Markdown report plus machine-readable JSON v1.1. Includes critical gate status, dimension scores (D1-D13), sub-scores (SEO/GEO/Tech each /100), full findings with 3D priority, bot matrix, source-vs-render evidence, and CI-parseable summary line."
   sections:
     - "Header (stack, mode, date)"
     - "Critical Gates (CG1-CG6 with evidence)"
     - "Dimension Scores table (D1-D13)"
     - "Overall Score + Grade (A/B/C/D/FAIL)"
     - "Sub-Scores: SEO, GEO, Tech"
+    - "Strengths"
+    - "Bot Policy Matrix"
+    - "Source vs Render Diff"
     - "Quick Wins (Priority >= 2.0, Effort = EASY)"
     - "Full Execution Plan (sorted by priority)"
-    - "Content Report (word counts, answer-first %)"
+    - "Content Table (word counts, answer-first %, coverage by page type)"
     - "GEO Readiness Panel (7 dimensions)"
+    - "Fix Coverage Summary"
     - "CI-Parseable Summary line"
 
 examples:
@@ -106,6 +115,8 @@ examples:
         ----
         Critical Gates: CG1 FAIL (no sitemap), CG5 FAIL (client-side JSON-LD)
         Overall: FAIL — 2 critical gates must be fixed before other optimization.
+        Bot Policy Matrix: 15 bot profiles, 4 sampled live, 1 PROVISIONAL due to Cloudflare uncertainty
+        Source vs Render Diff: JSON-LD visible only after hydration on /blog/[slug]
 
         Quick Wins (6 items, Priority >= 2.0, Effort = EASY):
           F3  Add XML sitemap          Priority 2.8  D4
@@ -113,7 +124,7 @@ examples:
           F12 Move JSON-LD server-side Priority 2.6  D3
     explanation: "The CI-parseable summary line enables automated gates: `SEO-AUDIT-RESULT: FAIL score=53 tier=C critical=CG1,CG5`"
 
-when_to_use: "Use before launch, after a redesign, when organic traffic drops, or quarterly as a health check. The `--quick` flag runs only the 6 critical gates for a fast pass/fail in under 2 minutes. Use `--geo` to focus on AI search readiness."
+when_to_use: "Use before launch, after a redesign, when organic traffic drops, or quarterly as a health check. The `--quick` flag runs only blocking gates for a fast pass/fail in under 2 minutes. Use `--geo` to focus on AI search readiness, `--profile` to tune D9/D10 heuristics, and `--live-sample-bots` with `--live-url` to probe real bot behavior. `--content-profile` remains a legacy alias."
 
 when_not_to_use: "For deep performance profiling (Core Web Vitals optimization), use `zuvo:performance-audit`. For code quality issues unrelated to SEO, use `zuvo:code-audit`. For applying fixes discovered by this audit, use `zuvo:seo-fix` — it reads the JSON output directly and applies templated fixes without re-scanning."
 
@@ -129,13 +140,13 @@ related_skills:
 
 faq:
   - q: "What does zuvo:seo-audit check?"
-    a: "It evaluates 13 dimensions: meta tags (D1), Open Graph/social (D2), structured data/JSON-LD (D3), sitemaps (D4), robots and crawler policy (D5), image optimization (D6), internal linking (D7), Core Web Vitals (D8), content quality (D9), GEO/AI readiness (D10), technical SEO (D11), hreflang/i18n (D12), and page experience (D13). Six critical gates must pass before any score-based optimization is relevant."
+    a: "It evaluates 13 dimensions: meta tags (D1), Open Graph/social (D2), structured data/JSON-LD (D3), sitemaps (D4), robots and crawler policy (D5), image optimization (D6), internal linking (D7), Core Web Vitals (D8), content quality (D9), GEO/AI readiness (D10), technical SEO (D11), hreflang/i18n (D12), and monitoring/visibility signals (D13). Six critical gates must pass before any score-based optimization is relevant."
   - q: "How is seo-audit different from running Lighthouse?"
-    a: "Lighthouse measures live-site performance and accessibility but cannot inspect source code for structural issues like client-side JSON-LD injection, sitemap configuration, hreflang correctness, or AI crawler policy. zuvo:seo-audit works primarily on source code and config files, making it useful before deployment. Lighthouse is complementary — use `--live-url` to add live CWV measurement on top of the code audit."
+    a: "Lighthouse measures live-site performance and accessibility but cannot inspect source code for structural issues like client-side JSON-LD injection, source-vs-render mismatches, sitemap configuration, hreflang correctness, or intentional AI crawler policy. zuvo:seo-audit works primarily on source code and config files, making it useful before deployment. Lighthouse is complementary — use `--live-url` to add live CWV measurement and response-vs-render evidence on top of the code audit."
   - q: "How long does an seo-audit take?"
-    a: "Code-only mode (default) typically completes in 2-5 minutes depending on content volume. The `--quick` flag checks only the 6 critical gates in under 2 minutes. Adding `--live-url` extends the audit with live CWV measurement and broken link detection, which adds 3-10 minutes depending on site size."
+    a: "Code-only mode (default) typically completes in 2-5 minutes depending on content volume. The `--quick` flag checks only blocking gates in under 2 minutes. Adding `--live-url` extends the audit with live CWV measurement, source-vs-render verification, and optional bot sampling, which adds 3-10 minutes depending on site size."
   - q: "What is GEO readiness and why does it matter?"
-    a: "Generative Engine Optimization (GEO) is about making content legible to AI answer engines like ChatGPT, Perplexity, and Google AI Overviews. The GEO Readiness Panel checks 7 dimensions: llms.txt presence, AI crawler policy, content chunkability, structured HTML, citation readiness, E-E-A-T signals, and freshness. GEO Score < 50 triggers a recommended remediation path."
+    a: "Generative Engine Optimization (GEO) is about making content legible to AI answer engines like ChatGPT, Perplexity, and Google AI Overviews. The GEO Readiness Panel checks llms best-practice quality, semantic HTML, chunkability, E-E-A-T signals, freshness, and the surrounding crawl/index preconditions that let AI systems reach that content. GEO Score < 50 triggers a recommended remediation path."
   - q: "What frameworks does seo-audit support?"
     a: "Framework-aware analysis for Astro, Next.js, Hugo, WordPress, React (SPA), and plain HTML. Each framework has different patterns for meta tags, JSON-LD, and sitemap generation — the audit applies the correct checks per detected stack."
 
@@ -152,6 +163,12 @@ arguments:
     description: "Content-focused audit: D7 (internal linking), D9 (content quality), D10 (GEO/AI readiness)"
   - flag: "--geo"
     description: "GEO-focused audit: D3 (structured data), D5 (AI crawlers), D9 (GEO readiness), D10 (answer-first content)"
+  - flag: "--profile <marketing|docs|blog|ecommerce|app-shell>"
+    description: "Canonical flag for overriding D9/D10 content heuristics with an explicit page profile"
+  - flag: "--content-profile auto|marketing|docs|blog|ecommerce|app-shell"
+    description: "Legacy alias for `--profile` retained for backward compatibility"
+  - flag: "--live-sample-bots <default|all|bot1,bot2>"
+    description: "In live mode, probe representative or explicit bot_key values from the 15-bot registry and emit a Bot Policy Matrix"
   - flag: "--persist-backlog"
     description: "Write Priority >= 2.0 findings and CG failures to memory/backlog.md"
 
@@ -181,43 +198,40 @@ checks:
           critical: true
     - name: "Structured Data"
       id_range: "D3"
-      count: 4
+      count: 5
       items:
         - id: "D3-1"
           name: "JSON-LD present on key page types"
           critical: false
         - id: "D3-2"
-          name: "Schema type matches content (Article, Product, FAQ, etc.)"
+          name: "JSON-LD present in raw source / initial response (CG5)"
           critical: false
         - id: "D3-3"
-          name: "Required schema fields populated"
+          name: "Schema type matches content (Article, Product, FAQ, etc.)"
           critical: false
         - id: "D3-4"
-          name: "No duplicate schema blocks"
+          name: "Required schema fields populated"
+          critical: false
+        - id: "D3-5"
+          name: "No duplicate or spam-like schema blocks"
           critical: false
     - name: "GEO / AI Readiness"
       id_range: "D10"
-      count: 7
+      count: 5
       items:
         - id: "D10-1"
-          name: "llms.txt present and valid"
+          name: "llms.txt / llms-full content is extraction-friendly"
           critical: false
         - id: "D10-2"
-          name: "AI crawler policy intentional"
+          name: "Structured HTML supports AI extraction"
           critical: false
         - id: "D10-3"
           name: "Content chunkable (clear H2/H3 structure)"
           critical: false
         - id: "D10-4"
-          name: "Structured HTML (lists, tables, definition lists)"
-          critical: false
-        - id: "D10-5"
-          name: "Citation-ready (author, date, sources visible)"
-          critical: false
-        - id: "D10-6"
           name: "E-E-A-T signals present"
           critical: false
-        - id: "D10-7"
+        - id: "D10-5"
           name: "Content freshness signals"
           critical: false
 
@@ -233,17 +247,19 @@ modes:
   - name: "full"
     description: "All 13 dimensions, code-only (default)"
   - name: "--quick"
-    description: "Critical gates CG1-CG6 only — pass/fail in under 2 minutes"
+    description: "Blocking gates only — owner-correct dispatch for fast pass/fail in under 2 minutes"
   - name: "--content-only"
     description: "Content quality, GEO, and answer-first dimensions"
   - name: "--geo"
-    description: "Structured data, AI crawlers, and GEO readiness dimensions"
+    description: "Structured data, AI crawlers, and GEO readiness dimensions across all required owners"
+  - name: "--profile"
+    description: "Profile-aware D9/D10 heuristics for marketing, docs, blog, ecommerce, or app-shell content"
   - name: "--live-url"
-    description: "Code audit plus live CWV measurement and broken link detection"
+    description: "Code audit plus live CWV measurement, broken link detection, source-vs-render verification, and optional bot sampling"
 
 agents:
   - name: "SEO Technical Agent"
-    role: "Evaluates D1 (meta tags), D4 (sitemaps), D5 (robots/crawlers), D11 (technical SEO), D12 (hreflang), D13 (page experience)"
+    role: "Evaluates D1 (meta tags), D4 (sitemaps), D5 (robots/crawlers), D11 (technical SEO), D12 (hreflang), D13 (monitoring/visibility)"
   - name: "SEO Content Agent"
     role: "Evaluates D7 (internal linking), D9 (content quality), D10 (GEO/AI readiness)"
   - name: "SEO Assets Agent"
@@ -254,6 +270,10 @@ benchmarks:
     type: accuracy
     verifiable: true
     source: "SKILL.md Phase 4.1 — Critical gate scoring rules"
+  - claim: "15 canonical bot profiles feed the Bot Policy Matrix and optional live sampling"
+    type: coverage
+    verifiable: true
+    source: "shared/includes/seo-bot-registry.md"
   - claim: "13 dimensions with individual weights summing to 100% — each dimension scored 0-100"
     type: coverage
     verifiable: true
@@ -262,19 +282,20 @@ benchmarks:
     type: coverage
     verifiable: true
     source: "SKILL.md Phase 4.4 — sub-score calculation"
-  - claim: "JSON output saved alongside Markdown report — enables zuvo:seo-fix to apply fixes without re-scanning"
+  - claim: "JSON output saved alongside Markdown report in schema v1.1 — enables zuvo:seo-fix to apply fixes without re-scanning"
     type: accuracy
     verifiable: true
-    source: "SKILL.md Phase 6.2 — JSON output schema with fix_type and fix_params fields"
+    source: "SKILL.md Phase 6.2 — JSON output schema with enforcement, layer, eta_minutes, bot_scope, and bot_matrix"
 
 comparison_table:
   columns: ["Capability", "Screaming Frog (live crawl)", "Lighthouse", "zuvo:seo-audit"]
   rows:
     - ["Works on source code pre-deploy", "No (needs live URL)", "No (needs live URL)", "Yes — code-only mode"]
     - ["JSON-LD SSR vs client-side detection", "Partial (crawl only)", "No", "Yes — CG5 critical gate"]
-    - ["AI crawler / llms.txt check", "No", "No", "Yes — D5 and D9"]
+    - ["Bot Policy Matrix + AI crawler policy", "No", "No", "Yes — D5 with 15-bot registry"]
+    - ["Source vs Render Diff", "Partial", "No", "Yes — raw response vs rendered DOM evidence"]
     - ["GEO readiness panel", "No", "No", "Yes — 7 sub-dimensions"]
     - ["Framework-aware analysis", "No", "No", "Yes — Astro, Next.js, Hugo, WP"]
     - ["3D priority scoring", "No", "No", "Yes — SEO + Business + Effort"]
     - ["Machine-readable JSON output", "Yes (paid)", "Yes", "Yes — free, feeds seo-fix"]
-    - ["Content quality scoring", "No", "No", "Yes — D7 and D10"]
+    - ["Profile-aware content scoring", "No", "No", "Yes — D9/D10 with `--content-profile`"]
