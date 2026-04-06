@@ -1,7 +1,8 @@
 # Adversarial Loop — Document Artifacts
 
-> Referenced by: skills that produce non-code artifacts (specs, plans, audit reports).
+> Referenced by: /brainstorm, /plan, /code-audit, /test-audit, /security-audit, /api-audit, /architecture, /seo-audit, /docs, /ship, and all audit skills that produce scored reports.
 > Companion to: `adversarial-loop.md` (code diffs). Load both when a skill produces code AND documents.
+> **MANDATORY** — if referenced by a skill, this loop runs. The agent does not decide whether to skip it.
 
 ## Purpose
 

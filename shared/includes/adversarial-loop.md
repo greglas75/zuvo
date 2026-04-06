@@ -1,41 +1,34 @@
 # Adversarial Loop
 
-> Referenced by: /build, /write-tests (Phase 1). Later: /execute, /write-e2e, /refactor.
-> NOT referenced by: /review (already IS review), /debug (speed > thoroughness), /audit-* (audits, not code).
+> Referenced by: /build, /write-tests, /execute, /refactor, /write-e2e, /debug, /fix-tests, /receive-review, /seo-fix, /code-audit, /test-audit, /security-audit.
+> For document artifacts (specs, plans, audit reports): see `adversarial-loop-docs.md`.
 
 ## Purpose
 
-After a skill writes code, consult a DIFFERENT AI model to catch blind spots before presenting results to the user. This is a **smart adversarial second opinion** — not a QA gate, not proof of correctness. "Adversarial clean" means no issues found by this pass, not that code is bug-free.
+After a skill writes code, consult a DIFFERENT AI model to catch blind spots before presenting results to the user. This is a **smart adversarial second opinion** — not a QA gate, not proof of correctness.
 
-## When to Run
+**MANDATORY.** This loop is not optional. The agent does NOT decide whether to run it. If the skill references this include, the adversarial review runs. Period. Self-review bias (the agent skipping review of its own output) is the primary failure mode this protocol prevents.
 
-Run adversarial loop **always** when code changes exist. The 5-15s cost per provider is negligible vs. the cost of undetected bugs.
+## What Counts as Code Changes
 
-**Skip ONLY when:**
-- Config-only changes (package.json, tsconfig, .env, CI config) with no logic changes
-- No provider available (note in output, proceed normally)
+Adversarial review runs when the skill produces any of these:
+- New or modified source code files (.ts, .tsx, .js, .py, .go, .php, .rs, etc.)
+- New or modified test files (.test.*, .spec.*, *_test.*)
+- New or modified shell scripts with logic
+- Modified database migrations, schema files
 
-High-risk signals (auth, payment, crypto, PII, migrations) automatically upgrade mode to `--mode security`.
+**Skip ONLY when ALL of these are true:**
+- Config-only changes (package.json version bump, tsconfig, .env, CI config) with zero logic changes
+- OR mechanical-only changes (symbol rename without logic change, formatting by tool, import reordering only)
+- OR no provider available (note in output, proceed normally)
 
-For **document artifact validation** (specs, plans, audit reports), see `adversarial-loop-docs.md`.
-
-## Mode Selection
-
-The calling skill determines the mode:
-
-| Skill | Default mode | Override to `--mode security` when |
-|-------|-------------|-----------------------------------|
-| /build | `--mode code` | Auth, payment, crypto, PII signals in diff |
-| /execute | `--mode code` | Same |
-| /write-tests | `--mode test` | N/A (test mode handles security test patterns) |
-| /write-e2e | `--mode test` | N/A |
-| /refactor | `--mode code` | Same |
+When skipped, state the reason. "Skipped" is NOT a clean pass — make this clear in output.
 
 ## Execution
 
-### Step 1: Check threshold
+### Step 1: Risk override
 
-Check for high-risk file patterns (for security mode override).
+The calling skill sets the default mode. Check if high-risk signals require an override:
 
 ```
 HIGH_RISK = diff content contains: auth, guard, token, session, payment, billing,
@@ -43,78 +36,107 @@ HIGH_RISK = diff content contains: auth, guard, token, session, payment, billing
          OR file paths match: */migrations/*, schema.prisma, *.sql, */auth/*,
             */payment/*, */billing/*, */crypto/*
 
-IF HIGH_RISK:
-  Override mode to --mode security
+IF HIGH_RISK AND mode is "code":
+  Override to --mode security
+
+IF HIGH_RISK AND file paths match */migrations/*, schema.prisma, *.sql:
+  Override to --mode migrate
 ```
 
-No line-count threshold. Run on every diff regardless of size.
+### Mode table
+
+| Skill | Default mode | Risk override |
+|-------|-------------|---------------|
+| /build | `code` | `security` or `migrate` on high-risk signals |
+| /execute | `code` | same |
+| /write-tests | `test` | N/A |
+| /write-e2e | `test` | N/A |
+| /refactor | `code` | `security` on high-risk signals |
+| /debug | `code` | `security` on high-risk signals |
+| /fix-tests | `test` | N/A |
+| /receive-review | `code` | `security` on high-risk signals |
+| /seo-fix | `code` | N/A |
 
 ### Step 2: Run adversarial review
 
-Stage changes, then run the script in a **single foreground Bash call**. The script auto-detects all available providers, runs them in parallel, and returns merged results. Do NOT manage providers yourself — the script handles everything.
+Run the script as a **single foreground Bash call**. The script auto-detects available providers and returns results. Do NOT manage providers yourself.
 
 ```bash
-git add -u  # only tracked files — never stage untracked secrets/env files
-git diff --staged | adversarial-review --json --mode {MODE}
+git add -u
+git diff --staged | adversarial-review --json --single --mode {MODE}
 ```
 
-Where `{MODE}` is set by the calling skill (see Mode Selection table above).
+Use `--single` (first available provider, fastest). Multi-provider mode is reserved for `/review` and dedicated review flows.
 
-**IMPORTANT:** Run this as a foreground Bash call. Wait for the complete output before proceeding to Step 3. Do NOT read results early or use background execution.
+**If staged diff doesn't reflect the skill's changes** (e.g., skill worked on explicit files, not staged): use `--files` instead:
+```bash
+adversarial-review --json --single --mode {MODE} --files "path/to/changed/file.ts"
+```
 
-**If `adversarial-review` is not in PATH:** try `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh` as fallback.
+**IMPORTANT:** Run as foreground Bash call. Wait for complete output before proceeding. Do NOT use background execution.
 
-**If the script exits non-zero with empty output:** no provider was available. Note `adversarial review: skipped (no provider available)` and proceed normally.
+**If `adversarial-review` is not in PATH:** try `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`.
 
-**If the output is not valid JSON:** treat entire output as text findings. Do NOT fail the loop.
+**If the script exits non-zero with empty output:** note `adversarial review: skipped (no provider available)` and proceed.
 
-### Step 3: Apply fix policy
+**If output is not valid JSON:** treat as raw text findings. Do NOT try to parse severity programmatically from prose. Present raw text in the adversarial section. Do NOT auto-fix based on unstructured output.
+
+### Step 3: Meta-review check
+
+```
+IF findings == 0 AND diff_lines > 150:
+  Add to output: "⚠ Adversarial returned clean on 150+ line diff — possible false negative. Consider running zuvo:review for thorough multi-provider check."
+```
+
+### Step 4: Apply fix policy
 
 ```
 For each finding:
 
   CRITICAL  ->  Fix immediately. No exceptions.
-  
-  WARNING   ->  Estimate fix size:
-                  < 10 lines changed  ->  Fix immediately
-                  >= 10 lines changed ->  Do NOT fix. Add to "known concerns" in output.
-  
-  INFO      ->  Do NOT fix. Add to "known concerns" in output.
+
+  WARNING   ->  Is the fix < 10 lines AND localized (same file, no cross-file impact)?
+                  YES  ->  Fix immediately
+                  NO   ->  Do NOT fix. Add to "known concerns."
+
+  INFO      ->  Do NOT fix. Add to "known concerns."
 ```
 
-### Step 4: Re-run after fixes (max 1 re-run)
+**Known concerns limit:** Max 3 items, one line each, highest severity first. If more than 3, keep top 3 and note "(N more omitted)".
 
-If Step 3 fixed any CRITICAL or WARNING findings:
+### Step 5: Validation re-run (max 1)
 
-1. Stage fixes: `git add -u  # only tracked files — never stage untracked secrets/env files`
-2. Re-run: dispatch 2 agents again (same as Step 2), merge results
-3. If new CRITICAL found in re-run: do NOT attempt another fix. Add to "known concerns" and STOP. (Prevents shipping unvalidated fixes.)
-4. If only WARNING/INFO: add to known concerns, do not fix
+If Step 4 fixed any CRITICAL or WARNING:
 
-**Hard limit: 2 total adversarial calls per task.** No third run. Prevents infinite loop.
+1. Stage fixes: `git add -u`
+2. Re-run: `git diff --staged | adversarial-review --json --single --mode {MODE}`
+3. **This is a validation run, NOT a new repair cycle.** If new issues found:
+   - New CRITICAL → add to known concerns, STOP. Do NOT attempt another fix.
+   - New WARNING caused by previous fix → add to known concerns, STOP.
+   - Only INFO → add to known concerns, proceed.
 
-### Step 5: Present to user
+**Hard limit: 2 total adversarial calls per task.** No third run.
 
-**Presentation policy — this determines what the user sees:**
+### Step 6: Present to user
 
-| Unresolved findings | Presentation | Wording |
-|---------------------|-------------|---------|
+| State | Presentation | Wording |
+|-------|-------------|---------|
 | No findings | Normal delivery | "complete" |
-| Only INFO | Normal delivery | "complete" + known concerns section |
+| Clean on large diff (150+ lines) | Normal with note | "complete" + false-negative warning |
+| Only INFO | Normal delivery | "complete" + known concerns |
 | Unresolved WARNING | Deliver with disclosure | "complete" + explicit WARNING list |
-| Unresolved CRITICAL | **DO NOT present as "gotowe/complete"** | "implementation done, but adversarial review found unresolved critical issue(s)" |
+| Unresolved CRITICAL | **DO NOT say "complete"** | "implementation done, but adversarial review found unresolved critical issue(s)" |
+| Skipped | Normal with note | "complete" + `adversarial review: skipped ([reason])` |
 
 **Output format:**
 
-When findings were found and fixed:
 ```
 [task description] complete
 Adversarial review ([provider]): [N] issues found, [N] fixed
   Fixed:
   - [CRITICAL] [description] ([file]:[line])
-  - [WARNING] [description] ([file]:[line])
   Known concerns (not fixed):
-  - [WARNING] [description] -- requires architecture change
+  - [WARNING] [description] — non-local fix
   - [INFO] [description]
 ```
 
@@ -130,80 +152,30 @@ When skipped:
 Adversarial review: skipped ([reason])
 ```
 
-Valid skip reasons: `config-only changes`, `no provider available`, `script timeout`
-
-When provider returned bad output:
-```
-[task description] complete
-Adversarial review ([provider]): [RAW -- provider returned non-standard output]
-[raw text from provider]
-```
+Valid skip reasons: `config-only changes`, `mechanical-only changes`, `no provider available`, `script not found`
 
 ---
 
 ## Integration Points
 
-Each calling skill adds the adversarial loop at a specific phase.
+Each skill adds the adversarial loop at a specific phase. The loop is **MANDATORY** at these points — the agent does not decide whether to run it.
 
-### /build — after Phase 4 (implementation + tests passing)
-
-```
-Phase 4: Implementation complete, tests pass
-  -> [ADVERSARIAL LOOP]
-  -> Present results to user
-```
-
-Add to SKILL.md:
-```markdown
-### Adversarial Loop
-
-Read and execute `../../shared/includes/adversarial-loop.md`.
-Set ADVERSARIAL_MODE to "code" (or "security" if auth/payment/crypto signals detected in diff).
-```
-
-### /write-tests — after all tests written and passing
-
-```
-Tests written and passing
-  -> [ADVERSARIAL LOOP --mode test]
-  -> Present results to user
-```
-
-Add to SKILL.md:
-```markdown
-### Adversarial Loop
-
-Read and execute `../../shared/includes/adversarial-loop.md`.
-Set ADVERSARIAL_MODE to "test".
-```
-
-### /execute — after Step 7 (Phase 2 — not yet integrated)
-
-```
-Step 7: Quality review passes
-  -> [ADVERSARIAL LOOP]
-  -> Confidence gate
-  -> Present results
-```
-
-### /write-e2e (Phase 2 — not yet integrated)
-
-Same as /write-tests, ADVERSARIAL_MODE = "test".
-
-### /refactor (Phase 2 — not yet integrated)
-
-```
-ETAP-2: Refactoring applied, tests pass
-  -> [ADVERSARIAL LOOP]
-  -> CQ audit agent
-  -> Present results
-```
+### /build — Phase 4.4 (after implementation + tests passing)
+### /write-tests — Phase 4.5 (after all tests written and passing)
+### /execute — Step 7b (after quality review passes, every task)
+### /refactor — Phase 4 (after CQ Post-Audit)
+### /debug — Phase 4.6 (after CQ self-eval)
+### /fix-tests — Step 5 (after all tests pass)
+### /receive-review — after all fixes implemented
+### /write-e2e — Phase 3 (after quality gates pass)
+### /seo-fix — Phase 3 (after verify/build passes)
 
 ---
 
 ## What This Is NOT
 
-- **Not a replacement for zuvo:review** — this is a quick, single-provider check during writing. zuvo:review is a full multi-pass audit with confidence scoring, CQ evaluation, and multi-provider adversarial.
-- **Not a quality gate** — adversarial loop does not block the skill from completing (except: unresolved CRITICAL changes the presentation wording). It finds and fixes what it can, notes the rest, and moves on.
-- **Not recursive** — max 2 adversarial calls per task. The third opinion is zuvo:review's job.
-- **Not proof of correctness** — "adversarial clean" means this specific model, at this moment, with this context window, found nothing. Different run, different model, different context = potentially different findings.
+- **Not a replacement for zuvo:review** — this uses `--single` (one provider). zuvo:review uses multi-provider with confidence scoring.
+- **Not a quality gate** — does not block completion (except: unresolved CRITICAL changes wording).
+- **Not recursive** — max 2 calls. Third opinion is zuvo:review's job.
+- **Not proof of correctness** — "clean pass" means one model found nothing. Different model = potentially different findings.
+- **Not optional** — if referenced by a skill, it runs. The agent does not skip it.
