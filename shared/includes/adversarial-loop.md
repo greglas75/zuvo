@@ -35,24 +35,24 @@ The calling skill determines the mode:
 
 ### Step 1: Check threshold
 
-Count changed lines. Check for high-risk file patterns.
+Check for high-risk file patterns (for security mode override).
 
 ```
-CHANGED_LINES = count insertions + deletions from git diff --staged --stat
 HIGH_RISK = diff content contains: auth, guard, token, session, payment, billing,
             charge, migration, schema, encrypt, decrypt, hash, secret, password, pii
          OR file paths match: */migrations/*, schema.prisma, *.sql, */auth/*,
             */payment/*, */billing/*, */crypto/*
 
-IF CHANGED_LINES < 30 AND NOT HIGH_RISK:
-  Skip adversarial. Set ADVERSARIAL_RESULT = "skipped (diff < 30 lines, no high-risk signals)"
-  Go to Step 5.
+IF HIGH_RISK:
+  Override mode to --mode security
 ```
+
+No line-count threshold. Run on every diff regardless of size.
 
 ### Step 2: Run adversarial review
 
 ```bash
-SCRIPT_PATH="{plugin_root}/scripts/adversarial-review.sh"
+SCRIPT_PATH="../../scripts/adversarial-review.sh"
 ```
 
 If script not found or not executable: skip, note in output, proceed normally.
@@ -151,7 +151,7 @@ When skipped:
 Adversarial review: skipped ([reason])
 ```
 
-Valid skip reasons: `diff < 30 lines, no high-risk signals`, `config-only changes`, `no provider available`, `script timeout`
+Valid skip reasons: `config-only changes`, `no provider available`, `script timeout`
 
 When provider returned bad output:
 ```
@@ -178,7 +178,7 @@ Add to SKILL.md:
 ```markdown
 ### Adversarial Loop
 
-Read and execute `{plugin_root}/shared/includes/adversarial-loop.md`.
+Read and execute `../../shared/includes/adversarial-loop.md`.
 Set ADVERSARIAL_MODE to "code" (or "security" if auth/payment/crypto signals detected in diff).
 ```
 
@@ -194,7 +194,7 @@ Add to SKILL.md:
 ```markdown
 ### Adversarial Loop
 
-Read and execute `{plugin_root}/shared/includes/adversarial-loop.md`.
+Read and execute `../../shared/includes/adversarial-loop.md`.
 Set ADVERSARIAL_MODE to "test".
 ```
 

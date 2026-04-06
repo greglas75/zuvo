@@ -1,6 +1,6 @@
 # Defensive Code Patterns — Core
 
-Writing patterns only. Read BEFORE producing code. Full version with examples: `{plugin_root}/rules/cq-patterns.md`.
+Writing patterns only. Read BEFORE producing code. Full version with examples: `../../rules/cq-patterns.md`.
 
 ---
 

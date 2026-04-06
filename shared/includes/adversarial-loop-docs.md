@@ -50,7 +50,7 @@ The script (`adversarial-review.sh`) handles this internally — the calling ski
 ### Step 2: Dispatch
 
 ```bash
-SCRIPT_PATH="{plugin_root}/scripts/adversarial-review.sh"
+SCRIPT_PATH="../../scripts/adversarial-review.sh"
 ```
 
 If script not found or not executable: skip, note in output, proceed normally.
