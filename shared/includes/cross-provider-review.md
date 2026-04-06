@@ -94,24 +94,28 @@ If no cross-provider tool is available:
 ## Installation (for users)
 
 ```bash
-# Recommended: Gemini CLI (free)
-npm install -g @google/gemini-cli
-gemini   # first run: login with Google account
-
-# Alternative: Codex CLI
+# Recommended: Codex CLI (fastest, needs ChatGPT sub)
 npm install -g @openai/codex
 codex    # first run: login with ChatGPT
 
-# Alternative: Ollama (local, free, needs GPU)
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull qwen2.5-coder:32b
+# Alternative: Gemini CLI (free)
+npm install -g @google/gemini-cli
+gemini   # first run: login with Google account
+
+# Alternative: Claude CLI (comes with Claude Code)
+# Already installed if you use Claude Code.
+
+# Alternative: Gemini API (free tier, 250 req/day)
+export GEMINI_API_KEY=<key from aistudio.google.com>
 ```
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ZUVO_REVIEW_PROVIDER` | (auto-detect) | Force a specific provider: `gemini`, `codex`, `ollama` |
-| `ZUVO_OLLAMA_MODEL` | `qwen2.5-coder:32b` | Ollama model for local review |
+| `ZUVO_REVIEW_PROVIDER` | (auto-detect) | Force: `codex-fast`, `gemini`, `claude`, `gemini-api`, `codex-mcp` |
 | `ZUVO_CODEX_MODEL` | (default) | Codex model override |
-| `ZUVO_GEMINI_MODEL` | (default) | Gemini model override |
+| `ZUVO_GEMINI_MODEL` | `gemini-3.1-pro-preview` | Gemini CLI model |
+| `ZUVO_GEMINI_API_MODEL` | `gemini-3.1-pro-preview` | Gemini API model |
+| `GEMINI_API_KEY` | — | Required for gemini-api provider |
+| `CLAUDE_MODEL` | — | Used for opposite-model detection |

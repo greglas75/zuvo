@@ -20,7 +20,6 @@ set -euo pipefail
 
 # ─── Configuration ──────────────────────────────────────────────
 
-OLLAMA_MODEL="${ZUVO_OLLAMA_MODEL:-qwen2.5-coder:32b}"
 CODEX_MODEL="${ZUVO_CODEX_MODEL:-}"
 GEMINI_MODEL="${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}"
 
@@ -45,7 +44,6 @@ while [[ $# -gt 0 ]]; do
     --context)   CONTEXT_HINT="$2"; shift 2 ;;
     --diff)      DIFF_REF="$2"; INPUT_MODE="diff"; shift 2 ;;
     --files)     FILES="$2"; INPUT_MODE="files"; shift 2 ;;
-    --model)     OLLAMA_MODEL="$2"; shift 2 ;;
     --help|-h)
       cat <<'HELP'
 Usage: adversarial-review.sh [OPTIONS] [--diff REF] [--files "f1 f2"]
@@ -53,7 +51,7 @@ Usage: adversarial-review.sh [OPTIONS] [--diff REF] [--files "f1 f2"]
 Provider options:
   (default)        Multi: run ALL available providers
   --single         First-success: stop after first provider
-  --provider P     Force: gemini, codex, ollama
+  --provider P     Force: codex-fast, gemini, claude, gemini-api, codex-mcp
 
 Review modes:
   --mode code      (default) General code review
@@ -70,11 +68,13 @@ Input:
   (stdin)          Pipe a diff
 
 Environment variables:
-  ZUVO_REVIEW_PROVIDER   Force provider
-  ZUVO_REVIEW_TIMEOUT    Per-provider timeout in seconds (default: 120)
-  ZUVO_OLLAMA_MODEL      Ollama model (default: qwen2.5-coder:32b)
-  ZUVO_CODEX_MODEL       Codex model override
-  ZUVO_GEMINI_MODEL      Gemini model override
+  ZUVO_REVIEW_PROVIDER     Force provider
+  ZUVO_REVIEW_TIMEOUT      Per-provider timeout in seconds (default: 300)
+  ZUVO_CODEX_MODEL         Codex model override
+  ZUVO_GEMINI_MODEL        Gemini CLI model (default: gemini-3.1-pro-preview)
+  ZUVO_GEMINI_API_MODEL    Gemini API model (default: gemini-3.1-pro-preview)
+  GEMINI_API_KEY           Required for gemini-api provider
+  CLAUDE_MODEL             Used for opposite-model detection (claude provider)
 HELP
       exit 0
       ;;
@@ -243,38 +243,31 @@ $INPUT"
 
 detect_providers() {
   # Returns space-separated list of available providers in priority order
-  # OAuth-fast (2-5s, free) > API key (2-5s, paid) > MCP (25-30s) > CLI (90s+)
   local providers=""
 
-  # Gemini: OAuth-fast (2-5s, free) > API key (2-5s, paid) > CLI (90s+, free but slow)
-  local script_dir
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  if [[ -x "$script_dir/gemini-fast.sh" && -f "$HOME/.gemini/oauth_creds.json" ]]; then
-    providers="gemini-fast"
-  elif [[ -n "${GEMINI_API_KEY:-}" ]]; then
-    providers="gemini-api"
-  elif command -v gemini &>/dev/null; then
-    providers="gemini"
-  fi
-
-  # Codex: MCP (fast, ~25s) > CLI exec (slow, ~90s+)
+  # 1. codex-fast — codex exec with empty CODEX_HOME (0 MCP, 4.5-23s)
   local codex_bin=""
   if command -v codex &>/dev/null; then
     codex_bin="codex"
   elif [[ -x "/Applications/Codex.app/Contents/Resources/codex" ]]; then
     codex_bin="/Applications/Codex.app/Contents/Resources/codex"
   fi
-  if [[ -n "$codex_bin" ]]; then
-    # Prefer MCP if mcp-server subcommand exists
-    if "$codex_bin" mcp-server --help &>/dev/null 2>&1; then
-      providers="$providers codex-mcp"
-    else
-      providers="$providers codex-app"
-    fi
-  fi
+  [[ -n "$codex_bin" ]] && providers="codex-fast"
 
-  # Ollama: disabled by default (too slow for review loops).
-  # Use --provider ollama to force it.
+  # 2. gemini — CLI with MCP disabled (~11s)
+  command -v gemini &>/dev/null && providers="$providers gemini"
+
+  # 3. claude — CLI with opposite model (10-30s)
+  command -v claude &>/dev/null && providers="$providers claude"
+
+  # 4. gemini-api — curl + API key (15-60s)
+  [[ -n "${GEMINI_API_KEY:-}" ]] && providers="$providers gemini-api"
+
+  # 5. codex-mcp — JSON-RPC stdio (25-30s)
+  # Intentional literal 5s timeout (startup probe, not a review)
+  if [[ -n "$codex_bin" ]] && timeout 5 "$codex_bin" mcp-server --help &>/dev/null; then
+    providers="$providers codex-mcp"
+  fi
 
   echo "$providers"
 }
@@ -291,57 +284,61 @@ ERROR: No cross-provider review tool found.
 
 Install one of these (in order of recommendation):
 
-  1. Gemini CLI (free, recommended):
-     npm install -g @google/gemini-cli
-     gemini   # first run: login with Google account
-
-  2. Codex CLI (needs ChatGPT sub or API key):
+  1. Codex CLI (fastest, needs ChatGPT sub):
      npm install -g @openai/codex
      codex    # first run: login with ChatGPT
 
-  3. Ollama (free, local, needs GPU):
-     curl -fsSL https://ollama.com/install.sh | sh
-     ollama pull qwen2.5-coder:32b
+  2. Gemini CLI (free, recommended):
+     npm install -g @google/gemini-cli
+     gemini   # first run: login with Google account
+
+  3. Claude CLI (needs Anthropic account):
+     Already installed if you use Claude Code.
+
+  4. Gemini API (free tier, 250 req/day):
+     export GEMINI_API_KEY=<key from aistudio.google.com>
 EOF
   exit 1
 fi
 
 # ─── Provider execution ─────────────────────────────────────────
 
-run_gemini_fast() {
-  # OAuth-fast path — uses gemini-fast.sh (2-5s, free, reuses CLI's OAuth)
-  local script_dir
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  local fast_script="$script_dir/gemini-fast.sh"
+run_codex_fast() {
+  local codex_cmd
+  codex_cmd=$(command -v codex || echo "/Applications/Codex.app/Contents/Resources/codex")
+  local tmp_home="$JSON_TMPDIR/codex_home"
+  mkdir -p "$tmp_home"
 
-  [[ -x "$fast_script" ]] || return 1
+  CODEX_HOME="$tmp_home" timeout "$PROVIDER_TIMEOUT" \
+    "$codex_cmd" exec --sandbox read-only --model gpt-5.4 \
+    -m "$REVIEW_PROMPT" 2>/dev/null || return 1
+}
 
-  local model_flag=""
-  if [[ -n "$GEMINI_MODEL" ]]; then
-    model_flag="--model $GEMINI_MODEL"
+run_claude() {
+  local model
+  if [[ "${CLAUDE_MODEL:-}" == *opus* ]]; then
+    model="claude-sonnet-4-6"
+  else
+    model="claude-opus-4-6"
   fi
 
-  printf '%s\n' "$REVIEW_PROMPT" | "$fast_script" $model_flag
+  printf '%s' "$REVIEW_PROMPT" \
+    | timeout "$PROVIDER_TIMEOUT" claude --model "$model" --print --output-format text 2>/dev/null \
+    || return 1
 }
 
 run_gemini() {
-  local model_flag=""
-  if [[ -n "$GEMINI_MODEL" ]]; then
-    model_flag="--model $GEMINI_MODEL"
-  fi
+  local model="${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}"
 
   # Write prompt to temp file, pass via stdin (avoids ARG_MAX on large diffs)
-  local prompt_file
-  prompt_file=$(mktemp)
-  trap 'rm -f "$prompt_file"' RETURN
+  local prompt_file="$JSON_TMPDIR/gemini_prompt.txt"
   printf '%s\n' "$REVIEW_PROMPT" > "$prompt_file"
 
   local result status=0
-  if command -v gemini &>/dev/null; then
-    result=$(gemini -p "Review the code below." --sandbox $model_flag < "$prompt_file") || status=$?
-  else
-    result=$(npx --yes @google/gemini-cli -p "Review the code below." --sandbox $model_flag < "$prompt_file") || status=$?
-  fi
+  result=$(timeout "$PROVIDER_TIMEOUT" gemini \
+    --allowed-mcp-server-names __NONE__ \
+    --model "$model" \
+    -p "Review the code below." < "$prompt_file" 2>/dev/null) || status=$?
 
   if [[ $status -ne 0 || -z "$result" ]]; then
     return 1
@@ -355,7 +352,7 @@ run_gemini_api() {
 
   # Sanitize model name (prevent URL injection)
   local model
-  model=$(printf '%s' "${ZUVO_GEMINI_API_MODEL:-gemini-3-flash-preview}" | tr -cd 'a-zA-Z0-9._-')
+  model=$(printf '%s' "${ZUVO_GEMINI_API_MODEL:-gemini-3.1-pro-preview}" | tr -cd 'a-zA-Z0-9._-')
 
   # Build JSON payload via temp file (avoids ARG_MAX on large prompts)
   local payload_file
@@ -385,13 +382,13 @@ run_gemini_api() {
 }
 
 run_codex_mcp() {
-  # Codex MCP server — JSON-RPC over stdio. ~3x faster than CLI exec.
+  # Codex MCP server — JSON-RPC over stdio, synchronous with timeout.
+  # No nested background, no polling loop. timeout kills entire pipeline.
   local codex_cmd="codex"
   if ! command -v codex &>/dev/null; then
     codex_cmd="/Applications/Codex.app/Contents/Resources/codex"
   fi
 
-  # Escape prompt for JSON embedding
   local prompt_json
   prompt_json=$(printf '%s' "$REVIEW_PROMPT" | jq -Rs '.')
 
@@ -399,89 +396,21 @@ run_codex_mcp() {
   local call_msg
   call_msg=$(printf '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"codex","arguments":{"prompt":%s,"sandbox":"read-only"}}}' "$prompt_json")
 
-  # Use FIFO so we can read response as it arrives (not after sleep)
-  local mcp_dir
-  mcp_dir=$(mktemp -d)
-  mkfifo "$mcp_dir/input"
+  local mcp_output="$JSON_TMPDIR/codex_mcp_output.txt"
 
-  # Start MCP server with FIFO input, capture output to file
-  "$codex_cmd" mcp-server < "$mcp_dir/input" > "$mcp_dir/output" 2>/dev/null &
-  local mcp_pid=$!
-
-  # Send init, wait, send tool call
-  {
-    printf '%s\n' "$init_msg"
+  # Synchronous pipe — timeout kills the entire process group on deadline
+  timeout "$PROVIDER_TIMEOUT" bash -c '
+    printf "%s\n" "$1"
     sleep 1
-    printf '%s\n' "$call_msg"
-    # Keep FIFO open until we're done reading
-    sleep "$PROVIDER_TIMEOUT"
-  } > "$mcp_dir/input" &
-  local writer_pid=$!
+    printf "%s\n" "$2"
+    sleep 300
+  ' _ "$init_msg" "$call_msg" \
+    | "$codex_cmd" mcp-server > "$mcp_output" 2>/dev/null || true
 
-  # Poll for result (id:2 with "result" key)
-  local elapsed=0
-  while [[ $elapsed -lt $PROVIDER_TIMEOUT ]]; do
-    if grep -q '"id":2.*"result"' "$mcp_dir/output" 2>/dev/null; then
-      break
-    fi
-    sleep 2
-    elapsed=$((elapsed + 2))
-  done
-
-  # Cleanup processes (suppress "Terminated" messages)
-  { kill "$writer_pid" "$mcp_pid" 2>/dev/null; wait "$writer_pid" "$mcp_pid" 2>/dev/null; } 2>/dev/null
-
-  # Extract result
-  local text=""
-  if [[ -f "$mcp_dir/output" ]]; then
-    text=$(grep '"id":2' "$mcp_dir/output" 2>/dev/null | grep '"result"' | jq -r '.result.content[0].text // empty' 2>/dev/null)
-  fi
-
-  rm -rf "$mcp_dir"
-
-  if [[ -z "$text" ]]; then
-    return 1
-  fi
+  local text
+  text=$(jq -r 'select(.id == 2) | .result.content[0].text // empty' "$mcp_output" 2>/dev/null)
+  [[ -z "$text" ]] && return 1
   printf '%s\n' "$text"
-}
-
-run_codex() {
-  # Legacy CLI exec — fallback if MCP not available
-  local codex_cmd="codex"
-  if ! command -v codex &>/dev/null; then
-    codex_cmd="/Applications/Codex.app/Contents/Resources/codex"
-  fi
-
-  local -a codex_args=(exec --sandbox read-only)
-  if [[ -n "$CODEX_MODEL" ]]; then
-    local safe_model
-    safe_model=$(printf '%s' "$CODEX_MODEL" | tr -cd 'a-zA-Z0-9._-')
-    codex_args+=(-c "model=$safe_model")
-  fi
-
-  printf '%s' "$REVIEW_PROMPT" | "$codex_cmd" "${codex_args[@]}" -
-}
-
-run_ollama() {
-  # Check if preferred model is available, fall back to any available coding model
-  local model="$OLLAMA_MODEL"
-  if ! ollama list 2>/dev/null | grep -q "$model"; then
-    # Try common coding models in order
-    for fallback in "qwen2.5-coder:14b" "qwen2.5-coder:7b" "mistral-small" "mistral"; do
-      if ollama list 2>/dev/null | grep -q "$fallback"; then
-        echo "  NOTE: $model not found, using $fallback" >&2
-        model="$fallback"
-        break
-      fi
-    done
-    # If still not found, try to pull the preferred model
-    if ! ollama list 2>/dev/null | grep -q "$model"; then
-      echo "  Pulling $model (first run only)..." >&2
-      ollama pull "$model" >&2
-    fi
-  fi
-
-  echo "$REVIEW_PROMPT" | ollama run "$model" --nowordwrap 2>/dev/null
 }
 
 # ─── Determine mode ────────────────────────────────────────────
@@ -493,122 +422,104 @@ elif [[ -z "$MULTI_MODE" ]]; then
   MULTI_MODE="multi"
 fi
 
+# ─── Unified dispatch ──────────────────────────────────────────
+
+dispatch_provider() {
+  local provider="$1"
+  case "$provider" in
+    codex-fast)  run_codex_fast ;;
+    gemini)      run_gemini ;;
+    claude)      run_claude ;;
+    gemini-api)  run_gemini_api ;;
+    codex-mcp)   run_codex_mcp ;;
+    *) return 1 ;;
+  esac
+}
+
 # ─── Execute ───────────────────────────────────────────────────
 
 echo "CROSS-PROVIDER REVIEW" >&2
 echo "  Input: ${#INPUT} chars" >&2
 echo "  Review: $REVIEW_MODE | Output: $OUTPUT_FORMAT | Dispatch: $MULTI_MODE" >&2
 
+# ─── Preflight checks ──────────────────────────────────────────
+
+command -v timeout &>/dev/null || { echo "ERROR: GNU timeout required. Install: brew install coreutils" >&2; exit 1; }
+
 PROVIDER_TIMEOUT="${ZUVO_REVIEW_TIMEOUT:-300}"
-
-run_provider() {
-  local p="$1"
-  local tmpfile
-  tmpfile=$(mktemp)
-
-  # Run provider in background subshell with timeout
-  (
-    case "$p" in
-      gemini-fast)       run_gemini_fast ;;
-      gemini-api)        run_gemini_api ;;
-      gemini|gemini-npx) run_gemini ;;
-      codex-mcp)         run_codex_mcp ;;
-      codex|codex-app)   run_codex ;;
-      ollama)            run_ollama ;;
-      *) exit 1 ;;
-    esac
-  ) > "$tmpfile" 2>/dev/null &
-  local provider_pid=$!
-
-  # Wait with poll-based timeout (kills only provider, not parent)
-  local elapsed=0
-  while kill -0 "$provider_pid" 2>/dev/null; do
-    sleep 2
-    elapsed=$((elapsed + 2))
-    if [[ $elapsed -ge $PROVIDER_TIMEOUT ]]; then
-      kill "$provider_pid" 2>/dev/null
-      wait "$provider_pid" 2>/dev/null
-      echo "  TIMEOUT after ${PROVIDER_TIMEOUT}s" >&2
-      rm -f "$tmpfile"
-      return 1
-    fi
-  done
-
-  wait "$provider_pid" 2>/dev/null
-  cat "$tmpfile"
-  rm -f "$tmpfile"
-}
-
-display_name() {
-  local p="$1"
-  p="${p/gemini-fast/gemini}"
-  p="${p/gemini-api/gemini}"
-  p="${p/gemini-npx/gemini}"
-  p="${p/codex-mcp/codex}"
-  p="${p/codex-app/codex}"
-  echo "$p"
-}
 
 ALL_RESULTS=""
 PROVIDERS_USED=""
 PROVIDER_COUNT=0
 JSON_TMPDIR=$(mktemp -d)
-trap 'rm -rf "$JSON_TMPDIR"' EXIT
+declare -a PIDS=()
+cleanup() {
+  [[ ${#PIDS[@]} -gt 0 ]] && kill "${PIDS[@]}" 2>/dev/null
+  wait 2>/dev/null
+  rm -rf "$JSON_TMPDIR"
+}
+trap cleanup EXIT INT TERM
 
 if [[ "$MULTI_MODE" == "multi" ]]; then
-  # ── PARALLEL: launch all providers at once, collect results ──
+  # ── PARALLEL: launch providers directly (no run_provider wrapper) ──
   declare -a PIDS=()
   declare -a PNAMES=()
 
   for p in $PROVIDERS; do
-    local_display=$(display_name "$p")
-    echo "  Launching: $local_display..." >&2
-    run_provider "$p" > "$JSON_TMPDIR/result_${local_display}.txt" 2>/dev/null &
+    outfile="$JSON_TMPDIR/result_${p}.txt"
+    echo "  Launching: $p..." >&2
+
+    (
+      dispatch_provider "$p" || exit 1
+    ) > "$outfile" 2>/dev/null &
     PIDS+=($!)
-    PNAMES+=("$local_display")
+    PNAMES+=("$p")
   done
 
-  # Wait for all to finish
-  for i in "${!PIDS[@]}"; do
-    wait "${PIDS[$i]}" 2>/dev/null || true
-    local_display="${PNAMES[$i]}"
-    result_file="$JSON_TMPDIR/result_${local_display}.txt"
+  # Wait for all providers — each has its own timeout inside the provider function
+  for pid in "${PIDS[@]}"; do
+    wait "$pid" 2>/dev/null || true
+  done
+
+  # Collect results
+  for i in "${!PNAMES[@]}"; do
+    local_name="${PNAMES[$i]}"
+    result_file="$JSON_TMPDIR/result_${local_name}.txt"
 
     if [[ -s "$result_file" ]]; then
       PROVIDER_COUNT=$((PROVIDER_COUNT + 1))
-      PROVIDERS_USED="${PROVIDERS_USED:+$PROVIDERS_USED, }$local_display"
-      upper_display=$(echo "$local_display" | tr '[:lower:]' '[:upper:]')
+      PROVIDERS_USED="${PROVIDERS_USED:+$PROVIDERS_USED, }$local_name"
+      upper_name=$(echo "$local_name" | tr '[:lower:]' '[:upper:]')
       RESULT=$(cat "$result_file")
       ALL_RESULTS="${ALL_RESULTS}
 
 ###############################################################
-###   REVIEW BY: ${upper_display}
+###   REVIEW BY: ${upper_name}
 ###############################################################
 
 $RESULT
 "
-      echo "  Done: $local_display" >&2
+      echo "  Done: $local_name" >&2
     else
-      echo "  WARN: $local_display failed or returned empty." >&2
+      echo "  WARN: $local_name failed or returned empty." >&2
     fi
   done
 
 else
   # ── SINGLE: stop at first successful provider ──
   for p in $PROVIDERS; do
-    local_display=$(display_name "$p")
-    echo "  Running: $local_display..." >&2
+    echo "  Running: $p..." >&2
 
-    RESULT=$(run_provider "$p") || true
+    RESULT=$(dispatch_provider "$p" 2>/dev/null) || true
 
     if [[ -n "$RESULT" ]]; then
       PROVIDER_COUNT=$((PROVIDER_COUNT + 1))
-      PROVIDERS_USED="$local_display"
-      echo "$RESULT" > "$JSON_TMPDIR/result_${local_display}.txt"
+      PROVIDERS_USED="$p"
+      echo "$RESULT" > "$JSON_TMPDIR/result_${p}.txt"
       ALL_RESULTS="$RESULT"
       break
     else
-      echo "  WARN: $local_display failed or returned empty." >&2
+      echo "  WARN: $p failed or returned empty." >&2
     fi
   done
 fi
@@ -625,45 +536,25 @@ fi
 # ─── Output ─────────────────────────────────────────────────────
 
 if [[ "$OUTPUT_FORMAT" == "json" ]]; then
-  # JSON output: wrap provider results into a combined structure
-  # Each provider already returns JSON (when --json is set)
-  # We wrap them with metadata
-  DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  echo "{"
-  echo "  \"mode\": \"$REVIEW_MODE\","
-  echo "  \"providers_used\": \"$PROVIDERS_USED\","
-  echo "  \"provider_count\": $PROVIDER_COUNT,"
-  echo "  \"input_size\": ${#INPUT},"
-  echo "  \"date\": \"$DATE\","
-  echo "  \"results\": {"
+  # JSON output: build with jq for safety (no injection from provider output)
+  json_results="{}"
+  for p in $PROVIDERS; do
+    result_file="$JSON_TMPDIR/result_${p}.txt"
+    if [[ -s "$result_file" ]]; then
+      # Strip markdown fences that LLMs sometimes wrap JSON in
+      cleaned=$(sed 's/^```json//; s/^```//; /^$/d' "$result_file")
+      json_results=$(printf '%s' "$json_results" | jq --arg k "$p" --arg v "$cleaned" '. + {($k): $v}')
+    fi
+  done
 
-  # In single mode, output is raw JSON from one provider
-  if [[ "$MULTI_MODE" != "multi" ]]; then
-    echo "    \"$(echo "$PROVIDERS_USED" | tr -d ' ')\": $ALL_RESULTS"
-  else
-    # Multi mode: each provider's JSON is separated by the banner
-    # Output them as named entries
-    first=true
-    for p in $PROVIDERS; do
-      local_display=$(display_name "$p")
-      if echo "$PROVIDERS_USED" | grep -q "$local_display"; then
-        if [[ "$first" != "true" ]]; then echo ","; fi
-        # Read from temp file (no eval — safe from injection)
-        local result_file="$JSON_TMPDIR/result_${local_display}.txt"
-        if [[ -f "$result_file" ]]; then
-          # Strip markdown fences that LLMs sometimes wrap JSON in
-          printf '    "%s": ' "$local_display"
-          sed 's/^```json//; s/^```//; /^$/d' "$result_file"
-        else
-          echo "    \"$local_display\": {\"findings\":[]}"
-        fi
-        first=false
-      fi
-    done
-  fi
-
-  echo "  }"
-  echo "}"
+  jq -n \
+    --arg mode "$REVIEW_MODE" \
+    --arg providers "$PROVIDERS_USED" \
+    --argjson count "$PROVIDER_COUNT" \
+    --argjson input_size "${#INPUT}" \
+    --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --argjson results "$json_results" \
+    '{mode: $mode, providers_used: $providers, provider_count: $count, input_size: $input_size, date: $date, results: $results}'
 else
   # Text output with banners
   cat <<HEADER

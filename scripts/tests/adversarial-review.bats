@@ -86,10 +86,10 @@ EOF
   chmod +x "$MOCK_BIN/$name"
 }
 
-# Set isolated PATH: mock bin + system essentials only.
-# No /opt/homebrew/bin (ollama), ~/.local/bin (agent), etc.
+# Set isolated PATH: mock bin + system essentials + homebrew (for timeout, jq).
+# No ~/.local/bin (agent), etc.
 isolated_path() {
-  export PATH="$MOCK_BIN:/usr/bin:/bin:/usr/sbin:/sbin"
+  export PATH="$MOCK_BIN:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
 }
 
 # ─── Help & usage ─────────────────────────────────────────────
@@ -282,7 +282,7 @@ isolated_path() {
   [[ "$output" == *"GEMINI_MULTI"* ]]
   [[ "$output" == *"CODEX_MULTI"* ]]
   [[ "$output" == *"REVIEW BY: GEMINI"* ]]
-  [[ "$output" == *"REVIEW BY: CODEX"* ]]
+  [[ "$output" == *"REVIEW BY: CODEX-FAST"* ]]
 }
 
 # ─── Provider execution ──────────────────────────────────────
@@ -351,7 +351,7 @@ isolated_path() {
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT'"
   [ "$status" -eq 0 ]
   [[ "$output" == *"REVIEW BY: GEMINI"* ]]
-  [[ "$output" == *"REVIEW BY: CODEX"* ]]
+  [[ "$output" == *"REVIEW BY: CODEX-FAST"* ]]
 }
 
 @test "--json output produces structured JSON metadata" {
@@ -403,17 +403,18 @@ isolated_path() {
 
 @test "ZUVO_REVIEW_PROVIDER overrides auto-detection" {
   create_mock "gemini" "SHOULD_NOT_RUN"
-  create_mock "codex" "CODEX_VIA_ENV"
+  create_mock "codex" "CODEX_FAST_VIA_ENV"
   isolated_path
 
-  export ZUVO_REVIEW_PROVIDER=codex
+  export ZUVO_REVIEW_PROVIDER=codex-fast
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT'"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"CODEX_VIA_ENV"* ]]
+  [[ "$output" == *"CODEX_FAST_VIA_ENV"* ]]
   [[ "$output" != *"SHOULD_NOT_RUN"* ]]
 }
 
 @test "ZUVO_REVIEW_TIMEOUT kills slow provider" {
+  command -v timeout &>/dev/null || skip "GNU timeout required"
   cat > "$MOCK_BIN/gemini" <<'EOF'
 #!/usr/bin/env bash
 cat > /dev/null 2>&1 || true

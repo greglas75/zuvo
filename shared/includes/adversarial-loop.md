@@ -71,7 +71,7 @@ git add -u  # only tracked files — never stage untracked secrets/env files
 Detect available providers, then randomly select 2 for dispatch. This ensures different model combinations across runs, maximizing blind-spot coverage over time.
 
 ```
-Available providers (check in order): gemini, codex-app, cursor
+Available providers (check in order): codex-fast, gemini, claude, gemini-api, codex-mcp
 Select 2 at random from those available.
 If only 1 available: use that one.
 If 0 available: skip adversarial, note in output.

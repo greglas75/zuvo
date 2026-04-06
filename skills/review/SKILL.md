@@ -694,13 +694,13 @@ After the internal adversarial agent completes, **run** a cross-provider review 
 
 Run `{plugin_root}/scripts/adversarial-review.sh` on the reviewed diff. Dispatch as parallel Agent tasks — one per provider — for maximum speed:
 
-- **TIER 1-2:** Dispatch 2 agents in parallel (Gemini + Codex), merge results
-- **TIER 3:** Dispatch 3 agents in parallel (Gemini + Codex + Cursor), merge results
+- **TIER 1-2:** Dispatch 2 agents in parallel (codex-fast + gemini), merge results
+- **TIER 3:** Dispatch 3 agents in parallel (codex-fast + gemini + claude), merge results
 
 ```
-Agent 1: git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review.sh --provider gemini
-Agent 2: git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review.sh --provider codex-app
-Agent 3 (TIER 3 only): git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review.sh --provider cursor
+Agent 1: git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review.sh --provider codex-fast
+Agent 2: git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review.sh --provider gemini
+Agent 3 (TIER 3 only): git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review.sh --provider claude
 ```
 
 All agents run with `run_in_background: true`. Merge results before the Confidence Gate. If a provider fails or times out, continue with the others.
