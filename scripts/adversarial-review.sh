@@ -335,7 +335,7 @@ run_gemini_api() {
 
   # Sanitize model name (prevent URL injection)
   local model
-  model=$(printf '%s' "${ZUVO_GEMINI_API_MODEL:-gemini-2.5-flash}" | tr -cd 'a-zA-Z0-9._-')
+  model=$(printf '%s' "${ZUVO_GEMINI_API_MODEL:-gemini-3-flash-preview}" | tr -cd 'a-zA-Z0-9._-')
 
   # Build JSON payload via temp file (avoids ARG_MAX on large prompts)
   local payload_file
