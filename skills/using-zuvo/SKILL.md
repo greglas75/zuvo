@@ -9,6 +9,8 @@ description: "ALWAYS LOADED — Zuvo skill router. Injected at session start. De
 
 You have access to the Zuvo skill ecosystem. Before acting on any user request, check the routing table below. If a skill matches, invoke it using the Skill tool. Do not implement the task yourself when a skill exists for it.
 
+**If the user asks "zuvo version", "what version", or "which zuvo"** — print the version banner above and stop. Do not invoke any skill.
+
 ## How Routing Works
 
 1. Read the user's message
