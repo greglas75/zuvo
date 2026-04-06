@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Wrapper — finds adversarial-review.sh relative to this bin/ directory
+SCRIPT_DIR="$(cd "$(dirname "$0")/../scripts" && pwd)"
+exec "$SCRIPT_DIR/adversarial-review.sh" "$@"

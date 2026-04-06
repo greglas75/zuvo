@@ -51,43 +51,22 @@ No line-count threshold. Run on every diff regardless of size.
 
 ### Step 2: Run adversarial review
 
-```bash
-SCRIPT_PATH="../../scripts/adversarial-review.sh"
-```
-
-If script not found or not executable: skip, note in output, proceed normally.
+Stage changes, then run the script in a **single foreground Bash call**. The script auto-detects all available providers, runs them in parallel, and returns merged results. Do NOT manage providers yourself — the script handles everything.
 
 ```bash
 git add -u  # only tracked files — never stage untracked secrets/env files
+git diff --staged | adversarial-review --json --mode {MODE}
 ```
 
-Detect available providers, then randomly select 2 for dispatch. This ensures different model combinations across runs, maximizing blind-spot coverage over time.
+Where `{MODE}` is set by the calling skill (see Mode Selection table above).
 
-```
-Available providers (check in order): codex-fast, gemini, claude, gemini-api, codex-mcp
-Select 2 at random from those available.
-If only 1 available: use that one.
-If 0 available: skip adversarial, note in output.
-```
+**IMPORTANT:** Run this as a foreground Bash call. Wait for the complete output before proceeding to Step 3. Do NOT read results early or use background execution.
 
-Dispatch selected providers in parallel as background Agent tasks — merge results:
+**If `adversarial-review` is not in PATH:** try `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh` as fallback.
 
-```
-Agent 1: git diff --staged | "$SCRIPT_PATH" --provider {RANDOM_PROVIDER_1} --json --mode {MODE}
-Agent 2: git diff --staged | "$SCRIPT_PATH" --provider {RANDOM_PROVIDER_2} --json --mode {MODE}
-```
+**If the script exits non-zero with empty output:** no provider was available. Note `adversarial review: skipped (no provider available)` and proceed normally.
 
-Both run with `run_in_background: true`. Merge findings from both before applying fix policy. If one provider fails or times out, continue with the other.
-
-**Flags per agent:**
-- `--provider X` — one specific provider per agent (parallel, not sequential)
-- `--json` — machine-readable for parsing
-- `--mode` — set by calling skill
-
-**Soft fail on bad JSON:** If the provider returns invalid JSON (markdown fences, trailing text, malformed output), do NOT fail the loop. Instead:
-- Strip markdown fences (```json ... ```)
-- Attempt to extract findings from raw text (look for SEVERITY: / FILE: / ISSUE: patterns)
-- If still unparseable: treat entire output as `unstructured_output`, present raw text to user in the adversarial summary section, tag as `[RAW — provider returned non-standard output]`
+**If the output is not valid JSON:** treat entire output as text findings. Do NOT fail the loop.
 
 ### Step 3: Apply fix policy
 

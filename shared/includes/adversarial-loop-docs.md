@@ -49,22 +49,17 @@ The script (`adversarial-review.sh`) handles this internally — the calling ski
 
 ### Step 2: Dispatch
 
+Run the script in a **single foreground Bash call**. The script auto-detects all available providers, runs them in parallel, and returns merged results. Do NOT manage providers yourself.
+
 ```bash
-SCRIPT_PATH="../../scripts/adversarial-review.sh"
+adversarial-review --json --mode {MODE} --files "{ARTIFACT_PATH}"
 ```
 
-If script not found or not executable: skip, note in output, proceed normally.
+**IMPORTANT:** Run as a foreground Bash call. Wait for the complete output before proceeding to Step 3. Do NOT read results early or use background execution.
 
-Detect available providers, randomly select 2, dispatch in parallel as background Agent tasks:
+**If `adversarial-review` is not in PATH:** try `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh` as fallback.
 
-```
-Agent 1: "$SCRIPT_PATH" --mode {MODE} --provider {RANDOM_PROVIDER_1} --json --files "{ARTIFACT_PATH}"
-Agent 2: "$SCRIPT_PATH" --mode {MODE} --provider {RANDOM_PROVIDER_2} --json --files "{ARTIFACT_PATH}"
-```
-
-Both run with `run_in_background: true`. Merge findings from both before applying fix policy.
-
-**Input method:** Use `--files <path>` to pass the artifact file directly. Do NOT pipe git diff — document artifacts are files, not diffs.
+**If the script exits non-zero with empty output:** no provider was available. Note `adversarial review: skipped (no provider available)` and proceed normally.
 
 ### Step 3: Apply fix policy
 

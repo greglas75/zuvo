@@ -86,6 +86,13 @@ install_claude() {
       chmod +x "$CACHE_DIR"/scripts/*.sh 2>/dev/null || true
     fi
 
+    # Copy bin/ (CLI wrappers — Claude Code adds {plugin_root}/bin to PATH)
+    if [[ -d "$ZUVO_DIR/bin" ]]; then
+      mkdir -p "$CACHE_DIR/bin"
+      cp "$ZUVO_DIR"/bin/* "$CACHE_DIR/bin/" 2>/dev/null || true
+      chmod +x "$CACHE_DIR"/bin/* 2>/dev/null || true
+    fi
+
     # Copy docs (if dir exists in cache)
     if [[ -d "$CACHE_DIR/docs" ]]; then
       cp -r "$ZUVO_DIR"/docs/*.md "$CACHE_DIR/docs/" 2>/dev/null || true
