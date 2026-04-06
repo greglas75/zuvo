@@ -4,16 +4,18 @@
 
 - **Claude Code** installed and working (`claude` command available in your terminal)
 - **Node.js** 18+ (for package.json resolution and hook execution)
+- **GNU coreutils** — required for adversarial review (`brew install coreutils` on macOS)
 - **Bash** available (macOS/Linux native; Windows requires Git Bash or WSL)
 - **Optional:** [codesift-mcp](https://github.com/nicobailey/codesift-mcp) for deep code exploration (semantic search, call chain tracing, complexity analysis). Zuvo works without it but runs in degraded mode.
 
-## Installation
-
-### Via marketplace (recommended)
+## Install
 
 > **Requires Claude Code 1.0.33+.** Check with `claude --version`, update with `claude update` or `npm update -g @anthropic-ai/claude-code`.
 
 ```bash
+# Prerequisite (macOS)
+brew install coreutils
+
 # Add the Zuvo marketplace (one-time)
 claude plugin marketplace add greglas75/zuvo-marketplace
 
@@ -21,7 +23,48 @@ claude plugin marketplace add greglas75/zuvo-marketplace
 claude plugin install zuvo
 ```
 
-### Enable auto-updates
+Restart Claude Code.
+
+## Update
+
+```bash
+claude plugin marketplace update zuvo-marketplace
+claude plugin update zuvo@zuvo-marketplace
+```
+
+Restart Claude Code. Then verify the update applied:
+
+```bash
+echo "test" | ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh --help 2>&1 | grep "mode spec"
+```
+
+If you see `--mode spec` — update successful.
+
+If you don't, or skills behave oddly after update — do a clean reinstall:
+
+```bash
+claude plugin uninstall zuvo@zuvo-marketplace
+claude plugin install zuvo
+```
+
+Restart Claude Code. This is a known Claude Code cache bug (stale SHA in `installed_plugins.json`), not a zuvo issue.
+
+## Check version
+
+```bash
+claude plugin list | grep zuvo
+```
+
+## Troubleshooting
+
+| Problem | Fix |
+|---------|-----|
+| Skills don't load after update | Clean reinstall: `claude plugin uninstall zuvo@zuvo-marketplace && claude plugin install zuvo` |
+| Skills load but skip adversarial review | Stale cache — clean reinstall |
+| `timeout: command not found` in adversarial review | `brew install coreutils` |
+| `/using-zuvo` shows "unknown command" | Plugin not loaded — restart Claude Code |
+
+## Enable auto-updates
 
 After installing, enable automatic updates so new skills and fixes arrive automatically:
 
@@ -31,41 +74,16 @@ After installing, enable automatic updates so new skills and fixes arrive automa
 → Enable auto-update
 ```
 
-Without auto-update, you can update manually anytime:
+## Codex
+
+Zuvo runs on OpenAI Codex. The SKILL.md format is natively compatible (agentskills.io open standard).
 
 ```bash
-claude plugin marketplace update zuvo-marketplace
-claude plugin update zuvo@zuvo-marketplace
+git clone https://github.com/greglas75/zuvo.git ~/zuvo-plugin
+cd ~/zuvo-plugin && ./scripts/install.sh codex
 ```
 
-**If skills don't appear after update** (known Claude Code cache issue):
-```bash
-claude plugin uninstall zuvo@zuvo-marketplace
-claude plugin install zuvo
-```
-Then start a new session. This is a Claude Code plugin cache bug, not a zuvo bug — it sometimes keeps a stale SHA in `installed_plugins.json`.
-
-### Local development
-
-```bash
-git clone https://github.com/greglas75/zuvo.git
-claude --plugin-dir ./zuvo
-```
-
-This loads the plugin for the current session only. Useful for testing changes before publishing.
-
-### Codex (experimental)
-
-Zuvo can also run on OpenAI Codex. The SKILL.md format is natively compatible (agentskills.io open standard).
-
-```bash
-# Build the Codex-adapted skills
-bash scripts/build-codex-skills.sh
-
-# Install to your Codex environment
-cp -r dist/codex/skills/* ~/.codex/skills/
-cp dist/codex/agents/*.toml ~/.codex/agents/
-```
+Update: `cd ~/zuvo-plugin && git pull && ./scripts/install.sh codex`
 
 Optional: bundle CodeSift MCP for deep code analysis:
 
@@ -79,6 +97,24 @@ args = ["-y", "codesift-mcp"]
 Skills are invoked with `$skill-name` (Codex convention) instead of `/skill-name`. The skill router auto-discovers skills via description matching.
 
 On Codex App (async mode), interactive skills like brainstorm run autonomously with `[AUTO-DECISION]` annotations. Review the generated spec before proceeding to plan.
+
+## Cursor / Antigravity
+
+```bash
+git clone https://github.com/greglas75/zuvo.git ~/zuvo-plugin
+cd ~/zuvo-plugin && ./scripts/install.sh cursor
+```
+
+Update: `cd ~/zuvo-plugin && git pull && ./scripts/install.sh cursor`
+
+## Local development
+
+```bash
+git clone https://github.com/greglas75/zuvo.git
+claude --plugin-dir ./zuvo
+```
+
+This loads the plugin for the current session only. Useful for testing changes before publishing.
 
 ## What happens at session start
 
