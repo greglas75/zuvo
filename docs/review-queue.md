@@ -124,3 +124,5 @@ Commits pending review. Auto-managed:
 - 9295f4b (2026-04-06) fix: meta-review inverted logic, preflight before dry-run, --files docs
 - 04e3756 (2026-04-06) release: v1.2.8 — fix: meta-review logic, preflight ordering, files docs
 - c737dbe (2026-04-06) feat: inline adversarial commands in 14 skills — no more "read include"
+- aee77fd (2026-04-06) release: v1.3.0 — feat: adversarial review in 14 skills — inline commands, mandatory, 8 modes
+- e01392e (2026-04-06) fix: install.sh removes old cache dirs (prevents PATH loading wrong version)
