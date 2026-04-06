@@ -302,7 +302,7 @@ The user decides: accept as-is (with backlog entry), require fix, or provide gui
 After quality review passes, run cross-model adversarial review. This runs for ALL tasks regardless of complexity.
 
 ```bash
-git add -u && git diff --staged | adversarial-review --json --single --mode code
+git add -u && git diff --staged | adversarial-review --json --mode code
 ```
 
 If diff touches auth/payment/crypto/PII: use `--mode security`. If migrations/schema: use `--mode migrate`.

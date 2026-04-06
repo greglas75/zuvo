@@ -513,7 +513,7 @@ Apply any FIX-NOW items from the auditor before committing. DEFER items go to th
 ### Adversarial Review (MANDATORY — do NOT skip)
 
 ```bash
-git add -u && git diff --staged | adversarial-review --json --single --mode code
+git add -u && git diff --staged | adversarial-review --json --mode code
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

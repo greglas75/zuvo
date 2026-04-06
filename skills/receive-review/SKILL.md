@@ -126,7 +126,7 @@ Do NOT batch all fixes into one large change. Sequential, verified fixes prevent
 After all items are implemented:
 
 ```bash
-git add -u && git diff --staged | adversarial-review --json --single --mode code
+git add -u && git diff --staged | adversarial-review --json --mode code
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

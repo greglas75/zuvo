@@ -224,7 +224,7 @@ All tests must pass. If a fix introduces a failure:
 ### Step 5b: Adversarial Review (MANDATORY — do NOT skip)
 
 ```bash
-git add -u && git diff --staged | adversarial-review --json --single --mode test
+git add -u && git diff --staged | adversarial-review --json --mode test
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

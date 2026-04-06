@@ -250,7 +250,7 @@ Run CQ1-CQ28 on each modified production file. Read `../../rules/cq-checklist.md
 ### 4.6b Adversarial Review (MANDATORY — do NOT skip)
 
 ```bash
-git add -u && git diff --staged | adversarial-review --json --single --mode code
+git add -u && git diff --staged | adversarial-review --json --mode code
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

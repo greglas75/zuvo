@@ -215,7 +215,7 @@ Read `agents/plan-reviewer.md` for full instructions.
 After the plan-reviewer converges, run cross-model validation on the plan file. This catches task bloat, hidden ordering violations, and AC orphans.
 
 ```bash
-adversarial-review --json --single --mode plan --files "docs/specs/YYYY-MM-DD-<topic>-plan.md"
+adversarial-review --json --mode plan --files "docs/specs/YYYY-MM-DD-<topic>-plan.md"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

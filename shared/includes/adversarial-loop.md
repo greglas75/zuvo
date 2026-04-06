@@ -63,14 +63,14 @@ Run the script as a **single foreground Bash call**. The script auto-detects ava
 
 ```bash
 git add -u
-git diff --staged | adversarial-review --json --single --mode {MODE}
+git diff --staged | adversarial-review --json --mode {MODE}
 ```
 
-Use `--single` (first available provider, fastest). Multi-provider mode is reserved for `/review` and dedicated review flows.
+Default is multi-provider (all available run in parallel). The script handles provider detection and dispatch.
 
 **If staged diff doesn't reflect the skill's changes** (e.g., skill worked on explicit files, not staged): use `--files` instead:
 ```bash
-adversarial-review --json --single --mode {MODE} --files "path/to/changed/file.ts"
+adversarial-review --json --mode {MODE} --files "path/to/changed/file.ts"
 ```
 
 **IMPORTANT:** Run as foreground Bash call. Wait for complete output before proceeding. Do NOT use background execution.
@@ -109,7 +109,7 @@ For each finding:
 If Step 4 fixed any CRITICAL or WARNING:
 
 1. Stage fixes: `git add -u`
-2. Re-run: `git diff --staged | adversarial-review --json --single --mode {MODE}`
+2. Re-run: `git diff --staged | adversarial-review --json --mode {MODE}`
 3. **This is a validation run, NOT a new repair cycle.** If new issues found:
    - New CRITICAL → add to known concerns, STOP. Do NOT attempt another fix.
    - New WARNING caused by previous fix → add to known concerns, STOP.
@@ -174,7 +174,7 @@ Each skill adds the adversarial loop at a specific phase. The loop is **MANDATOR
 
 ## What This Is NOT
 
-- **Not a replacement for zuvo:review** — this uses `--single` (one provider). zuvo:review uses multi-provider with confidence scoring.
+- **Not a replacement for zuvo:review** — this is a quick multi-provider check during writing. zuvo:review is a full multi-pass audit with confidence scoring.
 - **Not a quality gate** — does not block completion (except: unresolved CRITICAL changes wording).
 - **Not recursive** — max 2 calls. Third opinion is zuvo:review's job.
 - **Not proof of correctness** — "clean pass" means one model found nothing. Different model = potentially different findings.
