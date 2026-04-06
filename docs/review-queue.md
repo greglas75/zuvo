@@ -96,3 +96,10 @@ Commits pending review. Auto-managed:
 - 367c5d4 (2026-04-06) feat: parallel adversarial dispatch — 4 providers (codex-fast, cursor-agent, gemini, claude)
 - c5c3efd (2026-04-06) feat: cross-model validation for document artifacts (spec, plan, audit, tests modes)
 - 5416b07 (2026-04-06) fix: install.sh now copies scripts/ to Claude Code plugin cache
+- f842ad7 (2026-04-06) release: v1.2.0 — feat: parallel adversarial dispatch + cross-model document validation
+- a80304f (2026-04-06) fix: install.sh auto-fixes stale SHA in installed_plugins.json
+- 570de14 (2026-04-06) docs: update getting-started with install/update/troubleshooting guide
+- 1f4c1f7 (2026-04-06) docs: add adversarial provider setup instructions (Codex, Gemini, Cursor, Claude)
+- a77fb01 (2026-04-06) fix: add explicit plugin_root resolution instructions to env-compat.md
+- 8c93ae6 (2026-04-06) fix: install.sh resolves {plugin_root} to absolute paths in skill files
+- 453cc0e (2026-04-06) fix: replace {plugin_root} with relative paths in all 44 skill files
