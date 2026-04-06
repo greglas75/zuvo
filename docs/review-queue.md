@@ -106,3 +106,7 @@ Commits pending review. Auto-managed:
 - b6db4f9 (2026-04-06) release: v1.2.1 — fix: resolve {plugin_root} paths for all users
 - 98dc413 (2026-04-06) fix: remove contradictory 30-line threshold from adversarial-loop.md
 - d071546 (2026-04-06) release: v1.2.2 — fix: remove contradictory threshold + resolve all plugin_root paths
+- 6034274 (2026-04-06) fix: remove approval gates from write-tests and refactor skills
+- 5aab9c1 (2026-04-06) feat: show zuvo version in skill router banner, auto-update on release
+- c4ddebe (2026-04-06) feat: 'zuvo version' command prints version banner to user
+- 38f3329 (2026-04-06) fix: simplify adversarial dispatch — one Bash call, script handles everything
