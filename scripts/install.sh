@@ -139,6 +139,19 @@ if changed:
     fi
   fi
 
+  # Remove old cache dirs (keep only current version)
+  # Claude Code creates a new dir per version but never cleans old ones.
+  # Old dirs cause PATH confusion (agent may load skills from wrong version).
+  local current_version="$VERSION"
+  for old_dir in "$CACHE_BASE"/*/; do
+    local dir_name
+    dir_name=$(basename "$old_dir")
+    if [[ "$dir_name" != "$current_version" ]]; then
+      rm -rf "$old_dir"
+      echo "  Removed old cache: $dir_name"
+    fi
+  done
+
   ok "Claude Code updated"
 }
 
