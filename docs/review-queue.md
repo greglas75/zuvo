@@ -126,3 +126,5 @@ Commits pending review. Auto-managed:
 - c737dbe (2026-04-06) feat: inline adversarial commands in 14 skills — no more "read include"
 - aee77fd (2026-04-06) release: v1.3.0 — feat: adversarial review in 14 skills — inline commands, mandatory, 8 modes
 - e01392e (2026-04-06) fix: install.sh removes old cache dirs (prevents PATH loading wrong version)
+- 96837a1 (2026-04-06) release: v1.3.1 — fix: clean old cache dirs on install
+- f4104ba (2026-04-06) fix: remove --single from all 14 skills — use multi-provider by default
