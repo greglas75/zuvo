@@ -243,9 +243,13 @@ $INPUT"
 
 detect_providers() {
   # Returns space-separated list of available providers in priority order
+  # API providers first (2-5s), then MCP (25-30s), then CLI (90s+)
   local providers=""
 
-  if command -v gemini &>/dev/null; then
+  # Gemini: API (fast) > CLI (slow)
+  if [[ -n "${GEMINI_API_KEY:-}" ]]; then
+    providers="gemini-api"
+  elif command -v gemini &>/dev/null; then
     providers="gemini"
   elif command -v npx &>/dev/null && npx --yes @google/gemini-cli --version &>/dev/null 2>&1; then
     providers="gemini-npx"
@@ -330,6 +334,35 @@ run_gemini() {
     return 1
   fi
   printf '%s\n' "$result"
+}
+
+run_gemini_api() {
+  # Gemini API — direct curl, 2-5s, no CLI overhead
+  [[ -z "${GEMINI_API_KEY:-}" ]] && return 1
+
+  # API uses flash by default (faster, cheaper). CLI uses pro.
+  local model="${ZUVO_GEMINI_API_MODEL:-gemini-2.5-flash}"
+  local prompt_json
+  prompt_json=$(printf '%s' "$REVIEW_PROMPT" | jq -Rs '.')
+
+  local response
+  response=$(curl -s --max-time 120 \
+    "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent" \
+    -H "x-goog-api-key: $GEMINI_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "{\"contents\":[{\"parts\":[{\"text\":${prompt_json}}]}]}" \
+  ) || return 1
+
+  # Log token usage to stderr
+  local input_tokens output_tokens
+  input_tokens=$(printf '%s' "$response" | jq -r '.usageMetadata.promptTokenCount // "?"' 2>/dev/null)
+  output_tokens=$(printf '%s' "$response" | jq -r '.usageMetadata.candidatesTokenCount // "?"' 2>/dev/null)
+  echo "  Gemini API tokens: ${input_tokens} in / ${output_tokens} out" >&2
+
+  local text
+  text=$(printf '%s' "$response" | jq -r '.candidates[0].content.parts[0].text // empty' 2>/dev/null)
+  [[ -z "$text" ]] && return 1
+  printf '%s\n' "$text"
 }
 
 run_codex_mcp() {
@@ -462,6 +495,7 @@ run_provider() {
   # Run provider in background subshell with timeout
   (
     case "$p" in
+      gemini-api)        run_gemini_api ;;
       gemini|gemini-npx) run_gemini ;;
       codex-mcp)         run_codex_mcp ;;
       codex|codex-app)   run_codex ;;
@@ -493,6 +527,7 @@ run_provider() {
 
 display_name() {
   local p="$1"
+  p="${p/gemini-api/gemini}"
   p="${p/gemini-npx/gemini}"
   p="${p/codex-mcp/codex}"
   p="${p/codex-app/codex}"
