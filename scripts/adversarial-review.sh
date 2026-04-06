@@ -333,8 +333,9 @@ run_claude() {
 }
 
 run_cursor_agent() {
+  # --workspace /tmp avoids loading project context (~3.5K tokens saved)
   printf '%s' "$REVIEW_PROMPT" \
-    | timeout "$PROVIDER_TIMEOUT" cursor-agent -p --mode ask --trust 2>/dev/null \
+    | timeout "$PROVIDER_TIMEOUT" cursor-agent -p --mode ask --trust --workspace /tmp 2>/dev/null \
     || return 1
 }
 
