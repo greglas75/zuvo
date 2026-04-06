@@ -47,7 +47,7 @@ while [[ $# -gt 0 ]]; do
     --dry-run)   DRY_RUN=true; shift ;;
     --help|-h)
       cat <<'HELP'
-Usage: adversarial-review.sh [OPTIONS] [--diff REF] [--files "f1 f2"]
+Usage: adversarial-review.sh [OPTIONS] [--diff REF] [--files "path"]
 
 Provider options:
   (default)        Multi: run ALL available providers
@@ -71,12 +71,12 @@ Output:
 
 Input:
   --diff REF       Review diff from REF to HEAD
-  --files "f1 f2"  Review specific files
+  --files "f1\nf2"  Review specific files (newline-separated, supports spaces in paths)
   (stdin)          Pipe a diff
 
 Environment variables:
   ZUVO_REVIEW_PROVIDER     Force provider
-  ZUVO_REVIEW_TIMEOUT      Per-provider timeout in seconds (default: 300)
+  ZUVO_REVIEW_TIMEOUT      Per-provider timeout in seconds (default: 180)
   ZUVO_GEMINI_MODEL        Gemini CLI model (default: gemini-3.1-pro-preview)
   ZUVO_GEMINI_API_MODEL    Gemini API model (default: gemini-3.1-pro-preview)
   GEMINI_API_KEY           Required for gemini-api provider
@@ -553,10 +553,20 @@ dispatch_provider() {
 
 # ─── Dry run ───────────────────────────────────────────────────
 
+# ─── Preflight checks ──────────────────────────────────────────
+
+command -v timeout &>/dev/null || { echo "ERROR: GNU timeout required. Install: brew install coreutils" >&2; exit 1; }
+command -v jq &>/dev/null || { echo "ERROR: jq required. Install: brew install jq" >&2; exit 1; }
+
+PROVIDER_TIMEOUT="${ZUVO_REVIEW_TIMEOUT:-180}"
+
+# ─── Dry run ───────────────────────────────────────────────────
+
 if [[ "$DRY_RUN" == "true" ]]; then
   echo "=== DRY RUN — prompt that would be sent ===" >&2
   echo "Mode: $REVIEW_MODE | Input: ${#INPUT} chars | Format: $OUTPUT_FORMAT" >&2
   echo "Providers: $PROVIDERS" >&2
+  echo "Timeout: ${PROVIDER_TIMEOUT}s" >&2
   echo "===" >&2
   printf '%s\n' "$REVIEW_PROMPT"
   exit 0
@@ -565,13 +575,6 @@ fi
 echo "CROSS-PROVIDER REVIEW" >&2
 echo "  Input: ${#INPUT} chars" >&2
 echo "  Review: $REVIEW_MODE | Output: $OUTPUT_FORMAT | Dispatch: $MULTI_MODE" >&2
-
-# ─── Preflight checks ──────────────────────────────────────────
-
-command -v timeout &>/dev/null || { echo "ERROR: GNU timeout required. Install: brew install coreutils" >&2; exit 1; }
-command -v jq &>/dev/null || { echo "ERROR: jq required. Install: brew install jq" >&2; exit 1; }
-
-PROVIDER_TIMEOUT="${ZUVO_REVIEW_TIMEOUT:-180}"
 
 ALL_RESULTS=""
 PROVIDERS_USED=""
@@ -663,14 +666,20 @@ fi
 if [[ "$OUTPUT_FORMAT" == "json" ]]; then
   # Check if ALL results are clean (no findings) on a large input
   input_lines=$(printf '%s' "$INPUT" | wc -l | tr -d ' ')
-  has_findings=false
+  has_findings=true
+  all_clean=true
   for p in $PROVIDERS; do
     result_file="$JSON_TMPDIR/result_${p}.txt"
-    if [[ -s "$result_file" ]] && grep -qiE '"severity"|CRITICAL|WARNING' "$result_file" 2>/dev/null; then
-      has_findings=true
-      break
+    if [[ -s "$result_file" ]]; then
+      # Check for clean markers — inverted logic avoids false positives from "No CRITICAL issues"
+      if grep -qiE 'NO ISSUES FOUND|"findings":\s*\[\]' "$result_file" 2>/dev/null; then
+        : # this provider found nothing
+      else
+        all_clean=false
+      fi
     fi
   done
+  [[ "$all_clean" == "true" ]] && has_findings=false
   if [[ "$has_findings" == "false" && "$input_lines" -gt 150 ]]; then
     echo "  ⚠ META: Clean pass on ${input_lines}-line diff — possible false negative. Consider zuvo:review for multi-provider check." >&2
   fi
