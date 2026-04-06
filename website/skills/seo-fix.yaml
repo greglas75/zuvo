@@ -1,5 +1,5 @@
 schema_version: 1
-last_synced: "2026-04-05"
+last_synced: "2026-04-06"
 
 meta:
   slug: seo-fix
@@ -39,9 +39,12 @@ problem: |
   still manual, error-prone, and time-consuming. `zuvo:seo-fix` reads the audit JSON and
   applies the fixes that are safe to automate (SAFE and optionally MODERATE), generates
   exact diffs for DANGEROUS changes (canonical rewrites) that require human sign-off, and
-  runs a build verification after each batch to catch regressions. It also knows when not to
-  over-claim success: schema spam can reroute to `schema-cleanup`, and Cloudflare or other
-  edge controls can downgrade a seemingly valid `robots.txt` patch to `NEEDS_REVIEW`.
+  runs a build verification after each batch to catch regressions. `VERIFIED` means more
+  than "the logs looked good": the build must exit `0`, and generated public artifacts such
+  as `/llms-full.txt` must exist after build (or respond successfully in local preview)
+  before the skill can claim success. It also knows when not to over-claim success: schema
+  spam can reroute to `schema-cleanup`, and Cloudflare or other edge controls can downgrade
+  a seemingly valid `robots.txt` patch to `NEEDS_REVIEW`.
 
 how_it_works:
   - step: Load Findings
@@ -51,13 +54,13 @@ how_it_works:
   - step: Apply Fixes
     description: "Applies fixes in tier order: SAFE (auto-applied), MODERATE (applied with validation — robots.txt bot policy, JSON-LD/schema-cleanup anti-spam checks, OG image absolute URL, og:type normalization, sitemap lastmod review), DANGEROUS (generates diff + risk explanation only, unless --all)."
   - step: Verify
-    description: "If a build tool is detected (astro build, next build, hugo), runs a full build after fixes. A build failure triggers per-finding rollback, not a blind full revert. Re-runs targeted gate proxies on modified files and retains network override risk where a file-only patch cannot prove success."
+    description: "If a build tool is detected (astro build, next build, hugo), runs a full build after fixes and records the real exit code. Non-zero exit means FAIL even if logs look optimistic. For generated public files/endpoints such as /llms.txt, /llms-full.txt, and sitemap.xml, it also checks the built artifact or local preview response before reporting VERIFIED. A failed post-build check triggers per-finding rollback or NEEDS_REVIEW, not a blind full revert."
   - step: Report and Update Backlog
     description: "Prints the SEO FIX REPORT with per-finding verdicts, estimated before/after score, estimated_time, manual_checks, policy_notes, risk_notes, network_override_risk, and advisory_scaffolds for out-of-scope writing tasks. Updates memory/backlog.md accordingly."
 
 output:
   artifact: "audit-results/seo-fix-YYYY-MM-DD.md and audit-results/seo-fix-YYYY-MM-DD.json"
-  format: "SEO FIX REPORT block plus JSON v1.1 with per-finding status, estimated score improvement, eta_minutes, estimated_time, manual_checks, policy_notes, advisory_scaffolds, risk_notes, network_override_risk, and next steps."
+  format: "SEO FIX REPORT block plus JSON v1.1 with per-finding status, estimated score improvement, eta_minutes, estimated_time, manual_checks, policy_notes, advisory_scaffolds, risk_notes, network_override_risk, and next steps. VERIFIED requires a passing build exit code when a build exists, plus any required artifact/endpoint check for generated public files."
   sections:
     - "Findings summary (total / fixed / needs review / manual / out of scope / no template / insufficient data)"
     - "Estimated score (before → after)"
@@ -81,7 +84,7 @@ examples:
       Score:    53 -> 72 (estimated, re-audit for exact)
       ----
       FIXED (auto-applied):
-        F2: Added llms.txt + llms-full.txt     public/llms.txt (new)       [VERIFIED] ~10 min
+        F2: Added llms.txt + llms-full.txt     public/llms.txt + public/llms-full.txt (new)  [VERIFIED] ~10 min
         F5: Added security headers             public/_headers (new)       [VERIFIED] ~15 min
         F8: Added font-display: swap           src/styles/global.css:14    [VERIFIED] ~5 min
         F9: Added viewport meta tag            src/layouts/Layout.astro:7  [VERIFIED] ~5 min
@@ -133,7 +136,7 @@ faq:
   - q: "Which frameworks does zuvo:seo-fix support?"
     a: "Astro, Next.js, and Hugo have full template coverage for all applicable fix types. Universal (*) templates cover llms.txt, font-display, lang attribute, alt text, and viewport across any framework. WordPress and React SPAs without SSR are explicitly out of scope — seo-fix warns and skips those fix types."
   - q: "Does zuvo:seo-fix verify the build after applying fixes?"
-    a: "Yes — if a build tool is detected (astro build, next build, hugo), a full build runs after each fix batch. A build failure triggers per-finding rollback rather than a blind full revert. The report also records estimated_time, manual_checks, policy_notes, advisory_scaffolds, risk_notes, and network_override_risk when verification cannot prove a file-level fix is enough."
+    a: "Yes — if a build tool is detected (astro build, next build, hugo), a full build runs after each fix batch and the real exit code must be 0 before the run can be marked PASS. For generated public files such as llms.txt, llms-full.txt, or sitemap.xml, seo-fix also checks the built artifact or local preview response; a 404 or missing output downgrades the finding instead of reporting VERIFIED. The report also records estimated_time, manual_checks, policy_notes, advisory_scaffolds, risk_notes, and network_override_risk when verification cannot prove a file-level fix is enough."
 
 arguments:
   - flag: "(default)"
@@ -261,6 +264,7 @@ comparison_table:
     - ["Reads structured audit findings", "No", "No", "Yes — seo-audit JSON"]
     - ["Safety tier classification", "Manual judgment", "No", "Yes — SAFE/MODERATE/DANGEROUS"]
     - ["Build verification after each batch", "Manual", "No", "Yes — per-finding rollback on failure"]
+    - ["Exit-code + artifact verification", "Manual", "No", "Yes — exit code 0 plus non-404 generated endpoints"]
     - ["Framework-specific templates", "Manual", "Plugin-only (WP)", "Yes — Astro, Next.js, Hugo"]
     - ["Schema cleanup before JSON-LD add", "Manual", "No", "Yes — schema-cleanup fix type"]
     - ["Cloudflare / network override awareness", "Manual", "No", "Yes — `NEEDS_REVIEW` + manual_checks + network override risk"]

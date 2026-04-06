@@ -19,5 +19,9 @@ assert_contains "$SKILL_FILE" 'advisory_scaffolds'
 assert_contains "$SKILL_FILE" 'native agent dispatch is unavailable'
 assert_contains "$SKILL_FILE" 'workflow sequentially'
 assert_contains "$SKILL_FILE" 'user-proxy'
+assert_contains "$SKILL_FILE" 'exit code != 0'
+assert_contains "$SKILL_FILE" '/llms-full.txt'
+assert_contains "$SKILL_FILE" 'route file such as'
+assert_contains "$SKILL_FILE" 'verification="FAILED"'
 
 pass "seo-fix skill contract"

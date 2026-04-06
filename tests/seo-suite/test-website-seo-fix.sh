@@ -18,5 +18,8 @@ assert_contains "$YAML_FILE" 'policy_notes'
 assert_contains "$YAML_FILE" 'advisory_scaffolds'
 assert_contains "$YAML_FILE" 'NEEDS_PARAMS'
 assert_contains "$YAML_FILE" 'per-finding rollback'
+assert_contains "$YAML_FILE" 'exit `0`'
+assert_contains "$YAML_FILE" '/llms-full.txt'
+assert_contains "$YAML_FILE" '404'
 
 pass "website seo-fix contract"

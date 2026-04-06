@@ -114,3 +114,6 @@ Commits pending review. Auto-managed:
 - 7d95244 (2026-04-06) fix: install.sh creates cache dir for current version if missing
 - dd4815f (2026-04-06) release: v1.2.4 — fix: install.sh auto-creates cache dir for new versions
 - b877544 (2026-04-06) fix: 11 hardening fixes for adversarial-review.sh
+- 0173c95 (2026-04-06) release: v1.2.5 — fix: 11 hardening fixes (quoting, timeouts, jq preflight, dry-run)
+- bcae04d (2026-04-06) feat: adversarial-loop v2 — mandatory, single-provider, 8 modes, meta-review
+- 089aac3 (2026-04-06) fix: gemini -p requires argument, add --mode migrate, meta-review warning
