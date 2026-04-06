@@ -117,3 +117,6 @@ Commits pending review. Auto-managed:
 - 0173c95 (2026-04-06) release: v1.2.5 — fix: 11 hardening fixes (quoting, timeouts, jq preflight, dry-run)
 - bcae04d (2026-04-06) feat: adversarial-loop v2 — mandatory, single-provider, 8 modes, meta-review
 - 089aac3 (2026-04-06) fix: gemini -p requires argument, add --mode migrate, meta-review warning
+- ef9a21a (2026-04-06) release: v1.2.6 — fix: gemini headless mode, adversarial-loop v2 mandatory, 8 modes
+- 2239050 (2026-04-06) fix: remove npx fallback for gemini — require global install only
+- 6752f3a (2026-04-06) fix: timeout 180s (was 300s), remove npx gemini fallback
