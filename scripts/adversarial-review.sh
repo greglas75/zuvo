@@ -243,11 +243,15 @@ $INPUT"
 
 detect_providers() {
   # Returns space-separated list of available providers in priority order
-  # API providers first (2-5s), then MCP (25-30s), then CLI (90s+)
+  # OAuth-fast (2-5s, free) > API key (2-5s, paid) > MCP (25-30s) > CLI (90s+)
   local providers=""
 
-  # Gemini: API (2-5s) > CLI (90s+). npx fallback removed (too slow to probe).
-  if [[ -n "${GEMINI_API_KEY:-}" ]]; then
+  # Gemini: OAuth-fast (2-5s, free) > API key (2-5s, paid) > CLI (90s+, free but slow)
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -x "$script_dir/gemini-fast.sh" && -f "$HOME/.gemini/oauth_creds.json" ]]; then
+    providers="gemini-fast"
+  elif [[ -n "${GEMINI_API_KEY:-}" ]]; then
     providers="gemini-api"
   elif command -v gemini &>/dev/null; then
     providers="gemini"
@@ -303,6 +307,22 @@ EOF
 fi
 
 # ─── Provider execution ─────────────────────────────────────────
+
+run_gemini_fast() {
+  # OAuth-fast path — uses gemini-fast.sh (2-5s, free, reuses CLI's OAuth)
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local fast_script="$script_dir/gemini-fast.sh"
+
+  [[ -x "$fast_script" ]] || return 1
+
+  local model_flag=""
+  if [[ -n "$GEMINI_MODEL" ]]; then
+    model_flag="--model $GEMINI_MODEL"
+  fi
+
+  printf '%s\n' "$REVIEW_PROMPT" | "$fast_script" $model_flag
+}
 
 run_gemini() {
   local model_flag=""
@@ -489,6 +509,7 @@ run_provider() {
   # Run provider in background subshell with timeout
   (
     case "$p" in
+      gemini-fast)       run_gemini_fast ;;
       gemini-api)        run_gemini_api ;;
       gemini|gemini-npx) run_gemini ;;
       codex-mcp)         run_codex_mcp ;;
@@ -520,6 +541,7 @@ run_provider() {
 
 display_name() {
   local p="$1"
+  p="${p/gemini-fast/gemini}"
   p="${p/gemini-api/gemini}"
   p="${p/gemini-npx/gemini}"
   p="${p/codex-mcp/codex}"
@@ -533,22 +555,30 @@ PROVIDER_COUNT=0
 JSON_TMPDIR=$(mktemp -d)
 trap 'rm -rf "$JSON_TMPDIR"' EXIT
 
-for p in $PROVIDERS; do
-  local_display=$(display_name "$p")
-  echo "  Running: $local_display..." >&2
+if [[ "$MULTI_MODE" == "multi" ]]; then
+  # ── PARALLEL: launch all providers at once, collect results ──
+  declare -a PIDS=()
+  declare -a PNAMES=()
 
-  RESULT=$(run_provider "$p") || true
+  for p in $PROVIDERS; do
+    local_display=$(display_name "$p")
+    echo "  Launching: $local_display..." >&2
+    run_provider "$p" > "$JSON_TMPDIR/result_${local_display}.txt" 2>/dev/null &
+    PIDS+=($!)
+    PNAMES+=("$local_display")
+  done
 
-  if [[ -n "$RESULT" ]]; then
-    PROVIDER_COUNT=$((PROVIDER_COUNT + 1))
-    PROVIDERS_USED="${PROVIDERS_USED:+$PROVIDERS_USED, }$local_display"
+  # Wait for all to finish
+  for i in "${!PIDS[@]}"; do
+    wait "${PIDS[$i]}" 2>/dev/null || true
+    local_display="${PNAMES[$i]}"
+    result_file="$JSON_TMPDIR/result_${local_display}.txt"
 
-    # Store per-provider result for JSON multi mode (temp file, no eval)
-    echo "$RESULT" > "$JSON_TMPDIR/result_${local_display}.txt"
-
-    if [[ "$MULTI_MODE" == "multi" ]]; then
-      # Accumulate results from all providers
+    if [[ -s "$result_file" ]]; then
+      PROVIDER_COUNT=$((PROVIDER_COUNT + 1))
+      PROVIDERS_USED="${PROVIDERS_USED:+$PROVIDERS_USED, }$local_display"
       upper_display=$(echo "$local_display" | tr '[:lower:]' '[:upper:]')
+      RESULT=$(cat "$result_file")
       ALL_RESULTS="${ALL_RESULTS}
 
 ###############################################################
@@ -557,15 +587,31 @@ for p in $PROVIDERS; do
 
 $RESULT
 "
+      echo "  Done: $local_display" >&2
     else
-      # Single mode: stop at first success
+      echo "  WARN: $local_display failed or returned empty." >&2
+    fi
+  done
+
+else
+  # ── SINGLE: stop at first successful provider ──
+  for p in $PROVIDERS; do
+    local_display=$(display_name "$p")
+    echo "  Running: $local_display..." >&2
+
+    RESULT=$(run_provider "$p") || true
+
+    if [[ -n "$RESULT" ]]; then
+      PROVIDER_COUNT=$((PROVIDER_COUNT + 1))
+      PROVIDERS_USED="$local_display"
+      echo "$RESULT" > "$JSON_TMPDIR/result_${local_display}.txt"
       ALL_RESULTS="$RESULT"
       break
+    else
+      echo "  WARN: $local_display failed or returned empty." >&2
     fi
-  else
-    echo "  WARN: $local_display failed or returned empty." >&2
-  fi
-done
+  done
+fi
 
 if [[ -z "$ALL_RESULTS" ]]; then
   if [[ "$OUTPUT_FORMAT" == "json" ]]; then
