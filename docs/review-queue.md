@@ -110,3 +110,5 @@ Commits pending review. Auto-managed:
 - 5aab9c1 (2026-04-06) feat: show zuvo version in skill router banner, auto-update on release
 - c4ddebe (2026-04-06) feat: 'zuvo version' command prints version banner to user
 - 38f3329 (2026-04-06) fix: simplify adversarial dispatch — one Bash call, script handles everything
+- abb4961 (2026-04-06) release: v1.2.3 — fix: simplified adversarial dispatch + bin wrapper
+- 7d95244 (2026-04-06) fix: install.sh creates cache dir for current version if missing
