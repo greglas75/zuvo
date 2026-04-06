@@ -488,11 +488,12 @@ run_gemini() {
   local gemini_cmd="gemini"
   command -v gemini &>/dev/null || gemini_cmd="npx --yes @google/gemini-cli"
 
+  # -p "" triggers headless mode; actual prompt is piped via stdin
   local result status=0
   result=$(timeout "$PROVIDER_TIMEOUT" $gemini_cmd \
     --allowed-mcp-server-names __NONE__ \
     --model "$model" \
-    -p < "$prompt_file" 2>/dev/null) || status=$?
+    -p "" < "$prompt_file" 2>/dev/null) || status=$?
 
   if [[ $status -ne 0 || -z "$result" ]]; then
     return 1
