@@ -25,6 +25,7 @@ Read these files before any work begins:
 4. `{plugin_root}/shared/includes/seo-fix-registry.md` -- Canonical fix_type, safety, eta, and manual verification rules
 5. `{plugin_root}/shared/includes/fix-output-schema.md` -- JSON report contract
 6. `{plugin_root}/shared/includes/seo-bot-registry.md` -- Canonical AI/search bot policy taxonomy for robots fixes
+7. `{plugin_root}/shared/includes/run-logger.md` -- Run logging contract
 
 Print the checklist:
 
@@ -143,9 +144,9 @@ Read `timestamp` field. Calculate age.
 ### 0.4 Print summary
 
 ```
-AUDIT: seo-audit 2026-03-28 (2h ago) | Score: 53/100 (C) | 13 findings
+ AUDIT: seo-audit 2026-03-28 (2h ago) | Score: 53/100 (C) | 16 findings
   SAFE:              5 findings (auto-fixable)
-  MODERATE:          4 findings (fixable with validation)
+  MODERATE:          5 findings (fixable with validation)
   DANGEROUS:         1 finding (manual only)
   OUT_OF_SCOPE:      2 findings (no template — content/E-E-A-T)
   NO_TEMPLATE:       1 finding (fix_type not in registry)

@@ -1,10 +1,10 @@
 schema_version: 1
-last_synced: "2026-03-29"
+last_synced: "2026-04-06"
 
 meta:
   slug: refactor
   title: "Refactor — ETAP Workflow with Resumable Contract State and GOD_CLASS Protocol"
-  description: "Structured refactoring: 5 execution modes, 3 control flags, 10 types, per-target contract state files, GOD_CLASS protocol at 600 lines, CQ before/after scoring on all 22 gates."
+  description: "Structured refactoring: 5 modes, 3 flags, 10 types, resumable contract files, GOD_CLASS protocol at 600 lines, CQ scoring on all 22 gates."
   category: task
   og_image: /og/skills/refactor.png
 

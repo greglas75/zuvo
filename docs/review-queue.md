@@ -55,3 +55,40 @@ Commits pending review. Auto-managed:
 - 77c5134 (2026-03-30) docs: add dev-push.sh as recommended workflow in CLAUDE.md
 - 3b6879a (2026-03-30) docs: add troubleshooting for stale SHA to README + getting-started
 - 1d531e9 (2026-03-30) fix: sync plugin descriptions to 39 skills + 20 agents
+- d715bd9 (2026-03-30) fix: add LICENSE, correct SEO audit check count (59→74)
+- e6d9130 (2026-04-05) feat: add Cursor v3 build + install support with sub-agents
+- 5df197b (2026-04-05) feat: inline quality gates and stack detection into SessionStart skill
+- 515c212 (2026-04-05) fix: address review findings R-1 through R-5
+- 8173a27 (2026-04-05) fix: clean old claude-code-toolkit symlinks from Codex install
+- 0f82c18 (2026-04-05) feat: add cq-patterns-core.md for lightweight auto-loading
+- cf22c29 (2026-04-05) feat: auto-read cq-patterns-core.md at session start
+- cb26283 (2026-04-05) fix: adversarial-review.sh provider detection and fallthrough
+- 8c3a79e (2026-04-05) feat: absorb all private rules into zuvo plugin
+- 73aa17f (2026-04-05) fix: add Codex app bundle detection for adversarial review
+- b80d272 (2026-04-05) feat: multi-provider adversarial review (gemini + codex + ollama)
+- d0e812d (2026-04-05) feat: harden adversarial-review.sh per Claude review feedback
+- 9d98add (2026-04-05) feat: add --json, --mode, --context flags for agent-in-the-loop
+- 9777a7f (2026-04-05) fix: watchdog kills parent ($$) and eval injection in adversarial-review
+- 687fa33 (2026-04-05) feat: add Cursor Agent CLI as 4th provider, fix Gemini model to 2.5-pro
+- 52f7602 (2026-04-05) fix: default Gemini model to gemini-3.1-pro-preview
+- 0a578ae (2026-04-05) feat: adversarial loop — auto-review before presenting to user
+- e9396e0 (2026-04-05) feat: make session-start greeting more casual
+- 8211607 (2026-04-05) fix: adversarial review from TIER 1 + must-run enforcement
+- e86b860 (2026-04-05) fix: Gemini stdin for large diffs, parallel dispatch, remove Ollama default
+- f9e73bc (2026-04-05) feat: parallel 2-provider dispatch + random selection in adversarial loop
+- fda5719 (2026-04-05) fix: increase provider timeout from 120s to 300s
+- 5dad68c (2026-04-05) fix: 6 bugs found by multi-provider adversarial review
+- 9b4f2d6 (2026-04-05) feat: add Codex MCP provider (~30s vs CLI ~300s timeout)
+- ba39170 (2026-04-06) test: add bats test suite for adversarial-review.sh
+- 2e76253 (2026-04-06) feat: run-logger v2 — Log-in-Output pattern across 37 skills
+- 1529982 (2026-04-06) align SEO suite contracts and validation
+- 45a5dca (2026-04-06) add seo suite specs and follow-up tests
+- 6abab9f (2026-04-06) feat: add Gemini API provider (2-15s vs CLI 90-150s)
+- 6c2e903 (2026-04-06) fix: 4 bugs found by Gemma 4 26b local adversarial review
+- e8cedff (2026-04-06) chore: remove Cursor CLI provider (buggy, hangs after response)
+- 5a9c25c (2026-04-06) chore: default Gemini API model to gemini-3-flash-preview
+- 5982b34 (2026-04-06) feat: add gemini-fast OAuth transport for free 2-5s adversarial reviews
+- a8f168a (2026-04-06) feat: parallel adversarial dispatch with 5 providers (codex-fast, gemini, claude, gemini-api, codex-mcp)
+- a20750a (2026-04-06) fix: codex-fast auth + gemini npx fallback
+- 21c173b (2026-04-06) feat: add cursor-agent provider, remove codex-mcp and gemini-api from auto-detect
+- 3c54e40 (2026-04-06) perf: cursor-agent --workspace /tmp to skip project context (~3.5K tokens saved)
