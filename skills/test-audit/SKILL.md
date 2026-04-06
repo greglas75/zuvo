@@ -340,22 +340,20 @@ If `--details` flag: also save per-file reports to `audits/test-audit-details/`
 rm -rf audits/.test-audit-batch
 ```
 
-## Phase 3b: Cross-Provider Review (--deep only)
+## Phase 3b: Adversarial Review on Audit Report (MANDATORY — do NOT skip)
 
-In `--deep` mode, run a cross-provider adversarial review on the lowest-quality test files (Tier C and D). Read `../../shared/includes/cross-provider-review.md` for the full protocol.
-
-**Execution:**
+After the audit report is generated, run cross-model validation to catch Q-score inflation and coverage theater. Runs on ALL audits (not just --deep).
 
 ```bash
-SCRIPT_PATH="${PLUGIN_ROOT}/scripts/adversarial-review.sh"
-if [[ -x "$SCRIPT_PATH" ]]; then
-  "$SCRIPT_PATH" --files "[space-separated list of Tier C and D test files]" > /tmp/test-audit-cross.md
-fi
+adversarial-review --json --single --mode tests --files "audits/test-quality-audit-[date].md"
 ```
 
-**If available:** Parse findings, tag as `[CROSS:<provider>]`, add to the per-file audit results. Cross-provider findings that identify tautological oracles (Q17) or flaky patterns (Q18) are especially valuable — different models detect different forms of test tautology.
+If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
 
-**If not available:** Print `[CROSS-REVIEW] No external provider available.` Continue normally.
+Wait for complete output. Then:
+- **CRITICAL** (passing Q-score contradicted by evidence) → fix in report before delivery
+- **WARNING** (coverage theater not flagged) → append to Known Gaps section
+- **INFO** → ignore
 
 ## Phase 4: Coverage Registry Update
 

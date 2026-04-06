@@ -265,6 +265,21 @@ The reviewer checks for completeness, consistency, YAGNI violations, ambiguity, 
 - If the reviewer returns **ISSUES FOUND**: fix the listed issues in the spec, then re-dispatch the reviewer. Maximum 3 iterations.
 - After 3 iterations with unresolved issues: present the remaining issues to the user and let them decide whether to accept, revise, or defer.
 
+### Step 3b: Adversarial Review (MANDATORY — do NOT skip)
+
+After the spec-reviewer converges, run cross-model validation on the spec file. This catches hallucinations, contradictions, and scope creep that same-model review misses.
+
+```bash
+adversarial-review --json --single --mode spec --files "docs/specs/YYYY-MM-DD-<topic>-spec.md"
+```
+
+If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+
+Wait for complete output. Then apply fix policy:
+- **CRITICAL** (hallucinated capability, internal contradiction) → fix in spec, re-run spec-reviewer
+- **WARNING** (missing edge case, vague AC) → append to Open Questions section
+- **INFO** → ignore
+
 ### Step 4: User Approval
 
 **In interactive mode:** Present the final spec to the user. The user may:

@@ -446,14 +446,15 @@ Compare the auditor's scores with self-evaluation. **Any discrepancy of 2+ point
 
 If sub-agent dispatch is unavailable (single-agent mode): perform the audit as a separate pass with an explicit checkpoint: `[CHECKPOINT: switching to independent test auditor role]`. Re-read tests as if seeing them for the first time.
 
-### 4.5 Adversarial Loop
+### 4.5 Adversarial Review (MANDATORY — do NOT skip)
 
-Read and execute `../../shared/includes/adversarial-loop.md`.
+```bash
+git add -u && git diff --staged | adversarial-review --json --single --mode test
+```
 
-Set variables:
-- **ADVERSARIAL_MODE:** `test`
+If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
 
-This runs a cross-provider adversarial review focused on test quality: flaky patterns, coverage theater, missing edge cases, dead test paths, hardcoded assumptions. Fix CRITICAL findings before proceeding. See the include for full protocol.
+Wait for complete output. Fix CRITICAL immediately. WARNING (< 10 lines, localized) → fix. Everything else → known concerns (max 3, one line each).
 
 ---
 

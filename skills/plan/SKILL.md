@@ -210,6 +210,21 @@ Read `agents/plan-reviewer.md` for full instructions.
 2. If ISSUES FOUND: revise the plan to address the issues, then re-dispatch the reviewer
 3. Maximum 3 review iterations. After 3, present the remaining issues to the user and let them decide whether to accept the plan as-is or provide guidance
 
+### Cross-Model Validation (MANDATORY — do NOT skip)
+
+After the plan-reviewer converges, run cross-model validation on the plan file. This catches task bloat, hidden ordering violations, and AC orphans.
+
+```bash
+adversarial-review --json --single --mode plan --files "docs/specs/YYYY-MM-DD-<topic>-plan.md"
+```
+
+If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+
+Wait for complete output. Then apply fix policy:
+- **CRITICAL** (missing dependency, task requires nonexistent file) → fix in plan, re-run plan-reviewer
+- **WARNING** (task too large, questionable ordering) → append as note to affected task
+- **INFO** → ignore
+
 ### User Approval
 
 The plan follows a strict state machine:

@@ -510,6 +510,16 @@ After the lead's post-audit, dispatch an independent CQ Auditor agent to verify 
 
 Apply any FIX-NOW items from the auditor before committing. DEFER items go to the backlog.
 
+### Adversarial Review (MANDATORY — do NOT skip)
+
+```bash
+git add -u && git diff --staged | adversarial-review --json --single --mode code
+```
+
+If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+
+Wait for complete output. Fix CRITICAL immediately. WARNING (< 10 lines, localized) → fix. Everything else → known concerns (max 3, one line each).
+
 ---
 
 ## Phase 5: Completion

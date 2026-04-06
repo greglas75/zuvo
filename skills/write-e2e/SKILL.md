@@ -309,6 +309,16 @@ After generating each spec, run the quality gate check:
 
 Critical gates: auto-fix immediately. Non-critical: flag in output.
 
+### Adversarial Review (MANDATORY — do NOT skip)
+
+```bash
+git add -u && git diff --staged | adversarial-review --json --single --mode test
+```
+
+If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+
+Wait for complete output. Fix CRITICAL immediately. WARNING (< 10 lines, localized) → fix. Everything else → known concerns (max 3, one line each).
+
 ---
 
 ## Phase 4: Validate (--live only)

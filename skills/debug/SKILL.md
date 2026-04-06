@@ -247,6 +247,16 @@ Run CQ1-CQ28 on each modified production file. Read `../../rules/cq-checklist.md
 - Threshold: >= 24 PASS, 22-23 CONDITIONAL PASS, < 22 FAIL
 - Provide file:function:line evidence for every critical gate scored as 1
 
+### 4.6b Adversarial Review (MANDATORY — do NOT skip)
+
+```bash
+git add -u && git diff --staged | adversarial-review --json --single --mode code
+```
+
+If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+
+Wait for complete output. Fix CRITICAL immediately. WARNING (< 10 lines, localized) → fix. Everything else → known concerns (max 3, one line each).
+
 ### 4.7 Defense-in-Depth
 
 After confirming the fix works, add validation at multiple layers to prevent the same class of bug from recurring:

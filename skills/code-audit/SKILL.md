@@ -362,27 +362,20 @@ After per-file scoring, run these cross-cutting checks:
 
 Add findings under a `## Cross-File Issues` section.
 
-## Phase 3b: Cross-Provider Review (--deep only)
+## Phase 3b: Adversarial Review on Audit Report (MANDATORY — do NOT skip)
 
-In `--deep` mode, run a cross-provider adversarial review on the highest-risk files (Tier C and D). Read `../../shared/includes/cross-provider-review.md` for the full protocol.
-
-**Execution:**
+After the audit report is generated, run cross-model validation to catch score inflation and gate inconsistency. Runs on ALL audits (not just --deep).
 
 ```bash
-SCRIPT_PATH="${PLUGIN_ROOT}/scripts/adversarial-review.sh"
-if [[ -x "$SCRIPT_PATH" ]]; then
-  # Review Tier C+D files only (highest risk)
-  "$SCRIPT_PATH" --files "[space-separated list of Tier C and D files]" > /tmp/code-audit-cross.md
-fi
+adversarial-review --json --single --mode audit --files "audits/code-quality-audit-[date].md"
 ```
 
-**If available and succeeds:**
-- Parse CRITICAL/WARNING findings
-- Tag as `[CROSS:<provider>]`
-- Merge into the per-file findings — CRITICAL findings upgrade a file's priority in the execution plan
-- Add a `## Cross-Provider Findings` section to the report
+If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
 
-**If not available:** Print `[CROSS-REVIEW] No external provider available.` Continue normally. This is an enhancement, not a gate.
+Wait for complete output. Then:
+- **CRITICAL** (FAIL gate not in verdict, severity mismatch) → fix in report before delivery
+- **WARNING** (N/A abuse, skipped check) → append to Known Gaps section
+- **INFO** → ignore
 
 ## Phase 4: Report and Execution Plan
 

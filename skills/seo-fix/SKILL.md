@@ -403,6 +403,16 @@ Verification semantics:
 - `FAILED`: the re-check or artifact/endpoint check failed; do not leave the
   action reported as a clean success
 
+### 3.4 Adversarial Review (MANDATORY — do NOT skip)
+
+```bash
+git add -u && git diff --staged | adversarial-review --json --single --mode code
+```
+
+If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+
+Wait for complete output. Fix CRITICAL immediately. WARNING (< 10 lines, localized) → fix. Everything else → known concerns (max 3, one line each).
+
 ---
 
 ## Phase 4: Report

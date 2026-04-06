@@ -500,14 +500,17 @@ EXECUTION VERIFICATION
 ----------------------------------------------------
 ```
 
-### 4.4 Adversarial Loop
+### 4.4 Adversarial Review (MANDATORY — do NOT skip)
 
-Read and execute `../../shared/includes/adversarial-loop.md`.
+```bash
+git add -u && git diff --staged | adversarial-review --json --single --mode code
+```
 
-Set variables:
-- **ADVERSARIAL_MODE:** `code` (override to `security` if diff touches auth, payment, crypto, PII, or migration files)
+If diff touches auth, payment, crypto, PII, or migration files, use `--mode security` instead. If diff touches migrations/schema, use `--mode migrate`.
 
-This runs a cross-provider adversarial review (Gemini, Codex, Cursor, or Ollama) on staged changes. Fix CRITICAL findings before proceeding. The adversarial loop is a second opinion, not a gate — see the include for full protocol, fix policy, and presentation rules.
+If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+
+Wait for complete output. Fix CRITICAL immediately. WARNING (< 10 lines, localized) → fix. Everything else → known concerns (max 3, one line each).
 
 ### 4.5 Backlog Persistence
 

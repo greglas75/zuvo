@@ -297,58 +297,22 @@ Read the failure details. Each failure has a gate ID, file:line reference, and w
 
 The user decides: accept as-is (with backlog entry), require fix, or provide guidance.
 
-### Step 7b: Dispatch Adversarial Reviewer
+### Step 7b: Adversarial Review (MANDATORY — do NOT skip, every task)
 
-**When to run:** After every task's quality review passes. All tasks get adversarial review regardless of complexity — the 5-15s cost per provider is negligible vs. the cost of undetected bugs.
-
-**Purpose:** Catch blind spots shared between the implementer and quality reviewer. The adversarial reviewer assumes the code was written by an AI with systematic blind spots and hunts for production failure scenarios.
-
-Dispatch per environment:
-- **Claude Code:** use the Task tool.
-- **Codex:** use native agents in `~/.codex/agents/`.
-
-**Provide to the agent:**
-- The list of production files created or modified
-- The quality reviewer's CQ scores (so the adversarial agent focuses on areas NOT flagged)
-- Detected tech stack
-
-**Persona instructions (included in agent prompt):**
-> You are a hostile code reviewer. Assume the author (an AI) has systematic blind spots.
-> Focus on what the quality reviewer is likely to MISS:
-> 1. Edge cases: timezone, unicode, concurrent access, empty collections
-> 2. Production vs test assumptions: network latency, partial failures, clock skew
-> 3. Security paths that bypass the happy path
-> 4. Silent failures: catch blocks that swallow errors, unhandled promise rejections
-> 5. Data integrity: partial writes without rollback, cache inconsistency
-> Report only NEW findings not covered by the quality reviewer's CQ gates.
-
-**Handling the verdict:**
-
-#### NO ISSUES
-Proceed to commit (step 8).
-
-#### ISSUES FOUND
-Read the issue list. Each issue has a file:line reference.
-
-- **Critical findings** (would cause production incident): re-dispatch the implementer to fix, then re-run quality reviewer on the fix. Do NOT re-run adversarial reviewer.
-- **Non-critical findings** (code smell, potential improvement): note in the task result, persist to backlog. Proceed to commit.
-
-**Limit:** No iteration loop. The adversarial reviewer runs once. If it finds critical issues that the implementer fixes, only the quality reviewer re-validates.
-
-#### Cross-Provider Review (after adversarial agent)
-
-After the internal adversarial agent completes (or instead of it if the task is `standard` complexity but touches security/auth/payment files), run a cross-provider review. Read `../../shared/includes/cross-provider-review.md` for the full protocol.
+After quality review passes, run cross-model adversarial review. This runs for ALL tasks regardless of complexity.
 
 ```bash
-SCRIPT_PATH="${PLUGIN_ROOT}/scripts/adversarial-review.sh"
-if [[ -x "$SCRIPT_PATH" ]]; then
-  "$SCRIPT_PATH" --files "[list of modified production files]" > /tmp/cross-review.md
-fi
+git add -u && git diff --staged | adversarial-review --json --single --mode code
 ```
 
-If available: parse findings, tag as `[CROSS:<provider>]`, treat CRITICAL as blockers (re-dispatch implementer), treat WARNING/INFO as backlog items.
+If diff touches auth/payment/crypto/PII: use `--mode security`. If migrations/schema: use `--mode migrate`.
 
-If not available: print `[CROSS-REVIEW] No external provider available.` and continue. This is an enhancement, not a gate.
+If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+
+Wait for complete output. Then:
+- **CRITICAL** → re-dispatch implementer to fix, re-run quality reviewer. Do NOT re-run adversarial.
+- **WARNING** (< 10 lines, localized) → re-dispatch implementer to fix.
+- **WARNING** (large/cross-file) or **INFO** → known concerns (max 3, one line each). Proceed to commit.
 
 ### Step 8: Commit
 

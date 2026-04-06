@@ -221,6 +221,16 @@ All tests must pass. If a fix introduces a failure:
 3. If incorrect assertion: revise the fix
 4. If production bug discovered: note it in the report and persist to backlog
 
+### Step 5b: Adversarial Review (MANDATORY — do NOT skip)
+
+```bash
+git add -u && git diff --staged | adversarial-review --json --single --mode test
+```
+
+If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+
+Wait for complete output. Fix CRITICAL immediately. WARNING (< 10 lines, localized) → fix. Everything else → known concerns (max 3, one line each).
+
 ---
 
 ## Step 6: Report

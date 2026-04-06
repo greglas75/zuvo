@@ -395,27 +395,20 @@ Build summary table: input validation coverage, auth coverage, authZ depth (CQ4)
 
 ---
 
-## Phase 9b: Cross-Provider Security Review
+## Phase 9b: Adversarial Security Review (MANDATORY — do NOT skip)
 
-Security audits benefit the most from cross-provider review — different models have different knowledge of vulnerability patterns. Run this on ALL security audits (not just `--deep`). Read `../../shared/includes/cross-provider-review.md` for the full protocol.
-
-**Execution:**
+Security audits benefit the most from cross-model review. Runs on ALL security audits.
 
 ```bash
-SCRIPT_PATH="${PLUGIN_ROOT}/scripts/adversarial-review.sh"
-if [[ -x "$SCRIPT_PATH" ]]; then
-  # Send all security-relevant files (auth, middleware, controllers, config)
-  "$SCRIPT_PATH" --files "[auth files, middleware, controllers, env config]" > /tmp/security-cross.md
-fi
+adversarial-review --json --single --mode security --files "[auth files, middleware, controllers, env config]"
 ```
 
-**If available and succeeds:**
-- Parse findings — CRITICAL findings from a cross-provider security review have HIGH credibility
-- Cross-provider findings that identify auth bypass paths, SSRF vectors, or injection points are added to the attack path analysis (9.3)
-- Tag all findings as `[CROSS:<provider>]`
-- Add a `## Cross-Provider Security Findings` section before the main report
+If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
 
-**If not available:** Print `[CROSS-REVIEW] No external provider available. Internal analysis only.` Continue normally. For security audits, strongly recommend the user installs at least one cross-provider tool.
+Wait for complete output. Then:
+- **CRITICAL** (auth bypass, injection, SSRF) → add to attack path analysis, fix in report before delivery
+- **WARNING** → append to findings with `[CROSS]` tag
+- **INFO** → ignore
 
 ---
 

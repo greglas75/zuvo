@@ -121,6 +121,18 @@ Execute fixes one item at a time. After each fix:
 
 Do NOT batch all fixes into one large change. Sequential, verified fixes prevent cascading errors where fix #3 breaks what fix #1 corrected.
 
+### Adversarial Review (MANDATORY — do NOT skip)
+
+After all items are implemented:
+
+```bash
+git add -u && git diff --staged | adversarial-review --json --single --mode code
+```
+
+If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+
+Wait for complete output. Fix CRITICAL immediately. WARNING (< 10 lines, localized) → fix. Everything else → known concerns (max 3, one line each).
+
 ---
 
 ## Source-Specific Handling
