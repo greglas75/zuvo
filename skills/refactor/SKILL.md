@@ -400,11 +400,9 @@ If there is genuine uncertainty after planning, present questions to the user (m
 
 In AUTO and BATCH mode: skip questions, proceed with the safest default.
 
-### HARD STOP (plan approval)
+### Plan Display
 
-Display the plan and wait for user confirmation before proceeding.
-
-In AUTO mode: show the plan, wait for approval, then proceed without stopping again at test phase. In BATCH mode: skip the stop entirely.
+Display the plan, then proceed immediately. No approval gate — the user invoked the skill to get the work done.
 
 ---
 
@@ -431,9 +429,9 @@ ETAP-1B: test-quality-rules.md -- READ (WRITE_NEW or IMPROVE_TESTS only)
 3. Execute structural cleanup first, then assertion strengthening
 4. Re-score -- gate: improvement of at least 2 points (or reach 16+/19)
 
-### STOP for test approval (FULL mode only)
+### Test Results Display
 
-Show the test results and wait for approval before proceeding to execution. In AUTO and BATCH mode, this stop is skipped.
+Show the test results, then proceed to execution. No approval gate.
 
 ---
 

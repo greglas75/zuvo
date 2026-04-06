@@ -32,7 +32,7 @@ Parse `$ARGUMENTS` as: `[path | auto] [--dry-run]`
 
 | Mode | Approval gate | User questions | Sub-agents | Loops |
 |------|--------------|----------------|------------|-------|
-| `[path]` | Plan approval before writing | Up to 4 | Scanner + Selector | No |
+| `[path]` | None | Up to 4 | Scanner + Selector | No |
 | `auto` | None | None | Scanner + Selector | Yes (15 files per batch) |
 | `--dry-run` | N/A | None | Scanner + Selector | No |
 
@@ -327,9 +327,8 @@ For each file, state:
 
 ### Approval Gate
 
-- In explicit mode: present the plan and wait for user approval before Phase 3
-- In auto mode: proceed without approval
 - In --dry-run mode: print the plan and STOP. Do not write files.
+- In all other modes: proceed without approval.
 
 ---
 
