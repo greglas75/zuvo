@@ -91,6 +91,30 @@ install_claude() {
     ok "$DIR_NAME -- $SKILL_COUNT skills"
   done
 
+  # Fix stale SHA in installed_plugins.json (Claude Code cache bug workaround)
+  local plugins_json="$HOME/.claude/plugins/installed_plugins.json"
+  if [[ -f "$plugins_json" ]]; then
+    local current_sha
+    current_sha=$(cd "$ZUVO_DIR" && git rev-parse HEAD 2>/dev/null || echo "")
+    if [[ -n "$current_sha" ]]; then
+      python3 -c "
+import json, sys
+sha = sys.argv[1]
+with open(sys.argv[2]) as f:
+    data = json.load(f)
+changed = False
+for entry in data.get('plugins', {}).get('zuvo@zuvo-marketplace', []):
+    if entry.get('gitCommitSha') != sha:
+        entry['gitCommitSha'] = sha
+        changed = True
+if changed:
+    with open(sys.argv[2], 'w') as f:
+        json.dump(data, f, indent=2)
+    print('  \u2713 Fixed stale SHA in installed_plugins.json')
+" "$current_sha" "$plugins_json" 2>/dev/null || true
+    fi
+  fi
+
   ok "Claude Code updated"
 }
 
