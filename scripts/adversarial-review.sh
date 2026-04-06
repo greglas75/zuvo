@@ -51,7 +51,7 @@ Usage: adversarial-review.sh [OPTIONS] [--diff REF] [--files "f1 f2"]
 Provider options:
   (default)        Multi: run ALL available providers
   --single         First-success: stop after first provider
-  --provider P     Force: codex-fast, gemini, claude, gemini-api, codex-mcp
+  --provider P     Force: codex-fast, cursor-agent, gemini, claude, gemini-api
 
 Review modes:
   --mode code      (default) General code review
@@ -259,17 +259,14 @@ detect_providers() {
     providers="$providers gemini"
   fi
 
-  # 3. claude — CLI with opposite model (10-30s)
+  # 3. cursor-agent — headless print mode (~11s)
+  command -v cursor-agent &>/dev/null && providers="$providers cursor-agent"
+
+  # 4. claude — CLI with opposite model (10-30s)
   command -v claude &>/dev/null && providers="$providers claude"
 
-  # 4. gemini-api — curl + API key (15-60s)
-  [[ -n "${GEMINI_API_KEY:-}" ]] && providers="$providers gemini-api"
-
-  # 5. codex-mcp — JSON-RPC stdio (25-30s)
-  # Intentional literal 5s timeout (startup probe, not a review)
-  if [[ -n "$codex_bin" ]] && timeout 5 "$codex_bin" mcp-server --help &>/dev/null; then
-    providers="$providers codex-mcp"
-  fi
+  # gemini-api available as --provider gemini-api if GEMINI_API_KEY is set
+  # Not in auto-detect (gemini CLI is preferred)
 
   echo "$providers"
 }
@@ -335,6 +332,12 @@ run_claude() {
     || return 1
 }
 
+run_cursor_agent() {
+  printf '%s' "$REVIEW_PROMPT" \
+    | timeout "$PROVIDER_TIMEOUT" cursor-agent -p --mode ask --trust 2>/dev/null \
+    || return 1
+}
+
 run_gemini() {
   local model="${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}"
 
@@ -392,38 +395,6 @@ run_gemini_api() {
   printf '%s\n' "$text"
 }
 
-run_codex_mcp() {
-  # Codex MCP server — JSON-RPC over stdio, synchronous with timeout.
-  # No nested background, no polling loop. timeout kills entire pipeline.
-  local codex_cmd="codex"
-  if ! command -v codex &>/dev/null; then
-    codex_cmd="/Applications/Codex.app/Contents/Resources/codex"
-  fi
-
-  local prompt_json
-  prompt_json=$(printf '%s' "$REVIEW_PROMPT" | jq -Rs '.')
-
-  local init_msg='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"adversarial-review","version":"1.0"}}}'
-  local call_msg
-  call_msg=$(printf '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"codex","arguments":{"prompt":%s,"sandbox":"read-only"}}}' "$prompt_json")
-
-  local mcp_output="$JSON_TMPDIR/codex_mcp_output.txt"
-
-  # Synchronous pipe — timeout kills the entire process group on deadline
-  timeout "$PROVIDER_TIMEOUT" bash -c '
-    printf "%s\n" "$1"
-    sleep 1
-    printf "%s\n" "$2"
-    sleep 300
-  ' _ "$init_msg" "$call_msg" \
-    | "$codex_cmd" mcp-server > "$mcp_output" 2>/dev/null || true
-
-  local text
-  text=$(jq -r 'select(.id == 2) | .result.content[0].text // empty' "$mcp_output" 2>/dev/null)
-  [[ -z "$text" ]] && return 1
-  printf '%s\n' "$text"
-}
-
 # ─── Determine mode ────────────────────────────────────────────
 
 # If --provider is set, always single. Otherwise: default is multi.
@@ -438,11 +409,11 @@ fi
 dispatch_provider() {
   local provider="$1"
   case "$provider" in
-    codex-fast)  run_codex_fast ;;
-    gemini)      run_gemini ;;
-    claude)      run_claude ;;
-    gemini-api)  run_gemini_api ;;
-    codex-mcp)   run_codex_mcp ;;
+    codex-fast)    run_codex_fast ;;
+    cursor-agent)  run_cursor_agent ;;
+    gemini)        run_gemini ;;
+    claude)        run_claude ;;
+    gemini-api)    run_gemini_api ;;  # manual only: --provider gemini-api
     *) return 1 ;;
   esac
 }
