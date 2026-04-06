@@ -92,3 +92,4 @@ Commits pending review. Auto-managed:
 - a20750a (2026-04-06) fix: codex-fast auth + gemini npx fallback
 - 21c173b (2026-04-06) feat: add cursor-agent provider, remove codex-mcp and gemini-api from auto-detect
 - 3c54e40 (2026-04-06) perf: cursor-agent --workspace /tmp to skip project context (~3.5K tokens saved)
+- 0cc09a1 (2026-04-06) chore: commit pending changes from other sessions
