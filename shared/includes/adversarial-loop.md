@@ -9,22 +9,15 @@ After a skill writes code, consult a DIFFERENT AI model to catch blind spots bef
 
 ## When to Run
 
-Run adversarial loop when **ANY** of these are true:
+Run adversarial loop **always** when code changes exist. The 5-15s cost per provider is negligible vs. the cost of undetected bugs.
 
-| Condition | Rationale |
-|-----------|-----------|
-| Diff > 30 lines (production + test combined) | Enough context for meaningful review |
-| Diff touches auth, authorization, or session logic | High-risk even at 5 lines |
-| Diff touches billing, payment, or money flow | Financial impact |
-| Diff touches migrations or schema changes | Data integrity |
-| Diff touches cryptographic operations or secrets | Security-critical |
-| Diff touches PII or sensitive data handling | Compliance risk |
-
-**Skip when ALL of:**
-- Diff <= 30 lines AND none of the high-risk triggers above
-- Config-only changes (package.json, tsconfig, .env, CI config)
+**Skip ONLY when:**
+- Config-only changes (package.json, tsconfig, .env, CI config) with no logic changes
 - No provider available (note in output, proceed normally)
-- Script timeout > 120s (note in output, proceed normally)
+
+High-risk signals (auth, payment, crypto, PII, migrations) automatically upgrade mode to `--mode security`.
+
+For **document artifact validation** (specs, plans, audit reports), see `adversarial-loop-docs.md`.
 
 ## Mode Selection
 

@@ -298,9 +298,9 @@ Read the failure details. Each failure has a gate ID, file:line reference, and w
 
 The user decides: accept as-is (with backlog entry), require fix, or provide guidance.
 
-### Step 7b: Dispatch Adversarial Reviewer (complex tasks only)
+### Step 7b: Dispatch Adversarial Reviewer
 
-**When to run:** Only for tasks marked `**Complexity:** complex` in the plan (4+ files, architecture decisions). Skip for `standard` complexity tasks.
+**When to run:** After every task's quality review passes. All tasks get adversarial review regardless of complexity — the 5-15s cost per provider is negligible vs. the cost of undetected bugs.
 
 **Purpose:** Catch blind spots shared between the implementer and quality reviewer. The adversarial reviewer assumes the code was written by an AI with systematic blind spots and hunts for production failure scenarios.
 
