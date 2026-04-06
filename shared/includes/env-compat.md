@@ -17,17 +17,57 @@
 
 ## Path Resolution
 
-All paths are relative to the Zuvo plugin root. The plugin root is determined by:
+All paths use `{plugin_root}` as a placeholder. You MUST resolve it before reading any file.
 
-| Environment | Plugin root | Skills location | Rules location |
-|-------------|-------------|-----------------|----------------|
-| Claude Code | `CLAUDE_PLUGIN_ROOT` env var | `{root}/skills/` | `{root}/rules/` |
-| Codex | `~/.codex/skills/` (installed) | `{root}/skills/` | `{root}/rules/` |
-| Cursor | Project `.cursor/plugins/zuvo/` | `{root}/skills/` | `{root}/rules/` |
+### How to resolve `{plugin_root}`
 
-When referencing shared includes from a skill, use relative paths from the skill's location:
-- From `skills/review/SKILL.md` to shared: `../../shared/includes/codesift-setup.md`
-- From `skills/build/agents/blast-radius.md` to shared: `../../../shared/includes/agent-preamble.md`
+**Step 1:** Try the environment variable:
+```bash
+echo "$CLAUDE_PLUGIN_ROOT"
+```
+
+**Step 2:** If empty, find it from the skill file path. The skill you are executing lives at:
+```
+{plugin_root}/skills/<skill-name>/SKILL.md
+```
+So `{plugin_root}` = two directories up from the SKILL.md file.
+
+**Step 3:** If you still can't determine it, search the filesystem:
+```bash
+ls ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/shared/includes/env-compat.md 2>/dev/null | head -1
+```
+The parent of `shared/` in that path is `{plugin_root}`.
+
+**Step 4 (fallback):** Look in PATH for a zuvo entry:
+```bash
+echo "$PATH" | tr ':' '\n' | grep zuvo | head -1
+```
+Strip `/bin` from the end to get `{plugin_root}`.
+
+### Resolved paths
+
+Once you have `{plugin_root}`, these paths exist:
+
+| Path | Contents |
+|------|----------|
+| `{plugin_root}/skills/` | All 39 skill directories |
+| `{plugin_root}/rules/` | Code quality rules (cq-patterns.md, testing.md, etc.) |
+| `{plugin_root}/shared/includes/` | Shared includes (adversarial-loop.md, env-compat.md, etc.) |
+| `{plugin_root}/scripts/` | Shell scripts (adversarial-review.sh, install.sh, etc.) |
+
+### Environment-specific roots
+
+| Environment | Typical resolved path |
+|-------------|----------------------|
+| Claude Code | `~/.claude/plugins/cache/zuvo-marketplace/zuvo/<version>/` |
+| Codex | `~/.codex/` (skills, agents, shared, rules are direct children) |
+| Cursor | `~/.cursor/` (skills, agents, shared, rules are direct children) |
+
+### Relative paths from skills
+
+When a SKILL.md references `../../shared/includes/file.md`, that is relative to the skill directory. These are equivalent:
+- `../../shared/includes/codesift-setup.md` (relative from `skills/build/SKILL.md`)
+- `{plugin_root}/shared/includes/codesift-setup.md` (absolute)
 
 ## Agent Dispatch Patterns
 
