@@ -120,3 +120,5 @@ Commits pending review. Auto-managed:
 - ef9a21a (2026-04-06) release: v1.2.6 — fix: gemini headless mode, adversarial-loop v2 mandatory, 8 modes
 - 2239050 (2026-04-06) fix: remove npx fallback for gemini — require global install only
 - 6752f3a (2026-04-06) fix: timeout 180s (was 300s), remove npx gemini fallback
+- 32aa9a6 (2026-04-06) release: v1.2.7 — fix: timeout 180s, clean gemini detection
+- 9295f4b (2026-04-06) fix: meta-review inverted logic, preflight before dry-run, --files docs
