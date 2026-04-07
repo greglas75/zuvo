@@ -63,16 +63,9 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 
 ### GATE 1 -- Live Audit Consent
 
-| Scenario | Static Analysis (code) | Live Tests (--live-url) |
-|----------|----------------------|------------------------|
-| No --live-url | Proceed (code read only) | N/A |
-| --live-url localhost | Proceed | Proceed freely (GET/HEAD only) |
-| --live-url staging | Proceed | Confirm with user, then proceed |
-| --live-url production | Proceed | Confirm with user, then proceed. Default to code-only if confirmation is unavailable. |
-
-**Rate limiting (live audit):** Max 2 requests/second internal, 1 req/s external. 3 consecutive 429s triggers a 30s pause. 3 consecutive 5xx results halt the live audit.
-
-**Read-only:** GET and HEAD only. No POST/PUT/DELETE.
+Read `../../shared/includes/live-probe-protocol.md` for the full consent gate,
+rate limiting rules, error escalation thresholds, and HTTP method restrictions.
+All live probing in this skill follows that shared protocol.
 
 ### GATE 2 -- Read-Only Audit
 
