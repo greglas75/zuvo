@@ -154,3 +154,8 @@ Commits pending review. Auto-managed:
 - d7115dc (2026-04-07) fix: remove empty incident dir, add mutation-test skill
 - fccc52f (2026-04-07) release: v1.3.10 — feat: adversarial run logging + cleanup
 - f4cabe9 (2026-04-07) feat: add 3 new skills — mutation-test, a11y-audit, incident (44 skills total)
+- 4635c4c (2026-04-07) feat: competitive analysis + 3 new skills (mutation-test, a11y-audit, incident) + S15 + DB13 + risk scoring
+- 849f9a9 (2026-04-07) fix: content-audit/fix — round 2 Codex findings
+- 16de67d (2026-04-07) fix: a11y-audit — 6 adversarial review fixes
+- 40b4131 (2026-04-07) add geo registries and bump fix-output-schema to v1.2
+- 1072259 (2026-04-07) fix: mutation-test + incident — adversarial review fixes
