@@ -48,7 +48,7 @@ Each entry is a single JSON line:
 
 **Critical:** `confidence` is NEVER upgraded because an entry was surfaced frequently (`timesSurfaced`). Frequent surfacing means it was shown a lot — not that it was validated. Confidence upgrades only when a new independent provenance record confirms the same fact from a different angle.
 
-**Same source ≠ independent:** Multiple entries from the same workflow run, the same agent, or the same session count as one provenance source, not multiple. The same contributor confirming the same observation through the same code path in a different session is also not independent — independence requires a materially different angle (different feature, different failure mode, different contributor type).
+**Same source ≠ independent:** Multiple entries from the same workflow run, the same agent, or the same session count as one provenance source, not multiple. The same contributor confirming the same observation through the same code path in a different session is also not independent — independence requires a materially different angle (different feature, different failure mode, different contributor type). The same agent type working on the same file area is usually not independent unless the failure mode materially differs.
 
 **updatedAt semantics:** `updatedAt` changes only on curate merge, fact correction, or entry edit — never on prime surfacing.
 
@@ -87,7 +87,7 @@ If nothing passes all filters: print `KNOWLEDGE CURATED: No generalizable insigh
 Glob("knowledge/*.jsonl")
 ```
 
-If knowledge base does not exist: skip duplicate check entirely and proceed directly to Step 3 (write new entries).
+If knowledge base does not exist: skip duplicate check entirely and proceed directly to Step 3 (write new entries). Within the current curate run, still deduplicate candidate insights against each other before writing — do not write two near-identical entries in the same run just because the knowledge base was empty.
 
 If knowledge base exists: read all entries. For each candidate insight, scan existing entries.
 
@@ -118,6 +118,7 @@ For each NEW insight (not a duplicate):
 1. Generate a unique `id`: `<type>-<2-3-word-slug>-<YYYYMMDD>` (e.g., `gotcha-prisma-null-20260407`)
 2. Set `confidence` per confidence rules above (start at `"medium"` for directly observed facts, `"low"` for inferred)
 3. Set `timesSurfaced: 0`
+4. Set both `createdAt` and `updatedAt` to the current timestamp (same value for new entries)
 4. Write as a single JSON line appended to the appropriate file:
    - `pattern` → `knowledge/patterns.jsonl`
    - `gotcha` → `knowledge/gotchas.jsonl`
@@ -132,7 +133,7 @@ For each NEW insight (not a duplicate):
 1. Read the full file into memory.
 2. Parse each line. For the matched entry (by `id`): apply changes.
 3. **Preserve unknown fields** — if a line has fields not in the current schema, keep them as-is.
-4. **For malformed lines:** write them back unchanged. Log: `[KNOWLEDGE] Preserved malformed line N in <file> — not discarded.` Do NOT silently drop them.
+4. **For malformed lines:** write them back unchanged. Log: `[KNOWLEDGE] Preserved malformed line N in <file> — skipped for parsing.` Do NOT silently drop them.
 5. **Preserve original line order** — do not reorder entries when rewriting.
 6. Write the full file back.
 
@@ -154,7 +155,9 @@ Merged:
   [decision] "Zustand over Redux for client state" — new provenance added (confidence: medium, unchanged — same session)
   [gotcha] "API returns 200 on soft failures" — confidence upgraded medium→high (2nd independent source)
 
-Skipped:
+Skipped (did not pass generalization/quality filter):
   "Use TypeScript types" — too obvious, not novel
   "Check for null before using value" — generic best practice
 ```
+
+`Skipped` lists only insights that failed the generalization or quality filter (Step 1). Near-duplicates intentionally kept separate appear in `Merged` or `New entries`, not in `Skipped`. Do not mix rejection reasons.

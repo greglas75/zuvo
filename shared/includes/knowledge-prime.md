@@ -1,13 +1,13 @@
 # Knowledge Prime
 
-Load project-specific knowledge before starting work. If no knowledge base exists, skip silently.
+Load project-specific knowledge before starting work. If no knowledge base exists, skip gracefully (one-line log, no error).
 
 ## When to use
 
 Called by skills at the start of work, before any implementation or analysis. The skill passes:
 - `WORK_TYPE` — `planning` | `implementation` | `review` | `research`
 - `WORK_KEYWORDS` — comma-separated keywords from the task description (e.g., `"auth,token,session"`). Matching is case-insensitive — normalize both keywords and tag values to lowercase before comparing.
-- `WORK_FILES` — space-separated file paths or globs that will be touched (optional — if absent, ranking uses tags and confidence only)
+- `WORK_FILES` — newline-separated file paths or globs that will be touched (optional — if absent, ranking uses tags and confidence only). Paths with spaces are not supported — use paths without spaces or glob patterns instead.
 
 ---
 
@@ -34,11 +34,11 @@ Read all existing files in `knowledge/`:
 | `knowledge/api-behaviors.jsonl` | `api-behavior` | 3rd |
 | `knowledge/patterns.jsonl` | `pattern` | 4th (lowest) |
 
-Parse each line as a JSON object. Skip malformed lines and log:
+Parse each line as a JSON object. For malformed lines, log and skip:
 ```
-[KNOWLEDGE] Skipped malformed line N in knowledge/<file>.jsonl — preserved as-is in file
+[KNOWLEDGE] Preserved malformed line N in knowledge/<file>.jsonl — skipped for parsing
 ```
-Never delete or overwrite malformed lines. They may contain data in an unknown schema version — preserve them.
+Never delete or overwrite malformed lines. They may contain data in an unknown schema version — preserve them in the file unchanged.
 
 ### Step 3: Score and filter
 
@@ -61,7 +61,13 @@ For each entry, compute a relevance score:
 
 **`timesSurfaced` does NOT affect score.** Frequent surfacing is not a quality signal — only `confidence` (from provenance) and relevance determine ranking.
 
-Keep entries with score >= 1. Sort by score descending within each type group. **Tiebreaker:** when two entries score equally, prefer the more specific one — an entry scoped to a specific file, symbol, or path beats a generic one about the same topic. If two entries are equally specific, prefer the newer one (higher `updatedAt`).
+Keep entries with score >= 1. Sort by score descending within each type group. **Tiebreaker:** when two entries score equally, prefer the more specific one using this order:
+1. Symbol-scoped (references a named function, class, or variable)
+2. File-scoped (references a specific file path)
+3. Path-scoped (references a directory or glob pattern)
+4. Tag-only generic (no file/symbol reference)
+
+If two entries are equally specific at the same level, prefer the newer one (higher `updatedAt`).
 
 ### Step 4: Select entries (cap at 10 total)
 
@@ -81,7 +87,11 @@ Total cap: **10 entries**. Within each section, take highest-scoring entries fir
 ```
 ⚠ Conflict: anti-pattern and pattern both apply to <topic>. Anti-pattern takes precedence.
 ```
-Only flag conflicts between entries that appear in the final output. Do not flag conflicts from entries that scored but were cut by section caps, or entries that didn't score at all.
+If the anti-pattern is a narrower exception to a broader pattern (e.g., "use X" generally, but "never use X for Y case"), phrase the note as an exception rather than a full contradiction:
+```
+⚠ Exception: anti-pattern narrows the above pattern — avoid <topic> specifically when <condition>.
+```
+Only flag conflicts between entries that appear in the final output. Do not flag entries that scored but were cut by section caps, or entries that didn't score at all.
 
 ### Step 5: Output
 
@@ -93,7 +103,7 @@ KNOWLEDGE PRIMED (N entries)
 
 MUST AVOID (anti-patterns + high-confidence gotchas):
   • [fact] — [recommendation]
-    (source: [provenance[0].reference or "unknown"], confidence: [high/medium/low])
+    (source: [provenance[-1].reference or "unknown"], confidence: [high/medium/low])
 
 GOTCHAS:
   • [fact] — [recommendation]
@@ -110,6 +120,8 @@ PATTERNS:
 ```
 
 Only print sections that have entries. Skip empty sections.
+
+`provenance[-1]` = the most recent provenance record (last in array). The array is chronological — newest is last. If `provenance` is missing or empty, print `source: unknown`.
 
 Anti-patterns always appear before patterns in the same topic area. If a conflict note applies, print it inline.
 
