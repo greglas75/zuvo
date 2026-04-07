@@ -128,3 +128,5 @@ Commits pending review. Auto-managed:
 - e01392e (2026-04-06) fix: install.sh removes old cache dirs (prevents PATH loading wrong version)
 - 96837a1 (2026-04-06) release: v1.3.1 — fix: clean old cache dirs on install
 - f4104ba (2026-04-06) fix: remove --single from all 14 skills — use multi-provider by default
+- b5bcbf9 (2026-04-06) release: v1.3.2 — fix: multi-provider adversarial by default in all skills
+- 95ae698 (2026-04-07) feat: upgrade adversarial review prompts — semantic quality, design judgment, global review rules
