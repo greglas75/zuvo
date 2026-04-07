@@ -159,3 +159,4 @@ Commits pending review. Auto-managed:
 - 16de67d (2026-04-07) fix: a11y-audit — 6 adversarial review fixes
 - 40b4131 (2026-04-07) add geo registries and bump fix-output-schema to v1.2
 - 1072259 (2026-04-07) fix: mutation-test + incident — adversarial review fixes
+- 3067d54 (2026-04-07) fix: adversarial review fixes for mutation-test, incident, a11y-audit
