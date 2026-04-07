@@ -324,6 +324,8 @@ Wait for complete output. Handle findings by severity:
 
 Do NOT discard findings based on confidence alone. Confidence measures how sure the reviewer is, not how important the issue is. A CRITICAL with low confidence means "verify this — if true, it's serious."
 
+"Pre-existing" is NOT a reason to skip a finding. If the issue is in a file you are already editing, fix it now. If not, add it to backlog with file:line. The adversarial review found a real problem — don't dismiss it just because it existed before your changes.
+
 ---
 
 ## Phase 4: Validate (--live only)
