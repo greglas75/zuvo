@@ -48,7 +48,9 @@ Each entry is a single JSON line:
 
 **Critical:** `confidence` is NEVER upgraded because an entry was surfaced frequently (`timesSurfaced`). Frequent surfacing means it was shown a lot — not that it was validated. Confidence upgrades only when a new independent provenance record confirms the same fact from a different angle.
 
-**Same source ≠ independent:** Multiple entries from the same workflow run, the same agent, or the same session count as one provenance source, not multiple.
+**Same source ≠ independent:** Multiple entries from the same workflow run, the same agent, or the same session count as one provenance source, not multiple. The same contributor confirming the same observation through the same code path in a different session is also not independent — independence requires a materially different angle (different feature, different failure mode, different contributor type).
+
+**updatedAt semantics:** `updatedAt` changes only on curate merge, fact correction, or entry edit — never on prime surfacing.
 
 ---
 
@@ -85,6 +87,8 @@ If nothing passes all filters: print `KNOWLEDGE CURATED: No generalizable insigh
 Glob("knowledge/*.jsonl")
 ```
 
+If knowledge base does not exist: skip duplicate check entirely and proceed directly to Step 3 (write new entries).
+
 If knowledge base exists: read all entries. For each candidate insight, scan existing entries.
 
 **Merge rule:**
@@ -94,17 +98,18 @@ Identical symptom + different root cause = keep separate.
 Identical symptom + different recommendation = keep separate.
 Identical fact + identical recommendation = merge.
 
+**When in doubt, keep separate.** If you are unsure whether two entries describe the same core fact and recommendation, do not merge — create a new entry. Over-merging loses information; under-merging only creates mild duplication.
+
 **Merge protocol (when merging):**
 1. Append to `provenance[]`: `{"source": "<caller>", "reference": "<sha>", "date": "<today>"}`
 2. Do not modify `timesSurfaced` — curate does not surface entries, only prime does
-3. Update `updatedAt` to today — this IS a merited content change, recency signal is valid
-4. Consider confidence upgrade ONLY if the new provenance source is independent from all existing sources:
+3. Consider confidence upgrade ONLY if the new provenance source is independent from all existing sources:
    - Different session (different `started-at`)
    - Different code path or feature area
-   - Different contributor (human vs agent)
-   - If independent: `low→medium` or `medium→high`
-   - If NOT independent (same workflow, same agent): do NOT upgrade confidence
-4. Update `updatedAt`
+   - Different contributor type (human vs agent)
+   - If independent: upgrade by at most one level (`low→medium` or `medium→high`) — never skip a level in a single curate run
+   - If NOT independent (same workflow, same agent, same code path): do NOT upgrade confidence
+4. Update `updatedAt` to today — this IS a merited content change, recency signal is valid
 
 ### Step 3: Write new entries
 
@@ -128,7 +133,8 @@ For each NEW insight (not a duplicate):
 2. Parse each line. For the matched entry (by `id`): apply changes.
 3. **Preserve unknown fields** — if a line has fields not in the current schema, keep them as-is.
 4. **For malformed lines:** write them back unchanged. Log: `[KNOWLEDGE] Preserved malformed line N in <file> — not discarded.` Do NOT silently drop them.
-5. Write the full file back.
+5. **Preserve original line order** — do not reorder entries when rewriting.
+6. Write the full file back.
 
 ### Step 4: Report
 

@@ -6,7 +6,7 @@ Load project-specific knowledge before starting work. If no knowledge base exist
 
 Called by skills at the start of work, before any implementation or analysis. The skill passes:
 - `WORK_TYPE` — `planning` | `implementation` | `review` | `research`
-- `WORK_KEYWORDS` — comma-separated keywords from the task description (e.g., `"auth,token,session"`)
+- `WORK_KEYWORDS` — comma-separated keywords from the task description (e.g., `"auth,token,session"`). Matching is case-insensitive — normalize both keywords and tag values to lowercase before comparing.
 - `WORK_FILES` — space-separated file paths or globs that will be touched (optional — if absent, ranking uses tags and confidence only)
 
 ---
@@ -57,9 +57,11 @@ For each entry, compute a relevance score:
 
 **If `WORK_FILES` is not provided:** skip the affectedFiles check entirely. Do not penalize entries for missing file matches.
 
+**affectedFiles matching** uses path-based glob evaluation (e.g., `src/auth/**` matches `src/auth/token.ts`). It is NOT substring matching — `auth` alone does not match `src/authentication/service.ts` unless the glob explicitly covers it.
+
 **`timesSurfaced` does NOT affect score.** Frequent surfacing is not a quality signal — only `confidence` (from provenance) and relevance determine ranking.
 
-Keep entries with score >= 1. Sort by score descending within each type group. **Tiebreaker:** when two entries score equally, prefer the more specific one — an entry scoped to a specific file, symbol, or path beats a generic one about the same topic.
+Keep entries with score >= 1. Sort by score descending within each type group. **Tiebreaker:** when two entries score equally, prefer the more specific one — an entry scoped to a specific file, symbol, or path beats a generic one about the same topic. If two entries are equally specific, prefer the newer one (higher `updatedAt`).
 
 ### Step 4: Select entries (cap at 10 total)
 
@@ -67,7 +69,7 @@ Apply per-section caps after filtering:
 
 | Section | Types | Max entries |
 |---------|-------|-------------|
-| MUST AVOID | `anti-pattern`, high-confidence `gotcha` | 3 |
+| MUST AVOID | `anti-pattern`, high-confidence `gotcha` (`confidence == "high"`) | 3 |
 | GOTCHAS | `gotcha` (remaining) | 2 |
 | DECISIONS | `decision` | 2 |
 | CODEBASE FACTS | `codebase-fact`, `api-behavior` | 2 |
@@ -75,11 +77,11 @@ Apply per-section caps after filtering:
 
 Total cap: **10 entries**. Within each section, take highest-scoring entries first.
 
-**Conflict detection:** If an `anti-pattern` and a `pattern` both scored >= 1 AND describe the same code construct (same symbol, same file pattern, same operation), surface both — anti-pattern first — with a note:
+**Conflict detection:** If an `anti-pattern` and a `pattern` are both **actually selected for output** (within their section caps) AND describe the same code construct (same symbol, same file pattern, same operation), surface both — anti-pattern first — with a note:
 ```
 ⚠ Conflict: anti-pattern and pattern both apply to <topic>. Anti-pattern takes precedence.
 ```
-Only flag conflicts between entries that passed the relevance filter. Do not surface artificial conflicts from entries that didn't score.
+Only flag conflicts between entries that appear in the final output. Do not flag conflicts from entries that scored but were cut by section caps, or entries that didn't score at all.
 
 ### Step 5: Output
 
@@ -89,9 +91,9 @@ Print a structured block before starting work:
 KNOWLEDGE PRIMED (N entries)
 ──────────────────────────────
 
-MUST AVOID (anti-patterns + critical gotchas):
+MUST AVOID (anti-patterns + high-confidence gotchas):
   • [fact] — [recommendation]
-    (source: [provenance[0].reference], confidence: [high/medium/low])
+    (source: [provenance[0].reference or "unknown"], confidence: [high/medium/low])
 
 GOTCHAS:
   • [fact] — [recommendation]
@@ -115,7 +117,7 @@ Anti-patterns always appear before patterns in the same topic area. If a conflic
 
 For each entry included in the output, increment `timesSurfaced` by 1. Do NOT modify `updatedAt`.
 
-`updatedAt` reflects merited content changes (curate merge, fact correction). Updating it on surfacing would corrupt the recency signal — an entry shown often would appear "fresh" even if its knowledge is stale.
+`updatedAt` changes only on curate merge, fact correction, or entry edit — never on prime surfacing. Updating it here would corrupt the recency signal: an entry shown often would appear "fresh" even if its knowledge is stale.
 
 **Rewrite protocol:**
 1. Read the full file into memory.
