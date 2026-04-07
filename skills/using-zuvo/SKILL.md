@@ -3,7 +3,7 @@ name: using-zuvo
 description: "ALWAYS LOADED — Zuvo skill router. Injected at session start. Determines which zuvo skill to invoke for the current task."
 ---
 
-> **Zuvo v1.3.7** | 39 skills | 4 adversarial providers | CQ1-CQ28 + Q1-Q19
+> **Zuvo v1.3.7** | 41 skills | 4 adversarial providers | CQ1-CQ28 + Q1-Q19
 
 # Zuvo Skill Router
 
@@ -46,6 +46,7 @@ Do this on every message. Not just the first one.
 | Write end-to-end tests (Playwright) | `zuvo:write-e2e` |
 | Fix systematic test anti-patterns across files | `zuvo:fix-tests` |
 | Fix SEO audit findings, apply SEO fixes | `zuvo:seo-fix` |
+| Fix content audit findings (encoding, markdown, artifacts) | `zuvo:content-fix` |
 
 ### Priority 3 — Audit (analysis and reporting)
 
@@ -62,6 +63,7 @@ Do this on every message. Not just the first one.
 | Audit CI/CD pipelines | `zuvo:ci-audit` |
 | Audit environment config and secrets | `zuvo:env-audit` |
 | Audit SEO and structured data | `zuvo:seo-audit` |
+| Audit content quality (encoding, links, formatting, CMS artifacts) | `zuvo:content-audit` |
 | Audit codebase structure and organization | `zuvo:structure-audit` |
 | Review architecture, create ADR | `zuvo:architecture` |
 | Review UI/UX consistency and accessibility | `zuvo:design-review` |

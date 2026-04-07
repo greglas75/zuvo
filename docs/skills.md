@@ -1,6 +1,6 @@
 # Skills Reference
 
-Zuvo includes 39 skills organized into 9 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
+Zuvo includes 41 skills organized into 9 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
 
 ---
 
@@ -62,6 +62,8 @@ Scoped task execution for common development work.
 | `zuvo:structure-audit` | Codebase organization across 13 dimensions (SA1-SA13): naming, depth, colocation, file size, dead code, complexity, duplication, hotspots. Tool-driven with CodeSift primary and CLI fallbacks. | When codebase feels messy, before major restructuring | `full`, `[path]`, `--naming`, `--size`, `--dead-code`, `--duplication`, `--hotspots`, `--quick`, `--fix` |
 | `zuvo:seo-audit` | SEO/GEO audit across 13 dimensions with 6 critical gates. 74 checks across 13 dimensions on meta tags, structured data, AI crawlers, content, performance. Framework-aware. | Before launches, when SEO ranking drops | `full`, `[path]`, `--live-url <url>`, `--quick`, `--content-only`, `--geo`, `--persist-backlog` |
 | `zuvo:seo-fix` | Apply SEO audit fixes with 3-tier safety model (SAFE/MODERATE/DANGEROUS). Reads audit JSON, applies framework-specific templates. | After seo-audit, to auto-fix findings | `--auto`, `--all`, `--dry-run`, `--fix-type`, `--finding` |
+| `zuvo:content-audit` | Content file quality audit across 8 dimensions (CC1-CC8): encoding artifacts (NBSP, mojibake), markdown syntax, CMS migration artifacts, frontmatter, images, links, completeness, typography. Language-agnostic. | After CMS migration, content quality check, broken link detection | `[path]`, `--live-url <url>`, `--quick`, `--content-path <dir>`, `--lang <code>`, `--check-external`, `--persist-backlog` |
+| `zuvo:content-fix` | Apply content audit fixes with 2-tier safety model (SAFE/MODERATE). Strips encoding artifacts, fixes broken markdown, removes CMS debris. | After content-audit, to auto-fix findings | `--auto`, `--dry-run`, `--fix-type`, `--finding` |
 | `zuvo:architecture` | Three modes: review existing architecture (A1-A9), create ADRs, or design new systems. Uses CodeSift for module discovery and dependency mapping. | Architecture health check, documenting decisions, system design | `--mode review [path]`, `--mode adr`, `--mode design` |
 
 ---
