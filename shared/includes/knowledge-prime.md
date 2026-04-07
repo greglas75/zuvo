@@ -7,7 +7,9 @@ Load project-specific knowledge before starting work. If no knowledge base exist
 Called by skills at the start of work, before any implementation or analysis. The skill passes:
 - `WORK_TYPE` — `planning` | `implementation` | `review` | `research`
 - `WORK_KEYWORDS` — comma-separated keywords from the task description (e.g., `"auth,token,session"`)
-- `WORK_FILES` — space-separated file paths or globs that will be touched (optional)
+- `WORK_FILES` — space-separated file paths or globs that will be touched (optional — if absent, ranking uses tags and confidence only)
+
+---
 
 ## Protocol
 
@@ -23,32 +25,62 @@ If no files found: print `[KNOWLEDGE] No knowledge base found — starting fresh
 
 Read all existing files in `knowledge/`:
 
-| File | Contains |
-|------|----------|
-| `knowledge/patterns.jsonl` | Reusable best practices |
-| `knowledge/gotchas.jsonl` | Common pitfalls and surprises |
-| `knowledge/decisions.jsonl` | Architectural choices with rationale |
-| `knowledge/anti-patterns.jsonl` | Approaches to avoid |
-| `knowledge/codebase-facts.jsonl` | Implementation quirks specific to this codebase |
-| `knowledge/api-behaviors.jsonl` | External API quirks and integration behaviors |
+| File | Type tag | Section priority |
+|------|----------|-----------------|
+| `knowledge/anti-patterns.jsonl` | `anti-pattern` | 1st (highest) |
+| `knowledge/gotchas.jsonl` | `gotcha` | 1st (highest) |
+| `knowledge/decisions.jsonl` | `decision` | 2nd |
+| `knowledge/codebase-facts.jsonl` | `codebase-fact` | 3rd |
+| `knowledge/api-behaviors.jsonl` | `api-behavior` | 3rd |
+| `knowledge/patterns.jsonl` | `pattern` | 4th (lowest) |
 
-Parse each line as a JSON object. Skip malformed lines (log: `[KNOWLEDGE] Skipped malformed entry in <file>`).
+Parse each line as a JSON object. Skip malformed lines and log:
+```
+[KNOWLEDGE] Skipped malformed line N in knowledge/<file>.jsonl — preserved as-is in file
+```
+Never delete or overwrite malformed lines. They may contain data in an unknown schema version — preserve them.
 
-### Step 3: Filter and rank
+### Step 3: Score and filter
 
 For each entry, compute a relevance score:
 
-- `+3` if any `tags[]` value matches a word in `WORK_KEYWORDS`
-- `+2` if any `affectedFiles[]` glob matches a file in `WORK_FILES`
-- `+1` if `confidence == "high"`
-- `+0` for `confidence == "medium"`, `-1` for `confidence == "low"`
-- `-2` if `usageCount == 0` and `confidence == "low"` (unvalidated low-confidence — deprioritize)
+| Condition | Points |
+|-----------|--------|
+| Any `tags[]` value matches a word in `WORK_KEYWORDS` | +3 |
+| Any `affectedFiles[]` glob matches a file in `WORK_FILES` | +2 |
+| `confidence == "high"` | +1 |
+| `confidence == "medium"` | +0 |
+| `confidence == "low"` | -1 |
+| `updatedAt` within last 30 days | +1 (recency bonus) |
+| `updatedAt` older than 180 days AND `confidence != "high"` | -1 (staleness penalty) |
+| `timesSurfaced == 0` AND `confidence == "low"` | -2 (unvalidated) |
 
-Keep entries with score >= 1. Sort by score descending. Cap at 20 total entries across all files.
+**If `WORK_FILES` is not provided:** skip the affectedFiles check entirely. Do not penalize entries for missing file matches.
 
-If no entries score >= 1: print `[KNOWLEDGE] Knowledge base exists but no relevant entries for this task.` and exit.
+**`timesSurfaced` does NOT affect score.** Frequent surfacing is not a quality signal — only `confidence` (from provenance) and relevance determine ranking.
 
-### Step 4: Output
+Keep entries with score >= 1. Sort by score descending within each type group.
+
+### Step 4: Select entries (cap at 10 total)
+
+Apply per-section caps after filtering:
+
+| Section | Types | Max entries |
+|---------|-------|-------------|
+| MUST AVOID | `anti-pattern`, high-confidence `gotcha` | 3 |
+| GOTCHAS | `gotcha` (remaining) | 2 |
+| DECISIONS | `decision` | 2 |
+| CODEBASE FACTS | `codebase-fact`, `api-behavior` | 2 |
+| PATTERNS | `pattern` | 1 |
+
+Total cap: **10 entries**. Within each section, take highest-scoring entries first.
+
+**Conflict detection:** If an `anti-pattern` and a `pattern` describe the same code construct (same symbol, same file pattern, same operation), surface both — anti-pattern first — with a note:
+```
+⚠ Conflict: anti-pattern and pattern both apply to <topic>. Anti-pattern takes precedence.
+```
+
+### Step 5: Output
 
 Print a structured block before starting work:
 
@@ -56,30 +88,37 @@ Print a structured block before starting work:
 KNOWLEDGE PRIMED (N entries)
 ──────────────────────────────
 
-MUST FOLLOW (anti-patterns, high-confidence gotchas):
-  • [fact] — [recommendation] (source: [provenance[0].reference])
+MUST AVOID (anti-patterns + critical gotchas):
+  • [fact] — [recommendation]
+    (source: [provenance[0].reference], confidence: [high/medium/low])
 
 GOTCHAS:
   • [fact] — [recommendation]
 
-PATTERNS:
-  • [fact] — [recommendation]
-
-DECISIONS (architectural choices):
+DECISIONS:
   • [fact] — [recommendation]
 
 CODEBASE FACTS:
   • [fact] — [recommendation]
 
-API BEHAVIORS:
+PATTERNS:
   • [fact] — [recommendation]
 ──────────────────────────────
 ```
 
 Only print sections that have entries. Skip empty sections.
 
-### Step 5: Increment usageCount
+Anti-patterns always appear before patterns in the same topic area. If a conflict note applies, print it inline.
 
-For each entry that was included in the output, increment its `usageCount` by 1 and update `updatedAt` to today's date. Write the updated entry back to its JSONL file (rewrite the line in place).
+### Step 6: Increment timesSurfaced
 
-**Rewrite protocol:** Read the full file into memory, update matching lines (by `id`), write back the full file. JSONL files are small — full rewrite is safe.
+For each entry included in the output, increment `timesSurfaced` by 1 and update `updatedAt` to today.
+
+**Rewrite protocol:**
+1. Read the full file into memory.
+2. Parse each line. For lines matching an included entry (by `id`): update `timesSurfaced` and `updatedAt`.
+3. For malformed lines: write them back unchanged (never discard).
+4. For unknown fields: preserve them unchanged (schema may have evolved).
+5. Write the full file back.
+
+`timesSurfaced` tracks how often an entry reaches agents. It does NOT influence `confidence`. Confidence upgrades happen only in Curate, based on independent provenance sources.

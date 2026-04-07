@@ -33,14 +33,16 @@ This document defines the JSON schema for benchmark run results produced by the 
 "options": {
   "with_tests": true,
   "with_adversarial": true,
+  "with_test_adversarial": false,
   "with_static_checks": false
 }
 ```
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `with_tests` | `boolean` | `false` | Whether a Round 2 (write tests) task was run after Round 1. |
-| `with_adversarial` | `boolean` | `false` | Whether adversarial cross-review was run between providers. |
+| `with_tests` | `boolean` | `false` | Whether a Round 3 (write tests) task was run after Round 1. |
+| `with_adversarial` | `boolean` | `false` | Whether adversarial cross-review was run on Round 1 code. |
+| `with_test_adversarial` | `boolean` | `false` | Whether adversarial cross-review was run on Round 3 tests. |
 | `with_static_checks` | `boolean` | `false` | Whether TypeScript compile + lint was run on provider output. |
 
 ---
@@ -148,7 +150,8 @@ Detailed per-dimension scores for each provider. Keys are provider identifiers.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `adversarial_delta` | `number \| null` | Score change from adversarial review. Negative = weaknesses exposed. `null` if not run. |
+| `adversarial_delta` | `number \| null` | Score change on code from adversarial review (Round 1 → Round 1 fixed). Negative = weaknesses exposed. `null` if `with_adversarial` is false. |
+| `test_adversarial_delta` | `number \| null` | Score change on tests from adversarial review (Round 3 → Round 3 fixed). Negative = weaknesses exposed. `null` if `with_test_adversarial` is false. |
 | `self_eval_bias` | `number \| null` | Provider self-score minus judge score. `null` if no parseable `SELF_EVAL_SUMMARY` block found. |
 | `response_excerpt` | `string` | First 500 characters of provider's code response for audit purposes. |
 

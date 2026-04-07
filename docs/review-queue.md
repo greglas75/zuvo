@@ -184,3 +184,4 @@ Commits pending review. Auto-managed:
 - 201c137 (2026-04-07) add geo-fix skill: safety-tiered fixes with seo-fix dedup
 - 440f2fc (2026-04-07) wire geo-audit and geo-fix into routing, metadata, tests, and website
 - 3595327 (2026-04-07) feat: knowledge store, session recovery, evidence-enforced adversarial review
+- 8e16857 (2026-04-07) release: v1.3.17 — knowledge store, session recovery, evidence-enforced adversarial

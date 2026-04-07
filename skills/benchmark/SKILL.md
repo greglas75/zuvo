@@ -21,7 +21,8 @@ Parse `$ARGUMENTS` for these flags:
 | `--mode corpus` | Use fixed corpus tasks (OrderService + useSearchProducts) |
 | `--mode default` | Use user-provided task (default) |
 | `--with-tests` | Run Round 2: have providers write tests for their own Round 1 code |
-| `--with-adversarial` | Run adversarial cross-review between rounds |
+| `--with-adversarial` | Run adversarial cross-review on Round 1 code |
+| `--with-test-adversarial` | Run adversarial cross-review on Round 3 tests (requires `--with-tests`) |
 | `--with-static-checks` | Run tsc + jest on generated code (best-effort, null if tools missing) |
 | `--provider <name>` | Restrict to a single provider (codex-fast, gemini, claude, cursor-agent) |
 | `--show-costs` | Print provider cost table ($/M tokens) and exit |
@@ -215,6 +216,7 @@ For each provider in ranked order:
     "test_no_hallucinations": null,
     "test_composite": null,
     "adversarial_delta": null,
+    "test_adversarial_delta": null,
     "self_eval_bias": 1.2,
     "response_excerpt": "<first 500 chars of response>"
   }
@@ -345,7 +347,21 @@ For each provider that succeeded Round 1:
 3. Dispatch the interpolated prompt back to the same provider
 4. Capture Round 3 response (test code) → `tmp/round3_<provider>.txt` + `TEST_EVAL_SUMMARY` block
 
-### Phase 7: Score Round 2 Responses
+### Phase 7: Round 4 — Adversarial on Tests (if `--with-test-adversarial`)
+
+Mirrors Phase 5 but targets test files from Round 3.
+
+Each provider's Round 3 output is stored as `tmp/round3_<provider>.txt`.
+
+For each provider that succeeded Round 3:
+1. Run `scripts/adversarial-review.sh --files tmp/round3_<provider>.txt --json`
+2. Other providers critique: missing branches, weak assertions, echo tests, tautological oracles
+3. Author may rewrite tests → `tmp/round3_fixed_<provider>.txt`
+4. CQ8: if adversarial fails for a provider, continue with unfixed `round3_<provider>.txt`
+
+`test_adversarial_delta` = meta-judge score of fixed tests − original tests (typically negative).
+
+### Phase 7b: Score Round 3 Responses
 
 Use the same meta-judge model to score test quality on four dimensions (0–5 each):
 - `test_completeness`: coverage of happy paths, error paths, edge cases

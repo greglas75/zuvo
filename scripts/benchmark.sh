@@ -42,6 +42,7 @@ DIFF_REF=""
 INPUT_MODE="task"        # task | files | diff | stdin
 WITH_TESTS=false
 WITH_ADVERSARIAL=false
+WITH_TEST_ADVERSARIAL=false
 WITH_STATIC_CHECKS=false
 PROVIDERS_OVERRIDE=""
 OUTPUT_FILE="/tmp/benchmark-raw.json"
@@ -58,6 +59,7 @@ while [[ $# -gt 0 ]]; do
     --diff)             DIFF_REF="$2"; INPUT_MODE="diff"; shift 2 ;;
     --with-tests)       WITH_TESTS=true; shift ;;
     --with-adversarial) WITH_ADVERSARIAL=true; shift ;;
+    --with-test-adversarial) WITH_TEST_ADVERSARIAL=true; shift ;;
     --with-static-checks) WITH_STATIC_CHECKS=true; shift ;;
     --providers)        PROVIDERS_OVERRIDE="$2"; shift 2 ;;
     --output)           OUTPUT_FILE="$2"; shift 2 ;;
@@ -568,6 +570,7 @@ jq -n \
   --argjson task_snapshot_truncated "$TASK_SNAPSHOT_TRUNCATED" \
   --argjson with_tests "$WITH_TESTS" \
   --argjson with_adversarial "$WITH_ADVERSARIAL" \
+  --argjson with_test_adversarial "$WITH_TEST_ADVERSARIAL" \
   --argjson with_static_checks "$WITH_STATIC_CHECKS" \
   --argjson providers_raw "$(cat "$RAW_RESULTS_FILE")" \
   '{
@@ -583,6 +586,7 @@ jq -n \
     options: {
       with_tests: $with_tests,
       with_adversarial: $with_adversarial,
+      with_test_adversarial: $with_test_adversarial,
       with_static_checks: $with_static_checks
     },
     providers_raw: $providers_raw
