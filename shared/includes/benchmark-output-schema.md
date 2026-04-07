@@ -1,6 +1,8 @@
 # Benchmark Output Schema
 
-This document defines the JSON schema for benchmark run results produced by the `zuvo:benchmark` skill. All benchmark output files must conform to this schema.
+This document defines the JSON schema for the **final benchmark report** written by the `zuvo:benchmark` skill to `audit-results/benchmark-NNN-<run_id>.json`.
+
+> **Note:** `scripts/benchmark.sh` produces an intermediate raw JSON (`providers_raw` array) that does NOT conform to this schema. The skill orchestrator (SKILL.md) reads the raw output and assembles the final schema-conformant document including leaderboard, scorecards, and meta-judge fields.
 
 ---
 
@@ -22,7 +24,7 @@ This document defines the JSON schema for benchmark run results produced by the 
 | Field | Type | Description |
 |-------|------|-------------|
 | `task_source` | `string` | Source of the task — `"corpus"` for built-in corpus, `"user"` for a provided prompt, or a file path. |
-| `task_hash` | `string` | Full 64-char SHA-256 hex of the task prompt. First 8 chars are used as display label only. |
+| `task_hash` | `string` | Full 64-char SHA-256 hex of the task prompt. First 8 chars are used as display label only. (Examples in this document show truncated 8-char forms for readability.) |
 | `task_snapshot` | `string` | First 30,000 characters of the task prompt. Truncated if longer (`task_snapshot_truncated: true`). **Warning:** If the task contains secrets or PII, those will be stored here. Use `--no-snapshot` flag to suppress storage. |
 
 ---
@@ -43,7 +45,7 @@ This document defines the JSON schema for benchmark run results produced by the 
 | `with_tests` | `boolean` | `false` | Whether a Round 3 (write tests) task was run after Round 1. |
 | `with_adversarial` | `boolean` | `false` | Whether adversarial cross-review was run on Round 1 code. |
 | `with_test_adversarial` | `boolean` | `false` | Whether adversarial cross-review was run on Round 3 tests. |
-| `with_static_checks` | `boolean` | `false` | Whether TypeScript compile + lint was run on provider output. |
+| `with_static_checks` | `boolean` | `false` | Whether TypeScript compile + jest was run on provider output. |
 
 ---
 
@@ -161,7 +163,7 @@ Detailed per-dimension scores for each provider. Keys are provider identifiers.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `meta_judge_model` | `string` | Model used as judge (e.g. `"claude-opus-4-5"`). |
+| `meta_judge_model` | `string` | Model used as judge (e.g. `"claude-opus-4-6"`). |
 | `judge_presentation_order` | `string[]` | Order in which provider responses were shown to the judge (randomized to reduce positional bias). |
 | `judge_input_truncated` | `boolean` | Whether any provider response was truncated before being sent to the judge. |
 
@@ -250,7 +252,7 @@ Detailed per-dimension scores for each provider. Keys are provider identifiers.
       "response_excerpt": "// AuthController\nimport { Controller, Post, Body } from '@nestjs/common';\n..."
     }
   },
-  "meta_judge_model": "claude-opus-4-5",
+  "meta_judge_model": "claude-opus-4-6",
   "judge_presentation_order": ["codex-fast", "claude"],
   "judge_input_truncated": false
 }
@@ -399,7 +401,7 @@ Detailed per-dimension scores for each provider. Keys are provider identifiers.
       "response_excerpt": "@Injectable()\nclass OrderService {\n  // CRUD operations for orders\n..."
     }
   },
-  "meta_judge_model": "claude-opus-4-5",
+  "meta_judge_model": "claude-opus-4-6",
   "judge_presentation_order": ["gemini", "cursor-agent", "codex-fast", "claude"],
   "judge_input_truncated": false
 }

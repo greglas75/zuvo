@@ -25,13 +25,12 @@
 # Exit codes:
 #   0 — completed successfully
 #   1 — argument error
-#   2 — no providers available or all providers failed
+#   2 — no providers available
+#   3 — all providers failed or no results to score
 
 set -euo pipefail
 
 BENCHMARK_VERSION="2.0"
-START_TIME=$(date +%s)
-GEMINI_MODEL="${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}"
 
 # ─── Argument parsing ───────────────────────────────────────────
 
@@ -55,14 +54,14 @@ ROUND_DIR=""
 while [[ $# -gt 0 ]]; do
   case $1 in
     --mode)             MODE="$2"; shift 2 ;;
-    --task)             TASK_TEXT="$2"; INPUT_MODE="task"; shift 2 ;;
+    --task|--prompt)    TASK_TEXT="$2"; INPUT_MODE="task"; shift 2 ;;
     --files)            FILES="$2"; INPUT_MODE="files"; shift 2 ;;
     --diff)             DIFF_REF="$2"; INPUT_MODE="diff"; shift 2 ;;
     --with-tests)       WITH_TESTS=true; shift ;;
     --with-adversarial) WITH_ADVERSARIAL=true; shift ;;
     --with-test-adversarial) WITH_TEST_ADVERSARIAL=true; shift ;;
     --with-static-checks) WITH_STATIC_CHECKS=true; shift ;;
-    --providers)        PROVIDERS_OVERRIDE="$2"; shift 2 ;;
+    --provider|--providers) PROVIDERS_OVERRIDE="$2"; shift 2 ;;
     --output)           OUTPUT_FILE="$2"; shift 2 ;;
     --run-id)           RUN_ID="$2"; shift 2 ;;
     --round-dir)        ROUND_DIR="$2"; shift 2 ;;
@@ -402,12 +401,18 @@ if [[ "$MODE" == "corpus" ]]; then
   INPUT_MODE="task"
 fi
 
+# Default: no input specified → diff HEAD~1
+if [[ "$INPUT_MODE" == "task" && -z "$TASK_TEXT" && "$MODE" != "corpus" ]]; then
+  INPUT_MODE="diff"
+  DIFF_REF="HEAD~1"
+fi
+
 # ─── Collect task input ─────────────────────────────────────────
 
 TASK_PROMPT=$(collect_input)
 
 if [[ -z "$TASK_PROMPT" ]]; then
-  echo "ERROR: No task input. Use --task, --files, --diff, or --mode corpus." >&2
+  echo "ERROR: No task input. Use --prompt, --files, --diff, or --mode corpus." >&2
   exit 1
 fi
 
@@ -495,7 +500,6 @@ done
 # ── Collect results and assemble per-provider JSON ──────────────
 
 PROVIDERS_SUCCEEDED=()
-ALL_RESULTS_JSON="[]"
 
 for p in "${PROVIDER_ARRAY[@]}"; do
   outfile="$JSON_TMPDIR/result_${p}.txt"
@@ -576,9 +580,6 @@ if [[ ${#PROVIDERS_SUCCEEDED[@]} -eq 0 ]]; then
 fi
 
 # ── Assemble raw_results.json ───────────────────────────────────
-
-PROVIDERS_ATTEMPTED_JSON=$(printf '"%s",' "${PROVIDER_ARRAY[@]}" | sed 's/,$//')
-PROVIDERS_SUCCEEDED_JSON=$(printf '"%s",' "${PROVIDERS_SUCCEEDED[@]}" | sed 's/,$//')
 
 # Combine per-provider result JSONs into array
 RAW_RESULTS_FILE="$JSON_TMPDIR/raw_results.json"

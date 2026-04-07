@@ -1,6 +1,37 @@
 # Benchmark Corpus Task — Write Production Code
 
-You are participating in a benchmark. Write TWO production files as if they were going into a NestJS + TypeScript monorepo. Follow all rules and quality standards you have loaded. After writing EACH file, run a CQ1-CQ20 self-evaluation and print your scores.
+You are participating in a benchmark. Write TWO production TypeScript files. Do NOT reference any external rules, style guides, or quality standards — implement from the spec below only. After both files, emit the SELF_EVAL_SUMMARY block.
+
+---
+
+## Minimal Type Contracts
+
+Define these types inline in whichever file uses them (or in a shared block at the top):
+
+```typescript
+type OrderStatus = 'pending' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
+
+interface OrderFilters {
+  status?: OrderStatus;
+  dateRange?: { from: Date; to: Date };
+  customerId?: string;
+  take?: number;
+  skip?: number;
+}
+
+interface CreateOrderDto {
+  customerId: string;
+  lineItems: Array<{ productId: string; quantity: number; unitPrice: number }>;
+  currency: string;
+}
+
+interface ExportFilters {
+  status?: OrderStatus;
+  dateRange?: { from: Date; to: Date };
+}
+```
+
+You may define any additional local types needed. Do NOT invent external packages beyond what is specified.
 
 ---
 
@@ -38,14 +69,32 @@ Return value: `{ products, total, isLoading, isLoadingMore, error, hasMore, load
 
 ---
 
-## After both files
+## Required Response Format
 
-At the end of your response, print this block EXACTLY (fill in your scores):
+Your response MUST follow this structure exactly:
+
+1. A fenced TypeScript block for File 1:
+   ````
+   ```typescript
+   // FILE: OrderService.ts
+   <full implementation>
+   ```
+   ````
+
+2. A fenced TypeScript block for File 2:
+   ````
+   ```typescript
+   // FILE: useSearchProducts.ts
+   <full implementation>
+   ```
+   ````
+
+3. The SELF_EVAL_SUMMARY block at the very end (no prose after it):
 
 ```
 SELF_EVAL_SUMMARY
-OrderService: <your CQ score 0-20>/20
-useSearchProducts: <your CQ score 0-20>/20
+OrderService: <score 0-20>/20
+useSearchProducts: <score 0-20>/20
 ```
 
-Replace `<your CQ score 0-20>` with your actual self-evaluation score for each file.
+Score 0-20 = sum of: completeness (0-5) + accuracy (0-5) + actionability (0-5) + no_hallucinations (0-5).

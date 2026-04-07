@@ -16,15 +16,15 @@ Parse `$ARGUMENTS` for these flags:
 | Flag | Effect |
 |------|--------|
 | `--diff [ref]` | Benchmark against a git diff (default: HEAD~1) |
-| `--files <paths>` | Benchmark on specific files as task input |
-| `--prompt <text>` | Use a literal text prompt as the task |
+| `--files <path>` | Benchmark on a file or newline-separated list of files as task input |
+| `--prompt <text>` | Use a literal text prompt as the task (alias: `--task`) |
 | `--mode corpus` | Use fixed corpus tasks (OrderService + useSearchProducts) |
 | `--mode default` | Use user-provided task (default) |
 | `--with-tests` | Run Round 2: have providers write tests for their own Round 1 code |
 | `--with-adversarial` | Run adversarial cross-review on Round 1 code |
 | `--with-test-adversarial` | Run adversarial cross-review on Round 3 tests (requires `--with-tests`) |
 | `--with-static-checks` | Run tsc + jest on generated code (best-effort, null if tools missing) |
-| `--provider <name>` | Restrict to a single provider (codex-fast, gemini, claude, cursor-agent) |
+| `--provider <name>` | Restrict to one or more providers, comma-separated (alias: `--providers`) |
 | `--show-costs` | Print provider cost table ($/M tokens) and exit |
 | `--compare [id1] [id2]` | Compare two prior runs from audit-results/; default: last two |
 | `--replay-last` | Re-run benchmark with the same task as the most recent run |
@@ -67,7 +67,7 @@ If any core file is missing, proceed in degraded mode and note it in the BENCHMA
    - `--diff` → `task_source: "diff"`, input via git diff
    - `--files` → `task_source: "files"`, input via file concatenation
    - `--prompt` or remaining text → `task_source: "user"`, input is the literal text
-   - None of the above → `task_source: "diff"`, default to `HEAD~1`
+   - None of the above → `task_source: "diff"`, default to `HEAD~1` (matches runner behavior)
 
 7. Print run header:
    ```
