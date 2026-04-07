@@ -502,9 +502,10 @@ run_codex_fast() {
   [[ -f "$real_home/auth.json" ]] && cp "$real_home/auth.json" "$tmp_home/"
   echo 'model = "gpt-5.4"' > "$tmp_home/config.toml"
 
+  local err_file="$JSON_TMPDIR/err_codex-fast.txt"
   printf '%s' "$REVIEW_PROMPT" \
     | CODEX_HOME="$tmp_home" timeout "$PROVIDER_TIMEOUT" \
-      "$codex_cmd" exec --sandbox read-only 2>/dev/null || return 1
+      "$codex_cmd" exec --sandbox read-only 2>"$err_file" || { echo "  WARN: codex-fast failed (exit $?): $(head -1 "$err_file" 2>/dev/null)" >&2; return 1; }
 }
 
 run_claude() {
@@ -515,16 +516,18 @@ run_claude() {
     model="claude-opus-4-6"
   fi
 
+  local err_file="$JSON_TMPDIR/err_claude.txt"
   printf '%s' "$REVIEW_PROMPT" \
-    | timeout "$PROVIDER_TIMEOUT" claude --model "$model" --print --output-format text 2>/dev/null \
-    || return 1
+    | timeout "$PROVIDER_TIMEOUT" claude --model "$model" --print --output-format text 2>"$err_file" \
+    || { echo "  WARN: claude failed (exit $?): $(head -1 "$err_file" 2>/dev/null)" >&2; return 1; }
 }
 
 run_cursor_agent() {
   # --workspace /tmp avoids loading project context (~3.5K tokens saved)
+  local err_file="$JSON_TMPDIR/err_cursor-agent.txt"
   printf '%s' "$REVIEW_PROMPT" \
-    | timeout "$PROVIDER_TIMEOUT" cursor-agent -p --mode ask --trust --workspace /tmp 2>/dev/null \
-    || return 1
+    | timeout "$PROVIDER_TIMEOUT" cursor-agent -p --mode ask --trust --workspace /tmp 2>"$err_file" \
+    || { echo "  WARN: cursor-agent failed (exit $?): $(head -1 "$err_file" 2>/dev/null)" >&2; return 1; }
 }
 
 run_gemini() {
@@ -537,13 +540,15 @@ run_gemini() {
   local gemini_cmd="gemini"
 
   # -p "" triggers headless mode; actual prompt is piped via stdin
+  local err_file="$JSON_TMPDIR/err_gemini.txt"
   local result status=0
   result=$(timeout "$PROVIDER_TIMEOUT" $gemini_cmd \
     --allowed-mcp-server-names __NONE__ \
     --model "$model" \
-    -p "" < "$prompt_file" 2>/dev/null) || status=$?
+    -p "" < "$prompt_file" 2>"$err_file") || status=$?
 
   if [[ $status -ne 0 || -z "$result" ]]; then
+    echo "  WARN: gemini failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
     return 1
   fi
   printf '%s\n' "$result"
@@ -561,13 +566,14 @@ run_gemini_api() {
   local payload_file="$JSON_TMPDIR/gemini_api_payload.json"
   printf '%s' "$REVIEW_PROMPT" | jq -Rs '{contents:[{parts:[{text:.}]}]}' > "$payload_file"
 
+  local err_file="$JSON_TMPDIR/err_gemini-api.txt"
   local response
   response=$(curl -sf --max-time "$PROVIDER_TIMEOUT" \
     "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent" \
     -H "x-goog-api-key: $GEMINI_API_KEY" \
     -H "Content-Type: application/json" \
     -d @"$payload_file" \
-  ) || return 1
+  ) 2>"$err_file" || { echo "  WARN: gemini-api failed (exit $?): $(head -1 "$err_file" 2>/dev/null)" >&2; return 1; }
 
   # Log token usage to stderr
   local input_tokens output_tokens
@@ -708,12 +714,15 @@ else
 fi
 
 if [[ -z "$ALL_RESULTS" ]]; then
-  # Log failed run
+  # Log failed run (per-provider format)
   END_TIME=$(date +%s)
   DURATION=$((END_TIME - START_TIME))
-  mkdir -p "$HOME/.zuvo" 2>/dev/null || true
-  printf '%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%ds\t%d\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$REVIEW_MODE" "NONE" 0 "${#INPUT}" 0 0 0 0 0 "$DURATION" 2 \
+  mkdir -p "$HOME/.zuvo/adversarial-inputs" 2>/dev/null || true
+  RUN_ID="$(date +%s)-$$"
+  INPUT_FILE="$HOME/.zuvo/adversarial-inputs/${RUN_ID}.diff"
+  printf '%s' "$INPUT" > "$INPUT_FILE" 2>/dev/null || true
+  printf '%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%ds\t%d\t%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$RUN_ID" "$REVIEW_MODE" "NONE" "${#INPUT}" 0 0 0 0 0 "$DURATION" 2 "$INPUT_FILE" \
     >> "$HOME/.zuvo/adversarial.log" 2>/dev/null || true
 
   if [[ "$OUTPUT_FORMAT" == "json" ]]; then
@@ -813,29 +822,52 @@ END OF CROSS-PROVIDER REVIEW
 HEADER
 fi
 
-# ─── Run log ───────────────────────────────────────────────────
+# ─── Run log (per-provider) ────────────────────────────────────
 
 END_TIME=$(date +%s)
-DURATION=$((END_TIME - START_TIME))
+TOTAL_DURATION=$((END_TIME - START_TIME))
 
-# (findings and output size already counted above, before output section)
-
-# Log to ~/.zuvo/adversarial.log (TSV: date, mode, providers, count, input_chars, output_chars, findings, critical, warning, info, duration_s, exit)
 LOG_DIR="$HOME/.zuvo"
-mkdir -p "$LOG_DIR" 2>/dev/null || LOG_DIR="."
+mkdir -p "$LOG_DIR/adversarial-inputs" 2>/dev/null || LOG_DIR="."
 LOG_FILE="$LOG_DIR/adversarial.log"
 
-printf '%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%ds\t%d\n' \
-  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  "$REVIEW_MODE" \
-  "$PROVIDERS_USED" \
-  "$PROVIDER_COUNT" \
-  "${#INPUT}" \
-  "$OUTPUT_SIZE" \
-  "$TOTAL_FINDINGS" \
-  "$CRITICAL_COUNT" \
-  "$WARNING_COUNT" \
-  "$INFO_COUNT" \
-  "$DURATION" \
-  "0" \
-  >> "$LOG_FILE" 2>/dev/null || true
+# Generate run ID (groups providers from same invocation)
+RUN_ID="$(date +%s)-$$"
+
+# Save input for later investigation (cleanup files older than 7 days)
+INPUT_FILE="$LOG_DIR/adversarial-inputs/${RUN_ID}.diff"
+printf '%s' "$INPUT" > "$INPUT_FILE" 2>/dev/null || true
+find "$LOG_DIR/adversarial-inputs" -name "*.diff" -mtime +7 -delete 2>/dev/null || true
+
+# Log one line per provider
+# TSV: date  run_id  mode  provider  input_chars  output_chars  findings  critical  warning  info  duration_s  exit  input_file
+for p in $PROVIDERS; do
+  result_file="$JSON_TMPDIR/result_${p}.txt"
+  p_output=0
+  p_c=0; p_w=0; p_i=0
+  p_exit=1
+  if [[ -s "$result_file" ]]; then
+    p_output=$(wc -c < "$result_file" | tr -d ' ')
+    p_c=$(grep -ciE 'CRITICAL' "$result_file" 2>/dev/null) || p_c=0
+    p_w=$(grep -ciE 'WARNING' "$result_file" 2>/dev/null) || p_w=0
+    p_i=$(grep -ciE '\bINFO\b' "$result_file" 2>/dev/null) || p_i=0
+    p_exit=0
+  fi
+  p_findings=$((p_c + p_w + p_i))
+
+  printf '%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%ds\t%d\t%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "$RUN_ID" \
+    "$REVIEW_MODE" \
+    "$p" \
+    "${#INPUT}" \
+    "$p_output" \
+    "$p_findings" \
+    "$p_c" \
+    "$p_w" \
+    "$p_i" \
+    "$TOTAL_DURATION" \
+    "$p_exit" \
+    "$INPUT_FILE" \
+    >> "$LOG_FILE" 2>/dev/null || true
+done
