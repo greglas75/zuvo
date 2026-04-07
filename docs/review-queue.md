@@ -189,3 +189,5 @@ Commits pending review. Auto-managed:
 - d28854f (2026-04-07) fix: knowledge store — updatedAt integrity, conflict detection, tiebreaker
 - 4c0d9f1 (2026-04-07) fix: knowledge store — 15 precision fixes (semantics, safety, edge cases)
 - f65809f (2026-04-07) fix benchmark.sh: bash 3.2 compat, timeout propagation, task_source, show-costs placement, gemini-api fallback, round-dir
+- 1a5775c (2026-04-07) fix benchmark.sh: bash 3.2 compat, timeout propagation, task_source, round-dir
+- 66b6035 (2026-04-07) fix: knowledge store — 10 precision fixes (wording, contracts, edge cases)

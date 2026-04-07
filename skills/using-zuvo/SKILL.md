@@ -3,7 +3,7 @@ name: using-zuvo
 description: "ALWAYS LOADED — Zuvo skill router. Injected at session start. Determines which zuvo skill to invoke for the current task."
 ---
 
-> **Zuvo v1.3.18** | 47 skills | 4 adversarial providers | CQ1-CQ28 + Q1-Q19
+> **Zuvo v1.3.19** | 48 skills | 4 adversarial providers | CQ1-CQ28 + Q1-Q19
 
 # Zuvo Skill Router
 
@@ -48,6 +48,7 @@ Do this on every message. Not just the first one.
 | Fix SEO audit findings, apply SEO fixes | `zuvo:seo-fix` |
 | Fix GEO issues — fix schema, fix llms.txt, apply GEO fixes | `zuvo:geo-fix` |
 | Fix content audit findings (encoding, markdown, artifacts) | `zuvo:content-fix` |
+| Audit accessibility, WCAG compliance, keyboard navigation, screen reader, ADA, contrast | `zuvo:a11y-audit` |
 
 ### Priority 3 — Audit (analysis and reporting)
 
@@ -69,12 +70,12 @@ Do this on every message. Not just the first one.
 | Compare old CMS page with new SSG page, fix parity gaps | `zuvo:content-migration` |
 | Audit codebase structure and organization | `zuvo:structure-audit` |
 | Review architecture, create ADR | `zuvo:architecture` |
-| Review UI/UX consistency and accessibility | `zuvo:design-review` |
+| Review UI/UX consistency, visual design quality, component patterns | `zuvo:design-review` |
 | Design new UI (components, layouts, systems) | `zuvo:design` |
 | UI design with multi-agent team | `zuvo:ui-design-team` |
 | Optimize test suite speed | `zuvo:tests-performance` |
 | Run mutation testing (verify tests actually catch bugs) | `zuvo:mutation-test` |
-| Audit accessibility (WCAG 2.2, ADA, keyboard, contrast) | `zuvo:a11y-audit` |
+| _(see Priority 2)_ | `zuvo:a11y-audit` |
 | Benchmark providers, compare models, measure quality/speed/cost | `zuvo:benchmark` |
 
 ### Priority 4 — Utility
