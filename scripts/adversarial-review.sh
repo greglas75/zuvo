@@ -18,6 +18,9 @@
 
 set -euo pipefail
 
+# ─── Timing ────────────────────────────────────────────────────
+START_TIME=$(date +%s)
+
 # ─── Configuration ──────────────────────────────────────────────
 
 GEMINI_MODEL="${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}"
@@ -705,6 +708,14 @@ else
 fi
 
 if [[ -z "$ALL_RESULTS" ]]; then
+  # Log failed run
+  END_TIME=$(date +%s)
+  DURATION=$((END_TIME - START_TIME))
+  mkdir -p "$HOME/.zuvo" 2>/dev/null || true
+  printf '%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%ds\t%d\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$REVIEW_MODE" "NONE" 0 "${#INPUT}" 0 0 0 0 0 "$DURATION" 2 \
+    >> "$HOME/.zuvo/adversarial.log" 2>/dev/null || true
+
   if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     echo '{"providers":[],"findings":[],"error":"All providers failed"}'
   else
@@ -713,6 +724,26 @@ if [[ -z "$ALL_RESULTS" ]]; then
   exit 2
 fi
 
+# ─── Count findings (before output, while temp files still exist) ──
+
+TOTAL_FINDINGS=0
+CRITICAL_COUNT=0
+WARNING_COUNT=0
+INFO_COUNT=0
+OUTPUT_SIZE=0
+for p in $PROVIDERS; do
+  result_file="$JSON_TMPDIR/result_${p}.txt"
+  if [[ -s "$result_file" ]]; then
+    OUTPUT_SIZE=$((OUTPUT_SIZE + $(wc -c < "$result_file" | tr -d ' ')))
+    c=$(grep -ciE 'CRITICAL' "$result_file" 2>/dev/null) || c=0
+    w=$(grep -ciE 'WARNING' "$result_file" 2>/dev/null) || w=0
+    i=$(grep -ciE '\bINFO\b' "$result_file" 2>/dev/null) || i=0
+    CRITICAL_COUNT=$((CRITICAL_COUNT + c))
+    WARNING_COUNT=$((WARNING_COUNT + w))
+    INFO_COUNT=$((INFO_COUNT + i))
+  fi
+done
+TOTAL_FINDINGS=$((CRITICAL_COUNT + WARNING_COUNT + INFO_COUNT))
 # ─── Meta-review: warn on clean pass for large diffs ───────────
 
 if [[ "$OUTPUT_FORMAT" == "json" ]]; then
@@ -781,3 +812,30 @@ END OF CROSS-PROVIDER REVIEW
 ===============================================================
 HEADER
 fi
+
+# ─── Run log ───────────────────────────────────────────────────
+
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
+
+# (findings and output size already counted above, before output section)
+
+# Log to ~/.zuvo/adversarial.log (TSV: date, mode, providers, count, input_chars, output_chars, findings, critical, warning, info, duration_s, exit)
+LOG_DIR="$HOME/.zuvo"
+mkdir -p "$LOG_DIR" 2>/dev/null || LOG_DIR="."
+LOG_FILE="$LOG_DIR/adversarial.log"
+
+printf '%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%ds\t%d\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  "$REVIEW_MODE" \
+  "$PROVIDERS_USED" \
+  "$PROVIDER_COUNT" \
+  "${#INPUT}" \
+  "$OUTPUT_SIZE" \
+  "$TOTAL_FINDINGS" \
+  "$CRITICAL_COUNT" \
+  "$WARNING_COUNT" \
+  "$INFO_COUNT" \
+  "$DURATION" \
+  "0" \
+  >> "$LOG_FILE" 2>/dev/null || true
