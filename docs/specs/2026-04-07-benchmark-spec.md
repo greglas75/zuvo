@@ -418,7 +418,7 @@ Both checks are **best-effort** — if they cannot run (no tsc/jest in PATH), re
 
 ## Acceptance Criteria
 
-**Must have:**
+**Must have (default mode):**
 1. `zuvo:benchmark` runs on `git diff HEAD~1` by default and produces a leaderboard
 2. All available providers run in parallel; failed providers are marked TIMEOUT/ERROR without blocking others
 3. Meta-judge scores every provider response on completeness, accuracy, actionability, no-hallucinations (0-10 composite)
@@ -429,26 +429,36 @@ Both checks are **best-effort** — if they cannot run (no tsc/jest in PATH), re
 8. Run logged to `~/.zuvo/runs.log` in 11-field TSV format
 9. 0-providers case exits with clear install instructions
 
+**Must have (corpus mode):**
+10. `--mode corpus` runs corpus/task-code.md on all providers and produces code_score per provider
+11. `--with-tests` adds Round 3 (test writing) and produces test_score per provider
+12. `--with-adversarial` adds adversarial round between code and tests, produces adversarial_delta per provider
+13. Leaderboard in corpus mode shows: rank, provider, code_score, test_score (if run), compile_ok, tests_pass, self_eval_bias, adversarial_delta, time_s, cost_usd
+14. Self-eval bias computed when provider output contains `SELF_EVAL_SUMMARY` block; `null` otherwise (not an error)
+15. `--with-static-checks` runs tsc + jest on tmp files; null if tools not in PATH (never blocks)
+16. Corpus task files stored at `shared/includes/benchmark-corpus/task-code.md` and `task-tests.md`
+
 **Should have:**
-10. `--replay-last` re-runs the exact task from the most recent benchmark run
-11. `--files` and `--diff REF` work as task input alternatives
-12. Token estimates flagged as `~estimated` when provider response contains `tokens_in = 0`, `tokens_out = 0`, or missing token fields — verifiable by running benchmark against a provider with no token API (e.g. cursor-agent)
-13. Cost table visible with `--show-costs` (prints pricing table, no benchmark run)
+17. `--replay-last` re-runs the exact task from the most recent diff/files/prompt run
+18. `--files` and `--diff REF` work as task input alternatives
+19. Token estimates flagged as `~estimated` when not available from provider API
+20. Cost table visible with `--show-costs` (no benchmark run)
 
 **Edge case handling:**
-14. 1-provider run completes with a warning (not a failure)
-15. Meta-judge failure saves run as UNSCORED (`scored: false`), ranks by time only, explains reason in output — no structural scoring fallback
-16. `--compare` with non-existent run ID prints a useful error, not a crash
+21. 1-provider run completes with a warning (not a failure)
+22. Meta-judge failure saves run as UNSCORED, ranks by time only — no structural scoring fallback
+23. `--compare` with non-existent run ID prints a useful error, not a crash
+24. `--with-tests` / `--with-adversarial` without `--mode corpus` exits with a clear error
 
 ## Out of Scope
 
-- Standard task corpus (v2 — corpus builds naturally from saved runs)
 - Cost caps (`--max-cost`) — v2
 - `--sequential` mode for fairer timing — v2
 - Seed/temperature control for reproducibility — v2
+- Coverage % measurement (requires full project setup, not tmp files) — v2
 - Integration with `zuvo:review` to auto-select best provider — future
 - Web UI or dashboard for benchmark history — future
 
 ## Open Questions
 
-None — all design decisions resolved in Phase 2 dialogue.
+None — all design decisions resolved.

@@ -169,3 +169,5 @@ Commits pending review. Auto-managed:
 - 5ab556f (2026-04-07) release: v1.3.13 — feat: model names in adversarial log
 - 39bd90b (2026-04-07) feat: add content-migration skill — CMS-to-SSG parity check + fix
 - b711825 (2026-04-07) fix: update package.json skill count to 45
+- 1712594 (2026-04-07) release: v1.3.14 — feat: content-audit, content-fix, content-migration — 3 new skills for content quality and CMS migration
+- 33e6c58 (2026-04-07) refactor: simplify content-migration skill based on review feedback
