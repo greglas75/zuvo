@@ -48,6 +48,7 @@ OUTPUT_FILE="/tmp/benchmark-raw.json"
 RUN_ID="bm-$(date +%Y-%m-%d-%H%M%S)-$$"
 DRY_RUN=false
 NO_SNAPSHOT=false
+SHOW_COSTS=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -63,6 +64,7 @@ while [[ $# -gt 0 ]]; do
     --run-id)           RUN_ID="$2"; shift 2 ;;
     --dry-run)          DRY_RUN=true; shift ;;
     --no-snapshot)      NO_SNAPSHOT=true; shift ;;
+    --show-costs)       SHOW_COSTS=true; shift ;;
     --help|-h)
       grep '^# ' "$0" | sed 's/^# //' | head -25
       exit 0 ;;
@@ -417,8 +419,21 @@ if [[ "$DRY_RUN" == "true" ]]; then
   exit 0
 fi
 
+# ─── Show costs and exit ────────────────────────────────────────
+
+if [[ "${SHOW_COSTS:-false}" == "true" ]]; then
+  printf '| %-14s | %10s | %11s |\n' "Provider" "$/M in" "$/M out"
+  printf '|%s|%s|%s|\n' "----------------" "------------" "-------------"
+  for p in codex-fast claude gemini gemini-api cursor-agent; do
+    printf '| %-14s | %10s | %11s |\n' "$p" "${COST_IN[$p]:-0.00}" "${COST_OUT[$p]:-0.00}"
+  done
+  exit 0
+fi
+
 # ─── Main execution loop ────────────────────────────────────────
-# (filled in Task 4)
+
+TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+PROJECT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
 echo "BENCHMARK START" >&2
 echo "  Run ID: $RUN_ID" >&2
@@ -426,74 +441,142 @@ echo "  Mode: $MODE" >&2
 echo "  Providers: $PROVIDERS" >&2
 echo "  Task hash: ${TASK_HASH:0:8}" >&2
 
-# Placeholder: dispatch all providers in parallel, collect results
-# Full implementation in Task 4
-
 declare -a PROVIDER_ARRAY=()
 for p in $PROVIDERS; do PROVIDER_ARRAY+=("$p"); done
 
-declare -a RESULT_PIDS=()
-declare -a RESULT_NAMES=()
+# ── Parallel dispatch with per-provider timing ──────────────────
 
 for p in "${PROVIDER_ARRAY[@]}"; do
   outfile="$JSON_TMPDIR/result_${p}.txt"
   timefile="$JSON_TMPDIR/time_${p}.txt"
   statusfile="$JSON_TMPDIR/status_${p}.txt"
-  echo "scored" > "$statusfile"
+  printf 'scored' > "$statusfile"
 
   echo "  Launching: $p..." >&2
-  t_start=$(date +%s)
+
   (
-    dispatch_provider "$p"
-    t_end=$(date +%s)
-    echo $((t_end - t_start)) > "$timefile"
-  ) > "$outfile" 2>/dev/null &
-  RESULT_PIDS+=($!)
-  RESULT_NAMES+=("$p")
+    time_start=$(date +%s)
+    dispatch_provider "$p" > "$outfile" 2>/dev/null
+    dispatch_exit=$?
+    time_end=$(date +%s)
+    response_time_s=$((time_end - time_start))
+    printf '%d' "$response_time_s" > "$timefile"
+    if [[ $dispatch_exit -eq 124 ]]; then
+      printf 'timeout' > "$statusfile"
+    elif [[ $dispatch_exit -ne 0 ]]; then
+      printf 'error' > "$statusfile"
+    fi
+  ) &
+  PIDS+=($!)
 done
 
-for pid in "${RESULT_PIDS[@]}"; do
-  wait "$pid" 2>/dev/null || true
+# Wait for all providers
+for pid in "${PIDS[@]}"; do
+  wait $pid 2>/dev/null || true
 done
 
-# Collect results and write raw JSON
-# Full JSON assembly in Task 4 — stub output for now
-TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-PROJECT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+# ── Collect results and assemble per-provider JSON ──────────────
 
-echo "  Collecting results..." >&2
+PROVIDERS_SUCCEEDED=()
+ALL_RESULTS_JSON="[]"
 
-PROVIDERS_ATTEMPTED=$(printf '"%s",' "${PROVIDER_ARRAY[@]}" | sed 's/,$//')
-PROVIDERS_SUCCEEDED=""
-for i in "${!RESULT_NAMES[@]}"; do
-  p="${RESULT_NAMES[$i]}"
-  if [[ -s "$JSON_TMPDIR/result_${p}.txt" ]]; then
-    PROVIDERS_SUCCEEDED="${PROVIDERS_SUCCEEDED:+$PROVIDERS_SUCCEEDED,}\"$p\""
-    echo "  Done: $p" >&2
+for p in "${PROVIDER_ARRAY[@]}"; do
+  outfile="$JSON_TMPDIR/result_${p}.txt"
+  timefile="$JSON_TMPDIR/time_${p}.txt"
+  statusfile="$JSON_TMPDIR/status_${p}.txt"
+  result_json_file="$JSON_TMPDIR/result_${p}.json"
+
+  status=$(cat "$statusfile" 2>/dev/null || echo "error")
+  response_time_s=$(cat "$timefile" 2>/dev/null || echo "0")
+
+  if [[ -s "$outfile" && "$status" == "scored" ]]; then
+    PROVIDERS_SUCCEEDED+=("$p")
+    echo "  Done: $p (${response_time_s}s)" >&2
   else
-    echo "  WARN: $p failed or timed out" >&2
+    echo "  WARN: $p — status: $status (${response_time_s}s)" >&2
   fi
+
+  # Estimate tokens from response
+  tokens_out=$(estimate_tokens "$outfile")
+  tokens_in=$(printf '%s' "$TASK_PROMPT" | wc -w | awk '{printf "%d~estimated", int($1 * 1.3)}')
+
+  # Static checks (if requested)
+  compile_ok="null"
+  tests_pass="null"
+  if [[ "$WITH_STATIC_CHECKS" == "true" ]]; then
+    compile_ok=$(run_static_checks_ts "$outfile")
+    tests_pass=$(run_static_checks_jest "$outfile")
+  fi
+
+  # Self-eval score
+  self_eval_raw=$(extract_self_eval_score "$outfile")
+
+  # Response excerpt (first 500 chars)
+  response_excerpt=""
+  if [[ -s "$outfile" ]]; then
+    response_excerpt=$(head -c 500 "$outfile")
+  fi
+
+  jq -n \
+    --arg provider "$p" \
+    --arg status "$status" \
+    --argjson response_time_s "$response_time_s" \
+    --arg tokens_in "$tokens_in" \
+    --arg tokens_out "$tokens_out" \
+    --argjson compile_ok "$compile_ok" \
+    --argjson tests_pass "$tests_pass" \
+    --argjson self_eval_raw "$self_eval_raw" \
+    --arg response_excerpt "$response_excerpt" \
+    '{
+      provider: $provider,
+      status: $status,
+      response_time_s: $response_time_s,
+      tokens_in: $tokens_in,
+      tokens_out: $tokens_out,
+      compile_ok: $compile_ok,
+      tests_pass: $tests_pass,
+      self_eval_raw: $self_eval_raw,
+      response_excerpt: $response_excerpt
+    }' > "$result_json_file"
 done
 
-# Write stub JSON — Task 4 replaces this with full leaderboard + scorecards
+# ── CQ6: fail if no providers succeeded ────────────────────────
+
+if [[ ${#PROVIDERS_SUCCEEDED[@]} -eq 0 ]]; then
+  echo "ERROR: All providers failed. No results to score." >&2
+  exit 3
+fi
+
+# ── Assemble raw_results.json ───────────────────────────────────
+
+PROVIDERS_ATTEMPTED_JSON=$(printf '"%s",' "${PROVIDER_ARRAY[@]}" | sed 's/,$//')
+PROVIDERS_SUCCEEDED_JSON=$(printf '"%s",' "${PROVIDERS_SUCCEEDED[@]}" | sed 's/,$//')
+
+# Combine per-provider result JSONs into array
+RAW_RESULTS_FILE="$JSON_TMPDIR/raw_results.json"
+jq -s '.' "$JSON_TMPDIR"/result_*.json > "$RAW_RESULTS_FILE" 2>/dev/null || echo "[]" > "$RAW_RESULTS_FILE"
+
 jq -n \
   --arg version "$BENCHMARK_VERSION" \
   --arg run_id "$RUN_ID" \
   --arg timestamp "$TIMESTAMP" \
   --arg project "$PROJECT" \
   --arg mode "$MODE" \
+  --arg task_source "${MODE:-user}" \
   --arg task_hash "$TASK_HASH" \
   --arg task_snapshot "$TASK_SNAPSHOT" \
   --argjson task_snapshot_truncated "$TASK_SNAPSHOT_TRUNCATED" \
   --argjson with_tests "$WITH_TESTS" \
   --argjson with_adversarial "$WITH_ADVERSARIAL" \
   --argjson with_static_checks "$WITH_STATIC_CHECKS" \
+  --argjson providers_raw "$(cat "$RAW_RESULTS_FILE")" \
   '{
     version: $version,
     run_id: $run_id,
     timestamp: $timestamp,
     project: $project,
     mode: $mode,
+    task_source: $task_source,
     task_hash: $task_hash,
     task_snapshot: $task_snapshot,
     task_snapshot_truncated: $task_snapshot_truncated,
@@ -502,16 +585,9 @@ jq -n \
       with_adversarial: $with_adversarial,
       with_static_checks: $with_static_checks
     },
-    providers_attempted: [],
-    providers_succeeded: [],
-    scored: [],
-    leaderboard: [],
-    scorecards: {},
-    meta_judge_model: null,
-    judge_presentation_order: [],
-    judge_input_truncated: false,
-    _stub: "Task 4 will replace this with full leaderboard and scorecards"
+    providers_raw: $providers_raw
   }' > "$OUTPUT_FILE"
 
 echo "  Output: $OUTPUT_FILE" >&2
 echo "BENCHMARK DONE" >&2
+exit 0
