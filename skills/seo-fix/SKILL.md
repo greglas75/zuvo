@@ -261,10 +261,21 @@ All other fix_types: target file is deterministic from framework (single obvious
    - Join with `---` separator between sections
    - Prepend same header as llms.txt (`# {site_name}\n> {description}\n\n## Metadata\n...`)
    - If no content files found: skip llms-full.txt, note in report "No content files to aggregate for llms-full.txt"
-   - Max size: cap at **500KB** (truncate with "... [truncated, see full docs at {url}]")
-   - If aggregated content exceeds 1MB: split into topic files
-     (`llms-api.txt`, `llms-content.txt`) linked from `llms.txt` index, or
-     compress by removing code examples, changelogs, and boilerplate
+   - Max size per file: **500KB** (truncate with "... [truncated, see full docs at {url}]")
+   - **Size strategy by corpus:**
+     - **< 100 pages (corpus < 500KB):** single `llms-full.txt`
+     - **100–300 pages (500KB–2MB):** single `llms-full.txt` capped at 500KB,
+       prioritize key content (homepage, landing pages, recent articles).
+       Note excluded content in fix report.
+     - **300+ pages (corpus > 2MB):** split into category files linked from
+       `llms.txt` index (e.g. `llms-guides.txt`, `llms-blog.txt`,
+       `llms-faq.txt`). Each capped at 500KB. Derive categories from site
+       nav, content dirs, or CMS taxonomy.
+     - Before splitting, compress: remove duplicate content, strip
+       boilerplate (repeated headers/footers), keep summaries only for
+       low-value pages (changelogs, legal), drop embedded code blocks from
+       non-technical content.
+   - Add `X-Robots-Tag: noindex` for all generated `llms*.txt` paths (step 4)
 
 3. **Validation:** After generating:
    - Both files must be valid markdown (no broken syntax)
@@ -279,7 +290,7 @@ All other fix_types: target file is deterministic from framework (single obvious
    - Detect platform header config: `_headers` (Cloudflare/Netlify),
      `vercel.json` (Vercel), or existing host config
    - If `_headers` exists: append `X-Robots-Tag: noindex` rules for
-     `/llms.txt` and `/llms-full.txt`
+     `/llms.txt`, `/llms-full.txt`, and any category files (`/llms-*.txt`)
    - If `_headers` does not exist AND `headers-add` is also being applied:
      include the rules in the new `_headers` file
    - If `_headers` does not exist AND no `headers-add`: create a minimal

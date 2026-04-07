@@ -188,17 +188,36 @@ contains related config or conflicting implementations.
   - If no content corpus exists, do not fail proposal compliance solely because
     `llms-full.txt` is absent
 - Size limits:
-  - Max size cap: **500KB** per file (truncate with
+  - Max size cap per file: **500KB** (truncate with
     `... [truncated, see full docs at {url}]`)
-  - Size tiers when aggregated content exceeds thresholds:
-    - `< 500KB` → single `llms-full.txt`, done
-    - `500KB–1MB` → single file with TOC and `## Metadata` header, emit
-      advisory note in fix output
-    - `> 1MB` → split into topic files (`llms-api.txt`, `llms-content.txt`,
-      etc.) linked from `llms.txt` index, or compress by removing code
-      examples, changelogs, and boilerplate
+  - Strategy depends on total content corpus size:
+    - **Small sites (< 100 pages, corpus < 500KB):** single `llms-full.txt`,
+      done
+    - **Medium sites (100–300 pages, corpus 500KB–2MB):** single
+      `llms-full.txt` capped at 500KB with TOC, prioritize most important
+      content (homepage, key landing pages, recent articles). Emit advisory
+      note listing what was excluded.
+    - **Large content sites (300+ pages, corpus > 2MB):** split into
+      **category files** linked from `llms.txt` index:
+      ```markdown
+      ## Content
+      - [Travel Guides](/llms-guides.txt): Full travel guides and destination articles
+      - [Blog](/llms-blog.txt): Recent blog posts and updates
+      - [FAQ](/llms-faq.txt): Frequently asked questions
+      ```
+      Each category file capped at 500KB. Categories derived from site
+      navigation, content directories, or CMS taxonomy. If the site has no
+      clear categories, split chronologically (recent vs archive) or by
+      content type (articles vs pages vs docs).
+    - **Compression before splitting:** Before creating multiple files, try
+      reducing size by: removing duplicate content across pages, stripping
+      boilerplate (headers/footers repeated on every page), keeping only
+      summaries for low-value pages (changelogs, legal), removing embedded
+      code blocks from non-technical content
   - 100KB is too conservative for modern LLM context windows — Claude handles
     ~800KB, Cursor tolerates ~4MB, Gemini up to ~5MB
+  - `llms.txt` index itself should stay under ~50KB regardless of corpus size
+    (titles + URLs + one-sentence descriptions)
 - X-Robots-Tag (MANDATORY):
   - All `llms*.txt` files MUST be served with `X-Robots-Tag: noindex` HTTP
     header to prevent search engine indexing
@@ -214,19 +233,24 @@ contains related config or conflicting implementations.
     - Vercel: `vercel.json` `headers` array
     - Nginx: `location` block with `add_header`
     - Apache: `.htaccess` `<FilesMatch>` with `Header set`
-  - Template for `_headers` (Cloudflare/Netlify):
+  - Template for `_headers` (Cloudflare/Netlify). Use one entry per file; for
+    category splits add each generated file:
     ```
     /llms.txt
       X-Robots-Tag: noindex
     /llms-full.txt
       X-Robots-Tag: noindex
+    /llms-guides.txt
+      X-Robots-Tag: noindex
+    /llms-blog.txt
+      X-Robots-Tag: noindex
     ```
-  - Template for `vercel.json`:
+  - Template for `vercel.json` (single regex covers all llms files):
     ```json
     {
       "headers": [
         {
-          "source": "/llms(-full)?\\.txt",
+          "source": "/llms(-[a-z]+)?\\.txt",
           "headers": [{ "key": "X-Robots-Tag", "value": "noindex" }]
         }
       ]
