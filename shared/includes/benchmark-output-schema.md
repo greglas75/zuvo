@@ -23,7 +23,7 @@ This document defines the JSON schema for the **final benchmark report** written
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `task_source` | `string` | Source of the task — `"corpus"` for built-in corpus, `"user"` for a provided prompt, or a file path. |
+| `task_source` | `"corpus" \| "user" \| "diff" \| "files"` | Source of the task. `"corpus"` = built-in corpus tasks, `"user"` = `--prompt` text, `"diff"` = git diff, `"files"` = `--files` input. |
 | `task_hash` | `string` | Full 64-char SHA-256 hex of the task prompt. First 8 chars are used as display label only. (Examples in this document show truncated 8-char forms for readability.) |
 | `task_snapshot` | `string` | First 30,000 characters of the task prompt. Truncated if longer (`task_snapshot_truncated: true`). **Warning:** If the task contains secrets or PII, those will be stored here. Use `--no-snapshot` flag to suppress storage. |
 

@@ -26,9 +26,9 @@ Parse `$ARGUMENTS` for these flags:
 | `--with-static-checks` | Run tsc + jest on generated code (best-effort, null if tools missing) |
 | `--provider <name>` | Restrict to one or more providers, comma-separated (alias: `--providers`) |
 | `--show-costs` | Print provider cost table ($/M tokens) and exit |
-| `--compare [id1] [id2]` | Compare two prior runs from audit-results/; default: last two |
-| `--replay-last` | Re-run benchmark with the same task as the most recent run |
-| `--json` | Output raw JSON to stdout instead of formatted leaderboard |
+| `--compare [id1] [id2]` | Compare two prior runs from audit-results/; default: last two *(skill-only, not passed to runner)* |
+| `--replay-last` | Re-run benchmark with the same task as the most recent run *(skill-only, not passed to runner)* |
+| `--json` | Output raw JSON to stdout instead of formatted leaderboard *(handled by both runner and skill)* |
 | `--no-snapshot` | Suppress task_snapshot storage (use if task contains secrets or PII) |
 | `--dry-run` | Print prompt + providers without dispatching |
 | _(remaining text)_ | Treated as `--prompt <text>` if no other input flag given |
@@ -85,12 +85,16 @@ If any core file is missing, proceed in degraded mode and note it in the BENCHMA
    ```bash
    scripts/benchmark.sh \
      --mode <mode> \
-     [--task <text>|--files <paths>|--diff <ref>] \
-     [--with-tests] [--with-adversarial] [--with-static-checks] \
-     [--providers <list>] \
+     [--prompt <text>|--files <path>|--diff <ref>] \
+     [--with-tests] [--with-adversarial] [--with-test-adversarial] [--with-static-checks] \
+     [--provider <list>] [--json] \
      --run-id <run_id> \
+     --round-dir "$TMPDIR/rounds" \
      --output "$TMPDIR/benchmark-raw.json"
    ```
+
+   > **Runner-only flags:** `--prompt`, `--files`, `--diff`, `--mode`, `--with-*`, `--provider`, `--output`, `--run-id`, `--round-dir`, `--json`, `--show-costs`, `--dry-run`, `--no-snapshot`.
+   > **Skill-only flags (NOT passed to runner):** `--compare`, `--replay-last`. These are handled in Phase 0 before the runner is invoked.
 
 2. Check exit code:
    - `0`: success, proceed to Phase 2

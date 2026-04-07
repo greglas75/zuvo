@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# benchmark.sh — Multi-provider AI coding benchmark runner
+# benchmark.sh — Multi-provider AI coding benchmark runner (low-level)
 #
 # Dispatches a task to multiple AI providers in parallel, collects responses,
 # and writes raw results to a JSON file for the zuvo:benchmark skill to judge.
+#
+# This is the runner layer. The skill orchestrator (SKILL.md) handles:
+#   --compare, --replay-last (skill-only flags — not accepted here)
+#   meta-judge scoring, leaderboard assembly, multi-round corpus flow
 #
 # Usage:
 #   ./scripts/benchmark.sh --mode corpus [OPTIONS]
@@ -12,7 +16,7 @@
 # Options:
 #   --mode <default|corpus>      Run mode (default: default)
 #   --task <text>                Task prompt (default mode)
-#   --files <path ...>           Files to read as task input
+#   --files <path-or-list>        File path or newline-separated list as task input
 #   --diff <ref>                 Git diff as task input
 #   --with-tests                 Run Round 2: write tests for Round 1 output
 #   --with-adversarial           Run adversarial cross-review between rounds
@@ -349,14 +353,21 @@ calc_cost() {
   fi
 }
 
+extract_all_ts_blocks() {
+  # Extract ALL fenced ```typescript blocks from a file, concatenated
+  # Splits by // FILE: markers when present (corpus format)
+  local file="$1"
+  awk '/^```typescript/{found=1; next} found && /^```/{found=0; next} found{print}' "$file" 2>/dev/null
+}
+
 run_static_checks_ts() {
-  # Run tsc --noEmit on extracted TypeScript from provider response
+  # Run tsc --noEmit on all TypeScript blocks from provider response
   # Returns true/false/null
   local file="$1"
   command -v tsc &>/dev/null || { echo "null"; return; }
 
   local ts_file="$JSON_TMPDIR/static_check_$$.ts"
-  awk '/^```typescript/{found=1; next} found && /^```/{exit} found{print}' "$file" > "$ts_file" 2>/dev/null
+  extract_all_ts_blocks "$file" > "$ts_file"
   [[ ! -s "$ts_file" ]] && { echo "null"; return; }
 
   if tsc --noEmit --strict "$ts_file" &>/dev/null; then
@@ -367,13 +378,13 @@ run_static_checks_ts() {
 }
 
 run_static_checks_jest() {
-  # Run jest --passWithNoTests on extracted test file from provider response
+  # Run jest --passWithNoTests on all test blocks from provider response
   # Returns true/false/null
   local file="$1"
   command -v jest &>/dev/null || { echo "null"; return; }
 
   local test_file="$JSON_TMPDIR/static_check_$$.test.ts"
-  awk '/^```typescript/{found=1; next} found && /^```/{exit} found{print}' "$file" > "$test_file" 2>/dev/null
+  extract_all_ts_blocks "$file" > "$test_file"
   [[ ! -s "$test_file" ]] && { echo "null"; return; }
 
   if jest --passWithNoTests --testPathPattern "$test_file" &>/dev/null; then

@@ -40,4 +40,12 @@ out=$(bash "$SCRIPT" --mode corpus --dry-run 2>&1)
 [ $? -eq 0 ] || fail "--mode corpus --dry-run exited non-zero"
 echo "$out" | grep -q "corpus" || fail "corpus mode not reflected in dry-run"
 
+# ── default no-input uses diff HEAD~1 ──
+out=$(bash "$SCRIPT" --dry-run 2>&1)
+[ $? -eq 0 ] || fail "default diff mode --dry-run exited non-zero"
+echo "$out" | grep -q "DRY RUN" || fail "default diff missing DRY RUN header"
+
+# ── exit 3 in help/contract ──
+grep -q "exit 3" "$SCRIPT" || fail "exit 3 (all providers failed) missing from runner"
+
 pass "Behavioral smoke tests passed"
