@@ -183,3 +183,4 @@ Commits pending review. Auto-managed:
 - 0433ca1 (2026-04-07) wire benchmark skill into routing table, manifest, and docs (45→46 skills)
 - 201c137 (2026-04-07) add geo-fix skill: safety-tiered fixes with seo-fix dedup
 - 440f2fc (2026-04-07) wire geo-audit and geo-fix into routing, metadata, tests, and website
+- 3595327 (2026-04-07) feat: knowledge store, session recovery, evidence-enforced adversarial review
