@@ -131,3 +131,6 @@ Commits pending review. Auto-managed:
 - b5bcbf9 (2026-04-06) release: v1.3.2 — fix: multi-provider adversarial by default in all skills
 - 95ae698 (2026-04-07) feat: upgrade adversarial review prompts — semantic quality, design judgment, global review rules
 - 4e3932c (2026-04-07) adversarial prompt upgrades — semantic quality, design judgment, global rules
+- d238c40 (2026-04-07) release: v1.3.3 — upgrade adversarial review prompts — semantic quality, design judgment, global review rules
+- ac66c01 (2026-04-07) feat: large-site llms.txt strategy — category splits for 300+ page sites
+- a014f81 (2026-04-07) fix: increase adversarial review timeout from 180s to 240s
