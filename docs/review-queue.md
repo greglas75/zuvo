@@ -166,3 +166,6 @@ Commits pending review. Auto-managed:
 - e43cbc8 (2026-04-07) release: v1.3.11 — feat: per-provider logging + error diagnostics
 - 11aa641 (2026-04-07) feat: log model name per provider (gpt-5.4, claude-opus-4-6, etc.)
 - 4fd68da (2026-04-07) fix: remove empty content-migration dir
+- 5ab556f (2026-04-07) release: v1.3.13 — feat: model names in adversarial log
+- 39bd90b (2026-04-07) feat: add content-migration skill — CMS-to-SSG parity check + fix
+- b711825 (2026-04-07) fix: update package.json skill count to 45
