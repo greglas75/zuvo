@@ -48,6 +48,8 @@ CORE FILES LOADED:
   6. ../../shared/includes/code-contract.md          -- READ/MISSING
   7. ../../shared/includes/test-contract.md          -- READ/MISSING
   8. ../../shared/includes/run-logger.md             -- READ/MISSING
+  9. ../../shared/includes/knowledge-prime.md        -- READ/MISSING
+ 10. ../../shared/includes/knowledge-curate.md       -- READ/MISSING
 ```
 
 
@@ -122,6 +124,20 @@ Before the first agent dispatch:
 4. If unavailable: warn the user once — "CodeSift not available. Reviewers will use Grep/Read for verification, which is less thorough."
 
 Pass `CODESIFT_AVAILABLE` and the repo identifier to every agent.
+
+---
+
+## Knowledge Prime
+
+Before the first agent dispatch, run the knowledge prime protocol from `knowledge-prime.md`:
+
+```
+WORK_TYPE = "implementation"
+WORK_KEYWORDS = <3-5 keywords extracted from the plan title and task names>
+WORK_FILES = <all files listed across all tasks in the plan>
+```
+
+This loads project-specific patterns, gotchas, and decisions accumulated from prior sessions. Pass any MUST FOLLOW and GOTCHA entries to every implementer dispatch as an additional context block.
 
 ---
 
@@ -411,6 +427,18 @@ Print a completion report:
 ### Backlog Items Added
 [list any new items persisted to backlog during execution]
 ```
+
+### Knowledge Curation
+
+After all tasks complete, run the knowledge curation protocol from `knowledge-curate.md`. Reflect on the full execution — all tasks, all reviewer findings, all NEEDS_CONTEXT requests, all BLOCKED resolutions.
+
+```
+WORK_TYPE = "implementation"
+CALLER = "zuvo:execute"
+REFERENCE = <git SHA of the last commit>
+```
+
+The curate step runs regardless of how many tasks completed. Even a partially completed execution may yield learnings.
 
 ### Backlog Persistence
 

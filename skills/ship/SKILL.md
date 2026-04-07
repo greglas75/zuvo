@@ -33,9 +33,10 @@ Read each file below using the Read tool. Print the checklist with status before
 
 ```
 CORE FILES LOADED:
-  1. ../../shared/includes/env-compat.md     — READ/MISSING
-  2. ../../shared/includes/codesift-setup.md — READ/MISSING
-  3. ../../shared/includes/run-logger.md     — READ/MISSING
+  1. ../../shared/includes/env-compat.md       — READ/MISSING
+  2. ../../shared/includes/codesift-setup.md   — READ/MISSING
+  3. ../../shared/includes/run-logger.md       — READ/MISSING
+  4. ../../shared/includes/knowledge-curate.md — READ/MISSING
 ```
 
 If any file is missing: proceed in degraded mode. Note which files are unavailable in the Phase 5 output.
@@ -157,6 +158,27 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
    - `"light"` — review-light agent only
    - `"full"` — review-light + zuvo:review with adversarial pass (+ design-review if applicable)
    - `"full+coverage"` — full + coverage-check agent
+
+---
+
+## Phase 2.5: Knowledge Curation (Self-Reflect)
+
+After all review phases complete and before committing the release, extract learnings from this release cycle.
+
+Read `../../shared/includes/knowledge-curate.md` and run the protocol:
+
+```
+WORK_TYPE = "implementation"
+CALLER = "zuvo:ship"
+REFERENCE = <current git SHA before the release commit>
+```
+
+Reflect on the full diff (`git diff ${BASE_REF}..HEAD`) and any review findings from Phase 2. Ask:
+- What patterns emerged across the changed files?
+- Did any review finding reveal a recurring gotcha in this codebase?
+- Was any architectural decision made during this release worth recording?
+
+This step runs regardless of `--fast` or `--full` flags. It does NOT block the release — even if zero insights are extracted, proceed to Phase 3.
 
 ---
 

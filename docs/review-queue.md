@@ -171,3 +171,6 @@ Commits pending review. Auto-managed:
 - b711825 (2026-04-07) fix: update package.json skill count to 45
 - 1712594 (2026-04-07) release: v1.3.14 — feat: content-audit, content-fix, content-migration — 3 new skills for content quality and CMS migration
 - 33e6c58 (2026-04-07) refactor: simplify content-migration skill based on review feedback
+- fcfc5a8 (2026-04-07) release: v1.3.15 — refactor: simplified content-migration skill — semantic LLM matching, lazy file loading, conservative fixes
+- c0713db (2026-04-07) fix: content-migration round 3 — verdict model, severity matrix, conservative fixes
+- 3974b8c (2026-04-07) fix: content-migration final polish — verdict hierarchy, image matching, progress tracking

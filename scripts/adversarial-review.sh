@@ -55,7 +55,7 @@ Usage: adversarial-review.sh [OPTIONS] [--diff REF] [--files "path"]
 Provider options:
   (default)        Multi: run ALL available providers
   --single         First-success: stop after first provider
-  --provider P     Force: codex-fast, cursor-agent, gemini, claude, gemini-api
+  --provider P     Force: codex-5.4, codex-5.3, cursor-agent, gemini, claude, gemini-api
 
 Review modes:
   --mode code      (default) General code review
@@ -435,14 +435,14 @@ detect_providers() {
   # Returns space-separated list of available providers in priority order
   local providers=""
 
-  # 1. codex-fast — codex exec with empty CODEX_HOME (0 MCP, 4.5-23s)
+  # 1. codex-5.4 + codex-5.3 — two separate models, empty CODEX_HOME (0 MCP, ~50-57s)
   local codex_bin=""
   if command -v codex &>/dev/null; then
     codex_bin="codex"
   elif [[ -x "/Applications/Codex.app/Contents/Resources/codex" ]]; then
     codex_bin="/Applications/Codex.app/Contents/Resources/codex"
   fi
-  [[ -n "$codex_bin" ]] && providers="codex-fast"
+  [[ -n "$codex_bin" ]] && providers="codex-5.4 codex-5.3"
 
   # 2. gemini — requires global install: npm install -g @google/gemini-cli
   command -v gemini &>/dev/null && providers="$providers gemini"
@@ -490,23 +490,28 @@ fi
 
 # ─── Provider execution ─────────────────────────────────────────
 
-run_codex_fast() {
-  # Codex exec with minimal config — copy auth but skip MCP servers (4.5-23s vs 25-30s)
+run_codex() {
+  # Generic codex runner — empty CODEX_HOME (no MCP), model passed as arg (~50-57s)
+  local model="$1" provider_name="$2"
   local codex_cmd
   codex_cmd=$(command -v codex || echo "/Applications/Codex.app/Contents/Resources/codex")
   local real_home="${CODEX_HOME:-$HOME/.codex}"
-  local tmp_home="$JSON_TMPDIR/codex_home"
+  local tmp_home="$JSON_TMPDIR/codex_home_${provider_name}"
   mkdir -p "$tmp_home"
 
   # Copy auth (required) but create empty config (no MCP servers)
   [[ -f "$real_home/auth.json" ]] && cp "$real_home/auth.json" "$tmp_home/"
-  echo 'model = "gpt-5.4"' > "$tmp_home/config.toml"
+  printf 'model = "%s"\n' "$model" > "$tmp_home/config.toml"
 
-  local err_file="$JSON_TMPDIR/err_codex-fast.txt"
+  local err_file="$JSON_TMPDIR/err_${provider_name}.txt"
   printf '%s' "$REVIEW_PROMPT" \
     | CODEX_HOME="$tmp_home" timeout "$PROVIDER_TIMEOUT" \
-      "$codex_cmd" exec --sandbox read-only 2>"$err_file" || { echo "  WARN: codex-fast failed (exit $?): $(head -1 "$err_file" 2>/dev/null)" >&2; return 1; }
+      "$codex_cmd" exec --sandbox read-only 2>"$err_file" \
+    || { echo "  WARN: ${provider_name} failed (exit $?): $(head -1 "$err_file" 2>/dev/null)" >&2; return 1; }
 }
+
+run_codex_54() { run_codex "gpt-5.4"        "codex-5.4"; }
+run_codex_53() { run_codex "gpt-5.3-codex"  "codex-5.3"; }
 
 run_claude() {
   local model
@@ -573,7 +578,7 @@ run_gemini_api() {
     -H "x-goog-api-key: $GEMINI_API_KEY" \
     -H "Content-Type: application/json" \
     -d @"$payload_file" \
-  ) 2>"$err_file" || { echo "  WARN: gemini-api failed (exit $?): $(head -1 "$err_file" 2>/dev/null)" >&2; return 1; }
+    2>"$err_file") || { echo "  WARN: gemini-api failed (exit $?): $(head -1 "$err_file" 2>/dev/null)" >&2; return 1; }
 
   # Log token usage to stderr
   local input_tokens output_tokens
@@ -599,23 +604,22 @@ fi
 # ─── Unified dispatch ──────────────────────────────────────────
 
 provider_model() {
-  local provider="$1"
-  case "$provider" in
-    codex-fast)    echo "gpt-5.4" ;;
-    cursor-agent)  echo "cursor" ;;
-    gemini)        echo "${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}" ;;
-    claude)
-      if [[ "${CLAUDE_MODEL:-}" == *opus* ]]; then echo "claude-sonnet-4-6"
-      else echo "claude-opus-4-6"; fi ;;
-    gemini-api)    echo "${ZUVO_GEMINI_API_MODEL:-gemini-3.1-pro-preview}" ;;
-    *)             echo "unknown" ;;
+  case "$1" in
+    codex-5.4)    echo "gpt-5.4" ;;
+    codex-5.3)    echo "gpt-5.3-codex" ;;
+    gemini)       echo "${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}" ;;
+    gemini-api)   echo "${ZUVO_GEMINI_API_MODEL:-gemini-3.1-pro-preview}" ;;
+    cursor-agent) echo "cursor" ;;
+    claude)       [[ "${CLAUDE_MODEL:-}" == *opus* ]] && echo "claude-sonnet-4-6" || echo "claude-opus-4-6" ;;
+    *)            echo "unknown" ;;
   esac
 }
 
 dispatch_provider() {
   local provider="$1"
   case "$provider" in
-    codex-fast)    run_codex_fast ;;
+    codex-5.4)     run_codex_54 ;;
+    codex-5.3)     run_codex_53 ;;
     cursor-agent)  run_cursor_agent ;;
     gemini)        run_gemini ;;
     claude)        run_claude ;;
@@ -844,6 +848,13 @@ TOTAL_DURATION=$((END_TIME - START_TIME))
 LOG_DIR="$HOME/.zuvo"
 mkdir -p "$LOG_DIR/adversarial-inputs" 2>/dev/null || LOG_DIR="."
 LOG_FILE="$LOG_DIR/adversarial.log"
+
+# Write header if log file is new
+if [[ ! -f "$LOG_FILE" ]]; then
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "date" "run_id" "mode" "provider" "model" "input_chars" "output_chars" "findings" "critical" "warning" "info" "duration" "exit" "input_file" \
+    > "$LOG_FILE" 2>/dev/null || true
+fi
 
 # Generate run ID (groups providers from same invocation)
 RUN_ID="$(date +%s)-$$"
