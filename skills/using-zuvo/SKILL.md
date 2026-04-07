@@ -196,7 +196,49 @@ When writing security-sensitive code (auth, input, API): Read `../../rules/secur
 
 ## Session Startup
 
-At the start of every session, Read `../../rules/cq-patterns-core.md` — defensive coding patterns (error handling, security, data integrity, resource safety). This is a lightweight summary; skills load the full version when needed.
+### 1. Project Setup Check (BLOCKING — first session action)
+
+Check if `CLAUDE.md` exists in the project root. If it does NOT exist:
+
+**Tell the user:**
+
+> This project doesn't have a CLAUDE.md yet. Zuvo needs it to enforce quality gates (tests, code review, skill routing). Without it, I might skip skills and write code without tests.
+>
+> Want me to create one? It'll take 10 seconds.
+
+If the user agrees, create `CLAUDE.md` with this content (adapt stack detection from package.json/tsconfig/pyproject.toml):
+
+```markdown
+# [Project Name]
+
+## Development Rules
+
+- ALWAYS use zuvo skills for code changes. Never write production code directly.
+  - 1-5 files: `zuvo:build`
+  - 5+ files or unclear scope: `zuvo:brainstorm` → `zuvo:plan` → `zuvo:execute`
+  - Bug fixes: `zuvo:debug`
+  - Refactoring: `zuvo:refactor`
+- Tests are mandatory. No production file without a corresponding test file.
+- Run `zuvo:review` before pushing any changes.
+
+## Tech Stack
+
+[auto-detected from project files]
+
+## How to run
+
+- Dev: [detected from package.json scripts]
+- Test: [detected from package.json scripts]
+- Build: [detected from package.json scripts]
+```
+
+If the user declines, proceed but warn: "Without CLAUDE.md, quality gates are suggestions, not rules. Tests may be skipped."
+
+Do NOT skip this check. Do NOT silently proceed without CLAUDE.md. A project without CLAUDE.md is the #1 reason agents skip tests and quality gates.
+
+### 2. Load Patterns
+
+Read `../../rules/cq-patterns-core.md` — defensive coding patterns (error handling, security, data integrity, resource safety). This is a lightweight summary; skills load the full version when needed.
 
 ---
 
