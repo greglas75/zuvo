@@ -163,3 +163,5 @@ Commits pending review. Auto-managed:
 - 19a8556 (2026-04-07) fix: remove empty geo-audit dir (build blocker)
 - 260e1cb (2026-04-07) add 3 geo-audit agents: crawl-access, schema-render, content-signals
 - 21b6ef0 (2026-04-07) feat: per-provider logging + saved inputs + error diagnostics
+- e43cbc8 (2026-04-07) release: v1.3.11 — feat: per-provider logging + error diagnostics
+- 11aa641 (2026-04-07) feat: log model name per provider (gpt-5.4, claude-opus-4-6, etc.)
