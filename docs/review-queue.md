@@ -191,3 +191,5 @@ Commits pending review. Auto-managed:
 - f65809f (2026-04-07) fix benchmark.sh: bash 3.2 compat, timeout propagation, task_source, show-costs placement, gemini-api fallback, round-dir
 - 1a5775c (2026-04-07) fix benchmark.sh: bash 3.2 compat, timeout propagation, task_source, round-dir
 - 66b6035 (2026-04-07) fix: knowledge store — 10 precision fixes (wording, contracts, edge cases)
+- dc1f6b2 (2026-04-07) release: v1.3.19 — fix: a11y-audit routing — priority 2, no conflict with design-review, count 48
+- 6d04704 (2026-04-07) fix benchmark: CLI aliases, default diff HEAD~1, corpus prompt format, schema wording
