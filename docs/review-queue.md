@@ -195,3 +195,6 @@ Commits pending review. Auto-managed:
 - 6d04704 (2026-04-07) fix benchmark: CLI aliases, default diff HEAD~1, corpus prompt format, schema wording
 - 3cd3359 (2026-04-07) fix benchmark CLI, corpus prompt format, schema wording
 - 02e0b59 (2026-04-07) fix benchmark: add --compare/--json/--replay-last to parser, behavioral smoke tests, orchestrator note
+- 4922f43 (2026-04-07) fix benchmark: --compare/--json/--replay-last, smoke tests, orchestrator note
+- 5ed4a3e (2026-04-07) fix: incident skill — 6 fixes (suspect window, merge detection, metrics, comms)
+- 2f7b5b1 (2026-04-07) fix benchmark: skill-only flag labels, multi-block static checks, behavioral tests, schema task_source enum
