@@ -187,6 +187,65 @@ contains related config or conflicting implementations.
     resolve as `404`
   - If no content corpus exists, do not fail proposal compliance solely because
     `llms-full.txt` is absent
+- Size limits:
+  - Max size cap: **500KB** per file (truncate with
+    `... [truncated, see full docs at {url}]`)
+  - Size tiers when aggregated content exceeds thresholds:
+    - `< 500KB` → single `llms-full.txt`, done
+    - `500KB–1MB` → single file with TOC and `## Metadata` header, emit
+      advisory note in fix output
+    - `> 1MB` → split into topic files (`llms-api.txt`, `llms-content.txt`,
+      etc.) linked from `llms.txt` index, or compress by removing code
+      examples, changelogs, and boilerplate
+  - 100KB is too conservative for modern LLM context windows — Claude handles
+    ~800KB, Cursor tolerates ~4MB, Gemini up to ~5MB
+- X-Robots-Tag (MANDATORY):
+  - All `llms*.txt` files MUST be served with `X-Robots-Tag: noindex` HTTP
+    header to prevent search engine indexing
+  - **Why not `robots.txt Disallow`:** `Disallow` blocks crawling, not
+    indexing. The URL can still be discovered via external links and appear in
+    SERPs as "No information available" (per John Mueller, Google Search
+    Advocate). `X-Robots-Tag: noindex` keeps files crawlable for AI bots but
+    invisible in search results.
+  - **Why not `<meta name="robots">`:** `llms*.txt` are plain text, not HTML —
+    there is no `<head>` element to place meta tags in
+  - Platform-specific header config:
+    - Cloudflare Pages / Netlify: `public/_headers` or `static/_headers`
+    - Vercel: `vercel.json` `headers` array
+    - Nginx: `location` block with `add_header`
+    - Apache: `.htaccess` `<FilesMatch>` with `Header set`
+  - Template for `_headers` (Cloudflare/Netlify):
+    ```
+    /llms.txt
+      X-Robots-Tag: noindex
+    /llms-full.txt
+      X-Robots-Tag: noindex
+    ```
+  - Template for `vercel.json`:
+    ```json
+    {
+      "headers": [
+        {
+          "source": "/llms(-full)?\\.txt",
+          "headers": [{ "key": "X-Robots-Tag", "value": "noindex" }]
+        }
+      ]
+    }
+    ```
+  - If a `_headers` or equivalent host config file already exists, APPEND the
+    `X-Robots-Tag` rules — do not overwrite existing headers
+  - If `headers-add` fix is also being applied in the same run, merge the
+    `X-Robots-Tag` rules into the same file
+- Metadata section (best practice):
+  - Add a `## Metadata` section after the blockquote description in both
+    `llms.txt` and `llms-full.txt`:
+    ```markdown
+    ## Metadata
+    - Last updated: {ISO date}
+    - Language: {lang code}
+    - Total pages: {count}
+    ```
+  - Helps AI bots assess freshness and authority
 - Caveats:
   - A source file that looks correct is not enough. If the built artifact is
     missing or the endpoint responds with `404`, downgrade to

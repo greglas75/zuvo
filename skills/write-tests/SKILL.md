@@ -456,39 +456,6 @@ If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplac
 
 Wait for complete output. Fix CRITICAL immediately. WARNING (< 10 lines, localized) → fix. Everything else → known concerns (max 3, one line each).
 
-### 4.6 Test Architect Review (MANDATORY on STANDARD+ complexity)
-
-Read `../../shared/includes/test-architect-review.md` for the full prompt and protocol.
-
-This is a **judgment-based review** — not a checklist. It catches architectural problems that Q1-Q19 gates miss: brittle mock layers, existence-only assertions after actions, missing state coverage, inconsistent error handling across flows.
-
-**Setup:**
-
-Spawn a separate agent (Sonnet, Explore) with ONLY the production file and test file. Do NOT pass Q1-Q19 scores or the test contract — seeing them anchors the reviewer to the same blind spots.
-
-| File complexity | Requirement |
-|-----------------|------------|
-| THIN | Optional |
-| STANDARD | **Mandatory** |
-| COMPLEX | **Mandatory** |
-
-**Scoring:**
-
-The architect review scores 0-10 across 5 dimensions: mock architecture, assertion quality after actions, state coverage, consistency, and overall shippability.
-
-| Architect score | Action |
-|----------------|--------|
-| 9-10 | Ship |
-| 7-8 | Fix noted issues, no re-review |
-| 5-6 | Fix issues, re-review recommended |
-| 0-4 | Significant rework needed |
-
-**Both Q gates AND architect review must pass.** Q >= 16/19 AND architect >= 7/10.
-
-If Q gates say 19/19 but architect says < 7: **architect wins** — the tests have structural problems the checklist missed. Fix architect issues and re-run architect review only.
-
-If sub-agent dispatch is unavailable: perform as a separate pass with checkpoint `[CHECKPOINT: switching to independent architect review]`. Re-read production + test files as if seeing them for the first time. Do NOT reference your own Q1-Q19 scores.
-
 ---
 
 ## Phase 5: Completion

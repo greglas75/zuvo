@@ -186,23 +186,43 @@ fi
 # ─── Mode-specific focus ───────────────────────────────────────
 
 FOCUS_CODE="FOCUS ON:
+
+BUGS:
 1. Edge cases the author didn't consider (timezone, unicode, concurrent access, empty collections, integer overflow)
 2. Assumptions true in tests but false in production (network latency, partial failures, clock skew, out-of-order events)
 3. Security paths that bypass the happy path (expired tokens mid-request, TOCTOU races, parameter pollution)
 4. Silent failures (catch blocks that swallow errors, promises without rejection handlers, fallbacks that hide data loss)
 5. Data integrity issues (partial writes without rollback, cache inconsistency with DB, stale reads after write)
 6. Missing validation at boundaries (user input, API responses, deserialized data)
-7. Resource leaks (unclosed connections, missing cleanup on error paths, unbounded memory growth)"
+7. Resource leaks (unclosed connections, missing cleanup on error paths, unbounded memory growth)
+
+DESIGN — review as a senior engineer, not a linter:
+8. Design violations — God objects (class with >7 dependencies), services that mix query and mutation, controllers that contain business logic instead of delegating to services
+9. Abstraction leaks — ORM models returned directly from service layer, infrastructure types (Prisma, Redis) in controller signatures, HTTP concepts (Request, Response) in service layer
+10. Convention drift — new code uses different pattern than existing codebase for the same problem (e.g. manual findFirst+create where codebase uses upsert, string errors where codebase uses typed exceptions)
+11. Naming-behavior mismatch — function named 'validate' that also transforms data, 'get' that has side effects, 'is/has' that returns non-boolean"
 
 FOCUS_TEST="FOCUS ON TEST-SPECIFIC ISSUES:
-1. Tests that pass for wrong reasons (overly broad matchers, assertions that never fail)
-2. Missing edge case coverage (null, empty, boundary values, unicode, negative numbers)
-3. Flaky patterns (timing dependencies, shared mutable state, execution order assumptions)
-4. Mocked reality that differs from production (mock returns success but real API paginates, rate limits, times out)
-5. Coverage theater (testing trivial getters/setters while ignoring complex business logic paths)
-6. Missing negative tests (what SHOULD fail or throw but is not tested)
-7. Dead test paths (assertions inside unreachable branches, afterEach cleanup that masks failures)
-8. Hardcoded assumptions that break in CI (dates, timezones, locales, file paths, ports)"
+
+SEMANTIC QUALITY (most important — requires reading the production code):
+1. Assertion-action mismatch — user action (click, submit, type) followed by assertion that checks container existence or component render instead of the action's OUTCOME. Example: fireEvent.click('Share') then asserting page wrapper exists proves nothing. Assert the EFFECT: dialog opened with correct props, API called with correct args, state changed visibly.
+2. Missing state coverage — component receives props or hook state for loading, error, empty, and success states. Tests that only cover success path are incomplete. If the component has NO loading/error UI at all, flag as PRODUCTION GAP (component bug), not test gap.
+3. Mock-reality divergence — mock returns simple success but real dependency paginates, rate-limits, returns partial data, or throws specific error types. Mock shape must match real contract.
+4. Test value assessment — for each test ask: 'if the production code broke in the way this test is supposed to prevent, would this test actually fail?' If the answer is no, the test has no value regardless of coverage.
+
+STRUCTURAL QUALITY:
+5. Tests that pass for wrong reasons — overly broad matchers, assertions that literally cannot fail (e.g. expect(array).toBeDefined() on a variable just created), boolean coercion hiding bugs
+6. Missing edge case coverage — null, empty array, boundary values, unicode, negative numbers, zero, MAX_SAFE_INTEGER
+7. Missing negative tests — what SHOULD fail or throw but is not tested. Every error path in production should have a corresponding test.
+8. Flaky patterns — timing dependencies (setTimeout, Date.now), shared mutable state between tests, execution order assumptions, port/file path assumptions
+
+ARCHITECTURE:
+9. Mock architecture debt — >5 inline mocks from one library = shared mock file needed. Flag as WARNING. Mocks that implement custom behavior (prop forwarding, event simulation) test the mock, not the component.
+10. Repeated test setup — same render() + click() + click() in 3+ tests without helper function. Extract to helper. Flag as INFO.
+11. Dead test paths — assertions inside branches that never execute, afterEach cleanup that masks failures, try/catch in test body that swallows assertion errors
+12. Hardcoded assumptions — dates, timezones, locales, file paths, ports, API URLs that break in CI or different environments
+
+Be skeptical — assume they are weaker than they look."
 
 FOCUS_SECURITY="FOCUS ON SECURITY ISSUES (OWASP-aligned):
 1. Injection (SQL, NoSQL, command, LDAP, XSS via template interpolation)
@@ -212,7 +232,10 @@ FOCUS_SECURITY="FOCUS ON SECURITY ISSUES (OWASP-aligned):
 5. Sensitive data exposure (PII in logs, secrets in error messages, tokens in URLs)
 6. Mass assignment (accepting full request body into ORM, no field allowlist)
 7. Race conditions in security checks (TOCTOU between auth check and data access)
-8. Cryptographic weaknesses (weak hashing, missing salt, ECB mode, hardcoded keys)"
+8. Cryptographic weaknesses (weak hashing, missing salt, ECB mode, hardcoded keys)
+9. Timing attacks — secret comparison using === or !== instead of constant-time comparison (crypto.timingSafeEqual). String equality short-circuits and leaks length.
+10. Error information disclosure — stack traces, SQL error messages, internal file paths, or dependency versions exposed in API error responses. Error messages should be generic to client, detailed to logs.
+11. Dependency trust — imported packages making network calls, accessing filesystem, or running native code without explicit need. Only flag when there is a real signal in the code (unusual package name, unexpected network call), not just because an import exists."
 
 FOCUS_SPEC="FOCUS ON NON-CODE ARTIFACT ISSUES (DESIGN SPEC):
 1. Hallucinated capabilities — claims not grounded in listed integration points or data model
@@ -222,10 +245,13 @@ FOCUS_SPEC="FOCUS ON NON-CODE ARTIFACT ISSUES (DESIGN SPEC):
 5. Missing failure modes — Edge Cases covers happy path but not failure recovery or cascade scenarios
 6. Phantom constraints — 'shall not X' rules with no enforcement mechanism in data model or API
 7. Dependency blind spots — integration points referencing external systems without unavailability handling
+8. Implementation feasibility gap — spec describes change as 'simple addition' but implementation would require modifying 3+ services, changing DB schema, or breaking existing API contracts
+9. Performance blind spots — design introduces patterns that are O(n²) at scale, unbounded queries, or N+1 fetches without acknowledging performance impact
+10. Migration path missing — spec changes data model or API contract but includes no migration strategy, backward compatibility plan, or rollback path
 
 SEVERITY RUBRIC:
-  CRITICAL = hallucinated capability, internal contradiction that changes behavior
-  WARNING  = missing edge case, vague acceptance criteria
+  CRITICAL = hallucinated capability, internal contradiction that changes behavior, feasibility gap
+  WARNING  = missing edge case, vague acceptance criteria, missing migration path
   INFO     = style preference, alternative wording"
 
 FOCUS_PLAN="FOCUS ON NON-CODE ARTIFACT ISSUES (IMPLEMENTATION PLAN):
@@ -236,10 +262,13 @@ FOCUS_PLAN="FOCUS ON NON-CODE ARTIFACT ISSUES (IMPLEMENTATION PLAN):
 5. Acceptance criteria orphans — spec AC items that appear in no task's Acceptance field
 6. Scaffold over-specification — GREEN steps with full implementation code instead of interfaces/invariants
 7. Commit message drift — messages describing files changed rather than behavior added
+8. Risk concentration — hardest or most uncertain tasks scheduled last, meaning failures are discovered late. Risky tasks should be early.
+9. Missing spike tasks — tasks with uncertain feasibility ('integrate with external API', 'implement ML pipeline') should have a spike/prototype task first
+10. Happy-path-only plan — no tasks for error handling, retry logic, fallback paths, or monitoring. If the plan only covers success scenarios, production will surprise you.
 
 SEVERITY RUBRIC:
-  CRITICAL = missing dependency that will fail execution, task requires nonexistent file
-  WARNING  = task too large, questionable ordering
+  CRITICAL = missing dependency that will fail execution, task requires nonexistent file, risk concentration
+  WARNING  = task too large, questionable ordering, missing spike, happy-path-only
   INFO     = alternative decomposition preference"
 
 FOCUS_AUDIT="FOCUS ON NON-CODE ARTIFACT ISSUES (AUDIT REPORT):
@@ -250,11 +279,13 @@ FOCUS_AUDIT="FOCUS ON NON-CODE ARTIFACT ISSUES (AUDIT REPORT):
 5. Finding severity mismatch — impact description doesn't match severity label
 6. Remediation theater — fixes too vague to implement ('improve your tags') vs file-and-line instructions
 7. Coverage drift — audit dimensions listed in checklist but absent from report output
+8. Missing baseline — audit claims improvement but provides no before/after metrics. 'Better than before' requires a 'before' measurement.
+9. Sample size bias — audit reviewed 3-5 files but repo contains 50+. Findings may not be representative. Flag if audit doesn't disclose sample size or selection criteria.
 
 SEVERITY RUBRIC:
   CRITICAL = FAIL gate not reflected in verdict, finding severity mismatch
-  WARNING  = skipped check rationalized as N/A
-  INFO     = remediation could be more specific"
+  WARNING  = skipped check rationalized as N/A, missing baseline
+  INFO     = remediation could be more specific, sample size not disclosed"
 
 FOCUS_TESTS_AUDIT="FOCUS ON NON-CODE ARTIFACT ISSUES (TEST AUDIT REPORT):
 Note: this mode reviews test AUDIT REPORTS (Q-scores as prose), not test CODE diffs (use --mode test for that).
@@ -265,10 +296,13 @@ Note: this mode reviews test AUDIT REPORTS (Q-scores as prose), not test CODE di
 5. Missing negative test assessment — only positive paths evaluated, not what SHOULD throw/reject
 6. Flakiness signal missed — timing patterns (setTimeout, Date.now, waitFor) present but not flagged
 7. Phantom mock gaps — mocks return hardcoded success for operations real deps never guarantee
+8. Self-eval inflation — audit Q-scores that contradict observable evidence. If audit says 'all branches covered' but loading/error states have no tests, the score is inflated regardless of whether production code has those branches.
+9. Assertion-outcome disconnect — audit rates assertion quality by checking for weak tokens (toBeDefined) but misses semantically weak assertions (toBeInTheDocument on a container after a user action that should change state).
+10. Evidence-claim mismatch — audit claims 'systematic error coverage' but evidence shows only 1-2 error paths tested out of 5+ in production code. Count the error paths in production, count the error tests, compare.
 
 SEVERITY RUBRIC:
-  CRITICAL = passing Q-score contradicted by evidence
-  WARNING  = coverage theater not flagged
+  CRITICAL = passing Q-score contradicted by evidence, self-eval inflation
+  WARNING  = coverage theater not flagged, assertion-outcome disconnect
   INFO     = flakiness signal missed"
 
 FOCUS_MIGRATE="FOCUS ON MIGRATION/SCHEMA ISSUES:
@@ -279,11 +313,13 @@ FOCUS_MIGRATE="FOCUS ON MIGRATION/SCHEMA ISSUES:
 5. Data type changes that silently truncate — varchar(255) to varchar(50), integer to smallint
 6. Missing down migration / rollback path — up migration exists but no way to undo
 7. Ordering issues — migration depends on another migration not yet applied, or circular dependency
+8. Data volume blindness — migration safe for small tables but catastrophic for large ones. Flag any DDL on tables likely to have >100K rows without explicit volume consideration.
+9. Zero-downtime compatibility — does this migration require application downtime? Column renames, type changes, and NOT NULL additions on populated tables may need a multi-step deploy (add column → backfill → switch code → drop old column).
 
 SEVERITY RUBRIC:
   CRITICAL = irreversible data loss, missing rollback, silent truncation
-  WARNING  = missing CONCURRENTLY, FK lock on large table, missing backfill
-  INFO     = naming convention, unnecessary migration split"
+  WARNING  = missing CONCURRENTLY, FK lock on large table, missing backfill, zero-downtime violation
+  INFO     = naming convention, unnecessary migration split, volume not considered"
 
 case "$REVIEW_MODE" in
   test)     FOCUS="$FOCUS_TEST" ;;
@@ -298,38 +334,54 @@ esac
 
 # ─── Output format instruction ─────────────────────────────────
 
-OUTPUT_INSTRUCTION="OUTPUT FORMAT:
+OUTPUT_INSTRUCTION="REVIEW RULES:
+- Base findings ONLY on the provided artifact. Do not infer missing systems, files, or behaviors unless directly implied.
+- Maximum 7 findings. Sort by severity (CRITICAL first), then confidence (high first).
+- Do not report the same root cause twice. One finding per root cause.
+- Do not force a finding for every category — report only the strongest supported issues.
+- If evidence is weak, lower confidence instead of escalating severity.
+- Suggested fixes must be minimal and actionable, not redesigns.
+
+OUTPUT FORMAT:
 For each issue found, report:
   SEVERITY: CRITICAL | WARNING | INFO
   CONFIDENCE: high | medium | low
-  FILE: path:line (if identifiable from the diff)
+  FILE: path:line (or just path if line unknown, or 'unknown' if neither identifiable)
   ISSUE: One-line description
   ATTACK VECTOR: How this breaks in production
-  SUGGESTED FIX: Brief fix description
+  SUGGESTED FIX: Brief, minimal, actionable fix
 
 Confidence guide:
-  high   = deterministic bug, provable from the diff alone
-  medium = plausible issue, depends on runtime context not visible in diff
+  high   = deterministic bug, provable from the artifact alone
+  medium = plausible issue, depends on runtime context not visible in artifact
   low    = speculative concern, may be a false positive
 
 If no issues found, say: NO ISSUES FOUND."
 
 if [[ "$OUTPUT_FORMAT" == "json" ]]; then
-  OUTPUT_INSTRUCTION='OUTPUT FORMAT — respond with ONLY valid JSON, no markdown, no explanation:
+  OUTPUT_INSTRUCTION='REVIEW RULES:
+- Base findings ONLY on the provided artifact. Do not infer missing systems, files, or behaviors unless directly implied.
+- Maximum 7 findings. Sort by severity (CRITICAL first), then confidence (high first).
+- Do not report the same root cause twice. One finding per root cause.
+- Do not force a finding for every category — report only the strongest supported issues.
+- If evidence is weak, lower confidence instead of escalating severity.
+- Suggested fixes must be minimal and actionable, not redesigns.
+
+OUTPUT FORMAT — respond with ONLY valid JSON, no markdown, no explanation:
 {
   "findings": [
     {
       "severity": "CRITICAL|WARNING|INFO",
       "confidence": "high|medium|low",
-      "file": "path:line",
+      "file": "path:line or path or unknown",
       "issue": "one-line description",
       "attack_vector": "how this breaks in production",
-      "fix": "brief fix description"
+      "fix": "brief, minimal, actionable fix"
     }
   ]
 }
 
-Confidence: high = deterministic bug provable from diff, medium = plausible but context-dependent, low = speculative.
+Confidence: high = deterministic bug provable from artifact, medium = plausible but context-dependent, low = speculative.
 
 If no issues found, respond: {"findings": []}'
 fi

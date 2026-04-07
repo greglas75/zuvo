@@ -238,12 +238,17 @@ All other fix_types: target file is deterministic from framework (single obvious
   `Permissions-Policy`, and `Content-Security-Policy-Report-Only` unless the
   target platform already exposes a stronger equivalent.
 
-**`llms-txt-add` generation logic (two files):**
+**`llms-txt-add` generation logic (two files + noindex header):**
 
 1. **`llms.txt` (index):** Generate from project metadata:
    ```markdown
    # {site_name}
    > {one-line description from package.json or README first paragraph}
+
+   ## Metadata
+   - Last updated: {ISO date}
+   - Language: {lang code from html lang attr or config}
+   - Total pages: {count of indexed pages}
 
    ## Docs
    - [{title}]({path}): {first sentence of file}
@@ -254,9 +259,12 @@ All other fix_types: target file is deterministic from framework (single obvious
    - Scan: `README.md`, `docs/*.md`, `content/**/*.md`, `pages/**/*.md` (ordered by importance)
    - For each file: extract title (H1 or frontmatter title) + full markdown body
    - Join with `---` separator between sections
-   - Prepend same header as llms.txt (`# {site_name}\n> {description}`)
+   - Prepend same header as llms.txt (`# {site_name}\n> {description}\n\n## Metadata\n...`)
    - If no content files found: skip llms-full.txt, note in report "No content files to aggregate for llms-full.txt"
-   - Max size: cap at 100KB (truncate with "... [truncated, see full docs at {url}]")
+   - Max size: cap at **500KB** (truncate with "... [truncated, see full docs at {url}]")
+   - If aggregated content exceeds 1MB: split into topic files
+     (`llms-api.txt`, `llms-content.txt`) linked from `llms.txt` index, or
+     compress by removing code examples, changelogs, and boilerplate
 
 3. **Validation:** After generating:
    - Both files must be valid markdown (no broken syntax)
@@ -265,6 +273,21 @@ All other fix_types: target file is deterministic from framework (single obvious
    - When a framework exposes a static asset directory (`public/` or
      `static/`), write both files there. Do **not** prefer a route file such as
      `src/pages/llms-full.txt.ts` when the static target exists.
+
+4. **X-Robots-Tag: noindex (MANDATORY):** Prevent search engines from indexing
+   llms*.txt while keeping them crawlable for AI bots:
+   - Detect platform header config: `_headers` (Cloudflare/Netlify),
+     `vercel.json` (Vercel), or existing host config
+   - If `_headers` exists: append `X-Robots-Tag: noindex` rules for
+     `/llms.txt` and `/llms-full.txt`
+   - If `_headers` does not exist AND `headers-add` is also being applied:
+     include the rules in the new `_headers` file
+   - If `_headers` does not exist AND no `headers-add`: create a minimal
+     `_headers` with only the `X-Robots-Tag` rules
+   - For Vercel: merge into `vercel.json` `headers` array
+   - Do NOT use `robots.txt Disallow` — it blocks crawling but not indexing,
+     and the URL can still appear in SERPs via external links
+   - Record the header config file in `files_modified`
 
 **Not in registry (manual only):**
 - `hreflang-add`, `noindex-change`, `redirect-add` -- listed in shared registry as non-fixable
@@ -385,7 +408,7 @@ For each fix_type applied, run a targeted mini-check (not full cross-file audit)
 
 | fix_type | Re-check |
 |----------|----------|
-| `llms-txt-add` | Confirm `llms.txt` exists at the static target, and if `llms-full.txt` was generated, verify the built artifact or local preview response for `/llms-full.txt` is non-empty and not `404` |
+| `llms-txt-add` | Confirm `llms.txt` exists at the static target, and if `llms-full.txt` was generated, verify the built artifact or local preview response for `/llms-full.txt` is non-empty and not `404`. Confirm `X-Robots-Tag: noindex` is configured in platform headers (`_headers`, `vercel.json`, or equivalent) for all `llms*.txt` paths |
 | `sitemap-add` | Verify sitemap config exists in framework config (CG1 proxy) and note whether `lastmod` strategy still needs manual review |
 | `json-ld-add` | Grep for `application/ld+json` in target file (CG5 proxy) and confirm raw-source visibility is plausible |
 | `schema-cleanup` | Confirm duplicate schema blocks were reduced and no exact duplicates remain |

@@ -20,6 +20,12 @@
   `llms-txt-present` and `llms-full-txt-present`.
 - `llms-best-practice` is represented by the D10 quality check
   `llms-txt-quality`.
+- `llms-txt-noindex` ensures `llms.txt` and `llms-full.txt` serve an
+  `X-Robots-Tag: noindex` HTTP header. This prevents search engines from
+  indexing plain-text files that would appear as "No information available" in
+  SERPs, while keeping them fully crawlable for AI bots. Do NOT use
+  `robots.txt Disallow` for this purpose — `Disallow` blocks crawling, not
+  indexing, and the URL can still appear in search results via external links.
 - D9/D10 heuristics are `scored` by default, but the page-profile registry may
   downgrade them to `advisory` or `N/A` for specific page classes.
 
@@ -79,6 +85,7 @@
 | `robots-feed-block` | `robots.txt` does not unintentionally block feeds such as `/*.feed*` or RSS endpoints | `seo-technical` | hygiene | advisory | code | -- | `robots-fix` |
 | `llms-txt-present` | llms-spec-compliance: minimal `llms.txt` exists and is accessible | `seo-technical` | geo | scored | either | -- | `llms-txt-add` |
 | `llms-full-txt-present` | llms-spec-compliance companion: rich `llms-full.txt` exists when the site claims a richer AI index | `seo-technical` | geo | advisory | either | -- | `llms-txt-add` |
+| `llms-txt-noindex` | llms files serve `X-Robots-Tag: noindex` header to prevent search engine indexing while keeping them crawlable for AI bots | `seo-technical` | geo | scored | either | -- | `headers-add` |
 | `crawl-delay` | No excessive crawl-delay or blanket throttling | `seo-technical` | hygiene | advisory | code | -- | null |
 
 ## D6 — Images
@@ -164,7 +171,7 @@
 | D2 | 6 |
 | D3 | 5 |
 | D4 | 4 |
-| D5 | 11 |
+| D5 | 12 |
 | D6 | 4 |
 | D7 | 3 |
 | D8 | 4 |
@@ -173,5 +180,5 @@
 | D11 | 7 |
 | D12 | 3 |
 | D13 | 3 |
-| **Total** | **66** |
+| **Total** | **67** |
 | Blocking checks | 6 (CG1-CG6) |

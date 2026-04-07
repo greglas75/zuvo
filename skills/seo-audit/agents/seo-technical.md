@@ -156,7 +156,8 @@ canonical bot list from `seo-bot-registry.md`.
 8. `robots-feed-block`
 9. `llms-txt-present`
 10. `llms-full-txt-present`
-11. `crawl-delay`
+11. `llms-txt-noindex`
+12. `crawl-delay`
 
 **Evaluation rules:**
 
@@ -179,6 +180,21 @@ canonical bot list from `seo-bot-registry.md`.
 - Keep **llms proposal compliance** separate from **llms content quality**:
   presence/accessibility of `llms.txt` and optional `llms-full.txt` companion
   belongs here; substantive usefulness belongs to the Content agent.
+- **`llms-txt-noindex`:** Check that `llms.txt` and `llms-full.txt` are served
+  with `X-Robots-Tag: noindex` HTTP header. Without this, search engines may
+  index these plain-text files and show them in SERPs as "No information
+  available" entries (per John Mueller, Google Search Advocate). Do NOT
+  recommend `robots.txt Disallow` as a substitute — `Disallow` blocks crawling
+  but not indexing, and the URL can still appear in search results via external
+  links. Check platform header config:
+  - `_headers` file (Cloudflare Pages, Netlify) — look for `/llms.txt` or
+    `/llms-full.txt` path rules with `X-Robots-Tag: noindex`
+  - `vercel.json` — look for `headers` array matching `llms` paths
+  - `netlify.toml` — look for `[[headers]]` sections matching `llms` paths
+  - Live probe (when available): check response headers for `X-Robots-Tag`
+  - PASS: header is configured for all existing `llms*.txt` files
+  - FAIL: `llms*.txt` files exist but no `X-Robots-Tag: noindex` is configured
+  - N/A: no `llms*.txt` files exist (nothing to protect)
 - Deep robots heuristics are part of the evidence set. Flag:
   - `Disallow: /*.js*` as render-blocking risk
   - `Disallow: /*.pdf$` as document access risk
@@ -195,6 +211,7 @@ Read robots.txt (typically public/robots.txt or static/robots.txt)
 Read ../../../shared/includes/seo-bot-registry.md
 Glob for llms.txt and llms-full.txt in root, public, and static directories
 Inspect wrangler.toml, _headers, netlify.toml, vercel.json for host-layer hints
+Check _headers / vercel.json / netlify.toml for X-Robots-Tag: noindex on llms*.txt paths
 ```
 
 Parse robots.txt line-by-line:
