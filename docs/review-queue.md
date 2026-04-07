@@ -143,3 +143,10 @@ Commits pending review. Auto-managed:
 - b816002 (2026-04-07) fix: review skill — remove FIX-ALL blocker, use all adversarial providers
 - ce001e4 (2026-04-07) release: v1.3.6 — review: remove FIX-ALL blocker, use all adversarial providers
 - b7c9f5e (2026-04-07) feat: using-zuvo session startup checks for CLAUDE.md, offers to create it
+- e086f5d (2026-04-07) release: v1.3.7 — using-zuvo: CLAUDE.md setup check on session start
+- ac653ac (2026-04-07) feat: add content-check-registry (49 checks), content-fix-registry (5 fix types), live-probe-protocol
+- 4d1ccd6 (2026-04-07) feat: add content-audit skill (8 dims, 49 checks, 3 agents) + content-fix skill
+- 284a13e (2026-04-07) feat: register content-audit + content-fix — 41 skills total
+- eb8e1c6 (2026-04-07) feat: competitive analysis enhancements — trophy case, risk scoring, S15, DB13
+- b1c2d0c (2026-04-07) fix: content-audit/fix — 7 issues from Codex adversarial review
+- ead2050 (2026-04-07) feat: adversarial run logging to ~/.zuvo/adversarial.log
