@@ -46,8 +46,8 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 |-------|------|--------------|----------|
 | 2 | Blast radius of suspect commits | `impact_analysis(repo, since="[suspect]")` | Grep for imports of changed files |
 | 2 | Callers of changed code | `trace_call_chain(repo, symbol, direction="callers")` | Repeated Grep for function name |
-| 2 | Symbol-level changes | `changed_symbols(repo, since="[timeframe]")` | `git diff --stat` |
-| 2 | Compact change summary | `diff_outline(repo, since="[timeframe]")` | `git log --oneline` |
+| 2 | Symbol-level changes | `search_symbols(repo, "<symbol>", include_source=true, file_pattern="<changed files>")` | `git diff --stat` |
+| 2 | Compact change summary | `codebase_retrieval(repo, queries=[{type:"text", query:"<term>"}])` | `git log --oneline` |
 | 3 | Understand affected function | `get_context_bundle(repo, symbol_name)` | Read the entire file |
 | Any | Batch 3+ lookups | `codebase_retrieval(repo, queries=[...])` | Sequential Grep/Read |
 
@@ -207,16 +207,27 @@ Define explicit variables for the suspect window:
 - **`LAST_GOOD_AT`**: Timestamp of that deploy
 - **`FIRST_ERROR_AT`**: Timestamp of first error signal (Sentry first-seen, user report, health check failure)
 
+**Determine `LAST_DEPLOYED_SHA`:**
+From the confirmed deploys in Phase 1.2, find the last deploy SHA whose timestamp is <= `FIRST_ERROR_AT`. This is the upper bound of the suspect window — only deployed code can cause production incidents.
+
 **Determine suspect window:**
-- If both `LAST_GOOD_SHA` and `FIRST_ERROR_AT` are known:
+- If `LAST_GOOD_SHA`, `LAST_DEPLOYED_SHA`, and `FIRST_ERROR_AT` are all known:
   ```bash
-  git log --format="%H %ai %an %s" LAST_GOOD_SHA..HEAD --until="FIRST_ERROR_AT"
+  git log --format="%H %ai %an %s" LAST_GOOD_SHA..LAST_DEPLOYED_SHA
   ```
-- If only `FIRST_ERROR_AT` is known (no confirmed deploy):
+  This captures only commits that were (a) after the last known good state AND (b) actually deployed. Commits after `LAST_DEPLOYED_SHA` are excluded — they were not on production when the incident started.
+
+- If `LAST_DEPLOYED_SHA` is unknown (no confirmed deploys — unverified timeline):
+  Use commits to main/master before `FIRST_ERROR_AT` as a proxy:
   ```bash
-  git log --format="%H %ai %an %s" --since="$(date -d 'FIRST_ERROR_AT - 24h')" --until="FIRST_ERROR_AT"
+  git log --format="%H %ai %an %s" --until="FIRST_ERROR_AT" -20
   ```
-- If window is unclear: use all commits in the 24h before the incident. Mark as `[WINDOW: estimated]`.
+  Mark as `[WINDOW: estimated — no confirmed deploy chain]`.
+
+- If `LAST_GOOD_SHA` is also unknown:
+  Use the 20 most recent commits before `FIRST_ERROR_AT`. Mark as `[WINDOW: estimated — no baseline]`.
+
+**Never use `HEAD` as the upper bound.** HEAD may contain undeployed commits — including them would blame code that was never on production.
 
 ### 2.2 Analyze Each Suspect
 
@@ -243,7 +254,7 @@ For each suspect commit:
 4. **CodeSift analysis (if available):**
    - `impact_analysis(repo, since="[suspect commit]")` -- blast radius
    - `trace_call_chain(repo, symbol, direction="callers")` -- who calls the changed code
-   - `changed_symbols(repo, since="[suspect commit]")` -- symbol-level changes
+   - `search_symbols(repo, "<changed symbol>", include_source=true)` -- verify symbol state
 
 ### 2.3 Correlate and Rank
 
@@ -302,8 +313,9 @@ Quantify the incident impact across these dimensions:
 - **Start:** First error signal (Sentry first-seen, first user report)
 - **End:** Resolution time (if resolved) or current time (if ongoing)
 - **Total duration:** End - Start
-- **Time to detect:** First error - Last deploy
-- **Time to respond:** Incident declared - First error
+- **Time to failure:** First error signal - Last deploy (how quickly the bad deploy manifested)
+- **Time to detect:** Incident declared (or first human notice) - First error signal (detection/acknowledgement lag)
+- **Time to mitigate:** Mitigation applied - Incident declared (response speed)
 
 ### 3.3 Data Impact
 
@@ -337,8 +349,9 @@ IMPACT ASSESSMENT
 ------------------------------------------------------
 Users affected:    ~[N] (source: [Sentry / estimation])
 Duration:          [Xh Ym] ([start] to [end/ongoing])
-Time to detect:    [Xm]
-Time to respond:   [Xm]
+Time to failure:   [Xm] (deploy → first error)
+Time to detect:    [Xm] (first error → human notice)
+Time to mitigate:  [Xm] (declared → mitigation applied)
 Data impact:       [none / corrupted / lost / exposed]
 Financial impact:  [none / estimated $X / indirect]
 SLA impact:        [none / breached: [detail] / unknown]
@@ -357,7 +370,7 @@ Based on the root cause analysis:
 
 1. **Revert (only when ALL conditions are met):**
    - Confidence is CONFIRMED or LIKELY with clean blast radius
-   - Suspect is a single, non-merge commit (`git cat-file -t [hash]` is "commit", not merge)
+   - Suspect is a single, non-merge commit (check parent count: `git rev-list --parents -n 1 [hash]` — if more than 1 parent SHA, it's a merge)
    - No dependent commits after suspect (check `git log [hash]..HEAD --oneline`)
    - Rollback is a git operation (not config/infra change)
    
@@ -518,9 +531,13 @@ Team,
 We experienced [issue description] affecting [scope] from [start time] to
 [end time / ongoing].
 
+[If CONFIRMED/LIKELY:]
 Root cause: [technical explanation -- appropriate detail for engineering team].
-
 Suspect commit: [hash] "[message]" by [author].
+
+[If POSSIBLE/UNCONFIRMED:]
+Root cause: under investigation. Current suspects are being analyzed.
+We will update when we have a confirmed cause.
 
 Current status: [RESOLVED / MITIGATED / INVESTIGATING]
 [If resolved: fix was [revert/hotfix/config change] applied at [time]]
@@ -545,8 +562,13 @@ Hi,
 We experienced [plain-language issue description] affecting [user-visible scope]
 from [start] to [end].
 
-Root cause was [brief, non-technical explanation]. We have [resolved/mitigated]
+[If CONFIRMED/LIKELY:]
+This was caused by [brief, non-technical explanation]. We have [resolved/mitigated]
 the issue by [plain-language action].
+
+[If POSSIBLE/UNCONFIRMED:]
+We are still investigating the root cause. We have [mitigated/contained] the
+immediate impact by [plain-language action].
 
 We are implementing [prevention measures] to prevent recurrence.
 
