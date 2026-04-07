@@ -1,0 +1,272 @@
+schema_version: 1
+last_synced: "2026-04-07"
+
+meta:
+  slug: geo-fix
+  title: "geo-fix — Deterministic GEO Remediation by Safety Tier"
+  description: "Apply geo-audit findings with schema patches, robots AI policy, llms.txt generation, canonical, freshness signals, content scaffolds, and seo-fix deduplication."
+  category: audit
+  og_image: /og/skills/geo-fix.png
+
+seo:
+  target_queries:
+    - "apply GEO audit fixes automatically Astro Next.js Hugo"
+    - "add JSON-LD schema @id fix AI citation Claude Code"
+    - "fix robots.txt AI crawler policy automated"
+    - "generate llms.txt from codebase"
+    - "geo-audit findings apply fixes with build verification"
+  canonical: /en/skills/geo-fix
+
+stats:
+  - label: Fix Types
+    value: "10"
+    detail: "robots-ai-allow, schema-org-add, schema-article-add, schema-faq-add, schema-id-link, canonical-add, llms-txt-generate, sitemap-robots-ref, frontmatter-date-add, llms-txt-update"
+  - label: Safety Tiers
+    value: "3"
+    detail: "SAFE (auto) / MODERATE (validated) / DANGEROUS (manual)"
+  - label: Frameworks
+    value: "3"
+    detail: "Astro, Next.js, Hugo (+ Universal for llms.txt, canonical, robots)"
+  - label: Verdicts
+    value: "8"
+    detail: "FIXED / NEEDS_REVIEW / MANUAL / SCAFFOLDED / OUT_OF_SCOPE / NO_TEMPLATE / INSUFFICIENT_DATA / ALREADY_APPLIED_BY_SEO_FIX"
+  - label: Dedup
+    value: "Yes"
+    detail: "Checks seo-fix JSON for already-applied fixes — skips overlapping operations"
+
+problem: |
+  Running `zuvo:geo-audit` produces a findings report — but applying GEO fixes safely is
+  still error-prone. Schema @id changes can break existing Rich Results. Opening AI
+  retrieval bots in robots.txt without understanding training vs retrieval distinction can
+  have unintended consequences. `zuvo:geo-fix` reads the audit JSON and applies fixes
+  in safety-tier order: SAFE (auto), MODERATE (validated), DANGEROUS (diff + confirm only).
+  It deduplicates against `zuvo:seo-fix` output to prevent double-application of overlapping
+  fixes (llms.txt, canonical, robots.txt), emits structural scaffolds for content findings
+  that cannot be auto-fixed, and runs build verification after each batch. VERIFIED means
+  the build exited 0 AND required artifacts exist — not just that logs looked positive.
+
+how_it_works:
+  - step: Load Findings and Dedup
+    description: "Finds the latest geo-audit JSON in audit-results/, warns if older than 24 hours, and checks seo-fix output for already-applied overlapping fixes (llms-txt-add, robots-fix, canonical). Prints a tiered summary: SAFE / MODERATE / DANGEROUS plus deduped, scaffold, and insufficient-data counts."
+  - step: Detect Framework and Targets
+    description: "Detects stack directly (does not depend on geo-audit at runtime). Maps each finding's fix_type to framework-specific target files from the geo-fix registry. Applies context-aware safety upgrades: schema-org-add/schema-id-link upgrade to DANGEROUS if the target file has existing JSON-LD; robots-ai-allow upgrades to MODERATE if robots.txt has existing bot rules."
+  - step: Apply Fixes
+    description: "Applies fixes in tier order: SAFE (robots-ai-allow with no existing rules, canonical-add with no existing canonical, llms-txt-generate, sitemap-robots-ref, frontmatter-date-add), MODERATE (3-layer validation: file parse, framework convention, finding-specific post-condition), DANGEROUS (diff + risk explanation + explicit user confirmation per fix). OUT_OF_SCOPE findings emit structural scaffolds only — never body content."
+  - step: Verify
+    description: "Detects build command (astro build, next build, hugo) and runs a full build after fixes. Non-zero exit = FAIL even if logs look optimistic. For generated public files (llms.txt, sitemap.xml, robots.txt), checks the built artifact or local preview response. Failed post-build check triggers per-finding rollback, not a blind full revert."
+  - step: Report and Update Backlog
+    description: "Prints the GEO FIX REPORT with per-finding verdicts, estimated before/after score (confirmed fixes only), build result, dedup summary, manual_checks, policy_notes, risk_notes, and advisory_scaffolds. Updates memory/backlog.md accordingly."
+
+output:
+  artifact: "audit-results/geo-fix-YYYY-MM-DD.md and audit-results/geo-fix-YYYY-MM-DD.json"
+  format: "GEO FIX REPORT block plus JSON v1.2 with per-finding status, estimated score improvement (confirmed fixes only), build_result, eta_minutes, manual_checks, policy_notes, advisory_scaffolds, risk_notes, network_override_risk, upgraded flag, and dedup records."
+  sections:
+    - "Findings summary (total / fixed / needs review / manual / scaffolded / deduped / out of scope / no template / insufficient data)"
+    - "Estimated score (before → after, confirmed fixes only)"
+    - "Build result"
+    - "Dedup summary (already applied by seo-fix)"
+    - "FIXED (auto-applied) — file and line reference"
+    - "FIXED (validated) — validation outcome"
+    - "NEEDS_REVIEW — warning explanation"
+    - "MANUAL — exact diff and risk explanation"
+    - "SCAFFOLDED — structural markers only, no body content"
+    - "ALREADY APPLIED BY SEO-FIX"
+    - "OUT_OF_SCOPE / NO_TEMPLATE / INSUFFICIENT_DATA"
+    - "Next steps"
+
+examples:
+  - title: "Apply SAFE fixes from latest geo-audit"
+    type: invocation
+    command: "zuvo:geo-fix"
+    result: |
+      GEO FIX REPORT -- acme.com
+      ----
+      Findings: 18 total | 4 fixed | 3 needs review | 2 manual | 3 scaffolded | 1 deduped | ...
+      Score:    41 -> 52 (estimated, confirmed fixes only)
+      Build:    PASS
+      Dedup:    1 finding already applied by seo-fix
+      ----
+      FIXED (auto-applied):
+        G3: Generated llms.txt                public/llms.txt (new)          [VERIFIED] ~10 min
+        G7: Added canonical to base layout    src/layouts/Layout.astro:12    [VERIFIED] ~5 min
+        G8: Added Sitemap directive           public/robots.txt:1            [VERIFIED] ~5 min
+
+  - title: "Apply SAFE and MODERATE fixes"
+    type: invocation
+    command: "zuvo:geo-fix --auto"
+    result: "Applies all SAFE fixes plus MODERATE fixes (schema-org-add, schema-id-link, schema-article-add) with 3-layer validation. DANGEROUS fixes (robots-ai-policy-change, schema-restructure) still reported only."
+
+  - title: "Dry run to preview all tiers"
+    type: invocation
+    command: "zuvo:geo-fix --dry-run"
+    result: "Shows every fix that would be applied at each tier with target files, expected changes, and context-aware safety upgrades — without modifying any file."
+
+  - title: "Fix a specific finding"
+    type: invocation
+    command: "zuvo:geo-fix --finding G2-schema-id-disconnected"
+    result: "Targets only the G2-schema-id-disconnected finding. If the target file contains existing JSON-LD, applies the context-aware MODERATE→DANGEROUS upgrade and requires confirmation."
+
+when_to_use: |
+  Run `zuvo:geo-fix` after `zuvo:geo-audit` produces findings. It is the fix-application
+  complement: geo-audit identifies what is broken, geo-fix applies the fixes that are safe
+  to automate. Use default mode for the first pass (SAFE only), then `--auto` for MODERATE
+  fixes after reviewing SAFE results. Run seo-fix first if you have both SEO and GEO
+  findings — geo-fix will skip any fixes seo-fix already applied.
+
+when_not_to_use: |
+  Do not use `zuvo:geo-fix` as a substitute for `zuvo:geo-audit` — it requires a geo-audit
+  JSON to exist and warns if older than 24 hours. For SEO fixes (sitemap, OG tags, meta),
+  use `zuvo:seo-fix`. geo-fix does not handle content writing, BLUF restructuring, heading
+  rewriting, statistics addition, anti-pattern removal, WordPress plugin configuration, or
+  React SPA GEO improvements.
+
+related_skills:
+  - slug: geo-audit
+    relation: "Prerequisite — geo-fix reads the JSON produced by geo-audit (audit findings vs apply fixes)"
+  - slug: seo-fix
+    relation: "Sister skill — geo-fix deduplicates against seo-fix output to prevent double-application of overlapping fixes"
+  - slug: backlog
+    relation: "geo-fix updates memory/backlog.md — removes FIXED items and tracks NEEDS_REVIEW / MANUAL follow-up"
+  - slug: deploy
+    relation: "Deploy after geo-fix for framework build verification in production"
+
+faq:
+  - q: "What does zuvo:geo-fix apply automatically?"
+    a: "SAFE fixes are auto-applied: robots-ai-allow (when no existing bot rules), canonical-add (when no existing canonical), llms-txt-generate, sitemap-robots-ref, and frontmatter-date-add. MODERATE fixes require --auto and include 3-layer validation: schema-org-add, schema-article-add, schema-faq-add, schema-id-link. DANGEROUS fixes (robots-ai-policy-change when existing rules are present, schema-restructure) require --all plus explicit user confirmation per finding."
+  - q: "How does geo-fix handle seo-fix overlap?"
+    a: "Before applying any fix, geo-fix scans seo-fix JSON output for already-applied fixes. If seo-fix already applied llms-txt-add, robots-fix, or canonical-fix to the same file, geo-fix marks those findings as ALREADY_APPLIED_BY_SEO_FIX and skips them. If seo-fix applied a fix but with NEEDS_REVIEW or FAILED status, geo-fix proceeds independently."
+  - q: "What is a context-aware safety upgrade?"
+    a: "Context-aware safety upgrades promote a fix to a stricter tier when the target file already has conflicting content. schema-org-add/schema-id-link upgrade from MODERATE to DANGEROUS if the target file already contains JSON-LD (to avoid breaking existing Rich Results). robots-ai-allow upgrades from SAFE to MODERATE if robots.txt already has bot rules (to avoid accidental policy changes)."
+  - q: "What are advisory scaffolds and why do they not contain body content?"
+    a: "Content findings like BLUF restructuring, heading rewriting, and E-E-A-T improvements require editorial judgment — geo-fix emits HTML comment placeholders (<!-- TODO: ... GEO signal: ... -->) instead. These scaffolds tell content authors where to write and why it matters for AI citation, without generating text that may be factually wrong or misleading. Adversarial review enforces this: any generated body content in a scaffold fails the review."
+  - q: "Does geo-fix verify the build after applying fixes?"
+    a: "Yes — if a build tool is detected (astro build, next build, hugo), a full build runs after each fix batch and the real exit code must be 0 before the run can be marked PASS. For generated public files such as llms.txt, robots.txt, and sitemap.xml, geo-fix also checks the built artifact exists and is non-empty; a 404 or missing output downgrades the finding to NEEDS_REVIEW rather than reporting VERIFIED."
+
+arguments:
+  - flag: "(default)"
+    description: "Read latest geo-audit JSON, apply SAFE fixes only, report MODERATE and DANGEROUS"
+  - flag: "--auto"
+    description: "Apply SAFE and MODERATE fixes automatically (DANGEROUS still reported only)"
+  - flag: "--all"
+    description: "Apply all tiers including DANGEROUS — requires explicit user confirmation per dangerous fix"
+  - flag: "--dry-run"
+    description: "Show what would be fixed at each tier without modifying any file"
+  - flag: "--finding G2-schema-id-disconnected,G3-llms-txt-missing"
+    description: "Apply only the specified stable finding IDs"
+  - flag: "--fix-type schema-org-add,robots-ai-allow"
+    description: "Apply only fixes of the specified fix_type categories"
+  - flag: "--skip-adversarial"
+    description: "Skip cross-provider adversarial review of applied fixes"
+  - flag: "[json-path]"
+    description: "Use a specific audit JSON file instead of the latest in audit-results/"
+
+checks:
+  sections:
+    - name: "SAFE Fixes (auto-applied)"
+      id_range: "SAFE tier"
+      count: 3
+      items:
+        - id: "robots-ai-allow"
+          name: "Add retrieval bot allow rules to robots.txt (no existing rules)"
+          critical: false
+        - id: "llms-txt-generate"
+          name: "Generate public/llms.txt from site structure"
+          critical: false
+        - id: "sitemap-robots-ref"
+          name: "Add Sitemap: directive to robots.txt"
+          critical: false
+    - name: "MODERATE Fixes (with 3-layer validation)"
+      id_range: "MODERATE tier"
+      count: 5
+      items:
+        - id: "schema-org-add"
+          name: "Add Organization JSON-LD with @id to layout head"
+          critical: false
+        - id: "schema-article-add"
+          name: "Add Article JSON-LD with @id and dateModified to blog/post layout"
+          critical: false
+        - id: "schema-faq-add"
+          name: "Add FAQPage JSON-LD with Q/A pairs"
+          critical: false
+        - id: "schema-id-link"
+          name: "Add @id references to connect existing schema blocks"
+          critical: false
+        - id: "canonical-add"
+          name: "Add rel=canonical to layout head (no existing canonical)"
+          critical: true
+    - name: "DANGEROUS Fixes (manual only)"
+      id_range: "DANGEROUS tier"
+      count: 2
+      items:
+        - id: "robots-ai-policy-change"
+          name: "Modify existing robots.txt AI bot policy (risks unintended access changes)"
+          critical: true
+        - id: "schema-restructure"
+          name: "Restructure existing JSON-LD to @graph pattern (risks breaking Rich Results)"
+          critical: true
+    - name: "Content Scaffolds (OUT_OF_SCOPE)"
+      id_range: "Advisory tier"
+      count: 3
+      items:
+        - id: "bluf-scaffold"
+          name: "Structural placeholder for answer-first paragraph"
+          critical: false
+        - id: "eeat-scaffold"
+          name: "Structural placeholder for E-E-A-T signals (author bio, organization description)"
+          critical: false
+        - id: "freshness-scaffold"
+          name: "Structural placeholder for freshness signals (dateModified, last-reviewed)"
+          critical: false
+
+frameworks:
+  - Astro
+  - Next.js
+  - Hugo
+  - Universal (llms.txt, canonical, robots.txt, frontmatter)
+
+modes:
+  - name: default
+    description: "SAFE fixes only. MODERATE and DANGEROUS are reported with recommendations."
+  - name: "--auto"
+    description: "SAFE + MODERATE fixes. Includes 3-layer validation per fix type. DANGEROUS still reported only."
+  - name: "--all"
+    description: "All tiers including DANGEROUS. Each DANGEROUS fix requires explicit user confirmation."
+  - name: "--dry-run"
+    description: "Read-only preview of all fixes across all tiers. No files modified."
+
+agents: null
+
+benchmarks:
+  - claim: "Context-aware safety upgrades: schema fixes upgrade MODERATE→DANGEROUS when existing JSON-LD is present; robots-ai-allow upgrades SAFE→MODERATE when existing bot rules exist"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 1.3 — context-aware safety upgrade rules"
+  - claim: "seo-fix deduplication: geo-fix reads seo-fix JSON and skips any finding where seo-fix already applied the same fix_type to the same file"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 0.5 — dedup vs seo-fix"
+  - claim: "OUT_OF_SCOPE scaffolds contain only structural markers — adversarial review enforces no generated body content"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 3.4 — adversarial review OUT_OF_SCOPE scaffold enforcement"
+  - claim: "Build verification gate after every fix batch — per-finding rollback on failure, not blind full revert"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 3.2 — rollback model"
+  - claim: "Estimated after-score calculated from confirmed fixes only — scaffolds, NEEDS_REVIEW, and MANUAL do not inflate the estimate"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 4.1 — estimated score calculation"
+
+comparison_table:
+  columns: ["Capability", "Manual GEO fix", "seo-fix", "zuvo:geo-fix"]
+  rows:
+    - ["Reads structured geo-audit findings", "No", "No (reads seo-audit)", "Yes — geo-audit JSON v1.1"]
+    - ["Training vs retrieval bot distinction", "Manual judgment", "No", "Yes — robots-ai-allow uses bot registry"]
+    - ["Schema @id connectivity patching", "Manual", "No", "Yes — schema-id-link fix type"]
+    - ["seo-fix deduplication", "Manual", "N/A", "Yes — skips already-applied fixes"]
+    - ["Context-aware safety upgrades", "Manual", "Partial", "Yes — MODERATE→DANGEROUS on existing JSON-LD"]
+    - ["Content scaffold emission (no body text)", "Manual", "No", "Yes — structural HTML comment markers only"]
+    - ["Build verification + per-finding rollback", "Manual", "Yes", "Yes — same model, geo-specific artifacts"]
+    - ["Estimated score before re-audit", "No", "Yes", "Yes — confirmed fixes only"]
+    - ["DANGEROUS fix diffs with risk", "No", "Yes (canonical)", "Yes — robots policy + schema restructure"]

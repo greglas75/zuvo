@@ -1,0 +1,299 @@
+schema_version: 1
+last_synced: "2026-04-07"
+
+meta:
+  slug: geo-audit
+  title: "GEO Audit — 12-Dimension AI Citation Readiness Analysis"
+  description: "GEO/AI readiness audit: 12 dimensions, 4 critical gates, schema graph connectivity, SSR rendering, bot policy, llms.txt, chunkability. Astro, Next.js, Hugo."
+  category: audit
+  og_image: /og/skills/geo-audit.png
+
+seo:
+  target_queries:
+    - "GEO generative engine optimization audit tool"
+    - "AI citation readiness check Next.js Astro Hugo"
+    - "JSON-LD schema graph connectivity audit"
+    - "llms.txt AI crawler policy check"
+    - "ChatGPT Perplexity Google AI Overviews citation signals"
+  canonical: /en/skills/geo-audit
+
+stats:
+  - label: "Dimensions"
+    value: "12"
+    detail: "G1-G12: AI crawlers, schema graph, llms.txt, SSR, freshness, chunkability, canonicalization, sitemap, BLUF, headings, citation signals, anti-patterns"
+  - label: "Critical Gates"
+    value: "4"
+    detail: "GCG1-GCG4: retrieval bot access, schema @id, JSON-LD SSR, canonical tags"
+  - label: "AI Engines"
+    value: "4"
+    detail: "Google AI Overviews, ChatGPT Browse, Perplexity, Gemini"
+  - label: "Bot Profiles"
+    value: "15"
+    detail: "Training, search, retrieval, and user-proxy bots from the canonical registry"
+  - label: "Tiers"
+    value: "4"
+    detail: "A (GEO-ready) / B (good foundation) / C (significant gaps) / D (major issues)"
+  - label: "Frameworks"
+    value: "6"
+    detail: "Astro, Next.js, Hugo, Nuxt, SvelteKit, plain HTML"
+
+problem: |
+  Traditional SEO audits miss the signals that matter to AI answer engines. A site can
+  pass Lighthouse and Screaming Frog yet be invisible to ChatGPT Browse, Perplexity, and
+  Google AI Overviews — because AI citation depends on schema graph connectivity, SSR
+  rendering of JSON-LD, retrieval bot access policies, llms.txt presence, and content
+  chunkability. zuvo:geo-audit examines source code, templates, and config files
+  systematically across 12 GEO-specific dimensions, with 4 critical gates, a 15-bot
+  policy matrix, and profile-aware content heuristics. It imports overlapping findings
+  from seo-audit when available to avoid redundant scanning, and produces structured
+  JSON output for downstream consumption by zuvo:geo-fix.
+
+how_it_works:
+  - step: "Stack and Profile Detection"
+    description: "Detects framework (Astro, Next.js, Hugo, Nuxt, SvelteKit, or plain HTML), content profile (blog/docs/ecommerce/marketing/app-shell), CMS, deploy platform (Vercel, Netlify, Cloudflare), and optional seo-audit import for G1-G12 overlap dimensions."
+  - step: "Parallel Agent Dispatch"
+    description: "Dispatches 3 agents in parallel: Crawl & Access (G1, G7, G8), Schema & Render (G2, G4, G5), and Content Signals (G3, G6, G9, G10, G11, G12). Agents return raw check statuses; the main agent calculates all scores."
+  - step: "seo-audit Import"
+    description: "When a geo-audit runs after seo-audit, it imports overlapping findings (D5→G1, D3→G2/G4, D9/D10→G9/G10/G11) tagged [IMPORTED:seo-audit] to avoid re-auditing. Geo-audit's own deeper checks override imports when they conflict."
+  - step: "Critical Gate Evaluation"
+    description: "All 4 critical gates are evaluated with explicit PASS/FAIL/INSUFFICIENT DATA status. GCG1: retrieval bots not blocked. GCG2: schema has @id. GCG3: JSON-LD is SSR-rendered. GCG4: canonical tags present. Any FAIL overrides overall result to FAIL regardless of score."
+  - step: "3D Priority Scoring and Report"
+    description: "Each finding is scored on GEO Impact, Business Impact, and Fix Effort. Report includes dimension score table, critical gates, quick wins, full execution plan, and CI-parseable summary line. Saved as Markdown plus JSON v1.1 for geo-fix consumption."
+
+output:
+  artifact: "audit-results/geo-audit-YYYY-MM-DD.md"
+  format: "Markdown report plus machine-readable JSON v1.1. Includes critical gate status (GCG1-GCG4), dimension scores (G1-G12), tier (A/B/C/D), full findings with 3D priority, bot policy evidence, and CI-parseable summary line."
+  sections:
+    - "Header (stack, profile, CMS, date)"
+    - "Critical Gates (GCG1-GCG4 with evidence)"
+    - "Dimension Scores table (G1-G12)"
+    - "Overall Score + Tier (A/B/C/D) + Result (PASS/FAIL/PROVISIONAL)"
+    - "Strengths"
+    - "Quick Wins (Priority >= 2.0, Effort = EASY)"
+    - "Full Execution Plan (sorted by priority)"
+    - "Fix Coverage Summary"
+    - "Next-Action Routing table"
+    - "CI-Parseable Summary line"
+
+examples:
+  - title: "Schema missing @id — GCG2 FAIL"
+    type: before_after
+    gate: "GCG2"
+    before:
+      language: javascript
+      code: |
+        // Schema present but no @id — AI systems can't link entities across pages
+        {
+          "@context": "https://schema.org",
+          "@type": "Organization",
+          "name": "Acme Corp",
+          "url": "https://acme.com"
+        }
+    after:
+      language: javascript
+      code: |
+        // Schema with @id + sameAs — enables entity graph disambiguation
+        {
+          "@context": "https://schema.org",
+          "@type": "Organization",
+          "@id": "https://acme.com/#organization",
+          "name": "Acme Corp",
+          "url": "https://acme.com",
+          "sameAs": ["https://www.wikidata.org/wiki/Q..."]
+        }
+    explanation: "GCG2 requires schema to have @id for entity graph connectivity. Without @id, AI systems cannot link the Organization entity across pages or to external knowledge bases. Schema present but missing @id = GCG2 FAIL even though schema exists."
+  - title: "Audit score summary"
+    type: output_sample
+    sample:
+      language: text
+      code: |
+        GEO AUDIT — acme.com
+        ----
+        GEO Score:  41/100  Tier D  AT RISK
+        Result:     FAIL
+        Profile:    marketing | CMS: none
+        ----
+        Critical Gates: GCG1 PASS | GCG2 FAIL (no @id) | GCG3 FAIL (client-side JSON-LD) | GCG4 PASS
+        Overall: FAIL — 2 critical gates must be fixed before score-based optimization is relevant.
+
+        Quick Wins (4 items, Priority >= 2.0, Effort = EASY):
+          G3  Generate llms.txt                 Priority 2.4  SAFE
+          G7  Add canonical to layout           Priority 2.2  SAFE
+          G2  Add @id to Organization schema    Priority 2.8  MODERATE
+          G4  Move JSON-LD server-side          Priority 2.6  MODERATE
+    explanation: "CI-parseable summary line: `GEO-AUDIT-RESULT: FAIL score=41 tier=D critical=GCG2,GCG3`"
+
+when_to_use: "Use before launch to baseline GEO readiness, after a redesign, when AI-engine referral traffic drops, or quarterly as a health check. Run `zuvo:seo-audit --geo` first if you want a combined SEO+GEO view — geo-audit will import those findings automatically. Use `--live-url` to add live bot sampling. Use `--profile` to tune D9/D10 heuristics for content-heavy sites."
+
+when_not_to_use: "For traditional SEO (meta tags, sitemaps, Googlebot), use `zuvo:seo-audit`. For code quality issues, use `zuvo:code-audit`. For applying fixes discovered by this audit, use `zuvo:geo-fix` — it reads the JSON output directly and applies templated fixes without re-scanning. For deep performance profiling, use `zuvo:performance-audit`."
+
+related_skills:
+  - slug: geo-fix
+    relation: "Fix-application complement — geo-fix reads the JSON produced by geo-audit and applies templated patches by safety tier"
+  - slug: seo-audit
+    relation: "Sibling audit — geo-audit imports overlapping findings from seo-audit (D3/D5/D9/D10) when available"
+  - slug: backlog
+    relation: "Receives Priority >= 2.0 findings and GCG failures when --persist-backlog is enabled"
+  - slug: performance-audit
+    relation: "Core Web Vitals deep-dive — low CWV scores degrade AI citation probability for content-heavy pages"
+
+faq:
+  - q: "What does zuvo:geo-audit check?"
+    a: "It evaluates 12 dimensions: AI crawler access (G1), schema graph connectivity (G2), llms.txt / AI content files (G3), SSR rendering of JSON-LD (G4), freshness signals (G5), semantic HTML structure (G6), canonicalization (G7), sitemap (G8), BLUF / answer-first content (G9), heading quality (G10), citation signals (G11), and anti-patterns (G12). Four critical gates must pass before score-based optimization is relevant."
+  - q: "How is geo-audit different from the GEO panel in seo-audit?"
+    a: "zuvo:seo-audit includes a GEO Readiness Panel (D10) as part of its broader SEO analysis. zuvo:geo-audit is a dedicated deep-dive: 12 dimensions vs 7 sub-dimensions, schema @id graph connectivity analysis, per-bot access verification, and content-corpus chunkability checks. Run seo-audit first for a broad pass, then geo-audit for GEO-specific depth. geo-audit imports seo-audit findings automatically to avoid redundant scanning."
+  - q: "What is GEO and why does it matter?"
+    a: "Generative Engine Optimization (GEO) is about making content legible to AI answer engines — Google AI Overviews, ChatGPT Browse, Perplexity, and Gemini. These systems don't rank pages; they cite sources. Citation depends on schema graph connectivity, retrieval bot access, SSR-rendered structured data, and content that is chunked, entity-attributed, and freshness-signaled. Sites that ignore GEO lose referral traffic as AI-mediated search grows."
+  - q: "What are the 4 critical gates?"
+    a: "GCG1: Retrieval bots (ChatGPT-User, PerplexityBot, Google-Extended for retrieval) are not blocked by robots.txt. GCG2: Schema has @id field for entity graph connectivity. GCG3: JSON-LD is rendered server-side in the initial HTML response, not injected client-side after hydration. GCG4: Canonical tags are present in the layout head. Any FAIL overrides the overall result to FAIL regardless of the numeric score."
+  - q: "What is the difference between training bots and retrieval bots?"
+    a: "Training bots (GPTBot, Google-Extended in training mode, CCBot) are used to collect data for model training. Retrieval bots (ChatGPT-User, PerplexityBot) are used when AI systems answer live queries with citations. Blocking training bots while allowing retrieval bots is a valid and common policy — geo-audit scores this as PASS for GCG1, not a failure."
+  - q: "What frameworks does geo-audit support?"
+    a: "Framework-aware analysis for Astro, Next.js, Hugo, Nuxt, SvelteKit, and plain HTML. Each framework has different patterns for JSON-LD rendering, canonical tags, and robots.txt configuration. geo-fix applies the correct fix templates per detected stack."
+
+arguments:
+  - flag: "(empty) or full"
+    description: "All 12 dimensions, code-only analysis (default)"
+  - flag: "[path]"
+    description: "Audit a specific directory or module instead of the full project"
+  - flag: "--live-url <url>"
+    description: "Code audit plus live bot sampling: G1 HTTP-level access verification, per-bot policy confirmation"
+  - flag: "--profile <blog|docs|ecommerce|marketing|app-shell>"
+    description: "Override auto-detected content profile for G9/G10/G11/G12 heuristics"
+  - flag: "--cms / --no-cms"
+    description: "Override CMS auto-detection (affects G9-G12 scope)"
+  - flag: "--lang <en|pl>"
+    description: "Language for anti-pattern analysis (default: en)"
+  - flag: "--persist-backlog"
+    description: "Write Priority >= 2.0 findings and GCG failures to memory/backlog.md"
+
+checks:
+  sections:
+    - name: "Critical Gates"
+      id_range: "GCG1-GCG4"
+      count: 4
+      items:
+        - id: "GCG1"
+          name: "Retrieval bots not blocked in robots.txt"
+          critical: true
+        - id: "GCG2"
+          name: "Schema has @id field for entity graph connectivity"
+          critical: true
+        - id: "GCG3"
+          name: "JSON-LD rendered server-side (not client-only)"
+          critical: true
+        - id: "GCG4"
+          name: "Canonical tags present in layout head"
+          critical: true
+    - name: "AI Crawler Access"
+      id_range: "G1"
+      count: 4
+      items:
+        - id: "G1-1"
+          name: "Retrieval bots allowed in robots.txt"
+          critical: false
+        - id: "G1-2"
+          name: "Training vs retrieval bot distinction is conscious"
+          critical: false
+        - id: "G1-3"
+          name: "Sitemap referenced in robots.txt"
+          critical: false
+        - id: "G1-4"
+          name: "WAF/CDN policy consistent with robots.txt intent"
+          critical: false
+    - name: "Schema Graph"
+      id_range: "G2"
+      count: 6
+      items:
+        - id: "G2-1"
+          name: "JSON-LD present on key page types"
+          critical: false
+        - id: "G2-2"
+          name: "@id field present for entity disambiguation"
+          critical: false
+        - id: "G2-3"
+          name: "@graph pattern used for connected entities"
+          critical: false
+        - id: "G2-4"
+          name: "sameAs links to Wikidata / Wikipedia"
+          critical: false
+        - id: "G2-5"
+          name: "Required fields populated per schema type"
+          critical: false
+        - id: "G2-6"
+          name: "No duplicate or conflicting schema blocks"
+          critical: false
+    - name: "llms.txt / AI Content Files"
+      id_range: "G3"
+      count: 3
+      items:
+        - id: "G3-1"
+          name: "llms.txt present and accessible"
+          critical: false
+        - id: "G3-2"
+          name: "llms.txt content is extraction-friendly"
+          critical: false
+        - id: "G3-3"
+          name: "llms-full.txt present for content-heavy sites"
+          critical: false
+
+frameworks:
+  - "Astro"
+  - "Next.js"
+  - "Hugo"
+  - "Nuxt"
+  - "SvelteKit"
+  - "Plain HTML"
+
+modes:
+  - name: "full"
+    description: "All 12 dimensions, code-only (default)"
+  - name: "--profile"
+    description: "Profile-aware heuristics for G9/G10/G11/G12 (blog, docs, ecommerce, marketing, app-shell)"
+  - name: "--live-url"
+    description: "Code audit plus live bot sampling and G1 access verification"
+  - name: "--cms / --no-cms"
+    description: "Override CMS detection — when CMS is active, G9-G12 fall back to INSUFFICIENT DATA"
+
+agents:
+  - name: "GEO Crawl & Access Agent"
+    role: "Evaluates G1 (AI crawler access), G7 (canonicalization), G8 (sitemap)"
+  - name: "GEO Schema & Render Agent"
+    role: "Evaluates G2 (schema graph), G4 (SSR rendering), G5 (freshness signals)"
+  - name: "GEO Content Signals Agent"
+    role: "Evaluates G3 (llms.txt), G6 (semantic HTML), G9 (BLUF), G10 (heading quality), G11 (citation signals), G12 (anti-patterns)"
+
+benchmarks:
+  - claim: "4 critical gates with explicit PASS/FAIL/INSUFFICIENT DATA — any FAIL overrides overall result to FAIL"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 3.3 — critical gate scoring rules"
+  - claim: "12 dimensions with individual weights summing to 100% — G1:15%, G2:18%, G3:8%, G4:12%, G5:10%, G6:7%, G7:10%, G8:5%, G9:5%, G10:4%, G11:3%, G12:3%"
+    type: coverage
+    verifiable: true
+    source: "SKILL.md Phase 3.4 — dimension weights table"
+  - claim: "Distinguishes training bots (GPTBot, CCBot) from retrieval bots (ChatGPT-User, PerplexityBot) — blocking training while allowing retrieval scores as PASS"
+    type: accuracy
+    verifiable: true
+    source: "shared/includes/seo-bot-registry.md + SKILL.md G1 dimension constraints"
+  - claim: "Imports overlapping findings from seo-audit JSON — dependency direction enforced: geo-audit reads seo-audit, never the reverse"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 0.5 — seo-audit import protocol"
+  - claim: "JSON output saved alongside Markdown report in schema v1.1 — enables geo-fix to apply fixes without re-scanning"
+    type: accuracy
+    verifiable: true
+    source: "SKILL.md Phase 5.8 — JSON output schema"
+
+comparison_table:
+  columns: ["Capability", "seo-audit --geo panel", "Manual GEO checklist", "zuvo:geo-audit"]
+  rows:
+    - ["Schema @id graph connectivity analysis", "Partial (D3 basic presence)", "No", "Yes — GCG2 critical gate + G2 6-check depth"]
+    - ["Training vs retrieval bot distinction", "Partial (D5 policy check)", "No", "Yes — G1 with 15-bot registry"]
+    - ["SSR vs client-side JSON-LD detection", "Yes (CG5)", "No", "Yes — GCG3 critical gate"]
+    - ["seo-audit import (no re-scanning)", "N/A", "No", "Yes — D3/D5/D9/D10 imported automatically"]
+    - ["Content chunkability (H2/H3 structure)", "No", "Manual", "Yes — G10 heading quality"]
+    - ["llms.txt quality analysis", "Basic (D10-1)", "No", "Yes — G3 3-check depth"]
+    - ["CMS-aware scope downgrade", "No", "No", "Yes — G9-G12 → INSUFFICIENT DATA on CMS sites"]
+    - ["Machine-readable JSON for geo-fix", "No (feeds seo-fix)", "No", "Yes — v1.1 with fix_type and fix_safety"]
+    - ["3D priority scoring", "No", "No", "Yes — GEO + Business + Effort"]

@@ -3,7 +3,7 @@ name: using-zuvo
 description: "ALWAYS LOADED — Zuvo skill router. Injected at session start. Determines which zuvo skill to invoke for the current task."
 ---
 
-> **Zuvo v1.3.16** | 45 skills | 4 adversarial providers | CQ1-CQ28 + Q1-Q19
+> **Zuvo v1.3.16** | 47 skills | 4 adversarial providers | CQ1-CQ28 + Q1-Q19
 
 # Zuvo Skill Router
 
@@ -46,6 +46,7 @@ Do this on every message. Not just the first one.
 | Write end-to-end tests (Playwright) | `zuvo:write-e2e` |
 | Fix systematic test anti-patterns across files | `zuvo:fix-tests` |
 | Fix SEO audit findings, apply SEO fixes | `zuvo:seo-fix` |
+| Fix GEO issues — fix schema, fix llms.txt, apply GEO fixes | `zuvo:geo-fix` |
 | Fix content audit findings (encoding, markdown, artifacts) | `zuvo:content-fix` |
 
 ### Priority 3 — Audit (analysis and reporting)
@@ -63,6 +64,7 @@ Do this on every message. Not just the first one.
 | Audit CI/CD pipelines | `zuvo:ci-audit` |
 | Audit environment config and secrets | `zuvo:env-audit` |
 | Audit SEO and structured data | `zuvo:seo-audit` |
+| GEO readiness audit — AI citation optimization, llms.txt, schema graph, generative engine visibility | `zuvo:geo-audit` |
 | Audit content quality (encoding, links, formatting, CMS artifacts) | `zuvo:content-audit` |
 | Compare old CMS page with new SSG page, fix parity gaps | `zuvo:content-migration` |
 | Audit codebase structure and organization | `zuvo:structure-audit` |
