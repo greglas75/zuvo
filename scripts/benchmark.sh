@@ -49,6 +49,7 @@ RUN_ID="bm-$(date +%Y-%m-%d-%H%M%S)-$$"
 DRY_RUN=false
 NO_SNAPSHOT=false
 SHOW_COSTS=false
+JSON_OUTPUT=false
 ROUND_DIR=""
 
 while [[ $# -gt 0 ]]; do
@@ -68,6 +69,15 @@ while [[ $# -gt 0 ]]; do
     --dry-run)          DRY_RUN=true; shift ;;
     --no-snapshot)      NO_SNAPSHOT=true; shift ;;
     --show-costs)       SHOW_COSTS=true; shift ;;
+    --json)             JSON_OUTPUT=true; shift ;;
+    --compare)
+      echo "ERROR: --compare requires the zuvo:benchmark skill orchestrator." >&2
+      echo "Usage: zuvo:benchmark --compare [id1] [id2]" >&2
+      exit 0 ;;
+    --replay-last)
+      echo "ERROR: --replay-last requires the zuvo:benchmark skill orchestrator." >&2
+      echo "Usage: zuvo:benchmark --replay-last" >&2
+      exit 0 ;;
     --help|-h)
       grep '^# ' "$0" | sed 's/^# //' | head -25
       exit 0 ;;
@@ -620,5 +630,10 @@ jq -n \
   }' > "$OUTPUT_FILE"
 
 echo "  Output: $OUTPUT_FILE" >&2
+
+if [[ "$JSON_OUTPUT" == "true" ]]; then
+  cat "$OUTPUT_FILE"
+fi
+
 echo "BENCHMARK DONE" >&2
 exit 0

@@ -312,6 +312,8 @@ Self-eval bias range: [min] to [max] (positive = overconfident)
 
 *Corpus mode activates when `--mode corpus` is set. Phases 5–8 extend the default pipeline.*
 
+> **Architecture note:** Phases 5–8 are **orchestrator-managed** — they are executed by the LLM running this skill, not by `scripts/benchmark.sh`. The bash runner handles Round 1 dispatch and raw result collection only. The skill orchestrator manages multi-round flow: reading round files from `--round-dir`, interpolating prompts, re-dispatching providers, and scoring.
+
 See Phase 5 (adversarial round), Phase 6 (Round 2 test writing), Phase 7 (test scoring), and Phase 8 (corpus leaderboard) defined in the corpus mode extension below.
 
 **Corpus mode quality formula (both rounds):**
