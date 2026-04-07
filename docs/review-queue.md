@@ -198,3 +198,4 @@ Commits pending review. Auto-managed:
 - 4922f43 (2026-04-07) fix benchmark: --compare/--json/--replay-last, smoke tests, orchestrator note
 - 5ed4a3e (2026-04-07) fix: incident skill — 6 fixes (suspect window, merge detection, metrics, comms)
 - 2f7b5b1 (2026-04-07) fix benchmark: skill-only flag labels, multi-block static checks, behavioral tests, schema task_source enum
+- f2378ab (2026-04-07) fix benchmark: skill-only flags, multi-block static checks, task_source enum
