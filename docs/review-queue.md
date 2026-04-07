@@ -174,3 +174,12 @@ Commits pending review. Auto-managed:
 - fcfc5a8 (2026-04-07) release: v1.3.15 — refactor: simplified content-migration skill — semantic LLM matching, lazy file loading, conservative fixes
 - c0713db (2026-04-07) fix: content-migration round 3 — verdict model, severity matrix, conservative fixes
 - 3974b8c (2026-04-07) fix: content-migration final polish — verdict hierarchy, image matching, progress tracking
+- addda39 (2026-04-07) release: v1.3.16 — content-migration final: verdict hierarchy, image matching cascade, progress tracking, ignore file, Phase 5 verify
+- 767f9c1 (2026-04-07) add benchmark corpus task files and output schema
+- edff80c (2026-04-07) add benchmark.sh skeleton with provider dispatch copied from adversarial-review.sh
+- 31a6e6c (2026-04-07) add benchmark.sh token accounting, cost calculation, self-eval parser, static checks
+- d218ca7 (2026-04-07) add benchmark.sh main execution loop, JSON output, and --show-costs
+- 752328a (2026-04-07) add benchmark SKILL.md with default mode, meta-judge scoring, leaderboard, and corpus mode
+- 0433ca1 (2026-04-07) wire benchmark skill into routing table, manifest, and docs (45→46 skills)
+- 201c137 (2026-04-07) add geo-fix skill: safety-tiered fixes with seo-fix dedup
+- 440f2fc (2026-04-07) wire geo-audit and geo-fix into routing, metadata, tests, and website

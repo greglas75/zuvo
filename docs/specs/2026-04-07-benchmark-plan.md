@@ -3,7 +3,7 @@
 **Spec:** docs/specs/2026-04-07-benchmark-spec.md
 **spec_id:** 2026-04-07-benchmark-0634
 **plan_revision:** 1
-**status:** Reviewed
+**status:** Approved
 **Created:** 2026-04-07
 **Tasks:** 7
 **Estimated complexity:** 3 standard + 4 complex

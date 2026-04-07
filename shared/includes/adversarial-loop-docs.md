@@ -62,9 +62,25 @@ adversarial-review --json --mode {MODE} --files "{ARTIFACT_PATH}"
 
 **If the script exits non-zero with empty output:** no provider was available. Note `adversarial review: skipped (no provider available)` and proceed normally.
 
-### Step 3: Apply fix policy
+### Step 3: Evidence validation
 
-Fix policy depends on artifact type:
+Before applying any fix policy, validate each CRITICAL or WARNING finding for mandatory evidence.
+
+**Every CRITICAL or WARNING finding MUST include one of:**
+- A section reference: `(Section: "Acceptance Criteria")` or `(Task 3: RED step)`
+- A direct quote from the artifact: `("users can upload files" — no size limit specified)`
+- A line number if the artifact has numbered lines
+
+```
+IF finding.severity in [CRITICAL, WARNING]:
+  IF finding has no section reference AND no quote AND no line number:
+    Downgrade to INFO
+    Annotate: "(downgraded: no artifact reference — cannot locate or action)"
+```
+
+**Rationale:** "The spec is vague" is not actionable. "Section 'Acceptance Criteria', item 3: 'system responds quickly' — no latency threshold defined" is actionable.
+
+After evidence validation, apply fix policy:
 
 | Artifact | CRITICAL finding | WARNING finding | INFO finding |
 |----------|-----------------|-----------------|--------------|

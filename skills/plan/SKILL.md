@@ -52,6 +52,7 @@ CORE FILES LOADED:
   3. ../../shared/includes/quality-gates.md    -- READ/MISSING
   4. ../../shared/includes/tdd-protocol.md     -- READ/MISSING
   5. ../../shared/includes/run-logger.md       -- READ/MISSING
+  6. ../../shared/includes/session-state.md    -- READ/MISSING
 ```
 
 
@@ -238,6 +239,18 @@ Draft → Reviewed (by plan reviewer) → Approved (by user only)
 **Async mode (Codex App, Cursor):** The plan reviewer's APPROVED verdict moves the plan to "Reviewed" status (NOT "Approved"). Print: "Plan is in Reviewed status. Review the task breakdown and change status to Approved before running zuvo:execute."
 
 `zuvo:execute` MUST check for "Approved" status. It will not start from "Draft" or "Reviewed".
+
+---
+
+## Active Plan Pointer
+
+After the plan reaches Approved status (user confirmation in interactive mode, or Reviewed in async mode), write the active plan pointer using the WRITE protocol from `session-state.md`:
+
+```bash
+mkdir -p .zuvo/plans
+```
+
+Write `.zuvo/plans/active-plan.md` with `status: pending`. This lets `zuvo:execute` find the plan immediately without ambiguity, even if multiple plan files exist.
 
 ---
 

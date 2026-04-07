@@ -50,6 +50,7 @@ CORE FILES LOADED:
   8. ../../shared/includes/run-logger.md             -- READ/MISSING
   9. ../../shared/includes/knowledge-prime.md        -- READ/MISSING
  10. ../../shared/includes/knowledge-curate.md       -- READ/MISSING
+ 11. ../../shared/includes/session-state.md          -- READ/MISSING
 ```
 
 
@@ -58,9 +59,35 @@ CORE FILES LOADED:
 
 ---
 
+## Session Recovery Check
+
+Before locating the plan, run the READ protocol from `session-state.md`:
+
+```
+Read(".zuvo/context/execution-state.md")
+```
+
+- **`status: in-progress` found** → resume mode: skip completed tasks, restore retry counts, load project-context. Jump directly to the Execution Loop at `next-task`. Skip "Hard Gate: Plan Required", "Artifact Detection", "Stack Detection", and "CodeSift Initialization" — all of that is already in `.zuvo/context/project-context.md`.
+- **`status: completed` or `status: aborted`** → delete the file, proceed normally.
+- **File missing** → proceed normally.
+
+---
+
 ## Hard Gate: Plan Required
 
 Before anything else, locate the plan document.
+
+**Step 0: Check for active plan pointer**
+
+```
+Read(".zuvo/plans/active-plan.md")
+```
+
+If the file exists and `status: pending` or `status: in-progress`:
+- Use the `plan:` field as the plan path. Skip the Glob search.
+- If the plan file doesn't exist at that path: fall through to Glob.
+
+Otherwise: proceed with Glob below.
 
 **Step 1: Find the plan**
 
@@ -111,6 +138,17 @@ Before dispatching any agent, detect the project stack:
 3. Load the matching rules file path for the implementer: `rules/typescript.md`, `rules/react-nextjs.md`, `rules/nestjs.md`, `rules/python.md`
 
 Record the detected stack. Pass it to every implementer dispatch.
+
+---
+
+## Session State Initialization
+
+Before the first agent dispatch, initialize session state using the WRITE protocol from `session-state.md`:
+
+1. Write `.zuvo/plans/active-plan.md` — set `status: in-progress`.
+2. Write `.zuvo/context/execution-state.md` — `status: in-progress`, `completed: []`, `next-task: 1`.
+3. Write `.zuvo/context/project-context.md` — stack, test-runner, codesift-repo.
+4. Ensure `.zuvo/` is in `.gitignore` (add if missing).
 
 ---
 
@@ -352,6 +390,12 @@ Quality review: PASS (CQ: [score]/28, Q: [score]/19)
 Adversarial review: [PASS / N findings (N critical) / SKIPPED (standard complexity)]
 ```
 
+### Step 9b: Write Session State
+
+After marking the task completed, update `.zuvo/context/execution-state.md` using the WRITE protocol from `session-state.md`. This ensures that if context is compacted or the session is interrupted, the next invocation resumes from the correct task.
+
+Also append this task to `## Completed Work Units` in `.zuvo/context/project-context.md`.
+
 ### Step 10: Verify CodeSift Index
 
 The implementer updates the CodeSift index after each file change (see implementer.md). The orchestrator does NOT re-index — it only verifies the index is current by spot-checking one changed file:
@@ -403,6 +447,12 @@ Do not retry more than once. Two failures on the same dispatch indicate a system
 ---
 
 ## After All Tasks Complete
+
+### Session State Close
+
+Set `status: completed` in `.zuvo/context/execution-state.md`. Update `.zuvo/plans/active-plan.md` to `status: completed`.
+
+The files remain on disk — they serve as a record of what was done. `zuvo:execute` will detect `status: completed` on next run and start fresh rather than attempting to resume.
 
 ### Final Summary
 

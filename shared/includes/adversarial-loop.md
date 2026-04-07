@@ -88,18 +88,38 @@ IF findings == 0 AND diff_lines > 150:
   Add to output: "⚠ Adversarial returned clean on 150+ line diff — possible false negative. Consider running zuvo:review for thorough multi-provider check."
 ```
 
-### Step 4: Apply fix policy
+### Step 4: Evidence validation
+
+Before applying any fix policy, validate each finding for mandatory evidence.
+
+**Every CRITICAL or WARNING finding MUST include:**
+- `file:line` — exact file path and line number where the issue occurs
+- A description that references the specific code or behavior (not just "this looks wrong")
+
+```
+IF finding.severity in [CRITICAL, WARNING]:
+  IF finding has no file:line reference:
+    Downgrade to INFO
+    Annotate: "(downgraded: no file:line evidence — cannot action)"
+```
+
+**Rationale:** Vague findings without evidence cannot be verified, fixed, or explained to the user. A finding that says "authentication looks insecure" with no location is unfixable. A finding that says "auth/token.ts:47 — JWT secret is hardcoded as a string literal, violates no-hardcoded-secrets" is actionable.
+
+After validation, apply fix policy:
 
 ```
 For each finding:
 
   CRITICAL  ->  Fix immediately. No exceptions.
+               Output: [CRITICAL] <description> (<file>:<line>)
 
   WARNING   ->  Is the fix < 10 lines AND localized (same file, no cross-file impact)?
                   YES  ->  Fix immediately
                   NO   ->  Do NOT fix. Add to "known concerns."
+               Output: [WARNING] <description> (<file>:<line>) — <fix-or-not reason>
 
   INFO      ->  Do NOT fix. Add to "known concerns."
+               Output: [INFO] <description> (<file>:<line> or "general")
 ```
 
 **Known concerns limit:** Max 3 items, one line each, highest severity first. If more than 3, keep top 3 and note "(N more omitted)".
@@ -132,13 +152,18 @@ If Step 4 fixed any CRITICAL or WARNING:
 
 ```
 [task description] complete
-Adversarial review ([provider]): [N] issues found, [N] fixed
+Adversarial review ([provider]): [N] issues found, [N] fixed ([N] downgraded for missing evidence)
   Fixed:
-  - [CRITICAL] [description] ([file]:[line])
+  - [CRITICAL] <description> (<file>:<line>)
+  - [WARNING]  <description> (<file>:<line>) — fixed (< 10 lines, localized)
   Known concerns (not fixed):
-  - [WARNING] [description] — non-local fix
-  - [INFO] [description]
+  - [WARNING]  <description> (<file>:<line>) — non-local fix
+  - [INFO]     <description> (<file>:<line> or "general")
+  Downgraded (no evidence):
+  - [INFO↓]    <original description> — no file:line provided
 ```
+
+Every finding in Fixed and Known concerns **must** include `(<file>:<line>)`. No exceptions. If the provider returns a finding without a location, it is downgraded and listed in the Downgraded section — it does NOT block or trigger fixes.
 
 When clean:
 ```
