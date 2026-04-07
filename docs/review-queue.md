@@ -151,3 +151,4 @@ Commits pending review. Auto-managed:
 - b1c2d0c (2026-04-07) fix: content-audit/fix — 7 issues from Codex adversarial review
 - ead2050 (2026-04-07) feat: adversarial run logging to ~/.zuvo/adversarial.log
 - e862ca4 (2026-04-07) fix: remove empty a11y-audit dir (broke codex build)
+- d7115dc (2026-04-07) fix: remove empty incident dir, add mutation-test skill
