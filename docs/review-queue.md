@@ -139,3 +139,5 @@ Commits pending review. Auto-managed:
 - bfdd2b4 (2026-04-07) release: v1.3.4 — adversarial: verify low-confidence CRITICAL, timeout 240s, updated finding handling in 8 skills
 - b623cc1 (2026-04-07) fix: pre-existing findings must be fixed or backlogged, not dismissed
 - 7ffd67a (2026-04-07) pre-existing findings handling
+- dc84f2b (2026-04-07) release: v1.3.5 — adversarial: verify low-confidence CRITICAL, timeout 240s, updated finding handling in 8 skills
+- b816002 (2026-04-07) fix: review skill — remove FIX-ALL blocker, use all adversarial providers
