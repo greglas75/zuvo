@@ -189,15 +189,17 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 | Consistent navigation | 3.2.3 | Nav component differs across pages |
 | Page titles descriptive and unique | 2.4.2 | Missing `<title>`, duplicate titles, generic titles |
 
-### A10: Legal Compliance Status (weight 4)
+### A10: Legal Compliance Status (NOT scored — separate legal risk section)
+
+A10 is a **qualitative legal risk assessment**, not a scored dimension. It does NOT contribute to the numerical score (to avoid double-counting A1-A9 results). It appears as a standalone section in the report.
 
 | Check | Standard | Detection |
 |-------|----------|-----------|
-| WCAG 2.2 AA conformance assessment | WCAG 2.2 | Aggregate A1-A9 results against Level AA criteria |
-| ADA Title II compliance (deadline: April 24, 2026) | ADA | Map failures to ADA requirements, flag deadline proximity |
+| ADA Title II compliance (deadline: 2026-04-24) | ADA | Map A1-A9 failures to ADA requirements. If audit date < deadline: flag as APPROACHING. If audit date >= deadline: flag as POST-DEADLINE (compliance now mandatory). |
 | European Accessibility Act compliance | EAA | Map failures to EAA requirements (if EU-facing) |
 | Section 508 compliance | 508 | Map failures to Section 508 (if government) |
 | VPAT readiness | VPAT | Assess documentation completeness for VPAT generation |
+| Accessibility statement present | All | Check for /accessibility page or statement in footer |
 
 ---
 
@@ -263,10 +265,10 @@ Run grep/CodeSift scans across the codebase for:
 ### 1.2 eslint-plugin-jsx-a11y Integration
 
 If `eslint-plugin-jsx-a11y` is detected:
-1. Check existing ESLint config for a11y rule overrides
-2. Run `npx eslint --no-eslintrc --plugin jsx-a11y --rule '{...}' [scope]` if available
-3. Cross-reference ESLint findings with manual scan
-4. Note any a11y rules that are disabled (potential intentional exceptions)
+1. **Grep the ESLint config** for disabled `jsx-a11y/*` rules — note each as an intentional exception
+2. **Run with project config:** `npx eslint --ext .jsx,.tsx [scope]` — captures what the project considers violations
+3. **Run baseline scan:** `npx eslint --no-eslintrc --plugin jsx-a11y --rule '{...}' [scope]` — captures ALL violations including intentionally suppressed ones
+4. **Diff the two runs** — suppressions found in config but not in baseline are intentional exceptions. Report them as `[SUPPRESSED]` findings (user decided to allow this) vs `[ACTIVE]` findings (violations the project config also flags)
 
 If not available: skip, rely on manual scan.
 
@@ -379,7 +381,13 @@ Notes: [implementation considerations]
 2. User impact (keyboard/screen reader blockers > visual issues > enhancements)
 3. Effort (quick wins first within same priority tier)
 
-If `--fix` flag is set: apply all CRITICAL and HIGH fixes automatically. MEDIUM fixes are reported but not auto-applied.
+If `--dry-run` flag is set: report all fixes without applying. Show before/after code for each fix.
+
+If `--fix` flag is set:
+1. **Create rollback tag:** `git tag a11y-fix-YYYY-MM-DD` before applying any changes
+2. Apply all CRITICAL and HIGH fixes automatically. MEDIUM fixes are reported but not auto-applied.
+3. Run verification: check that fixes don't break existing tests
+4. If tests fail after a fix: revert that specific fix, keep the tag for manual rollback
 
 **Scope guard:** Fixes touch only accessibility attributes, ARIA properties, semantic elements, CSS focus/contrast styles, and meta tags. Fixes do NOT modify business logic, data fetching, or application state.
 
@@ -399,19 +407,20 @@ Read deferred files:
 
 **Per-dimension scoring:** Each dimension has a max weight. Score = sum of check scores within dimension.
 
-**Overall score:** `(total earned / total possible) * 100`
+**Overall score:** `(total earned / total possible) * 100` — A10 excluded from score (legal risk section only, max = 76 from A1-A9).
 
-**Critical gates:**
-- A2 (Keyboard Navigation) = 0 --> automatic FAIL regardless of overall score
-- A4 (Color & Contrast) = 0 --> automatic FAIL regardless of overall score
+**Critical gates (explicit pass thresholds):**
+- A2 (Keyboard Navigation) < 6/12 --> automatic FAIL regardless of overall score
+- A4 (Color & Contrast) < 5/10 --> automatic FAIL regardless of overall score
 
 **Grade thresholds:**
 | Grade | Score | Condition |
 |-------|-------|-----------|
 | A | >= 85% | All critical gates pass |
 | B | 70-84% | All critical gates pass |
-| C | 50-69% | OR any critical gate fails |
-| FAIL | < 50% | OR any critical gate = 0 |
+| FAIL | < 70% | OR any critical gate below threshold |
+
+VERDICT mapping for run log: PASS (A or B), WARN (B with critical gate borderline), FAIL (below 70% or critical gate failure).
 
 ### 5.3 Report Output
 
