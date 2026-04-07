@@ -138,7 +138,7 @@ Check the diff for these markers. Each one counts toward tier escalation:
 - New production files added (not test files)
 - AI-generated code patterns (hallucinated imports, generic names, overly verbose)
 
-Print the triage result:
+Print the triage result with deployment risk score:
 
 ```
 TRIAGE RESULT
@@ -154,8 +154,39 @@ Risk signals:
 
 Tier:       TIER 2 (STANDARD)
 Mode 2 OK:  YES
+
+DEPLOYMENT RISK: [LOW / MEDIUM / HIGH / CRITICAL]
+  Rationale: [1-2 sentence summary of risk factors]
+  Deploy strategy: [direct merge / canary recommended / staged rollout / extra review required]
 ------------------------------------
 ```
+
+### Deployment Risk Scoring
+
+Every review MUST compute a deployment risk score. This score appears in the triage, report header, and NEXT STEPS block.
+
+**Scoring factors (cumulative):**
+
+| Factor | Points | How to detect |
+|--------|--------|---------------|
+| Auth/authz changes | +3 | Diff touches guards, middleware, JWT, session, role checks |
+| Payment/money logic | +3 | Diff touches payment, pricing, billing, subscription |
+| DB migration or schema | +2 | Migration files, schema changes, ALTER/CREATE TABLE |
+| API contract changes | +2 | New/modified routes, request/response shape changes |
+| File in churn hotspot (top 10) | +2 | From Phase 0 hotspot detection |
+| >500 lines changed | +1 | From diff stat |
+| New production files added | +1 | New .ts/.tsx/.py files (not tests) |
+| Multi-service blast radius | +1 | Changes affect 3+ modules/services |
+| Reverts or rollback-sensitive | +1 | State machine, data migration, irreversible ops |
+
+**Risk level:**
+
+| Points | Level | Deploy strategy |
+|--------|-------|----------------|
+| 0-1 | LOW | Direct merge — standard CI |
+| 2-4 | MEDIUM | Merge after review — run full test suite |
+| 5-7 | HIGH | Canary recommended — deploy to subset first, monitor 15 min |
+| 8+ | CRITICAL | Staged rollout — extra reviewer, canary mandatory, rollback plan |
 
 ### FIX-ALL Blockers
 
@@ -418,7 +449,8 @@ The report contains these sections in order:
 1. **META** -- date, intent, tier, audit mode (SOLO/TEAM), agents used, confidence method
 2. **SCOPE FENCE** -- files that were examined, files that were excluded
 3. **VERDICT** -- PASS / WARN / BLOCKED with score
-4. **SEVERITY SUMMARY** -- `MUST-FIX: N | RECOMMENDED: N | NIT: N` (MUST-FIX > 0 means verdict is BLOCKED)
+4. **DEPLOYMENT RISK** -- `LOW / MEDIUM / HIGH / CRITICAL` with deploy strategy recommendation
+5. **SEVERITY SUMMARY** -- `MUST-FIX: N | RECOMMENDED: N | NIT: N` (MUST-FIX > 0 means verdict is BLOCKED)
 5. **CHANGE SUMMARY** -- what the diff does in plain language
 6. **SKIPPED STEPS** -- which audit steps were skipped and why (tier-based or conditional)
 7. **VERIFICATION PASSED** -- what checks passed cleanly
@@ -481,16 +513,39 @@ After printing this block, append the `Run:` line value (without the `Run: ` pre
 ```
 ------------------------------------
 REVIEW COMPLETE -- <VERDICT>, <N> issues found.
+DEPLOYMENT RISK: <RISK LEVEL> -- <deploy strategy>
 Run: <ISO-8601-Z>	review	<project>	<CQ>	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
 
 NEXT STEPS -- say one of these:
   "fix"         -> apply ALL fixes from this report
   "blocking"    -> apply MUST-FIX only
+  "auto-fix"    -> dispatch zuvo:build to fix MUST-FIX issues (closed-loop)
   "skip"        -> keep report, don't fix
 ------------------------------------
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 ```
+
+### Closed-Loop Auto-Fix ("auto-fix" mode)
+
+When the user says "auto-fix" after a review with MUST-FIX findings:
+
+1. Collect all MUST-FIX findings into a structured fix list
+2. Dispatch `zuvo:build` with the fix list as context:
+   - Scope: files from MUST-FIX findings only
+   - Task: "Fix review findings R-1, R-3, R-7: [descriptions]"
+   - Mode: `--auto` (skip plan approval — the review IS the plan)
+3. After build completes, auto-run `zuvo:review` on the fix diff (re-review)
+4. If re-review finds new MUST-FIX: report them (do NOT loop — max 1 auto-fix cycle)
+5. If re-review is clean: print `CLOSED-LOOP COMPLETE — all MUST-FIX resolved`
+
+This creates a review > fix > verify pipeline without manual intervention.
+
+**Constraints:**
+- Max 1 auto-fix cycle (prevent infinite loops)
+- Only MUST-FIX findings are dispatched (RECOMMENDED and NIT stay in backlog)
+- The re-review runs at TIER 1 minimum (even for small diffs) to catch regressions
+- If build fails or introduces new CRITICAL issues, stop and report
 
 ### Questions Gate (after report, before execute)
 

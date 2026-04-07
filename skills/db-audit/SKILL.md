@@ -1,10 +1,10 @@
 ---
 name: db-audit
 description: >
-  Database performance and safety audit. 60+ checks across 12 dimensions
-  (DB1-DB12): query patterns, indexes, schema design, connections, transactions,
+  Database performance and safety audit. 70+ checks across 13 dimensions
+  (DB1-DB13): query patterns, indexes, schema design, connections, transactions,
   migrations, caching, query optimization, ORM anti-patterns, observability,
-  data lifecycle, and DB security. Code-level checks for all ORMs. Optional
+  data lifecycle, DB security, and migration deployment safety. Code-level checks for all ORMs. Optional
   live analysis via PostgreSQL or MySQL connection.
   Switches: zuvo:db-audit full | [path] | [file] | --schema | --queries | --connections | --live <conn>
 ---
@@ -190,7 +190,7 @@ Refer to `env-compat.md` for the dispatch pattern.
 
 | Agent | Dimensions | Focus |
 |-------|-----------|-------|
-| Schema Analyst | DB2, DB3, DB6 | Schema design + migration safety |
+| Schema Analyst | DB2, DB3, DB6, DB13 | Schema design + migration safety + deploy safety |
 | Query Scanner | DB1, DB5, DB8, DB9 | Code-level query patterns |
 | Infrastructure Auditor | DB4, DB7, DB10, DB11, DB12 | Connections, cache, observability, security |
 
@@ -316,6 +316,46 @@ without `take`, `$transaction` with long-running operations.
 | Sensitive data | PII encrypted at rest, column-level encryption for secrets | Plaintext passwords or tokens in DB | CRITICAL |
 
 Critical gate: DB12=0 (SQL injection) triggers audit FAIL.
+
+### DB13: Migration Deployment Safety -- Weight 8, Max 8
+
+Goes beyond DB6 (migration code quality) to assess whether migrations can be deployed safely to a running production system.
+
+| Check | Good | Bad | Severity |
+|-------|------|-----|----------|
+| Destructive operations | `DROP COLUMN`/`DROP TABLE` preceded by deprecation migration, data backed up | Direct `DROP` on populated columns without prior migration to remove usage | CRITICAL |
+| Lock duration estimation | Short-lived locks: `ADD COLUMN` with default (PG 11+), `CREATE INDEX CONCURRENTLY` | `ALTER TABLE` operations that acquire `ACCESS EXCLUSIVE` lock on large tables (>100K rows) | CRITICAL |
+| Rollback plan | Down migration exists and tested, or forward-fix strategy documented | No rollback path — failed migration leaves DB in inconsistent state | HIGH |
+| Data loss risk | `NOT NULL` additions have `DEFAULT` value, type changes preserve data | `ALTER COLUMN SET NOT NULL` without default on populated table, truncating type changes | CRITICAL |
+| Backward compatibility | New columns nullable or with defaults (old app version still works), rename = add+copy+drop | Column renames or type changes that break currently-deployed app code | HIGH |
+| Idempotency | Migrations use `IF NOT EXISTS`, `IF EXISTS` guards | Migrations fail on re-run (no idempotency — partial failure leaves broken state) | HIGH |
+| Migration ordering | Migrations numbered/timestamped, no conflicts in team branches | Multiple migrations with same timestamp, or migrations that depend on unapplied predecessors | MEDIUM |
+| Long-running DML | Data backfills use batched updates with `LIMIT` and sleep between batches | Single `UPDATE` on millions of rows (locks table, blocks queries, risks timeout) | HIGH |
+| Connection impact | Migration runs outside connection pool, or uses dedicated migration connection | Migration runs through application pool, potentially exhausting connections during deploy | MEDIUM |
+| Zero-downtime readiness | Migration + app deploy order documented, blue-green or rolling deploy compatible | Migration requires app downtime — schema and app must change simultaneously | HIGH |
+
+**How to audit:**
+
+1. Read all migration files in the migrations directory (last 20 if >20 exist)
+2. For each migration, classify operations:
+   - **SAFE**: `ADD COLUMN` (nullable or with default), `CREATE TABLE`, `CREATE INDEX CONCURRENTLY`
+   - **CAUTION**: `ADD COLUMN NOT NULL` with default (PG 11+ safe, older = table rewrite), `ALTER COLUMN SET DEFAULT`
+   - **DANGEROUS**: `DROP COLUMN`, `DROP TABLE`, `ALTER COLUMN TYPE`, `ALTER COLUMN SET NOT NULL` without default
+   - **BLOCKING**: `CREATE INDEX` without `CONCURRENTLY`, `ALTER TABLE` on large table without estimated lock time
+3. For DANGEROUS/BLOCKING operations, check:
+   - Is there a prior migration removing code references to dropped columns?
+   - Is there a rollback migration?
+   - Is the table large enough to cause lock contention (estimate from schema relations)?
+4. Check deployment documentation for migration strategy
+
+**Scoring:**
+- 0 DANGEROUS ops without safeguards = 8/8
+- Each unguarded DANGEROUS op: -2
+- Each BLOCKING op without CONCURRENTLY: -1
+- No rollback path for any destructive migration: -2
+- No idempotency guards: -1
+
+**N/A:** If no migration files found, DB13=N/A.
 
 ---
 
@@ -479,6 +519,7 @@ Save to: `audits/db-audit-[YYYY-MM-DD].md`
 | DB10 | Observability | [N] | 4 | |
 | DB11 | Data Lifecycle | [N] | 4 | |
 | DB12 | DB Security | [N] | 4 | |
+| DB13 | Migration Deploy Safety | [N] | 8 | |
 | **Total** | | **[N]** | **[M]** | |
 
 ## Critical Gate Status
@@ -519,6 +560,7 @@ DB1 CRITICAL (N+1)       -> zuvo:refactor [service file]
 DB4 no connection pool    -> direct fix (add pool config)
 DB2 missing indexes       -> direct migration (add indexes)
 DB12 SQL injection        -> /security-audit [path]
+DB13 unsafe migrations    -> rewrite migrations with CONCURRENTLY, rollbacks, batch DML
 DB9 ORM anti-patterns     -> zuvo:refactor [service file]
 Multiple dimensions fail  -> zuvo:review [path]
 ------------------------------------

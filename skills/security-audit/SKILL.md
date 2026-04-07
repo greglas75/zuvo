@@ -5,7 +5,7 @@ description: "Application security audit covering OWASP Top 10, injection, XSS, 
 
 # zuvo:security-audit — Application Security Audit
 
-Comprehensive security assessment across 14 dimensions (S1-S14) covering OWASP Top 10 2021, application security, and infrastructure hardening. Every finding is filtered through a Sentry-inspired 3-tier confidence model: HIGH confidence findings in the main report, MEDIUM in a "Needs Verification" section, LOW excluded entirely.
+Comprehensive security assessment across 15 dimensions (S1-S15) covering OWASP Top 10 2021, OWASP LLM Top 10, application security, AI/LLM integration security, and infrastructure hardening. Every finding is filtered through a Sentry-inspired 3-tier confidence model: HIGH confidence findings in the main report, MEDIUM in a "Needs Verification" section, LOW excluded entirely.
 
 **When to use:** Before releases, after adding auth or payment flows, after security incidents, periodic quarterly health check, when onboarding a new codebase.
 **Out of scope:** Single-file code review (use `zuvo:review`), API contract audit (use `zuvo:api-audit`), performance issues (use `zuvo:performance-audit`), penetration testing with exploit verification (use `zuvo:pentest`).
@@ -332,6 +332,103 @@ Check:
 
 ---
 
+## Phase 7b: AI/LLM Integration Security (S15)
+
+**Skip if:** No AI/LLM integration detected (no OpenAI, Anthropic, Google AI, Hugging Face, LangChain, LlamaIndex, MCP imports or API calls).
+
+**Detection:**
+```bash
+rg "openai|anthropic|@google/generative|langchain|llamaindex|ai/sdk|@ai-sdk|mcp|claude|gpt|gemini" --type ts --type py --type js -l
+```
+
+If matches found, audit these 8 check areas:
+
+### S15.1 Prompt Injection (OWASP LLM01)
+
+| Check | Good | Bad | Severity |
+|-------|------|-----|----------|
+| User input in prompts | Parameterized templates, input sanitized before inclusion | Raw user input concatenated into system/user prompts | CRITICAL |
+| System prompt protection | System prompt separated from user content, instruction hierarchy enforced | System prompt injectable via user content | CRITICAL |
+| Indirect injection via RAG | Retrieved content sanitized, marked as untrusted data | RAG results inserted directly into prompt without sanitization | HIGH |
+| MCP tool input validation | Tool parameters validated with schema before execution | Tool parameters passed directly from LLM output without validation | CRITICAL |
+
+### S15.2 Sensitive Data Exposure (OWASP LLM06)
+
+| Check | Good | Bad | Severity |
+|-------|------|-----|----------|
+| PII in prompts | PII stripped/masked before sending to LLM API | User PII (email, name, SSN, credentials) sent to external LLM | HIGH |
+| Secrets in context | API keys, tokens, connection strings excluded from LLM context | Secrets appear in prompt context, system prompts, or tool outputs | CRITICAL |
+| Response filtering | LLM output checked for sensitive data before returning to user | Raw LLM response returned without output validation | HIGH |
+| Logging of prompts | Prompts redacted in logs, no PII in telemetry | Full prompts with user data logged to external observability | HIGH |
+
+### S15.3 AI Supply Chain (OWASP LLM05)
+
+| Check | Good | Bad | Severity |
+|-------|------|-----|----------|
+| Model pinning | Model version pinned (e.g., `gpt-4o-2024-08-06`, `claude-sonnet-4-20250514`) | Using `latest` or unpinned model identifiers | MEDIUM |
+| MCP server trust | MCP servers from known sources, tool descriptions reviewed | Third-party MCP servers with unreviewed tool descriptions | HIGH |
+| AI SDK versions | AI SDKs pinned and audited like any other dependency | AI SDKs unpinned or using pre-release versions in production | MEDIUM |
+| Embedding/vector store integrity | Vector DB content sourced from trusted origins | Embeddings from user-uploaded or scraped content without provenance | HIGH |
+
+### S15.4 Output Handling (OWASP LLM02)
+
+| Check | Good | Bad | Severity |
+|-------|------|-----|----------|
+| Rendered LLM output | LLM text sanitized before HTML rendering (DOMPurify, escape) | LLM output rendered via dangerouslySetInnerHTML or similar | HIGH |
+| Code execution from LLM | LLM-generated code sandboxed, reviewed before execution | `eval()` or `exec()` on raw LLM output | CRITICAL |
+| Structured output validation | LLM JSON/structured output validated with Zod/JSON Schema | LLM output parsed with `JSON.parse` and used directly without schema | MEDIUM |
+| Tool call validation | LLM tool calls validated against allowed tool set | LLM can invoke any tool without allowlist filtering | HIGH |
+
+### S15.5 Rate Limiting and Cost Control (OWASP LLM04)
+
+| Check | Good | Bad | Severity |
+|-------|------|-----|----------|
+| Per-user rate limiting | AI endpoints rate-limited per user/org/IP | No rate limit on AI endpoints — single user can exhaust budget | HIGH |
+| Cost budget enforcement | Hard budget cap with circuit breaker (Redis counter, middleware) | Budget tracked but not enforced, or no budget at all | HIGH |
+| Token/request limits | Max input tokens and max output tokens configured per request | No token limits — user can send 100K token prompts | MEDIUM |
+| Concurrent request limiting | Max concurrent AI requests per user | Unbounded concurrent AI requests possible | MEDIUM |
+
+### S15.6 Agent and Memory Security
+
+| Check | Good | Bad | Severity |
+|-------|------|-----|----------|
+| Agent action scope | Agent actions bounded by allowlist, destructive ops require confirmation | Agent can perform any action including writes, deletes, network calls | HIGH |
+| Memory/context poisoning | Agent memory validated, untrusted content marked | Conversation history or memory injectable by third-party content | HIGH |
+| Multi-step chain safety | Chain-of-thought actions validated at each step | Multi-step agent chains with no intermediate validation | MEDIUM |
+| Credential delegation | Agent uses scoped tokens with minimal permissions | Agent inherits full user session/admin credentials | CRITICAL |
+
+### S15.7 Data Poisoning and RAG Safety
+
+| Check | Good | Bad | Severity |
+|-------|------|-----|----------|
+| RAG source validation | Document sources verified, metadata preserved | Any user can upload documents to the RAG index | HIGH |
+| Embedding integrity | Embedding pipeline isolated, re-indexing requires admin | Users can trigger re-indexing or inject documents | HIGH |
+| Retrieval filtering | Retrieved chunks filtered by user permissions/tenant | RAG returns cross-tenant or unauthorized content | CRITICAL |
+| Content freshness | Stale/outdated content flagged or excluded from retrieval | No staleness check on retrieved content | MEDIUM |
+
+### S15.8 AI-Specific Infrastructure
+
+| Check | Good | Bad | Severity |
+|-------|------|-----|----------|
+| API key management | AI API keys in secrets manager, rotated, scoped per environment | AI API keys hardcoded or in .env committed to git | CRITICAL |
+| Fallback handling | Graceful degradation when AI service is unavailable | App crashes or hangs on AI provider timeout/error | HIGH |
+| AI proxy isolation | AI calls routed through a dedicated proxy/gateway service | Direct AI API calls from frontend/client code | HIGH |
+| Audit trail | AI interactions logged (input hash, model, tokens, cost, latency) | No audit trail for AI API calls | MEDIUM |
+
+### S15 Scoring
+
+```
+S15=[0-10]
+```
+
+**Weight: 10** (same as S4/S5 — AI integrations are a primary attack surface in 2025+)
+
+**Critical gate:** S15<3 when AI integration is present -> auto-escalate to AT RISK.
+
+**S15 N/A:** If no AI/LLM integration detected, S15=N/A (excluded from score).
+
+---
+
 ## Phase 8: Live Tests (OPTIONAL -- requires --live-url)
 
 **Prerequisites (HARD GATE):**
@@ -422,10 +519,10 @@ Per dimension using standard rubrics:
 S1=[0-10]  S2=[0-8]   S3=[0-8]   S4=[0-10]
 S5=[0-10]  S6=[0-8]   S7=[0-8]   S8=[0-5]
 S9=[0-8]   S10=[0-5]  S11=[0-5]  S12=[0-5]
-S13=[0-5]  S14=[0-5]
+S13=[0-5]  S14=[0-5]  S15=[0-10]
 ```
 
-**N/A handling:** S6=N/A if not multi-tenant. S10=N/A if no file upload. S13=N/A if LIGHT. S14=N/A if no infra. N/A excluded from both score and max.
+**N/A handling:** S6=N/A if not multi-tenant. S10=N/A if no file upload. S13=N/A if LIGHT. S14=N/A if no infra. S15=N/A if no AI/LLM integration. N/A excluded from both score and max.
 
 **Score = sum of dimension scores / sum of max for non-N/A dimensions x 100**
 
@@ -434,7 +531,7 @@ S13=[0-5]  S14=[0-5]
 - Any HIGH finding (confirmed) -> cap at 60
 - >5 MEDIUM findings -> cap at 70
 
-**Critical gates:** S1=0 OR S4<3 OR S5<3 OR S7=0 -> auto-fail to CRITICAL.
+**Critical gates:** S1=0 OR S4<3 OR S5<3 OR S7=0 OR (S15<3 AND S15!=N/A) -> auto-fail to CRITICAL.
 
 **Health grades:** >=80% HEALTHY, 60-79% NEEDS ATTENTION, 40-59% AT RISK, <40% CRITICAL.
 
@@ -498,6 +595,7 @@ Full protocol: `../../shared/includes/backlog-protocol.md`.
 | Secrets found (S7=0) | Rotate secrets immediately, add pre-commit gitleaks hook |
 | Multi-tenant gaps (S6<5) | `zuvo:code-audit [services]` -- audit query-level isolation |
 | Header/transport gaps (S8) | Quick config fix -- add Helmet/CSP/HSTS |
+| AI integration gaps (S15<5) | `zuvo:ai-security-audit` -- deep dive on prompt injection, RAG poisoning, MCP security |
 | All dimensions >= 8 | No urgent action. Schedule next audit in 90 days. |
 
 ## SECURITY AUDIT COMPLETE
