@@ -86,6 +86,15 @@ Scoped task execution for common development work.
 | `zuvo:fix-tests` | Batch repair of systematic test anti-patterns. Targets one pattern at a time across all matching files with production context. | Same anti-pattern across many test files | `--triage`, `--pattern [ID] [path]`, `--dry-run`, `--bundle-gates` |
 | `zuvo:write-e2e` | Generate Playwright E2E tests from codebase analysis. Discovers routes, scores flows by criticality, generates .spec.ts with page objects and quality gates. | Web apps needing browser-level test coverage | `[path]`, `--live`, `--auto`, `--flows`, `--max-flows N`, `--dry-run` |
 | `zuvo:tests-performance` | Test suite speed audit. Measures baseline, audits runner config (TP1-TP17), identifies slow tests, ranks fixes by impact. | When test suite feels slow, after adding many tests | `full`, `baseline`, `verify`, `--no-run`, `--path <dir>` |
+| `zuvo:mutation-test` | LLM-guided mutation testing. Injects intelligent mutations into production code, verifies test suites catch them. Reports mutation score per module with gap analysis. | After writing tests, to verify they actually catch bugs. When test-audit shows phantom mocks or weak assertions. | `[path]`, `full`, `--max N`, `--category SECURITY`, `--dry-run`, `--quick` |
+
+---
+
+## Audit Skills -- Accessibility
+
+| Skill | Description | When to use | Key flags |
+|-------|-------------|-------------|-----------|
+| `zuvo:a11y-audit` | Dedicated WCAG 2.2 AA/AAA accessibility audit across 10 dimensions (A1-A10): semantic HTML, keyboard navigation, ARIA patterns, color/contrast, forms, images/media, responsive/zoom, motion, reading/content, legal compliance. Critical gates on keyboard (A2) and contrast (A4). | Before launches, when accessibility complaints arise, ADA/EAA compliance check, periodic health check | `[path]`, `full`, `--live-url <url>`, `--quick`, `--fix`, `--standard AA\|AAA`, `--legal ada\|eaa\|508` |
 
 ---
 
@@ -108,6 +117,7 @@ Scoped task execution for common development work.
 | `zuvo:backlog` | Manage tech debt backlog. Supports add, list, fix, wontfix, delete, prioritize, and suggest. Used by audit and review skills to persist findings. | Viewing or managing accumulated tech debt | `list [category]`, `add [desc]`, `fix B-{N}`, `wontfix B-{N}`, `stats`, `prioritize`, `suggest` |
 | `zuvo:docs` | Write and update documentation from actual codebase analysis. README, API reference, runbook, onboarding guide, changelog. Update mode patches stale sections. | After building features, when docs are outdated | `readme [path]`, `api [path]`, `runbook [topic]`, `onboarding`, `update [file]`, `changelog [range]` |
 | `zuvo:presentation` | Generate PowerPoint (PPTX) presentations using python-pptx. Consistent theming, speaker notes, visual variety. | Creating slide decks | `[topic]`, `from [file]`, `--slides N`, `--theme dark\|light\|corporate`, `--outline-only` |
+| `zuvo:incident` | Incident response and postmortem generation from git/deploy context. Builds timeline, identifies suspect commits, assesses impact, generates structured postmortem with action items and comms templates. | When something breaks in production, after outages, post-incident review | `[description]`, `--since [time]`, `--service [name]`, `--sev [1-4]`, `--revert`, `--comms`, `--dry-run` |
 | `zuvo:using-zuvo` | Meta-skill router, always loaded at session start. Routes user intent to the correct skill. | Automatic -- you never invoke this directly |
 
 ---
@@ -122,7 +132,9 @@ Scoped task execution for common development work.
 | Infra audits | 5 |
 | Structure/SEO/Arch | 4 |
 | Design | 3 |
-| Testing | 4 |
+| Testing | 5 |
+| Accessibility | 1 |
 | Release | 5 |
-| Utility | 4 |
-| **Total** | **39** |
+| Utility | 5 |
+| Content | 2 |
+| **Total** | **44** |

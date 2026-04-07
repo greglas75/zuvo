@@ -3,7 +3,7 @@ name: using-zuvo
 description: "ALWAYS LOADED — Zuvo skill router. Injected at session start. Determines which zuvo skill to invoke for the current task."
 ---
 
-> **Zuvo v1.3.10** | 41 skills | 4 adversarial providers | CQ1-CQ28 + Q1-Q19
+> **Zuvo v1.3.10** | 44 skills | 4 adversarial providers | CQ1-CQ28 + Q1-Q19
 
 # Zuvo Skill Router
 
@@ -70,6 +70,8 @@ Do this on every message. Not just the first one.
 | Design new UI (components, layouts, systems) | `zuvo:design` |
 | UI design with multi-agent team | `zuvo:ui-design-team` |
 | Optimize test suite speed | `zuvo:tests-performance` |
+| Run mutation testing (verify tests actually catch bugs) | `zuvo:mutation-test` |
+| Audit accessibility (WCAG 2.2, ADA, keyboard, contrast) | `zuvo:a11y-audit` |
 
 ### Priority 4 — Utility
 
@@ -80,6 +82,7 @@ Do this on every message. Not just the first one.
 | Create a presentation | `zuvo:presentation` |
 | Respond to code review feedback | `zuvo:receive-review` |
 | Isolate work in a git worktree | `zuvo:worktree` |
+| Incident response, postmortem, root cause analysis | `zuvo:incident` |
 
 ### Priority 5 — Release (post-code lifecycle)
 
