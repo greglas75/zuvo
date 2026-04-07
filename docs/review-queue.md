@@ -138,3 +138,4 @@ Commits pending review. Auto-managed:
 - c204971 (2026-04-07) fix: adversarial findings — verify low-confidence CRITICAL, don't discard by confidence
 - bfdd2b4 (2026-04-07) release: v1.3.4 — adversarial: verify low-confidence CRITICAL, timeout 240s, updated finding handling in 8 skills
 - b623cc1 (2026-04-07) fix: pre-existing findings must be fixed or backlogged, not dismissed
+- 7ffd67a (2026-04-07) pre-existing findings handling
