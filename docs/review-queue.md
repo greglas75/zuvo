@@ -185,3 +185,7 @@ Commits pending review. Auto-managed:
 - 440f2fc (2026-04-07) wire geo-audit and geo-fix into routing, metadata, tests, and website
 - 3595327 (2026-04-07) feat: knowledge store, session recovery, evidence-enforced adversarial review
 - 8e16857 (2026-04-07) release: v1.3.17 — knowledge store, session recovery, evidence-enforced adversarial
+- dea8507 (2026-04-07) release: v1.3.18 — knowledge store v2: timesSurfaced, recency ranking, section caps, confidence integrity
+- d28854f (2026-04-07) fix: knowledge store — updatedAt integrity, conflict detection, tiebreaker
+- 4c0d9f1 (2026-04-07) fix: knowledge store — 15 precision fixes (semantics, safety, edge cases)
+- f65809f (2026-04-07) fix benchmark.sh: bash 3.2 compat, timeout propagation, task_source, show-costs placement, gemini-api fallback, round-dir
