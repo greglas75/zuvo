@@ -598,6 +598,20 @@ fi
 
 # ─── Unified dispatch ──────────────────────────────────────────
 
+provider_model() {
+  local provider="$1"
+  case "$provider" in
+    codex-fast)    echo "gpt-5.4" ;;
+    cursor-agent)  echo "cursor" ;;
+    gemini)        echo "${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}" ;;
+    claude)
+      if [[ "${CLAUDE_MODEL:-}" == *opus* ]]; then echo "claude-sonnet-4-6"
+      else echo "claude-opus-4-6"; fi ;;
+    gemini-api)    echo "${ZUVO_GEMINI_API_MODEL:-gemini-3.1-pro-preview}" ;;
+    *)             echo "unknown" ;;
+  esac
+}
+
 dispatch_provider() {
   local provider="$1"
   case "$provider" in
@@ -721,8 +735,8 @@ if [[ -z "$ALL_RESULTS" ]]; then
   RUN_ID="$(date +%s)-$$"
   INPUT_FILE="$HOME/.zuvo/adversarial-inputs/${RUN_ID}.diff"
   printf '%s' "$INPUT" > "$INPUT_FILE" 2>/dev/null || true
-  printf '%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%ds\t%d\t%s\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$RUN_ID" "$REVIEW_MODE" "NONE" "${#INPUT}" 0 0 0 0 0 "$DURATION" 2 "$INPUT_FILE" \
+  printf '%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%ds\t%d\t%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$RUN_ID" "$REVIEW_MODE" "NONE" "none" "${#INPUT}" 0 0 0 0 0 "$DURATION" 2 "$INPUT_FILE" \
     >> "$HOME/.zuvo/adversarial.log" 2>/dev/null || true
 
   if [[ "$OUTPUT_FORMAT" == "json" ]]; then
@@ -840,9 +854,10 @@ printf '%s' "$INPUT" > "$INPUT_FILE" 2>/dev/null || true
 find "$LOG_DIR/adversarial-inputs" -name "*.diff" -mtime +7 -delete 2>/dev/null || true
 
 # Log one line per provider
-# TSV: date  run_id  mode  provider  input_chars  output_chars  findings  critical  warning  info  duration_s  exit  input_file
+# TSV: date  run_id  mode  provider  model  input_chars  output_chars  findings  critical  warning  info  duration_s  exit  input_file
 for p in $PROVIDERS; do
   result_file="$JSON_TMPDIR/result_${p}.txt"
+  p_model=$(provider_model "$p")
   p_output=0
   p_c=0; p_w=0; p_i=0
   p_exit=1
@@ -855,11 +870,12 @@ for p in $PROVIDERS; do
   fi
   p_findings=$((p_c + p_w + p_i))
 
-  printf '%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%ds\t%d\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%ds\t%d\t%s\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     "$RUN_ID" \
     "$REVIEW_MODE" \
     "$p" \
+    "$p_model" \
     "${#INPUT}" \
     "$p_output" \
     "$p_findings" \
