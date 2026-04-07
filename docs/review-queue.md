@@ -150,3 +150,4 @@ Commits pending review. Auto-managed:
 - eb8e1c6 (2026-04-07) feat: competitive analysis enhancements — trophy case, risk scoring, S15, DB13
 - b1c2d0c (2026-04-07) fix: content-audit/fix — 7 issues from Codex adversarial review
 - ead2050 (2026-04-07) feat: adversarial run logging to ~/.zuvo/adversarial.log
+- e862ca4 (2026-04-07) fix: remove empty a11y-audit dir (broke codex build)
