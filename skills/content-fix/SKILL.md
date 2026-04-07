@@ -197,7 +197,10 @@ For each SAFE finding:
 - Remove PHP tags: `<?php ... ?>` blocks entirely
 - Remove `<font>` tags: keep inner text
 - Remove excessive inline styles (>50 chars)
-- Remove Joomla paths: flag for manual path update (cannot auto-fix target)
+- **Joomla paths (`/images/stories/`, `index.php?option=com_`):** do NOT
+  auto-replace — target path is unknown. Mark as `NEEDS_REVIEW` with evidence
+  and suggested manual action. These are always flagged for human review even
+  in `--auto` mode.
 
 ### 2.3 MANUAL findings
 

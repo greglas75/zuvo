@@ -152,10 +152,11 @@ above.
 
 ### `artifact-remove`
 
-- **Joomla paths:** Remove or flag references to `/images/stories/`,
-  `index.php?option=com_content`, `index.php?option=com_` patterns.
-  Cannot auto-replace path — only remove dead references or flag for manual
-  path update.
+- **Joomla paths:** `/images/stories/`, `index.php?option=com_` patterns.
+  **Cannot be auto-fixed** — target path is unknown. Always mark as
+  `NEEDS_REVIEW` with evidence, even in `--auto` mode. The finding carries
+  `fix_type: artifact-remove` for categorization but the actual Joomla path
+  sub-type is excluded from automatic application.
 - **WordPress shortcodes:** Remove `[caption]...[/caption]`,
   `[gallery ids="..."]`, `[embed]...[/embed]`. Extract inner content where
   applicable (caption text, embed URL).

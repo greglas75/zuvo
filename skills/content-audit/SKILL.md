@@ -27,9 +27,10 @@ Read these files before any work begins:
 3. `../../shared/includes/backlog-protocol.md` -- Backlog fingerprint dedup and update
 4. `../../shared/includes/content-check-registry.md` -- Canonical check slugs (49 checks, CC1-CC8)
 5. `../../shared/includes/audit-output-schema.md` -- JSON output contract (v1.1)
-6. `../../shared/includes/live-probe-protocol.md` -- Live URL safety rules
-7. `../../shared/includes/run-logger.md` -- Run logging contract
-8. `../../shared/includes/verification-protocol.md` -- Fresh-evidence rules
+6. `../../shared/includes/content-fix-registry.md` -- fix_type and safety for tagging fixable findings
+7. `../../shared/includes/live-probe-protocol.md` -- Live URL safety rules
+8. `../../shared/includes/run-logger.md` -- Run logging contract
+9. `../../shared/includes/verification-protocol.md` -- Fresh-evidence rules
 
 Print the checklist:
 
@@ -40,9 +41,10 @@ CORE FILES LOADED:
   3. backlog-protocol.md        -- [READ | MISSING -> STOP]
   4. content-check-registry.md  -- [READ | MISSING -> STOP]
   5. audit-output-schema.md     -- [READ | MISSING -> STOP]
-  6. live-probe-protocol.md     -- [READ | MISSING -> STOP]
-  7. run-logger.md              -- [READ | MISSING -> STOP]
-  8. verification-protocol.md   -- [READ | MISSING -> STOP]
+  6. content-fix-registry.md    -- [READ | MISSING -> STOP]
+  7. live-probe-protocol.md     -- [READ | MISSING -> STOP]
+  8. run-logger.md              -- [READ | MISSING -> STOP]
+  9. verification-protocol.md   -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.
@@ -284,14 +286,14 @@ Files scanned: [N] | Findings: [N] total
   Auto-fixable: [N] (run zuvo:content-fix)
 ----
 
-CC1 — Encoding Quality:    [PASS|WARN|FAIL] ([score]%)
-CC2 — Markdown Syntax:     [PASS|WARN|FAIL] ([score]%)
-CC3 — Migration Artifacts: [PASS|WARN|FAIL] ([score]%)
-CC4 — Frontmatter Quality: [PASS|WARN|FAIL] ([score]%)
-CC5 — Image Integrity:     [PASS|WARN|FAIL] ([score]%)
-CC6 — Link Integrity:      [PASS|WARN|FAIL] ([score]%)
-CC7 — Content Completeness:[PASS|WARN|FAIL] ([score]%)
-CC8 — Spelling/Typography: [PASS|WARN|FAIL] ([score]%)
+CC1 — Encoding Quality:    [PASS|PARTIAL|FAIL] ([score]%)
+CC2 — Markdown Syntax:     [PASS|PARTIAL|FAIL] ([score]%)
+CC3 — Migration Artifacts: [PASS|PARTIAL|FAIL] ([score]%)
+CC4 — Frontmatter Quality: [PASS|PARTIAL|FAIL] ([score]%)
+CC5 — Image Integrity:     [PASS|PARTIAL|FAIL] ([score]%)
+CC6 — Link Integrity:      [PASS|PARTIAL|FAIL] ([score]%)
+CC7 — Content Completeness:[PASS|PARTIAL|FAIL] ([score]%)
+CC8 — Spelling/Typography: [PASS|PARTIAL|FAIL] ([score]%)
 
 FINDINGS:
   F1: [CC1-mojibake-detected] content/post-1.md:42
