@@ -160,3 +160,6 @@ Commits pending review. Auto-managed:
 - 40b4131 (2026-04-07) add geo registries and bump fix-output-schema to v1.2
 - 1072259 (2026-04-07) fix: mutation-test + incident — adversarial review fixes
 - 3067d54 (2026-04-07) fix: adversarial review fixes for mutation-test, incident, a11y-audit
+- 19a8556 (2026-04-07) fix: remove empty geo-audit dir (build blocker)
+- 260e1cb (2026-04-07) add 3 geo-audit agents: crawl-access, schema-render, content-signals
+- 21b6ef0 (2026-04-07) feat: per-provider logging + saved inputs + error diagnostics
