@@ -134,3 +134,5 @@ Commits pending review. Auto-managed:
 - d238c40 (2026-04-07) release: v1.3.3 — upgrade adversarial review prompts — semantic quality, design judgment, global review rules
 - ac66c01 (2026-04-07) feat: large-site llms.txt strategy — category splits for 300+ page sites
 - a014f81 (2026-04-07) fix: increase adversarial review timeout from 180s to 240s
+- 6516b0b (2026-04-07) timeout 240s
+- c204971 (2026-04-07) fix: adversarial findings — verify low-confidence CRITICAL, don't discard by confidence
