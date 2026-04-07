@@ -59,7 +59,7 @@ For each entry, compute a relevance score:
 
 **`timesSurfaced` does NOT affect score.** Frequent surfacing is not a quality signal — only `confidence` (from provenance) and relevance determine ranking.
 
-Keep entries with score >= 1. Sort by score descending within each type group.
+Keep entries with score >= 1. Sort by score descending within each type group. **Tiebreaker:** when two entries score equally, prefer the more specific one — an entry scoped to a specific file, symbol, or path beats a generic one about the same topic.
 
 ### Step 4: Select entries (cap at 10 total)
 
@@ -75,10 +75,11 @@ Apply per-section caps after filtering:
 
 Total cap: **10 entries**. Within each section, take highest-scoring entries first.
 
-**Conflict detection:** If an `anti-pattern` and a `pattern` describe the same code construct (same symbol, same file pattern, same operation), surface both — anti-pattern first — with a note:
+**Conflict detection:** If an `anti-pattern` and a `pattern` both scored >= 1 AND describe the same code construct (same symbol, same file pattern, same operation), surface both — anti-pattern first — with a note:
 ```
 ⚠ Conflict: anti-pattern and pattern both apply to <topic>. Anti-pattern takes precedence.
 ```
+Only flag conflicts between entries that passed the relevance filter. Do not surface artificial conflicts from entries that didn't score.
 
 ### Step 5: Output
 
@@ -112,13 +113,13 @@ Anti-patterns always appear before patterns in the same topic area. If a conflic
 
 ### Step 6: Increment timesSurfaced
 
-For each entry included in the output, increment `timesSurfaced` by 1 and update `updatedAt` to today.
+For each entry included in the output, increment `timesSurfaced` by 1. Do NOT modify `updatedAt`.
+
+`updatedAt` reflects merited content changes (curate merge, fact correction). Updating it on surfacing would corrupt the recency signal — an entry shown often would appear "fresh" even if its knowledge is stale.
 
 **Rewrite protocol:**
 1. Read the full file into memory.
-2. Parse each line. For lines matching an included entry (by `id`): update `timesSurfaced` and `updatedAt`.
+2. Parse each line. For lines matching an included entry (by `id`): increment `timesSurfaced` only.
 3. For malformed lines: write them back unchanged (never discard).
 4. For unknown fields: preserve them unchanged (schema may have evolved).
 5. Write the full file back.
-
-`timesSurfaced` tracks how often an entry reaches agents. It does NOT influence `confidence`. Confidence upgrades happen only in Curate, based on independent provenance sources.

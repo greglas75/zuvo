@@ -96,8 +96,9 @@ Identical fact + identical recommendation = merge.
 
 **Merge protocol (when merging):**
 1. Append to `provenance[]`: `{"source": "<caller>", "reference": "<sha>", "date": "<today>"}`
-2. Increment `timesSurfaced` by 0 (curate does not surface — only prime does)
-3. Consider confidence upgrade ONLY if the new provenance source is independent from all existing sources:
+2. Do not modify `timesSurfaced` — curate does not surface entries, only prime does
+3. Update `updatedAt` to today — this IS a merited content change, recency signal is valid
+4. Consider confidence upgrade ONLY if the new provenance source is independent from all existing sources:
    - Different session (different `started-at`)
    - Different code path or feature area
    - Different contributor (human vs agent)
