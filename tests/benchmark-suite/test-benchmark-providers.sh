@@ -22,7 +22,7 @@ assert_contains "$SCRIPT" "trap cleanup EXIT"
 assert_contains "$SCRIPT" "PROVIDER_TIMEOUT"
 # Has 0-providers guard
 assert_contains "$SCRIPT" "No providers available"
-# Has cost table
-assert_contains "$SCRIPT" "COST_IN"
-assert_contains "$SCRIPT" "COST_OUT"
+# Has cost functions (bash 3.2 compatible — no declare -A)
+assert_contains "$SCRIPT" "cost_in()"
+assert_contains "$SCRIPT" "cost_out()"
 pass "benchmark.sh provider dispatch contracts verified"

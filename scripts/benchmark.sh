@@ -50,6 +50,7 @@ RUN_ID="bm-$(date +%Y-%m-%d-%H%M%S)-$$"
 DRY_RUN=false
 NO_SNAPSHOT=false
 SHOW_COSTS=false
+ROUND_DIR=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -64,6 +65,7 @@ while [[ $# -gt 0 ]]; do
     --providers)        PROVIDERS_OVERRIDE="$2"; shift 2 ;;
     --output)           OUTPUT_FILE="$2"; shift 2 ;;
     --run-id)           RUN_ID="$2"; shift 2 ;;
+    --round-dir)        ROUND_DIR="$2"; shift 2 ;;
     --dry-run)          DRY_RUN=true; shift ;;
     --no-snapshot)      NO_SNAPSHOT=true; shift ;;
     --show-costs)       SHOW_COSTS=true; shift ;;
@@ -75,22 +77,29 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ─── Cost tables (USD per 1M tokens) ────────────────────────────
+# Using functions instead of declare -A for bash 3.2 compatibility (macOS stock)
 
-declare -A COST_IN=(
-  [claude]="3.00"
-  [codex-fast]="5.00"
-  [gemini]="0.00"
-  [gemini-api]="1.25"
-  [cursor-agent]="0.00"
-)
+cost_in() {
+  case "$1" in
+    claude)       echo "3.00"  ;;
+    codex-fast)   echo "5.00"  ;;
+    gemini)       echo "0.00"  ;;
+    gemini-api)   echo "1.25"  ;;
+    cursor-agent) echo "0.00"  ;;
+    *)            echo "0.00"  ;;
+  esac
+}
 
-declare -A COST_OUT=(
-  [claude]="15.00"
-  [codex-fast]="15.00"
-  [gemini]="0.00"
-  [gemini-api]="5.00"
-  [cursor-agent]="0.00"
-)
+cost_out() {
+  case "$1" in
+    claude)       echo "15.00" ;;
+    codex-fast)   echo "15.00" ;;
+    gemini)       echo "0.00"  ;;
+    gemini-api)   echo "5.00"  ;;
+    cursor-agent) echo "0.00"  ;;
+    *)            echo "0.00"  ;;
+  esac
+}
 
 # ─── Globals ────────────────────────────────────────────────────
 
@@ -144,7 +153,12 @@ detect_providers() {
   fi
   [[ -n "$codex_bin" ]] && providers="codex-fast"
 
-  command -v gemini &>/dev/null && providers="${providers:+$providers }gemini"
+  if command -v gemini &>/dev/null; then
+    providers="${providers:+$providers }gemini"
+  elif [[ -n "${GEMINI_API_KEY:-}" ]]; then
+    # gemini-api as fallback when gemini CLI unavailable but API key is set
+    providers="${providers:+$providers }gemini-api"
+  fi
   command -v cursor-agent &>/dev/null && providers="${providers:+$providers }cursor-agent"
   command -v claude &>/dev/null && providers="${providers:+$providers }claude"
 
@@ -166,12 +180,8 @@ run_codex_fast() {
   local err_file="$JSON_TMPDIR/err_codex-fast.txt"
   printf '%s' "$TASK_PROMPT" \
     | CODEX_HOME="$tmp_home" timeout "$PROVIDER_TIMEOUT" \
-      "$codex_cmd" exec --sandbox read-only 2>"$err_file" \
-    || {
-      local exit_code=$?
-      [[ $exit_code -eq 124 ]] && echo "PROVIDER_STATUS:TIMEOUT" >&2 || echo "PROVIDER_STATUS:ERROR" >&2
-      return 1
-    }
+      "$codex_cmd" exec --sandbox read-only 2>"$err_file"
+  # Exit code propagates: 0=success, 124=timeout, other=error
 }
 
 run_claude() {
@@ -184,23 +194,13 @@ run_claude() {
 
   local err_file="$JSON_TMPDIR/err_claude.txt"
   printf '%s' "$TASK_PROMPT" \
-    | timeout "$PROVIDER_TIMEOUT" claude --model "$model" --print --output-format text 2>"$err_file" \
-    || {
-      local exit_code=$?
-      [[ $exit_code -eq 124 ]] && echo "PROVIDER_STATUS:TIMEOUT" >&2 || echo "PROVIDER_STATUS:ERROR" >&2
-      return 1
-    }
+    | timeout "$PROVIDER_TIMEOUT" claude --model "$model" --print --output-format text 2>"$err_file"
 }
 
 run_cursor_agent() {
   local err_file="$JSON_TMPDIR/err_cursor-agent.txt"
   printf '%s' "$TASK_PROMPT" \
-    | timeout "$PROVIDER_TIMEOUT" cursor-agent -p --mode ask --trust --workspace /tmp 2>"$err_file" \
-    || {
-      local exit_code=$?
-      [[ $exit_code -eq 124 ]] && echo "PROVIDER_STATUS:TIMEOUT" >&2 || echo "PROVIDER_STATUS:ERROR" >&2
-      return 1
-    }
+    | timeout "$PROVIDER_TIMEOUT" cursor-agent -p --mode ask --trust --workspace /tmp 2>"$err_file"
 }
 
 run_gemini() {
@@ -216,8 +216,7 @@ run_gemini() {
     -p "" < "$prompt_file" 2>"$err_file") || status=$?
 
   if [[ $status -ne 0 || -z "$result" ]]; then
-    [[ $status -eq 124 ]] && echo "PROVIDER_STATUS:TIMEOUT" >&2 || echo "PROVIDER_STATUS:ERROR" >&2
-    return 1
+    return $status
   fi
   printf '%s\n' "$result"
 }
@@ -241,8 +240,7 @@ run_gemini_api() {
     2>"$err_file") || status=$?
 
   if [[ $status -ne 0 || -z "$response" ]]; then
-    [[ $status -eq 124 ]] && echo "PROVIDER_STATUS:TIMEOUT" >&2 || echo "PROVIDER_STATUS:ERROR" >&2
-    return 1
+    return $status
   fi
 
   local text
@@ -330,8 +328,10 @@ calc_cost() {
   tokens_in=$(printf '%s' "$tokens_in" | tr -d '~estimated' | grep -oE '[0-9]+' || echo "0")
   tokens_out=$(printf '%s' "$tokens_out" | tr -d '~estimated' | grep -oE '[0-9]+' || echo "0")
 
-  local rate_in="${COST_IN[$provider]:-0.00}"
-  local rate_out="${COST_OUT[$provider]:-0.00}"
+  local rate_in
+  rate_in=$(cost_in "$provider")
+  local rate_out
+  rate_out=$(cost_out "$provider")
 
   if command -v bc &>/dev/null; then
     printf '%.6f' "$(bc -l <<< "($tokens_in * $rate_in / 1000000) + ($tokens_out * $rate_out / 1000000)")"
@@ -379,6 +379,17 @@ run_static_checks_jest() {
 command -v timeout &>/dev/null || { echo "ERROR: GNU timeout required. Install: brew install coreutils" >&2; exit 1; }
 command -v jq &>/dev/null || { echo "ERROR: jq required. Install: brew install jq" >&2; exit 1; }
 
+# ─── Show costs and exit (fast path — no task input needed) ─────
+
+if [[ "$SHOW_COSTS" == "true" ]]; then
+  printf '| %-14s | %10s | %11s |\n' "Provider" "$/M in" "$/M out"
+  printf '|%s|%s|%s|\n' "----------------" "------------" "-------------"
+  for p in codex-fast claude gemini gemini-api cursor-agent; do
+    printf '| %-14s | %10s | %11s |\n' "$p" "$(cost_in "$p")" "$(cost_out "$p")"
+  done
+  exit 0
+fi
+
 # ─── Load corpus task if mode=corpus ────────────────────────────
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -421,21 +432,21 @@ if [[ "$DRY_RUN" == "true" ]]; then
   exit 0
 fi
 
-# ─── Show costs and exit ────────────────────────────────────────
-
-if [[ "${SHOW_COSTS:-false}" == "true" ]]; then
-  printf '| %-14s | %10s | %11s |\n' "Provider" "$/M in" "$/M out"
-  printf '|%s|%s|%s|\n' "----------------" "------------" "-------------"
-  for p in codex-fast claude gemini gemini-api cursor-agent; do
-    printf '| %-14s | %10s | %11s |\n' "$p" "${COST_IN[$p]:-0.00}" "${COST_OUT[$p]:-0.00}"
-  done
-  exit 0
-fi
-
 # ─── Main execution loop ────────────────────────────────────────
 
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 PROJECT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+
+# Compute task_source per schema contract: corpus | diff | files | user
+if [[ "$MODE" == "corpus" ]]; then
+  TASK_SOURCE="corpus"
+elif [[ "$INPUT_MODE" == "diff" ]]; then
+  TASK_SOURCE="diff"
+elif [[ "$INPUT_MODE" == "files" ]]; then
+  TASK_SOURCE="files"
+else
+  TASK_SOURCE="user"
+fi
 
 echo "BENCHMARK START" >&2
 echo "  Run ID: $RUN_ID" >&2
@@ -458,15 +469,19 @@ for p in "${PROVIDER_ARRAY[@]}"; do
 
   (
     time_start=$(date +%s)
-    dispatch_provider "$p" > "$outfile" 2>/dev/null
+    dispatch_provider "$p" > "$outfile" 2>"$JSON_TMPDIR/stderr_${p}.txt"
     dispatch_exit=$?
     time_end=$(date +%s)
     response_time_s=$((time_end - time_start))
     printf '%d' "$response_time_s" > "$timefile"
-    if [[ $dispatch_exit -eq 124 ]]; then
+    if [[ $dispatch_exit -eq 0 ]]; then
+      printf 'scored' > "$statusfile"
+    elif [[ $dispatch_exit -eq 124 ]]; then
       printf 'timeout' > "$statusfile"
-    elif [[ $dispatch_exit -ne 0 ]]; then
+      rm -f "$outfile"
+    else
       printf 'error' > "$statusfile"
+      rm -f "$outfile"
     fi
   ) &
   PIDS+=($!)
@@ -542,6 +557,17 @@ for p in "${PROVIDER_ARRAY[@]}"; do
     }' > "$result_json_file"
 done
 
+# ── Persist round files if --round-dir specified ────────────────
+
+if [[ -n "$ROUND_DIR" ]]; then
+  mkdir -p "$ROUND_DIR"
+  for p in "${PROVIDER_ARRAY[@]}"; do
+    if [[ -s "$JSON_TMPDIR/result_${p}.txt" ]]; then
+      cp "$JSON_TMPDIR/result_${p}.txt" "$ROUND_DIR/round1_${p}.txt"
+    fi
+  done
+fi
+
 # ── CQ6: fail if no providers succeeded ────────────────────────
 
 if [[ ${#PROVIDERS_SUCCEEDED[@]} -eq 0 ]]; then
@@ -564,7 +590,7 @@ jq -n \
   --arg timestamp "$TIMESTAMP" \
   --arg project "$PROJECT" \
   --arg mode "$MODE" \
-  --arg task_source "${MODE:-user}" \
+  --arg task_source "$TASK_SOURCE" \
   --arg task_hash "$TASK_HASH" \
   --arg task_snapshot "$TASK_SNAPSHOT" \
   --argjson task_snapshot_truncated "$TASK_SNAPSHOT_TRUNCATED" \
