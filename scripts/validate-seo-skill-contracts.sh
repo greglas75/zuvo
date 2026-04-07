@@ -206,7 +206,7 @@ expect_fixed "render_diff" "$AUDIT_SCHEMA" "Audit schema documents render_diff"
 expect_fixed "coverage.fixable_ratio" "$AUDIT_SCHEMA" "Audit schema documents coverage.fixable_ratio"
 expect_fixed "manual_checks" "$AUDIT_SCHEMA" "Audit schema documents manual_checks"
 
-expect_fixed "# Fix Output Schema (v1.1)" "$FIX_SCHEMA" "Fix schema is v1.1"
+expect_fixed "# Fix Output Schema (v1.2)" "$FIX_SCHEMA" "Fix schema is v1.2"
 expect_fixed "estimated_time" "$FIX_SCHEMA" "Fix schema documents estimated_time"
 expect_fixed "manual_checks" "$FIX_SCHEMA" "Fix schema documents manual_checks"
 expect_fixed "policy_notes" "$FIX_SCHEMA" "Fix schema documents policy_notes"

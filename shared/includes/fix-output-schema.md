@@ -1,4 +1,4 @@
-# Fix Output Schema (v1.1)
+# Fix Output Schema (v1.2)
 
 > Standard JSON output format for zuvo fix skills (seo-fix, future code-fix, etc.).
 > Produced alongside markdown reports in `audit-results/`.
@@ -37,6 +37,7 @@ Each entry in `actions[]`:
 |-------|------|-------------|
 | `finding_id` | string | Stable ID from audit (e.g., `"D4-sitemap-exists"`) |
 | `fix_type` | string | From shared seo-fix-registry.md |
+| `fix_safety` | string or null | `"SAFE"`, `"MODERATE"`, `"DANGEROUS"`, `"OUT_OF_SCOPE"`, or `null` for findings without an auto-fix template |
 | `status` | string | `"FIXED"`, `"NEEDS_REVIEW"`, `"MANUAL"`, `"OUT_OF_SCOPE"`, `"NO_TEMPLATE"`, `"INSUFFICIENT_DATA"`, or `"NEEDS_PARAMS"` |
 | `file` | string or null | File modified (null if no change) |
 | `verification` | string or null | `"VERIFIED"` (re-check passed; when a build exists this also requires `exit code 0` plus any required artifact/endpoint checks), `"ESTIMATED"` (no deterministic runtime/artifact check), `"FAILED"` (re-check failed, rolled back, or built endpoint/artifact still missing/404), or `null` when no verification ran because the action remained manual/review-only |
@@ -44,6 +45,7 @@ Each entry in `actions[]`:
 | `manual_checks` | array or null | Human follow-up checks still required |
 | `estimated_time` | string or null | Human-readable time band such as `"<30 minutes"` or `"1-4 hours"` |
 | `policy_notes` | array or null | Policy-specific guidance, e.g. crawler strategy or edge-platform caveats |
+| `scaffold` | string or null | Structural scaffold content for `OUT_OF_SCOPE` findings (e.g., a content outline or schema template). Absent from non-`OUT_OF_SCOPE` findings. |
 | `advisory_scaffolds` | array or null | Non-mutating follow-up structures such as content outlines or suggested sections |
 | `risk_notes` | array or null | Important caveats associated with this action |
 | `network_override_risk` | boolean or null | Whether edge/network controls may invalidate the file-level fix |
@@ -52,6 +54,7 @@ Each entry in `actions[]`:
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `source_skill` | string or null | The skill that produced the source audit JSON (e.g., `"geo-audit"`, `"seo-audit"`). Null for pre-1.2 consumers. |
 | `manual_checks` | array | Aggregated follow-up checks across actions |
 | `estimated_time` | object | Roll-up of estimated effort, e.g. `{ "easy": 2, "medium": 1, "hard": 0 }` |
 | `policy_notes` | array | High-level policy considerations that affected fix decisions |
@@ -61,8 +64,9 @@ Each entry in `actions[]`:
 
 ```json
 {
-  "version": "1.1",
+  "version": "1.2",
   "skill": "seo-fix",
+  "source_skill": "seo-fix",
   "timestamp": "2026-03-29T10:30:00Z",
   "project": "/Users/dev/my-site",
   "args": "--auto",
@@ -142,7 +146,16 @@ Each entry in `actions[]`:
 }
 ```
 
+## Version 1.2 Changes
+
+Migration notes for consumers upgrading from v1.1:
+
+- **`OUT_OF_SCOPE` in `fix_safety`** — additive enum value. Existing consumers should add a default/ignore branch for this value; no existing logic breaks.
+- **`scaffold` field on actions** — optional, string or null. Present only on `OUT_OF_SCOPE` findings. Absent from all other action types. Consumers that do not handle `OUT_OF_SCOPE` can safely ignore it.
+- **`source_skill` top-level field** — optional, string or null. Identifies the skill that produced the source audit JSON. Null for pre-1.2 consumers that do not populate it.
+- **`seo-fix` continues to emit `"version": "1.1"`** — no changes are required to `seo-fix`. The schema file documents all valid versions. New consumers producing v1.2 output include `geo-fix` and future fix skills.
+
 ## Versioning
 
-- Adding optional fields = minor bump (1.1) — backward compatible
+- Adding optional fields = minor bump (1.1, 1.2) — backward compatible
 - Changing required fields = major bump (2.0) — old files ignored by consumers
