@@ -96,6 +96,7 @@ Scoped task execution for common development work.
 | Skill | Description | When to use | Key flags |
 |-------|-------------|-------------|-----------|
 | `zuvo:a11y-audit` | Dedicated WCAG 2.2 AA/AAA accessibility audit across 10 dimensions (A1-A10): semantic HTML, keyboard navigation, ARIA patterns, color/contrast, forms, images/media, responsive/zoom, motion, reading/content, legal compliance. Critical gates on keyboard (A2) and contrast (A4). | Before launches, when accessibility complaints arise, ADA/EAA compliance check, periodic health check | `[path]`, `full`, `--live-url <url>`, `--quick`, `--fix`, `--standard AA\|AAA`, `--legal ada\|eaa\|508` |
+| `zuvo:benchmark` | Multi-provider AI coding benchmark with meta-judge quality scoring. Dispatches a task to all available providers (Claude, Codex, Gemini, Cursor-Agent) in parallel, scores responses on completeness/accuracy/actionability/no-hallucinations (0–20 composite), and generates a quality/speed/cost leaderboard. Corpus mode runs fixed OrderService + useSearchProducts tasks for apples-to-apples comparison across runs. Measures adversarial impact and self-eval bias. | Comparing provider quality, measuring adversarial impact, tracking model changes over time, evaluating which model to use for a project | `--mode corpus`, `--with-tests`, `--with-adversarial`, `--with-static-checks`, `--compare [id1] [id2]`, `--provider P`, `--show-costs` |
 
 ---
 

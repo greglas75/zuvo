@@ -73,6 +73,7 @@ Do this on every message. Not just the first one.
 | Optimize test suite speed | `zuvo:tests-performance` |
 | Run mutation testing (verify tests actually catch bugs) | `zuvo:mutation-test` |
 | Audit accessibility (WCAG 2.2, ADA, keyboard, contrast) | `zuvo:a11y-audit` |
+| Benchmark providers, compare models, measure quality/speed/cost | `zuvo:benchmark` |
 
 ### Priority 4 — Utility
 
