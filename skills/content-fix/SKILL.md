@@ -60,8 +60,9 @@ If any file is missing, STOP.
 ### GATE 2 — Dirty File Check
 
 Before modifying any file:
-1. `git diff --name-only` — check for uncommitted changes in that file
-2. If the file has uncommitted changes: mark finding as `NEEDS_REVIEW`
+1. `git status --porcelain -- <file>` — check for BOTH staged and unstaged changes
+2. If the file has ANY uncommitted changes (staged or unstaged): mark finding
+   as `NEEDS_REVIEW`
 3. Do not modify dirty files
 
 ### GATE 3 — Stale Audit Protection
@@ -70,6 +71,16 @@ If audit JSON `timestamp` is >24h old:
 - Default mode (SAFE only): proceed with warning
 - `--auto` mode: **require user confirmation** before mutating
 - `--dry-run` mode: proceed with warning
+
+### GATE 4 — PROVISIONAL Audit Handling
+
+If audit JSON `result` is `"PROVISIONAL"` (has `INSUFFICIENT DATA` blocking
+gates):
+- Default mode (SAFE only): proceed normally — SAFE fixes are safe regardless
+  of incomplete gates
+- `--auto` mode: restrict to SAFE fixes only (do not apply MODERATE). Warn:
+  "Audit is PROVISIONAL — restricting to SAFE fixes. Re-run content-audit
+  with --live-url for full coverage."
 
 ---
 

@@ -76,7 +76,7 @@ This audit is read-only against source files.
 | `[path]` | Scope to specific file or directory |
 | `--content-path <dir>` | Override auto-detected content directory |
 | `--live-url <url>` | Enable live link/image checks (CC5 img-404-live, CC6 link-external-dead, CC6 link-external-redirect) |
-| `--quick` | Grep-only checks, no agent dispatch: all blocking checks + `broken-italic`, `joomla-path`, `wp-shortcode`, `img-path-broken`, `link-internal-broken`. Skips CC4/CC7/CC8 entirely. |
+| `--quick` | Source-only grep checks, no agent dispatch. Runs CC1-CC3 grep patterns + CC5/CC6 path resolution. Skips CC4/CC7/CC8 entirely. Checks requiring agents or live access return `INSUFFICIENT DATA`. |
 | `--lang <code>` | Force language for spell/typography checks (ISO 639-1: `pl`, `en`, `de`, `tr`, etc.) |
 | `--check-external` | Enable external link checking (requires network access) |
 | `--persist-backlog` | Append findings to memory/backlog.md |
@@ -146,7 +146,7 @@ checks.
   `.DS_Store`
 
 For each file, check encoding via `file -i` (available on Unix/macOS). Flag
-non-UTF-8 files with `ENCODING-WARN`.
+non-UTF-8 files with check `encoding-mismatch` (advisory).
 
 ### 0.5 Print discovery summary
 
@@ -167,12 +167,24 @@ DISCOVERY:
 
 ### Quick mode (--quick)
 
-Do NOT dispatch agents. Run grep-based checks directly:
+Do NOT dispatch agents. Run source-only grep checks directly:
 
-1. All blocking checks: `mojibake-detected`, `php-tag`, `fm-yaml-malformed`, `img-404-live`
-2. Key scored checks: `broken-italic`, `joomla-path`, `wp-shortcode`, `img-path-broken`, `link-internal-broken`
+1. CC1 blocking: `mojibake-detected` (grep for mojibake signatures)
+2. CC3 blocking: `php-tag` (grep for `<?php`, `<?=`)
+3. CC1 scored: `nbsp-present`, `zero-width-present`
+4. CC2 scored: `broken-italic`
+5. CC3 scored: `joomla-path`, `wp-shortcode`
+6. CC5 scored: `img-path-broken` (resolve paths via Glob)
+7. CC6 scored: `link-internal-broken` (resolve paths via Glob)
 
-Skip CC4/CC7/CC8 entirely. Proceed to Phase 2.
+**Skipped in --quick (require agents or live access):**
+- CC4 entirely (frontmatter parsing requires agent)
+- CC7 entirely (content analysis requires agent)
+- CC8 entirely (language detection + LLM judgment)
+- `fm-yaml-malformed` → `INSUFFICIENT DATA` (needs YAML parser, not grep)
+- `img-404-live` → `INSUFFICIENT DATA` (needs `--live-url`, not grep)
+
+Proceed to Phase 2.
 
 ### Full mode (default)
 
@@ -190,7 +202,7 @@ Agent B: Content Links
   model: sonnet
   type: Explore (read-only)
   instructions: [read agents/content-links.md]
-  input: file manifest, detected stack, live-probe-protocol.md, --live-url if set
+  input: file manifest, detected stack, live-probe-protocol.md, --live-url if set, --check-external if set
   dimensions: CC5, CC6
 
 Agent C: Content Prose
@@ -209,11 +221,17 @@ Wait for all three agents to complete before proceeding to Phase 2.
 
 ## Phase 2: Merge & Score
 
-### 2.1 Collect findings
+### 2.1 Collect check results
 
-Merge findings from all three agents into a single list. Each finding must
-include: `id`, `dimension`, `check`, `status`, `enforcement`, `severity`,
-`confidence`, `evidence`, `file`, `line`, `fix_type`, `fix_params`.
+Each agent MUST return **two** structures:
+1. **`check_results[]`** — complete matrix of ALL owned checks with status
+   (`PASS`, `FAIL`, `PARTIAL`, `N/A`, `INSUFFICIENT DATA`). Every check from
+   the registry that the agent owns appears here, even if it passed.
+2. **`findings[]`** — details for FAIL and PARTIAL checks only (evidence,
+   file:line, fix_type).
+
+Merge `check_results[]` from all agents into a single matrix. Build
+`findings[]` from the FAIL/PARTIAL entries.
 
 ### 2.2 Deduplicate
 
@@ -250,20 +268,7 @@ fix_type and safety classification from `content-fix-registry.md`.
 
 ---
 
-## Phase 3: Adversarial Review (MANDATORY — do NOT skip)
-
-```bash
-adversarial-review --json --mode audit --files "audit-results/content-audit-[date].md"
-```
-
-If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
-
-Wait for complete output. Fix CRITICAL immediately. WARNING → fix if localized.
-INFO → ignore.
-
----
-
-## Phase 4: Report
+## Phase 3: Report
 
 ### 4.1 Markdown report
 
@@ -322,21 +327,21 @@ Write to `audit-results/content-audit-YYYY-MM-DD.json` conforming to
   "args": "[arguments]",
   "stack": "[detected framework]",
   "language": "[detected language or unknown]",
-  "result": "PASS | WARN | FAIL",
+  "result": "PASS | FAIL | PROVISIONAL",
   "score": {
     "overall": 75,
-    "grade": "B",
-    "dimensions": {
-      "CC1": { "score": 85, "checks_passed": 6, "checks_total": 7 },
-      "CC2": { "score": 71, "checks_passed": 5, "checks_total": 7 }
+    "tier": "B",
+    "sub_scores": {
+      "CC1": 85, "CC2": 71, "CC3": 100, "CC4": 83,
+      "CC5": 67, "CC6": 50, "CC7": 80, "CC8": 60
     }
   },
-  "critical_gates": {
-    "mojibake-detected": "PASS | FAIL",
-    "php-tag": "PASS | FAIL",
-    "fm-yaml-malformed": "PASS | FAIL",
-    "img-404-live": "PASS | FAIL | N/A"
-  },
+  "critical_gates": [
+    { "id": "CC1-mojibake-detected", "name": "Mojibake detection", "status": "FAIL", "evidence": "12 corrupted sequences in 4 files" },
+    { "id": "CC3-php-tag", "name": "PHP tag presence", "status": "PASS", "evidence": "No PHP tags found" },
+    { "id": "CC4-fm-yaml-malformed", "name": "Frontmatter YAML validity", "status": "PASS", "evidence": "All 150 files parse" },
+    { "id": "CC5-img-404-live", "name": "Image live check", "status": "INSUFFICIENT DATA", "evidence": "--live-url not provided" }
+  ],
   "findings": [
     {
       "id": "CC1-mojibake-detected",
@@ -346,7 +351,7 @@ Write to `audit-results/content-audit-YYYY-MM-DD.json` conforming to
       "enforcement": "blocking",
       "severity": "HIGH",
       "confidence": "HIGH",
-      "evidence": "\"Ä…\" should be \"ą\"",
+      "evidence": "\"Ä…\" should be \"ą\" (ISO-8859-2 corruption)",
       "file": "content/post-1.md",
       "line": 42,
       "fix_type": "encoding-mojibake",
@@ -357,14 +362,30 @@ Write to `audit-results/content-audit-YYYY-MM-DD.json` conforming to
   "summary": {
     "files_scanned": 150,
     "files_skipped": 12,
-    "total_findings": 25,
-    "blocking": 2,
-    "scored": 15,
-    "advisory": 8,
-    "auto_fixable": 18
+    "findings_count": 25,
+    "fixable": 18
   }
 }
 ```
+
+Use `result: "PROVISIONAL"` when any blocking gate returns `INSUFFICIENT DATA`
+(e.g., `img-404-live` without `--live-url`, or `fm-yaml-malformed` in `--quick`
+mode).
+
+---
+
+## Phase 4: Adversarial Review (MANDATORY — do NOT skip)
+
+Run AFTER report files are generated (Phase 3).
+
+```bash
+adversarial-review --json --mode audit --files "audit-results/content-audit-[date].md"
+```
+
+If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+
+Wait for complete output. Fix CRITICAL immediately (update report files).
+WARNING → fix if localized. INFO → ignore.
 
 ---
 
@@ -387,12 +408,12 @@ When `--persist-backlog` is enabled, persist findings per
 
 | Edge case | Handling |
 |-----------|---------|
-| **Mixed encoding in file** | `file -i` per file. Non-UTF-8 → `ENCODING-WARN`, Unicode checks → `INSUFFICIENT DATA` |
+| **Mixed encoding in file** | `file -i` per file. Non-UTF-8 → `encoding-mismatch` (advisory), Unicode checks → `INSUFFICIENT DATA` |
 | **Large files (100KB+)** | Read in 500-line chunks. Flag: "large file — chunked read" |
 | **Binary files in content dir** | Skip by extension whitelist. Log in "Skipped files" section |
 | **Template syntax** | Strip `{...}`, `{{ }}`, `<% %>` before CC2/CC8 checks on `.astro`/`.tsx`/`.jsx`/`.mdx` |
 | **CMS-backed content** | Detect CMS config. Emit `CONTENT INACCESSIBLE`. Recommend `--live-url` |
-| **Framework-relative images** | `@/`, `~/`, `../assets/` → `POTENTIAL_RISK`, not hard FAIL |
+| **Framework-relative images** | `@/`, `~/`, `../assets/` → `img-path-relative-risk` (advisory), not hard FAIL |
 | **Anchor links** | Source: extract headings → normalize → compare. Live: DOM inspection |
 | **Multilingual dirs** | Detect language per file/directory. Apply CC8 only for matching language |
 | **Standalone `\`** | Stack-aware: flag for Hugo/Goldmark, skip for GFM targets |

@@ -231,10 +231,28 @@ Inconsistent quotes suggest copy-paste from different sources.
 
 ---
 
-## Finding Output Format
+## Output Format
 
-Same as other agents. Every FAIL finding includes `file`, `line`, `check` slug,
-`evidence`, `severity`, `confidence`, `fix_type`.
+Return TWO structures (same contract as content-encoding agent):
+
+### 1. `check_results[]` — complete matrix (ALL owned checks)
+
+For EVERY check in CC4, CC7, CC8 (all 16 checks), return a status even if
+passed. Checks requiring language detection that failed → `INSUFFICIENT DATA`.
+Checks requiring `aspell`/`hunspell` not installed → `INSUFFICIENT DATA`.
+
+```
+- check: string           # check slug from registry
+- dimension: string       # CC4, CC7, or CC8
+- status: PASS | PARTIAL | FAIL | N/A | INSUFFICIENT DATA
+- files_checked: number
+- issues_found: number
+```
+
+### 2. `findings[]` — details for FAIL and PARTIAL only
+
+Every FAIL finding includes `file`, `line`, `check` slug, `evidence`,
+`severity`, `confidence`, `fix_type`.
 
 ---
 

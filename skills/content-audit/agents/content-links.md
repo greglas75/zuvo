@@ -39,6 +39,7 @@ CORE FILES LOADED:
 - **detected_stack:** string
 - **codesift_repo:** string | null
 - **live_url:** string | null (base URL for live checks)
+- **check_external:** boolean (enable external link checking without full live mode)
 
 ---
 
@@ -62,8 +63,8 @@ Flag image paths using framework-specific conventions:
 - `~/` (Nuxt alias)
 - `../assets/` (content collection relative)
 
-These paths resolve at build time, not in source. Mark as `POTENTIAL_RISK`
-(advisory), not hard FAIL.
+These paths resolve at build time, not in source. Report as
+`img-path-relative-risk` (advisory), not hard FAIL.
 
 ### Check: `img-alt-quality`
 
@@ -140,8 +141,8 @@ For links with fragment identifiers (`page.md#section`):
 
 ### Check: `link-external-dead`
 
-**Requires `--live-url` or `--check-external`.** For each external link
-(`http://`, `https://`):
+**Requires `--live-url` or `--check-external`.** If neither is set, return
+`INSUFFICIENT DATA` for this check. When enabled:
 
 1. Perform HTTP HEAD request
 2. Follow rate limiting from `live-probe-protocol.md`
@@ -178,10 +179,27 @@ Grep for: href=""|href="#"|href="javascript:
 
 ---
 
-## Finding Output Format
+## Output Format
 
-Same as content-encoding agent. Every FAIL finding includes `file`, `line`,
-`check` slug, `evidence`, `severity`, `confidence`, `fix_type`.
+Return TWO structures (same contract as content-encoding agent):
+
+### 1. `check_results[]` — complete matrix (ALL owned checks)
+
+For EVERY check in CC5, CC6 (all 12 checks), return a status even if passed.
+Checks requiring `--live-url` that was not provided → `INSUFFICIENT DATA`.
+
+```
+- check: string           # check slug from registry
+- dimension: string       # CC5 or CC6
+- status: PASS | PARTIAL | FAIL | N/A | INSUFFICIENT DATA
+- files_checked: number
+- issues_found: number
+```
+
+### 2. `findings[]` — details for FAIL and PARTIAL only
+
+Every FAIL finding includes `file`, `line`, `check` slug, `evidence`,
+`severity`, `confidence`, `fix_type`.
 
 ---
 

@@ -138,7 +138,15 @@
 
 ## Quick Mode Checks
 
-When `--quick` is active, only these checks run (grep-only, no agent dispatch):
+When `--quick` is active, only source-only grep checks run (no agent dispatch):
 
-- All blocking: `mojibake-detected`, `php-tag`, `fm-yaml-malformed`, `img-404-live`
-- Key scored: `broken-italic`, `joomla-path`, `wp-shortcode`, `img-path-broken`, `link-internal-broken`
+- CC1: `mojibake-detected` (blocking), `nbsp-present`, `zero-width-present`
+- CC2: `broken-italic`
+- CC3: `php-tag` (blocking), `joomla-path`, `wp-shortcode`
+- CC5: `img-path-broken` (Glob path resolution)
+- CC6: `link-internal-broken` (Glob path resolution)
+
+Checks returning `INSUFFICIENT DATA` in quick mode:
+- `fm-yaml-malformed` (needs YAML parser, not grep)
+- `img-404-live` (needs `--live-url`, not grep)
+- All CC4, CC7, CC8 checks (need agent dispatch)

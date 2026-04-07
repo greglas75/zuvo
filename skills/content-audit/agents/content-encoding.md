@@ -277,15 +277,30 @@ Run checks on the stripped content to avoid false positives.
 
 ---
 
-## Finding Output Format
+## Output Format
 
-For each check that results in FAIL or PARTIAL, produce a finding object:
+Return TWO structures:
+
+### 1. `check_results[]` — complete matrix (ALL owned checks)
+
+For EVERY check in CC1, CC2, CC3 (all 21 checks), return a status even if it
+passed. This is required for scoring.
+
+```
+- check: string           # check slug from registry
+- dimension: string       # CC1, CC2, or CC3
+- status: PASS | PARTIAL | FAIL | N/A | INSUFFICIENT DATA
+- files_checked: number   # how many files were scanned for this check
+- issues_found: number    # count of matches (0 for PASS)
+```
+
+### 2. `findings[]` — details for FAIL and PARTIAL only
 
 ```
 - id: string              # {CCn}-{check_slug} e.g. CC1-nbsp-present
 - dimension: string       # CC1, CC2, or CC3
 - check: string           # check slug from registry
-- status: PASS | PARTIAL | FAIL | INSUFFICIENT DATA
+- status: FAIL | PARTIAL
 - enforcement: blocking | scored | advisory
 - severity: HIGH | MEDIUM | LOW
 - confidence: HIGH | MEDIUM | LOW
