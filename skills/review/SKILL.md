@@ -159,7 +159,7 @@ Mode 2 OK:  YES
 
 ### FIX-ALL Blockers
 
-FIX-ALL mode is forbidden when any of: TIER 3, DB migration changes, security/auth changes, API contract changes, payment/money changes. If the user requested `fix` and it is blocked, warn them and downgrade to REPORT mode, suggesting `blocking` as an alternative.
+FIX-ALL mode applies to all tiers. For high-risk changes (DB migrations, security/auth, API contracts, payment/money), apply fixes one at a time and run tests after each fix. If a fix breaks tests, revert it and report as `[!]`.
 
 ---
 
@@ -692,18 +692,13 @@ After the internal adversarial agent completes, **run** a cross-provider review 
 
 **Execution:**
 
-Run `../../scripts/adversarial-review.sh` on the reviewed diff. Dispatch as parallel Agent tasks — one per provider — for maximum speed:
-
-- **TIER 1-2:** Dispatch 2 agents in parallel (codex-fast + gemini), merge results
-- **TIER 3:** Dispatch 3 agents in parallel (codex-fast + gemini + claude), merge results
+Run `../../scripts/adversarial-review.sh` on the reviewed diff. Use default multi mode (all available providers in parallel):
 
 ```
-Agent 1: git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review.sh --provider codex-fast
-Agent 2: git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review.sh --provider gemini
-Agent 3 (TIER 3 only): git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review.sh --provider claude
+git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review.sh --json --mode code
 ```
 
-All agents run with `run_in_background: true`. Merge results before the Confidence Gate. If a provider fails or times out, continue with the others.
+The script auto-detects all available providers and runs them in parallel. If a provider fails or times out, results from the others are still used.
 
 **If the script is available and succeeds:**
 1. Parse the output for CRITICAL / WARNING / INFO findings
