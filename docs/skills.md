@@ -1,6 +1,6 @@
 # Skills Reference
 
-Zuvo includes 41 skills organized into 9 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
+Zuvo includes 45 skills organized into 9 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
 
 ---
 
@@ -64,6 +64,7 @@ Scoped task execution for common development work.
 | `zuvo:seo-fix` | Apply SEO audit fixes with 3-tier safety model (SAFE/MODERATE/DANGEROUS). Reads audit JSON, applies framework-specific templates. | After seo-audit, to auto-fix findings | `--auto`, `--all`, `--dry-run`, `--fix-type`, `--finding` |
 | `zuvo:content-audit` | Content file quality audit across 8 dimensions (CC1-CC8): encoding artifacts (NBSP, mojibake), markdown syntax, CMS migration artifacts, frontmatter, images, links, completeness, typography. Language-agnostic. | After CMS migration, content quality check, broken link detection | `[path]`, `--live-url <url>`, `--quick`, `--content-path <dir>`, `--lang <code>`, `--check-external`, `--persist-backlog` |
 | `zuvo:content-fix` | Apply content audit fixes with 2-tier safety model (SAFE/MODERATE). Strips encoding artifacts, fixes broken markdown, removes CMS debris. | After content-audit, to auto-fix findings | `--auto`, `--dry-run`, `--fix-type`, `--finding` |
+| `zuvo:content-migration` | CMS-to-SSG content parity check. Compares old CMS page with new SSG page element-by-element via Playwright DOM extraction. Identifies missing headings, paragraphs, images, CTAs. Optionally fixes gaps in local .md files. | After CMS migration, content parity verification | `--old <url>`, `--new <url>`, `--fix`, `--source-file <path>` |
 | `zuvo:architecture` | Three modes: review existing architecture (A1-A9), create ADRs, or design new systems. Uses CodeSift for module discovery and dependency mapping. | Architecture health check, documenting decisions, system design | `--mode review [path]`, `--mode adr`, `--mode design` |
 
 ---
