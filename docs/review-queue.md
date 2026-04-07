@@ -152,3 +152,5 @@ Commits pending review. Auto-managed:
 - ead2050 (2026-04-07) feat: adversarial run logging to ~/.zuvo/adversarial.log
 - e862ca4 (2026-04-07) fix: remove empty a11y-audit dir (broke codex build)
 - d7115dc (2026-04-07) fix: remove empty incident dir, add mutation-test skill
+- fccc52f (2026-04-07) release: v1.3.10 — feat: adversarial run logging + cleanup
+- f4cabe9 (2026-04-07) feat: add 3 new skills — mutation-test, a11y-audit, incident (44 skills total)
