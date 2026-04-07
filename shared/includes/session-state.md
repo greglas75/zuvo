@@ -36,13 +36,17 @@ next-task: <N>
 <!-- task-5: skipped-user (user chose skip at blocker prompt) -->
 
 ## Retry Counts
+<!-- Only non-zero values. Omit stages with zero retries to keep the file compact. -->
 <!-- task-N.stage: <count> -->
 <!-- task-3.spec-review: 2 -->
 <!-- task-3.quality-review: 1 -->
-<!-- task-3.adversarial: 0 -->
+
+## Files Changed
+<!-- Appended after each completed task. Diagnostic only — not used for resume logic. -->
+- <file> (Task <N>, commit <sha7>)
 ```
 
-**Reason codes for Task Reasons:**
+**Reason codes for Task Reasons** (required for skipped/blocked tasks, optional for completed tasks):
 
 | Code | Meaning |
 |------|---------|
@@ -54,7 +58,9 @@ next-task: <N>
 | `blocked-agent-crash` | Agent failed twice with no output |
 
 **Retry stages:**
-Track retries per task per stage: `task-N.spec-review`, `task-N.quality-review`, `task-N.adversarial`, `task-N.implementer`. Add new stages as the workflow evolves — the format is extensible.
+Track retries per task per stage: `task-N.spec-review`, `task-N.quality-review`, `task-N.adversarial`, `task-N.implementer`. Add new stages as the workflow evolves — the format is extensible. Omit zero-value stages — only record stages that actually had retries. A fresh start initializes all retry counts empty; prior counts remain only in archived `.stale`/`.completed` files.
+
+**Task exclusivity:** A task may appear in only one terminal bucket: `completed[]`, `skipped[]`, or `blocked[]`. Never in two or more simultaneously.
 
 ---
 
@@ -66,7 +72,7 @@ Written by `zuvo:execute` at startup. Passed to every agent dispatch.
 
 ```markdown
 # Project Context
-<!-- session-id: <same as execution-state.md> -->
+<!-- last-session-id: <session-id of the most recent session using this file> -->
 <!-- last-updated: <ISO-8601> -->
 
 stack: <detected stack>
@@ -87,7 +93,9 @@ codesift-repo: <repo identifier or "unavailable">
 - `## Active Concerns`: cap at 10 entries. When over limit, remove oldest INFO entries first, then oldest WARNING.
 - If the file would exceed ~200 lines: trim oldest Completed Work Units before writing.
 
-**Lifetime:** Survives across sessions. On fresh start, update `session-id` and continue accumulating. The history is valuable across sessions — do not wipe it on fresh start.
+**Lifetime:** Survives across sessions. On fresh start, update `last-session-id` to the current session and continue accumulating. The history is valuable across sessions — do not wipe it on fresh start.
+
+**If project-context.md is missing or malformed:** Rebuild it from scratch (re-detect stack, test-runner, codesift-repo). Do not fail resume because of project-context corruption — this file is a convenience aide, not a resume requirement.
 
 ---
 
@@ -188,8 +196,8 @@ Resuming from Task <next-task>. Completed tasks will be skipped.
 ```
 
 Load:
-- Plan from `state.plan` (skip Glob).
-- Stack/test-runner from `.zuvo/context/project-context.md`.
+- Plan from `state.plan` (skip Glob). **Ignore `active-plan.md` entirely on valid resume** — execution-state.md is the sole source of truth.
+- Stack/test-runner from `.zuvo/context/project-context.md` (if missing or malformed: re-detect, do not fail).
 - Retry counts from `## Retry Counts`.
 - Skip all tasks in `completed[]`, `skipped[]`.
 - Restore blocked tasks and their reasons.
@@ -223,10 +231,10 @@ Example: `exec-20260407-1423`
 - `status: in-progress`
 - `total-tasks`: from plan
 - `completed: []`, `skipped: []`, `blocked: []`
-- `next-task: 1`
+- `next-task`: set to the lowest task number in the plan (usually 1, but do not hardcode)
 
 **Write/update `.zuvo/context/project-context.md`:**
-- Update `session-id` to current session
+- Update `last-session-id` to current session
 - Update `last-updated`
 - Keep existing `## Completed Work Units` and `## Active Concerns` (accumulate across sessions)
 - Update `stack`, `test-runner`, `codesift-repo` (re-detect fresh)
@@ -248,9 +256,9 @@ Example: `exec-20260407-1423`
 
 Rewrite `.zuvo/context/execution-state.md` (full rewrite — never append):
 - Add task number to `completed[]`
-- Update `next-task` to lowest PENDING task
+- Update `next-task` to lowest PENDING task (lowest number not in completed/skipped/blocked)
 - Update `last-updated`
-- Append to `## Files Changed` (keep for diagnosis)
+- Append to `## Files Changed`: `- <file> (Task <N>, commit <sha7>)` for each changed file
 
 Append to `.zuvo/context/project-context.md` → `## Completed Work Units`:
 ```
@@ -275,9 +283,9 @@ Append to `## Active Concerns` in project-context.md:
 ```
 Trim to 10 entries (remove oldest INFO first).
 
-**On all tasks complete:** Set `status: completed`. Update active-plan.md to `status: completed`.
+**On all tasks complete:** Set `status: completed`. Update active-plan.md to `status: completed`. The file stays as `execution-state.md` until the next startup renames it to `.completed`.
 
-**On user abort:** Set `status: aborted`.
+**On user abort:** Set `status: aborted`. Update active-plan.md to `status: aborted`. The file stays as `execution-state.md` until the next startup renames it to `.stale`.
 
 ---
 
@@ -297,9 +305,11 @@ Fields: `plan`, `spec_id`, `tasks`, `approved` (timestamp), `status: pending`.
 
 | Event | execution-state.md | project-context.md | active-plan.md |
 |-------|-------------------|-------------------|----------------|
-| All tasks complete | → `execution-state.completed` | Keep, update session-id | `status: completed` |
-| User abort | → `execution-state.stale` | Keep as-is | Unchanged |
-| Stale validation fail | → `execution-state.stale` | Keep as-is | Unchanged |
-| Fresh start (next execute) | Writes new file | Updates session-id, appends history | `status: in-progress` |
+| All tasks complete | `status: completed` (renamed to `.completed` on next startup) | Keep, update last-session-id | `status: completed` |
+| User abort | `status: aborted` (renamed to `.stale` on next startup) | Keep as-is | `status: aborted` |
+| Stale validation fail | Renamed to `.stale` immediately | Keep as-is | Unchanged |
+| Fresh start (next execute) | Writes new file | Updates last-session-id, appends history | `status: in-progress` |
+
+**Rename timing:** Terminal states (`completed`, `aborted`) are written immediately but the file stays as `execution-state.md`. The rename to `.completed`/`.stale` happens on the **next startup** (READ protocol Step 1). Stale validation failures rename immediately (READ protocol Step 2).
 
 Stale/completed files are kept for diagnosis. They do not interfere — READ protocol ignores non-`in-progress` files.
