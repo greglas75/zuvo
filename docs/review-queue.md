@@ -141,3 +141,5 @@ Commits pending review. Auto-managed:
 - 7ffd67a (2026-04-07) pre-existing findings handling
 - dc84f2b (2026-04-07) release: v1.3.5 — adversarial: verify low-confidence CRITICAL, timeout 240s, updated finding handling in 8 skills
 - b816002 (2026-04-07) fix: review skill — remove FIX-ALL blocker, use all adversarial providers
+- ce001e4 (2026-04-07) release: v1.3.6 — review: remove FIX-ALL blocker, use all adversarial providers
+- b7c9f5e (2026-04-07) feat: using-zuvo session startup checks for CLAUDE.md, offers to create it
