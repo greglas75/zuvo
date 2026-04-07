@@ -317,7 +317,12 @@ git add -u && git diff --staged | adversarial-review --json --mode test
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
 
-Wait for complete output. Fix CRITICAL immediately. WARNING (< 10 lines, localized) → fix. Everything else → known concerns (max 3, one line each).
+Wait for complete output. Handle findings by severity:
+- **CRITICAL** — fix immediately, regardless of confidence. If confidence is low, verify first (check the code), then fix if confirmed.
+- **WARNING** — fix if localized (< 10 lines). If fix is larger, add to backlog with specific file:line.
+- **INFO** — known concerns (max 3, one line each).
+
+Do NOT discard findings based on confidence alone. Confidence measures how sure the reviewer is, not how important the issue is. A CRITICAL with low confidence means "verify this — if true, it's serious."
 
 ---
 
