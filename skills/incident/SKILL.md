@@ -94,17 +94,18 @@ If the description is empty or insufficient, ask the user:
 
 ### 0.2 Sentry Integration (if available)
 
-Check if Sentry MCP tools are available. If so:
+Check if Sentry MCP tools are available. If so, run discovery first:
 
-1. `list_issues` -- pull recent issues sorted by first-seen, filtered to the timeframe
-2. For the top 3 relevant issues:
+1. **Discovery:** `find_organizations()` → `find_projects(org)` → select project matching `--service` or ask user
+2. `list_issues` -- pull recent issues sorted by first-seen, filtered to the timeframe and selected project
+3. For the top 3 relevant issues:
    - Stack traces
    - Affected users count
    - First-seen and last-seen timestamps
    - Event frequency (is it increasing?)
-3. `list_events` -- recent events for correlation with deploy timeline
+4. `list_events` -- recent events for correlation with deploy timeline
 
-If Sentry is not available, note: `Sentry: unavailable -- using git history only`
+If Sentry is not available or org/project mapping is ambiguous: `Sentry: unavailable -- using git history only`. Do NOT guess the project — proceed in telemetry-unavailable mode.
 
 ### 0.3 Determine Severity
 
@@ -134,33 +135,38 @@ INCIDENT TRIAGE
 
 Build a chronological timeline of events leading to and during the incident.
 
-### 1.1 Recent Deploys
+### 1.1 Recent Code Changes (NOT deploys)
 
 ```bash
-git log --since="[incident time - 24h]" --oneline --format="%h %ai %s"
+git log --since="[incident time - 24h]" --oneline --format="%h %ai %an %s"
 ```
 
-For each commit, note:
-- Hash (short)
-- Timestamp
-- Author
-- Message
-- Files changed: `git diff --stat [commit]~1 [commit]`
+For each commit, note: hash, timestamp, author, message, files changed. **These are code changes, NOT deploys.** A commit only becomes a deploy after it's confirmed through CI/CD or platform signals.
 
-### 1.2 CI/CD History
+### 1.2 Actual Deploy History
 
-Cross-reference with CI/CD to identify actual deploys (not just commits):
+Identify which commits were actually deployed to production. Use this **source priority ladder:**
 
-**GitHub Actions:**
-```bash
-gh run list --limit 20 --json conclusion,createdAt,headBranch,name,status,databaseId
-```
+1. **`memory/last-ship.json`** (if exists) — Zuvo ship skill tracks deploys
+2. **Release/deploy tags:** `git tag -l 'v*' --sort=-creatordate | head -10` or `git tag -l 'deploy-*'`
+3. **Platform-specific deploy detection:**
+   - Check for `gh` CLI: `which gh && gh auth status` — if available:
+     ```bash
+     gh run list --limit 20 --json conclusion,createdAt,headBranch,name,status --jq '[.[] | select(.conclusion=="success")]'
+     ```
+     **Filter by workflow name** containing "deploy", "release", "cd", or "production". Do NOT treat all successful runs as deploys (build/test/lint workflows are not deploys).
+   - If `gh` unavailable or unauthorized: note `GH_AVAILABLE=false`, skip gracefully
+   - Vercel: check `.vercel/project.json` for deployment metadata
+   - Other platforms: check for `fly.toml`, `netlify.toml`, `render.yaml`, `railway.json`
+4. **Fallback:** If no deploy signals found, use commits to main/master as proxy. **Mark timeline as `[UNVERIFIED — commits used as deploy proxy]`.**
 
-Filter to runs that completed successfully within the timeframe. These represent actual deploys.
+### 1.2b Separate timeline tracks
 
-**Vercel:** Check for `vercel.json` or `.vercel/` metadata. If found, note deployment context.
+Build TWO separate tracks:
+- **Code changes:** all commits in the window (from 1.1)
+- **Confirmed deploys:** only commits verified through CI/CD or platform (from 1.2)
 
-**Other platforms:** Check for deployment config files (`fly.toml`, `netlify.toml`, `render.yaml`, `railway.json`, `Procfile`). Note the platform but do not attempt to query deployment APIs without explicit user configuration.
+Only confirmed deploys appear as `Deploy:` in the timeline. Undeployed commits appear as `Commit:` (they may not have reached production).
 
 ### 1.3 Sentry Correlation (if available)
 
@@ -176,13 +182,15 @@ Assemble all data into a chronological timeline:
 ```
 TIMELINE
 ------------------------------------------------------
-[T-24h]  Deploy: abc1234 "feat: add payment retry" (author)
-[T-18h]  Deploy: def5678 "fix: update rate limiter" (author)
-[T-4h]   CI: deploy pipeline succeeded (branch: main)
+[T-24h]  Commit: abc1234 "feat: add payment retry" (author)
+[T-20h]  Deploy: abc1234 confirmed via deploy pipeline (branch: main)
+[T-18h]  Commit: def5678 "fix: update rate limiter" (author)
+[T-4h]   Deploy: def5678 confirmed via deploy pipeline (branch: main)
 [T-2h]   First error reported (Sentry issue #1234 / user report)
 [T-1h]   Error rate increasing (Sentry: 50 events/hr -> 200 events/hr)
 [T-0]    Incident declared
 ------------------------------------------------------
+[VERIFIED / UNVERIFIED — commits used as deploy proxy]
 ```
 
 Use relative timestamps (`T-Nh`) anchored to the incident declaration time. Include absolute timestamps in parentheses when available.
@@ -193,17 +201,22 @@ Use relative timestamps (`T-Nh`) anchored to the incident declaration time. Incl
 
 ### 2.1 Identify Suspect Commits
 
-Determine the window of suspect commits:
-- **Last known good:** The most recent point where the system was confirmed working (last successful deploy before errors, or user-reported "it worked at [time]")
-- **First error:** The earliest error signal (Sentry first-seen, first user report, or first failed health check)
+Define explicit variables for the suspect window:
 
-List all commits between last-known-good and first-error:
+- **`LAST_GOOD_SHA`**: SHA of the last confirmed-working deploy (from deploy history in Phase 1)
+- **`LAST_GOOD_AT`**: Timestamp of that deploy
+- **`FIRST_ERROR_AT`**: Timestamp of first error signal (Sentry first-seen, user report, health check failure)
 
-```bash
-git log --format="%H %ai %an %s" [last-good]..[first-error]
-```
-
-If the window is unclear, use all commits in the 24h before the incident.
+**Determine suspect window:**
+- If both `LAST_GOOD_SHA` and `FIRST_ERROR_AT` are known:
+  ```bash
+  git log --format="%H %ai %an %s" LAST_GOOD_SHA..HEAD --until="FIRST_ERROR_AT"
+  ```
+- If only `FIRST_ERROR_AT` is known (no confirmed deploy):
+  ```bash
+  git log --format="%H %ai %an %s" --since="$(date -d 'FIRST_ERROR_AT - 24h')" --until="FIRST_ERROR_AT"
+  ```
+- If window is unclear: use all commits in the 24h before the incident. Mark as `[WINDOW: estimated]`.
 
 ### 2.2 Analyze Each Suspect
 
@@ -242,7 +255,14 @@ Score each suspect commit on three dimensions:
 | **Code area overlap** | Does this commit touch the same service, endpoint, or module? Direct overlap = higher probability |
 | **Risk signal match** | Does the risk area match the incident type? (e.g., auth change + auth error) Match = higher probability |
 
-Rank suspects by combined probability:
+Rank suspects by combined probability and assign **confidence level**:
+
+| Confidence | Criteria | Allows revert? |
+|-----------|----------|---------------|
+| **CONFIRMED** | 2+ independent signals agree (temporal + code overlap + telemetry OR temporal + reproduction) | Yes |
+| **LIKELY** | Strong temporal + code overlap match, but only 1 signal source | Only if blast radius is clean (no dependent commits) |
+| **POSSIBLE** | Temporal match but weak code overlap, or code overlap but large time gap | No — suggest investigation first |
+| **UNCONFIRMED** | No clear candidate, multiple suspects with similar scores | No — manual investigation required |
 
 ```
 SUSPECT COMMITS
@@ -250,16 +270,18 @@ SUSPECT COMMITS
 #1  abc1234  [LIKELY]    "fix: update rate limiter"
     Risk: INFRA | Overlap: YES (touches rate-limit middleware)
     Proximity: 2h before first error
+    Evidence: Sentry stack trace matches changed function
     Blast radius: 12 callers via middleware chain
 
 #2  def5678  [POSSIBLE]  "feat: add payment retry"
     Risk: PAYMENT | Overlap: PARTIAL (same service, different endpoint)
     Proximity: 18h before first error
+    Evidence: none (different code path)
     Blast radius: 3 direct callers
 ------------------------------------------------------
 ```
 
-If no clear candidate emerges, state: "Root cause unclear -- multiple candidates with similar probability. Manual investigation recommended."
+If confidence is UNCONFIRMED: `"Root cause: under investigation — multiple candidates with similar probability. Manual investigation recommended. See Open Questions below."`
 
 ---
 
@@ -331,26 +353,40 @@ SLA impact:        [none / breached: [detail] / unknown]
 
 Based on the root cause analysis:
 
-**If root cause is identified with high confidence:**
+**If root cause confidence is CONFIRMED or LIKELY:**
 
-1. **Revert (if applicable and `--revert` is set):**
-   Provide the exact revert command but DO NOT execute it:
+1. **Revert (only when ALL conditions are met):**
+   - Confidence is CONFIRMED or LIKELY with clean blast radius
+   - Suspect is a single, non-merge commit (`git cat-file -t [hash]` is "commit", not merge)
+   - No dependent commits after suspect (check `git log [hash]..HEAD --oneline`)
+   - Rollback is a git operation (not config/infra change)
+   
+   If all conditions met and `--revert` is set:
    ```
    SUGGESTED REVERT (do NOT execute without user confirmation):
    git revert [commit-hash] --no-edit
    ```
-   Note whether the revert is safe (no dependent commits that would conflict).
+   
+   If any condition fails, provide a **manual rollback playbook** instead:
+   ```
+   MANUAL ROLLBACK NEEDED:
+   - Merge commit: requires `git revert -m 1 [hash]`
+   - Multiple suspects: revert sequence needed (test after each)
+   - Config/infra change: [specific rollback steps]
+   - Dependent commits exist: forward-fix recommended over revert
+   ```
 
 2. **Hotfix:** If a revert is not practical (dependent commits, data migration):
-   Outline the minimal fix in pseudocode or a description. Suggest dispatching `zuvo:build` or `zuvo:debug` for the actual implementation.
+   Outline the minimal fix in pseudocode. Suggest `zuvo:build` or `zuvo:debug`.
 
 3. **Config change:** If the issue is configuration-related, specify exactly what to change and where.
 
-**If root cause is unclear:**
+**If root cause confidence is POSSIBLE or UNCONFIRMED:**
 
-1. Suggest specific investigation steps (which logs to check, which endpoints to test)
-2. Suggest rollback to last known good deploy with exact commands
-3. Suggest enabling additional monitoring or logging
+1. Do NOT suggest revert — too risky without confirmed root cause
+2. Suggest specific investigation steps (which logs to check, which endpoints to test)
+3. Suggest rollback to last known good deploy via platform (Vercel/Fly/etc.), not git revert
+4. Suggest enabling additional monitoring or logging
 
 ### 4.2 Post-Fix Monitoring
 
@@ -400,7 +436,8 @@ Use this exact format:
 | Severity | SEV-[1-4] |
 | Duration | [Xh Ym] |
 | Affected service | [service/endpoint] |
-| Root cause | [1-line summary] |
+| Root cause | [1-line summary OR "under investigation"] |
+| RCA confidence | [CONFIRMED / LIKELY / POSSIBLE / UNCONFIRMED] |
 | Status | [RESOLVED / MITIGATED / INVESTIGATING] |
 
 ## Summary
@@ -412,12 +449,25 @@ Use this exact format:
 | [timestamp] | [event] |
 
 ## Root Cause
-[Detailed explanation of what went wrong and why. Reference specific commits, files, lines.]
+**Confidence: [CONFIRMED / LIKELY / POSSIBLE / UNCONFIRMED]**
+
+[If CONFIRMED/LIKELY: Detailed explanation of what went wrong and why. Reference specific commits, files, lines.]
+[If POSSIBLE/UNCONFIRMED: "Root cause is under investigation. The following suspects have been identified but not confirmed."]
+
+**Evidence:**
+- [Signal 1: e.g., "Sentry stack trace matches function changed in abc1234"]
+- [Signal 2: e.g., "Error first-seen 2h after deploy of abc1234"]
+- [Or: "Insufficient evidence for confirmation — see Open Questions"]
 
 ### Suspect Commits
-| Commit | Author | Message | Risk | Probability |
-|--------|--------|---------|------|-------------|
-| [hash] | [author] | [msg] | [HIGH/MED] | [likely/possible] |
+| Commit | Author | Message | Risk | Confidence | Evidence |
+|--------|--------|---------|------|------------|----------|
+| [hash] | [author] | [msg] | [area] | [CONFIRMED/LIKELY/POSSIBLE] | [specific signal] |
+
+### Open Questions
+[List unresolved questions that would change the analysis if answered. Remove this section only if confidence is CONFIRMED.]
+- [Question 1: e.g., "Were there config changes outside git between T-4h and T-2h?"]
+- [Question 2: e.g., "Is the rate limiter Redis instance shared with other services?"]
 
 ## Impact
 | Metric | Value |
@@ -528,13 +578,25 @@ Impact:        [N users affected, data: none/corrupted/lost]
 Postmortem:    [file path or "DRY RUN -- not created"]
 Comms:         [generated / not requested]
 
-Run: <ISO-8601-Z>	incident	<project>	SEV-<N>	<duration>	<STATUS>	-	<N>-suspects	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	incident	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 
-STATUS: RESOLVED, MITIGATED, INVESTIGATING
-DURATION: incident duration (e.g., `2h15m`) or `ongoing`
-NOTES: 1-line incident summary (max 80 chars)
+Field mapping (aligned with run-logger.md contract):
+- CQ_SCORE: `-` (not applicable)
+- Q_SCORE: `-` (not applicable)  
+- VERDICT: RESOLVED→PASS, MITIGATED→WARN, INVESTIGATING→BLOCKED
+- TASKS: `-` (not applicable)
+- DURATION: `incident` or `6-phase`
+- NOTES: `SEV-N [confidence] [1-line summary]` (max 80 chars, severity and confidence in notes)
+
+Above the Run: line, print incident-specific status:
+```
+Severity:      SEV-[N]
+Status:        [RESOLVED / MITIGATED / INVESTIGATING]
+RCA Confidence: [CONFIRMED / LIKELY / POSSIBLE / UNCONFIRMED]
+Duration:      [Xh Ym]
+```
 
 Next steps:
   zuvo:debug [suspect-file]   -- investigate and fix root cause

@@ -60,8 +60,8 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 
 | Phase | Task | CodeSift tool | Fallback |
 |-------|------|--------------|----------|
-| 0 | Find production files | `get_file_tree(repo, name_pattern="*.ts")` | `Glob("**/*.ts")` |
-| 0 | Find test files | `get_file_tree(repo, name_pattern="*.test.*")` | `Glob("**/*.test.*")` |
+| 0 | Find production files | `get_file_tree(repo, file_pattern=<detected_ext>)` | `Glob` with detected extension |
+| 0 | Find test files | `get_file_tree(repo, name_pattern=<detected_test_pattern>)` | `Glob` with detected test pattern |
 | 0 | Understand file structure | `get_file_outline(repo, file_path)` | `Read` the file |
 | 0 | Detect complexity hotspots | `analyze_complexity(repo, top_n=20)` | Line count heuristic |
 | 2 | Read production code for mutation targeting | `get_symbol(repo, symbol_id)` | `Read` the file |
@@ -92,15 +92,27 @@ If framework cannot be detected: ask the user for the test runner command.
 
 ### 0.2 File Mapping
 
-Build a map of production files to their test files:
+Build a map of production files to their test files. **Discovery patterns are language-aware** — use the detected framework from 0.1:
 
-1. Scan for all test files (patterns: `*.test.*`, `*.spec.*`, `*_test.*`, `test_*.*`, `*_spec.rb`, `*_test.go`)
+| Language | Production ext | Test patterns |
+|----------|---------------|---------------|
+| TypeScript/JavaScript | `*.ts`, `*.tsx`, `*.js`, `*.jsx` | `*.test.*`, `*.spec.*`, `__tests__/*` |
+| Python | `*.py` | `test_*`, `*_test.py`, `tests/` |
+| PHP | `*.php` | `*Test.php`, `tests/` |
+| Go | `*.go` (non-test) | `*_test.go` |
+| Ruby | `*.rb` | `*_spec.rb`, `spec/` |
+| Rust | `*.rs` (non-test) | `#[cfg(test)]` blocks, `tests/` |
+
+For each detected language:
+1. Scan for all test files using the language-specific patterns
 2. For each test file, identify the production file it covers:
    - By import/require statements in the test
-   - By naming convention (`foo.ts` -> `foo.test.ts`)
-   - By directory convention (`src/foo.ts` -> `tests/foo.test.ts`, `__tests__/foo.test.ts`)
+   - By naming convention (`foo.ts` -> `foo.test.ts`, `foo.py` -> `test_foo.py`)
+   - By directory convention (`src/foo.ts` -> `__tests__/foo.test.ts`)
 3. Build the map: `{ production_file: [test_file_1, test_file_2, ...] }`
 4. Exclude production files with no test coverage (nothing to validate mutations against)
+
+If no language matches or discovery produces 0 files: ask the user for the file patterns.
 
 ### 0.3 Prioritization
 
@@ -250,10 +262,14 @@ For each mutation in the plan, apply it, run tests, and record the result.
 
 Before starting execution:
 
-1. Verify the working directory is clean (`git status` shows no uncommitted changes, or changes are safely stashed)
-2. Choose the restoration strategy:
-   - **Preferred:** `git stash` before mutations, `git stash pop` after each
-   - **Alternative:** Copy original file to a temp location, restore from copy after each mutation
+1. Verify the working directory is clean (`git status` shows no uncommitted changes)
+   - If uncommitted changes exist: STOP and ask user to commit or stash first
+2. **Restoration strategy (temp copy — NOT stash):**
+   - For each production file being mutated, copy the original to a temp location: `cp [file] /tmp/zuvo-mutation-[hash]-[filename]`
+   - After each mutation: restore from the temp copy: `cp /tmp/zuvo-mutation-[hash]-[filename] [file]`
+   - After ALL mutations complete (or on error): verify every original is restored, then delete temp copies
+   - **Do NOT use `git stash`** (pop consumes the stash on first iteration)
+   - **Do NOT use `git checkout -- [file]`** (destructive to local changes)
 3. NEVER commit a mutated file. NEVER leave a mutation in place after execution.
 
 ### 3.2 Execution Loop
@@ -262,23 +278,34 @@ For each mutation `MUT-NNN`:
 
 ```
 1. APPLY: Write the mutated code to the production file
-2. RUN: Execute ONLY the test files that cover this production file
-   - Jest: npx jest [test_file] --no-coverage
-   - Vitest: npx vitest run [test_file]
-   - Pytest: pytest [test_file] -x
+2. RUN (two-tier strategy):
+   TIER 1 — Run mapped test files first (fast, targeted):
+   - Jest: npx jest [test_file_1] [test_file_2] --no-coverage
+   - Vitest: npx vitest run [test_file_1] [test_file_2]
+   - Pytest: pytest [test_file_1] [test_file_2] -x
    - Go: go test [package] -run [test_pattern]
+   
+   TIER 2 — If TIER 1 passes (mutation survived), run the FULL test suite:
+   - This catches integration tests, black-box tests, and indirect callers
+   - If full suite fails -> mutation KILLED (integration test caught it)
+   - If full suite passes -> mutation truly SURVIVED
+
+   --quick mode: skip TIER 2 (only mapped tests). Mark survivors as
+   "SURVIVED (mapped tests only)" with a warning that score may be optimistic.
+
 3. RECORD result:
-   - Test FAILED -> mutation KILLED (good: tests caught the change)
-   - Test PASSED -> mutation SURVIVED (bad: tests missed the change)
+   - Test FAILED (tier 1) -> mutation KILLED (good: direct test caught it)
+   - Test FAILED (tier 2) -> mutation KILLED-INDIRECT (good: integration test caught it)
+   - Test PASSED (both tiers) -> mutation SURVIVED (bad: no test caught it)
    - Test TIMEOUT (>per-file timeout) -> mutation TIMEOUT (counts as killed)
    - Test ERROR (crash/compile error) -> mutation KILLED (counts as killed)
-4. RESTORE: Restore the original production file immediately
-5. VERIFY: Confirm the original file is restored (diff check)
+4. RESTORE: Copy original from temp location back to production file
+5. VERIFY: Diff check to confirm restoration is clean
 ```
 
 **Error recovery:** If restoration fails for any reason:
-1. Try `git checkout -- [file]`
-2. Try `git stash pop`
+1. Copy from temp file: `cp /tmp/zuvo-mutation-[hash]-[filename] [file]`
+2. If temp file missing: `git checkout HEAD -- [file]` (safe: working dir was clean at start)
 3. If both fail, STOP execution and alert the user
 
 **Progress tracking:** After every 10 mutations, print a progress line:
