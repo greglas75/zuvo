@@ -10,10 +10,11 @@ description: >
 
 # zuvo:content-migration — CMS-to-SSG Content Parity Check & Fix
 
-Compare an old CMS page with its new SSG version. Find what's missing. Fix it.
+Compare an old CMS page with its new SSG version. Report parity gaps.
+Optionally apply safe additive fixes to the local markdown source.
 
-**When to use:** After migrating content from a CMS. When pages look different
-and you need to know exactly what was lost.
+**When to use:** After a CMS-to-SSG migration when you need to verify that
+headings, paragraphs, CTAs, images, tables, and forms were preserved.
 **One page pair per invocation.** For bulk comparison, run multiple times.
 
 **Out of scope:** SEO optimization (`zuvo:seo-audit`), content hygiene
@@ -139,11 +140,16 @@ container found. Using body with nav/header/footer stripped. Consider
 - **Tables**: row/column count, header text
 - **Forms**: field types, submit button text
 
+**SEO metadata** (compared separately, not part of parity score):
+- Title tag, meta description, canonical URL, og:image, H1 count
+- Report as separate block: show old vs new with change type (shortened, missing, changed)
+- Title shortened >50% or meta description missing = WARNING in report
+
 **CTA detection** — element is a CTA if:
 - `<button>` tag or `role="button"`
 - Class contains `btn` or `cta`
-- Text matches: `register|sign up|join|buy|start|get started|contact|book now|learn more|try free|subscribe|download|apply` (EN)
-  or: `zarejestruj|kup|kontakt|sprawdz|zobacz|rezerwuj|zapisz|pobierz|dowiedz|umow|dolacz` (PL)
+- Text matches (EN): `register|sign up|join|buy|start|get started|contact|book now|learn more|try free|subscribe|download|apply|pricing|demo|free trial|reserve|schedule|enroll|book a call`
+  or (PL): `zarejestruj|kup|kontakt|sprawdz|zobacz|rezerwuj|zapisz|pobierz|dowiedz|umow|dolacz|cennik|zamow|wyprobuj`
 
 ---
 
@@ -160,17 +166,39 @@ matching by meaning, not exact string equality. This naturally handles:
 
 For each element from the OLD page, determine:
 
-| Status | Meaning | Severity |
-|--------|---------|----------|
-| **MATCHED** | Found in new page (exact or semantic match) | — |
-| **PARTIAL** | Found but significantly shortened or changed | MEDIUM |
-| **MISSING** | Not found in new page | HIGH (headings, CTAs) / MEDIUM (paragraphs, images) |
-| **ADDED** | In new page but not old (informational only) | INFO |
+**Parity status** (what happened to this element):
+
+| Status | Meaning |
+|--------|---------|
+| **MATCHED** | Found in new page (exact or semantic match) |
+| **PARTIAL** | Found but significantly shortened or changed |
+| **MISSING** | Not found in new page |
+| **ADDED** | In new page but not old (informational only) |
+
+**Severity** (business impact, independent from status):
+
+| Element type | MISSING severity | PARTIAL severity |
+|-------------|-----------------|-----------------|
+| H1 | CRITICAL | HIGH |
+| CTA / tel: / mailto: | CRITICAL | HIGH |
+| H2-H6 headings | HIGH | MEDIUM |
+| Paragraphs | MEDIUM | MEDIUM |
+| Images | MEDIUM | LOW |
+| Lists, tables, forms | HIGH | MEDIUM |
+
+**PARTIAL detection** — element exists but is degraded:
+- Paragraph: 50-90% word overlap (existing rule)
+- Heading: new heading is <60% character length of old
+- Title tag: new is <50% character length of old
+- Meta description: new is <70% character length of old
+
+Prefer semantic equivalence, but do NOT mark as MATCHED when intent,
+structure, or informational value materially changed.
 
 ### Parity Score
 
 ```
-score = elements matched or partial / total elements in old page * 100
+score = (elements MATCHED + elements PARTIAL) / total elements in old page * 100
 ```
 
 | Grade | Score |
@@ -179,6 +207,15 @@ score = elements matched or partial / total elements in old page * 100
 | **B** | 75-89% |
 | **C** | 50-74% |
 | **D** | 0-49% |
+
+### Verdict
+
+| Verdict | Condition |
+|---------|-----------|
+| **PASS** | No CRITICAL/HIGH missing items AND parity >= 90% |
+| **PROVISIONAL** | Low-confidence source mapping OR old site partially loaded |
+| **FAIL** | Any CRITICAL missing item OR parity < 50% OR new page 404 |
+| **NEEDS_REVIEW** | Ambiguous source mapping OR ambiguous fix insertion points |
 
 ---
 
@@ -228,7 +265,8 @@ For each MISSING element:
    - Find the nearest heading in the .md file that matches a heading that
      PRECEDES the missing element in the old page
    - Insert after that heading's section (before next heading of same/higher level)
-   - If no anchor found → insert at end of file, flag `NEEDS_REVIEW`
+   - If no anchor found → do NOT auto-insert. Report as `NEEDS_REVIEW`
+     with suggested content. User must place it manually.
 
 2. **Convert to markdown:**
    - Headings → `## Title`
@@ -246,7 +284,12 @@ For each MISSING element:
 ### Post-fix
 
 1. Build verification if build command exists (exit 0 = PASS, else rollback)
-2. Adversarial review: `git diff --staged | adversarial-review --json --mode code`
+2. Adversarial review (MANDATORY):
+   `git add -u && git diff --staged | adversarial-review --json --mode code`
+   If not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+   - CRITICAL → undo fix, report as `NEEDS_REVIEW`
+   - WARNING (localized) → fix
+   - Unresolved → include in report, mark fix as PROVISIONAL
 3. If `--new` is localhost: wait 1s for HMR, re-extract, report delta
 
 ---
@@ -258,7 +301,7 @@ For each MISSING element:
 | Old site down | 2 Playwright attempts → `SITE_UNREACHABLE` |
 | JS-rendered content | Playwright handles. Degraded mode → warn |
 | Lazy-loaded content | Use `--scroll-to-bottom` and `--settle-ms 8000` |
-| Content intentionally removed | All gaps = MISSING. User reviews report. |
+| Content intentionally removed | Report as MISSING (not auto-classified as defect — final decision is user's). If `.content-migration-ignore.yml` exists in project root, exclude listed elements from findings. |
 | Layout redesign | Semantic comparison. Layout differences are irrelevant. |
 | Joomla query URLs | Accepted: `--old "site.com/index.php?option=com_content&id=42"` |
 | Images on different CDN | Match by alt text, not URL |
