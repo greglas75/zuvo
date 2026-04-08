@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Quick installer for zuvo plugin
+# One command to install or update zuvo — everywhere.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/greglas75/zuvo/main/scripts/quick-install.sh | bash
@@ -7,7 +7,7 @@
 # What it does:
 #   1. Clones/updates zuvo to ~/.zuvo-plugin
 #   2. Removes old claude-code-toolkit leftovers
-#   3. Installs zuvo to Claude Code / Codex / Cursor
+#   3. Installs to Claude Code (via marketplace) + Codex + Cursor + Antigravity
 #
 # Uninstall:
 #   rm -rf ~/.zuvo-plugin && claude plugin uninstall zuvo@zuvo-marketplace 2>/dev/null
@@ -16,7 +16,6 @@ set -euo pipefail
 
 ZUVO_DIR="$HOME/.zuvo-plugin"
 REPO="https://github.com/greglas75/zuvo.git"
-TARGET="all"
 
 echo ""
 echo "╔══════════════════════════════════════╗"
@@ -67,7 +66,6 @@ for base_dir in "$HOME/.cursor" "$HOME/.codex"; do
   done
 done
 
-# Claude Code plugin
 if command -v claude &>/dev/null; then
   claude plugin uninstall claude-code-toolkit 2>/dev/null && cleaned=$((cleaned + 1)) || true
 fi
@@ -75,9 +73,39 @@ fi
 [[ $cleaned -gt 0 ]] && echo "  Removed $cleaned old toolkit items" || echo "  No old toolkit found"
 echo ""
 
-# ─── Install to all available platforms ──────────────────────────
+# ─── Install to Codex / Cursor / Antigravity ────────────────────
 
 bash "$ZUVO_DIR/scripts/install.sh"
+
+# ─── Claude Code: marketplace install/update ─────────────────────
+
+echo ""
+if command -v claude &>/dev/null; then
+  echo "Syncing Claude Code plugin..."
+
+  # Ensure marketplace is registered
+  claude plugin marketplace add greglas75/zuvo-marketplace 2>/dev/null || true
+
+  # Update marketplace cache
+  claude plugin marketplace update zuvo-marketplace 2>/dev/null && \
+    echo "  ✓ Marketplace updated" || \
+    echo "  ! Marketplace update failed (offline?)"
+
+  # Install or update the plugin
+  if claude plugin update zuvo@zuvo-marketplace 2>/dev/null; then
+    echo "  ✓ Claude Code plugin updated to v${VERSION}"
+  else
+    # First install
+    claude plugin install zuvo 2>/dev/null && \
+      echo "  ✓ Claude Code plugin installed v${VERSION}" || \
+      echo "  ! Plugin install failed — try: claude plugin install zuvo"
+  fi
+else
+  echo "  ! claude CLI not found — Claude Code plugin not updated"
+  echo "    Install Claude Code, then run:"
+  echo "    claude plugin marketplace add greglas75/zuvo-marketplace"
+  echo "    claude plugin install zuvo"
+fi
 
 echo ""
 echo "╔══════════════════════════════════════╗"
@@ -86,11 +114,7 @@ echo "╠═══════════════════════�
 echo "║  Restart Claude / Codex / Cursor /   ║"
 echo "║  Antigravity to pick up changes.     ║"
 echo "║                                      ║"
-echo "║  Update later:                       ║"
-echo "║  cd ~/.zuvo-plugin && git pull \\     ║"
-echo "║    && ./scripts/install.sh           ║"
-echo "║                                      ║"
-echo "║  Or re-run this installer:           ║"
-echo "║  curl -fsSL <url> | bash             ║"
+echo "║  Update anytime:                     ║"
+echo "║  curl -fsSL <same-url> | bash        ║"
 echo "╚══════════════════════════════════════╝"
 echo ""

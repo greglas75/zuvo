@@ -234,3 +234,5 @@ Commits pending review. Auto-managed:
 - 6900846 (2026-04-08) add Antigravity build target
 - e5b9f81 (2026-04-08) docs: competitive analysis update — 70+ competitors, April 2026 ecosystem scan
 - dd8ebe4 (2026-04-08) docs: update all documentation to reflect v1.3.24 state
+- 0f03888 (2026-04-08) release: v1.3.25 — unify dev-push + release into one script, add Antigravity build target
+- df587e7 (2026-04-08) add benchmark scoring rubric v1.0 — standardized 14-dimension evaluation model
