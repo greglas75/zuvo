@@ -247,3 +247,5 @@ Commits pending review. Auto-managed:
 - fd5a2f5 (2026-04-08) docs: add quick-install curl command to README
 - 0838fd7 (2026-04-08) enforce adversarial review: fill 4 skill gaps, add pentest→review chain, add pre-push hook gate
 - 1efbdb1 (2026-04-08) docs: update review queue with adversarial enforcement commit
+- 3f63062 (2026-04-08) release: v1.3.29 — enforce adversarial review: 4 skill gaps filled, pentest→review chain, pre-push hook gate
+- eae8951 (2026-04-08) fix: install.sh now copies hooks/ directory to Claude Code cache
