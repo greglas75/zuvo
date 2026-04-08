@@ -329,8 +329,9 @@ Dispatch per environment:
 - The list of production files created or modified by the implementer
 - The list of test files created or modified by the implementer
 - `CODESIFT_AVAILABLE` and repo identifier
+- **The content of `shared/includes/quality-gates.md`** — the quality reviewer uses this as the canonical source for CQ1-CQ28 and Q1-Q19 gate definitions, critical gate lists, scoring thresholds, and evidence format. The orchestrator has already read this file (mandatory file loading). Pass its content to the agent.
 
-The quality reviewer runs CQ1-CQ28 on production code and Q1-Q19 on test code. It also checks file size limits. For complex tasks, it verifies the test contract was filled correctly (all branches listed, no implementation-derived expected values, all mutations have catching tests).
+The quality reviewer applies CQ1-CQ28 on production code and Q1-Q19 on test code from the provided quality-gates.md. It also checks file size limits. For complex tasks, it verifies the test contract was filled correctly (all branches listed, no implementation-derived expected values, all mutations have catching tests).
 
 ### Step 7: Handle Quality Reviewer Verdict
 

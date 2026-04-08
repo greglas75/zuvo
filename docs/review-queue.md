@@ -204,3 +204,5 @@ Commits pending review. Auto-managed:
 - 93380ff (2026-04-08) benchmark: full 4-round pipeline with file extraction
 - bafe9eb (2026-04-08) release: v1.3.20 — benchmark: full 4-round pipeline with file extraction and artifact persistence
 - a96eb94 (2026-04-08) fix benchmark.sh: replace all unsafe ls glob calls with nullglob-safe helpers
+- c3a8483 (2026-04-08) fix: safe glob helpers for pipefail compat
+- 8d50a39 (2026-04-08) fix: install benchmark.sh to Codex/Cursor, add script path resolution to SKILL.md
