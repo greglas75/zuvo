@@ -55,7 +55,7 @@ Usage: adversarial-review.sh [OPTIONS] [--diff REF] [--files "path"]
 Provider options:
   (default)        Multi: run ALL available providers
   --single         First-success: stop after first provider
-  --provider P     Force: codex-5.4, codex-5.3, cursor-agent, gemini, claude, gemini-api
+  --provider P     Force: codex-5.4, codex-5.3, cursor-agent, gemini, claude, gemini-api, codestral
 
 Review modes:
   --mode code      (default) General code review
@@ -83,6 +83,8 @@ Environment variables:
   ZUVO_GEMINI_MODEL        Gemini CLI model (default: gemini-3.1-pro-preview)
   ZUVO_GEMINI_API_MODEL    Gemini API model (default: gemini-3.1-pro-preview)
   GEMINI_API_KEY           Required for gemini-api provider
+  CODESTRAL_API_KEY        Required for codestral provider (auto-detected)
+  ZUVO_CODESTRAL_MODEL     Codestral model (default: codestral-latest)
   CLAUDE_MODEL             Used for opposite-model detection (claude provider)
 HELP
       exit 0
@@ -455,6 +457,9 @@ detect_providers() {
   # 4. claude — CLI with opposite model (10-30s)
   command -v claude &>/dev/null && providers="$providers claude"
 
+  # 5. codestral — API-based, auto-detect if CODESTRAL_API_KEY is set
+  [[ -n "${CODESTRAL_API_KEY:-}" ]] && providers="$providers codestral"
+
   # gemini-api available as --provider gemini-api if GEMINI_API_KEY is set
   # Not in auto-detect (gemini CLI is preferred)
 
@@ -486,6 +491,9 @@ Install one of these (in order of recommendation):
 
   4. Gemini API (free tier, 250 req/day):
      export GEMINI_API_KEY=<key from aistudio.google.com>
+
+  5. Codestral API (Mistral coding model):
+     export CODESTRAL_API_KEY=<key from console.mistral.ai>
 EOF
   exit 1
 fi
@@ -561,6 +569,37 @@ run_gemini() {
   printf '%s\n' "$result"
 }
 
+run_codestral() {
+  # Codestral API — Mistral's coding model, OpenAI-compatible chat endpoint
+  [[ -z "${CODESTRAL_API_KEY:-}" ]] && return 1
+
+  local model="${ZUVO_CODESTRAL_MODEL:-codestral-latest}"
+
+  # Build JSON payload via temp file (avoids ARG_MAX on large prompts)
+  local payload_file="$JSON_TMPDIR/codestral_payload.json"
+  printf '%s' "$REVIEW_PROMPT" | jq -Rs '{model: "'"$model"'", messages: [{role: "user", content: .}]}' > "$payload_file"
+
+  local err_file="$JSON_TMPDIR/err_codestral.txt"
+  local response
+  response=$(curl -sf --max-time "$PROVIDER_TIMEOUT" \
+    "https://codestral.mistral.ai/v1/chat/completions" \
+    -H "Authorization: Bearer $CODESTRAL_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d @"$payload_file" \
+    2>"$err_file") || { echo "  WARN: codestral failed (exit $?): $(head -1 "$err_file" 2>/dev/null)" >&2; return 1; }
+
+  # Log token usage to stderr
+  local input_tokens output_tokens
+  input_tokens=$(printf '%s' "$response" | jq -r '.usage.prompt_tokens // "?"')
+  output_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens // "?"')
+  echo "  Codestral tokens: ${input_tokens} in / ${output_tokens} out" >&2
+
+  local text
+  text=$(printf '%s' "$response" | jq -r '.choices[0].message.content // empty')
+  [[ -z "$text" ]] && return 1
+  printf '%s\n' "$text"
+}
+
 run_gemini_api() {
   # Gemini API — direct curl, 2-5s, no CLI overhead
   [[ -z "${GEMINI_API_KEY:-}" ]] && return 1
@@ -611,6 +650,7 @@ provider_model() {
     codex-5.3)    echo "gpt-5.3-codex" ;;
     gemini)       echo "${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}" ;;
     gemini-api)   echo "${ZUVO_GEMINI_API_MODEL:-gemini-3.1-pro-preview}" ;;
+    codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
     cursor-agent) echo "cursor" ;;
     claude)       [[ "${CLAUDE_MODEL:-}" == *opus* ]] && echo "claude-sonnet-4-6" || echo "claude-opus-4-6" ;;
     *)            echo "unknown" ;;
@@ -626,6 +666,7 @@ dispatch_provider() {
     gemini)        run_gemini ;;
     claude)        run_claude ;;
     gemini-api)    run_gemini_api ;;  # manual only: --provider gemini-api
+    codestral)     run_codestral ;;
     *) return 1 ;;
   esac
 }

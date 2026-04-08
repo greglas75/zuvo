@@ -1,18 +1,20 @@
 #!/bin/bash
-# Dev push: commit + push + sync marketplace SHA + update local installed_plugins.json
+# One command to rule them all: version bump + commit + push + tag + marketplace + install
+#
 # Usage:
-#   ./scripts/dev-push.sh "commit message"
-#   ./scripts/dev-push.sh                    # auto-message from last change
+#   ./scripts/dev-push.sh "description"           # patch bump (default)
+#   ./scripts/dev-push.sh "description" minor      # minor bump
+#   ./scripts/dev-push.sh                          # patch bump, auto-message
 #
-# What it does:
-#   1. Stages all changes and commits (if message provided)
-#   2. Pushes to origin main
-#   3. Updates marketplace SHA → pushes marketplace
-#   4. Updates local installed_plugins.json SHA (no reinstall needed!)
-#   5. Copies files to Claude Code cache
-#   6. Installs to Codex
+# What it does (in order):
+#   1. Bump version in package.json, plugin.json files, using-zuvo banner
+#   2. Stage all + commit
+#   3. Push to origin + tag
+#   4. Update marketplace SHA + push marketplace
+#   5. Update local installed_plugins.json SHA
+#   6. Install to Claude Code + Codex + Cursor + Antigravity
 #
-# After running: just restart Claude Code. No uninstall/install needed.
+# After running: just restart Claude Code.
 
 set -euo pipefail
 
@@ -21,49 +23,94 @@ MARKETPLACE_DIR="${ZUVO_DIR}/../zuvo-marketplace"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
+YELLOW='\033[0;33m'
 NC='\033[0m'
 ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
 fail() { echo -e "  ${RED}✗${NC} $1"; exit 1; }
+warn() { echo -e "  ${YELLOW}!${NC} $1"; }
 
-# --- Step 1: Commit if message provided ---
+# --- Args ---
 MSG="${1:-}"
-if [[ -n "$MSG" ]]; then
-  cd "$ZUVO_DIR"
-  git add -A
-  if git diff --cached --quiet 2>/dev/null; then
-    echo "  No changes to commit."
-  else
-    git commit -m "$MSG"
-    ok "Committed: $MSG"
-  fi
+BUMP="${2:-patch}"
+
+# Validate marketplace exists
+if [[ ! -d "$MARKETPLACE_DIR/.claude-plugin" ]]; then
+  fail "Marketplace repo not found at $MARKETPLACE_DIR"
 fi
 
-# --- Step 2: Push ---
+# ═══════════════════════════════════════
+# Step 1: Version bump
+# ═══════════════════════════════════════
 cd "$ZUVO_DIR"
+CURRENT_VERSION=$(grep '"version"' package.json | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
+IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+
+case "$BUMP" in
+  major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+  minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+  patch) PATCH=$((PATCH + 1)) ;;
+  *) echo "Usage: $0 \"message\" [patch|minor|major]"; exit 1 ;;
+esac
+
+NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+echo ""
+echo "══════════════════════════════════════"
+echo "  zuvo v${CURRENT_VERSION} → v${NEW_VERSION} (${BUMP})"
+echo "══════════════════════════════════════"
+echo ""
+
+# Update version in all files
+sed -i '' "s/\"version\": \"${CURRENT_VERSION}\"/\"version\": \"${NEW_VERSION}\"/" package.json
+sed -i '' "s/\"version\": \"${CURRENT_VERSION}\"/\"version\": \"${NEW_VERSION}\"/" .claude-plugin/plugin.json
+sed -i '' "s/\"version\": \"${CURRENT_VERSION}\"/\"version\": \"${NEW_VERSION}\"/" .codex-plugin/plugin.json
+# Update version banner in skill router
+sed -i '' "s/Zuvo v${CURRENT_VERSION}/Zuvo v${NEW_VERSION}/" skills/using-zuvo/SKILL.md 2>/dev/null || true
+ok "Version bumped: v${NEW_VERSION}"
+
+# ═══════════════════════════════════════
+# Step 2: Commit
+# ═══════════════════════════════════════
+if [[ -z "$MSG" ]]; then
+  MSG="release v${NEW_VERSION}"
+fi
+
+git add -A
+if git diff --cached --quiet 2>/dev/null; then
+  echo "  No changes to commit."
+else
+  git commit -m "release: v${NEW_VERSION} — ${MSG}"
+  ok "Committed: v${NEW_VERSION} — ${MSG}"
+fi
+
+# ═══════════════════════════════════════
+# Step 3: Push + tag
+# ═══════════════════════════════════════
 git push origin main 2>&1 | tail -1
-ok "Pushed to origin"
+git tag "v${NEW_VERSION}" 2>/dev/null || true
+git push --tags 2>/dev/null || true
 
 NEW_SHA=$(git rev-parse HEAD)
-echo "  SHA: ${NEW_SHA:0:7}"
+ok "Pushed + tagged v${NEW_VERSION} (${NEW_SHA:0:7})"
 
-# --- Step 3: Update marketplace ---
-if [[ -d "$MARKETPLACE_DIR/.claude-plugin" ]]; then
-  cd "$MARKETPLACE_DIR"
-  sed -i '' "s/\"sha\": \"[a-f0-9]*\"/\"sha\": \"${NEW_SHA}\"/" .claude-plugin/marketplace.json
-  git add -A
-  git commit -m "bump: zuvo (${NEW_SHA:0:7})" --quiet
-  git push --quiet
-  ok "Marketplace updated (${NEW_SHA:0:7})"
-else
-  fail "Marketplace not found at $MARKETPLACE_DIR"
-fi
+# ═══════════════════════════════════════
+# Step 4: Update marketplace
+# ═══════════════════════════════════════
+cd "$MARKETPLACE_DIR"
+git pull --rebase --quiet 2>/dev/null || true
+sed -i '' "s/\"sha\": \"[a-f0-9]*\"/\"sha\": \"${NEW_SHA}\"/" .claude-plugin/marketplace.json
+git add -A
+git commit -m "bump: zuvo v${NEW_VERSION} (${NEW_SHA:0:7})" --quiet
+git push --quiet
+ok "Marketplace updated → v${NEW_VERSION} (${NEW_SHA:0:7})"
 
-# --- Step 4: Update local installed_plugins.json SHA ---
+# ═══════════════════════════════════════
+# Step 5: Update local installed_plugins.json
+# ═══════════════════════════════════════
+cd "$ZUVO_DIR"
 PLUGINS_JSON="$HOME/.claude/plugins/installed_plugins.json"
 if [[ -f "$PLUGINS_JSON" ]]; then
-  # Update the SHA for zuvo@zuvo-marketplace
   python3 -c "
-import json, sys
+import json
 path = '$PLUGINS_JSON'
 sha = '$NEW_SHA'
 with open(path) as f:
@@ -74,20 +121,21 @@ for name, entries in data.get('plugins', {}).items():
             e['gitCommitSha'] = sha
 with open(path, 'w') as f:
     json.dump(data, f, indent=2)
-print('  ✓ installed_plugins.json SHA updated')
-" 2>/dev/null || echo "  ! Could not update installed_plugins.json"
+" 2>/dev/null && ok "installed_plugins.json SHA updated" || warn "Could not update installed_plugins.json"
 else
-  echo "  ! installed_plugins.json not found (plugin not installed?)"
+  warn "installed_plugins.json not found"
 fi
 
-# --- Step 5: Copy to Claude Code cache ---
-cd "$ZUVO_DIR"
-bash scripts/install.sh 2>&1 | grep -E "✓|✗|DONE"
+# ═══════════════════════════════════════
+# Step 6: Install to all platforms
+# ═══════════════════════════════════════
+bash scripts/install.sh 2>&1 | grep -E "✓|✗|DONE|======" | grep -v "^$"
 
 echo ""
 echo "══════════════════════════════════════"
-echo "  DEV PUSH COMPLETE"
+echo "  RELEASE COMPLETE"
 echo "══════════════════════════════════════"
-echo "  SHA:    ${NEW_SHA:0:7}"
-echo "  Action: restart Claude Code"
+echo "  Version: v${NEW_VERSION}"
+echo "  SHA:     ${NEW_SHA:0:7}"
+echo "  Action:  restart Claude Code"
 echo ""

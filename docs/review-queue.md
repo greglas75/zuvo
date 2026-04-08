@@ -231,3 +231,6 @@ Commits pending review. Auto-managed:
 - 23c8fe7 (2026-04-08) fix corpus prompts: use existing project rules (file-limits.md, cq-patterns.md) instead of hardcoded limits
 - 02286ea (2026-04-08) fix: raise adversarial input limit from 15K to 30K chars (code/test modes)
 - 7ec8fd2 (2026-04-08) feat: add Google Antigravity as 4th build target
+- 6900846 (2026-04-08) add Antigravity build target
+- e5b9f81 (2026-04-08) docs: competitive analysis update — 70+ competitors, April 2026 ecosystem scan
+- dd8ebe4 (2026-04-08) docs: update all documentation to reflect v1.3.24 state

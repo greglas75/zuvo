@@ -26,7 +26,8 @@ Read these files before starting:
 CORE FILES LOADED:
   1. ../../shared/includes/benchmark-corpus/task-code.md    -- READ/MISSING
   2. ../../shared/includes/benchmark-corpus/task-tests.md   -- READ/MISSING
-  3. ../../shared/includes/run-logger.md                    -- READ/MISSING
+  3. ../../shared/includes/benchmark-scoring-rubric.md      -- READ/MISSING
+  4. ../../shared/includes/run-logger.md                    -- READ/MISSING
 ```
 
 If any file is missing, stop.

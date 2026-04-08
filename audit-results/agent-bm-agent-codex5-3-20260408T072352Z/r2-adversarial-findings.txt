@@ -1,0 +1,298 @@
+CROSS-PROVIDER REVIEW
+  Input: 21251 chars
+  Review: code | Output: json | Dispatch: multi
+  Launching: codex-5.4...
+  Launching: codex-5.3...
+  Launching: gemini...
+  Launching: cursor-agent...
+  Launching: claude...
+  Done: codex-5.4
+  Done: codex-5.3
+  Done: gemini
+  Done: cursor-agent
+  Done: claude
+{
+  "mode": "code",
+  "providers_used": "codex-5.4, codex-5.3, gemini, cursor-agent, claude",
+  "provider_count": 5,
+  "input_size": 21251,
+  "date": "2026-04-08T07:33:18Z",
+  "results": {
+    "codex-5.4": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-OrderService.ts:204",
+          "issue": "Status transition checks are vulnerable to TOCTOU races in both `updateStatus` and `bulkUpdateStatus`",
+          "attack_vector": "Both methods validate the current status from a prior read, then issue an unconstrained `update`/`updateMany`. A concurrent request can change the row between those steps, so an order can be moved through an otherwise-illegal transition or overwritten after it was already cancelled/delivered.",
+          "fix": "Make the write conditional on the expected current status (or wrap read+write in a transaction with row locking) and verify the affected row count before reporting success."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-OrderService.ts:344",
+          "issue": "Cached orders are deserialized with `createdAt` as strings, but the service still returns them as `Order` objects with `Date` fields",
+          "attack_vector": "The first uncached call returns real `Date` instances, but subsequent cache hits return plain JSON values. Any downstream code that calls `createdAt.getTime()` or relies on `instanceof Date` will fail only on cache hits, producing inconsistent production-only behavior.",
+          "fix": "Rehydrate date fields after `JSON.parse` or cache a DTO type that explicitly uses strings instead of returning it as `Order`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-OrderService.ts:169",
+          "issue": "Mutation methods commit data before writing the audit log, so audit failures surface as request failures after the primary write already succeeded",
+          "attack_vector": "`create`, `deleteOrder`, `updateStatus`, and `bulkUpdateStatus` all mutate state, invalidate cache, then call `audit()`. If `auditLog.create` fails, the client sees an error and may retry, even though the order change was already persisted, causing duplicate creates or repeated side effects.",
+          "fix": "Move audit persistence into the same transaction as the mutation, or catch/log audit failures so they do not cause the main operation to be reported as failed."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-OrderService.ts:142",
+          "issue": "`totalAmount` is computed with JavaScript floating-point arithmetic for currency values",
+          "attack_vector": "Values like `0.1` and `0.2` cannot be represented exactly, so multi-line-item totals can be persisted with rounding drift. That corrupts invoices/revenue calculations and is hard to reconcile after the fact.",
+          "fix": "Use a decimal type or calculate/store money in integer minor units instead of summing `number` values."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-useSearchProducts.ts:160",
+          "issue": "Scheduled retries clear the loading flags before the retry fires, allowing overlapping requests and duplicate page appends",
+          "attack_vector": "On transient failures, the hook queues a retry but `finally` immediately sets `isLoading`/`isLoadingMore` to false. The UI can then trigger `loadMore()` or `retry()` again for the same page before the backoff retry runs, and successful responses will append the same page multiple times.",
+          "fix": "Keep a request-in-flight/retrying guard until retries are exhausted, or cancel/suppress duplicate requests for the same `{query,page}` before appending results."
+        }
+      ]
+    },
+    "codex-5.3": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-OrderService.ts",
+          "issue": "Mutations commit before audit logging, so auditLog failure turns successful writes into 500 errors.",
+          "attack_vector": "In create/delete/update/bulkUpdateStatus, DB changes are persisted, then `audit()` runs outside the transaction; if audit storage is degraded, clients see failure and may retry, creating duplicate or repeated side effects while original write already succeeded.",
+          "fix": "Wrap audit write into the same transaction where business mutation happens, or catch/log audit failures so they do not fail the request after commit."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-OrderService.ts",
+          "issue": "Status transition validation is non-atomic (check-then-write race) in `updateStatus` and `bulkUpdateStatus`.",
+          "attack_vector": "Two concurrent requests can both pass transition checks based on stale status and then overwrite each other, producing illegal state jumps (e.g., `cancelled -> delivered`) because update queries do not constrain current status.",
+          "fix": "Enforce transition in the write condition (`where` includes expected current status) and verify affected row count; otherwise fail with conflict/bad transition."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-OrderService.ts",
+          "issue": "Money is computed with floating-point `number`, causing precision drift in `totalAmount` and revenue aggregation.",
+          "attack_vector": "Prices like 0.1/0.2 accumulate binary rounding errors, leading to incorrect totals persisted to DB and inconsistent financial reporting.",
+          "fix": "Use fixed-precision decimal math (DB Decimal type or integer minor units) for unitPrice/totalAmount calculations."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-OrderService.ts",
+          "issue": "`dateRange` is not validated (`from/to` validity and ordering), yet used in query and cache key serialization.",
+          "attack_vector": "Invalid `Date` objects can throw on `toISOString()` in cache-key generation or produce invalid DB filters; reversed ranges silently return wrong data.",
+          "fix": "Validate `dateRange.from` and `dateRange.to` are valid Dates and enforce `from <= to` before building filters/cache keys."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-OrderService.ts",
+          "issue": "Cache invalidation fallback uses Redis `KEYS` pattern scan, which is blocking and unsafe at scale.",
+          "attack_vector": "Under high key cardinality, `keys(prefix*)` can stall Redis, causing latency spikes/timeouts during writes that call invalidation.",
+          "fix": "Remove `KEYS` fallback and use cursor-based `SCAN` deletion (`scanDel`/prefix index) only."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-useSearchProducts.ts",
+          "issue": "`take` is not bounded or validated in the hook before building query params.",
+          "attack_vector": "`take <= 0` yields negative/zero `skip` and unstable pagination; very large `take` can trigger oversized backend queries and client memory growth.",
+          "fix": "Clamp `take` to a sane positive integer range (e.g., 1..100) before request construction."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-useSearchProducts.ts",
+          "issue": "Retry attempts can abort an unrelated in-flight request because all fetches share one global `abortRef`.",
+          "attack_vector": "A delayed retry timer calls `doFetch`, which immediately aborts `abortRef.current`; if a newer request is active, it gets canceled, causing intermittent stuck/loading behavior under failures.",
+          "fix": "Associate retries with a request token and abort only that token’s controller, or skip retry execution when it is not the latest active request."
+        }
+      ]
+    },
+    "gemini": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-OrderService.ts",
+          "issue": "Audit logs are silently lost on cache invalidation failures",
+          "attack_vector": "If Redis connection drops during create/update/delete operations, the database transaction commits but the cache invalidation throws, completely bypassing the subsequent `this.audit()` call and corrupting the system's audit trail.",
+          "fix": "Pass the transaction context `tx` to the `audit` method and execute `tx.auditLog.create` inside the transaction block."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-OrderService.ts",
+          "issue": "OOM vulnerability in monthly revenue calculation",
+          "attack_vector": "The `calculateMonthlyRevenue` method uses `findMany` to load every order for a month into Node.js memory just to compute a sum. Attackers or large organizations can trigger Out Of Memory crashes by querying heavy months.",
+          "fix": "Use DB-level aggregation via `prisma.order.groupBy({ by: ['currency'], _sum: { totalAmount: true } })` instead of fetching raw rows."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-useSearchProducts.ts",
+          "issue": "Loading state incorrectly resets during retry backoff period",
+          "attack_vector": "In `doFetch`, early-returning inside the `catch` block on retry still triggers the `finally` block, resetting `isLoading` to `false` during the backoff timer. Users can click 'Load More' repeatedly, causing duplicate simultaneous requests and UI glitching.",
+          "fix": "Set a flag (e.g., `let isRetrying = false`) inside the catch block and only call `setIsLoading(false)` in finally if `!isRetrying`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-OrderService.ts",
+          "issue": "Cache connection errors cause complete API outages",
+          "attack_vector": "The `getCache` method does not catch exceptions from `redisService.get`. If the cache server is down or unreachable, the unhandled promise rejection fails the entire `findAll` request instead of gracefully falling back to the database.",
+          "fix": "Wrap `redisService.get` and `redisService.set` in try/catch blocks and return `null` on error to ensure DB fallback."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-OrderService.ts",
+          "issue": "Unhandled TypeError 500s on malicious DTO types",
+          "attack_vector": "In `validateCreateDto`, calling `.trim()` on properties like `customerId` assumes they are strings. Sending `{ \"customerId\": 123 }` bypasses object validation and throws `TypeError: dto.customerId.trim is not a function`, resulting in an unhandled 500 error instead of a 400 Bad Request.",
+          "fix": "Add explicit `typeof dto.customerId !== 'string'` checks before invoking `.trim()`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-OrderService.ts",
+          "issue": "TOCTOU race condition in bulk status update",
+          "attack_vector": "The `bulkUpdateStatus` method checks allowed transitions in memory via `findMany` and then issues an `updateMany`. Concurrent transactions can change an order's status between these two queries, bypassing state machine constraints (e.g., marking a cancelled order as shipped).",
+          "fix": "Include the valid from-statuses in the update condition directly: `where: { id: { in: validIds }, status: { in: allowedFromStatuses } }`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-OrderService.ts",
+          "issue": "Memory bomb on export limit validation",
+          "attack_vector": "The `getOrdersForExport` method loads up to 10,001 rows with deeply nested includes (lineItems, customer, payments) into memory just to check if the result exceeds the size limit, risking severe garbage collection stalls and OOM.",
+          "fix": "Execute a lightweight `prisma.order.count(where)` check before performing the heavy `findMany` with includes."
+        }
+      ]
+    },
+    "cursor-agent": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-useSearchProducts.ts",
+          "issue": "Stale/aborted fetch `finally` always clears `isLoading`/`isLoadingMore`, racing with a newer in-flight request and leaving the UI not loading while fetch continues.",
+          "attack_vector": "Rapid query changes or abort/retry sequences: an older request’s `finally` runs after a newer `doFetch` set loading true, so loading flags flip false mid-flight; users see stale results or interact as if idle.",
+          "fix": "Track a monotonic request id (or compare `abortRef.current === controller`) and only run loading resets in `finally`/`catch` when the call is still the active request."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-OrderService.ts",
+          "issue": "`findAll` caches `Order[]` via `JSON.stringify`/`JSON.parse`, so `createdAt` (and any other dates) become strings, violating the `Order` type and breaking date-based logic.",
+          "attack_vector": "Second and later list responses for a cache hit return orders with string timestamps; sorting, formatting, or downstream code expecting `Date` misbehaves intermittently by cache.",
+          "fix": "Do not cache ORM rows as raw JSON without reviving dates (e.g. custom serializer), or cache only IDs and refetch, or disable list caching for this path."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-OrderService.ts",
+          "issue": "`create` commits the transaction then runs `audit`; if `audit` throws, the client likely gets an error while the order already exists.",
+          "attack_vector": "Client retries on 5xx and creates duplicate orders, or assumes failure when the order was actually persisted; audit trail missing for successful creates under audit failure.",
+          "fix": "Include audit in the same DB transaction as the create, or treat audit as best-effort with a durable outbox/retry and idempotent create semantics."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-OrderService.ts",
+          "issue": "`bulkUpdateStatus` reads allowed transitions then `updateMany` without locking/atomic guard, so concurrent status changes can violate the transition rules.",
+          "attack_vector": "Two overlapping bulk or single updates: an order’s status changes between the read and `updateMany`, applying `newStatus` from an invalid prior state.",
+          "fix": "Use a conditional update (e.g. `updateMany` with `where` including current `status IN (...)`) or a single SQL `UPDATE ... WHERE` with transition predicates/row locks."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-OrderService.ts",
+          "issue": "`invalidateOrderCache` becomes a no-op if Redis lacks `deleteByPrefix`, `scanDel`, and `keys`+`del`, leaving list cache stale after mutations.",
+          "attack_vector": "Deployments with a minimal Redis client or misconfigured adapter never invalidate `findAll` keys; users see outdated orders until TTL (120s) despite updates/deletes.",
+          "fix": "Require a supported delete API for this service, or fall back to versioning/timestamp in keys and bump on writes, or disable caching when invalidation cannot run."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T072352Z/r1-OrderService.ts",
+          "issue": "`validateCreateDto` only validates currency when `paymentGateway.validateCurrency` exists; if omitted, any string passes.",
+          "attack_vector": "Misconfigured module wiring skips currency validation, accepting unsupported or malformed currency codes into persisted orders.",
+          "fix": "Default to strict validation (e.g. ISO-4217 allowlist) when the gateway hook is absent, or fail fast if `validateCurrency` is not provided in production."
+        }
+      ]
+    },
+    "claude": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "r1-OrderService.ts:updateStatus",
+          "issue": "TOCTOU race: findById reads status, checks transition, then update runs as a separate query — concurrent requests can both pass the guard and produce invalid state transitions",
+          "attack_vector": "Two concurrent requests to transition order from 'confirmed': one to 'processing', one to 'cancelled'. Both read status='confirmed', both pass isTransitionAllowed, both succeed. Order ends up in whichever write lands last, with no conflict detection. In high-traffic orgs, status can skip states (confirmed→shipped) or fork (two conflicting updates both succeed).",
+          "fix": "Wrap the read + transition check + update in a single $transaction with a SELECT ... FOR UPDATE (or use Prisma's optimistic concurrency via a version field). Alternatively, add the current status as a WHERE condition on the update and check the affected row count."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r1-useSearchProducts.ts:doFetch finally block",
+          "issue": "finally block unconditionally clears isLoading/isLoadingMore even when a retry is pending, causing a flash of 'idle with no results' between retry attempts",
+          "attack_vector": "Fetch attempt 1 fails (e.g. 503). Code schedules retry with 300ms backoff and returns. finally runs immediately, setting isLoading=false. For 300ms the UI shows: no spinner, no error, no products. User sees a blank state and may navigate away or trigger another action. On flaky networks this repeats on every retry attempt.",
+          "fix": "Return before the finally block when scheduling a retry (extract the retry branch above try/catch), or track a 'retrying' flag and skip the finally reset when retries are pending."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r1-OrderService.ts:getCache/setCache",
+          "issue": "JSON round-trip destroys Date objects — cached Order.createdAt becomes a string, breaking consumers that call Date methods on it",
+          "attack_vector": "First call to findAll hits DB, returns orders with Date createdAt, caches them via JSON.stringify. Second call within 120s TTL gets the cached value via JSON.parse — createdAt is now a string like '2026-04-01T00:00:00.000Z'. Any downstream code calling .getTime(), .toISOString(), or comparing with < > against Date objects gets wrong results or throws TypeError. Bug is invisible in testing because tests rarely hit cache.",
+          "fix": "Add a reviver to JSON.parse that reconstitutes ISO date strings to Date objects, or store/return plain DTOs with string dates consistently (and update the Order interface accordingly)."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r1-OrderService.ts:create totalAmount calculation",
+          "issue": "Floating-point arithmetic on monetary values — quantity * unitPrice accumulates IEEE 754 rounding errors in totalAmount",
+          "attack_vector": "Line items with prices like 19.99 * 3 = 59.970000000000006. Accumulated across multiple items, the error grows. totalAmount stored in DB differs from what individual line items sum to. Reconciliation reports, invoices, and payment gateway charges disagree. In currencies with strict cent-level precision (USD, EUR), this produces off-by-one-cent errors that compound across orders.",
+          "fix": "Either store prices as integer cents (1999 not 19.99) and do integer arithmetic, or round the final totalAmount: Math.round(totalAmount * 100) / 100. Apply the same fix in calculateMonthlyRevenue's accumulator."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r1-OrderService.ts:validateCreateDto + create",
+          "issue": "Currency validated before toUpperCase normalization — paymentGateway.validateCurrency receives 'usd' but DB stores 'USD', causing valid currencies to be rejected or invalid ones to pass",
+          "attack_vector": "If paymentGateway.validateCurrency is case-sensitive (common for ISO 4217 validators), passing 'usd' fails validation even though the stored value 'USD' is correct. Conversely, if the validator is case-insensitive but has a mapping table, the lowercased input may not match, rejecting legitimate orders from frontends that send lowercase currency codes.",
+          "fix": "Normalize currency before validation: const normalizedCurrency = dto.currency.trim().toUpperCase(); then validate and store the normalized value."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r1-OrderService.ts:calculateMonthlyRevenue",
+          "issue": "Loads ALL non-cancelled orders for an entire month into Node.js memory for aggregation that should be a database GROUP BY",
+          "attack_vector": "A high-volume org with 500K orders/month loads ~500K rows into memory. Each Order object ~500 bytes → ~250MB heap spike per call. Multiple concurrent calls (dashboard refresh, API polling) compound this. Leads to OOM crashes or GC pauses that cascade into request timeouts.",
+          "fix": "Use a raw SQL or Prisma groupBy query: prisma.order.groupBy({ by: ['currency'], _sum: { totalAmount: true }, where: { ... } }). Returns one row per currency instead of all orders."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r1-useSearchProducts.ts:query change effect cleanup",
+          "issue": "Effect cleanup only clears the debounce timer, not retry timers — a pending retry from a stale query can fire between effect teardown and setup, aborting the new query's in-flight fetch",
+          "attack_vector": "User types 'shoe', fetch fails, 600ms retry scheduled. User types 'shoes' 200ms later. Effect cleanup clears debounce but not the retry timer. New effect sets up debounce for 'shoes'. 400ms later the stale retry fires, calls abortRef.current?.abort() — killing the 'shoes' fetch — then starts a fetch for 'shoe' which is discarded (queryRef mismatch). The 'shoes' fetch was aborted and never retried. User sees: loading clears, no results, no error. Dead state until next keystroke.",
+          "fix": "Move clearRetryTimers() into the effect cleanup return function alongside the debounce clearTimeout, so stale retries are cancelled synchronously on unmount/re-run."
+        }
+      ]
+    }
+  }
+}
