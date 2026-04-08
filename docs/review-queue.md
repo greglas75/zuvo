@@ -222,3 +222,4 @@ Commits pending review. Auto-managed:
 - 7e4ced6 (2026-04-08) fix: --files space-separated paths in adversarial-review.sh and benchmark.sh
 - 77913ee (2026-04-08) release: v1.3.22 — fix: --files space-separated paths in adversarial-review.sh, agent name in benchmark folder
 - 89b42af (2026-04-08) add quick-install.sh — one-line installer for Cursor/Codex/Claude Code
+- 3b02ff1 (2026-04-08) cleanup: remove old benchmark audit-results, add new haiku run, update docs

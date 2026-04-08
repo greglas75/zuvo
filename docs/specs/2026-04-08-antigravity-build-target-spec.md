@@ -60,9 +60,9 @@ The Codex build (700+ lines) adds complexity for TOML generation, GPT model mapp
 
 ### DD6: Semantic triggering -- keep using-zuvo as index
 
-**Chosen:** Copy `using-zuvo` skill to Antigravity build. Optimize skill `description` fields for semantic activation (action verbs, domain keywords, max 200 chars). Do not remove the router -- it serves as a discovery/index skill.
+**Chosen:** Copy `using-zuvo` skill to Antigravity build as-is. Descriptions are copied without modification in this spec. The `using-zuvo` router stays as a discovery/index skill.
 
-**Why:** Antigravity uses the `description` field as a semantic trigger for auto-skill-selection. Zuvo's current descriptions are written for marketplace readability, not LLM activation. Rewriting descriptions in the build script is a low-cost optimization. The `using-zuvo` router stays as an index because users may ask "what zuvo skills are available" -- the router answers that.
+**Why:** Antigravity uses the `description` field as a semantic trigger for auto-skill-selection (max 200 chars). However, optimizing descriptions for better semantic activation is a non-trivial content task that requires testing against Antigravity's actual triggering behavior. It is explicitly deferred to a follow-up task (see Out of Scope). The `using-zuvo` router stays because users may ask "what zuvo skills are available" -- the router answers that.
 
 ### DD7: Config file references -- CLAUDE.md to GEMINI.md
 
@@ -142,33 +142,33 @@ This function has no equivalent in `build-cursor-skills.sh` (Cursor keeps Claude
 
 ```
 CLAUDE.md       -> GEMINI.md
-.claude/        -> .gemini/          (in path references only)
-Claude Code     -> Antigravity       (in platform name context only)
+.claude/        -> .gemini/          (in path references only, handled by replace_paths())
+Claude Code     -> Antigravity       (in platform name context, SKILL.md body only)
 ```
+
+**CRITICAL SCOPE RESTRICTION:** The `Claude Code -> Antigravity` substitution MUST be scoped to SKILL.md body text only. It MUST NOT run on shared includes (`shared/includes/*.md`) or rules (`rules/*.md`), because those files describe ALL platforms in comparison tables. For example, `env-compat.md` has 12 "Claude Code" column headers and references that must remain intact. Running a global sed on shared files would produce broken tables like "Antigravity | Codex | Cursor | Antigravity".
 
 Example sed patterns:
 
 ```bash
-# Config file references
+# Config file references (safe to run globally)
 sed -i '' 's/CLAUDE\.md/GEMINI.md/g' "$file"
 
-# Path references (careful: only in prose, not in relative ../../ paths)
-sed -i '' 's|~/\.claude/|~/.gemini/antigravity/|g' "$file"
-
-# Platform name in prose (context-sensitive -- only standalone mentions)
-# Match "Claude Code" but NOT "Claude Sonnet" or "Claude Opus"
-sed -i '' 's/Claude Code/Antigravity/g' "$file"
+# Platform name — ONLY in skills, NOT shared includes
+if [[ "$file" == *"/skills/"* && "$file" != *"/shared/"* ]]; then
+  sed -i '' 's/Claude Code/Antigravity/g' "$file"
+fi
 ```
 
-The `Claude Code -> Antigravity` substitution targets only the platform name ("Claude Code"), never the model provider name ("Claude"). Model names like "Claude Sonnet 4.6" are handled by `replace_model_refs()` instead.
+The substitution targets only the platform name ("Claude Code"), never the model provider name ("Claude"). Model names like "Claude Sonnet 4.6" are handled by `replace_model_refs()` instead.
 
 #### `strip_tool_names()`
 
-Remove or replace references to Claude Code-specific tools:
-- `ToolSearch(...)` -> removed (MCP discovery not available in same form)
-- `AskUserQuestion` -> removed (non-interactive)
-- `EnterPlanMode` / `ExitPlanMode` -> removed
-- `TaskCreate` / `TaskUpdate` -> replaced with inline `STEP:` progress
+Replace references to Claude Code-specific tools with Antigravity-appropriate prose (following Cursor build pattern of replacing with meaningful text, not deleting):
+- `ToolSearch(...)` -> replace with "Check if MCP tools are available in this environment" (matches Cursor build lines 81-86)
+- `AskUserQuestion(...)` -> replace with `[AUTO-DECISION: proceed with safest default]` (preserves decision-point context per DD4)
+- `EnterPlanMode` / `ExitPlanMode` -> removed (no equivalent concept)
+- `TaskCreate` / `TaskUpdate` -> replaced with inline `STEP:` progress reporting text
 
 #### `adapt_agent_for_antigravity()` -- analogous to Cursor's `adapt_agent_for_cursor()`
 
@@ -214,7 +214,9 @@ Targets:
 - `EnterPlanMode`, `ExitPlanMode`, `AskUserQuestion`, `ToolSearch`
 - `CLAUDE_PLUGIN_ROOT`, `~/.claude/`
 - `model: sonnet`, `model: haiku`, `model: opus` (in YAML frontmatter context)
+- `model: "sonnet"`, `model: "haiku"`, `model: "opus"` (quoted form in task dispatch syntax)
 - `{plugin_root}` (unresolved placeholder)
+- `Claude Code` (in skill body text only -- shared includes are exempt from this check)
 - Prose model tier names: standalone "Sonnet", "Opus", "Haiku" in model dispatch context (not inside "Claude Sonnet" provider names)
 
 Pattern: `grep -r` across `dist/antigravity/skills/` and `dist/antigravity/shared/`.
@@ -288,7 +290,7 @@ Add Antigravity to non-interactive environment lists where Codex and Cursor are 
 
 #### EC1: Dead symlinks at install target
 
-The install function must handle existing symlinks at `~/.gemini/antigravity/skills/<name>`. Use `rm -f` before copy to remove symlinks, then copy real directories. Do not use `cp -r` over a symlink (it follows the link).
+The install function must handle existing symlinks in `~/.gemini/antigravity/skills/`, `~/.gemini/antigravity/shared/`, and `~/.gemini/antigravity/rules/` (the user's current install has a `rules/claude-rules` symlink). Use `rm -rf` on the target directories before copying to remove symlinks and stale content. Do not use `cp -r` over a symlink (it follows the link and may corrupt the source). Clean all three target directories, not just `skills/`.
 
 #### EC2: CodeSift unavailable
 
@@ -304,7 +306,7 @@ Skills `ship` and `deploy` must include Antigravity in the non-interactive push-
 
 #### EC5: Overlay priority
 
-If `skills/<name>/antigravity/SKILL.antigravity.md` exists, copy it verbatim instead of auto-transforming. Same pattern as Codex/Cursor overlays.
+If `skills/<name>/antigravity/SKILL.antigravity.md` exists, copy it verbatim instead of auto-transforming. Same pattern as Codex/Cursor overlays. Overlay files are hand-crafted for the target platform, so they are **exempt from validate_output()** checks -- they are expected to already have correct paths, model names, and tool references. The validation pass should skip files that came from overlays (track which files were overlayed during the build).
 
 ## Acceptance Criteria
 

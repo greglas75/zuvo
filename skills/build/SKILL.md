@@ -48,9 +48,11 @@ Before starting work, read each file below. Print the checklist with status.
 
 ```
 CORE FILES LOADED:
-  1. ../../rules/cq-patterns.md           -- READ/MISSING
-  2. ../../rules/file-limits.md            -- READ/MISSING
-  3. ../../shared/includes/run-logger.md   -- READ/MISSING
+  1. ../../rules/cq-patterns.md               -- READ/MISSING
+  2. ../../rules/file-limits.md                -- READ/MISSING
+  3. ../../shared/includes/run-logger.md       -- READ/MISSING
+  4. ../../shared/includes/knowledge-prime.md  -- READ/MISSING
+  5. ../../shared/includes/knowledge-curate.md -- READ/MISSING
 ```
 
 
@@ -130,6 +132,12 @@ BUILD TIER: STANDARD (3 files, 1 risk signal: shared utility)
 2. Detect the tech stack from config files (`package.json`, `tsconfig.json`, `pyproject.toml`, etc.)
 3. If the stack triggers a conditional rule file (TypeScript, React, NestJS, Python), read it from `../../rules/`
 4. Read `memory/backlog.md` if it exists — check for open items related to the feature area
+5. **Knowledge Prime:** Run the knowledge prime protocol from `knowledge-prime.md`:
+   ```
+   WORK_TYPE = "implementation"
+   WORK_KEYWORDS = <3-5 keywords from the user's request>
+   WORK_FILES = <files that will be touched, if known from step 1-4>
+   ```
 
 Output:
 ```
@@ -554,7 +562,17 @@ git tag build-[YYYY-MM-DD]-[short-slug]
 
 Do not push. Pushing is a separate user decision.
 
-### 4.6 Output
+### 4.6 Knowledge Curation
+
+After all work is done (code written, tests passing, CQ/Q scored), run the knowledge curation protocol from `knowledge-curate.md`:
+
+```
+WORK_TYPE = "implementation"
+CALLER = "zuvo:build"
+REFERENCE = <git SHA of the commit>
+```
+
+### 4.7 Output
 
 ```
 BUILD COMPLETE

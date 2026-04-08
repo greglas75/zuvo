@@ -25,11 +25,13 @@ Print the checklist:
 
 ```
 CORE FILES LOADED:
-  1. codesift-setup.md   -- [READ | MISSING -> STOP]
-  2. env-compat.md       -- [READ | MISSING -> STOP]
-  3. quality-gates.md    -- [READ | MISSING -> STOP]
-  4. cq-patterns.md      -- [READ | MISSING -> STOP]
-  5. run-logger.md       -- [READ | MISSING -> STOP]
+  1. codesift-setup.md     -- [READ | MISSING -> STOP]
+  2. env-compat.md         -- [READ | MISSING -> STOP]
+  3. quality-gates.md      -- [READ | MISSING -> STOP]
+  4. cq-patterns.md        -- [READ | MISSING -> STOP]
+  5. run-logger.md         -- [READ | MISSING -> STOP]
+  6. knowledge-prime.md    -- [READ | MISSING -> degraded]
+  7. knowledge-curate.md   -- [READ | MISSING -> degraded]
 ```
 
 If any file is missing, STOP. Do not proceed from memory.
