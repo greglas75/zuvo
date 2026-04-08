@@ -767,11 +767,13 @@ After the internal adversarial agent completes, **run** a cross-provider review 
 
 **Execution:**
 
-Run `../../scripts/adversarial-review.sh` on the reviewed diff. Use default multi mode (all available providers in parallel):
+Run adversarial-review on the reviewed diff. Use default multi mode (all available providers in parallel):
 
+```bash
+git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review --json --mode code
 ```
-git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review.sh --json --mode code
-```
+
+If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
 
 The script auto-detects all available providers and runs them in parallel. If a provider fails or times out, results from the others are still used.
 

@@ -8,7 +8,7 @@ The same model family shares systematic blind spots. Code written by Claude and 
 
 ## How It Works
 
-The script `scripts/adversarial-review.sh` auto-detects the best available provider and runs a hostile review:
+The script `adversarial-review` auto-detects the best available provider and runs a hostile review:
 
 1. **Gemini CLI** (free, recommended) — different model family, zero cost
 2. **Codex CLI** (OpenAI) — GPT-based, needs ChatGPT subscription or API key
@@ -32,10 +32,17 @@ The script outputs structured findings with severity, file:line, and suggested f
 ### Step 1: Check availability
 
 ```bash
-SCRIPT_PATH="${PLUGIN_ROOT}/scripts/adversarial-review.sh"
-CROSS_REVIEW_AVAILABLE=false
-if [[ -x "$SCRIPT_PATH" ]]; then
-  CROSS_REVIEW_AVAILABLE=true
+# Check if adversarial-review is in PATH, otherwise try known locations
+if command -v adversarial-review &>/dev/null; then
+  AR_CMD="adversarial-review"
+elif [[ -x "$HOME/.claude/plugins/cache/zuvo-marketplace/zuvo/$(ls $HOME/.claude/plugins/cache/zuvo-marketplace/zuvo/ 2>/dev/null | tail -1)/scripts/adversarial-review.sh" ]]; then
+  AR_CMD="$HOME/.claude/plugins/cache/zuvo-marketplace/zuvo/$(ls $HOME/.claude/plugins/cache/zuvo-marketplace/zuvo/ | tail -1)/scripts/adversarial-review.sh"
+elif [[ -x "$HOME/.cursor/scripts/adversarial-review.sh" ]]; then
+  AR_CMD="$HOME/.cursor/scripts/adversarial-review.sh"
+elif [[ -x "$HOME/.codex/scripts/adversarial-review.sh" ]]; then
+  AR_CMD="$HOME/.codex/scripts/adversarial-review.sh"
+else
+  CROSS_REVIEW_AVAILABLE=false
 fi
 ```
 
@@ -43,16 +50,16 @@ fi
 
 ```bash
 # Option A: Pipe a diff
-git diff HEAD~1 | "$SCRIPT_PATH" > /tmp/cross-review.md
+git diff HEAD~1 | "$AR_CMD" > /tmp/cross-review.md
 
 # Option B: Specify diff ref
-"$SCRIPT_PATH" --diff HEAD~3 > /tmp/cross-review.md
+"$AR_CMD" --diff HEAD~3 > /tmp/cross-review.md
 
 # Option C: Specify files
-"$SCRIPT_PATH" --files "src/auth.ts src/user.ts" > /tmp/cross-review.md
+"$AR_CMD" --files "src/auth.ts src/user.ts" > /tmp/cross-review.md
 
 # Option D: Force a provider
-"$SCRIPT_PATH" --provider gemini --diff HEAD~1 > /tmp/cross-review.md
+"$AR_CMD" --provider gemini --diff HEAD~1 > /tmp/cross-review.md
 ```
 
 ### Step 3: Parse results

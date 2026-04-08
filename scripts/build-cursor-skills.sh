@@ -49,7 +49,9 @@ replace_paths() {
     -e 's|{plugin_root}/rules/|~/.cursor/rules/|g' \
     -e 's|{plugin_root}/skills/|~/.cursor/skills/|g' \
     -e 's|{plugin_root}|~/.cursor|g' \
-    -e 's|CLAUDE_PLUGIN_ROOT|CURSOR_HOME|g'
+    -e 's|CLAUDE_PLUGIN_ROOT|CURSOR_HOME|g' \
+    -e 's|~/.claude/plugins/cache/zuvo-marketplace/zuvo/\*/scripts/adversarial-review\.sh|~/.cursor/scripts/adversarial-review.sh|g' \
+    -e 's|../../scripts/adversarial-review\.sh|~/.cursor/scripts/adversarial-review.sh|g'
 }
 
 # --- Strip Claude Code Tool Names ---

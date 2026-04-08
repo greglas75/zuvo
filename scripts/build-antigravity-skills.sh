@@ -49,8 +49,10 @@ replace_paths() {
     -e 's|{plugin_root}/skills/|~/.gemini/antigravity/skills/|g' \
     -e 's|{plugin_root}|~/.gemini/antigravity|g' \
     -e 's|CLAUDE_PLUGIN_ROOT|GEMINI_HOME|g' \
+    -e 's|~/\.claude/plugins/cache/zuvo-marketplace/zuvo/[^/]*/scripts/adversarial-review\.sh|~/.gemini/antigravity/scripts/adversarial-review.sh|g' \
     -e 's|~/\.claude/plugins/cache/zuvo-marketplace/zuvo/[^/]*/|~/.gemini/antigravity/|g' \
-    -e 's|~/\.claude/|~/.gemini/antigravity/|g'
+    -e 's|~/\.claude/|~/.gemini/antigravity/|g' \
+    -e 's|../../scripts/adversarial-review\.sh|~/.gemini/antigravity/scripts/adversarial-review.sh|g'
 }
 
 # --- Model Replacement (Antigravity — Gemini tiers) ---

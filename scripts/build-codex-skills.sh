@@ -48,12 +48,14 @@ replace_paths() {
   sed \
     -e 's|~/.claude/skills/|~/.codex/skills/|g' \
     -e 's|~/.claude/rules/|~/.codex/rules/|g' \
+    -e 's|~/.claude/plugins/cache/zuvo-marketplace/zuvo/\*/scripts/adversarial-review\.sh|~/.codex/scripts/adversarial-review.sh|g' \
     -e 's|~/.claude/|~/.codex/|g' \
     -e 's|{plugin_root}/shared/|~/.codex/shared/|g' \
     -e 's|{plugin_root}/rules/|~/.codex/rules/|g' \
     -e 's|{plugin_root}/skills/|~/.codex/skills/|g' \
     -e 's|{plugin_root}|~/.codex|g' \
-    -e 's|CLAUDE_PLUGIN_ROOT|CODEX_HOME|g'
+    -e 's|CLAUDE_PLUGIN_ROOT|CODEX_HOME|g' \
+    -e 's|../../scripts/adversarial-review\.sh|~/.codex/scripts/adversarial-review.sh|g'
 }
 
 # --- Strip Claude Code Tool Names (reusable) ---
