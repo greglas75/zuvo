@@ -1,0 +1,33 @@
+{
+  "version": "1.0",
+  "skill": "agent-benchmark",
+  "run_id": "agent-bm-20260408T051114Z",
+  "timestamp": "2026-04-08T05:22:53Z",
+  "agent_model": "claude-sonnet-4-6",
+  "project": "zuvo-plugin",
+  "r1_time_s": 60,
+  "r2_time_s": 218,
+  "r3_time_s": 115,
+  "r4_time_s": 481,
+  "total_time_s": 874,
+  "r2_adversarial": {
+    "providers": ["codex-5.4", "codex-5.3", "gemini", "cursor-agent", "claude"],
+    "critical": 1,
+    "warning": 6,
+    "info": 0
+  },
+  "r4_adversarial": {
+    "providers": ["codex-5.4", "codex-5.3", "gemini", "cursor-agent", "claude"],
+    "critical": 6,
+    "warning": 5,
+    "info": 1
+  },
+  "files": {
+    "r1_code_lines": 577,
+    "r2_code_lines": 631,
+    "r3_test_lines": 1132,
+    "r3_test_count": 66,
+    "r4_test_lines": 1270,
+    "r4_test_count": 73
+  }
+}

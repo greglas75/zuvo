@@ -6,3 +6,144 @@ CROSS-PROVIDER REVIEW
   Launching: gemini...
   Launching: cursor-agent...
   Launching: claude...
+  Done: codex-5.4
+  Done: codex-5.3
+  Done: gemini
+  Done: cursor-agent
+  Done: claude
+{
+  "mode": "test",
+  "providers_used": "codex-5.4, codex-5.3, gemini, cursor-agent, claude",
+  "provider_count": 5,
+  "input_size": 163,
+  "date": "2026-04-08T05:25:15Z",
+  "results": {
+    "codex-5.4": {
+      "findings": []
+    },
+    "codex-5.3": {
+      "findings": []
+    },
+    "gemini": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-20260408T051114Z/r3-useSearchProducts.test.ts:213",
+          "issue": "Test 'sets isLoading=true' never asserts the loading state during the fetch",
+          "attack_vector": "The hook could fail to set isLoading=true entirely, leaving the UI without loading indicators. This test passes anyway because it only asserts isLoading=false after the mock immediately resolves.",
+          "fix": "Use an unresolved Promise in the fetch mock to pause execution, assert result.current.isLoading === true, then resolve the Promise."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-20260408T051114Z/r3-OrderService.test.ts:114",
+          "issue": "Cache key assertions are overly broad and fail to verify query parameter integration",
+          "attack_vector": "If cache key generation ignores filters (status, pagination), users requesting page 2 will receive cached page 1 results. The expect.stringContaining assertion completely misses this.",
+          "fix": "Assert the exact cache key string, or test that findAll with different query parameters generates strictly different cache keys in redis.set."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-20260408T051114Z/r3-OrderService.test.ts:241",
+          "issue": "deleteOrder tests mock prisma.order.findFirst outside the transaction, proving a TOCTOU vulnerability",
+          "attack_vector": "Because findFirst is called outside $transaction, concurrent updates between the read and delete will be lost, causing the audit log to record a stale previousStatus.",
+          "fix": "Move findFirst inside the transaction in production, and update the test to mock and assert on mocks.tx.order.findFirst instead of mocks.prisma.order.findFirst."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-20260408T051114Z/r3-OrderService.test.ts:188",
+          "issue": "Missing validation coverage for malicious lineItem contents",
+          "attack_vector": "Malicious users could pass negative quantities or negative unitPrices to bypass payment logic or manipulate total revenue. Tests only verify that the array is not empty.",
+          "fix": "Add negative tests verifying that create() throws an error when lineItems contain zero/negative quantity or negative unitPrice."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-20260408T051114Z/r3-OrderService.test.ts:397",
+          "issue": "calculateMonthlyRevenue tests fail to assert that the database query actually filters by month",
+          "attack_vector": "If the date filter is omitted in production, the test still passes, but the app queries all historical orders, leading to massive memory usage and wildly incorrect revenue numbers.",
+          "fix": "Add createdAt: { gte: expectedStartOfMonth, lte: expectedEndOfMonth } to the expect.objectContaining assertion for the findMany call."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-20260408T051114Z/r3-useSearchProducts.test.ts:39",
+          "issue": "mockFetchNetworkError is defined but never used, leaving promise rejections untested",
+          "attack_vector": "If the fetch call lacks a try/catch for promise rejections (as opposed to checking !response.ok), a network error like DNS failure will cause an unhandled rejection and crash the component.",
+          "fix": "Add a test using mockFetchNetworkError to verify that result.current.error is correctly populated when the fetch promise completely rejects."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-20260408T051114Z/r3-useSearchProducts.test.ts:342",
+          "issue": "Manual retry test fails to verify pagination offset preservation",
+          "attack_vector": "If the retry() function mistakenly resets the skip offset to 0, users who experience a network error on page 2 and click 'Retry' will have their results overwritten by page 1.",
+          "fix": "Add a test that calls loadMore(), triggers a failure on the second page fetch, calls retry(), and asserts that the fetch uses the correct skip=20 offset."
+        }
+      ]
+    },
+    "cursor-agent": "The stated paths (`audit-results/agent-bm-20260408T051114Z/...`) are not present and no test file contents were included in the prompt. Per your rules, findings must be based only on the provided artifact; with no artifact, no test-quality issues can be assessed.\n{\"findings\": []}",
+    "claude": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts:111-117",
+          "issue": "Cache hit test has Date serialization mismatch — assertion will fail or silently mask type degradation",
+          "attack_vector": "JSON.parse(JSON.stringify({createdAt: new Date(...)})) returns createdAt as a string '2026-01-15T10:00:00.000Z', but the assertion compares against SAMPLE_ORDER which has createdAt: new Date(...). Jest toEqual does NOT equate Date objects with ISO strings. Either: (a) this test fails outright, meaning the suite is broken, or (b) if somehow suppressed, it masks the real production bug that cached responses lose Date types and downstream code doing date.getTime() on a cache-hit response will crash.",
+          "fix": "Define a separate SAMPLE_ORDER_SERIALIZED constant where createdAt is a string, and assert against that for cache-hit tests. Or add a JSON reviver in production for Date fields."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "medium",
+          "file": "r3-useSearchProducts.test.ts:320-332",
+          "issue": "Retry tests are timing-fragile — advanceTimersByTime runs synchronously before async retry callbacks schedule their next setTimeout",
+          "attack_vector": "fetchWithRetry uses `await fetch()` (microtask) then `await new Promise(resolve => setTimeout(resolve, delay))`. The test calls `jest.advanceTimersByTime(300)` to fire debounce, then immediately `jest.advanceTimersByTime(1400)` in the same act() block. The 1400ms advance runs synchronously BEFORE the first fetch rejection microtask resolves and schedules the retry setTimeout(200ms). Result: retry timers never fire, but fetch mock returns rejection for every call, so the assertion `toHaveBeenCalledTimes(3)` may pass for wrong reasons (immediate rejects) or may only see 1 call depending on Jest version. In CI with different Node versions, this is a flake vector.",
+          "fix": "Separate each retry step into its own `await act(async () => { jest.advanceTimersByTime(N) })` block so microtasks flush between timer advances. Or use jest.advanceTimersToNextTimerAsync() in a loop."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r3-useSearchProducts.test.ts:257-277",
+          "issue": "Loading state test claims to verify isLoading=true during fetch but never actually observes it — test passes for wrong reasons",
+          "attack_vector": "Test name says 'sets isLoading=true during initial search, isLoadingMore=false' but declares capturedLoading/capturedLoadingMore variables that are NEVER ASSIGNED. The custom fetch mock doesn't capture hook state. Only the post-resolution state (both false) is asserted. If a regression removed the setIsLoading(true) call entirely, this test would still pass. The loading state contract is completely untested.",
+          "fix": "Inside the mock fetch implementation, capture result.current.isLoading via a closure over the renderHook result, or use a deferred promise to pause fetch mid-flight and assert loading state before resolving."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts:287",
+          "issue": "Tautological assertion: expect(result).toBeDefined() passes for null, empty object, or any non-undefined value",
+          "attack_vector": "The test 'still returns the created order if cache invalidation fails' asserts only toBeDefined(). If a regression caused create() to return null, an empty object, or a partial result when Redis throws, the test still passes. The test claims to verify resilience but doesn't verify the ORDER CONTENT is correct. A silent data corruption path is untested.",
+          "fix": "Replace with expect(result).toEqual(expect.objectContaining({ id: ORDER_ID, customerId: CUSTOMER_ID, status: 'pending' })) to verify the actual created order is returned intact."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r3-useSearchProducts.test.ts:32-43",
+          "issue": "mockFetchSuccess wraps around via modulo — unexpected extra fetch calls silently get valid responses instead of failing",
+          "attack_vector": "The helper uses `responses[callIndex % responses.length]`, so if fetch is called more times than expected (e.g., a regression causes double-fetching), the extra calls get recycled valid responses. Tests pass green while production makes 2x API calls. The pagination test 'appends second page results' (line 188) would not catch a triple-fetch bug because call 3 would wrap to FIRST_PAGE_RESPONSE and likely still pass assertions.",
+          "fix": "After exhausting responses, return a failure response or throw, so unexpected extra fetch calls cause the test to fail: `if (callIndex >= responses.length) return Promise.reject(new Error('Unexpected fetch call'));`"
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r3-OrderService.test.ts:456-531",
+          "issue": "calculateMonthlyRevenue has no negative/zero edge case tests — negative quantities or prices silently produce negative revenue",
+          "attack_vector": "Production code sums `quantity * unitPrice` with no sign guard. A line item with quantity: -1 (return/refund) or unitPrice: 0 (free item) flows through unchecked. Revenue reports show incorrect totals. No test verifies behavior for zero-quantity items, negative prices, or mixed-sign line items. The rounding test (line 502) only covers the happy path.",
+          "fix": "Add tests with negative quantity (expect: error or explicit handling), zero unitPrice, and mixed positive/negative line items to document expected behavior."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts:348",
+          "issue": "Dead mock assignment: mocks.tx.updateMany is set on tx root instead of tx.order.updateMany — line does nothing",
+          "attack_vector": "Line 348 sets `mocks.tx.updateMany = jest.fn()...` which creates a property directly on the tx mock object. Production code calls `tx.order.updateMany` (already correctly mocked on line 349). The dead assignment misleads readers into thinking two different mocks are needed. If line 349 were accidentally removed during refactoring, the test would fail with an unhelpful 'updateMany is not a function' error on tx.order rather than a clear signal.",
+          "fix": "Delete line 348 (`mocks.tx.updateMany = jest.fn()...`). Only line 349 (`mocks.tx.order.updateMany.mockResolvedValue(...)`) is needed."
+        }
+      ]
+    }
+  }
+}

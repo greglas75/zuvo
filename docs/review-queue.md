@@ -217,3 +217,5 @@ Commits pending review. Auto-managed:
 - 969cc2d (2026-04-08) fix agent-benchmark: include agent name slug in output folder name
 - 0fcd97d (2026-04-08) agent-benchmark: agent name in folder
 - a1aac36 (2026-04-08) add token tracking + API cost estimation to agent-benchmark
+- 2cd6c80 (2026-04-08) agent-benchmark: token tracking + API cost
+- 8e0d67e (2026-04-08) fix: --files space-separated paths not read — adversarial review got empty input
