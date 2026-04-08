@@ -448,12 +448,8 @@ detect_providers() {
   fi
   [[ -n "$codex_bin" ]] && providers="codex-5.4 codex-5.3"
 
-  # 2. gemini CLI or gemini-api fallback
-  if command -v gemini &>/dev/null; then
-    providers="$providers gemini"
-  elif [[ -n "${GEMINI_API_KEY:-}" ]]; then
-    providers="$providers gemini-api"
-  fi
+  # 2. gemini — requires global install: npm install -g @google/gemini-cli
+  command -v gemini &>/dev/null && providers="$providers gemini"
 
   # 3. cursor-agent — headless print mode (~11s)
   command -v cursor-agent &>/dev/null && providers="$providers cursor-agent"
@@ -463,6 +459,9 @@ detect_providers() {
 
   # 5. codestral — API-based, auto-detect if CODESTRAL_API_KEY is set
   [[ -n "${CODESTRAL_API_KEY:-}" ]] && providers="$providers codestral"
+
+  # gemini-api available as --provider gemini-api if GEMINI_API_KEY is set
+  # Not in auto-detect (gemini CLI is preferred)
 
   echo "$providers"
 }
