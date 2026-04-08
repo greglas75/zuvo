@@ -1,25 +1,31 @@
 # Zuvo Competitive Analysis — April 2026
 
-> Comprehensive review of the AI coding tools ecosystem. 50+ competitors analyzed across Claude Code plugins, Cursor extensions, Codex/Windsurf/Copilot ecosystems, and DevOps trends.
+> Comprehensive review of the AI coding tools ecosystem. 70+ competitors analyzed across Claude Code plugins, Cursor extensions, Codex/Windsurf/Copilot ecosystems, and DevOps trends.
+> Last updated: 2026-04-08
 
 ---
 
 ## Executive Summary
 
-Zuvo's 39-skill depth across audits, testing, security, deployment, design, and pipeline management is **unmatched** in the plugin ecosystem. No competitor offers this breadth with structured multi-agent workflows, adversarial review, quality gates (CQ1-CQ28, Q1-Q19), and cross-platform support (Claude Code + Codex + Cursor).
+Zuvo's 48-skill depth across audits, testing, security, deployment, design, pipeline management, knowledge accumulation, and session recovery is **unmatched per-skill** in the plugin ecosystem. No competitor offers this depth with structured multi-agent workflows, adversarial review (4 providers), quality gates (CQ1-CQ28, Q1-Q19), evidence enforcement, knowledge store, and cross-platform support (Claude Code + Codex + Cursor).
 
 **Where Zuvo leads:**
 - Full SDLC pipeline (brainstorm > plan > execute > ship > deploy > canary > retro)
 - 10+ audit dimensions with evidence-based scoring and tiered output
 - Adversarial multi-provider review (4 providers) — unique in the ecosystem
+- Knowledge Store v3 (JSONL, timesSurfaced/confidence separation, recency ranking, merge rules)
+- Session Recovery with validation, precedence, stale detection
+- Evidence enforcement (auto-downgrade findings without file:line)
+- Unified severity vocabulary across all 48 skills
 - Cross-platform build system from single source
 
 **Where Zuvo trails:**
-- Event-driven automations (Cursor Automations)
-- Passive learning / auto-generated memories (Windsurf, CodeRabbit)
+- Visibility/distribution: 1 star vs 128K (everything-claude-code), 42K (superpowers)
+- Not on Skills.sh (87K+ skills indexed, 17 platforms) or Anthropic official marketplace
+- No viral proof point (metaswarm: "127 PRs in a weekend", Claw Code: 50K stars in 2h)
+- Event-driven automations (Cursor 3 Agents Window)
 - Closed-loop review-to-fix pipelines (Copilot, BugBot)
-- Issue-to-PR zero-friction workflows (Copilot Cloud Agent, Jules, Devin)
-- Visibility/distribution (1 star vs competitors with 10K+)
+- Issue-to-PR zero-friction workflows (Copilot Cloud Agent, Jules, Devin 2.0)
 
 ---
 
@@ -36,6 +42,16 @@ Zuvo's 39-skill depth across audits, testing, security, deployment, design, and 
 | **wondelai/skills** | 445 | 40 | Book-as-skill methodology (Clean Code, DDD, etc.) | Actionable audits vs theoretical frameworks |
 | **Anthropic-Cybersecurity-Skills** | 4,077 | 754 | 26 security domains, 5 framework mappings (MITRE, NIST, ATLAS) | Broader than security, integrated pipeline |
 
+### Tier 1b — Major New Competitors (discovered 2026-04-08)
+
+| Competitor | Stars | Skills/Agents | Strengths | Zuvo advantage |
+|-----------|-------|---------------|-----------|----------------|
+| **affaan-m/everything-claude-code** | 128,000 | 136 skills, 30 agents | Massive stars, breadth | Depth unknown — needs audit. Zuvo's per-skill depth (CQ/Q gates, evidence) likely unmatched |
+| **obra/superpowers** | 42,000 | TDD, debug, brainstorm, review | In official Anthropic marketplace (Jan 15, 2026), 6+ platforms | Zuvo has 48 skills vs ~10, adversarial review, knowledge store |
+| **ruvnet/ruflo** (ex Claude Flow) | 25,000 | 60+ agents, 314 MCP tools | MCP-native, self-learning, v3.5 (Apr 7) | Zuvo's structured CQ/Q gates vs generic quality checks |
+| **dsifry/metaswarm** | ~500 | 18 agents, 13 skills | BEADS task tracking, 9 formal rubrics, "127 PRs in a weekend" proof point | Zuvo has 48 vs 13 skills, knowledge store v3, evidence enforcement |
+| **levnikolaevich/claude-code-skills** | ~1,000 | 6 plugins + MCP servers | Bundled MCP: hex-line (hash editing), hex-graph (code knowledge graph), hex-ssh (remote) | Zuvo has deeper skills, more audit dimensions |
+
 ### Tier 2 — Workflow/Orchestration Competitors
 
 | Competitor | Stars | Focus | Zuvo advantage |
@@ -46,6 +62,9 @@ Zuvo's 39-skill depth across audits, testing, security, deployment, design, and 
 | **revfactory/harness** | 2,024 | Meta-skill: designs agent teams | Zuvo already HAS the teams built |
 | **agent-sh/agentsys** | 699 | 40 skills, cross-platform | Zuvo's skills are deeper and more specialized |
 | **oh-my-codex (OMX)** | ~500 | 40+ Codex workflow skills, autopilot, TDD | Orchestration primitives vs deep domain skills |
+| **Yeachan-Heo/oh-my-claudecode (OMC)** | ~1,000 | 19 agents, 36 skills, tmux workers | Zero-config multi-model team, trending #1 | Zuvo's structured pipeline and knowledge store |
+| **ComposioHQ/agent-orchestrator** | 4,700 | Parallel agents, worktrees, CI fix | Just-in-Time context, `ao start` onboarding | Zuvo has 48 skills vs orchestration primitives |
+| **jayminwest/overstory** | ~500 | 11 runtime adapters, SQLite mail | Pluggable AgentRuntime, FIFO merge queue | Infrastructure layer, not skill content |
 
 ### Tier 3 — Broader AI Tool Competitors
 
@@ -61,6 +80,15 @@ Zuvo's 39-skill depth across audits, testing, security, deployment, design, and 
 | **Qodo 2.0** | Parallel specialized review agents (60.1% F1) | Similar to Zuvo's adversarial, but with benchmarks |
 | **Amazon Q** | Cross-repo migration (1000 apps Java 8>17) | Large-scale transformation beyond file-level |
 | **Devin** | Auto-generated documentation wiki | Always-current docs from codebase analysis |
+| **Devin 2.0** | Interactive Planning, Devin Wiki (auto-indexes repos), $20/month Core plan | Lower cost, auto-planning. But SaaS vs local plugin |
+| **Cursor 3** | Agent-first workspace: parallel agents, Design Mode, worktrees, 30+ partner plugins | Paradigm shift — multi-repo, multi-agent. Plugin model cannot replicate Agents Window |
+| **Claw Code** | Clean-room Claude Code rewrite, 172K stars in days | Harness not skills — could become a platform for skills like Zuvo |
+| **Anthropic Code Review** | Native multi-agent PR review, $15-25/review, 54% substantive review rate | Zuvo has adversarial multi-provider (4 models), not just Anthropic's single-model agents |
+| **Qodo 2.0** | 60.1% F1 (highest benchmarked), $70M Series B, learns org's code quality definition | Review-only. Zuvo covers full SDLC, not just review |
+| **Macroscope v3** | 98% precision, dual-model (o4-mini + Opus 4) consensus | Review-only. Strong precision but narrow scope |
+| **CodeRabbit Issue Planner** | Auto-generates Coding Plans from Jira/Linear/GitHub Issues, scans full codebase | Competes with zuvo:brainstorm + zuvo:plan pipeline |
+| **Skills.sh (Vercel)** | 87K+ skills indexed across 17 platforms, npm-like discovery | Distribution platform. Zuvo should publish here |
+| **GitHub Copilot Cloud Agent** | Issue-to-PR, self-review, agent firewall, custom agents with MCP | Zero-friction from GitHub Issues. Zuvo's quality gates are deeper |
 
 ---
 
@@ -105,9 +133,8 @@ Zuvo's 39-skill depth across audits, testing, security, deployment, design, and 
 
 ### GAP B — New Skill Candidates (MEDIUM priority)
 
-#### B1. `zuvo:a11y-audit` — Dedicated Accessibility Audit
-**Why:** ADA Title II deadline April 24, 2026. 5,000+ lawsuits in 2025 (+20% YoY). Current coverage is embedded in design-review but not deep enough.
-**What:** Full WCAG 2.2 AA/AAA checklist, keyboard navigation analysis, ARIA validation, color contrast, screen reader compatibility, focus management, specific fix code per violation, legal compliance status.
+#### ~~B1. `zuvo:a11y-audit` — Dedicated Accessibility Audit~~ ✅ DONE
+Added in v1.3.x. 10 dimensions (A1-A10), WCAG 2.2 AA/AAA, 2 critical gates (keyboard A2, contrast A4), legal compliance (ADA/EAA/Section 508), `--fix` mode.
 
 #### B2. `zuvo:boundaries` — Module Boundary Enforcement
 **Why:** Architecture fitness functions becoming standard. Nx and Feature-Sliced Design proving value.
@@ -219,6 +246,28 @@ Zuvo's 39-skill depth across audits, testing, security, deployment, design, and 
 ### From Trail of Bits
 - **Trophy Case** — documented list of real bugs found by skills. Social proof.
 - **Framework compliance mapping** — every skill mapped to MITRE ATT&CK, NIST, CWE, etc.
+- **Mutation testing skill** — added same week as zuvo:mutation-test (convergent evolution).
+
+### From Cursor 3 (NEW — April 2026)
+- **Agents Window** — parallel agents across repos and environments (local, worktrees, cloud, SSH).
+- **Design Mode** — annotate and target UI elements in-browser for agent feedback.
+- **MCP Apps** — structured content in tool outputs (not flat text).
+- **30+ partner plugins** — Atlassian, Datadog, GitLab, PlanetScale ecosystem.
+
+### From Devin 2.0 (NEW)
+- **Interactive Planning** — auto-analyzes codebase, proposes plans before user asks.
+- **Devin Wiki** — auto-indexes repos every few hours, generates architecture docs.
+- **$20/month entry** — makes autonomous agent accessible to individuals.
+
+### From Skills.sh (Vercel) (NEW)
+- **87K+ skills indexed** across 17 platforms — the npm of agent skills.
+- **Cross-platform discovery** — one listing reaches Claude Code + Codex + Cursor + Gemini + 13 others.
+
+### From Metaswarm (deep-dived 2026-04-08)
+- **Knowledge Store** (JSONL fact store) — patterns, gotchas, decisions persist across sessions. ✅ ADOPTED by zuvo.
+- **Session Recovery** (.beads/context/) — state persistence across context compaction. ✅ ADOPTED by zuvo.
+- **BEADS CLI** — git-native task tracking. Zuvo uses session-state.md instead (lighter, no npm dependency).
+- **9 formal rubrics** — evaluated, decided against (3 targeted fixes instead — severity vocabulary, quality-reviewer dedup, threshold alignment). ✅ ADDRESSED differently.
 
 ---
 
@@ -226,86 +275,130 @@ Zuvo's 39-skill depth across audits, testing, security, deployment, design, and 
 
 ### TIER 1 — Do Now (high impact, achievable)
 
-| # | Action | Type | Effort |
-|---|--------|------|--------|
-| 1 | Add `zuvo:migrate` skill | New skill | L |
-| 2 | Add AI/LLM security dimension (S15) to security-audit | Enhancement | M |
-| 3 | Add deployment risk scoring to review output | Enhancement | M |
-| 4 | Add closed-loop review > auto-fix dispatch | Enhancement | M |
-| 5 | Submit to awesome-claude-code, awesome-agent-skills, claude-plugins-official | Distribution | S |
-| 6 | Create Trophy Case in docs (real bugs found by Zuvo audits) | Marketing | S |
+| # | Action | Type | Effort | Status |
+|---|--------|------|--------|--------|
+| 1 | ~~Add `zuvo:migrate` skill~~ | ~~New skill~~ | ~~L~~ | SKIPPED — not needed by user |
+| 2 | Add AI/LLM security dimension (S15) to security-audit | Enhancement | M | ✅ DONE (v1.3.x) |
+| 3 | Add deployment risk scoring to review output | Enhancement | M | OPEN |
+| 4 | Add closed-loop review > auto-fix dispatch | Enhancement | M | OPEN |
+| 5 | Submit to awesome-claude-code, awesome-agent-skills, claude-plugins-official | Distribution | S | OPEN |
+| 6 | Create Trophy Case in docs (real bugs found by Zuvo audits) | Marketing | S | ✅ DONE (docs/trophy-case.md, 550+ findings) |
+| 5b | **Publish to Skills.sh** (87K skills, 17 platforms) | Distribution | S | **NEW — HIGH PRIORITY** |
+| 5c | **Submit to Anthropic official marketplace** | Distribution | M | **NEW — superpowers got in Jan 15** |
 
 ### TIER 2 — Do Next (high impact, more effort)
 
-| # | Action | Type | Effort |
-|---|--------|------|--------|
-| 7 | Add `zuvo:ai-security-audit` skill | New skill | L |
-| 8 | Add `zuvo:risk-score` skill | New skill | M |
-| 9 | Add `zuvo:mutation-test` skill | New skill | L |
-| 10 | Add learnings system to review (remember patterns per-project) | Enhancement | L |
-| 11 | Add auto-lint/auto-test loop to build skill | Enhancement | M |
-| 12 | Map audit dimensions to OWASP/CWE/NIST frameworks | Enhancement | M |
+| # | Action | Type | Effort | Status |
+|---|--------|------|--------|--------|
+| 7 | Add `zuvo:ai-security-audit` skill | New skill | L | ✅ COVERED (S15 in security-audit) |
+| 8 | Add `zuvo:risk-score` skill | New skill | M | OPEN |
+| 9 | Add `zuvo:mutation-test` skill | New skill | L | ✅ DONE |
+| 10 | Add learnings system to review (remember patterns per-project) | Enhancement | L | ✅ DONE (Knowledge Store v3 — 2026-04-08) |
+| 11 | Add auto-lint/auto-test loop to build skill | Enhancement | M | OPEN |
+| 12 | Map audit dimensions to OWASP/CWE/NIST frameworks | Enhancement | M | PARTIAL (security-audit has CWE) |
+| 10b | **Knowledge Store v3** — JSONL fact store, prime/curate, session-level auto-prime | Enhancement | L | ✅ DONE (2026-04-08) |
+| 10c | **Session Recovery** — execution-state.md, project-context.md, active-plan.md | Enhancement | M | ✅ DONE (2026-04-08) |
+| 10d | **Evidence enforcement** — auto-downgrade findings without file:line | Enhancement | S | ✅ DONE (2026-04-08) |
+| 10e | **Severity vocabulary** — unified mapping across all 48 skills | Enhancement | S | ✅ DONE (2026-04-08) |
+| 10f | **Quality-reviewer dedup** — removed 140 lines of duplicated CQ/Q gates | Fix | S | ✅ DONE (2026-04-08) |
+| 10g | **CQ23-28 gap** — 6 missing gates added to code-audit | Fix | S | ✅ DONE (2026-04-08) |
 
 ### TIER 3 — Do Later (medium impact)
 
-| # | Action | Type | Effort |
-|---|--------|------|--------|
-| 13 | Add `zuvo:a11y-audit` skill | New skill | M |
-| 14 | Add `zuvo:incident` / `zuvo:postmortem` skill | New skill | M |
-| 15 | Add `zuvo:contract-test` skill | New skill | M |
-| 16 | Add `zuvo:boundaries` skill | New skill | M |
-| 17 | Add migration safety to db-audit | Enhancement | S |
-| 18 | Add visual regression to write-e2e | Enhancement | M |
-| 19 | Add AI attribution metrics to retro | Enhancement | S |
-| 20 | Add performance budgets to performance-audit | Enhancement | S |
+| # | Action | Type | Effort | Status |
+|---|--------|------|--------|--------|
+| 13 | Add `zuvo:a11y-audit` skill | New skill | M | ✅ DONE |
+| 14 | Add `zuvo:incident` skill | New skill | M | ✅ DONE (fixed 2026-04-08) |
+| 15 | Add `zuvo:contract-test` skill | New skill | M | OPEN |
+| 16 | Add `zuvo:boundaries` skill | New skill | M | OPEN |
+| 17 | Add migration safety to db-audit | Enhancement | S | OPEN |
+| 18 | Add visual regression to write-e2e | Enhancement | M | OPEN |
+| 19 | Add AI attribution metrics to retro | Enhancement | S | OPEN |
+| 20 | Add performance budgets to performance-audit | Enhancement | S | OPEN |
+| 14b | **Investigate everything-claude-code** — 128K stars, 136 skills, depth unknown | Research | S | **NEW** |
 
 ### TIER 4 — Consider (nice to have)
 
-| # | Action | Type |
-|---|--------|------|
-| 21 | `zuvo:sbom` — Software/AI Bill of Materials |  New skill |
-| 22 | `zuvo:license-audit` — GPL contamination detection | New skill |
-| 23 | Tool permission scoping (read-only audit modes) | Architecture |
-| 24 | PRPM package publishing | Distribution |
-| 25 | Watch mode / AI comments integration | Architecture |
+| # | Action | Type | Status |
+|---|--------|------|--------|
+| 21 | `zuvo:sbom` — Software/AI Bill of Materials |  New skill | OPEN |
+| 22 | `zuvo:license-audit` — GPL contamination detection | New skill | OPEN |
+| 23 | Tool permission scoping (read-only audit modes) | Architecture | OPEN |
+| 24 | PRPM package publishing | Distribution | OPEN |
+| 25 | Watch mode / AI comments integration | Architecture | OPEN |
 
 ---
 
-## Appendix: Competitor Star Counts (top 30)
+## Appendix: Competitor Star Counts (top 40)
 
-| Rank | Competitor | Stars | Category |
-|------|-----------|-------|----------|
-| 1 | claude-mem | 45,887 | Memory |
-| 2 | awesome-claude-code | 37,001 | Awesome list |
-| 3 | wshobson/agents | 33,091 | Orchestration |
-| 4 | OthmanAdi/planning-with-files | 18,178 | Planning |
-| 5 | jarrodwatts/claude-hud | 17,303 | Observability |
-| 6 | anthropics/claude-plugins-official | 16,175 | Registry |
-| 7 | VoltAgent/awesome-agent-skills | 14,478 | Directory |
-| 8 | EveryInc/compound-engineering | 13,415 | Workflow |
-| 9 | wasp-lang/open-saas | 13,930 | SaaS bundle |
-| 10 | mattpocock/skills | 12,637 | Personal skills |
-| 11 | blader/humanizer | 12,618 | Single skill |
-| 12 | anthropics/knowledge-work-plugins | 10,960 | Knowledge work |
-| 13 | alirezarezvani/claude-skills | 9,803 | Skill library |
-| 14 | numman-ali/openskills | 9,456 | Skills loader |
-| 15 | Understand-Anything | 7,913 | Knowledge graph |
-| 16 | slavingia/skills | 7,066 | Business skills |
-| 17 | ykdojo/claude-code-tips | 7,190 | Tips/education |
-| 18 | devin.cursorrules | 5,963 | Self-evolving agent |
-| 19 | vibe-tools | 4,752 | Tool integrations |
-| 20 | JuliusBrussee/caveman | 4,373 | Token reduction |
-| 21 | trailofbits/skills | 4,341 | Security skills |
-| 22 | Anthropic-Cybersecurity-Skills | 4,077 | Cybersecurity |
-| 23 | sanjeed5/awesome-cursor-rules-mdc | 3,433 | Rules generator |
-| 24 | agenticnotetaking/arscontexta | 3,054 | Knowledge system |
-| 25 | ralphy | 2,723 | Autonomous loop |
-| 26 | davepoon/buildwithclaude | 2,707 | Hub |
-| 27 | ZeframLou/call-me | 2,553 | Notification |
-| 28 | nyldn/claude-octopus | 2,423 | Multi-model review |
-| 29 | revfactory/harness | 2,024 | Meta-skill |
-| 30 | jeremylongshore/plugins-plus-skills | 1,859 | Mega collection |
+| Rank | Competitor | Stars | Category | Change |
+|------|-----------|-------|----------|--------|
+| 1 | **Claw Code** (clean-room Claude Code rewrite) | 172,000 | Harness | NEW — 50K in 2 hours |
+| 2 | **affaan-m/everything-claude-code** | 128,000 | Skill library | NEW |
+| 3 | claude-mem | 46,100 | Memory | +200 |
+| 4 | **obra/superpowers** | 42,000 | Workflow | NEW — Anthropic marketplace |
+| 5 | awesome-claude-code | 37,339 | Awesome list | +338 |
+| 6 | wshobson/agents | 33,091 | Orchestration | — |
+| 7 | **ruvnet/ruflo** (ex Claude Flow) | 25,000 | Agent framework | NEW |
+| 8 | OthmanAdi/planning-with-files | 18,178 | Planning | — |
+| 9 | jarrodwatts/claude-hud | 17,303 | Observability | — |
+| 10 | anthropics/claude-plugins-official | 16,298 | Registry | +123 |
+| 11 | VoltAgent/awesome-agent-skills | 14,686 | Directory | +208 |
+| 12 | EveryInc/compound-engineering-plugin | 13,605 | Workflow | +190, v2.63.1 |
+| 13 | wasp-lang/open-saas | 13,930 | SaaS bundle | — |
+| 14 | mattpocock/skills | 12,637 | Personal skills | — |
+| 15 | blader/humanizer | 12,618 | Single skill | — |
+| 16 | anthropics/knowledge-work-plugins | 10,960 | Knowledge work | — |
+| 17 | alirezarezvani/claude-skills | 9,975 | Skill library | +172, v2.0.0 |
+| 18 | numman-ali/openskills | 9,456 | Skills loader | — |
+| 19 | Understand-Anything | 7,913 | Knowledge graph | — |
+| 20 | ykdojo/claude-code-tips | 7,190 | Tips/education | — |
+| 21 | slavingia/skills | 7,066 | Business skills | — |
+| 22 | devin.cursorrules | 5,963 | Self-evolving agent | — |
+| 23 | **ComposioHQ/agent-orchestrator** | 4,700 | Orchestration | NEW |
+| 24 | vibe-tools | 4,752 | Tool integrations | — |
+| 25 | JuliusBrussee/caveman | 4,373 | Token reduction | — |
+| 26 | trailofbits/skills | 4,364 | Security skills | +23 |
+| 27 | Anthropic-Cybersecurity-Skills | 4,077 | Cybersecurity | — |
+| 28 | sanjeed5/awesome-cursor-rules-mdc | 3,433 | Rules generator | — |
+| 29 | agenticnotetaking/arscontexta | 3,054 | Knowledge system | — |
+| 30 | ralphy | 2,723 | Autonomous loop | — |
+| 31 | davepoon/buildwithclaude | 2,707 | Hub | — |
+| 32 | ZeframLou/call-me | 2,553 | Notification | — |
+| 33 | nyldn/claude-octopus | 2,449 | Multi-model review | +26, v9.20.0 |
+| 34 | revfactory/harness | 2,024 | Meta-skill | — |
+| 35 | jeremylongshore/claude-code-plugins-plus-skills | 1,871 | Mega collection | +12, v4.24.0 |
+| 36 | rohitg00/pro-workflow | 1,739 | Self-correcting | +185, v3.2.0 |
+| 37 | **levnikolaevich/claude-code-skills** | ~1,000 | SDLC + MCP servers | NEW |
+| 38 | **Yeachan-Heo/oh-my-claudecode** | ~1,000 | Multi-model team | NEW |
+| 39 | dsifry/metaswarm | ~500 | Multi-agent orchestration | v0.11.0 |
+| 40 | wondelai/skills | 473 | Book-as-skill | +28 |
+
+## Appendix B: Major Platform Events (March-April 2026)
+
+| Date | Event | Impact on zuvo |
+|------|-------|----------------|
+| 2026-03-31 | **Claude Code source leak** via npm sourcemap (512K lines, 1,906 files) | Ecosystem shift — open-source harnesses proliferate |
+| 2026-04-01 | **Claw Code** clean-room rewrite hits 172K stars | Could become a platform for skills like zuvo |
+| 2026-04-02 | **Cursor 3** launches — agent-first workspace, parallel agents, Design Mode | Plugin model cannot replicate Agents Window |
+| 2026-04-01 | **Copilot Cloud Agent** renamed, self-review + security scanning | Zero-friction from Issues remains Copilot's moat |
+| 2026-03-30 | **Qodo 2.0** — $70M Series B, 60.1% F1 highest | Review benchmarks as marketing weapon |
+| 2026-02-24 | **Anthropic Private Plugin Marketplaces** — 101 plugins official | Enterprise distribution opportunity for zuvo |
+| 2026-02-05 | **Anthropic Agent Teams** — full Claude Code instances as teammates | Enabler for zuvo multi-agent dispatch |
+| 2026-01-20 | **Skills.sh** (Vercel) — 87K+ skills, 17 platforms | npm for agent skills. Zuvo not listed |
+| 2026-01-15 | **Superpowers** accepted to Anthropic marketplace | Distribution advantage zuvo doesn't have |
+
+## Appendix C: Ecosystem Metrics (April 2026)
+
+| Metric | Count |
+|--------|-------|
+| Claude Code GitHub stars | 82K+ |
+| Indexed Claude Code plugin repos | 10,913 |
+| Official marketplace plugins | 101 (33 Anthropic + 68 partner) |
+| Community marketplaces | 43 (834 total plugins) |
+| Skills.sh indexed skills | 87,000+ |
+| AI agent skills packages (all platforms) | 350,000+ |
 
 ---
 
-*Generated 2026-04-07. Based on research across GitHub, web search, and AI tool documentation.*
+*Updated 2026-04-08. Based on research across GitHub, web search, AI tool documentation, and daily competitive scans.*
