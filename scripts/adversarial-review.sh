@@ -127,9 +127,9 @@ if [[ -z "$INPUT" ]]; then
 fi
 
 # Truncate very large inputs to avoid token limits (SIGPIPE-safe, line boundary)
-# Document modes get 30K chars (specs/plans are longer than diffs), code modes get 15K
-MAX_CHARS=15000
-[[ "$REVIEW_MODE" =~ ^(spec|plan|audit|tests|migrate)$ ]] && MAX_CHARS=30000
+# Document modes get 50K, code/test modes get 30K (must fit 2+ files from corpus benchmarks)
+MAX_CHARS=30000
+[[ "$REVIEW_MODE" =~ ^(spec|plan|audit|migrate)$ ]] && MAX_CHARS=50000
 
 if [[ ${#INPUT} -gt $MAX_CHARS ]]; then
   INPUT=$(printf '%s' "$INPUT" | head -c "$MAX_CHARS" || true)
