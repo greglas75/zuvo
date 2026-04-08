@@ -169,6 +169,20 @@ Print:
 
 ---
 
+## Self-Scoring
+
+After all 4 rounds, score your own output using `../../shared/includes/benchmark-scoring-rubric.md`.
+
+1. Read your R2 files. Score C1-C7 (code quality, max 35).
+2. Read your R4 files. Score T1-T5 (test quality, max 25).
+3. Compare R1 vs R2 + adversarial findings. Score A1 (code fix, max 5).
+4. Compare R3 vs R4 + adversarial findings. Score A2 (test fix, max 5).
+5. Record all scores in `agent-benchmark.json` under `scores` key.
+
+**Be honest.** This is self-evaluation — inflated scores will be caught when comparing across models.
+
+---
+
 ## Output — Summary + Artifacts
 
 ### File Inventory
