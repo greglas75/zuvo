@@ -207,3 +207,5 @@ Commits pending review. Auto-managed:
 - c3a8483 (2026-04-08) fix: safe glob helpers for pipefail compat
 - 8d50a39 (2026-04-08) fix: install benchmark.sh to Codex/Cursor, add script path resolution to SKILL.md
 - cdbbf9f (2026-04-08) fix: install scripts to codex/cursor, path resolution
+- cd4f51c (2026-04-08) release: v1.3.21 — unify severity vocabulary, fix quality-reviewer duplication, align file limits and CQ23-28 gap
+- 4df56bf (2026-04-08) add checkpointing to benchmark.sh — resume from last completed round per provider
