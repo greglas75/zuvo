@@ -2,6 +2,8 @@
 
 You are participating in a benchmark. Write Jest tests for the two production files below. Do NOT reference any external rules or style guides — implement from the spec below only.
 
+**File size limit: each test file must be under 400 lines.** Focus on high-value assertions, not quantity. Quality is measured by what the tests catch, not how many lines they have.
+
 ## Round 1 Output (the code you must test)
 
 {{ROUND_1_CODE}}
