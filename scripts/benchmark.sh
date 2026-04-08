@@ -166,12 +166,15 @@ collect_input() {
       git diff "$DIFF_REF"..HEAD 2>/dev/null || git diff "$DIFF_REF"
       ;;
     files)
+      # Support space-separated and newline-separated file lists
+      local file_list
+      file_list=$(printf '%s' "$FILES" | tr ' ' '\n')
       while IFS= read -r f || [[ -n "$f" ]]; do
         [[ -z "$f" ]] && continue
         echo "=== FILE: $f ==="
         cat "$f" 2>/dev/null || echo "(file not found)"
         echo ""
-      done <<< "$FILES"
+      done <<< "$file_list"
       ;;
   esac
 }
