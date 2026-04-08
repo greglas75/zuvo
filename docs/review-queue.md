@@ -250,3 +250,4 @@ Commits pending review. Auto-managed:
 - 3f63062 (2026-04-08) release: v1.3.29 — enforce adversarial review: 4 skill gaps filled, pentest→review chain, pre-push hook gate
 - eae8951 (2026-04-08) fix: install.sh now copies hooks/ directory to Claude Code cache
 - 03c4e29 (2026-04-08) release: v1.3.30 — fix: install.sh copies hooks/ to cache, pre-push gate now functional
+- c744228 (2026-04-08) feat: zuvo:plan works without brainstorm — inline mode from user description
