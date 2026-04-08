@@ -219,6 +219,12 @@ CQ19: API request AND response validated by runtime schema?
 CQ20: Each data point ONE canonical source? No dual fields?
 CQ21: CONDITIONAL -- No TOCTOU? State machine transitions use CAS? Mutations idempotent?
 CQ22: CONDITIONAL -- All listeners/timers/subscriptions cleaned up on unmount?
+CQ23: CONDITIONAL -- Cache has TTL or explicit invalidation? No stale-forever entries?
+CQ24: CONDITIONAL -- API changes additive only? Breaking changes have deprecation path?
+CQ25: New code follows existing project patterns? No special snowflakes?
+CQ26: Structured logger with context (requestId, userId), not plain console.log?
+CQ27: Log levels correct? `error` for infra failures only, not validation?
+CQ28: CONDITIONAL -- Timeout hierarchy correct? client < server < DB?
 
 ANTI-PATTERNS (each found = noted, severity attached):
 CAP1:  Empty catch block -- HIGH
@@ -245,6 +251,9 @@ CONDITIONAL CRITICAL GATE:
 - CQ20 -> critical if file defines entities with dual fields
 - CQ21 -> critical if concurrent mutations on same resource
 - CQ22 -> critical if creates subscriptions, timers, observers
+- CQ23 -> critical if uses Redis, Memcached, or in-memory cache
+- CQ24 -> critical if modifies existing API endpoint signatures
+- CQ28 -> critical if defines timeouts at 2+ architectural layers
 
 CQ8 NOTE: Check PROJECT_CONTEXT. If global error handler exists, services that let errors propagate = CQ8 PASS. Only CQ8=0 when errors are swallowed.
 CQ15 NOTE: `return somePromise` inside async function is NOT a missing await -- async auto-flattens. Only flag when promise is neither returned nor awaited.

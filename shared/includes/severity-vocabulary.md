@@ -35,6 +35,20 @@ Four severity levels, ordered by impact:
 
 **User-facing reports:** When presenting findings from multiple skills in one session, prefer the canonical vocabulary to avoid confusing the user with MUST-FIX + CRITICAL + BLOCKER + Tier D for the same severity concept.
 
+## Confidence Model Mapping
+
+Two confidence models exist across skills. Use this mapping when cross-referencing findings:
+
+| Numeric (0-100) | Categorical | Used by | Action |
+|-----------------|-------------|---------|--------|
+| 0-25 | LOW | — | Discard (below signal threshold) |
+| 26-50 | MEDIUM | security-audit, architecture | Backlog only (not reported to user) |
+| 51-100 | HIGH | security-audit, architecture | Report and action |
+
+`/review` uses the numeric scale. `/security-audit` and `/architecture` use the categorical scale. The mapping above aligns them. When persisting findings to backlog, record both the numeric value (if available) and the categorical level.
+
+---
+
 ## Rules
 
 1. **Mapping is fixed.** Skills do not redefine which of their labels maps to which canonical level. The table above is the source of truth.

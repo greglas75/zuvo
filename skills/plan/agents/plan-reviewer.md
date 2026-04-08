@@ -85,11 +85,16 @@ Does the plan account for the quality gates that will be enforced during executi
 
 ### 6. File Limits
 
-Does the plan respect file size constraints?
+Does the plan respect file size constraints defined in `rules/file-limits.md`?
 
-- Services: maximum 300 lines per file
-- Components: maximum 200 lines per file
-- If a task's GREEN step would produce a file exceeding these limits, the task should be split
+Use the **planning defaults** (conservative — you don't know method count until the code is written):
+- Services: 300 lines (450 permitted for services with 5-8 public methods, but plan for 300)
+- Controllers: 300 lines
+- Components: 200 lines (300 for page/container)
+- Hooks: 250 lines
+- Utilities: 100 lines
+
+If a task's GREEN step would produce a file exceeding these limits, the task should be split.
 
 Verify by estimating the size from the described targets. If the targets imply a file near the limit and the file is new, flag this as a risk.
 

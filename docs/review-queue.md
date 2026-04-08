@@ -206,3 +206,4 @@ Commits pending review. Auto-managed:
 - a96eb94 (2026-04-08) fix benchmark.sh: replace all unsafe ls glob calls with nullglob-safe helpers
 - c3a8483 (2026-04-08) fix: safe glob helpers for pipefail compat
 - 8d50a39 (2026-04-08) fix: install benchmark.sh to Codex/Cursor, add script path resolution to SKILL.md
+- cdbbf9f (2026-04-08) fix: install scripts to codex/cursor, path resolution

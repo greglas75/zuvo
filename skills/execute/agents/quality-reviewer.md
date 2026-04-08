@@ -77,18 +77,18 @@ Evaluate each test file against all 19 gates using the same 1/0/N/A scoring with
 
 ## Part 3: File Limits
 
-Check every changed file against size constraints:
+**Source of truth:** `rules/file-limits.md` — the orchestrator provides this file's content or the agent reads it directly.
 
-| Type | Limit | Action if exceeded |
-|------|-------|--------------------|
-| Service/utility file | 300 lines | Flag if >300, FAIL if >600 (2x) |
-| Component file | 200 lines | Flag if >200, FAIL if >400 (2x) |
-| Test file | 500 lines | Flag if >500, FAIL if >1000 (2x) |
-| Single function | 50 lines | Flag if >50, FAIL if >100 (2x) |
-| Function parameters | 5 max | Flag if >5 |
-| Nesting depth | 4 max | Flag if >4 |
+Apply the file and function size limits from file-limits.md. Key thresholds:
+- Services: 300 lines (<=4 methods) or 450 lines (5-8 methods) — count public methods to determine
+- Controllers: 300 lines
+- Components: 200 lines (300 for page/container)
+- Hooks: 250 lines
+- Utilities: 100 lines
+- Public method: 50 lines, Private helper: 30 lines
+- Max nesting: 4 levels, Max params: 5
 
-Exceeding 2x any limit is an automatic FAIL regardless of other scores.
+**Enforcement:** Flag if over limit. **FAIL if exceeding 2x any limit** regardless of other scores.
 
 ---
 
