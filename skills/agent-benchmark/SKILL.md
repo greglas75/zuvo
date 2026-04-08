@@ -199,12 +199,35 @@ Write `$OUT_DIR/agent-benchmark.json`:
   "run_id": "<run_id>",
   "timestamp": "<ISO-8601>",
   "agent_model": "<model name>",
+  "agent_slug": "<slug>",
   "project": "<project path>",
   "r1_time_s": 0,
   "r2_time_s": 0,
   "r3_time_s": 0,
   "r4_time_s": 0,
   "total_time_s": 0,
+  "tokens": {
+    "r1_input": 0,
+    "r1_output": 0,
+    "r2_input": 0,
+    "r2_output": 0,
+    "r3_input": 0,
+    "r3_output": 0,
+    "r4_input": 0,
+    "r4_output": 0,
+    "total_input": 0,
+    "total_output": 0
+  },
+  "cost_usd": {
+    "note": "Estimated API cost at current pricing. $0 if running from subscription.",
+    "r1": 0.0,
+    "r2": 0.0,
+    "r3": 0.0,
+    "r4": 0.0,
+    "total": 0.0,
+    "price_per_1m_input": 0.0,
+    "price_per_1m_output": 0.0
+  },
   "r2_adversarial": {
     "providers": ["gemini", "codex-fast"],
     "critical": 0,
@@ -228,6 +251,25 @@ Write `$OUT_DIR/agent-benchmark.json`:
 }
 ```
 
+### Token Estimation + API Cost
+
+For each round, estimate tokens:
+- **Input tokens**: count words in the prompt × 1.3
+- **Output tokens**: count words in the written files × 1.3
+
+Use these API prices (USD per 1M tokens) to compute cost:
+
+| Model | Input $/1M | Output $/1M |
+|-------|-----------|------------|
+| opus | 15.00 | 75.00 |
+| sonnet | 3.00 | 15.00 |
+| haiku | 0.80 | 4.00 |
+| composer | 0.00 | 0.00 |
+| cursor-composer | 0.00 | 0.00 |
+| unknown | 3.00 | 15.00 |
+
+Formula per round: `cost = (input_tokens × input_price / 1_000_000) + (output_tokens × output_price / 1_000_000)`
+
 ### Completion Block
 
 ```
@@ -236,12 +278,13 @@ Model:      [agent_model]
 Run ID:     [run_id]
 Artifacts:  [OUT_DIR]/
 
-Timing:
-  R1 Code:           Xs
-  R2 Adversarial+Fix: Xs
-  R3 Tests:          Xs
-  R4 Adversarial+Fix: Xs
-  Total:             Xs
+| Round | Time | Tokens (in/out) | API Cost |
+|-------|------|-----------------|----------|
+| R1 Code | Xs | ~Nk/~Mk | $X.XX |
+| R2 Adversarial+Fix | Xs | ~Nk/~Mk | $X.XX |
+| R3 Tests | Xs | ~Nk/~Mk | $X.XX |
+| R4 Adversarial+Fix | Xs | ~Nk/~Mk | $X.XX |
+| **Total** | **Xs** | **~Nk/~Mk** | **$X.XX** |
 
 Adversarial Impact:
   Code:  N findings → [what changed]
