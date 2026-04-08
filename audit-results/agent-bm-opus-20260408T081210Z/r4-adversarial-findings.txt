@@ -1,0 +1,46 @@
+ADVERSARIAL REVIEW — R4 Test Review
+Date: 2026-04-08T08:25:26Z
+Providers: codex-5.4, codex-5.3, gemini, cursor-agent, claude, codestral (6 providers)
+
+=== CRITICAL FINDINGS ===
+
+[C1] Assertion-action mismatch in cache behavior tests (codestral)
+  - Cache tests don't fully verify Redis operations and cache effects
+  FIX: Add specific assertions for Redis operations, cache keys, version checks
+
+=== WARNING FINDINGS ===
+
+[W1] Double-call exception pattern — same method called twice per test (codex-5.4, codex-5.3)
+  - Second call may fail for different reason if first mutates state
+  FIX: Capture rejection once, assert both type and message from single call
+
+[W2] calculateMonthlyRevenue doesn't assert computed UTC date boundaries (codex-5.4)
+  FIX: Assert createdAt filter in groupBy matches exact UTC start/end dates
+
+[W3] Abort test spies on AbortController.prototype, not hook's specific controller (claude)
+  FIX: Capture controller instances and verify specific ones are aborted
+
+[W4] Pagination test doesn't verify outgoing page parameter (codex-5.4)
+  FIX: Assert fetch URL contains page=1 for loadMore call
+
+[W5] Cache hit test only checks items.length, not full result integrity (codex-5.4)
+  FIX: Assert full returned object matches cached data
+
+[W6] Missing whitespace-only query test (claude)
+  FIX: Add test for '   ' input
+
+[W7] Cache deserialization test doesn't verify cache key contains ORDER_ID (claude)
+  FIX: Assert redis.get called with key containing ORDER_ID
+
+[W8] getOrdersForExport doesn't test exact boundary (MAX_EXPORT_ROWS ±1) (claude)
+  FIX: Test at boundary values
+
+[W9] Missing cache version mismatch test (codestral)
+  FIX: Test that version change forces DB query
+
+=== INFO FINDINGS ===
+
+[I1] bulkUpdateStatus partial failure not tested (codestral)
+[I2] Debounce uses fixed timer values (codestral) — intentional, using jest.advanceTimersByTime
+[I3] Cache key specificity insufficient (claude)
+[I4] Export boundary off-by-one potential (claude)

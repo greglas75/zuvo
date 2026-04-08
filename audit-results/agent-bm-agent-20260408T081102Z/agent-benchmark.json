@@ -1,0 +1,76 @@
+{
+  "version": "1.0",
+  "skill": "agent-benchmark",
+  "run_id": "agent-bm-agent-20260408T081102Z",
+  "timestamp": "2026-04-08T08:51:49Z",
+  "agent_model": "unknown",
+  "agent_slug": "unknown",
+  "project": "zuvo-plugin",
+  "r1_time_s": 240,
+  "r2_time_s": 180,
+  "r3_time_s": 840,
+  "r4_time_s": 1187,
+  "total_time_s": 2447,
+  "tokens": {
+    "r1_input": 705,
+    "r1_output": 3519,
+    "r2_input": 3519,
+    "r2_output": 3582,
+    "r3_input": 4025,
+    "r3_output": 2402,
+    "r4_input": 2402,
+    "r4_output": 3843,
+    "total_input": 10651,
+    "total_output": 13346
+  },
+  "cost_usd": {
+    "note": "Estimated API cost at current pricing. $0 if running from subscription.",
+    "r1": 0.0549,
+    "r2": 0.0643,
+    "r3": 0.0481,
+    "r4": 0.0649,
+    "total": 0.2321,
+    "price_per_1m_input": 3.0,
+    "price_per_1m_output": 15.0
+  },
+  "r2_adversarial": {
+    "providers": ["gemini", "codex-fast"],
+    "critical": 0,
+    "warning": 4,
+    "info": 0
+  },
+  "r4_adversarial": {
+    "providers": ["codex-5.4", "codex-5.3", "cursor-agent", "codestral"],
+    "critical": 2,
+    "warning": 15,
+    "info": 5
+  },
+  "files": {
+    "r1_code_lines": 996,
+    "r2_code_lines": 1011,
+    "r3_test_lines": 721,
+    "r3_test_count": 22,
+    "r4_test_lines": 1197,
+    "r4_test_count": 37
+  },
+  "scores": {
+    "C1_completeness": 5,
+    "C2_validation": 5,
+    "C3_error_handling": 5,
+    "C4_state_machine": 5,
+    "C5_redis": 5,
+    "C6_hook": 4,
+    "C7_structure": 4,
+    "code_total": 33,
+    "T1_assertion_specificity": 4,
+    "T2_edge_cases": 4,
+    "T3_mock_quality": 4,
+    "T4_error_paths": 3,
+    "T5_anti_tautology": 4,
+    "test_total": 19,
+    "A1_code_fix": 5,
+    "A2_test_fix": 3,
+    "adversarial_total": 8,
+    "grand_total": 60
+  }
+}

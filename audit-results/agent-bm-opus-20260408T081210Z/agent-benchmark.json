@@ -1,0 +1,80 @@
+{
+  "version": "1.0",
+  "skill": "agent-benchmark",
+  "run_id": "agent-bm-opus-20260408T081210Z",
+  "timestamp": "2026-04-08T08:12:10Z",
+  "agent_model": "claude-opus-4-6",
+  "agent_slug": "opus",
+  "project": "/Users/greglas/DEV/zuvo-plugin",
+  "r1_time_s": 73,
+  "r2_time_s": 335,
+  "r3_time_s": 210,
+  "r4_time_s": 528,
+  "total_time_s": 1153,
+  "tokens": {
+    "r1_input": 1700,
+    "r1_output": 7540,
+    "r2_input": 15600,
+    "r2_output": 9750,
+    "r3_input": 10400,
+    "r3_output": 12033,
+    "r4_input": 19500,
+    "r4_output": 16250,
+    "total_input": 47200,
+    "total_output": 45573
+  },
+  "cost_usd": {
+    "note": "Estimated API cost at current pricing. $0 if running from subscription.",
+    "r1": 0.59,
+    "r2": 0.97,
+    "r3": 1.06,
+    "r4": 1.51,
+    "total": 4.13,
+    "price_per_1m_input": 15.0,
+    "price_per_1m_output": 75.0
+  },
+  "r2_adversarial": {
+    "providers": ["codex-5.4", "codex-5.3", "gemini", "cursor-agent", "claude", "codestral"],
+    "critical": 3,
+    "warning": 12,
+    "info": 4
+  },
+  "r4_adversarial": {
+    "providers": ["codex-5.4", "codex-5.3", "gemini", "cursor-agent", "claude", "codestral"],
+    "critical": 1,
+    "warning": 13,
+    "info": 4
+  },
+  "files": {
+    "r1_code_lines": 726,
+    "r2_code_lines": 813,
+    "r3_test_lines": 1157,
+    "r3_test_count": 61,
+    "r4_test_lines": 1420,
+    "r4_test_count": 75
+  },
+  "scores": {
+    "C1_completeness": 5,
+    "C2_validation": 5,
+    "C3_error_handling": 5,
+    "C4_state_machine": 5,
+    "C5_redis": 5,
+    "C6_hook": 5,
+    "C7_structure": 4,
+    "code_total": 34,
+    "T1_assertion_specificity": 5,
+    "T2_edge_cases": 5,
+    "T3_mock_quality": 4,
+    "T4_error_paths": 5,
+    "T5_anti_tautology": 5,
+    "test_total": 24,
+    "A1_code_fix": 5,
+    "A2_test_fix": 5,
+    "adversarial_total": 10,
+    "grand_total": 68
+  },
+  "score_evidence": {
+    "C7_deduction": "OrderService.ts at 519 lines slightly exceeds typical file-limit thresholds, though 8 methods + helpers make this structurally justified",
+    "T3_deduction": "Mock factories and cleanup are solid, but missing jest.fn() unexpected-call detection guards"
+  }
+}

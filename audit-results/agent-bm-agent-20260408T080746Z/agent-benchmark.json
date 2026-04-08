@@ -1,0 +1,87 @@
+{
+  "version": "1.0",
+  "skill": "agent-benchmark",
+  "run_id": "agent-bm-agent-20260408T080746Z",
+  "timestamp": "2026-04-08T08:28:49Z",
+  "agent_model": "unknown",
+  "agent_slug": "agent",
+  "project": "/Users/greglas/DEV/zuvo-plugin",
+  "r1_time_s": 140,
+  "r2_time_s": 241,
+  "r3_time_s": 284,
+  "r4_time_s": 318,
+  "total_time_s": 983,
+  "tokens": {
+    "r1_input": 705,
+    "r1_output": 3013,
+    "r2_input": 2601,
+    "r2_output": 3385,
+    "r3_input": 3829,
+    "r3_output": 1820,
+    "r4_input": 3701,
+    "r4_output": 2024,
+    "total_input": 10836,
+    "total_output": 10242
+  },
+  "cost_usd": {
+    "note": "Estimated API cost at current pricing. $0 if running from subscription.",
+    "r1": 0.04731,
+    "r2": 0.058578,
+    "r3": 0.038787,
+    "r4": 0.041463,
+    "total": 0.186138,
+    "price_per_1m_input": 3.0,
+    "price_per_1m_output": 15.0
+  },
+  "r2_adversarial": {
+    "providers": [
+      "codex-5.4",
+      "codex-5.3",
+      "gemini",
+      "cursor-agent"
+    ],
+    "critical": 8,
+    "warning": 15,
+    "info": 4
+  },
+  "r4_adversarial": {
+    "providers": [
+      "codex-5.4",
+      "codex-5.3",
+      "gemini",
+      "cursor-agent",
+      "claude"
+    ],
+    "critical": 4,
+    "warning": 24,
+    "info": 6
+  },
+  "files": {
+    "r1_code_lines": 873,
+    "r2_code_lines": 972,
+    "r3_test_lines": 560,
+    "r3_test_count": 21,
+    "r4_test_lines": 627,
+    "r4_test_count": 22
+  },
+  "scores": {
+    "C1_completeness": 5,
+    "C2_validation": 4,
+    "C3_error_handling": 4,
+    "C4_state_machine": 5,
+    "C5_redis": 4,
+    "C6_hook": 4,
+    "C7_structure": 3,
+    "code_total": 29,
+    "T1_assertion_specificity": 4,
+    "T2_edge_cases": 4,
+    "T3_mock_quality": 4,
+    "T4_error_paths": 4,
+    "T5_anti_tautology": 4,
+    "test_total": 20,
+    "A1_code_fix": 4,
+    "A2_test_fix": 4,
+    "adversarial_total": 8,
+    "grand_total": 57
+  }
+}

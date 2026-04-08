@@ -238,3 +238,8 @@ Commits pending review. Auto-managed:
 - df587e7 (2026-04-08) add benchmark scoring rubric v1.0 — standardized 14-dimension evaluation model
 - a499491 (2026-04-08) release: v1.3.26 — quick-install.sh: one command does everything — includes Claude marketplace sync
 - 3a317e8 (2026-04-08) fix agent-benchmark: explicit slug mapping table, ban 'agent' as slug name
+- 6285e73 (2026-04-08) release: v1.3.27 — wire knowledge prime/curate into write-tests, fix-tests, write-e2e, receive-review, seo-fix, geo-fix, content-fix; fix ship prime gap
+- 60a2c13 (2026-04-08) fix: auto-detect gemini-api as fallback when gemini CLI unavailable
+- 7168449 (2026-04-08) Revert "fix: auto-detect gemini-api as fallback when gemini CLI unavailable"
+- cbb2494 (2026-04-08) add codestral provider, trim auto-detect to 4 providers (codex-5.3, gemini, cursor-agent, claude)
+- 6b2df0d (2026-04-08) review-fix: sanitize codestral model name, clarify auto vs manual providers in help

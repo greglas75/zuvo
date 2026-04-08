@@ -98,7 +98,7 @@ This does: version bump → commit → push → tag → update marketplace SHA �
 ## File structure
 
 ```
-skills/<name>/SKILL.md          — skill definitions (48 total)
+skills/<name>/SKILL.md          — skill definitions (49 total)
 skills/<name>/agents/<name>.md  — sub-agent instructions (26 agents)
 shared/includes/*.md            — shared procedural includes (32 files):
                                     knowledge-prime.md, knowledge-curate.md (knowledge store)
@@ -131,7 +131,7 @@ Every SKILL.md follows this structure:
 
 Reference: `skills/build/SKILL.md` is the canonical template.
 
-## Skill categories (48 total)
+## Skill categories (49 total)
 
 | Category | Count | Skills |
 |----------|-------|--------|
@@ -145,7 +145,7 @@ Reference: `skills/build/SKILL.md` is the canonical template.
 | Testing | 5 | write-tests, fix-tests, write-e2e, tests-performance, mutation-test |
 | Accessibility | 1 | a11y-audit |
 | Release | 5 | ship, deploy, canary, release-docs, retro |
-| Utility | 6 | docs, presentation, backlog, incident, benchmark, using-zuvo |
+| Utility | 7 | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo |
 
 ## Common tasks
 

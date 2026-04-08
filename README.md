@@ -2,7 +2,7 @@
 
 Auto-activating, multi-agent skill ecosystem for Claude Code, Codex, and Cursor.
 
-48 skills, 26 specialized agents, quality gates, knowledge store, session recovery, and structured workflows — all in one plugin.
+49 skills, 26 specialized agents, quality gates, knowledge store, session recovery, and structured workflows — all in one plugin.
 
 ## Install
 
@@ -140,16 +140,16 @@ args = ["-y", "codesift-mcp"]
 | Testing | write-tests, fix-tests, write-e2e, tests-performance, mutation-test |
 | Accessibility | a11y-audit |
 | Release | ship, deploy, canary, release-docs, retro |
-| Utility | docs, presentation, backlog, incident, benchmark, using-zuvo |
+| Utility | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo |
 
 ## Documentation
 
-- [All 48 Skills](docs/skills.md)
+- [All 49 Skills](docs/skills.md)
 - [Pipeline](docs/pipeline.md) — brainstorm → plan → execute
 - [Quality Gates](docs/quality-gates.md) — CQ1-CQ28 + Q1-Q19
 - [CodeSift Integration](docs/codesift-integration.md)
 - [Configuration](docs/configuration.md)
-- [Changelog](https://github.com/greglas75/zuvo/releases)
+- [Changelog](https://github.com/greglas75/zuvo/tags)
 
 ## For maintainers
 

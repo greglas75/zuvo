@@ -1,16 +1,3 @@
-CROSS-PROVIDER REVIEW
-  Input: 17362 chars
-  Review: test | Output: json | Dispatch: multi
-  Launching: codex-5.4...
-  Launching: codex-5.3...
-  Launching: gemini...
-  Launching: cursor-agent...
-  Launching: claude...
-  Done: codex-5.4
-  Done: codex-5.3
-  Done: gemini
-  Done: cursor-agent
-  Done: claude
 {
   "mode": "test",
   "providers_used": "codex-5.4, codex-5.3, gemini, cursor-agent, claude",

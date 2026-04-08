@@ -47,7 +47,7 @@ describe('useSearchProducts (round 3)', () => {
   });
 
   afterEach(() => {
-    jest.runOnlyPendingTimers();
+    jest.clearAllTimers();
     jest.useRealTimers();
     fetchSpy.mockRestore();
     abortSpy.mockRestore();
@@ -84,6 +84,37 @@ describe('useSearchProducts (round 3)', () => {
       expect.stringContaining(`q=${encodeURIComponent(SEARCH_QUERY)}`),
       expect.objectContaining({ method: 'GET' }),
     );
+  });
+
+  it('sets isLoading while the initial request is in flight', async () => {
+    const pending = deferredResponse();
+    fetchSpy.mockImplementationOnce(() => pending.promise);
+
+    const { result } = renderHook(() => useSearchProducts(SEARCH_QUERY, PAGE_SIZE));
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(result.current.isLoading).toBe(true);
+      expect(result.current.isLoadingMore).toBe(false);
+    });
+
+    await act(async () => {
+      pending.resolve(
+        mockResponse({
+          products: [PRODUCT_A, PRODUCT_B],
+          total: 2,
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.products).toEqual([PRODUCT_A, PRODUCT_B]);
+    });
   });
 
   it('aborts the in-flight request on query change and on unmount', async () => {
@@ -139,6 +170,55 @@ describe('useSearchProducts (round 3)', () => {
     expect(abortSpy).toHaveBeenCalledTimes(2);
   });
 
+  it('ignores a stale response that resolves after a newer query succeeds', async () => {
+    const stale = deferredResponse();
+    const fresh = deferredResponse();
+    fetchSpy
+      .mockImplementationOnce(() => stale.promise)
+      .mockImplementationOnce(() => fresh.promise);
+
+    const { result, rerender } = renderHook(({ query }) => useSearchProducts(query, PAGE_SIZE), {
+      initialProps: { query: 'a' },
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    rerender({ query: 'ab' });
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    await act(async () => {
+      fresh.resolve(
+        mockResponse({
+          products: [PRODUCT_B],
+          total: 1,
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.products).toEqual([PRODUCT_B]);
+    });
+
+    await act(async () => {
+      stale.resolve(
+        mockResponse({
+          products: [PRODUCT_A],
+          total: 1,
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.products).toEqual([PRODUCT_B]);
+      expect(result.current.error).toBeNull();
+    });
+  });
+
   it('appends loadMore results instead of replacing the existing products', async () => {
     fetchSpy
       .mockResolvedValueOnce(
@@ -169,14 +249,72 @@ describe('useSearchProducts (round 3)', () => {
       result.current.loadMore();
     });
 
+    expect(fetchSpy).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('skip=2'),
+      expect.objectContaining({ method: 'GET' }),
+    );
+
     await waitFor(() => {
       expect(result.current.products).toEqual([PRODUCT_A, PRODUCT_B, PRODUCT_C, PRODUCT_D]);
       expect(result.current.hasMore).toBe(false);
     });
   });
 
+  it('preserves existing products and clears isLoadingMore when loadMore exhausts retries', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        mockResponse({
+          products: [PRODUCT_A, PRODUCT_B],
+          total: 4,
+        }),
+      )
+      .mockResolvedValueOnce(mockResponse({}, false, 500))
+      .mockResolvedValueOnce(mockResponse({}, false, 500))
+      .mockResolvedValueOnce(mockResponse({}, false, 500));
+
+    const { result } = renderHook(() => useSearchProducts(SEARCH_QUERY, PAGE_SIZE));
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    await waitFor(() => {
+      expect(result.current.products).toEqual([PRODUCT_A, PRODUCT_B]);
+      expect(result.current.hasMore).toBe(true);
+    });
+
+    await act(async () => {
+      result.current.loadMore();
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoadingMore).toBe(true);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(600);
+    });
+
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledTimes(4);
+      expect(result.current.products).toEqual([PRODUCT_A, PRODUCT_B]);
+      expect(result.current.isLoadingMore).toBe(false);
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.error).toContain('500');
+    });
+  });
+
   it('returns an empty state without fetching when the query is empty', async () => {
     const { result } = renderHook(() => useSearchProducts('', PAGE_SIZE));
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
 
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(result.current.products).toEqual([]);
@@ -205,6 +343,38 @@ describe('useSearchProducts (round 3)', () => {
       expect(result.current.total).toBe(0);
       expect(result.current.hasMore).toBe(false);
     });
+  });
+
+  it('clears stale results when a populated search rerenders to an empty query', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      mockResponse({
+        products: [PRODUCT_A, PRODUCT_B],
+        total: 2,
+      }),
+    );
+
+    const { result, rerender } = renderHook(({ query }) => useSearchProducts(query, PAGE_SIZE), {
+      initialProps: { query: SEARCH_QUERY },
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    await waitFor(() => {
+      expect(result.current.products).toEqual([PRODUCT_A, PRODUCT_B]);
+    });
+
+    rerender({ query: '' });
+
+    await waitFor(() => {
+      expect(result.current.products).toEqual([]);
+      expect(result.current.total).toBe(0);
+      expect(result.current.error).toBeNull();
+      expect(result.current.hasMore).toBe(false);
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it('retries failed searches up to 3 attempts with exponential backoff', async () => {
@@ -247,9 +417,69 @@ describe('useSearchProducts (round 3)', () => {
     });
   });
 
+  it('settles into an error state after exhausting retries on persistent HTTP failures', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mockResponse({}, false, 503))
+      .mockResolvedValueOnce(mockResponse({}, false, 503))
+      .mockResolvedValueOnce(mockResponse({}, false, 503));
+
+    const { result } = renderHook(() => useSearchProducts(SEARCH_QUERY, PAGE_SIZE));
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(600);
+    });
+
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
+      expect(result.current.error).toContain('503');
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.isLoadingMore).toBe(false);
+      expect(result.current.products).toEqual([]);
+    });
+  });
+
   it('retries real network rejections and eventually resolves results', async () => {
     fetchSpy
       .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce(
+        mockResponse({
+          products: [PRODUCT_A],
+          total: 1,
+        }),
+      );
+
+    const { result } = renderHook(() => useSearchProducts(SEARCH_QUERY, PAGE_SIZE));
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(result.current.products).toEqual([PRODUCT_A]);
+      expect(result.current.error).toBeNull();
+    });
+  });
+
+  it('retries a malformed JSON response and eventually resolves results', async () => {
+    fetchSpy
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => {
+          throw new Error('bad json');
+        },
+      } as Response)
       .mockResolvedValueOnce(
         mockResponse({
           products: [PRODUCT_A],

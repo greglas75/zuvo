@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 
 import { OrderService } from './r2-OrderService';
 
@@ -57,6 +57,24 @@ function makeOrders(length: number, overridesByIndex: (index: number) => Partial
 }
 
 function createPrismaMock() {
+  const tx: any = {
+    order: {
+      findMany: jest.fn(),
+      findFirst: jest.fn(),
+      create: jest.fn(),
+      delete: jest.fn(),
+      deleteMany: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+    },
+    orderLineItem: {
+      deleteMany: jest.fn(),
+    },
+    auditLog: {
+      create: jest.fn(),
+    },
+  };
+
   const prisma: any = {
     order: {
       findMany: jest.fn(),
@@ -73,7 +91,8 @@ function createPrismaMock() {
     auditLog: {
       create: jest.fn(),
     },
-    $transaction: jest.fn(async (callback: (tx: any) => Promise<unknown>) => callback(prisma)),
+    tx,
+    $transaction: jest.fn(async (callback: (client: any) => Promise<unknown>) => callback(tx)),
   };
 
   return prisma;
@@ -142,6 +161,10 @@ describe('OrderService (round 3)', () => {
           organizationId: ORG_ID,
           status: 'pending',
           customerId: CUSTOMER_ID,
+          createdAt: {
+            gte: new Date('2026-03-01T00:00:00.000Z'),
+            lte: new Date('2026-03-31T23:59:59.000Z'),
+          },
         }),
         take: 25,
         skip: 5,
@@ -152,6 +175,21 @@ describe('OrderService (round 3)', () => {
       300,
       expect.any(String),
     );
+    expect(redisService.get).toHaveBeenNthCalledWith(
+      2,
+      `orders:${ORG_ID}:findAll:cache-v1:${JSON.stringify({
+        status: 'pending',
+        customerId: CUSTOMER_ID,
+        dateRange: {
+          from: '2026-03-01T00:00:00.000Z',
+          to: '2026-03-31T23:59:59.000Z',
+        },
+        take: 25,
+        skip: 5,
+      })}`,
+    );
+    const cachedListPayload = JSON.parse(redisService.setex.mock.calls[0][2] as string);
+    expect(cachedListPayload).toEqual([{ ...BASE_ORDER, createdAt: ISO_CREATED_AT }]);
   });
 
   it('throws NotFoundException when order not found in org', async () => {
@@ -161,6 +199,25 @@ describe('OrderService (round 3)', () => {
     const promise = service.findById(ORDER_ID, ORG_ID);
     await expect(promise).rejects.toBeInstanceOf(NotFoundException);
     await expect(promise).rejects.toThrow(`Order ${ORDER_ID} not found`);
+  });
+
+  it('rehydrates a cached order by id without hitting the database', async () => {
+    const cachedOrder = {
+      ...BASE_ORDER,
+      createdAt: ISO_CREATED_AT,
+      lineItems: [{ id: 'li-1', productId: 'prod-1', quantity: 1, unitPrice: 12.5, createdAt: ISO_CREATED_AT }],
+    };
+    redisService.get.mockResolvedValueOnce('cache-v1').mockResolvedValueOnce(JSON.stringify(cachedOrder));
+
+    const result = await service.findById(ORDER_ID, ORG_ID);
+
+    expect(result.createdAt).toBeInstanceOf(Date);
+    expect(result.createdAt.toISOString()).toBe(ISO_CREATED_AT);
+    expect(result.lineItems?.[0].createdAt).toBeInstanceOf(Date);
+    expect(result.lineItems?.[0].createdAt?.toISOString()).toBe(ISO_CREATED_AT);
+    expect(prisma.order.findFirst).not.toHaveBeenCalled();
+    expect(redisService.get).toHaveBeenNthCalledWith(1, `orders:${ORG_ID}:version`);
+    expect(redisService.get).toHaveBeenNthCalledWith(2, `orders:${ORG_ID}:findById:cache-v1:{"id":"${ORDER_ID}"}`);
   });
 
   it('returns an order by id when it exists in the tenant scope', async () => {
@@ -178,19 +235,22 @@ describe('OrderService (round 3)', () => {
       300,
       expect.any(String),
     );
+    expect(redisService.get).toHaveBeenNthCalledWith(2, `orders:${ORG_ID}:findById:cache-v1:{"id":"${ORDER_ID}"}`);
   });
 
   it('creates an order with nested line items, audits the mutation, and invalidates cache', async () => {
     const createdOrder = { ...BASE_ORDER, id: 'order-created', status: 'pending' as const, totalAmount: 42.5 };
-    prisma.order.create.mockResolvedValueOnce(createdOrder);
-    prisma.auditLog.create.mockResolvedValueOnce({});
+    prisma.tx.order.create.mockResolvedValueOnce(createdOrder);
+    prisma.tx.auditLog.create.mockResolvedValueOnce({});
 
     const result = await service.create(VALID_CREATE_DTO, ORG_ID);
 
     expect(result).toEqual(createdOrder);
     expect(result.totalAmount).toBe(42.5);
     expect(paymentGateway.validateCurrency).toHaveBeenCalledWith('USD');
-    expect(prisma.order.create).toHaveBeenCalledWith(
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.order.create).not.toHaveBeenCalled();
+    expect(prisma.tx.order.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           organizationId: ORG_ID,
@@ -208,7 +268,7 @@ describe('OrderService (round 3)', () => {
         include: { lineItems: true },
       }),
     );
-    expect(prisma.auditLog.create).toHaveBeenCalledWith(
+    expect(prisma.tx.auditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ action: 'order.create', organizationId: ORG_ID }),
       }),
@@ -225,37 +285,50 @@ describe('OrderService (round 3)', () => {
     const promise = service.create(VALID_CREATE_DTO, ORG_ID);
     await expect(promise).rejects.toBeInstanceOf(BadRequestException);
     await expect(promise).rejects.toThrow('unsupported currency: USD');
-    expect(prisma.order.create).not.toHaveBeenCalled();
-    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.tx.order.create).not.toHaveBeenCalled();
+    expect(prisma.tx.auditLog.create).not.toHaveBeenCalled();
     expect(redisService.set).not.toHaveBeenCalled();
   });
 
   it('propagates transaction rollback errors from create and does not invalidate cache', async () => {
-    prisma.$transaction.mockRejectedValueOnce(new Error('transaction rollback'));
+    prisma.tx.order.create.mockResolvedValueOnce({
+      ...BASE_ORDER,
+      id: 'order-created',
+      status: 'pending' as const,
+      totalAmount: 42.5,
+    });
+    prisma.tx.auditLog.create.mockRejectedValueOnce(new Error('audit log failed'));
 
-    await expect(service.create(VALID_CREATE_DTO, ORG_ID)).rejects.toThrow('transaction rollback');
+    await expect(service.create(VALID_CREATE_DTO, ORG_ID)).rejects.toThrow('audit log failed');
+    expect(prisma.tx.order.create).toHaveBeenCalled();
+    expect(prisma.tx.auditLog.create).toHaveBeenCalled();
     expect(redisService.set).not.toHaveBeenCalled();
   });
 
   it('deletes the order and its line items atomically within the tenant scope', async () => {
-    prisma.order.findFirst.mockResolvedValueOnce({ ...BASE_ORDER, status: 'confirmed' });
-    prisma.orderLineItem.deleteMany.mockResolvedValueOnce({ count: 2 });
-    prisma.order.deleteMany.mockResolvedValueOnce({ count: 1 });
-    prisma.auditLog.create.mockResolvedValueOnce({});
+    prisma.tx.order.findFirst.mockResolvedValueOnce({ ...BASE_ORDER, status: 'confirmed' });
+    prisma.tx.orderLineItem.deleteMany.mockResolvedValueOnce({ count: 2 });
+    prisma.tx.order.deleteMany.mockResolvedValueOnce({ count: 1 });
+    prisma.tx.auditLog.create.mockResolvedValueOnce({});
 
     await service.deleteOrder(ORDER_ID, ORG_ID);
 
-    expect(prisma.order.findFirst).toHaveBeenCalledWith({
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.order.findFirst).not.toHaveBeenCalled();
+    expect(prisma.orderLineItem.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.order.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.tx.order.findFirst).toHaveBeenCalledWith({
       where: { id: ORDER_ID, organizationId: ORG_ID },
       select: { id: true, customerId: true, status: true },
     });
-    expect(prisma.orderLineItem.deleteMany).toHaveBeenCalledWith({
+    expect(prisma.tx.orderLineItem.deleteMany).toHaveBeenCalledWith({
       where: { orderId: ORDER_ID, organizationId: ORG_ID },
     });
-    expect(prisma.order.deleteMany).toHaveBeenCalledWith({
+    expect(prisma.tx.order.deleteMany).toHaveBeenCalledWith({
       where: { id: ORDER_ID, organizationId: ORG_ID },
     });
-    expect(prisma.auditLog.create).toHaveBeenCalledWith(
+    expect(prisma.tx.auditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ action: 'order.delete', organizationId: ORG_ID }),
       }),
@@ -263,18 +336,44 @@ describe('OrderService (round 3)', () => {
     expect(redisService.set).toHaveBeenCalledWith(`orders:${ORG_ID}:version`, expect.any(String));
   });
 
+  it('rolls back deleteOrder and skips cache invalidation when a transactional step fails', async () => {
+    prisma.tx.order.findFirst.mockResolvedValueOnce({ ...BASE_ORDER, status: 'confirmed' });
+    prisma.tx.orderLineItem.deleteMany.mockRejectedValueOnce(new Error('delete failure'));
+
+    const promise = service.deleteOrder(ORDER_ID, ORG_ID);
+    await expect(promise).rejects.toThrow('delete failure');
+    expect(prisma.tx.order.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.tx.auditLog.create).not.toHaveBeenCalled();
+    expect(redisService.set).not.toHaveBeenCalled();
+  });
+
+  it('throws NotFoundException when deleteOrder cannot find the tenant order', async () => {
+    prisma.tx.order.findFirst.mockResolvedValueOnce(null);
+
+    const promise = service.deleteOrder(ORDER_ID, ORG_ID);
+    await expect(promise).rejects.toBeInstanceOf(NotFoundException);
+    await expect(promise).rejects.toThrow(`Order ${ORDER_ID} not found`);
+    expect(prisma.tx.orderLineItem.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.tx.order.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.tx.auditLog.create).not.toHaveBeenCalled();
+    expect(redisService.set).not.toHaveBeenCalled();
+  });
+
   it('updates status through a valid transition and sends shipment email when the order actually changes to shipped', async () => {
-    prisma.order.findFirst.mockResolvedValueOnce({
+    prisma.tx.order.findFirst.mockResolvedValueOnce({
       ...BASE_ORDER,
       status: 'processing',
     });
-    prisma.order.updateMany.mockResolvedValueOnce({ count: 1 });
-    prisma.auditLog.create.mockResolvedValueOnce({});
+    prisma.tx.order.updateMany.mockResolvedValueOnce({ count: 1 });
+    prisma.tx.auditLog.create.mockResolvedValueOnce({});
 
     const result = await service.updateStatus(ORDER_ID, 'shipped', ORG_ID);
 
     expect(result.status).toBe('shipped');
-    expect(prisma.order.updateMany).toHaveBeenCalledWith({
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.order.findFirst).not.toHaveBeenCalled();
+    expect(prisma.order.updateMany).not.toHaveBeenCalled();
+    expect(prisma.tx.order.updateMany).toHaveBeenCalledWith({
       where: {
         id: ORDER_ID,
         organizationId: ORG_ID,
@@ -291,12 +390,12 @@ describe('OrderService (round 3)', () => {
   });
 
   it('swallows shipment email errors after a successful shipped transition', async () => {
-    prisma.order.findFirst.mockResolvedValueOnce({
+    prisma.tx.order.findFirst.mockResolvedValueOnce({
       ...BASE_ORDER,
       status: 'processing',
     });
-    prisma.order.updateMany.mockResolvedValueOnce({ count: 1 });
-    prisma.auditLog.create.mockResolvedValueOnce({});
+    prisma.tx.order.updateMany.mockResolvedValueOnce({ count: 1 });
+    prisma.tx.auditLog.create.mockResolvedValueOnce({});
     emailService.sendOrderShipped.mockRejectedValueOnce(new Error('SMTP unavailable'));
     const warnSpy = jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
 
@@ -306,10 +405,11 @@ describe('OrderService (round 3)', () => {
     });
 
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('SMTP unavailable'));
+    expect(redisService.set).toHaveBeenCalledWith(`orders:${ORG_ID}:version`, expect.any(String));
   });
 
   it('throws BadRequestException on invalid status transition', async () => {
-    prisma.order.findFirst.mockResolvedValueOnce({
+    prisma.tx.order.findFirst.mockResolvedValueOnce({
       ...BASE_ORDER,
       status: 'pending',
     });
@@ -319,7 +419,34 @@ describe('OrderService (round 3)', () => {
     await expect(promise).rejects.toThrow(
       'Invalid transition from pending to delivered',
     );
-    expect(prisma.order.updateMany).not.toHaveBeenCalled();
+    expect(prisma.tx.order.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('throws NotFoundException when updateStatus cannot find the tenant order', async () => {
+    prisma.tx.order.findFirst.mockResolvedValueOnce(null);
+
+    const promise = service.updateStatus(ORDER_ID, 'shipped', ORG_ID);
+    await expect(promise).rejects.toBeInstanceOf(NotFoundException);
+    await expect(promise).rejects.toThrow(`Order ${ORDER_ID} not found`);
+    expect(prisma.tx.order.updateMany).not.toHaveBeenCalled();
+    expect(prisma.tx.auditLog.create).not.toHaveBeenCalled();
+    expect(emailService.sendOrderShipped).not.toHaveBeenCalled();
+    expect(redisService.set).not.toHaveBeenCalled();
+  });
+
+  it('throws ConflictException when updateStatus loses a race after validation', async () => {
+    prisma.tx.order.findFirst.mockResolvedValueOnce({
+      ...BASE_ORDER,
+      status: 'processing',
+    });
+    prisma.tx.order.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const promise = service.updateStatus(ORDER_ID, 'shipped', ORG_ID);
+    await expect(promise).rejects.toBeInstanceOf(ConflictException);
+    await expect(promise).rejects.toThrow('Order status changed by another request');
+    expect(prisma.tx.auditLog.create).not.toHaveBeenCalled();
+    expect(emailService.sendOrderShipped).not.toHaveBeenCalled();
+    expect(redisService.set).not.toHaveBeenCalled();
   });
 
   it('aggregates monthly revenue by currency for the given month', async () => {
@@ -339,6 +466,7 @@ describe('OrderService (round 3)', () => {
       expect.objectContaining({
         where: expect.objectContaining({
           organizationId: ORG_ID,
+          status: { not: 'cancelled' },
           createdAt: {
             gte: new Date('2026-03-01T00:00:00.000Z'),
             lt: new Date('2026-04-01T00:00:00.000Z'),
@@ -351,18 +479,21 @@ describe('OrderService (round 3)', () => {
 
   it('updates only valid source states in bulkUpdateStatus and skips invalid transitions silently', async () => {
     const requestedIds = ['order-123-1', 'order-123-2', 'order-123-3'];
-    prisma.order.findMany.mockResolvedValueOnce([
+    prisma.tx.order.findMany.mockResolvedValueOnce([
       makeOrder(1, { id: requestedIds[0], status: 'pending' }),
       makeOrder(2, { id: requestedIds[1], status: 'delivered' }),
       makeOrder(3, { id: requestedIds[2], status: 'processing' }),
     ]);
-    prisma.order.updateMany.mockResolvedValueOnce({ count: 2 });
-    prisma.auditLog.create.mockResolvedValueOnce({});
+    prisma.tx.order.updateMany.mockResolvedValueOnce({ count: 2 });
+    prisma.tx.auditLog.create.mockResolvedValueOnce({});
 
     const result = await service.bulkUpdateStatus(requestedIds, 'cancelled', ORG_ID);
 
     expect(result).toBe(2);
-    expect(prisma.order.findMany).toHaveBeenCalledWith(
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.order.findMany).not.toHaveBeenCalled();
+    expect(prisma.order.updateMany).not.toHaveBeenCalled();
+    expect(prisma.tx.order.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           organizationId: ORG_ID,
@@ -370,7 +501,7 @@ describe('OrderService (round 3)', () => {
         }),
       }),
     );
-    expect(prisma.order.updateMany).toHaveBeenCalledWith(
+    expect(prisma.tx.order.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           organizationId: ORG_ID,
@@ -380,21 +511,55 @@ describe('OrderService (round 3)', () => {
         data: { status: 'cancelled' },
       }),
     );
-    expect(prisma.auditLog.create).toHaveBeenCalledWith(
+    expect(prisma.tx.auditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ action: 'order.bulk_update_status', organizationId: ORG_ID }),
       }),
     );
   });
 
+  it('returns 0 for bulkUpdateStatus when every fetched order is an invalid transition', async () => {
+    prisma.tx.order.findMany.mockResolvedValueOnce([
+      makeOrder(1, { id: 'order-123-1', status: 'delivered' }),
+      makeOrder(2, { id: 'order-123-2', status: 'cancelled' }),
+    ]);
+
+    const result = await service.bulkUpdateStatus(['order-123-1', 'order-123-2'], 'cancelled', ORG_ID);
+
+    expect(result).toBe(0);
+    expect(prisma.tx.order.updateMany).not.toHaveBeenCalled();
+    expect(prisma.tx.auditLog.create).not.toHaveBeenCalled();
+    expect(redisService.set).not.toHaveBeenCalled();
+  });
+
   it('returns export payload at the maxRows boundary and includes relational data', async () => {
-    prisma.order.findMany.mockResolvedValueOnce(makeOrders(10_000));
+    const exportOrders = makeOrders(10_000).map((order, index) =>
+      index === 0
+        ? {
+            ...order,
+            lineItems: [
+              { id: 'li-1', productId: 'prod-1', quantity: 2, unitPrice: 10, createdAt: new Date('2026-03-01T00:00:00.000Z') },
+            ],
+            customer: { id: 'cust-1', name: 'Ada', email: 'ada@example.com' },
+            payments: [
+              { id: 'pay-1', amount: 20, currency: 'USD', createdAt: new Date('2026-03-01T00:00:00.000Z') },
+            ],
+          }
+        : order,
+    );
+    prisma.order.findMany.mockResolvedValueOnce(exportOrders);
 
     const result = await service.getOrdersForExport({}, ORG_ID);
 
     expect(result).toHaveLength(10_000);
+    expect(result[0].lineItems).toEqual(exportOrders[0].lineItems);
+    expect(result[0].customer).toEqual(exportOrders[0].customer);
+    expect(result[0].payments).toEqual(exportOrders[0].payments);
     expect(prisma.order.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: expect.objectContaining({
+          organizationId: ORG_ID,
+        }),
         include: {
           lineItems: true,
           customer: true,
@@ -411,5 +576,12 @@ describe('OrderService (round 3)', () => {
     const promise = service.getOrdersForExport({}, ORG_ID);
     await expect(promise).rejects.toBeInstanceOf(BadRequestException);
     await expect(promise).rejects.toThrow('Export row limit exceeded (10000)');
+    expect(prisma.order.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          organizationId: ORG_ID,
+        }),
+      }),
+    );
   });
 });

@@ -1,6 +1,6 @@
 # Skills Reference
 
-Zuvo includes 48 skills organized into 12 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
+Zuvo includes 49 skills organized into 12 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
 
 ---
 
@@ -141,7 +141,8 @@ Scoped task execution for common development work.
 | Accessibility | 1 | a11y-audit |
 | Release | 5 | ship, deploy, canary, release-docs, retro |
 | Utility | 6 | docs, presentation, backlog, incident, benchmark, using-zuvo |
-| **Total** | **48** | |
+| Utility | 7 | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo |
+| **Total** | **49** | |
 
 ## Shared Infrastructure (v1.3.24)
 
