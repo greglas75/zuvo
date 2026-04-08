@@ -202,3 +202,5 @@ Commits pending review. Auto-managed:
 - e09b531 (2026-04-08) sync benchmark skill to cache
 - 917b561 (2026-04-08) rewrite benchmark.sh: full 4-round pipeline with file extraction and artifact persistence
 - 93380ff (2026-04-08) benchmark: full 4-round pipeline with file extraction
+- bafe9eb (2026-04-08) release: v1.3.20 — benchmark: full 4-round pipeline with file extraction and artifact persistence
+- a96eb94 (2026-04-08) fix benchmark.sh: replace all unsafe ls glob calls with nullglob-safe helpers
