@@ -36,7 +36,22 @@ If any file is missing, stop.
 
 ## Setup
 
-1. Detect current model: check `$CLAUDE_MODEL` or infer from context. Record as `agent_model`. Build a short slug from it (e.g. `claude-sonnet-4-6` → `sonnet`, `claude-haiku-4-5-20251001` → `haiku`, `claude-opus-4-6` → `opus`, `composer` → `composer`, unknown → `agent`).
+1. Detect current model: check `$CLAUDE_MODEL` or infer from context. Record as `agent_model`. Build a short slug using this table:
+
+   | Model string contains | Slug |
+   |----------------------|------|
+   | `opus` | `opus` |
+   | `sonnet` | `sonnet` |
+   | `haiku` | `haiku` |
+   | `gpt-5.4` or `codex` + `5.4` | `codex-5.4` |
+   | `gpt-5.3` or `codex` + `5.3` | `codex-5.3` |
+   | `gpt-5` or `codex` (no version) | `codex` |
+   | `gemini` | `gemini` |
+   | `composer` | `composer` |
+   | `cursor` | `cursor` |
+   | anything else | use the model name as-is |
+
+   **Do NOT use `agent` as a slug.** The slug must identify which model ran the benchmark.
 
 2. Create output directory with agent name in folder:
    ```bash
