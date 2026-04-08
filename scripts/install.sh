@@ -106,6 +106,13 @@ install_claude() {
       chmod +x "$CACHE_DIR"/bin/* 2>/dev/null || true
     fi
 
+    # Copy hooks (pre-push gate, session hooks)
+    if [[ -d "$ZUVO_DIR/hooks" ]]; then
+      mkdir -p "$CACHE_DIR/hooks"
+      cp "$ZUVO_DIR"/hooks/* "$CACHE_DIR/hooks/" 2>/dev/null || true
+      chmod +x "$CACHE_DIR"/hooks/*.sh 2>/dev/null || true
+    fi
+
     # Copy docs (if dir exists in cache)
     if [[ -d "$CACHE_DIR/docs" ]]; then
       cp -r "$ZUVO_DIR"/docs/*.md "$CACHE_DIR/docs/" 2>/dev/null || true
