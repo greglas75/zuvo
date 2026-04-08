@@ -683,6 +683,21 @@ Same format used by seo-fix for backlog updates. Deduplicate against existing en
 | D3 < 50 (Structured Data) | Add/fix JSON-LD schemas | Schema markup boosts citations |
 | Tier A (>= 85) | Periodic re-audit or add --live-url for CWV data | Maintain and measure |
 
+## Phase 7b: Adversarial Review on Audit Report (MANDATORY — do NOT skip)
+
+After the audit report is generated, run cross-model validation to catch score inflation and gate inconsistency.
+
+```bash
+adversarial-review --json --mode audit --files "[audit report path]"
+```
+
+If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+
+Wait for complete output. Then:
+- **CRITICAL** (FAIL gate not in verdict, severity mismatch, score inflation) → fix in report before delivery
+- **WARNING** (N/A abuse, skipped check, insufficient evidence) → append to Known Gaps section
+- **INFO** → ignore
+
 ---
 
 ## SEO-AUDIT COMPLETE

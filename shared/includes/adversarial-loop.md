@@ -1,6 +1,6 @@
 # Adversarial Loop
 
-> Referenced by: /build, /write-tests, /execute, /refactor, /write-e2e, /debug, /fix-tests, /receive-review, /seo-fix, /code-audit, /test-audit, /security-audit.
+> **Protocol spec** for the adversarial review contract. Skills implement this protocol inline via `adversarial-review` bash calls — they do NOT load this file at runtime. This file documents the contract for reference and maintenance.
 > For document artifacts (specs, plans, audit reports): see `adversarial-loop-docs.md`.
 
 ## Purpose

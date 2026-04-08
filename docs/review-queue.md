@@ -243,3 +243,5 @@ Commits pending review. Auto-managed:
 - 7168449 (2026-04-08) Revert "fix: auto-detect gemini-api as fallback when gemini CLI unavailable"
 - cbb2494 (2026-04-08) add codestral provider, trim auto-detect to 4 providers (codex-5.3, gemini, cursor-agent, claude)
 - 6b2df0d (2026-04-08) review-fix: sanitize codestral model name, clarify auto vs manual providers in help
+- 914705e (2026-04-08) release: v1.3.28 — fix: update all counts to 49 skills/26 agents, fix marketplace description, fix changelog link
+- fd5a2f5 (2026-04-08) docs: add quick-install curl command to README

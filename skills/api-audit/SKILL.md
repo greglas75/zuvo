@@ -389,6 +389,21 @@ Full protocol: `../../shared/includes/backlog-protocol.md`.
 | D11=0 (breaking change) | Fix breaking changes before release |
 | All dimensions >= 8 | No action needed. Schedule next audit in 30 days. |
 
+## Phase 6b: Adversarial Review on Audit Report (MANDATORY — do NOT skip)
+
+After the audit report is generated, run cross-model validation to catch score inflation and gate inconsistency.
+
+```bash
+adversarial-review --json --mode audit --files "[audit report path]"
+```
+
+If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+
+Wait for complete output. Then:
+- **CRITICAL** (FAIL gate not in verdict, severity mismatch) → fix in report before delivery
+- **WARNING** (N/A abuse, skipped check) → append to Known Gaps section
+- **INFO** → ignore
+
 ---
 
 ## API-AUDIT COMPLETE

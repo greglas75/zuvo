@@ -437,6 +437,23 @@ Save to: `docs/design/[slug].md`
 
 ---
 
+## Adversarial Review on Output (MANDATORY — do NOT skip)
+
+After generating the architecture output (review report, ADR, or design document), run cross-model validation.
+
+```bash
+adversarial-review --json --mode audit --files "[output file path]"
+```
+
+If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+
+Wait for complete output. Then:
+- **CRITICAL** (unsupported claims, missing evidence, contradictions) → fix in output before delivery
+- **WARNING** (vague rationale, missing alternatives) → append to open questions section
+- **INFO** → ignore
+
+---
+
 ## Completion
 
 After completing any mode, print the completion block:

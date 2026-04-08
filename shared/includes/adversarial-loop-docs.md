@@ -1,8 +1,7 @@
 # Adversarial Loop — Document Artifacts
 
-> Referenced by: /brainstorm, /plan, /code-audit, /test-audit, /security-audit, /api-audit, /architecture, /seo-audit, /docs, /ship, and all audit skills that produce scored reports.
-> Companion to: `adversarial-loop.md` (code diffs). Load both when a skill produces code AND documents.
-> **MANDATORY** — if referenced by a skill, this loop runs. The agent does not decide whether to skip it.
+> **Protocol spec** for adversarial review of document artifacts. Skills implement this protocol inline via `adversarial-review` bash calls — they do NOT load this file at runtime. This file documents the contract for reference and maintenance.
+> Companion to: `adversarial-loop.md` (code diffs protocol spec).
 
 ## Purpose
 
