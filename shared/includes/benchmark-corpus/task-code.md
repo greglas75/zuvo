@@ -1,8 +1,6 @@
 # Benchmark Corpus Task — Write Production Code
 
-You are participating in a benchmark. Write TWO production TypeScript files. Do NOT reference any external rules, style guides, or quality standards — implement from the spec below only. After both files, emit the SELF_EVAL_SUMMARY block.
-
-**File size limit: each file must be under 300 lines.** If your implementation exceeds 300 lines, extract helpers or simplify. Quality is measured by correctness and completeness, not verbosity.
+You are participating in a benchmark. Write TWO production TypeScript files. Follow any file size limits and quality rules you have loaded (e.g. file-limits.md, cq-patterns.md). After both files, emit the SELF_EVAL_SUMMARY block.
 
 ---
 
