@@ -209,3 +209,5 @@ Commits pending review. Auto-managed:
 - cdbbf9f (2026-04-08) fix: install scripts to codex/cursor, path resolution
 - cd4f51c (2026-04-08) release: v1.3.21 — unify severity vocabulary, fix quality-reviewer duplication, align file limits and CQ23-28 gap
 - 4df56bf (2026-04-08) add checkpointing to benchmark.sh — resume from last completed round per provider
+- 534c9eb (2026-04-08) add benchmark checkpointing — resume from crashed runs
+- 232b63a (2026-04-08) add zuvo:agent-benchmark — self-benchmark where the agent writes code+tests with multi-provider adversarial
