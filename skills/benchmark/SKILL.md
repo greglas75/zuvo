@@ -80,7 +80,13 @@ If any core file is missing, proceed in degraded mode and note it in the BENCHMA
 
 ## Phase 1: Dispatch Providers
 
-1. Run `scripts/benchmark.sh` with all parsed flags. Capture stdout to `$TMPDIR/benchmark-raw.json`.
+1. Find and run `benchmark.sh`. Search in order:
+   - `scripts/benchmark.sh` (if in zuvo-plugin repo)
+   - `~/.codex/scripts/benchmark.sh` (Codex install)
+   - `~/.cursor/scripts/benchmark.sh` (Cursor install)
+   - `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/benchmark.sh` (Claude Code plugin cache)
+
+   Capture stdout to `$TMPDIR/benchmark-raw.json`.
 
    ```bash
    scripts/benchmark.sh \

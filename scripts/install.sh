@@ -240,6 +240,15 @@ install_codex() {
     ok "Rules installed"
   fi
 
+  # Step 7: Copy scripts (benchmark.sh, adversarial-review.sh, etc.)
+  if [[ -d "$ZUVO_DIR/scripts" ]]; then
+    mkdir -p "$HOME/.codex/scripts"
+    cp "$ZUVO_DIR"/scripts/benchmark.sh "$HOME/.codex/scripts/" 2>/dev/null || true
+    cp "$ZUVO_DIR"/scripts/adversarial-review.sh "$HOME/.codex/scripts/" 2>/dev/null || true
+    chmod +x "$HOME/.codex"/scripts/*.sh 2>/dev/null || true
+    ok "Scripts installed"
+  fi
+
   ok "Codex updated"
 }
 
@@ -330,6 +339,15 @@ install_cursor() {
     mkdir -p "$HOME/.cursor/rules"
     cp -r "$DIST"/rules/* "$HOME/.cursor/rules/"
     ok "Rules installed"
+  fi
+
+  # Step 7: Copy scripts (benchmark.sh, adversarial-review.sh, etc.)
+  if [[ -d "$ZUVO_DIR/scripts" ]]; then
+    mkdir -p "$HOME/.cursor/scripts"
+    cp "$ZUVO_DIR"/scripts/benchmark.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
+    cp "$ZUVO_DIR"/scripts/adversarial-review.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
+    chmod +x "$HOME/.cursor"/scripts/*.sh 2>/dev/null || true
+    ok "Scripts installed"
   fi
 
   ok "Cursor updated"
