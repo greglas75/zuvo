@@ -253,3 +253,5 @@ Commits pending review. Auto-managed:
 - c744228 (2026-04-08) feat: zuvo:plan works without brainstorm — inline mode from user description
 - 4612af2 (2026-04-08) release: v1.3.31 — feat: zuvo:plan inline mode — works without brainstorm spec
 - efb62c7 (2026-04-08) fix: adversarial-review path broken in review skill + all build scripts
+- 1b6a236 (2026-04-08) release: v1.3.32 — fix: adversarial-review paths — review skill + build scripts for Cursor/Codex/Antigravity
+- bd8a6cc (2026-04-08) fix: cross-provider-review.md — remove hardcoded ~/.claude/ paths that break Codex build
