@@ -1,43 +1,51 @@
 ---
 name: plan
-description: "Activates when an approved spec exists and implementation has not started. Analyzes architecture, selects patterns, assesses testability, then decomposes the spec into ordered TDD tasks with exact code and verification commands."
+description: "Analyzes architecture, selects patterns, assesses testability, then decomposes work into ordered TDD tasks with exact code and verification commands. Works from an approved spec (zuvo:brainstorm output) or directly from a user-provided description."
 ---
 
 # zuvo:plan
 
-Create a detailed, task-by-task implementation plan from an approved spec document. Every task follows the TDD protocol: RED (failing test) -> GREEN (minimal code) -> Verify -> Commit.
+Create a detailed, task-by-task implementation plan. Every task follows the TDD protocol: RED (failing test) -> GREEN (minimal code) -> Verify -> Commit.
 
 ---
 
-## Hard Gate: Spec Document Required
+## Input Resolution
 
-Before doing anything else, locate the spec:
+Determine the planning input. Two modes: **spec-driven** (from brainstorm output) or **inline** (from user description).
+
+### Step 1: Look for a spec
 
 1. If the user provided an explicit path (e.g., `zuvo:plan docs/specs/my-spec.md`), use that file
 2. Otherwise, search: `Glob("docs/specs/*-spec.md")`
 3. If multiple specs exist, present the list and ask the user which one to plan against
-4. If no spec is found:
-   - Set status to `BLOCKED_MISSING_SPEC`
-   - Print: "No spec document found in `docs/specs/`. A spec is required before planning."
-   - Print: "Next action: run `zuvo:brainstorm` to create one."
-   - Stop. Return `{ status: "BLOCKED_MISSING_SPEC", next: "zuvo:brainstorm" }`. Do not auto-invoke brainstorm.
 
-Once a spec is found, read it in full. This is the source of truth for all planning decisions.
+### Step 2: Determine mode
 
-Verify the spec status:
-- If `status: Approved` is NOT set in the spec header, stop with `BLOCKED_SPEC_NOT_APPROVED`.
-- Print: "Spec is not approved. Review and set status to Approved before planning."
-Return `{ status: "BLOCKED_SPEC_NOT_APPROVED", next: "approve spec" }`.
+- **Spec found with `status: Approved`** → **spec-driven mode**. Read spec in full. This is the source of truth.
+- **Spec found without `status: Approved`** → Print: "Spec exists but is not approved. Using it as reference in inline mode." Treat spec as context, not authority. → **inline mode**.
+- **No spec found** → **inline mode**.
+
+### Inline mode requirements
+
+The user's message (argument to `zuvo:plan`) IS the planning input. Extract:
+- **Goal:** what they want built
+- **Scope:** which files/areas are affected (explore codebase if not stated)
+- **Constraints:** any stated requirements
+
+If the user's description is too vague to plan against (less than one sentence, no clear deliverable), ask ONE clarifying question. Do not block — a couple of sentences is enough to plan from.
+
+Set `planning_mode: "inline"` or `planning_mode: "spec-driven"` — this affects the plan document header and review phase.
 
 ---
 
 ## Artifact Detection
 
-Check if a plan already exists for this spec:
+Check if a plan already exists:
 
 1. `Glob("docs/specs/*-plan.md")` — look for existing plans
-2. If a matching plan exists, determine the match by reading the plan's `**spec_id:**` field and comparing it to the spec's `spec_id`. Matching is ONLY by `spec_id`, never by filename or path.
-3. If no plan exists, proceed to Phase 1
+2. **Spec-driven mode:** match by `spec_id` field. If a matching plan exists, ask the user whether to revise or start fresh.
+3. **Inline mode:** skip this check (no spec_id to match against)
+4. If no plan exists, proceed to Phase 1
 
 ---
 
@@ -79,7 +87,7 @@ Read `agents/architect.md` for full instructions.
 |-------|-------|
 | Model | Sonnet |
 | Type | Explore (read-only) |
-| Input | The full spec document |
+| Input | The spec document (spec-driven) or user description + codebase context (inline) |
 | Token budget | 5000 for CodeSift calls |
 
 **Expected output:** Architecture Report containing component boundaries, data flow, interfaces, dependency graph, and a Mermaid diagram.
@@ -96,7 +104,7 @@ Read `agents/tech-lead.md` for full instructions.
 |-------|-------|
 | Model | Sonnet |
 | Type | Explore (read-only) |
-| Input | The spec document AND the Architect's report |
+| Input | The planning input (spec or user description) AND the Architect's report |
 | Token budget | 5000 for CodeSift calls |
 
 **Expected output:** Technical Decisions Report containing pattern selections, library choices, trade-offs, and file structure.
@@ -113,7 +121,7 @@ Read `agents/qa-engineer.md` for full instructions.
 |-------|-------|
 | Model | Sonnet |
 | Type | Explore (read-only) |
-| Input | The spec document, Architect's report, AND Tech Lead's report |
+| Input | The planning input (spec or user description), Architect's report, AND Tech Lead's report |
 | Token budget | 5000 for CodeSift calls |
 
 **Expected output:** Quality Assessment containing testability review, CQ pre-check, test strategy, and risk areas.
@@ -137,8 +145,9 @@ Write the plan document to `docs/specs/YYYY-MM-DD-<topic>-plan.md` using today's
 ```markdown
 # Implementation Plan: [Feature Name]
 
-**Spec:** [path to spec document]
-**spec_id:** [spec_id from the spec's header]
+**Spec:** [path to spec document | "inline — no spec"]
+**spec_id:** [spec_id from the spec's header | "none"]
+**planning_mode:** [spec-driven | inline]
 **plan_revision:** 1
 **status:** Draft | Reviewed | Approved
 **Created:** [date]
@@ -201,7 +210,7 @@ Read `agents/plan-reviewer.md` for full instructions.
 |-------|-------|
 | Model | Sonnet |
 | Type | Explore (read-only) |
-| Input | The spec document AND the plan document |
+| Input | The planning input (spec or user description) AND the plan document |
 
 **Expected output:** Review verdict — either APPROVED or ISSUES FOUND with specific items.
 

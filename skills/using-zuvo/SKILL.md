@@ -29,10 +29,10 @@ Do this on every message. Not just the first one.
 | User intent | Skill | Notes |
 |-------------|-------|-------|
 | Build a feature, add major functionality, implement a design | `zuvo:brainstorm` | Start here for anything touching 5+ files or requiring design decisions |
-| Continue from approved spec | `zuvo:plan` | Requires spec artifact in `docs/specs/*-spec.md` |
+| Plan implementation tasks | `zuvo:plan` | Uses spec from `docs/specs/*-spec.md` if available, otherwise plans from user description |
 | Continue from approved plan | `zuvo:execute` | Requires plan artifact in `docs/specs/*-plan.md` |
 
-**Pipeline order is mandatory.** `brainstorm` produces a spec. `plan` requires a spec. `execute` requires a plan. Do not skip phases. If the user says "build this feature" and no spec exists, start with `brainstorm`, not `execute`.
+**Pipeline order is recommended but not mandatory.** `brainstorm` produces a spec. `plan` works best with a spec but also accepts a direct description. `execute` requires a plan. If the user says "plan this" without a spec, `plan` runs in inline mode. If they say "build this feature" and it's large (5+ files), suggest `brainstorm` first but don't block.
 
 ### Priority 2 — Task (scoped work)
 
@@ -110,7 +110,7 @@ zuvo:plan        -->  plan document   -->  zuvo:execute
 ```
 
 - `zuvo:brainstorm` produces `docs/specs/YYYY-MM-DD-<topic>-spec.md`
-- `zuvo:plan` requires a spec. If none exists, redirect to `zuvo:brainstorm`.
+- `zuvo:plan` uses a spec if available, otherwise plans from user description (inline mode).
 - `zuvo:execute` requires a plan. If none exists, redirect to `zuvo:plan`.
 - Each downstream skill checks for its prerequisite artifact automatically.
 - The user can pass an artifact path explicitly: `zuvo:plan docs/specs/my-spec.md`
