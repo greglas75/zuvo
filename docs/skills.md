@@ -1,6 +1,6 @@
 # Skills Reference
 
-Zuvo includes 47 skills organized into 9 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
+Zuvo includes 48 skills organized into 12 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
 
 ---
 
@@ -128,17 +128,30 @@ Scoped task execution for common development work.
 
 ## Skill count by category
 
-| Category | Count |
-|----------|-------|
-| Pipeline | 5 |
-| Core | 4 |
-| Code/Test audits | 5 |
-| Infra audits | 5 |
-| Structure/SEO/Arch | 4 |
-| Design | 3 |
-| Testing | 5 |
-| Accessibility | 1 |
-| Release | 5 |
-| Utility | 5 |
-| Content | 2 |
-| **Total** | **46** |
+| Category | Count | Skills |
+|----------|-------|--------|
+| Pipeline | 5 | brainstorm, plan, execute, worktree, receive-review |
+| Core | 4 | build, review, refactor, debug |
+| Code/Test audits | 5 | code-audit, test-audit, api-audit, security-audit, pentest |
+| Infra audits | 5 | performance-audit, db-audit, dependency-audit, ci-audit, env-audit |
+| Structure/SEO/GEO | 6 | structure-audit, seo-audit, seo-fix, geo-audit, geo-fix, architecture |
+| Content | 3 | content-audit, content-fix, content-migration |
+| Design | 3 | design, design-review, ui-design-team |
+| Testing | 5 | write-tests, fix-tests, write-e2e, tests-performance, mutation-test |
+| Accessibility | 1 | a11y-audit |
+| Release | 5 | ship, deploy, canary, release-docs, retro |
+| Utility | 6 | docs, presentation, backlog, incident, benchmark, using-zuvo |
+| **Total** | **48** | |
+
+## Shared Infrastructure (v1.3.24)
+
+| Include | Purpose |
+|---------|---------|
+| `knowledge-prime.md` | Load project knowledge (patterns, gotchas, decisions) before work. Auto-primed at session start + per-skill |
+| `knowledge-curate.md` | Extract and persist learnings after work. JSONL schema with timesSurfaced, confidence, provenance |
+| `session-state.md` | Resume after context compaction/crashes. execution-state.md + project-context.md + active-plan.md |
+| `severity-vocabulary.md` | Canonical mapping across all skill severity vocabularies (S1-S4) |
+| `adversarial-loop.md` | Cross-model adversarial review with evidence enforcement (auto-downgrade without file:line) |
+| `adversarial-loop-docs.md` | Same for document artifacts (specs, plans, audit reports) |
+| `quality-gates.md` | CQ1-CQ28 + Q1-Q19 gate definitions, scoring, evidence format |
+| `env-compat.md` | Multi-platform dispatch (Claude Code, Codex, Cursor) |

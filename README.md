@@ -2,7 +2,7 @@
 
 Auto-activating, multi-agent skill ecosystem for Claude Code, Codex, and Cursor.
 
-39 skills, 20 specialized agents, quality gates, and structured workflows — all in one plugin.
+48 skills, 26 specialized agents, quality gates, knowledge store, session recovery, and structured workflows — all in one plugin.
 
 ## Install
 
@@ -109,11 +109,14 @@ args = ["-y", "codesift-mcp"]
 ## What's inside
 
 - **Pipeline skills** — `zuvo:brainstorm` → `zuvo:plan` → `zuvo:execute` with multi-agent exploration, quality gates, and evidence-based review
-- **34 task skills** — build, review, refactor, debug, 19 audits, design, docs, ship, deploy, canary, retro, and more
+- **43 task skills** — build, review, refactor, debug, 19 audits, design, docs, ship, deploy, canary, retro, incident, mutation-test, benchmark, and more
 - **Release pipeline** — `zuvo:ship` → `zuvo:deploy` → `zuvo:canary` for the full post-code lifecycle
+- **Knowledge Store** — JSONL-based project memory. Skills learn from past sessions (patterns, gotchas, decisions). Auto-primed at session start and per-skill
+- **Session Recovery** — execution state persisted to `.zuvo/context/`. Resume after context compaction or crashes without losing progress
+- **Adversarial review** — 4-provider cross-model verification with evidence enforcement (findings without file:line auto-downgraded)
 - **Auto-activation** — routing engine matches your intent to the right skill automatically
 - **CodeSift integration** — semantic search, community detection, call chain tracing, complexity analysis
-- **Quality gates** — CQ1-CQ28 (code quality) and Q1-Q19 (test quality)
+- **Quality gates** — CQ1-CQ28 (code quality) and Q1-Q19 (test quality) with unified severity vocabulary
 
 ## Platform support
 
@@ -131,15 +134,17 @@ args = ["-y", "codesift-mcp"]
 | Core | build, review, refactor, debug |
 | Code audits | code-audit, test-audit, api-audit, security-audit, pentest |
 | Infra audits | performance-audit, db-audit, dependency-audit, ci-audit, env-audit |
-| Structure | structure-audit, seo-audit, seo-fix, architecture |
+| Structure/SEO/GEO | structure-audit, seo-audit, seo-fix, geo-audit, geo-fix, architecture |
+| Content | content-audit, content-fix, content-migration |
 | Design | design, design-review, ui-design-team |
-| Testing | write-tests, fix-tests, write-e2e, tests-performance |
+| Testing | write-tests, fix-tests, write-e2e, tests-performance, mutation-test |
+| Accessibility | a11y-audit |
 | Release | ship, deploy, canary, release-docs, retro |
-| Utility | docs, presentation, backlog, using-zuvo |
+| Utility | docs, presentation, backlog, incident, benchmark, using-zuvo |
 
 ## Documentation
 
-- [All 39 Skills](docs/skills.md)
+- [All 48 Skills](docs/skills.md)
 - [Pipeline](docs/pipeline.md) — brainstorm → plan → execute
 - [Quality Gates](docs/quality-gates.md) — CQ1-CQ28 + Q1-Q19
 - [CodeSift Integration](docs/codesift-integration.md)

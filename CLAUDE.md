@@ -98,15 +98,21 @@ This does: version bump → commit → push → tag → update marketplace SHA �
 ## File structure
 
 ```
-skills/<name>/SKILL.md          — skill definitions (39 total)
-skills/<name>/agents/<name>.md  — sub-agent instructions
-shared/includes/*.md            — shared procedural includes (codesift-setup, env-compat, etc.)
-rules/*.md                      — code quality rules (cq-patterns, testing, security)
+skills/<name>/SKILL.md          — skill definitions (48 total)
+skills/<name>/agents/<name>.md  — sub-agent instructions (26 agents)
+shared/includes/*.md            — shared procedural includes (32 files):
+                                    knowledge-prime.md, knowledge-curate.md (knowledge store)
+                                    session-state.md (session recovery)
+                                    severity-vocabulary.md (unified severity mapping)
+                                    adversarial-loop.md, adversarial-loop-docs.md (evidence enforcement)
+                                    quality-gates.md, env-compat.md, codesift-setup.md, run-logger.md
+                                    + 22 registries, schemas, protocols
+rules/*.md                      — code quality rules (12 files: cq-patterns, testing, security, file-limits, etc.)
 scripts/install.sh              — local install to Claude + Codex + Cursor
 scripts/release.sh              — release to marketplace
 scripts/build-codex-skills.sh   — build Codex distribution (called by install.sh)
 scripts/build-cursor-skills.sh  — build Cursor v3 distribution (called by install.sh)
-docs/                           — documentation (skills.md, pipeline.md, etc.)
+docs/                           — documentation (skills.md, pipeline.md, competitive-analysis.md, etc.)
 .claude-plugin/plugin.json      — Claude Code plugin manifest
 .codex-plugin/plugin.json       — Codex plugin manifest
 package.json                    — version metadata only (no npm)
@@ -125,7 +131,7 @@ Every SKILL.md follows this structure:
 
 Reference: `skills/build/SKILL.md` is the canonical template.
 
-## Skill categories (39 total)
+## Skill categories (48 total)
 
 | Category | Count | Skills |
 |----------|-------|--------|
@@ -133,11 +139,13 @@ Reference: `skills/build/SKILL.md` is the canonical template.
 | Core | 4 | build, review, refactor, debug |
 | Code/Test audits | 5 | code-audit, test-audit, api-audit, security-audit, pentest |
 | Infra audits | 5 | performance-audit, db-audit, dependency-audit, ci-audit, env-audit |
-| Structure/SEO/Arch | 4 | structure-audit, seo-audit, seo-fix, architecture |
+| Structure/SEO/GEO | 6 | structure-audit, seo-audit, seo-fix, geo-audit, geo-fix, architecture |
+| Content | 3 | content-audit, content-fix, content-migration |
 | Design | 3 | design, design-review, ui-design-team |
-| Testing | 4 | write-tests, fix-tests, write-e2e, tests-performance |
+| Testing | 5 | write-tests, fix-tests, write-e2e, tests-performance, mutation-test |
+| Accessibility | 1 | a11y-audit |
 | Release | 5 | ship, deploy, canary, release-docs, retro |
-| Utility | 4 | docs, presentation, backlog, using-zuvo |
+| Utility | 6 | docs, presentation, backlog, incident, benchmark, using-zuvo |
 
 ## Common tasks
 
