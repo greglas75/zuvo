@@ -211,3 +211,5 @@ Commits pending review. Auto-managed:
 - 4df56bf (2026-04-08) add checkpointing to benchmark.sh — resume from last completed round per provider
 - 534c9eb (2026-04-08) add benchmark checkpointing — resume from crashed runs
 - 232b63a (2026-04-08) add zuvo:agent-benchmark — self-benchmark where the agent writes code+tests with multi-provider adversarial
+- 9e1804d (2026-04-08) add zuvo:agent-benchmark — self-benchmark with multi-provider adversarial
+- bd34514 (2026-04-08) fix agent-benchmark: explicit guardrails — never edit R1/R3 files, write R2/R4 as new files

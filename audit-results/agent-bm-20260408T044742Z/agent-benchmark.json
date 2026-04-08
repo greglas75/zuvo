@@ -1,0 +1,33 @@
+{
+  "version": "1.0",
+  "skill": "agent-benchmark",
+  "run_id": "agent-bm-20260408T044742Z",
+  "timestamp": "2026-04-08T04:57:30Z",
+  "agent_model": "claude-haiku-4-5-20251001",
+  "project": "zuvo-plugin",
+  "r1_time_s": 3,
+  "r2_time_s": 2,
+  "r3_time_s": 4,
+  "r4_time_s": 2,
+  "total_time_s": 11,
+  "r2_adversarial": {
+    "providers": ["codex-5.4", "codex-5.3", "gemini", "cursor-agent", "claude"],
+    "critical": 4,
+    "warning": 7,
+    "info": 0
+  },
+  "r4_adversarial": {
+    "providers": ["codex-5.4", "codex-5.3", "gemini", "cursor-agent", "claude"],
+    "critical": 2,
+    "warning": 5,
+    "info": 1
+  },
+  "files": {
+    "r1_code_lines": 400,
+    "r2_code_lines": 498,
+    "r3_test_lines": 874,
+    "r3_test_count": 58,
+    "r4_test_lines": 895,
+    "r4_test_count": 58
+  }
+}

@@ -1,0 +1,200 @@
+CROSS-PROVIDER REVIEW
+  Input: 163 chars
+  Review: test | Output: json | Dispatch: multi
+  Launching: codex-5.4...
+  Launching: codex-5.3...
+  Launching: gemini...
+  Launching: cursor-agent...
+  Launching: claude...
+  Done: codex-5.4
+  Done: codex-5.3
+  Done: gemini
+  Done: cursor-agent
+  Done: claude
+{
+  "mode": "test",
+  "providers_used": "codex-5.4, codex-5.3, gemini, cursor-agent, claude",
+  "provider_count": 5,
+  "input_size": 163,
+  "date": "2026-04-08T05:03:22Z",
+  "results": {
+    "codex-5.4": {
+      "findings": []
+    },
+    "codex-5.3": {
+      "findings": []
+    },
+    "gemini": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-20260408T044845Z/r3-OrderService.test.ts",
+          "issue": "Test 'scopes query to organizationId' asserts transaction execution but fails to check the where clause.",
+          "attack_vector": "Cross-tenant data leakage if organizationId filtering is accidentally removed, as the test will still pass.",
+          "fix": "Replace expect(prisma.$transaction).toHaveBeenCalled() with expect(prisma.order.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ organizationId: ORG_ID }) }))."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-20260408T044845Z/r3-useSearchProducts.test.ts",
+          "issue": "Test 'aborts in-flight request on unmount' only asserts that fetch was called, failing to verify if the abort signal was actually triggered.",
+          "attack_vector": "Memory leaks and background processing bugs could be introduced if unmount cleanup is removed, and this test would not catch it.",
+          "fix": "Mock globalThis.AbortController and assert that the abort method was called after unmounting."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-20260408T044845Z/r3-useSearchProducts.test.ts",
+          "issue": "Test 'does not update state after unmount' suppresses console errors but fails to assert they didn't happen.",
+          "attack_vector": "If the isMountedRef guard is removed, React will throw a memory leak warning, but this test will swallow the error and pass anyway.",
+          "fix": "Add expect(consoleSpy).not.toHaveBeenCalled() before restoring the spy to guarantee no React state updates occurred after unmount."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-20260408T044845Z/r3-OrderService.test.ts",
+          "issue": "Overly broad cache assertion expect(redis.set).toHaveBeenCalled() in findById test passes for any cache write.",
+          "attack_vector": "If cache keys are formatted incorrectly, TTL is dropped, or wrong data is cached, this test will falsely pass.",
+          "fix": "Assert specific arguments: expect(redis.set).toHaveBeenCalledWith(expect.any(String), JSON.stringify(BASE_ORDER), 300)."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-20260408T044845Z/r3-OrderService.test.ts",
+          "issue": "Missing negative test for non-existent products during order creation.",
+          "attack_vector": "If the product existence check is removed, the system might attempt to create orders for invalid products, causing DB constraint errors.",
+          "fix": "Add a test that mocks prisma._tx.product.findUnique.mockResolvedValue(null) and asserts it rejects with a Product not found error."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-20260408T044845Z/r3-useSearchProducts.test.ts",
+          "issue": "Missing test coverage for aborting a request while it is in the exponential backoff waiting phase.",
+          "attack_vector": "If the abort event listener inside the backoff Promise is removed, retries will continue executing even after the component unmounts.",
+          "fix": "Add a test that fails a fetch, advances time partially into the backoff delay, unmounts the component, and asserts that no further fetches occur."
+        }
+      ]
+    },
+    "cursor-agent": {
+      "findings": [
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "zuvo-benchmark-r3.yNsABU/r3-useSearchProducts.test.ts:231-241",
+          "issue": "loadMore() returns void (hook uses void runFetch('more')); assigning its return to loadMorePromise and awaiting it does not await the in-flight fetch, so the test does not synchronously gate on runFetch completion—only on waitFor polling.",
+          "attack_vector": "Timing/race changes (e.g. React 18 batching, slower microtasks) could make isLoadingMore assertions flaky or mask a bug where loading flags desync from the real request lifecycle.",
+          "fix": "Await fetch resolution explicitly (e.g. wrap runFetch in a Promise in tests only via a test double, or assert on fetchSpy.mock.results / waitFor on products length after loadMore without pretending loadMore returns a Promise)."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "zuvo-benchmark-r3.yNsABU/r3-OrderService.test.ts:436-455",
+          "issue": "bulkUpdateStatus test uses expect(prisma.auditLog.create).toHaveBeenCalled() with no call count or argument assertions despite two successful updates expected.",
+          "attack_vector": "Regression that drops one audit, writes wrong payload, or audits only the wrong order would still pass.",
+          "fix": "Assert toHaveBeenCalledTimes(2) and toHaveBeenCalledWith matching expect.objectContaining({ data: { action: 'order.status_updated_bulk', ... } }) for each order, or snapshot the sequence of calls."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "zuvo-benchmark-r3.yNsABU/r3-OrderService.test.ts",
+          "issue": "Production assertValidCreateDto enforces currency, per-line-item productId, quantity>0, and unitPrice>=0 (OrderService.ts:93-108) but tests only cover whitespace customerId and empty lineItems — missing negative tests for those paths.",
+          "attack_vector": "Validation regressions or wrong error messages for invalid currency/line items would ship without failing CI.",
+          "fix": "Add one test per thrown BadRequestException branch with matching getResponse() expectations."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "zuvo-benchmark-r3.yNsABU/r3-useSearchProducts.test.ts",
+          "issue": "fetch is always mocked as ok + JSON matching SearchResponse; no tests for !res.ok, parse errors, or isSearchResponse validation failure (Unexpected response shape) in fetchSearchJson.",
+          "attack_vector": "Broken error handling or user-visible error state for API/contract failures would not be caught; mocks diverge from real HTTP behavior.",
+          "fix": "Add tests with jsonResponse({ ok: false, status: 500 }) pattern or mockResolvedValueOnce with non-ok Response and assert error state; add malformed JSON / wrong shape cases."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "medium",
+          "file": "zuvo-benchmark-r3.yNsABU/r3-useSearchProducts.test.ts:170-206",
+          "issue": "Retry test asserts three fetch attempts and final products but does not assert backoff delays (200ms, 400ms) between attempts relative to implementation.",
+          "attack_vector": "A change that removes backoff or uses wrong multipliers could still pass if timers are advanced enough in one lump.",
+          "fix": "After each failure, advance timers by exactly FIRST_BACKOFF_MS and SECOND_BACKOFF_MS and optionally spy on setTimeout or assert fetch call timestamps order."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "medium",
+          "file": "zuvo-benchmark-r3.yNsABU/r3-OrderService.test.ts:164-205",
+          "issue": "create success test does not assert tx.order.create (or prisma.order.create) was invoked with expected data—only post-transaction side effects and return value.",
+          "attack_vector": "If production skipped DB create but still returned a fabricated object from a broken mock, the test could still pass depending on mock wiring.",
+          "fix": "Capture the inner tx mock and expect(tx.order.create).toHaveBeenCalledWith({ data: expect.objectContaining({ organizationId, customerId, total: 50 }) }) or equivalent."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "low",
+          "file": "zuvo-benchmark-r3.yNsABU/r3-useSearchProducts.test.ts:53-98",
+          "issue": "Query-change abort test asserts AbortController.prototype.abort was called but does not assert the stale response from finishFirst is ignored (e.g. products reflect only the final query).",
+          "attack_vector": "Abort could fire while a bug still merges stale results into state; test would pass.",
+          "fix": "After resolving the first pending response, assert result.current.products/query state matches only the second query outcome."
+        }
+      ]
+    },
+    "claude": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts:160-171",
+          "issue": "findAll 'scopes query to organizationId' test has a no-op assertion — asserts only that $transaction was called, not that the WHERE clause contains organizationId",
+          "attack_vector": "Removing the `organizationId` filter from the `where` clause in `findAll` would let any tenant see any other tenant's orders — a multi-tenancy data leak. This test would still pass because it only asserts `expect(prisma.$transaction).toHaveBeenCalled()`, which is true regardless of query contents.",
+          "fix": "Replace the assertion with verification of the actual Prisma arguments. After the $transaction mock executes the callback, assert `prisma._tx.order.findMany` was called with `expect.objectContaining({ where: expect.objectContaining({ organizationId: ORG_ID }) })`. Requires using the callback-based $transaction mock (like deleteOrder tests do) instead of the mockResolvedValue shortcut."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts:440-498",
+          "issue": "calculateMonthlyRevenue never tests that cancelled orders are excluded from revenue aggregation",
+          "attack_vector": "Production code (line 373) filters `status: { not: 'cancelled' }` in the groupBy. If someone removes that filter during refactoring, all tests still pass — cancelled orders inflate revenue. The UTC boundary test uses `expect.objectContaining` on the `where` clause but only checks `createdAt`, never `status`.",
+          "fix": "Add an assertion in the UTC boundary test (or a dedicated test) that verifies the groupBy `where` clause contains `status: { not: 'cancelled' }`. Alternatively, add a test with a mock that includes cancelled-order revenue to prove it's excluded."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts:114-124",
+          "issue": "findAll cache-miss test overrides $transaction with mockResolvedValue, bypassing the actual findMany/count calls — query construction is never verified",
+          "attack_vector": "Line 117 `prisma.$transaction.mockResolvedValue([[BASE_ORDER], 1])` short-circuits the array-form transaction. The `findMany` and `count` mocks at lines 115-116 are set but never called. If findAll's query construction broke (wrong orderBy, wrong take/skip, missing include), this test would still pass because the transaction returns hardcoded data. Combined with finding #1, findAll has zero query-construction coverage.",
+          "fix": "Remove the `$transaction.mockResolvedValue` override and let the default callback-based implementation from `makePrismaMock` execute. Mock `_tx.order.findMany` and `_tx.order.count` instead. Assert the findMany call received correct where/take/skip/orderBy arguments."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts:553-569",
+          "issue": "bulkUpdateStatus email test doesn't cover the TOCTOU race where actualCount < eligible.length — emails sent for orders that weren't actually updated",
+          "attack_vector": "Production code (line 430-445) sends emails based on the `eligible` array, not `actualCount`. If concurrent writes updated some orders between the read and the updateMany, `actualCount` could be less than `eligible.length`, but all eligible orders still get shipping emails — including ones whose status wasn't actually changed. No test covers `updateMany.count < eligible.length`.",
+          "fix": "Add a test where `updateMany` returns `{ count: 30 }` for 60 eligible orders. Verify that either (a) only 30 emails are sent (ideal fix to production code), or (b) document and test the current behavior explicitly. This is also arguably a production bug."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r3-useSearchProducts.test.ts:142-171",
+          "issue": "AbortController test replaces global with a mock whose signal doesn't dispatch events — retry backoff abort path is untested",
+          "attack_vector": "The MockAbortController (line 146-149) has `signal.addEventListener: jest.fn()` that captures but never fires listeners. Production code at line 79-88 registers a `once` listener on the signal to reject the backoff promise on abort. If that listener registration or the `{ once: true }` cleanup were removed, this test would still pass because it only checks `abortSpy` was called, not that the in-flight retry was actually cancelled.",
+          "fix": "Instead of replacing globalThis.AbortController, test abort behavior through observable side effects: after rerender with a new query, advance timers past the backoff period and verify the first query's fetch is NOT retried (fetchSpy only called for the second query). This tests abort propagation without mocking the controller itself."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r3-OrderService.test.ts:123",
+          "issue": "Cache write assertions across findAll, findById, and create only verify redis.set was called, never the cache key, value, or TTL",
+          "attack_vector": "Lines 123, 213 use bare `expect(redis.set).toHaveBeenCalled()`. If the cache key format changed (breaking cache lookups), or the TTL was set to 0 (instant expiry), or wrong data was serialized, these tests still pass. The only test with argument assertions is the version-bump check at line 297, but that only covers `cache-ver:`, not the actual data cache entries.",
+          "fix": "Assert `redis.set` was called with matching arguments: `expect(redis.set).toHaveBeenCalledWith(expect.stringContaining('list:'), expect.stringContaining(ORDER_ID), 300)` for findAll, and similar for findById. Verify the TTL matches `CACHE_TTL_SECONDS` (300)."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "medium",
+          "file": "r3-useSearchProducts.test.ts:241-257",
+          "issue": "Mutual exclusivity test uses boolean AND which can never detect the broken state where both are false simultaneously",
+          "attack_vector": "Line 256 asserts `expect(result.current.isLoading && result.current.isLoadingMore).toBe(false)`. This passes in THREE states: (false, false), (true, false), (false, true). Only (true, true) fails it. But the actual invariant being tested — that they're mutually exclusive — is already guaranteed to pass when both are false (the idle state). The assertion should verify that when one IS true, the other IS false, which the test at line 231 already does better. This test adds no value beyond line 231.",
+          "fix": "Either delete this test (line 231 already covers the invariant with a stronger assertion), or change the assertion to explicitly check: `expect(result.current.isLoadingMore).toBe(true); expect(result.current.isLoading).toBe(false);` to prove the specific mutual exclusion state."
+        }
+      ]
+    }
+  }
+}

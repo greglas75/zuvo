@@ -1,0 +1,44 @@
+ADVERSARIAL REVIEW — ROUND 4 (TESTS)
+Run: 2026-04-08T04:54:15Z
+Providers: codex-5.4, codex-5.3, gemini, cursor-agent, claude
+
+CRITICAL FINDINGS (2):
+1. loadMore-when-hasMore-false test race condition (useSearchProducts.test.ts:225)
+   - Tests default state before API response processed
+   - Fixed: Added waitFor before loadMore() to ensure fetch response is processed
+
+2. Memory leak test is tautological (useSearchProducts.test.ts:554)
+   - Asserts expect(true).toBe(true) — provides zero value
+   - Fixed: Added abort spy and verified abort() was called on cleanup
+
+WARNING FINDINGS (5):
+1. Cache hit test Date serialization mismatch (OrderService.test.ts:66)
+   - toEqual compares Date vs JSON.parse'd string
+   - Fixed: Assert type and fields instead of deep equality
+
+2. Mutual exclusivity test is tautological (useSearchProducts.test.ts:430)
+   - !(false && false) is trivially true
+   - Fixed: Assert specific expected state at each checkpoint
+
+3. UTC date boundary test uses expect.any(Date) (OrderService.test.ts:516)
+   - Proves dates exist, not that they are correct UTC boundaries
+   - Fixed: Assert concrete UTC boundaries (Feb 1 00:00:00Z through Feb 28)
+
+4. Max-retry test timing is fragile (useSearchProducts.test.ts:310)
+   - Hardcodes 1000ms advancement, pinned to implementation constants
+   - Fixed: Use jest.runAllTimers() to drain all pending timers
+
+5. deleteOrder cache invalidation mocks inconsistent (OrderService.test.ts:356)
+   - Returns empty keys array but asserts del() was called
+   - Fixed: Mock keys() to return realistic cache entries
+
+INFO FINDINGS (1):
+1. Test files not found in artifact (cursor-agent)
+   - Paths listed as "file not found"
+   - No action needed (reviewers ran tests, this was artifact delivery issue)
+
+FILES MODIFIED:
+- r4-useSearchProducts.test.ts: 461 lines (24 lines diff from r3)
+- r4-OrderService.test.ts: 459 lines (25 lines diff from r3)
+
+CONFIDENCE: HIGH (claude provider consensus)

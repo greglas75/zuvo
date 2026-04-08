@@ -1,0 +1,293 @@
+{
+  "mode": "test",
+  "providers_used": "codex-5.4, codex-5.3, gemini, cursor-agent, claude",
+  "provider_count": 5,
+  "input_size": 15062,
+  "date": "2026-04-08T04:57:34Z",
+  "results": {
+    "codex-5.4": {
+      "findings": [
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044645Z/r3-useSearchProducts.test.ts",
+          "issue": "`keeps isLoading and isLoadingMore mutually exclusive during fetch` only asserts `isLoadingMore === false`, so it never proves the hook enters the correct loading state.",
+          "attack_vector": "A regression where the hook leaves both flags `false` during the initial request, or never sets `isLoading` at all, would still pass this test.",
+          "fix": "Assert the full state transition: `isLoading` should be `true` and `isLoadingMore` `false` during the initial fetch, then add a separate `loadMore()` test that expects the inverse."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044645Z/r3-useSearchProducts.test.ts",
+          "issue": "`aborts in-flight fetch when query changes before debounce completes` does not test what its name claims; it starts the first request, then only checks that the old signal was aborted on rerender.",
+          "attack_vector": "The hook could abort requests on any rerender, never debounce the replacement query correctly, or never issue the second fetch at all, and this test would still pass.",
+          "fix": "If the intent is pre-debounce cancellation, rerender before the initial 300ms elapses; otherwise assert both outcomes: the first signal aborts and a new fetch is issued only after the second query's debounce window."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044645Z/r3-useSearchProducts.test.ts",
+          "issue": "The retry test only checks total call count after large timer jumps, not the actual backoff schedule or post-retry state.",
+          "attack_vector": "An implementation with immediate retries, wrong retry delays, or no success-state update after the final attempt could still satisfy `toHaveBeenCalledTimes(3)`.",
+          "fix": "Advance time in smaller steps and assert call counts at each boundary (after 300ms, 100ms, 200ms, 400ms) plus the final success state or cleared error/loading flags."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044645Z/r3-useSearchProducts.test.ts",
+          "issue": "`loadMore appends results without replacing prior products` never verifies the second request's pagination arguments and relies entirely on call-order mocks.",
+          "attack_vector": "A broken hook that re-fetches page 1 or omits the offset/cursor could still pass because the mocked second response returns different data regardless of request shape.",
+          "fix": "Assert the second `fetch` call includes the expected page/offset/cursor parameters and add a negative test that `loadMore` does nothing once all results are loaded."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044645Z/r3-OrderService.test.ts",
+          "issue": "Shared Prisma/Redis/Email mocks are only cleared with `jest.clearAllMocks()`, so mock implementations persist across tests.",
+          "attack_vector": "A `mockResolvedValue` or custom implementation from one test can leak into a later test, creating order-dependent passes/failures and masking missing setup.",
+          "fix": "Use `jest.resetAllMocks()` or recreate fresh mock objects in `beforeEach` before constructing the service."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044645Z/r3-OrderService.test.ts",
+          "issue": "`create validates dto and runs transaction` does not assert the transaction boundary or that `order.create` receives the DTO-derived payload.",
+          "attack_vector": "The service could skip `$transaction`, write the wrong `organizationId`, ignore line items, or miscompute totals while still passing because the test only checks that some side-effect methods were called.",
+          "fix": "Assert `prisma.$transaction` was called and verify `prisma.order.create` received the expected `organizationId`, nested line items, and derived monetary fields from the input DTO."
+        }
+      ]
+    },
+    "codex-5.3": {
+      "findings": [
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044645Z/r3-OrderService.test.ts:120",
+          "issue": "`create validates dto and runs transaction` never asserts that `$transaction` was used, so atomicity can regress undetected.",
+          "attack_vector": "If `OrderService.create` stops wrapping writes in a transaction (or partially writes on failure), this test still passes because it only checks that `order.create`/audit/cache methods were called.",
+          "fix": "Add `expect(prisma.$transaction).toHaveBeenCalledTimes(1)` and assert writes are performed through the transaction client path expected by production code."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044645Z/r3-useSearchProducts.test.ts:123",
+          "issue": "`retries up to 3 times with exponential backoff` asserts only fetch call count, not backoff timing or final outcome.",
+          "attack_vector": "Implementation could retry immediately (no exponential delay) or never recover state correctly; test still passes as long as `fetch` is called three times.",
+          "fix": "Assert per-attempt timing gaps (e.g., 100/200/400ms) and verify post-retry state (`products`, `error`, `isLoading`) reflects successful recovery."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044645Z/r3-useSearchProducts.test.ts:159",
+          "issue": "`isLoading`/`isLoadingMore` exclusivity test checks only `isLoadingMore === false` after a fast-resolving fetch, so it can pass for the wrong reason.",
+          "attack_vector": "A bug where `isLoading` is never set or both flags briefly become true is not caught because the assertion is not made during in-flight state and ignores `isLoading`.",
+          "fix": "Use a deferred fetch promise, assert flags immediately after request starts (`isLoading=true`, `isLoadingMore=false`), then resolve and assert final state."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044645Z/r3-OrderService.test.ts:84",
+          "issue": "Several rejection tests call the same service method twice, duplicating side effects and weakening determinism.",
+          "attack_vector": "If first invocation mutates cache/log/state, second invocation can fail differently, making tests flaky or masking the real failure mode.",
+          "fix": "Capture one rejection once (`const p = service...; await expect(p)...`) and assert both type and message against that single execution."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044645Z/r3-OrderService.test.ts:39",
+          "issue": "`$transaction` mock is unrealistically permissive and uses the root prisma object directly, diverging from real Prisma transaction behavior.",
+          "attack_vector": "Code that incorrectly uses non-transaction client inside transaction callback or relies on rollback/isolation semantics can pass tests but fail in production concurrency/error scenarios.",
+          "fix": "Mock `$transaction` with a distinct `tx` object and add assertions that mutating calls are made via `tx`, plus a failing-path test that validates rollback behavior expectations."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044645Z/r3-OrderService.test.ts:186",
+          "issue": "`console.error` spy is restored only on the happy test path, so failures can leak mocked global state into later tests.",
+          "attack_vector": "If assertion or awaited call throws before `mockRestore`, subsequent tests may run with `console.error` still mocked, hiding logs and creating order-dependent failures.",
+          "fix": "Wrap spy usage in `try/finally` (or restore in `afterEach`) to guarantee cleanup even when the test fails."
+        }
+      ]
+    },
+    "gemini": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts",
+          "issue": "Transaction mock reuses global prisma object, bypassing isolation check",
+          "attack_vector": "If production code mistakenly calls 'this.prisma.order.create' instead of 'tx.order.create' inside a transaction, the test will erroneously pass. This hides a bug where operations run outside the transaction, risking partial database updates on failure.",
+          "fix": "Provide a distinct mocked client for the transaction callback (e.g., 'const txMock = { order: { create: jest.fn() } }') and assert on 'txMock.order.create'."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts",
+          "issue": "Cache key missing from assertion, risking cross-tenant data leaks",
+          "attack_vector": "The test verifies 'redis.get' is called but doesn't check the key. If cache key generation accidentally omits 'organizationId', Org B could see Org A's orders. The test passes despite this critical data leak.",
+          "fix": "Assert the exact cache key: 'expect(redis.get).toHaveBeenCalledWith(expect.stringContaining(ORG_A))'."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts",
+          "issue": "Export capping test passes for the wrong reason",
+          "attack_vector": "The test passes '{}' and checks if 'take' defaults to 10000. This does not prove capping works. If an attacker passes '{ take: 1000000 }' and the code doesn't cap it, the system is vulnerable to DoS/OOM, but this test would not catch it.",
+          "fix": "Call 'service.getOrdersForExport({ take: 50000 }, ORG_A)' and expect 'take' to equal 10000."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r3-useSearchProducts.test.ts",
+          "issue": "Pagination test mocks behavior but omits request validation",
+          "attack_vector": "If 'loadMore' has a bug and requests page 1 again, the test still passes because the mock strictly returns page 2 data regardless of the URL. In production, users clicking 'Load More' would see duplicate data.",
+          "fix": "Assert the outgoing request URL: 'expect(fetchSpy).toHaveBeenNthCalledWith(2, expect.stringContaining(\"page=\"), expect.anything())'."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r3-OrderService.test.ts",
+          "issue": "Suspicious 'await Promise.resolve()' masks floating promises",
+          "attack_vector": "Flushing the microtask queue before assertions usually means a promise (like 'auditLog.create') is not awaited in production. In serverless environments, the process may terminate before the log writes, causing silent data loss.",
+          "fix": "Remove 'await Promise.resolve()'. If the test fails, fix production code to await all async operations."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r3-useSearchProducts.test.ts",
+          "issue": "Missing negative UI state coverage for fetch failures",
+          "attack_vector": "The retry test checks backoff logic but never asserts that the hook eventually exposes an error state to the component. If errors are swallowed internally, the UI silently hangs in a loading or empty state.",
+          "fix": "Add an assertion after retries exhaust: 'expect(result.current.error).toBeDefined()' or 'expect(result.current.isError).toBe(true)'."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts",
+          "issue": "Bulk update test asserts count but not the target record",
+          "attack_vector": "The test verifies 'n === 1' but not which order was updated. If logic mistakenly updates the invalid record instead of the valid one, it still returns 1, and the test falsely passes.",
+          "fix": "Assert 'prisma.order.updateMany' was called with the correct ID in the 'where' clause."
+        }
+      ]
+    },
+    "cursor-agent": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "r3-useSearchProducts.test.ts",
+          "issue": "Test named for mutual exclusivity of isLoading and isLoadingMore only asserts isLoadingMore is false after the debounce advance, with no assertion on isLoading or exclusivity.",
+          "attack_vector": "Wrong loading flags or both true at once in production; the test can still pass.",
+          "fix": "While fetch is unresolved, assert isLoading true and isLoadingMore false (or the inverse for loadMore), then assert final idle flags; or narrow the test title to what is actually checked."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r3-useSearchProducts.test.ts",
+          "issue": "Retry test only checks fetch was called three times, not exponential backoff delays, success body merge, or hook state after success.",
+          "attack_vector": "Incorrect backoff, wrong retry cap, or broken parsing after retries could ship; test still passes if call count matches.",
+          "fix": "Advance timers per expected backoff step and assert delays; assert result.current.products/error after the successful response; optionally assert !ok handling."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r3-OrderService.test.ts",
+          "issue": "create test uses await Promise.resolve() to flush work and never asserts $transaction boundaries or that line items/audit/cache run in one atomic unit.",
+          "attack_vector": "Partial writes or wrong execution order could pass if mocks fire in a loose order.",
+          "fix": "Assert prisma.$transaction was used as production does, or assert ordered calls on tx-scoped mocks; remove reliance on a single microtask flush."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r3-OrderService.test.ts",
+          "issue": "findAll cache-hit test only checks length and that DB was skipped, not that deserialized rows match cached payload (e.g. dates, nested fields).",
+          "attack_vector": "Broken JSON parse/revive could return wrong objects while length stays 1.",
+          "fix": "expect(rows[0]).toMatchObject({ ...makeOrder(), createdAt: expect.any(Date) }) or match serialized round-trip expectations."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r3-OrderService.test.ts",
+          "issue": "Pagination validation test covers take NaN only; skip non-finite and other invalid combinations are not shown.",
+          "attack_vector": "If production rejects bad skip, regressions there are untested.",
+          "fix": "Add rejects cases for skip NaN/Infinity and any combined take/skip rules the service enforces."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts",
+          "issue": "Duplicate back-to-back await expect on the same findAll NaN case repeats the service call without adding coverage.",
+          "attack_vector": "Noise and slower tests; misleading if someone edits only one block.",
+          "fix": "Single await expect combining instanceof and message, or one call with toMatchObject only."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "medium",
+          "file": "r3-useSearchProducts.test.ts",
+          "issue": "loadMore test relies on chained Promise.resolve() flushes instead of awaiting a stable completion signal from the hook.",
+          "attack_vector": "Timing/order changes in React or fetch scheduling could make the test flaky in CI.",
+          "fix": "Use waitFor on result length/ids or mock fetch with controllable resolve order."
+        }
+      ]
+    },
+    "claude": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts:230",
+          "issue": "getOrdersForExport test does not assert organizationId in where clause — multi-tenant data leak undetectable",
+          "attack_vector": "If production code omits organizationId filter in getOrdersForExport, org-B can export org-A's orders. This test only checks take:10000 and include shape, so it would pass with a completely unscoped query.",
+          "fix": "Add expect.objectContaining({ where: expect.objectContaining({ organizationId: ORG_A }) }) to the findMany assertion."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts:38",
+          "issue": "$transaction mock passes the outer prisma object as tx — cannot detect code that accidentally uses outer client instead of transaction client",
+          "attack_vector": "Production code inside a transaction that accidentally references the injected prisma instead of the tx parameter would bypass transaction isolation. Every transaction test passes because mock tx === prisma. A real DB transaction that mixed clients would see uncommitted reads or partial writes.",
+          "fix": "Create a separate txClient object (shallow clone of prisma mocks) and pass that from $transaction mock. Then assert transaction-scoped calls hit txClient, not prisma."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts:70",
+          "issue": "Cache hit test does not verify Date deserialization — JSON.parse returns date strings, not Date objects",
+          "attack_vector": "makeOrder() creates createdAt as a Date. JSON.stringify converts it to a string. If production code returns JSON.parse output directly, downstream code calling order.createdAt.getTime() throws. The test only checks array length, so this type mismatch is invisible.",
+          "fix": "Assert that rows[0].createdAt is a Date instance (or assert the production code rehydrates dates). If it doesn't, flag as a production bug."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r3-useSearchProducts.test.ts:127",
+          "issue": "Retry test asserts fetch call count but never verifies hook state after successful retry",
+          "attack_vector": "If the retry mechanism fires 3 fetches but silently discards the successful third response (e.g., stale closure, missing state update), products remains empty and error stays set. Test still passes because it only checks fetchSpy.toHaveBeenCalledTimes(3).",
+          "fix": "After advancing timers, assert result.current.products has the expected item and result.current.error is null."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r3-useSearchProducts.test.ts:142",
+          "issue": "isLoading/isLoadingMore exclusivity test only asserts isLoadingMore=false — never checks isLoading, passes vacuously",
+          "attack_vector": "Both flags could be false simultaneously (fetch already resolved by assertion time) or both true (bug). The test title claims mutual exclusivity but proves neither direction. A broken loading state that shows no spinner would pass.",
+          "fix": "Capture isLoading during the in-flight window (before fetch resolves). Assert isLoading=true AND isLoadingMore=false during initial search, then reverse during loadMore."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r3-useSearchProducts.test.ts:85",
+          "issue": "loadMore test does not verify the offset/page parameter sent in the second fetch call",
+          "attack_vector": "If loadMore always sends offset=0, production returns the same first page. Test mocks return different data per call regardless of params, masking the bug. Users would see duplicated products in infinite scroll.",
+          "fix": "Assert fetchSpy.mock.calls[1] includes the correct offset/page query parameter (e.g., offset=1 or page=2)."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts:99",
+          "issue": "Error-path tests call the method twice (once for toBeInstanceOf, once for toMatchObject) — doubles side effects and mock consumption",
+          "attack_vector": "Not a production risk, but if findAll had write side effects or mock was set with mockResolvedValueOnce, the second call would see different mock state. Currently benign but fragile under refactoring.",
+          "fix": "Store the rejection: const rejection = service.findAll(...); then chain both assertions on the same promise, or use expect(...).rejects.toEqual(expect.objectContaining({...}))."
+        }
+      ]
+    }
+  }
+}

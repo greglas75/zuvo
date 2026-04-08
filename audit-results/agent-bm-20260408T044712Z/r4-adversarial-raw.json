@@ -1,0 +1,269 @@
+{
+  "mode": "test",
+  "providers_used": "codex-5.4, codex-5.3, gemini, cursor-agent, claude",
+  "provider_count": 5,
+  "input_size": 15054,
+  "date": "2026-04-08T05:00:00Z",
+  "results": {
+    "codex-5.4": {
+      "findings": [
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-useSearchProducts.test.ts:56",
+          "issue": "The abort-on-query-change test never verifies that the first request was actually aborted or that stale results were suppressed.",
+          "attack_vector": "A hook that fires both requests and lets the first one resolve later would still satisfy `fetch` being called, so the test misses the real race condition this scenario is supposed to prevent.",
+          "fix": "Assert that the first fetch's `AbortSignal` becomes aborted and that only results for query `b` end up in hook state after both requests settle."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-useSearchProducts.test.ts:123",
+          "issue": "The retry test checks only call count and `error === null`, not the exponential-backoff behavior or the successful final state.",
+          "attack_vector": "An implementation that retries immediately, uses the wrong delays, or never stores the recovered products would still pass, so the test provides little protection against broken retry semantics.",
+          "fix": "Assert the expected timer progression between attempts and verify the final `products`/`total` state after the third successful response."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-useSearchProducts.test.ts:147",
+          "issue": "The pagination loading-state test asserts only an immediate transient flag and never verifies the completion outcome.",
+          "attack_vector": "If `loadMore` sets `isLoadingMore` true but never resets it, never appends the next page, or flips `isLoading` incorrectly after resolution, this test still passes because it stops before the request finishes.",
+          "fix": "After asserting the interim state, advance timers and assert that `isLoadingMore` returns to false and the appended product is present."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-OrderService.test.ts:121",
+          "issue": "The email-failure test only checks that `console.error` ran, not that `updateStatus` still returned the shipped order and completed the main path correctly.",
+          "attack_vector": "A buggy implementation could log the email failure and return `undefined` or stale data while still passing this test, even though the business operation is broken.",
+          "fix": "Capture the return value and assert the status update result explicitly, alongside the logging side effect."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-OrderService.test.ts:90",
+          "issue": "The delete-order test title promises payments, line items, then order, but it never asserts the line-item deletion happened or that deletions occurred in the required sequence/transaction.",
+          "attack_vector": "An implementation that skips `orderLineItem.deleteMany` or deletes the order first would still pass against these mocks, yet fail under real foreign-key constraints or leave orphaned data.",
+          "fix": "Assert `orderLineItem.deleteMany` was called with the correct filter and, if ordering matters, verify the calls occur inside the transaction in the intended order."
+        }
+      ]
+    },
+    "codex-5.3": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-useSearchProducts.test.ts:49",
+          "issue": "Abort test never asserts the abort outcome (signal aborted or stale response suppression), only that fetch was called.",
+          "attack_vector": "A race bug where the first query response overwrites the newer query results would still pass, so stale data bugs in rapid typing are undetected.",
+          "fix": "After rerender to new query, assert the first request was aborted and assert final hook state reflects only the second query's products/error/loading outcomes."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-OrderService.test.ts:126",
+          "issue": "`deleteOrder` test claims to verify payment+line-item+order deletion but never asserts `orderLineItem.deleteMany` was called.",
+          "attack_vector": "Production can regress to skip line-item cleanup (or use wrong filter), leaving orphaned rows while this test still passes.",
+          "fix": "Add an explicit expectation for `prismaMock.orderLineItem.deleteMany` with `{ where: { orderId: ORDER_ID } }` (and optionally assert transactional ordering)."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-OrderService.test.ts:165",
+          "issue": "Email-failure test checks only `console.error`, not the primary business outcome that status update still succeeds.",
+          "attack_vector": "`updateStatus` could log an error and fail to persist status (or return wrong status) and this test would still pass.",
+          "fix": "Also assert `order.updateMany` was called with expected transition and assert returned value/status indicates successful update."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-useSearchProducts.test.ts:102",
+          "issue": "Retry test validates only total call count, not exponential backoff timing semantics.",
+          "attack_vector": "Implementation could retry immediately (no backoff) and still pass, masking production rate-limit amplification bugs.",
+          "fix": "Assert retry scheduling delays (e.g., 100/200/400ms) by verifying call timing after controlled timer advances instead of only `toHaveBeenCalledTimes(3)`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-OrderService.test.ts",
+          "issue": "Suite uses shared singleton mocks with `jest.clearAllMocks()` (not `resetAllMocks`), so mock implementations can leak between tests.",
+          "attack_vector": "Order-dependent pass/fail can occur when prior `mockResolvedValue`/spies persist, producing false confidence and flaky CI behavior.",
+          "fix": "Use `jest.resetAllMocks()` in `beforeEach` and `jest.restoreAllMocks()` in `afterEach`; recreate mocks per test or in `beforeEach`."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-useSearchProducts.test.ts:135",
+          "issue": "Pagination loading-state test re-spies `global.fetch` mid-test and asserts only immediate flags, not full transition lifecycle.",
+          "attack_vector": "A bug where `isLoadingMore` toggles incorrectly after microtasks/timer resolution can evade detection because only one snapshot is asserted.",
+          "fix": "Use one fetch mock with sequential responses and assert state transitions with `waitFor` (loadingMore true during request, then false after completion with appended products)."
+        }
+      ]
+    },
+    "gemini": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-useSearchProducts.test.ts",
+          "issue": "Abort logic test asserts fetch was called instead of aborted",
+          "attack_vector": "If the component fails to abort the request (e.g. AbortController is removed), the test still passes because it only verifies fetch was called at least once, completely defeating the purpose of the test.",
+          "fix": "Assert that the abort event was fired or check `fetchSpy.mock.calls[0][1].signal.aborted === true`."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-OrderService.test.ts",
+          "issue": "bulkUpdateStatus test does not verify invalid IDs are filtered out",
+          "attack_vector": "If the production code mistakenly sends all IDs (including the invalid transition 'b') to the database, the test will still pass because it only checks `toHaveBeenCalledTimes(1)` instead of inspecting the `where` clause arguments.",
+          "fix": "Add an assertion to verify `updateMany` was called with arguments that only include the valid ID 'a'."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-OrderService.test.ts",
+          "issue": "Order creation test does not verify line items are saved",
+          "attack_vector": "If the service accidentally drops the line items array and only saves the order header, this test will pass, masking a severe data loss bug.",
+          "fix": "Add an assertion to check that `prismaMock.order.create` includes `lineItems` in its data payload or that `orderLineItem.createMany` is called."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-useSearchProducts.test.ts",
+          "issue": "Exponential backoff test passes even if retries are immediate",
+          "attack_vector": "The test sequentially advances timers and only checks the final call count. If the component immediately fires all 3 retries without waiting for the backoff, the test will still pass.",
+          "fix": "Assert the exact `fetchSpy` call count between each timer advancement step."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-OrderService.test.ts",
+          "issue": "deleteOrder test mocks line item deletion but does not assert it",
+          "attack_vector": "If the developer removes the logic that deletes line items, this test will still pass, which could lead to foreign key constraint violations or orphaned records in production.",
+          "fix": "Add `expect(prismaMock.orderLineItem.deleteMany).toHaveBeenCalledWith(...)` to verify deletion."
+        }
+      ]
+    },
+    "cursor-agent": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-useSearchProducts.test.ts:55-96",
+          "issue": "Abort-on-rerun test only asserts fetch was called at least once, not that the first request was aborted or that two distinct requests occurred with the first cancelled.",
+          "attack_vector": "Production could stop aborting in-flight requests; tests still pass as long as any fetch runs after debounce.",
+          "fix": "Assert AbortController behavior: e.g. expect first call’s signal.aborted true after rerender, or expect two fetch calls with first rejected as AbortError, or spy on AbortController.abort."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-OrderService.test.ts:163-179",
+          "issue": "Test title claims payments, line items, then order deletion, but there is no assertion that orderLineItem.deleteMany ran.",
+          "attack_vector": "Implementation could drop line-item cleanup; orders or FK constraints fail in production while tests stay green.",
+          "fix": "Add expect(prismaMock.orderLineItem.deleteMany).toHaveBeenCalledWith(...) with the expected where clause and ordering relative to order.deleteMany if required."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-OrderService.test.ts:44-48",
+          "issue": "$transaction mock invokes the callback with the same prismaMock as the outer client, so code using a transactional client alias cannot be distinguished from non-transactional usage in tests.",
+          "attack_vector": "Bugs where work runs outside the intended transaction (or wrong client) may not fail these tests.",
+          "fix": "Use a separate tx mock object passed into the callback and assert order.create (and related calls) use that tx reference."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-useSearchProducts.test.ts:98-129",
+          "issue": "Test name promises exponential backoff but only advances timers and asserts fetch call count and error cleared—no assertion on delay sequence or spacing.",
+          "attack_vector": "Backoff could be removed, constant, or wrong; retries might hammer the API yet the test still passes.",
+          "fix": "Assert timer advances or mock Date/performance between retries match intended delays, or assert scheduling calls with expected ms values."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-OrderService.test.ts:214-227",
+          "issue": "Email-failure test only asserts console.error was called, not that status update still completed successfully (e.g. returned row, updateMany count, or no thrown error from main path).",
+          "attack_vector": "Regression could surface email errors to callers or skip persistence; test may still pass from any console.error.",
+          "fix": "Assert resolved return value and/or prismaMock.order.updateMany / findFirst expectations unchanged from the happy path, and optionally match console payload."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-useSearchProducts.test.ts",
+          "issue": "Multiple tests repeat renderHook + advanceTimersByTime(300) (+ waitFor) without a shared helper.",
+          "attack_vector": "Drift in setup (timer mode, act wrapping) can diverge across tests and hide inconsistent behavior.",
+          "fix": "Extract async function runAfterDebounceMs(ms?) used by hook tests to centralize debounce advancement and waits."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "low",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-20260408T044712Z/r3-useSearchProducts.test.ts:131-156",
+          "issue": "Mutex test replaces fetch with a delayed promise and asserts isLoading/isLoadingMore once immediately after act; truncated/unshown remainder may omit flush of microtasks or completion assertions.",
+          "attack_vector": "Flaky pass if loading flags briefly overlap or revert before assertion; incomplete coverage if file continues without awaiting settle.",
+          "fix": "Use waitFor on flag expectations and assert final state after fetch resolves; ensure full unmount/cleanup test (if present) asserts no setState after unmount with pending promise."
+        }
+      ]
+    },
+    "claude": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts:71",
+          "issue": "Cache hit test hides Date→string type divergence — JSON.parse returns ISO strings, not Date objects, but test only checks `.id`",
+          "attack_vector": "Production code returns cached orders with string dates. Any downstream code calling `.createdAt.getTime()` or date comparison throws TypeError at runtime. Test passes because it never asserts on date fields, so the cache path ships with a silent type contract violation.",
+          "fix": "Assert that cached result dates are handled correctly: either assert they are strings (if raw JSON.parse is the contract) or assert they are Dates (if the service rehydrates them). Add `expect(result[0].createdAt).toBeInstanceOf(Date)` — this will immediately expose whether the production code rehydrates or not."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r3-useSearchProducts.test.ts:56",
+          "issue": "Abort test implements abort logic inside the mock, then asserts only `calls.length >= 1` — tests the mock, not the production code's AbortController usage",
+          "attack_vector": "If production code removes AbortController or passes no signal to fetch, this test still passes because the mock receives no signal, the setTimeout resolves normally, and `calls.length >= 1` is satisfied. The actual abort behavior is untested.",
+          "fix": "Assert abort was signaled: capture the `init.signal` from the first `fetchSpy.mock.calls[0][1]` and assert `signal.aborted === true` after rerender. Remove custom abort logic from mock — let AbortError come from the real signal if possible, or assert the signal property directly."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r3-useSearchProducts.test.ts",
+          "issue": "No test for retry exhaustion — all retry tests succeed on 3rd attempt. Error state after max retries is completely untested.",
+          "attack_vector": "If production code has a bug in final error-state assignment (e.g., sets `error` to the response object instead of parsed message, or never sets `isLoading` back to false after exhaustion), no test catches it. Users see infinite spinner or wrong error message.",
+          "fix": "Add test: mock fetch to return 500 for all calls, advance through all backoff windows, assert `result.current.error` is truthy and `result.current.isLoading` is false."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts:188",
+          "issue": "bulkUpdateStatus asserts updateMany called once but never verifies WHICH order ID was updated — if production updates 'b' (invalid transition) instead of 'a', test still passes",
+          "attack_vector": "A refactor that inverts the skip/apply logic (applies to invalid transitions, skips valid ones) passes the test because count-based assertions don't distinguish which rows were modified.",
+          "fix": "Add `expect(prismaMock.order.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: 'a' }) }))` to pin the correct order."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r3-OrderService.test.ts:38",
+          "issue": "$transaction mock passes itself as the tx client — operations that accidentally use the outer prisma client instead of the transaction client are invisible to tests",
+          "attack_vector": "Developer adds a new operation inside the $transaction callback but references `this.prisma` instead of `tx`. In production, that operation runs outside the transaction and is not rolled back on failure. The mock can never catch this because `prismaMock === tx` in the mock.",
+          "fix": "Create a separate `txMock` object (cloned from prismaMock with independent jest.fn() spies) and pass it from `$transaction`. Then assert operations use `txMock.order.create`, not `prismaMock.order.create`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r3-OrderService.test.ts:143",
+          "issue": "deleteOrder test asserts individual calls but not execution order — if order is deleted before payments/line-items, FK violations break production but test still passes",
+          "attack_vector": "Refactor reorders the three deleteMany calls. Test passes because each mock is called independently. Production fails with foreign key constraint violation on the first request.",
+          "fix": "Use `expect(prismaMock.payment.deleteMany).toHaveBeenCalledBefore(prismaMock.order.deleteMany)` (jest-extended) or compare `mock.invocationCallOrder` values to assert payments are deleted first."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "medium",
+          "file": "r3-useSearchProducts.test.ts:119",
+          "issue": "Retry backoff test hardcodes specific ms intervals (100, 200, 400) interleaved with `await Promise.resolve()` — fragile across Node versions and breaks if production changes backoff constants",
+          "attack_vector": "Node upgrade changes microtask scheduling, or production changes backoff from 100/200/400 to 1000/2000/4000. Test flakes or fails despite correct production behavior. The `await Promise.resolve()` between timer advances is a known source of non-determinism with fake timers.",
+          "fix": "Advance by a single large interval (`jest.advanceTimersByTime(10_000)`) inside `waitFor`, or use `jest.runAllTimersAsync()`. Assert call count and final state rather than intermediate timing."
+        }
+      ]
+    }
+  }
+}

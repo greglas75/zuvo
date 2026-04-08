@@ -1,0 +1,151 @@
+CROSS-PROVIDER REVIEW
+  Input: 153 chars
+  Review: code | Output: json | Dispatch: multi
+  Launching: codex-5.4...
+  Launching: codex-5.3...
+  Launching: gemini...
+  Launching: cursor-agent...
+  Launching: claude...
+  Done: codex-5.4
+  Done: codex-5.3
+  Done: gemini
+  Done: cursor-agent
+  Done: claude
+{
+  "mode": "code",
+  "providers_used": "codex-5.4, codex-5.3, gemini, cursor-agent, claude",
+  "provider_count": 5,
+  "input_size": 153,
+  "date": "2026-04-08T04:55:20Z",
+  "results": {
+    "codex-5.4": {
+      "findings": []
+    },
+    "codex-5.3": {
+      "findings": []
+    },
+    "gemini": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-20260408T044845Z/r1-OrderService.ts",
+          "issue": "Client-provided unitPrice is trusted without database verification",
+          "attack_vector": "Malicious users can submit an order with a unit price of 0 to bypass payment and acquire items for free.",
+          "fix": "Fetch the product's actual unit price from the database using productId instead of accepting it from the DTO."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-20260408T044845Z/r1-OrderService.ts",
+          "issue": "Use of redis.keys() in production causes event loop blocking",
+          "attack_vector": "Any cache invalidation triggers an O(N) blocking operation on Redis, easily enabling a Denial of Service attack via frequent order updates.",
+          "fix": "Use an incrementing cache version prefix for organizations or track keys in a Redis Set instead of using KEYS."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-20260408T044845Z/r1-OrderService.ts",
+          "issue": "JSON.parse does not rehydrate createdAt into Date objects",
+          "attack_vector": "Callers fetching cached orders will crash when attempting to invoke Date methods on the createdAt string.",
+          "fix": "Map over the parsed results and instantiate new Date objects for the createdAt field before returning."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-20260408T044845Z/r1-OrderService.ts",
+          "issue": "TOCTOU race condition in order status transition",
+          "attack_vector": "Concurrent requests can bypass the state machine validation, allowing an order to jump to an invalid final state.",
+          "fix": "Use updateMany with 'where: { id, status: order.status }' and verify the affected count to enforce optimistic locking."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-20260408T044845Z/r1-OrderService.ts",
+          "issue": "Monthly revenue time boundaries use local server timezone",
+          "attack_vector": "Servers deployed in non-UTC timezones will incorrectly shift the month boundaries, causing inaccurate financial reporting.",
+          "fix": "Construct boundaries using Date.UTC() and getUTCMonth() to align precisely with database UTC timestamps."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-20260408T044845Z/r1-useSearchProducts.ts",
+          "issue": "Rapid successive calls to loadMore skip pages due to asynchronous state",
+          "attack_vector": "Users double-clicking the 'Load More' button increment the page count twice and abort the first request, permanently missing a page of results.",
+          "fix": "Use a mutable useRef to track the loading state synchronously and prevent multiple increments within the same render cycle."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-20260408T044845Z/r1-OrderService.ts",
+          "issue": "Unbounded concurrent email sending in bulkUpdateStatus",
+          "attack_vector": "Admin bulk updating a large number of orders will spawn thousands of concurrent email requests, potentially exhausting memory or hitting rate limits.",
+          "fix": "Process email notifications in batches using a concurrency limiter or offload them to a background job queue."
+        }
+      ]
+    },
+    "cursor-agent": {
+      "findings": []
+    },
+    "claude": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "r1-OrderService.ts:248-260",
+          "issue": "TOCTOU race in updateStatus: read-validate-write without transaction allows concurrent requests to both pass transition validation",
+          "attack_vector": "Two concurrent requests both read status='pending', both validate transition to 'confirmed', both succeed. Worse: both could transition to 'shipped', triggering duplicate shipping notifications and emails. The update at line 259 uses `where: { id }` with no optimistic lock (e.g., `where: { id, status: expectedStatus }`).",
+          "fix": "Wrap lines 248-262 in `this.prisma.$transaction()`, or add optimistic locking by including `status: order.status` in the update's `where` clause and checking the returned record."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r1-OrderService.ts:221-227",
+          "issue": "Post-commit side-effects treated as critical path — audit log or cache invalidation failure after successful transaction throws to caller, who retries and creates duplicate orders",
+          "attack_vector": "Order creation transaction commits at line 220. Redis fails at line 222 or audit DB times out at line 223. Caller receives 500, retries, creates a second identical order. Same pattern exists in `deleteOrder` (line 239-240) where a failed audit log after successful deletion returns an error suggesting the delete failed.",
+          "fix": "Wrap post-commit side-effects (`invalidateOrgCache`, `emitAuditLog`) in try/catch with logging, or use fire-and-forget (`void Promise.all([...]).catch(log)`)."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r1-OrderService.ts:150-152,174-175",
+          "issue": "JSON.parse of cached OrderRecord deserializes Date fields as strings, causing intermittent type errors only on cache-hit path",
+          "attack_vector": "`JSON.stringify(order)` converts `createdAt: Date` to an ISO string. `JSON.parse(cached)` at lines 152/175 returns `createdAt` as string, not Date. Any downstream code calling `.getTime()`, `.toLocaleDateString()`, or date arithmetic on cached results throws TypeError. Cache-miss path returns real Date objects. Bug is intermittent (TTL-dependent), making it extremely hard to reproduce and debug.",
+          "fix": "Add a reviver to `JSON.parse` that restores Date fields, or use a serialization layer that round-trips types correctly (e.g., `superjson`)."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r1-OrderService.ts:113",
+          "issue": "Redis KEYS command in invalidateOrgCache blocks the Redis event loop — O(N) over entire keyspace",
+          "attack_vector": "Every order create, delete, status update, and bulk update calls `invalidateOrgCache`, which runs `redis.keys('orders:${orgId}:*')`. In production with millions of keys, this blocks ALL Redis operations (single-threaded event loop) for seconds. Under high write throughput, this becomes a cascading availability issue.",
+          "fix": "Replace `keys()` with `SCAN`-based iteration, or switch to a tag-based invalidation strategy (e.g., cache entries keyed under a version counter per org)."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r1-OrderService.ts:314-329",
+          "issue": "bulkUpdateStatus has same TOCTOU race as updateStatus but amplified — findMany + filter + updateMany without transaction",
+          "attack_vector": "Between `findMany` at line 315 and `updateMany` at line 327, concurrent single or bulk updates can change order statuses. `updateMany` has no status guard in its `where` clause, so it overwrites orders that have already transitioned. Return value `eligible.length` does not reflect actual updates. With 'shipped' status, this triggers spurious shipping notifications for already-delivered orders.",
+          "fix": "Wrap in transaction and add `status: { in: allowedSourceStatuses }` to the `updateMany` where clause. Use the returned `{ count }` instead of `eligible.length`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r1-OrderService.ts:296-302",
+          "issue": "calculateMonthlyRevenue uses floating-point multiplication for currency and loads unbounded order count into memory",
+          "attack_vector": "`item.quantity * item.unitPrice` at line 299 uses IEEE 754 doubles. For prices like $19.99 × 3, result is 59.96999999999999 not 59.97. Errors compound across thousands of line items. Additionally, `findMany` with no pagination loads ALL non-cancelled orders for the month into Node.js heap — a high-volume org with 100K+ monthly orders causes OOM or extreme GC pressure.",
+          "fix": "Use integer cents for arithmetic (or a decimal library like `decimal.js`). Move aggregation to a Prisma raw query with `SUM(quantity * unit_price)` grouped by currency — the DB handles precision and memory."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "medium",
+          "file": "r1-useSearchProducts.ts:75-82",
+          "issue": "Abort listener in fetchWithRetry backoff is never removed, accumulating stale listeners per retry attempt",
+          "attack_vector": "Each retry adds `signal.addEventListener('abort', ...)` without `{ once: true }` and without cleanup. After the backoff promise resolves via timer, the listener persists. With MAX_RETRIES=3, up to 2 stale listeners remain on the signal. If abort fires later (unmount), stale listeners call `reject()` on settled promises (no-op) and `clearTimeout` on fired timers (no-op). Functionally benign but violates resource cleanup discipline and would trip listener-count warnings in strict environments.",
+          "fix": "Add `{ once: true }` to `signal.addEventListener`, or store the handler and call `signal.removeEventListener` when the timer fires."
+        }
+      ]
+    }
+  }
+}

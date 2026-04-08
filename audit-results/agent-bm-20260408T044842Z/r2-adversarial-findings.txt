@@ -1,0 +1,44 @@
+ADVERSARIAL REVIEW — Round 2 (Code)
+Providers: codex-5.4, codex-5.3, gemini, cursor-agent, claude
+Date: 2026-04-08T04:52:22Z
+
+=== CRITICAL (4) ===
+
+[gemini] r1-OrderService.ts:203 — Redis KEYS command blocks event loop in production
+  Fix: Replace redis.keys() with SCAN or store cache keys in a Redis Set
+
+[gemini] r1-OrderService.ts:107 — updateStatus lacks database transaction (partial write vulnerability)
+  Fix: Wrap order.update + auditLog.create in prisma.$transaction
+
+[gemini] r1-useSearchProducts.ts:107 — Aborted requests clear loading state of newer in-flight requests
+  Fix: Check abortControllerRef.current === controller in finally block
+
+[claude] r1-OrderService.ts:117-119 — Floating point precision loss in line item calculations
+  Fix: Use integer cents or round: Math.round(quantity * unitPrice * 100) / 100
+
+=== WARNING (9) ===
+
+[gemini] r1-OrderService.ts:46 — Cached Prisma results return Date fields as strings
+  Fix: Use JSON.parse reviver to restore Date objects
+
+[gemini] r1-OrderService.ts:103 — TOCTOU race condition in status transitions
+  Fix: Include expected current status in Prisma where clause
+
+[gemini] r1-OrderService.ts:124 — Monthly revenue uses server local timezone
+  Fix: Use Date.UTC for month boundaries
+
+[gemini] r1-useSearchProducts.ts:48 — Retry backoff timeout ignores AbortSignal
+  Fix: Listen to signal.abort to clear retry timeout
+
+[claude] r1-OrderService.ts:190-204 — updateStatus audit log non-transactional (duplicate of gemini critical)
+
+[claude] r1-useSearchProducts.ts:186-188 — retry() replaces accumulated pages with single page
+  Fix: Pass isLoadMore=true when retrying non-first page
+
+[claude] r1-OrderService.ts:312 — Redis KEYS blocks keyspace (duplicate of gemini critical)
+
+[claude] r1-OrderService.ts:246-276 — bulkUpdateStatus per-item writes without transaction
+  Fix: Wrap each order update + audit in per-item $transaction
+
+[claude] r1-useSearchProducts.ts:96-98 — loadMore aborts in-flight request; rapid calls can skip pages
+  Fix: Use ref for loading flag or derive page from products.length
