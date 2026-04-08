@@ -44,7 +44,7 @@ The Codex build (700+ lines) adds complexity for TOML generation, GPT model mapp
 
 **Chosen:** Copy agent `.md` files into `skills/<name>/agents/` subdirectories. Apply the same transforms as skills (path rewrite, model mapping, tool stripping). Drop `tools:` from agent frontmatter.
 
-**Why:** Antigravity supports agent subdirectories natively (confirmed by filesystem inspection: `~/.gemini/antigravity/skills/` structure). No flat renaming (unlike Cursor's `~/.cursor/agents/` requirement). No TOML sidecar generation (unlike Codex). This makes the Antigravity build the simplest of all three platform builds.
+**Why:** Antigravity supports agent subdirectories natively (confirmed by filesystem inspection: `~/.gemini/antigravity/skills/` structure). No flat renaming (unlike Cursor's `~/.cursor/agents/` requirement). No TOML sidecar generation (unlike Codex). This removes two major complexity sources from the build (TOML generation and flat agent renaming), though new functions like `replace_config_refs()` and broader model mapping add back some complexity.
 
 ### DD4: Execution model -- sequential, non-interactive
 
@@ -85,7 +85,7 @@ Source: skills/*/SKILL.md + agents/*.md + shared/ + rules/
   |   3. replace_model_refs()      sonnet->low, opus->high, haiku->flash
   |   4. replace_config_refs()     CLAUDE.md -> GEMINI.md
   |   5. strip_tool_names()        ToolSearch, AskUserQuestion, etc.
-  |   6. transform_agent_frontmatter()  model mapping, drop tools:
+  |   6. adapt_agent_for_antigravity()  model mapping, drop tools:
   |   7. replace_spawn_blocks()    -> "Execute inline sequentially"
   |   8. normalize_unicode()
   |   9. validate_output()         grep for residual Claude tokens
@@ -116,10 +116,14 @@ dist/antigravity/
 ~/.claude/                          -> ~/.gemini/antigravity/
 ~/.claude/plugins/cache/...         -> ~/.gemini/antigravity/
 CLAUDE_PLUGIN_ROOT                  -> GEMINI_HOME
+{plugin_root}                       -> ~/.gemini/antigravity/
+{plugin_root}/shared/               -> ~/.gemini/antigravity/shared/
+{plugin_root}/rules/                -> ~/.gemini/antigravity/rules/
+{plugin_root}/skills/               -> ~/.gemini/antigravity/skills/
 ../../shared/includes/              -> ../../shared/includes/  (unchanged -- relative)
 ```
 
-Relative paths (`../../shared/includes/`) stay unchanged because the directory structure is preserved in the Antigravity dist.
+Relative paths (`../../shared/includes/`) stay unchanged because the directory structure is preserved in the Antigravity dist. The `{plugin_root}` token and its subdirectory variants follow the same pattern as Cursor's `replace_paths()` (lines 46-53 of `build-cursor-skills.sh`).
 
 #### `replace_model_refs()`
 
@@ -132,13 +136,31 @@ Does NOT replace:
 - Model names inside adversarial review context (those are provider names, not dispatch targets)
 - Model names in comparison tables that list multiple providers
 
-#### `replace_config_refs()`
+#### `replace_config_refs()` -- NEW (no Cursor analog)
+
+This function has no equivalent in `build-cursor-skills.sh` (Cursor keeps Claude references because it supports Claude natively). It must be authored from scratch.
 
 ```
 CLAUDE.md       -> GEMINI.md
 .claude/        -> .gemini/          (in path references only)
 Claude Code     -> Antigravity       (in platform name context only)
 ```
+
+Example sed patterns:
+
+```bash
+# Config file references
+sed -i '' 's/CLAUDE\.md/GEMINI.md/g' "$file"
+
+# Path references (careful: only in prose, not in relative ../../ paths)
+sed -i '' 's|~/\.claude/|~/.gemini/antigravity/|g' "$file"
+
+# Platform name in prose (context-sensitive -- only standalone mentions)
+# Match "Claude Code" but NOT "Claude Sonnet" or "Claude Opus"
+sed -i '' 's/Claude Code/Antigravity/g' "$file"
+```
+
+The `Claude Code -> Antigravity` substitution targets only the platform name ("Claude Code"), never the model provider name ("Claude"). Model names like "Claude Sonnet 4.6" are handled by `replace_model_refs()` instead.
 
 #### `strip_tool_names()`
 
@@ -148,7 +170,9 @@ Remove or replace references to Claude Code-specific tools:
 - `EnterPlanMode` / `ExitPlanMode` -> removed
 - `TaskCreate` / `TaskUpdate` -> replaced with inline `STEP:` progress
 
-#### `transform_agent_frontmatter()`
+#### `adapt_agent_for_antigravity()` -- analogous to Cursor's `adapt_agent_for_cursor()`
+
+This function replaces Cursor's `adapt_agent_for_cursor()` in the Antigravity build. The key difference: Cursor flattens agents into `dist/cursor/agents/` with skill-prefixed names; Antigravity keeps them in `skills/<name>/agents/` subdirectories. Both strip `tools:` and map model names.
 
 Input:
 ```yaml
@@ -184,11 +208,16 @@ Identical to Codex/Cursor builds. Normalizes invisible unicode characters that b
 
 #### `validate_output()`
 
-Grep the entire `dist/antigravity/` for residual tokens that should not appear:
+Recursive grep across the entire `dist/antigravity/` tree for residual tokens that should not appear. Must recurse into `skills/*/agents/` subdirectories (unlike Cursor's validator which checks flat `agents/*.md`).
+
+Targets:
 - `EnterPlanMode`, `ExitPlanMode`, `AskUserQuestion`, `ToolSearch`
 - `CLAUDE_PLUGIN_ROOT`, `~/.claude/`
-- `model: sonnet`, `model: haiku`, `model: opus` (in frontmatter context)
+- `model: sonnet`, `model: haiku`, `model: opus` (in YAML frontmatter context)
 - `{plugin_root}` (unresolved placeholder)
+- Prose model tier names: standalone "Sonnet", "Opus", "Haiku" in model dispatch context (not inside "Claude Sonnet" provider names)
+
+Pattern: `grep -r` across `dist/antigravity/skills/` and `dist/antigravity/shared/`.
 
 Report count and file locations. Non-zero = build failure.
 
@@ -197,24 +226,27 @@ Report count and file locations. Non-zero = build failure.
 #### `scripts/install.sh`
 
 New function `install_antigravity()`:
-1. Check `~/.gemini/antigravity/` exists (warn + skip if not)
+1. Guard: check `~/.gemini/antigravity/` exists (warn + `return 0` if not -- same pattern as `install_codex()` line 167)
 2. Run `build-antigravity-skills.sh`
 3. Remove old symlinks in `~/.gemini/antigravity/skills/` (replace with real files)
 4. Copy `dist/antigravity/skills/` -> `~/.gemini/antigravity/skills/`
 5. Copy `dist/antigravity/shared/` -> `~/.gemini/antigravity/shared/`
 6. Copy `dist/antigravity/rules/` -> `~/.gemini/antigravity/rules/`
+7. Copy `dist/antigravity/scripts/` -> `~/.gemini/antigravity/scripts/` (adversarial-review.sh, benchmark.sh)
 
-Extend case switch (line ~344): add `antigravity)` branch. Update `all)` to include antigravity.
+Extend case switch (line ~362, not ~344): add `antigravity)` branch. Update `both|all)` to include `install_antigravity`. Update `Usage:` error message string to include `antigravity`.
 
 #### `scripts/dev-push.sh`
 
-Add antigravity build+install step when `~/.gemini/antigravity/` exists (conditional, same as Codex check).
+No direct changes to `dev-push.sh` conditional logic needed. The Antigravity guard lives inside `install_antigravity()` itself (same pattern as `install_codex()` at line 167: `if [[ ! -d "$HOME/.codex" ]]; then warn...return 0; fi`). The `dev-push.sh` change is simply that `install.sh all` now includes Antigravity via the updated `both|all)` case branch.
 
 #### `shared/includes/env-compat.md`
 
-Add Antigravity column to all tables:
+Add Antigravity as a 4th column to the existing Execution Models table (alongside Claude Code, Codex, Cursor). Do NOT create a separate section -- the table must be consistent.
 
-**Execution Models table:**
+Note: the Interaction Defaults section (line 155) already lists Antigravity as `(Codex App async mode, Cursor, Antigravity)`. The new column values must be consistent with this existing entry. Do not duplicate the Interaction Defaults entry.
+
+**Execution Models table (new 4th column):**
 
 | Capability | Antigravity |
 |---|---|
@@ -260,7 +292,7 @@ The install function must handle existing symlinks at `~/.gemini/antigravity/ski
 
 #### EC2: CodeSift unavailable
 
-All 48 skills degrade gracefully when CodeSift is not found. The single-session warning fires once. No skill hard-fails.
+All skills degrade gracefully when CodeSift is not found. The single-session warning fires once. No skill hard-fails.
 
 #### EC3: Adversarial review script execution
 
@@ -279,23 +311,24 @@ If `skills/<name>/antigravity/SKILL.antigravity.md` exists, copy it verbatim ins
 1. `bash scripts/build-antigravity-skills.sh` produces `dist/antigravity/` with zero validation errors
 2. `./scripts/install.sh antigravity` copies dist to `~/.gemini/antigravity/skills/` with real files (not symlinks)
 3. `./scripts/install.sh all` includes Antigravity alongside Claude, Codex, and Cursor
-4. All 48 skill SKILL.md files build without requiring manual overlay files
-5. No residual Claude-specific tokens in built output (`ToolSearch`, `CLAUDE_PLUGIN_ROOT`, `~/.claude/`, `model: sonnet` in frontmatter)
-6. `env-compat.md` has complete Antigravity column in every table, consistent with interaction defaults
-7. Model mapping is correct: `sonnet->gemini-3.1-pro-low`, `opus->gemini-3.1-pro-high`, `haiku->gemini-3-flash`
-8. Agent frontmatter has `tools:` list removed and model mapped
-9. Spawn blocks replaced with sequential inline dispatch instructions
-10. Old dead symlinks at `~/.gemini/antigravity/skills/` are replaced with real directories
-11. `dev-push.sh` builds and installs to Antigravity when `~/.gemini/antigravity/` exists
-12. Ship/deploy skills include Antigravity in push-skip list
-13. `adversarial-review.sh` path references updated in built output
+4. All skill SKILL.md files (currently 49) build without requiring manual overlay files
+5. No residual Claude-specific tokens in built output (`ToolSearch`, `CLAUDE_PLUGIN_ROOT`, `~/.claude/`, `model: sonnet` in frontmatter, `{plugin_root}`)
+6. `env-compat.md` has complete Antigravity 4th column in every table, consistent with existing interaction defaults entry
+7. Model mapping in frontmatter is correct: `sonnet->gemini-3.1-pro-low`, `opus->gemini-3.1-pro-high`, `haiku->gemini-3-flash`
+8. Prose model tier names in skill body text and tables are replaced with Gemini equivalents ("Sonnet" -> "Gemini 3.1 Pro Low", etc.) except inside provider/adversarial-review context
+9. Agent frontmatter has `tools:` list removed and model mapped (validated by recursive grep across `skills/*/agents/`)
+10. Spawn blocks replaced with sequential inline dispatch instructions
+11. Old dead symlinks at `~/.gemini/antigravity/skills/` are replaced with real directories
+12. `install.sh` case switch updated: `antigravity)` branch added, `both|all)` includes `install_antigravity`, `Usage:` string updated
+13. Ship/deploy skills include Antigravity in push-skip list
+14. `adversarial-review.sh` copied to `dist/antigravity/scripts/` AND path references inside skill markdown updated to Antigravity paths
 
 ## Out of Scope
 
 - **Antigravity plugin marketplace distribution** -- this spec covers local build+install only, not publishing to Open VSX or any Antigravity marketplace
 - **MCP configuration for Antigravity** -- the empty `mcp_config.json` stays as-is; configuring CodeSift for Antigravity is a separate task
 - **GEMINI.md rules injection** -- the user's `~/.gemini/GEMINI.md` is not modified; Zuvo rules go to `~/.gemini/antigravity/rules/`
-- **Antigravity-specific skill overlays** -- no `antigravity/SKILL.antigravity.md` files are created in this spec; the auto-transform handles all 48 skills
+- **Antigravity-specific skill overlays** -- no `antigravity/SKILL.antigravity.md` files are created in this spec; the auto-transform handles all skills (currently 49)
 - **Description optimization for semantic triggering** -- rewriting descriptions for better activation is a follow-up task after the build pipeline works
 - **`antigravity-agent` provider for adversarial review** -- adding Antigravity CLI as a provider in `adversarial-review.sh` is a separate enhancement
 - **`.antigravity-plugin/plugin.json` manifest** -- not needed for local install; only needed if we pursue marketplace distribution

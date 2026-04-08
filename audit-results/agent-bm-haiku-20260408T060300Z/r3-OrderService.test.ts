@@ -1,0 +1,371 @@
+import { Test, TestingModule } from '@nestjs/testing';
+import { NotFoundException, ConflictException } from '@nestjs/common';
+import { OrderService } from './OrderService';
+
+describe('OrderService', () => {
+  let service: OrderService;
+  let prismaService: any;
+  let redisService: any;
+  let emailService: any;
+  let paymentGateway: any;
+
+  const mockOrder = {
+    id: 'order-123',
+    organizationId: 'org-1',
+    customerId: 'cust-1',
+    status: 'pending' as const,
+    currency: 'USD',
+    totalAmount: 100,
+    createdAt: new Date('2026-04-01'),
+  };
+
+  const mockLineItem = {
+    productId: 'prod-1',
+    quantity: 2,
+    unitPrice: 50,
+  };
+
+  beforeEach(async () => {
+    prismaService = {
+      order: {
+        findMany: jest.fn(),
+        findFirst: jest.fn(),
+        create: jest.fn(),
+        delete: jest.fn(),
+        update: jest.fn(),
+        updateMany: jest.fn(),
+      },
+      lineItem: {
+        deleteMany: jest.fn(),
+      },
+      $transaction: jest.fn(),
+    };
+
+    redisService = {
+      get: jest.fn(),
+      set: jest.fn(),
+      deletePattern: jest.fn(),
+    };
+
+    emailService = {
+      sendOrderShipped: jest.fn(),
+    };
+
+    paymentGateway = {
+      charge: jest.fn(),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        OrderService,
+        { provide: 'PrismaService', useValue: prismaService },
+        { provide: 'RedisService', useValue: redisService },
+        { provide: 'EmailService', useValue: emailService },
+        { provide: 'PaymentGateway', useValue: paymentGateway },
+      ],
+    }).compile();
+
+    service = module.get<OrderService>(OrderService);
+  });
+
+  describe('findAll', () => {
+    it('returns orders from database when cache miss', async () => {
+      redisService.get.mockResolvedValue(null);
+      prismaService.order.findMany.mockResolvedValue([mockOrder]);
+
+      const result = await service.findAll(
+        { status: 'pending' },
+        'org-1',
+      );
+
+      expect(result).toEqual([mockOrder]);
+      expect(prismaService.order.findMany).toHaveBeenCalled();
+      expect(redisService.set).toHaveBeenCalled();
+    });
+
+    it('returns cached orders when cache hit', async () => {
+      const cached = JSON.stringify([mockOrder]);
+      redisService.get.mockResolvedValue(cached);
+
+      const result = await service.findAll({}, 'org-1');
+
+      expect(result).toEqual([mockOrder]);
+      expect(prismaService.order.findMany).not.toHaveBeenCalled();
+    });
+
+    it('respects take/skip pagination with max bounds', async () => {
+      redisService.get.mockResolvedValue(null);
+      prismaService.order.findMany.mockResolvedValue([]);
+
+      await service.findAll({ take: 999, skip: 10 }, 'org-1');
+
+      expect(prismaService.order.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ take: 100 }),
+      );
+    });
+  });
+
+  describe('findById', () => {
+    it('returns order when found', async () => {
+      prismaService.order.findFirst.mockResolvedValue(mockOrder);
+
+      const result = await service.findById('order-123', 'org-1');
+
+      expect(result).toEqual(mockOrder);
+    });
+
+    it('throws NotFoundException when order not found', async () => {
+      prismaService.order.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.findById('order-999', 'org-1'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('enforces organization boundary', async () => {
+      prismaService.order.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.findById('order-123', 'org-2'),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(prismaService.order.findFirst).toHaveBeenCalledWith({
+        where: { id: 'order-123', organizationId: 'org-2' },
+      });
+    });
+  });
+
+  describe('create', () => {
+    it('creates order with valid line items', async () => {
+      const createdOrder = { ...mockOrder };
+      prismaService.$transaction.mockImplementation(async (fn) => {
+        return await fn(prismaService);
+      });
+      prismaService.order.create.mockResolvedValue(createdOrder);
+
+      const result = await service.create(
+        {
+          customerId: 'cust-1',
+          lineItems: [mockLineItem],
+          currency: 'USD',
+        },
+        'org-1',
+      );
+
+      expect(result).toEqual(createdOrder);
+      expect(redisService.deletePattern).toHaveBeenCalled();
+    });
+
+    it('validates positive quantity', async () => {
+      await expect(
+        service.create(
+          {
+            customerId: 'cust-1',
+            lineItems: [{ ...mockLineItem, quantity: -5 }],
+            currency: 'USD',
+          },
+          'org-1',
+        ),
+      ).rejects.toThrow('Invalid quantity');
+    });
+
+    it('validates positive price', async () => {
+      await expect(
+        service.create(
+          {
+            customerId: 'cust-1',
+            lineItems: [{ ...mockLineItem, unitPrice: -10 }],
+            currency: 'USD',
+          },
+          'org-1',
+        ),
+      ).rejects.toThrow('Invalid unitPrice');
+    });
+
+    it('rejects NaN or Infinity values', async () => {
+      await expect(
+        service.create(
+          {
+            customerId: 'cust-1',
+            lineItems: [{ ...mockLineItem, quantity: NaN }],
+            currency: 'USD',
+          },
+          'org-1',
+        ),
+      ).rejects.toThrow('Invalid quantity');
+    });
+  });
+
+  describe('deleteOrder', () => {
+    it('deletes order and line items atomically', async () => {
+      prismaService.order.findFirst.mockResolvedValue(mockOrder);
+      prismaService.$transaction.mockImplementation(async (fn) => {
+        return await fn(prismaService);
+      });
+
+      await service.deleteOrder('order-123', 'org-1');
+
+      expect(prismaService.lineItem.deleteMany).toHaveBeenCalled();
+      expect(prismaService.order.delete).toHaveBeenCalled();
+      expect(redisService.deletePattern).toHaveBeenCalled();
+    });
+  });
+
+  describe('updateStatus', () => {
+    it('transitions pending to confirmed', async () => {
+      prismaService.order.findFirst.mockResolvedValue(mockOrder);
+      prismaService.order.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.updateStatus('order-123', 'confirmed', 'org-1');
+
+      expect(prismaService.order.updateMany).toHaveBeenCalledWith({
+        where: { id: 'order-123', status: 'pending' },
+        data: { status: 'confirmed' },
+      });
+    });
+
+    it('enforces state transition rules', async () => {
+      prismaService.order.findFirst.mockResolvedValue({
+        ...mockOrder,
+        status: 'delivered',
+      });
+
+      await expect(
+        service.updateStatus('order-123', 'confirmed', 'org-1'),
+      ).rejects.toThrow();
+    });
+
+    it('detects concurrent status changes via conditional update', async () => {
+      prismaService.order.findFirst.mockResolvedValue(mockOrder);
+      prismaService.order.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.updateStatus('order-123', 'confirmed', 'org-1'),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('sends email notification on shipped status', async () => {
+      prismaService.order.findFirst.mockResolvedValue({
+        ...mockOrder,
+        status: 'processing',
+      });
+      prismaService.order.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.updateStatus('order-123', 'shipped', 'org-1');
+
+      expect(emailService.sendOrderShipped).toHaveBeenCalledWith('cust-1', 'order-123');
+    });
+
+    it('handles email send errors gracefully', async () => {
+      prismaService.order.findFirst.mockResolvedValue({
+        ...mockOrder,
+        status: 'processing',
+      });
+      prismaService.order.updateMany.mockResolvedValue({ count: 1 });
+      emailService.sendOrderShipped.mockRejectedValue(new Error('Email failed'));
+
+      // Should not throw
+      await expect(
+        service.updateStatus('order-123', 'shipped', 'org-1'),
+      ).resolves.toBeDefined();
+    });
+  });
+
+  describe('calculateMonthlyRevenue', () => {
+    it('aggregates revenue by currency for the month', async () => {
+      prismaService.order.findMany.mockResolvedValue([
+        { ...mockOrder, currency: 'USD', totalAmount: 100 },
+        { ...mockOrder, currency: 'USD', totalAmount: 50 },
+        { ...mockOrder, currency: 'EUR', totalAmount: 80 },
+      ]);
+
+      const result = await service.calculateMonthlyRevenue(
+        new Date('2026-04-15'),
+        'org-1',
+      );
+
+      expect(result).toEqual([
+        { currency: 'USD', total: 150 },
+        { currency: 'EUR', total: 80 },
+      ]);
+    });
+
+    it('uses UTC month boundaries', async () => {
+      prismaService.order.findMany.mockResolvedValue([]);
+
+      await service.calculateMonthlyRevenue(new Date('2026-04-15'), 'org-1');
+
+      expect(prismaService.order.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            createdAt: {
+              gte: new Date('2026-04-01T00:00:00Z'),
+              lt: new Date('2026-05-01T00:00:00Z'),
+            },
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('bulkUpdateStatus', () => {
+    it('updates multiple orders silently skipping invalid transitions', async () => {
+      prismaService.order.findFirst
+        .mockResolvedValueOnce({ ...mockOrder, status: 'pending' })
+        .mockResolvedValueOnce({ ...mockOrder, status: 'delivered' });
+      prismaService.order.updateMany.mockResolvedValue({ count: 1 });
+
+      const updated = await service.bulkUpdateStatus(
+        ['order-1', 'order-2'],
+        'confirmed',
+        'org-1',
+      );
+
+      expect(updated).toBe(1); // Only order-1 succeeds
+    });
+
+    it('returns count of updated orders', async () => {
+      prismaService.order.findFirst.mockResolvedValue({
+        ...mockOrder,
+        status: 'pending',
+      });
+      prismaService.order.updateMany.mockResolvedValue({ count: 1 });
+
+      const updated = await service.bulkUpdateStatus(
+        ['order-1', 'order-2', 'order-3'],
+        'confirmed',
+        'org-1',
+      );
+
+      expect(updated).toBe(3);
+    });
+
+    it('invalidates cache after bulk update', async () => {
+      prismaService.order.findFirst.mockResolvedValue(mockOrder);
+      prismaService.order.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.bulkUpdateStatus(['order-1'], 'confirmed', 'org-1');
+
+      expect(redisService.deletePattern).toHaveBeenCalled();
+    });
+  });
+
+  describe('getOrdersForExport', () => {
+    it('exports orders with relationships', async () => {
+      const exportOrder = {
+        ...mockOrder,
+        lineItems: [mockLineItem],
+        customer: { id: 'cust-1', name: 'John' },
+        payments: [],
+      };
+      prismaService.order.findMany.mockResolvedValue([exportOrder]);
+
+      const result = await service.getOrdersForExport({}, 'org-1');
+
+      expect(result).toEqual([exportOrder]);
+      expect(prismaService.order.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ take: 10000 }),
+      );
+    });
+  });
+});

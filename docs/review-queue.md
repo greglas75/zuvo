@@ -220,3 +220,5 @@ Commits pending review. Auto-managed:
 - 2cd6c80 (2026-04-08) agent-benchmark: token tracking + API cost
 - 8e0d67e (2026-04-08) fix: --files space-separated paths not read — adversarial review got empty input
 - 7e4ced6 (2026-04-08) fix: --files space-separated paths in adversarial-review.sh and benchmark.sh
+- 77913ee (2026-04-08) release: v1.3.22 — fix: --files space-separated paths in adversarial-review.sh, agent name in benchmark folder
+- 89b42af (2026-04-08) add quick-install.sh — one-line installer for Cursor/Codex/Claude Code

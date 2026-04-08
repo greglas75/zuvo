@@ -1,0 +1,314 @@
+CROSS-PROVIDER REVIEW
+  Input: 12608 chars
+  Review: code | Output: json | Dispatch: multi
+  Launching: codex-5.4...
+  Launching: codex-5.3...
+  Launching: gemini...
+  Launching: cursor-agent...
+  Launching: claude...
+  Done: codex-5.4
+  Done: codex-5.3
+  Done: gemini
+  Done: cursor-agent
+  Done: claude
+{
+  "mode": "code",
+  "providers_used": "codex-5.4, codex-5.3, gemini, cursor-agent, claude",
+  "provider_count": 5,
+  "input_size": 12608,
+  "date": "2026-04-08T06:05:36Z",
+  "results": {
+    "codex-5.4": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts:118",
+          "issue": "State-transition validation is TOCTOU and can be bypassed by concurrent updates",
+          "attack_vector": "Two requests can read the same current status, both pass `allowedNext.includes(...)`, and then each `update` by `id` only. A later write can overwrite an already-changed status with a transition that is no longer legal, e.g. `confirmed -> cancelled` racing with `confirmed -> processing`.",
+          "fix": "Perform the read/validate/write in a transaction and make the update conditional on both `id` and the previously-read status (or use a single conditional update that fails if the status changed)."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-useSearchProducts.ts:49",
+          "issue": "Clearing the query does not cancel the in-flight request, so stale results can repopulate after the UI is emptied",
+          "attack_vector": "If a user types a query, then quickly clears it, the early return resets products locally but leaves the previous fetch running. When that response resolves, it calls `setProducts(...)` and repopulates results for a now-empty query.",
+          "fix": "Before returning on an empty query, abort `abortControllerRef.current`, clear loading flags, and optionally reset `currentPage`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts:134",
+          "issue": "Monthly revenue date bounds exclude almost the entire last day of the month and depend on server local timezone",
+          "attack_vector": "`new Date(year, month + 1, 0)` creates midnight at the start of the last day in local time. With `lte: endOfMonth`, every order after 00:00:00 on that last day is omitted, and results shift with the server timezone.",
+          "fix": "Use an exclusive upper bound at the first instant of the next month (`lt: startOfNextMonth`) and compute boundaries in a consistent timezone, typically UTC."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts:49",
+          "issue": "Redis cache round-trip changes `createdAt` from `Date` to string while the method still returns `Promise<Order[]>`",
+          "attack_vector": "The uncached path returns Prisma objects with `Date` values, but the cached path returns plain JSON with ISO strings. Callers will see different runtime types depending on cache state, causing date comparisons/formatting logic to fail only after cache warm-up.",
+          "fix": "Rehydrate date fields after `JSON.parse`, or store a typed DTO that matches the declared return shape on both paths."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts:83",
+          "issue": "Order creation accepts invalid monetary and quantity values, allowing corrupt totals",
+          "attack_vector": "`create` only checks presence of fields. Negative quantities, negative prices, `NaN`, `Infinity`, or extremely large numbers can produce invalid `totalAmount` values and persist bad line items.",
+          "fix": "Validate each line item at the boundary: require finite positive quantity and unitPrice within expected bounds before computing `totalAmount`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-useSearchProducts.ts:141",
+          "issue": "Pagination logic hard-codes a page size of 10 and can stop early or overfetch when the API uses a different size",
+          "attack_vector": "`loadMore` gates on `currentPage * 10 < total`, but the response does not guarantee 10 items per page. If the backend page size changes or is tenant-specific, the hook may incorrectly suppress `loadMore` or keep requesting past the end.",
+          "fix": "Derive pagination from response data (`products.length < total`) or track an explicit page size/next-page token from the API instead of hard-coding 10."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts:164",
+          "issue": "Bulk status updates silently swallow all exceptions and return a misleading success count",
+          "attack_vector": "DB failures, timeouts, or constraint errors are ignored by the empty `catch`, so callers receive a partial count with no indication that some updates failed. That masks data loss and makes retries unsafe.",
+          "fix": "Catch only expected per-item validation failures; collect and return/report unexpected errors instead of swallowing them."
+        }
+      ]
+    },
+    "codex-5.3": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-useSearchProducts.ts:57",
+          "issue": "Clearing the query does not cancel in-flight requests, allowing stale results to repopulate the UI after an empty search.",
+          "attack_vector": "User types a query, request starts, then clears input; early return path skips abort logic, old request resolves later and overwrites state with products for a query that is no longer active.",
+          "fix": "When `searchQuery.trim()` is empty, abort `abortControllerRef.current` before resetting state (or track request IDs and ignore late responses)."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-useSearchProducts.ts:86",
+          "issue": "Retry attempts use `abortControllerRef.current` instead of a per-request controller, causing cross-request signal reuse and out-of-order state writes.",
+          "attack_vector": "Request A fails and enters backoff; request B starts and replaces `abortControllerRef`; A retry then uses B's signal and can complete later, overwriting B's results or being aborted unexpectedly with B.",
+          "fix": "Create a local `const controller = new AbortController()` per `performSearch` call and use only that signal through all retries; ignore responses if they are not from the latest request token."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts:119",
+          "issue": "Order status transition validation is non-atomic (read-then-write), so concurrent updates can violate the state machine.",
+          "attack_vector": "Two requests read the same current status and both pass `allowedNext`; both updates commit, allowing illegal jumps or lost transitions under concurrent traffic.",
+          "fix": "Perform transition check and update in a single conditional DB write (e.g., `updateMany` with `where: {id, organizationId, status: currentStatus}`) inside a transaction and fail if affected rows are 0."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts:88",
+          "issue": "External side effects (`emitAuditLog`, cache invalidation) are executed inside the DB transaction callback.",
+          "attack_vector": "If Redis is unavailable, order creation rolls back despite valid DB data; conversely, audit side effects may run and then transaction fail, creating external/DB inconsistency.",
+          "fix": "Keep transaction callback DB-only; run audit/cache side effects after commit, with isolated error handling/retry policy."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts:143",
+          "issue": "Monthly revenue date window excludes most of the last day of the month.",
+          "attack_vector": "`endOfMonth` is created at 00:00 of the last day, so orders later that day are excluded from revenue totals.",
+          "fix": "Use an exclusive upper bound at start of next month (`createdAt >= start && createdAt < nextMonthStart`) or set end timestamp to end-of-day explicitly."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts:199",
+          "issue": "`bulkUpdateStatus` swallows all exceptions, hiding partial failures and returning misleading success counts.",
+          "attack_vector": "DB/network errors are silently ignored; caller sees reduced/unchanged count without knowing updates failed, leading to inconsistent downstream state and missed remediation.",
+          "fix": "Catch only expected transition errors; log and aggregate unexpected errors, and return/report failed IDs or throw when infrastructure failures occur."
+        }
+      ]
+    },
+    "gemini": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts",
+          "issue": "Missing validation for positive line item quantities and unit prices",
+          "attack_vector": "Malicious users can submit negative quantities to generate orders with a negative totalAmount, bypassing payment logic or gaining unauthorized account credit.",
+          "fix": "Validate that item.quantity > 0 and item.unitPrice >= 0 before computing the total amount."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts",
+          "issue": "JSON.parse(cached) does not revive Date objects for the createdAt field",
+          "attack_vector": "Consumers invoking Date methods (e.g., .getTime()) on order.createdAt will crash with TypeErrors when the query is served from the Redis cache.",
+          "fix": "Use a JSON reviver function during JSON.parse to convert ISO string date fields back into instantiated Date objects."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-useSearchProducts.ts",
+          "issue": "The hook does not export setQuery, making the search query static",
+          "attack_vector": "The search feature will be permanently frozen at the initialQuery state, as consumers have no exposed mechanism to update the search term dynamically.",
+          "fix": "Include setQuery in the UseSearchProductsReturn interface and returned object, or accept query as a reactive parameter."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts",
+          "issue": "invalidateCache runs inside prisma.$transaction, coupling DB commits to Redis",
+          "attack_vector": "A temporary Redis outage will throw an error inside the transaction, forcing a DB rollback and causing core order creation and deletion APIs to fail.",
+          "fix": "Await this.invalidateCache(orgId) outside and after the prisma.$transaction block."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts",
+          "issue": "getOrdersForExport loads up to 10,000 deeply nested object graphs into memory",
+          "attack_vector": "Concurrent export requests will rapidly exhaust Node.js heap memory, resulting in Out Of Memory (OOM) crashes and Application Denial of Service.",
+          "fix": "Implement cursor-based pagination or use Prisma's stream API to process and stream the export payload in chunks."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts",
+          "issue": "bulkUpdateStatus silently swallows all exceptions in its catch block",
+          "attack_vector": "If the database connection drops mid-loop, the method will silently stop updating records and return a partial success count without alerting the caller.",
+          "fix": "Catch and ignore only specific business logic exceptions (like transition failures), but re-throw unexpected infrastructure or database exceptions."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts",
+          "issue": "calculateMonthlyRevenue relies on the local server timezone for boundary dates",
+          "attack_vector": "Monthly revenue calculations will be inconsistent and shift orders across month boundaries depending on the server's local timezone offset from UTC.",
+          "fix": "Use Date.UTC to calculate deterministic UTC boundaries for the start and end of the month."
+        }
+      ]
+    },
+    "cursor-agent": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts:185-188",
+          "issue": "Declared `byCurrency` but the reducer reads/writes `byurrency`, which is undefined — runtime ReferenceError on every call.",
+          "attack_vector": "Monthly revenue endpoint or UI path throws immediately; reporting is unusable and may surface as 500s.",
+          "fix": "Use the same identifier in the declaration and in the `forEach` (e.g. only `byCurrency`)."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts:214-224",
+          "issue": "Empty `catch` in `bulkUpdateStatus` treats any error (including DB/constraint failures) like a skipped invalid transition.",
+          "attack_vector": "Partial or failed bulk updates return a success count while hiding outages or data errors; operators cannot tell failure from invalid state.",
+          "fix": "Catch only expected errors or rethrow after logging; distinguish not-found/invalid transition from infrastructure errors."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-useSearchProducts.ts:88-124",
+          "issue": "Abort only stops in-flight `fetch`; a request that already finished can still run `setProducts`/`setTotal` after a newer search began.",
+          "attack_vector": "Fast query changes or slow responses can flash or stick to stale results from an older query (out-of-order completion).",
+          "fix": "Track a monotonic `searchGeneration` or request id and ignore late completions whose id does not match the latest."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts:66-88",
+          "issue": "Cached `findAll` results are `JSON.parse`d without reviving `Date`s; returned objects do not match `Order`’s `createdAt: Date`.",
+          "attack_vector": "Callers/tests assuming `Date` methods break on cache hits; subtle bugs in formatting, sorting, or comparisons.",
+          "fix": "Parse dates explicitly, store a normalized cache payload, or bypass cache for types that need real `Date` instances."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts:108-136",
+          "issue": "Non-database work (`emitAuditLog`, `invalidateCache`) runs inside `prisma.$transaction`, tying DB work to external failures and lengthening the transaction.",
+          "attack_vector": "Redis/audit failure rolls back a successfully created order; conversely DB commit can be delayed by slow I/O and increase lock contention.",
+          "fix": "Commit the transaction first, then invalidate cache and emit audit in a follow-up step with explicit failure handling."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts:66-88",
+          "issue": "`take`/`skip` from `filters` are passed through without an upper bound in this artifact.",
+          "attack_vector": "A caller supplying a very large `take` can force heavy queries and memory use, harming DB and app stability.",
+          "fix": "Clamp `take` to a maximum (e.g. min(requested, 50) or cap at 100) and validate `skip`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-useSearchProducts.ts:200-204",
+          "issue": "`loadMore` gates on `currentPage * 10` while page size is not defined alongside the API contract in this file.",
+          "attack_vector": "If the backend uses a different page size than 10, pagination stops early or requests empty pages, showing wrong `hasMore` behavior.",
+          "fix": "Derive page size from the API (constant shared with the server) or from response metadata instead of a magic `10`."
+        }
+      ]
+    },
+    "claude": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts:163",
+          "issue": "ReferenceError: `byurrency` used instead of `byCurrency` — method crashes on every call",
+          "attack_vector": "Any call to `calculateMonthlyRevenue` throws a ReferenceError at runtime. Revenue reporting is completely broken. The variable `byCurrency` is declared on line 162 but `byurrency` (missing `C`) is referenced on lines 163-164 and 167.",
+          "fix": "Rename `byurrency` to `byCurrency` on lines 163, 164, and 167."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts:133-138",
+          "issue": "TOCTOU race on status transition: read and validation are decoupled from write",
+          "attack_vector": "Two concurrent requests can both read `status='pending'`, both pass the transition check, and both write — one to `confirmed`, one to `cancelled`. The second write wins silently, producing an invalid `cancelled→confirmed` or `confirmed→cancelled` transition with no error. Under load, orders can reach states that violate the state machine.",
+          "fix": "Add the current status to the update's WHERE clause: `where: { id, status: order.status }`. Check `updateCount === 0` and throw a conflict error if the row wasn't matched."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-useSearchProducts.ts:41-46",
+          "issue": "Hook never exposes `setQuery` — consumers cannot trigger new searches",
+          "attack_vector": "The hook accepts `initialQuery` but `useState` only uses it once. If the parent passes a new query string on re-render, nothing happens — `query` state is frozen at the initial value. Since `setQuery` is not returned, the hook is a one-shot search with no way to search for different terms. Likely the author intended to wire `query` to `initialQuery` via an effect or expose `setQuery`/`search` in the return value.",
+          "fix": "Either return `setQuery` (renamed to `search`) in the hook's return object, or add a `useEffect` that syncs `query` when `initialQuery` changes (with appropriate equality check)."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts:183-192",
+          "issue": "bulkUpdateStatus swallows ALL errors, not just invalid transitions",
+          "attack_vector": "The catch block silently discards database connection failures, network timeouts, and serialization errors. A transient DB outage during a 500-order bulk update returns `{updated: 47}` with no indication that 453 orders were skipped due to infrastructure failure, not invalid transitions. Callers believe the operation partially succeeded when it actually partially crashed.",
+          "fix": "Catch only expected failures (e.g., check error type). Accumulate unexpected errors and throw an aggregate error or return them alongside the count: `{ updated, failed, errors }`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts:110-116",
+          "issue": "Side effects (audit log, cache invalidation) inside $transaction callback execute before commit",
+          "attack_vector": "In Prisma interactive transactions, the callback body runs before the transaction commits. `emitAuditLog` and `invalidateCache` are non-transactional (Redis + console). If the transaction rolls back (serialization conflict, constraint violation), the audit log records a ghost order and the cache is needlessly invalidated. This creates phantom audit entries and cache churn under contention.",
+          "fix": "Move `emitAuditLog` and `invalidateCache` after the `$transaction` call returns (outside the callback), operating on the returned `order`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-useSearchProducts.ts:85-100",
+          "issue": "Retry loop shares mutable AbortController ref across concurrent searches, causing cross-request interference",
+          "attack_vector": "During retry backoff (setTimeout), if a new search starts, it replaces `abortControllerRef.current` with a fresh controller. When the old retry wakes up, `performFetch` reads `abortControllerRef.current!.signal` — now the NEW search's signal. The stale retry is now attached to the new search's abort controller. Aborting the new search also kills the orphaned retry, but more critically, a successful orphaned retry overwrites `products` state with results from the old query, corrupting the UI.",
+          "fix": "Capture the AbortController in a local variable at the start of `performSearch` and pass it (or its signal) into `performFetch` as a parameter instead of reading from the ref on each attempt."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r1-OrderService.ts:67-68",
+          "issue": "Cache deserialization silently converts Date fields to strings, violating the Order interface contract",
+          "attack_vector": "`JSON.parse(cached)` returns `createdAt` as an ISO string, not a Date object. Callers receiving cached results get `Order` objects where `createdAt` is a string — `.getFullYear()`, date comparisons, and Prisma re-queries using these values will fail or produce wrong results. First request works (DB returns real Dates); subsequent requests (cache hit) break silently.",
+          "fix": "Add a reviver to `JSON.parse` that converts date fields: `JSON.parse(cached, dateReviver)`, or deserialize dates explicitly after parsing."
+        }
+      ]
+    }
+  }
+}
