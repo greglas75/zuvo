@@ -35,11 +35,12 @@ If any file is missing, stop.
 
 ## Setup
 
-1. Detect current model: check `$CLAUDE_MODEL` or infer from context. Record as `agent_model`.
+1. Detect current model: check `$CLAUDE_MODEL` or infer from context. Record as `agent_model`. Build a short slug from it (e.g. `claude-sonnet-4-6` → `sonnet`, `claude-haiku-4-5-20251001` → `haiku`, `claude-opus-4-6` → `opus`, `composer` → `composer`, unknown → `agent`).
 
-2. Create output directory:
+2. Create output directory with agent name in folder:
    ```bash
-   RUN_ID="agent-bm-$(date -u +%Y%m%dT%H%M%SZ)"
+   AGENT_SLUG="<slug from step 1>"
+   RUN_ID="agent-bm-${AGENT_SLUG}-$(date -u +%Y%m%dT%H%M%SZ)"
    OUT_DIR="audit-results/${RUN_ID}"
    mkdir -p "$OUT_DIR"
    ```
