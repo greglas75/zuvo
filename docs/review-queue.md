@@ -245,3 +245,4 @@ Commits pending review. Auto-managed:
 - 6b2df0d (2026-04-08) review-fix: sanitize codestral model name, clarify auto vs manual providers in help
 - 914705e (2026-04-08) release: v1.3.28 — fix: update all counts to 49 skills/26 agents, fix marketplace description, fix changelog link
 - fd5a2f5 (2026-04-08) docs: add quick-install curl command to README
+- 0838fd7 (2026-04-08) enforce adversarial review: fill 4 skill gaps, add pentest→review chain, add pre-push hook gate
