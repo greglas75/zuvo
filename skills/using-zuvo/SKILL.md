@@ -77,6 +77,7 @@ Do this on every message. Not just the first one.
 | Run mutation testing (verify tests actually catch bugs) | `zuvo:mutation-test` |
 | _(see Priority 2)_ | `zuvo:a11y-audit` |
 | Benchmark providers, compare models, measure quality/speed/cost | `zuvo:benchmark` |
+| Self-benchmark: YOU write code+tests, adversarial reviews, you fix — measures YOUR quality | `zuvo:agent-benchmark` |
 
 ### Priority 4 — Utility
 
