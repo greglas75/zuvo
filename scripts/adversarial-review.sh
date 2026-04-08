@@ -55,7 +55,8 @@ Usage: adversarial-review.sh [OPTIONS] [--diff REF] [--files "path"]
 Provider options:
   (default)        Multi: run ALL available providers
   --single         First-success: stop after first provider
-  --provider P     Force: codex-5.4, codex-5.3, cursor-agent, gemini, claude, gemini-api, codestral
+  --provider P     Auto: codex-5.3, gemini, cursor-agent, claude
+                   Manual: codex-5.4, gemini-api, codestral
 
 Review modes:
   --mode code      (default) General code review
@@ -572,7 +573,8 @@ run_codestral() {
   # Codestral API — Mistral's coding model, OpenAI-compatible chat endpoint
   [[ -z "${CODESTRAL_API_KEY:-}" ]] && return 1
 
-  local model="${ZUVO_CODESTRAL_MODEL:-codestral-latest}"
+  local model
+  model=$(printf '%s' "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" | tr -cd 'a-zA-Z0-9._-')
 
   # Build JSON payload via temp file (avoids ARG_MAX on large prompts)
   local payload_file="$JSON_TMPDIR/codestral_payload.json"
