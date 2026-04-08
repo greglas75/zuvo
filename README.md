@@ -6,6 +6,14 @@ Auto-activating, multi-agent skill ecosystem for Claude Code, Codex, and Cursor.
 
 ## Install
 
+### Quick install (all platforms)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/greglas75/zuvo/main/scripts/quick-install.sh | bash
+```
+
+Installs to Claude Code + Codex + Cursor in one command. Restart your IDE after install.
+
 ### Claude Code (recommended)
 
 > Requires Claude Code 1.0.33+. Check with `claude --version`, update with `claude update`.
