@@ -93,9 +93,9 @@ Read the findings. Print summary:
   Findings: N critical, M warning, K info
 ```
 
-Now **fix your code** based on the adversarial findings. Write corrected files:
-- `$OUT_DIR/r2-OrderService.ts`
-- `$OUT_DIR/r2-useSearchProducts.ts`
+Now **fix your code** based on the adversarial findings. **Do NOT edit R1 files — they are the baseline.** Write corrected code as NEW files:
+- `$OUT_DIR/r2-OrderService.ts` (new file — corrected version of r1)
+- `$OUT_DIR/r2-useSearchProducts.ts` (new file — corrected version of r1)
 
 Save adversarial findings:
 - `$OUT_DIR/r2-adversarial-findings.txt`
@@ -146,9 +146,11 @@ Run adversarial-review.sh on your test files. **Multi-provider mode**:
 adversarial-review.sh --files "$OUT_DIR/r3-OrderService.test.ts $OUT_DIR/r3-useSearchProducts.test.ts" --json --mode test
 ```
 
-Read findings. Fix your tests. Write corrected files:
-- `$OUT_DIR/r4-OrderService.test.ts`
-- `$OUT_DIR/r4-useSearchProducts.test.ts`
+Read findings. **Do NOT edit R3 files — they are the baseline.** Read R3, apply fixes, and write corrected tests as NEW files:
+- `$OUT_DIR/r4-OrderService.test.ts` (new file — corrected version of r3)
+- `$OUT_DIR/r4-useSearchProducts.test.ts` (new file — corrected version of r3)
+
+**Critical: R3 and R4 must be different files showing before/after.** If you edit R3 directly, the benchmark loses the ability to compare pre/post adversarial quality.
 
 Save findings:
 - `$OUT_DIR/r4-adversarial-findings.txt`
