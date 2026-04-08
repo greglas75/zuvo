@@ -215,3 +215,5 @@ Commits pending review. Auto-managed:
 - bd34514 (2026-04-08) fix agent-benchmark: explicit guardrails — never edit R1/R3 files, write R2/R4 as new files
 - 1f369b3 (2026-04-08) fix agent-benchmark: R3/R4 immutability guardrails
 - 969cc2d (2026-04-08) fix agent-benchmark: include agent name slug in output folder name
+- 0fcd97d (2026-04-08) agent-benchmark: agent name in folder
+- a1aac36 (2026-04-08) add token tracking + API cost estimation to agent-benchmark
