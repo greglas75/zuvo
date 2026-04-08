@@ -87,9 +87,11 @@ Before starting, read the applicable files:
 
 ```
 CORE FILES LOADED:
-  1. ../../rules/testing.md                -- [READ | MISSING -> STOP]
-  2. ../../shared/includes/quality-gates.md -- [READ | MISSING -> STOP]
-  3. ../../shared/includes/run-logger.md    -- [READ | MISSING -> STOP]
+  1. ../../rules/testing.md                    -- [READ | MISSING -> STOP]
+  2. ../../shared/includes/quality-gates.md    -- [READ | MISSING -> STOP]
+  3. ../../shared/includes/run-logger.md       -- [READ | MISSING -> STOP]
+  4. ../../shared/includes/knowledge-prime.md  -- READ/MISSING
+  5. ../../shared/includes/knowledge-curate.md -- READ/MISSING
 ```
 
 **Conditional (loaded when the pattern requires domain knowledge):**
@@ -124,6 +126,17 @@ Triage populates Files Found. The report step updates Fixed/Skipped/Needs Review
 | Claude Code | Agent (after Step 6) | Complete pattern, check remaining, start next if needed |
 | Codex | External loop | Complete one pattern, stop. Loop restarts if patterns remain |
 | Cursor | External hook | Complete one pattern, stop. Hook restarts if patterns remain |
+
+---
+
+## Knowledge Prime
+
+Run the knowledge prime protocol from `knowledge-prime.md`:
+```
+WORK_TYPE = "implementation"
+WORK_KEYWORDS = <keywords from user request>
+WORK_FILES = <files being touched>
+```
 
 ---
 
@@ -261,6 +274,15 @@ Update `memory/fix-tests-progress.md` with the results.
 Read `../../shared/includes/backlog-protocol.md`.
 
 Persist any production bugs discovered during fixing, or files that could not be fixed automatically, to `memory/backlog.md`.
+
+### Knowledge Curation
+
+After work is complete, run the knowledge curation protocol from `knowledge-curate.md`:
+```
+WORK_TYPE = "implementation"
+CALLER = "zuvo:fix-tests"
+REFERENCE = <git SHA or relevant identifier>
+```
 
 ### Multi-Pattern Continuation
 

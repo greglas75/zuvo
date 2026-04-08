@@ -1,0 +1,6 @@
+R4 adversarial findings
+
+1. CRITICAL: The bulkUpdateStatus test derives expected updated IDs from mocked database rows rather than the requested IDs, so it would pass even if the implementation ignored caller input and updated arbitrary tenant orders.
+2. WARNING: The query-change abort test only verifies abort side effects; it does not assert that the replacement query actually issues a new fetch or that stale results are suppressed.
+3. WARNING: Retry coverage models failure as rejected fetch promises instead of resolved HTTP error responses, which diverges from browser fetch behavior on 4xx/5xx responses.
+4. WARNING: The order-creation suite never proves that invalid currency input is rejected before persistence, so the paymentGateway validation branch is not exercised.

@@ -1,0 +1,321 @@
+{
+  "mode": "test",
+  "providers_used": "codex-5.4, codex-5.3, gemini, cursor-agent, claude, codestral",
+  "provider_count": 6,
+  "input_size": 13119,
+  "date": "2026-04-08T08:23:32Z",
+  "results": {
+    "codex-5.4": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-OrderService.test.ts:146",
+          "issue": "The shipped-email test only asserts that a notification was sent, not that it was sent with the correct order id and recipient.",
+          "attack_vector": "`updateStatus` currently hardcodes `customer@example.com`; if the service emails the wrong customer or omits the order id, this test still passes because any call satisfies it.",
+          "fix": "Assert the exact arguments to `sendShippingNotification`, including `ORDER_ID` and the expected recipient derived from the order/customer data."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-OrderService.test.ts:192",
+          "issue": "`bulkUpdateStatus` never verifies organization scoping, so a cross-tenant update bug would not be caught.",
+          "attack_vector": "If `organizationId` were dropped from the `findMany` query, the mock still returns only in-org orders and the test would pass while production could update other tenants' orders.",
+          "fix": "Assert that `findMany` is called with `organizationId: ORG_ID`, or include an out-of-org order in the fixture and verify it is excluded from the update set."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-useSearchProducts.test.ts:93",
+          "issue": "The retry test does not actually verify exponential backoff; it only checks that three fetches happened by the end.",
+          "attack_vector": "Retries could happen immediately, with the wrong delays, or with a different schedule, and this test would still pass while production hammers the API under failure.",
+          "fix": "Assert fetch call counts after each timer advance and confirm no extra call occurs before 2s and 4s respectively."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-useSearchProducts.test.ts:121",
+          "issue": "The error-path test proves the final error string, but not that the hook actually performed all three attempts before surfacing it.",
+          "attack_vector": "A regression that stops retrying after the first failure and sets `error` immediately would still satisfy this test once enough fake time has elapsed.",
+          "fix": "Also assert `fetch` was called exactly three times and that `error` remains null until the final retry has failed."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-useSearchProducts.test.ts",
+          "issue": "There is no negative test for the hook's explicit response-shape validation.",
+          "attack_vector": "The production hook rejects malformed payloads (`products` not an array, invalid product objects, missing `total`), but the suite only mocks perfect responses, so a broken validator or malformed API contract change would go unnoticed.",
+          "fix": "Add a test that returns an invalid payload and assert the hook sets `error` to the validation failure and does not update `products`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-OrderService.test.ts:47",
+          "issue": "`findAll` covers cache hit/miss only, but not the explicit fallback path for Redis read/parse failures.",
+          "attack_vector": "The service is written to recover from cache outages or corrupt JSON; if that fallback breaks, production order listing fails during cache incidents and this suite will not catch it.",
+          "fix": "Add a test where `redis.get` rejects or returns invalid JSON and assert the service falls back to `prisma.order.findMany` and returns DB data."
+        }
+      ]
+    },
+    "codex-5.3": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-OrderService.test.ts:18",
+          "issue": "`deleteOrder` test asserts `prisma.order.delete` was called, but the mock never defines `order.delete`, so the assertion target is invalid.",
+          "attack_vector": "The test can fail for setup reasons (or be patched ad hoc) instead of validating deletion behavior, allowing real delete regressions to slip through or creating noisy false failures.",
+          "fix": "Add `delete: jest.fn()` to the `prisma.order` mock in `beforeEach` and keep the assertion on that mock."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-useSearchProducts.test.ts:12",
+          "issue": "Tests overwrite `global.fetch` but never restore the original implementation after the suite.",
+          "attack_vector": "Later test files can run against a leaked mocked `fetch`, producing order-dependent/flaky failures and masking real integration behavior.",
+          "fix": "Capture original `global.fetch` before mutation and restore it in `afterEach`/`afterAll`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-useSearchProducts.test.ts:44",
+          "issue": "`aborts previous request when query changes` only checks `abort()` was called, not that an in-flight request was aborted for the old query.",
+          "attack_vector": "Implementation could call `abort()` during rerender cleanup without canceling a real request; stale response races would still ship while this test stays green.",
+          "fix": "Mock a pending fetch for query `a`, rerender to `ab`, and assert first call received an `AbortSignal` that becomes aborted plus second request is issued for `ab`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-useSearchProducts.test.ts:130",
+          "issue": "`isLoading`/`isLoadingMore` assertions depend on precise microtask timing with fake timers and immediately resolved promises.",
+          "attack_vector": "State can flip before assertions on faster/slower environments, causing flaky tests or false confidence about loading-state transitions.",
+          "fix": "Control fetch resolution with deferred promises and assert states before and after explicit promise resolution rather than relying on empty `act` blocks."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-useSearchProducts.test.ts",
+          "issue": "No test covers HTTP error responses (`fetch` resolves with `ok: false`), only rejected promises.",
+          "attack_vector": "If production returns 4xx/5xx with JSON body, hook error handling can break silently while current tests still pass.",
+          "fix": "Add a test where `fetch` resolves `{ ok: false, status: 500, json/text... }` and assert retry/error behavior matches contract."
+        }
+      ]
+    },
+    "gemini": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-OrderService.test.ts",
+          "issue": "Transaction mock yields original prisma client, hiding broken transactions",
+          "attack_vector": "If production code mistakenly calls 'this.prisma.order.create' instead of 'tx.order.create' inside the transaction, the operation won't be atomic. This mock passes 'prisma' as 'tx', making the test falsely pass and hiding the concurrency bug.",
+          "fix": "Mock $transaction to yield a separate mock transaction object (e.g., '{ order: prisma.order }') and assert on it."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-useSearchProducts.test.ts",
+          "issue": "loadMore test verifies state but misses pagination parameter assertion",
+          "attack_vector": "If the hook hardcodes 'page=1' or omits pagination params entirely in the fetch call, the test still passes because the mock blindly returns 'moreProducts' on the second call. Production pagination would be completely broken.",
+          "fix": "Add expect(global.fetch).toHaveBeenLastCalledWith(expect.stringContaining('page='), expect.any(Object)) to verify pagination."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-OrderService.test.ts",
+          "issue": "Cache invalidation test verifies key lookup but not actual deletion",
+          "attack_vector": "If the implementation queries redis.keys but forgets to call redis.del() to delete them, the cache will serve stale data indefinitely. The test only asserts redis.keys was called, allowing this bug to pass.",
+          "fix": "Mock redis.keys to return a dummy key and assert expect(redis.del).toHaveBeenCalledWith(dummyKey)."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-OrderService.test.ts",
+          "issue": "Missing mocked method causes deleteOrder test to crash",
+          "attack_vector": "prisma.order.delete is not defined in the beforeEach mock. If production code calls it, it throws a TypeError. If it doesn't, the expect(prisma.order.delete) assertion throws. This test cannot legitimately pass.",
+          "fix": "Add 'delete: jest.fn()' to the prisma.order mock definition in beforeEach."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-useSearchProducts.test.ts",
+          "issue": "Abort controller test verifies abort() but not signal assignment",
+          "attack_vector": "If production code calls abort() on the controller but forgets to pass { signal: controller.signal } to the fetch call, the request won't actually cancel in the browser. The test passes because it only spies on abort().",
+          "fix": "Update the fetch assertion to check for the signal: expect.objectContaining({ signal: expect.any(AbortSignal) })."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-useSearchProducts.test.ts",
+          "issue": "Retry test verifies fetch count but misses final state assertion",
+          "attack_vector": "If the retry mechanism triggers fetches but swallows the final successful response (failing to update the 'products' state), the UI remains broken. The test only counts fetch calls and would falsely pass.",
+          "fix": "Add expect(result.current.products).toEqual(mockProducts) at the end of the retry test."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-OrderService.test.ts",
+          "issue": "Cache population test verifies set() but ignores cached payload and TTL",
+          "attack_vector": "If the service serializes the data incorrectly (e.g., caches '[object Object]') or caches without an expiration TTL, the test still passes because it only checks that redis.set was invoked.",
+          "fix": "Assert expect(redis.set).toHaveBeenCalledWith(expect.any(String), JSON.stringify(dbData), expect.anything())."
+        }
+      ]
+    },
+    "cursor-agent": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-OrderService.test.ts:beforeEach prisma mock",
+          "issue": "`prisma.order` mock omits `delete` while `deleteOrder` asserts `prisma.order.delete` was called, so `delete` is `undefined` and a real `deleteOrder` call would throw before assertions.",
+          "attack_vector": "Test never exercises the intended DB delete path; CI fails for the wrong reason or the suite is skipped, hiding regressions in delete/transaction behavior.",
+          "fix": "Add `delete: jest.fn().mockResolvedValue(...)` (and any other methods the service calls) to `prisma.order` in `beforeEach`."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-useSearchProducts.test.ts:abort test",
+          "issue": "`aborts previous request when query changes` never advances the 300ms debounce before rerender, so there is typically no prior in-flight `fetch` to abort; `abort` may fire only from debounce/effect teardown, not from canceling an HTTP request.",
+          "attack_vector": "Regression in abort-on-fetch behavior can ship while the test still passes because it conflates debounce cleanup with request cancellation.",
+          "fix": "Advance timers (or flush) so the first query triggers `fetch`, then change `q` and assert `fetch` was aborted (e.g. `signal.aborted` or matching `AbortSignal` on the second call) and/or prior request count."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-useSearchProducts.test.ts:retry test",
+          "issue": "Retry test only asserts `fetch` call count (3), not that delays follow the intended backoff schedule (e.g. 2s then 4s), so an implementation that retries with no/zero/incorrect delay can still pass.",
+          "attack_vector": "Backoff/throttle bugs in production (API hammering, rate limits) are not caught; test gives false confidence.",
+          "fix": "Assert timer advancement between attempts matches expected delays (or spy `setTimeout` with explicit durations) in addition to call count."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-useSearchProducts.test.ts:debounce / loadMore / isLoading tests",
+          "issue": "Several tests use `await act(async () => {})` with an empty body expecting microtasks to flush; that often does not reliably drain promise chains tied to `fetch`, so `products` / loading flags may be asserted in a stale state.",
+          "attack_vector": "Intermittent CI failures or false greens depending on microtask ordering; weak guarantee that UI state reflects resolved `fetch`.",
+          "fix": "Use `await act(async () => { await Promise.resolve(); })`, `waitFor` from RTL, or await the same promise the hook uses; avoid empty async `act` as a flush mechanism."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-OrderService.test.ts:create + cache",
+          "issue": "`creates an order... invalidates cache` only asserts `redis.keys` was called, not that matching keys were deleted or that `set`/`del` ran with the expected pattern—cache could be broken while the test passes.",
+          "attack_vector": "Stale cache reads after create in production; test does not fail if invalidation is missing or wrong.",
+          "fix": "Mock `keys` to return concrete keys and assert `redis.del` (or pipeline) with those keys, or assert `set` invalidation behavior the service actually implements."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-useSearchProducts.test.ts:unmount cleanup",
+          "issue": "`cleans up on unmount` unmounts immediately without advancing the debounce timer, so whether `abort` reflects an in-flight request vs. only debounce/effect teardown is unclear; may pass without a scheduled fetch.",
+          "attack_vector": "Missing abort on active requests during fast unmount can slip through if the test only observes an abort from effect cleanup.",
+          "fix": "Advance timers to arm a fetch (or mock a pending request), then unmount and assert abort behavior tied to that request."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-OrderService.test.ts:calculateMonthlyRevenue",
+          "issue": "Uses `new Date('2026-03-15')` (ISO date parsing) while asserting UTC month boundaries; if production uses local-date semantics, the service’s range could diverge from the test’s expectations across environments.",
+          "attack_vector": "Off-by-one-month or boundary bugs in non-UTC CI or user locales may not match the test’s fixed UTC expectations.",
+          "fix": "Align input with production (explicit UTC vs local) or construct the `Date` with `Date.UTC` / same helper the service uses and assert against that."
+        }
+      ]
+    },
+    "claude": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-OrderService.test.ts:175",
+          "issue": "deleteOrder test asserts on `prisma.order.delete` which is never added to the mock object — assertion throws 'received value must be a mock or spy function'",
+          "attack_vector": "Test crashes at assertion, not at the production code call. If someone catches the error and marks the test as skipped/todo, the delete path is entirely untested. If the test is currently failing in CI, the suite is red-but-ignored, masking other regressions.",
+          "fix": "Add `delete: jest.fn()` to the `prisma.order` mock in `beforeEach`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-useSearchProducts.test.ts:14",
+          "issue": "global.fetch is overwritten in beforeEach but never restored in afterEach — leaks a dead mock into every subsequent test suite in the runner",
+          "attack_vector": "Any test file that imports after this suite and relies on real `fetch` (or its own mock) inherits a stale `jest.fn()` with cleared call counts but no implementation. Manifests as silent undefined responses in unrelated test files, extremely hard to trace.",
+          "fix": "Store `const originalFetch = global.fetch` before overwriting, restore in `afterEach`. Or use `jest.spyOn(global, 'fetch')` and call `mockRestore()` in afterEach."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-OrderService.test.ts:28",
+          "issue": "$transaction mock `(fn) => fn(prisma)` always succeeds — never tests rollback on partial failure, and passes the same client object instead of an isolated transaction client",
+          "attack_vector": "Production bug: if `create` succeeds but cache invalidation throws, real Prisma rolls back the order. The mock swallows this because the error propagates out of $transaction without rollback semantics. An order could be created in prod with no cache invalidation and no rollback.",
+          "fix": "Add a test where a step inside the transaction callback throws, and assert the transaction rejects (i.e., `$transaction` mock should re-throw, not swallow)."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-useSearchProducts.test.ts:80",
+          "issue": "Retry backoff test advances timers by 2000ms then 4000ms but never asserts fetch was NOT called at intermediate times — test passes even if backoff is 500ms/1000ms instead of 2000ms/4000ms",
+          "attack_vector": "Production ships with broken backoff (e.g., immediate retry or 100ms delay) and the test still passes green. Under real load, the server gets hammered with retries instead of backing off, causing cascading failures.",
+          "fix": "Add negative timing assertions: advance by 1999ms, assert fetch call count is still 1, then advance 1ms more, assert count is 2. Repeat for second backoff interval."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-OrderService.test.ts:90",
+          "issue": "create test asserts `total: 21` in the prisma.create call args, but the mock also returns `{ total: 21 }` — if production code copies the DTO total verbatim instead of calculating it, the test still passes",
+          "attack_vector": "If production code ever stops calculating `quantity * unitPrice` and just passes through a user-supplied total field, this test cannot detect the regression. An attacker could submit `{ total: 0 }` and get items for free.",
+          "fix": "Remove `total` from the mock return value (it's not checked) and add a separate test where the DTO has no `total` field to prove the service computes it. Or assert on the calculation: `expect(createArg.data.total).toBeCloseTo(2 * 10.50)`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-useSearchProducts.test.ts:121",
+          "issue": "isLoading assertion `expect(result.current.isLoading).toBe(true)` is checked synchronously after advanceTimersByTime(300) but before awaiting — depends on whether the hook sets state synchronously in the timer callback before the fetch promise settles",
+          "attack_vector": "If the hook implementation changes to set isLoading inside an async callback (e.g., `await someSetup(); setIsLoading(true)`), the synchronous assertion reads stale state and the test fails intermittently. Classic fake-timer + microtask ordering flake.",
+          "fix": "Wrap the timer advancement and loading check in `await act(async () => { jest.advanceTimersByTime(300); })` and use `waitFor` to assert the intermediate loading state, or restructure to assert loading via a rendered UI indicator."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r3-OrderService.test.ts:143",
+          "issue": "calculateMonthlyRevenue test uses a single mid-month date — no boundary test for month-start or month-end dates, and the Date constructor input is timezone-sensitive despite UTC assertions",
+          "attack_vector": "If production code uses `getMonth()` instead of `getUTCMonth()`, the test passes in UTC but fails in UTC+N timezones where a Jan 1 00:00 UTC input becomes Dec 31 local time — wrong month extracted, wrong revenue reported. Only manifests in CI runners with non-UTC locale.",
+          "fix": "Add boundary tests: `new Date('2026-03-01T00:00:00Z')` and `new Date('2026-03-31T23:59:59Z')`. Pass explicit UTC strings to avoid local-time parsing ambiguity."
+        }
+      ]
+    },
+    "codestral": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts",
+          "issue": "Missing negative test for cache invalidation failure",
+          "attack_vector": "If Redis cache invalidation fails, stale data could persist in production, leading to incorrect order displays. The test only verifies successful cache invalidation.",
+          "fix": "Add a test where redis.keys() rejects and verify the error is handled appropriately"
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r3-useSearchProducts.test.ts",
+          "issue": "Flaky test due to fake timers and promise resolution",
+          "attack_vector": "The test sequence of advanceTimersByTime and act(async) may not guarantee proper promise resolution timing, leading to intermittent failures in CI.",
+          "fix": "Replace fake timers with real timers and use waitFor instead of manual timer advancement"
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r3-useSearchProducts.test.ts",
+          "issue": "Missing test for network error during loadMore",
+          "attack_vector": "If loadMore fails, the UI would show inconsistent data (partial products) without proper error handling. The test only verifies success path.",
+          "fix": "Add a test where fetch rejects during loadMore and verify error state is updated"
+        },
+        {
+          "severity": "INFO",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts",
+          "issue": "Incomplete state coverage in bulkUpdateStatus test",
+          "attack_vector": "The test only verifies successful updates but doesn't test cases where no orders match the criteria or the update fails.",
+          "fix": "Add tests for empty order list and failed update scenarios"
+        }
+      ]
+    }
+  }
+}

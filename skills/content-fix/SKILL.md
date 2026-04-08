@@ -26,6 +26,8 @@ Read these files before any work begins:
 5. `../../shared/includes/backlog-protocol.md` -- Backlog fingerprint dedup
 6. `../../shared/includes/verification-protocol.md` -- Build verification rules
 7. `../../shared/includes/run-logger.md` -- Run logging contract
+8. `../../shared/includes/knowledge-prime.md` -- Project knowledge priming
+9. `../../shared/includes/knowledge-curate.md` -- Learning extraction after work
 
 Print the checklist:
 
@@ -38,6 +40,8 @@ CORE FILES LOADED:
   5. backlog-protocol.md        -- [READ | MISSING -> STOP]
   6. verification-protocol.md   -- [READ | MISSING -> STOP]
   7. run-logger.md              -- [READ | MISSING -> STOP]
+  8. ../../shared/includes/knowledge-prime.md  -- READ/MISSING
+  9. ../../shared/includes/knowledge-curate.md -- READ/MISSING
 ```
 
 If any file is missing, STOP.
@@ -94,6 +98,17 @@ gates):
 | `--finding CC1-nbsp-present,CC2-broken-italic` | Fix specific findings by stable ID |
 | `--fix-type encoding-strip,markdown-fix` | Fix specific fix_type categories |
 | `[json-path]` | Use specific JSON file instead of latest |
+
+---
+
+### Knowledge Prime
+
+Run the knowledge prime protocol from `knowledge-prime.md`:
+```
+WORK_TYPE = "implementation"
+WORK_KEYWORDS = <keywords from user request>
+WORK_FILES = <files being touched>
+```
 
 ---
 
@@ -281,6 +296,15 @@ prefix) to the log file path resolved per `run-logger.md`.
 
 Write to `audit-results/content-fix-YYYY-MM-DD.json` conforming to
 `fix-output-schema.md` v1.1. Auto-increment `-2.json` for same-day runs.
+
+### Knowledge Curation
+
+After work is complete, run the knowledge curation protocol from `knowledge-curate.md`:
+```
+WORK_TYPE = "implementation"
+CALLER = "zuvo:content-fix"
+REFERENCE = <git SHA or relevant identifier>
+```
 
 ### 5.3 Update backlog
 

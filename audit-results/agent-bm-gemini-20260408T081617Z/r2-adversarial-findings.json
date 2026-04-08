@@ -1,0 +1,337 @@
+{
+  "mode": "code",
+  "providers_used": "codex-5.4, codex-5.3, gemini, cursor-agent, claude, codestral",
+  "provider_count": 6,
+  "input_size": 10881,
+  "date": "2026-04-08T08:19:35Z",
+  "results": {
+    "codex-5.4": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-useSearchProducts.ts:38",
+          "issue": "Retried requests can escape cancellation and overwrite newer search results",
+          "attack_vector": "If a request fails, the retry waits on a timer and then reuses `abortControllerRef.current?.signal` instead of the controller created for that request. A user who changes the query during the backoff creates a new controller; the old retry then runs under the new signal, completes, and can replace or append stale products from the previous query.",
+          "fix": "Capture the AbortController in a local variable inside `fetchProducts` and pass its `signal` through all retry attempts instead of reading `abortControllerRef.current` during retries."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:125",
+          "issue": "`updateStatus` allows cancellation from terminal states despite the transition table forbidding it",
+          "attack_vector": "The guard skips validation whenever `newStatus === 'cancelled'`, so already `delivered` or `cancelled` orders can still be moved to `cancelled`. That breaks state-machine integrity and can corrupt downstream accounting/fulfillment assumptions.",
+          "fix": "Validate `cancelled` through the same transition table, or explicitly allow it only from the intended source states."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:109",
+          "issue": "Cache invalidation after delete is ineffective because Redis `DEL` does not match wildcards",
+          "attack_vector": "`await this.redis.del(`orders:${orgId}:*`)` deletes the literal key `orders:<orgId>:*`, not the cached query variants written by `findAll`. Deleted orders can remain visible from cache for up to the TTL, producing stale reads after mutation.",
+          "fix": "Track concrete cache keys and delete them explicitly, or use a supported key-scan/invalidation strategy instead of passing a glob to `del`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:147",
+          "issue": "Monthly revenue excludes almost the entire last day of the month",
+          "attack_vector": "`new Date(year, month + 1, 0)` produces midnight at the start of the last day, and the query uses `lte: endOfMonth`. Orders created later that same day are omitted, so revenue is undercounted in production while tests that use date-only fixtures may still pass.",
+          "fix": "Use an exclusive upper bound at the first instant of the next month (`lt: firstOfNextMonth`) or set the end timestamp to the end of the last day."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:171",
+          "issue": "Bulk status updates are non-atomic and can leave a partially updated batch",
+          "attack_vector": "The method reads the candidate orders and then updates them one by one outside a transaction. If one update fails midway, earlier rows stay changed and later rows remain untouched, producing partial writes with no rollback or retry boundary.",
+          "fix": "Wrap the batch in a transaction or use a single bulk update strategy after validating all targeted orders first."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:199",
+          "issue": "Export silently truncates results at 10,000 orders",
+          "attack_vector": "Large tenants will receive incomplete exports with no error or pagination signal because `getOrdersForExport` hard-limits `take: 10000`. This is silent data loss, not just a performance optimization.",
+          "fix": "Paginate/stream the export or explicitly fail when the result set exceeds the supported limit."
+        }
+      ]
+    },
+    "codex-5.3": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-useSearchProducts.ts:44",
+          "issue": "Retry logic reuses mutable global AbortController ref, allowing stale query retries to run with the new request's signal and overwrite fresh results",
+          "attack_vector": "Query A fails and schedules retry; user types Query B; Query B replaces abortControllerRef; Query A retry now uses Query B's signal, is no longer canceled, and can append/replace state with out-of-date products",
+          "fix": "Capture a local controller/signal inside each fetchProducts invocation and use that signal for all retries in that invocation (do not read abortControllerRef.current inside performFetch)."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:148",
+          "issue": "Monthly revenue range excludes most of the last day due to end-of-month timestamp at 00:00:00",
+          "attack_vector": "For month X, orders created after midnight on the final calendar day are omitted from aggregation, producing systematically under-reported revenue",
+          "fix": "Use an exclusive upper bound at start of next month (`lt: nextMonthStart`) instead of `lte: endOfMonth`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:113",
+          "issue": "Cache invalidation is ineffective because Redis DEL does not support wildcard patterns",
+          "attack_vector": "After delete, cached `findAll` entries remain and can continue serving deleted/stale orders for TTL duration",
+          "fix": "Track concrete cache keys and delete them explicitly, or use SCAN+DEL by prefix, or versioned namespace keys."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:172",
+          "issue": "bulkUpdateStatus performs per-row updates outside a transaction, enabling partial writes",
+          "attack_vector": "A failure mid-loop leaves some orders updated and others unchanged with no rollback, causing inconsistent state for batch operations",
+          "fix": "Wrap the batch in a single DB transaction (or use one atomic update strategy) so failures roll back the whole batch."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:79",
+          "issue": "Order creation lacks boundary validation for line item values and uses floating-point arithmetic for money totals",
+          "attack_vector": "Negative/zero/NaN/Infinity quantities or prices can produce invalid totals; floating-point rounding can corrupt financial data over time",
+          "fix": "Validate each line item (`quantity > 0`, finite numeric `unitPrice >= 0`) and compute/store money in integer minor units or Decimal type."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:126",
+          "issue": "Status transition guard has a built-in bypass that allows cancellation from any state",
+          "attack_vector": "Even terminal states like `delivered` can be force-cancelled because `newStatus === 'cancelled'` skips transition table checks",
+          "fix": "Apply transition-table validation to all target states (including `cancelled`) or explicitly whitelist only allowed source states."
+        }
+      ]
+    },
+    "gemini": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:107",
+          "issue": "Missing validation for negative quantities and prices",
+          "attack_vector": "Attackers can submit negative quantities to create orders with negative totals, potentially exploiting payment gateways for unauthorized credits.",
+          "fix": "Validate that quantity > 0 and unitPrice >= 0 for all line items before calculating the order total."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:133",
+          "issue": "Redis DEL command does not support wildcards",
+          "attack_vector": "Cache is never invalidated when orders are deleted, serving stale data and deleted orders to users until TTL expires.",
+          "fix": "Use a Redis Set to track cache keys per organization and delete them, or use SCAN to find matching keys before deleting."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:153",
+          "issue": "TOCTOU race condition in status transitions",
+          "attack_vector": "Concurrent requests can bypass the state machine, allowing an order to be simultaneously marked as 'cancelled' and 'shipped'.",
+          "fix": "Use optimistic concurrency by including the expected status in the update where clause: `where: { id, status: order.status }`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-useSearchProducts.ts:60",
+          "issue": "Retry logic continues fetching after component unmount or query change",
+          "attack_vector": "Pending retries for stale queries will execute after the delay and overwrite the results of newer queries, causing inconsistent UI state.",
+          "fix": "Add an abort check `if (abortControllerRef.current?.signal.aborted) return;` immediately after the retry setTimeout delay."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-useSearchProducts.ts:69",
+          "issue": "Aborted requests incorrectly clear the loading state of new requests",
+          "attack_vector": "Rapid typing aborts previous requests, which then execute their finally block and hide the loading spinner while the new request is still pending.",
+          "fix": "Check if the current request is still active before updating state in the finally block, or remove finally and handle state per-request."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:165",
+          "issue": "Local timezone dependency in monthly revenue calculation",
+          "attack_vector": "Financial aggregates will differ based on the server's local timezone, causing inconsistent reporting for edge-of-month transactions.",
+          "fix": "Use UTC Date methods `Date.UTC(month.getUTCFullYear(), month.getUTCMonth(), 1)` to ensure consistent time boundaries."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:192",
+          "issue": "N+1 database queries in bulkUpdateStatus",
+          "attack_vector": "Updating a large list of order IDs performs an individual update query for each, which can exhaust the database connection pool.",
+          "fix": "Filter valid transitions in memory and use `prisma.order.updateMany` to apply the status in a single query."
+        }
+      ]
+    },
+    "cursor-agent": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:deleteOrder",
+          "issue": "Redis DEL is called with a glob-style key; DEL does not match patterns, so no list-cache keys are removed and invalidation silently fails.",
+          "attack_vector": "After delete, cached `findAll` responses still serve deleted (or outdated) orders until TTL expires, causing wrong UI/API data and integrity violations.",
+          "fix": "Track concrete keys, maintain a set/index of cache keys per org, or use SCAN+DEL; alternatively disable pattern-based invalidation and use versioned keys or flush namespaced keys with a supported API."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-useSearchProducts.ts:performFetch/finally",
+          "issue": "The `finally` block runs when leaving the `catch` after scheduling a retry (`return performFetch(...)`), so loading flags are cleared while retries are still in flight.",
+          "attack_vector": "Users see idle UI during backoff retries, can trigger duplicate searches or navigation, and concurrent requests interleave with misleading loading state.",
+          "fix": "Move loading cleanup to run only after all attempts finish (e.g. await the recursive call in catch without returning before cleanup, or set loading false only when `attempt` exhausts or AbortError)."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:findAll/create/updateStatus",
+          "issue": "List results are cached on read but there is no invalidation on create or status update (delete invalidation is ineffective per separate issue).",
+          "attack_vector": "New or updated orders are missing or show old status in cached `findAll` responses for up to TTL, causing stale dashboards and wrong business actions.",
+          "fix": "Invalidate or bump a cache version for `orders:${orgId}` on write paths, or skip caching for lists until a correct invalidation strategy exists."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-useSearchProducts.ts:loadMore",
+          "issue": "`skip` is incremented before the fetch succeeds; failed or aborted loads leave `skip` ahead of loaded data.",
+          "attack_vector": "Retry/loadMore uses wrong offset, skipping pages or duplicating chunks when combined with total/length checks.",
+          "fix": "Advance `skip` only after a successful response (or roll back `skip` in catch for that request)."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:bulkUpdateStatus",
+          "issue": "Per-row updates run outside a single transaction and failures mid-loop leave some orders updated and others not.",
+          "attack_vector": "Partial bulk apply under load or DB errors yields inconsistent order statuses vs client expectation of atomic bulk.",
+          "fix": "Use one `updateMany` with a guarded where clause or wrap the loop in `$transaction` with `interactiveTransaction` / batch updates."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:findAll",
+          "issue": "`JSON.parse(cached)` is unguarded; malformed Redis payloads reject the whole request.",
+          "attack_vector": "Corrupted or manually poisoned cache entries turn reads into 500s with no graceful recovery.",
+          "fix": "Wrap parse in try/catch, delete bad key on failure, and fall through to DB."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:calculateMonthlyRevenue",
+          "issue": "Month boundaries use the runtime local timezone (`Date` getters), not an explicit zone or UTC.",
+          "attack_vector": "Revenue totals shift near month boundaries for global orgs or servers not in the business timezone.",
+          "fix": "Use UTC or org-configured timezone (e.g. `Temporal` or date-fns-tz) for start/end instants."
+        }
+      ]
+    },
+    "claude": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:126",
+          "issue": "redis.del with glob pattern silently does nothing — cache never invalidated after order deletion",
+          "attack_vector": "Redis DEL command takes exact keys, not patterns. `redis.del('orders:${orgId}:*')` attempts to delete a literal key named `orders:org1:*`, which doesn't exist. After deleteOrder, all cached list queries for that org continue serving the deleted order. Users see ghost orders indefinitely until the 5-minute TTL expires, and new queries re-cache stale-minus-one results.",
+          "fix": "Use SCAN to find matching keys then DEL them, or maintain a set of cache keys per org for targeted invalidation. Alternatively, use a cache generation counter: increment `orders:${orgId}:gen` on mutation, include the generation in cache keys."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:147",
+          "issue": "endOfMonth calculated as last-day-at-midnight excludes all orders created after 00:00:00 on the final day of the month",
+          "attack_vector": "`new Date(year, month + 1, 0)` yields e.g. `2026-03-31T00:00:00.000Z`. The query uses `lte: endOfMonth`, so any order with `createdAt` after midnight on the 31st (i.e., the entire last day) is excluded. Monthly revenue is systematically underreported by ~1/30th. The error is invisible unless someone audits against raw data.",
+          "fix": "Use exclusive upper bound: `const startOfNextMonth = new Date(year, month + 1, 1); ... createdAt: { gte: startOfMonth, lt: startOfNextMonth }`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-useSearchProducts.ts:68",
+          "issue": "finally block resets isLoading after AbortError, causing loading state to flicker false while a new fetch is in progress",
+          "attack_vector": "Sequence: (1) new query calls fetchProducts, sets isLoading=true, aborts previous controller. (2) Aborted fetch catches AbortError and returns. (3) finally block runs `setIsLoading(false)` — overwriting the true set in step 1. (4) UI briefly shows non-loading state while the new fetch is still in-flight. Users see content flash or empty state between queries during rapid typing.",
+          "fix": "Guard the finally block: `if (abortControllerRef.current?.signal.aborted) return;` before resetting loading state, or move loading state management out of performFetch into the caller."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:135",
+          "issue": "Status transition bypass allows cancelling terminal states (delivered, cancelled)",
+          "attack_vector": "The guard `if (newStatus !== 'cancelled' && ...)` lets any order transition to 'cancelled' regardless of current state. The transitions map explicitly defines `delivered: []` and `cancelled: []` as terminal, but the bypass ignores this. A delivered order can be cancelled (triggering refund logic downstream without return), and an already-cancelled order can be re-cancelled (duplicate webhook/event emissions).",
+          "fix": "Add terminal state guard before the bypass: `if (['delivered', 'cancelled'].includes(order.status) && newStatus === 'cancelled') throw new BadRequestException(...)`, or remove the special-case bypass and add 'cancelled' to each non-terminal state's transition list explicitly."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:162",
+          "issue": "bulkUpdateStatus performs individual updates outside a transaction with no cache invalidation",
+          "attack_vector": "If update N of M fails (DB error, constraint violation), orders 1..N-1 are already committed. The caller receives a count but has no way to know which orders failed or to roll back. Additionally, no cache invalidation means findAll continues returning stale statuses for all affected orders. Under concurrent bulk operations on overlapping ID sets, the non-atomic reads + writes also create TOCTOU races on individual order transitions.",
+          "fix": "Wrap the loop in `prisma.$transaction`. Invalidate cache after completion. Return failed IDs alongside the success count."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-useSearchProducts.ts:58",
+          "issue": "Retry after sleep uses stale query but current abort controller — can overwrite newer results with old query data",
+          "attack_vector": "Sequence: (1) query 'A' fetch fails, retry sleeps 2s. (2) User types query 'B', new fetchProducts runs, replaces abortControllerRef. (3) 'B' fetch completes, products shown. (4) 'A' retry wakes, reads current abortControllerRef (now 'B's controller), fetches with query='A' URL but 'B's signal. (5) Fetch succeeds, `setProducts(data.products)` overwrites 'B' results with 'A' results. User sees results for a query they're no longer searching for.",
+          "fix": "Capture a local query token or sequence number at the start of fetchProducts. Before any setProducts/setTotal call, check if the token still matches the current one. Alternatively, check if `abortControllerRef.current` is still the same instance that was created at the start of this fetchProducts invocation."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-gemini-20260408T081617Z/r1-OrderService.ts:185",
+          "issue": "getOrdersForExport loads up to 10,000 orders with three joined relations into memory in a single query",
+          "attack_vector": "An org with 10K orders, each having multiple line items, payments, and customer records, could produce a response exceeding hundreds of MB. This causes memory spikes, potential OOM kills on the Node process, and long DB query times that block the connection pool. No streaming, no cursor pagination, and no timeout. A single export request from a large org can degrade the service for all tenants.",
+          "fix": "Use cursor-based pagination with a reasonable page size (e.g., 500), stream results as NDJSON or CSV, or offload to a background job that writes to object storage."
+        }
+      ]
+    },
+    "codestral": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "r1-OrderService.ts",
+          "issue": "Cache invalidation pattern is too aggressive",
+          "attack_vector": "During concurrent operations, cache invalidation could cause stale reads as other requests repopulate the cache with partial data",
+          "fix": "Use cache keys with versioning or timestamps instead of wildcard invalidation"
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r1-OrderService.ts",
+          "issue": "Missing transaction rollback for email sending failure",
+          "attack_vector": "If email sending fails, the order status update succeeds but the system state is inconsistent",
+          "fix": "Wrap email sending in a transaction with the status update"
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r1-OrderService.ts",
+          "issue": "Potential TOCTOU race in bulkUpdateStatus",
+          "attack_vector": "Between finding orders and updating them, another process could modify the same orders",
+          "fix": "Use optimistic locking with version numbers or row-level locking"
+        },
+        {
+          "severity": "INFO",
+          "confidence": "high",
+          "file": "r1-useSearchProducts.ts",
+          "issue": "Unbounded retry growth in exponential backoff",
+          "attack_vector": "During network partitions, retry delays could grow indefinitely",
+          "fix": "Add a maximum retry delay (e.g., 30 seconds)"
+        },
+        {
+          "severity": "INFO",
+          "confidence": "medium",
+          "file": "r1-useSearchProducts.ts",
+          "issue": "Race condition between abort and retry logic",
+          "attack_vector": "AbortController could be aborted while retry logic is still executing",
+          "fix": "Check abort signal before each retry attempt"
+        }
+      ]
+    }
+  }
+}

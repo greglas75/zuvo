@@ -1,0 +1,52 @@
+ADVERSARIAL REVIEW — R2 Code Review
+Date: 2026-04-08T08:17:04Z
+Providers: codex-5.4, codex-5.3, gemini, cursor-agent, claude, codestral (6 providers)
+
+=== CRITICAL FINDINGS ===
+
+[C1] Redis cache invalidation uses in-memory cacheVersion (codex-5.4, codex-5.3, cursor-agent)
+  - In multi-instance deployments, writes on one instance don't invalidate other instances' cache
+  - After restart, cacheVersion resets to 0 and may reuse old key namespaces
+  FIX: Store cache version in Redis per-org, use INCR for atomic versioning
+
+[C2] bulkUpdateStatus has no upper bound on ids array (claude)
+  - 15k ids = sequential find + updateMany inside single transaction, can exceed Prisma timeout
+  FIX: Add hard cap (e.g. 100) and throw BadRequestException for larger batches
+
+[C3] TOCTOU race in bulkUpdateStatus (codestral)
+  - Already has per-order CAS via updateMany+status WHERE, but concurrent calls can still
+    interleave between findFirst and updateMany within same transaction
+  NOTE: Already mitigated by updateMany WHERE status clause; additional fix via batch cap
+
+=== WARNING FINDINGS ===
+
+[W1] Monthly revenue uses server-local timezone for date boundaries (codex-5.4)
+  FIX: Use Date.UTC for month boundary calculation
+
+[W2] Floating-point precision for money calculations (codex-5.4)
+  NOTE: Acknowledged but spec doesn't require Decimal.js; add range validation
+
+[W3] Response validator silently drops malformed products (codex-5.4)
+  FIX: Warn when items are filtered out, adjust total to match validated count
+
+[W4] lastQueryRef updated before debounce fires — loadMore race (codex-5.4, claude)
+  FIX: Track committed query separately, disable loadMore until search completes
+
+[W5] getOrdersForExport silently truncates at MAX_EXPORT_ROWS (claude)
+  FIX: Return { items, total, truncated } with parallel count query
+
+[W6] updateStatus returns stale spread of pre-update record (claude)
+  FIX: Re-fetch within transaction after updateMany
+
+[W7] deleteOrder has no status guard — can hard-delete shipped/delivered (claude)
+  FIX: Guard against deleting shipped/delivered orders
+
+[W8] Email failure is silent/logged only (codestral)
+  NOTE: This is by design per spec (.catch() requirement), but added structured logging
+
+=== INFO FINDINGS ===
+
+[I1] AbortController cleanup race condition (codestral) — already handled via mountedRef
+[I2] Missing ISO 4217 currency validation (codestral) — acknowledged, added basic length check
+[I3] Cache version concurrent increment (codestral) — fixed via Redis-based versioning
+[I4] Query parameter injection in URL construction (gemini) — already uses encodeURIComponent

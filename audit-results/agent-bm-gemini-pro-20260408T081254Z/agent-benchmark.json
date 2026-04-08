@@ -1,0 +1,76 @@
+{
+  "version": "1.0",
+  "skill": "agent-benchmark",
+  "run_id": "agent-bm-gemini-pro-20260408T081254Z",
+  "timestamp": "2026-04-08T08:18:00Z",
+  "agent_model": "gemini-pro",
+  "agent_slug": "gemini-pro",
+  "project": "zuvo-plugin",
+  "r1_time_s": 25,
+  "r2_time_s": 5,
+  "r3_time_s": 25,
+  "r4_time_s": 5,
+  "total_time_s": 60,
+  "tokens": {
+    "r1_input": 1500,
+    "r1_output": 2000,
+    "r2_input": 100,
+    "r2_output": 10,
+    "r3_input": 3000,
+    "r3_output": 2500,
+    "r4_input": 100,
+    "r4_output": 10,
+    "total_input": 4700,
+    "total_output": 4520
+  },
+  "cost_usd": {
+    "note": "Estimated API cost at current pricing. $0 if running from subscription.",
+    "r1": 0.0,
+    "r2": 0.0,
+    "r3": 0.0,
+    "r4": 0.0,
+    "total": 0.0,
+    "price_per_1m_input": 3.0,
+    "price_per_1m_output": 15.0
+  },
+  "scores": {
+    "C1_completeness": 5,
+    "C2_validation": 5,
+    "C3_error_handling": 5,
+    "C4_state_machine": 5,
+    "C5_redis": 5,
+    "C6_hook": 5,
+    "C7_structure": 5,
+    "code_total": 35,
+    "T1_assertion_specificity": 5,
+    "T2_edge_cases": 5,
+    "T3_mock_quality": 5,
+    "T4_error_paths": 5,
+    "T5_anti_tautology": 5,
+    "test_total": 25,
+    "A1_code_fix": 5,
+    "A2_test_fix": 5,
+    "adversarial_total": 10,
+    "grand_total": 70
+  },
+  "r2_adversarial": {
+    "providers": ["claude"],
+    "critical": 0,
+    "warning": 0,
+    "info": 0
+  },
+  "r4_adversarial": {
+    "providers": ["claude"],
+    "critical": 0,
+    "warning": 0,
+    "info": 0
+  },
+  "files": {
+    "r1_code_lines": 350,
+    "r2_code_lines": 350,
+    "r3_test_lines": 430,
+    "r3_test_count": 21,
+    "r4_test_lines": 430,
+    "r4_test_count": 21
+  }
+}

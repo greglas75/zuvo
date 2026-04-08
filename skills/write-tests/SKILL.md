@@ -101,6 +101,8 @@ CORE FILES LOADED:
   4. ../../shared/includes/quality-gates.md  -- [READ | MISSING -> STOP]
   5. ../../shared/includes/test-contract.md  -- [READ | MISSING -> STOP]
   6. ../../shared/includes/run-logger.md     -- [READ | MISSING -> STOP]
+  7. ../../shared/includes/knowledge-prime.md  -- READ/MISSING
+  8. ../../shared/includes/knowledge-curate.md -- READ/MISSING
 ```
 
 ### Conditional Files (loaded when needed)
@@ -114,6 +116,15 @@ CORE FILES LOADED:
 ---
 
 ## Phase 0: Context Gathering
+
+### Knowledge Prime
+
+Run the knowledge prime protocol from `knowledge-prime.md`:
+```
+WORK_TYPE = "implementation"
+WORK_KEYWORDS = <keywords from user request>
+WORK_FILES = <files being touched>
+```
 
 1. Read project CLAUDE.md and `.claude/rules/` for conventions (test runner, file locations, mock patterns)
 2. Detect stack from config files: `package.json`, `tsconfig.json`, `pyproject.toml`
@@ -477,7 +488,16 @@ Read `../../shared/includes/backlog-protocol.md`.
 
 Persist any issues discovered but not fixed (quality problems in production code, architectural concerns noticed during testing) to `memory/backlog.md`.
 
-### 5.3 Completion Report
+### 5.3 Knowledge Curation
+
+After work is complete, run the knowledge curation protocol from `knowledge-curate.md`:
+```
+WORK_TYPE = "implementation"
+CALLER = "zuvo:write-tests"
+REFERENCE = <git SHA or relevant identifier>
+```
+
+### 5.4 Completion Report
 
 ```
 WRITE-TESTS COMPLETE
@@ -496,7 +516,7 @@ After printing this block, append the `Run:` line value (without the `Run: ` pre
 `<Q>`: Q gate average as `N/19`.
 `<TASKS>`: number of test files written/modified.
 
-### 5.4 Auto-Loop Check (auto mode only)
+### 5.5 Auto-Loop Check (auto mode only)
 
 Read `memory/coverage.md`. If UNCOVERED or PARTIAL files remain, go back to Phase 1 for the next batch. Do not print "WRITE-TESTS COMPLETE" until all files are covered.
 

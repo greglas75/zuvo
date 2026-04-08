@@ -27,6 +27,8 @@ Read these files before any work begins:
 6. `../../shared/includes/seo-bot-registry.md` -- Canonical AI/search bot policy taxonomy for robots fixes
 7. `../../shared/includes/run-logger.md` -- Run logging contract
 8. `../../shared/includes/verification-protocol.md` -- Fresh-evidence rules for build and endpoint verification
+9. `../../shared/includes/knowledge-prime.md` -- Project knowledge priming
+10. `../../shared/includes/knowledge-curate.md` -- Learning extraction after work
 
 Print the checklist:
 
@@ -40,6 +42,8 @@ CORE FILES LOADED:
   6. seo-bot-registry.md   -- [READ | MISSING -> STOP]
   7. ../../shared/includes/run-logger.md -- [READ | MISSING -> STOP]
   8. ../../shared/includes/verification-protocol.md -- [READ | MISSING -> STOP]
+  9. ../../shared/includes/knowledge-prime.md  -- READ/MISSING
+  10. ../../shared/includes/knowledge-curate.md -- READ/MISSING
 ```
 
 If any file is missing, STOP.
@@ -112,6 +116,17 @@ Before modifying any file, check for uncommitted changes in that file (`git diff
 | `[json-path]` | Use specific JSON file instead of latest |
 
 Note: `--fix-type` matches against `findings[].fix_type` field. For convenience aliases: `sitemap` = `sitemap-add`, `json-ld` = `json-ld-add`, `og` = `meta-og-add`, `robots` = `robots-fix`, `headers` = `headers-add`, `canonical` = `canonical-fix`.
+
+---
+
+### Knowledge Prime
+
+Run the knowledge prime protocol from `knowledge-prime.md`:
+```
+WORK_TYPE = "implementation"
+WORK_KEYWORDS = <keywords from user request>
+WORK_FILES = <files being touched>
+```
 
 ---
 
@@ -543,6 +558,17 @@ NEXT STEPS:
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 
 `<DURATION>`: use `N-fixes` (number of findings fixed).
+
+---
+
+### Knowledge Curation
+
+After work is complete, run the knowledge curation protocol from `knowledge-curate.md`:
+```
+WORK_TYPE = "implementation"
+CALLER = "zuvo:seo-fix"
+REFERENCE = <git SHA or relevant identifier>
+```
 
 ---
 

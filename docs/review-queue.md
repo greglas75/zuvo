@@ -236,3 +236,5 @@ Commits pending review. Auto-managed:
 - dd8ebe4 (2026-04-08) docs: update all documentation to reflect v1.3.24 state
 - 0f03888 (2026-04-08) release: v1.3.25 — unify dev-push + release into one script, add Antigravity build target
 - df587e7 (2026-04-08) add benchmark scoring rubric v1.0 — standardized 14-dimension evaluation model
+- a499491 (2026-04-08) release: v1.3.26 — quick-install.sh: one command does everything — includes Claude marketplace sync
+- 3a317e8 (2026-04-08) fix agent-benchmark: explicit slug mapping table, ban 'agent' as slug name

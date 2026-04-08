@@ -9,9 +9,27 @@ description: >
 
 Protocol for responding to code review feedback. Every review comment gets the same structured treatment: understand it, verify it against the actual code, decide whether to fix or push back, then implement precisely.
 
-## Run Logging
+## Mandatory File Reading
 
-Read `../../shared/includes/run-logger.md` for log format and file path resolution.
+Before starting work, read each file below. Print the checklist with status.
+
+```
+CORE FILES LOADED:
+  1. ../../shared/includes/run-logger.md       -- READ/MISSING
+  2. ../../shared/includes/knowledge-prime.md  -- READ/MISSING
+  3. ../../shared/includes/knowledge-curate.md -- READ/MISSING
+```
+
+---
+
+### Knowledge Prime
+
+Run the knowledge prime protocol from `knowledge-prime.md`:
+```
+WORK_TYPE = "implementation"
+WORK_KEYWORDS = <keywords from user request>
+WORK_FILES = <files being touched>
+```
 
 ---
 
@@ -187,6 +205,17 @@ When the review contains multiple items, process them in this order:
 6. **Code clarity** -- naming, structure, documentation.
 
 This ordering ensures that if the review is partially addressed (e.g., user says "enough for now"), the most critical items were handled first.
+
+---
+
+## Knowledge Curation
+
+After work is complete, run the knowledge curation protocol from `knowledge-curate.md`:
+```
+WORK_TYPE = "implementation"
+CALLER = "zuvo:receive-review"
+REFERENCE = <git SHA or relevant identifier>
+```
 
 ---
 

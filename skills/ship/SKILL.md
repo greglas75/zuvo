@@ -37,6 +37,7 @@ CORE FILES LOADED:
   2. ../../shared/includes/codesift-setup.md   — READ/MISSING
   3. ../../shared/includes/run-logger.md       — READ/MISSING
   4. ../../shared/includes/knowledge-curate.md — READ/MISSING
+  5. ../../shared/includes/knowledge-prime.md  — READ/MISSING
 ```
 
 If any file is missing: proceed in degraded mode. Note which files are unavailable in the Phase 5 output.
@@ -53,6 +54,17 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 4. **Default to `patch`** bump with `[AUTO-DECISION]` annotation in non-interactive environments when the user cannot be asked for bump type.
 5. **NEVER** propose skipping, downgrading, or shortcutting the review threshold from Phase 2. The threshold table is MANDATORY — the agent does not get to override it based on effort estimates ("this would take hours"), prior pipeline claims ("execute already reviewed"), or diff complexity ("most of this is boilerplate"). Only the `--fast` flag explicitly passed by the user can skip review. If you catch yourself thinking "this is too much review for this release" — that is exactly when the review is most needed.
 6. **NEVER** claim that prior pipeline steps (zuvo:execute, zuvo:plan) substitute for ship review. Execute reviews individual tasks during implementation. Ship reviews the integrated whole. These are different scopes — one does not replace the other.
+
+---
+
+### Knowledge Prime
+
+Run the knowledge prime protocol from `knowledge-prime.md`:
+```
+WORK_TYPE = "implementation"
+WORK_KEYWORDS = <keywords from user request>
+WORK_FILES = <files being touched>
+```
 
 ---
 

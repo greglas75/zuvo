@@ -64,10 +64,23 @@ Read `../../shared/includes/codesift-setup.md` for initialization.
 
 ```
 CORE FILES LOADED:
-  1. ../../rules/cq-patterns.md            -- [READ | MISSING -> STOP]
-  2. ../../rules/file-limits.md             -- [READ | MISSING -> STOP]
-  3. ../../rules/testing.md                 -- [READ | MISSING -> STOP]
-  4. ../../shared/includes/run-logger.md    -- [READ | MISSING -> STOP]
+  1. ../../rules/cq-patterns.md               -- [READ | MISSING -> STOP]
+  2. ../../rules/file-limits.md               -- [READ | MISSING -> STOP]
+  3. ../../rules/testing.md                   -- [READ | MISSING -> STOP]
+  4. ../../shared/includes/run-logger.md      -- [READ | MISSING -> STOP]
+  5. ../../shared/includes/knowledge-prime.md  -- READ/MISSING
+  6. ../../shared/includes/knowledge-curate.md -- READ/MISSING
+```
+
+---
+
+### Knowledge Prime
+
+Run the knowledge prime protocol from `knowledge-prime.md`:
+```
+WORK_TYPE = "implementation"
+WORK_KEYWORDS = <keywords from user request>
+WORK_FILES = <files being touched>
 ```
 
 ---
@@ -363,6 +376,17 @@ Phase outputs persist to `memory/e2e-coverage.md`:
 ```
 
 Status progression: DISCOVERED -> PLANNED -> GENERATED -> VALIDATED / FAILED
+
+---
+
+## Knowledge Curation
+
+After work is complete, run the knowledge curation protocol from `knowledge-curate.md`:
+```
+WORK_TYPE = "implementation"
+CALLER = "zuvo:write-e2e"
+REFERENCE = <git SHA or relevant identifier>
+```
 
 ---
 

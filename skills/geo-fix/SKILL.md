@@ -30,6 +30,8 @@ Read these files before any work begins:
 6. `../../shared/includes/seo-bot-registry.md` -- Canonical AI/search bot policy taxonomy for robots fixes
 7. `../../shared/includes/run-logger.md` -- Run logging contract
 8. `../../shared/includes/verification-protocol.md` -- Fresh-evidence rules for build and endpoint verification
+9. `../../shared/includes/knowledge-prime.md` -- Project knowledge priming
+10. `../../shared/includes/knowledge-curate.md` -- Learning extraction after work
 
 Print the checklist:
 
@@ -43,6 +45,8 @@ CORE FILES LOADED:
   6. seo-bot-registry.md        -- [READ | MISSING -> STOP]
   7. run-logger.md              -- [READ | MISSING -> STOP]
   8. verification-protocol.md   -- [READ | MISSING -> STOP]
+  9. ../../shared/includes/knowledge-prime.md  -- READ/MISSING
+  10. ../../shared/includes/knowledge-curate.md -- READ/MISSING
 ```
 
 If any file is missing, STOP.
@@ -114,6 +118,17 @@ Before modifying any file, check for uncommitted changes in that file (`git diff
 | `--finding G5-schema-org,G3-robots-ai` | Fix specific findings by stable ID |
 | `--fix-type schema-org-add,robots-ai-allow` | Fix specific fix_type categories |
 | `[json-path]` | Use specific JSON file instead of latest |
+
+---
+
+### Knowledge Prime
+
+Run the knowledge prime protocol from `knowledge-prime.md`:
+```
+WORK_TYPE = "implementation"
+WORK_KEYWORDS = <keywords from user request>
+WORK_FILES = <files being touched>
+```
 
 ---
 
@@ -538,6 +553,17 @@ Per `shared/includes/backlog-protocol.md`:
 **Fingerprint format:** `{file}|{dimension}|{check}`
 
 Same format as geo-audit backlog persistence. Uses the stable check ID from the finding (e.g., `robots-ai`, `schema-org`), NOT the fix_type. Example: `public/robots.txt|G3|robots-ai`.
+
+---
+
+### Knowledge Curation
+
+After work is complete, run the knowledge curation protocol from `knowledge-curate.md`:
+```
+WORK_TYPE = "implementation"
+CALLER = "zuvo:geo-fix"
+REFERENCE = <git SHA or relevant identifier>
+```
 
 ---
 

@@ -1,0 +1,6 @@
+R2 adversarial findings
+
+1. WARNING: cache invalidation only uses Redis `set`, so a Redis mock that exposes `setex` but not `set` will leave stale list/detail cache entries behind after mutations.
+2. WARNING: `deleteOrder` uses `delete` after a separate lookup; switching to `deleteMany` with org scoping avoids schema coupling and keeps the delete path explicitly tenant-scoped.
+3. WARNING: `updateStatus` sends the shipped email whenever `newStatus === 'shipped'`, even if the order was already shipped, which can duplicate notifications on idempotent or retried updates.
+4. WARNING: `useSearchProducts.retry()` falls back to the current page instead of the last failed request, so retrying a failed `loadMore` call can re-fetch page 1 instead of the page that actually failed.

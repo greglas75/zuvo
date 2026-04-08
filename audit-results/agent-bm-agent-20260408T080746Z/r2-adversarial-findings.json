@@ -1,0 +1,241 @@
+{
+  "mode": "code",
+  "providers_used": "codex-5.4, codex-5.3, gemini, cursor-agent",
+  "provider_count": 4,
+  "input_size": 23775,
+  "date": "2026-04-08T08:17:08Z",
+  "results": {
+    "codex-5.4": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts:170",
+          "issue": "deleteOrder removes line items before verifying the parent order exists",
+          "attack_vector": "If the data is already inconsistent (orphaned line items, replicated lag, prior partial write), calling delete on a nonexistent order will delete matching line items, then throw NotFound because order.deleteMany returned 0. The caller sees a failure, but data was still destroyed.",
+          "fix": "Check that the order exists first inside the transaction, or delete the order first and only delete line items when the parent delete succeeds."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts:270",
+          "issue": "bulkUpdateStatus is non-atomic and can leave partial status changes without cache invalidation or audit logging",
+          "attack_vector": "The loop updates orders one by one outside a transaction. If Prisma/DB/network fails after some iterations, earlier rows stay updated, later rows do not, and the post-loop cache invalidation/audit log never runs. Clients can read stale cached data while the database is partially mutated.",
+          "fix": "Wrap the bulk operation in a transaction or collect eligible ids first and perform a single transactional update, then invalidate cache and write the audit record only after commit."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts:233",
+          "issue": "Revenue is accumulated with JavaScript floating-point math for money values",
+          "attack_vector": "Summing `quantity * unitPrice` into a `number` will introduce rounding drift for common decimal prices and can overflow precision on large exports, producing incorrect monthly revenue totals in production even when individual line items look valid.",
+          "fix": "Store and sum monetary amounts in integer minor units or use a decimal type/library instead of `number` arithmetic."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts:312",
+          "issue": "getOrdersForExport skips the date-range validation used by findAll",
+          "attack_vector": "A caller can pass `Invalid Date` or `from > to`; this method forwards those values straight to Prisma. In production that typically becomes a 500 from the ORM/driver or an export with an unintended range, instead of a controlled 400.",
+          "fix": "Reuse `normalizeFilters`-style date validation for export filters before issuing the query."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts:397",
+          "issue": "Audit log failures are swallowed after successful state changes",
+          "attack_vector": "create, delete, and status updates return success even when the audit write fails. That creates silent loss of the only trace for destructive operations, which is exactly the failure mode operators will miss until they need the audit trail.",
+          "fix": "Do not suppress audit failures silently; either make the write part of the transaction for required events or persist to a durable retry queue and surface failure explicitly."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-useSearchProducts.ts:68",
+          "issue": "Retry backoff is not abort-aware, so cancelled searches continue sleeping and retrying",
+          "attack_vector": "When the user types quickly during a 429/5xx burst, `abort()` only cancels `fetch`; any in-progress `sleep()` still runs to completion and the loop retries afterward. This keeps stale searches alive longer than expected, burns network budget, and prolongs loading/error churn after the user has moved on.",
+          "fix": "Make the backoff wait abortable and check `signal.aborted` before each retry delay and before issuing the next fetch."
+        }
+      ]
+    },
+    "codex-5.3": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts:282",
+          "issue": "bulkUpdateStatus performs per-row writes without a transaction, so mid-loop failures can leave partial status changes with no cache/audit sync",
+          "attack_vector": "A transient DB error on one ID after earlier successful updates throws out of the method; previously updated rows remain committed, but cache invalidation and audit logging may never run, leaving stale reads and missing audit trail",
+          "fix": "Wrap the whole bulk operation in a single prisma.$transaction (or collect successful IDs and always run cache/audit in a finally block) so partial writes and side effects stay consistent"
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts:81",
+          "issue": "findAll trusts filters to be a non-null object; normalizeFilters will throw on undefined/null and return 500",
+          "attack_vector": "If controller/query binding passes undefined or null (common for optional query params), accessing filters.take crashes with TypeError, causing an unhandled server error instead of a 4xx",
+          "fix": "Default to an empty object at boundary (e.g., findAll(filters: OrderFilters = {} as OrderFilters, ...)) and validate object shape before normalizeFilters"
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts:500",
+          "issue": "List cache key uses a 32-bit non-cryptographic hash, enabling key collisions between different filter sets",
+          "attack_vector": "Different filter payloads can map to the same hash and return cached results for the wrong query (wrong customer/date/status), causing cross-filter data leakage within the org",
+          "fix": "Use collision-resistant keying (full serialized filter string or a strong hash like SHA-256) instead of the 32-bit rolling hash"
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts:169",
+          "issue": "deleteOrder removes line items before confirming the parent order exists",
+          "attack_vector": "If data integrity is already degraded (orphaned line items), this endpoint deletes child rows and then throws NotFound for the order, producing destructive side effects on a failed request",
+          "fix": "Check parent existence first (or delete parent first with FK cascade) and only delete children when the order delete is confirmed"
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-useSearchProducts.ts:120",
+          "issue": "loadMore can use stale offset after query changes because products/total are not reset immediately on setQuery",
+          "attack_vector": "User changes query and quickly triggers load-more before the debounced fresh search resolves; request uses new query with old products.length skip, skipping first results or appending inconsistent pages",
+          "fix": "Reset products/total when query changes (before debounce) and gate loadMore until first page for the current query has completed"
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts:229",
+          "issue": "Shipped-email failures are swallowed, so shipment side effect can fail silently",
+          "attack_vector": "Email provider outage logs to console but API still returns success; operations assume customer was notified when they were not",
+          "fix": "Persist a retryable notification job/outbox record or surface a non-fatal status so failures are tracked and retried"
+        },
+        {
+          "severity": "INFO",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts:431",
+          "issue": "Audit log writes are globally swallowed, masking compliance/forensics gaps",
+          "attack_vector": "DB or schema issues in auditLog.create are reduced to console output while business mutations succeed, creating undetected audit holes",
+          "fix": "At minimum emit structured error metrics/alerts and include contextual identifiers; for critical actions, fail closed or enqueue durable audit events"
+        }
+      ]
+    },
+    "gemini": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts",
+          "issue": "Monthly revenue calculation fetches all orders into memory",
+          "attack_vector": "Organizations with a large volume of orders will cause the Node.js process to crash due to out-of-memory (OOM) when generating the monthly report.",
+          "fix": "Paginate the database query or use Prisma's aggregate/groupBy functions to sum the revenue at the database level."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts",
+          "issue": "Revenue calculation includes cancelled and failed orders",
+          "attack_vector": "The business will receive artificially inflated revenue reports because totals from cancelled or unfulfilled orders are aggregated.",
+          "fix": "Add a status filter (e.g., `status: { in: ['delivered', 'shipped'] }`) to the Prisma `findMany` where clause."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts",
+          "issue": "List cache key collision due to 31-bit hashing function",
+          "attack_vector": "The custom `hashString` function creates a limited entropy hash, meaning different filter combinations will collide and serve the wrong cached data to users.",
+          "fix": "Use a cryptographic hash function like `crypto.createHash('sha256')` instead of the custom bitwise string hash."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts",
+          "issue": "Denial of service via unbounded IDs array in bulk update",
+          "attack_vector": "Malicious users can submit an array of 100,000+ IDs, causing the server to execute 200,000 sequential database queries and exhaust connection pools.",
+          "fix": "Add a validation constraint to enforce a maximum length on the `ids` array (e.g., 100 items)."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts",
+          "issue": "Financial precision loss using floating-point math",
+          "attack_vector": "Accumulating currency totals using standard JavaScript addition will result in precision errors (e.g., 0.1 + 0.2 = 0.30000000000000004) causing incorrect financial records.",
+          "fix": "Use integer math representing cents, or implement a decimal library like `decimal.js` for currency calculations."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts",
+          "issue": "Silent partial failures in bulk update",
+          "attack_vector": "If some orders fail to update due to concurrent modifications or invalid transitions, the client receives a partial success count without knowing which IDs failed.",
+          "fix": "Return a structured response containing both the successfully updated IDs and an array of failed IDs with error reasons."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts",
+          "issue": "Cache invalidation deletes the wrong key version",
+          "attack_vector": "Because `invalidateOrgCache` increments the org version before querying it, the targeted specific ID cache deletion hits the *new* version key, leaving the old key orphaned in Redis until TTL.",
+          "fix": "Retrieve the current cache version and execute the specific ID deletion BEFORE incrementing the organization cache version."
+        }
+      ]
+    },
+    "cursor-agent": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts:getCacheVersion|invalidateOrgCache",
+          "issue": "Cache-busting version is non-monotonic on Redis failures: reads fall back to 1 and incr failure resets to 2, so list/by-id keys can alias older generations and serve stale or wrong orders after writes.",
+          "attack_vector": "Brief Redis outages, parse errors, or failed INCR during invalidation let clients hit prior v1/v2 keys still in Redis, violating org isolation of freshness after mutations.",
+          "fix": "On version read failure, treat cache as miss (do not use default 1); on incr failure, avoid fixed '2'—use SET NX seed, SCAN/DEL order:* patterns, or short-circuit reads until Redis is healthy."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts:writeAuditLog",
+          "issue": "Audit log persistence errors are caught and only logged, so security-relevant events can disappear without surfacing failure to callers.",
+          "attack_vector": "DB or Prisma failures during create/update/delete leave no durable audit trail while the business operation succeeds, breaking accountability and tamper detection expectations.",
+          "fix": "Propagate failures (throw after N retries), push to a dead-letter queue, or fail closed for regulated actions; do not swallow in production."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts:hashString|buildListCacheKey",
+          "issue": "32-bit rolling hash for list cache keys can collide across different filter payloads, returning another query’s cached order list.",
+          "attack_vector": "Two distinct filter combinations map to the same key; one tenant reads another cached result set until TTL expires or lucky invalidation.",
+          "fix": "Replace with SHA-256/SHA-1 hex prefix or include serialized filters verbatim in the key with length limits."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts:bulkUpdateStatus",
+          "issue": "Unbounded ids length with per-id find+update loops causes unbounded latency and DB load; invalid or non-matching ids are silently skipped.",
+          "attack_vector": "Large or attacker-controlled id arrays tie up connections and CPU; API reports partial success without per-id errors, masking authorization or data issues.",
+          "fix": "Cap batch size, validate ids upfront, use a single WHERE id IN (...) with transaction and return per-id results or structured errors."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts:updateStatus",
+          "issue": "Shipped notification email failures are caught and logged while the method returns success and audit logs a status change.",
+          "attack_vector": "Downstream email outages cause silent loss of customer communication while order appears shipped in API responses and logs.",
+          "fix": "Surface failure (throw, retriable queue, or explicit degraded status), or record a pending-notification flag for reconciliation."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-OrderService.ts:create",
+          "issue": "Payment gateway is only referenced with void and never used during order creation, so no charge or authorization runs.",
+          "attack_vector": "Orders are created as pending without any payment side effect if production expects gateway integration.",
+          "fix": "Invoke the gateway inside the transaction or an outbox with idempotency keys, or remove the dependency if intentional."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "low",
+          "file": "audit-results/agent-bm-agent-20260408T080746Z/r1-useSearchProducts.ts:requestWithRetry",
+          "issue": "Non-JSON or malformed bodies throw after json(); retry loop may re-hit the same bad payload without backoff differentiation from transport errors.",
+          "attack_vector": "Sustained 200 responses with invalid JSON could burn retries and delay user feedback similarly to transient faults.",
+          "fix": "Classify parse/shape errors as non-retryable and fail fast; only retry network/5xx/429 cases."
+        }
+      ]
+    }
+  }
+}
