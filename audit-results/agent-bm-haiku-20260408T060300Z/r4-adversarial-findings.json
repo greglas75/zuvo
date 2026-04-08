@@ -6,3 +6,293 @@ CROSS-PROVIDER REVIEW
   Launching: gemini...
   Launching: cursor-agent...
   Launching: claude...
+  Done: codex-5.4
+  Done: codex-5.3
+  Done: gemini
+  Done: cursor-agent
+  Done: claude
+{
+  "mode": "test",
+  "providers_used": "codex-5.4, codex-5.3, gemini, cursor-agent, claude",
+  "provider_count": 5,
+  "input_size": 15063,
+  "date": "2026-04-08T06:09:39Z",
+  "results": {
+    "codex-5.4": {
+      "findings": [
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-OrderService.test.ts:107",
+          "issue": "`create` success test asserts only the returned object and cache invalidation, not the persistence side effects or computed order data the action is supposed to produce.",
+          "attack_vector": "`OrderService.create()` could stop writing line items, skip the transaction, or calculate totals/status incorrectly and this test would still pass as long as it returns `createdOrder` and calls `deletePattern()`.",
+          "fix": "Assert the `order.create`/transaction call payload, including organization/customer IDs, nested line items, and any derived totals/status fields that the service is expected to persist."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-OrderService.test.ts:231",
+          "issue": "`bulkUpdateStatus` tests do not verify per-ID behavior, so they can pass even if the implementation ignores the requested order IDs and repeatedly updates the same record.",
+          "attack_vector": "A bug that updates the first matching order N times, or uses the same ID for every iteration, still satisfies `updated === 3` with the current mocks because `findFirst` always returns the same pending order and no call arguments are checked.",
+          "fix": "Assert `findFirst`/`updateMany` are called with each requested order ID and the organization filter, or mock distinct return values per ID and verify only those IDs are updated."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-OrderService.test.ts:199",
+          "issue": "The email-error test has a weak outcome assertion: `resolves.toBeDefined()` does not prove the order status update succeeded or that the failure was handled after the state change.",
+          "attack_vector": "If `updateStatus()` returns any defined placeholder while silently skipping the database update or cache invalidation when email sending fails, this test still passes.",
+          "fix": "Assert the persisted status transition still occurs (`updateMany` called with shipped state) and that the method returns the expected success value despite `sendOrderShipped` rejecting."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-useSearchProducts.test.ts:14",
+          "issue": "The hook tests replace `global.fetch` with a bare mock that never models rejected fetches, aborted fetch rejections, or non-OK responses, leaving the hook’s error path effectively untested.",
+          "attack_vector": "Real `fetch` aborts reject with an `AbortError`, and network/server failures produce different control flow than a simple resolved `{ok: true}` object; the hook can mishandle those cases without any visible test failure.",
+          "fix": "Add negative-path tests that mock rejected fetches, aborted requests, and `ok: false` responses, then assert the hook’s exposed error/loading/result state transitions."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-useSearchProducts.test.ts:18",
+          "issue": "The debounce tests mostly assert that `fetch` was called, not that the hook state reflects the search outcome after the debounced action.",
+          "attack_vector": "A regression where `search()` triggers the request but never stores products/total/page, or stores stale results, would still satisfy these tests because the observable outcome is not checked.",
+          "fix": "After the debounced request resolves, assert the hook’s returned state contains the expected products, pagination metadata, and loading completion for the searched query."
+        }
+      ]
+    },
+    "codex-5.3": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-OrderService.test.ts:197",
+          "issue": "Tenant boundary is effectively codified as absent in `updateStatus` by asserting `updateMany` without `organizationId`.",
+          "attack_vector": "A cross-tenant update bug (updating another org's order by ID) can ship undetected because the test enforces a where-clause that excludes org scoping.",
+          "fix": "Change the expectation to require org scoping, e.g. `where: { id: 'order-123', organizationId: 'org-1', status: 'pending' }`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-OrderService.test.ts:166",
+          "issue": "`deletes order and line items atomically` never verifies transaction usage, only that both deletes were called.",
+          "attack_vector": "If implementation runs two independent DB calls (no transaction), partial deletion on failure is possible and this test still passes.",
+          "fix": "Assert `prismaService.$transaction` is called and that delete operations occur inside it (e.g., by asserting callback execution path)."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-useSearchProducts.test.ts:13",
+          "issue": "Debounce tests assert only that `fetch` is called, not that hook state reflects the search outcome.",
+          "attack_vector": "A regression where requests fire but results/loading/error state is never updated will still pass, giving false confidence.",
+          "fix": "After timer advance and fetch resolution, assert observable hook state (`products`, `total`, `loading`, `error`) matches expected outcome."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-OrderService.test.ts:236",
+          "issue": "`bulkUpdateStatus` count tests do not verify per-order arguments/call count for `findFirst`/`updateMany`.",
+          "attack_vector": "Implementation could ignore some IDs, reuse one ID repeatedly, or skip org filtering yet still return expected numeric count and pass.",
+          "fix": "Assert exact call count and per-call args (each order ID plus `organizationId`) for both lookup and update operations."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-OrderService.test.ts:88",
+          "issue": "Pagination test title claims take/skip bounds, but assertion checks only `take`.",
+          "attack_vector": "A regression in `skip` handling (ignored, negative, unclamped) will not be caught though test name implies coverage.",
+          "fix": "Also assert `skip` in `findMany` arguments (and include boundary cases like negative/undefined)."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-useSearchProducts.test.ts:91",
+          "issue": "Abort test verifies abort signal firing but not stale-response suppression.",
+          "attack_vector": "If an aborted earlier request still resolves and overwrites newer results, user sees stale data while test suite remains green.",
+          "fix": "Add a test where first request resolves after second and assert state reflects only the latest search response."
+        }
+      ]
+    },
+    "gemini": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-OrderService.test.ts",
+          "issue": "deleteOrder test asserts toHaveBeenCalled without checking arguments",
+          "attack_vector": "If the implementation drops the WHERE clause, it will delete all orders and line items globally, and this test will still falsely pass.",
+          "fix": "Assert specific arguments: expect(prismaService.order.delete).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'order-123' } }))"
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-OrderService.test.ts",
+          "issue": "findAll test fails to assert organizationId filtering",
+          "attack_vector": "A developer could remove the organizationId filter from the findMany query, causing a severe cross-tenant data leak, but this test would still pass.",
+          "fix": "Use toHaveBeenCalledWith verifying the where clause includes organizationId: 'org-1'"
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-OrderService.test.ts",
+          "issue": "updateStatus test actively enforces insecure cross-tenant mutation",
+          "attack_vector": "The test expects updateMany to be called without organizationId. If a malicious user passes another tenant's order ID, they can mutate its status, and this test ensures that vulnerability persists.",
+          "fix": "Update assertion to require organizationId in the where clause: { id: 'order-123', status: 'pending', organizationId: 'org-1' }"
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-OrderService.test.ts",
+          "issue": "calculateMonthlyRevenue test enforces inefficient in-memory aggregation",
+          "attack_vector": "The test feeds raw records via findMany and expects JS to aggregate them. In production, fetching all month's orders into Node.js memory will cause OOM crashes under high load.",
+          "fix": "Refactor service to use prisma.order.groupBy and update test to mock and assert against the database-level groupBy method."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-OrderService.test.ts",
+          "issue": "getOrdersForExport test hardcodes dangerous unpaginated query size",
+          "attack_vector": "Enforcing take: 10000 on a query with deeply nested relations (lineItems, customer) will block the Node event loop and trigger memory exhaustion in production.",
+          "fix": "Change implementation to use cursor-based streaming and update test to assert sequential paginated fetch calls."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-useSearchProducts.test.ts",
+          "issue": "AbortController test asserts ANY abort happened, not the correct one",
+          "attack_vector": "expect(abortSpy.mock.calls.length).toBeGreaterThan(firstAbort) passes even if the second request immediately aborts itself instead of the first request. It masks race condition bugs in debounce cleanup.",
+          "fix": "Track individual signals and explicitly assert that the FIRST request's signal.aborted is true."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-OrderService.test.ts",
+          "issue": "Order creation misses boundary test for zero quantity and empty lineItems",
+          "attack_vector": "Tests check -5 but not 0. If production code uses quantity < 0 instead of <= 0, users could create orders with 0 quantity or 0 items, bypassing billing while allocating resources.",
+          "fix": "Add explicit negative test cases for quantity: 0 and lineItems: []."
+        }
+      ]
+    },
+    "cursor-agent": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-OrderService.test.ts:bulkUpdateStatus",
+          "issue": "Test expects updated count 3 from three ids but never asserts Prisma updateMany (or per-order updates) ran; an implementation could return ids.length or a constant 3 after findFirst-only logic and still satisfy expect(updated).toBe(3).",
+          "attack_vector": "Regression could return the input list length or a hardcoded count without persisting updates; the suite would still pass while orders stay wrong in production.",
+          "fix": "Assert updateMany call count and/or each call’s where/data (or assert the returned number equals the sum of resolved {count} values from mocked calls)."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-OrderService.test.ts:updateStatus",
+          "issue": "State transition test uses .rejects.toThrow() with no exception class or message, so any thrown value passes.",
+          "attack_vector": "Wrong exception type (e.g. generic Error vs domain error) or accidental throw from unrelated code would not be caught as a regression.",
+          "fix": "Use .rejects.toThrow(ExpectedError) or match message used by production for invalid transitions."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-OrderService.test.ts:findAll",
+          "issue": "Cache-miss test only checks findMany was called and set was called, not where args (e.g. organizationId, filters) or cache key/TTL/serialized payload passed to redis.set.",
+          "attack_vector": "Broken org scoping, wrong filter, or writing the wrong cache entry would not fail the test.",
+          "fix": "expect(findMany).toHaveBeenCalledWith(...) and expect(redis.set).toHaveBeenCalledWith(expectedKey, expectedSerialized, ...) as appropriate."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-OrderService.test.ts:create",
+          "issue": "Happy-path create asserts result and deletePattern but does not assert order.create (and line items) inside $transaction with correct org/customer payload.",
+          "attack_vector": "Transaction could omit line items, use wrong org, or skip writes while still returning a resolved object from a partial mock; cache invalidation alone would not catch it.",
+          "fix": "Add expect(prismaService.order.create).toHaveBeenCalledWith(...) (and lineItem ops if applicable) within the transaction callback."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-OrderService.test.ts:updateStatus",
+          "issue": "Email failure test only asserts promise resolves (toBeDefined); it does not assert status update still succeeded, email was attempted with correct args, or failure was logged/handled as specified.",
+          "attack_vector": "Implementation could swallow errors and skip DB update or send wrong customer/order ids while still resolving; test would not fail.",
+          "fix": "Assert updateMany (or equivalent) still called with expected data and optionally spy on logger; keep resolves expectation only after those assertions."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "low",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-OrderService.test.ts",
+          "issue": "Large inline Prisma/redis/email/payment mocks in every beforeEach increase drift risk vs real provider shapes (shared mock factory would align with rule-of-thumb for many stubs).",
+          "attack_vector": "Tests may pass while mocks omit required methods or wrong return types, masking integration breakage.",
+          "fix": "Extract a small factory or partial deep mock typed to the service’s injected interfaces."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "medium",
+          "file": "audit-results/agent-bm-haiku-20260408T060300Z/r3-useSearchProducts.test.ts",
+          "issue": "Combines jest fake timers with waitFor around fetch; without seeing the rest of the file, this pattern often needs runAllTimers/flushPromises or RTL timer config to avoid order/timing flakes.",
+          "attack_vector": "CI-only flakes: assertion runs before microtasks from fetch resolve or timer integration differs.",
+          "fix": "Prefer act(() => jest.runAllTimers()) where appropriate, or use waitFor options compatible with fake timers per RTL docs for this hook."
+        }
+      ]
+    },
+    "claude": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts:88",
+          "issue": "Cache-hit test has Date serialization mismatch — JSON.stringify(mockOrder) converts createdAt to a string, but assertion compares against mockOrder which has a Date object",
+          "attack_vector": "JSON.parse of the cached value produces {createdAt: \"2026-04-01T00:00:00.000Z\"} (string), but toEqual compares against {createdAt: Date}. Either this test silently fails (masking a real cache bug), or the production code does Date revival and this test accidentally passes without verifying that revival logic. In production, consumers downstream of findAll may receive strings from cache and Dates from DB — type inconsistency causes runtime crashes in date arithmetic.",
+          "fix": "Assert against a JSON-round-tripped expected value: expect(result).toEqual(JSON.parse(JSON.stringify([mockOrder]))). If the service is supposed to revive dates, add a dedicated test that the cache path returns Date objects."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts:164",
+          "issue": "deleteOrder test asserts deleteMany/delete were called but never verifies they were called with the correct order ID or organization ID — multi-tenant data deletion is unverified",
+          "attack_vector": "Production bug where deleteOrder passes wrong ID to Prisma (e.g. swapped orderId/organizationId, or missing org filter) would not be caught. An attacker-controlled orderId could delete another tenant's order and this test would still pass.",
+          "fix": "Assert arguments: expect(prismaService.lineItem.deleteMany).toHaveBeenCalledWith({where: {orderId: 'order-123'}}); expect(prismaService.order.delete).toHaveBeenCalledWith({where: {id: 'order-123', organizationId: 'org-1'}})."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts:30",
+          "issue": "paymentGateway is mocked in every test but never asserted anywhere — entire payment flow is untested",
+          "attack_vector": "If order creation or status transitions should trigger payment charges (charge on confirmed, refund on cancelled), no test verifies this. A regression removing the charge call would go undetected — orders confirmed without payment.",
+          "fix": "Add tests for payment flow: verify paymentGateway.charge is called with correct amount/currency on the appropriate status transition, and test behavior when charge fails (rollback, error propagation)."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r3-useSearchProducts.test.ts:96",
+          "issue": "AbortController test attaches a custom event listener to the signal and asserts that listener fired — this tests the mock's plumbing, not whether abort() was actually called",
+          "attack_vector": "If production code stops calling controller.abort() but still creates a new AbortController, this test still passes because it's measuring its own mock wiring. The real race condition (stale response updating state after a newer search) goes undetected.",
+          "fix": "Assert signal.aborted === true on the first request's signal after the second search fires, or capture the AbortController instance and spy on its abort method directly."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r3-OrderService.test.ts:195",
+          "issue": "State transition enforcement test uses bare .rejects.toThrow() without specifying error type or message — any throw (including unrelated TypeError from a null dereference) satisfies this assertion",
+          "attack_vector": "If the production code throws due to a bug in the transition path (e.g. accessing property of undefined) rather than a deliberate validation rejection, this test still passes. The actual transition guard logic is not verified.",
+          "fix": "Assert specific error: .rejects.toThrow('Cannot transition from delivered to confirmed') or .rejects.toThrow(BadRequestException)."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r3-OrderService.test.ts:131",
+          "issue": "Zero quantity and zero unitPrice are not tested — only negative values are validated, leaving the boundary value untested",
+          "attack_vector": "If validation uses quantity < 0 instead of quantity <= 0, a zero-quantity line item passes validation, creating an order with 0 items at the correct total but meaningless fulfillment. Downstream warehouse/shipping systems process a ghost item.",
+          "fix": "Add test: expect create with quantity: 0 to reject. Add test: expect create with unitPrice: 0 to either reject or explicitly allow (documenting free items as intentional)."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r3-OrderService.test.ts:164",
+          "issue": "deleteOrder has no test for deleting a non-existent order (findFirst returns null) — missing negative path",
+          "attack_vector": "If the production code doesn't check for null before executing the transaction, it silently deletes with an undefined ID, or throws an unhandled error that leaks stack traces to the client.",
+          "fix": "Add test: mock findFirst to return null, assert deleteOrder rejects with NotFoundException."
+        }
+      ]
+    }
+  }
+}

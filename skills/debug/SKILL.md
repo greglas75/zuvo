@@ -52,11 +52,13 @@ These files are needed during Phase 4 self-evaluations. Read them before writing
 
 ```
 CORE FILES LOADED:
-  1. ../../rules/cq-patterns.md           -- READ/MISSING (CQ self-eval on production fix)
-  2. ../../rules/cq-checklist.md           -- READ/MISSING (CQ1-CQ28 scoring and evidence)
-  3. ../../rules/testing.md                -- READ/MISSING (Q1-Q19 for regression test)
-  4. ../../rules/test-quality-rules.md     -- READ/MISSING (edge cases, mock safety)
-  5. ../../shared/includes/run-logger.md   -- READ/MISSING (run logging)
+  1. ../../rules/cq-patterns.md               -- READ/MISSING (CQ self-eval on production fix)
+  2. ../../rules/cq-checklist.md               -- READ/MISSING (CQ1-CQ28 scoring and evidence)
+  3. ../../rules/testing.md                    -- READ/MISSING (Q1-Q19 for regression test)
+  4. ../../rules/test-quality-rules.md         -- READ/MISSING (edge cases, mock safety)
+  5. ../../shared/includes/run-logger.md       -- READ/MISSING (run logging)
+  6. ../../shared/includes/knowledge-prime.md  -- READ/MISSING (project knowledge)
+  7. ../../shared/includes/knowledge-curate.md -- READ/MISSING (learning extraction)
 ```
 
 
@@ -87,6 +89,19 @@ Phase 4:   FIX + VERIFY -- Implement fix, regression test, quality gates
 Phase R:   REGRESSION BISECT -- Alternative path for "this used to work" bugs
            Replaces Phases 1-3 with automated git bisect, then joins Phase 4.
 ```
+
+---
+
+## Phase 0: Knowledge Prime
+
+Run the knowledge prime protocol from `knowledge-prime.md`:
+```
+WORK_TYPE = "research"
+WORK_KEYWORDS = <keywords from the bug description, error messages, affected files>
+WORK_FILES = <files mentioned in the bug report, if any>
+```
+
+Known gotchas from prior sessions may directly identify the root cause.
 
 ---
 
@@ -477,6 +492,19 @@ it('should [describe the bug scenario]', () => {
 - CQ self-eval: [score]/28
 - Regression test Q self-eval: [score]/19
 ```
+
+---
+
+## Knowledge Curation
+
+After the fix is verified, run the knowledge curation protocol from `knowledge-curate.md`:
+```
+WORK_TYPE = "research"
+CALLER = "zuvo:debug"
+REFERENCE = <git SHA of the fix commit>
+```
+
+Debugging often uncovers gotchas and codebase-facts that are highly valuable for future sessions.
 
 ---
 

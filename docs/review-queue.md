@@ -223,3 +223,4 @@ Commits pending review. Auto-managed:
 - 77913ee (2026-04-08) release: v1.3.22 — fix: --files space-separated paths in adversarial-review.sh, agent name in benchmark folder
 - 89b42af (2026-04-08) add quick-install.sh — one-line installer for Cursor/Codex/Claude Code
 - 3b02ff1 (2026-04-08) cleanup: remove old benchmark audit-results, add new haiku run, update docs
+- 2449a74 (2026-04-08) fix: split codex-fast into codex-5.4 + codex-5.3, restore gemini-api error handling, TSV model column

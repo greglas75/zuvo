@@ -198,6 +198,15 @@ FIX-ALL mode applies to all tiers. For high-risk changes (DB migrations, securit
 
 ## Phase 0: Pre-Audit Setup
 
+### Knowledge Prime
+
+Run the knowledge prime protocol from `knowledge-prime.md`:
+```
+WORK_TYPE = "review"
+WORK_KEYWORDS = <keywords from diff file paths and commit messages>
+WORK_FILES = <changed files from the diff>
+```
+
 ### CodeSift Setup
 
 Follow `codesift-setup.md`:
@@ -496,6 +505,15 @@ done
 ```
 
 Skip tagging when scope is `staged` (no committed code to tag).
+
+### Knowledge Curation
+
+After the report is generated, run the knowledge curation protocol from `knowledge-curate.md`:
+```
+WORK_TYPE = "review"
+CALLER = "zuvo:review"
+REFERENCE = <reviewed commit range or "staged">
+```
 
 ### NEXT STEPS Block
 

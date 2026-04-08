@@ -2,7 +2,7 @@
 
 > **spec_id:** 2026-04-08-antigravity-build-1215
 > **topic:** Google Antigravity build target for Zuvo plugin
-> **status:** Draft
+> **status:** Reviewed
 > **created_at:** 2026-04-08T12:15:00Z
 > **approved_at:** null
 > **approval_mode:** interactive
@@ -337,4 +337,12 @@ If `skills/<name>/antigravity/SKILL.antigravity.md` exists, copy it verbatim ins
 
 ## Open Questions
 
-None -- all questions resolved during design dialogue.
+1. **Model ID validation** -- The Gemini model IDs (`gemini-3.1-pro-low`, `gemini-3.1-pro-high`, `gemini-3-flash`) are based on the Antigravity UI model selector and web research. They have not been validated against Antigravity's internal model registry or API. If a model ID is invalid, agents will fail at dispatch. A runtime smoke test after first install is recommended.
+
+2. **Model fallback chain** -- If a mapped Gemini model tier is unavailable in a user's environment, there is no fallback. Consider adding fallback order: `gemini-3.1-pro-high` -> `gemini-3.1-pro-low` -> `gemini-3-flash`. Deferred to implementation.
+
+3. **AC8 prose exclusion rules** -- The "adversarial/provider context" exclusion for prose model name validation is not machine-checkable. Implementation should define explicit file-scope or marker-based exclusions rather than context-sensitive grep patterns.
+
+4. **Spawn block parser** -- The spec references "the existing awk parser" for spawn blocks, but `build-cursor-skills.sh` may implement this differently than expected. The implementer should examine the actual Cursor spawn block replacement code and adapt, not assume a reusable parser exists.
+
+5. **BSD vs GNU sed** -- The example sed patterns use macOS BSD syntax (`sed -i ''`). If cross-platform builds are needed (CI/CD on Linux), a sed wrapper or alternative approach will be required.

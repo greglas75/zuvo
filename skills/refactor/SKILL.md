@@ -28,12 +28,14 @@ Print the checklist:
 
 ```
 CORE FILES LOADED:
-  1. codesift-setup.md   -- [READ | MISSING -> STOP]
-  2. env-compat.md       -- [READ | MISSING -> STOP]
-  3. quality-gates.md    -- [READ | MISSING -> STOP]
-  4. cq-patterns.md      -- [READ | MISSING -> STOP]
-  5. cq-checklist.md     -- [READ | MISSING -> STOP]
-  6. run-logger.md       -- [READ | MISSING -> STOP]
+  1. codesift-setup.md     -- [READ | MISSING -> STOP]
+  2. env-compat.md         -- [READ | MISSING -> STOP]
+  3. quality-gates.md      -- [READ | MISSING -> STOP]
+  4. cq-patterns.md        -- [READ | MISSING -> STOP]
+  5. cq-checklist.md       -- [READ | MISSING -> STOP]
+  6. run-logger.md         -- [READ | MISSING -> STOP]
+  7. knowledge-prime.md    -- [READ | MISSING -> degraded]
+  8. knowledge-curate.md   -- [READ | MISSING -> degraded]
 ```
 
 If any file is missing, STOP. Do not proceed from memory.
@@ -158,6 +160,15 @@ This applies only to modes with a plan approval stop (standard, full, auto).
 ---
 
 ## Phase 0: Stack Detection and CodeSift Setup
+
+### Knowledge Prime
+
+Run the knowledge prime protocol from `knowledge-prime.md`:
+```
+WORK_TYPE = "implementation"
+WORK_KEYWORDS = <keywords from refactor target (file names, module names)>
+WORK_FILES = <files that will be refactored>
+```
 
 ### Tech Stack
 
@@ -571,6 +582,15 @@ Persist any deferred findings to `memory/backlog.md`:
 - Issues identified but out of scope for this refactoring
 
 **Fingerprint contract:** `file|rule-id|signature` (e.g., `order.service.ts|CQ8|no-try-catch`). Source: `zuvo:refactor` or `zuvo:refactor/cq-auditor` for agent findings. Deduplicate by exact fingerprint match per `backlog-protocol.md`.
+
+### Knowledge Curation
+
+After refactoring is complete, run the knowledge curation protocol from `knowledge-curate.md`:
+```
+WORK_TYPE = "implementation"
+CALLER = "zuvo:refactor"
+REFERENCE = <git SHA of the refactoring commit>
+```
 
 ### Post-Completion Summary
 
