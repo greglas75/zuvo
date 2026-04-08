@@ -201,3 +201,4 @@ Commits pending review. Auto-managed:
 - f2378ab (2026-04-07) fix benchmark: skill-only flags, multi-block static checks, task_source enum
 - e09b531 (2026-04-08) sync benchmark skill to cache
 - 917b561 (2026-04-08) rewrite benchmark.sh: full 4-round pipeline with file extraction and artifact persistence
+- 93380ff (2026-04-08) benchmark: full 4-round pipeline with file extraction
