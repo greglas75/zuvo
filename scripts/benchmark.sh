@@ -120,6 +120,29 @@ JSON_TMPDIR=$(mktemp -d)
 declare -a PIDS=()
 PROVIDER_TIMEOUT="${ZUVO_REVIEW_TIMEOUT:-240}"
 
+# Safe glob ops (bash 3.2 + nullglob; avoids `ls`/`pipefail` abort when no matches)
+count_matching_files() {
+  local dir="$1" glob="$2"
+  local n=0 f
+  shopt -s nullglob
+  for f in "$dir"/$glob; do
+    [[ -f "$f" ]] && n=$((n+1))
+  done
+  shopt -u nullglob
+  printf '%d' "$n"
+}
+
+list_matching_files_space() {
+  local dir="$1" glob="$2"
+  local out="" f
+  shopt -s nullglob
+  for f in "$dir"/$glob; do
+    [[ -f "$f" ]] && out="${out}${f} "
+  done
+  shopt -u nullglob
+  printf '%s' "$out"
+}
+
 # ─── Cleanup ────────────────────────────────────────────────────
 
 cleanup() {
@@ -568,7 +591,7 @@ for p in "${PROVIDER_ARRAY[@]}"; do
     mkdir -p "$ROUND_DIR/$p"
     cp "$JSON_TMPDIR/r1_${p}.txt" "$ROUND_DIR/$p/r1-response.txt"
     extract_code_files "$ROUND_DIR/$p/r1-response.txt" "$ROUND_DIR/$p" "r1"
-    r1_files=$(ls "$ROUND_DIR/$p"/r1-*.ts 2>/dev/null | wc -l | tr -d ' ')
+    r1_files=$(count_matching_files "$ROUND_DIR/$p" "r1-*.ts")
     echo "  R1 done: $p (${r1_time}s, ${r1_files} files extracted)" >&2
   else
     echo "  R1 WARN: $p — $status (${r1_time}s)" >&2
@@ -591,7 +614,7 @@ if [[ "$WITH_ADVERSARIAL" == "true" ]]; then
   for p in "${PROVIDERS_SUCCEEDED[@]}"; do
     echo "  R2 reviewing: $p..." >&2
     provider_dir="$ROUND_DIR/$p"
-    r1_files_list=$(ls "$provider_dir"/r1-*.ts 2>/dev/null | tr '\n' ' ')
+    r1_files_list=$(list_matching_files_space "$provider_dir" "r1-*.ts")
 
     # Get adversarial findings
     findings=""
@@ -653,7 +676,18 @@ Fix all issues found. Output corrected files using fenced \`\`\`typescript block
     if [[ -s "$provider_dir/r2-response.txt" ]]; then
       extract_code_files "$provider_dir/r2-response.txt" "$provider_dir" "r2"
       r2_time=$(cat "$JSON_TMPDIR/time_r2_${p}.txt" 2>/dev/null || echo "?")
-      r2_files=$(ls "$provider_dir"/r2-*.ts 2>/dev/null | wc -l | tr -d ' ')
+      r2_files=$(count_matching_files "$provider_dir" "r2-*.ts")
+      if [[ "$r2_files" -eq 0 ]]; then
+        echo "  R2 WARN: $p — no TypeScript blocks in fix response, copying r1 as r2" >&2
+        shopt -s nullglob
+        for f in "$provider_dir"/r1-*.ts; do
+          [[ -f "$f" ]] || continue
+          base=$(basename "$f" | sed 's/^r1-/r2-/')
+          cp "$f" "$provider_dir/$base"
+        done
+        shopt -u nullglob
+        r2_files=$(count_matching_files "$provider_dir" "r2-*.ts")
+      fi
       echo "  R2 done: $p (${r2_time}s, ${r2_files} files)" >&2
     else
       echo "  R2 WARN: $p — fix dispatch failed, keeping r1 files" >&2
@@ -717,7 +751,7 @@ $(cat "$f")
     if [[ -s "$provider_dir/r3-response.txt" ]]; then
       extract_code_files "$provider_dir/r3-response.txt" "$provider_dir" "r3"
       r3_time=$(cat "$JSON_TMPDIR/time_r3_${p}.txt" 2>/dev/null || echo "?")
-      r3_files=$(ls "$provider_dir"/r3-*.ts 2>/dev/null | wc -l | tr -d ' ')
+      r3_files=$(count_matching_files "$provider_dir" "r3-*.ts")
       echo "  R3 done: $p (${r3_time}s, ${r3_files} test files)" >&2
     else
       echo "  R3 WARN: $p — test dispatch failed" >&2
@@ -735,7 +769,7 @@ if [[ "$WITH_TEST_ADVERSARIAL" == "true" && "$WITH_TESTS" == "true" ]]; then
 
   for p in "${PROVIDERS_SUCCEEDED[@]}"; do
     provider_dir="$ROUND_DIR/$p"
-    r3_files_list=$(ls "$provider_dir"/r3-*.ts 2>/dev/null | tr '\n' ' ')
+    r3_files_list=$(list_matching_files_space "$provider_dir" "r3-*.ts")
     [[ -z "$r3_files_list" ]] && continue
 
     echo "  R4 reviewing: $p..." >&2
@@ -793,7 +827,7 @@ Fix all issues. Output corrected test files using fenced \`\`\`typescript blocks
     if [[ -s "$provider_dir/r4-response.txt" ]]; then
       extract_code_files "$provider_dir/r4-response.txt" "$provider_dir" "r4"
       r4_time=$(cat "$JSON_TMPDIR/time_r4_${p}.txt" 2>/dev/null || echo "?")
-      r4_files=$(ls "$provider_dir"/r4-*.ts 2>/dev/null | wc -l | tr -d ' ')
+      r4_files=$(count_matching_files "$provider_dir" "r4-*.ts")
       echo "  R4 done: $p (${r4_time}s, ${r4_files} files)" >&2
     else
       echo "  R4 WARN: $p — fix failed, keeping r3 files" >&2
@@ -832,11 +866,23 @@ for p in "${PROVIDER_ARRAY[@]}"; do
     tokens_out=$(estimate_tokens "$JSON_TMPDIR/r1_${p}.txt")
   fi
 
-  # File inventory
-  r1_files=$(ls "$provider_dir"/r1-*.ts 2>/dev/null | xargs -I{} basename {} | jq -R . | jq -s . 2>/dev/null || echo "[]")
-  r2_files=$(ls "$provider_dir"/r2-*.ts 2>/dev/null | xargs -I{} basename {} | jq -R . | jq -s . 2>/dev/null || echo "[]")
-  r3_files=$(ls "$provider_dir"/r3-*.ts 2>/dev/null | xargs -I{} basename {} | jq -R . | jq -s . 2>/dev/null || echo "[]")
-  r4_files=$(ls "$provider_dir"/r4-*.ts 2>/dev/null | xargs -I{} basename {} | jq -R . | jq -s . 2>/dev/null || echo "[]")
+  # File inventory (safe glob — no ls under pipefail)
+  list_files_json() {
+    local dir="$1" glob="$2" out="["
+    local first=true f
+    shopt -s nullglob
+    for f in "$dir"/$glob; do
+      [[ -f "$f" ]] || continue
+      $first && first=false || out="$out,"
+      out="$out\"$(basename "$f")\""
+    done
+    shopt -u nullglob
+    echo "$out]"
+  }
+  r1_files=$(list_files_json "$provider_dir" "r1-*.ts")
+  r2_files=$(list_files_json "$provider_dir" "r2-*.ts")
+  r3_files=$(list_files_json "$provider_dir" "r3-*.ts")
+  r4_files=$(list_files_json "$provider_dir" "r4-*.ts")
 
   # Quote times that might be "null"
   [[ "$r2_time" == "null" ]] && r2_time_json="null" || r2_time_json="$r2_time"
@@ -927,7 +973,7 @@ echo "  Artifacts:   $ROUND_DIR/" >&2
 
 # Print file tree summary
 for p in "${PROVIDERS_SUCCEEDED[@]}"; do
-  file_count=$(ls "$ROUND_DIR/$p"/*.ts 2>/dev/null | wc -l | tr -d ' ')
+  file_count=$(count_matching_files "$ROUND_DIR/$p" "*.ts")
   echo "    $p/ — ${file_count} files" >&2
 done
 
