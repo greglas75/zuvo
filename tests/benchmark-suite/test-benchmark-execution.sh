@@ -8,7 +8,7 @@ assert_contains "$SCRIPT" "PIDS+="
 assert_contains "$SCRIPT" "wait \$pid"
 # Has per-provider timing
 assert_contains "$SCRIPT" "time_start"
-assert_contains "$SCRIPT" "response_time_s"
+assert_contains "$SCRIPT" "r1_time_s"
 # Has JSON assembly with jq
 assert_contains "$SCRIPT" "jq -n"
 # Has --show-costs flag

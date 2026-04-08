@@ -235,14 +235,16 @@ Print the leaderboard as a markdown table:
 ## Benchmark Results — [run_id]
 Task: [first 60 chars] | Mode: [default|corpus]
 
-| Rank | Provider     | Quality | Code | Tests | Time  | Cost    | Status |
-|------|-------------|---------|------|-------|-------|---------|--------|
-|  1   | claude       |    87   |  18  |  null |  42s  | $0.031  | scored |
-|  2   | gemini       |    74   |  15  |  null |  31s  | $0.000  | scored |
-|  3   | codex-fast   |    65   |  13  |  null |  28s  | $0.008  | scored |
-|  4   | cursor-agent |   —     |  —   |  —    |  55s  |  —      | timeout|
+| Rank | Provider     | Quality | Code | Tests | Time  | Cost    | Tokens     | Adv.Δ | Status |
+|------|-------------|---------|------|-------|-------|---------|------------|-------|--------|
+|  1   | codex-fast   |    85   |  17  |  17   | 345s  | $0.025  | ~12K/~8K   |  -2   | scored |
+|  2   | gemini       |    75   |  15  |  15   | 291s  | $0.000  | ~11K/~9K   |  -4   | scored |
+|  3   | claude       |    70   |  14  |  14   | 300s  | $0.062  | ~12K/~7K   |  -3   | scored |
+|  4   | cursor-agent |    65   |  13  |  13   | 357s  |  —      | ~11K/~6K   |  -3   | scored |
 
-Self-eval bias (positive = overconfident): claude +1.2, gemini +3.0, codex-fast +4.5
+Tokens column: input/output estimates (~ = estimated via word count × 1.3).
+Self-eval bias (positive = overconfident): codex-fast +1, claude +4, cursor-agent +5, gemini +5
+Adversarial delta (negative = score dropped after adversarial critique): codex-fast -2, claude -3, cursor-agent -3, gemini -4
 ```
 
 ---

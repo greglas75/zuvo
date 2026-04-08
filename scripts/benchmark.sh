@@ -458,151 +458,430 @@ if [[ "$DRY_RUN" == "true" ]]; then
   exit 0
 fi
 
-# ─── Main execution loop ────────────────────────────────────────
+# ─── File extraction ────────────────────────────────────────────
+
+extract_code_files() {
+  # Extract TypeScript code blocks from response, split by // FILE: markers
+  # Saves each file as prefix-Filename.ts in output_dir
+  local response_file="$1" output_dir="$2" prefix="$3"
+  mkdir -p "$output_dir"
+  awk -v outdir="$output_dir" -v prefix="$prefix" '
+    /^```typescript/ { in_block=1; next }
+    in_block && /^```/ { if (outfile) close(outfile); outfile=""; in_block=0; next }
+    in_block && /^\/\/ FILE: / {
+      if (outfile) close(outfile)
+      fname = $0; sub(/^\/\/ FILE: /, "", fname); gsub(/[^a-zA-Z0-9._-]/, "", fname)
+      outfile = outdir "/" prefix "-" fname
+      next
+    }
+    in_block && !outfile {
+      outfile = outdir "/" prefix "-code.ts"
+    }
+    in_block && outfile { print > outfile }
+  ' "$response_file" 2>/dev/null
+}
+
+# ─── Single-provider dispatch with custom prompt ────────────────
+
+dispatch_single() {
+  # Dispatch a custom prompt to one provider, write output to file
+  local provider="$1" prompt="$2" outfile="$3"
+  TASK_PROMPT="$prompt"
+  local time_start time_end
+  time_start=$(date +%s)
+  dispatch_provider "$provider" > "$outfile" 2>"$JSON_TMPDIR/stderr_${provider}_dispatch.txt"
+  local exit_code=$?
+  time_end=$(date +%s)
+  echo $((time_end - time_start))  # prints elapsed seconds to stdout caller captures
+  return $exit_code
+}
+
+# ─── Main execution ────────────────────────────────────────────
 
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 PROJECT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
-# Compute task_source per schema contract: corpus | diff | files | user
-if [[ "$MODE" == "corpus" ]]; then
-  TASK_SOURCE="corpus"
-elif [[ "$INPUT_MODE" == "diff" ]]; then
-  TASK_SOURCE="diff"
-elif [[ "$INPUT_MODE" == "files" ]]; then
-  TASK_SOURCE="files"
-else
-  TASK_SOURCE="user"
+if [[ "$MODE" == "corpus" ]]; then TASK_SOURCE="corpus"
+elif [[ "$INPUT_MODE" == "diff" ]]; then TASK_SOURCE="diff"
+elif [[ "$INPUT_MODE" == "files" ]]; then TASK_SOURCE="files"
+else TASK_SOURCE="user"
 fi
+
+# Auto-create round dir for multi-round
+if [[ -z "$ROUND_DIR" ]]; then
+  ROUND_DIR="/tmp/benchmark-${RUN_ID}"
+fi
+mkdir -p "$ROUND_DIR"
 
 echo "BENCHMARK START" >&2
 echo "  Run ID: $RUN_ID" >&2
-echo "  Mode: $MODE" >&2
+echo "  Mode: $MODE | Artifacts: $ROUND_DIR" >&2
 echo "  Providers: $PROVIDERS" >&2
 echo "  Task hash: ${TASK_HASH:0:8}" >&2
 
 declare -a PROVIDER_ARRAY=()
 for p in $PROVIDERS; do PROVIDER_ARRAY+=("$p"); done
 
-# ── Parallel dispatch with per-provider timing ──────────────────
+ADVERSARIAL_SCRIPT="$SCRIPT_DIR/adversarial-review.sh"
+
+# ═══════════════════════════════════════════════════════════════
+#  ROUND 1 — Code generation (parallel)
+# ═══════════════════════════════════════════════════════════════
+
+echo "" >&2
+echo "── Round 1: Code generation ──────────────────────────" >&2
 
 for p in "${PROVIDER_ARRAY[@]}"; do
-  outfile="$JSON_TMPDIR/result_${p}.txt"
-  timefile="$JSON_TMPDIR/time_${p}.txt"
+  outfile="$JSON_TMPDIR/r1_${p}.txt"
+  timefile="$JSON_TMPDIR/time_r1_${p}.txt"
   statusfile="$JSON_TMPDIR/status_${p}.txt"
   printf 'scored' > "$statusfile"
-
-  echo "  Launching: $p..." >&2
+  echo "  R1 launching: $p..." >&2
 
   (
     time_start=$(date +%s)
-    dispatch_provider "$p" > "$outfile" 2>"$JSON_TMPDIR/stderr_${p}.txt"
+    dispatch_provider "$p" > "$outfile" 2>"$JSON_TMPDIR/stderr_r1_${p}.txt"
     dispatch_exit=$?
     time_end=$(date +%s)
-    response_time_s=$((time_end - time_start))
-    printf '%d' "$response_time_s" > "$timefile"
-    if [[ $dispatch_exit -eq 0 ]]; then
+    printf '%d' "$((time_end - time_start))" > "$timefile"
+    if [[ $dispatch_exit -eq 0 && -s "$outfile" ]]; then
       printf 'scored' > "$statusfile"
     elif [[ $dispatch_exit -eq 124 ]]; then
       printf 'timeout' > "$statusfile"
-      rm -f "$outfile"
     else
       printf 'error' > "$statusfile"
-      rm -f "$outfile"
     fi
   ) &
   PIDS+=($!)
 done
 
-# Wait for all providers
-for pid in "${PIDS[@]}"; do
-  wait $pid 2>/dev/null || true
-done
+for pid in "${PIDS[@]}"; do wait $pid 2>/dev/null || true; done
+PIDS=()
 
-# ── Collect results and assemble per-provider JSON ──────────────
-
+# Collect Round 1 results
 PROVIDERS_SUCCEEDED=()
-
 for p in "${PROVIDER_ARRAY[@]}"; do
-  outfile="$JSON_TMPDIR/result_${p}.txt"
-  timefile="$JSON_TMPDIR/time_${p}.txt"
-  statusfile="$JSON_TMPDIR/status_${p}.txt"
-  result_json_file="$JSON_TMPDIR/result_${p}.json"
-
-  status=$(cat "$statusfile" 2>/dev/null || echo "error")
-  response_time_s=$(cat "$timefile" 2>/dev/null || echo "0")
-
-  if [[ -s "$outfile" && "$status" == "scored" ]]; then
+  status=$(cat "$JSON_TMPDIR/status_${p}.txt" 2>/dev/null || echo "error")
+  r1_time=$(cat "$JSON_TMPDIR/time_r1_${p}.txt" 2>/dev/null || echo "0")
+  if [[ -s "$JSON_TMPDIR/r1_${p}.txt" && "$status" == "scored" ]]; then
     PROVIDERS_SUCCEEDED+=("$p")
-    echo "  Done: $p (${response_time_s}s)" >&2
+    mkdir -p "$ROUND_DIR/$p"
+    cp "$JSON_TMPDIR/r1_${p}.txt" "$ROUND_DIR/$p/r1-response.txt"
+    extract_code_files "$ROUND_DIR/$p/r1-response.txt" "$ROUND_DIR/$p" "r1"
+    r1_files=$(ls "$ROUND_DIR/$p"/r1-*.ts 2>/dev/null | wc -l | tr -d ' ')
+    echo "  R1 done: $p (${r1_time}s, ${r1_files} files extracted)" >&2
   else
-    echo "  WARN: $p — status: $status (${response_time_s}s)" >&2
+    echo "  R1 WARN: $p — $status (${r1_time}s)" >&2
   fi
-
-  # Estimate tokens from response
-  tokens_out=$(estimate_tokens "$outfile")
-  tokens_in=$(printf '%s' "$TASK_PROMPT" | wc -w | awk '{printf "%d~estimated", int($1 * 1.3)}')
-
-  # Static checks (if requested)
-  compile_ok="null"
-  tests_pass="null"
-  if [[ "$WITH_STATIC_CHECKS" == "true" ]]; then
-    compile_ok=$(run_static_checks_ts "$outfile")
-    tests_pass=$(run_static_checks_jest "$outfile")
-  fi
-
-  # Self-eval score
-  self_eval_raw=$(extract_self_eval_score "$outfile")
-
-  # Response excerpt (first 500 chars)
-  response_excerpt=""
-  if [[ -s "$outfile" ]]; then
-    response_excerpt=$(head -c 500 "$outfile")
-  fi
-
-  jq -n \
-    --arg provider "$p" \
-    --arg status "$status" \
-    --argjson response_time_s "$response_time_s" \
-    --arg tokens_in "$tokens_in" \
-    --arg tokens_out "$tokens_out" \
-    --argjson compile_ok "$compile_ok" \
-    --argjson tests_pass "$tests_pass" \
-    --argjson self_eval_raw "$self_eval_raw" \
-    --arg response_excerpt "$response_excerpt" \
-    '{
-      provider: $provider,
-      status: $status,
-      response_time_s: $response_time_s,
-      tokens_in: $tokens_in,
-      tokens_out: $tokens_out,
-      compile_ok: $compile_ok,
-      tests_pass: $tests_pass,
-      self_eval_raw: $self_eval_raw,
-      response_excerpt: $response_excerpt
-    }' > "$result_json_file"
 done
 
-# ── Persist round files if --round-dir specified ────────────────
+if [[ ${#PROVIDERS_SUCCEEDED[@]} -eq 0 ]]; then
+  echo "ERROR: All providers failed Round 1." >&2
+  exit 3
+fi
 
-if [[ -n "$ROUND_DIR" ]]; then
-  mkdir -p "$ROUND_DIR"
-  for p in "${PROVIDER_ARRAY[@]}"; do
-    if [[ -s "$JSON_TMPDIR/result_${p}.txt" ]]; then
-      cp "$JSON_TMPDIR/result_${p}.txt" "$ROUND_DIR/round1_${p}.txt"
+# ═══════════════════════════════════════════════════════════════
+#  ROUND 2 — Adversarial review + fix (if --with-adversarial)
+# ═══════════════════════════════════════════════════════════════
+
+if [[ "$WITH_ADVERSARIAL" == "true" ]]; then
+  echo "" >&2
+  echo "── Round 2: Adversarial review + fix ───────────────" >&2
+
+  for p in "${PROVIDERS_SUCCEEDED[@]}"; do
+    echo "  R2 reviewing: $p..." >&2
+    provider_dir="$ROUND_DIR/$p"
+    r1_files_list=$(ls "$provider_dir"/r1-*.ts 2>/dev/null | tr '\n' ' ')
+
+    # Get adversarial findings
+    findings=""
+    if [[ -x "$ADVERSARIAL_SCRIPT" && -n "$r1_files_list" ]]; then
+      findings=$("$ADVERSARIAL_SCRIPT" --files "$r1_files_list" --json --single 2>/dev/null) || true
+    fi
+
+    if [[ -z "$findings" ]]; then
+      echo "  R2 WARN: $p — no adversarial findings (skipping fix)" >&2
+      # Copy r1 as r2 (no change)
+      for f in "$provider_dir"/r1-*.ts; do
+        base=$(basename "$f" | sed 's/^r1-/r2-/')
+        cp "$f" "$provider_dir/$base"
+      done
+      continue
+    fi
+
+    # Save findings
+    printf '%s\n' "$findings" > "$provider_dir/r2-adversarial-findings.txt"
+
+    # Build code context
+    code_context=""
+    for f in "$provider_dir"/r1-*.ts; do
+      fname=$(basename "$f")
+      code_context="${code_context}
+=== ${fname} ===
+$(cat "$f")
+"
+    done
+
+    # Build fix prompt
+    fix_prompt="You previously wrote this code in a benchmark:
+
+${code_context}
+
+An adversarial review found these issues:
+
+${findings}
+
+Fix all issues found. Output corrected files using fenced \`\`\`typescript blocks with \`// FILE: <filename>\` on the first line of each block. Keep the same filenames."
+
+    # Dispatch fix to same provider
+    (
+      time_start=$(date +%s)
+      TASK_PROMPT="$fix_prompt"
+      dispatch_provider "$p" > "$provider_dir/r2-response.txt" 2>"$JSON_TMPDIR/stderr_r2_${p}.txt"
+      time_end=$(date +%s)
+      printf '%d' "$((time_end - time_start))" > "$JSON_TMPDIR/time_r2_${p}.txt"
+    ) &
+    PIDS+=($!)
+  done
+
+  for pid in "${PIDS[@]}"; do wait $pid 2>/dev/null || true; done
+  PIDS=()
+
+  # Extract Round 2 files
+  for p in "${PROVIDERS_SUCCEEDED[@]}"; do
+    provider_dir="$ROUND_DIR/$p"
+    if [[ -s "$provider_dir/r2-response.txt" ]]; then
+      extract_code_files "$provider_dir/r2-response.txt" "$provider_dir" "r2"
+      r2_time=$(cat "$JSON_TMPDIR/time_r2_${p}.txt" 2>/dev/null || echo "?")
+      r2_files=$(ls "$provider_dir"/r2-*.ts 2>/dev/null | wc -l | tr -d ' ')
+      echo "  R2 done: $p (${r2_time}s, ${r2_files} files)" >&2
+    else
+      echo "  R2 WARN: $p — fix dispatch failed, keeping r1 files" >&2
+      for f in "$provider_dir"/r1-*.ts; do
+        base=$(basename "$f" | sed 's/^r1-/r2-/')
+        cp "$f" "$provider_dir/$base"
+      done
     fi
   done
 fi
 
-# ── CQ6: fail if no providers succeeded ────────────────────────
+# ═══════════════════════════════════════════════════════════════
+#  ROUND 3 — Write tests (if --with-tests)
+# ═══════════════════════════════════════════════════════════════
 
-if [[ ${#PROVIDERS_SUCCEEDED[@]} -eq 0 ]]; then
-  echo "ERROR: All providers failed. No results to score." >&2
-  exit 3
+if [[ "$WITH_TESTS" == "true" ]]; then
+  echo "" >&2
+  echo "── Round 3: Test generation ────────────────────────" >&2
+
+  # Use best available code: r2 (post-adversarial) or r1 (original)
+  code_round="r1"
+  [[ "$WITH_ADVERSARIAL" == "true" ]] && code_round="r2"
+
+  for p in "${PROVIDERS_SUCCEEDED[@]}"; do
+    provider_dir="$ROUND_DIR/$p"
+
+    # Build code context from latest round files
+    code_for_tests=""
+    for f in "$provider_dir"/${code_round}-*.ts; do
+      [[ -f "$f" ]] || continue
+      fname=$(basename "$f")
+      code_for_tests="${code_for_tests}
+\`\`\`typescript
+// FILE: ${fname}
+$(cat "$f")
+\`\`\`
+"
+    done
+
+    # Load test task template and interpolate
+    test_prompt=$(cat "$CORPUS_TEST_TASK")
+    test_prompt="${test_prompt//\{\{ROUND_1_CODE\}\}/$code_for_tests}"
+
+    # Dispatch test task
+    (
+      time_start=$(date +%s)
+      TASK_PROMPT="$test_prompt"
+      dispatch_provider "$p" > "$provider_dir/r3-response.txt" 2>"$JSON_TMPDIR/stderr_r3_${p}.txt"
+      time_end=$(date +%s)
+      printf '%d' "$((time_end - time_start))" > "$JSON_TMPDIR/time_r3_${p}.txt"
+    ) &
+    PIDS+=($!)
+  done
+
+  for pid in "${PIDS[@]}"; do wait $pid 2>/dev/null || true; done
+  PIDS=()
+
+  # Extract Round 3 test files
+  for p in "${PROVIDERS_SUCCEEDED[@]}"; do
+    provider_dir="$ROUND_DIR/$p"
+    if [[ -s "$provider_dir/r3-response.txt" ]]; then
+      extract_code_files "$provider_dir/r3-response.txt" "$provider_dir" "r3"
+      r3_time=$(cat "$JSON_TMPDIR/time_r3_${p}.txt" 2>/dev/null || echo "?")
+      r3_files=$(ls "$provider_dir"/r3-*.ts 2>/dev/null | wc -l | tr -d ' ')
+      echo "  R3 done: $p (${r3_time}s, ${r3_files} test files)" >&2
+    else
+      echo "  R3 WARN: $p — test dispatch failed" >&2
+    fi
+  done
 fi
 
-# ── Assemble raw_results.json ───────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+#  ROUND 4 — Adversarial on tests + fix (if --with-test-adversarial)
+# ═══════════════════════════════════════════════════════════════
 
-# Combine per-provider result JSONs into array
+if [[ "$WITH_TEST_ADVERSARIAL" == "true" && "$WITH_TESTS" == "true" ]]; then
+  echo "" >&2
+  echo "── Round 4: Adversarial on tests + fix ─────────────" >&2
+
+  for p in "${PROVIDERS_SUCCEEDED[@]}"; do
+    provider_dir="$ROUND_DIR/$p"
+    r3_files_list=$(ls "$provider_dir"/r3-*.ts 2>/dev/null | tr '\n' ' ')
+    [[ -z "$r3_files_list" ]] && continue
+
+    echo "  R4 reviewing: $p..." >&2
+
+    findings=""
+    if [[ -x "$ADVERSARIAL_SCRIPT" ]]; then
+      findings=$("$ADVERSARIAL_SCRIPT" --files "$r3_files_list" --json --single --mode test 2>/dev/null) || true
+    fi
+
+    if [[ -z "$findings" ]]; then
+      echo "  R4 WARN: $p — no findings, copying r3 as r4" >&2
+      for f in "$provider_dir"/r3-*.ts; do
+        base=$(basename "$f" | sed 's/^r3-/r4-/')
+        cp "$f" "$provider_dir/$base"
+      done
+      continue
+    fi
+
+    printf '%s\n' "$findings" > "$provider_dir/r4-adversarial-findings.txt"
+
+    test_context=""
+    for f in "$provider_dir"/r3-*.ts; do
+      fname=$(basename "$f")
+      test_context="${test_context}
+=== ${fname} ===
+$(cat "$f")
+"
+    done
+
+    fix_prompt="You previously wrote these tests in a benchmark:
+
+${test_context}
+
+An adversarial review found these issues:
+
+${findings}
+
+Fix all issues. Output corrected test files using fenced \`\`\`typescript blocks with \`// FILE: <filename>\` on the first line."
+
+    (
+      time_start=$(date +%s)
+      TASK_PROMPT="$fix_prompt"
+      dispatch_provider "$p" > "$provider_dir/r4-response.txt" 2>"$JSON_TMPDIR/stderr_r4_${p}.txt"
+      time_end=$(date +%s)
+      printf '%d' "$((time_end - time_start))" > "$JSON_TMPDIR/time_r4_${p}.txt"
+    ) &
+    PIDS+=($!)
+  done
+
+  for pid in "${PIDS[@]}"; do wait $pid 2>/dev/null || true; done
+  PIDS=()
+
+  for p in "${PROVIDERS_SUCCEEDED[@]}"; do
+    provider_dir="$ROUND_DIR/$p"
+    if [[ -s "$provider_dir/r4-response.txt" ]]; then
+      extract_code_files "$provider_dir/r4-response.txt" "$provider_dir" "r4"
+      r4_time=$(cat "$JSON_TMPDIR/time_r4_${p}.txt" 2>/dev/null || echo "?")
+      r4_files=$(ls "$provider_dir"/r4-*.ts 2>/dev/null | wc -l | tr -d ' ')
+      echo "  R4 done: $p (${r4_time}s, ${r4_files} files)" >&2
+    else
+      echo "  R4 WARN: $p — fix failed, keeping r3 files" >&2
+      for f in "$provider_dir"/r3-*.ts; do
+        base=$(basename "$f" | sed 's/^r3-/r4-/')
+        cp "$f" "$provider_dir/$base"
+      done
+    fi
+  done
+fi
+
+# ═══════════════════════════════════════════════════════════════
+#  COLLECT — per-provider metrics + file inventory
+# ═══════════════════════════════════════════════════════════════
+
+echo "" >&2
+echo "── Collecting results ─────────────────────────────────" >&2
+
+for p in "${PROVIDER_ARRAY[@]}"; do
+  provider_dir="$ROUND_DIR/$p"
+  result_json="$JSON_TMPDIR/result_${p}.json"
+  status=$(cat "$JSON_TMPDIR/status_${p}.txt" 2>/dev/null || echo "error")
+  r1_time=$(cat "$JSON_TMPDIR/time_r1_${p}.txt" 2>/dev/null || echo "0")
+  r2_time=$(cat "$JSON_TMPDIR/time_r2_${p}.txt" 2>/dev/null || echo "null")
+  r3_time=$(cat "$JSON_TMPDIR/time_r3_${p}.txt" 2>/dev/null || echo "null")
+  r4_time=$(cat "$JSON_TMPDIR/time_r4_${p}.txt" 2>/dev/null || echo "null")
+
+  # Self-eval from Round 1
+  self_eval_raw="null"
+  [[ -f "$JSON_TMPDIR/r1_${p}.txt" ]] && self_eval_raw=$(extract_self_eval_score "$JSON_TMPDIR/r1_${p}.txt")
+
+  # Token estimates
+  tokens_in=$(printf '%s' "$TASK_PROMPT" | wc -w | awk '{printf "%d~estimated", int($1 * 1.3)}')
+  tokens_out="0~estimated"
+  if [[ -f "$JSON_TMPDIR/r1_${p}.txt" ]]; then
+    tokens_out=$(estimate_tokens "$JSON_TMPDIR/r1_${p}.txt")
+  fi
+
+  # File inventory
+  r1_files=$(ls "$provider_dir"/r1-*.ts 2>/dev/null | xargs -I{} basename {} | jq -R . | jq -s . 2>/dev/null || echo "[]")
+  r2_files=$(ls "$provider_dir"/r2-*.ts 2>/dev/null | xargs -I{} basename {} | jq -R . | jq -s . 2>/dev/null || echo "[]")
+  r3_files=$(ls "$provider_dir"/r3-*.ts 2>/dev/null | xargs -I{} basename {} | jq -R . | jq -s . 2>/dev/null || echo "[]")
+  r4_files=$(ls "$provider_dir"/r4-*.ts 2>/dev/null | xargs -I{} basename {} | jq -R . | jq -s . 2>/dev/null || echo "[]")
+
+  # Quote times that might be "null"
+  [[ "$r2_time" == "null" ]] && r2_time_json="null" || r2_time_json="$r2_time"
+  [[ "$r3_time" == "null" ]] && r3_time_json="null" || r3_time_json="$r3_time"
+  [[ "$r4_time" == "null" ]] && r4_time_json="null" || r4_time_json="$r4_time"
+
+  jq -n \
+    --arg provider "$p" \
+    --arg status "$status" \
+    --argjson r1_time_s "$r1_time" \
+    --argjson r2_time_s "$r2_time_json" \
+    --argjson r3_time_s "$r3_time_json" \
+    --argjson r4_time_s "$r4_time_json" \
+    --argjson self_eval_raw "$self_eval_raw" \
+    --arg tokens_in "$tokens_in" \
+    --arg tokens_out "$tokens_out" \
+    --argjson r1_files "$r1_files" \
+    --argjson r2_files "$r2_files" \
+    --argjson r3_files "$r3_files" \
+    --argjson r4_files "$r4_files" \
+    --arg artifacts_dir "$provider_dir" \
+    '{
+      provider: $provider,
+      status: $status,
+      r1_time_s: $r1_time_s,
+      r2_time_s: $r2_time_s,
+      r3_time_s: $r3_time_s,
+      r4_time_s: $r4_time_s,
+      self_eval_raw: $self_eval_raw,
+      tokens_in: $tokens_in,
+      tokens_out: $tokens_out,
+      artifacts: {
+        dir: $artifacts_dir,
+        r1_code: $r1_files,
+        r2_fixed: $r2_files,
+        r3_tests: $r3_files,
+        r4_fixed_tests: $r4_files
+      }
+    }' > "$result_json"
+done
+
+# ═══════════════════════════════════════════════════════════════
+#  OUTPUT — assemble final JSON
+# ═══════════════════════════════════════════════════════════════
+
 RAW_RESULTS_FILE="$JSON_TMPDIR/raw_results.json"
 jq -s '.' "$JSON_TMPDIR"/result_*.json > "$RAW_RESULTS_FILE" 2>/dev/null || echo "[]" > "$RAW_RESULTS_FILE"
 
@@ -620,6 +899,7 @@ jq -n \
   --argjson with_adversarial "$WITH_ADVERSARIAL" \
   --argjson with_test_adversarial "$WITH_TEST_ADVERSARIAL" \
   --argjson with_static_checks "$WITH_STATIC_CHECKS" \
+  --arg round_dir "$ROUND_DIR" \
   --argjson providers_raw "$(cat "$RAW_RESULTS_FILE")" \
   '{
     version: $version,
@@ -637,14 +917,24 @@ jq -n \
       with_test_adversarial: $with_test_adversarial,
       with_static_checks: $with_static_checks
     },
+    round_dir: $round_dir,
     providers_raw: $providers_raw
   }' > "$OUTPUT_FILE"
 
-echo "  Output: $OUTPUT_FILE" >&2
+echo "" >&2
+echo "  Output JSON: $OUTPUT_FILE" >&2
+echo "  Artifacts:   $ROUND_DIR/" >&2
+
+# Print file tree summary
+for p in "${PROVIDERS_SUCCEEDED[@]}"; do
+  file_count=$(ls "$ROUND_DIR/$p"/*.ts 2>/dev/null | wc -l | tr -d ' ')
+  echo "    $p/ — ${file_count} files" >&2
+done
 
 if [[ "$JSON_OUTPUT" == "true" ]]; then
   cat "$OUTPUT_FILE"
 fi
 
+echo "" >&2
 echo "BENCHMARK DONE" >&2
 exit 0
