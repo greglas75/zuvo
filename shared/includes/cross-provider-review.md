@@ -32,18 +32,9 @@ The script outputs structured findings with severity, file:line, and suggested f
 ### Step 1: Check availability
 
 ```bash
-# Check if adversarial-review is in PATH, otherwise try known locations
-if command -v adversarial-review &>/dev/null; then
-  AR_CMD="adversarial-review"
-elif [[ -x "$HOME/.claude/plugins/cache/zuvo-marketplace/zuvo/$(ls $HOME/.claude/plugins/cache/zuvo-marketplace/zuvo/ 2>/dev/null | tail -1)/scripts/adversarial-review.sh" ]]; then
-  AR_CMD="$HOME/.claude/plugins/cache/zuvo-marketplace/zuvo/$(ls $HOME/.claude/plugins/cache/zuvo-marketplace/zuvo/ | tail -1)/scripts/adversarial-review.sh"
-elif [[ -x "$HOME/.cursor/scripts/adversarial-review.sh" ]]; then
-  AR_CMD="$HOME/.cursor/scripts/adversarial-review.sh"
-elif [[ -x "$HOME/.codex/scripts/adversarial-review.sh" ]]; then
-  AR_CMD="$HOME/.codex/scripts/adversarial-review.sh"
-else
-  CROSS_REVIEW_AVAILABLE=false
-fi
+# adversarial-review resolves automatically — the skill's fallback line handles path lookup.
+# Just call: adversarial-review --json --mode {MODE} ...
+# If not in PATH, use the fallback from the calling skill's adversarial section.
 ```
 
 ### Step 2: Run the review
