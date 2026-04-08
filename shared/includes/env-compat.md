@@ -1,17 +1,17 @@
 # Environment Compatibility
 
-> How Zuvo skills adapt to Claude Code, Codex, and Cursor execution environments.
+> How Zuvo skills adapt to Claude Code, Codex, Cursor, and Antigravity execution environments.
 
 ## Execution Models
 
-| Capability | Claude Code | Codex | Cursor |
-|-----------|-------------|-------|--------|
-| Sub-agent dispatch | `Task` tool — parallel, model-routed | Native agents / TOML agents in `~/.codex/agents/` — parallel, sandboxed | Not available — single-agent only |
-| Concurrency | Unrestricted background tasks | Capped at `max_threads: 6` | Sequential execution only |
-| Model selection | Explicit per task dispatch | Fixed per TOML config or session model | Uses whichever model is active — routing ignored |
-| Progress reporting | Structured task updates | Inline progress or native status updates | Inline print: `STEP: [name] [START\|DONE]` |
-| User interaction | Native interactive prompts | Codex CLI: ask inline. Codex App async: safest default. | Not available — use safest default |
-| Agent instructions | Sub-process via Task tool reads agent markdown | Agent config points to `agents/*.md` for instructions | Read `agents/*.md` yourself, execute sequentially |
+| Capability | Claude Code | Codex | Cursor | Antigravity |
+|-----------|-------------|-------|--------|-------------|
+| Sub-agent dispatch | `Task` tool — parallel, model-routed | Native agents / TOML agents in `~/.codex/agents/` — parallel, sandboxed | Not available — single-agent only | Not available — single-agent, sequential |
+| Concurrency | Unrestricted background tasks | Capped at `max_threads: 6` | Sequential execution only | Sequential execution only |
+| Model selection | Explicit per task dispatch | Fixed per TOML config or session model | Uses whichever model is active — routing ignored | Mapped to Gemini models (user can override in UI) |
+| Progress reporting | Structured task updates | Inline progress or native status updates | Inline print: `STEP: [name] [START\|DONE]` | Inline print: `STEP: [name] [START\|DONE]` |
+| User interaction | Native interactive prompts | Codex CLI: ask inline. Codex App async: safest default. | Not available — use safest default | Not available — use safest default |
+| Agent instructions | Sub-process via Task tool reads agent markdown | Agent config points to `agents/*.md` for instructions | Read `agents/*.md` yourself, execute sequentially | Read `agents/*.md` yourself, execute sequentially |
 
 **Note:** Some skills use **inline prompt dispatch** — agent instructions are embedded in the SKILL.md itself, not in separate `agents/*.md` files. For these skills, the dispatch pattern simplifies to: Claude Code spawns via Task/Agent tool with the inline prompt; Codex spawns ad-hoc or executes inline if only TOML-registered agents are supported; Cursor always executes inline. The per-environment table above still governs concurrency, model selection, and progress reporting.
 
@@ -62,6 +62,7 @@ Once you have `{plugin_root}`, these paths exist:
 | Claude Code | `~/.claude/plugins/cache/zuvo-marketplace/zuvo/<version>/` |
 | Codex | `~/.codex/` (skills, agents, shared, rules are direct children) |
 | Cursor | `~/.cursor/` (skills, agents, shared, rules are direct children) |
+| Antigravity | `~/.gemini/antigravity/` (skills with agent subdirs, shared, rules) |
 
 ### Relative paths from skills
 
@@ -114,6 +115,16 @@ No agent spawning capability. When a skill references an agent:
 
 All agents execute sequentially. Quality gates and evidence requirements do not change.
 
+### Antigravity (sequential, Gemini models)
+
+Same as Cursor — no agent spawning. When a skill references an agent:
+
+1. Read the agent's instruction file (e.g., `agents/blast-radius.md`)
+2. Perform that analysis yourself in the current context
+3. Maintain identical output format and quality standards
+
+All agents execute sequentially. Models are mapped to Gemini tiers: sonnet → gemini-3.1-pro-low, opus → gemini-3.1-pro-high, haiku → gemini-3-flash.
+
 ## Progress Tracking
 
 Use structured progress when available, inline text when not:
@@ -135,7 +146,7 @@ When a skill needs user input (confirmation, choice between options):
 
 - **Claude Code:** Use the platform's interactive question/approval mechanism.
 - **Codex CLI:** Ask inline in the current conversation when clarification is necessary.
-- **Codex App async / Cursor:** Proceed with the safest default choice and document which default was chosen and why.
+- **Codex App async / Cursor / Antigravity:** Proceed with the safest default choice and document which default was chosen and why.
 
 Hard rule: Never push to a remote repository without explicit user confirmation, regardless of environment. If the current environment cannot confirm interactively, skip the push step entirely and state that pushing is a separate manual step.
 

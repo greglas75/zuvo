@@ -3,3 +3,6 @@ node_modules/
 *.log
 dist/
 .aider*
+
+# zuvo session state (local runtime, not committed)
+.zuvo/

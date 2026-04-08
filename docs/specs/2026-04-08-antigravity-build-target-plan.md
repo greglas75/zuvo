@@ -3,7 +3,7 @@
 **Spec:** docs/specs/2026-04-08-antigravity-build-target-spec.md
 **spec_id:** 2026-04-08-antigravity-build-1215
 **plan_revision:** 1
-**status:** Reviewed
+**status:** Approved
 **Created:** 2026-04-08
 **Tasks:** 8
 **Estimated complexity:** 6 standard, 2 complex

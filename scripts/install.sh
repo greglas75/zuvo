@@ -354,6 +354,80 @@ install_cursor() {
 }
 
 # =======================================
+# ANTIGRAVITY
+# =======================================
+install_antigravity() {
+  echo ""
+  echo "======================================"
+  echo "  ANTIGRAVITY"
+  echo "======================================"
+
+  if [[ ! -d "$HOME/.gemini/antigravity" ]]; then
+    warn "~/.gemini/antigravity not found -- Antigravity not installed. Skipping."
+    return 0
+  fi
+
+  # Step 1: Build
+  echo "  Building Antigravity distribution..."
+  local build_log
+  build_log=$(mktemp)
+  if ! bash "$ZUVO_DIR/scripts/build-antigravity-skills.sh" "$ZUVO_DIR" > "$build_log" 2>&1; then
+    fail "Build failed. Build output:"
+    cat "$build_log" >&2
+    rm -f "$build_log"
+    return 1
+  fi
+  rm -f "$build_log"
+  DIST="$ZUVO_DIR/dist/antigravity"
+
+  if [[ ! -d "$DIST/skills" ]]; then
+    fail "Build failed -- no dist/antigravity/skills/ produced"
+    return 1
+  fi
+  ok "Build complete"
+
+  # Step 2: Clean old symlinks and stale files
+  rm -rf "$HOME/.gemini/antigravity/skills"
+  rm -rf "$HOME/.gemini/antigravity/shared"
+  rm -rf "$HOME/.gemini/antigravity/rules"
+  rm -rf "$HOME/.gemini/antigravity/scripts"
+  ok "Cleaned old installation"
+
+  # Step 3: Copy skills (agents stay in subdirectories)
+  mkdir -p "$HOME/.gemini/antigravity/skills"
+  for skill_dir in "$DIST"/skills/*/; do
+    skill_name=$(basename "$skill_dir")
+    cp -r "$skill_dir" "$HOME/.gemini/antigravity/skills/$skill_name"
+  done
+  SKILL_COUNT=$(ls -d "$DIST/skills"/*/ 2>/dev/null | wc -l | tr -d ' ')
+  ok "Skills installed ($SKILL_COUNT total, agents in subdirectories)"
+
+  # Step 4: Copy shared includes
+  if [[ -d "$DIST/shared" ]]; then
+    mkdir -p "$HOME/.gemini/antigravity/shared/includes"
+    cp -r "$DIST"/shared/* "$HOME/.gemini/antigravity/shared/"
+    ok "Shared includes installed"
+  fi
+
+  # Step 5: Copy rules
+  if [[ -d "$DIST/rules" ]]; then
+    mkdir -p "$HOME/.gemini/antigravity/rules"
+    cp -r "$DIST"/rules/* "$HOME/.gemini/antigravity/rules/"
+    ok "Rules installed"
+  fi
+
+  # Step 6: Copy scripts
+  if [[ -d "$DIST/scripts" ]]; then
+    mkdir -p "$HOME/.gemini/antigravity/scripts"
+    cp "$DIST"/scripts/*.sh "$HOME/.gemini/antigravity/scripts/" 2>/dev/null || true
+    chmod +x "$HOME/.gemini/antigravity"/scripts/*.sh 2>/dev/null || true
+    ok "Scripts installed"
+  fi
+
+  ok "Antigravity updated"
+}
+
+# =======================================
 # MAIN
 # =======================================
 VERSION=$(grep '"version"' "$ZUVO_DIR/package.json" | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
@@ -363,8 +437,9 @@ case "$TARGET" in
   claude) install_claude ;;
   codex)  install_codex ;;
   cursor) install_cursor ;;
-  both|all) install_claude; install_codex; install_cursor ;;
-  *)      echo "Usage: $0 [claude|codex|cursor|all]"; exit 1 ;;
+  antigravity) install_antigravity ;;
+  both|all) install_claude; install_codex; install_cursor; install_antigravity ;;
+  *)      echo "Usage: $0 [claude|codex|cursor|antigravity|all]"; exit 1 ;;
 esac
 
 echo ""

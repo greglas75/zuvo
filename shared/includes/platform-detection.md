@@ -28,7 +28,7 @@
 
 4. **If only `.github/workflows/*deploy*` matched** (no explicit platform config file): read the workflow YAML file. Extract the deploy job name and trigger event. Use `gh workflow run <workflow-name>` as the deploy command and `gh run view` for status polling. If multiple deploy workflows exist, present the list and ask the user to pick (or use `[AUTO-DECISION]: first workflow` in non-interactive environments).
 
-5. **Special case: Render.** If `render.yaml` is the primary detection, there is no CLI deploy command. Prompt the user for their deploy hook URL via `AskUserQuestion`. In non-interactive environments (Codex, Cursor), skip automated deploy with `[AUTO-DECISION]: no Render CLI available` and print manual instructions.
+5. **Special case: Render.** If `render.yaml` is the primary detection, there is no CLI deploy command. Prompt the user for their deploy hook URL via `AskUserQuestion`. In non-interactive environments (Codex, Cursor, Antigravity), skip automated deploy with `[AUTO-DECISION]: no Render CLI available` and print manual instructions.
 
 ## Output Object
 
