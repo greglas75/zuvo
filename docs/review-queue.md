@@ -213,3 +213,5 @@ Commits pending review. Auto-managed:
 - 232b63a (2026-04-08) add zuvo:agent-benchmark — self-benchmark where the agent writes code+tests with multi-provider adversarial
 - 9e1804d (2026-04-08) add zuvo:agent-benchmark — self-benchmark with multi-provider adversarial
 - bd34514 (2026-04-08) fix agent-benchmark: explicit guardrails — never edit R1/R3 files, write R2/R4 as new files
+- 1f369b3 (2026-04-08) fix agent-benchmark: R3/R4 immutability guardrails
+- 969cc2d (2026-04-08) fix agent-benchmark: include agent name slug in output folder name
