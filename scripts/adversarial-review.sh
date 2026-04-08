@@ -83,7 +83,7 @@ Environment variables:
   ZUVO_GEMINI_MODEL        Gemini CLI model (default: gemini-3.1-pro-preview)
   ZUVO_GEMINI_API_MODEL    Gemini API model (default: gemini-3.1-pro-preview)
   GEMINI_API_KEY           Required for gemini-api provider
-  CODESTRAL_API_KEY        Required for codestral provider (auto-detected)
+  CODESTRAL_API_KEY        Required for codestral provider (manual: --provider codestral)
   ZUVO_CODESTRAL_MODEL     Codestral model (default: codestral-latest)
   CLAUDE_MODEL             Used for opposite-model detection (claude provider)
 HELP
@@ -439,29 +439,28 @@ detect_providers() {
   # Returns space-separated list of available providers in priority order
   local providers=""
 
-  # 1. codex-5.4 + codex-5.3 — two separate models, empty CODEX_HOME (0 MCP, ~50-57s)
+  # 1. codex-5.3 — fast (30s low effort), different vendor (OpenAI)
   local codex_bin=""
   if command -v codex &>/dev/null; then
     codex_bin="codex"
   elif [[ -x "/Applications/Codex.app/Contents/Resources/codex" ]]; then
     codex_bin="/Applications/Codex.app/Contents/Resources/codex"
   fi
-  [[ -n "$codex_bin" ]] && providers="codex-5.4 codex-5.3"
+  [[ -n "$codex_bin" ]] && providers="codex-5.3"
 
-  # 2. gemini — requires global install: npm install -g @google/gemini-cli
+  # 2. gemini CLI (10-15s, unique findings)
   command -v gemini &>/dev/null && providers="$providers gemini"
 
-  # 3. cursor-agent — headless print mode (~11s)
+  # 3. cursor-agent — fast fallback (~11s), redundancy for codex
   command -v cursor-agent &>/dev/null && providers="$providers cursor-agent"
 
-  # 4. claude — CLI with opposite model (10-30s)
+  # 4. claude — opposite model, different vendor (Anthropic, 10-30s)
   command -v claude &>/dev/null && providers="$providers claude"
 
-  # 5. codestral — API-based, auto-detect if CODESTRAL_API_KEY is set
-  [[ -n "${CODESTRAL_API_KEY:-}" ]] && providers="$providers codestral"
-
-  # gemini-api available as --provider gemini-api if GEMINI_API_KEY is set
-  # Not in auto-detect (gemini CLI is preferred)
+  # Manual-only providers (use --provider <name>):
+  # codex-5.4 — slower, overlaps with 5.3
+  # codestral — requires CODESTRAL_API_KEY, weaker findings
+  # gemini-api — requires GEMINI_API_KEY, redundant with gemini CLI
 
   echo "$providers"
 }
@@ -577,7 +576,7 @@ run_codestral() {
 
   # Build JSON payload via temp file (avoids ARG_MAX on large prompts)
   local payload_file="$JSON_TMPDIR/codestral_payload.json"
-  printf '%s' "$REVIEW_PROMPT" | jq -Rs '{model: "'"$model"'", messages: [{role: "user", content: .}]}' > "$payload_file"
+  printf '%s' "$REVIEW_PROMPT" | jq -Rs --arg model "$model" '{model: $model, messages: [{role: "user", content: .}]}' > "$payload_file"
 
   local err_file="$JSON_TMPDIR/err_codestral.txt"
   local response
