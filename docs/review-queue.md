@@ -219,3 +219,4 @@ Commits pending review. Auto-managed:
 - a1aac36 (2026-04-08) add token tracking + API cost estimation to agent-benchmark
 - 2cd6c80 (2026-04-08) agent-benchmark: token tracking + API cost
 - 8e0d67e (2026-04-08) fix: --files space-separated paths not read — adversarial review got empty input
+- 7e4ced6 (2026-04-08) fix: --files space-separated paths in adversarial-review.sh and benchmark.sh
