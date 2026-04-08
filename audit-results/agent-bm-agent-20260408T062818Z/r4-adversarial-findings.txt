@@ -1,0 +1,201 @@
+{
+  "mode": "test",
+  "providers_used": "codex-5.4, codex-5.3, gemini, cursor-agent",
+  "provider_count": 4,
+  "input_size": 15070,
+  "date": "2026-04-08T06:48:33Z",
+  "results": {
+    "codex-5.4": {
+      "findings": [
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T062818Z/r3-OrderService.test.ts:99",
+          "issue": "The transaction mock and \"atomically\" tests do not prove `OrderService` actually uses `$transaction`",
+          "attack_vector": "`create` and `deleteOrder` could be rewritten to call `prisma.order.*` directly, outside a transaction, and these tests would still pass because the mock injects the same delegates into the callback and the tests never assert `$transaction` was invoked.",
+          "fix": "Make the transaction client distinct from the root prisma mocks and assert `prisma.$transaction` is called in the create/delete/update-status paths that claim atomic behavior."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T062818Z/r3-OrderService.test.ts:148",
+          "issue": "Most public validation and boundary guards in `OrderService` are untested",
+          "attack_vector": "The service has explicit guards for invalid `take`/`skip`, invalid date ranges, empty or malformed `lineItems`, non-integer/overflow quantities, >2-decimal prices, invalid status values, and bad bulk IDs; regressions in any of those branches ship unnoticed because the suite only exercises nominal inputs plus two error cases.",
+          "fix": "Add focused negative tests for each public method's validation boundary, especially `findAll`, `create`, and `bulkUpdateStatus` using zero/negative values, invalid dates, empty arrays, and >2-decimal prices."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T062818Z/r3-OrderService.test.ts:148",
+          "issue": "Cache coverage omits the malformed-JSON recovery path that `findAll` implements",
+          "attack_vector": "`findAll` has special behavior for corrupt cache entries: log, delete the bad key, and fall back to Prisma. If that recovery breaks, production can serve 500s or keep poisoning reads while this suite still stays green because it only tests valid cache and clean miss scenarios.",
+          "fix": "Add a test where `redis.get` returns an invalid JSON payload and assert Prisma is queried and `redis.del` is called for the cache key."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T062818Z/r3-OrderService.test.ts:303",
+          "issue": "Race-condition safeguards are present in production but unverified in tests",
+          "attack_vector": "`deleteOrder` and `updateStatus` explicitly reject when `deleteMany/updateMany` returns `count !== 1`, and `bulkUpdateStatus` silently skips rows whose compare-and-swap fails. If those protections are removed, stale concurrent writes/deletes would succeed incorrectly and the current suite would not fail because it only covers the `count === 1` path.",
+          "fix": "Add tests for `deleteMany`/`updateMany` returning `{ count: 0 }` and assert the retry/error behavior (or skipped update behavior for bulk updates)."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T062818Z/r3-OrderService.test.ts:441",
+          "issue": "`bulkUpdateStatus` only tests a cancel flow, not the shipped notification side effects unique to that branch",
+          "attack_vector": "Production sends shipment emails with `Promise.allSettled` and logs individual failures only when `newStatus === 'shipped'`. If that branch stops notifying, starts throwing on one rejection, or logs the wrong order, nothing in this suite catches it.",
+          "fix": "Add a bulk shipped-status test that asserts notifications are sent for each transitioned order and that a single rejection is logged without failing the whole operation."
+        }
+      ]
+    },
+    "codex-5.3": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T062818Z/r3-OrderService.test.ts",
+          "issue": "Tests claim transactional atomicity but never assert `$transaction` was used.",
+          "attack_vector": "Service can execute multi-write flows (`create`, `deleteOrder`) outside a DB transaction; partial writes can occur in production while these tests still pass.",
+          "fix": "In transaction-sensitive tests, assert `prisma.$transaction` is called and add one failure-path test where a later write fails to verify no cache/audit side effects escape the transaction."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T062818Z/r3-OrderService.test.ts",
+          "issue": "Prototype spy cleanup is fragile (`Logger.prototype.error` restored only on happy path).",
+          "attack_vector": "If an assertion throws before `mockRestore()`, later tests inherit the mocked logger, causing order-dependent flakiness and masked regressions.",
+          "fix": "Add `afterEach(() => jest.restoreAllMocks())` or wrap the spy test body in `try/finally` to guarantee restoration."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T062818Z/r3-OrderService.test.ts",
+          "issue": "Cache tests validate returned data but not `redis.get` key arguments.",
+          "attack_vector": "Wrong cache-key composition (org/filter/pagination omission) can leak cross-tenant or stale data while tests still pass because mocks return values regardless of key.",
+          "fix": "Assert `redis.get` was called with the exact version key and list key that include `organizationId`, filters, `take`, and `skip`."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T062818Z/r3-OrderService.test.ts",
+          "issue": "Transaction mock diverges from real DB behavior by reusing shared model mocks and not modeling rollback.",
+          "attack_vector": "Bugs that depend on transactional isolation/rollback semantics can survive because the mock executes callback logic without realistic commit/rollback boundaries.",
+          "fix": "Use a transaction mock that can simulate rollback on thrown errors (or add targeted tests for post-failure invariants) instead of a pass-through callback only."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T062818Z/r3-OrderService.test.ts",
+          "issue": "State coverage is skewed to success paths for cache/export flows in the provided portion.",
+          "attack_vector": "Real failures like corrupted cached JSON, cache-version mismatch, or export count overflow may break production behavior without a failing test.",
+          "fix": "Add negative tests for invalid cached payloads/version mismatch and export-limit overflow rejection behavior."
+        }
+      ]
+    },
+    "gemini": {
+      "findings": [
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts",
+          "issue": "Overly broad matcher for Redis cache key masks potential cache collision bug",
+          "attack_vector": "Using expect.stringContaining(`orders:list:${ORGANIZATION_ID}`) allows the test to pass even if query parameters (skip, take, status, customerId) are omitted from the cache key. This masks a bug where one user's filtered results could be cached and incorrectly served to a different user's query.",
+          "fix": "Assert the exact expected cache key string, verifying that all query parameters are appropriately hashed or appended to the key."
+        },
+        {
+          "severity": "CRITICAL",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts",
+          "issue": "Production gap / Missing cache invalidation assertion in updateStatus",
+          "attack_vector": "Unlike the create, delete, and bulkUpdateStatus tests, the updateStatus test does not assert that the Redis cache version is bumped. If omitted in production, cached findAll queries will continue to return stale statuses (e.g., returning 'processing' after an order shipped).",
+          "fix": "Add expect(redis.set).toHaveBeenCalledWith('orders:cache-version:...', expect.any(String), ...) to the updateStatus test and ensure the production code invalidates the cache."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts",
+          "issue": "Tests claiming atomicity never assert that a transaction was actually used",
+          "attack_vector": "Tests named 'inside a transaction' and 'atomically' assert on individual model calls (e.g., prisma.order.create) but never assert expect(prisma.$transaction).toHaveBeenCalled(). A developer could remove the transaction wrapper in production, leading to partial writes/deletes, and these tests would falsely pass.",
+          "fix": "Add expect(prisma.$transaction).toHaveBeenCalled() to all tests verifying transactional behavior."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts",
+          "issue": "Missing negative test for concurrent status modification (count: 0)",
+          "attack_vector": "If an order status changes concurrently between findFirst and updateMany, updateMany will return { count: 0 }. Without a test for this, the service likely proceeds to send 'order shipped' emails and write success audit logs for an update that silently failed.",
+          "fix": "Add a test where prisma.order.updateMany returns { count: 0 } and assert that it throws a ConflictException and does not trigger emails or audit logs."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "r3-OrderService.test.ts",
+          "issue": "Undeclared expectReject helper used inconsistently",
+          "attack_vector": "The tests use an undeclared expectReject function, while another test uses standard await expect().rejects.toThrow(). If expectReject is not globally defined in a setup file, these tests will throw ReferenceErrors before assertions run, hiding true component failures.",
+          "fix": "Replace await expectReject(...) with standard await expect(...).rejects.toThrow(...) to ensure test execution is valid and consistent."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "high",
+          "file": "r3-OrderService.test.ts",
+          "issue": "bulkUpdateStatus test does not verify true bulk execution",
+          "attack_vector": "The test passes 3 IDs but only 1 is valid. It never tests the scenario where MULTIPLE orders are valid. The production code might incorrectly execute updateMany with a single ID instead of an 'in' clause, and this test would fail to catch the logic error.",
+          "fix": "Provide multiple valid orders in the mock and assert that updateMany is called with a 'where id in [...]' array containing all valid IDs."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "medium",
+          "file": "r3-OrderService.test.ts",
+          "issue": "Date object rehydration vulnerability from Redis cache",
+          "attack_vector": "The test mocks Redis returning JSON.stringify() containing Date objects. When parsed, these become ISO strings. The test expects toEqual([cachedOrder]), which contains real Dates. If the service doesn't explicitly re-hydrate these strings, this test immediately fails or masks that consumers will receive strings and crash calling Date methods.",
+          "fix": "Mock Redis to return a raw JSON string with ISO dates, and verify the service explicitly maps them back into Date instances."
+        }
+      ]
+    },
+    "cursor-agent": {
+      "findings": [
+        {
+          "severity": "WARNING",
+          "confidence": "high",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T062818Z/r3-OrderService.test.ts:creates an order with nested line items inside a transaction",
+          "issue": "Title and intent claim a transaction, but assertions only cover prisma.order.create/prisma.auditLog.create and redis; prisma.$transaction is never expected, so atomicity and transactional boundaries are untested.",
+          "attack_vector": "Implementation can drop $transaction, run creates/audit as separate commits, or reorder side effects while this suite still passes, risking partial failures in production.",
+          "fix": "Add expect(prisma.$transaction).toHaveBeenCalledTimes(1) (or assert the transactional callback runs both writes) if production uses $transaction; otherwise rename the test to match non-transactional behavior."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T062818Z/r3-OrderService.test.ts:bubbles transaction errors from create without invalidating cache",
+          "issue": "Failure path rejects prisma.order.create; if real code wraps work in prisma.$transaction, the surfaced error type/message and call site may differ from a bare create rejection.",
+          "attack_vector": "Service could map Prisma transaction failures or retry/unwrap errors; tests would not track the real failure contract and cache invalidation rules could diverge.",
+          "fix": "Mirror production: reject via prisma.$transaction.mockRejectedValueOnce or invoke the same wrapper the service uses, then assert redis.set not called and the same user-visible error."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T062818Z/r3-OrderService.test.ts:calculates monthly revenue by currency for the requested month",
+          "issue": "Service is called with MONTH but expectations hard-code April 2026 UTC bounds; any bug where month boundaries are derived differently from MONTH (timezone, fiscal calendar, inclusive/exclusive end) may not flip this assertion.",
+          "attack_vector": "Off-by-one-month or TZ shifts in production could return wrong revenue while tests keep constructing the same literals as the buggy code.",
+          "fix": "Compute expected gte/lt from MONTH in the test (or assert against a shared helper) so the test fails if boundary logic drifts from the input date."
+        },
+        {
+          "severity": "WARNING",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T062818Z/r3-OrderService.test.ts:updates status through a valid transition and logs email delivery failures",
+          "issue": "Logger.prototype.error is spied and mockRestore runs only at the end of the happy path; a failing assertion can leave the spy installed for subsequent tests.",
+          "attack_vector": "Later tests may see unexpected Logger.error calls or miss real errors, causing order-dependent flakes or masked failures.",
+          "fix": "Use try/finally or afterEach to always restore the spy, or jest.spyOn(...).mockRestore in a finally block around the assertions."
+        },
+        {
+          "severity": "INFO",
+          "confidence": "medium",
+          "file": "/Users/greglas/DEV/zuvo-plugin/audit-results/agent-bm-agent-20260408T062818Z/r3-OrderService.test.ts:bulk updates only orders with valid transitions",
+          "issue": "Asserts a single updateMany with one id and status filter; if production batches multiple eligible ids or uses separate queries per id, this test may not fail on the right regression or may overfit the current SQL shape.",
+          "attack_vector": "Refactoring bulk updates to a single in-list query (or the opposite) could be correct in production but fail this brittle mock expectation, or wrong batching could slip through if mocks stay permissive.",
+          "fix": "Assert invariants (eligible ids computed, audit rows for each change, cache bump) rather than exact Prisma where shape, or add a second case with two eligible orders."
+        }
+      ]
+    }
+  }
+}

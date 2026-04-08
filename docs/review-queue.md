@@ -226,3 +226,8 @@ Commits pending review. Auto-managed:
 - 2449a74 (2026-04-08) fix: split codex-fast into codex-5.4 + codex-5.3, restore gemini-api error handling, TSV model column
 - eac9831 (2026-04-08) release: v1.3.23 — wire knowledge prime/curate into build, review, refactor, debug skills
 - 1eed1e0 (2026-04-08) simplify quick-install.sh — always install to all platforms, no flags needed
+- 5367770 (2026-04-08) release: v1.3.24 — session-level knowledge prime in using-zuvo startup
+- 40b752b (2026-04-08) add file size limits to corpus prompts: 300L code, 400L tests
+- 23c8fe7 (2026-04-08) fix corpus prompts: use existing project rules (file-limits.md, cq-patterns.md) instead of hardcoded limits
+- 02286ea (2026-04-08) fix: raise adversarial input limit from 15K to 30K chars (code/test modes)
+- 7ec8fd2 (2026-04-08) feat: add Google Antigravity as 4th build target
