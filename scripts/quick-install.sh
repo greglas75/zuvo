@@ -3,9 +3,6 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/greglas75/zuvo/main/scripts/quick-install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/greglas75/zuvo/main/scripts/quick-install.sh | bash -s cursor
-#   curl -fsSL https://raw.githubusercontent.com/greglas75/zuvo/main/scripts/quick-install.sh | bash -s codex
-#   curl -fsSL https://raw.githubusercontent.com/greglas75/zuvo/main/scripts/quick-install.sh | bash -s all
 #
 # What it does:
 #   1. Clones/updates zuvo to ~/.zuvo-plugin
@@ -13,16 +10,13 @@
 #   3. Installs zuvo to Claude Code / Codex / Cursor
 #
 # Uninstall:
-#   rm -rf ~/.zuvo-plugin
-#   claude plugin uninstall zuvo@zuvo-marketplace  (Claude Code)
-#   rm -rf ~/.codex/skills ~/.codex/agents ~/.codex/scripts ~/.codex/shared ~/.codex/rules  (Codex)
-#   rm -rf ~/.cursor/skills ~/.cursor/agents ~/.cursor/scripts ~/.cursor/shared ~/.cursor/rules  (Cursor)
+#   rm -rf ~/.zuvo-plugin && claude plugin uninstall zuvo@zuvo-marketplace 2>/dev/null
 
 set -euo pipefail
 
 ZUVO_DIR="$HOME/.zuvo-plugin"
 REPO="https://github.com/greglas75/zuvo.git"
-TARGET="${1:-all}"
+TARGET="all"
 
 echo ""
 echo "╔══════════════════════════════════════╗"
@@ -81,30 +75,9 @@ fi
 [[ $cleaned -gt 0 ]] && echo "  Removed $cleaned old toolkit items" || echo "  No old toolkit found"
 echo ""
 
-# ─── Install ────────────────────────────────────────────────────
+# ─── Install to all available platforms ──────────────────────────
 
-case "$TARGET" in
-  claude)
-    echo "Installing to Claude Code..."
-    bash "$ZUVO_DIR/scripts/install.sh" claude
-    ;;
-  codex)
-    echo "Installing to Codex..."
-    bash "$ZUVO_DIR/scripts/install.sh" codex
-    ;;
-  cursor)
-    echo "Installing to Cursor..."
-    bash "$ZUVO_DIR/scripts/install.sh" cursor
-    ;;
-  all)
-    bash "$ZUVO_DIR/scripts/install.sh"
-    ;;
-  *)
-    echo "ERROR: Unknown target: $TARGET"
-    echo "Usage: $0 [claude|codex|cursor|all]"
-    exit 1
-    ;;
-esac
+bash "$ZUVO_DIR/scripts/install.sh"
 
 echo ""
 echo "╔══════════════════════════════════════╗"
