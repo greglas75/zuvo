@@ -554,47 +554,67 @@ ADVERSARIAL_SCRIPT="$SCRIPT_DIR/adversarial-review.sh"
 echo "" >&2
 echo "── Round 1: Code generation ──────────────────────────" >&2
 
+# Checkpoint: skip providers that already have r1-response.txt
+R1_NEEDED=()
 for p in "${PROVIDER_ARRAY[@]}"; do
-  outfile="$JSON_TMPDIR/r1_${p}.txt"
-  timefile="$JSON_TMPDIR/time_r1_${p}.txt"
-  statusfile="$JSON_TMPDIR/status_${p}.txt"
-  printf 'scored' > "$statusfile"
-  echo "  R1 launching: $p..." >&2
-
-  (
-    time_start=$(date +%s)
-    dispatch_provider "$p" > "$outfile" 2>"$JSON_TMPDIR/stderr_r1_${p}.txt"
-    dispatch_exit=$?
-    time_end=$(date +%s)
-    printf '%d' "$((time_end - time_start))" > "$timefile"
-    if [[ $dispatch_exit -eq 0 && -s "$outfile" ]]; then
-      printf 'scored' > "$statusfile"
-    elif [[ $dispatch_exit -eq 124 ]]; then
-      printf 'timeout' > "$statusfile"
-    else
-      printf 'error' > "$statusfile"
-    fi
-  ) &
-  PIDS+=($!)
+  if [[ -s "$ROUND_DIR/$p/r1-response.txt" ]] && [[ $(count_matching_files "$ROUND_DIR/$p" "r1-*.ts") -gt 0 ]]; then
+    r1_files=$(count_matching_files "$ROUND_DIR/$p" "r1-*.ts")
+    echo "  R1 SKIP: $p (checkpoint: ${r1_files} files already exist)" >&2
+  else
+    R1_NEEDED+=("$p")
+  fi
 done
 
-for pid in "${PIDS[@]}"; do wait $pid 2>/dev/null || true; done
-PIDS=()
+if [[ ${#R1_NEEDED[@]} -gt 0 ]]; then
+  for p in "${R1_NEEDED[@]}"; do
+    outfile="$JSON_TMPDIR/r1_${p}.txt"
+    timefile="$JSON_TMPDIR/time_r1_${p}.txt"
+    statusfile="$JSON_TMPDIR/status_${p}.txt"
+    printf 'scored' > "$statusfile"
+    echo "  R1 launching: $p..." >&2
 
-# Collect Round 1 results
+    (
+      time_start=$(date +%s)
+      dispatch_provider "$p" > "$outfile" 2>"$JSON_TMPDIR/stderr_r1_${p}.txt"
+      dispatch_exit=$?
+      time_end=$(date +%s)
+      printf '%d' "$((time_end - time_start))" > "$timefile"
+      if [[ $dispatch_exit -eq 0 && -s "$outfile" ]]; then
+        printf 'scored' > "$statusfile"
+      elif [[ $dispatch_exit -eq 124 ]]; then
+        printf 'timeout' > "$statusfile"
+      else
+        printf 'error' > "$statusfile"
+      fi
+    ) &
+    PIDS+=($!)
+  done
+
+  for pid in "${PIDS[@]}"; do wait $pid 2>/dev/null || true; done
+  PIDS=()
+
+  # Collect new Round 1 results
+  for p in "${R1_NEEDED[@]}"; do
+    status=$(cat "$JSON_TMPDIR/status_${p}.txt" 2>/dev/null || echo "error")
+    r1_time=$(cat "$JSON_TMPDIR/time_r1_${p}.txt" 2>/dev/null || echo "0")
+    if [[ -s "$JSON_TMPDIR/r1_${p}.txt" && "$status" == "scored" ]]; then
+      mkdir -p "$ROUND_DIR/$p"
+      cp "$JSON_TMPDIR/r1_${p}.txt" "$ROUND_DIR/$p/r1-response.txt"
+      extract_code_files "$ROUND_DIR/$p/r1-response.txt" "$ROUND_DIR/$p" "r1"
+      r1_files=$(count_matching_files "$ROUND_DIR/$p" "r1-*.ts")
+      echo "  R1 done: $p (${r1_time}s, ${r1_files} files extracted)" >&2
+    else
+      echo "  R1 WARN: $p — $status (${r1_time}s)" >&2
+    fi
+  done
+fi
+
+# Build PROVIDERS_SUCCEEDED from all providers with r1 files (new + checkpointed)
 PROVIDERS_SUCCEEDED=()
 for p in "${PROVIDER_ARRAY[@]}"; do
-  status=$(cat "$JSON_TMPDIR/status_${p}.txt" 2>/dev/null || echo "error")
-  r1_time=$(cat "$JSON_TMPDIR/time_r1_${p}.txt" 2>/dev/null || echo "0")
-  if [[ -s "$JSON_TMPDIR/r1_${p}.txt" && "$status" == "scored" ]]; then
+  if [[ $(count_matching_files "$ROUND_DIR/$p" "r1-*.ts") -gt 0 ]]; then
     PROVIDERS_SUCCEEDED+=("$p")
-    mkdir -p "$ROUND_DIR/$p"
-    cp "$JSON_TMPDIR/r1_${p}.txt" "$ROUND_DIR/$p/r1-response.txt"
-    extract_code_files "$ROUND_DIR/$p/r1-response.txt" "$ROUND_DIR/$p" "r1"
-    r1_files=$(count_matching_files "$ROUND_DIR/$p" "r1-*.ts")
-    echo "  R1 done: $p (${r1_time}s, ${r1_files} files extracted)" >&2
-  else
-    echo "  R1 WARN: $p — $status (${r1_time}s)" >&2
+    printf 'scored' > "$JSON_TMPDIR/status_${p}.txt"
   fi
 done
 
@@ -611,7 +631,17 @@ if [[ "$WITH_ADVERSARIAL" == "true" ]]; then
   echo "" >&2
   echo "── Round 2: Adversarial review + fix ───────────────" >&2
 
+  R2_NEEDED=()
   for p in "${PROVIDERS_SUCCEEDED[@]}"; do
+    provider_dir="$ROUND_DIR/$p"
+    if [[ $(count_matching_files "$provider_dir" "r2-*.ts") -gt 0 ]]; then
+      echo "  R2 SKIP: $p (checkpoint: r2 files exist)" >&2
+    else
+      R2_NEEDED+=("$p")
+    fi
+  done
+
+  for p in "${R2_NEEDED[@]}"; do
     echo "  R2 reviewing: $p..." >&2
     provider_dir="$ROUND_DIR/$p"
     r1_files_list=$(list_matching_files_space "$provider_dir" "r1-*.ts")
@@ -670,8 +700,8 @@ Fix all issues found. Output corrected files using fenced \`\`\`typescript block
   for pid in "${PIDS[@]}"; do wait $pid 2>/dev/null || true; done
   PIDS=()
 
-  # Extract Round 2 files
-  for p in "${PROVIDERS_SUCCEEDED[@]}"; do
+  # Extract Round 2 files (only for newly dispatched)
+  for p in "${R2_NEEDED[@]}"; do
     provider_dir="$ROUND_DIR/$p"
     if [[ -s "$provider_dir/r2-response.txt" ]]; then
       extract_code_files "$provider_dir/r2-response.txt" "$provider_dir" "r2"
@@ -707,11 +737,20 @@ if [[ "$WITH_TESTS" == "true" ]]; then
   echo "" >&2
   echo "── Round 3: Test generation ────────────────────────" >&2
 
-  # Use best available code: r2 (post-adversarial) or r1 (original)
   code_round="r1"
   [[ "$WITH_ADVERSARIAL" == "true" ]] && code_round="r2"
 
+  R3_NEEDED=()
   for p in "${PROVIDERS_SUCCEEDED[@]}"; do
+    provider_dir="$ROUND_DIR/$p"
+    if [[ $(count_matching_files "$provider_dir" "r3-*.ts") -gt 0 ]]; then
+      echo "  R3 SKIP: $p (checkpoint: r3 files exist)" >&2
+    else
+      R3_NEEDED+=("$p")
+    fi
+  done
+
+  for p in "${R3_NEEDED[@]}"; do
     provider_dir="$ROUND_DIR/$p"
 
     # Build code context from latest round files
@@ -745,8 +784,8 @@ $(cat "$f")
   for pid in "${PIDS[@]}"; do wait $pid 2>/dev/null || true; done
   PIDS=()
 
-  # Extract Round 3 test files
-  for p in "${PROVIDERS_SUCCEEDED[@]}"; do
+  # Extract Round 3 test files (only for newly dispatched)
+  for p in "${R3_NEEDED[@]}"; do
     provider_dir="$ROUND_DIR/$p"
     if [[ -s "$provider_dir/r3-response.txt" ]]; then
       extract_code_files "$provider_dir/r3-response.txt" "$provider_dir" "r3"
@@ -767,7 +806,17 @@ if [[ "$WITH_TEST_ADVERSARIAL" == "true" && "$WITH_TESTS" == "true" ]]; then
   echo "" >&2
   echo "── Round 4: Adversarial on tests + fix ─────────────" >&2
 
+  R4_NEEDED=()
   for p in "${PROVIDERS_SUCCEEDED[@]}"; do
+    provider_dir="$ROUND_DIR/$p"
+    if [[ $(count_matching_files "$provider_dir" "r4-*.ts") -gt 0 ]]; then
+      echo "  R4 SKIP: $p (checkpoint: r4 files exist)" >&2
+    else
+      R4_NEEDED+=("$p")
+    fi
+  done
+
+  for p in "${R4_NEEDED[@]}"; do
     provider_dir="$ROUND_DIR/$p"
     r3_files_list=$(list_matching_files_space "$provider_dir" "r3-*.ts")
     [[ -z "$r3_files_list" ]] && continue
@@ -822,7 +871,7 @@ Fix all issues. Output corrected test files using fenced \`\`\`typescript blocks
   for pid in "${PIDS[@]}"; do wait $pid 2>/dev/null || true; done
   PIDS=()
 
-  for p in "${PROVIDERS_SUCCEEDED[@]}"; do
+  for p in "${R4_NEEDED[@]}"; do
     provider_dir="$ROUND_DIR/$p"
     if [[ -s "$provider_dir/r4-response.txt" ]]; then
       extract_code_files "$provider_dir/r4-response.txt" "$provider_dir" "r4"
