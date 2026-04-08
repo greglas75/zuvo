@@ -3,7 +3,7 @@ name: using-zuvo
 description: "ALWAYS LOADED — Zuvo skill router. Injected at session start. Determines which zuvo skill to invoke for the current task."
 ---
 
-> **Zuvo v1.3.23** | 48 skills | 4 adversarial providers | CQ1-CQ28 + Q1-Q19
+> **Zuvo v1.3.24** | 48 skills | 4 adversarial providers | CQ1-CQ28 + Q1-Q19
 
 # Zuvo Skill Router
 
@@ -247,7 +247,25 @@ If the user declines, proceed but warn: "Without CLAUDE.md, quality gates are su
 
 Do NOT skip this check. Do NOT silently proceed without CLAUDE.md. A project without CLAUDE.md is the #1 reason agents skip tests and quality gates.
 
-### 2. Load Patterns
+### 2. Knowledge Prime (session-level)
+
+Check if the project has a knowledge base:
+```
+Glob("knowledge/*.jsonl")
+```
+
+If found: read `../../shared/includes/knowledge-prime.md` and run a **lightweight session prime** — no specific WORK_FILES or WORK_KEYWORDS (session start doesn't know the task yet). Use:
+```
+WORK_TYPE = "research"
+WORK_KEYWORDS = <project name>
+WORK_FILES = <empty>
+```
+
+This surfaces the top project-level gotchas and anti-patterns at session start, before the user even asks for a task. Individual skills will run a focused prime with task-specific keywords later.
+
+If no knowledge base found: skip silently. No log needed at session level.
+
+### 3. Load Patterns
 
 Read `../../rules/cq-patterns-core.md` — defensive coding patterns (error handling, security, data integrity, resource safety). This is a lightweight summary; skills load the full version when needed.
 

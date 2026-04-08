@@ -2,9 +2,9 @@
 
 > **spec_id:** 2026-04-08-antigravity-build-1215
 > **topic:** Google Antigravity build target for Zuvo plugin
-> **status:** Reviewed
+> **status:** Approved
 > **created_at:** 2026-04-08T12:15:00Z
-> **approved_at:** null
+> **approved_at:** 2026-04-08T13:05:00Z
 > **approval_mode:** interactive
 > **author:** zuvo:brainstorm
 
@@ -241,6 +241,13 @@ Extend case switch (line ~362, not ~344): add `antigravity)` branch. Update `bot
 #### `scripts/dev-push.sh`
 
 No direct changes to `dev-push.sh` conditional logic needed. The Antigravity guard lives inside `install_antigravity()` itself (same pattern as `install_codex()` at line 167: `if [[ ! -d "$HOME/.codex" ]]; then warn...return 0; fi`). The `dev-push.sh` change is simply that `install.sh all` now includes Antigravity via the updated `both|all)` case branch.
+
+#### `scripts/quick-install.sh`
+
+The quick installer (`curl -fsSL .../quick-install.sh | bash`) calls `bash "$ZUVO_DIR/scripts/install.sh"` which defaults to `all`. Antigravity support flows through automatically once `install.sh` is updated. Two cosmetic updates needed:
+
+1. Update the completion banner to mention Antigravity: `"Restart Claude Code / Codex / Cursor / Antigravity"`
+2. Optionally add `~/.gemini/antigravity/skills/` to the old-symlinks cleanup section (remove dead symlinks before fresh install)
 
 #### `shared/includes/env-compat.md`
 
