@@ -199,3 +199,5 @@ Commits pending review. Auto-managed:
 - 5ed4a3e (2026-04-07) fix: incident skill — 6 fixes (suspect window, merge detection, metrics, comms)
 - 2f7b5b1 (2026-04-07) fix benchmark: skill-only flag labels, multi-block static checks, behavioral tests, schema task_source enum
 - f2378ab (2026-04-07) fix benchmark: skill-only flags, multi-block static checks, task_source enum
+- e09b531 (2026-04-08) sync benchmark skill to cache
+- 917b561 (2026-04-08) rewrite benchmark.sh: full 4-round pipeline with file extraction and artifact persistence

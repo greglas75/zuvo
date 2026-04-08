@@ -1,0 +1,169 @@
+{
+  "version": "2.0",
+  "skill": "benchmark",
+  "run_id": "bm-2026-04-08-014044",
+  "timestamp": "2026-04-07T18:40:44Z",
+  "project": "/Users/greglas/DEV/zuvo-plugin",
+  "mode": "corpus",
+  "task_source": "corpus",
+  "task_hash": "c02d40e7289662ee1f0783e3110d97f497d5df8703798a8584c3403be17a608b",
+  "task_snapshot": "# Benchmark Corpus Task — Write Production Code\n\nYou are participating in a benchmark. Write TWO production TypeScript files. Do NOT reference any external rules, style guides, or quality standards — implement from the spec below only. After both files, emit the SELF_EVAL_SUMMARY block.\n\n---\n\n## Minimal Type Contracts\n\nDefine these types inline in whichever file uses them (or in a shared block at the top):\n\n```typescript\ntype OrderStatus = 'pending' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'cancelled';\n\ninterface OrderFilters {\n  status?: OrderStatus;\n  dateRange?: { from: Date; to: Date };\n  customerId?: string;\n  take?: number;\n  skip?: number;\n}\n\ninterface CreateOrderDto {\n  customerId: string;\n  lineItems: Array<{ productId: string; quantity: number; unitPrice: number }>;\n  currency: string;\n}\n\ninterface ExportFilters {\n  status?: OrderStatus;\n  dateRange?: { from: Date; to: Date };\n}\n```\n\nYou may define any additional local types needed. Do NOT invent external packages beyond what is specified.\n\n---\n\n## File 1: OrderService.ts\n\nNestJS service class (`@Injectable()`). Dependencies injected via constructor: `PrismaService`, `RedisService`, `EmailService`, `PaymentGateway`.\n\nImplement the following methods:\n\n- `findAll(filters: OrderFilters, orgId: string)` — query orders with filters (status, dateRange, customerId); Redis cache with TTL; bounded with take/skip pagination; scoped to orgId\n- `findById(id: string, orgId: string)` — find single order; throw NotFoundException if not found or wrong org\n- `create(dto: CreateOrderDto, orgId: string)` — create order + line items in a single transaction; validate dto; emit audit log; return created order\n- `deleteOrder(id: string, orgId: string)` — delete order + line items atomically in transaction; invalidate cache; emit audit log\n- `updateStatus(id: string, newStatus: OrderStatus, orgId: string)` — state machine enforcement: pending→confirmed→processing→shipped→delivered; cancellation allowed from any non-delivered state; send email notification on `shipped` status with error handling; emit audit log\n- `calculateMonthlyRevenue(month: Date, orgId: string)` — aggregate total revenue by currency for the given month; return `{ currency: string, total: number }[]`\n- `bulkUpdateStatus(ids: string[], newStatus: OrderStatus, orgId: string)` — update multiple orders; skip invalid transitions silently; return count of updated orders\n- `getOrdersForExport(filters: ExportFilters, orgId: string)` — full order data including line items, customer, and payments; bounded by maxRows: 10000\n\nAll queries must be scoped by `organizationId`. Redis cache must be invalidated on all mutations. Audit logging on all mutations. Email notification on shipping must have `.catch()` or `await` with error handling.\n\n---\n\n## File 2: useSearchProducts.ts\n\nReact custom hook for product search. Implement:\n\n- Debounced search input (300ms) using `AbortController` to cancel in-flight requests\n- Pagination with `loadMore` that appends results (not replaces)\n- Runtime validation of API response shape (hand-rolled checks, NOT Zod)\n- Error handling with automatic retry on failure (max 3 attempts, exponential backoff)\n- Separate loading states: `isLoading` (initial/reset search) and `isLoadingMore` (loadMore)\n- Cleanup on unmount: abort in-flight requests, clear debounce timers\n\nReturn value: `{ products, total, isLoading, isLoadingMore, error, hasMore, loadMore, retry }`\n\n---\n\n## Required Response Format\n\nYour response MUST follow this structure exactly:\n\n1. A fenced TypeScript block for File 1:\n   ````\n   ```typescript\n   // FILE: OrderService.ts\n   <full implementation>\n   ```\n   ````\n\n2. A fenced TypeScript block for File 2:\n   ````\n   ```typescript\n   // FILE: useSearchProducts.ts\n   <full implementation>\n   ```\n   ````\n\n3. The SELF_EVAL_SUMMARY block at the very end (no prose after it):\n\n```\nSELF_EVAL_SUMMARY\nOrderService: <score 0-20>/20\nuseSearchProducts: <score 0-20>/20\n```\n\nScore 0-20 = sum of: completeness (0-5) + accuracy (0-5) + actionability (0-5) + no_hallucinations (0-5).",
+  "task_snapshot_truncated": false,
+  "options": {
+    "with_tests": true,
+    "with_adversarial": true,
+    "with_test_adversarial": false,
+    "with_static_checks": false
+  },
+  "providers_attempted": [
+    "claude",
+    "codex-fast",
+    "cursor-agent",
+    "gemini"
+  ],
+  "providers_succeeded": [
+    "claude",
+    "codex-fast",
+    "cursor-agent"
+  ],
+  "scored": [
+    "claude",
+    "cursor-agent",
+    "codex-fast"
+  ],
+  "leaderboard": [
+    {
+      "rank": 1,
+      "provider": "claude",
+      "quality": 95,
+      "code_score": 19,
+      "test_score": 19,
+      "time_s": 367,
+      "cost_usd": 0.143448,
+      "compile_ok": null,
+      "tests_pass": null,
+      "self_eval_bias": 0,
+      "adversarial_delta": 0,
+      "status": "scored"
+    },
+    {
+      "rank": 2,
+      "provider": "cursor-agent",
+      "quality": 75,
+      "code_score": 19,
+      "test_score": 11,
+      "time_s": 443,
+      "cost_usd": 0,
+      "compile_ok": null,
+      "tests_pass": null,
+      "self_eval_bias": 3,
+      "adversarial_delta": 4,
+      "status": "scored"
+    },
+    {
+      "rank": 3,
+      "provider": "codex-fast",
+      "quality": 75,
+      "code_score": 14,
+      "test_score": 16,
+      "time_s": 492,
+      "cost_usd": 0.17633,
+      "compile_ok": null,
+      "tests_pass": null,
+      "self_eval_bias": -1,
+      "adversarial_delta": -5,
+      "status": "scored"
+    },
+    {
+      "rank": null,
+      "provider": "gemini",
+      "quality": null,
+      "code_score": null,
+      "test_score": null,
+      "time_s": null,
+      "cost_usd": null,
+      "compile_ok": null,
+      "tests_pass": null,
+      "self_eval_bias": null,
+      "adversarial_delta": null,
+      "status": "error"
+    }
+  ],
+  "scorecards": {
+    "claude": {
+      "code_completeness": 5,
+      "code_accuracy": 4,
+      "code_actionability": 5,
+      "code_no_hallucinations": 5,
+      "code_composite": 19,
+      "test_completeness": 5,
+      "test_accuracy": 5,
+      "test_actionability": 5,
+      "test_no_hallucinations": 4,
+      "test_composite": 19,
+      "adversarial_delta": 0,
+      "test_adversarial_delta": null,
+      "self_eval_bias": 0,
+      "response_excerpt": "```typescript\n// FILE: OrderService.ts\nimport { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';\nimport { PrismaService } from './prisma.service';\nimport { RedisService } from './redis.service';\nimport { EmailService } from './email.service';\nimport { PaymentGateway } from './payment.gateway';\n\ntype OrderStatus = 'pending' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'cancelled';\n\ninterface OrderFilters {\n  status?: OrderStatus;\n  dateRange?: { from"
+    },
+    "codex-fast": {
+      "code_completeness": 3,
+      "code_accuracy": 4,
+      "code_actionability": 2,
+      "code_no_hallucinations": 5,
+      "code_composite": 14,
+      "test_completeness": 4,
+      "test_accuracy": 4,
+      "test_actionability": 4,
+      "test_no_hallucinations": 4,
+      "test_composite": 16,
+      "adversarial_delta": -5,
+      "test_adversarial_delta": null,
+      "self_eval_bias": -1,
+      "response_excerpt": "```typescript\n// FILE: OrderService.ts\nimport {\n  BadRequestException,\n  ConflictException,\n  Injectable,\n  Logger,\n  NotFoundException,\n} from '@nestjs/common';\n\ntype OrderStatus =\n  | 'pending'\n  | 'confirmed'\n  | 'processing'\n  | 'shipped'\n  | 'delivered'\n  | 'cancelled';\n\ninterface OrderFilters {\n  status?: OrderStatus;\n  dateRange?: { from: Date; to: Date };\n  customerId?: string;\n  take?: number;\n  skip?: number;\n}\n\ninterface CreateOrderDto {\n  customerId: string;\n  lineItems: Array<{ prod"
+    },
+    "cursor-agent": {
+      "code_completeness": 5,
+      "code_accuracy": 5,
+      "code_actionability": 5,
+      "code_no_hallucinations": 4,
+      "code_composite": 19,
+      "test_completeness": 4,
+      "test_accuracy": 2,
+      "test_actionability": 2,
+      "test_no_hallucinations": 3,
+      "test_composite": 11,
+      "adversarial_delta": 4,
+      "test_adversarial_delta": null,
+      "self_eval_bias": 3,
+      "response_excerpt": "\n```typescript\n// FILE: OrderService.ts\nimport {\n  BadRequestException,\n  Injectable,\n  Logger,\n  NotFoundException,\n} from '@nestjs/common';\nimport { Prisma } from '@prisma/client';\nimport { PrismaService } from './prisma.service';\nimport { RedisService } from './redis.service';\nimport { EmailService } from './email.service';\nimport { PaymentGateway } from './payment.gateway';\n\ntype OrderStatus =\n  | 'pending'\n  | 'confirmed'\n  | 'processing'\n  | 'shipped'\n  | 'delivered'\n  | 'cancelled';\n\ninte"
+    },
+    "gemini": {
+      "code_completeness": null,
+      "code_accuracy": null,
+      "code_actionability": null,
+      "code_no_hallucinations": null,
+      "code_composite": null,
+      "test_completeness": null,
+      "test_accuracy": null,
+      "test_actionability": null,
+      "test_no_hallucinations": null,
+      "test_composite": null,
+      "adversarial_delta": null,
+      "test_adversarial_delta": null,
+      "self_eval_bias": null,
+      "response_excerpt": ""
+    }
+  },
+  "meta_judge_model": "claude-opus-4-6",
+  "judge_presentation_order": [
+    "claude",
+    "codex-fast",
+    "cursor-agent"
+  ],
+  "judge_input_truncated": true,
+  "execution_notes": [
+    "Gemini returned an empty Round 1 payload and was excluded from scoring.",
+    "Adversarial review used one opposing reviewer per author submission to keep the run bounded."
+  ]
+}
