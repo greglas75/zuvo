@@ -139,8 +139,10 @@ Run adversarial passes sequentially, one RANDOM provider per pass (`--rotate`). 
 ```bash
 adversarial-review --rotate --mode test \
   --context "Code type: [type] [complexity] [testability]. Q-GATES: Q7=[0|1] Q11=[0|1] Q13=[0|1] Q15=[0|1] Q17=[0|1]" \
-  --files "<production-file> <test-file>"
+  --files "<absolute-path-to-production-file> <absolute-path-to-test-file>"
 ```
+
+**Always use absolute paths for --files.** Relative paths fail silently.
 
 The provider sees both files and focuses on gaps between production behavior and test coverage. Without production code, reviewer can't detect missing ordering tests, auth boundary gaps, or untested error messages.
 

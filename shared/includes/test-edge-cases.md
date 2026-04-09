@@ -9,6 +9,6 @@
 | **array** | empty `[]`, single element, duplicates, very large (1000+), sparse |
 | **object** | empty `{}`, missing keys, extra keys, null prototype `Object.create(null)` |
 | **boolean** | explicit `true`/`false`, truthy/falsy coercion traps (`0`, `""`, `null`) |
-| **Date** | invalid date, epoch (`new Date(0)`), timezone edge (DST transitions), far future |
+| **Date** | invalid date, epoch (`new Date(0)`), timezone edge (DST transitions), far future, **exact window boundary** (`time === deadline`, off-by-one on timer/window expiry) |
 | **optional** | `undefined`, `null`, missing key vs present-null, explicit `undefined` in object |
 | **enum** | each valid value, invalid value not in enum, `undefined` |
