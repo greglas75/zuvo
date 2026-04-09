@@ -4,9 +4,8 @@ description: >
   Structured refactoring runner with ETAP workflow, resumable CONTRACT, and
   batch processing. Use when restructuring code, extracting methods, splitting
   files, breaking circular dependencies, or cleaning up god classes. NOT for
-  new features (use zuvo:build). Execution modes: full (default), auto (skip
-  test approval), quick (small scope), standard (moderate, no agents), batch
-  <file> (queue processing). Control flags: plan-only, no-commit, continue.
+  new features (use zuvo:build). Execution modes: full (default), batch <file>
+  (queue processing). Control flags: plan-only, no-commit, continue.
 ---
 
 # zuvo:refactor
@@ -63,99 +62,25 @@ ETAP-1B: test-quality-rules.md -- READ
 ### Execution Modes (mutually exclusive)
 
 ```
-$ARGUMENTS = empty         -> FULL mode (approval gates at plan + test phase)
+$ARGUMENTS = empty         -> FULL mode (default)
 $ARGUMENTS = "full"        -> FULL mode (explicit)
-$ARGUMENTS = "auto"        -> AUTO mode (approval gate at plan only)
-$ARGUMENTS = "quick"       -> QUICK mode (lightweight, no agents, no stops)
-$ARGUMENTS = "standard"    -> STANDARD mode (contract state + ETAP, no agents)
 $ARGUMENTS = "batch <file>"-> BATCH mode (process queue file, zero stops)
 $ARGUMENTS = other         -> task description, FULL mode
 ```
 
-### Control Flags (modify behavior of the selected mode)
+### Control Flags
 
 ```
-"no-commit"                -> Apply to current mode: skip auto-commits (show diff + proposed message)
-"plan-only"                -> Apply to current mode: ETAP-1A only, stop after plan
+"no-commit"                -> Skip auto-commits (show diff + proposed message instead)
+"plan-only"                -> Stop after the approval gate (Phase 1). Do not enter Phase 2 or Phase 3.
 "continue"                 -> RESUME: scan .zuvo/contracts/refactor-*.json, resume active contract
 "continue <path>"          -> RESUME: user passes readable file path (e.g., src/services/order.service.ts), skill computes hash internally to find .zuvo/contracts/refactor-{hash}.json
 ```
 
 **Flag priority rules:**
-- `continue` has highest priority: it overrides the execution mode (the mode is restored from the contract state file). All other flags except `no-commit` are ignored when `continue` is active. Example: `zuvo:refactor standard continue` ignores `standard` and resumes from the contract's recorded mode.
-- `no-commit` and `plan-only` combine freely with any mode: `zuvo:refactor standard no-commit` runs STANDARD mode without committing.
+- `continue` has highest priority: it overrides flags (except `no-commit`). Mode is always `full` — if the contract was created with a legacy mode (`quick`/`standard`/`auto`), silently upgrade to `full` and log the migration.
+- `no-commit` and `plan-only` combine freely: `zuvo:refactor no-commit` runs full mode without committing. Contract stage is set to `EXECUTION_COMPLETE` (not `COMPLETE`) so `continue` can resume from the uncommitted state.
 - `plan-only` and `continue` are mutually exclusive (continue resumes past the plan phase).
-
-### Mode Comparison
-
-| Aspect | quick | standard | full | auto | batch |
-|--------|-------|----------|------|------|-------|
-| Contract state file | No | Yes | Yes | Yes | Per-file |
-| Sub-agents | None | None | 2-6 | 2-6 | 2-6 |
-| ETAP stages | Inline | 1A + 2 | 1A + 1B + 2 | 1A + 1B + 2 | 1A + 1B + 2 |
-| CQ before/after | Quick eval | Printed | Agent-verified | Agent-verified | Agent-verified |
-| Test rewrite (1B) | Skip | Verify only | Write if needed | Write if needed | Write if needed |
-| Backup branch | No | No | Yes | Yes | No |
-| Backlog persistence | No | No | Yes | Yes | Yes |
-| Approval stops | None | Plan only | Plan + test | Plan only | None |
-
-### QUICK Mode
-
-For small, low-risk refactors.
-
-**Auto-detection criteria:** File <=120L, <=1 file changed, type is one of EXTRACT_METHODS / SIMPLIFY / RENAME_MOVE / DELETE_DEAD, no GOD_CLASS or security or API or migration involvement.
-
-**Flow:** Stack detect -> Type detect -> Inline CQ audit -> Quick Plan (inline scope + extraction list, no approval stop) -> Baseline tests -> Execute -> Verify (tsc + tests + CQ self-eval) -> Commit.
-
-Skips: sub-agents, backup branch, contract state file, multi-phase ETAP, backlog, metrics, all approval stops.
-
-### STANDARD Mode
-
-For moderate refactors that need structure but not full agent overhead.
-
-**Auto-detection criteria:** File 120-400L, 1-3 files changed, type is NOT GOD_CLASS / security / API-contract / migration.
-
-**Flow:** Stack detect -> Type detect -> CQ pre-audit (inline) -> contract state file -> ETAP-1A plan -> APPROVAL STOP -> Baseline tests -> Execute -> CQ post-audit (inline) -> Verify -> Commit.
-
-Includes: contract state file for resumability, CQ before/after scoring, ETAP stages. Skips: sub-agents, backup branch, backlog, ETAP-1B test rewrite.
-
-### no-commit Mode
-
-Identical to FULL except: after execution, show `git diff --staged` and a proposed commit message. The user controls git history.
-
----
-
-## Mode Resolution (when no explicit mode given)
-
-If the user passed an explicit mode (`full`, `quick`, `standard`, `auto`, `batch`), use it. Otherwise, resolve the mode **after** reading the target file (requires line count and type):
-
-```
-1. Read target file -> count lines, detect type (Phase 1)
-2. Apply auto-detection criteria:
-
-   QUICK if ALL:
-     - lines <= 120
-     - scope <= 1 file
-     - type in {EXTRACT_METHODS, SIMPLIFY, RENAME_MOVE, DELETE_DEAD}
-     - NOT GOD_CLASS, NOT security/API/migration involvement
-
-   STANDARD if ALL:
-     - lines 121-400
-     - scope 1-3 files
-     - type NOT in {GOD_CLASS, security, API-contract, migration}
-
-   FULL otherwise (default)
-
-3. Print resolution:
-   MODE RESOLUTION: [selected_mode]
-   Reason: [criteria matched] (e.g., "142L, EXTRACT_METHODS, 2 files -> STANDARD")
-
-4. If selected_mode is QUICK: skip contract state file creation (QUICK has no contract).
-   Otherwise: record selected_mode in contract state file.
-```
-
-The user can override auto-detection at the plan approval stop by saying "use full" or "use quick". Override is only possible in modes that have a plan approval stop (standard, full, auto). In quick and batch modes there is no approval stop, so no override opportunity.
-This applies only to modes with a plan approval stop (standard, full, auto).
 
 ---
 
@@ -524,7 +449,7 @@ Apply any FIX-NOW items from the auditor before committing. DEFER items go to th
 ### Adversarial Review (MANDATORY — do NOT skip)
 
 ```bash
-git add -u && git diff --staged | adversarial-review --json --mode code
+git add -u && git diff --staged | adversarial-review --mode code
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
@@ -783,30 +708,3 @@ After each extraction, check:
 - All modules: run CQ self-eval on each (Split-File Audit Rule).
 
 ---
-
-## IMPROVE_TESTS Workflow
-
-When the target is a test file:
-
-1. **ETAP-1A:** Run Q1-Q19 self-eval to identify gaps. Classify each gap. Record the BEFORE score in the contract state file.
-2. **ETAP-1B:** Structural cleanup (test organization, describe blocks, mock setup). Commit.
-3. **ETAP-2:** Assertion strengthening (exact values, error path tests, branch coverage). Re-score Q1-Q19. Commit.
-4. **Gate:** Score must improve by at least 2 points, or reach 16+/19.
-
----
-
-## Environment Adaptation
-
-Refer to `env-compat.md` for dispatch patterns:
-
-- **Claude Code:** Use the Task tool for parallel agent dispatch. Set model and type per agent.
-- **Codex:** Agents are TOML configs. Skills reference agents by name.
-- **Cursor:** No agent spawning. Execute each agent's analysis sequentially yourself, maintaining the same output format and quality standards.
-
-Progress tracking:
-- **Claude Code:** Use TaskCreate/TaskUpdate for structured progress.
-- **Codex / Cursor:** Print inline: `STEP: ETAP-1A [START]` ... `STEP: ETAP-1A [DONE]`
-
-User interaction:
-- **Interactive environments:** Ask the user at approval gates.
-- **Non-interactive environments:** At approval stops, proceed with the safest default and document the choice.

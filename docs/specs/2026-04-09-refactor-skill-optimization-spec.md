@@ -2,9 +2,9 @@
 
 > **spec_id:** 2026-04-09-refactor-skill-optimization-1845
 > **topic:** Refactor skill structural overhaul — mode reduction, contradiction fixes, agent prompt rewrites
-> **status:** Draft
+> **status:** Approved
 > **created_at:** 2026-04-09T18:45:00Z
-> **approved_at:** null
+> **approved_at:** 2026-04-09T19:10:00Z
 > **approval_mode:** interactive
 > **author:** zuvo:brainstorm
 
@@ -98,9 +98,18 @@ If we do nothing: every new feature added to refactor will interact with 5 mode 
 
 ### D9: Migrate existing contract state files
 
-**Chosen:** When `continue` loads a contract with `"mode": "quick"`, `"mode": "standard"`, or `"mode": "auto"`, silently upgrade it to `"mode": "full"` and proceed. Log the migration.
+**Chosen:** When `continue` loads a contract with `"mode": "quick"`, `"mode": "standard"`, or `"mode": "auto"`, silently upgrade to `"mode": "full"`. Also map any legacy stage values from the old phase numbering to the new Phase 0-4 scheme:
 
-**Why:** Existing `.zuvo/contracts/refactor-*.json` files may contain eliminated mode names. Without a migration rule, `continue` on an old contract has undefined behavior.
+| Legacy stage | New stage |
+|-------------|-----------|
+| `ETAP-1A` | `PHASE-1` |
+| `ETAP-1B` | `PHASE-2` |
+| `ETAP-2` | `PHASE-3` |
+| `COMPLETE` | `COMPLETE` (unchanged) |
+
+Bump contract `"version"` from 2 to 3. Log the migration.
+
+**Why:** Existing `.zuvo/contracts/refactor-*.json` files may contain eliminated mode names and old phase/stage values. Without a migration rule, `continue` on an old contract has undefined behavior.
 
 ### D10: GOD_CLASS partial failure in batch mode
 
@@ -209,10 +218,17 @@ After Phase 1 completes, display:
     [Confirm / change type / modify plan]
 
 Wait for user input. If the user changes the type or plan:
-1. The orchestrator (not agents) recomputes scope, extractions, and test mode inline.
-2. Sub-agents are NOT re-dispatched — their analysis (dependency map, existing code scan) remains valid.
-3. Re-display the updated plan.
-4. Wait for confirmation again.
+
+**Cosmetic change** (wording, extraction names, minor scope adjustments within same files):
+1. The orchestrator recomputes scope, extractions, and test mode inline.
+2. Sub-agents are NOT re-dispatched — their analysis remains valid.
+3. Re-display the updated plan. Wait for confirmation again.
+
+**Material change** (different type, new files added to scope, fundamentally different extraction strategy):
+1. Re-dispatch Dependency Mapper and Existing Code Scanner with updated inputs.
+2. Recompute plan incorporating new agent results.
+3. Re-display. Wait for confirmation again.
+
 Proceed only after explicit confirmation.
 ```
 
@@ -323,15 +339,19 @@ Cycles:     [N cycles detected | no cycles]
 After execution, before CQ Auditor agent and adversarial review, run:
 
 ```
-# Machine verification (CodeSift)
-review_diff(repo, since="HEAD~1", until="STAGED",
+# Record pre-refactoring SHA before any changes in Phase 3:
+PRE_REFACTOR_SHA = $(git rev-parse HEAD)
+
+# Machine verification (CodeSift) — after execution completes:
+review_diff(repo, since=PRE_REFACTOR_SHA, until="STAGED",
             checks="breaking-changes,test-gaps,dead-code,complexity,blast-radius",
             token_budget=10000)
 
-impact_analysis(repo, since="HEAD~1")               # blast radius vs scope fence
-changed_symbols(repo, since="HEAD~1")                # API surface change detection
-diff_outline(repo, since="HEAD~1")                   # structural diff
-check_boundaries(repo, rules=PROJECT_RULES)           # arch boundary check (if rules defined)
+impact_analysis(repo, since=PRE_REFACTOR_SHA)        # blast radius vs scope fence
+changed_symbols(repo, since=PRE_REFACTOR_SHA)        # API surface change detection
+diff_outline(repo, since=PRE_REFACTOR_SHA)           # structural diff
+# Only if project defines boundary rules:
+check_boundaries(repo, rules=PROJECT_RULES)           # arch boundary check
 ```
 
 **`review_diff` integration with CQ Auditor:**
@@ -426,7 +446,7 @@ Key additions:
 
 1. SKILL.md has exactly 2 execution modes: `full` (default) and `batch <file>`. No references to `quick`, `standard`, or `auto` modes remain in the skill text.
 2. Mode Comparison table, QUICK Mode section, STANDARD Mode section, and Mode Resolution section are deleted.
-3. SKILL.md line count is ≤680 (from 812).
+3. SKILL.md line count is ≤680 (from 812, target ~650).
 4. Full mode has exactly 1 approval gate after Phase 1 (type + plan display). No other approval gates exist.
 5. Batch mode has 0 approval gates.
 6. Phase numbering uses a single system (Phase 0-4). Current Phase 5 is renamed to Phase 4. ETAP names appear as descriptive labels within phases only.
@@ -460,7 +480,7 @@ Key additions:
 ### Agent prompts — all agents
 
 21. All 3 agent files produce output conforming to agent preamble structure (`## Report → ### Findings → ### Summary → ### BACKLOG ITEMS`).
-22. All 3 agent files have execution profile header with token budget: `> Execution profile: read-only analysis | Token budget: 3000 tokens (per-call limit for CodeSift)`.
+22. All 3 agent files have execution profile header with per-call CodeSift token budget: dependency-mapper: 5000 (batch query with 5 sub-queries), cq-auditor: 3000, existing-code-scanner: 3000.
 23. All 3 agent files have error handling: empty input → STOP; file unreadable → report and skip; degraded mode → notice at top.
 24. dependency-mapper and existing-code-scanner define SCOPE placeholder: `SCOPE = directory containing the target file + "/**"`.
 
@@ -485,12 +505,15 @@ Key additions:
 
 ### CodeSift integration
 
-35. Phase 0 pre-scan includes `classify_roles` and `find_circular_deps` (when CodeSift available).
-36. Phase 3 post-audit runs `review_diff(until="STAGED")` before CQ Auditor dispatch.
-37. Phase 3 post-audit runs `impact_analysis` + `changed_symbols` + `diff_outline` for blast radius and API surface verification.
-38. RENAME_MOVE type uses `rename_symbol` for cross-file rename (when CodeSift available).
-39. BREAK_CIRCULAR type uses `find_circular_deps` before and after execution.
-40. Post-execution cleanup includes `find_unused_imports` on all modified files.
+All CodeSift-dependent ACs have a degraded mode: when CodeSift is unavailable, skip the tool call, log `[DEGRADED: tool unavailable]`, and continue. CQ Auditor receives empty `machine_checks` and runs in manual-only mode.
+
+35. Phase 0 pre-scan includes `classify_roles` and `find_circular_deps` when CodeSift is available. When unavailable: skip with degraded notice.
+36. Phase 3 post-audit runs `review_diff(until="STAGED")` before CQ Auditor dispatch when CodeSift is available. When unavailable: pass empty `machine_checks` to CQ Auditor.
+37. Phase 3 post-audit runs `impact_analysis(since=PRE_REFACTOR_SHA)` + `changed_symbols(since=PRE_REFACTOR_SHA)` + `diff_outline` for blast radius and API surface verification. `PRE_REFACTOR_SHA` is the commit hash recorded at the start of Phase 3 execution (before any changes). For single-extraction refactors this equals HEAD~1; for GOD_CLASS multi-commit it captures the full refactoring window. When CodeSift unavailable: skip with degraded notice.
+38. RENAME_MOVE type uses `rename_symbol` for cross-file rename when CodeSift is available. Fallback: manual edit with grep-based import discovery.
+39. BREAK_CIRCULAR type uses `find_circular_deps` before and after execution when CodeSift is available. Fallback: skip cycle verification with degraded notice.
+40. Post-execution cleanup includes `find_unused_imports` on all modified files when CodeSift is available.
+41. `check_boundaries` runs only if the project defines architectural boundary rules (e.g., `.boundary-rules`, eslint-plugin-boundaries config). Otherwise: skip silently.
 
 ## Out of Scope
 
@@ -503,4 +526,6 @@ Key additions:
 
 ## Open Questions
 
-None — all questions resolved during design dialogue.
+1. **Security mode classification rules** — The `--mode security` override triggers when diff touches "auth, payment, crypto, PII, or migration files." No deterministic matching rules (path globs, symbol patterns) are defined. Current behavior: orchestrator uses best judgment. Consider defining explicit glob patterns (e.g., `**/auth/**`, `**/payment/**`, `**/*.migration.*`) in a future iteration.
+
+2. **Adversarial review unavailability in non-Claude environments** — The fallback path (`~/.claude/plugins/cache/...`) only works in Claude Code. Codex/Cursor environments may not have the script. Current behavior: pipeline blocks on the mandatory step. Consider adding a portable fallback or graceful skip with degraded-mode notice.

@@ -259,3 +259,6 @@ Commits pending review. Auto-managed:
 - 26348d4 (2026-04-09) feat: PostToolUse hook enforces adversarial review after code-producing skills
 - 546a9ce (2026-04-09) release: v1.3.34 — feat: PostToolUse hook — adversarial review enforcement after code-producing skills
 - c76ed9f (2026-04-09) rewrite: write-tests — single-file pipeline (532→197 lines)
+- 8d41056 (2026-04-09) release: v1.3.35 — rewrite: write-tests single-file pipeline — 532→197 lines, adversarial per-file, CodeSift discovery, Q-scoring shared include
+- 3034c2f (2026-04-09) rewrite: review skill — 920→546 lines, 4 extracted agents, adversarial at all tiers
+- 9ee978f (2026-04-09) optimize: write-tests token reduction + iterative adversarial
