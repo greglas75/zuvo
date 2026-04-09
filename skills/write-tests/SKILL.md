@@ -36,7 +36,7 @@ CORE (Phase 0):
   3. ../../shared/includes/test-blocklist.md       -- [READ|MISSING -> STOP]
   4. ../../shared/includes/quality-gates.md        -- [READ|MISSING -> STOP]
   5. ../../shared/includes/run-logger.md           -- [READ|MISSING -> STOP]
-  6. ../../rules/testing.md                        -- [READ|MISSING -> STOP]
+  6. ../../rules/testing-slim.md                    -- [READ|MISSING -> STOP]
 ```
 
 **Step 1 (load after classification):** based on file complexity.
@@ -57,14 +57,15 @@ STANDARD+ only (skip for THIN):
 3. **Baseline test run:** execute test suite, record pre-existing failures. These are ignored in verification.
 4. **Build queue:**
    - **Explicit mode:** queue = user's target file(s)
-   - **Auto mode with CodeSift:**
+   - **Auto mode with CodeSift:** single batch call:
      ```
-     classify_roles(repo)                    → dead/leaf symbols = likely untested
-     analyze_hotspots(repo, since_days=90)   → prioritize by churn × complexity
-     find_references(repo, symbol_names=[exported symbols], file_pattern="*.test.*")
-                                             → 0 refs in test files = no tests
+     codebase_retrieval(repo, token_budget=5000, queries=[
+       {type: "dead_code"},
+       {type: "hotspots", since_days: 90},
+       {type: "references", symbol_names: [exports], file_pattern: "*.test.*"}
+     ])
      ```
-     Merge results. Priority: UNCOVERED+high-churn first. Queue all UNCOVERED + PARTIAL files.
+     Dead/leaf symbols with 0 test refs = UNCOVERED. Priority: high-churn first.
    - **Auto mode without CodeSift:** `Glob("src/**/*.ts")` + check for matching `*.test.*` files. Files without test = UNCOVERED.
 
 **`--dry-run` mode:** after building queue, run Step 1 (Analyze) for each file, print classification table, STOP.
@@ -79,10 +80,14 @@ For each file in the queue, execute Steps 1-5 in order. Do NOT skip any step. Do
 
 Read the production file fully. Classify it.
 
-**With CodeSift:**
-- `get_file_outline(repo, file_path)` → exports, classes, functions
-- `analyze_complexity(repo, file_pattern="<file>")` → cyclomatic complexity, nesting, LOC
-- `trace_call_chain(repo, symbol, direction="callees")` → dependencies to mock
+**With CodeSift:** single batch call:
+```
+codebase_retrieval(repo, token_budget=3000, queries=[
+  {type: "outline", file_path: "<file>"},
+  {type: "complexity", file_pattern: "<file>"},
+  {type: "call_chain", symbol_name: "<main_export>", direction: "callees"}
+])
+```
 
 **Without CodeSift:** Read the file, count branches manually.
 
