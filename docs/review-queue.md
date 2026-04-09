@@ -293,3 +293,5 @@ Commits pending review. Auto-managed:
 - 2c8d0d6 (2026-04-09) enhance: retrospective — up to 5 ranked change proposals, token breakdown table
 - 9edf2e1 (2026-04-09) release: v1.3.45 — enhance: retrospective — multi-proposal + token breakdown
 - 8639f7d (2026-04-09) feat: ORM templates, side-effect assertions, vi.hoisted docs, pass count reduction
+- 098719b (2026-04-09) release: v1.3.46 — feat: ORM mock templates, error side-effect assertions, vi.hoisted docs, adversarial 4→2 passes
+- 6027543 (2026-04-09) enhance: retrospective — paste-ready code in proposals, impact ranking table
