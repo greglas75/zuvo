@@ -27,7 +27,7 @@ Fill these 7 fields. At least 1 of fields 1-4 must be non-empty and artifact-gro
 | 3 | `most_turns` | Which sub-task consumed the most iterations? What would have prevented it? | Must include a count (turns, attempts, or minutes) |
 | 4 | `missing_template` | What code pattern did you need but had to invent from scratch? | Must include the pattern name or a 1-line description |
 | 5 | `worked_well` | What in the skill saved you time or prevented mistakes? | May reference specific include, phase, or template |
-| 6 | `change_proposal` | ONE specific edit to ONE specific file. | Format: `FILE: / SECTION: / CONTENT: / RATIONALE:` |
+| 6 | `change_proposals` | Up to 5 specific edits, ranked by impact. Each one: `FILE: / SECTION: / CONTENT: / RATIONALE:`. At least 1 required. | Each must name a file path and a concrete change — "improve docs" is rejected |
 | 7 | `session_cost` | Estimate session costs. Use `/cost` if available, otherwise estimate from activity. | Must include: tool call count, files read, files modified |
 
 **Structural grounding check:** Each non-empty answer in fields 1-4 MUST contain at least one of: a file path with extension (e.g., `app.ts`), a phase/step number (e.g., `Phase 3`), or a numeric count (e.g., `6 turns`). Answers without any of these tokens are treated as empty.
@@ -97,13 +97,28 @@ Append a section to the retro markdown file using this exact template:
 - **Tool calls:** N total (Read: N, Edit: N, Bash: N, Grep: N, ...)
 - **Test runs:** N (pass: N, fail: N)
 - **Adversarial passes:** N
-- **Estimated tokens:** ~NK input, ~NK output
+- **Token breakdown:**
 
-### Change Proposal
-FILE: [path]
-SECTION: [where]
+| Category | Gross | With cache | Notes |
+|----------|-------|------------|-------|
+| System prompt + rules + includes | ~NK | ~NK | cached after turn 1 |
+| Production code reads | ~NK | ~NK | one-time reads |
+| Conversation context (cumulative) | ~NK | ~NK | grows per turn |
+| Output total | ~NK | ~NK | not cacheable |
+
+- **Biggest waste:** [what consumed the most tokens for the least value — e.g., "system prompt 15K × 17 turns = 255K gross, but cache reduces to ~50K"]
+
+### Change Proposals (ranked by impact, up to 5)
+
+**1.** FILE: [path] | SECTION: [where]
 CONTENT: [what to add]
 RATIONALE: [which problem from above it solves]
+
+**2.** FILE: [path] | SECTION: [where]
+CONTENT: [what to add]
+RATIONALE: [...]
+
+(continue up to 5 if warranted)
 ```
 
 If `degraded_context = true`, prefix the H2 header with `[DEGRADED-CONTEXT]` and cap each answer to 2 sentences.
@@ -164,6 +179,6 @@ fi
 ## Enforcement Rules
 
 - At least 1 of fields 1-4 must have a non-empty, structurally grounded answer (contains file path, phase number, or numeric count)
-- Field 6 (change proposal) is always required and must use `FILE: / SECTION: / CONTENT: / RATIONALE:` format
-- Field 7 (session cost) is always required with at least tool call count, files read, files modified
+- Field 6 (change proposals) is always required — at least 1, up to 5, ranked by impact. Each must use `FILE: / SECTION: / CONTENT: / RATIONALE:` format
+- Field 7 (session cost) is always required with tool call count, files read, files modified, token breakdown table, and biggest waste insight
 - No code snippets or user data values in any field — only file paths, error types, phase numbers, and structured signals
