@@ -298,3 +298,4 @@ Commits pending review. Auto-managed:
 - b64cd47 (2026-04-09) release: v1.3.47 — enhance: retrospective — paste-ready proposals + impact ranking
 - b30952a (2026-04-09) fix: retrospective gate — always write unless session truly aborted
 - 67ebed2 (2026-04-09) release: v1.3.48 — fix: retrospective gate — always write retro
+- 5736e85 (2026-04-09) chore: update review queue with v1.3.48 release entry
