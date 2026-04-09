@@ -317,27 +317,70 @@ For each test file, run Q1-Q19. Format: `Q EVAL: file.spec.ts | Q1=1 Q2=1 ... | 
 
 Issues NOT introduced by the current diff: always report critical CQ gate violations (CQ3/4/5/6/8/14); briefly note CQ2, CQ10, CQ22; skip naming/magic numbers (code-audit territory). Cap at RECOMMENDED severity.
 
-### 1.6 Adversarial (ALL tiers)
+### 1.6 Adversarial (ALL tiers — sequential)
 
-Run cross-model adversarial review using the bash script:
+Cross-model adversarial review using external providers. Runs **sequentially** — each provider is informed of prior findings and targets different areas. Text mode (no `--json`).
 
 ```bash
-git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review --mode code
+# Per-provider invocation:
+git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review --mode code --provider <name>
 ```
 
 If `adversarial-review` not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
 
-Script auto-detects and runs ALL available providers in parallel (Gemini, Codex, opposite-Claude-model).
-
 **Self-review escalation:** If SELF-REVIEW marker set in 1.1, pass `--all-providers` flag.
 
-**Failure:** Provider timeout/malformed -> skip that provider. All unavailable -> `[CROSS-REVIEW] No external provider available.` in SKIPPED STEPS. Partial success -> use available, note skipped.
+#### REPORT mode — sequential finding (no fixes)
 
-**Parse:** CRITICAL -> MUST-FIX (bypasses confidence gate). WARNING -> RECOMMENDED. INFO -> NIT. Tag as `[CROSS:<provider>]`. Deduplicate against primary findings (same file:line = drop).
+Each provider receives the diff + a summary of what prior providers found. Each is instructed to search for NEW issues only.
+
+```
+Provider 1 (e.g. Gemini):
+  Input: diff
+  Output: ADV-1, ADV-2
+
+Provider 2 (e.g. Codex):
+  Input: diff + "Already found: R-1..3, ADV-1..2 — find NEW issues"
+  Output: ADV-3
+
+Provider 3 (e.g. opposite-Claude):
+  Input: diff + "Already found: R-1..3, ADV-1..3 — final pass"
+  Output: ADV-4 (or clean)
+```
+
+Zero deduplication needed — each provider deliberately avoids prior findings.
+
+#### FIX mode — sequential fix + validation
+
+Each provider reviews the IMPROVED code after fixes from prior passes.
+
+```
+Provider 1:
+  Input: diff (post-primary-audit fixes)
+  Output: ADV-1 → apply fix
+
+Provider 2:
+  Input: updated diff (post-ADV-1 fix)
+  Output: validates prior fix + finds ADV-2 → apply fix
+
+Provider 3:
+  Input: updated diff (post-ADV-2 fix)
+  Output: final validation (clean or ADV-3)
+```
+
+Each fix is validated by the next provider. Max 2 fix attempts per provider finding.
+
+#### Common rules
+
+- **Provider order:** use all available, max 3 sequential passes
+- **Timeout:** 60s per provider. Skip on timeout/malformed, continue with next.
+- **All unavailable:** `[CROSS-REVIEW] No external provider available.` in SKIPPED STEPS.
+- **Severity mapping:** CRITICAL -> MUST-FIX (bypasses confidence gate). WARNING -> RECOMMENDED. INFO -> NIT.
+- **Tag:** each finding as `[CROSS:<provider>]`
 
 ### Multi-Pass (--thorough variant)
 
-3 passes in parallel: Pass 1 alphabetical, Pass 2 reverse dependency (leaf-first), Pass 3 risk-score descending. **Majority voting:** 3/3 -> KEEP + confidence +15. 2/3 -> KEEP. 1/3 -> DOWNGRADE one tier. Adversarial runs AFTER merge and is NOT subject to voting (WARNING/INFO -> confidence gate, CRITICAL -> bypass).
+3 audit passes in parallel: Pass 1 alphabetical, Pass 2 reverse dependency (leaf-first), Pass 3 risk-score descending. **Majority voting:** 3/3 -> KEEP + confidence +15. 2/3 -> KEEP. 1/3 -> DOWNGRADE one tier. Sequential adversarial runs AFTER multi-pass merge. Adversarial findings are NOT subject to voting — they go through confidence gate (WARNING/INFO) or bypass it (CRITICAL).
 
 ---
 

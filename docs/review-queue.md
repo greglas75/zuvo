@@ -262,3 +262,6 @@ Commits pending review. Auto-managed:
 - 8d41056 (2026-04-09) release: v1.3.35 — rewrite: write-tests single-file pipeline — 532→197 lines, adversarial per-file, CodeSift discovery, Q-scoring shared include
 - 3034c2f (2026-04-09) rewrite: review skill — 920→546 lines, 4 extracted agents, adversarial at all tiers
 - 9ee978f (2026-04-09) optimize: write-tests token reduction + iterative adversarial
+- 2c95b7e (2026-04-09) release: v1.3.36 — optimize: write-tests tiered loading, text adversarial, iterative 4-pass, no sub-agent — ~30% token reduction
+- 3374279 (2026-04-09) rewrite: refactor skill — 812→670 lines, 5→2 modes, 4 contradiction fixes, 10 CodeSift tools, agent rewrites
+- 06c00e4 (2026-04-09) optimize: testing-slim.md (465→54 lines) + batch CodeSift calls

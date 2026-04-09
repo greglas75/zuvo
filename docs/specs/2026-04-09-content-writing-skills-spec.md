@@ -2,9 +2,9 @@
 
 > **spec_id:** 2026-04-09-content-writing-skills-1845
 > **topic:** write-article and content-optimize skills
-> **status:** Draft
+> **status:** Approved
 > **created_at:** 2026-04-09T18:45:00Z
-> **approved_at:** null
+> **approved_at:** 2026-04-09T19:15:00Z
 > **approval_mode:** interactive
 > **author:** zuvo:brainstorm
 
@@ -55,7 +55,9 @@ No open-source tool combines deep research, anti-slop enforcement, and adversari
 Soft bans activate based on `--tone`:
 - `casual` / `marketing`: all soft bans active (strictest)
 - `technical`: "Furthermore", "Moreover", "In conclusion" allowed; rest banned
-- `formal` / `academic`: all soft bans are WARNINGs only (least strict)
+- `formal`: all soft bans are WARNINGs only (least strict)
+
+Note: `academic` is not a separate tone value — use `formal` for academic content. The `--tone` enum is: `casual` | `technical` | `formal` | `marketing`.
 
 **Why:** One threshold doesn't fit all content types. "Furthermore" is slop in a blog post but normal in a technical reference.
 
@@ -205,11 +207,12 @@ It is important to note, plays a crucial role, are not limited to
 Ponadto, Co więcej, Podsumowując, Warto podkreślić, Nie ulega wątpliwości,
 Kluczowym aspektem jest, W dzisiejszych czasach
 
-## Burstiness Rules
+## Burstiness Rules (qualitative — LLM-assessed, not exact counting)
 
-- Max 3 consecutive sentences in 15-25 word range
-- Min 20% of sentences should be <10 words or >30 words
-- No more than 2 consecutive sentences starting with the same word
+- Avoid long runs of similarly-lengthed sentences (flag 3+ consecutive medium-length sentences)
+- Mix short punchy sentences with longer complex ones
+- Vary sentence openers — flag 2+ consecutive sentences starting with the same word
+- These are heuristic checks assessed by the reviewer agent, not deterministic word counts
 ```
 
 #### `shared/includes/prose-quality-registry.md`
@@ -361,7 +364,11 @@ JSON output contract for content-optimize:
 |-------|-------|------|-------|------|
 | Anti-Slop Reviewer | sonnet | Explore | Read | `agents/anti-slop-reviewer.md` |
 
-The Anti-Slop Reviewer is a SEPARATE agent from the Writer — it has no memory of the drafting process. It sees only the output text and the banned vocabulary list. This is the two-model pattern.
+The Anti-Slop Reviewer is a SEPARATE agent from the Writer — it has no memory of the drafting process. It sees only the output text and the banned vocabulary list. This is the two-model pattern. Additionally, the cross-model adversarial review at the end of Phase 4 uses `adversarial-loop-docs.md` which dispatches to external providers (Codex, Gemini, Cursor-Agent) — this is the cross-model validation layer, distinct from the intra-pipeline agent review.
+
+**Note on Phase 3 execution:** The Draft phase is executed by the orchestrating agent itself (the main LLM context), not by a sub-agent. This is intentional — the orchestrator has full context of the research, outline, and persona questions. Section-by-section drafting happens in the main context with structured prompting per section.
+
+**Note on EC-WA-05 (technical articles):** The "Code Explorer" referenced in the edge case is the same agent pattern from `zuvo:brainstorm` (`agents/code-explorer.md`). It is dispatched ad-hoc only when the topic references the current project — it is NOT a permanent agent in write-article's architecture. The skill reads `brainstorm/agents/code-explorer.md` instructions and dispatches a one-off Explore agent.
 
 #### content-optimize agents (Phase 1+3, parallel)
 
@@ -380,7 +387,7 @@ The Anti-Slop Reviewer is a SEPARATE agent from the Writer — it has no memory 
 | `--lang <code>` | Language (default: `en`). Affects banned vocabulary, SEO, register |
 | `--tone <value>` | `casual` / `technical` / `formal` / `marketing` (default: `casual`) |
 | `--length <N>` | Approximate word count (default: `1500`). <800 = COMPACT mode |
-| `--site-dir <path>` | Write to site content dir; auto-detect frontmatter schema |
+| `--site-dir <path>` | Write to site content dir; auto-detect frontmatter schema from existing articles (text fields only — enums, relational IDs, and custom types use placeholder values with `# TODO` comments) |
 | `--format <fmt>` | `md` (default) / `astro-mdx` / `hugo` / `nextjs-mdx` |
 | `--keyword <term>` | Primary SEO keyword (auto-detected from topic if omitted) |
 | `--audience <desc>` | Target audience description (feeds persona generation) |
@@ -407,7 +414,7 @@ When `--batch-mode` is active on write-article:
 
 | Argument | Behavior |
 |----------|----------|
-| `[file]` | Required. Path to content file (.md, .mdx) |
+| `[file]` | Required. Path to content file. Primary: `.md`, `.mdx`. Tolerated: `.html` (tag-stripped, body text only, WARNING emitted). Blocked: binary formats |
 | `--apply` | Apply optimizations (default: report only). See Backup Strategy below |
 | `--lang <code>` | Language override (default: auto-detect) |
 | `--tone <value>` | Tone context for anti-slop thresholds |
@@ -494,7 +501,7 @@ When `content-optimize --apply` is active, the skill modifies the source file in
 | EC-WA-10 | write-article | Banned words in research sources | Strip from summaries BEFORE injection into draft. |
 | EC-WA-11 | write-article | <800 words requested | COMPACT mode: collapse research+outline, skip competitor analysis, lighter review. |
 | EC-WA-12 | write-article | Batch generation across sites | `--batch-mode` caches research per domain. Inter-run isolation in run logger. |
-| EC-CO-01 | content-optimize | Non-markdown file | .md/.mdx supported. .html tolerated (strip tags). Binary → STOP. |
+| EC-CO-01 | content-optimize | Non-markdown file | .md/.mdx supported (primary). .html tolerated with warning (strip tags, body text only — see argument table). Binary → STOP. |
 | EC-CO-02 | content-optimize | Complex nested YAML frontmatter | Only optimize title/description/keywords/author. Preserve all other fields byte-for-byte. |
 | EC-CO-03 | content-optimize | MDX components in content | Phase 0 extracts as protected regions. Never rewrite component tags or props. |
 | EC-CO-04 | content-optimize | Undetected language | Fall back to structural-only analysis. Skip language-dependent checks. |
@@ -502,10 +509,10 @@ When `content-optimize --apply` is active, the skill modifies the source file in
 | EC-CO-06 | content-optimize | Article already high quality (>=80) | Enhancement-only mode by default. `--force-rewrite` required for structural changes. |
 | EC-CO-07 | content-optimize | File >5000 words | Section-by-section optimization with full outline as context anchor. |
 | EC-CO-08 | content-optimize | Code blocks in article | Protected regions pattern. Re-insert verbatim after optimization. |
-| EC-CO-09 | content-optimize | Author voice destroyed | Voice profile extraction → voice delta metric → HIGH delta requires confirmation. |
+| EC-CO-09 | content-optimize | Author voice destroyed | Voice profile extraction → voice delta metric → HIGH delta: interactive mode requires confirmation; async mode applies with `[AUTO-DECISION: voice-delta-high]` and report includes `REVIEW NEEDED` flag. |
 | EC-CO-10 | content-optimize | Optimization reduces score | Re-score after optimize. Rollback any regressive change. Never deliver lower composite score. |
-| EC-CO-11 | content-optimize | Uncommitted changes in file | Dirty file check → STOP. Require commit or stash first. |
-| EC-CO-12 | content-optimize | Internal link suggestions point to nonexistent files | Validate against real files. Unverified links flagged `[UNVERIFIED LINK]`, not auto-inserted. |
+| EC-CO-11 | content-optimize | Uncommitted changes in file | Dirty file check: with `--apply` → STOP, require commit or stash. Without `--apply` (report-only) → proceed with WARNING banner: "File has uncommitted changes. Report reflects current disk state." |
+| EC-CO-12 | content-optimize | Internal link suggestions point to nonexistent files | Validate via Glob against content files in the same directory tree (not URL routing). Unverified links flagged `[UNVERIFIED LINK]`, not auto-inserted. For SSG routing mismatches, note: "Link targets validated by file path, not by generated URL — verify routing matches your framework." |
 
 ## Acceptance Criteria
 
@@ -541,7 +548,7 @@ When `content-optimize --apply` is active, the skill modifies the source file in
 4. Optimized content never has lower composite score than original (rollback regressive changes)
 5. Code blocks and MDX components preserved as protected regions
 6. Frontmatter fields outside title/description/keywords/author preserved verbatim
-7. Dirty file check blocks optimization of files with uncommitted changes
+7. Dirty file check blocks `--apply` on files with uncommitted changes; report-only mode proceeds with warning
 8. Run-logger line appended at completion
 9. Async mode proceeds without prompts
 10. Internal link suggestions validated against existing files
