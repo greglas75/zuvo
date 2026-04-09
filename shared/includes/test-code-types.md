@@ -2,6 +2,16 @@
 
 > 11 code types for production file classification. Drives minimum test count, required patterns, and mock strategy.
 
+## Pre-Test Meta-Check: Is Production Code Correct?
+
+Before writing exhaustive tests, ask:
+1. **Dead code?** — defensive checks under guarantees that prevent them from firing (e.g., post-check under atomic execution). If found: flag with `// CODE REVIEW: [rationale]`, don't write 200 lines testing unreachable paths.
+2. **Contradictions between code and comments?** — comment says "atomic, no interleaving" but code checks for interleaving. Flag, don't silently test the contradiction.
+3. **Input validation gaps?** — what happens with nil, 0, negative, wrong type? Flag if unhandled.
+4. **Duplicate functions?** — single-item version that's a subset of multi-item version. Flag duplication.
+
+**Do NOT silently test incorrect behavior — that legitimizes bugs.** One test flagging a problem is worth more than 50 tests covering it.
+
 ## Classification Table
 
 | Code Type | Detection Signals | Min Tests Formula |
