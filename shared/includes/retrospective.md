@@ -5,10 +5,12 @@
 ## Gate Check
 
 ```
-IF this was a trivial session (your subjective assessment: fewer than ~5 distinct
-tool calls, or the work took under ~1 minute of effort):
-  PRINT: "RETRO: skipped (trivial session)"
-  SKIP the rest of this protocol — proceed to the terminal block.
+ALWAYS write the retrospective. The only exception is if you literally did
+nothing (e.g., skill aborted immediately, or you ran 1-2 tool calls total).
+
+Do NOT skip because the file was "simple" or the tier was THIN — simple files
+often have the most interesting friction (mock strategy, missing templates).
+If you have ANY insight about the skill, the tools, or the process — write it.
 
 IF you used more than ~200 tool calls in this session:
   SET degraded_context = true (cap each answer to 2 sentences below)
