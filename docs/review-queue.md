@@ -271,3 +271,6 @@ Commits pending review. Auto-managed:
 - 6069d1b (2026-04-09) release: v1.3.38 — feat: --rotate adversarial flag — random provider per pass for iterative review
 - 498e5b8 (2026-04-09) enhance: write-tests — tiered adversarial passes, context-enriched input, classify_roles discovery
 - 2b4a913 (2026-04-09) fix: restore full testing.md — testing-slim caused quality regression
+- afc14fd (2026-04-09) release: v1.3.39 — fix: restore full testing.md — testing-slim caused quality regression (5/10 vs 9/10)
+- 6d214ba (2026-04-09) enhance: refactor adversarial — iterative --rotate passes with context-enriched input
+- 017da7c (2026-04-09) feat: adversarial sees production+test, per-code-type strategy, ordering template
