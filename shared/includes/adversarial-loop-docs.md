@@ -16,6 +16,7 @@ After a skill produces a document artifact (design spec, implementation plan, au
 | Audit report (code-audit, test-audit, security-audit, etc.) | Score < 75% OR any FAIL gate | `--mode audit` |
 | Test audit report (test-audit Q1-Q19 output) | **Always** | `--mode tests` |
 | Changelog (ship, release-docs) | **Always** | `--mode spec` (reuse spec mode) |
+| Article (write-article, content-optimize) | After internal review converges | `--mode article` |
 
 **Skip when:**
 - Artifact below minimum size (200 words for spec, 3 tasks for plan, 500 words for audit/tests)
@@ -118,6 +119,11 @@ Each mode has its own definition of CRITICAL/WARNING/INFO. The adversarial-revie
 - **CRITICAL:** Passing Q-score contradicted by evidence
 - **WARNING:** Coverage theater not flagged
 - **INFO:** Flakiness signal missed
+
+### article mode
+- **CRITICAL:** Factual claim with no source in fact sheet; internal contradiction between sections; hard-banned vocabulary present (per `banned-vocabulary.md`)
+- **WARNING:** Weak E-E-A-T signals; buried answer (key point not in first 2 sentences of section); soft-banned vocabulary (tone-dependent); burstiness violation; voice inconsistency between sections
+- **INFO:** Style preference; minor transition quality; paragraph length variation
 
 ## Limits
 

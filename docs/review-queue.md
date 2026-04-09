@@ -265,3 +265,6 @@ Commits pending review. Auto-managed:
 - 2c95b7e (2026-04-09) release: v1.3.36 — optimize: write-tests tiered loading, text adversarial, iterative 4-pass, no sub-agent — ~30% token reduction
 - 3374279 (2026-04-09) rewrite: refactor skill — 812→670 lines, 5→2 modes, 4 contradiction fixes, 10 CodeSift tools, agent rewrites
 - 06c00e4 (2026-04-09) optimize: testing-slim.md (465→54 lines) + batch CodeSift calls
+- 0fdeebe (2026-04-09) release: v1.3.37 — optimize: testing-slim.md + batch CodeSift — additional ~15K token reduction per file
+- 6a43178 (2026-04-09) fix: clarify adversarial FIX mode interaction with fix-loop in review skill
+- 676ab75 (2026-04-09) feat: --rotate flag for adversarial-review — random provider per pass

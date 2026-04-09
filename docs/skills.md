@@ -1,6 +1,6 @@
 # Skills Reference
 
-Zuvo includes 49 skills organized into 12 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
+Zuvo includes 51 skills organized into 12 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
 
 ---
 
@@ -135,14 +135,14 @@ Scoped task execution for common development work.
 | Code/Test audits | 5 | code-audit, test-audit, api-audit, security-audit, pentest |
 | Infra audits | 5 | performance-audit, db-audit, dependency-audit, ci-audit, env-audit |
 | Structure/SEO/GEO | 6 | structure-audit, seo-audit, seo-fix, geo-audit, geo-fix, architecture |
-| Content | 3 | content-audit, content-fix, content-migration |
+| Content | 5 | content-audit, content-fix, content-migration, write-article, content-optimize |
 | Design | 3 | design, design-review, ui-design-team |
 | Testing | 5 | write-tests, fix-tests, write-e2e, tests-performance, mutation-test |
 | Accessibility | 1 | a11y-audit |
 | Release | 5 | ship, deploy, canary, release-docs, retro |
 | Utility | 6 | docs, presentation, backlog, incident, benchmark, using-zuvo |
 | Utility | 7 | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo |
-| **Total** | **49** | |
+| **Total** | **51** | |
 
 ## Shared Infrastructure (v1.3.24)
 

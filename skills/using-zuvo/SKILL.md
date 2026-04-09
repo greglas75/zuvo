@@ -3,7 +3,7 @@ name: using-zuvo
 description: "ALWAYS LOADED — Zuvo skill router. Injected at session start. Determines which zuvo skill to invoke for the current task."
 ---
 
-> **Zuvo v1.3.37** | 49 skills | 4 adversarial providers | CQ1-CQ28 + Q1-Q19
+> **Zuvo v1.3.38** | 51 skills | 4 adversarial providers | CQ1-CQ28 + Q1-Q19
 
 # Zuvo Skill Router
 
@@ -48,6 +48,7 @@ Do this on every message. Not just the first one.
 | Fix SEO audit findings, apply SEO fixes | `zuvo:seo-fix` |
 | Fix GEO issues — fix schema, fix llms.txt, apply GEO fixes | `zuvo:geo-fix` |
 | Fix content audit findings (encoding, markdown, artifacts) | `zuvo:content-fix` |
+| Write an article, blog post, generate content from scratch | `zuvo:write-article` |
 | Audit accessibility, WCAG compliance, keyboard navigation, screen reader, ADA, contrast | `zuvo:a11y-audit` |
 
 ### Priority 3 — Audit (analysis and reporting)
@@ -67,6 +68,7 @@ Do this on every message. Not just the first one.
 | Audit SEO and structured data | `zuvo:seo-audit` |
 | GEO readiness audit — AI citation optimization, llms.txt, schema graph, generative engine visibility | `zuvo:geo-audit` |
 | Audit content quality (encoding, links, formatting, CMS artifacts) | `zuvo:content-audit` |
+| Optimize existing article, improve content quality, score content | `zuvo:content-optimize` |
 | Compare old CMS page with new SSG page, fix parity gaps | `zuvo:content-migration` |
 | Audit codebase structure and organization | `zuvo:structure-audit` |
 | Review architecture, create ADR | `zuvo:architecture` |
