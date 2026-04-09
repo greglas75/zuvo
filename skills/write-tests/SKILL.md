@@ -122,16 +122,16 @@ No sub-agent dispatch. Step 4 (4 adversarial passes with different models) provi
 
 ### Step 4: Adversarial Review (iterative, 4 passes max)
 
-Run up to 4 adversarial passes, one provider per pass (auto-rotates). Each pass sees the FIXED code from previous passes. Early exit when a pass returns 0 findings.
+Run up to 4 adversarial passes, one RANDOM provider per pass (`--rotate` shuffles the list). Each pass sees the FIXED code from previous passes. Early exit when a pass returns 0 findings. Run until clean or until all available providers exhausted (whichever comes first).
 
 ```
-Pass 1: git diff HEAD -- <test-file> | adversarial-review --single --mode test
+Pass 1: git diff HEAD -- <test-file> | adversarial-review --rotate --mode test
   → fix CRITICAL/WARNING findings → re-run tests
-Pass 2: git diff HEAD -- <test-file> | adversarial-review --single --mode test
+Pass 2: git diff HEAD -- <test-file> | adversarial-review --rotate --mode test
   → fix findings → re-run tests
-Pass 3: git diff HEAD -- <test-file> | adversarial-review --single --mode test
+Pass 3: git diff HEAD -- <test-file> | adversarial-review --rotate --mode test
   → fix findings → re-run tests
-Pass 4: git diff HEAD -- <test-file> | adversarial-review --single --mode test
+Pass 4: git diff HEAD -- <test-file> | adversarial-review --rotate --mode test
   → fix or backlog remaining
 ```
 

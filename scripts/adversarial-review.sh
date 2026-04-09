@@ -28,7 +28,7 @@ GEMINI_MODEL="${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}"
 # ─── Argument parsing ───────────────────────────────────────────
 
 PROVIDER=""
-MULTI_MODE=""  # empty = auto (multi if 2+ available), "single" = first-success only
+MULTI_MODE=""  # empty = auto (multi if 2+ available), "single" = first-success only, "rotate" = random single
 REVIEW_MODE="code"  # code | test | security | spec | plan | audit | tests
 OUTPUT_FORMAT="text"  # text | json
 CONTEXT_HINT=""
@@ -42,6 +42,7 @@ while [[ $# -gt 0 ]]; do
     --provider)  PROVIDER="$2"; shift 2 ;;
     --multi)     MULTI_MODE="multi"; shift ;;
     --single)    MULTI_MODE="single"; shift ;;
+    --rotate)    MULTI_MODE="rotate"; shift ;;
     --mode)      REVIEW_MODE="$2"; shift 2 ;;
     --json)      OUTPUT_FORMAT="json"; shift ;;
     --context)   CONTEXT_HINT="$2"; shift 2 ;;
@@ -55,6 +56,7 @@ Usage: adversarial-review.sh [OPTIONS] [--diff REF] [--files "path"]
 Provider options:
   (default)        Multi: run ALL available providers
   --single         First-success: stop after first provider
+  --rotate         Random single: shuffle providers, pick one
   --provider P     Auto: codex-5.3, gemini, cursor-agent, claude
                    Manual: codex-5.4, gemini-api, codestral
 
@@ -641,6 +643,12 @@ if [[ -n "$PROVIDER" ]]; then
   MULTI_MODE="single"
 elif [[ -z "$MULTI_MODE" ]]; then
   MULTI_MODE="multi"
+fi
+
+# Rotate mode: shuffle provider list, then behave like single
+if [[ "$MULTI_MODE" == "rotate" ]]; then
+  PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | sort -R | tr '\n' ' ' | sed 's/ *$//')
+  MULTI_MODE="single"
 fi
 
 # ─── Unified dispatch ──────────────────────────────────────────
