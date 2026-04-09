@@ -112,6 +112,40 @@ Example: 4 middleware + 13 routes + 6 limiters×2 + 4 groups×2 + 2 endpoints + 
 
 **CRITICAL:** THIN complexity does NOT mean simple testing. A 67-line ORCHESTRATOR with 0 branches can have critical ordering invariants that require more test sophistication than a 200-line SERVICE with 10 branches.
 
+### SERVICE + ORM Mock Templates
+
+For services with chainable query builders — use these templates to avoid wasting turns on mock setup.
+
+**Drizzle (chainable select):**
+```typescript
+function thenableChain(result: unknown) {
+  const chain: Record<string, unknown> = {};
+  const self = () => chain;
+  chain.from = vi.fn(self);
+  chain.where = vi.fn(self);
+  chain.leftJoin = vi.fn(self);
+  chain.groupBy = vi.fn(self);
+  chain.having = vi.fn(self);
+  chain.for = vi.fn(self);
+  chain.then = (resolve: (v: unknown) => void) => resolve(result);
+  return chain;
+}
+
+// Sequential results for tx.select():
+let callIdx = 0;
+const selectFn = vi.fn(() => thenableChain(results[callIdx++]));
+```
+
+**Prisma (delegate mock):**
+```typescript
+const prismaMock = {
+  user: { findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
+  $transaction: vi.fn((fn) => fn(prismaMock)),
+};
+```
+
+**Key rule:** Mock the query builder chain, not individual SQL. Test the RESULT of the query (what your service returns), not the query SHAPE (which methods were called).
+
 ## Mixed Files
 
 When a file combines types (e.g., a SERVICE with PURE helper functions inside it), apply both classifications. Sum the minimum test counts.

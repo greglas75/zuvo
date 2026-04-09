@@ -121,6 +121,22 @@ feature-name.spec.ts           # Playwright E2E
 - Arrange-Act-Assert structure
 - No test logic inside describe blocks (only in it/test)
 
+## Vitest-specific: vi.hoisted for mock variables
+
+When a `vi.mock()` factory references a variable defined outside, Vitest hoists `vi.mock()` above all imports — so the variable doesn't exist yet. Use `vi.hoisted()`:
+
+```typescript
+// WRONG — ReferenceError: Cannot access before initialization
+const mockFn = vi.fn();
+vi.mock("./module", () => ({ fn: mockFn }));
+
+// CORRECT — vi.hoisted lifts the variable above the hoisted vi.mock
+const mockFn = vi.hoisted(() => vi.fn());
+vi.mock("./module", () => ({ fn: mockFn }));
+```
+
+This applies to spy arrays, mock factories, and any shared state between `vi.mock()` factories and test code. Jest does NOT have this issue — Jest's `jest.mock()` has different hoisting semantics.
+
 ## Favoring Real Implementations Over Mocks
 
 **Default: use real code. Mock only when forced by external I/O.**

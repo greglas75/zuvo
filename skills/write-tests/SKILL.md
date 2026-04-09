@@ -22,6 +22,7 @@ Generate high-quality tests for production code. Each file goes through the full
 | `[directory/]` | Write tests for all production files in the directory |
 | `auto` | Discover uncovered files, process one at a time until done |
 | `--dry-run` | Run Phase 0 + Step 1 for all files, print plan, stop |
+| `--no-cache` | Force regeneration of project profile before test planning |
 
 ---
 
@@ -38,15 +39,16 @@ CORE (Phase 0):
   5. ../../shared/includes/quality-gates.md        -- [READ|MISSING -> STOP]
   6. ../../shared/includes/run-logger.md           -- [READ|MISSING -> STOP]
   7. ../../rules/testing.md                          -- [READ|MISSING -> STOP]
-  8. ../../shared/includes/retrospective.md          -- RETRO PROTOCOL
+  8. ../../shared/includes/project-profile-protocol.md -- [READ|MISSING -> DEGRADED]
+  9. ../../shared/includes/retrospective.md          -- RETRO PROTOCOL
 ```
 
 **Step 1 (load after classification):** based on file complexity.
 
 ```
 STANDARD+ only (skip for THIN):
-  9. ../../shared/includes/test-edge-cases.md      -- [READ|SKIP]
-  10. ../../shared/includes/test-code-types.md      -- [READ|SKIP]
+  10. ../../shared/includes/test-edge-cases.md      -- [READ|SKIP]
+  11. ../../shared/includes/test-code-types.md      -- [READ|SKIP]
 ```
 
 ---
@@ -54,9 +56,12 @@ STANDARD+ only (skip for THIN):
 ## Phase 0: Setup (runs once)
 
 1. **CodeSift setup** per `codesift-setup.md`. Note repo identifier.
-2. **Stack detection:** read package.json/tsconfig/composer.json. Detect test runner (vitest/jest/phpunit). Find existing test patterns (DB helpers, factory functions, mock conventions).
-3. **Baseline test run:** execute test suite, record pre-existing failures. These are ignored in verification.
-4. **Build queue:**
+2. **Project profile:** Load project profile per `project-profile-protocol.md` (pass `--no-cache` flag if set).
+   - If `profile.conventions` exists for this file's framework: use convention values for ORCHESTRATOR test planning (middleware names, rate limit values, auth boundaries, route mounts).
+   - If profile unavailable or partial: use generic `test-code-types.md` patterns (current behavior).
+3. **Stack detection:** If profile loaded, use `profile.stack` for framework/test-runner/language. Otherwise: read package.json/tsconfig/composer.json. Detect test runner (vitest/jest/phpunit). Find existing test patterns (DB helpers, factory functions, mock conventions).
+4. **Baseline test run:** execute test suite, record pre-existing failures. These are ignored in verification.
+5. **Build queue:**
    - **Explicit mode:** queue = user's target file(s)
    - **Auto mode with CodeSift:** single batch call:
      ```
@@ -130,9 +135,11 @@ Run adversarial passes sequentially, one RANDOM provider per pass (`--rotate`). 
 
 | Complexity | Max passes | Rationale |
 |-----------|-----------|-----------|
-| THIN | 2 | Quick sanity — cross-model catch, no deep dive |
-| STANDARD | 3 | Good coverage — most issues found in 2-3 passes |
-| COMPLEX | 4 | Full depth — orchestrators, state machines, multi-dependency |
+| THIN | 1 | Sanity check — wiring correctness only |
+| STANDARD | 2 | Pass 1 finds gaps, pass 2 verifies fixes |
+| COMPLEX | 2 + optional 3rd | Extra pass ONLY IF pass 2 found CRITICAL with high confidence |
+
+Agent data shows passes 3-4 yield 0 new findings and cost ~60K tokens. 99% of value is in first 2 passes.
 
 **Input: production + test file** (not just diff). Reviewer needs to see what's being tested to find gaps:
 

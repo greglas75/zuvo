@@ -37,13 +37,20 @@ TEST CONTRACT: [production-file-path]
    List every throw, reject, error return, and catch block.
 
    Error 1: [file:line] throws [ErrorType] when [condition] — message: "[exact or pattern]"
+     Side-effects NOT executed: [insert, update, email send, etc.]
    Error 2: [file:line] rejects with [ErrorType] when [condition]
+     Side-effects NOT executed: [list]
    Error 3: [file:line] returns { error: ... } when [condition]
+     Side-effects NOT executed: [list]
    Error 4: [file:line] catch block handles [what] — does [action]
    ...
 
    Total error paths: [N]
    Tests needed: [N] (one per error path, asserting specific type + message)
+
+   For each error path, verify BOTH:
+   - The correct error is thrown (type + message)
+   - Operations AFTER the throw point were NOT called (insert, update, emit, etc.)
 
 3. EXPECTED VALUES (where each assertion value comes from)
    For every assertion you plan to write, state the SOURCE of the expected value.
