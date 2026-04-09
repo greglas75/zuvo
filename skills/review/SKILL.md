@@ -495,6 +495,8 @@ Input:
 - **FIX-BLOCKING:** apply MUST-FIX only
 - **AUTO-FIX:** dispatch `zuvo:build` with MUST-FIX findings as context (closed-loop, max 1 cycle)
 
+**Note:** When FIX/BLOCKING/AUTO-FIX mode is active, Phase 1.6 adversarial runs in FIX variant (sequential providers validate and fix between passes). The fix-loop.md below handles primary audit findings. Adversarial findings discovered and fixed during Phase 1.6 do NOT appear in the fix-loop — they are already resolved.
+
 ### Review-Specific Wrapper
 
 After fix-loop.md completes:
