@@ -151,6 +151,35 @@ Before writing any mock, ask: "Can I use the real implementation?" Tests with re
 
 **Diagnostic:** If you need `as unknown as FooService` → use the real class. If a mock has 10+ method stubs → use the real class with faked dependencies.
 
+**Exception: ORCHESTRATOR files** (app.ts, server.ts, main.ts) that wire middleware + routes. These REQUIRE mocks even for "your own" modules because transitive dependency chains make real imports impractical. Mock route modules as stub Hono/Express apps. Mock middleware with external deps as pass-through with spy tracking. Keep pure middleware real.
+
+### Composition / Ordering Test Pattern
+
+For files that register middleware, routes, or event handlers in a specific order, test the ordering invariant using a log array:
+
+```typescript
+const callOrder = vi.hoisted(() => [] as string[]);
+
+vi.mock("./middleware/auth.js", () => ({
+  clerkAuth: vi.fn(async (_, next) => { callOrder.push("clerkAuth"); await next(); }),
+}));
+vi.mock("./middleware/db.js", () => ({
+  dbMiddleware: vi.fn(async (_, next) => { callOrder.push("db"); await next(); }),
+}));
+
+beforeEach(() => { callOrder.length = 0; });
+
+it("applies middleware in registration order", async () => {
+  await app.request("/api/admin/contests");
+  expect(callOrder).toEqual(["clerkAuth", "db"]);
+});
+```
+
+Use this pattern when:
+- Middleware A depends on context set by middleware B (auth before tenant)
+- Error handler must wrap all subsequent middleware
+- Rate limiter must run before expensive operations
+
 ## Pre-Writing Steps (mandatory for all workflows)
 
 ### 1. Identify Coverage Gaps

@@ -18,13 +18,49 @@
 | STATE-MACHINE | Finite states with transitions, event-driven reducers | Transitions × 2 + States × 1 + lifecycle flow |
 | ORM/DB | Repository pattern, query builders, migrations | Queries × 3 (success + empty + constraint violation) |
 
-## ORCHESTRATOR / THIN Guidance
+## Per-Code-Type Test Strategy
 
-ORCHESTRATOR files (app.ts, server.ts, main.ts) that are THIN (pure wiring, no owned branching):
-- **Mock ALL imports as pass-through.** Do not analyze transitive dependency chains.
-- **Test what THIS file does:** route mounting, middleware wiring, health endpoints, CORS config.
-- **Do not overthink mocking strategy.** If import has external deps (DB, auth, HTTP), mock the entire module. One-line pass-through mock is sufficient.
-- **Keep tests focused:** verify routes are mounted at correct paths, middleware is applied to correct route groups, health check returns expected shape.
+Each code type has specific things to test and a recommended mock strategy. This is NOT optional — use this table in Step 1 to plan tests.
+
+| Code Type | What to test | Mock strategy | Key pattern |
+|-----------|-------------|---------------|-------------|
+| **ORCHESTRATOR** | Middleware ordering invariants, route mounting, auth boundaries (presence + order), path isolation | Mock route modules + external-dep middleware as pass-through. Keep pure middleware real. | `vi.hoisted` log array for ordering (see template below) |
+| **SERVICE** | Business logic branches, error paths, transaction boundaries, caller contracts | Mock external I/O only (DB, HTTP, email). Use real code for internal deps. | Test computed output, not mock echo |
+| **CONTROLLER** | Input validation (400), auth (401/403), success (200/201), error shapes, security S1-S4 | Mock service layer. Real validation + guards. | Every endpoint × 4 (happy + auth + validation + error) |
+| **PURE/VALIDATOR** | All branches, edge cases per parameter type, property-based tests | Zero mocks | State matrix: input combinations → expected outputs |
+| **GUARD/MIDDLEWARE** | Request without header → expected behavior, wrong header → 4xx, correct header → next() called, ordering relative to other middleware | Mock downstream only | Positive AND negative assertions |
+| **HOOK** | Return values, state transitions, side effects, cleanup | Mock external effects (fetch, timers) | Test lifecycle: mount → interact → verify → cleanup |
+| **COMPONENT** | Render states (loading/error/empty/data), user flows (action → state → callback), a11y | Mock API calls. Real render. | 30%+ must be flow tests, not just render |
+| **API-CALL** | Success + error + timeout, retry behavior, response parsing | Mock HTTP layer (MSW or vi.fn) | Test transformed output, not raw response echo |
+| **STATE-MACHINE** | All transitions, invalid transitions rejected, lifecycle flows, reset behavior | Zero or minimal mocks | Transition matrix: state × event → new state |
+| **ORM/DB** | Query construction, empty results, constraint violations, transaction rollback | Real DB with transaction rollback, or mock query builder | Test query RESULTS not query SHAPE |
+
+### ORCHESTRATOR Ordering Template
+
+For files that wire middleware/routes in a specific order, use this pattern to test ordering invariants:
+
+```typescript
+const callOrder = vi.hoisted(() => [] as string[]);
+
+vi.mock("./middleware/auth.js", () => ({
+  clerkAuth: vi.fn(async (_, next) => { callOrder.push("clerkAuth"); await next(); }),
+}));
+vi.mock("./middleware/tenant.js", () => ({
+  tenantResolver: vi.fn(async (_, next) => { callOrder.push("tenantResolver"); await next(); }),
+}));
+
+// In test:
+beforeEach(() => { callOrder.length = 0; });
+
+it("applies middleware in correct order", async () => {
+  await app.request("/api/admin/contests");
+  expect(callOrder).toEqual(["clerkAuth", "tenantResolver"]);
+});
+```
+
+This catches: reordered middleware (auth before DB → crash), removed middleware (silent security gap), duplicated middleware (double auth check).
+
+**CRITICAL:** THIN complexity does NOT mean simple testing. A 67-line ORCHESTRATOR with 0 branches can have critical ordering invariants that require more test sophistication than a 200-line SERVICE with 10 branches.
 
 ## Mixed Files
 

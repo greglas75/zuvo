@@ -133,32 +133,27 @@ Run adversarial passes sequentially, one RANDOM provider per pass (`--rotate`). 
 | STANDARD | 3 | Good coverage — most issues found in 2-3 passes |
 | COMPLEX | 4 | Full depth — orchestrators, state machines, multi-dependency |
 
-**Context-enriched input:** Prepend classification and Q scorecard to help the provider target weaknesses:
+**Input: production + test file** (not just diff). Reviewer needs to see what's being tested to find gaps:
 
 ```bash
-(echo "CONTEXT: [code_type] [complexity] [testability]";
- echo "Q-GATES: Q7=[0|1] Q11=[0|1] Q13=[0|1] Q15=[0|1] Q17=[0|1]";
- echo "CONTRACT: [mock strategy summary] [edge cases summary]";
- echo "---";
- git diff HEAD -- <test-file>) | adversarial-review --rotate --mode test
+adversarial-review --rotate --mode test \
+  --context "Code type: [type] [complexity] [testability]. Q-GATES: Q7=[0|1] Q11=[0|1] Q13=[0|1] Q15=[0|1] Q17=[0|1]" \
+  --files "<production-file> <test-file>"
 ```
 
-The provider sees the context before the diff and focuses on Q-gate failures and contract gaps rather than searching from scratch.
+The provider sees both files and focuses on gaps between production behavior and test coverage. Without production code, reviewer can't detect missing ordering tests, auth boundary gaps, or untested error messages.
 
 **Pass sequence:**
 
 ```
-Pass 1: context + diff | adversarial-review --rotate --mode test
-  → fix CRITICAL/WARNING findings → re-run tests
-Pass 2: context + updated diff | adversarial-review --rotate --mode test
-  → fix findings → re-run tests
-[THIN: stop here]
-Pass 3: context + updated diff | adversarial-review --rotate --mode test
-  → fix findings → re-run tests
-[STANDARD: stop here]
-Pass 4: context + updated diff | adversarial-review --rotate --mode test
-  → fix or backlog remaining
-[COMPLEX: stop here]
+Pass 1: adversarial-review --rotate --mode test --context "..." --files "<prod> <test>"
+  → fix CRITICAL/WARNING → re-run tests
+Pass 2: adversarial-review --rotate --mode test --context "..." --files "<prod> <test>"
+  → fix findings → re-run tests (different provider auto-selected)
+Pass 3+: same pattern, early exit on 0 findings
+
+If same CRITICAL repeats across passes and was consciously rejected: stop adversarial.
+Pass previous findings summary in --context to avoid repetition.
 ```
 
 If `adversarial-review` is not found: check `../../scripts/adversarial-review.sh`. If missing entirely, mark file SKIPPED_REVIEW and proceed.
