@@ -304,3 +304,5 @@ Commits pending review. Auto-managed:
 - 51477ce (2026-04-09) fix: --exclude flag for adversarial + timeout 240→90s
 - 35a2068 (2026-04-09) release: v1.3.50 — fix: --exclude adversarial flag + timeout 240→90s — prevent rate limit failures
 - 0fd180d (2026-04-09) release: v1.3.51 — feat: write-article SEO/GEO enhancement — domain detection, multi-schema, FAQ, BLUF, humanization
+- e0ecfa7 (2026-04-09) release: v1.3.52 — fix: project profile used for ALL file types, not just ORCHESTRATOR
+- df16305 (2026-04-09) fix: write-tests retro — promote from inline list item to full heading section
