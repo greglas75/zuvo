@@ -381,7 +381,7 @@ mode).
 Run AFTER report files are generated (Phase 3).
 
 ```bash
-adversarial-review --json --mode audit --files "audit-results/content-audit-[date].md"
+adversarial-review --mode audit --files "audit-results/content-audit-[date].md"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

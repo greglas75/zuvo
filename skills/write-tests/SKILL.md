@@ -27,20 +27,25 @@ Generate high-quality tests for production code. Each file goes through the full
 
 ## Mandatory File Loading
 
-Read each file. Print checklist. If any REQUIRED file is missing, STOP.
+**Phase 0 (always load):** core files needed before analysis.
 
 ```
-CORE FILES LOADED:
+CORE (Phase 0):
   1. ../../shared/includes/codesift-setup.md      -- [READ|MISSING -> STOP]
   2. ../../shared/includes/test-contract.md        -- [READ|MISSING -> STOP]
-  3. ../../shared/includes/test-code-types.md      -- [READ|MISSING -> STOP]
-  4. ../../shared/includes/test-blocklist.md       -- [READ|MISSING -> STOP]
-  5. ../../shared/includes/test-mock-safety.md     -- [READ|MISSING -> STOP]
-  6. ../../shared/includes/test-edge-cases.md      -- [READ|MISSING -> STOP]
-  7. ../../shared/includes/q-scoring-protocol.md   -- [READ|MISSING -> STOP]
-  8. ../../shared/includes/quality-gates.md        -- [READ|MISSING -> STOP]
-  9. ../../shared/includes/run-logger.md           -- [READ|MISSING -> STOP]
-  10. ../../rules/testing.md                       -- [READ|MISSING -> STOP]
+  3. ../../shared/includes/test-blocklist.md       -- [READ|MISSING -> STOP]
+  4. ../../shared/includes/quality-gates.md        -- [READ|MISSING -> STOP]
+  5. ../../shared/includes/run-logger.md           -- [READ|MISSING -> STOP]
+  6. ../../rules/testing.md                        -- [READ|MISSING -> STOP]
+```
+
+**Step 1 (load after classification):** based on file complexity.
+
+```
+STANDARD+ only (skip for THIN):
+  7. ../../shared/includes/test-edge-cases.md      -- [READ|SKIP]
+  8. ../../shared/includes/test-mock-safety.md     -- [READ|SKIP]
+  9. ../../shared/includes/test-code-types.md      -- [READ|SKIP]
 ```
 
 ---
@@ -107,29 +112,37 @@ Print: `[file]: [type] [complexity] [testability] → [N] tests planned`
    Critical gates: Q7=[0|1] Q11=[0|1] Q13=[0|1] Q15=[0|1] Q17=[0|1]
    ```
    Any critical gate at 0: fix immediately and re-score.
-3. **Quality audit** per `q-scoring-protocol.md`:
-   - **Claude Code (sub-agent available):** dispatch `agents/test-quality-reviewer.md` (Sonnet, Explore). Pass production file, test file, test contract.
-   - **All platforms (fallback):** `[CHECKPOINT: quality audit]` — re-read the test file from disk as if seeing it for the first time. Score Q1-Q19 independently with evidence. This is a best-effort heuristic; Step 4 (adversarial) provides true cross-model independence.
-   - **Discrepancy 2+ points** on any gate: auditor's score wins. Fix before proceeding.
 
-### Step 4: Adversarial Review
+No sub-agent dispatch. Step 4 (4 adversarial passes with different models) provides true independent verification — stronger than same-model sub-agent.
 
-```bash
-git diff HEAD -- <test-file> | adversarial-review --json --mode test
+### Step 4: Adversarial Review (iterative, 4 passes max)
+
+Run up to 4 adversarial passes, one provider per pass (auto-rotates). Each pass sees the FIXED code from previous passes. Early exit when a pass returns 0 findings.
+
+```
+Pass 1: git diff HEAD -- <test-file> | adversarial-review --single --mode test
+  → fix CRITICAL/WARNING findings → re-run tests
+Pass 2: git diff HEAD -- <test-file> | adversarial-review --single --mode test
+  → fix findings → re-run tests
+Pass 3: git diff HEAD -- <test-file> | adversarial-review --single --mode test
+  → fix findings → re-run tests
+Pass 4: git diff HEAD -- <test-file> | adversarial-review --single --mode test
+  → fix or backlog remaining
 ```
 
 If `adversarial-review` is not found: check `../../scripts/adversarial-review.sh`. If missing entirely, mark file SKIPPED_REVIEW and proceed.
 
-Wait for complete output. Handle findings:
+**Fix policy per pass:**
 
 | Finding | Action |
 |---------|--------|
-| **CRITICAL** | Fix immediately. Re-run tests. Re-run adversarial (max 2 total calls per file). |
-| **CRITICAL after 2 calls** | Mark file **FAILED** in coverage.md. Backlog findings with file:line. Proceed to next file. |
+| **CRITICAL** | Fix immediately. Re-run tests. |
 | **WARNING (<10 lines)** | Fix immediately. |
 | **WARNING (>10 lines)** | Add to backlog with file:line. |
 | **INFO** | Known concerns (max 3). |
-| **Provider unavailable** | Note `adversarial: skipped (provider unavailable)`. Mark file **SKIPPED_REVIEW** in coverage.md. |
+| **0 findings** | Early exit — stop passes, file is clean. |
+| **After pass 4 with unresolved CRITICAL** | Mark file **FAILED** in coverage.md. Backlog findings. |
+| **Provider unavailable on all passes** | Mark file **SKIPPED_REVIEW** in coverage.md. |
 
 ### Step 5: Log
 

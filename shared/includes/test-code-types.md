@@ -18,6 +18,14 @@
 | STATE-MACHINE | Finite states with transitions, event-driven reducers | Transitions × 2 + States × 1 + lifecycle flow |
 | ORM/DB | Repository pattern, query builders, migrations | Queries × 3 (success + empty + constraint violation) |
 
+## ORCHESTRATOR / THIN Guidance
+
+ORCHESTRATOR files (app.ts, server.ts, main.ts) that are THIN (pure wiring, no owned branching):
+- **Mock ALL imports as pass-through.** Do not analyze transitive dependency chains.
+- **Test what THIS file does:** route mounting, middleware wiring, health endpoints, CORS config.
+- **Do not overthink mocking strategy.** If import has external deps (DB, auth, HTTP), mock the entire module. One-line pass-through mock is sufficient.
+- **Keep tests focused:** verify routes are mounted at correct paths, middleware is applied to correct route groups, health check returns expected shape.
+
 ## Mixed Files
 
 When a file combines types (e.g., a SERVICE with PURE helper functions inside it), apply both classifications. Sum the minimum test counts.

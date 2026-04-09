@@ -325,7 +325,7 @@ Critical gates: auto-fix immediately. Non-critical: flag in output.
 ### Adversarial Review (MANDATORY — do NOT skip)
 
 ```bash
-git add -u && git diff --staged | adversarial-review --json --mode test
+git add -u && git diff --staged | adversarial-review --mode test
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

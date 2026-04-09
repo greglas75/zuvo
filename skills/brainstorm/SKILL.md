@@ -270,7 +270,7 @@ The reviewer checks for completeness, consistency, YAGNI violations, ambiguity, 
 After the spec-reviewer converges, run cross-model validation on the spec file. This catches hallucinations, contradictions, and scope creep that same-model review misses.
 
 ```bash
-adversarial-review --json --mode spec --files "docs/specs/YYYY-MM-DD-<topic>-spec.md"
+adversarial-review --mode spec --files "docs/specs/YYYY-MM-DD-<topic>-spec.md"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

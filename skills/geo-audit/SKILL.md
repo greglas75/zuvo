@@ -473,7 +473,7 @@ Fix any discrepancies before presenting to user.
 After the audit report is generated, run cross-model validation to catch score inflation and gate inconsistency. Runs on ALL audits.
 
 ```bash
-adversarial-review --json --mode audit --files "audit-results/geo-audit-[date].md"
+adversarial-review --mode audit --files "audit-results/geo-audit-[date].md"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

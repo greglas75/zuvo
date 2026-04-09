@@ -511,7 +511,7 @@ EXECUTION VERIFICATION
 ### 4.4 Adversarial Review (MANDATORY — do NOT skip)
 
 ```bash
-git add -u && git diff --staged | adversarial-review --json --mode code
+git add -u && git diff --staged | adversarial-review --mode code
 ```
 
 If diff touches auth, payment, crypto, PII, or migration files, use `--mode security` instead. If diff touches migrations/schema, use `--mode migrate`.

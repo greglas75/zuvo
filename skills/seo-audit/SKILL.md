@@ -688,7 +688,7 @@ Same format used by seo-fix for backlog updates. Deduplicate against existing en
 After the audit report is generated, run cross-model validation to catch score inflation and gate inconsistency.
 
 ```bash
-adversarial-review --json --mode audit --files "[audit report path]"
+adversarial-review --mode audit --files "[audit report path]"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

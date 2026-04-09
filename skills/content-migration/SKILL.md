@@ -373,7 +373,7 @@ For each MISSING element (max 5 insertions per run):
 
 1. Build verification if build command exists (exit 0 = PASS, else rollback)
 2. Adversarial review (MANDATORY):
-   `git add -u && git diff --staged | adversarial-review --json --mode code`
+   `git add -u && git diff --staged | adversarial-review --mode code`
    If not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
    - CRITICAL → undo fix, report as `NEEDS_REVIEW`
    - WARNING (localized, low-risk) → fix

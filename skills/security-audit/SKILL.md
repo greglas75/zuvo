@@ -497,7 +497,7 @@ Build summary table: input validation coverage, auth coverage, authZ depth (CQ4)
 Security audits benefit the most from cross-model review. Runs on ALL security audits.
 
 ```bash
-adversarial-review --json --mode security --files "[auth files, middleware, controllers, env config]"
+adversarial-review --mode security --files "[auth files, middleware, controllers, env config]"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

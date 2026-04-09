@@ -442,7 +442,7 @@ Save to: `docs/design/[slug].md`
 After generating the architecture output (review report, ADR, or design document), run cross-model validation.
 
 ```bash
-adversarial-review --json --mode audit --files "[output file path]"
+adversarial-review --mode audit --files "[output file path]"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

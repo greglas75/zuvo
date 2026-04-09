@@ -376,7 +376,7 @@ Add findings under a `## Cross-File Issues` section.
 After the audit report is generated, run cross-model validation to catch score inflation and gate inconsistency. Runs on ALL audits (not just --deep).
 
 ```bash
-adversarial-review --json --mode audit --files "audits/code-quality-audit-[date].md"
+adversarial-review --mode audit --files "audits/code-quality-audit-[date].md"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

@@ -331,7 +331,7 @@ If target file exists, ask before overwriting (except in update mode). Non-inter
 After generating or updating documentation, run cross-model validation to catch inaccuracies and stale content.
 
 ```bash
-adversarial-review --json --mode audit --files "[generated doc path]"
+adversarial-review --mode audit --files "[generated doc path]"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

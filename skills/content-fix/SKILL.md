@@ -245,7 +245,7 @@ Build failure → rollback per-file snapshots from Phase 2.0.
 ## Phase 4: Adversarial Review (MANDATORY — do NOT skip)
 
 ```bash
-git add -u && git diff --staged | adversarial-review --json --mode code
+git add -u && git diff --staged | adversarial-review --mode code
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
