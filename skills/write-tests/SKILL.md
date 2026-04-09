@@ -62,10 +62,11 @@ STANDARD+ only (skip for THIN):
      codebase_retrieval(repo, token_budget=5000, queries=[
        {type: "dead_code"},
        {type: "hotspots", since_days: 90},
-       {type: "references", symbol_names: [exports], file_pattern: "*.test.*"}
+       {type: "references", symbol_names: [exports], file_pattern: "*.test.*"},
+       {type: "classify_roles", file_pattern: "src/"}
      ])
      ```
-     Dead/leaf symbols with 0 test refs = UNCOVERED. Priority: high-churn first.
+     Dead/leaf symbols with 0 test refs = UNCOVERED. **Priority:** hub symbols first (many connections = failures cascade), then high-churn, then leaf.
    - **Auto mode without CodeSift:** `Glob("src/**/*.ts")` + check for matching `*.test.*` files. Files without test = UNCOVERED.
 
 **`--dry-run` mode:** after building queue, run Step 1 (Analyze) for each file, print classification table, STOP.
@@ -120,19 +121,44 @@ Print: `[file]: [type] [complexity] [testability] → [N] tests planned`
 
 No sub-agent dispatch. Step 4 (4 adversarial passes with different models) provides true independent verification — stronger than same-model sub-agent.
 
-### Step 4: Adversarial Review (iterative, 4 passes max)
+### Step 4: Adversarial Review (iterative, complexity-tiered)
 
-Run up to 4 adversarial passes, one RANDOM provider per pass (`--rotate` shuffles the list). Each pass sees the FIXED code from previous passes. Early exit when a pass returns 0 findings. Run until clean or until all available providers exhausted (whichever comes first).
+Run adversarial passes sequentially, one RANDOM provider per pass (`--rotate`). Each pass sees the FIXED code from previous passes. Early exit when a pass returns 0 findings. Run until clean or max passes exhausted (whichever first).
+
+**Pass count by complexity:**
+
+| Complexity | Max passes | Rationale |
+|-----------|-----------|-----------|
+| THIN | 2 | Quick sanity — cross-model catch, no deep dive |
+| STANDARD | 3 | Good coverage — most issues found in 2-3 passes |
+| COMPLEX | 4 | Full depth — orchestrators, state machines, multi-dependency |
+
+**Context-enriched input:** Prepend classification and Q scorecard to help the provider target weaknesses:
+
+```bash
+(echo "CONTEXT: [code_type] [complexity] [testability]";
+ echo "Q-GATES: Q7=[0|1] Q11=[0|1] Q13=[0|1] Q15=[0|1] Q17=[0|1]";
+ echo "CONTRACT: [mock strategy summary] [edge cases summary]";
+ echo "---";
+ git diff HEAD -- <test-file>) | adversarial-review --rotate --mode test
+```
+
+The provider sees the context before the diff and focuses on Q-gate failures and contract gaps rather than searching from scratch.
+
+**Pass sequence:**
 
 ```
-Pass 1: git diff HEAD -- <test-file> | adversarial-review --rotate --mode test
+Pass 1: context + diff | adversarial-review --rotate --mode test
   → fix CRITICAL/WARNING findings → re-run tests
-Pass 2: git diff HEAD -- <test-file> | adversarial-review --rotate --mode test
+Pass 2: context + updated diff | adversarial-review --rotate --mode test
   → fix findings → re-run tests
-Pass 3: git diff HEAD -- <test-file> | adversarial-review --rotate --mode test
+[THIN: stop here]
+Pass 3: context + updated diff | adversarial-review --rotate --mode test
   → fix findings → re-run tests
-Pass 4: git diff HEAD -- <test-file> | adversarial-review --rotate --mode test
+[STANDARD: stop here]
+Pass 4: context + updated diff | adversarial-review --rotate --mode test
   → fix or backlog remaining
+[COMPLEX: stop here]
 ```
 
 If `adversarial-review` is not found: check `../../scripts/adversarial-review.sh`. If missing entirely, mark file SKIPPED_REVIEW and proceed.
