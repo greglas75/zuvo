@@ -299,3 +299,6 @@ Commits pending review. Auto-managed:
 - b30952a (2026-04-09) fix: retrospective gate — always write unless session truly aborted
 - 67ebed2 (2026-04-09) release: v1.3.48 — fix: retrospective gate — always write retro
 - 5736e85 (2026-04-09) chore: update review queue with v1.3.48 release entry
+- 102ac77 (2026-04-09) release: v1.3.49 — feat: project profile protocol + write-tests integration + validation script
+- 925b2de (2026-04-09) feat: write-article SEO/GEO enhancement — domain detection, multi-schema, FAQ, BLUF, humanization
+- 51477ce (2026-04-09) fix: --exclude flag for adversarial + timeout 240→90s
