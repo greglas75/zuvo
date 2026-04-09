@@ -35,26 +35,55 @@ If you are unsure, the router will ask: "This could be handled as a scoped task 
 |-------|------|-------|
 | Code Explorer | Scans the codebase for relevant modules, patterns, similar code, and blast radius | Sonnet |
 | Domain Researcher | Researches libraries, APIs, established approaches, and prior art | Sonnet |
-| Business Analyst | Identifies edge cases, acceptance criteria, and problem landscape | Sonnet |
+| Business Analyst | Identifies edge cases, failure modes (per-component with cost-benefit analysis), and acceptance criteria (ship + success tiers) | Sonnet |
 
 All three agents run in parallel. Their reports feed the design dialogue.
 
 ### Design dialogue
 
-After agents report, brainstorm enters a conversation with you:
+After agents report, brainstorm enters a conversation with you. Approval is grouped to prevent fatigue:
 
-1. **Context summary** -- what exists in the codebase, what exists externally, problem landscape
-2. **Clarifying questions** -- asked one at a time, referencing specific agent findings
-3. **Approach proposals** -- 2-3 options with trade-offs, one recommended
-4. **Section-by-section approval** -- overall approach, data model, API surface, integration points, edge cases
+**Group 1 — Solution shape:**
+1. Overall approach (which of the 2-3 options)
+2. Data model / schema changes
+3. API surface / interface design
+4. Integration points with existing code
+
+**Group 2 — Operational concerns** (critical — not rushed):
+5. Edge case handling strategy
+6. Failure modes and mitigation decisions
+7. Rollback strategy
+8. Backward compatibility approach
+
+**Group 3 — Validation:**
+9. Validation methodology
 
 ### Output artifact
 
-`docs/specs/YYYY-MM-DD-<topic>-spec.md` containing the approved design, acceptance criteria, files affected, and risk assessment.
+`docs/specs/YYYY-MM-DD-<topic>-spec.md` containing:
+- Approved design with decision rationale
+- Per-component failure mode tables (minimum 3 scenarios each, with detection/impact/recovery/cost-benefit → explicit mitigate/accept/defer/monitor decision)
+- Acceptance criteria split into ship criteria (deterministic, fact-checkable) and success criteria (measurable value/quality)
+- Validation methodology (concrete script/command, not "review manually")
+- Rollback strategy with kill switch mechanism
+- Backward compatibility assessment
+- Out of scope split into deferred-to-v2 vs permanently excluded
 
 ### Spec reviewer
 
-After writing the spec, a Spec Reviewer agent validates internal consistency, completeness, and alignment with the approved design decisions.
+After writing the spec, a Spec Reviewer agent validates 14 checkpoints (C1-C12 including C7b and C8b):
+
+| Checkpoint | Focus |
+|------------|-------|
+| C1-C6 | Problem statement, design decisions, solution overview, data model, API surface, integration points |
+| C7 | Edge cases (input validation) |
+| C7b | Failure modes (system resilience) — completeness check against C6 components, structured scenarios, cost-benefit decisions |
+| C8 | Ship acceptance criteria |
+| C8b | Success acceptance criteria — traceability to validation methodology, measurable output |
+| C9 | Out of scope — deferred vs permanent distinction |
+| C10 | Open questions |
+| C11 | Rollback strategy |
+| C12 | Backward compatibility |
 
 ## Phase 2: Plan (`zuvo:plan`)
 

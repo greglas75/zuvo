@@ -10,7 +10,7 @@ These enforce a strict sequence for non-trivial features. See [pipeline.md](pipe
 
 | Skill | Description | When to use |
 |-------|-------------|-------------|
-| `zuvo:brainstorm` | Explores codebase, researches the problem space, and produces an approved design spec. 3 parallel agents (Code Explorer, Domain Researcher, Business Analyst) followed by collaborative design dialogue. | New feature touching 5+ files, unclear scope, needs design decisions |
+| `zuvo:brainstorm` | Explores codebase, researches the problem space, and produces an approved design spec. 3 parallel agents (Code Explorer, Domain Researcher, Business Analyst) followed by collaborative design dialogue. Spec includes per-component failure mode analysis with cost-benefit decisions, ship/success acceptance criteria split, validation methodology, rollback strategy, and backward compatibility. Spec Reviewer validates 14 checkpoints (C1-C12 including C7b failure modes and C8b success criteria traceability). | New feature touching 5+ files, unclear scope, needs design decisions |
 | `zuvo:plan` | Decomposes an approved spec into ordered TDD tasks. 3 sequential agents (Architect, Tech Lead, QA Engineer) plus Team Lead synthesis. | After brainstorm produces a spec |
 | `zuvo:execute` | Implements a plan task by task with TDD cycle and dual-review gates (spec compliance + quality). | After plan produces a task list |
 | `zuvo:worktree` | Isolates work in a git worktree. CREATE mode sets up a new worktree; FINISH mode wraps up with merge/PR/cleanup options. | Branch isolation before executing a plan, or finishing worktree work |
