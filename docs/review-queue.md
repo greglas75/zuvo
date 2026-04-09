@@ -302,3 +302,4 @@ Commits pending review. Auto-managed:
 - 102ac77 (2026-04-09) release: v1.3.49 — feat: project profile protocol + write-tests integration + validation script
 - 925b2de (2026-04-09) feat: write-article SEO/GEO enhancement — domain detection, multi-schema, FAQ, BLUF, humanization
 - 51477ce (2026-04-09) fix: --exclude flag for adversarial + timeout 240→90s
+- 35a2068 (2026-04-09) release: v1.3.50 — fix: --exclude adversarial flag + timeout 240→90s — prevent rate limit failures
