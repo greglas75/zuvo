@@ -473,20 +473,44 @@ The **orchestrator** applies FIX-NOW items before committing. DEFER items go to 
 - Default: `--mode code`
 - If diff touches auth, payment, crypto, PII, or migration files: `--mode security`
 
+**Staging:** Stage ONLY files within the scope fence — not `git add -u` (which misses new files and may include unrelated changes):
 ```bash
-git add [specific files from scope fence] && git diff --staged | adversarial-review --json --mode [code|security]
+git add [specific files from scope fence]
 ```
 
-Stage ONLY files within the scope fence — not `git add -u` (which misses new files and may include unrelated changes). New files from extractions must be explicitly staged to be included in the adversarial diff.
+**Iterative review with `--rotate`:** Run adversarial passes sequentially, one random provider per pass. Each pass sees the FIXED code from previous passes — so fixes themselves get reviewed. Early exit when a pass returns 0 findings.
+
+**Context-enriched input:** Prepend refactoring context so the provider targets weaknesses:
+
+```bash
+(echo "CONTEXT: refactor [TYPE] [TARGET] scope:[N files]";
+ echo "CQ-PRE: [pre-audit score]. CQ-POST: [post-audit score]. Critical: [gates]";
+ echo "SCOPE-FENCE: [file list]";
+ echo "---";
+ git diff --staged) | adversarial-review --rotate --mode [code|security]
+```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
 
-Wait for complete output. Handle findings by severity:
-- **CRITICAL** — fix immediately, regardless of confidence. Verify first if confidence is low.
-- **WARNING** — fix if localized (< 10 lines). Larger fixes → backlog with file:line.
-- **INFO** — known concerns (max 3, one line each).
+**Pass count by diff size:**
 
-**Meta-review:** If findings == 0 AND diff_lines > 150: add false-negative warning — large diffs with zero findings suggest insufficient review depth.
+| Diff size | Max passes | Rationale |
+|-----------|-----------|-----------|
+| < 50 lines | 2 | Small extraction — quick sanity check |
+| 50-200 lines | 3 | Standard refactor — most issues found in 2-3 passes |
+| > 200 lines or GOD_CLASS | 4 | Large split — fixes on fixes need full depth |
+
+**Per-pass fix policy:**
+
+| Finding | Action |
+|---------|--------|
+| **CRITICAL** | Fix immediately. Re-run tests. |
+| **WARNING (< 10 lines)** | Fix immediately. |
+| **WARNING (> 10 lines)** | Add to backlog with file:line. |
+| **INFO** | Known concerns (max 3, one line each). |
+| **0 findings** | Early exit — stop passes, code is clean. |
+
+**Meta-review:** If pass 1 returns 0 findings AND diff_lines > 150: add false-negative warning — large diffs with zero findings suggest insufficient review depth. Run pass 2 regardless.
 
 Do NOT discard findings based on confidence alone. "Pre-existing" is NOT a reason to skip — if the issue is in a file you are editing, fix it now.
 
@@ -589,7 +613,7 @@ For each `[ ]` entry, run the full pipeline -- not a shortcut:
 2. **Test handling:** Write/verify tests per test mode routing
 3. **Execution:** Execute fixes per CONTRACT → verify (type check + tests)
 4. **Post-Audit:** Dispatch CQ Auditor (read-only; the **orchestrator** applies FIX-NOW items). Print CQ1-CQ28 AFTER (all 28 gates).
-5. **Adversarial:** Run adversarial review on staged diff.
+5. **Adversarial:** Run iterative adversarial review (`--rotate`) on staged diff with context-enriched input (same protocol as Phase 3). Pass count by diff size.
 6. **Commit:** ONE commit for this file only (exception: GOD_CLASS → multi-commit per extracted responsibility).
 7. **Queue update:** Update line with CQ before/after and commit hash.
 8. **Backlog:** Persist DEFER items.
