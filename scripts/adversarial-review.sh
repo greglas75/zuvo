@@ -36,6 +36,7 @@ DIFF_REF=""
 FILES=""
 INPUT_MODE="stdin"  # stdin | diff | files
 DRY_RUN=false
+EXCLUDE_PROVIDER=""  # --exclude: skip this provider (used by --rotate to avoid repeat)
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -43,6 +44,7 @@ while [[ $# -gt 0 ]]; do
     --multi)     MULTI_MODE="multi"; shift ;;
     --single)    MULTI_MODE="single"; shift ;;
     --rotate)    MULTI_MODE="rotate"; shift ;;
+    --exclude)   EXCLUDE_PROVIDER="$2"; shift 2 ;;
     --mode)      REVIEW_MODE="$2"; shift 2 ;;
     --json)      OUTPUT_FORMAT="json"; shift ;;
     --context)   CONTEXT_HINT="$2"; shift 2 ;;
@@ -57,6 +59,7 @@ Provider options:
   (default)        Multi: run ALL available providers
   --single         First-success: stop after first provider
   --rotate         Random single: shuffle providers, pick one
+  --exclude P      Skip provider P (use with --rotate to avoid repeats)
   --provider P     Auto: codex-5.3, gemini, cursor-agent, claude
                    Manual: codex-5.4, gemini-api, codestral
 
@@ -82,7 +85,7 @@ Input:
 
 Environment variables:
   ZUVO_REVIEW_PROVIDER     Force provider
-  ZUVO_REVIEW_TIMEOUT      Per-provider timeout in seconds (default: 240)
+  ZUVO_REVIEW_TIMEOUT      Per-provider timeout in seconds (default: 90)
   ZUVO_GEMINI_MODEL        Gemini CLI model (default: gemini-3.1-pro-preview)
   ZUVO_GEMINI_API_MODEL    Gemini API model (default: gemini-3.1-pro-preview)
   GEMINI_API_KEY           Required for gemini-api provider
@@ -645,9 +648,13 @@ elif [[ -z "$MULTI_MODE" ]]; then
   MULTI_MODE="multi"
 fi
 
-# Rotate mode: shuffle provider list, then behave like single
+# Rotate mode: shuffle provider list, exclude previous, then behave like single
 if [[ "$MULTI_MODE" == "rotate" ]]; then
-  PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | sort -R | tr '\n' ' ' | sed 's/ *$//')
+  if [[ -n "$EXCLUDE_PROVIDER" ]]; then
+    PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -v "^${EXCLUDE_PROVIDER}$" | sort -R | tr '\n' ' ' | sed 's/ *$//')
+  else
+    PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | sort -R | tr '\n' ' ' | sed 's/ *$//')
+  fi
   MULTI_MODE="single"
 fi
 
@@ -689,7 +696,7 @@ dispatch_provider() {
 command -v timeout &>/dev/null || { echo "ERROR: GNU timeout required. Install: brew install coreutils" >&2; exit 1; }
 command -v jq &>/dev/null || { echo "ERROR: jq required. Install: brew install jq" >&2; exit 1; }
 
-PROVIDER_TIMEOUT="${ZUVO_REVIEW_TIMEOUT:-240}"
+PROVIDER_TIMEOUT="${ZUVO_REVIEW_TIMEOUT:-90}"
 
 # ─── Dry run ───────────────────────────────────────────────────
 

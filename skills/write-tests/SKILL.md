@@ -157,19 +157,19 @@ The provider sees both files and focuses on gaps between production behavior and
 
 ```
 Pass 1:
-  --context "Code type: [type] [complexity]. Q-GATES: [scores]"
-  --files "<prod> <test>"
+  adversarial-review --rotate --mode test --context "..." --files "<prod> <test>"
+  Note which provider was used (from stderr output).
   → fix CRITICAL/WARNING → re-run tests
 
 Pass 2:
-  --context "Code type: [type] [complexity]. Q-GATES: [scores].
-    FIXED: [list of findings fixed in pass 1].
-    REJECTED: [findings consciously skipped, with reason].
-    KNOWN: [remaining limitations]."
-  --files "<prod> <test>"
-  → fix findings → re-run tests
+  adversarial-review --rotate --exclude <pass-1-provider> --mode test \
+    --context "... FIXED: [...]. REJECTED: [...]. KNOWN: [...]." \
+    --files "<prod> <test>"
+  → fix findings → re-run tests (guaranteed different provider)
 
-Pass 3+: same pattern, accumulate FIXED/REJECTED/KNOWN from all previous passes.
+Pass 3 (COMPLEX only, if pass 2 had CRITICAL):
+  adversarial-review --rotate --exclude <pass-2-provider> --mode test \
+    --context "..." --files "<prod> <test>"
 ```
 
 **Context rules:**
