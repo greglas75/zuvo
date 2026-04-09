@@ -2,9 +2,9 @@
 
 > **spec_id:** 2026-04-09-retrospective-feedback-loop-1345
 > **topic:** Structured agent retrospective after skill execution for systematic skill quality improvement
-> **status:** Reviewed
+> **status:** Approved
 > **created_at:** 2026-04-09T13:45:00Z
-> **approved_at:** null
+> **approved_at:** 2026-04-09T14:00:00Z
 > **approval_mode:** interactive
 > **author:** zuvo:brainstorm
 
@@ -125,8 +125,9 @@ Each question has:
 | 4 | `missing_template` | What code pattern did you need but had to invent from scratch? | Must include the pattern name or a 1-line description of what it does |
 | 5 | `worked_well` | What in the skill saved you time or prevented mistakes? | May reference specific include, phase, or template |
 | 6 | `change_proposal` | ONE specific edit to ONE specific file. Format: `FILE: / SECTION: / CONTENT: / RATIONALE:` | Must be actionable — "improve docs" is rejected |
+| 7 | `session_cost` | Estimate session costs: files read, files modified, tool calls (total + breakdown by type), test runs (pass/fail counts), adversarial passes, estimated total tokens (input+output). Use `/cost` if available, otherwise estimate from activity. | Must include at least: tool call count, files read count, files modified count |
 
-**Enforcement:** At least 1 of fields 1-4 must have a non-empty, artifact-grounded answer. Field 5 is encouraged but optional. Field 6 (change proposal) is always required and must use the `FILE: / SECTION: / CONTENT: / RATIONALE:` format.
+**Enforcement:** At least 1 of fields 1-4 must have a non-empty, artifact-grounded answer. Field 5 is encouraged but optional. Field 6 (change proposal) is always required and must use the `FILE: / SECTION: / CONTENT: / RATIONALE:` format. Field 7 (session cost) is always required.
 
 **Explicit prohibition:** "Sections that just describe the end result will be rejected. Each answer must reference a specific moment of friction or insight during the task, not a property of the final artifact."
 
@@ -137,7 +138,7 @@ Each question has:
 After filling the structured questions, emit a single TSV line:
 
 ```
-RETRO: DATE\tSKILL\tPROJECT\tCODE_TYPE\tFRICTION_CATEGORY\tMISSING_TEMPLATE\tCONTEXT_GAP\tTURNS_WASTED\tBRANCH\tSHA7
+RETRO: DATE\tSKILL\tPROJECT\tCODE_TYPE\tFRICTION_CATEGORY\tMISSING_TEMPLATE\tCONTEXT_GAP\tTURNS_WASTED\tTOOL_CALLS\tFILES_READ\tFILES_MODIFIED\tBRANCH\tSHA7
 ```
 
 | # | Field | Type | Values |
@@ -150,8 +151,11 @@ RETRO: DATE\tSKILL\tPROJECT\tCODE_TYPE\tFRICTION_CATEGORY\tMISSING_TEMPLATE\tCON
 | 6 | MISSING_TEMPLATE | string (40 char max) | short description or `-` |
 | 7 | CONTEXT_GAP | enum | `no-production-code`, `no-schema`, `no-env`, `no-test-fixture`, `no-framework-docs`, `none`, `other` |
 | 8 | TURNS_WASTED | integer | estimated turns lost to friction, or `0` |
-| 9 | BRANCH | string | current git branch |
-| 10 | SHA7 | string | short commit hash |
+| 9 | TOOL_CALLS | integer | total tool calls in session (agent estimate) |
+| 10 | FILES_READ | integer | distinct files read during session |
+| 11 | FILES_MODIFIED | integer | files created or edited during session |
+| 12 | BRANCH | string | current git branch |
+| 13 | SHA7 | string | short commit hash |
 
 The `RETRO:` prefix (like `Run:`) triggers file append. Agent appends the line (without prefix) to `~/.zuvo/retros.log`.
 
@@ -178,6 +182,14 @@ Append a section to `~/.zuvo/retros.md`:
 
 ### Worked Well
 [answer to field 5]
+
+### Session Cost
+- **Files read:** N
+- **Files modified:** N
+- **Tool calls:** N total (Read: N, Edit: N, Bash: N, Grep: N, ...)
+- **Test runs:** N (pass: N, fail: N)
+- **Adversarial passes:** N
+- **Estimated tokens:** ~NK input, ~NK output
 
 ### Change Proposal
 FILE: [path]
@@ -225,7 +237,7 @@ If gate check skips: print "RETRO: skipped (trivial session)" and proceed to ter
 
 | File | Format | Location | Rotation |
 |------|--------|----------|----------|
-| `retros.log` | TSV, 10 fields per line | `~/.zuvo/retros.log` | 100 entries max, oldest pruned on write |
+| `retros.log` | TSV, 13 fields per line | `~/.zuvo/retros.log` | 100 entries max, oldest pruned on write |
 | `retros.md` | Markdown, `<!-- RETRO -->` delimited sections | `~/.zuvo/retros.md` | 100 entries max, oldest pruned on write |
 
 **Rotation mechanism:** Before appending, count existing entries. If >= 100, prune the oldest. Follow the same shell pattern as `run-logger.md`:
@@ -256,7 +268,7 @@ Note: In the markdown file, each entry starts with `<!-- RETRO -->` as a unique 
 First line of `retros.log` is a header comment:
 
 ```
-# v1 DATE SKILL PROJECT CODE_TYPE FRICTION_CATEGORY MISSING_TEMPLATE CONTEXT_GAP TURNS_WASTED BRANCH SHA7
+# v1 DATE SKILL PROJECT CODE_TYPE FRICTION_CATEGORY MISSING_TEMPLATE CONTEXT_GAP TURNS_WASTED TOOL_CALLS FILES_READ FILES_MODIFIED BRANCH SHA7
 ```
 
 If the schema changes, bump to `v2` and add migration notes to `retrospective.md`. This prevents silent corruption of historical data.
@@ -280,7 +292,7 @@ If the schema changes, bump to `v2` and add migration notes to `retrospective.md
 
 1. A retrospective entry is written if and only if the skill reaches its terminal output block AND the agent's subjective assessment is that the session was non-trivial (roughly: more than ~5 tool calls or ~1 minute of effort).
 2. Each retrospective produces exactly one TSV line in `retros.log` and one markdown section in `retros.md`.
-3. The TSV line contains all 10 fields with valid enum values (no free-text in enum columns).
+3. The TSV line contains all 13 fields with valid enum values in enum columns, integers in numeric columns.
 4. At least 1 of fields 1-4 has a non-empty, artifact-grounded answer; field 6 (change proposal) is populated using the required format.
 5. Field 6 (change proposal) uses the `FILE: / SECTION: / CONTENT: / RATIONALE:` format.
 6. `retros.log` and `retros.md` do not exceed 100 entries; rotation prunes the oldest.

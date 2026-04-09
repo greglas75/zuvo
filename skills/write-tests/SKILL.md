@@ -38,14 +38,15 @@ CORE (Phase 0):
   5. ../../shared/includes/quality-gates.md        -- [READ|MISSING -> STOP]
   6. ../../shared/includes/run-logger.md           -- [READ|MISSING -> STOP]
   7. ../../rules/testing.md                          -- [READ|MISSING -> STOP]
+  8. ../../shared/includes/retrospective.md          -- RETRO PROTOCOL
 ```
 
 **Step 1 (load after classification):** based on file complexity.
 
 ```
 STANDARD+ only (skip for THIN):
-  8. ../../shared/includes/test-edge-cases.md      -- [READ|SKIP]
-  9. ../../shared/includes/test-code-types.md      -- [READ|SKIP]
+  9. ../../shared/includes/test-edge-cases.md      -- [READ|SKIP]
+  10. ../../shared/includes/test-code-types.md      -- [READ|SKIP]
 ```
 
 ---
@@ -201,7 +202,8 @@ Print per-file summary: `[status] [file] — [N] tests, Q [N]/19, adversarial: [
 
 1. **Backlog persistence:** write unfixed issues to `memory/backlog.md`
 2. **Knowledge curation** per `knowledge-curate.md`
-3. **Report:**
+3. **Retrospective** per `retrospective.md`. Gate check -> structured questions -> TSV emit -> markdown append. If gate check skips: print "RETRO: skipped (trivial session)".
+4. **Report:**
 
 ```
 WRITE-TESTS COMPLETE

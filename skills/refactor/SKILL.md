@@ -22,6 +22,7 @@ Read these files before any work begins:
 4. `../../rules/cq-patterns.md` -- NEVER/ALWAYS code pairs
 5. `../../rules/cq-checklist.md` -- Full CQ1-CQ28 evaluation criteria and evidence standards
 6. `../../shared/includes/run-logger.md` -- Run logging protocol
+7. `../../shared/includes/retrospective.md`   -- RETRO PROTOCOL
 
 Print the checklist:
 
@@ -545,6 +546,12 @@ Read `../../shared/includes/backlog-protocol.md`. Persist CQ Auditor DEFER items
 
 Run `knowledge-curate.md`: `WORK_TYPE = "implementation"`, `CALLER = "zuvo:refactor"`, `REFERENCE = <commit SHA>`.
 
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check -> structured questions -> TSV emit -> markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed to output.
+
 ### Post-Completion Summary
 
 ```
@@ -669,6 +676,12 @@ Batch mode overrides ALL interactive stops:
 ### Resume
 
 Running `zuvo:refactor batch queue.md` on a file with existing progress: `[x]` skip (completed), `[!]` skip (needs human), `[ ]` process, bare path: process (triage enriches). Session-crash safe: uncommitted files stay `[ ]`.
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check -> structured questions -> TSV emit -> markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed to output.
 
 ### Batch Completion
 

@@ -21,6 +21,7 @@ Read these files before doing anything else:
 2. `../../shared/includes/env-compat.md` -- Agent dispatch and environment adaptation. **Token optimization:** if environment is already known (Claude Code CLI), read ONLY the "Claude Code" section (~20L) and skip Codex/Cursor/Antigravity sections (~150L / ~1.8K tok saved).
 3. `../../shared/includes/quality-gates.md` -- CQ1-CQ28 and Q1-Q19 condensed reference
 4. `../../shared/includes/run-logger.md` -- Log-in-Output run logging
+5. `../../shared/includes/retrospective.md`   -- RETRO PROTOCOL
 
 ### Optional Files (degraded if missing)
 
@@ -469,6 +470,12 @@ Skip tagging when scope is `staged`.
 ### Knowledge Curation
 
 Run `knowledge-curate.md` (if loaded): `WORK_TYPE="review"`, `CALLER="zuvo:review"`, `REFERENCE=<commit range or "staged">`.
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check -> structured questions -> TSV emit -> markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed to output.
 
 ### NEXT STEPS Block
 

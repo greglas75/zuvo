@@ -59,6 +59,7 @@ CORE FILES LOADED:
   5. ../../shared/includes/run-logger.md       -- READ/MISSING (run logging)
   6. ../../shared/includes/knowledge-prime.md  -- READ/MISSING (project knowledge)
   7. ../../shared/includes/knowledge-curate.md -- READ/MISSING (learning extraction)
+  8. ../../shared/includes/retrospective.md    -- RETRO PROTOCOL
 ```
 
 
@@ -505,6 +506,14 @@ REFERENCE = <git SHA of the fix commit>
 ```
 
 Debugging often uncovers gotchas and codebase-facts that are highly valuable for future sessions.
+
+---
+
+## Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check -> structured questions -> TSV emit -> markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed to completion.
 
 ---
 

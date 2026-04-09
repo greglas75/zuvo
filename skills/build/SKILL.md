@@ -53,6 +53,7 @@ CORE FILES LOADED:
   3. ../../shared/includes/run-logger.md       -- READ/MISSING
   4. ../../shared/includes/knowledge-prime.md  -- READ/MISSING
   5. ../../shared/includes/knowledge-curate.md -- READ/MISSING
+  6. ../../shared/includes/retrospective.md   -- RETRO PROTOCOL
 ```
 
 
@@ -572,7 +573,13 @@ CALLER = "zuvo:build"
 REFERENCE = <git SHA of the commit>
 ```
 
-### 4.7 Output
+### 4.7 Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check -> structured questions -> TSV emit -> markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed to output.
+
+### 4.8 Output
 
 ```
 BUILD COMPLETE

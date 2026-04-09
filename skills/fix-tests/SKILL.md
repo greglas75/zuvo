@@ -92,6 +92,7 @@ CORE FILES LOADED:
   3. ../../shared/includes/run-logger.md       -- [READ | MISSING -> STOP]
   4. ../../shared/includes/knowledge-prime.md  -- READ/MISSING
   5. ../../shared/includes/knowledge-curate.md -- READ/MISSING
+  6. ../../shared/includes/retrospective.md    -- RETRO PROTOCOL
 ```
 
 **Conditional (loaded when the pattern requires domain knowledge):**
@@ -287,6 +288,12 @@ REFERENCE = <git SHA or relevant identifier>
 ### Multi-Pattern Continuation
 
 If fixing all patterns: check which patterns remain in the triage list. If any are left, proceed to Step 2 for the next pattern. If none remain, print the full session summary:
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check -> structured questions -> TSV emit -> markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed to session complete.
 
 ```
 FIX-TESTS SESSION COMPLETE
