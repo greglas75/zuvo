@@ -306,3 +306,5 @@ Commits pending review. Auto-managed:
 - 0fd180d (2026-04-09) release: v1.3.51 — feat: write-article SEO/GEO enhancement — domain detection, multi-schema, FAQ, BLUF, humanization
 - e0ecfa7 (2026-04-09) release: v1.3.52 — fix: project profile used for ALL file types, not just ORCHESTRATOR
 - df16305 (2026-04-09) fix: write-tests retro — promote from inline list item to full heading section
+- e672146 (2026-04-09) release: v1.3.53 — fix: write-tests retro promoted to heading section
+- 77ba2c1 (2026-04-09) fix: REWRITE action for bad existing tests + production code meta-check
