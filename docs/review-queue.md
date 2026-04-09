@@ -303,3 +303,4 @@ Commits pending review. Auto-managed:
 - 925b2de (2026-04-09) feat: write-article SEO/GEO enhancement — domain detection, multi-schema, FAQ, BLUF, humanization
 - 51477ce (2026-04-09) fix: --exclude flag for adversarial + timeout 240→90s
 - 35a2068 (2026-04-09) release: v1.3.50 — fix: --exclude adversarial flag + timeout 240→90s — prevent rate limit failures
+- 0fd180d (2026-04-09) release: v1.3.51 — feat: write-article SEO/GEO enhancement — domain detection, multi-schema, FAQ, BLUF, humanization

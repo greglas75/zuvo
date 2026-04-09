@@ -56,10 +56,19 @@ STANDARD+ only (skip for THIN):
 ## Phase 0: Setup (runs once)
 
 1. **CodeSift setup** per `codesift-setup.md`. Note repo identifier.
-2. **Project profile:** Load project profile per `project-profile-protocol.md` (pass `--no-cache` flag if set).
-   - If `profile.conventions` exists for this file's framework: use convention values for ORCHESTRATOR test planning (middleware names, rate limit values, auth boundaries, route mounts).
-   - If profile unavailable or partial: use generic `test-code-types.md` patterns (current behavior).
-3. **Stack detection:** If profile loaded, use `profile.stack` for framework/test-runner/language. Otherwise: read package.json/tsconfig/composer.json. Detect test runner (vitest/jest/phpunit). Find existing test patterns (DB helpers, factory functions, mock conventions).
+2. **Project profile (MANDATORY — do not skip):** Read `.zuvo/project-profile.json`. If it exists:
+   - **Print confirmation:** `[PROFILE] Loaded project profile: {framework} + {test_runner}, {N} critical files, conventions: {yes/no}`
+   - **Use for ALL file types, not just ORCHESTRATOR:**
+     - `profile.stack` → framework, test runner, language (replaces inline detection in Step 3)
+     - `profile.file_classifications` → know if target file is critical/important/routine (informs test depth)
+     - `profile.conventions` or `profile.nest_conventions` etc. → framework-specific context:
+       - For ORCHESTRATOR: middleware chains, rate limits, route mounts, auth boundaries
+       - For SERVICE/CONTROLLER: global guards applied (NestJS), middleware chain context (Hono/Express)
+       - For GUARD/MIDDLEWARE: where this guard sits in the global chain, what it protects
+       - For COMPONENT/HOOK: state management, UI library, routing conventions
+       - For ALL types: test conventions (mock style, assertion patterns, setup patterns)
+   - If profile missing or CodeSift unavailable: fall back to Step 3 (legacy inline detection). Print: `[PROFILE] Not found — using legacy detection.`
+3. **Stack detection (skip if profile loaded):** Only runs if Step 2 found no profile. Read package.json/tsconfig/composer.json. Detect test runner (vitest/jest/phpunit). Find existing test patterns (DB helpers, factory functions, mock conventions).
 4. **Baseline test run:** execute test suite, record pre-existing failures. These are ignored in verification.
 5. **Build queue:**
    - **Explicit mode:** queue = user's target file(s)
@@ -86,6 +95,8 @@ For each file in the queue, execute Steps 1-5 in order. Do NOT skip any step. Do
 ### Step 1: Analyze
 
 Read the production file fully. Classify it.
+
+**If project profile loaded in Phase 0:** Check `file_classifications` — the target file may already be classified (critical/important/routine with code_type). Use this as starting point. Also use profile conventions to understand what global guards/middleware/modules apply to this file's context.
 
 **With CodeSift:** single batch call:
 ```
