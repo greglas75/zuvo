@@ -268,3 +268,6 @@ Commits pending review. Auto-managed:
 - 0fdeebe (2026-04-09) release: v1.3.37 — optimize: testing-slim.md + batch CodeSift — additional ~15K token reduction per file
 - 6a43178 (2026-04-09) fix: clarify adversarial FIX mode interaction with fix-loop in review skill
 - 676ab75 (2026-04-09) feat: --rotate flag for adversarial-review — random provider per pass
+- 6069d1b (2026-04-09) release: v1.3.38 — feat: --rotate adversarial flag — random provider per pass for iterative review
+- 498e5b8 (2026-04-09) enhance: write-tests — tiered adversarial passes, context-enriched input, classify_roles discovery
+- 2b4a913 (2026-04-09) fix: restore full testing.md — testing-slim caused quality regression

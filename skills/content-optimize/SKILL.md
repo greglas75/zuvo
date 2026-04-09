@@ -274,10 +274,19 @@ Run knowledge curation per `knowledge-curate.md` (WORK_TYPE="analysis", CALLER="
 
 ## CONTENT-OPTIMIZE COMPLETE
 
-Print: File, Mode, Composite (before→after, tier), Voice delta, Benchmark count, Protected regions, Changes count.
-
 ```
+----------------------------------------------------
+CONTENT-OPTIMIZE COMPLETE
+File: [input file path]
+Mode: [report-only | applied]
+Composite: [before] → [after] ([tier] → [tier])
+Voice delta: [LOW | MED | HIGH | n/a]
+Benchmark: [N competitors | skipped]
+Protected: [N] code blocks, [N] MDX components preserved
+Changes: [N] applied | [N] proposed
+
 Run: <ISO-8601-Z>	content-optimize	<project>	-	-	<VERDICT>	<TASKS>	6-dim	<NOTES>	<BRANCH>	<SHA7>
+----------------------------------------------------
 ```
 
 After printing, append the `Run:` line value (without `Run: ` prefix) to the log file per `run-logger.md`.

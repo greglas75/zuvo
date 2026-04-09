@@ -5,7 +5,6 @@ model: sonnet
 reasoning: false
 tools:
   - Read
-  - Glob
 ---
 
 # Prose Quality Scorer Agent
@@ -71,7 +70,7 @@ The voice profile is used by the Optimize phase to preserve the author's voice w
 | Structure | [N]% | PQ10: [P/F], PQ11: [P/F], PQ12: [P/F] |
 | Authority | [N]% | PQ13: [P/F], PQ14: [P/F] |
 | Anti-slop | [N]% | PQ15: [P/F], PQ16: [P/F], PQ17: [P/F] |
-| Freshness | PQ18: [P/F] |
+| Freshness | PQ18: [P/F] (modifier only — NOT included in composite score) |
 
 ### Composite Score: [N]/100 — Tier: [A/B/C/D]
 

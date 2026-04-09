@@ -32,7 +32,7 @@ You receive from the orchestrator:
 
 ## Mandatory: Read banned-vocabulary.md FIRST
 
-Before reviewing ANY text, read `../../shared/includes/banned-vocabulary.md` in full. Load the hard ban list and soft ban list for the active language. Load the tone matrix to determine soft ban severity.
+Before reviewing ANY text, read `../../../shared/includes/banned-vocabulary.md` in full. Load the hard ban list and soft ban list for the active language. Load the tone matrix to determine soft ban severity.
 
 ## Review Checklist
 

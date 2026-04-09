@@ -12,7 +12,7 @@ description: >
   --batch-mode.
 ---
 
-# zuvo:write-article -- Research-Grounded Article Writer
+# zuvo:write-article — Research-Grounded Article Writer
 
 Write articles backed by real research, not model memory. Every claim traces to a fact sheet. Every draft passes anti-slop review before output.
 
