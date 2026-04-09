@@ -18,7 +18,7 @@ Read these files before doing anything else:
 ### Core Files (STOP if missing)
 
 1. `../../shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
-2. `../../shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
+2. `../../shared/includes/env-compat.md` -- Agent dispatch and environment adaptation. **Token optimization:** if environment is already known (Claude Code CLI), read ONLY the "Claude Code" section (~20L) and skip Codex/Cursor/Antigravity sections (~150L / ~1.8K tok saved).
 3. `../../shared/includes/quality-gates.md` -- CQ1-CQ28 and Q1-Q19 condensed reference
 4. `../../shared/includes/run-logger.md` -- Log-in-Output run logging
 
@@ -32,11 +32,14 @@ Read these files before doing anything else:
 | File | Load when | Skip when |
 |------|-----------|-----------|
 | `../../rules/cq-patterns-core.md` | TIER 1 only | TIER 0 or TIER 2+ |
-| `../../rules/cq-patterns.md` | TIER 2+ | TIER 0-1 |
+| `../../rules/cq-patterns.md` | TIER 2+ AND code type is SERVICE/CONTROLLER/ORCHESTRATOR/ORM-DB | TIER 0-1 |
+| `../../rules/cq-patterns-core.md` | TIER 2+ AND code type is PURE/HOOK/GUARD/VALIDATOR/CLI utility | Full patterns overkill for simple types |
 | `../../rules/cq-checklist.md` | TIER 1+ | TIER 0 |
 | `../../rules/testing.md` | Diff contains test files (`*.test.*`, `*.spec.*`) | No test files |
 | `../../rules/security.md` | Security signals or TIER 3 | TIER 0-2 without security signals |
 | `../../shared/includes/cross-provider-review.md` | Always (adversarial runs at all tiers) | Never |
+
+**cq-patterns loading rule:** After Step 1 (classify code type), check the "High-Risk Gates by Code Type" table in `cq-checklist.md`. If the code type has <=10 relevant gates, load `cq-patterns-core.md` (~500 tok) instead of `cq-patterns.md` (~8.4K tok). This saves ~8K tokens on pure utilities, CLI code, guards, and validators.
 
 Print loaded files after triage:
 
@@ -180,7 +183,7 @@ For high-risk changes (DB migrations, security/auth, API contracts, payment/mone
 
 ### Knowledge Prime
 
-Run the knowledge prime protocol from `knowledge-prime.md` (if loaded):
+Check if knowledge base exists BEFORE loading the protocol: `Glob("memory/knowledge*.md")` or `Glob(".zuvo/knowledge*.md")`. If no files found, skip — do NOT load `knowledge-prime.md` (saves ~140L / ~1.6K tokens). If files exist, then load and run:
 ```
 WORK_TYPE = "review"
 WORK_KEYWORDS = <keywords from diff file paths and commit messages>
@@ -191,7 +194,7 @@ WORK_FILES = <changed files from the diff>
 
 Follow `codesift-setup.md`:
 1. Check whether CodeSift tools are available
-2. `list_repos()` once to cache the repo identifier
+2. `list_repos()` once — cache ONLY the repo identifier string (e.g., `"local/my-project"`). Ignore the full response body (can be ~5K tokens with 200+ repos).
 3. If not indexed: `index_folder(path=<project_root>)`
 
 ### Stack Detection (TIER 2+)
@@ -319,12 +322,7 @@ Issues NOT introduced by the current diff: always report critical CQ gate violat
 
 ### 1.6 Adversarial (ALL tiers — sequential)
 
-Cross-model adversarial review using external providers. Runs **sequentially** — each provider is informed of prior findings and targets different areas. Text mode (no `--json`).
-
-```bash
-# Per-provider invocation:
-git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review --mode code --provider <name>
-```
+Cross-model adversarial review using external providers. Runs **sequentially** via `--rotate` — each pass uses a different random provider. Text mode (no `--json`).
 
 If `adversarial-review` not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
 
@@ -332,50 +330,52 @@ If `adversarial-review` not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/z
 
 #### REPORT mode — sequential finding (no fixes)
 
-Each provider receives the diff + a summary of what prior providers found. Each is instructed to search for NEW issues only.
+Each pass uses `--rotate` (script picks a random unused provider). Prepend prior findings summary so each provider targets NEW issues.
 
+```bash
+# Pass 1:
+git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review --rotate --mode code
+# → Read output, extract ADV-1, ADV-2
+
+# Pass 2:
+(echo "PRIOR FINDINGS: ADV-1 [desc], ADV-2 [desc] — find NEW issues only";
+ git diff {REVIEWED_FROM}..{REVIEWED_THROUGH}) | adversarial-review --rotate --mode code
+# → Read output, extract ADV-3
+
+# Pass 3 (if provider available):
+(echo "PRIOR FINDINGS: ADV-1..3 — final pass, find what everyone missed";
+ git diff {REVIEWED_FROM}..{REVIEWED_THROUGH}) | adversarial-review --rotate --mode code
+# → ADV-4 or clean → early exit
 ```
-Provider 1 (e.g. Gemini):
-  Input: diff
-  Output: ADV-1, ADV-2
 
-Provider 2 (e.g. Codex):
-  Input: diff + "Already found: R-1..3, ADV-1..2 — find NEW issues"
-  Output: ADV-3
-
-Provider 3 (e.g. opposite-Claude):
-  Input: diff + "Already found: R-1..3, ADV-1..3 — final pass"
-  Output: ADV-4 (or clean)
-```
-
-Zero deduplication needed — each provider deliberately avoids prior findings.
+**Early exit:** 0 findings from a pass = stop (code is clean from that model's perspective).
 
 #### FIX mode — sequential fix + validation
 
-Each provider reviews the IMPROVED code after fixes from prior passes.
+Same `--rotate` pattern but each pass sees the IMPROVED diff after prior fixes.
 
+```bash
+# Pass 1: review post-primary-fix code
+git diff {REVIEWED_FROM}..HEAD | adversarial-review --rotate --mode code
+# → ADV-1 → apply fix → commit
+
+# Pass 2: validate fix + find new
+git diff {REVIEWED_FROM}..HEAD | adversarial-review --rotate --mode code
+# → validates ADV-1 fix + finds ADV-2 → apply → commit
+
+# Pass 3: final validation
+git diff {REVIEWED_FROM}..HEAD | adversarial-review --rotate --mode code
+# → clean or ADV-3
 ```
-Provider 1:
-  Input: diff (post-primary-audit fixes)
-  Output: ADV-1 → apply fix
 
-Provider 2:
-  Input: updated diff (post-ADV-1 fix)
-  Output: validates prior fix + finds ADV-2 → apply fix
-
-Provider 3:
-  Input: updated diff (post-ADV-2 fix)
-  Output: final validation (clean or ADV-3)
-```
-
-Each fix is validated by the next provider. Max 2 fix attempts per provider finding.
+Max 2 fix attempts per provider finding. Max 3 passes total.
 
 #### Common rules
 
-- **Provider order:** use all available, max 3 sequential passes
+- **Use `--rotate`** — script picks a random provider each call. Do NOT use bare `--mode code` (that runs all providers in parallel, defeating sequential).
 - **Timeout:** 60s per provider. Skip on timeout/malformed, continue with next.
 - **All unavailable:** `[CROSS-REVIEW] No external provider available.` in SKIPPED STEPS.
-- **Severity mapping:** CRITICAL -> MUST-FIX (bypasses confidence gate). WARNING -> RECOMMENDED. INFO -> NIT.
+- **Severity:** CRITICAL -> MUST-FIX (bypasses confidence gate). WARNING -> RECOMMENDED. INFO -> NIT.
 - **Tag:** each finding as `[CROSS:<provider>]`
 
 ### Multi-Pass (--thorough variant)
@@ -414,9 +414,13 @@ Each fix is validated by the next provider. Max 2 fix attempts per provider find
 | **RECOMMENDED** | Maintenance risk, degraded reliability | Merge discouraged |
 | **NIT** | Style, readability, no functional impact | Merge OK as-is |
 
-### Report Sections (in order)
+### Report Sections
 
-1. META  2. SCOPE FENCE  3. VERDICT  4. **QUESTIONS FOR AUTHOR** (in FIX modes: pause, re-evaluate findings per answers; in REPORT: informational)  5. DEPLOYMENT RISK  6. SEVERITY SUMMARY (`MUST-FIX: N | RECOMMENDED: N | NIT: N`)  7. CHANGE SUMMARY  8. SKIPPED STEPS  9. VERIFICATION PASSED  10. BACKLOG IN SCOPE  11. DROPPED ISSUES (with tags)  12. **FINDINGS** (MUST-FIX -> RECOMMENDED -> NIT collapsed)  13. **QUALITY WINS** (max 3: novel pattern, clean error handling, effective test)  14. TEST ANALYSIS
+**TIER 2-3 (full report, 14 sections):**
+1. META  2. SCOPE FENCE  3. VERDICT  4. **QUESTIONS FOR AUTHOR** (in FIX modes: pause, re-evaluate findings per answers; in REPORT: informational)  5. DEPLOYMENT RISK  6. SEVERITY SUMMARY  7. CHANGE SUMMARY  8. SKIPPED STEPS  9. VERIFICATION PASSED  10. BACKLOG IN SCOPE  11. DROPPED ISSUES (with tags)  12. **FINDINGS** (MUST-FIX -> RECOMMENDED -> NIT collapsed)  13. **QUALITY WINS** (max 3)  14. TEST ANALYSIS
+
+**TIER 0-1 (condensed report — merge sections to save ~1.5K output tokens):**
+Combine META + SCOPE FENCE + VERDICT into the merged banner. Skip: DEPLOYMENT RISK (always LOW at TIER 0-1), SKIPPED STEPS (obvious), VERIFICATION PASSED (inline), BACKLOG IN SCOPE (check manually). Print only: banner, FINDINGS (if any), QUALITY WINS, NEXT STEPS. ~500 tok output vs ~3K for full report.
 
 Each finding:
 ```
