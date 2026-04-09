@@ -255,3 +255,5 @@ Commits pending review. Auto-managed:
 - efb62c7 (2026-04-08) fix: adversarial-review path broken in review skill + all build scripts
 - 1b6a236 (2026-04-08) release: v1.3.32 — fix: adversarial-review paths — review skill + build scripts for Cursor/Codex/Antigravity
 - bd8a6cc (2026-04-08) fix: cross-provider-review.md — remove hardcoded ~/.claude/ paths that break Codex build
+- 4b72064 (2026-04-08) release: v1.3.33 — fix: adversarial-review build validation — remove hardcoded paths from cross-provider-review.md
+- 26348d4 (2026-04-09) feat: PostToolUse hook enforces adversarial review after code-producing skills
