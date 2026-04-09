@@ -43,16 +43,16 @@ If any file is missing, STOP. Do not proceed from memory.
 
 | File | Load when | Skip when |
 |------|-----------|-----------|
-| `../../rules/testing.md` | Before ETAP-1B (test writing phase) | Test mode is RUN_EXISTING or VERIFY_COMPILATION |
-| `../../rules/test-quality-rules.md` | Before ETAP-1B when test mode is WRITE_NEW or IMPROVE_TESTS | Test mode is RUN_EXISTING or VERIFY_COMPILATION |
+| `../../rules/testing.md` | Before Phase 2 (test handling) | Test mode is RUN_EXISTING or VERIFY_COMPILATION |
+| `../../rules/test-quality-rules.md` | Before Phase 2 when test mode is WRITE_NEW or IMPROVE_TESTS | Test mode is RUN_EXISTING or VERIFY_COMPILATION |
 | `../../rules/file-limits.md` | Phase 0 (stack detection) | If unavailable, use defaults: 300L service, 200L component |
 | `../../rules/security.md` | When refactoring touches auth, input validation, or secrets | No security-sensitive code in scope |
 
 Print status when loading each conditional file:
 
 ```
-ETAP-1B: testing.md -- READ
-ETAP-1B: test-quality-rules.md -- READ
+Phase 2: testing.md -- READ
+Phase 2: test-quality-rules.md -- READ
 ```
 
 ---
@@ -88,12 +88,7 @@ $ARGUMENTS = other         -> task description, FULL mode
 
 ### Knowledge Prime
 
-Run the knowledge prime protocol from `knowledge-prime.md`:
-```
-WORK_TYPE = "implementation"
-WORK_KEYWORDS = <keywords from refactor target (file names, module names)>
-WORK_FILES = <files that will be refactored>
-```
+Run `knowledge-prime.md`: `WORK_TYPE = "implementation"`, `WORK_KEYWORDS = <target file/module names>`, `WORK_FILES = <files to refactor>`.
 
 ### Tech Stack
 
@@ -112,20 +107,18 @@ Print: `STACK: [language] | RUNNER: [test runner]`
 
 ### CodeSift Setup
 
-Follow `codesift-setup.md`:
+Follow `codesift-setup.md`: check availability, `list_repos()` once (cache identifier), `index_folder(path=<root>)` if not indexed.
 
-1. Check whether CodeSift tools are available in the current environment
-2. `list_repos()` once to cache the repo identifier
-3. If not indexed: `index_folder(path=<project_root>)`
+### Pre-Scan
 
-### Pre-Scan (STANDARD, FULL, AUTO, BATCH modes; skipped in QUICK)
-
-Run 4 analysis calls to understand WHAT to refactor before planning HOW:
+Run 6 analysis calls to understand WHAT to refactor before planning HOW:
 
 1. `analyze_complexity(repo, top_n=10, file_pattern=SCOPE)` -- Is the target among the most complex files? Which functions are worst?
 2. `analyze_hotspots(repo, since_days=90)` -- Is the target a churn hotspot? Changed often + complex = high-value refactor.
 3. `find_clones(repo, min_similarity=0.7, file_pattern=SCOPE)` -- Copy-paste blocks with other files? DRY extraction candidates.
 4. `find_dead_code(repo, file_pattern=SCOPE)` -- Unused exports in scope. Delete BEFORE refactoring (less code to move).
+5. `classify_roles(repo, file_pattern=SCOPE)` -- Symbol role classification: dead/leaf/core/entry
+6. `find_circular_deps(repo, file_pattern=SCOPE)` -- Cycle detection for BREAK_CIRCULAR type
 
 Print:
 
@@ -136,20 +129,21 @@ Complexity: target ranks #N/10 (cyclomatic X, function: Y)
 Hotspot:    changed N times in 90 days (rank in repo)
 Clones:     N blocks (X% similar) with [file:lines]
 Dead code:  N unused exports ([names])
+Roles:      N dead symbols (delete first), N leaf (safe to move), N core (careful)
+Cycles:     [N cycles detected | no cycles]
 ------------------------------------
 ```
 
 Feed pre-scan data into the extraction plan:
-- Clone blocks -> extract to shared module
-- Dead exports -> delete before refactoring
-- Highest-complexity functions -> prioritize splitting these first
-- Hotspot confirmation -> validates this refactor is high-value
+- Clone blocks -> extract to shared module. Dead exports -> delete before refactoring.
+- Highest-complexity functions -> prioritize splitting these first. Hotspot confirmation -> validates high-value.
+- `classify_roles`: dead = delete before refactoring, leaf = safe extraction, core = careful handling, entry = do not move without re-export.
 
-If CodeSift not available: skip pre-scan. If mode is QUICK: skip pre-scan.
+When CodeSift unavailable: skip pre-scan. Log `[DEGRADED: classify_roles/find_circular_deps unavailable]`.
 
 ---
 
-## Phase 1: Type Detection
+## Phase 1: Type Detection + CQ Pre-Audit + Approval Gate
 
 ### Test File Auto-Detection
 
@@ -200,13 +194,7 @@ Critical gates: CQ4=0(no orgId:42) CQ5=0(PII:54,82)
 Fix targets: CQ5, CQ14, CQ19, CQ10, CQ12
 ```
 
-Showing only failures hides false positives in the 1s. The user needs to see all 28 scores.
-
-Display detected type and wait for confirmation (unless AUTO or BATCH mode).
-
----
-
-## Phase 2: CONTRACT and Planning (ETAP-1A)
+Showing only failures hides false positives in the 1s. All 28 scores must be visible.
 
 ### CONTRACT State File
 
@@ -214,26 +202,22 @@ Create a resumable state file per target. The path is scoped so batch mode can t
 
 | Mode | Contract path |
 |------|---------------|
-| Single-file (full/standard/auto) | `.zuvo/contracts/refactor-{target-hash}.json` |
+| Single-file (full) | `.zuvo/contracts/refactor-{target-hash}.json` |
 | Batch | `.zuvo/contracts/refactor-{target-hash}.json` (one per queue entry) |
 
 Where `{target-hash}` is the first 8 chars of SHA-1 of the relative target path (e.g., `sha1("src/services/order.service.ts")[:8]`).
 
 **Resume contract:**
-
-- `continue <path>`: the user passes the readable target file path (e.g., `zuvo:refactor continue src/services/order.service.ts`). The skill computes the hash internally from the relative path and loads `.zuvo/contracts/refactor-{hash}.json`.
-- `continue` (no argument): scan `.zuvo/contracts/refactor-*.json` for files with `stage != "COMPLETE"`.
-  - **0 active:** print "No active refactoring contracts found." and stop.
-  - **1 active:** resume it automatically.
-  - **2+ active:** print a numbered list of candidates (file, type, stage, last modified) and ask the user to pick one. Do NOT auto-pick "most recent".
+- `continue <path>`: compute hash from relative path, load `.zuvo/contracts/refactor-{hash}.json`.
+- `continue` (no argument): scan `.zuvo/contracts/refactor-*.json` for `stage != "COMPLETE"`. 0 active: stop. 1 active: resume. 2+: list candidates, ask user to pick (do NOT auto-pick "most recent").
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "file": "src/services/order.service.ts",
   "type": "EXTRACT_METHODS",
   "mode": "full",
-  "stage": "ETAP-1A",
+  "stage": "PHASE-1",
   "queue_file": null,
   "queue_entry": null,
   "cq_before": { "score": "11/18", "critical_failures": ["CQ4", "CQ5"] },
@@ -245,6 +229,11 @@ Where `{target-hash}` is the first 8 chars of SHA-1 of the relative target path 
 }
 ```
 
+**Contract migration (v2 → v3):** When `continue` loads a legacy contract:
+- Mode migration: `quick`/`standard`/`auto` → `full` (silently, with log)
+- Stage migration: `ETAP-1A` → `PHASE-1`, `ETAP-1B` → `PHASE-2`, `ETAP-2` → `PHASE-3`, `COMPLETE` → `COMPLETE`
+- Version: bump to 3
+
 In batch mode, `queue_file` and `queue_entry` are set so resume can map back to the queue:
 
 ```json
@@ -254,9 +243,9 @@ In batch mode, `queue_file` and `queue_entry` are set so resume can map back to 
 }
 ```
 
-Update this file after each ETAP stage completes. If the session is interrupted, `zuvo:refactor continue` picks up from the last recorded stage.
+Update this file after each phase completes. If the session is interrupted, `zuvo:refactor continue` picks up from the last recorded stage.
 
-### Sub-Agent Dispatch (FULL and AUTO modes)
+### Sub-Agent Dispatch (FULL mode)
 
 Refer to `env-compat.md` for the correct dispatch pattern per environment.
 
@@ -264,35 +253,19 @@ The orchestrator passes the following to each agent: **target file**, **CODESIFT
 
 Dispatch two agents in parallel (background) to inform the plan:
 
-#### Agent 1: Dependency Mapper
+#### Agent 1: Dependency Mapper (default tier, read-only)
 
-**Execution profile:** default analysis tier
+Trace all importers and callers of the target file. Build a dependency map: direct importers, transitive dependents (one level up), exported symbols and where each is consumed, risk assessment for export changes.
 
-**Type:** Explore (read-only)
+**CodeSift:** `find_references(repo, symbol_name)` for each export, `trace_call_chain(repo, symbol_name, direction="callers", depth=2)` for critical functions. **Fallback:** grep for imports.
 
-**Task:** Trace all importers and callers of the target file. Build a dependency map showing:
-- Direct importers (files that import from the target)
-- Transitive dependents (one level up)
-- Exported symbols and where each is consumed
-- Risk assessment: which dependents will break if the refactoring changes exports
+#### Agent 2: Existing Code Scanner (lightweight tier, read-only)
 
-**CodeSift (if available):** Use `find_references(repo, symbol_name)` for each exported symbol and `trace_call_chain(repo, symbol_name, direction="callers", depth=2)` for critical functions.
+Search the codebase for existing helpers, utilities, or patterns similar to planned extractions. Prevents creating duplicates.
 
-**Fallback:** `grep -r 'import.*[module]'` and `grep -r 'from.*[module]'` to find importers.
+**CodeSift:** `find_clones(repo, min_similarity=0.7, file_pattern=SCOPE)` and `search_symbols(repo, query, detail_level="compact")`. **Fallback:** grep for function names and patterns.
 
-#### Agent 2: Existing Code Scanner
-
-**Execution profile:** lightweight analysis tier
-
-**Type:** Explore (read-only)
-
-**Task:** Search the codebase for existing helpers, utilities, or patterns similar to what the refactoring plans to extract. Prevents creating duplicates.
-
-**CodeSift (if available):** Use `find_clones(repo, min_similarity=0.7, file_pattern=SCOPE)` and `search_symbols(repo, query, detail_level="compact")`.
-
-**Fallback:** Grep for function names and patterns matching the planned extraction targets.
-
-### ETAP-1A Plan
+### Phase 1 Planning
 
 Produce the refactoring plan incorporating sub-agent results (when available):
 
@@ -332,25 +305,48 @@ Note: priority 1 (VERIFY_COMPILATION) is checked **before** test discovery runs.
 
 ### Questions Gate
 
-If there is genuine uncertainty after planning, present questions to the user (max 4). Update the CONTRACT with answers, then HARD STOP for plan approval.
+If there is genuine uncertainty after planning, present questions to the user (max 4). Update the CONTRACT with answers, then proceed to the approval gate.
 
-In AUTO and BATCH mode: skip questions, proceed with the safest default.
+In BATCH mode: skip questions, proceed with the safest default.
 
-### Plan Display
+### Approval Gate (full mode only; skipped in batch)
 
-Display the plan, then proceed immediately. No approval gate — the user invoked the skill to get the work done.
+Display the plan:
+
+```
+REFACTOR PLAN: [filename] ([N]L)
+Type: [EXTRACT_METHODS / SPLIT_FILE / ...]
+Scope: [N] files
+Extractions: [summary of planned changes]
+CQ targets: [which CQ failures to fix]
+Test mode: [RUN_EXISTING / WRITE_NEW / IMPROVE_TESTS / VERIFY_COMPILATION]
+```
+
+Wait for user input. If the user changes the type or plan:
+
+**Cosmetic change** (wording, extraction names, minor scope adjustments within same files):
+1. The orchestrator recomputes scope, extractions, and test mode inline.
+2. Sub-agents are NOT re-dispatched — their analysis remains valid.
+3. Re-display the updated plan. Wait for confirmation again.
+
+**Material change** (different type, new files added to scope, fundamentally different extraction strategy):
+1. Re-dispatch Dependency Mapper and Existing Code Scanner with updated inputs.
+2. Recompute plan incorporating new agent results.
+3. Re-display. Wait for confirmation again.
+
+Proceed only after explicit confirmation. In `plan-only` mode: stop here (do not proceed to Phase 2).
 
 ---
 
-## Phase 3: Test Handling (ETAP-1B)
+## Phase 2: Test Handling
 
-Skip for QUICK mode and VERIFY_COMPILATION test mode.
+Skip for VERIFY_COMPILATION test mode.
 
 ### Load Conditional Files
 
 ```
-ETAP-1B: testing.md -- READ
-ETAP-1B: test-quality-rules.md -- READ (WRITE_NEW or IMPROVE_TESTS only)
+Phase 2: testing.md -- READ
+Phase 2: test-quality-rules.md -- READ (WRITE_NEW or IMPROVE_TESTS only)
 ```
 
 ### Test Mode Execution
@@ -371,9 +367,9 @@ Show the test results, then proceed to execution. No approval gate.
 
 ---
 
-## Phase 4: Execution (ETAP-2)
+## Phase 3: Execution + Post-Audit + Adversarial Review
 
-### Backup Branch (FULL and AUTO modes)
+### Backup Branch (FULL mode)
 
 Create a backup branch before making changes:
 
@@ -384,6 +380,8 @@ git checkout -  # return to original branch
 
 ### Execute Refactoring
 
+Record `PRE_REFACTOR_SHA = $(git rev-parse HEAD)` at the start of Phase 3, before any changes.
+
 Apply the planned changes according to the extraction list, following these rules:
 
 1. One extraction at a time. Verify tests pass after each extraction before starting the next.
@@ -392,22 +390,54 @@ Apply the planned changes according to the extraction list, following these rule
 4. Follow CQ patterns from `cq-patterns.md` in all new code.
 5. Respect file size limits throughout. If an extraction creates a file that exceeds the limit, split further.
 
+**Type-specific CodeSift tools (when available):**
+
+| Refactor type | CodeSift tool | Use |
+|---------------|--------------|-----|
+| RENAME_MOVE | `rename_symbol(repo, old_name, new_name)` | LSP-based cross-file rename. Fallback: manual edit with grep. |
+| BREAK_CIRCULAR | `find_circular_deps(repo)` before + after | Verify cycles are broken. Fallback: skip verification. |
+| Any (post-execution) | `find_unused_imports(repo, file_pattern=SCOPE)` | Clean stale imports. Fallback: skip. |
+
+### Failure Recovery
+
+| Failure | Action |
+|---------|--------|
+| tsc/type-check fails | Fix type errors. Retry up to 3 times. If still failing: revert current extraction, mark in contract as BLOCKED, proceed to next extraction (GOD_CLASS) or stop (single extraction). |
+| Tests fail after extraction | Revert to `LAST_PASSING_SHA` (updated after each successful extraction commit). Re-analyze: was the extraction incorrect, or does the test need updating? If test is testing internal implementation (not behavior): update test. If extraction broke behavior: revert extraction and try a different approach. |
+| Lint fails | Fix lint issues. This should never block — lint is auto-fixable in most cases. |
+| Adversarial CRITICAL | Fix immediately. Re-run adversarial on the fix. Max 2 iterations. |
+| All verifications fail | Restore from backup branch. Mark contract as BLOCKED. Report to user. |
+
 ### Split-File Audit Rule
 
-**After any refactoring that creates new files (SPLIT_FILE, EXTRACT_METHODS with new module, SIMPLIFY with delegation):**
+**After any refactoring that creates new files:** Run CQ self-eval on EACH extracted module, not just the orchestrator. The bugs move with the code. CQ failures (CQ5, CQ8, CQ9, CQ17, CQ19) live in the modules where the actual logic resides.
 
-Run CQ self-eval on EACH extracted module, not just the orchestrator. The bugs move with the code.
-
-"Split file into 4 modules" means audit 4 modules. The orchestrator is clean by construction (it just delegates). The CQ failures (CQ5 PII in logs, CQ8 missing try/catch, CQ9 no transaction, CQ17 N+1, CQ19 no validation) live in the modules where the actual logic resides.
-
-**Procedure:**
 1. List ALL files created or modified during the refactoring
 2. Run CQ1-CQ28 self-eval on EACH file
 3. Any CQ critical gate failure (CQ3/4/5/6/8/14 = 0) in ANY module blocks the commit
 
+### CodeSift Post-Audit Verification (when CodeSift available)
+
+After execution completes, stage all scope-fence files (`git add [specific files]`) first, then run:
+```
+review_diff(repo, since=PRE_REFACTOR_SHA, until="STAGED",
+            checks="breaking-changes,test-gaps,dead-code,complexity,blast-radius",
+            token_budget=10000)
+impact_analysis(repo, since=PRE_REFACTOR_SHA)
+changed_symbols(repo, since=PRE_REFACTOR_SHA)
+diff_outline(repo, since=PRE_REFACTOR_SHA)
+```
+
+- **Scope fence:** If `impact_analysis` returns affected files OUTSIDE the scope fence → WARNING: unintended blast radius.
+- **Behavioral equivalence:** REMOVED symbol consumed externally → CRITICAL: breaking change. MODIFIED signature → WARNING: verify callers updated.
+- **CQ Auditor integration:** Pass `review_diff` output as `machine_checks` input. Auditor uses machine checks as baseline and focuses on domain-specific gates (CQ5, CQ8, CQ9, CQ14, CQ19, CQ25).
+- **Boundaries:** If `check_boundaries` rules exist: run `check_boundaries(repo, rules=PROJECT_RULES)`. Otherwise skip.
+
+When CodeSift unavailable: skip machine verification. Pass empty `machine_checks` to CQ Auditor. Log `[DEGRADED: CodeSift unavailable — machine verification skipped]`.
+
 ### CQ Post-Audit
 
-After execution completes, run CQ1-CQ28 on every modified and created file. Print ALL 28 gates for each file:
+Run CQ1-CQ28 on every modified and created file. Print ALL 28 gates per file:
 
 ```
 CQ POST-AUDIT: order.service.ts (132L)
@@ -415,12 +445,9 @@ CQ1=1 CQ2=1 CQ3=1 CQ4=1 CQ5=1 CQ6=1 CQ7=1 CQ8=1 CQ9=1 CQ10=1
 CQ11=1 CQ12=1 CQ13=1 CQ14=1 CQ15=1 CQ16=N/A CQ17=1 CQ18=N/A CQ19=1
 CQ20=N/A CQ21=1 CQ22=N/A CQ23=1 CQ24=1 CQ25=1 CQ26=N/A CQ27=1 CQ28=N/A
 Score: 24/24 applicable -> PASS
-
-CQ POST-AUDIT: order-helpers.ts (85L)
-CQ1=1 CQ2=1 CQ3=N/A CQ4=N/A CQ5=1 ...
 ```
 
-Compare before and after scores. The post-audit score must not be lower than the pre-audit score. Any regression is a bug in the refactoring.
+Post-audit score must not be lower than pre-audit. Any regression is a bug in the refactoring.
 
 ### Verification
 
@@ -432,40 +459,40 @@ Run the full verification suite:
 4. CQ self-eval on all modified files
 5. Q1-Q19 on all modified test files
 
-### Independent CQ Auditor (FULL and AUTO modes)
+### Independent CQ Auditor (FULL mode, default tier, read-only)
 
-After the lead's post-audit, dispatch an independent CQ Auditor agent to verify the results.
+After the lead's post-audit, dispatch an independent CQ Auditor agent. Run CQ1-CQ28 independently on ALL modified/created files. Does NOT trust the lead's scores. Catches N/A abuse and rubber-stamped gates.
 
-**Execution profile:** default analysis tier
+**Input:** Full source of each file, CQ checklist, CQ patterns, tech stack, `machine_checks` from CodeSift (if available).
 
-**Type:** Explore (read-only)
-
-**Task:** Run CQ1-CQ28 independently on ALL files created or modified during the refactoring. Does NOT trust the lead's scores. Catches N/A abuse and rubber-stamped gates. Returns findings that must be addressed before committing.
-
-**Input:** Full source of each file, CQ checklist reference, CQ patterns reference, tech stack.
-
-Apply any FIX-NOW items from the auditor before committing. DEFER items go to the backlog.
+The **orchestrator** applies FIX-NOW items before committing. DEFER items go to the backlog.
 
 ### Adversarial Review (MANDATORY — do NOT skip)
 
+**Risk-sensitive mode selection:**
+- Default: `--mode code`
+- If diff touches auth, payment, crypto, PII, or migration files: `--mode security`
+
 ```bash
-git add -u && git diff --staged | adversarial-review --mode code
+git add [specific files from scope fence] && git diff --staged | adversarial-review --json --mode [code|security]
 ```
+
+Stage ONLY files within the scope fence — not `git add -u` (which misses new files and may include unrelated changes). New files from extractions must be explicitly staged to be included in the adversarial diff.
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
 
 Wait for complete output. Handle findings by severity:
-- **CRITICAL** — fix immediately, regardless of confidence. If confidence is low, verify first (check the code), then fix if confirmed.
-- **WARNING** — fix if localized (< 10 lines). If fix is larger, add to backlog with specific file:line.
+- **CRITICAL** — fix immediately, regardless of confidence. Verify first if confidence is low.
+- **WARNING** — fix if localized (< 10 lines). Larger fixes → backlog with file:line.
 - **INFO** — known concerns (max 3, one line each).
 
-Do NOT discard findings based on confidence alone. Confidence measures how sure the reviewer is, not how important the issue is. A CRITICAL with low confidence means "verify this — if true, it's serious."
+**Meta-review:** If findings == 0 AND diff_lines > 150: add false-negative warning — large diffs with zero findings suggest insufficient review depth.
 
-"Pre-existing" is NOT a reason to skip a finding. If the issue is in a file you are already editing, fix it now. If not, add it to backlog with file:line. The adversarial review found a real problem — don't dismiss it just because it existed before your changes.
+Do NOT discard findings based on confidence alone. "Pre-existing" is NOT a reason to skip — if the issue is in a file you are editing, fix it now.
 
 ---
 
-## Phase 5: Completion
+## Phase 4: Completion
 
 ### Commit
 
@@ -480,75 +507,40 @@ In no-commit mode: show `git diff --staged` and the proposed message instead.
 
 ### Update Contract State
 
-Mark the contract as completed:
-
-```json
-{
-  "stage": "COMPLETE",
-  "cq_after": { "score": "18/18", "critical_failures": [] },
-  "commits": ["abc1234"]
-}
-```
+Mark contract: `"stage": "COMPLETE"`, `"cq_after": { "score": "18/18", "critical_failures": [] }`, `"commits": ["abc1234"]`.
 
 ### CodeSift Index Update
 
-After committing, update the CodeSift index for every changed file:
+After committing: `index_file(path=<changed-file>)` for every changed file.
 
-```
-index_file(path="/absolute/path/to/changed-file.ts")
-```
+### Backlog Persistence (FULL mode)
 
-### Backlog Persistence (FULL and AUTO modes)
-
-Read `../../shared/includes/backlog-protocol.md` before persisting.
-
-Persist any deferred findings to `memory/backlog.md`:
-- CQ Auditor DEFER items
-- Issues identified but out of scope for this refactoring
-
-**Fingerprint contract:** `file|rule-id|signature` (e.g., `order.service.ts|CQ8|no-try-catch`). Source: `zuvo:refactor` or `zuvo:refactor/cq-auditor` for agent findings. Deduplicate by exact fingerprint match per `backlog-protocol.md`.
+Read `../../shared/includes/backlog-protocol.md`. Persist CQ Auditor DEFER items and out-of-scope issues to `memory/backlog.md`. Fingerprint: `file|rule-id|signature`. Source: `zuvo:refactor` or `zuvo:refactor/cq-auditor`. Deduplicate per `backlog-protocol.md`.
 
 ### Knowledge Curation
 
-After refactoring is complete, run the knowledge curation protocol from `knowledge-curate.md`:
-```
-WORK_TYPE = "implementation"
-CALLER = "zuvo:refactor"
-REFERENCE = <git SHA of the refactoring commit>
-```
+Run `knowledge-curate.md`: `WORK_TYPE = "implementation"`, `CALLER = "zuvo:refactor"`, `REFERENCE = <commit SHA>`.
 
 ### Post-Completion Summary
 
 ```
 REFACTORING COMPLETE
 ------------------------------------
-Type: [EXTRACT_METHODS / SPLIT_FILE / ...]
-Target: [filename]
-Files modified: [N]
-Files created: [N]
-
-CQ: [before score] -> [after score]
-Tests: [status]
-Commit: [hash] -- [message]
+Type: [TYPE] | Target: [filename]
+Files modified: [N] | Files created: [N]
+CQ: [before] -> [after] | Tests: [status] | Commit: [hash]
 
 Run: <ISO-8601-Z>\trefactor\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>
-
-After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
-
-VERDICT: PASS / WARN / FAIL / BLOCKED / ABORTED only.
-CQ: CQ post-audit score (e.g., `18/18`).
-Q: Q score from test evaluation (or `-` if VERIFY_COMPILATION).
-TASKS: number of files modified + created.
-DURATION: ETAP stage reached (e.g., `etap-2`).
-NOTES: refactoring type + target file (max 80 chars).
 ------------------------------------
 ```
+
+Append the `Run:` line to log file per `run-logger.md`. VERDICT: PASS/WARN/FAIL/BLOCKED/ABORTED. CQ: post-audit score. Q: test score or `-`. TASKS: files modified+created. DURATION: phase reached (e.g., `phase-3`). NOTES: type + target (max 80 chars).
 
 ---
 
 ## Batch Mode (batch <file>)
 
-Process a queue of files through the full ETAP pipeline autonomously. Zero interactive stops, one commit per file, failure logging in the queue file.
+Process a queue of files through the full pipeline autonomously. Zero interactive stops, one commit per file (exception: GOD_CLASS), failure logging in the queue file.
 
 ### Phase 0: Parse Queue and Triage
 
@@ -560,15 +552,15 @@ Process a queue of files through the full ETAP pipeline autonomously. Zero inter
    - Bare file paths: process (first run)
 2. Validate each file exists. Non-existent files: mark `[!] FILE NOT FOUND`, skip.
 3. For each pending file: quick CQ1-CQ28 pre-scan, detect type.
-4. Compute **PriorityScore** for ordering (range 0.00–1.00):
+4. Compute **PriorityScore** for ordering (range 0.00-1.00):
 
    ```
    PriorityScore = 0.4 * complexity_rank + 0.3 * hotspot_rank + 0.3 * cq_gap
    ```
 
    Where:
-   - `complexity_rank` = file's rank in `analyze_complexity` top-10, normalized to 0–1 (rank 1 = 1.0, not in top 10 = 0.0)
-   - `hotspot_rank` = file's rank in `analyze_hotspots`, normalized to 0–1
+   - `complexity_rank` = file's rank in `analyze_complexity` top-10, normalized to 0-1 (rank 1 = 1.0, not in top 10 = 0.0)
+   - `hotspot_rank` = file's rank in `analyze_hotspots`, normalized to 0-1
    - `cq_gap` = `1 - (cq_score / cq_applicable)` (e.g., 11/18 = gap 0.39)
 
    If CodeSift pre-scan is unavailable: `PriorityScore = cq_gap` (fallback). The queue is still sorted by PriorityScore descending even when using the fallback formula.
@@ -587,19 +579,26 @@ Process a queue of files through the full ETAP pipeline autonomously. Zero inter
 
 ### Per-File Pipeline
 
-For each `[ ]` entry, run the LITERAL ETAP pipeline -- not a shortcut:
+For each `[ ]` entry, run the full pipeline -- not a shortcut:
 
-**Pipeline enforcement:** "Full pipeline" means running ETAP-1A -> 1B -> 2 -> Phase 4-5 as defined in this skill. "Read file, fix obvious things, commit" is a shortcut that violates batch mode. Every file gets: its own contract state file (`.zuvo/contracts/refactor-{target-hash}.json`), CQ BEFORE eval, fixes, CQ AFTER eval, sub-agents (in FULL modes), one commit.
+**Pipeline enforcement:** "Full pipeline" means running Phase 1 planning → Phase 2 test handling → Phase 3 execution → Phase 4 completion as defined in this skill. "Read file, fix obvious things, commit" is a shortcut that violates batch mode. Every file gets: its own contract state file (`.zuvo/contracts/refactor-{target-hash}.json`), CQ BEFORE eval, fixes, CQ AFTER eval, one commit.
 
 **Steps (ALL mandatory, in order):**
 
-1. **ETAP-1A:** Read file -> CQ1-CQ28 BEFORE (print ALL 28 gates) -> type detect -> scope freeze -> create contract state file
-2. **ETAP-1B:** Write/verify tests per test mode routing
-3. **ETAP-2:** Execute fixes per CONTRACT -> verify (type check + tests)
-4. **Post-Audit:** Run sub-agents (Dependency Mapper, Existing Code Scanner, CQ Auditor). Apply FIX-NOW items from CQ Auditor. Print CQ1-CQ28 AFTER (all 28 gates).
-5. **Commit:** ONE commit for this file only. `git add` only files within this file's scope fence.
-6. **Queue update:** Update the line with CQ before/after scores and commit hash.
-7. **Backlog:** Persist any DEFER items.
+1. **Analysis:** Dispatch Dependency Mapper + Existing Code Scanner (parallel) → CQ1-CQ28 BEFORE (all 28 gates) → type detect → scope freeze → create contract
+2. **Test handling:** Write/verify tests per test mode routing
+3. **Execution:** Execute fixes per CONTRACT → verify (type check + tests)
+4. **Post-Audit:** Dispatch CQ Auditor (read-only; the **orchestrator** applies FIX-NOW items). Print CQ1-CQ28 AFTER (all 28 gates).
+5. **Adversarial:** Run adversarial review on staged diff.
+6. **Commit:** ONE commit for this file only (exception: GOD_CLASS → multi-commit per extracted responsibility).
+7. **Queue update:** Update line with CQ before/after and commit hash.
+8. **Backlog:** Persist DEFER items.
+
+### GOD_CLASS Batch Exception
+
+GOD_CLASS files in batch mode produce multiple commits (one per extracted responsibility). This overrides the general "one commit per file" rule. GOD_CLASS requires iterative decomposition by design — forcing a single commit would require extracting all responsibilities at once, which the GOD_CLASS protocol explicitly forbids.
+
+**Partial failure in GOD_CLASS batch:** If a GOD_CLASS extraction fails mid-sequence, keep all previously committed extractions (they are atomic and tested). Mark the contract as `PARTIAL` with a list of completed and remaining extractions. Mark the queue entry as `[!] PARTIAL` with details.
 
 ### CQ Before/After (Non-Negotiable)
 
@@ -631,31 +630,21 @@ Batch mode overrides ALL interactive stops:
 
 | Standard stop | Batch behavior |
 |---------------|----------------|
-| ETAP-1A plan approval | Skipped -- agent proceeds autonomously |
-| ETAP-1B test approval | Skipped |
+| Phase 1 plan approval | Skipped -- agent proceeds autonomously |
+| Phase 2 test approval | Skipped |
 | Questions Gate | Skipped -- agent makes best judgment, logs uncertainty |
 | Post-completion prompt | Skipped -- proceed to next queue entry |
 | GOD_CLASS confirmation | Skipped -- auto-proceed with iterative decomposition |
 
 ### Failure Policy
 
-- **Never stop.** Log the failure in the queue file, revert uncommitted changes for the current file, move to the next entry.
-- **Actionable descriptions:** Not "failed" but WHY and what partial progress was made (e.g., "BLOCKED: test fail pricing.spec.ts -- expects old return shape after Decimal removal | CQ16 fixed, CQ17 open").
-- **Revert scope:** Only revert the current file's uncommitted changes. Previous file commits are preserved.
-- **Partial progress:** If some phases committed before failure, note which commits landed.
+- **Never stop.** Log failure in queue file, revert current file's uncommitted changes, move to next entry.
+- **Actionable descriptions:** WHY + partial progress (e.g., "BLOCKED: test fail pricing.spec.ts -- expects old return shape | CQ16 fixed, CQ17 open").
+- **Revert scope:** Only current file. Previous commits preserved. Note which commits landed if partial.
 
 ### Resume
 
-Running `zuvo:refactor batch queue.md` on a file with existing progress:
-
-| Marker | Action |
-|--------|--------|
-| `[x]` | Skip (completed) |
-| `[!]` | Skip (needs human decision) |
-| `[ ]` | Process |
-| Bare path | Process (triage will enrich) |
-
-Session-crash safe: uncommitted files stay `[ ]`, resume picks them up.
+Running `zuvo:refactor batch queue.md` on a file with existing progress: `[x]` skip (completed), `[!]` skip (needs human), `[ ]` process, bare path: process (triage enriches). Session-crash safe: uncommitted files stay `[ ]`.
 
 ### Batch Completion
 
@@ -663,17 +652,10 @@ Session-crash safe: uncommitted files stay `[ ]`, resume picks them up.
 BATCH COMPLETE
 Total: N | Completed: X | Failed: Y | Skipped: Z
 Queue: [path to queue file]
-
 Run: <ISO-8601-Z>\trefactor\t<project>\t<CQ>\t-\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>
-
-After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
-
-VERDICT: PASS / WARN / FAIL / BLOCKED / ABORTED only.
-CQ: aggregate CQ score across batch (e.g., `avg 16/18`), or `-` if mixed.
-TASKS: number of files completed in batch.
-DURATION: `batch-N` where N is total queue entries.
-NOTES: `batch X/N completed Y failed` (max 80 chars).
 ```
+
+Append `Run:` line to log per `run-logger.md`. CQ: aggregate (e.g., `avg 16/18`) or `-`. TASKS: files completed. DURATION: `batch-N`. NOTES: `batch X/N completed Y failed` (max 80 chars).
 
 ---
 
@@ -681,30 +663,8 @@ NOTES: `batch X/N completed Y failed` (max 80 chars).
 
 When GOD_CLASS is detected (>600L, 5+ responsibilities):
 
-### Identification
-
-1. List all public methods grouped by responsibility (e.g., "order creation", "pricing", "notification", "validation")
-2. Map internal dependencies between responsibility groups
-3. Determine extraction order: extract the group with the FEWEST internal dependencies first
-
-### Iterative Decomposition
-
-Do NOT extract all responsibilities at once. For each responsibility group:
-
-1. Create the new module file with the extracted methods
-2. Update the original file to delegate to the new module
-3. Update all imports in dependent files
-4. Run the full test suite
-5. Verify behavioral equivalence
-6. Commit this single extraction
-
-Repeat until the original file is under the size limit and has a single clear responsibility.
-
-### Size Gate
-
-After each extraction, check:
-- Original file: is it under the limit? If not, continue extracting.
-- New module: is it under the limit? If not, it may need further splitting.
-- All modules: run CQ self-eval on each (Split-File Audit Rule).
+1. **Identify:** List public methods grouped by responsibility. Map internal dependencies. Extract the group with the FEWEST internal dependencies first.
+2. **Decompose iteratively:** For each responsibility: create new module, delegate from original, update imports, run tests, verify equivalence, commit. Repeat until original is under size limit with single responsibility.
+3. **Size gate:** After each extraction check original file, new module, and all modules (CQ self-eval via Split-File Audit Rule). Continue if any exceeds limit.
 
 ---

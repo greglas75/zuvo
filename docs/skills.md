@@ -26,7 +26,7 @@ Scoped task execution for common development work.
 |-------|-------------|-------------|-----------|
 | `zuvo:build` | Scoped feature development (1-5 files). Runs blast radius and duplication analysis in parallel, then TDD implementation with CQ/Q quality gates. | Small feature with clear scope | `--auto` (skip plan approval), `--auto-commit` |
 | `zuvo:review` | Structured code review with parallel audit agents, deployment risk scoring (LOW/MED/HIGH/CRIT), confidence-scored triage, and auto-fix. Closed-loop mode dispatches zuvo:build for MUST-FIX findings. | After coding, before push | Scope: `staged`, `HEAD~N`, `[path]`, `[commit range]`. Modes: `fix`, `blocking`, `auto-fix`, `tag`, `batch` |
-| `zuvo:refactor` | ETAP workflow (Evaluate, Test, Act, Prove) with resumable CONTRACT and batch processing. | Extracting, splitting, moving, renaming, simplifying code | Modes: `full`, `auto`, `quick`, `standard`, `plan-only`, `continue`, `batch <file>` |
+| `zuvo:refactor` | ETAP workflow (Evaluate, Test, Act, Prove) with resumable CONTRACT and batch processing. | Extracting, splitting, moving, renaming, simplifying code | Modes: `full`, `batch <file>`. Flags: `plan-only`, `no-commit`, `continue` |
 | `zuvo:debug` | Five-phase bug investigation: reproduce, narrow, diagnose, fix, verify. Produces structured report with root cause analysis and regression test. | Any bug, error, or unexpected behavior | `--regression` (git bisect) |
 
 ---
