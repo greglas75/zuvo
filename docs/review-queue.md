@@ -297,3 +297,4 @@ Commits pending review. Auto-managed:
 - 6027543 (2026-04-09) enhance: retrospective — paste-ready code in proposals, impact ranking table
 - b64cd47 (2026-04-09) release: v1.3.47 — enhance: retrospective — paste-ready proposals + impact ranking
 - b30952a (2026-04-09) fix: retrospective gate — always write unless session truly aborted
+- 67ebed2 (2026-04-09) release: v1.3.48 — fix: retrospective gate — always write retro
