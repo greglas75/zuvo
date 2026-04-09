@@ -98,9 +98,9 @@ This does: version bump → commit → push → tag → update marketplace SHA �
 ## File structure
 
 ```
-skills/<name>/SKILL.md          — skill definitions (49 total)
-skills/<name>/agents/<name>.md  — sub-agent instructions (26 agents)
-shared/includes/*.md            — shared procedural includes (32 files):
+skills/<name>/SKILL.md          — skill definitions (51 total)
+skills/<name>/agents/<name>.md  — sub-agent instructions (28 agents)
+shared/includes/*.md            — shared procedural includes (36 files):
                                     knowledge-prime.md, knowledge-curate.md (knowledge store)
                                     session-state.md (session recovery)
                                     severity-vocabulary.md (unified severity mapping)
@@ -131,7 +131,7 @@ Every SKILL.md follows this structure:
 
 Reference: `skills/build/SKILL.md` is the canonical template.
 
-## Skill categories (49 total)
+## Skill categories (51 total)
 
 | Category | Count | Skills |
 |----------|-------|--------|
@@ -140,7 +140,7 @@ Reference: `skills/build/SKILL.md` is the canonical template.
 | Code/Test audits | 5 | code-audit, test-audit, api-audit, security-audit, pentest |
 | Infra audits | 5 | performance-audit, db-audit, dependency-audit, ci-audit, env-audit |
 | Structure/SEO/GEO | 6 | structure-audit, seo-audit, seo-fix, geo-audit, geo-fix, architecture |
-| Content | 3 | content-audit, content-fix, content-migration |
+| Content | 5 | content-audit, content-fix, content-migration, write-article, content-optimize |
 | Design | 3 | design, design-review, ui-design-team |
 | Testing | 5 | write-tests, fix-tests, write-e2e, tests-performance, mutation-test |
 | Accessibility | 1 | a11y-audit |

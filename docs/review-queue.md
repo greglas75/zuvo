@@ -284,3 +284,5 @@ Commits pending review. Auto-managed:
 - 4110573 (2026-04-09) fix: review findings — move retro above worktree conditional, single-shell note, PID tmp files
 - 79a3319 (2026-04-09) feat: ORCHESTRATOR contract variant + REJECTED severity cap + stub fidelity
 - 26e41e5 (2026-04-09) release: v1.3.42 — feat: ORCHESTRATOR contract, REJECTED severity cap, stub fidelity rule
+- cf101f6 (2026-04-09) release: v1.3.43 — feat: retrospective feedback loop — structured agent reflection after skill execution
+- a5d1fd7 (2026-04-09) feat(brainstorm): failure modes, structured validation, operational review groups
