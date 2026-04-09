@@ -308,3 +308,5 @@ Commits pending review. Auto-managed:
 - df16305 (2026-04-09) fix: write-tests retro — promote from inline list item to full heading section
 - e672146 (2026-04-09) release: v1.3.53 — fix: write-tests retro promoted to heading section
 - 77ba2c1 (2026-04-09) fix: REWRITE action for bad existing tests + production code meta-check
+- be9bb84 (2026-04-09) release: v1.3.54 — fix: REWRITE action for bad tests + production code meta-check — don't add good tests on top of bad
+- d27aae3 (2026-04-09) fix: retrospective — explicit MUST-execute-bash note after structured questions
