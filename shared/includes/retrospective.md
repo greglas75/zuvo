@@ -27,7 +27,7 @@ Fill these 7 fields. At least 1 of fields 1-4 must be non-empty and artifact-gro
 | 3 | `most_turns` | Which sub-task consumed the most iterations? What would have prevented it? | Must include a count (turns, attempts, or minutes) |
 | 4 | `missing_template` | What code pattern did you need but had to invent from scratch? | Must include the pattern name or a 1-line description |
 | 5 | `worked_well` | What in the skill saved you time or prevented mistakes? | May reference specific include, phase, or template |
-| 6 | `change_proposals` | Up to 5 specific edits, ranked by impact. Each one: `FILE: / SECTION: / CONTENT: / RATIONALE:`. At least 1 required. | Each must name a file path and a concrete change — "improve docs" is rejected |
+| 6 | `change_proposals` | Up to 5 specific edits, ranked by impact (token savings + quality). Each one: `FILE: / SECTION: / CONTENT: / RATIONALE:`. CONTENT must include paste-ready code/text, not just a description. Include a ranking table at the end with columns: change, token savings, quality impact. At least 1 required. | Each must name a file path and include the actual content to add — "add a section about X" is rejected, show the section |
 | 7 | `session_cost` | Estimate session costs. Use `/cost` if available, otherwise estimate from activity. | Must include: tool call count, files read, files modified |
 
 **Structural grounding check:** Each non-empty answer in fields 1-4 MUST contain at least one of: a file path with extension (e.g., `app.ts`), a phase/step number (e.g., `Phase 3`), or a numeric count (e.g., `6 turns`). Answers without any of these tokens are treated as empty.
@@ -111,14 +111,27 @@ Append a section to the retro markdown file using this exact template:
 ### Change Proposals (ranked by impact, up to 5)
 
 **1.** FILE: [path] | SECTION: [where]
-CONTENT: [what to add]
+CONTENT:
+```
+[paste-ready code or markdown to add — not a description, the actual content]
+```
 RATIONALE: [which problem from above it solves]
 
 **2.** FILE: [path] | SECTION: [where]
-CONTENT: [what to add]
+CONTENT:
+```
+[actual content]
+```
 RATIONALE: [...]
 
 (continue up to 5 if warranted)
+
+**Impact ranking:**
+
+| # | Change | Token savings | Quality impact |
+|---|--------|---------------|----------------|
+| 1 | [short label] | ~NK/session | high/medium/low |
+| 2 | ... | ... | ... |
 ```
 
 If `degraded_context = true`, prefix the H2 header with `[DEGRADED-CONTEXT]` and cap each answer to 2 sentences.
