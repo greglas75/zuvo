@@ -60,6 +60,56 @@ it("applies middleware in correct order", async () => {
 
 This catches: reordered middleware (auth before DB → crash), removed middleware (silent security gap), duplicated middleware (double auth check).
 
+### ORCHESTRATOR Pitfalls (learned from real sessions)
+
+**Pitfall 1: Stub path collision.** When a route module is mounted at a broad prefix (e.g. `/api`), a catch-all stub (`all("*")`) steals requests meant for other routes (health checks, other mount points). FIX: Use path-specific stubs:
+```typescript
+// BAD — catches /api/health, /api/admin/*, everything
+const social = new Hono(); social.all("*", handler);
+
+// GOOD — only catches its own paths
+const social = new Hono();
+social.all("/r/*", handler);
+social.all("/contests/:slug/entry/*", handler);
+```
+
+**Pitfall 2: Rate limit path binding.** Testing `rateLimit.toHaveBeenCalledWith(3, 3600)` proves the factory was called but NOT that the limit is applied to `/register`. Test path execution:
+```typescript
+// INCOMPLETE — proves config, not binding
+expect(rateLimit).toHaveBeenCalledWith(3, 3600);
+
+// COMPLETE — proves limit runs on the right path
+it("applies 3/3600 rate limit on /register", async () => {
+  await app.request("/api/contests/slug/register");
+  expect(callOrder).toContain("rateLimit(3/3600)");
+});
+```
+
+**Pitfall 3: Auth boundary checklist.** Test BOTH presence AND absence of middleware per route group. Missing absence tests = silent security gap if someone adds auth to public routes:
+```
+Auth boundary matrix (test each cell):
+| Route group | clerkAuth | tenantResolver | publicTenantResolver | rateLimit |
+|-------------|-----------|----------------|---------------------|-----------|
+| Admin       | YES       | YES            | NO                  | NO        |
+| Public      | NO        | NO             | YES                 | per-path  |
+| Webhook     | NO        | NO             | NO                  | NO        |
+| Health      | NO        | NO             | NO                  | NO        |
+```
+Every NO cell needs `expect(callOrder).not.toContain("clerkAuth")`.
+
+### ORCHESTRATOR Min Tests Formula
+
+```
+middleware_count (ordering)
++ route_modules × 1 (mount verification)
++ rate_limiters × 2 (config + path execution)
++ auth_boundaries × 2 (positive + negative per group)
++ endpoints × 1 (health, etc.)
++ 1 (404 unknown path)
+```
+
+Example: 4 middleware + 13 routes + 6 limiters×2 + 4 groups×2 + 2 endpoints + 1 = 32 tests.
+
 **CRITICAL:** THIN complexity does NOT mean simple testing. A 67-line ORCHESTRATOR with 0 branches can have critical ordering invariants that require more test sophistication than a 200-line SERVICE with 10 branches.
 
 ## Mixed Files

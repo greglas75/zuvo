@@ -143,18 +143,30 @@ adversarial-review --rotate --mode test \
 
 The provider sees both files and focuses on gaps between production behavior and test coverage. Without production code, reviewer can't detect missing ordering tests, auth boundary gaps, or untested error messages.
 
-**Pass sequence:**
+**Pass sequence with structured context (prevents repetition):**
 
 ```
-Pass 1: adversarial-review --rotate --mode test --context "..." --files "<prod> <test>"
+Pass 1:
+  --context "Code type: [type] [complexity]. Q-GATES: [scores]"
+  --files "<prod> <test>"
   → fix CRITICAL/WARNING → re-run tests
-Pass 2: adversarial-review --rotate --mode test --context "..." --files "<prod> <test>"
-  → fix findings → re-run tests (different provider auto-selected)
-Pass 3+: same pattern, early exit on 0 findings
 
-If same CRITICAL repeats across passes and was consciously rejected: stop adversarial.
-Pass previous findings summary in --context to avoid repetition.
+Pass 2:
+  --context "Code type: [type] [complexity]. Q-GATES: [scores].
+    FIXED: [list of findings fixed in pass 1].
+    REJECTED: [findings consciously skipped, with reason].
+    KNOWN: [remaining limitations]."
+  --files "<prod> <test>"
+  → fix findings → re-run tests
+
+Pass 3+: same pattern, accumulate FIXED/REJECTED/KNOWN from all previous passes.
 ```
+
+**Context rules:**
+- FIXED findings must NOT be re-raised. If reviewer repeats a fixed finding, ignore it.
+- REJECTED findings must NOT be re-raised. If same CRITICAL repeats after rejection, stop adversarial.
+- Each pass adds its own fixes/rejections to the context for the next pass.
+- Early exit: 0 new findings (not counting repeats of FIXED/REJECTED).
 
 If `adversarial-review` is not found: check `../../scripts/adversarial-review.sh`. If missing entirely, mark file SKIPPED_REVIEW and proceed.
 
