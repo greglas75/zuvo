@@ -34,6 +34,7 @@ Read these files before any work begins:
 10. `../../shared/includes/knowledge-curate.md` -- Learning extraction after work
 11. `../../shared/includes/verification-protocol.md` -- Build verification after apply
 12. `../../shared/includes/seo-page-profile-registry.md` -- Profile-aware SEO scoring
+13. `../../shared/includes/domain-profile-registry.md` -- Niche-aware schema merge rules
 
 Print `CORE FILES LOADED:` checklist with `[READ | MISSING -> STOP]` for each. If any file is missing, STOP.
 
@@ -203,7 +204,11 @@ Skip entirely without `--apply`. Proceed directly to Phase 5.
 5. **On failure (crash, regression, abort):** `.content-optimize-backup` remains. Report: "ROLLBACK: Backup preserved at <path>. Original file unchanged."
 6. **Per-dimension rollback (EC-CO-10):** If a section rewrite causes ANY dimension to regress, revert that single rewrite in the temp copy. Final file contains only non-regressive changes.
 
-### 4.1 Rewrite
+### 4.1 Schema Merge Rule
+
+When updating schema in frontmatter or JSON-LD: detect existing `@type` values. If the present schema is more specific than BlogPosting (e.g., Recipe, HowTo, Event, SoftwareApplication), **PRESERVE it** — merge new fields into the existing schema, do not replace `@type`. Only downgrade to plain BlogPosting if user explicitly requests schema regeneration. Reference `../../shared/includes/domain-profile-registry.md` for valid niche-schema mappings.
+
+### 4.2 Rewrite
 
 For each diagnosed issue (Phase 3), apply targeted rewrites on the temp copy:
 

@@ -30,21 +30,10 @@ Read these files before any work begins:
 5. `../../shared/includes/article-output-schema.md` -- JSON output contract
 6. `../../shared/includes/adversarial-loop-docs.md` -- Cross-model review protocol
 7. `../../shared/includes/seo-page-profile-registry.md` -- Word count thresholds and SEO profiles
+8. `../../shared/includes/domain-profile-registry.md` -- 17 niche profiles: schema, E-E-A-T, detection signals
+9. `../../shared/includes/humanization-rules.md` -- Anti-detection writing constraints + voice matching
 
-Print the checklist:
-
-```
-CORE FILES LOADED:
-  1. env-compat.md                  -- [READ | MISSING -> STOP]
-  2. run-logger.md                  -- [READ | MISSING -> STOP]
-  3. banned-vocabulary.md           -- [READ | MISSING -> STOP]
-  4. prose-quality-registry.md      -- [READ | MISSING -> STOP]
-  5. article-output-schema.md       -- [READ | MISSING -> STOP]
-  6. adversarial-loop-docs.md       -- [READ | MISSING -> STOP]
-  7. seo-page-profile-registry.md   -- [READ | MISSING -> STOP]
-```
-
-If any file is missing, STOP.
+Print `CORE FILES LOADED:` checklist with `[READ | MISSING -> STOP]` for each. If any file is missing, STOP.
 
 ## Safety Gates
 
@@ -70,6 +59,7 @@ If any file is missing, STOP.
 | `--format <fmt>` | `md` (default) / `astro-mdx` / `hugo` / `nextjs-mdx`. Unsupported value: fall back to `md` with note (EC-WA-09) |
 | `--keyword <term>` | Primary SEO keyword (auto-detected from topic if omitted) |
 | `--audience <desc>` | Target audience description (feeds persona generation) |
+| `--domain <niche>` | Override auto-detection. One of 17 niche IDs from `domain-profile-registry.md` (e.g., `travel`, `recipe-food`, `technical`, `saas-product`) |
 | `--batch-mode` | Cache competitor/domain research per session. Key: `{site-dir-basename}:{keyword}`. Storage: `memory/write-article-cache-{date}.json`. TTL: session or 24h (EC-WA-12) |
 
 ---
@@ -81,18 +71,11 @@ If any file is missing, STOP.
 3. **Vague topic gate (EC-WA-02):** If topic lacks specificity (no audience, keyword, or length signal), ask for clarification: audience, keyword, length, tone. Async: apply defaults with `[AUTO-DECISION: defaults-applied]`.
 4. **Web search probe:** Test `WebSearch` availability. If unavailable, set `research_limited = true` and emit: `WARNING: Web search unavailable. Article will use context-only research. Frontmatter tagged research_limited: true.` (EC-WA-01)
 5. **Site-dir schema detection:** If `--site-dir` provided, read 2-3 existing articles to extract frontmatter schema (field names, types, structure). Text fields (title, description, tags): populate. Enums, relational IDs, custom types: use placeholder values with `# TODO` comments.
-6. **COMPACT mode (EC-WA-11):** If `--length < 800`, activate COMPACT: collapse research + outline into single phase, skip competitor analysis, lighter review.
+6. **Domain detection:** Cascade: `--domain` override → scan 3-5 articles in `--site-dir` for frontmatter/content signals per `domain-profile-registry.md` → fallback `general`. If top two niches within 20%: `domain=mixed`, use `general` schema. YMYL niches (`health`, `finance-legal`): emit credentials WARNING per registry.
+7. **Voice matching:** If `--site-dir` has 3+ articles in the same content directory (blog posts only, not about/landing pages), extract voice profile per `humanization-rules.md` (sentence rhythm, person, formality, patterns). Inconclusive → fall back to default rules with note.
+8. **COMPACT mode (EC-WA-11):** If `--length < 800`, activate COMPACT: collapse research + outline into single phase, skip competitor analysis, FAQ generation, voice matching, lighter review.
 
-Print:
-```
-SETUP:
-  Topic: [topic]
-  Language: [code] | Tone: [tone] | Length: [N] words
-  Format: [format] | Site-dir: [path | none]
-  Web search: [available | unavailable (research_limited)]
-  Mode: [STANDARD | COMPACT]
-  Batch: [active (run N) | inactive]
-```
+Print SETUP block: Topic, Language, Tone, Length, Format, Site-dir, Domain (niche/mixed/unknown), Voice (profile/inconclusive/skipped), Web search, Mode, Batch.
 
 ---
 
@@ -100,32 +83,15 @@ SETUP:
 
 **COMPACT mode:** Orchestrator performs a single focused web search + brief fact gathering. Skip agents and competitor analysis. Proceed to Phase 2.
 
-**STANDARD mode:** The orchestrator performs all web searches (agents do NOT search). Then dispatch three parallel agents per `env-compat.md`:
+**STANDARD mode:** Orchestrator performs all web searches first (agents do NOT search), then dispatches 3 parallel agents per `env-compat.md`:
 
-```
-Agent 1: Topic Researcher
-  model: sonnet
-  type: Explore (read-only)
-  instructions: [read agents/topic-researcher.md]
-  input: topic, web search results, --lang
-  output: structured fact sheet with cited sources
+| Agent | Instructions | Input | Output |
+|-------|-------------|-------|--------|
+| Topic Researcher | `agents/topic-researcher.md` | topic, web results, --lang | Fact sheet with citations |
+| Persona Generator | `agents/persona-generator.md` | topic, --audience, web results | 3-5 personas + questions |
+| Competitor Analyst | `agents/competitor-analyst.md` | topic, --keyword, web results, site inventory | Gaps + angle recommendations |
 
-Agent 2: Persona Generator
-  model: sonnet
-  type: Explore (read-only)
-  instructions: [read agents/persona-generator.md]
-  input: topic, --audience (if provided), web search results
-  output: 3-5 reader personas with their questions
-
-Agent 3: Competitor Analyst
-  model: sonnet
-  type: Explore (read-only)
-  instructions: [read agents/competitor-analyst.md]
-  input: topic, --keyword, web search results, --site-dir content inventory
-  output: competitor gaps, content angle recommendations
-```
-
-**Cursor / Antigravity fallback:** Read each agent's instruction file and execute sequentially yourself.
+All agents: model sonnet, type Explore (read-only). Cursor/Antigravity: execute sequentially yourself.
 
 **Web search unavailable (EC-WA-01):** Degrade to user-context only. Agents work with available project context and general knowledge. Tag all output: `research_limited: true`.
 
@@ -149,7 +115,11 @@ Generate outline using STORM pattern: derive sections from persona questions, no
    - Interactive: present outline for approval. Max 3 revision rounds. After 3 rejections: prompt for manual outline or abandon.
    - Async: auto-approve after 1 self-revision with `[AUTO-DECISION: outline-approved]`.
 
-Output: numbered outline with mapped fact references per section.
+5. **Snippet targeting:** Classify each H2 by query type: "What is X" → paragraph snippet (40-60 word answer block), "How to X" → ordered list snippet, "X vs Y" → table snippet. Use niche defaults from `domain-profile-registry.md` as starting point; override per H2.
+6. **H2 question words (G10):** Prefer What/How/Why question-word headings for informational topics.
+7. **FAQ candidates:** Collect answerable questions from persona output + competitor gaps. If 3+ questions + informational intent + >800 words: plan FAQ section at article end. Skip FAQ for `marketing`/`ecommerce`/`personal-brand` niches unless explicitly requested.
+
+Output: numbered outline with mapped fact references, snippet classification per H2, and FAQ candidate list.
 
 ---
 
@@ -167,7 +137,11 @@ For each section:
 
 **Language awareness (EC-WA-06):** For non-English output, apply language-specific register, morphological variants in SEO, and locale-appropriate banned vocabulary from `banned-vocabulary.md`.
 
-After all sections are drafted, assemble the complete article.
+5. **Humanization rules:** Apply ALL constraints from `humanization-rules.md` during drafting: sentence variation (fragments + long sentences, max 3 consecutive medium), contractions, parenthetical asides, rhetorical questions, first-person references, hedging transitions, entity grounding, structural asymmetry. If voice profile available: match person, formality, rhythm.
+6. **GEO constraints:** BLUF per H2 section — first sentence ≤30 words, answer-first, no throat-clearing (G9). Section cap 300 words between headings (G6). Snippet format per H2 classification from Phase 2. Stats carry source attribution + year (G11).
+7. **FAQ section:** If FAQ candidates from Phase 2 passed quality gate (3+ research-backed questions, >800 words, informational intent): draft FAQ section at article end. Each answer traces to fact sheet. Skip if `research_limited` and no PAA data.
+
+After all sections + FAQ are drafted, assemble the complete article.
 
 ---
 
@@ -196,20 +170,7 @@ If topic is medical, legal, or financial AND `--tone` is `casual` or `marketing`
 
 ### 4.3 Cross-Model Adversarial Review
 
-Run `adversarial-loop-docs --mode article` for cross-model validation.
-
-```bash
-adversarial-review --mode article --files "[draft path]"
-```
-
-If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
-
-**Fallback:** If `--mode article` is not available, use `--mode audit` with: `WARNING: Adversarial review used --mode audit (article mode not yet available). Prose-specific checks (burstiness, voice, slop) not covered by this mode.`
-
-Handle findings:
-- **CRITICAL** (unsourced claims, contradictions, hard-banned vocabulary) -- fix immediately
-- **WARNING** (weak E-E-A-T, buried answers, soft-banned vocabulary, burstiness) -- fix if localized
-- **INFO** (style, transitions) -- ignore
+Run: `adversarial-review --mode article --files "[draft path]"` (fallback: `--mode audit` with WARNING). If not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`. CRITICAL → fix. WARNING → fix if localized. INFO → ignore.
 
 ---
 
@@ -219,9 +180,11 @@ Handle findings:
 
 1. **Keyword placement (PQ6):** Ensure primary keyword appears in title, H1, first 100 words, and at least 2 H2s
 2. **Meta tags (PQ7):** Generate `title` (50-60 chars) and `description` (150-160 chars) with primary keyword
-3. **Schema (PQ8):** Add BlogPosting JSON-LD (headline, author, datePublished, dateModified, image placeholder)
-4. **Internal links (PQ9):** Suggest 2-5 per 1000 words. If `--site-dir`: validate link targets via Glob against real files. Unverified links: tag `[UNVERIFIED LINK]`
-5. **Language-aware SEO (EC-WA-06):** For non-English, use morphological keyword variants and locale-appropriate schema
+3. **Schema (PQ8):** Domain-aware JSON-LD per `domain-profile-registry.md`. Use `@type` array when multiple types apply (e.g., `["BlogPosting", "Recipe"]` for recipe-food). Include `@id`, `isPartOf` (Organization), `datePublished`, `dateModified`. YMYL niches: add author credentials schema. Framework injection: `astro-mdx` → component placeholder, `hugo` → shortcode hint, `nextjs-mdx` → inline JSON-LD.
+4. **FAQ Schema:** If FAQ section present, auto-append FAQPage JSON-LD with all Q&A pairs.
+5. **OG Tags:** Generate `og:title`, `og:description`, `og:type: article`, `og:image` (placeholder path) in frontmatter.
+6. **Internal links (PQ9):** Suggest 2-5 per 1000 words. If `--site-dir`: validate via Glob. Unverified: tag `[UNVERIFIED LINK]`
+7. **Language-aware SEO (EC-WA-06):** For non-English, use morphological keyword variants and locale-appropriate schema
 
 ### 5.2 Frontmatter
 
@@ -265,7 +228,9 @@ Format: [format] | Output: [file path]
 Research: [N] sources, [N] facts used / [N] available [| research_limited]
 Quality: hard violations [N], soft violations [N], burstiness [score]
 Adversarial: [PASS | WARN | FAIL]
-SEO: keyword "[kw]", meta OK, schema BlogPosting [| internal links: N verified / N suggested]
+Domain: [niche] | Schema: [type(s)] | FAQ: [N items | none]
+SEO: keyword "[kw]", meta OK, OG OK [| internal links: N verified / N suggested]
+Humanization: [voice matched | rules only | skipped]
 
 Run: <ISO-8601-Z>	write-article	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
 -----
@@ -279,9 +244,4 @@ After printing this block, append the `Run:` line value (without the `Run: ` pre
 
 **NOTES:** `[MODE] topic summary` (max 80 chars). Batch mode: append `batch:N`.
 
-```
-Next steps:
-  zuvo:content-optimize [file]  -- evaluate and improve the article
-  zuvo:seo-audit [--site-dir]   -- full site SEO check
-  zuvo:ship                     -- commit and release
-```
+Next steps: `zuvo:content-optimize [file]` | `zuvo:seo-audit` | `zuvo:ship`

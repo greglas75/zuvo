@@ -59,6 +59,21 @@ AI writing defaults to uniform ~18-word sentences with subject-verb-object struc
 
 These are heuristic assessments by the reviewer agent, not deterministic word counts. The reviewer should read the text naturally and flag sections that "feel" monotonous or robotic.
 
+## G12 Anti-Patterns (from geo-check-registry)
+
+### Throat-Clearing Openers (after H2/H3 headings)
+In today's rapidly evolving, When it comes to, It goes without saying, As we all know, In the world of, It is widely recognized that, One cannot overstate, In an era where, As technology continues to
+
+**Rule:** First sentence after any H2/H3 must NOT match these patterns. Start with the answer, not the windup.
+
+### Generic Superlatives
+best, leading, top, premier, #1, world-class, cutting-edge, state-of-the-art, industry-leading, unparalleled, unmatched, best-in-class
+
+**Rule:** Flag unless backed by a verifiable source ("rated #1 by G2 in Q3 2025" is OK; "#1 solution" alone is not).
+
+### Keyword Density
+Same exact phrase appearing more than 3 times per 500 words = keyword stuffing. Flag as WARNING.
+
 ## How to Apply
 
 ### In write-article (Phase 4 — Review)

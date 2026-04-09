@@ -88,6 +88,22 @@ If the topic involves medical, legal, financial, or safety-critical content AND 
 WARNING: Domain sensitivity — [domain] topic with [tone] tone. Review for accuracy and appropriate disclaimers.
 ```
 
+### 6. G12 Anti-Pattern Check
+
+Scan for throat-clearing openers after H2/H3 headings (from `banned-vocabulary.md` G12 section). First sentence after a heading must be the answer/point, not a windup. Flag generic superlatives without verifiable source ("best", "leading", "#1" — OK only with attribution). Check keyword density: same phrase max 3x per 500 words.
+
+### 7. BLUF Compliance (G9)
+
+For each H2 section: first sentence must be ≤30 words and contain the section's key answer or fact. No filler, no preamble. Sections that bury the answer after 2+ introductory sentences → WARNING.
+
+### 8. Chunkability (G6)
+
+Flag any section with >300 words between headings. Long sections hurt AI snippet extraction and reader scannability. Suggest splitting with an additional H3.
+
+### 9. Citation Compliance (G11)
+
+Every statistic, percentage, or factual claim must carry source attribution and year reference. "55% of homepages" without "[WebAIM, 2025]" → WARNING. Claims from the fact sheet must retain their source in the draft.
+
 ## Output Format
 
 ```markdown

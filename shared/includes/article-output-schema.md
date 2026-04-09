@@ -47,12 +47,25 @@
     "adversarial_verdict": "PASS|WARN|FAIL|SKIPPED"
   },
   "seo": {
+    "domain": "string — detected niche from domain-profile-registry (17 IDs or 'unknown')",
     "primary_keyword": "string",
     "meta_title": "string — 50-60 chars",
     "meta_description": "string — 150-160 chars",
-    "schema_type": "BlogPosting|Article",
+    "schema_type": "string|array — 'BlogPosting' or ['BlogPosting', 'Recipe'] etc.",
+    "snippet_targets": [{"heading": "string — H2 text", "format": "paragraph|list|table"}],
+    "faq_count": "number — FAQ items generated (0 if none)",
+    "og_tags": {
+      "og_title": "string",
+      "og_description": "string",
+      "og_type": "article",
+      "og_image": "string — placeholder path or null"
+    },
     "internal_links_suggested": "number",
     "internal_links_verified": "number — verified against real files (if site-dir)"
+  },
+  "humanization": {
+    "voice_matched": "boolean — true if voice profile was extracted and applied",
+    "voice_profile_source": "string|null — path to site-dir content directory"
   }
 }
 ```
