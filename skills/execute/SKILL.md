@@ -504,17 +504,17 @@ For each finding:
 2. Check for duplicates in existing backlog
 3. Route by confidence (0-25 discard, 26-50 backlog only, 51+ report and backlog)
 
-### Worktree Suggestion
-
-If the current working directory is inside a git worktree (check `git worktree list`), suggest:
-
-"Execution is complete. You are working in a worktree. Run `zuvo:worktree` to finish — merge, push as PR, keep, or discard."
-
 ### Retrospective (REQUIRED)
 
 Follow the retrospective protocol from `retrospective.md`.
 Gate check -> structured questions -> TSV emit -> markdown append.
 If gate check skips: print "RETRO: skipped (trivial session)" and proceed to the Run: block.
+
+### Worktree Suggestion
+
+If the current working directory is inside a git worktree (check `git worktree list`), suggest:
+
+"Execution is complete. You are working in a worktree. Run `zuvo:worktree` to finish — merge, push as PR, keep, or discard."
 
 ```
 Run: <ISO-8601-Z>	execute	<project>	<CQ>	<Q>	<VERDICT>	<TASKS>	<N>-tasks	<NOTES>	<BRANCH>	<SHA7>

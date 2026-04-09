@@ -110,6 +110,8 @@ If `degraded_context = true`, prefix the H2 header with `[DEGRADED-CONTEXT]` and
 
 ## Append Commands
 
+**Execute all bash variables and commands below in a single shell invocation.** Variables from Path Detection and Field Resolution must be available to the Append blocks.
+
 ### Path Detection
 
 ```bash
@@ -136,9 +138,9 @@ echo "<tsv-line>" >> "$RETRO_LOG"
 # Rotation: preserve header, keep last 100 data lines
 LINE_COUNT=$(wc -l < "$RETRO_LOG")
 if [ "$LINE_COUNT" -gt 101 ]; then
-  head -1 "$RETRO_LOG" > "$RETRO_LOG.tmp"
-  tail -n 100 "$RETRO_LOG" >> "$RETRO_LOG.tmp"
-  mv "$RETRO_LOG.tmp" "$RETRO_LOG"
+  head -1 "$RETRO_LOG" > "$RETRO_LOG.tmp.$$"
+  tail -n 100 "$RETRO_LOG" >> "$RETRO_LOG.tmp.$$"
+  mv "$RETRO_LOG.tmp.$$" "$RETRO_LOG"
 fi
 ```
 
@@ -155,7 +157,7 @@ RETRO_EOF
 # Rotation: keep last 100 entries
 ENTRY_COUNT=$(grep -c '^<!-- RETRO -->' "$RETRO_MD" 2>/dev/null || echo 0)
 if [ "$ENTRY_COUNT" -gt 100 ]; then
-  awk '/^<!-- RETRO -->/{c++} c>=('"$ENTRY_COUNT"'-99){print}' "$RETRO_MD" > "$RETRO_MD.tmp" && mv "$RETRO_MD.tmp" "$RETRO_MD"
+  awk '/^<!-- RETRO -->/{c++} c>=('"$ENTRY_COUNT"'-99){print}' "$RETRO_MD" > "$RETRO_MD.tmp.$$" && mv "$RETRO_MD.tmp.$$" "$RETRO_MD"
 fi
 ```
 
