@@ -158,7 +158,11 @@ Present 2-3 design approaches. For each approach:
 - **How it works:** 3-5 sentences describing the approach
 - **Files affected:** List of files that would be created or modified
 - **Trade-offs:** What you gain and what you give up
-- **Risk:** What could go wrong or what assumptions it depends on
+- **Risks:**
+  - Dependency failures: what external components could break this approach
+  - Data migration risk: what existing state needs transformation
+  - Backward compatibility: what breaks for existing users/workflows
+  - Estimation confidence: low/medium/high with rationale
 
 Mark one approach as the **recommended** choice and explain why.
 
@@ -171,6 +175,10 @@ Do not ask the user to approve the entire design in one shot. Walk through it in
 3. API surface / interface design (if any)
 4. Integration points with existing code
 5. Edge case handling strategy
+6. Failure modes and mitigation decisions
+7. Rollback strategy
+8. Backward compatibility approach
+9. Validation methodology
 
 Get a thumbs-up on each section before moving to the next. If the user pushes back on a section, revise it before continuing.
 
@@ -229,16 +237,57 @@ Spec document structure:
 
 [Each edge case identified, with the chosen handling strategy]
 
+### Failure Modes
+
+[Per-component failure analysis. For each external dependency, integration point, and stateful component:]
+
+#### [Component Name]
+
+| Scenario | Detection | Impact Radius | User Symptom | Recovery | Data Consistency | Detection Lag |
+|----------|-----------|---------------|--------------|----------|------------------|---------------|
+| <specific scenario 1> | <signal> | <affected> | <visible effect> | <mechanism> | <partial state?> | <timing> |
+| <specific scenario 2> | ... | ... | ... | ... | ... | ... |
+| <specific scenario 3> | ... | ... | ... | ... | ... | ... |
+
+**Cost-benefit:** Frequency × Severity vs Mitigation Cost → Decision (mitigate / accept / defer / monitor)
+
+[Edge cases cover input validation. Failure modes cover system resilience — what happens when components fail during operation. Both are required.]
+
 ## Acceptance Criteria
 
-[Numbered list. Each criterion is testable and specific.]
+**Ship criteria** (must pass for release — deterministic, fact-checkable):
 
 1. ...
 2. ...
 
+**Success criteria** (must pass for value validation — measurable quality/efficiency):
+
+1. ...
+2. ...
+
+[Ship criteria can all pass while success criteria fail. That means infrastructure works but value is not delivered. Both tiers are required.]
+
+## Validation Methodology
+
+[How success criteria are measured. Must be concrete: specific script, command, comparison method. Not "compare manually" or "review subjectively." Validation tooling is a prerequisite for implementation, not a deliverable of it.]
+
+## Rollback Strategy
+
+[How to disable this feature without rolling back the entire deployment. Must include: kill switch mechanism, fallback behavior, data preservation during rollback.]
+
+## Backward Compatibility
+
+[What existing state (files, schemas, configs, APIs) is affected. Which has precedence during migration. When old format is deprecated. Migration path if applicable.]
+
 ## Out of Scope
 
-[What this spec explicitly does NOT cover. Prevents scope creep during implementation.]
+### Deferred to v2
+
+[Features excluded from this spec but planned for future iterations. Include brief rationale for deferral.]
+
+### Permanently out of scope
+
+[Features that will not be built. Include brief rationale for exclusion.]
 
 ## Open Questions
 

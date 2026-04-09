@@ -283,3 +283,4 @@ Commits pending review. Auto-managed:
 - fc18e7a (2026-04-09) docs: update skills reference + README + GitHub desc — 49→51 skills
 - 4110573 (2026-04-09) fix: review findings — move retro above worktree conditional, single-shell note, PID tmp files
 - 79a3319 (2026-04-09) feat: ORCHESTRATOR contract variant + REJECTED severity cap + stub fidelity
+- 26e41e5 (2026-04-09) release: v1.3.42 — feat: ORCHESTRATOR contract, REJECTED severity cap, stub fidelity rule

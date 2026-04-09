@@ -73,23 +73,60 @@ Work through each checkpoint. For each one, determine: PASS, ISSUE, or N/A.
 - Do the strategies match the project's existing error handling patterns?
 - Are there obvious edge cases missing? (Check: empty input, concurrent access, partial failure, unauthorized access)
 
-### C8: Acceptance Criteria
+### C7b: Failure Modes
+
+- Does the spec enumerate failure modes per external dependency, integration point, and stateful component?
+- Are failure scenarios **specific and concrete** (not generic "falls back" / "retries")? Each component should have minimum 3 distinct scenarios.
+- For each scenario: are detection signal, impact radius, user-facing symptom, recovery mechanism, data consistency risk, and detection lag specified?
+- Does each failure mode have a **cost-benefit analysis** (frequency × severity vs mitigation cost)?
+- Is there an **explicit decision** per failure mode (mitigate / accept / defer / monitor) with rationale?
+- Are there failure modes with expensive mitigations that should be accepted or deferred instead?
+- Are there high-severity failure modes without mitigation that should not be accepted?
+
+Edge cases (C7) cover input validation. Failure modes (C7b) cover system resilience. Both are required. A spec can pass C7 and fail C7b completely.
+
+### C8: Acceptance Criteria — Ship
 
 - Is every criterion testable and specific?
 - Do the criteria cover the core functionality, not just the happy path?
 - Can you trace each criterion back to the problem statement or an edge case?
+
+### C8b: Acceptance Criteria — Success
+
+- Does the spec include **success criteria** separate from ship criteria?
+- Do success criteria measure whether the feature **achieves its stated goal**, not just whether it runs without errors?
+- Are success criteria **measurable** (specific metric, score, comparison method)?
+- Is a **validation methodology** specified (concrete script, tool, or command — not "review manually")?
+- Could all ship criteria pass while the feature delivers no value? If yes, success criteria are missing or too weak.
 
 ### C9: Out of Scope
 
 - Is the out-of-scope section present and specific?
 - Are there items in the detailed design that contradict the out-of-scope declarations?
 - Does the scope feel appropriate for the stated problem? (Too narrow = incomplete; too broad = YAGNI)
+- Does the spec distinguish **deferred to later** from **permanently excluded**? Items deferred to v2 inform the roadmap. Items permanently excluded prevent scope creep. Conflating the two loses planning information.
 
 ### C10: Open Questions
 
 - Are there open questions that MUST be answered before implementation?
 - If the open questions section is empty, does the spec actually resolve all ambiguities?
 - Are any "decisions" in the spec actually still open questions in disguise?
+
+### C11: Rollback Strategy
+
+- Does the spec describe how to disable the feature without rolling back the entire deployment?
+- Is there a kill switch mechanism (env var, feature flag, config toggle)?
+- Is fallback behavior specified (what happens when feature is disabled)?
+- Is data preservation addressed (are artifacts kept, deleted, or ignored during rollback)?
+- N/A if the feature is purely additive with no state changes.
+
+### C12: Backward Compatibility
+
+- Does the spec identify existing state (files, schemas, configs, APIs) that the feature affects?
+- If two sources of truth could coexist (old + new format), is precedence defined?
+- Is there a migration path from old to new format?
+- Is deprecation timeline specified for old formats?
+- N/A if the feature creates entirely new state with no overlap.
 
 ## Calibration
 
@@ -142,9 +179,13 @@ Order issues by impact: things that would cause the wrong feature to be built co
 | C5 | API Surface | PASS / ISSUE / N/A |
 | C6 | Integration Points | PASS / ISSUE / N/A |
 | C7 | Edge Cases | PASS / ISSUE / N/A |
-| C8 | Acceptance Criteria | PASS / ISSUE / N/A |
+| C7b | Failure Modes | PASS / ISSUE / N/A |
+| C8 | Acceptance Criteria — Ship | PASS / ISSUE / N/A |
+| C8b | Acceptance Criteria — Success | PASS / ISSUE / N/A |
 | C9 | Out of Scope | PASS / ISSUE / N/A |
 | C10 | Open Questions | PASS / ISSUE / N/A |
+| C11 | Rollback Strategy | PASS / ISSUE / N/A |
+| C12 | Backward Compatibility | PASS / ISSUE / N/A |
 
 ### Issues
 

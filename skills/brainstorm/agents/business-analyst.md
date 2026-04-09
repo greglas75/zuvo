@@ -95,6 +95,46 @@ Based on what you found in Steps 1 and 2, identify edge cases. Think about:
 
 Not all categories apply to every feature. Skip categories that are clearly irrelevant (e.g., concurrency for a static config page). But explain which categories you skipped and why.
 
+### Step 3b: Failure Mode Enumeration
+
+Edge cases (Step 3) cover **input validation** — properties of individual data points. Failure modes cover **system resilience** — what happens when components, dependencies, and infrastructure fail during operation. Both are needed. An agent can be excellent at one and completely blind to the other.
+
+After identifying edge cases, enumerate failure modes for each **external dependency, integration point, and stateful component** identified in Steps 1-2.
+
+**For each component, use this structured format:**
+
+```
+## Failure Mode: [Component Name]
+
+**Specific failure scenarios** (minimum 3 concrete cases — not generic):
+1. [specific scenario, not just "unavailable"]
+2. [...]
+3. [...]
+
+**For each scenario:**
+- **Detection**: How does the system know this happened? (specific signal, error code, timeout)
+- **Impact radius**: What other components are affected? (list explicitly)
+- **User-facing symptom**: What does the user see? (specific message or behavior)
+- **Recovery mechanism**: Automatic retry? Manual intervention? Graceful abort?
+- **Data consistency**: Is partial state possible? How is it cleaned up?
+- **Detection lag**: How quickly is failure noticed? (immediate / delayed / silent)
+
+**Cost-benefit analysis:**
+- Frequency: rare (<0.1%) | occasional (0.1-5%) | frequent (>5%)
+- Severity: low (cosmetic) | medium (degraded UX) | high (data loss/security)
+- Mitigation cost: trivial (<1 day) | moderate (1-5 days) | expensive (>5 days)
+
+**Decision:**
+- [ ] Mitigate (frequency × severity justifies mitigation cost)
+- [ ] Accept and document (rare + low severity, or mitigation too expensive)
+- [ ] Defer to v2 (medium severity, expensive mitigation)
+- [ ] Convert to monitoring alert (rare but high severity)
+```
+
+The structured format with minimum scenario counts forces concrete enumeration. Without it, agents produce generic answers ("falls back", "retries", "lock file") that are technically responsive but valueless — they could be copy-pasted for any dependency.
+
+Not every failure mode needs mitigation. Some are acceptable risks. The cost-benefit analysis forces an **explicit decision** per failure mode rather than defaulting to "mitigate everything" (over-engineering) or "mitigate nothing" (optimism bias).
+
 ### Step 4: Acceptance Criteria Drafting
 
 Convert findings into testable acceptance criteria. Each criterion must be:
@@ -104,10 +144,19 @@ Convert findings into testable acceptance criteria. Each criterion must be:
 - **Independent:** Does not depend on other criteria being true
 - **Realistic:** Matches what the codebase can actually support
 
-Separate criteria into:
+Separate criteria into two tiers:
+
+**Ship criteria** (must pass before release):
 - **Must have:** The feature is broken without these
 - **Should have:** Expected behavior that prevents user confusion
 - **Edge case:** Defensive handling that prevents data corruption or security issues
+
+**Success criteria** (must pass to confirm value delivered):
+- **Quality:** Does the output achieve the stated goal? (measurable, not just "works")
+- **Efficiency:** Does the feature deliver measurable improvement? (time, cost, accuracy)
+- **Validation:** How is success measured? (specific script, metric, comparison method)
+
+All ship criteria can be met while success criteria fail — that means infrastructure works but value is not delivered. Both tiers must be present in every spec. Ship criteria without success criteria produces systems that "technically work but nobody can validate they work well."
 
 ## Output Format
 
@@ -141,19 +190,50 @@ If no implicit requirements found: "User's stated requirements appear complete f
 
 If no pain points found in the relevant area: "No existing debt markers found in the affected code."
 
+### Failure Modes
+
+[For each external dependency / integration point / stateful component:]
+
+## Failure Mode: <Component Name>
+
+**Specific failure scenarios:**
+1. <concrete scenario>
+2. <concrete scenario>
+3. <concrete scenario>
+
+**Scenario 1: <label>**
+- Detection: <specific signal>
+- Impact radius: <affected components>
+- User-facing symptom: <what user sees>
+- Recovery: <mechanism>
+- Data consistency: <partial state risk>
+- Detection lag: <immediate/delayed/silent>
+
+**Cost-benefit:** Frequency: <rare/occasional/frequent> | Severity: <low/medium/high> | Mitigation cost: <trivial/moderate/expensive>
+**Decision:** Mitigate | Accept | Defer | Monitor — <rationale>
+
+[Repeat for each component. If no external dependencies: "No external dependencies identified."]
+
 ### Acceptance Criteria
 
-**Must have:**
+**Ship criteria** (must pass for release):
+
+*Must have:*
 1. <criterion>
 2. ...
 
-**Should have:**
+*Should have:*
 1. <criterion>
 2. ...
 
-**Edge case handling:**
+*Edge case handling:*
 1. <criterion>
 2. ...
+
+**Success criteria** (must pass for value validation):
+1. <quality criterion — measurable output quality>
+2. <efficiency criterion — measurable improvement>
+3. <validation criterion — how success is measured, specific method>
 
 ### Summary
 
