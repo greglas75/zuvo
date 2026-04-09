@@ -168,19 +168,24 @@ Mark one approach as the **recommended** choice and explain why.
 
 ### Step 4: Section-by-Section Approval
 
-Do not ask the user to approve the entire design in one shot. Walk through it in sections:
+Do not ask the user to approve the entire design in one shot. Walk through it in groups of related concerns:
 
+**Group 1: Solution shape**
 1. Overall approach (which of the 2-3 options)
 2. Data model / schema changes (if any)
 3. API surface / interface design (if any)
 4. Integration points with existing code
+
+**Group 2: Operational concerns** (critical — do not rush even if user shows fatigue)
 5. Edge case handling strategy
 6. Failure modes and mitigation decisions
 7. Rollback strategy
 8. Backward compatibility approach
+
+**Group 3: Validation**
 9. Validation methodology
 
-Get a thumbs-up on each section before moving to the next. If the user pushes back on a section, revise it before continuing.
+Get a thumbs-up on each group before moving to the next. If the user pushes back on a section, revise it before continuing. If user shows fatigue during Group 2, explicitly note: "These are the operational concerns that prevent production fires — worth getting right now rather than discovering gaps during implementation."
 
 ---
 
@@ -239,15 +244,29 @@ Spec document structure:
 
 ### Failure Modes
 
-[Per-component failure analysis. For each external dependency, integration point, and stateful component:]
+[Per-component failure analysis. Every component mentioned in Solution Overview and Integration Points MUST have a corresponding entry here. Minimum 3 specific scenarios per component — add more rows as needed. "Specific" means concrete situations, not generic categories (e.g., "MCP server timeout after 30s" not "service fails").]
+
+> **Example** (for a CodeSift dependency):
+>
+> #### CodeSift extraction
+>
+> | Scenario | Detection | Impact Radius | User Symptom | Recovery | Data Consistency | Detection Lag |
+> |----------|-----------|---------------|--------------|----------|------------------|---------------|
+> | MCP server timeout (>30s) | timeout exception | all profile-dependent skills | "Profile generation timed out, using fallback" | Auto fall back to inline detection | None — profile not written | 30s |
+> | Returns 500 status | HTTP status check | profile generation only | "Profile unavailable, using legacy detection" | Auto fallback + log error | None | Immediate |
+> | Valid response but framework=null | profile.stack.framework === null | conventions-dependent skills | Generic checklist instead of framework-specific | User writes profile-overrides.json | Profile written with status=partial | Immediate |
+> | Partial results (some extractors succeed, others fail) | per-section status check | skills depending on failed sections | Missing sections noted in profile metadata | Regenerate failed sections on next run | Profile written with gaps flagged | Immediate |
+>
+> **Cost-benefit:** Frequency: occasional (~2%) × Severity: medium (degraded UX, no data loss) → Mitigation cost: trivial (fallback exists) → **Decision: Mitigate**
 
 #### [Component Name]
 
 | Scenario | Detection | Impact Radius | User Symptom | Recovery | Data Consistency | Detection Lag |
 |----------|-----------|---------------|--------------|----------|------------------|---------------|
-| <specific scenario 1> | <signal> | <affected> | <visible effect> | <mechanism> | <partial state?> | <timing> |
-| <specific scenario 2> | ... | ... | ... | ... | ... | ... |
-| <specific scenario 3> | ... | ... | ... | ... | ... | ... |
+| <scenario 1 — REQUIRED, specific> | <signal> | <affected> | <visible effect> | <mechanism> | <partial state?> | <timing> |
+| <scenario 2 — REQUIRED, specific> | ... | ... | ... | ... | ... | ... |
+| <scenario 3 — REQUIRED, specific> | ... | ... | ... | ... | ... | ... |
+| <scenario 4+ — add more if applicable> | ... | ... | ... | ... | ... | ... |
 
 **Cost-benefit:** Frequency × Severity vs Mitigation Cost → Decision (mitigate / accept / defer / monitor)
 

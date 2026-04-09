@@ -75,6 +75,7 @@ Work through each checkpoint. For each one, determine: PASS, ISSUE, or N/A.
 
 ### C7b: Failure Modes
 
+- **Completeness:** Is there a 1:1 mapping between components mentioned in Solution Overview / Integration Points (C6) and components covered in Failure Modes? Cross-reference to ensure no component is omitted. A spec with excellent failure modes for 3 components but 2 omitted components scores poorly even if existing analysis is deep.
 - Does the spec enumerate failure modes per external dependency, integration point, and stateful component?
 - Are failure scenarios **specific and concrete** (not generic "falls back" / "retries")? Each component should have minimum 3 distinct scenarios.
 - For each scenario: are detection signal, impact radius, user-facing symptom, recovery mechanism, data consistency risk, and detection lag specified?
@@ -98,6 +99,8 @@ Edge cases (C7) cover input validation. Failure modes (C7b) cover system resilie
 - Are success criteria **measurable** (specific metric, score, comparison method)?
 - Is a **validation methodology** specified (concrete script, tool, or command — not "review manually")?
 - Could all ship criteria pass while the feature delivers no value? If yes, success criteria are missing or too weak.
+- For each success criterion, is there a **corresponding validation step** in the Validation Methodology section? (Traceability: criterion → validation step → measurable output. No orphan criteria without validation, no validation steps without criteria.)
+- Does each validation step produce a **numerical score, comparison result, or pass/fail signal**? ("Looks good" or "feels right" is not a validation step.)
 
 ### C9: Out of Scope
 
