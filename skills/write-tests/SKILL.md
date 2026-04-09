@@ -34,17 +34,17 @@ CORE (Phase 0):
   1. ../../shared/includes/codesift-setup.md      -- [READ|MISSING -> STOP]
   2. ../../shared/includes/test-contract.md        -- [READ|MISSING -> STOP]
   3. ../../shared/includes/test-blocklist.md       -- [READ|MISSING -> STOP]
-  4. ../../shared/includes/quality-gates.md        -- [READ|MISSING -> STOP]
-  5. ../../shared/includes/run-logger.md           -- [READ|MISSING -> STOP]
-  6. ../../rules/testing-slim.md                    -- [READ|MISSING -> STOP]
+  4. ../../shared/includes/test-mock-safety.md     -- [READ|MISSING -> STOP]
+  5. ../../shared/includes/quality-gates.md        -- [READ|MISSING -> STOP]
+  6. ../../shared/includes/run-logger.md           -- [READ|MISSING -> STOP]
+  7. ../../rules/testing.md                          -- [READ|MISSING -> STOP]
 ```
 
 **Step 1 (load after classification):** based on file complexity.
 
 ```
 STANDARD+ only (skip for THIN):
-  7. ../../shared/includes/test-edge-cases.md      -- [READ|SKIP]
-  8. ../../shared/includes/test-mock-safety.md     -- [READ|SKIP]
+  8. ../../shared/includes/test-edge-cases.md      -- [READ|SKIP]
   9. ../../shared/includes/test-code-types.md      -- [READ|SKIP]
 ```
 
