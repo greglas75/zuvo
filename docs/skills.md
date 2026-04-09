@@ -64,6 +64,8 @@ Scoped task execution for common development work.
 | `zuvo:seo-fix` | Apply SEO audit fixes with 3-tier safety model (SAFE/MODERATE/DANGEROUS). Reads audit JSON, applies framework-specific templates. | After seo-audit, to auto-fix findings | `--auto`, `--all`, `--dry-run`, `--fix-type`, `--finding` |
 | `zuvo:content-audit` | Content file quality audit across 8 dimensions (CC1-CC8): encoding artifacts (NBSP, mojibake), markdown syntax, CMS migration artifacts, frontmatter, images, links, completeness, typography. Language-agnostic. | After CMS migration, content quality check, broken link detection | `[path]`, `--live-url <url>`, `--quick`, `--content-path <dir>`, `--lang <code>`, `--check-external`, `--persist-backlog` |
 | `zuvo:content-fix` | Apply content audit fixes with 2-tier safety model (SAFE/MODERATE). Strips encoding artifacts, fixes broken markdown, removes CMS debris. | After content-audit, to auto-fix findings | `--auto`, `--dry-run`, `--fix-type`, `--finding` |
+| `zuvo:write-article` | Write articles from scratch using a 6-phase pipeline: STORM-inspired research (3 parallel agents), multi-perspective outline, section-by-section drafting with research grounding, adaptive anti-slop enforcement, adversarial review, SEO with BlogPosting schema. Site-aware output with frontmatter auto-detection. | Writing blog posts, marketing content, technical articles | `<topic>`, `--lang`, `--tone`, `--length`, `--site-dir`, `--format`, `--keyword`, `--audience`, `--batch-mode` |
+| `zuvo:content-optimize` | Evaluate and optimize existing articles across 6 dimensions (readability, engagement, SEO, structure, authority, anti-slop) using PQ1-PQ18 checks. Hybrid audit+fix: always produces a diagnostic report; `--apply` rewrites while preserving author voice, protected regions, and rollback guarantees. | Improving existing articles, content quality scoring, competitor benchmarking | `[file]`, `--apply`, `--lang`, `--tone`, `--force-rewrite`, `--dry-run`, `--competitors`, `--skip-benchmark` |
 | `zuvo:content-migration` | CMS-to-SSG content parity check. Compares old CMS page with new SSG page element-by-element via Playwright DOM extraction. Identifies missing headings, paragraphs, images, CTAs. Optionally fixes gaps in local .md files. | After CMS migration, content parity verification | `--old <url>`, `--new <url>`, `--fix`, `--source-file <path>` |
 | `zuvo:architecture` | Three modes: review existing architecture (A1-A9), create ADRs, or design new systems. Uses CodeSift for module discovery and dependency mapping. | Architecture health check, documenting decisions, system design | `--mode review [path]`, `--mode adr`, `--mode design` |
 | `zuvo:geo-audit` | GEO readiness audit across 12 dimensions, AI citation signals, schema graph, llms.txt. | Before launches, when AI search visibility is a concern, after SEO audit | `[path]`, `full`, `--live-url <url>`, `--quick`, `--persist-backlog` |
@@ -140,11 +142,10 @@ Scoped task execution for common development work.
 | Testing | 5 | write-tests, fix-tests, write-e2e, tests-performance, mutation-test |
 | Accessibility | 1 | a11y-audit |
 | Release | 5 | ship, deploy, canary, release-docs, retro |
-| Utility | 6 | docs, presentation, backlog, incident, benchmark, using-zuvo |
 | Utility | 7 | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo |
 | **Total** | **51** | |
 
-## Shared Infrastructure (v1.3.24)
+## Shared Infrastructure
 
 | Include | Purpose |
 |---------|---------|
@@ -155,4 +156,8 @@ Scoped task execution for common development work.
 | `adversarial-loop.md` | Cross-model adversarial review with evidence enforcement (auto-downgrade without file:line) |
 | `adversarial-loop-docs.md` | Same for document artifacts (specs, plans, audit reports) |
 | `quality-gates.md` | CQ1-CQ28 + Q1-Q19 gate definitions, scoring, evidence format |
-| `env-compat.md` | Multi-platform dispatch (Claude Code, Codex, Cursor) |
+| `env-compat.md` | Multi-platform dispatch (Claude Code, Codex, Cursor, Antigravity) |
+| `banned-vocabulary.md` | Hard/soft banned AI vocabulary per language (EN, PL) with tone-dependent thresholds |
+| `prose-quality-registry.md` | PQ1-PQ18 content quality checks — readability, engagement, SEO, structure, authority, anti-slop |
+| `article-output-schema.md` | JSON output contract for write-article |
+| `content-optimize-output-schema.md` | JSON output contract for content-optimize (before/after scores, changes, voice delta) |

@@ -277,3 +277,6 @@ Commits pending review. Auto-managed:
 - 2e68530 (2026-04-09) release: v1.3.40 — feat: adversarial sees production+test, per-code-type test strategy, vi.hoisted ordering template
 - 2d49dce (2026-04-09) optimize: review skill — 6 token/quality fixes from production feedback
 - 7189902 (2026-04-09) feat: ORCHESTRATOR pitfalls + structured adversarial context
+- b803caf (2026-04-09) release: v1.3.41 — feat: ORCHESTRATOR 3 pitfalls + structured adversarial FIXED/REJECTED/KNOWN context
+- 17aed48 (2026-04-09) feat: add retrospective feedback loop — structured agent reflection after skill execution
+- 6515621 (2026-04-09) enhance: refactor adversarial — include original source + new files alongside diff
