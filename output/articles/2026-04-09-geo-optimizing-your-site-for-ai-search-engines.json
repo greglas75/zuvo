@@ -1,0 +1,55 @@
+{
+  "version": "1.0",
+  "skill": "write-article",
+  "timestamp": "2026-04-09T09:36:50Z",
+  "project": "zuvo-plugin",
+  "args": {
+    "topic": "GEO: Optimizing Your Site for AI Search Engines",
+    "lang": "en",
+    "tone": "technical",
+    "length": 1500,
+    "format": "md",
+    "keyword": "Generative Engine Optimization",
+    "audience": "Technical marketers, developers, and site owners who want their content cited by AI search engines",
+    "site_dir": null,
+    "batch_mode": false
+  },
+  "article": {
+    "title": "GEO: Optimizing Your Site for AI Search Engines",
+    "slug": "geo-optimizing-your-site-for-ai-search-engines",
+    "language": "en",
+    "tone": "technical",
+    "word_count": 2037,
+    "format": "md",
+    "output_path": "/Users/greglas/DEV/zuvo-plugin/output/articles/2026-04-09-geo-optimizing-your-site-for-ai-search-engines.md",
+    "research_limited": false
+  },
+  "research": {
+    "sources_count": 7,
+    "personas_count": 4,
+    "competitor_gaps": [
+      "Most GEO guides stay at the marketing layer and do not explain WAF and IP allowlisting for retrieval bots.",
+      "Many articles mention schema but skip SSR rendering and linked entity graphs.",
+      "Most guides mention llms.txt as a hack instead of framing it as an optional, low-cost assist.",
+      "Few guides connect content structure with query fan-out behavior in Google AI search."
+    ],
+    "facts_used": 12,
+    "facts_available": 15
+  },
+  "quality": {
+    "anti_slop": {
+      "hard_violations": 0,
+      "soft_violations": 0
+    },
+    "burstiness_score": "GOOD",
+    "adversarial_verdict": "WARN"
+  },
+  "seo": {
+    "primary_keyword": "Generative Engine Optimization",
+    "meta_title": "GEO: Optimizing Your Site for AI Search Engines",
+    "meta_description": "Learn how Generative Engine Optimization helps your site get cited by AI search engines with crawl access, clear structure, schema, freshness, and measurement.",
+    "schema_type": "BlogPosting",
+    "internal_links_suggested": 0,
+    "internal_links_verified": 0
+  }
+}

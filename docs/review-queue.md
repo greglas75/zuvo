@@ -288,3 +288,6 @@ Commits pending review. Auto-managed:
 - a5d1fd7 (2026-04-09) feat(brainstorm): failure modes, structured validation, operational review groups
 - 9496e35 (2026-04-09) docs: update CLAUDE.md skill counts and file structure — 49→51 skills, 28 agents, 36 includes
 - 0910500 (2026-04-09) fix: module-level singleton state guidance + exact boundary edge case + absolute paths
+- 84d0526 (2026-04-09) release: v1.3.44 — fix: singleton state guidance, exact boundary edge case, absolute paths for adversarial
+- a6774a8 (2026-04-09) docs: update brainstorm documentation — failure modes, 14 checkpoints, grouped approval
+- 2c8d0d6 (2026-04-09) enhance: retrospective — up to 5 ranked change proposals, token breakdown table

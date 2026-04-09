@@ -1,0 +1,194 @@
+[
+  {
+    "id": "mw_order_global",
+    "category": "middleware_order",
+    "pattern": "callOrder.*requestId.*errorHandler.*corsMiddleware.*dbMiddleware",
+    "description": "Global middleware chain order: requestId → errorHandler → corsMiddleware → dbMiddleware"
+  },
+  {
+    "id": "mw_order_admin",
+    "category": "middleware_order",
+    "pattern": "callOrder.*clerkAuth.*tenantResolver",
+    "description": "Admin middleware chain order: clerkAuth → tenantResolver"
+  },
+  {
+    "id": "mw_order_public_tenant",
+    "category": "middleware_order",
+    "pattern": "publicTenantResolver",
+    "description": "Public routes use publicTenantResolver middleware"
+  },
+  {
+    "id": "mw_order_all_global_before_scoped",
+    "category": "middleware_order",
+    "pattern": "(requestId|errorHandler|corsMiddleware|dbMiddleware).*(clerkAuth|tenantResolver|publicTenantResolver)",
+    "description": "Global middleware runs before scoped middleware on any route group"
+  },
+  {
+    "id": "route_admin_contests",
+    "category": "route_mounting",
+    "pattern": "/api/admin/contests",
+    "description": "Admin contests route mounted at /api/admin/contests"
+  },
+  {
+    "id": "route_admin_draws",
+    "category": "route_mounting",
+    "pattern": "/api/admin.*draws",
+    "description": "Admin draws route mounted under /api/admin"
+  },
+  {
+    "id": "route_admin_rewards",
+    "category": "route_mounting",
+    "pattern": "/api/admin.*rewards",
+    "description": "Admin rewards route mounted under /api/admin"
+  },
+  {
+    "id": "route_admin_translations",
+    "category": "route_mounting",
+    "pattern": "/api/admin/translations",
+    "description": "Admin translations route mounted at /api/admin/translations"
+  },
+  {
+    "id": "route_admin_tenant",
+    "category": "route_mounting",
+    "pattern": "/api/admin/tenant",
+    "description": "Admin tenant route mounted at /api/admin/tenant"
+  },
+  {
+    "id": "route_public_contests",
+    "category": "route_mounting",
+    "pattern": "/api/contests",
+    "description": "Public contests route mounted at /api/contests"
+  },
+  {
+    "id": "route_public_translations",
+    "category": "route_mounting",
+    "pattern": "/api/translations",
+    "description": "Public translations route mounted at /api/translations"
+  },
+  {
+    "id": "route_public_social",
+    "category": "route_mounting",
+    "pattern": "/api.*social|/api/r",
+    "description": "Social/redirect routes mounted under /api"
+  },
+  {
+    "id": "route_webhooks",
+    "category": "route_mounting",
+    "pattern": "/api/webhooks",
+    "description": "Webhook routes mounted at /api/webhooks"
+  },
+  {
+    "id": "rl_register_3_3600",
+    "category": "rate_limit_factory",
+    "pattern": "rateLimit.*3.*3600|rateLimit.*\\(3,\\s*3600\\)",
+    "description": "Rate limit factory: 3 requests per 3600s for /register"
+  },
+  {
+    "id": "rl_verify_email_5_3600",
+    "category": "rate_limit_factory",
+    "pattern": "rateLimit.*5.*3600|rateLimit.*\\(5,\\s*3600\\)",
+    "description": "Rate limit factory: 5 requests per 3600s for /verify-email"
+  },
+  {
+    "id": "rl_entry_10_3600",
+    "category": "rate_limit_factory",
+    "pattern": "rateLimit.*10.*3600|rateLimit.*\\(10,\\s*3600\\)",
+    "description": "Rate limit factory: 10 requests per 3600s for /entry/*"
+  },
+  {
+    "id": "rl_social_10_60",
+    "category": "rate_limit_factory",
+    "pattern": "rateLimit.*10.*60|rateLimit.*\\(10,\\s*60\\)",
+    "description": "Rate limit factory: 10 requests per 60s for /r/*"
+  },
+  {
+    "id": "rl_og_image_30_60",
+    "category": "rate_limit_factory",
+    "pattern": "rateLimit.*30.*60|rateLimit.*\\(30,\\s*60\\)",
+    "description": "Rate limit factory: 30 requests per 60s for /og-image"
+  },
+  {
+    "id": "rl_winners_60_60",
+    "category": "rate_limit_factory",
+    "pattern": "rateLimit.*60.*60|rateLimit.*\\(60,\\s*60\\)",
+    "description": "Rate limit factory: 60 requests per 60s for /winners"
+  },
+  {
+    "id": "rl_bind_register",
+    "category": "rate_limit_path_binding",
+    "pattern": "register.*rateLimit|/api/contests.*/register.*rateLimit\\(3",
+    "description": "Rate limit 3/3600 bound to /register path"
+  },
+  {
+    "id": "rl_bind_verify_email",
+    "category": "rate_limit_path_binding",
+    "pattern": "verify-email.*rateLimit|/api/contests.*/verify-email.*rateLimit\\(5",
+    "description": "Rate limit 5/3600 bound to /verify-email path"
+  },
+  {
+    "id": "rl_bind_entry",
+    "category": "rate_limit_path_binding",
+    "pattern": "entry.*rateLimit|/api/contests.*/entry.*rateLimit\\(10.*3600",
+    "description": "Rate limit 10/3600 bound to /entry/* path"
+  },
+  {
+    "id": "rl_bind_social",
+    "category": "rate_limit_path_binding",
+    "pattern": "/api/r.*rateLimit\\(10.*60|r/\\*.*rateLimit",
+    "description": "Rate limit 10/60 bound to /r/* path"
+  },
+  {
+    "id": "rl_bind_og_image",
+    "category": "rate_limit_path_binding",
+    "pattern": "og-image.*rateLimit|/api/contests.*/og-image.*rateLimit\\(30",
+    "description": "Rate limit 30/60 bound to /og-image path"
+  },
+  {
+    "id": "rl_bind_winners",
+    "category": "rate_limit_path_binding",
+    "pattern": "winners.*rateLimit|/api/contests.*/winners.*rateLimit\\(60",
+    "description": "Rate limit 60/60 bound to /winners path"
+  },
+  {
+    "id": "auth_admin_positive",
+    "category": "auth_boundary_positive",
+    "pattern": "admin.*clerkAuth|/api/admin.*callOrder.*clerkAuth",
+    "description": "Admin routes require clerkAuth middleware"
+  },
+  {
+    "id": "auth_public_tenant_positive",
+    "category": "auth_boundary_positive",
+    "pattern": "public.*publicTenantResolver|/api/contests.*publicTenantResolver",
+    "description": "Public contest routes use publicTenantResolver"
+  },
+  {
+    "id": "auth_public_no_clerk",
+    "category": "auth_boundary_negative",
+    "pattern": "public.*not.*clerkAuth|contests.*not.*toContain.*clerkAuth",
+    "description": "Public routes do NOT have clerkAuth"
+  },
+  {
+    "id": "auth_webhook_no_clerk",
+    "category": "auth_boundary_negative",
+    "pattern": "webhook.*not.*clerkAuth|webhooks.*not.*toContain.*clerkAuth",
+    "description": "Webhook routes do NOT have clerkAuth"
+  },
+  {
+    "id": "auth_health_no_clerk",
+    "category": "auth_boundary_negative",
+    "pattern": "health.*not.*clerkAuth|health.*not.*toContain.*clerkAuth",
+    "description": "Health endpoint does NOT have clerkAuth"
+  },
+  {
+    "id": "error_404_unknown",
+    "category": "error_handling",
+    "pattern": "404|not.?found|unknown.*path",
+    "description": "Unknown path returns 404"
+  },
+  {
+    "id": "health_endpoint",
+    "category": "health",
+    "pattern": "/api/health.*200|health.*status.*ok",
+    "description": "Health endpoint returns 200 with status ok"
+  }
+]
