@@ -280,3 +280,6 @@ Commits pending review. Auto-managed:
 - b803caf (2026-04-09) release: v1.3.41 — feat: ORCHESTRATOR 3 pitfalls + structured adversarial FIXED/REJECTED/KNOWN context
 - 17aed48 (2026-04-09) feat: add retrospective feedback loop — structured agent reflection after skill execution
 - 6515621 (2026-04-09) enhance: refactor adversarial — include original source + new files alongside diff
+- fc18e7a (2026-04-09) docs: update skills reference + README + GitHub desc — 49→51 skills
+- 4110573 (2026-04-09) fix: review findings — move retro above worktree conditional, single-shell note, PID tmp files
+- 79a3319 (2026-04-09) feat: ORCHESTRATOR contract variant + REJECTED severity cap + stub fidelity
