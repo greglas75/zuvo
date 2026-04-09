@@ -103,6 +103,50 @@ After filling the contract, verify:
 
 If any check fails, expand the test outline before writing code.
 
+## ORCHESTRATOR Contract Variant
+
+For ORCHESTRATOR files (app.ts, server.ts, main.ts) — replace sections 1-3 with these. Keep sections 4-6.
+
+```
+TEST CONTRACT (ORCHESTRATOR): [production-file-path]
+═══════════════════════════════════════
+
+1. MIDDLEWARE ORDERING (what runs in what order)
+   List every middleware registration in source order:
+
+   Position 1: [file:line] app.use("*", requestId)     — purpose: assign request ID
+   Position 2: [file:line] app.use("*", errorHandler)   — purpose: catch downstream errors
+   Position 3: [file:line] app.use("*", corsMiddleware)  — purpose: CORS headers
+   ...
+
+   Critical ordering constraints:
+   - errorHandler MUST follow requestId (needs ID for error logs)
+   - dbMiddleware MUST precede route handlers (they need DB connection)
+
+2. AUTH BOUNDARY MATRIX (which middleware applies where)
+   Fill every cell. Every NO cell needs a negative assertion test.
+
+   | Route group | clerkAuth | tenantResolver | publicTenantResolver | rateLimit |
+   |-------------|-----------|----------------|---------------------|-----------|
+   | Admin       | YES       | YES            | NO                  | NO        |
+   | Public      | NO        | NO             | YES                 | per-path  |
+   | Webhook     | NO        | NO             | NO                  | NO        |
+   | Health      | NO        | NO             | NO                  | NO        |
+
+3. RATE LIMIT BINDING (path → config)
+   Each rate limiter has a target path and config:
+
+   Limit 1: /contests/*/register → (3, 3600) — 3 per hour
+   Limit 2: /contests/*/verify   → (5, 3600) — 5 per hour
+   ...
+
+   Test: each limit must have a path-execution test (not just factory call).
+
+4-6: Same as standard contract (MOCK INVENTORY, MUTATION TARGETS, TEST OUTLINE).
+```
+
+Use this variant when `test-code-types.md` classifies the file as ORCHESTRATOR. The standard contract (sections 1-3 above) is for SERVICE, CONTROLLER, PURE, and other types.
+
 ## Anti-Patterns This Contract Prevents
 
 | Problem | How the contract catches it |

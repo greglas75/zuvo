@@ -165,9 +165,11 @@ Pass 3+: same pattern, accumulate FIXED/REJECTED/KNOWN from all previous passes.
 
 **Context rules:**
 - FIXED findings must NOT be re-raised. If reviewer repeats a fixed finding, ignore it.
-- REJECTED findings must NOT be re-raised. If same CRITICAL repeats after rejection, stop adversarial.
+- REJECTED findings have a **severity cap**: `REJECTED: [finding] — max re-raise: INFO`. If reviewer escalates a rejected finding above the cap (e.g. INFO → CRITICAL), auto-ignore. This prevents adversarial from overriding conscious scope decisions.
 - Each pass adds its own fixes/rejections to the context for the next pass.
 - Early exit: 0 new findings (not counting repeats of FIXED/REJECTED).
+
+**Stub fidelity rule for ORCHESTRATOR:** Route module stubs MUST use `all()` (catch-all). Testing HTTP methods (GET vs POST) is the responsibility of route module tests, not orchestrator tests. If adversarial flags "stubs don't verify HTTP methods" — REJECT with "scope mismatch, route module responsibility".
 
 If `adversarial-review` is not found: check `../../scripts/adversarial-review.sh`. If missing entirely, mark file SKIPPED_REVIEW and proceed.
 
