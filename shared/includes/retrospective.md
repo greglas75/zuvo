@@ -34,6 +34,8 @@ Fill these 7 fields. At least 1 of fields 1-4 must be non-empty and artifact-gro
 
 **Structural grounding check:** Each non-empty answer in fields 1-4 MUST contain at least one of: a file path with extension (e.g., `app.ts`), a phase/step number (e.g., `Phase 3`), or a numeric count (e.g., `6 turns`). Answers without any of these tokens are treated as empty.
 
+**CRITICAL: Printing answers is NOT enough.** After filling fields 1-7 above, you MUST execute the bash commands in the Append Commands section below to write data to `~/.zuvo/retros.log` and `~/.zuvo/retros.md`. If you skip the bash append, the retrospective is lost. The retro is not done until both files are written.
+
 ## TSV Emit
 
 After filling the structured questions, emit a `RETRO:` line and append to the retro log.
