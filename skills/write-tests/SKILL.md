@@ -224,8 +224,14 @@ Print per-file summary: `[status] [file] — [N] tests, Q [N]/19, adversarial: [
 
 1. **Backlog persistence:** write unfixed issues to `memory/backlog.md`
 2. **Knowledge curation** per `knowledge-curate.md`
-3. **Retrospective** per `retrospective.md`. Gate check -> structured questions -> TSV emit -> markdown append. If gate check skips: print "RETRO: skipped (trivial session)".
-4. **Report:**
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check -> structured questions -> TSV emit -> markdown append.
+This step is MANDATORY — do not skip it. Write the retro BEFORE the terminal report below.
+
+3. **Report:**
 
 ```
 WRITE-TESTS COMPLETE
