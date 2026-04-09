@@ -256,6 +256,42 @@ install_codex() {
     ok "Scripts installed"
   fi
 
+  # Step 8: Install hooks to Codex plugin cache
+  # Codex only discovers hooks.json from formally-installed plugins
+  # in ~/.codex/.tmp/plugins/plugins/<name>/
+  local CODEX_PLUGIN_CACHE="$HOME/.codex/.tmp/plugins/plugins/zuvo"
+  if [[ -d "$HOME/.codex/.tmp/plugins" ]]; then
+    mkdir -p "$CODEX_PLUGIN_CACHE/hooks"
+    mkdir -p "$CODEX_PLUGIN_CACHE/.codex-plugin"
+
+    # Copy hooks.json to plugin root
+    if [[ -f "$DIST/hooks.json" ]]; then
+      cp "$DIST/hooks.json" "$CODEX_PLUGIN_CACHE/hooks.json"
+    fi
+
+    # Copy plugin manifest
+    if [[ -f "$DIST/.codex-plugin/plugin.json" ]]; then
+      cp "$DIST/.codex-plugin/plugin.json" "$CODEX_PLUGIN_CACHE/.codex-plugin/plugin.json"
+    fi
+
+    # Copy hook scripts
+    if [[ -d "$DIST/hooks" ]]; then
+      cp "$DIST"/hooks/* "$CODEX_PLUGIN_CACHE/hooks/" 2>/dev/null || true
+      chmod +x "$CODEX_PLUGIN_CACHE"/hooks/*.sh 2>/dev/null || true
+      chmod +x "$CODEX_PLUGIN_CACHE"/hooks/session-start 2>/dev/null || true
+    fi
+
+    # Copy skills to plugin cache (self-contained plugin)
+    if [[ -d "$DIST/skills" ]]; then
+      mkdir -p "$CODEX_PLUGIN_CACHE/skills"
+      cp -r "$DIST"/skills/* "$CODEX_PLUGIN_CACHE/skills/" 2>/dev/null || true
+    fi
+
+    ok "Hooks installed to plugin cache"
+  else
+    warn "Codex plugin cache not found -- hooks not installed (skills still work)"
+  fi
+
   ok "Codex updated"
 }
 
@@ -429,6 +465,86 @@ install_antigravity() {
     cp "$DIST"/scripts/*.sh "$HOME/.gemini/antigravity/scripts/" 2>/dev/null || true
     chmod +x "$HOME/.gemini/antigravity"/scripts/*.sh 2>/dev/null || true
     ok "Scripts installed"
+  fi
+
+  # Step 7: Copy hooks + merge into ~/.gemini/settings.json
+  if [[ -d "$DIST/hooks" ]]; then
+    mkdir -p "$HOME/.gemini/antigravity/hooks"
+    cp "$DIST"/hooks/* "$HOME/.gemini/antigravity/hooks/" 2>/dev/null || true
+    chmod +x "$HOME/.gemini/antigravity"/hooks/*.sh 2>/dev/null || true
+    chmod +x "$HOME/.gemini/antigravity/hooks/session-start" 2>/dev/null || true
+    ok "Hook scripts installed"
+  fi
+
+  # Merge hook config into ~/.gemini/settings.json (idempotent)
+  if [[ -f "$DIST/hooks.json" ]]; then
+    local gemini_settings="$HOME/.gemini/settings.json"
+    python3 -c "
+import json, sys, os, tempfile
+
+hooks_template = sys.argv[1]
+settings_path = sys.argv[2]
+
+# Read template
+with open(hooks_template) as f:
+    template = json.load(f)
+
+# Read existing settings (or create empty)
+settings = {}
+if os.path.exists(settings_path):
+    try:
+        with open(settings_path) as f:
+            settings = json.load(f)
+    except (json.JSONDecodeError, ValueError):
+        print('  ! settings.json is malformed -- skipping hook merge')
+        sys.exit(0)
+
+if 'hooks' not in settings:
+    settings['hooks'] = {}
+
+changed = False
+for event_name, event_hooks in template.get('hooks', {}).items():
+    if event_name not in settings['hooks']:
+        settings['hooks'][event_name] = []
+
+    existing_entries = settings['hooks'][event_name]
+
+    for new_hook_group in event_hooks:
+        for new_hook in new_hook_group.get('hooks', []):
+            cmd = new_hook.get('command', '')
+            # Check if zuvo hook already exists (match on script name)
+            already_exists = False
+            for existing_group in existing_entries:
+                for existing_hook in existing_group.get('hooks', []):
+                    existing_cmd = existing_hook.get('command', '')
+                    if 'antigravity/hooks/' in existing_cmd and any(
+                        s in existing_cmd for s in ['pre-push-gate', 'session-start']
+                        if s in cmd
+                    ):
+                        # Update in place
+                        existing_hook.update(new_hook)
+                        already_exists = True
+                        changed = True
+                        break
+                if already_exists:
+                    break
+
+            if not already_exists:
+                existing_entries.append(new_hook_group)
+                changed = True
+                break  # Only add the group once
+
+if changed:
+    # Write atomically
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(settings_path), suffix='.tmp')
+    with os.fdopen(fd, 'w') as f:
+        json.dump(settings, f, indent=2)
+        f.write('\n')
+    os.rename(tmp, settings_path)
+    print('  \u2713 Hooks merged into settings.json')
+else:
+    print('  \u2713 Hooks already present in settings.json (no changes)')
+" "$DIST/hooks.json" "$HOME/.gemini/settings.json" 2>/dev/null || warn "settings.json merge failed"
   fi
 
   ok "Antigravity updated"

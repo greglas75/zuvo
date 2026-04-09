@@ -2,8 +2,8 @@
 # Pre-push gate: blocks git push / gh pr create if zuvo:review
 # has not been logged for the current project+branch.
 #
-# Enforcement layer for Claude Code only (hooks don't exist on
-# Codex/Cursor/Antigravity — those platforms use skill chaining).
+# Enforcement layer for Claude Code, Codex CLI, and Gemini CLI.
+# Cursor uses skill chaining (no PreToolUse hook available).
 #
 # Called by PreToolUse hook on Bash tool calls. Reads tool input
 # from stdin to filter for push commands only.

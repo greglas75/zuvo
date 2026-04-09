@@ -4,7 +4,7 @@
 **spec_id:** none
 **planning_mode:** inline
 **plan_revision:** 2
-**status:** Draft
+**status:** Approved
 **Created:** 2026-04-09
 **Tasks:** 7 (T1-T5 + T6a + T6b; validation folded into T4/T5)
 **Estimated complexity:** all standard (shell scripts + JSON config, no code architecture)

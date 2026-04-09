@@ -356,6 +356,30 @@ for script in adversarial-review.sh benchmark.sh; do
 done
 echo "  + scripts/"
 
+# --- Hooks ---
+echo ""
+echo "Assembling hooks..."
+mkdir -p "$DIST/hooks"
+
+# Copy hooks.antigravity.json as hooks.json (merge template for settings.json)
+if [ -f "$PLUGIN_DIR/hooks/hooks.antigravity.json" ]; then
+  cat "$PLUGIN_DIR/hooks/hooks.antigravity.json" \
+    | replace_paths \
+    > "$DIST/hooks.json"
+  echo "  + hooks.json (from hooks.antigravity.json)"
+fi
+
+# Copy hook scripts with path replacement
+for hook_script in pre-push-gate.sh session-start; do
+  if [ -f "$PLUGIN_DIR/hooks/$hook_script" ]; then
+    cat "$PLUGIN_DIR/hooks/$hook_script" \
+      | replace_paths \
+      > "$DIST/hooks/$hook_script"
+    chmod +x "$DIST/hooks/$hook_script"
+    echo "  + hooks/$hook_script"
+  fi
+done
+
 # ============================================================
 # 2. Assemble skills + agents (in subdirectories)
 # ============================================================
@@ -545,6 +569,45 @@ for f in "$DIST"/skills/*/SKILL.md; do
     warnings=$((warnings + 1))
   fi
 done
+
+# Hook validation
+if [ -f "$DIST/hooks.json" ]; then
+  if ! python3 -m json.tool "$DIST/hooks.json" > /dev/null 2>&1; then
+    echo "  ERROR: hooks.json is not valid JSON"
+    errors=$((errors + 1))
+  fi
+  if grep -q 'CLAUDE_PLUGIN_ROOT' "$DIST/hooks.json" 2>/dev/null; then
+    echo "  ERROR: hooks.json contains CLAUDE_PLUGIN_ROOT (path leak)"
+    errors=$((errors + 1))
+  fi
+  if grep -q '"PreToolUse"' "$DIST/hooks.json" 2>/dev/null; then
+    echo "  ERROR: hooks.json contains PreToolUse (should be BeforeTool for Gemini)"
+    errors=$((errors + 1))
+  fi
+  if grep -q '"Bash"' "$DIST/hooks.json" 2>/dev/null; then
+    echo "  ERROR: hooks.json contains Bash matcher (should be run_shell_command for Gemini)"
+    errors=$((errors + 1))
+  fi
+  if ! grep -q 'BeforeTool' "$DIST/hooks.json" 2>/dev/null; then
+    echo "  ERROR: hooks.json missing BeforeTool event (required for Gemini)"
+    errors=$((errors + 1))
+  fi
+  if ! grep -q 'run_shell_command' "$DIST/hooks.json" 2>/dev/null; then
+    echo "  ERROR: hooks.json missing run_shell_command matcher (required for Gemini)"
+    errors=$((errors + 1))
+  fi
+else
+  echo "  WARN: hooks.json not found in dist"
+  warnings=$((warnings + 1))
+fi
+if [ ! -x "$DIST/hooks/pre-push-gate.sh" ]; then
+  echo "  WARN: hooks/pre-push-gate.sh missing or not executable"
+  warnings=$((warnings + 1))
+fi
+if [ ! -f "$DIST/hooks/session-start" ]; then
+  echo "  WARN: hooks/session-start missing"
+  warnings=$((warnings + 1))
+fi
 
 # ============================================================
 # Summary

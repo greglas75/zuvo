@@ -667,6 +667,39 @@ if [ -f "$PLUGIN_DIR/skills/using-zuvo/agents/openai.yaml" ]; then
 fi
 
 # ============================================================
+# 4b. Hooks
+# ============================================================
+echo ""
+echo "Assembling hooks..."
+
+mkdir -p "$DIST/hooks"
+
+# Copy hooks.codex.json as hooks.json (the plugin manifest references ./hooks.json)
+if [ -f "$PLUGIN_DIR/hooks/hooks.codex.json" ]; then
+  cat "$PLUGIN_DIR/hooks/hooks.codex.json" \
+    | replace_paths \
+    > "$DIST/hooks.json"
+  echo "  + hooks.json (from hooks.codex.json)"
+fi
+
+# Copy hook scripts with path replacement
+for hook_script in pre-push-gate.sh session-start; do
+  if [ -f "$PLUGIN_DIR/hooks/$hook_script" ]; then
+    cat "$PLUGIN_DIR/hooks/$hook_script" \
+      | replace_paths \
+      > "$DIST/hooks/$hook_script"
+    chmod +x "$DIST/hooks/$hook_script"
+    echo "  + hooks/$hook_script"
+  fi
+done
+
+# Copy run-hook.cmd as-is (polyglot wrapper, no path replacement needed)
+if [ -f "$PLUGIN_DIR/hooks/run-hook.cmd" ]; then
+  cp "$PLUGIN_DIR/hooks/run-hook.cmd" "$DIST/hooks/run-hook.cmd"
+  echo "  + hooks/run-hook.cmd"
+fi
+
+# ============================================================
 # 5. Validation
 # ============================================================
 echo ""
@@ -836,6 +869,33 @@ for f in "$DIST"/skills/*/SKILL.md; do
     warnings=$((warnings + 1))
   fi
 done
+
+# Hook validation
+if [ -f "$DIST/hooks.json" ]; then
+  if ! python3 -m json.tool "$DIST/hooks.json" > /dev/null 2>&1; then
+    echo "  ERROR: hooks.json is not valid JSON"
+    errors=$((errors + 1))
+  fi
+  if grep -q 'CLAUDE_PLUGIN_ROOT' "$DIST/hooks.json" 2>/dev/null; then
+    echo "  ERROR: hooks.json contains CLAUDE_PLUGIN_ROOT (path leak)"
+    errors=$((errors + 1))
+  fi
+  if grep -q '~/\.claude/' "$DIST/hooks.json" 2>/dev/null; then
+    echo "  ERROR: hooks.json contains ~/.claude/ path (path leak)"
+    errors=$((errors + 1))
+  fi
+else
+  echo "  WARN: hooks.json not found in dist"
+  warnings=$((warnings + 1))
+fi
+if [ ! -x "$DIST/hooks/pre-push-gate.sh" ]; then
+  echo "  WARN: hooks/pre-push-gate.sh missing or not executable"
+  warnings=$((warnings + 1))
+fi
+if [ ! -f "$DIST/hooks/session-start" ]; then
+  echo "  WARN: hooks/session-start missing"
+  warnings=$((warnings + 1))
+fi
 
 # ============================================================
 # Summary

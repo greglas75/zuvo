@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.gemini/antigravity/hooks/session-start\"",
+            "async": false
+          }
+        ]
+      }
+    ],
+    "BeforeTool": [
+      {
+        "matcher": "run_shell_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.gemini/antigravity/hooks/pre-push-gate.sh\"",
+            "async": false
+          }
+        ]
+      }
+    ]
+  }
+}
