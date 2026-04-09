@@ -6,3 +6,6 @@ dist/
 
 # zuvo session state (local runtime, not committed)
 .zuvo/
+
+# zuvo review reports (local, not committed)
+memory/reviews/

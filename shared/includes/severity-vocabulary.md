@@ -55,3 +55,4 @@ Two confidence models exist across skills. Use this mapping when cross-referenci
 2. **Higher severity wins.** If the same finding is reported by two skills at different severities, use the higher canonical level.
 3. **Canonical labels are optional in skill output.** Skills continue using their own vocabulary. The canonical mapping is for cross-skill interpretation, not for replacing skill-specific output.
 4. **New skills** that introduce severity labels must add a row to this table before release.
+5. **Adversarial script findings.** The "adversarial loop" row (CRITICAL/WARNING/INFO -> S1/S2/S4) applies to all `adversarial-review.sh` output regardless of which skill invokes it. Within `/review`, CRITICAL findings from the adversarial script bypass the confidence gate entirely (effective confidence = 100, per design decision D7).

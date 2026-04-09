@@ -2,9 +2,9 @@
 
 > **spec_id:** 2026-04-09-review-revision-1445
 > **topic:** Review skill restructure, bug fixes, token optimization, and new features
-> **status:** Draft
+> **status:** Approved
 > **created_at:** 2026-04-09T14:45:00Z
-> **approved_at:** null
+> **approved_at:** 2026-04-09T15:10:00Z
 > **approval_mode:** interactive
 > **author:** zuvo:brainstorm
 
@@ -41,6 +41,8 @@ Extract Behavior Auditor, Structure Auditor, CQ Auditor, and Confidence Re-Score
 Replace the internal Adversarial Auditor agent + cross-provider section (~100 lines) with a single call to `adversarial-review.sh` at every tier. The script sends the diff to all available external providers (Gemini, Codex, opposite-Claude-model) in parallel.
 
 **Why:** The internal agent is Claude reviewing Claude — same blind spots. The bash script costs 0 Claude context tokens and provides true cross-model diversity. For TIER 0 (15-line diff), the script call takes 5-10 seconds. There is no tier where skipping adversarial is justified.
+
+**Provider count:** The script auto-detects and runs ALL available providers at every tier. There is no "single provider" mode — if Gemini, Codex, and Claude-opposite are all available, they all run in parallel regardless of tier. The cost is external (provider API calls), not Claude tokens. Simplicity over per-tier provider gating.
 
 ### D4: Tiered cq-patterns loading
 
@@ -90,6 +92,23 @@ Add `auto-fix` to the argument parsing table as a parseable mode token.
 
 ---
 
+## Feature Summary
+
+| ID | Feature | Tier Gate | Design Decision |
+|----|---------|-----------|-----------------|
+| F1 | `auto-fix` as first-class argument | All | D10 |
+| F2 | Report persistence to `memory/reviews/` | TIER 1+ | D8 |
+| F3 | Stack-specific rule loading | TIER 2+ | Detailed Design |
+| F4 | Test coverage delta detection | TIER 2+ | Detailed Design |
+| F5 | Self-review → auto-escalate adversarial to all providers | All | Detailed Design |
+| F6 | Empty/binary/merge edge case handling | All | B6+B7+B9 |
+| F7 | `status --depth N` configurable commit depth | Utility | B11 |
+| F8 | Merged banner (4 → 1) | All | D9 |
+| F9 | QUESTIONS FOR AUTHOR moved to position 4 (before FINDINGS) | All | Detailed Design |
+| F10 | QUALITY WINS specification (criteria, max count) | All | Detailed Design |
+
+---
+
 ## Solution Overview
 
 ### New SKILL.md Structure (~550 lines, down from 920)
@@ -129,8 +148,8 @@ Utility Modes (+ status --depth N)                ~35L
 | File | Change |
 |------|--------|
 | `skills/review/SKILL.md` | Full rewrite (920L → ~550L) |
-| `shared/includes/severity-vocabulary.md` | Add adversarial-within-review mapping |
-| `docs/review-queue.md` | Update to reflect new structure |
+| `shared/includes/severity-vocabulary.md` | Clarify that the existing "adversarial loop" row (CRITICAL/WARNING/INFO → S1/S2/S4) covers bash script adversarial findings within review. Add a footnote: "The adversarial loop row applies to all adversarial-review.sh output regardless of which skill invokes it. Within `/review`, CRITICAL findings bypass the confidence gate (D7)." No new row needed — the existing mapping is correct. |
+| `docs/review-queue.md` | Move to post-implementation documentation follow-up (not blocking for spec) |
 
 ---
 
@@ -178,9 +197,11 @@ Key change: `cq-patterns.md` moves from mandatory to conditional. `cross-provide
 | cross-provider-review.md | 1.4K | 1.4K | 1.4K | 1.4K |
 | testing.md (if tests) | — | — | 5.6K | 5.6K |
 | security.md (if signals) | — | — | — | 1.9K |
-| **TOTAL (mandatory)** | **~15K** | **~19K** | **~27K** | **~32K** |
+| **TOTAL (mandatory)** | **~15K** | **~19K** | **~28K** | **~33K** |
 | **Current baseline** | ~30K | ~30K | ~35K | ~42K |
-| **Saving** | **-50%** | **-37%** | **-23%** | **-24%** |
+| **Saving** | **-50%** | **-37%** | **-20%** | **-21%** |
+
+Note: TIER 2-3 totals include cross-provider-review.md (1.4K) which is always loaded since adversarial runs at all tiers. Agent files at TIER 2 are conditional on new production files; worst case shown.
 
 ### Argument Parsing (updated)
 
@@ -201,6 +222,24 @@ New mode table:
 
 ### Tier System (edge cases added)
 
+**Updated Tier Capabilities table (replaces current SKILL.md table):**
+
+| Capability | TIER 0 | TIER 1 | TIER 2 | TIER 3 |
+|-----------|--------|--------|--------|--------|
+| Inline diff scan | Yes | Yes | Yes | Yes |
+| CQ patterns loaded | Skip | Core (500 tok) | Full (8.4K tok) | Full (8.4K tok) |
+| CQ1-CQ28 evaluation | Skip | Yes (lead inline) | Yes (CQ Auditor agent) | Yes (CQ Auditor agent) |
+| Q1-Q19 on test files | Skip | If present (lead) | Yes | Yes |
+| Audit agents | None | None | Behavior + CQ (if new files) | All 3 (Behavior + Structure + CQ) |
+| Adversarial (bash script) | Yes (all available) | Yes (all available) | Yes (all available) | Yes (all available) |
+| CodeSift pre-compute | Optional (minimal) | Yes (3 queries) | Yes (5 queries) | Yes (5 queries) |
+| Confidence scoring | Lead inline | Lead inline | Re-Scorer agent | Re-Scorer agent |
+| Hotspot detection | Skip | Skip | Yes | Yes |
+| Multi-pass (--thorough) | Refused | Optional | Optional | Auto if >500L |
+| Security deep dive | Skip | Skip | Skip | Yes |
+| Stack-specific rules | Skip | Skip | Yes | Yes |
+| Report persistence | Skip | Yes | Yes | Yes |
+
 New rows in tier selection:
 
 | Condition | Tier | Action |
@@ -208,7 +247,9 @@ New rows in tier selection:
 | 0 files changed (empty diff) | — | Print "No changes to review." → STOP |
 | All files are binary | — | Print "Only binary files changed. Nothing to review." → STOP |
 | Binary files mixed with code | Tier based on code lines only | Note binary files in report, exclude from line count |
-| Merge commit detected | — | Warn + offer `--first-parent` to get incremental diff |
+| Merge commit detected | — | Interactive: warn + offer `--first-parent`. Non-interactive (Codex App, Cursor): auto-apply `--first-parent` with `[AUTO-DECISION]` annotation |
+
+**Deployment risk hotspot factor at TIER 0-1 (B12 fix):** The "File in churn hotspot (top 10)" scoring factor requires Phase 0 hotspot detection, which is skipped at TIER 0-1. For TIER 0-1, this factor is explicitly scored as 0 points in the deployment risk calculation. Add a note in the scoring table: "File in churn hotspot (top 10) | +2 | From Phase 0 hotspot detection (TIER 2+). **Score 0 at TIER 0-1.**"
 
 Default branch detection for `new` scope:
 
@@ -223,7 +264,9 @@ git merge-base HEAD "$DEFAULT_BRANCH"
 
 After Phase 0 setup and before Phase 1 audit dispatch. Runs only when CodeSift is available. When unavailable, agents fall back to their own analysis (degraded mode documented in each agent file).
 
-**TIER 0-1 (no agents — pre-compute feeds inline analysis):**
+**TIER 0 (optional — may be skipped without impacting audit):** Pre-compute is optional for ≤15 line diffs. If CodeSift is available, the pattern scan adds marginal value; if latency is a concern, skip entirely. Lead performs inline analysis from the diff alone.
+
+**TIER 1 (no agents — pre-compute feeds inline analysis):**
 
 ```
 codebase_retrieval(repo, queries=[
@@ -263,14 +306,22 @@ Results passed as structured `PRECOMPUTED_DATA` section in each agent's input. A
 New sub-phase ordering within Phase 1:
 
 ```
-1.1  Self-Review Disclosure
-1.2  Review Header (merged banner — single block)
-1.3  Agent Dispatch (TIER 2+) or Inline Audit (TIER 0-1)
-1.4  CQ Self-Evaluation (TIER 1+)
-1.5  Q1-Q19 Evaluation (if test files)
-1.6  Adversarial (bash script — ALL tiers)
-1.7  Multi-Pass merge (if --thorough)
-1.8  Result Merging + deduplication
+Standard flow (no --thorough):
+  1.1  Self-Review Disclosure
+  1.2  Review Header (merged banner — single block)
+  1.3  Agent Dispatch (TIER 2+) or Inline Audit (TIER 0-1)
+  1.4  CQ Self-Evaluation (TIER 1+)
+  1.5  Q1-Q19 Evaluation (if test files)
+  1.6  Adversarial (bash script — ALL tiers)
+  1.7  Result Merging + deduplication
+
+With --thorough:
+  1.1  Self-Review Disclosure
+  1.2  Review Header (merged banner — single block)
+  1.3  Multi-Pass: 3 independent audit passes in parallel (each includes CQ + Q eval)
+  1.4  Multi-Pass merge with majority voting (3/3, 2/3, 1/3 thresholds)
+  1.5  Adversarial (bash script — runs AFTER multi-pass merge, on the merged diff)
+  1.6  Result Merging: multi-pass findings + adversarial findings, deduplication
 ```
 
 **1.2 Merged Banner** — replaces 4 separate blocks:
@@ -317,7 +368,15 @@ git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review --json --mode 
 
 If `adversarial-review` not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
 
-Script auto-detects providers and runs all available in parallel (Gemini, Codex, opposite-Claude-model). Parse JSON output:
+Script auto-detects providers and runs all available in parallel (Gemini, Codex, opposite-Claude-model).
+
+**Failure modes:**
+- Provider timeout (>60s): skip that provider, use results from others
+- Malformed JSON from a provider: skip that provider with warning
+- All providers unavailable: print `[CROSS-REVIEW] No external provider available. Proceeding without adversarial.` — continue review, add to SKIPPED STEPS in report
+- Partial success (1 of 3 providers): use available results, note which providers were skipped
+
+Parse JSON output:
 - CRITICAL → MUST-FIX (bypass confidence gate per D7)
 - WARNING → RECOMMENDED
 - INFO → NIT
@@ -326,15 +385,23 @@ Script auto-detects providers and runs all available in parallel (Gemini, Codex,
 
 **Self-review escalation (F5):** When self-review detected in 1.1, pass `--all-providers` flag to the script to force multi-provider mode regardless of tier.
 
+**Multi-pass + adversarial interaction:** With `--thorough`, multi-pass uses **3-pass majority voting** (Pass 1: alphabetical, Pass 2: reverse dependency, Pass 3: risk score descending). The old Pass 4 (adversarial persona) is eliminated — the internal Adversarial Auditor agent no longer exists. The bash script adversarial (step 1.5 in --thorough flow) runs **after multi-pass merge** (step 1.4), not as a voting pass. Adversarial findings are NOT subject to majority voting — adversarial WARNING/INFO go through the confidence gate individually; adversarial CRITICAL bypasses the gate per D7. Majority voting thresholds: 3/3, 2/3, 1/3.
+
 ### Phase 2: Confidence Gate (updated)
+
+**Dispatch logic:**
+- TIER 0-1: Lead scores each finding inline using the scoring factors below. For each issue, state `Confidence: [X]/100 — [reason]`.
+- TIER 2+: Dispatch Confidence Re-Scorer agent (`agents/confidence-rescorer.md`). Agent receives full candidate list, pre-computed data, and adversarial findings.
 
 New disposition table:
 
 | Confidence | Action | Backlog tag |
 |-----------|--------|-------------|
-| 0-25 | BACKLOG only (not in report) | `[low-confidence]` |
-| 26-50 | BACKLOG only (not in report) | `[below-threshold]` |
-| 51-100 | KEEP in report + BACKLOG (if not fixed) | — |
+| 0-25 | EXCLUDE from report | `[low-confidence]` |
+| 26-50 | EXCLUDE from report | `[below-threshold]` |
+| 51-100 | KEEP in report | — |
+
+**Backlog write timing:** All backlog writes happen AFTER Phase 4 Execute (or after Phase 3 Report if no execute). This prevents stale entries: if Phase 4 fixes a finding, it is NOT written to backlog. Only unfixed findings and excluded findings are persisted. The Confidence Re-Scorer tags dispositions but does NOT write to backlog directly — it returns tags to the orchestrator, which writes after execute.
 
 **Adversarial CRITICAL bypass:** Findings from `adversarial-review.sh` tagged CRITICAL skip the confidence gate entirely. They enter the report as MUST-FIX with effective confidence 100.
 
@@ -348,7 +415,7 @@ New report section order (QUESTIONS moved to position 4):
 1.  META — date, intent, tier, audit mode, agents, confidence method, CodeSift status
 2.  SCOPE FENCE — files examined, files excluded
 3.  VERDICT — PASS / WARN / BLOCKED with score
-4.  QUESTIONS FOR AUTHOR — genuine uncertainties (moved from position 11)
+4.  QUESTIONS FOR AUTHOR — genuine uncertainties (moved from position 11). **Questions Gate integrated into report flow.** Questions are now visible at position 4, before findings. In interactive mode with FIX-ALL/FIX-BLOCKING/AUTO-FIX: the skill prints positions 1-4 (META through QUESTIONS), pauses for user answers, **re-evaluates affected findings based on answers** (user says "intentional" → downgrade to NIT or drop), then prints positions 5+ with updated findings. In REPORT mode (default): no pause, questions are informational alongside findings.
 5.  DEPLOYMENT RISK — LOW-CRITICAL with deploy strategy
 6.  SEVERITY SUMMARY — MUST-FIX: N | RECOMMENDED: N | NIT: N
 7.  CHANGE SUMMARY — what the diff does in plain language
@@ -401,16 +468,39 @@ FIX-BLOCKING: apply MUST-FIX only
 AUTO-FIX:     dispatch zuvo:build for MUST-FIX (closed-loop, max 1 cycle)
 ```
 
-**Staged + fix bug fix (B5):** When scope is `staged`:
+**Review-specific wrapper around fix-loop.md:**
+
+After fix-loop.md completes (commit done), SKILL.md adds:
+
+1. Review-specific git tag: `git tag review-YYYY-MM-DD-[short-slug]`
+2. Post-Execute output block:
+```
+===============================================================
+EXECUTION COMPLETE
+===============================================================
+FILES MODIFIED: [list]
+FIXED: [list of R-N items fixed]
+TESTS WRITTEN: [list]
+VERIFIED: Tests PASS, Types PASS
+Commit: [hash] — [message]
+Tag: [tag name]
+===============================================================
+```
+3. Persist unfixed issues to backlog (FIX-BLOCKING: RECOMMENDED + NIT; partial fix: any unfixed items)
+
+These are NOT in fix-loop.md (which is generic). They wrap the fix-loop call in SKILL.md's Phase 4 section.
+
+**Staged + fix bug fix (B5):** When scope is `staged`, the fix-loop.md handles the commit internally. The SKILL.md wrapper adds stash management around the fix-loop call:
 
 ```
 1. git stash --keep-index        # save unstaged changes
-2. Apply fixes to staged files
-3. git commit -m "review-fix: [description]"
-4. git stash pop                 # restore unstaged changes
+2. Run fix-loop.md (it applies fixes, runs tests, and commits)
+3. git stash pop                 # restore unstaged changes — ALWAYS runs, even if fix-loop fails
 ```
 
-This separates the user's staged changes from review fixes.
+**Failure recovery:** If fix-loop aborts (tests fail, fix breaks), `git stash pop` MUST still execute. The SKILL.md wrapper treats stash pop as a `finally` block — it runs regardless of fix-loop outcome. If fix-loop fails, the wrapper pops the stash and reports the failure.
+
+This separates the user's staged changes from review fixes. The wrapper does NOT issue its own `git commit` — fix-loop.md handles that.
 
 **Batch mode TIER 3 fix (B10):** Replace "needs dedicated zuvo:review" with:
 
@@ -449,7 +539,7 @@ For each changed production file:
      "R-N [RECOMMENDED] No test coverage for [symbol] — changed without corresponding test update"
 ```
 
-At TIER 0-1: skip (too small to warrant coverage analysis). CodeSift pre-compute already provides the test reference data; no extra queries needed.
+At TIER 0: skip entirely. At TIER 1: the pre-compute includes test references — if a changed symbol has 0 test refs, note it as an observation in the report (not a formal RECOMMENDED finding, just a note in TEST ANALYSIS section). At TIER 2+: formal RECOMMENDED findings with evidence.
 
 ---
 
@@ -544,6 +634,12 @@ BEHAV-2 ...
 
 [What was checked, what was found, overall assessment.]
 
+### Quality Wins
+
+[Things done well — max 2 per agent. Criteria: novel pattern, clean error handling, effective edge case coverage.]
+- [WIN] description — file:line
+(or "None observed")
+
 ### BACKLOG ITEMS
 
 [Issues outside scope, or "None"]
@@ -552,6 +648,8 @@ BEHAV-2 ...
 **Calibration examples:**
 - `Confidence: 92` — `findMany` at order.service.ts:87 has no `take` parameter, called in a GET endpoint with user-supplied filter. Bounded query is missing. Clear CQ6 violation with production OOM risk.
 - `Confidence: 35` — `catch (err) { logger.warn(err) }` at cache.service.ts:45. Looks like swallowed error but this is a cache warm path — warn + continue is the correct strategy per CQ8 context-aware rules. Low confidence because PROJECT_CONTEXT shows this service is non-critical.
+
+**Degraded mode (CodeSift unavailable):** Fall back to Read for full file content, Grep for pattern matching (`grep -n "catch.*{" <file>` for empty catches, `grep "findMany" <file>` for unbounded queries). Skip callee chain analysis. Note "CodeSift unavailable — callee chain not analyzed" in report.
 
 **What You Must NOT Do:**
 - Do not flag CQ8 on services when PROJECT_CONTEXT shows a global exception filter handles errors
@@ -598,6 +696,12 @@ STRUCT-2 ...
 |------|-------|-----------|---------|------------|--------|
 | ... | ... | ... | ... | ... | OK / OVER LIMIT |
 
+### Quality Wins
+
+[Max 2. Criteria: clean module boundaries, good refactoring, well-organized file structure.]
+- [WIN] description — file:line
+(or "None observed")
+
 ### Summary
 
 [What was checked, what was found.]
@@ -606,6 +710,13 @@ STRUCT-2 ...
 
 [Or "None"]
 ```
+
+**Calibration examples:**
+- `Confidence: 88` — STRUCT-1: order.service.ts is 412 lines (limit 300). 9 public methods. File outline shows clear SRP violation — service handles both order CRUD and payment orchestration. High confidence: objective measurement exceeds hard limit.
+- `Confidence: 32` — STRUCT-3: function `processWebhook` is 52 lines (limit 50). Only 2 lines over limit, single responsibility, clean early returns. Low confidence: marginal violation, not worth refactoring.
+- `Confidence: 15` — STRUCT-5: `getUserName` uses camelCase but project has 3 files with snake_case helpers. After reading 5 existing files, camelCase is the dominant convention (>80%). The snake_case files are legacy. Low confidence: flagging would be wrong.
+
+**Degraded mode (CodeSift unavailable):** Fall back to Read for file content, count lines with `wc -l`, count functions with Grep (`grep -c "function\|=>.*{" <file>`). Skip circular dependency detection and complexity scoring. Note "CodeSift unavailable — complexity and circular dep analysis skipped" in report.
 
 **What You Must NOT Do:**
 - Do not check logic correctness — that is the Behavior Auditor's scope
@@ -664,6 +775,8 @@ PROJECT_CONTEXT applied: [which gates were affected by global handlers]
 - `CQ8=N/A` (correct) — user.service.ts in NestJS project with global AllExceptionsFilter registered in main.ts. Non-critical service. Global handler catches and logs. Per-method catch is optional.
 - `CQ8=0` (correct) — payment.service.ts in same project. Critical path (money). Global filter is insufficient — payment errors need specific handling with retry/rollback logic. Evidence: processPayment:67 has bare `throw` without cause chain.
 - `CQ8=0` (WRONG — should be N/A) — cache.service.ts warm-cache method. `catch { logger.warn(...) }` is the CORRECT pattern for non-critical cache warming per cq-patterns.md "error strategy by impact."
+
+**Degraded mode (CodeSift unavailable):** Fall back to Read for full file source. Use Grep for pattern searches (`grep -n "catch" <file>`, `grep -n "findMany" <file>`). All 28 gates must still be evaluated — degraded mode affects speed, not coverage.
 
 **What You Must NOT Do:**
 - Do not trust the lead's CQ scores — evaluate from scratch
@@ -727,6 +840,8 @@ Kept: N | Backlogged: M | Total: N+M
 - `Confidence: 92` — R-1 MUST-FIX: findMany without limit. CQ6 critical gate (+25), 47 callers in codebase (+10), GET endpoint accessible to all users (+15), hotspot file (+10). Clear production OOM risk.
 - `Confidence: 28` — R-4 RECOMMENDED: sequential await in loop. Theoretical perf concern (-20), loop is over a fixed 3-element config array (-10), not user-facing (-0). Below threshold → backlog.
 - `Confidence: 100` — ADV-1 CRITICAL from Gemini: race condition in auth token refresh. Adversarial CRITICAL override. Bypasses scoring entirely.
+
+**Degraded mode (CodeSift unavailable):** Skip reference count and hotspot rank factors (score them as 0 impact). All other scoring factors work from the finding data alone (no CodeSift dependency). Note "CodeSift unavailable — reference count and hotspot factors not applied" in report.
 
 **What You Must NOT Do:**
 - Do not discard any finding — all go to either report or backlog
@@ -818,13 +933,13 @@ apply one at a time, run tests after each. If a fix breaks tests, revert and rep
 
 ## Acceptance Criteria
 
-1. SKILL.md is ≤600 lines and loads ≤15K tokens at TIER 0
+1. SKILL.md is ≤600 lines and loads ≤16K tokens at TIER 0
 2. 4 agent files exist in `skills/review/agents/` with frontmatter, tool discovery, output templates, calibration examples, and "What You Must NOT Do"
 3. No internal Adversarial Auditor agent — adversarial is bash script only
-4. `adversarial-review.sh` runs at all tiers (TIER 0 through TIER 3)
+4. `adversarial-review.sh` runs at all tiers (TIER 0 through TIER 3) with all available providers
 5. `cq-patterns.md` is conditional (TIER 2+), `cq-patterns-core.md` loads at TIER 1
-6. CodeSift pre-compute runs in Phase 0.5, results passed to agents as PRECOMPUTED_DATA
-7. CQ Auditor receives PROJECT_CONTEXT and does not false-positive CQ8 on NestJS with global filters
+6. When CodeSift is available: pre-compute runs in Phase 0.5 (mandatory TIER 1+, optional TIER 0), results passed to agents as PRECOMPUTED_DATA. When CodeSift unavailable: agents use degraded mode (Read/Grep fallback)
+7. CQ Auditor receives PROJECT_CONTEXT as input item 5. When PROJECT_CONTEXT includes a global exception filter (e.g., `AllExceptionsFilter` in NestJS `main.ts`), CQ8 on non-critical services is scored N/A with justification referencing the global handler — not scored 0
 8. Adversarial CRITICAL findings bypass confidence gate (effective confidence = 100)
 9. All findings (including 0-25 confidence) persist to `memory/backlog.md` with appropriate tags
 10. Empty diff, binary-only diff, and merge commits are handled with explicit messages
@@ -842,12 +957,12 @@ apply one at a time, run tests after each. If a fix breaks tests, revert and rep
 22. Stack-specific rules loaded at TIER 2+ based on detected stack
 23. Test coverage delta detection at TIER 2+ using CodeSift pre-computed test references
 24. Self-review detected → adversarial escalates to `--all-providers`
-25. `severity-vocabulary.md` updated with adversarial-within-review mapping
+25. `severity-vocabulary.md` has footnote clarifying that existing "adversarial loop" row covers bash script findings within review, with D7 bypass note
 26. All 4 agent prompts pass quality bar: workflow steps (not categories), CodeSift guidance, degraded mode, evidence requirements
 
 ## Out of Scope
 
-- Changes to `adversarial-review.sh` script itself (it works as-is)
+- Changes to `adversarial-review.sh` script behavior or provider logic (the script already supports `--json`, `--mode code`, `--files`, auto-provider-detection, and multi-provider parallel execution — verified in current v1.3.33+). The `--all-providers` flag for self-review escalation (F5) is the ONE exception: if not already supported, add it as a minimal script change (pass-through, no logic change — the script already runs all available providers by default)
 - Changes to `ship` or `pentest` skill output parsing (backward-compatible — review output format unchanged for MUST-FIX/RECOMMENDED/NIT)
 - Changes to `build` skill to use `fix-loop.md` (separate task — `build` continues with its inline loop until explicitly migrated)
 - Creating new stack-specific rules files (uses existing `rules/*.md`)
