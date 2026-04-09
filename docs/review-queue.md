@@ -257,3 +257,5 @@ Commits pending review. Auto-managed:
 - bd8a6cc (2026-04-08) fix: cross-provider-review.md — remove hardcoded ~/.claude/ paths that break Codex build
 - 4b72064 (2026-04-08) release: v1.3.33 — fix: adversarial-review build validation — remove hardcoded paths from cross-provider-review.md
 - 26348d4 (2026-04-09) feat: PostToolUse hook enforces adversarial review after code-producing skills
+- 546a9ce (2026-04-09) release: v1.3.34 — feat: PostToolUse hook — adversarial review enforcement after code-producing skills
+- c76ed9f (2026-04-09) rewrite: write-tests — single-file pipeline (532→197 lines)
