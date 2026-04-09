@@ -295,3 +295,5 @@ Commits pending review. Auto-managed:
 - 8639f7d (2026-04-09) feat: ORM templates, side-effect assertions, vi.hoisted docs, pass count reduction
 - 098719b (2026-04-09) release: v1.3.46 — feat: ORM mock templates, error side-effect assertions, vi.hoisted docs, adversarial 4→2 passes
 - 6027543 (2026-04-09) enhance: retrospective — paste-ready code in proposals, impact ranking table
+- b64cd47 (2026-04-09) release: v1.3.47 — enhance: retrospective — paste-ready proposals + impact ranking
+- b30952a (2026-04-09) fix: retrospective gate — always write unless session truly aborted
