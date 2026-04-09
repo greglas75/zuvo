@@ -481,15 +481,22 @@ git add [specific files from scope fence]
 
 **Iterative review with `--rotate`:** Run adversarial passes sequentially, one random provider per pass. Each pass sees the FIXED code from previous passes — so fixes themselves get reviewed. Early exit when a pass returns 0 findings.
 
-**Context-enriched input:** Prepend refactoring context so the provider targets weaknesses:
+**Context-enriched input:** Prepend refactoring context + full source files so the provider can verify behavioral equivalence, not just diff syntax:
 
 ```bash
 (echo "CONTEXT: refactor [TYPE] [TARGET] scope:[N files]";
  echo "CQ-PRE: [pre-audit score]. CQ-POST: [post-audit score]. Critical: [gates]";
  echo "SCOPE-FENCE: [file list]";
- echo "---";
+ echo "MOVED_VERBATIM: [files moved without changes]. Focus on new/changed logic. Verbatim-moved code is out of scope unless the move itself creates an issue.";
+ echo "---ORIGINAL SOURCE---";
+ cat [target file before refactoring];
+ echo "---NEW/MODIFIED FILES---";
+ cat [each new or modified file in scope fence];
+ echo "---DIFF---";
  git diff --staged) | adversarial-review --rotate --mode [code|security]
 ```
+
+The provider receives: (1) original file — can check nothing was lost in extraction, (2) new files in full — can evaluate as standalone modules, (3) diff — sees exact changes. This prevents false positives on moved-verbatim code while catching real issues like dropped branches, changed signatures, or broken re-exports.
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
 
