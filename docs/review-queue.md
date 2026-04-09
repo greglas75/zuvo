@@ -291,3 +291,5 @@ Commits pending review. Auto-managed:
 - 84d0526 (2026-04-09) release: v1.3.44 — fix: singleton state guidance, exact boundary edge case, absolute paths for adversarial
 - a6774a8 (2026-04-09) docs: update brainstorm documentation — failure modes, 14 checkpoints, grouped approval
 - 2c8d0d6 (2026-04-09) enhance: retrospective — up to 5 ranked change proposals, token breakdown table
+- 9edf2e1 (2026-04-09) release: v1.3.45 — enhance: retrospective — multi-proposal + token breakdown
+- 8639f7d (2026-04-09) feat: ORM templates, side-effect assertions, vi.hoisted docs, pass count reduction

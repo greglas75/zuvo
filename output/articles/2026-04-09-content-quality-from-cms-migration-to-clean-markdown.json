@@ -1,0 +1,53 @@
+{
+  "version": "1.0",
+  "skill": "write-article",
+  "timestamp": "2026-04-09T09:46:55Z",
+  "project": "zuvo-plugin",
+  "args": {
+    "topic": "Content Quality: From CMS Migration to Clean Markdown (encoding, mojibake, Joomla/WordPress → Astro/Hugo)",
+    "lang": "en",
+    "tone": "technical",
+    "length": 1500,
+    "format": "md",
+    "keyword": "CMS migration",
+    "audience": null,
+    "site_dir": null,
+    "batch_mode": false
+  },
+  "article": {
+    "title": "Content Quality: From CMS Migration to Clean Markdown",
+    "slug": "content-quality-from-cms-migration-to-clean-markdown",
+    "language": "en",
+    "tone": "technical",
+    "word_count": 1420,
+    "format": "md",
+    "output_path": "/Users/greglas/DEV/zuvo-plugin/output/articles/2026-04-09-content-quality-from-cms-migration-to-clean-markdown.md",
+    "research_limited": true
+  },
+  "research": {
+    "sources_count": 6,
+    "personas_count": 4,
+    "competitor_gaps": [
+      "Few migration guides combine charset/database diagnosis with SSG-specific Markdown hygiene in one checklist.",
+      "Tutorials often skip RSS/feed parity when explaining UTF-8 issues on WordPress exports."
+    ],
+    "facts_used": 14,
+    "facts_available": 16
+  },
+  "quality": {
+    "anti_slop": {
+      "hard_violations": 0,
+      "soft_violations": 0
+    },
+    "burstiness_score": "GOOD",
+    "adversarial_verdict": "WARN"
+  },
+  "seo": {
+    "primary_keyword": "CMS migration",
+    "meta_title": "Content Quality: From CMS Migration to Clean Markdown",
+    "meta_description": "Encoding artifacts, mojibake, and database quirks follow you from Joomla and WordPress into Astro and Hugo unless you audit, fix, and verify before cutover.",
+    "schema_type": "BlogPosting",
+    "internal_links_suggested": 3,
+    "internal_links_verified": 3
+  }
+}

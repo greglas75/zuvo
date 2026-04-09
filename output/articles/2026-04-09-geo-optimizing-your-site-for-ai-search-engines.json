@@ -1,7 +1,7 @@
 {
   "version": "1.0",
   "skill": "write-article",
-  "timestamp": "2026-04-09T09:36:50Z",
+  "timestamp": "2026-04-09T09:39:32Z",
   "project": "zuvo-plugin",
   "args": {
     "topic": "GEO: Optimizing Your Site for AI Search Engines",
@@ -19,7 +19,7 @@
     "slug": "geo-optimizing-your-site-for-ai-search-engines",
     "language": "en",
     "tone": "technical",
-    "word_count": 2037,
+    "word_count": 2142,
     "format": "md",
     "output_path": "/Users/greglas/DEV/zuvo-plugin/output/articles/2026-04-09-geo-optimizing-your-site-for-ai-search-engines.md",
     "research_limited": false
