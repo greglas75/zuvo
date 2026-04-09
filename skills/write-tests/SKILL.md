@@ -1,532 +1,197 @@
 ---
 name: write-tests
 description: >
-  Write tests for existing production code. Scans coverage gaps, classifies
-  code types (11 categories), selects patterns per type, and writes tests
-  with Q1-Q19 quality gates. Supports single file, directory, and auto-loop
-  modes. Modes: [path] (specific target), auto (discover and loop until
-  done), --dry-run (preview plan without writing).
+  Write tests for existing production code. Processes ONE file at a time
+  through a full pipeline: analyze, write, verify, adversarial review, log.
+  Uses CodeSift for discovery and analysis when available. Modes: [path]
+  (specific target), auto (discover and loop until done), --dry-run (plan only).
 ---
 
-# zuvo:write-tests — Test Writing Workflow
+# zuvo:write-tests — Single-File Test Pipeline
 
-Generate high-quality tests for production code that lacks coverage. Analyzes each target file, classifies its code type, selects the correct test patterns, and writes tests that pass Q1-Q19 gates.
+Generate high-quality tests for production code. Each file goes through the full pipeline individually — no batching, no skipping verification.
 
 **Scope:** Existing production files with missing or partial test coverage.
-**Out of scope:** New feature tests during development (use `zuvo:build`), mass repair of the same anti-pattern across many files (use `zuvo:fix-tests`), auditing existing test quality without writing (use `zuvo:test-audit`).
-
-**Boundary rule:** If this skill discovers quality issues in existing tests for target files (auto-fail patterns, weak assertions, untested branches), fix them directly. Do not delegate to `zuvo:fix-tests` unless the same anti-pattern spans 10+ files outside the current target set.
+**Out of scope:** New feature tests (use `zuvo:build`), mass anti-pattern repair (use `zuvo:fix-tests`), audit without writing (use `zuvo:test-audit`).
 
 ## Argument Parsing
-
-Parse `$ARGUMENTS` as: `[path | auto] [--dry-run]`
 
 | Input | Behavior |
 |-------|----------|
 | `[file.ts]` | Write tests for one production file |
 | `[directory/]` | Write tests for all production files in the directory |
-| `auto` | Discover uncovered files, write tests in batches of 15, loop until zero UNCOVERED/PARTIAL remain |
-| `--dry-run` | Run analysis and produce the plan, but do not write any test files |
-
-## Mode Table
-
-| Mode | Approval gate | User questions | Sub-agents | Loops |
-|------|--------------|----------------|------------|-------|
-| `[path]` | None | Up to 4 | Scanner + Selector | No |
-| `auto` | None | None | Scanner + Selector | Yes (15 files per batch) |
-| `--dry-run` | N/A | None | Scanner + Selector | No |
+| `auto` | Discover uncovered files, process one at a time until done |
+| `--dry-run` | Run Phase 0 + Step 1 for all files, print plan, stop |
 
 ---
 
-## Environment Compatibility
+## Mandatory File Loading
 
-Read `../../shared/includes/env-compat.md` for agent dispatch, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
-
-## CodeSift Integration
-
-Read `../../shared/includes/codesift-setup.md` for initialization.
-
-**Key tools for this skill:**
-
-| Phase | Task | CodeSift tool | Fallback |
-|-------|------|--------------|----------|
-| 1 | Production file inventory | `get_file_tree(repo, name_pattern="*.ts")` | `Glob("**/*.ts")` |
-| 1 | Exported symbols per file | `get_file_outline(repo, file_path)` | `Read` the file |
-| 1 | Check if a symbol has tests | `search_text(repo, query=<export_name>, file_pattern="*.test.*")` | Grep |
-| 1 | Classify code type from signatures | `get_file_outline(repo, file_path)` | Read the file |
-| 1.5 | Read multiple methods at once | `get_symbols(repo, symbol_ids=[...])` | Multiple Read calls |
-| 1.5 | Find production code + its references | `find_and_show(repo, query=<fn_name>, include_refs=true)` | Grep + Read |
-| 2 | Assemble context for test writing | `assemble_context(repo, query=<fn_name>, token_budget=4000)` | Multiple Read calls |
-| 4 | Find existing test patterns | `search_text(repo, query=<pattern>, file_pattern="*.test.*")` | Grep |
-
----
-
-## Auto-Loop Protocol
-
-After each batch, read `memory/coverage.md`. If UNCOVERED or PARTIAL files remain, start the next batch immediately. Do not declare completion until zero gaps remain. One batch does not equal done.
-
-**Loop ownership by environment:**
-
-| Environment | Who owns the loop | Agent behavior |
-|-------------|------------------|----------------|
-| Claude Code | Agent (Phase 5) | Finish batch, check coverage.md, continue if needed |
-| Codex | External loop | Finish one batch, stop. Loop restarts if gaps remain |
-| Cursor | External hook | Finish one batch, stop. Hook restarts if gaps remain |
-
-If no external loop or hook is installed, fall back to self-loop (same as Claude Code).
-
----
-
-## Agent Routing
-
-| Agent | Purpose | Model | Type | Phase |
-|-------|---------|-------|------|-------|
-| Coverage Scanner | Inventory production files, find untested exports, rank by risk | Haiku | Explore | 1 (background) |
-| Pattern Selector | Read target files, classify code types, select G-*/P-* patterns | Haiku | Explore | 1 (background) |
-| Test Quality Auditor | Run Q1-Q19 on written tests, produce evidence-backed score | Sonnet | Explore | 4 (MANDATORY on STANDARD+) |
-
-All agents are read-only (Explore type).
-
----
-
-## Mandatory File Reading
-
-Before starting any work, read each file below. Print the checklist. If any REQUIRED file is missing, STOP.
+Read each file. Print checklist. If any REQUIRED file is missing, STOP.
 
 ```
 CORE FILES LOADED:
-  1. ../../rules/testing.md                  -- [READ | MISSING -> STOP]
-  2. ../../rules/test-quality-rules.md       -- [READ | MISSING -> STOP]
-  3. ../../rules/file-limits.md              -- [READ | MISSING -> STOP]
-  4. ../../shared/includes/quality-gates.md  -- [READ | MISSING -> STOP]
-  5. ../../shared/includes/test-contract.md  -- [READ | MISSING -> STOP]
-  6. ../../shared/includes/run-logger.md     -- [READ | MISSING -> STOP]
-  7. ../../shared/includes/knowledge-prime.md  -- READ/MISSING
-  8. ../../shared/includes/knowledge-curate.md -- READ/MISSING
+  1. ../../shared/includes/codesift-setup.md      -- [READ|MISSING -> STOP]
+  2. ../../shared/includes/test-contract.md        -- [READ|MISSING -> STOP]
+  3. ../../shared/includes/test-code-types.md      -- [READ|MISSING -> STOP]
+  4. ../../shared/includes/test-blocklist.md       -- [READ|MISSING -> STOP]
+  5. ../../shared/includes/test-mock-safety.md     -- [READ|MISSING -> STOP]
+  6. ../../shared/includes/test-edge-cases.md      -- [READ|MISSING -> STOP]
+  7. ../../shared/includes/q-scoring-protocol.md   -- [READ|MISSING -> STOP]
+  8. ../../shared/includes/quality-gates.md        -- [READ|MISSING -> STOP]
+  9. ../../shared/includes/run-logger.md           -- [READ|MISSING -> STOP]
+  10. ../../rules/testing.md                       -- [READ|MISSING -> STOP]
 ```
-
-### Conditional Files (loaded when needed)
-
-| File | Load when | Skip when |
-|------|-----------|-----------|
-| `../../rules/cq-patterns.md` | Target has test files with production patterns to validate | No production patterns in scope |
-| `../../rules/security.md` | Code type is CONTROLLER, GUARD, or API-CALL | Not security-sensitive code |
-| Domain test patterns (NestJS, Redux, etc.) | Pattern Selector detects domain code | No domain-specific code detected |
 
 ---
 
-## Phase 0: Context Gathering
+## Phase 0: Setup (runs once)
 
-### Knowledge Prime
+1. **CodeSift setup** per `codesift-setup.md`. Note repo identifier.
+2. **Stack detection:** read package.json/tsconfig/composer.json. Detect test runner (vitest/jest/phpunit). Find existing test patterns (DB helpers, factory functions, mock conventions).
+3. **Baseline test run:** execute test suite, record pre-existing failures. These are ignored in verification.
+4. **Build queue:**
+   - **Explicit mode:** queue = user's target file(s)
+   - **Auto mode with CodeSift:**
+     ```
+     classify_roles(repo)                    → dead/leaf symbols = likely untested
+     analyze_hotspots(repo, since_days=90)   → prioritize by churn × complexity
+     find_references(repo, symbol_names=[exported symbols], file_pattern="*.test.*")
+                                             → 0 refs in test files = no tests
+     ```
+     Merge results. Priority: UNCOVERED+high-churn first. Queue all UNCOVERED + PARTIAL files.
+   - **Auto mode without CodeSift:** `Glob("src/**/*.ts")` + check for matching `*.test.*` files. Files without test = UNCOVERED.
 
-Run the knowledge prime protocol from `knowledge-prime.md`:
-```
-WORK_TYPE = "implementation"
-WORK_KEYWORDS = <keywords from user request>
-WORK_FILES = <files being touched>
-```
+**`--dry-run` mode:** after building queue, run Step 1 (Analyze) for each file, print classification table, STOP.
 
-1. Read project CLAUDE.md and `.claude/rules/` for conventions (test runner, file locations, mock patterns)
-2. Detect stack from config files: `package.json`, `tsconfig.json`, `pyproject.toml`
-3. Note domain-specific test patterns needed (NestJS controllers, Redux slices, etc.)
-4. **Discover existing test patterns in the project (MANDATORY for non-trivial code):**
-   Search for how THIS project already tests hard-to-mock code. Reuse established patterns.
+---
+
+## Per-File Loop
+
+For each file in the queue, execute Steps 1-5 in order. Do NOT skip any step. Do NOT proceed to the next file until all 5 steps complete.
+
+### Step 1: Analyze
+
+Read the production file fully. Classify it.
+
+**With CodeSift:**
+- `get_file_outline(repo, file_path)` → exports, classes, functions
+- `analyze_complexity(repo, file_pattern="<file>")` → cyclomatic complexity, nesting, LOC
+- `trace_call_chain(repo, symbol, direction="callees")` → dependencies to mock
+
+**Without CodeSift:** Read the file, count branches manually.
+
+Classify per `test-code-types.md`:
+- **Code type:** VALIDATOR / SERVICE / CONTROLLER / HOOK / PURE / COMPONENT / GUARD / API-CALL / ORCHESTRATOR / STATE-MACHINE / ORM-DB
+- **Complexity:** THIN / STANDARD / COMPLEX
+- **Testability:** UNIT_MOCKABLE / UNIT_REFLECTION / NEEDS_INTEGRATION / MIXED
+
+Plan: target test count (from code-type formula), describe/it outline, mock strategy. For STANDARD+, apply edge cases from `test-edge-cases.md`.
+
+Print: `[file]: [type] [complexity] [testability] → [N] tests planned`
+
+### Step 2: Write
+
+1. **Fill test contract** per `test-contract.md`: BRANCHES, ERROR PATHS, EXPECTED VALUES, MOCK INVENTORY, MUTATION TARGETS, TEST OUTLINE.
+2. **Check blocklist** per `test-blocklist.md` — verify you are NOT about to write any blocked pattern.
+3. **Apply mock rules** per `test-mock-safety.md`.
+4. **Write the test file.** Follow the contract and plan exactly.
+5. **Run tests:** `[test runner] [test file]`. All new tests must pass. Pre-existing failures ignored. Fix red tests before proceeding.
+
+### Step 3: Verify
+
+1. **Anti-tautology check:** grep test file for mock-return-echoed-in-assertion patterns. Verify every expected value is spec-derived, not implementation-derived. Any tautological oracle found = fix immediately.
+2. **Q1-Q19 self-eval** per `quality-gates.md`. Print scorecard with evidence:
    ```
-   Search for:
-   - Integration tests with DB: grep for transaction, beginTransaction, rollBack, fixtures, $this->tester->create
-   - Reflection-based mocking: grep for ReflectionClass, ReflectionProperty, disableOriginalConstructor
-   - Factory helpers: grep for createMock.*willReturnCallback, getMockBuilder
-   - DI container overrides: grep for TestingModule, overrideProvider, useValue
+   Self-eval: Q1=1 Q2=1 Q3=0 ... → [N]/19 [PASS|FIX|REWRITE]
+   Critical gates: Q7=[0|1] Q11=[0|1] Q13=[0|1] Q15=[0|1] Q17=[0|1]
    ```
-   Log:
-   ```
-   PROJECT TEST PATTERNS:
-     DB integration: [file:line — describe pattern] or "none found"
-     Reflection mocking: [file:line — describe pattern] or "none found"
-     Factory helpers: [file:line — describe pattern] or "none found"
-   ```
-   **These patterns are your toolkit.** When Phase 1.5b classifies a file as NEEDS_INTEGRATION, use the pattern you found here.
-5. Read `memory/backlog.md` if it exists -- check for related open items in target files
-6. Read `memory/coverage.md` if it exists -- use as cached state to skip re-scanning known files
-   - If `memory/` directory does not exist, create it: `mkdir -p memory`
-   - If `memory/coverage.md` does not exist, create it with an empty table header
+   Any critical gate at 0: fix immediately and re-score.
+3. **Quality audit** per `q-scoring-protocol.md`:
+   - **Claude Code (sub-agent available):** dispatch `agents/test-quality-reviewer.md` (Sonnet, Explore). Pass production file, test file, test contract.
+   - **All platforms (fallback):** `[CHECKPOINT: quality audit]` — re-read the test file from disk as if seeing it for the first time. Score Q1-Q19 independently with evidence. This is a best-effort heuristic; Step 4 (adversarial) provides true cross-model independence.
+   - **Discrepancy 2+ points** on any gate: auditor's score wins. Fix before proceeding.
 
-Output:
-
-```
-STACK: [language] | RUNNER: [test runner] | DOMAIN PATTERNS: [nestjs/redux/none]
-TARGET: [file | directory | auto-discover]
-BACKLOG: [N open items in target files, or "none"]
-```
-
-### Phase 0.5: Baseline Test Run
-
-Run the existing test suite before writing anything to establish a known state:
+### Step 4: Adversarial Review
 
 ```bash
-[test runner] [target path if scoped]
+git diff HEAD -- <test-file> | adversarial-review --json --mode test
 ```
 
-Record:
+If `adversarial-review` is not found: check `../../scripts/adversarial-review.sh`. If missing entirely, mark file SKIPPED_REVIEW and proceed.
 
+Wait for complete output. Handle findings:
+
+| Finding | Action |
+|---------|--------|
+| **CRITICAL** | Fix immediately. Re-run tests. Re-run adversarial (max 2 total calls per file). |
+| **CRITICAL after 2 calls** | Mark file **FAILED** in coverage.md. Backlog findings with file:line. Proceed to next file. |
+| **WARNING (<10 lines)** | Fix immediately. |
+| **WARNING (>10 lines)** | Add to backlog with file:line. |
+| **INFO** | Known concerns (max 3). |
+| **Provider unavailable** | Note `adversarial: skipped (provider unavailable)`. Mark file **SKIPPED_REVIEW** in coverage.md. |
+
+### Step 5: Log
+
+Update `memory/coverage.md`:
 ```
-BASELINE: [N] tests, [N] passing, [N] failing
-PRE-EXISTING FAILURES: [list, or "none"]
+| File | Status | Tests | Q Score | Adversarial | Date |
 ```
 
-Pre-existing failures are ignored during Phase 4 verification. If the baseline run fails on infrastructure (missing deps, no runner), note it and proceed.
+Statuses: `PASS`, `FAILED`, `SKIPPED_REVIEW`
+
+Print per-file summary: `[status] [file] — [N] tests, Q [N]/19, adversarial: [clean|N findings|skipped]`
+
+**→ NEXT file in queue.**
 
 ---
 
-## Phase 1: Analysis
-
-### Explicit mode (file or directory target)
-
-Spawn Coverage Scanner and Pattern Selector in parallel. Both receive the target file list.
-
-**Coverage Scanner** identifies which exports lack test coverage, categorizes each file as UNCOVERED, PARTIAL, or COVERED, and assigns a risk ranking.
-
-**Pattern Selector** reads each target file and classifies its code type from the 11-type system (see Code-Type Gate below). It outputs the correct G-* patterns to follow and P-* patterns to avoid.
-
-Wait for both agents before starting Phase 2.
-
-### Auto mode (discovery)
-
-Execute sequentially: Scanner first (discovers files), then Selector (classifies the top 30 candidates).
-
-1. Scanner discovers all production files, classifies coverage status
-2. Pass the top 30 UNCOVERED + PARTIAL files (by risk) to Pattern Selector
-3. Selector classifies code types for those candidates
-
-Merge results and apply priority:
-
-| Priority | Criteria |
-|----------|----------|
-| 1 (highest) | UNCOVERED + SERVICE, CONTROLLER, GUARD |
-| 2 | UNCOVERED + HOOK, ORCHESTRATOR, API-CALL |
-| 3 | UNCOVERED + PURE, COMPONENT, ORM |
-| 4 | PARTIAL (below 50% method coverage) |
-| 5 (lowest) | PARTIAL (50%+ method coverage) |
-
-Within the same priority, sort by file size descending. Take the top 15 for this batch.
-
----
-
-## Code-Type Gate (11 Types)
-
-Every target file receives a code-type classification. The classification drives minimum test count, required patterns, and mock strategy.
-
-| Code Type | Detection Signals | Min Tests Formula |
-|-----------|------------------|-------------------|
-| VALIDATOR | Zod schemas, `validate*`, class-validator decorators | Fields x 3 (valid + invalid + boundary) |
-| SERVICE | Injectable class with DB/HTTP calls, business logic methods | Methods x 3 |
-| CONTROLLER | Route decorators, request/response handlers | Endpoints x 4 (happy + auth + validation + error) |
-| HOOK | `use*` functions, React hooks with side effects | States x 3 + lifecycle tests |
-| PURE | No I/O, no side effects -- transforms, formatters, calculators | Functions x 4 + property-based |
-| COMPONENT | React/Vue component with props and render logic | Render states x 2 + interaction tests |
-| GUARD | Auth guards, permission checks, middleware | Rules x 3 (allow + deny + edge) |
-| API-CALL | HTTP client wrappers, SDK calls | Methods x 3 (success + error + timeout) |
-| ORCHESTRATOR | Coordinates multiple services, saga/workflow logic | Steps x 2 + full-flow integration |
-| STATE-MACHINE | Finite states with transitions, event-driven reducers | Transitions x 2 + States x 1 + lifecycle flow |
-| ORM/DB | Repository pattern, query builders, migrations | Queries x 3 (success + empty + constraint violation) |
-
-**Mixed files:** When a file combines types (e.g., a SERVICE with PURE helper functions inside it), apply both classifications. Sum the minimum test counts.
-
-**PURE_EXTRACTABLE detection:** After classifying the file, scan for non-exported pure helper functions within non-pure files. Mark them for property-based testing. If 3+ such helpers exist, recommend extraction to a `[file].utils.ts` module.
-
----
-
-## Phase 1.5: Production Code Read (Non-Negotiable)
-
-For every target file, read the production code fully before planning tests. This is the primary quality driver.
-
-For each file:
-
-1. Read the entire production file (use `get_file_outline` + `get_symbols` for efficient reads when CodeSift is available)
-2. List all branches: if/else, switch, ternary, nullish coalescing, early return, try/catch
-3. Classify what the file OWNS (internal computations, branching decisions) versus what it DELEGATES (pass-through calls to dependencies)
-4. Assign complexity:
-
-| Classification | Criteria | Test depth |
-|---------------|----------|------------|
-| THIN | Under 50 LOC, no owned branching, pure delegation | Wiring correctness + error propagation. Skip edge case checklist. 5-12 tests. |
-| STANDARD | 50-200 LOC, moderate branching (3-10 branches) | Full edge case checklist per parameter. 15-40 tests. |
-| COMPLEX | Over 200 LOC or more than 10 branches | Split test files by concern. Full coverage. 40-80 tests. |
-
-5. Log per file:
-
-```
-[path]: [N] LOC, [N] branches, [N] owned / [N] delegated -> [THIN|STANDARD|COMPLEX]
-  Owned logic: [brief description]
-  Key branches: [list the if/switch requiring both-side testing]
-```
-
-6. If time-dependent code is found (`Date.now()`, `setTimeout`, `setInterval`), flag: `FAKE TIMERS REQUIRED`
-
-### Phase 1.5b: Testability Decision (MANDATORY — BLOCKING)
-
-**After classifying complexity, decide HOW to test each file.** This prevents agents from writing `assertIsBool`/`markTestSkipped` stubs when code is hard to mock.
-
-For each file, classify testability:
-
-| Classification | Signal | Strategy |
-|---------------|--------|----------|
-| **UNIT_MOCKABLE** | All deps injected, no static DB/ORM calls | Standard unit test with mocks |
-| **UNIT_REFLECTION** | Protected/private properties, constructor does DI but also creates internal deps | Partial mock + `disableOriginalConstructor()` + inject via reflection (use project pattern from Phase 0 step 4) |
-| **NEEDS_INTEGRATION** | Static ORM calls (`Model::findOne`, `Model::find`), framework singletons, global state | Integration test with real DB -- use project's DB test pattern (transaction rollback, fixture helpers) |
-| **MIXED** | Some methods unit-testable, some need DB | Split: unit tests for injectable methods, integration tests for static-call methods |
-
-**Detection rules:**
-- Static ORM/AR: `ClassName::findOne`, `::find`, `::findAll`, `DB::table`, `Yii::$app->db` → NEEDS_INTEGRATION
-- Constructor injection with `$this->dep = $dep` → UNIT_MOCKABLE or UNIT_REFLECTION
-- Both in same file → MIXED (decide per method)
-
-**HARD RULES:**
-1. **NEVER write `assertIsBool`/`assertIsInt`/`assertInstanceOf` as sole assertion when real testing is possible.** If reaching for these → wrong testability decision → go back and choose NEEDS_INTEGRATION.
-2. **NEVER write `markTestSkipped` + TODO comment as a test.** Either write the real test (integration if needed) or skip the file and add a backlog item.
-3. **NEVER write `assertTrue(true)` as a real assertion.** Only valid for "verify no exception thrown".
-4. **Test file MUST test the class it's named after.** `FooServiceTest` tests `FooService`, not `BarHelper` constants.
-
-Log per file:
-```
-[path]: TESTABILITY = [UNIT_MOCKABLE | UNIT_REFLECTION | NEEDS_INTEGRATION | MIXED]
-  Static calls: [list or "none"]
-  Project pattern to use: [from Phase 0 step 4]
-```
-
----
-
-## Phase 2: Plan
-
-Produce a plan with these mandatory sections before writing any tests.
-
-### Scope
-
-| File | Status | Untested methods | Risk |
-|------|--------|-----------------|------|
-
-Files to SKIP must satisfy ALL three: 100% method coverage, zero auto-fail patterns, no untested branches. Cite evidence for each skip.
-
-Files to FIX (covered but weak): not skipped, goes through Phase 3 with action=FIX.
-
-### Test Files
-
-| Production file | Test file | Action |
-|----------------|-----------|--------|
-| foo.service.ts | foo.service.test.ts | CREATE |
-| bar.service.ts | bar.service.test.ts | ADD TO (partial) |
-| baz.service.ts | baz.service.test.ts | FIX (100% coverage, auto-fail patterns) |
-
-Rules:
-- ADD TO: never delete or replace existing tests. New describe/it blocks only. Modification of imports, beforeEach, shared helpers is allowed when needed by new tests.
-- FIX: replace auto-fail assertions with behavioral tests. This is the only action that modifies existing test logic.
-- If estimated total LOC exceeds 400 lines, plan split files.
-
-### Strategy Per File
-
-For each file, state:
-- **Testability: [UNIT_MOCKABLE | UNIT_REFLECTION | NEEDS_INTEGRATION | MIXED]** (from Phase 1.5b -- MANDATORY)
-- Complexity classification (from Phase 1.5)
-- Code type (from Code-Type Gate)
-- Target test count with math: `[code type]: [units] x [factor] = [minimum]`
-- Patterns to follow (G-* IDs) and patterns to avoid (P-* IDs)
-- Mock hazards and required mock patterns
-- Time-dependent code flags
-- Describe block outline with it() descriptions
-- Lifecycle/flow tests for STATE-MACHINE and ORCHESTRATOR types
-- Security tests for CONTROLLER, API-CALL, and GUARD types
-
-### Approval Gate
-
-- In --dry-run mode: print the plan and STOP. Do not write files.
-- In all other modes: proceed without approval.
-
----
-
-## Phase 3: Write Tests
-
-For each target file in the plan, write the test file following the plan exactly.
-
-### Pre-Write Test Contract (MANDATORY — fill BEFORE writing a single line)
-
-Read `../../shared/includes/test-contract.md` for the full protocol.
-
-For each production file being tested, fill the complete test contract:
-
-1. **BRANCHES** — exhaustive list from production code (every if/else, switch, try/catch, early return)
-2. **ERROR PATHS** — every throw, reject, error return with specific type and message
-3. **EXPECTED VALUES** — source of every planned assertion value (reject implementation-derived values)
-4. **MOCK INVENTORY** — every mock with justification (reject unnecessary mocks)
-5. **MUTATION TARGETS** — M1-M5 mapped to specific catching tests
-6. **TEST OUTLINE** — describe/it structure traced to branches and error paths
-
-**Verification before proceeding:** Every branch has a test, every error path has a test, no expected value is sourced from implementation output, all mutations have catching tests.
-
-If the contract reveals fewer tests than the Code-Type Gate minimum, expand the outline.
-
-### Pre-Write Blocklist (BLOCKING — check BEFORE writing a single line)
-
-Before writing, verify you are NOT about to produce any of these. If you catch yourself reaching for one, STOP and reconsider testability classification:
-
-| Blocked Pattern | Why | Do Instead |
-|----------------|-----|------------|
-| `assertIsBool` / `assertIsInt` / `assertIsString` as sole assertion | Tests TYPE not VALUE — accepts both correct and wrong results | `assertEquals`/`assertFalse`/`assertTrue` with specific expected value |
-| `assertInstanceOf` as sole assertion (except factory/DI tests) | Existence test, not behavior | Test a method call and verify its output |
-| `markTestSkipped('Requires database')` + no real assertion | Stub test, inflates coverage with zero value | Write integration test with transaction rollback, or skip file + backlog item |
-| `assertTrue(true)` as primary assertion | Always-true, passes regardless of production behavior | Let test pass naturally (no exception = pass) or use `expectNotToPerformAssertions()` |
-| TODO comment as test body ("With DB fixtures: create X, verify Y") | Recipe, not a test | Write the actual test or add backlog item |
-| Testing a different class than the test file name | `FooServiceTest` testing `BarHelper` constants | Create `BarHelperTest` for BarHelper |
-| `canConnectToDb()` guard wrapping most tests | Mixing unit and integration | Choose one strategy per file |
-
-### Writing Protocol
-
-1. Create or extend the test file per the plan's Action column
-2. Write tests in describe/it blocks matching the plan's outline
-3. Apply the correct patterns from the Code-Type Gate
-4. For PURE_CANDIDATE files, add property-based tests alongside example-based tests
-5. For STATE-MACHINE types, include lifecycle flow tests (init, interact, verify, cleanup, re-init)
-6. For time-dependent code, use fake timers (`vi.useFakeTimers()` or `jest.useFakeTimers()`)
-
-### Mock Safety Rules
-
-- Every mock verified with `toHaveBeenCalledWith` (positive) and `not.toHaveBeenCalled` (negative)
-- No `as any` or `as never` casts on mocks -- use typed factories
-- Reset all mocks in `beforeEach`
-- Async generators: mock with `async function*` or iterable factory
-- Streams: mock with readable stream from string
-- External services: mock at the boundary, test real logic
-
-### Edge Case Checklist (STANDARD and COMPLEX only)
-
-Apply per parameter type: string (empty, whitespace, unicode, max-length), number (0, negative, NaN, Infinity, MAX_SAFE_INTEGER), array (empty, single, duplicates, very large), object (empty, missing keys, extra keys, null prototype), boolean (truthy/falsy coercion traps), Date (invalid, epoch, timezone edge), optional (undefined, null, missing key vs present-null), enum (each value + invalid value + undefined).
-
-THIN wrappers skip this checklist -- test wiring correctness and error propagation only.
-
----
-
-## Phase 4: Verification
-
-### 4.1 Run Tests
-
-Execute the test suite:
-
-```bash
-[test runner] [target test files]
-```
-
-All new tests must pass. Pre-existing failures from Phase 0.5 are ignored. If new tests fail, fix them before proceeding.
-
-### 4.2 Anti-Tautology Check (MANDATORY)
-
-Run the automated anti-tautology checks from `rules/testing.md` → "Anti-Tautology Automation" section:
-
-1. **Grep for echo patterns** — search test files for mock-return-echoed-in-assertion patterns
-2. **Verify expected value sources** — for every `toBe()`/`toEqual()`, confirm the value is spec-derived, not implementation-derived
-3. **Coverage report** — run with `--coverage` if runner supports it. Check branch coverage >= 70%.
-
-Any tautological oracle found = Q17 violation. Fix before proceeding.
-
-### 4.3 Q1-Q19 Self-Evaluation
-
-Run the Q1-Q19 checklist against every written or modified test file. Print the scorecard:
-
-```
-Self-eval: Q1=1 Q2=1 Q3=0 Q4=1 ...
-  Score: [N]/19 -> PASS | FIX | REWRITE
-  Critical gates: Q7=[0|1] Q11=[0|1] Q13=[0|1] Q15=[0|1] Q17=[0|1]
-```
-
-Any critical gate at 0: fix immediately and re-score. Target: PASS (16+/19 with all critical gates satisfied).
-
-### 4.4 Test Quality Auditor (MANDATORY on STANDARD+ complexity)
-
-Spawn the Test Quality Auditor (Sonnet, Explore) to independently verify Q1-Q19 scores with evidence.
-
-| File complexity | Auditor requirement |
-|-----------------|-------------------|
-| THIN | Optional — self-eval sufficient |
-| STANDARD | **Mandatory** — independent auditor required |
-| COMPLEX | **Mandatory** — independent auditor required |
-
-The auditor receives:
-- The production file
-- The test file
-- The test contract (from Phase 3)
-
-Compare the auditor's scores with self-evaluation. **Any discrepancy of 2+ points** on a single gate must be resolved by checking evidence. The auditor's score wins ties — self-evaluation is biased toward the author.
-
-If sub-agent dispatch is unavailable (single-agent mode): perform the audit as a separate pass with an explicit checkpoint: `[CHECKPOINT: switching to independent test auditor role]`. Re-read tests as if seeing them for the first time.
-
-### 4.5 Adversarial Review (MANDATORY — do NOT skip)
-
-```bash
-git add -u && git diff --staged | adversarial-review --json --mode test
-```
-
-If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
-
-Wait for complete output. Handle findings by severity:
-- **CRITICAL** — fix immediately, regardless of confidence. If confidence is low, verify first (check the code), then fix if confirmed.
-- **WARNING** — fix if localized (< 10 lines). If fix is larger, add to backlog with specific file:line.
-- **INFO** — known concerns (max 3, one line each).
-
-Do NOT discard findings based on confidence alone. Confidence measures how sure the reviewer is, not how important the issue is. A CRITICAL with low confidence means "verify this — if true, it's serious."
-
-"Pre-existing" is NOT a reason to skip a finding. If the issue is in a file you are already editing, fix it now. If not, add it to backlog with file:line. The adversarial review found a real problem — don't dismiss it just because it existed before your changes.
-
----
-
-## Phase 5: Completion
-
-### 5.1 Update Coverage Tracking
-
-Write results to `memory/coverage.md`. Each file gets a row: file path, coverage status, test count, quality score, date.
-
-### 5.2 Backlog Persistence
-
-Read `../../shared/includes/backlog-protocol.md`.
-
-Persist any issues discovered but not fixed (quality problems in production code, architectural concerns noticed during testing) to `memory/backlog.md`.
-
-### 5.3 Knowledge Curation
-
-After work is complete, run the knowledge curation protocol from `knowledge-curate.md`:
-```
-WORK_TYPE = "implementation"
-CALLER = "zuvo:write-tests"
-REFERENCE = <git SHA or relevant identifier>
-```
-
-### 5.4 Completion Report
+## Completion (after queue empty)
+
+1. **Backlog persistence:** write unfixed issues to `memory/backlog.md`
+2. **Knowledge curation** per `knowledge-curate.md`
+3. **Report:**
 
 ```
 WRITE-TESTS COMPLETE
 -----
 Files tested:  [N] ([M] new, [K] extended, [J] fixed)
-Tests written: [N] (target: [M], actual: [N])
+Tests written: [N] total
 Q gates:       [N]/19 avg (critical gates: all pass)
-Failures:      [pre-existing: N, new: 0]
+Failures:      pre-existing: [N], new: 0
+FAILED files:  [list or "none"]
+SKIPPED_REVIEW: [list or "none"]
 Run: <ISO-8601-Z>	write-tests	<project>	-	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
 -----
 ```
 
-After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+Append `Run:` line to log file per `run-logger.md`.
 
-`<DURATION>`: use `N-files` (number of files tested) or `auto-loop` (auto mode with looping).
-`<Q>`: Q gate average as `N/19`.
-`<TASKS>`: number of test files written/modified.
+**Do NOT print WRITE-TESTS COMPLETE if any file has no status in coverage.md.**
 
-### 5.5 Auto-Loop Check (auto mode only)
+---
 
-Read `memory/coverage.md`. If UNCOVERED or PARTIAL files remain, go back to Phase 1 for the next batch. Do not print "WRITE-TESTS COMPLETE" until all files are covered.
+## Resume / Crash Recovery
+
+On start, read `memory/coverage.md`:
+
+| Status | Resume action |
+|--------|---------------|
+| PASS | Skip |
+| FAILED | Skip (already backlocked) |
+| SKIPPED_REVIEW | Re-process Step 4 only (adversarial) |
+| (absent) | Process from Step 1 |
+
+If a test file exists on disk but file is absent from coverage.md → partial run. Check if file was auto-generated (contains `// Generated by zuvo:write-tests` header). If yes, delete and re-process from Step 1. If no (pre-existing/manual test), treat as ADD TO (extend, don't replace).
+
+Auto mode: re-run CodeSift discovery to rebuild priority queue (queue order not persisted).
 
 ---
 
 ## Principles
 
-1. Read the production code before planning tests. Every test assertion must trace to real behavior in the source.
-2. Test depth matches file complexity. A 25-line wrapper does not need 30 edge-case tests.
+1. Read production code before planning tests. Every assertion traces to real behavior.
+2. Test depth matches complexity. A 25-line wrapper does not need 30 edge-case tests.
 3. Test what the code OWNS, mock what it DELEGATES.
-4. Fake timers for time-dependent code. Real implementations for pure functions.
-5. Quality gates are not optional. Q1-Q19 evaluation happens on every test file, every time.
-6. Pre-write contract prevents weak tests at the source. Post-write auditing catches what slips through.
+4. ONE file, FULL pipeline. No batching. No skipping steps.
+5. Adversarial review is step 4 of 5 — not optional, not at the end.

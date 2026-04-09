@@ -69,9 +69,9 @@ No evidence means the score is 0. "Errors are handled" is not evidence. "order.s
 
 ## Part 2: Test Code — Q1-Q19
 
-**Source of truth:** Apply Q1-Q19 gate definitions, critical gate lists, scoring thresholds, and evidence format from `quality-gates.md` — same document as Part 1.
+Read `../../shared/includes/q-scoring-protocol.md` for the full Q1-Q19 scoring protocol: gate definitions, evidence requirements, critical gates, N/A abuse checks, and output format.
 
-Evaluate each test file against all 19 gates using the same 1/0/N/A scoring with mandatory evidence.
+Evaluate each test file against all 19 gates using that protocol.
 
 ---
 
