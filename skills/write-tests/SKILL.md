@@ -104,9 +104,17 @@ PHASE 1 — LOADED:
 2. **Read production file.** Read the target file fully. This happens BEFORE loading any other includes.
 3. **Classify** per PHASE 0.5 above. Determine code type, complexity, testability, and loading tier.
 4. **Load conditional includes** per PHASE 1 table above. Print READ/SKIP status for each.
-5. **Dynamic context retrieval (when CodeSift available):** Run targeted retrieval dimensions for the target file. Which dimensions run depends on the tier. Skip any that timeout/fail — partial context is better than none.
+5. **Dynamic context retrieval (when CodeSift available):** Run targeted retrieval dimensions for the target file. Which dimensions run depends on the tier:
+   - **LIGHT tier:** D1 only (file is self-contained, no complex mocks)
+   - **STANDARD tier:** D1 + D2 (conditional) + D3 (conditional) + D4
+   - **HEAVY tier:** D1 + D2 + D3 + D4
+   - **COMPONENT tier:** D1 + D4 (setup comes from exemplar, skip D2-D3)
+   
+   Skip any dimension that times out or fails — partial context is better than none.
+   
+   Print: `[CONTEXT] Tier: {TIER}, exemplar={path}, {N} import mocks, {N} signatures`
 
-   **Dimension 1 — Exemplar test:** Find an existing test file to use as pattern reference.
+   **Dimension 1 — Exemplar test (ALL tiers):** Find an existing test file to use as pattern reference.
    ```
    find_references(repo, "<main_export_of_target_file>")
    ```
@@ -115,7 +123,7 @@ PHASE 1 — LOADED:
    If still nothing → try same code type in same module: `search_text(repo, query: "describe", file_pattern: "**/<same_module>/__tests__/*")`.
    Print: `[CONTEXT] Exemplar: {path}` or `[CONTEXT] No exemplar found — using generic patterns.`
 
-   **Dimension 2 — Import mocks (CONDITIONAL):** Skip if Dimension 1 found an exemplar in the **same module** (exemplar already shows mock patterns). Run only when exemplar is from a different module or not found.
+   **Dimension 2 — Import mocks (STANDARD+ tiers, skip for LIGHT/COMPONENT):** Also skip if Dimension 1 found an exemplar in the **same module** (exemplar already shows mock patterns). Run only when exemplar is from a different module or not found.
    For **at most 5** imports from the target file (skip node_modules, skip type-only imports):
    ```
    search_text(repo, query: "vi.mock.*<import_path>", file_pattern: "**/__tests__/*|*.test.*|*.spec.*", max_results: 3)
@@ -123,14 +131,14 @@ PHASE 1 — LOADED:
    Collect: which dependencies are mocked, what mock patterns are used (mockResolvedValue, vi.fn, class mock, etc.).
    Print: `[CONTEXT] Import mocks: {N} dependencies with existing mock patterns.` or `[CONTEXT] D2 skipped — exemplar covers mock patterns.`
 
-   **Dimension 3 — Test setup (CONDITIONAL):** Skip if CLAUDE.md describes test infrastructure OR if exemplar test already imports setup helpers. Run only for first file in queue or when no other context source exists.
+   **Dimension 3 — Test setup (STANDARD+ tiers, skip for LIGHT/COMPONENT):** Also skip if CLAUDE.md describes test infrastructure OR if exemplar test already imports setup helpers. Run only for first file in queue or when no other context source exists.
    ```
    search_text(repo, query: "setupFiles", file_pattern: "vitest.config.*|jest.config.*")
    ```
    Extract setup file paths from config → read their outlines with `get_file_outline`. These setup files contain global mocks (Sentry, shared-types, etc.) that tests inherit.
    Print: `[CONTEXT] Setup: {N} setup files.` or `[CONTEXT] D3 skipped — setup info available from exemplar/CLAUDE.md.`
 
-   **Dimension 4 — Hub signatures:** What do the target file's imported utilities look like?
+   **Dimension 4 — Hub signatures (STANDARD+ and COMPONENT tiers, skip for LIGHT):** What do the target file's imported utilities look like?
    Extract import names from target file → query signatures:
    ```
    codebase_retrieval(repo, token_budget=1000, queries=[
@@ -142,11 +150,11 @@ PHASE 1 — LOADED:
 
    **Error handling per dimension:** If any query times out or returns an error, print `[CONTEXT] Dimension N skipped — {reason}.` and continue with remaining dimensions.
 
-   **If CodeSift unavailable:** Skip all 4 dimensions. Print: `[CONTEXT] CodeSift unavailable — using legacy detection.` Fall to Step 3.
+   **If CodeSift unavailable:** Skip all 4 dimensions. Print: `[CONTEXT] CodeSift unavailable — using legacy detection.`
 
-3. **Stack detection:** Read package.json/tsconfig/composer.json. Detect test runner (vitest/jest/phpunit). Find existing test patterns (DB helpers, factory functions, mock conventions). If Dimension 1 found an exemplar, stack is already implied — but confirm test runner from config.
-4. **Baseline test run:** execute test suite, record pre-existing failures. These are ignored in verification.
-5. **Build queue:**
+6. **Stack detection:** Read package.json/tsconfig/composer.json. Detect test runner (vitest/jest/phpunit). Find existing test patterns (DB helpers, factory functions, mock conventions). If Dimension 1 found an exemplar, stack is already implied — but confirm test runner from config.
+7. **Baseline test run:** execute test suite, record pre-existing failures. These are ignored in verification.
+8. **Build queue:**
    - **Explicit mode:** queue = user's target file(s)
    - **Auto mode with CodeSift:** single batch call:
      ```
