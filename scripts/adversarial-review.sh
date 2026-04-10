@@ -114,9 +114,35 @@ collect_input() {
       git diff "$DIFF_REF"..HEAD 2>/dev/null || git diff "$DIFF_REF"
       ;;
     files)
-      # Support space-separated and newline-separated file lists
-      local file_list
-      file_list=$(printf '%s' "$FILES" | tr ' ' '\n')
+      # Support both newline-separated and space-separated file lists.
+      # Handles paths with spaces: if a space-split token doesn't exist as a file,
+      # try joining it with the next token (greedy path reconstruction).
+      local file_list=""
+      local raw_files="$FILES"
+      if printf '%s' "$raw_files" | grep -q $'\n'; then
+        # Newline-separated — safe, preserves spaces in paths
+        file_list="$raw_files"
+      else
+        # Space-separated — reconstruct paths that may contain spaces
+        local pending=""
+        for token in $raw_files; do
+          if [[ -n "$pending" ]]; then
+            pending="$pending $token"
+            if [[ -f "$pending" ]]; then
+              file_list="${file_list}${pending}"$'\n'
+              pending=""
+            fi
+          elif [[ -f "$token" ]]; then
+            file_list="${file_list}${token}"$'\n'
+          else
+            pending="$token"
+          fi
+        done
+        # If there's a remaining pending path, add it (may not exist — will error later)
+        if [[ -n "$pending" ]]; then
+          file_list="${file_list}${pending}"$'\n'
+        fi
+      fi
       while IFS= read -r f || [[ -n "$f" ]]; do
         [[ -z "$f" ]] && continue
         echo "=== FILE: $f ==="

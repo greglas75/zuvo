@@ -331,3 +331,4 @@ Commits pending review. Auto-managed:
 - 0821780 (2026-04-10) release: v1.3.66 — enhance: boundary tests in contract, positive-anchor rule, conditional-expect blocklist, PURE fast-path, deferred includes
 - 1003486 (2026-04-10) fix: content-expand auto-sets modifiedDate in frontmatter on expansion
 - 0f7acc0 (2026-04-10) release: v1.3.67 — fix: auto modifiedDate + preserve original text refinements
+- d94c56d (2026-04-10) release: v1.3.68 — enhance: retro-driven — clearAllMocks guidance, Logger spy template, cross-method branch refs, filtered last-call, slug/threshold edges, Q5 clarification, COMPONENT fast-path
