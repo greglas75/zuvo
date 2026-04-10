@@ -323,3 +323,4 @@ Commits pending review. Auto-managed:
 - abdbdbf (2026-04-10) feat: rename content-optimize → content-expand — new 3-phase pipeline with research, expansion, and optimization
 - a6a0b92 (2026-04-10) fix: content-expand — remove article length threshold for agent dispatch, always use full review pipeline
 - cf87713 (2026-04-10) release: v1.3.62 — feat: content-expand replaces content-optimize — 3-phase pipeline with research, expansion, full review
+- 5233866 (2026-04-10) release: v1.3.63 — feat: replace static profile with per-task dynamic CodeSift retrieval in write-tests

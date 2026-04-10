@@ -35,7 +35,7 @@ Each code type has specific things to test and a recommended mock strategy. This
 | Code Type | What to test | Mock strategy | Key pattern |
 |-----------|-------------|---------------|-------------|
 | **ORCHESTRATOR** | Middleware ordering invariants, route mounting, auth boundaries (presence + order), path isolation | Mock route modules + external-dep middleware as pass-through. Keep pure middleware real. | `vi.hoisted` log array for ordering (see template below) |
-| **SERVICE** | Business logic branches, error paths, transaction boundaries, caller contracts | Mock external I/O only (DB, HTTP, email). Use real code for internal deps. | Test computed output, not mock echo |
+| **SERVICE** | Business logic branches, error paths, transaction boundaries, caller contracts, side-effect CalledWith | Mock external I/O only (DB, HTTP, email). Use real code for internal deps. | Test computed output, not mock echo. Side-effect CalledWith in every success test. |
 | **CONTROLLER** | Input validation (400), auth (401/403), success (200/201), error shapes, security S1-S4 | Mock service layer. Real validation + guards. | Every endpoint × 4 (happy + auth + validation + error) |
 | **PURE/VALIDATOR** | All branches, edge cases per parameter type, property-based tests | Zero mocks | State matrix: input combinations → expected outputs |
 | **GUARD/MIDDLEWARE** | Request without header → expected behavior, wrong header → 4xx, correct header → next() called, ordering relative to other middleware | Mock downstream only | Positive AND negative assertions |
@@ -44,6 +44,14 @@ Each code type has specific things to test and a recommended mock strategy. This
 | **API-CALL** | Success + error + timeout, retry behavior, response parsing | Mock HTTP layer (MSW or vi.fn) | Test transformed output, not raw response echo |
 | **STATE-MACHINE** | All transitions, invalid transitions rejected, lifecycle flows, reset behavior | Zero or minimal mocks | Transition matrix: state × event → new state |
 | **ORM/DB** | Query construction, empty results, constraint violations, transaction rollback | Real DB with transaction rollback, or mock query builder | Test query RESULTS not query SHAPE |
+
+### Private Method Testing
+
+Private/internal methods should be tested through the public API, not directly. Rules:
+
+- **3+ branches in private method** → dedicate a `describe` block. Name it after the behavior, not the method: `describe('slug generation from name')` not `describe('generateSlug')`. Test through the public method that calls it.
+- **1 branch in private method** → cover implicitly through caller tests. No separate describe needed.
+- **Private method called by multiple public methods** → test the shared behavior once in its own describe, then verify each caller delegates correctly.
 
 ### ORCHESTRATOR Ordering Template
 

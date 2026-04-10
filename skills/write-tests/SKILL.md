@@ -66,20 +66,20 @@ STANDARD+ only (skip for THIN):
    If still nothing → try same code type in same module: `search_text(repo, query: "describe", file_pattern: "**/<same_module>/__tests__/*")`.
    Print: `[CONTEXT] Exemplar: {path}` or `[CONTEXT] No exemplar found — using generic patterns.`
 
-   **Dimension 2 — Import mocks:** How does this project mock the target file's dependencies?
+   **Dimension 2 — Import mocks (CONDITIONAL):** Skip if Dimension 1 found an exemplar in the **same module** (exemplar already shows mock patterns). Run only when exemplar is from a different module or not found.
    For **at most 5** imports from the target file (skip node_modules, skip type-only imports):
    ```
    search_text(repo, query: "vi.mock.*<import_path>", file_pattern: "**/__tests__/*|*.test.*|*.spec.*", max_results: 3)
    ```
    Collect: which dependencies are mocked, what mock patterns are used (mockResolvedValue, vi.fn, class mock, etc.).
-   Print: `[CONTEXT] Import mocks: {N} dependencies with existing mock patterns.`
+   Print: `[CONTEXT] Import mocks: {N} dependencies with existing mock patterns.` or `[CONTEXT] D2 skipped — exemplar covers mock patterns.`
 
-   **Dimension 3 — Test setup:** What shared test infrastructure exists?
+   **Dimension 3 — Test setup (CONDITIONAL):** Skip if CLAUDE.md describes test infrastructure OR if exemplar test already imports setup helpers. Run only for first file in queue or when no other context source exists.
    ```
    search_text(repo, query: "setupFiles", file_pattern: "vitest.config.*|jest.config.*")
    ```
    Extract setup file paths from config → read their outlines with `get_file_outline`. These setup files contain global mocks (Sentry, shared-types, etc.) that tests inherit.
-   Print: `[CONTEXT] Setup: {N} setup files with {N} global mocks.`
+   Print: `[CONTEXT] Setup: {N} setup files.` or `[CONTEXT] D3 skipped — setup info available from exemplar/CLAUDE.md.`
 
    **Dimension 4 — Hub signatures:** What do the target file's imported utilities look like?
    Extract import names from target file → query signatures:
@@ -141,6 +141,18 @@ Do NOT invent new patterns — follow what the exemplar does.
 **If import mocks loaded (Dimension 2):** Use discovered mock patterns in MOCK INVENTORY section of test contract. Copy mock patterns from existing project tests, not from memory.
 
 **If hub signatures loaded (Dimension 4):** Reference utility function signatures when planning assertions. Know what `isPrismaNotFound(error)` returns before writing error-path tests.
+
+### Step 1.5: Bug Scan (before writing tests)
+
+You just read the production code. **Before** planning tests, scan for bugs:
+- Missing error handling (uncaught promise, empty catch)
+- Logic errors (wrong operator, off-by-one, inverted condition)
+- Security gaps (missing auth check, unsanitized input, unbounded query)
+- Edge cases the code doesn't handle (null, empty, duplicates)
+
+If you find a bug: log it to `memory/backlog.md` with file:line and description. Then write tests that **expose** the bug (test should fail if bug exists, pass if fixed). This catches bugs BEFORE adversarial review instead of wasting ~30K tokens discovering them in pass 2.
+
+Print: `[BUG-SCAN] Found {N} potential issues.` or `[BUG-SCAN] Clean.`
 
 **With CodeSift:** single batch call:
 ```

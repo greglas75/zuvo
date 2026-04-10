@@ -85,6 +85,13 @@ TEST CONTRACT: [production-file-path]
    - What it throws (error case)
    - CalledWith assertion planned: YES/NO
 
+   SIDE-EFFECT INVENTORY (MANDATORY for services with audit/email/cache/event):
+   List every side-effect dependency (audit logger, email sender, cache invalidator, event emitter).
+   For EACH side-effect:
+   - CalledWith in EVERY success test (verify exact args: action, entity, entityId, userId, changes)
+   - not.toHaveBeenCalled in EVERY error test (verify no side-effect on failure path)
+   Missing CalledWith for side-effects is the #1 gap in first-pass tests. Do not skip this.
+
 5. MUTATION TARGETS (pre-planned M1-M5 from testing.md)
    For each mutation, name the test that would catch it:
 
