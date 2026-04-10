@@ -319,3 +319,6 @@ Commits pending review. Auto-managed:
 - 5d740c7 (2026-04-10) release: v1.3.59 — feat: Phase 1B — full 12-step profile protocol + test_conventions + overrides
 - aa47d53 (2026-04-10) release: v1.3.60 — enhance: THIN delegation checklist, P-70 exception, pass-through guidance, re-export exclusion
 - f418c7d (2026-04-10) feat: add retrospective to content-optimize and write-article skills
+- 879d7dd (2026-04-10) release: v1.3.61 — feat: retrospective in content-optimize + write-article
+- abdbdbf (2026-04-10) feat: rename content-optimize → content-expand — new 3-phase pipeline with research, expansion, and optimization
+- a6a0b92 (2026-04-10) fix: content-expand — remove article length threshold for agent dispatch, always use full review pipeline

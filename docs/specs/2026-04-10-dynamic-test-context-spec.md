@@ -2,9 +2,9 @@
 
 > **spec_id:** 2026-04-10-dynamic-test-context-1430
 > **topic:** Replace static project profile with per-task CodeSift retrieval in write-tests
-> **status:** Draft
+> **status:** Approved
 > **created_at:** 2026-04-10T14:30:00Z
-> **approved_at:** null
+> **approved_at:** 2026-04-10T15:00:00Z
 > **approval_mode:** interactive
 > **author:** zuvo:brainstorm
 
