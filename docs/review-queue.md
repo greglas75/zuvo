@@ -330,3 +330,4 @@ Commits pending review. Auto-managed:
 - 790aad1 (2026-04-10) feat: content-expand --rewrite flag — allow fixing factual errors in existing text with stated reason
 - 0821780 (2026-04-10) release: v1.3.66 — enhance: boundary tests in contract, positive-anchor rule, conditional-expect blocklist, PURE fast-path, deferred includes
 - 1003486 (2026-04-10) fix: content-expand auto-sets modifiedDate in frontmatter on expansion
+- 0f7acc0 (2026-04-10) release: v1.3.67 — fix: auto modifiedDate + preserve original text refinements

@@ -100,6 +100,16 @@ TEST CONTRACT: [production-file-path]
    - not.toHaveBeenCalled in EVERY error test (verify no side-effect on failure path)
    Missing CalledWith for side-effects is the #1 gap in first-pass tests. Do not skip this.
 
+   CROSS-METHOD BRANCH REFERENCE: When private methods are called from multiple
+   public methods, list branches ONCE in a private method section, then reference
+   from each caller: "see handleError Branch 1-2". Do NOT duplicate branch analysis.
+
+   VITEST clearAllMocks vs resetAllMocks:
+   `vi.clearAllMocks()` clears call records but does NOT clear `mockResolvedValue`
+   or `mockImplementation`. A mock set in test A can leak into test B.
+   - If mocks are set per-test in each `it()`: `clearAllMocks()` is sufficient
+   - If any test relies on a mock NOT having a return value: use `resetAllMocks()`
+
    POSITIVE-ANCHOR RULE: Every negative assertion (`not.toContain`, `not.toHaveBeenCalled`,
    `not.toInclude`) MUST be paired with a positive assertion in the same test or describe
    block that proves the system produced output. A test with ONLY negative assertions

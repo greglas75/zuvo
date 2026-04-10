@@ -93,7 +93,7 @@ If more than 60% of gates (17+) are scored N/A, flag the evaluation as "low-sign
 | Q2 | Tests grouped in logical describe blocks |
 | Q3 | Every mock verified with `CalledWith` (positive) and `not.toHaveBeenCalled` (negative) |
 | Q4 | Assertions use exact values (`toEqual`/`toBe`), not loose checks (`toBeTruthy`) |
-| Q5 | Mocks are properly typed (no `as any` or `as never`) |
+| Q5 | Mocks are properly typed (no `as any` or `as never`). Note: `as unknown as ServiceType` is acceptable when no mock factory exists — it avoids `as any` while preserving the target type. Score Q5=1 for `as unknown as X`, Q5=0 only for `as any` or `as never`. |
 | Q6 | Mock state reset between tests (proper `beforeEach`, no shared mutable state) |
 | Q7 | Every error-throwing path tested with specific error type AND message (not just "at least one") |
 | Q8 | Null, undefined, and empty inputs tested where applicable |

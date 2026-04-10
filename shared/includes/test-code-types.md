@@ -40,7 +40,7 @@ Each code type has specific things to test and a recommended mock strategy. This
 | **PURE/VALIDATOR** | All branches, edge cases per parameter type, property-based tests | Zero mocks | State matrix: input combinations → expected outputs |
 | **GUARD/MIDDLEWARE** | Request without header → expected behavior, wrong header → 4xx, correct header → next() called, ordering relative to other middleware | Mock downstream only | Positive AND negative assertions |
 | **HOOK** | Return values, state transitions, side effects, cleanup | Mock external effects (fetch, timers) | Test lifecycle: mount → interact → verify → cleanup |
-| **COMPONENT** | Render states (loading/error/empty/data), user flows (action → state → callback), a11y | Mock API calls. Real render. | 30%+ must be flow tests, not just render |
+| **COMPONENT** | Render states (loading/error/empty/data), user flows (action → state → callback), a11y, dispatch/routing | Mock API calls. Real render. Mock child components with testid stubs for dispatch. | 30%+ must be flow tests, not just render. Use `afterEach(cleanup)`. |
 | **API-CALL** | Success + error + timeout, retry behavior, response parsing | Mock HTTP layer (MSW or vi.fn) | Test transformed output, not raw response echo |
 | **STATE-MACHINE** | All transitions, invalid transitions rejected, lifecycle flows, reset behavior | Zero or minimal mocks | Transition matrix: state × event → new state |
 | **ORM/DB** | Query construction, empty results, constraint violations, transaction rollback | Real DB with transaction rollback, or mock query builder | Test query RESULTS not query SHAPE |
@@ -52,6 +52,36 @@ Private/internal methods should be tested through the public API, not directly. 
 - **3+ branches in private method** → dedicate a `describe` block. Name it after the behavior, not the method: `describe('slug generation from name')` not `describe('generateSlug')`. Test through the public method that calls it.
 - **1 branch in private method** → cover implicitly through caller tests. No separate describe needed.
 - **Private method called by multiple public methods** → test the shared behavior once in its own describe, then verify each caller delegates correctly.
+
+### COMPONENT Dispatch/Router Template
+
+For components that switch on a type/variant to render different children (QuestionRenderer, TabRouter, StepWizard):
+
+```typescript
+// Mock all child components with testid stubs
+vi.mock('./ChildA', () => ({ default: () => <div data-testid="child-a" /> }));
+vi.mock('./ChildB', () => ({ default: () => <div data-testid="child-b" /> }));
+
+// For lazy-loaded children:
+vi.mock('./LazyChild', () => ({
+  default: vi.fn(() => <div data-testid="lazy-child" />),
+}));
+
+// Test each dispatch case:
+it('renders ChildA for type="foo"', async () => {
+  render(<Dispatcher type="foo" />);
+  expect(await screen.findByTestId('child-a')).toBeInTheDocument();
+});
+
+// Test unknown/default case:
+it('renders fallback for unknown type', () => {
+  render(<Dispatcher type="unknown" />);
+  expect(screen.getByText(/unsupported/i)).toBeInTheDocument();
+});
+```
+
+**Always:** `afterEach(cleanup)` for component tests. Extract from exemplar if available.
+**Lazy components:** Use `findByTestId` (async) not `getByTestId` (sync).
 
 ### ORCHESTRATOR Ordering Template
 

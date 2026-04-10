@@ -133,7 +133,15 @@ Read the production file fully. **If a test file already exists, read it too.** 
 
 **Barrel file detection:** If the file contains ONLY `export { X } from './sub-module'` lines (zero owned logic), it is a barrel/re-export file. Do NOT write delegation tests for it — expand the queue to the sub-modules it re-exports from. Print: `[BARREL] {file} is a re-export barrel — expanding to {N} sub-modules.`
 
-**If exemplar test loaded in Phase 0 (Dimension 1):** Use it as the primary pattern reference:
+**If exemplar test loaded in Phase 0 (Dimension 1):** Use it as the primary pattern reference.
+First, **extract these patterns from the exemplar** before planning tests:
+- **Cleanup pattern:** Does it use `afterEach(cleanup)`? `afterAll`? Nothing?
+- **Matcher library:** testing-library (`screen.getByRole`) vs enzyme (`wrapper.find`) vs direct (`container.querySelector`)?
+- **Async pattern:** `findBy` (auto-wait) vs `waitFor` vs `act`?
+- **Mock factory style:** inline `vi.mock` vs shared factory vs `__mocks__/` directory?
+- **Import conventions:** path aliases, relative imports, barrel imports?
+
+Then apply:
 - Copy mock import style from exemplar (vi.mock paths, mock factory patterns)
 - Match describe/it nesting structure
 - Reuse setup patterns (beforeEach, afterEach, shared helpers)
@@ -180,6 +188,13 @@ Plan: target test count (from code-type formula), describe/it outline, mock stra
 - Shorten test contract to: BRANCHES + EXPECTED VALUES + TEST OUTLINE only (skip ERROR PATHS if no throws, skip MOCK INVENTORY if only Logger)
 - Adversarial: 1 pass max (if Q >= 17, skip pass 2)
 Print: `[PURE-FAST] Shortened pipeline for pure function.`
+
+**COMPONENT fast-path:** If code type is COMPONENT (React/Vue):
+- Skip `test-mock-safety.md` rules (component mocks follow different patterns)
+- Skip `test-edge-cases.md` (string/number edge cases rarely apply to render tests)
+- Skip Dimensions 2-3 in retrieval (setup comes from exemplar)
+- After finding exemplar (D1), extract: cleanup pattern (`afterEach(cleanup)`), matcher library (testing-library vs enzyme), async pattern (`findBy` vs `waitFor` vs `act`).
+Print: `[COMPONENT-FAST] Shortened pipeline for component.`
 
 Print: `[file]: [type] [complexity] [testability] → [N] tests planned`
 
