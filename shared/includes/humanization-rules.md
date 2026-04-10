@@ -1,6 +1,6 @@
 # Humanization Rules
 
-> Shared include consumed by `write-article` Phase 3 (drafting) and optionally `content-optimize` Phase 4 (rewriting). Makes AI-generated prose harder to detect as machine-written by increasing perplexity and burstiness.
+> Shared include consumed by `write-article` Phase 3 (drafting) and optionally `content-expand` Phase 4 (rewriting). Makes AI-generated prose harder to detect as machine-written by increasing perplexity and burstiness.
 
 ## Why This Exists
 

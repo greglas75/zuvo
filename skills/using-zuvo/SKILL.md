@@ -68,7 +68,7 @@ Do this on every message. Not just the first one.
 | Audit SEO and structured data | `zuvo:seo-audit` |
 | GEO readiness audit — AI citation optimization, llms.txt, schema graph, generative engine visibility | `zuvo:geo-audit` |
 | Audit content quality (encoding, links, formatting, CMS artifacts) | `zuvo:content-audit` |
-| Optimize existing article, improve content quality, score content | `zuvo:content-optimize` |
+| Expand article, add content, deepen thin sections, optimize quality | `zuvo:content-expand` |
 | Compare old CMS page with new SSG page, fix parity gaps | `zuvo:content-migration` |
 | Audit codebase structure and organization | `zuvo:structure-audit` |
 | Review architecture, create ADR | `zuvo:architecture` |

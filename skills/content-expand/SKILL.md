@@ -1,0 +1,217 @@
+---
+name: content-expand
+description: >
+  Expand and optimize existing articles. Adds new sections, deepens thin content,
+  and applies the same quality pipeline as write-article (anti-slop, BLUF, GEO
+  signals, humanization, multi-schema). Includes web search research about the
+  topic and auto-discovery of internal links from your content collection.
+  Replaces content-optimize. Flags: [file], --dry-run, --lang, --tone,
+  --site-dir, --domain, --skip-research, --light.
+---
+
+# zuvo:content-expand — Expand & Optimize Articles
+
+Take an existing article, research the topic, add what's missing, and optimize the result — all in one pass. Same quality standards as `zuvo:write-article`.
+
+**Scope:** Expand thin content, add missing sections, research and integrate new facts, optimize prose quality, update SEO/schema.
+**Out of scope:** Encoding/markdown fixes (`zuvo:content-audit` + `content-fix`), writing from scratch (`zuvo:write-article`), CMS API, PDF/Word.
+
+## Mandatory File Loading
+
+**Phase 0 (always):**
+
+1. `../../shared/includes/env-compat.md` -- Agent dispatch
+2. `../../shared/includes/run-logger.md` -- Run logging
+3. `../../shared/includes/banned-vocabulary.md` -- Anti-slop + G12 anti-patterns
+4. `../../shared/includes/humanization-rules.md` -- Writing constraints + voice matching
+5. `../../shared/includes/domain-profile-registry.md` -- 17 niche profiles
+6. `../../shared/includes/seo-page-profile-registry.md` -- SEO profiles
+
+**Lazy-loaded (Phase 2 only):**
+
+7. `../../shared/includes/prose-quality-registry.md` -- PQ1-PQ18 (scoring)
+8. `../../shared/includes/adversarial-loop-docs.md` -- Cross-model review (end of Phase 2)
+9. `../../shared/includes/article-output-schema.md` -- JSON output
+10. `../../shared/includes/retrospective.md` -- RETRO PROTOCOL
+
+Print `CORE FILES LOADED:` for items 1-6. Lazy items loaded inline when needed.
+
+## Safety Gates
+
+### GATE 1 — File Type
+`.md`, `.mdx` supported. `.html` tolerated (tag-stripped, WARNING). Binary → STOP.
+
+### GATE 2 — Dirty File Check
+`git status --porcelain -- <file>`. Uncommitted changes → STOP. Require commit or stash.
+`--dry-run` mode: proceed with WARNING (no file mutation).
+
+### GATE 3 — Write Scope
+Allowed: input file, `<file>.content-expand-backup`, `audit-results/`. FORBIDDEN: everything else.
+
+## Arguments
+
+| Argument | Behavior |
+|----------|----------|
+| `[file]` | Required. Path to `.md`/`.mdx` file to expand |
+| `--dry-run` | Show proposed changes without writing. Print before/after diff |
+| `--lang <code>` | Language override (default: auto-detect) |
+| `--tone <value>` | `casual` / `technical` / `formal` / `marketing` (default: auto-detect from existing text) |
+| `--site-dir <path>` | Content collection root — enables internal link discovery + voice matching |
+| `--domain <niche>` | Override domain detection (one of 17 niche IDs from `domain-profile-registry.md`) |
+| `--skip-research` | Skip web search; expand using existing content + LLM knowledge only |
+| `--light` | Skip reporting, backlog, knowledge curation. Just expand and write. |
+
+---
+
+## Phase 0 — Read & Score
+
+### 0.1 Validate + Extract
+
+1. File type validation (GATE 1). Dirty file check (GATE 2).
+2. Parse frontmatter. Mark mutable fields (`title`, `description`, `keywords`, `author`). All others immutable.
+3. Extract protected regions: fenced code blocks, MDX components. Store with position markers.
+4. Language detection: `--lang` → frontmatter → content analysis → fallback structural-only.
+
+### 0.2 Domain Detection
+
+Cascade: `--domain` → scan `--site-dir` articles for niche signals per `domain-profile-registry.md` → fallback `general`. YMYL niches emit credentials WARNING.
+
+### 0.3 Voice Profile
+
+If `--site-dir` has 3+ blog articles: extract voice profile per `humanization-rules.md` (rhythm, person, formality). Inconclusive → default rules only.
+
+### 0.4 Quick Score (inline, no agents)
+
+Score the article yourself across 6 dimensions (PQ1-PQ17 from `prose-quality-registry.md`). For articles >1500 words, dispatch prose-quality-scorer + structure-analyst agents in parallel per `env-compat.md`. For ≤1500 words, score inline — faster and cheaper.
+
+Record: before-scores, tier, weak sections, thin sections (<100 words), missing elements per niche profile.
+
+### 0.5 Internal Link Discovery
+
+If `--site-dir` provided: scan the content collection (Glob `*.md` + `*.mdx`), read titles/descriptions of 10-20 articles, identify 5 most related by topic overlap. These become internal link candidates for Phase 2.
+
+Print:
+```
+SETUP: [file] | [lang] | [tone] | Domain: [niche] | Voice: [matched|default]
+SCORE: [composite]/100 ([tier]) | Weak: [N sections] | Thin: [N sections]
+LINKS: [N candidates found | no site-dir]
+```
+
+---
+
+## Phase 1 — Research
+
+**Skip if `--skip-research` set.** Print: "Research skipped. Expanding from existing content + LLM knowledge."
+
+### 1.1 Topic extraction
+
+From article content + frontmatter, identify: primary topic, subtopics covered, subtopics missing (from Phase 0 scoring).
+
+### 1.2 Web search
+
+Perform 2-4 targeted web searches about the topic — NOT competitor analysis, but **factual research** for expansion:
+- Facts, statistics, recent developments about the topic
+- Specific details the article is missing (from Phase 0 thin-section analysis)
+- Named sources, dates, version numbers for entity grounding
+
+### 1.3 Fact sheet
+
+Assemble research into a structured fact sheet (same format as `write-article` topic-researcher output). Each fact has source attribution + year. Tag conflicts as `[CONFLICT]`.
+
+If web search unavailable: note `research_limited: true`, proceed with LLM knowledge only (clearly marked).
+
+---
+
+## Phase 2 — Expand + Optimize
+
+This is the core phase. Expand THEN optimize in one pass — no separate faz.
+
+### 2.1 Backup
+
+Copy original to `<file>.content-expand-backup`. All work on temp copy. `--dry-run`: skip backup, work in memory only.
+
+### 2.2 Expand
+
+For each thin/weak section identified in Phase 0:
+- **Thin sections** (<100 words): add depth using research facts. Add examples, specific data, named sources.
+- **Missing subtopics**: add new H2/H3 sections with BLUF opener + research-backed content.
+- **Weak intro/conclusion**: strengthen with hook (PQ3) and CTA.
+
+For new content, apply `humanization-rules.md` constraints:
+- Sentence variation (fragments + long), contractions, parenthetical asides
+- Entity grounding (specific versions, dates, names from research)
+- Voice matching if profile available
+- No throat-clearing (G12), BLUF per section (G9), max 300 words/section (G6)
+- Stats with attribution + year (G11)
+
+### 2.3 Internal Links
+
+Insert 2-5 contextual internal links from Phase 0 candidates. Validate each via Glob. Unverified → `[UNVERIFIED LINK]`, not auto-inserted.
+
+### 2.4 SEO + Schema
+
+Read `domain-profile-registry.md` for niche-appropriate schema:
+- Detect existing `@type`. If specific (Recipe, HowTo, Event) → preserve and merge. If BlogPosting only → upgrade per niche.
+- FAQ: if article now has Q&A content + niche allows FAQ → add FAQPage schema.
+- OG tags: ensure `og:title`, `og:description`, `og:type`, `og:image` in frontmatter.
+- `dateModified` updated to today.
+- Meta title/description refreshed if content changed significantly.
+
+### 2.5 Anti-slop Review
+
+Run anti-slop check on expanded content (same as write-article Phase 4):
+- Hard/soft banned vocabulary per `banned-vocabulary.md` + `--tone`
+- G12 anti-patterns (throat-clearing, superlatives, keyword density)
+- BLUF compliance (G9), chunkability (G6), citation compliance (G11)
+- For articles >1500 words: dispatch anti-slop-reviewer agent (read `../../skills/write-article/agents/anti-slop-reviewer.md`). For ≤1500: review inline.
+
+Fix all CRITICAL violations. Fix WARNINGs if localized.
+
+### 2.6 Re-score + Rollback
+
+Score expanded article (same 6 dimensions). If ANY dimension regressed → revert that section's changes. Never deliver a lower composite score.
+
+### 2.7 Adversarial Review
+
+Load `adversarial-loop-docs.md` now. Run: `adversarial-review --mode article --files "<temp-file>"` (fallback: `--mode audit` + WARNING). CRITICAL → fix. WARNING → fix if localized.
+
+### 2.8 Replace Original
+
+Protected regions re-inserted. Frontmatter immutable fields preserved. Replace original with expanded temp copy. Delete backup. `--dry-run`: print diff only, no file changes.
+
+---
+
+## Phase 3 — Output
+
+### Before/After Summary
+
+```
+CONTENT-EXPAND COMPLETE
+-----
+File: [path]
+Words: [before] → [after] (+[N] added)
+Score: [before]/100 ([tier]) → [after]/100 ([tier])
+Domain: [niche] | Schema: [type(s)]
+Sections added: [N] | Sections expanded: [N]
+Internal links: [N] added ([N] verified)
+FAQ: [N items | none] | OG: [present]
+Voice: [matched | default] | Research: [N facts used | skipped | limited]
+
+Run: <ISO-8601-Z>	content-expand	<project>	-	-	<VERDICT>	<TASKS>	3-phase	<NOTES>	<BRANCH>	<SHA7>
+-----
+```
+
+After printing, append `Run:` line to log per `run-logger.md`.
+
+**VERDICT:** `PASS` (expanded, no regressions), `WARN` (research_limited or voice delta MED+), `FAIL` (adversarial blockers), `BLOCKED` (dirty file, binary input).
+**NOTES:** `[file basename] [before]->[after] +[N]words [tier]` (max 80 chars).
+
+### Reporting (skip with `--light`)
+
+Unless `--light`: write report to `audit-results/content-expand-YYYY-MM-DD.md`. Write JSON per `article-output-schema.md`. Run knowledge curation per `knowledge-curate.md`. Persist findings per `backlog-protocol.md`.
+
+### Retrospective (REQUIRED)
+
+Follow `retrospective.md`. Gate check → structured questions → TSV emit → markdown append.
+
+Next steps: `zuvo:review [file]` | `zuvo:content-audit [file]` | `zuvo:ship`

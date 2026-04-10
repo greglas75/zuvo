@@ -1,6 +1,6 @@
 # Banned Vocabulary — Anti-Slop Enforcement
 
-> Shared include consumed by `write-article` and `content-optimize`. Defines hard-banned and soft-banned AI vocabulary per language, plus burstiness heuristics.
+> Shared include consumed by `write-article` and `content-expand`. Defines hard-banned and soft-banned AI vocabulary per language, plus burstiness heuristics.
 
 ## Hard Ban (all tones, all languages — ALWAYS block)
 
@@ -84,7 +84,7 @@ Same exact phrase appearing more than 3 times per 500 words = keyword stuffing. 
 4. Assesses burstiness qualitatively
 5. Reports findings with line references
 
-### In content-optimize (Phase 1 — Analyze)
+### In content-expand (Phase 1 — Analyze)
 
 1. The Prose Quality Scorer agent reads this file and the input article
 2. PQ15 = hard-banned vocabulary count (CRITICAL if >0)

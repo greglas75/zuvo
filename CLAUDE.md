@@ -140,7 +140,7 @@ Reference: `skills/build/SKILL.md` is the canonical template.
 | Code/Test audits | 5 | code-audit, test-audit, api-audit, security-audit, pentest |
 | Infra audits | 5 | performance-audit, db-audit, dependency-audit, ci-audit, env-audit |
 | Structure/SEO/GEO | 6 | structure-audit, seo-audit, seo-fix, geo-audit, geo-fix, architecture |
-| Content | 5 | content-audit, content-fix, content-migration, write-article, content-optimize |
+| Content | 5 | content-audit, content-fix, content-migration, write-article, content-expand |
 | Design | 3 | design, design-review, ui-design-team |
 | Testing | 5 | write-tests, fix-tests, write-e2e, tests-performance, mutation-test |
 | Accessibility | 1 | a11y-audit |

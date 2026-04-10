@@ -251,4 +251,4 @@ After printing this block, append the `Run:` line value (without the `Run: ` pre
 
 **NOTES:** `[MODE] topic summary` (max 80 chars). Batch mode: append `batch:N`.
 
-Next steps: `zuvo:content-optimize [file]` | `zuvo:seo-audit` | `zuvo:ship`
+Next steps: `zuvo:content-expand [file]` | `zuvo:seo-audit` | `zuvo:ship`

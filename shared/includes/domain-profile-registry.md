@@ -1,6 +1,6 @@
 # Domain Profile Registry
 
-> Shared include consumed by `write-article` (Phase 0 detection + Phase 5 schema) and `content-optimize` (schema merge awareness). Maps content niches to SEO requirements.
+> Shared include consumed by `write-article` (Phase 0 detection + Phase 5 schema) and `content-expand` (schema merge awareness). Maps content niches to SEO requirements.
 
 ## Detection Cascade
 

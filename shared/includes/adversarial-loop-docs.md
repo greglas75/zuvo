@@ -16,7 +16,7 @@ After a skill produces a document artifact (design spec, implementation plan, au
 | Audit report (code-audit, test-audit, security-audit, etc.) | Score < 75% OR any FAIL gate | `--mode audit` |
 | Test audit report (test-audit Q1-Q19 output) | **Always** | `--mode tests` |
 | Changelog (ship, release-docs) | **Always** | `--mode spec` (reuse spec mode) |
-| Article (write-article, content-optimize) | After internal review converges | `--mode article` |
+| Article (write-article, content-expand) | After internal review converges | `--mode article` |
 
 **Skip when:**
 - Artifact below minimum size (200 words for spec, 3 tasks for plan, 500 words for audit/tests)

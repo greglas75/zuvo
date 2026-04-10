@@ -1,6 +1,6 @@
 # Prose Quality Registry — PQ1-PQ18
 
-> Canonical check definitions for content quality scoring. Consumed by `content-optimize` and `write-article` review phases.
+> Canonical check definitions for content quality scoring. Consumed by `content-expand` and `write-article` review phases.
 
 ## Check Registry
 

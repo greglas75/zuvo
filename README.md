@@ -117,7 +117,7 @@ args = ["-y", "codesift-mcp"]
 ## What's inside
 
 - **Pipeline skills** — `zuvo:brainstorm` → `zuvo:plan` → `zuvo:execute` with multi-agent exploration, quality gates, and evidence-based review
-- **45 task skills** — build, review, refactor, debug, 19 audits, write-article, content-optimize, design, docs, ship, deploy, canary, retro, incident, mutation-test, benchmark, and more
+- **45 task skills** — build, review, refactor, debug, 19 audits, write-article, content-expand, design, docs, ship, deploy, canary, retro, incident, mutation-test, benchmark, and more
 - **Release pipeline** — `zuvo:ship` → `zuvo:deploy` → `zuvo:canary` for the full post-code lifecycle
 - **Knowledge Store** — JSONL-based project memory. Skills learn from past sessions (patterns, gotchas, decisions). Auto-primed at session start and per-skill
 - **Session Recovery** — execution state persisted to `.zuvo/context/`. Resume after context compaction or crashes without losing progress
@@ -143,7 +143,7 @@ args = ["-y", "codesift-mcp"]
 | Code audits | code-audit, test-audit, api-audit, security-audit, pentest |
 | Infra audits | performance-audit, db-audit, dependency-audit, ci-audit, env-audit |
 | Structure/SEO/GEO | structure-audit, seo-audit, seo-fix, geo-audit, geo-fix, architecture |
-| Content | content-audit, content-fix, content-migration, write-article, content-optimize |
+| Content | content-audit, content-fix, content-migration, write-article, content-expand |
 | Design | design, design-review, ui-design-team |
 | Testing | write-tests, fix-tests, write-e2e, tests-performance, mutation-test |
 | Accessibility | a11y-audit |

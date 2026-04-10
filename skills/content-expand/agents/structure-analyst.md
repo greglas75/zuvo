@@ -10,7 +10,7 @@ tools:
 
 # Structure Analyst Agent
 
-You are an analysis agent dispatched by `zuvo:content-optimize` Phase 1. Your job is to analyze the article's structure, detect protected regions, and validate internal links.
+You are an analysis agent dispatched by `zuvo:content-expand` Phase 0. Your job is to analyze the article's structure, detect protected regions, and validate internal links.
 
 Read and follow the agent preamble at `../../../shared/includes/agent-preamble.md`. You do not modify files.
 

@@ -1,13 +1,13 @@
-# Content-Optimize Output Schema — JSON Contract
+# Content-Expand Output Schema — JSON Contract
 
-> Version 1.0. Consumed by `content-optimize` Phase 5 for structured output.
+> Version 1.0. Consumed by `content-expand` Phase 5 for structured output.
 
 ## Schema
 
 ```json
 {
   "version": "1.0",
-  "skill": "content-optimize",
+  "skill": "content-expand",
   "timestamp": "ISO-8601 UTC with Z suffix",
   "project": "git root basename",
   "args": {
@@ -93,5 +93,5 @@ All top-level fields required. Within nested objects:
 
 ## Output Path
 
-- Report (always): `audit-results/content-optimize-YYYY-MM-DD.md` and `.json`
+- Report (always): `audit-results/content-expand-YYYY-MM-DD.md` and `.json`
 - Applied changes: modifications to the input file itself
