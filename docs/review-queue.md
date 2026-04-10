@@ -341,3 +341,5 @@ Commits pending review. Auto-managed:
 - f0599d4 (2026-04-10) feat: review lazy include loading — diff-based conditional loading
 - 67accc8 (2026-04-10) feat: debug lazy include loading — bug-category-based conditional loading
 - 6b1be8d (2026-04-10) docs: cross-skill validation pass — lazy include loading consistent across 6 skills
+- 75d8d03 (2026-04-10) release: v1.3.70 — feat: lazy include loading — classify first, load matching context across 6 skills
+- 760f96e (2026-04-10) feat: PHP test support — mock templates, stack-aware retrieval, per-pattern contract
