@@ -14,47 +14,54 @@ A senior architect executing a structured refactoring workflow. Every refactorin
 
 ## Mandatory File Loading
 
-Read these files before any work begins:
-
-1. `../../shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
-2. `../../shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
-3. `../../shared/includes/quality-gates.md` -- CQ1-CQ28 and Q1-Q19 condensed reference
-4. `../../rules/cq-patterns.md` -- NEVER/ALWAYS code pairs
-5. `../../rules/cq-checklist.md` -- Full CQ1-CQ28 evaluation criteria and evidence standards
-6. `../../shared/includes/run-logger.md` -- Run logging protocol
-7. `../../shared/includes/retrospective.md`   -- RETRO PROTOCOL
-
-Print the checklist:
+### PHASE 0 — Bootstrap (always, before reading any input)
 
 ```
-CORE FILES LOADED:
-  1. codesift-setup.md     -- [READ | MISSING -> STOP]
-  2. env-compat.md         -- [READ | MISSING -> STOP]
-  3. quality-gates.md      -- [READ | MISSING -> STOP]
-  4. cq-patterns.md        -- [READ | MISSING -> STOP]
-  5. cq-checklist.md       -- [READ | MISSING -> STOP]
-  6. run-logger.md         -- [READ | MISSING -> STOP]
-  7. knowledge-prime.md    -- [READ | MISSING -> degraded]
-  8. knowledge-curate.md   -- [READ | MISSING -> degraded]
+  1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> STOP]
 ```
 
-If any file is missing, STOP. Do not proceed from memory.
+This is the ONLY file loaded before reading the refactor target.
 
-### Conditional Files (loaded at the phase that needs them)
+### PHASE 0.5 — Classify (read target, determine refactor type)
 
-| File | Load when | Skip when |
-|------|-----------|-----------|
-| `../../rules/testing.md` | Before Phase 2 (test handling) | Test mode is RUN_EXISTING or VERIFY_COMPILATION |
-| `../../rules/test-quality-rules.md` | Before Phase 2 when test mode is WRITE_NEW or IMPROVE_TESTS | Test mode is RUN_EXISTING or VERIFY_COMPILATION |
-| `../../rules/file-limits.md` | Phase 0 (stack detection) | If unavailable, use defaults: 300L service, 200L component |
-| `../../rules/security.md` | When refactoring touches auth, input validation, or secrets | No security-sensitive code in scope |
+After CodeSift setup, read the target file(s). Determine refactor type:
+- **RENAME:** symbol rename, file move
+- **EXTRACT:** extract function/class/module
+- **SPLIT:** split large file into smaller modules
+- **INLINE:** consolidate/inline scattered logic
+- **RESTRUCTURE:** architectural change (module boundaries, dependency direction)
 
-Print status when loading each conditional file:
+Print: `[CLASSIFIED] Refactor type: {RENAME|EXTRACT|SPLIT|INLINE|RESTRUCTURE}`
+
+### PHASE 1 — Conditional Load (based on refactor type)
+
+| Include | RENAME | EXTRACT/SPLIT | INLINE | RESTRUCTURE |
+|---------|--------|---------------|--------|-------------|
+| `../../shared/includes/env-compat.md` | Full | Full | Full | Full |
+| `../../shared/includes/quality-gates.md` | **SKIP** | CQ section only | CQ section only | Full |
+| `../../rules/cq-patterns.md` | **SKIP** | **SKIP** | Full | Full |
+| `../../rules/cq-checklist.md` | **SKIP** | **SKIP** | **SKIP** | Full |
+| `../../rules/file-limits.md` | **SKIP** | Full | **SKIP** | Full |
+| `../../rules/testing.md` | If tests affected | If tests affected | If tests affected | Full |
+| `../../rules/test-quality-rules.md` | **SKIP** | If tests affected | **SKIP** | If tests affected |
+| `../../rules/security.md` | **SKIP** | **SKIP** | **SKIP** | If security-sensitive |
+
+Print loaded files:
+```
+PHASE 1 — LOADED:
+  [list with READ/SKIP status per file]
+```
+
+### DEFERRED — Load at completion
 
 ```
-Phase 2: testing.md -- READ
-Phase 2: test-quality-rules.md -- READ
+  ../../shared/includes/run-logger.md        -- [READ at final step]
+  ../../shared/includes/retrospective.md     -- [READ at final step]
+  ../../shared/includes/knowledge-prime.md   -- [READ at start if available | MISSING -> degraded]
+  ../../shared/includes/knowledge-curate.md  -- [READ at final step if available | MISSING -> degraded]
 ```
+
+If any PHASE 0 file missing, STOP. The plugin installation is incomplete.
 
 ---
 
