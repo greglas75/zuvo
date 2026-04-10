@@ -340,3 +340,4 @@ Commits pending review. Auto-managed:
 - f5fb80b (2026-04-10) feat: code-audit lazy include loading — domain-based conditional loading
 - f0599d4 (2026-04-10) feat: review lazy include loading — diff-based conditional loading
 - 67accc8 (2026-04-10) feat: debug lazy include loading — bug-category-based conditional loading
+- 6b1be8d (2026-04-10) docs: cross-skill validation pass — lazy include loading consistent across 6 skills
