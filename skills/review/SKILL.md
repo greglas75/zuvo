@@ -13,45 +13,58 @@ Triage the diff, audit it through independent lenses, confidence-score every fin
 
 ## Mandatory File Loading
 
-Read these files before doing anything else:
-
-### Core Files (STOP if missing)
-
-1. `../../shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
-2. `../../shared/includes/env-compat.md` -- Agent dispatch and environment adaptation. **Token optimization:** if environment is already known (Claude Code CLI), read ONLY the "Claude Code" section (~20L) and skip Codex/Cursor/Antigravity sections (~150L / ~1.8K tok saved).
-3. `../../shared/includes/quality-gates.md` -- CQ1-CQ28 and Q1-Q19 condensed reference
-4. `../../shared/includes/run-logger.md` -- Log-in-Output run logging
-5. `../../shared/includes/retrospective.md`   -- RETRO PROTOCOL
-
-### Optional Files (degraded if missing)
-
-5. `../../shared/includes/knowledge-prime.md` -- Pre-audit knowledge loading protocol
-6. `../../shared/includes/knowledge-curate.md` -- Post-report knowledge curation
-
-### Conditional Files (loaded after triage)
-
-| File | Load when | Skip when |
-|------|-----------|-----------|
-| `../../rules/cq-patterns-core.md` | TIER 1 only | TIER 0 or TIER 2+ |
-| `../../rules/cq-patterns.md` | TIER 2+ AND code type is SERVICE/CONTROLLER/ORCHESTRATOR/ORM-DB | TIER 0-1 |
-| `../../rules/cq-patterns-core.md` | TIER 2+ AND code type is PURE/HOOK/GUARD/VALIDATOR/CLI utility | Full patterns overkill for simple types |
-| `../../rules/cq-checklist.md` | TIER 1+ | TIER 0 |
-| `../../rules/testing.md` | Diff contains test files (`*.test.*`, `*.spec.*`) | No test files |
-| `../../rules/security.md` | Security signals or TIER 3 | TIER 0-2 without security signals |
-| `../../shared/includes/cross-provider-review.md` | Always (adversarial runs at all tiers) | Never |
-
-**cq-patterns loading rule:** After Step 1 (classify code type), check the "High-Risk Gates by Code Type" table in `cq-checklist.md`. If the code type has <=10 relevant gates, load `cq-patterns-core.md` (~500 tok) instead of `cq-patterns.md` (~8.4K tok). This saves ~8K tokens on pure utilities, CLI code, guards, and validators.
-
-Print loaded files after triage:
+### PHASE 0 — Bootstrap (always, before reading any input)
 
 ```
-CORE: codesift-setup.md, env-compat.md, quality-gates.md, run-logger.md
-OPTIONAL: knowledge-prime.md [READ|MISSING], knowledge-curate.md [READ|MISSING]
-CONDITIONAL: cq-patterns-core.md, cq-checklist.md, cross-provider-review.md
-             (skipped: cq-patterns.md -- TIER 1, security.md -- no signals)
+  1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> STOP]
 ```
 
-If any CORE file is missing, STOP. Do not proceed from memory.
+This is the ONLY file loaded before reading the diff.
+
+### PHASE 0.5 — Classify (read diff, determine content type)
+
+After CodeSift setup, read the git diff. Classify content type:
+- **prod-only:** diff touches production files only (no `*.test.*`, `*.spec.*`)
+- **test-only:** diff touches test files only
+- **mixed:** diff touches both production and test files
+
+Print: `[CLASSIFIED] Diff type: {prod-only|test-only|mixed}`
+
+### PHASE 1 — Conditional Load (based on diff type)
+
+| Include | prod-only | test-only | mixed |
+|---------|-----------|-----------|-------|
+| `../../shared/includes/env-compat.md` | Full | Full | Full |
+| `../../shared/includes/quality-gates.md` | CQ1-CQ28 section only* | Q1-Q19 section only** | Full |
+| `../../shared/includes/cross-provider-review.md` | Full | Full | Full |
+| `../../rules/cq-patterns.md` or `cq-patterns-core.md` | Per code type*** | **SKIP** | Per code type*** |
+| `../../rules/cq-checklist.md` | TIER 1+ | **SKIP** | TIER 1+ |
+| `../../rules/testing.md` | **SKIP** | Full | Full |
+| `../../rules/security.md` | If security signals | **SKIP** | If security signals |
+
+\* **CQ section only:** Read from start of file to the `## Q1-Q19` heading. Skip Q section.
+\*\* **Q section only:** Read from `## Q1-Q19: Test Quality Gates` heading to end of file. Skip CQ section.
+\*\*\* **cq-patterns loading rule:** After Step 1 (classify code type), check the "High-Risk Gates by Code Type" table in `cq-checklist.md`. If the code type has <=10 relevant gates, load `cq-patterns-core.md` (~500 tok) instead of `cq-patterns.md` (~8.4K tok).
+
+Print loaded files:
+```
+PHASE 1 — LOADED:
+  [list with READ/SKIP status per file and section qualifiers]
+```
+
+### Optional Files (loaded if available, degraded if missing)
+
+```
+  ../../shared/includes/knowledge-prime.md   -- [READ | MISSING -> degraded]
+  ../../shared/includes/knowledge-curate.md  -- [READ | MISSING -> degraded]
+```
+
+### DEFERRED — Load at completion
+
+```
+  ../../shared/includes/run-logger.md        -- [READ at final step]
+  ../../shared/includes/retrospective.md     -- [READ at final step]
+```
 
 ---
 
