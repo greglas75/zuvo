@@ -32,6 +32,7 @@ Read these files before any work begins:
 7. `../../shared/includes/seo-page-profile-registry.md` -- Word count thresholds and SEO profiles
 8. `../../shared/includes/domain-profile-registry.md` -- 17 niche profiles: schema, E-E-A-T, detection signals
 9. `../../shared/includes/humanization-rules.md` -- Anti-detection writing constraints + voice matching
+10. `../../shared/includes/retrospective.md` -- RETRO PROTOCOL
 
 Print `CORE FILES LOADED:` checklist with `[READ | MISSING -> STOP]` for each. If any file is missing, STOP.
 
@@ -216,6 +217,12 @@ Write `article-output-schema.md`-conformant JSON alongside the article:
 - Includes research stats, quality scores, SEO data
 
 ---
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check -> structured questions -> TSV emit -> markdown append.
+This step is MANDATORY — do not skip it. Write the retro BEFORE the terminal report below.
 
 ## ARTICLE COMPLETE
 

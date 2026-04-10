@@ -35,6 +35,7 @@ Read these files before any work begins:
 11. `../../shared/includes/verification-protocol.md` -- Build verification after apply
 12. `../../shared/includes/seo-page-profile-registry.md` -- Profile-aware SEO scoring
 13. `../../shared/includes/domain-profile-registry.md` -- Niche-aware schema merge rules
+14. `../../shared/includes/retrospective.md` -- RETRO PROTOCOL
 
 Print `CORE FILES LOADED:` checklist with `[READ | MISSING -> STOP]` for each. If any file is missing, STOP.
 
@@ -276,6 +277,12 @@ Write JSON to `audit-results/content-optimize-YYYY-MM-DD.json` per `content-opti
 Run knowledge curation per `knowledge-curate.md` (WORK_TYPE="analysis", CALLER="zuvo:content-optimize"). Persist findings per `backlog-protocol.md` — fingerprint: `{file}|{dimension}|{check_id}`, CRITICAL→content-critical, HIGH→content-quality, MEDIUM/LOW→content-advisory.
 
 ---
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check -> structured questions -> TSV emit -> markdown append.
+This step is MANDATORY — do not skip it. Write the retro BEFORE the terminal report below.
 
 ## CONTENT-OPTIMIZE COMPLETE
 
