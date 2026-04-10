@@ -38,33 +38,53 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 
 ## CodeSift Integration
 
-Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
-
-After editing any file, update the index: `index_file(path="/absolute/path/to/file")`
+CodeSift setup completed in PHASE 0. Use CodeSift tools for all discovery and analysis when available.
 
 ## Mandatory File Reading
 
-Before starting work, read each file below. Print the checklist with status.
+### PHASE 0 — Bootstrap (always, before reading any input)
 
 ```
-CORE FILES LOADED:
-  1. ../../rules/cq-patterns.md               -- READ/MISSING
-  2. ../../rules/file-limits.md                -- READ/MISSING
-  3. ../../shared/includes/run-logger.md       -- READ/MISSING
-  4. ../../shared/includes/knowledge-prime.md  -- READ/MISSING
-  5. ../../shared/includes/knowledge-curate.md -- READ/MISSING
-  6. ../../shared/includes/retrospective.md   -- RETRO PROTOCOL
+  1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> STOP]
 ```
 
+This is the ONLY file loaded before reading the task spec and target files.
 
-**Deferred loading (read when the tier activates them):**
-- `../../rules/cq-checklist.md` — read at CQ self-eval time (STANDARD+)
-- `../../rules/testing.md` — read before writing tests (all tiers)
-- `../../rules/test-quality-rules.md` — read before writing tests (STANDARD+)
-- `../../shared/includes/code-contract.md` — read before writing production code (STANDARD+)
-- `../../shared/includes/test-contract.md` — read before writing tests (STANDARD+)
+### PHASE 0.5 — Classify (after reading task context, determine tier)
 
-**If any CORE file missing:** Proceed in degraded mode. Note in Phase 4 output.
+After CodeSift setup, read the task spec and target files. Classify the build into a tier using the Risk Signals and Tiering Model below.
+
+Print: `[CLASSIFIED] Tier: {TIER}`
+
+### PHASE 1 — Conditional Load (based on tier)
+
+| Include | LIGHT | STANDARD | DEEP |
+|---------|-------|----------|------|
+| `../../rules/cq-patterns.md` | Full | Full | Full |
+| `../../rules/file-limits.md` | Full | Full | Full |
+| `../../shared/includes/code-contract.md` | **SKIP** | Full | Full |
+| `../../rules/testing.md` | Full | Full | Full |
+| `../../rules/test-quality-rules.md` | **SKIP** | Full | Full |
+| `../../rules/cq-checklist.md` | **SKIP** | **SKIP** | Full |
+| `../../shared/includes/test-contract.md` | **SKIP** | Full | Full |
+| `../../shared/includes/quality-gates.md` | **SKIP** | **SKIP** | Q1-Q19 section only |
+
+Print loaded files:
+```
+PHASE 1 — LOADED:
+  [list with READ/SKIP status per file]
+```
+
+### DEFERRED — Load at completion
+
+```
+  ../../shared/includes/run-logger.md        -- [READ at final step]
+  ../../shared/includes/retrospective.md     -- [READ at final step]
+  ../../shared/includes/knowledge-prime.md   -- [READ at start if available | MISSING -> degraded]
+  ../../shared/includes/knowledge-curate.md  -- [READ at final step if available | MISSING -> degraded]
+```
+
+**If any PHASE 0 file missing:** STOP. The plugin installation is incomplete.
 
 ---
 
