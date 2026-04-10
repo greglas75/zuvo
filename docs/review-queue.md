@@ -324,3 +324,5 @@ Commits pending review. Auto-managed:
 - a6a0b92 (2026-04-10) fix: content-expand — remove article length threshold for agent dispatch, always use full review pipeline
 - cf87713 (2026-04-10) release: v1.3.62 — feat: content-expand replaces content-optimize — 3-phase pipeline with research, expansion, full review
 - 5233866 (2026-04-10) release: v1.3.63 — feat: replace static profile with per-task dynamic CodeSift retrieval in write-tests
+- b553b17 (2026-04-10) release: v1.3.64 — enhance: bug scan step, pagination edge case, side-effect CalledWith, private method guidance, conditional D2/D3
+- dbc0287 (2026-04-10) fix: content-expand IRON RULE — never rewrite existing text, only add new content around it
