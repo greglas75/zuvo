@@ -35,11 +35,13 @@ CORE (Phase 0):
   1. ../../shared/includes/codesift-setup.md      -- [READ|MISSING -> STOP]
   2. ../../shared/includes/test-contract.md        -- [READ|MISSING -> STOP]
   3. ../../shared/includes/test-blocklist.md       -- [READ|MISSING -> STOP]
-  4. ../../shared/includes/test-mock-safety.md     -- [READ|MISSING -> STOP]
+  4. ../../shared/includes/test-mock-safety.md     -- [READ|MISSING -> STOP] (skip for PURE)
   5. ../../shared/includes/quality-gates.md        -- [READ|MISSING -> STOP]
-  6. ../../shared/includes/run-logger.md           -- [READ|MISSING -> STOP]
-  7. ../../rules/testing.md                          -- [READ|MISSING -> STOP]
-  8. ../../shared/includes/retrospective.md          -- RETRO PROTOCOL
+  6. ../../rules/testing.md                          -- [READ|MISSING -> STOP]
+
+DEFERRED (load at Step 5, NOT Phase 0 — saves ~340 lines × 25 turns in context):
+  7. ../../shared/includes/run-logger.md           -- [READ at Step 5]
+  8. ../../shared/includes/retrospective.md          -- [READ at Step 5]
 ```
 
 **Step 1 (load after classification):** based on file complexity.
@@ -171,6 +173,13 @@ Classify per `test-code-types.md`:
 - **Testability:** UNIT_MOCKABLE / UNIT_REFLECTION / NEEDS_INTEGRATION / MIXED
 
 Plan: target test count (from code-type formula), describe/it outline, mock strategy. For STANDARD+, apply edge cases from `test-edge-cases.md`.
+
+**PURE fast-path:** If code type is PURE (no I/O, no side-effects, no mocks except Logger):
+- Skip `test-mock-safety.md` rules (no mocks to verify)
+- Skip Dimensions 2-4 in retrieval (self-contained file)
+- Shorten test contract to: BRANCHES + EXPECTED VALUES + TEST OUTLINE only (skip ERROR PATHS if no throws, skip MOCK INVENTORY if only Logger)
+- Adversarial: 1 pass max (if Q >= 17, skip pass 2)
+Print: `[PURE-FAST] Shortened pipeline for pure function.`
 
 Print: `[file]: [type] [complexity] [testability] → [N] tests planned`
 

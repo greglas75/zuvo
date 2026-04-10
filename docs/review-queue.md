@@ -326,3 +326,5 @@ Commits pending review. Auto-managed:
 - 5233866 (2026-04-10) release: v1.3.63 — feat: replace static profile with per-task dynamic CodeSift retrieval in write-tests
 - b553b17 (2026-04-10) release: v1.3.64 — enhance: bug scan step, pagination edge case, side-effect CalledWith, private method guidance, conditional D2/D3
 - dbc0287 (2026-04-10) fix: content-expand IRON RULE — never rewrite existing text, only add new content around it
+- e91a9d4 (2026-04-10) release: v1.3.65 — fix: content-expand preserve original text iron rule
+- 790aad1 (2026-04-10) feat: content-expand --rewrite flag — allow fixing factual errors in existing text with stated reason

@@ -11,5 +11,6 @@
 | TODO comment as test body ("With DB fixtures: create X, verify Y") | Recipe, not a test | Write the actual test or add backlog item |
 | Testing a different class than the test file name | `FooServiceTest` testing `BarHelper` constants | Create `BarHelperTest` for BarHelper |
 | `canConnectToDb()` guard wrapping most tests | Mixing unit and integration | Choose one strategy per file |
+| `if (condition) { expect(...) }` / ternary expect | Assertion silently skipped when condition is false — test is green but verifies nothing | Assert precondition first (`expect(condition).toBe(true)`), then assert outcome unconditionally. Or use separate tests for each branch. |
 
 **If reaching for a blocked pattern:** wrong testability decision. Go back to testability classification (in `test-code-types.md`) and choose NEEDS_INTEGRATION.

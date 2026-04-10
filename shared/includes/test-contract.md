@@ -33,6 +33,14 @@ TEST CONTRACT: [production-file-path]
    Total branches: [N]
    Minimum tests from branches alone: [N × 2]
 
+   THRESHOLD/BOUNDARY RULE: For every numeric threshold N in the code (rate limits,
+   retry counts, max attempts, timeouts, size limits), plan THREE tests:
+   - N-1 (should NOT trigger)
+   - N (should trigger — boundary)
+   - N+1 (should trigger)
+   This catches off-by-one errors (> vs >=, < vs <=). Do NOT wait for adversarial
+   to find these — they are the #1 boundary bug pattern.
+
 2. ERROR PATHS (every way this code can fail)
    List every throw, reject, error return, and catch block.
 
@@ -91,6 +99,12 @@ TEST CONTRACT: [production-file-path]
    - CalledWith in EVERY success test (verify exact args: action, entity, entityId, userId, changes)
    - not.toHaveBeenCalled in EVERY error test (verify no side-effect on failure path)
    Missing CalledWith for side-effects is the #1 gap in first-pass tests. Do not skip this.
+
+   POSITIVE-ANCHOR RULE: Every negative assertion (`not.toContain`, `not.toHaveBeenCalled`,
+   `not.toInclude`) MUST be paired with a positive assertion in the same test or describe
+   block that proves the system produced output. A test with ONLY negative assertions
+   passes even if the function returns undefined/empty. Always verify "it DID produce X"
+   before verifying "X does NOT contain Y."
 
 5. MUTATION TARGETS (pre-planned M1-M5 from testing.md)
    For each mutation, name the test that would catch it:
