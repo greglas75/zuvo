@@ -65,6 +65,14 @@ TEST CONTRACT: [production-file-path]
    ✗ "The code does X * Y so I expect X * Y" — that's mirroring the formula
    ✗ "The mock returns X so I check for X" — that's echo testing
 
+   EXCEPTION — pass-through delegation (NOT a P-70 violation):
+   For methods whose contract IS "return exactly what the delegate gives" (service facades,
+   thin wrappers, DB query pass-through), `expect(result).toBe(mockReturnValue)` is correct.
+   The mock-echo IS the behavioral test — the method's job is to pass through unchanged.
+   Must be COMBINED with CalledWith on the delegate (verifies correct query/args).
+   This exception applies ONLY when the method body is `return delegate(args)` with no
+   transformation. If the method filters, maps, or computes — P-70 applies normally.
+
 4. MOCK INVENTORY (what gets mocked and why)
    List every dependency that will be mocked, and justify WHY a mock is needed.
 

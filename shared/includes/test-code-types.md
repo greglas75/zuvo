@@ -168,7 +168,22 @@ After classifying the file, scan for non-exported pure helper functions within n
 
 | Classification | Criteria | Test depth |
 |---------------|----------|------------|
-| THIN | Under 50 LOC, no owned branching, pure delegation | Wiring correctness + error propagation. Skip edge case checklist. 5-12 tests. |
+| THIN | Under 50 LOC, no owned branching, pure delegation | Wiring correctness + error propagation + default param delegation. Skip edge case checklist. 5-12 tests. |
+
+### THIN Delegation Checklist
+
+For THIN files (facades, wrappers, barrel services) where methods are single-line delegations:
+
+1. **Per-method delegation test:** verify correct args passed to delegate + return value forwarded unchanged
+2. **Default parameter tests:** for each method with default parameters, call WITHOUT the defaulted arg and assert the default was forwarded. This catches regressions where someone changes the default in the facade but not in the delegate.
+3. **One error propagation test:** verify async delegate rejection propagates unchanged (one representative test is sufficient — all delegation methods share the same `return fn(args)` pattern)
+4. **Cross-module isolation:** for key methods, assert unrelated delegates were NOT called
+
+**Pass-through assertions:** For methods that return DB/delegate results without transformation, use reference equality `expect(result).toBe(delegateResult)`. This is NOT mock-echo — it verifies the contract "return exactly what the delegate gives." Combined with `CalledWith` on the delegate call, this is the strongest assertion for pure delegation.
+
+**Bundling:** Bundled tests (multiple methods in one `it()`) are acceptable for THIN delegation when each method is a single-line `return delegate(args)`. Split when any method has branching, defaults, or transformations.
+
+**Re-exports:** Named re-exports (`export { X } from './module'`) are module system wiring, not behavior. Do NOT test them. Only test class methods or functions with owned logic.
 | STANDARD | 50-200 LOC, moderate branching (3-10 branches) | Full edge case checklist per parameter. 15-40 tests. |
 | COMPLEX | Over 200 LOC or more than 10 branches | Split test files by concern. Full coverage. 40-80 tests. |
 

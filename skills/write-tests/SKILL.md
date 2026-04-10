@@ -135,6 +135,7 @@ Print: `[file]: [type] [complexity] [testability] → [N] tests planned`
 ### Step 3: Verify
 
 1. **Anti-tautology check:** grep test file for mock-return-echoed-in-assertion patterns. Verify every expected value is spec-derived, not implementation-derived. Any tautological oracle found = fix immediately.
+   **Exception for THIN delegation:** When code type is THIN and the method body is a single `return delegateFunction(args)`, echo testing IS the behavioral test — the facade's contract is to forward unchanged. `expect(result).toBe(mockReturnValue)` combined with `CalledWith` is correct, not tautological. P-70 does NOT apply to pure delegation pass-through.
 2. **Q1-Q19 self-eval** per `quality-gates.md`. Print scorecard with evidence:
    ```
    Self-eval: Q1=1 Q2=1 Q3=0 ... → [N]/19 [PASS|FIX|REWRITE]
