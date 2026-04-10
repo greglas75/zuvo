@@ -56,7 +56,7 @@ STANDARD+ only (skip for THIN):
 ## Phase 0: Setup (runs once)
 
 1. **CodeSift setup** per `codesift-setup.md`. Note repo identifier.
-2. **Project profile (MANDATORY — do not skip):** Read `.zuvo/project-profile.json`. If it exists:
+2. **Project profile (MANDATORY — do not skip):** Read `.zuvo/project-profile.json` with `offset=0 limit=50` (grab stack + test_conventions only — do NOT read the full file, it can be 30K+). If it exists:
    - **Print confirmation:** `[PROFILE] Loaded project profile: {framework} + {test_runner}, {N} critical files, conventions: {yes/no}`
    - **Use for ALL file types, not just ORCHESTRATOR:**
      - `profile.stack` → framework, test runner, language (replaces inline detection in Step 3)
@@ -101,6 +101,8 @@ Read the production file fully. **If a test file already exists, read it too.** 
 - **Test file exists, quality BAD** (fragile string tests, tautological oracles, security theatre, duplicated positives, structural tests that duplicate behavioral ones) → action: **REWRITE**. Fix the whole file, not just add tests. Net test count MAY decrease. Remove anti-patterns, consolidate with it.each, keep only behavioral tests.
 
 **Do NOT add good tests on top of bad tests.** If existing tests are weak, fix them first. "ONE file, FULL pipeline" means the WHOLE test file, not just the gap you were sent to fix.
+
+**Barrel file detection:** If the file contains ONLY `export { X } from './sub-module'` lines (zero owned logic), it is a barrel/re-export file. Do NOT write delegation tests for it — expand the queue to the sub-modules it re-exports from. Print: `[BARREL] {file} is a re-export barrel — expanding to {N} sub-modules.`
 
 **If project profile loaded in Phase 0:** Check `file_classifications` — the target file may already be classified (critical/important/routine with code_type). Use this as starting point. Also use profile conventions to understand what global guards/middleware/modules apply to this file's context.
 

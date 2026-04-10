@@ -317,3 +317,5 @@ Commits pending review. Auto-managed:
 - 9af9aaf (2026-04-10) fix: retrospective — require exactly 5 proposals, not "up to 5"
 - 5ac2e2f (2026-04-10) release: v1.3.58 — fix: retrospective — require exactly 5 proposals
 - 5d740c7 (2026-04-10) release: v1.3.59 — feat: Phase 1B — full 12-step profile protocol + test_conventions + overrides
+- aa47d53 (2026-04-10) release: v1.3.60 — enhance: THIN delegation checklist, P-70 exception, pass-through guidance, re-export exclusion
+- f418c7d (2026-04-10) feat: add retrospective to content-optimize and write-article skills
