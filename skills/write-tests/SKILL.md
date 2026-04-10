@@ -28,36 +28,83 @@ Generate high-quality tests for production code. Each file goes through the full
 
 ## Mandatory File Loading
 
-**Phase 0 (always load):** core files needed before analysis.
+### PHASE 0 — Bootstrap (always, before reading production file)
 
 ```
-CORE (Phase 0):
-  1. ../../shared/includes/codesift-setup.md      -- [READ|MISSING -> STOP]
-  2. ../../shared/includes/test-contract.md        -- [READ|MISSING -> STOP]
-  3. ../../shared/includes/test-blocklist.md       -- [READ|MISSING -> STOP]
-  4. ../../shared/includes/test-mock-safety.md     -- [READ|MISSING -> STOP] (skip for PURE)
-  5. ../../shared/includes/quality-gates.md        -- [READ|MISSING -> STOP]
-  6. ../../rules/testing.md                          -- [READ|MISSING -> STOP]
-
-DEFERRED (load at Step 5, NOT Phase 0 — saves ~340 lines × 25 turns in context):
-  7. ../../shared/includes/run-logger.md           -- [READ at Step 5]
-  8. ../../shared/includes/retrospective.md          -- [READ at Step 5]
+  1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> STOP]
 ```
 
-**Step 1 (load after classification):** based on file complexity.
+This is the ONLY file loaded before reading the production file. Do NOT load test-contract, quality-gates, testing rules, or any other include at this point — you don't know the code type yet.
+
+### PHASE 0.5 — Classify (read production file, determine loading tier)
+
+After CodeSift setup, read the production file fully. Classify it per `test-code-types.md` classification table (memorized from prior sessions or read on first encounter):
+
+- **Code type:** VALIDATOR / SERVICE / CONTROLLER / HOOK / PURE / COMPONENT / GUARD / API-CALL / ORCHESTRATOR / STATE-MACHINE / ORM-DB
+- **Complexity:** THIN / STANDARD / COMPLEX
+- **Testability:** UNIT_MOCKABLE / UNIT_REFLECTION / NEEDS_INTEGRATION / MIXED
+
+Determine loading tier:
 
 ```
-STANDARD+ only (skip for THIN):
-  9. ../../shared/includes/test-edge-cases.md      -- [READ|SKIP]
-  10. ../../shared/includes/test-code-types.md      -- [READ|SKIP]
+IF code_type IN (PURE, VALIDATOR) AND complexity == THIN       → LIGHT
+IF code_type IN (PURE, VALIDATOR) AND complexity == STANDARD   → STANDARD
+IF code_type IN (STATE-MACHINE) AND complexity == THIN         → LIGHT
+IF code_type IN (COMPONENT, HOOK)                              → COMPONENT
+IF code_type IN (CONTROLLER, ORCHESTRATOR)                     → HEAVY
+IF complexity == COMPLEX                                       → HEAVY
+ELSE                                                           → STANDARD
+```
+
+When classification is ambiguous, default to STANDARD (loads more than LIGHT, less than HEAVY).
+
+Print: `[CLASSIFIED] {file}: {code_type} {complexity} → tier {TIER}`
+
+### PHASE 1 — Conditional Load (based on classification tier)
+
+Load ONLY the includes matching the detected tier. Print READ/SKIP status for each.
+
+| Include | LIGHT | STANDARD | HEAVY | COMPONENT |
+|---------|-------|----------|-------|-----------|
+| `../../shared/includes/test-contract.md` | Sections 1,3,6 only (BRANCHES, VALUES, OUTLINE) | Full | Full | Full |
+| `../../shared/includes/test-blocklist.md` | Full | Full | Full | Full |
+| `../../shared/includes/quality-gates.md` | Q1-Q19 section only* | Q1-Q19 section only* | Q1-Q19 section only* | Q1-Q19 section only* |
+| `../../rules/testing.md` | Full | Full | Full | Full |
+| `../../shared/includes/test-mock-safety.md` | **SKIP** | Full | Full | **SKIP** |
+| `../../shared/includes/test-edge-cases.md` | **SKIP** | Full | Full | **SKIP** |
+| `../../shared/includes/test-code-types.md` | **SKIP** | Matching section only** | Matching section + templates | **SKIP** |
+
+\* **quality-gates.md selective reading:** Read ONLY from the heading `## Q1-Q19: Test Quality Gates` to end of file. Skip the CQ1-CQ28 section entirely — those gates are for production code review, not test writing.
+
+\*\* **test-code-types.md selective reading:** Find the `### {CODE_TYPE}` heading matching your classification. Read ONLY that section (to the next `###` heading). Skip all other code type sections.
+
+```
+PHASE 1 — LOADED:
+  2. test-contract.md         -- [READ (full) | READ (sections 1,3,6) | per tier]
+  3. test-blocklist.md        -- [READ]
+  4. quality-gates.md         -- [READ Q1-Q19 only]
+  5. testing.md               -- [READ]
+  6. test-mock-safety.md      -- [READ | SKIP — per tier]
+  7. test-edge-cases.md       -- [READ | SKIP — per tier]
+  8. test-code-types.md       -- [READ matching section | SKIP — per tier]
+```
+
+### DEFERRED — Load at completion (Step 5)
+
+```
+  9. ../../shared/includes/run-logger.md           -- [READ at Step 5]
+  10. ../../shared/includes/retrospective.md        -- [READ at Step 5]
 ```
 
 ---
 
-## Phase 0: Setup (runs once)
+## Phase 0: Bootstrap + Classify (runs once per file)
 
 1. **CodeSift setup** per `codesift-setup.md`. Note repo identifier.
-2. **Dynamic context retrieval (when CodeSift available):** Run 4 targeted retrieval dimensions for the target file. Each dimension answers a specific question. Skip any that timeout/fail — partial context is better than none.
+2. **Read production file.** Read the target file fully. This happens BEFORE loading any other includes.
+3. **Classify** per PHASE 0.5 above. Determine code type, complexity, testability, and loading tier.
+4. **Load conditional includes** per PHASE 1 table above. Print READ/SKIP status for each.
+5. **Dynamic context retrieval (when CodeSift available):** Run targeted retrieval dimensions for the target file. Which dimensions run depends on the tier. Skip any that timeout/fail — partial context is better than none.
 
    **Dimension 1 — Exemplar test:** Find an existing test file to use as pattern reference.
    ```
@@ -123,7 +170,7 @@ For each file in the queue, execute Steps 1-5 in order. Do NOT skip any step. Do
 
 ### Step 1: Analyze
 
-Read the production file fully. **If a test file already exists, read it too.** Classify the production file AND assess existing test quality:
+The production file was already read and classified in Phase 0.5. **If a test file already exists, read it now.** Assess existing test quality:
 
 - **No test file** → action: CREATE
 - **Test file exists, quality OK** (behavioral assertions, no anti-patterns) → action: ADD TO (extend with missing coverage)
@@ -175,26 +222,15 @@ codebase_retrieval(repo, token_budget=3000, queries=[
 
 **Without CodeSift:** Read the file, count branches manually.
 
-Classify per `test-code-types.md`:
-- **Code type:** VALIDATOR / SERVICE / CONTROLLER / HOOK / PURE / COMPONENT / GUARD / API-CALL / ORCHESTRATOR / STATE-MACHINE / ORM-DB
-- **Complexity:** THIN / STANDARD / COMPLEX
-- **Testability:** UNIT_MOCKABLE / UNIT_REFLECTION / NEEDS_INTEGRATION / MIXED
+Classification already done in Phase 0.5. Includes already loaded per tier in Phase 1.
 
-Plan: target test count (from code-type formula), describe/it outline, mock strategy. For STANDARD+, apply edge cases from `test-edge-cases.md`.
+Plan: target test count (from code-type formula), describe/it outline, mock strategy. For STANDARD+ tiers, apply edge cases from `test-edge-cases.md` (already loaded in Phase 1).
 
-**PURE fast-path:** If code type is PURE (no I/O, no side-effects, no mocks except Logger):
-- Skip `test-mock-safety.md` rules (no mocks to verify)
-- Skip Dimensions 2-4 in retrieval (self-contained file)
-- Shorten test contract to: BRANCHES + EXPECTED VALUES + TEST OUTLINE only (skip ERROR PATHS if no throws, skip MOCK INVENTORY if only Logger)
-- Adversarial: 1 pass max (if Q >= 17, skip pass 2)
-Print: `[PURE-FAST] Shortened pipeline for pure function.`
+**PURE optimization (LIGHT tier):** Contract: skip MOCK INVENTORY if only Logger. Keep BRANCHES, ERROR PATHS, EXPECTED VALUES. **Do NOT skip adversarial** — retro shows it catches real bugs even on simple files.
 
-**COMPONENT fast-path:** If code type is COMPONENT (React/Vue):
-- Skip `test-mock-safety.md` rules (component mocks follow different patterns)
-- Skip `test-edge-cases.md` (string/number edge cases rarely apply to render tests)
-- Skip Dimensions 2-3 in retrieval (setup comes from exemplar)
-- After finding exemplar (D1), extract: cleanup pattern (`afterEach(cleanup)`), matcher library (testing-library vs enzyme), async pattern (`findBy` vs `waitFor` vs `act`).
-Print: `[COMPONENT-FAST] Shortened pipeline for component.`
+**COMPONENT optimization (COMPONENT tier):** After finding exemplar (D1), extract: cleanup pattern (`afterEach(cleanup)`), matcher library (testing-library vs enzyme), async pattern (`findBy` vs `waitFor` vs `act`). **Do NOT skip adversarial or edge-cases.**
+
+**Test contract output:** Do NOT print the full contract to the conversation. Use it as an internal checklist. Show the user only: branch coverage table + test outline + planned test count. The contract costs ~2K output tokens and the user doesn't read it.
 
 Print: `[file]: [type] [complexity] [testability] → [N] tests planned`
 
