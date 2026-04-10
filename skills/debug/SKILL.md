@@ -48,22 +48,55 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 
 ## Mandatory File Reading
 
-These files are needed during Phase 4 self-evaluations. Read them before writing the fix, not after.
+### PHASE 0 — Bootstrap (always, before reading error/file)
 
 ```
-CORE FILES LOADED:
-  1. ../../rules/cq-patterns.md               -- READ/MISSING (CQ self-eval on production fix)
-  2. ../../rules/cq-checklist.md               -- READ/MISSING (CQ1-CQ28 scoring and evidence)
-  3. ../../rules/testing.md                    -- READ/MISSING (Q1-Q19 for regression test)
-  4. ../../rules/test-quality-rules.md         -- READ/MISSING (edge cases, mock safety)
-  5. ../../shared/includes/run-logger.md       -- READ/MISSING (run logging)
-  6. ../../shared/includes/knowledge-prime.md  -- READ/MISSING (project knowledge)
-  7. ../../shared/includes/knowledge-curate.md -- READ/MISSING (learning extraction)
-  8. ../../shared/includes/retrospective.md    -- RETRO PROTOCOL
+  1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> STOP]
 ```
 
+This is the ONLY file loaded before reading the error report or target file.
 
-**If any file is missing:** Run self-evaluation using the embedded minimal checklist below. Note "DEGRADED -- [file] unavailable" in the debug report.
+### PHASE 0.5 — Classify (read error/file, determine bug category)
+
+After CodeSift setup, read the error, stack trace, or target file. Classify bug category:
+- **logic:** wrong output, off-by-one, condition error, missing branch
+- **async:** race condition, unhandled rejection, deadlock, timeout
+- **data:** wrong query, missing join, constraint violation, data corruption
+- **integration:** API contract mismatch, version incompatibility, env config error
+- **test-failure:** existing test broke, flaky test, test infrastructure issue
+
+Print: `[CLASSIFIED] Bug category: {logic|async|data|integration|test-failure}`
+
+### PHASE 1 — Conditional Load (based on bug category)
+
+| Include | logic | async | data | integration | test-failure |
+|---------|-------|-------|------|-------------|-------------|
+| `../../rules/cq-patterns.md` | Full | CQ15,CQ21 focus | CQ6,7,9 focus | CQ8,CQ19 focus | **SKIP** |
+| `../../rules/cq-checklist.md` | Full | CQ15,CQ21 focus | CQ6,7,9 focus | CQ8,CQ19 focus | **SKIP** |
+| `../../rules/testing.md` | **SKIP** | **SKIP** | **SKIP** | **SKIP** | Full |
+| `../../rules/test-quality-rules.md` | **SKIP** | **SKIP** | **SKIP** | **SKIP** | Full |
+
+Print loaded files:
+```
+PHASE 1 — LOADED:
+  [list with READ/SKIP status per file]
+```
+
+### Optional Files (loaded if available)
+
+```
+  ../../shared/includes/knowledge-prime.md   -- [READ | MISSING -> degraded]
+```
+
+### DEFERRED — Load at completion
+
+```
+  ../../shared/includes/run-logger.md        -- [READ at final step]
+  ../../shared/includes/retrospective.md     -- [READ at final step]
+  ../../shared/includes/knowledge-curate.md  -- [READ at final step | MISSING -> degraded]
+```
+
+**If PHASE 0 file missing:** Run self-evaluation using the embedded minimal checklist below. Note "DEGRADED — codesift-setup.md unavailable" in the debug report.
 
 **Minimal checklist (fallback only):**
 1. Error path tested? (Q7)
