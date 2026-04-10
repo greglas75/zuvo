@@ -19,6 +19,51 @@ ROUTER_FILE="${PLUGIN_DIR}/skills/using-zuvo/SKILL.md"
 router_content=$(cat "$ROUTER_FILE" 2>&1 || echo "Failed to read using-zuvo skill")
 
 # ---------------------------------------------------------------------------
+# Read project profile if it exists (.zuvo/project-profile.json)
+# ---------------------------------------------------------------------------
+# CWD is the user's project directory (Claude Code sets this)
+PROFILE_FILE="${PWD}/.zuvo/project-profile.json"
+profile_content=""
+if [ -f "$PROFILE_FILE" ]; then
+    # Extract summary fields only (not the full JSON — that can be 100KB+)
+    profile_content=$(python3 -c "
+import json, sys, os
+profile_path = os.environ.get('_ZUVO_PROFILE', '$PROFILE_FILE')
+try:
+    with open(profile_path) as f:
+        p = json.load(f)
+    s = p.get('stack', {})
+    fc = p.get('file_classifications', {})
+    gm = p.get('generation_metadata', {})
+    gh = p.get('git_health', {})
+    dh = p.get('dependency_health', {})
+    # Convention keys
+    conv_keys = [k for k in p if k.endswith('_conventions') or k == 'conventions']
+    conv_summary = ', '.join(conv_keys) if conv_keys else 'none'
+    lines = [
+        'PROJECT PROFILE (.zuvo/project-profile.json):',
+        f'  Framework: {s.get(\"framework\", \"unknown\")} {s.get(\"framework_version\", \"\")}',
+        f'  Language: {s.get(\"language\", \"unknown\")}',
+        f'  Test runner: {s.get(\"test_runner\", \"unknown\")}',
+        f'  Package manager: {s.get(\"package_manager\", \"unknown\")}',
+        f'  Monorepo: {\"yes (\" + str(s.get(\"monorepo\", {}).get(\"tool\", \"\")) + \")\" if s.get(\"monorepo\") else \"no\"}',
+        f'  Files: {gm.get(\"files_analyzed\", 0)} analyzed ({len(fc.get(\"critical\", []))} critical, {len(fc.get(\"important\", []))} important, {fc.get(\"routine\", {}).get(\"count\", 0)} routine)',
+        f'  Conventions: {conv_summary}',
+        f'  Status: {p.get(\"status\", \"unknown\")}',
+    ]
+    if gh:
+        lines.append(f'  Git: {gh.get(\"total_commits\", 0)} commits, {gh.get(\"recent_commits_30d\", 0)} in last 30d, {gh.get(\"contributors\", 0)} contributors')
+    if dh:
+        lines.append(f'  Dependencies: {dh.get(\"total\", 0)} ({dh.get(\"prod\", 0)} prod, {dh.get(\"dev\", 0)} dev)')
+    lines.append('')
+    lines.append('For full profile data, read .zuvo/project-profile.json')
+    print('\n'.join(lines))
+except Exception as e:
+    print(f'Profile load error: {e}')
+" 2>/dev/null || echo "")
+fi
+
+# ---------------------------------------------------------------------------
 # JSON-safe escaping via parameter substitution
 # Order matters: backslashes first, then the rest.
 # ---------------------------------------------------------------------------
@@ -39,7 +84,14 @@ escaped_router=$(json_escape "$router_content")
 # ---------------------------------------------------------------------------
 # Build the context payload
 # ---------------------------------------------------------------------------
-payload="<IMPORTANT>\nYou’ve got zuvo skills installed.\n\nBelow is the zuvo meta-skill router. It tells you which skill to invoke for any given task. For all skills listed here, use the Skill tool to invoke them.\n\n${escaped_router}\n</IMPORTANT>"
+# Build profile section if available
+profile_section=""
+if [ -n "$profile_content" ]; then
+    escaped_profile=$(json_escape "$profile_content")
+    profile_section="\n\n---\n\n${escaped_profile}"
+fi
+
+payload="<IMPORTANT>\nYou’ve got zuvo skills installed.\n\nBelow is the zuvo meta-skill router. It tells you which skill to invoke for any given task. For all skills listed here, use the Skill tool to invoke them.\n\n${escaped_router}${profile_section}\n</IMPORTANT>"
 
 # ---------------------------------------------------------------------------
 # Platform detection and JSON output

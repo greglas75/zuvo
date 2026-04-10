@@ -312,3 +312,4 @@ Commits pending review. Auto-managed:
 - d27aae3 (2026-04-09) fix: retrospective — explicit MUST-execute-bash note after structured questions
 - 78630ff (2026-04-09) release: v1.3.55 — fix: retrospective — must-execute-bash persistence note
 - fbff1ae (2026-04-10) fix: retrospective — anti-self-censoring for change proposals
+- edd377a (2026-04-10) release: v1.3.56 — fix: retrospective — anti-self-censoring instruction
