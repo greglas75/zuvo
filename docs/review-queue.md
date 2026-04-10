@@ -343,3 +343,5 @@ Commits pending review. Auto-managed:
 - 6b1be8d (2026-04-10) docs: cross-skill validation pass — lazy include loading consistent across 6 skills
 - 75d8d03 (2026-04-10) release: v1.3.70 — feat: lazy include loading — classify first, load matching context across 6 skills
 - 760f96e (2026-04-10) feat: PHP test support — mock templates, stack-aware retrieval, per-pattern contract
+- 0927101 (2026-04-10) release: v1.3.71 — feat: PHP test support — mock templates, stack-aware retrieval, per-pattern contract
+- 2a6a97c (2026-04-10) feat: split test includes by stack — core + JS + PHP files
