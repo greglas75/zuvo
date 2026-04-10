@@ -313,3 +313,5 @@ Commits pending review. Auto-managed:
 - 78630ff (2026-04-09) release: v1.3.55 — fix: retrospective — must-execute-bash persistence note
 - fbff1ae (2026-04-10) fix: retrospective — anti-self-censoring for change proposals
 - edd377a (2026-04-10) release: v1.3.56 — fix: retrospective — anti-self-censoring instruction
+- 4129d16 (2026-04-10) release: v1.3.57 — feat: auto-inject project profile summary into SessionStart hook
+- 9af9aaf (2026-04-10) fix: retrospective — require exactly 5 proposals, not "up to 5"
