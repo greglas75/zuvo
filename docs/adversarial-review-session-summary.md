@@ -52,7 +52,7 @@
 | Ollama | `ollama run model` | 3-10min | Free/lokalne | Działa ale za wolne |
 
 ### API Key setup
-- `GEMINI_API_KEY` — z `~/DEV/translation-qa/.env` (`AIzaSyDwZkjyYoM-pcKzT1fuNyraO9ToMjRzPAg`)
+- `GEMINI_API_KEY` — z `~/DEV/translation-qa/.env` (`<redacted>`)
 - Free tier: 15 RPM, 1000 RPD — pokrywa adversarial review z zapasem
 - Modele free tier: gemini-2.5-flash, gemini-3-flash-preview, gemini-3.1-flash-lite-preview
 

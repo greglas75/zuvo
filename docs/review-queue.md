@@ -328,3 +328,5 @@ Commits pending review. Auto-managed:
 - dbc0287 (2026-04-10) fix: content-expand IRON RULE — never rewrite existing text, only add new content around it
 - e91a9d4 (2026-04-10) release: v1.3.65 — fix: content-expand preserve original text iron rule
 - 790aad1 (2026-04-10) feat: content-expand --rewrite flag — allow fixing factual errors in existing text with stated reason
+- 0821780 (2026-04-10) release: v1.3.66 — enhance: boundary tests in contract, positive-anchor rule, conditional-expect blocklist, PURE fast-path, deferred includes
+- 1003486 (2026-04-10) fix: content-expand auto-sets modifiedDate in frontmatter on expansion
