@@ -36,21 +36,47 @@ Default behavior: `all --quick`
 
 ## Mandatory File Loading
 
-Read these files from disk before starting. Print the checklist. Do not proceed from memory.
+### PHASE 0 — Bootstrap (always, before reading any input)
 
 ```
-CORE FILES LOADED:
-  1. ../../rules/cq-checklist.md        -- READ/MISSING
-  2. ../../rules/cq-patterns.md         -- READ/MISSING
-  3. ../../rules/security.md            -- READ/MISSING
-  4. ../../rules/file-limits.md         -- READ/MISSING
-  5. ../../shared/includes/env-compat.md -- READ/MISSING
-  6. ../../shared/includes/run-logger.md -- READ/MISSING
+  1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> STOP]
 ```
 
+This is the ONLY file loaded before reading the audit target files.
 
-**If 1-2 files missing:** Proceed in degraded mode; note which files are absent.
-**If 3+ files missing:** Stop. The plugin installation is incomplete.
+### PHASE 0.5 — Classify (read target files, determine domain)
+
+After CodeSift setup, read the target file(s). Classify the primary domain:
+- **data:** touches DB queries, transactions, ORMs, migrations
+- **async:** touches promises, streams, workers, event emitters
+- **security:** touches auth, input validation, secrets, crypto
+- **general:** none of the above (or mixed)
+
+Print: `[CLASSIFIED] Domain: {data|async|security|general}`
+
+### PHASE 1 — Conditional Load (based on domain)
+
+| Include | data | async | security | general |
+|---------|------|-------|----------|---------|
+| `../../rules/cq-checklist.md` | Full | Full | Full | Full |
+| `../../shared/includes/env-compat.md` | Full | Full | Full | Full |
+| `../../rules/cq-patterns.md` | CQ6,7,9,16,17 focus | CQ15,17 focus | CQ4,5 focus | Full |
+| `../../rules/security.md` | **SKIP** | **SKIP** | Full | **SKIP** |
+| `../../rules/file-limits.md` | **SKIP** | **SKIP** | **SKIP** | Full |
+
+Print loaded files:
+```
+PHASE 1 — LOADED:
+  [list with READ/SKIP status per file]
+```
+
+### DEFERRED — Load at completion
+
+```
+  ../../shared/includes/run-logger.md        -- [READ at final step]
+```
+
+**If PHASE 0 file missing:** STOP. The plugin installation is incomplete.
 
 ## Environment Compatibility
 
@@ -58,9 +84,7 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 
 ## CodeSift Integration
 
-Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
-
-**Summary:** Run the CodeSift setup from `codesift-setup.md` at skill start. Use CodeSift tools for all discovery and analysis when available. If not found, fall back to Grep/Read/Glob and inform the user once.
+CodeSift setup completed in PHASE 0. Use CodeSift tools for all discovery and analysis when available. If not found, fall back to Grep/Read/Glob and inform the user once.
 
 After editing any file: `index_file(path="/absolute/path/to/file")`
 
