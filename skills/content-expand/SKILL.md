@@ -59,6 +59,7 @@ Allowed: input file, `<file>.content-expand-backup`, `audit-results/`. FORBIDDEN
 | `--site-dir <path>` | Content collection root — enables internal link discovery + voice matching |
 | `--domain <niche>` | Override domain detection (one of 17 niche IDs from `domain-profile-registry.md`) |
 | `--skip-research` | Skip web search; expand using existing content + LLM knowledge only |
+| `--rewrite` | Allow rewriting existing sentences that have concrete defects (factual errors, grammar, outdated info). Without this flag, existing text is never modified. |
 | `--light` | Skip reporting, backlog, knowledge curation. Just expand and write. |
 
 ---
@@ -132,21 +133,19 @@ Copy original to `<file>.content-expand-backup`. All work on temp copy. `--dry-r
 
 ### 2.2 Expand (PRESERVE ORIGINAL TEXT)
 
-**IRON RULE: NEVER rewrite, rephrase, or "improve" existing text.** The original was written by a human. Rewriting it replaces human prose with AI prose — detectors will flag the entire article. Every original sentence, paragraph, and word stays EXACTLY as-is.
+**DEFAULT: Do not rewrite existing text.** Rewriting human prose with AI prose triggers detection on the entire article. Expand by ADDING content around what exists.
 
-What you CAN do:
-- **Add new paragraphs** between existing ones (clearly marked as additions)
-- **Add new H2/H3 sections** for missing subtopics (BLUF opener + research-backed content)
-- **Add depth after thin sections** — append new paragraphs below the existing ones, don't touch what's there
-- **Add intro paragraph** before the first section if missing (PQ3 hook)
-- **Add conclusion/CTA** at the end if missing
+What you CAN always do:
+- **Add new paragraphs** between or after existing ones
+- **Add new H2/H3 sections** for missing subtopics
+- **Add intro/conclusion** if missing
 
-What you CANNOT do:
-- Rephrase existing sentences ("make them flow better")
-- Merge existing paragraphs
-- Reorder existing content
-- Change existing word choices
-- "Improve" existing headings
+What you CANNOT do without `--rewrite`:
+- Rephrase existing sentences
+- Merge or reorder existing paragraphs
+- Change existing word choices or headings
+
+**With `--rewrite`:** Rewrites are allowed ONLY for sentences with a concrete defect: factual error, grammatical mistake, nonsensical claim, or outdated information. Each rewrite must state the reason (e.g., "Fixed: claimed population is 5M, actual is 8.3M per 2025 census"). Style preferences ("sounds better") are NOT a valid reason.
 
 For ALL new content, apply `humanization-rules.md` constraints:
 - Sentence variation (fragments + long), contractions, parenthetical asides
