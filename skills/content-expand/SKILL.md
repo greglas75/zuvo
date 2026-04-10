@@ -130,17 +130,28 @@ This is the core phase. Expand THEN optimize in one pass — no separate faz.
 
 Copy original to `<file>.content-expand-backup`. All work on temp copy. `--dry-run`: skip backup, work in memory only.
 
-### 2.2 Expand
+### 2.2 Expand (PRESERVE ORIGINAL TEXT)
 
-For each thin/weak section identified in Phase 0:
-- **Thin sections** (<100 words): add depth using research facts. Add examples, specific data, named sources.
-- **Missing subtopics**: add new H2/H3 sections with BLUF opener + research-backed content.
-- **Weak intro/conclusion**: strengthen with hook (PQ3) and CTA.
+**IRON RULE: NEVER rewrite, rephrase, or "improve" existing text.** The original was written by a human. Rewriting it replaces human prose with AI prose — detectors will flag the entire article. Every original sentence, paragraph, and word stays EXACTLY as-is.
 
-For new content, apply `humanization-rules.md` constraints:
+What you CAN do:
+- **Add new paragraphs** between existing ones (clearly marked as additions)
+- **Add new H2/H3 sections** for missing subtopics (BLUF opener + research-backed content)
+- **Add depth after thin sections** — append new paragraphs below the existing ones, don't touch what's there
+- **Add intro paragraph** before the first section if missing (PQ3 hook)
+- **Add conclusion/CTA** at the end if missing
+
+What you CANNOT do:
+- Rephrase existing sentences ("make them flow better")
+- Merge existing paragraphs
+- Reorder existing content
+- Change existing word choices
+- "Improve" existing headings
+
+For ALL new content, apply `humanization-rules.md` constraints:
 - Sentence variation (fragments + long), contractions, parenthetical asides
 - Entity grounding (specific versions, dates, names from research)
-- Voice matching if profile available
+- Voice matching if profile available — match the existing article's voice, not your default
 - No throat-clearing (G12), BLUF per section (G9), max 300 words/section (G6)
 - Stats with attribution + year (G11)
 
@@ -155,7 +166,7 @@ Read `domain-profile-registry.md` for niche-appropriate schema:
 - FAQ: if article now has Q&A content + niche allows FAQ → add FAQPage schema.
 - OG tags: ensure `og:title`, `og:description`, `og:type`, `og:image` in frontmatter.
 - `dateModified` updated to today.
-- Meta title/description refreshed if content changed significantly.
+- Meta title/description: only update if currently MISSING. Never rewrite existing meta that the author wrote.
 
 ### 2.5 Anti-slop Review
 
