@@ -114,38 +114,61 @@ PHASE 1 — LOADED:
    
    Print: `[CONTEXT] Tier: {TIER}, exemplar={path}, {N} import mocks, {N} signatures`
 
+   **Retrieval queries are stack-aware.** Detect stack from Phase 0 (package.json → JS/TS, composer.json → PHP, pyproject.toml → Python). Use the matching query set below.
+
    **Dimension 1 — Exemplar test (ALL tiers):** Find an existing test file to use as pattern reference.
+   
+   JS/TS stack:
    ```
    find_references(repo, "<main_export_of_target_file>")
+   → look for *.test.* or *.spec.* files in results
+   → fallback: search_text(repo, query: "describe.*<ClassName>", file_pattern: "**/__tests__/*")
+   → fallback: search_text(repo, query: "describe", file_pattern: "**/<same_module>/__tests__/*")
    ```
-   Look for `*.test.*` or `*.spec.*` files in the results. If found → this is the exemplar. Read it fully — it shows how THIS project writes tests (mock style, describe structure, import conventions, setup patterns).
-   If no test file in references → try: `search_text(repo, query: "describe.*<ClassName>", file_pattern: "**/__tests__/*")`.
-   If still nothing → try same code type in same module: `search_text(repo, query: "describe", file_pattern: "**/<same_module>/__tests__/*")`.
+   
+   PHP stack:
+   ```
+   search_text(repo, query: "extends Unit|extends TestCase", file_pattern: "tests/**/*Test.php", max_results: 5)
+   → prefer test file in same module: tests/unit/<ModuleName>*Test.php
+   → fallback: search_text(repo, query: "createMock|getMockBuilder", file_pattern: "tests/**/*Test.php", max_results: 3)
+   ```
+   
+   Python stack:
+   ```
+   search_text(repo, query: "class Test<ClassName>|def test_<function>", file_pattern: "tests/**/test_*.py|**/tests.py", max_results: 5)
+   → fallback: search_text(repo, query: "mock.patch|MagicMock", file_pattern: "tests/**/test_*.py", max_results: 3)
+   ```
+   
+   Read the exemplar fully — it shows how THIS project writes tests (mock style, describe/class structure, import conventions, setup patterns).
    Print: `[CONTEXT] Exemplar: {path}` or `[CONTEXT] No exemplar found — using generic patterns.`
 
-   **Dimension 2 — Import mocks (STANDARD+ tiers, skip for LIGHT/COMPONENT):** Also skip if Dimension 1 found an exemplar in the **same module** (exemplar already shows mock patterns). Run only when exemplar is from a different module or not found.
-   For **at most 5** imports from the target file (skip node_modules, skip type-only imports):
-   ```
-   search_text(repo, query: "vi.mock.*<import_path>", file_pattern: "**/__tests__/*|*.test.*|*.spec.*", max_results: 3)
-   ```
-   Collect: which dependencies are mocked, what mock patterns are used (mockResolvedValue, vi.fn, class mock, etc.).
+   **Dimension 2 — Import mocks (STANDARD+ tiers, skip for LIGHT/COMPONENT):** Also skip if Dimension 1 found an exemplar in the **same module** (exemplar already shows mock patterns).
+   For **at most 5** imports from the target file (skip vendor/node_modules, skip type-only imports):
+   
+   JS/TS: `search_text(repo, query: "vi.mock.*<import_path>|jest.mock.*<import_path>", file_pattern: "**/__tests__/*|*.test.*|*.spec.*", max_results: 3)`
+   PHP: `search_text(repo, query: "createMock.*<ClassName>|getMockBuilder.*<ClassName>", file_pattern: "tests/**/*Test.php", max_results: 3)`
+   Python: `search_text(repo, query: "mock.patch.*<module_path>|MagicMock.*<ClassName>", file_pattern: "tests/**/test_*.py", max_results: 3)`
+   
+   Collect: which dependencies are mocked, what mock patterns are used.
    Print: `[CONTEXT] Import mocks: {N} dependencies with existing mock patterns.` or `[CONTEXT] D2 skipped — exemplar covers mock patterns.`
 
-   **Dimension 3 — Test setup (STANDARD+ tiers, skip for LIGHT/COMPONENT):** Also skip if CLAUDE.md describes test infrastructure OR if exemplar test already imports setup helpers. Run only for first file in queue or when no other context source exists.
-   ```
-   search_text(repo, query: "setupFiles", file_pattern: "vitest.config.*|jest.config.*")
-   ```
-   Extract setup file paths from config → read their outlines with `get_file_outline`. These setup files contain global mocks (Sentry, shared-types, etc.) that tests inherit.
+   **Dimension 3 — Test setup (STANDARD+ tiers, skip for LIGHT/COMPONENT):** Also skip if CLAUDE.md describes test infrastructure OR if exemplar test already imports setup helpers.
+   
+   JS/TS: `search_text(repo, query: "setupFiles", file_pattern: "vitest.config.*|jest.config.*")`
+   PHP: `search_text(repo, query: "_bootstrap|Helper|ActorActions", file_pattern: "tests/**/*.php|codeception.yml")`
+   Python: `search_text(repo, query: "conftest|fixtures|factory", file_pattern: "tests/**/conftest.py|pytest.ini|setup.cfg")`
+   
+   Extract setup file paths → read their outlines. These contain global mocks, fixtures, helpers.
    Print: `[CONTEXT] Setup: {N} setup files.` or `[CONTEXT] D3 skipped — setup info available from exemplar/CLAUDE.md.`
 
    **Dimension 4 — Hub signatures (STANDARD+ and COMPONENT tiers, skip for LIGHT):** What do the target file's imported utilities look like?
-   Extract import names from target file → query signatures:
+   Extract import/use names from target file → query signatures:
    ```
    codebase_retrieval(repo, token_budget=1000, queries=[
-     {type: "symbols", query: "<imported_function_names>", detail_level: "compact"}
+     {type: "symbols", query: "<imported_function_or_class_names>", detail_level: "compact"}
    ])
    ```
-   This gives function signatures (params + return types) without full source. The LLM knows `isPrismaNotFound(error: unknown): boolean` exists without reading 200 lines.
+   This gives function/method signatures without full source.
    Print: `[CONTEXT] Signatures: {N} utility functions.`
 
    **Error handling per dimension:** If any query times out or returns an error, print `[CONTEXT] Dimension N skipped — {reason}.` and continue with remaining dimensions.
@@ -244,7 +267,7 @@ Print: `[file]: [type] [complexity] [testability] → [N] tests planned`
 
 ### Step 2: Write
 
-1. **Fill test contract** per `test-contract.md`: BRANCHES, ERROR PATHS, EXPECTED VALUES, MOCK INVENTORY, MUTATION TARGETS, TEST OUTLINE.
+1. **Fill test contract** per `test-contract.md`: BRANCHES, ERROR PATHS, EXPECTED VALUES, MOCK INVENTORY, MUTATION TARGETS, TEST OUTLINE. If 3+ methods share the same control flow pattern (e.g., null guard + try/catch), use **per-pattern mode** from test-contract.md instead of per-branch.
 2. **Check blocklist** per `test-blocklist.md` — verify you are NOT about to write any blocked pattern.
 3. **Apply mock rules** per `test-mock-safety.md`.
 4. **Write the test file.** Follow the contract and plan exactly.
@@ -281,9 +304,14 @@ Agent data shows passes 3-4 yield 0 new findings and cost ~60K tokens. 99% of va
 
 ```bash
 adversarial-review --rotate --mode test \
-  --context "Code type: [type] [complexity] [testability]. Q-GATES: Q7=[0|1] Q11=[0|1] Q13=[0|1] Q15=[0|1] Q17=[0|1]" \
+  --context "STACK: [language] [version] / [test-framework] [version]. Code type: [type] [complexity] [testability]. Q-GATES: Q7=[0|1] Q11=[0|1] Q13=[0|1] Q15=[0|1] Q17=[0|1]" \
   --files "<absolute-path-to-production-file> <absolute-path-to-test-file>"
 ```
+
+**STACK in context is mandatory.** Without it, reviewers assume JS/TS and generate false positives for PHP/Python mock patterns. Examples:
+- `STACK: PHP 8.3 / Codeception 5 / PHPUnit 10`
+- `STACK: TypeScript 5.4 / Vitest 2.0`
+- `STACK: Python 3.12 / pytest 8.0`
 
 **Always use absolute paths for --files.** Relative paths fail silently.
 

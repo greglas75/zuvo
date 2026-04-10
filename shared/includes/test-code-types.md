@@ -194,6 +194,88 @@ const prismaMock = {
 
 **Key rule:** Mock the query builder chain, not individual SQL. Test the RESULT of the query (what your service returns), not the query SHAPE (which methods were called).
 
+### SERVICE + PHP Mock Templates
+
+For PHP services using PHPUnit/Codeception — use these templates to avoid wasting turns on mock setup.
+
+**PHPUnit `getMockBuilder` — real methods vs magic methods:**
+```php
+// REAL methods (defined in class or trait): use onlyMethods()
+$mock = $this->getMockBuilder(S3Client::class)
+    ->disableOriginalConstructor()
+    ->onlyMethods(['upload'])  // upload() exists in AwsClientTrait
+    ->getMock();
+
+// MAGIC methods (__call dispatched): use addMethods()
+$mock = $this->getMockBuilder(S3Client::class)
+    ->disableOriginalConstructor()
+    ->addMethods(['getObject', 'deleteObject'])  // these go through __call()
+    ->getMock();
+
+// MIXED (real + magic): combine both
+$mock = $this->getMockBuilder(S3Client::class)
+    ->disableOriginalConstructor()
+    ->onlyMethods(['upload'])         // real
+    ->addMethods(['getObject'])       // magic
+    ->getMock();
+```
+
+**Key rule:** `onlyMethods()` auto-stubs ALL other real methods (they return null/default). `addMethods()` declares methods that don't exist on the class — required for `__call()` magic.
+
+**AWS SDK services (S3Client, SesClient, SqsClient, etc.):**
+- `upload()`, `putObject()` → **real** (AwsClientTrait) → `onlyMethods()`
+- `getObject()`, `deleteObject()`, `doesObjectExist()` → **magic** (`__call`) → `addMethods()`
+- `getObjectUrl()` → **magic** → `addMethods()`
+- When unsure: check if method exists in the class or its traits. If not → magic → `addMethods()`.
+
+**S3Exception mock (requires CommandInterface):**
+```php
+use Aws\CommandInterface;
+use Aws\S3\Exception\S3Exception;
+
+$command = $this->createMock(CommandInterface::class);
+$mock->method('deleteObject')
+    ->willThrowException(new S3Exception('Error message', $command));
+```
+
+**Codeception Unit test lifecycle:**
+```php
+class MyServiceTest extends \Codeception\Test\Unit
+{
+    protected UnitTester $tester;
+    private MyService $service;
+    private MockObject $mockDep;
+
+    protected function _before(): void  // NOT setUp()
+    {
+        $this->mockDep = $this->createMock(Dependency::class);
+        $this->service = new MyService($this->mockDep);
+    }
+
+    protected function _after(): void   // NOT tearDown()
+    {
+        // cleanup temp files, restore state
+    }
+}
+```
+
+**Yii2 static singletons — inject via public property or constructor:**
+```php
+// PREFERRED: If the service accepts the dep in constructor or has public property:
+$this->service->client = $this->mockClient;
+
+// ALTERNATIVE: If the service uses Yii::$app->component internally:
+// Mock at the boundary — create a test config that injects the mock.
+// Do NOT mock Yii::$app globally — it leaks across tests.
+```
+
+**Repetitive null-guard + try/catch pattern:** When a PHP service has N methods with the same pattern (null guard → try { delegate } catch { log, return false/null }), test each method with:
+1. **Success test:** mock delegate → returns expected → assert true/result
+2. **Null-client test:** set dep to null → assert false/null (no delegate called)
+3. **Exception test:** mock delegate → throws → assert false/null + verify logged
+
+This is 3 tests per method. For a service with 7 identical-pattern methods = 21 tests minimum. Use the **per-pattern contract mode** (see test-contract.md) to avoid repetitive contract filling.
+
 ## Mixed Files
 
 When a file combines types (e.g., a SERVICE with PURE helper functions inside it), apply both classifications. Sum the minimum test counts.

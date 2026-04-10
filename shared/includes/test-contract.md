@@ -149,6 +149,40 @@ After filling the contract, verify:
 
 If any check fails, expand the test outline before writing code.
 
+## Per-Pattern Contract Mode
+
+When a file has N methods following the SAME pattern (e.g., null guard → try { delegate } catch { log, return false/null }), filling sections 1-3 per-branch creates massive repetition with zero value. Use **per-pattern mode** instead:
+
+```
+TEST CONTRACT (PER-PATTERN): [production-file-path]
+═══════════════════════════════════════
+
+PATTERN: [name — e.g., "null-guard + try/delegate/catch"]
+  Guard: if ($this->client === null) return false|null
+  Happy: delegate call → return result
+  Error: catch (ExceptionType) → log + return false|null
+
+METHODS USING THIS PATTERN:
+  1. upload($dto)        → returns bool    → catches Throwable
+  2. uploadContent($dto) → returns bool    → catches S3Exception  ← BUG: inconsistent with #1
+  3. getUrl($dto)        → returns ?string → catches S3Exception
+  4. getObject($dto)     → returns ?Result → catches S3Exception
+  5. delete($dto)        → returns bool    → catches S3Exception
+  6. exist($dto)         → returns bool    → catches RuntimeException
+
+TESTS PER METHOD: 3 (success + null-guard + exception)
+TOTAL: 6 methods × 3 = 18 + extras below
+
+EXCEPTIONS TO PATTERN:
+  - upload() has needUnlink param → +2 tests (unlink true/false)
+  - uploadContent() has acl param with default → +1 test (default value)
+  - exist() uses doesObjectExist (bool) not command → +1 test (false return)
+
+4-6: Same as standard contract (MOCK INVENTORY, MUTATION TARGETS, TEST OUTLINE).
+```
+
+**When to use per-pattern mode:** When 3+ methods share the same control flow pattern AND section 1 (BRANCHES) would repeat the same branches N times. The pattern description replaces per-method branches. Exceptions to the pattern are listed explicitly — these are the high-value test targets.
+
 ## ORCHESTRATOR Contract Variant
 
 For ORCHESTRATOR files (app.ts, server.ts, main.ts) — replace sections 1-3 with these. Keep sections 4-6.
