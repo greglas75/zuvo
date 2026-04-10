@@ -315,3 +315,4 @@ Commits pending review. Auto-managed:
 - edd377a (2026-04-10) release: v1.3.56 — fix: retrospective — anti-self-censoring instruction
 - 4129d16 (2026-04-10) release: v1.3.57 — feat: auto-inject project profile summary into SessionStart hook
 - 9af9aaf (2026-04-10) fix: retrospective — require exactly 5 proposals, not "up to 5"
+- 5ac2e2f (2026-04-10) release: v1.3.58 — fix: retrospective — require exactly 5 proposals
