@@ -164,7 +164,7 @@ Read `domain-profile-registry.md` for niche-appropriate schema:
 - Detect existing `@type`. If specific (Recipe, HowTo, Event) → preserve and merge. If BlogPosting only → upgrade per niche.
 - FAQ: if article now has Q&A content + niche allows FAQ → add FAQPage schema.
 - OG tags: ensure `og:title`, `og:description`, `og:type`, `og:image` in frontmatter.
-- `dateModified` updated to today.
+- **dateModified / modifiedDate / updatedDate:** Find the existing modification date field in frontmatter (common names: `modifiedDate`, `updatedDate`, `dateModified`, `lastmod`, `updated`). Update it to today's date. If no such field exists, add `modifiedDate: YYYY-MM-DD`. Never touch `publishDate` / `date` / `publishedDate` — that's the original publication date.
 - Meta title/description: only update if currently MISSING. Never rewrite existing meta that the author wrote.
 
 ### 2.5 Anti-slop Review
