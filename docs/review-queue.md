@@ -322,3 +322,4 @@ Commits pending review. Auto-managed:
 - 879d7dd (2026-04-10) release: v1.3.61 — feat: retrospective in content-optimize + write-article
 - abdbdbf (2026-04-10) feat: rename content-optimize → content-expand — new 3-phase pipeline with research, expansion, and optimization
 - a6a0b92 (2026-04-10) fix: content-expand — remove article length threshold for agent dispatch, always use full review pipeline
+- cf87713 (2026-04-10) release: v1.3.62 — feat: content-expand replaces content-optimize — 3-phase pipeline with research, expansion, full review

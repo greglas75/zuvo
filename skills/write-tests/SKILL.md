@@ -39,16 +39,15 @@ CORE (Phase 0):
   5. ../../shared/includes/quality-gates.md        -- [READ|MISSING -> STOP]
   6. ../../shared/includes/run-logger.md           -- [READ|MISSING -> STOP]
   7. ../../rules/testing.md                          -- [READ|MISSING -> STOP]
-  8. ../../shared/includes/project-profile-protocol.md -- [READ|MISSING -> DEGRADED]
-  9. ../../shared/includes/retrospective.md          -- RETRO PROTOCOL
+  8. ../../shared/includes/retrospective.md          -- RETRO PROTOCOL
 ```
 
 **Step 1 (load after classification):** based on file complexity.
 
 ```
 STANDARD+ only (skip for THIN):
-  10. ../../shared/includes/test-edge-cases.md      -- [READ|SKIP]
-  11. ../../shared/includes/test-code-types.md      -- [READ|SKIP]
+  9. ../../shared/includes/test-edge-cases.md      -- [READ|SKIP]
+  10. ../../shared/includes/test-code-types.md      -- [READ|SKIP]
 ```
 
 ---
@@ -56,19 +55,47 @@ STANDARD+ only (skip for THIN):
 ## Phase 0: Setup (runs once)
 
 1. **CodeSift setup** per `codesift-setup.md`. Note repo identifier.
-2. **Project profile (MANDATORY — do not skip):** Read `.zuvo/project-profile.json` with `offset=0 limit=50` (grab stack + test_conventions only — do NOT read the full file, it can be 30K+). If it exists:
-   - **Print confirmation:** `[PROFILE] Loaded project profile: {framework} + {test_runner}, {N} critical files, conventions: {yes/no}`
-   - **Use for ALL file types, not just ORCHESTRATOR:**
-     - `profile.stack` → framework, test runner, language (replaces inline detection in Step 3)
-     - `profile.file_classifications` → know if target file is critical/important/routine (informs test depth)
-     - `profile.conventions` or `profile.nest_conventions` etc. → framework-specific context:
-       - For ORCHESTRATOR: middleware chains, rate limits, route mounts, auth boundaries
-       - For SERVICE/CONTROLLER: global guards applied (NestJS), middleware chain context (Hono/Express)
-       - For GUARD/MIDDLEWARE: where this guard sits in the global chain, what it protects
-       - For COMPONENT/HOOK: state management, UI library, routing conventions
-       - For ALL types: test conventions (mock style, assertion patterns, setup patterns)
-   - If profile missing or CodeSift unavailable: fall back to Step 3 (legacy inline detection). Print: `[PROFILE] Not found — using legacy detection.`
-3. **Stack detection (skip if profile loaded):** Only runs if Step 2 found no profile. Read package.json/tsconfig/composer.json. Detect test runner (vitest/jest/phpunit). Find existing test patterns (DB helpers, factory functions, mock conventions).
+2. **Dynamic context retrieval (when CodeSift available):** Run 4 targeted retrieval dimensions for the target file. Each dimension answers a specific question. Skip any that timeout/fail — partial context is better than none.
+
+   **Dimension 1 — Exemplar test:** Find an existing test file to use as pattern reference.
+   ```
+   find_references(repo, "<main_export_of_target_file>")
+   ```
+   Look for `*.test.*` or `*.spec.*` files in the results. If found → this is the exemplar. Read it fully — it shows how THIS project writes tests (mock style, describe structure, import conventions, setup patterns).
+   If no test file in references → try: `search_text(repo, query: "describe.*<ClassName>", file_pattern: "**/__tests__/*")`.
+   If still nothing → try same code type in same module: `search_text(repo, query: "describe", file_pattern: "**/<same_module>/__tests__/*")`.
+   Print: `[CONTEXT] Exemplar: {path}` or `[CONTEXT] No exemplar found — using generic patterns.`
+
+   **Dimension 2 — Import mocks:** How does this project mock the target file's dependencies?
+   For **at most 5** imports from the target file (skip node_modules, skip type-only imports):
+   ```
+   search_text(repo, query: "vi.mock.*<import_path>", file_pattern: "**/__tests__/*|*.test.*|*.spec.*", max_results: 3)
+   ```
+   Collect: which dependencies are mocked, what mock patterns are used (mockResolvedValue, vi.fn, class mock, etc.).
+   Print: `[CONTEXT] Import mocks: {N} dependencies with existing mock patterns.`
+
+   **Dimension 3 — Test setup:** What shared test infrastructure exists?
+   ```
+   search_text(repo, query: "setupFiles", file_pattern: "vitest.config.*|jest.config.*")
+   ```
+   Extract setup file paths from config → read their outlines with `get_file_outline`. These setup files contain global mocks (Sentry, shared-types, etc.) that tests inherit.
+   Print: `[CONTEXT] Setup: {N} setup files with {N} global mocks.`
+
+   **Dimension 4 — Hub signatures:** What do the target file's imported utilities look like?
+   Extract import names from target file → query signatures:
+   ```
+   codebase_retrieval(repo, token_budget=1000, queries=[
+     {type: "symbols", query: "<imported_function_names>", detail_level: "compact"}
+   ])
+   ```
+   This gives function signatures (params + return types) without full source. The LLM knows `isPrismaNotFound(error: unknown): boolean` exists without reading 200 lines.
+   Print: `[CONTEXT] Signatures: {N} utility functions.`
+
+   **Error handling per dimension:** If any query times out or returns an error, print `[CONTEXT] Dimension N skipped — {reason}.` and continue with remaining dimensions.
+
+   **If CodeSift unavailable:** Skip all 4 dimensions. Print: `[CONTEXT] CodeSift unavailable — using legacy detection.` Fall to Step 3.
+
+3. **Stack detection:** Read package.json/tsconfig/composer.json. Detect test runner (vitest/jest/phpunit). Find existing test patterns (DB helpers, factory functions, mock conventions). If Dimension 1 found an exemplar, stack is already implied — but confirm test runner from config.
 4. **Baseline test run:** execute test suite, record pre-existing failures. These are ignored in verification.
 5. **Build queue:**
    - **Explicit mode:** queue = user's target file(s)
@@ -104,7 +131,16 @@ Read the production file fully. **If a test file already exists, read it too.** 
 
 **Barrel file detection:** If the file contains ONLY `export { X } from './sub-module'` lines (zero owned logic), it is a barrel/re-export file. Do NOT write delegation tests for it — expand the queue to the sub-modules it re-exports from. Print: `[BARREL] {file} is a re-export barrel — expanding to {N} sub-modules.`
 
-**If project profile loaded in Phase 0:** Check `file_classifications` — the target file may already be classified (critical/important/routine with code_type). Use this as starting point. Also use profile conventions to understand what global guards/middleware/modules apply to this file's context.
+**If exemplar test loaded in Phase 0 (Dimension 1):** Use it as the primary pattern reference:
+- Copy mock import style from exemplar (vi.mock paths, mock factory patterns)
+- Match describe/it nesting structure
+- Reuse setup patterns (beforeEach, afterEach, shared helpers)
+- Match assertion style (toEqual vs toBe, exact vs loose)
+Do NOT invent new patterns — follow what the exemplar does.
+
+**If import mocks loaded (Dimension 2):** Use discovered mock patterns in MOCK INVENTORY section of test contract. Copy mock patterns from existing project tests, not from memory.
+
+**If hub signatures loaded (Dimension 4):** Reference utility function signatures when planning assertions. Know what `isPrismaNotFound(error)` returns before writing error-path tests.
 
 **With CodeSift:** single batch call:
 ```
