@@ -332,3 +332,11 @@ Commits pending review. Auto-managed:
 - 1003486 (2026-04-10) fix: content-expand auto-sets modifiedDate in frontmatter on expansion
 - 0f7acc0 (2026-04-10) release: v1.3.67 — fix: auto modifiedDate + preserve original text refinements
 - d94c56d (2026-04-10) release: v1.3.68 — enhance: retro-driven — clearAllMocks guidance, Logger spy template, cross-method branch refs, filtered last-call, slug/threshold edges, Q5 clarification, COMPONENT fast-path
+- c27644e (2026-04-10) release: v1.3.69 — fix: adversarial-review handles spaces in file paths (greedy path reconstruction)
+- 4d234c8 (2026-04-10) feat: write-tests lazy include loading — classify first, load matching tier
+- 5741fa7 (2026-04-10) feat: write-tests CodeSift retrieval aligned with lazy loading phases
+- 200c9e5 (2026-04-10) feat: build lazy include loading — tier-based conditional loading
+- ebdde81 (2026-04-10) feat: refactor lazy include loading — refactor-type-based conditional loading
+- f5fb80b (2026-04-10) feat: code-audit lazy include loading — domain-based conditional loading
+- f0599d4 (2026-04-10) feat: review lazy include loading — diff-based conditional loading
+- 67accc8 (2026-04-10) feat: debug lazy include loading — bug-category-based conditional loading

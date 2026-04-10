@@ -1,150 +1,280 @@
-# Implementation Plan: Dynamic Test Context
+# Implementation Plan: Lazy Include Loading + Dynamic Test Context
 
 **Spec:** docs/specs/2026-04-10-dynamic-test-context-spec.md
 **spec_id:** 2026-04-10-dynamic-test-context-1430
 **planning_mode:** spec-driven
-**plan_revision:** 1
+**plan_revision:** 2
 **status:** Approved
 **Created:** 2026-04-10
-**Tasks:** 4
-**Estimated complexity:** 4 standard (1 spike + 2 markdown changes + 1 validation)
+**Tasks:** 9
+**Estimated complexity:** 8 standard + 1 complex (write-tests Phase 0 restructure)
 
 ## Architecture Summary
 
-Single-file change: `skills/write-tests/SKILL.md`. Phase 0 Step 2 replaces static profile loading with 4 CodeSift retrieval dimensions. All other skill steps unchanged. No new files, no new tools, no code.
+6 independent SKILL.md file edits + 1 validation task. All changes are markdown-only — no compiled code, no new files, no dependencies. Each skill gets the same 3-phase pattern (PHASE 0 bootstrap → PHASE 0.5 classify → PHASE 1 conditional load) with skill-specific classification dimensions and include maps.
+
+**Component map:**
+- `skills/write-tests/SKILL.md` — highest value, most complex (4 loading tiers + CodeSift queries + contract output)
+- `skills/build/SKILL.md` — already has tiering, minimal change (add Phase labels)
+- `skills/review/SKILL.md` — heavy upfront loader, needs diff-based classification
+- `skills/refactor/SKILL.md` — 7 upfront files, needs ETAP-aligned conditional loading
+- `skills/code-audit/SKILL.md` — consolidate codesift-setup from prose to Phase 0
+- `skills/debug/SKILL.md` — no conditional loading today, needs bug-type classification
+
+**Zero blast radius to shared includes** — no files under `shared/includes/` are modified.
 
 ## Technical Decisions
 
-- Use existing CodeSift MCP tools (already available in Phase 0 via `codesift-setup.md`)
-- 4 separate calls (not batch) — allows per-query graceful skip
-- Cap Query 2 at 5 dependencies
-- Total token budget: ~5K across all 4 dimensions
-- Legacy fallback: if CodeSift unavailable, skip enrichment entirely
+- **Pattern:** 3-phase Mandatory File Loading template standardized across all skills
+- **Selective reading:** Heading-based section instructions (e.g., "Read from ## Q1-Q19 to end") — no file splitting
+- **Implementation order:** write-tests first (Tasks 1-2) as spike, then build → review → refactor → code-audit → debug
+- **Spike gate:** Tasks 3-7 are gated on Task 2 completing successfully — write-tests validates the pattern works before applying to other skills
+- **Validation:** `./scripts/adversarial-review.sh --mode spec` on each diff, cross-skill validation at end
+- **Rollback:** Each task edits one file. Rollback = `git checkout HEAD~1 -- <file>`. Global rollback = revert all commits in this series.
+- **Classification fallback:** When classification is ambiguous, default to STANDARD tier (loads more includes than LIGHT, less than HEAVY). Never skip includes due to low-confidence classification.
 
 ## Quality Strategy
 
-- No TDD (markdown skill file, not code)
-- Verification: manual run on SERVICE file, check `[CONTEXT]` output
-- Acceptance: AC #7-10 measured empirically on tgm-survey-platform
-- Risk: exemplar selection quality — mitigated by selection heuristic (same dir > same type > any)
+- **Primary risk:** Agent silently loads conditional file before classification (undetectable without live run)
+- **Mitigation:** Each skill prints classification BEFORE conditional load checklist — adversarial review checks structural ordering
+- **CQ gates relevant:** CQ13 (no dead instructions), CQ14 (no duplicate load references), CQ20 (single source of truth for phase ordering)
+- **Verification per task:** `adversarial-review --mode spec --files <skill>` on the changed file
 
 ## Task Breakdown
 
----
-
-### Task 1: Spike — validate 4 CodeSift queries on real SERVICE file
-**Files:** none (manual exploration in tgm-survey-platform)
-**Complexity:** standard
+### Task 1: write-tests — restructure Mandatory File Loading to 3-phase pattern
+**Files:** `skills/write-tests/SKILL.md`
+**Complexity:** complex
 **Dependencies:** none
-**Execution routing:** default
+**Execution routing:** deep implementation tier
 
-- [ ] RED: N/A (spike — exploration, not code)
-- [ ] GREEN: In a Claude Code session on tgm-survey-platform, manually run the 4 CodeSift queries for `apps/api/src/modules/organization/organization.service.ts`:
-  1. `codebase_retrieval(token_budget=2000, queries=[{type: "semantic", query: "test for SERVICE organization"}])` → Does it find an exemplar test?
-  2. `find_references("<main_export>")` + `search_text(query: "vi.mock.*organization", file_pattern: "*.test.*")` → Does it find mock patterns?
-  3. `search_text(query: "beforeAll|globalSetup|setupFiles", file_pattern: "vitest.config.*|setup.*")` → Does it find setup files?
-  4. `assemble_context(query: "organization service imports", level: "L1", token_budget: 1000)` → Does it return useful signatures?
-  Record: total latency, total tokens retrieved, quality of results (relevant or noise?).
-- [ ] Verify: All 4 queries return non-empty results. Total latency <20s. Total tokens <6K. Results are relevant (not random files).
-  Expected: Exemplar test found, mock patterns found, setup file found, signatures returned.
-- [ ] Acceptance: Validates feasibility of AC #1, #2, #3 before writing skill changes.
-- [ ] Commit: N/A (spike only — no code changes)
+- [ ] RED: Current Phase 0 loads 5 files (test-contract, test-blocklist, quality-gates, testing.md, codesift-setup) before reading the production file. Spec requires: ONLY codesift-setup in Phase 0. The rest moves to Phase 1 (after classification). Identify exact lines 29-57 that need restructuring.
+- [ ] GREEN: Rewrite the Mandatory File Loading section to 3-phase pattern:
+  - PHASE 0 — BOOTSTRAP: codesift-setup.md ONLY (1 file)
+  - PHASE 0.5 — CLASSIFY: read production file → classify code type + complexity + testability → determine loading tier (LIGHT/STANDARD/HEAVY/COMPONENT)
+  - PHASE 1 — CONDITIONAL: load includes per tier using the include map from spec DD6
+  - DEFERRED: run-logger.md, retrospective.md at Step 5
+  
+  Add tier assignment rules:
+  ```
+  IF code_type IN (PURE, VALIDATOR) AND complexity == THIN → LIGHT
+  IF code_type IN (COMPONENT, HOOK) → COMPONENT
+  IF code_type IN (CONTROLLER, ORCHESTRATOR) → HEAVY
+  IF complexity == COMPLEX → HEAVY
+  ELSE → STANDARD
+  ```
+  
+  Add selective reading instructions:
+  - quality-gates.md: "Read from ## Q1-Q19: Test Quality Gates to end of file"
+  - test-code-types.md: "Read only the ### {CODE_TYPE} section matching classification"
+  
+  Remove duplicate items 9-10 (lines 53-56) that appear in both Phase 0 and Step 1 blocks.
+  
+  Add print instruction: `[CLASSIFIED] {file}: {type} {complexity} → tier {TIER}`
+  
+  Also apply DD8: change test contract from printed output to internal checklist. Add instruction: "Do NOT print the full contract to conversation. Use as internal checklist. Show user only: branch coverage table + test outline + planned test count."
 
-**Gate:** If spike fails (queries return garbage, latency >30s, or CodeSift can't find relevant tests), STOP. Revisit query design before proceeding.
+- [ ] Verify: `./scripts/adversarial-review.sh --mode spec --files "skills/write-tests/SKILL.md"`
+  Expected: No CRITICAL findings related to phase ordering or missing includes
+- [ ] Acceptance: AC #1 (only codesift-setup before reading), AC #2 (classification before includes), AC #3 (tier printed), AC #4 (READ/SKIP checklist)
+- [ ] Commit: `feat: write-tests lazy include loading — classify first, load matching tier`
 
----
-
-### Task 2: Replace static profile loading with dynamic retrieval instructions
-**Files:** `skills/write-tests/SKILL.md` (modify)
+### Task 2: write-tests — align CodeSift retrieval with new phase structure
+**Files:** `skills/write-tests/SKILL.md`
 **Complexity:** standard
-**Dependencies:** Task 1 (spike must pass gate)
-**Execution routing:** default
+**Dependencies:** Task 1
+**Execution routing:** default implementation tier
 
-- [ ] RED: N/A (markdown change — no TDD)
-- [ ] GREEN: Modify Phase 0 Step 2 in `skills/write-tests/SKILL.md`:
-  - Remove: static profile loading (`Read .zuvo/project-profile.json with offset=0 limit=50`)
-  - Remove: profile consumption instructions (the `IF profile.conventions...` block)
-  - Remove: `project-profile-protocol.md` from Mandatory File Loading checklist (item 8)
-  - Add: 4 retrieval dimensions with CodeSift queries:
-    - **Dimension 1 — Exemplar test:** `codebase_retrieval(repo, token_budget=2000, queries=[{type: "semantic", query: "test for [code_type] in [module]"}, {type: "text", query: "describe.*[code_type]", file_pattern: "*.test.*"}])`. Select best match by: same directory > same code type > any test. Read the exemplar file as pattern reference.
-    - **Dimension 2 — Import context:** `find_references(repo, "<main_export>")` + `trace_call_chain(repo, "<main_export>", direction: "callees", depth: 1)`. Then for at most 5 dependencies: `search_text(repo, query: "vi.mock.*<dep_path>", file_pattern: "*.test.*", top_k: 3)`.
-    - **Dimension 3 — Test setup:** `search_text(repo, query: "beforeAll|globalSetup|setupFiles", file_pattern: "vitest.config.*|jest.config.*|setup.*")` + `get_file_outline(repo, file_path: "<setup_file>")`.
-    - **Dimension 4 — Hub signatures:** `assemble_context(repo, query: "<imports>", level: "L1", token_budget: 1000)`.
-  - Add: console output `[CONTEXT] Loaded: exemplar={path}, {N} import mocks, {N} setup helpers, {N} utility signatures`
-  - Add: fallback `If CodeSift unavailable: skip to Step 3 (legacy stack detection).`
-  - Add: error handling per query: `catch timeout/error → print [CONTEXT] Query N timed out — skipping {dimension}. → continue`
-- [ ] Verify: `grep -c "Dimension" skills/write-tests/SKILL.md && grep -c "\[CONTEXT\]" skills/write-tests/SKILL.md`
-  Expected: Dimension count >= 4, [CONTEXT] count >= 3
-- [ ] Acceptance: AC #1 (4 retrieval dimensions), AC #3 (<6K tokens), AC #6 (no new mandatory files)
-- [ ] Commit: `feat: replace static profile with per-task CodeSift retrieval in write-tests Phase 0`
+- [ ] RED: Current CodeSift retrieval dimensions (D1-D4) run in Phase 0 Step 2, before classification. After Task 1, classification happens in Phase 0.5. The retrieval dimensions should run AFTER classification (in Phase 1) since code type affects which dimensions to run (PURE skips D2-D4, COMPONENT skips D2-D3).
+- [ ] GREEN: Move CodeSift retrieval from Phase 0 Step 2 to Phase 1 (after classification, alongside conditional include loading). Ensure:
+  - D1 (exemplar) runs for all tiers
+  - D2 (import mocks) conditional: skip for LIGHT tier
+  - D3 (test setup) conditional: skip if exemplar covers it
+  - D4 (hub signatures) conditional: skip for LIGHT tier
+  
+  Update print output to include tier: `[CONTEXT] Tier: {TIER}, exemplar={path}, {N} import mocks, {N} signatures`
 
----
+- [ ] Verify: `./scripts/adversarial-review.sh --mode spec --files "skills/write-tests/SKILL.md"`
+  Expected: No CRITICAL findings
+  Additionally verify: CodeSift queries use `token_budget` params (D1: 2000, D2: 1500, D4: 1000) → total max ~4.5K tokens (satisfies AC #9 <6K). Timing (AC #8) verified during live validation in Task 9.
+- [ ] Acceptance: AC #7 (4 dimensions when CodeSift available), AC #8 (timing — verified live), AC #9 (token budget enforced by params), AC #10 (legacy fallback works)
+- [ ] Commit: `feat: write-tests CodeSift retrieval aligned with lazy loading phases`
 
-### Task 3: Update Step 1 (Analyze) to use retrieved context
-**Files:** `skills/write-tests/SKILL.md` (modify)
+### Task 3: build — restructure to 3-phase lazy loading
+**Files:** `skills/build/SKILL.md`
 **Complexity:** standard
-**Dependencies:** Task 2
-**Execution routing:** default
+**Dependencies:** Task 2 (spike gate — write-tests validates pattern works)
+**Execution routing:** default implementation tier
 
-- [ ] RED: N/A (markdown change)
-- [ ] GREEN: Modify Step 1 (Analyze) in `skills/write-tests/SKILL.md`:
-  - Replace: `If project profile loaded in Phase 0: Check file_classifications...` block
-  - With: `If exemplar test loaded in Phase 0: Use it as pattern reference for mock style, describe/it structure, import conventions, and setup patterns. If import context loaded: Use discovered mock patterns for MOCK INVENTORY in test contract. If hub signatures loaded: Reference utility function signatures when planning assertions.`
-  - Add to test contract section (Step 2): `If exemplar test is available, use its patterns for MOCK INVENTORY section. Copy mock import paths from exemplar, not from memory.`
-- [ ] Verify: `grep -c "exemplar" skills/write-tests/SKILL.md`
-  Expected: >= 3 references to exemplar
-- [ ] Acceptance: AC #10 (mock pattern match >= 70%)
-- [ ] Commit: `feat: wire dynamic context into test analysis and contract steps`
+- [ ] RED: Current structure: CORE block (6 files loaded unconditionally) + Deferred section. codesift-setup.md is referenced in prose (line ~61), not in the checklist. Spec requires 3-phase pattern with codesift-setup as Phase 0 item 1.
+- [ ] GREEN: Restructure Mandatory File Reading section using build's ACTUAL current includes:
+  - PHASE 0 — BOOTSTRAP: codesift-setup.md ONLY (move from inline prose at line ~61 to Phase 0 checklist)
+  - PHASE 0.5 — CLASSIFY: after Phase 0 context gathering, classify into tier (already exists as "Tiering Model" section at line ~71 — add Phase 0.5 label, ensure it runs BEFORE conditional loading)
+  - PHASE 1 — CONDITIONAL (based on tier): load per tier using build's current deferred-loading items:
+    - ALL tiers: cq-patterns.md, file-limits.md
+    - STANDARD+: code-contract.md, testing.md, test-quality-rules.md
+    - DEEP: + cq-checklist.md, test-contract.md, quality-gates.md (Q1-Q19 for test eval)
+  - DEFERRED: run-logger.md, retrospective.md, knowledge-prime/curate
+  
+  Note: build's include map follows what the skill CURRENTLY loads (cq-patterns, file-limits, code-contract, testing, test-quality-rules, cq-checklist, test-contract) reorganized by tier. The spec's DD9 build include map table is illustrative — the actual includes are determined by what the skill needs.
 
----
+- [ ] Verify: `./scripts/adversarial-review.sh --mode spec --files "skills/build/SKILL.md"`
+  Expected: No CRITICAL findings
+- [ ] Acceptance: AC #5 (build restructured to 3-phase), AC #16 (token cost reduction)
+- [ ] Commit: `feat: build lazy include loading — tier-based conditional loading`
 
-### Task 4: E2E validation on SERVICE file
-**Files:** none (validation only)
+### Task 4: review — restructure to 3-phase lazy loading
+**Files:** `skills/review/SKILL.md`
 **Complexity:** standard
-**Dependencies:** Tasks 2, 3
-**Execution routing:** default
+**Dependencies:** Task 2 (spike gate)
+**Execution routing:** default implementation tier
 
-- [ ] RED: N/A (validation)
-- [ ] GREEN: Execute the full pipeline:
-  1. Install updated skill: `./scripts/install.sh`
-  2. Restart Claude Code
-  3. In tgm-survey-platform, run: `/zuvo:write-tests` on a SERVICE file (e.g., `apps/api/src/modules/organization/organization.service.ts`)
-  4. Verify output contains `[CONTEXT] Loaded: exemplar=...`
-  5. Verify generated test uses mock patterns from project (not generic patterns)
-  6. Check token usage — should be lower than previous runs with static profile
-- [ ] Verify: Visual inspection of skill output for `[CONTEXT]` line and exemplar-based patterns
-  Expected: `[CONTEXT] Loaded: exemplar={some_test_path}, {N} import mocks, {N} setup helpers, {N} utility signatures`
-- [ ] Acceptance: AC #2 (<20s total), AC #4 (legacy fallback), AC #5 (no new gate failures), AC #7 (Q >= 16/19), AC #8 (CQ25 -30%), AC #9 (tokens -40%), AC #10 (mock match >= 70%)
-- [ ] Commit: N/A (validation only)
+- [ ] RED: Current structure: Core (5 files unconditional) + Optional (2) + Conditional table (7). quality-gates.md loaded unconditionally (~144 lines) even when diff is test-only. run-logger.md and retrospective.md loaded in Core but not needed until final output.
+- [ ] GREEN: Restructure Mandatory File Loading:
+  - PHASE 0 — BOOTSTRAP: codesift-setup.md ONLY
+  - PHASE 0.5 — CLASSIFY: read the diff, classify content type:
+    - prod-only: diff touches production files only
+    - test-only: diff touches test files only
+    - mixed: both
+  - PHASE 1 — CONDITIONAL:
+    - ALWAYS: env-compat.md (needed for agent dispatch), cross-provider-review.md (adversarial runs at all tiers — currently line 41 "Always")
+    - prod-only: quality-gates.md (CQ1-CQ28 section only), cq-patterns (per code type), cq-checklist
+    - test-only: quality-gates.md (Q1-Q19 section only), testing.md
+    - mixed: quality-gates.md (full), cq-patterns (per code type), testing.md
+    - security signals: security.md
+  - DEFERRED: run-logger.md, retrospective.md, knowledge-prime/curate
+  
+  Note: env-compat.md and cross-provider-review.md are in the review skill's CURRENT loading (lines 21, 41). They are not in the spec's simplified review include map but are legitimate — env-compat is needed for agent dispatch, cross-provider-review is marked "Always" for adversarial.
+  
+  Preserve existing conditional table but reframe under Phase 1.
 
----
+- [ ] Verify: `./scripts/adversarial-review.sh --mode spec --files "skills/review/SKILL.md"`
+  Expected: No CRITICAL findings
+- [ ] Acceptance: AC #5 (review restructured to 3-phase), AC #15 (token cost reduction)
+- [ ] Commit: `feat: review lazy include loading — diff-based conditional loading`
 
-## Dependency Graph
+### Task 5: refactor — restructure to 3-phase lazy loading
+**Files:** `skills/refactor/SKILL.md`
+**Complexity:** standard
+**Dependencies:** Task 2 (spike gate)
+**Execution routing:** default implementation tier
 
-```
-Task 1 (spike) ──GATE──→ Task 2 (Phase 0 rewrite) ←── Task 3 (Step 1 update) ←── Task 4 (E2E validation)
-```
+- [ ] RED: Current structure: 7 unconditional files (including cq-patterns.md ~8.4K and cq-checklist.md) + conditional table. cq-patterns loaded unconditionally even for simple renames. Spec requires classification-based loading.
+- [ ] GREEN: Restructure Mandatory File Loading:
+  - PHASE 0 — BOOTSTRAP: codesift-setup.md ONLY
+  - PHASE 0.5 — CLASSIFY: read target, determine refactor type:
+    - RENAME: symbol rename, file move
+    - EXTRACT: extract function/class/module
+    - SPLIT: split large file
+    - INLINE: consolidate/inline
+    - RESTRUCTURE: architectural change
+  - PHASE 1 — CONDITIONAL:
+    - RENAME: env-compat.md only (minimal ceremony)
+    - EXTRACT/SPLIT: + quality-gates.md (CQ section), file-limits.md
+    - INLINE: + cq-patterns.md (to verify no duplicate logic)
+    - RESTRUCTURE: + cq-patterns.md, cq-checklist.md, quality-gates.md (full)
+    - IF tests affected: + testing.md, test-quality-rules.md
+  - DEFERRED: run-logger.md, retrospective.md
 
-Task 1 is a go/no-go gate. If spike fails, revisit query design.
+- [ ] Verify: `./scripts/adversarial-review.sh --mode spec --files "skills/refactor/SKILL.md"`
+  Expected: No CRITICAL findings
+- [ ] Acceptance: AC #5 (refactor restructured to 3-phase)
+- [ ] Commit: `feat: refactor lazy include loading — refactor-type-based conditional loading`
 
-## Acceptance Criteria Coverage
+### Task 6: code-audit — restructure to 3-phase lazy loading
+**Files:** `skills/code-audit/SKILL.md`
+**Complexity:** standard
+**Dependencies:** Task 2 (spike gate)
+**Execution routing:** default implementation tier
 
-| Spec AC | Task(s) |
-|---------|---------|
-| AC #1 (4 retrieval dimensions) | Task 1 (spike), Task 2 |
-| AC #2 (<20s total) | Task 1 (spike), Task 4 |
-| AC #3 (<6K tokens) | Task 1 (spike), Task 2 |
-| AC #4 (legacy fallback) | Task 2, Task 4 |
-| AC #5 (no new gate failures) | Task 4 |
-| AC #6 (no new mandatory files) | Task 2 |
-| AC #7 (Q >= 16/19) | Task 4 |
-| AC #8 (CQ25 -30%) | Task 4 |
-| AC #9 (tokens -40%) | Task 4 |
-| AC #10 (mock match >= 70%) | Task 3, Task 4 |
+- [ ] RED: Current structure: CORE block (6 files) + codesift-setup in separate prose section (lines 59-65). codesift-setup is NOT in the checklist. No conditional loading. Spec requires codesift-setup as Phase 0 item 1 and domain-based conditional loading.
+- [ ] GREEN: Restructure Mandatory File Loading:
+  - PHASE 0 — BOOTSTRAP: codesift-setup.md ONLY (move from prose to checklist)
+  - PHASE 0.5 — CLASSIFY: read target file(s), classify domain:
+    - data: touches DB, queries, transactions
+    - async: touches promises, streams, workers
+    - security: touches auth, input, secrets
+    - general: none of the above
+  - PHASE 1 — CONDITIONAL:
+    - ALWAYS: cq-checklist.md, env-compat.md
+    - data: + cq-patterns.md (CQ6, CQ7, CQ9, CQ16, CQ17 focus)
+    - async: + cq-patterns.md (CQ15, CQ17 focus)
+    - security: + security.md, cq-patterns.md (CQ4, CQ5 focus)
+    - general: + cq-patterns.md (full), file-limits.md
+  - DEFERRED: run-logger.md
 
-## Notes
+- [ ] Verify: `./scripts/adversarial-review.sh --mode spec --files "skills/code-audit/SKILL.md"`
+  Expected: No CRITICAL findings
+- [ ] Acceptance: AC #5 (code-audit restructured to 3-phase)
+- [ ] Commit: `feat: code-audit lazy include loading — domain-based conditional loading`
 
-- Task 1 is a spike — run manually in Claude Code with CodeSift. If queries don't return useful results, STOP and redesign before touching the skill file.
-- Tasks 2 and 3 are markdown edits to `skills/write-tests/SKILL.md` — no TDD, no code compilation.
-- Task 4 requires a live Claude Code session with CodeSift in tgm-survey-platform. Cannot be automated.
-- The spec's `project-profile-protocol.md` stays in shared/includes — just removed from write-tests mandatory file loading.
+### Task 7: debug — restructure to 3-phase lazy loading
+**Files:** `skills/debug/SKILL.md`
+**Complexity:** standard
+**Dependencies:** Task 2 (spike gate)
+**Execution routing:** default implementation tier
+
+- [ ] RED: Current structure: 8 files loaded unconditionally, no classification, no conditional loading. codesift-setup missing from checklist entirely. Most significant restructure needed.
+- [ ] GREEN: Restructure Mandatory File Reading:
+  - PHASE 0 — BOOTSTRAP: codesift-setup.md ONLY (add to checklist)
+  - PHASE 0.5 — CLASSIFY: read error/file/stack trace, classify bug category:
+    - logic: wrong output, off-by-one, condition error
+    - async: race condition, unhandled rejection, deadlock
+    - data: wrong query, missing join, constraint violation
+    - integration: API contract, version mismatch, env config
+    - test-failure: existing test broke, flaky test
+  - PHASE 1 — CONDITIONAL:
+    - logic: cq-patterns.md, cq-checklist.md
+    - async: cq-patterns.md (CQ15, CQ21 focus)
+    - data: cq-patterns.md (CQ6, CQ7, CQ9 focus)
+    - integration: cq-patterns.md (CQ8, CQ19 focus)
+    - test-failure: testing.md, test-quality-rules.md
+    - ALL: knowledge-prime.md (if available)
+  - DEFERRED: run-logger.md, retrospective.md, knowledge-curate.md
+
+- [ ] Verify: `./scripts/adversarial-review.sh --mode spec --files "skills/debug/SKILL.md"`
+  Expected: No CRITICAL findings
+- [ ] Acceptance: AC #5 (debug restructured to 3-phase)
+- [ ] Commit: `feat: debug lazy include loading — bug-category-based conditional loading`
+
+### Task 8: Cross-skill adversarial validation
+**Files:** All 6 SKILL.md files (read-only validation)
+**Complexity:** standard
+**Dependencies:** Tasks 1-7
+**Execution routing:** default implementation tier
+
+- [ ] RED: After all 6 skills restructured, verify cross-skill consistency:
+  - codesift-setup.md is Phase 0 item 1 in ALL skills
+  - quality-gates.md selective reading instructions are consistent across write-tests, review, refactor
+  - run-logger.md and retrospective.md are DEFERRED in ALL skills
+  - No skill loads a shared include in two different phases
+- [ ] GREEN: Run adversarial review across all 6 files in one pass. Fix any CRITICAL or WARNING findings.
+  ```
+  ./scripts/adversarial-review.sh --mode spec --files "skills/write-tests/SKILL.md skills/build/SKILL.md skills/review/SKILL.md skills/refactor/SKILL.md skills/code-audit/SKILL.md skills/debug/SKILL.md"
+  ```
+- [ ] Verify: Adversarial review returns 0 CRITICAL findings across all 6 files
+  Expected: PASS or WARN-only (no CRITICAL)
+- [ ] Acceptance: AC #5 (all 6 skills restructured), AC #6 (no quality regression)
+- [ ] Commit: `fix: cross-skill consistency for lazy include loading`
+
+### Task 9: Live validation — success criteria verification
+**Files:** None (validation-only, run skills on real projects)
+**Complexity:** standard
+**Dependencies:** Tasks 1-8
+**Execution routing:** default implementation tier
+
+- [ ] RED: Success criteria AC #11-16 require measuring real-world impact: token cost reduction, Q score no regression, CQ25 improvement, exemplar pattern match rate. These cannot be verified structurally — only by running the skills.
+- [ ] GREEN: Run write-tests on 3 files of different types (PURE, SERVICE, ORCHESTRATOR) in a real project. Verify from print output:
+  1. AC #11: Compare include tokens loaded (from PHASE 1 checklist) vs baseline ~27K. Target: >= 50% reduction.
+  2. AC #12: Record Q self-eval scores → median >= 16/19
+  3. AC #8: CodeSift retrieval timing — [CONTEXT] print should appear within 20s of [CLASSIFIED] print
+  4. AC #13-14: Record adversarial pass 1 findings for CQ25 and mock pattern match
+  
+  Run review on one diff and build on one task to verify AC #15-16 (token cost reduction >= 30%).
+  
+  Note: This is a manual validation task. If live runs are not possible in this session, document the validation checklist for the user to run post-release.
+
+- [ ] Verify: Print output from live runs confirms phase ordering and token budgets
+  Expected: All print statements appear in correct order: [CLASSIFIED] before [CONTEXT] before test output
+- [ ] Acceptance: AC #8, AC #11, AC #12, AC #13, AC #14, AC #15, AC #16
+- [ ] Commit: `docs: validation results for lazy include loading`
