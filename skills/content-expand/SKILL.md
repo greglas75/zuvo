@@ -80,9 +80,9 @@ Cascade: `--domain` → scan `--site-dir` articles for niche signals per `domain
 
 If `--site-dir` has 3+ blog articles: extract voice profile per `humanization-rules.md` (rhythm, person, formality). Inconclusive → default rules only.
 
-### 0.4 Quick Score (inline, no agents)
+### 0.4 Score
 
-Score the article yourself across 6 dimensions (PQ1-PQ17 from `prose-quality-registry.md`). For articles >1500 words, dispatch prose-quality-scorer + structure-analyst agents in parallel per `env-compat.md`. For ≤1500 words, score inline — faster and cheaper.
+Dispatch prose-quality-scorer + structure-analyst agents in parallel per `env-compat.md`. Score across 6 dimensions (PQ1-PQ17 from `prose-quality-registry.md`). Short articles get the same scrutiny as long ones — every sentence matters more when there are fewer of them.
 
 Record: before-scores, tier, weak sections, thin sections (<100 words), missing elements per niche profile.
 
@@ -163,7 +163,7 @@ Run anti-slop check on expanded content (same as write-article Phase 4):
 - Hard/soft banned vocabulary per `banned-vocabulary.md` + `--tone`
 - G12 anti-patterns (throat-clearing, superlatives, keyword density)
 - BLUF compliance (G9), chunkability (G6), citation compliance (G11)
-- For articles >1500 words: dispatch anti-slop-reviewer agent (read `../../skills/write-article/agents/anti-slop-reviewer.md`). For ≤1500: review inline.
+- Dispatch anti-slop-reviewer agent (read `../../skills/write-article/agents/anti-slop-reviewer.md`) for all articles regardless of length.
 
 Fix all CRITICAL violations. Fix WARNINGs if localized.
 
