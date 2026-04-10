@@ -60,33 +60,44 @@ When classification is ambiguous, default to STANDARD (loads more than LIGHT, le
 
 Print: `[CLASSIFIED] {file}: {code_type} {complexity} → tier {TIER}`
 
-### PHASE 1 — Conditional Load (based on classification tier)
+### PHASE 1 — Conditional Load (based on classification tier + detected stack)
 
-Load ONLY the includes matching the detected tier. Print READ/SKIP status for each.
+Load ONLY the includes matching the detected tier AND stack. Print READ/SKIP status for each.
+
+**Always load (all tiers, all stacks):**
 
 | Include | LIGHT | STANDARD | HEAVY | COMPONENT |
 |---------|-------|----------|-------|-----------|
-| `../../shared/includes/test-contract.md` | Sections 1,3,6 only (BRANCHES, VALUES, OUTLINE) | Full | Full | Full |
+| `../../shared/includes/test-contract.md` | Sections 1,3,6 only | Full | Full | Full |
 | `../../shared/includes/test-blocklist.md` | Full | Full | Full | Full |
-| `../../shared/includes/quality-gates.md` | Q1-Q19 section only* | Q1-Q19 section only* | Q1-Q19 section only* | Q1-Q19 section only* |
+| `../../shared/includes/quality-gates.md` | Q1-Q19 only* | Q1-Q19 only* | Q1-Q19 only* | Q1-Q19 only* |
 | `../../rules/testing.md` | Full | Full | Full | Full |
-| `../../shared/includes/test-mock-safety.md` | **SKIP** | Full | Full | **SKIP** |
+| `../../shared/includes/test-mock-safety-core.md` | Full | Full | Full | Full |
+| `../../shared/includes/test-code-types-core.md` | Full | Full | Full | Full |
+
+**Stack-specific (load ONLY matching stack):**
+
+| Include | LIGHT | STANDARD | HEAVY | COMPONENT |
+|---------|-------|----------|-------|-----------|
+| `test-mock-safety-js.md` OR `test-mock-safety-php.md` | **SKIP** | Full | Full | **SKIP** |
+| `test-code-types-js.md` OR `test-code-types-php.md` | **SKIP** | Full | Full | **SKIP** |
 | `../../shared/includes/test-edge-cases.md` | **SKIP** | Full | Full | **SKIP** |
-| `../../shared/includes/test-code-types.md` | **SKIP** | Matching section only** | Matching section + templates | **SKIP** |
 
-\* **quality-gates.md selective reading:** Read ONLY from the heading `## Q1-Q19: Test Quality Gates` to end of file. Skip the CQ1-CQ28 section entirely — those gates are for production code review, not test writing.
+**Stack detection:** `composer.json` → PHP, `package.json` → JS/TS, `pyproject.toml` → Python. Load the matching `-js.md` or `-php.md` file. Never load both.
 
-\*\* **test-code-types.md selective reading:** Find the `### {CODE_TYPE}` heading matching your classification. Read ONLY that section (to the next `###` heading). Skip all other code type sections.
+\* **quality-gates.md:** Read ONLY from `## Q1-Q19: Test Quality Gates` to end of file. Skip CQ1-CQ28.
 
 ```
 PHASE 1 — LOADED:
-  2. test-contract.md         -- [READ (full) | READ (sections 1,3,6) | per tier]
-  3. test-blocklist.md        -- [READ]
-  4. quality-gates.md         -- [READ Q1-Q19 only]
-  5. testing.md               -- [READ]
-  6. test-mock-safety.md      -- [READ | SKIP — per tier]
-  7. test-edge-cases.md       -- [READ | SKIP — per tier]
-  8. test-code-types.md       -- [READ matching section | SKIP — per tier]
+  2. test-contract.md              -- [READ]
+  3. test-blocklist.md             -- [READ]
+  4. quality-gates.md              -- [READ Q1-Q19 only]
+  5. testing.md                    -- [READ]
+  6. test-mock-safety-core.md      -- [READ]
+  7. test-code-types-core.md       -- [READ]
+  8. test-mock-safety-{stack}.md   -- [READ | SKIP — per tier]
+  9. test-code-types-{stack}.md    -- [READ | SKIP — per tier]
+  10. test-edge-cases.md           -- [READ | SKIP — per tier]
 ```
 
 ### DEFERRED — Load at completion (Step 5)
