@@ -218,7 +218,9 @@ MODEL INVENTORY
 
 ### 2.0 CodeSift Pre-Scan
 
-Before dispatching agents or running manual analysis, run these automated checks when CodeSift is available. They replace ~20 manual Grep calls:
+Before dispatching agents or running manual analysis, run these automated checks when CodeSift is available. They replace ~20 manual Grep calls and provide TOOL-VERIFIED findings.
+
+#### 2.0a — Generic anti-pattern scans
 
 ```
 # DB1: N+1 and unbounded query detection (automated)
@@ -236,9 +238,62 @@ scan_secrets(min_confidence="medium")              # hardcoded DB passwords, con
 
 If `scan_secrets` is unavailable, fall back to: `Grep` for `password=`, `DATABASE_URL=`, `connection_string`, API keys in `.env` committed to git.
 
+#### 2.0b — SQL composite audit (`sql_audit`)
+
+If the project has `.sql` files (migrations, schema definitions, dumps), run the `sql_audit` composite tool. It bundles 5 diagnostic gates in a single call and replaces what would otherwise be 5+ separate analysis tool invocations:
+
+```
+# Claude Code: ToolSearch("select:mcp__codesift__sql_audit")
+# Codex/other: describe_tools(names=["sql_audit"], reveal=true)
+sql_audit()                                        # runs all 5 gates: drift, orphan, lint, dml, complexity
+```
+
+Map each gate to the corresponding DB dimension:
+
+| sql_audit gate | Maps to | What it catches |
+|---------------|---------|-----------------|
+| `drift`       | DB13 (migration deploy safety) | Prisma↔SQL field/type mismatches — "forgot to run migration" bugs |
+| `orphan`      | DB3 (schema design) | Tables defined in SQL with zero references in code or ORM |
+| `lint`        | DB2 + DB3 | Missing PK, wide tables (>20 cols), duplicate index names |
+| `dml`         | DB12 (DB security) | DELETE/UPDATE without WHERE (data loss), SELECT * (unbounded) |
+| `complexity`  | DB3 (schema design) | God tables: column count + FK count + index count score ≥25 |
+
+For finer control, run a subset of gates: `sql_audit({ checks: ["drift", "dml"] })`.
+
+The `sql_audit` result has shape:
+```json
+{
+  "gates": [
+    { "check": "drift", "pass": false, "critical": true, "finding_count": 3, "summary": "3 drifts: 2 extra in ORM, 0 extra in SQL, 1 type mismatches", "data": {...} },
+    { "check": "orphan", "pass": true, ... },
+    ...
+  ],
+  "summary": { "total_findings": 12, "critical_findings": 1, "gates_run": 5, "gates_passed": 2, "gates_failed": 3 }
+}
+```
+
+Pass each gate's findings to the corresponding DB dimension scoring as TOOL-VERIFIED evidence. Critical gates (`drift` with type_mismatches > 0, `dml` with high-severity findings) propagate to the matching DB critical gate (DB13, DB12).
+
+If `sql_audit` is unavailable (CodeSift older than v0.4.x or no `.sql` files), skip 2.0b and rely on the manual schema/migration analysis in Phase 1 + agent dispatch.
+
+#### 2.0c — Additional SQL query tools (optional)
+
+When deeper investigation is needed for specific findings:
+
+| Tool | When to use |
+|------|-------------|
+| `analyze_schema` | Generate ERD (Mermaid) for the executive summary section |
+| `trace_query(table)` | For each "orphan" finding, verify zero references across `.ts`/`.py`/`.go` |
+| `search_columns(query)` | For DB12 PII concerns, find all `email`/`password`/`ssn` columns |
+| `diff_migrations` | For DB13, scan migration history for destructive ops with severity ranking |
+
+These are query tools (one input, one focused answer) — call them only when an agent needs to drill into a specific concern, not as a blanket pre-scan.
+
+---
+
 If CodeSift is entirely unavailable, skip Phase 2.0 and proceed directly to Agent Dispatch — agents will use Grep/Read.
 
-Collect results. Pass them into agent prompts as "pre-verified findings" (HIGH confidence, tool-verified). Agents should NOT re-scan for these patterns — they should verify context and discover patterns the automated scan missed.
+Collect results from 2.0a + 2.0b. Pass them into agent prompts as "pre-verified findings" (HIGH confidence, tool-verified). Agents should NOT re-scan for these patterns — they should verify context and discover patterns the automated scan missed.
 
 ### Agent Dispatch
 
@@ -262,7 +317,7 @@ Refer to `env-compat.md` for the dispatch pattern.
    - Cursor/Antigravity: CodeSift unavailable — use Grep/Read.
    If any tool call fails, fall back to Grep/Read.
    ```
-   Adjust the tool list per agent role — Schema Analyst needs `get_file_outline` + `search_symbols`; Query Scanner needs `trace_route` + `codebase_retrieval` + `search_patterns`; Infrastructure Auditor needs `search_text` + `find_references`.
+   Adjust the tool list per agent role — Schema Analyst needs `get_file_outline` + `search_symbols` + `sql_audit` + `analyze_schema` + `search_columns`; Query Scanner needs `trace_route` + `codebase_retrieval` + `search_patterns` + `trace_query`; Infrastructure Auditor needs `search_text` + `find_references` + `diff_migrations` (for DB13 destructive op review).
 2. **Token budget:** Each agent must keep its report under 800 words. Structured as: findings list (ID, severity, file:line, 1-sentence description) + 1-paragraph summary. No prose explanations per finding.
 3. **CodeSift cheat sheet** — include right after the tool loading block:
    ```
