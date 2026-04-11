@@ -162,6 +162,8 @@ Skills are invoked with `$skill-name` (Codex convention) instead of `/skill-name
 
 On Codex App (async mode), interactive skills like brainstorm run autonomously with `[AUTO-DECISION]` annotations. Review the generated spec before proceeding to plan.
 
+The compressed response protocol is injected only in hook-enabled sessions. If you invoke skills in a degraded path without session hooks, skills still work, but terse working-mode defaults are not guaranteed.
+
 ## Cursor / Antigravity
 
 ```bash
@@ -186,10 +188,19 @@ When you start a Claude Code session with Zuvo installed:
 
 1. The `SessionStart` hook fires (defined in `hooks/hooks.json`)
 2. The hook script (`hooks/session-start`) reads the skill router from `skills/using-zuvo/SKILL.md`
-3. The router content is injected as session context via `hookSpecificOutput`
-4. Claude now knows about all 39 skills and will auto-route your requests to the right skill
+3. The hook also reads `shared/includes/compressed-response-protocol.md` unless `ZUVO_RESPONSE_PROTOCOL=off`
+4. Router and protocol content are injected as session context via `hookSpecificOutput`
+5. Claude now knows about all 39 skills and will auto-route your requests to the right skill
 
 You do not need to type skill names. The router matches your intent to skills automatically. Saying "review my changes" activates `zuvo:review`. Saying "add a notification feature" activates `zuvo:brainstorm` or `zuvo:build` depending on scope.
+
+If the hook is unavailable or disabled, Zuvo still runs in degraded mode: explicit skill invocation works, but the global compression contract for working chatter is not guaranteed.
+
+To disable the response protocol while keeping the router, start the session with:
+
+```bash
+ZUVO_RESPONSE_PROTOCOL=off claude
+```
 
 ## Quick test
 

@@ -12,11 +12,22 @@ HOOKS_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLUGIN_DIR="$(cd "${HOOKS_DIR}/.." && pwd)"
 
 ROUTER_FILE="${PLUGIN_DIR}/skills/using-zuvo/SKILL.md"
+PROTOCOL_FILE="${PLUGIN_DIR}/shared/includes/compressed-response-protocol.md"
+RESPONSE_PROTOCOL_MODE="${ZUVO_RESPONSE_PROTOCOL:-on}"
+RESPONSE_PROTOCOL_MODE_NORMALIZED="$(printf '%s' "$RESPONSE_PROTOCOL_MODE" | tr '[:upper:]' '[:lower:]')"
 
 # ---------------------------------------------------------------------------
 # Read the meta-skill router content
 # ---------------------------------------------------------------------------
 router_content=$(cat "$ROUTER_FILE" 2>&1 || echo "Failed to read using-zuvo skill")
+
+# ---------------------------------------------------------------------------
+# Read compressed response protocol unless explicitly disabled
+# ---------------------------------------------------------------------------
+protocol_content=""
+if [ "$RESPONSE_PROTOCOL_MODE_NORMALIZED" != "off" ] && [ -f "$PROTOCOL_FILE" ]; then
+    protocol_content=$(cat "$PROTOCOL_FILE" 2>/dev/null || echo "")
+fi
 
 # ---------------------------------------------------------------------------
 # Read project profile if it exists (.zuvo/project-profile.json)
@@ -80,6 +91,10 @@ json_escape() {
 }
 
 escaped_router=$(json_escape "$router_content")
+escaped_protocol=""
+if [ -n "$protocol_content" ]; then
+    escaped_protocol=$(json_escape "$protocol_content")
+fi
 
 # ---------------------------------------------------------------------------
 # Build the context payload
@@ -91,7 +106,12 @@ if [ -n "$profile_content" ]; then
     profile_section="\n\n---\n\n${escaped_profile}"
 fi
 
-payload="<IMPORTANT>\nYou’ve got zuvo skills installed.\n\nBelow is the zuvo meta-skill router. It tells you which skill to invoke for any given task. For all skills listed here, use the Skill tool to invoke them.\n\n${escaped_router}${profile_section}\n</IMPORTANT>"
+protocol_section=""
+if [ -n "$escaped_protocol" ]; then
+    protocol_section="\n\n---\n\nBelow is the global response-style contract for hook-enabled main assistant responses. It compresses working chatter, but it does not override explicit user requests or protected final artifacts.\n\n${escaped_protocol}"
+fi
+
+payload="<IMPORTANT>\nYou’ve got zuvo skills installed.\n\nBelow is the zuvo meta-skill router. It tells you which skill to invoke for any given task. For all skills listed here, use the Skill tool to invoke them.\n\n${escaped_router}${protocol_section}${profile_section}\n</IMPORTANT>"
 
 # ---------------------------------------------------------------------------
 # Platform detection and JSON output

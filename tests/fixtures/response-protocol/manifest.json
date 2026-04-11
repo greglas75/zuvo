@@ -1,0 +1,139 @@
+{
+  "provider": "Codex",
+  "model": "gpt-5.4",
+  "notes": "Fixed local snapshot corpus for the compressed response protocol rollout.",
+  "samples": [
+    {
+      "id": "progress-update",
+      "prompt": "prompts/01-progress-update.md",
+      "baseline": "baseline/01-progress-update.md",
+      "protocol": "protocol/01-progress-update.md",
+      "expected_surface": "working",
+      "expected_mode": "TERSE",
+      "protected_literals": [
+        "shared/includes/compressed-response-protocol.md",
+        "hooks/session-start",
+        "ZUVO_RESPONSE_PROTOCOL=off"
+      ]
+    },
+    {
+      "id": "clarifying-question",
+      "prompt": "prompts/02-clarifying-question.md",
+      "baseline": "baseline/02-clarifying-question.md",
+      "protocol": "protocol/02-clarifying-question.md",
+      "expected_surface": "working",
+      "expected_mode": "TERSE",
+      "protected_literals": [
+        "hooks/session-start",
+        "skills/using-zuvo/SKILL.md",
+        "direct skill fallback paths"
+      ]
+    },
+    {
+      "id": "design-options",
+      "prompt": "prompts/03-design-options.md",
+      "baseline": "baseline/03-design-options.md",
+      "protocol": "protocol/03-design-options.md",
+      "expected_surface": "working",
+      "expected_mode": "TERSE",
+      "protected_literals": [
+        "hooks/session-start",
+        "v1"
+      ]
+    },
+    {
+      "id": "audit-summary",
+      "prompt": "prompts/04-audit-summary.md",
+      "baseline": "baseline/04-audit-summary.md",
+      "protocol": "protocol/04-audit-summary.md",
+      "expected_surface": "working",
+      "expected_mode": "TERSE",
+      "protected_literals": [
+        "ZUVO_RESPONSE_PROTOCOL=off",
+        "tests/fixtures/response-protocol/manifest.json"
+      ]
+    },
+    {
+      "id": "review-finding",
+      "prompt": "prompts/05-review-finding.md",
+      "baseline": "baseline/05-review-finding.md",
+      "protocol": "protocol/05-review-finding.md",
+      "expected_surface": "working",
+      "expected_mode": "STRUCTURED_TERSE",
+      "protected_literals": [
+        "${RESPONSE_PROTOCOL_MODE,,}",
+        "/bin/bash",
+        "tr '[:upper:]' '[:lower:]'"
+      ]
+    },
+    {
+      "id": "operational-checklist",
+      "prompt": "prompts/06-operational-checklist.md",
+      "baseline": "baseline/06-operational-checklist.md",
+      "protocol": "protocol/06-operational-checklist.md",
+      "expected_surface": "working",
+      "expected_mode": "STRUCTURED_TERSE",
+      "protected_literals": [
+        "tests/fixtures/response-protocol/manifest.json",
+        "scripts/validate-response-protocol.sh",
+        "scripts/eval-response-protocol.sh"
+      ]
+    },
+    {
+      "id": "debug-summary",
+      "prompt": "prompts/07-debug-summary.md",
+      "baseline": "baseline/07-debug-summary.md",
+      "protocol": "protocol/07-debug-summary.md",
+      "expected_surface": "working",
+      "expected_mode": "STRUCTURED_TERSE",
+      "protected_literals": [
+        "\"No input provided\"",
+        "tests/fixtures/response-protocol/manifest.json",
+        "bash scripts/eval-response-protocol.sh"
+      ]
+    },
+    {
+      "id": "build-complete",
+      "prompt": "prompts/08-build-complete.md",
+      "baseline": "baseline/08-build-complete.md",
+      "protocol": "protocol/08-build-complete.md",
+      "expected_surface": "protected",
+      "expected_mode": "STANDARD",
+      "protected_heading": "## BUILD COMPLETE",
+      "protected_literals": [
+        "## BUILD COMPLETE",
+        "shared/includes/compressed-response-protocol.md",
+        "bash scripts/validate-response-protocol.sh"
+      ]
+    },
+    {
+      "id": "review-complete",
+      "prompt": "prompts/09-review-complete.md",
+      "baseline": "baseline/09-review-complete.md",
+      "protocol": "protocol/09-review-complete.md",
+      "expected_surface": "protected",
+      "expected_mode": "STANDARD",
+      "protected_heading": "## REVIEW COMPLETE",
+      "protected_literals": [
+        "## REVIEW COMPLETE",
+        "ZUVO_RESPONSE_PROTOCOL=off",
+        "shared/includes/compressed-response-protocol.md"
+      ]
+    },
+    {
+      "id": "verbose-override",
+      "prompt": "prompts/10-verbose-override.md",
+      "baseline": "baseline/10-verbose-override.md",
+      "protocol": "protocol/10-verbose-override.md",
+      "expected_surface": "user-request",
+      "expected_mode": "STANDARD",
+      "scenario": "verbose-override",
+      "protected_literals": [
+        "Detailed explanation:",
+        "hooks/session-start",
+        "shared/includes/compressed-response-protocol.md",
+        "STANDARD"
+      ]
+    }
+  ]
+}

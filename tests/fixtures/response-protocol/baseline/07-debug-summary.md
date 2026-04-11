@@ -1,0 +1,1 @@
+The eval wrapper returned `"No input provided"`. That quoted error is correct, but the failure is more likely in the wrapper logic than in the validator itself, because the wrapper should have defaulted to `tests/fixtures/response-protocol/manifest.json` before calling `bash scripts/eval-response-protocol.sh`. Confidence: likely.

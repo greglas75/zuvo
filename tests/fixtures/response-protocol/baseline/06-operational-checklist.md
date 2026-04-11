@@ -1,0 +1,1 @@
+To finish this rollout, first create `tests/fixtures/response-protocol/manifest.json`, then add baseline and protocol snapshots, then write `scripts/validate-response-protocol.sh`, then write `scripts/eval-response-protocol.sh`, and finally smoke-test `hooks/session-start`.

@@ -1,0 +1,1 @@
+Static audit summary: the hook wiring is present, the router now documents protected surfaces, and the docs mention `ZUVO_RESPONSE_PROTOCOL=off`, but `tests/fixtures/response-protocol/manifest.json` is still missing, so the release gate is not ready yet.

@@ -1,0 +1,1 @@
+`hooks/session-start` currently uses `${RESPONSE_PROTOCOL_MODE,,}`, which is a Bash 4 feature. On macOS `/bin/bash` 3.2 that expansion fails before any hook output is emitted, so the SessionStart hook can break on default systems. Replace it with a portable lowercase step such as `tr '[:upper:]' '[:lower:]'`. Confidence: confirmed.

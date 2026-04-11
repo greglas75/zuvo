@@ -1,0 +1,1 @@
+Detailed explanation: `hooks/session-start` injects `shared/includes/compressed-response-protocol.md` so one central contract governs response style. Working chatter compresses, but final reports remain `STANDARD` because plans, docs, and completion blocks need fuller context for later readers. The protocol is therefore surface-based, not persona-based.

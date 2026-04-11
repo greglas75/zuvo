@@ -1,0 +1,1 @@
+One scope question before I keep editing files: do you want this rollout limited to `hooks/session-start` and `skills/using-zuvo/SKILL.md`, or should I also push equivalent guidance into direct skill fallback paths and sub-agent output in this pass?

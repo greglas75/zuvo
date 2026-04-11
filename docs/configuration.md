@@ -30,9 +30,11 @@ zuvo-plugin/
 
 Zuvo uses a single `SessionStart` hook. It fires when you start a Claude Code session (or clear/compact the context).
 
-**What it does:** Reads the `using-zuvo` skill router and injects it as session context so Claude knows about all 33 skills from the first message. The router handles auto-activation -- matching your intent to the right skill without explicit commands.
+**What it does:** Reads the `using-zuvo` skill router and injects it as session context so Claude knows about all 33 skills from the first message. The same hook also injects the compressed response protocol for hook-enabled main assistant replies, plus the optional `.zuvo/project-profile.json` summary when present. The router handles auto-activation -- matching your intent to the right skill without explicit commands.
 
 **Platform detection:** The hook detects whether it is running in Claude Code (`CLAUDE_PLUGIN_ROOT`), Cursor (`CURSOR_PLUGIN_ROOT`), or an unknown environment, and emits the correct JSON format for each.
+
+**Kill switch:** Set `ZUVO_RESPONSE_PROTOCOL=off` before starting a session to disable protocol injection while keeping router injection enabled.
 
 ## Shared includes
 
@@ -42,6 +44,7 @@ Located in `shared/includes/`. These are protocol files loaded by skills at runt
 |------|---------|
 | `env-compat.md` | Environment compatibility: how skills adapt to Claude Code, Codex, and Cursor. Covers agent dispatch patterns, path resolution, progress tracking, and user interaction per platform. |
 | `codesift-setup.md` | CodeSift discovery, initialization, and tool selection guide. Includes the full tool mapping table and degraded mode fallbacks. See [codesift-integration.md](codesift-integration.md). |
+| `compressed-response-protocol.md` | Global v1 response-style contract for hook-enabled main assistant turns. Defines `STANDARD`, `TERSE`, `STRUCTURED_TERSE`, protected literals, override order, and the `[...truncated...]` escape hatch. |
 | `quality-gates.md` | Quick reference for CQ1-CQ28 and Q1-Q19 gates. Condensed version for agent use. Full details in the rules directory. See [quality-gates.md](quality-gates.md). |
 | `tdd-protocol.md` | TDD cycle enforcement: RED (failing test), GREEN (minimal code), REFACTOR. Red flag table for common violations. Used by pipeline execute and build skills. |
 | `verification-protocol.md` | 5-step verification protocol: IDENTIFY, RUN, READ, VERIFY, CLAIM. Ensures no completion claims without fresh evidence from the actual system. |
@@ -106,6 +109,16 @@ If you want to use Zuvo skills explicitly without auto-routing, you can:
 
 1. Invoke skills directly by name: `zuvo:review`, `zuvo:code-audit`, etc.
 2. For tasks that do not need a skill, state your intent clearly: "just change the port to 3001" -- the router recognizes one-line fixes and does not activate a skill.
+
+### Disabling response compression
+
+If you want the router but not the compressed response protocol for a session, start the session with:
+
+```bash
+ZUVO_RESPONSE_PROTOCOL=off claude
+```
+
+That disables only the protocol injection. Explicit skill invocation still works. In environments where session hooks do not run, Zuvo falls back to degraded mode: skills still work, but global response compression defaults are not guaranteed.
 
 ### Environment support
 

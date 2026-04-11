@@ -1,0 +1,1 @@
+Option A is to inject the protocol only through `hooks/session-start`, which gives us one central control point, one kill switch, and a smaller blast radius. Option B is to edit each skill file individually so every skill restates the same terse policy, but that creates immediate drift and a wider maintenance surface. I recommend Option A for v1.

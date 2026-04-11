@@ -1,0 +1,1 @@
+Updated `shared/includes/compressed-response-protocol.md` wiring in `hooks/session-start` and added policy text to `skills/using-zuvo/SKILL.md`. Next: add validators + fixture corpus, then verify `ZUVO_RESPONSE_PROTOCOL=off`.
