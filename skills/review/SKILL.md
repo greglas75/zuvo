@@ -495,7 +495,7 @@ If gate check skips: print "RETRO: skipped (trivial session)" and proceed to out
 ```
 REVIEW COMPLETE -- <VERDICT>, <N> issues found.
 DEPLOYMENT RISK: <RISK LEVEL> -- <deploy strategy>
-Run: <ISO-8601-Z>	review	<project>	<CQ>	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	review	<project>	<CQ>	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 
 NEXT STEPS: "fix" (all) | "blocking" (MUST-FIX only) | "auto-fix" (zuvo:build) | "skip"
 ```

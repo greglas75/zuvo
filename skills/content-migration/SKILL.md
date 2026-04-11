@@ -32,6 +32,7 @@ Load on demand:
 - `../../shared/includes/migration-fix-registry.md` -- Only with `--fix`
 - `../../shared/includes/verification-protocol.md` -- Only with `--fix`
 - `../../shared/includes/run-logger.md` -- At report phase
+- `../../shared/includes/retrospective.md` -- At report phase
 
 ---
 
@@ -297,10 +298,11 @@ PARTIAL:
 MATCHED: 23/32 elements
 Screenshots: audit-results/content-migration-{ts}/
 
-Run: <ISO-8601-Z>	content-migration	<project>	-	-	<VERDICT>	-	parity-[grade]	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	content-migration	<project>	-	-	<VERDICT>	-	parity-[grade]	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 ```
 
 Append Run: line per `run-logger.md`.
+Append Run: line per `retrospective.md`.
 
 **JSON report** → `audit-results/content-migration-YYYY-MM-DD.json`:
 

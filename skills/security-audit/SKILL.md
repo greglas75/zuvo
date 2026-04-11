@@ -47,6 +47,7 @@ CORE FILES LOADED:
 ```
   5. ../../shared/includes/backlog-protocol.md -- READ/MISSING
   6. ../../shared/includes/run-logger.md       -- READ/MISSING
+  7. ../../shared/includes/retrospective.md       -- READ/MISSING
 ```
 
 Stage 2 deferred to save ~300 lines of upfront context.
@@ -600,7 +601,14 @@ Full protocol: `../../shared/includes/backlog-protocol.md`.
 
 ## SECURITY AUDIT COMPLETE
 
-Run: <ISO-8601-Z>\tsecurity-audit\t<project>\t-\t-\t<VERDICT>\t-\t<N>-dimensions\t<NOTES>\t<BRANCH>\t<SHA7>
+Run: <ISO-8601-Z>\tsecurity-audit\t<project>\t-\t-\t<VERDICT>\t-\t<N>-dimensions\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
+
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 

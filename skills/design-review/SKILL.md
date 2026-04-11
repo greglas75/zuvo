@@ -30,6 +30,7 @@ CORE FILES LOADED:
   1. codesift-setup.md   -- [READ | MISSING -> STOP]
   2. env-compat.md       -- [READ | MISSING -> STOP]
   3. ../../shared/includes/run-logger.md -- [READ | MISSING -> STOP]
+  4. ../../shared/includes/retrospective.md -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.
@@ -354,9 +355,16 @@ DESIGN-REVIEW COMPLETE
 -----
 Views audited: [N]
 Avg DX score:  [N]%
-Run: <ISO-8601-Z>	design-review	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	design-review	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 -----
 ```
+
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 

@@ -44,6 +44,7 @@ Read `../../shared/includes/env-compat.md` for progress tracking and user intera
 ## Run Logging
 
 Read `../../shared/includes/run-logger.md` for log format and file path resolution.
+Read `../../shared/includes/retrospective.md` for log format and file path resolution.
 
 ## CodeSift Integration
 
@@ -294,6 +295,13 @@ TESTS-PERFORMANCE COMPLETE
   Run: <ISO-8601-Z>	tests-performance	<project>	-	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
 -----
 ```
+
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 

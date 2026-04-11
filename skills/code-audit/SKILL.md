@@ -74,6 +74,7 @@ PHASE 1 — LOADED:
 
 ```
   ../../shared/includes/run-logger.md        -- [READ at final step]
+  ../../shared/includes/retrospective.md        -- [READ at final step]
 ```
 
 **If PHASE 0 file missing:** STOP. The plugin installation is incomplete.
@@ -446,7 +447,14 @@ If `--deep` mode: also save per-file detail to `audits/code-audit-details/[filen
 
 ## CODE AUDIT COMPLETE
 
-Run: <ISO-8601-Z>\tcode-audit\t<project>\t<N-critical>\t<N-total>\t<VERDICT>\t-\t<N>-dimensions\t<NOTES>\t<BRANCH>\t<SHA7>
+Run: <ISO-8601-Z>\tcode-audit\t<project>\t<N-critical>\t<N-total>\t<VERDICT>\t-\t<N>-dimensions\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
+
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 

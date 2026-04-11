@@ -28,6 +28,7 @@ CORE FILES LOADED:
   2. ../../shared/includes/benchmark-corpus/task-tests.md   -- READ/MISSING
   3. ../../shared/includes/benchmark-scoring-rubric.md      -- READ/MISSING
   4. ../../shared/includes/run-logger.md                    -- READ/MISSING
+  5. ../../shared/includes/retrospective.md                    -- READ/MISSING
 ```
 
 If any file is missing, stop.
@@ -326,7 +327,7 @@ Files: 8 artifacts + 2 findings + 1 JSON = 11 files
 ### Run Log
 
 ```
-Run: <ISO-8601-Z>	agent-benchmark	<project>	-	-	PASS	<agent_model>	4-round	<notes>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	agent-benchmark	<project>	-	-	PASS	<agent_model>	4-round	<notes>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 ```
 
 After printing, append to the log file path resolved per `../../shared/includes/run-logger.md`.

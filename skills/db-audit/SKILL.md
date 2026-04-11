@@ -26,11 +26,13 @@ Read every file below before starting. Print the checklist.
 
 ```
 CORE FILES LOADED:
-  1. ../../shared/includes/codesift-setup.md   -- [READ | MISSING -> STOP]
-  2. ../../shared/includes/env-compat.md        -- [READ | MISSING -> STOP]
-  3. ../../rules/cq-patterns.md                 -- [READ | MISSING -> STOP]
-  4. ../../shared/includes/run-logger.md        -- [READ | MISSING -> STOP]
+  1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> STOP]
+  2. ../../shared/includes/env-compat.md           -- [READ | MISSING -> STOP]
+  3. ../../shared/includes/run-logger.md           -- [READ | MISSING -> STOP]
+  4. ../../shared/includes/retrospective.md        -- [READ | MISSING -> STOP]
 ```
+
+Note: `cq-patterns.md` is NOT loaded — this is a read-only audit, not a code quality review. Loading it wastes ~7K tokens per turn.
 
 If any file is MISSING, STOP. Do not proceed from memory.
 
@@ -74,7 +76,18 @@ When `--live <conn>` is used:
 
 ## Phase 0: Detect and Prepare
 
+### 0.0 CodeSift Capability Check
+
+If CodeSift MCP is available, run these two calls before anything else:
+
+1. `get_extractor_versions()` — check if the project's primary language has a full parser (symbol-level tools) or only text-stub support. If text-stub only: skip all symbol-based CodeSift calls (search_symbols, get_file_outline, trace_call_chain, find_references) and use Grep/Read fallbacks instead. Print the result.
+2. `analyze_project()` — returns detected stack (framework, language, package manager, monorepo), file classifications, dependency counts, and git health. Use the output to pre-fill ORM, Engine, and Deployment detection below instead of manual file scanning.
+
+If `analyze_project` returns enough to populate the stack table, skip 0.1/0.2/0.3 manual detection and jump to the output block. If it returns partial data (e.g. framework=null), fill the gaps with the manual tables below.
+
 ### 0.1 ORM Detection
+
+If not resolved by `analyze_project`:
 
 | Signal | ORM |
 |--------|-----|
@@ -89,6 +102,8 @@ When `--live <conn>` is used:
 
 ### 0.2 Database Engine Detection
 
+If not resolved by `analyze_project`:
+
 | Signal | Engine |
 |--------|--------|
 | `postgresql` in connection string or schema provider | PostgreSQL |
@@ -97,6 +112,8 @@ When `--live <conn>` is used:
 | `mongodb` in provider or `mongoose` | MongoDB |
 
 ### 0.3 Deployment Detection
+
+If not resolved by `analyze_project`:
 
 | Signal | Type |
 |--------|------|
@@ -111,11 +128,12 @@ Print detection results:
 ```
 DB AUDIT STACK
 ------------------------------------
-ORM:     [Prisma / TypeORM / Drizzle / Django / SQLAlchemy / Raw SQL]
-Engine:  [PostgreSQL / MySQL / SQLite / MongoDB]
-Deploy:  [Serverless / Container / Traditional]
-Scope:   [full / path / file]
-Dims:    [DB1-DB12 / subset]
+ORM:       [Prisma / TypeORM / Drizzle / Django / SQLAlchemy / Raw SQL]
+Engine:    [PostgreSQL / MySQL / SQLite / MongoDB]
+Deploy:    [Serverless / Container / Traditional]
+Scope:     [full / path / file]
+Dims:      [DB1-DB13 / subset]
+CodeSift:  [full-parser / text-stub / unavailable]
 ------------------------------------
 ```
 
@@ -141,7 +159,23 @@ Read the schema source for the detected ORM and extract:
 | Nullable fields | Count and distribution |
 | Enums vs string | Enum definitions vs raw string status/type fields |
 
-**ORM-specific sources:**
+**CodeSift accelerated (Prisma):** When CodeSift has a Prisma parser (check Phase 0.0), use symbol-level tools instead of reading the entire schema file:
+
+```
+# Get all models, enums, and types at a glance
+get_file_outline(file_path="prisma/schema.prisma")
+
+# Search for specific model patterns
+search_symbols(query="@@index", file_pattern="*.prisma", include_source=true)
+search_symbols(query="@@unique", file_pattern="*.prisma", include_source=true)
+
+# For large schemas (>500 lines), use assemble_context instead of Read:
+assemble_context(query="prisma models with relations", level="L1", token_budget=8000)
+```
+
+This replaces reading a 500-1500 line schema file in full, saving ~5-10K tokens.
+
+**ORM-specific sources (manual fallback):**
 - **Prisma:** `prisma/schema.prisma` -- `@@index`, `@@unique`, `@default`, `?` nullable
 - **TypeORM:** Entity files -- `@Column`, `@Index`, `@JoinColumn`, `@ManyToOne`
 - **Django:** `models.py` -- `Field` types, `class Meta` indexes, `ForeignKey`
@@ -180,7 +214,31 @@ MODEL INVENTORY
 
 ---
 
-## Phase 2: Code-Level Analysis (DB1-DB12)
+## Phase 2: Code-Level Analysis (DB1-DB13)
+
+### 2.0 CodeSift Pre-Scan
+
+Before dispatching agents or running manual analysis, run these automated checks when CodeSift is available. They replace ~20 manual Grep calls:
+
+```
+# DB1: N+1 and unbounded query detection (automated)
+search_patterns(pattern="unbounded-findmany")     # findMany without take/limit
+search_patterns(pattern="await-in-loop")           # sequential await in loop = N+1
+
+# DB5: Race condition pre-scan
+search_patterns(pattern="toctou")                  # read-then-write without atomic op
+
+# DB12: Secret exposure (hidden tool — reveal first)
+# Claude Code: ToolSearch("select:mcp__codesift__scan_secrets")
+# Codex/other: describe_tools(names=["scan_secrets"], reveal=true)
+scan_secrets(min_confidence="medium")              # hardcoded DB passwords, connection strings
+```
+
+If `scan_secrets` is unavailable, fall back to: `Grep` for `password=`, `DATABASE_URL=`, `connection_string`, API keys in `.env` committed to git.
+
+If CodeSift is entirely unavailable, skip Phase 2.0 and proceed directly to Agent Dispatch — agents will use Grep/Read.
+
+Collect results. Pass them into agent prompts as "pre-verified findings" (HIGH confidence, tool-verified). Agents should NOT re-scan for these patterns — they should verify context and discover patterns the automated scan missed.
 
 ### Agent Dispatch
 
@@ -193,6 +251,26 @@ Refer to `env-compat.md` for the dispatch pattern.
 | Schema Analyst | DB2, DB3, DB6, DB13 | Schema design + migration safety + deploy safety |
 | Query Scanner | DB1, DB5, DB8, DB9 | Code-level query patterns |
 | Infrastructure Auditor | DB4, DB7, DB10, DB11, DB12 | Connections, cache, observability, security |
+
+**Agent prompt rules:**
+
+1. **CodeSift tool loading** — include this block at the very top of every agent prompt so tools are callable:
+   ```
+   FIRST: Load CodeSift tools before doing anything else.
+   - Claude Code: Run ToolSearch("select:mcp__codesift__search_text,mcp__codesift__search_symbols,mcp__codesift__codebase_retrieval,mcp__codesift__trace_route,mcp__codesift__find_references,mcp__codesift__get_file_outline,mcp__codesift__trace_call_chain,mcp__codesift__search_patterns,mcp__codesift__assemble_context")
+   - Codex: Call mcp__codesift__search_text directly — MCP tools are pre-registered.
+   - Cursor/Antigravity: CodeSift unavailable — use Grep/Read.
+   If any tool call fails, fall back to Grep/Read.
+   ```
+   Adjust the tool list per agent role — Schema Analyst needs `get_file_outline` + `search_symbols`; Query Scanner needs `trace_route` + `codebase_retrieval` + `search_patterns`; Infrastructure Auditor needs `search_text` + `find_references`.
+2. **Token budget:** Each agent must keep its report under 800 words. Structured as: findings list (ID, severity, file:line, 1-sentence description) + 1-paragraph summary. No prose explanations per finding.
+3. **CodeSift cheat sheet** — include right after the tool loading block:
+   ```
+   CodeSift: batch 3+ searches → codebase_retrieval(queries=[...]).
+   Endpoints → trace_route first. Skip list_repos (auto-resolve).
+   If empty results → fallback to Grep (parser may be unavailable).
+   ```
+4. **Pre-verified findings:** Pass Phase 2.0 results to agents with instruction: "These findings are TOOL-VERIFIED. Do not re-scan for them. Focus on patterns the pre-scan cannot catch."
 
 **Without parallel dispatch:** Execute all dimensions sequentially.
 
@@ -489,6 +567,8 @@ Save to: `audits/db-audit-[YYYY-MM-DD].md`
 | Deployment | [detected deployment type] |
 | Scope | [full / path / file] |
 | Live analysis | [enabled / skipped] |
+| CodeSift | [full-parser / text-stub / unavailable] |
+| Prior audit | [date or "none — baseline"] |
 
 ## Executive Summary
 
@@ -529,13 +609,54 @@ Save to: `audits/db-audit-[YYYY-MM-DD].md`
 [From Phase 1]
 
 ## Findings (sorted by severity)
-[Per finding: ID, severity, dimension, file:line, description, fix]
+
+Per finding:
+- **ID:** DB{dimension}-{NNN} (e.g. DB1-001)
+- **Severity:** CRITICAL / HIGH / MEDIUM / LOW
+- **Confidence:** TOOL-VERIFIED (from Phase 2.0 pre-scan) / HIGH / MEDIUM
+- **File:line:** exact location
+- **Description:** 1 sentence
+- **Fix:** concrete code change or command
+- **Effort:** S (<1h) / M (1-4h) / L (4h+)
+
+## Delta from Prior Audit
+
+If a prior `audits/db-audit-*.md` exists, include:
+
+| Finding | Prior status | Current status | Change |
+|---------|-------------|----------------|--------|
+| DB1-001 | CRITICAL | RESOLVED | Fixed in [commit] |
+| DB2-003 | HIGH | HIGH | Still open |
+| DB9-001 | — | NEW | First detected |
+
+Score delta: [prior score] → [current score] ([+/-N])
+
+If no prior audit exists, print: "No prior audit found — baseline established."
 
 ## Cross-Cutting Patterns
 [Compound patterns found]
 
 ## Top 5 Action Items
-[Prioritized by Impact / Effort]
+
+Per item: priority (P0/P1/P2), effort (S/M/L), blast radius (N files), concrete action.
+
+## Delete These Tomorrow
+
+Actionable commands for findings that require zero design decisions — just execute:
+
+```bash
+# Example format:
+# DB1-003: Add take: 100 to unbounded findMany
+# File: src/services/user.service.ts:45
+
+# DB2-001: Add missing FK index
+# npx prisma migrate dev --name add_org_id_index
+
+# DB12-002: Remove hardcoded connection string
+# Move to .env: DATABASE_URL=...
+```
+
+List only findings with effort=S. If none qualify, omit this section.
 
 ## Backlog Entries
 [/backlog add commands for HIGH+ findings]
@@ -548,6 +669,10 @@ After writing, verify:
 - Finding counts match Executive Summary
 - All models from inventory are addressed
 - Critical gate status is accurate
+- Every finding has a DB{N}-{NNN} ID, severity, confidence, file:line, and effort
+- Delta section references correct prior audit (or states "baseline")
+- TOOL-VERIFIED findings match Phase 2.0 pre-scan output
+- "Delete These Tomorrow" only contains effort=S items
 
 ---
 
@@ -574,7 +699,14 @@ Score: [N] / [MAX] -- [grade]
 ORM: [detected] | Engine: [detected]
 Dimensions: [N scored] | Critical gates: [PASS/FAIL]
 Findings: [N critical] / [N total]
-Run: <ISO-8601-Z>	db-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	db-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
+
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 

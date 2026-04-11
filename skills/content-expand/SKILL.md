@@ -207,7 +207,7 @@ Internal links: [N] added ([N] verified)
 FAQ: [N items | none] | OG: [present]
 Voice: [matched | default] | Research: [N facts used | skipped | limited]
 
-Run: <ISO-8601-Z>	content-expand	<project>	-	-	<VERDICT>	<TASKS>	3-phase	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	content-expand	<project>	-	-	<VERDICT>	<TASKS>	3-phase	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 -----
 ```
 

@@ -20,6 +20,7 @@ Generate professional PPTX presentations from a topic description, outline, or e
 ## Run Logging
 
 Read `../../shared/includes/run-logger.md` for log format and file path resolution.
+Read `../../shared/includes/retrospective.md` for log format and file path resolution.
 
 ## Argument Parsing
 
@@ -198,9 +199,16 @@ Slide overview:
   ...
 
 Script: scripts/generate_presentation.py
-Run: <ISO-8601-Z>	presentation	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	presentation	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 -----
 ```
+
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 

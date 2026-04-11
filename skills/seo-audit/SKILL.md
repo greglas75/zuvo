@@ -30,6 +30,7 @@ Read these files before any work begins:
 6. `../../shared/includes/audit-output-schema.md` -- JSON output contract (before Phase 6.2)
 7. `../../shared/includes/seo-check-registry.md` -- Canonical check slugs and enforcement layers (agents MUST use)
 8. `../../shared/includes/run-logger.md` -- Run logging contract
+9. `../../shared/includes/retrospective.md` -- Retrospective protocol
 
 Print the checklist:
 
@@ -43,6 +44,7 @@ CORE FILES LOADED:
   6. audit-output-schema.md -- [READ | MISSING -> STOP]
   7. seo-check-registry.md  -- [READ | MISSING -> STOP]
   8. run-logger.md           -- [READ | MISSING -> STOP]
+  9. retrospective.md           -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.
@@ -706,7 +708,14 @@ Overall: [N]/100 -- Tier [A/B/C/D] | Result: [PASS/FAIL/PROVISIONAL]
 SEO: [N]/100 | GEO: [N]/100 | Tech: [N]/100
 Critical gates: [N PASS] / [N FAIL] / [N INSUFFICIENT DATA]
 Findings: [N critical] / [N total]
-Run: <ISO-8601-Z>	seo-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	seo-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
+
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 

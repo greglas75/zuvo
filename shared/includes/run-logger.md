@@ -44,10 +44,10 @@ DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 ## Format
 
-Single-line TSV (tab-separated), 11 fields per entry:
+Single-line TSV (tab-separated), 13 fields per entry:
 
 ```
-DATE\tSKILL\tPROJECT\tCQ_SCORE\tQ_SCORE\tVERDICT\tTASKS\tDURATION\tNOTES\tBRANCH\tHEAD_SHA7
+DATE\tSKILL\tPROJECT\tCQ_SCORE\tQ_SCORE\tVERDICT\tTASKS\tDURATION\tNOTES\tBRANCH\tHEAD_SHA7\tINCLUDES\tTIER
 ```
 
 | # | Field | Value | Example |
@@ -63,8 +63,14 @@ DATE\tSKILL\tPROJECT\tCQ_SCORE\tQ_SCORE\tVERDICT\tTASKS\tDURATION\tNOTES\tBRANCH
 | 9 | NOTES | One-line summary, max 80 chars, no tabs | `added user export CSV` |
 | 10 | BRANCH | Current git branch (see Field Resolution) | `main` |
 | 11 | HEAD_SHA7 | Short commit hash (see Field Resolution) | `a3f7b2c` |
+| 12 | INCLUDES | Pipe-separated list of loaded includes/rules (without `.md` suffix), or `-` | `env-compat\|cq-patterns\|testing` |
+| 13 | TIER | Classification tier used by the skill, or `-` | `STANDARD` |
 
-**Backward compatibility:** Fields 1-9 are unchanged from v1. Existing `cut -f1-9` queries continue to work. Fields 10-11 are additive.
+**Field 12 — INCLUDES:** List every `shared/includes/*.md` and `rules/*.md` file that was actually Read during this skill run. Use basenames without `.md`, separated by `|`. Order does not matter. If no includes were loaded, use `-`.
+
+**Field 13 — TIER:** The classification tier the skill resolved to. Common values: `LIGHT`, `STANDARD`, `DEEP`, `NANO`, `HEAVY`, `COMPONENT`, `THIN`, `COMPLEX`. If the skill does not use tiering, use `-`.
+
+**Backward compatibility:** Fields 1-9 are unchanged from v1. Existing `cut -f1-9` queries continue to work. Fields 10-11 added in v2. Fields 12-13 added in v3.
 
 ## Log-in-Output Pattern
 
@@ -83,7 +89,7 @@ Feature: user export to CSV
 Tier: STANDARD | Files: 3 created + 2 modified
 CQ: 22/28 | Q: 15/19
 Verdict: PASS
-Run: 2026-04-05T14:30:00Z	build	zuvo-plugin	22/28	15/19	PASS	4	standard	user export CSV	main	a3f7b2c
+Run: 2026-04-05T14:30:00Z	build	zuvo-plugin	22/28	15/19	PASS	4	standard	user export CSV	main	a3f7b2c	env-compat|codesift-setup|cq-patterns|testing|code-contract|quality-gates	STANDARD
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved above.
 ```
@@ -93,10 +99,20 @@ After printing this block, append the `Run:` line value (without the `Run: ` pre
 Each skill's SKILL.md includes a literal template with placeholders:
 
 ```
-Run: <ISO-8601-Z>\t<skill>\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>
+Run: <ISO-8601-Z>\t<skill>\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
 ```
 
 The LLM fills in the placeholders when generating the output block, then appends the resulting line to the log file.
+
+**Filling INCLUDES:** A PostToolUse hook (`hooks/track-includes.sh`) automatically tracks every `shared/includes/*.md` and `rules/*.md` file Read during the session. To get the list, run:
+
+```bash
+INCLUDES=$(sort -u /tmp/zuvo-includes-*.txt 2>/dev/null | paste -sd'|' - || echo "-")
+```
+
+If the hook file doesn't exist (e.g., Codex/Cursor without hooks), fall back to manually listing the includes you loaded. Use basenames without `.md`, pipe-separated. Example: `env-compat|cq-patterns-core|testing|quality-gates`. If none, use `-`.
+
+**Filling TIER:** Use the tier/classification you resolved in Phase 0 or Phase 1 (e.g., `LIGHT`, `STANDARD`, `DEEP`). If the skill has no tiering, use `-`.
 
 ## VERDICT Vocabulary
 
@@ -136,4 +152,13 @@ grep "build" "$LOG_PATH" | cut -f4
 
 # Branch distribution
 grep "zuvo-plugin" "$LOG_PATH" | cut -f10 | sort | uniq -c | sort -rn
+
+# Include loading frequency (v3 field 12)
+cut -f12 "$LOG_PATH" | tr '|' '\n' | sort | uniq -c | sort -rn
+
+# Tier distribution per skill (v3 field 13)
+awk -F'\t' '{print $2, $13}' "$LOG_PATH" | sort | uniq -c | sort -rn
+
+# Which includes does review actually load?
+grep "^.*review" "$LOG_PATH" | cut -f12 | tr '|' '\n' | sort | uniq -c | sort -rn
 ```

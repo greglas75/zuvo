@@ -575,7 +575,7 @@ Type: [TYPE] | Target: [filename]
 Files modified: [N] | Files created: [N]
 CQ: [before] -> [after] | Tests: [status] | Commit: [hash]
 
-Run: <ISO-8601-Z>\trefactor\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>
+Run: <ISO-8601-Z>\trefactor\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
 ------------------------------------
 ```
 
@@ -703,7 +703,7 @@ If gate check skips: print "RETRO: skipped (trivial session)" and proceed to out
 BATCH COMPLETE
 Total: N | Completed: X | Failed: Y | Skipped: Z
 Queue: [path to queue file]
-Run: <ISO-8601-Z>\trefactor\t<project>\t<CQ>\t-\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>
+Run: <ISO-8601-Z>\trefactor\t<project>\t<CQ>\t-\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
 ```
 
 Append `Run:` line to log per `run-logger.md`. CQ: aggregate (e.g., `avg 16/18`) or `-`. TASKS: files completed. DURATION: `batch-N`. NOTES: `batch X/N completed Y failed` (max 80 chars).

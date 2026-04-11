@@ -23,6 +23,7 @@ Before starting any work, read these files and confirm they loaded:
 2. `../../shared/includes/env-compat.md` -- Agent dispatch patterns per environment
 3. `../../rules/cq-patterns.md` -- NEVER/ALWAYS code pairs (informs design decisions)
 4. `../../shared/includes/run-logger.md` -- Run logging protocol
+5. `../../shared/includes/retrospective.md` -- Retrospective protocol
 
 Print the checklist:
 
@@ -32,6 +33,7 @@ CORE FILES LOADED:
   2. env-compat.md       -- READ
   3. cq-patterns.md      -- READ
   4. run-logger.md       -- READ
+  5. retrospective.md       -- READ
 ```
 
 If any required file is missing, STOP. Do not proceed from memory.
@@ -372,7 +374,14 @@ The deliverable of `zuvo:brainstorm` is a spec document at `docs/specs/YYYY-MM-D
 The next step is `zuvo:plan`, which reads this spec and produces an implementation plan. Remind the user of this when brainstorm completes. Do not auto-invoke `zuvo:plan` -- let the user decide when to proceed.
 
 ```
-Run: <ISO-8601-Z>	brainstorm	<project>	-	-	<VERDICT>	-	3-phase	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	brainstorm	<project>	-	-	<VERDICT>	-	3-phase	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 ```
+
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.

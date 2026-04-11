@@ -406,7 +406,7 @@ Q gates:       [N]/19 avg (critical gates: all pass)
 Failures:      pre-existing: [N], new: 0
 FAILED files:  [list or "none"]
 SKIPPED_REVIEW: [list or "none"]
-Run: <ISO-8601-Z>	write-tests	<project>	-	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	write-tests	<project>	-	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 -----
 ```
 

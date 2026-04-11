@@ -615,7 +615,7 @@ Backlog: [N items persisted | "none"]
 Commit: [hash] — [message]
 [Tag: [tag name]]
 
-Run: <ISO-8601-Z>\tbuild\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>
+Run: <ISO-8601-Z>\tbuild\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 

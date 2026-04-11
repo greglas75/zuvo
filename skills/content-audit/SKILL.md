@@ -30,6 +30,7 @@ Read these files before any work begins:
 6. `../../shared/includes/content-fix-registry.md` -- fix_type and safety for tagging fixable findings
 7. `../../shared/includes/live-probe-protocol.md` -- Live URL safety rules
 8. `../../shared/includes/run-logger.md` -- Run logging contract
+9. `../../shared/includes/retrospective.md` -- Retrospective protocol
 9. `../../shared/includes/verification-protocol.md` -- Fresh-evidence rules
 
 Print the checklist:
@@ -44,6 +45,7 @@ CORE FILES LOADED:
   6. content-fix-registry.md    -- [READ | MISSING -> STOP]
   7. live-probe-protocol.md     -- [READ | MISSING -> STOP]
   8. run-logger.md              -- [READ | MISSING -> STOP]
+  9. retrospective.md              -- [READ | MISSING -> STOP]
   9. verification-protocol.md   -- [READ | MISSING -> STOP]
 ```
 
@@ -304,13 +306,20 @@ FINDINGS:
 SKIPPED FILES:
   [list of binary files skipped]
 
-Run: <ISO-8601-Z>	content-audit	<project>	-	-	<VERDICT>	-	8-dim	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	content-audit	<project>	-	-	<VERDICT>	-	8-dim	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 
 NEXT STEPS:
   1. Run zuvo:content-fix to apply [N] auto-fixable findings
   2. Review MODERATE fixes before applying with --auto
   3. Address MANUAL findings listed above
 ```
+
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 After printing this block, append the `Run:` line value (without the `Run:`
 prefix) to the log file path resolved per `run-logger.md`.

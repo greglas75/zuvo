@@ -26,6 +26,7 @@ Read these files before any work begins:
 5. `../../shared/includes/backlog-protocol.md` -- Backlog fingerprint dedup
 6. `../../shared/includes/verification-protocol.md` -- Build verification rules
 7. `../../shared/includes/run-logger.md` -- Run logging contract
+8. `../../shared/includes/retrospective.md` -- Retrospective protocol
 8. `../../shared/includes/knowledge-prime.md` -- Project knowledge priming
 9. `../../shared/includes/knowledge-curate.md` -- Learning extraction after work
 
@@ -40,6 +41,7 @@ CORE FILES LOADED:
   5. backlog-protocol.md        -- [READ | MISSING -> STOP]
   6. verification-protocol.md   -- [READ | MISSING -> STOP]
   7. run-logger.md              -- [READ | MISSING -> STOP]
+  8. retrospective.md              -- [READ | MISSING -> STOP]
   8. ../../shared/includes/knowledge-prime.md  -- READ/MISSING
   9. ../../shared/includes/knowledge-curate.md -- READ/MISSING
 ```
@@ -281,13 +283,20 @@ MANUAL (advisory):
   F5: Spelling correction needed               content/about.md:7
       Suggestion: "forumują" → "formują"
 
-Run: <ISO-8601-Z>	content-fix	<project>	-	-	<VERDICT>	<N-fixes>	fix	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	content-fix	<project>	-	-	<VERDICT>	<N-fixes>	fix	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 
 NEXT STEPS:
   1. Review NEEDS_REVIEW items
   2. Apply MANUAL fixes manually
   3. Re-audit: zuvo:content-audit
 ```
+
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 After printing this block, append the `Run:` line value (without the `Run:`
 prefix) to the log file path resolved per `run-logger.md`.

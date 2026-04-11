@@ -18,6 +18,7 @@ Read these files before proceeding:
 CORE FILES LOADED:
   1. ../../shared/includes/env-compat.md    — READ
   2. ../../shared/includes/run-logger.md    — READ
+  3. ../../shared/includes/retrospective.md    — READ
 ```
 
 ## Argument Parsing
@@ -139,7 +140,14 @@ If `--dry-run` was set and execution reached this phase (only on early exits), a
 After the output block, print and append the run log line:
 
 ```
-Run: <ISO-8601-Z>\trelease-docs\t<project>\t-\t-\t<VERDICT>\t-\t5-phase\t<NOTES>\t<BRANCH>\t<SHA7>
+Run: <ISO-8601-Z>\trelease-docs\t<project>\t-\t-\t<VERDICT>\t-\t5-phase\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
+
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 ```

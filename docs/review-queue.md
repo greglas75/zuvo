@@ -345,3 +345,4 @@ Commits pending review. Auto-managed:
 - 760f96e (2026-04-10) feat: PHP test support — mock templates, stack-aware retrieval, per-pattern contract
 - 0927101 (2026-04-10) release: v1.3.71 — feat: PHP test support — mock templates, stack-aware retrieval, per-pattern contract
 - 2a6a97c (2026-04-10) feat: split test includes by stack — core + JS + PHP files
+- ab33079 (2026-04-10) release: v1.3.72 — feat: split test includes by stack — core + JS + PHP (agent loads only matching stack)

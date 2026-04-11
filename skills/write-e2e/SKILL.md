@@ -409,7 +409,7 @@ Files created:      [X] (.spec.ts) + [Y] (pages/fixtures)
 Quality gates:      [N]/[N] passed ([M] auto-fixed)
 TestID suggestions: [P] elements in [Q] files
 Validation:         [N/M passed | skipped (no --live)]
-Run: <ISO-8601-Z>	write-e2e	<project>	-	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	write-e2e	<project>	-	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 -----
 Human review recommended before committing.
 ```

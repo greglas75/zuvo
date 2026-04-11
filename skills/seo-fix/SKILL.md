@@ -26,6 +26,7 @@ Read these files before any work begins:
 5. `../../shared/includes/fix-output-schema.md` -- JSON report contract
 6. `../../shared/includes/seo-bot-registry.md` -- Canonical AI/search bot policy taxonomy for robots fixes
 7. `../../shared/includes/run-logger.md` -- Run logging contract
+8. `../../shared/includes/retrospective.md` -- Retrospective protocol
 8. `../../shared/includes/verification-protocol.md` -- Fresh-evidence rules for build and endpoint verification
 9. `../../shared/includes/knowledge-prime.md` -- Project knowledge priming
 10. `../../shared/includes/knowledge-curate.md` -- Learning extraction after work
@@ -41,6 +42,7 @@ CORE FILES LOADED:
   5. fix-output-schema.md  -- [READ | MISSING -> STOP]
   6. seo-bot-registry.md   -- [READ | MISSING -> STOP]
   7. ../../shared/includes/run-logger.md -- [READ | MISSING -> STOP]
+  8. ../../shared/includes/retrospective.md -- [READ | MISSING -> STOP]
   8. ../../shared/includes/verification-protocol.md -- [READ | MISSING -> STOP]
   9. ../../shared/includes/knowledge-prime.md  -- READ/MISSING
   10. ../../shared/includes/knowledge-curate.md -- READ/MISSING
@@ -546,7 +548,7 @@ NO TEMPLATE:
 INSUFFICIENT DATA:
   F16: HTTPS verification                          Requires live audit
 
-Run: <ISO-8601-Z>	seo-fix	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	seo-fix	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 
 NEXT STEPS:
   1. Review NEEDS_REVIEW items above
@@ -554,6 +556,13 @@ NEXT STEPS:
   3. Apply MANUAL fixes if appropriate: zuvo:seo-fix --finding F12 --all
   4. Re-audit for exact score: zuvo:seo-audit
 ```
+
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 

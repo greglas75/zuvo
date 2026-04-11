@@ -568,7 +568,7 @@ CQ: [score]/28 | Q: [score]/19
 Confidence: HIGH / MEDIUM / LOW
 Backlog: [N items added | "none"]
 
-Run: <ISO-8601-Z>\tdebug\t<project>\t<CQ>\t<Q>\t<VERDICT>\t-\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>
+Run: <ISO-8601-Z>\tdebug\t<project>\t<CQ>\t<Q>\t<VERDICT>\t-\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 

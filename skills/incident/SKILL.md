@@ -60,6 +60,7 @@ CORE FILES LOADED:
   1. ../../shared/includes/env-compat.md      -- READ/MISSING
   2. ../../shared/includes/codesift-setup.md   -- READ/MISSING
   3. ../../shared/includes/run-logger.md       -- READ/MISSING
+  4. ../../shared/includes/retrospective.md       -- READ/MISSING
 ```
 
 **If any CORE file is missing:** Proceed in degraded mode. Note "DEGRADED -- [file] unavailable" in the output.
@@ -600,11 +601,19 @@ Impact:        [N users affected, data: none/corrupted/lost]
 Postmortem:    [file path or "DRY RUN -- not created"]
 Comms:         [generated / not requested]
 
-Run: <ISO-8601-Z>	incident	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	incident	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
+
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 
 Field mapping (aligned with run-logger.md contract):
+Field mapping (aligned with retrospective.md contract):
 - CQ_SCORE: `-` (not applicable)
 - Q_SCORE: `-` (not applicable)  
 - VERDICT: RESOLVED→PASS, MITIGATED→WARN, INVESTIGATING→BLOCKED

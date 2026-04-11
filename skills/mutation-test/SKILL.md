@@ -44,6 +44,7 @@ CORE FILES LOADED:
   2. ../../rules/test-quality-rules.md     -- READ/MISSING
   3. ../../shared/includes/env-compat.md   -- READ/MISSING
   4. ../../shared/includes/run-logger.md   -- READ/MISSING
+  5. ../../shared/includes/retrospective.md   -- READ/MISSING
 ```
 
 **If any file is missing:** Proceed in degraded mode. Note "DEGRADED -- [file] unavailable" in the final report.
@@ -410,7 +411,14 @@ MUTATION SCORE: [N]% -- Grade [A/B/C/D]
 - zuvo:fix-tests -- for files where tests exist but don't catch mutations
 - zuvo:mutation-test [file] --category [weakest] -- retest after fixes
 
-Run: <ISO-8601-Z>	mutation-test	<project>	<score>%	<killed>/<total>	<VERDICT>	-	<N>-files	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	mutation-test	<project>	<score>%	<killed>/<total>	<VERDICT>	-	<N>-files	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
+
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `../../shared/includes/run-logger.md`.
 

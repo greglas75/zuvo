@@ -239,7 +239,7 @@ Domain: [niche] | Schema: [type(s)] | FAQ: [N items | none]
 SEO: keyword "[kw]", meta OK, OG OK [| internal links: N verified / N suggested]
 Humanization: [voice matched | rules only | skipped]
 
-Run: <ISO-8601-Z>	write-article	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	write-article	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 -----
 ```
 

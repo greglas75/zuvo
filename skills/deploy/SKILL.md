@@ -35,6 +35,7 @@ Read each file below using the Read tool. Print the checklist with status before
 CORE FILES LOADED:
   1. ../../shared/includes/env-compat.md          — READ/MISSING
   2. ../../shared/includes/run-logger.md           — READ/MISSING
+  3. ../../shared/includes/retrospective.md           — READ/MISSING
   3. ../../shared/includes/platform-detection.md   — READ/MISSING
 ```
 
@@ -262,7 +263,14 @@ DEPLOY COMPLETE
 
   Next: zuvo:canary <url> (optional monitoring)
 
-Run: <ISO-8601-Z>\tdeploy\t<project>\t-\t-\t<VERDICT>\t-\t7-phase\t<NOTES>\t<BRANCH>\t<SHA7>
+Run: <ISO-8601-Z>\tdeploy\t<project>\t-\t-\t<VERDICT>\t-\t7-phase\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
+
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 

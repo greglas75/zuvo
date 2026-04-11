@@ -31,6 +31,7 @@ Read these files before any work begins:
 7. `../../shared/includes/audit-output-schema.md` -- JSON output contract
 8. `../../shared/includes/backlog-protocol.md` -- Backlog persistence contract
 9. `../../shared/includes/run-logger.md` -- Run logging contract
+10. `../../shared/includes/retrospective.md` -- Retrospective protocol
 
 Print the checklist:
 
@@ -45,6 +46,7 @@ CORE FILES LOADED:
   7. audit-output-schema.md        -- [READ | MISSING -> STOP]
   8. backlog-protocol.md           -- [READ | MISSING -> STOP]
   9. run-logger.md                 -- [READ | MISSING -> STOP]
+  10. retrospective.md                 -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.
@@ -695,7 +697,14 @@ Overall: [N]/100 -- Tier [A/B/C/D] | Result: [PASS/FAIL/PROVISIONAL]
 Profile: [profile] | CMS: [type or none]
 Critical gates: [N PASS] / [N FAIL] / [N INSUFFICIENT DATA]
 Findings: [N critical] / [N total] | Quick wins: [N]
-Run: <ISO-8601-Z>	geo-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	geo-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
+
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 

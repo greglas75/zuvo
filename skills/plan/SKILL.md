@@ -60,6 +60,7 @@ CORE FILES LOADED:
   3. ../../shared/includes/quality-gates.md    -- READ/MISSING
   4. ../../shared/includes/tdd-protocol.md     -- READ/MISSING
   5. ../../shared/includes/run-logger.md       -- READ/MISSING
+  6. ../../shared/includes/retrospective.md       -- READ/MISSING
   6. ../../shared/includes/session-state.md    -- READ/MISSING
 ```
 
@@ -270,8 +271,15 @@ The approved plan document at `docs/specs/YYYY-MM-DD-<topic>-plan.md`.
 This artifact is the prerequisite for `zuvo:execute`. When the user is ready to implement, they invoke `zuvo:execute` and it picks up this plan automatically.
 
 ```
-Run: <ISO-8601-Z>	plan	<project>	-	-	<VERDICT>	<TASKS>	3-phase	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	plan	<project>	-	-	<VERDICT>	<TASKS>	3-phase	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 ```
+
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 

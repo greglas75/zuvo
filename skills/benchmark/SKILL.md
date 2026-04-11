@@ -41,6 +41,7 @@ Before starting work, read each file below. Print the checklist with status.
 CORE FILES LOADED:
   1. ../../shared/includes/benchmark-output-schema.md  -- READ/MISSING
   2. ../../shared/includes/run-logger.md               -- READ/MISSING
+  3. ../../shared/includes/retrospective.md               -- READ/MISSING
   3. ../../shared/includes/env-compat.md               -- READ/MISSING
 ```
 
@@ -293,8 +294,15 @@ The JSON file must conform to the schema version `"2.0"` defined in `../../share
 ### Run Log
 
 ```
-Run: <ISO-8601-Z>	benchmark	<project>	-	-	<VERDICT>	<providers_count>-providers	<mode>	<notes>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	benchmark	<project>	-	-	<VERDICT>	<providers_count>-providers	<mode>	<notes>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 ```
+
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `../../shared/includes/run-logger.md`.
 

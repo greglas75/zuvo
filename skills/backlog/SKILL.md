@@ -40,6 +40,7 @@ Add, list, and manage backlog items. The backlog tracks technical debt discovere
 ## Run Logging
 
 Read `../../shared/includes/run-logger.md` for log format and file path resolution.
+Read `../../shared/includes/retrospective.md` for log format and file path resolution.
 
 ## CodeSift Integration
 
@@ -274,9 +275,16 @@ After completing any action, print:
 BACKLOG COMPLETE
 -----
 Action: [list | add | fix | wontfix | delete | stats | prioritize | suggest]
-Run: <ISO-8601-Z>	backlog	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	backlog	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 -----
 ```
+
+
+### Retrospective (REQUIRED)
+
+Follow the retrospective protocol from `retrospective.md`.
+Gate check → structured questions → TSV emit → markdown append.
+If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 

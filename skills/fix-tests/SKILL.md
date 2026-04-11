@@ -301,7 +301,7 @@ FIX-TESTS SESSION COMPLETE
 Patterns fixed:  [list]
 Total files:     [N] fixed, [N] skipped
 Bugs discovered: [N] (see backlog)
-Run: <ISO-8601-Z>	fix-tests	<project>	-	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
+Run: <ISO-8601-Z>	fix-tests	<project>	-	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 -----
 ```
 
