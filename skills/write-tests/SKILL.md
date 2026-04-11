@@ -2,14 +2,15 @@
 name: write-tests
 description: >
   Write tests for existing production code. Processes ONE file at a time
-  through a full pipeline: analyze, write, verify, adversarial review, log.
-  Uses CodeSift for discovery and analysis when available. Modes: [path]
-  (specific target), auto (discover and loop until done), --dry-run (plan only).
+  through a full pipeline: analyze, write, verify, blind coverage audit,
+  adversarial review, log. Uses CodeSift for discovery and analysis when
+  available. Modes: [path] (specific target), auto (discover and loop until
+  done), --dry-run (plan only; skips suite verification).
 ---
 
 # zuvo:write-tests — Single-File Test Pipeline
 
-Generate high-quality tests for production code. Each file goes through the full pipeline individually — no batching, no skipping verification.
+Generate high-quality tests for production code. Each file goes through the full pipeline individually — no batching of files or pipeline steps, no skipping verification in normal mode, no skipping coverage audit.
 
 **Scope:** Existing production files with missing or partial test coverage.
 **Out of scope:** New feature tests (use `zuvo:build`), mass anti-pattern repair (use `zuvo:fix-tests`), audit without writing (use `zuvo:test-audit`).
@@ -23,6 +24,8 @@ Generate high-quality tests for production code. Each file goes through the full
 | `auto` | Discover uncovered files, process one at a time until done |
 | `--dry-run` | Run Phase 0 + Step 1 for all files, print plan, stop |
 | `--no-cache` | Force regeneration of project profile before test planning |
+
+`--no-cache` clears cached project-profile and queue hints before discovery/classification.
 
 ---
 
@@ -38,7 +41,7 @@ This is the ONLY file loaded before reading the production file. Do NOT load tes
 
 ### PHASE 0.5 — Classify (read production file, determine loading tier)
 
-After CodeSift setup, read the production file fully. Classify it per `test-code-types.md` classification table (memorized from prior sessions or read on first encounter):
+After CodeSift setup, read the production file fully. Then read `../../shared/includes/test-code-types.md` and classify from that file's canonical table. Do NOT classify from memory.
 
 - **Code type:** VALIDATOR / SERVICE / CONTROLLER / HOOK / PURE / COMPONENT / GUARD / API-CALL / ORCHESTRATOR / STATE-MACHINE / ORM-DB
 - **Complexity:** THIN / STANDARD / COMPLEX
@@ -68,7 +71,7 @@ Load ONLY the includes matching the detected tier AND stack. Print READ/SKIP sta
 
 | Include | LIGHT | STANDARD | HEAVY | COMPONENT |
 |---------|-------|----------|-------|-----------|
-| `../../shared/includes/test-contract.md` | Sections 1,3,6 only | Full | Full | Full |
+| `../../shared/includes/test-contract.md` | Full | Full | Full | Full |
 | `../../shared/includes/test-blocklist.md` | Full | Full | Full | Full |
 | `../../shared/includes/quality-gates.md` | Q1-Q19 only* | Q1-Q19 only* | Q1-Q19 only* | Q1-Q19 only* |
 | `../../rules/testing.md` | Full | Full | Full | Full |
@@ -81,9 +84,17 @@ Load ONLY the includes matching the detected tier AND stack. Print READ/SKIP sta
 |---------|-------|----------|-------|-----------|
 | `test-mock-safety-js.md` OR `test-mock-safety-php.md` | **SKIP** | Full | Full | **SKIP** |
 | `test-code-types-js.md` OR `test-code-types-php.md` | **SKIP** | Full | Full | **SKIP** |
-| `../../shared/includes/test-edge-cases.md` | **SKIP** | Full | Full | **SKIP** |
+| `../../shared/includes/test-edge-cases.md` | **SKIP** | Full | Full | Full |
 
-**Stack detection:** `composer.json` → PHP, `package.json` → JS/TS, `pyproject.toml` → Python. Load the matching `-js.md` or `-php.md` file. Never load both.
+**Stack detection:** resolve stack per target file using the nearest manifest:
+
+- nearest `package.json` => JS/TS
+- nearest `composer.json` => PHP
+- nearest `pyproject.toml` => Python (core-only mode: no Python-specific `test-mock-safety-*` or `test-code-types-*` includes exist yet)
+
+If multiple manifests are equally near, prefer `package.json` > `composer.json` > `pyproject.toml` and print the conflict decision.
+
+Load at most one stack-specific include family. Python uses `test-mock-safety-core.md`, `test-code-types-core.md`, and `test-edge-cases.md`; rows 8-9 are `SKIP` until Python-specific split includes exist.
 
 \* **quality-gates.md:** Read ONLY from `## Q1-Q19: Test Quality Gates` to end of file. Skip CQ1-CQ28.
 
@@ -95,27 +106,29 @@ PHASE 1 — LOADED:
   5. testing.md                    -- [READ]
   6. test-mock-safety-core.md      -- [READ]
   7. test-code-types-core.md       -- [READ]
-  8. test-mock-safety-{stack}.md   -- [READ | SKIP — per tier]
-  9. test-code-types-{stack}.md    -- [READ | SKIP — per tier]
+  8. test-mock-safety-{stack}.md   -- [READ | SKIP — per tier/stack]
+  9. test-code-types-{stack}.md    -- [READ | SKIP — per tier/stack]
   10. test-edge-cases.md           -- [READ | SKIP — per tier]
 ```
 
-### DEFERRED — Load at completion (Step 5)
+### DEFERRED — Load after queue empty (Completion only, once per run)
 
 ```
-  9. ../../shared/includes/run-logger.md           -- [READ at Step 5]
-  10. ../../shared/includes/retrospective.md        -- [READ at Step 5]
+  D1. ../../shared/includes/run-logger.md           -- [READ at completion]
+  D2. ../../shared/includes/retrospective.md        -- [READ at completion]
+  D3. ../../shared/includes/knowledge-curate.md     -- [READ at completion]
 ```
 
 ---
 
-## Phase 0: Bootstrap + Classify (runs once per file)
+## Phase 0: Bootstrap + Classify (baseline once per run, classification once per file)
 
 1. **CodeSift setup** per `codesift-setup.md`. Note repo identifier.
 2. **Read production file.** Read the target file fully. This happens BEFORE loading any other includes.
-3. **Classify** per PHASE 0.5 above. Determine code type, complexity, testability, and loading tier.
-4. **Load conditional includes** per PHASE 1 table above. Print READ/SKIP status for each.
-5. **Dynamic context retrieval (when CodeSift available):** Run targeted retrieval dimensions for the target file. Which dimensions run depends on the tier:
+3. **Detect stack** per the nearest-manifest rule above. If target file extension conflicts with the manifest winner, the target file extension wins. Record the final stack before Phase 1 loading.
+4. **Classify** per PHASE 0.5 above. Determine code type, complexity, testability, and loading tier.
+5. **Load conditional includes** per PHASE 1 table above. Print READ/SKIP status for each.
+6. **Dynamic context retrieval (when CodeSift available):** Run targeted retrieval dimensions for the target file. Which dimensions run depends on the tier:
    - **LIGHT tier:** D1 only (file is self-contained, no complex mocks)
    - **STANDARD tier:** D1 + D2 (conditional) + D3 (conditional) + D4
    - **HEAVY tier:** D1 + D2 + D3 + D4
@@ -125,7 +138,7 @@ PHASE 1 — LOADED:
    
    Print: `[CONTEXT] Tier: {TIER}, exemplar={path}, {N} import mocks, {N} signatures`
 
-   **Retrieval queries are stack-aware.** Detect stack from Phase 0 (package.json → JS/TS, composer.json → PHP, pyproject.toml → Python). Use the matching query set below.
+   **Retrieval queries are stack-aware.** Use the stack resolved in Phase 0 Step 3. Use the matching query set below.
 
    **Dimension 1 — Exemplar test (ALL tiers):** Find an existing test file to use as pattern reference.
    
@@ -186,29 +199,27 @@ PHASE 1 — LOADED:
 
    **If CodeSift unavailable:** Skip all 4 dimensions. Print: `[CONTEXT] CodeSift unavailable — using legacy detection.`
 
-6. **Stack detection:** Read package.json/tsconfig/composer.json. Detect test runner (vitest/jest/phpunit). Find existing test patterns (DB helpers, factory functions, mock conventions). If Dimension 1 found an exemplar, stack is already implied — but confirm test runner from config.
-7. **Baseline test run:** execute test suite, record pre-existing failures. These are ignored in verification.
+7. **Test runner refinement:** Read the nearest manifest/config for the resolved stack. Detect test runner (vitest/jest/phpunit/pytest). Find existing test patterns (DB helpers, factory functions, mock conventions). If no manifest exists, infer runner from the target file extension. If still unknown, mark the file `FAILED` and backlog the environment issue. If Dimension 1 found an exemplar, stack is already implied — but confirm the runner from config.
 8. **Build queue:**
    - **Explicit mode:** queue = user's target file(s)
-   - **Auto mode with CodeSift:** single batch call:
-     ```
-     codebase_retrieval(repo, token_budget=5000, queries=[
-       {type: "dead_code"},
-       {type: "hotspots", since_days: 90},
-       {type: "references", symbol_names: [exports], file_pattern: "*.test.*"},
-       {type: "classify_roles", file_pattern: "src/"}
-     ])
-     ```
+   - **Auto mode with CodeSift:** use available CodeSift primitives to gather, at minimum:
+     - dead or leaf production candidates
+     - 90-day hotspots
+     - whether each candidate export is referenced from test files
+     - role/classification signals under `<source-root>/`
+     Prefer one batched retrieval when the environment supports it; otherwise run equivalent read-only calls and merge the results.
      Dead/leaf symbols with 0 test refs = UNCOVERED. **Priority:** hub symbols first (many connections = failures cascade), then high-churn, then leaf.
-   - **Auto mode without CodeSift:** `Glob("src/**/*.ts")` + check for matching `*.test.*` files. Files without test = UNCOVERED.
+     If any sub-query fails or returns empty, log degraded discovery and fall back to the non-CodeSift queue builder.
+   - **Auto mode without CodeSift:** resolve `<source-root>` from the nearest manifest (`src/`, `app/`, `lib/`, else repo root), then glob for production files in that root using stack-appropriate extensions. Files without matching tests = UNCOVERED.
+9. **Baseline test run:** execute test suite once per run, after the queue is known and before the queue loop starts, and record pre-existing failures. These are ignored in verification. **Skip Step 9 in `--dry-run`.** If the runner/config is unavailable, backlog one run-level environment issue and mark every queued file `FAILED` with `Blind Audit=skipped` and `Adversarial=not_run`, then stop.
 
-**`--dry-run` mode:** after building queue, run Step 1 (Analyze) for each file, print classification table, STOP.
+**`--dry-run` mode:** after Step 8 builds the queue, run Step 1 (Analyze) for each file, print classification table, STOP. Never run Step 9 or any other shell command that would validate or mutate the suite.
 
 ---
 
 ## Per-File Loop
 
-For each file in the queue, execute Steps 1-5 in order. Do NOT skip any step. Do NOT proceed to the next file until all 5 steps complete.
+For each file in the queue, execute Steps 1, 2, 3, 3.5, 4, and 5 in order. Do NOT skip any step unless a later step explicitly defines a degraded terminal state such as `SKIPPED_REVIEW`. Do NOT proceed to the next file until every required checkpoint completes or is explicitly downgraded by the skill.
 
 ### Step 1: Analyze
 
@@ -220,7 +231,9 @@ The production file was already read and classified in Phase 0.5. **If a test fi
 
 **Do NOT add good tests on top of bad tests.** If existing tests are weak, fix them first. "ONE file, FULL pipeline" means the WHOLE test file, not just the gap you were sent to fix.
 
-**Barrel file detection:** If the file contains ONLY `export { X } from './sub-module'` lines (zero owned logic), it is a barrel/re-export file. Do NOT write delegation tests for it — expand the queue to the sub-modules it re-exports from. Print: `[BARREL] {file} is a re-export barrel — expanding to {N} sub-modules.`
+Rewrite scope is still single-file. Do not turn one target file into a broad anti-pattern cleanup campaign across unrelated tests; use `zuvo:fix-tests` for that.
+
+**Barrel file detection:** If the file contains ONLY `export { X } from './sub-module'` lines (zero owned logic), it is a barrel/re-export file. Do NOT write delegation tests for it — write a coverage row immediately with `Status=SKIPPED_BARREL`, `Tests=0`, `Q Score=N/A`, `Blind Audit=skipped`, `Adversarial=not_run`, then expand the queue to the sub-modules it re-exports from. Print: `[BARREL] {file} is a re-export barrel — expanding to {N} sub-modules.`
 
 **If exemplar test loaded in Phase 0 (Dimension 1):** Use it as the primary pattern reference.
 First, **extract these patterns from the exemplar** before planning tests:
@@ -249,18 +262,17 @@ You just read the production code. **Before** planning tests, scan for bugs:
 - Security gaps (missing auth check, unsanitized input, unbounded query)
 - Edge cases the code doesn't handle (null, empty, duplicates)
 
-If you find a bug: log it to `memory/backlog.md` with file:line and description. Then write tests that **expose** the bug (test should fail if bug exists, pass if fixed). This catches bugs BEFORE adversarial review instead of wasting ~30K tokens discovering them in pass 2.
+If you find a bug: log it to `memory/backlog.md` with file:line and description.
+
+- If the strongest honest regression test would be **red** against current production code, do NOT weaken the assertion just to satisfy Step 2.
+- Instead: backlog the bug, mark the file `FAILED`, and hand off the production fix to `zuvo:debug` or `zuvo:build`.
+- Only add a regression test in this skill when it can pass against the current production contract.
+
+This prevents a deadlock between bug exposure and Step 2's green-test requirement.
 
 Print: `[BUG-SCAN] Found {N} potential issues.` or `[BUG-SCAN] Clean.`
 
-**With CodeSift:** single batch call:
-```
-codebase_retrieval(repo, token_budget=3000, queries=[
-  {type: "outline", file_path: "<file>"},
-  {type: "complexity", file_pattern: "<file>"},
-  {type: "call_chain", symbol_name: "<main_export>", direction: "callees"}
-])
-```
+**With CodeSift:** gather outline, complexity, and call-chain context for the target file. Prefer one batched retrieval when supported; otherwise use equivalent discrete CodeSift calls and continue if any one dimension is unavailable.
 
 **Without CodeSift:** Read the file, count branches manually.
 
@@ -280,9 +292,14 @@ Print: `[file]: [type] [complexity] [testability] → [N] tests planned`
 
 1. **Fill test contract** per `test-contract.md`: BRANCHES, ERROR PATHS, EXPECTED VALUES, MOCK INVENTORY, MUTATION TARGETS, TEST OUTLINE. If 3+ methods share the same control flow pattern (e.g., null guard + try/catch), use **per-pattern mode** from test-contract.md instead of per-branch.
 2. **Check blocklist** per `test-blocklist.md` — verify you are NOT about to write any blocked pattern.
-3. **Apply mock rules** per `test-mock-safety.md`.
+3. **Apply mock rules** per the loaded `test-mock-safety-core.md` plus `test-mock-safety-{stack}.md` when that stack file was loaded.
 4. **Write the test file.** Follow the contract and plan exactly.
+   - When creating a new test file or fully rewriting one under this skill, prepend a generated marker using stack-native comment syntax:
+     - JS/TS/PHP: `// Generated by zuvo:write-tests`
+     - Python: `# Generated by zuvo:write-tests`
 5. **Run tests:** `[test runner] [test file]`. All new tests must pass. Pre-existing failures ignored. Fix red tests before proceeding.
+
+Red regression tests for known production bugs are not a valid terminal state for `write-tests`. If the truthful test stays red, backlog the bug and fail the file instead of weakening the assertion.
 
 ### Step 3: Verify
 
@@ -295,9 +312,69 @@ Print: `[file]: [type] [complexity] [testability] → [N] tests planned`
    ```
    Any critical gate at 0: fix immediately and re-score.
 
-No sub-agent dispatch. Step 4 (4 adversarial passes with different models) provides true independent verification — stronger than same-model sub-agent.
+Q-score is a quality gate, not an exhaustive coverage map. Step 3 validates test quality. Step 3.5 validates production behavior coverage.
+
+### Step 3.5: Blind Coverage Audit
+
+Read `../../shared/includes/blind-coverage-audit.md` now. This is the source of truth for the audit protocol.
+
+Goal: run a **production-first** coverage audit before adversarial review. Strict contract-blind isolation is required for a passing blind audit. This is not another Q-score and must not reuse the writer's test contract.
+
+**Execution paths:**
+
+- **Required:** isolated read-only `blind-coverage-auditor` or a fresh subprocess that receives only the files below
+
+Strict isolated execution receives only:
+- `../../shared/includes/blind-coverage-audit.md`
+- production file
+- test file
+- optional repo identifier
+
+Do not use CodeSift in strict mode. If isolated execution is unavailable or fails, do NOT substitute an inline same-run audit. Mark the file `FAILED`, persist `Blind Audit=skipped`, set `Adversarial=blocked`, and stop after backlog persistence.
+
+**Audit order:**
+
+1. Read the production file first and enumerate owned behaviors.
+2. Classify each row as owned vs delegated.
+3. Read the test file second and map evidence.
+4. Assign one coverage state per row: `FULL | PARTIAL | NONE | STRUCTURAL_ONLY | N/A`
+5. Issue one verdict: `CLEAN | FIX | REWRITE`
+6. Name exactly one highest-value missing test.
+
+Thin delegators and wrappers are audited on forwarding contract only. Do NOT demand downstream implementation tests. Barrels remain out of scope. Accessibility fallbacks, including nodes such as `role="status"`, are owned behavior when this module renders them.
+
+**Pass budget:** max 2 blind-audit passes per file.
+
+- **Pass 1:** audit the current test file.
+- **If verdict = FIX:** patch tests, re-run the target test file, then rerun Step 3.5 once.
+- **If verdict = REWRITE:** rewrite the test file from Step 2, rerun Step 3, then rerun Step 3.5 once.
+- **If verdict remains FIX or REWRITE after pass 2:** mark the file `FAILED`, backlog the findings, and do NOT proceed to Step 4.
+
+**Blind-audit state machine:**
+
+| Blind-audit result | Step 4 transition | `coverage.md` Blind Audit value | Resume behavior |
+|--------------------|-------------------|---------------------------------|-----------------|
+| `CLEAN` via strict path | Proceed to Step 4 | `clean:strict` | If adversarial status is missing, resume at Step 4 |
+| `FIX` on pass 1 | Block Step 4; patch tests and rerun once | `fix:<n>` | Resume at Step 3.5 |
+| `REWRITE` on pass 1 | Block Step 4; rewrite from Step 2, then rerun Step 3 + 3.5 once | `rewrite` | Resume at Step 2 |
+| `FIX` or `REWRITE` on pass 2 | Do NOT run Step 4; mark file `FAILED` and set `Adversarial=blocked` | `fix:<n>` or `rewrite` | Skip after backlog persistence |
+| Strict audit unavailable or inputs unreadable | Do NOT run Step 4; mark file `FAILED` and set `Adversarial=blocked` | `skipped` | Skip after backlog persistence |
+
+Emit the exact table schema from `blind-coverage-audit.md`. Summary-only prose is not enough.
+
+Print:
+```
+Audit mode: strict
+Coverage verdict: [CLEAN|FIX|REWRITE]
+INVENTORY COMPLETE: [N] rows
+| id | kind | production lines | owned_or_delegated | coverage | test evidence | notes |
+Prioritized findings: [N or none]
+Highest-value missing test: [one concrete test]
+```
 
 ### Step 4: Adversarial Review (iterative, complexity-tiered)
+
+Enter Step 4 only when Step 3.5 returned `Audit mode: strict` and `Coverage verdict: CLEAN`.
 
 Run adversarial passes sequentially, one RANDOM provider per pass (`--rotate`). Each pass sees the FIXED code from previous passes. Early exit when a pass returns 0 findings. Run until clean or max passes exhausted (whichever first).
 
@@ -333,17 +410,17 @@ The provider sees both files and focuses on gaps between production behavior and
 ```
 Pass 1:
   adversarial-review --rotate --mode test --context "..." --files "<prod> <test>"
-  Note which provider was used (from stderr output).
+  Record provider identity only if the script exposes it reliably.
   → fix CRITICAL/WARNING → re-run tests
 
 Pass 2:
-  adversarial-review --rotate --exclude <pass-1-provider> --mode test \
+  adversarial-review --rotate [--exclude <pass-1-provider> if known] --mode test \
     --context "... FIXED: [...]. REJECTED: [...]. KNOWN: [...]." \
     --files "<prod> <test>"
-  → fix findings → re-run tests (guaranteed different provider)
+  → fix findings → re-run tests
 
 Pass 3 (COMPLEX only, if pass 2 had CRITICAL):
-  adversarial-review --rotate --exclude <pass-2-provider> --mode test \
+  adversarial-review --rotate [--exclude <pass-2-provider> if known] --mode test \
     --context "..." --files "<prod> <test>"
 ```
 
@@ -355,7 +432,7 @@ Pass 3 (COMPLEX only, if pass 2 had CRITICAL):
 
 **Stub fidelity rule for ORCHESTRATOR:** Route module stubs MUST use `all()` (catch-all). Testing HTTP methods (GET vs POST) is the responsibility of route module tests, not orchestrator tests. If adversarial flags "stubs don't verify HTTP methods" — REJECT with "scope mismatch, route module responsibility".
 
-If `adversarial-review` is not found: check `../../scripts/adversarial-review.sh`. If missing entirely, mark file SKIPPED_REVIEW and proceed.
+If `adversarial-review` is not found: check `../../scripts/adversarial-review.sh`. If missing entirely, mark file `SKIPPED_REVIEW`, record a degraded completion note, and proceed.
 
 **Fix policy per pass:**
 
@@ -366,19 +443,28 @@ If `adversarial-review` is not found: check `../../scripts/adversarial-review.sh
 | **WARNING (>10 lines)** | Add to backlog with file:line. |
 | **INFO** | Known concerns (max 3). |
 | **0 findings** | Early exit — stop passes, file is clean. |
-| **After pass 4 with unresolved CRITICAL** | Mark file **FAILED** in coverage.md. Backlog findings. |
+| **After final pass with unresolved CRITICAL** | Mark file **FAILED** in coverage.md. Backlog findings. |
 | **Provider unavailable on all passes** | Mark file **SKIPPED_REVIEW** in coverage.md. |
 
 ### Step 5: Log
 
 Update `memory/coverage.md`:
 ```
-| File | Status | Tests | Q Score | Adversarial | Date |
+| File | Status | Tests | Q Score | Blind Audit | Adversarial | Date |
 ```
 
-Statuses: `PASS`, `FAILED`, `SKIPPED_REVIEW`
+Statuses: `PASS`, `FAILED`, `SKIPPED_REVIEW`, `SKIPPED_BARREL`
+Blind Audit values: `clean:strict`, `fix:<n>`, `rewrite`, `skipped`
+Adversarial values: `clean`, `<n> findings`, `skipped`, `blocked`, `not_run`
 
-Print per-file summary: `[status] [file] — [N] tests, Q [N]/19, adversarial: [clean|N findings|skipped]`
+`SKIPPED_REVIEW` is a degraded terminal state, not a clean pass. Never silently collapse it into `PASS`.
+Rows that never enter Step 4 must persist `Adversarial=blocked` or `Adversarial=not_run`; never leave the column empty.
+
+Persist `Q Score` as a durable value, not prose memory: `<score>/19 (Q7=?,Q11=?,Q13=?,Q15=?,Q17=?)`.
+
+Print per-file summary: `[status] [file] — [N] tests, Q [N]/19, blind audit: [clean:strict|fix:<n>|rewrite|skipped], adversarial: [clean|N findings|skipped|blocked|not_run]`
+
+Do NOT treat a file as complete unless both `Blind Audit` and `Adversarial` columns are populated.
 
 **→ NEXT file in queue.**
 
@@ -403,31 +489,40 @@ WRITE-TESTS COMPLETE
 Files tested:  [N] ([M] new, [K] extended, [J] fixed)
 Tests written: [N] total
 Q gates:       [N]/19 avg (critical gates: all pass)
-Failures:      pre-existing: [N], new: 0
+Blind audit:   [N] clean, [M] failed/rewrite, [K] skipped
+Validation:    [full-suite|scoped:touched-tests]
+Failures:      pre-existing: [N], new in scope: 0
 FAILED files:  [list or "none"]
 SKIPPED_REVIEW: [list or "none"]
+SKIPPED_BARREL: [list or "none"]
 Run: <ISO-8601-Z>	write-tests	<project>	-	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 -----
 ```
 
 Append `Run:` line to log file per `run-logger.md`.
 
-**Do NOT print WRITE-TESTS COMPLETE if any file has no status in coverage.md.**
+Run one final full-suite validation, or explicitly scope the final failure count to touched test files only before printing `new in scope: 0`.
+
+**Do NOT print WRITE-TESTS COMPLETE if any file is missing `Status`, `Blind Audit`, or `Adversarial` in coverage.md.**
 
 ---
 
 ## Resume / Crash Recovery
 
-On start, read `memory/coverage.md`:
+On start, read `memory/coverage.md`. If the file uses the old pre-blind-audit schema, normalize the row once by adding empty `Blind Audit` and `Adversarial` cells with note `legacy-pre-blind-audit`, then resume from Step 3.5 before Step 4.
 
-| Status | Resume action |
-|--------|---------------|
-| PASS | Skip |
-| FAILED | Skip (already backlocked) |
-| SKIPPED_REVIEW | Re-process Step 4 only (adversarial) |
-| (absent) | Process from Step 1 |
+| Status | Blind Audit | Adversarial | Resume action |
+|--------|-------------|-------------|---------------|
+| PASS | `clean:strict` | present | Skip |
+| FAILED | `fix:<n>` or `rewrite` or `skipped` | any | Skip (already backlogged) |
+| SKIPPED_REVIEW | `clean:strict` | `skipped` | Re-process Step 4 only |
+| SKIPPED_BARREL | `skipped` | `not_run` | Skip |
+| status missing or non-terminal legacy row | `fix:<n>` | missing or stale | Re-process Step 3.5 |
+| status missing or non-terminal legacy row | `rewrite` | missing or stale | Re-process from Step 2, then Step 3 + 3.5 |
+| status missing or non-terminal legacy row | `skipped` | missing or stale | Re-process Step 3.5 only if inputs are now readable |
+| (absent) | - | - | Process from Step 1 |
 
-If a test file exists on disk but file is absent from coverage.md → partial run. Check if file was auto-generated (contains `// Generated by zuvo:write-tests` header). If yes, delete and re-process from Step 1. If no (pre-existing/manual test), assess quality in Step 1 and choose ADD TO or REWRITE.
+If a test file exists on disk but file is absent from coverage.md → partial run. Check if file was auto-generated (contains stack-native marker `Generated by zuvo:write-tests`, e.g. `// ...` or `# ...`). If yes, delete and re-process from Step 1. If no (pre-existing/manual test), assess quality in Step 1 and choose ADD TO or REWRITE.
 
 Auto mode: re-run CodeSift discovery to rebuild priority queue (queue order not persisted).
 
@@ -438,5 +533,5 @@ Auto mode: re-run CodeSift discovery to rebuild priority queue (queue order not 
 1. Read production code before planning tests. Every assertion traces to real behavior.
 2. Test depth matches complexity. A 25-line wrapper does not need 30 edge-case tests.
 3. Test what the code OWNS, mock what it DELEGATES.
-4. ONE file, FULL pipeline. No batching. No skipping steps.
-5. Adversarial review is step 4 of 5 — not optional, not at the end.
+4. ONE file, FULL pipeline. No batching of files or pipeline steps. Batched read-only discovery queries are allowed.
+5. Blind coverage audit and adversarial review are separate gates. Step 4 never runs until Step 3.5 is clean.
