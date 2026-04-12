@@ -299,8 +299,4 @@ Run: <ISO-8601-Z>	context-audit	<project>	-	-	<VERDICT>	-	<mode>	<NOTES>	<BRANCH
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 
-After appending the Run: line, collect context metrics:
-
-```bash
-bash "${CLAUDE_PLUGIN_ROOT}/hooks/collect-context-metrics.sh" "context-audit" "<project>" "-"
-```
+Context metrics are collected automatically by the `post-skill-metrics.sh` hook — no manual bash call needed.

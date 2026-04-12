@@ -34,6 +34,16 @@
             "async": true
           }
         ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ./hooks/post-skill-metrics.sh",
+            "async": true
+          }
+        ]
       }
     ]
   }

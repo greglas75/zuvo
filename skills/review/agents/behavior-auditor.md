@@ -19,16 +19,16 @@ Read and follow the agent preamble at `../../../shared/includes/agent-preamble.m
 
 1. Production code diff (excluding test files, config, locks)
 2. Detected tech stack and change intent (BUGFIX / REFACTOR / FEATURE / INFRA)
-3. `PRECOMPUTED_DATA` — callee chains, pattern matches, complexity scores from Phase 0.5
+3. `PRECOMPUTED_DATA` — call chains, pattern matches, complexity scores from Phase 0.5
 4. `PROJECT_CONTEXT` — global error handlers, middleware, decorators (if detected)
-5. CODESIFT_AVAILABLE flag and repo identifier
+5. CODESIFT_AVAILABLE flag and optional repo identifier
 6. Tier and risk signals
 
 ## Tool Discovery
 
 If CODESIFT_AVAILABLE=true:
-1. `list_repos()` — get the repo identifier (call once, cache)
-2. Use `get_symbol`, `trace_call_chain`, `search_patterns` for deeper analysis beyond PRECOMPUTED_DATA
+1. Repo resolves from CWD. Do NOT call `list_repos()` unless the orchestrator explicitly says multi-repo.
+2. Start with `PRECOMPUTED_DATA`. Use targeted `get_symbol`, `trace_call_chain`, or `search_patterns` only when pre-compute is insufficient.
 
 If CODESIFT_AVAILABLE=false: fall back to Read/Grep/Glob.
 

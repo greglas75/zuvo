@@ -108,6 +108,24 @@ secrets/
 - **Bearer token pattern**: hold in memory (not localStorage), send via `Authorization` header, never in URL params
 - Rate limit auth endpoints (login, register, password reset)
 
+## Token Transport
+
+- **Never accept auth-bearing tokens via query params** — URL parameters leak into access logs, browser history, copied URLs, and `Referer` headers
+- Preferred transport for bearer-style secrets: `Authorization` header or explicit `x-*-token` header
+- Preferred transport for browser sessions: signed, httpOnly, Secure cookies
+- Flag these patterns for review: `@Query('*token*')`, `?token=`, `?preview_token=`, `?api_key=`
+- Public lookup IDs are not the same thing as auth tokens — only exempt values that are explicitly non-secret and non-authenticating
+
+```typescript
+// NEVER — token in query params
+@Get("preview")
+preview(@Query("preview_token") token: string) {}
+
+// ALWAYS — token in header
+@Get("preview")
+preview(@Headers("x-preview-token") token: string) {}
+```
+
 ## API Security Checklist
 
 - [ ] Rate limiting: auth endpoints (5/min), public endpoints (throttled or behind secret), AI/export endpoints (rate proportional to cost)
@@ -127,6 +145,7 @@ secrets/
 | SSRF | Host allowlist + protocol check | Pass `http://169.254.169.254` → verify 400/blocked |
 | Path traversal | `path.resolve` + containment check | Pass `../../etc/passwd` → verify 400 |
 | Auth bypass | Middleware auth check | Request without token → verify 401 |
+| Credential leakage via URL | Header/cookie token transport | Request with `?token=` / `?preview_token=` → verify rejected |
 | Tenant isolation | orgId/ownerId filter | Request with wrong orgId → verify 403 + `service.not.toHaveBeenCalled()` |
 | CSRF | SameSite cookie + CSRF token | POST without CSRF token → verify 403 |
 | Rate limiting | Rate limiter middleware | N+1 requests → verify 429 |

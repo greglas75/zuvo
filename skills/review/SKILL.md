@@ -91,6 +91,25 @@ Tokens combine: `HEAD~3 src/api/` reviews the last 3 commits scoped to `src/api/
 3. Fallback: `git merge-base HEAD "$DEFAULT_BRANCH"`
 4. Final fallback: `HEAD~5` with a warning
 
+### Range Validation
+
+After deriving `REVIEWED_FROM` and `REVIEWED_THROUGH` for any commit-based scope (`new`, `HEAD~N`, `abc123..def456`, batch entry), validate the range before tier selection, CodeSift pre-compute, or adversarial review:
+
+```bash
+git log --oneline "${REVIEWED_FROM}..${REVIEWED_THROUGH}" | head -5
+```
+
+If this returns no commits, STOP and print:
+`[RANGE-ERROR] Empty commit range. Verify base/tip order before running review.`
+
+Do NOT auto-swap the range.
+
+Then print the validated diff stat:
+
+```bash
+git diff --shortstat "${REVIEWED_FROM}..${REVIEWED_THROUGH}"
+```
+
 ### Mode (what to do after the audit)
 
 | Token | Mode | Behavior |
@@ -122,10 +141,21 @@ A quick `git diff --stat` determines how deep the review goes. Filter out noise 
 | All changed files are noise | Print "Only noise files changed (locks, snapshots, dist). Nothing to review." -> STOP |
 | Merge commit detected | Interactive: warn + offer `--first-parent`. Non-interactive: auto-apply `--first-parent` with `[AUTO-DECISION]`. |
 
+### Production Logic Line Count
+
+Before tier selection, compute `PROD_LOGIC_LINES` from changed non-test production hunks after stripping diff headers, blank lines, and comment-only additions/deletions (`//`, `#`, `/*`, `*`, `*/`).
+
+If `PROD_LOGIC_LINES = 0`:
+- Force `TIER 1 -- LIGHT`
+- Skip TIER 2+ escalation driven only by risk signals on comment-only diffs
+- Skip heavy TIER 2-3 pre-compute and behavior-agent escalation
+- Print `[AUTO-DECISION] No production logic lines changed -> TIER 1 override`
+
 ### Tier Selection
 
 | Condition | Tier |
 |-----------|------|
+| `PROD_LOGIC_LINES = 0` | TIER 1 -- LIGHT |
 | <15 lines, no risk signals | TIER 0 -- NANO |
 | 15-100 lines, no risk signals | TIER 1 -- LIGHT |
 | 100-500 lines OR 5-15 files OR 1 risk signal | TIER 2 -- STANDARD |
@@ -145,7 +175,7 @@ A quick `git diff --stat` determines how deep the review goes. Filter out noise 
 | Q1-Q19 on test files | Skip | If present (lead) | Yes | Yes |
 | Audit agents | None | None | Behavior + CQ (if new files) | All 3 (Behavior + Structure + CQ) |
 | Adversarial (bash script) | Yes (all available) | Yes (all available) | Yes (all available) | Yes (all available) |
-| CodeSift pre-compute | Optional | Yes (3 queries) | Yes (5 queries) | Yes (5 queries) |
+| CodeSift pre-compute | Optional | Yes (light ops) | Yes (core ops) | Yes (core ops) |
 | Confidence scoring | Lead inline | Lead inline | Re-Scorer agent | Re-Scorer agent |
 | Hotspot detection | Skip | Skip | Yes | Yes |
 | Multi-pass (--thorough) | Refused | Optional | Optional | Auto if >500L |
@@ -208,8 +238,9 @@ WORK_FILES = <changed files from the diff>
 
 Follow `codesift-setup.md`:
 1. Check whether CodeSift tools are available
-2. `list_repos()` once — cache ONLY the repo identifier string (e.g., `"local/my-project"`). Ignore the full response body (can be ~5K tokens with 200+ repos).
-3. If not indexed: `index_folder(path=<project_root>)`
+2. Repo auto-resolves from CWD — do NOT call `list_repos()` unless the review explicitly spans multiple repositories
+3. If unsure whether the repo is indexed: `index_status()`
+4. If not indexed: `index_folder(path=<project_root>)`
 
 ### Stack Detection (TIER 2+)
 
@@ -247,36 +278,41 @@ Runs only when CodeSift is available. When unavailable, agents fall back to thei
 
 **TIER 0 (optional):** Skip unless CodeSift is already initialized. Minimal value for <=15 line diffs.
 
-**TIER 1 (3 queries):**
+If any pre-compute call fails, set `PRECOMPUTED_DATA=partial`, log the failed operation in SKIPPED STEPS, and continue. Do NOT guess `codebase_retrieval` sub-query shapes.
 
-```
-codebase_retrieval(repo, queries=[
-  {"type": "patterns", "pattern": "empty-catch", "file_pattern": "<changed files>"},
-  {"type": "references", "symbol_names": [<changed exports>], "file_pattern": "*.test.*"},
-  {"type": "complexity", "file_pattern": "<changed files>"}
-], token_budget=2000)
-```
+**TIER 1 (light ops):**
 
-**TIER 2-3 (5 queries):**
+1. `search_patterns(pattern="empty-catch", file_pattern="<changed-file-substring>", max_results=20)`
+2. `find_references(symbol_names=[<changed exports>], file_pattern="<active test glob>")`
+3. `analyze_complexity(file_pattern="<changed-file-substring>", top_n=10)`
 
-```
-codebase_retrieval(repo, queries=[
-  {"type": "file_outlines", "paths": [<changed files>]},
-  {"type": "references", "symbol_names": [<changed symbols>], "file_pattern": "*.test.*"},
-  {"type": "call_chain", "symbol_name": "<key changed symbol>", "direction": "callees"},
-  {"type": "patterns", "pattern": "empty-catch", "file_pattern": "<changed files>"},
-  {"type": "complexity", "file_pattern": "<changed files>"}
-], token_budget=5000)
-```
+**TIER 2-3 (core ops):**
+
+1. For each changed production file: `get_file_outline(file_path="<relative path>")`
+2. `find_references(symbol_names=[<changed symbols>], file_pattern="<active test glob>")`
+3. `trace_call_chain(symbol_name="<key changed symbol>", direction="callers", depth=2)`
+4. `search_patterns(pattern="empty-catch", file_pattern="<changed-file-substring>", max_results=50)`
+5. `analyze_complexity(file_pattern="<changed-file-substring>", top_n=20)`
+6. `impact_analysis(since=<REVIEWED_FROM>, until=<REVIEWED_THROUGH>, depth=2)`
+
+If the repo uses both `*.spec.*` and `*.test.*`, run the test-reference step for both globs and merge the results.
+
+### Compatibility Notes
+
+- Valid `codebase_retrieval` sub-query types: `symbols`, `text`, `file_tree`, `outline`, `references`, `call_chain`, `impact`, `context`, `knowledge_map`
+- Do NOT use `patterns`, `complexity`, or `file_outlines` inside `codebase_retrieval`
+- `outline` uses singular `file_path`
+- For direct `find_references`, use `symbol_names` when checking multiple symbols
+- For `search_patterns` and `analyze_complexity`, use the standalone tools — there is no equivalent valid `codebase_retrieval` sub-query type
 
 Pass results as `PRECOMPUTED_DATA` to each agent:
 
 | Agent | Gets | Helps with |
 |-------|------|-----------|
-| Behavior Auditor | Callee chains, patterns, complexity | Focus on high-risk functions |
-| Structure Auditor | File outlines, complexity | SRP and limits pre-answered |
-| CQ Auditor | Pattern matches, test refs | ~40% of gates pre-evaluated |
-| Confidence Re-Scorer | Reference counts, hotspot ranks | Data-driven confidence |
+| Behavior Auditor | Call chains, pattern matches, complexity | Focus on high-risk functions |
+| Structure Auditor | File outlines, complexity, impact | SRP and limits pre-answered |
+| CQ Auditor | Pattern matches, test refs, file outlines | ~40% of gates pre-evaluated |
+| Confidence Re-Scorer | Reference counts, hotspot ranks, impact | Data-driven confidence |
 
 ---
 
@@ -334,6 +370,19 @@ For each test file, run Q1-Q19. Format: `Q EVAL: file.spec.ts | Q1=1 Q2=1 ... | 
 
 Issues NOT introduced by the current diff: always report critical CQ gate violations (CQ3/4/5/6/8/14); briefly note CQ2, CQ10, CQ22; skip naming/magic numbers (code-audit territory). Cap at RECOMMENDED severity.
 
+### Working-Tree Staleness Check
+
+When reviewing a commit range rather than the current working tree, verify that HEAD has not already changed a file after `REVIEWED_THROUGH` before reporting a finding against it:
+
+```bash
+git diff --quiet "{REVIEWED_THROUGH}..HEAD" -- <file>
+```
+
+If the file changed after the reviewed range:
+- mark it `[ALREADY-PATCHED]`
+- read the current file before reporting
+- drop stale findings that no longer exist at HEAD
+
 ### 1.6 Adversarial (ALL tiers — sequential)
 
 Cross-model adversarial review using external providers. Runs **sequentially** via `--rotate` — each pass uses a different random provider. Text mode (no `--json`).
@@ -387,6 +436,9 @@ Max 2 fix attempts per provider finding. Max 3 passes total.
 #### Common rules
 
 - **Use `--rotate`** — script picks a random provider each call. Do NOT use bare `--mode code` (that runs all providers in parallel, defeating sequential).
+- Strip lockfiles, snapshots, dist output, and other known noise files from the diff before piping it to `adversarial-review`.
+- When deterministic facts are already known (for example: lockfile present in diff, package ships bundled types, file already patched at HEAD), prepend a short `FACTS:` block before the diff so the adversarial provider does not rediscover settled facts.
+- If `PROD_LOGIC_LINES = 0` and SELF-REVIEW is not set, skip adversarial and log: `[CROSS-REVIEW] Skipped — no production logic changed.`
 - **Timeout:** 60s per provider. Skip on timeout/malformed, continue with next.
 - **All unavailable:** `[CROSS-REVIEW] No external provider available.` in SKIPPED STEPS.
 - **Severity:** CRITICAL -> MUST-FIX (bypasses confidence gate). WARNING -> RECOMMENDED. INFO -> NIT.

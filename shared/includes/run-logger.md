@@ -158,18 +158,6 @@ Only these 5 values are valid. Skills with non-standard internal vocabularies mu
 - Do not include file paths, code snippets, or sensitive data in NOTES
 - Do not send data anywhere — this is a local file only
 
-## Context Metrics Collection
-
-After appending the Run: line, collect context metrics by running:
-
-```bash
-bash "${CLAUDE_PLUGIN_ROOT:-$(dirname "$(dirname "$(dirname "$0")")")}/hooks/collect-context-metrics.sh" "<SKILL>" "<PROJECT>" "<TIER>"
-```
-
-This reads the session include log (from `track-includes.sh` hook), calculates cumulative file sizes, and appends a metrics line to `~/.zuvo/context-metrics.log`. The metrics file enables trend tracking via `zuvo:context-audit`.
-
-If `collect-context-metrics.sh` is not found, skip silently — metrics collection is optional.
-
 ## Reading the Log
 
 Resolve the log path first (same logic as writing), then query:

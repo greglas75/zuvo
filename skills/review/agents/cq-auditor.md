@@ -20,16 +20,16 @@ Read and follow the agent preamble at `../../../shared/includes/agent-preamble.m
 1. Full source of each changed production file (not just diff — you need complete context)
 2. CQ checklist reference (`rules/cq-checklist.md`)
 3. CQ patterns reference (`rules/cq-patterns.md` or `cq-patterns-core.md` per tier)
-4. `PRECOMPUTED_DATA` — pattern matches, test references from Phase 0.5
+4. `PRECOMPUTED_DATA` — pattern matches, test references, and file outlines from Phase 0.5
 5. `PROJECT_CONTEXT` — global error handlers, middleware, decorators, DI container details
 6. Detected tech stack
-7. CODESIFT_AVAILABLE flag and repo identifier
+7. CODESIFT_AVAILABLE flag and optional repo identifier
 
 ## Tool Discovery
 
 If CODESIFT_AVAILABLE=true:
-1. `list_repos()` — get the repo identifier (call once, cache)
-2. Use `get_file_outline`, `search_patterns`, `get_symbol` for gate verification
+1. Repo resolves from CWD. Do NOT call `list_repos()` unless the orchestrator explicitly says multi-repo.
+2. Start with `PRECOMPUTED_DATA`. Use `get_file_outline`, `search_patterns`, or `get_symbol` only for targeted follow-up verification.
 
 If CODESIFT_AVAILABLE=false: fall back to Read for full file source, Grep for patterns.
 
@@ -83,7 +83,7 @@ Fall back to Read for full file source. Use Grep for pattern searches (`grep -n 
 
 ## What You Must NOT Do
 
-- Do not trust the lead's CQ scores ��� evaluate from scratch
+- Do not trust the lead's CQ scores -- evaluate from scratch
 - Do not score a gate as 1 without file:line evidence
 - Do not score CQ8 as 0 on non-critical services when PROJECT_CONTEXT shows global error handling
 - Do not score >60% N/A without per-gate justification

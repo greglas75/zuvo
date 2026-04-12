@@ -19,16 +19,16 @@ Read and follow the agent preamble at `../../../shared/includes/agent-preamble.m
 
 1. Production code diff
 2. Detected tech stack and change intent
-3. `PRECOMPUTED_DATA` — file outlines, complexity scores from Phase 0.5
+3. `PRECOMPUTED_DATA` — file outlines, complexity scores, and impact data from Phase 0.5
 4. Blast radius data from Phase 0
-5. CODESIFT_AVAILABLE flag and repo identifier
+5. CODESIFT_AVAILABLE flag and optional repo identifier
 6. Content of `rules/file-limits.md` (provided by orchestrator)
 
 ## Tool Discovery
 
 If CODESIFT_AVAILABLE=true:
-1. `list_repos()` — get the repo identifier (call once, cache)
-2. Use `find_circular_deps`, `get_file_outline`, `analyze_complexity` for deeper analysis
+1. Repo resolves from CWD. Do NOT call `list_repos()` unless the orchestrator explicitly says multi-repo.
+2. Start with `PRECOMPUTED_DATA`. Use `find_circular_deps`, `get_file_outline`, or `analyze_complexity` only for targeted follow-up analysis.
 
 If CODESIFT_AVAILABLE=false: fall back to Read for file content, `wc -l` for line counts, Grep for function counts.
 
