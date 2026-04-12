@@ -55,6 +55,7 @@ Detect the environment per `env-compat.md`:
 - Set status to `Reviewed` (NOT `Approved`) -- user must explicitly approve after review
 - Set `approval_mode: async`, `approved_at: null`
 - Do NOT auto-transition to `zuvo:plan`
+- Treat Codex App as async even if the user replies in-thread later. A live follow-up message does NOT retroactively convert the run into interactive mode
 <!-- /PLATFORM:CURSOR -->
 <!-- PLATFORM:ANTIGRAVITY -->
 **Async mode (Antigravity, non-interactive):** Same behavior as Cursor async mode above — apply the same [AUTO-DECISION] annotation and `Reviewed` status rules.
@@ -83,9 +84,10 @@ Dispatch three agents in **parallel** (background). Each agent investigates one 
 Follow the instructions in `codesift-setup.md`:
 
 1. Check whether CodeSift tools are available in the current environment
-2. `list_repos()` once to get the repo identifier
-3. If not indexed: `index_folder(path=<project_root>)`
-4. Pass the repo identifier and CodeSift availability status to each agent
+2. In single-repo work, let the repo auto-resolve from CWD. Do NOT call `list_repos()` unless you are genuinely operating across multiple repos
+3. If unsure whether the repo is indexed: `index_status()`. If not indexed: `index_folder(path=<project_root>)`
+4. If CodeSift is available and the task shape is unclear, run `plan_turn(query=<user request>)` once before manual exploration to get tool and file recommendations
+5. Pass CodeSift availability status plus any concrete repo hints (key directories, files, or recommended tools) to each agent
 
 ### Agent Dispatch
 
@@ -98,7 +100,7 @@ Agent 1: Code Explorer
   model: "sonnet"
   type: "Explore"
   instructions: [read agents/code-explorer.md]
-  input: user request + repo identifier + CodeSift availability
+  input: user request + repo hints + CodeSift availability
 
 Agent 2: Domain Researcher
   model: "sonnet"
@@ -109,7 +111,7 @@ Agent 3: Business Analyst
   model: "sonnet"
   type: "Explore"
   instructions: [read agents/business-analyst.md]
-  input: user request + repo identifier + CodeSift availability
+  input: user request + repo hints + CodeSift availability
 ```
 
 <!-- PLATFORM:CODEX -->
@@ -135,6 +137,16 @@ Collect all three reports before proceeding to Phase 2. Agent roles have differe
 - **Optional agent fails:** Proceed normally. Note "Domain research unavailable" in the spec.
 - **Two or more required agents fail:** STOP. Inform the user. Ask whether to continue with severely limited context or investigate the failures.
 
+### Evidence Calibration
+
+Before Phase 2, verify exact claims from the agent reports before repeating them as fact. This includes:
+
+- Numeric counts ("21 uncovered types", "16 existing specs")
+- Existence/absence claims ("seed script missing", "only one importer")
+- Runtime location claims ("client-side only", "API-testable", "server-side")
+
+Use CodeSift when available; otherwise verify with Read/Grep/Glob. If you cannot verify a claim quickly, keep it out of the factual summary or label it explicitly as `inferred` / `estimate` in the spec.
+
 ---
 
 ## Phase 2: Design Dialogue
@@ -156,12 +168,15 @@ Keep the summary concise. The user does not need the raw agent reports.
 **In interactive mode:** Ask questions **one at a time**. Do not dump a list of 10 questions. Each question should:
 
 - Reference specific findings from the agents (e.g., "The codebase already has a notification service in `src/services/notification.ts`. Should this feature integrate with it or use a separate channel?")
-- Offer multiple-choice answers when possible (A/B/C with brief trade-offs)
+- When asking the user to choose, present at least 2 named alternatives with brief trade-offs
 - Explain why the answer matters for the design
+- Do NOT ask "I recommend X. OK?" If there is only one viable option, record the decision with rationale and move on instead of asking for rubber-stamp approval
 
 Continue asking until you have enough information to propose approaches. Typical count: 2-5 questions. Stop sooner if the scope is clear.
 
 **In async mode:** Make best-judgment decisions for each question you would have asked. Annotate every decision as `[AUTO-DECISION]` with rationale and the alternatives you considered. Proceed directly to proposing approaches.
+
+**Codex App clarification:** In Codex App, do NOT ask open-ended clarifying questions unless the decision is high-risk and cannot be safely defaulted. Use `[AUTO-DECISION]` for normal design assumptions, then present the chosen approach for review.
 
 ### Step 3: Propose Approaches
 
@@ -199,6 +214,7 @@ Do not ask the user to approve the entire design in one shot. Walk through it in
 9. Validation methodology
 
 Get a thumbs-up on each group before moving to the next. If the user pushes back on a section, revise it before continuing. If user shows fatigue during Group 2, explicitly note: "These are the operational concerns that prevent production fires — worth getting right now rather than discovering gaps during implementation."
+A single "go" / "ok" only approves the group currently on the table. It does NOT imply approval of groups that have not yet been presented.
 
 ---
 
@@ -219,8 +235,10 @@ Spec document structure:
 > **topic:** <human-readable feature name>
 > **status:** Draft | Reviewed | Approved
 > **created_at:** YYYY-MM-DDTHH:MM:SSZ
+> **reviewed_at:** null | YYYY-MM-DDTHH:MM:SSZ
 > **approved_at:** null | YYYY-MM-DDTHH:MM:SSZ
 > **approval_mode:** interactive | async
+> **adversarial_review:** pending | clear | warnings | skipped-no-provider
 > **author:** zuvo:brainstorm
 
 `spec_id` is the sole linking key for `zuvo:plan` and `zuvo:execute`. Do not change it after creation. Downstream skills match by `spec_id`, never by filename. The `<HHMM>` suffix prevents collisions when multiple specs are created on the same day.
@@ -250,6 +268,10 @@ Spec document structure:
 ### Integration Points
 
 [How this connects to existing code. Reference specific files and modules.]
+
+### Interaction Contract
+
+[Required for cross-cutting behavioral changes. Define: target surfaces, protected surfaces, override order, validation signal, and rollback boundary. Use this section whenever the feature changes how the agent speaks, classifies, routes, validates, or formats output rather than what product code does. If not applicable, state "Not applicable -- no cross-cutting behavior contract changes."]
 
 ### Edge Cases
 
@@ -324,6 +346,10 @@ Spec document structure:
 ## Open Questions
 
 [Anything unresolved that must be answered before implementation begins. Empty if all questions were resolved in Phase 2.]
+
+## Adversarial Review
+
+[Populate after Step 3b. Summarize provider verdicts and any warnings carried into Open Questions. If skipped, write the exact skip reason.]
 ```
 
 ### Step 2: Spec Review
@@ -340,26 +366,33 @@ Agent: Spec Reviewer
 
 The reviewer checks for completeness, consistency, YAGNI violations, ambiguity, and scope gaps.
 
+If native sub-agent dispatch is unavailable in the current environment, read `agents/spec-reviewer.md` and execute its checklist locally. Print `Spec review performed inline (no sub-agent available)` before reporting the verdict.
+
 ### Step 3: Iteration Loop
 
 - If the reviewer returns **APPROVED**: proceed to user review.
 - If the reviewer returns **ISSUES FOUND**: fix the listed issues in the spec, then re-dispatch the reviewer. Maximum 3 iterations.
 - After 3 iterations with unresolved issues: present the remaining issues to the user and let them decide whether to accept, revise, or defer.
 
+After the internal reviewer converges, update the spec to `status: Reviewed` and set `reviewed_at: <now>`.
+
 ### Step 3b: Adversarial Review (MANDATORY — do NOT skip)
 
-After the spec-reviewer converges, run cross-model validation on the spec file. This catches hallucinations, contradictions, and scope creep that same-model review misses.
+After the spec-reviewer converges, run cross-model validation on the spec file. This catches hallucinations, contradictions, and scope creep that same-model review misses. Use the shared document-artifact protocol semantics from `adversarial-loop-docs.md` even though this skill implements the call inline.
 
 ```bash
-adversarial-review --mode spec --files "docs/specs/YYYY-MM-DD-<topic>-spec.md"
+adversarial-review --json --mode spec --files "docs/specs/YYYY-MM-DD-<topic>-spec.md"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
 
-Wait for complete output. Then apply fix policy:
-- **CRITICAL** (hallucinated capability, internal contradiction) → fix in spec, re-run spec-reviewer
-- **WARNING** (missing edge case, vague AC) → append to Open Questions section
-- **INFO** → ignore
+Wait for complete output. Then update the spec's `## Adversarial Review` section and metadata:
+- **No provider / empty output:** set `adversarial_review: skipped-no-provider` and write the exact skip reason in `## Adversarial Review`
+- **CRITICAL** (hallucinated capability, internal contradiction) → fix in spec, re-run spec-reviewer, then re-run adversarial review
+- **WARNING** (missing edge case, vague AC) → append actionable items to `Open Questions` or explicitly resolve them in the spec; set `adversarial_review: warnings`
+- **INFO** → summarize briefly in `## Adversarial Review`
+
+The spec MUST NOT transition from `Reviewed` to `Approved` until the `## Adversarial Review` section exists and `adversarial_review` is no longer `pending`.
 
 ### Step 4: User Approval
 
@@ -368,6 +401,14 @@ Wait for complete output. Then apply fix policy:
 - **Approve** -- spec is locked. Proceed to `zuvo:plan` when ready.
 - **Request changes** -- revise the spec, re-run reviewer if changes are significant.
 - **Reject** -- start over or abandon.
+
+Before asking for final approval, confirm all of the following:
+
+1. Internal spec review converged and the spec status is `Reviewed`
+2. `## Adversarial Review` exists in the spec
+3. Group 1, Group 2, and Group 3 approvals have each been collected or explicitly waived by the user
+
+If the user says "go" / "approved" before this checklist is satisfied, treat it as approval of the current section only and continue the process.
 
 Update spec: `status: Approved`, `approved_at: <now>`, `approval_mode: interactive`.
 
@@ -395,4 +436,4 @@ Follow the retrospective protocol from `retrospective.md`.
 Gate check → structured questions → TSV emit → markdown append.
 If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 
-After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+Run logging and retrospective writes are completion gates, not optional cleanup. Append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`, then complete the retrospective appends from `retrospective.md`. If either append fails, report it explicitly instead of silently claiming a clean completion.

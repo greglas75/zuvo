@@ -27,13 +27,13 @@ You are looking for:
 ## Tool Discovery (run first)
 
 Before any code analysis, discover available tools:
-1. Check whether CodeSift tools are available in the current environment. If so, use the CodeSift tools below.
-2. `list_repos()` — get the repo identifier (call once, cache result)
-3. If CodeSift not available, fall back to Read/Grep/Glob
+1. Inspect the tool list available to this agent. Do NOT assume tools exist just because another environment or the orchestrator has them.
+2. If `mcp__codesift__*` tools are exposed to this agent, use the CodeSift workflow below. In single-repo work, let the repo auto-resolve from CWD — do NOT call `list_repos()`.
+3. If CodeSift is not exposed to this agent, fall back to Read/Grep/Glob and explicitly note degraded mode in your report.
 
 ## CodeSift Workflow
 
-You will receive a repo identifier and CodeSift availability status from the orchestrator.
+You will receive CodeSift availability status and any repo hints from the orchestrator. Only follow this branch if CodeSift tools are actually exposed to this agent.
 
 ### When CodeSift Is Available
 

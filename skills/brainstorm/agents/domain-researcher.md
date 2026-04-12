@@ -28,9 +28,10 @@ You are looking for:
 ## Tool Discovery (run first)
 
 Before any code analysis, discover available tools:
-1. Check whether CodeSift tools are available in the current environment. If so, use the CodeSift tools below.
-2. `list_repos()` — get the repo identifier (call once, cache result)
-3. If CodeSift not available, fall back to Read/Grep/Glob
+1. Inspect the tool list available to this agent. Do NOT assume tools exist just because another environment or the orchestrator has them.
+2. If `mcp__codesift__*` tools are exposed to this agent, use them for repo-side analysis. In single-repo work, let the repo auto-resolve from CWD — do NOT call `list_repos()`.
+3. If authoritative external research tools are exposed (web search, docs lookup, package metadata), use them. If not, downgrade to `repo-only` or `none`.
+4. If this agent only has repo-local tools, do not invent external research. Report the downgrade clearly.
 
 ## Research Workflow
 
@@ -38,7 +39,7 @@ Before any code analysis, discover available tools:
 
 Before looking externally, check what the project already uses. You will receive the detected tech stack from the orchestrator.
 
-If CodeSift is available and the feature involves HTTP routes or external service calls:
+If CodeSift is available to this agent and the feature involves HTTP routes or external service calls:
 
 ```
 trace_route(repo, "<relevant route path>")
@@ -58,6 +59,8 @@ If CodeSift is unavailable, use Grep to search for import statements from extern
 
 Search for libraries that address the feature's core need.
 
+Use the environment's authoritative external research tools when they exist. In some environments this may be `WebSearch`, package metadata lookup, or docs lookup tools such as Context7. These are examples, not assumptions:
+
 ```
 WebSearch(query="<technology> <problem domain> library <year>")
 ```
@@ -67,18 +70,18 @@ Focus searches on:
 - The specific problem domain (e.g., "retry with exponential backoff TypeScript")
 - Recent results (include the current year to filter outdated recommendations)
 
-For each candidate library, check its documentation:
+For each candidate library, check its documentation when a docs lookup tool is available:
 
 ```
 context7: resolve-library-id(libraryName="<library>")
 context7: query-docs(libraryId="<id>", query="<specific usage question>")
 ```
 
-Use context7 to get authoritative API documentation instead of relying on web search summaries.
+Use official documentation or an authoritative docs lookup tool instead of relying on web search summaries.
 
 ### Step 3: Pattern Research
 
-Search for established patterns that apply to this type of feature:
+Search for established patterns that apply to this type of feature when authoritative external lookup is available:
 
 ```
 WebSearch(query="<pattern name> design pattern <language> best practices")
@@ -91,7 +94,7 @@ Look for:
 
 ### Step 4: Prior Art
 
-If the feature involves a well-known problem (authentication, file uploads, real-time updates, etc.), search for how mature projects handle it:
+If the feature involves a well-known problem (authentication, file uploads, real-time updates, etc.), search for how mature projects handle it when authoritative external lookup is available:
 
 ```
 WebSearch(query="how <well-known project> implements <feature>")
@@ -105,9 +108,9 @@ Determine your active mode BEFORE starting research. Print it at the top of your
 
 | Mode | Condition | What you can do |
 |------|-----------|-----------------|
-| **full** | WebSearch available | Web search + package inspection + context7 docs |
-| **repo-only** | No WebSearch, but repo accessible | Package/dependency inspection only. Read `package.json`/`pyproject.toml`/`composer.json` to identify what the project already uses. No new library recommendations. |
-| **none** | No WebSearch, no repo access | Return the template below immediately. Do not guess. |
+| **full** | Repo access + authoritative external research tools available | External research + package inspection + docs lookup |
+| **repo-only** | Repo accessible, but no trustworthy external lookup | Package/dependency inspection only. Read `package.json`/`pyproject.toml`/`composer.json` to identify what the project already uses. No new library recommendations. |
+| **none** | No repo access and no authoritative external lookup | Return the template below immediately. Do not guess. |
 
 **Mode declaration (mandatory first line of report):**
 ```
@@ -119,7 +122,7 @@ Research mode: full | repo-only | none
 **When mode is `none`:**
 ```
 Research mode: none
-External research unavailable. No tool access for web search or package inspection.
+External research unavailable. No tool access for authoritative web/docs lookup or package inspection.
 Recommendations: none (confidence: n/a)
 ```
 

@@ -34,12 +34,14 @@ Work through each checkpoint. For each one, determine: PASS, ISSUE, or N/A.
 - Does the spec clearly state what problem is being solved?
 - Would a new team member understand WHY this feature exists?
 - Is the problem statement specific enough to evaluate whether the solution addresses it?
+- If the spec makes exact numeric or codebase-fact claims, are they evidenced or clearly marked as inferred/estimated?
 
 ### C2: Design Decisions
 
 - Are the key decisions recorded with rationale?
 - For each decision, is it clear what alternatives were considered?
 - Could someone revisit a decision later without re-doing the entire brainstorm?
+- Are user-choice decisions clearly separated from orchestrator decisions and assumptions?
 
 ### C3: Solution Overview
 
@@ -66,6 +68,12 @@ Work through each checkpoint. For each one, determine: PASS, ISSUE, or N/A.
 - Does the spec name specific files and modules that will be touched?
 - Is it clear how new code connects to existing code?
 - Are external service dependencies identified?
+
+### C6b: Detailed Design -- Interaction Contract
+
+- If the spec changes prompts, hooks, agent behavior, routing, formatting, validation, or other cross-cutting behavior, does the `Interaction Contract` section define target surfaces, protected surfaces, override order, validation signal, and rollback boundary?
+- If the section is marked "Not applicable", is that claim actually true?
+- N/A if the feature is ordinary product behavior with no cross-cutting contract changes.
 
 ### C7: Edge Cases
 
@@ -181,6 +189,7 @@ Order issues by impact: things that would cause the wrong feature to be built co
 | C4 | Data Model | PASS / ISSUE / N/A |
 | C5 | API Surface | PASS / ISSUE / N/A |
 | C6 | Integration Points | PASS / ISSUE / N/A |
+| C6b | Interaction Contract | PASS / ISSUE / N/A |
 | C7 | Edge Cases | PASS / ISSUE / N/A |
 | C7b | Failure Modes | PASS / ISSUE / N/A |
 | C8 | Acceptance Criteria — Ship | PASS / ISSUE / N/A |
