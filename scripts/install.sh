@@ -629,5 +629,59 @@ echo "======================================"
 echo "  DONE"
 echo "======================================"
 echo ""
-echo "  Restart Claude Code / Codex / Cursor to pick up changes."
+echo "  Restart Claude Code / Codex / Cursor / Antigravity to pick up changes."
 echo ""
+
+# =======================================
+# POST-INSTALL: Cross-provider check
+# =======================================
+# Adversarial review needs a DIFFERENT provider than the host IDE.
+# Warn if no cross-providers are available.
+
+check_cross_providers() {
+  local has_codex="" has_gemini="" has_cursor="" has_claude=""
+  command -v codex &>/dev/null && has_codex=1
+  [[ -x "/Applications/Codex.app/Contents/Resources/codex" ]] && has_codex=1
+  command -v gemini &>/dev/null && has_gemini=1
+  command -v cursor-agent &>/dev/null && has_cursor=1
+  command -v claude &>/dev/null && has_claude=1
+
+  local count=0
+  [[ -n "$has_codex" ]] && count=$((count + 1))
+  [[ -n "$has_gemini" ]] && count=$((count + 1))
+  [[ -n "$has_cursor" ]] && count=$((count + 1))
+  [[ -n "$has_claude" ]] && count=$((count + 1))
+
+  if [[ $count -eq 0 ]]; then
+    echo "  ⚠ WARNING: No adversarial review providers found!"
+    echo ""
+    echo "  Zuvo uses cross-model review — a DIFFERENT AI reviews code"
+    echo "  written by your primary AI. Install at least one:"
+    echo ""
+    echo "    npm install -g @openai/codex     # Codex CLI (fastest)"
+    echo "    npm install -g @google/gemini-cli # Gemini CLI (free)"
+    echo "    # Claude CLI — already included with Claude Code"
+    echo ""
+    echo "  Without a cross-provider, adversarial review will be skipped."
+    echo ""
+  elif [[ $count -eq 1 ]]; then
+    echo "  Cross-provider check: 1 provider found."
+    echo "  Adversarial review needs a provider DIFFERENT from your host IDE."
+    [[ -n "$has_codex" ]] && echo "    ✓ codex (excluded in Codex — need another for Codex users)"
+    [[ -n "$has_gemini" ]] && echo "    ✓ gemini (excluded in Antigravity — need another for Antigravity users)"
+    [[ -n "$has_claude" ]] && echo "    ✓ claude (excluded in Claude Code — need another for Claude Code users)"
+    [[ -n "$has_cursor" ]] && echo "    ✓ cursor-agent (excluded in Cursor — need another for Cursor users)"
+    echo ""
+    echo "  For full coverage, install one more provider from a different vendor."
+    echo ""
+  else
+    echo "  Cross-provider check: $count providers found ✓"
+    [[ -n "$has_codex" ]] && echo "    ✓ codex"
+    [[ -n "$has_gemini" ]] && echo "    ✓ gemini"
+    [[ -n "$has_claude" ]] && echo "    ✓ claude"
+    [[ -n "$has_cursor" ]] && echo "    ✓ cursor-agent"
+    echo ""
+  fi
+}
+
+check_cross_providers

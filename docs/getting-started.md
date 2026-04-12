@@ -2,10 +2,11 @@
 
 ## Prerequisites
 
-- **Claude Code** installed and working (`claude` command available in your terminal)
+- **One supported IDE/CLI:** Claude Code, Codex, Google Antigravity, or Cursor
 - **Node.js** 18+ (for package.json resolution and hook execution)
 - **GNU coreutils** — required for adversarial review (`brew install coreutils` on macOS)
 - **Bash** available (macOS/Linux native; Windows requires Git Bash or WSL)
+- **At least one cross-provider CLI** for adversarial review (see cross-provider table below)
 - **Optional:** [codesift-mcp](https://github.com/nicobailey/codesift-mcp) for deep code exploration (semantic search, call chain tracing, complexity analysis). Zuvo works without it but runs in degraded mode.
 
 ## Adversarial review providers (optional but recommended)
@@ -72,7 +73,22 @@ Zuvo automatically detects which providers are available and uses them in priori
 
 You don't need all of them. Even one provider gives you cross-model review. Two or more providers run in parallel for diverse coverage.
 
+## Cross-provider requirements by platform
+
+Zuvo auto-detects your host platform and **excludes its own provider** to ensure true cross-model review. This means you need at least one OTHER provider installed:
+
+| Your platform | Auto-excluded | You need to install (pick one or more) |
+|---|---|---|
+| **Claude Code** | `claude` | `codex`, `gemini`, or `cursor-agent` |
+| **Codex** | `codex` | `claude`, `gemini`, or `cursor-agent` |
+| **Antigravity** | `gemini` | `codex`, `claude`, or `cursor-agent` |
+| **Cursor** | `cursor-agent` | `codex`, `gemini`, or `claude` |
+
+Without at least one cross-provider, adversarial review and blind audit will be skipped with `no provider available`.
+
 ## Install
+
+### Claude Code (primary)
 
 > **Requires Claude Code 1.0.33+.** Check with `claude --version`, update with `claude update` or `npm update -g @anthropic-ai/claude-code`.
 
@@ -89,7 +105,45 @@ claude plugin install zuvo
 
 Restart Claude Code.
 
+### Codex
+
+```bash
+# Clone the zuvo source
+git clone https://github.com/greglas75/zuvo.git ~/zuvo-plugin
+
+# Install (builds Codex distribution + copies to ~/.codex/)
+cd ~/zuvo-plugin && ./scripts/install.sh
+```
+
+Restart Codex. Skills appear in `~/.codex/skills/`, scripts in `~/.codex/scripts/`.
+
+### Antigravity
+
+```bash
+# Clone the zuvo source
+git clone https://github.com/greglas75/zuvo.git ~/zuvo-plugin
+
+# Install (builds Antigravity distribution + copies to ~/.gemini/antigravity/)
+cd ~/zuvo-plugin && ./scripts/install.sh
+```
+
+Restart Antigravity. Skills appear in `~/.gemini/antigravity/skills/` (global scope). No workspace-level `.agent/skills/` symlinks needed.
+
+### Cursor
+
+```bash
+# Clone the zuvo source
+git clone https://github.com/greglas75/zuvo.git ~/zuvo-plugin
+
+# Install (builds Cursor distribution + copies to ~/.cursor/)
+cd ~/zuvo-plugin && ./scripts/install.sh
+```
+
+Restart Cursor. Skills appear in `~/.cursor/skills/`, agents in `~/.cursor/agents/`.
+
 ## Update
+
+### Claude Code
 
 ```bash
 claude plugin marketplace update zuvo-marketplace
@@ -113,10 +167,28 @@ claude plugin install zuvo
 
 Restart Claude Code. This is a known Claude Code cache bug (stale SHA in `installed_plugins.json`), not a zuvo issue.
 
+### Codex / Antigravity / Cursor
+
+```bash
+cd ~/zuvo-plugin && git pull && ./scripts/install.sh
+```
+
+Restart the IDE.
+
 ## Check version
+
+### Claude Code
 
 ```bash
 claude plugin list | grep zuvo
+```
+
+### Codex / Antigravity / Cursor
+
+```bash
+head -1 ~/.codex/skills/using-zuvo/SKILL.md          # Codex
+head -1 ~/.gemini/antigravity/skills/using-zuvo/SKILL.md  # Antigravity
+head -1 ~/.cursor/skills/using-zuvo/SKILL.md          # Cursor
 ```
 
 ## Troubleshooting
