@@ -377,3 +377,5 @@ Commits pending review. Auto-managed:
 - c7ed0bf (2026-04-12) docs: multi-platform getting-started + cross-provider check in install.sh
 - feba26a (2026-04-12) release: v1.3.85 — v1.3.85 multi-platform docs + cross-provider check
 - 2b6e5a2 (2026-04-12) write-tests: BLOCKED_INFRA state, prod-bug hard block, SHA freshness guard
+- e379f18 (2026-04-12) release: v1.3.86 — v1.3.86 BLOCKED_INFRA + prod-bug block + SHA guard
+- be7af97 (2026-04-12) retro: structured telemetry + infra status + skill gaps + 240s timeout
