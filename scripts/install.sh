@@ -452,6 +452,18 @@ install_cursor() {
     ok "Scripts installed"
   fi
 
+  # Step 8: Clean duplicate skills from Claude Code cache
+  # Cursor scans both ~/.cursor/skills/ AND ~/.claude/plugins/cache/ without
+  # deduplication (known Cursor bug). Remove zuvo skills from ~/.cursor/skills/
+  # so only Claude Code's plugin cache is used — avoids double entries in /skills.
+  if [[ -d "$HOME/.claude/plugins/cache/zuvo-marketplace" ]]; then
+    if [[ -d "$HOME/.cursor/skills/write-tests" || -d "$HOME/.cursor/skills/using-zuvo" ]]; then
+      echo "  Cleaning duplicate skills from ~/.cursor/skills/ (Cursor dedup bug)..."
+      rm -rf "$HOME/.cursor/skills"
+      ok "Duplicate skills removed (Cursor uses Claude Code cache)"
+    fi
+  fi
+
   ok "Cursor updated"
 }
 
