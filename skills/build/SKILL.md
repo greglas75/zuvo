@@ -599,6 +599,23 @@ Follow the retrospective protocol from `retrospective.md`.
 Gate check -> structured questions -> TSV emit -> markdown append.
 If gate check skips: print "RETRO: skipped (trivial session)" and proceed to output.
 
+## Completion Gate Check
+
+Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+
+```
+COMPLETION GATE CHECK
+[ ] Tier classified and printed: BUILD TIER: [LIGHT/STANDARD/DEEP]
+[ ] Code contract filled (STANDARD+) before production code written
+[ ] Test contract filled (STANDARD+) before tests written
+[ ] CQ self-eval printed with scores and evidence for critical gates
+[ ] Q self-eval printed (>=16 PASS) with evidence
+[ ] Adversarial review ran and findings handled
+[ ] All verification commands ran and exited 0
+[ ] Backlog updated with deferred findings or "none"
+[ ] Run: line printed and appended to log
+```
+
 ### 4.8 Output
 
 ```

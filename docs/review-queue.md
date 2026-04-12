@@ -381,3 +381,5 @@ Commits pending review. Auto-managed:
 - be7af97 (2026-04-12) retro: structured telemetry + infra status + skill gaps + 240s timeout
 - 4f554c0 (2026-04-12) release: v1.3.87 — v1.3.87 retro telemetry + 240s timeout
 - c829c10 (2026-04-12) write-tests: mandatory completion gate checklist
+- ecb023a (2026-04-12) release: v1.3.88 — v1.3.88 completion gate checklist
+- 9912fa2 (2026-04-12) install: clean duplicate Cursor skills when Claude Code cache exists
