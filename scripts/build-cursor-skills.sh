@@ -245,6 +245,7 @@ transform_skill_for_cursor() {
       { blank=0; print }
     ' \
     | replace_cursor_refs \
+    | replace_reviewer_lane_refs_cursor \
     | normalize_unicode \
     | sed \
       -e "s|skills/${skill}/agents/\([a-z][-a-z]*\)\.md|~/.cursor/agents/${prefix}-\1.md|g" \
