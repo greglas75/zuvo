@@ -88,7 +88,7 @@ Input:
 
 Environment variables:
   ZUVO_REVIEW_PROVIDER     Force provider
-  ZUVO_REVIEW_TIMEOUT      Per-provider timeout in seconds (default: 90)
+  ZUVO_REVIEW_TIMEOUT      Per-provider timeout in seconds (default: 240)
   ZUVO_GEMINI_MODEL        Gemini CLI model (default: gemini-3.1-pro-preview)
   ZUVO_GEMINI_API_MODEL    Gemini API model (default: gemini-3.1-pro-preview)
   GEMINI_API_KEY           Required for gemini-api provider
@@ -808,7 +808,7 @@ write_artifact() {
 command -v timeout &>/dev/null || { echo "ERROR: GNU timeout required. Install: brew install coreutils" >&2; exit 1; }
 command -v jq &>/dev/null || { echo "ERROR: jq required. Install: brew install jq" >&2; exit 1; }
 
-PROVIDER_TIMEOUT="${ZUVO_REVIEW_TIMEOUT:-90}"
+PROVIDER_TIMEOUT="${ZUVO_REVIEW_TIMEOUT:-240}"
 
 # ─── Dry run ───────────────────────────────────────────────────
 

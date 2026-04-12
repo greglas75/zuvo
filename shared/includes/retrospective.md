@@ -20,7 +20,9 @@ IF you used more than ~200 tool calls in this session:
 
 ## Structured Questions
 
-Fill these 7 fields. At least 1 of fields 1-4 must be non-empty and artifact-grounded. Field 6 and 7 are always required.
+Fill these sections. Fields 1-4: at least 1 must be non-empty and artifact-grounded. Fields 5-9: always required.
+
+### Part A: Friction (at least 1 of fields 1-4 non-empty)
 
 | # | Field | Prompt | Grounding |
 |---|-------|--------|-----------|
@@ -28,13 +30,38 @@ Fill these 7 fields. At least 1 of fields 1-4 must be non-empty and artifact-gro
 | 2 | `missing_context` | What information did you need but had to discover yourself? | Must reference a file path, framework behavior, or dependency |
 | 3 | `most_turns` | Which sub-task consumed the most iterations? What would have prevented it? | Must include a count (turns, attempts, or minutes) |
 | 4 | `missing_template` | What code pattern did you need but had to invent from scratch? | Must include the pattern name or a 1-line description |
-| 5 | `worked_well` | What in the skill saved you time or prevented mistakes? | May reference specific include, phase, or template |
-| 6 | `change_proposals` | Write exactly 5 proposals. Not 1, not 3 — five. Categories: token waste, missing templates, pipeline overhead, false positive rules, missing patterns, include loading, adversarial tuning, gate applicability. Review what you told the user during this session — every insight you shared inline MUST appear here. Each proposal: `FILE: / SECTION: / CONTENT:` with paste-ready code. Include ranking table at the end (token savings + quality impact). | Each must name a file path and include the actual content to add — "add a section about X" is rejected, show the section |
-| 7 | `session_cost` | Estimate session costs. Use `/cost` if available, otherwise estimate from activity. | Must include: tool call count, files read, files modified |
+
+### Part B: Infrastructure Status (always required)
+
+| # | Field | Fill with |
+|---|-------|-----------|
+| 5 | `infra_status` | Telemetry block (see template below). Every line is mandatory — write `N/A` or `skipped` for lines that don't apply, never omit a line. |
+
+Telemetry block template (key=value, one per line):
+```
+platform: <claude|codex|antigravity|cursor> | writer: <model> | reviewer: <model> | routing: <ok|same-model-fallback|unknown-writer-model|routing-failed>
+codesift: <indexed(Nsymbols)|not_indexed|transport_closed_after_N|unavailable|N/A>
+paths: shared=<ok|missing:file> scripts=<ok|missing:file> rules=<ok|missing:file>
+extension_check: <ok|.test.ts->.spec.ts(renamed)|N/A>
+blind_audit: <clean:strict|clean:degraded|fix:N|rewrite|skipped|blocked_infra> | provider=<name> | exit=<code> | rows=<N> | FULL=<N> PARTIAL=<N> NONE=<N>
+adversarial: pass1=<provider>(NC,NW,NI) [pass2=<provider>(NC,NW,NI)] | cross_provider=<true|false|single_provider> | timeout=<Ns>
+q_gates: <N>/19 (Q7=<0|1> Q11=<0|1> Q13=<0|1> Q15=<0|1> Q17=<0|1>)
+tests: <N>/<N> pass | extension=<.spec.ts|.test.ts>
+status: <PASS|FAILED|BLOCKED_INFRA> | failure_cause=<none|blind-audit-timeout|prod-bug|...>
+```
+
+### Part C: Gaps and Proposals (always required)
+
+| # | Field | Fill with |
+|---|-------|-----------|
+| 6 | `skill_gaps` | Bullet list: what was missing or broken in the skill/includes. Each must name a file or section. |
+| 7 | `missing_tools` | Bullet list: what tools/scripts would have helped but don't exist. |
+| 8 | `worked_well` | What in the skill saved you time or prevented mistakes? May reference specific include, phase, or template. |
+| 9 | `change_proposals` | Write up to 5 proposals. Categories: token waste, missing templates, pipeline overhead, false positive rules, missing patterns, include loading, adversarial tuning, gate applicability, infrastructure. Each: `FILE: / SECTION: / CONTENT:` with paste-ready code. Include ranking table. |
 
 **Structural grounding check:** Each non-empty answer in fields 1-4 MUST contain at least one of: a file path with extension (e.g., `app.ts`), a phase/step number (e.g., `Phase 3`), or a numeric count (e.g., `6 turns`). Answers without any of these tokens are treated as empty.
 
-**CRITICAL: Printing answers is NOT enough.** After filling fields 1-7 above, you MUST execute the bash commands in the Append Commands section below to write data to `~/.zuvo/retros.log` and `~/.zuvo/retros.md`. If you skip the bash append, the retrospective is lost. The retro is not done until both files are written.
+**CRITICAL: Printing answers is NOT enough.** After filling fields 1-9 above, you MUST execute the bash commands in the Append Commands section below to write data to `~/.zuvo/retros.log` and `~/.zuvo/retros.md`. If you skip the bash append, the retrospective is lost. The retro is not done until both files are written.
 
 ## TSV Emit
 
@@ -49,10 +76,10 @@ SHA7=$(git rev-parse --short HEAD 2>/dev/null || echo "-")
 DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 ```
 
-### TSV Format (13 fields, tab-separated)
+### TSV Format (17 fields, tab-separated)
 
 ```
-RETRO: DATE\tSKILL\tPROJECT\tCODE_TYPE\tFRICTION_CATEGORY\tMISSING_TEMPLATE\tCONTEXT_GAP\tTURNS_WASTED\tTOOL_CALLS\tFILES_READ\tFILES_MODIFIED\tBRANCH\tSHA7
+RETRO: DATE\tSKILL\tPROJECT\tCODE_TYPE\tFRICTION_CATEGORY\tMISSING_TEMPLATE\tCONTEXT_GAP\tTURNS_WASTED\tTOOL_CALLS\tFILES_READ\tFILES_MODIFIED\tBRANCH\tSHA7\tBLIND_AUDIT\tADVERSARIAL\tCODESIFT\tROUTING_STATUS
 ```
 
 | # | Field | Type | Values |
@@ -60,16 +87,20 @@ RETRO: DATE\tSKILL\tPROJECT\tCODE_TYPE\tFRICTION_CATEGORY\tMISSING_TEMPLATE\tCON
 | 1 | DATE | ISO 8601 UTC | `2026-04-09T13:45:00Z` |
 | 2 | SKILL | string | skill name without `zuvo:` prefix |
 | 3 | PROJECT | string | basename of git root |
-| 4 | CODE_TYPE | enum | `ORCHESTRATOR` (coordinates 3+ modules), `DATA_SERVICE` (data access/transformation), `PURE_FUNCTION` (no side effects), `UI_COMPONENT` (renders UI), `CONFIG` (configuration), `MIXED` (multiple types), `OTHER` |
-| 5 | FRICTION_CATEGORY | enum | `mock-strategy`, `ordering-template`, `context-missing`, `pipeline-heavy`, `framework-gotcha`, `unclear-instruction`, `skill-overhead` (too many includes for the task), `missing-pattern` (had to invent code from scratch), `false-positive-rule` (skill rule flagged valid code), `scope-mismatch` (skill ceremony > task complexity), `no-friction`, `other`. **`no-friction` is ONLY valid if you have ZERO change proposals. If you wrote any proposals, pick the category matching your #1 ranked proposal** |
+| 4 | CODE_TYPE | enum | `ORCHESTRATOR`, `DATA_SERVICE`, `PURE_FUNCTION`, `UI_COMPONENT`, `CONFIG`, `MIXED`, `OTHER` |
+| 5 | FRICTION_CATEGORY | enum | `mock-strategy`, `ordering-template`, `context-missing`, `pipeline-heavy`, `framework-gotcha`, `unclear-instruction`, `skill-overhead`, `missing-pattern`, `false-positive-rule`, `scope-mismatch`, `infra-failure`, `no-friction`, `other`. **`no-friction` is ONLY valid if you have ZERO change proposals.** |
 | 6 | MISSING_TEMPLATE | string (40 char max) | short description or `-` |
 | 7 | CONTEXT_GAP | enum | `no-production-code`, `no-schema`, `no-env`, `no-test-fixture`, `no-framework-docs`, `none`, `other` |
-| 8 | TURNS_WASTED | integer | Count ANY of: tool retries, context re-reads, mental cycles rejecting false-positive rules, iterations due to unclear instructions, or deliberation over missing patterns. NOT just bash failures. If you wrote a change proposal about "I spent N turns figuring out X," count N. |
+| 8 | TURNS_WASTED | integer | Count retries, re-reads, false-positive deliberation, missing pattern invention, infra waits |
 | 9 | TOOL_CALLS | integer | total tool calls in session (estimate) |
 | 10 | FILES_READ | integer | distinct files read |
-| 11 | FILES_MODIFIED | integer | files created or edited |
+| 11 | FILES_MODIFIED | integer | files created or edited (include backlog, coverage, ALL touched files) |
 | 12 | BRANCH | string | current git branch |
 | 13 | SHA7 | string | short commit hash |
+| 14 | BLIND_AUDIT | enum | `clean:strict`, `clean:degraded`, `fix:N`, `rewrite`, `skipped`, `blocked_infra`, `not_run` |
+| 15 | ADVERSARIAL | enum | `clean`, `Nfindings`, `skipped`, `blocked`, `not_run`, `blocked:prod-bug` |
+| 16 | CODESIFT | enum | `indexed`, `transport_closed`, `not_indexed`, `unavailable`, `N/A` |
+| 17 | ROUTING_STATUS | enum | `ok`, `same-model-fallback`, `unknown-writer-model`, `routing-failed`, `N/A` |
 
 ## Markdown Emit
 
@@ -80,55 +111,52 @@ Append a section to the retro markdown file using this exact template:
 
 ## [DATE] [SKILL] [PROJECT] [TARGET_FILE]
 
-### Unclear
-[answer to field 1, or "N/A"]
+### Telemetry
+```
+platform: ... | writer: ... | reviewer: ... | routing: ...
+codesift: ...
+paths: shared=... scripts=... rules=...
+extension_check: ...
+blind_audit: ... | provider=... | exit=... | rows=... | FULL=... PARTIAL=... NONE=...
+adversarial: ... | cross_provider=... | timeout=...
+q_gates: .../19 (Q7=... Q11=... Q13=... Q15=... Q17=...)
+tests: .../... pass | extension=...
+status: ... | failure_cause=...
+```
 
-### Missing Context
-[answer to field 2, or "N/A"]
+### Friction
+- **Unclear:** [field 1, or N/A]
+- **Missing context:** [field 2, or N/A]
+- **Most turns:** [field 3, or N/A]
+- **Missing template:** [field 4, or N/A]
 
-### Most Turns
-[answer to field 3, or "N/A"]
+### Skill Gaps
+- [bullet per gap — name the file/section that's missing or broken]
 
-### Missing Template
-[answer to field 4, or "N/A"]
+### Missing Tools
+- [bullet per tool — what would have helped but doesn't exist]
 
 ### Worked Well
-[answer to field 5, or "N/A"]
+[field 8]
 
 ### Session Cost
 - **Files read:** N
 - **Files modified:** N
-- **Tool calls:** N total (Read: N, Edit: N, Bash: N, Grep: N, ...)
+- **Tool calls:** N total (Read: N, Edit: N, Bash: N, ...)
 - **Test runs:** N (pass: N, fail: N)
 - **Adversarial passes:** N
-- **Token breakdown:**
-
-| Category | Gross | With cache | Notes |
-|----------|-------|------------|-------|
-| System prompt + rules + includes | ~NK | ~NK | cached after turn 1 |
-| Production code reads | ~NK | ~NK | one-time reads |
-| Conversation context (cumulative) | ~NK | ~NK | grows per turn |
-| Output total | ~NK | ~NK | not cacheable |
-
-- **Biggest waste:** [what consumed the most tokens for the least value — e.g., "system prompt 15K × 17 turns = 255K gross, but cache reduces to ~50K"]
+- **Biggest waste:** [what consumed the most tokens/time for the least value]
 
 ### Change Proposals (ranked by impact, up to 5)
 
 **1.** FILE: [path] | SECTION: [where]
 CONTENT:
 ```
-[paste-ready code or markdown to add — not a description, the actual content]
+[paste-ready code or markdown to add]
 ```
 RATIONALE: [which problem from above it solves]
 
-**2.** FILE: [path] | SECTION: [where]
-CONTENT:
-```
-[actual content]
-```
-RATIONALE: [...]
-
-(continue up to 5 if warranted)
+(continue up to 5)
 
 **Impact ranking:**
 
@@ -161,7 +189,7 @@ fi
 ```bash
 # Create header if file doesn't exist
 if [ ! -f "$RETRO_LOG" ]; then
-  echo "# v1 DATE SKILL PROJECT CODE_TYPE FRICTION_CATEGORY MISSING_TEMPLATE CONTEXT_GAP TURNS_WASTED TOOL_CALLS FILES_READ FILES_MODIFIED BRANCH SHA7" > "$RETRO_LOG"
+  echo "# v2 DATE SKILL PROJECT CODE_TYPE FRICTION_CATEGORY MISSING_TEMPLATE CONTEXT_GAP TURNS_WASTED TOOL_CALLS FILES_READ FILES_MODIFIED BRANCH SHA7 BLIND_AUDIT ADVERSARIAL CODESIFT ROUTING_STATUS" > "$RETRO_LOG"
 fi
 
 # Append the RETRO: line value (without the RETRO: prefix)
@@ -196,6 +224,8 @@ fi
 ## Enforcement Rules
 
 - At least 1 of fields 1-4 must have a non-empty, structurally grounded answer (contains file path, phase number, or numeric count)
-- Field 6 (change proposals) is always required — at least 1, up to 5, ranked by impact. Each must use `FILE: / SECTION: / CONTENT: / RATIONALE:` format
-- Field 7 (session cost) is always required with tool call count, files read, files modified, token breakdown table, and biggest waste insight
+- Field 5 (infra_status) telemetry block is always required — every line filled, `N/A` for non-applicable
+- Field 6 (skill_gaps) is always required — at least 1 bullet or explicit "none found"
+- Field 7 (missing_tools) is always required — at least 1 bullet or explicit "none needed"
+- Field 9 (change_proposals) is always required — at least 1, up to 5, ranked by impact. Each must use `FILE: / SECTION: / CONTENT: / RATIONALE:` format
 - No code snippets or user data values in any field — only file paths, error types, phase numbers, and structured signals
