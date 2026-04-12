@@ -43,6 +43,16 @@ If CODESIFT_AVAILABLE=false: fall back to Read for full file source, Grep for pa
    d. Count N/A scores — if >60% (17+), flag as "low-signal audit" and justify each N/A
 3. CQ8 context rule: if PROJECT_CONTEXT has a global exception filter AND the service is non-critical-path, CQ8 per-method catch is N/A (not 0)
 
+### Special Case — Test Utilities and Mocks
+
+If the changed production file lives under `test-utils/`, `__mocks__/`, or `fixtures/`, it is still audited as production TypeScript, but some gates have different applicability:
+
+- CQ4 auth/tenant boundary checks are usually `N/A` unless the utility performs real auth, tenancy, or request-boundary logic
+- CQ5 log/PII checks are `N/A` unless the utility logs or handles real sensitive values
+- CQ6 query-bounding checks are `N/A` unless the utility performs real DB access
+- CQ11 size limits should consider non-comment lines first; do not fail a utility file solely because JSDoc or fixture data pushes total line count over the limit
+- Do not force service/controller expectations onto pure helper factories or mock objects
+
 ## Output Format
 
 ```
@@ -86,5 +96,6 @@ Fall back to Read for full file source. Use Grep for pattern searches (`grep -n 
 - Do not trust the lead's CQ scores -- evaluate from scratch
 - Do not score a gate as 1 without file:line evidence
 - Do not score CQ8 as 0 on non-critical services when PROJECT_CONTEXT shows global error handling
+- Do not score CQ4 as 0 on `test-utils/`, `__mocks__/`, or `fixtures/` files unless they implement real auth or tenant logic
 - Do not score >60% N/A without per-gate justification
 - Do not skip any of the 28 gates

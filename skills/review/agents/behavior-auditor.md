@@ -50,6 +50,16 @@ If CODESIFT_AVAILABLE=false: fall back to Read/Grep/Glob.
 - **CQ9** — async: missing await, async forEach, Promise without catch
 - **CQ10** — resource cleanup: listeners without removeEventListener, intervals without clear
 
+### NestJS CLS / AsyncLocalStorage Pattern
+
+When the stack uses `nestjs-cls` or AsyncLocalStorage-backed request context:
+
+- `cls.set()` / `cls.get()` assumptions are only safe inside an active CLS scope
+- Global `APP_INTERCEPTOR`s, WebSocket handlers, queues, and CQRS paths may execute without `ClsMiddleware`
+- Treat unguarded context writes in framework-wide interceptors as a real behavioral risk unless PROJECT_CONTEXT proves the scope is always active
+- Prefer `if (this.cls.isActive()) { ... }` before context writes when transport coverage is mixed
+- In tests, expect mocks to model `isActive()` explicitly when behavior depends on CLS state
+
 ## Output Format
 
 ```
@@ -84,6 +94,7 @@ BEHAV-2 ...
 
 - `Confidence: 92` — `findMany` at order.service.ts:87 has no `take` parameter, called in a GET endpoint with user-supplied filter. Clear CQ6 violation with production OOM risk.
 - `Confidence: 35` — `catch (err) { logger.warn(err) }` at cache.service.ts:45. Cache warm path — warn + continue is the correct strategy per CQ8 context-aware rules. PROJECT_CONTEXT confirms non-critical service.
+- `Confidence: 84` — interceptor writes `this.cls.set("tenantBypass", true)` without checking `this.cls.isActive()` in a mixed-transport NestJS app. HTTP works, but WebSocket/CQRS paths can crash outside CLS scope.
 
 ## Degraded Mode (CodeSift Unavailable)
 
