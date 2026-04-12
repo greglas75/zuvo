@@ -110,6 +110,7 @@ If critical blind-audit findings persist after pass 2, the caller must mark the 
 - Do not call a row `FULL` if the test only asserts a mock return value and never verifies forwarded args with `CalledWith`.
 - Do not downgrade owned accessibility fallbacks just because they look "small". If the screen reader-visible fallback can regress, it must be audited.
 - Do not confuse "rendered something" with "proved the fallback path". That is `STRUCTURAL_ONLY`, not `FULL`.
+- When a Suspense/loading fallback is structurally unobservable because all lazy children are mocked synchronously (`vi.mock` + `React.lazy` in Vitest), do not mark the row `NONE`. Use `PARTIAL`, explain the sync-mock limitation, and backlog it only if the project needs stronger fallback observability.
 
 ## Required Output
 

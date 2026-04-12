@@ -83,6 +83,27 @@ it('renders fallback for unknown type', () => {
 **Always:** `afterEach(cleanup)` for component tests. Extract from exemplar if available.
 **Lazy components:** Use `findByTestId` (async) not `getByTestId` (sync).
 
+### COMPONENT Callback Routing Guard
+
+When a component routes different handlers into the **same child prop slot** depending on mode, type, or state (for example `onNext={handleSubmitAll}` vs `onNext={handleNext}`), label-only or presence-only tests are insufficient.
+
+Add interaction tests that prove:
+- the correct handler fires after the user action
+- the competing handler does **not** fire
+- visible state or feedback is asserted when the component owns it
+
+One representative interaction test per distinct routing decision is the minimum. If the file has zero interaction tests, it does not satisfy the COMPONENT flow requirement.
+
+### COMPONENT Lazy/Suspense Caveat
+
+When all lazy children are mocked with `vi.mock`, Vitest can resolve `React.lazy()` imports synchronously. Testing Library wraps `render()` in `act()`, which flushes microtasks before control returns. In that setup, a Suspense fallback may never be observable even though the fallback exists in production.
+
+Implications:
+- do **not** write doomed synchronous assertions for the fallback just because the code renders one
+- prefer `findBy...` assertions for the resolved lazy child
+- if you must test the fallback, either export it directly or use a real delayed lazy import instead of sync mocks
+- treat an unobservable fallback under sync mocks as an environment limitation, not automatic missing coverage
+
 ### ORCHESTRATOR Ordering Template
 
 For files that wire middleware/routes in a specific order, use this pattern to test ordering invariants:

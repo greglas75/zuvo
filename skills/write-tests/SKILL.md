@@ -34,10 +34,12 @@ Generate high-quality tests for production code. Each file goes through the full
 ### PHASE 0 — Bootstrap (always, before reading production file)
 
 ```
-  1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> STOP]
+  1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> DEGRADED]
 ```
 
 This is the ONLY file loaded before reading the production file. Do NOT load test-contract, quality-gates, testing rules, or any other include at this point — you don't know the code type yet.
+
+If `codesift-setup.md` is missing, print `[CONTEXT] codesift-setup missing — assuming CodeSift unavailable and continuing in degraded mode.` Continue the run with legacy detection and native tools. Do not stop the file solely because the bootstrap include is absent.
 
 ### PHASE 0.5 — Classify (read production file, determine loading tier)
 
@@ -66,6 +68,12 @@ Print: `[CLASSIFIED] {file}: {code_type} {complexity} → tier {TIER}`
 ### PHASE 1 — Conditional Load (based on classification tier + detected stack)
 
 Load ONLY the includes matching the detected tier AND stack. Print READ/SKIP status for each.
+
+If an include is missing:
+- print `[PHASE1] MISSING: <file> — continuing with degraded rules`
+- continue loading the remaining includes
+- after Phase 1, print `loaded=<N>/<M>` for the files expected for this tier/stack
+- if fewer than half of expected includes loaded, print `[WARN] Low include availability — coverage planning and Q-score confidence are reduced for this file. Do not overclaim clean states.`
 
 **Always load (all tiers, all stacks):**
 
@@ -229,6 +237,14 @@ The production file was already read and classified in Phase 0.5. **If a test fi
 - **Test file exists, quality OK** (behavioral assertions, no anti-patterns) → action: ADD TO (extend with missing coverage)
 - **Test file exists, quality BAD** (fragile string tests, tautological oracles, security theatre, duplicated positives, structural tests that duplicate behavioral ones) → action: **REWRITE**. Fix the whole file, not just add tests. Net test count MAY decrease. Remove anti-patterns, consolidate with it.each, keep only behavioral tests.
 
+**Duplicate test file detection:** Before locking the action, search sibling and legacy test trees for other test files that target the same production module (same import target, same basename, or same co-located `__tests__/` pattern).
+
+- If 2+ active test files target the same production file, print `[DUPLICATE] Found {N} test files for {production-file}: {paths}`.
+- Read every duplicate before deciding `ADD TO` vs `REWRITE`.
+- Prefer the nearest co-located test file as the canonical file. If no co-located file exists, prefer the file with the strongest existing behavioral coverage.
+- Do **not** silently create or extend a second overlapping test suite.
+- If the duplicates materially overlap and cannot be safely consolidated within this single-file run, mark the file `FAILED`, backlog `duplicate-test-suite`, and stop instead of deepening the duplication.
+
 **Do NOT add good tests on top of bad tests.** If existing tests are weak, fix them first. "ONE file, FULL pipeline" means the WHOLE test file, not just the gap you were sent to fix.
 
 Rewrite scope is still single-file. Do not turn one target file into a broad anti-pattern cleanup campaign across unrelated tests; use `zuvo:fix-tests` for that.
@@ -305,11 +321,22 @@ Red regression tests for known production bugs are not a valid terminal state fo
 
 1. **Anti-tautology check:** grep test file for mock-return-echoed-in-assertion patterns. Verify every expected value is spec-derived, not implementation-derived. Any tautological oracle found = fix immediately.
    **Exception for THIN delegation:** When code type is THIN and the method body is a single `return delegateFunction(args)`, echo testing IS the behavioral test — the facade's contract is to forward unchanged. `expect(result).toBe(mockReturnValue)` combined with `CalledWith` is correct, not tautological. P-70 does NOT apply to pure delegation pass-through.
+1b. **COMPONENT interaction gate:** For COMPONENT files, grep the production file for owned callback routing such as `onNext=`, `onBack=`, `onClick=`, `onSubmit=`, `onChange=`, or equivalent handler-selection branches. Then grep the test file for `fireEvent` or `userEvent`.
+   - If the production file forwards callbacks and the test file has **0** interaction calls, STOP and add flow tests before self-eval.
+   - For every distinct owned routing decision where the same child prop slot can receive different handlers by mode, type, or state, add at least one representative interaction test proving the correct handler fires and the competing handler does **not**.
+   - Render-only assertions and label-only assertions do **not** satisfy Q3 or Q14 for callback-routing rows.
 2. **Q1-Q19 self-eval** per `quality-gates.md`. Print scorecard with evidence:
    ```
    Self-eval: Q1=1 Q2=1 Q3=0 ... → [N]/19 [PASS|FIX|REWRITE]
    Critical gates: Q7=[0|1] Q11=[0|1] Q13=[0|1] Q15=[0|1] Q17=[0|1]
    ```
+   Then print **critical-gate evidence** with one specific `test-file:line` citation per gate:
+   - `Q7:` the error-path test proving exact type/message, or explicit `N/A — no production error paths`
+   - `Q11:` the test(s) covering each owned production branch or routing path
+   - `Q13:` the import line proving the real production module is under test
+   - `Q15:` the assertion line proving content/value, not just count/shape
+   - `Q17:` the assertion line plus expected-value source proving the oracle is not echoed from the mock
+   If you cannot cite a specific `test-file:line` for a critical gate, score that gate `0`. Do **not** invent scores from memory or from general confidence.
    Any critical gate at 0: fix immediately and re-score.
 
 Q-score is a quality gate, not an exhaustive coverage map. Step 3 validates test quality. Step 3.5 validates production behavior coverage.
@@ -493,6 +520,8 @@ Fallback-local path (only if the primary path never produced a successful provid
 **Context rules:**
 - FIXED findings must NOT be re-raised. If reviewer repeats a fixed finding, ignore it.
 - REJECTED findings have a **severity cap**: `REJECTED: [finding] — max re-raise: INFO`. If reviewer escalates a rejected finding above the cap (e.g. INFO → CRITICAL), auto-ignore. This prevents adversarial from overriding conscious scope decisions.
+- Before rejecting any CRITICAL/WARNING finding, restate the **attack vector** in one sentence and verify that your rejection defeats that attack vector, not just the reviewer's suggested fix.
+- If the suggested fix is wrong but the attack vector still applies, the finding is **not** rejected. Either fix it another way or carry it forward as `KNOWN` / backlog.
 - Each pass adds its own fixes/rejections to the context for the next pass.
 - Early exit: 0 new findings (not counting repeats of FIXED/REJECTED).
 
