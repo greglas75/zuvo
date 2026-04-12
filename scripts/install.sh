@@ -26,6 +26,44 @@ ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
 warn() { echo -e "  ${YELLOW}!${NC} $1"; }
 fail() { echo -e "  ${RED}✗${NC} $1"; }
 
+materialize_claude_reviewer_lanes() {
+  local target_root="$1"
+  local dir
+  local file
+
+  for dir in "$target_root/skills" "$target_root/shared/includes" "$target_root/rules"; do
+    if [[ ! -d "$dir" ]]; then
+      fail "Required Claude cache dir missing: $dir"
+      return 1
+    fi
+
+    while IFS= read -r -d '' file; do
+      perl -0pi -e 's/\breview-primary\b/opus/g; s/\breview-alt\b/sonnet/g' "$file" || return 1
+    done < <(find "$dir" -name "*.md" -print0)
+  done
+}
+
+validate_claude_reviewer_lanes() {
+  local target_root="$1"
+  local dir
+  local refs
+
+  for dir in "$target_root/skills" "$target_root/shared" "$target_root/rules"; do
+    if [[ ! -d "$dir" ]]; then
+      fail "Required Claude cache dir missing during validation: $dir"
+      return 1
+    fi
+  done
+
+  refs=$(grep -rn 'review-primary\|review-alt' "$target_root/skills" "$target_root/shared" "$target_root/rules" 2>/dev/null || true)
+  if [[ -n "$refs" ]]; then
+    fail "Abstract reviewer lanes remain in Claude cache:"
+    echo "$refs" | head -10 | sed 's/^/     /'
+    return 1
+  fi
+  return 0
+}
+
 # =======================================
 # CLAUDE CODE
 # =======================================
@@ -131,6 +169,9 @@ install_claude() {
     if [[ -d "$CACHE_DIR/docs" ]]; then
       cp -r "$ZUVO_DIR"/docs/*.md "$CACHE_DIR/docs/" 2>/dev/null || true
     fi
+
+    materialize_claude_reviewer_lanes "$CACHE_DIR"
+    validate_claude_reviewer_lanes "$CACHE_DIR" || return 1
 
     SKILL_COUNT=$(ls -d "$CACHE_DIR/skills"/*/ 2>/dev/null | wc -l | tr -d ' ')
     ok "$DIR_NAME -- $SKILL_COUNT skills"

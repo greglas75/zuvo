@@ -97,6 +97,10 @@ replace_cursor_refs() {
     -e 's/\.claude\/skills\//skills\//g'
 }
 
+replace_reviewer_lane_refs_cursor() {
+  perl -pe 's/\breview-primary\b/inherit/g; s/\breview-alt\b/inherit/g'
+}
+
 # --- Skill prefix for agent naming ---
 get_skill_prefix() {
   local skill="$1"
@@ -304,6 +308,8 @@ adapt_agent_for_cursor() {
       # Map model: sonnet/opus/haiku → inherit or fast
       if ($0 ~ /haiku/) {
         print "model: fast"
+      } else if ($0 ~ /review-primary/ || $0 ~ /review-alt/) {
+        print "model: inherit"
       } else {
         print "model: inherit"
       }
@@ -326,6 +332,7 @@ adapt_agent_for_cursor() {
     | replace_paths \
     | strip_tool_names \
     | replace_cursor_refs \
+    | replace_reviewer_lane_refs_cursor \
     | normalize_unicode > "$dst"
 }
 
@@ -340,6 +347,7 @@ for f in "$PLUGIN_DIR"/rules/*.md; do
     | replace_paths \
     | strip_tool_names \
     | replace_cursor_refs \
+    | replace_reviewer_lane_refs_cursor \
     | normalize_unicode > "$DIST/rules/$(basename "$f")"
 done
 echo "  + rules/ ($(ls "$PLUGIN_DIR"/rules/*.md 2>/dev/null | wc -l | tr -d ' ') files)"
@@ -353,6 +361,7 @@ if [ -d "$PLUGIN_DIR/shared/includes" ]; then
       | replace_paths \
       | strip_tool_names \
       | replace_cursor_refs \
+      | replace_reviewer_lane_refs_cursor \
       | normalize_unicode > "$DIST/shared/includes/$(basename "$f")"
   done
   echo "  + shared/includes/ ($(ls "$PLUGIN_DIR"/shared/includes/*.md 2>/dev/null | wc -l | tr -d ' ') files)"
@@ -551,6 +560,23 @@ if [ -n "$bad_models" ]; then
   echo "  ERROR: CC model names in agents (should be inherit/fast):"
   echo "$bad_models" | head -5
   errors=$((errors + 1))
+fi
+
+lane_refs=$(grep -rn 'review-primary\|review-alt' "$DIST"/skills "$DIST"/shared "$DIST"/agents 2>/dev/null || true)
+if [ -n "$lane_refs" ]; then
+  echo "  ERROR: Abstract reviewer lanes remain in Cursor dist:"
+  echo "$lane_refs" | head -10
+  errors=$((errors + 1))
+fi
+
+reviewer_primary_md="$DIST/agents/write-tests-blind-coverage-auditor.md"
+reviewer_alt_md="$DIST/agents/write-tests-blind-coverage-auditor-alt.md"
+if [ ! -f "$reviewer_primary_md" ] || [ ! -f "$reviewer_alt_md" ]; then
+  echo "  ERROR: Missing Cursor blind audit reviewer agents"
+  errors=$((errors + 1))
+else
+  grep -q '^model: inherit$' "$reviewer_primary_md" || { echo "  ERROR: Cursor primary reviewer did not resolve to inherit"; errors=$((errors + 1)); }
+  grep -q '^model: inherit$' "$reviewer_alt_md" || { echo "  ERROR: Cursor alt reviewer did not resolve to inherit"; errors=$((errors + 1)); }
 fi
 
 # Verify shared includes were copied

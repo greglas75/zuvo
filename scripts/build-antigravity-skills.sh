@@ -61,9 +61,13 @@ replace_model_refs() {
     -e 's/model: sonnet/model: gemini-3.1-pro-low/g' \
     -e 's/model: opus/model: gemini-3.1-pro-high/g' \
     -e 's/model: haiku/model: gemini-3-flash/g' \
+    -e 's/model: review-primary/model: gemini-3.1-pro-high/g' \
+    -e 's/model: review-alt/model: gemini-3.1-pro-low/g' \
     -e 's/model: "sonnet"/model: "gemini-3.1-pro-low"/g' \
     -e 's/model: "opus"/model: "gemini-3.1-pro-high"/g' \
     -e 's/model: "haiku"/model: "gemini-3-flash"/g' \
+    -e 's/model: "review-primary"/model: "gemini-3.1-pro-high"/g' \
+    -e 's/model: "review-alt"/model: "gemini-3.1-pro-low"/g' \
     -e 's/Model | Sonnet/Model | Gemini 3.1 Pro Low/g' \
     -e 's/Model | Opus/Model | Gemini 3.1 Pro High/g' \
     -e 's/Model | Haiku/Model | Gemini 3 Flash/g' \
@@ -73,6 +77,10 @@ replace_model_refs() {
     -e 's/-> Sonnet/-> Gemini 3.1 Pro Low/g' \
     -e 's/-> Opus/-> Gemini 3.1 Pro High/g' \
     -e 's/-> Haiku/-> Gemini 3 Flash/g'
+}
+
+replace_reviewer_lane_refs_antigravity() {
+  perl -pe 's/\breview-primary\b/gemini-3.1-pro-high/g; s/\breview-alt\b/gemini-3.1-pro-low/g'
 }
 
 # --- Config Reference Replacement (Antigravity) ---
@@ -232,6 +240,7 @@ transform_skill_for_antigravity() {
     | replace_paths \
     | strip_tool_names \
     | replace_model_refs \
+    | replace_reviewer_lane_refs_antigravity \
     | sed \
       -e 's/`subagent_type: "general-purpose"`//g' \
       -e 's/subagent_type: "general-purpose"//g' \
@@ -289,6 +298,10 @@ adapt_agent_for_antigravity() {
     in_fm && /^model:/ {
       if ($0 ~ /haiku/) {
         print "model: gemini-3-flash"
+      } else if ($0 ~ /review-primary/) {
+        print "model: gemini-3.1-pro-high"
+      } else if ($0 ~ /review-alt/) {
+        print "model: gemini-3.1-pro-low"
       } else if ($0 ~ /opus/) {
         print "model: gemini-3.1-pro-high"
       } else {
@@ -308,6 +321,7 @@ adapt_agent_for_antigravity() {
     | replace_paths \
     | strip_tool_names \
     | replace_model_refs \
+    | replace_reviewer_lane_refs_antigravity \
     | normalize_unicode > "$dst"
 
   # Apply in-place config refs
@@ -325,6 +339,8 @@ for f in "$PLUGIN_DIR"/rules/*.md; do
   cat "$f" \
     | replace_paths \
     | strip_tool_names \
+    | replace_model_refs \
+    | replace_reviewer_lane_refs_antigravity \
     | normalize_unicode > "$DIST/rules/$(basename "$f")"
   # Config refs for rules: CLAUDE.md -> GEMINI.md but NOT Claude Code -> Antigravity
   sed -i '' 's/CLAUDE\.md/GEMINI.md/g' "$DIST/rules/$(basename "$f")"
@@ -339,6 +355,8 @@ if [ -d "$PLUGIN_DIR/shared/includes" ]; then
     cat "$f" \
       | replace_paths \
       | strip_tool_names \
+      | replace_model_refs \
+      | replace_reviewer_lane_refs_antigravity \
       | normalize_unicode > "$DIST/shared/includes/$(basename "$f")"
     # Config refs for shared: CLAUDE.md -> GEMINI.md but NOT Claude Code -> Antigravity
     sed -i '' 's/CLAUDE\.md/GEMINI.md/g' "$DIST/shared/includes/$(basename "$f")"
@@ -412,6 +430,7 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
         | replace_paths \
         | strip_tool_names \
         | replace_model_refs \
+        | replace_reviewer_lane_refs_antigravity \
         | normalize_unicode > "$DIST/skills/$skill/$f"
       replace_config_refs "$DIST/skills/$skill/$f"
     fi
@@ -450,7 +469,7 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
     mkdir -p "$DIST/skills/$skill/references"
     for ref in "$skill_dir/references/"*.md; do
       [ -f "$ref" ] || continue
-      cat "$ref" | replace_paths | replace_model_refs | normalize_unicode > "$DIST/skills/$skill/references/$(basename "$ref")"
+      cat "$ref" | replace_paths | replace_model_refs | replace_reviewer_lane_refs_antigravity | normalize_unicode > "$DIST/skills/$skill/references/$(basename "$ref")"
       replace_config_refs "$DIST/skills/$skill/references/$(basename "$ref")"
     done
   fi
@@ -519,6 +538,23 @@ if [ -n "$bad_models" ]; then
   echo "  ERROR: Claude model names found (should be Gemini):"
   echo "$bad_models" | head -10
   errors=$((errors + 1))
+fi
+
+lane_refs=$(grep -rn 'review-primary\|review-alt' "$DIST"/skills "$DIST"/shared "$DIST"/rules 2>/dev/null || true)
+if [ -n "$lane_refs" ]; then
+  echo "  ERROR: Abstract reviewer lanes remain in Antigravity dist:"
+  echo "$lane_refs" | head -10
+  errors=$((errors + 1))
+fi
+
+reviewer_primary_md="$DIST/skills/write-tests/agents/blind-coverage-auditor.md"
+reviewer_alt_md="$DIST/skills/write-tests/agents/blind-coverage-auditor-alt.md"
+if [ ! -f "$reviewer_primary_md" ] || [ ! -f "$reviewer_alt_md" ]; then
+  echo "  ERROR: Missing Antigravity blind audit reviewer agents"
+  errors=$((errors + 1))
+else
+  grep -q '^model: gemini-3.1-pro-high$' "$reviewer_primary_md" || { echo "  ERROR: Antigravity primary reviewer did not resolve to gemini-3.1-pro-high"; errors=$((errors + 1)); }
+  grep -q '^model: gemini-3.1-pro-low$' "$reviewer_alt_md" || { echo "  ERROR: Antigravity alt reviewer did not resolve to gemini-3.1-pro-low"; errors=$((errors + 1)); }
 fi
 
 # Check for subagent_type

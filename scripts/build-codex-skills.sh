@@ -148,6 +148,10 @@ replace_claude_refs() {
     -e 's/\.claude\/skills\//skills\//g'
 }
 
+replace_reviewer_lane_refs_codex() {
+  perl -pe 's/\breview-primary\b/gpt-5.4/g; s/\breview-alt\b/gpt-5.3-codex/g'
+}
+
 # --- Strip Team/Multi-Agent Sections from Protocols (reusable) ---
 strip_team_sections() {
   awk '
@@ -177,6 +181,8 @@ map_model() {
     haiku)   echo "gpt-5.4-mini" ;;
     sonnet)  echo "gpt-5.4" ;;
     opus)    echo "gpt-5.3-codex" ;;
+    review-primary) echo "gpt-5.4" ;;
+    review-alt) echo "gpt-5.3-codex" ;;
     per-task) echo "gpt-5.4" ;; # implementer has "per-task: sonnet for standard..."
     *)       echo "gpt-5.4" ;;
   esac
@@ -437,8 +443,9 @@ transform_skill_for_codex() {
         }
       }
       { print }
-    ' \
+  ' \
     | replace_claude_refs \
+    | replace_reviewer_lane_refs_codex \
     | normalize_unicode > "$dst"
 }
 
@@ -473,6 +480,7 @@ adapt_agent_for_codex() {
     | replace_paths \
     | strip_tool_names \
     | replace_claude_refs \
+    | replace_reviewer_lane_refs_codex \
     | normalize_unicode > "$dst"
 }
 
@@ -487,6 +495,7 @@ for f in "$PLUGIN_DIR"/rules/*.md; do
     | replace_paths \
     | strip_tool_names \
     | replace_claude_refs \
+    | replace_reviewer_lane_refs_codex \
     | normalize_unicode > "$DIST/rules/$(basename "$f")"
 done
 echo "  + rules/ ($(ls "$PLUGIN_DIR"/rules/*.md 2>/dev/null | wc -l | tr -d ' ') files)"
@@ -500,6 +509,7 @@ if [ -d "$PLUGIN_DIR/shared/includes" ]; then
       | replace_paths \
       | strip_tool_names \
       | replace_claude_refs \
+      | replace_reviewer_lane_refs_codex \
       | normalize_unicode > "$DIST/shared/includes/$(basename "$f")"
   done
   echo "  + shared/includes/ ($(ls "$PLUGIN_DIR"/shared/includes/*.md 2>/dev/null | wc -l | tr -d ' ') files)"
@@ -832,6 +842,24 @@ if [ -n "$bad_models" ]; then
   echo "  ERROR: CC model names in TOMLs (should be gpt-5.4/gpt-5.4-mini/gpt-5.3-codex):"
   echo "$bad_models"
   errors=$((errors + 1))
+fi
+
+# Validation: no abstract reviewer lanes remain in emitted Codex artifacts
+lane_refs=$(grep -rn 'review-primary\|review-alt' "$DIST"/skills "$DIST"/shared "$DIST"/agents 2>/dev/null || true)
+if [ -n "$lane_refs" ]; then
+  echo "  ERROR: Abstract reviewer lanes remain in Codex dist:"
+  echo "$lane_refs" | head -10
+  errors=$((errors + 1))
+fi
+
+reviewer_primary_toml="$DIST/agents/write-tests-blind-coverage-auditor.toml"
+reviewer_alt_toml="$DIST/agents/write-tests-blind-coverage-auditor-alt.toml"
+if [ ! -f "$reviewer_primary_toml" ] || [ ! -f "$reviewer_alt_toml" ]; then
+  echo "  ERROR: Missing Codex blind audit reviewer TOMLs"
+  errors=$((errors + 1))
+else
+  grep -q 'model = "gpt-5.4"' "$reviewer_primary_toml" || { echo "  ERROR: Codex primary reviewer TOML did not resolve to gpt-5.4"; errors=$((errors + 1)); }
+  grep -q 'model = "gpt-5.3-codex"' "$reviewer_alt_toml" || { echo "  ERROR: Codex alt reviewer TOML did not resolve to gpt-5.3-codex"; errors=$((errors + 1)); }
 fi
 
 # TOML validation: developer_instructions paths exist
