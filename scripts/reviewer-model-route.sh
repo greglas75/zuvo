@@ -52,13 +52,13 @@ fi
 detect_platform() {
   if [[ -n "$PLATFORM_OVERRIDE" ]]; then
     printf '%s\n' "$PLATFORM_OVERRIDE"
-  elif [[ -n "${CLAUDE_MODEL:-}" ]]; then
+  elif [[ "${CLAUDECODE:-}" == "1" || -n "${CLAUDE_MODEL:-}" ]]; then
     printf 'claude\n'
-  elif [[ -n "${ZUVO_CODEX_MODEL:-}" ]]; then
+  elif [[ -n "${CODEX_SANDBOX:-}" || -n "${ZUVO_CODEX_MODEL:-}" ]]; then
     printf 'codex\n'
-  elif [[ -n "${CURSOR_AGENT_MODEL:-}" || -n "${CURSOR_MODEL:-}" ]]; then
+  elif [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"Cursor"* || -n "${CURSOR_AGENT_MODEL:-}" || -n "${CURSOR_MODEL:-}" ]]; then
     printf 'cursor\n'
-  elif [[ -n "${GEMINI_MODEL:-}" || -n "${ANTIGRAVITY_MODEL:-}" ]]; then
+  elif [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"Antigravity"* || -n "${ANTIGRAVITY_SESSION_ID:-}" || -n "${GEMINI_MODEL:-}" || -n "${ANTIGRAVITY_MODEL:-}" ]]; then
     printf 'antigravity\n'
   else
     printf 'unknown\n'
@@ -73,10 +73,10 @@ detect_writer_model() {
   fi
 
   case "$platform" in
-    claude) printf '%s\n' "${CLAUDE_MODEL:-unknown}" ;;
-    codex) printf '%s\n' "${ZUVO_CODEX_MODEL:-unknown}" ;;
+    claude) printf '%s\n' "${CLAUDE_MODEL:-sonnet}" ;;
+    codex) printf '%s\n' "${ZUVO_CODEX_MODEL:-gpt-5.3-codex}" ;;
     cursor) printf '%s\n' "${CURSOR_AGENT_MODEL:-${CURSOR_MODEL:-unknown}}" ;;
-    antigravity) printf '%s\n' "${GEMINI_MODEL:-${ANTIGRAVITY_MODEL:-unknown}}" ;;
+    antigravity) printf '%s\n' "${GEMINI_MODEL:-${ANTIGRAVITY_MODEL:-gemini-3.1-pro-low}}" ;;
     *) printf 'unknown\n' ;;
   esac
 }
@@ -162,7 +162,19 @@ case "$platform" in
         reviewer_model="gemini-3.1-pro-high"
         routing_status="ok"
         ;;
+      gemini-2.5-flash*|gemini-3-flash*|gemini-flash*)
+        writer_lane="small"
+        reviewer_lane="review-primary"
+        reviewer_model="gemini-3.1-pro-high"
+        routing_status="ok"
+        ;;
       gemini-3.1-pro-low)
+        writer_lane="strong_alt"
+        reviewer_lane="review-primary"
+        reviewer_model="gemini-3.1-pro-high"
+        routing_status="ok"
+        ;;
+      gemini-3.1-pro-low*|gemini-2.5-pro-low*)
         writer_lane="strong_alt"
         reviewer_lane="review-primary"
         reviewer_model="gemini-3.1-pro-high"
@@ -173,6 +185,18 @@ case "$platform" in
         reviewer_lane="review-alt"
         reviewer_model="gemini-3.1-pro-low"
         routing_status="ok"
+        ;;
+      gemini-3.1-pro-high*|gemini-2.5-pro*|gemini-pro*)
+        writer_lane="strong_primary"
+        reviewer_lane="review-alt"
+        reviewer_model="gemini-3.1-pro-low"
+        routing_status="ok"
+        ;;
+      gemini)
+        writer_lane="strong_primary"
+        reviewer_lane="same-model-fallback"
+        reviewer_model="gemini"
+        routing_status="same-model-fallback"
         ;;
     esac
     ;;

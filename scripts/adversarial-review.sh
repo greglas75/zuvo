@@ -34,6 +34,7 @@ OUTPUT_FORMAT="text"  # text | json
 CONTEXT_HINT=""
 DIFF_REF=""
 FILES=""
+ARTIFACT_PATH=""
 INPUT_MODE="stdin"  # stdin | diff | files
 DRY_RUN=false
 EXCLUDE_PROVIDER=""  # --exclude: skip this provider (used by --rotate to avoid repeat)
@@ -50,6 +51,7 @@ while [[ $# -gt 0 ]]; do
     --context)   CONTEXT_HINT="$2"; shift 2 ;;
     --diff)      DIFF_REF="$2"; INPUT_MODE="diff"; shift 2 ;;
     --files)     FILES="$2"; INPUT_MODE="files"; shift 2 ;;
+    --artifact)  ARTIFACT_PATH="$2"; shift 2 ;;
     --dry-run)   DRY_RUN=true; shift ;;
     --help|-h)
       cat <<'HELP'
@@ -81,6 +83,7 @@ Output:
 Input:
   --diff REF       Review diff from REF to HEAD
   --files "f1\nf2"  Review specific files (newline-separated, supports spaces in paths)
+  --artifact PATH  Save review output + metadata to PATH for downstream gates
   (stdin)          Pipe a diff
 
 Environment variables:
@@ -145,8 +148,16 @@ collect_input() {
       fi
       while IFS= read -r f || [[ -n "$f" ]]; do
         [[ -z "$f" ]] && continue
-        echo "=== FILE: $f ==="
-        cat "$f" 2>/dev/null || echo "(file not found)"
+        # Resolve to absolute path from CWD (not from temp/cache dirs)
+        local abs_path
+        if [[ -f "$f" ]]; then
+          abs_path=$(cd "$(dirname "$f")" 2>/dev/null && pwd)/$(basename "$f")
+        else
+          abs_path="$f"
+        fi
+        # Show basename in header to prevent providers from reading stale cached paths
+        echo "=== FILE: $(basename "$abs_path") ==="
+        cat "$abs_path" 2>/dev/null || echo "(file not found: $abs_path)"
         echo ""
       done <<< "$file_list"
       ;;
@@ -465,6 +476,41 @@ Focus on what a DIFFERENT reviewer with DIFFERENT blind spots would find.
 $INPUT"
 fi
 
+# ─── Host platform detection (prevent self-review) ────────────────
+
+detect_host_platform() {
+  # Returns the provider name that matches the HOST IDE/CLI.
+  # Self-review (Gemini reviewing Gemini, Codex reviewing Codex) produces
+  # low-value findings and can cause auth/process conflicts.
+
+  # Claude Code: sets CLAUDECODE=1
+  [[ "${CLAUDECODE:-}" == "1" ]] && echo "claude" && return
+
+  # Codex: sets CODEX_SANDBOX when running inside sandbox
+  [[ -n "${CODEX_SANDBOX:-}" ]] && echo "codex-5.3" && return
+
+  # Antigravity (Google IDE): VS Code fork with Antigravity in app paths
+  if [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"Antigravity"* ]] \
+     || [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"antigravity"* ]] \
+     || [[ -n "${ANTIGRAVITY_SESSION_ID:-}" ]]; then
+    echo "gemini" && return
+  fi
+
+  # Cursor: VS Code fork with Cursor in app paths
+  if [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"Cursor"* ]] \
+     || [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"cursor"* ]]; then
+    echo "cursor-agent" && return
+  fi
+
+  echo ""
+}
+
+HOST_PROVIDER=$(detect_host_platform)
+if [[ -n "$HOST_PROVIDER" && -z "$EXCLUDE_PROVIDER" ]]; then
+  EXCLUDE_PROVIDER="$HOST_PROVIDER"
+  echo "  Host detected: $HOST_PROVIDER -- auto-excluding to prevent self-review" >&2
+fi
+
 # ─── Provider detection ─────────────────────────────────────────
 
 detect_providers() {
@@ -503,10 +549,25 @@ else
   PROVIDERS=$(detect_providers)
 fi
 
-if [[ -z "$PROVIDERS" ]]; then
-  cat >&2 <<'EOF'
-ERROR: No cross-provider review tool found.
+# Apply EXCLUDE_PROVIDER globally (host auto-exclusion + --exclude flag).
+# Previously only applied in --rotate mode — now filters in ALL modes.
+if [[ -n "$EXCLUDE_PROVIDER" && -n "$PROVIDERS" ]]; then
+  PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -v "^${EXCLUDE_PROVIDER}$" | tr '\n' ' ' | sed 's/ *$//')
+fi
 
+if [[ -z "$PROVIDERS" ]]; then
+  if [[ -n "$EXCLUDE_PROVIDER" ]]; then
+    cat >&2 <<EOF
+ERROR: No cross-provider review tool found.
+Host platform auto-excluded: $EXCLUDE_PROVIDER (self-review prevention).
+All detected providers matched the host — install a DIFFERENT vendor's CLI:
+
+EOF
+  else
+    echo "ERROR: No cross-provider review tool found." >&2
+    echo "" >&2
+  fi
+  cat >&2 <<'EOF'
 Install one of these (in order of recommendation):
 
   1. Codex CLI (fastest, needs ChatGPT sub):
@@ -715,6 +776,31 @@ dispatch_provider() {
 
 # ─── Execute ───────────────────────────────────────────────────
 
+write_artifact() {
+  local artifact_path="$1"
+  local final_output="$2"
+
+  [[ -z "$artifact_path" ]] && return 0
+
+  mkdir -p "$(dirname "$artifact_path")"
+
+  {
+    printf 'artifact_kind=adversarial-review\n'
+    printf 'created_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'mode=%s\n' "$REVIEW_MODE"
+    printf 'output_format=%s\n' "$OUTPUT_FORMAT"
+    printf 'providers_used=%s\n' "$PROVIDERS_USED"
+    printf 'provider_count=%s\n' "$PROVIDER_COUNT"
+    printf 'input_chars=%s\n' "${#INPUT}"
+    printf 'total_findings=%s\n' "$TOTAL_FINDINGS"
+    printf 'critical=%s\n' "$CRITICAL_COUNT"
+    printf 'warning=%s\n' "$WARNING_COUNT"
+    printf 'info=%s\n' "$INFO_COUNT"
+    printf -- '---\n'
+    printf '%s\n' "$final_output"
+  } > "$artifact_path"
+}
+
 # ─── Dry run ───────────────────────────────────────────────────
 
 # ─── Preflight checks ──────────────────────────────────────────
@@ -883,6 +969,8 @@ fi
 
 # ─── Output ─────────────────────────────────────────────────────
 
+FINAL_OUTPUT=""
+
 if [[ "$OUTPUT_FORMAT" == "json" ]]; then
   # JSON output: build with jq for safety (no injection from provider output)
   json_results="{}"
@@ -900,17 +988,17 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     fi
   done
 
-  jq -n \
+  FINAL_OUTPUT=$(jq -n \
     --arg mode "$REVIEW_MODE" \
     --arg providers "$PROVIDERS_USED" \
     --argjson count "$PROVIDER_COUNT" \
     --argjson input_size "${#INPUT}" \
     --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --argjson results "$json_results" \
-    '{mode: $mode, providers_used: $providers, provider_count: $count, input_size: $input_size, date: $date, results: $results}'
+    '{mode: $mode, providers_used: $providers, provider_count: $count, input_size: $input_size, date: $date, results: $results}')
 else
   # Text output with banners
-  cat <<HEADER
+  FINAL_OUTPUT=$(cat <<HEADER
 ===============================================================
 CROSS-PROVIDER ADVERSARIAL REVIEW
 ===============================================================
@@ -924,7 +1012,15 @@ $ALL_RESULTS
 END OF CROSS-PROVIDER REVIEW
 ===============================================================
 HEADER
+)
 fi
+
+if [[ -n "$ARTIFACT_PATH" ]]; then
+  write_artifact "$ARTIFACT_PATH" "$FINAL_OUTPUT" \
+    || { echo "ERROR: Failed to write adversarial artifact to $ARTIFACT_PATH" >&2; exit 2; }
+fi
+
+printf '%s\n' "$FINAL_OUTPUT"
 
 # ─── Run log (per-provider) ────────────────────────────────────
 

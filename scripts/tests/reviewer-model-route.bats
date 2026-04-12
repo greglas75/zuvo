@@ -88,6 +88,28 @@ assert_line() {
   assert_line "routing_status=unknown-writer-model"
 }
 
+@test "routes Antigravity generic gemini writer to explicit same-model fallback" {
+  run_route GEMINI_MODEL=gemini
+  [ "$status" -eq 0 ]
+  assert_line "platform=antigravity"
+  assert_line "writer_model=gemini"
+  assert_line "writer_lane=strong_primary"
+  assert_line "reviewer_lane=same-model-fallback"
+  assert_line "reviewer_model=gemini"
+  assert_line "routing_status=same-model-fallback"
+}
+
+@test "routes Antigravity flash writer to high reviewer" {
+  run_route GEMINI_MODEL=gemini-2.5-flash
+  [ "$status" -eq 0 ]
+  assert_line "platform=antigravity"
+  assert_line "writer_model=gemini-2.5-flash"
+  assert_line "writer_lane=small"
+  assert_line "reviewer_lane=review-primary"
+  assert_line "reviewer_model=gemini-3.1-pro-high"
+  assert_line "routing_status=ok"
+}
+
 @test "rejects override flags unless explicit test override is enabled" {
   run "$SCRIPT" --platform unknown --writer-model custom-writer
   [ "$status" -eq 2 ]

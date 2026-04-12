@@ -370,3 +370,5 @@ Commits pending review. Auto-managed:
 - 1c370cf (2026-04-12) strengthen write-tests review guardrails
 - 4e14784 (2026-04-12) Tighten brainstorm review and approval flow
 - d5eb1ed (2026-04-12) review: add CLS and test-utility audit guidance
+- 20e2e94 (2026-04-12) release: v1.3.82 — feat: context-audit Codex build — remove ~/.claude/ path reference
+- 7c46df8 (2026-04-12) make blind audit wrapper executable

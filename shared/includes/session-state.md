@@ -2,6 +2,7 @@
 
 Persist execution progress so sessions can resume after context compaction, crashes, or interruption.
 State files live in `.zuvo/context/` in the project root. They are local runtime state — never committed.
+For `zuvo:execute`, rewriting state after each successful commit is a blocking durability step, not a best-effort note.
 
 ---
 
@@ -9,7 +10,8 @@ State files live in `.zuvo/context/` in the project root. They are local runtime
 
 ### `.zuvo/context/execution-state.md`
 
-Written by `zuvo:execute` after each completed task. The primary source of truth for resume.
+Written by `zuvo:execute` immediately after each successful task commit. The primary source of truth for resume.
+If this file is not rewritten, the task is not durably complete.
 
 ```markdown
 # Execution State
@@ -20,7 +22,7 @@ Written by `zuvo:execute` after each completed task. The primary source of truth
 
 plan: <path to plan file>
 spec_id: <spec_id from plan header>
-branch: <git branch at execution start>
+branch: <current execution branch>
 total-tasks: <N>
 
 ## Progress
@@ -42,7 +44,7 @@ next-task: <N>
 <!-- task-3.quality-review: 1 -->
 
 ## Files Changed
-<!-- Appended after each completed task. Diagnostic only — not used for resume logic. -->
+<!-- Appended after each successful task commit. Diagnostic only — not used for resume logic. -->
 - <file> (Task <N>, commit <sha7>)
 ```
 
@@ -252,12 +254,13 @@ Example: `exec-20260407-1423`
 
 ## WRITE Protocol (execute — after each task)
 
-**After Step 9 (Mark Completed):**
+**After Step 9 (successful commit):**
 
 Rewrite `.zuvo/context/execution-state.md` (full rewrite — never append):
 - Add task number to `completed[]`
 - Update `next-task` to lowest PENDING task (lowest number not in completed/skipped/blocked)
 - Update `last-updated`
+- Update `branch` if the session intentionally continued on a different branch than the previous task
 - Append to `## Files Changed`: `- <file> (Task <N>, commit <sha7>)` for each changed file
 
 Append to `.zuvo/context/project-context.md` → `## Completed Work Units`:
@@ -265,6 +268,11 @@ Append to `.zuvo/context/project-context.md` → `## Completed Work Units`:
 - Task <N>: "<name>" [<sha7>] — <comma-separated files>
 ```
 Trim to last 20 entries if over limit.
+
+MANDATORY:
+- Rewrite the file immediately after each successful commit
+- Treat a failed rewrite exactly like a failed test
+- Do not start the next task until the file on disk reflects the new `completed[]`, `next-task`, and `last-updated` values
 
 **After a task is SKIPPED:**
 - Add to `skipped[]`

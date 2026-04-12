@@ -135,6 +135,22 @@ isolated_path() {
   [[ "$output" == *"FILES_RECEIVED"* ]]
 }
 
+@test "--artifact writes metadata and review output to file" {
+  create_mock "gemini" "ARTIFACT_RECEIVED"
+  isolated_path
+
+  local artifact="$TMPDIR_TEST/adversarial-task-1.txt"
+
+  run "$SCRIPT" --provider gemini --files "$SAMPLE_FILE" --artifact "$artifact"
+  [ "$status" -eq 0 ]
+  [ -s "$artifact" ]
+  [[ "$output" == *"ARTIFACT_RECEIVED"* ]]
+  grep -q '^artifact_kind=adversarial-review$' "$artifact"
+  grep -q '^mode=code$' "$artifact"
+  grep -q '^provider_count=1$' "$artifact"
+  grep -q 'ARTIFACT_RECEIVED' "$artifact"
+}
+
 @test "handles missing file in --files gracefully" {
   create_mock "gemini" "MISSING_OK"
   isolated_path
@@ -155,20 +171,20 @@ isolated_path() {
 
 # ─── Input truncation ────────────────────────────────────────
 
-@test "truncates input exceeding 15000 chars and adds notice" {
+@test "truncates code-mode input exceeding 30000 chars and adds notice" {
   create_inspecting_mock "gemini" "TRUNCATED" "WAS_TRUNCATED" "NOT_TRUNCATED"
   isolated_path
 
-  # Generate 20000 chars
+  # Generate 35000 chars (code mode truncates at 30000)
   local big_input
-  big_input=$(printf '%0.sx' $(seq 1 20000))
+  big_input=$(printf '%0.sx' $(seq 1 35000))
 
   run bash -c "printf '%s' '$big_input' | '$SCRIPT' --provider gemini"
   [ "$status" -eq 0 ]
   [[ "$output" == *"WAS_TRUNCATED"* ]]
 }
 
-@test "preserves input under 15000 chars without truncation" {
+@test "preserves input under 30000 chars without truncation" {
   create_inspecting_mock "gemini" "TRUNCATED" "WAS_TRUNCATED" "NOT_TRUNCATED"
   isolated_path
 

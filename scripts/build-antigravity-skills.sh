@@ -42,6 +42,9 @@ normalize_unicode() {
 }
 
 # --- Path Replacement (Antigravity) ---
+# CRITICAL: Replace ALL relative paths (../../) with absolute ~/.gemini/antigravity/ paths.
+# Relative paths work in Claude Code (plugin resolves from SKILL.md location) but NOT in
+# Antigravity/Codex/Cursor where the agent reads instructions and resolves from CWD.
 replace_paths() {
   sed \
     -e 's|{plugin_root}/shared/|~/.gemini/antigravity/shared/|g' \
@@ -52,7 +55,11 @@ replace_paths() {
     -e 's|~/\.claude/plugins/cache/zuvo-marketplace/zuvo/[^/]*/scripts/adversarial-review\.sh|~/.gemini/antigravity/scripts/adversarial-review.sh|g' \
     -e 's|~/\.claude/plugins/cache/zuvo-marketplace/zuvo/[^/]*/|~/.gemini/antigravity/|g' \
     -e 's|~/\.claude/|~/.gemini/antigravity/|g' \
-    -e 's|../../scripts/adversarial-review\.sh|~/.gemini/antigravity/scripts/adversarial-review.sh|g'
+    -e 's|../../shared/includes/|~/.gemini/antigravity/shared/includes/|g' \
+    -e 's|../../shared/|~/.gemini/antigravity/shared/|g' \
+    -e 's|../../scripts/|~/.gemini/antigravity/scripts/|g' \
+    -e 's|../../rules/|~/.gemini/antigravity/rules/|g' \
+    -e 's|../../skills/|~/.gemini/antigravity/skills/|g'
 }
 
 # --- Model Replacement (Antigravity — Gemini tiers) ---
@@ -388,7 +395,7 @@ if [ -f "$PLUGIN_DIR/hooks/hooks.antigravity.json" ]; then
 fi
 
 # Copy hook scripts with path replacement
-for hook_script in pre-push-gate.sh session-start; do
+for hook_script in pre-push-gate.sh pre-commit-adversarial-gate.sh session-start; do
   if [ -f "$PLUGIN_DIR/hooks/$hook_script" ]; then
     cat "$PLUGIN_DIR/hooks/$hook_script" \
       | replace_paths \

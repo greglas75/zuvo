@@ -75,7 +75,16 @@ adversarial-review --json --mode {MODE} --files "path/to/changed/file.ts"
 
 **IMPORTANT:** Run as foreground Bash call. Wait for complete output before proceeding. Do NOT use background execution.
 
-**If `adversarial-review` is not in PATH:** try `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`.
+**If `adversarial-review` is not in PATH**, use the platform-specific fallback:
+
+| Platform | Fallback path |
+|----------|---------------|
+| Claude Code | `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh` |
+| Codex | `~/.codex/scripts/adversarial-review.sh` |
+| Antigravity | `~/.gemini/antigravity/scripts/adversarial-review.sh` |
+| Cursor | `~/.cursor/scripts/adversarial-review.sh` |
+
+**Host auto-exclusion:** The script auto-detects which IDE/CLI is the host (via `CLAUDECODE`, `CODEX_SANDBOX`, `VSCODE_GIT_ASKPASS_MAIN`) and excludes the host's provider from review. This prevents self-review (e.g., Gemini reviewing Gemini's work inside Antigravity). Override with explicit `--exclude` or `--provider`.
 
 **If the script exits non-zero with empty output:** note `adversarial review: skipped (no provider available)` and proceed.
 

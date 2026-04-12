@@ -43,6 +43,9 @@ normalize_unicode() {
 }
 
 # --- Path Replacement (Cursor) ---
+# CRITICAL: Replace ALL relative paths (../../) with absolute ~/.cursor/ paths.
+# Relative paths work in Claude Code (plugin resolves from SKILL.md location)
+# but NOT in Cursor where the agent reads instructions and resolves from CWD.
 replace_paths() {
   sed \
     -e 's|{plugin_root}/shared/|~/.cursor/shared/|g' \
@@ -51,7 +54,11 @@ replace_paths() {
     -e 's|{plugin_root}|~/.cursor|g' \
     -e 's|CLAUDE_PLUGIN_ROOT|CURSOR_HOME|g' \
     -e 's|~/.claude/plugins/cache/zuvo-marketplace/zuvo/\*/scripts/adversarial-review\.sh|~/.cursor/scripts/adversarial-review.sh|g' \
-    -e 's|../../scripts/adversarial-review\.sh|~/.cursor/scripts/adversarial-review.sh|g'
+    -e 's|../../shared/includes/|~/.cursor/shared/includes/|g' \
+    -e 's|../../shared/|~/.cursor/shared/|g' \
+    -e 's|../../scripts/|~/.cursor/scripts/|g' \
+    -e 's|../../rules/|~/.cursor/rules/|g' \
+    -e 's|../../skills/|~/.cursor/skills/|g'
 }
 
 # --- Strip Claude Code Tool Names ---

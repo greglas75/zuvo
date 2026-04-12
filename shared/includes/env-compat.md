@@ -4,11 +4,14 @@
 
 ## Execution Models
 
-| Capability | Claude Code | Other (Codex, Cursor, Antigravity) |
-|-----------|-------------|-------------------------------------|
-| Sub-agent dispatch | `Agent` tool — parallel, model-routed | Sequential execution (read agent .md, execute yourself) |
-| Concurrency | Unrestricted background tasks | Limited or sequential |
-| User interaction | Native interactive prompts | Use safest default, annotate `[AUTO-DECISION]` |
+| Capability | Claude Code | Codex | Antigravity | Cursor |
+|-----------|-------------|-------|-------------|--------|
+| Sub-agent dispatch | `Agent` tool — parallel, model-routed | TOML agents in `~/.codex/agents/` | Sequential (no spawning) | Sequential (no spawning) |
+| Concurrency | Unrestricted background tasks | Limited | Sequential | Sequential |
+| User interaction | Native interactive prompts | `[AUTO-DECISION]` | `[AUTO-DECISION]` | `[AUTO-DECISION]` |
+| Install root | `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/` | `~/.codex/` | `~/.gemini/antigravity/` | `~/.cursor/` |
+| Scripts path | `<install-root>/scripts/` | `~/.codex/scripts/` | `~/.gemini/antigravity/scripts/` | `~/.cursor/scripts/` |
+| Adversarial self-exclude | `claude` | `codex-5.3` | `gemini` | `cursor-agent` |
 
 ## Agent Dispatch
 
@@ -56,7 +59,22 @@ No agent spawning capability. When a skill references an agent:
 <!-- PLATFORM:ANTIGRAVITY -->
 ### Antigravity
 
-Same as Cursor — no agent spawning. Execute sequentially. Models mapped to Gemini tiers: sonnet → gemini-3.1-pro-low, opus → gemini-3.1-pro-high.
+Google Antigravity is an agent-first IDE (VS Code fork, released Nov 2025 with Gemini 3). No sub-agent spawning via API — execute sequentially like Cursor.
+
+**Install paths:** `~/.gemini/antigravity/` (skills, shared, rules, scripts)
+
+**Model mapping:** sonnet → gemini-3.1-pro-low, opus → gemini-3.1-pro-high, haiku → gemini-3-flash
+
+**CLI:** `agy` (command-line launcher)
+
+**Env detection:** `VSCODE_GIT_ASKPASS_MAIN` contains `Antigravity` or `ANTIGRAVITY_SESSION_ID` is set
+
+**Adversarial review:** Host auto-excluded (`gemini` provider skipped). Cross-review uses codex, claude, codestral, or cursor-agent. Script at `~/.gemini/antigravity/scripts/adversarial-review.sh`.
+
+When a skill references an agent:
+1. Read the agent's instruction file (e.g., `agents/blast-radius.md`)
+2. Perform that analysis yourself in the current context
+3. Maintain identical output format and quality standards
 <!-- /PLATFORM:ANTIGRAVITY -->
 
 ## Progress Tracking

@@ -20,6 +20,11 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/pre-push-gate.sh\"",
             "async": false
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/pre-commit-adversarial-gate.sh\"",
+            "async": false
           }
         ]
       }

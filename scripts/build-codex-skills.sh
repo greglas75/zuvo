@@ -53,8 +53,9 @@ normalize_unicode() {
 
 # --- Path Replacement (reusable) ---
 # Replaces ~/.claude/ paths with ~/.codex/ paths.
-# Also replaces {plugin_root} tokens with ~/.codex/ paths.
-# Agent paths stay as agents/ (not references/).
+# Also replaces {plugin_root} tokens and ALL relative paths (../../) with ~/.codex/.
+# CRITICAL: Relative paths work in Claude Code (plugin resolves from SKILL.md location)
+# but NOT in Codex where the agent reads instructions and resolves from CWD.
 replace_paths() {
   sed \
     -e 's|~/.claude/skills/|~/.codex/skills/|g' \
@@ -66,7 +67,11 @@ replace_paths() {
     -e 's|{plugin_root}/skills/|~/.codex/skills/|g' \
     -e 's|{plugin_root}|~/.codex|g' \
     -e 's|CLAUDE_PLUGIN_ROOT|CODEX_HOME|g' \
-    -e 's|../../scripts/adversarial-review\.sh|~/.codex/scripts/adversarial-review.sh|g'
+    -e 's|../../shared/includes/|~/.codex/shared/includes/|g' \
+    -e 's|../../shared/|~/.codex/shared/|g' \
+    -e 's|../../scripts/|~/.codex/scripts/|g' \
+    -e 's|../../rules/|~/.codex/rules/|g' \
+    -e 's|../../skills/|~/.codex/skills/|g'
 }
 
 # --- Strip Claude Code Tool Names (reusable) ---
@@ -704,7 +709,7 @@ if [ -f "$PLUGIN_DIR/hooks/hooks.codex.json" ]; then
 fi
 
 # Copy hook scripts with path replacement
-for hook_script in pre-push-gate.sh session-start; do
+for hook_script in pre-push-gate.sh pre-commit-adversarial-gate.sh session-start; do
   if [ -f "$PLUGIN_DIR/hooks/$hook_script" ]; then
     cat "$PLUGIN_DIR/hooks/$hook_script" \
       | replace_paths \
