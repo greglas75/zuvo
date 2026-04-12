@@ -82,3 +82,77 @@ STEP: Phase 1 — Code Exploration [DONE]
 | Clarifying question | Ask user | Best-judgment `[AUTO-DECISION]` |
 
 **Hard rule:** Never push to a remote repository without explicit user confirmation, regardless of environment.
+
+## Reviewer Model Routing
+
+Some reviewer workflows need a reviewer that is as strong as possible while still being different from the writer.
+
+Use these abstract reviewer lanes in source artifacts:
+
+- `review-primary` -- strongest preferred reviewer for the current platform
+- `review-alt` -- strongest alternate reviewer when `review-primary` would match the writer
+
+Runtime-only fallback lane:
+
+- `same-model-fallback` -- degraded runtime lane used only when a different reviewer cannot be honored
+
+Resolve the concrete reviewer model at runtime with `scripts/reviewer-model-route.sh`.
+Do not duplicate the mapping inline in skills or build scripts.
+
+Routing contract:
+
+- detect the writer model from environment
+- classify the writer as `small`, `strong_primary`, `strong_alt`, or `unknown`
+- emit `review-primary` or `review-alt` when the platform can honor a different reviewer
+- emit `same-model-fallback` with an explicit degraded status when the environment cannot honor a different reviewer model
+- if the writer classification is `unknown`, emit `routing_status=unknown-writer-model` and do not claim a valid cross-model route
+- routing metadata is an orchestration signal, not a security boundary; callers that do not trust their runtime environment must degrade to `unknown-writer-model`
+
+Machine contract for `scripts/reviewer-model-route.sh`:
+
+- runtime routing uses environment detection only
+- explicit override flags are allowed only for tests and smoke validation, and only when `ZUVO_ALLOW_REVIEWER_ROUTE_OVERRIDE=1`
+- stdout must emit one `KEY=VALUE` line per field in this exact order:
+  - `platform`
+  - `writer_model`
+  - `writer_lane`
+  - `reviewer_lane`
+  - `reviewer_model`
+  - `routing_status`
+- stdout must contain only those six keys; diagnostics go to stderr
+- callers must parse the keys, not positional prose
+- callers must not use `eval`; parse line-by-line, for example with `while IFS='=' read -r key value`
+- `routing_status=ok` is valid only when `reviewer_model != writer_model`
+- token values must be single-line and must not contain `=`; malformed tokens are sanitized to `unknown`
+- callers must reject malformed output: exactly 6 unique keys, no duplicates, no extras, no empty values
+
+Decision table:
+
+| Platform capability | Writer classification | Reviewer lane | Routing status |
+|---------------------|-------------|---------------|----------------|
+| can honor alternate reviewer | `small` | `review-primary` | `ok` |
+| can honor alternate reviewer | `strong_alt` | `review-primary` | `ok` |
+| can honor alternate reviewer | `strong_primary` | `review-alt` | `ok` |
+| cannot honor alternate reviewer | any known lane | `same-model-fallback` | `same-model-fallback` |
+| platform unknown | any classification | `same-model-fallback` | `unknown-writer-model` |
+| writer classification unknown | `unknown` | `same-model-fallback` | `unknown-writer-model` |
+
+Allowed routing statuses:
+
+- `ok` -- reviewer differs from writer and the platform can honor the route
+- `same-model-fallback` -- environment is known but cannot honor a different reviewer
+- `unknown-writer-model` -- writer model or platform is unknown, so routing cannot safely pick an alternate
+- `routing-failed` -- resolver execution failed, timed out, or emitted malformed output
+
+Failure mode contract:
+
+- if `scripts/reviewer-model-route.sh` is missing, exits non-zero, or times out, the caller must block or degrade explicitly
+- caller-side timeout should fail closed within 5 seconds
+- the safe default is to emit all six keys with explicit sentinels:
+  - `platform=unknown`
+  - `writer_model=unknown`
+  - `writer_lane=unknown`
+  - `reviewer_lane=same-model-fallback`
+  - `reviewer_model=unknown`
+  - `routing_status=routing-failed`
+- callers must never silently invent their own reviewer mapping after resolver failure
