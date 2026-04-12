@@ -364,3 +364,4 @@ Commits pending review. Auto-managed:
 - 27a9928 (2026-04-12) release: v1.3.77 — feat: blind audit reviewer model routing — cross-model validation in write-tests, platform-aware lane resolver
 - bede8f8 (2026-04-12) add adversarial fallback reviewers for write-tests
 - 3662d38 (2026-04-12) release: v1.3.78 — fix: adversarial-review --files parsing bug — grep newline false positive caused both files to merge into one path, breaking all external providers
+- 04ef086 (2026-04-12) release: v1.3.79 — feat: context-audit skill + auto metrics collection — include loading trends, heaviest runs, week-over-week delta, baseline snapshots

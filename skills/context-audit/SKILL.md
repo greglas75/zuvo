@@ -154,7 +154,7 @@ From `/context` Skills section, for each skill >120 tokens:
 
 ### 2.4 Settings
 
-Check `~/.claude/settings.json` and project `.claude/settings.json`:
+Check the global and project settings files (e.g., `settings.json`):
 
 | Setting | Flag if | Recommended |
 |---------|---------|-------------|
