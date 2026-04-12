@@ -320,9 +320,49 @@ Read `../../shared/includes/blind-coverage-audit.md` now. This is the source of 
 
 Goal: run a **production-first** coverage audit before adversarial review. Strict contract-blind isolation is required for a passing blind audit. This is not another Q-score and must not reuse the writer's test contract.
 
+**Reviewer routing is mandatory before audit dispatch.**
+
+Resolve the writer hint using environment precedence:
+- `CLAUDE_MODEL`
+- `ZUVO_CODEX_MODEL`
+- `CURSOR_AGENT_MODEL`
+- `CURSOR_MODEL`
+- `GEMINI_MODEL`
+- `ANTIGRAVITY_MODEL`
+- otherwise treat the writer hint as `unknown`
+
+Run `../../scripts/reviewer-model-route.sh` with **no override flags** before selecting the blind-audit reviewer artifact. Enforce a **5s timeout**. Runtime callers must not `eval` resolver output.
+
+Treat resolver output as valid only when stdout contains exactly one single-line `KEY=VALUE` entry for each required key:
+- `platform`
+- `writer_model`
+- `writer_lane`
+- `reviewer_lane`
+- `reviewer_model`
+- `routing_status`
+
+Any missing key, duplicate key, unknown key, multi-line value, timeout, missing script, or non-zero exit status = `routing-failed`.
+
+Print a routing note immediately after resolution, then repeat the same line in the final Step 3.5 output block:
+
+```text
+Reviewer routing: writer=<model>, reviewer=<model>, lane=<review-primary|review-alt|same-model-fallback>, status=<ok|same-model-fallback|unknown-writer-model|routing-failed>
+```
+
+Routing rules:
+- `reviewer_lane=review-primary` and `routing_status=ok` -> use `blind-coverage-auditor`
+- `reviewer_lane=review-alt` and `routing_status=ok` -> use `blind-coverage-auditor-alt`
+- `reviewer_lane=same-model-fallback` or `routing_status=unknown-writer-model` -> use `blind-coverage-auditor`, record degraded routing explicitly, and never describe the audit as cross-model
+- `routing_status=routing-failed` -> do not select an agent artifact from lane data; only a fresh subprocess may continue
+
+If the resolver is missing, exits non-zero, times out, or emits malformed output, treat routing as degraded:
+- `Reviewer routing: writer=<writer-hint-or-unknown>, reviewer=unknown, lane=same-model-fallback, status=routing-failed`
+- continue only if strict isolated execution is still available
+- never invent a reviewer mapping inline
+
 **Execution paths:**
 
-- **Required:** isolated read-only `blind-coverage-auditor` or a fresh subprocess that receives only the files below
+- **Required:** isolated read-only `blind-coverage-auditor` or `blind-coverage-auditor-alt`, chosen from the resolver output above, or a fresh subprocess that receives only the files below
 
 Strict isolated execution receives only:
 - `../../shared/includes/blind-coverage-audit.md`
@@ -364,6 +404,7 @@ Emit the exact table schema from `blind-coverage-audit.md`. Summary-only prose i
 
 Print:
 ```
+Reviewer routing: writer=<model>, reviewer=<model>, lane=<review-primary|review-alt|same-model-fallback>, status=<ok|same-model-fallback|unknown-writer-model|routing-failed>
 Audit mode: strict
 Coverage verdict: [CLEAN|FIX|REWRITE]
 INVENTORY COMPLETE: [N] rows
