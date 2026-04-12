@@ -373,3 +373,5 @@ Commits pending review. Auto-managed:
 - 20e2e94 (2026-04-12) release: v1.3.82 — feat: context-audit Codex build — remove ~/.claude/ path reference
 - 7c46df8 (2026-04-12) make blind audit wrapper executable
 - 7670196 (2026-04-12) release: v1.3.83 — fix multi-platform adversarial, blind audit, path resolution
+- c7661a4 (2026-04-12) release: v1.3.84 — v1.3.83 multi-platform adversarial fix
+- c7ed0bf (2026-04-12) docs: multi-platform getting-started + cross-provider check in install.sh
