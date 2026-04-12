@@ -360,3 +360,4 @@ Commits pending review. Auto-managed:
 - d23fabb (2026-04-12) map reviewer lanes in platform builds
 - e096b03 (2026-04-12) wire blind audit routing into write-tests
 - db3a3e7 (2026-04-12) fix cursor reviewer lane replacement in skill output
+- 6065dfe (2026-04-12) add reviewer routing execution plan docs
