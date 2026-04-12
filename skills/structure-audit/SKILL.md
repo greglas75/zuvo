@@ -485,6 +485,21 @@ Confirm each fix with the user before executing.
 
 ---
 
+## Completion Gate Check
+
+Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+
+```
+COMPLETION GATE CHECK
+[ ] Code density mode printed (FULL/LIMITED/NO-CODE)
+[ ] Tool summary printed: cloc/dead-code/dep-cruiser/duplication/complexity
+[ ] SA6 fitness functions ran
+[ ] SA7 file size uses cloc data with category classification
+[ ] Critical gates printed: SA6, SA7, SA8
+[ ] Report saved to audit-results/
+[ ] Run: line printed and appended to log
+```
+
 ## STRUCTURE-AUDIT COMPLETE
 
 Grade: [A/B/C/D/FAIL] | Score: [N] / [MAX]

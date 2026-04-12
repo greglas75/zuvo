@@ -426,6 +426,22 @@ After presenting the report, the user may request fixes:
 | Coverage gaps (methods untested) | Write missing tests | `zuvo:write-tests [path]` |
 | Test infra issues (runner config) | Optimize runner | `zuvo:tests-performance` |
 
+## Completion Gate Check
+
+Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+
+```
+COMPLETION GATE CHECK
+[ ] Red flag pre-scan ran on every batch
+[ ] Phantom mock detection ran: unused mocks listed
+[ ] Untested public methods listed per file
+[ ] Adversarial review ran on audit report
+[ ] Coverage registry updated: memory/coverage.md rows written
+[ ] Backlog updated for critical gate failures
+[ ] Report saved to audits/
+[ ] Run: line printed and appended to log
+```
+
 ## TEST AUDIT COMPLETE
 
 Run: <ISO-8601-Z>\ttest-audit\t<project>\t<N-critical>\t<N-total>\t<VERDICT>\t-\t<N>-dimensions\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>

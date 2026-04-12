@@ -566,6 +566,21 @@ Follow the retrospective protocol from `retrospective.md`.
 Gate check -> structured questions -> TSV emit -> markdown append.
 If gate check skips: print "RETRO: skipped (trivial session)" and proceed to output.
 
+## Completion Gate Check
+
+Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+
+```
+COMPLETION GATE CHECK
+[ ] Refactor type classified and printed: [RENAME/EXTRACT/SPLIT/INLINE/RESTRUCTURE]
+[ ] CQ pre-audit printed on target file (all gates before changes)
+[ ] Baseline test suite ran green before first change
+[ ] After each change: tests ran and green (not just at the end)
+[ ] CQ post-audit printed — score must not regress
+[ ] Adversarial review ran on final diff
+[ ] Run: line printed and appended to log
+```
+
 ### Post-Completion Summary
 
 ```

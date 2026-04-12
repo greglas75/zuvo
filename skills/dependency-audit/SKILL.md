@@ -424,6 +424,22 @@ Score >= 85%                -> schedule next audit in 3 months
 
 ---
 
+## Completion Gate Check
+
+Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+
+```
+COMPLETION GATE CHECK
+[ ] Tool availability printed: PM audit, knip, dep-cruiser, license-checker
+[ ] D1 supply chain: CRITICAL/HIGH CVEs checked for reachability
+[ ] D4 license: GPL/AGPL in production flagged
+[ ] D6 circular dependency detection ran
+[ ] Critical gates printed: D1, D4, D6, D8
+[ ] "Delete These Tomorrow" section present
+[ ] Report saved to audits/
+[ ] Run: line printed and appended to log
+```
+
 ## DEPENDENCY-AUDIT COMPLETE
 
 Score: [N] / [MAX] -- [grade]

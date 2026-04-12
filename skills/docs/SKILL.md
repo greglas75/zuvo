@@ -344,6 +344,19 @@ Wait for complete output. Then:
 
 ---
 
+## Completion Gate Check
+
+Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+
+```
+COMPLETION GATE CHECK
+[ ] Mandatory source files read before writing
+[ ] Every shell command verified against source (package.json/Makefile)
+[ ] Evidence Map present: factual claims trace to source file:line
+[ ] Adversarial review ran on generated doc
+[ ] Run: line printed and appended to log
+```
+
 ## Completion
 
 After completing any mode, print:

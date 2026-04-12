@@ -295,6 +295,22 @@ Follow the retrospective protocol from `retrospective.md`.
 Gate check -> structured questions -> TSV emit -> markdown append.
 If gate check skips: print "RETRO: skipped (trivial session)" and proceed to session complete.
 
+## Completion Gate Check
+
+Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+
+```
+COMPLETION GATE CHECK
+[ ] Triage results printed: every pattern with file/hit count
+[ ] Production context read for each affected test file
+[ ] All modified test files ran and pass
+[ ] Adversarial review ran (--mode test)
+[ ] Needs-review count printed: production bugs discovered
+[ ] fix-tests-progress.md updated
+[ ] Backlog updated for discovered production bugs
+[ ] Run: line printed and appended to log
+```
+
 ```
 FIX-TESTS SESSION COMPLETE
 -----

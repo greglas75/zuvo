@@ -425,6 +425,21 @@ The deliverable of `zuvo:brainstorm` is a spec document at `docs/specs/YYYY-MM-D
 
 The next step is `zuvo:plan`, which reads this spec and produces an implementation plan. Remind the user of this when brainstorm completes. Do not auto-invoke `zuvo:plan` -- let the user decide when to proceed.
 
+## Completion Gate Check
+
+Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+
+```
+COMPLETION GATE CHECK
+[ ] All 3 Phase 1 agents ran (Code Explorer, Domain Researcher, Business Analyst)
+[ ] Failure modes section present for EVERY component (minimum 3 scenarios each)
+[ ] Spec-reviewer ran and converged (max 3 iterations)
+[ ] Adversarial review ran (--mode spec) — not skipped
+[ ] Spec status is Approved (interactive) or Reviewed (async)
+[ ] Spec saved to docs/specs/ with spec_id populated
+[ ] Run: line printed and appended to log
+```
+
 ```
 Run: <ISO-8601-Z>	brainstorm	<project>	-	-	<VERDICT>	-	3-phase	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 ```

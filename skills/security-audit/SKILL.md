@@ -599,6 +599,22 @@ Full protocol: `../../shared/includes/backlog-protocol.md`.
 | AI integration gaps (S15<5) | `zuvo:ai-security-audit` -- deep dive on prompt injection, RAG poisoning, MCP security |
 | All dimensions >= 8 | No urgent action. Schedule next audit in 90 days. |
 
+## Completion Gate Check
+
+Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+
+```
+COMPLETION GATE CHECK
+[ ] Auth coverage matrix built: every endpoint classified
+[ ] Top 3 attack paths constructed with full detail
+[ ] Reconciliation ran: findings re-verified against exclusions and framework mitigations
+[ ] Adversarial security review ran (--mode security)
+[ ] Report validation ran: count consistency and score math verified
+[ ] S15 AI/LLM section present or explicitly N/A with evidence
+[ ] Report saved to audits/
+[ ] Run: line printed and appended to log
+```
+
 ## SECURITY AUDIT COMPLETE
 
 Run: <ISO-8601-Z>\tsecurity-audit\t<project>\t-\t-\t<VERDICT>\t-\t<N>-dimensions\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>

@@ -520,6 +520,20 @@ Save to: `audit-results/a11y-audit-YYYY-MM-DD.md`
 
 ---
 
+## Completion Gate Check
+
+Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+
+```
+COMPLETION GATE CHECK
+[ ] A11y tooling detection printed
+[ ] Critical gates printed: A2 (Keyboard) and A4 (Contrast)
+[ ] Per-component score table present with all A1-A9 dimensions
+[ ] Findings sorted by legal risk first
+[ ] Report saved to audit-results/
+[ ] Run: line printed and appended to log
+```
+
 ## Completion
 
 After completing the audit, print:

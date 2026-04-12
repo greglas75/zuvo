@@ -550,6 +550,22 @@ If gate check skips: print "RETRO: skipped (trivial session)" and proceed to com
 
 ---
 
+## Completion Gate Check
+
+Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+
+```
+COMPLETION GATE CHECK
+[ ] Bug category classified and printed: [logic/async/data/integration/test-failure]
+[ ] Root cause identified at specific file:line (not just symptom)
+[ ] Original reproduction confirmed RESOLVED
+[ ] Regression test written with Q self-eval (>=16)
+[ ] CQ self-eval on modified production files
+[ ] Adversarial review ran on staged diff
+[ ] Backlog updated
+[ ] Run: line printed and appended to log
+```
+
 ## Completion
 
 After Phase 4 or Phase R verification passes:

@@ -407,6 +407,20 @@ Wait for complete output. Then:
 
 ---
 
+## Completion Gate Check
+
+Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+
+```
+COMPLETION GATE CHECK
+[ ] Endpoint inventory printed with total count
+[ ] Auth matrix built: every endpoint classified
+[ ] Adversarial review ran on audit report
+[ ] Cross-cutting analysis ran
+[ ] Report saved to audits/
+[ ] Run: line printed and appended to log
+```
+
 ## API-AUDIT COMPLETE
 
 Score: [N] / [max] -- [grade]

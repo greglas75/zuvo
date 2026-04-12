@@ -399,6 +399,20 @@ If gate check skips: print "RETRO: skipped (trivial session)" and proceed to com
 
 ---
 
+## Completion Gate Check
+
+Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+
+```
+COMPLETION GATE CHECK
+[ ] Scored flow list printed with confidence levels
+[ ] E2E-Q gates checked on every generated spec
+[ ] Auth fixture generated or skip reason printed
+[ ] Adversarial review ran (--mode test)
+[ ] memory/e2e-coverage.md updated
+[ ] Run: line printed and appended to log
+```
+
 ## Completion Report
 
 ```

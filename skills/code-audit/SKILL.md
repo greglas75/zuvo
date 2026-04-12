@@ -445,6 +445,22 @@ If `--deep` mode: also save per-file detail to `audits/code-audit-details/[filen
 | CQ/CAP | Before | After | Files affected |
 |--------|--------|-------|----------------|
 
+## Completion Gate Check
+
+Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+
+```
+COMPLETION GATE CHECK
+[ ] Domain classified and printed: [data/async/security/general]
+[ ] Red flag pre-scan ran on every batch
+[ ] Global error handler detection ran
+[ ] Adversarial review ran on audit report (--mode audit)
+[ ] Cross-file analysis section present
+[ ] Report saved to audits/
+[ ] Backlog updated for deferred findings
+[ ] Run: line printed and appended to log
+```
+
 ## CODE AUDIT COMPLETE
 
 Run: <ISO-8601-Z>\tcode-audit\t<project>\t<N-critical>\t<N-total>\t<VERDICT>\t-\t<N>-dimensions\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>

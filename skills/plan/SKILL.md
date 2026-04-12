@@ -296,6 +296,21 @@ The final plan document at `docs/specs/YYYY-MM-DD-<topic>-plan.md`.
 
 This artifact is the prerequisite for `zuvo:execute`. When the user is ready to implement, the plan itself must be `Approved`; only then should `zuvo:execute` or the active-plan pointer treat it as the source of truth.
 
+## Completion Gate Check
+
+Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+
+```
+COMPLETION GATE CHECK
+[ ] All 3 Phase 1 agents ran sequentially (Architect → Tech Lead → QA Engineer)
+[ ] Every spec AC maps to at least one task
+[ ] Plan-reviewer ran and converged — APPROVED verdict
+[ ] Adversarial validation ran (--mode plan)
+[ ] Plan status is Approved (interactive) or Reviewed (async)
+[ ] Active plan pointer written to .zuvo/plans/active-plan.md
+[ ] Run: line printed and appended to log
+```
+
 ```
 Run: <ISO-8601-Z>	plan	<project>	-	-	<VERDICT>	<TASKS>	3-phase	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 ```

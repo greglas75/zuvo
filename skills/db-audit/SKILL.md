@@ -866,6 +866,22 @@ Multiple dimensions fail  -> zuvo:review [path]
 
 ---
 
+## Completion Gate Check
+
+Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+
+```
+COMPLETION GATE CHECK
+[ ] ORM + engine + deployment type detected and printed
+[ ] N+1 query detection ran (DB1 critical gate)
+[ ] Unbounded query detection ran (DB1/DB7)
+[ ] Migration safety audit ran (DB6)
+[ ] Critical gates printed: DB1, DB2, DB4, DB6, DB7, DB10, DB11
+[ ] Report saved to audits/
+[ ] Backlog updated for HIGH+ findings
+[ ] Run: line printed and appended to log
+```
+
 ## DB-AUDIT COMPLETE
 
 Score: [N] / [MAX] -- [grade]

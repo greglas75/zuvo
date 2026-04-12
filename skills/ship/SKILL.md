@@ -342,6 +342,21 @@ Field notes:
 
 ## Phase 5: Output
 
+## Completion Gate Check
+
+Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+
+```
+COMPLETION GATE CHECK
+[ ] DIFF_LOC computed from last tag and review threshold applied
+[ ] Review depth recorded: none/light/full/full+coverage
+[ ] Tests ran and passed before bump
+[ ] Version bumped with CHANGELOG section added
+[ ] Only version files staged (never git add -A)
+[ ] memory/last-ship.json written
+[ ] Run: line printed and appended to log
+```
+
 ### 1. Print SHIP COMPLETE block
 
 ```

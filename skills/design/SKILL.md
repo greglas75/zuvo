@@ -286,6 +286,20 @@ This skill produces two artifacts in `.interface-design/`:
 
 ---
 
+## Completion Gate Check
+
+Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+
+```
+COMPLETION GATE CHECK
+[ ] Intent questions answered (Q1/Q2/Q3) before any token decisions
+[ ] Domain exploration produced: Concepts, Color World, Signature, Defaults to Avoid
+[ ] Per-component checkpoint filled for EACH component
+[ ] All 4 craft validation tests ran (Swap, Squint, Signature, Token)
+[ ] system.md and system.json saved to .interface-design/
+[ ] Run: line printed and appended to log
+```
+
 ## Completion
 
 After completing any mode, print:

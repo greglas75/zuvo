@@ -531,6 +531,21 @@ Score >= 85%             -> schedule next audit in 3 months
 
 ---
 
+## Completion Gate Check
+
+Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+
+```
+COMPLETION GATE CHECK
+[ ] Profile selected and printed (A/B/C/D/E) with active dimensions
+[ ] Audit confidence tier declared (FULL/STANDARD/PARTIAL/MINIMAL)
+[ ] Hot path identification ran
+[ ] Every HIGH+ finding has Impact Model with estimated savings
+[ ] D7 critical gate printed (N+1 in hot path)
+[ ] Report saved to audits/ with optimization roadmap
+[ ] Run: line printed and appended to log
+```
+
 ## PERFORMANCE-AUDIT COMPLETE
 
 Score: [N] / [MAX] -- [grade]

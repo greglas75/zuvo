@@ -629,6 +629,24 @@ If the current working directory is inside a git worktree (check `git worktree l
 
 "Execution is complete. You are working in a worktree. Run `zuvo:worktree` to finish — merge, push as PR, keep, or discard."
 
+## Completion Gate Check
+
+Before printing the final summary, verify every item. Unfinished items = pipeline incomplete.
+
+```
+COMPLETION GATE CHECK (per task):
+[ ] Spec reviewer ran (or [GATE: spec-compliance] marker printed)
+[ ] Quality reviewer ran (or [GATE: cq-critical] marker printed with scores)
+[ ] Adversarial review ran
+[ ] execution-state.md rewritten immediately after commit (not batched)
+
+COMPLETION GATE CHECK (final):
+[ ] Final summary table printed with all tasks
+[ ] Backlog persistence ran for deferred findings
+[ ] Knowledge curation ran
+[ ] Run: line printed and appended to log
+```
+
 ```
 Run: <ISO-8601-Z>	execute	<project>	<CQ>	<Q>	<VERDICT>	<TASKS>	<N>-tasks	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 ```
