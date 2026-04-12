@@ -22,6 +22,7 @@ Detect the environment per `env-compat.md`:
 **Multi-agent mode (Claude Code, Codex):**
 Dispatch implementer, spec-reviewer, and quality-reviewer as separate agents. This is the default described in the execution loop below.
 
+<!-- PLATFORM:CURSOR -->
 **Single-agent mode (Cursor, or when agent dispatch is unavailable):**
 Execute all three roles yourself in sequential passes with explicit checkpoints:
 
@@ -33,6 +34,7 @@ Execute all three roles yourself in sequential passes with explicit checkpoints:
 6. **Commit** (if all reviews pass)
 
 The checkpoint markers ensure role separation even within a single agent context.
+<!-- /PLATFORM:CURSOR -->
 
 ## Mandatory File Loading
 
@@ -221,7 +223,9 @@ Files: [list from plan]
 
 Dispatch per environment:
 - **Claude Code:** use the Task tool.
+<!-- PLATFORM:CODEX -->
 - **Codex:** use native agents in `~/.codex/agents/` (see `env-compat.md`).
+<!-- /PLATFORM:CODEX -->
 
 **Model routing** (set by the plan author in task metadata):
 - `**Complexity:** standard` (1-3 files, clear spec) -> Sonnet
@@ -280,6 +284,7 @@ Provide three options:
 
 If the user picks option 1, re-dispatch the implementer with the provided context. If the user picks option 2, mark the task as SKIPPED and note it in the final report. If the user picks option 3, proceed directly to the final summary.
 
+<!-- PLATFORM:CURSOR -->
 **Async mode (Codex App, Cursor — no AskUserQuestion):**
 - Set task to BLOCKED
 - Propagate BLOCKED_BY_DEPENDENCY to dependent tasks (per Dependency State Contract)
@@ -287,12 +292,15 @@ If the user picks option 1, re-dispatch the implementer with the provided contex
 - Include all BLOCKED tasks with their blockers in the final summary
 - Do NOT wait inline — the pipeline continues on independent branches
 - Print: `[AUTO-DECISION]: Task N blocked. Continuing with independent tasks. Review BLOCKED tasks in the final summary.`
+<!-- /PLATFORM:CURSOR -->
 
 ### Step 4: Dispatch Spec Reviewer
 
 Dispatch per environment:
 - **Claude Code:** use the Task tool.
+<!-- PLATFORM:CODEX -->
 - **Codex:** use native agents in `~/.codex/agents/`.
+<!-- /PLATFORM:CODEX -->
 
 **Provide to the agent:**
 - The task spec from the plan
@@ -324,7 +332,9 @@ The user decides: accept the implementation, accept the reviewer's position, or 
 
 Dispatch per environment:
 - **Claude Code:** use the Task tool.
+<!-- PLATFORM:CODEX -->
 - **Codex:** use native agents in `~/.codex/agents/`.
+<!-- /PLATFORM:CODEX -->
 
 **Provide to the agent:**
 - The list of production files created or modified by the implementer

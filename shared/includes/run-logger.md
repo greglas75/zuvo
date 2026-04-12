@@ -94,6 +94,31 @@ Run: 2026-04-05T14:30:00Z	build	zuvo-plugin	22/28	15/19	PASS	4	standard	user exp
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved above.
 ```
 
+### Audit skill example (TASKS=`-`, NOT skipped)
+
+Audits don't produce tasks — **TASKS field must be `-`**, not omitted. Never merge TASKS into DURATION.
+
+```
+Run: 2026-04-11T14:00:00Z	db-audit	tgm-survey-platform	0-critical	14-total	WARN	-	13-dimensions	delta refresh partial M1 fix	chore/audit-fixes	cc12109	codesift-setup|env-compat|cq-patterns|quality-gates|knowledge-prime	-
+```
+
+Field-by-field (tab-separated):
+1. `2026-04-11T14:00:00Z` — DATE
+2. `db-audit` — SKILL
+3. `tgm-survey-platform` — PROJECT
+4. `0-critical` — CQ (audit format)
+5. `14-total` — Q (audit format)
+6. `WARN` — VERDICT
+7. **`-`** — TASKS (audit has no tasks → use `-`, do NOT skip)
+8. `13-dimensions` — DURATION (audit-specific label)
+9. `delta refresh partial M1 fix` — NOTES
+10. `chore/audit-fixes` — BRANCH
+11. `cc12109` — HEAD_SHA7
+12. `codesift-setup|env-compat|cq-patterns|quality-gates|knowledge-prime` — INCLUDES
+13. `-` — TIER (audit has no tier → use `-`)
+
+**Critical:** Always emit all 13 fields. If a field has no value, write `-`. Never skip a field — tab count must be exactly 12.
+
 ### Template format
 
 Each skill's SKILL.md includes a literal template with placeholders:

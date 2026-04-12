@@ -47,6 +47,7 @@ Detect the environment per `env-compat.md`:
 - Present approaches and get section-by-section approval (Phase 2, Steps 3-4)
 - User explicitly approves the spec before status changes to "Approved"
 
+<!-- PLATFORM:CURSOR -->
 **Async mode (Codex App, Cursor, any non-interactive environment):**
 - Skip clarifying questions -- make best-judgment decisions
 - Annotate every decision as `[AUTO-DECISION]` with rationale and alternatives
@@ -54,6 +55,11 @@ Detect the environment per `env-compat.md`:
 - Set status to `Reviewed` (NOT `Approved`) -- user must explicitly approve after review
 - Set `approval_mode: async`, `approved_at: null`
 - Do NOT auto-transition to `zuvo:plan`
+<!-- /PLATFORM:CURSOR -->
+<!-- PLATFORM:ANTIGRAVITY -->
+**Async mode (Antigravity, non-interactive):** Same behavior as Cursor async mode above — apply the same [AUTO-DECISION] annotation and `Reviewed` status rules.
+<!-- /PLATFORM:ANTIGRAVITY -->
+
 
 ## Scope Check
 
@@ -106,7 +112,12 @@ Agent 3: Business Analyst
   input: user request + repo identifier + CodeSift availability
 ```
 
-**Codex / Cursor:** Follow the patterns in `env-compat.md`. On Cursor, execute each agent's analysis sequentially yourself, maintaining the same output format.
+<!-- PLATFORM:CODEX -->
+**Codex:** Follow TOML agent dispatch patterns in `env-compat.md`.
+<!-- /PLATFORM:CODEX -->
+<!-- PLATFORM:CURSOR -->
+**Cursor:** Execute each agent's analysis sequentially yourself, maintaining the same output format.
+<!-- /PLATFORM:CURSOR -->
 
 ### Waiting for Results
 

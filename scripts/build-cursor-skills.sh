@@ -440,6 +440,27 @@ if [ -f "$PLUGIN_DIR/skills/using-zuvo/agents/openai.yaml" ]; then
 fi
 
 # ============================================================
+# 2.5. Platform Block Stripping
+# Cursor build: keep CURSOR blocks, strip CODEX and ANTIGRAVITY.
+# ============================================================
+echo ""
+echo "Stripping non-Cursor platform blocks..."
+strip_count=0
+for md in "$DIST"/skills/*/SKILL.md "$DIST"/skills/*/*.md "$DIST"/shared/includes/*.md "$DIST"/rules/*.md; do
+  [ -f "$md" ] || continue
+  if grep -q "<!-- PLATFORM:" "$md" 2>/dev/null; then
+    sed -i '' \
+      -e '/<!-- PLATFORM:CODEX -->/,/<!-- \/PLATFORM:CODEX -->/d' \
+      -e '/<!-- PLATFORM:ANTIGRAVITY -->/,/<!-- \/PLATFORM:ANTIGRAVITY -->/d' \
+      -e '/<!-- PLATFORM:CURSOR -->/d' \
+      -e '/<!-- \/PLATFORM:CURSOR -->/d' \
+      "$md"
+    strip_count=$((strip_count + 1))
+  fi
+done
+echo "  Stripped platform blocks from $strip_count files"
+
+# ============================================================
 # 3. Validation
 # ============================================================
 echo ""

@@ -20,6 +20,17 @@ echo ""
 rm -rf "$DIST/skills" "$DIST/rules" "$DIST/protocols" "$DIST/shared"
 mkdir -p "$DIST/skills" "$DIST/agents"
 
+# --- Platform Block Stripping (reusable) ---
+# Codex build: keep CODEX blocks, strip CURSOR + ANTIGRAVITY blocks.
+# Also strip the platform marker comment lines themselves.
+strip_platform_blocks_codex() {
+  sed \
+    -e '/<!-- PLATFORM:CURSOR -->/,/<!-- \/PLATFORM:CURSOR -->/d' \
+    -e '/<!-- PLATFORM:ANTIGRAVITY -->/,/<!-- \/PLATFORM:ANTIGRAVITY -->/d' \
+    -e '/<!-- PLATFORM:CODEX -->/d' \
+    -e '/<!-- \/PLATFORM:CODEX -->/d'
+}
+
 # --- Unicode Normalization (reusable) ---
 normalize_unicode() {
   sed \
@@ -698,6 +709,27 @@ if [ -f "$PLUGIN_DIR/hooks/run-hook.cmd" ]; then
   cp "$PLUGIN_DIR/hooks/run-hook.cmd" "$DIST/hooks/run-hook.cmd"
   echo "  + hooks/run-hook.cmd"
 fi
+
+# ============================================================
+# 4.5. Platform Block Stripping
+# Codex build: keep CODEX blocks, strip CURSOR and ANTIGRAVITY.
+# ============================================================
+echo ""
+echo "Stripping non-Codex platform blocks..."
+strip_count=0
+for md in "$DIST"/skills/*/SKILL.md "$DIST"/skills/*/*.md "$DIST"/shared/includes/*.md "$DIST"/rules/*.md; do
+  [ -f "$md" ] || continue
+  if grep -q "<!-- PLATFORM:" "$md" 2>/dev/null; then
+    sed -i '' \
+      -e '/<!-- PLATFORM:CURSOR -->/,/<!-- \/PLATFORM:CURSOR -->/d' \
+      -e '/<!-- PLATFORM:ANTIGRAVITY -->/,/<!-- \/PLATFORM:ANTIGRAVITY -->/d' \
+      -e '/<!-- PLATFORM:CODEX -->/d' \
+      -e '/<!-- \/PLATFORM:CODEX -->/d' \
+      "$md"
+    strip_count=$((strip_count + 1))
+  fi
+done
+echo "  Stripped platform blocks from $strip_count files"
 
 # ============================================================
 # 5. Validation

@@ -285,12 +285,14 @@ If `--no-tag` was passed, do not create a tag and record `newTag: null` in the a
 
 ### Step 4: Push
 
+<!-- PLATFORM:CURSOR -->
 **Non-interactive environments (Codex App, Cursor):** Skip ALL remote pushes. Print the exact manual commands:
 ```
 [NON-INTERACTIVE] Remote push skipped. Run manually:
   git push origin <branch>
   git push origin v<version>   # only if tag was created
 ```
+<!-- /PLATFORM:CURSOR -->
 
 **Interactive environments (Claude Code, Codex CLI):**
 

@@ -254,9 +254,13 @@ Agent 3: GEO Content Signals (Group C)
          imported_findings (G3/G6/G9-G12 subset), file_paths, codesift_repo, lang
 ```
 
+<!-- PLATFORM:CODEX -->
 **Codex:** Define TOML agents per env-compat.md patterns. Each agent runs in read-only sandbox.
+<!-- /PLATFORM:CODEX -->
 
+<!-- PLATFORM:CURSOR -->
 **Cursor:** No agent dispatch. Execute each agent's analysis sequentially yourself, maintaining identical output format.
+<!-- /PLATFORM:CURSOR -->
 
 If native agent dispatch is unavailable, run the three agent analyses sequentially yourself, preserve the same report sections, and note the fallback mode in the final audit header.
 

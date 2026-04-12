@@ -236,9 +236,13 @@ Agent 3: SEO Assets (Group C)
   input: detected_stack, [layout/template paths], codesift_repo, mode, selected_dimensions, content_profile
 ```
 
+<!-- PLATFORM:CODEX -->
 **Codex:** Define TOML agents per env-compat.md patterns. Each agent runs in read-only sandbox.
+<!-- /PLATFORM:CODEX -->
 
+<!-- PLATFORM:CURSOR -->
 **Cursor:** No agent dispatch. Execute each agent's analysis sequentially yourself, maintaining identical output format.
+<!-- /PLATFORM:CURSOR -->
 
 If native agent dispatch is unavailable, run the three agent analyses
 sequentially yourself, preserve the same report sections, and note the fallback

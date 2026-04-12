@@ -23,6 +23,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ./hooks/track-includes.sh",
+            "async": true
+          }
+        ]
+      }
     ]
   }
 }

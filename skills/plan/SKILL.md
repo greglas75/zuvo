@@ -246,7 +246,9 @@ Draft → Reviewed (by plan reviewer) → Approved (by user only)
 
 **Interactive mode:** Present the final plan. The user must explicitly approve. Update status to "Approved" only on user confirmation.
 
+<!-- PLATFORM:CURSOR -->
 **Async mode (Codex App, Cursor):** The plan reviewer's APPROVED verdict moves the plan to "Reviewed" status (NOT "Approved"). Print: "Plan is in Reviewed status. Review the task breakdown and change status to Approved before running zuvo:execute."
+<!-- /PLATFORM:CURSOR -->
 
 `zuvo:execute` MUST check for "Approved" status. It will not start from "Draft" or "Reviewed".
 

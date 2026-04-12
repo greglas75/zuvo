@@ -82,9 +82,23 @@ install_claude() {
     rm -f "$CACHE_DIR/skills/SKILL.md" 2>/dev/null || true
     rm -rf "$CACHE_DIR/skills/agents" 2>/dev/null || true
 
+    # Strip non-Claude-Code platform blocks (CODEX, CURSOR, ANTIGRAVITY)
+    # Each block is delimited by <!-- PLATFORM:X --> ... <!-- /PLATFORM:X -->
+    find "$CACHE_DIR/skills" -name "*.md" -exec \
+      sed -i '' -e '/<!-- PLATFORM:CODEX -->/,/<!-- \/PLATFORM:CODEX -->/d' \
+                -e '/<!-- PLATFORM:CURSOR -->/,/<!-- \/PLATFORM:CURSOR -->/d' \
+                -e '/<!-- PLATFORM:ANTIGRAVITY -->/,/<!-- \/PLATFORM:ANTIGRAVITY -->/d' \
+                {} + 2>/dev/null || true
+
     # Copy shared includes
     if [[ -d "$ZUVO_DIR/shared/includes" ]] && [[ -d "$CACHE_DIR/shared/includes" ]]; then
       cp "$ZUVO_DIR"/shared/includes/*.md "$CACHE_DIR/shared/includes/" 2>/dev/null || true
+      # Strip non-Claude-Code platform blocks from shared includes too
+      find "$CACHE_DIR/shared/includes" -name "*.md" -exec \
+        sed -i '' -e '/<!-- PLATFORM:CODEX -->/,/<!-- \/PLATFORM:CODEX -->/d' \
+                  -e '/<!-- PLATFORM:CURSOR -->/,/<!-- \/PLATFORM:CURSOR -->/d' \
+                  -e '/<!-- PLATFORM:ANTIGRAVITY -->/,/<!-- \/PLATFORM:ANTIGRAVITY -->/d' \
+                  {} + 2>/dev/null || true
     fi
 
     # Copy rules

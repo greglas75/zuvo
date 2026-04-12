@@ -346,3 +346,8 @@ Commits pending review. Auto-managed:
 - 0927101 (2026-04-10) release: v1.3.71 — feat: PHP test support — mock templates, stack-aware retrieval, per-pattern contract
 - 2a6a97c (2026-04-10) feat: split test includes by stack — core + JS + PHP files
 - ab33079 (2026-04-10) release: v1.3.72 — feat: split test includes by stack — core + JS + PHP (agent loads only matching stack)
+- e0457c0 (2026-04-11) release: v1.3.73 — feat: db-audit CodeSift integration + codesift-setup expansion — analyze_project, pre-scan patterns, agent tool loading, delta tracking, effort estimates, 28 new tools documented
+- b1f4718 (2026-04-11) add compressed response protocol rollout
+- a96df3b (2026-04-11) feat: harden pentest registries and validation
+- 6444f8f (2026-04-11) add blind coverage audit to write-tests
+- 729892c (2026-04-11) feat(db-audit): integrate sql_audit composite + 4 SQL query tools

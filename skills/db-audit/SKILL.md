@@ -29,12 +29,18 @@ CORE FILES LOADED:
   1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> STOP]
   2. ../../shared/includes/env-compat.md           -- [READ | MISSING -> STOP]
   3. ../../shared/includes/run-logger.md           -- [READ | MISSING -> STOP]
-  4. ../../shared/includes/retrospective.md        -- [READ | MISSING -> STOP]
+```
+
+**Deferred (lazy load):**
+
+```
+DEFERRED FILES (read only when needed):
+  - ../../shared/includes/retrospective.md  -- read right before Phase 6 (saves ~3K tokens during audit)
 ```
 
 Note: `cq-patterns.md` is NOT loaded — this is a read-only audit, not a code quality review. Loading it wastes ~7K tokens per turn.
 
-If any file is MISSING, STOP. Do not proceed from memory.
+If any CORE file is MISSING, STOP. Do not proceed from memory.
 
 ---
 
@@ -42,13 +48,15 @@ If any file is MISSING, STOP. Do not proceed from memory.
 
 | Token | Behavior |
 |-------|----------|
-| _(empty)_ or `full` | All 12 dimensions across the project |
+| _(empty)_ or `full` | All 13 dimensions across the project (auto-decides mode in Phase 0.4) |
 | `[path]` | Scope to a directory or module |
 | `[file]` | Deep audit of a single file (all applicable dimensions) |
 | `--schema` | Schema analysis only (DB2, DB3, DB6) |
 | `--queries` | Query pattern analysis only (DB1, DB8, DB9) |
 | `--connections` | Connection and pool management only (DB4) |
 | `--live <conn>` | Enable Phase 3: connect to the database for EXPLAIN and statistics |
+| `--force-full` | Skip audit mode decision in Phase 0.4 — always run full audit even if a recent prior audit exists |
+| `--delta` | Force delta mode (only allowed if commits_since < 5 AND hours_since < 4 — see Phase 0.4) |
 
 ---
 
@@ -136,6 +144,77 @@ Dims:      [DB1-DB13 / subset]
 CodeSift:  [full-parser / text-stub / unavailable]
 ------------------------------------
 ```
+
+### 0.4 Audit Mode Decision
+
+**Default mode is `full`.** Delta mode is a narrow exception, NOT a shortcut.
+
+If `--force-full` was passed: `mode = "full"` — skip the rest of this section.
+
+Otherwise, look for the most recent prior audit at `audits/db-audit-*.md`:
+
+```bash
+PRIOR_AUDIT=$(ls -t audits/db-audit-*.md 2>/dev/null | head -1)
+
+if [ -z "$PRIOR_AUDIT" ]; then
+  mode="full"  # baseline
+else
+  PRIOR_SHA=$(grep -E '^\| HEAD_SHA' "$PRIOR_AUDIT" | head -1 | awk '{print $NF}')
+  PRIOR_MTIME=$(stat -f %m "$PRIOR_AUDIT" 2>/dev/null || stat -c %Y "$PRIOR_AUDIT")
+  NOW=$(date +%s)
+  HOURS_SINCE=$(( (NOW - PRIOR_MTIME) / 3600 ))
+  COMMITS_SINCE=$(git rev-list --count "${PRIOR_SHA}..HEAD" 2>/dev/null || echo 999)
+
+  if [ "$COMMITS_SINCE" -eq 0 ] && [ "$HOURS_SINCE" -lt 2 ]; then
+    mode="sanity-check"
+  elif [ "$COMMITS_SINCE" -lt 5 ] && [ "$HOURS_SINCE" -lt 4 ]; then
+    mode="delta"
+  else
+    mode="full"
+  fi
+fi
+```
+
+| Mode | When | What it does |
+|------|------|--------------|
+| `full` | No prior audit, OR commits_since ≥ 5, OR hours_since ≥ 4, OR `--force-full` | Independent re-evaluation of all dimensions. Default. |
+| `delta` | commits_since < 5 AND hours_since < 4 AND prior audit exists | Verify prior findings + scan changed files only. **Requires Phase 0.5 checklist.** |
+| `sanity-check` | commits_since == 0 AND hours_since < 2 | Spot-verify 1-2 specific fixes. Not a full audit. |
+
+If user passed `--delta` but the conditions for delta are not met: print a warning and override to `full`. Do NOT silently honor the flag — the user's "I want delta" is overridden by methodology safety.
+
+Print the decision:
+
+```
+AUDIT MODE: [full / delta / sanity-check]
+Reason:     prior=[date or "none"] | commits_since=[N] | hours_since=[N.N]
+Override:   [user --force-full | user --delta accepted | user --delta REJECTED→full | none]
+```
+
+### 0.5 Delta Verification Checklist
+
+**Skip this section if `mode != "delta"`.**
+
+When `mode == "delta"`, you MUST complete every item below before writing the report. Any skipped item forces `mode = "full"` and restart from Phase 1.
+
+```
+DELTA VERIFICATION CHECKLIST
+[ ] git diff --name-only <prior_sha>..HEAD  → list changed files (CHANGED_FILES)
+[ ] scan_secrets on CHANGED_FILES (NEVER skip, even if DB12 was 4/4 in prior)
+[ ] For every finding from prior audit:
+      → 1× codebase_retrieval batch call (do NOT iterate per-finding)
+[ ] For every severity downgrade you propose (M→L, H→M):
+      → find_references on the symbol → document the count
+      → DOWNGRADE BLOCKED without count evidence in the report
+[ ] For every endpoint mentioned in any finding:
+      → trace_route to confirm hot-path / cold-path status
+[ ] For every finding with a matching docs/specs/*-plan.md reference:
+      → tag as PLANNED (not HIGH/MEDIUM)
+```
+
+Why this checklist exists: previous delta audits inherited prior assumptions and silently propagated errors. Severity downgrades without evidence, skipped scans on changed files, and untraced endpoint claims are the four most common delta-mode failures. This checklist eliminates them.
+
+If at any point during the audit you find yourself thinking "the prior audit already covered this," STOP — that's the anchoring bias the checklist is designed to break. Run the verification.
 
 ---
 
@@ -758,6 +837,8 @@ Run: <ISO-8601-Z>	db-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dime
 
 
 ### Retrospective (REQUIRED)
+
+**Load now (deferred):** Read `../../shared/includes/retrospective.md` if not already loaded.
 
 Follow the retrospective protocol from `retrospective.md`.
 Gate check → structured questions → TSV emit → markdown append.
