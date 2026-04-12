@@ -372,3 +372,4 @@ Commits pending review. Auto-managed:
 - d5eb1ed (2026-04-12) review: add CLS and test-utility audit guidance
 - 20e2e94 (2026-04-12) release: v1.3.82 — feat: context-audit Codex build — remove ~/.claude/ path reference
 - 7c46df8 (2026-04-12) make blind audit wrapper executable
+- 7670196 (2026-04-12) release: v1.3.83 — fix multi-platform adversarial, blind audit, path resolution
