@@ -144,6 +144,8 @@ Allowed routing statuses:
 - `unknown-writer-model` -- writer model or platform is unknown, so routing cannot safely pick an alternate
 - `routing-failed` -- resolver execution failed, timed out, or emitted malformed output
 
+This routing contract may be reused by isolated blind-audit reviewers and by same-environment adversarial fallback reviewers. If the resolved route is not `ok`, the caller must not pretend the review came from a different model.
+
 Failure mode contract:
 
 - if `scripts/reviewer-model-route.sh` is missing, exits non-zero, or times out, the caller must block or degrade explicitly

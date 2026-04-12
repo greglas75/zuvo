@@ -446,15 +446,34 @@ adversarial-review --rotate --mode test \
 
 The provider sees both files and focuses on gaps between production behavior and test coverage. Without production code, reviewer can't detect missing ordering tests, auth boundary gaps, or untested error messages.
 
+**Adversarial routing priority:**
+
+1. **Primary path:** external cross-provider `adversarial-review --rotate`
+2. **Fallback-local path:** same environment, different-from-writer read-only agent selected via `../../scripts/reviewer-model-route.sh`
+3. **Final degraded state:** `SKIPPED_REVIEW`
+
+If the primary path is missing, exits non-zero, or every provider returns empty:
+- run `../../scripts/reviewer-model-route.sh` with the same 5s timeout and parser rules used in Step 3.5
+- print:
+  ```text
+  Adversarial routing: path=fallback-local, writer=<model>, reviewer=<model>, lane=<review-primary|review-alt>, status=<ok|same-model-fallback|unknown-writer-model|routing-failed>
+  ```
+- route `review-primary` -> `adversarial-test-reviewer`
+- route `review-alt` -> `adversarial-test-reviewer-alt`
+- require `routing_status=ok`
+- if routing resolves to `same-model-fallback`, `unknown-writer-model`, or `routing-failed`, do **NOT** run local adversarial fallback; mark file `SKIPPED_REVIEW`
+
+Fallback-local review is a degraded second opinion. It is valid only when the fallback reviewer model differs from the writer model. Never label it as cross-provider review.
+
 **Pass sequence with structured context (prevents repetition):**
 
 ```
-Pass 1:
+Pass 1 (primary path):
   adversarial-review --rotate --mode test --context "..." --files "<prod> <test>"
   Record provider identity only if the script exposes it reliably.
   → fix CRITICAL/WARNING → re-run tests
 
-Pass 2:
+Pass 2 (primary path):
   adversarial-review --rotate [--exclude <pass-1-provider> if known] --mode test \
     --context "... FIXED: [...]. REJECTED: [...]. KNOWN: [...]." \
     --files "<prod> <test>"
@@ -463,6 +482,12 @@ Pass 2:
 Pass 3 (COMPLEX only, if pass 2 had CRITICAL):
   adversarial-review --rotate [--exclude <pass-2-provider> if known] --mode test \
     --context "..." --files "<prod> <test>"
+
+Fallback-local path (only if the primary path never produced a successful provider result):
+  dispatch `adversarial-test-reviewer` or `adversarial-test-reviewer-alt`
+    with the production file, test file, stack context, and current FIXED/REJECTED/KNOWN notes
+  use the same pass budget and fix policy as above
+  persist the result as `clean:fallback-local` or `<n> findings:fallback-local`
 ```
 
 **Context rules:**
@@ -473,7 +498,7 @@ Pass 3 (COMPLEX only, if pass 2 had CRITICAL):
 
 **Stub fidelity rule for ORCHESTRATOR:** Route module stubs MUST use `all()` (catch-all). Testing HTTP methods (GET vs POST) is the responsibility of route module tests, not orchestrator tests. If adversarial flags "stubs don't verify HTTP methods" — REJECT with "scope mismatch, route module responsibility".
 
-If `adversarial-review` is not found: check `../../scripts/adversarial-review.sh`. If missing entirely, mark file `SKIPPED_REVIEW`, record a degraded completion note, and proceed.
+If `adversarial-review` is not found: check `../../scripts/adversarial-review.sh`. If missing entirely, attempt fallback-local routing. If fallback-local is unavailable or not safely different-from-writer, mark file `SKIPPED_REVIEW`, record a degraded completion note, and proceed.
 
 **Fix policy per pass:**
 
@@ -485,7 +510,7 @@ If `adversarial-review` is not found: check `../../scripts/adversarial-review.sh
 | **INFO** | Known concerns (max 3). |
 | **0 findings** | Early exit — stop passes, file is clean. |
 | **After final pass with unresolved CRITICAL** | Mark file **FAILED** in coverage.md. Backlog findings. |
-| **Provider unavailable on all passes** | Mark file **SKIPPED_REVIEW** in coverage.md. |
+| **Provider unavailable on all passes and fallback-local unavailable** | Mark file **SKIPPED_REVIEW** in coverage.md. |
 
 ### Step 5: Log
 
@@ -496,14 +521,14 @@ Update `memory/coverage.md`:
 
 Statuses: `PASS`, `FAILED`, `SKIPPED_REVIEW`, `SKIPPED_BARREL`
 Blind Audit values: `clean:strict`, `fix:<n>`, `rewrite`, `skipped`
-Adversarial values: `clean`, `<n> findings`, `skipped`, `blocked`, `not_run`
+Adversarial values: `clean`, `clean:fallback-local`, `<n> findings`, `<n> findings:fallback-local`, `skipped`, `blocked`, `not_run`
 
 `SKIPPED_REVIEW` is a degraded terminal state, not a clean pass. Never silently collapse it into `PASS`.
 Rows that never enter Step 4 must persist `Adversarial=blocked` or `Adversarial=not_run`; never leave the column empty.
 
 Persist `Q Score` as a durable value, not prose memory: `<score>/19 (Q7=?,Q11=?,Q13=?,Q15=?,Q17=?)`.
 
-Print per-file summary: `[status] [file] — [N] tests, Q [N]/19, blind audit: [clean:strict|fix:<n>|rewrite|skipped], adversarial: [clean|N findings|skipped|blocked|not_run]`
+Print per-file summary: `[status] [file] — [N] tests, Q [N]/19, blind audit: [clean:strict|fix:<n>|rewrite|skipped], adversarial: [clean|clean:fallback-local|N findings|N findings:fallback-local|skipped|blocked|not_run]`
 
 Do NOT treat a file as complete unless both `Blind Audit` and `Adversarial` columns are populated.
 
