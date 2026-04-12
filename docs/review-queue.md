@@ -375,3 +375,5 @@ Commits pending review. Auto-managed:
 - 7670196 (2026-04-12) release: v1.3.83 — fix multi-platform adversarial, blind audit, path resolution
 - c7661a4 (2026-04-12) release: v1.3.84 — v1.3.83 multi-platform adversarial fix
 - c7ed0bf (2026-04-12) docs: multi-platform getting-started + cross-provider check in install.sh
+- feba26a (2026-04-12) release: v1.3.85 — v1.3.85 multi-platform docs + cross-provider check
+- 2b6e5a2 (2026-04-12) write-tests: BLOCKED_INFRA state, prod-bug hard block, SHA freshness guard
