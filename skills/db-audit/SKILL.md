@@ -112,12 +112,22 @@ If not resolved by `analyze_project`:
 
 If not resolved by `analyze_project`:
 
-| Signal | Engine |
-|--------|--------|
-| `postgresql` in connection string or schema provider | PostgreSQL |
-| `mysql` in connection string or provider | MySQL |
-| `sqlite` in provider | SQLite |
-| `mongodb` in provider or `mongoose` | MongoDB |
+| Signal | Engine | Managed provider |
+|--------|--------|------------------|
+| `postgresql` in connection string or schema provider | PostgreSQL | — |
+| `mysql` in connection string or provider | MySQL | — |
+| `sqlite` in provider | SQLite | — |
+| `mongodb` in provider or `mongoose` | MongoDB | — |
+| `neon.tech` in DATABASE_URL | PostgreSQL | **Neon** (built-in pooler) |
+| `supabase.co` in DATABASE_URL | PostgreSQL | **Supabase** (built-in pooler) |
+| `pscale.sh` or `psdb.cloud` | MySQL | **PlanetScale** (built-in pooler) |
+| `cockroachlabs.cloud` | CockroachDB | **Cockroach Cloud** (built-in pooler) |
+| `rds.amazonaws.com` | PostgreSQL/MySQL | **AWS RDS** |
+| `azure.com` with `database` segment | PostgreSQL/MySQL/SQL Server | **Azure Database** |
+| `googleapis.com` with `cloudsql` | PostgreSQL/MySQL | **Cloud SQL** |
+| `mongodb.net` | MongoDB | **MongoDB Atlas** |
+
+**Managed provider note:** When a managed provider with built-in pooling is detected (Neon, Supabase, PlanetScale, Cockroach Cloud), DB4 should NOT be marked critical-fail for "no PgBouncer config" — the platform handles pooling. Mark these findings as TOOL-VERIFIED with note "managed pooling: <provider>" and pass DB4 if no other issues exist.
 
 ### 0.3 Deployment Detection
 
@@ -633,10 +643,16 @@ Mark Phase 3 as SKIPPED.
 |---------|-----------|
 | `findMany` without `take` | Inside admin tool, migration script, or seed file |
 | N+1 loop | Loop is bounded (< 10 items) AND commented as intentional |
+| `await-in-loop` (search_patterns hit) | Function contains `*_CONCURRENCY_LIMIT`, `BATCH_SIZE`, `CHUNK_SIZE`, or similar bounded-concurrency constant |
+| `await-in-loop` (search_patterns hit) | Loop body is inside a seed/migration/admin script (path contains `seed/`, `scripts/`, `migrations/`, `tools/`) |
+| `await-in-loop` (search_patterns hit) | Loop is wrapped by `pLimit`, `Promise.all` with chunks, `pAll`, `bottleneck`, or similar concurrency limiter |
+| `await-in-loop` (search_patterns hit) | Loop is bounded by literal `< 10` and the bound is visible in source |
 | Missing index | Table known to be small (< 1000 rows, documented) |
 | No indexes in ORM | External index scripts found (use external inventory for scoring) |
-| No connection pool | Using managed service that pools for you (Supabase, PlanetScale) |
+| No connection pool | Using managed service that pools for you (Neon, Supabase, PlanetScale, Cockroach Cloud — see Phase 0.2) |
 | Raw SQL flagged | Uses tagged template `$queryRaw` (safe, parameterized) |
+
+**Anti-noise rule for await-in-loop:** If `search_patterns(pattern="await-in-loop")` returns more than 10 hits, do NOT report each one as a finding. Instead, group them by file, identify which match the false-positive filters above, and report only the residual count with the worst 3 examples. Reporting 30+ "potential N+1" findings without filtering = noise that drowns signal.
 
 ### 4.2 Severity Classification
 
@@ -747,11 +763,30 @@ Save to: `audits/db-audit-[YYYY-MM-DD].md`
 Per finding:
 - **ID:** DB{dimension}-{NNN} (e.g. DB1-001)
 - **Severity:** CRITICAL / HIGH / MEDIUM / LOW
+- **Status:** NEW / RESOLVED / PARTIAL / PLANNED / REGRESSION (see status rules below)
 - **Confidence:** TOOL-VERIFIED (from Phase 2.0 pre-scan) / HIGH / MEDIUM
 - **File:line:** exact location
 - **Description:** 1 sentence
 - **Fix:** concrete code change or command
 - **Effort:** S (<1h) / M (1-4h) / L (4h+)
+- **Evidence:** required for any severity downgrade — `find_references` count, `trace_route` hot/cold path, etc.
+
+### Status rules
+
+| Status | When to use | Counted in severity totals? |
+|--------|-------------|----------------------------|
+| `NEW` | First time this finding appears | Yes |
+| `RESOLVED` | Prior finding no longer present (verified, not assumed) | No (moved to "Resolved" section) |
+| `PARTIAL` | Part of prior issue is fixed, part remains. Severity stays at original level with `(partial)` suffix — DO NOT downgrade. | Yes, at original severity |
+| `PLANNED` | Finding has a linked task in `docs/specs/*-plan.md` or `memory/backlog.md`. Tracked separately. | No (moved to "Planned" section) |
+| `REGRESSION` | Finding was RESOLVED in prior audit but reappeared | Yes, severity = max(prior, current) |
+
+**Severity downgrade rule:** A finding's severity may only be lowered (e.g. M→L) when ALL of these are true:
+1. The Evidence field includes a concrete count from `find_references` or `trace_route`
+2. The downgrade reason is documented in 1 sentence in the Description
+3. If `mode == "delta"`, the Phase 0.5 checklist was completed for this specific finding
+
+If any of the three conditions fail, keep the prior severity. Anchoring to a number you didn't independently verify is the #1 cause of audit drift.
 
 ## Delta from Prior Audit
 
@@ -800,13 +835,17 @@ List only findings with effort=S. If none qualify, omit this section.
 
 After writing, verify:
 - Dimension scores sum to total in Executive Summary
-- Finding counts match Executive Summary
+- Finding counts match Executive Summary (counted: NEW + PARTIAL + REGRESSION; not counted: RESOLVED + PLANNED)
 - All models from inventory are addressed
 - Critical gate status is accurate
-- Every finding has a DB{N}-{NNN} ID, severity, confidence, file:line, and effort
+- Every finding has a DB{N}-{NNN} ID, severity, status, confidence, file:line, and effort
+- Every severity downgrade has Evidence field populated (find_references count or trace_route output)
+- PLANNED findings have a verified link to `docs/specs/*-plan.md` or `memory/backlog.md`
+- PARTIAL findings keep prior severity with `(partial)` suffix — no downgrade
 - Delta section references correct prior audit (or states "baseline")
 - TOOL-VERIFIED findings match Phase 2.0 pre-scan output
 - "Delete These Tomorrow" only contains effort=S items
+- If `mode == "delta"`: Phase 0.5 checklist is fully completed (all 6 items checked)
 
 ---
 

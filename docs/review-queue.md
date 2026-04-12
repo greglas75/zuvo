@@ -351,3 +351,4 @@ Commits pending review. Auto-managed:
 - a96df3b (2026-04-11) feat: harden pentest registries and validation
 - 6444f8f (2026-04-11) add blind coverage audit to write-tests
 - 729892c (2026-04-11) feat(db-audit): integrate sql_audit composite + 4 SQL query tools
+- 5d1e987 (2026-04-12) release: v1.3.74 — fix: db-audit force full mode + delta verification checklist + lazy retrospective load — prevent prior-audit anchoring bias
