@@ -61,10 +61,10 @@ RETRO: DATE\tSKILL\tPROJECT\tCODE_TYPE\tFRICTION_CATEGORY\tMISSING_TEMPLATE\tCON
 | 2 | SKILL | string | skill name without `zuvo:` prefix |
 | 3 | PROJECT | string | basename of git root |
 | 4 | CODE_TYPE | enum | `ORCHESTRATOR` (coordinates 3+ modules), `DATA_SERVICE` (data access/transformation), `PURE_FUNCTION` (no side effects), `UI_COMPONENT` (renders UI), `CONFIG` (configuration), `MIXED` (multiple types), `OTHER` |
-| 5 | FRICTION_CATEGORY | enum | `mock-strategy`, `ordering-template`, `context-missing`, `pipeline-heavy`, `framework-gotcha`, `unclear-instruction`, `no-friction`, `other` |
+| 5 | FRICTION_CATEGORY | enum | `mock-strategy`, `ordering-template`, `context-missing`, `pipeline-heavy`, `framework-gotcha`, `unclear-instruction`, `skill-overhead` (too many includes for the task), `missing-pattern` (had to invent code from scratch), `false-positive-rule` (skill rule flagged valid code), `scope-mismatch` (skill ceremony > task complexity), `no-friction`, `other`. **`no-friction` is ONLY valid if you have ZERO change proposals. If you wrote any proposals, pick the category matching your #1 ranked proposal** |
 | 6 | MISSING_TEMPLATE | string (40 char max) | short description or `-` |
 | 7 | CONTEXT_GAP | enum | `no-production-code`, `no-schema`, `no-env`, `no-test-fixture`, `no-framework-docs`, `none`, `other` |
-| 8 | TURNS_WASTED | integer | estimated turns lost to friction, or `0` |
+| 8 | TURNS_WASTED | integer | Count ANY of: tool retries, context re-reads, mental cycles rejecting false-positive rules, iterations due to unclear instructions, or deliberation over missing patterns. NOT just bash failures. If you wrote a change proposal about "I spent N turns figuring out X," count N. |
 | 9 | TOOL_CALLS | integer | total tool calls in session (estimate) |
 | 10 | FILES_READ | integer | distinct files read |
 | 11 | FILES_MODIFIED | integer | files created or edited |
