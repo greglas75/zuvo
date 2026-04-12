@@ -1,7 +1,7 @@
 ---
-name: blind-coverage-auditor
-description: "Production-first coverage mapper for write-tests. Read-only. Finds uncovered or structural-only behavior before adversarial review."
-model: review-primary
+name: blind-coverage-auditor-alt
+description: "Alternate production-first coverage mapper for write-tests. Read-only. Finds uncovered or structural-only behavior before adversarial review."
+model: review-alt
 tools:
   - Read
   - Grep
