@@ -363,3 +363,4 @@ Commits pending review. Auto-managed:
 - 6065dfe (2026-04-12) add reviewer routing execution plan docs
 - 27a9928 (2026-04-12) release: v1.3.77 — feat: blind audit reviewer model routing — cross-model validation in write-tests, platform-aware lane resolver
 - bede8f8 (2026-04-12) add adversarial fallback reviewers for write-tests
+- 3662d38 (2026-04-12) release: v1.3.78 — fix: adversarial-review --files parsing bug — grep newline false positive caused both files to merge into one path, breaking all external providers

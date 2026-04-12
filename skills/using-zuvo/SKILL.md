@@ -3,7 +3,7 @@ name: using-zuvo
 description: "ALWAYS LOADED — Zuvo skill router. Injected at session start. Determines which zuvo skill to invoke for the current task."
 ---
 
-> **Zuvo v1.3.78** | 51 skills | 4 adversarial providers | CQ1-CQ28 + Q1-Q19
+> **Zuvo v1.3.79** | 52 skills | 4 adversarial providers | CQ1-CQ28 + Q1-Q19
 
 # Zuvo Skill Router
 
@@ -112,6 +112,7 @@ If the session context includes the compressed response protocol, apply it by su
 | Monitor production after deploy, check for regressions | `zuvo:canary` |
 | Sync documentation with a release | `zuvo:release-docs` |
 | Engineering retrospective, shipping velocity | `zuvo:retro` |
+| Context health audit, include loading trends, setup bloat | `zuvo:context-audit` |
 
 ---
 
