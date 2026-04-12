@@ -24,6 +24,7 @@ You receive:
 2. The plan document (full text)
 
 Read both documents completely before making any judgments.
+Before the File Limits check, read `../../rules/file-limits.md`.
 
 ---
 
@@ -31,7 +32,19 @@ Read both documents completely before making any judgments.
 
 Perform every check below. For each one, record a PASS or FAIL with a specific explanation.
 
-### 1. Spec Completeness
+### 1. Source of Truth and Coverage Matrix
+
+Does the plan make the source of truth explicit, and does the coverage matrix reflect it correctly?
+
+- Verify that `planning_mode` and `source_of_truth` match the actual planning input
+- In spec-driven mode, the plan must contain a `## Coverage Matrix` with rows covering every spec acceptance item, deliverable, or explicit constraint
+- In inline mode, the matrix must cover the user's goals, scope boundaries, and constraints
+- If an unapproved spec was used as context in inline mode, verify that it is treated as context only, not as the authority
+- Flag missing rows, orphan rows, or matrix rows that do not map to any task
+
+A missing or misleading coverage matrix is a FAIL for this check.
+
+### 2. Spec Completeness
 
 Does the plan cover every requirement in the spec?
 
@@ -41,7 +54,7 @@ Does the plan cover every requirement in the spec?
 
 A single missed requirement is a FAIL for this check.
 
-### 2. Spec Alignment
+### 3. Spec Alignment
 
 Does the plan implement what the spec describes, not something different?
 
@@ -51,7 +64,7 @@ Does the plan implement what the spec describes, not something different?
 
 Scope creep and misinterpretation are both FAIL conditions.
 
-### 3. Task Decomposition Quality
+### 4. Task Decomposition Quality
 
 Are the tasks properly sized and ordered?
 
@@ -62,7 +75,7 @@ Are the tasks properly sized and ordered?
 | Independence | Tasks without listed dependencies can truly run in any order | An unlisted dependency exists between tasks |
 | Granularity | Each task represents a single logical unit of work | A task combines unrelated changes |
 
-### 4. TDD Protocol Compliance
+### 5. TDD Protocol Compliance
 
 Does every task follow the RED-GREEN-Verify-Commit structure?
 
@@ -70,12 +83,14 @@ Does every task follow the RED-GREEN-Verify-Commit structure?
 - Every RED step must include test intent, target assertions, and test file path
 - Every GREEN step must include implementation targets: symbols to add/change, invariants, and interfaces
 - If a scaffold snippet is included, it must be ≤20 LOC and only to clarify non-obvious patterns
+- The plan must not inline full implementations or full test bodies as a substitute for task design
 - Every Verify step must include an exact shell command and expected output
+- The Verify command must prove the expected invariant by exit status, not merely run a script or print a value
 - Every Commit step must include a behavior-describing commit message
 
 A task with a vague RED step ("write tests for the service") is a FAIL. The test intent and assertions must be explicit.
 
-### 5. CQ Gate Awareness
+### 6. CQ Gate Awareness
 
 Does the plan account for the quality gates that will be enforced during execution?
 
@@ -83,22 +98,21 @@ Does the plan account for the quality gates that will be enforced during executi
 - Check if the tasks include edge-case tests for activated gates (e.g., error path tests for CQ8, validation tests for CQ3)
 - Flag any activated CQ gate that no task addresses
 
-### 6. File Limits
+### 7. File Limits
 
 Does the plan respect file size constraints defined in `rules/file-limits.md`?
 
-Use the **planning defaults** (conservative — you don't know method count until the code is written):
-- Services: 300 lines (450 permitted for services with 5-8 public methods, but plan for 300)
-- Controllers: 300 lines
+Use the planning defaults from `rules/file-limits.md`:
+- Services/controllers: 300 lines unless the rule explicitly grants more
 - Components: 200 lines (300 for page/container)
 - Hooks: 250 lines
-- Utilities: 100 lines
+- Utilities/helpers: 100 lines
 
 If a task's GREEN step would produce a file exceeding these limits, the task should be split.
 
 Verify by estimating the size from the described targets. If the targets imply a file near the limit and the file is new, flag this as a risk.
 
-### 7. Buildability
+### 8. Buildability and Review Trail
 
 Can each task be executed independently (with its dependencies satisfied) and produce a working, testable state?
 
@@ -106,6 +120,8 @@ Can each task be executed independently (with its dependencies satisfied) and pr
 - No task should leave the codebase in a broken state
 - No task should depend on a future task for its tests to pass
 - If a task modifies an existing file, verify that the existing tests for that file are not broken without also being updated in the same task
+- The plan must include a `## Review Trail` section. A placeholder cross-model entry is acceptable before adversarial review; a missing section is a FAIL.
+- The plan must not imply `Reviewed` status without a converged reviewer pass on the current revision
 
 ---
 
@@ -117,10 +133,10 @@ After completing all checks, issue one of two verdicts:
 
 All checks passed. The plan is ready for user review.
 
-```
+``` 
 VERDICT: APPROVED
 
-All 7 review checks passed. The plan covers the spec completely, tasks are properly decomposed, and quality gates are accounted for.
+All 8 review checks passed. The plan covers the source of truth completely, tasks are properly decomposed, and quality gates are accounted for.
 ```
 
 ### ISSUES FOUND

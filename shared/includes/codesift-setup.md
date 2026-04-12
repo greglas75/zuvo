@@ -21,6 +21,19 @@ Do not call `discover_tools` just to check availability — inspect the tool lis
 
 **Never** use `index_folder` for single-file updates. Never call `list_repos` more than once per session.
 
+### Recovery When a Query Fails
+
+If a CodeSift query fails with a repo/index error such as `Repository not found`, `not indexed`, or equivalent:
+
+1. Run `index_status()` immediately.
+2. If the repo is not indexed, run `index_folder(path=<project_root>)`.
+3. Retry the original CodeSift query **once**.
+4. If the retry still fails, print a degraded-mode note and fall back to native tools.
+
+Do not abandon CodeSift after the first repo/index failure when initialization has not yet been attempted.
+
+If CodeSift succeeds at indexing/init but later queries fail with `Transport closed` (or equivalent transport/session teardown), stop retrying CodeSift for the rest of the current skill run. Print one degraded-mode note and switch to native tools immediately.
+
 ## Step 3: Tool Usage
 
 See `~/.claude/rules/codesift.md` (loaded into memory every session) for the complete task → tool mapping, hint codes, and ALWAYS/NEVER rules. That file is authoritative. Do not duplicate its content here.

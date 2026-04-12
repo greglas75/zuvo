@@ -17,6 +17,11 @@ From the spec, list every concrete deliverable: each new file, each modified fil
 
 If any deliverable appears in the spec but not in the agent reports, investigate. Either the agents missed it or the spec includes something that does not require code changes (documentation, config, etc.).
 
+Build the plan's `## Coverage Matrix` before writing tasks:
+- **Spec-driven mode:** one row per spec acceptance item, deliverable, or explicit constraint
+- **Inline mode:** one row per goal, scope boundary, and user-stated constraint
+- If an unapproved spec exists in inline mode, treat it as context only. Do not promote its IDs into the matrix as authority items.
+
 ### Step 2: Determine Task Order
 
 Tasks must be ordered so that:
@@ -40,25 +45,30 @@ Each task should take 2-5 minutes to implement. Use these guidelines:
 | Task involves only type definitions or interfaces | Mark as `standard`. These are low-risk. |
 | Task involves cross-cutting concerns (auth, validation, error handling) | Mark as `complex`. These affect multiple code paths. |
 
-### Step 4: Write the RED-GREEN Steps
+If a task would touch more than 5 files, more than two system boundaries, or two independent deliverables, split it instead of merely marking it `complex`.
 
-For each task, write the exact code that the implementer will produce.
+### Step 4: Write the Task Contract
+
+For each task, write the minimum contract the implementer needs to succeed without guessing.
 
 **RED step (failing test):**
-- Write the complete test. Include imports, describe block, test name, setup, action, and assertion.
-- The test must fail before the production code exists (missing import, missing function, wrong return value).
+- Name the test file path.
+- State the behavior that must fail first (missing symbol, wrong value, broken path, failing assertion).
+- State the key assertions and edge/error cases that prove the task is complete.
 - Use the test conventions identified by the QA Engineer (framework, naming, directory).
-- Include the edge cases and error paths identified by the QA Engineer for this component.
+- Do not inline full test bodies unless a scaffold of 20 LOC or less is necessary to clarify a non-obvious pattern.
 
-**GREEN step (production code):**
-- Write the minimum code that makes the RED test pass.
+**GREEN step (implementation intent):**
+- Name the symbols, files, interfaces, and invariants to add or change.
 - Follow the patterns selected by the Tech Lead.
 - Reuse the existing code identified by the Tech Lead (do not reimplement what already exists).
-- Respect file size limits: services at most 300 lines, components at most 200 lines.
+- If a scaffold is necessary, keep it at or below 20 LOC and use it only to show structure.
+- Do NOT write the full implementation. The plan defines WHAT must exist and WHY, not every line the implementer will type.
 
 **Verify step:**
 - Write the exact shell command to run the tests. Example: `npx vitest run src/services/order.service.test.ts`
 - Write the expected output. Example: `Tests: 3 passed, 3 total`
+- If the expected result mentions a concrete value or behavior, the command must assert it through exit status rather than merely print it.
 - If the verification involves more than just tests (e.g., type checking, linting), include those commands too.
 
 **Commit step:**
@@ -71,8 +81,8 @@ For each task, assign a complexity level that determines which model the execute
 
 | Complexity | Criteria | Model |
 |------------|----------|-------|
-| `standard` | 1-3 files, clear spec, follows existing patterns, no architecture decisions | Sonnet |
-| `complex` | 4+ files, new patterns, cross-cutting concerns, high-risk modifications, design decisions | Opus |
+| `standard` | 1-3 files, existing patterns, one system boundary, no new public contract | Sonnet |
+| `complex` | 4+ files, 2+ system boundaries, new patterns/contracts, cross-cutting concerns, or high-risk modifications | Opus |
 
 Use the QA Engineer's risk assessment and the Tech Lead's complexity hotspot analysis to inform this decision. When in doubt, mark as `complex` — it is better to over-allocate than to have a Sonnet implementer struggle with an architecture decision.
 
@@ -89,11 +99,14 @@ Before finalizing, check:
 | Check | Question | If no |
 |-------|----------|-------|
 | Spec coverage | Does every requirement in the spec map to at least one task? | Add missing tasks. |
+| Coverage matrix | Does every `## Coverage Matrix` row map to at least one task, and does every task reference one or more row IDs? | Fix the matrix or the Acceptance fields. |
 | Test coverage | Does every production file have a corresponding test task? | Add test tasks. |
 | Dependency order | Can tasks be executed in the listed order without forward references? | Reorder. |
-| File limits | Does any task create a file estimated at >300 lines (service) or >200 lines (component)? | Split the task. |
+| Verification discipline | Does every Verify command prove the expected invariant by exit status? | Strengthen the command. |
+| File limits | Does any task create a file estimated above `rules/file-limits.md` defaults (especially utils/helpers >100)? | Split the task. |
 | CQ gate coverage | Is every activated CQ gate from the QA report addressed? | Add gate-specific steps to relevant tasks. |
 | Independence | Can tasks with no listed dependencies truly run in any order? | If not, add the missing dependency. |
+| Review trail readiness | Does the plan leave a `## Review Trail` section for reviewer + adversarial results? | Add it before finalizing. |
 
 ---
 

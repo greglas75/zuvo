@@ -25,14 +25,15 @@ case "$file_path" in
   *) exit 0 ;;
 esac
 
-# Get basename without .md
+# Get basename without .md and file size
 basename="${file_path##*/}"
 basename="${basename%.md}"
+size=$(stat -f%z "$file_path" 2>/dev/null || stat --printf='%s' "$file_path" 2>/dev/null || echo 0)
 
 # Session-specific include log
 include_log="/tmp/zuvo-includes-${session_id}.txt"
 
-# Append (deduplicated at read time, not write time — faster)
-echo "$basename" >> "$include_log"
+# Append as name:bytes (deduplicated at read time, not write time — faster)
+echo "${basename}:${size}" >> "$include_log"
 
 exit 0

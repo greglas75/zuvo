@@ -31,8 +31,9 @@ Read both documents completely. The Architecture Report tells you what exists; t
 Follow the CodeSift setup procedure:
 
 1. Check whether CodeSift tools are available in the current environment
-2. If found, `list_repos()` — get the repo identifier
-3. If not found, fall back to Grep/Read/Glob for all analysis below
+2. In single-repo work, let the repo auto-resolve from CWD. Do NOT call `list_repos()` unless the orchestrator explicitly says this is multi-repo
+3. If unsure whether the repo is indexed, use `index_status()` and `index_folder(path=<project_root>)` once if needed
+4. If not found, fall back to Grep/Read/Glob for all analysis below
 
 All CodeSift calls in this agent should stay within a combined token budget of 5000.
 
@@ -46,16 +47,17 @@ Identify the patterns already used in the codebase so the new feature stays cons
 
 **With CodeSift:**
 ```
-search_patterns(repo, "empty-catch")
-search_patterns(repo, "todo-without-ticket")
+search_patterns(pattern="empty-catch", file_pattern="<affected_scope>")
+search_patterns(pattern="todo-without-ticket", file_pattern="<affected_scope>")
 ```
 
 Also search for the dominant patterns in the affected modules:
 ```
-search_symbols(repo, "<key_concept_from_spec>", token_budget=3000, file_pattern="*.service.ts")
+search_symbols(query="<key_concept_from_spec>", token_budget=3000, detail_level="compact", file_pattern="<affected_scope>")
+search_text(query="<representative decorator, hook, helper, or interface name>", file_pattern="<affected_scope>", group_by_file=true)
 ```
 
-Adjust the `file_pattern` to match the project's file conventions (e.g., `*.service.ts` for NestJS, `*.py` for Python, etc.).
+Adjust `<affected_scope>` to match the project's conventions (e.g., `src/orders`, `apps/web`, `*.service.ts`, `*.py`, etc.).
 
 **Without CodeSift:**
 ```
@@ -74,15 +76,11 @@ Determine which existing libraries to use and whether new dependencies are neede
 
 **With CodeSift:**
 ```
-find_references(repo, "<library_or_utility_name>")
+find_references(symbol_name="<library_or_utility_name>")
+search_text(query="<library_or_utility_name>", group_by_file=true)
 ```
 
-Run this for utilities or libraries the spec mentions or implies. Also:
-```
-cross_repo_search(query="<pattern_name>", repo_pattern="local/*")
-```
-
-Use `cross_repo_search` only if multiple repos are indexed and relevant.
+Run this for utilities or libraries the spec mentions or implies. Stay inside the current repo unless the user explicitly requested multi-repo analysis.
 
 **Without CodeSift:**
 ```

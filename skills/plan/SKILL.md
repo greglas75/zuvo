@@ -1,6 +1,6 @@
 ---
 name: plan
-description: "Analyzes architecture, selects patterns, assesses testability, then decomposes work into ordered TDD tasks with exact code and verification commands. Works from an approved spec (zuvo:brainstorm output) or directly from a user-provided description."
+description: "Analyzes architecture, selects patterns, assesses testability, then decomposes work into ordered TDD tasks with exact verification commands and explicit acceptance mapping. Works from an approved spec (zuvo:brainstorm output) or directly from a user-provided description."
 ---
 
 # zuvo:plan
@@ -60,10 +60,12 @@ CORE FILES LOADED:
   3. ../../shared/includes/quality-gates.md    -- READ/MISSING
   4. ../../shared/includes/tdd-protocol.md     -- READ/MISSING
   5. ../../shared/includes/run-logger.md       -- READ/MISSING
-  6. ../../shared/includes/retrospective.md       -- READ/MISSING
-  6. ../../shared/includes/session-state.md    -- READ/MISSING
+  6. ../../shared/includes/retrospective.md    -- READ/MISSING
+  7. ../../shared/includes/session-state.md    -- READ/MISSING
+  8. ../../rules/file-limits.md                -- READ/MISSING
 ```
 
+Resolve these paths relative to the currently loaded `skills/plan/SKILL.md`. If a relative read fails, mark that file as `MISSING` for this run; do not silently substitute a different plugin version.
 
 **If 1-2 files missing:** Proceed in degraded mode. Note which files are unavailable in the final output.
 **If 3+ files missing:** Stop. The plugin installation is incomplete.
@@ -77,6 +79,8 @@ Execute the CodeSift setup procedure from `codesift-setup.md`. Note the repo ide
 Dispatch 3 agents SEQUENTIALLY. Each agent receives the output of the previous agent(s) as input context. The 4th step is performed by you (the main agent) as Team Lead synthesis.
 
 The sequential order is mandatory because each agent's analysis depends on what came before: the Architect maps the terrain, the Tech Lead makes decisions based on that map, and the QA Engineer assesses testability of those decisions.
+
+Pass the prior reports in full when practical. If you must compress for token budget, preserve concrete file paths, symbols, risk rankings, and open questions. Do not reduce a prior report to generic prose.
 
 ### Agent 1: Architect
 
@@ -149,6 +153,7 @@ Write the plan document to `docs/specs/YYYY-MM-DD-<topic>-plan.md` using today's
 **Spec:** [path to spec document | "inline — no spec"]
 **spec_id:** [spec_id from the spec's header | "none"]
 **planning_mode:** [spec-driven | inline]
+**source_of_truth:** [approved spec | inline brief | inline brief (unapproved spec is context only)]
 **plan_revision:** 1
 **status:** Draft | Reviewed | Approved
 **Created:** [date]
@@ -164,6 +169,18 @@ Write the plan document to `docs/specs/YYYY-MM-DD-<topic>-plan.md` using today's
 ## Quality Strategy
 [Condensed from QA Engineer report — test approach, risk areas, CQ gates to watch]
 
+## Coverage Matrix
+[Deterministic authority -> task mapping]
+
+| Row ID | Authority item | Type | Primary task(s) | Notes |
+|--------|----------------|------|-----------------|-------|
+| AC1 / G1 | [spec AC, deliverable, goal, or constraint] | requirement / deliverable / constraint | Task 2, Task 5 | [context-only note if needed] |
+
+## Review Trail
+- Plan reviewer: revision 1 -> APPROVED | ISSUES FOUND ([short summary])
+- Cross-model validation: executed -> clean | findings fixed | skipped ([script reason])
+- Status gate: Draft | Reviewed | Approved
+
 ## Task Breakdown
 
 ### Task 1: [Short descriptive name]
@@ -177,7 +194,7 @@ Write the plan document to `docs/specs/YYYY-MM-DD-<topic>-plan.md` using today's
   [Optional: scaffold snippet ≤20 LOC if pattern is non-obvious]
 - [ ] Verify: `[exact shell command]`
   Expected: [exact expected output or pattern]
-- [ ] Acceptance: [which spec AC this task satisfies]
+- [ ] Acceptance: [which Coverage Matrix row(s) this task satisfies]
 - [ ] Commit: `[commit message describing behavior added]`
 
 ### Task 2: [...]
@@ -186,14 +203,15 @@ Write the plan document to `docs/specs/YYYY-MM-DD-<topic>-plan.md` using today's
 
 ### Task Authoring Rules
 
-1. **Scope per task:** Each task should take 2-5 minutes to implement. If a task would take longer, split it.
-2. **Task intent over exact code:** RED steps include: test intent, target assertions, and file path. GREEN steps include: symbols to add/change, invariants to maintain, and interfaces to implement. Include scaffold code or snippets (≤20 lines) when the pattern is non-obvious. Do NOT write the full implementation — that is the implementer's job. The plan specifies WHAT and WHY, the implementer decides HOW.
-3. **Exact verification:** The Verify step includes the shell command to run and what the output should look like. No vague "tests should pass" — specify the command and expected result.
-4. **Commit messages:** Describe the behavior added ("add order validation that rejects negative quantities"), not the files changed ("update order.service.ts").
-5. **Dependencies:** A task can only depend on tasks with a lower number. No circular dependencies. Minimize dependencies — prefer independent tasks that can run in any order.
-6. **Complexity rating:** `standard` means 1-3 files, clear spec, no architecture decisions. `complex` means 4+ files, design pattern selection, or cross-cutting concerns. The complexity rating determines which implementation tier the execute phase will use: default for standard, deep for complex.
-7. **File limits:** No single file should exceed 300 lines (services) or 200 lines (components). If the plan would create a file larger than this, split the task.
-8. **Test files:** Every task that creates production code must include a test file. The test file appears in the Files list alongside the production file.
+1. **Scope per task:** Each task should take 2-5 minutes to implement and represent one logical unit of work. If it would take longer, split it.
+2. **Boundary size:** A task touching more than 5 files, more than one new public surface, or more than two system boundaries is oversized by default. Split it unless you can justify why the files are inseparable.
+3. **Task intent over exact code:** RED steps include test intent, target assertions, and file path. GREEN steps include symbols to add/change, invariants to maintain, interfaces to implement, and reuse obligations. Include scaffold code only when the pattern is non-obvious, and keep scaffolds at or below 20 LOC. Do NOT write the full implementation.
+4. **Exact verification:** The Verify step must include an exact shell command whose exit code proves the claimed invariant. If the expected output mentions a specific value or behavior, the command must assert that value or behavior rather than merely running a script.
+5. **Acceptance mapping:** Every Coverage Matrix row must appear in at least one task's Acceptance field. No orphan requirements, deliverables, or constraints.
+6. **Dependencies:** A task can only depend on tasks with a lower number. No circular dependencies. Dependencies must reflect real ordering, not preference.
+7. **Complexity rating:** `standard` means 1-3 files, existing patterns, one system boundary, and no new public contract. `complex` means 4+ files, 2+ system boundaries, new patterns/contracts, cross-cutting concerns, or high-risk hotspot files. The complexity rating determines which implementation tier the execute phase will use: default for standard, deep for complex.
+8. **File limits:** Use `../../rules/file-limits.md` as the planning default. In particular: utilities/helpers <=100 lines, controllers/services <=300 unless the rule explicitly allows more, components <=200/300, hooks <=250. If the plan would exceed these limits, split the task.
+9. **Test files:** Every task that creates production code must include a test file. If a task is docs-only or config-only, say so explicitly in the RED step instead of implying a missing test.
 
 ---
 
@@ -217,8 +235,8 @@ Read `agents/plan-reviewer.md` for full instructions.
 
 ### Review Loop
 
-1. If APPROVED: proceed to user review
-2. If ISSUES FOUND: revise the plan to address the issues, then re-dispatch the reviewer
+1. If APPROVED on the current revision: append the verdict to `## Review Trail`, then proceed to cross-model validation.
+2. If ISSUES FOUND: revise the plan to address the issues, increment `plan_revision`, update `## Review Trail`, then re-dispatch the reviewer on the new revision.
 3. Maximum 3 review iterations. After 3, present the remaining issues to the user and let them decide whether to accept the plan as-is or provide guidance
 
 ### Cross-Model Validation (MANDATORY — do NOT skip)
@@ -232,22 +250,28 @@ adversarial-review --mode plan --files "docs/specs/YYYY-MM-DD-<topic>-plan.md"
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
 
 Wait for complete output. Then apply fix policy:
-- **CRITICAL** (missing dependency, task requires nonexistent file) → fix in plan, re-run plan-reviewer
-- **WARNING** (task too large, questionable ordering) → append as note to affected task
+- **CRITICAL** (missing dependency, task requires nonexistent file) → fix in plan, increment `plan_revision`, re-run plan-reviewer
+- **WARNING** that changes task size, ordering, dependencies, verification, or coverage → fix in plan, increment `plan_revision`, re-run plan-reviewer
+- **WARNING** that does NOT change execution semantics or coverage → append as note to the affected task and record it in `## Review Trail`
 - **INFO** → ignore
+
+Do not set `status: Reviewed` unless the current plan revision has:
+1. a plan-reviewer `APPROVED` verdict,
+2. a cross-model validation result or explicit script-generated skip reason, and
+3. a populated `## Review Trail` reflecting both checks.
 
 ### User Approval
 
 The plan follows a strict state machine:
 
 ```
-Draft → Reviewed (by plan reviewer) → Approved (by user only)
+Draft → Reviewed (reviewer converged + cross-model recorded) → Approved (by user only)
 ```
 
 **Interactive mode:** Present the final plan. The user must explicitly approve. Update status to "Approved" only on user confirmation.
 
 <!-- PLATFORM:CURSOR -->
-**Async mode (Codex App, Cursor):** The plan reviewer's APPROVED verdict moves the plan to "Reviewed" status (NOT "Approved"). Print: "Plan is in Reviewed status. Review the task breakdown and change status to Approved before running zuvo:execute."
+**Async mode (Codex App, Cursor):** A converged reviewer verdict plus cross-model validation moves the plan to `Reviewed` status (NOT `Approved`). Print: "Plan is in Reviewed status. Review the task breakdown, then change status to Approved before running zuvo:execute."
 <!-- /PLATFORM:CURSOR -->
 
 `zuvo:execute` MUST check for "Approved" status. It will not start from "Draft" or "Reviewed".
@@ -256,21 +280,21 @@ Draft → Reviewed (by plan reviewer) → Approved (by user only)
 
 ## Active Plan Pointer
 
-After the plan reaches Approved status (user confirmation in interactive mode, or Reviewed in async mode), write the active plan pointer using the WRITE protocol from `session-state.md`:
+After the plan reaches `Approved` status, write the active plan pointer using the WRITE protocol from `session-state.md`:
 
 ```bash
 mkdir -p .zuvo/plans
 ```
 
-Write `.zuvo/plans/active-plan.md` with `status: pending`. This lets `zuvo:execute` find the plan immediately without ambiguity, even if multiple plan files exist.
+Write `.zuvo/plans/active-plan.md` with `status: pending`. If the plan is only `Reviewed`, do not write the pointer yet. This keeps `zuvo:execute` aligned with the same approval gate as the plan header.
 
 ---
 
 ## Output
 
-The approved plan document at `docs/specs/YYYY-MM-DD-<topic>-plan.md`.
+The final plan document at `docs/specs/YYYY-MM-DD-<topic>-plan.md`.
 
-This artifact is the prerequisite for `zuvo:execute`. When the user is ready to implement, they invoke `zuvo:execute` and it picks up this plan automatically.
+This artifact is the prerequisite for `zuvo:execute`. When the user is ready to implement, the plan itself must be `Approved`; only then should `zuvo:execute` or the active-plan pointer treat it as the source of truth.
 
 ```
 Run: <ISO-8601-Z>	plan	<project>	-	-	<VERDICT>	<TASKS>	3-phase	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>

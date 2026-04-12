@@ -302,11 +302,13 @@ install_codex() {
     ok "Rules installed"
   fi
 
-  # Step 7: Copy scripts (benchmark.sh, adversarial-review.sh, etc.)
+  # Step 7: Copy scripts (benchmark.sh, adversarial-review.sh, reviewer-model-route.sh, blind-audit-codex.sh)
   if [[ -d "$ZUVO_DIR/scripts" ]]; then
     mkdir -p "$HOME/.codex/scripts"
     cp "$ZUVO_DIR"/scripts/benchmark.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/adversarial-review.sh "$HOME/.codex/scripts/" 2>/dev/null || true
+    cp "$ZUVO_DIR"/scripts/reviewer-model-route.sh "$HOME/.codex/scripts/" 2>/dev/null || true
+    cp "$ZUVO_DIR"/scripts/blind-audit-codex.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     chmod +x "$HOME/.codex"/scripts/*.sh 2>/dev/null || true
     ok "Scripts installed"
   fi
@@ -439,11 +441,13 @@ install_cursor() {
     ok "Rules installed"
   fi
 
-  # Step 7: Copy scripts (benchmark.sh, adversarial-review.sh, etc.)
+  # Step 7: Copy scripts (benchmark.sh, adversarial-review.sh, reviewer-model-route.sh, blind-audit-codex.sh)
   if [[ -d "$ZUVO_DIR/scripts" ]]; then
     mkdir -p "$HOME/.cursor/scripts"
     cp "$ZUVO_DIR"/scripts/benchmark.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/adversarial-review.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
+    cp "$ZUVO_DIR"/scripts/reviewer-model-route.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
+    cp "$ZUVO_DIR"/scripts/blind-audit-codex.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     chmod +x "$HOME/.cursor"/scripts/*.sh 2>/dev/null || true
     ok "Scripts installed"
   fi

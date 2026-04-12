@@ -32,8 +32,9 @@ Read all three documents. The Architecture Report shows you what exists and what
 Follow the CodeSift setup procedure:
 
 1. Check whether CodeSift tools are available in the current environment
-2. If found, `list_repos()` — get the repo identifier
-3. If not found, fall back to Grep/Read/Glob for all analysis below
+2. In single-repo work, let the repo auto-resolve from CWD. Do NOT call `list_repos()` unless the orchestrator explicitly says this is multi-repo
+3. If unsure whether the repo is indexed, use `index_status()` and `index_folder(path=<project_root>)` once if needed
+4. If not found, fall back to Grep/Read/Glob for all analysis below
 
 All CodeSift calls in this agent should stay within a combined token budget of 5000.
 
@@ -68,8 +69,8 @@ Identify areas of the codebase that are already fragile or neglected, so the pla
 
 **With CodeSift:**
 ```
-find_dead_code(repo, file_pattern="<affected_module>/**")
-analyze_hotspots(repo, since_days=90)
+audit_scan(checks="CQ13", file_pattern="<affected_module>", include_tests=false)
+analyze_hotspots(since_days=90, file_pattern="<affected_module>")
 ```
 
 **Without CodeSift:**
@@ -86,10 +87,10 @@ Determine which existing tests will be affected by the changes.
 
 **With CodeSift:**
 ```
-impact_analysis(repo, since="HEAD~3")
+find_references(symbol_names=[<key symbols from the Architect blast radius or Tech Lead file structure>])
 ```
 
-Check the `affected_tests` field in the response. This tells you which test files are likely to need updates or may break.
+Filter the results to test files. Planned work is not a git diff, so do NOT use `impact_analysis(repo, since="HEAD~3")` here.
 
 **Without CodeSift:**
 ```
@@ -182,7 +183,7 @@ Produce your report in this exact structure:
 ## Constraints
 
 - You are read-only. Do not create, modify, or delete any files.
-- Stay within the 5000 token budget for CodeSift calls. Prioritize `assemble_context` and `impact_analysis` over other calls if budget is tight.
+- Stay within the 5000 token budget for CodeSift calls. Prioritize `assemble_context`, `analyze_hotspots`, and targeted `find_references` over broader scans if budget is tight.
 - Be specific about risk. "This might be tricky" is not useful. "The `OrderService.create` method has cyclomatic complexity of 15 and 6 dependencies, making it the highest-risk modification" is useful.
 - Do not propose code changes or refactoring. Your job is to assess and warn, not to implement. The Team Lead uses your risk assessment to size tasks and allocate effort.
 - Every CQ gate assessment must be justified. Do not mark a gate as "No" without explaining why it does not apply. Do not mark it as "Yes" without explaining what specific aspect of the feature triggers it.

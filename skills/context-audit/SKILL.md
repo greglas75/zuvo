@@ -6,7 +6,7 @@ description: "Context health monitoring. Analyzes include loading trends from co
 # zuvo:context-audit — Context Health Monitor
 
 Tracks what fills your context window over time and flags waste. Two data sources:
-1. **Auto-collected** — `~/.zuvo/context-metrics.log` (populated by `track-includes.sh` hook on every skill run)
+1. **Auto-collected** — `~/.zuvo/runs.log` field 12 (`name:bytes` pairs, populated by `track-includes.sh` hook on every Read)
 2. **Manual** — `/context` output (optional, for full system-level audit)
 
 ## Argument Parsing
@@ -30,19 +30,24 @@ CORE FILES LOADED:
 
 ## Phase 0: Collect Data
 
-### Metrics data (always available)
+### Metrics data (from runs.log)
 
-Read `~/.zuvo/context-metrics.log`:
+Read `~/.zuvo/runs.log` — the single source of truth for all skill run data:
 
 ```bash
-METRICS_LOG="$HOME/.zuvo/context-metrics.log"
+RUNS_LOG="$HOME/.zuvo/runs.log"
 ```
 
-If the file doesn't exist or has <3 entries: print "Not enough data yet. Run a few zuvo skills first — metrics are collected automatically after each skill run." and exit.
+Filter entries that have INCLUDES data (field 12 contains `:`). These are v3+ entries with `name:bytes` format.
 
-Parse TSV fields: `DATE, SKILL, PROJECT, INCLUDES_COUNT, INCLUDES_BYTES, INCLUDES, TIER`
+```bash
+# Extract v3 entries (field 12 has name:bytes pairs)
+awk -F'\t' 'NF>=12 && $12 ~ /:/' "$RUNS_LOG"
+```
 
-Also read `~/.zuvo/runs.log` for skill invocation context (field 12 INCLUDES if available).
+If fewer than 3 entries with INCLUDES data: print "Not enough data yet. Run a few zuvo skills first — the `track-includes.sh` hook captures include sizes automatically." and exit.
+
+Parse field 12 as `name:bytes|name:bytes` pairs. Calculate per-include sizes and cumulative costs directly from this field. No separate metrics file needed.
 
 ### /context data (--full mode only)
 
@@ -299,4 +304,4 @@ Run: <ISO-8601-Z>	context-audit	<project>	-	-	<VERDICT>	-	<mode>	<NOTES>	<BRANCH
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 
-Context metrics are collected automatically by the `post-skill-metrics.sh` hook — no manual bash call needed.
+Include sizes are captured automatically by the `track-includes.sh` PostToolUse hook and written to runs.log field 12 as `name:bytes` pairs. No separate metrics file or manual collection needed.

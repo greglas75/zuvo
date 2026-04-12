@@ -63,10 +63,16 @@ DATE\tSKILL\tPROJECT\tCQ_SCORE\tQ_SCORE\tVERDICT\tTASKS\tDURATION\tNOTES\tBRANCH
 | 9 | NOTES | One-line summary, max 80 chars, no tabs | `added user export CSV` |
 | 10 | BRANCH | Current git branch (see Field Resolution) | `main` |
 | 11 | HEAD_SHA7 | Short commit hash (see Field Resolution) | `a3f7b2c` |
-| 12 | INCLUDES | Pipe-separated list of loaded includes/rules (without `.md` suffix), or `-` | `env-compat\|cq-patterns\|testing` |
+| 12 | INCLUDES | Pipe-separated list of loaded includes/rules as `name:bytes`, or `-` | `env-compat:1538\|cq-patterns:27396` |
 | 13 | TIER | Classification tier used by the skill, or `-` | `STANDARD` |
 
-**Field 12 — INCLUDES:** List every `shared/includes/*.md` and `rules/*.md` file that was actually Read during this skill run. Use basenames without `.md`, separated by `|`. Order does not matter. If no includes were loaded, use `-`.
+**Field 12 — INCLUDES:** List every `shared/includes/*.md` and `rules/*.md` file that was actually Read during this skill run. Format: `name:bytes` pairs separated by `|`. The `track-includes.sh` PostToolUse hook automatically captures these with exact file sizes. To get the list, run:
+
+```bash
+INCLUDES=$(sort -t: -k1,1 -u /tmp/zuvo-includes-*.txt 2>/dev/null | paste -sd'|' - || echo "-")
+```
+
+If the hook file doesn't exist (e.g., Codex/Cursor without hooks), fall back to manually listing includes as `name:0` (size unknown). If no includes were loaded, use `-`.
 
 **Field 13 — TIER:** The classification tier the skill resolved to. Common values: `LIGHT`, `STANDARD`, `DEEP`, `NANO`, `HEAVY`, `COMPONENT`, `THIN`, `COMPLEX`. If the skill does not use tiering, use `-`.
 
@@ -89,7 +95,7 @@ Feature: user export to CSV
 Tier: STANDARD | Files: 3 created + 2 modified
 CQ: 22/28 | Q: 15/19
 Verdict: PASS
-Run: 2026-04-05T14:30:00Z	build	zuvo-plugin	22/28	15/19	PASS	4	standard	user export CSV	main	a3f7b2c	env-compat|codesift-setup|cq-patterns|testing|code-contract|quality-gates	STANDARD
+Run: 2026-04-05T14:30:00Z	build	zuvo-plugin	22/28	15/19	PASS	4	standard	user export CSV	main	a3f7b2c	env-compat:1538|codesift-setup:1582|cq-patterns:27396|testing:21723|code-contract:5916|quality-gates:7722	STANDARD
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved above.
 ```
@@ -99,7 +105,7 @@ After printing this block, append the `Run:` line value (without the `Run: ` pre
 Audits don't produce tasks — **TASKS field must be `-`**, not omitted. Never merge TASKS into DURATION.
 
 ```
-Run: 2026-04-11T14:00:00Z	db-audit	tgm-survey-platform	0-critical	14-total	WARN	-	13-dimensions	delta refresh partial M1 fix	chore/audit-fixes	cc12109	codesift-setup|env-compat|cq-patterns|quality-gates|knowledge-prime	-
+Run: 2026-04-11T14:00:00Z	db-audit	tgm-survey-platform	0-critical	14-total	WARN	-	13-dimensions	delta refresh partial M1 fix	chore/audit-fixes	cc12109	codesift-setup:1582|env-compat:1538|cq-patterns:27396|quality-gates:7722|knowledge-prime:6396	-
 ```
 
 Field-by-field (tab-separated):

@@ -32,11 +32,6 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/post-skill-adversarial-check.sh\"",
             "async": false
-          },
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/post-skill-metrics.sh\"",
-            "async": true
           }
         ]
       },

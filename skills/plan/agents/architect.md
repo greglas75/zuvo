@@ -31,8 +31,9 @@ Read the spec thoroughly before starting analysis. Identify the key components, 
 Follow the CodeSift setup procedure:
 
 1. Check whether CodeSift tools are available in the current environment
-2. If found, `list_repos()` — get the repo identifier
-3. If not found, fall back to Grep/Read/Glob for all analysis below
+2. In single-repo work, let the repo auto-resolve from CWD. Do NOT call `list_repos()` unless the orchestrator explicitly says this is multi-repo
+3. If unsure whether the repo is indexed, use `index_status()` and `index_folder(path=<project_root>)` once if needed
+4. If not found, fall back to Grep/Read/Glob for all analysis below
 
 All CodeSift calls in this agent should stay within a combined token budget of 5000.
 
@@ -97,19 +98,17 @@ Run this for up to 3 key entry points. Choose the ones most relevant to the spec
 **Without CodeSift:**
 Skip this analysis. Note in your report that call chain tracing was unavailable.
 
-### 4. Impact Assessment
+### 4. Blast-Radius Assessment
 
 Determine what existing code will be affected by the changes described in the spec.
 
 **With CodeSift:**
 ```
-impact_analysis(repo, since="HEAD~3")
+find_references(symbol_names=[<up to 5 key existing symbols from the spec or prior analysis>])
+trace_route(path="<route_from_spec>")
 ```
 
-If the spec references specific files or symbols, also run:
-```
-find_references(repo, "<key_symbol_name>")
-```
+Use `trace_route()` only when the spec names a concrete HTTP path. Planned work is not a git diff, so do NOT use `impact_analysis(repo, since="HEAD~3")` here.
 
 **Without CodeSift:**
 ```

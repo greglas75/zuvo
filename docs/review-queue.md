@@ -366,3 +366,7 @@ Commits pending review. Auto-managed:
 - 3662d38 (2026-04-12) release: v1.3.78 — fix: adversarial-review --files parsing bug — grep newline false positive caused both files to merge into one path, breaking all external providers
 - 04ef086 (2026-04-12) release: v1.3.79 — feat: context-audit skill + auto metrics collection — include loading trends, heaviest runs, week-over-week delta, baseline snapshots
 - fbf76bc (2026-04-12) release: v1.3.80 — fix: context-audit Codex build — remove ~/.claude/ path reference
+- 7e857f2 (2026-04-12) release: v1.3.81 — feat: fully automatic context metrics — PostToolUse/Skill hook replaces model-driven collection, zero token cost
+- 1c370cf (2026-04-12) strengthen write-tests review guardrails
+- 4e14784 (2026-04-12) Tighten brainstorm review and approval flow
+- d5eb1ed (2026-04-12) review: add CLS and test-utility audit guidance
