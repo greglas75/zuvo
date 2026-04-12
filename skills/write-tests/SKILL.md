@@ -460,7 +460,10 @@ Thin delegators and wrappers are audited on forwarding contract only. Do NOT dem
 | `FIX` on pass 1 | Block Step 4; patch tests and rerun once | `fix:<n>` | Resume at Step 3.5 |
 | `REWRITE` on pass 1 | Block Step 4; rewrite from Step 2, then rerun Step 3 + 3.5 once | `rewrite` | Resume at Step 2 |
 | `FIX` or `REWRITE` on pass 2 | Do NOT run Step 4; mark file `FAILED` and set `Adversarial=blocked` | `fix:<n>` or `rewrite` | Skip after backlog persistence |
-| Strict audit unavailable or inputs unreadable | Do NOT run Step 4; mark file `FAILED` and set `Adversarial=blocked` | `skipped` | Skip after backlog persistence |
+| Wrapper timeout, missing script, or non-zero exit without validated block | Do NOT run Step 4; mark file `BLOCKED_INFRA` (not `FAILED` — tests may be fine, infrastructure is the issue) | `skipped` + `Failure Cause=blind-audit-timeout` or `blind-audit-invalid` | Skip after backlog persistence |
+| Strict audit unavailable or inputs unreadable | Do NOT run Step 4; mark file `BLOCKED_INFRA` and set `Adversarial=blocked` | `skipped` | Skip after backlog persistence |
+
+**Freshness guard:** Before each blind-audit pass, compute `sha256` of both production and test files. A blind-audit result is valid ONLY for the exact file pair it was run against. If either file is edited after a pass, all prior blind-audit results become INVALID — do not reuse an earlier CLEAN for a newer file pair. Only the latest validated pass for the current hashes may unlock Step 4.
 
 Emit the exact table schema from `blind-coverage-audit.md`. Summary-only prose is not enough.
 
@@ -490,6 +493,12 @@ Run adversarial passes sequentially, one RANDOM provider per pass (`--rotate`). 
 | COMPLEX | 2 + optional 3rd | Extra pass ONLY IF pass 2 found CRITICAL with high confidence |
 
 Agent data shows passes 3-4 yield 0 new findings and cost ~60K tokens. 99% of value is in first 2 passes.
+
+**Production bug hard block:** If any adversarial finding is a high-confidence production bug (not a test gap) and the strongest honest regression test would be RED against current production code:
+- Backlog the bug with file:line and provider citation
+- Mark the file `FAILED` with `Adversarial=blocked:prod-bug`
+- Stop the write-tests run for this file and hand off to `zuvo:build` or `zuvo:debug`
+- Do NOT close the file as PASS or WARN while that production bug remains unfixed
 
 **Input: production + test file** (not just diff). Reviewer needs to see what's being tested to find gaps:
 
