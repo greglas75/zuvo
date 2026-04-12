@@ -361,3 +361,5 @@ Commits pending review. Auto-managed:
 - e096b03 (2026-04-12) wire blind audit routing into write-tests
 - db3a3e7 (2026-04-12) fix cursor reviewer lane replacement in skill output
 - 6065dfe (2026-04-12) add reviewer routing execution plan docs
+- 27a9928 (2026-04-12) release: v1.3.77 — feat: blind audit reviewer model routing — cross-model validation in write-tests, platform-aware lane resolver
+- bede8f8 (2026-04-12) add adversarial fallback reviewers for write-tests

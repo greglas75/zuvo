@@ -119,7 +119,7 @@ collect_input() {
       # try joining it with the next token (greedy path reconstruction).
       local file_list=""
       local raw_files="$FILES"
-      if printf '%s' "$raw_files" | grep -q $'\n'; then
+      if [[ "$raw_files" == *$'\n'* ]]; then
         # Newline-separated — safe, preserves spaces in paths
         file_list="$raw_files"
       else
@@ -750,7 +750,8 @@ cleanup() {
   wait 2>/dev/null
   rm -rf "$JSON_TMPDIR"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'cleanup; exit 124' INT TERM
 
 if [[ "$MULTI_MODE" == "multi" ]]; then
   # ── PARALLEL: launch providers directly (no run_provider wrapper) ──
@@ -807,7 +808,7 @@ else
     if [[ -n "$RESULT" ]]; then
       PROVIDER_COUNT=$((PROVIDER_COUNT + 1))
       PROVIDERS_USED="$p"
-      echo "$RESULT" > "$JSON_TMPDIR/result_${p}.txt"
+      [[ -d "$JSON_TMPDIR" ]] && echo "$RESULT" > "$JSON_TMPDIR/result_${p}.txt"
       ALL_RESULTS="$RESULT"
       break
     else
