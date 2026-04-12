@@ -354,3 +354,9 @@ Commits pending review. Auto-managed:
 - 5d1e987 (2026-04-12) release: v1.3.74 — fix: db-audit force full mode + delta verification checklist + lazy retrospective load — prevent prior-audit anchoring bias
 - dd5b7f6 (2026-04-12) release: v1.3.75 — feat: db-audit detection refinements — managed DB providers (Neon/Supabase/PlanetScale), await-in-loop noise filter, PARTIAL/PLANNED status, severity downgrade evidence rule
 - 25b997f (2026-04-12) fix: retrospective enums — expand FRICTION_CATEGORY + TURNS_WASTED
+- 0d35572 (2026-04-12) release: v1.3.76 — fix: retrospective enums expanded — skill-overhead, missing-pattern, etc
+- 8e680ad (2026-04-12) add reviewer model routing resolver
+- c3694c5 (2026-04-12) add blind audit reviewer lanes
+- d23fabb (2026-04-12) map reviewer lanes in platform builds
+- e096b03 (2026-04-12) wire blind audit routing into write-tests
+- db3a3e7 (2026-04-12) fix cursor reviewer lane replacement in skill output
