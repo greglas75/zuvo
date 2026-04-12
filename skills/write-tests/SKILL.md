@@ -643,6 +643,21 @@ Append `Run:` line to log file per `run-logger.md`.
 
 Run one final full-suite validation, or explicitly scope the final failure count to touched test files only before printing `new in scope: 0`.
 
+**Completion gate checklist — print BEFORE the WRITE-TESTS COMPLETE block:**
+
+```
+COMPLETION GATE CHECK
+[ ] Step 2: Test file written with Write tool (not sequential Edit)
+[ ] Step 3: Q-score self-eval printed with per-gate evidence (Q7,Q11,Q13,Q15,Q17)
+[ ] Step 3.5: Blind audit ran (result: clean:strict|clean:degraded|skipped|blocked_infra)
+[ ] Step 4: Adversarial review ran (result: clean|Nfindings|skipped|blocked|not_run)
+[ ] Step 5: coverage.md row has Status + Blind Audit + Adversarial columns filled
+[ ] Step 5: backlog.md updated if any unfixed findings
+[ ] Final test run: all tests pass (N/N)
+```
+
+If ANY checkbox is `[ ]` (not done), you MUST go back and complete that step before printing WRITE-TESTS COMPLETE. After context compaction/resume, re-read this checklist and verify each step against actual tool outputs in the current window — not from memory or compaction summary.
+
 **Do NOT print WRITE-TESTS COMPLETE if any file is missing `Status`, `Blind Audit`, or `Adversarial` in coverage.md.**
 
 ---
