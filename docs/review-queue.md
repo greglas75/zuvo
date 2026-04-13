@@ -389,3 +389,4 @@ Commits pending review. Auto-managed:
 - 3d81f99 (2026-04-13) install: clean duplicate Cursor skills AND agents when Claude Code cache exists
 - 59d2741 (2026-04-13) release: v1.3.91 — v1.3.91 Cursor agent dedup
 - 4af6005 (2026-04-13) feat: defer non-essential includes in brainstorm, plan, execute
+- de705f6 (2026-04-13) docs: update review queue
