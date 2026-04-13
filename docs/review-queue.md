@@ -385,3 +385,5 @@ Commits pending review. Auto-managed:
 - 9912fa2 (2026-04-12) install: clean duplicate Cursor skills when Claude Code cache exists
 - f345aaa (2026-04-12) release: v1.3.89 — v1.3.89 Cursor dedup fix
 - 82ed6ab (2026-04-12) feat: add completion gate checks to 21 skills
+- b3a2b2e (2026-04-12) release: v1.3.90 — feat: completion gate checks in 21 skills — prevent agents from skipping late-pipeline steps
+- 3d81f99 (2026-04-13) install: clean duplicate Cursor skills AND agents when Claude Code cache exists
