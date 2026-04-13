@@ -51,7 +51,7 @@ Check if a plan already exists:
 
 ## Mandatory File Loading
 
-Before starting work, read each file below using the Read tool. Print the checklist with status. Do not proceed from memory.
+### Phase 0 — Bootstrap (load before any work)
 
 ```
 CORE FILES LOADED:
@@ -59,13 +59,13 @@ CORE FILES LOADED:
   2. ../../shared/includes/env-compat.md       -- READ/MISSING
   3. ../../shared/includes/quality-gates.md    -- READ/MISSING
   4. ../../shared/includes/tdd-protocol.md     -- READ/MISSING
-  5. ../../shared/includes/run-logger.md       -- READ/MISSING
-  6. ../../shared/includes/retrospective.md    -- READ/MISSING
-  7. ../../shared/includes/session-state.md    -- READ/MISSING
-  8. ../../rules/file-limits.md                -- READ/MISSING
+  5. ../../shared/includes/session-state.md    -- READ/MISSING
+  6. ../../rules/file-limits.md                -- READ/MISSING
+  7. ../../shared/includes/run-logger.md       -- DEFERRED (completion)
+  8. ../../shared/includes/retrospective.md    -- DEFERRED (completion)
 ```
 
-Resolve these paths relative to the currently loaded `skills/plan/SKILL.md`. If a relative read fails, mark that file as `MISSING` for this run; do not silently substitute a different plugin version.
+Resolve these paths relative to the currently loaded `skills/plan/SKILL.md`. If a Phase 0 file read fails, mark it as `MISSING`. Deferred files are loaded when their phase begins, not at startup.
 
 **If 1-2 files missing:** Proceed in degraded mode. Note which files are unavailable in the final output.
 **If 3+ files missing:** Stop. The plugin installation is incomplete.

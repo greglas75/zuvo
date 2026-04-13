@@ -44,7 +44,7 @@ The checkpoint markers and gate markers ensure role separation even within a sin
 
 ## Mandatory File Loading
 
-Before starting work, read each file below using the Read tool. Print the checklist with status. Do not proceed from memory.
+### Phase 0 — Bootstrap (load before any work)
 
 ```
 CORE FILES LOADED:
@@ -53,13 +53,13 @@ CORE FILES LOADED:
   3. ../../shared/includes/quality-gates.md          -- READ/MISSING
   4. ../../shared/includes/verification-protocol.md  -- READ/MISSING
   5. ../../shared/includes/tdd-protocol.md           -- READ/MISSING
-  6. ../../shared/includes/code-contract.md          -- READ/MISSING
-  7. ../../shared/includes/test-contract.md          -- READ/MISSING
-  8. ../../shared/includes/run-logger.md             -- READ/MISSING
-  9. ../../shared/includes/knowledge-prime.md        -- READ/MISSING
- 10. ../../shared/includes/knowledge-curate.md       -- READ/MISSING
- 11. ../../shared/includes/session-state.md          -- READ/MISSING
- 12. ../../shared/includes/retrospective.md          -- RETRO PROTOCOL
+  6. ../../shared/includes/session-state.md          -- READ/MISSING
+  7. ../../shared/includes/code-contract.md          -- DEFERRED (task dispatch)
+  8. ../../shared/includes/test-contract.md          -- DEFERRED (task dispatch)
+  9. ../../shared/includes/knowledge-prime.md        -- DEFERRED (task dispatch)
+ 10. ../../shared/includes/knowledge-curate.md       -- DEFERRED (completion)
+ 11. ../../shared/includes/run-logger.md             -- DEFERRED (completion)
+ 12. ../../shared/includes/retrospective.md          -- DEFERRED (completion)
 ```
 
 

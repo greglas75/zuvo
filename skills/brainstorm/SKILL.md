@@ -17,13 +17,16 @@ Understand the problem thoroughly. Design a solution collaboratively. Write a sp
 
 ## Mandatory File Loading
 
-Before starting any work, read these files and confirm they loaded:
+### Phase 0 — Bootstrap (load before any work)
 
 1. `../../shared/includes/codesift-setup.md` -- CodeSift discovery and initialization
 2. `../../shared/includes/env-compat.md` -- Agent dispatch patterns per environment
-3. `../../rules/cq-patterns.md` -- NEVER/ALWAYS code pairs (informs design decisions)
-4. `../../shared/includes/run-logger.md` -- Run logging protocol
-5. `../../shared/includes/retrospective.md` -- Retrospective protocol
+
+### Deferred — Load when needed (NOT at startup)
+
+3. `../../rules/cq-patterns.md` -- Load at Phase 3 (design decisions), NOT at Phase 0
+4. `../../shared/includes/run-logger.md` -- Load at completion only
+5. `../../shared/includes/retrospective.md` -- Load at completion only
 
 Print the checklist:
 
@@ -31,12 +34,12 @@ Print the checklist:
 CORE FILES LOADED:
   1. codesift-setup.md   -- READ
   2. env-compat.md       -- READ
-  3. cq-patterns.md      -- READ
-  4. run-logger.md       -- READ
-  5. retrospective.md       -- READ
+  3. cq-patterns.md      -- DEFERRED (Phase 3)
+  4. run-logger.md       -- DEFERRED (completion)
+  5. retrospective.md    -- DEFERRED (completion)
 ```
 
-If any required file is missing, STOP. Do not proceed from memory.
+If a Phase 0 file is missing, STOP. Deferred files are loaded when their phase begins.
 
 ## Interaction Modes
 
