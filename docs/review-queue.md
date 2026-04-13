@@ -387,3 +387,5 @@ Commits pending review. Auto-managed:
 - 82ed6ab (2026-04-12) feat: add completion gate checks to 21 skills
 - b3a2b2e (2026-04-12) release: v1.3.90 — feat: completion gate checks in 21 skills — prevent agents from skipping late-pipeline steps
 - 3d81f99 (2026-04-13) install: clean duplicate Cursor skills AND agents when Claude Code cache exists
+- 59d2741 (2026-04-13) release: v1.3.91 — v1.3.91 Cursor agent dedup
+- 4af6005 (2026-04-13) feat: defer non-essential includes in brainstorm, plan, execute
