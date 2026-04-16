@@ -25,14 +25,21 @@ Answer: **Does this article read like it was written by a human expert, or does 
 
 You receive from the orchestrator:
 - **Draft file path:** The article draft to review
-- **Banned vocabulary file:** `../../shared/includes/banned-vocabulary.md`
+- **Banned vocabulary core:** `../../shared/includes/banned-vocabulary/core.md`
+- **Active language file:** `../../shared/includes/banned-vocabulary/languages/<resolved-lang>.md`
 - **Tone setting:** The active `--tone` value
 - **Fact sheet:** The research fact sheet from Phase 1
 - **Language:** Target language
 
-## Mandatory: Read banned-vocabulary.md FIRST
+## Mandatory: Read core + language file FIRST
 
-Before reviewing ANY text, read `../../../shared/includes/banned-vocabulary.md` in full. Load the hard ban list and soft ban list for the active language. Load the tone matrix to determine soft ban severity.
+Before reviewing ANY text:
+
+1. Read `../../../shared/includes/banned-vocabulary/core.md`
+2. Read `../../../shared/includes/banned-vocabulary/languages/<resolved-lang>.md`
+3. If the language file is unavailable, read `../../../shared/includes/banned-vocabulary/languages/en.md` and note the fallback
+
+Load the hard ban list and soft ban list for the active language. Load the tone matrix and G12 rules from `core.md`.
 
 ## Review Checklist
 
@@ -47,7 +54,7 @@ CRITICAL: Hard-banned word "[word]" found at line [N]: "[surrounding sentence]"
 
 ### 2. Soft-Banned Vocabulary (severity per tone)
 
-Scan for soft-banned words. Severity determined by tone matrix in banned-vocabulary.md.
+Scan for soft-banned words. Severity determined by the tone matrix in `core.md`.
 
 Report format:
 ```
@@ -90,7 +97,7 @@ WARNING: Domain sensitivity — [domain] topic with [tone] tone. Review for accu
 
 ### 6. G12 Anti-Pattern Check
 
-Scan for throat-clearing openers after H2/H3 headings (from `banned-vocabulary.md` G12 section). First sentence after a heading must be the answer/point, not a windup. Flag generic superlatives without verifiable source ("best", "leading", "#1" — OK only with attribution). Check keyword density: same phrase max 3x per 500 words.
+Scan for throat-clearing openers after H2/H3 headings (from `banned-vocabulary/core.md` G12 section). First sentence after a heading must be the answer/point, not a windup. Flag generic superlatives without verifiable source ("best", "leading", "#1" — OK only with attribution). Check keyword density: same phrase max 3x per 500 words.
 
 ### 7. BLUF Compliance (G9)
 
@@ -103,6 +110,14 @@ Flag any section with >300 words between headings. Long sections hurt AI snippet
 ### 9. Citation Compliance (G11)
 
 Every statistic, percentage, or factual claim must carry source attribution and year reference. "55% of homepages" without "[WebAIM, 2025]" → WARNING. Claims from the fact sheet must retain their source in the draft.
+
+- Flag source-heavy prose when attribution overwhelms readability or turns the article into a research log.
+- Flag repeated full institution/source names when the same name appears more than once in one section or more than 3 times in the body outside a compact `## Źródła` block, unless the section is explicitly comparing sources.
+- Flag long appendix-style sections such as `Źródła wykorzystane przy aktualizacji...` if they read like process output rather than editorial content.
+- Flag missing visible `## Źródła` section when the article is a standard public-facing article and project conventions do not explicitly forbid public sources.
+- Flag `## Źródła` sections that are not grouped even though the same institution/source family appears in multiple bullets.
+- Flag narrative filler when a paragraph mostly scene-sets or smooths the tone without adding practical, factual, or structural value. Existing article families often score better when depth is added through concrete sections rather than glossy intro prose.
+- For practical/service-intent articles, flag a missing `## W skrócie` block after the lead when the article would benefit from a 10-second answer summary.
 
 ## Output Format
 

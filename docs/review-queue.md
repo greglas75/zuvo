@@ -390,3 +390,4 @@ Commits pending review. Auto-managed:
 - 59d2741 (2026-04-13) release: v1.3.91 — v1.3.91 Cursor agent dedup
 - 4af6005 (2026-04-13) feat: defer non-essential includes in brainstorm, plan, execute
 - de705f6 (2026-04-13) docs: update review queue
+- 3867c0d (2026-04-13) release: v1.3.92 — v1.3.92 deferred includes + all fixes

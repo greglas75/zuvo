@@ -16,7 +16,8 @@ Read and follow the agent preamble at `../../../shared/includes/agent-preamble.m
 ## Mandatory: Read These First
 
 1. `../../../shared/includes/prose-quality-registry.md` — PQ1-PQ18 check definitions, scoring, dimension weights
-2. `../../../shared/includes/banned-vocabulary.md` — hard/soft ban lists for PQ15-PQ17
+2. `../../../shared/includes/banned-vocabulary/core.md` — shared anti-slop rules, tone matrix, G12
+3. `../../../shared/includes/banned-vocabulary/languages/<resolved-lang>.md` — active hard/soft ban lists for PQ15-PQ17; fallback `en`
 
 ## Your Mission
 

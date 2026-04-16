@@ -22,7 +22,7 @@ Take an existing article, research the topic, add what's missing, and optimize t
 
 1. `../../shared/includes/env-compat.md` -- Agent dispatch
 2. `../../shared/includes/run-logger.md` -- Run logging
-3. `../../shared/includes/banned-vocabulary.md` -- Anti-slop + G12 anti-patterns
+3. `../../shared/includes/banned-vocabulary/core.md` -- Shared anti-slop rules, tone matrix, G12, fallback behavior
 4. `../../shared/includes/humanization-rules.md` -- Writing constraints + voice matching
 5. `../../shared/includes/domain-profile-registry.md` -- 17 niche profiles
 6. `../../shared/includes/seo-page-profile-registry.md` -- SEO profiles
@@ -34,7 +34,7 @@ Take an existing article, research the topic, add what's missing, and optimize t
 9. `../../shared/includes/article-output-schema.md` -- JSON output
 10. `../../shared/includes/retrospective.md` -- RETRO PROTOCOL
 
-Print `CORE FILES LOADED:` for items 1-6. Lazy items loaded inline when needed.
+Print `CORE FILES LOADED:` for items 1-6. After language detection, print `LANGUAGE FILE:` with the resolved banned-vocabulary language file and whether English fallback was used. Lazy items loaded inline when needed.
 
 ## Safety Gates
 
@@ -72,6 +72,7 @@ Allowed: input file, `<file>.content-expand-backup`, `audit-results/`. FORBIDDEN
 2. Parse frontmatter. Mark mutable fields (`title`, `description`, `keywords`, `author`). All others immutable.
 3. Extract protected regions: fenced code blocks, MDX components. Store with position markers.
 4. Language detection: `--lang` → frontmatter → content analysis → fallback structural-only.
+5. Resolve the active language file from `../../shared/includes/banned-vocabulary/languages/` using the normalized base code. If missing: load `en.md` and emit `WARNING: banned-vocabulary fallback -> en`.
 
 ### 0.2 Domain Detection
 
@@ -152,7 +153,34 @@ For ALL new content, apply `humanization-rules.md` constraints:
 - Entity grounding (specific versions, dates, names from research)
 - Voice matching if profile available — match the existing article's voice, not your default
 - No throat-clearing (G12), BLUF per section (G9), max 300 words/section (G6)
-- Stats with attribution + year (G11)
+- Stats and volatile practical facts must remain traceable to the fact sheet (G11)
+- Do not build paragraph rhythm around repeated source lead-ins such as `Według X (2025)`
+- Use a hard source-name budget: the same full institution/source name should appear no more than once per section and no more than 3 times in the whole article body, excluding a compact `## Źródła` section
+- Use `(odczyt: miesiąc rok)` only for volatile practical facts, not for stable historical description
+- Do not append a process-heavy research appendix such as `Źródła wykorzystane przy aktualizacji`
+- End public articles with a compact `## Źródła` section unless the host project explicitly forbids visible sources
+- In `## Źródła`, keep 3-6 grouped bullets max: source title + link only
+- Group repeated institutions into one bullet whenever possible, e.g. `- **APSARA National Authority:** [Temple page](...), [Restoration update](...)`
+- Do not add filler closers like `## Na koniec` if they only restate the article
+- Prefer practical expansion blocks (specific H2s, lists, route notes, local comparisons, FAQ at the end) over replacing the opening with smoother narrative prose
+- For practical/service-intent articles, add or preserve a short `## W skrócie` block immediately after the italic lead and before the first image or H2. Keep 3-5 bullets max.
+
+Use these exact output shapes when applicable:
+
+```md
+## W skrócie
+- [Najważniejsza decyzja / odpowiedź]
+- [Najważniejszy wymóg / koszt / limit]
+- [Najważniejsza opcja / wyjątek]
+- [Najważniejszy warunek praktyczny]
+```
+
+```md
+## Źródła
+- **[Instytucja / grupa źródeł]:** [Tytuł 1](...), [Tytuł 2](...)
+- **[Instytucja / grupa źródeł]:** [Tytuł 3](...)
+- **[Instytucja / grupa źródeł]:** [Tytuł 4](...)
+```
 
 ### 2.3 Internal Links
 
@@ -163,14 +191,15 @@ Insert 2-5 contextual internal links from Phase 0 candidates. Validate each via 
 Read `domain-profile-registry.md` for niche-appropriate schema:
 - Detect existing `@type`. If specific (Recipe, HowTo, Event) → preserve and merge. If BlogPosting only → upgrade per niche.
 - FAQ: if article now has Q&A content + niche allows FAQ → add FAQPage schema.
-- OG tags: ensure `og:title`, `og:description`, `og:type`, `og:image` in frontmatter.
-- **dateModified / modifiedDate / updatedDate:** Find the existing modification date field in frontmatter (common names: `modifiedDate`, `updatedDate`, `dateModified`, `lastmod`, `updated`). Update it to today's date. If no such field exists, add `modifiedDate: YYYY-MM-DD`. Never touch `publishDate` / `date` / `publishedDate` — that's the original publication date.
+- Inspect the local content schema/config before mutating frontmatter. Treat the schema as the source of truth for allowed fields.
+- OG tags: write `og:title`, `og:description`, `og:type`, `og:image` only if those fields are clearly accepted by the local schema. If not, inherit layout-level OG behavior and record `OG: inherited-from-layout`.
+- **dateModified / modifiedDate / updatedDate:** Find the exact modification-date field already accepted by the collection schema (common names: `modifiedDate`, `updatedDate`, `dateModified`, `lastmod`, `updated`) and update that field. If no such field exists and schema support is unclear, do not invent `modifiedDate`; leave frontmatter unchanged and record `Date field: unchanged (schema-blocked)`. Never touch `publishDate` / `date` / `publishedDate` — that's the original publication date.
 - Meta title/description: only update if currently MISSING. Never rewrite existing meta that the author wrote.
 
 ### 2.5 Anti-slop Review
 
 Run anti-slop check on expanded content (same as write-article Phase 4):
-- Hard/soft banned vocabulary per `banned-vocabulary.md` + `--tone`
+- Hard/soft banned vocabulary per `banned-vocabulary/core.md` + active language file + `--tone`
 - G12 anti-patterns (throat-clearing, superlatives, keyword density)
 - BLUF compliance (G9), chunkability (G6), citation compliance (G11)
 - Dispatch anti-slop-reviewer agent (read `../../skills/write-article/agents/anti-slop-reviewer.md`) for all articles regardless of length.
@@ -183,7 +212,7 @@ Score expanded article (same 6 dimensions). If ANY dimension regressed → rever
 
 ### 2.7 Adversarial Review
 
-Load `adversarial-loop-docs.md` now. Run: `adversarial-review --mode article --files "<temp-file>"` (fallback: `--mode audit` + WARNING). CRITICAL → fix. WARNING → fix if localized.
+Load `adversarial-loop-docs.md` now. Run: `adversarial-review --json --mode article --files "<temp-file>"` (fallback: `--json --mode audit` + WARNING). CRITICAL → fix. WARNING → fix if localized. If the script returns `status: "timeout"` or exits `124`, record `Adversarial review: skipped (timeout)` and continue without blocking the article.
 
 ### 2.8 Replace Original
 
@@ -204,7 +233,7 @@ Score: [before]/100 ([tier]) → [after]/100 ([tier])
 Domain: [niche] | Schema: [type(s)]
 Sections added: [N] | Sections expanded: [N]
 Internal links: [N] added ([N] verified)
-FAQ: [N items | none] | OG: [present]
+FAQ: [N items | none] | OG: [present | inherited-from-layout | schema-blocked]
 Voice: [matched | default] | Research: [N facts used | skipped | limited]
 
 Run: <ISO-8601-Z>	content-expand	<project>	-	-	<VERDICT>	<TASKS>	3-phase	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>

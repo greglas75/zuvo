@@ -136,3 +136,8 @@ Each mode has its own definition of CRITICAL/WARNING/INFO. The adversarial-revie
 If no provider is available: output `Adversarial review: skipped (no provider available)` and proceed. Do NOT block skill completion.
 
 If provider returns empty: output `Adversarial review: skipped (provider returned empty)` and proceed with other provider's results.
+
+If the script times out after provider launch:
+- text mode: output `Adversarial review: skipped (timeout)` and continue
+- `--json` mode: return a compact object with `status: "timeout"` and `findings: []`
+- exit code should be `124` so callers can distinguish timeout from ordinary provider failure

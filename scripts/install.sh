@@ -634,6 +634,11 @@ else:
 VERSION=$(grep '"version"' "$ZUVO_DIR/package.json" | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
 echo "Installing zuvo v${VERSION} from $ZUVO_DIR"
 
+echo "Validating banned-vocabulary contracts..."
+"$ZUVO_DIR/scripts/validate-banned-vocabulary.sh"
+echo "Validating banned-vocabulary fixtures..."
+"$ZUVO_DIR/scripts/validate-banned-vocabulary-fixtures.sh"
+
 case "$TARGET" in
   claude) install_claude ;;
   codex)  install_codex ;;
