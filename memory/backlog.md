@@ -47,3 +47,7 @@ type: project
 ## 2026-04-17 zuvo:leads Task 5 (lead-validator agent)
 
 - [ ] B-leads-T5-warn-8: 8 WARNING-level adversarial findings on round 1 (test precision, edge cases in GDPR fallback, EU/EEA list not including UK, name-confidence heuristic subjectivity). Address in cleanup pass before v1 ship.
+
+## 2026-04-17 zuvo:leads Task 6 (SKILL.md orchestrator)
+
+- [ ] B-leads-T6-warn-7: 7 WARNING-level adversarial findings (pseudocode shell quoting, ``to_epoch`` undefined helper, greying-timing of checkpoint flushes, Unicode casefold subprocess spawning in Phase 5 loop not batched, etc.). Address in cleanup PR before v1 ship.
