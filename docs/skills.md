@@ -143,7 +143,8 @@ Scoped task execution for common development work.
 | Accessibility | 1 | a11y-audit |
 | Release | 5 | ship, deploy, canary, release-docs, retro |
 | Utility | 7 | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo |
-| **Total** | **51** | |
+| Lead Generation | 1 | leads |
+| **Total** | **52** | |
 
 ## Shared Infrastructure
 
