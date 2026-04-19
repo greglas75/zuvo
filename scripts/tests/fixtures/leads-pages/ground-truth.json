@@ -1,0 +1,139 @@
+{
+  "page-1.html": {
+    "expected_emails_verbatim": [
+      "person.one1@company1.test",
+      "person.two1@company1.test"
+    ],
+    "expected_record_count_min": 2
+  },
+  "page-10.html": {
+    "expected_emails_verbatim": [
+      "yuki.tanaka@company10.test",
+      "wei@company10.test",
+      "tu.nguyen@company10.test"
+    ],
+    "expected_record_count_min": 3
+  },
+  "page-11.html": {
+    "expected_emails_verbatim": [
+      "yuki.tanaka@company11.test",
+      "wei@company11.test",
+      "tu.nguyen@company11.test"
+    ],
+    "expected_record_count_min": 3
+  },
+  "page-12.html": {
+    "expected_emails_verbatim": [],
+    "expected_record_count_min": 0
+  },
+  "page-13.html": {
+    "expected_emails_verbatim": [
+      "marc.dubois@gmail.com",
+      "m.gonzalez@company13.test"
+    ],
+    "expected_record_count_min": 2
+  },
+  "page-14.html": {
+    "expected_emails_verbatim": [
+      "marc.dubois@gmail.com",
+      "m.gonzalez@company14.test"
+    ],
+    "expected_record_count_min": 2
+  },
+  "page-15.html": {
+    "expected_emails_verbatim": [
+      "marc.dubois@gmail.com",
+      "m.gonzalez@company15.test"
+    ],
+    "expected_record_count_min": 2
+  },
+  "page-16.html": {
+    "expected_emails_verbatim": [
+      "jane.smith@acme-saas.test",
+      "mark.j@acme-saas.test"
+    ],
+    "expected_record_count_min": 2
+  },
+  "page-17.html": {
+    "expected_emails_verbatim": [
+      "contact@beta-fintech.test",
+      "s.chen@beta-fintech.test",
+      "tom@beta-fintech.test"
+    ],
+    "expected_record_count_min": 3
+  },
+  "page-18.html": {
+    "expected_emails_verbatim": [
+      "lukasz.nowak@gamma-hr.test",
+      "elena@gamma-hr.test"
+    ],
+    "expected_record_count_min": 2
+  },
+  "page-19.html": {
+    "expected_emails_verbatim": [],
+    "expected_record_count_min": 0
+  },
+  "page-2.html": {
+    "expected_emails_verbatim": [
+      "person.one2@company2.test",
+      "person.two2@company2.test"
+    ],
+    "expected_record_count_min": 2
+  },
+  "page-20.html": {
+    "expected_emails_verbatim": [
+      "sales@epsilon.test",
+      "support@epsilon.test"
+    ],
+    "expected_record_count_min": 2
+  },
+  "page-3.html": {
+    "expected_emails_verbatim": [
+      "person.one3@company3.test",
+      "person.two3@company3.test"
+    ],
+    "expected_record_count_min": 2
+  },
+  "page-4.html": {
+    "expected_emails_verbatim": [
+      "person.one4@company4.test",
+      "person.two4@company4.test"
+    ],
+    "expected_record_count_min": 2
+  },
+  "page-5.html": {
+    "expected_emails_verbatim": [
+      "person.one5@company5.test",
+      "person.two5@company5.test"
+    ],
+    "expected_record_count_min": 2
+  },
+  "page-6.html": {
+    "expected_emails_verbatim": [
+      "alex.kim@company6.test",
+      "riya@company6.test"
+    ],
+    "expected_record_count_min": 2
+  },
+  "page-7.html": {
+    "expected_emails_verbatim": [
+      "alex.kim@company7.test",
+      "riya@company7.test"
+    ],
+    "expected_record_count_min": 2
+  },
+  "page-8.html": {
+    "expected_emails_verbatim": [
+      "info@company8.test",
+      "careers@company8.test"
+    ],
+    "expected_record_count_min": 2
+  },
+  "page-9.html": {
+    "expected_emails_verbatim": [
+      "info@company9.test",
+      "careers@company9.test"
+    ],
+    "expected_record_count_min": 2
+  }
+}
