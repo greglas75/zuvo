@@ -9,3 +9,6 @@ dist/
 
 # zuvo review reports (local, not committed)
 memory/reviews/
+
+# zuvo:leads output (per-user lead lists; not committed)
+docs/leads/
