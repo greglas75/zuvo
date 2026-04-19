@@ -1,0 +1,17 @@
+{
+  "meta": {
+    "spec_id": "2026-04-17-zuvo-leads-1438",
+    "mode": "discovery",
+    "status": "complete",
+    "record_count": 7,
+    "smtp_available": false,
+    "gdpr_mode": "off"
+  },
+  "contacts_min_count": 7,
+  "contacts_with_email_min_count": 7,
+  "expected_record_types": {
+    "person": 5,
+    "role-address": 2
+  },
+  "notes": "Minimum expectations: 5 person records (Jane, Mark, Sarah, Tom, Łukasz, Elena → 6 actually; Delta has no extractable contact so omitted) plus role-addresses contact@beta-fintech.test, sales@epsilon.test, support@epsilon.test. Smoke test asserts contacts >=5 with email populated."
+}

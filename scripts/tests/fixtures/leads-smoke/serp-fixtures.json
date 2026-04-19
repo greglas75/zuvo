@@ -1,0 +1,12 @@
+{
+  "queries": [
+    {"q": "site:linkedin.com/in/ \"CTO\" \"US\"", "results": [
+      {"url": "https://linkedin.com/in/jane-smith-acme-saas", "title": "Jane Smith — CTO at Acme SaaS", "company_hint": "Acme SaaS", "domain_hint": "acme-saas.test"},
+      {"url": "https://linkedin.com/in/sarah-chen-beta-fintech", "title": "Sarah Chen — CTO at Beta Fintech", "company_hint": "Beta Fintech", "domain_hint": "beta-fintech.test"}
+    ]},
+    {"q": "\"saas\" company \"US\" \"about us\" \"team\"", "results": [
+      {"url": "https://acme-saas.test/team", "title": "Acme SaaS — Team", "domain_hint": "acme-saas.test"},
+      {"url": "https://gamma-hr.test/people", "title": "Gamma HR — People", "domain_hint": "gamma-hr.test"}
+    ]}
+  ]
+}
