@@ -413,3 +413,4 @@ Commits pending review. Auto-managed:
 - c9906b5 (2026-04-19) release: v1.3.94 — zuvo:leads skill + stale-SHA fix
 - a118b87 (2026-04-20) feat(review): grant CodeSift MCP tools to all 4 review agents
 - 647239d (2026-04-20) feat(skills): grant CodeSift MCP tools to 18 code-analysis agents
+- fc73d7b (2026-04-20) release: v1.3.95 — release v1.3.95 — zuvo:leads skill + banned-vocabulary updates + content-expand/write-article/performance-audit improvements

@@ -73,15 +73,16 @@ fi
 [[ $cleaned -gt 0 ]] && echo "  Removed $cleaned old toolkit items" || echo "  No old toolkit found"
 echo ""
 
-# ─── Install to Codex / Cursor / Antigravity ────────────────────
-
-bash "$ZUVO_DIR/scripts/install.sh"
-
-# ─── Claude Code: marketplace install/update ─────────────────────
+# ─── Claude Code: marketplace install/update (FIRST — creates cache dirs) ───
+#
+# Order matters: `claude plugin update` creates/recreates cache dirs based on
+# the current marketplace SHA. If install.sh runs first and wipes old dirs,
+# `claude plugin update` would just resurrect them. Running plugin update FIRST
+# means install.sh can then do the final sync + cleanup pass with authority.
 
 echo ""
 if command -v claude &>/dev/null; then
-  echo "Syncing Claude Code plugin..."
+  echo "Syncing Claude Code plugin (pre-install)..."
 
   # Ensure marketplace is registered
   claude plugin marketplace add greglas75/zuvo-marketplace 2>/dev/null || true
@@ -91,7 +92,7 @@ if command -v claude &>/dev/null; then
     echo "  ✓ Marketplace updated" || \
     echo "  ! Marketplace update failed (offline?)"
 
-  # Install or update the plugin
+  # Install or update the plugin (creates cache dirs from current SHA)
   if claude plugin update zuvo@zuvo-marketplace 2>/dev/null; then
     echo "  ✓ Claude Code plugin updated to v${VERSION}"
   else
@@ -106,6 +107,14 @@ else
   echo "    claude plugin marketplace add greglas75/zuvo-marketplace"
   echo "    claude plugin install zuvo"
 fi
+
+# ─── Install to Claude Code cache / Codex / Cursor / Antigravity ────────
+#
+# Runs AFTER `claude plugin update` so the final cache-cleanup pass in
+# install_claude_code() has the last word. Any cache dirs the plugin-update
+# step created for obsolete versions get wiped here.
+
+bash "$ZUVO_DIR/scripts/install.sh"
 
 echo ""
 echo "╔══════════════════════════════════════╗"
