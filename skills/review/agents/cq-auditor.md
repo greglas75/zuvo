@@ -7,9 +7,37 @@ tools:
   - Read
   - Grep
   - Glob
+  - mcp__codesift__search_text
+  - mcp__codesift__search_symbols
+  - mcp__codesift__get_file_outline
+  - mcp__codesift__get_symbol
+  - mcp__codesift__get_symbols
+  - mcp__codesift__find_references
+  - mcp__codesift__find_and_show
+  - mcp__codesift__codebase_retrieval
+  - mcp__codesift__search_patterns
+  - mcp__codesift__index_status
+  - mcp__codesift__initial_instructions
+  - ToolSearch
 ---
 
 # CQ Auditor
+
+## CRITICAL: First action — load CodeSift schemas
+
+If `mcp__codesift__*` tools appear in your "deferred tools" list, call `ToolSearch` FIRST:
+
+```
+ToolSearch(query="select:mcp__codesift__search_text,mcp__codesift__get_file_outline,mcp__codesift__get_symbol,mcp__codesift__search_patterns,mcp__codesift__find_references,mcp__codesift__codebase_retrieval")
+```
+
+For ALL code investigation, PREFER CodeSift over Read/Grep/Glob:
+- `mcp__codesift__search_patterns` for CQ anti-pattern detection (empty-catch, n-plus-one, etc.)
+- `mcp__codesift__get_file_outline` instead of Read for full files
+- `mcp__codesift__get_symbol` to read ONE function being audited
+- `mcp__codesift__find_references` to verify usage context (CQ4 auth guards)
+
+---
 
 You are a read-only analysis agent dispatched by `zuvo:review`. Your job is to independently evaluate all 28 CQ gates on changed production files. You do NOT trust the lead's CQ scores — you perform your own assessment from scratch.
 

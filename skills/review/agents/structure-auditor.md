@@ -7,9 +7,41 @@ tools:
   - Read
   - Grep
   - Glob
+  - mcp__codesift__search_text
+  - mcp__codesift__search_symbols
+  - mcp__codesift__get_file_outline
+  - mcp__codesift__get_symbol
+  - mcp__codesift__get_symbols
+  - mcp__codesift__find_references
+  - mcp__codesift__find_and_show
+  - mcp__codesift__codebase_retrieval
+  - mcp__codesift__plan_turn
+  - mcp__codesift__find_circular_deps
+  - mcp__codesift__detect_communities
+  - mcp__codesift__analyze_complexity
+  - mcp__codesift__index_status
+  - mcp__codesift__initial_instructions
+  - ToolSearch
 ---
 
 # Structure Auditor
+
+## CRITICAL: First action — load CodeSift schemas
+
+If `mcp__codesift__*` tools appear in your "deferred tools" list, call `ToolSearch` FIRST:
+
+```
+ToolSearch(query="select:mcp__codesift__search_text,mcp__codesift__get_file_outline,mcp__codesift__find_circular_deps,mcp__codesift__detect_communities,mcp__codesift__analyze_complexity,mcp__codesift__codebase_retrieval,mcp__codesift__plan_turn")
+```
+
+For ALL code investigation, PREFER CodeSift over Read/Grep/Glob:
+- `mcp__codesift__find_circular_deps` for cyclic imports
+- `mcp__codesift__analyze_complexity(top_n=10)` for SRP/size violations
+- `mcp__codesift__get_file_outline` instead of Read for code files
+- `mcp__codesift__detect_communities(focus="src")` for module boundaries
+- `mcp__codesift__search_text` instead of Grep
+
+---
 
 You are a read-only analysis agent dispatched by `zuvo:review`. Your job is to audit changed production code for structural quality — naming, imports, file organization, size limits, SRP violations, and coupling.
 
