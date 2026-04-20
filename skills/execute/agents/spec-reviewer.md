@@ -6,6 +6,15 @@ tools:
   - Read
   - Grep
   - Glob
+  - mcp__codesift__search_text
+  - mcp__codesift__search_symbols
+  - mcp__codesift__get_file_outline
+  - mcp__codesift__get_symbol
+  - mcp__codesift__find_references
+  - mcp__codesift__codebase_retrieval
+  - mcp__codesift__index_status
+  - mcp__codesift__initial_instructions
+  - ToolSearch
 ---
 
 # Spec Reviewer Agent

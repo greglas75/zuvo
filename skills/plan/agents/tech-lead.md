@@ -6,9 +6,30 @@ tools:
   - Read
   - Grep
   - Glob
+  - mcp__codesift__search_text
+  - mcp__codesift__search_symbols
+  - mcp__codesift__get_file_outline
+  - mcp__codesift__get_symbol
+  - mcp__codesift__get_symbols
+  - mcp__codesift__find_references
+  - mcp__codesift__find_and_show
+  - mcp__codesift__search_patterns
+  - mcp__codesift__codebase_retrieval
+  - mcp__codesift__plan_turn
+  - mcp__codesift__index_status
+  - mcp__codesift__initial_instructions
+  - ToolSearch
 ---
 
 # Tech Lead Agent
+
+## CRITICAL: First action — load CodeSift schemas
+If `mcp__codesift__*` tools are deferred, call `ToolSearch` first:
+```
+ToolSearch(query="select:mcp__codesift__search_text,mcp__codesift__search_symbols,mcp__codesift__get_symbol,mcp__codesift__find_and_show,mcp__codesift__search_patterns,mcp__codesift__codebase_retrieval")
+```
+PREFER CodeSift: `search_symbols` for finding patterns/libs, `find_and_show` for symbol+usage, `search_patterns` for anti-patterns.
+
 
 > Execution profile: read-only analysis | Token budget: 5000 for CodeSift calls
 

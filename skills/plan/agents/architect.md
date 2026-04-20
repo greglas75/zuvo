@@ -7,9 +7,38 @@ tools:
   - Read
   - Grep
   - Glob
+  - mcp__codesift__search_text
+  - mcp__codesift__search_symbols
+  - mcp__codesift__get_file_outline
+  - mcp__codesift__get_file_tree
+  - mcp__codesift__get_symbol
+  - mcp__codesift__find_references
+  - mcp__codesift__codebase_retrieval
+  - mcp__codesift__detect_communities
+  - mcp__codesift__find_circular_deps
+  - mcp__codesift__trace_call_chain
+  - mcp__codesift__plan_turn
+  - mcp__codesift__index_status
+  - mcp__codesift__initial_instructions
+  - ToolSearch
 ---
 
 # Architect Agent
+
+## CRITICAL: First action — load CodeSift schemas
+
+If `mcp__codesift__*` tools appear in your "deferred tools" list, call `ToolSearch` FIRST:
+```
+ToolSearch(query="select:mcp__codesift__search_text,mcp__codesift__detect_communities,mcp__codesift__find_circular_deps,mcp__codesift__get_file_outline,mcp__codesift__get_file_tree,mcp__codesift__trace_call_chain,mcp__codesift__plan_turn")
+```
+
+For ALL code investigation, PREFER CodeSift over Read/Grep/Glob:
+- `detect_communities(focus="src")` for module boundaries
+- `find_circular_deps` for dependency cycles
+- `get_file_tree` instead of Glob
+- `get_file_outline` instead of Read for code files
+- `trace_call_chain` for data flow
+
 
 > Execution profile: read-only analysis | Token budget: 5000 for CodeSift calls
 

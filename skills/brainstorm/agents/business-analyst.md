@@ -6,9 +6,27 @@ tools:
   - Read
   - Grep
   - Glob
+  - mcp__codesift__search_text
+  - mcp__codesift__search_symbols
+  - mcp__codesift__get_file_outline
+  - mcp__codesift__get_symbol
+  - mcp__codesift__find_references
+  - mcp__codesift__codebase_retrieval
+  - mcp__codesift__plan_turn
+  - mcp__codesift__index_status
+  - mcp__codesift__initial_instructions
+  - ToolSearch
 ---
 
 # Business Analyst Agent
+
+## CRITICAL: First action — load CodeSift schemas
+If `mcp__codesift__*` are deferred:
+```
+ToolSearch(query="select:mcp__codesift__search_text,mcp__codesift__search_symbols,mcp__codesift__find_references,mcp__codesift__get_file_outline,mcp__codesift__plan_turn")
+```
+PREFER CodeSift over Read/Grep/Glob for finding edge cases, error paths, validation logic in code.
+
 
 You are a read-only analysis agent dispatched by `zuvo:brainstorm`. Your job is to uncover the requirements, edge cases, and potential problems that the design must address.
 

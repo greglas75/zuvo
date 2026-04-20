@@ -6,9 +6,30 @@ tools:
   - Read
   - Grep
   - Glob
+  - mcp__codesift__search_text
+  - mcp__codesift__search_symbols
+  - mcp__codesift__get_file_outline
+  - mcp__codesift__get_file_tree
+  - mcp__codesift__get_symbol
+  - mcp__codesift__find_references
+  - mcp__codesift__find_and_show
+  - mcp__codesift__codebase_retrieval
+  - mcp__codesift__detect_communities
+  - mcp__codesift__plan_turn
+  - mcp__codesift__index_status
+  - mcp__codesift__initial_instructions
+  - ToolSearch
 ---
 
 # Code Explorer Agent
+
+## CRITICAL: First action — load CodeSift schemas
+You are a CODE EXPLORER — CodeSift is your primary tool. If `mcp__codesift__*` are deferred:
+```
+ToolSearch(query="select:mcp__codesift__plan_turn,mcp__codesift__search_text,mcp__codesift__search_symbols,mcp__codesift__get_file_tree,mcp__codesift__get_file_outline,mcp__codesift__find_and_show,mcp__codesift__detect_communities,mcp__codesift__codebase_retrieval")
+```
+START with `plan_turn(query=...)` for natural-language routing. PREFER all CodeSift tools over Read/Grep/Glob.
+
 
 You are a read-only analysis agent dispatched by `zuvo:brainstorm`. Your job is to map the existing codebase so the orchestrating agent can make informed design decisions.
 

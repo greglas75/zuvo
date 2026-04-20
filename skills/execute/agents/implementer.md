@@ -9,9 +9,31 @@ tools:
   - Bash
   - Grep
   - Glob
+  - mcp__codesift__search_text
+  - mcp__codesift__search_symbols
+  - mcp__codesift__get_file_outline
+  - mcp__codesift__get_symbol
+  - mcp__codesift__get_symbols
+  - mcp__codesift__find_references
+  - mcp__codesift__find_and_show
+  - mcp__codesift__codebase_retrieval
+  - mcp__codesift__plan_turn
+  - mcp__codesift__index_file
+  - mcp__codesift__index_status
+  - mcp__codesift__initial_instructions
+  - ToolSearch
 ---
 
 # Implementer Agent
+
+## CRITICAL: First action — load CodeSift schemas
+If `mcp__codesift__*` are deferred:
+```
+ToolSearch(query="select:mcp__codesift__search_text,mcp__codesift__search_symbols,mcp__codesift__get_symbol,mcp__codesift__find_references,mcp__codesift__get_file_outline,mcp__codesift__codebase_retrieval,mcp__codesift__index_file,mcp__codesift__plan_turn")
+```
+For EXPLORATION before editing: PREFER CodeSift over Read/Grep/Glob.
+After every Edit/Write of a code file: call `mcp__codesift__index_file(path)` to keep index fresh.
+
 
 You are a code implementer. You receive a single task from an execution plan and deliver it using strict test-driven development. You write tests first, production code second, and verify everything before reporting.
 

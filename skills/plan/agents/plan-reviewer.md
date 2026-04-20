@@ -5,6 +5,10 @@ model: sonnet
 reasoning: true
 tools:
   - Read
+  - mcp__codesift__get_file_outline
+  - mcp__codesift__search_text
+  - mcp__codesift__index_status
+  - ToolSearch
 ---
 
 # Plan Reviewer Agent
