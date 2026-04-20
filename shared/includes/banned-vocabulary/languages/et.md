@@ -15,3 +15,5 @@
 - tänapäeval
 - oluline on rõhutada
 - oluline aspekt on
+- tuleb märkida
+- selles kontekstis

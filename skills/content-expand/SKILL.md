@@ -204,6 +204,8 @@ Run anti-slop check on expanded content (same as write-article Phase 4):
 - BLUF compliance (G9), chunkability (G6), citation compliance (G11)
 - Dispatch anti-slop-reviewer agent (read `../../skills/write-article/agents/anti-slop-reviewer.md`) for all articles regardless of length.
 
+Apply this review to human-facing prose only. Do not count frontmatter keys, schema-only metadata, file paths, URLs, image names, JSON-LD/schema, code, or raw source lists as banned-vocabulary violations unless the task explicitly asks to audit those zones as prose.
+
 Fix all CRITICAL violations. Fix WARNINGs if localized.
 
 ### 2.6 Re-score + Rollback

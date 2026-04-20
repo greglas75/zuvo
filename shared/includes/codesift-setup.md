@@ -57,9 +57,11 @@ Fall back to built-ins:
 
 ### Text-Stub Languages
 
-When `get_extractor_versions()` shows the project's language as text-stub only (kotlin, swift, dart, scala), **do NOT call** symbol-based tools — they return empty silently: `search_symbols`, `get_file_outline`, `get_symbol`, `find_references`, `trace_call_chain`.
+When `get_extractor_versions()` shows the project's language as text-stub only (kotlin, swift, dart, scala, php), **do NOT call** symbol-based tools — they return empty silently: `search_symbols`, `get_file_outline`, `get_symbol`, `find_references`, `trace_call_chain`.
 
 These still work on text-stub languages: `search_text`, `get_file_tree`, `scan_secrets`, `analyze_project`.
+
+**PHP specifically:** check `get_extractor_versions()` before symbol tools. If text-stub, fall back to `search_text`/Grep for Yii2/Laravel patterns like `::find()`, `->all()`, `->batch()`, `->with()`, `Yii::$app->cache`, `TagDependency`, `DbTarget`.
 
 ### User Notification
 

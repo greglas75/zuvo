@@ -15,3 +15,5 @@
 - v dnešnej dobe
 - je dôležité zdôrazniť
 - kľúčovým aspektom je
+- treba poznamenať
+- v tomto kontexte

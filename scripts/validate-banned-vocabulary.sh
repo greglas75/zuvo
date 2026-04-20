@@ -15,6 +15,7 @@ LANG_DIR="$ROOT/shared/includes/banned-vocabulary/languages"
 python3 - "$LOADER" "$CORE" "$REGISTRY" "$LANG_DIR" <<'PY'
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 loader_path = Path(sys.argv[1])
@@ -103,6 +104,19 @@ def parse_language_file(path: Path):
                 soft.append(item)
     return title_ok, hard, soft
 
+def normalize_match_text(raw: str) -> str:
+    text = unicodedata.normalize("NFKC", raw).casefold()
+    chars = []
+    for char in text:
+        category = unicodedata.category(char)
+        if char.isspace():
+            chars.append(" ")
+        elif category.startswith(("P", "S")):
+            chars.append(" ")
+        else:
+            chars.append(char)
+    return " ".join("".join(chars).split())
+
 for code, meta in sorted(registry.items()):
     path = lang_dir / f"{code}.md"
     title_ok, hard_items, soft_items = parse_language_file(path)
@@ -123,7 +137,7 @@ for code, meta in sorted(registry.items()):
 
     norm_hard = {}
     for item in hard_items:
-        key = item.casefold().strip()
+        key = normalize_match_text(item)
         norm_hard.setdefault(key, []).append(item)
     dup_hard = [vals[0] for vals in norm_hard.values() if len(vals) > 1]
     if dup_hard:
@@ -131,7 +145,7 @@ for code, meta in sorted(registry.items()):
 
     norm_soft = {}
     for item in soft_items:
-        key = item.casefold().strip()
+        key = normalize_match_text(item)
         norm_soft.setdefault(key, []).append(item)
     dup_soft = [vals[0] for vals in norm_soft.values() if len(vals) > 1]
     if dup_soft:

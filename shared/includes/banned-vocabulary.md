@@ -23,6 +23,7 @@ Always load in this order:
 ## Coverage Notes
 
 - `en` and `pl` remain the most mature lists.
+- The English file now separates research-backed markers from workflow-specific house-style blockers; apply the prose-only scope rules from `core.md` before counting hits.
 - All other languages currently use conservative seed lists. Expand them when corpus evidence shows stable local slop patterns.
 - Shared rules like tone handling, burstiness, and G12 anti-patterns live in `core.md`, not in language files.
 - Coverage tiers and minimum per-language list sizes live in `./banned-vocabulary/registry.tsv`.

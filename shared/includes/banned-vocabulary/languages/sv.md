@@ -15,3 +15,5 @@
 - numera
 - det är viktigt att betona
 - en viktig aspekt är
+- det bör noteras
+- i detta sammanhang

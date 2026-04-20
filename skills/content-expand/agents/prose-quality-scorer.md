@@ -31,6 +31,16 @@ You receive from the orchestrator:
 - **Language:** Detected or specified language
 - **Tone:** If provided via `--tone`
 
+## Anti-Slop Scope Discipline
+
+For PQ15-PQ17, score human-facing prose only:
+
+- Include headings, lead/dek, body paragraphs, FAQ questions/answers, and publishable CTA text.
+- Include `title` / `description` only when they are clearly visible to readers in the final article.
+- Exclude frontmatter keys, schema-only metadata, slugs, URLs, image filenames, JSON-LD/schema, code fences, inline code, raw source lists, and verbatim quoted source text.
+- If a marker appears only in excluded zones, do not count it toward PQ15/PQ16/PQ17.
+- For context-sensitive English soft markers, prefer repeated filler patterns and obvious generic phrasing over isolated legitimate usage.
+
 ## Scoring Process
 
 For each PQ check (PQ1-PQ18):

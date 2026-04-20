@@ -15,3 +15,5 @@
 - šiais laikais
 - svarbu pabrėžti
 - svarbus aspektas yra
+- verta pažymėti
+- šiame kontekste

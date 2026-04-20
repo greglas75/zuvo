@@ -15,3 +15,5 @@
 - dandanes
 - pomembno je poudariti
 - ključni vidik je
+- treba poudariti
+- v tem kontekstu

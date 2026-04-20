@@ -15,3 +15,5 @@
 - în zilele noastre
 - este important de subliniat
 - un aspect cheie este
+- trebuie subliniat că
+- în acest context

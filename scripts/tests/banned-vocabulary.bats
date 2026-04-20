@@ -42,6 +42,7 @@ import sys
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 text = text.replace("- as an AI\n", "")
+text = text.replace("- certainly!\n", "")
 path.write_text(text, encoding="utf-8")
 PY
 

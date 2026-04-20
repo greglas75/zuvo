@@ -15,3 +15,5 @@
 - nykyään
 - on tärkeää korostaa
 - keskeinen näkökulma on
+- on syytä korostaa
+- tässä yhteydessä

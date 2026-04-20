@@ -85,12 +85,26 @@ Different stacks exhibit different pathologies.
 - `svelte.config.*` -- SvelteKit
 - React / Vue / Angular in dependencies
 
+**Dormant-frontend detection:** flag as a D2 finding (unused deps) + D9 finding
+(architectural debt) when any of these are true:
+- `webpack.config.*` returns `[]` or `{}` (empty entry)
+- `package.json` declares React/Vue/Webpack but the source tree has zero
+  `*.tsx`/`*.jsx`/`*.vue` files
+- `assets/` directory is empty and referenced only by dead build scripts
+
+Dormant frontends are a silent cost: install weight, lockfile churn, and CI
+time for code that never ships. Call them out even when the profile is
+backend-heavy.
+
 **Backend signals:**
 - `@nestjs/core` or `nest-cli.json` -- NestJS
 - `express` in deps -- Express
 - `fastify` in deps -- Fastify
 - `FastAPI` or `APIRouter` in Python files -- FastAPI
 - `gin-gonic` in Go files -- Gin
+- `composer.json` has `yiisoft/yii2` -- Yii2 (PHP)
+- `composer.json` has `laravel/framework` -- Laravel (PHP)
+- `composer.json` has `symfony/framework-bundle` -- Symfony (PHP)
 
 **ORM / database signals:**
 - `prisma/schema.prisma` -- Prisma
@@ -126,9 +140,14 @@ Deploy:    [Serverless / Container / Traditional]
 | C | Frontend SPA (React/Vue + API calls) | D1-D3, D9-D10 |
 | D | Static / JAMstack | D1-D3, D10 |
 | E | Monorepo | Per-package profile, weighted merge |
+| F | PHP full-stack (Yii2/Laravel/Symfony + MySQL/Postgres) | D2, D4-D9, D11-D12 (D11 = opcache, JIT, FPM tuning) |
 
 Profile E: detect workspace packages, assign profile per package, audit
 individually, merge into a weighted final report.
+
+Profile F: load `rules/yii2.md` (if Yii2 detected) for framework-specific
+performance checks. D11 Runtime pivots from Node.js event-loop checks to
+opcache/JIT/FPM pool tuning. Apply `rules/php.md` for general PHP patterns.
 
 ### 0.3 Tooling Probe
 

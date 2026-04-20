@@ -15,3 +15,5 @@
 - tegenwoordig
 - het is belangrijk om te benadrukken
 - een belangrijk aspect is
+- hierbij moet worden opgemerkt
+- in deze context

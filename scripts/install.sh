@@ -130,7 +130,7 @@ install_claude() {
 
     # Copy shared includes
     if [[ -d "$ZUVO_DIR/shared/includes" ]] && [[ -d "$CACHE_DIR/shared/includes" ]]; then
-      cp "$ZUVO_DIR"/shared/includes/*.md "$CACHE_DIR/shared/includes/" 2>/dev/null || true
+      cp -R "$ZUVO_DIR"/shared/includes/. "$CACHE_DIR/shared/includes/" 2>/dev/null || true
       # Strip non-Claude-Code platform blocks from shared includes too
       find "$CACHE_DIR/shared/includes" -name "*.md" -exec \
         sed -i '' -e '/<!-- PLATFORM:CODEX -->/,/<!-- \/PLATFORM:CODEX -->/d' \

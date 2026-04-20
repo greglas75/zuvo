@@ -15,3 +15,5 @@
 - mūsdienās
 - ir svarīgi uzsvērt
 - būtisks aspekts ir
+- jāuzsver, ka
+- šajā kontekstā

@@ -197,6 +197,8 @@ Agent: Anti-Slop Reviewer
 
 This agent has NO memory of the drafting process. It sees only the output text plus the shared rules and active language list.
 
+Anti-slop review applies to human-facing prose only. Do not treat frontmatter keys, file paths, URLs, image names, JSON-LD/schema, code, or raw source lists as banned-vocabulary violations unless the task explicitly asks to review those zones as prose.
+
 Fix all hard-ban violations. Fix soft-ban violations per tone rules. Burstiness warnings: fix if 3+ consecutive same-range sentences.
 
 ### 4.2 Domain Sensitivity (EC-WA-07)

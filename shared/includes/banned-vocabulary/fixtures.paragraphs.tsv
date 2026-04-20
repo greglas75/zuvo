@@ -1,0 +1,34 @@
+# locale_code	expected_phrases	paragraph
+ar	كنموذج ذكاء اصطناعي|علاوة على ذلك	كنموذج ذكاء اصطناعي، قد يبدو هذا التفسير مرتبًا أكثر من اللازم. علاوة على ذلك، يضيف مقدمة عامة بدل أن يبدأ بالمعلومة مباشرة.
+bg	като ИИ|освен това	КАТО ИИ, този абзац звучи прекалено шаблонно. Освен това, добавя плавен преход вместо конкретен извод.
+cs	jako AI|navíc	Jako AI, tento odstavec působí příliš šablonovitě. Navíc, přidává výplň místo přímé odpovědi.
+da	som AI|desuden	Som AI, lyder dette afsnit mere maskinelt end menneskeligt. Desuden, glider det videre uden at sige noget konkret.
+de	als KI|abschließend	Als KI wirkt dieser Einstieg sofort künstlich. Abschließend, rundet der Absatz ab, ohne zuerst die eigentliche Antwort zu geben.
+el	ως ΤΝ|επιπλέον	Ως ΤΝ, αυτή η διατύπωση ακούγεται τεχνητή. Επιπλέον, παρατείνει την εισαγωγή αντί να μπει στην ουσία.
+en	as an AI|Furthermore	As an AI, this paragraph sounds instantly synthetic. FURTHERMORE, it adds transition-heavy padding instead of giving the answer first.
+en	it's worth noting|in summary	It’s worth noting: this draft still sounds rehearsed. IN SUMMARY, it wraps the section too neatly instead of ending on the useful point.
+es	como IA|hoy en día	Como IA, este párrafo ya suena poco humano. Hoy en día, además, abre con una generalidad en lugar de un dato útil.
+et	tehisintellektina|lisaks	Tehisintellektina kõlab see lõik kohe liiga masinlikult. Lisaks, venitab see mõtet enne tegeliku vastuse andmist.
+fi	tekoälynä|lisäksi	Tekoälynä kirjoitettu avaustapa kuulostaa heti keinotekoiselta. Lisäksi, kappale venyttää siirtymää ennen varsinaista pointtia.
+fr	en tant qu'IA|en outre	En tant qu’IA, ce paragraphe paraît immédiatement artificiel. En outre, il allonge la transition au lieu d’aller droit au fait.
+hr	kao AI|osim toga	Kao AI, ovaj odlomak zvuči previše strojno. Osim toga, produžuje uvod umjesto da odmah da odgovor.
+hu	MI-ként|továbbá	MI-ként ez a bekezdés azonnal mesterségesnek hat. Továbbá, átvezető tölteléket használ a lényeg helyett.
+id	sebagai AI|selain itu	Sebagai AI, paragraf ini langsung terasa buatan. Selain itu, kalimatnya menambah transisi alih-alih memberi jawaban dengan cepat.
+it	come IA|inoltre	Come IA, questo paragrafo suona subito artificiale. Inoltre, prolunga il passaggio invece di arrivare al punto.
+ja	AIとして|さらに	AIとして、この段落はすぐに機械的に見える。さらに、要点より先に無難なつなぎを置いている。
+ko	AI로서|또한	AI로서, 이 문단은 시작부터 기계적으로 들린다. 또한, 핵심 답보다 연결 문장을 먼저 늘어놓는다.
+lt	kaip DI|be to	Kaip DI, ši pastraipa skamba pernelyg dirbtinai. Be to, ji vilkina perėjimą vietoje tiesaus atsakymo.
+lv	kā MI|turklāt	Kā MI šī rindkopa uzreiz skan mākslīgi. Turklāt, tā pievieno pārejas frāzi, nevis konkrētu atbildi.
+nl	als AI|bovendien	Als AI klinkt deze alinea meteen gekunsteld. Bovendien, rekt hij de overgang op in plaats van direct antwoord te geven.
+no	som KI|dessuten	Som KI høres dette avsnittet straks kunstig ut. Dessuten, bruker det en glatt overgang før det sier noe konkret.
+pl	w dzisiejszym świecie|co więcej	W dzisiejszym świecie taki akapit brzmi od razu sztucznie. Co więcej, rozciąga wstęp zamiast przejść prosto do odpowiedzi.
+pt	como IA|além disso	Como IA, este parágrafo soa artificial logo de início. Além disso, alonga a transição em vez de responder de forma direta.
+ro	ca IA|în plus	Ca IA, acest paragraf sună imediat artificial. În plus, prelungește introducerea în loc să ofere răspunsul direct.
+sk	ako AI|navyše	Ako AI pôsobí tento odsek okamžite umelo. Navyše, pridáva výplňovú spojku namiesto priamej odpovede.
+sl	kot umetna inteligenca|poleg tega	Kot umetna inteligenca ta odstavek takoj zveni umetno. Poleg tega, razteguje uvod namesto jasnega odgovora.
+sr	kao AI|pored toga	Kao AI, ovaj pasus odmah zvuči veštački. Pored toga, razvlači uvod umesto da odmah da konkretan odgovor.
+sv	som AI|dessutom	Som AI låter det här stycket direkt konstlat. Dessutom, fyller det ut övergången i stället för att svara rakt.
+th	ในฐานะปัญญาประดิษฐ์|นอกจากนี้	ในฐานะปัญญาประดิษฐ์ ย่อหน้านี้ฟังดูเป็นกลไกทันที นอกจากนี้ ยังยืดคำนำแทนที่จะตอบให้ชัดเจนตั้งแต่ต้น
+uk	як ШІ|крім того	Як ШІ, цей абзац одразу звучить штучно. Крім того, він розтягує вступ замість прямої відповіді.
+vi	với tư cách là AI|hơn nữa	Với tư cách là AI, đoạn này nghe rất máy móc ngay từ đầu. Hơn nữa, nó kéo dài phần chuyển ý thay vì trả lời thẳng.
+zh	作为人工智能|此外	作为人工智能，这一段一开始就显得很机械。此外，它先铺垫套话，而不是直接给出答案。

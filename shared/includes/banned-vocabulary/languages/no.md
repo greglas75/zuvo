@@ -15,3 +15,5 @@
 - nå til dags
 - det er viktig å understreke
 - et viktig aspekt er
+- det bør bemerkes
+- i denne sammenhengen

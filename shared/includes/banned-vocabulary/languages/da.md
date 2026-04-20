@@ -15,3 +15,5 @@
 - nu om dage
 - det er vigtigt at understrege
 - et vigtigt aspekt er
+- det skal bemærkes
+- i denne sammenhæng

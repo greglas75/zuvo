@@ -12,10 +12,27 @@ Dedicated language files currently cover 32 languages:
 ## Coverage Model
 
 - `en` and `pl` remain the most mature lists.
+- The English file is intentionally layered: assistant-leakage markers, research-backed lexical markers, and a small set of workflow-specific house-style blockers.
 - All languages added beyond `en` and `pl` use conservative seed lists built around the same high-signal AI cliches already enforced in English and Polish: "as an AI", "it's worth noting", "in today's world", "in the realm/domain of", and generic transition-heavy scaffolding like "furthermore" / "in conclusion".
 - Extend local lists when corpus evidence shows recurring language-specific slop patterns.
 - Hard bans are precision-first and intentionally shorter. Soft bans carry most multilingual coverage and are expected to be larger.
 - The cross-language contract lives in `./banned-vocabulary/registry.tsv` and is enforced by `scripts/validate-banned-vocabulary.sh`.
+
+## Evidence Model
+
+- Research-backed English markers should be preferred over hand-made folklore lists. Current anchors: Kobak et al. (excess vocabulary in LLM-assisted scientific writing), Juzek & Ward (lexical overrepresentation / "delve"), and Russell et al. (expert AI-text detection guide).
+- Non-English coverage is still weaker in the literature. Treat most non-English lists as conservative seeds unless local corpus evidence supports stronger, language-specific additions.
+- Do not flatten everything into a universal "banned words" doctrine. Some items are hard blockers because they expose assistant voice; others are soft because they are only suspicious in aggregate or in filler-heavy prose.
+
+## Review Scope
+
+- Primary scope: human-facing prose only — headings, dek/lead, paragraph copy, FAQ questions/answers, CTA copy, and other publishable text blocks.
+- Review `title` and `description` only when they are clearly user-visible fields in the final article output.
+- Skip frontmatter keys, schema-only metadata, slugs, file paths, URLs, image filenames, JSON-LD/schema blocks, code fences, inline code, import snippets, raw citations, and source-link lists.
+- Skip verbatim quoted source text unless the task explicitly asks to rewrite or normalize those quotes.
+- If a marker appears only in an excluded zone, do not count it as a violation.
+- For context-sensitive English soft markers such as `robust`, `comprehensive`, `intricate`, or `underscore`, prefer clear prose-context hits and repeated filler patterns over isolated one-off usage.
+- Do not blanket-ban noisy domain-neutral words such as `landscape` or `unlock` without local evidence. Flag larger stock phrases instead, e.g. "unlock the power of ..." or "the ever-evolving landscape of ...".
 
 ## Matching Guidance
 
@@ -23,6 +40,7 @@ Dedicated language files currently cover 32 languages:
 - Treat sentence-initial capitalization as the same phrase.
 - For inflected languages, flag close morphological variants and common punctuation variants, not just exact string matches.
 - For Arabic, Chinese, Japanese, Korean, Thai, and Vietnamese, also flag visually obvious close variants even when spacing or punctuation changes.
+- For English, map obvious inflections to the base marker during review when the phrase is clearly the same filler pattern, e.g. `delves into` -> `delve`, `underscores` -> `underscore`.
 - If the active language is unsupported, fall back to English hard-ban + soft-ban logic and still apply G12 heuristics.
 
 ## Language Resolution
@@ -78,18 +96,20 @@ Same exact phrase appearing more than 3 times per 500 words = keyword stuffing. 
 
 1. Read `core.md`
 2. Read the active language file
-3. Check every sentence against hard bans
-4. Check every sentence against soft bans using the active `--tone`
-5. Assess burstiness qualitatively
-6. Report findings with line references
+3. Restrict the review to the scope rules above before counting hits
+4. Check every sentence in reviewable prose against hard bans
+5. Check every sentence in reviewable prose against soft bans using the active `--tone`
+6. Assess burstiness qualitatively
+7. Report findings with line references
 
 ### In content-expand (Phase 0 / Phase 2.5)
 
 1. Read `core.md`
 2. Read the active language file
-3. PQ15 = hard-banned vocabulary count (CRITICAL if >0)
-4. PQ16 = soft-banned vocabulary count (severity per tone matrix)
-5. PQ17 = AI-pattern sentence openers (MEDIUM)
+3. Restrict analysis to reviewable prose per the scope rules above
+4. PQ15 = hard-banned vocabulary count (CRITICAL if >0)
+5. PQ16 = soft-banned vocabulary count (severity per tone matrix)
+6. PQ17 = AI-pattern sentence openers (MEDIUM)
 
 ### In research summaries (write-article Phase 1 -> Phase 3)
 

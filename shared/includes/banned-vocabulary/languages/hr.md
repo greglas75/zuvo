@@ -15,3 +15,5 @@
 - danas
 - važno je naglasiti
 - ključni aspekt je
+- valja istaknuti
+- u tom kontekstu

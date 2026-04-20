@@ -391,3 +391,25 @@ Commits pending review. Auto-managed:
 - 4af6005 (2026-04-13) feat: defer non-essential includes in brainstorm, plan, execute
 - de705f6 (2026-04-13) docs: update review queue
 - 3867c0d (2026-04-13) release: v1.3.92 — v1.3.92 deferred includes + all fixes
+- b37f1c9 (2026-04-16) release: v1.3.93 — adversarial retry on timeout + 360s for heavy modes, banned-vocabulary split, write-article + content-expand improvements
+- 8671560 (2026-04-17) zuvo:leads Task 1 — add lead-output-schema shared include as single source of truth for contact record shape
+- 6af57cd (2026-04-17) zuvo:leads Task 2 — add lead-source-registry shared include
+- 2080b4e (2026-04-17) zuvo:leads Task 3 — add company-finder discovery-mode agent
+- 645d068 (2026-04-18) zuvo:leads Task 4 — add contact-extractor per-company agent
+- 7635bad (2026-04-18) zuvo:leads Task 5 — add lead-validator blind agent
+- ffd788b (2026-04-19) zuvo:leads Task 6 — add SKILL.md orchestrator (7-phase pipeline)
+- 65feb9c (2026-04-19) zuvo:leads Task 7 — add zero-key smoke fixture set
+- bb6447c (2026-04-19) zuvo:leads Task 8 — add zero-key smoke script
+- 0bd2cf5 (2026-04-19) zuvo:leads Task 9 — add LLM extraction eval + 20 fixture pages
+- d7d484e (2026-04-19) zuvo:leads Task 10 — add catch-all detection test with SMTP mock
+- ed6b13d (2026-04-19) zuvo:leads Task 11 — add resume resilience test
+- 353fa13 (2026-04-19) zuvo:leads Task 12 — add dedup normalization test + fixtures
+- 32b6611 (2026-04-19) zuvo:leads Task 13 — add leads.bats wrapper
+- 9c57890 (2026-04-19) zuvo:leads Task 14 — add routing entry and bump banner to 53 skills
+- ab6a0c3 (2026-04-19) zuvo:leads Task 15 — bump skill counts across manifests + docs
+- 2e751be (2026-04-19) zuvo:leads Task 15 fixup — docs/skills.md header now reads 52 skills / 13 categories
+- d0ab5ec (2026-04-19) zuvo:leads Task 16 — gitignore docs/leads/
+- 957add3 (2026-04-19) zuvo:leads Task 17 — add release-gate chain script
+- c9906b5 (2026-04-19) release: v1.3.94 — zuvo:leads skill + stale-SHA fix
+- a118b87 (2026-04-20) feat(review): grant CodeSift MCP tools to all 4 review agents
+- 647239d (2026-04-20) feat(skills): grant CodeSift MCP tools to 18 code-analysis agents

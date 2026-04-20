@@ -54,6 +54,11 @@ replace_paths() {
     -e 's|{plugin_root}|~/.cursor|g' \
     -e 's|CLAUDE_PLUGIN_ROOT|CURSOR_HOME|g' \
     -e 's|~/.claude/plugins/cache/zuvo-marketplace/zuvo/\*/scripts/adversarial-review\.sh|~/.cursor/scripts/adversarial-review.sh|g' \
+    -e 's|../../../shared/includes/|~/.cursor/shared/includes/|g' \
+    -e 's|../../../shared/|~/.cursor/shared/|g' \
+    -e 's|../../../scripts/|~/.cursor/scripts/|g' \
+    -e 's|../../../rules/|~/.cursor/rules/|g' \
+    -e 's|../../../skills/|~/.cursor/skills/|g' \
     -e 's|../../shared/includes/|~/.cursor/shared/includes/|g' \
     -e 's|../../shared/|~/.cursor/shared/|g' \
     -e 's|../../scripts/|~/.cursor/scripts/|g' \
@@ -363,16 +368,17 @@ echo "  + rules/ ($(ls "$PLUGIN_DIR"/rules/*.md 2>/dev/null | wc -l | tr -d ' ')
 # --- Shared includes ---
 if [ -d "$PLUGIN_DIR/shared/includes" ]; then
   mkdir -p "$DIST/shared/includes"
-  for f in "$PLUGIN_DIR"/shared/includes/*.md; do
-    [ -f "$f" ] || continue
+  while IFS= read -r -d '' f; do
+    rel="${f#$PLUGIN_DIR/shared/includes/}"
+    mkdir -p "$DIST/shared/includes/$(dirname "$rel")"
     cat "$f" \
       | replace_paths \
       | strip_tool_names \
       | replace_cursor_refs \
       | replace_reviewer_lane_refs_cursor \
-      | normalize_unicode > "$DIST/shared/includes/$(basename "$f")"
-  done
-  echo "  + shared/includes/ ($(ls "$PLUGIN_DIR"/shared/includes/*.md 2>/dev/null | wc -l | tr -d ' ') files)"
+      | normalize_unicode > "$DIST/shared/includes/$rel"
+  done < <(find "$PLUGIN_DIR/shared/includes" -type f -name "*.md" -print0)
+  echo "  + shared/includes/ ($(find "$PLUGIN_DIR/shared/includes" -type f -name '*.md' | wc -l | tr -d ' ') files)"
 fi
 
 # ============================================================
@@ -463,8 +469,7 @@ fi
 echo ""
 echo "Stripping non-Cursor platform blocks..."
 strip_count=0
-for md in "$DIST"/skills/*/SKILL.md "$DIST"/skills/*/*.md "$DIST"/shared/includes/*.md "$DIST"/rules/*.md; do
-  [ -f "$md" ] || continue
+while IFS= read -r -d '' md; do
   if grep -q "<!-- PLATFORM:" "$md" 2>/dev/null; then
     sed -i '' \
       -e '/<!-- PLATFORM:CODEX -->/,/<!-- \/PLATFORM:CODEX -->/d' \
@@ -474,7 +479,7 @@ for md in "$DIST"/skills/*/SKILL.md "$DIST"/skills/*/*.md "$DIST"/shared/include
       "$md"
     strip_count=$((strip_count + 1))
   fi
-done
+done < <(find "$DIST/skills" "$DIST/shared/includes" "$DIST/rules" -type f -name "*.md" -print0 2>/dev/null)
 echo "  Stripped platform blocks from $strip_count files"
 
 # ============================================================
@@ -588,9 +593,13 @@ else
 fi
 
 # Verify shared includes were copied
-include_count=$(ls "$DIST/shared/includes/"*.md 2>/dev/null | wc -l | tr -d ' ')
+include_count=$(find "$DIST/shared/includes" -type f -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
 if [ "$include_count" -eq 0 ]; then
   echo "  ERROR: No shared include files found in $DIST/shared/includes/"
+  errors=$((errors + 1))
+fi
+if [ ! -f "$DIST/shared/includes/banned-vocabulary/core.md" ] || [ ! -f "$DIST/shared/includes/banned-vocabulary/languages/en.md" ]; then
+  echo "  ERROR: Missing recursive banned-vocabulary includes in Cursor dist"
   errors=$((errors + 1))
 fi
 

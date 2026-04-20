@@ -41,11 +41,21 @@ Before reviewing ANY text:
 
 Load the hard ban list and soft ban list for the active language. Load the tone matrix and G12 rules from `core.md`.
 
+## Review Scope Discipline
+
+Before counting ANY banned-vocabulary hit, restrict the review to human-facing prose:
+
+- Include: headings, lead/dek, body paragraphs, FAQ questions/answers, CTA copy, and other publishable text blocks.
+- Include `title` / `description` only when they are clearly user-visible in the final article.
+- Exclude: frontmatter keys, schema-only metadata, file paths, slugs, URLs, image names, JSON-LD/schema, code fences, inline code, raw citations/source lists, and quoted source excerpts copied verbatim.
+- If a phrase appears only inside an excluded zone, do not report it.
+- For context-sensitive English soft markers such as `robust`, `comprehensive`, `intricate`, or `underscore`, only report them when they clearly function as filler in prose. Prefer clusters/repetition over isolated legitimate technical usage.
+
 ## Review Checklist
 
 ### 1. Hard-Banned Vocabulary (CRITICAL)
 
-Scan every sentence for hard-banned words/phrases. ANY hit = CRITICAL finding.
+Scan every sentence in reviewable prose for hard-banned words/phrases. ANY hit = CRITICAL finding.
 
 Report format:
 ```
@@ -54,7 +64,9 @@ CRITICAL: Hard-banned word "[word]" found at line [N]: "[surrounding sentence]"
 
 ### 2. Soft-Banned Vocabulary (severity per tone)
 
-Scan for soft-banned words. Severity determined by the tone matrix in `core.md`.
+Scan reviewable prose for soft-banned words. Severity determined by the tone matrix in `core.md`.
+
+If a soft-ban finding depends on context, explain why the usage is generic/filler rather than precise or domain-necessary.
 
 Report format:
 ```

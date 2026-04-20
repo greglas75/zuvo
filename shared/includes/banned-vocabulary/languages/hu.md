@@ -15,3 +15,5 @@
 - manapság
 - fontos kiemelni
 - kulcsfontosságú szempont
+- érdemes kiemelni
+- ebben az összefüggésben
