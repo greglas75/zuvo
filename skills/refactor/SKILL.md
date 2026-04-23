@@ -261,6 +261,20 @@ The orchestrator passes the following to each agent: **target file**, **CODESIFT
 
 Dispatch two agents in parallel (background) to inform the plan:
 
+```
+Agent 1: Dependency Mapper
+  model: "sonnet"
+  type: "Explore"
+  instructions: trace all importers and callers of the target file (see details below)
+  input: target file, CODESIFT_AVAILABLE, repo identifier
+
+Agent 2: Existing Code Scanner
+  model: "sonnet"
+  type: "Explore"
+  instructions: search codebase for helpers/utilities similar to planned extractions (see details below)
+  input: target file, CODESIFT_AVAILABLE, repo identifier, planned extraction list
+```
+
 #### Agent 1: Dependency Mapper (default tier, read-only)
 
 Trace all importers and callers of the target file. Build a dependency map: direct importers, transitive dependents (one level up), exported symbols and where each is consumed, risk assessment for export changes.

@@ -362,11 +362,14 @@ Dispatch per environment:
 - **Codex:** use native agents in `~/.codex/agents/`.
 <!-- /PLATFORM:CODEX -->
 
-**Provide to the agent:**
-- The task spec from the plan
-- The spec document (the original feature spec)
-- The list of files the implementer created or modified
-- `CODESIFT_AVAILABLE` and repo identifier
+```
+Agent: Spec Reviewer
+  model: "sonnet"
+  type: "Explore"
+  instructions: read agents/spec-reviewer.md
+  input: task spec from plan, spec document, list of files implementer created/modified,
+         CODESIFT_AVAILABLE, repo identifier
+```
 
 The spec reviewer reads the actual code independently. It does NOT receive the implementer's status report. Its job is to verify compliance with the plan, not to validate the implementer's self-assessment.
 
@@ -396,11 +399,14 @@ Dispatch per environment:
 - **Codex:** use native agents in `~/.codex/agents/`.
 <!-- /PLATFORM:CODEX -->
 
-**Provide to the agent:**
-- The list of production files created or modified by the implementer
-- The list of test files created or modified by the implementer
-- `CODESIFT_AVAILABLE` and repo identifier
-- **The content of `shared/includes/quality-gates.md`** — the quality reviewer uses this as the canonical source for CQ1-CQ28 and Q1-Q19 gate definitions, critical gate lists, scoring thresholds, and evidence format. The orchestrator has already read this file (mandatory file loading). Pass its content to the agent.
+```
+Agent: Quality Reviewer
+  model: "sonnet"
+  type: "Explore"
+  instructions: read agents/quality-reviewer.md
+  input: list of production files modified, list of test files modified,
+         CODESIFT_AVAILABLE, repo identifier, content of shared/includes/quality-gates.md
+```
 
 The quality reviewer applies CQ1-CQ28 on production code and Q1-Q19 on test code from the provided quality-gates.md. It also checks file size limits. For complex tasks, it verifies the test contract was filled correctly (all branches listed, no implementation-derived expected values, all mutations have catching tests).
 

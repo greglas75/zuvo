@@ -415,3 +415,4 @@ Commits pending review. Auto-managed:
 - 647239d (2026-04-20) feat(skills): grant CodeSift MCP tools to 18 code-analysis agents
 - fc73d7b (2026-04-20) release: v1.3.95 — release v1.3.95 — zuvo:leads skill + banned-vocabulary updates + content-expand/write-article/performance-audit improvements
 - 2ecef0b (2026-04-20) release: v1.3.96 — v1.3.96 — fix install order so claude plugin update no longer resurrects old cache dirs
+- 64d88a4 (2026-04-20) release: v1.3.97 — v1.3.97 — fix banner sed regex so future version bumps actually update the Zuvo vX.Y.Z string in using-zuvo/SKILL.md (was matching CURRENT_VERSION, silently no-op if banner drifted)

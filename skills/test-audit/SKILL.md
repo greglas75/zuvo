@@ -132,6 +132,15 @@ Each batch agent writes results here. Cleaned up after the final report.
 
 Split grouped files into batches of 8-10. For each batch, spawn a Task agent or process inline.
 
+Each Task agent dispatch:
+```
+Agent: Test Quality Auditor (per batch)
+  model: "sonnet"
+  type: "Explore"
+  instructions: evaluate test files against Q1-Q19 and AP anti-patterns (see Agent Prompt below)
+  input: batch file list with paired production files, CODESIFT_AVAILABLE
+```
+
 ### Agent Prompt (provided to each batch agent)
 
 ```

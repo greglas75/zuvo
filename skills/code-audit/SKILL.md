@@ -189,6 +189,15 @@ If semgrep unavailable: skip silently. This enhances the audit but does not gate
 
 Split files into batches of 6-8 (10 in `--quick` mode). For each batch, spawn a Task agent or process inline depending on environment (see `env-compat.md`).
 
+Each Task agent dispatch:
+```
+Agent: Code Quality Auditor (per batch)
+  model: "sonnet"
+  type: "Explore"
+  instructions: evaluate files against CQ1-CQ28 checklist (see Agent Prompt below)
+  input: batch file list, PROJECT_CONTEXT, CODESIFT_AVAILABLE
+```
+
 ### Agent Prompt (provided to each batch agent)
 
 ```

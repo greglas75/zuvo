@@ -346,9 +346,26 @@ Refer to `env-compat.md` for the correct dispatch pattern per environment.
 **TIER 2:** Dispatch Behavior Auditor (`agents/behavior-auditor.md`) if new production files. Dispatch CQ Auditor (`agents/cq-auditor.md`) as background agent. Lead performs Structure analysis inline.
 
 **TIER 3:** Dispatch all 3 audit agents in parallel:
-- Agent 1: `agents/behavior-auditor.md`
-- Agent 2: `agents/structure-auditor.md`
-- Agent 3: `agents/cq-auditor.md`
+
+```
+Agent 1: Behavior Auditor
+  model: "sonnet"
+  type: "Explore"
+  instructions: read agents/behavior-auditor.md
+  input: diff, tech stack, change intent, PRECOMPUTED_DATA, PROJECT_CONTEXT
+
+Agent 2: Structure Auditor
+  model: "sonnet"
+  type: "Explore"
+  instructions: read agents/structure-auditor.md
+  input: diff, tech stack, change intent, PRECOMPUTED_DATA, PROJECT_CONTEXT
+
+Agent 3: CQ Auditor
+  model: "sonnet"
+  type: "Explore"
+  instructions: read agents/cq-auditor.md
+  input: diff, tech stack, change intent, PRECOMPUTED_DATA, PROJECT_CONTEXT
+```
 
 Each agent receives: diff, tech stack, change intent, PRECOMPUTED_DATA, PROJECT_CONTEXT (global error handlers, middleware, decorators).
 
@@ -454,7 +471,15 @@ Max 2 fix attempts per provider finding. Max 3 passes total.
 
 **TIER 0-1:** Lead scores each finding inline. `Confidence: [X]/100 -- [reason]`.
 
-**TIER 2+:** Dispatch Confidence Re-Scorer agent (`agents/confidence-rescorer.md`). Agent receives full candidate list, PRECOMPUTED_DATA, and adversarial findings.
+**TIER 2+:** Dispatch Confidence Re-Scorer agent:
+
+```
+Agent: Confidence Re-Scorer
+  model: "sonnet"
+  type: "Explore"
+  instructions: read agents/confidence-rescorer.md
+  input: full candidate list, PRECOMPUTED_DATA, adversarial findings
+```
 
 ### Disposition
 

@@ -238,6 +238,15 @@ Split endpoints into batches by controller/module. Each batch covers one control
 **Parallel** (Claude Code with Task tool): spawn one agent per batch, max 6 concurrent.
 **Sequential** (Cursor, Codex, no Task tool): evaluate one batch at a time inline.
 
+Each Task agent dispatch:
+```
+Agent: API Dimension Auditor (per batch)
+  model: "sonnet"
+  type: "Explore"
+  instructions: evaluate endpoints in batch against D1-D11 dimensions
+  input: batch endpoint list (one controller/module), detected stack, CODESIFT_AVAILABLE
+```
+
 ---
 
 ## Phase 2: GET-Only Probing (STANDARD+ tier)
