@@ -497,6 +497,8 @@ Agent: Confidence Re-Scorer
 
 ## Phase 3: Report
 
+> **Phase 3 runs end-to-end with no approval pauses.** Do not ask the user to confirm before persisting the report, tagging commits, writing to backlog, or running the retrospective. All subsections below (Backlog Persistence → Report Persistence → Tag Reviewed Commits → Knowledge Curation → Retrospective → Completion Gate → NEXT STEPS) execute in order before any `REVIEW COMPLETE` text is emitted. The only gate is the Completion Gate Check at the end.
+
 ### Severity Tiers
 
 | Tier | Meaning | Merge impact |
@@ -546,7 +548,9 @@ Persist ALL findings to `memory/backlog.md`:
 
 Save the full report to `memory/reviews/YYYY-MM-DD-<scope>.md`.
 
-### Tag Reviewed Commits
+### Tag Reviewed Commits (per-commit audit trail)
+
+Naming convention: `reviewed/<short-hash>` tags the individual commits that were examined. This is distinct from the post-execute wrapper tag (`review-YYYY-MM-DD-<slug>`) that marks the fix commit produced by Phase 4.
 
 ```bash
 for H in $(git log --format='%H' REVIEWED_FROM..REVIEWED_THROUGH); do
@@ -555,7 +559,7 @@ for H in $(git log --format='%H' REVIEWED_FROM..REVIEWED_THROUGH); do
 done
 ```
 
-Skip tagging when scope is `staged`.
+Skip tagging when scope is `staged` or `uncommitted`.
 
 ### Knowledge Curation
 
@@ -565,11 +569,16 @@ Run `knowledge-curate.md` (if loaded): `WORK_TYPE="review"`, `CALLER="zuvo:revie
 
 Follow the retrospective protocol from `retrospective.md`.
 Gate check -> structured questions -> TSV emit -> markdown append.
-If gate check skips: print "RETRO: skipped (trivial session)" and proceed to output.
 
-## Completion Gate Check
+If the gate check skips, you MUST print one of:
+- `RETRO: skipped (trivial session, <3 findings and no fix-loop)`
+- `RETRO: skipped (<reason>)` — reason must name a specific condition, not "nothing interesting"
 
-Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+Silently omitting the retro is a protocol violation. Track record shows ~90% of review runs skip this step without marking why, which produces no learning signal. If you are tempted to skip, print the reason explicitly so the pattern is visible in `~/.zuvo/retros.md`.
+
+## Completion Gate Check (HARD GATE — blocks output)
+
+Before printing `REVIEW COMPLETE` or the NEXT STEPS block, verify every item below. If any item is unchecked, execute the missing step now — do not emit the completion text with unfinished items.
 
 ```
 COMPLETION GATE CHECK
@@ -578,10 +587,15 @@ COMPLETION GATE CHECK
 [ ] Q1-Q19 printed for each changed test file (if any)
 [ ] Adversarial review ran — at least 2 sequential passes with findings printed
 [ ] All findings confidence-scored
-[ ] Report saved to memory/reviews/
-[ ] Backlog persistence ran
-[ ] Run: line printed and appended to log
+[ ] Backlog persistence ran (memory/backlog.md updated or explicitly N/A)
+[ ] Report saved to memory/reviews/YYYY-MM-DD-<scope>.md (TIER 1+)
+[ ] reviewed/<hash> tags created (skip for staged/uncommitted scope)
+[ ] Knowledge curation ran (if knowledge-curate.md loaded)
+[ ] Retrospective ran OR explicit "RETRO: skipped (<reason>)" printed
+[ ] Run: TSV line printed and appended to ~/.zuvo/runs.log
 ```
+
+Enforcement: print the gate check as a checklist with actual `[x]` / `[ ]` marks so the user can audit. If any `[ ]` remains, loop back and complete it before emitting the NEXT STEPS block.
 
 ### NEXT STEPS Block
 
@@ -618,7 +632,7 @@ Input:
 
 After fix-loop.md completes:
 
-1. **Git tag:** `git tag review-YYYY-MM-DD-[short-slug]`
+1. **Git tag:** `git tag review-YYYY-MM-DD-<short-slug>` on the fix commit. This is distinct from the per-commit `reviewed/<hash>` tags created in Phase 3 — that set marks what was *audited*, this one marks what was *fixed*. Both can coexist on the same repo.
 2. **Post-Execute block:**
 ```
 ===============================================================

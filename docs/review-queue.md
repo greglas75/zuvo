@@ -416,3 +416,4 @@ Commits pending review. Auto-managed:
 - fc73d7b (2026-04-20) release: v1.3.95 — release v1.3.95 — zuvo:leads skill + banned-vocabulary updates + content-expand/write-article/performance-audit improvements
 - 2ecef0b (2026-04-20) release: v1.3.96 — v1.3.96 — fix install order so claude plugin update no longer resurrects old cache dirs
 - 64d88a4 (2026-04-20) release: v1.3.97 — v1.3.97 — fix banner sed regex so future version bumps actually update the Zuvo vX.Y.Z string in using-zuvo/SKILL.md (was matching CURRENT_VERSION, silently no-op if banner drifted)
+- 199cdbe (2026-04-23) release: v1.3.98 — force standard context on subagents — add explicit model: sonnet to dispatch instructions in 8 skills (refactor, review, execute, security-audit, code-audit, test-audit, api-audit, ui-design-team) so subagents don't inherit 1M context and require extra-usage
