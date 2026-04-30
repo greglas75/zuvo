@@ -3,7 +3,7 @@ name: using-zuvo
 description: "ALWAYS LOADED — Zuvo skill router. Injected at session start. Determines which zuvo skill to invoke for the current task."
 ---
 
-> **Zuvo v1.3.99** | 53 skills | 4 adversarial providers | CQ1-CQ28 + Q1-Q19
+> **Zuvo v1.3.100** | 53 skills | 4 adversarial providers | CQ1-CQ29 + Q1-Q19
 
 # Zuvo Skill Router
 
@@ -192,14 +192,14 @@ Before writing ANY code, verify:
 |---|------|---------|--------|
 | G1 | **New code → tests** | Any new `.ts`/`.tsx`/`.py`/`.php` file | Write tests BEFORE or WITH the code. Zero exceptions. |
 | G2 | **3+ files → /build** | Feature touches 3+ files | Use `zuvo:build`, NOT direct coding. |
-| G3 | **CQ self-eval** | Any production code written | Read `../../rules/cq-checklist.md`. Run CQ1-CQ28. Print score. |
+| G3 | **CQ self-eval** | Any production code written | Read `../../rules/cq-checklist.md`. Run CQ1-CQ29. Print score. |
 | G4 | **Test self-eval** | Any test code written | Read `../../rules/testing.md`. Run Q1-Q19. Print score. |
 
 Tests are part of implementation, not a follow-up. NEVER ask "should I write tests?" — the answer is always yes. NEVER say "implementation complete" when test files = 0.
 
 **Additional rules:**
 - **No direct EnterPlanMode** for features touching 3+ files — use `zuvo:build` instead (includes planning WITH analysis sub-agents).
-- **CQ self-eval for direct coding** (1-2 files, no skill): still run CQ1-CQ28 on each production file before writing tests.
+- **CQ self-eval for direct coding** (1-2 files, no skill): still run CQ1-CQ29 on each production file before writing tests.
 - **/review before push**: after any non-trivial implementation, run `zuvo:review` before pushing.
 
 ## Skill File Loading

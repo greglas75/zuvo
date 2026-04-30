@@ -337,6 +337,8 @@ INHERITED from both numerator and denominator.
 
 Save to: `audits/dependency-audit-[YYYY-MM-DD].md`
 
+**REQUIRED:** emit the Tool Availability Block (template in `../../shared/includes/codesift-setup.md`) at the top of the report, after the title and before findings. Auditing degraded runs depends on this — do NOT skip it.
+
 ### Report Structure
 
 ```markdown

@@ -124,7 +124,7 @@ args = ["-y", "codesift-mcp"]
 - **Adversarial review** — 4-provider cross-model verification with evidence enforcement (findings without file:line auto-downgraded)
 - **Auto-activation** — routing engine matches your intent to the right skill automatically
 - **CodeSift integration** — semantic search, community detection, call chain tracing, complexity analysis
-- **Quality gates** — CQ1-CQ28 (code quality) and Q1-Q19 (test quality) with unified severity vocabulary
+- **Quality gates** — CQ1-CQ29 (code quality) and Q1-Q19 (test quality) with unified severity vocabulary
 
 ## Platform support
 
@@ -154,7 +154,7 @@ args = ["-y", "codesift-mcp"]
 
 - [All 51 Skills](docs/skills.md)
 - [Pipeline](docs/pipeline.md) — brainstorm → plan → execute
-- [Quality Gates](docs/quality-gates.md) — CQ1-CQ28 + Q1-Q19
+- [Quality Gates](docs/quality-gates.md) — CQ1-CQ29 + Q1-Q19
 - [CodeSift Integration](docs/codesift-integration.md)
 - [Configuration](docs/configuration.md)
 - [Changelog](https://github.com/greglas75/zuvo/tags)

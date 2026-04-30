@@ -321,6 +321,8 @@ Build endpoint x role matrix:
 
 Save to: `audits/api-audit-[date].md`
 
+**REQUIRED:** emit the Tool Availability Block (template in `../../shared/includes/codesift-setup.md`) at the top of the report, after the title and before findings. Auditing degraded runs depends on this — do NOT skip it.
+
 ```markdown
 # API and Endpoint Integrity Audit
 

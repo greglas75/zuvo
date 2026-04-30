@@ -1,7 +1,7 @@
 {
   "name": "zuvo",
   "description": "Multi-agent skill ecosystem for structured software development. 53 skills and 26 specialized agents with quality gates, code exploration, and evidence-based review.",
-  "version": "1.3.99",
+  "version": "1.3.100",
   "author": {
     "name": "Zuvo",
     "email": "hello@zuvo.dev"

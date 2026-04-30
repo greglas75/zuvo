@@ -426,6 +426,8 @@ VERDICT mapping for run log: PASS (A or B), WARN (B with critical gate borderlin
 
 ### 5.3 Report Output
 
+**REQUIRED:** emit the Tool Availability Block (template in `../../shared/includes/codesift-setup.md`) at the top of the report, after the title and before findings. Auditing degraded runs depends on this — do NOT skip it.
+
 ```
 ACCESSIBILITY AUDIT REPORT
 ===============================================

@@ -130,7 +130,7 @@ For each task in the plan:
 
 1. **Implementer agent** writes a failing test (RED), then the minimal code to pass it (GREEN), then refactors
 2. **Spec Reviewer agent** verifies the implementation matches the spec
-3. **Quality Reviewer agent** runs CQ1-CQ28 (code quality) and Q1-Q19 (test quality) with evidence
+3. **Quality Reviewer agent** runs CQ1-CQ29 (code quality) and Q1-Q19 (test quality) with evidence
 
 If a quality reviewer finds a critical gate violation, the task is sent back to the implementer for correction before moving to the next task.
 
@@ -140,7 +140,7 @@ If a quality reviewer finds a critical gate violation, the task is sent back to 
 |-------|------|-------|------|
 | Implementer | Writes tests and production code following TDD | Sonnet | Code (read-write) |
 | Spec Reviewer | Verifies code matches spec requirements | Sonnet | Explore (read-only) |
-| Quality Reviewer | Runs CQ1-CQ28 and Q1-Q19 gates with evidence | Sonnet | Explore (read-only) |
+| Quality Reviewer | Runs CQ1-CQ29 and Q1-Q19 gates with evidence | Sonnet | Explore (read-only) |
 
 ### Verification protocol
 

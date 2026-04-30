@@ -289,7 +289,7 @@ Condensed reference: `../../shared/includes/quality-gates.md`
 
 ### 4.6 CQ Self-Evaluation (on production code changes)
 
-Run CQ1-CQ28 on each modified production file. Read `../../rules/cq-checklist.md` for the full protocol.
+Run CQ1-CQ29 on each modified production file. Read `../../rules/cq-checklist.md` for the full protocol.
 
 - Static critical gates: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 -- any = 0 means FAIL
 - Conditional gates: CQ16 (money), CQ19 (API boundary), CQ20 (dual fields), CQ21 (concurrency), CQ22 (subscriptions), CQ23-CQ28 -- activated by code context
@@ -474,7 +474,7 @@ File: [file:line]
 - Targeted tests: PASS ([N] tests)
 - Full suite: PASS (no new failures vs baseline)
 - Original reproduction: RESOLVED
-- CQ self-eval: [score]/28
+- CQ self-eval: [score]/29
 - Regression test Q self-eval: [score]/19
 
 ### Side Effects
@@ -523,7 +523,7 @@ it('should [describe the bug scenario]', () => {
 - Targeted tests: PASS ([N] tests)
 - Full suite: PASS (no new failures)
 - Original reproduction: RESOLVED
-- CQ self-eval: [score]/28
+- CQ self-eval: [score]/29
 - Regression test Q self-eval: [score]/19
 ```
 
@@ -580,7 +580,7 @@ Breaking commit: [hash -- message] (regression mode only)
 Files fixed: [list]
 Regression test: [test file path]
 Verification: targeted PASS | full suite PASS | repro RESOLVED
-CQ: [score]/28 | Q: [score]/19
+CQ: [score]/29 | Q: [score]/19
 Confidence: HIGH / MEDIUM / LOW
 Backlog: [N items added | "none"]
 
@@ -589,7 +589,7 @@ Run: <ISO-8601-Z>\tdebug\t<project>\t<CQ>\t<Q>\t<VERDICT>\t-\t<DURATION>\t<NOTES
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 
 VERDICT: PASS / WARN / FAIL / BLOCKED / ABORTED only.
-CQ: from Phase 4.6 CQ self-eval on production fix (`N/28`).
+CQ: from Phase 4.6 CQ self-eval on production fix (`N/29`).
 Q: from Phase 4.5 Q self-eval on regression test (`N/19`).
 TASKS: `-` (debug does not track task count).
 DURATION: mode label (e.g., `standard`, `regression-bisect`).

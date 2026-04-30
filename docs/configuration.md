@@ -45,7 +45,7 @@ Located in `shared/includes/`. These are protocol files loaded by skills at runt
 | `env-compat.md` | Environment compatibility: how skills adapt to Claude Code, Codex, and Cursor. Covers agent dispatch patterns, path resolution, progress tracking, and user interaction per platform. |
 | `codesift-setup.md` | CodeSift discovery, initialization, and tool selection guide. Includes the full tool mapping table and degraded mode fallbacks. See [codesift-integration.md](codesift-integration.md). |
 | `compressed-response-protocol.md` | Global v1 response-style contract for hook-enabled main assistant turns. Defines `STANDARD`, `TERSE`, `STRUCTURED_TERSE`, protected literals, override order, and the `[...truncated...]` escape hatch. |
-| `quality-gates.md` | Quick reference for CQ1-CQ28 and Q1-Q19 gates. Condensed version for agent use. Full details in the rules directory. See [quality-gates.md](quality-gates.md). |
+| `quality-gates.md` | Quick reference for CQ1-CQ29 and Q1-Q19 gates. Condensed version for agent use. Full details in the rules directory. See [quality-gates.md](quality-gates.md). |
 | `tdd-protocol.md` | TDD cycle enforcement: RED (failing test), GREEN (minimal code), REFACTOR. Red flag table for common violations. Used by pipeline execute and build skills. |
 | `verification-protocol.md` | 5-step verification protocol: IDENTIFY, RUN, READ, VERIFY, CLAIM. Ensures no completion claims without fresh evidence from the actual system. |
 | `agent-preamble.md` | Standard rules for read-only audit agents: never modify files, every finding requires evidence (file:line), confidence levels (0-25% discard, 26-50% backlog, 51-100% report), structured output format. |
@@ -59,7 +59,7 @@ Located in `rules/`. These are reference files that skills load when performing 
 
 | File | Scope |
 |------|-------|
-| `cq-checklist.md` | Full CQ1-CQ28 gate definitions, scoring thresholds, evidence standards, N/A rules |
+| `cq-checklist.md` | Full CQ1-CQ29 gate definitions, scoring thresholds, evidence standards, N/A rules |
 | `cq-patterns.md` | NEVER/ALWAYS code pairs for 40+ patterns (atomicity, idempotency, errors, money, lookups, cleanup, secrets, path traversal, prototype pollution, Docker, etc.) |
 | `testing.md` | Q1-Q19 gate definitions, test quality scoring, pattern selection |
 | `test-quality-rules.md` | Edge case checklists, mock safety rules, auto-fail patterns, assertion strength |

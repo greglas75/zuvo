@@ -35,7 +35,7 @@ Print: `[CLASSIFIED] Diff type: {prod-only|test-only|mixed}`
 | Include | prod-only | test-only | mixed |
 |---------|-----------|-----------|-------|
 | `../../shared/includes/env-compat.md` | Full | Full | Full |
-| `../../shared/includes/quality-gates.md` | CQ1-CQ28 section only* | Q1-Q19 section only** | Full |
+| `../../shared/includes/quality-gates.md` | CQ1-CQ29 section only* | Q1-Q19 section only** | Full |
 | `../../shared/includes/cross-provider-review.md` | Full | Full | Full |
 | `../../rules/cq-patterns.md` or `cq-patterns-core.md` | Per code type*** | **SKIP** | Per code type*** |
 | `../../rules/cq-checklist.md` | TIER 1+ | **SKIP** | TIER 1+ |
@@ -171,7 +171,7 @@ If `PROD_LOGIC_LINES = 0`:
 |-----------|--------|--------|--------|--------|
 | Inline diff scan | Yes | Yes | Yes | Yes |
 | CQ patterns loaded | Skip | Core (500 tok) | Full (8.4K tok) | Full (8.4K tok) |
-| CQ1-CQ28 evaluation | Skip | Yes (lead inline) | Yes (CQ Auditor agent) | Yes (CQ Auditor agent) |
+| CQ1-CQ29 evaluation | Skip | Yes (lead inline) | Yes (CQ Auditor agent) | Yes (CQ Auditor agent) |
 | Q1-Q19 on test files | Skip | If present (lead) | Yes | Yes |
 | Audit agents | None | None | Behavior + CQ (if new files) | All 3 (Behavior + Structure + CQ) |
 | Adversarial (bash script) | Yes (all available) | Yes (all available) | Yes (all available) | Yes (all available) |
@@ -377,7 +377,7 @@ Each agent receives: diff, tech stack, change intent, PRECOMPUTED_DATA, PROJECT_
 
 ### 1.4 CQ Self-Evaluation (TIER 1+)
 
-For each changed production file, run CQ1-CQ28. Print all 28 gates. Format: `CQ EVAL: file.ts (NL) | CQ1=1 CQ2=0 ... | Score: X/Y -> PASS/FAIL | Critical gates: CQ4=0(no orgId:87)`. CQ critical gate failures (CQ3, CQ4, CQ5, CQ6, CQ8, CQ14) always produce MUST-FIX.
+For each changed production file, run CQ1-CQ29. Print all 29 gates. Format: `CQ EVAL: file.ts (NL) | CQ1=1 CQ2=0 ... | Score: X/Y -> PASS/FAIL | Critical gates: CQ4=0(no orgId:87)`. CQ critical gate failures (CQ3, CQ4, CQ5, CQ6, CQ8, CQ14) always produce MUST-FIX.
 
 ### 1.5 Q1-Q19 Evaluation (if test files in diff)
 

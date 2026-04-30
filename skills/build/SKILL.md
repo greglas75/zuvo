@@ -131,7 +131,7 @@ Check for these in the feature description and target files:
 | Discovery pass (Phase 1a) | Yes | Yes | Yes |
 | Analysis agents (Phase 1b) | No | Blast Radius agent + inline duplication check | Blast Radius + Duplication Scanner agents |
 | Implementation plan | Inline, brief | Full plan with all sections | Full plan with all sections |
-| CQ self-eval (CQ1-CQ28) | Critical gates only | Full CQ1-CQ28 | Full CQ1-CQ28 |
+| CQ self-eval (CQ1-CQ29) | Critical gates only | Full CQ1-CQ29 | Full CQ1-CQ29 |
 | Test quality self-eval (Q1-Q19) | Inline check | Full Q1-Q19 | Full Q1-Q19 |
 | Pre-write code contract | No | Yes | Yes |
 | Pre-write test contract | No | Yes | Yes |
@@ -374,7 +374,7 @@ Rules:
 
 **LIGHT tier:** Check critical gates only (CQ3, CQ4, CQ5, CQ6, CQ8, CQ14) + any conditional gates activated by context (CQ16/CQ19/CQ20/CQ21/CQ22). Provide evidence for each. Fix any gate = 0.
 
-**STANDARD and DEEP tiers:** Read `../../rules/cq-checklist.md`. Run full CQ1-CQ28 on every production file written or modified. Condensed reference: `../../shared/includes/quality-gates.md`.
+**STANDARD and DEEP tiers:** Read `../../rules/cq-checklist.md`. Run full CQ1-CQ29 on every production file written or modified. Condensed reference: `../../shared/includes/quality-gates.md`.
 
 - Score each gate (1 = satisfied, 0 = violated, N/A = not applicable)
 - Static critical gates: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 — any = 0 means FIX before tests
@@ -481,7 +481,7 @@ Dispatch with:
 
   Tasks:
   1. Read each file completely.
-  2. Run CQ1-CQ28 with file:function:line evidence.
+  2. Run CQ1-CQ29 with file:function:line evidence.
   3. Classify: FIX-NOW (< 5 min), CRITICAL-BLOCKED (critical gate failure), DEFER (backlog).
   4. Check file sizes against limits.
 
@@ -519,7 +519,7 @@ EXECUTION VERIFICATION
 [ALL] [ ] TESTS: Test suite green
 [ALL] [ ] CQ CRITICAL: All critical gates pass (with evidence)
 [ALL] [ ] TYPES: Type checker passes (if checker exists; skip with note if none)
-[STD+] [ ] CQ FULL: CQ1-CQ28 self-eval, scores + evidence
+[STD+] [ ] CQ FULL: CQ1-CQ29 self-eval, scores + evidence
 [STD+] [ ] Q FULL: Q1-Q19 self-eval on each test file
 [STD+] [ ] ANTI-TAUTOLOGY: Automated echo pattern check passed
 [STD+] [ ] TEST AUDITOR: Independent auditor score matches self-eval (±1)
@@ -626,7 +626,7 @@ Tier: [LIGHT / STANDARD / DEEP]
 Files created: [N] | Files modified: [N]
 Tests: [N files], all passing
 Verification: tests PASS [| types PASS] [| lint PASS]
-CQ: [critical gates PASS | score/28 on N files]
+CQ: [critical gates PASS | score/29 on N files]
 Q: [critical gates PASS | score/19 on N test files]
 Backlog: [N items persisted | "none"]
 Commit: [hash] — [message]
@@ -637,7 +637,7 @@ Run: <ISO-8601-Z>\tbuild\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<DURATION>\t
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 
 VERDICT: PASS / WARN / FAIL / BLOCKED / ABORTED only.
-CQ: LIGHT → `critical-only`, STANDARD+ → `N/28`.
+CQ: LIGHT → `critical-only`, STANDARD+ → `N/29`.
 Q: LIGHT → `critical-only`, STANDARD+ → `N/19`.
 TASKS: number of production files created + modified.
 DURATION: `light` / `standard` / `deep` (tier label).

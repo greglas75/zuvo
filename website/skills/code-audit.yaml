@@ -4,7 +4,7 @@ last_synced: "2026-03-29"
 meta:
   slug: code-audit
   title: "Code Audit — batch quality triage across 22 gates"
-  description: "Audit every production file against CQ1-CQ22 quality gates and 14 anti-patterns. Tiered A/B/C/D output with 4 critical gates and a prioritized fix plan."
+  description: "Audit every production file against CQ1-CQ29 quality gates and 19 anti-patterns. Tiered A/B/C/D output with 4 critical gates and a prioritized fix plan."
   category: audit
   og_image: /og/skills/code-audit.png
 
@@ -20,10 +20,10 @@ seo:
 stats:
   - label: "Quality Gates"
     value: "22"
-    detail: "CQ1-CQ22 binary checklist"
+    detail: "CQ1-CQ29 binary checklist"
   - label: "Anti-Patterns"
-    value: "14"
-    detail: "CAP1-CAP14"
+    value: "19"
+    detail: "CAP1-CAP19"
   - label: "Critical Gates"
     value: "4"
     detail: "CQ3, CQ4, CQ5, CQ6 — any fail caps tier at C"
@@ -42,7 +42,7 @@ how_it_works:
     description: "The skill locates all production files, excludes tests and build artifacts, then classifies each file by type (SERVICE, CONTROLLER, GUARD, HOOK, ORM, etc.) to activate the relevant conditional gates."
   - step: "Red-flag pre-scan"
     description: "Before the full checklist, each batch agent scans for instant Tier-D triggers: hardcoded secrets, SQL string concatenation, eval() with dynamic input, and dangerouslySetInnerHTML without sanitization."
-  - step: "CQ1-CQ22 evaluation"
+  - step: "CQ1-CQ29 evaluation"
     description: "Every applicable gate is scored binary (1/0/N/A). CodeSift pre-populates CQ8 (empty catch), CQ13 (dead code), and CQ14 (duplicated logic) with deterministic tool-verified findings when available."
   - step: "Aggregate and cross-file analysis"
     description: "Results are aggregated into a tier distribution table. Cross-file checks detect inconsistent transaction usage, validation chain gaps, and project-wide money-handling drift."
@@ -71,7 +71,7 @@ examples:
   - title: "Deep dive on a service directory"
     type: invocation
     command: "zuvo:code-audit src/services --deep"
-    result: "Full CQ1-CQ22 evidence for every service file. Outputs per-gate rationale at file:line format and a fix plan. Takes ~5 minutes for 20 files."
+    result: "Full CQ1-CQ29 evidence for every service file. Outputs per-gate rationale at file:line format and a fix plan. Takes ~5 minutes for 20 files."
   - title: "Hardcoded secret auto-flagged Tier D"
     type: before_after
     gate: "CAP5"
@@ -118,7 +118,7 @@ faq:
   - q: "Can zuvo:code-audit auto-fix issues it finds?"
     a: "No — the audit is strictly read-only. It generates a prioritized fix plan pointing to exact file:line locations. For structural fixes (extracting duplicated logic, splitting god files), the plan will suggest `zuvo:refactor`. For systematic patterns across many files, `zuvo:fix-tests` handles the test equivalent."
   - q: "What frameworks and languages does it support?"
-    a: "The CQ1-CQ22 checklist applies to any language. ORM-specific checks (CQ9, CQ17, CQ20) auto-activate when Prisma, TypeORM, SQLAlchemy, or Django is detected. React-specific gates (CQ22 for cleanup, CQ13 for dead exports) activate on .tsx/.jsx files. Python, PHP, and Go are supported with adjusted heuristics."
+    a: "The CQ1-CQ29 checklist applies to any language. ORM-specific checks (CQ9, CQ17, CQ20) auto-activate when Prisma, TypeORM, SQLAlchemy, or Django is detected. React-specific gates (CQ22 for cleanup, CQ13 for dead exports) activate on .tsx/.jsx files. Python, PHP, and Go are supported with adjusted heuristics."
 
 arguments:
   - flag: "all"
@@ -139,7 +139,7 @@ arguments:
 checks:
   sections:
     - name: "Quality Gates"
-      id_range: "CQ1-CQ22"
+      id_range: "CQ1-CQ29"
       count: 22
       items:
         - id: "CQ3"
@@ -167,8 +167,8 @@ checks:
           name: "Money fields use exact arithmetic — no float for prices or discounts"
           critical: false
     - name: "Anti-Patterns"
-      id_range: "CAP1-CAP14"
-      count: 14
+      id_range: "CAP1-CAP19"
+      count: 19
       items:
         - id: "CAP5"
           name: "Hardcoded secret (API key, password, token in source) — AUTO TIER-D"
@@ -206,7 +206,7 @@ modes: null
 
 agents:
   - name: "Batch Audit Agent"
-    role: "Evaluates a batch of 6-10 production files against CQ1-CQ22 and CAP1-CAP14, produces per-file tier blocks with evidence."
+    role: "Evaluates a batch of 6-10 production files against CQ1-CQ29 and CAP1-CAP19, produces per-file tier blocks with evidence."
 
 benchmarks:
   - claim: "Quick mode audits 50 files in approximately 2 minutes using 10-file batches."

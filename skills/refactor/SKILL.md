@@ -190,7 +190,7 @@ The GOD_CLASS protocol uses iterative decomposition: extract one responsibility 
 
 ### CQ Pre-Audit
 
-Before displaying the plan, run CQ1-CQ28 on the target file. Print ALL 28 gates:
+Before displaying the plan, run CQ1-CQ29 on the target file. Print ALL 28 gates:
 
 ```
 CQ PRE-AUDIT: [filename] ([N]L)
@@ -435,7 +435,7 @@ Apply the planned changes according to the extraction list, following these rule
 **After any refactoring that creates new files:** Run CQ self-eval on EACH extracted module, not just the orchestrator. The bugs move with the code. CQ failures (CQ5, CQ8, CQ9, CQ17, CQ19) live in the modules where the actual logic resides.
 
 1. List ALL files created or modified during the refactoring
-2. Run CQ1-CQ28 self-eval on EACH file
+2. Run CQ1-CQ29 self-eval on EACH file
 3. Any CQ critical gate failure (CQ3/4/5/6/8/14 = 0) in ANY module blocks the commit
 
 ### CodeSift Post-Audit Verification (when CodeSift available)
@@ -459,7 +459,7 @@ When CodeSift unavailable: skip machine verification. Pass empty `machine_checks
 
 ### CQ Post-Audit
 
-Run CQ1-CQ28 on every modified and created file. Print ALL 28 gates per file:
+Run CQ1-CQ29 on every modified and created file. Print ALL 28 gates per file:
 
 ```
 CQ POST-AUDIT: order.service.ts (132L)
@@ -483,7 +483,7 @@ Run the full verification suite:
 
 ### Independent CQ Auditor (FULL mode, default tier, read-only)
 
-After the lead's post-audit, dispatch an independent CQ Auditor agent. Run CQ1-CQ28 independently on ALL modified/created files. Does NOT trust the lead's scores. Catches N/A abuse and rubber-stamped gates.
+After the lead's post-audit, dispatch an independent CQ Auditor agent. Run CQ1-CQ29 independently on ALL modified/created files. Does NOT trust the lead's scores. Catches N/A abuse and rubber-stamped gates.
 
 **Input:** Full source of each file, CQ checklist, CQ patterns, tech stack, `machine_checks` from CodeSift (if available).
 
@@ -625,7 +625,7 @@ Process a queue of files through the full pipeline autonomously. Zero interactiv
    - `- [ ]`: process (pending)
    - Bare file paths: process (first run)
 2. Validate each file exists. Non-existent files: mark `[!] FILE NOT FOUND`, skip.
-3. For each pending file: quick CQ1-CQ28 pre-scan, detect type.
+3. For each pending file: quick CQ1-CQ29 pre-scan, detect type.
 4. Compute **PriorityScore** for ordering (range 0.00-1.00):
 
    ```
@@ -659,10 +659,10 @@ For each `[ ]` entry, run the full pipeline -- not a shortcut:
 
 **Steps (ALL mandatory, in order):**
 
-1. **Analysis:** Dispatch Dependency Mapper + Existing Code Scanner (parallel) → CQ1-CQ28 BEFORE (all 28 gates) → type detect → scope freeze → create contract
+1. **Analysis:** Dispatch Dependency Mapper + Existing Code Scanner (parallel) → CQ1-CQ29 BEFORE (all 29 gates) → type detect → scope freeze → create contract
 2. **Test handling:** Write/verify tests per test mode routing
 3. **Execution:** Execute fixes per CONTRACT → verify (type check + tests)
-4. **Post-Audit:** Dispatch CQ Auditor (read-only; the **orchestrator** applies FIX-NOW items). Print CQ1-CQ28 AFTER (all 28 gates).
+4. **Post-Audit:** Dispatch CQ Auditor (read-only; the **orchestrator** applies FIX-NOW items). Print CQ1-CQ29 AFTER (all 29 gates).
 5. **Adversarial:** Run iterative adversarial review (`--rotate`) on staged diff with context-enriched input (same protocol as Phase 3). Pass count by diff size.
 6. **Commit:** ONE commit for this file only (exception: GOD_CLASS → multi-commit per extracted responsibility).
 7. **Queue update:** Update line with CQ before/after and commit hash.
@@ -676,7 +676,7 @@ GOD_CLASS files in batch mode produce multiple commits (one per extracted respon
 
 ### CQ Before/After (Non-Negotiable)
 
-Every file in the batch gets a full CQ1-CQ28 evaluation, even if the agent believes it is already fixed. No file gets `[x]` without proof.
+Every file in the batch gets a full CQ1-CQ29 evaluation, even if the agent believes it is already fixed. No file gets `[x]` without proof.
 
 ```
 - [x] path | TYPE | CQ: 12/18->17/18 | CQ3,CQ21 fixed | commit: abc1234

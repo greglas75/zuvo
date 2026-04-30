@@ -1,10 +1,10 @@
 # Quality Gates — Quick Reference
 
-> Summary of CQ1-CQ28 (code quality) and Q1-Q19 (test quality) gates for agent use.
+> Summary of CQ1-CQ29 (code quality) and Q1-Q19 (test quality) gates for agent use.
 
-This is a condensed reference. Full details, evidence examples, and N/A rules are in `rules/cq-checklist.md` (code) and `rules/testing.md` (tests). Agents should read the full files when performing detailed evaluations. CQ23-CQ28 and Q18-Q19 were added in v1.3.0.
+This is a condensed reference. Full details, evidence examples, and N/A rules are in `rules/cq-checklist.md` (code) and `rules/testing.md` (tests). Agents should read the full files when performing detailed evaluations. CQ23-CQ28 and Q18-Q19 were added in v1.3.0. CQ29 (import-depth) added in v1.4.0.
 
-## CQ1-CQ28: Code Quality Gates
+## CQ1-CQ29: Code Quality Gates
 
 | # | Category | What it checks |
 |---|----------|---------------|
@@ -36,6 +36,7 @@ This is a condensed reference. Full details, evidence examples, and N/A rules ar
 | CQ26 | Observability | Structured logger with context (requestId, userId), not plain console.log. |
 | CQ27 | Observability | Log levels correct. `error` for infrastructure failures only, not validation. |
 | CQ28 | Resilience | Timeout hierarchy correct: client < server < DB. |
+| CQ29 | Structure | Workspace path alias (`@/`, `~/`, `#/`) used for imports >=3 hops deep when alias is configured. N/A if no alias in workspace. |
 
 ### Critical Gates (Static)
 
@@ -62,9 +63,9 @@ These become critical only when the code context activates them:
 
 | Result | Criteria |
 |--------|---------|
-| PASS | Score >= 24/28 AND all active critical gates = 1 |
-| CONDITIONAL PASS | Score 22-23/28 AND all active critical gates = 1 |
-| FAIL | Any active critical gate = 0, OR total score < 22 |
+| PASS | Score >= 25/29 AND all active critical gates = 1 |
+| CONDITIONAL PASS | Score 23-24/29 AND all active critical gates = 1 |
+| FAIL | Any active critical gate = 0, OR total score < 23 |
 
 ### CQ Evidence Format
 

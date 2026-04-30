@@ -419,6 +419,8 @@ debt_ratio = remediation_minutes / (total_LOC * 30)
 
 ## Phase 5: Report and Action Plan
 
+**REQUIRED:** emit the Tool Availability Block (template in `../../shared/includes/codesift-setup.md`) at the top of the report, after the title and before findings. Auditing degraded runs depends on this — do NOT skip it. The standard table replaces ad-hoc "tools used" prose in META.
+
 ### 5.1 Report Sections
 
 1. **META** -- date, stack, scope, code files count, mode (FULL/LIMITED/NO-CODE), tools used, LOC count

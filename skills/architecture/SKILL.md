@@ -226,6 +226,8 @@ Prevent contradictions between report sections:
 
 ### Output -- Architecture Review Report
 
+**REQUIRED:** emit the Tool Availability Block (template in `../../shared/includes/codesift-setup.md`) at the top of the report, after the title and before findings. The standard table replaces the ad-hoc `**Tools:**` line below — do NOT use both.
+
 ```markdown
 # Architecture Review: [Project Name]
 

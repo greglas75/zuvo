@@ -288,7 +288,7 @@ Zuvo should activate `zuvo:build` (scoped feature, 1-5 files). You will see:
 2. **Analysis agents** -- blast radius mapper and existing code scanner run in parallel
 3. **Implementation plan** -- presented for your approval before any code is written
 4. **TDD cycle** -- failing test first, then implementation, then quality gates
-5. **CQ self-evaluation** -- CQ1-CQ28 scored with evidence before completion
+5. **CQ self-evaluation** -- CQ1-CQ29 scored with evidence before completion
 
 If you ask for something larger ("build a user management module with roles, permissions, and audit logging"), the router will direct to `zuvo:brainstorm` instead, starting the full pipeline.
 

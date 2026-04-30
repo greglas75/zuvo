@@ -1,11 +1,11 @@
 ---
 name: code-audit
-description: "Batch audit of production files against CQ1-CQ28 quality gates and CAP1-CAP14 anti-patterns. Tiered output (A/B/C/D), critical gate enforcement, evidence-backed scoring, cross-file pattern analysis, and prioritized execution plan. Flags: zuvo:code-audit all | [path] | [file] | --deep | --quick | --services | --controllers"
+description: "Batch audit of production files against CQ1-CQ29 quality gates and CAP1-CAP19 anti-patterns. Tiered output (A/B/C/D), critical gate enforcement, evidence-backed scoring, cross-file pattern analysis, and prioritized execution plan. Flags: zuvo:code-audit all | [path] | [file] | --deep | --quick | --services | --controllers"
 ---
 
 # zuvo:code-audit — Production Code Quality Triage
 
-Systematic evaluation of production source files through the CQ1-CQ28 binary checklist and CAP anti-pattern catalog. Every file receives a tier classification based on its score, critical gate status, and detected anti-patterns. The output is a prioritized report with actionable fix plans.
+Systematic evaluation of production source files through the CQ1-CQ29 binary checklist and CAP anti-pattern catalog. Every file receives a tier classification based on its score, critical gate status, and detected anti-patterns. The output is a prioritized report with actionable fix plans.
 
 **When to use:** Periodic health checks, before major releases, after adding many production files, when onboarding a new codebase, when code quality feels inconsistent.
 **Out of scope:** Single-file code review (use `zuvo:review`), refactoring (use `zuvo:refactor`), test quality assessment (use `zuvo:test-audit`), feature development (use `zuvo:build`).
@@ -99,7 +99,7 @@ When CodeSift is available, run these checks before the manual CQ evaluation to 
 
 TOOL_VERIFIED findings have deterministic HIGH confidence and bypass the confidence gate. They go directly to the report.
 
-Manual CQ1-CQ28 evaluation still runs for all 28 gates. CodeSift pre-scan accelerates 3 of 28 checks.
+Manual CQ1-CQ29 evaluation still runs for all 29 gates. CodeSift pre-scan accelerates 3 of 29 checks.
 
 ### Degraded Mode (CodeSift unavailable)
 
@@ -179,7 +179,7 @@ If `semgrep` is installed and the project has `.semgrep/` config:
 npx semgrep --config .semgrep/ --json --quiet 2>/dev/null
 ```
 
-Semgrep findings auto-score the matching CQ as 0 for affected files (deterministic = HIGH confidence). Exception: CQ4 findings from semgrep need dataflow verification before auto-scoring. LLM evaluation still runs full CQ1-CQ28 but skips deep analysis on CQs already flagged.
+Semgrep findings auto-score the matching CQ as 0 for affected files (deterministic = HIGH confidence). Exception: CQ4 findings from semgrep need dataflow verification before auto-scoring. LLM evaluation still runs full CQ1-CQ29 but skips deep analysis on CQs already flagged.
 
 If semgrep unavailable: skip silently. This enhances the audit but does not gate it.
 
@@ -194,20 +194,20 @@ Each Task agent dispatch:
 Agent: Code Quality Auditor (per batch)
   model: "sonnet"
   type: "Explore"
-  instructions: evaluate files against CQ1-CQ28 checklist (see Agent Prompt below)
+  instructions: evaluate files against CQ1-CQ29 checklist (see Agent Prompt below)
   input: batch file list, PROJECT_CONTEXT, CODESIFT_AVAILABLE
 ```
 
 ### Agent Prompt (provided to each batch agent)
 
 ```
-You are a production code quality auditor. Evaluate each file below against the CQ1-CQ28 binary checklist.
+You are a production code quality auditor. Evaluate each file below against the CQ1-CQ29 binary checklist.
 
 PROJECT_CONTEXT:
 [INSERT: global error handler info, or "No global error handler detected"]
 
 RED FLAG PRE-SCAN (do this FIRST, before full checklist):
-Scan for these. If any found, use TIER-D SHORT FORMAT and skip full CQ1-CQ28:
+Scan for these. If any found, use TIER-D SHORT FORMAT and skip full CQ1-CQ29:
 - Hardcoded secret (API key, password, token in source) -> AUTO TIER-D
 - SQL string concatenation with user input -> AUTO TIER-D
 - eval() / new Function() with non-literal input -> AUTO TIER-D
@@ -259,22 +259,28 @@ CQ25: New code follows existing project patterns? No special snowflakes?
 CQ26: Structured logger with context (requestId, userId), not plain console.log?
 CQ27: Log levels correct? `error` for infra failures only, not validation?
 CQ28: CONDITIONAL -- Timeout hierarchy correct? client < server < DB?
+CQ29: Workspace path alias (@/, ~/, #/) used for imports >=3 hops deep when alias is configured? N/A if no alias in workspace.
 
 ANTI-PATTERNS (each found = noted, severity attached):
 CAP1:  Empty catch block -- HIGH
-CAP2:  console.log in production (not structured logger) -- MEDIUM
-CAP3:  `as any` / `as unknown as X` without validation -- MEDIUM (x5+ = HIGH)
+CAP2:  Plain `console.log` in production -- MEDIUM. `console.warn`/`console.error` allowed ONLY when paired with Sentry.captureMessage/captureException on the same code path; otherwise MEDIUM.
+CAP3:  `as any` / `as unknown as X` without validation -- MEDIUM (x5+ = HIGH). `as unknown as <DomainType>` after Prisma/ORM queries = HIGH (silent contract bypass).
 CAP4:  @ts-ignore without justification -- MEDIUM
 CAP5:  Hardcoded secret -- AUTO TIER-D
-CAP6:  dangerouslySetInnerHTML without DOMPurify -- AUTO TIER-D
+CAP6:  Unsanitized HTML reaching DOM or persistence -- AUTO TIER-D. Covers `dangerouslySetInnerHTML` without DOMPurify, `editor.commands.setContent(rawHtml)`/raw-HTML mode without pre-save sanitization, paste-as-HTML, programmatic raw HTML writes. Display-time sanitization alone is INSUFFICIENT if persistence path is unsanitized.
 CAP7:  eval() / new Function() with dynamic input -- AUTO TIER-D
-CAP8:  SQL string concatenation -- AUTO TIER-D
-CAP9:  File exceeds type limit (service <=450, controller <=300, hook <=250, component <=200, helper <=100) -- HIGH (2x = AUTO TIER-D)
+CAP8:  SQL string concatenation OR `$queryRaw`/`$executeRawUnsafe` against tenant tables without organizationId in WHERE -- AUTO TIER-D
+CAP9:  File exceeds type limit (service <=450, controller <=300, hook <=250, component <=200, helper <=100) OR inline sub-component >=50 LOC nested in a parent component file -- HIGH (2x file limit = AUTO TIER-D)
 CAP10: Function > 100 lines (2x the 50L limit) -- HIGH
 CAP11: parseFloat/Number() on money field -- HIGH
 CAP12: await inside for/while without batch alternative -- MEDIUM
-CAP13: 7+ useState in one component, or boolean toggles for mutually exclusive UI -- MEDIUM
+CAP13: 7+ useState in one component, OR >=3 mutually-exclusive dialog/modal boolean flags (collapse to discriminated union `dialog: { kind: '...' } | null`), OR state mirroring URL params managed via local useState (use router query API) -- MEDIUM
 CAP14: Business logic >10 lines in component body that has no DOM dependency -- MEDIUM
+CAP15: API URL built without `encodeURIComponent` on dynamic path segments, OR hardcoded base URL string-concat (`` `${BASE}/api/foo/${id}` ``), OR unencoded user-controlled token in URL path/query -- HIGH. MUST use a single `buildApiUrl(path, pathParams)` helper and validate enum-typed segments against an allowlist before interpolation.
+CAP16: Client auth-token plumbing race (deferred-promise wait for provider, token injected mid-flight, no readiness gate before first request), OR missing 401-> refresh-> retry-once on REST clients while tRPC has it (or vice versa), OR unsigned/dev-only tokens accepted as auth credentials in any environment -- HIGH
+CAP17: `error.message` rendered directly to UI/DOM without a curated `userMessageFor(error)` mapping -- HIGH. Leaks server stack/PII; map known error types to safe messages and fall back to a generic "Something went wrong".
+CAP18: `throw new Error(...)` from a service/injectable/handler -- MEDIUM. Use a typed exception class instead (BadRequestException, NotFoundException, custom DomainError); bare Error loses HTTP status mapping and can leak the original message into 5xx response bodies.
+CAP19: Mutating endpoint, AI/expensive operation (LLM call, export, generation), webhook receiver, or tRPC procedure without a rate limiter (ThrottlerGuard, custom limiter, queue with concurrency cap) -- HIGH. tRPC bypassing the project-wide ThrottlerGuard = always violation.
 
 N/A HANDLING: N/A items are excluded from both numerator and denominator. Score = passed / applicable. N/A requires justification.
 
@@ -298,7 +304,7 @@ OUTPUT FORMAT per file:
 Code type: [TYPE]
 Lines: [count]
 Red flags: [CAP5/6/7/8 = auto Tier-D; or "none"]
-Score: CQ1=[0/1] CQ2=[0/1] ... CQ22=[0/1/N/A]
+Score: CQ1=[0/1] CQ2=[0/1] ... CQ29=[0/1/N/A]
 Anti-patterns: [CAP IDs found, or "none"]
 Total: [passed]/[applicable] ([%]) -- N/A excluded
 Static gate: CQ3=... CQ4=... CQ5=... CQ6=... CQ8=... CQ14=... -> [PASS/FAIL]
@@ -308,10 +314,10 @@ Tier: [A/B/C/D]
 Top 3 issues: [brief]
 
 TIER CLASSIFICATION:
-  A (>=24/28, all active gates PASS): Production-ready
-  B (21-23, all active gates PASS): Conditional pass
-  C (16-20, or any critical gate FAIL with score >=16): Significant rework
-  D (<16 or AUTO TIER-D red flag): Critical -- immediate fix
+  A (>=25/29, all active gates PASS): Production-ready
+  B (22-24, all active gates PASS): Conditional pass
+  C (17-21, or any critical gate FAIL with score >=17): Significant rework
+  D (<17 or AUTO TIER-D red flag): Critical -- immediate fix
 
 IMPORTANT:
 - Read the FULL file before scoring
@@ -351,7 +357,7 @@ Mode: [quick/deep]
 
 | Tier | Count | % | Action |
 |------|-------|---|--------|
-| A (>=24/28) | [N] | [%] | Production-ready |
+| A (>=25/29) | [N] | [%] | Production-ready |
 | B (21-23) | [N] | [%] | Targeted fixes before merge |
 | C (16-20) | [N] | [%] | Significant rework |
 | D (<16 or red flag) | [N] | [%] | Critical -- immediate fix |
@@ -431,7 +437,7 @@ If `--deep` mode: also save per-file detail to `audits/code-audit-details/[filen
 ## Recommended Execution Plan
 
 ### Goal
-- Raise score from [current avg]/28 to min [target]/28
+- Raise score from [current avg]/29 to min [target]/29
 - Close all critical gate FAILs
 - Add regression tests for every P0/P1 change
 

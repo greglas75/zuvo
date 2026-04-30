@@ -104,7 +104,7 @@ If multiple manifests are equally near, prefer `package.json` > `composer.json` 
 
 Load at most one stack-specific include family. Python uses `test-mock-safety-core.md`, `test-code-types-core.md`, and `test-edge-cases.md`; rows 8-9 are `SKIP` until Python-specific split includes exist.
 
-\* **quality-gates.md:** Read ONLY from `## Q1-Q19: Test Quality Gates` to end of file. Skip CQ1-CQ28.
+\* **quality-gates.md:** Read ONLY from `## Q1-Q19: Test Quality Gates` to end of file. Skip CQ1-CQ29.
 
 ```
 PHASE 1 — LOADED:

@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-Zuvo's 48-skill depth across audits, testing, security, deployment, design, pipeline management, knowledge accumulation, and session recovery is **unmatched per-skill** in the plugin ecosystem. No competitor offers this depth with structured multi-agent workflows, adversarial review (4 providers), quality gates (CQ1-CQ28, Q1-Q19), evidence enforcement, knowledge store, and cross-platform support (Claude Code + Codex + Cursor).
+Zuvo's 48-skill depth across audits, testing, security, deployment, design, pipeline management, knowledge accumulation, and session recovery is **unmatched per-skill** in the plugin ecosystem. No competitor offers this depth with structured multi-agent workflows, adversarial review (4 providers), quality gates (CQ1-CQ29, Q1-Q19), evidence enforcement, knowledge store, and cross-platform support (Claude Code + Codex + Cursor).
 
 **Where Zuvo leads:**
 - Full SDLC pipeline (brainstorm > plan > execute > ship > deploy > canary > retro)
@@ -215,7 +215,7 @@ Added in v1.3.x. 10 dimensions (A1-A10), WCAG 2.2 AA/AAA, 2 critical gates (keyb
 1. **Adversarial review is unique** — No competitor does multi-provider adversarial verification at Zuvo's depth. Double down.
 2. **Full pipeline is unique** — brainstorm > plan > execute > review > ship > deploy > canary > retro. No competitor covers end-to-end.
 3. **Audit breadth is unique** — 10+ audit dimensions with structured scoring. Closest is Trail of Bits (security only).
-4. **Quality gates are unique** — CQ1-CQ28 + Q1-Q19 + AP1-AP29 + CAP1-CAP14. No competitor has this systematic approach.
+4. **Quality gates are unique** — CQ1-CQ29 + Q1-Q19 + AP1-AP29 + CAP1-CAP19. No competitor has this systematic approach.
 
 ---
 

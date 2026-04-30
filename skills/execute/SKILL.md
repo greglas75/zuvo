@@ -34,7 +34,7 @@ Execute all three roles yourself in sequential passes with explicit checkpoints:
 1. **Pre-write contracts:** For complex tasks, fill the code contract (from `code-contract.md`) before writing production code, and the test contract (from `test-contract.md`) before writing tests. Print: `[CHECKPOINT: contracts complete, starting implementation]`
 2. **Implementer pass:** Write the code following the task spec and contracts. Run verification. Print: `[CHECKPOINT: implementation complete, switching to spec review]`
 3. **Spec reviewer pass:** Re-read the task spec and the code you just wrote. Compare independently. Do NOT trust your implementation pass — review as if seeing the code for the first time. Print findings and: `[GATE: spec-compliance] <3 plan requirements satisfied, or BLOCKED with exact gap>`
-4. **Quality reviewer pass:** Run CQ1-CQ28 on production files, Q1-Q19 on test files. Run anti-tautology checks on test files. Print scores and: `[GATE: cq-critical] <critical gates checked + evidence>`
+4. **Quality reviewer pass:** Run CQ1-CQ29 on production files, Q1-Q19 on test files. Run anti-tautology checks on test files. Print scores and: `[GATE: cq-critical] <critical gates checked + evidence>`
 5. **Independent test auditor pass:** Re-read tests as if seeing them for the first time. Compare Q scores with self-eval. Print: `[CHECKPOINT: independent test audit complete]`
 6. **Adversarial pass:** Run the same adversarial review required in Step 7b. Print: `[GATE: adversarial-done] PASS|WARNING|CRITICAL|BLOCKED <mode + artifact path or exact blocker>`
 7. **Commit** (if all reviews pass)
@@ -408,7 +408,7 @@ Agent: Quality Reviewer
          CODESIFT_AVAILABLE, repo identifier, content of shared/includes/quality-gates.md
 ```
 
-The quality reviewer applies CQ1-CQ28 on production code and Q1-Q19 on test code from the provided quality-gates.md. It also checks file size limits. For complex tasks, it verifies the test contract was filled correctly (all branches listed, no implementation-derived expected values, all mutations have catching tests).
+The quality reviewer applies CQ1-CQ29 on production code and Q1-Q19 on test code from the provided quality-gates.md. It also checks file size limits. For complex tasks, it verifies the test contract was filled correctly (all branches listed, no implementation-derived expected values, all mutations have catching tests).
 
 ### Step 7: Handle Quality Reviewer Verdict
 
@@ -506,7 +506,7 @@ Status: COMPLETED
 Files changed: [list]
 Mode: [multi-agent|single-agent] (fallback: [none|reason])
 Spec review: COMPLIANT (iteration [N])
-Quality review: PASS (CQ: [score]/28, Q: [score]/19)
+Quality review: PASS (CQ: [score]/29, Q: [score]/19)
 Adversarial review: [PASS / N findings (N critical) / BLOCKED]
 Verify: [command -> exit code]
 ```
@@ -584,8 +584,8 @@ Print a completion report:
 ### Task Results
 | # | Task | Status | CQ Score | Q Score | Notes |
 |---|------|--------|----------|---------|-------|
-| 1 | [name] | COMPLETED | 25/28 | 17/19 | — |
-| 2 | [name] | COMPLETED | 26/28 | 16/19 | Concern: [brief] |
+| 1 | [name] | COMPLETED | 26/29 | 17/19 | — |
+| 2 | [name] | COMPLETED | 27/29 | 16/19 | Concern: [brief] |
 | 3 | [name] | SKIPPED | — | — | Blocker: [brief] |
 
 ### Files Changed
@@ -676,7 +676,7 @@ From `shared/includes/tdd-protocol.md`: no production code without a failing tes
 ### Quality Gates
 
 From `shared/includes/quality-gates.md`:
-- CQ1-CQ28 on production code (critical gates: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 + conditional: CQ16, CQ19-CQ24, CQ28)
+- CQ1-CQ29 on production code (critical gates: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 + conditional: CQ16, CQ19-CQ24, CQ28)
 - Q1-Q19 on test code (critical gates: Q7, Q11, Q13, Q15, Q17)
 - Any critical gate = 0 -> FAIL, regardless of total score
 

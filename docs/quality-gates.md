@@ -1,10 +1,10 @@
 # Quality Gates
 
-Zuvo enforces two quality gate systems: **CQ1-CQ28** for production code and **Q1-Q19** for test code. Every skill that writes or reviews code runs these evaluations with evidence requirements. Scores determine whether work can proceed.
+Zuvo enforces two quality gate systems: **CQ1-CQ29** for production code and **Q1-Q19** for test code. Every skill that writes or reviews code runs these evaluations with evidence requirements. Scores determine whether work can proceed.
 
 ---
 
-## CQ1-CQ28: Code Quality Gates
+## CQ1-CQ29: Code Quality Gates
 
 Each gate is scored **1** (pass with evidence), **0** (fail or unproven), or **N/A** (precondition not active, requires justification).
 
@@ -38,6 +38,7 @@ Each gate is scored **1** (pass with evidence), **0** (fail or unproven), or **N
 | CQ26 | Observability | Structured logger with context (requestId, userId), not plain console.log. |
 | CQ27 | Observability | Log levels correct. `error` for infrastructure failures only, not validation. |
 | CQ28 | Resilience | Timeout hierarchy correct: client < server < DB. |
+| CQ29 | Structure | Workspace path alias (`@/`, `~/`, `#/`) used for imports >=3 hops deep when alias is configured. N/A if no alias in workspace. |
 
 ### Critical gates -- static (always block)
 
@@ -62,9 +63,9 @@ Any of these scored 0 is an immediate FAIL, regardless of the total score.
 
 | Result | Criteria |
 |--------|---------|
-| **PASS** | Score >= 24/28 AND all active critical gates = 1 |
-| **CONDITIONAL PASS** | Score 22-23/28 AND all active critical gates = 1 |
-| **FAIL** | Any active critical gate = 0, OR total score < 22 |
+| **PASS** | Score >= 25/29 AND all active critical gates = 1 |
+| **CONDITIONAL PASS** | Score 23-24/29 AND all active critical gates = 1 |
+| **FAIL** | Any active critical gate = 0, OR total score < 23 |
 
 ---
 
