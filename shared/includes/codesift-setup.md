@@ -40,21 +40,88 @@ If CodeSift succeeds at indexing/init but later queries fail with `Transport clo
 
 Some MCP hosts (Claude Code, Codex Plugins) defer tool schemas to keep the system prompt small. When `mcp__codesift__*` tools appear under "deferred tools" in the session-start system reminder rather than directly in the tool list, calling them produces `InputValidationError`.
 
-**Detect:** scan the session-start banner for any `mcp__codesift__*` name appearing in a deferred-tools list.
+**Detect:** scan the session-start banner for any `mcp__codesift__*` name appearing in a deferred-tools list. The preload mechanism described below uses Claude Code's `ToolSearch`; on other MCP hosts use the host's equivalent tool-schema preload mechanism that honors a `select:`-style allowlist. If no such mechanism exists on the host, fall through to Degraded Mode.
 
-**If deferred:** run preload BEFORE Step 3. Use this exact ToolSearch call (one per session, max once):
+**If deferred:** run stack-aware preload BEFORE Step 3. Issue exactly ONE `ToolSearch(query="select:...")` call with the union of:
+
+1. Tools from the calling skill's `codesift_tools.always` list (frontmatter)
+2. Tools from `codesift_tools.by_stack[<key>]` for every key matched against the detected stack
+
+If the calling skill has no `codesift_tools` manifest, fall back to the legacy 6-tool preload:
 
 ```
 ToolSearch(query="select:mcp__codesift__search_text,mcp__codesift__get_file_tree,mcp__codesift__search_symbols,mcp__codesift__get_symbol,mcp__codesift__index_status,mcp__codesift__plan_turn")
 ```
 
-This loads the 6 most-used tools' schemas. After preload, the tools work normally — proceed with Step 3. Mark these tools as `DEFERRED-PRELOADED` in the Tool Availability Block (see end of file).
+### Stack detection (one-time per session)
 
-**Additional tools:** if a skill needs niche tools beyond the core 6 (`analyze_complexity`, `analyze_hotspots`, `find_dead_code`, `scan_secrets`, `framework_audit`, etc.), add them to the same `select:` query — do NOT issue a second ToolSearch call.
+Before issuing the ToolSearch, run `analyze_project()` ONCE. It returns:
 
-**If `ToolSearch` itself is unavailable:** skip preload and treat CodeSift as unavailable (degraded mode). Do not attempt direct calls — they will fail with `InputValidationError`.
+```json
+{
+  "stack": {
+    "language": "javascript|python|php|kotlin|...",
+    "framework": "nextjs|django|astro|nestjs|hono|...|null",
+    "test_runner": "pytest|jest|vitest|...|null",
+    "package_manager": "npm|pnpm|pip|composer|...",
+    "monorepo": true|false
+  },
+  "dependency_health": { ... }
+}
+```
 
-**Idempotency:** run preload at most ONCE per session. Repeating it wastes tokens. Track preload state in skill memory if the same skill spawns sub-agents that also call CodeSift.
+### Match `by_stack` keys against detected stack
+
+For each key in the calling skill's `codesift_tools.by_stack`, include its tool group if ANY of the following match:
+
+1. Key equals `analyze_project.stack.language` (e.g. `python`, `php`, `kotlin`)
+2. Key equals `analyze_project.stack.framework` (e.g. `nextjs`, `django`, `astro`)
+3. Key equals `analyze_project.stack.test_runner` (e.g. `pytest`, `jest`)
+4. Key appears in the project's dependency manifest:
+   - `package.json` (deps + devDeps): match keys like `react`, `prisma`, `drizzle`, `hono`, `vitest`
+   - `composer.json` (require): match keys like `yii`, `laravel`, `symfony`
+   - `pyproject.toml` / `requirements.txt`: match keys like `django`, `fastapi`, `celery`, `flask`, `pytest`
+   - **Monorepo (`stack.monorepo === true`):** scan ALL workspace package.json files (`apps/*`, `packages/*`, plus paths from `workspaces` field) — not just root. Otherwise auditing a workspace dir with a different framework than root produces the wrong preload.
+5. Key matches a database driver in deps. Postgres signal includes any of: `pg`, `psycopg2`, `psycopg2-binary`, `psycopg`, `postgresql`, `postgres`, `postgres-js`, `@prisma/adapter-pg`, `@neondatabase/serverless`, `@vercel/postgres`. MySQL: `mysql`, `mysql2`, `pymysql`, `mysqlclient`. SQLite: `sqlite3`, `better-sqlite3`, `aiosqlite`.
+
+Take the UNION of all matched groups + `always`. Build one `select:` query with all tool names prefixed `mcp__codesift__`. Issue ONE ToolSearch.
+
+### Worked example
+
+Calling skill `code-audit` has manifest with `always` = 17 tools and `by_stack` = 13 groups.
+
+Project is Next.js + React + Prisma + PostgreSQL + Vitest:
+- `analyze_project` returns `language=javascript, framework=nextjs, test_runner=vitest`
+- `package.json` deps include: `react`, `next`, `@prisma/client`, `pg`
+- Matched groups: `nextjs` (framework), `react` (deps), `prisma` (deps), `postgres` (pg driver)
+- Final preload: 17 always + 2 nextjs + 3 react + 1 prisma + 1 postgres = **24 tools**
+- Skipped: nestjs, astro, hono, python, django, fastapi, php, yii, sql (~16 tools)
+
+Project is Django + Celery + pytest + PostgreSQL:
+- `analyze_project` returns `language=python, framework=django, test_runner=pytest`
+- `pyproject.toml` deps include: `django`, `celery`, `pytest`, `psycopg2`
+- Matched groups: `python` (language), `django` (framework + deps), `postgres` (psycopg2)
+- Final preload: 17 always + 2 python + 3 django + 1 postgres = **23 tools**
+
+### Output format
+
+After preload, mark all loaded tools as `DEFERRED-PRELOADED` in the Tool Availability Block. Print a one-line trace before continuing:
+
+```
+[CodeSift preload] stack=<lang>/<framework>/<test_runner>, groups=<N matched>, tools=<N total>
+```
+
+### Constraints
+
+- Run preload at most ONCE per session by default — gather all known tool needs into the initial UNION-based `select:` query.
+- **Mid-run preload (escape valve):** long-running skills (audits, multi-phase pipelines) may genuinely discover a niche-tool need only at a phase boundary that was not predictable at session start. A second `ToolSearch` is permitted, but only:
+  - At a phase boundary (not opportunistically).
+  - For tools genuinely required by the upcoming phase (not "just in case").
+  - When the missing tool was not available in the calling skill's `codesift_tools` manifest at session start.
+  - Hard cap: **2 `ToolSearch` calls per session**. A third indicates a planning gap — surface it as `[CodeSift preload exceeded 2 calls]` rather than silently issuing it.
+- If `ToolSearch` itself is unavailable: skip preload and treat CodeSift as unavailable (degraded mode). Do not attempt direct calls — they fail with `InputValidationError`.
+- If `analyze_project` fails or returns `status=partial` with all-null stack (e.g. markdown-only repo): preload only `always` tools. Skip `by_stack` matching.
+- Sub-agents inherit parent's preload state. Do NOT re-run preload in sub-agents.
 
 ## Step 3: Tool Usage
 

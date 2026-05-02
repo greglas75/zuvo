@@ -498,6 +498,12 @@ Agent: Confidence Re-Scorer
 ## Phase 3: Report
 
 > **Phase 3 runs end-to-end with no approval pauses.** Do not ask the user to confirm before persisting the report, tagging commits, writing to backlog, or running the retrospective. All subsections below (Backlog Persistence → Report Persistence → Tag Reviewed Commits → Knowledge Curation → Retrospective → Completion Gate → NEXT STEPS) execute in order before any `REVIEW COMPLETE` text is emitted. The only gate is the Completion Gate Check at the end.
+>
+> **Destructive-persistence preconditions** (verify silently before tagging or writing to shared logs):
+> - The CWD is a git repo and matches the scope being reviewed (`git rev-parse --is-inside-work-tree` true; `REVIEWED_FROM..REVIEWED_THROUGH` resolved against this repo's history).
+> - For commit-range scopes (`new`, `HEAD~N`, explicit hashes): `REVIEWED_FROM` and `REVIEWED_THROUGH` are both reachable from HEAD.
+> - For `staged` / uncommitted scopes: skip `reviewed/<hash>` tagging entirely (already documented below).
+> - If any precondition fails: skip the destructive step (tag / log append) and report `[skipped: precondition failed (<reason>)]` in the gate check rather than silently writing into the wrong repo or logging spurious entries.
 
 ### Severity Tiers
 

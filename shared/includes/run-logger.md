@@ -55,7 +55,7 @@ DATE\tSKILL\tPROJECT\tCQ_SCORE\tQ_SCORE\tVERDICT\tTASKS\tDURATION\tNOTES\tBRANCH
 | 1 | DATE | ISO 8601 UTC with Z suffix | `2026-04-05T18:45:00Z` |
 | 2 | SKILL | Skill name without `zuvo:` prefix | `build` |
 | 3 | PROJECT | Git root directory basename (see Field Resolution) | `tgm-survey-platform` |
-| 4 | CQ_SCORE | `N/29`, `N-critical` (audits), or `-` | `23/29` |
+| 4 | CQ_SCORE | `N/29`, `N-critical` (audits), or `-` | `26/29` |
 | 5 | Q_SCORE | `N/19`, `N-total` (audits), or `-` | `16/19` |
 | 6 | VERDICT | `PASS`, `WARN`, `FAIL`, `BLOCKED`, or `ABORTED` only | `PASS` |
 | 7 | TASKS | Number of tasks completed, or `-` | `4` |
@@ -93,9 +93,9 @@ Each skill has a named output block (e.g., `BUILD COMPLETE`, `REVIEW COMPLETE`).
 
 Feature: user export to CSV
 Tier: STANDARD | Files: 3 created + 2 modified
-CQ: 23/29 | Q: 15/19
+CQ: 26/29 | Q: 15/19
 Verdict: PASS
-Run: 2026-04-05T14:30:00Z	build	zuvo-plugin	23/29	15/19	PASS	4	standard	user export CSV	main	a3f7b2c	env-compat:1538|codesift-setup:1582|cq-patterns:27396|testing:21723|code-contract:5916|quality-gates:7722	STANDARD
+Run: 2026-04-05T14:30:00Z	build	zuvo-plugin	26/29	15/19	PASS	4	standard	user export CSV	main	a3f7b2c	env-compat:1538|codesift-setup:1582|cq-patterns:27396|testing:21723|code-contract:5916|quality-gates:7722	STANDARD
 
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved above.
 ```
