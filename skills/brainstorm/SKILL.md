@@ -21,22 +21,24 @@ Understand the problem thoroughly. Design a solution collaboratively. Write a sp
 
 1. `../../shared/includes/codesift-setup.md` -- CodeSift discovery and initialization
 2. `../../shared/includes/env-compat.md` -- Agent dispatch patterns per environment
+3. `../../shared/includes/acceptance-proof-protocol.md` -- Per-AC proof contract for plan/execute
 
 ### Deferred — Load when needed (NOT at startup)
 
-3. `../../rules/cq-patterns.md` -- Load at Phase 3 (design decisions), NOT at Phase 0
-4. `../../shared/includes/run-logger.md` -- Load at completion only
-5. `../../shared/includes/retrospective.md` -- Load at completion only
+4. `../../rules/cq-patterns.md` -- Load at Phase 3 (design decisions), NOT at Phase 0
+5. `../../shared/includes/run-logger.md` -- Load at completion only
+6. `../../shared/includes/retrospective.md` -- Load at completion only
 
 Print the checklist:
 
 ```
 CORE FILES LOADED:
-  1. codesift-setup.md   -- READ
-  2. env-compat.md       -- READ
-  3. cq-patterns.md      -- DEFERRED (Phase 3)
-  4. run-logger.md       -- DEFERRED (completion)
-  5. retrospective.md    -- DEFERRED (completion)
+  1. codesift-setup.md              -- READ
+  2. env-compat.md                  -- READ
+  3. acceptance-proof-protocol.md   -- READ
+  4. cq-patterns.md                 -- DEFERRED (Phase 3)
+  5. run-logger.md                  -- DEFERRED (completion)
+  6. retrospective.md               -- DEFERRED (completion)
 ```
 
 If a Phase 0 file is missing, STOP. Deferred files are loaded when their phase begins.
@@ -312,21 +314,48 @@ Spec document structure:
 
 ## Acceptance Criteria
 
+Every AC has an inline **Proof** sub-bullet — a deterministic procedure (or interaction-with-artifact for UI) that, when run, demonstrates the AC is satisfied. Proofs are the contract between this spec and `zuvo:plan` / `zuvo:execute`. Read `../../shared/includes/acceptance-proof-protocol.md` for the surface taxonomy and proof shape.
+
 **Ship criteria** (must pass for release — deterministic, fact-checkable):
 
-1. ...
-2. ...
+- **AC1 — <single declarative sentence describing the user-observable behavior>**
+  - Surface: `backend-logic | api | db | db-data | ui | integration | config | docs`
+  - Proof: <command, interaction, or measurement that exhibits the behavior>
+  - Expected: <what success looks like — exit code, response shape, DOM state, screenshot match>
+  - Artifact: `.zuvo/proofs/<task-or-AC-id>.<ext>`
+- **AC2 — ...**
+  - Surface: ...
+  - Proof: ...
+  - Expected: ...
+  - Artifact: ...
 
 **Success criteria** (must pass for value validation — measurable quality/efficiency):
 
-1. ...
-2. ...
+- **AC-S1 — <single declarative sentence describing the measurable outcome>**
+  - Surface: ...
+  - Proof: <measurement procedure — script, dashboard query, A/B comparison>
+  - Expected: <numeric threshold or comparison target>
+  - Artifact: ...
+- **AC-S2 — ...**
 
-[Ship criteria can all pass while success criteria fail. That means infrastructure works but value is not delivered. Both tiers are required.]
+[Ship criteria can all pass while success criteria fail. That means infrastructure works but value is not delivered. Both tiers are required. AC bullets without a concrete `Proof:` field are rejected by spec-reviewer.]
+
+## Whole-feature Smoke Proofs
+
+[Enumerate the **end-to-end user flows** described in Solution Overview. Each main flow gets its own smoke proof that exercises the entire path — not just one task's slice. Run by `zuvo:execute` at Phase Final, after all per-task proofs pass, before COMPLETED is declared. Catches structural bugs that span tasks (e.g., round-trip data loss across encode → transform → decode).]
+
+- **SMOKE1 — <name of the main flow, e.g., "import HTML, translate, export HTML round-trip">**
+  - Preconditions: <fixtures, env vars, seeded data>
+  - Proof: <full end-to-end script that drives the flow>
+  - Expected: <invariants the entire flow must preserve — e.g., "exported HTML matches imported HTML byte-for-byte except for translated text spans">
+  - Artifact: `.zuvo/proofs/smoke-<flow-name>.<ext>`
+- **SMOKE2 — ...**
+
+If the spec describes only an internal subsystem with no end-user flow (e.g., a refactor), state "Not applicable — no main user flow; per-task proofs cover all behavior." and document why no smoke is needed.
 
 ## Validation Methodology
 
-[How success criteria are measured. Must be concrete: specific script, command, comparison method. Not "compare manually" or "review subjectively." Validation tooling is a prerequisite for implementation, not a deliverable of it.]
+[Aggregator section. Lists the proof runners required by this spec (vitest, curl, playwright, chrome-devtools MCP, etc.) and any infrastructure prerequisites (test DB, fixture files, dev server). Per-AC proof bodies live above; this section is the inventory + setup, not the proof content. Validation tooling is a prerequisite for implementation, not a deliverable of it.]
 
 ## Rollback Strategy
 
@@ -436,6 +465,8 @@ Before printing the final output block, verify every item. Unfinished items = pi
 COMPLETION GATE CHECK
 [ ] All 3 Phase 1 agents ran (Code Explorer, Domain Researcher, Business Analyst)
 [ ] Failure modes section present for EVERY component (minimum 3 scenarios each)
+[ ] EVERY Acceptance Criterion has Surface, Proof, Expected, Artifact fields filled
+[ ] Whole-feature Smoke Proofs section present (or explicit "Not applicable" with reason)
 [ ] Spec-reviewer ran and converged (max 3 iterations)
 [ ] Adversarial review ran (--mode spec) — not skipped
 [ ] Spec status is Approved (interactive) or Reviewed (async)

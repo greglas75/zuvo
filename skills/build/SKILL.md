@@ -45,10 +45,12 @@ CodeSift setup completed in PHASE 0. Use CodeSift tools for all discovery and an
 ### PHASE 0 — Bootstrap (always, before reading any input)
 
 ```
-  1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> STOP]
+  1. ../../shared/includes/codesift-setup.md              -- [READ | MISSING -> STOP]
+  2. ../../shared/includes/no-pause-protocol.md           -- [READ | MISSING -> WARN] (HARD: no mid-loop pauses)
+  3. ../../shared/includes/acceptance-proof-protocol.md   -- [READ | MISSING -> STOP] (HARD: per-step proof gates)
 ```
 
-This is the ONLY file loaded before reading the task spec and target files.
+These files are loaded before reading the task spec and target files.
 
 ### PHASE 0.5 — Classify (after reading task context, determine tier)
 
@@ -104,6 +106,7 @@ Check for these in the feature description and target files:
 [ ] Touches API contracts (request/response shapes)
 [ ] Target file is a git churn hotspot (top 10 in last 90 days)
 [ ] Feature involves concurrency or race conditions
+[ ] Touches UI / user-interactive surface (.tsx / .vue / .svelte / .astro / *.css in components/ or app/)
 ```
 
 ### Tier Assignment
@@ -191,10 +194,13 @@ Output:
 ```
 DISCOVERY
   Candidate files: [list with paths]
+  Surface(s): [backend-logic | api | db | db-data | ui | integration | config | docs — one per file or "mixed"]
   Key dependencies: [files that import/call candidates]
   Risk signals: [updated list]
   Tier: [confirmed or adjusted]
 ```
+
+The Surface(s) line drives proof shape selection in Phase 2 — see `acceptance-proof-protocol.md`. UI surface activates browser-tool requirement at Phase 4 verification. Backend / api / db surfaces require deterministic proofs (real call, real query) not just unit tests.
 
 This output feeds Phase 1b agents with concrete scope. No guessing.
 
@@ -324,15 +330,29 @@ FORBIDDEN: files outside these lists, unrelated improvements, opportunistic refa
 - Test files: [paths]
 - Critical scenarios: [error paths, edge cases, boundaries]
 
-## 7. File Size Check
+## 7. Acceptance Proofs
+[For each user-observable behavior this build delivers, one entry. See ../../shared/includes/acceptance-proof-protocol.md for surface taxonomy and proof shapes.]
+- AP1 — [single declarative sentence describing the behavior]
+  - Surface: [backend-logic | api | db | db-data | ui | integration | config | docs]
+  - Proof: [exact procedure — command, HTTP call, DB query, browser interaction]
+  - Expected: [exit code, response shape, DOM state, screenshot match]
+  - Artifact: `.zuvo/proofs/build-<short-slug>-AP1.<ext>`
+- AP2 — ...
+
+[For configuration-only or pure-refactor builds with no user-observable behavior change, write "Not applicable — pure refactor / config; behavior unchanged" with one-line justification.]
+
+## 8. Whole-feature Smoke
+[If this build contributes to a multi-step user flow that other builds also touch, name the smoke proof here. For self-contained 1-5 file builds, usually skipped — note "Not applicable — self-contained scope". For UI builds touching the same screen as backend builds, mandatory.]
+
+## 9. File Size Check
 [Current line count + estimated post-change count for each file to modify]
 [Flag any that will exceed limits from file-limits.md]
 
-## 8. Open Questions
+## 10. Open Questions
 [Genuine uncertainties. Empty if none.]
 ```
 
-If section 8 is non-empty: ask the user (max 4 questions), wait for answers, update plan.
+If section 10 is non-empty: ask the user (max 4 questions), wait for answers, update plan.
 
 ---
 
@@ -507,6 +527,30 @@ All must pass. If any fails, fix and re-run.
 
 Read `../../shared/includes/verification-protocol.md` — no completion claims without fresh evidence.
 
+**Verification commands check implementation health (compiles, types, tests). They do NOT check that user-observable behavior matches the AP entries. That is Phase 4.2b.**
+
+### 4.2b Acceptance Proofs (MANDATORY — the behavior gate)
+
+For each AP entry from the Phase 2 plan section 7 (Acceptance Proofs):
+
+1. Set up the AP's preconditions (fixtures, env vars, seeded data, dev server).
+2. Run the AP's proof exactly as written:
+   - `backend-logic` / `api` / `integration` / `config` — execute shell command or HTTP call. Capture stdout/stderr + exit code to artifact path.
+   - `db` / `db-data` — run migration / sample query, capture schema dump or query results to artifact.
+   - `ui` — drive Playwright or chrome-devtools MCP through the interaction script. Save screenshot + DOM snapshot to artifact.
+   - `docs` — run linter / link checker, capture report.
+3. Compare against the AP's `Expected:` field.
+4. Verdict per AP: VERIFIED or BROKEN.
+
+**LLM-judge fallback for UI subjective dimensions:** if an AP includes a subjective visual quality the proof cannot deterministically express, after capturing the screenshot dispatch a Sonnet judge with `(AP description, screenshot, DOM)` requiring binary `VERIFIED` / `BROKEN` plus one-sentence justification. Default deterministic.
+
+**Verdict handling:**
+- All APs VERIFIED → proceed to 4.3.
+- Any AP BROKEN → fix the implementation, re-run from 4.1 (or from 3.2 if the fix is non-trivial). Maximum 3 AP iterations. After 3, abort with `BLOCKED_ACCEPTANCE_PROOF_FAILURE` and surface to user.
+- AP marked "Not applicable" in plan → skip with a note. Reason must already be in plan section 7.
+
+**Aggregate scoring forbidden.** Telemetry must report per-file CQ/Q scores (e.g. `cq=27/29@codec.ts,28/29@parser.ts`), never `cq=27/29 aggregate`. The 2026-04-22 codec session shipped Q7=0 and Q11=0 hidden under `q_gates: 19/19 aggregate` — per-file enforcement prevents recurrence.
+
 ### 4.3 Execution Checklist
 
 Print before committing. Required items depend on tier.
@@ -519,8 +563,9 @@ EXECUTION VERIFICATION
 [ALL] [ ] TESTS: Test suite green
 [ALL] [ ] CQ CRITICAL: All critical gates pass (with evidence)
 [ALL] [ ] TYPES: Type checker passes (if checker exists; skip with note if none)
-[STD+] [ ] CQ FULL: CQ1-CQ29 self-eval, scores + evidence
-[STD+] [ ] Q FULL: Q1-Q19 self-eval on each test file
+[ALL] [ ] AP: Every Acceptance Proof from plan section 7 ran and returned VERIFIED (artifact paths recorded) — or "Not applicable" with reason
+[STD+] [ ] CQ FULL: CQ1-CQ29 self-eval, PER-FILE scores + evidence (aggregate forbidden)
+[STD+] [ ] Q FULL: Q1-Q19 self-eval on each test file, PER-FILE scores
 [STD+] [ ] ANTI-TAUTOLOGY: Automated echo pattern check passed
 [STD+] [ ] TEST AUDITOR: Independent auditor score matches self-eval (±1)
 [DEEP] [ ] LINT: Linter passes
@@ -593,11 +638,12 @@ CALLER = "zuvo:build"
 REFERENCE = <git SHA of the commit>
 ```
 
-### 4.7 Retrospective (REQUIRED)
+### 4.7 Retrospective (REQUIRED — no opt-out)
 
 Follow the retrospective protocol from `retrospective.md`.
 Gate check -> structured questions -> TSV emit -> markdown append.
-If gate check skips: print "RETRO: skipped (trivial session)" and proceed to output.
+
+**The "trivial session" opt-out is removed.** Every build produces a retro entry. If the build truly was uneventful, the entry is brief (one Friction line of `none observed`) but must still exist. The 92% retro skip rate observed in 2026-Q1 left the pipeline blind to its own failure modes.
 
 ## Completion Gate Check
 
@@ -606,12 +652,15 @@ Before printing the final output block, verify every item. Unfinished items = pi
 ```
 COMPLETION GATE CHECK
 [ ] Tier classified and printed: BUILD TIER: [LIGHT/STANDARD/DEEP]
+[ ] Surface(s) recorded in DISCOVERY output
 [ ] Code contract filled (STANDARD+) before production code written
 [ ] Test contract filled (STANDARD+) before tests written
-[ ] CQ self-eval printed with scores and evidence for critical gates
-[ ] Q self-eval printed (>=16 PASS) with evidence
+[ ] CQ self-eval printed with PER-FILE scores and evidence for critical gates (aggregate forbidden)
+[ ] Q self-eval printed PER-FILE (>=16 PASS) with evidence
 [ ] Adversarial review ran and findings handled
+[ ] Acceptance Proofs (Phase 4.2b) — every AP ran and VERIFIED, artifact paths recorded
 [ ] All verification commands ran and exited 0
+[ ] Retrospective ran (no "trivial session" opt-out)
 [ ] Backlog updated with deferred findings or "none"
 [ ] Run: line printed and appended to log
 ```

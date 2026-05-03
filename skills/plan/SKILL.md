@@ -55,14 +55,15 @@ Check if a plan already exists:
 
 ```
 CORE FILES LOADED:
-  1. ../../shared/includes/codesift-setup.md  -- READ/MISSING
-  2. ../../shared/includes/env-compat.md       -- READ/MISSING
-  3. ../../shared/includes/quality-gates.md    -- READ/MISSING
-  4. ../../shared/includes/tdd-protocol.md     -- READ/MISSING
-  5. ../../shared/includes/session-state.md    -- READ/MISSING
-  6. ../../rules/file-limits.md                -- READ/MISSING
-  7. ../../shared/includes/run-logger.md       -- DEFERRED (completion)
-  8. ../../shared/includes/retrospective.md    -- DEFERRED (completion)
+  1. ../../shared/includes/codesift-setup.md            -- READ/MISSING
+  2. ../../shared/includes/env-compat.md                 -- READ/MISSING
+  3. ../../shared/includes/quality-gates.md              -- READ/MISSING
+  4. ../../shared/includes/tdd-protocol.md               -- READ/MISSING
+  5. ../../shared/includes/session-state.md              -- READ/MISSING
+  6. ../../shared/includes/acceptance-proof-protocol.md  -- READ/MISSING
+  7. ../../rules/file-limits.md                          -- READ/MISSING
+  8. ../../shared/includes/run-logger.md                 -- DEFERRED (completion)
+  9. ../../shared/includes/retrospective.md              -- DEFERRED (completion)
 ```
 
 Resolve these paths relative to the currently loaded `skills/plan/SKILL.md`. If a Phase 0 file read fails, mark it as `MISSING`. Deferred files are loaded when their phase begins, not at startup.
@@ -185,6 +186,7 @@ Write the plan document to `docs/specs/YYYY-MM-DD-<topic>-plan.md` using today's
 
 ### Task 1: [Short descriptive name]
 **Files:** [list of files to create or modify, with full paths]
+**Surface:** backend-logic | api | db | db-data | ui | integration | config | docs
 **Complexity:** standard | complex
 **Dependencies:** none | Task N, Task M
 **Execution routing:** default implementation tier | deep implementation tier
@@ -194,11 +196,33 @@ Write the plan document to `docs/specs/YYYY-MM-DD-<topic>-plan.md` using today's
   [Optional: scaffold snippet ≤20 LOC if pattern is non-obvious]
 - [ ] Verify: `[exact shell command]`
   Expected: [exact expected output or pattern]
-- [ ] Acceptance: [which Coverage Matrix row(s) this task satisfies]
+- [ ] Acceptance Proof: [for each AC# this task satisfies, copy the proof block from the spec inline]
+  - AC#: [id from spec]
+    - Surface: [matching surface]
+    - Proof: [exact procedure — command, HTTP call, DB query, browser interaction script]
+    - Expected: [exit code, response shape, DOM state, screenshot match]
+    - Artifact: `.zuvo/proofs/task-1-<ac-id>.<ext>`
 - [ ] Commit: `[commit message describing behavior added]`
 
 ### Task 2: [...]
 ...
+```
+
+## Whole-feature Smoke Proofs
+
+After all tasks complete, `zuvo:execute` runs these end-to-end proofs **before** declaring the feature COMPLETED. Catches structural bugs that span multiple tasks (e.g., round-trip data loss across encode/transform/decode in three tasks).
+
+Copy each smoke proof from the spec's `## Whole-feature Smoke Proofs` section. If the spec marked smoke as "Not applicable" (internal-only subsystem, no user flow), repeat the justification here.
+
+```markdown
+## Whole-feature Smoke Proofs
+
+- **SMOKE1 — [name]**
+  - Preconditions: [fixtures, env, seeded data]
+  - Proof: [full end-to-end script]
+  - Expected: [invariants the entire flow must preserve]
+  - Artifact: `.zuvo/proofs/smoke-<flow-name>.<ext>`
+- **SMOKE2 — ...**
 ```
 
 ### Task Authoring Rules
@@ -207,11 +231,14 @@ Write the plan document to `docs/specs/YYYY-MM-DD-<topic>-plan.md` using today's
 2. **Boundary size:** A task touching more than 5 files, more than one new public surface, or more than two system boundaries is oversized by default. Split it unless you can justify why the files are inseparable.
 3. **Task intent over exact code:** RED steps include test intent, target assertions, and file path. GREEN steps include symbols to add/change, invariants to maintain, interfaces to implement, and reuse obligations. Include scaffold code only when the pattern is non-obvious, and keep scaffolds at or below 20 LOC. Do NOT write the full implementation.
 4. **Exact verification:** The Verify step must include an exact shell command whose exit code proves the claimed invariant. If the expected output mentions a specific value or behavior, the command must assert that value or behavior rather than merely running a script.
-5. **Acceptance mapping:** Every Coverage Matrix row must appear in at least one task's Acceptance field. No orphan requirements, deliverables, or constraints.
-6. **Dependencies:** A task can only depend on tasks with a lower number. No circular dependencies. Dependencies must reflect real ordering, not preference.
-7. **Complexity rating:** `standard` means 1-3 files, existing patterns, one system boundary, and no new public contract. `complex` means 4+ files, 2+ system boundaries, new patterns/contracts, cross-cutting concerns, or high-risk hotspot files. The complexity rating determines which implementation tier the execute phase will use: default for standard, deep for complex.
-8. **File limits:** Use `../../rules/file-limits.md` as the planning default. In particular: utilities/helpers <=100 lines, controllers/services <=300 unless the rule explicitly allows more, components <=200/300, hooks <=250. If the plan would exceed these limits, split the task.
-9. **Test files:** Every task that creates production code must include a test file. If a task is docs-only or config-only, say so explicitly in the RED step instead of implying a missing test.
+5. **Acceptance Proof per task (MANDATORY):** Every task must list its `Acceptance Proof:` block — copying the spec's per-AC proof inline so `zuvo:execute` can run it without re-resolving from spec. Tasks without proofs are rejected by plan-reviewer. See `../../shared/includes/acceptance-proof-protocol.md` for surface taxonomy and proof shapes. **Verify** (rule 4) is an *implementation-detail* check (does my function compile and pass unit tests); **Acceptance Proof** is a *behavior* check (does the AC actually work). Both required — they catch different defects.
+6. **Surface field (MANDATORY):** Every task declares one Surface (backend-logic / api / db / db-data / ui / integration / config / docs). Determines proof shape and verification primitive. UI surface enables browser-tool requirement at execute time.
+7. **Coverage matrix:** Every Coverage Matrix row must appear in at least one task's Acceptance Proof field. No orphan requirements, deliverables, or constraints. **In addition:** every spec AC must be covered by at least one task's Acceptance Proof — Coverage Matrix and AC list must both be exhaustively mapped.
+8. **Whole-feature smoke proofs:** Copy the spec's `## Whole-feature Smoke Proofs` section into the plan verbatim. If the spec marked smoke "Not applicable", repeat the justification. Smoke proofs run after all per-task proofs at execute Phase Final.
+9. **Dependencies:** A task can only depend on tasks with a lower number. No circular dependencies. Dependencies must reflect real ordering, not preference.
+10. **Complexity rating:** `standard` means 1-3 files, existing patterns, one system boundary, and no new public contract. `complex` means 4+ files, 2+ system boundaries, new patterns/contracts, cross-cutting concerns, or high-risk hotspot files. The complexity rating determines which implementation tier the execute phase will use: default for standard, deep for complex.
+11. **File limits:** Use `../../rules/file-limits.md` as the planning default. In particular: utilities/helpers <=100 lines, controllers/services <=300 unless the rule explicitly allows more, components <=200/300, hooks <=250. If the plan would exceed these limits, split the task.
+12. **Test files:** Every task that creates production code must include a test file. If a task is docs-only or config-only, say so explicitly in the RED step instead of implying a missing test.
 
 ---
 
@@ -303,7 +330,9 @@ Before printing the final output block, verify every item. Unfinished items = pi
 ```
 COMPLETION GATE CHECK
 [ ] All 3 Phase 1 agents ran sequentially (Architect → Tech Lead → QA Engineer)
-[ ] Every spec AC maps to at least one task
+[ ] Every spec AC maps to at least one task's Acceptance Proof field
+[ ] EVERY task has Surface field + Acceptance Proof block (inline, not just AC# reference)
+[ ] Whole-feature Smoke Proofs section present (or "Not applicable" with reason)
 [ ] Plan-reviewer ran and converged — APPROVED verdict
 [ ] Adversarial validation ran (--mode plan)
 [ ] Plan status is Approved (interactive) or Reviewed (async)
