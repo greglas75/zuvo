@@ -418,3 +418,6 @@ Commits pending review. Auto-managed:
 - 64d88a4 (2026-04-20) release: v1.3.97 — v1.3.97 — fix banner sed regex so future version bumps actually update the Zuvo vX.Y.Z string in using-zuvo/SKILL.md (was matching CURRENT_VERSION, silently no-op if banner drifted)
 - 199cdbe (2026-04-23) release: v1.3.98 — force standard context on subagents — add explicit model: sonnet to dispatch instructions in 8 skills (refactor, review, execute, security-audit, code-audit, test-audit, api-audit, ui-design-team) so subagents don't inherit 1M context and require extra-usage
 - 2a424fe (2026-04-24) release: v1.3.99 — review skill — hard completion gate + end-to-end Phase 3 marker + tag convention split (reviewed/<hash> audit vs review-<date>-<slug> fix)
+- a8cc812 (2026-04-30) release: v1.3.100 — CQ29 + CAP15-19 + refinements (CQ4/11/14/19, CAP2/3/6/8/9/13) — close synthesis-gaps coverage from ~50% to ~85%; +CodeSift deferred-tool preflight
+- 6fae7ed (2026-05-02) review-fix: address 8 findings from review of fc73d7b..a8cc812
+- 71d5d2d (2026-05-03) pipeline: structural fix — Acceptance Proof gate across brainstorm/plan/execute/build

@@ -41,6 +41,7 @@ CORE FILES LOADED:
   2. ../../rules/security.md                -- READ/MISSING
   3. ../../shared/includes/env-compat.md    -- READ/MISSING
   4. ../../shared/includes/codesift-setup.md -- READ/MISSING
+  5. ../../shared/includes/no-pause-protocol.md -- READ/MISSING (HARD: no mid-loop pauses)
 ```
 
 **Stage 2 -- Before Phase 10 (report writing):**

@@ -26,6 +26,7 @@ Take an existing article, research the topic, add what's missing, and optimize t
 4. `../../shared/includes/humanization-rules.md` -- Writing constraints + voice matching
 5. `../../shared/includes/domain-profile-registry.md` -- 17 niche profiles
 6. `../../shared/includes/seo-page-profile-registry.md` -- SEO profiles
+7. `../../shared/includes/no-pause-protocol.md` -- HARD: no mid-loop pauses (batch/multi-section)
 
 **Lazy-loaded (Phase 2 only):**
 

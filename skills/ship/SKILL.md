@@ -36,9 +36,10 @@ CORE FILES LOADED:
   1. ../../shared/includes/env-compat.md       — READ/MISSING
   2. ../../shared/includes/codesift-setup.md   — READ/MISSING
   3. ../../shared/includes/run-logger.md       — READ/MISSING
-  4. ../../shared/includes/retrospective.md       — READ/MISSING
-  4. ../../shared/includes/knowledge-curate.md — READ/MISSING
-  5. ../../shared/includes/knowledge-prime.md  — READ/MISSING
+  4. ../../shared/includes/retrospective.md    — READ/MISSING
+  5. ../../shared/includes/knowledge-curate.md — READ/MISSING
+  6. ../../shared/includes/knowledge-prime.md  — READ/MISSING
+  7. ../../shared/includes/no-pause-protocol.md — READ/MISSING (HARD: no mid-pipeline pauses)
 ```
 
 If any file is missing: proceed in degraded mode. Note which files are unavailable in the Phase 5 output.

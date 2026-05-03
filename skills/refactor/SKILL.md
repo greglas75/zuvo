@@ -18,9 +18,10 @@ A senior architect executing a structured refactoring workflow. Every refactorin
 
 ```
   1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> STOP]
+  2. ../../shared/includes/no-pause-protocol.md   -- [READ | MISSING -> WARN] (HARD: no mid-batch pauses)
 ```
 
-This is the ONLY file loaded before reading the refactor target.
+These files are loaded before reading the refactor target.
 
 ### PHASE 0.5 — Classify (read target, determine refactor type)
 

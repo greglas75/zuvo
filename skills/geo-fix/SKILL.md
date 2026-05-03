@@ -49,6 +49,7 @@ CORE FILES LOADED:
   8. verification-protocol.md   -- [READ | MISSING -> STOP]
   9. ../../shared/includes/knowledge-prime.md  -- READ/MISSING
   10. ../../shared/includes/knowledge-curate.md -- READ/MISSING
+  11. ../../shared/includes/no-pause-protocol.md -- READ/MISSING (HARD: no mid-batch pauses)
 ```
 
 If any file is missing, STOP.

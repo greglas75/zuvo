@@ -48,6 +48,7 @@ CORE FILES LOADED:
   3. ../../shared/includes/env-compat.md -- READ/MISSING
   4. ../../shared/includes/run-logger.md -- READ/MISSING
   5. ../../shared/includes/retrospective.md -- READ/MISSING
+  6. ../../shared/includes/no-pause-protocol.md -- READ/MISSING (HARD: no mid-batch pauses)
 ```
 
 

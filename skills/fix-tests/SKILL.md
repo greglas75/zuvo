@@ -93,6 +93,7 @@ CORE FILES LOADED:
   4. ../../shared/includes/knowledge-prime.md  -- READ/MISSING
   5. ../../shared/includes/knowledge-curate.md -- READ/MISSING
   6. ../../shared/includes/retrospective.md    -- RETRO PROTOCOL
+  7. ../../shared/includes/no-pause-protocol.md -- READ/MISSING (HARD: no mid-batch pauses)
 ```
 
 **Conditional (loaded when the pattern requires domain knowledge):**

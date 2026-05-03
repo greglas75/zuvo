@@ -5,7 +5,8 @@
 **planning_mode:** inline
 **source_of_truth:** inline brief — 2026-04-30 audit batch (tgm-survey-platform) surfaced 5 CodeSift failure patterns. Pattern C (`NOT INDEXED` due to wrong repo resolution) is fixed at the source by `c65d399c4` in `~/DEV/codesift-mcp` (resolver: walk registry by ancestor root). Patterns A, B, D, E remain.
 **plan_revision:** 2
-**status:** Approved
+**status:** Completed
+**completed_at:** 2026-05-02T18:05:00Z
 **Created:** 2026-04-30
 **Tasks:** 5 (3 in zuvo-plugin, 2 in codesift-mcp)
 **Estimated complexity:** 4 standard, 1 complex (Task 4 — diagnose-first)

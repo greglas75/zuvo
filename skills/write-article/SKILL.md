@@ -34,6 +34,7 @@ Read these files before any work begins:
 9. `../../shared/includes/domain-profile-registry.md` -- 17 niche profiles: schema, E-E-A-T, detection signals
 10. `../../shared/includes/humanization-rules.md` -- Anti-detection writing constraints + voice matching
 11. `../../shared/includes/retrospective.md` -- RETRO PROTOCOL
+12. `../../shared/includes/no-pause-protocol.md` -- HARD: no mid-loop pauses in batch mode
 
 Print `CORE FILES LOADED:` checklist with `[READ | MISSING -> STOP]` for each. For item 4 print the resolved language file and whether English fallback was used.
 

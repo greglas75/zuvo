@@ -35,9 +35,10 @@ Generate high-quality tests for production code. Each file goes through the full
 
 ```
   1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> DEGRADED]
+  2. ../../shared/includes/no-pause-protocol.md   -- [READ | MISSING -> WARN] (HARD: no mid-file pauses in batch/auto mode)
 ```
 
-This is the ONLY file loaded before reading the production file. Do NOT load test-contract, quality-gates, testing rules, or any other include at this point — you don't know the code type yet.
+These files are loaded before reading the production file. Do NOT load test-contract, quality-gates, testing rules, or any other include at this point — you don't know the code type yet.
 
 If `codesift-setup.md` is missing, print `[CONTEXT] codesift-setup missing — assuming CodeSift unavailable and continuing in degraded mode.` Continue the run with legacy detection and native tools. Do not stop the file solely because the bootstrap include is absent.
 

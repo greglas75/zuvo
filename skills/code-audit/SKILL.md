@@ -1,6 +1,81 @@
 ---
 name: code-audit
 description: "Batch audit of production files against CQ1-CQ29 quality gates and CAP1-CAP19 anti-patterns. Tiered output (A/B/C/D), critical gate enforcement, evidence-backed scoring, cross-file pattern analysis, and prioritized execution plan. Flags: zuvo:code-audit all | [path] | [file] | --deep | --quick | --services | --controllers"
+codesift_tools:
+  always:
+    - analyze_project       # stack detection (used by codesift-setup orchestrator)
+    - index_status
+    - index_folder
+    - index_file
+    - plan_turn
+    - get_file_tree         # Phase 0.1 file discovery
+    - search_text           # batch agents, fallback
+    - search_symbols        # batch agents
+    - get_symbol            # punktowy lookup
+    - get_symbols           # batch lookup (2+ symbols)
+    - get_file_outline      # file-level scan
+    - audit_scan            # COMPOUND: replaces find_dead_code + search_patterns + find_clones + analyze_complexity + analyze_hotspots
+    - find_dead_code        # CQ13 fallback if audit_scan unavailable
+    - search_patterns       # CQ8 empty-catch (TOOL_VERIFIED)
+    - find_clones           # CQ14 duplication (TOOL_VERIFIED)
+    - trace_call_chain      # CQ4 ownership trace (--deep mode)
+    - scan_secrets          # CAP5 hardcoded secret pre-scan
+  # Each key = a technology label. Orchestrator (codesift-setup.md) matches keys
+  # against analyze_project.stack.{language,framework,test_runner} and dep manifests
+  # (package.json / composer.json / pyproject.toml). Union all matched groups.
+  by_stack:
+    # Languages
+    python:
+      - python_audit               # compound: circular + django + anti-patterns + ...
+      - analyze_async_correctness  # CQ15/CQ17 for async Python
+    php:
+      - php_project_audit          # security + ActiveRecord + N+1 + god model
+      - php_security_scan          # CAP6/CAP7/CAP8
+    # JS/TS frameworks
+    nestjs:
+      - nest_audit                 # CQ1-29 + NestJS-specific (DI, guards, modules)
+    nextjs:
+      - framework_audit            # 9 sub-audits (security, api_contract, boundary, ...)
+      - nextjs_route_map           # rendering strategy per route
+    astro:
+      - astro_audit                # one-call composite
+      - astro_actions_audit        # AA01-AA06 anti-patterns
+      - astro_hydration_audit
+    hono:
+      - analyze_hono_app           # routes + middleware overview
+      - audit_hono_security        # secure-headers, rate-limit, auth-ordering
+    # express / fastify — no dedicated CodeSift tools as of 2026-05.
+    # Generic CodeSift (search_text, search_patterns, find_dead_code, etc.) covers them.
+    # Listed here only to acknowledge they're recognized stacks (orchestrator can match them).
+    express: []
+    fastify: []
+    react:
+      - react_quickstart           # component/hook inventory + critical patterns
+      - analyze_hooks              # Rule of Hooks violations
+      - analyze_renders            # CAP13-related re-render risk
+    # Python sub-frameworks
+    django:
+      - analyze_django_settings    # CQ5/CQ6 Django security
+      - effective_django_view_security
+      - taint_trace                # CAP6/CAP8 (currently Django-only)
+    fastapi:
+      - trace_fastapi_depends      # CQ19 dependency injection
+      - get_pydantic_models        # CQ19 schema validation
+    flask:
+      - find_framework_wiring      # Flask init_app, blueprints, signals
+    # jest test_runner — no jest-specific CodeSift tools as of 2026-05.
+    # Generic CodeSift covers; orchestrator can match the key for completeness.
+    jest: []
+    # PHP sub-frameworks
+    yii:
+      - resolve_php_service        # Yii::$app-> resolution for CQ4
+    # ORMs / databases
+    prisma:
+      - analyze_prisma_schema      # CQ7/CQ20 (FK index, dual fields)
+    sql:
+      - sql_audit                  # 5 SQL gates
+    postgres:
+      - migration_lint             # squawk PG-only migration safety
 ---
 
 # zuvo:code-audit — Production Code Quality Triage
@@ -40,9 +115,10 @@ Default behavior: `all --quick`
 
 ```
   1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> STOP]
+  2. ../../shared/includes/no-pause-protocol.md   -- [READ | MISSING -> WARN] (HARD: no mid-loop pauses across files)
 ```
 
-This is the ONLY file loaded before reading the audit target files.
+These files are loaded before reading the audit target files. The no-pause protocol is mandatory for any multi-file audit run.
 
 ### PHASE 0.5 — Classify (read target files, determine domain)
 
