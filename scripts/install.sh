@@ -218,6 +218,29 @@ if changed:
 }
 
 # =======================================
+# ZUVO HOME ($HOME/.zuvo)
+# Forcing-function scripts that gate run-log writes on retrospective presence.
+# Independent of plugin host (Claude Code / Codex / Cursor) — installed once
+# per machine, called from every skill that loads run-logger.md.
+# =======================================
+install_zuvo_home() {
+  echo ""
+  echo "======================================"
+  echo "  ZUVO HOME (~/.zuvo)"
+  echo "======================================"
+
+  mkdir -p "$HOME/.zuvo"
+
+  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/append-runlog" ]]; then
+    cp "$ZUVO_DIR/scripts/zuvo-home/append-runlog" "$HOME/.zuvo/append-runlog"
+    chmod +x "$HOME/.zuvo/append-runlog"
+    ok "append-runlog installed (~/.zuvo/append-runlog)"
+  else
+    warn "scripts/zuvo-home/append-runlog not found in repo — skipping"
+  fi
+}
+
+# =======================================
 # CODEX
 # =======================================
 install_codex() {
@@ -644,7 +667,7 @@ case "$TARGET" in
   codex)  install_codex ;;
   cursor) install_cursor ;;
   antigravity) install_antigravity ;;
-  both|all) install_claude; install_codex; install_cursor; install_antigravity ;;
+  both|all) install_claude; install_codex; install_cursor; install_antigravity; install_zuvo_home ;;
   *)      echo "Usage: $0 [claude|codex|cursor|antigravity|all]"; exit 1 ;;
 esac
 

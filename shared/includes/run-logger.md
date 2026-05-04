@@ -100,6 +100,24 @@ Run: 2026-04-05T14:30:00Z	build	zuvo-plugin	26/29	15/19	PASS	4	standard	user exp
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved above.
 ```
 
+### Append via retro-gate wrapper (REQUIRED for skills with retrospective)
+
+For any skill that loads `shared/includes/retrospective.md`, **do NOT append directly** to `~/.zuvo/runs.log`. Use the wrapper:
+
+```bash
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
+Behavior:
+- The wrapper checks `~/.zuvo/retros.log` for a matching retro entry (same SKILL + PROJECT). If found, appends to runs.log. If not, **exits with code 2 and refuses the write** until retro is appended first.
+- Order is enforced: retros.log first, then runs.log.
+- Skills exempt from the gate (no retro protocol expected): `using-zuvo`, `backlog`, `benchmark`, `agent-benchmark`, `deploy`, `canary`, `worktree`. These can append directly.
+- Override (rare, audited): `ZUVO_SKIP_RETRO_GATE=1 ~/.zuvo/append-runlog "$RUN_LINE"`.
+
+This closes the silent-skip failure mode where an audit writes the report + Run line + finishes the session, never reaching the retrospective phase. The wrapper makes the order forcing-functioned: agent CANNOT write runs.log without retro first.
+
+If the wrapper script does not exist on the host (e.g., Codex CLI / Cursor without zuvo install), fall back to direct append (`echo -e "$RUN_LINE" >> "$LOG_PATH"`) and add `retro_gate=missing` to the next retrospective's friction notes so the install gap is surfaced.
+
 ### Audit skill example (TASKS=`-`, NOT skipped)
 
 Audits don't produce tasks — **TASKS field must be `-`**, not omitted. Never merge TASKS into DURATION.

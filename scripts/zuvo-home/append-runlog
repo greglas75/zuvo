@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# ~/.zuvo/append-runlog
+#
+# Forcing function: blocks `runs.log` append when no matching retro entry
+# exists in `retros.log`. Closes the failure mode where agents declare
+# "task done" after writing the audit report + Run line, skipping the
+# retrospective entirely (observed: 11 db-audit runs Apr 9 → May 4 with
+# 0 retro entries).
+#
+# Usage (call from skills via run-logger.md):
+#   echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+#
+# Or with explicit args:
+#   ~/.zuvo/append-runlog "$RUN_LINE"
+#
+# Behavior:
+#   1. Parse SKILL + PROJECT from the run line (TSV fields 2 + 3).
+#   2. Check ~/.zuvo/retros.log for a matching entry (same SKILL +
+#      PROJECT, any timestamp). If multiple agents wrote retros, take
+#      the most recent.
+#   3. If no retro entry: print a clear error to stderr, exit 2, do
+#      NOT append to runs.log. Skill caller must write retro first.
+#   4. If retro exists: append to runs.log, print confirmation.
+#
+# Override (escape hatch — use sparingly, audit gate will flag it):
+#   ZUVO_SKIP_RETRO_GATE=1 ~/.zuvo/append-runlog "$RUN_LINE"
+#
+# Skills excluded from gate (no retrospective protocol expected):
+#   using-zuvo, backlog, benchmark, agent-benchmark, deploy, canary,
+#   worktree (these don't load retrospective.md by design).
+
+set -eu
+
+RUN_LINE="${1:-}"
+[ -z "$RUN_LINE" ] && RUN_LINE="$(cat -)"
+
+if [ -z "$RUN_LINE" ]; then
+  echo "ERROR: append-runlog received empty input" >&2
+  exit 1
+fi
+
+SKILL=$(echo "$RUN_LINE" | awk -F'\t' '{print $2}')
+PROJECT=$(echo "$RUN_LINE" | awk -F'\t' '{print $3}')
+
+if [ -z "$SKILL" ] || [ -z "$PROJECT" ]; then
+  echo "ERROR: could not parse SKILL/PROJECT from run line:" >&2
+  echo "  $RUN_LINE" >&2
+  exit 1
+fi
+
+RUNS_LOG="$HOME/.zuvo/runs.log"
+RETROS_LOG="$HOME/.zuvo/retros.log"
+
+# Skills exempted from retro gate
+case "$SKILL" in
+  using-zuvo|backlog|benchmark|agent-benchmark|deploy|canary|worktree)
+    echo "$RUN_LINE" >> "$RUNS_LOG"
+    echo "OK: appended to runs.log (skill '$SKILL' exempt from retro gate)"
+    exit 0
+    ;;
+esac
+
+# Override
+if [ "${ZUVO_SKIP_RETRO_GATE:-0}" = "1" ]; then
+  echo "$RUN_LINE" >> "$RUNS_LOG"
+  echo "WARN: appended to runs.log (ZUVO_SKIP_RETRO_GATE=1 — retro gate bypassed)"
+  echo "  This will be flagged in the next zuvo:context-audit / zuvo:retro run."
+  exit 0
+fi
+
+# Verify retros.log has matching entry
+if [ ! -f "$RETROS_LOG" ]; then
+  echo "RETRO_REQUIRED: ~/.zuvo/retros.log does not exist." >&2
+  echo "  Skill '$SKILL' on '$PROJECT' must write a retrospective first." >&2
+  echo "  Load shared/includes/retrospective.md, fill 9 fields, append RETRO: line." >&2
+  echo "  Then re-run this command." >&2
+  exit 2
+fi
+
+HAVE_RETRO=$(awk -F'\t' -v skill="$SKILL" -v project="$PROJECT" '
+  ($2 == skill || $1 ~ "RETRO: " skill) && index($0, project) { found = 1 }
+  END { print found + 0 }
+' "$RETROS_LOG")
+
+if [ "$HAVE_RETRO" -eq 0 ]; then
+  echo "RETRO_REQUIRED: No retros.log entry found for skill='$SKILL' project='$PROJECT'." >&2
+  echo "" >&2
+  echo "  The audit is incomplete without a retrospective." >&2
+  echo "  Order of operations:" >&2
+  echo "    1. Write the audit report (audits/<skill>-<date>.md)." >&2
+  echo "    2. Print Validity Gate block." >&2
+  echo "    3. Load shared/includes/retrospective.md if not loaded." >&2
+  echo "    4. Fill the 9 retrospective fields." >&2
+  echo "    5. Append RETRO: line to ~/.zuvo/retros.log." >&2
+  echo "    6. Append long-form entry to ~/.zuvo/retros.md." >&2
+  echo "    7. THEN call this script (~/.zuvo/append-runlog) for runs.log." >&2
+  echo "" >&2
+  echo "  Override (use only with cause): ZUVO_SKIP_RETRO_GATE=1" >&2
+  exit 2
+fi
+
+# Retro present — proceed
+echo "$RUN_LINE" >> "$RUNS_LOG"
+echo "OK: appended to runs.log (retro verified for $SKILL on $PROJECT)"
