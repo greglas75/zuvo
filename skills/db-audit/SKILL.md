@@ -42,10 +42,19 @@ codesift_tools:
     flask: [find_framework_wiring]
     jest: []
     yii: [resolve_php_service]
-    prisma: [analyze_prisma_schema]
+    # ORMs / databases — full SQL toolchain (verified 2026-05-04: each tool catches what others miss)
+    prisma:
+      - analyze_prisma_schema     # FK index coverage, soft-delete, status-as-String warnings
+      - explain_query             # KEY — Prisma→EXPLAIN ANALYZE: unbounded queries, N+1, missing indexes
     drizzle: []
-    sql: [sql_audit]
-    postgres: [migration_lint]
+    sql:
+      - sql_audit                 # composite: 5 gates (drift, orphan, lint, dml, complexity)
+      - analyze_schema            # tables/columns/FKs/relations → ERD for executive summary
+      - diff_migrations           # classify ops: additive/modifying/destructive (deploy risk)
+      - trace_query               # cross-codebase table-ref tracing (DDL, DML, FK, ORM)
+      - search_columns            # find columns by name/type — PII discovery (DB12)
+    postgres:
+      - migration_lint            # squawk PG migration safety (30+ patterns: NOT NULL no default, etc.)
 ---
 
 # zuvo:db-audit
@@ -80,6 +89,72 @@ DEFERRED FILES (read only when needed):
 Note: `cq-patterns.md` is NOT loaded — this is a read-only audit, not a code quality review. Loading it wastes ~7K tokens per turn.
 
 If any CORE file is MISSING, STOP. Do not proceed from memory.
+
+---
+
+## MANDATORY TOOL CALLS — Audit Validity Gate
+
+**This audit is INVALID if any of the tools below are skipped when their trigger condition holds.** "DEFERRED", "N/A", "no diff vs prior audit" are NOT valid reasons. The presence of trigger artifacts (migrations directory, .sql files, ORM schema, etc.) is what dictates the call — not whether they changed since the last audit.
+
+### Required tool list
+
+| Tool | Trigger | Reason | Skip allowed? |
+|------|---------|--------|---------------|
+| `sql_audit` | Project has any `.sql` file (migrations, schema, dumps) anywhere under `TARGET_ROOT` | DB6/DB12/DB13 — bundles 5 gates (drift, orphan, lint, dml, complexity) that no manual scan reproduces | **NO** — audit FAILS if skipped while trigger holds |
+| `analyze_schema` | Same as `sql_audit` (`.sql` files exist) | DB3 schema design — extracts tables/columns/FKs/relationships, generates ERD for executive summary | **NO** when `.sql` exists |
+| `diff_migrations` | `migrations/` dir exists (any ORM/framework) | DB6/DB13 deployment safety — classifies every op as additive/modifying/destructive with risk ranking; surfaces destructive ops missed by `sql_audit lint` gate | **NO** when migrations exist |
+| `trace_query` | At least one HIGH/MEDIUM finding mentions a table OR `sql_audit orphan` gate flags any orphan | DB3/DB13 verification — confirms zero references for "orphan" claim and traces every cited table across DDL/DML/FK/ORM (Prisma + Drizzle) | **NO** when condition holds |
+| `search_columns` | Always | DB12 PII discovery — find every `email`/`password`/`ssn`/`token` column across all tables | **NO** — always required |
+| `migration_lint` | Postgres detected (any of: `pg`, `psycopg2`, `@prisma/adapter-pg`, `postgres-js` in deps) AND `migrations/` dir exists | DB13 migration deployment safety (squawk: 30+ PG-specific patterns including `NOT NULL` without default, `CREATE INDEX` without `CONCURRENTLY`, etc.) | **NO** when both conditions hold |
+| `analyze_prisma_schema` | `prisma/schema.prisma` exists | DB2/DB3/DB6 Prisma-specific schema gates (FK index coverage %, unindexed FKs, soft-delete detection, `status: String` smell) | **NO** when schema exists |
+| `explain_query` | Prisma project AND any HIGH/MEDIUM finding cites a `prisma.<model>.<call>` query | DB1/DB2 Prisma-specific N+1 + missing-index detection via simulated EXPLAIN ANALYZE; finds risks `sql_audit dml` cannot see | **NO** when condition holds |
+| `python_audit` | Language detected as Python | DB1 N+1 detection (`n-plus-one-django` pattern), DB9 ORM anti-patterns | **NO** when Python project |
+| `nest_audit` | Framework detected as NestJS (`@nestjs/*` in deps) | DB1/DB4 NestJS DI + repository scoping issues | **NO** when NestJS project |
+| `analyze_django_settings` + `get_model_graph` | `django` in pyproject/requirements | DB6 Django migration safety, DB3 model graph | **NO** when Django |
+| `scan_secrets` | Always | DB12 hardcoded credentials in code or `.env` | **NO** — always required |
+| `search_patterns(pattern="unbounded-findmany")` + `search_patterns(pattern="await-in-loop")` + `search_patterns(pattern="toctou")` | Always | DB1/DB5 — these are the ONLY tool-verified gates for those patterns | **NO** — always required |
+
+### Pre-flight check (run BEFORE any phase)
+
+Before Phase 0, verify the required tools are reachable:
+
+```
+# Detect triggers
+sql_files=$(find TARGET_ROOT -name "*.sql" -not -path "*/node_modules/*" -not -path "*/.git/*" | head -1)
+migrations_dir=$(find TARGET_ROOT -type d -name "migrations" -not -path "*/node_modules/*" | head -1)
+prisma_schema=$([ -f TARGET_ROOT/prisma/schema.prisma ] && echo "yes" || echo "no")
+```
+
+For each trigger that holds, confirm the matching tool is in the preloaded tool list (from `codesift-setup.md` Step 2.5 ToolSearch). If a required tool is NOT in the list and is also NOT in the deferred-tools banner:
+- Print `[ABORT] Required tool '<name>' not reachable. db-audit cannot produce a valid report without it.`
+- Do NOT proceed with grep fallback. The audit is incomplete by definition.
+- Exit with status `INCOMPLETE` and add a backlog item: `[BLOCKER] db-audit needs <tool> on <project>`.
+
+### Forbidden escape hatches
+
+The following telemetry values are **forbidden** when the trigger condition holds:
+
+| Value | Forbidden when | Required value instead |
+|-------|----------------|------------------------|
+| `sql_audit: DEFERRED` | `.sql` files exist | `sql_audit: <gates_passed>/<gates_run>` |
+| `sql_audit: N/A` | `.sql` files exist | (same as above) |
+| `sql_audit: skipped (no diff vs prior)` | EVER | (same as above — trigger is presence, not delta) |
+| `migration_lint: DEFERRED` | Postgres + migrations exist | `migration_lint: <findings>` |
+| `scan_secrets: DEFERRED` | EVER | `scan_secrets: <count>` |
+| `codesift: unavailable` | `mcp__codesift__*` was in deferred-tools session-start banner | `codesift: deferred-not-preloaded (FAILURE: skill required preload)` |
+
+### Audit completion verification (run BEFORE writing PASS/WARN/FAIL status)
+
+At the end of the audit, before emitting the status block:
+
+1. Re-check each trigger condition.
+2. For each held trigger, verify the corresponding tool was actually called in this session (the LLM must self-report honestly — there is no automated post-execution gate yet, so use the run log as ground truth).
+3. If ANY required tool is missing for a held trigger:
+   - Override the verdict to `INCOMPLETE` regardless of finding count.
+   - Print: `[VALIDITY GATE FAIL] <tool> required by <trigger>, not called. Audit cannot be trusted.`
+   - Add the gap to the backlog as `B-db-audit-incomplete-<date>`.
+
+A db-audit that says "0 critical findings" while skipping `sql_audit` on a project with 34 migrations is **lying**, not passing. The completion gate exists to catch that.
 
 ---
 
@@ -232,12 +307,35 @@ fi
 
 If user passed `--delta` but the conditions for delta are not met: print a warning and override to `full`. Do NOT silently honor the flag — the user's "I want delta" is overridden by methodology safety.
 
+### CRITICAL — Mode does NOT affect MANDATORY TOOL CALLS
+
+Mode (full / delta / sanity-check) controls **scope of additional analysis** — which dimensions get deep-dived, which agent-dispatched explorations run, how many findings are re-examined. Mode does **NOT** waive any tool from the MANDATORY TOOL CALLS section above.
+
+Specifically, in EVERY mode (including `delta` and `sanity-check`):
+
+- `sql_audit` MUST run if any `.sql` file exists.
+- `analyze_schema` MUST run if any `.sql` file exists (companion to sql_audit — generates ERD).
+- `diff_migrations` MUST run if `migrations/` dir exists (classifies destructive ops).
+- `search_columns` MUST run (PII discovery — every audit).
+- `scan_secrets` MUST run.
+- `search_patterns(unbounded-findmany | await-in-loop | toctou)` MUST run.
+- `migration_lint` MUST run if Postgres + `migrations/` dir exists.
+- `analyze_prisma_schema` MUST run if `prisma/schema.prisma` exists.
+- `explain_query` MUST run on every Prisma query cited in a HIGH/MEDIUM finding.
+- `trace_query` MUST run on every table cited in a HIGH/MEDIUM finding (or flagged by `sql_audit orphan`).
+- Stack-specific mandatory tools (nest_audit, python_audit, django/celery/etc.) MUST run when their language/framework is detected.
+
+These tools ARE the audit's validity floor — without them the report cannot be trusted regardless of how small the delta is. They are also fast (single composite calls), so "delta is too small to bother" is never a defensible reason.
+
+If you are tempted to mark any mandatory tool as `DEFERRED (delta-mode, low risk)` or `N/A (no DB changes)`: **STOP**. That is the exact failure mode this section exists to prevent. The trigger is presence of `.sql`/`migrations/`/`schema.prisma`/etc. — never delta or risk.
+
 Print the decision:
 
 ```
 AUDIT MODE: [full / delta / sanity-check]
 Reason:     prior=[date or "none"] | commits_since=[N] | hours_since=[N.N]
 Override:   [user --force-full | user --delta accepted | user --delta REJECTED→full | none]
+Mandatory-tools-acknowledgment: I will run sql_audit + analyze_schema + diff_migrations + search_columns + scan_secrets + migration_lint (if PG) + analyze_prisma_schema (if Prisma) + search_patterns(unbounded-findmany, await-in-loop, toctou) + stack-specific mandatory tools (nest_audit/python_audit/etc. when detected) + trace_query + explain_query (on cited tables/queries) in this mode. [REQUIRED — print verbatim]
 ```
 
 ### 0.5 Delta Verification Checklist
@@ -366,9 +464,9 @@ scan_secrets(min_confidence="medium")              # hardcoded DB passwords, con
 
 If `scan_secrets` is unavailable, fall back to: `Grep` for `password=`, `DATABASE_URL=`, `connection_string`, API keys in `.env` committed to git.
 
-#### 2.0b — SQL composite audit (`sql_audit`)
+#### 2.0b — SQL composite audit (`sql_audit`) — MANDATORY when `.sql` files exist
 
-If the project has `.sql` files (migrations, schema definitions, dumps), run the `sql_audit` composite tool. It bundles 5 diagnostic gates in a single call and replaces what would otherwise be 5+ separate analysis tool invocations:
+**REQUIRED CALL.** If `find TARGET_ROOT -name "*.sql" -not -path "*/node_modules/*"` returns ≥1 file, you MUST call `sql_audit` in this phase. There is no condition under which "skipped" is acceptable on a `.sql`-bearing repo: not "no diff vs prior", not "DEFERRED", not "low risk this run". The 5 internal gates are independent of delta — they re-run every time and re-validate the schema↔ORM mapping from scratch. Skipping = audit invalid (see MANDATORY TOOL CALLS section above).
 
 ```
 # Claude Code: ToolSearch("select:mcp__codesift__sql_audit")
@@ -411,11 +509,13 @@ When deeper investigation is needed for specific findings:
 | Tool | When to use |
 |------|-------------|
 | `analyze_schema` | Generate ERD (Mermaid) for the executive summary section |
-| `trace_query(table)` | For each "orphan" finding, verify zero references across `.ts`/`.py`/`.go` |
-| `search_columns(query)` | For DB12 PII concerns, find all `email`/`password`/`ssn` columns |
-| `diff_migrations` | For DB13, scan migration history for destructive ops with severity ranking |
+| `trace_query(table)` | **MANDATORY** for every "orphan" finding from `sql_audit` and every table cited in HIGH/MEDIUM findings — verify zero references across `.ts`/`.py`/`.go`/`.kt`/Prisma/Drizzle |
+| `search_columns(query)` | **MANDATORY** for DB12 PII discovery — find all `email`/`password`/`ssn`/`token`/`secret`/`hash` columns. Run with empty query first to inventory PII surface, then targeted queries for specific concerns. |
+| `diff_migrations` | **MANDATORY when `migrations/` exists** — DB6/DB13 destructive op classification. Reports `additive`/`modifying`/`destructive` counts. Now in MANDATORY TOOL CALLS section above. |
+| `analyze_schema(output_format='mermaid')` | **MANDATORY when `.sql` exists** — DB3 schema inventory + ERD for executive summary. |
+| `explain_query(code='prisma.<model>.<call>(...)')` | **MANDATORY for every Prisma query cited in HIGH/MEDIUM finding** — DB1/DB2 simulated EXPLAIN ANALYZE catches N+1 from `include`, unbounded `findMany`, missing indexes that `sql_audit` cannot see (Prisma-only). |
 
-These are query tools (one input, one focused answer) — call them only when an agent needs to drill into a specific concern, not as a blanket pre-scan.
+Previously these were "drill down only" — promoted to mandatory after the 2026-05-04 audit on tgm-survey-platform showed `sql_audit` alone misses ~30% of issues that surface when paired with `diff_migrations` + `analyze_schema` + `trace_query`.
 
 ---
 
@@ -929,6 +1029,38 @@ Score: [N] / [MAX] -- [grade]
 ORM: [detected] | Engine: [detected]
 Dimensions: [N scored] | Critical gates: [PASS/FAIL]
 Findings: [N critical] / [N total]
+
+### Validity Gate (REQUIRED — print BEFORE Run line)
+
+```
+VALIDITY GATE
+  triggers_held:
+    sql_files: [yes(N) | no]
+    migrations_dir: [yes | no]
+    prisma_schema: [yes | no]
+    postgres_in_deps: [yes | no]
+    framework: [nestjs | django | none]
+  required_tool_calls (held triggers only):
+    sql_audit: [<gates_passed>/<gates_run> | NOT_CALLED — VIOLATES_TRIGGER]
+    analyze_schema: [<table_count> tables | not_required | NOT_CALLED — VIOLATES_TRIGGER]
+    diff_migrations: [<additive>/<modifying>/<destructive> | not_required | NOT_CALLED — VIOLATES_TRIGGER]
+    trace_query: [<table_count> traced | not_required | NOT_CALLED — VIOLATES_TRIGGER]
+    search_columns: [<pii_columns_found> | NOT_CALLED — VIOLATES_TRIGGER]
+    migration_lint: [<findings> | not_required | NOT_CALLED — VIOLATES_TRIGGER]
+    analyze_prisma_schema: [<fk_index_coverage> | not_required | NOT_CALLED — VIOLATES_TRIGGER]
+    explain_query: [<queries_explained> | not_required | NOT_CALLED — VIOLATES_TRIGGER]
+    nest_audit: [<score> | not_required | NOT_CALLED — VIOLATES_TRIGGER]
+    python_audit: [<findings> | not_required | NOT_CALLED — VIOLATES_TRIGGER]
+    scan_secrets: [<findings> | NOT_CALLED — VIOLATES_TRIGGER]
+  pattern_calls:
+    unbounded-findmany: [<count> | NOT_CALLED — VIOLATES_TRIGGER]
+    await-in-loop: [<count> | NOT_CALLED — VIOLATES_TRIGGER]
+    toctou: [<count> | NOT_CALLED — VIOLATES_TRIGGER]
+  gate_status: [PASS | FAIL — <which tools missing>]
+```
+
+If `gate_status = FAIL`, override the VERDICT below to `INCOMPLETE` regardless of finding count, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and add a backlog item.
+
 Run: <ISO-8601-Z>	db-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 
 
