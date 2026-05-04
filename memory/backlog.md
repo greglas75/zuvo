@@ -52,16 +52,6 @@ type: project
 
 - [ ] B-leads-T6-warn-7: 7 WARNING-level adversarial findings (pseudocode shell quoting, ``to_epoch`` undefined helper, greying-timing of checkpoint flushes, Unicode casefold subprocess spawning in Phase 5 loop not batched, etc.). Address in cleanup PR before v1 ship.
 
-# Review 2026-05-02 fc73d7b..a8cc812 — Pending findings
-
-- [x] B-rev-2026-05-02-R3 [RECOMMENDED] rules/cq-checklist.md — two scoring formulas (N/A counts as 1 vs subtract N/A from 29). Adopt single explicit formula. confidence:70 — FIXED 2026-05-02 in zuvo-plugin working tree
-- [x] B-rev-2026-05-02-R4 [RECOMMENDED] rules/cq-checklist.md CQ4 — client-side token validation may be misread as server-side substitute. Split into UX-only and security-MUST sections. confidence:55 — FIXED 2026-05-02 in zuvo-plugin working tree
-- [x] B-rev-2026-05-02-R5 [RECOMMENDED] shared/includes/codesift-setup.md Step 2.5 — forbids second ToolSearch with no escape for mid-run discovery. Relax to ≤2 per session. confidence:60 — FIXED 2026-05-02 in zuvo-plugin working tree
-- [x] B-rev-2026-05-02-R6 [below-threshold] codesift-setup hardcodes ToolSearch name; other MCP hosts differ. confidence:50 — FIXED 2026-05-02 in zuvo-plugin working tree
-- [x] B-rev-2026-05-02-R7 [below-threshold] skills/review/SKILL.md Phase 3 no-approval-pauses lacks destructive-persistence preconditions. confidence:45 — FIXED 2026-05-02 in zuvo-plugin working tree
-- [x] B-rev-2026-05-02-R8 [below-threshold] rules/cq-checklist.md CQ29 — `~/` example overloaded with home-dir meaning. Drop or narrow to tsconfig-configured aliases. confidence:50 — FIXED 2026-05-02 in zuvo-plugin working tree
-
-
 # Adversarial pass-2 findings on docs/competitive-analysis.md (working tree content — author's market research, not fix-related)
 
 - [ ] B-rev-2026-05-02-N1 [WARNING] competitive-analysis.md — Antigravity build target says `~/.gemini/AGENTS.md` but Gemini CLI natively reads `GEMINI.md`. Writes will silently fail. Source: gemini adversarial pass-2.
