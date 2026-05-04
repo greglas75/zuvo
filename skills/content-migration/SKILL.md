@@ -6,6 +6,17 @@ description: >
   gaps in local .md files. Use when content was migrated from Joomla/WordPress/
   Drupal to Astro/Hugo/Next.js and you need to verify nothing was lost.
   Flags: --old <url>, --new <url>, --fix, --source-file <path>, --status.
+codesift_tools:
+  always:
+    - analyze_project
+    - index_status
+    - index_folder
+    - index_file
+    - plan_turn
+    - get_file_tree
+    - search_text
+    - search_patterns
+  by_stack: {}
 ---
 
 # zuvo:content-migration — CMS-to-SSG Content Parity Check & Fix

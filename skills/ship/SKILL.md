@@ -5,6 +5,18 @@ description: >
   changelog generation, git tag, push or PR. Auto-detects branch context (direct
   push on main, PR on feature branch). Scales review depth by diff size.
   Flags: --fast, --full, --no-bump, --no-tag, --dry-run, patch/minor/major.
+codesift_tools:
+  always:
+    - analyze_project
+    - index_status
+    - index_folder
+    - index_file
+    - plan_turn
+    - changed_symbols
+    - diff_outline
+    - scan_secrets             # KEY — last-line check before push
+    - search_patterns
+  by_stack: {}                  # delegates to review/code-audit which have full by_stack
 ---
 
 # zuvo:ship

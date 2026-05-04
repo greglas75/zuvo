@@ -7,6 +7,16 @@ description: >
   topic and auto-discovery of internal links from your content collection.
   Replaces content-optimize. Flags: [file], --dry-run, --lang, --tone,
   --site-dir, --domain, --skip-research, --light.
+codesift_tools:
+  always:
+    - analyze_project
+    - index_status
+    - index_folder
+    - index_file
+    - plan_turn
+    - get_file_tree
+    - search_text
+  by_stack: {}
 ---
 
 # zuvo:content-expand — Expand & Optimize Articles

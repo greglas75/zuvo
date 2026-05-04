@@ -1,6 +1,45 @@
 ---
 name: debug
 description: "Systematic bug investigation with a five-phase framework: reproduce, narrow, diagnose, fix, verify. Supports automated regression bisect via --regression flag. Produces a structured debug report with root cause analysis, regression test, and CQ/Q self-evaluations."
+codesift_tools:
+  always:
+    - analyze_project
+    - index_status
+    - index_folder
+    - index_file
+    - plan_turn
+    - search_text              # error messages, log strings
+    - search_symbols           # find suspect functions
+    - get_symbol
+    - get_symbols
+    - get_file_outline
+    - find_references          # who calls this — narrow Phase 2
+    - trace_call_chain         # KEY — Phase 3 diagnose flow
+    - search_conversations     # have we seen this error before?
+    - find_conversations_for_symbol  # past discussions about this fn
+    - search_patterns          # known anti-pattern matches
+  by_stack:
+    typescript: [get_type_info]
+    javascript: []
+    python: [python_audit, analyze_async_correctness]
+    php: [php_project_audit, php_security_scan]
+    kotlin: [analyze_sealed_hierarchy, find_extension_functions, trace_flow_chain, trace_suspend_chain, trace_compose_tree, analyze_compose_recomposition, trace_hilt_graph, trace_room_schema, analyze_kmp_declarations, extract_kotlin_serialization_contract]
+    nestjs: [nest_audit]
+    nextjs: [framework_audit, nextjs_route_map]
+    astro: [astro_audit, astro_actions_audit, astro_hydration_audit]
+    hono: [analyze_hono_app, audit_hono_security]
+    express: []
+    fastify: []
+    react: [react_quickstart, analyze_hooks, analyze_renders]
+    django: [analyze_django_settings, effective_django_view_security, taint_trace]
+    fastapi: [trace_fastapi_depends, get_pydantic_models]
+    flask: [find_framework_wiring]
+    jest: []
+    yii: [resolve_php_service]
+    prisma: [analyze_prisma_schema]
+    drizzle: []
+    sql: [sql_audit]
+    postgres: [migration_lint]
 ---
 
 # zuvo:debug — Structured Bug Investigation

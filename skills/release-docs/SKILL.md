@@ -4,6 +4,43 @@ description: >
   Diff-driven documentation sync after a release. Determines what source files
   changed, delegates changelog to zuvo:docs, updates only docs whose source changed.
   Flags: --dry-run, explicit range argument.
+codesift_tools:
+  always:
+    - analyze_project
+    - index_status
+    - index_folder
+    - index_file
+    - plan_turn
+    - changed_symbols           # KEY — what changed in this release
+    - diff_outline              # structural diff per file
+    - impact_analysis           # which docs need updating
+    - get_file_outline
+    - get_symbol
+    - search_text
+    - search_symbols
+    - find_references
+  by_stack:
+    typescript: [get_type_info]
+    javascript: []
+    python: [python_audit, analyze_async_correctness]
+    php: [php_project_audit, php_security_scan]
+    kotlin: [analyze_sealed_hierarchy, find_extension_functions, trace_flow_chain, trace_suspend_chain, trace_compose_tree, analyze_compose_recomposition, trace_hilt_graph, trace_room_schema, analyze_kmp_declarations, extract_kotlin_serialization_contract]
+    nestjs: [nest_audit]
+    nextjs: [framework_audit, nextjs_route_map]
+    astro: [astro_audit, astro_actions_audit, astro_hydration_audit]
+    hono: [analyze_hono_app, audit_hono_security]
+    express: []
+    fastify: []
+    react: [react_quickstart, analyze_hooks, analyze_renders]
+    django: [analyze_django_settings, effective_django_view_security, taint_trace]
+    fastapi: [trace_fastapi_depends, get_pydantic_models]
+    flask: [find_framework_wiring]
+    jest: []
+    yii: [resolve_php_service]
+    prisma: [analyze_prisma_schema]
+    drizzle: []
+    sql: [sql_audit]
+    postgres: [migration_lint]
 ---
 
 # zuvo:release-docs

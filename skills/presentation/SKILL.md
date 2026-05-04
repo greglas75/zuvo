@@ -6,6 +6,16 @@ description: >
   theming and typography. Modes: [topic] (from scratch), from [file] (from
   markdown), --slides N, --theme dark|light|corporate, --outline-only,
   --out [path], --lang [code].
+codesift_tools:
+  always:
+    - analyze_project
+    - index_status
+    - index_folder
+    - index_file
+    - plan_turn
+    - get_file_tree
+    - search_text
+  by_stack: {}                  # PPTX gen — no code analysis
 ---
 
 # zuvo:presentation — PowerPoint Generator

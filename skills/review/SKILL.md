@@ -5,6 +5,101 @@ description: >
   and optional auto-fix. Examines uncommitted changes, staged diffs, commit
   ranges, or specific paths. Produces a tiered report (MUST-FIX / RECOMMENDED /
   NIT) backed by evidence, then optionally applies fixes with verification.
+codesift_tools:
+  always:
+    # Stack detection (used by codesift-setup orchestrator)
+    - analyze_project
+    - index_status
+    - index_folder
+    - index_file
+    - plan_turn
+    # Diff-specific (review's headline tools — work on uncommitted/staged/commit-range diffs)
+    - review_diff           # COMPOUND: 9 parallel checks on git diff (security, dead code, complexity, etc.)
+    - changed_symbols       # which symbols added/modified/deleted in range
+    - diff_outline          # structural diff per file (signatures only — no body churn noise)
+    - impact_analysis       # blast radius + affected_tests for the changed surface
+    # Reading the changed code in context
+    - get_symbol            # read one changed symbol
+    - get_symbols           # read 2+ changed symbols (batch — preferred)
+    - get_file_outline      # file-level structure of touched files
+    - find_references       # who calls the changed function (regression risk)
+    - trace_call_chain      # downstream impact (--deep mode)
+    # Pattern + safety scans applied to the diff
+    - audit_scan            # COMPOUND: find_dead_code + search_patterns + find_clones + analyze_complexity (--deep)
+    - search_patterns       # CQ8 empty-catch + CAP anti-patterns introduced
+    - scan_secrets          # CAP5 hardcoded-secret pre-scan (always run on diff)
+    # Cross-cutting search (fallback when symbol-aware tools miss)
+    - search_text
+    - search_symbols
+    - get_file_tree
+  # Same `by_stack` shape as code-audit — review benefits from framework-aware
+  # checks applied to the diff (e.g. a Next.js route change should run
+  # framework_audit and nextjs_route_map; a Yii controller change should run
+  # php_security_scan + resolve_php_service). Orchestrator (codesift-setup.md
+  # Step 2.5) matches keys against analyze_project + dep manifests with same
+  # 6 rules used by code-audit, including rule #6 hybrid handling.
+  by_stack:
+    # Languages
+    typescript:
+      - get_type_info              # TS-only: type inference for changed signatures
+    javascript: []                 # symmetric placeholder; no JS-only tools yet
+    python:
+      - python_audit
+      - analyze_async_correctness
+    php:
+      - php_project_audit
+      - php_security_scan
+    kotlin:
+      - analyze_sealed_hierarchy
+      - find_extension_functions
+      - trace_flow_chain
+      - trace_suspend_chain
+      - trace_compose_tree
+      - analyze_compose_recomposition
+      - trace_hilt_graph
+      - trace_room_schema
+      - analyze_kmp_declarations
+      - extract_kotlin_serialization_contract
+    # JS/TS frameworks
+    nestjs:
+      - nest_audit
+    nextjs:
+      - framework_audit
+      - nextjs_route_map
+    astro:
+      - astro_audit
+      - astro_actions_audit
+      - astro_hydration_audit
+    hono:
+      - analyze_hono_app
+      - audit_hono_security
+    express: []                    # generic CodeSift covers; key acknowledged
+    fastify: []
+    react:
+      - react_quickstart
+      - analyze_hooks
+      - analyze_renders
+    # Python sub-frameworks
+    django:
+      - analyze_django_settings
+      - effective_django_view_security
+      - taint_trace
+    fastapi:
+      - trace_fastapi_depends
+      - get_pydantic_models
+    flask:
+      - find_framework_wiring
+    jest: []                       # generic CodeSift covers
+    # PHP sub-frameworks
+    yii:
+      - resolve_php_service
+    # ORMs / databases
+    prisma:
+      - analyze_prisma_schema
+    sql:
+      - sql_audit
+    postgres:
+      - migration_lint
 ---
 
 # zuvo:review

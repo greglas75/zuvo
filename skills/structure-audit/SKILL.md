@@ -8,6 +8,50 @@ description: >
   Tool-driven with CodeSift primary and CLI fallbacks (cloc, knip, dep-cruiser,
   jscpd, eslint, git mining). Flags: full (default), [path], --naming, --size,
   --dead-code, --duplication, --hotspots, --quick, --fix.
+codesift_tools:
+  always:
+    - analyze_project
+    - index_status
+    - index_folder
+    - index_file
+    - plan_turn
+    - get_file_tree            # SA1-SA3 directory + naming + depth
+    - get_file_outline
+    - detect_communities       # KEY — SA6 separation of concerns
+    - check_boundaries         # SA8 boundary violations
+    - classify_roles           # hub / leaf / bridge symbols
+    - fan_in_fan_out           # coupling distribution
+    - architecture_summary     # high-level overview
+    - analyze_complexity       # SA9 complexity distribution
+    - analyze_hotspots         # SA13 churn × complexity
+    - find_dead_code           # SA8 dead code
+    - find_clones              # SA10 duplication
+    - find_unused_imports      # SA5 barrel exports / dead imports
+    - audit_scan
+    - search_text
+    - search_symbols
+  by_stack:
+    typescript: [get_type_info]
+    javascript: []
+    python: [python_audit, analyze_async_correctness]
+    php: [php_project_audit, php_security_scan]
+    kotlin: [analyze_sealed_hierarchy, find_extension_functions, trace_flow_chain, trace_suspend_chain, trace_compose_tree, analyze_compose_recomposition, trace_hilt_graph, trace_room_schema, analyze_kmp_declarations, extract_kotlin_serialization_contract]
+    nestjs: [nest_audit]
+    nextjs: [framework_audit, nextjs_route_map]
+    astro: [astro_audit, astro_actions_audit, astro_hydration_audit]
+    hono: [analyze_hono_app, audit_hono_security, detect_hono_modules]
+    express: []
+    fastify: []
+    react: [react_quickstart, analyze_hooks, analyze_renders]
+    django: [analyze_django_settings, effective_django_view_security, taint_trace]
+    fastapi: [trace_fastapi_depends, get_pydantic_models]
+    flask: [find_framework_wiring]
+    jest: []
+    yii: [resolve_php_service]
+    prisma: [analyze_prisma_schema]
+    drizzle: []
+    sql: [sql_audit]
+    postgres: [migration_lint]
 ---
 
 # zuvo:structure-audit — Codebase Structure & Organization Audit

@@ -1,6 +1,46 @@
 ---
 name: api-audit
 description: "API and endpoint integrity audit across 10 dimensions (D1-D10) plus optional contract stability (D11). Covers validation, payloads, pagination, errors, caching, HTTP semantics, waterfalls, rate limiting, auth, and documentation. Supports NestJS, Cloudflare Workers, FastAPI, and frontend call patterns. Optional GET probing on non-production targets. Flags: zuvo:api-audit full | [path] | --static"
+codesift_tools:
+  always:
+    - analyze_project
+    - index_status
+    - index_folder
+    - index_file
+    - plan_turn
+    - trace_route              # KEY — endpoint enumeration across frameworks
+    - get_file_tree
+    - get_file_outline
+    - search_text
+    - search_symbols           # find handlers, services, middleware
+    - get_symbol
+    - get_symbols
+    - find_references          # who calls this endpoint / handler
+    - audit_scan
+    - search_patterns          # money fields, eval, error swallow, missing validation
+    - scan_secrets             # hardcoded API keys in client code
+  by_stack:
+    typescript: [get_type_info]
+    javascript: []
+    python: [python_audit, analyze_async_correctness]
+    php: [php_project_audit, php_security_scan]
+    kotlin: [analyze_sealed_hierarchy, find_extension_functions, trace_flow_chain, trace_suspend_chain, trace_compose_tree, analyze_compose_recomposition, trace_hilt_graph, trace_room_schema, analyze_kmp_declarations, extract_kotlin_serialization_contract]
+    nestjs: [nest_audit]
+    nextjs: [framework_audit, nextjs_route_map]
+    astro: [astro_audit, astro_actions_audit, astro_hydration_audit]
+    hono: [analyze_hono_app, audit_hono_security, extract_api_contract, extract_response_types, trace_rpc_types, trace_middleware_chain, find_dead_hono_routes, visualize_hono_routes]
+    express: []
+    fastify: []
+    react: [react_quickstart, analyze_hooks, analyze_renders]
+    django: [analyze_django_settings, effective_django_view_security, taint_trace]
+    fastapi: [trace_fastapi_depends, get_pydantic_models]
+    flask: [find_framework_wiring]
+    jest: []
+    yii: [resolve_php_service]
+    prisma: [analyze_prisma_schema]
+    drizzle: []
+    sql: [sql_audit]
+    postgres: [migration_lint]
 ---
 
 # zuvo:api-audit — API and Endpoint Integrity Audit

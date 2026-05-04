@@ -7,6 +7,44 @@ description: >
   Node.js (.env/process.env), Python (os.environ/settings), and framework-specific
   patterns (Vite import.meta.env, Next.js NEXT_PUBLIC_).
   Switches: zuvo:env-audit full | [path] | --secrets-only | --parity
+codesift_tools:
+  always:
+    - analyze_project
+    - index_status
+    - index_folder
+    - index_file
+    - plan_turn
+    - scan_secrets             # KEY — ENV4 secret exposure (committed .env, hardcoded values)
+    - get_file_tree            # discover .env*, config/*, settings.py
+    - search_text              # process.env.X, os.environ.get, import.meta.env.X
+    - search_patterns          # ENV2 unused, ENV3 missing-validation, ENV6 type-coerce
+    - get_file_outline
+    - find_references          # ENV2 unused — where is each var actually read
+    - search_symbols
+    - get_symbol
+    - audit_scan
+  by_stack:
+    typescript: [get_type_info]
+    javascript: []
+    python: [python_audit, analyze_async_correctness]
+    php: [php_project_audit, php_security_scan]
+    kotlin: [analyze_sealed_hierarchy, find_extension_functions, trace_flow_chain, trace_suspend_chain, trace_compose_tree, analyze_compose_recomposition, trace_hilt_graph, trace_room_schema, analyze_kmp_declarations, extract_kotlin_serialization_contract]
+    nestjs: [nest_audit]
+    nextjs: [framework_audit, nextjs_route_map]
+    astro: [astro_audit, astro_actions_audit, astro_hydration_audit]
+    hono: [analyze_hono_app, audit_hono_security]
+    express: []
+    fastify: []
+    react: [react_quickstart, analyze_hooks, analyze_renders]
+    django: [analyze_django_settings, effective_django_view_security, taint_trace]
+    fastapi: [trace_fastapi_depends, get_pydantic_models]
+    flask: [find_framework_wiring]
+    jest: []
+    yii: [resolve_php_service]
+    prisma: [analyze_prisma_schema]
+    drizzle: []
+    sql: [sql_audit]
+    postgres: [migration_lint]
 ---
 
 # zuvo:env-audit

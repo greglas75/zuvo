@@ -4,6 +4,19 @@ description: >
   Engineering retrospective from git metrics. Reports deployment frequency,
   release cycle span, churn hotspots, backlog health. Outputs narrative report
   with 3+ actionable items. Flags: --since, --path, explicit range argument.
+codesift_tools:
+  always:
+    - analyze_project
+    - index_status
+    - index_folder
+    - index_file
+    - plan_turn
+    - analyze_hotspots          # KEY — git churn × complexity for retrospective
+    - changed_symbols           # what changed in the period
+    - diff_outline
+    - get_file_tree
+    - search_text
+  by_stack: {}                  # narrative report — no framework-specific tools needed
 ---
 
 # zuvo:retro

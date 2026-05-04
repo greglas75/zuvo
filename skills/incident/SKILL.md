@@ -5,6 +5,24 @@ description: >
   breaks in production, this skill builds a timeline, identifies the probable cause,
   and generates a structured postmortem document. Flags: --since, --service, --sev,
   --revert, --comms, --dry-run.
+codesift_tools:
+  always:
+    - analyze_project
+    - index_status
+    - index_folder
+    - index_file
+    - plan_turn
+    - changed_symbols          # what shipped near the incident time
+    - diff_outline
+    - search_text              # error strings / log patterns
+    - search_symbols
+    - get_symbol
+    - get_file_outline
+    - find_references
+    - trace_call_chain         # blast radius of the suspect change
+    - search_conversations     # have we hit this before?
+    - find_conversations_for_symbol
+  by_stack: {}                  # incident scope is cross-cutting; framework checks via review skill if needed
 ---
 
 # zuvo:incident — Incident Response & Postmortem

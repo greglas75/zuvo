@@ -8,6 +8,17 @@ description: >
   spelling/typography. Language-agnostic with multi-encoding mojibake detection.
   Companion fix skill: content-fix. Flags: [path], --live-url <url>, --quick,
   --content-path <dir>, --lang <code>, --check-external, --profile <type>,
+codesift_tools:
+  always:
+    - analyze_project
+    - index_status
+    - index_folder
+    - index_file
+    - plan_turn
+    - get_file_tree            # locate content/*.md
+    - search_text              # encoding artifacts, mojibake patterns
+    - search_patterns          # broken markdown, orphan backslash, etc.
+  by_stack: {}                 # markdown-focused — no framework tools needed
   --persist-backlog.
 ---
 

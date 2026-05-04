@@ -5,6 +5,14 @@ description: >
   detects platform (Vercel/Fly/Netlify/Railway/Render/GHA), waits for CI, triggers
   deploy, runs health check, offers rollback on failure.
   Flags: --url, --skip-ci-wait, --skip-health, #<number>.
+codesift_tools:
+  always:
+    - analyze_project
+    - index_status
+    - plan_turn
+    - get_file_tree            # detect platform configs (vercel.json, fly.toml, etc.)
+    - search_text
+  by_stack: {}                  # platform CLI driven, no code analysis needed
 ---
 
 # zuvo:deploy

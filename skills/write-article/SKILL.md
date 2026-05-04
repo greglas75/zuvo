@@ -8,6 +8,16 @@ description: >
   adversarial review, and SEO optimization with BlogPosting schema. Supports
   site-aware output with frontmatter auto-detection, batch mode for multi-article
   sessions, and graceful degradation when web search is unavailable. Flags:
+codesift_tools:
+  always:
+    - analyze_project
+    - index_status
+    - index_folder
+    - index_file
+    - plan_turn
+    - get_file_tree            # locate content collection
+    - search_text              # internal-link discovery
+  by_stack: {}                 # web-research + writing focused
   --lang, --tone, --length, --site-dir, --format, --keyword, --audience,
   --batch-mode.
 ---

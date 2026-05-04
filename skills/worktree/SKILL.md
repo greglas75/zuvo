@@ -4,6 +4,13 @@ description: >
   Isolate work in a git worktree. Activates when the user needs branch isolation
   before executing a plan, wants a clean environment for a feature, or is ready
   to finish work in an existing worktree.
+codesift_tools:
+  always:
+    - analyze_project
+    - index_status
+    - plan_turn
+    - get_file_tree
+  by_stack: {}                  # git ops only, no code analysis
 ---
 
 # zuvo:worktree

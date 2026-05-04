@@ -6,6 +6,17 @@ description: >
   encoding artifacts (NBSP, mojibake), broken markdown, CMS migration debris,
   and typography issues. Modes: default (SAFE only), --auto (SAFE+MODERATE),
   --dry-run, --finding CC1-nbsp-present, --fix-type encoding-strip.
+codesift_tools:
+  always:
+    - analyze_project
+    - index_status
+    - index_folder
+    - index_file
+    - plan_turn
+    - get_file_tree
+    - search_text
+    - search_patterns
+  by_stack: {}
 ---
 
 # zuvo:content-fix — Apply Content Audit Fixes

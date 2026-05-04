@@ -4,6 +4,12 @@ description: >
   Post-deploy monitoring with browser or degraded HTTP mode. Checks console errors,
   performance, page load. Configurable duration (1m-30m) and interval.
   Reports HEALTHY/DEGRADED/BROKEN. Flags: --duration, --interval, --quick, --max-errors.
+codesift_tools:
+  always:
+    - analyze_project
+    - index_status
+    - plan_turn
+  by_stack: {}                  # browser monitoring — no code analysis
 ---
 
 # zuvo:canary

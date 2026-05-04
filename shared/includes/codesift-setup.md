@@ -74,7 +74,7 @@ Before issuing the ToolSearch, run `analyze_project()` ONCE. It returns:
 
 For each key in the calling skill's `codesift_tools.by_stack`, include its tool group if ANY of the following match:
 
-1. Key equals `analyze_project.stack.language` (e.g. `python`, `php`, `kotlin`)
+1. Key equals `analyze_project.stack.language` (e.g. `typescript`, `javascript`, `python`, `php`, `kotlin`)
 2. Key equals `analyze_project.stack.framework` (e.g. `nextjs`, `django`, `astro`)
 3. Key equals `analyze_project.stack.test_runner` (e.g. `pytest`, `jest`)
 4. Key appears in the project's dependency manifest:
@@ -83,6 +83,15 @@ For each key in the calling skill's `codesift_tools.by_stack`, include its tool 
    - `pyproject.toml` / `requirements.txt`: match keys like `django`, `fastapi`, `celery`, `flask`, `pytest`
    - **Monorepo (`stack.monorepo === true`):** scan ALL workspace package.json files (`apps/*`, `packages/*`, plus paths from `workspaces` field) — not just root. Otherwise auditing a workspace dir with a different framework than root produces the wrong preload.
 5. Key matches a database driver in deps. Postgres signal includes any of: `pg`, `psycopg2`, `psycopg2-binary`, `psycopg`, `postgresql`, `postgres`, `postgres-js`, `@prisma/adapter-pg`, `@neondatabase/serverless`, `@vercel/postgres`. MySQL: `mysql`, `mysql2`, `pymysql`, `mysqlclient`. SQLite: `sqlite3`, `better-sqlite3`, `aiosqlite`.
+6. **Manifest-implies-language.** Match the language-level group based on the presence of a language-specific dep manifest. This handles three real-world scenarios:
+   (a) hybrid projects where one language masks another (Yii2 backend + React frontend, Django backend + React SPA),
+   (b) Android/JVM repos where JS tooling files confuse `analyze_project` (returns `language=javascript` for a Kotlin app), and
+   (c) pure-language library projects where `analyze_project` may fail or return `partial` (a pure-Python MCP server, a pure-PHP Composer package).
+   Triggers (presence-only — language manifests are overwhelmingly used for that language; tooling-only false positives are vanishingly rare):
+   - **`composer.json` present** → implicitly match the `php` key, even if `stack.language` is `javascript`/`typescript`/`null`.
+   - **`pyproject.toml` or `requirements.txt` present** → implicitly match the `python` key.
+   - **`build.gradle.kts` or `build.gradle` present** (Gradle build script — Kotlin or Groovy DSL) → implicitly match the `kotlin` key.
+   Rationale: rule #4 already handles the *framework* group (e.g. `yii`, `django`) for these cases, but the language-level group (`php_project_audit`, `python_audit`, `kotlin` Compose/Hilt/Room toolchain) was unreachable for hybrid, misclassified, or pure-language projects without a web-framework dep. This rule closes that gap symmetrically across all three languages — no asymmetric "framework dep required" caveats.
 
 Take the UNION of all matched groups + `always`. Build one `select:` query with all tool names prefixed `mcp__codesift__`. Issue ONE ToolSearch.
 
@@ -90,12 +99,12 @@ Take the UNION of all matched groups + `always`. Build one `select:` query with 
 
 Calling skill `code-audit` has manifest with `always` = 17 tools and `by_stack` = 13 groups.
 
-Project is Next.js + React + Prisma + PostgreSQL + Vitest:
-- `analyze_project` returns `language=javascript, framework=nextjs, test_runner=vitest`
+Project is Next.js + React + Prisma + PostgreSQL + Vitest (TypeScript):
+- `analyze_project` returns `language=typescript, framework=nextjs, test_runner=vitest`
 - `package.json` deps include: `react`, `next`, `@prisma/client`, `pg`
-- Matched groups: `nextjs` (framework), `react` (deps), `prisma` (deps), `postgres` (pg driver)
-- Final preload: 17 always + 2 nextjs + 3 react + 1 prisma + 1 postgres = **24 tools**
-- Skipped: nestjs, astro, hono, python, django, fastapi, php, yii, sql (~16 tools)
+- Matched groups: `typescript` (language), `nextjs` (framework), `react` (deps), `prisma` (deps), `postgres` (pg driver)
+- Final preload: 17 always + 1 typescript + 2 nextjs + 3 react + 1 prisma + 1 postgres = **25 tools**
+- Skipped: nestjs, astro, hono, javascript, python, django, fastapi, php, yii, sql (~16 tools)
 
 Project is Django + Celery + pytest + PostgreSQL:
 - `analyze_project` returns `language=python, framework=django, test_runner=pytest`
@@ -120,7 +129,7 @@ After preload, mark all loaded tools as `DEFERRED-PRELOADED` in the Tool Availab
   - When the missing tool was not available in the calling skill's `codesift_tools` manifest at session start.
   - Hard cap: **2 `ToolSearch` calls per session**. A third indicates a planning gap — surface it as `[CodeSift preload exceeded 2 calls]` rather than silently issuing it.
 - If `ToolSearch` itself is unavailable: skip preload and treat CodeSift as unavailable (degraded mode). Do not attempt direct calls — they fail with `InputValidationError`.
-- If `analyze_project` fails or returns `status=partial` with all-null stack (e.g. markdown-only repo): preload only `always` tools. Skip `by_stack` matching.
+- If `analyze_project` fails or returns `status=partial` with all-null stack: do NOT skip `by_stack` matching wholesale. Rules #4 (dep manifest), #5 (DB driver), and #6 (manifest-implies-language) operate directly on filesystem manifests (`package.json`, `composer.json`, `pyproject.toml`, `requirements.txt`, `build.gradle.kts`/`build.gradle`) and remain fully applicable without a stack object. Only rules #1 (language), #2 (framework), and #3 (test_runner) get skipped because they consume `analyze_project.stack.{language,framework,test_runner}` directly. If NO manifest files are readable either (e.g. truly markdown-only repo): preload only `always` tools.
 - Sub-agents inherit parent's preload state. Do NOT re-run preload in sub-agents.
 
 ## Step 3: Tool Usage

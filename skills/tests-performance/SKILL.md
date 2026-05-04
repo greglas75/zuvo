@@ -6,6 +6,19 @@ description: >
   slowest tests, and produces an impact-ranked action plan. Modes: full
   audit (default), baseline (measure only), verify (compare to saved
   baseline), --no-run (config audit only), --path <dir> (monorepo scope).
+codesift_tools:
+  always:
+    - analyze_project
+    - index_status
+    - index_folder
+    - index_file
+    - plan_turn
+    - get_file_tree            # find test runner config (vitest/jest/pytest)
+    - get_file_outline
+    - search_text              # config patterns
+    - search_patterns          # TP-checklist anti-patterns
+    - analyze_complexity       # slow test correlation
+  by_stack: {}                 # test perf is runner-config-focused, not framework-specific
 ---
 
 # zuvo:tests-performance — Test Suite Performance Audit

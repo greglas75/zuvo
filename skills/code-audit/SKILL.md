@@ -25,12 +25,29 @@ codesift_tools:
   # (package.json / composer.json / pyproject.toml). Union all matched groups.
   by_stack:
     # Languages
+    typescript:
+      - get_type_info              # TS-only: inferred return types, generics, `as` assertion checks (CQ1/CQ2 type safety)
+    # No JS-only CodeSift tools as of 2026-05. Listed here for symmetry with python/php
+    # so the orchestrator can match the key for completeness; future JS-specific tools
+    # (e.g. eslint-driven analyses) would land here.
+    javascript: []
     python:
       - python_audit               # compound: circular + django + anti-patterns + ...
       - analyze_async_correctness  # CQ15/CQ17 for async Python
     php:
       - php_project_audit          # security + ActiveRecord + N+1 + god model
       - php_security_scan          # CAP6/CAP7/CAP8
+    kotlin:
+      - analyze_sealed_hierarchy            # exhaustiveness checks for sealed types
+      - find_extension_functions            # Kotlin extension fn discovery
+      - trace_flow_chain                    # kotlinx.coroutines Flow propagation
+      - trace_suspend_chain                 # suspend fn call graph
+      - trace_compose_tree                  # Jetpack Compose component tree
+      - analyze_compose_recomposition       # Compose re-render hot spots
+      - trace_hilt_graph                    # Hilt DI graph
+      - trace_room_schema                   # Room DB ORM schema
+      - analyze_kmp_declarations            # Kotlin Multiplatform expect/actual
+      - extract_kotlin_serialization_contract  # kotlinx.serialization data contracts
     # JS/TS frameworks
     nestjs:
       - nest_audit                 # CQ1-29 + NestJS-specific (DI, guards, modules)
