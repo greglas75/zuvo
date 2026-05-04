@@ -162,3 +162,69 @@ Scoped task execution for common development work.
 | `prose-quality-registry.md` | PQ1-PQ18 content quality checks — readability, engagement, SEO, structure, authority, anti-slop |
 | `article-output-schema.md` | JSON output contract for write-article |
 | `content-expand-output-schema.md` | JSON output contract for content-expand (before/after scores, changes, voice delta) |
+
+## Skill `codesift_tools` manifest
+
+Every skill that uses CodeSift MCP declares its tool needs in YAML frontmatter so the orchestrator (`shared/includes/codesift-setup.md` Step 2.5) can issue ONE deterministic `ToolSearch` preload sized to the skill + the project's actual stack. This replaces a legacy 6-tool fallback that ignored both skill scope and detected framework.
+
+### Shape
+
+```yaml
+codesift_tools:
+  always:                       # tools every invocation needs
+    - analyze_project           # stack detection (used by orchestrator)
+    - index_status
+    - plan_turn
+    - search_text
+    - ...skill-specific...      # e.g. review_diff, trace_route, scan_secrets
+  by_stack:                     # per-language / per-framework groups
+    typescript: [get_type_info]
+    python: [python_audit, analyze_async_correctness]
+    php: [php_project_audit, php_security_scan]
+    kotlin: [...10 tools...]
+    nextjs: [framework_audit, nextjs_route_map]
+    astro: [astro_audit, astro_actions_audit, astro_hydration_audit]
+    hono: [analyze_hono_app, audit_hono_security]
+    react: [react_quickstart, analyze_hooks, analyze_renders]
+    django: [analyze_django_settings, effective_django_view_security, taint_trace]
+    prisma: [analyze_prisma_schema]
+    postgres: [migration_lint]
+    # acknowledgment placeholders (key matches but contributes 0 tools):
+    express: []
+    fastify: []
+    jest: []
+    drizzle: []
+    javascript: []
+    # ... etc
+```
+
+### Matching rules (codesift-setup.md Step 2.5)
+
+For each key in `codesift_tools.by_stack`, include its tool group if ANY of:
+
+1. Key equals `analyze_project.stack.language` (`typescript`, `python`, `php`, `kotlin`, ...)
+2. Key equals `analyze_project.stack.framework` (`nextjs`, `astro`, `nestjs`, `hono`, `react`, ...)
+3. Key equals `analyze_project.stack.test_runner` (`jest`, ...)
+4. Key appears in dep manifest (`package.json` / `composer.json` / `pyproject.toml`). Monorepo (`stack.monorepo === true`) — scan all workspace package.json files.
+5. Key matches a database driver in deps (postgres: `pg`, `psycopg2`, `@prisma/adapter-pg`, ...)
+6. **Manifest-implies-language guard:** presence of `composer.json` → match `php`; presence of `pyproject.toml` / `requirements.txt` → match `python`; presence of `build.gradle.kts` / `build.gradle` → match `kotlin`. This handles hybrid projects (Yii+React, Django+React) and pure-language libraries where `analyze_project` may misclassify or fail.
+
+Final preload = UNION of `always` + every matched `by_stack` group, issued as ONE `ToolSearch(query="select:mcp__codesift__a,mcp__codesift__b,...")` call before Step 3.
+
+### Audit-specific extensions
+
+Some skills override the standard group with extra tools where the audit is deeper in that direction:
+
+| Skill | Extension |
+|-------|-----------|
+| `api-audit` | `hono` +6 (extract_api_contract, extract_response_types, trace_rpc_types, trace_middleware_chain, find_dead_hono_routes, visualize_hono_routes) |
+| `db-audit` | `django` +1 (get_model_graph) |
+| `dependency-audit` | `python` +1 (analyze_python_deps) |
+| `structure-audit` | `hono` +1 (detect_hono_modules) |
+| `seo-audit` / `seo-fix` / `geo-audit` / `geo-fix` | `nextjs` +1 (nextjs_metadata_audit) |
+| `design-review` / `ui-design-team` / `a11y-audit` / `write-e2e` / `design` | `react` +1 (trace_component_tree) |
+| `refactor` | `always` +rename_symbol (cross-file) |
+
+### Sub-agents
+
+Sub-agents (spawned via `Agent` tool) do **not** inherit the parent's preload state — each runs in its own Claude Code instance with a fresh tool list populated from the agent's own frontmatter `tools:` array. An agent that needs CodeSift tools must list them explicitly in `tools:` and (if those arrive deferred in the agent's session-start banner) call `ToolSearch` as its first action.

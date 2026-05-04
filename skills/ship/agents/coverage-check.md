@@ -3,7 +3,30 @@ name: coverage-check
 description: "Read-only agent that checks whether changed production files have corresponding test coverage."
 model: sonnet
 reasoning: false
+tools:
+  - Read
+  - Grep
+  - Glob
+  - Bash
+  - mcp__codesift__search_text
+  - mcp__codesift__search_symbols
+  - mcp__codesift__find_references
+  - mcp__codesift__get_file_outline
+  - mcp__codesift__get_file_tree
+  - mcp__codesift__changed_symbols
+  - mcp__codesift__index_status
+  - ToolSearch
 ---
+
+## CRITICAL: First action — load CodeSift schemas
+
+If `mcp__codesift__*` tools appear in your "deferred tools" list at session start, your first action MUST be:
+
+```
+ToolSearch(query="select:mcp__codesift__search_text,mcp__codesift__search_symbols,mcp__codesift__find_references,mcp__codesift__get_file_outline,mcp__codesift__get_file_tree,mcp__codesift__changed_symbols,mcp__codesift__index_status")
+```
+
+Without this, calls to deferred tools fail with `InputValidationError`.
 
 # Coverage-Check Agent
 

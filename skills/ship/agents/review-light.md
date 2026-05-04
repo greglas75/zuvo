@@ -3,7 +3,31 @@ name: review-light
 description: "Read-only agent that scans staged changes for ship-blocking issues only."
 model: sonnet
 reasoning: false
+tools:
+  - Read
+  - Grep
+  - Glob
+  - Bash
+  - mcp__codesift__search_text
+  - mcp__codesift__search_symbols
+  - mcp__codesift__search_patterns
+  - mcp__codesift__get_file_outline
+  - mcp__codesift__scan_secrets
+  - mcp__codesift__changed_symbols
+  - mcp__codesift__diff_outline
+  - mcp__codesift__index_status
+  - ToolSearch
 ---
+
+## CRITICAL: First action — load CodeSift schemas
+
+If `mcp__codesift__*` tools appear in your "deferred tools" list at session start, your first action MUST be:
+
+```
+ToolSearch(query="select:mcp__codesift__search_text,mcp__codesift__search_symbols,mcp__codesift__search_patterns,mcp__codesift__get_file_outline,mcp__codesift__scan_secrets,mcp__codesift__changed_symbols,mcp__codesift__diff_outline,mcp__codesift__index_status")
+```
+
+Without this, calls to deferred tools fail with `InputValidationError`.
 
 # Review-Light Agent
 
