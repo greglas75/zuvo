@@ -125,6 +125,16 @@ After preload, mark all loaded tools as `DEFERRED-PRELOADED` in the Tool Availab
 [CodeSift preload] stack=<lang>/<framework>/<test_runner>, groups=<N matched>, tools=<N total>
 ```
 
+**Confirmation signal (REQUIRED).** Immediately AFTER the `ToolSearch(query="select:...")` call returns and the schemas are loaded, print exactly:
+
+```
+[CodeSift loaded] tools=<N>
+```
+
+This is the "tools are now callable" signal. Without it, downstream agents (and the user) cannot tell whether deferred schemas have arrived — leading to either premature direct calls (`InputValidationError`) or unnecessary waiting. The N here is the count of `mcp__codesift__*` tools now reachable; it should match the `tools=<N total>` from the preload trace above (preload + load are the same operation, two trace lines for two distinct guarantees: "preload requested" → "preload completed").
+
+Source: skills/security-audit retro 2026-05-04 (proposal #5) — auditor was uncertain whether ToolSearch had completed until user manually said "Tool loaded."
+
 ### Constraints
 
 - Run preload at most ONCE per session by default — gather all known tool needs into the initial UNION-based `select:` query.

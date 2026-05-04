@@ -130,6 +130,24 @@ For each trigger that holds, confirm the matching tool is in the preloaded tool 
 - Do NOT proceed with grep fallback. The audit is incomplete by definition.
 - Exit with status `INCOMPLETE` and add a backlog item: `[BLOCKER] db-audit needs <tool> on <project>`.
 
+### Required POSTAMBLE — retrospective append (NOT optional)
+
+After the audit report is written and the Run line is appended, **the audit is NOT complete until** the retrospective protocol has appended an entry to BOTH `~/.zuvo/retros.log` AND `~/.zuvo/retros.md`. Reaching the Run line is **not** the end of the skill — it is the midpoint between findings-output and process-feedback.
+
+This is the failure mode the 2026-04-09 → 2026-05-04 db-audit history shows: 11 db-audit runs, 0 retrospective entries written. Every prior run reached the Run line, declared "task done", and skipped retrospective.md entirely. The skipped retros lost ~11 sessions of skill feedback that would otherwise have caught the very issues this MANDATORY section now enforces.
+
+**Hard requirement, in this order, before considering db-audit complete:**
+
+1. Write `audits/db-audit-<date>.md`.
+2. Print Validity Gate block.
+3. Print Run line + append to runs.log.
+4. **Load `../../shared/includes/retrospective.md` if not already loaded.**
+5. **Fill all 9 retrospective fields per protocol.**
+6. **Execute the bash append commands** that write `RETRO:` line to `~/.zuvo/retros.log` and the long-form entry to `~/.zuvo/retros.md`.
+7. **Print confirmation:** `RETRO_APPENDED: retros.log=YES retros.md=YES (verified)`.
+
+If you reach step 3 and stop — the audit is INVALID regardless of finding count. The Validity Gate's `gate_status` flips to `FAIL — retrospective not appended` and the verdict is overridden to `INCOMPLETE`.
+
 ### Forbidden escape hatches
 
 The following telemetry values are **forbidden** when the trigger condition holds:
@@ -142,6 +160,8 @@ The following telemetry values are **forbidden** when the trigger condition hold
 | `migration_lint: DEFERRED` | Postgres + migrations exist | `migration_lint: <findings>` |
 | `scan_secrets: DEFERRED` | EVER | `scan_secrets: <count>` |
 | `codesift: unavailable` | `mcp__codesift__*` was in deferred-tools session-start banner | `codesift: deferred-not-preloaded (FAILURE: skill required preload)` |
+| `retrospective: skipped` | EVER | `retrospective: appended (retros.log=N entries, retros.md=N bytes added)` — see Required POSTAMBLE above |
+| Stopping after Run line without retrospective | EVER | Not allowed — the Validity Gate catches this and overrides to INCOMPLETE |
 
 ### Audit completion verification (run BEFORE writing PASS/WARN/FAIL status)
 
@@ -1056,8 +1076,13 @@ VALIDITY GATE
     unbounded-findmany: [<count> | NOT_CALLED — VIOLATES_TRIGGER]
     await-in-loop: [<count> | NOT_CALLED — VIOLATES_TRIGGER]
     toctou: [<count> | NOT_CALLED — VIOLATES_TRIGGER]
-  gate_status: [PASS | FAIL — <which tools missing>]
+  postamble:
+    retros_log_appended: [yes(bytes_added=N) | NOT_APPENDED — VIOLATES_REQUIRED_POSTAMBLE]
+    retros_md_appended:  [yes(entry_count=N) | NOT_APPENDED — VIOLATES_REQUIRED_POSTAMBLE]
+  gate_status: [PASS | FAIL — <which tools or postamble missing>]
 ```
+
+**The Validity Gate must be printed AFTER step 6 of the Required POSTAMBLE (after retros append), not before.** Printing it before retro append guarantees `retros_*_appended: NOT_APPENDED`.
 
 If `gate_status = FAIL`, override the VERDICT below to `INCOMPLETE` regardless of finding count, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and add a backlog item.
 
