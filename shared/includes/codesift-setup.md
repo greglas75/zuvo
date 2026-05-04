@@ -92,6 +92,11 @@ For each key in the calling skill's `codesift_tools.by_stack`, include its tool 
    - **`pyproject.toml` or `requirements.txt` present** → implicitly match the `python` key.
    - **`build.gradle.kts` or `build.gradle` present** (Gradle build script — Kotlin or Groovy DSL) → implicitly match the `kotlin` key.
    Rationale: rule #4 already handles the *framework* group (e.g. `yii`, `django`) for these cases, but the language-level group (`php_project_audit`, `python_audit`, `kotlin` Compose/Hilt/Room toolchain) was unreachable for hybrid, misclassified, or pure-language projects without a web-framework dep. This rule closes that gap symmetrically across all three languages — no asymmetric "framework dep required" caveats.
+7. **Filesystem-implies-toolchain.** Some tool groups are gated by file *presence*, not dep manifest entries. Match these keys based on filesystem evidence:
+   - **`.sql` files exist** anywhere under `TARGET_ROOT` (excluding `node_modules/`, `.git/`, `dist/`, `build/`) → match the `sql` key. Triggers the SQL toolchain (`sql_audit`, `analyze_schema`, `diff_migrations`, `trace_query`, `search_columns`). Rationale: `sql` is rarely a `package.json`/`composer.json` dep name (rule #4 misses it) and not a DB driver (rule #5 maps drivers to `postgres`/`mysql`/`sqlite`, not `sql`). Without this rule, projects with raw migration `.sql` files would get DB driver tools but miss the schema/migration linting toolchain — exactly the gap that left `sql_audit` skippable on tgm-survey-platform's 34 migrations.
+   - **`prisma/schema.prisma` exists** → match `prisma` key (in addition to rule #4's `@prisma/client` dep match — handles edge case where schema exists but client lib not yet installed).
+   - **`migrations/` directory exists** AND any rule has matched `postgres` → match `postgres` key (already triggered by rule #5, but reinforces in case driver dep is transitive-only).
+   This rule applies regardless of `analyze_project` outcome — pure filesystem check.
 
 Take the UNION of all matched groups + `always`. Build one `select:` query with all tool names prefixed `mcp__codesift__`. Issue ONE ToolSearch.
 
