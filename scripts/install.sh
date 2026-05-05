@@ -414,13 +414,38 @@ install_codex() {
     warn "Codex plugin cache not found -- hooks not installed (skills still work)"
   fi
 
-  # Step 9: Dedupe against Cursor when both runtimes coexist.
-  # Cursor v3 scans **/.codex/skills/** AND **/.claude/plugins/** without name-based
-  # deduplication, so flat Codex skills + Claude cache produce double entries
-  # in the Cursor /skills picker (one with "Zuvo --" prefix, one without).
-  # When Cursor is present, remove all zuvo-marked entries (current + orphan
-  # stale versions) from the flat install. Codex still sees zuvo via plugin
-  # cache at ~/.codex/.tmp/plugins/plugins/zuvo/skills/.
+  # Step 9: Install zuvo into Codex's proper plugin cache so Codex CLI keeps
+  # auto-discovering it after we strip the flat install for Cursor dedup.
+  # Cursor scans **/.codex/skills/** but NOT **/.codex/plugins/**, so plugin
+  # cache is invisible to Cursor while Codex loads it natively (same path as
+  # OpenAI bundled plugins like browser-use).
+  local CODEX_PLUGIN_DIR="$HOME/.codex/plugins/cache/zuvo-marketplace/zuvo/$VERSION"
+  if [[ -d "$DIST/skills" ]]; then
+    rm -rf "$HOME/.codex/plugins/cache/zuvo-marketplace/zuvo"
+    mkdir -p "$CODEX_PLUGIN_DIR/skills" "$CODEX_PLUGIN_DIR/.codex-plugin"
+    cp -r "$DIST"/skills/* "$CODEX_PLUGIN_DIR/skills/" 2>/dev/null || true
+    if [[ -f "$DIST/.codex-plugin/plugin.json" ]]; then
+      cp "$DIST/.codex-plugin/plugin.json" "$CODEX_PLUGIN_DIR/.codex-plugin/plugin.json"
+    elif [[ -f "$ZUVO_DIR/.codex-plugin/plugin.json" ]]; then
+      cp "$ZUVO_DIR/.codex-plugin/plugin.json" "$CODEX_PLUGIN_DIR/.codex-plugin/plugin.json"
+    fi
+    if [[ -f "$DIST/hooks.json" ]]; then
+      cp "$DIST/hooks.json" "$CODEX_PLUGIN_DIR/hooks.json"
+    fi
+    if [[ -d "$DIST/hooks" ]]; then
+      mkdir -p "$CODEX_PLUGIN_DIR/hooks"
+      cp "$DIST"/hooks/* "$CODEX_PLUGIN_DIR/hooks/" 2>/dev/null || true
+      chmod +x "$CODEX_PLUGIN_DIR"/hooks/*.sh 2>/dev/null || true
+      chmod +x "$CODEX_PLUGIN_DIR"/hooks/session-start 2>/dev/null || true
+    fi
+    ok "Installed to ~/.codex/plugins/cache/zuvo-marketplace/zuvo/$VERSION (Codex plugin cache)"
+  fi
+
+  # Step 10: Strip flat install when Cursor is present (dedup).
+  # Cursor v3 scans **/.codex/skills/** AND **/.claude/plugins/** without
+  # name-based deduplication. With both populated, every zuvo skill appears
+  # twice in Cursor's /skills picker. Keep flat for Codex-only setups; remove
+  # it when Cursor coexists (Step 9 above ensures Codex plugin cache has it).
   if [[ -d "$HOME/.cursor" && -d "$HOME/.codex/skills" ]]; then
     local removed=0
     for skill_dir in "$HOME/.codex/skills"/*/; do
@@ -431,7 +456,7 @@ install_codex() {
       fi
     done
     if [[ "$removed" -gt 0 ]]; then
-      ok "Removed $removed flat zuvo skills from ~/.codex/skills/ (Cursor dedup)"
+      ok "Removed $removed flat zuvo skills from ~/.codex/skills/ (Cursor dedup; Codex still loads from plugin cache)"
     fi
   fi
 
