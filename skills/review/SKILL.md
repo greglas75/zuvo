@@ -70,6 +70,10 @@ codesift_tools:
       - astro_audit
       - astro_actions_audit
       - astro_hydration_audit
+      - astro_middleware
+      - astro_sessions
+      - astro_image_audit
+      - astro_svg_components
     hono:
       - analyze_hono_app
       - audit_hono_security

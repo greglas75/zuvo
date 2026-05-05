@@ -31,7 +31,7 @@ codesift_tools:
     kotlin: [analyze_sealed_hierarchy, find_extension_functions, trace_flow_chain, trace_suspend_chain, trace_compose_tree, analyze_compose_recomposition, trace_hilt_graph, trace_room_schema, analyze_kmp_declarations, extract_kotlin_serialization_contract]
     nestjs: [nest_audit]
     nextjs: [framework_audit, nextjs_route_map, nextjs_metadata_audit]   # +1 SEO ext: metadata gaps
-    astro: [astro_audit, astro_actions_audit, astro_hydration_audit]
+    astro: [astro_audit, astro_actions_audit, astro_hydration_audit, astro_image_audit]
     hono: [analyze_hono_app, audit_hono_security]
     express: []
     fastify: []

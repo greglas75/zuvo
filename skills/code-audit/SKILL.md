@@ -58,6 +58,10 @@ codesift_tools:
       - astro_audit                # one-call composite
       - astro_actions_audit        # AA01-AA06 anti-patterns
       - astro_hydration_audit
+      - astro_middleware           # MW00-MW03: src/middleware.ts, sequence(), guards
+      - astro_sessions             # SE01-SE04: Astro 5 Sessions API + adapter compat
+      - astro_image_audit          # IM01-IM04: <Image>, getImage(), astro:assets
+      - astro_svg_components       # SV01-SV03: *.svg?component imports, native vs legacy
     hono:
       - analyze_hono_app           # routes + middleware overview
       - audit_hono_security        # secure-headers, rate-limit, auth-ordering
