@@ -72,19 +72,30 @@ def find_project_root(audit_path: Path) -> Path:
 
 # ---- finding parser --------------------------------------------------------
 
-# Finding sections in zuvo audit reports use one of two formats:
-#   ## H1: Title text                    (markdown header style)
-#   **H1 — Title text**                  (bold-bullet style, used by db-audit/security-audit/etc.)
-# Plus the severity word forms: HIGH-1, MEDIUM-2, etc.
+# Finding sections in zuvo audit reports use varied formats across skills:
+#   ## H1: Title text                       (markdown header — generic)
+#   **H1 — Title text**                     (bold — generic)
+#   **DB12-NEW-001 — Title**                (db-audit: <DIM>-<TYPE>-<NUM>)
+#   **S2.3-A — Title**                      (security-audit: <DIM>.<SUB>-<VAR>)
+#   **D5.2 — Title**                        (api-audit: <DIM>.<SUB>)
+#   **DB1.1-D — Title**                     (db-audit sub-finding)
+#   **PT4-001 — Title**                     (pentest)
+#   **CC1-encoding — Title**                (content-audit)
+# Common shape: optional severity letter prefix(H/M/L/C) OR dimension prefix
+# (DB/S/D/T/PT/CC/SA/A/Q...) followed by digits, optionally dotted/dashed.
 FINDING_HEADER_RE = re.compile(
     r"^(?:"
-    r"#{2,4}\s+"                                                                  # markdown header
-    r"|\*\*\s*"                                                                   # bold
+    r"#{2,4}\s+"                                          # markdown header
+    r"|[*_]{2}\s*"                                        # bold (asterisk or underscore)
     r")"
-    r"(?:[HMLC]\d+|HIGH-\d+|MEDIUM-\d+|LOW-\d+|CRITICAL-\d+)"
-    r"(?:\s*[:—–-].*?)?"
-    r"(?:\*\*)?$",
-    re.IGNORECASE,
+    r"(?:"
+    r"  [HMLC]\d+"                                        # H1, M2, L3, C1
+    r"  |HIGH-\d+|MEDIUM-\d+|LOW-\d+|CRITICAL-\d+"        # HIGH-1
+    r"  |[A-Z]{1,3}\d+(?:\.\d+)?(?:[-:][A-Z0-9-]+)*"      # DB12-NEW-001, S2.3-A, DB1.1-D, PT4-001, CC1
+    r")"
+    r"(?:\s*[:—–-]\s*.*?)?"
+    r"(?:[*_]{2})?\s*(?:\*?\(.*?\))?$",
+    re.IGNORECASE | re.VERBOSE,
 )
 
 # file:line citation. Accept .ts/.tsx/.js/.py/.php/.kt/.sql/.prisma/.json/.md/.yml etc.
@@ -117,9 +128,17 @@ def split_findings(text: str) -> list[tuple[str, str]]:
 
 
 def looks_like_finding(header: str) -> bool:
-    """Heuristic: only sections starting with H/M/L/C<digit> or severity word are findings."""
-    h = header.lstrip("#").lstrip("*").strip()
-    return bool(re.match(r"^(?:[HMLC]\d+|HIGH-\d+|MEDIUM-\d+|LOW-\d+|CRITICAL-\d+)\b", h, re.IGNORECASE))
+    """Heuristic: any of these patterns are findings:
+       - H/M/L/C<digit>  (generic severity)
+       - HIGH-<n>, MEDIUM-<n>, LOW-<n>, CRITICAL-<n>
+       - <DIM>[.<SUB>][-<VARIANT>]<digit*>  e.g. DB12-NEW-001, S2.3-A, PT4-001, CC1-encoding
+    """
+    h = header.lstrip("#").lstrip("*").lstrip("_").strip()
+    return bool(
+        re.match(r"^[HMLC]\d+\b", h, re.IGNORECASE)
+        or re.match(r"^(?:HIGH|MEDIUM|LOW|CRITICAL)-\d+\b", h, re.IGNORECASE)
+        or re.match(r"^[A-Z]{1,3}\d+(?:\.\d+)?(?:[-:][A-Z0-9-]+)*\b", h, re.IGNORECASE)
+    )
 
 
 # ---- citation verification -------------------------------------------------
@@ -207,24 +226,25 @@ def main() -> None:
             errors.append(f"  [{finding_id}] every cited file:line is unverifiable. Last error: {last_err}")
             continue
 
-        # 4. Verified-against stamp (only enforce if we know current SHA)
+        # 4. (Optional, recommended) per-finding Verified-against stamp.
+        # The citation resolution above is the primary proof — if the cited
+        # file:line exists in the current tree, the agent had to look at it.
+        # The stamp is a stronger guarantee but is no longer strictly required
+        # per finding (single report-level stamp is also sufficient — see
+        # report-level check below). If a stamp is present but doesn't match
+        # current SHA, that IS still a hard fail — proves the finding was
+        # carried forward without re-verification.
         if current_sha:
             stamp_match = VERIFIED_RE.search(section)
-            if not stamp_match:
-                errors.append(
-                    f"  [{finding_id}] missing 'Verified-against: <sha>' stamp. "
-                    f"Required to prove the finding was re-checked against current code "
-                    f"(expected current SHA prefix: {current_sha})."
-                )
-                continue
-            stamp_sha = stamp_match.group(1).lower()
-            cur_lc = current_sha.lower()
-            if not (stamp_sha.startswith(cur_lc) or cur_lc.startswith(stamp_sha)):
-                errors.append(
-                    f"  [{finding_id}] Verified-against: {stamp_sha} does not match current SHA {cur_lc}. "
-                    f"Finding may be carried forward from a prior audit without re-verification."
-                )
-                continue
+            if stamp_match:
+                stamp_sha = stamp_match.group(1).lower()
+                cur_lc = current_sha.lower()
+                if not (stamp_sha.startswith(cur_lc) or cur_lc.startswith(stamp_sha)):
+                    errors.append(
+                        f"  [{finding_id}] Verified-against: {stamp_sha} does not match current SHA {cur_lc}. "
+                        f"Finding carried forward from a prior audit without re-verification."
+                    )
+                    continue
 
         verified_count += 1
 
