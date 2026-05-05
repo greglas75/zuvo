@@ -238,6 +238,14 @@ install_zuvo_home() {
   else
     warn "scripts/zuvo-home/append-runlog not found in repo — skipping"
   fi
+
+  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/compute-preload" ]]; then
+    cp "$ZUVO_DIR/scripts/zuvo-home/compute-preload" "$HOME/.zuvo/compute-preload"
+    chmod +x "$HOME/.zuvo/compute-preload"
+    ok "compute-preload installed (~/.zuvo/compute-preload)"
+  else
+    warn "scripts/zuvo-home/compute-preload not found in repo — skipping"
+  fi
 }
 
 # =======================================

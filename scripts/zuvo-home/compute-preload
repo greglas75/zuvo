@@ -1,0 +1,362 @@
+#!/usr/bin/env python3
+"""
+~/.zuvo/compute-preload — deterministic CodeSift preload computation.
+
+Reads a skill's codesift_tools frontmatter, applies the 7 matching rules from
+codesift-setup.md against the target project, and emits:
+  1. The verbatim [CodeSift matching trace] block (copy-paste into the audit).
+  2. The select: query string for ToolSearch.
+  3. The expected tool count for math gate validation.
+
+Usage:
+  ~/.zuvo/compute-preload <skill_name> [project_path]
+  ~/.zuvo/compute-preload db-audit                       # uses CWD
+  ~/.zuvo/compute-preload db-audit /Users/x/DEV/repo
+
+Why it exists: agents repeatedly faked the matching trace — invented `always`
+lists, skipped framework groups, claimed manifest "not visible" while md5
+proves cache is correct. Soft enforcement (mandatory ack, math gate, forbidden
+patterns) is bypass-able because the agent self-reports the trace inputs.
+This script removes that discretion: trace is mechanically derived from the
+skill's frontmatter + project filesystem, not from agent judgment.
+
+Skills are read from the Claude Code plugin cache (latest version dir).
+"""
+
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+
+# ----- locating the skill ---------------------------------------------------
+
+PLUGIN_CACHE = Path.home() / ".claude/plugins/cache/zuvo-marketplace/zuvo"
+
+
+def find_skill_md(skill_name: str) -> Path:
+    if not PLUGIN_CACHE.exists():
+        sys.exit(f"ERROR: plugin cache not found at {PLUGIN_CACHE}")
+    versions = sorted(
+        [d for d in PLUGIN_CACHE.iterdir() if d.is_dir()],
+        key=lambda d: d.stat().st_mtime,
+        reverse=True,
+    )
+    for v in versions:
+        candidate = v / "skills" / skill_name / "SKILL.md"
+        if candidate.exists():
+            return candidate
+    sys.exit(f"ERROR: skill '{skill_name}' not found in {PLUGIN_CACHE}")
+
+
+# ----- frontmatter parsing (minimal YAML, no external deps) ----------------
+
+def read_frontmatter(skill_md: Path) -> str:
+    text = skill_md.read_text()
+    if not text.startswith("---\n"):
+        sys.exit(f"ERROR: {skill_md} has no YAML frontmatter")
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        sys.exit(f"ERROR: {skill_md} frontmatter not closed")
+    return text[4:end]
+
+
+def parse_codesift_tools(fm: str) -> dict:
+    """Extract codesift_tools.always (list) and by_stack (dict of key → list)."""
+    out = {"always": [], "by_stack": {}}
+    in_codesift = False
+    in_always = False
+    in_by_stack = False
+    current_key = None
+    for raw_line in fm.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.lstrip()
+        indent = len(line) - len(stripped)
+        if not stripped or stripped.startswith("#"):
+            continue
+        if indent == 0:
+            in_codesift = stripped.startswith("codesift_tools:")
+            in_always = False
+            in_by_stack = False
+            current_key = None
+            continue
+        if not in_codesift:
+            continue
+        if indent == 2:
+            if stripped.startswith("always:"):
+                in_always = True
+                in_by_stack = False
+                current_key = None
+                continue
+            if stripped.startswith("by_stack:"):
+                in_always = False
+                in_by_stack = True
+                current_key = None
+                rest = stripped.split(":", 1)[1].strip()
+                if rest in ("{}", "{ }"):
+                    out["by_stack"] = {}
+                continue
+        if in_always and indent >= 4 and stripped.startswith("- "):
+            tool = stripped[2:].split("#", 1)[0].strip()
+            out["always"].append(tool)
+            continue
+        if in_by_stack and indent == 4:
+            # `key: [tool, tool]` or `key:` (list follows)
+            if ":" not in stripped:
+                continue
+            key_part, _, val_part = stripped.partition(":")
+            key = key_part.strip()
+            val_part = val_part.strip().split("#", 1)[0].strip()
+            if val_part.startswith("[") and val_part.endswith("]"):
+                inner = val_part[1:-1].strip()
+                tools = [t.strip() for t in inner.split(",") if t.strip()]
+                out["by_stack"][key] = tools
+                current_key = None
+            elif val_part == "":
+                out["by_stack"][key] = []
+                current_key = key
+            else:
+                # inline scalar - treat as single tool
+                out["by_stack"][key] = [val_part]
+                current_key = None
+            continue
+        if in_by_stack and indent >= 6 and stripped.startswith("- ") and current_key:
+            tool = stripped[2:].split("#", 1)[0].strip()
+            out["by_stack"][current_key].append(tool)
+    return out
+
+
+# ----- project signal collection -------------------------------------------
+
+POSTGRES_DRIVERS = {
+    "pg", "psycopg2", "psycopg2-binary", "psycopg", "postgresql", "postgres",
+    "postgres-js", "@prisma/adapter-pg", "@neondatabase/serverless",
+    "@vercel/postgres",
+}
+MYSQL_DRIVERS = {"mysql", "mysql2", "pymysql", "mysqlclient"}
+SQLITE_DRIVERS = {"sqlite3", "better-sqlite3", "aiosqlite"}
+
+PHP_FRAMEWORK_DEPS = {
+    "yiisoft/yii2", "laravel/framework", "symfony/symfony", "drupal/core",
+    "cakephp/cakephp", "codeigniter4/framework", "slim/slim", "phalcon/cphalcon",
+}
+PYTHON_FRAMEWORK_DEPS = {
+    "django", "flask", "fastapi", "celery", "sqlalchemy", "pyramid", "tornado",
+    "aiohttp", "starlette",
+}
+
+
+def read_package_json(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return {}
+
+
+def collect_signals(project: Path) -> dict:
+    sig = {
+        "language": None, "framework": None, "test_runner": None,
+        "monorepo": False, "package_manager": None,
+        "deps": set(), "files": {},
+    }
+    # package.json (root + workspaces)
+    package_jsons = []
+    root_pkg = project / "package.json"
+    if root_pkg.exists():
+        package_jsons.append(root_pkg)
+        data = read_package_json(root_pkg)
+        if "workspaces" in data:
+            sig["monorepo"] = True
+        for sub in ("apps", "packages"):
+            sub_dir = project / sub
+            if sub_dir.exists():
+                for child in sub_dir.iterdir():
+                    pj = child / "package.json"
+                    if pj.exists():
+                        package_jsons.append(pj)
+                        sig["monorepo"] = True
+    sig["files"]["package_jsons_scanned"] = [str(p.relative_to(project)) for p in package_jsons]
+    for pj in package_jsons:
+        data = read_package_json(pj)
+        for section in ("dependencies", "devDependencies"):
+            for k in (data.get(section) or {}).keys():
+                sig["deps"].add(k)
+    # filesystem evidence
+    sig["files"]["composer_json"] = (project / "composer.json").exists()
+    sig["files"]["pyproject_toml"] = (project / "pyproject.toml").exists()
+    sig["files"]["requirements_txt"] = (project / "requirements.txt").exists()
+    sig["files"]["build_gradle_kts"] = (project / "build.gradle.kts").exists()
+    sig["files"]["build_gradle"] = (project / "build.gradle").exists()
+    sig["files"]["prisma_schema"] = (project / "prisma" / "schema.prisma").exists()
+    # .sql files (scan, exclude vendor dirs)
+    sql_count = 0
+    for sql in project.rglob("*.sql"):
+        if any(part in {"node_modules", ".git", "dist", "build"} for part in sql.parts):
+            continue
+        sql_count += 1
+        if sql_count > 1000:
+            break
+    sig["files"]["sql_files_count"] = sql_count
+    sig["files"]["migrations_dir"] = any(
+        d.is_dir() and d.name == "migrations"
+        for d in project.rglob("migrations") if "node_modules" not in d.parts
+    )
+    # language / framework heuristics from deps + files
+    if "react" in sig["deps"] or "next" in sig["deps"]:
+        if any((project / f).exists() for f in ("tsconfig.json",)):
+            sig["language"] = "typescript"
+        else:
+            sig["language"] = "javascript"
+    if any(p.suffix in {".ts", ".tsx"} for p in project.glob("*.ts")):
+        sig["language"] = "typescript"
+    if "next" in sig["deps"]:
+        sig["framework"] = "nextjs"
+    elif "@nestjs/core" in sig["deps"] or "@nestjs/common" in sig["deps"]:
+        sig["framework"] = "nestjs"
+    elif "astro" in sig["deps"]:
+        sig["framework"] = "astro"
+    elif "hono" in sig["deps"]:
+        sig["framework"] = "hono"
+    elif "react" in sig["deps"]:
+        sig["framework"] = "react"
+    elif sig["files"]["composer_json"]:
+        composer_text = (project / "composer.json").read_text()
+        for php_fw in PHP_FRAMEWORK_DEPS:
+            if php_fw in composer_text:
+                sig["framework"] = php_fw.split("/")[1] if "/" in php_fw else php_fw
+                break
+        if not sig["language"]:
+            sig["language"] = "php"
+    if sig["files"]["pyproject_toml"] or sig["files"]["requirements_txt"]:
+        if not sig["language"]:
+            sig["language"] = "python"
+    if sig["files"]["build_gradle_kts"] or sig["files"]["build_gradle"]:
+        if not sig["language"] or sig["language"] == "javascript":
+            sig["language"] = "kotlin"
+    # test_runner
+    if "vitest" in sig["deps"]:
+        sig["test_runner"] = "vitest"
+    elif "jest" in sig["deps"]:
+        sig["test_runner"] = "jest"
+    elif sig["files"]["pyproject_toml"]:
+        sig["test_runner"] = "pytest"
+    return sig
+
+
+# ----- the 7 matching rules ------------------------------------------------
+
+def match_groups(by_stack: dict, sig: dict) -> list[tuple[str, str, list[str]]]:
+    """Return list of (key, evidence, tool_list) for matched groups."""
+    matched = []
+    deps = sig["deps"]
+    for key, tools in by_stack.items():
+        evidence = None
+        # rule 1: language
+        if sig["language"] == key:
+            evidence = f"rule #1 language={key}"
+        # rule 2: framework
+        elif sig["framework"] == key:
+            evidence = f"rule #2 framework={key}"
+        # rule 3: test_runner
+        elif sig["test_runner"] == key:
+            evidence = f"rule #3 test_runner={key}"
+        # rule 4: dep manifest
+        elif key in deps:
+            evidence = f"rule #4 deps:{key}"
+        # rule 5: db driver
+        elif key == "postgres" and any(d in POSTGRES_DRIVERS for d in deps):
+            driver = next(d for d in deps if d in POSTGRES_DRIVERS)
+            evidence = f"rule #5 driver:{driver}"
+        elif key == "mysql" and any(d in MYSQL_DRIVERS for d in deps):
+            evidence = f"rule #5 driver:mysql"
+        elif key == "sqlite" and any(d in SQLITE_DRIVERS for d in deps):
+            evidence = f"rule #5 driver:sqlite"
+        # rule 6: manifest-implies-language
+        elif key == "php" and sig["files"]["composer_json"]:
+            evidence = "rule #6 composer.json present"
+        elif key == "python" and (sig["files"]["pyproject_toml"] or sig["files"]["requirements_txt"]):
+            evidence = "rule #6 pyproject/requirements present"
+        elif key == "kotlin" and (sig["files"]["build_gradle_kts"] or sig["files"]["build_gradle"]):
+            evidence = "rule #6 Gradle build file present"
+        # rule 7: filesystem-implies-toolchain
+        elif key == "sql" and sig["files"]["sql_files_count"] > 0:
+            evidence = f"rule #7 .sql files={sig['files']['sql_files_count']}"
+        elif key == "prisma" and sig["files"]["prisma_schema"]:
+            evidence = "rule #7 prisma/schema.prisma present"
+        if evidence:
+            matched.append((key, evidence, tools))
+    return matched
+
+
+# ----- output --------------------------------------------------------------
+
+def emit(skill: str, project: Path, ct: dict, sig: dict, matched: list):
+    always = ct["always"]
+    by_stack = ct["by_stack"]
+    skipped_keys = sorted(set(by_stack.keys()) - {k for k, _, _ in matched})
+    print("[CodeSift matching trace]")
+    print(f"  skill: {skill}")
+    print(f"  project: {project}")
+    print("  analyze_project (best-effort from filesystem):")
+    print(f"    language={sig['language']} framework={sig['framework']} "
+          f"test_runner={sig['test_runner']} monorepo={sig['monorepo']}")
+    print("  dep manifests scanned:")
+    for p in sig["files"].get("package_jsons_scanned", []):
+        print(f"    - {p}")
+    print("  filesystem evidence:")
+    print(f"    composer.json={'yes' if sig['files']['composer_json'] else 'no'} "
+          f"pyproject.toml={'yes' if sig['files']['pyproject_toml'] else 'no'} "
+          f"requirements.txt={'yes' if sig['files']['requirements_txt'] else 'no'}")
+    print(f"    build.gradle.kts/build.gradle="
+          f"{'yes' if sig['files']['build_gradle_kts'] or sig['files']['build_gradle'] else 'no'} "
+          f"prisma/schema.prisma={'yes' if sig['files']['prisma_schema'] else 'no'}")
+    print(f"    .sql files={sig['files']['sql_files_count']} "
+          f"migrations/ dir={'yes' if sig['files']['migrations_dir'] else 'no'}")
+    print(f"  matched by_stack groups (FULL tool list):")
+    sum_m = 0
+    for key, evidence, tools in matched:
+        print(f"    {key} ({evidence}) → {tools}")
+        sum_m += len(tools)
+    print(f"  skipped by_stack groups (no signal):")
+    print(f"    {', '.join(skipped_keys) if skipped_keys else '(none)'}")
+    print("  union math:")
+    print(f"    always.length = {len(always)}")
+    parts = " + ".join(f"{key}={len(tools)}" for key, _, tools in matched)
+    print(f"    matched: {parts} = {sum_m}" if matched else f"    matched: 0")
+    expected = len(always) + sum_m
+    print(f"    expected_tools = {len(always)} + {sum_m} = {expected}")
+    print()
+    # build the select query
+    all_tools = list(always)
+    seen = set(always)
+    for _, _, tools in matched:
+        for t in tools:
+            if t not in seen:
+                all_tools.append(t)
+                seen.add(t)
+    select_str = ",".join(f"mcp__codesift__{t}" for t in all_tools)
+    print("[CodeSift preload query — copy verbatim]")
+    print(f'ToolSearch(query="select:{select_str}")')
+    print()
+    print(f"[Expected after load] tools={expected}")
+    print(f"[CodeSift loaded] tools=<this must equal {expected} or print [PRELOAD MATH MISMATCH]>")
+
+
+def main():
+    if len(sys.argv) < 2:
+        sys.exit(f"Usage: {sys.argv[0]} <skill_name> [project_path]")
+    skill = sys.argv[1]
+    project = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else Path.cwd().resolve()
+    skill_md = find_skill_md(skill)
+    fm = read_frontmatter(skill_md)
+    ct = parse_codesift_tools(fm)
+    if not ct["always"] and not ct["by_stack"]:
+        sys.exit(f"ERROR: skill '{skill}' has no codesift_tools manifest in frontmatter")
+    sig = collect_signals(project)
+    matched = match_groups(ct["by_stack"], sig)
+    emit(skill, project, ct, sig, matched)
+
+
+if __name__ == "__main__":
+    main()

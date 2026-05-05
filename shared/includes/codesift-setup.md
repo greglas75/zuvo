@@ -100,6 +100,33 @@ For each key in the calling skill's `codesift_tools.by_stack`, include its tool 
 
 Take the UNION of all matched groups + `always`. Build one `select:` query with all tool names prefixed `mcp__codesift__`. Issue ONE ToolSearch.
 
+### MANDATORY — Use the deterministic preload helper
+
+**Do NOT compute the matching trace by hand.** A deterministic Bash helper exists at `~/.zuvo/compute-preload` that:
+
+1. Reads the calling skill's `codesift_tools` frontmatter from the plugin cache.
+2. Scans the project filesystem (root + monorepo workspaces, dep manifests, prisma schema, .sql files, Gradle, etc.).
+3. Applies all 7 matching rules deterministically.
+4. Emits the verbatim `[CodeSift matching trace]` block + the exact `ToolSearch(query="select:...")` line + the expected tool count.
+
+**The agent's only job is:**
+
+1. Run: `~/.zuvo/compute-preload <skill_name> "$PWD"` (or pass an explicit project path).
+2. Copy the output trace block VERBATIM into the audit output.
+3. Issue the printed `ToolSearch(query="select:...")` call exactly as printed (no edits, no re-ordering).
+4. After ToolSearch returns, print `[CodeSift loaded] tools=<N>` where `<N>` matches the helper's `[Expected after load] tools=<N>`.
+5. If the count does not match: print `[PRELOAD MATH MISMATCH] expected=<X> got=<Y>` and abort.
+
+This eliminates LLM discretion in stack matching. The helper is the single source of truth — no hand-crafted `always` lists, no invented `matched=[...]` keys, no partial-group loads. If `~/.zuvo/compute-preload` is unavailable on the host, fall through to the manual algorithm below (Required matching trace section), but flag `compute_preload=missing` in the next retrospective so the install gap is surfaced.
+
+Why this exists: agents repeatedly faked the matching trace despite the math gate and forbidden-pattern rules below. Specific failures observed in real audits:
+- Claimed `vitest` matched when only `jest:[]` was in by_stack (hallucinated key).
+- Loaded only `sql_audit` from the 5-tool sql group (silent dropout).
+- Skipped `react`/`nextjs`/`typescript` groups despite all signals being present.
+- Wrote `tools=20` while internally consistent math `17+2+5+1=25` had wrong inputs.
+
+The helper closes all four failure modes at once because the trace is mechanically derived, not self-reported.
+
 ### Required matching trace (print BEFORE the ToolSearch call)
 
 The orchestrator's stack-matching algorithm is deterministic. Its output must therefore be reproducible — every preload must be backed by a citable rule, not a hand-picked shortlist. Print the following block before issuing ToolSearch:
