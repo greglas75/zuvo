@@ -3,7 +3,7 @@ name: using-zuvo
 description: "ALWAYS LOADED — Zuvo skill router. Injected at session start. Determines which zuvo skill to invoke for the current task."
 ---
 
-> **Zuvo v1.3.102** | 53 skills | 4 adversarial providers | CQ1-CQ29 + Q1-Q19
+> **Zuvo v1.3.103** | 53 skills | 4 adversarial providers | CQ1-CQ29 + Q1-Q19
 
 # Zuvo Skill Router
 

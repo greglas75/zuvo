@@ -288,6 +288,34 @@ install_claude_home() {
     chmod +x "$dst_dir/$name"
     ok "$name installed (~/.claude/scripts/$name)"
   done
+
+  # Wire global git core.hooksPath to ~/.claude/hooks/ so the codesift-mcp
+  # dispatcher actually runs (which in turn fires our post-commit-review-backlog).
+  # Self-heals against stale paths — codesift-mcp's setup test had a bug that
+  # leaked tmp paths like /var/folders/.../codesift-setup-XXXXXX/.claude/hooks
+  # into the user's real ~/.gitconfig, silently breaking every git hook on the
+  # machine until manual unset.
+  local hooks_dir="$HOME/.claude/hooks"
+  if [[ -x "$hooks_dir/post-commit" ]]; then
+    local current_hooks_path
+    current_hooks_path=$(git config --global --get core.hooksPath 2>/dev/null || true)
+    if [[ -z "$current_hooks_path" ]]; then
+      git config --global core.hooksPath "$hooks_dir"
+      ok "core.hooksPath set to $hooks_dir"
+    elif [[ "$current_hooks_path" != "$hooks_dir" ]]; then
+      if [[ ! -d "$current_hooks_path" ]]; then
+        warn "core.hooksPath was stale ($current_hooks_path) — replacing with $hooks_dir"
+      else
+        warn "core.hooksPath was $current_hooks_path — replacing with $hooks_dir"
+      fi
+      git config --global core.hooksPath "$hooks_dir"
+      ok "core.hooksPath repointed to $hooks_dir"
+    else
+      ok "core.hooksPath already → $hooks_dir"
+    fi
+  else
+    warn "~/.claude/hooks/post-commit not found — install codesift-mcp setup first to populate the dispatcher (then rerun this)"
+  fi
 }
 
 # =======================================
