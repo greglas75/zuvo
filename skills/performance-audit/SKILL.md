@@ -113,6 +113,37 @@ source files, configs, build output, or runtime environments. Tooling probes
 
 ---
 
+## MANDATORY TOOL CALLS — Performance Audit Validity Gate
+
+**This audit is INVALID if any tool below is skipped when its trigger condition holds.** "DEFERRED", "N/A", "--frontend only" are NOT valid reasons for tools relevant to the scoped scope.
+
+| Tool | Trigger | Reason | Skip allowed? |
+|------|---------|--------|---------------|
+| `analyze_complexity` | Always | KEY — algorithmic hot spots, CC distribution, outliers | **NO** |
+| `analyze_hotspots` | Always | KEY — git-churn × complexity (last 90d) | **NO** |
+| `audit_scan` | Always | Compound including find_perf_hotspots-equivalent | **NO** |
+| `search_patterns(n-plus-one-django\|await-in-loop\|sync-fs)` | Always | D-dim anti-patterns | **NO** |
+| `find_clones` | Always | Repeated-work patterns | **NO** |
+| `trace_call_chain` | Any HIGH/MEDIUM finding cites a function | Waterfall + downstream impact | **NO** when condition holds |
+| `analyze_renders` + `analyze_hooks` | React detected | D-frontend gates | **NO** when React |
+| Stack-specific (analyze_prisma_schema/explain_query/python_audit/etc.) | Framework/ORM detected | Stack-specific perf gates | **NO** when matches |
+
+### Forbidden escape hatches: `analyze_complexity: skipped`, `analyze_hotspots: N/A`, `codesift: unavailable` (when deferred), `retrospective: skipped` — all REJECTED.
+
+### Required POSTAMBLE: report on disk → retro appended → `~/.zuvo/append-runlog` exit 0. Every HIGH/MEDIUM finding needs `path/to/file.ext:LINE` (verify-audit gate).
+
+### Mandatory acknowledgment (REQUIRED — print verbatim before Phase 0)
+
+```
+Mandatory-tools-acknowledgment: I will run analyze_complexity + analyze_hotspots + audit_scan + search_patterns(n+1, await-in-loop) + find_clones + trace_call_chain (on cited functions) + analyze_renders/analyze_hooks (when React) + stack-specific tools for this performance audit. Every HIGH/MEDIUM finding will cite a `path/to/file.ext:LINE` resolving in the current tree.
+```
+
+### CodeSift preload
+
+**Use the deterministic preload helper FIRST.** Run `~/.zuvo/compute-preload performance-audit "$PWD"` before any ToolSearch. Copy `[CodeSift matching trace]` verbatim, issue printed `ToolSearch(query="select:...")`. Math gate enforced.
+
+---
+
 ## Phase 0: Detect and Prepare
 
 ### 0.1 Technology Stack Detection
@@ -615,6 +646,36 @@ Score: [N] / [MAX] -- [grade]
 Profile: [A/B/C/D/E] | Audit tier: [FULL/STANDARD/PARTIAL/MINIMAL]
 Dimensions: [N scored] | Critical gates: [PASS/FAIL]
 Findings: [N critical] / [N total]
+
+### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+
+```
+VALIDITY GATE
+  triggers_held: language=<X> framework=<X> react=<yes|no> orm=<prisma|drizzle|none>
+  required_tool_calls:
+    analyze_complexity: [<max_cc> max | NOT_CALLED — VIOLATES_TRIGGER]
+    analyze_hotspots: [<top_N> hotspots | NOT_CALLED — VIOLATES_TRIGGER]
+    audit_scan: [<N> findings | NOT_CALLED — VIOLATES_TRIGGER]
+    search_patterns: [<N> hits | NOT_CALLED — VIOLATES_TRIGGER]
+    find_clones: [<N> clusters | NOT_CALLED — VIOLATES_TRIGGER]
+    trace_call_chain: [<N> chains | not_required | NOT_CALLED — VIOLATES_TRIGGER]
+    analyze_renders/analyze_hooks: [<N> | not_required (no React) | NOT_CALLED — VIOLATES_TRIGGER]
+    stack_specific: [<result> | not_required | NOT_CALLED — VIOLATES_TRIGGER]
+  postamble:
+    retros_log_appended: [yes(bytes_added=N) | NOT_APPENDED]
+    retros_md_appended: [yes(entry_count=N) | NOT_APPENDED]
+    verify_audit_pass: [yes(<verified>/<total>) | NOT_RUN | REJECTED]
+  gate_status: [PASS | FAIL — <which gates missing>]
+```
+
+If `gate_status = FAIL` → VERDICT = INCOMPLETE.
+
+Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
+
+```bash
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
 Run: <ISO-8601-Z>	performance-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 
 

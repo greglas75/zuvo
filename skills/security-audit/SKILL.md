@@ -98,7 +98,36 @@ Stage 2 deferred to save ~300 lines of upfront context.
 
 Read `../../shared/includes/env-compat.md` for agent dispatch, path resolution, and progress tracking.
 
+## MANDATORY TOOL CALLS — Audit Validity Gate
+
+**This audit is INVALID if any tool below is skipped when its trigger condition holds.** "DEFERRED", "N/A", "scope too narrow", "--quick" are NOT valid reasons.
+
+| Tool | Trigger | Reason | Skip allowed? |
+|------|---------|--------|---------------|
+| `scan_secrets` | Always | S5/CAP5 hardcoded secrets | **NO** |
+| `search_patterns(sql-injection\|eval-exec\|unsafe-pickle\|shell-true)` | Always | S1/S2/S3 injection vectors — TOOL-VERIFIED gates | **NO** |
+| `audit_scan` | Always | Compound security + CQ pattern check | **NO** |
+| `trace_call_chain` | Any HIGH/CRITICAL finding cites auth flow OR sink | S4/S6 source-to-sink verification | **NO** when condition holds |
+| `trace_route` | Backend framework detected | S4/S6 endpoint inventory — knows which routes lack auth | **NO** when backend exists |
+| `taint_trace` | Django detected | S2/S3 taint propagation through Django views | **NO** when Django |
+| `find_references` | Any finding cites a function/method | S6 auth-bypass tracing | **NO** when condition holds |
+| Stack-specific (nest_audit/php_security_scan/python_audit) | Framework/language detected | Stack-specific security gates | **NO** when matches |
+
+### Forbidden escape hatches: `scan_secrets: skipped`, `search_patterns: not_run`, `trace_route: N/A` (when backend exists), `codesift: unavailable` (when deferred), `retrospective: skipped` — all REJECTED with required value instead.
+
+### Required POSTAMBLE: report on disk → retro appended → `~/.zuvo/append-runlog` called and exit 0. Wrapper gates retro-presence AND verify-audit (every HIGH/CRITICAL/MEDIUM finding needs `path/to/file.ext:LINE` citation resolving in current tree). Stop without `append-runlog` → audit INVALID, VERDICT = INCOMPLETE.
+
+### Mandatory acknowledgment (REQUIRED — print verbatim before Phase 0)
+
+```
+Mandatory-tools-acknowledgment: I will run scan_secrets + search_patterns(injection patterns) + audit_scan + trace_call_chain (on cited auth/sink) + trace_route (when backend detected) + taint_trace (when Django) + stack-specific tools for this security audit. Every HIGH/CRITICAL/MEDIUM finding will cite a `path/to/file.ext:LINE` resolving in the current tree.
+```
+
+---
+
 ## CodeSift Integration
+
+**Use the deterministic preload helper FIRST.** Run `~/.zuvo/compute-preload security-audit "$PWD"` before any ToolSearch. Copy the printed `[CodeSift matching trace]` block verbatim and issue the printed `ToolSearch(query="select:...")` line without modification. Math gate: `[CodeSift loaded] tools=N` must equal expected — else `[PRELOAD MATH MISMATCH]` and abort.
 
 Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
 
@@ -684,6 +713,34 @@ COMPLETION GATE CHECK
 ```
 
 ## SECURITY AUDIT COMPLETE
+
+### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+
+```
+VALIDITY GATE
+  triggers_held: language=<X> framework=<X> backend=<yes|no> django=<yes|no>
+  required_tool_calls:
+    scan_secrets: [<N> hits | NOT_CALLED — VIOLATES_TRIGGER]
+    search_patterns(injection): [<N> hits per pattern | NOT_CALLED — VIOLATES_TRIGGER]
+    audit_scan: [<N> findings | NOT_CALLED — VIOLATES_TRIGGER]
+    trace_call_chain: [<N> chains | not_required (no auth/sink cited) | NOT_CALLED — VIOLATES_TRIGGER]
+    trace_route: [<N> routes | not_required (no backend) | NOT_CALLED — VIOLATES_TRIGGER]
+    taint_trace: [<N> taints | not_required (no Django) | NOT_CALLED — VIOLATES_TRIGGER]
+    stack_specific: [<result> | not_required | NOT_CALLED — VIOLATES_TRIGGER]
+  postamble:
+    retros_log_appended: [yes(bytes_added=N) | NOT_APPENDED — VIOLATES_REQUIRED_POSTAMBLE]
+    retros_md_appended: [yes(entry_count=N) | NOT_APPENDED — VIOLATES_REQUIRED_POSTAMBLE]
+    verify_audit_pass: [yes(<verified>/<total>) | NOT_RUN | REJECTED]
+  gate_status: [PASS | FAIL — <which gates missing>]
+```
+
+If `gate_status = FAIL` → VERDICT overrides to `INCOMPLETE`, append `[VALIDITY GATE FAIL]` to NOTES, add backlog item `B-security-audit-incomplete-<date>`. Print Validity Gate AFTER retro append + `~/.zuvo/append-runlog` so postamble fields can be `yes(verified)`.
+
+Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
+
+```bash
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
 
 Run: <ISO-8601-Z>\tsecurity-audit\t<project>\t-\t-\t<VERDICT>\t-\t<N>-dimensions\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
 

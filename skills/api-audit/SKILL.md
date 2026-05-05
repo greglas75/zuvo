@@ -79,7 +79,35 @@ CORE FILES LOADED:
 
 Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking.
 
+## MANDATORY TOOL CALLS — API Audit Validity Gate
+
+**This audit is INVALID if any tool below is skipped when its trigger condition holds.** "DEFERRED", "N/A", "static-only mode" are NOT valid reasons.
+
+| Tool | Trigger | Reason | Skip allowed? |
+|------|---------|--------|---------------|
+| `trace_route` | Always | KEY — endpoint enumeration. The audit cannot evaluate D1-D11 without a route inventory | **NO** |
+| `audit_scan` | Always | Compound check covering money fields, eval, error swallow, missing validation | **NO** |
+| `search_patterns` | Always | D1-D9 anti-patterns (overfetching, n+1, missing rate-limit, etc.) | **NO** |
+| `scan_secrets` | Always | API keys hardcoded in client/server | **NO** |
+| `find_references` | Any finding cites a handler/service | Caller graph for endpoint impact | **NO** when condition holds |
+| `extract_api_contract` + `extract_response_types` + `trace_rpc_types` + `trace_middleware_chain` + `find_dead_hono_routes` + `visualize_hono_routes` | Hono framework detected | Hono-specific D1/D2/D6/D8 gates that no generic scan reproduces | **NO** when Hono |
+| Stack-specific (nest_audit/framework_audit) | NestJS/Next.js detected | Framework D-dimension audits | **NO** when matches |
+
+### Forbidden escape hatches: `trace_route: skipped`, `extract_api_contract: not_run` (when Hono), `codesift: unavailable` (when deferred), `retrospective: skipped` — all REJECTED.
+
+### Required POSTAMBLE: report on disk → retro appended → `~/.zuvo/append-runlog` exit 0. Every D-dim finding needs `path/to/file.ext:LINE` (verify-audit gate).
+
+### Mandatory acknowledgment (REQUIRED — print verbatim before Phase 0)
+
+```
+Mandatory-tools-acknowledgment: I will run trace_route + audit_scan + search_patterns + scan_secrets + find_references (on cited handlers) + Hono toolchain (extract_api_contract / trace_rpc_types / etc. when Hono) + framework_audit/nest_audit (when matches) for this api audit. Every D-dim finding will cite a `path/to/file.ext:LINE` resolving in the current tree.
+```
+
+---
+
 ## CodeSift Integration
+
+**Use the deterministic preload helper FIRST.** Run `~/.zuvo/compute-preload api-audit "$PWD"` before any ToolSearch. Copy the printed `[CodeSift matching trace]` verbatim and issue the printed `ToolSearch(query="select:...")` line. Math gate enforced.
 
 Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
 
@@ -478,6 +506,35 @@ Score: [N] / [max] -- [grade]
 Tier: [LIGHT/STANDARD/DEEP]
 Dimensions: [N scored] | Critical gates: [PASS/FAIL]
 Findings: [N critical] / [N total]
+
+### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+
+```
+VALIDITY GATE
+  triggers_held: language=<X> framework=<X> hono=<yes|no>
+  required_tool_calls:
+    trace_route: [<N> routes | NOT_CALLED — VIOLATES_TRIGGER]
+    audit_scan: [<N> findings | NOT_CALLED — VIOLATES_TRIGGER]
+    search_patterns: [<N> hits | NOT_CALLED — VIOLATES_TRIGGER]
+    scan_secrets: [<N> hits | NOT_CALLED — VIOLATES_TRIGGER]
+    find_references: [<N> chains | not_required | NOT_CALLED — VIOLATES_TRIGGER]
+    hono_toolchain: [extract_api_contract:<N> trace_rpc_types:<N> ... | not_required (no Hono) | NOT_CALLED]
+    stack_specific: [framework_audit / nest_audit result | not_required | NOT_CALLED]
+  postamble:
+    retros_log_appended: [yes(bytes_added=N) | NOT_APPENDED]
+    retros_md_appended: [yes(entry_count=N) | NOT_APPENDED]
+    verify_audit_pass: [yes(<verified>/<total>) | NOT_RUN | REJECTED]
+  gate_status: [PASS | FAIL — <which gates missing>]
+```
+
+If `gate_status = FAIL` → VERDICT = INCOMPLETE.
+
+Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
+
+```bash
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
 Run: <ISO-8601-Z>	api-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 
 

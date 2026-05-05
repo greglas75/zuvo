@@ -122,6 +122,37 @@ equivalent automatically.
 
 ---
 
+## MANDATORY TOOL CALLS — Dependency Audit Validity Gate
+
+**This audit is INVALID if any tool below is skipped when its trigger condition holds.** "DEFERRED", "N/A", "no fresh deps" are NOT valid reasons.
+
+| Tool | Trigger | Reason | Skip allowed? |
+|------|---------|--------|---------------|
+| `find_dead_code` | Always | KEY — unused exports = dead code = candidate dead deps | **NO** |
+| `find_unused_imports` | Always | KEY — barrel-file health, dead transitive deps | **NO** |
+| `find_circular_deps` | Always | KEY — circular module detection (D6) | **NO** |
+| `fan_in_fan_out` | Always | KEY — coupling metrics (D7) | **NO** |
+| `check_boundaries` | Always | D8 architecture boundary violations | **NO** |
+| `audit_scan` | Always | Compound CQ + dep pattern check | **NO** |
+| `analyze_python_deps` | Python detected | D1 supply-chain CVE check via PyPI | **NO** when Python |
+| Stack-specific tools | Framework/language detected | Stack-specific dep gates | **NO** when matches |
+
+### Forbidden escape hatches: `find_dead_code: skipped`, `find_circular_deps: N/A`, `codesift: unavailable` (when deferred), `retrospective: skipped` — all REJECTED.
+
+### Required POSTAMBLE: report on disk → retro appended → `~/.zuvo/append-runlog` exit 0. Every D-dim finding needs `path/to/file.ext:LINE` (verify-audit gate).
+
+### Mandatory acknowledgment (REQUIRED — print verbatim before Phase 0)
+
+```
+Mandatory-tools-acknowledgment: I will run find_dead_code + find_unused_imports + find_circular_deps + fan_in_fan_out + check_boundaries + audit_scan + analyze_python_deps (when Python) + stack-specific tools for this dependency audit. Every D-dim finding will cite a `path/to/file.ext:LINE` resolving in the current tree.
+```
+
+### CodeSift preload
+
+**Use the deterministic preload helper FIRST.** Run `~/.zuvo/compute-preload dependency-audit "$PWD"` before any ToolSearch. Copy `[CodeSift matching trace]` verbatim, issue printed `ToolSearch(query="select:...")`. Math gate enforced.
+
+---
+
 ## Phase 0: Preflight
 
 ### 0.1 Manifest and Lockfile
@@ -487,6 +518,36 @@ Score: [N] / [MAX] -- [grade]
 Package Manager: [npm/pnpm/yarn/bun]
 Dimensions: [N scored] | Critical gates: [PASS/FAIL]
 Findings: [N critical] / [N total]
+
+### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+
+```
+VALIDITY GATE
+  triggers_held: language=<X> python=<yes|no>
+  required_tool_calls:
+    find_dead_code: [<N> unused exports | NOT_CALLED — VIOLATES_TRIGGER]
+    find_unused_imports: [<N> | NOT_CALLED — VIOLATES_TRIGGER]
+    find_circular_deps: [<N> cycles | NOT_CALLED — VIOLATES_TRIGGER]
+    fan_in_fan_out: [<max_in>/<max_out> | NOT_CALLED — VIOLATES_TRIGGER]
+    check_boundaries: [<N> violations | NOT_CALLED — VIOLATES_TRIGGER]
+    audit_scan: [<N> findings | NOT_CALLED — VIOLATES_TRIGGER]
+    analyze_python_deps: [<N> CVEs | not_required (no Python) | NOT_CALLED — VIOLATES_TRIGGER]
+    stack_specific: [<result> | not_required | NOT_CALLED — VIOLATES_TRIGGER]
+  postamble:
+    retros_log_appended: [yes(bytes_added=N) | NOT_APPENDED]
+    retros_md_appended: [yes(entry_count=N) | NOT_APPENDED]
+    verify_audit_pass: [yes(<verified>/<total>) | NOT_RUN | REJECTED]
+  gate_status: [PASS | FAIL — <which gates missing>]
+```
+
+If `gate_status = FAIL` → VERDICT = INCOMPLETE.
+
+Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
+
+```bash
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
 Run: <ISO-8601-Z>	dependency-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 
 
