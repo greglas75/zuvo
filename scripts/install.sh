@@ -246,6 +246,14 @@ install_zuvo_home() {
   else
     warn "scripts/zuvo-home/compute-preload not found in repo — skipping"
   fi
+
+  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/verify-audit" ]]; then
+    cp "$ZUVO_DIR/scripts/zuvo-home/verify-audit" "$HOME/.zuvo/verify-audit"
+    chmod +x "$HOME/.zuvo/verify-audit"
+    ok "verify-audit installed (~/.zuvo/verify-audit)"
+  else
+    warn "scripts/zuvo-home/verify-audit not found in repo — skipping"
+  fi
 }
 
 # =======================================
