@@ -75,27 +75,18 @@ def find_project_root(audit_path: Path) -> Path:
 # Finding sections in zuvo audit reports use varied formats across skills:
 #   ## H1: Title text                       (markdown header — generic)
 #   **H1 — Title text**                     (bold — generic)
-#   **DB12-NEW-001 — Title**                (db-audit: <DIM>-<TYPE>-<NUM>)
-#   **S2.3-A — Title**                      (security-audit: <DIM>.<SUB>-<VAR>)
-#   **D5.2 — Title**                        (api-audit: <DIM>.<SUB>)
-#   **DB1.1-D — Title**                     (db-audit sub-finding)
+#   **DB12-NEW-001 — Title**                (db-audit)
+#   **S2.3-A — Title**                      (security-audit)
 #   **PT4-001 — Title**                     (pentest)
 #   **CC1-encoding — Title**                (content-audit)
-# Common shape: optional severity letter prefix(H/M/L/C) OR dimension prefix
-# (DB/S/D/T/PT/CC/SA/A/Q...) followed by digits, optionally dotted/dashed.
+# Common shape: header marker (## / **) followed by an ID token that contains
+# either (a) severity-letter+digits, (b) severity-word + dash + digits, or
+# (c) dimension-prefix (1-3 capital letters) + digits, optionally with dotted
+# sub-numbers and dash-separated variants.
 FINDING_HEADER_RE = re.compile(
-    r"^(?:"
-    r"#{2,4}\s+"                                          # markdown header
-    r"|[*_]{2}\s*"                                        # bold (asterisk or underscore)
-    r")"
-    r"(?:"
-    r"  [HMLC]\d+"                                        # H1, M2, L3, C1
-    r"  |HIGH-\d+|MEDIUM-\d+|LOW-\d+|CRITICAL-\d+"        # HIGH-1
-    r"  |[A-Z]{1,3}\d+(?:\.\d+)?(?:[-:][A-Z0-9-]+)*"      # DB12-NEW-001, S2.3-A, DB1.1-D, PT4-001, CC1
-    r")"
-    r"(?:\s*[:—–-]\s*.*?)?"
-    r"(?:[*_]{2})?\s*(?:\*?\(.*?\))?$",
-    re.IGNORECASE | re.VERBOSE,
+    r"^(?:#{2,4}\s+|[*_]{2}\s*)"
+    r"(?:[HMLC]\d+\b|(?:HIGH|MEDIUM|LOW|CRITICAL)-\d+\b|[A-Z]{1,3}\d+(?:\.\d+)?(?:[-:][A-Z0-9-]+)*\b)",
+    re.IGNORECASE,
 )
 
 # file:line citation. Accept .ts/.tsx/.js/.py/.php/.kt/.sql/.prisma/.json/.md/.yml etc.
