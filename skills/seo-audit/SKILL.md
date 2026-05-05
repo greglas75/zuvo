@@ -89,6 +89,32 @@ If any file is missing, STOP.
 
 Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
 
+## MANDATORY TOOL CALLS — SEO Audit Validity Gate
+
+**INVALID if any tool below is skipped.** "DEFERRED", "N/A", "--quick" NOT valid reasons.
+
+| Tool | Trigger | Skip allowed? |
+|------|---------|---------------|
+| `get_file_tree` | Always | **NO** — locate sitemap.xml, robots.txt, llms.txt, /pages/ |
+| `search_text` | Always | **NO** — meta tags, JSON-LD, OpenGraph, canonical |
+| `search_patterns` | Always | **NO** — SEO anti-patterns (missing meta, malformed schema) |
+| `scan_secrets` | Always | **NO** — API keys in client code |
+| `audit_scan` | Always | **NO** — compound check |
+| `nextjs_metadata_audit` | Next.js detected | **NO** when Next.js |
+| Astro/framework tools | Astro/framework detected | **NO** when matches |
+
+Forbidden: `nextjs_metadata_audit: skipped` (when Next), `codesift: unavailable` (when deferred), `retrospective: skipped` — REJECTED.
+
+POSTAMBLE: report on disk → retro appended → `~/.zuvo/append-runlog` exit 0. Every SEO finding needs `path/to/file.ext:LINE` (verify-audit gate).
+
+```
+Mandatory-tools-acknowledgment: I will run get_file_tree + search_text + search_patterns + scan_secrets + audit_scan + nextjs_metadata_audit (when Next.js) + framework tools for this SEO audit. Every finding will cite a `path/to/file.ext:LINE` resolving in the current tree.
+```
+
+**Use the deterministic preload helper FIRST.** Run `~/.zuvo/compute-preload seo-audit "$PWD"`. Math gate enforced.
+
+---
+
 ## CodeSift Integration
 
 Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
@@ -748,6 +774,30 @@ Overall: [N]/100 -- Tier [A/B/C/D] | Result: [PASS/FAIL/PROVISIONAL]
 SEO: [N]/100 | GEO: [N]/100 | Tech: [N]/100
 Critical gates: [N PASS] / [N FAIL] / [N INSUFFICIENT DATA]
 Findings: [N critical] / [N total]
+### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+
+```
+VALIDITY GATE
+  required_tool_calls:
+    get_file_tree: [<N> | NOT_CALLED]
+    search_text: [<N> | NOT_CALLED]
+    search_patterns: [<N> | NOT_CALLED]
+    scan_secrets: [<N> | NOT_CALLED]
+    audit_scan: [<N> | NOT_CALLED]
+    nextjs_metadata_audit: [<N> | not_required | NOT_CALLED]
+  postamble:
+    retros_log_appended: [yes(bytes_added=N) | NOT_APPENDED]
+    retros_md_appended: [yes(entry_count=N) | NOT_APPENDED]
+    verify_audit_pass: [yes(<verified>/<total>) | NOT_RUN | REJECTED]
+  gate_status: [PASS | FAIL]
+```
+
+If `gate_status = FAIL` → VERDICT = INCOMPLETE. Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
+
+```bash
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
 Run: <ISO-8601-Z>	seo-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 
 

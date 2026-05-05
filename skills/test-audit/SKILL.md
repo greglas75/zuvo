@@ -99,7 +99,33 @@ CORE FILES LOADED:
 
 Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking.
 
+## MANDATORY TOOL CALLS — Test Audit Validity Gate
+
+**INVALID if any tool below is skipped when trigger holds.** "DEFERRED", "N/A", "--quick mode" NOT valid reasons.
+
+| Tool | Trigger | Skip allowed? |
+|------|---------|---------------|
+| `find_dead_code` | Always | **NO** — AP6 orphan tests + AP7 orphan helpers |
+| `find_clones` | Always | **NO** — AP19 copy-paste tests |
+| `find_references` | Always | **NO** — untested public methods detection |
+| `search_patterns` | Always | **NO** — Q-checklist anti-patterns |
+| `audit_scan` | Always | **NO** — compound check |
+| `scan_secrets` | Always | **NO** — AP24 hardcoded creds in fixtures |
+| Stack-specific tools | Framework/language detected | **NO** when matches |
+
+Forbidden: `find_dead_code: skipped`, `codesift: unavailable` (when deferred), `retrospective: skipped` — all REJECTED.
+
+POSTAMBLE: report on disk → retro appended → `~/.zuvo/append-runlog` exit 0. Every Q-fail/AP finding needs `path/to/file.ext:LINE` (verify-audit gate).
+
+```
+Mandatory-tools-acknowledgment: I will run find_dead_code + find_clones + find_references + search_patterns + audit_scan + scan_secrets + stack-specific tools for this test audit. Every finding will cite a `path/to/file.ext:LINE` resolving in the current tree.
+```
+
+---
+
 ## CodeSift Integration
+
+**Use the deterministic preload helper FIRST.** Run `~/.zuvo/compute-preload test-audit "$PWD"` before any ToolSearch. Copy `[CodeSift matching trace]` verbatim, issue printed `ToolSearch(query="select:...")`. Math gate enforced.
 
 Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
 
@@ -494,6 +520,34 @@ COMPLETION GATE CHECK
 ```
 
 ## TEST AUDIT COMPLETE
+
+### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+
+```
+VALIDITY GATE
+  triggers_held: language=<X> framework=<X> test_runner=<X>
+  required_tool_calls:
+    find_dead_code: [<N> orphan helpers | NOT_CALLED — VIOLATES_TRIGGER]
+    find_clones: [<N> dup tests | NOT_CALLED — VIOLATES_TRIGGER]
+    find_references: [<N> ref-checks | NOT_CALLED — VIOLATES_TRIGGER]
+    search_patterns: [<N> hits | NOT_CALLED — VIOLATES_TRIGGER]
+    audit_scan: [<N> findings | NOT_CALLED — VIOLATES_TRIGGER]
+    scan_secrets: [<N> hits | NOT_CALLED — VIOLATES_TRIGGER]
+    stack_specific: [<result> | not_required | NOT_CALLED — VIOLATES_TRIGGER]
+  postamble:
+    retros_log_appended: [yes(bytes_added=N) | NOT_APPENDED]
+    retros_md_appended: [yes(entry_count=N) | NOT_APPENDED]
+    verify_audit_pass: [yes(<verified>/<total>) | NOT_RUN | REJECTED]
+  gate_status: [PASS | FAIL — <which gates missing>]
+```
+
+If `gate_status = FAIL` → VERDICT = INCOMPLETE.
+
+Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
+
+```bash
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
 
 Run: <ISO-8601-Z>\ttest-audit\t<project>\t<N-critical>\t<N-total>\t<VERDICT>\t-\t<N>-dimensions\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
 

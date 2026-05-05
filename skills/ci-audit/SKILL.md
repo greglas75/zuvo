@@ -97,6 +97,30 @@ FORBIDDEN:
 
 ---
 
+## MANDATORY TOOL CALLS — CI Audit Validity Gate
+
+**INVALID if any tool below is skipped.** "DEFERRED", "N/A" NOT valid reasons.
+
+| Tool | Trigger | Skip allowed? |
+|------|---------|---------------|
+| `get_file_tree` | Always | **NO** — locate `.github/workflows/`, `.gitlab-ci.yml`, `.circleci/` |
+| `search_text` | Always | **NO** — YAML scan: cache hits, action versions, secrets refs |
+| `search_patterns` | Always | **NO** — CI5 secret leaks, CI6 unpinned actions, CI3 missing if |
+| `scan_secrets` | Always | **NO** — CI5 hardcoded credentials in workflow YAML |
+| `audit_scan` | Always | **NO** — compound check |
+
+Forbidden: same as above (DEFERRED, codesift unavailable when deferred, retrospective skipped — all REJECTED).
+
+POSTAMBLE: report on disk → retro appended → `~/.zuvo/append-runlog` exit 0. Every CI finding needs `path/to/file.ext:LINE` (verify-audit gate).
+
+```
+Mandatory-tools-acknowledgment: I will run get_file_tree + search_text + search_patterns + scan_secrets + audit_scan for this CI audit. Every CI finding will cite a `path/to/file.ext:LINE` resolving in the current tree.
+```
+
+**Use the deterministic preload helper FIRST.** Run `~/.zuvo/compute-preload ci-audit "$PWD"`. Math gate enforced.
+
+---
+
 ## Phase 0: Detect and Scope
 
 ### 0.1 Platform Detection
@@ -386,6 +410,33 @@ Score: [N] / 100 -- [grade]
 Platform: [GitHub Actions / GitLab CI / CircleCI]
 Dimensions: [N scored] | Critical gates: [PASS/FAIL]
 Findings: [N critical] / [N total]
+
+### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+
+```
+VALIDITY GATE
+  triggers_held: platform=<github|gitlab|circle>
+  required_tool_calls:
+    get_file_tree: [<N> CI configs found | NOT_CALLED — VIOLATES_TRIGGER]
+    search_text: [<N> yaml refs | NOT_CALLED — VIOLATES_TRIGGER]
+    search_patterns: [<N> hits | NOT_CALLED — VIOLATES_TRIGGER]
+    scan_secrets: [<N> hits | NOT_CALLED — VIOLATES_TRIGGER]
+    audit_scan: [<N> findings | NOT_CALLED — VIOLATES_TRIGGER]
+  postamble:
+    retros_log_appended: [yes(bytes_added=N) | NOT_APPENDED]
+    retros_md_appended: [yes(entry_count=N) | NOT_APPENDED]
+    verify_audit_pass: [yes(<verified>/<total>) | NOT_RUN | REJECTED]
+  gate_status: [PASS | FAIL — <which gates missing>]
+```
+
+If `gate_status = FAIL` → VERDICT = INCOMPLETE.
+
+Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
+
+```bash
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
 Run: <ISO-8601-Z>	ci-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 
 

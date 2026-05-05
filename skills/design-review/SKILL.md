@@ -76,6 +76,32 @@ If any file is missing, STOP.
 
 Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
 
+## MANDATORY TOOL CALLS — Design Review Validity Gate
+
+**INVALID if any tool below is skipped.** "DEFERRED", "N/A" NOT valid reasons.
+
+| Tool | Trigger | Skip allowed? |
+|------|---------|---------------|
+| `get_file_tree` | Always | **NO** — find component dirs, theme files |
+| `search_text` | Always | **NO** — className=, design tokens, CSS variables |
+| `search_symbols` | Always | **NO** — component discovery |
+| `search_patterns` | Always | **NO** — DAP anti-patterns |
+| `scan_secrets` | Always | **NO** — env-var leaks in client code |
+| `audit_scan` | Always | **NO** — compound check |
+| React tools (analyze_renders, analyze_hooks, trace_component_tree) | React detected | **NO** when React |
+
+Forbidden: same (skipped/N/A/codesift unavailable when deferred — REJECTED).
+
+POSTAMBLE: report on disk → retro appended → `~/.zuvo/append-runlog` exit 0. Every DX/DAP finding needs `path/to/file.ext:LINE` (verify-audit gate).
+
+```
+Mandatory-tools-acknowledgment: I will run get_file_tree + search_text + search_symbols + search_patterns + scan_secrets + audit_scan + React tools (when React) for this design review. Every DX/DAP finding will cite a `path/to/file.ext:LINE` resolving in the current tree.
+```
+
+**Use the deterministic preload helper FIRST.** Run `~/.zuvo/compute-preload design-review "$PWD"`. Math gate enforced.
+
+---
+
 ## CodeSift Integration
 
 Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
@@ -392,6 +418,31 @@ DESIGN-REVIEW COMPLETE
 -----
 Views audited: [N]
 Avg DX score:  [N]%
+### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+
+```
+VALIDITY GATE
+  required_tool_calls:
+    get_file_tree: [<N> | NOT_CALLED]
+    search_text: [<N> | NOT_CALLED]
+    search_symbols: [<N> | NOT_CALLED]
+    search_patterns: [<N> | NOT_CALLED]
+    scan_secrets: [<N> | NOT_CALLED]
+    audit_scan: [<N> | NOT_CALLED]
+    react_tools: [<result> | not_required | NOT_CALLED]
+  postamble:
+    retros_log_appended: [yes(bytes_added=N) | NOT_APPENDED]
+    retros_md_appended: [yes(entry_count=N) | NOT_APPENDED]
+    verify_audit_pass: [yes(<verified>/<total>) | NOT_RUN | REJECTED]
+  gate_status: [PASS | FAIL]
+```
+
+If `gate_status = FAIL` → VERDICT = INCOMPLETE. Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
+
+```bash
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
 Run: <ISO-8601-Z>	design-review	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 -----
 ```

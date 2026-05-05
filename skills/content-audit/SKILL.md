@@ -99,6 +99,26 @@ This audit is read-only against source files.
 
 ---
 
+## MANDATORY TOOL CALLS — Content Audit Validity Gate
+
+**INVALID if any tool below is skipped.** "DEFERRED", "N/A" NOT valid reasons.
+
+| Tool | Trigger | Skip allowed? |
+|------|---------|---------------|
+| `get_file_tree` | Always | **NO** — locate content/*.md |
+| `search_text` | Always | **NO** — encoding artifacts, mojibake patterns |
+| `search_patterns` | Always | **NO** — broken markdown, orphan backslash |
+
+Forbidden: skipped/N/A — REJECTED. POSTAMBLE: report on disk → retro appended → `~/.zuvo/append-runlog` exit 0. Every CC finding needs `path/to/file.ext:LINE` (verify-audit gate).
+
+```
+Mandatory-tools-acknowledgment: I will run get_file_tree + search_text + search_patterns for this content audit. Every CC finding will cite a `path/to/file.ext:LINE` resolving in the current tree.
+```
+
+**Use the deterministic preload helper FIRST.** Run `~/.zuvo/compute-preload content-audit "$PWD"`. Math gate enforced.
+
+---
+
 ## Phase 0: Discovery
 
 ### 0.1 Framework detection
@@ -316,6 +336,27 @@ FINDINGS:
 
 SKIPPED FILES:
   [list of binary files skipped]
+
+### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+
+```
+VALIDITY GATE
+  required_tool_calls:
+    get_file_tree: [<N> | NOT_CALLED]
+    search_text: [<N> | NOT_CALLED]
+    search_patterns: [<N> | NOT_CALLED]
+  postamble:
+    retros_log_appended: [yes(bytes_added=N) | NOT_APPENDED]
+    retros_md_appended: [yes(entry_count=N) | NOT_APPENDED]
+    verify_audit_pass: [yes(<verified>/<total>) | NOT_RUN | REJECTED]
+  gate_status: [PASS | FAIL]
+```
+
+If `gate_status = FAIL` → VERDICT = INCOMPLETE. Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
+
+```bash
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
 
 Run: <ISO-8601-Z>	content-audit	<project>	-	-	<VERDICT>	-	8-dim	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 

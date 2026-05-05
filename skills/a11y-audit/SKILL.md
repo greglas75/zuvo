@@ -103,6 +103,31 @@ Stage 2 deferred to save upfront context.
 
 Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
 
+## MANDATORY TOOL CALLS — A11y Audit Validity Gate
+
+**INVALID if any tool below is skipped.** "DEFERRED", "N/A" NOT valid reasons.
+
+| Tool | Trigger | Skip allowed? |
+|------|---------|---------------|
+| `get_file_tree` | Always | **NO** |
+| `search_text` | Always | **NO** — aria-*, role=, alt=, tabindex, lang attrs |
+| `search_symbols` | Always | **NO** — interactive component discovery |
+| `search_patterns` | Always | **NO** — WCAG anti-patterns (missing alt, nested interactive) |
+| `audit_scan` | Always | **NO** — compound check |
+| React tools (analyze_hooks, trace_component_tree) | React detected | **NO** when React |
+
+Forbidden: same as above (skipped/N/A/codesift unavailable when deferred — REJECTED).
+
+POSTAMBLE: report on disk → retro appended → `~/.zuvo/append-runlog` exit 0. Every A-dim finding needs `path/to/file.ext:LINE` (verify-audit gate).
+
+```
+Mandatory-tools-acknowledgment: I will run get_file_tree + search_text + search_symbols + search_patterns + audit_scan + React tools (when React) for this a11y audit. Every A-dim finding will cite a `path/to/file.ext:LINE` resolving in the current tree.
+```
+
+**Use the deterministic preload helper FIRST.** Run `~/.zuvo/compute-preload a11y-audit "$PWD"`. Math gate enforced.
+
+---
+
 ## CodeSift Integration
 
 Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
@@ -586,6 +611,30 @@ Critical gates: A2=[PASS/FAIL] A4=[PASS/FAIL]
 Findings: [N] CRITICAL, [N] HIGH, [N] MEDIUM
 Fixes generated: [N] (if --fix)
 Legal: [status summary]
+### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+
+```
+VALIDITY GATE
+  required_tool_calls:
+    get_file_tree: [<N> | NOT_CALLED]
+    search_text: [<N> | NOT_CALLED]
+    search_symbols: [<N> | NOT_CALLED]
+    search_patterns: [<N> | NOT_CALLED]
+    audit_scan: [<N> | NOT_CALLED]
+    react_tools: [<result> | not_required | NOT_CALLED]
+  postamble:
+    retros_log_appended: [yes(bytes_added=N) | NOT_APPENDED]
+    retros_md_appended: [yes(entry_count=N) | NOT_APPENDED]
+    verify_audit_pass: [yes(<verified>/<total>) | NOT_RUN | REJECTED]
+  gate_status: [PASS | FAIL]
+```
+
+If `gate_status = FAIL` → VERDICT = INCOMPLETE. Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
+
+```bash
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
 Run: <ISO-8601-Z>	a11y-audit	<project>	<score>%	-	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 -----
 ```

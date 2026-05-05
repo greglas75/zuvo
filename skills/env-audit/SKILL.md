@@ -104,6 +104,30 @@ When including env var values in the report:
 
 ---
 
+## MANDATORY TOOL CALLS — Env Audit Validity Gate
+
+**INVALID if any tool below is skipped.** "DEFERRED", "N/A", "--secrets-only" NOT valid reasons.
+
+| Tool | Trigger | Skip allowed? |
+|------|---------|---------------|
+| `scan_secrets` | Always | **NO** — KEY: ENV4 secret exposure |
+| `search_text` | Always | **NO** — process.env / os.environ / import.meta.env scan |
+| `search_patterns` | Always | **NO** — ENV2/ENV3/ENV6 anti-patterns |
+| `find_references` | Always | **NO** — ENV2 unused detection |
+| `audit_scan` | Always | **NO** — compound check |
+
+Forbidden: `scan_secrets: skipped`, `codesift: unavailable` (when deferred), `retrospective: skipped` — all REJECTED.
+
+POSTAMBLE: report on disk → retro appended → `~/.zuvo/append-runlog` exit 0. Every ENV finding needs `path/to/file.ext:LINE` (verify-audit gate).
+
+```
+Mandatory-tools-acknowledgment: I will run scan_secrets + search_text + search_patterns + find_references + audit_scan for this env audit. Every ENV finding will cite a `path/to/file.ext:LINE` resolving in the current tree.
+```
+
+**Use the deterministic preload helper FIRST.** Run `~/.zuvo/compute-preload env-audit "$PWD"`. Copy `[CodeSift matching trace]` verbatim, issue printed `ToolSearch(query="select:...")`. Math gate enforced.
+
+---
+
 ## Phase 0: Detect and Scope
 
 ### 0.1 Target Resolution
@@ -395,6 +419,33 @@ Score: [N] / 100 -- [grade]
 Stack: [Node.js / Python / Vite / Next.js]
 Dimensions: [N scored] | Critical gates: [PASS/FAIL]
 Findings: [N critical] / [N total]
+
+### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+
+```
+VALIDITY GATE
+  triggers_held: language=<X> framework=<X>
+  required_tool_calls:
+    scan_secrets: [<N> hits | NOT_CALLED — VIOLATES_TRIGGER]
+    search_text: [<N> env-var refs | NOT_CALLED — VIOLATES_TRIGGER]
+    search_patterns: [<N> hits | NOT_CALLED — VIOLATES_TRIGGER]
+    find_references: [<N> ref-checks | NOT_CALLED — VIOLATES_TRIGGER]
+    audit_scan: [<N> findings | NOT_CALLED — VIOLATES_TRIGGER]
+  postamble:
+    retros_log_appended: [yes(bytes_added=N) | NOT_APPENDED]
+    retros_md_appended: [yes(entry_count=N) | NOT_APPENDED]
+    verify_audit_pass: [yes(<verified>/<total>) | NOT_RUN | REJECTED]
+  gate_status: [PASS | FAIL — <which gates missing>]
+```
+
+If `gate_status = FAIL` → VERDICT = INCOMPLETE.
+
+Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
+
+```bash
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
 Run: <ISO-8601-Z>	env-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 
 
