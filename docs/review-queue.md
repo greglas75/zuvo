@@ -421,3 +421,8 @@ Commits pending review. Auto-managed:
 - a8cc812 (2026-04-30) release: v1.3.100 — CQ29 + CAP15-19 + refinements (CQ4/11/14/19, CAP2/3/6/8/9/13) — close synthesis-gaps coverage from ~50% to ~85%; +CodeSift deferred-tool preflight
 - 6fae7ed (2026-05-02) review-fix: address 8 findings from review of fc73d7b..a8cc812
 - 71d5d2d (2026-05-03) pipeline: structural fix — Acceptance Proof gate across brainstorm/plan/execute/build
+- 868617c (2026-05-03) release: v1.3.101 — no-pause-protocol integration across 13+ skills + acceptance-proof structural fix (1.3.101 covers commit 71d5d2d which lacked version bump)
+- 3944735 (2026-05-04) feat(skills): add stack-aware codesift_tools manifest to all 47 skills
+- 411eb5f (2026-05-04) fix(codesift-setup): correct false claim about sub-agent preload inheritance
+- d015239 (2026-05-04) feat(agents+docs): grant CodeSift to 2 ship agents + document codesift_tools convention
+- 7c3fda1 (2026-05-04) chore(backlog): remove resolved entries
