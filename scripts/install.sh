@@ -249,6 +249,40 @@ install_zuvo_home() {
 }
 
 # =======================================
+# CLAUDE HOME (~/.claude/scripts)
+# Shared helper scripts that live alongside the user's Claude config.
+# Currently: post-commit hook that feeds review-backlog.md / review-queue.md.
+# Per-project activation is opt-in (user wires .git/hooks/post-commit themselves);
+# we just make sure the script is present and up-to-date for every machine.
+# =======================================
+install_claude_home() {
+  echo ""
+  echo "======================================"
+  echo "  CLAUDE HOME (~/.claude/scripts)"
+  echo "======================================"
+
+  local src_dir="$ZUVO_DIR/scripts/claude-home/scripts"
+  local dst_dir="$HOME/.claude/scripts"
+
+  if [[ ! -d "$src_dir" ]]; then
+    warn "scripts/claude-home/scripts not found in repo — skipping"
+    return 0
+  fi
+
+  mkdir -p "$dst_dir"
+
+  local src
+  for src in "$src_dir"/*.sh; do
+    [[ -f "$src" ]] || continue
+    local name
+    name="$(basename "$src")"
+    cp "$src" "$dst_dir/$name"
+    chmod +x "$dst_dir/$name"
+    ok "$name installed (~/.claude/scripts/$name)"
+  done
+}
+
+# =======================================
 # CODEX
 # =======================================
 install_codex() {
@@ -378,6 +412,27 @@ install_codex() {
     ok "Hooks installed to plugin cache"
   else
     warn "Codex plugin cache not found -- hooks not installed (skills still work)"
+  fi
+
+  # Step 9: Dedupe against Cursor when both runtimes coexist.
+  # Cursor v3 scans **/.codex/skills/** AND **/.claude/plugins/** without name-based
+  # deduplication, so flat Codex skills + Claude cache produce double entries
+  # in the Cursor /skills picker (one with "Zuvo --" prefix, one without).
+  # When Cursor is present, remove all zuvo-marked entries (current + orphan
+  # stale versions) from the flat install. Codex still sees zuvo via plugin
+  # cache at ~/.codex/.tmp/plugins/plugins/zuvo/skills/.
+  if [[ -d "$HOME/.cursor" && -d "$HOME/.codex/skills" ]]; then
+    local removed=0
+    for skill_dir in "$HOME/.codex/skills"/*/; do
+      local skill_md="$skill_dir/SKILL.md"
+      if [[ -f "$skill_md" ]] && grep -q 'Zuvo --' "$skill_md" 2>/dev/null; then
+        rm -rf "$skill_dir"
+        removed=$((removed + 1))
+      fi
+    done
+    if [[ "$removed" -gt 0 ]]; then
+      ok "Removed $removed flat zuvo skills from ~/.codex/skills/ (Cursor dedup)"
+    fi
   fi
 
   ok "Codex updated"
@@ -671,11 +726,11 @@ echo "Validating banned-vocabulary fixtures..."
 "$ZUVO_DIR/scripts/validate-banned-vocabulary-fixtures.sh"
 
 case "$TARGET" in
-  claude) install_claude ;;
+  claude) install_claude; install_claude_home ;;
   codex)  install_codex ;;
   cursor) install_cursor ;;
   antigravity) install_antigravity ;;
-  both|all) install_claude; install_codex; install_cursor; install_antigravity; install_zuvo_home ;;
+  both|all) install_claude; install_codex; install_cursor; install_antigravity; install_zuvo_home; install_claude_home ;;
   *)      echo "Usage: $0 [claude|codex|cursor|antigravity|all]"; exit 1 ;;
 esac
 
