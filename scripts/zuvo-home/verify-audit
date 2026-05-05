@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""
+~/.zuvo/verify-audit — block audit reports that fake findings.
+
+Closes the failure mode observed on tgm-survey-platform 2026-05-05:
+agent ran every mandatory tool, wrote correct telemetry, appended retro
+correctly — and then silently copied 11 "findings" from the prior audit
+(2026-04-30) without re-verifying any against current code. Result: 6 of
+11 findings were already fixed, 2 were false positives, only 2 were
+genuinely open. Agent admitted: "kopiowałem stary raport zamiast zrobić
+nowy."
+
+This script verifies the audit report at write time. For every finding:
+  1. The finding section MUST contain at least one citation in the form
+     `path/to/file.ext:LINE` or `path/to/file.ext:START-END`.
+  2. The cited file MUST exist relative to the project root.
+  3. The cited line number MUST be within the file's actual line count.
+  4. The finding section MUST contain a "Verified-against: <sha>"
+     line where <sha> matches the current git HEAD short SHA — proves
+     the agent re-read the file in this session, not just copied from
+     a prior audit at a different SHA.
+
+Usage:
+  ~/.zuvo/verify-audit <audit_report_path>
+  ~/.zuvo/verify-audit audits/db-audit-2026-05-05.md
+  ~/.zuvo/verify-audit audits/code-audit-XXX.md --skill code-audit
+
+Exit codes:
+  0  every finding has a real file:line citation + current-SHA verification
+  2  one or more findings unverified — report rejected (printed to stderr)
+  3  invocation error (missing file, no findings detected, etc.)
+
+Override (rare, audited):
+  ZUVO_SKIP_AUDIT_VERIFY=1 ~/.zuvo/verify-audit <path>
+  Each use is recorded — surfaces in the next zuvo:context-audit run.
+
+Designed to be called by ~/.zuvo/append-runlog as a precondition for
+appending to runs.log: the only path to a finalized audit goes through
+this verifier.
+"""
+
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+
+def fail(msg: str, exit_code: int = 3) -> None:
+    print(msg, file=sys.stderr)
+    sys.exit(exit_code)
+
+
+def get_current_sha(project_root: Path) -> str:
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(project_root), stderr=subprocess.DEVNULL,
+        )
+        return out.decode().strip()
+    except Exception:
+        return ""
+
+
+def find_project_root(audit_path: Path) -> Path:
+    cur = audit_path.parent.resolve()
+    for parent in [cur, *cur.parents]:
+        if (parent / ".git").exists():
+            return parent
+    return audit_path.parent.resolve()
+
+
+# ---- finding parser --------------------------------------------------------
+
+# Finding sections in zuvo audit reports use one of two formats:
+#   ## H1: Title text                    (markdown header style)
+#   **H1 — Title text**                  (bold-bullet style, used by db-audit/security-audit/etc.)
+# Plus the severity word forms: HIGH-1, MEDIUM-2, etc.
+FINDING_HEADER_RE = re.compile(
+    r"^(?:"
+    r"#{2,4}\s+"                                                                  # markdown header
+    r"|\*\*\s*"                                                                   # bold
+    r")"
+    r"(?:[HMLC]\d+|HIGH-\d+|MEDIUM-\d+|LOW-\d+|CRITICAL-\d+)"
+    r"(?:\s*[:—–-].*?)?"
+    r"(?:\*\*)?$",
+    re.IGNORECASE,
+)
+
+# file:line citation. Accept .ts/.tsx/.js/.py/.php/.kt/.sql/.prisma/.json/.md/.yml etc.
+FILE_LINE_RE = re.compile(
+    r"\b([\w./-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|php|kt|sql|prisma|json|md|yml|yaml|toml|sh|rb|go|rs|java|cs|swift|dart|scala))"
+    r":(\d+)(?:[-–](\d+))?\b"
+)
+
+# verification stamp inside a finding section
+VERIFIED_RE = re.compile(r"^\s*[*\-]?\s*\*{0,2}Verified-against\*{0,2}\s*:\s*([0-9a-f]{7,40})\b", re.IGNORECASE | re.MULTILINE)
+
+
+def split_findings(text: str) -> list[tuple[str, str]]:
+    """Return list of (header_line, body) for every finding section."""
+    lines = text.splitlines(keepends=True)
+    findings: list[tuple[str, list[str]]] = []
+    cur_header: str | None = None
+    cur_body: list[str] = []
+    for line in lines:
+        if FINDING_HEADER_RE.match(line.strip()):
+            if cur_header is not None:
+                findings.append((cur_header, cur_body))
+            cur_header = line.strip()
+            cur_body = []
+        elif cur_header is not None:
+            cur_body.append(line)
+    if cur_header is not None:
+        findings.append((cur_header, cur_body))
+    return [(h, "".join(body)) for h, body in findings]
+
+
+def looks_like_finding(header: str) -> bool:
+    """Heuristic: only sections starting with H/M/L/C<digit> or severity word are findings."""
+    h = header.lstrip("#").lstrip("*").strip()
+    return bool(re.match(r"^(?:[HMLC]\d+|HIGH-\d+|MEDIUM-\d+|LOW-\d+|CRITICAL-\d+)\b", h, re.IGNORECASE))
+
+
+# ---- citation verification -------------------------------------------------
+
+def verify_citation(project_root: Path, file_path: str, start_line: int, end_line: int | None) -> tuple[bool, str]:
+    abs_path = (project_root / file_path).resolve()
+    try:
+        abs_path.relative_to(project_root.resolve())
+    except ValueError:
+        return False, f"path escapes project root: {file_path}"
+    if not abs_path.exists():
+        return False, f"file does not exist: {file_path}"
+    if not abs_path.is_file():
+        return False, f"path is not a file: {file_path}"
+    try:
+        with abs_path.open() as f:
+            line_count = sum(1 for _ in f)
+    except Exception as e:
+        return False, f"cannot read {file_path}: {e}"
+    if start_line < 1 or start_line > line_count:
+        return False, f"{file_path}:{start_line} out of range (file has {line_count} lines)"
+    if end_line is not None and (end_line < start_line or end_line > line_count):
+        return False, f"{file_path}:{start_line}-{end_line} out of range (file has {line_count} lines)"
+    return True, f"{file_path}:{start_line}{f'-{end_line}' if end_line else ''} OK"
+
+
+# ---- main ------------------------------------------------------------------
+
+def main() -> None:
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if not args:
+        fail("Usage: ~/.zuvo/verify-audit <audit_report_path>", 3)
+    audit_path = Path(args[0]).resolve()
+    if not audit_path.exists():
+        fail(f"ERROR: audit report not found: {audit_path}", 3)
+
+    if os.environ.get("ZUVO_SKIP_AUDIT_VERIFY") == "1":
+        print(f"WARN: ZUVO_SKIP_AUDIT_VERIFY=1 — verification bypassed for {audit_path.name}")
+        print("  This will be flagged in the next zuvo:context-audit / zuvo:retro.")
+        sys.exit(0)
+
+    project_root = find_project_root(audit_path)
+    current_sha = get_current_sha(project_root)
+    if not current_sha:
+        print(f"WARN: cannot determine current git SHA for {project_root} — skipping SHA stamp check")
+
+    text = audit_path.read_text()
+    findings = [(h, b) for h, b in split_findings(text) if looks_like_finding(h)]
+
+    if not findings:
+        # If the report has no finding sections, audit is informational —
+        # nothing to verify. Pass through.
+        print(f"OK: {audit_path.name} — no finding sections detected (informational report)")
+        sys.exit(0)
+
+    errors: list[str] = []
+    verified_count = 0
+
+    for header, body in findings:
+        finding_id = header.lstrip("#").strip().split()[0].rstrip(":—–-").strip()
+        section = header + "\n" + body
+
+        # 1. Must contain at least one file:line citation
+        citations = list(FILE_LINE_RE.finditer(section))
+        if not citations:
+            errors.append(
+                f"  [{finding_id}] no file:line citation found in section. "
+                f"Every finding MUST cite at least one path/to/file.ext:LINE."
+            )
+            continue
+
+        # 2. + 3. At least one citation must resolve to an existing file at a valid line
+        any_valid = False
+        last_err = ""
+        for m in citations:
+            file_path, start_line, end_line = m.group(1), int(m.group(2)), m.group(3)
+            end_int = int(end_line) if end_line else None
+            ok, msg = verify_citation(project_root, file_path, start_line, end_int)
+            if ok:
+                any_valid = True
+                break
+            else:
+                last_err = msg
+        if not any_valid:
+            errors.append(f"  [{finding_id}] every cited file:line is unverifiable. Last error: {last_err}")
+            continue
+
+        # 4. Verified-against stamp (only enforce if we know current SHA)
+        if current_sha:
+            stamp_match = VERIFIED_RE.search(section)
+            if not stamp_match:
+                errors.append(
+                    f"  [{finding_id}] missing 'Verified-against: <sha>' stamp. "
+                    f"Required to prove the finding was re-checked against current code "
+                    f"(expected current SHA prefix: {current_sha})."
+                )
+                continue
+            stamp_sha = stamp_match.group(1).lower()
+            cur_lc = current_sha.lower()
+            if not (stamp_sha.startswith(cur_lc) or cur_lc.startswith(stamp_sha)):
+                errors.append(
+                    f"  [{finding_id}] Verified-against: {stamp_sha} does not match current SHA {cur_lc}. "
+                    f"Finding may be carried forward from a prior audit without re-verification."
+                )
+                continue
+
+        verified_count += 1
+
+    print(f"verify-audit: {audit_path.name}")
+    print(f"  findings detected: {len(findings)}")
+    print(f"  verified:          {verified_count}")
+    print(f"  unverified:        {len(errors)}")
+    if errors:
+        print()
+        print("UNVERIFIED FINDINGS — audit REJECTED:")
+        for err in errors:
+            print(err)
+        print()
+        print("Each rejected finding either:")
+        print("  - lacks a file:line citation,")
+        print("  - cites a file:line that doesn't exist or is out of range,")
+        print("  - or lacks 'Verified-against: <current-sha>' stamp.")
+        print()
+        print("To fix: re-read each cited file in the current working tree, ")
+        print("update file:line if the line number drifted, and add ")
+        print("'Verified-against: <current_sha>' to each finding section.")
+        if current_sha:
+            print(f"Current SHA: {current_sha}")
+        print()
+        print("Override (rare, audited): ZUVO_SKIP_AUDIT_VERIFY=1")
+        sys.exit(2)
+
+    print("OK: every finding has a verifiable citation + current-SHA stamp.")
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

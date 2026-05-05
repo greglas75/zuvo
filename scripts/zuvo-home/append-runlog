@@ -99,6 +99,49 @@ if [ "$HAVE_RETRO" -eq 0 ]; then
   exit 2
 fi
 
-# Retro present — proceed
+# === audit-content verification (audit skills only) ===
+# For audit-style skills (write a report under audits/), every finding must
+# cite a real file:line in current code AND carry a Verified-against: <sha>
+# stamp. Closes the failure mode where agents copy findings forward from
+# prior audits without re-checking against the current working tree.
+case "$SKILL" in
+  *audit*|review|pentest)
+    if [ -x "$HOME/.zuvo/verify-audit" ]; then
+      # Locate today's audit report. Common locations:
+      #   $PWD/audits/<skill>-YYYY-MM-DD.md
+      #   $PWD/audits/<skill>-YYYY-MM-DD-*.md  (variants like -full, -delta)
+      AUDIT_DATE=$(date -u +%Y-%m-%d)
+      AUDIT_REPORT=""
+      for candidate in \
+        "audits/$SKILL-$AUDIT_DATE.md" \
+        $(ls -t audits/$SKILL-$AUDIT_DATE*.md 2>/dev/null); do
+        if [ -f "$candidate" ]; then
+          AUDIT_REPORT="$candidate"
+          break
+        fi
+      done
+      if [ -z "$AUDIT_REPORT" ]; then
+        # No today's report found — try most recent
+        AUDIT_REPORT=$(ls -t audits/$SKILL-*.md 2>/dev/null | head -1)
+      fi
+
+      if [ -n "$AUDIT_REPORT" ] && [ -f "$AUDIT_REPORT" ]; then
+        if [ "${ZUVO_SKIP_AUDIT_VERIFY:-0}" = "1" ]; then
+          echo "WARN: ZUVO_SKIP_AUDIT_VERIFY=1 — finding-content verification bypassed for $AUDIT_REPORT" >&2
+        else
+          if ! "$HOME/.zuvo/verify-audit" "$AUDIT_REPORT" >&2; then
+            echo "" >&2
+            echo "AUDIT_REPORT_REJECTED: $AUDIT_REPORT failed finding-content verification." >&2
+            echo "  runs.log NOT appended. Fix the findings (add file:line citations + Verified-against: <sha> stamps), then re-run." >&2
+            echo "  Override (rare, audited): ZUVO_SKIP_AUDIT_VERIFY=1 ~/.zuvo/append-runlog" >&2
+            exit 2
+          fi
+        fi
+      fi
+    fi
+    ;;
+esac
+
+# Retro + audit verified — proceed
 echo "$RUN_LINE" >> "$RUNS_LOG"
 echo "OK: appended to runs.log (retro verified for $SKILL on $PROJECT)"
