@@ -337,8 +337,59 @@ WORK_FILES = <changed files from the diff>
 
 ### CodeSift Setup
 
+**Use the deterministic preload helper FIRST.** Before issuing any ToolSearch, run:
+```
+~/.zuvo/compute-preload review "$PWD"
+```
+Copy the printed `[CodeSift matching trace]` block verbatim and issue the printed `ToolSearch(query="select:...")` line without modification. Math gate: `[CodeSift loaded] tools=N` must equal `[Expected after load] tools=N` from the helper. If they differ → `[PRELOAD MATH MISMATCH]` and abort before Phase 1.
+
+### MANDATORY TOOL CALLS — Review Validity Gate
+
+**This review is INVALID if any tool below is skipped when its trigger condition holds.** "DEFERRED", "N/A", "TIER 0 minimal scope" are NOT valid reasons unless explicitly documented as such.
+
+| Tool | Trigger | Reason | Skip allowed? |
+|------|---------|--------|---------------|
+| `review_diff` | Always (any review with a diff) | KEY COMPOUND — 9 parallel checks (security, dead code, complexity, etc.) on the diff | **NO** |
+| `changed_symbols` | Always (any commit-range or staged review) | Which symbols added/modified/deleted in range — required for CQ scoring | **NO** |
+| `diff_outline` | Always | Structural diff per file (signatures only — no body churn noise) | **NO** |
+| `impact_analysis` | Always | Blast radius + affected_tests for the changed surface | **NO** |
+| `find_references` | Any finding cites a function/method | Regression risk verification | **NO** when condition holds |
+| `scan_secrets` | Always (any review touching code or config) | CAP5 hardcoded-secret pre-scan on the diff | **NO** |
+| `search_patterns` | Always | CQ8 empty-catch + CAP anti-patterns introduced in the diff | **NO** |
+| Stack-specific tools (nest_audit/framework_audit/python_audit/etc.) | Framework/language detected AND diff touches framework code | Framework-aware gates the diff inherits | **NO** when conditions hold |
+
+### Forbidden escape hatches
+
+| Value | Forbidden when | Required value instead |
+|-------|----------------|------------------------|
+| `review_diff: skipped (TIER 0)` | EVER (TIER 0 still uses CodeSift pre-compute per Tier table) | `review_diff: <findings_per_check>` |
+| `scan_secrets: not_run` | EVER | `scan_secrets: <count>` |
+| `changed_symbols: N/A (test-only diff)` | EVER (test files have changed_symbols too) | `changed_symbols: <count>` |
+| `codesift: unavailable` | `mcp__codesift__*` was in deferred-tools session-start banner | `codesift: deferred-not-preloaded (FAILURE: skill required preload)` |
+| `RETRO: skipped (nothing interesting)` | EVER | One of: `RETRO: skipped (trivial session, <3 findings and no fix-loop)` OR full retro appended |
+
+### Required POSTAMBLE — retrospective + verify-audit gates
+
+After the review report is written, the review is **NOT complete** until:
+
+1. `memory/reviews/<date>-<scope>.md` (TIER 1+) is on disk.
+2. `~/.zuvo/append-runlog` is called with the Run line — this triggers BOTH:
+   - **retro-gate**: requires a matching `RETRO:` entry in `~/.zuvo/retros.log` for `skill=review project=<this>`. If missing → exit 2, runs.log NOT appended.
+   - **audit-content gate**: runs `~/.zuvo/verify-audit` on the report. Every MUST-FIX and RECOMMENDED finding must contain at least one `path/to/file.ext:LINE` citation that resolves in the current tree. NIT findings without citations get rejected. If rejected → fix the report, re-run `append-runlog`.
+3. Print `RETRO_APPENDED: retros.log=YES retros.md=YES (verified)` and confirm exit 0 from `append-runlog`.
+
+If you reach `REVIEW COMPLETE` and stop without calling `append-runlog`: the review is INVALID regardless of finding count. The Validity Gate `gate_status` flips to `FAIL — postamble incomplete` and the verdict overrides to `INCOMPLETE`.
+
+### Mandatory acknowledgment (REQUIRED — print verbatim before Phase 0.5)
+
+```
+Mandatory-tools-acknowledgment: I will run review_diff + changed_symbols + diff_outline + impact_analysis + scan_secrets + search_patterns + find_references (on cited symbols) + stack-specific tools (nest_audit/framework_audit/python_audit/etc. when detected) for this review. Each MUST-FIX and RECOMMENDED finding will cite a `path/to/file.ext:LINE` resolving in the current tree.
+```
+
+### Standard CodeSift checks (run AFTER the helper)
+
 Follow `codesift-setup.md`:
-1. Check whether CodeSift tools are available
+1. Check whether CodeSift tools are available (the helper above already verified this)
 2. Repo auto-resolves from CWD — do NOT call `list_repos()` unless the review explicitly spans multiple repositories
 3. If unsure whether the repo is indexed: `index_status()`
 4. If not indexed: `index_folder(path=<project_root>)`
@@ -704,6 +755,36 @@ COMPLETION GATE CHECK
 
 Enforcement: print the gate check as a checklist with actual `[x]` / `[ ]` marks so the user can audit. If any `[ ]` remains, loop back and complete it before emitting the NEXT STEPS block.
 
+### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+
+```
+VALIDITY GATE
+  triggers_held:
+    diff_lines: <count>
+    diff_type: [prod-only|test-only|mixed]
+    language: <typescript|python|...>
+    framework: <nextjs|nestjs|astro|hono|react|django|...|none>
+    tier: <0|1|2|3>
+  required_tool_calls:
+    review_diff: [<N> findings across 9 checks | NOT_CALLED — VIOLATES_TRIGGER]
+    changed_symbols: [<N> symbols | NOT_CALLED — VIOLATES_TRIGGER]
+    diff_outline: [<N> files outlined | NOT_CALLED — VIOLATES_TRIGGER]
+    impact_analysis: [<N> affected_tests / <N> blast | NOT_CALLED — VIOLATES_TRIGGER]
+    scan_secrets: [<N> hits | NOT_CALLED — VIOLATES_TRIGGER]
+    search_patterns: [<N> CQ8/CAP hits | NOT_CALLED — VIOLATES_TRIGGER]
+    find_references: [<N> chains | not_required (no symbol cited) | NOT_CALLED — VIOLATES_TRIGGER]
+    stack_specific (nest_audit/framework_audit/python_audit/etc.): [<result> | not_required | NOT_CALLED — VIOLATES_TRIGGER]
+  postamble:
+    retros_log_appended: [yes(bytes_added=N) | NOT_APPENDED — VIOLATES_REQUIRED_POSTAMBLE]
+    retros_md_appended: [yes(entry_count=N) | NOT_APPENDED — VIOLATES_REQUIRED_POSTAMBLE]
+    verify_audit_pass: [yes(<verified>/<total> findings) | NOT_RUN | REJECTED]
+  gate_status: [PASS | FAIL — <which gates missing>]
+```
+
+If `gate_status = FAIL`, override the VERDICT to `INCOMPLETE` regardless of finding count, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and add a backlog item `B-review-incomplete-<date>`.
+
+Print this Validity Gate **AFTER** the retro append and `~/.zuvo/append-runlog` call (so postamble fields can be filled with `yes(verified)`).
+
 ### NEXT STEPS Block
 
 ```
@@ -714,7 +795,18 @@ Run: <ISO-8601-Z>	review	<project>	<CQ>	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>
 NEXT STEPS: "fix" (all) | "blocking" (MUST-FIX only) | "auto-fix" (zuvo:build) | "skip"
 ```
 
-After printing, append the `Run:` line to the log file per `run-logger.md`.
+Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
+
+```bash
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
+The wrapper:
+- Verifies the matching `RETRO:` entry in `retros.log` (skill+project). Missing → exit 2.
+- Runs `~/.zuvo/verify-audit` on the report at `memory/reviews/<date>-<scope>.md`. Findings without `file:line` citations → exit 2.
+- On both pass: appends to `runs.log` and prints confirmation.
+
+If the wrapper exits non-zero: do NOT manually append to runs.log. Fix the cause and re-run.
 
 ---
 

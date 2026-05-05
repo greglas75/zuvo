@@ -182,7 +182,59 @@ PHASE 1 — LOADED:
 
 Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
 
+## MANDATORY TOOL CALLS — Audit Validity Gate
+
+**This audit is INVALID if any tool below is skipped when its trigger condition holds.** "DEFERRED", "N/A", "no diff vs prior audit", "--quick mode" are NOT valid reasons. The presence of trigger artifacts (a code file list, language detection, dep manifest) is what dictates the call — never delta or risk.
+
+### Required tool list
+
+| Tool | Trigger | Reason | Skip allowed? |
+|------|---------|--------|---------------|
+| `audit_scan` | Always (any project with code files) | COMPOUND replacement for find_dead_code+search_patterns+find_clones+analyze_complexity+analyze_hotspots — primary CQ engine | **NO** |
+| `find_dead_code` | Always | CQ13 unused exports across symbol graph (kept as fallback if audit_scan unavailable) | **NO** when audit_scan also unavailable |
+| `search_patterns(empty-catch)` | Always | CQ8 empty-catch detection — TOOL-VERIFIED gate, only authoritative source | **NO** |
+| `find_clones` | Always | CQ14 duplication ≥0.7 similarity — TOOL-VERIFIED gate | **NO** |
+| `scan_secrets` | Always | CAP5 hardcoded secret pre-scan — every audit, every project | **NO** |
+| `trace_call_chain` | --deep mode OR finding cites a function with cross-file impact | CQ4 ownership trace; required to verify "this is internal" claims | **NO** when --deep |
+| Stack-specific (nest_audit/framework_audit/python_audit/php_project_audit/etc.) | Framework/language detected | Stack-specific CQ patterns no generic scan reproduces | **NO** when language/framework matches |
+
+### Forbidden escape hatches
+
+| Value | Forbidden when | Required value instead |
+|-------|----------------|------------------------|
+| `audit_scan: DEFERRED` | EVER | `audit_scan: <findings_count>` |
+| `scan_secrets: skipped (CAP5 covered manually)` | EVER | `scan_secrets: <count>` |
+| `find_clones: N/A (--quick mode)` | EVER | `find_clones: <cluster_count>` |
+| `codesift: unavailable` | `mcp__codesift__*` was in deferred-tools session-start banner | `codesift: deferred-not-preloaded (FAILURE: skill required preload)` |
+| `retrospective: skipped` | EVER | `retrospective: appended (retros.log + retros.md)` |
+
+### Required POSTAMBLE — retrospective + verify-audit gates
+
+After the audit report is written, the audit is **NOT complete** until:
+
+1. `audits/code-quality-audit-<date>.md` (or `audits/code-audit-<date>.md`) is on disk.
+2. `~/.zuvo/append-runlog` is called with the Run line — this triggers BOTH:
+   - **retro-gate**: requires a matching `RETRO:` entry in `~/.zuvo/retros.log` for `skill=code-audit project=<this>`. If missing → exit 2, runs.log NOT appended.
+   - **audit-content gate**: runs `~/.zuvo/verify-audit` on the report. Every Tier D/C finding (and every Tier B critical-gate-near-miss) must contain at least one `path/to/file.ext:LINE` citation that resolves in the current tree. Findings without citations get rejected. If rejected → fix the report (add file:line per finding), re-run `append-runlog`.
+3. Print `RETRO_APPENDED: retros.log=YES retros.md=YES (verified)` and confirm exit 0 from `append-runlog`.
+
+If you reach the Run line and stop without calling `append-runlog`: the audit is INVALID regardless of finding count. The Validity Gate's `gate_status` flips to `FAIL — postamble incomplete` and the verdict overrides to `INCOMPLETE`.
+
+### Mandatory acknowledgment (REQUIRED — print verbatim before Phase 0)
+
+```
+Mandatory-tools-acknowledgment: I will run audit_scan + scan_secrets + search_patterns(empty-catch) + find_clones + find_dead_code + trace_call_chain (in --deep mode or for cross-file impact verification) + stack-specific tools (nest_audit/framework_audit/python_audit/etc. when detected) in this audit. Each finding will cite a `path/to/file.ext:LINE` resolving in the current tree.
+```
+
+---
+
 ## CodeSift Integration
+
+**Use the deterministic preload helper FIRST.** Before issuing any ToolSearch, run:
+```
+~/.zuvo/compute-preload code-audit "$PWD"
+```
+Copy the printed `[CodeSift matching trace]` block verbatim and issue the printed `ToolSearch(query="select:...")` line without modification. Math gate: `[CodeSift loaded] tools=N` must equal `[Expected after load] tools=N` from the helper. If they differ → `[PRELOAD MATH MISMATCH]` and abort before Phase 1.
 
 CodeSift setup completed in PHASE 0. Use CodeSift tools for all discovery and analysis when available. If not found, fall back to Grep/Read/Glob and inform the user once.
 
@@ -577,18 +629,55 @@ COMPLETION GATE CHECK
 
 ## CODE AUDIT COMPLETE
 
+### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
+
+```
+VALIDITY GATE
+  triggers_held:
+    code_files: yes(<count>)
+    language: <typescript|python|php|kotlin|javascript|...>
+    framework: <nextjs|nestjs|astro|hono|react|django|flask|...|none>
+    mode: <quick|standard|deep>
+  required_tool_calls:
+    audit_scan: [<N> compound findings | NOT_CALLED — VIOLATES_TRIGGER]
+    scan_secrets: [<N> hits | NOT_CALLED — VIOLATES_TRIGGER]
+    search_patterns(empty-catch): [<N> CQ8 hits | NOT_CALLED — VIOLATES_TRIGGER]
+    find_clones: [<N> clone clusters | NOT_CALLED — VIOLATES_TRIGGER]
+    find_dead_code: [<N> unused exports | NOT_CALLED — VIOLATES_TRIGGER]
+    trace_call_chain: [<N> chains traced | not_required (non-deep) | NOT_CALLED — VIOLATES_TRIGGER]
+    stack_specific (nest_audit/framework_audit/python_audit/etc.): [<result> | not_required | NOT_CALLED — VIOLATES_TRIGGER]
+  postamble:
+    retros_log_appended: [yes(bytes_added=N) | NOT_APPENDED — VIOLATES_REQUIRED_POSTAMBLE]
+    retros_md_appended: [yes(entry_count=N) | NOT_APPENDED — VIOLATES_REQUIRED_POSTAMBLE]
+    verify_audit_pass: [yes(<verified>/<total> findings) | NOT_RUN | REJECTED]
+  gate_status: [PASS | FAIL — <which gates missing>]
+```
+
+If `gate_status = FAIL`, override the VERDICT below to `INCOMPLETE` regardless of finding count, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and add a backlog item `B-code-audit-incomplete-<date>`.
+
+The Validity Gate must be printed **AFTER** the retro append and `~/.zuvo/append-runlog` call (so postamble fields can be filled with `yes(verified)`). Printing it before guarantees `NOT_APPENDED`.
+
 Run: <ISO-8601-Z>\tcode-audit\t<project>\t<N-critical>\t<N-total>\t<VERDICT>\t-\t<N>-dimensions\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
 
 
-### Retrospective (REQUIRED)
+### Retrospective (REQUIRED — load + fill BEFORE the Run line append)
 
-Follow the retrospective protocol from `retrospective.md`.
-Gate check → structured questions → TSV emit → markdown append.
-If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
+Load `../../shared/includes/retrospective.md` if not already loaded. Follow the retrospective protocol: gate check → 9 structured questions → TSV emit → markdown append to `~/.zuvo/retros.md` AND `~/.zuvo/retros.log`.
 
-After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+Then append the Run line via the retro-gated wrapper:
 
-VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+ critical).
+```bash
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
+The wrapper:
+- Verifies the matching `RETRO:` entry in `retros.log` (skill+project). Missing → exit 2, runs.log NOT appended.
+- Runs `~/.zuvo/verify-audit` on the audit report. Findings without `path/to/file.ext:LINE` citations → exit 2, audit REJECTED.
+- On both pass: appends to `runs.log` and prints confirmation.
+
+If the wrapper exits non-zero: do NOT manually append to runs.log. Fix the cause (add retro, add file:line citations to findings, etc.) and re-run.
+
+VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+ critical), INCOMPLETE (Validity Gate FAIL).
 ```
 
 ## Phase 5: Backlog Persistence
