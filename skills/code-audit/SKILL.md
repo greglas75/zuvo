@@ -27,6 +27,7 @@ codesift_tools:
     # Languages
     typescript:
       - get_type_info              # TS-only: inferred return types, generics, `as` assertion checks (CQ1/CQ2 type safety)
+      - resolve_constant_value      # TS+Python: resolve constants and function defaults through alias/import chains
     # No JS-only CodeSift tools as of 2026-05. Listed here for symmetry with python/php
     # so the orchestrator can match the key for completeness; future JS-specific tools
     # (e.g. eslint-driven analyses) would land here.
@@ -34,6 +35,7 @@ codesift_tools:
     python:
       - python_audit               # compound: circular + django + anti-patterns + ...
       - analyze_async_correctness  # CQ15/CQ17 for async Python
+      - resolve_constant_value      # TS+Python: resolve constants and function defaults through alias/import chains
     php:
       - php_project_audit          # security + ActiveRecord + N+1 + god model
       - php_security_scan          # CAP6/CAP7/CAP8

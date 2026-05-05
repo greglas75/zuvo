@@ -42,10 +42,12 @@ codesift_tools:
     # Languages
     typescript:
       - get_type_info              # TS-only: type inference for changed signatures
+      - resolve_constant_value      # TS+Python: resolve constants and function defaults through alias/import chains
     javascript: []                 # symmetric placeholder; no JS-only tools yet
     python:
       - python_audit
       - analyze_async_correctness
+      - resolve_constant_value      # TS+Python: resolve constants and function defaults through alias/import chains
     php:
       - php_project_audit
       - php_security_scan
