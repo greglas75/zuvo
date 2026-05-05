@@ -92,6 +92,65 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 
 **Summary:** Run the CodeSift setup from `codesift-setup.md` at skill start. CodeSift tools are the primary analysis engine for SA8 (dead code), SA9 (complexity), SA10 (duplication), and SA13 (hotspots). If unavailable, fall back to CLI tools and grep heuristics.
 
+**Use the deterministic preload helper.** Before issuing any ToolSearch, run:
+```
+~/.zuvo/compute-preload structure-audit "$PWD"
+```
+Copy the printed `[CodeSift matching trace]` block verbatim and issue the printed `ToolSearch(query="select:...")` line without modification. Math gate: `[CodeSift loaded] tools=N` must equal `[Expected after load] tools=N` from the helper. If they differ → `[PRELOAD MATH MISMATCH]` and abort before Phase 1.
+
+---
+
+## MANDATORY TOOL CALLS — Audit Validity Gate
+
+**This audit is INVALID if any tool below is skipped when its trigger condition holds.** "DEFERRED", "N/A", "no diff vs prior audit" are NOT valid reasons. The presence of trigger artifacts (a code file list, language detection, dep manifest) is what dictates the call — never delta or risk.
+
+### Required tool list
+
+| Tool | Trigger | Reason | Skip allowed? |
+|------|---------|--------|---------------|
+| `detect_communities` | Always (any project with code files) | SA6 separation of concerns — module boundary discovery | **NO** |
+| `check_boundaries` | Always | SA8 boundary violations between detected communities | **NO** |
+| `classify_roles` | Always | Hub/leaf/bridge symbol classification — needed for SA1+SA6 evidence | **NO** |
+| `fan_in_fan_out` | Always | SA8 coupling distribution; flags god modules and orphans | **NO** |
+| `architecture_summary` | Always | High-level project shape — required for executive summary section | **NO** |
+| `analyze_complexity` | Always | SA9 cyclomatic complexity distribution (CRITICAL GATE if outliers) | **NO** |
+| `analyze_hotspots` | Always | SA13 churn × complexity (last 90 days by default) | **NO** |
+| `find_dead_code` | Always | SA8 unused exports across the symbol graph | **NO** |
+| `find_clones` | Always | SA10 duplication ≥0.7 similarity | **NO** |
+| `find_unused_imports` | Always | SA5 barrel-export hygiene | **NO** |
+| `audit_scan` | Always | Compound CQ-pattern check covering several SA gates in one call | **NO** |
+| `detect_hono_modules` | Hono framework detected | SA6 Hono-specific module discovery | **NO** when Hono |
+| `nest_audit` | NestJS framework detected | SA6 NestJS module + DI graph | **NO** when NestJS |
+| Stack-specific tools (python_audit, php_project_audit, kotlin trace_*) | Language detected | Language-specific structural patterns | **NO** when language matches |
+
+### Forbidden escape hatches
+
+| Value | Forbidden when | Required value instead |
+|-------|----------------|------------------------|
+| `detect_communities: DEFERRED` | EVER | `detect_communities: <community_count> communities` |
+| `analyze_complexity: skipped (no diff vs prior)` | EVER | `analyze_complexity: <max_cc> max, <count_above_20> outliers` |
+| `find_dead_code: N/A` | EVER | `find_dead_code: <count> unused exports` |
+| `codesift: unavailable` | `mcp__codesift__*` was in deferred-tools session-start banner | `codesift: deferred-not-preloaded (FAILURE: skill required preload)` |
+| `retrospective: skipped` | EVER | `retrospective: appended (retros.log + retros.md)` |
+
+### Required POSTAMBLE — retrospective + verify-audit gates
+
+After the audit report is written and the Validity Gate block is printed, the audit is **NOT complete** until:
+
+1. `audit-results/structure-audit-<date>.md` (or `audits/structure-audit-<date>.md`) is on disk.
+2. `~/.zuvo/append-runlog` is called with the Run line — this triggers BOTH gates:
+   - **retro-gate**: requires a matching `RETRO:` entry in `~/.zuvo/retros.log` for `skill=structure-audit project=<this>`. If missing → exit 2, runs.log NOT appended. Load `retrospective.md`, fill 9 fields, run the bash append commands, then re-run `append-runlog`.
+   - **audit-content gate**: runs `~/.zuvo/verify-audit` on the report. Every finding section must contain at least one `path/to/file.ext:LINE` citation that resolves in the current tree. Findings without citations get rejected. If rejected → fix the report (add file:line per finding), re-run `append-runlog`.
+3. Print `RETRO_APPENDED: retros.log=YES retros.md=YES (verified)` and confirm exit 0 from `append-runlog`.
+
+If you reach the Run line and stop without calling `append-runlog`: the audit is INVALID regardless of finding count. The Validity Gate's `gate_status` flips to `FAIL — postamble incomplete` and the verdict overrides to `INCOMPLETE`.
+
+### Mandatory acknowledgment (REQUIRED — print verbatim before Phase 0)
+
+```
+Mandatory-tools-acknowledgment: I will run detect_communities + check_boundaries + classify_roles + fan_in_fan_out + architecture_summary + analyze_complexity + analyze_hotspots + find_dead_code + find_clones + find_unused_imports + audit_scan + stack-specific structural tools (detect_hono_modules/nest_audit/python_audit/etc. when language/framework is detected) in this audit. Each finding will cite a `path/to/file.ext:LINE` resolving in the current tree.
+```
+
 ---
 
 ## Phase 0: Parse $ARGUMENTS and Detect Stack
@@ -552,15 +611,57 @@ Grade: [A/B/C/D/FAIL] | Score: [N] / [MAX]
 Mode: [FULL/LIMITED/NO-CODE] | Stack: [detected]
 Dimensions: [N scored] | Critical gates: [PASS/FAIL]
 Findings: [N critical] / [N total]
+
+### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append)
+
+```
+VALIDITY GATE
+  triggers_held:
+    code_files: yes(<count>)
+    language: <typescript|python|php|kotlin|javascript|...>
+    framework: <nextjs|nestjs|astro|hono|react|django|flask|...|none>
+  required_tool_calls:
+    detect_communities: [<N> communities | NOT_CALLED — VIOLATES_TRIGGER]
+    check_boundaries: [<N> violations | NOT_CALLED — VIOLATES_TRIGGER]
+    classify_roles: [<hub>/<leaf>/<bridge> distribution | NOT_CALLED — VIOLATES_TRIGGER]
+    fan_in_fan_out: [<max_in>/<max_out> outliers | NOT_CALLED — VIOLATES_TRIGGER]
+    architecture_summary: [<modules>/<files> | NOT_CALLED — VIOLATES_TRIGGER]
+    analyze_complexity: [<max_cc> max, <outliers_above_20> outliers | NOT_CALLED — VIOLATES_TRIGGER]
+    analyze_hotspots: [<top_N> hotspots in 90d | NOT_CALLED — VIOLATES_TRIGGER]
+    find_dead_code: [<N> unused exports | NOT_CALLED — VIOLATES_TRIGGER]
+    find_clones: [<N> clone clusters ≥0.7 | NOT_CALLED — VIOLATES_TRIGGER]
+    find_unused_imports: [<N> unused imports | NOT_CALLED — VIOLATES_TRIGGER]
+    audit_scan: [<N> compound findings | NOT_CALLED — VIOLATES_TRIGGER]
+    stack_specific (nest_audit/detect_hono_modules/python_audit/etc.): [<result> | not_required | NOT_CALLED — VIOLATES_TRIGGER]
+  postamble:
+    retros_log_appended: [yes(bytes_added=N) | NOT_APPENDED — VIOLATES_REQUIRED_POSTAMBLE]
+    retros_md_appended: [yes(entry_count=N) | NOT_APPENDED — VIOLATES_REQUIRED_POSTAMBLE]
+    verify_audit_pass: [yes(<verified>/<total> findings) | NOT_RUN | REJECTED]
+  gate_status: [PASS | FAIL — <which gates missing>]
+```
+
+If `gate_status = FAIL`, override the VERDICT below to `INCOMPLETE` regardless of finding count, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and add a backlog item `B-structure-audit-incomplete-<date>`.
+
+The Validity Gate must be printed **AFTER** the retro append and `~/.zuvo/append-runlog` call (so postamble fields can be filled with `yes(verified)`). Printing it before guarantees `NOT_APPENDED`.
+
 Run: <ISO-8601-Z>	structure-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 
 
-### Retrospective (REQUIRED)
+### Retrospective (REQUIRED — load + fill BEFORE the Run line append)
 
-Follow the retrospective protocol from `retrospective.md`.
-Gate check → structured questions → TSV emit → markdown append.
-If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
+Load `../../shared/includes/retrospective.md` if not already loaded. Follow the retrospective protocol: gate check → 9 structured questions → TSV emit → markdown append to `~/.zuvo/retros.md` AND `~/.zuvo/retros.log`.
 
-After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+Then append the Run line via the retro-gated wrapper:
 
-VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+ critical).
+```bash
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
+The wrapper:
+- Verifies the matching `RETRO:` entry in `retros.log` (skill+project). Missing → exit 2, runs.log NOT appended.
+- Runs `~/.zuvo/verify-audit` on the audit report. Findings without `file:line` citations → exit 2, audit REJECTED.
+- On both pass: appends to `runs.log` and prints confirmation.
+
+If the wrapper exits non-zero: do NOT manually append to runs.log. Fix the cause (add retro, add file:line citations, etc.) and re-run.
+
+VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+ critical), INCOMPLETE (Validity Gate FAIL).
