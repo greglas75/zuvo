@@ -116,15 +116,23 @@ The orchestrator's stack-matching algorithm is deterministic. Its output must th
     composer.json=<yes|no> pyproject.toml=<yes|no> requirements.txt=<yes|no>
     build.gradle.kts/build.gradle=<yes|no> prisma/schema.prisma=<yes|no>
     .sql files=<count> migrations/ dir=<yes|no>
-  matched by_stack groups (rule cited):
-    <key1> (rule #N, evidence: <signal>) → [<tool1>, <tool2>, ...]
-    <key2> (rule #N, evidence: <signal>) → [...]
+  matched by_stack groups (rule cited, FULL tool list):
+    <key1> (rule #N, evidence: <signal>) → [<tool1>, <tool2>, ...]   # MUST list every tool from manifest's by_stack[<key1>]
+    <key2> (rule #N, evidence: <signal>) → [<tool1>, ...]
     ...
   skipped by_stack groups (no signal):
-    <key3>, <key4>, ...
-  union:
-    always (<N> tools) + matched groups (<M> tools) = <N+M> tools total
+    <key3>, <key4>, ...   # MUST be a key from the calling skill's by_stack — never invent keys
+  monorepo workspace scan (if stack.monorepo === true):
+    <workspace_path1>: deps that triggered matches → <key>(rule #4)
+    <workspace_path2>: deps that triggered matches → <key>(rule #4)
+    ...
+  union math:
+    always.length = <N>
+    matched: <key1>=<M1> + <key2>=<M2> + ... = <SUM_M>
+    expected_tools = <N> + <SUM_M> = <TOTAL>
 ```
+
+**Math validation gate.** The `tools=<N>` count printed in `[CodeSift loaded] tools=<N>` MUST equal the `expected_tools` computed in the union math line. If they differ, the preload is broken — either the matching algorithm dropped tools silently, or the ToolSearch select string was truncated. In either case: print `[PRELOAD MATH MISMATCH] expected=<X> got=<Y>` and abort the skill before Phase 1.
 
 Then issue ONE ToolSearch with the union.
 
@@ -145,10 +153,13 @@ These preload behaviors are explicit violations of Step 2.5. If you find yoursel
 |---------|----------------|
 | `groups=manual-selection` (or `full-set`, `handpicked`, `manual-set`) | Bypasses the by_stack matching rules — defeats stack-aware preload entirely |
 | Picking tools without citing a rule (`#1` language, `#2` framework, ..., `#7` filesystem) | Cannot be reproduced or audited; another agent re-running the same project would get a different preload |
+| Citing a `matched=` key that is not in the calling skill's `by_stack` map (e.g. claiming `vitest` matched when only `jest:[]` exists) | Hallucinated match — the trace is fiction. Every key in `matched=[...]` MUST be a literal key from the skill's `codesift_tools.by_stack` |
 | Skipping `react`/`prisma`/`hono`/etc. groups when the dep manifest contains the matching key | Rule #4 violation — workspace deps in monorepos must be scanned |
+| Loading only some tools from a matched group (e.g. matching `sql` but loading only `sql_audit`, not the other 4 tools in the group) | The group is the unit of matching — partial-group loads are silent dropouts. Either match the key and load ALL its tools, or don't match it. |
 | Skipping `sql`/`prisma` groups when filesystem evidence holds (.sql files, schema.prisma) | Rule #7 violation — filesystem-implies-toolchain |
+| Skipping monorepo workspace deps scan when `stack.monorepo === true` | Rule #4 sub-clause violation — `apps/*` and `packages/*` package.json files are deps sources too. Common failure: `react` lives only in `apps/designer/package.json` but the orchestrator only scanned the root manifest. |
 | Issuing more than the cap of `ToolSearch` calls (default 1, escape valve allows 2) without a phase-boundary justification | Mid-run discovery without planning is the failure mode the cap exists to prevent |
-| Printing `tools=<N>` where N is smaller than `always.length + sum(matched_groups.length)` | Math mismatch — silently dropped tools that the manifest required |
+| Printing `tools=<N>` where N is smaller than `always.length + sum(matched_groups.length)` | Math mismatch — silently dropped tools that the manifest required. The math validation gate above catches this. |
 
 Each of the above is detectable from the printed trace alone — that's why the trace is mandatory. A skill that can produce `[CodeSift preload]` with the explicit `matched=[...]` list and `[CodeSift matching trace]` with cited rules has demonstrably followed Step 2.5. A skill that only prints `tools=23, groups=manual-selection` has not.
 
