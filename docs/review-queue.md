@@ -426,3 +426,6 @@ Commits pending review. Auto-managed:
 - 411eb5f (2026-05-04) fix(codesift-setup): correct false claim about sub-agent preload inheritance
 - d015239 (2026-05-04) feat(agents+docs): grant CodeSift to 2 ship agents + document codesift_tools convention
 - 7c3fda1 (2026-05-04) chore(backlog): remove resolved entries
+- 12893cb (2026-05-05) release: v1.3.103 — install.sh wires core.hooksPath to ~/.claude/hooks/ (self-heals stale tmp paths)
+- b7b8f3b (2026-05-05) fix(verify-audit): expand finding parser — DB-audit/security/api/pentest formats + relax per-finding stamp
+- 0012f5a (2026-05-05) fix(verify-audit): regex syntax — drop VERBOSE flag

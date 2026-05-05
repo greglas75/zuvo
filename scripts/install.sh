@@ -701,7 +701,12 @@ install_antigravity() {
     ok "Hook scripts installed"
   fi
 
-  # Merge hook config into ~/.gemini/settings.json (idempotent)
+  # Merge hook config into ~/.gemini/settings.json (idempotent, dedup-safe).
+  # Strategy: remove ALL entries pointing at ~/.gemini/antigravity/hooks/<zuvo>,
+  # then re-append the canonical groups from the template. Repeated install runs
+  # cannot accumulate duplicates this way. Also self-heals stale state from the
+  # previous merge bug (which only matched 2 of 3 zuvo scripts and appended the
+  # full group every run, blowing BeforeTool up to 60+ entries).
   if [[ -f "$DIST/hooks.json" ]]; then
     local gemini_settings="$HOME/.gemini/settings.json"
     python3 -c "
@@ -709,12 +714,11 @@ import json, sys, os, tempfile
 
 hooks_template = sys.argv[1]
 settings_path = sys.argv[2]
+zuvo_hook_marker = '/.gemini/antigravity/hooks/'
 
-# Read template
 with open(hooks_template) as f:
     template = json.load(f)
 
-# Read existing settings (or create empty)
 settings = {}
 if os.path.exists(settings_path):
     try:
@@ -724,51 +728,40 @@ if os.path.exists(settings_path):
         print('  ! settings.json is malformed -- skipping hook merge')
         sys.exit(0)
 
-if 'hooks' not in settings:
-    settings['hooks'] = {}
+settings.setdefault('hooks', {})
 
-changed = False
-for event_name, event_hooks in template.get('hooks', {}).items():
-    if event_name not in settings['hooks']:
-        settings['hooks'][event_name] = []
+removed = 0
+added = 0
 
-    existing_entries = settings['hooks'][event_name]
+for event_name, template_groups in template.get('hooks', {}).items():
+    existing_groups = settings['hooks'].setdefault(event_name, [])
 
-    for new_hook_group in event_hooks:
-        for new_hook in new_hook_group.get('hooks', []):
-            cmd = new_hook.get('command', '')
-            # Check if zuvo hook already exists (match on script name)
-            already_exists = False
-            for existing_group in existing_entries:
-                for existing_hook in existing_group.get('hooks', []):
-                    existing_cmd = existing_hook.get('command', '')
-                    if 'antigravity/hooks/' in existing_cmd and any(
-                        s in existing_cmd for s in ['pre-push-gate', 'session-start']
-                        if s in cmd
-                    ):
-                        # Update in place
-                        existing_hook.update(new_hook)
-                        already_exists = True
-                        changed = True
-                        break
-                if already_exists:
-                    break
+    cleaned = []
+    for group in existing_groups:
+        kept_hooks = [
+            h for h in group.get('hooks', [])
+            if zuvo_hook_marker not in h.get('command', '')
+        ]
+        before = len(group.get('hooks', []))
+        removed += before - len(kept_hooks)
+        if kept_hooks:
+            new_group = {**group, 'hooks': kept_hooks}
+            cleaned.append(new_group)
+        elif before == 0:
+            cleaned.append(group)
 
-            if not already_exists:
-                existing_entries.append(new_hook_group)
-                changed = True
-                break  # Only add the group once
+    for tg in template_groups:
+        cleaned.append(tg)
+        added += len(tg.get('hooks', []))
 
-if changed:
-    # Write atomically
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(settings_path), suffix='.tmp')
-    with os.fdopen(fd, 'w') as f:
-        json.dump(settings, f, indent=2)
-        f.write('\n')
-    os.rename(tmp, settings_path)
-    print('  \u2713 Hooks merged into settings.json')
-else:
-    print('  \u2713 Hooks already present in settings.json (no changes)')
+    settings['hooks'][event_name] = cleaned
+
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(settings_path), suffix='.tmp')
+with os.fdopen(fd, 'w') as f:
+    json.dump(settings, f, indent=2)
+    f.write('\n')
+os.rename(tmp, settings_path)
+print(f'  \u2713 Hooks merged into settings.json (removed {removed} stale zuvo entries, added {added} canonical)')
 " "$DIST/hooks.json" "$HOME/.gemini/settings.json" 2>/dev/null || warn "settings.json merge failed"
   fi
 
