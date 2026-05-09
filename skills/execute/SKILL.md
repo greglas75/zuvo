@@ -764,15 +764,30 @@ COMPLETION GATE CHECK (final):
 [ ] Final summary table printed with all tasks AND all smoke proofs
 [ ] Backlog persistence ran for deferred findings
 [ ] Knowledge curation ran
-[ ] Retrospective ran (no "trivial session" opt-out — every run produces a retro entry)
-[ ] Run: line printed and appended to log
+[ ] Retrospective bash appends EXECUTED (retros.log + retros.md) — no "trivial session" opt-out, printing markdown is not enough
+[ ] append-runlog wrapper invoked and exited 0
+[ ] Logs evidence block printed with real `tail` output
 ```
+
+**Phase order is non-negotiable.** Retro append → log append → final Run: block. Past failure mode (e.g. `uptime` 2026-05-09): agent prints final summary + Run: line in chat, never executes the bash, all logs stay empty.
+
+### Append run line via wrapper (REQUIRED)
+
+```bash
+RUN_LINE="<ISO-8601-Z>\texecute\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<N>-tasks\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>"
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
+Expected stdout: `OK: appended to runs.log (retro verified for execute on <project>)`. If `RETRO_REQUIRED` exit 2 — execute the retro bash from `retrospective.md` first, never bypass with `ZUVO_SKIP_RETRO_GATE=1`.
+
+### Final Run: block (only after wrapper succeeds)
 
 ```
 Run: <ISO-8601-Z>	execute	<project>	<CQ>	<Q>	<VERDICT>	<TASKS>	<N>-tasks	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
+Logs: retros.log=ok retros.md=ok(<count> entries) runs.log=ok
 ```
 
-After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+If any append failed: `EXECUTE INCOMPLETE`, not a normal Run: line.
 
 ---
 

@@ -375,21 +375,36 @@ COMPLETION GATE CHECK
 [ ] Adversarial validation ran (--mode plan)
 [ ] Plan status is Approved (interactive) or Reviewed (async)
 [ ] Active plan pointer written to .zuvo/plans/active-plan.md
-[ ] Run: line printed and appended to log
+[ ] Retrospective bash appends EXECUTED (retros.log + retros.md) — printing markdown is not enough
+[ ] append-runlog wrapper invoked and exited 0
+[ ] Logs evidence block printed with real `tail` output
 ```
+
+**Phase order is non-negotiable.** Retro append → log append → final Run: block. Printing the Run: line + retrospective markdown without executing bash leaves the logs empty.
+
+### Retrospective (REQUIRED, before final Run: block)
+
+Follow the retrospective protocol from `retrospective.md`. Fill the 9 fields, then **execute the bash append commands** for `retros.log` and `retros.md`. Then run the Postamble: Forced Evidence block from `retrospective.md`.
+
+If gate check skips (only valid when literally 1-2 tool calls were made): print `RETRO: skipped (trivial session)` and proceed.
+
+### Append run line via wrapper (REQUIRED)
+
+```bash
+RUN_LINE="<ISO-8601-Z>\tplan\t<project>\t-\t-\t<VERDICT>\t<TASKS>\t3-phase\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>"
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
+Expected stdout: `OK: appended to runs.log (retro verified for plan on <project>)`. If `RETRO_REQUIRED` exit 2 — execute the retro bash first, never bypass with `ZUVO_SKIP_RETRO_GATE=1`.
+
+### Final Run: block (only after wrapper succeeds)
 
 ```
 Run: <ISO-8601-Z>	plan	<project>	-	-	<VERDICT>	<TASKS>	3-phase	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
+Logs: retros.log=ok retros.md=ok(<count> entries) runs.log=ok
 ```
 
-
-### Retrospective (REQUIRED)
-
-Follow the retrospective protocol from `retrospective.md`.
-Gate check → structured questions → TSV emit → markdown append.
-If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
-
-After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+If any append failed: `PLAN INCOMPLETE`, not a normal Run: line.
 
 ---
 

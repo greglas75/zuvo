@@ -434,3 +434,4 @@ Commits pending review. Auto-managed:
 - 7592b60 (2026-05-05) feat(code-audit,review): hard enforcement — same pilot pattern as db-audit + structure-audit
 - 60476dd (2026-05-05) feat(audits-tier2): hard enforcement — security/pentest/api/performance/dependency
 - 8252637 (2026-05-05) feat(audits-tier3): hard enforcement — test/env/ci/content/seo/geo/a11y/design-review
+- 20870e8 (2026-05-09) release: v1.3.105 — ship+retro forcing functions + 5 new codesift php/react tools across 34 skills

@@ -510,18 +510,33 @@ COMPLETION GATE CHECK
 [ ] Adversarial review ran (--mode spec) — not skipped
 [ ] Spec status is Approved (interactive) or Reviewed (async)
 [ ] Spec saved to docs/specs/ with spec_id populated
-[ ] Run: line printed and appended to log
+[ ] Retrospective bash appends EXECUTED (retros.log + retros.md) — printing markdown is not enough
+[ ] append-runlog wrapper invoked and exited 0
+[ ] Logs evidence block printed with real `tail` output
 ```
+
+**Phase order is non-negotiable.** Retro append → log append → final Run: block. Printing the Run: line and the retrospective markdown without executing bash leaves `~/.zuvo/retros.log`, `~/.zuvo/retros.md`, and `~/.zuvo/runs.log` empty — observed failure mode for new projects (e.g. `uptime` 2026-05-09).
+
+### Retrospective (REQUIRED, before final Run: block)
+
+Follow the retrospective protocol from `retrospective.md`. Fill the 9 fields, then **execute the bash append commands** for `retros.log` and `retros.md`. Printing the markdown section is not the retrospective — the bash execution is. Then run the Postamble: Forced Evidence block from `retrospective.md` and paste real `tail` / `stat` output.
+
+If gate check skips (only valid when literally 1-2 tool calls were made): print `RETRO: skipped (trivial session)` and proceed with `ZUVO_SKIP_RETRO_GATE=1` on the next step.
+
+### Append run line via wrapper (REQUIRED)
+
+```bash
+RUN_LINE="<ISO-8601-Z>\tbrainstorm\t<project>\t-\t-\t<VERDICT>\t-\t3-phase\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>"
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
+Capture stdout. Expected: `OK: appended to runs.log (retro verified for brainstorm on <project>)`. If `RETRO_REQUIRED` exit code 2 — go back and execute the retrospective bash, do NOT bypass with `ZUVO_SKIP_RETRO_GATE=1`.
+
+### Final Run: block (only after wrapper succeeds)
 
 ```
 Run: <ISO-8601-Z>	brainstorm	<project>	-	-	<VERDICT>	-	3-phase	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
+Logs: retros.log=ok retros.md=ok(<count> entries) runs.log=ok
 ```
 
-
-### Retrospective (REQUIRED)
-
-Follow the retrospective protocol from `retrospective.md`.
-Gate check → structured questions → TSV emit → markdown append.
-If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
-
-Run logging and retrospective writes are completion gates, not optional cleanup. Append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`, then complete the retrospective appends from `retrospective.md`. If either append fails, report it explicitly instead of silently claiming a clean completion.
+If any append failed, the block is `BRAINSTORM INCOMPLETE`, not a normal Run: line.
