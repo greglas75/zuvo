@@ -429,3 +429,8 @@ Commits pending review. Auto-managed:
 - 12893cb (2026-05-05) release: v1.3.103 — install.sh wires core.hooksPath to ~/.claude/hooks/ (self-heals stale tmp paths)
 - b7b8f3b (2026-05-05) fix(verify-audit): expand finding parser — DB-audit/security/api/pentest formats + relax per-finding stamp
 - 0012f5a (2026-05-05) fix(verify-audit): regex syntax — drop VERBOSE flag
+- ad84b75 (2026-05-05) release: v1.3.104 — antigravity hooks dedup — remove-then-add idempotent merge fixes 119-entry blowup
+- 98bea38 (2026-05-05) feat(structure-audit): hard enforcement — MANDATORY TOOL CALLS + Validity Gate + Required POSTAMBLE
+- 7592b60 (2026-05-05) feat(code-audit,review): hard enforcement — same pilot pattern as db-audit + structure-audit
+- 60476dd (2026-05-05) feat(audits-tier2): hard enforcement — security/pentest/api/performance/dependency
+- 8252637 (2026-05-05) feat(audits-tier3): hard enforcement — test/env/ci/content/seo/geo/a11y/design-review

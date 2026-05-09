@@ -39,6 +39,7 @@ codesift_tools:
     php:
       - php_project_audit          # security + ActiveRecord + N+1 + god model
       - php_security_scan          # CAP6/CAP7/CAP8
+      - resolve_php_namespace      # PSR-4 FQCN → file path (CQ4 navigation)
     kotlin:
       - analyze_sealed_hierarchy            # exhaustiveness checks for sealed types
       - find_extension_functions            # Kotlin extension fn discovery
@@ -76,6 +77,9 @@ codesift_tools:
       - react_quickstart           # component/hook inventory + critical patterns
       - analyze_hooks              # Rule of Hooks violations
       - analyze_renders            # CAP13-related re-render risk
+      - analyze_context_graph      # CAP13 unstable Provider value re-render investigation
+      - audit_compiler_readiness   # React Compiler v1.0 bailout patterns
+      - trace_component_tree       # CQ4 ownership trace for components
     # Python sub-frameworks
     django:
       - analyze_django_settings    # CQ5/CQ6 Django security
@@ -92,6 +96,8 @@ codesift_tools:
     # PHP sub-frameworks
     yii:
       - resolve_php_service        # Yii::$app-> resolution for CQ4
+      - trace_php_event            # event → listener chain (CQ4 ownership)
+      - find_php_views             # controller render() → view file (CAP6 sink trace)
     # ORMs / databases
     prisma:
       - analyze_prisma_schema      # CQ7/CQ20 (FK index, dual fields)

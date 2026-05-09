@@ -51,6 +51,7 @@ codesift_tools:
     php:
       - php_project_audit
       - php_security_scan
+      - resolve_php_namespace
     kotlin:
       - analyze_sealed_hierarchy
       - find_extension_functions
@@ -85,6 +86,9 @@ codesift_tools:
       - react_quickstart
       - analyze_hooks
       - analyze_renders
+      - analyze_context_graph
+      - audit_compiler_readiness
+      - trace_component_tree
     # Python sub-frameworks
     django:
       - analyze_django_settings
@@ -99,6 +103,8 @@ codesift_tools:
     # PHP sub-frameworks
     yii:
       - resolve_php_service
+      - trace_php_event
+      - find_php_views
     # ORMs / databases
     prisma:
       - analyze_prisma_schema

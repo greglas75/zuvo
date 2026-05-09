@@ -229,3 +229,31 @@ fi
 - Field 7 (missing_tools) is always required — at least 1 bullet or explicit "none needed"
 - Field 9 (change_proposals) is always required — at least 1, up to 5, ranked by impact. Each must use `FILE: / SECTION: / CONTENT: / RATIONALE:` format
 - No code snippets or user data values in any field — only file paths, error types, phase numbers, and structured signals
+
+## Skill-Specific Gates
+
+### ship — review-downgrade auto-friction
+
+If the calling skill is `ship` AND the recorded `Review:` depth in `SHIP COMPLETE` is lower than the threshold table required for the computed `DIFF_LOC` (e.g., DIFF_LOC=4500 but Review depth was `light` or `none`, without `--fast` having been passed by the user), then the retrospective MUST:
+
+1. Set `friction_category = skipped-review-rationalization` in the TSV line.
+2. Field 1 (`unclear`) MUST contain at least one full sentence naming the exact rationalization that drove the downgrade (e.g., "Skipped Phase 2 full review at DIFF_LOC=4500 because each Tier 6/7/8 was reviewed during creation — violates ship Safety Rule 6"). Reference Phase 2 of `skills/ship/SKILL.md`.
+3. Field 9 MUST include at least one Change Proposal targeting `skills/ship/SKILL.md` Phase 2 with a concrete tightening — generic "be more careful next time" entries do not satisfy this gate.
+
+This gate exists because the agent that just shortcut the review is the same agent writing the retro, and absent forcing the entry will be omitted via the same rationalization that caused the shortcut.
+
+## Postamble: Forced Evidence (REQUIRED)
+
+**Printing the markdown emit and the TSV emit is NOT the retrospective. The retrospective is the file write.** After filling fields 1-9 and printing the markdown section, you MUST execute the Append Commands above as actual `Bash` tool calls, then print the postamble below with REAL stdout from `tail`. Pasting fabricated output is a falsification — it will be flagged by the next `zuvo:context-audit` run because the file mtime will not match.
+
+```
+RETRO POSTAMBLE
+$ tail -1 ~/.zuvo/retros.log
+<paste actual last line — must contain the DATE you set in Field Resolution>
+$ grep -c '^<!-- RETRO -->' ~/.zuvo/retros.md
+<paste integer count — must be ≥1 and incremented by 1 from session start>
+$ stat -f '%Sm' ~/.zuvo/retros.md 2>/dev/null || stat -c '%y' ~/.zuvo/retros.md 2>/dev/null
+<paste mtime — must be within the last few minutes of session wall clock>
+```
+
+If any of the three commands errors, the retrospective was not appended — re-execute the Append Commands block. Do not proceed to `append-runlog` until the postamble shows real output. The `append-runlog` wrapper will refuse the runs.log write anyway if `retros.log` lacks a matching SKILL+PROJECT entry, so skipping the postamble only delays the failure.

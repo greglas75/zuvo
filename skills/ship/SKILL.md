@@ -145,14 +145,34 @@ WORK_FILES = <files being touched>
    |----------|----------------|
    | < 20 | **Fast path** — skip review entirely |
    | 20 - 100 | Dispatch `review-light` agent (read `skills/ship/agents/review-light.md`) |
-   | 100+ | Dispatch `review-light` + invoke `zuvo:review` as inline agent (includes adversarial review pass at TIER 2+) + invoke `zuvo:design-review` if frontend files changed (`.tsx`, `.jsx`, `.css`, `.scss`, `.html`) |
-   | 300+ | All of the above + dispatch `coverage-check` agent (read `skills/ship/agents/coverage-check.md`). `zuvo:review` runs at TIER 3 with automatic adversarial pass. |
+   | 100+ | Dispatch `review-light` + invoke `zuvo:review` via the Skill tool (`Skill(skill="zuvo:review")`) — runs adversarial pass at TIER 2+ + invoke `Skill(skill="zuvo:design-review")` if frontend files changed (`.tsx`, `.jsx`, `.css`, `.scss`, `.html`) |
+   | 300+ | All of the above + dispatch `coverage-check` agent (read `skills/ship/agents/coverage-check.md`). `Skill(skill="zuvo:review")` runs at TIER 3 with automatic adversarial pass. |
 
    **Flag overrides (user-provided ONLY — agent must NEVER self-apply):**
    - `--fast`: always use fast path regardless of diff size. Must be in `$ARGUMENTS` from the user's invocation.
    - `--full`: always use 300+ path (all reviews + coverage check) regardless of diff size.
 
-   **Anti-rationalization:** If the diff is 300+ LOC and `--fast` was NOT passed, you MUST run the full pipeline. Do not propose "fast path because it's late / it's too big / execute already reviewed / most changes are trivial." The threshold exists precisely for large releases where the temptation to skip is strongest.
+   **Invocation form is non-negotiable.** When the threshold says "invoke `zuvo:review`", you MUST issue an actual `Skill(skill="zuvo:review")` tool call. Reading the review skill, simulating it mentally, summarizing findings from prior commits, or asserting that `zuvo:execute` / per-task review "covered it" does NOT count as invocation. The tool call is the only acceptable evidence.
+
+   **MANDATORY: Phase 2 Anti-Rationalization Attestation.** Before proceeding to step 3, print this block verbatim with your honest answers. If ANY box is left unchecked because the statement is true (i.e., you HAD that thought), you MUST escalate review depth to `full+coverage` regardless of the LOC table — and record the escalation reason in the SHIP COMPLETE block.
+
+   ```
+   PHASE 2 ATTESTATION (DIFF_LOC=<N>, threshold-required depth=<depth>)
+   I confirm I am NOT rationalizing a downgrade with any of the following:
+   [ ] "redundant because each task / tier / commit was already reviewed during creation"
+   [ ] "zuvo:execute / zuvo:plan / zuvo:build already covered this — running review again is duplicate work"
+   [ ] "most of this diff is boilerplate / merge artifacts / generated code / formatting"
+   [ ] "the integration is trivial — only conflicts were in template literals / imports / config"
+   [ ] "running a full review feels excessive for this release"
+   [ ] "I can mentally substitute review by re-reading the diff myself"
+   DIFF_LOC scope confirmation:
+   [ ] DIFF_LOC counts ALL commits since the last tag (integration scope), not just "my feature"
+   Decision:
+   - All boxes checked → proceed at threshold-required depth.
+   - ANY unchecked → escalate to full+coverage; reason: <which thought you had>.
+   ```
+
+   The forbidden thoughts above are the EXACT rationalizations that have caused past ship runs to skip review on integrated multi-tier diffs. They are listed so you can recognize them, not so you can pattern-match around them. If your reasoning resembles ANY of these — even with different wording — treat the corresponding box as unchecked.
 
 3. **Agent dispatch — review-light:**
    - Read `skills/ship/agents/review-light.md` for the agent's instructions.
@@ -355,6 +375,8 @@ Field notes:
 
 ## Phase 5: Output
 
+**Phase 5 order is non-negotiable.** Retro append → log append → print SHIP COMPLETE. Printing SHIP COMPLETE before the appends are verified makes the SHIP run unauditable. Past failure mode: agents printed the markdown retro section + a fake `Run:` line in chat without ever executing the bash append commands, leaving `~/.zuvo/retros.log`, `~/.zuvo/retros.md`, and `~/.zuvo/runs.log` empty.
+
 ## Completion Gate Check
 
 Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
@@ -362,15 +384,46 @@ Before printing the final output block, verify every item. Unfinished items = pi
 ```
 COMPLETION GATE CHECK
 [ ] DIFF_LOC computed from last tag and review threshold applied
+[ ] Phase 2 attestation block printed (all boxes considered, escalation applied if any unchecked)
 [ ] Review depth recorded: none/light/full/full+coverage
+[ ] If invocation form was zuvo:review — actual Skill(skill="zuvo:review") tool call exists in the tool log (not simulated, not summarized)
 [ ] Tests ran and passed before bump
 [ ] Version bumped with CHANGELOG section added
 [ ] Only version files staged (never git add -A)
 [ ] memory/last-ship.json written
-[ ] Run: line printed and appended to log
+[ ] Retrospective bash appends EXECUTED (retros.log + retros.md) — printing markdown is not enough
+[ ] append-runlog wrapper invoked and exited 0
+[ ] Logs evidence block printed with real `tail` output
 ```
 
-### 1. Print SHIP COMPLETE block
+### 1. Run retrospective (REQUIRED, before SHIP COMPLETE)
+
+Follow the retrospective protocol from `retrospective.md`. Fill the 9 fields, then **execute the bash append commands** for `retros.log` and `retros.md`. Printing the markdown section is not the retrospective — the bash execution is.
+
+If gate check skips (only valid when literally 1-2 tool calls were made): print `RETRO: skipped (trivial session)` and proceed to step 2 with the `ZUVO_SKIP_RETRO_GATE=1` override.
+
+### 2. Append run line via wrapper (REQUIRED)
+
+Compose `RUN_LINE` per `run-logger.md`, then append via the gate wrapper. **Never `>>` directly to `runs.log`** — the wrapper is the gate that verifies the retro entry exists.
+
+```bash
+RUN_LINE="<ISO-8601-Z>\tship\t<project>\t-\t-\t<VERDICT>\t-\t5-phase\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>"
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
+Capture the wrapper's stdout. Expected: `OK: appended to runs.log (retro verified for ship on <project>)`. If it exits non-zero with `RETRO_REQUIRED`, the retro was not actually appended — go back to step 1 and execute the bash, do not retry by adding `ZUVO_SKIP_RETRO_GATE=1`.
+
+### 3. Print Logs evidence block (REQUIRED)
+
+Run these three commands and paste the actual stdout. This is the audit trail that proves the writes happened — agents cannot fabricate it without a corresponding tool call in the transcript.
+
+```bash
+tail -1 ~/.zuvo/retros.log
+grep -c '^<!-- RETRO -->' ~/.zuvo/retros.md
+tail -1 ~/.zuvo/runs.log
+```
+
+### 4. Print SHIP COMPLETE block
 
 ```
 SHIP COMPLETE
@@ -380,24 +433,14 @@ SHIP COMPLETE
   Tag:         v<new-version> / skipped (--no-tag)
   Diff:        <N> LOC (<review-depth> path)
   Tests:       PASS (<N> passed, <N> failed)
-  Review:      <depth> (<details>)
+  Review:      <depth> (<details>) [escalated-from <table-depth> due to attestation: <reason>]
   Changelog:   CHANGELOG.md updated / skipped
   Push:        pushed to origin/<branch> / skipped (non-interactive) / skipped (user declined)
   PR:          #<N> / — (direct flow) / skipped (gh unavailable)
   Artifact:    memory/last-ship.json written locally
+  Logs:        retros.log=ok retros.md=ok(<count> entries) runs.log=ok  [paste tails from step 3]
 
   Next: zuvo:deploy (when ready)
-
-Run: <ISO-8601-Z>\tship\t<project>\t-\t-\t<VERDICT>\t-\t5-phase\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
-
-
-### Retrospective (REQUIRED)
-
-Follow the retrospective protocol from `retrospective.md`.
-Gate check → structured questions → TSV emit → markdown append.
-If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
-
-After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 ```
 
-Render each line conditionally based on actual outcomes (`pushed`, `tagPushed`, `--no-tag` flag). Do not show success indicators for actions that were skipped.
+Render each line conditionally based on actual outcomes (`pushed`, `tagPushed`, `--no-tag` flag). Do not show success indicators for actions that were skipped. The `Logs:` line MUST reflect actual file state from step 3 — if any append failed, the block is `SHIP INCOMPLETE`, not `SHIP COMPLETE`.

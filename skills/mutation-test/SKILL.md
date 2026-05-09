@@ -26,7 +26,7 @@ codesift_tools:
     typescript: [get_type_info]
     javascript: []
     python: [python_audit, analyze_async_correctness]
-    php: [php_project_audit, php_security_scan]
+    php: [php_project_audit, php_security_scan, resolve_php_namespace]
     kotlin: [analyze_sealed_hierarchy, find_extension_functions, trace_flow_chain, trace_suspend_chain, trace_compose_tree, analyze_compose_recomposition, trace_hilt_graph, trace_room_schema, analyze_kmp_declarations, extract_kotlin_serialization_contract]
     nestjs: [nest_audit]
     nextjs: [framework_audit, nextjs_route_map]
