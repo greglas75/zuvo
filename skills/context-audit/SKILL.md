@@ -302,6 +302,12 @@ If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 Run: <ISO-8601-Z>	context-audit	<project>	-	-	<VERDICT>	-	<mode>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 ```
 
-After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
+**Append via wrapper (REQUIRED).** Never `>>` directly to `~/.zuvo/runs.log` — the wrapper is the gate that verifies a retro entry exists for this run. Order: retro bash executed → wrapper invoked → completion claimed.
+
+```bash
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
+Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <project>)`. If exit 2 with `RETRO_REQUIRED` — go execute the retro bash from `retrospective.md` first; never bypass with `ZUVO_SKIP_RETRO_GATE=1`. After the wrapper succeeds, print a `Logs:` evidence line (`tail -1 ~/.zuvo/retros.log`, `grep -c "^<!-- RETRO -->" ~/.zuvo/retros.md`, `tail -1 ~/.zuvo/runs.log`) before claiming completion. Printing the markdown retro section without executing the bash leaves all three log files empty.
 
 Include sizes are captured automatically by the `track-includes.sh` PostToolUse hook and written to runs.log field 12 as `name:bytes` pairs. No separate metrics file or manual collection needed.

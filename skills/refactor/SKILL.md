@@ -650,7 +650,15 @@ Run: <ISO-8601-Z>\trefactor\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<DURATION
 ------------------------------------
 ```
 
-Append the `Run:` line to log file per `run-logger.md`. VERDICT: PASS/WARN/FAIL/BLOCKED/ABORTED. CQ: post-audit score. Q: test score or `-`. TASKS: files modified+created. DURATION: phase reached (e.g., `phase-3`). NOTES: type + target (max 80 chars).
+**Append via wrapper (REQUIRED).** Never `>>` directly to `~/.zuvo/runs.log` — the wrapper is the gate that verifies a retro entry exists for this run. Order: retro bash executed → wrapper invoked → completion claimed.
+
+```bash
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
+Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <project>)`. If exit 2 with `RETRO_REQUIRED` — go execute the retro bash from `retrospective.md` first; never bypass with `ZUVO_SKIP_RETRO_GATE=1`. After the wrapper succeeds, print a `Logs:` evidence line (`tail -1 ~/.zuvo/retros.log`, `grep -c "^<!-- RETRO -->" ~/.zuvo/retros.md`, `tail -1 ~/.zuvo/runs.log`) before claiming completion. Printing the markdown retro section without executing the bash leaves all three log files empty.
+
+Field hints — VERDICT: PASS/WARN/FAIL/BLOCKED/ABORTED. CQ: post-audit score. Q: test score or `-`. TASKS: files modified+created. DURATION: phase reached (e.g., `phase-3`). NOTES: type + target (max 80 chars).
 
 ---
 
@@ -777,7 +785,15 @@ Queue: [path to queue file]
 Run: <ISO-8601-Z>\trefactor\t<project>\t<CQ>\t-\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
 ```
 
-Append `Run:` line to log per `run-logger.md`. CQ: aggregate (e.g., `avg 16/18`) or `-`. TASKS: files completed. DURATION: `batch-N`. NOTES: `batch X/N completed Y failed` (max 80 chars).
+**Append via wrapper (REQUIRED).** Never `>>` directly to `~/.zuvo/runs.log` — the wrapper is the gate that verifies a retro entry exists for this run. Order: retro bash executed → wrapper invoked → completion claimed.
+
+```bash
+echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
+Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <project>)`. If exit 2 with `RETRO_REQUIRED` — go execute the retro bash from `retrospective.md` first; never bypass with `ZUVO_SKIP_RETRO_GATE=1`. After the wrapper succeeds, print a `Logs:` evidence line (`tail -1 ~/.zuvo/retros.log`, `grep -c "^<!-- RETRO -->" ~/.zuvo/retros.md`, `tail -1 ~/.zuvo/runs.log`) before claiming completion. Printing the markdown retro section without executing the bash leaves all three log files empty.
+
+Field hints (batch mode) — CQ: aggregate (e.g., `avg 16/18`) or `-`. TASKS: files completed. DURATION: `batch-N`. NOTES: `batch X/N completed Y failed` (max 80 chars).
 
 ---
 
