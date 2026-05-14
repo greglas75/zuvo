@@ -477,24 +477,11 @@ install_codex() {
     ok "Installed to ~/.codex/plugins/cache/zuvo-marketplace/zuvo/$VERSION (Codex plugin cache)"
   fi
 
-  # Step 10: Strip flat install when Cursor is present (dedup).
-  # Cursor v3 scans **/.codex/skills/** AND **/.claude/plugins/** without
-  # name-based deduplication. With both populated, every zuvo skill appears
-  # twice in Cursor's /skills picker. Keep flat for Codex-only setups; remove
-  # it when Cursor coexists (Step 9 above ensures Codex plugin cache has it).
-  if [[ -d "$HOME/.cursor" && -d "$HOME/.codex/skills" ]]; then
-    local removed=0
-    for skill_dir in "$HOME/.codex/skills"/*/; do
-      local skill_md="$skill_dir/SKILL.md"
-      if [[ -f "$skill_md" ]] && grep -q 'Zuvo --' "$skill_md" 2>/dev/null; then
-        rm -rf "$skill_dir"
-        removed=$((removed + 1))
-      fi
-    done
-    if [[ "$removed" -gt 0 ]]; then
-      ok "Removed $removed flat zuvo skills from ~/.codex/skills/ (Cursor dedup; Codex still loads from plugin cache)"
-    fi
-  fi
+  # Codex desktop app reads skills from ~/.codex/skills/ directly (its
+  # Skills tab enumerates this dir). Plugin cache copy above is for the
+  # Codex CLI / future compat. Cursor v3 reads its own ~/.cursor/skills-cursor/
+  # (per cursor-managed-skills-manifest.json) and does NOT scan ~/.codex/skills/,
+  # so there is no cross-tool collision to dedup against.
 
   ok "Codex updated"
 }

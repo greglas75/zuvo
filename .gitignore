@@ -12,3 +12,6 @@ memory/reviews/
 
 # zuvo:leads output (per-user lead lists; not committed)
 docs/leads/
+
+# Auto-managed local review queue
+docs/review-queue.md
