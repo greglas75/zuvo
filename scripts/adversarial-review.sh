@@ -38,6 +38,7 @@ ARTIFACT_PATH=""
 INPUT_MODE="stdin"  # stdin | diff | files
 DRY_RUN=false
 EXCLUDE_PROVIDER=""  # --exclude: skip this provider (used by --rotate to avoid repeat)
+EXCLUDE_LAST=""      # --exclude-last: cross-call rotation handoff (D4)
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -45,7 +46,19 @@ while [[ $# -gt 0 ]]; do
     --multi)     MULTI_MODE="multi"; shift ;;
     --single)    MULTI_MODE="single"; shift ;;
     --rotate)    MULTI_MODE="rotate"; shift ;;
-    --exclude)   EXCLUDE_PROVIDER="$2"; shift 2 ;;
+    --exclude)
+      # Reject next-arg-is-a-flag (prevents `--exclude --json` from swallowing --json).
+      # Allow empty string explicitly (treated as noop downstream).
+      if [[ $# -lt 2 || ( -n "${2:-}" && "$2" == -* ) ]]; then
+        echo "ERROR: --exclude requires a value (provider name or empty string), got '${2:-<missing>}'." >&2; exit 2
+      fi
+      EXCLUDE_PROVIDER="$2"; shift 2 ;;
+    --exclude-last)
+      # Same flag-swallow guard as --exclude. Empty string = explicit noop (test contract).
+      if [[ $# -lt 2 || ( -n "${2:-}" && "$2" == -* ) ]]; then
+        echo "ERROR: --exclude-last requires a value (provider name or empty string), got '${2:-<missing>}'." >&2; exit 2
+      fi
+      EXCLUDE_LAST="$2"; shift 2 ;;
     --mode)      REVIEW_MODE="$2"; shift 2 ;;
     --json)      OUTPUT_FORMAT="json"; shift ;;
     --context)   CONTEXT_HINT="$2"; shift 2 ;;
@@ -64,6 +77,8 @@ Provider options:
   --rotate         Random single: shuffle providers, pick one
                    REQUIRES 2+ providers (else exit 3)
   --exclude P      Skip provider P (e.g. host self-exclusion)
+  --exclude-last P Cross-call rotation: skip P (caller threads providers_used[0]
+                   from prior JSON). Stale value → stderr warning, proceeds.
   --provider P     Auto: codex-5.3, gemini, cursor-agent, claude
                    Manual: codex-5.4, gemini-api, codestral
 
@@ -582,6 +597,19 @@ fi
 # Previously only applied in --rotate mode — now filters in ALL modes.
 if [[ -n "$EXCLUDE_PROVIDER" && -n "$PROVIDERS" ]]; then
   PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -v "^${EXCLUDE_PROVIDER}$" | tr '\n' ' ' | sed 's/ *$//')
+fi
+
+# D4: --exclude-last filters out the named provider for cross-call rotation
+# (caller threads providers_used[0] from prior JSON output back as --exclude-last).
+# Validates: if non-empty and not in current PROVIDERS, log stderr warning but
+# proceed (allows stale rotation state to not break the call).
+if [[ -n "$EXCLUDE_LAST" && -n "$PROVIDERS" ]]; then
+  if echo "$PROVIDERS" | tr ' ' '\n' | grep -qx "$EXCLUDE_LAST"; then
+    PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -v "^${EXCLUDE_LAST}$" | tr '\n' ' ' | sed 's/ *$//')
+    echo "  Excluding from rotation: $EXCLUDE_LAST (--exclude-last)" >&2
+  else
+    echo "  WARN: --exclude-last value not in current provider list: $EXCLUDE_LAST (proceeding with full set)" >&2
+  fi
 fi
 
 # D2: ATTEMPTED_COUNT = post-exclusion candidate count. Used by JSON status logic
