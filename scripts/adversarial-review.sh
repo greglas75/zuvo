@@ -575,6 +575,11 @@ if [[ -n "$EXCLUDE_PROVIDER" && -n "$PROVIDERS" ]]; then
   PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -v "^${EXCLUDE_PROVIDER}$" | tr '\n' ' ' | sed 's/ *$//')
 fi
 
+# D2: ATTEMPTED_COUNT = post-exclusion candidate count. Used by JSON status logic
+# and observability log. Set early so we have it regardless of which exit path runs.
+ATTEMPTED_COUNT=$(echo "$PROVIDERS" | wc -w | tr -d ' ')
+TIMEOUT_COUNT=${TIMEOUT_COUNT:-0}
+
 if [[ -z "$PROVIDERS" ]]; then
   if [[ -n "$EXCLUDE_PROVIDER" ]]; then
     cat >&2 <<EOF
@@ -1138,9 +1143,10 @@ if [[ -z "$ALL_RESULTS" ]]; then
         --arg status "timeout" \
         --arg mode "$REVIEW_MODE" \
         --arg providers "$PROVIDERS" \
+        --argjson attempted "$ATTEMPTED_COUNT" \
         --argjson count "$TIMEOUT_COUNT" \
         --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        '{status: $status, mode: $mode, providers_attempted: $providers, timeout_count: $count, findings: [], date: $date}')
+        '{status: $status, mode: $mode, providers_attempted: $providers, attempted_count: $attempted, timeout_count: $count, provider_count: 0, findings: [], date: $date}')
     else
       FINAL_OUTPUT="Adversarial review: skipped (timeout)"
     fi
@@ -1231,15 +1237,27 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     fi
   done
 
+  # D2: derive status from provider counts. ok = all attempted succeeded; partial
+  # = some succeeded, some did not (timeout or fail); timeout-only is handled in
+  # the all-failed branch above. ATTEMPTED_COUNT was set after EXCLUDE filtering.
+  # Strict equality — PROVIDER_COUNT > ATTEMPTED_COUNT would indicate a counting
+  # bug elsewhere and should be visible (treat as partial so it stands out).
+  if [[ "$PROVIDER_COUNT" -eq "$ATTEMPTED_COUNT" ]]; then
+    DERIVED_STATUS="ok"
+  else
+    DERIVED_STATUS="partial"
+  fi
   FINAL_OUTPUT=$(jq -n \
-    --arg status "ok" \
+    --arg status "$DERIVED_STATUS" \
     --arg mode "$REVIEW_MODE" \
     --arg providers "$PROVIDERS_USED" \
     --argjson count "$PROVIDER_COUNT" \
+    --argjson attempted "$ATTEMPTED_COUNT" \
+    --argjson timeouts "$TIMEOUT_COUNT" \
     --argjson input_size "${#INPUT}" \
     --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --argjson results "$json_results" \
-    '{status: $status, mode: $mode, providers_used: $providers, provider_count: $count, input_size: $input_size, date: $date, results: $results}')
+    '{status: $status, mode: $mode, providers_used: $providers, provider_count: $count, attempted_count: $attempted, timeout_count: $timeouts, input_size: $input_size, date: $date, results: $results}')
 else
   # Text output with banners
   FINAL_OUTPUT=$(cat <<HEADER
