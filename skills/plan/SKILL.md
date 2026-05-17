@@ -320,6 +320,13 @@ Wait for complete output. Then apply fix policy:
 - **WARNING** that does NOT change execution semantics or coverage → append as note to the affected task and record it in `## Review Trail`
 - **INFO** → ignore
 
+**Status handling (D2+D3+D4, 2026-05-17):** parse `--json` output (or the script's text-mode summary banners) for non-`ok` status:
+- **`status: "single_provider_only"` (exit 3)** — `--rotate`/`--multi` requested but only 1 provider remains after host exclusion. Re-invoke with `--single` and record in `## Review Trail`: `Cross-model validation: single-provider-only (note: install additional provider for diversity)`. Plan may still advance to Reviewed — single-provider validation is a real signal, just narrower.
+- **`status: "timeout"` (exit 124)** — ALL providers timed out. Record `Cross-model validation: skipped (timeout)` and proceed.
+- **`status: "partial"` (exit 0)** — `timeout_count > 0` but at least one provider returned. Record in `## Review Trail`: `Cross-model validation: partial (N/M providers; M-N timed out)`. Apply fix policy to the findings that did come back. Surface `timeout_count` to user so reduced coverage is visible.
+
+**Cross-call rotation:** if a second adversarial pass is needed after rev bump, capture `providers_used[0]` from pass-1 JSON and pass it via `--exclude-last <name>` on pass-2 to force a different provider's perspective on the revised plan.
+
 Do not set `status: Reviewed` unless the current plan revision has:
 1. a plan-reviewer `APPROVED` verdict,
 2. a cross-model validation result or explicit script-generated skip reason, and

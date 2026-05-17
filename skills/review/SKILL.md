@@ -566,6 +566,14 @@ If `adversarial-review` not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/z
 
 **Self-review escalation:** If SELF-REVIEW marker set in 1.1, pass `--all-providers` flag.
 
+**Status handling (D2+D3+D4, 2026-05-17):** When the script exits non-zero or returns non-`ok` JSON status, branch:
+
+- **exit 3 / `single_provider_only`** — `--rotate` was requested but post-host-exclusion only 1 provider remains. Two options: re-invoke with `--single` (accept reduced consensus and note it in the review header) OR skip this pass and note `Adversarial: skipped (single_provider_only — install second provider for diversity)` in the review output.
+- **exit 124 / `status: "timeout"`** — ALL providers timed out. Record `Adversarial: skipped (timeout)` and continue to next pass (or finalize if last pass).
+- **`status: "partial"` with exit 0** — some providers returned, others did not. Surface `timeout_count` in the review header (e.g. `Adversarial pass 1: cursor-agent (1 of 2 providers; gemini timed out)`) so the user sees coverage was reduced.
+
+**Cross-call rotation:** between passes, capture `providers_used[0]` from each pass's JSON output (if using `--json` for parsing) and thread it into the next `--rotate` call via `--exclude-last <name>`. Forces a different provider on each successive pass even when host exclusion limits the pool.
+
 #### REPORT mode — sequential finding (no fixes)
 
 Each pass uses `--rotate` (script picks a random unused provider). Prepend prior findings summary so each provider targets NEW issues.

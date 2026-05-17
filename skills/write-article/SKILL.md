@@ -218,7 +218,14 @@ If topic is medical, legal, or financial AND `--tone` is `casual` or `marketing`
 
 ### 4.3 Cross-Model Adversarial Review
 
-Run: `adversarial-review --json --mode article --files "[draft path]"` (fallback: `--json --mode audit` with WARNING). If not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`. CRITICAL → fix. WARNING → fix if localized. INFO → ignore. If the script returns `status: "timeout"` or exit `124`, record `Adversarial review: skipped (timeout)` and continue without blocking publication.
+Run: `adversarial-review --json --mode article --files "[draft path]"` (fallback: `--json --mode audit` with WARNING). If not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`. CRITICAL → fix. WARNING → fix if localized. INFO → ignore.
+
+**Status handling (D2+D3+D4, 2026-05-17):** parse the JSON `status` field:
+- **`status: "timeout"` / exit `124`** — record `Adversarial review: skipped (timeout)` and continue without blocking publication.
+- **`status: "single_provider_only"` / exit `3`** — only 1 provider available after host exclusion. Re-invoke with `--single` (still useful for content quality) OR record `Adversarial review: skipped (single_provider_only)` and continue. Do NOT block publication.
+- **`status: "partial"` / exit `0`** — some providers returned, `timeout_count > 0`. Continue with partial findings; surface `timeout_count` in the article delivery log so reduced coverage is visible.
+
+**Cross-call rotation (multi-pass flows like content-expand):** capture `providers_used[0]` from pass-1 JSON, thread to pass 2 via `--exclude-last <name>` so the second pass uses a different provider perspective.
 
 ---
 

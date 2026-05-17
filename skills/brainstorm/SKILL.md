@@ -463,6 +463,13 @@ Wait for complete output. Then update the spec's `## Adversarial Review` section
 - **WARNING** (missing edge case, vague AC) → append actionable items to `Open Questions` or explicitly resolve them in the spec; set `adversarial_review: warnings`
 - **INFO** → summarize briefly in `## Adversarial Review`
 
+**Status handling (D2+D3+D4, 2026-05-17):** the script may return non-`ok` JSON status:
+- **`status: "single_provider_only"` (exit 3)** — host self-exclusion left only 1 external provider when `--rotate`/`--multi` was requested. Re-invoke with `--single` and note in the spec: `adversarial_review: single-provider-only (install additional provider for diversity)`. Do NOT block spec approval — single-provider review is still a real signal, just narrower.
+- **`status: "timeout"` (exit 124)** — ALL providers timed out. Set `adversarial_review: skipped-timeout` and proceed.
+- **`status: "partial"` (exit 0)** — some providers returned, others timed out (`timeout_count > 0`). Set `adversarial_review: partial (N/M providers)` and surface the timeout_count in the spec's `## Adversarial Review` section so reviewers know coverage was reduced.
+
+**Cross-call rotation (multi-pass adversarial):** for specs that warrant 2 adversarial passes (CRITICAL findings in pass 1), capture `providers_used[0]` from the pass-1 JSON output and thread it via `--exclude-last <name>` into pass 2 — forces a different provider perspective on the revised spec.
+
 The spec MUST NOT transition from `Reviewed` to `Approved` until the `## Adversarial Review` section exists and `adversarial_review` is no longer `pending`.
 
 ### Step 4: User Approval
