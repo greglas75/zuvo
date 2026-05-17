@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# mock-timeout — Mock provider that sleeps long enough to be killed by GNU timeout.
+# Designed to test the timeout-handling path. MOCK_HANG_SECONDS overridable.
+cat >/dev/null
+sleep "${MOCK_HANG_SECONDS:-300}"
+echo "should-not-reach-here"
+exit 0

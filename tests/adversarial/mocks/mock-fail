@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# mock-fail — Mock provider that exits 1 silently (no output).
+cat >/dev/null
+exit 1

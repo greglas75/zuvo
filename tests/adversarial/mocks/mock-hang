@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# mock-hang — Mock provider that hangs forever (tests SIGTERM cleanup paths).
+cat >/dev/null
+sleep 99999
+exit 0

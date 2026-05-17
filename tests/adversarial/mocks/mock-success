@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# mock-success — Mock provider that returns canned valid JSON and exits 0.
+# Consumes stdin (review prompt) but ignores it.
+cat >/dev/null
+cat <<'EOF'
+{"findings":[]}
+EOF
+exit 0

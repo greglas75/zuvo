@@ -519,6 +519,15 @@ fi
 # ─── Provider detection ─────────────────────────────────────────
 
 detect_providers() {
+  # Test-only escape hatch (must be first): when BOTH ZUVO_ADVERSARIAL_TEST_HARNESS=1
+  # AND ZUVO_REVIEW_TEST_PROVIDERS are set, bypass CLI auto-detection and return the
+  # configured list verbatim. Two-variable guard prevents accidental activation by a
+  # single leaked/compromised env var. Used only by tests/adversarial/ harness.
+  if [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-}" == "1" && -n "${ZUVO_REVIEW_TEST_PROVIDERS:-}" ]]; then
+    echo "$ZUVO_REVIEW_TEST_PROVIDERS"
+    return 0
+  fi
+
   # Returns space-separated list of available providers in priority order
   local providers=""
 
@@ -821,9 +830,27 @@ provider_model() {
   esac
 }
 
+run_mock() {
+  # Test-only: invoke a mock-* provider on PATH directly. The provider name IS the
+  # binary name. Same two-variable guard as detect_providers — refuses to dispatch
+  # mock-* unless ZUVO_ADVERSARIAL_TEST_HARNESS=1 is explicitly set, even if the
+  # provider name made it into the candidate list somehow.
+  if [[ "${ZUVO_ADVERSARIAL_TEST_HARNESS:-}" != "1" ]]; then
+    echo "[mock dispatch] refused: ZUVO_ADVERSARIAL_TEST_HARNESS not set" >&2
+    return 2
+  fi
+  local mock_bin="$1"
+  if ! command -v "$mock_bin" &>/dev/null; then
+    echo "[mock dispatch] $mock_bin not found on PATH" >&2
+    return 2
+  fi
+  printf '%s' "$REVIEW_PROMPT" | timeout "${PROVIDER_TIMEOUT:-240}" "$mock_bin"
+}
+
 dispatch_provider() {
   local provider="$1"
   case "$provider" in
+    mock-*)        run_mock "$provider" ;;
     codex-5.4)     run_codex_54 ;;
     codex-5.3)     run_codex_53 ;;
     cursor-agent)  run_cursor_agent ;;

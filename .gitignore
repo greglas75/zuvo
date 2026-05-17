@@ -15,3 +15,4 @@ docs/leads/
 
 # Auto-managed local review queue
 docs/review-queue.md
+tests/adversarial/.tmp/
