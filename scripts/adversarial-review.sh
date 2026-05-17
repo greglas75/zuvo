@@ -58,12 +58,21 @@ while [[ $# -gt 0 ]]; do
 Usage: adversarial-review.sh [OPTIONS] [--diff REF] [--files "path"]
 
 Provider options:
-  (default)        Multi: run ALL available providers
+  (default)        Multi: run ALL available providers (best-effort with 1)
+  --multi          Explicit multi: REQUIRES 2+ providers (else exit 3)
   --single         First-success: stop after first provider
   --rotate         Random single: shuffle providers, pick one
-  --exclude P      Skip provider P (use with --rotate to avoid repeats)
+                   REQUIRES 2+ providers (else exit 3)
+  --exclude P      Skip provider P (e.g. host self-exclusion)
   --provider P     Auto: codex-5.3, gemini, cursor-agent, claude
                    Manual: codex-5.4, gemini-api, codestral
+
+Exit codes:
+  0    success (or partial: some providers timed out, others succeeded)
+  1    no provider available (none detected/installed)
+  2    all providers failed (non-timeout failures)
+  3    single_provider_only (--multi/--rotate requested but <2 providers)
+  124  timeout (all providers timed out)
 
 Review modes:
   --mode code      (default) General code review
@@ -803,11 +812,49 @@ run_gemini_api() {
 
 # ─── Determine mode ────────────────────────────────────────────
 
+# Capture caller's original intent before mode normalization (rotate→single).
+# Used by D3 single-provider refusal: --multi/--rotate signal explicit diversity
+# request; falling back silently to single-provider violates that intent.
+REQUESTED_MODE="$MULTI_MODE"
+
 # If --provider is set, always single. Otherwise: default is multi.
+# REQUESTED_MODE intentionally stays empty for the implicit-default case so D3
+# refusal only fires when the user EXPLICITLY asked for diversity (--multi or
+# --rotate). Implicit-default with 1 provider keeps the historical best-effort
+# behavior (run the single provider, no surprise).
 if [[ -n "$PROVIDER" ]]; then
   MULTI_MODE="single"
+  REQUESTED_MODE="single"   # explicit --provider opts into single-provider risk
 elif [[ -z "$MULTI_MODE" ]]; then
   MULTI_MODE="multi"
+  # REQUESTED_MODE stays empty — see comment above.
+fi
+
+# D3: hard refusal when post-exclusion provider count < 2 AND caller EXPLICITLY
+# requested multi-provider diversity (--multi or --rotate). Implicit-default does
+# NOT refuse — REQUESTED_MODE stays empty in that path so a 1-provider host keeps
+# the historical best-effort behavior. Exit code 3 = single_provider_only domain
+# error (distinct from 1=no-provider, 2=provider-failed, 124=timeout).
+if [[ "$ATTEMPTED_COUNT" -lt 2 && "$REQUESTED_MODE" =~ ^(multi|rotate)$ ]]; then
+  cat >&2 <<EOF
+ERROR: single_provider_only — --${REQUESTED_MODE} requires 2+ providers but only $ATTEMPTED_COUNT available after exclusions${EXCLUDE_PROVIDER:+ (host/--exclude: $EXCLUDE_PROVIDER)}.
+Options:
+  1. Install a second provider (codex, gemini, cursor-agent, or claude CLI)
+  2. Use --single to accept single-provider review explicitly
+  3. Use --provider <name> to bypass multi-provider intent
+EOF
+  if [[ "$OUTPUT_FORMAT" == "json" ]]; then
+    jq -n \
+      --arg status "single_provider_only" \
+      --arg mode "$REVIEW_MODE" \
+      --arg requested "$REQUESTED_MODE" \
+      --arg providers "$PROVIDERS" \
+      --argjson attempted "$ATTEMPTED_COUNT" \
+      --arg excluded "$EXCLUDE_PROVIDER" \
+      --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      '{status: $status, mode: $mode, requested: $requested, providers_available: $providers, attempted_count: $attempted, excluded: $excluded, findings: [], date: $date}'
+  fi
+  exit 3
 fi
 
 # Rotate mode: shuffle provider list, exclude previous, then behave like single
