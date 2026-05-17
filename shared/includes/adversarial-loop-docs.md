@@ -140,4 +140,30 @@ If provider returns empty: output `Adversarial review: skipped (provider returne
 If the script times out after provider launch:
 - text mode: output `Adversarial review: skipped (timeout)` and continue
 - `--json` mode: return a compact object with `status: "timeout"` and `findings: []`
-- exit code should be `124` so callers can distinguish timeout from ordinary provider failure
+- exit code `124` ONLY when ALL providers timed out (`provider_count == 0`). Partial timeouts (some providers succeeded) return exit 0 with `status: "partial"` — see Status enum below.
+
+## Status enum (D2 + D3, adversarial-robustness 2026-05-17)
+
+The script's JSON `status` field reports the run's outcome. Skills should branch on it. Notable: exit code 124 means ALL providers timed out (use with `--single` to retry); exit code 3 means `single_provider_only` (caller asked for diversity but only 1 provider available).
+
+| JSON `status` | Exit code | Meaning | Caller action |
+|---------------|-----------|---------|---------------|
+| `ok` | 0 | All requested providers returned a usable artifact | normal delivery |
+| `partial` | 0 | `0 < provider_count < attempted_count` — some succeeded, some did not | continue, but surface `timeout_count` + `provider_count` in user-visible output (reduced consensus is a quality signal) |
+| `timeout` | 124 | ALL providers timed out (`provider_count == 0`, `timeout_count == attempted_count`) | record `Adversarial review: skipped (timeout)` and continue — no inline retry (D1 removed the truncated-retry path; callers wanting recovery use `--rotate` + `--exclude-last`) |
+| `single_provider_only` | 3 | `--multi` or `--rotate` requested but post-exclusion provider count < 2 | install a second provider, accept with `--single`, or pass `--provider <name>` |
+| `error` | 2 | All providers failed (non-timeout) | record `Adversarial review: skipped (provider error)` and continue |
+
+`attempted_count` and `timeout_count` are always present in JSON output regardless of status.
+
+## Cross-call rotation pattern (D4)
+
+Docs-mode skills (brainstorm, plan, write-article) that invoke `adversarial-review` more than once in a flow can rotate providers between passes:
+
+```bash
+out1=$(adversarial-review --json --mode {MODE} --rotate --files "$ARTIFACT")
+last=$(jq -r '.providers_used[0] // .providers_used' <<<"$out1")
+out2=$(adversarial-review --json --mode {MODE} --rotate --exclude-last "$last" --files "$ARTIFACT")
+```
+
+If only 1 provider remains after the host exclusion + `--exclude-last`, pass 2 will exit 3 (`single_provider_only`). The skill chooses whether to fall back (e.g., `--single`) or report reduced-consensus to the user.

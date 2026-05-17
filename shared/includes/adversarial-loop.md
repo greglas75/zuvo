@@ -97,6 +97,31 @@ IF findings == 0 AND diff_lines > 150:
   Add to output: "⚠ Adversarial returned clean on 150+ line diff — possible false negative. Consider running zuvo:review for thorough multi-provider check."
 ```
 
+### Step 3b: Partial / single-provider handling (D2 + D3)
+
+The script may return a non-clean `status` when not all requested providers ran. Branch on it explicitly. Notable: `status: "partial"` with exit 0 means *some* providers succeeded and *some* timed out or failed — surface the `timeout_count` field to the user. `single_provider_only` produces exit code 3 (distinct from exit code 124 = all-timeout, exit 2 = all-failed, exit 1 = no provider available).
+
+| JSON `status` | Exit code | Meaning | Caller action |
+|---------------|-----------|---------|---------------|
+| `ok` | 0 | All requested providers succeeded | normal delivery |
+| `partial` | 0 | Some succeeded, some timed out or failed (`timeout_count > 0` or `provider_count < attempted_count`) | continue, but surface `timeout_count` + `provider_count` in user-visible output so they know coverage was reduced |
+| `timeout` | 124 | ALL providers timed out (`provider_count == 0`, `timeout_count == attempted_count`) — exit code 124 distinguishes total timeout from partial | record `Adversarial review: skipped (timeout)` and continue — do NOT retry inline |
+| `single_provider_only` | 3 | `--multi` or `--rotate` requested but post-exclusion provider count < 2 — exit code 3 is unique to this case | install a second provider, retry with `--single`, or pass `--provider <name>` explicitly |
+| `error` | 2 | All providers failed (non-timeout) | record `Adversarial review: skipped (provider error)` and continue |
+
+**Cross-call rotation pattern** (D4 — for skills that invoke `adversarial-review` multiple times in the same flow):
+
+```bash
+# Pass 1
+out1=$(adversarial-review --rotate --json --files "$ARTIFACT")
+last_provider=$(jq -r '.providers_used[0] // .providers_used' <<<"$out1")
+
+# Pass 2 — exclude last to force a different provider
+out2=$(adversarial-review --rotate --exclude-last "$last_provider" --json --files "$ARTIFACT")
+```
+
+If only 1 provider remains after the exclusion, pass 2 will exit 3 (`single_provider_only`) — caller chooses whether to fall back to `--single` or accept single-perspective results.
+
 ### Step 4: Evidence validation
 
 Before applying any fix policy, validate each finding for mandatory evidence.
