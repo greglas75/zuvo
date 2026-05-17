@@ -1212,6 +1212,16 @@ fi
 
 FINAL_OUTPUT=""
 
+# D2 / Task 6: compute DERIVED_STATUS once, regardless of output format. Used by
+# both the JSON status field and the SUMMARY log row. Without this hoist the
+# SUMMARY for text-output runs would always log "ok" even when partial.
+if [[ "$PROVIDER_COUNT" -eq "$ATTEMPTED_COUNT" ]]; then
+  DERIVED_STATUS="ok"
+else
+  DERIVED_STATUS="partial"
+fi
+FINAL_STATUS="$DERIVED_STATUS"
+
 if [[ "$OUTPUT_FORMAT" == "json" ]]; then
   # JSON output: build with jq for safety (no injection from provider output)
   json_results="{}"
@@ -1229,16 +1239,7 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     fi
   done
 
-  # D2: derive status from provider counts. ok = all attempted succeeded; partial
-  # = some succeeded, some did not (timeout or fail); timeout-only is handled in
-  # the all-failed branch above. ATTEMPTED_COUNT was set after EXCLUDE filtering.
-  # Strict equality — PROVIDER_COUNT > ATTEMPTED_COUNT would indicate a counting
-  # bug elsewhere and should be visible (treat as partial so it stands out).
-  if [[ "$PROVIDER_COUNT" -eq "$ATTEMPTED_COUNT" ]]; then
-    DERIVED_STATUS="ok"
-  else
-    DERIVED_STATUS="partial"
-  fi
+  # DERIVED_STATUS computed above (output-format-agnostic).
   FINAL_OUTPUT=$(jq -n \
     --arg status "$DERIVED_STATUS" \
     --arg mode "$REVIEW_MODE" \
@@ -1288,7 +1289,9 @@ TOTAL_DURATION=$((END_TIME - START_TIME))
 
 LOG_DIR="$HOME/.zuvo"
 mkdir -p "$LOG_DIR/adversarial-inputs" 2>/dev/null || LOG_DIR="."
-LOG_FILE="$LOG_DIR/adversarial.log"
+# Task 6: ZUVO_ADVERSARIAL_LOG_FILE overrides default path (used by tests + ops
+# who want per-run logging without polluting ~/.zuvo/adversarial.log).
+LOG_FILE="${ZUVO_ADVERSARIAL_LOG_FILE:-$LOG_DIR/adversarial.log}"
 
 # Write header if log file is new
 if [[ ! -f "$LOG_FILE" ]]; then
@@ -1337,6 +1340,18 @@ for p in $PROVIDERS; do
     "$INPUT_FILE" \
     >> "$LOG_FILE" 2>/dev/null || true
 done
+
+# ─── Task 6: SUMMARY row (per-invocation roll-up) ───────────────────────────
+# One TSV line per invocation summarizing the run. Greppable by leading SUMMARY
+# token to distinguish from per-provider rows. Fields: SUMMARY \t ts \t mode \t
+# status \t attempted_count \t timeout_count \t duration_s \t providers_used
+SUMMARY_STATUS="${FINAL_STATUS:-${DERIVED_STATUS:-ok}}"
+SUMMARY_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf 'SUMMARY\t%s\t%s\t%s\t%d\t%d\t%d\t%s\n' \
+  "$SUMMARY_TS" "$REVIEW_MODE" "$SUMMARY_STATUS" \
+  "${ATTEMPTED_COUNT:-0}" "${TIMEOUT_COUNT:-0}" "$TOTAL_DURATION" \
+  "${PROVIDERS_USED:-${PROVIDERS:-none}}" \
+  >> "$LOG_FILE" 2>/dev/null || true
 
 # Explicit success exit. Set -e + the logging loop's last assignment can otherwise
 # leak a non-zero status into the script's implicit exit code on some bash versions.
