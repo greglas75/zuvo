@@ -325,7 +325,7 @@ Wait for complete output. Then apply fix policy:
 - **`status: "timeout"` (exit 124)** — ALL providers timed out. Record `Cross-model validation: skipped (timeout)` and proceed.
 - **`status: "partial"` (exit 0)** — `timeout_count > 0` but at least one provider returned. Record in `## Review Trail`: `Cross-model validation: partial (N/M providers; M-N timed out)`. Apply fix policy to the findings that did come back. Surface `timeout_count` to user so reduced coverage is visible.
 
-**Cross-call rotation:** if a second adversarial pass is needed after rev bump, capture `providers_used[0]` from pass-1 JSON and pass it via `--exclude-last <name>` on pass-2 to force a different provider's perspective on the revised plan.
+**Cross-call rotation:** if a second adversarial pass is needed after rev bump, capture `providers_used_list[0]` (array field) from pass-1 JSON and pass it via `--exclude-last <name>` on pass-2 to force a different provider's perspective on the revised plan. (Use the array field — the string `providers_used` cannot be indexed with `[0]`.)
 
 Do not set `status: Reviewed` unless the current plan revision has:
 1. a plan-reviewer `APPROVED` verdict,

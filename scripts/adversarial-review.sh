@@ -88,6 +88,8 @@ Exit codes:
   2    all providers failed (non-timeout failures)
   3    single_provider_only (--multi/--rotate requested but <2 providers)
   124  timeout (all providers timed out)
+  130  interrupted (SIGINT — Ctrl-C)
+  143  terminated (SIGTERM — orchestrator kill)
 
 Review modes:
   --mode code      (default) General code review
@@ -596,7 +598,9 @@ fi
 # Apply EXCLUDE_PROVIDER globally (host auto-exclusion + --exclude flag).
 # Previously only applied in --rotate mode — now filters in ALL modes.
 if [[ -n "$EXCLUDE_PROVIDER" && -n "$PROVIDERS" ]]; then
-  PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -v "^${EXCLUDE_PROVIDER}$" | tr '\n' ' ' | sed 's/ *$//')
+  # -Fx: fixed-string + whole-line match. Provider names contain regex-active
+  # chars (e.g. codex-5.4, gpt-5.4) — plain `grep -v "^X$"` would over-match.
+  PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -vFx "$EXCLUDE_PROVIDER" | tr '\n' ' ' | sed 's/ *$//')
 fi
 
 # D4: --exclude-last filters out the named provider for cross-call rotation
@@ -604,8 +608,9 @@ fi
 # Validates: if non-empty and not in current PROVIDERS, log stderr warning but
 # proceed (allows stale rotation state to not break the call).
 if [[ -n "$EXCLUDE_LAST" && -n "$PROVIDERS" ]]; then
-  if echo "$PROVIDERS" | tr ' ' '\n' | grep -qx "$EXCLUDE_LAST"; then
-    PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -v "^${EXCLUDE_LAST}$" | tr '\n' ' ' | sed 's/ *$//')
+  # -Fx: same fixed-string + whole-line guard as EXCLUDE_PROVIDER above.
+  if echo "$PROVIDERS" | tr ' ' '\n' | grep -qFx "$EXCLUDE_LAST"; then
+    PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -vFx "$EXCLUDE_LAST" | tr '\n' ' ' | sed 's/ *$//')
     echo "  Excluding from rotation: $EXCLUDE_LAST (--exclude-last)" >&2
   else
     echo "  WARN: --exclude-last value not in current provider list: $EXCLUDE_LAST (proceeding with full set)" >&2
@@ -888,7 +893,7 @@ fi
 # Rotate mode: shuffle provider list, exclude previous, then behave like single
 if [[ "$MULTI_MODE" == "rotate" ]]; then
   if [[ -n "$EXCLUDE_PROVIDER" ]]; then
-    PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -v "^${EXCLUDE_PROVIDER}$" | sort -R | tr '\n' ' ' | sed 's/ *$//')
+    PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -vFx "$EXCLUDE_PROVIDER" | sort -R | tr '\n' ' ' | sed 's/ *$//')
   else
     PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | sort -R | tr '\n' ' ' | sed 's/ *$//')
   fi
@@ -1005,12 +1010,19 @@ FINAL_STATUS="ok"
 TIMEOUT_COUNT=0
 JSON_TMPDIR=$(mktemp -d)
 declare -a PIDS=()
+CLEANED_UP=0
 cleanup() {
   # Preserve the script's exit code — any non-zero return from kill/wait/rm here
   # would otherwise override an explicit `exit 124` (timeout) or `exit 0`. Locally
   # disable set -e so a stale PID kill (which returns 1) does not short-circuit
   # the return statement that propagates the original rc.
   local rc=$?
+  # R-5 fix: guard against double-run. INT/TERM trap fires `cleanup` then `exit N`,
+  # which triggers EXIT trap → `cleanup` again. Without this guard, kill/rm run
+  # twice on already-dead PIDs / already-gone tmpdir — usually benign but creates
+  # noisy debugging trails.
+  [[ "$CLEANED_UP" -eq 1 ]] && return $rc
+  CLEANED_UP=1
   set +e
   [[ ${#PIDS[@]} -gt 0 ]] && kill "${PIDS[@]}" 2>/dev/null
   wait 2>/dev/null
@@ -1018,7 +1030,12 @@ cleanup() {
   return $rc
 }
 trap cleanup EXIT
-trap 'cleanup; exit 124' INT TERM
+# R-3 fix: distinct exit codes for signals vs timeout. INT=130 (standard 128+SIGINT),
+# TERM=143 (standard 128+SIGTERM). Previously both mapped to 124, conflating user-cancel
+# / orchestrator-kill with "all providers timed out". Callers branching on exit 124
+# now reliably mean "timeout" only.
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 
 if [[ "$MULTI_MODE" == "multi" ]]; then
   # ── PARALLEL: launch providers directly (no run_provider wrapper) ──
@@ -1138,7 +1155,7 @@ if [[ -z "$ALL_RESULTS" ]]; then
         --argjson attempted "$ATTEMPTED_COUNT" \
         --argjson count "$TIMEOUT_COUNT" \
         --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        '{status: $status, mode: $mode, providers_attempted: $providers, attempted_count: $attempted, timeout_count: $count, provider_count: 0, findings: [], date: $date}')
+        '{status: $status, mode: $mode, providers_attempted: $providers, providers_attempted_list: ($providers | split(" ")), attempted_count: $attempted, timeout_count: $count, provider_count: 0, findings: [], date: $date}')
     else
       FINAL_OUTPUT="Adversarial review: skipped (timeout)"
     fi
@@ -1240,6 +1257,10 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
   done
 
   # DERIVED_STATUS computed above (output-format-agnostic).
+  # R-1 fix: emit BOTH providers_used (comma-string, back-compat) AND providers_used_list
+  # (JSON array, typed access for jq '[0]' indexing per D4 cross-call rotation pattern).
+  # Old consumers using `jq -r '.providers_used'` continue to see the string;
+  # new consumers use `.providers_used_list[0]` for correct typed extraction.
   FINAL_OUTPUT=$(jq -n \
     --arg status "$DERIVED_STATUS" \
     --arg mode "$REVIEW_MODE" \
@@ -1250,7 +1271,7 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     --argjson input_size "${#INPUT}" \
     --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --argjson results "$json_results" \
-    '{status: $status, mode: $mode, providers_used: $providers, provider_count: $count, attempted_count: $attempted, timeout_count: $timeouts, input_size: $input_size, date: $date, results: $results}')
+    '{status: $status, mode: $mode, providers_used: $providers, providers_used_list: ($providers | split(", ")), provider_count: $count, attempted_count: $attempted, timeout_count: $timeouts, input_size: $input_size, date: $date, results: $results}')
 else
   # Text output with banners
   FINAL_OUTPUT=$(cat <<HEADER

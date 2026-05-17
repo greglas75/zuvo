@@ -468,7 +468,7 @@ Wait for complete output. Then update the spec's `## Adversarial Review` section
 - **`status: "timeout"` (exit 124)** — ALL providers timed out. Set `adversarial_review: skipped-timeout` and proceed.
 - **`status: "partial"` (exit 0)** — some providers returned, others timed out (`timeout_count > 0`). Set `adversarial_review: partial (N/M providers)` and surface the timeout_count in the spec's `## Adversarial Review` section so reviewers know coverage was reduced.
 
-**Cross-call rotation (multi-pass adversarial):** for specs that warrant 2 adversarial passes (CRITICAL findings in pass 1), capture `providers_used[0]` from the pass-1 JSON output and thread it via `--exclude-last <name>` into pass 2 — forces a different provider perspective on the revised spec.
+**Cross-call rotation (multi-pass adversarial):** for specs that warrant 2 adversarial passes (CRITICAL findings in pass 1), capture `providers_used_list[0]` from the pass-1 JSON output and thread it via `--exclude-last <name>` into pass 2 — forces a different provider perspective on the revised spec. Use the array field `providers_used_list[0]` (string `providers_used` indexed with `[0]` would error in jq).
 
 The spec MUST NOT transition from `Reviewed` to `Approved` until the `## Adversarial Review` section exists and `adversarial_review` is no longer `pending`.
 

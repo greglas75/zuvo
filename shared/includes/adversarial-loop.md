@@ -114,7 +114,7 @@ The script may return a non-clean `status` when not all requested providers ran.
 ```bash
 # Pass 1
 out1=$(adversarial-review --rotate --json --files "$ARTIFACT")
-last_provider=$(jq -r '.providers_used[0] // .providers_used' <<<"$out1")
+last_provider=$(jq -r '.providers_used_list[0] // .providers_used' <<<"$out1")
 
 # Pass 2 — exclude last to force a different provider
 out2=$(adversarial-review --rotate --exclude-last "$last_provider" --json --files "$ARTIFACT")

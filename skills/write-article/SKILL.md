@@ -225,7 +225,7 @@ Run: `adversarial-review --json --mode article --files "[draft path]"` (fallback
 - **`status: "single_provider_only"` / exit `3`** — only 1 provider available after host exclusion. Re-invoke with `--single` (still useful for content quality) OR record `Adversarial review: skipped (single_provider_only)` and continue. Do NOT block publication.
 - **`status: "partial"` / exit `0`** — some providers returned, `timeout_count > 0`. Continue with partial findings; surface `timeout_count` in the article delivery log so reduced coverage is visible.
 
-**Cross-call rotation (multi-pass flows like content-expand):** capture `providers_used[0]` from pass-1 JSON, thread to pass 2 via `--exclude-last <name>` so the second pass uses a different provider perspective.
+**Cross-call rotation (multi-pass flows like content-expand):** capture `providers_used_list[0]` (array field) from pass-1 JSON, thread to pass 2 via `--exclude-last <name>` so the second pass uses a different provider perspective. (The string `providers_used` cannot be indexed with `[0]` in jq.)
 
 ---
 

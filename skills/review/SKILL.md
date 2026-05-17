@@ -572,7 +572,7 @@ If `adversarial-review` not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/z
 - **exit 124 / `status: "timeout"`** — ALL providers timed out. Record `Adversarial: skipped (timeout)` and continue to next pass (or finalize if last pass).
 - **`status: "partial"` with exit 0** — some providers returned, others did not. Surface `timeout_count` in the review header (e.g. `Adversarial pass 1: cursor-agent (1 of 2 providers; gemini timed out)`) so the user sees coverage was reduced.
 
-**Cross-call rotation:** between passes, capture `providers_used[0]` from each pass's JSON output (if using `--json` for parsing) and thread it into the next `--rotate` call via `--exclude-last <name>`. Forces a different provider on each successive pass even when host exclusion limits the pool.
+**Cross-call rotation:** between passes, capture `providers_used_list[0]` (array field) from each pass's JSON output and thread it into the next `--rotate` call via `--exclude-last <name>`. Forces a different provider on each successive pass even when host exclusion limits the pool. (The string field `providers_used` cannot be indexed with `[0]` in jq.)
 
 #### REPORT mode — sequential finding (no fixes)
 

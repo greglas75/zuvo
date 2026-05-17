@@ -107,6 +107,24 @@ gemini   # first run: login with Google account
 export GEMINI_API_KEY=<key from aistudio.google.com>
 ```
 
+## JSON Status Enum (2026-05-17 — adversarial-robustness A1+A2)
+
+The script's `--json` output includes a `status` field. Skills should branch on it:
+
+| `status` | Exit | Meaning |
+|----------|------|---------|
+| `ok` | 0 | All requested providers succeeded |
+| `partial` | 0 | Some providers succeeded, others timed out or failed (`provider_count < attempted_count`) — proceed but surface `timeout_count` to user |
+| `timeout` | 124 | ALL providers timed out (`provider_count == 0`) — no inline retry; caller chooses next action |
+| `single_provider_only` | 3 | `--multi` or `--rotate` requested but only 1 provider available after host self-exclusion — caller must use `--single` or install another provider |
+| `error` | 2 | All providers failed (non-timeout) |
+| (n/a) | 130 | Interrupted (SIGINT — user pressed Ctrl-C) |
+| (n/a) | 143 | Terminated (SIGTERM — orchestrator killed the process) |
+
+Always-present count fields: `attempted_count`, `provider_count`, `timeout_count`.
+
+For cross-call rotation (extracting last-used provider for `--exclude-last`), use the **array** field `providers_used_list[0]` — the string field `providers_used` cannot be indexed with `[0]` in jq.
+
 ## Environment Variables
 
 | Variable | Default | Description |

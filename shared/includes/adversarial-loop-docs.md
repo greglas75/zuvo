@@ -162,7 +162,7 @@ Docs-mode skills (brainstorm, plan, write-article) that invoke `adversarial-revi
 
 ```bash
 out1=$(adversarial-review --json --mode {MODE} --rotate --files "$ARTIFACT")
-last=$(jq -r '.providers_used[0] // .providers_used' <<<"$out1")
+last=$(jq -r '.providers_used_list[0] // .providers_used' <<<"$out1")
 out2=$(adversarial-review --json --mode {MODE} --rotate --exclude-last "$last" --files "$ARTIFACT")
 ```
 
