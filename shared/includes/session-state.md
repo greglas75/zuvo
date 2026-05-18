@@ -46,6 +46,21 @@ next-task: <N>
 ## Files Changed
 <!-- Appended after each successful task commit. Diagnostic only — not used for resume logic. -->
 - <file> (Task <N>, commit <sha7>)
+
+## Retro State
+<!-- retro-session-id is the stable identity of THIS RUN (the plan execution), -->
+<!-- assigned ONCE at run start and persisted here. It is NOT the per-process -->
+<!-- session-id: a resuming process INHERITS this value unchanged (it does not -->
+<!-- regenerate it), so the whole multi-session run finalizes ONE retro. -->
+<!-- Resume rule (see READ Protocol "Retro carry"): the resuming run adopts the -->
+<!-- persisted retro-session-id; its single eventual full retro is keyed to it. -->
+<!-- A checkpoint stub for this run is superseded by this run's full retro -->
+<!-- (retro-stub idempotency on skill+project+SHA7 is the cheap WITHIN-run -->
+<!-- guard). Distinct runs (different retro-session-id — e.g. two runs on the -->
+<!-- same commit) each keep their OWN retro: no cross-run dedup, no data loss. -->
+<!-- retro-session-id: <stable id owning this run's eventual retro; inherited on resume> -->
+<!-- last-retro-status: none | stub:ABANDONED | stub:CONTEXT_OUT | stub:PARTIAL | full -->
+<!-- last-retro-friction: <FRICTION_CATEGORY enum value, or - > -->
 ```
 
 **Reason codes for Task Reasons** (required for skipped/blocked tasks, optional for completed tasks):
@@ -201,6 +216,15 @@ Load:
 - Plan from `state.plan` (skip Glob). **Ignore `active-plan.md` entirely on valid resume** — execution-state.md is the sole source of truth.
 - Stack/test-runner from `.zuvo/context/project-context.md` (if missing or malformed: re-detect, do not fail).
 - Retry counts from `## Retry Counts`.
+- **Retro carry (one RUN ⇒ one retro):** if `retro-session-id` is set, the
+  resuming run **inherits it unchanged** (do NOT regenerate from the new
+  process session-id) — this run owns that prior retro, so finalize/upgrade
+  it and do NOT write a second. This run's full retro supersedes its own
+  earlier checkpoint stub (retro-stub idempotency on `skill+project+SHA7` —
+  the within-run guard). Distinct runs keep distinct `retro-session-id`s
+  (two runs on the same commit each keep their own retro — no cross-run
+  dedup, no data loss). One run yields exactly one eventual retro (stub OR
+  full, never both).
 - Skip all tasks in `completed[]`, `skipped[]`.
 - Restore blocked tasks and their reasons.
 - Continue execution from `next-task`.
