@@ -176,6 +176,31 @@ Check `settings.json` for `permissions.deny` rules. If missing, check whether bl
 | go.mod | vendor |
 | pyproject.toml | __pycache__, .venv |
 
+### 2.6 Retro-gate bypass check
+
+Surface every `ZUVO_SKIP_RETRO_GATE=1` use recorded by `append-runlog` to
+`$ZUVO_HOME/skip-retro-gate.log` (default `~/.zuvo/skip-retro-gate.log`).
+Schema: `# v1 SKIP\tDATE\tSKILL\tPROJECT\tNOTE`. Run this and fold the count
+into the report (each bypass skipped a durability gate = an unverified run):
+
+```bash
+# >>> zuvo:skip-audit  (plan Task 9 — surface retro-gate bypasses)
+_SL="${ZUVO_HOME:-$HOME/.zuvo}/skip-retro-gate.log"
+if [ -f "$_SL" ]; then
+  _n=$(grep -c '^SKIP:' "$_SL" 2>/dev/null) || true; _n=${_n:-0}
+  echo "Retro-gate bypasses (ZUVO_SKIP_RETRO_GATE): $_n"
+  if [ "$_n" -gt 0 ]; then
+    echo "  recent (skill / project / date):"
+    grep '^SKIP:' "$_SL" | tail -5 | awk -F'\t' '{printf "  - %s / %s / %s\n",$3,$4,$2}'
+  fi
+else
+  echo "Retro-gate bypasses: 0 (no skip-retro-gate.log)"
+fi
+# <<< zuvo:skip-audit
+```
+
+Cross-reference any nonzero skill/project against missing retros in retros.log.
+
 ## Phase 3: Score and Report
 
 ### Scoring (--full mode)
