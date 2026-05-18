@@ -88,7 +88,7 @@ RETRO: DATE\tSKILL\tPROJECT\tCODE_TYPE\tFRICTION_CATEGORY\tMISSING_TEMPLATE\tCON
 | 2 | SKILL | string | skill name without `zuvo:` prefix |
 | 3 | PROJECT | string | basename of git root |
 | 4 | CODE_TYPE | enum | `ORCHESTRATOR`, `DATA_SERVICE`, `PURE_FUNCTION`, `UI_COMPONENT`, `CONFIG`, `MIXED`, `OTHER` |
-| 5 | FRICTION_CATEGORY | enum | `mock-strategy`, `ordering-template`, `context-missing`, `pipeline-heavy`, `framework-gotcha`, `unclear-instruction`, `skill-overhead`, `missing-pattern`, `false-positive-rule`, `scope-mismatch`, `infra-failure`, `no-friction`, `other`. **`no-friction` is ONLY valid if you have ZERO change proposals.** |
+| 5 | FRICTION_CATEGORY | enum | `mock-strategy`, `ordering-template`, `context-missing`, `pipeline-heavy`, `framework-gotcha`, `unclear-instruction`, `skill-overhead`, `missing-pattern`, `false-positive-rule`, `scope-mismatch`, `infra-failure`, `abandoned`, `context-out`, `partial-recovery`, `no-friction`, `other`. **`no-friction` is ONLY valid if you have ZERO change proposals.** The last three (`abandoned`/`context-out`/`partial-recovery`) are **checkpoint-stub** values — see Checkpoint Stub Schema below. |
 | 6 | MISSING_TEMPLATE | string (40 char max) | short description or `-` |
 | 7 | CONTEXT_GAP | enum | `no-production-code`, `no-schema`, `no-env`, `no-test-fixture`, `no-framework-docs`, `none`, `other` |
 | 8 | TURNS_WASTED | integer | Count retries, re-reads, false-positive deliberation, missing pattern invention, infra waits |
@@ -101,6 +101,36 @@ RETRO: DATE\tSKILL\tPROJECT\tCODE_TYPE\tFRICTION_CATEGORY\tMISSING_TEMPLATE\tCON
 | 15 | ADVERSARIAL | enum | `clean`, `Nfindings`, `skipped`, `blocked`, `not_run`, `blocked:prod-bug` |
 | 16 | CODESIFT | enum | `indexed`, `transport_closed`, `not_indexed`, `unavailable`, `N/A` |
 | 17 | ROUTING_STATUS | enum | `ok`, `same-model-fallback`, `unknown-writer-model`, `routing-failed`, `N/A` |
+
+### Canonical Full-Retro Predicate (single source of truth)
+
+**Full retro** iff line starts `RETRO:` AND field 5 (FRICTION_CATEGORY) ∉
+`{abandoned, context-out, partial-recovery}`; field 5 **in** that set ⇒
+**checkpoint stub** (telemetry only). The `append-runlog` gate, `retro-stub`
+idempotency, and `--sweep` all use exactly this predicate; the gate is satisfied
+**only by a full retro** (an incomplete run never reaches the gate, so a stub
+never gates). Coherence ("one session ⇒ one eventual retro") is enforced at
+**WRITE time** by session-state `retro-session-id` (session-state.md Retro
+State / plan Task 6) — it suppresses the duplicate before it is written, since
+`retro-session-id` is **not** one of the 17 logged fields. Post-hoc dedup of
+`retros.log` therefore keys only on in-line **SKILL+PROJECT+SHA7** (sufficient:
+Task 6 already prevents the resume duplicate at write time; do NOT key on DATE
+— midnight rollover). A later full retro supersedes a stub of the same key.
+
+### Checkpoint Stub Schema
+
+`retro-stub` emits this before the terminal retro on abandon/pause/context-out:
+a 17-field `RETRO:` line, **every field enum-valid** (strict parsers must not
+choke). Field 5 = `abandoned`/`context-out`/`partial-recovery`
+(`ABANDONED`/`CONTEXT_OUT`/`PARTIAL`). Integer cols
+(`TURNS_WASTED/TOOL_CALLS/FILES_*`) carry the **best-known count at interrupt**
+(emitter passes real figures — a 50-turn abandon logs 50, never destructive
+`0`; `0` only if truly unknown). Other unknown fields take their column's
+**valid neutral**: `CODE_TYPE=OTHER`, `MISSING_TEMPLATE=-` (string; `-` ok),
+`CONTEXT_GAP=none`, `BLIND_AUDIT=not_run`, `ADVERSARIAL=not_run`, `CODESIFT=N/A`
+(`skipped` is NOT a CODESIFT value), `ROUTING_STATUS=N/A`. A later full retro
+(same `retro-session-id`) supersedes the stub. SKILL/PROJECT/BRANCH/SHA7/DATE
+populated so the predicate works.
 
 ## Markdown Emit
 
