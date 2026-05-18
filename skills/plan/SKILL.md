@@ -106,6 +106,36 @@ CORE FILES LOADED:
 
 Resolve these paths relative to the currently loaded `skills/plan/SKILL.md`. If a Phase 0 file read fails, mark it as `MISSING`. Deferred files are loaded when their phase begins, not at startup.
 
+### Phase 0.1 — Retro checkpoint marker (run this bash at bootstrap)
+
+Write a run-marker so an abandoned plan is captured at the next zuvo skill
+start, and sweep any prior orphans. **Ungated** — never blocks plan.
+
+```bash
+# >>> zuvo:retro-marker  (plan Task 7 — passive checkpoint capture)
+_RS=$(command -v retro-stub 2>/dev/null || ls ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/zuvo-home/retro-stub 2>/dev/null | head -1)
+_ZH="${ZUVO_HOME:-$HOME/.zuvo}"
+_RSK="${SKILL:-plan}"
+_RPR="${PROJECT:-$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")}"
+_RSHA=$(git rev-parse --short HEAD 2>/dev/null || echo "-")
+# Sweep PRIOR orphans FIRST — before writing this run's marker — so this
+# run's fresh marker is never swept as its own orphan.
+[ -n "$_RS" ] && "$_RS" --sweep >/dev/null 2>&1 || true
+if mkdir -p "$_ZH/run-markers" 2>/dev/null; then
+  { printf 'start_ts=%s\nskill=%s\nproject=%s\nsha7=%s\nbranch=%s\nsession_id=%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_RSK" "$_RPR" "$_RSHA" \
+      "$(git branch --show-current 2>/dev/null || echo -)" "${ZUVO_SESSION_ID:-$_RSHA}" \
+      > "$_ZH/run-markers/$_RSK-$_RPR-$_RSHA-$$-$(date +%s).marker"; } 2>/dev/null || true
+fi
+# <<< zuvo:retro-marker
+```
+
+Capture is **best-effort, not guaranteed**: the block is intentionally
+ungated (never blocks/fails plan), so if `ZUVO_HOME` is not writable no
+marker is written and plan proceeds normally. When a marker *is* written,
+`append-runlog` clears it on a clean terminal retro; if plan is abandoned
+first, the next skill's `--sweep` emits an ABANDONED stub.
+
 **If 1-2 files missing:** Proceed in degraded mode. Note which files are unavailable in the final output.
 **If 3+ files missing:** Stop. The plugin installation is incomplete.
 

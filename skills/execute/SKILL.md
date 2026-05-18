@@ -105,6 +105,31 @@ CORE FILES LOADED:
 **If 1-2 files missing:** Proceed in degraded mode. Note which files are unavailable in the final summary.
 **If 3+ files missing:** Stop. The plugin installation is incomplete.
 
+### Phase 0.1 — Retro checkpoint marker (run this bash at bootstrap)
+
+Write a run-marker so an abandoned/context-out execute run is captured at the
+next zuvo skill start, and sweep any prior orphans. **Ungated** — never blocks
+execute. (On clean Phase Final, `append-runlog` clears this marker.)
+
+```bash
+# >>> zuvo:retro-marker  (plan Task 7 — passive checkpoint capture)
+_RS=$(command -v retro-stub 2>/dev/null || ls ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/zuvo-home/retro-stub 2>/dev/null | head -1)
+_ZH="${ZUVO_HOME:-$HOME/.zuvo}"
+_RSK="${SKILL:-execute}"
+_RPR="${PROJECT:-$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")}"
+_RSHA=$(git rev-parse --short HEAD 2>/dev/null || echo "-")
+# Sweep PRIOR orphans FIRST — before writing this run's marker — so this
+# run's fresh marker is never swept as its own orphan.
+[ -n "$_RS" ] && "$_RS" --sweep >/dev/null 2>&1 || true
+if mkdir -p "$_ZH/run-markers" 2>/dev/null; then
+  { printf 'start_ts=%s\nskill=%s\nproject=%s\nsha7=%s\nbranch=%s\nsession_id=%s\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_RSK" "$_RPR" "$_RSHA" \
+      "$(git branch --show-current 2>/dev/null || echo -)" "${ZUVO_SESSION_ID:-$_RSHA}" \
+      > "$_ZH/run-markers/$_RSK-$_RPR-$_RSHA-$$-$(date +%s).marker"; } 2>/dev/null || true
+fi
+# <<< zuvo:retro-marker
+```
+
 ---
 
 ## Session Recovery Check
@@ -115,7 +140,7 @@ Before locating the plan, run the READ protocol from `session-state.md`:
 Read(".zuvo/context/execution-state.md")
 ```
 
-- **`status: in-progress` found** → resume mode: skip completed tasks, restore retry counts, load project-context. Jump directly to the Execution Loop at `next-task`. Skip "Hard Gate: Plan Required", "Artifact Detection", "Stack Detection", and "CodeSift Integration" — all of that is already in `.zuvo/context/project-context.md`.
+- **`status: in-progress` found** → resume mode: skip completed tasks, restore retry counts, load project-context. Jump directly to the Execution Loop at `next-task`. Skip "Hard Gate: Plan Required", "Artifact Detection", "Stack Detection", and "CodeSift Integration" — all of that is already in `.zuvo/context/project-context.md`. **Retro carry:** inherit `retro-session-id` from the `## Retro State` block unchanged (do NOT regenerate) per `session-state.md` — this resumed run owns that prior retro, so one run yields exactly one eventual retro (a full retro supersedes any earlier checkpoint stub via retro-stub idempotency).
 - **`status: completed` or `status: aborted`** → follow the rename/archive behavior from `session-state.md`, then proceed normally.
 - **File missing** → proceed normally.
 
@@ -283,6 +308,27 @@ backlog-adds=1
 Process tasks in dependency order. If task B depends on task A, do not start B until A is marked completed.
 
 **HARD CONTINUATION RULE (per `no-pause-protocol.md`):** After Step 9b (telemetry) of task N, IMMEDIATELY start task N+1. Do NOT estimate remaining wall-clock time, do NOT extrapolate session capacity, do NOT present A/B/C menus, do NOT ask "want me to continue?". The plan was approved at the entry gate — that approval covers ALL tasks. Only legitimate stops: BLOCKED_* states, all tasks terminal, explicit user "stop"/"pause"/"wystarczy", or `/context` >85% (write state and exit, do NOT ask).
+
+**Non-terminal stop — emit a checkpoint retro stub (do NOT skip).** When stopping for `/context` >85%, an explicit user "pause"/"stop", or any abandon BEFORE Phase Final, after writing `execution-state.md` run this ungated bash so the partial run's telemetry is captured immediately (more precise than waiting for the next skill's `--sweep`):
+
+```bash
+# >>> zuvo:retro-stop  (plan Task 7 — explicit checkpoint on non-terminal stop)
+_RS=$(command -v retro-stub 2>/dev/null || ls ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/zuvo-home/retro-stub 2>/dev/null | head -1)
+_RPR="${PROJECT:-$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")}"
+# CONTEXT_OUT for context-pressure; PARTIAL for an explicit user pause/stop.
+_RST="${ZUVO_STOP_STATUS:-CONTEXT_OUT}"
+# Explicit status->friction map (no brittle tr|sed substring rewriting).
+case "$_RST" in
+  CONTEXT_OUT) _RFR=context-out ;;
+  PARTIAL)     _RFR=partial-recovery ;;
+  *)           _RST=ABANDONED; _RFR=abandoned ;;   # unknown -> safe default
+esac
+[ -n "$_RS" ] && "$_RS" --status="$_RST" --friction="$_RFR" \
+  --skill="${SKILL:-execute}" --project="$_RPR" --tool-calls="${ZUVO_TOOLCALLS:-0}" >/dev/null 2>&1 || true
+# <<< zuvo:retro-stop
+```
+
+The run-marker (Phase 0.1) is the belt-and-suspenders fallback if even this is skipped; the next skill's `--sweep` will still capture the orphan.
 
 ### Per-Task Cycle
 

@@ -158,10 +158,43 @@ if [ "$SWEEP" -eq 1 ]; then
       [ -n "$mmt" ] && [ "$(( $(date +%s) - mmt ))" -gt 604800 ] && rm -f "$m"
       continue
     fi
+    SHA7="${msha:--}"
+    # (a) Completed normally? If a FULL retro for this run already exists,
+    #     just clear the marker (any age) — never emit a spurious stub.
+    if [ -f "$RETRO_LOG" ] && awk -F'\t' -v s="$msk" -v p="$mpr" -v sha="$SHA7" '
+         /^RETRO:/ && NF==17 {
+           if ($2==s && $3==p && $13==sha &&
+               $5!="abandoned" && $5!="context-out" && $5!="partial-recovery") found=1
+         } END { exit found?0:1 }' "$RETRO_LOG"; then
+      rm -f "$m"; continue
+    fi
+    # (b) No full retro. If the marker is YOUNG the run may still be ACTIVE —
+    #     do NOT reap it (a later sweep handles it once it ages out or the
+    #     run completes). Only markers older than the grace window (default
+    #     6h; ZUVO_SWEEP_GRACE) with no full retro are genuinely abandoned.
+    #     Use the most CONSERVATIVE (smallest) of file-mtime age / start_ts
+    #     age so a still-running run is never mistaken for abandoned.
+    GRACE="${ZUVO_SWEEP_GRACE:-21600}"
+    case "$GRACE" in (*[!0-9]*|'') GRACE=21600 ;; esac   # numeric guard
+    # start_ts (when the RUN began) is the authoritative age signal — the
+    # marker is written ONCE at run start so in production its file mtime ≈
+    # start_ts. Prefer start_ts; fall back to file mtime only if start_ts is
+    # missing/unparseable. (Do NOT min() with file mtime: a freshly *written*
+    # marker for an already-old/abandoned run would look young and escape.)
+    mts=$(sed -n 's/^start_ts=//p' "$m" 2>/dev/null | head -1)
+    age=""
+    if [ -n "$mts" ]; then
+      se=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$mts" +%s 2>/dev/null || date -u -d "$mts" +%s 2>/dev/null || echo "")
+      [ -n "$se" ] && age=$(( $(date +%s) - se ))
+    fi
+    [ -z "$age" ] && [ -n "$mmt" ] && age=$(( $(date +%s) - mmt ))
+    if [ -z "$age" ] || [ "$age" -le "$GRACE" ]; then
+      continue                       # within grace -> possibly active, leave it
+    fi
     SKILL="$msk"; PROJECT="$mpr"; STATUS="ABANDONED"; FRICTION="abandoned"
     MT=$(printf '%s' "orphan-sweep:$msk" | tr '\t\r\n' '   ' | cut -c1-40)
     TURNS=0; TOOLS=0; FREAD=0; FMOD=0
-    SHA7="${msha:--}"; BRANCH="${mbr:--}"
+    BRANCH="${mbr:--}"
     # Clear the marker ONLY if _emit_one actually handled it (0 = stub
     # emitted OR idempotent no-op because a full retro already exists).
     # On lock-busy (3, nothing written) KEEP the marker so a later sweep
