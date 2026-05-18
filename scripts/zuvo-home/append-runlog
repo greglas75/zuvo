@@ -48,8 +48,24 @@ if [ -z "$SKILL" ] || [ -z "$PROJECT" ]; then
   exit 1
 fi
 
-RUNS_LOG="$HOME/.zuvo/runs.log"
-RETROS_LOG="$HOME/.zuvo/retros.log"
+# Hermetic-test + distribution override. Two SEPARATE knobs:
+#   ZUVO_HOME — STATE dir (runs.log, retros.log). Overridable for tests/builds.
+#   ZUVO_BIN  — where helper EXECUTABLES live (verify-audit). Defaults to
+#               $HOME/.zuvo independently, so redirecting state for a hermetic
+#               test or a Codex/Cursor build does NOT relocate (and thereby
+#               silently disable) the audit-verification gate.
+# Default preserves the historical $HOME/.zuvo path exactly (no behavior
+# change when both are unset). (Codex-cloud memory/ filename harmonization
+# is tracked in backlog — out of scope for this change.)
+ZUVO_HOME="${ZUVO_HOME:-$HOME/.zuvo}"
+ZUVO_BIN="${ZUVO_BIN:-$HOME/.zuvo}"
+if ! mkdir -p "$ZUVO_HOME" || [ ! -d "$ZUVO_HOME" ] || [ ! -w "$ZUVO_HOME" ]; then
+  echo "ERROR: append-runlog cannot use state dir ZUVO_HOME='$ZUVO_HOME'" >&2
+  echo "  (must be a writable directory — set ZUVO_HOME accordingly)" >&2
+  exit 1
+fi
+RUNS_LOG="$ZUVO_HOME/runs.log"
+RETROS_LOG="$ZUVO_HOME/retros.log"
 
 # Skills exempted from retro gate
 case "$SKILL" in
@@ -106,7 +122,7 @@ fi
 # prior audits without re-checking against the current working tree.
 case "$SKILL" in
   *audit*|review|pentest)
-    if [ -x "$HOME/.zuvo/verify-audit" ]; then
+    if [ -x "$ZUVO_BIN/verify-audit" ]; then
       # Locate today's audit report. Common locations:
       #   $PWD/audits/<skill>-YYYY-MM-DD.md
       #   $PWD/audits/<skill>-YYYY-MM-DD-*.md  (variants like -full, -delta)
@@ -129,7 +145,7 @@ case "$SKILL" in
         if [ "${ZUVO_SKIP_AUDIT_VERIFY:-0}" = "1" ]; then
           echo "WARN: ZUVO_SKIP_AUDIT_VERIFY=1 — finding-content verification bypassed for $AUDIT_REPORT" >&2
         else
-          if ! "$HOME/.zuvo/verify-audit" "$AUDIT_REPORT" >&2; then
+          if ! "$ZUVO_BIN/verify-audit" "$AUDIT_REPORT" >&2; then
             echo "" >&2
             echo "AUDIT_REPORT_REJECTED: $AUDIT_REPORT failed finding-content verification." >&2
             echo "  runs.log NOT appended. Fix the findings (add file:line citations + Verified-against: <sha> stamps), then re-run." >&2
