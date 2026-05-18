@@ -254,6 +254,21 @@ install_zuvo_home() {
   else
     warn "scripts/zuvo-home/verify-audit not found in repo — skipping"
   fi
+
+  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/retro-stub" ]]; then
+    cp "$ZUVO_DIR/scripts/zuvo-home/retro-stub" "$HOME/.zuvo/retro-stub"
+    chmod +x "$HOME/.zuvo/retro-stub"
+    ok "retro-stub installed (~/.zuvo/retro-stub)"
+  else
+    warn "scripts/zuvo-home/retro-stub not found in repo — skipping"
+  fi
+
+  # NOTE: ~/.zuvo is the SHARED cross-platform helper dir. These zuvo-home
+  # helpers (incl. retro-stub) reach Claude/Codex/Cursor via THIS function
+  # only — build-codex-skills.sh / build-cursor-skills.sh deliberately do NOT
+  # copy scripts/zuvo-home (verified). install_zuvo_home runs in the default
+  # `all`/`both` dispatch (the documented canonical install). Do not add a
+  # zuvo-home copy to the per-platform build scripts.
 }
 
 # =======================================
