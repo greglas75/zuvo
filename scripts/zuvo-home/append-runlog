@@ -66,11 +66,81 @@ if ! mkdir -p "$ZUVO_HOME" || [ ! -d "$ZUVO_HOME" ] || [ ! -w "$ZUVO_HOME" ]; th
 fi
 RUNS_LOG="$ZUVO_HOME/runs.log"
 RETROS_LOG="$ZUVO_HOME/retros.log"
+SKIP_LOG="$ZUVO_HOME/skip-retro-gate.log"
+RUN_START=$(printf '%s' "$RUN_LINE" | awk -F'\t' '{print $1}')
+HEAD_SHA7=$(git rev-parse --short HEAD 2>/dev/null || echo "-")
+
+# Portable mkdir-atomic write-lock — same convention as retro-stub (no flock
+# dep; macOS ships none). Bounded ZUVO_LOCK_WAIT (default 5s), pid-liveness +
+# 30s stale reclaim, fail-SAFE on stat error, PID-guarded release. A unified
+# retros.log/runs.log lock across ALL writers is tracked in backlog (B-3).
+RUNLOG_LOCK="$ZUVO_HOME/.runlog.lock.d"
+_lock_acquire() {
+  local waited=0 lpid mt
+  while :; do
+    if mkdir "$RUNLOG_LOCK" 2>/dev/null; then
+      # A lock we cannot stamp ownership of is NOT held: if the pid write
+      # fails (full/slow FS) release and retry, so a held lock ALWAYS has a
+      # readable pid (the no-pid steal path then only covers a genuine -9
+      # between mkdir and echo).
+      if echo "$$" > "$RUNLOG_LOCK/pid" 2>/dev/null; then return 0; fi
+      rmdir "$RUNLOG_LOCK" 2>/dev/null || true
+    fi
+    if [ -d "$RUNLOG_LOCK" ]; then
+      lpid=$(cat "$RUNLOG_LOCK/pid" 2>/dev/null || echo "")
+      mt=$(stat -f %m "$RUNLOG_LOCK" 2>/dev/null || stat -c %Y "$RUNLOG_LOCK" 2>/dev/null || echo "")
+      # Correct-by-construction: NEVER steal from a provably-live holder.
+      #  - pid present & alive            -> never steal (wait)
+      #  - pid present & dead             -> attempt reclaim
+      #  - pid absent (-9 between mkdir/echo) -> reclaim only if mtime >30s
+      # Reclaim is best-effort and falls THROUGH to the bounded wait+sleep
+      # below — it never `continue`s past the guard (a failing rmdir must
+      # not busy-spin; the loop stays bounded + paced regardless).
+      if [ -n "$lpid" ]; then
+        kill -0 "$lpid" 2>/dev/null || { rm -f "$RUNLOG_LOCK/pid" 2>/dev/null || true; rmdir "$RUNLOG_LOCK" 2>/dev/null || true; }
+      elif [ -n "$mt" ] && [ "$(( $(date +%s) - mt ))" -gt 30 ]; then
+        rmdir "$RUNLOG_LOCK" 2>/dev/null || true
+      fi
+    fi
+    waited=$((waited + 1))
+    [ "$waited" -ge "$(( ${ZUVO_LOCK_WAIT:-5} * 5 ))" ] && return 1
+    sleep 0.2
+  done
+}
+_lock_release() {
+  [ "$(cat "$RUNLOG_LOCK/pid" 2>/dev/null || echo)" = "$$" ] || return 0
+  rm -f "$RUNLOG_LOCK/pid" 2>/dev/null || true; rmdir "$RUNLOG_LOCK" 2>/dev/null || true
+}
+# Append RUN_LINE under the lock and clear the matching run-marker on clean
+# completion (so retro-stub --sweep finds no orphan). Exit 4 on lock-busy —
+# never a silent drop, never an indefinite hang.
+runs_append() {
+  if ! _lock_acquire; then
+    echo "append-runlog: lock busy (ZUVO_LOCK_WAIT=${ZUVO_LOCK_WAIT:-5}s) — runs.log NOT appended; retry" >&2
+    exit 4
+  fi
+  trap '_lock_release' EXIT INT TERM
+  printf '%s\n' "$RUN_LINE" >> "$RUNS_LOG"
+  rm -f "$ZUVO_HOME"/run-markers/"$SKILL-$PROJECT"-*.marker 2>/dev/null || true
+  _lock_release; trap - EXIT INT TERM
+}
+# Record a parseable, rotated SKIP: line (consumed by zuvo:context-audit).
+skip_log_append() {
+  _lock_acquire || { echo "append-runlog: lock busy — skip-retro-gate.log NOT recorded" >&2; return 1; }
+  trap '_lock_release' EXIT INT TERM
+  [ -f "$SKIP_LOG" ] || printf '# v1 SKIP\tDATE\tSKILL\tPROJECT\tNOTE\n' > "$SKIP_LOG"
+  printf 'SKIP:\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SKILL" "$PROJECT" "runs.log gate bypassed" >> "$SKIP_LOG"
+  if [ "$(grep -c '^SKIP:' "$SKIP_LOG" 2>/dev/null || echo 0)" -gt 100 ]; then
+    T="$SKIP_LOG.tmp.$$.$(date +%s)"
+    head -1 "$SKIP_LOG" > "$T"; grep '^SKIP:' "$SKIP_LOG" | tail -n 100 >> "$T"; mv "$T" "$SKIP_LOG"
+  fi
+  _lock_release; trap - EXIT INT TERM
+}
 
 # Skills exempted from retro gate
 case "$SKILL" in
   using-zuvo|backlog|benchmark|agent-benchmark|deploy|canary|worktree)
-    echo "$RUN_LINE" >> "$RUNS_LOG"
+    runs_append
     echo "OK: appended to runs.log (skill '$SKILL' exempt from retro gate)"
     exit 0
     ;;
@@ -78,9 +148,13 @@ esac
 
 # Override
 if [ "${ZUVO_SKIP_RETRO_GATE:-0}" = "1" ]; then
-  echo "$RUN_LINE" >> "$RUNS_LOG"
+  runs_append
   echo "WARN: appended to runs.log (ZUVO_SKIP_RETRO_GATE=1 — retro gate bypassed)"
-  echo "  This will be flagged in the next zuvo:context-audit / zuvo:retro run."
+  if skip_log_append; then
+    echo "  Recorded to skip-retro-gate.log; flagged by the next zuvo:context-audit / zuvo:retro run."
+  else
+    echo "  WARNING: skip-retro-gate.log could NOT be recorded (lock busy) — this bypass is UNTRACKED." >&2
+  fi
   exit 0
 fi
 
@@ -93,8 +167,34 @@ if [ ! -f "$RETROS_LOG" ]; then
   exit 2
 fi
 
-HAVE_RETRO=$(awk -F'\t' -v skill="$SKILL" -v project="$PROJECT" '
-  ($2 == skill || $1 ~ "RETRO: " skill) && index($0, project) { found = 1 }
+# Strong-signal match (replaces the loose skill+project-substring/any-date
+# match — the exact defect this plan removes). A run is gated ONLY by a FULL
+# retro (canonical predicate, retrospective.md): line ^RETRO: AND field2==skill
+# AND field3==project (EXACT, not substring) AND field5 NOT a stub value, AND
+# — unless ZUVO_MATCH_LOOSE=1 — the retro is for THIS run window: field13==HEAD
+# SHA7 OR its timestamp >= the incoming run line's DATE (RUN_START). A stale
+# retro or a checkpoint stub therefore never satisfies a fresh completed run.
+HAVE_RETRO=$(awk -F'\t' -v skill="$SKILL" -v project="$PROJECT" \
+                       -v sha="$HEAD_SHA7" -v rstart="$RUN_START" \
+                       -v loose="${ZUVO_MATCH_LOOSE:-0}" '
+  # Fail-safe: only a well-formed 17-field record can match. A malformed /
+  # column-drifted / extra-tab line is SKIPPED (never satisfies the gate,
+  # never falsely blocks — the scan just continues to the next line). This
+  # makes $13/timestamp alignment robust against corruption or schema drift.
+  /^RETRO:/ && NF==17 {
+    if ($2==skill && $3==project &&
+        $5!="abandoned" && $5!="context-out" && $5!="partial-recovery") {
+      if (loose=="1") { found=1 }
+      else {
+        # Timestamps are the canonical `%Y-%m-%dT%H:%M:%SZ` (every zuvo
+        # writer uses exactly this), so lexicographic >= is correct.
+        # Guard: an empty/missing RUN_START must NOT make ts>=rstart
+        # always-true (overly permissive) — require the SHA match then.
+        ts=$1; sub(/^RETRO: /,"",ts)
+        if ($13==sha || (rstart!="" && ts>=rstart)) { found=1 }
+      }
+    }
+  }
   END { print found + 0 }
 ' "$RETROS_LOG")
 
@@ -159,5 +259,5 @@ case "$SKILL" in
 esac
 
 # Retro + audit verified — proceed
-echo "$RUN_LINE" >> "$RUNS_LOG"
+runs_append
 echo "OK: appended to runs.log (retro verified for $SKILL on $PROJECT)"

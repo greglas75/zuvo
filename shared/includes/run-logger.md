@@ -118,6 +118,8 @@ This closes the silent-skip failure mode where an audit writes the report + Run 
 
 If the wrapper script does not exist on the host (e.g., Codex CLI / Cursor without zuvo install), fall back to direct append (`echo -e "$RUN_LINE" >> "$LOG_PATH"`) and add `retro_gate=missing` to the next retrospective's friction notes so the install gap is surfaced.
 
+**Strong-signal match (2026-05-18 retro-checkpoint).** The gate is satisfied **only by a full retro** (canonical predicate in `retrospective.md`: `^RETRO:` AND field-5 ∉ {abandoned,context-out,partial-recovery}) for the **same skill + exact project** AND for **this run window** (retro `SHA7` == HEAD, or retro timestamp ≥ the run line's DATE). A stale retro or a checkpoint stub does NOT satisfy a fresh completed run. Documented relax: `ZUVO_MATCH_LOOSE=1` (any matching full retro, any date — audited). `ZUVO_SKIP_RETRO_GATE=1` still bypasses, but now also appends a rotated, parseable `SKIP:` line to `$ZUVO_HOME/skip-retro-gate.log` (consumed by `zuvo:context-audit`). The runs.log/skip-log append is serialized by a portable mkdir-lock; on lock-busy the wrapper exits non-zero (`runs.log NOT appended; retry`) — never a silent drop, never an indefinite hang. State dir is `ZUVO_HOME` (default `$HOME/.zuvo`); `ZUVO_BIN` resolves helper executables independently.
+
 ### Audit skill example (TASKS=`-`, NOT skipped)
 
 Audits don't produce tasks — **TASKS field must be `-`**, not omitted. Never merge TASKS into DURATION.

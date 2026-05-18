@@ -100,21 +100,27 @@ LOCK="$ZUVO_HOME/.retro.lock.d"
 WAIT="${ZUVO_LOCK_WAIT:-5}"
 acquired=0; waited=0
 while :; do
-  if mkdir "$LOCK" 2>/dev/null; then echo "$$" > "$LOCK/pid" 2>/dev/null || true; acquired=1; break; fi
+  if mkdir "$LOCK" 2>/dev/null; then
+    # A lock we cannot stamp ownership of is NOT held (same convention as
+    # append-runlog): pid-write failure -> release + retry, so a held lock
+    # always has a readable pid.
+    if echo "$$" > "$LOCK/pid" 2>/dev/null; then acquired=1; break; fi
+    rmdir "$LOCK" 2>/dev/null || true
+  fi
   if [ -d "$LOCK" ]; then
     lpid=$(cat "$LOCK/pid" 2>/dev/null || echo "")
     mt=$(stat -f %m "$LOCK" 2>/dev/null || stat -c %Y "$LOCK" 2>/dev/null || echo "")
-    # Steal ONLY if the holder PID is provably dead (immediate — no wait), OR
-    # the lock is clearly stale (>30s) with a readable mtime. If stat failed
-    # (mt empty) we do NOT steal — fail SAFE (keep waiting) not fail open.
-    # Invariant: the critical section is a single append (milliseconds), so a
-    # LIVE holder can never reach 30s; mkdir is atomic so even a contended
-    # steal yields exactly one acquirer. Pid-dead steal makes -9 recovery
-    # immediate; the 30s path only covers the rare mkdir/echo-pid race window.
-    if { [ -n "$lpid" ] && ! kill -0 "$lpid" 2>/dev/null; } \
-       || { [ -n "$mt" ] && [ "$(( $(date +%s) - mt ))" -gt 30 ]; }; then
-      rm -f "$LOCK/pid" 2>/dev/null || true; rmdir "$LOCK" 2>/dev/null || true
-      continue
+    # Correct-by-construction (same convention as append-runlog): NEVER steal
+    # from a provably-live holder. pid alive -> wait; pid dead -> steal now
+    # (immediate -9 recovery); pid absent (mkdir/echo race) -> steal only if
+    # mtime stale >30s. stat-failed (mt empty) with no pid -> fail SAFE (wait).
+    # Reclaim is best-effort and FALLS THROUGH to the bounded wait+sleep
+    # below (never `continue`s past the guard — a failing rmdir must not
+    # busy-spin; the loop stays bounded + paced regardless).
+    if [ -n "$lpid" ]; then
+      kill -0 "$lpid" 2>/dev/null || { rm -f "$LOCK/pid" 2>/dev/null || true; rmdir "$LOCK" 2>/dev/null || true; }
+    elif [ -n "$mt" ] && [ "$(( $(date +%s) - mt ))" -gt 30 ]; then
+      rmdir "$LOCK" 2>/dev/null || true
     fi
   fi
   waited=$((waited + 1))
