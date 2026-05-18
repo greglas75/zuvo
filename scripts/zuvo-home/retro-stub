@@ -14,12 +14,14 @@
 #              --skill=<skill> --project=<project> [--friction=<val>] \
 #              [--turns=N --tool-calls=N --files-read=N --files-modified=N] \
 #              [--missing-template=<text>]
-#   retro-stub --sweep            # orphan sweep (implemented in plan Task 5)
+#   retro-stub --sweep   # next-boundary orphan sweep: for each run-marker
+#                        # with no matching full retro, emit one ABANDONED
+#                        # stub and clear the marker (passive capture).
 #
 # Lock primitive: a portable mkdir-atomic lock DIR at $ZUVO_HOME/.retro.lock.d
-# (NO flock dependency — macOS ships no flock(1)). Bounded wait
-# ZUVO_LOCK_WAIT seconds (default 5); a lock dir older than 60s is reclaimed
-# (stale). On lock-busy: exit non-zero, write nothing, never hang.
+# (NO flock dependency — macOS ships no flock(1)). Bounded ZUVO_LOCK_WAIT
+# seconds (default 5); never steal a provably-live holder; a held lock always
+# has a readable pid; bounded + paced (no busy-spin); fail-SAFE on stat error.
 #
 # Idempotent: no-op if a FULL retro (canonical predicate) for the same
 # skill+project+SHA7 already exists. A later full retro supersedes a stub.
@@ -34,6 +36,7 @@ if ! mkdir -p "$ZUVO_HOME" || [ ! -d "$ZUVO_HOME" ] || [ ! -w "$ZUVO_HOME" ]; th
 fi
 RETRO_LOG="$ZUVO_HOME/retros.log"
 RETRO_MD="$ZUVO_HOME/retros.md"
+LOCK="$ZUVO_HOME/.retro.lock.d"
 
 # ---- args -----------------------------------------------------------------
 STATUS="" FRICTION="" SKILL="" PROJECT="" SWEEP=0
@@ -54,14 +57,126 @@ for a in "$@"; do
   esac
 done
 
+# PID-guarded lock release (only tears down a lock still OURS). Script-level
+# safety net for INT/TERM mid-emit; _emit_one also releases explicitly so the
+# lock is never held across sweep iterations.
+_release() {
+  [ "$(cat "$LOCK/pid" 2>/dev/null || echo)" = "$$" ] || return 0
+  rm -f "$LOCK/pid" 2>/dev/null || true; rmdir "$LOCK" 2>/dev/null || true
+}
+trap '_release' INT TERM EXIT
+
+# ===== _emit_one: locked, idempotent, enum-valid 17-field stub emit ========
+# Caller must have set+validated: SKILL PROJECT FRICTION STATUS MT TURNS TOOLS
+# FREAD FMOD DATE BRANCH SHA7. Returns 0 (emitted, OR idempotent no-op when a
+# full retro for skill+project+SHA7 exists) | 3 (lock busy — nothing written).
+_emit_one() {
+  local WAIT="${ZUVO_LOCK_WAIT:-5}" acquired=0 waited=0 lpid mt LC EC T
+  while :; do
+    if mkdir "$LOCK" 2>/dev/null; then
+      # A lock we cannot stamp ownership of is NOT held: pid-write failure
+      # -> release + retry, so a held lock ALWAYS has a readable pid.
+      if echo "$$" > "$LOCK/pid" 2>/dev/null; then acquired=1; break; fi
+      rmdir "$LOCK" 2>/dev/null || true
+    fi
+    if [ -d "$LOCK" ]; then
+      lpid=$(cat "$LOCK/pid" 2>/dev/null || echo "")
+      mt=$(stat -f %m "$LOCK" 2>/dev/null || stat -c %Y "$LOCK" 2>/dev/null || echo "")
+      # NEVER steal a provably-live holder. pid alive -> wait; pid dead ->
+      # reclaim (immediate -9 recovery); pid absent (-9 between mkdir/echo)
+      # -> reclaim only if mtime >30s; stat-failed + no pid -> fail SAFE.
+      # Reclaim is best-effort and FALLS THROUGH to the bounded wait+sleep
+      # (never `continue`s past the guard — a failing rmdir must not spin).
+      if [ -n "$lpid" ]; then
+        kill -0 "$lpid" 2>/dev/null || { rm -f "$LOCK/pid" 2>/dev/null || true; rmdir "$LOCK" 2>/dev/null || true; }
+      elif [ -n "$mt" ] && [ "$(( $(date +%s) - mt ))" -gt 30 ]; then
+        rmdir "$LOCK" 2>/dev/null || true
+      fi
+    fi
+    waited=$((waited + 1))
+    [ "$waited" -ge "$((WAIT * 5))" ] && break
+    sleep 0.2
+  done
+  if [ "$acquired" -ne 1 ]; then
+    echo "retro-stub: lock busy (ZUVO_LOCK_WAIT=${WAIT}s), skipped — no data written" >&2
+    return 3
+  fi
+
+  # idempotency INSIDE the lock (no check-then-act race). Canonical full-retro
+  # predicate: well-formed (NF==17) ^RETRO: AND $2==skill AND $3==project
+  # (EXACT) AND $13==sha AND $5 NOT a stub value.
+  if [ -f "$RETRO_LOG" ] && awk -F'\t' -v s="$SKILL" -v p="$PROJECT" -v sha="$SHA7" '
+       /^RETRO:/ && NF==17 {
+         if ($2==s && $3==p && $13==sha &&
+             $5!="abandoned" && $5!="context-out" && $5!="partial-recovery") { found=1 }
+       }
+       END { exit found?0:1 }' "$RETRO_LOG"; then
+    _release; return 0   # full retro present -> stub is a no-op
+  fi
+
+  [ -f "$RETRO_LOG" ] || echo "# v2 DATE SKILL PROJECT CODE_TYPE FRICTION_CATEGORY MISSING_TEMPLATE CONTEXT_GAP TURNS_WASTED TOOL_CALLS FILES_READ FILES_MODIFIED BRANCH SHA7 BLIND_AUDIT ADVERSARIAL CODESIFT ROUTING_STATUS" > "$RETRO_LOG"
+  printf 'RETRO: %s\t%s\t%s\tOTHER\t%s\t%s\tnone\t%s\t%s\t%s\t%s\t%s\t%s\tnot_run\tnot_run\tN/A\tN/A\n' \
+    "$DATE" "$SKILL" "$PROJECT" "$FRICTION" "$MT" "$TURNS" "$TOOLS" "$FREAD" "$FMOD" "$BRANCH" "$SHA7" >> "$RETRO_LOG"
+  LC=$(wc -l < "$RETRO_LOG")
+  if [ "$LC" -gt 101 ]; then
+    T="$RETRO_LOG.tmp.$$.$(date +%s)"
+    head -1 "$RETRO_LOG" > "$T"; tail -n 100 "$RETRO_LOG" >> "$T"; mv "$T" "$RETRO_LOG"
+  fi
+  {
+    printf '<!-- RETRO -->\n\n'
+    printf '## [CHECKPOINT-STUB] %s %s %s\n\n' "$DATE" "$SKILL" "$PROJECT"
+    printf 'status: %s | friction: %s | turns: %s | tool-calls: %s\n' "$STATUS" "$FRICTION" "$TURNS" "$TOOLS"
+    printf 'Run did not reach its terminal retrospective. A later full retro for\n'
+    printf 'the same retro-session-id supersedes this stub.\n\n'
+  } >> "$RETRO_MD"
+  EC=$(grep -c '^<!-- RETRO -->' "$RETRO_MD" 2>/dev/null || echo 0)
+  if [ "$EC" -gt 100 ]; then
+    T="$RETRO_MD.tmp.$$.$(date +%s)"
+    awk '/^<!-- RETRO -->/{c++} c>=('"$EC"'-99){print}' "$RETRO_MD" > "$T" && mv "$T" "$RETRO_MD"
+  fi
+  _release; return 0
+}
+
+# ---- sweep mode: passive next-boundary orphan capture ---------------------
 if [ "$SWEEP" -eq 1 ]; then
-  # --sweep logic is delivered in plan Task 5. Until then this is an
-  # accepted incremental shim: parse-only, no-op, success (so callers
-  # wired in Task 7 do not fail on a pre-Task-5 binary).
-  exit 0
+  MDIR="$ZUVO_HOME/run-markers"
+  [ -d "$MDIR" ] || exit 0          # nothing to sweep
+  DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  rc=0; any=0
+  for m in "$MDIR"/*.marker; do
+    [ -e "$m" ] || continue          # nullglob-safe (no markers -> no-op)
+    any=1
+    msk=$(sed -n 's/^skill=//p'   "$m" 2>/dev/null | head -1)
+    mpr=$(sed -n 's/^project=//p' "$m" 2>/dev/null | head -1)
+    msha=$(sed -n 's/^sha7=//p'   "$m" 2>/dev/null | head -1)
+    mbr=$(sed -n 's/^branch=//p'  "$m" 2>/dev/null | head -1)
+    mmt=$(stat -f %m "$m" 2>/dev/null || stat -c %Y "$m" 2>/dev/null || echo "")
+    # Unparseable / dirty marker: only delete when clearly stale (>7d) so we
+    # never race a marker mid-write; otherwise leave it for a later sweep.
+    case "$msk$mpr" in *$'\t'*|*$'\n'*|*$'\r'*) msk="" ;; esac
+    if [ -z "$msk" ] || [ -z "$mpr" ]; then
+      [ -n "$mmt" ] && [ "$(( $(date +%s) - mmt ))" -gt 604800 ] && rm -f "$m"
+      continue
+    fi
+    SKILL="$msk"; PROJECT="$mpr"; STATUS="ABANDONED"; FRICTION="abandoned"
+    MT=$(printf '%s' "orphan-sweep:$msk" | tr '\t\r\n' '   ' | cut -c1-40)
+    TURNS=0; TOOLS=0; FREAD=0; FMOD=0
+    SHA7="${msha:--}"; BRANCH="${mbr:--}"
+    # Clear the marker ONLY if _emit_one actually handled it (0 = stub
+    # emitted OR idempotent no-op because a full retro already exists).
+    # On lock-busy (3, nothing written) KEEP the marker so a later sweep
+    # retries it — never lose passive capture for an orphan.
+    if _emit_one; then
+      rm -f "$m"
+    else
+      rc=$?                          # lock busy -> marker preserved
+    fi
+  done
+  [ "$any" -eq 1 ] || exit 0
+  exit "$rc"
 fi
 
-# status -> canonical stub friction value
+# ---- normal mode: validate args, then emit one ----------------------------
 case "$STATUS" in
   ABANDONED)   DEF_FR="abandoned" ;;
   CONTEXT_OUT) DEF_FR="context-out" ;;
@@ -74,109 +189,19 @@ case "${FRICTION:-$DEF_FR}" in
 esac
 [ -n "$SKILL" ]   || { echo "retro-stub: --skill required" >&2; exit 2; }
 [ -n "$PROJECT" ] || { echo "retro-stub: --project required" >&2; exit 2; }
-
-# integer columns must be integers (enum/strict-parser safety)
 for v in "$TURNS" "$TOOLS" "$FREAD" "$FMOD"; do
   case "$v" in (*[!0-9]*|'') echo "retro-stub: integer cols must be numeric" >&2; exit 2 ;; esac
 done
-
-# TSV/log-injection guard: a TAB / newline / CR in any string field would split
-# one logical row into several physical fields/lines, corrupting the log and
-# breaking the predicate + dedup. SKILL/PROJECT are identifiers — reject if
-# dirty. MISSING_TEMPLATE is free-ish text — strip control chars + cap 40.
+# TSV/log-injection guard (identifiers must be clean; MT stripped + capped 40).
 case "$SKILL$PROJECT$FRICTION" in
   *$'\t'*|*$'\n'*|*$'\r'*)
     echo "retro-stub: --skill/--project/--friction must not contain TAB/newline/CR" >&2; exit 2 ;;
 esac
 MT=$(printf '%s' "$MT" | tr '\t\r\n' '   ' | cut -c1-40)
-
 DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 BRANCH=$(git branch --show-current 2>/dev/null || true)
-[ -n "$BRANCH" ] || BRANCH="-"   # detached HEAD prints nothing -> use "-"
+[ -n "$BRANCH" ] || BRANCH="-"   # detached HEAD prints nothing -> "-"
 SHA7=$(git rev-parse --short HEAD 2>/dev/null || echo "-")
 
-# ---- portable mkdir-atomic lock (bounded, PID-guarded, fail-SAFE) ---------
-LOCK="$ZUVO_HOME/.retro.lock.d"
-WAIT="${ZUVO_LOCK_WAIT:-5}"
-acquired=0; waited=0
-while :; do
-  if mkdir "$LOCK" 2>/dev/null; then
-    # A lock we cannot stamp ownership of is NOT held (same convention as
-    # append-runlog): pid-write failure -> release + retry, so a held lock
-    # always has a readable pid.
-    if echo "$$" > "$LOCK/pid" 2>/dev/null; then acquired=1; break; fi
-    rmdir "$LOCK" 2>/dev/null || true
-  fi
-  if [ -d "$LOCK" ]; then
-    lpid=$(cat "$LOCK/pid" 2>/dev/null || echo "")
-    mt=$(stat -f %m "$LOCK" 2>/dev/null || stat -c %Y "$LOCK" 2>/dev/null || echo "")
-    # Correct-by-construction (same convention as append-runlog): NEVER steal
-    # from a provably-live holder. pid alive -> wait; pid dead -> steal now
-    # (immediate -9 recovery); pid absent (mkdir/echo race) -> steal only if
-    # mtime stale >30s. stat-failed (mt empty) with no pid -> fail SAFE (wait).
-    # Reclaim is best-effort and FALLS THROUGH to the bounded wait+sleep
-    # below (never `continue`s past the guard — a failing rmdir must not
-    # busy-spin; the loop stays bounded + paced regardless).
-    if [ -n "$lpid" ]; then
-      kill -0 "$lpid" 2>/dev/null || { rm -f "$LOCK/pid" 2>/dev/null || true; rmdir "$LOCK" 2>/dev/null || true; }
-    elif [ -n "$mt" ] && [ "$(( $(date +%s) - mt ))" -gt 30 ]; then
-      rmdir "$LOCK" 2>/dev/null || true
-    fi
-  fi
-  waited=$((waited + 1))
-  [ "$waited" -ge "$((WAIT * 5))" ] && break   # WAIT seconds in 0.2s ticks
-  sleep 0.2
-done
-if [ "$acquired" -ne 1 ]; then
-  echo "retro-stub: lock busy (ZUVO_LOCK_WAIT=${WAIT}s), skipped — no data written" >&2
-  exit 3
-fi
-# PID-guarded release: only tear down the lock if it is still OURS (prevents
-# deleting another process's lock after a mistaken steal). Covers Ctrl-C/TERM.
-release_lock() {
-  [ "$(cat "$LOCK/pid" 2>/dev/null || echo)" = "$$" ] || return 0
-  rm -f "$LOCK/pid" 2>/dev/null || true; rmdir "$LOCK" 2>/dev/null || true
-}
-trap 'release_lock' EXIT INT TERM
-
-# ---- idempotency INSIDE the lock (no check-then-act race) ----------------
-# Canonical full-retro predicate (retrospective.md): ^RETRO: AND field2==skill
-# AND field3==project (EXACT field match, NOT substring — substring-anywhere is
-# the very loose-match defect this whole plan removes) AND field13==sha AND
-# field5 NOT a stub value. Line is "RETRO: <date>\t<skill>\t<project>\t..." so
-# under -F'\t': $1="RETRO: <date>", $2=skill, $3=project, $13=sha7.
-if [ -f "$RETRO_LOG" ] && awk -F'\t' -v s="$SKILL" -v p="$PROJECT" -v sha="$SHA7" '
-     /^RETRO:/ {
-       if ($2==s && $3==p && $13==sha &&
-           $5!="abandoned" && $5!="context-out" && $5!="partial-recovery") { found=1 }
-     }
-     END { exit found?0:1 }' "$RETRO_LOG"; then
-  exit 0   # full retro present -> stub is a no-op (trap releases the lock)
-fi
-
-# ---- emit 17-field enum-valid stub ---------------------------------------
-[ -f "$RETRO_LOG" ] || echo "# v2 DATE SKILL PROJECT CODE_TYPE FRICTION_CATEGORY MISSING_TEMPLATE CONTEXT_GAP TURNS_WASTED TOOL_CALLS FILES_READ FILES_MODIFIED BRANCH SHA7 BLIND_AUDIT ADVERSARIAL CODESIFT ROUTING_STATUS" > "$RETRO_LOG"
-printf 'RETRO: %s\t%s\t%s\tOTHER\t%s\t%s\tnone\t%s\t%s\t%s\t%s\t%s\t%s\tnot_run\tnot_run\tN/A\tN/A\n' \
-  "$DATE" "$SKILL" "$PROJECT" "$FRICTION" "$MT" "$TURNS" "$TOOLS" "$FREAD" "$FMOD" "$BRANCH" "$SHA7" >> "$RETRO_LOG"
-
-# header-preserving last-100 rotation
-LC=$(wc -l < "$RETRO_LOG")
-if [ "$LC" -gt 101 ]; then
-  T="$RETRO_LOG.tmp.$$.$(date +%s)"
-  head -1 "$RETRO_LOG" > "$T"; tail -n 100 "$RETRO_LOG" >> "$T"; mv "$T" "$RETRO_LOG"
-fi
-
-# retros.md degraded block
-{
-  printf '<!-- RETRO -->\n\n'
-  printf '## [CHECKPOINT-STUB] %s %s %s\n\n' "$DATE" "$SKILL" "$PROJECT"
-  printf 'status: %s | friction: %s | turns: %s | tool-calls: %s\n' "$STATUS" "$FRICTION" "$TURNS" "$TOOLS"
-  printf 'Run did not reach its terminal retrospective. A later full retro for\n'
-  printf 'the same retro-session-id supersedes this stub.\n\n'
-} >> "$RETRO_MD"
-EC=$(grep -c '^<!-- RETRO -->' "$RETRO_MD" 2>/dev/null || echo 0)
-if [ "$EC" -gt 100 ]; then
-  T="$RETRO_MD.tmp.$$.$(date +%s)"
-  awk '/^<!-- RETRO -->/{c++} c>=('"$EC"'-99){print}' "$RETRO_MD" > "$T" && mv "$T" "$RETRO_MD"
-fi
-exit 0
+_emit_one
+exit $?
