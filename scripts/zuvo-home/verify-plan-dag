@@ -1,0 +1,285 @@
+#!/usr/bin/env bash
+# verify-plan-dag — zuvo plan DAG validator (cycles / forward-refs / missing deps).
+#
+# Usage:
+#   verify-plan-dag [--json] <plan-file>
+#
+# Exit codes:
+#   0 — clean DAG (no cycles, no forward-refs, no missing deps)
+#   1 — one or more DAG violations
+#   2 — parse / IO error (file missing, malformed markdown, no tasks)
+#
+# Parses both supported task-metadata layouts:
+#   (a) standalone:  **Dependencies:** Task 1, Task 2
+#   (b) inline `·`:  **Surface:** … · **Dependencies:** Task 1 · **Execution routing:** deep
+#
+# Pure awk for the core (associative arrays, byte-safe). Bash only orchestrates.
+# Portable to macOS bash 3.2 (no `declare -A`) and Linux.
+
+LC_ALL=C
+export LC_ALL
+
+JSON=0
+PLAN=""
+SAW_PLAN=0
+for arg in "$@"; do
+  case "$arg" in
+    --json) JSON=1 ;;
+    -h|--help)
+      sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    --*) echo "verify-plan-dag: unknown flag: $arg" >&2; exit 2 ;;
+    *)
+      # Reject multiple positional plan files — silent skip of all-but-last
+      # is a CI footgun (broken plan masked by later valid one).
+      if [ "$SAW_PLAN" -eq 1 ]; then
+        echo "verify-plan-dag: only one plan file accepted per invocation (got multiple)" >&2
+        exit 2
+      fi
+      PLAN="$arg"
+      SAW_PLAN=1
+      ;;
+  esac
+done
+
+if [ -z "$PLAN" ]; then
+  echo "verify-plan-dag: missing plan file argument" >&2
+  exit 2
+fi
+if [ ! -f "$PLAN" ]; then
+  echo "verify-plan-dag: $PLAN: not found (ENOENT)" >&2
+  exit 2
+fi
+
+awk -v json="$JSON" -v planpath="$PLAN" '
+function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+function json_esc(s,   r) { r = s; gsub(/\\/, "\\\\", r); gsub(/"/, "\\\"", r); return r }
+
+BEGIN {
+  bullet = sprintf("%c%c", 194, 183)        # · = U+00B7 = 0xC2 0xB7
+}
+
+# ── Phase 1: parse ────────────────────────────────────────────────────────
+# Numeric task header (allows trailing `:` or not — we anchor on the digits).
+/^###[[:space:]]+Task[[:space:]]+[0-9]+[[:space:]]*:/ {
+  if (match($0, /[0-9]+/)) {
+    cur = substr($0, RSTART, RLENGTH) + 0
+    if (cur in seen) {
+      malformed = 1
+      malformed_reason = "duplicate Task " cur " header"
+    } else {
+      seen[cur] = 1
+      n++
+      order[n] = cur
+      deps[cur] = ""
+      depcapt[cur] = 0
+    }
+  }
+  next
+}
+# Non-numeric task header (`### Task abc:`, `### Task 2a:`) — malformed.
+/^###[[:space:]]+Task[[:space:]]+[^0-9[:space:]]/ {
+  malformed = 1
+  malformed_reason = "non-numeric task header: " $0
+  next
+}
+# A `### Task <num>` not followed by `:` is also non-conforming and would
+# otherwise slip past — match `### Task NNN<non-colon, non-space>`.
+/^###[[:space:]]+Task[[:space:]]+[0-9]+[^:[:space:]]/ {
+  malformed = 1
+  malformed_reason = "malformed numeric task header (id suffix): " $0
+  next
+}
+/\*\*Dependencies:\*\*/ {
+  if (cur == 0) next                                  # before any task header
+  if (depcapt[cur]) next                              # first deps line wins
+
+  # Anchor: capture ONLY when the marker is at line-start (whitespace prefix
+  # only) OR is preceded by an inline `·` bullet. Prose like
+  #   "Some narrative that says **Dependencies:** are tricky"
+  # must NOT shadow a later, real deps line for the same task.
+  mpos = index($0, "**Dependencies:**")
+  prefix = substr($0, 1, mpos - 1)
+  sub(/[[:space:]]+$/, "", prefix)                    # strip trailing whitespace
+  if (prefix != "") {
+    blen = length(bullet)
+    if (length(prefix) < blen || substr(prefix, length(prefix) - blen + 1) != bullet) {
+      next                                            # prose mention — ignore
+    }
+  }
+
+  line = $0
+  sub(/^.*\*\*Dependencies:\*\*[[:space:]]*/, "", line)
+  # Cut at inline `·` if present.
+  p = index(line, bullet)
+  if (p > 0) line = substr(line, 1, p - 1)
+  deps[cur] = trim(line)
+  depcapt[cur] = 1
+  next
+}
+
+END {
+  # ── Phase 2: emit diagnostics for unparseable inputs ─────────────────
+  # Order matters: malformed MUST be checked first; otherwise a mix of
+  # `### Task 2a:` (malformed) with `### Task 1:` (valid) would silently
+  # drop the bad header and report the rest as a valid DAG.
+  if (malformed) {
+    reason = (malformed_reason != "" ? malformed_reason : "malformed markdown")
+    printf "verify-plan-dag: %s: malformed plan — %s\n", planpath, reason > "/dev/stderr"
+    exit 2
+  }
+  if (n == 0) {
+    printf "verify-plan-dag: %s: no tasks parsed (no ### Task N: headers found)\n", planpath > "/dev/stderr"
+    exit 2
+  }
+
+  # ── Phase 3: resolve deps to numeric IDs ─────────────────────────────
+  n_miss = 0; n_fwd = 0
+  for (i = 1; i <= n; i++) {
+    t = order[i]
+    raw = deps[t]
+    rn = tolower(raw); gsub(/[[:space:]]/, "", rn)
+    if (rn == "" || rn == "none") {
+      adj_count[t] = 0
+      continue
+    }
+    nc = split(raw, chunks, ",")
+    ac = 0
+    for (k = 1; k <= nc; k++) {
+      c = trim(chunks[k])
+      if (c == "") continue                       # trailing comma — tolerated
+      # Extract first numeric run.
+      if (match(c, /[0-9]+/)) {
+        d = substr(c, RSTART, RLENGTH) + 0
+        ac++
+        adj[t, ac] = d
+        if (!(d in seen)) {
+          mkey = t SUBSEP d
+          if (!(mkey in miss_seen)) {
+            miss_seen[mkey] = 1
+            n_miss++
+            miss_src[n_miss] = t
+            miss_dst[n_miss] = d
+          }
+        } else if (d >= t) {
+          fkey = t SUBSEP d
+          if (!(fkey in fwd_seen)) {
+            fwd_seen[fkey] = 1
+            n_fwd++
+            fwd_src[n_fwd] = t
+            fwd_dst[n_fwd] = d
+          }
+        }
+      } else {
+        # Non-empty chunk without a digit (e.g. "Build") is a malformed token,
+        # not a silently-dropped edge.
+        printf "verify-plan-dag: %s: malformed plan — non-numeric dependency token in Task %d: \"%s\"\n", planpath, t, c > "/dev/stderr"
+        exit 2
+      }
+    }
+    adj_count[t] = ac
+  }
+
+  # ── Phase 4: DFS cycle detection (iterative, white/gray/black) ──────
+  for (i = 1; i <= n; i++) color[order[i]] = "W"
+  n_cyc = 0
+  for (i = 1; i <= n; i++) {
+    root = order[i]
+    if (color[root] != "W") continue
+    # Iterative DFS using an explicit stack of (node, next_edge_idx).
+    sp = 0
+    sp++; st_node[sp] = root; st_idx[sp] = 1; color[root] = "G"; on_path[root] = sp
+    while (sp > 0) {
+      v = st_node[sp]
+      idx = st_idx[sp]
+      if (idx > adj_count[v]) {
+        # done with v
+        color[v] = "B"
+        delete on_path[v]
+        sp--
+        continue
+      }
+      st_idx[sp] = idx + 1
+      d = adj[v, idx]
+      if (!(d in seen)) continue            # missing dep already recorded
+      if (color[d] == "W") {
+        color[d] = "G"; sp++; st_node[sp] = d; st_idx[sp] = 1; on_path[d] = sp
+      } else if (color[d] == "G") {
+        # Cycle: from on_path[d] up to sp, then close with d.
+        path = ""
+        for (q = on_path[d]; q <= sp; q++) {
+          path = (path == "") ? st_node[q] : path "," st_node[q]
+        }
+        path = path "," d
+        # Dedupe by canonical key (sorted node set).
+        # Build sorted-set key.
+        nset = split(path, nodes_arr, ",")
+        # Bubble-sort unique numeric ids — small inputs.
+        delete uniq
+        un = 0
+        for (q = 1; q <= nset; q++) {
+          if (!(nodes_arr[q] in uniq)) { uniq[nodes_arr[q]] = 1; un++; uarr[un] = nodes_arr[q] + 0 }
+        }
+        for (a = 1; a < un; a++) for (b = a+1; b <= un; b++) if (uarr[a] > uarr[b]) { tmp = uarr[a]; uarr[a] = uarr[b]; uarr[b] = tmp }
+        ckey = ""
+        for (q = 1; q <= un; q++) ckey = (ckey == "") ? uarr[q] : ckey "," uarr[q]
+        if (!(ckey in cyc_seen)) {
+          cyc_seen[ckey] = 1
+          n_cyc++
+          cyc_path[n_cyc] = path
+        }
+      }
+      # B → already explored
+    }
+  }
+
+  violations = n_cyc + n_miss + n_fwd
+
+  # ── Phase 5: emit ────────────────────────────────────────────────────
+  if (json) {
+    printf "{"
+    printf "\"plan\":\"%s\",", json_esc(planpath)
+    printf "\"tasks\":%d,", n
+    printf "\"valid\":%s,", (violations == 0 ? "true" : "false")
+    printf "\"cycles\":["
+    for (i = 1; i <= n_cyc; i++) {
+      if (i > 1) printf ","
+      printf "\"%s\"", cyc_path[i]
+    }
+    printf "],"
+    printf "\"forward_refs\":["
+    for (i = 1; i <= n_fwd; i++) {
+      if (i > 1) printf ","
+      printf "{\"task\":%d,\"depends_on\":%d}", fwd_src[i], fwd_dst[i]
+    }
+    printf "],"
+    printf "\"missing_deps\":["
+    for (i = 1; i <= n_miss; i++) {
+      if (i > 1) printf ","
+      printf "{\"task\":%d,\"depends_on\":%d}", miss_src[i], miss_dst[i]
+    }
+    printf "]}\n"
+  } else {
+    if (violations == 0) {
+      printf "verify-plan-dag: %s: valid DAG (%d tasks, 0 violations)\n", planpath, n
+    } else {
+      printf "verify-plan-dag: %s: INVALID — %d violation(s) across %d tasks\n", planpath, violations, n
+      for (i = 1; i <= n_cyc; i++) {
+        path = cyc_path[i]
+        gsub(/,/, " → Task ", path)
+        printf "  cycle: Task %s\n", path
+      }
+      for (i = 1; i <= n_fwd; i++) {
+        printf "  forward-ref: Task %d depends on Task %d (forward / self)\n", fwd_src[i], fwd_dst[i]
+      }
+      for (i = 1; i <= n_miss; i++) {
+        printf "  missing-dep: Task %d depends on Task %d (not defined in plan)\n", miss_src[i], miss_dst[i]
+      }
+    }
+  }
+
+  exit (violations == 0 ? 0 : 1)
+}
+' < "$PLAN"
+# stdin-redirect (instead of trailing arg) so filenames containing `=`
+# are not interpreted by awk as `var=value` variable assignments.
