@@ -373,6 +373,12 @@ Copy the printed `[CodeSift matching trace]` block verbatim and issue the printe
 | `changed_symbols: N/A (test-only diff)` | EVER (test files have changed_symbols too) | `changed_symbols: <count>` |
 | `codesift: unavailable` | `mcp__codesift__*` was in deferred-tools session-start banner | `codesift: deferred-not-preloaded (FAILURE: skill required preload)` |
 | `RETRO: skipped (nothing interesting)` | EVER | One of: `RETRO: skipped (trivial session, <3 findings and no fix-loop)` OR full retro appended |
+| `Adversarial: skipped (context budget)` / `(tight context)` | EVER | Chunk the diff (see section 1.6 CONTEXT BUDGET) and run adversarial per chunk, OR exit with `BLOCKED_CONTEXT_BUDGET` and ask the user to narrow scope. Skipping is never an option. |
+| `Adversarial: skipped (already mechanically detected)` / `(scanners covered it)` | EVER | This inverts the rationale. Adversarial's purpose is to find what mechanical scanners MISSED (CodeSift/audit_scan find patterns; adversarial finds semantics). Skipping because scanners ran is a category error. Run it. |
+| `Adversarial: skipped (self-review, low value)` / `(I wrote this code so adversarial adds little)` | EVER | Self-review REQUIRES MORE adversarial coverage, not less. Section 1.1 + 1.6 mandate `--all-providers` on SELF-REVIEW. Anchoring bias is exactly why adversarial exists here. |
+| `Adversarial: skipped (small diff)` / `(<N lines so not worth)` | EVER (Tier table line 284 mandates adversarial at TIER 0) | Run it. Even <15 line diffs get the pass per the Tier table — a single-line semantic bug (e.g. inverted comparison, off-by-one, swapped args) is exactly the class adversarial catches that scanners cannot. |
+| `Adversarial: skipped (documented honestly)` / `(noting the skip transparently)` | EVER | Honesty about a violation is still a violation. The Validity Gate evaluates whether the gate ran, not whether the skip was politely worded. Run it or exit BLOCKED. |
+| Any `Adversarial: skipped (<reason>)` where `<reason>` is not on the whitelist | EVER | Whitelist (from section 1.6): `single_provider_only` (exit 3), `timeout` (exit 124), `BLOCKED_CONTEXT_BUDGET` (after chunking attempt failed). Nothing else. |
 
 ### Required POSTAMBLE — retrospective + verify-audit gates
 
@@ -573,6 +579,17 @@ If `adversarial-review` not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/z
 - **`status: "partial"` with exit 0** — some providers returned, others did not. Surface `timeout_count` in the review header (e.g. `Adversarial pass 1: cursor-agent (1 of 2 providers; gemini timed out)`) so the user sees coverage was reduced.
 
 **Cross-call rotation:** between passes, capture `providers_used_list[0]` (array field) from each pass's JSON output and thread it into the next `--rotate` call via `--exclude-last <name>`. Forces a different provider on each successive pass even when host exclusion limits the pool. (The string field `providers_used` cannot be indexed with `[0]` in jq.)
+
+**CONTEXT BUDGET handling (the constructive escape valve — read this before invoking the "tight budget" rationalization):**
+
+Adversarial CLI providers have ~150K char input limits (varies: codex ~200K, gemini ~100K, cursor-agent ~150K). If `git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | wc -c` exceeds the smallest provider's limit OR the current session is genuinely close to its own ceiling, do NOT skip adversarial. Take the staircase in order:
+
+1. **Per-file chunking.** Split the diff per file (`git diff --name-only {REVIEWED_FROM}..{REVIEWED_THROUGH}`) and run adversarial separately on each file's diff. Aggregate findings, dedupe by fingerprint. Per-file passes still satisfy the gate.
+2. **Hunk-level chunking** (if a single file's diff is still too large): split on `@@` hunk boundaries with surrounding context. Run per-hunk, aggregate.
+3. **Drop --rotate to --single fastest provider.** Reduces parallelism but keeps adversarial coverage. Note in header: `Adversarial: degraded (--single <provider>, context-budget chunked N files)`.
+4. **Last resort — exit BLOCKED:** if even single-provider per-hunk does not fit, exit with status `BLOCKED_CONTEXT_BUDGET` and surface to the user: "Diff is N chars across M files; adversarial cannot complete. Narrow the scope (e.g. `/zuvo:review path/to/subdir/` or `HEAD~3`) and re-invoke." This blocks the review verdict — does NOT silently produce PASS/APPROVED.
+
+What "context budget tight" is NOT a license to do: skip the pass, mark `Adversarial: skipped (context budget)`, and proceed to a verdict. That value is on the forbidden escape hatches list (line 376+) and the Validity Gate will override the verdict to `INCOMPLETE` with suffix `[ESCAPE-HATCH-VIOLATION:adversarial]`.
 
 #### REPORT mode — sequential finding (no fixes)
 
@@ -788,6 +805,11 @@ VALIDITY GATE
     search_patterns: [<N> CQ8/CAP hits | NOT_CALLED — VIOLATES_TRIGGER]
     find_references: [<N> chains | not_required (no symbol cited) | NOT_CALLED — VIOLATES_TRIGGER]
     stack_specific (nest_audit/framework_audit/python_audit/etc.): [<result> | not_required | NOT_CALLED — VIOLATES_TRIGGER]
+  adversarial:
+    passes_run: [<N> | 0 — VIOLATES_MANDATE]
+    providers_used: [<provider1,provider2,...> | none]
+    skip_reason: [n/a | single_provider_only | timeout | BLOCKED_CONTEXT_BUDGET | <other> — VIOLATES_MANDATE]
+    self_review_flag: [no | yes — used --all-providers | yes — DID_NOT_USE_--all-providers — VIOLATES_1.1]
   postamble:
     retros_log_appended: [yes(bytes_added=N) | NOT_APPENDED — VIOLATES_REQUIRED_POSTAMBLE]
     retros_md_appended: [yes(entry_count=N) | NOT_APPENDED — VIOLATES_REQUIRED_POSTAMBLE]
@@ -796,6 +818,14 @@ VALIDITY GATE
 ```
 
 If `gate_status = FAIL`, override the VERDICT to `INCOMPLETE` regardless of finding count, append `[VALIDITY GATE FAIL]` to the Run line NOTES column, and add a backlog item `B-review-incomplete-<date>`.
+
+**Adversarial-skip violation handling (NEW — closes the 2026-05-28 escape-hatch loophole):** If `adversarial.skip_reason` is set to anything OUTSIDE the whitelist `{n/a, single_provider_only, timeout, BLOCKED_CONTEXT_BUDGET}` — including but not limited to "context budget", "already mechanically detected", "self-review low value", "small diff", "documented honestly" — then:
+1. Set `gate_status = FAIL — adversarial skip outside whitelist (<reason>)`.
+2. Override VERDICT to `INCOMPLETE` regardless of finding count.
+3. Append `[ESCAPE-HATCH-VIOLATION:adversarial:<reason>]` to the Run line NOTES column.
+4. Add backlog item `B-review-escape-hatch-<date>` with the verbatim quote of the skip rationale (so the pattern is auditable).
+
+Same handling if `self_review_flag = yes — DID_NOT_USE_--all-providers` (section 1.1 mandates `--all-providers` on self-review).
 
 Print this Validity Gate **AFTER** the retro append and `~/.zuvo/append-runlog` call (so postamble fields can be filled with `yes(verified)`).
 

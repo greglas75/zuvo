@@ -217,13 +217,44 @@ fi
 ### TSV Append + Rotation
 
 ```bash
-# Create header if file doesn't exist
+# Create header if file doesn't exist (v2 schema: RETRO: prefix + 17 TSV fields).
+# NOTE: the on-disk header includes a `RETRO:` token in column 1 because every
+# data row begins with `RETRO:` followed by 16 TSV fields → 17 total columns
+# (the `RETRO: ` prefix on the timestamp counts as field 1 of the awk parse).
 if [ ! -f "$RETRO_LOG" ]; then
-  echo "# v2 DATE SKILL PROJECT CODE_TYPE FRICTION_CATEGORY MISSING_TEMPLATE CONTEXT_GAP TURNS_WASTED TOOL_CALLS FILES_READ FILES_MODIFIED BRANCH SHA7 BLIND_AUDIT ADVERSARIAL CODESIFT ROUTING_STATUS" > "$RETRO_LOG"
+  echo "# v2-17col RETRO: DATE	SKILL	PROJECT	CODE_TYPE	FRICTION_CATEGORY	MISSING_TEMPLATE	CONTEXT_GAP	TURNS_WASTED	TOOL_CALLS	FILES_READ	FILES_MODIFIED	BRANCH	SHA7	BLIND_AUDIT	ADVERSARIAL	CODESIFT	ROUTING_STATUS" > "$RETRO_LOG"
 fi
 
-# Append the RETRO: line value (without the RETRO: prefix)
-echo "<tsv-line>" >> "$RETRO_LOG"
+# === VALIDATION (added 2026-05-28 to close OPT-1 corruption gap) ===
+# Reject malformed RETRO: lines BEFORE they hit retros.log. Historical
+# contamination came from skills appending free-form notes or partial-column
+# lines that the append-runlog gate then silently ignored (awk NF==17
+# predicate matched nothing → looked like "no retro" → retro-gate failures).
+# This validator catches the four observed failure modes:
+#   1. Line not starting with `RETRO:`
+#   2. NF != 17 (column count drift)
+#   3. Empty SKILL ($2) or empty PROJECT ($3)
+#   4. Embedded newlines (multi-line accidentally collapsed)
+# Reject = print error to stderr + exit 2 (caller propagates the failure;
+# the retro is NOT written; the next append-runlog will demand a clean retry).
+RETRO_LINE="<tsv-line>"
+if ! printf '%s' "$RETRO_LINE" | awk -F'\t' '
+  BEGIN { ok=1 }
+  NR>1 { print "validator: embedded newline in RETRO line — multi-line collapse?" > "/dev/stderr"; ok=0; exit }
+  $1 !~ /^RETRO: / { print "validator: line does not start with `RETRO: ` prefix — refusing append" > "/dev/stderr"; ok=0 }
+  NF != 17 { printf "validator: RETRO line has %d TSV fields, schema requires 17 (v2-17col)\n", NF > "/dev/stderr"; ok=0 }
+  $2 == "" { print "validator: SKILL field (col 2) is empty" > "/dev/stderr"; ok=0 }
+  $3 == "" { print "validator: PROJECT field (col 3) is empty" > "/dev/stderr"; ok=0 }
+  END { exit (ok ? 0 : 2) }
+'; then
+  echo "RETRO_REJECTED: malformed line not appended to $RETRO_LOG" >&2
+  echo "  Line: $RETRO_LINE" >&2
+  echo "  Fix the field generation above, then re-run this Append block." >&2
+  exit 2
+fi
+
+# Append the validated RETRO: line
+echo "$RETRO_LINE" >> "$RETRO_LOG"
 
 # Rotation: preserve header, keep last 100 data lines
 LINE_COUNT=$(wc -l < "$RETRO_LOG")
@@ -244,12 +275,28 @@ cat >> "$RETRO_MD" << 'RETRO_EOF'
 ## ...filled template...
 RETRO_EOF
 
-# Rotation: keep last 100 entries
+# Hard cap (safety net): keep last 100 entries inline. Triggered only when
+# rotate-retros has not been run recently — the canonical archival path is the
+# date-based ~/.zuvo/rotate-retros helper (see Rotation Strategy below).
 ENTRY_COUNT=$(grep -c '^<!-- RETRO -->' "$RETRO_MD" 2>/dev/null || echo 0)
 if [ "$ENTRY_COUNT" -gt 100 ]; then
   awk '/^<!-- RETRO -->/{c++} c>=('"$ENTRY_COUNT"'-99){print}' "$RETRO_MD" > "$RETRO_MD.tmp.$$" && mv "$RETRO_MD.tmp.$$" "$RETRO_MD"
 fi
 ```
+
+### Rotation Strategy (added 2026-05-28 alongside OPT-4/OPT-5)
+
+The inline cap above is a safety net — it preserves last-100 in a single file but discards anything older permanently. For real archival, use the dedicated helper installed by `scripts/install.sh`:
+
+```bash
+~/.zuvo/rotate-retros                    # dry-run (default; reports what would move)
+~/.zuvo/rotate-retros --apply            # move entries older than 90 days to per-quarter archives
+~/.zuvo/rotate-retros --apply --days 60  # custom threshold
+```
+
+Behavior: groups `<!-- RETRO -->` entries by quarter of their parsed ISO date and appends them to `~/.zuvo/retros-archive-YYYY-QN.md`, leaving only recent entries in `retros.md`. Idempotent — safe to re-run (each invocation adds a rotated-on marker). Entries without parseable dates are kept in place (never silently archived). The pre-rotation file is preserved as `retros.md.pre-rotate.<pid>` until the user verifies and deletes.
+
+Run manually after multi-week sessions, or hook into a periodic schedule (e.g. zuvo:schedule). The retros.log file has its own count-based rotation built into the TSV Append block above and does not need this helper.
 
 ## Enforcement Rules
 

@@ -271,6 +271,14 @@ install_zuvo_home() {
     warn "scripts/zuvo-home/verify-plan-dag not found in repo — skipping"
   fi
 
+  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/rotate-retros" ]]; then
+    cp "$ZUVO_DIR/scripts/zuvo-home/rotate-retros" "$HOME/.zuvo/rotate-retros"
+    chmod +x "$HOME/.zuvo/rotate-retros"
+    ok "rotate-retros installed (~/.zuvo/rotate-retros)"
+  else
+    warn "scripts/zuvo-home/rotate-retros not found in repo — skipping"
+  fi
+
   # B-9 (v1.3.109): per-platform `zuvo-home` subcommand is a pre-existing gap
   # affecting ALL zuvo-home helpers equally; out of scope for v1.3.110.
   # NOTE: ~/.zuvo is the SHARED cross-platform helper dir. These zuvo-home

@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+# ~/.zuvo/rotate-retros — quarterly archival of ~/.zuvo/retros.md
+#
+# Why this exists: retros.md grows monotonically (~7 entries/day in active
+# weeks, ~3K bytes/entry). With no rotation it hits 1MB in ~3 months and
+# becomes unreadable to humans + slow for tools to grep. The companion
+# retros.log has a 100-line rotation built into shared/includes/retrospective.md
+# Append Commands; retros.md needed an equivalent but markdown rotation by
+# count is harder (entries vary in size, must respect entry boundaries).
+#
+# This script splits entries older than N days (default 90) into a per-quarter
+# archive file `~/.zuvo/retros-archive-YYYY-QN.md` and leaves only recent
+# entries in retros.md. Idempotent — safe to re-run.
+#
+# Usage:
+#   ~/.zuvo/rotate-retros                  # dry-run (default, no changes)
+#   ~/.zuvo/rotate-retros --apply          # actually move entries
+#   ~/.zuvo/rotate-retros --apply --days 60   # custom threshold
+#   ~/.zuvo/rotate-retros --apply --target ~/elsewhere/retros.md
+#
+# Entry boundary: each entry starts with `<!-- RETRO -->` marker on its own
+# line. Entries between markers (or between a marker and EOF) are treated
+# atomically — we never split inside an entry.
+#
+# Date detection: first matches the entry's `## [YYYY-MM-DDTHH:MM:SSZ]`
+# header (preferred — emitted by retrospective.md Append). Falls back to
+# `## YYYY-MM-DD` or `## <skill> — YYYY-MM-DD` patterns. An entry without
+# any parseable date is kept in retros.md (safe default — never archive
+# something we can't classify).
+
+set -eu
+
+# ── args
+APPLY=0
+DAYS=90
+TARGET="${ZUVO_HOME:-$HOME/.zuvo}/retros.md"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --apply)  APPLY=1; shift ;;
+    --days)   DAYS="$2"; shift 2 ;;
+    --target) TARGET="$2"; shift 2 ;;
+    -h|--help)
+      sed -n '2,30p' "$0" | sed 's/^# //;s/^#//'
+      exit 0 ;;
+    *) echo "rotate-retros: unknown arg '$1' (try --help)" >&2; exit 1 ;;
+  esac
+done
+
+[ -f "$TARGET" ] || { echo "rotate-retros: target file not found: $TARGET" >&2; exit 1; }
+
+ARCHIVE_DIR=$(dirname "$TARGET")
+CUTOFF_EPOCH=$(( $(date +%s) - DAYS * 86400 ))
+CUTOFF_DATE=$(date -u -r "$CUTOFF_EPOCH" +%Y-%m-%d 2>/dev/null || date -u -d "@$CUTOFF_EPOCH" +%Y-%m-%d)
+
+echo "rotate-retros: target=$TARGET days=$DAYS cutoff=$CUTOFF_DATE apply=$APPLY"
+
+# ── extract entries with metadata: [start_line, end_line, parsed_date, quarter_key]
+# Two-pass awk: pass 1 finds entry boundaries; pass 2 dates them.
+# Output one line per entry: START\tEND\tDATE_OR_BLANK\tQUARTER_OR_BLANK
+ENTRIES_TSV=$(awk '
+  BEGIN { in_entry=0; start=0 }
+  /^<!-- RETRO -->/ {
+    if (in_entry) { print start "\t" (NR-1) "\tPENDING\tPENDING" }
+    in_entry=1; start=NR; next
+  }
+  END {
+    if (in_entry) { print start "\t" NR "\tPENDING\tPENDING" }
+  }
+' "$TARGET")
+
+if [ -z "$ENTRIES_TSV" ]; then
+  echo "rotate-retros: no <!-- RETRO --> markers found in $TARGET — nothing to rotate"
+  exit 0
+fi
+
+# Resolve each entry's date by scanning its lines for the first ISO date
+RESOLVED=$(while IFS=$'\t' read -r start end _ _; do
+  date_iso=$(sed -n "${start},${end}p" "$TARGET" \
+    | grep -oE '20[0-9]{2}-[0-9]{2}-[0-9]{2}' \
+    | head -1)
+  if [ -n "$date_iso" ]; then
+    month=$(echo "$date_iso" | cut -d- -f2)
+    year=$(echo "$date_iso" | cut -d- -f1)
+    quarter=$(( (10#$month - 1) / 3 + 1 ))
+    qkey="${year}-Q${quarter}"
+  else
+    date_iso=""
+    qkey=""
+  fi
+  echo "$start	$end	$date_iso	$qkey"
+done <<< "$ENTRIES_TSV")
+
+# Classify: archive if date < cutoff AND date != ""
+TO_ARCHIVE=$(echo "$RESOLVED" | awk -F'\t' -v cutoff="$CUTOFF_DATE" '$3!="" && $3 < cutoff')
+TO_KEEP=$(echo "$RESOLVED" | awk -F'\t' -v cutoff="$CUTOFF_DATE" '$3=="" || $3 >= cutoff')
+
+ARCHIVE_COUNT=$(echo "$TO_ARCHIVE" | grep -c '^' 2>/dev/null || echo 0)
+KEEP_COUNT=$(echo "$TO_KEEP" | grep -c '^' 2>/dev/null || echo 0)
+[ -z "$TO_ARCHIVE" ] && ARCHIVE_COUNT=0
+[ -z "$TO_KEEP" ] && KEEP_COUNT=0
+
+echo "rotate-retros: classified entries — archive=$ARCHIVE_COUNT keep=$KEEP_COUNT (undated entries default to keep)"
+
+if [ "$ARCHIVE_COUNT" -eq 0 ]; then
+  echo "rotate-retros: no entries older than $DAYS days — done"
+  exit 0
+fi
+
+# Per-quarter archive plan
+QUARTERS=$(echo "$TO_ARCHIVE" | awk -F'\t' '{print $4}' | sort -u)
+echo "rotate-retros: target archive files:"
+for q in $QUARTERS; do
+  c=$(echo "$TO_ARCHIVE" | awk -F'\t' -v q="$q" '$4==q' | wc -l | tr -d ' ')
+  echo "  $ARCHIVE_DIR/retros-archive-${q}.md  ← $c entries"
+done
+
+if [ "$APPLY" -eq 0 ]; then
+  echo "rotate-retros: dry-run — re-run with --apply to commit changes"
+  exit 0
+fi
+
+# ── apply: per quarter, append entries to its archive file (creating header if missing)
+TS_RUN=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+for q in $QUARTERS; do
+  AF="$ARCHIVE_DIR/retros-archive-${q}.md"
+  if [ ! -f "$AF" ]; then
+    {
+      echo "# Retros archive — $q"
+      echo ""
+      echo "Entries rotated out of \`~/.zuvo/retros.md\` by \`rotate-retros\` on $TS_RUN."
+      echo "Threshold at rotation: --days $DAYS (cutoff=$CUTOFF_DATE)."
+      echo ""
+    } > "$AF"
+  else
+    # Append a separator if file existed (re-runs append more entries)
+    {
+      echo ""
+      echo "<!-- rotated $TS_RUN (--days $DAYS) -->"
+      echo ""
+    } >> "$AF"
+  fi
+
+  echo "$TO_ARCHIVE" | awk -F'\t' -v q="$q" '$4==q' | while IFS=$'\t' read -r start end _ _; do
+    sed -n "${start},${end}p" "$TARGET" >> "$AF"
+    echo "" >> "$AF"
+  done
+done
+
+# Rebuild retros.md keeping only TO_KEEP entries (in original order), preserving
+# the file's preamble (everything BEFORE the first <!-- RETRO --> marker).
+TMP="$TARGET.rotate.tmp.$$"
+
+# Preamble = lines 1..(first marker -1)
+FIRST_MARKER=$(grep -n '^<!-- RETRO -->' "$TARGET" | head -1 | cut -d: -f1)
+if [ "$FIRST_MARKER" -gt 1 ]; then
+  sed -n "1,$((FIRST_MARKER - 1))p" "$TARGET" > "$TMP"
+else
+  : > "$TMP"
+fi
+
+# Append kept entries in original order
+echo "$TO_KEEP" | sort -n -k1 -t$'\t' | while IFS=$'\t' read -r start end _ _; do
+  sed -n "${start},${end}p" "$TARGET" >> "$TMP"
+  echo "" >> "$TMP"
+done
+
+# Atomic swap
+mv "$TARGET" "$TARGET.pre-rotate.$$"
+mv "$TMP" "$TARGET"
+echo "rotate-retros: applied. previous retros.md kept as $TARGET.pre-rotate.$$ (delete after verification)"
+echo "rotate-retros: new retros.md = $(grep -c '^<!-- RETRO -->' "$TARGET") entries, $(wc -l < "$TARGET") lines"
