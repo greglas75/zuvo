@@ -720,6 +720,52 @@ Per-task acceptance proofs verify each task's slice in isolation. They cannot de
 
 **The plan cannot transition to `status: completed` without `[GATE: smoke-verified]` or an explicit "Not applicable" with a recorded justification.**
 
+### Phase Final-2: End-of-Plan Aggregate Review (MANDATORY — every plan)
+
+Per-task gates (Step 4 spec / Step 6 quality / Step 7b adversarial) review ONE task in isolation — 1–3 files, fresh-from-implementer context. They cannot see **cross-task drift**, **integration bugs between tasks**, or **cumulative design decay** across the 10–20+ tasks a `brainstorm → plan → execute` pipeline produces. Phase Final (smoke proofs) catches end-to-end behavioral breakage; this phase catches end-to-end **code quality** breakage.
+
+Rationale: prior practice was to either (a) skip post-execute review entirely or (b) require the user to manually invoke `/zuvo:review` after merge. Both leak findings into main. The 2026-05-28 retro on `progress-v2` (16 commits, all per-task adversarials green) had `/zuvo:review` TIER 3 surface 4 RECOMMENDED + 2 NIT integration-view findings that per-task gates structurally could not see. Making this phase mandatory closes that gap.
+
+**Skip condition:** If the user invoked execute with `--skip-final-review` in `$ARGUMENTS`, skip this phase and emit `[GATE: aggregate-review] SKIPPED (--skip-final-review)` in telemetry. Reserved for genuine hotfix/cherry-pick cases. Do NOT skip on size, "looks small", or "per-task adversarials were thorough" — those are not valid reasons.
+
+1. **Derive the plan range.**
+   ```bash
+   # Plan base = parent of the first commit of this execute session.
+   # Prefer execution-state's recorded base SHA if present; else merge-base with default branch.
+   BASE_SHA=$(awk '/^plan_base_sha:/ {print $2; exit}' .zuvo/context/execution-state.md 2>/dev/null)
+   if [ -z "$BASE_SHA" ]; then
+     DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||')
+     DEFAULT_BRANCH=${DEFAULT_BRANCH:-main}
+     BASE_SHA=$(git merge-base HEAD "$DEFAULT_BRANCH")
+   fi
+   HEAD_SHA=$(git rev-parse HEAD)
+   echo "Aggregate review range: ${BASE_SHA}..${HEAD_SHA}"
+   ```
+   If the range is empty (`git log "${BASE_SHA}..${HEAD_SHA}" --oneline` returns nothing), emit `[GATE: aggregate-review] NO-OP (empty range)` and proceed to Session State Close.
+
+2. **Dispatch `zuvo:review` on the full plan range.**
+   ```
+   Skill(skill="zuvo:review", args="${BASE_SHA}..${HEAD_SHA}")
+   ```
+   Tier auto-selection in review will land on TIER 3 — a 10–20 task plan clears the >500 lines / 15+ files threshold trivially. Do NOT pass `--quick` or any narrowing flag; the whole point is the deep cross-task pass.
+
+3. **Capture review verdict.** When the review skill returns, extract from its output:
+   - `MUST-FIX` count, `RECOMMENDED` count, `NIT` count
+   - `DEPLOYMENT RISK: <LOW|MEDIUM|HIGH>` line
+   - Path to the saved review artifact (`memory/reviews/<date>-<feature>.md`)
+
+4. **Non-blocking by design.** Even if review surfaces `MUST-FIX > 0`, this phase does NOT prevent `status: completed`. The user requested the pipeline to finish; findings are surfaced, not enforced. The MUST-FIX count + artifact path go into the Final Summary, and the standard review NEXT STEPS menu (`fix` / `auto-fix` / `skip`) is preserved verbatim so the user can decide post-summary.
+
+   The one exception: if `Skill(zuvo:review)` itself errors (skill missing, dispatch failure), emit `[GATE: aggregate-review] BLOCKED (dispatch-failed: <reason>)` and continue to Session State Close — do not retry, do not silently swallow. The dispatch failure is logged so it surfaces in retros.
+
+5. **Emit telemetry line:**
+   ```
+   [GATE: aggregate-review] PASS|RECOMMENDED-FOUND|MUST-FIX-FOUND must=<N> rec=<N> nit=<N> risk=<LOW|MEDIUM|HIGH> artifact=<path>
+   ```
+   Verdict mapping: `must>0` → `MUST-FIX-FOUND`; else `rec>0` → `RECOMMENDED-FOUND`; else `PASS`.
+
+6. **Carry the verdict into Final Summary.** Add an `### Aggregate Review` block (see Final Summary template) listing must/rec/nit counts, deployment risk, and the artifact path. The user reads ONE place to know what `/zuvo:review` would have said.
+
 ### Session State Close
 
 Set `status: completed` in `.zuvo/context/execution-state.md`. Update `.zuvo/plans/active-plan.md` to `status: completed`.
@@ -747,6 +793,14 @@ Print a completion report:
 
 ### Files Changed
 [list all files created, modified, or deleted across all tasks]
+
+### Aggregate Review
+[from Phase Final-2 — copy the [GATE: aggregate-review] telemetry verbatim:
+ must=N rec=N nit=N risk=LOW|MEDIUM|HIGH artifact=memory/reviews/<date>-<feature>.md
+ If MUST-FIX-FOUND or RECOMMENDED-FOUND, also print the review's NEXT STEPS line verbatim
+ (`fix` | `auto-fix` | `skip`) so the user can act without re-opening the artifact.
+ If SKIPPED, print `aggregate-review: SKIPPED (--skip-final-review)`.
+ If BLOCKED, print `aggregate-review: BLOCKED (<reason>) — run /zuvo:review manually before merge.`]
 
 ### Backlog Items Added
 [list any new items persisted to backlog during execution]
@@ -807,7 +861,8 @@ COMPLETION GATE CHECK (per task):
 
 COMPLETION GATE CHECK (final):
 [ ] Whole-feature Smoke Proofs ran (or [GATE: smoke-verified] / explicit "Not applicable" with justification)
-[ ] Final summary table printed with all tasks AND all smoke proofs
+[ ] End-of-plan aggregate review ran (or [GATE: aggregate-review] PASS|RECOMMENDED-FOUND|MUST-FIX-FOUND|SKIPPED|NO-OP|BLOCKED — never silently omitted)
+[ ] Final summary table printed with all tasks AND all smoke proofs AND the Aggregate Review block
 [ ] Backlog persistence ran for deferred findings
 [ ] Knowledge curation ran
 [ ] Retrospective bash appends EXECUTED (retros.log + retros.md) — no "trivial session" opt-out, printing markdown is not enough

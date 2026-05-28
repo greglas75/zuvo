@@ -125,10 +125,25 @@ migrations_dir=$(find TARGET_ROOT -type d -name "migrations" -not -path "*/node_
 prisma_schema=$([ -f TARGET_ROOT/prisma/schema.prisma ] && echo "yes" || echo "no")
 ```
 
-For each trigger that holds, confirm the matching tool is in the preloaded tool list (from `codesift-setup.md` Step 2.5 ToolSearch). If a required tool is NOT in the list and is also NOT in the deferred-tools banner:
-- Print `[ABORT] Required tool '<name>' not reachable. db-audit cannot produce a valid report without it.`
-- Do NOT proceed with grep fallback. The audit is incomplete by definition.
-- Exit with status `INCOMPLETE` and add a backlog item: `[BLOCKER] db-audit needs <tool> on <project>`.
+For each trigger that holds, the matching tool MUST be reachable before Phase 1.
+
+**Do NOT treat absence from the session-start deferred-tools banner as "unreachable."** The CodeSift SQL toolchain (`sql_audit`, `analyze_schema`, `diff_migrations`, `trace_query`, `search_columns`, `analyze_prisma_schema`, `migration_lint`, `explain_query`) is non-core (`is_core: false`) — these tools are **never** in the banner, yet are reachable on demand. The banner lists only deferred-but-known schemas; CodeSift's ~95 hidden tools sit behind a reveal step and will never appear there. Aborting on "not in banner" is a false alarm and is what forced prior runs into unnecessary degraded mode.
+
+For each held trigger, resolve the tool in this order — abort ONLY at the last step:
+
+1. **In preloaded list already?** (from `codesift-setup.md` Step 2.5 ToolSearch — the `sql` group is auto-included when `.sql` files exist.) → use it.
+2. **Not preloaded?** Attempt to reveal it before concluding anything:
+   - Claude Code: `ToolSearch(query="select:mcp__codesift__<tool>")` (or re-run Step 2.5 preload with the full union).
+   - Codex/other CodeSift hosts: `describe_tools(names=["<tool>"], reveal=true)`.
+3. **Reveal succeeded?** (schema returned / tool now in list) → use it. This is the expected path for a CodeSift-backed session.
+4. **Reveal genuinely failed** — and only then ABORT. Genuine failure means ONE of:
+   - the reveal mechanism itself is unavailable (`ToolSearch`/`describe_tools` not present — i.e. CodeSift not connected at all), or
+   - the reveal call confirms the tool does not exist in this CodeSift version (e.g. CodeSift older than v0.4.x for `sql_audit`).
+
+   On genuine failure:
+   - Print `[ABORT] Required tool '<name>' not reachable after reveal attempt. db-audit cannot produce a valid report without it.`
+   - Do NOT proceed with grep fallback. The audit is incomplete by definition.
+   - Exit with status `INCOMPLETE` and add a backlog item: `[BLOCKER] db-audit needs <tool> on <project>`.
 
 ### Required POSTAMBLE — retrospective append (NOT optional)
 
