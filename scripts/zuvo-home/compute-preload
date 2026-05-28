@@ -336,11 +336,25 @@ def emit(skill: str, project: Path, ct: dict, sig: dict, matched: list):
                 all_tools.append(t)
                 seen.add(t)
     select_str = ",".join(f"mcp__codesift__{t}" for t in all_tools)
-    print("[CodeSift preload query — copy verbatim]")
+    names_json = "[" + ",".join(f'"{t}"' for t in all_tools) + "]"
+    print("[CodeSift preload — copy verbatim, issue in order]")
+    print()
+    print("# Step A — bootstrap describe_tools (needed to reveal hidden tools):")
+    print('ToolSearch(query="select:mcp__codesift__describe_tools")')
+    print()
+    print("# Step B — reveal any hidden CodeSift tools so they enter ListTools:")
+    print(f"mcp__codesift__describe_tools(names={names_json}, reveal=true)")
+    print()
+    print("# Step C — load all schemas (must return all {n} names):".format(n=expected))
     print(f'ToolSearch(query="select:{select_str}")')
     print()
     print(f"[Expected after load] tools={expected}")
     print(f"[CodeSift loaded] tools=<this must equal {expected} or print [PRELOAD MATH MISMATCH]>")
+    print()
+    print("Why 3 steps: ToolSearch only loads schemas for tools already exposed by the MCP")
+    print("server. CodeSift hides ~95 of its 175 tools by default (is_core=false); they must")
+    print("be revealed via describe_tools(..., reveal=true) BEFORE the final ToolSearch, or")
+    print("the select: query silently drops them and the math gate aborts the skill.")
 
 
 def main():

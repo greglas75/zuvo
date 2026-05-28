@@ -113,8 +113,11 @@ Take the UNION of all matched groups + `always`. Build one `select:` query with 
 
 1. Run: `~/.zuvo/compute-preload <skill_name> "$PWD"` (or pass an explicit project path).
 2. Copy the output trace block VERBATIM into the audit output.
-3. Issue the printed `ToolSearch(query="select:...")` call exactly as printed (no edits, no re-ordering).
-4. After ToolSearch returns, print `[CodeSift loaded] tools=<N>` where `<N>` matches the helper's `[Expected after load] tools=<N>`.
+3. Issue the helper's three printed steps in order, no edits:
+   - **Step A** — `ToolSearch(query="select:mcp__codesift__describe_tools")` to bootstrap `describe_tools`.
+   - **Step B** — `mcp__codesift__describe_tools(names=[...], reveal=true)` with the full union list. This makes CodeSift's hidden tools (~95 of 175, `is_core: false`) enter ListTools so the next ToolSearch can resolve them. Skipping this step is the most common cause of `[PRELOAD MATH MISMATCH]` — the `select:` query silently drops names that aren't yet visible.
+   - **Step C** — `ToolSearch(query="select:...")` with the full union list to load every schema.
+4. After Step C, print `[CodeSift loaded] tools=<N>` where `<N>` matches the helper's `[Expected after load] tools=<N>`.
 5. If the count does not match: print `[PRELOAD MATH MISMATCH] expected=<X> got=<Y>` and abort.
 
 This eliminates LLM discretion in stack matching. The helper is the single source of truth — no hand-crafted `always` lists, no invented `matched=[...]` keys, no partial-group loads. If `~/.zuvo/compute-preload` is unavailable on the host, fall through to the manual algorithm below (Required matching trace section), but flag `compute_preload=missing` in the next retrospective so the install gap is surfaced.
@@ -159,9 +162,14 @@ The orchestrator's stack-matching algorithm is deterministic. Its output must th
     expected_tools = <N> + <SUM_M> = <TOTAL>
 ```
 
-**Math validation gate.** The `tools=<N>` count printed in `[CodeSift loaded] tools=<N>` MUST equal the `expected_tools` computed in the union math line. If they differ, the preload is broken — either the matching algorithm dropped tools silently, or the ToolSearch select string was truncated. In either case: print `[PRELOAD MATH MISMATCH] expected=<X> got=<Y>` and abort the skill before Phase 1.
+**Math validation gate.** The `tools=<N>` count printed in `[CodeSift loaded] tools=<N>` MUST equal the `expected_tools` computed in the union math line. If they differ, the preload is broken — likely causes (in priority order):
+1. **Reveal step skipped.** CodeSift hides ~95 of 175 tools (`is_core: false`); without `describe_tools(..., reveal=true)` they never become ToolSearch-resolvable. This is the #1 cause and explains the original mismatch on `review`'s 6 hidden tools (`review_diff`, `changed_symbols`, `diff_outline`, `scan_secrets`, `sql_audit`, `resolve_constant_value`).
+2. Matching algorithm dropped tools silently (manifest vs. trace divergence).
+3. ToolSearch `select:` string was truncated.
 
-Then issue ONE ToolSearch with the union.
+In any case: print `[PRELOAD MATH MISMATCH] expected=<X> got=<Y>` and abort the skill before Phase 1.
+
+Then issue the three-step preload (bootstrap → reveal → load) as printed by the helper.
 
 After ToolSearch returns, print:
 
