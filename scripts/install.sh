@@ -263,6 +263,16 @@ install_zuvo_home() {
     warn "scripts/zuvo-home/retro-stub not found in repo — skipping"
   fi
 
+  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/verify-plan-dag" ]]; then
+    cp "$ZUVO_DIR/scripts/zuvo-home/verify-plan-dag" "$HOME/.zuvo/verify-plan-dag"
+    chmod +x "$HOME/.zuvo/verify-plan-dag"
+    ok "verify-plan-dag installed (~/.zuvo/verify-plan-dag)"
+  else
+    warn "scripts/zuvo-home/verify-plan-dag not found in repo — skipping"
+  fi
+
+  # B-9 (v1.3.109): per-platform `zuvo-home` subcommand is a pre-existing gap
+  # affecting ALL zuvo-home helpers equally; out of scope for v1.3.110.
   # NOTE: ~/.zuvo is the SHARED cross-platform helper dir. These zuvo-home
   # helpers (incl. retro-stub) reach Claude/Codex/Cursor via THIS function
   # only — build-codex-skills.sh / build-cursor-skills.sh deliberately do NOT
