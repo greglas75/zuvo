@@ -349,6 +349,55 @@ install_claude_home() {
   else
     warn "~/.claude/hooks/post-commit not found — install codesift-mcp setup first to populate the dispatcher (then rerun this)"
   fi
+
+  # ── Claude Code Stop-hook: zuvo-stop-retro-sweep (added 2026-05-29)
+  # Copies the hook script into ~/.claude/hooks/ and idempotently merges the
+  # Stop matcher into ~/.claude/settings.json. Closes the 2026-05-29 retro
+  # gap (819 runs.log / 32 retros.log) where agents print "done" without
+  # executing the retro bash — sweep emits ABANDONED stubs at session end so
+  # telemetry survives.
+  local stop_hook_src="$ZUVO_DIR/hooks/zuvo-stop-retro-sweep.sh"
+  local stop_hook_dst="$hooks_dir/zuvo-stop-retro-sweep.sh"
+  if [[ -f "$stop_hook_src" ]]; then
+    mkdir -p "$hooks_dir"
+    cp "$stop_hook_src" "$stop_hook_dst"
+    chmod +x "$stop_hook_dst"
+    ok "zuvo-stop-retro-sweep.sh installed (~/.claude/hooks/)"
+
+    local claude_settings="$HOME/.claude/settings.json"
+    if [[ -f "$claude_settings" ]]; then
+      python3 - "$claude_settings" "$stop_hook_dst" <<'PYEOF' || warn "Stop-hook merge into ~/.claude/settings.json failed (manual edit may be needed)"
+import json, sys, os
+settings_path, hook_cmd = sys.argv[1], sys.argv[2]
+try:
+    with open(settings_path) as f:
+        s = json.load(f)
+except Exception as e:
+    print(f'  ! ~/.claude/settings.json is malformed ({e}) — skipping Stop-hook merge')
+    sys.exit(1)
+hooks = s.setdefault('hooks', {})
+stop = hooks.setdefault('Stop', [])
+hook_cmd_norm = hook_cmd.replace(os.path.expanduser('~'), '$HOME')
+# Idempotency: skip if any existing Stop hook already points at this script
+already = any(
+    any(h.get('command', '').endswith('zuvo-stop-retro-sweep.sh') for h in group.get('hooks', []))
+    for group in stop
+)
+if already:
+    print('  ✓ Stop-hook already registered in ~/.claude/settings.json (no change)')
+    sys.exit(0)
+stop.append({'hooks': [{'type': 'command', 'command': hook_cmd_norm, 'timeout': 15}]})
+with open(settings_path, 'w') as f:
+    json.dump(s, f, indent=2)
+    f.write('\n')
+print('  ✓ Stop-hook registered in ~/.claude/settings.json')
+PYEOF
+    else
+      warn "~/.claude/settings.json not found — Stop-hook not registered (Claude Code will not run it)"
+    fi
+  else
+    warn "hooks/zuvo-stop-retro-sweep.sh not found in repo — Claude Code Stop-hook not installed"
+  fi
 }
 
 # =======================================
