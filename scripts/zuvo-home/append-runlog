@@ -39,6 +39,49 @@ if [ -z "$RUN_LINE" ]; then
   exit 1
 fi
 
+# === input normalization + shape guard (2026-05-29 contamination fix) =======
+# The runs.log write path previously trusted whatever bytes it was handed,
+# which let two corruption classes through: (a) a literal `-e ` prefix when a
+# caller used non-POSIX `echo -e` under /bin/sh (runs.log:697), and (b) a
+# `Run: ` label prefix copied verbatim from a run-logger.md template
+# (runs.log:527). Strip at most one such leading label, reject anything that
+# is not a clean 13-field timestamp-led TSV row, and OWN the timestamp so a
+# future date can never be forged into the append-only log.
+RUN_LINE="${RUN_LINE#Run: }"
+RUN_LINE="${RUN_LINE#-e }"
+RUN_LINE="${RUN_LINE#RETRO: }"
+
+case "$RUN_LINE" in
+  *$'\n'*) echo "RUN_LINE_REJECTED: embedded newline (multi-line collapse) — runs.log NOT appended" >&2; exit 2 ;;
+esac
+
+# Field-1 timestamp policy — machine-owned, never agent-forgeable:
+#   valid ISO-Z and <= now+300s -> keep (backfill with real git %cI times OK)
+#   valid ISO-Z and >  now+300s -> REJECT (kills the fabricated-future class)
+#   missing / non-ISO           -> stamp `date -u` now and rebuild the row
+_f1=$(printf '%s' "$RUN_LINE" | awk -F'\t' '{print $1}')
+case "$_f1" in
+  [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z)
+    _fe=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$_f1" +%s 2>/dev/null || date -u -d "$_f1" +%s 2>/dev/null || echo "")
+    if [ -n "$_fe" ] && [ "$_fe" -gt "$(( $(date +%s) + 300 ))" ]; then
+      echo "RUN_LINE_REJECTED: field1 '$_f1' is in the FUTURE (>now+300s) — refusing forged timestamp" >&2
+      exit 2
+    fi
+    ;;
+  *)
+    RUN_LINE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"$'\t'"${RUN_LINE#*$'\t'}"
+    ;;
+esac
+
+# Shape guard: exactly 13 TSV fields (12 tabs). A contaminated / column-drifted
+# line is REJECTED, never appended (no more `-e ...` / `Run: ...` garbage).
+_tabs=$(printf '%s' "$RUN_LINE" | awk -F'\t' '{print NF-1}')
+if [ "$_tabs" -ne 12 ]; then
+  echo "RUN_LINE_REJECTED: $((_tabs + 1)) TSV fields, runs.log schema requires 13 — NOT appended" >&2
+  echo "  Line: $RUN_LINE" >&2
+  exit 2
+fi
+
 SKILL=$(echo "$RUN_LINE" | awk -F'\t' '{print $2}')
 PROJECT=$(echo "$RUN_LINE" | awk -F'\t' '{print $3}')
 
@@ -260,4 +303,14 @@ esac
 
 # Retro + audit verified — proceed
 runs_append
-echo "OK: appended to runs.log (retro verified for $SKILL on $PROJECT)"
+# When the Stop-hook sweep backfills an orphaned-but-progressed run
+# (ZUVO_DEGRADED_AUTOLOG=1, sweep-only — never agent-settable), the matching
+# retro carries friction=degraded-autolog and the run NOTES say "auto-logged".
+# Those two fields ARE the audit trail (greppable by zuvo:context-audit); no
+# separate skip-log line — this row legitimately satisfied the gate via a
+# degraded retro, it did NOT bypass it.
+if [ "${ZUVO_DEGRADED_AUTOLOG:-0}" = "1" ]; then
+  echo "OK: appended to runs.log (DEGRADED-AUTOLOG backfill for $SKILL on $PROJECT — retro never self-executed)"
+else
+  echo "OK: appended to runs.log (retro verified for $SKILL on $PROJECT)"
+fi

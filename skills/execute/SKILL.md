@@ -122,9 +122,10 @@ _RSHA=$(git rev-parse --short HEAD 2>/dev/null || echo "-")
 # run's fresh marker is never swept as its own orphan.
 [ -n "$_RS" ] && "$_RS" --sweep >/dev/null 2>&1 || true
 if mkdir -p "$_ZH/run-markers" 2>/dev/null; then
-  { printf 'start_ts=%s\nskill=%s\nproject=%s\nsha7=%s\nbranch=%s\nsession_id=%s\n' \
+  { printf 'start_ts=%s\nskill=%s\nproject=%s\nsha7=%s\nbranch=%s\nsession_id=%s\nrepo_root=%s\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_RSK" "$_RPR" "$_RSHA" \
       "$(git branch --show-current 2>/dev/null || echo -)" "${ZUVO_SESSION_ID:-$_RSHA}" \
+      "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" \
       > "$_ZH/run-markers/$_RSK-$_RPR-$_RSHA-$$-$(date +%s).marker"; } 2>/dev/null || true
 fi
 # <<< zuvo:retro-marker
@@ -875,8 +876,12 @@ COMPLETION GATE CHECK (final):
 ### Append run line via wrapper (REQUIRED)
 
 ```bash
-RUN_LINE="<ISO-8601-Z>\texecute\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<N>-tasks\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>"
-echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+# Field 1 is machine-stamped by the wrapper (date -u) — do NOT hand-type a
+# timestamp. `printf '%b\n'` (never echo -e) expands the literal \t separators
+# portably; the wrapper strips any stray Run:/-e prefix, rejects a future date,
+# and refuses a non-13-field row.
+RUN_LINE="<DATE>\texecute\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<N>-tasks\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>"
+printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
 Expected stdout: `OK: appended to runs.log (retro verified for execute on <project>)`. If `RETRO_REQUIRED` exit 2 — execute the retro bash from `retrospective.md` first, never bypass with `ZUVO_SKIP_RETRO_GATE=1`.

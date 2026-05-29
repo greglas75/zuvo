@@ -739,7 +739,7 @@ If `gate_status = FAIL` → VERDICT overrides to `INCOMPLETE`, append `[VALIDITY
 Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
 
 ```bash
-echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
 Run: <ISO-8601-Z>\tsecurity-audit\t<project>\t-\t-\t<VERDICT>\t-\t<N>-dimensions\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>

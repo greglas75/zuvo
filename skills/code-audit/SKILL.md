@@ -673,7 +673,7 @@ Load `../../shared/includes/retrospective.md` if not already loaded. Follow the 
 Then append the Run line via the retro-gated wrapper:
 
 ```bash
-echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
 The wrapper:

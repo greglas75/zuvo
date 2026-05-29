@@ -105,8 +105,17 @@ After printing this block, append the `Run:` line value (without the `Run: ` pre
 For any skill that loads `shared/includes/retrospective.md`, **do NOT append directly** to `~/.zuvo/runs.log`. Use the wrapper:
 
 ```bash
-echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
+
+**Use `printf '%b\n'`, never `echo -e`.** `RUN_LINE` carries literal backslash-t
+(`\t`) field separators; `%b` expands them to real tabs on every shell. `echo -e`
+is non-POSIX — under `/bin/sh` (dash) it prints a literal `-e ` prefix that
+corrupted `runs.log` (the `-e 2026-...` rows). `printf '%s\n'` is also wrong here
+(it would write literal `\t` and break field parsing). The wrapper additionally
+**owns field 1**: it strips a stray `Run: `/`-e ` prefix, rejects a non-ISO or
+future timestamp, and stamps `date -u` when absent — so you never hand-type the
+timestamp and a forged future date can never enter the append-only log.
 
 Behavior:
 - The wrapper checks `~/.zuvo/retros.log` for a matching retro entry (same SKILL + PROJECT). If found, appends to runs.log. If not, **exits with code 2 and refuses the write** until retro is appended first.
@@ -116,7 +125,7 @@ Behavior:
 
 This closes the silent-skip failure mode where an audit writes the report + Run line + finishes the session, never reaching the retrospective phase. The wrapper makes the order forcing-functioned: agent CANNOT write runs.log without retro first.
 
-If the wrapper script does not exist on the host (e.g., Codex CLI / Cursor without zuvo install), fall back to direct append (`echo -e "$RUN_LINE" >> "$LOG_PATH"`) and add `retro_gate=missing` to the next retrospective's friction notes so the install gap is surfaced.
+If the wrapper script does not exist on the host (e.g., Codex CLI / Cursor without zuvo install), fall back to direct append (`printf '%b\n' "$RUN_LINE" >> "$LOG_PATH"` — never `echo -e`) and add `retro_gate=missing` to the next retrospective's friction notes so the install gap is surfaced.
 
 **Strong-signal match (2026-05-18 retro-checkpoint).** The gate is satisfied **only by a full retro** (canonical predicate in `retrospective.md`: `^RETRO:` AND field-5 ∉ {abandoned,context-out,partial-recovery}) for the **same skill + exact project** AND for **this run window** (retro `SHA7` == HEAD, or retro timestamp ≥ the run line's DATE). A stale retro or a checkpoint stub does NOT satisfy a fresh completed run. Documented relax: `ZUVO_MATCH_LOOSE=1` (any matching full retro, any date — audited). `ZUVO_SKIP_RETRO_GATE=1` still bypasses, but now also appends a rotated, parseable `SKIP:` line to `$ZUVO_HOME/skip-retro-gate.log` (consumed by `zuvo:context-audit`). The runs.log/skip-log append is serialized by a portable mkdir-lock; on lock-busy the wrapper exits non-zero (`runs.log NOT appended; retry`) — never a silent drop, never an indefinite hang. State dir is `ZUVO_HOME` (default `$HOME/.zuvo`); `ZUVO_BIN` resolves helper executables independently.
 
@@ -147,13 +156,18 @@ Field-by-field (tab-separated):
 
 ### Template format
 
-Each skill's SKILL.md includes a literal template with placeholders:
+Each skill's SKILL.md includes a literal template with placeholders. The value
+PIPED to the wrapper carries NO `Run: ` label prefix (that prefix belongs only
+to the human-facing output block); field 1 is a machine-stamped placeholder, not
+a hand-typed timestamp:
 
 ```
-Run: <ISO-8601-Z>\t<skill>\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
+<DATE-machine-stamped>\t<skill>\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
 ```
 
-The LLM fills in the placeholders when generating the output block, then appends the resulting line to the log file.
+The LLM fills the non-DATE placeholders, then pipes the line via
+`printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog`. The wrapper stamps/validates
+field 1 itself — do NOT copy a literal example timestamp into it.
 
 **Filling INCLUDES:** A PostToolUse hook (`hooks/track-includes.sh`) automatically tracks every `shared/includes/*.md` and `rules/*.md` file Read during the session. To get the list, run:
 

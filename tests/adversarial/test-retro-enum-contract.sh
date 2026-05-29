@@ -4,19 +4,17 @@
 # checkpoint stub schema + the extended friction enum, token-lean (<=25 lines).
 
 R="$ROOT/shared/includes/retrospective.md"
-BASE=259   # line count before this task (verified 2026-05-18)
-# Token-lean budget. Plan estimate was +25; the actual minimal-correct content
-# is +30 because adversarial review (Task 2, 5 iters) MANDATED four correctness
-# additions the estimate did not foresee: enum-valid neutral mapping,
-# friction-preservation (no destructive TURNS_WASTED=0), and the write-time
-# vs post-hoc dedup model (coherence via session-state retro-session-id at
-# WRITE; retros.log post-hoc dedup keys only on in-line SKILL+PROJECT+SHA7 —
-# resolves the date<->sha<->session-id oscillation). Squeezing these to hit a
-# lower number re-introduces the exact CRITICALs review caught. 30 lines for 5
-# contracts in a widely-loaded include is still lean. User-approved disposition
-# (BLOCKED_ADVERSARIAL_LOOP accept, 2026-05-18). Budget stays HARD at +30 — it
-# still catches genuine future bloat.
-BUDGET=30
+# Baseline reset 2026-05-29 (append-retro refactor). The original BASE=259
+# (verified 2026-05-18, +30 budget = 289) went stale on 2026-05-28 when the
+# OPT-1 validator block + Rotation Strategy + Postamble grew the file to 336
+# WITHOUT updating this test — so the gate had been silently red. The 2026-05-29
+# append-retro refactor then REPLACED the in-doc TSV hand-assembly + the dead
+# OPT-1 validator (a fenced block with a `RETRO_LINE="<tsv-line>"` stub that
+# never executed) with a single `~/.zuvo/append-retro` writer call, netting the
+# file DOWN to 315. New BASE reflects that real, leaner post-refactor content;
+# the +15 budget keeps the anti-bloat guard tight for future growth.
+BASE=315
+BUDGET=15
 
 start_test "T2.1 FRICTION_CATEGORY enum ROW includes the stub friction values"
 # Anchor to the actual enum table row (`| 5 | FRICTION_CATEGORY | enum | ... |`)

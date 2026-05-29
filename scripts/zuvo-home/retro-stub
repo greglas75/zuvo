@@ -150,6 +150,7 @@ if [ "$SWEEP" -eq 1 ]; then
     mpr=$(sed -n 's/^project=//p' "$m" 2>/dev/null | head -1)
     msha=$(sed -n 's/^sha7=//p'   "$m" 2>/dev/null | head -1)
     mbr=$(sed -n 's/^branch=//p'  "$m" 2>/dev/null | head -1)
+    mrepo=$(sed -n 's/^repo_root=//p' "$m" 2>/dev/null | head -1)
     mmt=$(stat -f %m "$m" 2>/dev/null || stat -c %Y "$m" 2>/dev/null || echo "")
     # Unparseable / dirty marker: only delete when clearly stale (>7d) so we
     # never race a marker mid-write; otherwise leave it for a later sweep.
@@ -191,18 +192,59 @@ if [ "$SWEEP" -eq 1 ]; then
     if [ -z "$age" ] || [ "$age" -le "$GRACE" ]; then
       continue                       # within grace -> possibly active, leave it
     fi
-    SKILL="$msk"; PROJECT="$mpr"; STATUS="ABANDONED"; FRICTION="abandoned"
-    MT=$(printf '%s' "orphan-sweep:$msk" | tr '\t\r\n' '   ' | cut -c1-40)
-    TURNS=0; TOOLS=0; FREAD=0; FMOD=0
-    BRANCH="${mbr:--}"
-    # Clear the marker ONLY if _emit_one actually handled it (0 = stub
-    # emitted OR idempotent no-op because a full retro already exists).
-    # On lock-busy (3, nothing written) KEEP the marker so a later sweep
-    # retries it — never lose passive capture for an orphan.
-    if _emit_one; then
-      rm -f "$m"
+    # ── progress determination (2026-05-29 degraded-backfill) ──────────────
+    # The orphan is genuinely past-grace with no full retro. Decide between:
+    #   PROGRESSED  -> the run did real work (commits landed on its branch in
+    #                  the window) but never self-logged. Emit a gate-PASSABLE
+    #                  DEGRADED retro (friction=degraded-autolog) and backfill a
+    #                  truthful runs.log row via append-runlog — so the highest-
+    #                  volume work is no longer telemetry-invisible.
+    #   NO-PROGRESS -> nothing committed. A true no-op abandon: ABANDONED stub,
+    #                  NO runs.log row (correct — there is nothing to credit).
+    # PROJECT is normalized to the repo basename (NOT a Codex-exported plan
+    # slug) so the backfilled row is attributed to the real repository.
+    SKILL="$msk"; BRANCH="${mbr:--}"; TURNS=0; TOOLS=0; FREAD=0; FMOD=0
+    progressed=0; PROJECT="$mpr"
+    if [ -n "$mrepo" ] && git -C "$mrepo" rev-parse --git-dir >/dev/null 2>&1; then
+      PROJECT=$(basename "$(git -C "$mrepo" rev-parse --show-toplevel 2>/dev/null || echo "$mpr")")
+      # Commits anywhere in the repo since the run started = evidence of work.
+      # (Branch-scoped would miss squash/rebase/detached cases; repo-wide since
+      # start_ts is the conservative "something happened during this run" signal.)
+      if [ -n "$mts" ]; then
+        nc=$(git -C "$mrepo" log --oneline --since="$mts" 2>/dev/null | head -1 | wc -l | tr -d ' ')
+        [ "${nc:-0}" -ge 1 ] && progressed=1
+      fi
+    fi
+    if [ "$progressed" -eq 1 ]; then
+      STATUS="DEGRADED"; FRICTION="degraded-autolog"
+      MT=$(printf '%s' "orphan-autolog:$msk" | tr '\t\r\n' '   ' | cut -c1-40)
+      if _emit_one; then
+        # Degraded retro now present -> backfill the runs.log row truthfully.
+        # field1 = run START (real, past) so the time series stays honest;
+        # SHA7/BRANCH/PROJECT match the degraded retro so the gate passes.
+        # ZUVO_DEGRADED_AUTOLOG=1 is sweep-only (agents cannot set it).
+        _AR=$(command -v append-runlog 2>/dev/null || echo "$ZUVO_HOME/append-runlog")
+        if [ -x "$_AR" ]; then
+          _RL=$(printf '%s\t%s\t%s\t-\t-\tWARN\t-\tauto-logged\tretro never executed\t%s\t%s\t-\t-' \
+                  "${mts:-$DATE}" "$SKILL" "$PROJECT" "$BRANCH" "${msha:--}")
+          ZUVO_DEGRADED_AUTOLOG=1 "$_AR" "$_RL" >/dev/null 2>&1 || true
+        fi
+        rm -f "$m"
+      else
+        rc=$?                        # lock busy -> marker preserved for retry
+      fi
     else
-      rc=$?                          # lock busy -> marker preserved
+      STATUS="ABANDONED"; FRICTION="abandoned"
+      MT=$(printf '%s' "orphan-sweep:$msk" | tr '\t\r\n' '   ' | cut -c1-40)
+      # Clear the marker ONLY if _emit_one actually handled it (0 = stub
+      # emitted OR idempotent no-op because a full retro already exists).
+      # On lock-busy (3, nothing written) KEEP the marker so a later sweep
+      # retries it — never lose passive capture for an orphan.
+      if _emit_one; then
+        rm -f "$m"
+      else
+        rc=$?                        # lock busy -> marker preserved
+      fi
     fi
   done
   [ "$any" -eq 1 ] || exit 0

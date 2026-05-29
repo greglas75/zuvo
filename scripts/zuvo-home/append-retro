@@ -1,0 +1,240 @@
+#!/usr/bin/env bash
+# ~/.zuvo/append-retro
+#
+# First-class FULL-RETRO writer — the missing sibling of `append-runlog`.
+#
+# Why this exists (2026-05-29 telemetry forensics): the runs.log write path was
+# centralized behind `append-runlog`, but the retros.log write path NEVER was.
+# Agents hand-assembled a 17-column TSV from a markdown table in
+# `shared/includes/retrospective.md`, and under load drifted into free-prose
+# (`RETRO: 2026-05-29 mcp/tools REDO #15 — FULL pipeline...`, NF==1) or
+# key=value (`skill=review project=...`, field2!="review") shapes. The
+# `append-runlog` gate only matches a CANONICAL line (`^RETRO:` AND NF==17 AND
+# $2==skill exact AND $3==project exact AND $5∉{stub-values}), so every drifted
+# retro was silently un-matchable → exit-2 RETRO_REQUIRED → runs.log never
+# written → 12 execute-class runs on 2026-05-29 left ZERO telemetry. The
+# "validator" added 2026-05-28 (retrospective.md) was dead documentation: a
+# fenced block with a hardcoded `RETRO_LINE="<tsv-line>"` placeholder that no
+# script ever sourced.
+#
+# This helper removes agent discretion from the WRITE path, exactly as
+# `compute-preload` removed it from CodeSift preload: the agent supplies NAMED
+# fields, the script BUILDS the canonical line. Format drift, column-count
+# drift, and timestamp forgery become structurally impossible at the source.
+#
+# Coherence contract (enforced by tests/adversarial/test-append-retro-contract.sh):
+#   append-retro output MUST satisfy append-runlog's gate for the SAME
+#   skill+project+sha7. Both self-resolve PROJECT/SHA7/DATE the SAME way, so a
+#   real completed run always matches.
+#
+# Usage:
+#   ~/.zuvo/append-retro \
+#     --skill=execute --code-type=DATA_SERVICE --friction=other \
+#     --missing-template='-' --context-gap=none \
+#     --turns=4 --tool-calls=120 --files-read=18 --files-modified=6 \
+#     --blind-audit=clean:strict --adversarial=2findings \
+#     --codesift=indexed --routing=ok \
+#     [--project=<basename>] [--branch=<b>] [--sha7=<s>] \
+#     [--date=<ISO-8601-Z>]   # past OK (backfill from git %cI); future REJECTED \
+#     [--md=<file>]           # markdown block to append verbatim to retros.md
+#
+# Field self-resolution (the integrity guarantee):
+#   DATE     = --date if given (must be <= now+300s), else `date -u`
+#   PROJECT  = --project if given, else basename(git rev-parse --show-toplevel)
+#              The inherited $PROJECT ENV VAR IS IGNORED (a Codex orchestrator
+#              exports $PROJECT=<plan-slug>, which would mis-attribute the row).
+#   SHA7     = --sha7 if given, else git rev-parse --short HEAD
+#
+# Exit: 0 appended (or idempotent no-op if a full retro for skill+project+sha7
+#       already exists) | 2 validation reject (per-field error to stderr) |
+#       3 lock busy (nothing written) | 1 usage / env error.
+
+set -eu
+
+# ---- state resolution (mirrors append-runlog / retro-stub) ----------------
+ZUVO_HOME="${ZUVO_HOME:-$HOME/.zuvo}"
+if ! mkdir -p "$ZUVO_HOME" || [ ! -d "$ZUVO_HOME" ] || [ ! -w "$ZUVO_HOME" ]; then
+  echo "append-retro: ZUVO_HOME='$ZUVO_HOME' is not a writable directory" >&2
+  exit 1
+fi
+RETRO_LOG="$ZUVO_HOME/retros.log"
+RETRO_MD="$ZUVO_HOME/retros.md"
+LOCK="$ZUVO_HOME/.retro.lock.d"   # SAME lock as retro-stub — serialize retros.* writes
+
+# ---- args -----------------------------------------------------------------
+SKILL="" PROJECT="" CODE_TYPE="OTHER" FRICTION="" MT="-" CONTEXT_GAP="none"
+TURNS=0 TOOLS=0 FREAD=0 FMOD=0
+BLIND="not_run" ADV="not_run" CODESIFT="N/A" ROUTING="N/A"
+DATE_ARG="" BRANCH_ARG="" SHA_ARG="" MD_FILE=""
+for a in "$@"; do
+  case "$a" in
+    --skill=*)            SKILL="${a#*=}" ;;
+    --project=*)          PROJECT="${a#*=}" ;;
+    --code-type=*)        CODE_TYPE="${a#*=}" ;;
+    --friction=*)         FRICTION="${a#*=}" ;;
+    --missing-template=*) MT="${a#*=}" ;;
+    --context-gap=*)      CONTEXT_GAP="${a#*=}" ;;
+    --turns=*)            TURNS="${a#*=}" ;;
+    --tool-calls=*)       TOOLS="${a#*=}" ;;
+    --files-read=*)       FREAD="${a#*=}" ;;
+    --files-modified=*)   FMOD="${a#*=}" ;;
+    --blind-audit=*)      BLIND="${a#*=}" ;;
+    --adversarial=*)      ADV="${a#*=}" ;;
+    --codesift=*)         CODESIFT="${a#*=}" ;;
+    --routing=*)          ROUTING="${a#*=}" ;;
+    --date=*)             DATE_ARG="${a#*=}" ;;
+    --branch=*)           BRANCH_ARG="${a#*=}" ;;
+    --sha7=*)             SHA_ARG="${a#*=}" ;;
+    --md=*)               MD_FILE="${a#*=}" ;;
+    *) echo "append-retro: unknown arg '$a'" >&2; exit 2 ;;
+  esac
+done
+
+# ---- self-resolution (ignore inherited env; this is the integrity core) ----
+PROJECT="${PROJECT:-$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")}"
+BRANCH="${BRANCH_ARG:-$(git branch --show-current 2>/dev/null || true)}"
+[ -n "$BRANCH" ] || BRANCH="-"
+SHA7="${SHA_ARG:-$(git rev-parse --short HEAD 2>/dev/null || echo "-")}"
+
+NOW_EPOCH=$(date +%s)
+if [ -n "$DATE_ARG" ]; then
+  # Backfill path: an explicit historical timestamp is allowed, a FUTURE one
+  # is not (closes the fabricated-2026-05-29T22:30:00Z class).
+  case "$DATE_ARG" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) : ;;
+    *) echo "append-retro: --date must be ISO-8601 UTC 'YYYY-MM-DDTHH:MM:SSZ' (got '$DATE_ARG')" >&2; exit 2 ;;
+  esac
+  de=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$DATE_ARG" +%s 2>/dev/null || date -u -d "$DATE_ARG" +%s 2>/dev/null || echo "")
+  if [ -z "$de" ]; then echo "append-retro: --date '$DATE_ARG' not parseable" >&2; exit 2; fi
+  if [ "$de" -gt "$((NOW_EPOCH + 300))" ]; then
+    echo "append-retro: --date '$DATE_ARG' is in the FUTURE (>now+300s) — refusing forged timestamp" >&2; exit 2
+  fi
+  DATE="$DATE_ARG"
+else
+  DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+fi
+
+# ---- validation -----------------------------------------------------------
+[ -n "$SKILL" ]   || { echo "append-retro: --skill required" >&2; exit 2; }
+[ -n "$PROJECT" ] || { echo "append-retro: --project unresolved (not in a git repo? pass --project=)" >&2; exit 2; }
+[ -n "$FRICTION" ] || { echo "append-retro: --friction required (e.g. other, no-friction, missing-pattern)" >&2; exit 2; }
+
+# Stub-friction values are FORBIDDEN on the full-retro path — they belong to
+# retro-stub. A full retro must represent a completed run. `degraded-autolog`
+# is RESERVED for the Stop-hook sweep (truthful backfill of an abandoned-but-
+# progressed run); an agent must never self-emit it to dodge a real retro.
+case "$FRICTION" in
+  abandoned|context-out|partial-recovery)
+    echo "append-retro: --friction='$FRICTION' is a checkpoint-stub value — use retro-stub for those; a full retro needs a real friction category" >&2; exit 2 ;;
+  degraded-autolog)
+    echo "append-retro: --friction='degraded-autolog' is reserved for the Stop-hook sweep — agents must write a real friction category" >&2; exit 2 ;;
+esac
+
+# Enum guards (mirror retrospective.md "Structured Questions" allowed values).
+case "$CODE_TYPE" in
+  ORCHESTRATOR|DATA_SERVICE|PURE_FUNCTION|UI_COMPONENT|CONFIG|MIXED|OTHER) : ;;
+  *) echo "append-retro: --code-type='$CODE_TYPE' invalid (ORCHESTRATOR|DATA_SERVICE|PURE_FUNCTION|UI_COMPONENT|CONFIG|MIXED|OTHER)" >&2; exit 2 ;;
+esac
+case "$CONTEXT_GAP" in
+  no-production-code|no-schema|no-env|no-test-fixture|no-framework-docs|none|other) : ;;
+  *) echo "append-retro: --context-gap='$CONTEXT_GAP' invalid" >&2; exit 2 ;;
+esac
+case "$BLIND" in
+  clean:strict|clean:degraded|rewrite|skipped|blocked_infra|not_run|fix:*) : ;;
+  *) echo "append-retro: --blind-audit='$BLIND' invalid" >&2; exit 2 ;;
+esac
+case "$ADV" in
+  clean|skipped|blocked|not_run|blocked:prod-bug|*findings) : ;;
+  *) echo "append-retro: --adversarial='$ADV' invalid (clean|Nfindings|skipped|blocked|not_run|blocked:prod-bug)" >&2; exit 2 ;;
+esac
+case "$CODESIFT" in
+  indexed|transport_closed|not_indexed|unavailable|N/A) : ;;
+  *) echo "append-retro: --codesift='$CODESIFT' invalid" >&2; exit 2 ;;
+esac
+case "$ROUTING" in
+  ok|same-model-fallback|unknown-writer-model|routing-failed|N/A) : ;;
+  *) echo "append-retro: --routing='$ROUTING' invalid" >&2; exit 2 ;;
+esac
+for v in "$TURNS" "$TOOLS" "$FREAD" "$FMOD"; do
+  case "$v" in (*[!0-9]*|'') echo "append-retro: integer cols (turns/tool-calls/files-*) must be numeric, got '$v'" >&2; exit 2 ;; esac
+done
+# TSV / log-injection guard: identifiers must not carry the field separator or
+# line terminators (the exact corruption class that produced NF-drift). Use
+# bash ANSI-C $'...' literals — $(printf '\n') would be stripped to "" by
+# command substitution and match everything.
+case "$SKILL$PROJECT$FRICTION$CODE_TYPE$CONTEXT_GAP$BLIND$ADV$CODESIFT$ROUTING$MT$BRANCH$SHA7" in
+  *$'\t'*|*$'\n'*|*$'\r'*) echo "append-retro: a field contains TAB/newline/CR — refusing (would corrupt TSV)" >&2; exit 2 ;;
+esac
+MT=$(printf '%s' "$MT" | tr '\t\r\n' '   ' | cut -c1-40)
+
+# ---- locked, idempotent 17-field emit (lock model lifted from retro-stub) --
+_release() {
+  [ "$(cat "$LOCK/pid" 2>/dev/null || echo)" = "$$" ] || return 0
+  rm -f "$LOCK/pid" 2>/dev/null || true; rmdir "$LOCK" 2>/dev/null || true
+}
+trap '_release' INT TERM EXIT
+
+WAIT="${ZUVO_LOCK_WAIT:-5}"; acquired=0; waited=0; lpid=""; lmt=""
+while :; do
+  if mkdir "$LOCK" 2>/dev/null; then
+    if echo "$$" > "$LOCK/pid" 2>/dev/null; then acquired=1; break; fi
+    rmdir "$LOCK" 2>/dev/null || true
+  fi
+  if [ -d "$LOCK" ]; then
+    lpid=$(cat "$LOCK/pid" 2>/dev/null || echo "")
+    lmt=$(stat -f %m "$LOCK" 2>/dev/null || stat -c %Y "$LOCK" 2>/dev/null || echo "")
+    if [ -n "$lpid" ]; then
+      kill -0 "$lpid" 2>/dev/null || { rm -f "$LOCK/pid" 2>/dev/null || true; rmdir "$LOCK" 2>/dev/null || true; }
+    elif [ -n "$lmt" ] && [ "$(( $(date +%s) - lmt ))" -gt 30 ]; then
+      rmdir "$LOCK" 2>/dev/null || true
+    fi
+  fi
+  waited=$((waited + 1))
+  [ "$waited" -ge "$((WAIT * 5))" ] && break
+  sleep 0.2
+done
+if [ "$acquired" -ne 1 ]; then
+  echo "append-retro: lock busy (ZUVO_LOCK_WAIT=${WAIT}s) — retros.log NOT written; retry" >&2
+  exit 3
+fi
+
+# Idempotency INSIDE the lock: a FULL retro for this skill+project+sha7 already
+# present (canonical predicate) -> no-op, never a duplicate.
+if [ -f "$RETRO_LOG" ] && awk -F'\t' -v s="$SKILL" -v p="$PROJECT" -v sha="$SHA7" '
+     /^RETRO:/ && NF==17 {
+       if ($2==s && $3==p && $13==sha &&
+           $5!="abandoned" && $5!="context-out" && $5!="partial-recovery") found=1
+     } END { exit found?0:1 }' "$RETRO_LOG"; then
+  echo "OK: full retro already present for $SKILL on $PROJECT @ $SHA7 (idempotent no-op)"
+  _release; trap - INT TERM EXIT; exit 0
+fi
+
+# Append the canonical 17-field line. printf with REAL tabs — never echo -e,
+# never literal backslash-t. Column order is identical to retro-stub:118-119
+# and to the schema in retrospective.md "TSV Format (17 fields)".
+[ -f "$RETRO_LOG" ] || printf '# v2 DATE\tSKILL\tPROJECT\tCODE_TYPE\tFRICTION_CATEGORY\tMISSING_TEMPLATE\tCONTEXT_GAP\tTURNS_WASTED\tTOOL_CALLS\tFILES_READ\tFILES_MODIFIED\tBRANCH\tSHA7\tBLIND_AUDIT\tADVERSARIAL\tCODESIFT\tROUTING_STATUS\n' > "$RETRO_LOG"
+printf 'RETRO: %s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$DATE" "$SKILL" "$PROJECT" "$CODE_TYPE" "$FRICTION" "$MT" "$CONTEXT_GAP" \
+  "$TURNS" "$TOOLS" "$FREAD" "$FMOD" "$BRANCH" "$SHA7" "$BLIND" "$ADV" "$CODESIFT" "$ROUTING" >> "$RETRO_LOG"
+
+# Count-based rotation (preserve header, keep last 100 data lines).
+LC=$(wc -l < "$RETRO_LOG")
+if [ "$LC" -gt 101 ]; then
+  T="$RETRO_LOG.tmp.$$.$(date +%s)"
+  head -1 "$RETRO_LOG" > "$T"; tail -n 100 "$RETRO_LOG" >> "$T"; mv "$T" "$RETRO_LOG"
+fi
+
+# Optional markdown block (verbatim from --md file). The free-form NARRATIVE
+# lives in retros.md ONLY — never in retros.log (that was the NF==1 drift).
+if [ -n "$MD_FILE" ] && [ -f "$MD_FILE" ]; then
+  cat "$MD_FILE" >> "$RETRO_MD"
+  EC=$(grep -c '^<!-- RETRO -->' "$RETRO_MD" 2>/dev/null || echo 0)
+  if [ "$EC" -gt 100 ]; then
+    T="$RETRO_MD.tmp.$$.$(date +%s)"
+    awk '/^<!-- RETRO -->/{c++} c>=('"$EC"'-99){print}' "$RETRO_MD" > "$T" && mv "$T" "$RETRO_MD"
+  fi
+fi
+
+_release; trap - INT TERM EXIT
+echo "OK: appended full retro to retros.log ($SKILL on $PROJECT @ $SHA7, $DATE)"
+exit 0

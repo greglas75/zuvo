@@ -263,6 +263,14 @@ install_zuvo_home() {
     warn "scripts/zuvo-home/retro-stub not found in repo — skipping"
   fi
 
+  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/append-retro" ]]; then
+    cp "$ZUVO_DIR/scripts/zuvo-home/append-retro" "$HOME/.zuvo/append-retro"
+    chmod +x "$HOME/.zuvo/append-retro"
+    ok "append-retro installed (~/.zuvo/append-retro)"
+  else
+    warn "scripts/zuvo-home/append-retro not found in repo — skipping"
+  fi
+
   if [[ -f "$ZUVO_DIR/scripts/zuvo-home/verify-plan-dag" ]]; then
     cp "$ZUVO_DIR/scripts/zuvo-home/verify-plan-dag" "$HOME/.zuvo/verify-plan-dag"
     chmod +x "$HOME/.zuvo/verify-plan-dag"
@@ -397,6 +405,52 @@ PYEOF
     fi
   else
     warn "hooks/zuvo-stop-retro-sweep.sh not found in repo — Claude Code Stop-hook not installed"
+  fi
+
+  # ── Claude Code PostToolUse hook: skill-usage-logger (vendored 2026-05-29)
+  # Was previously untracked at ~/.claude/hooks/ and hand-built its JSONL via
+  # shell string-interpolation of raw $ARGS — 73% of records were unparseable.
+  # Vendoring + the jq -c rewrite makes it survive reinstall and emit valid
+  # escaped JSON. Registers PostToolUse matcher=Skill idempotently.
+  local sul_src="$ZUVO_DIR/hooks/skill-usage-logger.sh"
+  local sul_dst="$hooks_dir/skill-usage-logger.sh"
+  if [[ -f "$sul_src" ]]; then
+    mkdir -p "$hooks_dir"
+    cp "$sul_src" "$sul_dst"
+    chmod +x "$sul_dst"
+    ok "skill-usage-logger.sh installed (~/.claude/hooks/)"
+    local claude_settings="$HOME/.claude/settings.json"
+    if [[ -f "$claude_settings" ]]; then
+      python3 - "$claude_settings" "$sul_dst" <<'PYEOF' || warn "skill-usage-logger merge into ~/.claude/settings.json failed (manual edit may be needed)"
+import json, sys, os
+settings_path, hook_cmd = sys.argv[1], sys.argv[2]
+try:
+    with open(settings_path) as f:
+        s = json.load(f)
+except Exception as e:
+    print(f'  ! ~/.claude/settings.json is malformed ({e}) — skipping skill-usage-logger merge')
+    sys.exit(1)
+hooks = s.setdefault('hooks', {})
+ptu = hooks.setdefault('PostToolUse', [])
+hook_cmd_norm = hook_cmd.replace(os.path.expanduser('~'), '$HOME')
+already = any(
+    any(h.get('command', '').endswith('skill-usage-logger.sh') for h in group.get('hooks', []))
+    for group in ptu
+)
+if already:
+    print('  ✓ skill-usage-logger already registered in ~/.claude/settings.json (no change)')
+    sys.exit(0)
+ptu.append({'matcher': 'Skill', 'hooks': [{'type': 'command', 'command': hook_cmd_norm, 'timeout': 5}]})
+with open(settings_path, 'w') as f:
+    json.dump(s, f, indent=2)
+    f.write('\n')
+print('  ✓ skill-usage-logger registered in ~/.claude/settings.json (PostToolUse matcher=Skill)')
+PYEOF
+    else
+      warn "~/.claude/settings.json not found — skill-usage-logger not registered"
+    fi
+  else
+    warn "hooks/skill-usage-logger.sh not found in repo — skill-usage logger not installed"
   fi
 }
 

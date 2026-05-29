@@ -50,12 +50,18 @@ STUBS_EMITTED=$(( ORPHANS_BEFORE - ORPHANS_AFTER ))
 # Always-emit summary line to stderr (Claude Code surfaces this to the user
 # in the session-end summary). Distinguish three cases:
 if [ "$STUBS_EMITTED" -gt 0 ]; then
+  # Count how many of the just-swept orphans were DEGRADED auto-logs (run had
+  # commits → truthful runs.log row backfilled) vs true ABANDONED (no work).
+  DEGRADED=$(grep -c 'degraded-autolog' "$HOME/.zuvo/retros.log" 2>/dev/null || echo 0)
   printf '\n' >&2
-  printf '⚠ zuvo session-stop: %d orphan run-marker(s) swept into ABANDONED retro stubs.\n' "$STUBS_EMITTED" >&2
-  printf '  The skill(s) wrote a runs.log entry but never executed the retrospective bash.\n' >&2
-  printf '  Stubs preserve telemetry but lose the change_proposals / friction analysis.\n' >&2
-  printf '  Backfill a full retro before next session if you want the lost feedback recovered.\n' >&2
-  printf '  Recent stubs: tail -%d ~/.zuvo/retros.log\n' "$STUBS_EMITTED" >&2
+  printf '⚠ zuvo session-stop: %d orphan run-marker(s) swept.\n' "$STUBS_EMITTED" >&2
+  printf '  These skill runs never executed their terminal retrospective bash.\n' >&2
+  printf '  Runs WITH commits in their window were auto-logged to runs.log as DEGRADED\n' >&2
+  printf '  (friction=degraded-autolog, verdict=WARN); runs with NO commits were swept\n' >&2
+  printf '  to ABANDONED stubs (no runs.log row — nothing to credit).\n' >&2
+  printf '  Either way the change_proposals / friction analysis is lost — backfill a full\n' >&2
+  printf '  retro before next session if you want that feedback recovered.\n' >&2
+  printf '  Recent entries: tail -%d ~/.zuvo/retros.log  (degraded-autolog total: %s)\n' "$STUBS_EMITTED" "$DEGRADED" >&2
 elif [ "$ORPHANS_AFTER" -gt 0 ]; then
   printf '\n' >&2
   printf '⚠ zuvo session-stop: %d orphan run-marker(s) remain after sweep (stub failure?).\n' "$ORPHANS_AFTER" >&2

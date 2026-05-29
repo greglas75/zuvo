@@ -842,7 +842,7 @@ NEXT STEPS: "fix" (all) | "blocking" (MUST-FIX only) | "auto-fix" (zuvo:build) |
 Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
 
 ```bash
-echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
 The wrapper:

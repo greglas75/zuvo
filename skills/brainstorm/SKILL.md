@@ -99,9 +99,10 @@ _RSHA=$(git rev-parse --short HEAD 2>/dev/null || echo "-")
 # run's fresh marker is never swept as its own orphan.
 [ -n "$_RS" ] && "$_RS" --sweep >/dev/null 2>&1 || true
 if mkdir -p "$_ZH/run-markers" 2>/dev/null; then
-  { printf 'start_ts=%s\nskill=%s\nproject=%s\nsha7=%s\nbranch=%s\nsession_id=%s\n' \
+  { printf 'start_ts=%s\nskill=%s\nproject=%s\nsha7=%s\nbranch=%s\nsession_id=%s\nrepo_root=%s\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_RSK" "$_RPR" "$_RSHA" \
       "$(git branch --show-current 2>/dev/null || echo -)" "${ZUVO_SESSION_ID:-$_RSHA}" \
+      "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" \
       > "$_ZH/run-markers/$_RSK-$_RPR-$_RSHA-$$-$(date +%s).marker"; } 2>/dev/null || true
 fi
 # <<< zuvo:retro-marker
@@ -566,7 +567,7 @@ If gate check skips (only valid when literally 1-2 tool calls were made): print 
 
 ```bash
 RUN_LINE="<ISO-8601-Z>\tbrainstorm\t<project>\t-\t-\t<VERDICT>\t-\t3-phase\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>"
-echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
 Capture stdout. Expected: `OK: appended to runs.log (retro verified for brainstorm on <project>)`. If `RETRO_REQUIRED` exit code 2 — go back and execute the retrospective bash, do NOT bypass with `ZUVO_SKIP_RETRO_GATE=1`.

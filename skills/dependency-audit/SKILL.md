@@ -545,7 +545,7 @@ If `gate_status = FAIL` → VERDICT = INCOMPLETE.
 Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
 
 ```bash
-echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
 Run: <ISO-8601-Z>	dependency-audit	<project>	<N-critical>	<N-total>	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>

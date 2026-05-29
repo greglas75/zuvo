@@ -408,7 +408,7 @@ Compose `RUN_LINE` per `run-logger.md`, then append via the gate wrapper. **Neve
 
 ```bash
 RUN_LINE="<ISO-8601-Z>\tship\t<project>\t-\t-\t<VERDICT>\t-\t5-phase\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>"
-echo -e "$RUN_LINE" | ~/.zuvo/append-runlog
+printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
 Capture the wrapper's stdout. Expected: `OK: appended to runs.log (retro verified for ship on <project>)`. If it exits non-zero with `RETRO_REQUIRED`, the retro was not actually appended — go back to step 1 and execute the bash, do not retry by adding `ZUVO_SKIP_RETRO_GATE=1`.

@@ -200,88 +200,67 @@ If `degraded_context = true`, prefix the H2 header with `[DEGRADED-CONTEXT]` and
 
 ## Append Commands
 
-**Execute all bash variables and commands below in a single shell invocation.** Variables from Path Detection and Field Resolution must be available to the Append blocks.
+**Call the `append-retro` writer — do NOT hand-assemble the TSV line.** Supply
+NAMED fields; it BUILDS the canonical 17-column line, self-resolves DATE
+(`date -u`) / PROJECT (`basename` of the git root, ignoring any inherited
+`$PROJECT`) / SHA7, validates every enum, rejects TAB/newline/future-date,
+appends to **both** retros.log and retros.md, and is idempotent per
+skill+project+SHA7. Drift is impossible because the agent never formats the line.
+(2026-05-29 fix: hand-built `echo >> retros.log` lines drifted to NF==1 prose /
+`skill=review` key=value, which the `append-runlog` `NF==17 && $2==skill` gate
+could never match → 12 execute runs left zero telemetry; the 2026-05-28
+"validator" never ran — it was a doc block with a `RETRO_LINE="<tsv-line>"` stub.)
 
-### Path Detection
-
-```bash
-if [ -n "$CODEX_WORKSPACE" ] || ! mkdir -p ~/.zuvo 2>/dev/null || ! test -w ~/.zuvo; then
-  RETRO_LOG="memory/zuvo-retros.log"
-  RETRO_MD="memory/zuvo-retros.md"
-else
-  RETRO_LOG="$HOME/.zuvo/retros.log"
-  RETRO_MD="$HOME/.zuvo/retros.md"
-fi
-```
-
-### TSV Append + Rotation
+### Build the markdown narrative, then call append-retro
 
 ```bash
-# Create header if file doesn't exist (v2 schema: RETRO: prefix + 17 TSV fields).
-# NOTE: the on-disk header includes a `RETRO:` token in column 1 because every
-# data row begins with `RETRO:` followed by 16 TSV fields → 17 total columns
-# (the `RETRO: ` prefix on the timestamp counts as field 1 of the awk parse).
-if [ ! -f "$RETRO_LOG" ]; then
-  echo "# v2-17col RETRO: DATE	SKILL	PROJECT	CODE_TYPE	FRICTION_CATEGORY	MISSING_TEMPLATE	CONTEXT_GAP	TURNS_WASTED	TOOL_CALLS	FILES_READ	FILES_MODIFIED	BRANCH	SHA7	BLIND_AUDIT	ADVERSARIAL	CODESIFT	ROUTING_STATUS" > "$RETRO_LOG"
-fi
-
-# === VALIDATION (added 2026-05-28 to close OPT-1 corruption gap) ===
-# Reject malformed RETRO: lines BEFORE they hit retros.log. Historical
-# contamination came from skills appending free-form notes or partial-column
-# lines that the append-runlog gate then silently ignored (awk NF==17
-# predicate matched nothing → looked like "no retro" → retro-gate failures).
-# This validator catches the four observed failure modes:
-#   1. Line not starting with `RETRO:`
-#   2. NF != 17 (column count drift)
-#   3. Empty SKILL ($2) or empty PROJECT ($3)
-#   4. Embedded newlines (multi-line accidentally collapsed)
-# Reject = print error to stderr + exit 2 (caller propagates the failure;
-# the retro is NOT written; the next append-runlog will demand a clean retry).
-RETRO_LINE="<tsv-line>"
-if ! printf '%s' "$RETRO_LINE" | awk -F'\t' '
-  BEGIN { ok=1 }
-  NR>1 { print "validator: embedded newline in RETRO line — multi-line collapse?" > "/dev/stderr"; ok=0; exit }
-  $1 !~ /^RETRO: / { print "validator: line does not start with `RETRO: ` prefix — refusing append" > "/dev/stderr"; ok=0 }
-  NF != 17 { printf "validator: RETRO line has %d TSV fields, schema requires 17 (v2-17col)\n", NF > "/dev/stderr"; ok=0 }
-  $2 == "" { print "validator: SKILL field (col 2) is empty" > "/dev/stderr"; ok=0 }
-  $3 == "" { print "validator: PROJECT field (col 3) is empty" > "/dev/stderr"; ok=0 }
-  END { exit (ok ? 0 : 2) }
-'; then
-  echo "RETRO_REJECTED: malformed line not appended to $RETRO_LOG" >&2
-  echo "  Line: $RETRO_LINE" >&2
-  echo "  Fix the field generation above, then re-run this Append block." >&2
-  exit 2
-fi
-
-# Append the validated RETRO: line
-echo "$RETRO_LINE" >> "$RETRO_LOG"
-
-# Rotation: preserve header, keep last 100 data lines
-LINE_COUNT=$(wc -l < "$RETRO_LOG")
-if [ "$LINE_COUNT" -gt 101 ]; then
-  head -1 "$RETRO_LOG" > "$RETRO_LOG.tmp.$$"
-  tail -n 100 "$RETRO_LOG" >> "$RETRO_LOG.tmp.$$"
-  mv "$RETRO_LOG.tmp.$$" "$RETRO_LOG"
-fi
-```
-
-### Markdown Append + Rotation
-
-```bash
-# Append the markdown block (fill from the template above)
-cat >> "$RETRO_MD" << 'RETRO_EOF'
+# 1. Write the long-form markdown block (fields 1-9, filled from the template
+#    above) to a temp file — this is the narrative; it lives in retros.md only.
+RETRO_MD_BLOCK="$(mktemp)"
+cat > "$RETRO_MD_BLOCK" << 'RETRO_EOF'
 <!-- RETRO -->
 
-## ...filled template...
+## [DATE] [SKILL] [PROJECT] [TARGET_FILE]
+...filled template (Telemetry / Friction / Skill Gaps / Missing Tools /
+Worked Well / Session Cost / Change Proposals)...
 RETRO_EOF
 
-# Hard cap (safety net): keep last 100 entries inline. Triggered only when
-# rotate-retros has not been run recently — the canonical archival path is the
-# date-based ~/.zuvo/rotate-retros helper (see Rotation Strategy below).
-ENTRY_COUNT=$(grep -c '^<!-- RETRO -->' "$RETRO_MD" 2>/dev/null || echo 0)
-if [ "$ENTRY_COUNT" -gt 100 ]; then
-  awk '/^<!-- RETRO -->/{c++} c>=('"$ENTRY_COUNT"'-99){print}' "$RETRO_MD" > "$RETRO_MD.tmp.$$" && mv "$RETRO_MD.tmp.$$" "$RETRO_MD"
+# 2. Call the writer with NAMED fields. It resolves DATE/PROJECT/SHA7 itself,
+#    validates, and appends to retros.log + retros.md. NO tab string, NO echo.
+~/.zuvo/append-retro \
+  --skill="<skill>" \
+  --code-type="<ORCHESTRATOR|DATA_SERVICE|PURE_FUNCTION|UI_COMPONENT|CONFIG|MIXED|OTHER>" \
+  --friction="<friction-category>" \
+  --missing-template="<short text or ->" \
+  --context-gap="<no-production-code|no-schema|no-env|no-test-fixture|no-framework-docs|none|other>" \
+  --turns=<N> --tool-calls=<N> --files-read=<N> --files-modified=<N> \
+  --blind-audit="<clean:strict|clean:degraded|fix:N|rewrite|skipped|blocked_infra|not_run>" \
+  --adversarial="<clean|Nfindings|skipped|blocked|not_run|blocked:prod-bug>" \
+  --codesift="<indexed|transport_closed|not_indexed|unavailable|N/A>" \
+  --routing="<ok|same-model-fallback|unknown-writer-model|routing-failed|N/A>" \
+  --md="$RETRO_MD_BLOCK"
+rm -f "$RETRO_MD_BLOCK"
+```
+
+Exit 0 = appended (or idempotent no-op if this run's retro already exists);
+exit 2 = a field failed validation (the per-field error tells you what to fix);
+exit 3 = lock busy (retry). The wrapper handles header creation, rotation, and
+markdown coupling — there is nothing else to run for retros.
+
+### Codex / Cursor fallback (append-retro absent)
+
+If `~/.zuvo/append-retro` does not exist on the host (Codex CLI / Cursor without
+a zuvo install), detect the state path and append manually, then flag the gap:
+
+```bash
+if [ -n "$CODEX_WORKSPACE" ] || ! test -w ~/.zuvo; then
+  RETRO_LOG="memory/zuvo-retros.log"; RETRO_MD="memory/zuvo-retros.md"
+else
+  RETRO_LOG="$HOME/.zuvo/retros.log"; RETRO_MD="$HOME/.zuvo/retros.md"
 fi
+# Build the 17-field line with printf and REAL tabs (never echo -e / literal \t),
+# verify NF==17 before appending, then add `retro_gate=missing` to the next
+# run's friction so the install gap is surfaced.
 ```
 
 ### Rotation Strategy (added 2026-05-28 alongside OPT-4/OPT-5)

@@ -332,7 +332,7 @@ records by their deterministic record-id, never by name/email/phone.
 
 ## Phase 7 — Run Log + Retrospective
 
-Append via wrapper: `echo -e "$RUN_LINE" | ~/.zuvo/append-runlog` (NEVER `>>` directly). Print `Logs:` evidence with `tail` output of `~/.zuvo/retros.log`, retro count from `~/.zuvo/retros.md`, and `~/.zuvo/runs.log`. The wrapper gates on a matching retro entry — if it exits 2, execute the retro bash from `retrospective.md` first.
+Append via wrapper: `printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog` (NEVER `>>` directly). Print `Logs:` evidence with `tail` output of `~/.zuvo/retros.log`, retro count from `~/.zuvo/retros.md`, and `~/.zuvo/runs.log`. The wrapper gates on a matching retro entry — if it exits 2, execute the retro bash from `retrospective.md` first.
 
 Legacy reference (do not bypass the wrapper): runs.log per `run-logger.md` (13-field TSV, VERDICT one of
 `COMPLETE`, `PARTIAL`, `DEGRADED`, `FAILED`).
