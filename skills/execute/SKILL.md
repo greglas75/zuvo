@@ -316,9 +316,13 @@ backlog-adds=1
 
 Process tasks in dependency order. If task B depends on task A, do not start B until A is marked completed.
 
-**HARD CONTINUATION RULE (per `no-pause-protocol.md`):** After Step 9b (telemetry) of task N, IMMEDIATELY start task N+1. Do NOT estimate remaining wall-clock time, do NOT extrapolate session capacity, do NOT present A/B/C menus, do NOT ask "want me to continue?". The plan was approved at the entry gate — that approval covers ALL tasks. Only legitimate stops: BLOCKED_* states, all tasks terminal, explicit user "stop"/"pause"/"wystarczy", or `/context` >85% (write state and exit, do NOT ask).
+**HARD CONTINUATION RULE (per `no-pause-protocol.md`):** After Step 9b (telemetry) of task N, IMMEDIATELY start task N+1. Do NOT estimate remaining wall-clock time, do NOT extrapolate session capacity, do NOT present A/B/C menus, do NOT ask "want me to continue?". The plan was approved at the entry gate — that approval covers ALL tasks. Only legitimate stops: BLOCKED_* states, all tasks terminal, or an explicit user "stop"/"pause"/"wystarczy".
 
-**Non-terminal stop — emit a checkpoint retro stub (do NOT skip).** When stopping for `/context` >85%, an explicit user "pause"/"stop", or any abandon BEFORE Phase Final, after writing `execution-state.md` run this ungated bash so the partial run's telemetry is captured immediately (more precise than waiting for the next skill's `--sweep`):
+**Context pressure is NOT a stop on Claude Code.** `execution-state.md` is rewritten after EVERY task (Step 9b), so it is a durable per-task checkpoint that survives compaction. On an auto-compacting runtime (Claude Code), do NOT halt at `/context` >85% — keep running tasks; the runtime summarizes and carries you into the next context window mid-run, and you resume from `execution-state.md` automatically in the SAME `/zuvo:execute` invocation (see "Resume after mid-run compaction" below). Emit the `[CONTINUATION CHECKPOINT]` + exit ONLY as a fallback on a runtime that hard-stops at the context limit with no auto-compaction. Stopping a 31-task plan after task 2 and making the user re-run `/zuvo:execute` is the friction this rule removes.
+
+**Resume after mid-run compaction (no user action needed).** If your context was just summarized mid-plan and you are unsure where you are: `Read(".zuvo/context/execution-state.md")`, take `next-task`, and CONTINUE the loop from there — do NOT stop to ask, do NOT re-request approval (the plan was already approved). The PreCompact snapshot + the state file are designed for exactly this seamless continuation.
+
+**Non-terminal stop — emit a checkpoint retro stub (do NOT skip).** This applies only when you DO stop before Phase Final: an explicit user "pause"/"stop", or the FALLBACK context-limit exit on a non-auto-compacting runtime (NOT the Claude Code default, where you keep running through compaction). After writing `execution-state.md` run this ungated bash so the partial run's telemetry is captured immediately (more precise than waiting for the next skill's `--sweep`):
 
 ```bash
 # >>> zuvo:retro-stop  (plan Task 7 — explicit checkpoint on non-terminal stop)
