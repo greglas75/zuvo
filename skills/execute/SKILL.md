@@ -391,6 +391,14 @@ Dispatch per environment:
 - `**Complexity:** standard` (1-3 files, clear spec) -> Sonnet
 - `**Complexity:** complex` (4+ files, architecture decisions, design patterns) -> Opus
 
+**User model override (`--model` in `$ARGUMENTS`) — beats the per-complexity default.** The default above quietly sends standard tasks to **Sonnet** (and reviewers/verifier to Sonnet) for cost/speed. If the user wants the real work done by a specific model, honor it for EVERY dispatched sub-agent (implementer, spec-reviewer, quality-reviewer, acceptance-verifier, and any batch sub-agent):
+- `--model opus` → all sub-agents run Opus (no silent downgrade to Sonnet/Haiku on standard tasks). Use when the user wants top quality and accepts the cost.
+- `--model sonnet` / `--model haiku` → force that model everywhere (explicit cheap mode).
+- `--model inherit` → all sub-agents inherit the orchestrator's (session) model — so an Opus session drives Opus sub-agents end-to-end.
+- **No flag → the per-complexity default above.** But STATE the resolved per-role models up front (`[MODELS] implementer=sonnet(std)/opus(cplx) · reviewers=sonnet · override=none`) so the model choice is never a silent surprise — the user sees it and can re-run with `--model opus` if they disagree.
+
+The cross-model ADVERSARIAL pass (Step 7b: codex/gemini/cursor) is independent of this and always runs regardless of the sub-agent model — so forcing Opus on the in-house agents does NOT cost you review diversity.
+
 **Provide to the agent:**
 - The full task spec from the plan (RED/GREEN/Verify/Commit steps)
 - The content of `rules/cq-patterns.md`
@@ -471,7 +479,7 @@ Dispatch per environment:
 
 ```
 Agent: Spec Reviewer
-  model: "sonnet"
+  model: "sonnet"   # unless the user passed --model (opus/inherit/…) — then use that, per Model routing
   type: "Explore"
   instructions: read agents/spec-reviewer.md
   input: task spec from plan, spec document, list of files implementer created/modified,
@@ -509,7 +517,7 @@ Dispatch per environment:
 
 ```
 Agent: Quality Reviewer
-  model: "sonnet"
+  model: "sonnet"   # unless the user passed --model (opus/inherit/…) — then use that, per Model routing
   type: "Explore"
   instructions: read agents/quality-reviewer.md
   input: list of production files modified, list of test files modified,
