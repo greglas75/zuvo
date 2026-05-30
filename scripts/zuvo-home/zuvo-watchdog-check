@@ -35,9 +35,10 @@ emit_alive() { printf 'ALIVE\n'; exit 0; }
 # Terminal / deliberately-halted run → stop watching.
 #   status: done | completed | aborted → clean finish (disarm belt-and-suspenders)
 #   status: halted | blocked           → deliberate stop; auto-resume would loop
-# Pattern requires `status:` immediately before the keyword, so an execution-state
-# `blocked: []` bucket line can never be mistaken for `status: blocked`.
-if grep -iqE 'status:[[:space:]]*(done|completed|aborted|halted|blocked)' "$HB" 2>/dev/null; then
+# Anchored at line start (after optional leading space): only a real `status:`
+# LINE counts — never a `status:` substring inside a `note:`/free-text field, and
+# never an execution-state `blocked: []` bucket line.
+if grep -iqE '^[[:space:]]*status:[[:space:]]*(done|completed|aborted|halted|blocked)' "$HB" 2>/dev/null; then
   emit_done
 fi
 

@@ -61,6 +61,15 @@ OUT3=$(printf '{"session_id":"S5","tool_name":"TodoWrite","tool_input":{"todos":
 assert_eq "0" "$(cat "$Z/heartbeats/S5.todos" 2>/dev/null)" "0 open recorded"
 assert_eq "" "$OUT3" "no arm injection when nothing is open"
 
+start_test "armed flag clears on completion → a NEW batch in the same session re-arms"
+Z=$(_z)
+printf '{"session_id":"S7","tool_name":"TodoWrite","tool_input":{"todos":[{"status":"pending"}]}}' | ZUVO_HOME="$Z" bash "$TW" >/dev/null
+assert_exit_code 0 "$([ -f "$Z/watchdogs/S7.armed" ]; echo $?)" "batch A armed"
+printf '{"session_id":"S7","tool_name":"TodoWrite","tool_input":{"todos":[{"status":"completed"}]}}' | ZUVO_HOME="$Z" bash "$TW" >/dev/null
+assert_exit_code 1 "$([ -f "$Z/watchdogs/S7.armed" ]; echo $?)" "armed flag cleared when all completed"
+OUTB=$(printf '{"session_id":"S7","tool_name":"TodoWrite","tool_input":{"todos":[{"status":"in_progress"}]}}' | ZUVO_HOME="$Z" bash "$TW")
+assert_exit_code 0 "$(printf '%s' "$OUTB" | jq -e '.hookSpecificOutput.additionalContext' >/dev/null 2>&1; echo $?)" "batch B re-injects the arm instruction"
+
 start_test "hooks.json registers heartbeat (match-all, async) and todo-watchdog (TodoWrite, sync)"
 HJ=$(cat "$ROOT/hooks/hooks.json")
 assert_contains "$HJ" "zuvo-heartbeat.sh" "heartbeat hook registered"

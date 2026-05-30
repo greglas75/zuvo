@@ -60,6 +60,11 @@ D=$(_z); HB="$D/execute.heartbeat"
 printf 'status: running\nblocked: []\nskill: execute\nresume: zuvo:execute\n' > "$HB"; _age_file "$HB" 10
 assert_eq "RESUME" "$(_v "$HB" 150)" "running+blocked-bucket+stale => RESUME (not DONE)"
 
+start_test "a 'status:' substring inside a note field does NOT trigger DONE (anchored match)"
+D=$(_z); HB="$D/execute.heartbeat"
+printf 'status: running\nskill: execute\nresume: zuvo:execute\nnote: re-checking the status: done flag\n' > "$HB"; _age_file "$HB" 10
+assert_eq "RESUME" "$(_v "$HB" 150)" "note containing 'status: done' is ignored; stale running => RESUME"
+
 start_test "resume command derives from skill: when resume: is absent"
 D=$(_z); HB="$D/sec.heartbeat"
 printf 'status: running\nskill: security-audit\n' > "$HB"; _age_file "$HB" 10

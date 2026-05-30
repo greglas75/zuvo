@@ -31,8 +31,17 @@ open=$(printf '%s' "$input" | jq -r '[.tool_input.todos[]? | select(.status != "
 case "$open" in ''|*[!0-9]*) open=0 ;; esac
 printf '%s' "$open" > "$todos_f" 2>/dev/null || true
 
-# Nothing open → work done / not started. No arm needed (cron self-disarms).
-[ "$open" -gt 0 ] || exit 0
+# Opportunistic cleanup (this hook is infrequent): prune session beat/todos/armed
+# files older than 2 days so ~/.zuvo/heartbeats + watchdogs don't grow unbounded.
+find "$hbdir" "$ZH/watchdogs" -type f -mtime +2 -delete 2>/dev/null || true
+
+# Nothing open → work done / not started. CLEAR the armed flag so a NEW batch of
+# multi-step work later in this same session re-arms (the cron self-deletes when
+# it sees 0 open, so without this the next batch would run unprotected).
+if [ "$open" -le 0 ]; then
+  rm -f "$armed" 2>/dev/null || true
+  exit 0
+fi
 # Already injected this session → stay quiet (CronList tag is the real guard).
 [ -f "$armed" ] && exit 0
 : > "$armed" 2>/dev/null || true
