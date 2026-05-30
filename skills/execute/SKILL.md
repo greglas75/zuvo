@@ -775,11 +775,11 @@ Rationale: prior practice was to either (a) skip post-execute review entirely or
    ```
    If the range is empty (`git log "${BASE_SHA}..${HEAD_SHA}" --oneline` returns nothing), emit `[GATE: aggregate-review] NO-OP (empty range)` and proceed to Session State Close.
 
-2. **Dispatch `zuvo:review` on the full plan range.**
+2. **Dispatch `zuvo:review` on the full plan range — in `--report-only` mode.**
    ```
-   Skill(skill="zuvo:review", args="${BASE_SHA}..${HEAD_SHA}")
+   Skill(skill="zuvo:review", args="${BASE_SHA}..${HEAD_SHA} --report-only")
    ```
-   Tier auto-selection in review will land on TIER 3 — a 10–20 task plan clears the >500 lines / 15+ files threshold trivially. Do NOT pass `--quick` or any narrowing flag; the whole point is the deep cross-task pass.
+   Tier auto-selection in review will land on TIER 3 — a 10–20 task plan clears the >500 lines / 15+ files threshold trivially. Do NOT pass `--quick` or any narrowing flag; the whole point is the deep cross-task pass. **Pass `--report-only`** so review SURFACES findings (consistent with this phase being "Non-blocking by design", step 4) and does NOT auto-apply fixes at the end of a completed plan — the user gets the verdict + NEXT STEPS menu and decides. (Direct `/zuvo:review` defaults to auto-fix; dispatched-from-execute does not.)
 
 3. **Capture review verdict.** When the review skill returns, extract from its output:
    - `MUST-FIX` count, `RECOMMENDED` count, `NIT` count

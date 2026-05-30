@@ -222,9 +222,10 @@ git diff --shortstat "${REVIEWED_FROM}..${REVIEWED_THROUGH}"
 
 | Token | Mode | Behavior |
 |-------|------|----------|
-| _(none)_ | REPORT | Audit and present findings. Wait for user decision. |
-| `fix` | FIX-ALL | Apply every reported fix automatically, then verify. |
-| `blocking` | FIX-BLOCKING | Apply only MUST-FIX findings, then verify. |
+| _(none)_ | **FIX-AUTO (default)** | Audit, then **automatically apply** MUST-FIX + localized/high-confidence RECOMMENDED, verify, and run the post-fix adversarial gate — NO menu wait. NIT + structural-refactor RECOMMENDED → backlog (not force-applied). |
+| `--report-only` | REPORT | Audit and present findings only. Do NOT touch code; print the menu and stop. Use when you want to read before acting. |
+| `fix` | FIX-ALL | Apply EVERY reported fix incl. NIT, then verify + gate. |
+| `blocking` | FIX-BLOCKING | Apply only MUST-FIX findings, then verify + gate. |
 | `auto-fix` | AUTO-FIX | Dispatch `zuvo:build` to fix MUST-FIX issues (closed-loop). |
 | `tag` | UTILITY | No audit. Remove reviewed commits from backlog. |
 | `mark-reviewed` | UTILITY | No audit. Create `reviewed/` git tags on commits. |
@@ -882,7 +883,18 @@ Print this Validity Gate **AFTER** the retro append and `~/.zuvo/append-runlog` 
 REVIEW COMPLETE -- <VERDICT>, <N> issues found.
 DEPLOYMENT RISK: <RISK LEVEL> -- <deploy strategy>
 Run: <ISO-8601-Z>	review	<project>	<CQ>	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
+```
 
+**Default (FIX-AUTO) — do NOT stop here; auto-proceed to Phase 4.** Unless `--report-only` (or an explicit `fix`/`blocking`/`auto-fix`/`tag`/`status`) was passed, the review does not present a menu and wait — it announces what it will apply and goes straight into the fix:
+
+```
+AUTO-FIX: applying <M> MUST-FIX + <R> RECOMMENDED (localized/high-confidence) → Phase 4.
+DEFERRED to backlog: <K> NIT + <S> structural-refactor RECOMMENDED.
+```
+
+Then continue to Phase 4 immediately (no user turn). If there are ZERO MUST-FIX and ZERO applicable RECOMMENDED, print `AUTO-FIX: nothing to apply (only NIT/structural — backlogged)` and finish. Only when `--report-only` was passed do you instead print the menu and stop:
+
+```
 NEXT STEPS: "fix" (all) | "blocking" (MUST-FIX only) | "auto-fix" (zuvo:build) | "skip"
 ```
 
@@ -901,7 +913,7 @@ If the wrapper exits non-zero: do NOT manually append to runs.log. Fix the cause
 
 ---
 
-## Phase 4: Execute (FIX-ALL / FIX-BLOCKING / AUTO-FIX)
+## Phase 4: Execute (FIX-AUTO / FIX-ALL / FIX-BLOCKING / AUTO-FIX)
 
 Read and follow the fix loop protocol from `../../shared/includes/fix-loop.md`.
 
@@ -909,12 +921,23 @@ Read and follow the fix loop protocol from `../../shared/includes/fix-loop.md`.
 Input:
   FINDINGS: [R-N findings to fix, per mode]
   SCOPE_FENCE: [allowed files from triage]
-  MODE: FIX-ALL | FIX-BLOCKING | AUTO-FIX
+  MODE: FIX-AUTO | FIX-ALL | FIX-BLOCKING | AUTO-FIX
 ```
 
-- **FIX-ALL:** apply MUST-FIX + RECOMMENDED + NIT
-- **FIX-BLOCKING:** apply MUST-FIX only
-- **AUTO-FIX:** dispatch `zuvo:build` with MUST-FIX findings as context (closed-loop, max 1 cycle)
+- **FIX-AUTO (default):** apply MUST-FIX + RECOMMENDED that are localized + high-confidence (confidence ≥ ~60 from Phase 2). Do NOT apply NIT or structural-refactor RECOMMENDED — those go to backlog (the structural-refactor defer rule in Phase 2 already routes them there). This is the "I always click fix anyway" default — minus the low-value churn and the multi-file refactors that belong to `zuvo:refactor`.
+- **FIX-ALL:** apply MUST-FIX + RECOMMENDED + NIT (explicit `fix` — you want everything incl. nits).
+- **FIX-BLOCKING:** apply MUST-FIX only.
+- **AUTO-FIX:** dispatch `zuvo:build` with MUST-FIX findings as context (closed-loop, max 1 cycle).
+
+### Post-fix gate (MANDATORY — auto-applied fixes can over-correct)
+
+Applying fixes without re-checking is how a "fix" silently becomes a regression (2026-05-30: an auto-applied resize fix removed the width floor → the dock could collapse to 0px and `aria-valuemin > valuemax`; caught only by the next adversarial pass). After applying ANY fixes, before declaring done:
+
+1. **Verify** — run the project's test/typecheck/build. A fix that leaves the suite red is reverted, not shipped.
+2. **Adversarial re-validation** — run one cross-provider adversarial pass on the FIX diff (`adversarial-review --mode code` on the applied changes). It must **converge** (no new CRITICAL): a new CRITICAL introduced by a fix is itself fixed (cap 3 passes per `adversarial-loop.md`), residual non-CRITICAL → backlog. Do NOT print the FIX-COMPLETE block while a fix-introduced CRITICAL is open.
+3. **Commit** only after 1+2 pass. Record applied vs deferred (backlog IDs) in the FIX summary.
+
+This gate is what makes auto-fix safe to default: the user never has to eyeball each change, because the verify + adversarial pass catch an over-correction the way a human glance would.
 
 **Note:** When FIX/BLOCKING/AUTO-FIX mode is active, Phase 1.6 adversarial runs in FIX variant (sequential providers validate and fix between passes). The fix-loop.md below handles primary audit findings. Adversarial findings discovered and fixed during Phase 1.6 do NOT appear in the fix-loop — they are already resolved.
 

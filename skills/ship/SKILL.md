@@ -145,8 +145,10 @@ WORK_FILES = <files being touched>
    |----------|----------------|
    | < 20 | **Fast path** — skip review entirely |
    | 20 - 100 | Dispatch `review-light` agent (read `skills/ship/agents/review-light.md`) |
-   | 100+ | Dispatch `review-light` + invoke `zuvo:review` via the Skill tool (`Skill(skill="zuvo:review")`) — runs adversarial pass at TIER 2+ + invoke `Skill(skill="zuvo:design-review")` if frontend files changed (`.tsx`, `.jsx`, `.css`, `.scss`, `.html`) |
-   | 300+ | All of the above + dispatch `coverage-check` agent (read `skills/ship/agents/coverage-check.md`). `Skill(skill="zuvo:review")` runs at TIER 3 with automatic adversarial pass. |
+   | 100+ | Dispatch `review-light` + invoke `zuvo:review` via the Skill tool (`Skill(skill="zuvo:review", args="--report-only")`) — runs adversarial pass at TIER 2+ + invoke `Skill(skill="zuvo:design-review")` if frontend files changed (`.tsx`, `.jsx`, `.css`, `.scss`, `.html`) |
+   | 300+ | All of the above + dispatch `coverage-check` agent (read `skills/ship/agents/coverage-check.md`). `Skill(skill="zuvo:review", args="--report-only")` runs at TIER 3 with automatic adversarial pass. |
+
+   **Pass `--report-only` when invoking `zuvo:review` from ship** — a pre-merge release review must SURFACE blockers for the release decision, not silently auto-rewrite the diff you are about to tag. (Direct `/zuvo:review` defaults to auto-fix; ship-dispatched does not.)
 
    **Flag overrides (user-provided ONLY — agent must NEVER self-apply):**
    - `--fast`: always use fast path regardless of diff size. Must be in `$ARGUMENTS` from the user's invocation.
