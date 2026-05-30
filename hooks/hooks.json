@@ -49,6 +49,26 @@
             "async": true
           }
         ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/zuvo-heartbeat.sh\"",
+            "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "TodoWrite",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/zuvo-todo-watchdog.sh\"",
+            "async": false
+          }
+        ]
       }
     ]
   }

@@ -136,6 +136,28 @@ Then, if `CronCreate` was used, **delete the cron** explicitly: read `cron_id:` 
 
 ---
 
+## Normal (non-skill) work — the todo-keyed watchdog
+
+A long *skill* run is resumable because it has a state file and a `status: done` signal. Plain interactive work has neither — so a blind "re-fire every 3 min" cron can't tell a turn that **died** from one that **finished** (both leave the REPL idle), and would nag after every completed turn. The fix is to borrow the one done-signal ad-hoc multi-step work usually has: **the TodoWrite list.** Open todos = work in progress; all completed = nothing to resume.
+
+This is wired with two hooks (Claude Code only — they no-op where there is no scheduler) plus the same `zuvo-watchdog-check` clock:
+
+1. **`hooks/zuvo-heartbeat.sh`** — PostToolUse, matcher `"*"`, **async**. Touches `~/.zuvo/heartbeats/<session>.beat` on every tool call. Fresh beat = actively working; stale beat = the turn stopped. Skips the watchdog's own poll command so a check never resets the clock.
+2. **`hooks/zuvo-todo-watchdog.sh`** — PostToolUse, matcher `"TodoWrite"`, **sync** (required for `additionalContext`). Writes the open-todo count to `<session>.todos`, and on the first TodoWrite with open items injects an instruction asking the agent to **arm the watchdog cron once** (`CronCreate "*/3 * * * *"`, recurring, non-durable, tagged `[zuvo-todo-watchdog session=…]`). A hook cannot call `CronCreate` itself — only the agent can — so this injection is the trigger. Idempotent via the CronList tag + an `.armed` flag.
+
+When the cron fires (only while idle), it runs `zuvo-watchdog-check <beat> 150` and reads the open-todo count from context + `<session>.todos`:
+
+- **0 open todos** → work done → `CronDelete` self, stop.
+- **open + ALIVE** → actively working → do nothing.
+- **open + RESUME** (stale) **and the last turn was not a question awaiting the user** → the turn was killed by an API/rate-limit/socket error → resume the next incomplete todo, unattended.
+- **open + RESUME but waiting on the user** → do nothing (don't nag a genuine wait).
+
+**Honest limits (don't oversell this):**
+- It needs the work to use **TodoWrite**. A single-shot turn with no todos has no done-signal and is not auto-resumed — for that, run the work under `/loop 3m "<prompt>"`.
+- Arming depends on the agent acting on the injected instruction (a hook can't arm a cron directly). The CronList tag makes it safe to re-attempt but the first arm is soft.
+- The "were you waiting on the user?" guard is a judgment call by the cron-fired agent, not a hard signal — it can occasionally mis-decide. Erring toward *not* resuming a genuine wait is the safer bias and the prompt is written that way.
+- For a true **rate-limit/quota** stall, resuming only succeeds once the limit window reopens — the `*/3` cron keeps retrying until it does (the session context is intact, so the resumed turn has full history). Do NOT assume Claude Code self-retries these; in practice it frequently does not, which is the whole reason this exists.
+
 ## Interaction with no-pause-protocol
 
 This protocol does not relax `no-pause-protocol`. The watchdog catches *unexpected death* (API/network), not *legitimate stops*. A skill that hits a real `BLOCKED_*` or an explicit user interrupt writes `status: halted` precisely so the watchdog leaves it alone. Everything no-pause already mandates — ride auto-compaction, Post-Cap auto-disposition, never ask between items — stays in force. The watchdog is the layer below: it only matters when the turn itself stopped existing.
