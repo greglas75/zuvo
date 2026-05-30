@@ -50,17 +50,31 @@ When repo reality and the artifact conflict:
 - The repo decides **how you implement it** (which store, which component, migration path).
 - You may NEVER downgrade the artifact to "reference-only" because the current code is structured differently. "The repo already has a left sidebar hosting other modes" is a HOW problem to solve (move those modes), not a license to keep a panel the design forbids.
 
-## 4. Deviation gate (HARD STOP — surface, do not rationalize)
+## 3.5. The artifact is NOT infallible — surface its gaps, don't blindly copy either
 
-If any spec/plan decision **contradicts a Design Constraint** — especially a `DO-NOT`/`must`/`single`/`one`/`no` — you do NOT proceed and you do NOT justify it from repo structure. Surface it and wait:
+The artifact is the source of truth you may not **silently ignore** — but it is NOT always 100%. Prototypes ship with gaps, mistakes, dead states, placeholder data, accessibility holes, and details that collide with the real data model or backend. The rule is therefore **NO SILENT DIVERGENCE IN EITHER DIRECTION** — not "copy the prototype pixel-for-pixel no matter what":
+
+- The original sin (2026-05-30) is silently substituting **your own** design for the artifact's. Forbidden.
+- The opposite sin is silently "fixing" or improving the artifact with **your own** opinion. Also forbidden.
+- When the artifact is **wrong / incomplete / ambiguous / impossible / conflicts with reality** (a state it never shows, a field the data model can't supply, a contrast/a11y failure, an obvious prototype bug), you do NOT blindly copy the mistake AND you do NOT quietly override it. You **surface it** with your proposed correction and get the user's call (§4). The prototype being authoritative means it's the default and the baseline — not that it's beyond question.
+
+So: follow the artifact by default; flag where it's genuinely deficient; let the user decide. Both "I ignored your design" and "I copied a flaw in your design without telling you" are failures.
+
+## 4. Deviation gate (surface + get a decision — do not silently diverge)
+
+When a spec/plan decision would **differ from a Design Constraint** — whether because you'd rather do it another way OR because the constraint is wrong/incomplete/impossible — you do NOT proceed silently and you do NOT rationalize it from repo structure. Surface it and get a decision:
 
 ```
 [DEVIATION] DC-3 says "Do not regress to persistent side panels", but I propose
-keeping the left sidebar because <repo reason>. This contradicts your design.
-Confirm: (a) follow the design — remove it, or (b) you accept this deviation.
+keeping the left sidebar because <reason>. This differs from your design.
+Confirm: (a) follow the design as-is, or (b) accept this deviation.
+```
+```
+[ARTIFACT-GAP] DC-7 (the prototype) shows no empty/loading state for the tree, and
+the real data model can return zero sections. I propose <X>. Confirm or adjust.
 ```
 
-A constraint that is genuinely impossible in the repo is still a DEVIATION you surface (with your proposed alternative) — never a silent reinterpretation. Quietly recording it as a "decision" with a repo-derived rationale is the 2026-05-30 bug.
+A **surfaced, user-approved** deviation recorded in the spec/plan is legitimate — that is the prototype not being 100%, handled honestly. The defect is a **SILENT** divergence in either direction (quietly substituting your design, or quietly copying/overriding a flaw). Reviewers FAIL only the silent ones.
 
 ## 5. Question prioritization
 

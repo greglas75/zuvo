@@ -157,9 +157,9 @@ Edge cases (C7) cover input validation. Failure modes (C7b) cover system resilie
 The most expensive failure mode is a spec that is internally consistent but contradicts the design the user actually handed over (prototype / `HANDOFF.md` / mockup / "match 1:1"). Grade the spec AGAINST that artifact, not just against itself:
 
 - If a design artifact was provided, the spec MUST contain a `## Design Constraints` section (DC-1…) extracted from it. **Its absence is a FAIL** — the spec was grounded on the agent's own reading, not the user's design.
-- Every quoted `do not`/`never`/`single`/`one`/`no <X>`/`must` constraint must be HONORED by the spec's Solution Overview / Detailed Design. A spec choice that contradicts a DC (design says "one dock, no persistent side panels"; spec keeps a side panel) is a **FAIL** — a repo-derived rationalization does not excuse it.
-- If the artifact is working code (`.jsx`/`.tsx`/components) and the spec describes re-deriving the behavior rather than PORTING those files, that is a FAIL.
-- Any genuine impossibility must be an explicit `[DEVIATION: …]` to the user, never a silent reinterpretation. A spec that silently downgraded the artifact to "reference-only" is a FAIL.
+- Every quoted `do not`/`never`/`single`/`one`/`no <X>`/`must` constraint must be HONORED by the spec, OR carry an explicit surfaced `[DEVIATION]`/`[ARTIFACT-GAP]`. A spec choice that **SILENTLY contradicts** a DC (design says "one dock, no persistent side panels"; spec keeps a side panel with a repo rationale, no surfaced deviation) is a **FAIL**.
+- **The prototype is not always 100%.** A deviation the spec SURFACED and the user approved (recorded as `[DEVIATION]`/`[ARTIFACT-GAP]`) is legitimate, NOT a FAIL — that is an artifact gap handled honestly. Fail only the SILENT divergences (substituting the agent's own design, or copying/overriding a flaw without telling the user).
+- If the artifact is working code (`.jsx`/`.tsx`/components) and the spec describes re-deriving the behavior rather than PORTING those files (with no surfaced reason), that is a FAIL.
 
 ## Calibration
 
