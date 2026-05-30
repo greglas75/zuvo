@@ -6,9 +6,21 @@
 
 ---
 
+## PRIMARY mechanism — `StopFailure` + `asyncRewake` (universal, no arming)
+
+The cleanest recovery is a **harness hook**, not a cron — it catches **every** turn killed by an API error, with no TodoWrite, no cron, and no agent-arming. Claude Code fires a `StopFailure` hook **exactly when a turn ends due to an API error** (matchable by type: `rate_limit`, `server_error`, `unknown`, …). Registered with `asyncRewake: true`, a hook "runs in the background and wakes Claude on exit code 2" with its stderr shown as a system reminder.
+
+So `hooks/zuvo-rewake-on-failure.sh` (StopFailure, matcher `rate_limit|server_error|unknown`, `async`+`asyncRewake`): on a retryable death it backs off (rate_limit → 90s for the window to reopen; server/transient → 20–30s), then exits 2 → Claude wakes → resumes the work right where it stopped (the conversation context is intact). `hooks/zuvo-rewake-reset.sh` (Stop) clears the per-session counter on every clean turn end, so the runaway cap (`ZUVO_REWAKE_CAP`, default 20) counts *consecutive* failures, not lifetime. Non-retryable errors (auth / billing / invalid_request / model_not_found) are excluded by the matcher and never rewake.
+
+**This covers ALL work** — any skill, any ad-hoc turn — the moment it dies on rate-limit / overloaded / socket-closed. It needs only that the hooks be installed (a Claude Code **restart** loads them), and it cannot save a turn that died *before* the hook existed.
+
+The cron/heartbeat machinery below is now **secondary**: it adds *granular* resume for `execute` (re-enter at the next task via `execution-state.md`, vs. the rewake's "resume where you stopped") and a `/loop 3m` story for runtimes with no `StopFailure`/`asyncRewake` (Codex / Cursor). For ordinary Claude Code stalls, the `StopFailure` hook above is the mechanism that actually fires.
+
+---
+
 ## The hard constraint (read this first)
 
-A markdown skill **cannot revive its own dead turn.** When the API errors mid-run, the agent loop is gone — no instruction in this file can run. The thing that re-fires MUST be the **harness** (a cron). So recovery has two halves, and BOTH are required:
+A markdown skill **cannot revive its own dead turn.** When the API errors mid-run, the agent loop is gone — no instruction in this file can run. The thing that re-fires MUST be the **harness** — the `StopFailure` hook above, or (secondary) a cron. So cron-based recovery has two halves, and BOTH are required:
 
 1. **Resumability** — a re-fire must *continue from saved state*, never restart from zero. `execute` has this (`.zuvo/context/execution-state.md`, per-task). A skill with no per-step state file resumes *from the beginning* — acceptable only for idempotent read-then-report skills (audits); never wire a destructive non-resumable skill here.
 2. **The 3-minute watchdog** — a self-armed cron (this file). On runtimes with no scheduler (Codex / Cursor), it degrades to printing a `/loop 3m` instruction the user can run.

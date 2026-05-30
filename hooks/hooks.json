@@ -70,6 +70,31 @@
           }
         ]
       }
+    ],
+    "StopFailure": [
+      {
+        "matcher": "rate_limit|server_error|unknown",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/zuvo-rewake-on-failure.sh\"",
+            "async": true,
+            "asyncRewake": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/zuvo-rewake-reset.sh\"",
+            "async": true
+          }
+        ]
+      }
     ]
   }
 }
