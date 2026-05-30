@@ -480,11 +480,12 @@ Read the issue list. Each issue has a file:line reference and a description of t
 
 **Re-dispatch the implementer** with the spec reviewer's findings. The implementer fixes the issues. Then re-dispatch the spec reviewer.
 
-**Limit:** Maximum 3 spec review iterations per task. After 3 iterations with unresolved issues, present both positions to the user:
-- What the spec reviewer says is missing
-- What the implementer says about why it is built this way
+**Limit:** Maximum 3 spec review iterations per task. After 3 iterations with unresolved issues, **do NOT pause to ask the user `fix / accept / abort`.** Apply the **Post-Cap Autonomous Disposition** from `no-pause-protocol.md`:
+- Reviewer objectively right + determinate fix (maps to an explicit plan/AC requirement) → apply ONE final implementer pass conforming the contract, verify tests/tsc/build, continue. Record `[POST-CAP: FIXED]`.
+- Spec itself wrong / contradicts the codebase → amend the plan task's contract, record `[POST-CAP: SPEC-AMENDED]`, continue.
+- Genuine irreversible product call → safest reversible default + backlog, record `[POST-CAP: DEFERRED]`, continue (BLOCK only the one item if every path is destructive).
 
-The user decides: accept the implementation, accept the reviewer's position, or provide guidance.
+The agent decides and continues — it does not wake the user. Every `[POST-CAP: ...]` line goes into the Final Summary for morning review. A spec-vs-code contract gap is case (a) or (b), never a reason to halt overnight.
 
 ### Step 6: Dispatch Quality Reviewer
 
@@ -517,12 +518,7 @@ Read the failure details. Each failure has a gate ID, file:line reference, and w
 
 **Re-dispatch the implementer** with the quality reviewer's findings. The implementer fixes the issues. Then re-dispatch the quality reviewer.
 
-**Limit:** Maximum 3 quality review iterations per task. After 3 iterations with unresolved failures, present to the user:
-- Which gates are still failing
-- What the implementer has done to address them
-- Whether the remaining issues are fixable or represent a design disagreement
-
-The user decides: accept as-is (with backlog entry), require fix, or provide guidance.
+**Limit:** Maximum 3 quality review iterations per task. After 3 iterations with unresolved failures, **do NOT pause to ask the user.** Apply the **Post-Cap Autonomous Disposition** from `no-pause-protocol.md`: a CQ/Q gate failure with a determinate fix → apply it and continue (`[POST-CAP: FIXED]`); a gate that is a genuine false-positive for this code shape → log the rule-mismatch to backlog and continue (`[POST-CAP: DEFERRED]` with the gate ID + why it is a false positive); a real design disagreement → backlog both positions, take the safest default, continue. Surface every `[POST-CAP: ...]` in the Final Summary. The pipeline keeps moving; the user reviews dispositions in the morning, not mid-run.
 
 ### Step 7b: Adversarial Review (MANDATORY — do NOT skip, every task)
 
@@ -806,6 +802,12 @@ Print a completion report:
 ### Backlog Items Added
 [list any new items persisted to backlog during execution]
 
+### Post-Cap Dispositions
+[MORNING-REVIEW CONTRACT — list every `[POST-CAP: FIXED|SPEC-AMENDED|DEFERRED]` the run made
+ after a review loop hit its 3-iteration cap. This is what the agent decided FOR you instead
+ of waking you. One line each: task, what the reviewer blocked on, what the agent did, and
+ (for SPEC-AMENDED) the old→new contract. If none fired, write "none — no review loop hit its cap".]
+
 ### Verification Evidence
 [task -> command(s) -> exit code(s)]
 ```
@@ -927,10 +929,10 @@ From `shared/includes/backlog-protocol.md`: every finding with confidence above 
 | Situation | Max retries | After limit |
 |-----------|-------------|-------------|
 | NEEDS_CONTEXT re-dispatch | 2 | Escalate to user |
-| Spec review loop | 3 iterations | Surface to user with both positions |
-| Quality review loop | 3 iterations | Surface to user with failing gates |
+| Spec review loop | 3 iterations | Post-cap disposition: fix / amend-spec / defer — continue (no pause) |
+| Quality review loop | 3 iterations | Post-cap disposition: fix / defer-false-positive — continue (no pause) |
 | Adversarial review loop | 3 iterations | Mark BLOCKED, surface findings |
-| Agent crash/timeout | 1 retry | Mark BLOCKED, present to user |
+| Agent crash/timeout | 1 retry | Mark BLOCKED, continue rest of plan |
 
 ---
 
@@ -940,9 +942,9 @@ From `shared/includes/backlog-protocol.md`: every finding with confidence above 
 - Do not silently switch from multi-agent to single-agent. Announce the mode switch and keep every gate.
 - Do not skip spec review or quality review. Both are mandatory for every task.
 - Do not skip adversarial review. It is mandatory for every task.
-- Do not silently skip BLOCKED tasks. Always present to the user with options.
-- Do not proceed past a critical gate failure without user authorization.
-- Do not auto-resolve disagreements between reviewers and implementers after 3 cycles. The user decides.
+- Do not silently skip BLOCKED tasks — record them in the Final Summary with the blocker and resume command (but keep processing the rest of the plan).
+- Do not proceed past a critical gate failure by pretending it passed. Apply the Post-Cap Disposition (fix / amend-spec / defer-with-default) and record it — do not fabricate a pass.
+- **Do** auto-resolve reviewer↔implementer disagreements after the 3-cycle cap via the Post-Cap Autonomous Disposition (`no-pause-protocol.md`) — apply the determinate fix, amend a wrong spec, or take the safest documented default and continue. Do NOT stop and ask `fix / accept / abort` mid-run; the user reviews dispositions in the Final Summary, not at 2am.
 - Do not re-order tasks in a way that violates dependency constraints.
 - Do not mark a task as completed if its tests have not been verified as passing.
 - Do not start the next task until `execution-state.md` has been successfully rewritten on disk.

@@ -31,9 +31,25 @@ Stop only when one of these fires:
 2. **All items processed** — terminal state reached (COMPLETED / SKIPPED / BLOCKED for every item)
 3. **Explicit user interrupt** — user typed "stop", "pause", "wait", "halt", "wystarczy", "starczy", or pressed Ctrl+C in the current turn
 4. **Runtime context pressure** — `/context` reports >85% usage, OR a context-compaction warning fired in this session. In that case: write session state, print resume instructions, exit. Do NOT ask the user — the runtime is the signal.
-5. **Per-item retry exhausted** — same item failed N times (per the skill's own retry limit, e.g. 3 adversarial iterations). Surface to user with the standard 3 options (context / skip / abort), then continue with next item if user says skip.
+5. **Per-item retry exhausted** — same item hit its retry cap (e.g. 3 review iterations) with residual findings. Do **NOT** pause to ask the user `fix / accept / abort`. Apply the **Post-Cap Autonomous Disposition** below, record it loudly, and continue. The ONLY thing that halts the whole pipeline here is a genuinely *irreversible* action only the user can authorize (see (c)) — and even then you mark that ONE item BLOCKED and continue the rest, you do not stop and wait.
 
 If none of these fired: keep going.
+
+---
+
+## Post-Cap Autonomous Disposition (replaces "surface to user, wait for decision")
+
+When a per-item review loop (spec / quality / adversarial / acceptance) exhausts its cap and the reviewer still blocks, the orchestrator **decides and continues — it does not wake the user.** The plan was approved at the entry gate; resolving *how* the contract conforms is the agent's job, not a question for a sleeping user. This is one BOUNDED final action per item (apply / amend / defer), NOT a re-entry into the loop. Classify the residual and act:
+
+**(a) Reviewer is objectively right and the fix is determinate** — the finding maps to an explicit plan/AC requirement (e.g. "AC9 requires per-question `source` provenance"; "spec types `meta: string`, code has object") and the corrective change is unambiguous. → Apply it as ONE final implementer pass, re-run tests/tsc/build, and on green **continue**. No further review loop — the fix was already agreed, re-litigating it is the waste. Record `[POST-CAP: FIXED] <task> <finding> → <change>`.
+
+**(b) The spec/plan itself is wrong, impossible, or contradicts the codebase** — the reviewer is enforcing a contract that reality won't support (a column that isn't NOT NULL, an API that doesn't exist, a type the framework forbids). → **Amend the plan task's contract** to the correct shape, then continue. Record `[POST-CAP: SPEC-AMENDED] <task> <old → new> (reason)` in the artifact, `execution-state.md`, AND the Final Summary. The agent is explicitly authorized to fix the spec — that is what "let it fix the contract or the spec itself" means.
+
+**(c) A genuine product / irreversible decision only a human can make** — choosing between two valid behaviors with real user-visible consequences, or an action that destroys data / breaks a published contract. → Pick the **safest reversible default**, persist the decision to the backlog with both options, record `[POST-CAP: DEFERRED] <task> <decision> default=<X> alt=<Y>`, and continue. HARD-stop the single item as `BLOCKED_*` ONLY if every path is destructive AND irreversible — then continue the REST of the plan; never halt the pipeline waiting on the user.
+
+**Morning-review contract:** every `[POST-CAP: ...]` line MUST appear in the Final Summary so the user reviews all autonomous dispositions in one place when they return. Continue + document beats pause + wait — the user runs these overnight expecting to review, not to be paged. (This honors the standing `no-approval-gates` preference: skills execute and report; they do not gate on approval.)
+
+A `fix / accept / abort` menu mid-run is now an ANTI-PATTERN for retry-exhaustion. The agent already knows the fix when it recommends one — applying it (a) or amending the spec (b) is the action, not the question.
 
 ---
 
