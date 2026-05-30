@@ -80,6 +80,14 @@ Work through each checkpoint. For each one, determine: PASS, ISSUE, or N/A.
 - If the section is marked "Not applicable", is that claim actually true?
 - N/A if the feature is ordinary product behavior with no cross-cutting contract changes.
 
+### C6c: Cross-section consistency (HARD RULE — single source of truth)
+
+This is the dominant source of round-2+ adversarial CRITICALs: a decision is stated in one section and silently contradicted or re-worded in another (a TTL of 5m in Design Decisions but 300s elsewhere, a dedup key named two ways, a status code that differs between API Surface and Failure Modes, a lock form written `pg_try_advisory_lock(42, id)` here and `pg_advisory_xact_lock(id)` there).
+
+- **Single-value check:** for every constant/identifier/predicate/status-code/lock-form/key-name that appears in 2+ sections, confirm it has ONE consistent value across Design Decisions, Solution Overview, Detailed Design, Integration Points, Edge Cases, Failure Modes, Rollback Strategy, Acceptance Criteria, and Smoke Proofs. Any divergence is a **FAIL** — name the sections and the two values.
+- **Cite-don't-restate:** if the spec declares an `## Integration Contract` (IC-N) for a multi-section invariant, FLAG any section that *restates* that decision in its own words instead of citing it (`per Integration Contract IC-3`). A restated contract is a future drift; a cited one cannot diverge.
+- A spec that is internally inconsistent on any cross-cutting value FAILS this check regardless of how well each individual section reads.
+
 ### C7: Edge Cases
 
 - Are edge cases listed with handling strategies?

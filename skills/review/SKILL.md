@@ -670,6 +670,8 @@ Max 2 fix attempts per provider finding. Max 3 passes total.
 
 ## Phase 2: Confidence Gate
 
+**Structural-refactor findings → defer with a recipe, don't block.** A RECOMMENDED finding whose fix is a structural refactor (extract a module, split a god-file, invert a dependency, restructure a layer) is real but does NOT belong in this review's fix loop — it is multi-file work that `zuvo:refactor` owns. Do not leave it as a vague "consider refactoring": persist it to backlog with a concrete **resolution recipe** (what to extract/split, the target shape, the 2-3 ordered steps, the rule it satisfies) so it is actionable later, and keep it OUT of the MUST-FIX set so it cannot block the merge. A structural refactor surfaced as MUST-FIX on an unrelated diff is scope creep.
+
 **TIER 0-1:** Lead scores each finding inline. `Confidence: [X]/100 -- [reason]`.
 
 **TIER 2+:** Dispatch Confidence Re-Scorer agent:

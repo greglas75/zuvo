@@ -39,6 +39,8 @@ Every task and every AC declares one **Surface**. Different surfaces accept diff
 
 **LLM-judge required only when** the AC includes a subjective dimension that no deterministic check can express (e.g., "chip renders with visual affordance for atomic edit"). For these, attach the screenshot/snapshot and dispatch a Sonnet judge with the AC text + artifact, requiring a binary `VERIFIED` or `BROKEN` token plus one-sentence justification. Default: deterministic.
 
+**Next.js dev hidden-duplicate-page-tree caveat (UI/e2e surface proofs).** The Next.js dev server can render a route's tree more than once (App Router fallback/overlay, fast-refresh remounts), so a `document`-wide selector (`getByRole`, `querySelectorAll`) can match 2× and a "found N elements" assertion flakes or double-counts. Scope UI/e2e proof selectors to a single rendered container (`within(screen.getByTestId('page-root'))` / a `data-testid` on the route root), and prefer a production build (`next build && next start`) for the final smoke proof when element-count assertions matter.
+
 ### AC class split: deterministic vs judgment vs deployment
 
 Do not conflate three distinct AC classes at spec-review time:
@@ -105,6 +107,7 @@ artifact_path: .zuvo/proofs/<task-N>-AC1.png + .zuvo/proofs/<task-N>-AC1-dom.txt
 2. **No aggregate scoring.** Telemetry must report per-file Q/CQ scores, never `q_gates: N/M aggregate`. Aggregate scores hide per-file zeros and were the proximate cause of the 2026-04-22 codec session failure (q_gates: 19/19 aggregate while review later found Q7=0 and Q11=0 in specific files).
 3. **Independence.** The agent or runner that *executes* the proof must not be the same agent that *implemented* the code, when multi-agent dispatch is available. In single-agent mode, a `[CHECKPOINT: switching to acceptance-verifier role]` marker is required.
 4. **Whole-feature smoke is mandatory** for any plan that has a "main user flow" AC. Per-task proofs alone cannot detect cross-task structural defects (e.g., codec round-trip data loss spanning encode + strip + decode in three different tasks).
+4b. **Dual-allocate smoke proofs.** Every whole-feature smoke proof must appear in TWO places: (a) the plan's `## Whole-feature Smoke Proofs` section (run at execute Phase Final), AND (b) at least one task's RED sub-suite as a runnable (possibly-mocked) end-to-end exercise. Phase-Final-only smoke surfaces a cross-task regression only at the very end, after 15 commits; the per-task RED copy makes it fail the moment the breaking task lands. A plan whose smoke proofs map to no task's RED is rejected by plan-reviewer.
 5. **Proof failure = task BLOCKED, not WARN.** A proof that does not produce its expected outcome blocks the task. The implementer is re-dispatched with the failure evidence. After 3 cycles, surface to user.
 6. **Deterministic preferred.** Use LLM judge only when no deterministic check expresses the AC. Prefer `assert response.target === '[[g1]]hello[[/g1]]'` over `LLM-judge: does this look right?`.
 7. **Artifact retention.** Every proof writes its artifact to `.zuvo/proofs/<task-N>-<ac-id>.<ext>` so retros and post-hoc audits can verify the proof actually ran with real outputs.

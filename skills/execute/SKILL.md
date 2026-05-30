@@ -305,6 +305,13 @@ backlog-adds=1
 
 ---
 
+## Pre-loop guards (run once before the first task)
+
+- **Worktree / shared-tree pre-flight.** Before opening the plan, run `git worktree list`. If the CWD is the MAIN checkout but the plan was authored against a feature branch in a worktree (or vice-versa), or another worktree shares this branch, STOP and resolve which tree to execute in — running tasks in the wrong tree silently splits the work. (Pairs with `zuvo:worktree`.)
+- **Baseline test snapshot.** Run the suite ONCE at session start and record which tests are already red (`baseline-failures: [...]` in `execution-state.md`). Per-task verification then compares against this baseline — a test that was red before your change is a pre-existing failure to backlog, NOT a regression to re-investigate every task.
+- **No parallel same-file tasks.** If you ever batch task dispatch, never run two tasks that touch the SAME production file concurrently (lost-edit hazard) — the plan's rule 13 should already have serialized them; if it did not, serialize here.
+- **DB integration tasks.** For a task that changes schema, generate the migration via `migrate diff` / hand-written SQL applied with `psql` against a clean DB — NEVER `migrate dev` against a drifted local DB (it silently rewrites history / drops data). Verify the migration applies forward AND the rollback is present.
+
 ## Execution Loop
 
 Process tasks in dependency order. If task B depends on task A, do not start B until A is marked completed.
@@ -517,6 +524,8 @@ Proceed to adversarial review (step 7b).
 
 Read the failure details. Each failure has a gate ID, file:line reference, and what needs fixing.
 
+**Pre-existing vs diff-introduced (only the latter blocks).** A critical-gate-0 failure (CQ critical gate, a red test) blocks this task ONLY if THIS task's diff introduced it. Cross-check the cited `file:line` against the staged diff and the session `baseline-failures`: if the failure pre-existed your change (it is in the baseline / outside the diff hunks), do NOT block the task on it — backlog it as pre-existing tech debt and proceed. Blocking every task on the repo's pre-existing redness stalls the whole plan for debt this task did not create.
+
 **Re-dispatch the implementer** with the quality reviewer's findings. The implementer fixes the issues. Then re-dispatch the quality reviewer.
 
 **Limit:** Maximum 3 quality review iterations per task. After 3 iterations with unresolved failures, **do NOT pause to ask the user.** Apply the **Post-Cap Autonomous Disposition** from `no-pause-protocol.md`: a CQ/Q gate failure with a determinate fix → apply it and continue (`[POST-CAP: FIXED]`); a gate that is a genuine false-positive for this code shape → log the rule-mismatch to backlog and continue (`[POST-CAP: DEFERRED]` with the gate ID + why it is a false positive); a real design disagreement → backlog both positions, take the safest default, continue. Surface every `[POST-CAP: ...]` in the Final Summary. The pipeline keeps moving; the user reviews dispositions in the morning, not mid-run.
@@ -550,7 +559,7 @@ For each finding, confirm its file path appears in that scope list. A CRITICAL/W
 
 Wait for complete output. Then:
 - **Binary unavailable / no verdict produced** → `BLOCKED_ADVERSARIAL_UNAVAILABLE`. Do not commit.
-- **Plan-accepted risk** → if a CRITICAL maps to a risk the plan explicitly accepts (match the plan's `## Review Trail` entries and any per-task `> **Accepted risk note**` block), do NOT auto-fix. Surface to the user the CRITICAL text + the plan's accepted-risk paragraph + three options: (a) fix anyway, (b) confirm-accept-as-planned (record verdict, proceed), (c) pause. This short-circuits the loop that would otherwise re-discover the same accepted risk and add new attack surface.
+- **Plan-accepted risk** → if a CRITICAL maps to a risk the plan EXPLICITLY accepts (match the plan's `## Review Trail` entries and any per-task `> **Accepted risk note**` block), do NOT auto-fix AND do NOT pause to ask — the plan already made this decision at the approved entry gate. Confirm-accept-as-planned automatically: record `[POST-CAP: DEFERRED] adversarial CRITICAL <X> — accepted per plan Review Trail` in the Final Summary, proceed. (Per `no-pause-protocol.md`: re-litigating a plan-accepted risk mid-run is the waste; the user reviews the disposition in the Final Summary.) Only if the CRITICAL is a NEW risk the plan did NOT anticipate does it route to the normal CRITICAL fix path below.
 - **CRITICAL** → re-dispatch implementer to fix, re-run quality reviewer, then re-run adversarial on the updated staged diff.
 - **WARNING** (< 10 lines, localized) → re-dispatch implementer to fix, re-run quality reviewer, then re-run adversarial.
 - **WARNING** (large/cross-file) or **INFO** → proceed only if logged as known concerns (max 3, one line each) and persisted to backlog.

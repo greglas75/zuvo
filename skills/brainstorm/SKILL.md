@@ -490,6 +490,8 @@ After the internal reviewer converges, update the spec to `status: Reviewed` and
 
 ### Step 3b: Adversarial Review (MANDATORY — do NOT skip)
 
+**Auth/RBAC contradiction pre-check (before the adversarial run, when the spec touches auth/permissions/tenancy).** Adversarial providers reliably flag these as CRITICAL, so catch them first — cheaper than a re-run. Verify the spec does not contradict itself on access control: a route/action is not declared BOTH public and role-gated; every mutation that touches tenant/org data states its scope filter; the guard layer (middleware vs in-handler vs server-action first-line) is consistent across Integration Points, Failure Modes, and ACs; CSRF/state-changing-GET assumptions match between API Surface and Edge Cases. Fix any contradiction in ONE pass before running the provider round.
+
 After the spec-reviewer converges, run cross-model validation on the spec file. This catches hallucinations, contradictions, and scope creep that same-model review misses. Use the shared document-artifact protocol semantics from `adversarial-loop-docs.md` even though this skill implements the call inline.
 
 ```bash
@@ -500,9 +502,11 @@ If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplac
 
 Wait for complete output. Then update the spec's `## Adversarial Review` section and metadata:
 - **No provider / empty output:** set `adversarial_review: skipped-no-provider` and write the exact skip reason in `## Adversarial Review`
-- **CRITICAL** (hallucinated capability, internal contradiction) → fix in spec, re-run spec-reviewer, then re-run adversarial review
+- **CRITICAL** (hallucinated capability, internal contradiction) → fix in spec. **Before re-running adversarial, run a self-consistency sweep:** grep the spec for every constant/identifier/predicate/status-code/key-name/lock-form you changed this round and confirm a SINGLE consistent value across Design Decisions, Solution Overview, Detailed Design, Integration Points, Edge Cases, Failure Modes, Rollback Strategy, ACs, and Smoke Proofs. When a CRITICAL targets a cross-cutting property (auth, status, locking, a shared key), update ALL referencing sections in ONE pass. Stale cross-references are the dominant source of round-2+ CRITICALs and are cheaper to fix by grep than by another ~600s provider round. Then re-run spec-reviewer, then re-run adversarial review.
 - **WARNING** (missing edge case, vague AC) → append actionable items to `Open Questions` or explicitly resolve them in the spec; set `adversarial_review: warnings`
 - **INFO** → summarize briefly in `## Adversarial Review`
+
+**After the adversarial cap (max 2 cross-model runs per `adversarial-loop-docs.md`):** do NOT loop indefinitely or stop to ask. Classify each RESIDUAL CRITICAL: **(a) true blocker** → fix before approval; **(b) accepted trade-off** → document it in the spec's `## Adversarial Review` section with the rationale and converge; **(c) out-of-scope follow-up** → record in `## Open Questions` as owned by `zuvo:plan`/a follow-up spec, and converge. A 2-run cap does NOT short-circuit when a run surfaces a genuinely NOVEL architectural concern (vs. a re-raise of a prior-round fix) — that earns one more targeted pass; a re-labeled nitpick does not.
 
 **Status handling (D2+D3+D4, 2026-05-17):** the script may return non-`ok` JSON status:
 - **`status: "single_provider_only"` (exit 3)** — host self-exclusion left only 1 external provider when `--rotate`/`--multi` was requested. Re-invoke with `--single` and note in the spec: `adversarial_review: single-provider-only (install additional provider for diversity)`. Do NOT block spec approval — single-provider review is still a real signal, just narrower.

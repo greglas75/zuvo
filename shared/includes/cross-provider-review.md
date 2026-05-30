@@ -68,6 +68,7 @@ Read the output file. Extract findings between the header/footer markers. Each f
 - WARNING findings are added at RECOMMENDED severity
 - INFO findings are added at NIT severity
 - Deduplicate against internal findings (same file:line + same issue = drop)
+- **Secret false-positive suppression.** Before promoting any "hardcoded secret" / `scan_secrets` finding, Read the cited `file:line`: if the match is on a COMMENT line (`//`, `#`, `/* */`, `--`, docstring), a `.env.example` placeholder, a test fixture, or an obvious placeholder token (`xxx`, `your-key-here`, `<REDACTED>`, `changeme`), DROP it — it is not a live secret. Only an assignment to a real config/runtime value on a non-comment line is a true finding. (A flood of comment-line secret false positives buries the one real leak.)
 
 ### Step 5: Report
 
