@@ -775,8 +775,14 @@ if [ -n "$tool_refs" ]; then
   errors=$((errors + 1))
 fi
 
-# Check for untransformed ~/.claude/ paths
-bad_paths=$(grep -rlnE '(~/.claude/|\.claude/)' "$DIST" 2>/dev/null || true)
+# Check for untransformed ~/.claude/ paths.
+# Flag only genuine PLUGIN-INSTALL paths: a tilde `~/.claude/` (the transformer
+# rewrites all of these → must never survive) and the install subdirs
+# `.claude/{plugins,skills,rules,agents}/`. Do NOT flag repo-CONTENT references
+# like `.claude/worktrees/` — that is a directory-exclusion glob used during file
+# counting (e.g. db-audit) and is correct as-is on every platform; Claude Code
+# creates `.claude/worktrees/` regardless of which agent runs the skill.
+bad_paths=$(grep -rlnE '(~/\.claude/|\.claude/(plugins|skills|rules|agents)/)' "$DIST" 2>/dev/null || true)
 
 if [ -n "$bad_paths" ]; then
   echo "  ERROR: Untransformed ~/.claude/ paths found:"

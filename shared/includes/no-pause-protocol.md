@@ -99,6 +99,10 @@ Do NOT halt with "I think this is enough for one session". That is not a valid r
 
 ---
 
+## Layer below: unexpected death (stall-recovery)
+
+This protocol governs *legitimate* stops — it forbids the agent from pausing when it shouldn't. It cannot do anything about the turn **ceasing to exist**: an API error, a rate-limit, a `socket connection closed unexpectedly` that kills the agent loop mid-run. No instruction here runs once the loop is dead. That failure mode is handled one layer below by `stall-recovery.md` — a self-arming ~3-minute watchdog (cron on Claude Code, `/loop 3m` fallback elsewhere) that re-invokes the skill from its saved state until it reaches full completion. The two are complementary: no-pause keeps the agent from stopping when alive; stall-recovery restarts it when the runtime killed it. A skill that *deliberately* stops (real `BLOCKED_*`, explicit user "stop") marks its heartbeat `halted` so the watchdog leaves it alone — see `stall-recovery.md`.
+
 ## Loading
 
 This protocol is loaded once at skill entry, before the iteration loop begins. Skills that include this file MUST honor it for the lifetime of the run. The loop continuation behavior is non-negotiable — it is the contract with the user.

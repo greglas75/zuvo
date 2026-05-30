@@ -93,13 +93,14 @@ CORE FILES LOADED:
   6. ../../shared/includes/session-state.md               -- READ/MISSING
   7. ../../shared/includes/no-pause-protocol.md           -- READ/MISSING (HARD: no mid-loop pauses)
   8. ../../shared/includes/acceptance-proof-protocol.md   -- READ/MISSING (HARD: per-task + smoke proof gates)
-  9. ../../shared/includes/code-contract.md               -- DEFERRED (task dispatch)
- 10. ../../shared/includes/test-contract.md               -- DEFERRED (task dispatch)
- 11. ../../shared/includes/knowledge-prime.md             -- DEFERRED (task dispatch)
- 12. ../../shared/includes/knowledge-curate.md            -- DEFERRED (completion)
- 13. ../../shared/includes/run-logger.md                  -- DEFERRED (completion)
- 14. ../../shared/includes/retrospective.md               -- DEFERRED (completion)
- 15. ../../shared/includes/documentation-mandate.md       -- DEFERRED (completion)
+  9. ../../shared/includes/stall-recovery.md              -- READ/MISSING (self-arming watchdog: resume on API-error/rate-limit stall)
+ 10. ../../shared/includes/code-contract.md               -- DEFERRED (task dispatch)
+ 11. ../../shared/includes/test-contract.md               -- DEFERRED (task dispatch)
+ 12. ../../shared/includes/knowledge-prime.md             -- DEFERRED (task dispatch)
+ 13. ../../shared/includes/knowledge-curate.md            -- DEFERRED (completion)
+ 14. ../../shared/includes/run-logger.md                  -- DEFERRED (completion)
+ 15. ../../shared/includes/retrospective.md               -- DEFERRED (completion)
+ 16. ../../shared/includes/documentation-mandate.md       -- DEFERRED (completion)
 ```
 
 
@@ -131,6 +132,10 @@ if mkdir -p "$_ZH/run-markers" 2>/dev/null; then
 fi
 # <<< zuvo:retro-marker
 ```
+
+### Phase 0.2 — Arm the stall-recovery watchdog
+
+Follow the **ARM** section of `../../shared/includes/stall-recovery.md`. In short: seed `.zuvo/context/execute.heartbeat` (`status: running`, `resume: zuvo:execute`), and **if the `CronCreate` tool is available**, arm a `*/3 * * * *` `recurring`/non-`durable` cron whose prompt runs `zuvo-watchdog-check` and re-invokes `zuvo:execute` on a `RESUME` verdict — so a turn that dies on an API error / rate-limit / `socket closed` auto-resumes from `execution-state.md` within ~3 minutes instead of freezing. Idempotent: skip arming if `CronList` already shows this run's `[zuvo-watchdog skill=execute project=…]` tag (the watchdog-triggered resume re-enters this phase). If `CronCreate` is absent (Codex/Cursor) print the `/loop 3m zuvo:execute` fallback line and continue. **Never block execute on watchdog setup** — a missing helper or scheduler only disables auto-resume, it does not stop the run.
 
 ---
 
@@ -340,6 +345,19 @@ esac
   --skill="${SKILL:-execute}" --project="$_RPR" --tool-calls="${ZUVO_TOOLCALLS:-0}" >/dev/null 2>&1 || true
 # <<< zuvo:retro-stop
 ```
+
+**Watchdog on a deliberate stop:** if this stop is an explicit user "pause"/"stop" (`_RST=PARTIAL`), mark the heartbeat `halted` so the stall watchdog does NOT auto-resume a run the user chose to stop (per `stall-recovery.md`). Leave it `running` for `CONTEXT_OUT`/`ABANDONED` — those SHOULD resume.
+
+```bash
+# >>> zuvo:stall-watchdog (halt on deliberate user stop)
+_HB="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.zuvo/context/execute.heartbeat"
+if [ "${ZUVO_STOP_STATUS:-}" = "PARTIAL" ] && [ -f "$_HB" ]; then
+  sed -i.bak 's/^status:.*/status: halted/' "$_HB" 2>/dev/null && rm -f "$_HB.bak" || true
+fi
+# <<< zuvo:stall-watchdog
+```
+
+Then, if a watchdog cron was armed (Claude Code), `CronDelete` the id recorded in the heartbeat's `cron_id:` line (belt: `CronList` → delete any job whose prompt contains `[zuvo-watchdog skill=execute project=…]`).
 
 The run-marker (Phase 0.1) is the belt-and-suspenders fallback if even this is skipped; the next skill's `--sweep` will still capture the orphan.
 
@@ -653,6 +671,16 @@ MANDATORY: Rewrite `.zuvo/context/execution-state.md` immediately after each suc
 
 This is the only resumable artifact. If context is compacted, lost, or the session crashes, `execution-state.md` is the source of truth. Failure to rewrite it is a blocking bug. Treat it exactly like a failed test.
 
+**Refresh the watchdog heartbeat** at the same time (its mtime is the "last action" clock that keeps the stall watchdog seeing the run as ALIVE — per `stall-recovery.md`):
+
+```bash
+# >>> zuvo:stall-watchdog (heartbeat after each task)
+_HB="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.zuvo/context/execute.heartbeat"
+[ -d "$(dirname "$_HB")" ] && printf 'status: running\nskill: execute\nresume: zuvo:execute\ncron_id: %s\nnote: task %s/%s done\n' \
+  "$(sed -n 's/^cron_id:[[:space:]]*//p' "$_HB" 2>/dev/null | head -1)" "$N" "$M" > "$_HB" 2>/dev/null || true
+# <<< zuvo:stall-watchdog
+```
+
 Also append this task to `## Completed Work Units` in `.zuvo/context/project-context.md`. If the branch changed intentionally for this task, update the stored `branch:` value at the same time.
 
 ### Step 9b: Mark Completed + Emit Telemetry
@@ -801,6 +829,17 @@ Rationale: prior practice was to either (a) skip post-execute review entirely or
 ### Session State Close
 
 Set `status: completed` in `.zuvo/context/execution-state.md`. Update `.zuvo/plans/active-plan.md` to `status: completed`.
+
+**Disarm the stall watchdog** (per `stall-recovery.md`) — clean finish, so the watchdog must never auto-resume this run again:
+
+```bash
+# >>> zuvo:stall-watchdog (disarm — clean finish)
+_HB="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.zuvo/context/execute.heartbeat"
+[ -f "$_HB" ] && { sed -i.bak 's/^status:.*/status: done/' "$_HB" 2>/dev/null && rm -f "$_HB.bak"; } || true
+# <<< zuvo:stall-watchdog
+```
+
+Then, if a watchdog cron was armed (Claude Code), read `cron_id:` from the heartbeat and `CronDelete` it — and as belt-and-suspenders, `CronList` → `CronDelete` any job whose prompt contains `[zuvo-watchdog skill=execute project=…]`. Writing `status: done` means even a missed `CronDelete` self-cleans: the next cron fire reads `DONE` and deletes itself.
 
 The files remain on disk — they serve as a record of what was done. `zuvo:execute` will detect `status: completed` on next run and start fresh rather than attempting to resume.
 

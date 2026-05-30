@@ -1,0 +1,65 @@
+#!/bin/sh
+# zuvo-watchdog-check — verdict for the zuvo stall-recovery watchdog.
+#
+# A long zuvo skill (execute, audits, …) refreshes a heartbeat file after every
+# action and arms a ~3-minute cron that re-invokes this script. A Claude Code
+# cron fires ONLY while the REPL is idle — so if it fires while the run is
+# unfinished, the turn died (API error / rate-limit / socket close) and the run
+# must resume. This script turns "heartbeat file + clock" into one verdict.
+#
+# Usage:  zuvo-watchdog-check <heartbeat-file> [stall-seconds]
+# Output (stdout):
+#   line 1: ALIVE | RESUME | DONE
+#   line 2: <resume command>   (only when verdict is RESUME)
+# Exit is always 0 — the caller branches on the printed verdict, never on $?.
+#
+# Why a staleness threshold AND the idle-fire guarantee:
+#   - Idle-fire alone says "the turn ended". It cannot tell a clean finish from
+#     a crash, so we also read the heartbeat `status:` (done/halted ⇒ DONE).
+#   - The threshold is belt-and-suspenders: it refuses to resume a run whose
+#     heartbeat was touched moments ago (a turn that ended cleanly and is about
+#     to write `done`, or a brief idle window), eliminating spurious resumes.
+
+set -u
+
+HB="${1:-}"
+STALL="${2:-150}"
+
+emit_done()  { printf 'DONE\n';  exit 0; }
+emit_alive() { printf 'ALIVE\n'; exit 0; }
+
+# No heartbeat path, or file gone → nothing to resume.
+[ -n "$HB" ] || emit_done
+[ -f "$HB" ] || emit_done
+
+# Terminal / deliberately-halted run → stop watching.
+#   status: done | completed | aborted → clean finish (disarm belt-and-suspenders)
+#   status: halted | blocked           → deliberate stop; auto-resume would loop
+# Pattern requires `status:` immediately before the keyword, so an execution-state
+# `blocked: []` bucket line can never be mistaken for `status: blocked`.
+if grep -iqE 'status:[[:space:]]*(done|completed|aborted|halted|blocked)' "$HB" 2>/dev/null; then
+  emit_done
+fi
+
+# Portable mtime (epoch seconds): GNU stat first, then BSD/macOS stat.
+mtime=$(stat -c %Y "$HB" 2>/dev/null || stat -f %m "$HB" 2>/dev/null || echo 0)
+now=$(date +%s 2>/dev/null || echo 0)
+# Can't read a sane mtime/clock → assume alive, never misfire a resume.
+case "$mtime" in ''|*[!0-9]*) emit_alive ;; esac
+case "$now"   in ''|*[!0-9]*) emit_alive ;; esac
+[ "$mtime" -gt 0 ] || emit_alive
+age=$(( now - mtime ))
+
+# Fresh heartbeat → run is progressing (or another turn just touched it).
+[ "$age" -lt "$STALL" ] && emit_alive
+
+# Stale + not terminal → the turn died unexpectedly. Resume.
+printf 'RESUME\n'
+# Resume command: an explicit `resume:` line wins; else derive from `skill:`.
+resume=$(sed -n 's/^[[:space:]]*resume:[[:space:]]*//p' "$HB" 2>/dev/null | head -1)
+if [ -z "$resume" ]; then
+  sk=$(sed -n 's/^[[:space:]]*skill:[[:space:]]*//p' "$HB" 2>/dev/null | head -1)
+  [ -n "$sk" ] && resume="zuvo:$sk"
+fi
+[ -n "$resume" ] && printf '%s\n' "$resume"
+exit 0
