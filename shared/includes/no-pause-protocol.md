@@ -53,6 +53,12 @@ A `fix / accept / abort` menu mid-run is now an ANTI-PATTERN for retry-exhaustio
 
 ---
 
+## Sub-agent file-write integrity (check after a dispatched agent writes a file)
+
+A dispatched sub-agent that writes/edits a file can occasionally emit a corrupt result — a NUL-byte / binary blob, a truncated half-write, or an empty file — instead of the intended text. Continuing the loop over a corrupted file silently propagates garbage. After a sub-agent reports a file write/edit, before treating that item as done, verify the file is well-formed text: it is non-empty, contains no NUL bytes (`grep -qP '\x00' <file>` must be FALSE / `file <file>` says text, not "data"), and parses for its language (tsc/py-compile/`node --check`/markdown headings intact). If corrupt: re-dispatch that ONE item once with an explicit "your previous write produced a binary/empty file, rewrite as plain UTF-8 text" note; if it corrupts again, mark that item BLOCKED with `BLOCKED_CORRUPT_WRITE` and continue the rest of the loop. Never commit or build on an unverified sub-agent write.
+
+---
+
 ## What "going to the end" means
 
 - 21 tasks → process all 21 (or until BLOCKED / context pressure)

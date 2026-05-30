@@ -17,7 +17,7 @@ codesift_tools:
     - analyze_hotspots         # KEY — git-churn × complexity
     - audit_scan               # compound (incl. find_perf_hotspots-equivalent)
     - search_patterns          # n-plus-one-django, await-in-loop, sync-fs etc.
-    - find_clones              # repeated work patterns
+    - find_clones              # repeated work patterns (covered by audit_scan CQ14 if not directly selectable)
     - get_file_tree
     - get_file_outline
     - search_text

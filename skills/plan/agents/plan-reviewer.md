@@ -74,10 +74,11 @@ Are the tasks properly sized and ordered?
 
 | Sub-check | PASS criteria | FAIL criteria |
 |-----------|---------------|---------------|
-| Size | Every task creates or modifies 1-5 files (including tests) | Any task touches 6+ files |
+| Size | Every task creates or modifies 1-5 files (excluding test fixtures/data) | Any task touches 6+ production+test files |
 | Order | Every task's dependencies have lower task numbers | Circular or forward dependencies exist |
 | Independence | Tasks without listed dependencies can truly run in any order | An unlisted dependency exists between tasks |
 | Granularity | Each task represents a single logical unit of work | A task combines unrelated changes |
+| **Dependency completeness** | Each task's `Dependencies` list **every** prior task whose output (file/symbol/schema column/env var) its RED/GREEN actually reads or imports (concrete-consume, not transitive); no declared dep the task does not consume | A task reads a prior task's file/symbol/column/env-var but does NOT list it (common: feature-flag→schema, orchestrator→schema, Acceptance Proof invoking a higher-numbered symbol); or lists a dep it never consumes |
 
 ### 5. TDD Protocol Compliance
 

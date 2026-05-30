@@ -131,6 +131,15 @@ Each mode has its own definition of CRITICAL/WARNING/INFO. The adversarial-revie
 - **Provider dispatch:** 2 random providers per run (matching code adversarial loop).
 - **Soft fail on bad JSON:** Same as code loop — strip fences, attempt text extraction, fall back to `[RAW]` tag.
 
+## Convergence / Stop
+
+The count caps above (max 2 cross-model runs, max 3 internal re-entry) are hard ceilings. Stop earlier on convergence — do not chase an empty run or re-labeled nitpicks:
+
+- **STOP iterating** when, across two consecutive cross-model runs, no NEW finding is introduced AND every remaining CRITICAL is a re-raise of an item already addressed in-spec/in-plan.
+- A re-run after fixing CRITICALs is a **validation run, NOT a new repair cycle** (same as `adversarial-loop.md` Step 5). New CRITICAL or new WARNING caused by the prior fix → add to Open Questions / Known Gaps, STOP. Do NOT attempt another fix.
+- Each round may surface seams introduced by the prior round's fixes — the goal is convergence, not a perfectly empty run.
+- After the cap, fix remaining genuine CRITICALs, then ACCEPT residual non-CRITICAL findings by documenting them in the artifact's Open Questions (spec/plan) or Known Gaps (audit/tests) section as residual warnings, and finalize.
+
 ## Graceful Degradation
 
 If no provider is available: output `Adversarial review: skipped (no provider available)` and proceed. Do NOT block skill completion.

@@ -281,6 +281,15 @@ This step runs regardless of `--fast` or `--full` flags. It does NOT block the r
      ```
    - Group commit messages under the appropriate heading (Added for `feat:`, Fixed for `fix:`, Changed for everything else). If commits are not conventional, list all under Changed.
 
+6. **Documentation sync (per `documentation-mandate.md`).** The CHANGELOG above is the
+   release-level doc; it does NOT cover feature/API/README docs. If the diff in this release
+   changed a public API, a user-facing feature, env/config, or a runbook-relevant behavior and
+   the matching docs were NOT updated upstream (in the execute/build that produced the code),
+   dispatch `Skill(skill="zuvo:release-docs")` (diff-driven — updates only docs whose source
+   changed). If all feature/API docs are already current, record `[DOC: changelog-only — feature
+   docs current]` in the SHIP COMPLETE block. A release that ships a new public surface with stale
+   docs is a defect.
+
 ---
 
 ## Phase 4: Stage, Commit, Tag, Push, Artifact

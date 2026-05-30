@@ -35,8 +35,17 @@ Every task and every AC declares one **Surface**. Different surfaces accept diff
 | `integration` | Wiring across services, event handlers | Trigger upstream event, observe downstream effect end-to-end | Yes |
 | `config` | Env vars, feature flags, build config | Load config, assert dependent code reads expected values | Yes |
 | `docs` | Markdown, READMEs, runbooks | Linter (markdownlint), link checker, content validation against rubric | Yes |
+| `advisory` | Post-deploy SLO checks, perf baselines, manual smoke | Captured artifact + recommended next action, NOT a gate | N/A (not gated) |
 
 **LLM-judge required only when** the AC includes a subjective dimension that no deterministic check can express (e.g., "chip renders with visual affordance for atomic edit"). For these, attach the screenshot/snapshot and dispatch a Sonnet judge with the AC text + artifact, requiring a binary `VERIFIED` or `BROKEN` token plus one-sentence justification. Default: deterministic.
+
+### AC class split: deterministic vs judgment vs deployment
+
+Do not conflate three distinct AC classes at spec-review time:
+
+1. **Automated AC** — MUST have command-observable pass/fail evidence (curl/test exit code/assertion). No "it works" prose.
+2. **Deployment gate** — a separate class that may legitimately rely on a runbook artifact, topology proof, or release marker (e.g. RBAC rollout order, feature-flag default) rather than a command. MUST NOT be filed as, or scored against, an automated AC.
+3. **Judgment AC** (hybrid skills mixing an LLM-persona with a deterministic code module) — split explicitly: deterministic checks route to pytest/CI ship gates; judgment checks route to statistical recall against a labelled corpus with an explicit success criterion (e.g. recall ≥ X% on N labelled cases). A judgment AC without a numeric corpus target is too vague.
 
 ## Proof structure
 
@@ -109,6 +118,7 @@ For each AC, ask:
 3. **What artifact would a skeptic accept?** That is the expected output.
 4. **What surface is it on?** Pick from the taxonomy. If uncertain, default to the most concrete (favor `api` over `backend-logic` if the AC is reachable through HTTP).
 5. **Is this a main user flow?** If yes, also list it under Whole-feature Smoke Proofs.
+6. **Is this a "must NOT merge / must NOT drop" invariant?** (negative/uniqueness/idempotency) Then the proof MUST seed a deliberate conflict — e.g. two records with colliding keys but different values — and assert BOTH survive distinctly (or that the merge is rejected). A happy-path-only proof lets a silent-drop implementation pass the gate.
 
 If you cannot answer (1) without using words like "should work" or "looks right", the AC is too vague — return to brainstorm to tighten it.
 

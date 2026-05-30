@@ -188,6 +188,7 @@ PHASE 1 — LOADED:
 | `new` | Commits since last review | Backlog/merge-base resolution |
 | `HEAD~N` | Last N commits | `git diff --stat HEAD~N..HEAD` |
 | `abc123..def456` | Specific commit range | `git diff --stat abc123..def456` |
+| `commits A,B,C` | Specific non-consecutive commit hashes | Union-diff via `git show` per hash, concatenated |
 | `src/services/` | Directory (uncommitted) | `git diff --stat HEAD -- src/services/` |
 
 Tokens combine: `HEAD~3 src/api/` reviews the last 3 commits scoped to `src/api/`.
@@ -364,6 +365,14 @@ Copy the printed `[CodeSift matching trace]` block verbatim and issue the printe
 | `search_patterns` | Always | CQ8 empty-catch + CAP anti-patterns introduced in the diff | **NO** |
 | Stack-specific tools (nest_audit/framework_audit/python_audit/etc.) | Framework/language detected AND diff touches framework code | Framework-aware gates the diff inherits | **NO** when conditions hold |
 
+**Absent-in-build substitution (per-tool, NOT whole-server).** If a required tool above is genuinely absent from THIS build's tool surface (verified absent, not merely deferred — see `codesift-setup.md` absent-in-build detection), run the documented equivalent and record `<tool>: absent-in-build (<equivalent>: <result>)`, which SATISFIES the gate. This is distinct from whole-server absence (`codesift-setup.md` handles that). Substitution map:
+
+| Absent tool | Equivalent | Recorded as |
+|-------------|-----------|-------------|
+| `review_diff` | `audit_scan` (compound 5-gate) | `review_diff: absent-in-build (audit_scan: <findings>)` |
+| `changed_symbols` + `diff_outline` | `impact_analysis` + `get_file_outline` | `changed_symbols: absent-in-build (impact_analysis+get_file_outline: <result>)` |
+| `scan_secrets` | `grep` secret-scan (high-entropy/key patterns on diff) | `scan_secrets: absent-in-build (grep secret-scan: <count>)` |
+
 ### Forbidden escape hatches
 
 | Value | Forbidden when | Required value instead |
@@ -405,6 +414,15 @@ Follow `codesift-setup.md`:
 2. Repo auto-resolves from CWD — do NOT call `list_repos()` unless the review explicitly spans multiple repositories
 3. If unsure whether the repo is indexed: `index_status()`
 4. If not indexed: `index_folder(path=<project_root>)`
+
+### Cross-checkout / worktree scope
+
+When the REVIEWED scope path resolves to a repo or worktree that is NOT the CWD, do NOT degrade CodeSift — re-point it at the target instead:
+
+1. **Resolve `TARGET_REPO`.** `git -C <scope-path> rev-parse --show-toplevel`. If it differs from CWD's toplevel, set `TARGET_REPO=<that path>`.
+2. **Pass `repo=`/`path=` explicitly** to `review_diff`, `changed_symbols`, `scan_secrets`, `find_references` (and `index_folder`) so they target `TARGET_REPO`, not CWD.
+3. **Fresh worktree staleness.** Run `index_status(path=TARGET_REPO)`. If the worktree's branch commits are not yet indexed, run `index_folder(path=TARGET_REPO)` BEFORE any symbol/pattern tool — otherwise semantic tools silently scan the stale main checkout. If indexing the worktree is not possible, fall back to git-diff-scoped `grep` over `git diff {REVIEWED_FROM}..{REVIEWED_THROUGH}`.
+4. **Keep `TARGET_REPO` consistent** with the Phase 3 destructive-persistence precondition (the repo `REVIEWED_FROM..REVIEWED_THROUGH` is resolved against MUST be the same `TARGET_REPO` analysis and tagging both reference).
 
 ### Stack Detection (TIER 2+)
 
@@ -799,11 +817,14 @@ VALIDITY GATE
     framework: <nextjs|nestjs|astro|hono|react|django|...|none>
     tier: <0|1|2|3>
   required_tool_calls:
-    review_diff: [<N> findings across 9 checks | NOT_CALLED — VIOLATES_TRIGGER]
-    changed_symbols: [<N> symbols | NOT_CALLED — VIOLATES_TRIGGER]
-    diff_outline: [<N> files outlined | NOT_CALLED — VIOLATES_TRIGGER]
+    # VIOLATES_TRIGGER fires ONLY when the tool IS present in this build's surface
+    # but was not called. `absent-in-build (<equivalent>: <result>)` = PASS (see
+    # MANDATORY TOOL CALLS substitution map). NOT_CALLED on a present tool = violation.
+    review_diff: [<N> findings across 9 checks | absent-in-build (audit_scan: <findings>) | NOT_CALLED — VIOLATES_TRIGGER]
+    changed_symbols: [<N> symbols | absent-in-build (impact_analysis+get_file_outline: <result>) | NOT_CALLED — VIOLATES_TRIGGER]
+    diff_outline: [<N> files outlined | absent-in-build (get_file_outline: <result>) | NOT_CALLED — VIOLATES_TRIGGER]
     impact_analysis: [<N> affected_tests / <N> blast | NOT_CALLED — VIOLATES_TRIGGER]
-    scan_secrets: [<N> hits | NOT_CALLED — VIOLATES_TRIGGER]
+    scan_secrets: [<N> hits | absent-in-build (grep secret-scan: <count>) | NOT_CALLED — VIOLATES_TRIGGER]
     search_patterns: [<N> CQ8/CAP hits | NOT_CALLED — VIOLATES_TRIGGER]
     find_references: [<N> chains | not_required (no symbol cited) | NOT_CALLED — VIOLATES_TRIGGER]
     stack_specific (nest_audit/framework_audit/python_audit/etc.): [<result> | not_required | NOT_CALLED — VIOLATES_TRIGGER]

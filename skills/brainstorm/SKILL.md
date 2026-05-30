@@ -145,6 +145,7 @@ Before dispatching agents, assess the scope of what the user is asking for:
 
 - **Single concern** (one feature, one module, one workflow): proceed normally.
 - **Multiple subsystems** (e.g., "rebuild the entire backend"): decompose first. Ask the user to pick one subsystem to brainstorm. Each subsystem gets its own spec. Trying to brainstorm everything at once produces vague specs that cannot drive implementation.
+- **Meta-design target** (new SKILL/agent-team, not a code feature in CWD): treat the analogous existing skill dir (e.g., `skills/<similar>/`) as the "codebase" for the Phase 1 Code Explorer, and SKIP CodeSift repo-indexing expectations — do not assume a CWD repo feature.
 
 **Async mode:** If multiple subsystems are detected and you cannot ask the user, pick a single subsystem to scope as an `[AUTO-DECISION]`. Explain why that subsystem is the highest leverage and list the alternatives you deferred.
 
@@ -221,6 +222,7 @@ Before Phase 2, verify exact claims from the agent reports before repeating them
 - Numeric counts ("21 uncovered types", "16 existing specs")
 - Existence/absence claims ("seed script missing", "only one importer")
 - Runtime location claims ("client-side only", "API-testable", "server-side")
+- Reused-schema claims: when the feature reuses an existing schema/table/key, verify against the LIVE schema (grep the table def), not memory — (a) the key's uniqueness/constraints, and (b) the table's NOT NULL columns. A reused table's mandatory columns frequently conflict with a new access pattern (e.g. a GET endpoint cannot supply a NOT NULL `idempotency_key` that a POST middleware always sends). Report constraints explicitly in the Data Model.
 
 Use CodeSift when available; otherwise verify with Read/Grep/Glob. If you cannot verify a claim quickly, keep it out of the factual summary or label it explicitly as `inferred` / `estimate` in the spec.
 
@@ -252,6 +254,8 @@ Keep the summary concise. The user does not need the raw agent reports.
 Continue asking until you have enough information to propose approaches. Typical count: 2-5 questions. Stop sooner if the scope is clear.
 
 **In async mode:** Make best-judgment decisions for each question you would have asked. Annotate every decision as `[AUTO-DECISION]` with rationale and the alternatives you considered. Proceed directly to proposing approaches.
+
+**Handling mid-dialogue scope changes:** When the user introduces a new requirement or dumps a multi-part answer mid-loop, do not silently absorb it: (1) explicitly acknowledge the added scope, (2) re-state and re-confirm the updated problem statement, and (3) decide with the user whether the new scope belongs in this spec or a follow-up spec before resuming the question loop. In async mode, record the same as an `[AUTO-DECISION]`.
 
 **Codex App clarification:** In Codex App, do NOT ask open-ended clarifying questions unless the decision is high-risk and cannot be safely defaulted. Use `[AUTO-DECISION]` for normal design assumptions, then present the chosen approach for review.
 
@@ -349,6 +353,10 @@ Spec document structure:
 ### Interaction Contract
 
 [Required for cross-cutting behavioral changes. Define: target surfaces, protected surfaces, override order, validation signal, and rollback boundary. Use this section whenever the feature changes how the agent speaks, classifies, routes, validates, or formats output rather than what product code does. If not applicable, state "Not applicable -- no cross-cutting behavior contract changes."]
+
+### Integration Contract
+
+[REQUIRED for any technical invariant binding 3+ sections (TTL values, lock-function form, dedup/key names, status codes, predicate names). Declare each ONCE with an ID (IC-1, IC-2…); every other section CITES it ("per Integration Contract IC-3") rather than restating in its own words. Example: `IC-1 — Lock function = pg_try_advisory_lock(42::int, cloneId::int)`; all locking references cite IC-1. If no multi-section invariant exists, state "Not applicable." Distinct from Interaction Contract above (behavioral, not technical-invariant DRY).]
 
 ### Edge Cases
 

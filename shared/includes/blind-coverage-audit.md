@@ -80,6 +80,8 @@ Use this coverage scale only:
 | `PARTIAL` | some evidence exists, but key branch data or contract detail is missing |
 | `NONE` | no test proves the behavior |
 | `STRUCTURAL_ONLY` | test checks presence, markup, or mock shape without proving runtime behavior |
+| `PARTIAL-by-constraint` | reachable only if a production schema/DB constraint is violated, so the branch cannot be driven from a valid integration input (e.g. a NULL on a `NOT NULL` column) |
+| `UNREACHABLE` | a branch with no public-input path to drive it (dead defensive guard) |
 | `N/A` | behavior is not owned by the file or genuinely does not apply |
 
 Evidence must reference concrete test locations or assertions, not impressions.
@@ -93,6 +95,7 @@ Rules:
 - any owned `branch`, `error_path`, `fallback`, `side_effect`, `callback_forwarding`, `prop_forwarding`, `a11y_output`, `async_state`, or `delegation_contract` with coverage `NONE` => `FIX`
 - any owned `error_path`, `fallback`, `side_effect`, `callback_forwarding`, `prop_forwarding`, `a11y_output`, `async_state`, or `delegation_contract` with coverage `STRUCTURAL_ONLY` => `FIX`
 - 3 or more `PARTIAL` rows => `FIX`
+- a `PARTIAL-by-constraint` or `UNREACHABLE` row does NOT trigger `FIX`. For `PARTIAL-by-constraint`, do not demand a test that violates the production constraint. For `UNREACHABLE`, recommend remove-or-annotate the dead guard (e.g. `// CODE REVIEW: dead guard`) rather than a test. Keep `NONE` strictly for genuinely-untested-but-reachable branches.
 - if the overall test shape is wrong for the module's owned behaviors => `REWRITE`
 - otherwise => `CLEAN`
 
@@ -132,3 +135,5 @@ After the table, emit:
 2. `Highest-value missing test`
 
 `Highest-value missing test` must name the single test that closes the most important uncovered or structural-only gap.
+
+Before naming the highest-value missing test, verify it is REACHABLE under the production schema/constraints (e.g. a `NOT NULL` column cannot receive `NULL` in an integration test). If the only way to hit a defensive branch is blocked by a DB constraint, mark that inventory row `PARTIAL-by-constraint` and do NOT demand the unreachable test.

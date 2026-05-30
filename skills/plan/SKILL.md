@@ -146,6 +146,8 @@ Execute the CodeSift setup procedure from `codesift-setup.md`. Note the repo ide
 
 ## Phase 1: Architecture Analysis
 
+**Light mode (small scope):** If the planning input is inline (no spec doc), scope is ≤5 tasks (excluding test fixtures/data files), no new public contract is introduced, AND the orchestrator has CodeSift on an indexed repo with the feature spanning ≤7 files, the Team Lead MAY perform Phase 1 analysis directly (CodeSift + Read) and SKIP the Architect/Tech-Lead/QA sub-agent fan-out. Rationale: Explore sub-agents lack CodeSift and re-explore with weaker tools, making them slower and less accurate than self-analysis on an indexed repo. Record `Phase 1: direct (small/light scope)` in `## Review Trail`. plan-reviewer (Phase 3) + cross-model validation still run normally. Spec-driven and >5-task / new-contract plans stay on the mandatory full fan-out below.
+
 Dispatch 3 agents SEQUENTIALLY. Each agent receives the output of the previous agent(s) as input context. The 4th step is performed by you (the main agent) as Team Lead synthesis.
 
 The sequential order is mandatory because each agent's analysis depends on what came before: the Architect maps the terrain, the Tech Lead makes decisions based on that map, and the QA Engineer assesses testability of those decisions.
@@ -297,14 +299,14 @@ Copy each smoke proof from the spec's `## Whole-feature Smoke Proofs` section. I
 ### Task Authoring Rules
 
 1. **Scope per task:** Each task should take 2-5 minutes to implement and represent one logical unit of work. If it would take longer, split it.
-2. **Boundary size:** A task touching more than 5 files, more than one new public surface, or more than two system boundaries is oversized by default. Split it unless you can justify why the files are inseparable.
+2. **Boundary size:** A task touching more than 5 files, more than one new public surface, or more than two system boundaries is oversized by default. Split it unless you can justify why the files are inseparable. Test fixtures and test-data files (`.json`/`.html`/`.csv` under `tests/fixtures/` or equivalent fixture dirs) do NOT count toward the 5-file boundary. Count only production code plus their direct test files, and state the fixture count separately.
 3. **Task intent over exact code:** RED steps include test intent, target assertions, and file path. GREEN steps include symbols to add/change, invariants to maintain, interfaces to implement, and reuse obligations. Include scaffold code only when the pattern is non-obvious, and keep scaffolds at or below 20 LOC. Do NOT write the full implementation.
 4. **Exact verification:** The Verify step must include an exact shell command whose exit code proves the claimed invariant. If the expected output mentions a specific value or behavior, the command must assert that value or behavior rather than merely running a script.
 5. **Acceptance Proof per task (MANDATORY):** Every task must list its `Acceptance Proof:` block — copying the spec's per-AC proof inline so `zuvo:execute` can run it without re-resolving from spec. Tasks without proofs are rejected by plan-reviewer. See `../../shared/includes/acceptance-proof-protocol.md` for surface taxonomy and proof shapes. **Verify** (rule 4) is an *implementation-detail* check (does my function compile and pass unit tests); **Acceptance Proof** is a *behavior* check (does the AC actually work). Both required — they catch different defects.
 6. **Surface field (MANDATORY):** Every task declares one Surface (backend-logic / api / db / db-data / ui / integration / config / docs). Determines proof shape and verification primitive. UI surface enables browser-tool requirement at execute time.
 7. **Coverage matrix:** Every Coverage Matrix row must appear in at least one task's Acceptance Proof field. No orphan requirements, deliverables, or constraints. **In addition:** every spec AC must be covered by at least one task's Acceptance Proof — Coverage Matrix and AC list must both be exhaustively mapped.
-8. **Whole-feature smoke proofs:** Copy the spec's `## Whole-feature Smoke Proofs` section into the plan verbatim. If the spec marked smoke "Not applicable", repeat the justification. Smoke proofs run after all per-task proofs at execute Phase Final.
-9. **Dependencies:** A task can only depend on tasks with a lower number. No circular dependencies. Dependencies must reflect real ordering, not preference.
+8. **Whole-feature smoke proofs:** Copy the spec's `## Whole-feature Smoke Proofs` section into the plan verbatim. If the spec marked smoke "Not applicable", repeat the justification. Smoke proofs run after all per-task proofs at execute Phase Final. When smoke proofs apply: (a) the plan MUST include a final numbered task that authors the smoke-test runner file (the `.zuvo/proofs/smoke-*` artifact named in the template), with the smoke proofs listed in that task's Acceptance Proof block — otherwise execute Phase Final hits a missing file; (b) every smoke proof MUST map to at least one task's RED sub-suite (a runnable, possibly-mocked end-to-end exercise) so smoke regressions surface during execute rather than only at the end.
+9. **Dependencies:** A task can only depend on tasks with a lower number. No circular dependencies. Dependencies must reflect real ordering, not preference. Dependency declaration must trace concrete reads — a task's Dependencies MUST list every prior task whose output (file/symbol/schema column/env var) its RED/GREEN actually reads or imports; transitive coverage is not sufficient; conversely reject declared deps the task does not consume. Common offenders: a feature-flag task that reads a schema column, an orchestrator that reads a schema column, an Acceptance Proof that invokes a higher-numbered symbol. Task numbers are a *partial* order: `zuvo:execute` runs in dependency order, so numbers need not encode priority — only that dependencies point backward. Place the riskiest cross-boundary unit as early as its dependencies allow so adversarial review does not flag deferred risk.
 10. **Complexity rating:** `standard` means 1-3 files, existing patterns, one system boundary, and no new public contract. `complex` means 4+ files, 2+ system boundaries, new patterns/contracts, cross-cutting concerns, or high-risk hotspot files. The complexity rating determines which implementation tier the execute phase will use: default for standard, deep for complex.
 11. **File limits:** Use `../../rules/file-limits.md` as the planning default. In particular: utilities/helpers <=100 lines, controllers/services <=300 unless the rule explicitly allows more, components <=200/300, hooks <=250. If the plan would exceed these limits, split the task.
 12. **Test files:** Every task that creates production code must include a test file. If a task is docs-only or config-only, say so explicitly in the RED step instead of implying a missing test.
@@ -312,6 +314,24 @@ Copy each smoke proof from the spec's `## Whole-feature Smoke Proofs` section. I
 ---
 
 ## Phase 3: Plan Review
+
+### Phase 3.0 — Deterministic DAG lint (run FIRST, after any renumber, before the reviewer)
+
+Before dispatching the reviewer, run the deterministic dependency-DAG linter on the plan file. It catches circular deps, forward references (a task depending on a higher number), and missing-task references mechanically — cheaper than a ~600s adversarial round.
+
+```bash
+# >>> zuvo:plan-dag-check
+_VD=$(command -v verify-plan-dag 2>/dev/null || ls ~/.zuvo/verify-plan-dag 2>/dev/null | head -1 \
+      || ls ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/zuvo-home/verify-plan-dag 2>/dev/null | head -1)
+if [ -n "$_VD" ] && [ -x "$_VD" ]; then
+  "$_VD" "docs/specs/YYYY-MM-DD-<topic>-plan.md" || { echo "[PLAN-DAG FAIL] fix the reported dependency/cycle/forward-ref before review"; }
+else
+  echo "[PLAN-DAG SKIP] verify-plan-dag not installed — DAG checked by reviewer only (warn-only)"
+fi
+# <<< zuvo:plan-dag-check
+```
+
+Fail-loud on exit 1 (fix the dependency/cycle/forward-ref in the plan, then re-run). Warn-only if the script is missing. Re-run after ANY task renumber.
 
 Dispatch the plan reviewer agent to verify the plan against the spec.
 
@@ -405,7 +425,7 @@ Before printing the final output block, verify every item. Unfinished items = pi
 
 ```
 COMPLETION GATE CHECK
-[ ] All 3 Phase 1 agents ran sequentially (Architect → Tech Lead → QA Engineer)
+[ ] All 3 Phase 1 agents ran sequentially (Architect → Tech Lead → QA Engineer) — OR Light mode used and `Phase 1: direct (small/light scope)` recorded in Review Trail
 [ ] Every spec AC maps to at least one task's Acceptance Proof field
 [ ] EVERY task has Surface field + Acceptance Proof block (inline, not just AC# reference)
 [ ] Whole-feature Smoke Proofs section present (or "Not applicable" with reason)

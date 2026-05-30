@@ -63,10 +63,12 @@ Run the script as a **single foreground Bash call**. The script auto-detects ava
 
 ```bash
 git add -u
-git diff --staged | adversarial-review --json --mode {MODE}
+git diff --staged | adversarial-review --json --artifact /tmp/adv-pass1.json --mode {MODE}
 ```
 
 Default is multi-provider (all available run in parallel). The script handles provider detection and dispatch.
+
+**Capture full output before triage — NEVER pipe through `tail`/`head`.** Multi-provider output exceeds one screen; `tail`/`head` silently truncates the first providers (codex, gemini) and drops their CRITICAL findings (two documented loss-of-finding incidents). Use the `--artifact <path>` flag (or redirect `... > /tmp/adv-passN.txt 2>&1`) and triage from the full file/variable. Prefer `--artifact` — it is a real script flag that also records metadata for downstream gates.
 
 **If staged diff doesn't reflect the skill's changes** (e.g., skill worked on explicit files, not staged): use `--files` instead:
 ```bash
@@ -112,12 +114,12 @@ The script may return a non-clean `status` when not all requested providers ran.
 **Cross-call rotation pattern** (D4 — for skills that invoke `adversarial-review` multiple times in the same flow):
 
 ```bash
-# Pass 1
-out1=$(adversarial-review --rotate --json --files "$ARTIFACT")
+# Pass 1 — capture to a per-pass artifact; never pipe through tail/head
+out1=$(adversarial-review --rotate --json --artifact /tmp/adv-pass1.json --files "$ARTIFACT")
 last_provider=$(jq -r '.providers_used_list[0] // .providers_used' <<<"$out1")
 
-# Pass 2 — exclude last to force a different provider
-out2=$(adversarial-review --rotate --exclude-last "$last_provider" --json --files "$ARTIFACT")
+# Pass 2 — exclude last to force a different provider, distinct artifact
+out2=$(adversarial-review --rotate --exclude-last "$last_provider" --json --artifact /tmp/adv-pass2.json --files "$ARTIFACT")
 ```
 
 If only 1 provider remains after the exclusion, pass 2 will exit 3 (`single_provider_only`) — caller chooses whether to fall back to `--single` or accept single-perspective results.

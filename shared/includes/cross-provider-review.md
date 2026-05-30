@@ -89,6 +89,13 @@ If no cross-provider tool is available:
 2. Fall back to the internal adversarial agent (same model, different persona)
 3. Do NOT block the review pipeline — cross-provider review is an enhancement, not a gate
 
+## Large diffs
+
+`--all-providers`/`--multi` combined with `--artifact` on a >5000-line (~600KB+) aggregate diff can exit 0 yet write NO artifact file — a silent no-artifact failure. Guard against it:
+
+1. **Chunk or rotate above ~3000 lines.** For diffs over ~3000 lines, use `--rotate` (one provider per pass) instead of `--all-providers`, and/or pre-chunk the diff by file group and run a pass per group.
+2. **Always verify the artifact exists and is non-empty** before treating a pass as complete: `[ -s "$ARTIFACT" ] || { echo "[CROSS-REVIEW] empty artifact — diff too large; rotate/chunk and retry"; }`. Exit 0 alone does NOT prove the pass produced findings.
+
 ## Installation (for users)
 
 ```bash

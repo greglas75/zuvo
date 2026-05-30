@@ -118,7 +118,7 @@ Take the UNION of all matched groups + `always`. Build one `select:` query with 
    - **Step B** — `mcp__codesift__describe_tools(names=[...], reveal=true)` with the full union list. This makes CodeSift's hidden tools (~95 of 175, `is_core: false`) enter ListTools so the next ToolSearch can resolve them. Skipping this step is the most common cause of `[PRELOAD MATH MISMATCH]` — the `select:` query silently drops names that aren't yet visible.
    - **Step C** — `ToolSearch(query="select:...")` with the full union list to load every schema.
 4. After Step C, print `[CodeSift loaded] tools=<N>` where `<N>` matches the helper's `[Expected after load] tools=<N>`.
-5. If the count does not match: print `[PRELOAD MATH MISMATCH] expected=<X> got=<Y>` and abort.
+5. If the count does not match: before aborting, run the **host-disabled probe** (below). Hard-abort with `[PRELOAD MATH MISMATCH] expected=<X> got=<Y>` ONLY for an *unexplained* delta (a select-string truncation — names that WERE resolvable but the query dropped them). When the delta is fully explained by host-disabled tools, do NOT abort — degrade and continue.
 
 This eliminates LLM discretion in stack matching. The helper is the single source of truth — no hand-crafted `always` lists, no invented `matched=[...]` keys, no partial-group loads. If `~/.zuvo/compute-preload` is unavailable on the host, fall through to the manual algorithm below (Required matching trace section), but flag `compute_preload=missing` in the next retrospective so the install gap is surfaced.
 
@@ -167,7 +167,19 @@ The orchestrator's stack-matching algorithm is deterministic. Its output must th
 2. Matching algorithm dropped tools silently (manifest vs. trace divergence).
 3. ToolSearch `select:` string was truncated.
 
-In any case: print `[PRELOAD MATH MISMATCH] expected=<X> got=<Y>` and abort the skill before Phase 1.
+Before aborting on a mismatch, run the **host-disabled probe** below. Hard-abort with `[PRELOAD MATH MISMATCH] expected=<X> got=<Y>` ONLY when the delta is a true select-string truncation (cause #3 — names that ARE in the deferrable pool but failed to load). If the delta is fully accounted for by host-disabled tools, degrade and continue instead of aborting.
+
+### Host-disabled probe (degrade, don't false-abort)
+
+A non-deferrable or host-disabled manifest tool produces a `got < expected` delta even when the preload is correct. Aborting here blocks otherwise-valid brainstorm/audit/review/pentest/performance-audit runs. Before any abort:
+
+1. For each manifest tool in `expected_tools` but absent from `got`, probe whether it is genuinely host-disabled: `ToolSearch(query="select:mcp__codesift__<name>")` returns `No matching deferred tools` AND `discover_tools(query="<name>")` shows no such tool (or `is_core:false` and not in this host's deferrable pool).
+2. **Confirmed host-disabled with a known equivalent** → record `[PRELOAD SUBSTITUTION] <tool> -> <equivalent>`, route the affected dimension to the substitute, and count it as satisfied. Known equivalences:
+   - `find_clones` → `audit_scan` (CQ14)
+   - `sql_audit` → `migration_lint` + `search_text` over `*.sql`
+   - `review_diff` / `changed_symbols` / `diff_outline` / `scan_secrets` → `audit_scan` + `get_file_outline` + `impact_analysis` + `search_patterns` + Grep secret scan
+3. **Confirmed host-disabled with no equivalent** → record `[PRELOAD HOST-DISABLED tools=<names>]`, drop those names from `expected_tools`, route the affected dimensions to Degraded Mode, and recompute the gate so dropped tools count as satisfied.
+4. Recompute: if `got` now equals the adjusted `expected_tools` (substitutions + host-disabled drops applied), continue — do NOT abort. Hard-abort only on a residual *unexplained* delta (cause #3, select-string truncation).
 
 Then issue the three-step preload (bootstrap → reveal → load) as printed by the helper.
 

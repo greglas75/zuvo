@@ -242,6 +242,8 @@ If CodeSift MCP is available, run these two calls before anything else:
 
 If `analyze_project` returns enough to populate the stack table, skip 0.1/0.2/0.3 manual detection and jump to the output block. If it returns partial data (e.g. framework=null), fill the gaps with the manual tables below.
 
+**Worktree de-pollution (do this before ANY file/table/migration count).** If the repo has git worktrees checked out under the tree (`.worktrees/`, `.claude/worktrees/`, `worktrees/`), every `.sql`/migration/model file is duplicated N times and inflates counts (the same class as the [[repo-file-counting]] node_modules/vendor exclusion). Exclude them from every count and CodeSift scope: `find ... -not -path '*/.worktrees/*' -not -path '*/.claude/worktrees/*' -not -path '*/worktrees/*'` (and the standard `node_modules/.git/dist/build/vendor`). When a CodeSift SQL tool reports a migration/table count, sanity-check it against `git worktree list` — if there are W worktrees, a count that is ~W× the migrations/ file count is worktree-inflated; report the de-duplicated figure. (CodeSift SQL tools lack an `exclude_pattern`/`--no-worktrees` param — surfaced as a tool gap; until it lands, verify counts against the primary worktree only.)
+
 ### 0.1 ORM Detection
 
 If not resolved by `analyze_project`:
@@ -354,7 +356,7 @@ Specifically, in EVERY mode (including `delta` and `sanity-check`):
 - `search_columns` MUST run (PII discovery — every audit).
 - `scan_secrets` MUST run.
 - `search_patterns(unbounded-findmany | await-in-loop | toctou)` MUST run.
-- `migration_lint` MUST run if Postgres + `migrations/` dir exists.
+- `migration_lint` MUST run if Postgres + `migrations/` dir exists. **If it degrades** (squawk CLI not installed — `migration_lint` returns a `squawk_unavailable`/empty result), do NOT silently pass DB13: fall back to `diff_migrations` + a manual DDL scan for the high-severity squawk patterns (`NOT NULL` without default, `CREATE INDEX` without `CONCURRENTLY`, `ALTER COLUMN TYPE`, `DROP COLUMN`) and record DB13 as `WARN (migration_lint degraded — manual scan, install squawk for full coverage)`, never `PASS`.
 - `analyze_prisma_schema` MUST run if `prisma/schema.prisma` exists.
 - `explain_query` MUST run on every Prisma query cited in a HIGH/MEDIUM finding.
 - `trace_query` MUST run on every table cited in a HIGH/MEDIUM finding (or flagged by `sql_audit orphan`).
@@ -534,6 +536,11 @@ The `sql_audit` result has shape:
 ```
 
 Pass each gate's findings to the corresponding DB dimension scoring as TOOL-VERIFIED evidence. Critical gates (`drift` with type_mismatches > 0, `dml` with high-severity findings) propagate to the matching DB critical gate (DB13, DB12).
+
+**MANDATORY false-positive verification for `dml` DELETE/UPDATE-without-WHERE (before it counts toward DB12).** A hallucinated CRITICAL in a read-only safety audit destroys trust in the whole report — in a 2026-05 run all 4 "CRITICAL dml" hits were false positives that would have flipped a passing DB to FAIL. For EVERY `dml` DELETE/UPDATE-without-WHERE hit, **Read the cited `file:line` through `line+5`** and confirm no `WHERE` clause follows before counting it. The two dominant false-positive shapes:
+- **ORM builder chains** where `.where()` is a separate call: `db.delete(t).where(eq(...))`, `db.update(t).set({...}).where(...)` (Drizzle), `repo.delete({...})` / `qb.delete().where(...)` (TypeORM) — the WHERE is real, just not adjacent to the verb token.
+- **Multi-line raw SQL**: `DELETE FROM x` on one line, `WHERE ...` on the next — a single-line regex misses it.
+Only a hit with NO `WHERE` within the read window (and not an ORM builder chain that applies one downstream) is a true CRITICAL. Record the verification in the finding evidence (`verified file:line, no WHERE in [line..line+5]`). Add this shape to the False Positive Filters used in scoring.
 
 If `sql_audit` is unavailable (CodeSift older than v0.4.x or no `.sql` files), skip 2.0b and rely on the manual schema/migration analysis in Phase 1 + agent dispatch.
 

@@ -99,6 +99,7 @@ PHASE 1 — LOADED:
 ```
   ../../shared/includes/run-logger.md        -- [READ at final step]
   ../../shared/includes/retrospective.md     -- [READ at final step]
+  ../../shared/includes/documentation-mandate.md -- [READ at final step]
   ../../shared/includes/knowledge-prime.md   -- [READ at start if available | MISSING -> degraded]
   ../../shared/includes/knowledge-curate.md  -- [READ at final step if available | MISSING -> degraded]
 ```
@@ -616,6 +617,15 @@ Read `../../shared/includes/backlog-protocol.md`. Persist CQ Auditor DEFER items
 
 Run `knowledge-curate.md`: `WORK_TYPE = "implementation"`, `CALLER = "zuvo:refactor"`, `REFERENCE = <commit SHA>`.
 
+### Documentation (REQUIRED — no silent skip)
+
+Follow `documentation-mandate.md`. A pure internal refactor with no behavior/API/contract
+change is the COMMON case here — but it must still be DECLARED, not silently skipped:
+`[DOC: N/A — internal-only refactor, no behavior/API/contract change]`. If the refactor
+DID change public surface (moved a module, renamed an exported symbol, split a package,
+changed an import path others use) → update the architecture/onboarding note + CHANGELOG.
+Record the doc paths (or the N/A line) for the Post-Completion Summary.
+
 ### Retrospective (REQUIRED)
 
 Follow the retrospective protocol from `retrospective.md`.
@@ -634,6 +644,7 @@ COMPLETION GATE CHECK
 [ ] After each change: tests ran and green (not just at the end)
 [ ] CQ post-audit printed — score must not regress
 [ ] Adversarial review ran on final diff
+[ ] Documentation updated if public surface changed, else explicit [DOC: N/A — internal-only] (per documentation-mandate.md)
 [ ] Run: line printed and appended to log
 ```
 

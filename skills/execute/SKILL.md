@@ -99,6 +99,7 @@ CORE FILES LOADED:
  12. ../../shared/includes/knowledge-curate.md            -- DEFERRED (completion)
  13. ../../shared/includes/run-logger.md                  -- DEFERRED (completion)
  14. ../../shared/includes/retrospective.md               -- DEFERRED (completion)
+ 15. ../../shared/includes/documentation-mandate.md       -- DEFERRED (completion)
 ```
 
 
@@ -539,13 +540,26 @@ The captured artifact path is mandatory for commit gating. Use the current task 
 - Task 1 -> `.zuvo/context/adversarial-task-1.txt`
 - Task 9 -> `.zuvo/context/adversarial-task-9.txt`
 
+**Diff-scope guard (filter findings to changed paths).** The pipe at the command above scopes the *input* to the staged diff, but a reviewer/harness can still emit findings on files outside it. Before applying verdict rules, capture the changed-file set and validate every finding's path against it:
+
+```bash
+git diff --staged --name-only > .zuvo/context/task-<task-N>-scope.txt
+```
+
+For each finding, confirm its file path appears in that scope list. A CRITICAL/WARNING finding targeting a file NOT in the staged diff is a backlog candidate (persist via `backlog-protocol.md`), NOT a task blocker — only findings intersecting the staged diff gate the commit. This prevents whole-repo scans from misattributing pre-existing findings to the task's diff.
+
 Wait for complete output. Then:
 - **Binary unavailable / no verdict produced** → `BLOCKED_ADVERSARIAL_UNAVAILABLE`. Do not commit.
+- **Plan-accepted risk** → if a CRITICAL maps to a risk the plan explicitly accepts (match the plan's `## Review Trail` entries and any per-task `> **Accepted risk note**` block), do NOT auto-fix. Surface to the user the CRITICAL text + the plan's accepted-risk paragraph + three options: (a) fix anyway, (b) confirm-accept-as-planned (record verdict, proceed), (c) pause. This short-circuits the loop that would otherwise re-discover the same accepted risk and add new attack surface.
 - **CRITICAL** → re-dispatch implementer to fix, re-run quality reviewer, then re-run adversarial on the updated staged diff.
 - **WARNING** (< 10 lines, localized) → re-dispatch implementer to fix, re-run quality reviewer, then re-run adversarial.
 - **WARNING** (large/cross-file) or **INFO** → proceed only if logged as known concerns (max 3, one line each) and persisted to backlog.
 
-**Retry limit:** Maximum 3 adversarial iterations per task. After 3 unresolved runs, stop with `BLOCKED_ADVERSARIAL_LOOP` and surface the exact findings to the user.
+**Retry limit (distinct vs. relooped).** Track a finding fingerprint (`file|rule-id|signature`, same scheme as Backlog Persistence) for each CRITICAL across iterations:
+- Each iteration surfaces a NEW distinct CRITICAL fingerprint (progressive hardening) → allow continued iteration up to a ceiling of 6. A blunt 3-cap would ship a real bug when several distinct CRITICALs are legitimately found in sequence.
+- The SAME CRITICAL fingerprint reappears after a fix attempt (relooped, not converging) → hard-stop at 3 with `BLOCKED_ADVERSARIAL_LOOP` and surface the exact findings to the user.
+
+(`adversarial-loop.md` STOPs on a new distinct CRITICAL in its own validation-rerun; execute deliberately diverges here because it owns the full per-task fix loop, not a single validation pass.)
 
 ### Step 7c: Self-Review Gate + Branch Drift Check
 
@@ -802,6 +816,12 @@ Print a completion report:
 ### Backlog Items Added
 [list any new items persisted to backlog during execution]
 
+### Documentation
+[per documentation-mandate.md — list every doc file created/updated (path + one-line what
+ changed: README section, docs/<feature>.md, API ref, CHANGELOG entry, runbook, .env.example),
+ or the explicit `[DOC: N/A — <reason>]` line. A multi-task plan with no docs and no declared
+ N/A is INCOMPLETE.]
+
 ### Post-Cap Dispositions
 [MORNING-REVIEW CONTRACT — list every `[POST-CAP: FIXED|SPEC-AMENDED|DEFERRED]` the run made
  after a review loop hit its 3-iteration cap. This is what the agent decided FOR you instead
@@ -837,6 +857,21 @@ For each finding:
 2. Check for duplicates in existing backlog
 3. Route by confidence (0-25 discard, 26-50 backlog only, 51+ report and backlog)
 
+### Documentation (REQUIRED — no silent skip)
+
+Follow `documentation-mandate.md`. A multi-task plan landing with zero docs is a
+defect. Decide the doc target(s) by what actually changed across the whole plan
+(new feature → README/`docs/<feature>.md` + CHANGELOG; new/changed API or contract
+→ API reference + CHANGELOG; new subsystem → architecture/onboarding note;
+behavior/flag/env/migration → runbook + `.env.example`; bugfix-only → CHANGELOG).
+For a substantial feature, dispatch `Skill(skill="zuvo:docs", args="update <target>")`
+or `Skill(skill="zuvo:release-docs")` (diff-driven) — they read the real diff. Write
+from the landed code, not from intent.
+
+The ONLY valid no-docs path is an explicit `[DOC: N/A — internal-only, no
+behavior/API/contract/config change]`. A bare skip is forbidden. Record what was
+documented (paths) for the Final Summary `### Documentation` section.
+
 ### Retrospective (REQUIRED — no opt-out)
 
 Follow the retrospective protocol from `retrospective.md`.
@@ -868,6 +903,7 @@ COMPLETION GATE CHECK (final):
 [ ] Final summary table printed with all tasks AND all smoke proofs AND the Aggregate Review block
 [ ] Backlog persistence ran for deferred findings
 [ ] Knowledge curation ran
+[ ] Documentation created/updated for the landed change (per documentation-mandate.md) — or explicit [DOC: N/A — <reason>]; a bare skip is INCOMPLETE
 [ ] Retrospective bash appends EXECUTED (retros.log + retros.md) — no "trivial session" opt-out, printing markdown is not enough
 [ ] append-runlog wrapper invoked and exited 0
 [ ] Logs evidence block printed with real `tail` output
@@ -931,7 +967,7 @@ From `shared/includes/backlog-protocol.md`: every finding with confidence above 
 | NEEDS_CONTEXT re-dispatch | 2 | Escalate to user |
 | Spec review loop | 3 iterations | Post-cap disposition: fix / amend-spec / defer — continue (no pause) |
 | Quality review loop | 3 iterations | Post-cap disposition: fix / defer-false-positive — continue (no pause) |
-| Adversarial review loop | 3 iterations | Mark BLOCKED, surface findings |
+| Adversarial review loop | 3 (same CRITICAL relooped) / 6 (new distinct CRITICAL each iteration) | Mark BLOCKED, surface findings |
 | Agent crash/timeout | 1 retry | Mark BLOCKED, continue rest of plan |
 
 ---

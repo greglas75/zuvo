@@ -119,6 +119,7 @@ PHASE 1 — LOADED:
 ```
   ../../shared/includes/run-logger.md        -- [READ at final step]
   ../../shared/includes/retrospective.md     -- [READ at final step]
+  ../../shared/includes/documentation-mandate.md -- [READ at final step]
   ../../shared/includes/knowledge-prime.md   -- [READ at start if available | MISSING -> degraded]
   ../../shared/includes/knowledge-curate.md  -- [READ at final step if available | MISSING -> degraded]
 ```
@@ -675,7 +676,17 @@ CALLER = "zuvo:build"
 REFERENCE = <git SHA of the commit>
 ```
 
-### 4.7 Retrospective (REQUIRED — no opt-out)
+### 4.7 Documentation (REQUIRED — no silent skip)
+
+Follow `documentation-mandate.md`. The feature you just built MUST land with docs:
+pick the target by what changed (new capability → README/`docs/<feature>.md` + CHANGELOG;
+new/changed API or contract → API reference + CHANGELOG; behavior/flag/env → runbook +
+`.env.example`; bugfix-only → CHANGELOG line). Small builds edit the doc inline; a
+substantial one dispatches `Skill(skill="zuvo:docs", args="update <target>")`. The only
+no-docs path is an explicit `[DOC: N/A — internal-only, no behavior/API/contract change]`.
+Record the doc paths for the `### Documentation` line in the BUILD COMPLETE block.
+
+### 4.8 Retrospective (REQUIRED — no opt-out)
 
 Follow the retrospective protocol from `retrospective.md`.
 Gate check -> structured questions -> TSV emit -> markdown append.
@@ -697,6 +708,7 @@ COMPLETION GATE CHECK
 [ ] Adversarial review ran and findings handled
 [ ] Acceptance Proofs (Phase 4.2b) — every AP ran and VERIFIED, artifact paths recorded
 [ ] All verification commands ran and exited 0
+[ ] Documentation created/updated (per documentation-mandate.md) or explicit [DOC: N/A — <reason>]
 [ ] Retrospective ran (no "trivial session" opt-out)
 [ ] Backlog updated with deferred findings or "none"
 [ ] Run: line printed and appended to log

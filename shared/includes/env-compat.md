@@ -30,6 +30,7 @@ Agent(
 
 - `subagent_type: "Explore"` — read-only analysis (agent cannot modify files)
 - Multiple agents can run in parallel when their work is independent
+- **Consecutive dispatch rate-limits = agent failure.** If sub-agent dispatch returns a rate-limit / overloaded / quota error **twice in a row** for the same stage, treat it as a dispatch failure (not a thing to keep retrying): print `[MODE SWITCH] dispatch rate-limited ×2 → single-agent`, record reason `same-model-fallback`/`rate-limited`, and execute that stage's role inline per the single-agent checkpoint protocol. Do NOT silently spin retrying a rate-limited dispatch — it stalls the pipeline; fall back and keep moving.
 
 <!-- PLATFORM:CODEX -->
 ### Codex
