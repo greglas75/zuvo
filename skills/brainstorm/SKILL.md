@@ -75,9 +75,10 @@ CORE FILES LOADED:
   1. codesift-setup.md              -- READ
   2. env-compat.md                  -- READ
   3. acceptance-proof-protocol.md   -- READ
-  4. cq-patterns.md                 -- DEFERRED (Phase 3)
-  5. run-logger.md                  -- DEFERRED (completion)
-  6. retrospective.md               -- DEFERRED (completion)
+  4. provided-artifact-supremacy.md -- READ
+  5. cq-patterns.md                 -- DEFERRED (Phase 3)
+  6. run-logger.md                  -- DEFERRED (completion)
+  7. retrospective.md               -- DEFERRED (completion)
 ```
 
 If a Phase 0 file is missing, STOP. Deferred files are loaded when their phase begins.
@@ -150,6 +151,19 @@ Before dispatching agents, assess the scope of what the user is asking for:
 **Async mode:** If multiple subsystems are detected and you cannot ask the user, pick a single subsystem to scope as an `[AUTO-DECISION]`. Explain why that subsystem is the highest leverage and list the alternatives you deferred.
 
 Tell the user which scope you detected and why.
+
+---
+
+## Provided-Design Check (BEFORE Phase 1 repo exploration)
+
+Run `provided-artifact-supremacy.md` now. If the user provided a design artifact (a prototype, `HANDOFF.md`, mockup, screenshot, reference URL, "match this / 1:1 / like the prototype"):
+
+1. **It is the SOURCE OF TRUTH for WHAT to build** — not the existing repo. The repo informs HOW.
+2. **Read it IN FULL** (not skim) and extract a `## Design Constraints` checklist (DC-1, DC-2…), quoting every explicit do/don't/`single`/`one`/`no`/`must`/`never`.
+3. **If the artifact contains code** (`.jsx`/`.tsx`/component files / a runnable demo) → inventory and read those files; the spec's default is to PORT them, not re-derive behavior from prose.
+4. Carry `## Design Constraints` into the spec; every design decision that touches a DC cites it. A decision that contradicts a DC is a `[DEVIATION: …]` you surface to the user and wait — NEVER a silent "reference-only" downgrade or a repo-derived rationalization.
+
+This is the gate that stops the dominant expensive failure: building the wrong thing correctly because the agent grounded on its own repo reading instead of the design the user handed it.
 
 ---
 

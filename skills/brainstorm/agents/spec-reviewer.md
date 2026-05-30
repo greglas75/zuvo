@@ -152,6 +152,15 @@ Edge cases (C7) cover input validation. Failure modes (C7b) cover system resilie
 - Is deprecation timeline specified for old formats?
 - N/A if the feature creates entirely new state with no overlap.
 
+### C13: Provided-design fidelity (when the user supplied a design artifact)
+
+The most expensive failure mode is a spec that is internally consistent but contradicts the design the user actually handed over (prototype / `HANDOFF.md` / mockup / "match 1:1"). Grade the spec AGAINST that artifact, not just against itself:
+
+- If a design artifact was provided, the spec MUST contain a `## Design Constraints` section (DC-1…) extracted from it. **Its absence is a FAIL** — the spec was grounded on the agent's own reading, not the user's design.
+- Every quoted `do not`/`never`/`single`/`one`/`no <X>`/`must` constraint must be HONORED by the spec's Solution Overview / Detailed Design. A spec choice that contradicts a DC (design says "one dock, no persistent side panels"; spec keeps a side panel) is a **FAIL** — a repo-derived rationalization does not excuse it.
+- If the artifact is working code (`.jsx`/`.tsx`/components) and the spec describes re-deriving the behavior rather than PORTING those files, that is a FAIL.
+- Any genuine impossibility must be an explicit `[DEVIATION: …]` to the user, never a silent reinterpretation. A spec that silently downgraded the artifact to "reference-only" is a FAIL.
+
 ## Calibration
 
 Only flag issues that would cause real problems during implementation. Ask yourself:

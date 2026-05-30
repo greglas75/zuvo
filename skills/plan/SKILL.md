@@ -99,9 +99,10 @@ CORE FILES LOADED:
   4. ../../shared/includes/tdd-protocol.md               -- READ/MISSING
   5. ../../shared/includes/session-state.md              -- READ/MISSING
   6. ../../shared/includes/acceptance-proof-protocol.md  -- READ/MISSING
-  7. ../../rules/file-limits.md                          -- READ/MISSING
-  8. ../../shared/includes/run-logger.md                 -- DEFERRED (completion)
-  9. ../../shared/includes/retrospective.md              -- DEFERRED (completion)
+  7. ../../shared/includes/provided-artifact-supremacy.md -- READ/MISSING
+  8. ../../rules/file-limits.md                          -- READ/MISSING
+  9. ../../shared/includes/run-logger.md                 -- DEFERRED (completion)
+ 10. ../../shared/includes/retrospective.md              -- DEFERRED (completion)
 ```
 
 Resolve these paths relative to the currently loaded `skills/plan/SKILL.md`. If a Phase 0 file read fails, mark it as `MISSING`. Deferred files are loaded when their phase begins, not at startup.
@@ -143,6 +144,15 @@ first, the next skill's `--sweep` emits an ABANDONED stub.
 Execute the CodeSift setup procedure from `codesift-setup.md`. Note the repo identifier for agent dispatches when CodeSift is available.
 
 ---
+
+## Provided-Design Check (BEFORE Phase 1 — run even without a brainstorm spec)
+
+Run `provided-artifact-supremacy.md`. `zuvo:plan` is frequently invoked directly on a user-supplied design (a downloaded prototype, `HANDOFF.md`, mockup, "match this 1:1") with NO brainstorm spec — that is the exact case that failed on 2026-05-30. When a design artifact is present:
+
+1. **The artifact is the SOURCE OF TRUTH for WHAT to build; the repo is HOW.** Do NOT downgrade it to "reference-only" and ground the architecture on your own repo reading.
+2. **Read it IN FULL**, extract a `## Design Constraints` checklist (DC-1…), quoting every `do not`/`never`/`single`/`one`/`no <X>`/`must`. Carry it into the plan; every architecture decision that touches a DC cites it.
+3. **If the artifact contains working code** (`.jsx`/`.tsx`/component files, a runnable prototype) → **inventory and read those files; the plan's tasks PORT them component-by-component into the target stack, not re-derive the behavior from prose.** A 7000-line working prototype is ground truth, not a sketch to reinterpret.
+4. Any architecture decision that **contradicts a DC** is a HARD-STOP `[DEVIATION: DC-N says "<quote>" but I propose <X> — confirm]`, never a repo-rationalized "decision". The plan-reviewer (Phase 3) FAILs a plan whose architecture contradicts a DC.
 
 ## Phase 1: Architecture Analysis
 

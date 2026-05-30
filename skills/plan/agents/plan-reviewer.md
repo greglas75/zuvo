@@ -128,6 +128,15 @@ Can each task be executed independently (with its dependencies satisfied) and pr
 - The plan must include a `## Review Trail` section. A placeholder cross-model entry is acceptable before adversarial review; a missing section is a FAIL.
 - The plan must not imply `Reviewed` status without a converged reviewer pass on the current revision
 
+### 9. Provided-design fidelity (when the user supplied a design artifact)
+
+This is the highest-stakes check: a plan can be internally flawless and still build the WRONG thing because it ignored the design the user handed it (2026-05-30: a plan kept a left sidebar the prototype's `HANDOFF.md` explicitly forbade; every other check passed; 5 hours wasted). Check the plan AGAINST the artifact, not just against itself:
+
+- If the input references a design artifact (prototype, `HANDOFF.md`, mockup, screenshot, "match 1:1"), the plan MUST carry a `## Design Constraints` section (DC-1…). Its **absence is a FAIL** — the plan was not grounded in the provided design.
+- For every constraint, especially each quoted `do not`/`never`/`single`/`one`/`no <X>`/`must`: verify the plan's architecture HONORS it. A plan decision that **contradicts** a DC (e.g. design says "one dock, no side panels"; plan keeps a persistent side panel) is a **FAIL**, regardless of how well the rest of the plan reads. Do not accept a repo-derived rationalization ("the existing code has X") as justification for contradicting the design.
+- If the artifact contains working code (`.jsx`/`.tsx`/components) and the plan re-derives the behavior from scratch instead of **porting** those files, that is a FAIL — name the artifact components the plan should port.
+- A genuine impossibility must appear as an explicit `[DEVIATION: …]` surfaced to the user, NOT as a silently-rationalized decision. A silent deviation is a FAIL.
+
 ---
 
 ## Verdict
