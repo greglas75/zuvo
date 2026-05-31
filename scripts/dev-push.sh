@@ -108,20 +108,31 @@ ok "Marketplace updated → v${NEW_VERSION} (${NEW_SHA:0:7})"
 # ═══════════════════════════════════════
 cd "$ZUVO_DIR"
 PLUGINS_JSON="$HOME/.claude/plugins/installed_plugins.json"
+NEW_INSTALL_PATH="$HOME/.claude/plugins/cache/zuvo-marketplace/zuvo/${NEW_VERSION}"
 if [[ -f "$PLUGINS_JSON" ]]; then
+  # CRITICAL: update installPath + version, NOT just gitCommitSha. Claude Code
+  # loads hooks/skills from `installPath` — if only the SHA moves, the running
+  # plugin stays frozen at the OLD version dir (the 2026-05-31 bug where three
+  # watchdog releases never took effect because installPath stayed at 1.3.107
+  # while only gitCommitSha advanced). install.sh has already populated the new
+  # version dir by this point, so pointing installPath at it is safe.
   python3 -c "
 import json
 path = '$PLUGINS_JSON'
 sha = '$NEW_SHA'
+ver = '$NEW_VERSION'
+ipath = '$NEW_INSTALL_PATH'
 with open(path) as f:
     data = json.load(f)
 for name, entries in data.get('plugins', {}).items():
     if 'zuvo' in name.lower():
         for e in entries:
             e['gitCommitSha'] = sha
+            e['version'] = ver
+            e['installPath'] = ipath
 with open(path, 'w') as f:
     json.dump(data, f, indent=2)
-" 2>/dev/null && ok "installed_plugins.json SHA updated" || warn "Could not update installed_plugins.json"
+" 2>/dev/null && ok "installed_plugins.json updated → installPath+version+sha = v${NEW_VERSION}" || warn "Could not update installed_plugins.json"
 else
   warn "installed_plugins.json not found"
 fi

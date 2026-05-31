@@ -63,14 +63,19 @@ This does everything: version bump, commit, push, tag, marketplace SHA update. U
 | User first install | `claude plugin marketplace add greglas75/zuvo-marketplace && claude plugin install zuvo` |
 | User updates | `claude plugin marketplace update zuvo-marketplace && claude plugin update zuvo@zuvo-marketplace` |
 
-### Known gotcha: stale SHA after update
+### Known gotcha: stale `installPath` after update (ROOT CAUSE — fixed 2026-05-31)
 
-`claude plugin update` sometimes keeps a stale SHA in `installed_plugins.json`, causing skills to not load. If skills don't appear after update, do a clean reinstall:
+**Claude Code loads hooks + skills from the `installPath` field in `installed_plugins.json`, NOT from `gitCommitSha`.** The original `dev-push.sh` step 5 updated only `gitCommitSha` and left `installPath`/`version` frozen — so every "release" copied files into a new `cache/.../zuvo/<new-version>/` dir while Claude Code kept loading the OLD `<installPath>` dir. Symptom: new hooks/skills never take effect no matter how many restarts (the 2026-05-31 watchdog saga — three releases, zero hook firings, because `installPath` was stuck at 1.3.107 while `gitCommitSha` advanced to 1.3.111's commit).
+
+`dev-push.sh` now updates `installPath` + `version` + `gitCommitSha` together, so future releases are fixed. To check if it ever recurs:
 ```bash
-claude plugin uninstall zuvo@zuvo-marketplace
-claude plugin install zuvo
+python3 -c "import json; d=json.load(open('$HOME/.claude/plugins/installed_plugins.json')); [print(x['installPath'], x['version']) for n,e in d['plugins'].items() if 'zuvo' in n.lower() for x in e]"
 ```
-This is a Claude Code plugin cache bug, not a zuvo bug. It creates multiple cache directories (by version AND by SHA) and can get confused about which one to load.
+`installPath`/`version` must match the latest `cache/.../zuvo/<version>/` dir that holds your changes. If stale, re-run `dev-push.sh` or clean reinstall:
+```bash
+claude plugin uninstall zuvo@zuvo-marketplace && claude plugin install zuvo
+```
+Claude Code also creates multiple cache dirs (by version AND by SHA); `install.sh` syncs all of them, but `installPath` is the one that actually loads.
 
 ### What install.sh does
 
