@@ -1,6 +1,6 @@
 ---
 name: execute
-description: "Activated when an implementation plan exists. Executes plan tasks sequentially with enforced review gates, adversarial validation, and resumable session state."
+description: "Activated when an implementation plan exists. Executes plan tasks in dependency order (independent, non-same-file tasks may run in parallel batches) with enforced review gates, adversarial validation, and resumable session state."
 codesift_tools:
   always:
     - analyze_project
@@ -319,7 +319,9 @@ backlog-adds=1
 
 ## Execution Loop
 
-Process tasks in dependency order. If task B depends on task A, do not start B until A is marked completed.
+Process tasks in **dependency order**. If task B depends on task A (directly or transitively), do not start B until A is marked completed.
+
+**Parallel dispatch — when it is allowed (the definitive rule):** two or more tasks MAY be dispatched as ONE concurrent batch **iff** they are (1) **mutually independent** in the plan's dependency graph — neither depends on the other, directly or transitively — AND (2) touch **no production file in common** (lost-edit hazard; see Pre-loop guard "No parallel same-file tasks" + the plan's rule 13). If either condition fails, **serialize** them. A task that depends on an unfinished task is never in the batch; same-file tasks run one at a time even when otherwise independent. Each task in a parallel batch still runs the full per-task cycle (implementer → spec → quality → adversarial → acceptance → commit) and writes its own `execution-state.md` update. To find what's parallelizable for the remaining tasks: read the plan's dependency edges, group the ready (all-deps-completed) tasks, then drop any that share a production file with another in the group — what's left is the safe concurrent batch.
 
 **HARD CONTINUATION RULE (per `no-pause-protocol.md`):** After Step 9b (telemetry) of task N, IMMEDIATELY start task N+1. Do NOT estimate remaining wall-clock time, do NOT extrapolate session capacity, do NOT present A/B/C menus, do NOT ask "want me to continue?". The plan was approved at the entry gate — that approval covers ALL tasks. Only legitimate stops: BLOCKED_* states, all tasks terminal, or an explicit user "stop"/"pause"/"wystarczy".
 
