@@ -201,16 +201,21 @@ if changed:
     fi
   fi
 
-  # Remove old cache dirs (keep only current version)
-  # Claude Code creates a new dir per version but never cleans old ones.
-  # Old dirs cause PATH confusion (agent may load skills from wrong version).
-  local current_version="$VERSION"
+  # Remove old cache dirs but KEEP the 2 newest versions (current + the most-recent
+  # previous). A live session bakes CLAUDE_PLUGIN_ROOT to whatever version was current
+  # when it STARTED; deleting that dir mid-run 404s all its plugin hooks (the
+  # 2026-05-31 regression — releasing 1.3.112 while a 1.3.111 session was live broke
+  # its hooks with "Plugin directory does not exist"). Keeping the previous version
+  # lets that session run until the user restarts it onto the current one. Truly-stale
+  # dirs (2+ behind) still get cleaned to avoid version PATH confusion.
+  local keep_versions
+  keep_versions=$(ls -d "$CACHE_BASE"/*/ 2>/dev/null | xargs -n1 basename 2>/dev/null | sort -V | tail -2)
   for old_dir in "$CACHE_BASE"/*/; do
     local dir_name
     dir_name=$(basename "$old_dir")
-    if [[ "$dir_name" != "$current_version" ]]; then
+    if ! printf '%s\n' "$keep_versions" | grep -qx "$dir_name"; then
       rm -rf "$old_dir"
-      echo "  Removed old cache: $dir_name"
+      echo "  Removed old cache: $dir_name (kept current + previous)"
     fi
   done
 
