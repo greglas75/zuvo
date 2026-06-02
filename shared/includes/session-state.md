@@ -92,6 +92,8 @@ Written by `zuvo:execute` at startup. Passed to every agent dispatch.
 <!-- last-session-id: <session-id of the most recent session using this file> -->
 <!-- last-updated: <ISO-8601> -->
 
+repo_root: <absolute path of the tree this plan executes in — the targeted worktree, NOT necessarily the session CWD; resolved at execute's worktree pre-flight and passed to every sub-agent so multi-agent is path-safe>
+branch: <execution branch>
 stack: <detected stack>
 test-runner: <exact command, e.g. "npx vitest run">
 codesift-repo: <repo identifier or "unavailable">

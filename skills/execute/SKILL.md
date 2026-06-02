@@ -312,7 +312,7 @@ backlog-adds=1
 
 ## Pre-loop guards (run once before the first task)
 
-- **Worktree / shared-tree pre-flight.** Before opening the plan, run `git worktree list`. If the CWD is the MAIN checkout but the plan was authored against a feature branch in a worktree (or vice-versa), or another worktree shares this branch, STOP and resolve which tree to execute in — running tasks in the wrong tree silently splits the work. (Pairs with `zuvo:worktree`.)
+- **Worktree / shared-tree pre-flight — RESOLVE `repo_root`, don't bail to single-agent.** Run `git worktree list`. Determine the ONE tree this plan targets (the worktree checked out on the plan's `branch:`, else the current checkout), set `repo_root` to its absolute path, and **store it in `project-context.md`** so every sub-agent dispatch (Step 2) and the resume path get the same root. Sub-agents then `cd $repo_root` + use absolute paths, so **multi-agent runs correctly even when the session CWD is the main checkout and the work lives in a worktree** — you do NOT need a worktree-rooted session and you do NOT drop to single-agent for this. STOP (ask the user) ONLY on genuine ambiguity: the plan's branch is checked out in **two** worktrees, or in **none** (can't locate the tree). Otherwise resolve and proceed. (Pairs with `zuvo:worktree`.)
 - **Baseline test snapshot.** Run the suite ONCE at session start and record which tests are already red (`baseline-failures: [...]` in `execution-state.md`). Per-task verification then compares against this baseline — a test that was red before your change is a pre-existing failure to backlog, NOT a regression to re-investigate every task.
 - **No parallel same-file tasks.** If you ever batch task dispatch, never run two tasks that touch the SAME production file concurrently (lost-edit hazard) — the plan's rule 13 should already have serialized them; if it did not, serialize here.
 - **DB integration tasks.** For a task that changes schema, generate the migration via `migrate diff` / hand-written SQL applied with `psql` against a clean DB — NEVER `migrate dev` against a drifted local DB (it silently rewrites history / drops data). Verify the migration applies forward AND the rollback is present.
@@ -420,6 +420,7 @@ Dispatch per environment:
 The cross-model ADVERSARIAL pass (Step 7b: codex/gemini/cursor) is independent of this and always runs regardless of the sub-agent model — so forcing Opus on the in-house agents does NOT cost you review diversity.
 
 **Provide to the agent:**
+- **The absolute working root (`repo_root`) and this hard instruction: "Operate ONLY under `<repo_root>`. `cd <repo_root>` before every Bash command; use absolute paths (under `<repo_root>`) for every Read/Edit/Write. Do not touch files outside it."** This is what makes multi-agent **path-safe regardless of the orchestrator's CWD** — a dispatched sub-agent inherits the session CWD, so without this it would edit the wrong tree when the plan targets a worktree the session isn't rooted in. `repo_root` is resolved once at the worktree pre-flight (below) and stored in `project-context.md`; pass it verbatim. **Worktree is NOT a reason to drop to single-agent** — pass `repo_root` and stay multi-agent.
 - The full task spec from the plan (RED/GREEN/Verify/Commit steps)
 - The content of `rules/cq-patterns.md`
 - The content of the detected stack rules file
