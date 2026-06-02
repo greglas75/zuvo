@@ -556,7 +556,7 @@ adversarial-review --rotate --mode test \
 
 **Always use absolute paths for --files.** Relative paths fail silently.
 
-**Capture full output — never tail/head as the triage source.** Redirect the run to a file (`adversarial-review ... > .zuvo/review.txt 2>&1`) and read it whole before triaging. NEVER pipe the adversarial output through `tail`/`head` to decide findings — truncation silently drops findings (a pass-2 CRITICAL was lost to `tail -60`). `tail` is allowed only for a quick human glance, never as the source of the verdict.
+**Capture full output — never tail/head as the triage source.** Redirect the run to a file (`adversarial-review ... > zuvo/review.txt 2>&1`) and read it whole before triaging. NEVER pipe the adversarial output through `tail`/`head` to decide findings — truncation silently drops findings (a pass-2 CRITICAL was lost to `tail -60`). `tail` is allowed only for a quick human glance, never as the source of the verdict.
 
 The provider sees both files and focuses on gaps between production behavior and test coverage. Without production code, reviewer can't detect missing ordering tests, auth boundary gaps, or untested error messages.
 
