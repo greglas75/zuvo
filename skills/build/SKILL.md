@@ -374,7 +374,7 @@ FORBIDDEN: files outside these lists, unrelated improvements, opportunistic refa
   - Surface: [backend-logic | api | db | db-data | ui | integration | config | docs]
   - Proof: [exact procedure — command, HTTP call, DB query, browser interaction]
   - Expected: [exit code, response shape, DOM state, screenshot match]
-  - Artifact: `.zuvo/proofs/build-<short-slug>-AP1.<ext>`
+  - Artifact: `zuvo/proofs/build-<short-slug>-AP1.<ext>`
 - AP2 — ...
 
 [For configuration-only or pure-refactor builds with no user-observable behavior change, write "Not applicable — pure refactor / config; behavior unchanged" with one-line justification.]

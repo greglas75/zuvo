@@ -1,6 +1,6 @@
 # Benchmark Output Schema
 
-This document defines the JSON schema for the **final benchmark report** written by the `zuvo:benchmark` skill to `audit-results/benchmark-NNN-<run_id>.json`.
+This document defines the JSON schema for the **final benchmark report** written by the `zuvo:benchmark` skill to `zuvo/reports/benchmark-NNN-<run_id>.json`.
 
 > **Note:** `scripts/benchmark.sh` produces an intermediate raw JSON (`providers_raw` array) that does NOT conform to this schema. The skill orchestrator (SKILL.md) reads the raw output and assembles the final schema-conformant document including leaderboard, scorecards, and meta-judge fields.
 

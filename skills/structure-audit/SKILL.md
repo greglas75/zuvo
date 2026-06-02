@@ -137,7 +137,7 @@ Copy the printed `[CodeSift matching trace]` block verbatim and issue the printe
 
 After the audit report is written and the Validity Gate block is printed, the audit is **NOT complete** until:
 
-1. `audit-results/structure-audit-<date>.md` (or `audits/structure-audit-<date>.md`) is on disk.
+1. `zuvo/audits/structure-audit-<date>.md` is on disk — at the **project root** (`zuvo/` resolves via `git rev-parse --show-toplevel`; override `$ZUVO_OUTPUT_DIR`. See `../../shared/includes/report-output-location.md`).
 2. `~/.zuvo/append-runlog` is called with the Run line — this triggers BOTH gates:
    - **retro-gate**: requires a matching `RETRO:` entry in `~/.zuvo/retros.log` for `skill=structure-audit project=<this>`. If missing → exit 2, runs.log NOT appended. Load `retrospective.md`, fill 9 fields, run the bash append commands, then re-run `append-runlog`.
    - **audit-content gate**: runs `~/.zuvo/verify-audit` on the report. Every finding section must contain at least one `path/to/file.ext:LINE` citation that resolves in the current tree. Findings without citations get rejected. If rejected → fix the report (add file:line per finding), re-run `append-runlog`.
@@ -253,7 +253,7 @@ Dimensions: [which SA dimensions will run]
 
 ## Phase 1: Tool Execution
 
-Run external tools. Save all outputs to `./audit-results/structure-audit-{YYYY-MM-DD}/`.
+Run external tools. Save all outputs to `zuvo/audits/structure-audit-{YYYY-MM-DD}/`.
 
 **Skip if:** `--quick` mode (SA9/SA10/SA13 = N/A), LIMITED/NO-CODE mode, or code density < 10.
 
@@ -308,7 +308,7 @@ find_clones(repo, min_similarity=0.7, file_pattern="*.{ts,tsx}")
 tr '\n' '\0' < "$CODE_DIR_LIST" | xargs -0 npx --yes jscpd \
   --min-lines 10 --reporters json \
   --ignore "**/node_modules/**,**/dist/**,**/*.md,**/*.json" \
-  --output ./audit-results/
+  --output zuvo/audits/
 ```
 **Verify output:** check `statistics.total.sources > 0` in JSON.
 
@@ -549,7 +549,7 @@ debt_ratio = remediation_minutes / (total_LOC * 30)
 mkdir -p audit-results
 ```
 
-Save to: `audit-results/structure-audit-YYYY-MM-DD.md`
+Save to: `zuvo/audits/structure-audit-YYYY-MM-DD.md` — at the **project root** (`zuvo/` resolves via `git rev-parse --show-toplevel`; override `$ZUVO_OUTPUT_DIR`. See `../../shared/includes/report-output-location.md`).
 
 ### 5.3 Backlog Integration
 
@@ -601,7 +601,7 @@ COMPLETION GATE CHECK
 [ ] SA6 fitness functions ran
 [ ] SA7 file size uses cloc data with category classification
 [ ] Critical gates printed: SA6, SA7, SA8
-[ ] Report saved to audit-results/
+[ ] Report saved to zuvo/audits/
 [ ] Run: line printed and appended to log
 ```
 

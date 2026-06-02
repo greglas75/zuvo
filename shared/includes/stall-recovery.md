@@ -22,7 +22,7 @@ The cron/heartbeat machinery below is now **secondary**: it adds *granular* resu
 
 A markdown skill **cannot revive its own dead turn.** When the API errors mid-run, the agent loop is gone — no instruction in this file can run. The thing that re-fires MUST be the **harness** — the `StopFailure` hook above, or (secondary) a cron. So cron-based recovery has two halves, and BOTH are required:
 
-1. **Resumability** — a re-fire must *continue from saved state*, never restart from zero. `execute` has this (`.zuvo/context/execution-state.md`, per-task). A skill with no per-step state file resumes *from the beginning* — acceptable only for idempotent read-then-report skills (audits); never wire a destructive non-resumable skill here.
+1. **Resumability** — a re-fire must *continue from saved state*, never restart from zero. `execute` has this (`zuvo/context/execution-state.md`, per-task). A skill with no per-step state file resumes *from the beginning* — acceptable only for idempotent read-then-report skills (audits); never wire a destructive non-resumable skill here.
 2. **The 3-minute watchdog** — a self-armed cron (this file). On runtimes with no scheduler (Codex / Cursor), it degrades to printing a `/loop 3m` instruction the user can run.
 
 **Why a cron is safe against false resumes (the key insight):** a Claude Code cron fires **only while the REPL is idle**. While a task is genuinely running — even a 10-minute adversarial pass with a sub-agent in flight — the REPL is *busy*, so the watchdog **does not fire**. It fires only once the turn has ended. If the turn ended cleanly we already disarmed; if it ended on an error, the run is unfinished and idle — exactly the stall we want to catch. The staleness threshold (below) is belt-and-suspenders on top of this.
@@ -33,7 +33,7 @@ A markdown skill **cannot revive its own dead turn.** When the API errors mid-ru
 
 A dedicated file, refreshed (rewritten) after **every** action/task the skill completes. Its **mtime** is the "last action" clock; its `status:` line is the terminal signal.
 
-Path: `.zuvo/context/<skill>.heartbeat` (e.g. `.zuvo/context/execute.heartbeat`). Lives under `.zuvo/` → already git-ignored.
+Path: `zuvo/context/<skill>.heartbeat` (e.g. `zuvo/context/execute.heartbeat`). Lives under `zuvo/` → already git-ignored.
 
 Format:
 
@@ -92,7 +92,7 @@ Run exactly: <WD> "<HB>" 150
 Read the FIRST output line:
 - DONE  → the run finished or was deliberately halted. Call CronList, find the job whose prompt contains "<TAG>", and CronDelete it. Then stop — output nothing else.
 - ALIVE → the run is still progressing. Do nothing at all. Do NOT delete the cron.
-- RESUME → the turn died (API error / rate-limit / socket closed) and the run is unfinished. The SECOND output line is the resume command (e.g. "zuvo:execute"). Invoke that skill now via the Skill tool to resume from its saved state in .zuvo/context/. Do not re-plan, do not ask — just resume.
+- RESUME → the turn died (API error / rate-limit / socket closed) and the run is unfinished. The SECOND output line is the resume command (e.g. "zuvo:execute"). Invoke that skill now via the Skill tool to resume from its saved state in zuvo/context/. Do not re-plan, do not ask — just resume.
 ```
 
 5. Record the cron id into the heartbeat (`cron_id:`) so disarm is exact:

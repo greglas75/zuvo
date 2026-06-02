@@ -135,7 +135,7 @@ For each documentation file whose corresponding source files changed:
 3. **Iron rule:** Every documentation claim added or modified must reference a source file (file path, function name, or line reference). If `zuvo:docs` produces a claim without traceable evidence, flag it and request a correction before accepting the update.
 
    Write the evidence trail to:
-   `audit-results/release-docs-sources-<range-suffix>.md`
+   `zuvo/reports/release-docs-sources-<range-suffix>.md`
 
    Use one line per claim in this format:
    - `<doc-file>` → `<claim summary>` → `<source-file:line>` or `<source-file:function>`
@@ -168,7 +168,7 @@ RELEASE-DOCS COMPLETE
   Docs updated: <list of doc files updated, or "none">
   Docs skipped: <list of known doc files (from docs-map/frontmatter) with no source changes, or "—" if no mapping exists>
   Debt found:   N file(s) (<list of undocumented files>) / none
-  Evidence:     audit-results/release-docs-sources-<range-suffix>.md
+  Evidence:     zuvo/reports/release-docs-sources-<range-suffix>.md
   Verdict:      PASS
 ```
 

@@ -105,9 +105,10 @@ This does: version bump → commit → push → tag → update marketplace SHA �
 ```
 skills/<name>/SKILL.md          — skill definitions (51 total)
 skills/<name>/agents/<name>.md  — sub-agent instructions (28 agents)
-shared/includes/*.md            — shared procedural includes (36 files):
+shared/includes/*.md            — shared procedural includes (37 files):
                                     knowledge-prime.md, knowledge-curate.md (knowledge store)
                                     session-state.md (session recovery)
+                                    report-output-location.md (canonical zuvo/ output dir)
                                     severity-vocabulary.md (unified severity mapping)
                                     adversarial-loop.md, adversarial-loop-docs.md (evidence enforcement)
                                     quality-gates.md, env-compat.md, codesift-setup.md, run-logger.md
@@ -135,6 +136,30 @@ Every SKILL.md follows this structure:
 7. Run log append via `../../shared/includes/run-logger.md`
 
 Reference: `skills/build/SKILL.md` is the canonical template.
+
+## Output location convention (where reports/state are written)
+
+**Single source of truth: `shared/includes/report-output-location.md`.** All project-local
+zuvo output goes into ONE visible folder at the **project root**, never scattered into a
+scoped subfolder:
+
+```
+ZUVO_DIR="${ZUVO_OUTPUT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)/zuvo}"
+```
+
+- `zuvo/audits/` — all `*-audit` reports (`.md` + `.json`), incl. seo/geo/content/a11y/design-review/architecture-review
+- `zuvo/reports/` — non-audit outputs: canary, content-migration, benchmark, agent-benchmark, retro, release-docs
+- `zuvo/plans/`, `zuvo/contracts/`, `zuvo/context/` — pipeline state (plan/build/execute/refactor/review)
+- `zuvo/project-profile.json` — project profile (read by `hooks/session-start`)
+
+Anchored to git root (not `$PWD`/scope), **visible** (not hidden `.zuvo/`, which is invisible
+in macOS Finder), overridable via `$ZUVO_OUTPUT_DIR`. Readers (`~/.zuvo/append-runlog`,
+`hooks/pre-commit-adversarial-gate.sh`, fix skills) check `zuvo/` first, then fall back to the
+legacy `audits/`, `audit-results/`, and `.zuvo/` locations for projects mid-migration.
+
+Distinct and unaffected: `~/.zuvo/` (HOME — global `runs.log`, `retros.*`, helper binaries)
+and `docs/` (human-authored README/ADR/runbook/spec docs). When adding a report-writing skill,
+load `report-output-location.md` and write under `$ZUVO_DIR/{audits,reports}/`.
 
 ## Skill categories (51 total)
 

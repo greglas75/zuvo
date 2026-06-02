@@ -1,14 +1,14 @@
 # Session State
 
 Persist execution progress so sessions can resume after context compaction, crashes, or interruption.
-State files live in `.zuvo/context/` in the project root. They are local runtime state — never committed.
+State files live in `zuvo/context/` in the project root. They are local runtime state — never committed.
 For `zuvo:execute`, rewriting state after each successful commit is a blocking durability step, not a best-effort note.
 
 ---
 
 ## State Files
 
-### `.zuvo/context/execution-state.md`
+### `zuvo/context/execution-state.md`
 
 Written by `zuvo:execute` immediately after each successful task commit. The primary source of truth for resume.
 If this file is not rewritten, the task is not durably complete.
@@ -81,7 +81,7 @@ Track retries per task per stage: `task-N.spec-review`, `task-N.quality-review`,
 
 ---
 
-### `.zuvo/context/project-context.md`
+### `zuvo/context/project-context.md`
 
 Written by `zuvo:execute` at startup. Passed to every agent dispatch.
 
@@ -118,7 +118,7 @@ codesift-repo: <repo identifier or "unavailable">
 
 ---
 
-### `.zuvo/plans/active-plan.md`
+### `zuvo/plans/active-plan.md`
 
 Written by `zuvo:plan` after user approval. Used only for fresh-start plan discovery.
 
@@ -155,7 +155,7 @@ If `execution-state.md` (in-progress) and `active-plan.md` point to **different 
 **Step 1: Check for execution-state.md**
 
 ```
-Read(".zuvo/context/execution-state.md")
+Read("zuvo/context/execution-state.md")
 ```
 
 If missing → skip to Step 3.
@@ -195,7 +195,7 @@ Run all checks. If ANY check fails: mark state as stale and start fresh.
 2. Print:
    ```
    [SESSION] Stale state detected — <specific reason>.
-             Renamed to .zuvo/context/execution-state.stale for diagnosis.
+             Renamed to zuvo/context/execution-state.stale for diagnosis.
              Starting fresh.
    ```
 3. Proceed to Step 3.
@@ -216,7 +216,7 @@ Resuming from Task <next-task>. Completed tasks will be skipped.
 
 Load:
 - Plan from `state.plan` (skip Glob). **Ignore `active-plan.md` entirely on valid resume** — execution-state.md is the sole source of truth.
-- Stack/test-runner from `.zuvo/context/project-context.md` (if missing or malformed: re-detect, do not fail).
+- Stack/test-runner from `zuvo/context/project-context.md` (if missing or malformed: re-detect, do not fail).
 - Retry counts from `## Retry Counts`.
 - **Retro carry (one RUN ⇒ one retro):** if `retro-session-id` is set, the
   resuming run **inherits it unchanged** (do NOT regenerate from the new
@@ -234,7 +234,7 @@ Load:
 **Step 3: Check active-plan.md (fresh start only)**
 
 ```
-Read(".zuvo/plans/active-plan.md")
+Read("zuvo/plans/active-plan.md")
 ```
 
 If exists and `status: pending`: use `plan:` field. Skip Glob.
@@ -253,7 +253,7 @@ session-id: exec-<YYYYMMDD>-<HHMM>
 ```
 Example: `exec-20260407-1423`
 
-**Write `.zuvo/context/execution-state.md`:**
+**Write `zuvo/context/execution-state.md`:**
 - `session-id`: generated above
 - `started-at`: now (ISO-8601)
 - `status: in-progress`
@@ -261,19 +261,19 @@ Example: `exec-20260407-1423`
 - `completed: []`, `skipped: []`, `blocked: []`
 - `next-task`: set to the lowest task number in the plan (usually 1, but do not hardcode)
 
-**Write/update `.zuvo/context/project-context.md`:**
+**Write/update `zuvo/context/project-context.md`:**
 - Update `last-session-id` to current session
 - Update `last-updated`
 - Keep existing `## Completed Work Units` and `## Active Concerns` (accumulate across sessions)
 - Update `stack`, `test-runner`, `codesift-repo` (re-detect fresh)
 
-**Update `.zuvo/plans/active-plan.md`:**
+**Update `zuvo/plans/active-plan.md`:**
 - Set `status: in-progress`
 
-**Ensure `.zuvo/` in `.gitignore`:** Check `.gitignore`; if `.zuvo/` not present, append:
+**Ensure `zuvo/` in `.gitignore`:** Check `.gitignore`; if `zuvo/` not present, append:
 ```
 # zuvo session state (local runtime, not committed)
-.zuvo/
+zuvo/
 ```
 
 ---
@@ -282,14 +282,14 @@ Example: `exec-20260407-1423`
 
 **After Step 9 (successful commit):**
 
-Rewrite `.zuvo/context/execution-state.md` (full rewrite — never append):
+Rewrite `zuvo/context/execution-state.md` (full rewrite — never append):
 - Add task number to `completed[]`
 - Update `next-task` to lowest PENDING task (lowest number not in completed/skipped/blocked)
 - Update `last-updated`
 - Update `branch` if the session intentionally continued on a different branch than the previous task
 - Append to `## Files Changed`: `- <file> (Task <N>, commit <sha7>)` for each changed file
 
-Append to `.zuvo/context/project-context.md` → `## Completed Work Units`:
+Append to `zuvo/context/project-context.md` → `## Completed Work Units`:
 ```
 - Task <N>: "<name>" [<sha7>] — <comma-separated files>
 ```
@@ -325,10 +325,10 @@ Trim to 10 entries (remove oldest INFO first).
 
 ## WRITE Protocol (plan — after approval)
 
-After user approves the plan, write `.zuvo/plans/active-plan.md`:
+After user approves the plan, write `zuvo/plans/active-plan.md`:
 
 ```bash
-mkdir -p .zuvo/plans
+mkdir -p zuvo/plans
 ```
 
 Fields: `plan`, `spec_id`, `tasks`, `approved` (timestamp), `status: pending`.

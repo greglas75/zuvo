@@ -30,10 +30,14 @@ if [ "$RESPONSE_PROTOCOL_MODE_NORMALIZED" != "off" ] && [ -f "$PROTOCOL_FILE" ];
 fi
 
 # ---------------------------------------------------------------------------
-# Read project profile if it exists (.zuvo/project-profile.json)
+# Read project profile if it exists (zuvo/project-profile.json)
 # ---------------------------------------------------------------------------
-# CWD is the user's project directory (Claude Code sets this)
-PROFILE_FILE="${PWD}/.zuvo/project-profile.json"
+# CWD is the user's project directory (Claude Code sets this). Resolve the
+# canonical zuvo dir (see shared/includes/report-output-location.md), then fall
+# back to the legacy hidden .zuvo/ location for projects not yet migrated.
+ZUVO_DIR="${ZUVO_OUTPUT_DIR:-$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || echo "$PWD")/zuvo}"
+PROFILE_FILE="${ZUVO_DIR}/project-profile.json"
+[ -f "$PROFILE_FILE" ] || PROFILE_FILE="${PWD}/.zuvo/project-profile.json"
 profile_content=""
 if [ -f "$PROFILE_FILE" ]; then
     # Extract summary fields only (not the full JSON — that can be 100KB+)
@@ -52,7 +56,7 @@ try:
     conv_keys = [k for k in p if k.endswith('_conventions') or k == 'conventions']
     conv_summary = ', '.join(conv_keys) if conv_keys else 'none'
     lines = [
-        'PROJECT PROFILE (.zuvo/project-profile.json):',
+        'PROJECT PROFILE (zuvo/project-profile.json):',
         f'  Framework: {s.get(\"framework\", \"unknown\")} {s.get(\"framework_version\", \"\")}',
         f'  Language: {s.get(\"language\", \"unknown\")}',
         f'  Test runner: {s.get(\"test_runner\", \"unknown\")}',
@@ -67,7 +71,7 @@ try:
     if dh:
         lines.append(f'  Dependencies: {dh.get(\"total\", 0)} ({dh.get(\"prod\", 0)} prod, {dh.get(\"dev\", 0)} dev)')
     lines.append('')
-    lines.append('For full profile data, read .zuvo/project-profile.json')
+    lines.append('For full profile data, read zuvo/project-profile.json')
     print('\n'.join(lines))
 except Exception as e:
     print(f'Profile load error: {e}')

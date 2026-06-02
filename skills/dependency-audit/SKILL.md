@@ -116,7 +116,7 @@ If any file is MISSING, STOP. Do not proceed from memory.
 
 ## Safety Gate
 
-This audit is **read-only**. The only write target is `audits/`. Do not
+This audit is **read-only**. The only write target is `zuvo/audits/`. Do not
 install, uninstall, or modify any dependency. Do not run `npm audit fix` or
 equivalent automatically.
 
@@ -405,7 +405,7 @@ INHERITED from both numerator and denominator.
 
 ## Phase 4: Report
 
-Save to: `audits/dependency-audit-[YYYY-MM-DD].md`
+Save to: `zuvo/audits/dependency-audit-[YYYY-MM-DD].md` — at the **project root** (`zuvo/` resolves via `git rev-parse --show-toplevel`; override `$ZUVO_OUTPUT_DIR`. See `../../shared/includes/report-output-location.md`).
 
 **REQUIRED:** emit the Tool Availability Block (template in `../../shared/includes/codesift-setup.md`) at the top of the report, after the title and before findings. Auditing degraded runs depends on this — do NOT skip it.
 
@@ -508,7 +508,7 @@ COMPLETION GATE CHECK
 [ ] D6 circular dependency detection ran
 [ ] Critical gates printed: D1, D4, D6, D8
 [ ] "Delete These Tomorrow" section present
-[ ] Report saved to audits/
+[ ] Report saved to zuvo/audits/
 [ ] Run: line printed and appended to log
 ```
 

@@ -218,7 +218,7 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 
 After the audit report is written, the audit is **NOT complete** until:
 
-1. `audits/code-quality-audit-<date>.md` (or `audits/code-audit-<date>.md`) is on disk.
+1. `zuvo/audits/code-quality-audit-<date>.md` (or `zuvo/audits/code-audit-<date>.md`) is on disk — at the **project root** (`zuvo/` resolves via `git rev-parse --show-toplevel`; override `$ZUVO_OUTPUT_DIR`. See `../../shared/includes/report-output-location.md`).
 2. `~/.zuvo/append-runlog` is called with the Run line — this triggers BOTH:
    - **retro-gate**: requires a matching `RETRO:` entry in `~/.zuvo/retros.log` for `skill=code-audit project=<this>`. If missing → exit 2, runs.log NOT appended.
    - **audit-content gate**: runs `~/.zuvo/verify-audit` on the report. Every Tier D/C finding (and every Tier B critical-gate-near-miss) must contain at least one `path/to/file.ext:LINE` citation that resolves in the current tree. Findings without citations get rejected. If rejected → fix the report (add file:line per finding), re-run `append-runlog`.
@@ -573,7 +573,7 @@ Add findings under a `## Cross-File Issues` section.
 After the audit report is generated, run cross-model validation to catch score inflation and gate inconsistency. Runs on ALL audits (not just --deep).
 
 ```bash
-adversarial-review --mode audit --files "audits/code-quality-audit-[date].md"
+adversarial-review --mode audit --files "zuvo/audits/code-quality-audit-[date].md"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
@@ -585,8 +585,8 @@ Wait for complete output. Then:
 
 ## Phase 4: Report and Execution Plan
 
-Save the report to: `audits/code-quality-audit-[date].md`
-If `--deep` mode: also save per-file detail to `audits/code-audit-details/[filename].md`
+Save the report to: `zuvo/audits/code-quality-audit-[date].md`
+If `--deep` mode: also save per-file detail to `zuvo/audits/code-audit-details/[filename].md`
 
 ### Execution Plan (appended to report)
 
@@ -628,7 +628,7 @@ COMPLETION GATE CHECK
 [ ] Global error handler detection ran
 [ ] Adversarial review ran on audit report (--mode audit)
 [ ] Cross-file analysis section present
-[ ] Report saved to audits/
+[ ] Report saved to zuvo/audits/
 [ ] Backlog updated for deferred findings
 [ ] Run: line printed and appended to log
 ```

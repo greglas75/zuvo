@@ -179,7 +179,7 @@ Discovery scripts >20 lines: save to file, `chmod +x`, execute. No long inline s
 
 ### GATE 4 -- Tool Scope
 
-This audit is read-only against production code. Sole write target: `audits/`. Forbidden: modifying source files, sending requests to production, installing packages, running DB mutations.
+This audit is read-only against production code. Sole write target: `zuvo/audits/`. Forbidden: modifying source files, sending requests to production, installing packages, running DB mutations.
 
 ---
 
@@ -300,7 +300,7 @@ rg "NEXT_PUBLIC_.*KEY|NEXT_PUBLIC_.*SECRET|VITE_.*KEY|VITE_.*SECRET" --type ts -
 ### 2.1 Semgrep (if available)
 
 ```bash
-semgrep --config auto --json --output audits/artifacts/security/semgrep.json . 2>/dev/null
+semgrep --config auto --json --output zuvo/audits/artifacts/security/semgrep.json . 2>/dev/null
 ```
 
 Parse results, cross-reference with confidence model, deduplicate against grep findings.
@@ -642,8 +642,8 @@ Always show both scores in Executive Summary.
 
 ### 10.2 Write Report
 
-Save to: `audits/security-audit-[date].md`
-Artifacts to: `audits/artifacts/security/`
+Save to: `zuvo/audits/security-audit-[date].md` — at the **project root** (`zuvo/` resolves via `git rev-parse --show-toplevel`; override `$ZUVO_OUTPUT_DIR`. See `../../shared/includes/report-output-location.md`).
+Artifacts to: `zuvo/audits/artifacts/security/`
 
 Report includes: metadata, threat model, executive summary, dimension scores (S1-S14), auth matrix, top 3 attack paths, all findings (grouped CRITICAL -> HIGH -> MEDIUM -> Needs Verification), dependency vulnerabilities, infrastructure findings, defense gap analysis, remediation roadmap (immediate / short-term / medium-term / long-term).
 
@@ -708,7 +708,7 @@ COMPLETION GATE CHECK
 [ ] Adversarial security review ran (--mode security)
 [ ] Report validation ran: count consistency and score math verified
 [ ] S15 AI/LLM section present or explicitly N/A with evidence
-[ ] Report saved to audits/
+[ ] Report saved to zuvo/audits/
 [ ] Run: line printed and appended to log
 ```
 

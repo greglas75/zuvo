@@ -129,7 +129,7 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 This audit is read-only against source code.
 
 **Allowed write targets:**
-- `audit-results/` for the report file (`.md` and `.json`)
+- `zuvo/audits/` for the report file (`.md` and `.json`)
 - `memory/backlog.md` only when `--persist-backlog` is explicitly enabled
 
 **FORBIDDEN:**
@@ -244,7 +244,7 @@ CMS_DETECTED = [wordpress | contentful | sanity | strapi | prismic | none]
 
 Import overlapping findings from the most recent seo-audit JSON output to avoid re-auditing what seo-audit already checked.
 
-1. Scan `audit-results/` for `seo-audit-*.json` files
+1. Scan `zuvo/audits/` for `seo-audit-*.json` files
 2. If found, select the file with the lexicographically greatest filename (ISO date + optional `-N` suffix ensures correct ordering)
 3. Extract findings with `layer: geo` from dimensions D3, D5, D9, D10. Also extract `critical_gates.CG5` status from the JSON root object (CG5 is a gate value, not a dimension finding -- handled separately).
 4. Map to geo-audit dimensions:
@@ -538,7 +538,7 @@ Fix any discrepancies before presenting to user.
 After the audit report is generated, run cross-model validation to catch score inflation and gate inconsistency. Runs on ALL audits.
 
 ```bash
-adversarial-review --mode audit --files "audit-results/geo-audit-[date].md"
+adversarial-review --mode audit --files "zuvo/audits/geo-audit-[date].md"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
@@ -649,7 +649,7 @@ Advisory:            [N] findings -- no fix template
 mkdir -p audit-results
 ```
 
-Save to: `audit-results/geo-audit-YYYY-MM-DD.md`
+Save to: `zuvo/audits/geo-audit-YYYY-MM-DD.md` — at the **project root** (`zuvo/` resolves via `git rev-parse --show-toplevel`; override `$ZUVO_OUTPUT_DIR`. See `../../shared/includes/report-output-location.md`).
 
 Auto-increment if a report for today already exists: `geo-audit-YYYY-MM-DD-2.md`, `geo-audit-YYYY-MM-DD-3.md`, etc.
 
@@ -659,7 +659,7 @@ Before generating JSON, read `../../shared/includes/audit-output-schema.md` for 
 
 After saving the markdown report, also save structured JSON findings for downstream consumption by `zuvo:geo-fix` and CI pipelines.
 
-**File:** `audit-results/geo-audit-YYYY-MM-DD.json`
+**File:** `zuvo/audits/geo-audit-YYYY-MM-DD.json`
 
 Auto-increment with `-N` suffix if same-day file exists (same convention as `.md`).
 

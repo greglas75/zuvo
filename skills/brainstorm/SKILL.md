@@ -416,7 +416,7 @@ Every AC has an inline **Proof** sub-bullet — a deterministic procedure (or in
   - Surface: `backend-logic | api | db | db-data | ui | integration | config | docs`
   - Proof: <command, interaction, or measurement that exhibits the behavior>
   - Expected: <what success looks like — exit code, response shape, DOM state, screenshot match>
-  - Artifact: `.zuvo/proofs/<task-or-AC-id>.<ext>`
+  - Artifact: `zuvo/proofs/<task-or-AC-id>.<ext>`
 - **AC2 — ...**
   - Surface: ...
   - Proof: ...
@@ -442,7 +442,7 @@ Every AC has an inline **Proof** sub-bullet — a deterministic procedure (or in
   - Preconditions: <fixtures, env vars, seeded data>
   - Proof: <full end-to-end script that drives the flow>
   - Expected: <invariants the entire flow must preserve — e.g., "exported HTML matches imported HTML byte-for-byte except for translated text spans">
-  - Artifact: `.zuvo/proofs/smoke-<flow-name>.<ext>`
+  - Artifact: `zuvo/proofs/smoke-<flow-name>.<ext>`
 - **SMOKE2 — ...**
 
 If the spec describes only an internal subsystem with no end-user flow (e.g., a refactor), state "Not applicable — no main user flow; per-task proofs cover all behavior." and document why no smoke is needed.

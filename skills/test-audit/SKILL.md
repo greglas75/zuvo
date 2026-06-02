@@ -63,7 +63,7 @@ Systematic evaluation of unit and integration test files through the Q1-Q19 bina
 | `--deep` | Collect evidence and fix recommendations for every file |
 | `--quick` | Binary pass/fail only, skip evidence |
 | `--include-e2e` | Include E2E test files in scope |
-| `--details` | Save per-file reports to `audits/test-audit-details/` |
+| `--details` | Save per-file reports to `zuvo/audits/test-audit-details/` |
 | `--commit=ask\|auto\|off` | Commit behavior after fix workflow (default: `ask`) |
 
 Default: `all --quick --commit=ask`
@@ -189,7 +189,7 @@ If this is the first audit of a project or agent scores seem inconsistent:
 ### 0.5 Batch Output Directory
 
 ```bash
-mkdir -p audits/.test-audit-batch
+mkdir -p zuvo/audits/.test-audit-batch
 ```
 
 Each batch agent writes results here. Cleaned up after the final report.
@@ -341,7 +341,7 @@ IMPORTANT:
 - Q15 API ROUTE CALIBRATION: Status code checks, error body checks, response field checks, auth guard verification all count as Q15=1 for API routes.
 - AP21 CALIBRATION: `.mock.calls[N]` = fragile (AP21). `.toHaveBeenNthCalledWith(N, ...)` = Jest API, not AP21.
 
-Write complete output to: audits/.test-audit-batch/batch-{N}.md
+Write complete output to: zuvo/audits/.test-audit-batch/batch-{N}.md
 
 Files to audit:
 [BATCH FILE LIST]
@@ -351,9 +351,9 @@ Files to audit:
 
 ## Phase 2: Aggregate Results
 
-Read all batch files from `audits/.test-audit-batch/`:
+Read all batch files from `zuvo/audits/.test-audit-batch/`:
 
-1. Glob for `audits/.test-audit-batch/batch-*.md`
+1. Glob for `zuvo/audits/.test-audit-batch/batch-*.md`
 2. Parse summary tables for tier counts
 3. Parse per-file blocks for detailed analysis
 4. If any batch file is missing (agent failure), log the gap
@@ -409,13 +409,13 @@ Total tests: [count from test runner]
 ## Tier A -- No Action
 ```
 
-Save to: `audits/test-quality-audit-[date].md`
-If `--details` flag: also save per-file reports to `audits/test-audit-details/`
+Save to: `zuvo/audits/test-quality-audit-[date].md` — at the **project root** (`zuvo/` resolves via `git rev-parse --show-toplevel`; override `$ZUVO_OUTPUT_DIR`. See `../../shared/includes/report-output-location.md`).
+If `--details` flag: also save per-file reports to `zuvo/audits/test-audit-details/`
 
 ## Phase 3: Cleanup Batch Files
 
 ```bash
-rm -rf audits/.test-audit-batch
+rm -rf zuvo/audits/.test-audit-batch
 ```
 
 ## Phase 3b: Adversarial Review on Audit Report (MANDATORY — do NOT skip)
@@ -423,7 +423,7 @@ rm -rf audits/.test-audit-batch
 After the audit report is generated, run cross-model validation to catch Q-score inflation and coverage theater. Runs on ALL audits (not just --deep).
 
 ```bash
-adversarial-review --mode tests --files "audits/test-quality-audit-[date].md"
+adversarial-review --mode tests --files "zuvo/audits/test-quality-audit-[date].md"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
@@ -515,7 +515,7 @@ COMPLETION GATE CHECK
 [ ] Adversarial review ran on audit report
 [ ] Coverage registry updated: memory/coverage.md rows written
 [ ] Backlog updated for critical gate failures
-[ ] Report saved to audits/
+[ ] Report saved to zuvo/audits/
 [ ] Run: line printed and appended to log
 ```
 

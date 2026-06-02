@@ -22,8 +22,8 @@ This script verifies the audit report at write time. For every finding:
 
 Usage:
   ~/.zuvo/verify-audit <audit_report_path>
-  ~/.zuvo/verify-audit audits/db-audit-2026-05-05.md
-  ~/.zuvo/verify-audit audits/code-audit-XXX.md --skill code-audit
+  ~/.zuvo/verify-audit zuvo/audits/db-audit-2026-05-05.md
+  ~/.zuvo/verify-audit zuvo/audits/code-audit-XXX.md --skill code-audit
 
 Exit codes:
   0  every finding has a real file:line citation + current-SHA verification

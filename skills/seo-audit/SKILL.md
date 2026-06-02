@@ -136,7 +136,7 @@ All live probing in this skill follows that shared protocol.
 This audit is read-only against source code.
 
 **Allowed write targets:**
-- `audit-results/` for the report file (`.md` and `.json`)
+- `zuvo/audits/` for the report file (`.md` and `.json`)
 - `memory/backlog.md` only when `--persist-backlog` is explicitly enabled
 
 **FORBIDDEN:**
@@ -640,7 +640,7 @@ Quick Win = Priority >= 2.0 AND Effort = EASY
 mkdir -p audit-results
 ```
 
-Save to: `audit-results/seo-audit-YYYY-MM-DD.md`
+Save to: `zuvo/audits/seo-audit-YYYY-MM-DD.md` — at the **project root** (`zuvo/` resolves via `git rev-parse --show-toplevel`; override `$ZUVO_OUTPUT_DIR`. See `../../shared/includes/report-output-location.md`).
 
 Auto-increment if a report for today already exists: `seo-audit-YYYY-MM-DD-2.md`, `seo-audit-YYYY-MM-DD-3.md`, etc.
 
@@ -650,7 +650,7 @@ Before generating JSON, read `../../shared/includes/audit-output-schema.md` for 
 
 After saving the markdown report, also save structured JSON findings for downstream consumption by `zuvo:seo-fix` and CI pipelines.
 
-**File:** `audit-results/seo-audit-YYYY-MM-DD.json`
+**File:** `zuvo/audits/seo-audit-YYYY-MM-DD.json`
 
 Auto-increment with `-N` suffix if same-day file exists (same convention as `.md`).
 

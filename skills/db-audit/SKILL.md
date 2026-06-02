@@ -153,7 +153,7 @@ This is the failure mode the 2026-04-09 → 2026-05-04 db-audit history shows: 1
 
 **Hard requirement, in this order, before considering db-audit complete:**
 
-1. Write `audits/db-audit-<date>.md`.
+1. Write `zuvo/audits/db-audit-<date>.md`.
 2. Print Validity Gate block.
 3. Print Run line + append to runs.log.
 4. **Load `../../shared/includes/retrospective.md` if not already loaded.**
@@ -213,7 +213,7 @@ A db-audit that says "0 critical findings" while skipping `sql_audit` on a proje
 
 ### GATE 1 -- Read-Only
 
-This audit is **read-only**. The only write target is `audits/`.
+This audit is **read-only**. The only write target is `zuvo/audits/`.
 
 FORBIDDEN:
 - Running any migration
@@ -312,10 +312,10 @@ CodeSift:  [full-parser / text-stub / unavailable]
 
 If `--force-full` was passed: `mode = "full"` — skip the rest of this section.
 
-Otherwise, look for the most recent prior audit at `audits/db-audit-*.md`:
+Otherwise, look for the most recent prior audit at `zuvo/audits/db-audit-*.md`:
 
 ```bash
-PRIOR_AUDIT=$(ls -t audits/db-audit-*.md 2>/dev/null | head -1)
+PRIOR_AUDIT=$(ls -t zuvo/audits/db-audit-*.md 2>/dev/null | head -1)
 
 if [ -z "$PRIOR_AUDIT" ]; then
   mode="full"  # baseline
@@ -881,7 +881,7 @@ Any critical gate = 0 overrides the overall grade to **FAIL**.
 
 ## Phase 5: Report
 
-Save to: `audits/db-audit-[YYYY-MM-DD].md`
+Save to: `zuvo/audits/db-audit-[YYYY-MM-DD].md` — at the **project root** (`zuvo/` resolves via `git rev-parse --show-toplevel`; override `$ZUVO_OUTPUT_DIR`. See `../../shared/includes/report-output-location.md`).
 
 **REQUIRED:** emit the Tool Availability Block (template in `../../shared/includes/codesift-setup.md`) at the top of the report, after the title and before findings. Auditing degraded runs depends on this — do NOT skip it.
 
@@ -973,7 +973,7 @@ If any of the three conditions fail, keep the prior severity. Anchoring to a num
 
 ## Delta from Prior Audit
 
-If a prior `audits/db-audit-*.md` exists, include:
+If a prior `zuvo/audits/db-audit-*.md` exists, include:
 
 | Finding | Prior status | Current status | Change |
 |---------|-------------|----------------|--------|
@@ -1060,7 +1060,7 @@ COMPLETION GATE CHECK
 [ ] Unbounded query detection ran (DB1/DB7)
 [ ] Migration safety audit ran (DB6)
 [ ] Critical gates printed: DB1, DB2, DB4, DB6, DB7, DB10, DB11
-[ ] Report saved to audits/
+[ ] Report saved to zuvo/audits/
 [ ] Backlog updated for HIGH+ findings
 [ ] Run: line printed and appended to log
 ```

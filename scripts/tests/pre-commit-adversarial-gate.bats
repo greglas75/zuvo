@@ -5,7 +5,7 @@ SCRIPT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)/hooks/pre-commit-adversarial-gat
 setup() {
   TMPDIR_TEST=$(mktemp -d)
   REPO="$TMPDIR_TEST/repo"
-  mkdir -p "$REPO/.zuvo/context"
+  mkdir -p "$REPO/zuvo/context"
 
   (
     cd "$REPO"
@@ -17,7 +17,7 @@ setup() {
     git commit -qm "base"
   )
 
-  cat > "$REPO/.zuvo/context/execution-state.md" <<'EOF'
+  cat > "$REPO/zuvo/context/execution-state.md" <<'EOF'
 # Execution State
 <!-- status: in-progress -->
 plan: docs/specs/example-plan.md
@@ -48,7 +48,7 @@ run_hook() {
 }
 
 @test "allows non-execute commits when no execution-state exists" {
-  rm -f "$REPO/.zuvo/context/execution-state.md"
+  rm -f "$REPO/zuvo/context/execution-state.md"
 
   run_hook
   [ "$status" -eq 0 ]
@@ -62,7 +62,7 @@ run_hook() {
 }
 
 @test "allows commit when execute task has a fresh adversarial artifact" {
-  cat > "$REPO/.zuvo/context/adversarial-task-3.txt" <<'EOF'
+  cat > "$REPO/zuvo/context/adversarial-task-3.txt" <<'EOF'
 artifact_kind=adversarial-review
 created_at=2026-04-12T10:00:00Z
 mode=code
@@ -83,7 +83,7 @@ EOF
 }
 
 @test "blocks commit when adversarial artifact is older than staged edits" {
-  cat > "$REPO/.zuvo/context/adversarial-task-3.txt" <<'EOF'
+  cat > "$REPO/zuvo/context/adversarial-task-3.txt" <<'EOF'
 artifact_kind=adversarial-review
 created_at=2026-04-12T10:00:00Z
 mode=code
@@ -109,4 +109,24 @@ EOF
   run_hook
   [ "$status" -eq 1 ]
   [[ "$output" == *"artifact for task 3 is stale"* ]]
+}
+
+@test "falls back to legacy .zuvo/context when zuvo/context absent" {
+  # Pre-migration project: state + artifact live in the hidden .zuvo/ dir,
+  # and no canonical zuvo/ dir exists. The gate must still find them.
+  rm -rf "$REPO/zuvo"
+  mkdir -p "$REPO/.zuvo/context"
+  cat > "$REPO/.zuvo/context/execution-state.md" <<'EOF'
+# Execution State
+<!-- status: in-progress -->
+next-task: 3
+EOF
+  cat > "$REPO/.zuvo/context/adversarial-task-3.txt" <<'EOF'
+artifact_kind=adversarial-review
+---
+NO ISSUES FOUND
+EOF
+
+  run_hook
+  [ "$status" -eq 0 ]
 }

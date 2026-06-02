@@ -75,12 +75,12 @@ All live probing in this skill follows that shared protocol.
 This audit is read-only against source files.
 
 **Allowed write targets:**
-- `audit-results/` for the report file (`.md` and `.json`)
+- `zuvo/audits/` for the report file (`.md` and `.json`)
 - `memory/backlog.md` only when `--persist-backlog` is explicitly enabled
 
 **FORBIDDEN:**
 - Modifying any content files
-- Creating, deleting, or renaming files outside `audit-results/`
+- Creating, deleting, or renaming files outside `zuvo/audits/`
 
 ---
 
@@ -307,7 +307,7 @@ fix_type and safety classification from `content-fix-registry.md`.
 
 ### 4.1 Markdown report
 
-Write to `audit-results/content-audit-YYYY-MM-DD.md`. Auto-increment
+Write to `zuvo/audits/content-audit-YYYY-MM-DD.md`. Auto-increment
 `-2.md`, `-3.md` for same-day runs.
 
 ```
@@ -378,7 +378,7 @@ prefix) to the log file path resolved per `run-logger.md`.
 
 ### 4.2 JSON report
 
-Write to `audit-results/content-audit-YYYY-MM-DD.json` conforming to
+Write to `zuvo/audits/content-audit-YYYY-MM-DD.json` conforming to
 `audit-output-schema.md` v1.1.
 
 ```json
@@ -442,7 +442,7 @@ mode).
 Run AFTER report files are generated (Phase 3).
 
 ```bash
-adversarial-review --mode audit --files "audit-results/content-audit-[date].md"
+adversarial-review --mode audit --files "zuvo/audits/content-audit-[date].md"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

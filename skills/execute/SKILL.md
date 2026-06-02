@@ -73,7 +73,7 @@ Execute all roles yourself in sequential passes with explicit checkpoints:
 4. **Quality reviewer pass:** Run CQ1-CQ29 on production files, Q1-Q19 on test files. Run anti-tautology checks on test files. **Report per-file scores — aggregate scoring is forbidden.** Print scores and: `[GATE: cq-critical] <critical gates checked + evidence>`
 5. **Independent test auditor pass:** Re-read tests as if seeing them for the first time. Compare Q scores with self-eval. Print: `[CHECKPOINT: independent test audit complete]`
 6. **Adversarial pass:** Run the same adversarial review required in Step 7b. Print: `[GATE: adversarial-done] PASS|WARNING|CRITICAL|BLOCKED <mode + artifact path or exact blocker>`
-7. **Acceptance verifier pass (MANDATORY):** Read the task's Acceptance Proof block from the plan. Set up preconditions, run the proof, capture artifact to `.zuvo/proofs/task-<N>-<ac-id>.<ext>`. Behavior must match Expected. Print: `[CHECKPOINT: switching to acceptance-verifier role]` then `[GATE: acceptance-verified] <ac-ids passed | BLOCKED with failing AC# + observed-vs-expected>`
+7. **Acceptance verifier pass (MANDATORY):** Read the task's Acceptance Proof block from the plan. Set up preconditions, run the proof, capture artifact to `zuvo/proofs/task-<N>-<ac-id>.<ext>`. Behavior must match Expected. Print: `[CHECKPOINT: switching to acceptance-verifier role]` then `[GATE: acceptance-verified] <ac-ids passed | BLOCKED with failing AC# + observed-vs-expected>`
 8. **Commit** (only if all reviews and acceptance gates pass)
 9. **Session durability pass:** Rewrite `execution-state.md` immediately after the commit. Print: `[GATE: state-written] <task N, sha7, next-task>`
 
@@ -135,7 +135,7 @@ fi
 
 ### Phase 0.2 — Arm the stall-recovery watchdog
 
-Follow the **ARM** section of `../../shared/includes/stall-recovery.md`. In short: seed `.zuvo/context/execute.heartbeat` (`status: running`, `resume: zuvo:execute`), and **if the `CronCreate` tool is available**, arm a `*/3 * * * *` `recurring`/non-`durable` cron whose prompt runs `zuvo-watchdog-check` and re-invokes `zuvo:execute` on a `RESUME` verdict — so a turn that dies on an API error / rate-limit / `socket closed` auto-resumes from `execution-state.md` within ~3 minutes instead of freezing. Idempotent: skip arming if `CronList` already shows this run's `[zuvo-watchdog skill=execute project=…]` tag (the watchdog-triggered resume re-enters this phase). If `CronCreate` is absent (Codex/Cursor) print the `/loop 3m zuvo:execute` fallback line and continue. **Never block execute on watchdog setup** — a missing helper or scheduler only disables auto-resume, it does not stop the run.
+Follow the **ARM** section of `../../shared/includes/stall-recovery.md`. In short: seed `zuvo/context/execute.heartbeat` (`status: running`, `resume: zuvo:execute`), and **if the `CronCreate` tool is available**, arm a `*/3 * * * *` `recurring`/non-`durable` cron whose prompt runs `zuvo-watchdog-check` and re-invokes `zuvo:execute` on a `RESUME` verdict — so a turn that dies on an API error / rate-limit / `socket closed` auto-resumes from `execution-state.md` within ~3 minutes instead of freezing. Idempotent: skip arming if `CronList` already shows this run's `[zuvo-watchdog skill=execute project=…]` tag (the watchdog-triggered resume re-enters this phase). If `CronCreate` is absent (Codex/Cursor) print the `/loop 3m zuvo:execute` fallback line and continue. **Never block execute on watchdog setup** — a missing helper or scheduler only disables auto-resume, it does not stop the run.
 
 ---
 
@@ -144,10 +144,10 @@ Follow the **ARM** section of `../../shared/includes/stall-recovery.md`. In shor
 Before locating the plan, run the READ protocol from `session-state.md`:
 
 ```
-Read(".zuvo/context/execution-state.md")
+Read("zuvo/context/execution-state.md")
 ```
 
-- **`status: in-progress` found** → resume mode: skip completed tasks, restore retry counts, load project-context. Jump directly to the Execution Loop at `next-task`. Skip "Hard Gate: Plan Required", "Artifact Detection", "Stack Detection", and "CodeSift Integration" — all of that is already in `.zuvo/context/project-context.md`. **Retro carry:** inherit `retro-session-id` from the `## Retro State` block unchanged (do NOT regenerate) per `session-state.md` — this resumed run owns that prior retro, so one run yields exactly one eventual retro (a full retro supersedes any earlier checkpoint stub via retro-stub idempotency).
+- **`status: in-progress` found** → resume mode: skip completed tasks, restore retry counts, load project-context. Jump directly to the Execution Loop at `next-task`. Skip "Hard Gate: Plan Required", "Artifact Detection", "Stack Detection", and "CodeSift Integration" — all of that is already in `zuvo/context/project-context.md`. **Retro carry:** inherit `retro-session-id` from the `## Retro State` block unchanged (do NOT regenerate) per `session-state.md` — this resumed run owns that prior retro, so one run yields exactly one eventual retro (a full retro supersedes any earlier checkpoint stub via retro-stub idempotency).
 - **`status: completed` or `status: aborted`** → follow the rename/archive behavior from `session-state.md`, then proceed normally.
 - **File missing** → proceed normally.
 
@@ -160,7 +160,7 @@ Before anything else, locate the plan document.
 **Step 0: Check for active plan pointer**
 
 ```
-Read(".zuvo/plans/active-plan.md")
+Read("zuvo/plans/active-plan.md")
 ```
 
 If the file exists and `status: pending` or `status: in-progress`:
@@ -225,10 +225,10 @@ Record the detected stack. Pass it to every implementer dispatch.
 
 Before the first agent dispatch, initialize session state using the WRITE protocol from `session-state.md`:
 
-1. Write `.zuvo/plans/active-plan.md` — set `status: in-progress`.
-2. Write `.zuvo/context/execution-state.md` — `status: in-progress`, `completed: []`, `next-task: <lowest task number from the plan>`.
-3. Write `.zuvo/context/project-context.md` — stack, test-runner, codesift-repo.
-4. Ensure `.zuvo/` is in `.gitignore` (add if missing).
+1. Write `zuvo/plans/active-plan.md` — set `status: in-progress`.
+2. Write `zuvo/context/execution-state.md` — `status: in-progress`, `completed: []`, `next-task: <lowest task number from the plan>`.
+3. Write `zuvo/context/project-context.md` — stack, test-runner, codesift-repo.
+4. Ensure `zuvo/` is in `.gitignore` (add if missing).
 
 ---
 
@@ -282,7 +282,7 @@ Minimum fields:
 - `quality-review`: `PASS` or `FAIL` — **with per-file scores; aggregate forbidden** (e.g. `cq=27/29@codec.ts,28/29@parser.ts; q=18/19@codec.test.ts,17/19@parser.test.ts` not `cq=27/29 q=18/19 aggregate`)
 - `adversarial`: verdict plus mode (`code`, `security`, `migrate`)
 - `verify`: command(s) and exit code(s) — implementation-detail check
-- `acceptance-verified`: list of AC ids passed plus artifact paths (e.g. `AC1@.zuvo/proofs/task-4-AC1.txt,AC3@.zuvo/proofs/task-4-AC3.txt`) — behavior check
+- `acceptance-verified`: list of AC ids passed plus artifact paths (e.g. `AC1@zuvo/proofs/task-4-AC1.txt,AC3@zuvo/proofs/task-4-AC3.txt`) — behavior check
 - `codesift`: `available`, `unavailable`, or `index-failed`
 - `backlog-adds`: integer count for this task
 
@@ -303,7 +303,7 @@ spec-review=COMPLIANT
 quality-review=PASS cq=27/29@tenant.ts,28/29@guards.ts q=18/19@tenant.test.ts
 adversarial=PASS mode=security
 verify="pnpm vitest run src/foo.spec.ts" exit=0
-acceptance-verified=AC2@.zuvo/proofs/task-4-AC2.txt,AC5@.zuvo/proofs/task-4-AC5.txt
+acceptance-verified=AC2@zuvo/proofs/task-4-AC2.txt,AC5@zuvo/proofs/task-4-AC5.txt
 codesift=available
 backlog-adds=1
 ```
@@ -327,7 +327,7 @@ Process tasks in **dependency order**. If task B depends on task A (directly or 
 
 **Context pressure is NOT a stop on Claude Code.** `execution-state.md` is rewritten after EVERY task (Step 9b), so it is a durable per-task checkpoint that survives compaction. On an auto-compacting runtime (Claude Code), do NOT halt at `/context` >85% — keep running tasks; the runtime summarizes and carries you into the next context window mid-run, and you resume from `execution-state.md` automatically in the SAME `/zuvo:execute` invocation (see "Resume after mid-run compaction" below). Emit the `[CONTINUATION CHECKPOINT]` + exit ONLY as a fallback on a runtime that hard-stops at the context limit with no auto-compaction. Stopping a 31-task plan after task 2 and making the user re-run `/zuvo:execute` is the friction this rule removes.
 
-**Resume after mid-run compaction (no user action needed).** If your context was just summarized mid-plan and you are unsure where you are: `Read(".zuvo/context/execution-state.md")`, take `next-task`, and CONTINUE the loop from there — do NOT stop to ask, do NOT re-request approval (the plan was already approved). The PreCompact snapshot + the state file are designed for exactly this seamless continuation.
+**Resume after mid-run compaction (no user action needed).** If your context was just summarized mid-plan and you are unsure where you are: `Read("zuvo/context/execution-state.md")`, take `next-task`, and CONTINUE the loop from there — do NOT stop to ask, do NOT re-request approval (the plan was already approved). The PreCompact snapshot + the state file are designed for exactly this seamless continuation.
 
 **Non-terminal stop — emit a checkpoint retro stub (do NOT skip).** This applies only when you DO stop before Phase Final: an explicit user "pause"/"stop", or the FALLBACK context-limit exit on a non-auto-compacting runtime (NOT the Claude Code default, where you keep running through compaction). After writing `execution-state.md` run this ungated bash so the partial run's telemetry is captured immediately (more precise than waiting for the next skill's `--sweep`):
 
@@ -568,7 +568,7 @@ Read the failure details. Each failure has a gate ID, file:line reference, and w
 After quality review passes, run cross-model adversarial review. This runs for ALL tasks regardless of complexity.
 
 ```bash
-git add -u && git diff --staged | adversarial-review --mode code --artifact ".zuvo/context/adversarial-task-<task-N>.txt"
+git add -u && git diff --staged | adversarial-review --mode code --artifact "zuvo/context/adversarial-task-<task-N>.txt"
 ```
 
 Mode selection:
@@ -579,13 +579,13 @@ Mode selection:
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
 
 The captured artifact path is mandatory for commit gating. Use the current task number in the filename:
-- Task 1 -> `.zuvo/context/adversarial-task-1.txt`
-- Task 9 -> `.zuvo/context/adversarial-task-9.txt`
+- Task 1 -> `zuvo/context/adversarial-task-1.txt`
+- Task 9 -> `zuvo/context/adversarial-task-9.txt`
 
 **Diff-scope guard (filter findings to changed paths).** The pipe at the command above scopes the *input* to the staged diff, but a reviewer/harness can still emit findings on files outside it. Before applying verdict rules, capture the changed-file set and validate every finding's path against it:
 
 ```bash
-git diff --staged --name-only > .zuvo/context/task-<task-N>-scope.txt
+git diff --staged --name-only > zuvo/context/task-<task-N>-scope.txt
 ```
 
 For each finding, confirm its file path appears in that scope list. A CRITICAL/WARNING finding targeting a file NOT in the staged diff is a backlog candidate (persist via `backlog-protocol.md`), NOT a task blocker — only findings intersecting the staged diff gate the commit. This prevents whole-repo scans from misattributing pre-existing findings to the task's diff.
@@ -618,7 +618,7 @@ Then compare branches:
 git branch --show-current
 ```
 
-If the current branch differs from `branch:` in `.zuvo/context/execution-state.md`:
+If the current branch differs from `branch:` in `zuvo/context/execution-state.md`:
 - stop with `BLOCKED_BRANCH_MISMATCH`
 - print both branch names
 - require an explicit user/runtime decision before committing on the new branch
@@ -654,7 +654,7 @@ For the current task:
    - Any AC BROKEN → re-dispatch the implementer with the BROKEN list and observed-vs-expected detail. Re-run from Step 4 (spec review) on the next iteration. Maximum 3 acceptance iterations per task. After 3 unresolved iterations, mark BLOCKED with `BLOCKED_ACCEPTANCE_PROOF_FAILURE` and surface to user.
    - Proof cannot run (missing precondition, broken environment) → BLOCKED with `BLOCKED_PROOF_PRECONDITION_FAILED`. Do not commit the task — fixing preconditions is the next action.
 
-6. **Artifact retention.** Every successful proof writes to `.zuvo/proofs/task-<N>-<ac-id>.<ext>`. The path is recorded in telemetry's `acceptance-verified` field for retro and audit. Failed proofs write to the same path with a `.failed` suffix and are kept for the implementer's re-dispatch context.
+6. **Artifact retention.** Every successful proof writes to `zuvo/proofs/task-<N>-<ac-id>.<ext>`. The path is recorded in telemetry's `acceptance-verified` field for retro and audit. Failed proofs write to the same path with a `.failed` suffix and are kept for the implementer's re-dispatch context.
 
 **No `[GATE: acceptance-verified]` marker = task remains IN_PROGRESS, no commit allowed.**
 
@@ -664,13 +664,13 @@ Only after spec review (COMPLIANT), quality review (PASS), and adversarial revie
 
 1. Stage only the files listed in the task's "Files" field: `git add <file1> <file2> ...`
 2. Never use `git add -A` or `git add .`
-3. Verify `.zuvo/context/adversarial-task-<task-N>.txt` exists, is non-empty, and is newer than the latest staged edit for this task
+3. Verify `zuvo/context/adversarial-task-<task-N>.txt` exists, is non-empty, and is newer than the latest staged edit for this task
 4. Commit with the message from the task's Commit step
 5. The implementer does NOT commit — it only writes files and runs verification
 
 ### Step 9: Write Session State Immediately
 
-MANDATORY: Rewrite `.zuvo/context/execution-state.md` immediately after each successful commit using the WRITE protocol from `session-state.md`.
+MANDATORY: Rewrite `zuvo/context/execution-state.md` immediately after each successful commit using the WRITE protocol from `session-state.md`.
 
 This is the only resumable artifact. If context is compacted, lost, or the session crashes, `execution-state.md` is the source of truth. Failure to rewrite it is a blocking bug. Treat it exactly like a failed test.
 
@@ -684,7 +684,7 @@ _HB="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.zuvo/context/execute.h
 # <<< zuvo:stall-watchdog
 ```
 
-Also append this task to `## Completed Work Units` in `.zuvo/context/project-context.md`. If the branch changed intentionally for this task, update the stored `branch:` value at the same time.
+Also append this task to `## Completed Work Units` in `zuvo/context/project-context.md`. If the branch changed intentionally for this task, update the stored `branch:` value at the same time.
 
 ### Step 9b: Mark Completed + Emit Telemetry
 
@@ -766,7 +766,7 @@ Per-task acceptance proofs verify each task's slice in isolation. They cannot de
 3. **Otherwise, for each SMOKE proof:**
    - Set up the preconditions (typically heavier than per-task: full fixture set, seeded DB, dev server, sample input file).
    - Run the proof end-to-end. This is **not** a task-level test — it exercises the entire user flow described in the spec.
-   - Capture artifact to `.zuvo/proofs/smoke-<flow-name>.<ext>`.
+   - Capture artifact to `zuvo/proofs/smoke-<flow-name>.<ext>`.
    - Compare against Expected invariants.
    - VERIFIED → next smoke. BROKEN → enter recovery loop (step 4).
 
@@ -795,7 +795,7 @@ Rationale: prior practice was to either (a) skip post-execute review entirely or
    ```bash
    # Plan base = parent of the first commit of this execute session.
    # Prefer execution-state's recorded base SHA if present; else merge-base with default branch.
-   BASE_SHA=$(awk '/^plan_base_sha:/ {print $2; exit}' .zuvo/context/execution-state.md 2>/dev/null)
+   BASE_SHA=$(awk '/^plan_base_sha:/ {print $2; exit}' zuvo/context/execution-state.md 2>/dev/null)
    if [ -z "$BASE_SHA" ]; then
      DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||')
      DEFAULT_BRANCH=${DEFAULT_BRANCH:-main}
@@ -831,7 +831,7 @@ Rationale: prior practice was to either (a) skip post-execute review entirely or
 
 ### Session State Close
 
-Set `status: completed` in `.zuvo/context/execution-state.md`. Update `.zuvo/plans/active-plan.md` to `status: completed`.
+Set `status: completed` in `zuvo/context/execution-state.md`. Update `zuvo/plans/active-plan.md` to `status: completed`.
 
 **Disarm the stall watchdog** (per `stall-recovery.md`) — clean finish, so the watchdog must never auto-resume this run again:
 

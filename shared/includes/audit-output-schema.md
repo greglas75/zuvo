@@ -5,7 +5,7 @@ Standard JSON output format for zuvo audit skills, produced alongside markdown r
 ## File Naming
 
 ```
-audit-results/[skill-name]-YYYY-MM-DD.json
+zuvo/audits/[skill-name]-YYYY-MM-DD.json
 ```
 
 Auto-incremented with `-N` suffix if a same-day file exists (e.g., `seo-audit-2026-03-28-2.json`), matching the `.md` convention.

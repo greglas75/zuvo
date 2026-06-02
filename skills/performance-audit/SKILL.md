@@ -107,7 +107,7 @@ If any file is MISSING, STOP. Do not proceed from memory.
 
 ## Safety Gate
 
-This audit is **read-only**. The only write target is `audits/`. Do not modify
+This audit is **read-only**. The only write target is `zuvo/audits/`. Do not modify
 source files, configs, build output, or runtime environments. Tooling probes
 (bundle analysis, Lighthouse) may be invoked but must not alter the build.
 
@@ -503,7 +503,7 @@ Flag compound patterns that are worse than individual findings:
 
 ## Phase 5: Report
 
-Save to: `audits/performance-audit-[YYYY-MM-DD].md`
+Save to: `zuvo/audits/performance-audit-[YYYY-MM-DD].md` — at the **project root** (`zuvo/` resolves via `git rev-parse --show-toplevel`; override `$ZUVO_OUTPUT_DIR`. See `../../shared/includes/report-output-location.md`).
 
 **REQUIRED:** emit the Tool Availability Block (template in `../../shared/includes/codesift-setup.md`) at the top of the report, after the title and before findings. Auditing degraded runs depends on this — do NOT skip it.
 
@@ -636,7 +636,7 @@ COMPLETION GATE CHECK
 [ ] Hot path identification ran
 [ ] Every HIGH+ finding has Impact Model with estimated savings
 [ ] D7 critical gate printed (N+1 in hot path)
-[ ] Report saved to audits/ with optimization roadmap
+[ ] Report saved to zuvo/audits/ with optimization roadmap
 [ ] Run: line printed and appended to log
 ```
 

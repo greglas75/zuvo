@@ -53,7 +53,7 @@ Load on demand:
 Per `live-probe-protocol.md` for BOTH `--old` and `--new` URLs.
 
 ### GATE 2 — Read-Only Default
-Without `--fix`: compare and report only. Writes only to `audit-results/`.
+Without `--fix`: compare and report only. Writes only to `zuvo/reports/`.
 
 ### GATE 3 — Conservative Fixes
 With `--fix`:
@@ -88,7 +88,7 @@ With `--fix`:
 
 **0.1 Status mode** (`--status`):
 If `--status` flag is set, skip all phases. Read
-`audit-results/migration-status.json` and print progress dashboard:
+`zuvo/reports/migration-status.json` and print progress dashboard:
 
 ```
 MIGRATION PROGRESS:
@@ -169,7 +169,7 @@ For each URL (old, new):
 3. If `--wait-for <sel>`: wait until selector appears (max 10s)
 4. Wait `--settle-ms` (default 3s)
 5. Extract content from page (see below)
-6. Take full-page screenshot → `audit-results/content-migration-{timestamp}/`
+6. Take full-page screenshot → `zuvo/reports/content-migration-{timestamp}/`
 
 ### Content Extraction
 
@@ -307,7 +307,7 @@ PARTIAL:
   - H2 "Full guide to Vietnam" → "Vietnam" — shortened 70%, HIGH
 
 MATCHED: 23/32 elements
-Screenshots: audit-results/content-migration-{ts}/
+Screenshots: zuvo/reports/content-migration-{ts}/
 
 Run: <ISO-8601-Z>	content-migration	<project>	-	-	<VERDICT>	-	parity-[grade]	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 ```
@@ -320,7 +320,7 @@ printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 
 Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <project>)`. If exit 2 with `RETRO_REQUIRED` — go execute the retro bash from `retrospective.md` first; never bypass with `ZUVO_SKIP_RETRO_GATE=1`. After the wrapper succeeds, print a `Logs:` evidence line (`tail -1 ~/.zuvo/retros.log`, `grep -c "^<!-- RETRO -->" ~/.zuvo/retros.md`, `tail -1 ~/.zuvo/runs.log`) before claiming completion. Printing the markdown retro section without executing the bash leaves all three log files empty.
 
-**JSON report** → `audit-results/content-migration-YYYY-MM-DD.json`:
+**JSON report** → `zuvo/reports/content-migration-YYYY-MM-DD.json`:
 
 ```json
 {
@@ -341,7 +341,7 @@ Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <proje
 }
 ```
 
-**Update progress** → `audit-results/migration-status.json`:
+**Update progress** → `zuvo/reports/migration-status.json`:
 
 Auto-append/update this page's result. Keyed by new URL path.
 

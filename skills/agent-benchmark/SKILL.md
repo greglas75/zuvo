@@ -58,7 +58,7 @@ If any file is missing, stop.
    ```bash
    AGENT_SLUG="<slug from step 1>"
    RUN_ID="agent-bm-${AGENT_SLUG}-$(date -u +%Y%m%dT%H%M%SZ)"
-   OUT_DIR="audit-results/${RUN_ID}"
+   OUT_DIR="zuvo/reports/${RUN_ID}"
    mkdir -p "$OUT_DIR"
    ```
 

@@ -26,7 +26,7 @@ Parse `$ARGUMENTS` for these flags:
 | `--with-static-checks` | Run tsc + jest on generated code (best-effort, null if tools missing) |
 | `--provider <name>` | Restrict to one or more providers, comma-separated (alias: `--providers`) |
 | `--show-costs` | Print provider cost table ($/M tokens) and exit |
-| `--compare [id1] [id2]` | Compare two prior runs from audit-results/; default: last two *(skill-only, not passed to runner)* |
+| `--compare [id1] [id2]` | Compare two prior runs from zuvo/reports/; default: last two *(skill-only, not passed to runner)* |
 | `--replay-last` | Re-run benchmark with the same task as the most recent run *(skill-only, not passed to runner)* |
 | `--json` | Output raw JSON to stdout instead of formatted leaderboard *(handled by both runner and skill)* |
 | `--no-snapshot` | Suppress task_snapshot storage (use if task contains secrets or PII) |
@@ -55,9 +55,9 @@ If any core file is missing, proceed in degraded mode and note it in the BENCHMA
 
 2. `--show-costs`: run `scripts/benchmark.sh --show-costs`, print the table, stop. No benchmark run.
 
-3. `--compare`: load the two specified run JSONs from `audit-results/` (or the last two if no IDs given). Print a delta table: quality, time_s, cost_usd per provider. Warn if task_hash values differ (different tasks, comparison may be misleading). Stop — no benchmark run.
+3. `--compare`: load the two specified run JSONs from `zuvo/reports/` (or the last two if no IDs given). Print a delta table: quality, time_s, cost_usd per provider. Warn if task_hash values differ (different tasks, comparison may be misleading). Stop — no benchmark run.
 
-4. `--replay-last`: find the most recent `.json` file in `audit-results/`. Read `task_snapshot` as the task input. Set `INPUT_MODE=prompt`. Error if no history found. Error if `--mode corpus` (corpus uses fixed prompts, replay makes no sense).
+4. `--replay-last`: find the most recent `.json` file in `zuvo/reports/`. Read `task_snapshot` as the task input. Set `INPUT_MODE=prompt`. Error if no history found. Error if `--mode corpus` (corpus uses fixed prompts, replay makes no sense).
 
 5. Validate flag combinations:
    - `--with-tests` and `--with-adversarial` require `--mode corpus` (they assume a two-round structure). If set without `--mode corpus`, print a warning and auto-set `--mode corpus`.
@@ -260,9 +260,9 @@ Adversarial delta (negative = score dropped after adversarial critique): codex-f
 
 ### Output Files
 
-Auto-increment the run number (NNN) by reading existing files in `audit-results/`:
-- `audit-results/benchmark-NNN-[run_id].md` — human-readable report
-- `audit-results/benchmark-NNN-[run_id].json` — machine-readable JSON per benchmark-output-schema.md
+Auto-increment the run number (NNN) by reading existing files in `zuvo/reports/`:
+- `zuvo/reports/benchmark-NNN-[run_id].md` — human-readable report
+- `zuvo/reports/benchmark-NNN-[run_id].json` — machine-readable JSON per benchmark-output-schema.md
 
 The JSON file must conform to the schema version `"2.0"` defined in `../../shared/includes/benchmark-output-schema.md`.
 
@@ -319,8 +319,8 @@ Providers: [N attempted / M succeeded / K scored]
 Judge:     [model name] (opposite-model rule)
 
 Results saved:
-  audit-results/benchmark-NNN-[run_id].md
-  audit-results/benchmark-NNN-[run_id].json
+  zuvo/reports/benchmark-NNN-[run_id].md
+  zuvo/reports/benchmark-NNN-[run_id].json
 
 Top provider: [name] (quality: [score], time: [Xs], cost: $[N])
 Self-eval bias range: [min] to [max] (positive = overconfident)

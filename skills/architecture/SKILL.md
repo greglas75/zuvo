@@ -316,7 +316,7 @@ Prevent contradictions between report sections:
 [Prioritized by impact: 1, 2, 3]
 ```
 
-Save to: `audit-results/architecture-review-YYYY-MM-DD.md`
+Save to: `zuvo/audits/architecture-review-YYYY-MM-DD.md` — at the **project root** (`zuvo/` resolves via `git rev-parse --show-toplevel`; override `$ZUVO_OUTPUT_DIR`. See `../../shared/includes/report-output-location.md`).
 
 ---
 

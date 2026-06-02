@@ -1,6 +1,6 @@
 # Project Profile Protocol
 
-> Load the project's convention profile from `.zuvo/project-profile.json`. Falls back to legacy inline detection when unavailable.
+> Load the project's convention profile from `zuvo/project-profile.json`. Falls back to legacy inline detection when unavailable.
 
 ## Purpose
 
@@ -30,15 +30,15 @@ Check `ZUVO_USE_PROFILE` env var. If `"false"` → skip everything, use legacy. 
 
 ### Step 1: Lock
 
-Acquire `.zuvo/.profile.lock` (timeout 30s). If lock exists, check PID — if stale (dead process), remove and acquire. If lock held by live process, wait up to 30s then proceed without lock.
+Acquire `zuvo/.profile.lock` (timeout 30s). If lock exists, check PID — if stale (dead process), remove and acquire. If lock held by live process, wait up to 30s then proceed without lock.
 
 ### Step 2: Read profile
 
-Try to read `.zuvo/project-profile.json`.
+Try to read `zuvo/project-profile.json`.
 
 ### Step 3: Parse check
 
-If JSON parse fails → log to `.zuvo/profile-errors.log` with timestamp → treat as missing → go to Step 7.
+If JSON parse fails → log to `zuvo/profile-errors.log` with timestamp → treat as missing → go to Step 7.
 
 ### Step 4: Sanity check
 
@@ -60,7 +60,7 @@ Check staleness in priority order. Stop checking if 50ms budget exhausted (accep
 1. **Critical files** — mtime of `package.json`, `tsconfig.json`, `vitest.config.*`, main entry point > `generated_at`
 2. **Middleware dirs** — mtime of any `*/middleware/` directory > `generated_at`
 3. **Recent tests** — mtime of 5 most recent `*.test.*` files > `generated_at`
-4. **User overrides** — mtime of `.zuvo/profile-overrides.json` > `generated_at`
+4. **User overrides** — mtime of `zuvo/profile-overrides.json` > `generated_at`
 5. **Extractor version** — `generated_by.extractor_versions` differs from CodeSift's `get_extractor_versions()`
 
 If any trigger fires → go to Step 7.
@@ -83,7 +83,7 @@ Go to Step 12.
 
 ### Step 9: Merge overrides
 
-If `.zuvo/profile-overrides.json` exists:
+If `zuvo/profile-overrides.json` exists:
 - Deep merge into loaded profile
 - Scalars: override replaces base
 - Objects: recursive merge
@@ -103,7 +103,7 @@ Profile is ready. Go to Step 12.
 
 ### Step 12: Release lock
 
-Release `.zuvo/.profile.lock`. Return profile (or degraded flag) to skill.
+Release `zuvo/.profile.lock`. Return profile (or degraded flag) to skill.
 
 ---
 
@@ -135,10 +135,10 @@ If profile not available: `[PROFILE] Not found — using legacy detection.`
 
 ## `.gitignore` Verification
 
-Before writing `.zuvo/project-profile.json`, verify `.zuvo/` is in `.gitignore`. If absent, append:
+Before writing `zuvo/project-profile.json`, verify `zuvo/` is in `.gitignore`. If absent, append:
 ```
 # zuvo session state (local runtime, not committed)
-.zuvo/
+zuvo/
 ```
 
 ## `--no-cache` Flag

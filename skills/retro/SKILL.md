@@ -204,11 +204,11 @@ If fewer than 3 items can be derived from the data, supplement with: "Run `zuvo:
 
 Create the report using a readable suffix:
 - Prefer tag-based names when `previousTag` / `newTag` are known:
-  `audit-results/retro-YYYY-MM-DD-<previousTag>_<newTag>.md`
+  `zuvo/reports/retro-YYYY-MM-DD-<previousTag>_<newTag>.md`
 - Otherwise fall back to a shortened SHA-based suffix (first 7 chars of `baseSha` and `releaseCommitSha` from `last-ship.json`):
-  `audit-results/retro-YYYY-MM-DD-<baseSha7>_<releaseCommitSha7>.md`
+  `zuvo/reports/retro-YYYY-MM-DD-<baseSha7>_<releaseCommitSha7>.md`
 
-This prevents collisions and keeps filenames readable. If `audit-results/` does not exist, create it.
+This prevents collisions and keeps filenames readable. If `zuvo/reports/` does not exist, create it.
 
 Use this exact structure:
 
@@ -255,7 +255,7 @@ Use this exact structure:
 
 ### Prior Retro Comparison
 
-Check for existing `audit-results/retro-*.md` files. If one or more exist, compare with the most recent:
+Check for existing `zuvo/reports/retro-*.md` files. If one or more exist, compare with the most recent:
 
 | Metric | Prior | Current | Delta |
 |--------|-------|---------|-------|
@@ -278,7 +278,7 @@ RETRO COMPLETE
   Cycle span:  14 days (earliest commit → latest tag)
   Hotspots:    src/orders/service.ts (12 changes), src/auth/guard.ts (8 changes)
   Backlog:     +5 added, -3 resolved, 12 open (2 critical)
-  Report:      audit-results/retro-2026-03-28-v1.1.0_v1.2.0.md
+  Report:      zuvo/reports/retro-2026-03-28-v1.1.0_v1.2.0.md
 
   Actions:
   1. zuvo:write-tests src/orders/ — high-churn, low coverage
@@ -296,7 +296,7 @@ If E13 (insufficient history) was triggered, show:
 RETRO COMPLETE [QUALITATIVE ONLY — <10 commits in window]
   Window:      HEAD~30..HEAD (fallback — fewer than 10 commits found)
   Backlog:     +N added, -N resolved, N open (N critical)
-  Report:      audit-results/retro-YYYY-MM-DD-<suffix>.md
+  Report:      zuvo/reports/retro-YYYY-MM-DD-<suffix>.md
 
   Actions:
   1. [derived from backlog only]

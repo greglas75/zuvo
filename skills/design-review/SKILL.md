@@ -343,7 +343,7 @@ Combine per-view DX scores + cross-view analysis + visual audit (if run) + craft
 9. **Action Plan** -- prioritized: critical gates -> consistency -> state gaps -> design system gaps
 10. **Accessibility Summary** (if visual mode ran)
 
-Save to: `audit-results/design-review-YYYY-MM-DD.md`
+Save to: `zuvo/audits/design-review-YYYY-MM-DD.md` — at the **project root** (`zuvo/` resolves via `git rev-parse --show-toplevel`; override `$ZUVO_OUTPUT_DIR`. See `../../shared/includes/report-output-location.md`).
 
 ### Step 9: Propose Next Actions
 

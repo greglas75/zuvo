@@ -1,12 +1,12 @@
 # Fix Output Schema (v1.2)
 
 > Standard JSON output format for zuvo fix skills (seo-fix, future code-fix, etc.).
-> Produced alongside markdown reports in `audit-results/`.
+> Produced alongside markdown reports in `zuvo/audits/`.
 > Consumers: CI pipelines, backlog tools, reporting dashboards.
 
 ## File Naming
 
-`audit-results/[skill-name]-YYYY-MM-DD.json`
+`zuvo/audits/[skill-name]-YYYY-MM-DD.json`
 
 Auto-increment with `-2`, `-3` suffix if same-day file exists.
 
@@ -70,7 +70,7 @@ Each entry in `actions[]`:
   "timestamp": "2026-03-29T10:30:00Z",
   "project": "/Users/dev/my-site",
   "args": "--auto",
-  "source_audit": "audit-results/seo-audit-2026-03-29.json",
+  "source_audit": "zuvo/audits/seo-audit-2026-03-29.json",
   "result": "PARTIAL",
   "score": {
     "before": 53,

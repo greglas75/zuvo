@@ -12,7 +12,14 @@ case "$INPUT" in
   *) exit 0 ;;
 esac
 
-STATE_FILE="$PWD/.zuvo/context/execution-state.md"
+# Resolve the canonical zuvo context dir (see
+# shared/includes/report-output-location.md), falling back to the legacy hidden
+# .zuvo/ location for sessions started before the migration.
+ZUVO_DIR="${ZUVO_OUTPUT_DIR:-$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || echo "$PWD")/zuvo}"
+CTX_DIR="$ZUVO_DIR/context"
+[ -d "$CTX_DIR" ] || CTX_DIR="$PWD/.zuvo/context"
+
+STATE_FILE="$CTX_DIR/execution-state.md"
 [ -f "$STATE_FILE" ] || exit 0
 
 if ! grep -q '<!-- status: in-progress -->' "$STATE_FILE" 2>/dev/null; then
@@ -21,25 +28,26 @@ fi
 
 task_id=$(awk -F': ' '/^next-task:/ {print $2; exit}' "$STATE_FILE" | tr -d '[:space:]')
 if ! [[ "$task_id" =~ ^[0-9]+$ ]]; then
-  echo "BLOCKED: active zuvo:execute session has malformed next-task in .zuvo/context/execution-state.md."
+  echo "BLOCKED: active zuvo:execute session has malformed next-task in $STATE_FILE."
   echo "Fix the state file before committing."
   exit 1
 fi
 
-artifact_path="$PWD/.zuvo/context/adversarial-task-${task_id}.txt"
+artifact_path="$CTX_DIR/adversarial-task-${task_id}.txt"
+artifact_rel="${artifact_path#"$PWD"/}"
 
 if [[ ! -s "$artifact_path" ]]; then
   echo "BLOCKED: missing adversarial artifact for execute task ${task_id}."
-  echo "Expected: .zuvo/context/adversarial-task-${task_id}.txt"
+  echo "Expected: $artifact_rel"
   echo "Run Step 7b before commit."
-  echo "Example: git add -u && git diff --staged | adversarial-review --mode code --artifact \".zuvo/context/adversarial-task-${task_id}.txt\""
+  echo "Example: git add -u && git diff --staged | adversarial-review --mode code --artifact \"$artifact_rel\""
   echo "Use --mode security or --mode migrate when the diff is high-risk."
   exit 1
 fi
 
 if ! grep -q '^artifact_kind=adversarial-review$' "$artifact_path" 2>/dev/null; then
   echo "BLOCKED: adversarial artifact for task ${task_id} is malformed."
-  echo "Re-run adversarial review and overwrite .zuvo/context/adversarial-task-${task_id}.txt."
+  echo "Re-run adversarial review and overwrite $artifact_rel."
   exit 1
 fi
 
@@ -67,7 +75,7 @@ done < <(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null || true)
 
 if [[ "$latest_staged_mtime" -gt 0 && "$artifact_mtime" -lt "$latest_staged_mtime" ]]; then
   echo "BLOCKED: adversarial artifact for task ${task_id} is stale."
-  echo "Re-run adversarial review after the latest staged edits and overwrite .zuvo/context/adversarial-task-${task_id}.txt."
+  echo "Re-run adversarial review after the latest staged edits and overwrite $artifact_rel."
   exit 1
 fi
 

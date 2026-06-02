@@ -246,7 +246,7 @@ if [ "$HAVE_RETRO" -eq 0 ]; then
   echo "" >&2
   echo "  The audit is incomplete without a retrospective." >&2
   echo "  Order of operations:" >&2
-  echo "    1. Write the audit report (audits/<skill>-<date>.md)." >&2
+  echo "    1. Write the audit report (zuvo/audits/<skill>-<date>.md)." >&2
   echo "    2. Print Validity Gate block." >&2
   echo "    3. Load shared/includes/retrospective.md if not loaded." >&2
   echo "    4. Fill the 9 retrospective fields." >&2
@@ -259,7 +259,7 @@ if [ "$HAVE_RETRO" -eq 0 ]; then
 fi
 
 # === audit-content verification (audit skills only) ===
-# For audit-style skills (write a report under audits/), every finding must
+# For audit-style skills (write a report under zuvo/audits/), every finding must
 # cite a real file:line in current code AND carry a Verified-against: <sha>
 # stamp. Closes the failure mode where agents copy findings forward from
 # prior audits without re-checking against the current working tree.
@@ -267,21 +267,28 @@ case "$SKILL" in
   *audit*|review|pentest)
     if [ -x "$ZUVO_BIN/verify-audit" ]; then
       # Locate today's audit report. Common locations:
-      #   $PWD/audits/<skill>-YYYY-MM-DD.md
-      #   $PWD/audits/<skill>-YYYY-MM-DD-*.md  (variants like -full, -delta)
+      #   <project-root>/zuvo/audits/<skill>-YYYY-MM-DD.md
+      #   <project-root>/zuvo/audits/<skill>-YYYY-MM-DD-*.md  (variants like -full, -delta)
       AUDIT_DATE=$(date -u +%Y-%m-%d)
       AUDIT_REPORT=""
-      for candidate in \
-        "audits/$SKILL-$AUDIT_DATE.md" \
-        $(ls -t audits/$SKILL-$AUDIT_DATE*.md 2>/dev/null); do
-        if [ -f "$candidate" ]; then
-          AUDIT_REPORT="$candidate"
-          break
-        fi
+      # Canonical output dir (see shared/includes/report-output-location.md):
+      #   $ZUVO_OUTPUT_DIR, else <project-root>/zuvo. Search the new audits/
+      #   location first, then fall back to the legacy audits/ and audit-results/
+      #   dirs so in-flight projects mid-migration still pass the gate.
+      ZUVO_DIR="${ZUVO_OUTPUT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)/zuvo}"
+      for base in "$ZUVO_DIR/audits" "audits" "audit-results"; do
+        for candidate in \
+          "$base/$SKILL-$AUDIT_DATE.md" \
+          $(ls -t "$base"/$SKILL-$AUDIT_DATE*.md 2>/dev/null); do
+          if [ -f "$candidate" ]; then
+            AUDIT_REPORT="$candidate"
+            break 2
+          fi
+        done
       done
       if [ -z "$AUDIT_REPORT" ]; then
-        # No today's report found — try most recent
-        AUDIT_REPORT=$(ls -t audits/$SKILL-*.md 2>/dev/null | head -1)
+        # No today's report found — try most recent across all locations
+        AUDIT_REPORT=$(ls -t "$ZUVO_DIR"/audits/$SKILL-*.md audits/$SKILL-*.md audit-results/$SKILL-*.md 2>/dev/null | head -1)
       fi
 
       if [ -n "$AUDIT_REPORT" ] && [ -f "$AUDIT_REPORT" ]; then

@@ -127,7 +127,7 @@ Otherwise: run one check cycle every `--interval` seconds, for the total `--dura
 
 4. Measure page load time. Response time >10s = MEDIUM alert.
 
-5. Take screenshot: save to `audit-results/canary-{ISO-timestamp}/check-{N}.png`
+5. Take screenshot: save to `zuvo/reports/canary-{ISO-timestamp}/check-{N}.png`
    - Playwright: `mcp__playwright__browser_take_screenshot(path=...)`
    - Chrome DevTools: `mcp__chrome-devtools__take_screenshot(path=...)`
    - ISO-timestamp format: `YYYY-MM-DDTHHMM` (e.g., `2026-03-28T1430`)
@@ -186,7 +186,7 @@ If verdict is BROKEN:
 
 ### Step 3: Write Summary and Baseline Comparison
 
-After all checks complete, write `audit-results/canary-<ISO-timestamp>/summary.json`:
+After all checks complete, write `zuvo/reports/canary-<ISO-timestamp>/summary.json`:
 
 ```json
 {
@@ -202,7 +202,7 @@ After all checks complete, write `audit-results/canary-<ISO-timestamp>/summary.j
 }
 ```
 
-Check if prior canary runs exist in `audit-results/canary-*/summary.json`. If found, compare `avgResponseTime` and `consoleErrors` against the most recent prior run and compute percentage deltas for the Performance line.
+Check if prior canary runs exist in `zuvo/reports/canary-*/summary.json`. If found, compare `avgResponseTime` and `consoleErrors` against the most recent prior run and compute percentage deltas for the Performance line.
 
 If no prior run exists, omit the baseline comparison from the Performance line.
 
@@ -215,7 +215,7 @@ CANARY COMPLETE
   Mode:        full (Playwright available) | degraded (HTTP-only)
   Console:     <N> errors, <N> warnings
   Performance: avg <N>s (baseline: <N>s, +<N>%) | avg <N>s (no baseline)
-  Screenshots: audit-results/canary-<ISO-timestamp>/  [full mode only — omit in degraded mode]
+  Screenshots: zuvo/reports/canary-<ISO-timestamp>/  [full mode only — omit in degraded mode]
   Verdict:     HEALTHY | DEGRADED | BROKEN
 ```
 
@@ -248,4 +248,4 @@ DURATION: resolved monitoring duration (e.g., `one-shot`, `10m`, `30m`).
 | — | URL is missing | STOP with "URL is required" message. |
 | — | Duration outside 1m–30m | STOP with range validation error. |
 | — | First canary run (no baseline) | Omit baseline comparison from Performance line. |
-| — | Screenshot directory doesn't exist | Create `audit-results/canary-{ISO-timestamp}/` before writing. |
+| — | Screenshot directory doesn't exist | Create `zuvo/reports/canary-{ISO-timestamp}/` before writing. |

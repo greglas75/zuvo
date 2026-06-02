@@ -98,7 +98,7 @@ in the final fix report.
 
 **Allowed write targets:**
 - Files listed in geo-fix-registry.md target paths (source/config files)
-- `audit-results/` for the fix report (`.md` and `.json`)
+- `zuvo/audits/` for the fix report (`.md` and `.json`)
 - `memory/backlog.md` for backlog updates
 
 **FORBIDDEN:**
@@ -174,7 +174,7 @@ WORK_FILES = <files being touched>
 ### 0.1 Locate audit JSON
 
 1. If `[json-path]` provided: use that file
-2. Otherwise: glob `audit-results/geo-audit-*.json`, parse `timestamp` from each, select most recent by timestamp (not filename)
+2. Otherwise: glob `zuvo/audits/geo-audit-*.json`, parse `timestamp` from each, select most recent by timestamp (not filename)
 3. If no JSON found: "No audit JSON found. Run `zuvo:seo-audit` first (GEO dimensions are included)." STOP.
 
 ### 0.2 Validate schema and version
@@ -229,7 +229,7 @@ Exclude findings where `fix_type` is not in `geo-fix-registry.md` fixable invent
 
 ### 0.5.1 Read seo-fix output
 
-Glob `audit-results/seo-fix-*.json`. For each file, parse `actions[]`.
+Glob `zuvo/audits/seo-fix-*.json`. For each file, parse `actions[]`.
 
 ### 0.5.2 Check for overlapping fixes
 
@@ -522,10 +522,10 @@ ALREADY APPLIED BY SEO-FIX:
 
 ### 4.3 Save report
 
-1. Save markdown report to `audit-results/geo-fix-YYYY-MM-DD.md`
+1. Save markdown report to `zuvo/audits/geo-fix-YYYY-MM-DD.md`
    Auto-increment: `-2.md`, `-3.md` if same-day file exists.
 
-2. Save fix JSON to `audit-results/geo-fix-YYYY-MM-DD.json` (schema: `../../shared/includes/fix-output-schema.md`):
+2. Save fix JSON to `zuvo/audits/geo-fix-YYYY-MM-DD.json` (schema: `../../shared/includes/fix-output-schema.md`):
 
 ```json
 {
@@ -535,7 +535,7 @@ ALREADY APPLIED BY SEO-FIX:
   "timestamp": "[ISO 8601]",
   "project": "[cwd]",
   "args": "[arguments]",
-  "source_audit": "audit-results/geo-audit-YYYY-MM-DD.json",
+  "source_audit": "zuvo/audits/geo-audit-YYYY-MM-DD.json",
   "result": "PARTIAL | COMPLETE | SAFE_ONLY",
   "score": { "before": 41, "estimated_after": 58, "method": "confirmed-fixes-only" },
   "summary": {

@@ -233,7 +233,7 @@ When unavailable, per stack:
 **FastAPI:** `grep -rn "@router\.\(get\|post\|put\|patch\|delete\)" --include="*.py"`
 **Frontend:** `grep -rn "useQuery\|useMutation\|fetch(\|axios\." --include="*.ts" --include="*.tsx"`
 
-Discovery must return ALL results. No truncation via `head -N`. If output exceeds 200 lines, save to `audits/artifacts/endpoints-raw.txt`.
+Discovery must return ALL results. No truncation via `head -N`. If output exceeds 200 lines, save to `zuvo/audits/artifacts/endpoints-raw.txt`.
 
 **OpenAPI layer:** If an OpenAPI/Swagger spec exists, use it as primary inventory. Grep-based discovery becomes the fallback. Endpoints found by grep but missing from spec = undocumented (flag for D10).
 
@@ -387,7 +387,7 @@ Build endpoint x role matrix:
 
 ## Phase 4: Report
 
-Save to: `audits/api-audit-[date].md`
+Save to: `zuvo/audits/api-audit-[date].md` — at the **project root** (`zuvo/` resolves via `git rev-parse --show-toplevel`; override `$ZUVO_OUTPUT_DIR`. See `../../shared/includes/report-output-location.md`).
 
 **REQUIRED:** emit the Tool Availability Block (template in `../../shared/includes/codesift-setup.md`) at the top of the report, after the title and before findings. Auditing degraded runs depends on this — do NOT skip it.
 
@@ -496,7 +496,7 @@ COMPLETION GATE CHECK
 [ ] Auth matrix built: every endpoint classified
 [ ] Adversarial review ran on audit report
 [ ] Cross-cutting analysis ran
-[ ] Report saved to audits/
+[ ] Report saved to zuvo/audits/
 [ ] Run: line printed and appended to log
 ```
 

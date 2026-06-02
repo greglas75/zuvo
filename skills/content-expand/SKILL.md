@@ -57,7 +57,7 @@ Print `CORE FILES LOADED:` for items 1-6. After language detection, print `LANGU
 `--dry-run` mode: proceed with WARNING (no file mutation).
 
 ### GATE 3 — Write Scope
-Allowed: input file, `<file>.content-expand-backup`, `audit-results/`. FORBIDDEN: everything else.
+Allowed: input file, `<file>.content-expand-backup`, `zuvo/reports/`. FORBIDDEN: everything else.
 
 ## Arguments
 
@@ -266,7 +266,7 @@ Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <proje
 
 ### Reporting (skip with `--light`)
 
-Unless `--light`: write report to `audit-results/content-expand-YYYY-MM-DD.md`. Write JSON per `article-output-schema.md`. Run knowledge curation per `knowledge-curate.md`. Persist findings per `backlog-protocol.md`.
+Unless `--light`: write report to `zuvo/reports/content-expand-YYYY-MM-DD.md`. Write JSON per `article-output-schema.md`. Run knowledge curation per `knowledge-curate.md`. Persist findings per `backlog-protocol.md`.
 
 ### Retrospective (REQUIRED)
 

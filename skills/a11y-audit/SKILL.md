@@ -567,7 +567,7 @@ For each CRITICAL or HIGH finding, persist to `memory/backlog.md`:
 
 ### 5.5 Save Report
 
-Save to: `audit-results/a11y-audit-YYYY-MM-DD.md`
+Save to: `zuvo/audits/a11y-audit-YYYY-MM-DD.md` — at the **project root** (`zuvo/` resolves via `git rev-parse --show-toplevel`; override `$ZUVO_OUTPUT_DIR`. See `../../shared/includes/report-output-location.md`).
 
 ### 5.6 Propose Next Actions
 
@@ -593,7 +593,7 @@ COMPLETION GATE CHECK
 [ ] Critical gates printed: A2 (Keyboard) and A4 (Contrast)
 [ ] Per-component score table present with all A1-A9 dimensions
 [ ] Findings sorted by legal risk first
-[ ] Report saved to audit-results/
+[ ] Report saved to zuvo/audits/
 [ ] Run: line printed and appended to log
 ```
 

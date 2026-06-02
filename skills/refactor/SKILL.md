@@ -124,8 +124,8 @@ $ARGUMENTS = other         -> task description, FULL mode
 ```
 "no-commit"                -> Skip auto-commits (show diff + proposed message instead)
 "plan-only"                -> Stop after the approval gate (Phase 1). Do not enter Phase 2 or Phase 3.
-"continue"                 -> RESUME: scan .zuvo/contracts/refactor-*.json, resume active contract
-"continue <path>"          -> RESUME: user passes readable file path (e.g., src/services/order.service.ts), skill computes hash internally to find .zuvo/contracts/refactor-{hash}.json
+"continue"                 -> RESUME: scan zuvo/contracts/refactor-*.json, resume active contract
+"continue <path>"          -> RESUME: user passes readable file path (e.g., src/services/order.service.ts), skill computes hash internally to find zuvo/contracts/refactor-{hash}.json
 ```
 
 **Flag priority rules:**
@@ -253,14 +253,14 @@ Create a resumable state file per target. The path is scoped so batch mode can t
 
 | Mode | Contract path |
 |------|---------------|
-| Single-file (full) | `.zuvo/contracts/refactor-{target-hash}.json` |
-| Batch | `.zuvo/contracts/refactor-{target-hash}.json` (one per queue entry) |
+| Single-file (full) | `zuvo/contracts/refactor-{target-hash}.json` |
+| Batch | `zuvo/contracts/refactor-{target-hash}.json` (one per queue entry) |
 
 Where `{target-hash}` is the first 8 chars of SHA-1 of the relative target path (e.g., `sha1("src/services/order.service.ts")[:8]`).
 
 **Resume contract:**
-- `continue <path>`: compute hash from relative path, load `.zuvo/contracts/refactor-{hash}.json`.
-- `continue` (no argument): scan `.zuvo/contracts/refactor-*.json` for `stage != "COMPLETE"`. 0 active: stop. 1 active: resume. 2+: list candidates, ask user to pick (do NOT auto-pick "most recent").
+- `continue <path>`: compute hash from relative path, load `zuvo/contracts/refactor-{hash}.json`.
+- `continue` (no argument): scan `zuvo/contracts/refactor-*.json` for `stage != "COMPLETE"`. 0 active: stop. 1 active: resume. 2+: list candidates, ask user to pick (do NOT auto-pick "most recent").
 
 ```json
 {
@@ -716,7 +716,7 @@ Process a queue of files through the full pipeline autonomously. Zero interactiv
 
 For each `[ ]` entry, run the full pipeline -- not a shortcut:
 
-**Pipeline enforcement:** "Full pipeline" means running Phase 1 planning → Phase 2 test handling → Phase 3 execution → Phase 4 completion as defined in this skill. "Read file, fix obvious things, commit" is a shortcut that violates batch mode. Every file gets: its own contract state file (`.zuvo/contracts/refactor-{target-hash}.json`), CQ BEFORE eval, fixes, CQ AFTER eval, one commit.
+**Pipeline enforcement:** "Full pipeline" means running Phase 1 planning → Phase 2 test handling → Phase 3 execution → Phase 4 completion as defined in this skill. "Read file, fix obvious things, commit" is a shortcut that violates batch mode. Every file gets: its own contract state file (`zuvo/contracts/refactor-{target-hash}.json`), CQ BEFORE eval, fixes, CQ AFTER eval, one commit.
 
 **Steps (ALL mandatory, in order):**
 

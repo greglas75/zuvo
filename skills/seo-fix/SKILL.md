@@ -95,7 +95,7 @@ in the final fix report.
 
 **Allowed write targets:**
 - Files listed in template registry target paths (source/config files)
-- `audit-results/` for the fix report (`.md` and `.json`)
+- `zuvo/audits/` for the fix report (`.md` and `.json`)
 - `memory/backlog.md` for backlog updates
 
 **FORBIDDEN:**
@@ -172,7 +172,7 @@ WORK_FILES = <files being touched>
 ### 0.1 Locate audit JSON
 
 1. If `[json-path]` provided: use that file
-2. Otherwise: glob `audit-results/seo-audit-*.json`, parse `timestamp` from each, select most recent by timestamp (not filename)
+2. Otherwise: glob `zuvo/audits/seo-audit-*.json`, parse `timestamp` from each, select most recent by timestamp (not filename)
 3. If no JSON found: "No audit JSON found. Run `zuvo:seo-audit` first." STOP.
 
 ### 0.2 Validate schema and version
@@ -643,10 +643,10 @@ Same format as seo-audit backlog persistence. Uses the stable check ID from the 
 
 ### 5.2 Save report
 
-1. Save markdown report to `audit-results/seo-fix-YYYY-MM-DD.md`
+1. Save markdown report to `zuvo/audits/seo-fix-YYYY-MM-DD.md`
    Auto-increment: `-2.md`, `-3.md` if same-day file exists.
 
-2. Save fix JSON to `audit-results/seo-fix-YYYY-MM-DD.json` (schema: `../../shared/includes/fix-output-schema.md`):
+2. Save fix JSON to `zuvo/audits/seo-fix-YYYY-MM-DD.json` (schema: `../../shared/includes/fix-output-schema.md`):
 
 ```json
 {
@@ -655,7 +655,7 @@ Same format as seo-audit backlog persistence. Uses the stable check ID from the 
   "timestamp": "[current ISO 8601]",
   "project": "[working directory]",
   "args": "[arguments]",
-  "source_audit": "audit-results/seo-audit-2026-03-28.json",
+  "source_audit": "zuvo/audits/seo-audit-2026-03-28.json",
   "result": "PARTIAL",
   "score": {
     "before": 53,

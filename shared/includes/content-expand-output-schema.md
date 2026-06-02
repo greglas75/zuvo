@@ -93,5 +93,5 @@ All top-level fields required. Within nested objects:
 
 ## Output Path
 
-- Report (always): `audit-results/content-expand-YYYY-MM-DD.md` and `.json`
+- Report (always): `zuvo/reports/content-expand-YYYY-MM-DD.md` and `.json`
 - Applied changes: modifications to the input file itself

@@ -88,7 +88,7 @@ If any file is MISSING, STOP. Do not proceed from memory.
 
 ### GATE 1 -- Read-Only
 
-This audit is **read-only**. The only write target is `audits/`.
+This audit is **read-only**. The only write target is `zuvo/audits/`.
 
 FORBIDDEN:
 - Modifying any `.env`, config, or source file
@@ -325,7 +325,7 @@ ENV8 = [0-5]    Documentation
 
 ## Phase 3: Report
 
-Save to: `audits/env-audit-[YYYY-MM-DD].md`
+Save to: `zuvo/audits/env-audit-[YYYY-MM-DD].md` — at the **project root** (`zuvo/` resolves via `git rev-parse --show-toplevel`; override `$ZUVO_OUTPUT_DIR`. See `../../shared/includes/report-output-location.md`).
 
 ### Report Structure
 

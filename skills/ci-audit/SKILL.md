@@ -87,7 +87,7 @@ If any file is MISSING, STOP. Do not proceed from memory.
 
 ## Safety Gate
 
-This audit is **read-only**. The only write target is `audits/`.
+This audit is **read-only**. The only write target is `zuvo/audits/`.
 
 FORBIDDEN:
 - Modifying any workflow or pipeline file
@@ -324,7 +324,7 @@ Excluded from both score and max.
 
 ## Phase 3: Report
 
-Save to: `audits/ci-audit-[YYYY-MM-DD].md`
+Save to: `zuvo/audits/ci-audit-[YYYY-MM-DD].md` — at the **project root** (`zuvo/` resolves via `git rev-parse --show-toplevel`; override `$ZUVO_OUTPUT_DIR`. See `../../shared/includes/report-output-location.md`).
 
 ### Report Structure
 

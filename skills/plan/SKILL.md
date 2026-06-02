@@ -282,7 +282,7 @@ Write the plan document to `docs/specs/YYYY-MM-DD-<topic>-plan.md` using today's
     - Surface: [matching surface]
     - Proof: [exact procedure — command, HTTP call, DB query, browser interaction script]
     - Expected: [exit code, response shape, DOM state, screenshot match]
-    - Artifact: `.zuvo/proofs/task-1-<ac-id>.<ext>`
+    - Artifact: `zuvo/proofs/task-1-<ac-id>.<ext>`
 - [ ] Commit: `[commit message describing behavior added]`
 
 ### Task 2: [...]
@@ -302,7 +302,7 @@ Copy each smoke proof from the spec's `## Whole-feature Smoke Proofs` section. I
   - Preconditions: [fixtures, env, seeded data]
   - Proof: [full end-to-end script]
   - Expected: [invariants the entire flow must preserve]
-  - Artifact: `.zuvo/proofs/smoke-<flow-name>.<ext>`
+  - Artifact: `zuvo/proofs/smoke-<flow-name>.<ext>`
 - **SMOKE2 — ...**
 ```
 
@@ -315,7 +315,7 @@ Copy each smoke proof from the spec's `## Whole-feature Smoke Proofs` section. I
 5. **Acceptance Proof per task (MANDATORY):** Every task must list its `Acceptance Proof:` block — copying the spec's per-AC proof inline so `zuvo:execute` can run it without re-resolving from spec. Tasks without proofs are rejected by plan-reviewer. See `../../shared/includes/acceptance-proof-protocol.md` for surface taxonomy and proof shapes. **Verify** (rule 4) is an *implementation-detail* check (does my function compile and pass unit tests); **Acceptance Proof** is a *behavior* check (does the AC actually work). Both required — they catch different defects.
 6. **Surface field (MANDATORY):** Every task declares one Surface (backend-logic / api / db / db-data / ui / integration / config / docs). Determines proof shape and verification primitive. UI surface enables browser-tool requirement at execute time.
 7. **Coverage matrix:** Every Coverage Matrix row must appear in at least one task's Acceptance Proof field. No orphan requirements, deliverables, or constraints. **In addition:** every spec AC must be covered by at least one task's Acceptance Proof — Coverage Matrix and AC list must both be exhaustively mapped.
-8. **Whole-feature smoke proofs:** Copy the spec's `## Whole-feature Smoke Proofs` section into the plan verbatim. If the spec marked smoke "Not applicable", repeat the justification. Smoke proofs run after all per-task proofs at execute Phase Final. When smoke proofs apply: (a) the plan MUST include a final numbered task that authors the smoke-test runner file (the `.zuvo/proofs/smoke-*` artifact named in the template), with the smoke proofs listed in that task's Acceptance Proof block — otherwise execute Phase Final hits a missing file; (b) every smoke proof MUST map to at least one task's RED sub-suite (a runnable, possibly-mocked end-to-end exercise) so smoke regressions surface during execute rather than only at the end.
+8. **Whole-feature smoke proofs:** Copy the spec's `## Whole-feature Smoke Proofs` section into the plan verbatim. If the spec marked smoke "Not applicable", repeat the justification. Smoke proofs run after all per-task proofs at execute Phase Final. When smoke proofs apply: (a) the plan MUST include a final numbered task that authors the smoke-test runner file (the `zuvo/proofs/smoke-*` artifact named in the template), with the smoke proofs listed in that task's Acceptance Proof block — otherwise execute Phase Final hits a missing file; (b) every smoke proof MUST map to at least one task's RED sub-suite (a runnable, possibly-mocked end-to-end exercise) so smoke regressions surface during execute rather than only at the end.
 9. **Dependencies:** A task can only depend on tasks with a lower number. No circular dependencies. Dependencies must reflect real ordering, not preference. Dependency declaration must trace concrete reads — a task's Dependencies MUST list every prior task whose output (file/symbol/schema column/env var) its RED/GREEN actually reads or imports; transitive coverage is not sufficient; conversely reject declared deps the task does not consume. Common offenders: a feature-flag task that reads a schema column, an orchestrator that reads a schema column, an Acceptance Proof that invokes a higher-numbered symbol. Task numbers are a *partial* order: `zuvo:execute` runs in dependency order, so numbers need not encode priority — only that dependencies point backward. Place the riskiest cross-boundary unit as early as its dependencies allow so adversarial review does not flag deferred risk.
 10. **Complexity rating:** `standard` means 1-3 files, existing patterns, one system boundary, and no new public contract. `complex` means 4+ files, 2+ system boundaries, new patterns/contracts, cross-cutting concerns, or high-risk hotspot files. The complexity rating determines which implementation tier the execute phase will use: default for standard, deep for complex.
 11. **File limits:** Use `../../rules/file-limits.md` as the planning default. In particular: utilities/helpers <=100 lines, controllers/services <=300 unless the rule explicitly allows more, components <=200/300, hooks <=250. If the plan would exceed these limits, split the task.
@@ -421,10 +421,10 @@ Draft → Reviewed (reviewer converged + cross-model recorded) → Approved (by 
 After the plan reaches `Approved` status, write the active plan pointer using the WRITE protocol from `session-state.md`:
 
 ```bash
-mkdir -p .zuvo/plans
+mkdir -p zuvo/plans
 ```
 
-Write `.zuvo/plans/active-plan.md` with `status: pending`. If the plan is only `Reviewed`, do not write the pointer yet. This keeps `zuvo:execute` aligned with the same approval gate as the plan header.
+Write `zuvo/plans/active-plan.md` with `status: pending`. If the plan is only `Reviewed`, do not write the pointer yet. This keeps `zuvo:execute` aligned with the same approval gate as the plan header.
 
 ---
 
@@ -447,7 +447,7 @@ COMPLETION GATE CHECK
 [ ] Plan-reviewer ran and converged — APPROVED verdict
 [ ] Adversarial validation ran (--mode plan)
 [ ] Plan status is Approved (interactive) or Reviewed (async)
-[ ] Active plan pointer written to .zuvo/plans/active-plan.md
+[ ] Active plan pointer written to zuvo/plans/active-plan.md
 [ ] Retrospective bash appends EXECUTED (retros.log + retros.md) — printing markdown is not enough
 [ ] append-runlog wrapper invoked and exited 0
 [ ] Logs evidence block printed with real `tail` output

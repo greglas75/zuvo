@@ -66,7 +66,7 @@ If any file is missing, STOP.
 
 **Allowed write targets:**
 - Content files from the audit manifest (files listed in audit JSON findings)
-- `audit-results/` for the fix report (`.md` and `.json`)
+- `zuvo/audits/` for the fix report (`.md` and `.json`)
 - `memory/backlog.md` for backlog updates
 
 **FORBIDDEN:**
@@ -131,7 +131,7 @@ WORK_FILES = <files being touched>
 ### 0.1 Locate audit JSON
 
 1. If `[json-path]` provided: use that file
-2. Otherwise: glob `audit-results/content-audit-*.json`, select most recent by timestamp
+2. Otherwise: glob `zuvo/audits/content-audit-*.json`, select most recent by timestamp
 3. If no JSON found: "No audit JSON found. Run `zuvo:content-audit` first." STOP.
 
 ### 0.2 Validate schema
@@ -320,7 +320,7 @@ Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <proje
 
 ### 5.2 Save JSON report
 
-Write to `audit-results/content-fix-YYYY-MM-DD.json` conforming to
+Write to `zuvo/audits/content-fix-YYYY-MM-DD.json` conforming to
 `fix-output-schema.md` v1.1. Auto-increment `-2.json` for same-day runs.
 
 ### Knowledge Curation
