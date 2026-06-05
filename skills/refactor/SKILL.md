@@ -276,6 +276,7 @@ Where `{target-hash}` is the first 8 chars of SHA-1 of the relative target path 
   "backup_branch": "backup/refactor-order-service-2026-03-27",
   "plan": {},
   "test_mode": "",
+  "test_audit_before": { "test_file": null, "q7": 0, "q11": 0, "q13": 0, "units_total": 0, "units_covered": 0, "uncovered_units": [] },
   "progress": []
 }
 ```
@@ -346,14 +347,19 @@ Produce the refactoring plan incorporating sub-agent results (when available):
    Test file:  [path or NONE]
    Found via:  [co-located .test.* / .spec.* / __tests__/* / grep import]
    Q-triage:   Q7=[0|1] Q11=[0|1] Q13=[0|1]
+   Coverage:   units_total=[N] units_covered=[M] gap=[N-M]
    -----------------------------------------------
    ```
 
    Steps:
    a. Search for test file: co-located `.test.*` / `.spec.*`, `__tests__/` directory, grep for imports of target
    b. If test file found: read it, run quick Q-audit on 3 critical gates only (Q7=error-path coverage, Q11=branch coverage, Q13=imports actual production function). This is a partial triage, not a full Q1-Q19 audit.
-   c. Record `test_audit_before` in contract state: `{ "test_file": "...", "q7": 0|1, "q11": 0|1, "q13": 0|1 }`
-   d. If no test file found: record `{ "test_file": null }`
+   c. **Coverage of the refactoring surface (CRITICAL — separate from Q-triage).** Q-triage measures how *good* the found test is; coverage measures whether it actually *exercises the code being moved*. A test can score Q7=Q11=Q13=1 and still touch only one of many units. Compute:
+      - `units_total` = the count of independent units this refactor will move/extract/relocate. For SPLIT_FILE / GOD_CLASS / EXTRACT_CLASS: every top-level component/function/class that lands in a new module. For EXTRACT_METHODS: the public methods whose internals change. Get this from the planned extractions, not a guess.
+      - `units_covered` = how many of those units the existing test **actually executes at runtime** (rendered/called with real input and asserted on — not merely imported, and not landing in an empty-state/early-return branch). When unsure whether a unit is truly exercised, count it as NOT covered.
+      - `coverage_gap = units_total - units_covered`, and list the uncovered unit names.
+   d. Record `test_audit_before` in contract state: `{ "test_file": "...", "q7": 0|1, "q11": 0|1, "q13": 0|1, "units_total": N, "units_covered": M, "uncovered_units": [...] }`
+   e. If no test file found: record `{ "test_file": null, "units_total": N, "units_covered": 0, "uncovered_units": [...] }`
 
 6. **Test mode routing** -- Route based on test discovery results. Evaluate top-to-bottom, first match wins:
 
@@ -361,10 +367,13 @@ Produce the refactoring plan incorporating sub-agent results (when available):
 |----------|-----------|-----------|
 | 1 | Target is a type file (`.d.ts`, `.types.ts`) or config (`.config.*`, `.*rc`) | VERIFY_COMPILATION |
 | 2 | No test file found (test_file = null) | WRITE_NEW |
-| 3 | Test found AND Q7=1 AND Q11=1 AND Q13=1 | RUN_EXISTING |
-| 4 | Test found AND (Q7=0 OR Q11=0 OR Q13=0) | IMPROVE_TESTS |
+| 3 | **`coverage_gap > 0`** (one or more units being moved are NOT exercised by any test) | **CHARACTERIZE_GAP** |
+| 4 | Test found AND Q7=1 AND Q11=1 AND Q13=1 AND `coverage_gap = 0` | RUN_EXISTING |
+| 5 | Test found AND (Q7=0 OR Q11=0 OR Q13=0) AND `coverage_gap = 0` | IMPROVE_TESTS |
 
 Note: priority 1 (VERIFY_COMPILATION) is checked **before** test discovery runs. If the target is a type/config file, skip test discovery entirely.
+
+**Why priority 3 outranks RUN_EXISTING (the failure this prevents):** a single test that passes Q7/Q11/Q13 can still exercise only one of N units being relocated. `RUN_EXISTING` would then go green while proving nothing about the other N−1 units — the refactor "verifies" against a test that never touches most of the moved code. Whenever `coverage_gap > 0`, you MUST write characterization tests for the uncovered units **before** touching production code. Build success, type-check, and static import resolution are NOT substitutes — they prove the code links, not that behavior is preserved. This gate is non-negotiable for SPLIT_FILE / GOD_CLASS / EXTRACT_CLASS, where moving unexercised units is the whole job.
 
 7. **CQ gate targets** -- Which CQ failures from the pre-audit should be fixed during this refactoring.
 
@@ -384,7 +393,8 @@ Type: [EXTRACT_METHODS / SPLIT_FILE / ...]
 Scope: [N] files
 Extractions: [summary of planned changes]
 CQ targets: [which CQ failures to fix]
-Test mode: [RUN_EXISTING / WRITE_NEW / IMPROVE_TESTS / VERIFY_COMPILATION]
+Test mode: [RUN_EXISTING / CHARACTERIZE_GAP / WRITE_NEW / IMPROVE_TESTS / VERIFY_COMPILATION]
+Coverage: units_total=[N] units_covered=[M] gap=[N-M]
 ```
 
 Wait for user input. If the user changes the type or plan:
@@ -411,14 +421,22 @@ Skip for VERIFY_COMPILATION test mode.
 
 ```
 Phase 2: testing.md -- READ
-Phase 2: test-quality-rules.md -- READ (WRITE_NEW or IMPROVE_TESTS only)
+Phase 2: test-quality-rules.md -- READ (WRITE_NEW, IMPROVE_TESTS, or CHARACTERIZE_GAP)
 ```
 
 ### Test Mode Execution
 
 **RUN_EXISTING:** Run the existing test suite. Verify all tests pass. This establishes the behavioral baseline. If any test fails, investigate before proceeding -- the refactoring must not start from a broken state.
 
-**WRITE_NEW:** Write tests for the target file before refactoring. The tests capture the current behavior so that the refactoring can be verified against them. Apply Q1-Q19 self-eval on the new tests.
+**CHARACTERIZE_GAP:** The existing test does not exercise every unit being moved (`coverage_gap > 0`). Close the gap BEFORE any production edit:
+1. For **each** uncovered unit in `uncovered_units`, write a characterization (pin-down) test that executes it with a representative input and asserts on real output — mount/render the component, or call the function, with a payload that reaches actual logic (not an empty-state/early-return path). Source representative inputs from existing fixtures, sample data, or recover them from git history (e.g. `git show <sha>:<path>`) when they were deleted; never invent shapes the code never sees.
+   - The bar is "fails loudly if behavior changes," not full Q1-Q19. A smoke test that mounts the unit and asserts `does not throw` + a stable output snapshot is the minimum; prefer a value assertion where the unit returns something checkable.
+   - A parameterized table over the units (one case per unit) is the canonical shape for SPLIT_FILE / GOD_CLASS.
+2. Run the new tests against the **pre-refactor** code and confirm they pass. This is the lock — they must be green on the OLD code, or they are not characterizing current behavior. If a unit genuinely cannot be exercised (truly dead), record it in the contract as `dead:<unit>` with evidence and exclude it from the move; do not silently skip it.
+3. Apply Q1-Q19 self-eval on the new tests. Only after `coverage_gap` reaches 0 (every moved unit now exercised, or proven dead) does execution proceed.
+4. Record `test_audit_after` with the closed gap. The completion checklist gates on this.
+
+**WRITE_NEW:** Write tests for the target file before refactoring. The tests capture the current behavior so that the refactoring can be verified against them. Apply Q1-Q19 self-eval on the new tests. Same coverage bar as CHARACTERIZE_GAP: every unit being moved must be exercised, not just the file's entry point.
 
 **IMPROVE_TESTS:** When the refactoring type is IMPROVE_TESTS (target is a test file):
 1. Run Q1-Q19 self-eval on the existing tests to identify gaps
@@ -449,7 +467,7 @@ Record `PRE_REFACTOR_SHA = $(git rev-parse HEAD)` at the start of Phase 3, befor
 
 Apply the planned changes according to the extraction list, following these rules:
 
-1. One extraction at a time. Verify tests pass after each extraction before starting the next.
+1. One extraction at a time. Verify tests pass after each extraction before starting the next. "Tests pass" here means a test that **actually exercises the extracted unit** — guaranteed by the Phase 2 coverage gate, which has already characterized every moved unit. If you reach an extraction whose unit has no exercising test, stop and go back to CHARACTERIZE_GAP; do not lean on build/type-check to wave it through.
 2. Update all imports affected by each extraction (use the Dependency Mapper results).
 3. Maintain behavioral equivalence -- the refactored code must produce identical outputs for identical inputs.
 4. Follow CQ patterns from `cq-patterns.md` in all new code.
@@ -640,6 +658,7 @@ Before printing the final output block, verify every item. Unfinished items = pi
 COMPLETION GATE CHECK
 [ ] Refactor type classified and printed: [RENAME/EXTRACT/SPLIT/INLINE/RESTRUCTURE]
 [ ] CQ pre-audit printed on target file (all gates before changes)
+[ ] Coverage gate: `units_total`/`units_covered` printed; if gap > 0, characterization tests were written for EVERY uncovered moved unit and ran green on the PRE-refactor code (build/type-check/static-resolution do NOT satisfy this item)
 [ ] Baseline test suite ran green before first change
 [ ] After each change: tests ran and green (not just at the end)
 [ ] CQ post-audit printed — score must not regress
