@@ -61,6 +61,27 @@ Comprehensive security assessment across 15 dimensions (S1-S15) covering OWASP T
 | `--static` | Static analysis only -- skip Phase 8 even if `--live-url` present |
 | `--quick` | Quick mode: secrets + auth coverage + critical gates only |
 | `--persist-backlog` | Emit backlog entries for CRITICAL/HIGH findings |
+| `--strict-v2` | Count the new v2 vulnerability classes toward the HIGH/CRITICAL gate total. Default: warning-only grace (see below) |
+
+### v2 class grace (CI-safety) — shared by security-audit AND pentest
+
+The **11** v2 vulnerability `finding_type`s — `xxe`, `prototype_pollution`, `redos`,
+`graphql_introspection`, `graphql_depth_unbounded`, `ldap_injection`, `insecure_deserialization`,
+`mass_assignment`, `ssji`, `jwt_weak`, `xss_dom` (the GraphQL pair is TWO distinct classes) — ship
+**warning-only through the grace window: the minor that introduces them up to but excluding the next
+minor** (introduced in the `1.4.x` line; they graduate to full gate weight in `1.5.0`). During the
+window they are reported in the findings list AND persisted to backlog (`--persist-backlog`
+unaffected), but do NOT count toward the HIGH/CRITICAL gate total / pentest score caps that a CI
+"zero-HIGH" policy keys on — so updating the plugin never breaks an existing pipeline.
+
+- `--strict-v2` opts in to full gate weight immediately — each skill applies it to its own gate
+  mechanism (security-audit: HIGH/CRITICAL totals; pentest: score caps + critical-gate totals).
+  In `1.5.0` full weight becomes the default and the flag is a no-op (kept for back-compat).
+- `--quick` still reports v2 findings if its dimensions surface them; grace only changes gate
+  weighting, never whether a finding is shown.
+- When any v2-class finding is present without `--strict-v2`, both skills print the identical line:
+  `v2-grace: warning-only (N v2 findings reported + backlogged, excluded from gate; --strict-v2 to enforce)`
+  where N counts v2-class findings.
 
 | Mode | Scope | Phases | Live Probes |
 |------|-------|--------|-------------|
