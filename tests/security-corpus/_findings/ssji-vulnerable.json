@@ -1,0 +1,1 @@
+{"meta":{"source_fixture":"tests/security-corpus/ssji/vulnerable"},"findings":[{"type":"ssji","severity":"high","reason_code":"proof_complete"}]}

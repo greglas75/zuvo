@@ -1,0 +1,1 @@
+{"meta":{"source_fixture":"tests/security-corpus/insecure_deserialization/vulnerable"},"findings":[{"type":"insecure_deserialization","severity":"high","reason_code":"proof_complete"}]}

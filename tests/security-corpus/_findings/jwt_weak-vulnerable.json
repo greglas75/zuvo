@@ -1,0 +1,1 @@
+{"meta":{"source_fixture":"tests/security-corpus/jwt_weak/vulnerable"},"findings":[{"type":"jwt_weak","severity":"high","reason_code":"proof_complete"}]}
