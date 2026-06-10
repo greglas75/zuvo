@@ -283,10 +283,16 @@ Check for behavioral supply chain risks: install scripts, native addons, recentl
 
 ### 1.2 Secret Scanning (S7)
 
-If gitleaks available:
+If gitleaks available — scan the **full git history**, not just the working tree (a secret
+committed then deleted is still exposed in history and must be found + rotated):
 ```bash
-gitleaks detect --source . --report-format json --no-git 2>/dev/null
+# default `gitleaks detect` walks all commits; --redact keeps the secret value out of the report.
+# Cap scan size on very large repos to bound runtime.
+gitleaks detect --source . --report-format json --redact --max-target-megabytes 50 2>/dev/null
 ```
+Report each historical hit with its commit SHA so the secret can be rotated and history-scrubbed.
+For a working-tree-only pass (faster, pre-commit style), `--no-git` is the explicit opt-out — but
+the default audit MUST scan history.
 
 If unavailable, grep-based:
 ```bash
