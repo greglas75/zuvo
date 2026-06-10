@@ -5,7 +5,7 @@
 **planning_mode:** spec-driven
 **source_of_truth:** approved spec
 **plan_revision:** 2
-**status:** Reviewed
+**status:** Approved
 **Created:** 2026-06-10
 **Tasks:** 18
 **Estimated complexity:** 12 standard / 6 complex (registry-wide + cross-skill edits)
