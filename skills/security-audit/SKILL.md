@@ -85,6 +85,14 @@ CORE FILES LOADED:
   5. ../../shared/includes/no-pause-protocol.md -- READ/MISSING (HARD: no mid-loop pauses)
 ```
 
+**Stage 1b -- Shared vuln registries (DEGRADABLE — load if present; do NOT STOP if missing,
+fall back to built-in patterns per Phase 3):**
+```
+  6. ../../shared/includes/pentest-finding-registry.md      -- READ/MISSING (finding_type→CWE)
+  7. ../../shared/includes/pentest-source-sink-registry.md  -- READ/MISSING (sink seeds for registry-seeded trace)
+  8. ../../shared/includes/pentest-safe-pattern-registry.md -- READ/MISSING (safe-pattern downgrades)
+```
+
 **Stage 2 -- Before Phase 10 (report writing):**
 ```
   5. ../../shared/includes/backlog-protocol.md -- READ/MISSING
@@ -362,13 +370,34 @@ Each agent must:
 5. Assign confidence: HIGH/MEDIUM/LOW using the 3-tier model
 6. Only HIGH in main findings. MEDIUM in "Needs Verification". LOW excluded entirely.
 
-For each grep match:
-1. Read the full function containing the match
-2. Trace input source -- attacker-controlled?
-3. Check for framework mitigation
+**Registry-seeded source-to-sink (not grep-and-read).** Seed discovery from the shared
+`pentest-source-sink-registry.md` sink families for the detected stack, and classify every
+finding by its `pentest-finding-registry.md` `finding_type` (+ CWE). **If those registries are
+MISSING (Stage-1 load failed — partial install), fall back to the built-in `search_patterns`
+grep families and emit `DEGRADED: shared vuln registry unavailable — using built-in patterns,
+no finding_type/CWE classification`; do NOT block the audit.** For each candidate sink,
+**invoke CodeSift `trace_call_chain` / `find_references`** (the same index-backed tools pentest
+uses) to establish whether the sink is **reachable** from an attacker-controlled source along the
+call path — do NOT stop at reading the surrounding function. These tools prove call-path
+*reachability*, NOT formal taint: a reference/caller match raises confidence above grep-adjacency,
+but you must still reason explicitly about whether the tainted *value* flows to the sink (vs. a
+reachable-but-unrelated reference). Confidence rule: a **locally-visible direct flow** (untrusted
+input concatenated into the sink within the same function) is HIGH on its own — no trace needed.
+Only a **non-local** flow (source and sink in different functions/files) whose connection you could
+NOT establish is capped at MEDIUM. A `pentest-safe-pattern-registry.md` match on the traced path
+downgrades the candidate (it is evidence, not auto-exclusion — the trace must still show the
+defense covers the live path). When CodeSift is unavailable, fall back to Grep+read and **emit an
+explicit `DEGRADED: CodeSift unavailable — cross-function flows not traced (capped at MEDIUM);
+locally-visible flows still rated HIGH`** line; never claim a trace you did not perform, and never
+bury an obvious local injection in Needs-Verification just because the tracer was down.
+
+For each candidate sink:
+1. Confirm the sink (via the registry sink family if loaded, else built-in patterns); record its `finding_type` if available
+2. Trace the source with `trace_call_chain`/`find_references` -- attacker-controlled and reaching this sink?
+3. Check for framework mitigation / safe-pattern on the traced path
 4. Check for explicit validation/sanitization
-5. Assign confidence
-6. HIGH/MEDIUM -> create finding. LOW -> skip silently.
+5. Assign confidence (local direct flow ⇒ HIGH; untraced cross-function flow ⇒ cap at MEDIUM)
+6. HIGH/MEDIUM -> create finding with `finding_type` + CWE when the registry loaded; in degraded mode (registry MISSING) classify by dimension (S1/S2/S3) only. LOW -> skip silently.
 
 Fix completeness: for findings involving data flow, the fix must cover BOTH source side (validation) and sink side (escaping/parameterization).
 
