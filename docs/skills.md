@@ -228,3 +228,15 @@ Some skills override the standard group with extra tools where the audit is deep
 ### Sub-agents
 
 Sub-agents (spawned via `Agent` tool) do **not** inherit the parent's preload state — each runs in its own Claude Code instance with a fresh tool list populated from the agent's own frontmatter `tools:` array. An agent that needs CodeSift tools must list them explicitly in `tools:` and (if those arrive deferred in the agent's session-start banner) call `ToolSearch` as its first action.
+
+## Security detection coverage (v2 vuln classes) — 2026-06-10
+
+pentest + security-audit now share a vuln-class registry covering 11 new classes
+(XXE, prototype-pollution, ReDoS, GraphQL introspection/depth, LDAP injection,
+insecure deserialization, mass-assignment, SSJI, JWT-weak, DOM-XSS), Java/Spring +
+Kotlin/Ktor stack profiles, GraphQL/serverless source models, real scanners
+(gitleaks history, SCA via osv-scanner, IaC via checkov/tfsec/trivy/dockle),
+cross-skill finding reconciliation, coverage-gate parity (IC-2 surface / IC-5 class),
+and a `--strict-v2` flag (warning-only grace through 1.4.x, full weight 1.5.0).
+Proven by tests/security-corpus/ (14 fixtures, scorer + smoke benchmark).
+Spec/plan: docs/specs/2026-06-10-security-detection-coverage-{spec,plan}.md.
