@@ -1,0 +1,1 @@
+{"meta":{"source_fixture":"tests/security-corpus/serverless_ssrf/vulnerable","stack":"lambda-serverless","profile_active":true},"findings":[{"type":"ssrf_url_fetch","severity":"high","reason_code":"proof_complete"}]}

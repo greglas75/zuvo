@@ -104,6 +104,14 @@
       "clean_path": "kotlin_sqli/clean",
       "stack": "kotlin-ktor",
       "exploit_note": "call.parameters concatenated into Exposed exec"
+    },
+    {
+      "class": "serverless_ssrf",
+      "finding_type": "ssrf_url_fetch",
+      "vulnerable_path": "serverless_ssrf/vulnerable",
+      "clean_path": "serverless_ssrf/clean",
+      "stack": "lambda-serverless",
+      "exploit_note": "event.body url fetched server-side"
     }
   ]
 }
