@@ -96,6 +96,14 @@
       "clean_path": "spring_sqli/clean",
       "stack": "java-spring",
       "exploit_note": "@RequestParam concatenated into JPQL"
+    },
+    {
+      "class": "kotlin_sqli",
+      "finding_type": "sql_injection",
+      "vulnerable_path": "kotlin_sqli/vulnerable",
+      "clean_path": "kotlin_sqli/clean",
+      "stack": "kotlin-ktor",
+      "exploit_note": "call.parameters concatenated into Exposed exec"
     }
   ]
 }
