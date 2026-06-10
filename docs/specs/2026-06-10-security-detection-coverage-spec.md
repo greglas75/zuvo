@@ -2,10 +2,10 @@
 
 > **spec_id:** 2026-06-10-security-detection-coverage-0457
 > **topic:** Improve zuvo:pentest + zuvo:security-audit to detect maximally many security problems
-> **status:** Reviewed
+> **status:** Approved
 > **created_at:** 2026-06-10T04:57:11Z
 > **reviewed_at:** 2026-06-10T05:03:00Z
-> **approved_at:** null
+> **approved_at:** 2026-06-10T05:08:00Z
 > **approval_mode:** interactive
 > **adversarial_review:** partial (1/3 providers — gemini; codex-5.3 empty, host claude auto-excluded)
 > **author:** zuvo:brainstorm
