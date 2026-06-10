@@ -458,10 +458,43 @@ Check:
 
 **Skip if:** No Docker/CI/K8s/Terraform detected.
 
+Manual checklist (always):
 - Docker: USER directive, secrets in layers, base image pinning, .dockerignore
 - CI/CD: script injection, action pinning, permissions, secret handling
 - K8s: pod security, network policies, secrets management
 - Terraform: state file, provider credentials, insecure defaults
+
+### S14 Scanners (run when present — don't eyeball what a scanner can prove)
+
+Prefer real IaC/container scanners over manual inspection. Detect availability, run the
+matching scanner for the detected files, and parse JSON findings. **A scanner exits non-zero
+when it FINDS issues — that is a successful scan, not a failure; key on JSON output, not exit
+code (same trap as SCA).**
+
+```bash
+# A scanner exits NON-ZERO when it finds issues — success, not failure. Key the
+# degraded decision on VALID JSON output, never the exit code. Validate the output
+# parses as JSON (a tool error printed to stdout is NOT a result).
+scan() { OUT="$("$@" 2>/dev/null)"; if [ -n "$OUT" ] && printf '%s' "$OUT" | python3 -c 'import sys,json; json.load(sys.stdin)' 2>/dev/null; then printf '%s\n' "$OUT"; return 0; fi; return 1; }
+HAS_TF=$(find . -name '*.tf' -not -path '*/.terraform/*' 2>/dev/null | head -1)
+if command -v checkov >/dev/null 2>&1 && { [ -n "$HAS_TF" ] || [ -d k8s ]; }; then
+  scan checkov -d . -o json || echo "DEGRADED: checkov produced no valid output (IC-5 only)"
+else echo "DEGRADED: checkov not installed or no Terraform/K8s — misconfig not scanned (IC-5 only)"; fi
+if command -v tfsec >/dev/null 2>&1 && [ -n "$HAS_TF" ]; then
+  scan tfsec . --format json || echo "DEGRADED: tfsec produced no valid output (IC-5 only)"
+else echo "DEGRADED: tfsec absent or no .tf (IC-5 only)"; fi
+if command -v trivy >/dev/null 2>&1; then
+  scan trivy fs --format json --quiet . || echo "DEGRADED: trivy produced no output (IC-5 only)"
+else echo "DEGRADED: trivy not installed — image/fs CVE scan skipped (IC-5 only)"; fi
+if command -v dockle >/dev/null 2>&1 && ls Dockerfile >/dev/null 2>&1; then
+  scan dockle -f json . || echo "DEGRADED: dockle produced no output (IC-5 only)"
+else echo "DEGRADED: dockle absent or no Dockerfile (IC-5 only)"; fi
+```
+
+**Per IC-4/IC-5:** each missing scanner emits an explicit `DEGRADED: <tool> not installed` line
+and lowers IC-5 `class_coverage` — it **never** fails the IC-2 surface gate, so a fresh
+environment without these tools still produces a valid (non-INCOMPLETE) audit. Scanner findings
+merge into S14 with their rule id + severity; the manual checklist remains the floor.
 
 ---
 
