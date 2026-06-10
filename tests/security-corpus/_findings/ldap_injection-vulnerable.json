@@ -1,0 +1,1 @@
+{"meta":{"source_fixture":"tests/security-corpus/ldap_injection/vulnerable"},"findings":[{"type":"ldap_injection","severity":"high","reason_code":"proof_complete"}]}
