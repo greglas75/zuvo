@@ -221,6 +221,15 @@ Based on detection, load the applicable conditional rules from `../../rules/`:
 
 Load ALL that match. Most projects have 2-3 applicable stacks.
 
+### 0.2b Entry-Point Inventory (authoritative snapshot for the IC-2 surface gate)
+
+Enumerate EVERY attack-surface entry point in scope ONCE here — routes, HTTP/RPC/GraphQL handlers,
+server actions, webhook receivers, message/queue consumers, and CLI/cron entrypoints — and record
+the count as the immutable `entry_points_in_scope` (N) the Validity Gate's `surface_gate` checks
+against. This snapshot is fixed at discovery: later phases may leave an entry point un-audited (it
+must then carry a reason code) but may NEVER drop it from N to inflate coverage. If the project has
+no backend entry points (static frontend), N=0 and the surface gate is `N/A`.
+
 ### 0.3 Tool Detection
 
 ```bash
@@ -795,14 +804,53 @@ VALIDITY GATE
     trace_route: [<N> routes | not_required (no backend) | NOT_CALLED — VIOLATES_TRIGGER]
     taint_trace: [<N> taints | not_required (no Django) | NOT_CALLED — VIOLATES_TRIGGER]
     stack_specific: [<result> | not_required | NOT_CALLED — VIOLATES_TRIGGER]
+  surface_coverage (IC-2 — STRUCTURAL gate):
+    entry_points_in_scope: <N>          # == the Phase-0 entry-point inventory (recorded ONCE at
+                                        # discovery as the authoritative immutable snapshot, like
+                                        # pentest files_in_scope). N MUST equal that snapshot — it
+                                        # cannot be shrunk to inflate the ratio; an un-audited entry
+                                        # point stays in N and must be reason-coded, never dropped.
+    entry_points_enumerated: <M>        # of those, actually audited
+    surface_coverage_pct: <M/N | N/A when N=0>
+    uncovered_undocumented: [<count> — entry points in N neither audited nor reason-coded | 0]
+    surface_gate: [PASS (>=0.90 AND all uncovered reason-coded AND N == Phase-0 snapshot) | N/A (N=0, e.g. static frontend / no backend routes) | FAIL]
+  class_coverage (IC-5 — ADVISORY, never a gate):
+    classes_in_scope: <N>
+    classes_checked: <M>               # reduced by degraded scanners (IC-4) + stacks with no profile
+    class_coverage_pct: <M/N>
+    degraded: [<tool/profile list> | none]
   postamble:
     retros_log_appended: [yes(bytes_added=N) | NOT_APPENDED — VIOLATES_REQUIRED_POSTAMBLE]
     retros_md_appended: [yes(entry_count=N) | NOT_APPENDED — VIOLATES_REQUIRED_POSTAMBLE]
     verify_audit_pass: [yes(<verified>/<total>) | NOT_RUN | REJECTED]
-  gate_status: [PASS | FAIL — <which gates missing>]
+  gate_status: [PASS (requires required_tool_calls satisfied AND surface_gate in {PASS, N/A}) | FAIL — <which gates missing>]
 ```
 
-If `gate_status = FAIL` → VERDICT overrides to `INCOMPLETE`, append `[VALIDITY GATE FAIL]` to NOTES, add backlog item `B-security-audit-incomplete-<date>`. Print Validity Gate AFTER retro append + `~/.zuvo/append-runlog` so postamble fields can be `yes(verified)`.
+`gate_status = PASS` requires BOTH the required-tool-calls block satisfied AND `surface_gate` in {`PASS`, `N/A`}; only `surface_gate = FAIL` forces `gate_status = FAIL` (an `N/A` surface gate — a static frontend with no backend entry points — is a valid passing audit).
+
+**Coverage-gate parity (IC-2 / IC-5 — mirrors pentest `5814c2d`).** The audit cannot emit a passing
+grade over an **un-enumerated attack surface**: if `surface_gate = FAIL` (under 90% of entry points
+enumerated, or any uncovered entry point lacks a reason code), VERDICT overrides to `INCOMPLETE`.
+**Tool/profile gaps do NOT fail the surface gate** — a missing checkov/gitleaks/IaC scanner or an
+unprofiled stack lowers IC-5 `class_coverage` (advisory, surfaced in the report) only, so a fresh
+environment without optional tools still produces a valid audit. The denominator of IC-2 is entry
+points; the denominator of IC-5 is vulnerability classes — they are never mixed.
+
+Three clarifications (per adversarial review):
+- **Best-effort + additive snapshot.** The Phase-0 inventory is the best enumeration at discovery,
+  not a claim of omniscience. An entry point discovered later is ADDED to N (raising the bar),
+  never used to retroactively pass a prior run — immutability means "cannot be shrunk to game the
+  ratio," not "cannot grow when more surface is found."
+- **`surface_gate = N/A` means no SERVER-side request-handling surface** (static frontend / pure
+  library). Client-side surface (DOM-XSS, prototype pollution) is still audited by S2/S9 regardless
+  — N/A exempts only the route-enumeration gate, not the audit.
+- **The surface gate measures BREADTH (was every entry point examined), not DEPTH.** Audit depth
+  per entry point is governed by the per-dimension methodology (Phases 3–7); `entry_points_enumerated`
+  counts an entry point as audited only when its dimensions actually ran on it, not on a glance.
+
+If `gate_status = FAIL` OR `surface_gate = FAIL` (NOT `N/A`) → VERDICT overrides to `INCOMPLETE`, append
+`[VALIDITY GATE FAIL]` / `[COVERAGE GATE FAIL]` to NOTES, add backlog item
+`B-security-audit-incomplete-<date>`. Print Validity Gate AFTER retro append + `~/.zuvo/append-runlog` so postamble fields can be `yes(verified)`.
 
 Append the Run line via the retro-gated wrapper (NOT direct `>> runs.log`):
 
