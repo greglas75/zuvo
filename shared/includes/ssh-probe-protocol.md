@@ -81,9 +81,22 @@ Every `ssh` invocation MUST use the following flag string verbatim (IC-8):
 mkdir -m 700 /tmp/zuvo-<run-id> || { echo 'run dir exists — refusing'; exit 1; }
 
 # PER CHECK: the inner command is bounded SERVER-SIDE with IC-9's per-check timeout,
-# so a check orphaned by a dropped SSH session self-kills instead of leaking forever:
-nohup sh -c 'timeout <CHECK_TIMEOUT_S> <cmd> > /tmp/zuvo-<run-id>/<check>.out 2>&1; echo $? > /tmp/zuvo-<run-id>/<check>.rc' \
-  < /dev/null > /dev/null 2>&1 &
+# so a check orphaned by a dropped SSH session self-kills instead of leaking forever.
+# The command is base64-encoded before transport to eliminate quote-injection hazard
+# (backlog B-infra-collect-nohup-quote-transport, FIXED). Conceptual shape:
+#
+#   # collector side (laptop):
+#   encoded=$(printf '%s' "$cmd" | base64)
+#   ssh <IC-8-flags> user@host \
+#     "nohup sh -c 'base64 -d <<< $encoded | timeout <N> sh \
+#       > /tmp/zuvo-<run-id>/<check>.out 2>&1; echo \$? > /tmp/zuvo-<run-id>/<check>.rc' \
+#      < /dev/null > /dev/null 2>&1 &"
+#
+# NOTE: <cmd> placeholders are STATIC, predefined battery commands only — never
+# interpolate host-derived or user-supplied strings into the encoded command.
+# Dynamic values (paths, ports) go through validated variables in the collector,
+# not into this template, regardless of encoding.
+#
 # … retrieval polls (bounded) for /tmp/zuvo-<run-id>/<check>.rc; the .rc file's
 #   appearance marks completion and its contents are the command's exit code
 #   (124 = server-side timeout per coreutils convention).

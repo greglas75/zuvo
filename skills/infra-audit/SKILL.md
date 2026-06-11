@@ -43,6 +43,20 @@ one target source must resolve. `--quick` and `--dimensions` are mutually
 exclusive (error if both). `--resume <run-dir>` overrides target resolution from
 the run's own `state.json`.
 
+Variable mapping for flags that the collector invocation threads through:
+
+| Flag | Variable set |
+|------|-------------|
+| `--external <mode>` (e.g. `--external direct`) | `EXTERNAL_MODE=<mode>` |
+| `--skip-external` | `SKIP_EXTERNAL=1` |
+| `--proxy <url>` | `proxy=<url>` (overrides hosts.yaml/env) |
+| `--quick` | `QUICK=1` |
+| `--dimensions <list>` | `DIMENSIONS=<list>` |
+| `--no-install` | `NO_INSTALL=1` |
+| `--deep-scan` | `DEEP_SCAN=1` |
+
+`--external <mode>` and `--skip-external` are mutually exclusive; error if both supplied.
+
 ## Dimensions (IS1-IS12)
 
 | ID | Dimension | Analyst |
@@ -312,6 +326,7 @@ Invoke per host, passing `ssh_key` / `known_hosts` / `proxy` resolved from
   ${NO_INSTALL:+--no-install} \
   ${DEEP_SCAN:+--deep-scan} \
   ${SKIP_EXTERNAL:+--skip-external} \
+  ${EXTERNAL_MODE:+--external "$EXTERNAL_MODE"} \
   --run-id "$RUN_ID" \
   --out "$RUN_DIR/bundle/$name.json" \
   --raw-dir "$RUN_DIR/raw"
@@ -524,7 +539,7 @@ outcome vocabulary (`OK|DEGRADED|UNREACHABLE|FAILED|SKIPPED`, IC-2).
 |--------|------------------|
 | `pending` | run full collection + analysis + report |
 | `collecting` | re-run collection from scratch (idempotent; a partial bundle is never trusted — overwrite) |
-| `analyzed` | skip collection AND analysis ONLY when `findings/<host>.json` exists AND its `bundle_sha256` matches the current bundle (IC-3 stale-findings guard); on `bundle_sha256` mismatch the mismatch forces re-analysis from the bundle |
+| `analyzed` | skip collection AND analysis ONLY when all four `findings/<host>-<layer>.json` files exist AND each file's `bundle_sha256` matches the current bundle (IC-3 stale-findings guard); on any `bundle_sha256` mismatch the mismatch forces re-analysis from the bundle |
 | `reported` | skip entirely; the per-host report file is untouched (mtime unchanged) |
 | `unreachable` | retry from `pending` (the cause may have been fixed) |
 | `failed` | retry from `pending` (the cause may have been fixed) |
@@ -550,7 +565,7 @@ resumed run (always written LAST).
 | E10 | Alpine / containers as targets | `/etc/alpine-release` detection → skip lynis, use `apk` checks; containers via `docker exec` |
 | E11 | Duplicate inventory IPs | merge + `[WARN] duplicate IP`, audit once |
 | E12 | lynis < 3.0 | version probe → manual fallback + `DEGRADED (lynis vX < 3.0)` |
-| E13 | No proxy but external requested | ask once: `--external direct` (polite) or `--skip-external`; non-interactive → skip-external `[AUTO-DECISION]` (targets are NEVER auto-decided) |
+| E13 | No proxy but external requested | ask once: `--external direct` (polite) or `--skip-external`; if user chooses `--external direct` → set `EXTERNAL_MODE=direct`; non-interactive → skip-external `[AUTO-DECISION]` (targets are NEVER auto-decided) |
 | E14 | pgdsat (IS10) | runs ON host as `postgres` via SSH; requires BOTH install consent AND query consent; decline either → `DEGRADED (pgdsat declined)` |
 | E15 | IS4 with no `external_fqdn` (bare IP) | IS4 = `insufficient-data (no external_fqdn)` — never guessed from nginx configs |
 
