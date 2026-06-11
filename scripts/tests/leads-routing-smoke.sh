@@ -19,8 +19,8 @@ for kw in "${REQUIRED[@]}"; do
   echo "$ROUTE_LINE" | grep -iq "$kw" || fail "route line missing keyword '$kw'"
 done
 
-# Banner bumped to 53
-grep -Fq '53 skills' "$ROUTER" || fail "banner still shows old skill count (expected 53)"
+# Banner bumped to 54
+grep -Fq '54 skills' "$ROUTER" || fail "banner still shows old skill count (expected 54)"
 
 # No conflicting lead-related keywords on another route
 OTHER=$(grep -F 'lead' "$ROUTER" | grep -Fv '`zuvo:leads`' | grep -Ev 'lead time|leadership' || true)

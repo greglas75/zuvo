@@ -138,3 +138,10 @@ type: project
 - **Issue:** The IS9 docker CVE check audits a single container image, not all running containers — partial coverage (correct for what it scans, incomplete fleet-wide).
 - **v2 fix:** enumerate `docker ps -q` and run trivy per image; aggregate per-container findings.
 - **Confidence:** 55 (coverage limitation, results correct for the scanned image)
+
+## B-install-sh-copy-verification
+- **Source:** zuvo:execute Task 10 adversarial (pre-existing convention, repo-wide)
+- **File:** scripts/install.sh Codex/Cursor Step 7 script-copy blocks
+- **Issue:** ALL named-script cp lines (benchmark.sh, adversarial-review.sh, reviewer-model-route.sh, blind-audit-codex.sh, infra-collect.sh) use `cp ... 2>/dev/null || true`, so a missing/failed copy still prints "Scripts installed". Task 10 conformed to this convention for infra-collect.sh; the gap is pre-existing and repo-wide.
+- **v2 fix:** add a post-copy verification loop asserting each expected script exists at its dest; warn/exit on any missing. Repo-wide (not infra-audit-specific).
+- **Confidence:** 50 (pre-existing convention; `|| true` is intentional install robustness, but silent-fail masks real breakage)

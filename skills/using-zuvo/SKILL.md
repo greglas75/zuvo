@@ -3,7 +3,7 @@ name: using-zuvo
 description: "ALWAYS LOADED — Zuvo skill router. Injected at session start. Determines which zuvo skill to invoke for the current task."
 ---
 
-> **Zuvo v1.3.116** | 53 skills | 4 adversarial providers | CQ1-CQ29 + Q1-Q19
+> **Zuvo v1.3.116** | 54 skills | 4 adversarial providers | CQ1-CQ29 + Q1-Q19
 
 # Zuvo Skill Router
 
@@ -77,6 +77,7 @@ If the session context includes the compressed response protocol, apply it by su
 | Audit dependencies (outdated, vulnerable, unused) | `zuvo:dependency-audit` |
 | Audit CI/CD pipelines | `zuvo:ci-audit` |
 | Audit environment config and secrets | `zuvo:env-audit` |
+| Audit server and infrastructure security (SSH, services, CVEs, misconfigs) | `zuvo:infra-audit` |
 | Audit SEO and structured data | `zuvo:seo-audit` |
 | GEO readiness audit — AI citation optimization, llms.txt, schema graph, generative engine visibility | `zuvo:geo-audit` |
 | Audit content quality (encoding, links, formatting, CMS artifacts) | `zuvo:content-audit` |

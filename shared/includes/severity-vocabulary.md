@@ -20,6 +20,7 @@ Four severity levels, ordered by impact:
 | `/review` | MUST-FIX / RECOMMENDED / NIT | MUST-FIX | RECOMMENDED | NIT | — |
 | `/code-audit` | Tier A / B / C / D | Tier D | Tier C | Tier B | Tier A |
 | `/security-audit` | CRITICAL / HIGH / MEDIUM / LOW | CRITICAL | HIGH | MEDIUM | LOW |
+| `/infra-audit` | CRITICAL / HIGH / MEDIUM / LOW | CRITICAL | HIGH | MEDIUM | LOW |
 | `/ship` review-light | BLOCKER / WARNING | BLOCKER | WARNING | — | — |
 | adversarial loop | CRITICAL / WARNING / INFO | CRITICAL | WARNING | — | INFO |
 | `/architecture` | 0-3 score | 0 (Critical) | 1 (Needs work) | 2 (Minor gaps) | 3 (Good) |
