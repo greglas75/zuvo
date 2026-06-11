@@ -138,7 +138,7 @@ for _i in $(seq 1 15); do
   if command -v nc >/dev/null 2>&1; then
     nc -z -w 2 127.0.0.1 1080 2>/dev/null && { _socks_up=1; break; }
   else
-    (exec 3<>/dev/tcp/127.0.0.1/1080) 2>/dev/null && exec 3>&- && { _socks_up=1; break; }
+    (exec 3<>/dev/tcp/127.0.0.1/1080) 2>/dev/null && { _socks_up=1; break; }
   fi
   sleep 1
 done
@@ -150,7 +150,7 @@ if command -v nc >/dev/null 2>&1; then
   pass "socks proxy reachable on 1080 (nc)"
 else
   # portable fallback: /dev/tcp
-  (exec 3<>/dev/tcp/127.0.0.1/1080) 2>/dev/null && exec 3>&- || fail "socks proxy not reachable on 1080"
+  (exec 3<>/dev/tcp/127.0.0.1/1080) 2>/dev/null || fail "socks proxy not reachable on 1080"
   pass "socks proxy reachable on 1080 (/dev/tcp)"
 fi
 
@@ -167,6 +167,9 @@ fi
 #   2. host.docker.internal:2201 — published host port via the Docker host;
 #      resolves on Docker Desktop, needs host-gateway on Linux. FALLBACK.
 # We try (1) first, fall back to (2), and report which variant carried the banner.
+# Portable timeout wrapper: use coreutils timeout when available, else run bare.
+_tmo() { if command -v timeout >/dev/null 2>&1; then timeout 10 "$@"; else "$@"; fi; }
+
 if ! command -v nc >/dev/null 2>&1; then
   echo "WARN: nc unavailable — skipping socks application-layer proof" >&2
   pass "socks application-layer proof skipped (no nc) — TCP-open verified above"
@@ -174,12 +177,12 @@ else
   _socks_banner=""
   _socks_variant=""
   # Variant 1: compose service DNS (platform-independent).
-  _socks_banner="$(timeout 10 nc -X 5 -x 127.0.0.1:1080 sshd-misconfigured 22 < /dev/null 2>/dev/null | head -1 || true)"
+  _socks_banner="$(_tmo nc -X 5 -x 127.0.0.1:1080 sshd-misconfigured 22 < /dev/null 2>/dev/null | head -1 || true)"
   if printf '%s' "$_socks_banner" | grep -q '^SSH-2\.0'; then
     _socks_variant="compose service DNS (sshd-misconfigured:22)"
   else
     # Variant 2: host.docker.internal published port.
-    _socks_banner="$(timeout 10 nc -X 5 -x 127.0.0.1:1080 host.docker.internal 2201 < /dev/null 2>/dev/null | head -1 || true)"
+    _socks_banner="$(_tmo nc -X 5 -x 127.0.0.1:1080 host.docker.internal 2201 < /dev/null 2>/dev/null | head -1 || true)"
     if printf '%s' "$_socks_banner" | grep -q '^SSH-2\.0'; then
       _socks_variant="host.docker.internal:2201 (published port)"
     fi
