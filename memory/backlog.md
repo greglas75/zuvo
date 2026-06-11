@@ -123,3 +123,11 @@ type: project
 - **Mitigation already in place:** IS12 (the .env reader) emits key NAMES only, never values — the dominant leak path is structurally closed. Other battery checks read only known-schema config files (sshd_config/sysctl/ufw have no secret fields; redis requirepass+masterauth explicitly covered).
 - **v2 fix:** add a value-heuristic redaction pass (high-entropy / token-shaped values) on top of keyword redaction; tune false-positive rate against real config corpus.
 - **Confidence:** 50 (real residual, structurally mitigated where it matters; spec-sanctioned keyword model)
+
+## B-infra-collect-external-live-execution
+- **Source:** zuvo:execute Task 7 (deferred — within Task 7's vantage-only test contract)
+- **File:** scripts/infra-collect.sh collect_live external leg
+- **Issue:** Task 7 delivered the external vantage state machine + nuclei tag allowlist + proxy wiring (all dry-run-printable + vantage enum live-correct), but does NOT yet EXECUTE the external sub-scans live: open_ports[]/tls{}/nuclei_findings[] are written empty, and --external direct's abort-after-3-consecutive-refused loop exists only as dry-run preview.
+- **Impact:** IS3 firewall-diff (internal-vs-external port visibility), IS4 TLS, IS8 nuclei findings have no external data to analyze in v1; analysts treat empty external arrays as "external data absent (vantage recorded)", not "nothing found". SMOKE1 only asserts vantage=proxy (satisfied).
+- **v2 fix:** wire live proxychains nmap -sT + testssl.sh + nuclei -proxy execution in collect_live, populate the external block, parse+redact findings, implement the direct-mode abort threshold.
+- **Confidence:** 70 (intentional v1 scope boundary, plan-sanctioned; the diff value is the firewall-effectiveness proof which needs this for full IS3)

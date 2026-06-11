@@ -93,6 +93,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # the tool list is defined exactly once here, not duplicated at two call sites.
 TOOL_AVAIL_DEFAULTS='{"lynis":null,"nmap":null,"trivy":null,"grype":null,"debsecan":null,"needrestart":null,"docker":null,"ss":null}'
 
+# IC-4 nuclei template enforcement. The collector invokes nuclei ONLY with this
+# pinned allowlist — defined ONCE here as named constants (CQ14 single-source) so
+# the AC3 dry-run audit can assert no other tag set ever appears. v2's active
+# categories are opt-in by design; the safe set is exposure/misconfig/recon only,
+# and the excluded set bars every intrusive / DoS / brute / fuzz / default-login
+# template class. NEVER reconstruct these inline — always interpolate the consts.
+NUCLEI_SAFE_TAGS='exposures,misconfiguration,technologies,ssl,dns'
+NUCLEI_EXCLUDE_TAGS='intrusive,dos,fuzz,bruteforce,default-login'
+
 # ===========================================================================
 # Usage
 # ===========================================================================
@@ -258,6 +267,28 @@ esac
 # flags. Restrict to the same safe charset as --raw-dir: alphanumeric + . _ / -
 if [ -n "$KNOWN_HOSTS" ] && ! printf '%s' "$KNOWN_HOSTS" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
   echo "ERROR: malformed --known-hosts '$KNOWN_HOSTS' (allowed: A-Z a-z 0-9 . _ / -)" >&2
+  usage
+  exit 1
+fi
+
+# IC-4 external-scan proxy resolution + validation. Resolution order:
+#   --proxy flag  >  $ZUVO_SCAN_PROXY env  (hosts-yaml default is passed by the
+#   caller as --proxy, so it folds into the flag tier). Whichever wins becomes
+#   $PROXY for the rest of the run.
+: "${ZUVO_SCAN_PROXY:=}"
+if [ -z "$PROXY" ] && [ -n "$ZUVO_SCAN_PROXY" ]; then
+  PROXY="$ZUVO_SCAN_PROXY"
+fi
+
+# SECURITY (CQ3 / injection guard): $PROXY is interpolated verbatim into external
+# command strings (`proxychains4 ... `, `nuclei -proxy $PROXY ...`) and into the
+# IC-4 proxychains.conf. An unvalidated value with shell metacharacters or spaces
+# (e.g. `socks5://h:1 -tags intrusive` or `; rm -rf /`) would break out of the
+# command / inject extra nuclei flags, defeating the pinned allowlist. Restrict to
+# a strict URL charset: scheme ∈ {socks5,socks4,http}, host = safe hostname/IPv4
+# charset, port = bare integer. Reject anything else, fail loud (exit 1).
+if [ -n "$PROXY" ] && ! printf '%s' "$PROXY" | grep -Eq '^(socks5|socks4|http)://[A-Za-z0-9._-]+:[0-9]+$'; then
+  echo "ERROR: malformed --proxy '$PROXY' (expected (socks5|socks4|http)://host:port)" >&2
   usage
   exit 1
 fi
@@ -651,7 +682,11 @@ write_bundle() {
   local checks_json
   checks_json="$(_build_checks_json)"
 
-  local vantage="none"
+  # IC-4: the skeleton records the SAME resolved external vantage as the live path.
+  # With no --proxy and no `--external direct` this is `none` (the CLI-test
+  # contract for the default dry-run); a proxy/direct run reflects the real state.
+  _resolve_vantage
+  local vantage="$EXTERNAL_VANTAGE"
   local proxy_json="null"
   if [ -n "$PROXY" ]; then
     proxy_json="$(printf '%s' "$PROXY" | jq -R '.')"
@@ -681,6 +716,144 @@ write_bundle() {
         nuclei_findings: []
       }
     }' > "$OUT" || { echo "ERROR: failed to write bundle: $OUT" >&2; exit 1; }
+}
+
+# ===========================================================================
+# External vantage leg (Task 7 / IC-4).
+#
+# The external view scans the host's PUBLIC attack surface from the operator's
+# laptop, routed through a user-supplied proxy so a fail2ban ban lands on the
+# proxy IP, not the SSH management IP (DD-4). Per-tool mechanism:
+#   - nmap (-sT TCP connect) + testssl.sh  → wrapped in proxychains-ng
+#     (handles SOCKS5/HTTP transparently; testssl's native --proxy is
+#      HTTP-CONNECT-only, so it is NEVER used with a SOCKS proxy).
+#   - nuclei → its native `-proxy` (supports socks5://, http://), invoked ONLY
+#     with the pinned $NUCLEI_SAFE_TAGS / $NUCLEI_EXCLUDE_TAGS allowlist.
+#
+# vantage state machine (external.vantage ∈ proxy|direct|none|failed):
+#   --skip-external                         → none
+#   no proxy AND not `--external direct`    → none
+#   `--external direct`                     → direct (-T2 --max-rate 50 + abort
+#                                             after 3 consecutive refused, DD-4)
+#   proxy set, proxychains-ng absent        → none + preflight warning (IC-4)
+#   proxy set, proxychains-ng present,
+#       proxy unreachable                   → failed
+#   proxy set, proxychains-ng present,
+#       proxy reachable                     → proxy
+# ===========================================================================
+
+# Module-level external state, consumed by the bundle writers.
+EXTERNAL_VANTAGE="none"
+# The host being scanned externally = the SSH address (the public surface of the
+# host under audit). No user/port interpolation beyond the already-validated addr.
+EXTERNAL_TARGET="$SSH_ADDR"
+
+# Detect a proxychains-ng binary. Prints the binary NAME on stdout (one of
+# proxychains4 / proxychains-ng / proxychains, in preference order) and returns 0
+# when found; prints nothing and returns 1 when none is on PATH (IC-4 degrade).
+_detect_proxychains() {
+  local b
+  for b in proxychains4 proxychains-ng proxychains; do
+    if command -v "$b" >/dev/null 2>&1; then
+      printf '%s' "$b"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Reachability of the proxy endpoint (parse host:port out of the validated URL).
+# Returns 0 reachable, 1 not. Reuses the same bounded nc/timeout probe shape as
+# _reachable. Host/port are passed as POSITIONAL ARGS, never interpolated into a
+# shell string (defense-in-depth; both already pass the strict --proxy charset).
+_proxy_reachable() {
+  local hostport rest phost pport
+  hostport="${PROXY#*://}"          # strip scheme
+  phost="${hostport%:*}"
+  pport="${hostport##*:}"
+  local tmo=""
+  if command -v timeout >/dev/null 2>&1; then tmo="timeout"
+  elif command -v gtimeout >/dev/null 2>&1; then tmo="gtimeout"; fi
+  if command -v nc >/dev/null 2>&1; then
+    if [ -n "$tmo" ]; then
+      "$tmo" "$PREFLIGHT_TIMEOUT_S" nc -z "$phost" "$pport" >/dev/null 2>&1
+      return $?
+    fi
+    if nc -h 2>&1 | grep -q -- '-G'; then
+      nc -G "$PREFLIGHT_TIMEOUT_S" -z "$phost" "$pport" >/dev/null 2>&1
+      return $?
+    fi
+    nc -z -w "$PREFLIGHT_TIMEOUT_S" "$phost" "$pport" >/dev/null 2>&1
+    return $?
+  fi
+  if [ -n "$tmo" ]; then
+    "$tmo" "$PREFLIGHT_TIMEOUT_S" bash -c 'exec 3<>/dev/tcp/"$1"/"$2"' _ "$phost" "$pport" >/dev/null 2>&1
+  else
+    ( exec 3<>"/dev/tcp/$phost/$pport" ) >/dev/null 2>&1
+  fi
+}
+
+# Resolve EXTERNAL_VANTAGE from flags + proxy state. Pure decision logic; emits a
+# preflight warning to stderr on the proxychains-absent degrade path (IC-4). Sets
+# EXTERNAL_VANTAGE. Idempotent — safe to call from dry-run and live.
+_resolve_vantage() {
+  if [ "$SKIP_EXTERNAL" = true ]; then
+    EXTERNAL_VANTAGE="none"
+    return 0
+  fi
+  if [ -z "$PROXY" ]; then
+    if [ "$EXTERNAL_MODE" = "direct" ]; then
+      EXTERNAL_VANTAGE="direct"
+    else
+      EXTERNAL_VANTAGE="none"
+    fi
+    return 0
+  fi
+  # Proxy configured: require proxychains-ng for the nmap/testssl legs (IC-4).
+  if ! _detect_proxychains >/dev/null 2>&1; then
+    echo "WARN: proxychains-ng not found on PATH — external vantage degraded to 'none' (IC-4). Install proxychains-ng to enable proxied external scans." >&2
+    EXTERNAL_VANTAGE="none"
+    return 0
+  fi
+  # In --dry-run we never open a socket — assume the proxy would be used so the
+  # command preview is emitted; live mode probes reachability below.
+  if [ "$DRY_RUN" = true ]; then
+    EXTERNAL_VANTAGE="proxy"
+    return 0
+  fi
+  if _proxy_reachable; then
+    EXTERNAL_VANTAGE="proxy"
+  else
+    echo "WARN: external proxy $PROXY unreachable — external vantage 'failed' (internal checks unaffected)" >&2
+    EXTERNAL_VANTAGE="failed"
+  fi
+}
+
+# Dry-run preview of the external command battery (DD-9). Prints the proxychains-
+# wrapped nmap (-sT) + testssl.sh lines and the nuclei native-`-proxy` line with
+# the pinned allowlist, exactly as they WOULD run. Emitted only when the resolved
+# vantage actually performs external scanning (proxy or direct).
+preview_external() {
+  _resolve_vantage
+  if [ "$EXTERNAL_VANTAGE" = "none" ] || [ "$EXTERNAL_VANTAGE" = "failed" ]; then
+    printf '[DRY-RUN] external vantage=%s — no external scan commands (IC-4)\n' "$EXTERNAL_VANTAGE"
+    return 0
+  fi
+  if [ "$EXTERNAL_VANTAGE" = "direct" ]; then
+    # DD-4 direct mode: polite timing + abort threshold; no proxychains wrapper.
+    printf '[DRY-RUN] WOULD run (external-nmap, direct): nmap -sT -T2 --max-rate 50 -- %s\n' "$EXTERNAL_TARGET"
+    printf '[DRY-RUN] WOULD run (external-testssl, direct): testssl.sh --quiet -- %s\n' "$EXTERNAL_TARGET"
+    printf '[DRY-RUN] WOULD run (external-nuclei, direct): nuclei -target %s -tags %s -exclude-tags %s\n' \
+      "$EXTERNAL_TARGET" "$NUCLEI_SAFE_TAGS" "$NUCLEI_EXCLUDE_TAGS"
+    printf '[DRY-RUN] direct mode aborts after 3 consecutive connection-refused (DD-4)\n'
+    return 0
+  fi
+  # proxy mode: nmap + testssl via proxychains-ng; nuclei via native -proxy.
+  local pc; pc="$(_detect_proxychains)"
+  printf '[DRY-RUN] WOULD run (external-nmap, proxy): %s nmap -sT -- %s\n' "$pc" "$EXTERNAL_TARGET"
+  printf '[DRY-RUN] WOULD run (external-testssl, proxy): %s testssl.sh --quiet -- %s\n' "$pc" "$EXTERNAL_TARGET"
+  printf '[DRY-RUN] WOULD run (external-nuclei, proxy): nuclei -target %s -proxy %s -tags %s -exclude-tags %s\n' \
+    "$EXTERNAL_TARGET" "$PROXY" "$NUCLEI_SAFE_TAGS" "$NUCLEI_EXCLUDE_TAGS"
 }
 
 # ===========================================================================
@@ -1081,6 +1254,7 @@ _write_live_bundle() {
     --arg host "$HOST_NAME" \
     --arg collected_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg privilege_mode "$PRIVILEGE_MODE" \
+    --arg vantage "$EXTERNAL_VANTAGE" \
     --argjson tool_availability "$TOOL_AVAIL_JSON" \
     --argjson tool_defaults "$TOOL_AVAIL_DEFAULTS" \
     --argjson proxy_used "$proxy_json" \
@@ -1094,7 +1268,7 @@ _write_live_bundle() {
       tools_installed_this_run: [],
       checks: $checks,
       external: {
-        vantage: "none",
+        vantage: $vantage,
         proxy_used: $proxy_used,
         open_ports: [],
         tls: {},
@@ -1133,6 +1307,11 @@ collect_live() {
 
   _probe_privilege
   _probe_tools
+  # IC-4: resolve the external vantage ONCE here (before the battery loop) so the
+  # incremental _write_live_bundle calls all record the same external.vantage.
+  # A dead/absent proxy degrades vantage but NEVER disrupts the internal battery
+  # below — the internal and external legs are independent.
+  _resolve_vantage
   maybe_consent_install
 
   # Claim the remote run dir ONCE here in the parent shell (ssh-probe-protocol
@@ -1190,6 +1369,8 @@ main() {
     maybe_consent_install
     # Battery preview — every ssh/find line is emitted here.
     preview_battery
+    # External (proxy) leg preview — proxychains nmap/testssl + nuclei (IC-4).
+    preview_external
     # Bundle skeleton is still written so downstream tooling can validate IC-3.
     write_bundle
     printf '[DRY-RUN] bundle skeleton written: %s\n' "$OUT"
