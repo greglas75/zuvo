@@ -240,6 +240,14 @@ run_remote() {
       _claim_run_dir
       RUN_DIR_CLAIMED=true
     fi
+    # TASK-5 CONTRACT (live wiring): the long-mode nohup path is NOT exercised at
+    # the skeleton stage (battery emits `skipped` placeholders; dry-run only prints).
+    # Before Task 5 activates live execution it MUST replace the naive `sh -c '...'`
+    # string-embedding below with a quote-safe transport (base64-decode the inner
+    # command on the target, or a remote temp script) so a battery command containing
+    # a single quote — awk/sed are full of them — cannot terminate the wrapper. The
+    # static-command rule (§2) bounds WHICH commands run; it does not make `sh -c`
+    # string-nesting quote-safe on its own. [B-infra-collect-nohup-quote-transport]
     local wrapped
     wrapped="nohup sh -c 'timeout ${CHECK_TIMEOUT_S} ${remote_cmd} > ${REMOTE_RUN_DIR}/${check_id}.out 2>&1; echo \$? > ${REMOTE_RUN_DIR}/${check_id}.rc' < /dev/null > /dev/null 2>&1 &"
     _ssh_exec "$check_id" "$wrapped"

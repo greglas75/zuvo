@@ -108,3 +108,10 @@ type: project
 - [B-secaudit-5] security-audit coverage-gate parity (IC-2/IC-5): 4 adversarial rounds specified it (immutable+additive Phase-0 entry-point snapshot, no denominator-gaming, gate_status folds surface_gate, N=0→N/A non-failing, breadth-not-depth, client-surface still audited). Residual unbounded refinements (perfect discovery impossible) clarified as best-effort. conf: 20
 - [B-secaudit-6] v2-class warning-only grace: adversarial flags the grace itself (HIGH v2 findings excluded from gate). This is the PLAN-MANDATED trade-off (plan WARNING #5: CI-safety) — [POST-CAP: DEFERRED] accepted per plan Review Trail. Mitigations: findings still reported+backlogged, --strict-v2 enforces now, time-boxed to 1.4.x→1.5.0. Residual --quick/score-cap wording aligned. conf: 20
 - [x] - [B-review-1] validate-pentest-output.sh — PENTEST_REGISTRY/PENTEST_MANIFEST env-overridable (test affordance) is also a prod-path override; low risk (local CI script, attacker would need env control) but consider a test-only guard. Source: zuvo:review self-review F4. conf: 35
+
+## B-infra-collect-nohup-quote-transport
+- **Source:** zuvo:execute Task 4 adversarial round 2 (deferred to Task 5 live-wiring)
+- **File:** scripts/infra-collect.sh — run_remote() long-mode nohup wrapper
+- **Issue:** `sh -c '...'` string-embeds the inner battery command; a single quote (awk/sed are full of them) would terminate the wrapper. NOT exploitable at skeleton stage (live long-path stubbed; dry-run only prints).
+- **Fix owner:** Task 5 MUST replace string-embedding with quote-safe transport (base64-decode inner cmd on target, or remote temp script) BEFORE activating live execution.
+- **Confidence:** 60 (real latent, gated by §2 static rule, no current exploit path)
