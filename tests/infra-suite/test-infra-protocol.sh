@@ -46,10 +46,16 @@ pass "section header present: Host-key mismatch rule"
 require_text "Rate & timing rules" "$TARGET"
 pass "section header present: Rate & timing rules"
 
-# --- 3. IC-8 verbatim SSH flag string ----------------------------------------
+# --- 3. IC-8 verbatim SSH flag string — must appear EXACTLY once -------------
 IC8_FLAGS="-o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o BatchMode=yes"
 require_text "$IC8_FLAGS" "$TARGET"
 pass "IC-8 flag string present verbatim"
+
+IC8_COUNT="$(grep -cF -e "$IC8_FLAGS" "$TARGET" || true)"
+if [[ "$IC8_COUNT" -ne 1 ]]; then
+  fail "IC-8 flag string appears ${IC8_COUNT} time(s) in the include — expected exactly 1"
+fi
+pass "IC-8 flag string appears exactly once (count=${IC8_COUNT})"
 
 # --- 4. --confirm-targets present --------------------------------------------
 require_text "--confirm-targets" "$TARGET"

@@ -45,7 +45,7 @@ Lynis test IDs NOT explicitly listed in this registry map by default:
 
 | check_id | dimension | default_severity | lynis_test_id | remediation_template | cis_ref |
 |----------|-----------|------------------|---------------|----------------------|---------|
-| IS4-cert-expired | IS4 | CRITICAL | - | Renew certificate immediately: `certbot renew --force-renewal`; verify with `openssl s_client -connect host:443 </dev/null 2>&1 \| grep 'notAfter'` | - |
+| IS4-cert-expired | IS4 | CRITICAL | - | Renew certificate immediately: `certbot renew --force-renewal`; verify expiry: `openssl s_client -connect host:443 </dev/null 2>&1 > /tmp/cert.txt ; openssl x509 -noout -enddate -in /tmp/cert.txt` | - |
 | IS4-cert-expiring-30d | IS4 | HIGH | - | Renew certificate before expiry: `certbot renew`; configure cron/timer for auto-renewal | - |
 | IS4-weak-protocols | IS4 | HIGH | - | Disable SSLv3/TLS 1.0/1.1 in web server config (nginx: `ssl_protocols TLSv1.2 TLSv1.3;`); reload service | CIS 2.2.7 |
 | IS4-weak-ciphers | IS4 | HIGH | - | Remove weak cipher suites (RC4, DES, EXPORT) from TLS config; use `ssl_ciphers ECDHE+AESGCM:DHE+AESGCM:!aNULL` in nginx | CIS 2.2.7 |
@@ -63,7 +63,7 @@ Lynis test IDs NOT explicitly listed in this registry map by default:
 
 | check_id | dimension | default_severity | lynis_test_id | remediation_template | cis_ref |
 |----------|-----------|------------------|---------------|----------------------|---------|
-| IS6-security-updates-pending | IS6 | HIGH | - | Apply security updates: `apt-get update && apt-get upgrade -y`; check with `apt list --upgradable 2>/dev/null \| grep security` | CIS 1.8.1 |
+| IS6-security-updates-pending | IS6 | HIGH | - | Apply security updates: `apt-get update && apt-get upgrade -y`; check pending: `apt list --upgradable 2>/dev/null > /tmp/upgr.txt ; grep security /tmp/upgr.txt` | CIS 1.8.1 |
 | IS6-kernel-reboot-required | IS6 | MEDIUM | - | Reboot to apply new kernel: schedule maintenance window and `reboot`; verify after: `uname -r` | - |
 | IS6-eol-distro | IS6 | CRITICAL | - | Upgrade to a supported OS release; see Ubuntu upgrade: `do-release-upgrade` (test in staging first) | - |
 | IS6-unattended-upgrades-off | IS6 | MEDIUM | - | Enable unattended security updates: `apt-get install -y unattended-upgrades && dpkg-reconfigure unattended-upgrades` | CIS 1.8.2 |

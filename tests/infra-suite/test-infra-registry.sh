@@ -146,6 +146,31 @@ pass "IS1-sshd-permitrootlogin has severity CRITICAL"
 require_grep "IS1-sshd-permitrootlogin.*SSH-7408|SSH-7408.*IS1-sshd-permitrootlogin" "$REGISTRY"
 pass "IS1-sshd-permitrootlogin references lynis test SSH-7408"
 
+# Assert remediation_template contains both required strings (grep the row line)
+ROW_LINE="$(grep -F "IS1-sshd-permitrootlogin" "$REGISTRY")"
+if ! echo "$ROW_LINE" | grep -Fq "PermitRootLogin no"; then
+  fail "IS1-sshd-permitrootlogin remediation_template missing: PermitRootLogin no"
+fi
+if ! echo "$ROW_LINE" | grep -Fq "sshd -t"; then
+  fail "IS1-sshd-permitrootlogin remediation_template missing: sshd -t"
+fi
+pass "IS1-sshd-permitrootlogin remediation_template contains 'PermitRootLogin no' and 'sshd -t'"
+
+# ---------------------------------------------------------------------------
+# 9. Column uniformity — every ^| IS row must have exactly 8 fields under awk -F'|'
+# ---------------------------------------------------------------------------
+UNEVEN_AWK="$(awk -F'|' '/^\| IS/{if(NF!=8)print NR": "NF}' "$REGISTRY")"
+UNEVEN_COUNT=0
+if [[ -n "$UNEVEN_AWK" ]]; then
+  UNEVEN_COUNT="$(echo "$UNEVEN_AWK" | wc -l | tr -d ' ')"
+fi
+
+echo "  Column-uniformity offenders: ${UNEVEN_COUNT}"
+if [[ -n "$UNEVEN_AWK" ]]; then
+  fail "rows with NF!=8 (line: NF):"$'\n'"${UNEVEN_AWK}"
+fi
+pass "all ^| IS rows have exactly 8 awk-F'|' fields (column uniformity)"
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
