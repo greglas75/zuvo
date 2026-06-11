@@ -1,0 +1,22 @@
+--- Bringing fixtures up (ensure running) ---
+ Image zuvo-infra-fixtures-sshd-hardened Built 
+ Image zuvo-infra-fixtures-sshd-misconfigured Built 
+ Container zuvo-infra-fixtures-sshd-hardened-1 Running 
+ Container zuvo-infra-fixtures-sshd-misconfigured-1 Running 
+ Container zuvo-infra-fixtures-socks-proxy-1 Running 
+PASS: IC-1 run-dir name matches pattern: infra-audit-2026-06-11-2242
+PASS: per-host reports: 2 report files found (≥2 required)
+PASS: fleet-summary.md exists
+PASS: fleet-summary contains UNREACHABLE entry (black-hole host 192.0.2.1)
+PASS: fleet-summary mtime is newest (written last)
+PASS: bundle/*.json: 2 bundles valid (IC-3 keys present)
+PASS: findings/*.json bundle_sha256: 8/8 files match
+PASS: external.vantage=proxy present in at least one bundle
+PASS: grade: misconfigured (F) worse than hardened (C)
+PASS: ~/.zuvo/runs.log: infra-audit entry found in tail-50
+PASS: zero seeded secrets found in run dir (IC-5 redaction verified)
+
+=== smoke-fleet-audit RESULTS ===
+RUN_DIR: /Users/greglas/DEV/zuvo-plugin/zuvo/audits/infra-audit-2026-06-11-2242
+PASS: 11  FAIL: 0
+SMOKE1: ALL INVARIANTS HOLD

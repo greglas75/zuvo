@@ -108,13 +108,28 @@ if [ -f "$FLEET_SUMMARY_CHECK" ]; then
     pass "resume-idempotency: fleet-summary.md host table has no duplicate rows ($SUMMARY_HOST_COUNT distinct hosts)"
   fi
 
-  # Cross-check: number of per-host .md reports should equal the number of
-  # distinct hosts in fleet-summary (no orphan report from a spurious re-run).
+  # Cross-check: the number of per-host .md reports should equal the number of
+  # fleet-summary hosts that actually produced a report. UNREACHABLE / FAILED
+  # hosts appear in the fleet-summary (correct — the black-hole host must be
+  # listed) but legitimately have NO per-host .md report (only a phase0 bundle),
+  # so they are excluded from the expected report count.
+  # Filter on the STATUS column ($3 in `| host | status | grade | ... |`) only —
+  # NOT the whole row — so a host legitimately NAMED e.g. `db-failed-01` with an
+  # OK status is still counted. UNREACHABLE/FAILED hosts have no per-host .md.
+  REPORTABLE_HOST_COUNT="$(grep -E '^\|[^|]' "$FLEET_SUMMARY_CHECK" 2>/dev/null \
+    | awk -F'|' '{
+        h=$2; s=$3;
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", h);
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", s);
+        if (h=="" || h ~ /^-+$/ || h=="host") next;
+        if (toupper(s) ~ /UNREACHABLE|FAILED/) next;
+        print h;
+      }' | grep -c . || true)"
   REPORT_COUNT="$(find "$RUN_DIR" -maxdepth 1 -name '*.md' ! -name 'fleet-summary.md' 2>/dev/null | wc -l | tr -d ' ')"
-  if [ "$REPORT_COUNT" -eq "$SUMMARY_HOST_COUNT" ]; then
-    pass "report-count matches fleet-summary host count ($REPORT_COUNT = $SUMMARY_HOST_COUNT)"
+  if [ "$REPORT_COUNT" -eq "$REPORTABLE_HOST_COUNT" ]; then
+    pass "report-count matches reportable fleet-summary hosts ($REPORT_COUNT = $REPORTABLE_HOST_COUNT; UNREACHABLE/FAILED excluded)"
   else
-    fail "report-count ($REPORT_COUNT) != fleet-summary distinct host count ($SUMMARY_HOST_COUNT) — orphan or missing report from a re-run"
+    fail "report-count ($REPORT_COUNT) != reportable fleet-summary hosts ($REPORTABLE_HOST_COUNT) — orphan or missing report from a re-run"
   fi
 else
   fail "fleet-summary.md not found — cannot run SMOKE2 idempotency checks (check section 2)"

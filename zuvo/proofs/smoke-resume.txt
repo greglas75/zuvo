@@ -1,0 +1,12 @@
+PASS: state.json: all hosts in terminal status (no pending/collecting/analyzed)
+PASS: fleet-summary.md: exactly 1 found (no duplicates)
+PASS: resume-idempotency: fleet-summary.md host table has no duplicate rows (3 distinct hosts)
+PASS: report-count matches reportable fleet-summary hosts (2 = 2; UNREACHABLE/FAILED excluded)
+PASS: all state=reported hosts have report files (no baseline file — mtime unchanged assertion skipped)
+PASS: fleet-summary: UNREACHABLE entry present (black-hole host)
+PASS: fleet-summary: 4 data rows (≥2 hosts listed)
+
+=== smoke-resume RESULTS ===
+RUN_DIR: zuvo/audits/infra-audit-2026-06-11-2242
+PASS: 7  FAIL: 0
+SMOKE2: ALL INVARIANTS HOLD
