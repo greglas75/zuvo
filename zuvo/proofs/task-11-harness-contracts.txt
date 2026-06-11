@@ -1,0 +1,5 @@
+== Task 11 harness contracts — 2026-06-11T15:34:28Z
+smoke-fleet-audit no-arg guard: exit 2
+smoke-resume no-arg guard: exit 2
+e2e driver: PASS: 10  SKIP: 0  FAIL: 0
+(SMOKE1/SMOKE2 are llm-manual at execute Phase Final — these harnesses verify the run dir)
