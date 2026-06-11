@@ -47,7 +47,7 @@ require_text "Rate & timing rules" "$TARGET"
 pass "section header present: Rate & timing rules"
 
 # --- 3. IC-8 verbatim SSH flag string — must appear EXACTLY once -------------
-IC8_FLAGS="-o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o BatchMode=yes"
+IC8_FLAGS="-o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o BatchMode=yes -o StrictHostKeyChecking=yes"
 require_text "$IC8_FLAGS" "$TARGET"
 pass "IC-8 flag string present verbatim"
 

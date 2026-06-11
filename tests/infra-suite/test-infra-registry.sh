@@ -66,8 +66,10 @@ pass "12/12 dimensions covered (IS1..IS12 each have ≥1 row)"
 INVALID_IDS=()
 # Extract check_ids from data rows (lines starting with | IS)
 while IFS= read -r line; do
-  # Trim leading pipe and whitespace to get the first column value
-  check_id="$(echo "$line" | sed 's/^|[[:space:]]*//' | cut -d'|' -f1 | tr -d ' ')"
+  # Trim leading pipe, then TRIM leading/trailing whitespace ONLY (preserve internal
+  # spaces so an ID containing an internal space FAILS the regex instead of being
+  # silently normalized away).
+  check_id="$(echo "$line" | sed 's/^|[[:space:]]*//' | cut -d'|' -f1 | sed 's/^ *//; s/ *$//')"
   if [[ -z "$check_id" ]]; then
     continue
   fi

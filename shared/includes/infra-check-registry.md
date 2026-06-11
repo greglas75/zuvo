@@ -14,6 +14,12 @@ Lynis test IDs NOT explicitly listed in this registry map by default:
 - `SUGGESTION` → `LOW`
 - Escalation above MEDIUM requires an explicit registry row with `default_severity` = `HIGH` or `CRITICAL`.
 
+**`lynis_test_id` is a cross-reference, NOT a lookup key.** Phase 3 and the analysts key
+exclusively on `check_id` (= `bundle.checks[].id`); the collector's lynis parser maps each
+`.dat` sub-detail (option name) to its per-option `check_id`. Several rows legitimately share
+one lynis umbrella test (e.g. `SSH-7408` covers ALL sshd option checks in lynis — verified
+against `include/tests_ssh`); never resolve severity or remediation by `lynis_test_id`.
+
 ## IS1 — SSH Hardening
 
 | check_id | dimension | default_severity | lynis_test_id | remediation_template | cis_ref |
@@ -29,7 +35,7 @@ Lynis test IDs NOT explicitly listed in this registry map by default:
 | check_id | dimension | default_severity | lynis_test_id | remediation_template | cis_ref |
 |----------|-----------|------------------|---------------|----------------------|---------|
 | IS2-uid0-nonroot | IS2 | CRITICAL | - | Audit with `awk -F: '($3==0){print}' /etc/passwd`; remove or lock any non-root UID-0 account: `usermod -L <user>` | CIS 6.2.5 |
-| IS2-sudoers-nopasswd-all | IS2 | HIGH | - | Remove `NOPASSWD:ALL` from /etc/sudoers and /etc/sudoers.d/*; use specific command allowlists instead | CIS 5.3.7 |
+| IS2-sudoers-nopasswd-all | IS2 | HIGH | - | Edit ONLY via visudo (`visudo` for /etc/sudoers, `visudo -f /etc/sudoers.d/<file>` for drop-ins) to remove `NOPASSWD:ALL`; never edit sudoers with a raw text editor; use specific command allowlists instead | CIS 5.3.7 |
 | IS2-inactive-accounts | IS2 | MEDIUM | - | Lock accounts inactive >90 days: `usermod -L <user>`; set inactive lock: `useradd -D -f 30` | CIS 5.4.1.4 |
 | IS2-pam-pwquality | IS2 | MEDIUM | - | Install libpam-pwquality and configure minlen=14, dcredit=-1, ucredit=-1 in /etc/security/pwquality.conf | CIS 5.3.1 |
 
@@ -45,7 +51,7 @@ Lynis test IDs NOT explicitly listed in this registry map by default:
 
 | check_id | dimension | default_severity | lynis_test_id | remediation_template | cis_ref |
 |----------|-----------|------------------|---------------|----------------------|---------|
-| IS4-cert-expired | IS4 | CRITICAL | - | Renew certificate immediately: `certbot renew --force-renewal`; verify expiry: `openssl s_client -connect host:443 </dev/null 2>&1 > /tmp/cert.txt ; openssl x509 -noout -enddate -in /tmp/cert.txt` | - |
+| IS4-cert-expired | IS4 | CRITICAL | - | Renew certificate immediately: `certbot renew --force-renewal`; verify expiry: `C=$(mktemp) ; openssl s_client -connect host:443 </dev/null 2>&1 > "$C" ; openssl x509 -noout -enddate -in "$C" ; rm -f "$C"` | - |
 | IS4-cert-expiring-30d | IS4 | HIGH | - | Renew certificate before expiry: `certbot renew`; configure cron/timer for auto-renewal | - |
 | IS4-weak-protocols | IS4 | HIGH | - | Disable SSLv3/TLS 1.0/1.1 in web server config (nginx: `ssl_protocols TLSv1.2 TLSv1.3;`); reload service | CIS 2.2.7 |
 | IS4-weak-ciphers | IS4 | HIGH | - | Remove weak cipher suites (RC4, DES, EXPORT) from TLS config; use `ssl_ciphers ECDHE+AESGCM:DHE+AESGCM:!aNULL` in nginx | CIS 2.2.7 |
@@ -63,7 +69,7 @@ Lynis test IDs NOT explicitly listed in this registry map by default:
 
 | check_id | dimension | default_severity | lynis_test_id | remediation_template | cis_ref |
 |----------|-----------|------------------|---------------|----------------------|---------|
-| IS6-security-updates-pending | IS6 | HIGH | - | Apply security updates: `apt-get update && apt-get upgrade -y`; check pending: `apt list --upgradable 2>/dev/null > /tmp/upgr.txt ; grep security /tmp/upgr.txt` | CIS 1.8.1 |
+| IS6-security-updates-pending | IS6 | HIGH | - | Apply security updates: `apt-get update && apt-get upgrade -y`; check pending: `U=$(mktemp) ; apt list --upgradable 2>/dev/null > "$U" ; grep security "$U" ; rm -f "$U"` | CIS 1.8.1 |
 | IS6-kernel-reboot-required | IS6 | MEDIUM | - | Reboot to apply new kernel: schedule maintenance window and `reboot`; verify after: `uname -r` | - |
 | IS6-eol-distro | IS6 | CRITICAL | - | Upgrade to a supported OS release; see Ubuntu upgrade: `do-release-upgrade` (test in staging first) | - |
 | IS6-unattended-upgrades-off | IS6 | MEDIUM | - | Enable unattended security updates: `apt-get install -y unattended-upgrades && dpkg-reconfigure unattended-upgrades` | CIS 1.8.2 |
@@ -109,7 +115,7 @@ Lynis test IDs NOT explicitly listed in this registry map by default:
 | check_id | dimension | default_severity | lynis_test_id | remediation_template | cis_ref |
 |----------|-----------|------------------|---------------|----------------------|---------|
 | IS11-suid-unexpected | IS11 | HIGH | - | Remove unexpected SUID bit: `chmod u-s <path>`; audit with `find / -xdev -perm -4000 -type f 2>/dev/null` | CIS 6.1.11 |
-| IS11-world-writable-dir | IS11 | MEDIUM | - | Remove world-writable on non-tmp paths: `chmod o-w <path>`; audit with `find / -xdev -perm -0002 -type d 2>/dev/null` | CIS 6.1.10 |
+| IS11-world-writable-dir | IS11 | MEDIUM | - | Remove world-writable on non-sticky dirs: `chmod o-w <path>`; audit (sticky /tmp excluded) with `find / -xdev -type d -perm -0002 ! -perm -1000 2>/dev/null` | CIS 6.1.10 |
 | IS11-tmp-noexec-missing | IS11 | LOW | - | Mount /tmp with noexec: add `noexec` to /tmp entry in /etc/fstab (or systemd override for tmp.mount), then `mount -o remount,noexec /tmp` | CIS 1.1.3 |
 | IS11-apparmor-disabled | IS11 | MEDIUM | - | Enable AppArmor: `systemctl enable apparmor --now`; enforce profiles: `aa-enforce /etc/apparmor.d/*` | CIS 1.6.1 |
 
