@@ -695,6 +695,49 @@ TOOLS_PRESENT=""
 # JSON object built incrementally for tool_availability.
 TOOL_AVAIL_JSON='{}'
 
+# E12 lynis-version state. _probe_tools resolves the remote lynis version into
+# this (empty if lynis absent / version unparsed). When non-empty AND < 3.0, the
+# bundle records the version STRING in tool_availability.lynis (not bare true)
+# and every lynis-sourced check is tagged `DEGRADED (lynis <ver> < 3.0)` while
+# its manual fallback (config reads) still runs (E12). LYNIS_DEGRADED is the
+# precomputed boolean; LYNIS_DEGRADE_NOTE the verbatim notation appended to
+# affected check evidence.
+LYNIS_VERSION=""
+LYNIS_DEGRADED=false
+LYNIS_DEGRADE_NOTE=""
+
+# IC-7 sanity markers (DD-8): a check whose tool output MUST contain a minimum
+# marker to count as a successful parse. Missing marker ⇒ status `error` +
+# raw_ref (never silently `ok`). Keyed by check id; `-` / unset = no mandatory
+# marker (most checks are config greps where empty output is a legitimate
+# answer). Bash-3.2: case lookup, not an associative array.
+_sanity_marker() {
+  case "$1" in
+    IS1-lynis-hardening) printf 'Hardening index' ;;
+    *) printf '' ;;
+  esac
+}
+
+# E12 / DD-8: which checks draw their primary evidence from lynis (so they are
+# the ones degraded when lynis < 3.0). Keyed by check id.
+_check_is_lynis_sourced() {
+  case "$1" in
+    IS1-lynis-hardening) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Test-only fault-injection hook (IC-7 negative path coverage). ZUVO_FORCE_ERROR_CHECK
+# is a comma-separated list of check ids whose output is treated as missing its
+# sanity marker, forcing status `error` + raw_ref — exercising the defensive
+# per-check capture without a flaky truncated transport. NEVER set in production;
+# the default-empty value is inert. Documented for the hardening suite (Task 6).
+: "${ZUVO_FORCE_ERROR_CHECK:=}"
+_check_force_error() {
+  [ -z "$ZUVO_FORCE_ERROR_CHECK" ] && return 1
+  case ",$ZUVO_FORCE_ERROR_CHECK," in *",$1,"*) return 0 ;; *) return 1 ;; esac
+}
+
 # Reachability preflight (AC1). Fast bounded TCP probe BEFORE any ssh handshake
 # so a black-hole host fails in ~$CONNECT_TIMEOUT_S instead of waiting out the
 # OS connect timeout (and the ssh ConnectTimeout chain). Returns 0 reachable,
@@ -779,6 +822,38 @@ _probe_tools() {
       TOOL_AVAIL_JSON="$(printf '%s' "$TOOL_AVAIL_JSON" | jq --arg t "$t" '. + {($t): null}')"
     fi
   done
+
+  # E12: if lynis is present, resolve its version. A version < 3.0 records the
+  # version STRING in tool_availability.lynis and flips LYNIS_DEGRADED so
+  # lynis-sourced checks fall back to manual reads + the DEGRADED notation. A
+  # version ≥ 3.0 keeps the plain `true` already recorded above (no degradation).
+  if _tool_present lynis; then
+    _probe_lynis_version
+  fi
+}
+
+# E12 lynis version probe (one extra round trip, only when lynis is present).
+# Parses the numeric `X.Y[.Z]` from `lynis --version` (stderr/stdout vary across
+# releases). On a clean parse with major.minor < 3.0 → degrade: record the
+# version string in tool_availability.lynis and set the DEGRADED notation.
+_probe_lynis_version() {
+  local raw ver major minor
+  raw="$(_ssh_exec_short 'lynis --version 2>&1 || lynis show version 2>&1' || true)"
+  # Extract the FIRST dotted numeric token (e.g. `lynis 2.6.8` → 2.6.8).
+  ver="$(printf '%s\n' "$raw" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
+  [ -z "$ver" ] && return 0
+  LYNIS_VERSION="$ver"
+  major="${ver%%.*}"
+  minor="${ver#*.}"; minor="${minor%%.*}"
+  # Force base-10 (10#) so a leading-zero minor is not read as octal.
+  if [ "$((10#${major:-0}))" -lt 3 ]; then
+    LYNIS_DEGRADED=true
+    LYNIS_DEGRADE_NOTE="DEGRADED (lynis ${ver} < 3.0)"
+    # Record the version STRING (not bare true) so analysts/report can show it.
+    TOOL_AVAIL_JSON="$(printf '%s' "$TOOL_AVAIL_JSON" | jq --arg v "$ver" '. + {lynis: $v}')"
+    echo "WARN: lynis ${ver} < 3.0 on ${HOST_NAME} — lynis-sourced checks DEGRADED (manual fallback)" >&2
+  fi
+  unset major minor
 }
 
 # Is <tool> present? (`-` always present.)
@@ -798,6 +873,79 @@ _persist_raw() {
   # IC-5: redact BEFORE write — analysts/raw consumers never see secret values.
   printf '%s\n' "$content" | LC_ALL=C sed -E "$SED_REDACT" > "$f" 2>/dev/null || true
   printf '%s' "${check_id}.raw"
+}
+
+# IC-7 sanity-marker enforcement helper. Sets status/evidence (caller's locals)
+# if the marker is absent or the ZUVO_FORCE_ERROR_CHECK hook fires.
+# Args: <id> <raw_output> <status_nameref_var> <evidence_nameref_var>
+# Uses indirect assignment via printf+read pattern (bash 3.2 safe).
+_apply_marker_guard() {
+  local _id="$1" _raw="$2" _sv="$3" _ev="$4"
+  local _marker
+  _marker="$(_sanity_marker "$_id")"
+  if _check_force_error "$_id"; then
+    printf -v "$_sv" '%s' 'error'
+    printf -v "$_ev" '%s' 'IC-7: forced error (ZUVO_FORCE_ERROR_CHECK) — sanity marker treated as missing; see raw_ref'
+  elif [ -n "$_marker" ]; then
+    # A grep inside an if-condition is exempt from set -e; 2>/dev/null suppresses
+    # transport errors.
+    if printf '%s' "$_raw" | grep -qF -- "$_marker" 2>/dev/null; then
+      : # marker present — keep current status
+    else
+      # $_marker is a static, internally-generated marker — safe to expand into
+      # a normal-quoted string. No eval (which would execute $_raw-derived data).
+      local _msg="IC-7: expected sanity marker '$_marker' absent from output — parse failed (see raw_ref)"
+      printf -v "$_sv" '%s' 'error'
+      printf -v "$_ev" '%s' "$_msg"
+    fi
+  fi
+}
+
+# E12: lynis-degraded notation. Mutates source/evidence (caller's locals) when
+# lynis is older than 3.0 and this check is lynis-sourced.
+# Args: <id> <source_nameref_var> <evidence_nameref_var>
+_maybe_degrade_lynis_evidence() {
+  local _id="$1" _sv="$2" _ev="$3"
+  if [ "$LYNIS_DEGRADED" = true ] && _check_is_lynis_sourced "$_id"; then
+    # Read the current evidence via indirect expansion (NOT eval — the evidence
+    # holds redacted-but-still-attacker-influenced remote output), prepend note.
+    local _cur_ev="${!_ev}"
+    printf -v "$_sv" '%s' 'fallback'
+    printf -v "$_ev" '%s' "${LYNIS_DEGRADE_NOTE}: ${_cur_ev}"
+  fi
+}
+
+# Live execution branch: sets SUDO_PREFIX, runs the remote command, captures
+# raw output, redacts into evidence, persists raw_ref, then delegates to
+# _apply_marker_guard and _maybe_degrade_lynis_evidence.
+# Args: <id> <mode> <needs_sudo> <status_var> <evidence_var> <raw_ref_var>
+# Reads cmd from the caller's local $cmd; writes SUDO_PREFIX (reset after).
+_exec_and_assess() {
+  local _id="$1" _mode="$2" _ns="$3" _sv="$4" _ev="$5" _rv="$6"
+  SUDO_PREFIX=""
+  [ "$_ns" = "true" ] && [ "$PRIVILEGE_MODE" = "passwordless-sudo" ] && SUDO_PREFIX="sudo -n "
+  local _raw
+  if [ "$_mode" = "long" ]; then
+    _raw="$(run_remote "$_id" long -- "$cmd" || true)"
+  else
+    _raw="$(run_remote "$_id" short -- "$cmd" || true)"
+  fi
+  SUDO_PREFIX=""
+  # IC-5: redact BEFORE the value becomes bundle evidence. Compute into a local
+  # via normal command substitution, then assign with printf -v — $_raw (hostile
+  # remote output) NEVER enters an eval string, so $(...)/backticks in it are data.
+  local _red; _red="$(printf '%s' "$_raw" | LC_ALL=C sed -E "$SED_REDACT" | head -c 4000)"
+  printf -v "$_ev" '%s' "$_red"
+  # DD-5: persist raw first so an error verdict still carries a raw_ref.
+  local _rr; _rr="$(_persist_raw "$_id" "$_raw")"
+  printf -v "$_rv" '%s' "$_rr"
+  _apply_marker_guard "$_id" "$_raw" "$_sv" "$_ev"
+  # Empty short output is benign — record it rather than leaving evidence blank.
+  local _cur_status="${!_sv}"
+  if [ "$_cur_status" != "error" ] && [ -z "$_raw" ] && [ "$_mode" = "short" ]; then
+    printf -v "$_ev" '%s' '(no output)'
+  fi
+  _maybe_degrade_lynis_evidence "$_id" "source" "$_ev"
 }
 
 # Execute one battery row and append its check object to checks_json (passed by
@@ -825,28 +973,7 @@ _run_single_check() {
     status="skipped"
     evidence="required tool '$tool' not available (tool_availability.$tool=null)"
   else
-    # Live execution. Run needs_sudo checks through `sudo -n` when privileged
-    # via passwordless sudo; root already has privilege, others were filtered
-    # to insufficient-data above.
-    SUDO_PREFIX=""
-    if [ "$needs_sudo" = "true" ] && [ "$PRIVILEGE_MODE" = "passwordless-sudo" ]; then
-      SUDO_PREFIX="sudo -n "
-    fi
-    local raw
-    if [ "$mode" = "long" ]; then
-      raw="$(run_remote "$id" long -- "$cmd" || true)"
-    else
-      raw="$(run_remote "$id" short -- "$cmd" || true)"
-    fi
-    SUDO_PREFIX=""
-    # IC-5: redact BEFORE the value becomes bundle evidence.
-    evidence="$(printf '%s' "$raw" | LC_ALL=C sed -E "$SED_REDACT" | head -c 4000)"
-    raw_ref="$(_persist_raw "$id" "$raw")"
-    if [ -z "$raw" ] && [ "$mode" = "short" ]; then
-      # Empty output from a short check is benign (e.g. no match) — keep ok,
-      # but record that nothing was returned.
-      evidence="(no output)"
-    fi
+    _exec_and_assess "$id" "$mode" "$needs_sudo" "status" "evidence" "raw_ref"
   fi
 
   local raw_ref_json="null"
@@ -903,11 +1030,45 @@ LINE
     [ -z "$id" ] && continue
     _dimension_in_scope "$dim" || continue
 
+    # IC-9 wall-clock guard. `$SECONDS` (shell-builtin elapsed seconds since the
+    # collector started — NOT `date` arithmetic; subshells inherit it) bounds the
+    # worst case. Once the per-host budget is breached, every REMAINING in-scope
+    # check is emitted as `skipped` with a wall-clock note (dimension DEGRADED)
+    # rather than run — so the bundle stays complete and valid but the tail does
+    # not extend the run. --deep-scan is excluded from this budget by the caller
+    # (it raises WALL_CLOCK_LIMIT_S out of band); the default 1800s is the spec's.
+    if [ "$SECONDS" -ge "$WALL_CLOCK_LIMIT_S" ]; then
+      checks_json="$(_append_wallclock_skip "$id" "$dim" "$needs_sudo" "$checks_json")"
+      _write_live_bundle "$checks_json"
+      continue
+    fi
+
     checks_json="$(_run_single_check "$id" "$dim" "$needs_sudo" "$mode" "$tool" "$cmd" "$unprivileged" "$checks_json")"
     # Incremental write: re-render the bundle after each check (resume-safe).
     _write_live_bundle "$checks_json"
   done
   printf '%s' "$checks_json"
+}
+
+# IC-9: append a `skipped` check object carrying the wall-clock note. Used when
+# the per-host wall clock ($SECONDS ≥ WALL_CLOCK_LIMIT_S) is breached — remaining
+# checks are recorded skipped rather than run (dimension DEGRADED), never hung.
+_append_wallclock_skip() {
+  local id="$1" dim="$2" needs_sudo="$3" cur_json="$4"
+  printf '%s' "$cur_json" | jq \
+    --arg id "$id" \
+    --arg dim "$dim" \
+    --arg evidence "skipped (wall-clock): per-host budget ${WALL_CLOCK_LIMIT_S}s exceeded before this check ran (IC-9; dimension DEGRADED)" \
+    --argjson needs_sudo "$needs_sudo" \
+    '. + [{
+      id: $id,
+      dimension: $dim,
+      status: "skipped",
+      evidence: $evidence,
+      source: "wall-clock",
+      raw_ref: null,
+      needs_sudo: $needs_sudo
+    }]'
 }
 
 # Assemble + write the live IC-3 bundle from an (in-progress) checks[] array.
@@ -958,7 +1119,7 @@ collect_live() {
   # detection logic is hardened in Task 6, but the fail-fast hook lives here so
   # the first live handshake is the one that catches it).
   local hs_err
-  hs_err="$(LC_ALL=C _ssh_raw "true" 2>&1 >/dev/null || true)"
+  hs_err="$(LC_ALL=C _ssh_raw "true" 2>&1 >/dev/null | head -c 4000 || true)"
   if printf '%s' "$hs_err" | grep -q 'REMOTE HOST IDENTIFICATION HAS CHANGED'; then
     local red
     red="$(printf '%s' "$hs_err" | LC_ALL=C sed -E "$SED_REDACT")"
