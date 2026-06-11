@@ -343,6 +343,51 @@ require_eq "$BAD_DASH" "0" "ssh invocations missing ' -- ' guard: $BAD_DASH"
 pass "every ssh invocation in script carries ' -- ' before the destination"
 
 # ---------------------------------------------------------------------------
+# 17. Injection guard: --host address with shell metacharacters → exit 1.
+#     The addr lands in the /dev/tcp preflight; `u@bad;addr` must be rejected
+#     by the strict SSH_ADDR charset (^[A-Za-z0-9._-]+$) before any use.
+# ---------------------------------------------------------------------------
+set +e
+bash "$COLLECTOR" --host 'u@bad;addr' --out "$BRANCH_OUT" >/dev/null 2>&1
+RC=$?
+set -e
+require_eq "$RC" "1" "malformed --host 'u@bad;addr' should exit 1 (addr injection)"
+pass "malformed --host 'u@bad;addr' (addr injection) → exit 1"
+
+# ---------------------------------------------------------------------------
+# 18. SSH option injection via --ssh-key: a path that is really an ssh flag
+#     (`-oProxyCommand=x`) must be rejected (charset + leading-dash basename).
+# ---------------------------------------------------------------------------
+set +e
+bash "$COLLECTOR" --dry-run --no-install --ssh-key '-oProxyCommand=x' \
+  --host u@192.0.2.1 --out "$BRANCH_OUT" >/dev/null 2>&1
+RC=$?
+set -e
+require_eq "$RC" "1" "malformed --ssh-key '-oProxyCommand=x' should exit 1 (ssh option injection)"
+pass "malformed --ssh-key '-oProxyCommand=x' (ssh option injection) → exit 1"
+
+# ---------------------------------------------------------------------------
+# 19. Timeout-injection guard: a non-integer CHECK_TIMEOUT_S override → exit 1.
+#     The value is interpolated into remote command strings; `x` (or
+#     `1; rm -rf /`) must be rejected at startup.
+# ---------------------------------------------------------------------------
+set +e
+CHECK_TIMEOUT_S='x' bash "$COLLECTOR" --dry-run --no-install \
+  --host u@192.0.2.1 --out "$BRANCH_OUT" >/dev/null 2>&1
+RC=$?
+set -e
+require_eq "$RC" "1" "non-integer CHECK_TIMEOUT_S='x' should exit 1 (timeout injection)"
+pass "non-integer CHECK_TIMEOUT_S='x' → exit 1 (timeout injection)"
+
+set +e
+CHECK_TIMEOUT_S='1; rm -rf /' bash "$COLLECTOR" --dry-run --no-install \
+  --host u@192.0.2.1 --out "$BRANCH_OUT" >/dev/null 2>&1
+RC=$?
+set -e
+require_eq "$RC" "1" "CHECK_TIMEOUT_S='1; rm -rf /' should exit 1 (timeout injection)"
+pass "CHECK_TIMEOUT_S='1; rm -rf /' → exit 1 (timeout injection)"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

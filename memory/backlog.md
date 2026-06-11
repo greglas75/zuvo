@@ -115,3 +115,11 @@ type: project
 - **Issue:** `sh -c '...'` string-embeds the inner battery command; a single quote (awk/sed are full of them) would terminate the wrapper. NOT exploitable at skeleton stage (live long-path stubbed; dry-run only prints).
 - **Fix owner:** Task 5 MUST replace string-embedding with quote-safe transport (base64-decode inner cmd on target, or remote temp script) BEFORE activating live execution.
 - **Confidence:** 60 (real latent, gated by §2 static rule, no current exploit path)
+
+## B-infra-collect-value-heuristic-redaction
+- **Source:** zuvo:execute Task 5 adversarial security round 4 (deferred — IC-5 design trade-off)
+- **File:** scripts/infra-collect.sh SED_REDACT
+- **Issue:** Keyword-based redaction (IC-5 spec design) only fires when the KEY NAME contains a sensitive substring; a generically-named secret (`FOO=abc123`) in an arbitrary config would leak verbatim.
+- **Mitigation already in place:** IS12 (the .env reader) emits key NAMES only, never values — the dominant leak path is structurally closed. Other battery checks read only known-schema config files (sshd_config/sysctl/ufw have no secret fields; redis requirepass+masterauth explicitly covered).
+- **v2 fix:** add a value-heuristic redaction pass (high-entropy / token-shaped values) on top of keyword redaction; tune false-positive rate against real config corpus.
+- **Confidence:** 50 (real residual, structurally mitigated where it matters; spec-sanctioned keyword model)

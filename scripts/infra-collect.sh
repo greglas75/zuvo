@@ -34,15 +34,64 @@ SSH_OPTS='-o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=
 : "${CHECK_TIMEOUT_S:=300}"        # default per-check server-side timeout
 : "${TRIVY_TIMEOUT_S:=120}"        # trivy --timeout 120s --skip-update
 : "${CONNECT_TIMEOUT_S:=10}"       # ssh ConnectTimeout (mirrors SSH_OPTS)
+: "${PREFLIGHT_TIMEOUT_S:=5}"      # TCP reachability preflight (nc -zw5; faster than ssh connect, AC1)
 : "${WALL_CLOCK_LIMIT_S:=1800}"    # per-host 30-min wall clock (full mode)
+: "${POLL_SLACK_S:=15}"           # extra seconds past CHECK_TIMEOUT_S to poll for .rc sidecar
 
-# IC-5 redaction. Case-insensitive sed program: any KEY matching the pattern
-# has its VALUE replaced with [REDACTED] BEFORE the value is written to the
-# bundle or any raw file, so analysts never see secrets. Applied to every
-# config-dump line of the form `key = value` / `key: value` / `KEY=value`.
-SED_REDACT='s/((password|passwd|secret|token|api[_-]?key|private[_-]?key|DATABASE_URL|REDIS_URL|connection[_-]?string)[[:space:]]*[:=][[:space:]]*).*/\1[REDACTED]/Ig'
+# SECURITY (timeout-injection guard): every timeout constant above is env-
+# overridable AND interpolated verbatim into remote/local command strings
+# (e.g. `timeout ${CHECK_TIMEOUT_S} sh`, `trivy --timeout ${TRIVY_TIMEOUT_S}s`).
+# A non-integer override (`CHECK_TIMEOUT_S='1; rm -rf /'`) would break out of the
+# command and execute arbitrary code. Assert each is a bare positive integer
+# (1+ digits, no sign/space/metachars) right here, before any use. Fail loud.
+for _tvar in CHECK_TIMEOUT_S TRIVY_TIMEOUT_S CONNECT_TIMEOUT_S PREFLIGHT_TIMEOUT_S WALL_CLOCK_LIMIT_S POLL_SLACK_S; do
+  # Indirect expansion (bash 3.2 `${!var}`), NOT eval — eval would EXECUTE any
+  # metacharacters in a hostile env value BEFORE the integer check could reject it,
+  # turning the injection guard into an injection vector.
+  _tval="${!_tvar}"
+  if ! printf '%s' "$_tval" | grep -Eq '^[0-9]+$'; then
+    echo "ERROR: $_tvar must be a non-negative integer (got: '$_tval')" >&2
+    exit 1
+  fi
+done
+unset _tvar _tval
+
+# IC-5 redaction. Case-insensitive sed program (TWO rules, joined by `;`):
+#
+# RULE 1 (key=value / key:value) — any KEY whose name CONTAINS a sensitive word
+# (password/passwd/secret/token/apikey/privatekey/credential/database_url/
+# redis_url/connection_string) — anywhere in the key token, so e.g.
+# AWS_SECRET_ACCESS_KEY and DB_PASSWORD both match — has its VALUE replaced with
+# [REDACTED]. Matches `key = value` / `key: value` / `KEY=value`. The leading key
+# token `[A-Za-z0-9_.-]*<word>[A-Za-z0-9_.-]*` is captured and preserved; only the
+# value after the first `:`/`=` separator is redacted.
+#
+# RULE 2 (redis-config space separator) — redis.conf carries auth secrets as
+# `requirepass <value>` and `masterauth <value>` with a SPACE separator (no `:`/`=`),
+# AND neither key contains a RULE-1 sensitive substring ("requirepass" has no
+# "password"; "masterauth" has none). RULE 1 therefore misses them entirely. RULE 2
+# is a dedicated, line-anchored redaction: a line that begins (after optional
+# whitespace) with `requirepass`/`masterauth` followed by whitespace has the rest of
+# the line ([REDACTED]). The line anchor `^[[:space:]]*` prevents redacting the word
+# when it appears mid-sentence in prose/log output — only genuine config directives.
+#
+# BEFORE the value is written to the bundle or any raw file, so analysts never see
+# secrets. Verify: a redis.conf line `requirepass zuvo-seed-redispw-2e6f` →
+# `requirepass [REDACTED]`.
+#
+# LIMITATION (line-oriented): sed processes ONE line at a time, and the value
+# pattern ends at end-of-line. A MULTI-LINE secret value (e.g. a PEM-encoded RSA
+# private key spanning many lines) only has its FIRST line redacted; subsequent
+# lines are not matched. Single-line `KEY=value` secrets (the common .env / conf
+# shape) ARE fully redacted. Do not rely on this for multi-line key material.
+SED_REDACT='s/(([A-Za-z0-9_.-]*(password|passwd|secret|token|api[_-]?key|private[_-]?key|credential|DATABASE_URL|REDIS_URL|connection[_-]?string)[A-Za-z0-9_.-]*)[[:space:]]*[:=][[:space:]]*).*/\1[REDACTED]/Ig;s/^([[:space:]]*(requirepass|masterauth)[[:space:]]+).*/\1[REDACTED]/Ig'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# CQ14: single-source tool_availability default object. Both write_bundle (dry-run
+# skeleton) and _write_live_bundle (live incremental) merge against this constant so
+# the tool list is defined exactly once here, not duplicated at two call sites.
+TOOL_AVAIL_DEFAULTS='{"lynis":null,"nmap":null,"trivy":null,"grype":null,"debsecan":null,"needrestart":null,"docker":null,"ss":null}'
 
 # ===========================================================================
 # Usage
@@ -66,6 +115,9 @@ Options:
   --deep-scan               nmap -p- instead of --top-ports 1000 (IC-9)
   --skip-external           Internal vantage only
   --external <mode>         External vantage mode (direct)
+  --raw-dir <path>          Directory for redacted raw tool output (raw_ref targets)
+  --ssh-key <path>          Identity file for ssh -i (the inventory ssh_key PATH; §4)
+  --known-hosts <path>      UserKnownHostsFile for host-key verification (StrictHostKeyChecking stays =yes)
 
 Reads no SSH private key material (ssh-probe-protocol §4). StrictHostKeyChecking
 is never disabled. See docs/specs/2026-06-10-infra-audit-spec.md.
@@ -87,6 +139,9 @@ DIMENSIONS=""
 DEEP_SCAN=false
 SKIP_EXTERNAL=false
 EXTERNAL_MODE=""
+RAW_DIR=""
+SSH_KEY=""
+KNOWN_HOSTS=""
 
 # A value-taking flag passed as the LAST argument leaves $# at 1; a bare `shift 2`
 # would then fail and — under `set -e` — exit the script silently with no usage.
@@ -112,6 +167,9 @@ while [ $# -gt 0 ]; do
     --deep-scan)   DEEP_SCAN=true; shift ;;
     --skip-external) SKIP_EXTERNAL=true; shift ;;
     --external)    _need_val --external $#; EXTERNAL_MODE="$2"; shift 2 ;;
+    --raw-dir)     _need_val --raw-dir $#; RAW_DIR="$2"; shift 2 ;;
+    --ssh-key)     _need_val --ssh-key $#; SSH_KEY="$2"; shift 2 ;;
+    --known-hosts) _need_val --known-hosts $#; KNOWN_HOSTS="$2"; shift 2 ;;
     -h|--help)     usage; exit 0 ;;
     *)
       echo "ERROR: unknown argument: $1" >&2
@@ -173,6 +231,37 @@ if ! printf '%s' "$RUN_ID" | grep -Eq '^[A-Za-z0-9._-]{1,64}$'; then
   exit 1
 fi
 
+# --raw-dir: default beside --out (so analysts can resolve raw_ref). Created
+# fresh per run; redacted raw tool output lands here (never the unredacted form).
+if [ -z "$RAW_DIR" ]; then
+  RAW_DIR="${OUT%.json}-raw"
+fi
+# Validate --raw-dir charset (lands in no remote command; local path only, but
+# keep it sane). Create it eagerly (live mode) so writers never race on it.
+if ! printf '%s' "$RAW_DIR" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
+  echo "ERROR: malformed --raw-dir '$RAW_DIR'" >&2
+  exit 1
+fi
+# Reject path traversal: a `..` component (e.g. `../../sensitive/out-raw`) would
+# let redacted-but-sensitive raw output be written outside the audit workspace.
+case "/$RAW_DIR/" in
+  */../*)
+    echo "ERROR: --raw-dir must not contain '..' path components: $RAW_DIR" >&2
+    exit 1
+    ;;
+esac
+
+# --known-hosts charset validation (CQ3). The value is word-split into the ssh
+# command line as `-o UserKnownHostsFile=<value>` via $SSH_ID_OPTS; an
+# unvalidated path with embedded spaces or shell metacharacters (e.g.
+# `--known-hosts '/tmp/x -oProxyCommand=...'`) would inject additional ssh
+# flags. Restrict to the same safe charset as --raw-dir: alphanumeric + . _ / -
+if [ -n "$KNOWN_HOSTS" ] && ! printf '%s' "$KNOWN_HOSTS" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
+  echo "ERROR: malformed --known-hosts '$KNOWN_HOSTS' (allowed: A-Z a-z 0-9 . _ / -)" >&2
+  usage
+  exit 1
+fi
+
 # ===========================================================================
 # Hard prerequisite: jq (benchmark.sh line 426 pattern)
 # ===========================================================================
@@ -203,28 +292,102 @@ if [ "$((10#$SSH_PORT))" -lt 1 ] || [ "$((10#$SSH_PORT))" -gt 65535 ]; then
   exit 1
 fi
 
+# Validate SSH_ADDR charset (CQ3 / injection guard). The --host addr regex
+# `[^@:[:space:]]+` is permissive — it admits shell metacharacters (`;`, `$`,
+# backtick, `(`, `/`) that would break out of the reachability preflight
+# (`/dev/tcp/$SSH_ADDR/$SSH_PORT`) and any other string the addr lands in.
+# Restrict to a strict hostname / IPv4 charset: letters, digits, dot, hyphen,
+# underscore. Anything else is rejected before SSH_ADDR is ever used.
+if ! printf '%s' "$SSH_USER" | grep -Eq '^[A-Za-z0-9._-]+$'; then
+  echo "ERROR: --host user '$SSH_USER' has invalid characters (allowed: letters, digits, . _ -)" >&2
+  usage
+  exit 1
+fi
+if ! printf '%s' "$SSH_ADDR" | grep -Eq '^[A-Za-z0-9._-]+$'; then
+  echo "ERROR: --host address '$SSH_ADDR' contains illegal characters (allowed: A-Z a-z 0-9 . _ -)" >&2
+  usage
+  exit 1
+fi
+
 # Bundle host name = address (collector audits a single ad-hoc host).
 HOST_NAME="$SSH_ADDR"
 
 REMOTE_RUN_DIR="/tmp/${RUN_ID}"
 
+# Identity / known-hosts options, kept SEPARATE from the IC-8 $SSH_OPTS constant
+# (which must appear verbatim exactly once). The collector receives only PATHS
+# here — it never reads key material (ssh-probe-protocol §4); ssh resolves -i.
+# StrictHostKeyChecking is never weakened; --known-hosts only RELOCATES the
+# verification file (needed because ssh on macOS resolves ~ via getpwuid, not
+# $HOME, so an isolated known_hosts can't be supplied via HOME alone).
+# SSH_ID_OPTS is a bash ARRAY, not a word-split string. Each option and its
+# argument is a SEPARATE element, so a key/known-hosts PATH containing spaces or
+# a leading `-` can NEVER be re-parsed by ssh as an injected flag (SSH option
+# injection). Expanded as `"${SSH_ID_OPTS[@]}"` at every ssh call site. Bash 3.2
+# supports indexed arrays, so this stays macOS-system-bash compatible.
+SSH_ID_OPTS=()
+if [ -n "$SSH_KEY" ]; then
+  # Charset validation (injection guard, parallels --known-hosts). An unvalidated
+  # path with spaces or a leading `-` basename (e.g. `-oProxyCommand=evil`) would
+  # be treated by ssh as flags. Restrict to the safe path charset.
+  if ! printf '%s' "$SSH_KEY" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
+    echo "ERROR: malformed --ssh-key '$SSH_KEY' (allowed: A-Z a-z 0-9 . _ / -)" >&2
+    usage
+    exit 1
+  fi
+  # Forbid a leading `-` on the basename: `-oProxyCommand=x` or `dir/-flag` would
+  # let ssh parse the identity path as an option even though it passed charset.
+  _ssh_key_base="${SSH_KEY##*/}"
+  case "$_ssh_key_base" in
+    -*)
+      echo "ERROR: --ssh-key basename must not begin with '-': $SSH_KEY" >&2
+      usage
+      exit 1
+      ;;
+  esac
+  unset _ssh_key_base
+  if [ ! -f "$SSH_KEY" ]; then
+    echo "ERROR: --ssh-key path does not exist: $SSH_KEY" >&2
+    exit 1
+  fi
+  SSH_ID_OPTS+=(-i "$SSH_KEY" -o IdentitiesOnly=yes)
+fi
+if [ -n "$KNOWN_HOSTS" ]; then
+  SSH_ID_OPTS+=(-o "UserKnownHostsFile=$KNOWN_HOSTS")
+fi
+
 # ===========================================================================
 # run_remote() — SINGLE dispatch point for every remote command (IC-8).
 #
-#   run_remote <check-id> <long?> -- <remote command...>
+#   run_remote <check-id> <short|long> -- <remote command...>
 #
-#   <long?>: "long" → command may exceed 30s → wrapped in the nohup pattern
-#            (ssh-probe-protocol §2: server-side timeout + .rc sidecar +
-#            stream redirection). Anything else → plain bounded ssh.
+#   short → bounded `timeout` ssh; output captured to stdout, exit code via $?.
+#   long  → command may exceed 30s → wrapped in the nohup pattern
+#           (ssh-probe-protocol §2: server-side timeout + .rc sidecar +
+#           stream redirection), then retrieval polls the .rc file and the
+#           captured .out is streamed back to stdout.
 #
-# In --dry-run it PRINTS the full command line it WOULD run (including the ssh
-# + IC-8 prefix) and returns without connecting. Live execution is a minimal
-# stub at this skeleton stage (checks emit `skipped` placeholders); the dry-run
-# preview is the contract surface Task 4 must satisfy.
+# In --dry-run it PRINTS the full ssh command line it WOULD run (IC-8 flags + the
+# remote command, including `--` and `-xdev`) and returns 0 without connecting —
+# this printed form is the CLI-test contract surface (Task 4).
+#
+# QUOTE-SAFE TRANSPORT (B-infra-collect-nohup-quote-transport):
+# The inner battery command is NEVER string-embedded into a remote `sh -c '...'`.
+# Instead it is base64-encoded on the collector and decoded+exec'd on the target
+# (`base64 -d | sh`). A single quote inside an awk/sed/find battery command —
+# which abound — therefore cannot terminate any wrapper. Verified by the live
+# suite (IS2 `awk '($3==0){print $1}'`).
 # ===========================================================================
 
 # Tracks whether the per-host run dir has been claimed (mkdir once per run).
 RUN_DIR_CLAIMED=false
+
+# SUDO_PREFIX is set per-check by _collect_battery_json: empty, or the literal
+# `sudo -n ` when the check needs_sudo AND privilege_mode grants passwordless
+# sudo. It is prepended to the REMOTE INTERPRETER (`sudo -n sh`), so the entire
+# decoded battery script runs as root — compound commands and all — without any
+# per-command quoting (the base64 transport keeps the script itself inert).
+SUDO_PREFIX=""
 
 run_remote() {
   local check_id="$1"; shift
@@ -233,27 +396,39 @@ run_remote() {
   if [ "${1:-}" = "--" ]; then shift; fi
   local remote_cmd="$*"
 
-  if [ "$mode" = "long" ]; then
-    # ssh-probe-protocol §2: claim the run dir ONCE per host (atomic mkdir),
-    # then run the bounded inner command under nohup with a .rc sidecar.
-    if [ "$RUN_DIR_CLAIMED" = false ]; then
-      _claim_run_dir
-      RUN_DIR_CLAIMED=true
+  if [ "$DRY_RUN" = true ]; then
+    # Preview the HUMAN-READABLE ssh form (IC-8 flags + the literal battery
+    # command). For `long` mode also show the nohup wrapper shape so the dry-run
+    # makes the run-dir + sidecar visible. The printed form is what the CLI test
+    # greps for the IC-8 flag string and `-xdev` on find lines.
+    if [ "$mode" = "long" ]; then
+      _dry_print "$check_id" \
+        "nohup sh -c 'base64 -d <<EOF | timeout ${CHECK_TIMEOUT_S} sh > ${REMOTE_RUN_DIR}/${check_id}.out 2>&1; echo \$? > ${REMOTE_RUN_DIR}/${check_id}.rc' & : ${remote_cmd}"
+    else
+      _dry_print "$check_id" "timeout ${CHECK_TIMEOUT_S} sh -c : ${remote_cmd}"
     fi
-    # TASK-5 CONTRACT (live wiring): the long-mode nohup path is NOT exercised at
-    # the skeleton stage (battery emits `skipped` placeholders; dry-run only prints).
-    # Before Task 5 activates live execution it MUST replace the naive `sh -c '...'`
-    # string-embedding below with a quote-safe transport (base64-decode the inner
-    # command on the target, or a remote temp script) so a battery command containing
-    # a single quote — awk/sed are full of them — cannot terminate the wrapper. The
-    # static-command rule (§2) bounds WHICH commands run; it does not make `sh -c`
-    # string-nesting quote-safe on its own. [B-infra-collect-nohup-quote-transport]
-    local wrapped
-    wrapped="nohup sh -c 'timeout ${CHECK_TIMEOUT_S} ${remote_cmd} > ${REMOTE_RUN_DIR}/${check_id}.out 2>&1; echo \$? > ${REMOTE_RUN_DIR}/${check_id}.rc' < /dev/null > /dev/null 2>&1 &"
-    _ssh_exec "$check_id" "$wrapped"
-  else
-    _ssh_exec "$check_id" "timeout ${CHECK_TIMEOUT_S} ${remote_cmd}"
+    return 0
   fi
+
+  if [ "$mode" = "long" ]; then
+    # The run dir is claimed ONCE, eagerly, by collect_live() before the battery
+    # loop — NOT lazily here. run_remote runs inside `raw="$(run_remote …)"`
+    # command-substitution subshells, so a `RUN_DIR_CLAIMED=true` set here would
+    # be lost when the subshell exits, making every long check after the first
+    # re-claim the (now-existing) dir and fail closed. Eager claim in the parent
+    # shell avoids that entirely.
+    _ssh_exec_long "$check_id" "$remote_cmd"
+  else
+    _ssh_exec_short "$remote_cmd"
+  fi
+}
+
+# Dry-run pretty-printer: emits one `ssh <IC-8 flags> -- dest <cmd>` line so the
+# CLI test can grep the verbatim IC-8 string, the `--` guard, and `-xdev`.
+_dry_print() {
+  local check_id="$1" remote_cmd="$2"
+  printf '[DRY-RUN] WOULD run (%s): LC_ALL=C ssh %s -p %s -- %s@%s %s\n' \
+    "$check_id" "$SSH_OPTS" "$SSH_PORT" "$SSH_USER" "$SSH_ADDR" "$remote_cmd"
 }
 
 # Claim the per-host scratch dir exactly once (atomic; fail-closed on EEXIST).
@@ -263,49 +438,117 @@ run_remote() {
 # never silently continue into checks that would write into an unclaimed dir.
 _claim_run_dir() {
   local claim="mkdir -m 700 ${REMOTE_RUN_DIR} || { echo 'run dir exists — refusing'; exit 1; }"
-  if [ "$DRY_RUN" = true ]; then
-    printf '[DRY-RUN] WOULD run (run-dir claim): LC_ALL=C ssh %s -p %s -- %s@%s %s\n' \
-      "$SSH_OPTS" "$SSH_PORT" "$SSH_USER" "$SSH_ADDR" "$claim"
-  else
-    local claim_err claim_rc
-    claim_err="$(LC_ALL=C ssh $SSH_OPTS -p "$SSH_PORT" -- "$SSH_USER@$SSH_ADDR" "$claim" 2>&1 >/dev/null)"
-    claim_rc=$?
-    if [ "$claim_rc" -ne 0 ]; then
-      local redacted_err
-      redacted_err="$(printf '%s' "$claim_err" | LC_ALL=C sed -E "$SED_REDACT")"
-      phase0_writer "FAILED" "run-dir-claim-failed" "$redacted_err"
-      echo "ERROR: run-dir claim failed (rc=$claim_rc) on $HOST_NAME — see phase0 bundle: $OUT" >&2
-      exit 1
-    fi
+  local claim_err claim_rc
+  claim_err="$(_ssh_raw "$claim" 2>&1 >/dev/null)"
+  claim_rc=$?
+  if [ "$claim_rc" -ne 0 ]; then
+    local redacted_err
+    redacted_err="$(printf '%s' "$claim_err" | LC_ALL=C sed -E "$SED_REDACT")"
+    phase0_writer "FAILED" "run-dir-claim-failed" "$redacted_err"
+    echo "ERROR: run-dir claim failed (rc=$claim_rc) on $HOST_NAME — see phase0 bundle: $OUT" >&2
+    exit 1
   fi
 }
 
-# Lowest-level ssh dispatch — every remote command flows through here so the
-# IC-8 flag string is applied in exactly one place.
-_ssh_exec() {
-  local check_id="$1"; shift
+# _ssh_raw — lowest-level ssh dispatch for a literal (non-base64) control string.
+# Used only for fixed control commands the collector itself constructs (run-dir
+# claim, .rc poll, .out fetch). Every battery command goes via the base64 path.
+# `--` ends ssh option parsing before the destination (option-injection guard).
+# The full IC-8 flag string ($SSH_OPTS) is applied here — one of exactly two ssh
+# call sites, both interpolating the single SSH_OPTS constant.
+_ssh_raw() {
   local remote_cmd="$1"
-  if [ "$DRY_RUN" = true ]; then
-    printf '[DRY-RUN] WOULD run (%s): LC_ALL=C ssh %s -p %s -- %s@%s %s\n' \
-      "$check_id" "$SSH_OPTS" "$SSH_PORT" "$SSH_USER" "$SSH_ADDR" "$remote_cmd"
-    return 0
-  fi
-  # Live path is a minimal stub at the skeleton stage — checks emit `skipped`
-  # placeholders, so the live battery is not yet wired. Tasks 5-7 implement it.
-  # `--` ends ssh option parsing before the destination (SSH option-injection guard).
-  LC_ALL=C ssh $SSH_OPTS -p "$SSH_PORT" -- "$SSH_USER@$SSH_ADDR" "$remote_cmd" 2>/dev/null || true
+  # `< /dev/null`: never inherit the caller's stdin. The battery is driven by a
+  # `while read` loop reading a heredoc; an ssh that read THAT stdin would drain
+  # the remaining battery rows and silently truncate the run after the first
+  # long check. Control commands carry no stdin payload, so closing it is safe.
+  # $SSH_OPTS stays word-split (it is the trusted IC-8 constant). SSH_ID_OPTS is
+  # an array expanded with the empty-safe `${arr[@]+...}` idiom (bash 3.2 + set -u
+  # errors on a bare `"${arr[@]}"` when the array is empty) so key/known-hosts
+  # paths remain single args, immune to word-splitting / option injection.
+  LC_ALL=C ssh $SSH_OPTS ${SSH_ID_OPTS[@]+"${SSH_ID_OPTS[@]}"} -p "$SSH_PORT" -- "$SSH_USER@$SSH_ADDR" "$remote_cmd" < /dev/null
+}
+
+# _ssh_b64 — QUOTE-SAFE transport: base64-encode the inner command locally, ship
+# it as stdin, decode it and run it AS A SCRIPT under `sh` on the target. Because
+# the battery command becomes `sh`'s stdin script (not a shell-string argument),
+# pipes / semicolons / single quotes inside it are completely inert during
+# transport — the remote control string (`base64 -d | timeout N sh`) is constant
+# and quote-free. This is the only mechanism that runs battery commands.
+#
+#   $1 = inner command (a full /bin/sh script; may be compound, may quote)
+#   $2 = "nohup-wrap" (optional) → don't run inline; emit a launcher that detaches
+#        the script under nohup with a server-side timeout and an .rc sidecar (§2).
+_ssh_b64() {
+  local inner="$1"
+  printf '%s' "$inner" | base64 \
+    | LC_ALL=C ssh $SSH_OPTS ${SSH_ID_OPTS[@]+"${SSH_ID_OPTS[@]}"} -p "$SSH_PORT" -- "$SSH_USER@$SSH_ADDR" \
+        "base64 -d | timeout ${CHECK_TIMEOUT_S} ${SUDO_PREFIX}sh"
+}
+
+# Short check: the decoded script runs inline under a server-side timeout.
+# stdout is the (raw) command output; caller redacts before persisting.
+_ssh_exec_short() {
+  local remote_cmd="$1"
+  _ssh_b64 "$remote_cmd" 2>/dev/null
+}
+
+# Long check (ssh-probe-protocol §2). Two CLEANLY SEPARATED round trips:
+#   1. ship the battery command to a remote .cmd file via the base64 transport —
+#      a plain `base64 -d > cmd_f` with NO backgrounding (so the quote-safe
+#      stdin pipe and process detachment never interfere with each other);
+#   2. a second, CONSTANT control command launches `cmd_f` under nohup with a
+#      server-side timeout + .rc sidecar — the launcher embeds only filenames
+#      and the timeout (no battery command), so its single quotes are inert.
+# Retrieval then polls (bounded) for the .rc completion marker and streams the
+# captured .out back.
+_ssh_exec_long() {
+  local check_id="$1" remote_cmd="$2"
+  local out_f="${REMOTE_RUN_DIR}/${check_id}.out"
+  local rc_f="${REMOTE_RUN_DIR}/${check_id}.rc"
+  local cmd_f="${REMOTE_RUN_DIR}/${check_id}.cmd"
+
+  # 1. Materialize the battery command remotely (quote-safe; no `&`).
+  printf '%s' "$remote_cmd" | base64 \
+    | LC_ALL=C ssh $SSH_OPTS ${SSH_ID_OPTS[@]+"${SSH_ID_OPTS[@]}"} -p "$SSH_PORT" -- "$SSH_USER@$SSH_ADDR" \
+        "base64 -d > ${cmd_f}" >/dev/null 2>&1 || true
+
+  # 2. Launch under nohup with the .rc sidecar. Control string is constant
+  #    (filenames + timeout + optional sudo) — battery command not embedded.
+  local launcher="nohup sh -c 'timeout ${CHECK_TIMEOUT_S} ${SUDO_PREFIX}sh ${cmd_f} > ${out_f} 2>&1; echo \$? > ${rc_f}' < /dev/null > /dev/null 2>&1 &"
+  _ssh_raw "$launcher" >/dev/null 2>&1 || true
+
+  # Poll (bounded by CHECK_TIMEOUT_S + slack) for the .rc completion marker.
+  local waited=0 poll_max=$((CHECK_TIMEOUT_S + POLL_SLACK_S))
+  while [ "$waited" -lt "$poll_max" ]; do
+    if _ssh_raw "test -f ${rc_f}" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  # Stream the captured output back (may be empty if the check produced nothing).
+  _ssh_raw "cat ${out_f} 2>/dev/null" 2>/dev/null || true
 }
 
 # ===========================================================================
 # Check battery declaration.
 #
-# One entry per representative check, parsed as: id|dimension|needs_sudo|mode|cmd
-# `mode` = short|long. The cmd is a STATIC predefined battery command (never
-# host- or user-interpolated — ssh-probe-protocol §2). Tasks 5-7 flesh out the
-# real parsing/normalization; here each becomes a `skipped` placeholder, and in
-# --dry-run the command line is previewed via run_remote().
+# One entry per representative check, parsed as:
+#   id | dimension | needs_sudo | mode | tool | cmd
 #
-# IDs are drawn from the infra-check-registry.md namespace; ≥1 per IS1..IS12.
+#   mode = short|long  (long = lynis/nmap/trivy class, >30s → nohup §2).
+#   tool = `-` for a check requiring no special tool (always runnable when the
+#          host has a POSIX shell + coreutils), otherwise the tool that MUST be
+#          present in tool_availability for the check to run. When that tool is
+#          absent (and not installed — e.g. --no-install) the check is `skipped`
+#          (AC9), and crucially NO CVE string is ever fabricated (AC6).
+#
+# The cmd is a STATIC predefined battery command (never host- or user-
+# interpolated — ssh-probe-protocol §2). The cmd CAN contain single quotes
+# (awk/find/sed); the base64 transport in run_remote keeps that quote-safe.
+#
+# IDs are drawn EXACTLY from infra-check-registry.md; ≥1 per IS1..IS12.
 # ===========================================================================
 
 # Quick mode = IS1 + IS3 + IS4 only.
@@ -325,20 +568,24 @@ _dimension_in_scope() {
 
 # The battery. find lines carry -xdev + pseudo-fs prunes (IC-9). sshd/ss/etc
 # are static. `long` = lynis/nmap/trivy class (>30s → nohup).
+# Column 5 (tool): `lynis`/`trivy`/`ss`/`docker`/... must exist in
+# tool_availability for the row to run; `-` = always runnable.
 battery() {
   cat <<EOF
-IS1-sshd-permitrootlogin|IS1|true|short|sshd -T | grep -i permitrootlogin
-IS2-uid0-nonroot|IS2|false|short|awk -F: '(\$3==0){print \$1}' /etc/passwd
-IS3-unexpected-listener|IS3|false|short|ss -tulpn
-IS4-weak-protocols|IS4|false|long|true
-IS5-ufw-disabled|IS5|true|short|ufw status verbose
-IS6-security-updates-pending|IS6|true|long|debsecan --suite \$(lsb_release -cs) --format detail
-IS7-fail2ban-missing|IS7|false|short|systemctl is-active fail2ban
-IS8-exposed-admin-panel|IS8|false|long|true
-IS9-socket-world-readable|IS9|true|short|ls -l /var/run/docker.sock
-IS10-redis-no-auth|IS10|true|short|redis-cli CONFIG GET requirepass
-IS11-suid-unexpected|IS11|true|long|find / -xdev -path /proc -prune -o -path /sys -prune -o -path /run -prune -o -perm -4000 -type f -print
-IS12-world-readable-env|IS12|true|long|find / -xdev -path /proc -prune -o -path /sys -prune -o -path /run -prune -o -name '.env' -perm /044 -type f -print
+IS1-sshd-permitrootlogin|IS1|true|short|-|sshd -T 2>/dev/null | grep -i permitrootlogin || grep -i '^[[:space:]]*permitrootlogin' /etc/ssh/sshd_config
+IS1-lynis-hardening|IS1|true|long|lynis|lynis audit system --quick --no-colors 2>/dev/null | grep -i 'Hardening index'; HI=\$(grep -i '^hardening_index=' /var/log/lynis-report.dat 2>/dev/null | head -1 | cut -d= -f2); [ -n "\$HI" ] && echo "Hardening index : \$HI"
+IS2-uid0-nonroot|IS2|false|short|-|awk -F: '(\$3==0){print \$1}' /etc/passwd
+IS3-unexpected-listener|IS3|false|short|ss|ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null
+IS4-weak-protocols|IS4|false|long|-|true
+IS5-ufw-disabled|IS5|true|short|-|ufw status verbose 2>/dev/null || iptables -L -n 2>/dev/null || echo 'no-firewall-tool'
+IS6-security-updates-pending|IS6|true|long|debsecan|debsecan --suite "\$(lsb_release -cs 2>/dev/null)" --format detail 2>/dev/null
+IS7-fail2ban-missing|IS7|false|short|-|systemctl is-active fail2ban 2>/dev/null || echo inactive
+IS8-exposed-admin-panel|IS8|false|short|-|ss -tlnp 2>/dev/null | grep -iE ':(80|443|8080|8443|9000|3000)\b' || echo 'no-web-listener'
+IS9-socket-world-readable|IS9|true|short|-|ls -l /var/run/docker.sock 2>/dev/null || echo 'no-docker-socket'
+IS9-image-critical-cve|IS9|true|long|trivy|img=\$(docker ps --format '{{.Image}}' 2>/dev/null | head -1); [ -n "\$img" ] && trivy image --timeout ${TRIVY_TIMEOUT_S}s --skip-update --severity CRITICAL --quiet -- "\$img" 2>/dev/null
+IS10-redis-no-auth|IS10|true|short|-|grep -iE '^[[:space:]]*(requirepass|bind|protected-mode)' /etc/redis/redis.conf 2>/dev/null || echo 'no-redis-conf'
+IS11-suid-unexpected|IS11|true|long|-|find / -xdev -path /proc -prune -o -path /sys -prune -o -path /run -prune -o -perm -4000 -type f -print 2>/dev/null
+IS12-world-readable-env|IS12|true|long|-|find / -xdev -path /proc -prune -o -path /sys -prune -o -path /run -prune -o -name '.env' -perm /044 -type f -print 2>/dev/null | while read -r f; do perms=\$(stat -c '%a %n' "\$f" 2>/dev/null || stat -f '%Lp %N' "\$f" 2>/dev/null); n=\$(grep -cE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=' "\$f" 2>/dev/null); echo "== world-readable secret file: \$perms (keys: \${n:-0}) =="; grep -oE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*' "\$f" 2>/dev/null | sed 's/^[[:space:]]*//'; done
 EOF
 }
 
@@ -369,21 +616,18 @@ phase0_writer() {
 }
 
 # ===========================================================================
-# Bundle writer — assembles the IC-3 skeleton. checks[] = the full battery as
-# `skipped` placeholders at this stage. tool_availability includes grype
-# (IC-6 consistency). external.vantage = none.
+# Dry-run bundle writer — IC-3 skeleton with `skipped` placeholders (no live
+# collection). Live collection happens in collect_live() below.
 # ===========================================================================
 
-# Helper: build the checks[] JSON array from the in-scope battery entries.
-# Prints the resulting JSON to stdout.
+# Helper: build the checks[] JSON array from the in-scope battery entries
+# (skeleton placeholders, for --dry-run only). Prints JSON to stdout.
 _build_checks_json() {
   local checks_json="[]"
-  local id dim needs_sudo mode cmd
-  while IFS='|' read -r id dim needs_sudo mode cmd; do
+  local id dim needs_sudo mode tool cmd
+  while IFS='|' read -r id dim needs_sudo mode tool cmd; do
     [ -z "$id" ] && continue
-    if ! _dimension_in_scope "$dim"; then
-      continue
-    fi
+    _dimension_in_scope "$dim" || continue
     checks_json="$(printf '%s' "$checks_json" | jq \
       --arg id "$id" \
       --arg dim "$dim" \
@@ -407,7 +651,6 @@ write_bundle() {
   local checks_json
   checks_json="$(_build_checks_json)"
 
-  # External vantage: skeleton never connects → none.
   local vantage="none"
   local proxy_json="null"
   if [ -n "$PROXY" ]; then
@@ -421,15 +664,13 @@ write_bundle() {
     --arg vantage "$vantage" \
     --argjson proxy_used "$proxy_json" \
     --argjson checks "$checks_json" \
+    --argjson tool_defaults "$TOOL_AVAIL_DEFAULTS" \
     '{
       host: $host,
       collected_at: $collected_at,
       privilege_mode: $privilege_mode,
       os: { id: null, version: null, kernel: null },
-      tool_availability: {
-        lynis: null, nmap: null, trivy: null, grype: null,
-        debsecan: null, needrestart: null, docker: null, ss: null
-      },
+      tool_availability: $tool_defaults,
       tools_installed_this_run: [],
       checks: $checks,
       external: {
@@ -440,6 +681,312 @@ write_bundle() {
         nuclei_findings: []
       }
     }' > "$OUT" || { echo "ERROR: failed to write bundle: $OUT" >&2; exit 1; }
+}
+
+# ===========================================================================
+# Live collection (Task 5).
+# ===========================================================================
+
+# Module-level state populated by the live probes, consumed by collect_live().
+PRIVILEGE_MODE="insufficient-data"
+# Space-separated list of tools detected present (`command -v` hit). Bash-3.2
+# compatible — no associative arrays.
+TOOLS_PRESENT=""
+# JSON object built incrementally for tool_availability.
+TOOL_AVAIL_JSON='{}'
+
+# Reachability preflight (AC1). Fast bounded TCP probe BEFORE any ssh handshake
+# so a black-hole host fails in ~$CONNECT_TIMEOUT_S instead of waiting out the
+# OS connect timeout (and the ssh ConnectTimeout chain). Returns 0 reachable,
+# 1 unreachable.
+#
+# Portability: BSD `nc -w` (macOS) is only the POST-connect idle timeout, NOT the
+# connect timeout — a black-hole address would hang for ~75s. So the probe is
+# wrapped in a HARD wall-clock `timeout`/`gtimeout` of $CONNECT_TIMEOUT_S, which
+# bounds connect on every platform. Without a timeout binary we fall back to
+# BSD nc's `-G` connect-timeout (GNU/Linux nc lacks `-G`, but there `-w` already
+# bounds connect, so the plain `nc -w` path applies).
+_reachable() {
+  local tmo=""
+  if command -v timeout >/dev/null 2>&1; then tmo="timeout"
+  elif command -v gtimeout >/dev/null 2>&1; then tmo="gtimeout"; fi
+
+  if command -v nc >/dev/null 2>&1; then
+    if [ -n "$tmo" ]; then
+      "$tmo" "$PREFLIGHT_TIMEOUT_S" nc -z "$SSH_ADDR" "$SSH_PORT" >/dev/null 2>&1
+      return $?
+    fi
+    # No timeout binary: try BSD `-G` connect timeout, else plain `-w`.
+    if nc -h 2>&1 | grep -q -- '-G'; then
+      nc -G "$PREFLIGHT_TIMEOUT_S" -z "$SSH_ADDR" "$SSH_PORT" >/dev/null 2>&1
+      return $?
+    fi
+    nc -z -w "$PREFLIGHT_TIMEOUT_S" "$SSH_ADDR" "$SSH_PORT" >/dev/null 2>&1
+    return $?
+  fi
+
+  # No nc → bounded /dev/tcp attempt (bash builtin). SSH_ADDR/SSH_PORT are
+  # passed as POSITIONAL ARGS ($1/$2), never interpolated into the shell string,
+  # so even if validation were bypassed the addr/port cannot break out of the
+  # `exec` (defense-in-depth; injection guard). Both vars are already strictly
+  # validated above (addr `^[A-Za-z0-9._-]+$`, port integer 1-65535).
+  if [ -n "$tmo" ]; then
+    "$tmo" "$PREFLIGHT_TIMEOUT_S" bash -c 'exec 3<>/dev/tcp/"$1"/"$2"' _ "$SSH_ADDR" "$SSH_PORT" >/dev/null 2>&1
+  else
+    ( exec 3<>"/dev/tcp/$SSH_ADDR/$SSH_PORT" ) >/dev/null 2>&1
+  fi
+}
+
+# Privilege probe (ssh-probe-protocol §3). Determines privilege_mode from a
+# single round trip: uid, sudo binary presence, and `sudo -n true` outcome.
+_probe_privilege() {
+  local probe
+  # Prints three tokens: <uid> <has-sudo:0|1> <sudo-n-rc>
+  probe='id -u; command -v sudo >/dev/null 2>&1 && echo 1 || echo 0; sudo -n true >/dev/null 2>&1 && echo 0 || echo 1'
+  local out uid has_sudo sudo_rc
+  out="$(_ssh_exec_short "$probe" || true)"
+  uid="$(printf '%s\n' "$out" | sed -n '1p')"
+  has_sudo="$(printf '%s\n' "$out" | sed -n '2p')"
+  sudo_rc="$(printf '%s\n' "$out" | sed -n '3p')"
+  if [ "${uid:-x}" = "0" ]; then
+    PRIVILEGE_MODE="root"
+  elif [ "${sudo_rc:-1}" = "0" ]; then
+    PRIVILEGE_MODE="passwordless-sudo"
+  elif [ "${has_sudo:-0}" = "1" ]; then
+    PRIVILEGE_MODE="limited-sudo"
+  else
+    PRIVILEGE_MODE="no-sudo"
+  fi
+}
+
+# Tool probe — one round trip resolves availability for every tool the battery
+# and IC-6 care about. Populates TOOLS_PRESENT + TOOL_AVAIL_JSON. A tool that is
+# absent records JSON null; present records its version string (best-effort) or
+# `true`. NEVER fabricates a tool that is not there (AC6/AC9 foundation).
+_probe_tools() {
+  local tools="lynis nmap trivy grype debsecan needrestart docker ss"
+  local probe="for t in $tools; do if command -v \$t >/dev/null 2>&1; then echo \"\$t=present\"; else echo \"\$t=absent\"; fi; done"
+  local out
+  out="$(_ssh_exec_short "$probe" || true)"
+  local t state
+  TOOL_AVAIL_JSON='{}'
+  for t in $tools; do
+    state="$(printf '%s\n' "$out" | grep "^${t}=" | head -1 | cut -d= -f2)"
+    if [ "$state" = "present" ]; then
+      TOOLS_PRESENT="$TOOLS_PRESENT $t"
+      TOOL_AVAIL_JSON="$(printf '%s' "$TOOL_AVAIL_JSON" | jq --arg t "$t" '. + {($t): true}')"
+    else
+      TOOL_AVAIL_JSON="$(printf '%s' "$TOOL_AVAIL_JSON" | jq --arg t "$t" '. + {($t): null}')"
+    fi
+  done
+}
+
+# Is <tool> present? (`-` always present.)
+_tool_present() {
+  local tool="$1"
+  [ "$tool" = "-" ] && return 0
+  case " $TOOLS_PRESENT " in *" $tool "*) return 0 ;; *) return 1 ;; esac
+}
+
+# Persist a check's raw output (redacted) to --raw-dir and return the raw_ref
+# (relative filename) on stdout, or empty if no raw dir / empty output.
+_persist_raw() {
+  local check_id="$1" content="$2"
+  [ -z "$content" ] && { printf ''; return 0; }
+  mkdir -p "$RAW_DIR" 2>/dev/null || true
+  local f="$RAW_DIR/${check_id}.raw"
+  # IC-5: redact BEFORE write — analysts/raw consumers never see secret values.
+  printf '%s\n' "$content" | LC_ALL=C sed -E "$SED_REDACT" > "$f" 2>/dev/null || true
+  printf '%s' "${check_id}.raw"
+}
+
+# Execute one battery row and append its check object to checks_json (passed by
+# name). Handles needs_sudo / tool-absent / live-exec + jq append in one place.
+# Prints nothing; sets the caller's `checks_json` variable via printf into a
+# local and echoes the updated JSON — caller captures with $(...).
+#
+# Args: <id> <dim> <needs_sudo> <mode> <tool> <cmd> <unprivileged_flag>
+# Stdout: updated checks_json array (caller replaces its own variable).
+_run_single_check() {
+  local id="$1" dim="$2" needs_sudo="$3" mode="$4" tool="$5" cmd="$6"
+  local unprivileged="$7"
+  local cur_json="$8"
+
+  local status evidence source raw_ref
+  status="ok"; evidence=""; source="manual"; raw_ref=""
+  [ "$tool" != "-" ] && source="$tool"
+
+  if [ "$needs_sudo" = "true" ] && [ "$unprivileged" = true ]; then
+    # AC4 / §3: needs_sudo check without privilege is insufficient-data, never ok.
+    status="insufficient-data"
+    evidence="needs sudo; privilege_mode=$PRIVILEGE_MODE"
+  elif ! _tool_present "$tool"; then
+    # AC9: required tool absent (and not installed) → skipped, no fabrication (AC6).
+    status="skipped"
+    evidence="required tool '$tool' not available (tool_availability.$tool=null)"
+  else
+    # Live execution. Run needs_sudo checks through `sudo -n` when privileged
+    # via passwordless sudo; root already has privilege, others were filtered
+    # to insufficient-data above.
+    SUDO_PREFIX=""
+    if [ "$needs_sudo" = "true" ] && [ "$PRIVILEGE_MODE" = "passwordless-sudo" ]; then
+      SUDO_PREFIX="sudo -n "
+    fi
+    local raw
+    if [ "$mode" = "long" ]; then
+      raw="$(run_remote "$id" long -- "$cmd" || true)"
+    else
+      raw="$(run_remote "$id" short -- "$cmd" || true)"
+    fi
+    SUDO_PREFIX=""
+    # IC-5: redact BEFORE the value becomes bundle evidence.
+    evidence="$(printf '%s' "$raw" | LC_ALL=C sed -E "$SED_REDACT" | head -c 4000)"
+    raw_ref="$(_persist_raw "$id" "$raw")"
+    if [ -z "$raw" ] && [ "$mode" = "short" ]; then
+      # Empty output from a short check is benign (e.g. no match) — keep ok,
+      # but record that nothing was returned.
+      evidence="(no output)"
+    fi
+  fi
+
+  local raw_ref_json="null"
+  [ -n "$raw_ref" ] && raw_ref_json="$(printf '%s' "$raw_ref" | jq -R '.')"
+
+  printf '%s' "$cur_json" | jq \
+    --arg id "$id" \
+    --arg dim "$dim" \
+    --arg status "$status" \
+    --arg evidence "$evidence" \
+    --arg source "$source" \
+    --argjson raw_ref "$raw_ref_json" \
+    --argjson needs_sudo "$needs_sudo" \
+    '. + [{
+      id: $id,
+      dimension: $dim,
+      status: $status,
+      evidence: $evidence,
+      source: $source,
+      raw_ref: $raw_ref,
+      needs_sudo: $needs_sudo
+    }]'
+}
+
+# Run the full in-scope battery live, emitting one check object per row. Prints
+# the checks[] JSON array to stdout. Each row:
+#   - needs_sudo && unprivileged   → insufficient-data (AC4; never ok)
+#   - required tool absent          → skipped (AC9; never fabricates evidence)
+#   - otherwise run, capture+redact → ok (or error on transport failure)
+_collect_battery_json() {
+  local checks_json="[]"
+  local id dim needs_sudo mode tool cmd
+  local unprivileged=false
+  case "$PRIVILEGE_MODE" in limited-sudo|no-sudo|insufficient-data) unprivileged=true ;; esac
+
+  # Read the WHOLE battery into an indexed array FIRST, then iterate by index —
+  # NOT a `while read` over a heredoc. A heredoc-fed loop keeps the row list live
+  # on the loop's stdin; any ssh that inherited that fd would drain the remaining
+  # rows and silently truncate the run after the first check that opened an ssh
+  # on stdin. Index iteration leaves no live fd for a remote command to consume.
+  local battery_arr=()
+  local _l
+  while IFS= read -r _l; do
+    [ -n "$_l" ] && battery_arr+=("$_l")
+  done <<BATTERY
+$(battery)
+BATTERY
+
+  local _i
+  for _i in "${!battery_arr[@]}"; do
+    IFS='|' read -r id dim needs_sudo mode tool cmd <<LINE
+${battery_arr[$_i]}
+LINE
+    [ -z "$id" ] && continue
+    _dimension_in_scope "$dim" || continue
+
+    checks_json="$(_run_single_check "$id" "$dim" "$needs_sudo" "$mode" "$tool" "$cmd" "$unprivileged" "$checks_json")"
+    # Incremental write: re-render the bundle after each check (resume-safe).
+    _write_live_bundle "$checks_json"
+  done
+  printf '%s' "$checks_json"
+}
+
+# Assemble + write the live IC-3 bundle from an (in-progress) checks[] array.
+_write_live_bundle() {
+  local checks_json="$1"
+  local proxy_json="null"
+  [ -n "$PROXY" ] && proxy_json="$(printf '%s' "$PROXY" | jq -R '.')"
+
+  jq -n \
+    --arg host "$HOST_NAME" \
+    --arg collected_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg privilege_mode "$PRIVILEGE_MODE" \
+    --argjson tool_availability "$TOOL_AVAIL_JSON" \
+    --argjson tool_defaults "$TOOL_AVAIL_DEFAULTS" \
+    --argjson proxy_used "$proxy_json" \
+    --argjson checks "$checks_json" \
+    '{
+      host: $host,
+      collected_at: $collected_at,
+      privilege_mode: $privilege_mode,
+      os: { id: null, version: null, kernel: null },
+      tool_availability: ($tool_defaults + $tool_availability),
+      tools_installed_this_run: [],
+      checks: $checks,
+      external: {
+        vantage: "none",
+        proxy_used: $proxy_used,
+        open_ports: [],
+        tls: {},
+        nuclei_findings: []
+      }
+    }' > "$OUT" || { echo "ERROR: failed to write bundle: $OUT" >&2; exit 1; }
+}
+
+# Top-level live collection driver.
+collect_live() {
+  # AC1: reachability preflight BEFORE any ssh handshake. Unreachable → phase0
+  # UNREACHABLE + exit 0 (fleet continuity — the orchestrator keeps going).
+  if ! _reachable; then
+    phase0_writer "UNREACHABLE" "tcp-preflight-failed" \
+      "nc -zw5 ${SSH_ADDR}:${SSH_PORT} failed (host did not accept a TCP connection)"
+    echo "INFO: $HOST_NAME unreachable (tcp preflight) — phase0 bundle written: $OUT" >&2
+    exit 0
+  fi
+
+  # Host-key mismatch fail-fast (§5): a probe handshake captures ssh stderr; the
+  # canonical mismatch string halts the host with a phase0 bundle (AC8 — full
+  # detection logic is hardened in Task 6, but the fail-fast hook lives here so
+  # the first live handshake is the one that catches it).
+  local hs_err
+  hs_err="$(LC_ALL=C _ssh_raw "true" 2>&1 >/dev/null || true)"
+  if printf '%s' "$hs_err" | grep -q 'REMOTE HOST IDENTIFICATION HAS CHANGED'; then
+    local red
+    red="$(printf '%s' "$hs_err" | LC_ALL=C sed -E "$SED_REDACT")"
+    phase0_writer "FAILED" "host-key-mismatch" "$red"
+    echo "ERROR: host-key mismatch on $HOST_NAME — phase0 bundle written: $OUT" >&2
+    echo "       Recover: ssh-keygen -R $SSH_ADDR  (then verify the new key out-of-band)" >&2
+    exit 0
+  fi
+
+  mkdir -p "$RAW_DIR" 2>/dev/null || true
+
+  _probe_privilege
+  _probe_tools
+  maybe_consent_install
+
+  # Claim the remote run dir ONCE here in the parent shell (ssh-probe-protocol
+  # §2), before the battery loop — the long-check nohup/.rc sidecars live in it.
+  # Done eagerly (not lazily inside run_remote's subshell) so the claim survives.
+  if [ "$RUN_DIR_CLAIMED" = false ]; then
+    _claim_run_dir
+    RUN_DIR_CLAIMED=true
+  fi
+
+  local checks_json
+  checks_json="$(_collect_battery_json)"
+  # Final bundle render (collect_battery already wrote incrementally, but render
+  # once more to guarantee the complete array is the last write).
+  _write_live_bundle "$checks_json"
 }
 
 # ===========================================================================
@@ -462,8 +1009,8 @@ maybe_consent_install() {
 # Preview every command the run WOULD execute (dry-run dispatch through
 # run_remote so the IC-8 prefix and bounds are exercised exactly as live).
 preview_battery() {
-  local id dim needs_sudo mode cmd
-  while IFS='|' read -r id dim needs_sudo mode cmd; do
+  local id dim needs_sudo mode tool cmd
+  while IFS='|' read -r id dim needs_sudo mode tool cmd; do
     [ -z "$id" ] && continue
     _dimension_in_scope "$dim" || continue
     run_remote "$id" "$mode" -- "$cmd"
@@ -488,9 +1035,10 @@ main() {
     exit 0
   fi
 
-  # Live path (skeleton): write the IC-3 bundle with `skipped` placeholders.
-  # The real check battery is implemented in Tasks 5-7.
-  write_bundle
+  # Live path: reachability preflight → privilege/tool probes → battery →
+  # incremental IC-3 bundle (Task 5). Unreachable/host-key-mismatch hosts write a
+  # phase0 bundle and exit 0/0 so the fleet run continues (AC1/AC8).
+  collect_live
   exit 0
 }
 

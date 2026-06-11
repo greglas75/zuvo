@@ -8,7 +8,7 @@ fails if any drifts. Paths are relative to `tests/infra-suite/fixtures/`.
 The `Dockerfile-sha256` comment pins the misconfigured Dockerfile so silent
 edits (e.g. dropping a seed) are caught.
 
-# Dockerfile-sha256: 5cc16bca56476b7a740d1fff6c5862b4209f5bee83e644b41de2dc11acbecfb1
+# Dockerfile-sha256: b8645b51d00544710960c2d2d5201da4aa32ac9f6b15c1b0fc12439ff0a0082a
 
 | IS# | seed-id | literal value | fixture file | expected detection source |
 | --- | --- | --- | --- | --- |

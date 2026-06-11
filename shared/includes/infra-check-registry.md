@@ -29,6 +29,7 @@ against `include/tests_ssh`); never resolve severity or remediation by `lynis_te
 | IS1-sshd-maxauthtries | IS1 | MEDIUM | SSH-7408 | Set `MaxAuthTries 4` (or lower) in /etc/ssh/sshd_config, then `sshd -t && systemctl reload sshd` | CIS 5.2.7 |
 | IS1-sshd-x11forwarding | IS1 | MEDIUM | SSH-7408 | Set `X11Forwarding no` in /etc/ssh/sshd_config, then `sshd -t && systemctl reload sshd` | CIS 5.2.6 |
 | IS1-sshd-protocol-algos | IS1 | HIGH | - | Remove weak KEX/ciphers/MACs from sshd_config; run `ssh-audit localhost` to verify; reload: `systemctl reload sshd` | CIS 5.2.16 |
+| IS1-lynis-hardening | IS1 | MEDIUM | - | Review lynis Hardening index; run lynis audit system for detail | - |
 
 ## IS2 — Accounts & Auth
 

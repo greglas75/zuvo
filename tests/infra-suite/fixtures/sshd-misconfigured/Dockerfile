@@ -34,7 +34,8 @@ RUN install -d -m 700 -o audituser -g audituser /home/audituser/.ssh \
 # Weak sshd config (PermitRootLogin yes, PasswordAuthentication yes).
 COPY sshd_config /etc/ssh/sshd_config
 
-# IS10 — Redis bound to all interfaces with no requirepass.
+# IS10 — Redis bound to all interfaces (0.0.0.0). requirepass carries a
+# space-separated synthetic secret used to prove SED_REDACT RULE 2 redaction.
 COPY redis.conf /etc/redis/redis.conf
 
 # IS12 — secrets file world-readable on disk.
