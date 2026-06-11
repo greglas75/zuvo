@@ -131,3 +131,10 @@ type: project
 - **Impact:** IS3 firewall-diff (internal-vs-external port visibility), IS4 TLS, IS8 nuclei findings have no external data to analyze in v1; analysts treat empty external arrays as "external data absent (vantage recorded)", not "nothing found". SMOKE1 only asserts vantage=proxy (satisfied).
 - **v2 fix:** wire live proxychains nmap -sT + testssl.sh + nuclei -proxy execution in collect_live, populate the external block, parse+redact findings, implement the direct-mode abort threshold.
 - **Confidence:** 70 (intentional v1 scope boundary, plan-sanctioned; the diff value is the firewall-effectiveness proof which needs this for full IS3)
+
+## B-infra-collect-multi-container-cve
+- **Source:** zuvo:execute Task 9 adversarial (deferred — v1 scope boundary, not a bug)
+- **File:** scripts/infra-collect.sh IS9-image-critical-cve
+- **Issue:** The IS9 docker CVE check audits a single container image, not all running containers — partial coverage (correct for what it scans, incomplete fleet-wide).
+- **v2 fix:** enumerate `docker ps -q` and run trivy per image; aggregate per-container findings.
+- **Confidence:** 55 (coverage limitation, results correct for the scanned image)

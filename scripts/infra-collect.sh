@@ -599,24 +599,43 @@ _dimension_in_scope() {
 
 # The battery. find lines carry -xdev + pseudo-fs prunes (IC-9). sshd/ss/etc
 # are static. `long` = lynis/nmap/trivy class (>30s → nohup).
+# Column layout (parsed by `read -r id dim needs_sudo mode tool match_re cmd`):
+#   id | dimension | needs_sudo | mode | tool | match_re | cmd
+# Columns 1-6 are pipe-free; `cmd` (column 7) absorbs all remaining text and MAY
+# contain embedded `|` (shell pipelines) — `read` with 7 names assigns the rest
+# to the final variable, so embedded pipes in `cmd` stay intact.
+#
 # Column 5 (tool): `lynis`/`trivy`/`ss`/`docker`/... must exist in
 # tool_availability for the row to run; `-` = always runnable.
+#
+# Column 6 (match_re) — DETERMINISTIC FINDING CLASSIFIER (DD-5, DD-8, IC-3):
+#   The collector DETECTS; the LLM only interprets. A case-insensitive POSIX
+#   extended regex evaluated against the redacted evidence. If it MATCHES, the
+#   check status becomes `finding` (the misconfiguration is present); if it does
+#   NOT match (and the check ran cleanly with its IC-7 sanity marker), status
+#   stays `ok`. `-` = no positive-match rule (informational/listener checks the
+#   analyst reads as evidence). The regex is a STATIC, internally-authored
+#   pattern — never host- or user-derived — so it is safe to evaluate against
+#   attacker-influenced evidence with `grep -iE` (no eval; evidence is data).
+#   Because the battery is `|`-delimited, a match_re MUST NOT contain a literal
+#   `|`; ERE alternation is written with the placeholder `~~` (translated back to
+#   `|` by _classify_finding immediately before the grep).
 battery() {
   cat <<EOF
-IS1-sshd-permitrootlogin|IS1|true|short|-|sshd -T 2>/dev/null | grep -i permitrootlogin || grep -i '^[[:space:]]*permitrootlogin' /etc/ssh/sshd_config
-IS1-lynis-hardening|IS1|true|long|lynis|lynis audit system --quick --no-colors 2>/dev/null | grep -i 'Hardening index'; HI=\$(grep -i '^hardening_index=' /var/log/lynis-report.dat 2>/dev/null | head -1 | cut -d= -f2); [ -n "\$HI" ] && echo "Hardening index : \$HI"
-IS2-uid0-nonroot|IS2|false|short|-|awk -F: '(\$3==0){print \$1}' /etc/passwd
-IS3-unexpected-listener|IS3|false|short|ss|ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null
-IS4-weak-protocols|IS4|false|long|-|true
-IS5-ufw-disabled|IS5|true|short|-|ufw status verbose 2>/dev/null || iptables -L -n 2>/dev/null || echo 'no-firewall-tool'
-IS6-security-updates-pending|IS6|true|long|debsecan|debsecan --suite "\$(lsb_release -cs 2>/dev/null)" --format detail 2>/dev/null
-IS7-fail2ban-missing|IS7|false|short|-|systemctl is-active fail2ban 2>/dev/null || echo inactive
-IS8-exposed-admin-panel|IS8|false|short|-|ss -tlnp 2>/dev/null | grep -iE ':(80|443|8080|8443|9000|3000)\b' || echo 'no-web-listener'
-IS9-socket-world-readable|IS9|true|short|-|ls -l /var/run/docker.sock 2>/dev/null || echo 'no-docker-socket'
-IS9-image-critical-cve|IS9|true|long|trivy|img=\$(docker ps --format '{{.Image}}' 2>/dev/null | head -1); [ -n "\$img" ] && trivy image --timeout ${TRIVY_TIMEOUT_S}s --skip-update --severity CRITICAL --quiet -- "\$img" 2>/dev/null
-IS10-redis-no-auth|IS10|true|short|-|grep -iE '^[[:space:]]*(requirepass|bind|protected-mode)' /etc/redis/redis.conf 2>/dev/null || echo 'no-redis-conf'
-IS11-suid-unexpected|IS11|true|long|-|find / -xdev -path /proc -prune -o -path /sys -prune -o -path /run -prune -o -perm -4000 -type f -print 2>/dev/null
-IS12-world-readable-env|IS12|true|long|-|find / -xdev -path /proc -prune -o -path /sys -prune -o -path /run -prune -o -name '.env' -perm /044 -type f -print 2>/dev/null | while read -r f; do perms=\$(stat -c '%a %n' "\$f" 2>/dev/null || stat -f '%Lp %N' "\$f" 2>/dev/null); n=\$(grep -cE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=' "\$f" 2>/dev/null); echo "== world-readable secret file: \$perms (keys: \${n:-0}) =="; grep -oE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*' "\$f" 2>/dev/null | sed 's/^[[:space:]]*//'; done
+IS1-sshd-permitrootlogin|IS1|true|short|-|permitrootlogin[[:space:]]+(yes~~prohibit-password~~without-password)|sshd -T 2>/dev/null | grep -i permitrootlogin || grep -i '^[[:space:]]*permitrootlogin' /etc/ssh/sshd_config
+IS1-lynis-hardening|IS1|true|long|lynis|hardening index[[:space:]]*:?[[:space:]]*([0-5][0-9]~~[0-9])([^0-9]~~\$)|lynis audit system --quick --no-colors 2>/dev/null | grep -i 'Hardening index'; HI=\$(grep -i '^hardening_index=' /var/log/lynis-report.dat 2>/dev/null | head -1 | cut -d= -f2); [ -n "\$HI" ] && echo "Hardening index : \$HI"
+IS2-uid0-nonroot|IS2|false|short|-|UID0-EXTRA|awk -F: '(\$3==0){print \$1}' /etc/passwd | awk 'BEGIN{x=0} \$0!="root"{x=1} END{if(x)print "UID0-EXTRA: non-root uid-0 account present"}' ; awk -F: '(\$3==0){print \$1}' /etc/passwd
+IS3-unexpected-listener|IS3|false|short|ss|-|ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null
+IS4-weak-protocols|IS4|false|short|-|-|echo 'IS4-EXTERNAL-ONLY: TLS protocol/cipher inspection requires an external vantage (testssl) — not covered by the internal battery'
+IS5-ufw-disabled|IS5|true|short|-|inactive~~disabled~~no-firewall-tool~~Chain INPUT \(policy ACCEPT|ufw status verbose 2>/dev/null || iptables -L -n 2>/dev/null || echo 'no-firewall-tool'
+IS6-security-updates-pending|IS6|true|long|debsecan|CVE-[0-9]{4}-[0-9]+|debsecan --suite "\$(lsb_release -cs 2>/dev/null)" --format detail 2>/dev/null
+IS7-fail2ban-missing|IS7|false|short|-|inactive~~failed~~not-found|systemctl is-active fail2ban 2>/dev/null || echo inactive
+IS8-exposed-admin-panel|IS8|false|short|-|:(8080~~8443~~9000~~3000)([^0-9]~~\$)|ss -tlnp 2>/dev/null | grep -iE ':(80|443|8080|8443|9000|3000)\b' || echo 'no-web-listener'
+IS9-socket-world-readable|IS9|true|short|-|^.{7}rw|ls -l /var/run/docker.sock 2>/dev/null || echo 'no-docker-socket'
+IS9-image-critical-cve|IS9|true|long|trivy|CVE-[0-9]{4}-[0-9]+|img=\$(docker ps --format '{{.Image}}' 2>/dev/null | head -1); [ -n "\$img" ] && trivy image --timeout ${TRIVY_TIMEOUT_S}s --skip-update --severity CRITICAL --quiet -- "\$img" 2>/dev/null
+IS10-redis-no-auth|IS10|true|short|-|bind[[:space:]]+0\.0\.0\.0~~protected-mode[[:space:]]+no~~no-requirepass|if [ -f /etc/redis/redis.conf ]; then grep -iE '^[[:space:]]*(requirepass|bind|protected-mode)' /etc/redis/redis.conf 2>/dev/null; grep -qiE '^[[:space:]]*requirepass[[:space:]]' /etc/redis/redis.conf 2>/dev/null || echo 'no-requirepass'; else echo 'no-redis-conf'; fi
+IS11-suid-unexpected|IS11|true|long|-|/usr/local/~~^/tmp/~~/home/~~/opt/|find / -xdev -path /proc -prune -o -path /sys -prune -o -path /run -prune -o -perm -4000 -type f -print 2>/dev/null
+IS12-world-readable-env|IS12|true|long|-|world-readable secret file|find / -xdev -path /proc -prune -o -path /sys -prune -o -path /run -prune -o -name '.env' -perm /044 -type f -print 2>/dev/null | while read -r f; do perms=\$(stat -c '%a %n' "\$f" 2>/dev/null || stat -f '%Lp %N' "\$f" 2>/dev/null); n=\$(grep -cE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=' "\$f" 2>/dev/null); echo "== world-readable secret file: \$perms (keys: \${n:-0}) =="; grep -oE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*' "\$f" 2>/dev/null | sed 's/^[[:space:]]*//'; done
 EOF
 }
 
@@ -655,8 +674,8 @@ phase0_writer() {
 # (skeleton placeholders, for --dry-run only). Prints JSON to stdout.
 _build_checks_json() {
   local checks_json="[]"
-  local id dim needs_sudo mode tool cmd
-  while IFS='|' read -r id dim needs_sudo mode tool cmd; do
+  local id dim needs_sudo mode tool match_re cmd
+  while IFS='|' read -r id dim needs_sudo mode tool match_re cmd; do
     [ -z "$id" ] && continue
     _dimension_in_scope "$dim" || continue
     checks_json="$(printf '%s' "$checks_json" | jq \
@@ -1088,13 +1107,47 @@ _maybe_degrade_lynis_evidence() {
   fi
 }
 
+# DD-5 / DD-8 / IC-3 deterministic finding classifier. The collector DETECTS;
+# the LLM only interprets. Given the battery row's `match_re` (column 6) and the
+# already-redacted evidence, mark the check `status: finding` when the regex
+# matches — but NEVER override a terminal diagnostic verdict (error / fallback /
+# insufficient-data / skipped), which carry their own meaning and must not be
+# silently turned into a finding. `match_re == -` means "no positive-match rule"
+# (the check is informational; the analyst reads its evidence). The regex is a
+# STATIC, internally-authored pattern (never host/user-derived), so evaluating it
+# against attacker-influenced evidence with `grep -iE` is safe — evidence is data,
+# there is no eval. Empty evidence never matches (DD-8: empty output ≠ finding,
+# and certainly ≠ ok when a sanity marker is missing — that path is `error`).
+# Args: <match_re> <status_nameref_var> <evidence_nameref_var>
+_classify_finding() {
+  local _re="$1" _sv="$2" _ev="$3"
+  [ -z "$_re" ] && return 0
+  [ "$_re" = "-" ] && return 0
+  local _cur_status="${!_sv}"
+  case "$_cur_status" in
+    ok) : ;;                 # only a clean `ok` is eligible to become `finding`
+    *) return 0 ;;           # error/fallback/insufficient-data/skipped untouched
+  esac
+  local _cur_ev="${!_ev}"
+  [ -z "$_cur_ev" ] && return 0
+  # The battery is `|`-delimited, so a `match_re` can never contain a literal `|`
+  # (it would be parsed as a column break). ERE alternation is therefore written
+  # with the two-char placeholder `~~` in the battery and translated back to `|`
+  # here, immediately before the grep. `~~` is not a metacharacter and does not
+  # occur in any battery evidence, so the substitution is unambiguous.
+  local _re_grep="${_re//\~\~/|}"
+  if printf '%s' "$_cur_ev" | grep -qiE -- "$_re_grep" 2>/dev/null; then
+    printf -v "$_sv" '%s' 'finding'
+  fi
+}
+
 # Live execution branch: sets SUDO_PREFIX, runs the remote command, captures
 # raw output, redacts into evidence, persists raw_ref, then delegates to
-# _apply_marker_guard and _maybe_degrade_lynis_evidence.
-# Args: <id> <mode> <needs_sudo> <status_var> <evidence_var> <raw_ref_var>
+# _apply_marker_guard, _classify_finding (DD-5), and _maybe_degrade_lynis_evidence.
+# Args: <id> <mode> <needs_sudo> <status_var> <evidence_var> <raw_ref_var> <match_re>
 # Reads cmd from the caller's local $cmd; writes SUDO_PREFIX (reset after).
 _exec_and_assess() {
-  local _id="$1" _mode="$2" _ns="$3" _sv="$4" _ev="$5" _rv="$6"
+  local _id="$1" _mode="$2" _ns="$3" _sv="$4" _ev="$5" _rv="$6" _match_re="${7:-}"
   SUDO_PREFIX=""
   [ "$_ns" = "true" ] && [ "$PRIVILEGE_MODE" = "passwordless-sudo" ] && SUDO_PREFIX="sudo -n "
   local _raw
@@ -1118,6 +1171,10 @@ _exec_and_assess() {
   if [ "$_cur_status" != "error" ] && [ -z "$_raw" ] && [ "$_mode" = "short" ]; then
     printf -v "$_ev" '%s' '(no output)'
   fi
+  # DD-5/DD-8/IC-3: deterministic finding classification on the redacted evidence
+  # (runs BEFORE lynis-degrade so a real hardening-index finding is preserved as a
+  # `finding` even when the lynis-degrade note later annotates the evidence string).
+  _classify_finding "$_match_re" "$_sv" "$_ev"
   _maybe_degrade_lynis_evidence "$_id" "source" "$_ev"
 }
 
@@ -1126,18 +1183,26 @@ _exec_and_assess() {
 # Prints nothing; sets the caller's `checks_json` variable via printf into a
 # local and echoes the updated JSON — caller captures with $(...).
 #
-# Args: <id> <dim> <needs_sudo> <mode> <tool> <cmd> <unprivileged_flag>
+# Args: <id> <dim> <needs_sudo> <mode> <tool> <match_re> <cmd> <unprivileged_flag> <cur_json>
 # Stdout: updated checks_json array (caller replaces its own variable).
 _run_single_check() {
-  local id="$1" dim="$2" needs_sudo="$3" mode="$4" tool="$5" cmd="$6"
-  local unprivileged="$7"
-  local cur_json="$8"
+  local id="$1" dim="$2" needs_sudo="$3" mode="$4" tool="$5" match_re="$6" cmd="$7"
+  local unprivileged="$8"
+  local cur_json="$9"
 
   local status evidence source raw_ref
   status="ok"; evidence=""; source="manual"; raw_ref=""
   [ "$tool" != "-" ] && source="$tool"
 
-  if [ "$needs_sudo" = "true" ] && [ "$unprivileged" = true ]; then
+  if [ "$id" = "IS4-weak-protocols" ]; then
+    # IS4 TLS protocol/cipher inspection is an EXTERNAL-vantage check (testssl):
+    # it cannot be assessed from inside the host battery. Emit `skipped` (NOT a
+    # masquerading `ok` from a dummy probe) so the analyst/report shows IS4 as
+    # not-internally-covered. The real check runs on the external leg — backlog
+    # B-infra-collect-external-live-execution.
+    status="skipped"
+    evidence="IS4 TLS requires external vantage (testssl) — see external leg (not covered by internal battery)"
+  elif [ "$needs_sudo" = "true" ] && [ "$unprivileged" = true ]; then
     # AC4 / §3: needs_sudo check without privilege is insufficient-data, never ok.
     status="insufficient-data"
     evidence="needs sudo; privilege_mode=$PRIVILEGE_MODE"
@@ -1146,7 +1211,7 @@ _run_single_check() {
     status="skipped"
     evidence="required tool '$tool' not available (tool_availability.$tool=null)"
   else
-    _exec_and_assess "$id" "$mode" "$needs_sudo" "status" "evidence" "raw_ref"
+    _exec_and_assess "$id" "$mode" "$needs_sudo" "status" "evidence" "raw_ref" "$match_re"
   fi
 
   local raw_ref_json="null"
@@ -1178,7 +1243,7 @@ _run_single_check() {
 #   - otherwise run, capture+redact → ok (or error on transport failure)
 _collect_battery_json() {
   local checks_json="[]"
-  local id dim needs_sudo mode tool cmd
+  local id dim needs_sudo mode tool match_re cmd
   local unprivileged=false
   case "$PRIVILEGE_MODE" in limited-sudo|no-sudo|insufficient-data) unprivileged=true ;; esac
 
@@ -1197,7 +1262,7 @@ BATTERY
 
   local _i
   for _i in "${!battery_arr[@]}"; do
-    IFS='|' read -r id dim needs_sudo mode tool cmd <<LINE
+    IFS='|' read -r id dim needs_sudo mode tool match_re cmd <<LINE
 ${battery_arr[$_i]}
 LINE
     [ -z "$id" ] && continue
@@ -1216,7 +1281,7 @@ LINE
       continue
     fi
 
-    checks_json="$(_run_single_check "$id" "$dim" "$needs_sudo" "$mode" "$tool" "$cmd" "$unprivileged" "$checks_json")"
+    checks_json="$(_run_single_check "$id" "$dim" "$needs_sudo" "$mode" "$tool" "$match_re" "$cmd" "$unprivileged" "$checks_json")"
     # Incremental write: re-render the bundle after each check (resume-safe).
     _write_live_bundle "$checks_json"
   done
@@ -1349,8 +1414,8 @@ maybe_consent_install() {
 # Preview every command the run WOULD execute (dry-run dispatch through
 # run_remote so the IC-8 prefix and bounds are exercised exactly as live).
 preview_battery() {
-  local id dim needs_sudo mode tool cmd
-  while IFS='|' read -r id dim needs_sudo mode tool cmd; do
+  local id dim needs_sudo mode tool match_re cmd
+  while IFS='|' read -r id dim needs_sudo mode tool match_re cmd; do
     [ -z "$id" ] && continue
     _dimension_in_scope "$dim" || continue
     run_remote "$id" "$mode" -- "$cmd"

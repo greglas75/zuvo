@@ -1,0 +1,35 @@
+=== zuvo:infra-audit Task 9 SPIKE — analyst-pipeline de-risk ===
+date: 2026-06-11T13:16:38Z
+bundle: /tmp/zuvo-spike-run.UITeHG/bundle/web.json
+fixture: misconfigured sshd container (audituser@127.0.0.1:2201)
+collector: scripts/infra-collect.sh (REAL run, not mocked)
+
+--- CHECK 1: findings JSON parses ---
+[PASS] findings/web-host.json is valid JSON
+
+--- CHECK 2: every finding cites an existing bundle.checks[].id ---
+[PASS] all 5 host-layer findings cite existing bundle check ids (0 UNGROUNDED-FINDING)
+
+--- CHECK 3: bundle_sha256 in findings matches shasum -a 256 of bundle ---
+[PASS] bundle_sha256 matches: 59c71b6f607d0b64e7234f61d21b37c7b33eab1abcc7b0dfa626af281b5f8637
+
+--- CHECK 4: >=1 seeded IS1/IS2 issue from seed-manifest surfaces as a finding ---
+[PASS] seeded IS1 issue(s) surfaced as findings:
+         - IS1-sshd-permitrootlogin
+         - IS1-lynis-hardening
+         - IS11-suid-unexpected
+       evidence (IS1-sshd-permitrootlogin): permitrootlogin yes
+
+--- total findings in bundle (all dimensions): 7 ---
+
+[SPIKE: analyst-pipeline PASS]
+
+=== NOTE: SPIKE caught a real collector contract bug ===
+Pre-fix the collector classified EVERY check as status:ok (incl. 'permitrootlogin yes'),
+so the analyst (emits findings only for status==finding) surfaced ZERO findings.
+Root cause: scripts/infra-collect.sh battery had no deterministic finding classifier
+(DD-5 'collector detects, LLM interprets' was not implemented). Fixed by adding a
+match_re column (col 6) + _classify_finding() that marks status=finding when the
+redacted evidence matches a static ERE. (A second bug surfaced + fixed during the spike:
+literal '|' inside a match_re collided with the battery '|' delimiter; alternation now
+uses the '~~' placeholder translated back to '|' before grep.)
