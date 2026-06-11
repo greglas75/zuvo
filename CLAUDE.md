@@ -105,7 +105,7 @@ This does: version bump → commit → push → tag → update marketplace SHA �
 ```
 skills/<name>/SKILL.md          — skill definitions (51 total)
 skills/<name>/agents/<name>.md  — sub-agent instructions (28 agents)
-shared/includes/*.md            — shared procedural includes (37 files):
+shared/includes/*.md            — shared procedural includes (38 files):
                                     knowledge-prime.md, knowledge-curate.md (knowledge store)
                                     session-state.md (session recovery)
                                     report-output-location.md (canonical zuvo/ output dir)

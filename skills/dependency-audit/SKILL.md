@@ -61,6 +61,9 @@ health check, after monorepo restructuring, before lock-in reviews.
 (`zuvo:db-audit`), full-stack performance (`zuvo:performance-audit`), OWASP
 (`/security-audit`).
 
+
+> **Scanner exit codes:** follow `../../shared/includes/scanner-invocation.md` — `npm/pip-audit/osv-scanner` exit non-zero WHEN they find vulns (success); never treat non-zero as failure.
+
 ## Known Limitations
 
 - Node.js/TypeScript only. Python, Go, Rust, and Java are not supported.

@@ -1,0 +1,42 @@
+# zuvo:infra-audit Docker fixture rig (compose v2 — no `version:` key).
+# Two sshd targets (weak + hardened) plus a SOCKS5 proxy to exercise the
+# jump/proxy path. TEST-ONLY; the sshd-misconfigured service is deliberately
+# insecure. All images pinned by digest for reproducibility.
+#
+# All host port publications bind loopback only (127.0.0.1) so the deliberately
+# insecure fixtures are never reachable off-box. No container_name: keys — the
+# compose project name (-p) already namespaces containers and a fixed name is a
+# collision hazard across parallel runs.
+services:
+  sshd-misconfigured:
+    build:
+      context: ./sshd-misconfigured
+    ports:
+      - "127.0.0.1:2201:22"
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q ':0016 ' /proc/net/tcp /proc/net/tcp6 2>/dev/null"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 2s
+
+  sshd-hardened:
+    build:
+      context: ./sshd-hardened
+    ports:
+      - "127.0.0.1:2202:22"
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q ':0016 ' /proc/net/tcp /proc/net/tcp6 2>/dev/null"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 2s
+
+  socks-proxy:
+    image: serjs/go-socks5-proxy@sha256:0af522996f402c03ecd985a87997158eabeb28935365e3a384df37eafcf740ea
+    # Open (no-auth) proxy — TEST-ONLY, loopback-published. The image defaults
+    # to REQUIRE_AUTH=true and exits without PROXY_USER/PROXY_PASSWORD.
+    environment:
+      REQUIRE_AUTH: "false"
+    ports:
+      - "127.0.0.1:1080:1080"

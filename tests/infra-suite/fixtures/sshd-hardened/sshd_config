@@ -1,0 +1,15 @@
+# Hardened sshd config for zuvo:infra-audit negative-control fixture.
+Port 22
+Protocol 2
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_rsa_key
+
+PermitRootLogin no
+PasswordAuthentication no
+PubkeyAuthentication yes
+ChallengeResponseAuthentication no
+MaxAuthTries 3
+UsePAM yes
+PrintMotd no
+AcceptEnv LANG LC_*
+Subsystem sftp /usr/lib/openssh/sftp-server

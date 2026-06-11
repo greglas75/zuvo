@@ -1,0 +1,17 @@
+# TEST-ONLY weak sshd config for zuvo:infra-audit misconfigured fixture.
+# Deliberately insecure — do NOT use on a real host.
+Port 22
+Protocol 2
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_rsa_key
+
+# IS1 — seeded weaknesses (greppable literals):
+PermitRootLogin yes
+PasswordAuthentication yes
+
+PubkeyAuthentication yes
+ChallengeResponseAuthentication no
+UsePAM yes
+PrintMotd no
+AcceptEnv LANG LC_*
+Subsystem sftp /usr/lib/openssh/sftp-server

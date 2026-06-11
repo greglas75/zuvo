@@ -36,6 +36,31 @@ Do not abandon CodeSift after the first repo/index failure when initialization h
 
 If CodeSift succeeds at indexing/init but later queries fail with `Transport closed` (or equivalent transport/session teardown), stop retrying CodeSift for the rest of the current skill run. Print one degraded-mode note and switch to native tools immediately.
 
+### Worktree / branch-not-in-index scope (decide ONCE, up front — do not rediscover per agent)
+
+CodeSift indexes a repo's **main checkout**. When the scope you are about to analyze is a **git
+worktree** or a branch whose commits are not in the index, semantic tools silently scan the STALE
+main checkout and miss the actual code — and every dispatched sub-agent re-discovers this
+independently (the recurring, expensive failure across review/execute/refactor/plan). Resolve it
+once, before dispatching agents, and pass the decision to them:
+
+```bash
+TARGET_REPO=$(git -C "<scope-path>" rev-parse --show-toplevel 2>/dev/null)
+```
+
+1. **Different toplevel than CWD?** You are in a worktree/secondary checkout. Pass `path=$TARGET_REPO`
+   / `repo=$TARGET_REPO` **explicitly** to every CodeSift call (`search_text`, `search_symbols`,
+   `find_references`, `scan_secrets`, `index_*`) so they target the right tree, not CWD.
+2. **Branch commits not yet indexed?** Run `index_status(path=$TARGET_REPO)`. If the worktree's
+   branch tip is not indexed, run `index_folder(path=$TARGET_REPO)` **BEFORE any symbol/pattern
+   query** — otherwise the results describe the stale main checkout.
+3. **Can't reindex the worktree** (transient / cost): fall back to **git-diff-scoped `grep`** over
+   `git -C $TARGET_REPO diff <from>..<to>` — NOT a whole-CWD CodeSift scan, which would mislead.
+4. **Tell the sub-agents.** Put `TARGET_REPO=<abs path>` + "use git/grep, branch not in CodeSift
+   index" in the dispatch input so 4 agents don't each pay the rediscovery cost.
+
+A worktree is NEVER a reason to drop the whole analysis to degraded mode — it is a `path=` argument.
+
 ## Step 2.5: Deferred Tool Preload (MCP-host environments)
 
 Some MCP hosts (Claude Code, Codex Plugins) defer tool schemas to keep the system prompt small. When `mcp__codesift__*` tools appear under "deferred tools" in the session-start system reminder rather than directly in the tool list, calling them produces `InputValidationError`.

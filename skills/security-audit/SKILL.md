@@ -496,6 +496,8 @@ Manual checklist (always):
 
 ### S14 Scanners (run when present — don't eyeball what a scanner can prove)
 
+Follow `../../shared/includes/scanner-invocation.md` — scanners exit non-zero WHEN they find issues (success, not failure); key DEGRADED on JSON output, never exit code.
+
 Prefer real IaC/container scanners over manual inspection. Detect availability, run the
 matching scanner for the detected files, and parse JSON findings. **A scanner exits non-zero
 when it FINDS issues — that is a successful scan, not a failure; key on JSON output, not exit

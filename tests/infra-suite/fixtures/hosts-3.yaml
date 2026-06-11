@@ -1,0 +1,41 @@
+# zuvo:infra-audit test inventory — 3 hosts behind a SOCKS5 jump.
+# All addresses are loopback or TEST-NET-1 (192.0.2.0/24, RFC 5737); the
+# blackhole host is intentionally unreachable to exercise timeout handling.
+defaults:
+  proxy: socks5://127.0.0.1:1080
+
+hosts:
+  misconfigured:
+    address: 127.0.0.1
+    ssh_port: 2201
+    ssh_user: audituser
+    ssh_key: tests/infra-suite/fixtures/.keys/zuvo_test_key
+    # external_fqdn is the target for SOCKS-proxied (external) scans. The proxy
+    # is itself a container, so 127.0.0.1 inside it is the proxy's OWN loopback —
+    # NOT the published host port. External/proxied checks must therefore target
+    # host.docker.internal (the Docker host as seen from a container). SSH from
+    # the host side still uses address: 127.0.0.1 (the published 2201 mapping).
+    #   Docker Desktop (macOS/Windows): host.docker.internal resolves natively.
+    #   Linux CI: requires `--add-host=host.docker.internal:host-gateway`
+    #             (or `extra_hosts: ["host.docker.internal:host-gateway"]` in
+    #             compose). Alternatively, since the proxy shares the compose
+    #             network, external targets can use the compose SERVICE NAME
+    #             (e.g. sshd-misconfigured:22) which resolves platform-independently.
+    external_fqdn: host.docker.internal
+
+  hardened:
+    address: 127.0.0.1
+    ssh_port: 2202
+    ssh_user: audituser
+    ssh_key: tests/infra-suite/fixtures/.keys/zuvo_test_key
+    # See misconfigured.external_fqdn above: external (proxied) checks target
+    # host.docker.internal because the proxy is a container; SSH stays on
+    # 127.0.0.1 from the host. Linux CI needs host-gateway, or use the compose
+    # service name (sshd-hardened:22) which is platform-independent.
+    external_fqdn: host.docker.internal
+
+  blackhole:
+    address: 192.0.2.1
+    ssh_port: 22
+    ssh_user: audituser
+    ssh_key: tests/infra-suite/fixtures/.keys/zuvo_test_key

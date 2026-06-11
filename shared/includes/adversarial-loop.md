@@ -126,7 +126,23 @@ If only 1 provider remains after the exclusion, pass 2 will exit 3 (`single_prov
 
 ### Step 4: Evidence validation
 
-Before applying any fix policy, validate each finding for mandatory evidence.
+#### Step 4.0: Known false-positive classes (verify-then-dismiss, do NOT churn the diff)
+
+These FP classes recur from CLI/provider artifacts and cost a turn each if treated as real. For each,
+do the ONE-LINE verification and dismiss if confirmed FP — do not apply a fix, do not loop:
+
+| FP class | Symptom | One-line verification → dismiss |
+|----------|---------|--------------------------------|
+| **CLI-token mangling** | A provider (notably `gemini`) reports a "hallucinated/invalid file path" CRITICAL where the "path" is actually an email, `user@host`, URL, or `@`-decorator token in the diff | Check the cited token in the diff: if it's an `@`-token / email / host, not a real path → `FP: CLI @-token mangling`. |
+| **Markdown-regex balance** | "Unbalanced parens / stray lookaround / broken regex" on a regex inside a **markdown table cell** (`\\(`, `\|` double-escaped for the table) | Extract the real regex (unescape `\|`→`|`, `\\(`→`\(`) and `python3 -c 'import re; re.compile(r"…")'`. Compiles → `FP: markdown double-escape miscount`. |
+| **Type-system-disproven** | "May be null/falsy/0/undefined" on a value a declared type forbids (e.g. a string-union can't be `0`; a non-optional field can't be `undefined`) | Confirm the declared type; if it excludes the claimed value → `FP: type-disproven`. |
+| **Already-a-fact** | Re-raises a settled fact (lockfile present, bundled types, file already patched at HEAD) | Confirm against the `FACTS:` block / current tree → `FP: settled-fact`. |
+
+Record each dismissal as a one-line `FP: <class> — <token/evidence>` in the output; these do NOT
+count toward the known-concerns limit and do NOT block the verdict. **Verify before dismissing** —
+an unverified "probably FP" is not a dismissal, it's a skipped finding.
+
+Before applying any fix policy, validate each remaining finding for mandatory evidence.
 
 **Every CRITICAL or WARNING finding MUST include:**
 - `file:line` — exact file path and line number where the issue occurs
@@ -167,7 +183,13 @@ If Step 4 fixed any CRITICAL or WARNING:
 1. Stage fixes: `git add -u`
 2. Re-run: `git diff --staged | adversarial-review --json --mode {MODE}`
 3. **This is a validation run, NOT a new repair cycle.** If new issues found:
-   - New CRITICAL → add to known concerns, STOP. Do NOT attempt another fix.
+   - **False-re-raise check FIRST.** If a re-flagged CRITICAL is the SAME issue you just fixed
+     (same `file:line` + same root cause) and you can prove the fix holds (the regression test for
+     it passes / the changed code is present at HEAD), it is a **false-re-raise, NOT non-convergence**:
+     dispose `[POST-CAP: FIXED] false-re-raise — <file:line>, verified by <test/evidence>` and STOP
+     cleanly. Do NOT count it toward the retry cap, do NOT re-fix, do NOT flip the verdict to BLOCKED.
+     A provider re-stating an already-fixed finding is noise; the test is ground truth.
+   - New CRITICAL (genuinely distinct from what you fixed) → add to known concerns, STOP. Do NOT attempt another fix.
    - New WARNING caused by previous fix → add to known concerns, STOP.
    - Only INFO → add to known concerns, proceed.
 
