@@ -7,7 +7,7 @@ description: >
   integrity, link integrity with anchor validation, content completeness, and
   spelling/typography. Language-agnostic with multi-encoding mojibake detection.
   Companion fix skill: content-fix. Flags: [path], --live-url <url>, --quick,
-  --content-path <dir>, --lang <code>, --check-external, --profile <type>,
+  --content-path <dir>, --lang <code>, --check-external, --profile <type>, --persist-backlog.
 codesift_tools:
   always:
     - analyze_project
@@ -19,7 +19,6 @@ codesift_tools:
     - search_text              # encoding artifacts, mojibake patterns
     - search_patterns          # broken markdown, orphan backslash, etc.
   by_stack: {}                 # markdown-focused — no framework tools needed
-  --persist-backlog.
 ---
 
 # zuvo:content-audit — Content File Quality Audit

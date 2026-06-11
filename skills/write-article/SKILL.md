@@ -8,6 +8,7 @@ description: >
   adversarial review, and SEO optimization with BlogPosting schema. Supports
   site-aware output with frontmatter auto-detection, batch mode for multi-article
   sessions, and graceful degradation when web search is unavailable. Flags:
+  --lang, --tone, --length, --site-dir, --format, --keyword, --audience, --batch-mode.
 codesift_tools:
   always:
     - analyze_project
@@ -18,8 +19,6 @@ codesift_tools:
     - get_file_tree            # locate content collection
     - search_text              # internal-link discovery
   by_stack: {}                 # web-research + writing focused
-  --lang, --tone, --length, --site-dir, --format, --keyword, --audience,
-  --batch-mode.
 ---
 
 # zuvo:write-article — Research-Grounded Article Writer
