@@ -167,7 +167,8 @@ fi
 #   2. host.docker.internal:2201 — published host port via the Docker host;
 #      resolves on Docker Desktop, needs host-gateway on Linux. FALLBACK.
 # We try (1) first, fall back to (2), and report which variant carried the banner.
-# Portable timeout wrapper: use coreutils timeout when available, else run bare.
+# Timeout wrapper: use coreutils `timeout 10` when available; otherwise rely on
+# the nc -w bounds passed by the caller (probe is bounded at both layers).
 _tmo() { if command -v timeout >/dev/null 2>&1; then timeout 10 "$@"; else "$@"; fi; }
 
 if ! command -v nc >/dev/null 2>&1; then
@@ -177,12 +178,12 @@ else
   _socks_banner=""
   _socks_variant=""
   # Variant 1: compose service DNS (platform-independent).
-  _socks_banner="$(_tmo nc -X 5 -x 127.0.0.1:1080 sshd-misconfigured 22 < /dev/null 2>/dev/null | head -1 || true)"
+  _socks_banner="$(_tmo nc -w 10 -X 5 -x 127.0.0.1:1080 sshd-misconfigured 22 < /dev/null 2>/dev/null | head -1 || true)"
   if printf '%s' "$_socks_banner" | grep -q '^SSH-2\.0'; then
     _socks_variant="compose service DNS (sshd-misconfigured:22)"
   else
     # Variant 2: host.docker.internal published port.
-    _socks_banner="$(_tmo nc -X 5 -x 127.0.0.1:1080 host.docker.internal 2201 < /dev/null 2>/dev/null | head -1 || true)"
+    _socks_banner="$(_tmo nc -w 10 -X 5 -x 127.0.0.1:1080 host.docker.internal 2201 < /dev/null 2>/dev/null | head -1 || true)"
     if printf '%s' "$_socks_banner" | grep -q '^SSH-2\.0'; then
       _socks_variant="host.docker.internal:2201 (published port)"
     fi
