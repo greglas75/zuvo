@@ -323,5 +323,74 @@ if ! grep -Eq 'nmap[[:print:]]*-T2' "$DRY_F"; then
 fi
 pass "(f) dry-run log prints nmap with -T2 (polite timing)"
 
+# ===========================================================================
+# Scenario (g): LIVE external execution through the proxy (the headline fix —
+# B-infra-collect-external-live-execution). With a reachable SOCKS proxy AND
+# proxychains-ng AND nmap present, the collector actually RUNS the external port
+# scan through the proxy and populates external.open_ports. The proxy reaches the
+# misconfigured fixture via compose service DNS (sshd-misconfigured:22), so port
+# 22 must appear in external.open_ports — proving the dual-vantage firewall diff
+# now has external data (it was always empty before this fix).
+#
+# Guarded: needs docker (fixtures), proxychains-ng (wraps nmap), and nmap itself.
+# Absent any of those → SKIP cleanly (suite convention — never a false FAIL).
+# ===========================================================================
+echo ""
+echo "### Scenario (g): LIVE proxy port scan → external.open_ports non-empty (port 22)"
+if [ "$HAVE_PROXYCHAINS" != true ]; then
+  echo "SKIP: proxychains-ng not installed — (g) live external port scan requires it (IC-4)"
+elif ! command -v nmap >/dev/null 2>&1; then
+  echo "SKIP: nmap not installed — (g) live external port scan requires nmap on the laptop"
+else
+BUNDLE_G="$WORK_DIR/g-live-external.json"
+set +e
+# --external-target is the compose SERVICE NAME the SOCKS proxy resolves over the
+# docker network (remote DNS); 127.0.0.1 would resolve on the PROXY container's
+# own loopback, not the fixture. This is exactly how the SKILL passes external_fqdn.
+run_collector --host audituser@127.0.0.1:2201 --out "$BUNDLE_G" \
+  --no-install --run-id "ztest-ext-g-$$" --proxy "$PROXY_OK" \
+  --external-target sshd-misconfigured \
+  >"$WORK_DIR/g.log" 2>&1
+RC=$?
+set -e
+require_eq "$RC" "0" "(g) live external collect should exit 0 (log: $WORK_DIR/g.log)"
+assert_file_exists "$BUNDLE_G"
+jq -e . "$BUNDLE_G" >/dev/null 2>&1 || fail "(g) bundle not valid JSON: $(cat "$BUNDLE_G")"
+
+# vantage must be proxy (reachable SOCKS proxy + proxychains present).
+VANTAGE_G="$(jq -r '.external.vantage' "$BUNDLE_G")"
+require_eq "$VANTAGE_G" "proxy" "(g) external.vantage should be proxy for the live scan"
+pass "(g) external.vantage = proxy"
+
+# THE HEADLINE ASSERTION: external.open_ports is NON-EMPTY (the diff now has data).
+OPEN_COUNT="$(jq -r '.external.open_ports | length' "$BUNDLE_G")"
+if [ "${OPEN_COUNT:-0}" -lt 1 ]; then
+  fail "(g) external.open_ports is EMPTY — live external port scan did not populate it. Bundle external: $(jq -c '.external' "$BUNDLE_G"). Log: $(cat "$WORK_DIR/g.log")"
+fi
+pass "(g) external.open_ports is non-empty ($OPEN_COUNT port(s) seen through the proxy)"
+
+# Port 22 (the fixture sshd) must be visible through the SOCKS proxy.
+if ! jq -e '.external.open_ports | any(.port == 22)' "$BUNDLE_G" >/dev/null 2>&1; then
+  fail "(g) port 22 (sshd-misconfigured) NOT visible in external.open_ports through the proxy. open_ports=$(jq -c '.external.open_ports' "$BUNDLE_G")"
+fi
+pass "(g) port 22 visible in external.open_ports (proxy → sshd-misconfigured:22)"
+
+# Each open-port entry carries the IC-3 shape {port, proto, state}.
+if ! jq -e '.external.open_ports | all(has("port") and has("proto") and has("state"))' "$BUNDLE_G" >/dev/null 2>&1; then
+  fail "(g) open_ports entries missing port/proto/state keys: $(jq -c '.external.open_ports' "$BUNDLE_G")"
+fi
+pass "(g) open_ports entries carry {port, proto, state}"
+
+# Internal battery still ran (the external leg must never disrupt internal collection).
+require_eq "$(jq -r '.checks | length >= 1' "$BUNDLE_G")" "true" "(g) internal checks still collected alongside the live external scan"
+pass "(g) internal checks unaffected by the live external leg"
+
+# No secret leak: the published bundle external block must carry no raw secret.
+if jq -r '.external | tostring' "$BUNDLE_G" | grep -Eiq 'requirepass[[:space:]]+[^[:space:]"]+[^]]|BEGIN [A-Z]+ PRIVATE KEY'; then
+  fail "(g) external block appears to leak a secret (SED_REDACT not applied): $(jq -c '.external' "$BUNDLE_G")"
+fi
+pass "(g) external block carries no leaked secret (SED_REDACT applied)"
+fi  # end (g) proxychains+nmap guard
+
 echo ""
 echo "ALL INFRA-COLLECTOR-EXTERNAL ASSERTIONS PASSED"

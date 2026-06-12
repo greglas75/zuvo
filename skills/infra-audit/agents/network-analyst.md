@@ -79,6 +79,18 @@ Also read the external vantage block — it is CRITICAL for IS3 and IS4 analysis
 jq '{host, privilege_mode, external}' bundle/<host>.json
 ```
 
+**Surface `external.notes` in your IS3/IS4/IS8 analysis.** The collector records
+degradation and abort notes there (e.g. "external port scan SKIPPED: nmap not on
+PATH", "direct mode: nuclei skipped — zero open ports (DD-4 abort)", "testssl.sh
+not on PATH", DD-4 lockout/refused notes). Read them and report when external
+coverage was reduced, so a user knows IS3/IS4/IS8 ran with less-than-full external
+visibility — never silently treat an empty `open_ports`/`tls`/`nuclei_findings` as
+a clean result when a note explains the gap:
+
+```bash
+jq '.external.notes' bundle/<host>.json
+```
+
 ---
 
 ## IS3 — Firewall Diff: Internal vs External Vantage

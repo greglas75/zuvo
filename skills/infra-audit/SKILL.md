@@ -327,6 +327,7 @@ Invoke per host, passing `ssh_key` / `known_hosts` / `proxy` resolved from
   ${DEEP_SCAN:+--deep-scan} \
   ${SKIP_EXTERNAL:+--skip-external} \
   ${EXTERNAL_MODE:+--external "$EXTERNAL_MODE"} \
+  ${external_fqdn:+--external-target "$external_fqdn"} \   # IC-4: public surface scanned externally (else bare addr)
   --run-id "$RUN_ID" \
   --out "$RUN_DIR/bundle/$name.json" \
   --raw-dir "$RUN_DIR/raw"
@@ -475,6 +476,13 @@ proof. Verdict per `external.vantage`:
 | `proxy` / `direct` | full diff: ports visible externally but not intended → finding |
 | `none` | `rules-only` (rules read but not externally verified) |
 | `failed` | `rules-only`, IS4/IS8 `DEGRADED (proxy-failed)` |
+
+The collector's `external` block is:
+`external: { vantage, proxy_used, open_ports, tls, nuclei_findings, notes }`.
+`notes` is an array of degradation/abort messages (tool-absent skips, the DD-4
+zero-open-ports nuclei abort, proxy/refused notes) — the network-analyst surfaces
+them so reduced external coverage is visible in the IS3/IS4/IS8 verdict, never
+silently masked by an empty `open_ports`/`tls`/`nuclei_findings`.
 
 ### Phase 3.5 — Per-host report → fleet-summary written LAST
 

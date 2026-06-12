@@ -37,6 +37,9 @@ SSH_OPTS='-o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=
 : "${PREFLIGHT_TIMEOUT_S:=5}"      # TCP reachability preflight (nc -zw5; faster than ssh connect, AC1)
 : "${WALL_CLOCK_LIMIT_S:=1800}"    # per-host 30-min wall clock (full mode)
 : "${POLL_SLACK_S:=15}"           # extra seconds past CHECK_TIMEOUT_S to poll for .rc sidecar
+: "${EXTERNAL_PORTSCAN_TIMEOUT_S:=300}"  # IC-4 external nmap -sT wall clock (per scan)
+: "${EXTERNAL_TLS_TIMEOUT_S:=180}"       # IC-4 external testssl.sh wall clock (per port)
+: "${EXTERNAL_NUCLEI_TIMEOUT_S:=300}"    # IC-4 external nuclei wall clock
 
 # SECURITY (timeout-injection guard): every timeout constant above is env-
 # overridable AND interpolated verbatim into remote/local command strings
@@ -44,7 +47,8 @@ SSH_OPTS='-o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=
 # A non-integer override (`CHECK_TIMEOUT_S='1; rm -rf /'`) would break out of the
 # command and execute arbitrary code. Assert each is a bare positive integer
 # (1+ digits, no sign/space/metachars) right here, before any use. Fail loud.
-for _tvar in CHECK_TIMEOUT_S TRIVY_TIMEOUT_S CONNECT_TIMEOUT_S PREFLIGHT_TIMEOUT_S WALL_CLOCK_LIMIT_S POLL_SLACK_S; do
+for _tvar in CHECK_TIMEOUT_S TRIVY_TIMEOUT_S CONNECT_TIMEOUT_S PREFLIGHT_TIMEOUT_S WALL_CLOCK_LIMIT_S POLL_SLACK_S \
+             EXTERNAL_PORTSCAN_TIMEOUT_S EXTERNAL_TLS_TIMEOUT_S EXTERNAL_NUCLEI_TIMEOUT_S; do
   # Indirect expansion (bash 3.2 `${!var}`), NOT eval — eval would EXECUTE any
   # metacharacters in a hostile env value BEFORE the integer check could reject it,
   # turning the injection guard into an injection vector.
@@ -119,6 +123,10 @@ Options:
   --no-install              Hard read-only; never offer tool installation (DD-3)
   --run-id <id>             Run identifier (default: zuvo-<epoch>-<pid>)
   --proxy <url>             External-scan proxy override (IC-4)
+  --external-target <host>  External-scan target hostname/IP (default: --host addr).
+                            The SKILL passes the inventory external_fqdn here so the
+                            proxy resolves the public surface; tests pass a compose
+                            service name reachable through the SOCKS proxy DNS.
   --quick                   IS1 + IS3 (internal) + IS4 only
   --dimensions <list>       Comma-separated dimension subset (e.g. IS1,IS3,IS9)
   --deep-scan               nmap -p- instead of --top-ports 1000 (IC-9)
@@ -148,6 +156,7 @@ DIMENSIONS=""
 DEEP_SCAN=false
 SKIP_EXTERNAL=false
 EXTERNAL_MODE=""
+EXTERNAL_TARGET_ARG=""
 RAW_DIR=""
 SSH_KEY=""
 KNOWN_HOSTS=""
@@ -176,6 +185,7 @@ while [ $# -gt 0 ]; do
     --deep-scan)   DEEP_SCAN=true; shift ;;
     --skip-external) SKIP_EXTERNAL=true; shift ;;
     --external)    _need_val --external $#; EXTERNAL_MODE="$2"; shift 2 ;;
+    --external-target) _need_val --external-target $#; EXTERNAL_TARGET_ARG="$2"; shift 2 ;;
     --raw-dir)     _need_val --raw-dir $#; RAW_DIR="$2"; shift 2 ;;
     --ssh-key)     _need_val --ssh-key $#; SSH_KEY="$2"; shift 2 ;;
     --known-hosts) _need_val --known-hosts $#; KNOWN_HOSTS="$2"; shift 2 ;;
@@ -289,6 +299,17 @@ fi
 # charset, port = bare integer. Reject anything else, fail loud (exit 1).
 if [ -n "$PROXY" ] && ! printf '%s' "$PROXY" | grep -Eq '^(socks5|socks4|http)://[A-Za-z0-9._-]+:[0-9]+$'; then
   echo "ERROR: malformed --proxy '$PROXY' (expected (socks5|socks4|http)://host:port)" >&2
+  usage
+  exit 1
+fi
+
+# SECURITY (CQ3 / injection guard): $EXTERNAL_TARGET is passed as a POSITIONAL ARG
+# into nmap/testssl/nuclei — never interpolated into a `sh -c` string — but a
+# leading `-` would let the scanner parse it as an option, and metacharacters have
+# no place in a hostname/IPv4. Restrict to the same strict host charset as
+# SSH_ADDR (letters, digits, dot, hyphen, underscore). Empty = derive from --host.
+if [ -n "$EXTERNAL_TARGET_ARG" ] && ! printf '%s' "$EXTERNAL_TARGET_ARG" | grep -Eq '^[A-Za-z0-9._-]+$'; then
+  echo "ERROR: malformed --external-target '$EXTERNAL_TARGET_ARG' (allowed: A-Z a-z 0-9 . _ -)" >&2
   usage
   exit 1
 fi
@@ -732,7 +753,8 @@ write_bundle() {
         proxy_used: $proxy_used,
         open_ports: [],
         tls: {},
-        nuclei_findings: []
+        nuclei_findings: [],
+        notes: []
       }
     }' > "$OUT" || { echo "ERROR: failed to write bundle: $OUT" >&2; exit 1; }
 }
@@ -763,9 +785,30 @@ write_bundle() {
 
 # Module-level external state, consumed by the bundle writers.
 EXTERNAL_VANTAGE="none"
-# The host being scanned externally = the SSH address (the public surface of the
-# host under audit). No user/port interpolation beyond the already-validated addr.
-EXTERNAL_TARGET="$SSH_ADDR"
+# The host being scanned externally. Resolution order:
+#   --external-target (the SKILL passes the inventory external_fqdn; tests pass a
+#   compose service name the SOCKS proxy resolves via docker DNS)  >  the bare SSH
+#   address (the public surface of the host under audit). Both are charset-validated
+#   above and only ever passed as POSITIONAL ARGS to the scanners (never a shell
+#   string), so neither can break out or inject scanner flags.
+if [ -n "$EXTERNAL_TARGET_ARG" ]; then
+  EXTERNAL_TARGET="$EXTERNAL_TARGET_ARG"
+else
+  EXTERNAL_TARGET="$SSH_ADDR"
+fi
+
+# DD-4 direct-mode abort threshold: stop external scanning after this many
+# consecutive connection-refused signals (lockout-avoidance). Bare integer; no
+# user input lands here, but keep it a named constant (CQ14 single-source).
+EXTERNAL_DIRECT_ABORT_THRESHOLD=3
+
+# Module-level external evidence, populated by _collect_external() and consumed by
+# the live bundle writer. Defaults are the empty IC-3 shapes (used when the vantage
+# does not scan, i.e. none/failed). Populated incrementally as each sub-scan runs.
+EXTERNAL_OPEN_PORTS_JSON='[]'
+EXTERNAL_TLS_JSON='{}'
+EXTERNAL_NUCLEI_JSON='[]'
+EXTERNAL_NOTES_JSON='[]'
 
 # Detect a proxychains-ng binary. Prints the binary NAME on stdout (one of
 # proxychains4 / proxychains-ng / proxychains, in preference order) and returns 0
@@ -858,10 +901,16 @@ preview_external() {
     printf '[DRY-RUN] external vantage=%s — no external scan commands (IC-4)\n' "$EXTERNAL_VANTAGE"
     return 0
   fi
+  # AC3: the dry-run prints the SAME flags the live scan runs, so --dry-run is a
+  # faithful preview. Port selection mirrors the live `--top-ports 1000` default
+  # (or `-p-` under --deep-scan / IC-9); nmap carries `-Pn -oG -`, testssl carries
+  # `--color 0`, exactly as _external_port_scan / _external_tls_scan invoke them.
+  local _portsel="--top-ports 1000"
+  [ "$DEEP_SCAN" = true ] && _portsel="-p-"
   if [ "$EXTERNAL_VANTAGE" = "direct" ]; then
     # DD-4 direct mode: polite timing + abort threshold; no proxychains wrapper.
-    printf '[DRY-RUN] WOULD run (external-nmap, direct): nmap -sT -T2 --max-rate 50 -- %s\n' "$EXTERNAL_TARGET"
-    printf '[DRY-RUN] WOULD run (external-testssl, direct): testssl.sh --quiet -- %s\n' "$EXTERNAL_TARGET"
+    printf '[DRY-RUN] WOULD run (external-nmap, direct): nmap -sT -Pn -T2 --max-rate 50 %s -oG - -- %s\n' "$_portsel" "$EXTERNAL_TARGET"
+    printf '[DRY-RUN] WOULD run (external-testssl, direct): testssl.sh --quiet --color 0 -- %s\n' "$EXTERNAL_TARGET"
     printf '[DRY-RUN] WOULD run (external-nuclei, direct): nuclei -target %s -tags %s -exclude-tags %s\n' \
       "$EXTERNAL_TARGET" "$NUCLEI_SAFE_TAGS" "$NUCLEI_EXCLUDE_TAGS"
     printf '[DRY-RUN] direct mode aborts after 3 consecutive connection-refused (DD-4)\n'
@@ -869,10 +918,350 @@ preview_external() {
   fi
   # proxy mode: nmap + testssl via proxychains-ng; nuclei via native -proxy.
   local pc; pc="$(_detect_proxychains)"
-  printf '[DRY-RUN] WOULD run (external-nmap, proxy): %s nmap -sT -- %s\n' "$pc" "$EXTERNAL_TARGET"
-  printf '[DRY-RUN] WOULD run (external-testssl, proxy): %s testssl.sh --quiet -- %s\n' "$pc" "$EXTERNAL_TARGET"
+  printf '[DRY-RUN] WOULD run (external-nmap, proxy): %s nmap -sT -Pn %s -oG - -- %s\n' "$pc" "$_portsel" "$EXTERNAL_TARGET"
+  printf '[DRY-RUN] WOULD run (external-testssl, proxy): %s testssl.sh --quiet --color 0 -- %s\n' "$pc" "$EXTERNAL_TARGET"
   printf '[DRY-RUN] WOULD run (external-nuclei, proxy): nuclei -target %s -proxy %s -tags %s -exclude-tags %s\n' \
     "$EXTERNAL_TARGET" "$PROXY" "$NUCLEI_SAFE_TAGS" "$NUCLEI_EXCLUDE_TAGS"
+}
+
+# ===========================================================================
+# Live external execution (Task 7 / IC-4 — B-infra-collect-external-live-execution).
+#
+# Runs the external attack-surface scans LIVE (proxy or direct vantage) and
+# populates the module-level EXTERNAL_*_JSON state that _write_live_bundle emits
+# into the bundle's `external` block. This is the data IS3's internal-vs-external
+# firewall diff (the dual-vantage firewall-effectiveness proof) consumes — the
+# collector POPULATES open_ports; the network-analyst DIFFS it against internal
+# ss -tulpn. Without this leg open_ports was always empty and the diff had no data.
+#
+# SAFETY INVARIANTS (mirrors the internal battery):
+#   - Every sub-scan is bounded by a named timeout constant (no unbounded hang).
+#   - A missing tool SKIPS that sub-scan with a note — never a crash, never a
+#     fabricated result. The other sub-scans still run.
+#   - The target is a charset-validated host passed ONLY as a positional arg to
+#     the scanner (never interpolated into a `sh -c` string); NO eval anywhere.
+#   - SED_REDACT is applied to every parsed evidence string before it enters the
+#     bundle (defense-in-depth; external evidence is generally non-secret but
+#     testssl/nuclei output can echo headers/banners).
+#   - nuclei runs ONLY with the pinned $NUCLEI_SAFE_TAGS / $NUCLEI_EXCLUDE_TAGS.
+# ===========================================================================
+
+# Path to the per-run proxychains config the collector generates (IC-4). Empty
+# until _write_proxychains_conf builds it; proxychains is invoked with `-f` so it
+# NEVER falls back to the system default (which points at Tor :9050, not $PROXY).
+PROXYCHAINS_CONF=""
+
+# Write a per-run proxychains-ng config pointing at the validated $PROXY (IC-4).
+# The system default proxychains.conf targets Tor (127.0.0.1:9050); without an
+# explicit `-f <conf>` every proxied scan would silently hit the wrong proxy. The
+# proxy host/port are parsed from the already-charset-validated $PROXY URL and
+# written as config DATA (not interpolated into any shell command) — no injection
+# surface. `proxy_dns` + `remote_dns_subnet 224` make the proxy resolve the target
+# hostname remotely (so a compose service name / external_fqdn resolves on the
+# proxy's network, not the laptop's). Sets PROXYCHAINS_CONF. SOCKS5 (default) or
+# HTTP per the URL scheme; SOCKS4 maps to `socks4`.
+_write_proxychains_conf() {
+  local _scheme _hostport _phost _pport _pctype
+  _scheme="${PROXY%%://*}"
+  _hostport="${PROXY#*://}"
+  _phost="${_hostport%:*}"
+  _pport="${_hostport##*:}"
+  case "$_scheme" in
+    socks5) _pctype="socks5" ;;
+    socks4) _pctype="socks4" ;;
+    http)   _pctype="http" ;;
+    *)      _pctype="socks5" ;;
+  esac
+  mkdir -p "$RAW_DIR" 2>/dev/null || true
+  PROXYCHAINS_CONF="${RAW_DIR}/proxychains-${RUN_ID}.conf"
+  {
+    printf 'strict_chain\n'
+    printf 'proxy_dns\n'
+    printf 'remote_dns_subnet 224\n'
+    printf 'tcp_read_time_out 15000\n'
+    printf 'tcp_connect_time_out 8000\n'
+    printf '[ProxyList]\n'
+    printf '%s %s %s\n' "$_pctype" "$_phost" "$_pport"
+  } > "$PROXYCHAINS_CONF" 2>/dev/null || PROXYCHAINS_CONF=""
+}
+
+# Resolve a wall-clock timeout binary (timeout / gtimeout) into $1 (nameref-ish via
+# echo). Prints the binary name on stdout, or empty if neither is present.
+_timeout_bin() {
+  if command -v timeout >/dev/null 2>&1; then printf 'timeout'
+  elif command -v gtimeout >/dev/null 2>&1; then printf 'gtimeout'
+  else printf ''; fi
+}
+
+# Append a human-readable note to EXTERNAL_NOTES_JSON (redacted, bounded).
+_external_note() {
+  local _msg="$1"
+  local _red; _red="$(printf '%s' "$_msg" | LC_ALL=C sed -E "$SED_REDACT" | head -c 500)"
+  EXTERNAL_NOTES_JSON="$(printf '%s' "$EXTERNAL_NOTES_JSON" | jq --arg n "$_red" '. + [$n]')"
+}
+
+# Persist redacted external raw output under --raw-dir, return the raw_ref filename.
+_persist_external_raw() {
+  local _name="$1" _content="$2"
+  [ -z "$_content" ] && { printf ''; return 0; }
+  mkdir -p "$RAW_DIR" 2>/dev/null || true
+  local _f="$RAW_DIR/external-${_name}.raw"
+  printf '%s\n' "$_content" | LC_ALL=C sed -E "$SED_REDACT" > "$_f" 2>/dev/null || true
+  printf 'external-%s.raw' "$_name"
+}
+
+# Parse greppable nmap output ($1) into a JSON array of {port, proto, state,
+# service}, echoed on stdout (CQ11 — extracted from _external_port_scan to keep
+# that function ≤50 lines). Each "Ports:" line carries comma-separated
+# `port/state/proto//service///` tuples; awk extracts open ports into
+# `port proto service` triples, jq folds them into the array. Services are
+# SED_REDACT'd; ports must be bare integers (defensive against tool output).
+_parse_nmap_greppable() {
+  local _raw="$1"
+  local _parsed
+  _parsed="$(printf '%s\n' "$_raw" | awk '
+    /Ports:/ {
+      sub(/.*Ports: /, "")
+      n = split($0, arr, ", ")
+      for (i = 1; i <= n; i++) {
+        m = split(arr[i], f, "/")
+        # f[1]=port f[2]=state f[3]=proto f[5]=service
+        if (f[2] == "open") {
+          svc = (f[5] == "" ? "" : f[5])
+          print f[1] "\t" f[3] "\t" svc
+        }
+      }
+    }')"
+  local _ports='[]'
+  if [ -n "$_parsed" ]; then
+    local _p _proto _svc
+    while IFS=$'\t' read -r _p _proto _svc; do
+      [ -z "$_p" ] && continue
+      printf '%s' "$_p" | grep -Eq '^[0-9]+$' || continue
+      local _svc_red; _svc_red="$(printf '%s' "$_svc" | LC_ALL=C sed -E "$SED_REDACT")"
+      _ports="$(printf '%s' "$_ports" | jq \
+        --argjson port "$_p" \
+        --arg proto "${_proto:-tcp}" \
+        --arg service "$_svc_red" \
+        '. + [{port: $port, proto: $proto, state: "open", service: (if $service == "" then null else $service end)}]')"
+    done <<PORTS
+$_parsed
+PORTS
+  fi
+  printf '%s' "$_ports"
+}
+
+# --- PORT SCAN (populates EXTERNAL_OPEN_PORTS_JSON) -------------------------
+# proxy  → proxychains -q nmap -sT -Pn --top-ports 1000 -oG - <target>
+# direct → nmap -sT -Pn -T2 --max-rate 50 --top-ports 1000 -oG - <target>
+#          with the DD-4 abort-after-3-consecutive-refused guard.
+# SOCKS = TCP connect only (-sT), no SYN/UDP (IC-4). Greppable (-oG) output is
+# parsed into a JSON array of {port, proto, state, service}. Sets the module-level
+# EXTERNAL_OPEN_PORTS_JSON and persists redacted raw internally (NOT via a caller
+# `$(...)` capture — that would subshell-discard the assignment). Returns 0 always.
+_external_port_scan() {
+  if ! command -v nmap >/dev/null 2>&1; then
+    _external_note "external port scan SKIPPED: nmap not on PATH (open_ports empty)"
+    return 0
+  fi
+  local _tmo; _tmo="$(_timeout_bin)"
+  local _raw=""
+  # --top-ports 1000 unless --deep-scan (-p- full range, IC-9).
+  local _portsel="--top-ports 1000"
+  [ "$DEEP_SCAN" = true ] && _portsel="-p-"
+  if [ "$EXTERNAL_VANTAGE" = "proxy" ]; then
+    local _pc; _pc="$(_detect_proxychains)"
+    # proxychains-ng wraps nmap; -sT (TCP connect) is the only SOCKS-compatible
+    # scan. `-f $PROXYCHAINS_CONF` pins our generated config (else proxychains hits
+    # the system default = Tor :9050). Target is a positional arg (validated).
+    local _pcf=(); [ -n "$PROXYCHAINS_CONF" ] && _pcf=(-f "$PROXYCHAINS_CONF")
+    if [ -n "$_tmo" ]; then
+      _raw="$("$_tmo" "$EXTERNAL_PORTSCAN_TIMEOUT_S" "$_pc" -q ${_pcf[@]+"${_pcf[@]}"} nmap -sT -Pn $_portsel -oG - -- "$EXTERNAL_TARGET" 2>/dev/null || true)"
+    else
+      _raw="$("$_pc" -q ${_pcf[@]+"${_pcf[@]}"} nmap -sT -Pn $_portsel -oG - -- "$EXTERNAL_TARGET" 2>/dev/null || true)"
+    fi
+  else
+    # direct mode (DD-4): polite timing + abort threshold. nmap itself has no
+    # "abort after N refused", so we enforce the threshold by inspecting the
+    # result: a fully-refused/filtered scan (zero open, host down) is treated as
+    # the lockout signal and recorded as a note (vantage stays direct).
+    if [ -n "$_tmo" ]; then
+      _raw="$("$_tmo" "$EXTERNAL_PORTSCAN_TIMEOUT_S" nmap -sT -Pn -T2 --max-rate 50 $_portsel -oG - -- "$EXTERNAL_TARGET" 2>/dev/null || true)"
+    else
+      _raw="$(nmap -sT -Pn -T2 --max-rate 50 $_portsel -oG - -- "$EXTERNAL_TARGET" 2>/dev/null || true)"
+    fi
+  fi
+
+  # Parse greppable nmap output into the {port,proto,state,service} array
+  # (extracted into _parse_nmap_greppable for CQ11 — keeps this function ≤50 lines).
+  local _ports; _ports="$(_parse_nmap_greppable "$_raw")"
+  EXTERNAL_OPEN_PORTS_JSON="$_ports"
+
+  # DD-4 (direct): if direct mode produced zero open ports, the host is either
+  # firewalled or refusing — record the abort-threshold note (lockout-avoidance).
+  if [ "$EXTERNAL_VANTAGE" = "direct" ] && [ "$(printf '%s' "$_ports" | jq 'length')" = "0" ]; then
+    _external_note "direct external scan: no open ports observed — treating as connection-refused/filtered; external scanning halted after ${EXTERNAL_DIRECT_ABORT_THRESHOLD} consecutive refusals (DD-4 lockout-avoidance)"
+  fi
+  # Persist redacted raw HERE (inside the function) — NOT via a caller `$(...)`
+  # capture, which would run this whole function in a subshell and DISCARD the
+  # EXTERNAL_OPEN_PORTS_JSON assignment above (subshell state is lost on exit).
+  [ -n "$_raw" ] && _persist_external_raw "nmap" "$_raw" >/dev/null
+  return 0
+}
+
+# --- TLS (populates EXTERNAL_TLS_JSON) -------------------------------------
+# Best-effort: only runs when a TLS-bearing port is open. proxychains -q
+# testssl.sh --quiet --color 0 --jsonfile <tmp> <target>:<port> (proxychains,
+# NOT testssl native --proxy, per IC-4). Parses protocol versions + cert expiry
+# from the JSON. testssl absent → tls={} + note. Sets EXTERNAL_TLS_JSON + persists
+# raw internally (no caller capture — subshell would discard state). Returns 0.
+_external_tls_scan() {
+  # CQ11-justified at 53 lines: the 4-path proxy/direct × timeout/no-timeout
+  # invocation dispatch (each a distinct safety-bounded command line) plus the
+  # skip-guards and JSON parse cannot be split without obscuring the single
+  # linear best-effort flow; extracting a sub-helper would only relocate lines.
+  # Pick the first open TLS-class port (443/8443/9443/...) from the port scan.
+  local _tls_port
+  _tls_port="$(printf '%s' "$EXTERNAL_OPEN_PORTS_JSON" | jq -r '
+    [.[] | select(.port == 443 or .port == 8443 or .port == 9443 or .port == 4443 or .port == 10443)] | .[0].port // empty')"
+  if [ -z "$_tls_port" ]; then
+    _external_note "external TLS scan SKIPPED: no TLS-class port (443/8443/...) open (tls={})"
+    return 0
+  fi
+  if ! command -v testssl.sh >/dev/null 2>&1; then
+    _external_note "external TLS scan SKIPPED: testssl.sh not on PATH (tls={})"
+    return 0
+  fi
+  local _tmo; _tmo="$(_timeout_bin)"
+  local _jsonf; _jsonf="$(mktemp 2>/dev/null || echo "${RAW_DIR}/external-testssl-$$.json")"
+  local _target_port="${EXTERNAL_TARGET}:${_tls_port}"
+  if [ "$EXTERNAL_VANTAGE" = "proxy" ]; then
+    local _pc; _pc="$(_detect_proxychains)"
+    local _pcf=(); [ -n "$PROXYCHAINS_CONF" ] && _pcf=(-f "$PROXYCHAINS_CONF")
+    if [ -n "$_tmo" ]; then
+      "$_tmo" "$EXTERNAL_TLS_TIMEOUT_S" "$_pc" -q ${_pcf[@]+"${_pcf[@]}"} testssl.sh --quiet --color 0 --jsonfile "$_jsonf" -- "$_target_port" >/dev/null 2>&1 || true
+    else
+      "$_pc" -q ${_pcf[@]+"${_pcf[@]}"} testssl.sh --quiet --color 0 --jsonfile "$_jsonf" -- "$_target_port" >/dev/null 2>&1 || true
+    fi
+  else
+    if [ -n "$_tmo" ]; then
+      "$_tmo" "$EXTERNAL_TLS_TIMEOUT_S" testssl.sh --quiet --color 0 --jsonfile "$_jsonf" -- "$_target_port" >/dev/null 2>&1 || true
+    else
+      testssl.sh --quiet --color 0 --jsonfile "$_jsonf" -- "$_target_port" >/dev/null 2>&1 || true
+    fi
+  fi
+  local _json=""
+  [ -f "$_jsonf" ] && _json="$(cat "$_jsonf" 2>/dev/null || true)"
+  if [ -z "$_json" ] || ! printf '%s' "$_json" | jq -e . >/dev/null 2>&1; then
+    _external_note "external TLS scan: testssl.sh produced no parseable JSON for ${_target_port} (tls={})"
+    rm -f "$_jsonf" 2>/dev/null || true
+    return 0
+  fi
+  # Parse protocol-version findings (id ~ SSLv*/TLS1*) and cert expiry. testssl's
+  # JSON is an array of {id, severity, finding}. Evidence is redacted before it
+  # enters the bundle. Static jq program; the testssl JSON is DATA, not eval'd.
+  local _red_json; _red_json="$(printf '%s' "$_json" | LC_ALL=C sed -E "$SED_REDACT")"
+  EXTERNAL_TLS_JSON="$(printf '%s' "$_red_json" | jq \
+    --argjson port "$_tls_port" '
+    {
+      port: $port,
+      protocols: [ .[] | select(.id | test("^(SSLv|TLS1)"; "i")) | {id: .id, finding: .finding} ],
+      cert_expiry: ( [ .[] | select(.id | test("cert_expiration|expiration|cert_notAfter"; "i")) | .finding ] | .[0] // null )
+    }' 2>/dev/null || printf '{}')"
+  [ -n "$_json" ] && _persist_external_raw "testssl" "$_json" >/dev/null
+  rm -f "$_jsonf" 2>/dev/null || true
+  return 0
+}
+
+# --- NUCLEI (populates EXTERNAL_NUCLEI_JSON) -------------------------------
+# nuclei -target <target> -proxy <url> -tags $NUCLEI_SAFE_TAGS -exclude-tags
+# $NUCLEI_EXCLUDE_TAGS -jsonl -silent (native -proxy; pinned allowlist ONLY).
+# direct mode omits -proxy. Parses JSONL findings. nuclei absent → empty + note.
+# Sets EXTERNAL_NUCLEI_JSON + persists raw internally (no caller capture — subshell
+# would discard state). Returns 0. The tag constants are NEVER reconstructed.
+_external_nuclei_scan() {
+  if ! command -v nuclei >/dev/null 2>&1; then
+    _external_note "external nuclei scan SKIPPED: nuclei not on PATH (nuclei_findings empty)"
+    return 0
+  fi
+  local _tmo; _tmo="$(_timeout_bin)"
+  local _raw=""
+  if [ "$EXTERNAL_VANTAGE" = "proxy" ]; then
+    if [ -n "$_tmo" ]; then
+      _raw="$("$_tmo" "$EXTERNAL_NUCLEI_TIMEOUT_S" nuclei -target "$EXTERNAL_TARGET" -proxy "$PROXY" -tags "$NUCLEI_SAFE_TAGS" -exclude-tags "$NUCLEI_EXCLUDE_TAGS" -jsonl -silent 2>/dev/null || true)"
+    else
+      _raw="$(nuclei -target "$EXTERNAL_TARGET" -proxy "$PROXY" -tags "$NUCLEI_SAFE_TAGS" -exclude-tags "$NUCLEI_EXCLUDE_TAGS" -jsonl -silent 2>/dev/null || true)"
+    fi
+  else
+    if [ -n "$_tmo" ]; then
+      _raw="$("$_tmo" "$EXTERNAL_NUCLEI_TIMEOUT_S" nuclei -target "$EXTERNAL_TARGET" -tags "$NUCLEI_SAFE_TAGS" -exclude-tags "$NUCLEI_EXCLUDE_TAGS" -jsonl -silent 2>/dev/null || true)"
+    else
+      _raw="$(nuclei -target "$EXTERNAL_TARGET" -tags "$NUCLEI_SAFE_TAGS" -exclude-tags "$NUCLEI_EXCLUDE_TAGS" -jsonl -silent 2>/dev/null || true)"
+    fi
+  fi
+  # Parse JSONL (one finding per line) into a normalized array. Each finding:
+  # {template-id, info.name, info.severity, matched-at}. Evidence redacted first.
+  local _findings='[]'
+  if [ -n "$_raw" ]; then
+    local _line
+    while IFS= read -r _line; do
+      [ -z "$_line" ] && continue
+      printf '%s' "$_line" | jq -e . >/dev/null 2>&1 || continue
+      local _red_line; _red_line="$(printf '%s' "$_line" | LC_ALL=C sed -E "$SED_REDACT")"
+      _findings="$(printf '%s' "$_findings" | jq -c \
+        --argjson f "$(printf '%s' "$_red_line" | jq -c '{
+          template_id: (."template-id" // .template // null),
+          name: (.info.name // null),
+          severity: (.info.severity // null),
+          matched_at: (."matched-at" // .host // null)
+        }')" '. + [$f]' 2>/dev/null || printf '%s' "$_findings")"
+    done <<NUCLEI
+$_raw
+NUCLEI
+  fi
+  EXTERNAL_NUCLEI_JSON="$_findings"
+  [ -n "$_raw" ] && _persist_external_raw "nuclei" "$_raw" >/dev/null
+  return 0
+}
+
+# Top-level live external driver. Called from collect_live() ONLY when the
+# resolved vantage is `proxy` or `direct`. Runs each sub-scan (port → tls →
+# nuclei), persisting redacted raw output under --raw-dir. Each sub-scan degrades
+# independently on tool-absence; the whole leg never disrupts the internal battery.
+_collect_external() {
+  case "$EXTERNAL_VANTAGE" in
+    proxy|direct) : ;;
+    *) return 0 ;;   # none/failed → leave the empty IC-3 shapes (no scanning)
+  esac
+
+  echo "INFO: external vantage=$EXTERNAL_VANTAGE — scanning ${EXTERNAL_TARGET} (IC-4)" >&2
+
+  # proxy mode: generate the per-run proxychains config pinned to $PROXY (IC-4),
+  # so nmap/testssl reach the configured SOCKS/HTTP proxy (not the Tor default).
+  if [ "$EXTERNAL_VANTAGE" = "proxy" ]; then
+    _write_proxychains_conf
+  fi
+
+  # Each sub-scan is called as a BARE STATEMENT (never `_raw="$(_external_…)"`):
+  # the sub-scan sets module-level state (EXTERNAL_OPEN_PORTS_JSON / _TLS_JSON /
+  # _NUCLEI_JSON / _NOTES_JSON) and persists its own redacted raw internally. A
+  # `$(...)` capture would run the sub-scan in a SUBSHELL, discarding every one of
+  # those assignments on subshell exit (the exact bug that left open_ports empty).
+  # Each sub-scan returns 0 even when its tool is absent, so `set -e` is satisfied.
+  _external_port_scan
+  _external_tls_scan
+  # DD-4 (advisory 8): in DIRECT mode a zero-open-ports result IS the lockout/abort
+  # signal (recorded as a note by _external_port_scan). nuclei would still contact
+  # the target after that abort, violating "stop external scanning after 3
+  # consecutive refused". Gate it: skip nuclei when direct + zero open ports, so
+  # EXTERNAL_DIRECT_ABORT_THRESHOLD is semantically real for the batch-scan case.
+  if [ "$EXTERNAL_VANTAGE" = "direct" ] && \
+     [ "$(printf '%s' "$EXTERNAL_OPEN_PORTS_JSON" | jq 'length')" = "0" ]; then
+    _external_note "direct mode: nuclei skipped — zero open ports (DD-4 abort)"
+  else
+    _external_nuclei_scan
+  fi
+  return 0
 }
 
 # ===========================================================================
@@ -1324,6 +1713,10 @@ _write_live_bundle() {
     --argjson tool_defaults "$TOOL_AVAIL_DEFAULTS" \
     --argjson proxy_used "$proxy_json" \
     --argjson checks "$checks_json" \
+    --argjson open_ports "$EXTERNAL_OPEN_PORTS_JSON" \
+    --argjson tls "$EXTERNAL_TLS_JSON" \
+    --argjson nuclei_findings "$EXTERNAL_NUCLEI_JSON" \
+    --argjson external_notes "$EXTERNAL_NOTES_JSON" \
     '{
       host: $host,
       collected_at: $collected_at,
@@ -1335,9 +1728,10 @@ _write_live_bundle() {
       external: {
         vantage: $vantage,
         proxy_used: $proxy_used,
-        open_ports: [],
-        tls: {},
-        nuclei_findings: []
+        open_ports: $open_ports,
+        tls: $tls,
+        nuclei_findings: $nuclei_findings,
+        notes: $external_notes
       }
     }' > "$OUT" || { echo "ERROR: failed to write bundle: $OUT" >&2; exit 1; }
 }
@@ -1389,8 +1783,20 @@ collect_live() {
 
   local checks_json
   checks_json="$(_collect_battery_json)"
+
+  # IC-4 external leg (B-infra-collect-external-live-execution): run the external
+  # attack-surface scans LIVE through the proxy (or direct), populating
+  # external.open_ports / external.tls / external.nuclei_findings. Runs AFTER the
+  # internal battery so a slow/blocked external scan never delays internal
+  # collection, and only when the vantage actually scans (proxy|direct) — a
+  # none/failed vantage leaves the empty IC-3 shapes untouched. This is the data
+  # the network-analyst diffs against internal `ss -tulpn` for the IS3 firewall
+  # proof (the collector populates open_ports; the analyst computes the diff).
+  _collect_external
+
   # Final bundle render (collect_battery already wrote incrementally, but render
-  # once more to guarantee the complete array is the last write).
+  # once more to guarantee the complete array AND the populated external block are
+  # the last write).
   _write_live_bundle "$checks_json"
 }
 
