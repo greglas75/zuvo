@@ -71,6 +71,7 @@ run_test test-infra-collector-cli.sh
 run_test test-infra-agents.sh
 run_test test-infra-skill-contract.sh
 run_test test-infra-wiring.sh
+run_test test-infra-limited-sudo-scanvia.sh
 
 # ── test files (docker-dependent; SKIP cleanly when docker absent) ────────────
 run_test test-infra-fixtures.sh

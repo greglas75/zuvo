@@ -29,6 +29,29 @@ set -euo pipefail
 # $SSH_OPTS — never re-typed, split, or reordered (ssh-probe-protocol §2).
 SSH_OPTS='-o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o BatchMode=yes -o StrictHostKeyChecking=yes'
 
+# SSH connection multiplexing (ControlMaster). On a host with SSH rate-limiting —
+# ufw `22/tcp LIMIT` or fail2ban — opening one TCP connection PER check (the
+# battery makes ~15 rapid short sessions) trips the limit and the host drops
+# mid-battery sessions (ssh exit 255 → truncated collection). Multiplexing rides
+# the WHOLE battery over ONE persistent master connection, so the host sees a
+# single connection, not N. Appended AFTER $SSH_OPTS (the IC-8 constant stays
+# byte-for-byte intact — tests grep it verbatim). Empty in --dry-run (no sockets)
+# and when ZUVO_NO_SSH_MUX=1. Set by _ssh_mux_setup; torn down by _ssh_mux_teardown.
+# ControlPath uses the %C connection-hash token → short, unique, collision-free
+# (avoids the ~104-char unix-socket path limit a long --raw-dir would blow).
+SSH_MUX_OPTS=""
+: "${ZUVO_NO_SSH_MUX:=}"
+_ssh_mux_setup() {
+  { [ "$DRY_RUN" = true ] || [ -n "$ZUVO_NO_SSH_MUX" ]; } && { SSH_MUX_OPTS=""; return 0; }
+  SSH_MUX_OPTS="-o ControlMaster=auto -o ControlPersist=120s -o ControlPath=/tmp/zuvo-ssh-mux-%C"
+}
+_ssh_mux_teardown() {
+  [ -z "$SSH_MUX_OPTS" ] && return 0
+  # Close the master so no socket lingers past the run (ControlPersist would also
+  # reap it, but be tidy). Best-effort; never fail the run on teardown.
+  LC_ALL=C ssh $SSH_OPTS $SSH_MUX_OPTS ${SSH_ID_OPTS[@]+"${SSH_ID_OPTS[@]}"} -p "$SSH_PORT" -O exit -- "$SSH_USER@$SSH_ADDR" >/dev/null 2>&1 || true
+}
+
 # IC-9 collection-safety bounds (timeouts in seconds). Env-overridable so the
 # hardening test suite can force a tiny wall clock; defaults are the spec's.
 : "${CHECK_TIMEOUT_S:=300}"        # default per-check server-side timeout
@@ -132,6 +155,10 @@ Options:
   --deep-scan               nmap -p- instead of --top-ports 1000 (IC-9)
   --skip-external           Internal vantage only
   --external <mode>         External vantage mode (direct)
+  --scan-via <ssh-target>   Run the external leg FROM this SSH host via portable
+                            nc/openssl/curl (no nmap/testssl/nuclei/proxychains
+                            needed; macOS-safe; a real internet vantage). Highest
+                            external-vantage priority. Also $ZUVO_SCAN_VIA.
   --raw-dir <path>          Directory for redacted raw tool output (raw_ref targets)
   --ssh-key <path>          Identity file for ssh -i (the inventory ssh_key PATH; §4)
   --known-hosts <path>      UserKnownHostsFile for host-key verification (StrictHostKeyChecking stays =yes)
@@ -157,6 +184,13 @@ DEEP_SCAN=false
 SKIP_EXTERNAL=false
 EXTERNAL_MODE=""
 EXTERNAL_TARGET_ARG=""
+# --scan-via <ssh-target>: run the external leg FROM a remote SSH host using only
+# portable nc/openssl/curl probes (no nmap/testssl/nuclei, no proxychains). This
+# is the macOS-safe external vantage — proxychains-ng cannot inject into SIP-
+# protected system binaries (/usr/bin/curl, /usr/bin/nmap) on macOS, so the
+# proxy-mode leg silently fails there. A remote scan host is a genuine internet
+# vantage, needs no local scanner install, and protects the operator's own IP.
+SCAN_VIA="${ZUVO_SCAN_VIA:-}"
 RAW_DIR=""
 SSH_KEY=""
 KNOWN_HOSTS=""
@@ -185,6 +219,7 @@ while [ $# -gt 0 ]; do
     --deep-scan)   DEEP_SCAN=true; shift ;;
     --skip-external) SKIP_EXTERNAL=true; shift ;;
     --external)    _need_val --external $#; EXTERNAL_MODE="$2"; shift 2 ;;
+    --scan-via)    _need_val --scan-via $#; SCAN_VIA="$2"; shift 2 ;;
     --external-target) _need_val --external-target $#; EXTERNAL_TARGET_ARG="$2"; shift 2 ;;
     --raw-dir)     _need_val --raw-dir $#; RAW_DIR="$2"; shift 2 ;;
     --ssh-key)     _need_val --ssh-key $#; SSH_KEY="$2"; shift 2 ;;
@@ -518,7 +553,7 @@ _ssh_raw() {
   # an array expanded with the empty-safe `${arr[@]+...}` idiom (bash 3.2 + set -u
   # errors on a bare `"${arr[@]}"` when the array is empty) so key/known-hosts
   # paths remain single args, immune to word-splitting / option injection.
-  LC_ALL=C ssh $SSH_OPTS ${SSH_ID_OPTS[@]+"${SSH_ID_OPTS[@]}"} -p "$SSH_PORT" -- "$SSH_USER@$SSH_ADDR" "$remote_cmd" < /dev/null
+  LC_ALL=C ssh $SSH_OPTS $SSH_MUX_OPTS ${SSH_ID_OPTS[@]+"${SSH_ID_OPTS[@]}"} -p "$SSH_PORT" -- "$SSH_USER@$SSH_ADDR" "$remote_cmd" < /dev/null
 }
 
 # _ssh_b64 — QUOTE-SAFE transport: base64-encode the inner command locally, ship
@@ -534,7 +569,7 @@ _ssh_raw() {
 _ssh_b64() {
   local inner="$1"
   printf '%s' "$inner" | base64 \
-    | LC_ALL=C ssh $SSH_OPTS ${SSH_ID_OPTS[@]+"${SSH_ID_OPTS[@]}"} -p "$SSH_PORT" -- "$SSH_USER@$SSH_ADDR" \
+    | LC_ALL=C ssh $SSH_OPTS $SSH_MUX_OPTS ${SSH_ID_OPTS[@]+"${SSH_ID_OPTS[@]}"} -p "$SSH_PORT" -- "$SSH_USER@$SSH_ADDR" \
         "base64 -d | timeout ${CHECK_TIMEOUT_S} ${SUDO_PREFIX}sh"
 }
 
@@ -562,7 +597,7 @@ _ssh_exec_long() {
 
   # 1. Materialize the battery command remotely (quote-safe; no `&`).
   printf '%s' "$remote_cmd" | base64 \
-    | LC_ALL=C ssh $SSH_OPTS ${SSH_ID_OPTS[@]+"${SSH_ID_OPTS[@]}"} -p "$SSH_PORT" -- "$SSH_USER@$SSH_ADDR" \
+    | LC_ALL=C ssh $SSH_OPTS $SSH_MUX_OPTS ${SSH_ID_OPTS[@]+"${SSH_ID_OPTS[@]}"} -p "$SSH_PORT" -- "$SSH_USER@$SSH_ADDR" \
         "base64 -d > ${cmd_f}" >/dev/null 2>&1 || true
 
   # 2. Launch under nohup with the .rc sidecar. Control string is constant
@@ -869,6 +904,20 @@ _resolve_vantage() {
     EXTERNAL_VANTAGE="none"
     return 0
   fi
+  # --scan-via takes precedence over every other vantage: a remote SSH scan host
+  # runs portable nc/openssl/curl (no proxychains, no SIP injection problem, no
+  # local scanner install). In dry-run we assume it is usable (no socket opens);
+  # live mode verifies the scan host answers an SSH BatchMode probe, else falls
+  # through to proxy/direct/none so the leg degrades rather than hanging.
+  if [ -n "$SCAN_VIA" ]; then
+    if [ "$DRY_RUN" = true ]; then
+      EXTERNAL_VANTAGE="scan-via"; return 0
+    fi
+    if ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=yes -- "$SCAN_VIA" true >/dev/null 2>&1; then
+      EXTERNAL_VANTAGE="scan-via"; return 0
+    fi
+    echo "WARN: --scan-via host '$SCAN_VIA' did not answer an SSH probe — falling back to proxy/direct/none for the external leg" >&2
+  fi
   if [ -z "$PROXY" ]; then
     if [ "$EXTERNAL_MODE" = "direct" ]; then
       EXTERNAL_VANTAGE="direct"
@@ -877,9 +926,17 @@ _resolve_vantage() {
     fi
     return 0
   fi
+  # macOS SIP guard: proxychains-ng cannot inject libproxychains into SIP-protected
+  # system binaries (/usr/bin/nmap, /usr/bin/curl), so the proxy leg silently runs
+  # DIRECT (leaking the laptop IP) or returns nothing. On Darwin, steer the operator
+  # to --scan-via (the portable remote vantage) instead of a proxychains leg that
+  # won't actually proxy.
+  if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && [ -z "$SCAN_VIA" ]; then
+    echo "WARN: macOS detected — proxychains-ng cannot inject into SIP-protected nmap/curl, so --proxy external scans do NOT reliably route through the proxy. Use --scan-via <ssh-host> for a portable external vantage instead." >&2
+  fi
   # Proxy configured: require proxychains-ng for the nmap/testssl legs (IC-4).
   if ! _detect_proxychains >/dev/null 2>&1; then
-    echo "WARN: proxychains-ng not found on PATH — external vantage degraded to 'none' (IC-4). Install proxychains-ng to enable proxied external scans." >&2
+    echo "WARN: proxychains-ng not found on PATH — external vantage degraded to 'none' (IC-4). Install proxychains-ng to enable proxied external scans, or use --scan-via <ssh-host>." >&2
     EXTERNAL_VANTAGE="none"
     return 0
   fi
@@ -905,6 +962,12 @@ preview_external() {
   _resolve_vantage
   if [ "$EXTERNAL_VANTAGE" = "none" ] || [ "$EXTERNAL_VANTAGE" = "failed" ]; then
     printf '[DRY-RUN] external vantage=%s — no external scan commands (IC-4)\n' "$EXTERNAL_VANTAGE"
+    return 0
+  fi
+  if [ "$EXTERNAL_VANTAGE" = "scan-via" ]; then
+    printf '[DRY-RUN] WOULD run (external, scan-via %s): ssh -- %s "nc -zw3 %s {ports} ; openssl s_client %s:443 ; curl -skI https://%s/"\n' \
+      "$SCAN_VIA" "$SCAN_VIA" "$EXTERNAL_TARGET" "$EXTERNAL_TARGET" "$EXTERNAL_TARGET"
+    printf '[DRY-RUN] scan-via uses portable nc/openssl/curl on the remote host — no nmap/testssl/nuclei/proxychains, macOS-safe\n'
     return 0
   fi
   # AC3: the dry-run prints the SAME flags the live scan runs, so --dry-run is a
@@ -1234,7 +1297,126 @@ NUCLEI
 # resolved vantage is `proxy` or `direct`. Runs each sub-scan (port → tls →
 # nuclei), persisting redacted raw output under --raw-dir. Each sub-scan degrades
 # independently on tool-absence; the whole leg never disrupts the internal battery.
+# --- SCAN-VIA: external leg from a remote SSH host (portable nc/openssl/curl) ---
+# Runs the external attack-surface probes FROM $SCAN_VIA against $EXTERNAL_TARGET
+# using only tools present on virtually every Linux host (nc, openssl, curl) — no
+# nmap/testssl/nuclei, no proxychains, no SIP-injection problem. A genuine internet
+# vantage. Populates the SAME module-level EXTERNAL_*_JSON the proxy/direct legs do
+# (no bundle-schema change). The remote script is shipped base64-over-stdin and the
+# target is the script's positional $1 (never interpolated into a sh -c string), so
+# the charset-validated target cannot break out — same transport posture as the
+# internal battery. Returns 0 always (a degraded scan host → notes, never a crash).
+_scan_via_port_list() { printf '22 25 53 80 110 143 443 465 587 993 995 2375 2376 3000 3306 5432 5433 6379 8000 8080 8443 9000 9200 11211 27017'; }
+
+_collect_external_via_ssh() {
+  echo "INFO: external vantage=scan-via ($SCAN_VIA) — scanning ${EXTERNAL_TARGET} with portable nc/openssl/curl" >&2
+  local _ports; _ports="$(_scan_via_port_list)"
+  # POSIX-sh remote script. $1 = target (positional, never interpolated). Emits a
+  # line-tagged report parsed below. Every probe is time-bounded; a missing nc only
+  # skips the port sweep (openssl/curl still run).
+  local _rscript
+  _rscript='T="$1"; PORTS="'"$_ports"'"
+if command -v nc >/dev/null 2>&1; then
+  for p in $PORTS; do nc -zw3 "$T" "$p" >/dev/null 2>&1 && echo "OPEN $p"; done
+else echo "NONC"; fi
+echo "===TLS==="
+echo | openssl s_client -connect "$T:443" -servername "$T" 2>/dev/null | openssl x509 -noout -subject -issuer -dates 2>/dev/null
+for proto in tls1 tls1_1 tls1_2 tls1_3; do
+  c=$(echo | openssl s_client -connect "$T:443" -servername "$T" -$proto 2>/dev/null | grep -E "Cipher *:" | head -1 | awk "{print \$NF}")
+  if [ -n "$c" ] && [ "$c" != "(NONE)" ] && [ "$c" != "0000" ]; then echo "PROTO $proto $c"; fi
+done
+echo "===HTTP==="
+curl -sI --max-time 12 "http://$T/" 2>/dev/null | grep -iE "^HTTP|^location:|^server:"
+echo "---HTTPS---"
+curl -skI --max-time 12 "https://$T/" 2>/dev/null | grep -iE "^HTTP|^server:|^strict-transport-security:|^x-frame-options:|^x-content-type-options:|^content-security-policy:|^referrer-policy:|^permissions-policy:"
+echo "===ADMIN==="
+for path in /admin /.env /.git/config /actuator /server-status /phpmyadmin /metrics; do
+  code=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 8 "https://$T$path" 2>/dev/null)
+  echo "PATH $path $code"
+done'
+  local _tmo; _tmo="$(_timeout_bin)"
+  local _raw=""
+  local _scan_to=$((EXTERNAL_PORTSCAN_TIMEOUT_S + EXTERNAL_TLS_TIMEOUT_S))
+  if [ -n "$_tmo" ]; then
+    _raw="$(printf '%s' "$_rscript" | base64 | "$_tmo" "$_scan_to" ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -- "$SCAN_VIA" "base64 -d | sh -s -- $(printf '%q' "$EXTERNAL_TARGET")" 2>/dev/null || true)"
+  else
+    _raw="$(printf '%s' "$_rscript" | ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -- "$SCAN_VIA" "base64 -d | sh -s -- $(printf '%q' "$EXTERNAL_TARGET")" 2>/dev/null || true)"
+  fi
+  [ -n "$_raw" ] && _persist_external_raw "scan-via" "$_raw" >/dev/null
+  if [ -z "$_raw" ]; then
+    _external_note "scan-via: remote scan host '$SCAN_VIA' returned no output (host unreachable / nc+openssl+curl absent)"
+    return 0
+  fi
+  _scan_via_parse "$_raw"
+  return 0
+}
+
+# Parse the line-tagged scan-via report ($1) into EXTERNAL_OPEN_PORTS_JSON /
+# EXTERNAL_TLS_JSON / EXTERNAL_NUCLEI_JSON / EXTERNAL_NOTES_JSON. All evidence is
+# SED_REDACT'd before it enters the bundle (defense-in-depth).
+_scan_via_parse() {
+  local _raw="$1"
+  # -- open ports --
+  local _ports='[]' _line _p
+  while IFS= read -r _line; do
+    case "$_line" in
+      OPEN\ *) _p="${_line#OPEN }"; printf '%s' "$_p" | grep -Eq '^[0-9]+$' || continue
+               _ports="$(printf '%s' "$_ports" | jq --argjson port "$_p" '. + [{port:$port, proto:"tcp", state:"open", service:null}]')" ;;
+      NONC)    _external_note "scan-via: nc absent on scan host — port reachability sweep skipped (open_ports empty)" ;;
+    esac
+  done <<PORTS
+$_raw
+PORTS
+  EXTERNAL_OPEN_PORTS_JSON="$_ports"
+  # -- TLS: cert + protocol acceptance (weak = tls1/tls1_1 accepted) --
+  local _subj _iss _nb _na _weak='[]' _accepted='[]'
+  _subj="$(printf '%s\n' "$_raw" | grep -i '^subject=' | head -1 | sed -E 's/^subject=//' | LC_ALL=C sed -E "$SED_REDACT")"
+  _iss="$(printf '%s\n' "$_raw" | grep -i '^issuer=' | head -1 | sed -E 's/^issuer=//' | LC_ALL=C sed -E "$SED_REDACT")"
+  _nb="$(printf '%s\n' "$_raw" | grep -i '^notBefore=' | head -1 | sed -E 's/^notBefore=//')"
+  _na="$(printf '%s\n' "$_raw" | grep -i '^notAfter=' | head -1 | sed -E 's/^notAfter=//')"
+  local _proto _cipher
+  while IFS= read -r _line; do
+    case "$_line" in
+      PROTO\ *) _proto="$(printf '%s' "$_line" | awk '{print $2}')"; _cipher="$(printf '%s' "$_line" | awk '{print $3}')"
+                _accepted="$(printf '%s' "$_accepted" | jq --arg p "$_proto" --arg c "$_cipher" '. + [{protocol:$p, cipher:$c}]')"
+                case "$_proto" in tls1|tls1_1) _weak="$(printf '%s' "$_weak" | jq --arg p "$_proto" '. + [$p]')" ;; esac ;;
+    esac
+  done <<TLSP
+$_raw
+TLSP
+  EXTERNAL_TLS_JSON="$(jq -n --arg subject "$_subj" --arg issuer "$_iss" --arg nb "$_nb" --arg na "$_na" \
+    --argjson accepted "$_accepted" --argjson weak "$_weak" \
+    '{cert:{subject:(if $subject=="" then null else $subject end), issuer:(if $issuer=="" then null else $issuer end), notBefore:(if $nb=="" then null else $nb end), notAfter:(if $na=="" then null else $na end)}, protocols_accepted:$accepted, weak_protocols:$weak}')"
+  # -- HTTP findings (IS8) synthesized into nuclei_findings: exposed admin paths
+  # (HTTP 200 = reachable without auth) + a missing-HSTS signal. The collector
+  # DETECTS; the analyst/registry assign final severity (DD-7). --
+  local _findings='[]' _path _code _https_headers
+  _https_headers="$(printf '%s\n' "$_raw" | sed -n '/---HTTPS---/,/===ADMIN===/p')"
+  while IFS= read -r _line; do
+    case "$_line" in
+      PATH\ *) _path="$(printf '%s' "$_line" | awk '{print $2}')"; _code="$(printf '%s' "$_line" | awk '{print $3}')"
+               if [ "$_code" = "200" ]; then
+                 _findings="$(printf '%s' "$_findings" | jq --arg id "exposed-path${_path}" --arg p "$_path" \
+                   '. + [{template_id:$id, severity:"medium", matched_at:$p, info:"path reachable without authentication (HTTP 200)"}]')"
+               fi ;;
+    esac
+  done <<ADMIN
+$_raw
+ADMIN
+  if ! printf '%s' "$_https_headers" | grep -qi '^strict-transport-security:'; then
+    if printf '%s\n' "$_raw" | grep -qiE '^HTTP/'; then
+      _findings="$(printf '%s' "$_findings" | jq '. + [{template_id:"missing-header-hsts", severity:"low", matched_at:"/", info:"no Strict-Transport-Security header on HTTPS response"}]')"
+    fi
+  fi
+  EXTERNAL_NUCLEI_JSON="$_findings"
+  _external_note "scan-via ($SCAN_VIA): $(printf '%s' "$_ports" | jq 'length') open port(s); TLS weak=$(printf '%s' "$_weak" | jq -c .); $(printf '%s' "$_findings" | jq 'length') http finding(s)"
+}
+
 _collect_external() {
+  if [ "$EXTERNAL_VANTAGE" = "scan-via" ]; then
+    _collect_external_via_ssh
+    return 0
+  fi
   case "$EXTERNAL_VANTAGE" in
     proxy|direct) : ;;
     *) return 0 ;;   # none/failed → leave the empty IC-3 shapes (no scanning)
@@ -1276,6 +1458,15 @@ _collect_external() {
 
 # Module-level state populated by the live probes, consumed by collect_live().
 PRIVILEGE_MODE="insufficient-data"
+# Raw `sudo -n -l` output captured by _probe_privilege when privilege_mode=
+# limited-sudo (E3 allowlist-aware probing). Empty otherwise. A deploy account
+# commonly grants a curated NOPASSWD allowlist (docker, `ufw status`, `systemctl
+# status`, ss, journalctl); those let several needs_sudo checks run a DIRECT
+# privileged probe instead of degrading wholesale to insufficient-data. The old
+# behavior tested only generic `sudo -n true`, which fails for such accounts, so
+# every needs_sudo check went insufficient-data even when its specific command
+# was granted. Consumed by _sudo_probe / _allowlist_has_binary / _run_single_check.
+SUDO_ALLOWLIST=""
 # Space-separated list of tools detected present (`command -v` hit). Bash-3.2
 # compatible — no associative arrays.
 TOOLS_PRESENT=""
@@ -1384,9 +1575,50 @@ _probe_privilege() {
     PRIVILEGE_MODE="passwordless-sudo"
   elif [ "${has_sudo:-0}" = "1" ]; then
     PRIVILEGE_MODE="limited-sudo"
+    # E3: capture the NOPASSWD allowlist so needs_sudo checks whose specific
+    # privileged command is granted can run a direct probe (instead of blanket
+    # insufficient-data). `-n` keeps it non-interactive (never prompts); an
+    # empty/locked result just leaves SUDO_ALLOWLIST empty and the run degrades
+    # exactly as before. One extra short round trip, only in the limited-sudo case.
+    SUDO_ALLOWLIST="$(_ssh_exec_short 'sudo -n -l 2>/dev/null' || true)"
   else
     PRIVILEGE_MODE="no-sudo"
   fi
+}
+
+# E3 allowlist-aware probing. For a needs_sudo check that CANNOT run under a
+# blanket `sudo -n sh` (granular NOPASSWD grants the binary, not the shell),
+# _sudo_probe returns a DIRECT command to run in limited-sudo mode — carrying its
+# own `sudo -n <binary>` where root is required, or a plain unprivileged read when
+# the evidence lives in a world-readable file. Empty ⇒ no direct probe; the check
+# stays insufficient-data. _sudo_probe_binary names the binary that must appear in
+# the allowlist for the probe to be attempted (empty ⇒ needs no sudo, always runs).
+_sudo_probe() {
+  case "$1" in
+    # sshd_config is world-readable on stock Ubuntu/Debian — the hardened value is
+    # obtainable without root (the battery's own `|| grep sshd_config` fallback).
+    IS1-sshd-permitrootlogin)  printf "grep -iE '^[[:space:]]*permitrootlogin' /etc/ssh/sshd_config 2>/dev/null" ;;
+    # `ufw status` is the single most common deploy-account NOPASSWD grant.
+    IS5-ufw-disabled)          printf 'sudo -n ufw status verbose' ;;
+    # docker.sock perms are world-listable metadata — no sudo needed.
+    IS9-socket-world-readable) printf 'ls -l /var/run/docker.sock 2>/dev/null' ;;
+    *) printf '' ;;
+  esac
+}
+_sudo_probe_binary() {
+  case "$1" in
+    IS5-ufw-disabled) printf 'ufw' ;;
+    *) printf '' ;;
+  esac
+}
+
+# True when $1 (a bare binary name) appears in the parsed SUDO_ALLOWLIST as an
+# allowed Cmnd — either as a path component (`/usr/sbin/ufw status*`) or a bare
+# token. Conservative: no allowlist text ⇒ false (skip the probe, no sudo-log
+# noise). The match is a word/path-boundary grep, never an eval of allowlist text.
+_allowlist_has_binary() {
+  [ -z "$SUDO_ALLOWLIST" ] && return 1
+  printf '%s\n' "$SUDO_ALLOWLIST" | grep -qE "(/|[[:space:]])${1}([[:space:]]|\*|,|\$)"
 }
 
 # Tool probe — one round trip resolves availability for every tool the battery
@@ -1395,7 +1627,24 @@ _probe_privilege() {
 # `true`. NEVER fabricates a tool that is not there (AC6/AC9 foundation).
 _probe_tools() {
   local tools="lynis nmap trivy grype debsecan needrestart docker ss"
-  local probe="for t in $tools; do if command -v \$t >/dev/null 2>&1; then echo \"\$t=present\"; else echo \"\$t=absent\"; fi; done"
+  # PATH-robust detection (fixes false-negatives on restricted-PATH deploy
+  # accounts). A `command -v lynis` as an unprivileged user whose login/secure_path
+  # excludes /usr/sbin reports lynis/debsecan ABSENT even when installed system-
+  # wide — which then mislabels their dimensions "skipped: tool absent" instead of
+  # the truthful "present but needs root". So fall back to (a) common absolute
+  # sbin/bin locations and (b) `dpkg -s` (catches packages with no --version /
+  # not on PATH, e.g. debsecan). Still POSIX-sh; runs on the target.
+  local probe='for t in '"$tools"'; do
+  if command -v "$t" >/dev/null 2>&1; then echo "$t=present"; continue; fi
+  f=
+  for d in /usr/sbin /sbin /usr/local/sbin /usr/local/bin /usr/bin /opt/"$t"/bin; do
+    if [ -x "$d/$t" ]; then f=1; break; fi
+  done
+  if [ -z "$f" ] && command -v dpkg >/dev/null 2>&1; then
+    if dpkg -s "$t" >/dev/null 2>&1; then f=1; fi
+  fi
+  if [ -n "$f" ]; then echo "$t=present"; else echo "$t=absent"; fi
+done'
   local out
   out="$(_ssh_exec_short "$probe" || true)"
   local t state
@@ -1598,9 +1847,35 @@ _run_single_check() {
     status="skipped"
     evidence="IS4 TLS requires external vantage (testssl) — see external leg (not covered by internal battery)"
   elif [ "$needs_sudo" = "true" ] && [ "$unprivileged" = true ]; then
-    # AC4 / §3: needs_sudo check without privilege is insufficient-data, never ok.
-    status="insufficient-data"
-    evidence="needs sudo; privilege_mode=$PRIVILEGE_MODE"
+    # E3 allowlist-aware: a limited-sudo account often grants the SPECIFIC command
+    # this check needs (e.g. `ufw status`) even though generic `sudo -n true`
+    # fails. If a direct probe exists AND its binary is allowlisted (or needs no
+    # sudo at all), run it rather than degrading to insufficient-data.
+    local _probe _probe_bin
+    _probe="$(_sudo_probe "$id")"
+    _probe_bin="$(_sudo_probe_binary "$id")"
+    if [ "$PRIVILEGE_MODE" = "limited-sudo" ] && [ -n "$_probe" ] \
+       && { [ -z "$_probe_bin" ] || _allowlist_has_binary "$_probe_bin"; }; then
+      # needs_sudo passed as "false" → _exec_and_assess does NOT wrap the probe in
+      # `sudo -n sh` (the probe already carries its own `sudo -n <binary>` where
+      # root is required). Run the probe in place of the battery cmd.
+      cmd="$_probe"
+      _exec_and_assess "$id" "$mode" "false" "status" "evidence" "raw_ref" "$match_re"
+      # DD-5: a denied/empty allowlisted probe (sudo wrote the denial to discarded
+      # stderr → empty stdout) must NEVER read as `ok`. Downgrade to insufficient-
+      # data; a real finding/ok with evidence is annotated as allowlist-sourced.
+      if [ -z "$evidence" ] || [ "$evidence" = "(no output)" ] \
+         || printf '%s' "$evidence" | grep -qiE 'a password is required|not allowed to execute|^sudo:'; then
+        status="insufficient-data"
+        evidence="limited-sudo: probe not granted (NOPASSWD allowlist miss / denied); privilege_mode=$PRIVILEGE_MODE"
+      else
+        evidence="${evidence} [via limited-sudo allowlist]"
+      fi
+    else
+      # AC4 / §3: needs_sudo check without privilege is insufficient-data, never ok.
+      status="insufficient-data"
+      evidence="needs sudo; privilege_mode=$PRIVILEGE_MODE"
+    fi
   elif ! _tool_present "$tool"; then
     # AC9: required tool absent (and not installed) → skipped, no fabrication (AC6).
     status="skipped"
@@ -1769,6 +2044,10 @@ collect_live() {
     exit 0
   fi
 
+  # Establish the multiplex master BEFORE the first handshake so the whole battery
+  # rides one connection (rate-limit safe on ufw-LIMIT / fail2ban hosts).
+  _ssh_mux_setup
+
   # Host-key mismatch fail-fast (§5): a probe handshake captures ssh stderr; the
   # canonical mismatch string halts the host with a phase0 bundle (AC8 — full
   # detection logic is hardened in Task 6, but the fail-fast hook lives here so
@@ -1836,6 +2115,8 @@ collect_live() {
   # the ONLY write that does so; every earlier checkpoint stays false.
   COLLECTION_COMPLETE=true
   _write_live_bundle "$checks_json"
+  # Close the multiplex master (best-effort) now that all target-host SSH is done.
+  _ssh_mux_teardown
 }
 
 # ===========================================================================

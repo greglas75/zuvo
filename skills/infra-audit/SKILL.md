@@ -33,6 +33,7 @@ codesift_tools:
 | `--dry-run` | Print every SSH/local command without executing; no connections beyond DNS |
 | `--resume <run-dir>` | Continue an interrupted run from `state.json` |
 | `--proxy <url>` | External-scan proxy override (else hosts.yaml `defaults.proxy`, else `$ZUVO_SCAN_PROXY`) |
+| `--scan-via <ssh-target>` | Run the external leg FROM this SSH host via portable nc/openssl/curl (no nmap/testssl/nuclei/proxychains; **macOS-safe**; a real internet vantage). Highest external-vantage priority. Else hosts.yaml `defaults.scan_via`, else `$ZUVO_SCAN_VIA` |
 | `--external direct` | Explicit opt-in to a proxyless external scan (polite timing `-T2 --max-rate 50`) |
 | `--skip-external` | Internal vantage only (no external leg) |
 | `--deep-scan` | nmap `-p-` instead of `--top-ports 1000` (EXCLUDED from the AC-S2 timing SLA + 30-min wall clock) |
@@ -50,6 +51,7 @@ Variable mapping for flags that the collector invocation threads through:
 | `--external <mode>` (e.g. `--external direct`) | `EXTERNAL_MODE=<mode>` |
 | `--skip-external` | `SKIP_EXTERNAL=1` |
 | `--proxy <url>` | `proxy=<url>` (overrides hosts.yaml/env) |
+| `--scan-via <ssh-target>` | `SCAN_VIA=<ssh-target>` (overrides hosts.yaml `defaults.scan_via` / `$ZUVO_SCAN_VIA`) |
 | `--quick` | `QUICK=1` |
 | `--dimensions <list>` | `DIMENSIONS=<list>` |
 | `--no-install` | `NO_INSTALL=1` |
@@ -259,7 +261,12 @@ The ONLY write outside `RUN_DIR` permitted by the whole run is this one-time
 defaults:
   ssh_user: deploy
   ssh_port: 22
-  proxy: socks5://127.0.0.1:1080   # external-scan proxy; overridable per host / $ZUVO_SCAN_PROXY
+  # External-vantage source (pick ONE; scan_via takes precedence). scan_via is the
+  # recommended + macOS-safe option: the external leg runs FROM this SSH host using
+  # portable nc/openssl/curl — no proxychains, no local scanner install. proxy is the
+  # SOCKS/HTTP path (needs proxychains-ng; does NOT work on macOS due to SIP).
+  scan_via: bastion.example.com    # ssh target to scan from; overridable per host / $ZUVO_SCAN_VIA
+  # proxy: socks5://127.0.0.1:1080 # alt external-scan proxy; overridable / $ZUVO_SCAN_PROXY
 hosts:
   - name: web01                    # required, unique
     address: 203.0.113.10          # required (IP or DNS name)
@@ -381,6 +388,7 @@ Invoke per host, passing `ssh_key` / `known_hosts` / `proxy` resolved from
   --ssh-key "$ssh_key" \                  # path only — key material never read (§4)
   --known-hosts "$known_hosts" \          # StrictHostKeyChecking stays =yes
   ${proxy:+--proxy "$proxy"} \            # IC-4: resolved --proxy > hosts.yaml default > $ZUVO_SCAN_PROXY
+  ${scan_via:+--scan-via "$scan_via"} \   # IC-4: external leg from a remote SSH host (portable nc/openssl/curl; macOS-safe). resolved --scan-via > defaults.scan_via > $ZUVO_SCAN_VIA
   ${QUICK:+--quick} \
   ${DIMENSIONS:+--dimensions "$DIMENSIONS"} \
   ${NO_INSTALL:+--no-install} \
@@ -639,12 +647,12 @@ resumed run (always written LAST).
 | E5 | Unreachable / typo'd address | `nc -zw5` preflight → `UNREACHABLE`, fleet continues (AC1) |
 | E6 | Missing remote tools | DD-3 consent gate → install or fallback matrix + `DEGRADED` |
 | E7 | Long scans / dropped session | IC-8 nohup `.rc` marker; incremental bundle; `--resume` |
-| E8 | fail2ban / IDS | External leg via proxy (ban hits proxy IP); `--external direct` → `-T2 --max-rate 50` + abort threshold |
+| E8 | fail2ban / IDS | External leg via `scan_via` (ban hits the scan host's IP, not the operator's) or proxy; `--external direct` → `-T2 --max-rate 50` + abort threshold |
 | E9 | Secrets in collected configs | IC-5 redaction at collector + DD-10 gitignore preflight |
 | E10 | Alpine / containers as targets | `/etc/alpine-release` detection → skip lynis, use `apk` checks; containers via `docker exec` |
 | E11 | Duplicate inventory IPs | merge + `[WARN] duplicate IP`, audit once |
 | E12 | lynis < 3.0 | version probe → manual fallback + `DEGRADED (lynis vX < 3.0)` |
-| E13 | No proxy but external requested | ask once: `--external direct` (polite) or `--skip-external`; if user chooses `--external direct` → set `EXTERNAL_MODE=direct`; non-interactive → skip-external `[AUTO-DECISION]` (targets are NEVER auto-decided) |
+| E13 | No external vantage configured | **Dual-vantage is the default** when a vantage resolves (`scan_via` / `proxy`): the skill runs internal AND external automatically. With NONE configured: ask once → `--scan-via <ssh-host>` (recommended, macOS-safe), `--external direct` (polite proxyless), or `--skip-external`; non-interactive → skip-external `[AUTO-DECISION]` (targets are NEVER auto-decided). On macOS a bare `--proxy` is steered to `--scan-via` (proxychains cannot inject under SIP). |
 | E14 | pgdsat (IS10) | runs ON host as `postgres` via SSH; requires BOTH install consent AND query consent; decline either → `DEGRADED (pgdsat declined)` |
 | E15 | IS4 with no `external_fqdn` (bare IP) | IS4 = `insufficient-data (no external_fqdn)` — never guessed from nginx configs |
 
