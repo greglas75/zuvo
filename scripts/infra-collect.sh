@@ -810,6 +810,12 @@ EXTERNAL_TLS_JSON='{}'
 EXTERNAL_NUCLEI_JSON='[]'
 EXTERNAL_NOTES_JSON='[]'
 
+# false on every incremental/early bundle write; set true only by the FINAL write
+# in collect_live (after the battery + external leg). A bundle with
+# collection_complete=false is a partial crash-resilience checkpoint, never a
+# finished audit — consumers must not read its checks[] as a complete result.
+COLLECTION_COMPLETE=false
+
 # Detect a proxychains-ng binary. Prints the binary NAME on stdout (one of
 # proxychains4 / proxychains-ng / proxychains, in preference order) and returns 0
 # when found; prints nothing and returns 1 when none is on PATH (IC-4 degrade).
@@ -1704,11 +1710,19 @@ _write_live_bundle() {
   local proxy_json="null"
   [ -n "$PROXY" ] && proxy_json="$(printf '%s' "$PROXY" | jq -R '.')"
 
+  # collection_complete=false on every incremental/early write (the crash-
+  # resilience checkpoint + per-check writes); set true ONLY by the final write
+  # in collect_live after the battery AND external leg finished. Consumers (the
+  # SKILL resume / analysts) MUST treat a bundle with collection_complete=false
+  # as a partial checkpoint — never as a finished "clean" audit (an empty/partial
+  # checks[] with 0 findings is NOT a pass). This is an UNAMBIGUOUS flag, not a
+  # "non-empty checks" heuristic.
   jq -n \
     --arg host "$HOST_NAME" \
     --arg collected_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg privilege_mode "$PRIVILEGE_MODE" \
     --arg vantage "$EXTERNAL_VANTAGE" \
+    --argjson complete "${COLLECTION_COMPLETE:-false}" \
     --argjson tool_availability "$TOOL_AVAIL_JSON" \
     --argjson tool_defaults "$TOOL_AVAIL_DEFAULTS" \
     --argjson proxy_used "$proxy_json" \
@@ -1720,6 +1734,7 @@ _write_live_bundle() {
     '{
       host: $host,
       collected_at: $collected_at,
+      collection_complete: $complete,
       privilege_mode: $privilege_mode,
       os: { id: null, version: null, kernel: null },
       tool_availability: ($tool_defaults + $tool_availability),
@@ -1738,6 +1753,13 @@ _write_live_bundle() {
 
 # Top-level live collection driver.
 collect_live() {
+  # Reset the completion flag at entry (defense-in-depth): the CLI runs ONE host
+  # per process so the module-level init already suffices, but resetting here makes
+  # collect_live per-host-safe even if ever called twice in one process — a stale
+  # `true` would otherwise stamp host 2's early empty-checks checkpoint as a
+  # "complete clean audit". Never trust a global flag to stay false across calls.
+  COLLECTION_COMPLETE=false
+
   # AC1: reachability preflight BEFORE any ssh handshake. Unreachable → phase0
   # UNREACHABLE + exit 0 (fleet continuity — the orchestrator keeps going).
   if ! _reachable; then
@@ -1766,6 +1788,20 @@ collect_live() {
 
   _probe_privilege
   _probe_tools
+
+  # CRASH-RESILIENCE: write a valid (empty-checks) bundle to disk NOW, the moment
+  # the probes finish — BEFORE the slow steps (vantage resolution, the battery,
+  # the external leg). The collector is invoked from an LLM orchestrator turn that
+  # can die on an API error / rate-limit and take this subprocess with it; without
+  # this, a kill anywhere in the window probe→first-battery-check left NO bundle on
+  # disk at all (observed 2026-06-12: a misconfigured host's bundle was entirely
+  # absent after an API kill during external collection). With it, a parseable IC-3
+  # bundle exists from the earliest moment; the battery's per-check incremental
+  # writes and the final external-populated write progressively complete it, and a
+  # partial bundle is a resume checkpoint — never total loss. Vantage is still the
+  # default "none" here; the first post-resolve write upgrades it.
+  _write_live_bundle "[]"
+
   # IC-4: resolve the external vantage ONCE here (before the battery loop) so the
   # incremental _write_live_bundle calls all record the same external.vantage.
   # A dead/absent proxy degrades vantage but NEVER disrupts the internal battery
@@ -1796,7 +1832,9 @@ collect_live() {
 
   # Final bundle render (collect_battery already wrote incrementally, but render
   # once more to guarantee the complete array AND the populated external block are
-  # the last write).
+  # the last write). collection_complete=true marks this as a finished audit —
+  # the ONLY write that does so; every earlier checkpoint stays false.
+  COLLECTION_COMPLETE=true
   _write_live_bundle "$checks_json"
 }
 

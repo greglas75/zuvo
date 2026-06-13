@@ -166,6 +166,66 @@ mkdir -p "$RUN_DIR/bundle" "$RUN_DIR/raw" "$RUN_DIR/findings"
 On `--resume <run-dir>`, set `RUN_DIR` to the supplied dir instead and DO NOT
 re-timestamp (resume appends to its own dir only).
 
+**Implicit resume after an interrupted run (StopFailure / watchdog auto-resume).**
+The collector is invoked from an orchestrator turn that can die on an API
+error / rate-limit; the StopFailure watchdog then re-invokes `zuvo:infra-audit`
+**fresh, with the same args** — without `--resume`. A naive fresh run would mint
+a NEW timestamped `RUN_DIR` and re-collect every host from zero, discarding the
+bundles the interrupted run already wrote (observed 2026-06-12: 7 auto-resumes).
+So BEFORE minting a new `RUN_DIR`, detect an in-progress run and adopt it:
+
+```bash
+# Implicit-resume detection: the most-recent infra-audit run whose state.json
+# still has a host NOT in a terminal status (reported|unreachable|failed) is an
+# unfinished run — adopt its dir instead of creating a new one. A fresh first
+# run (no such dir) falls through to the new-RUN_DIR mint above.
+# NOTE: iterate via a glob (NOT `$(ls)`) — a `for x in $(ls)` word-splits on
+# whitespace/glob chars in dir names. The glob yields one safe word per match;
+# pick the newest by mtime without parsing `ls`.
+if [ -z "${RESUME_DIR:-}" ]; then   # only when --resume was NOT passed explicitly
+  _now="$(date +%s)"; _fresh_window=1800   # 30 min — the crash-recovery window
+  _newest=""; _newest_mt=0
+  for _d in "$ZUVO_DIR"/audits/infra-audit-*/; do
+    [ -d "$_d" ] && [ -f "${_d}state.json" ] || continue
+    _mt="$(stat -c %Y "${_d}state.json" 2>/dev/null || stat -f %m "${_d}state.json" 2>/dev/null || echo 0)"
+    # FRESHNESS BOUND: only auto-adopt a run whose state.json changed within the
+    # last 30 min — a genuine StopFailure/watchdog resume fires minutes after the
+    # kill. An OLDER unfinished run is NOT silently adopted (that would return
+    # stale results, or trust a poisoned/abandoned dir); the user gets a fresh run
+    # and can resume the old one explicitly with `--resume <dir>`.
+    [ $((_now - _mt)) -le "$_fresh_window" ] || continue
+    if jq -e '[.hosts[]?|select(.status|IN("reported","unreachable","failed")|not)]|length>0' \
+         "${_d}state.json" >/dev/null 2>&1; then
+      [ "$_mt" -gt "$_newest_mt" ] && { _newest_mt="$_mt"; _newest="${_d%/}"; }
+    fi
+  done
+  if [ -n "$_newest" ]; then
+    RUN_DIR="$_newest"
+    echo "[RESUME] adopting recent in-progress run $RUN_DIR (interrupted <30m ago) — skipping completed hosts"
+  fi
+fi
+```
+
+On adoption, a per-host skip additionally **validates the bundle at the gate**
+before trusting `collection_complete: true`: the bundle must be valid JSON whose
+`.host` matches the inventory entry and whose `bundle_sha256` (recomputed) is
+self-consistent. A bundle that fails validation re-collects from scratch — the
+`collection_complete` flag is a convenience signal, not a security boundary
+(everything under `zuvo/` is local user state; a local attacker who can write it
+already has the access the audit would report).
+
+Then in Phase 0.6 / Phase 1, **per-host idempotency:** skip any host whose
+`state.json` status is already `reported` (its report is immutable) or whose
+`bundle/<host>.json` has `collection_complete == true` (an unambiguous flag the
+collector sets ONLY on its final, fully-scanned write — NEVER infer "done" from
+a non-empty `checks[]`; an early/partial checkpoint has `collection_complete:
+false` and an empty/partial `checks[]` is NOT a clean result). A host whose
+bundle is absent or `collection_complete: false` re-collects from scratch (a
+partial bundle is never trusted — the resume table). This makes every auto-resume
+idempotent: finished hosts are not re-audited, the unfinished one continues.
+Write/update `state.json` after EACH host transitions (`collecting → analyzed →
+reported`) so the next auto-resume sees accurate progress.
+
 ### Phase 0.2 — Secrets-hygiene preflight (DD-10)
 
 Before writing ANY file under `zuvo/`, confirm `zuvo/` is gitignored. If missing,
@@ -413,6 +473,17 @@ host's analysis stage, print `[MODE SWITCH] dispatch rate-limited ×2 → single
 record reason `same-model-fallback`/`rate-limited`, and execute that host's four
 analyst roles **inline** (single-agent) per the checkpoint protocol. Do NOT spin
 retrying a rate-limited dispatch — fall back and keep moving (`no-pause-protocol`).
+
+**Already in a storm → go inline immediately (don't prolong it).** If THIS run
+has already been auto-resumed by the StopFailure watchdog (i.e. you entered via a
+watchdog `RESUME`, or you've seen ≥1 API-error/rate-limit auto-resume this run),
+do NOT attempt the parallel 4-agent dispatch at all for the remaining hosts —
+print `[MODE SWITCH] mid-storm → single-agent inline (skip dispatch)` and run the
+analysts inline from the first host. Dispatching N×4 sub-agents into an active
+rate-limit storm just extends it; inline analysis over the already-written
+bundles is deterministic (severity is registry-driven — DD-7) and completes
+without burning more dispatch quota. This is the observed-2026-06-12 recovery
+path: 7 auto-resumes, recovered by inline analysis over the checkpointed bundles.
 
 ### bundle_sha256 stale-findings guard (IC-3)
 
