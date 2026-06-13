@@ -800,6 +800,7 @@ COMPLETION GATE CHECK
 [ ] Adversarial review ran — at least 2 sequential passes with findings printed; SELF-REVIEW used --multi (not --rotate)
 [ ] All findings confidence-scored
 [ ] Backlog persistence ran (memory/backlog.md updated or explicitly N/A)
+[ ] No localized RECOMMENDED silently backlogged — every backlogged RECOMMENDED carries a defer-reason of [NIT] or [structural-refactor (multi-file)]; any single-file fix in backlog = drift, route it to Phase 4 instead
 [ ] Report saved to memory/reviews/YYYY-MM-DD-<scope>.md (TIER 1+)
 [ ] reviewed/<hash> tags created (skip for staged/uncommitted scope)
 [ ] Knowledge curation ran (if knowledge-curate.md loaded)
@@ -851,6 +852,9 @@ VALIDITY GATE
     providers_used: [<provider1,provider2,...> | none]
     skip_reason: [n/a | single_provider_only | timeout | BLOCKED_CONTEXT_BUDGET | <other> — VIOLATES_MANDATE]
     self_review_flag: [no | yes — used --multi | yes — DID_NOT_USE_--multi — VIOLATES_1.1]
+  backlog_deferral:
+    recommended_applied: <count of localized RECOMMENDED fixed in Phase 4>
+    recommended_deferred: [<count> all tagged NIT/structural-refactor(multi-file) | <B-id> NO_VALID_DEFER_REASON — LOCALIZED-DEFER-DRIFT]
   postamble:
     retros_log_appended: [yes(bytes_added=N) | NOT_APPENDED — VIOLATES_REQUIRED_POSTAMBLE]
     retros_md_appended: [yes(entry_count=N) | NOT_APPENDED — VIOLATES_REQUIRED_POSTAMBLE]
@@ -875,6 +879,12 @@ Same handling if `self_review_flag = yes — DID_NOT_USE_--multi` (section 1.1 m
 4. Add backlog item `B-review-tier2-skip-<date>` with the verbatim rationalization quote.
 A DEGRADED line (`[DEGRADED: <agent> skipped because <reason>]`) is acceptable ONLY for non-self-review AND only as a printed, deliberate choice — never the default. On self-review there is NO degraded path.
 
+**Localized-deferral drift handling (NEW — closes the "RECOMMENDED → backlog" reflex that grows the backlog with things that should have been fixed in-loop):** The recurring failure is the lead reflexively routing a localized, single-file RECOMMENDED fix (add `try/catch`, add a guard, add a missing affordance) to backlog *because* it is "only RECOMMENDED" — conflating merge-severity with fix-scope. The backlog then accretes one-line fixes that the AUTO-FIX default already mandates applying. If any backlogged RECOMMENDED item carries a `defer-reason` OUTSIDE the whitelist `{NIT, structural-refactor (multi-file)}` — or carries none — then:
+1. Set `gate_status = FAIL — localized RECOMMENDED deferred to backlog (<B-id>)`.
+2. Override VERDICT to `INCOMPLETE` and route the mis-deferred item(s) into Phase 4 NOW (do not emit REVIEW COMPLETE with them still in backlog).
+3. Append `[LOCALIZED-DEFER-DRIFT:<B-id>]` to the Run line NOTES.
+A multi-file structural refactor stays in backlog with its recipe — that is correct, not drift. The test is fix-scope (one file/symbol → fix; cross-cutting restructure → backlog), never severity tier.
+
 Print this Validity Gate **AFTER** the retro append and `~/.zuvo/append-runlog` call (so postamble fields can be filled with `yes(verified)`).
 
 ### NEXT STEPS Block
@@ -890,7 +900,14 @@ Run: <ISO-8601-Z>	review	<project>	<CQ>	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>
 ```
 AUTO-FIX: applying <M> MUST-FIX + <R> RECOMMENDED (localized/high-confidence) → Phase 4.
 DEFERRED to backlog: <K> NIT + <S> structural-refactor RECOMMENDED.
+  <for each deferred item> B-<id> — defer-reason: [NIT | structural-refactor (multi-file)]
 ```
+
+**Backlog-deferral whitelist (HARD — closes the silent-deferral drift gap).** The DEFAULT for a RECOMMENDED finding is **fix it now in Phase 4**, not backlog. A RECOMMENDED finding may be deferred to backlog ONLY if it matches one of exactly two categories, and you MUST print its `defer-reason` tag in the AUTO-FIX block above:
+- **NIT** — style/readability, zero functional impact (already its own tier; would only apply under explicit `fix`/FIX-ALL).
+- **structural-refactor (multi-file)** — extract a module, split a god-file, invert a dependency, restructure a layer. This is `zuvo:refactor` territory and gets a resolution recipe per Phase 2.
+
+Everything else is **localized and gets fixed in-loop, full stop.** A single-file, single-symbol reliability/correctness/affordance fix — add a missing `try/catch` around a transaction, add a null guard, tighten a WHERE clause, add a missing scope indicator on a button, reject invalid input — is **localized + high-confidence by construction** and is NEVER deferrable. "It's only RECOMMENDED so I'll backlog it" is the exact drift this gate forbids: severity tier (MUST-FIX vs RECOMMENDED) decides *merge-blocking*, it does NOT decide *fix-now vs defer*. The defer decision is made on the **scope of the fix** (localized → fix; multi-file refactor → backlog), not on severity. If you cannot name the deferred item's category as `NIT` or `structural-refactor (multi-file)`, it is NOT deferrable — route it to Phase 4.
 
 Then continue to Phase 4 immediately (no user turn). If there are ZERO MUST-FIX and ZERO applicable RECOMMENDED, print `AUTO-FIX: nothing to apply (only NIT/structural — backlogged)` and finish. Only when `--report-only` was passed do you instead print the menu and stop:
 
