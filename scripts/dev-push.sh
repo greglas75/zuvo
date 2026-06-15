@@ -149,9 +149,37 @@ bash scripts/install.sh 2>&1 | grep -E "✓|✗|DONE|======" | grep -v "^$"
 # 2026-06-15 "znowu nie widać skili" incident). Idempotent; no-op if already on.
 # ═══════════════════════════════════════
 if command -v claude >/dev/null 2>&1; then
-  claude plugin enable zuvo@zuvo-marketplace >/dev/null 2>&1 \
-    && ok "Plugin re-asserted enabled (zuvo@zuvo-marketplace)" \
-    || warn "Could not re-assert plugin enabled — check: claude plugin list"
+  _en=$(claude plugin enable zuvo@zuvo-marketplace 2>&1 || true)
+  if printf '%s' "$_en" | grep -qiE "enabled|already"; then
+    ok "Plugin enabled (zuvo@zuvo-marketplace)"
+  else
+    warn "Could not enable plugin — check: claude plugin list"
+  fi
+fi
+
+# ═══════════════════════════════════════
+# Step 8: Verify installPath is LOADABLE; self-heal if not.
+# Root cause of the recurring "znowu nie widać skili" (2026-06-15): Step 5
+# repoints installPath to the new version dir, but install.sh populates that dir
+# with content subdirs ONLY (no .claude-plugin/plugin.json, no .git) — so Claude
+# Code cannot load it. The old frozen-installPath bug masked this by keeping the
+# pointer on the original complete clone. Here we detect the incomplete dir and
+# force a real clone (uninstall+install — `update` no-ops once the version is
+# already recorded), which is the only thing that produces a loadable dir.
+# ═══════════════════════════════════════
+if command -v claude >/dev/null 2>&1; then
+  if [[ -f "$NEW_INSTALL_PATH/.claude-plugin/plugin.json" ]]; then
+    ok "installPath loadable (.claude-plugin/plugin.json present)"
+  else
+    warn "installPath incomplete ($NEW_INSTALL_PATH has no .claude-plugin/plugin.json) — forcing clean reinstall"
+    claude plugin uninstall zuvo@zuvo-marketplace >/dev/null 2>&1 || true
+    if claude plugin install zuvo@zuvo-marketplace >/dev/null 2>&1; then
+      claude plugin enable zuvo@zuvo-marketplace >/dev/null 2>&1 || true
+      ok "Clean reinstall → loadable plugin"
+    else
+      warn "Clean reinstall failed — run manually: claude plugin uninstall zuvo@zuvo-marketplace && claude plugin install zuvo@zuvo-marketplace"
+    fi
+  fi
 fi
 
 echo ""
