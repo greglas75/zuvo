@@ -142,6 +142,18 @@ fi
 # ═══════════════════════════════════════
 bash scripts/install.sh 2>&1 | grep -E "✓|✗|DONE|======" | grep -v "^$"
 
+# ═══════════════════════════════════════
+# Step 7: Re-assert plugin enabled (prevents the recurring "skills not visible"
+# bug where a plugin update/reinstall cycle leaves zuvo DISABLED in
+# ~/.claude/settings.json enabledPlugins, and nothing turns it back on — the
+# 2026-06-15 "znowu nie widać skili" incident). Idempotent; no-op if already on.
+# ═══════════════════════════════════════
+if command -v claude >/dev/null 2>&1; then
+  claude plugin enable zuvo@zuvo-marketplace >/dev/null 2>&1 \
+    && ok "Plugin re-asserted enabled (zuvo@zuvo-marketplace)" \
+    || warn "Could not re-assert plugin enabled — check: claude plugin list"
+fi
+
 echo ""
 echo "══════════════════════════════════════"
 echo "  RELEASE COMPLETE"

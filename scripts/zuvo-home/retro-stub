@@ -225,8 +225,20 @@ if [ "$SWEEP" -eq 1 ]; then
         # ZUVO_DEGRADED_AUTOLOG=1 is sweep-only (agents cannot set it).
         _AR=$(command -v append-runlog 2>/dev/null || echo "$ZUVO_HOME/append-runlog")
         if [ -x "$_AR" ]; then
-          _RL=$(printf '%s\t%s\t%s\t-\t-\tWARN\t-\tauto-logged\tretro never executed\t%s\t%s\t-\t-' \
-                  "${mts:-$DATE}" "$SKILL" "$PROJECT" "$BRANCH" "${msha:--}")
+          # For an execute orphan that PROGRESSED (commits landed) but left no
+          # retro, also detect whether the per-task adversarial gate ran at all:
+          # zuvo:execute writes zuvo/context/adversarial-task-N.txt per task. If
+          # the repo has commits in the window but ZERO adversarial artifacts,
+          # the gates were bypassed — not just the retro. Surface that in the
+          # WARN note so the gate-skip (not only the retro-skip) is auditable.
+          _NOTE="retro never executed"
+          if [ "$msk" = "execute" ] && [ -n "$mrepo" ]; then
+            _advc=$(ls "$mrepo"/zuvo/context/adversarial-task-*.txt \
+                       "$mrepo"/.zuvo/context/adversarial-task-*.txt 2>/dev/null | wc -l | tr -d ' ')
+            [ "${_advc:-0}" -eq 0 ] && _NOTE="retro+adversarial-gate skipped (0 adversarial-task artifacts)"
+          fi
+          _RL=$(printf '%s\t%s\t%s\t-\t-\tWARN\t-\tauto-logged\t%s\t%s\t%s\t-\t-' \
+                  "${mts:-$DATE}" "$SKILL" "$PROJECT" "$_NOTE" "$BRANCH" "${msha:--}")
           ZUVO_DEGRADED_AUTOLOG=1 "$_AR" "$_RL" >/dev/null 2>&1 || true
         fi
         rm -f "$m"

@@ -11,6 +11,18 @@ set -euo pipefail
 HOOKS_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLUGIN_DIR="$(cd "${HOOKS_DIR}/.." && pwd)"
 
+# ---------------------------------------------------------------------------
+# Reconcile orphaned run-markers at session start (passive telemetry capture).
+# A skill that died / drifted past its terminal retro leaves a dangling
+# ~/.zuvo/run-markers/<skill>-*.marker. retro-stub --sweep backfills a truthful
+# (DEGRADED/WARN) runs.log row for past-grace orphans and clears them. Running
+# it here means a skipped retro/runlog becomes visible at the NEXT session,
+# not only at the next same-skill invocation. MUST stay silent: this hook's
+# stdout is the JSON context payload — any sweep output would corrupt it, so
+# all output is redirected and failure is swallowed.
+_SWEEP="${ZUVO_HOME:-$HOME/.zuvo}/retro-stub"
+[ -x "$_SWEEP" ] && "$_SWEEP" --sweep >/dev/null 2>&1 || true
+
 ROUTER_FILE="${PLUGIN_DIR}/skills/using-zuvo/SKILL.md"
 PROTOCOL_FILE="${PLUGIN_DIR}/shared/includes/compressed-response-protocol.md"
 RESPONSE_PROTOCOL_MODE="${ZUVO_RESPONSE_PROTOCOL:-on}"

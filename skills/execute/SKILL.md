@@ -64,6 +64,13 @@ If agent dispatch is unavailable, disallowed by the current runtime, or fails tw
 - Record the fallback reason in task telemetry and the final summary (`dispatch-unavailable`, `dispatch-disallowed`, `agent-failure`, or `same-model-fallback`).
 - Continue only with the single-agent checkpoint protocol below. Never silently drop spec review, quality review, adversarial review, or session-state updates.
 
+**Anti-"ceremony" clause (HARD — closes the substance-vs-ceremony rationalization).** Rate-limits / 137 OOM kills / environment instability justify the single-agent fallback and NOTHING MORE. They do NOT justify skipping the gates. Framing the run as "I did the substance (TDD code), skipped the heavy ceremony (sub-agent reviewers, per-task adversarial, retro/runlog) because it was infeasible this session" is a protocol violation, not a degraded-but-valid run. Specifically:
+- **Spec review + quality review** are not "sub-agent ceremony" — under single-agent they become the sequential passes below (steps 3–4). They are cheaper (no dispatch), not optional.
+- **Per-task adversarial** is mandatory in BOTH modes (see Step 7b + the `[GATE: adversarial-done]` requirement). "~600s × N is too slow under rate-limits" does not authorize skipping it; if truly time-boxed, run it and record the result — never commit a task without the gate marker.
+- **Retro + runlog have ZERO dispatch dependency** — they are local bash that costs seconds. "Infeasible in this session" is categorically false for them. A run that committed code but skipped retro/runlog is INCOMPLETE, not degraded.
+
+There is no "ceremony tier" that instability lets you drop. If you cannot run a gate, the task is `BLOCKED_MISSING_GATE` (Step 7c), not "committed without the gate." Print the explicit `[MODE SWITCH]` line and keep every checkpoint.
+
 **Single-agent mode (Cursor, or any runtime where multi-agent dispatch is unavailable):**
 Execute all roles yourself in sequential passes with explicit checkpoints:
 
