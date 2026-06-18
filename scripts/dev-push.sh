@@ -172,6 +172,13 @@ if command -v claude >/dev/null 2>&1; then
     ok "installPath loadable (.claude-plugin/plugin.json present)"
   else
     warn "installPath incomplete ($NEW_INSTALL_PATH has no .claude-plugin/plugin.json) — forcing clean reinstall"
+    # CRITICAL: refresh the LOCAL marketplace cache to the SHA we just pushed in
+    # Step 4 FIRST. `claude plugin install` clones from the local marketplace
+    # cache, NOT from GitHub — and Step 4 only pushed the marketplace repo, it
+    # did not refresh this machine's cache. Without this, the reinstall clones
+    # the PREVIOUS SHA and silently installs the prior version (the 2026-06-18
+    # v1.3.119 race: self-heal produced a loadable dir but it was v1.3.118).
+    claude plugin marketplace update zuvo-marketplace >/dev/null 2>&1 || true
     claude plugin uninstall zuvo@zuvo-marketplace >/dev/null 2>&1 || true
     if claude plugin install zuvo@zuvo-marketplace >/dev/null 2>&1; then
       claude plugin enable zuvo@zuvo-marketplace >/dev/null 2>&1 || true
