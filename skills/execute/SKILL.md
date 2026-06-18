@@ -813,18 +813,18 @@ Rationale: prior practice was to either (a) skip post-execute review entirely or
    ```
    If the range is empty (`git log "${BASE_SHA}..${HEAD_SHA}" --oneline` returns nothing), emit `[GATE: aggregate-review] NO-OP (empty range)` and proceed to Session State Close.
 
-2. **Dispatch `zuvo:review` on the full plan range — in `--report-only` mode.**
+2. **Dispatch `zuvo:review` on the full plan range — default (FIX-AUTO) mode.**
    ```
-   Skill(skill="zuvo:review", args="${BASE_SHA}..${HEAD_SHA} --report-only")
+   Skill(skill="zuvo:review", args="${BASE_SHA}..${HEAD_SHA}")
    ```
-   Tier auto-selection in review will land on TIER 3 — a 10–20 task plan clears the >500 lines / 15+ files threshold trivially. Do NOT pass `--quick` or any narrowing flag; the whole point is the deep cross-task pass. **Pass `--report-only`** so review SURFACES findings (consistent with this phase being "Non-blocking by design", step 4) and does NOT auto-apply fixes at the end of a completed plan — the user gets the verdict + NEXT STEPS menu and decides. (Direct `/zuvo:review` defaults to auto-fix; dispatched-from-execute does not.)
+   Tier auto-selection in review will land on TIER 3 — a 10–20 task plan clears the >500 lines / 15+ files threshold trivially. Do NOT pass `--quick`, `--report-only`, or any narrowing flag; the whole point is the deep cross-task pass that also **applies its localized fixes**. Default FIX-AUTO means review fixes MUST-FIX + localized/high-confidence RECOMMENDED in-loop (review's own post-fix gate — verify + adversarial re-validation — guards against over-correction) and defers only NIT + multi-file structural-refactor to backlog. This is deliberate: per-task gates structurally cannot see cross-task findings, so this phase is where they get **found AND fixed** — which makes a separate manual `/zuvo:review` after execute redundant rather than mandatory. (Prior behavior passed `--report-only`, which SURFACED localized RECOMMENDED but applied nothing — forcing the user to re-run review in fix mode to apply the exact fixes review had already identified. That second pass is the friction this removes; it also contradicted the review skill's own "localized RECOMMENDED → fix in-loop, never silently backlog" rule.)
 
 3. **Capture review verdict.** When the review skill returns, extract from its output:
    - `MUST-FIX` count, `RECOMMENDED` count, `NIT` count
    - `DEPLOYMENT RISK: <LOW|MEDIUM|HIGH>` line
    - Path to the saved review artifact (`memory/reviews/<date>-<feature>.md`)
 
-4. **Non-blocking by design.** Even if review surfaces `MUST-FIX > 0`, this phase does NOT prevent `status: completed`. The user requested the pipeline to finish; findings are surfaced, not enforced. The MUST-FIX count + artifact path go into the Final Summary, and the standard review NEXT STEPS menu (`fix` / `auto-fix` / `skip`) is preserved verbatim so the user can decide post-summary.
+4. **Localized findings are fixed in-loop; completion is still non-blocking.** Review in FIX-AUTO applies MUST-FIX + localized/high-confidence RECOMMENDED and commits them as part of this phase — the localized fixes the user would otherwise apply by re-running review by hand are already applied, so the post-execute review is redundant by construction, not a required second pass. This phase still does NOT block `status: completed`: anything review could NOT auto-apply (multi-file structural-refactor, or a MUST-FIX whose fix is non-localized / needs a design decision) is surfaced with the artifact path + the standard review NEXT STEPS menu so the user decides post-summary. Record in the Final Summary both what was **fixed** (review's applied commit) and what **remains** for the user.
 
    The one exception: if `Skill(zuvo:review)` itself errors (skill missing, dispatch failure), emit `[GATE: aggregate-review] BLOCKED (dispatch-failed: <reason>)` and continue to Session State Close — do not retry, do not silently swallow. The dispatch failure is logged so it surfaces in retros.
 
