@@ -113,6 +113,16 @@ BEGIN {
   # Cut at inline `·` if present.
   p = index(line, bullet)
   if (p > 0) line = substr(line, 1, p - 1)
+  # Cut at the first open-paren or angle-bracket: anything after them is a prose
+  # note, not a dependency token. Without this, a parenthetical cross-reference
+  # such as Task 9 followed by a bracketed note, or a Note: marker, made the
+  # linter false-positive a forward-ref, forcing authors to reword Dependencies
+  # lines to dodge the parser (the 2026-06-18 reconciliation-plan churn, agent
+  # retro proposal). Only the real comma-list before the first marker counts.
+  pp = index(line, "(")
+  if (pp > 0) line = substr(line, 1, pp - 1)
+  pg = index(line, ">")
+  if (pg > 0) line = substr(line, 1, pg - 1)
   deps[cur] = trim(line)
   depcapt[cur] = 1
   next
