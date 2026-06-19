@@ -819,6 +819,12 @@ Rationale: prior practice was to either (a) skip post-execute review entirely or
    ```
    Tier auto-selection in review will land on TIER 3 — a 10–20 task plan clears the >500 lines / 15+ files threshold trivially. Do NOT pass `--quick`, `--report-only`, or any narrowing flag; the whole point is the deep cross-task pass that also **applies its localized fixes**. Default FIX-AUTO means review fixes MUST-FIX + localized/high-confidence RECOMMENDED in-loop (review's own post-fix gate — verify + adversarial re-validation — guards against over-correction) and defers only NIT + multi-file structural-refactor to backlog. This is deliberate: per-task gates structurally cannot see cross-task findings, so this phase is where they get **found AND fixed** — which makes a separate manual `/zuvo:review` after execute redundant rather than mandatory. (Prior behavior passed `--report-only`, which SURFACED localized RECOMMENDED but applied nothing — forcing the user to re-run review in fix mode to apply the exact fixes review had already identified. That second pass is the friction this removes; it also contradicted the review skill's own "localized RECOMMENDED → fix in-loop, never silently backlog" rule.)
 
+   **NO-SUBSTITUTION (HARD — closes the "I'll do a lighter pass instead" drift).** Step 2 is the literal `Skill(skill="zuvo:review", …)` dispatch and NOTHING ELSE may stand in for it. Specifically forbidden as a substitute for the review-skill dispatch:
+   - a single `Agent`/`Explore` "focused integration pass",
+   - an inline lead-authored "cross-task read",
+   - "the per-task adversarials already covered it, so a lighter aggregate is enough".
+   The per-task adversarial (Step 7b) and this aggregate review are NOT interchangeable: adversarial sees one task's diff text; `zuvo:review` reads the plan + spec + the whole cross-task surface with its own sub-agent panel and FIX-AUTO loop. "4 rounds of adversarial already ran" is the exact rationalization this gate refuses — it justifies a substitute, and a substitute is not the gate. If you find yourself writing "rather than the full review skill", STOP: that sentence is the drift. The ONLY non-dispatch outcomes are the empty-range NO-OP (step 1) and the genuine dispatch-error BLOCKED (step 4) — never a self-rolled lighter pass reported as PASS.
+
 3. **Capture review verdict.** When the review skill returns, extract from its output:
    - `MUST-FIX` count, `RECOMMENDED` count, `NIT` count
    - `DEPLOYMENT RISK: <LOW|MEDIUM|HIGH>` line
@@ -828,11 +834,11 @@ Rationale: prior practice was to either (a) skip post-execute review entirely or
 
    The one exception: if `Skill(zuvo:review)` itself errors (skill missing, dispatch failure), emit `[GATE: aggregate-review] BLOCKED (dispatch-failed: <reason>)` and continue to Session State Close — do not retry, do not silently swallow. The dispatch failure is logged so it surfaces in retros.
 
-5. **Emit telemetry line:**
+5. **Emit telemetry line — with dispatch proof:**
    ```
-   [GATE: aggregate-review] PASS|RECOMMENDED-FOUND|MUST-FIX-FOUND must=<N> rec=<N> nit=<N> risk=<LOW|MEDIUM|HIGH> artifact=<path>
+   [GATE: aggregate-review] PASS|RECOMMENDED-FOUND|MUST-FIX-FOUND must=<N> rec=<N> nit=<N> risk=<LOW|MEDIUM|HIGH> artifact=<path> via=zuvo:review report=<memory/reviews/...path>
    ```
-   Verdict mapping: `must>0` → `MUST-FIX-FOUND`; else `rec>0` → `RECOMMENDED-FOUND`; else `PASS`.
+   Verdict mapping: `must>0` → `MUST-FIX-FOUND`; else `rec>0` → `RECOMMENDED-FOUND`; else `PASS`. The `via=zuvo:review` token + the `report=<path>` to the review skill's own saved artifact (`memory/reviews/<date>-<scope>.md`, which only the review skill writes) are the **proof of dispatch**. A PASS without a real `report=` path that exists on disk is a substituted gate → it is INVALID; re-emit as `[GATE: aggregate-review] BLOCKED (substituted — no zuvo:review artifact)` and actually dispatch the skill. Never print `via=explore`/`via=inline`/`via=adversarial` — those are the substitution markers this gate forbids.
 
 6. **Carry the verdict into Final Summary.** Add an `### Aggregate Review` block (see Final Summary template) listing must/rec/nit counts, deployment risk, and the artifact path. The user reads ONE place to know what `/zuvo:review` would have said.
 
@@ -970,6 +976,7 @@ COMPLETION GATE CHECK (per task):
 COMPLETION GATE CHECK (final):
 [ ] Whole-feature Smoke Proofs ran (or [GATE: smoke-verified] / explicit "Not applicable" with justification)
 [ ] End-of-plan aggregate review ran (or [GATE: aggregate-review] PASS|RECOMMENDED-FOUND|MUST-FIX-FOUND|SKIPPED|NO-OP|BLOCKED — never silently omitted)
+[ ] Aggregate review was the REAL `Skill(zuvo:review)` dispatch — `[GATE: aggregate-review]` PASS/FOUND carries `via=zuvo:review` + a `report=<memory/reviews/...>` path that EXISTS on disk. A PASS via Explore/inline/adversarial substitute, or with no review artifact, is INVALID → re-run as the real dispatch (see Phase Final-2 NO-SUBSTITUTION)
 [ ] Final summary table printed with all tasks AND all smoke proofs AND the Aggregate Review block
 [ ] Backlog persistence ran for deferred findings
 [ ] Knowledge curation ran
