@@ -850,11 +850,13 @@ VALIDITY GATE
   adversarial:
     passes_run: [<N> | 0 — VIOLATES_MANDATE]
     providers_used: [<provider1,provider2,...> | none]
-    skip_reason: [n/a | single_provider_only | timeout | rate_limit | BLOCKED_CONTEXT_BUDGET | <other> — VIOLATES_MANDATE]
-    # NOTE: rate_limit/timeout are UNAVAILABILITY reasons — they are NOT a mandate
-    # violation (you didn't lazily skip), but per "Degraded-coverage verdict
-    # handling" below they FORCE a CONDITIONAL verdict + re-validation obligation
-    # unless the dimension is covered by a same-session same-commit artifact.
+    skip_reason: [n/a | single_provider_only | BLOCKED_CONTEXT_BUDGET | <other> — VIOLATES_MANDATE]
+    # rate_limit / timeout are NOT skip reasons — per stall-recovery.md ("Rate-limit
+    # is a RETRY condition, NEVER a quality lever"), a rate-limited adversarial pass
+    # is RE-RUN across watchdog resumes until it completes, never recorded as a skip
+    # or a degraded verdict. The only genuine no-retry unavailability reasons are
+    # single_provider_only (only one model exists) and BLOCKED_CONTEXT_BUDGET (window
+    # full) — those keep the degraded-coverage handling below; rate_limit does not.
     coverage_source: [fresh-this-run | same-session-same-commit(<artifact-paths>) | NONE — degraded]
     self_review_flag: [no | yes — used --multi | yes — DID_NOT_USE_--multi — VIOLATES_1.1]
   backlog_deferral:
@@ -877,15 +879,13 @@ If `gate_status = FAIL`, override the VERDICT to `INCOMPLETE` regardless of find
 
 Same handling if `self_review_flag = yes — DID_NOT_USE_--multi` (section 1.1 mandates `--multi` on self-review).
 
-**Degraded-coverage verdict handling (NEW — closes the "rate-limit as a clean-pass excuse" loophole).** A whitelisted unavailability reason (`timeout`, `rate_limit`, `single_provider_only`, `BLOCKED_CONTEXT_BUDGET`) means you did NOT lazily skip — so the gate does NOT FAIL/INCOMPLETE for it. But unavailability is NOT coverage: it must NOT yield a clean `APPROVE`/`PASS`. The whitelist controls *whether you violated the mandate*, NOT *whether the verdict can be green*. So when a mandatory gate (fresh adversarial `--multi`, or any TIER-2 sub-agent fan-out) was skipped for a whitelisted unavailability reason, check `coverage_source`:
-- `same-session-same-commit(<artifacts>)` — the dimension WAS covered by a real pass on the EXACT commits under review (e.g. adversarial artifacts in `zuvo/context/adversarial-task-*.txt` returning 0 open MUST-FIX). Verify the artifacts exist on disk AND reference these commit SHAs. If so, that dimension is legitimately covered → it does NOT degrade the verdict. (This is the ONE honest reuse — real coverage on the same code, not a lighter substitute.)
-- `NONE` — no fresh run and no same-commit artifact. The dimension is genuinely UNCOVERED. Then:
-  1. The verdict CANNOT be `APPROVE`/`PASS` — downgrade it to **`CONDITIONAL`** (mergeable only after the deferred re-validation).
-  2. Print `[DEGRADED-COVERAGE: <gate> not run — <rate_limit|timeout>; re-validate before merge]` in the report AND append `[DEGRADED-COVERAGE:<gate>:<reason>]` to the Run line NOTES.
-  3. Record a re-validation obligation: backlog item `B-review-revalidate-<date>` naming the exact gate + range to re-run when the limit clears, and state it in the NEXT STEPS block ("run `/zuvo:review <range>` to clear the CONDITIONAL").
-  4. `gate_status` stays `PASS` (no mandate violation) but with `degraded=<gate>` noted — the honesty is in the CONDITIONAL verdict, not a FAIL.
+**Rate-limit is NOT a degraded path — it is a RETRY (per stall-recovery.md).** If a mandatory gate (fresh adversarial `--multi`, or any TIER-2 sub-agent fan-out) cannot complete this turn because of a rate-limit / API-error, do NOT record a skip, do NOT downgrade to CONDITIONAL, do NOT cite coverage. **End the turn; the watchdog resumes; RE-RUN the exact gate.** Repeat until it actually runs. A rate-limited review is *still-running*, not *done-degraded*. The verdict is computed only once every mandatory gate has truly run (or is proven by a same-commit artifact, below). There is no `rate_limit` skip-reason and no rate-limit CONDITIONAL — that path is removed precisely because it became the universal excuse.
 
-The point: rate-limit must COST a clean verdict, not buy a skip. Citing it gets you `CONDITIONAL + re-run obligation`, never a green `APPROVE` on coverage you didn't produce. A clean `APPROVE` requires every mandatory gate to be either freshly run OR proven by a same-commit artifact — `n/a` (no production logic to review) is the only no-coverage-needed path.
+**Genuine capability-limit handling (NOT rate-limit — these do not clear by retrying).** The only honest non-retry unavailability reasons are `single_provider_only` (only one model is configured, so cross-model `--multi` truly cannot run) and `BLOCKED_CONTEXT_BUDGET` (the context window is full). For these, check `coverage_source`:
+- `same-session-same-commit(<artifacts>)` — the dimension WAS covered by a real pass on the EXACT commits under review (e.g. adversarial artifacts in `zuvo/context/adversarial-task-*.txt` returning 0 open MUST-FIX). Verify the artifacts exist on disk AND reference these commit SHAs. If so, that dimension is legitimately covered → it does NOT degrade the verdict. (The ONE honest reuse — real coverage on the same code, not a lighter substitute.)
+- `NONE` — no fresh run and no same-commit artifact, and the limit genuinely cannot be retried away. Then: verdict downgrades to **`CONDITIONAL`**; print `[DEGRADED-COVERAGE: <gate> not run — <single_provider_only|BLOCKED_CONTEXT_BUDGET>; re-validate before merge]` + append `[DEGRADED-COVERAGE:<gate>:<reason>]` to the Run line NOTES; record a re-validation obligation (`B-review-revalidate-<date>` + the NEXT STEPS "run `/zuvo:review <range>` to clear the CONDITIONAL"); `gate_status` stays `PASS` with `degraded=<gate>` noted.
+
+The point: a clean `APPROVE` requires every mandatory gate to be either freshly run, proven by a same-commit artifact, or (only for a true capability limit) honestly degraded to CONDITIONAL. Rate-limit is none of these — it is retried until the gate runs. `n/a` (no production logic to review) is the only no-coverage-needed path.
 
 **TIER 2 sub-agent skip handling (NEW — closes the silent-degradation / context-fatigue drift gap):** This is the dominant real-world failure: on a long session the lead does CQ/behavior/confidence scoring *inline as "lead"* instead of dispatching the sub-agents, then rationalizes it after the fact ("adversarial covers it", "scoped check instead"). That is **drift, not a decision**. If any `tier2_subagents.*` reads `NOT_DISPATCHED — VIOLATES_TIER2`:
 1. Set `gate_status = FAIL — tier2 sub-agent(s) not dispatched (<which>)`.

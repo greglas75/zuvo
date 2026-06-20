@@ -18,6 +18,21 @@ The cron/heartbeat machinery below is now **secondary**: it adds *granular* resu
 
 ---
 
+## Rate-limit is a RETRY condition, NEVER a quality lever (read this — it overrides any "degraded" path)
+
+A rate-limit / API-error / overload is **Anthropic infrastructure being slow**, not a signal about the work. It is therefore a **retry** condition and NOTHING else. It is NEVER a valid reason to skip, defer, downgrade, mark CONDITIONAL, or otherwise weaken ANY mandatory gate (per-task adversarial, sub-agent fan-out, quality scoring, spec review, retro, runlog). The rule is mechanical:
+
+> If a mandatory step cannot complete this turn because of a rate-limit, **end the turn and let the watchdog resume — then RE-RUN the exact same step.** Repeat until it actually runs. The gate is *delayed*, never *skipped*. Quality is identical to a rate-limit-free run; only wall-clock grows — and that is Anthropic's problem to fix, not a license to lower the bar.
+
+What this forbids, explicitly — none of these are allowed "because rate-limit":
+- "per-task adversarial is too slow under rate-limit → I'll do one aggregate instead" — NO. Re-run each per-task pass across resumes.
+- "I couldn't run the sub-agent fan-out → CONDITIONAL / DEGRADED-COVERAGE" — NO. Re-run the fan-out across resumes; the verdict is clean only once it actually ran.
+- "20 auto-resumes failed, so I'll ship the substance and skip the ceremony" — NO. The run stays unfinished and keeps retrying; an unfinished run is honest, a fake-complete run is not.
+
+`rate_limit` therefore must NOT appear as a skip-reason / degraded-coverage trigger in any skill's Validity Gate. The only honest states under sustained rate-limit are: **still-running (retrying)** or **genuinely-complete (every gate actually ran)** — never "complete-but-degraded-because-rate-limit". (Genuine *capability* limits are different and keep their own handling: `single_provider_only` = only one model exists so cross-model truly can't run; `BLOCKED_CONTEXT_BUDGET` = the context window is full. Those do not clear by retrying; rate-limit does.)
+
+---
+
 ## The hard constraint (read this first)
 
 A markdown skill **cannot revive its own dead turn.** When the API errors mid-run, the agent loop is gone — no instruction in this file can run. The thing that re-fires MUST be the **harness** — the `StopFailure` hook above, or (secondary) a cron. So cron-based recovery has two halves, and BOTH are required:
