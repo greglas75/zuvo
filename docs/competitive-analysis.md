@@ -1,7 +1,37 @@
 # Zuvo Competitive Analysis — May 2026
 
 > Comprehensive review of the AI coding tools ecosystem. 90+ competitors analyzed across Claude Code plugins, Cursor extensions, Codex/Windsurf/Copilot ecosystems, and DevOps trends.
-> Last updated: 2026-05-01 (prior: 2026-04-08)
+> Last updated: 2026-05-01 (prior: 2026-04-08) · **2026-06-25 June refresh appended below (⚠️ UNVERIFIED leads)**
+
+---
+
+## June 2026 Refresh — Fresh Competitive Leads (⚠️ UNVERIFIED)
+
+> **Provenance + honesty flag (read first).** These came from a deep-research fan-out (5 search angles, 25 extracted claims, sources cited) run 2026-06-25. The **adversarial-verification phase did NOT run** — an Anthropic-side rate-limit storm killed every verifier vote (`v0/v1/v2 = rate_limited` across all 25 claims). The workflow's auto-summary said "all refuted / inconclusive"; that is an **artifact of failed verification, not real refutation**. So: these are **sourced leads, not confirmed facts.** Re-run the verify phase (`resumeFromRunId` on the cached run) before treating any line as fact. Full raw output captured under the session `tasks/` dir.
+
+### A. Genuinely NEW since the May doc — competitor capability → zuvo action
+
+| Competitor (source) | New capability | Zuvo action |
+|---|---|---|
+| **Vercel Labs OpenReview** (github.com/vercel-labs/openreview) | **Sandboxed review**: clones the PR branch, installs deps, **runs** linters/formatters/tests — the reviewer *executes* the code, not just reads the diff. Extensible via `.agents/skills/` (a skill model directly comparable to zuvo). | **★ Highest leverage.** New enforcement: a **sandboxed-execution review gate** — `review`/audits clone+install+run in a sandbox, not static-read only. |
+| **MS Agent Governance Toolkit** (opensource.microsoft.com, Apr 2026) | Deterministic **pre-action policy gates** (<1 ms; YAML / OPA Rego / Cedar), "Agent OS" stateless engine intercepting every action; covers OWASP agentic-AI risks. | Generalize our pre-commit / proof-of-dispatch hooks into a **policy-as-data layer**. |
+| **Cursor BugBot** (cursor.com/bugbot) | CI/PR-native autonomous review; "Bugbot Rules" (custom standards); ~8 parallel review passes; **BugBot Autofix** (Feb 2026) applies fixes in-PR. | **PR-native review + autofix mode** for `review` / `ship`. |
+| **Anthropic Claude Code Review** | First-party agent-based PR review. | Differentiate on **multi-skill + cross-model adversarial** (which the first-party tool lacks). |
+| **Datadog "harness-first engineering"** | Build automated verification harnesses; verification (not generation) is the bottleneck; prod telemetry + harness failures feed back to update the harness. | **Telemetry→gate** pattern: wire `canary`/`incident` signals back into the gate. |
+| **MemCoder** (arxiv 2603.13258) | **Git-commit memory bank** (FAISS retrieval + cross-encoder rerank), experience self-internalization for cross-session evolution. | Structured **git-history memory** for `execute`/`debug` (we have knowledge-curate/prime but not this). |
+| **SWE-bench Pro** | Contamination-resistant benchmark, per-task validation. | Adopt anti-contamination methodology in `benchmark`/`agent-benchmark`. |
+
+### B. Confirms what we already do (strong external evidence)
+- **LLM-as-judge self-preference bias** (arxiv 2509.03647): a model judging itself picks its own output **~72%** vs **~48%** for an impartial ensemble (aware setting); activation steering cuts bias up to 97% but is unstable. → **Hard validation of RULE-ZERO (no self-judging) + cross-model adversarial.** Cite this magnitude as the rationale in our anti-drift docs.
+- **ReVeal** (arxiv 2506.11442): verify-then-revise RL loop that **optimizes the verification step itself** (not just the output). → Validates our adversarial loop; new idea = *strengthen the verifier*, not only the fix.
+- **ASDLC.io** Builder/Critic adversarial-code-review pattern — formalizes our adversarial-loop.
+
+### C. Top 5 highest-leverage (act on after verification)
+1. **Sandboxed-execution gate** (OpenReview + Datadog converge) — review/audit clones+installs+runs in a sandbox.
+2. **Policy-as-data pre-action gate** (MS) — our hooks as a YAML/Rego layer.
+3. **PR-native review + autofix** (BugBot / Claude Code Review).
+4. **Git-commit memory bank** (MemCoder) for `execute`/`debug`.
+5. **Strengthen-the-verifier** (ReVeal + bias paper); bake the 0.72-vs-0.48 bias figure into the anti-drift rationale.
 
 ---
 
