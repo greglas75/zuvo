@@ -313,13 +313,49 @@ These still work on text-stub languages: `search_text`, `get_file_tree`, `scan_s
 
 **PHP specifically:** check `get_extractor_versions()` before symbol tools. If text-stub, fall back to `search_text`/Grep for Yii2/Laravel patterns like `::find()`, `->all()`, `->batch()`, `->with()`, `Yii::$app->cache`, `TagDependency`, `DbTarget`.
 
-### User Notification
+### Degraded-Mode Banner + Decision Gate (REQUIRED — silent degrade is FORBIDDEN)
 
-The first time CodeSift is unavailable in a session, notify once:
+A one-line "degraded mode" note is too easy to miss — whole refactor/audit sweeps have
+run `codesift: unavailable` and quietly fallen back to grep, weakening every result with
+nobody noticing. So the FIRST time CodeSift is found unavailable in a session, print this
+banner **verbatim** (full width, impossible to miss) BEFORE any analysis work:
 
-> CodeSift not available. Running in degraded mode — install `codesift-mcp` for full analysis.
+```
+╔════════════════════════════════════════════════════════════════════════╗
+║  ⚠   CODESIFT UNAVAILABLE  —  analysis would run DEGRADED               ║
+╠════════════════════════════════════════════════════════════════════════╣
+║  mcp__codesift__* tools are not loaded in this session.                 ║
+║  Fallback = grep + Read only. You LOSE:                                 ║
+║    • symbol & call-graph tracing (find_references, trace_call_chain)    ║
+║    • complexity / hotspot / clone ranking (analyze_complexity, ...)     ║
+║    • ~1100 secret-scan rules (scan_secrets)                             ║
+║    • stack-aware tool preload + impact_analysis / blast-radius          ║
+║  For refactor / audit / review this MATERIALLY weakens the result.      ║
+╚════════════════════════════════════════════════════════════════════════╝
+```
 
-Do not repeat the warning after the first notification.
+Then **STOP and ask the user** (exactly one question — "co dalej?"):
+
+```
+Co dalej? (CodeSift niedostępny)
+  1) Kontynuuj w trybie degraded (grep/Read fallback) — wynik słabszy
+  2) Zatrzymaj — naprawię CodeSift (uruchom MCP / index_folder), potem retry
+  3) Przerwij skill
+```
+
+Wait for the answer before running ANY analysis.
+
+- **Choice 1 (continue degraded):** record `[DEGRADED: CodeSift unavailable — user chose continue]`, use the Degraded Mode fallback table above, carry `codesift: unavailable` into the retro.
+- **Choice 2 (fix it):** stop cleanly. Tell the user how to recover — start the codesift MCP server, or run `index_status()` / `index_folder(path=<root>)`, or re-open the session so the MCP re-attaches — then re-run the skill. Do NOT proceed.
+- **Choice 3 (abort):** stop the skill, make no changes.
+
+**Non-interactive override** (batch mode, `--auto`, an active `no-pause-protocol`, or CI):
+a blocking question would hang an autonomous run. In those modes, still print the banner,
+then auto-select choice 1, log `[DEGRADED: CodeSift unavailable — auto-continue (non-interactive)]`,
+and carry `codesift: unavailable` into the retro so the degraded run stays auditable.
+**The banner is NEVER skipped — not even non-interactively.**
+
+Print the banner once per session; after the decision is recorded, do not repeat it.
 
 ## Tool Availability Block (REQUIRED in audit reports)
 
