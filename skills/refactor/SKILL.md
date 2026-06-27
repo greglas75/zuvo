@@ -473,6 +473,8 @@ Apply the planned changes according to the extraction list, following these rule
 4. Follow CQ patterns from `cq-patterns.md` in all new code.
 5. Respect file size limits throughout. If an extraction creates a file that exceeds the limit, split further.
 
+**Behavioral equivalence is scoped to the MOVE, not the whole run.** Rule 3 means the *extraction/move* produces identical outputs — that is what the unchanged-tests-still-pass proof certifies. It does NOT mean "any bug you discover stays in the file." Bugs surfaced by the audits below are fixed in **Phase 3.5 (Bug Remediation)** within this same run, as a SEPARATE commit. A refactor that tidies a file but leaves its bugs is half a job — it forces a second pass over the same code later. "I must preserve behavior, so I'll backlog the bug" is the exact rationalization to avoid: preserve behavior in commit 1, fix the bug in commit 2, same session.
+
 **Type-specific CodeSift tools (when available):**
 
 | Refactor type | CodeSift tool | Use |
@@ -552,7 +554,7 @@ After the lead's post-audit, dispatch an independent CQ Auditor agent. Run CQ1-C
 
 **Input:** Full source of each file, CQ checklist, CQ patterns, tech stack, `machine_checks` from CodeSift (if available).
 
-The **orchestrator** applies FIX-NOW items before committing. DEFER items go to the backlog.
+The **orchestrator** applies FIX-NOW items in Phase 3.5 (as the separate fix commit). Only items whose fix needs files OUTSIDE the scope fence, or that require a behavior/product decision the user declined, go to the backlog — deferral is a fix-SCOPE decision, never a severity or size one.
 
 ### Adversarial Review (MANDATORY — do NOT skip)
 
@@ -594,15 +596,18 @@ If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplac
 | 50-200 lines | 3 | Standard refactor — most issues found in 2-3 passes |
 | > 200 lines or GOD_CLASS | 4 | Large split — fixes on fixes need full depth |
 
-**Per-pass fix policy:**
+**Per-pass fix policy (disposition by fix-SCOPE, never by line count):**
 
 | Finding | Action |
 |---------|--------|
 | **CRITICAL** | Fix immediately. Re-run tests. |
-| **WARNING (< 10 lines)** | Fix immediately. |
-| **WARNING (> 10 lines)** | Add to backlog with file:line. |
+| **WARNING — real bug, one clearly-correct fix** | Fix it in Phase 3.5 (the fix commit). **Size is irrelevant** — a 40-line mechanical bug is still fix-now. Never park a bug just because the fix is large. |
+| **WARNING — needs a behavior/product DECISION** (e.g. on total failure: partial result vs hard error) | Not a bug, a choice. Interactive → ask the user (Phase 3.5 decision gate, ≤1 question). Batch/`--auto`/`no-pause` → pick the safe default, log `[DECISION-DEFAULT: …]`, surface in report. |
+| **WARNING — fix needs files OUTSIDE the scope fence** | Backlog with file:line — genuinely out of this contract's reach. |
 | **INFO** | Known concerns (max 3, one line each). |
 | **0 findings** | Early exit — stop passes, code is clean. |
+
+The old "WARNING > 10 lines → backlog" rule is gone: line count is not a proxy for scope. A big mechanical fix is still a fix; a one-line product decision is still a decision.
 
 **Meta-review:** If pass 1 returns 0 findings AND diff_lines > 150: add false-negative warning — large diffs with zero findings suggest insufficient review depth. Run pass 2 regardless.
 
@@ -610,18 +615,43 @@ Do NOT discard findings based on confidence alone. "Pre-existing" is NOT a reaso
 
 ---
 
+## Phase 3.5: Bug Remediation + Commit (in-process — leave the file CORRECT, not just tidier)
+
+The point of a refactor is that the file ends up **better AND correct**, in one sitting — not tidier-but-still-buggy, forcing you back into the same code later. So real bugs surfaced by the CQ auditor and adversarial passes are fixed HERE, in this run. The behavior-preserving guarantee is kept via **stacked commits inside the one run**, not by deferring the fix: commit 1 proves the move changed nothing; commit 2 is the fix. One process for the user; clean, bisectable history underneath.
+
+This phase OWNS all committing (Phase 4 no longer commits — it records).
+
+**Disposition (the line is fix-SCOPE, not severity or size):**
+
+| Finding | Disposition |
+|---------|-------------|
+| Real bug, one clearly-correct fix (any size) | **Fix now** (commit 2). Mechanical correctness has one answer — don't park it. |
+| Real bug, fix needs files OUTSIDE the scope fence | Backlog with file:line — genuinely out of this contract's reach. |
+| Behavior/product DECISION (partial vs hard error on failure; swallow vs surface a cost; etc.) | **Not a bug — a choice.** Interactive: ask the user (≤1 question), apply the chosen fix into commit 2. Batch/`--auto`/`no-pause`: pick the safe, conservative default, log `[DECISION-DEFAULT: …]`, surface in the report; backlog only if the user later declines. |
+
+**Procedure:**
+
+1. **Commit the pure refactor (always).** Stage scope-fence files → `git commit -m "refactor([scope]): [what moved]"`. This is the behavior-preserving proof: the Phase-2 characterization/existing tests, UNCHANGED, still pass. Record `REFACTOR_SHA`. (no-commit mode: show the diff + message, don't commit.)
+2. **Triage** the CQ-auditor + adversarial findings into the table above.
+3. **If fix-now items exist:**
+   a. Apply every fix-now fix.
+   b. Behavior now CHANGES, so update the characterization test that pinned the OLD (buggy) behavior to assert the NEW correct behavior, and add a regression test that is **red on `REFACTOR_SHA`, green on the fix**.
+   c. Re-verify: type-check + full suite + ONE adversarial pass over the fix diff (`adversarial-review --mode code`) — must converge (no new CRITICAL).
+   d. **Commit separately:** `git commit -m "fix([scope]): [bug summary]"` (`feat`/`perf` if that fits better). NEVER fold the fix into the refactor commit — that erases the move-vs-change boundary that makes commit 1 trustworthy.
+   Else: print `[REMEDIATION: none — no fixable bugs surfaced]`.
+4. **Decisions:** resolve per the table (ask / safe-default+log). Out-of-scope-fence items → backlog (Phase 4).
+
+**Why two commits and not one:** a single mixed commit can't be bisected — if prod breaks you can't tell "moved the code" from "changed the logic." Two commits in one run cost you nothing and keep that boundary. (If you genuinely want one commit, that's the only thing to override here — the in-run fixing stays either way.)
+
+---
+
 ## Phase 4: Completion
 
-### Commit
+### Commits (recorded — committing happened in Phase 3.5)
 
-Stage and commit the changes:
+Phase 3.5 has already committed: the pure refactor (`REFACTOR_SHA`), and — when fix-now bugs existed — a separate `fix(…)` commit. Record BOTH SHAs in the contract and the Post-Completion Summary. If no bugs surfaced, there is just the one refactor commit.
 
-```bash
-git add [specific files from scope fence]
-git commit -m "refactor([scope]): [description of what changed]"
-```
-
-In no-commit mode: show `git diff --staged` and the proposed message instead.
+In no-commit mode: Phase 3.5 showed both diffs + proposed messages instead of committing; nothing to record here beyond the proposed messages.
 
 ### Update Contract State
 
@@ -633,7 +663,7 @@ After committing: `index_file(path=<changed-file>)` for every changed file.
 
 ### Backlog Persistence (FULL mode)
 
-Read `../../shared/includes/backlog-protocol.md`. Persist CQ Auditor DEFER items and out-of-scope issues to `memory/backlog.md`. Fingerprint: `file|rule-id|signature`. Source: `zuvo:refactor` or `zuvo:refactor/cq-auditor`. Deduplicate per `backlog-protocol.md`.
+Read `../../shared/includes/backlog-protocol.md`. Persist ONLY the items Phase 3.5 deferred — fixes needing files outside the scope fence, and behavior decisions the user declined. **Mechanical bugs were already fixed in Phase 3.5; they do NOT belong in the backlog.** Persist to `memory/backlog.md`. Fingerprint: `file|rule-id|signature`. Source: `zuvo:refactor` or `zuvo:refactor/cq-auditor`. Deduplicate per `backlog-protocol.md`.
 
 ### Aggregate Review Hand-off (single FULL mode)
 
@@ -686,6 +716,7 @@ COMPLETION GATE CHECK
 [ ] CQ post-audit printed — score must not regress
 [ ] Independent CQ Auditor (blind audit) RAN — telemetry is clean:strict or clean:degraded, NOT skipped/not_run (HARD GATE; if it could not be dispatched the verdict is BLOCKED, never PASS/WARN — CodeSift being unavailable does NOT excuse skipping it)
 [ ] Adversarial review ran on final diff
+[ ] Bug remediation (Phase 3.5): every fix-now bug fixed + tested IN THIS RUN as a separate fix commit; nothing parked by size; only out-of-scope-fence items or user-declined decisions deferred. If bugs were fixed, the run has 2 commits (refactor, then fix)
 [ ] Aggregate review hand-off evaluated: if 2+ sibling refactor commits this session, the `zuvo:review <range>` line is surfaced (per Aggregate Review Hand-off)
 [ ] Documentation updated if public surface changed, else explicit [DOC: N/A — internal-only] (per documentation-mandate.md)
 [ ] Run: line printed and appended to log
@@ -698,7 +729,7 @@ REFACTORING COMPLETE
 ------------------------------------
 Type: [TYPE] | Target: [filename]
 Files modified: [N] | Files created: [N]
-CQ: [before] -> [after] | Tests: [status] | Commit: [hash]
+CQ: [before] -> [after] | Tests: [status] | Commits: refactor [sha7][ + fix [sha7] (N bugs fixed in-run)]
 
 Run: <ISO-8601-Z>\trefactor\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
 ------------------------------------
@@ -760,7 +791,7 @@ Process a queue of files through the full pipeline autonomously. Zero interactiv
 
 For each `[ ]` entry, run the full pipeline -- not a shortcut:
 
-**Pipeline enforcement:** "Full pipeline" means running Phase 1 planning → Phase 2 test handling → Phase 3 execution → Phase 4 completion as defined in this skill. "Read file, fix obvious things, commit" is a shortcut that violates batch mode. Every file gets: its own contract state file (`zuvo/contracts/refactor-{target-hash}.json`), CQ BEFORE eval, fixes, CQ AFTER eval, one commit.
+**Pipeline enforcement:** "Full pipeline" means running Phase 1 planning → Phase 2 test handling → Phase 3 execution → Phase 3.5 remediation → Phase 4 completion as defined in this skill. "Read file, fix obvious things, commit" is a shortcut that violates batch mode. Every file gets: its own contract state file (`zuvo/contracts/refactor-{target-hash}.json`), CQ BEFORE eval, fixes, CQ AFTER eval, and Phase 3.5 remediation+commit (the refactor commit, plus a separate `fix(…)` commit when fix-now bugs surfaced — files come out CORRECT, not just tidier).
 
 **Steps (ALL mandatory, in order):**
 
@@ -769,9 +800,9 @@ For each `[ ]` entry, run the full pipeline -- not a shortcut:
 3. **Execution:** Execute fixes per CONTRACT → verify (type check + tests)
 4. **Post-Audit:** Dispatch CQ Auditor (read-only; the **orchestrator** applies FIX-NOW items). Print CQ1-CQ29 AFTER (all 29 gates).
 5. **Adversarial:** Run iterative adversarial review (`--rotate`) on staged diff with context-enriched input (same protocol as Phase 3). Pass count by diff size.
-6. **Commit:** ONE commit for this file only (exception: GOD_CLASS → multi-commit per extracted responsibility).
-7. **Queue update:** Update line with CQ before/after and commit hash.
-8. **Backlog:** Persist DEFER items.
+6. **Remediate + Commit (Phase 3.5):** commit the pure refactor first; then if fix-now bugs surfaced, fix them + update/add tests and add a SEPARATE `fix(…)` commit. Behavior DECISIONS take the safe default + `[DECISION-DEFAULT: …]` log — batch is zero-stop, never ask. Clean file = 1 commit; file with bugs = 2 commits (GOD_CLASS exception still applies: multi-commit per extracted responsibility, plus its fix commit).
+7. **Queue update:** Update line with CQ before/after and commit hash(es).
+8. **Backlog:** Persist ONLY out-of-scope-fence items and declined decisions — NOT mechanical bugs (those were fixed in step 6).
 
 ### GOD_CLASS Batch Exception
 
