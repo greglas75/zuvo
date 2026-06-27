@@ -542,9 +542,13 @@ Run the full verification suite:
 4. CQ self-eval on all modified files
 5. Q1-Q19 on all modified test files
 
-### Independent CQ Auditor (FULL mode, default tier, read-only)
+### Independent CQ Auditor (FULL mode — HARD GATE, non-skippable, default tier, read-only)
 
 After the lead's post-audit, dispatch an independent CQ Auditor agent. Run CQ1-CQ29 independently on ALL modified/created files. Does NOT trust the lead's scores. Catches N/A abuse and rubber-stamped gates.
+
+**This is a HARD GATE, not best-effort.** The lead's own CQ post-audit is NOT a substitute — the whole point is a second, independent pass that never sees the lead's scores. In FULL mode (single and batch), the run CANNOT reach `COMPLETE`/PASS without it. Allowed telemetry values for `blind_audit` are `clean:strict` or `clean:degraded` (findings applied or deferred). **`skipped` and `not_run` are pipeline FAILURES, not neutral states** — if the auditor genuinely cannot be dispatched in this environment, mark the run `BLOCKED` and say so loudly; never claim PASS/WARN with the blind audit absent. A self-rolled lighter pass reported as "done" is forbidden — run the real independent pass or report BLOCKED.
+
+**CodeSift availability does NOT gate the auditor.** The auditor is an LLM agent that reads the full source + CQ checklist itself; CodeSift only enriches the optional `machine_checks` input. When CodeSift is unavailable, pass empty `machine_checks` and record `blind_audit: clean:degraded` — **but still RUN it.** "CodeSift unavailable" is never a reason to skip the blind audit. (This is the exact regression seen in the field: `codesift:unavailable` was being conflated with `blind_audit:skipped`.)
 
 **Input:** Full source of each file, CQ checklist, CQ patterns, tech stack, `machine_checks` from CodeSift (if available).
 
@@ -631,6 +635,24 @@ After committing: `index_file(path=<changed-file>)` for every changed file.
 
 Read `../../shared/includes/backlog-protocol.md`. Persist CQ Auditor DEFER items and out-of-scope issues to `memory/backlog.md`. Fingerprint: `file|rule-id|signature`. Source: `zuvo:refactor` or `zuvo:refactor/cq-auditor`. Deduplicate per `backlog-protocol.md`.
 
+### Aggregate Review Hand-off (single FULL mode)
+
+A single refactor is fully reviewed by its in-skill layer (CQ post-audit + independent blind audit + adversarial). That layer is scoped to ONE contract's scope fence. When several refactors run back-to-back as separate invocations (a refactor sweep — the common real-world case), nothing reviews their **combined** blast radius: a symbol renamed in refactor A and consumed by refactor B's new module, two extractions that now duplicate each other, a re-export chain broken across several commits.
+
+Do NOT auto-run `zuvo:review` after every single refactor — that is redundant ceremony the in-skill layer already covers. Instead, **detect a series and hand off once.** At completion:
+
+1. Determine the session merge-base: `MERGE_BASE = $(git merge-base HEAD <main-branch>)`.
+2. Scan `zuvo/contracts/refactor-*.json` for sibling contracts with `stage == "COMPLETE"` whose commits are ahead of `MERGE_BASE` on the current branch (i.e., landed this session, not yet reviewed together).
+3. If 2 or more sibling refactor commits exist (including this one), surface:
+
+```
+AGGREGATE REVIEW RECOMMENDED
+  N refactor commits this session not yet reviewed together: <sha7 list>
+  Run: zuvo:review <MERGE_BASE>..HEAD   (cross-refactor integration check)
+```
+
+Print this in the Post-Completion Summary. If this refactor was invoked under an orchestrator running a known sweep, the orchestrator SHOULD run that single `zuvo:review` once after the LAST refactor — not after each one. (In `batch <file>` mode the series is known, so this becomes the MANDATORY aggregate review in Batch Completion, not a recommendation.)
+
 ### Knowledge Curation
 
 Run `knowledge-curate.md`: `WORK_TYPE = "implementation"`, `CALLER = "zuvo:refactor"`, `REFERENCE = <commit SHA>`.
@@ -662,7 +684,9 @@ COMPLETION GATE CHECK
 [ ] Baseline test suite ran green before first change
 [ ] After each change: tests ran and green (not just at the end)
 [ ] CQ post-audit printed — score must not regress
+[ ] Independent CQ Auditor (blind audit) RAN — telemetry is clean:strict or clean:degraded, NOT skipped/not_run (HARD GATE; if it could not be dispatched the verdict is BLOCKED, never PASS/WARN — CodeSift being unavailable does NOT excuse skipping it)
 [ ] Adversarial review ran on final diff
+[ ] Aggregate review hand-off evaluated: if 2+ sibling refactor commits this session, the `zuvo:review <range>` line is surfaced (per Aggregate Review Hand-off)
 [ ] Documentation updated if public surface changed, else explicit [DOC: N/A — internal-only] (per documentation-mandate.md)
 [ ] Run: line printed and appended to log
 ```
@@ -698,6 +722,7 @@ Process a queue of files through the full pipeline autonomously. Zero interactiv
 
 ### Phase 0: Parse Queue and Triage
 
+0. **Record `PRE_BATCH_SHA = $(git rev-parse HEAD)` before any triage or change.** The mandatory aggregate review at Batch Completion diffs the whole batch against this SHA.
 1. Read the queue file. Parse lines:
    - Blank lines and lines starting with `#`: skip (comments)
    - `- [x]`: skip (completed, resume mode)
@@ -800,6 +825,19 @@ Batch mode overrides ALL interactive stops:
 
 Running `zuvo:refactor batch queue.md` on a file with existing progress: `[x]` skip (completed), `[!]` skip (needs human), `[ ]` process, bare path: process (triage enriches). Session-crash safe: uncommitted files stay `[ ]`.
 
+### Aggregate Review (batch mode — MANDATORY, runs once)
+
+Per-file review (CQ auditor + adversarial) sees each file in isolation against its own scope fence. It **cannot** catch integration issues that emerge ACROSS refactors in the same batch: a symbol renamed in file A and consumed by file B's new module, two extractions that now duplicate each other, a re-export chain broken across several commits. After the LAST queue entry is processed and committed, run ONE aggregate review over the whole batch:
+
+```
+Skill(skill="zuvo:review")  with the commit range  PRE_BATCH_SHA..HEAD
+```
+
+- Runs **once per batch**, not once per file — this is the cross-file safety net, distinct from per-file review. Do not skip it because each file "already passed."
+- Honors `no-pause-protocol`: invoke `zuvo:review` non-interactively. MUST-FIX findings are applied in-loop by review's own auto-fix; RECOMMENDED/NIT go to the backlog. Do NOT stop for approval.
+- Record the outcome as `aggregate_review: <APPROVE|CHANGES|BLOCKED>` for the completion block.
+- If `zuvo:review` cannot be dispatched in this environment, record `aggregate_review: BLOCKED`, downgrade the batch VERDICT to WARN at best, and say so loudly — never report a clean batch with the aggregate review absent. (Same HARD-GATE discipline as the per-file blind audit: a real review or an honest BLOCKED, never a silent skip.)
+
 ### Retrospective (REQUIRED)
 
 Follow the retrospective protocol from `retrospective.md`.
@@ -811,6 +849,7 @@ If gate check skips: print "RETRO: skipped (trivial session)" and proceed to out
 ```
 BATCH COMPLETE
 Total: N | Completed: X | Failed: Y | Skipped: Z
+Aggregate review: [APPROVE | CHANGES (M MUST-FIX applied) | BLOCKED] over PRE_BATCH_SHA..HEAD
 Queue: [path to queue file]
 Run: <ISO-8601-Z>\trefactor\t<project>\t<CQ>\t-\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
 ```
