@@ -798,20 +798,24 @@ Rationale: prior practice was to either (a) skip post-execute review entirely or
 
 **Skip condition:** If the user invoked execute with `--skip-final-review` in `$ARGUMENTS`, skip this phase and emit `[GATE: aggregate-review] SKIPPED (--skip-final-review)` in telemetry. Reserved for genuine hotfix/cherry-pick cases. Do NOT skip on size, "looks small", or "per-task adversarials were thorough" — those are not valid reasons.
 
-1. **Derive the plan range.**
+1. **Derive the plan range (worktree-safe — bind git to the worktree's repo, not CWD).**
    ```bash
+   # repo_root was resolved in the pre-loop worktree pre-flight. If unset, resolve now —
+   # NEVER let a CWD that reset to the main checkout pick the wrong tree.
+   repo_root="${repo_root:-$(git rev-parse --show-toplevel)}"
    # Plan base = parent of the first commit of this execute session.
    # Prefer execution-state's recorded base SHA if present; else merge-base with default branch.
    BASE_SHA=$(awk '/^plan_base_sha:/ {print $2; exit}' zuvo/context/execution-state.md 2>/dev/null)
    if [ -z "$BASE_SHA" ]; then
-     DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||')
+     DEFAULT_BRANCH=$(git -C "$repo_root" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||')
      DEFAULT_BRANCH=${DEFAULT_BRANCH:-main}
-     BASE_SHA=$(git merge-base HEAD "$DEFAULT_BRANCH")
+     BASE_SHA=$(git -C "$repo_root" merge-base HEAD "$DEFAULT_BRANCH")
    fi
-   HEAD_SHA=$(git rev-parse HEAD)
-   echo "Aggregate review range: ${BASE_SHA}..${HEAD_SHA}"
+   HEAD_SHA=$(git -C "$repo_root" rev-parse HEAD)
+   echo "Aggregate review range: ${BASE_SHA}..${HEAD_SHA} (repo_root=$repo_root)"
    ```
-   If the range is empty (`git log "${BASE_SHA}..${HEAD_SHA}" --oneline` returns nothing), emit `[GATE: aggregate-review] NO-OP (empty range)` and proceed to Session State Close.
+   `${BASE_SHA}..${HEAD_SHA}` are content-addressed SHAs: the range resolves to the SAME diff from the main checkout OR any worktree of this repo (one shared object store). So passing the explicit range to `zuvo:review` is **worktree-portable** — a CWD reset to the main checkout does NOT make review diff the wrong branch. That is why worktree isolation is never a reason to skip this gate (see step 4).
+   If the range is empty (`git -C "$repo_root" log "${BASE_SHA}..${HEAD_SHA}" --oneline` returns nothing), emit `[GATE: aggregate-review] NO-OP (empty range)` and proceed to Session State Close.
 
 2. **Dispatch `zuvo:review` on the full plan range — default (FIX-AUTO) mode.**
    ```
@@ -832,7 +836,9 @@ Rationale: prior practice was to either (a) skip post-execute review entirely or
 
 4. **Localized findings are fixed in-loop; completion is still non-blocking.** Review in FIX-AUTO applies MUST-FIX + localized/high-confidence RECOMMENDED and commits them as part of this phase — the localized fixes the user would otherwise apply by re-running review by hand are already applied, so the post-execute review is redundant by construction, not a required second pass. This phase still does NOT block `status: completed`: anything review could NOT auto-apply (multi-file structural-refactor, or a MUST-FIX whose fix is non-localized / needs a design decision) is surfaced with the artifact path + the standard review NEXT STEPS menu so the user decides post-summary. Record in the Final Summary both what was **fixed** (review's applied commit) and what **remains** for the user.
 
-   The one exception: if `Skill(zuvo:review)` itself errors (skill missing, dispatch failure), emit `[GATE: aggregate-review] BLOCKED (dispatch-failed: <reason>)` and continue to Session State Close — do not retry, do not silently swallow. The dispatch failure is logged so it surfaces in retros.
+   The one exception: if `Skill(zuvo:review)` itself errors (skill genuinely missing, or the dispatch mechanism fails), emit `[GATE: aggregate-review] BLOCKED (dispatch-failed: <reason>)` and continue to Session State Close — do not retry, do not silently swallow. The dispatch failure is logged so it surfaces in retros.
+
+   **Worktree isolation is NOT a dispatch failure and NEVER a valid BLOCKED reason.** "CWD resets to the main checkout, so `zuvo:review` would diff the wrong branch" is the exact dodge this gate refuses — it is *solved*, not deferred onto the user. The range is explicit content SHAs (step 1, computed with `git -C "$repo_root"`) that resolve identically from any checkout of the same repo, so review diffs correctly wherever its CWD lands; if review needs to operate on the worktree tree itself, pass `repo_root` to it. A worktree is a `path=`/range argument, not a reason to bail (same rule as `codesift-setup.md`: "a worktree is NEVER a reason to drop analysis"). If you catch yourself writing "worktree", "isolation", or "CWD reset" as the BLOCKED reason — STOP: that sentence IS the drift. Compute the SHA range from `repo_root` and dispatch.
 
 5. **Emit telemetry line — with dispatch proof:**
    ```
@@ -977,6 +983,7 @@ COMPLETION GATE CHECK (final):
 [ ] Whole-feature Smoke Proofs ran (or [GATE: smoke-verified] / explicit "Not applicable" with justification)
 [ ] End-of-plan aggregate review ran (or [GATE: aggregate-review] PASS|RECOMMENDED-FOUND|MUST-FIX-FOUND|SKIPPED|NO-OP|BLOCKED — never silently omitted)
 [ ] Aggregate review was the REAL `Skill(zuvo:review)` dispatch — `[GATE: aggregate-review]` PASS/FOUND carries `via=zuvo:review` + a `report=<memory/reviews/...>` path that EXISTS on disk. A PASS via Explore/inline/adversarial substitute, or with no review artifact, is INVALID → re-run as the real dispatch (see Phase Final-2 NO-SUBSTITUTION)
+[ ] If `[GATE: aggregate-review] BLOCKED`: the reason is a GENUINE skill-missing/dispatch error — NOT "worktree"/"CWD reset"/"isolation" (those are solved with `git -C $repo_root` + the explicit content-SHA range and must be dispatched, never punted to the user)
 [ ] Final summary table printed with all tasks AND all smoke proofs AND the Aggregate Review block
 [ ] Backlog persistence ran for deferred findings
 [ ] Knowledge curation ran

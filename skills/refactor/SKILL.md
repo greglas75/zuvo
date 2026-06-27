@@ -671,7 +671,7 @@ A single refactor is fully reviewed by its in-skill layer (CQ post-audit + indep
 
 Do NOT auto-run `zuvo:review` after every single refactor — that is redundant ceremony the in-skill layer already covers. Instead, **detect a series and hand off once.** At completion:
 
-1. Determine the session merge-base: `MERGE_BASE = $(git merge-base HEAD <main-branch>)`.
+1. Determine the session merge-base from the worktree's own repo: `repo_root=$(git rev-parse --show-toplevel); MERGE_BASE=$(git -C "$repo_root" merge-base HEAD <main-branch>)`. The `<MERGE_BASE>..HEAD` range is content-SHA-portable across worktrees, so the surfaced command diffs correctly from any checkout — a worktree/CWD reset is never a reason to drop the hand-off.
 2. Scan `zuvo/contracts/refactor-*.json` for sibling contracts with `stage == "COMPLETE"` whose commits are ahead of `MERGE_BASE` on the current branch (i.e., landed this session, not yet reviewed together).
 3. If 2 or more sibling refactor commits exist (including this one), surface:
 
@@ -753,7 +753,7 @@ Process a queue of files through the full pipeline autonomously. Zero interactiv
 
 ### Phase 0: Parse Queue and Triage
 
-0. **Record `PRE_BATCH_SHA = $(git rev-parse HEAD)` before any triage or change.** The mandatory aggregate review at Batch Completion diffs the whole batch against this SHA.
+0. **Record `repo_root=$(git rev-parse --show-toplevel)` and `PRE_BATCH_SHA=$(git -C "$repo_root" rev-parse HEAD)` before any triage or change.** Bind git to `repo_root` (not CWD) so a worktree/CWD reset cannot target the wrong tree. The mandatory aggregate review at Batch Completion diffs the whole batch against this SHA.
 1. Read the queue file. Parse lines:
    - Blank lines and lines starting with `#`: skip (comments)
    - `- [x]`: skip (completed, resume mode)
@@ -861,13 +861,15 @@ Running `zuvo:refactor batch queue.md` on a file with existing progress: `[x]` s
 Per-file review (CQ auditor + adversarial) sees each file in isolation against its own scope fence. It **cannot** catch integration issues that emerge ACROSS refactors in the same batch: a symbol renamed in file A and consumed by file B's new module, two extractions that now duplicate each other, a re-export chain broken across several commits. After the LAST queue entry is processed and committed, run ONE aggregate review over the whole batch:
 
 ```
-Skill(skill="zuvo:review")  with the commit range  PRE_BATCH_SHA..HEAD
+HEAD_SHA=$(git -C "$repo_root" rev-parse HEAD)   # worktree-safe; SHAs are object-store-global
+Skill(skill="zuvo:review", args="${PRE_BATCH_SHA}..${HEAD_SHA}")
 ```
 
 - Runs **once per batch**, not once per file — this is the cross-file safety net, distinct from per-file review. Do not skip it because each file "already passed."
 - Honors `no-pause-protocol`: invoke `zuvo:review` non-interactively. MUST-FIX findings are applied in-loop by review's own auto-fix; RECOMMENDED/NIT go to the backlog. Do NOT stop for approval.
 - Record the outcome as `aggregate_review: <APPROVE|CHANGES|BLOCKED>` for the completion block.
-- If `zuvo:review` cannot be dispatched in this environment, record `aggregate_review: BLOCKED`, downgrade the batch VERDICT to WARN at best, and say so loudly — never report a clean batch with the aggregate review absent. (Same HARD-GATE discipline as the per-file blind audit: a real review or an honest BLOCKED, never a silent skip.)
+- **Worktree isolation / CWD reset is NOT a dispatch failure.** The `${PRE_BATCH_SHA}..${HEAD_SHA}` content SHAs resolve to the same diff from any checkout of the repo (shared object store), so review diffs correctly regardless of where its CWD lands — "review would diff the wrong branch in a worktree" is a solved problem (explicit SHA range computed via `git -C "$repo_root"`), never a reason to punt the gate.
+- If `zuvo:review` is GENUINELY un-dispatchable (skill missing / dispatch mechanism errors — not worktree), record `aggregate_review: BLOCKED`, downgrade the batch VERDICT to WARN at best, and say so loudly — never report a clean batch with the aggregate review absent. (Same HARD-GATE discipline as the per-file blind audit: a real review or an honest BLOCKED, never a silent skip.)
 
 ### Retrospective (REQUIRED)
 
