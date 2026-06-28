@@ -161,6 +161,23 @@ Distinct and unaffected: `~/.zuvo/` (HOME — global `runs.log`, `retros.*`, hel
 and `docs/` (human-authored README/ADR/runbook/spec docs). When adding a report-writing skill,
 load `report-output-location.md` and write under `$ZUVO_DIR/{audits,reports}/`.
 
+## Pipeline-entry enforcement (stop agents shipping past the gates)
+
+Production-code work must go through `zuvo:build`/`zuvo:execute` so it gets reviewed. The
+enforcement is deterministic (see `docs/pipeline.md` → "Pipeline-entry enforcement" for the
+full layer table + honest limits):
+
+- **CI gate** (`ci/zuvo-pipeline-entry.yml` + `scripts/zuvo-pipeline-entry-ci.sh`) — THE
+  GUARANTEE, fail-closed, unbypassable server-side. Enable: `cp ci/zuvo-pipeline-entry.yml .github/workflows/`.
+- **pre-push gate** — primary local block (canonical pushed range).
+- **commit-gate + Stop-gate nudges** — best-effort early warnings (bypassable by design).
+- **`hooks/lib/pipeline-gate-lib.sh`** — single-source detection (range-arg, content-keyed
+  review coverage via `memory/reviews/<base7>..<head7>-<slug>.md`, fail-open).
+- **Threshold = the contract:** ≥3 production files OR ≥150 changed lines, override with
+  `ZUVO_GATE_MIN_FILES` / `ZUVO_GATE_MIN_LINES`.
+- **Escapes (logged):** `ZUVO_ALLOW_ADHOC=1` locally; the human-applied `zuvo:adhoc-approved`
+  PR label in CI (an agent cannot self-apply it). Hooks/tests live in `hooks/` + `tests/hooks/`.
+
 ## Skill categories (51 total)
 
 | Category | Count | Skills |

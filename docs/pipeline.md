@@ -175,3 +175,62 @@ These are approximate costs per phase for a medium-complexity feature (5-10 file
 Total pipeline for a medium feature: approximately 200-300K tokens. Smaller features (3-4 tasks) run closer to 100-150K.
 
 CodeSift reduces token usage by 15-30% compared to degraded mode (Grep/Read fallback) because it returns more precise results with fewer tokens.
+
+## Pipeline-entry enforcement (stop agents shipping past the gates)
+
+The pipeline is only useful if production-code work actually goes through it. Prompts
+and the router are a soft layer — an agent can ignore them and freelance a multi-file
+feature with raw `Edit`/`Write`, never invoking `zuvo:build`/`zuvo:execute`, so no
+review ever runs. The enforcement below makes that fail deterministically.
+
+### The layers (honest about what each guarantees)
+
+| Layer | Role | Bypassable? |
+|-------|------|-------------|
+| **CI gate** (`ci/zuvo-pipeline-entry.yml` + `scripts/zuvo-pipeline-entry-ci.sh`) | **THE GUARANTEE** — fails the PR/push server-side | **No** — an agent cannot `--no-verify` or skip a server-side check (FAIL-CLOSED) |
+| **pre-push gate** (`hooks/pre-push-gate.sh`) | **primary local enforcement** — blocks the push | only via `--no-verify` → blocked by the next two rows |
+| **commit-gate + Stop-gate nudges** | **early warning** — surface before the push/CI block | yes, by design (best-effort, NOT the guarantee) |
+| **block-no-verify + git PATH-shim** | `--no-verify` defense | — |
+| **using-zuvo router rule** | soft top layer (sets intent) | yes — the gates enforce |
+
+The **signal** is content-keyed review coverage: `zuvo:review`/`zuvo:build`/`zuvo:execute`
+write `memory/reviews/<base7>..<head7>-<slug>.md` (with a machine-readable `range:`/`files:`
+header) on success only. The gates ask "is THIS range/file-set reviewed?" — a review of
+files X never whitelists unrelated files Y, and a crashed run writes nothing.
+
+### What counts as "substantial"
+
+A change is gate-eligible when, counting **production files only** (the classifier excludes
+`tests/`, `*.test.*`, `*.spec.*`, `docs/`, `*.md`, config like `*.json`/`*.yml`/`*.toml`/`*rc`,
+`*.lock`, `zuvo/`), it changes **≥3 production files OR ≥150 added+deleted lines**. Override
+with `ZUVO_GATE_MIN_FILES` (default 3) and `ZUVO_GATE_MIN_LINES` (default 150).
+
+### Enabling the CI gate (the only unbypassable layer)
+
+1. Copy the template into your repo: `cp ci/zuvo-pipeline-entry.yml .github/workflows/`
+   (it ships in the plugin under `ci/` and is installed to the cache + `~/.claude/ci/`).
+2. It runs on `pull_request` + `push` with `fetch-depth: 0` (full history for merge-base).
+3. It fails any substantial change with no covering `memory/reviews/` artifact.
+
+### Escape valves (logged)
+
+- **Local** (`ZUVO_ALLOW_ADHOC=1`): bypasses the pre-push + commit/Stop gates for one
+  invocation — use with a reason; it is the documented local escape.
+- **CI** (the `zuvo:adhoc-approved` PR label): the ONLY CI escape, and it is **human-applied**
+  — an agent cannot self-apply a GitHub label, so it cannot self-exempt the guarantee.
+
+### Honest limits
+
+- The **commit-gate and Stop-gate are nudges, not blocks** — they are bypassable by design
+  (staging tricks, harnesses without a Stop hook). They exist to surface the problem early so
+  the agent self-corrects; they are NOT load-bearing.
+- The **pre-push gate** is bypassable with `--no-verify` (which is why `block-no-verify` + the
+  opt-in PATH-shim exist) and only fires where a git pre-push hook is wired.
+- **CI is the only unbypassable layer.** If you only enable one thing, enable CI.
+- All local gates **fail OPEN**: malformed input / missing repo / git failure / missing lib →
+  exit 0. A benign error never opaque-blocks your work. The CI gate (FAIL-CLOSED) is the
+  backstop that catches anything a local fail-open lets slip.
+- Human (non-agent) commits and pushes are **exempt** (agent-env detection) — these gates
+  constrain agents, not you.
+- Codex and Antigravity have **no Stop hook**; their coverage is the commit-gate nudge +
+  pre-push + CI. Cursor inherits the Claude cache wiring.
