@@ -123,8 +123,12 @@ adversarial_gate() {
     [[ -z "$path" ]] && continue
     if [[ -e "$PWD/$path" ]]; then
       path_mtime=$(file_mtime "$PWD/$path")
-      if [[ "$path_mtime" -gt "$latest_staged_mtime" ]]; then latest_staged_mtime="$path_mtime"; fi
+    else
+      # staged but deleted from the working tree → can't trust an old mtime;
+      # treat as just-now so a stale artifact does not slip through.
+      path_mtime=$(date +%s)
     fi
+    if [[ "$path_mtime" -gt "$latest_staged_mtime" ]]; then latest_staged_mtime="$path_mtime"; fi
   done < <(git diff --cached --name-only --diff-filter=ACMR -z 2>/dev/null || true)
 
   if [[ "$latest_staged_mtime" -gt 0 && "$artifact_mtime" -lt "$latest_staged_mtime" ]]; then

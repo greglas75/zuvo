@@ -237,25 +237,32 @@ with `ZUVO_GATE_MIN_FILES` (default 3) and `ZUVO_GATE_MIN_LINES` (default 150).
 
 #### Known bypasses of the `--no-verify` defense layer (block-no-verify + git-shim)
 
-Adversarial review (gemini, 2026-06-28) confirmed the `--no-verify` defense is a *best-effort*
-layer with a residual bypass surface — which is precisely why **CI is the guarantee**. The
-gates harden the common holes (quoted metacharacters in messages, `-c core.hooksPath` in
-key=value / attached / boolean forms, `git config core.hooksPath`, `GIT_CONFIG_*` env in the
-shim, `--no-verify` abbreviations, `-uno` false-positive, `-nm` clustering). The following
-residue is **documented, not chased** — each defeats only the local best-effort layer and is
-caught server-side by the CI gate (which re-checks review coverage on the actual pushed
-content, regardless of how the commit was produced):
+Four adversarial rounds (gemini, 2026-06-28) hardened the `--no-verify` defense, which is a
+*best-effort* layer by design — **CI is the guarantee**. The string-parser (`block-no-verify`)
+now uses quote-aware `xargs` tokenization and scans EVERY git invocation in the command, so the
+following classes are **CLOSED**: quoted metacharacters in messages, newline-joined / chained
+2nd-git invocations, nested-quote encapsulation, `--no-verify` abbreviations, `-uno`/`-nm`
+clustering, `-c core.hooksPath` (key=value / attached / boolean) + `git config core.hooksPath`
++ `GIT_CONFIG_*` env injection + `git config alias.x "...--no-verify..."` creation, jq-absent
+JSON, and unmatched-quote tokenize-failure (fail-closed). The lib's coverage bug (`files:*`
+permanent whitelist) is closed too — coverage now requires range-containment AND files.
 
-- **git aliases** — `git config alias.x "commit --no-verify"; git x`. Resolving aliases would
-  require a `git config --get alias.*` subprocess per call (recursion / latency risk).
-- **quoted flag in a command STRING** — `git commit "--no-verify"` seen by the PreToolUse
-  command-string hook (`block-no-verify`). The git **PATH-shim** does catch this (it receives
-  the real, shell-tokenized argv), so an installed shim closes it; the string-parser does not.
-- **commit-gate mtime TOCTOU** — staging via `git update-index` / `git apply --cached` leaves
-  the working-tree mtime old, so the commit-gate's freshness check can miss it. The commit-gate
-  is an early *nudge* (non-blocking) by design; pre-push + CI re-evaluate the real content.
+Irreducible residue (a command-STRING parser cannot fully decide shell semantics) —
+**documented, not chased**; each defeats only the best-effort layer and is caught by the CI
+gate (which re-checks review coverage on the pushed content regardless of how it was committed):
 
-Backlog item `B-noverify-hardening` tracks an optional deeper pass (alias resolution, index
-blob-hash tracking) if the local layer ever needs to be more than best-effort. **None of these
-weaken the guarantee:** the CI gate fails any unreviewed substantial change in the merged
-range no matter how the local hooks were evaded.
+- **git alias USAGE** — `git c` where `c` is a pre-existing alias for `commit --no-verify`.
+  (Alias *creation* of a hook-skip IS blocked; resolving an alias at *use* time needs a
+  `git config --get alias.*` subprocess — recursion/latency risk.)
+- **`include.path` indirection** — `git -c include.path=evil.conf` where the included file sets
+  hooksPath. Not blocked, because `include.path` is a legitimate, common config feature and its
+  value doesn't reveal hooksPath without reading the file; over-blocking it would break real
+  workflows.
+- **commit-gate mtime** — the commit-gate is a non-blocking *nudge* anyway; pre-push + CI
+  re-evaluate the real content. (Deleted-staged-file mtime is now handled.)
+
+The git **PATH-shim** is more robust than the string parser (it receives the real shell-tokenized
+argv, so quoting/metachar bypasses don't apply to it). Backlog `B-noverify-hardening` tracks an
+optional deeper pass (alias resolution, index blob-hash tracking). **None of this weakens the
+guarantee:** the CI gate fails any unreviewed substantial change in the merged range no matter
+how the local hooks were evaded.

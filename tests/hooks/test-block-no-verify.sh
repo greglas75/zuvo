@@ -42,6 +42,16 @@ check 'git config core.hooksPath=/dev/null'         2 'R2: git config core.hooks
 check 'git commit --no-veri'                        2 'R2: abbreviated --no-veri blocked'
 check 'git commit --no-v'                           2 'R2: abbreviated --no-v blocked'
 check 'git push --no-ver'                           2 'R2: abbreviated push --no-ver blocked'
+# round-4 (fresh-review gemini): deeper string-parser holes
+check 'git status
+git commit --no-verify'                             2 'R4: newline-joined 2nd git commit --no-verify blocked'
+check 'git add . && git commit --no-verify'         2 'R4: chained 2nd git invocation blocked'
+check 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit' 2 'R4: GIT_CONFIG_* env injection blocked'
+check 'git config alias.c "commit --no-verify"'     2 'R4: alias creation of hook-skip blocked'
+# include.path is documented residue (legit config-include; not over-blocked):
+check 'git -c include.path=/tmp/x.conf commit'      0 'R4: include.path NOT over-blocked (documented residue)'
+printf '%s' "git commit --no-verify # '" | bash "$HOOK" >/dev/null 2>&1
+[ "$?" -eq 2 ] && pass "R4: unmatched-quote tokenize-fail → fail CLOSED (rc=2)" || bad "R4: unmatched quote should fail closed"
 
 # --- should ALLOW (exit 0) ---
 check 'git push -n'                               0 'push -n (dry-run) allowed'
@@ -59,6 +69,9 @@ check 'git commit -m "mentions --no-verify here"' 0 'ADV-1: --no-verify only ins
 check 'git -c user.name=x commit -m ok'           0 'benign -c override allowed'
 check 'git config user.name "Me"'                 0 'R2: benign git config allowed'
 check 'git -ccommit.gpgsign=false commit -m ok'   0 'R2: benign attached -c allowed'
+check 'git config alias.co checkout'              0 'R4: benign alias creation allowed'
+check 'git status && git log --oneline'           0 'R4: chained benign git commands allowed'
+check 'git -c include.path=/etc/gitconfig log'    0 'R4: include.path on non-gated subcmd (log) allowed'
 
 # 'echo git commit --no-verify' — echo is the command, but our parser finds the
 # 'git' TOKEN and treats 'commit' as subcommand → would block. That is acceptable

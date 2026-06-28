@@ -130,12 +130,12 @@ violates_args() {
   case "$sub" in
     commit|push|merge|cherry-pick|rebase|am)
       [ "$has_nv" -eq 1 ] && return 0
-      [ "$hookspath" -eq 1 ] && return 0 ;;
+      [ "$hookspath" -eq 1 ] && return 0 ;;   # hooksPath override on a hook-running cmd
     config)
       [ "$config_hookspath" -eq 1 ] && return 0 ;;
   esac
-  [ "$hookspath" -eq 1 ] && return 0      # core.hooksPath override on any subcommand
   [ "$sub" = "commit" ] && [ "$has_cn" -eq 1 ] && return 0
+  # hooksPath on a non-gated subcommand (log/status) is harmless → not blocked.
   return 1
 }
 
