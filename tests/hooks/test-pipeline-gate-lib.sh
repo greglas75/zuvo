@@ -141,6 +141,46 @@ ART
 pg_range_reviewed "$HEAD_A2..$HEAD6"; rc=$?
 [ "$rc" -eq 0 ] && pass "range_reviewed: files:'*' covers within its range" || bad "wildcard should be 0, got $rc"
 
+# *** content coverage across a MULTI-AGENT / contaminated range (the key fix) ***
+# Two "agents" each review only their own file; a push spanning BOTH commits is
+# covered per-FILE-CONTENT even though no single artifact covers the whole range
+# and the range mixes both agents' commits. "Review already ran in the pipeline"
+# → no redundant standalone review.
+git checkout -q -b multiagent "$HEAD6" 2>/dev/null || git checkout -q multiagent
+echo "agent1 work" > src/foo.sh; git add src/foo.sh; git commit -qm "agent1 foo"
+A1=$(git rev-parse HEAD); A1B=$(git rev-parse "$HEAD6")
+cat > memory/reviews/agent1.md <<ART
+<!-- zuvo-review -->
+range: $A1B..$A1
+files: src/foo.sh
+verdict: PASS
+-->
+ART
+echo "agent2 work" > src/bar.sh; git add src/bar.sh; git commit -qm "agent2 bar"
+A2=$(git rev-parse HEAD)
+cat > memory/reviews/agent2.md <<ART
+<!-- zuvo-review -->
+range: $A1..$A2
+files: src/bar.sh
+verdict: PASS
+-->
+ART
+pg_range_reviewed "$HEAD6..$A2"; rc=$?
+[ "$rc" -eq 0 ] && pass "content-coverage: multi-agent range covered per-file (foo↔A1, bar↔A2)" || bad "multi-agent per-file content should cover, got $rc"
+
+# one FREELANCE file (no artifact) in the range → whole push NOT covered
+echo "freelance" > src/baz.sh; git add src/baz.sh; git commit -qm "freelance baz"
+A3=$(git rev-parse HEAD)
+pg_range_reviewed "$HEAD6..$A3"; rc=$?
+[ "$rc" -eq 1 ] && pass "content-coverage: one freelance file → whole push NOT covered (incident still caught)" || bad "freelance file should block, got $rc"
+
+# re-edit a reviewed file to NEW content → its old artifact no longer covers it
+echo "tampered" >> src/foo.sh; git add src/foo.sh; git commit -qm "tamper foo after review"
+A4=$(git rev-parse HEAD)
+pg_range_reviewed "$A3..$A4"; rc=$?   # range = just the tampered-foo commit
+[ "$rc" -eq 1 ] && pass "content-coverage: tampered (re-edited) reviewed file → NOT covered" || bad "tampered file should not be covered, got $rc"
+git checkout -q feature 2>/dev/null || true
+
 # ---------- fail-open ----------
 pg_is_substantial "zzz..yyy" && bad "bad range should NOT be substantial" || pass "fail-open: bad range not substantial"
 pg_range_reviewed "zzz..yyy"; rc=$?

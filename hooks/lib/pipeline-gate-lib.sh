@@ -152,60 +152,63 @@ EOF
   return 0
 }
 
-# Does artifact <art_range> contain EVERY commit in <change_commits>?
-pg_range_covers() {
-  local root="$1" art_range="$2" change_commits="$3" art_commits c
-  [ -n "$art_range" ] || return 1
-  [ -n "$change_commits" ] || return 1
-  case "$art_range" in *..*) ;; *) return 1 ;; esac
-  art_commits="$(git -C "$root" rev-list "$art_range" 2>/dev/null)" || return 1
-  [ -n "$art_commits" ] || return 1
-  while IFS= read -r c; do
-    [ -n "$c" ] || continue
-    printf '%s\n' "$art_commits" | grep -qxF "$c" || return 1
-  done <<EOF
-$change_commits
-EOF
-  return 0
+# Blob hash of <path> at <ref> (a committish), via the repo at <root>. Empty if absent.
+pg_file_blob() {
+  git -C "$1" rev-parse "$2:$3" 2>/dev/null
 }
 
 # 0 = covered, 1 = definitively NOT covered, 2 = unknown/error (fail-open).
 #
-# Coverage is RANGE-BOUND: an artifact covers a change iff its commit range
-# CONTAINS every commit of the change AND its files-set covers the change's
-# production files (or files: *). The two conditions are ANDed — NOT ORed.
-# This is what prevents a permanent whitelist: a NEW commit (not inside any
-# reviewed range) is never covered, even if it touches a file some old artifact
-# once listed, and `files: *` only ever covers WITHIN its own reviewed range.
+# CONTENT-KEYED coverage (by file CONTENT, not commit range): a change is covered
+# iff EVERY changed production file's CURRENT content was reviewed by some artifact.
+# A file F (current blob B at the change head) is covered by artifact A iff F is in
+# A's files-set (or A.files == '*') AND F's blob at A's reviewed head equals B
+# (i.e. the exact content A reviewed is what is being shipped).
+#
+# Why content, not range:
+#   - "review already ran in the producing pipeline" (write-tests/build/execute)
+#     → that skill wrote an artifact for the file's content → covered, NO redundant
+#     standalone review needed.
+#   - multi-agent SHARED branch: a push passes iff EVERY file in it was reviewed by
+#     SOME pipeline — regardless of which agent authored which commit (the contaminated
+#     merge-base..HEAD range no longer forces reviewing other agents' work).
+#   - NO permanent whitelist: re-editing a reviewed file changes its blob → the old
+#     artifact (different blob) no longer covers it → a fresh review is required.
+#   - genuine freelance (raw Edit, no pipeline) → file's content unreviewed → blocked.
 pg_range_reviewed() {
-  local range="$1" root reviews change_files change_commits art art_range art_files
+  local range="$1" root reviews head change_files f bcur art art_range art_files art_head bart this any=0
   [ -n "$range" ] || return 2
   root="$(pg_repo_root)" || return 2
+  head="${range##*..}"; [ -n "$head" ] || return 2
+  git -C "$root" rev-parse --verify "${head}^{commit}" >/dev/null 2>&1 || return 2   # unresolvable → unknown
   reviews="$root/memory/reviews"
   [ -d "$reviews" ] || return 1            # repo present, no reviews dir → NOT covered
 
   change_files="$(pg_changed_production "$range" 2>/dev/null)"
-  change_commits="$(git -C "$root" rev-list "$range" 2>/dev/null)"
-  # Genuinely unresolvable range (bad refs → empty commit list AND git errored).
-  if [ -z "$change_commits" ] && ! git -C "$root" rev-list "$range" >/dev/null 2>&1; then
-    return 2
-  fi
-  [ -n "$change_commits" ] || return 1     # no commits to cover → nothing grants coverage
+  [ -n "$change_files" ] || return 1       # no production files → nothing grants coverage
 
-  for art in "$reviews"/*.md; do
-    [ -e "$art" ] || continue
-    grep -q '<!-- zuvo-review -->' "$art" 2>/dev/null || continue
-    art_range="$(sed -n 's/^range:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
-    art_files="$(sed -n 's/^files:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
-    # BOTH must hold: the artifact's range contains the change's commits, AND
-    # its files-set covers the change's production files (or is `*`).
-    if pg_range_covers "$root" "$art_range" "$change_commits" \
-       && pg_files_covered "$change_files" "$art_files"; then
-      return 0
-    fi
-  done
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    any=1
+    bcur="$(pg_file_blob "$root" "$head" "$f")"
+    [ -n "$bcur" ] || { return 1; }        # file gone/unreadable at head → not coverable → block
+    this=0
+    for art in "$reviews"/*.md; do
+      [ -e "$art" ] || continue
+      grep -q '<!-- zuvo-review -->' "$art" 2>/dev/null || continue
+      art_files="$(sed -n 's/^files:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
+      pg_files_covered "$f" "$art_files" || continue          # F in artifact's files-set (or *)
+      art_range="$(sed -n 's/^range:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
+      art_head="${art_range##*..}"; [ -n "$art_head" ] || continue
+      bart="$(pg_file_blob "$root" "$art_head" "$f")"
+      [ -n "$bart" ] && [ "$bart" = "$bcur" ] && { this=1; break; }   # SAME content reviewed
+    done
+    [ "$this" -eq 1 ] || return 1          # this file's current content is not reviewed → NOT covered
+  done <<EOF
+$change_files
+EOF
 
-  # No artifact's reviewed range+files covers this change → NOT covered.
+  [ "$any" -eq 1 ] && return 0             # every changed production file covered by content
   return 1
 }
 

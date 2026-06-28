@@ -46,9 +46,20 @@ verdict: APPROVE|CHANGES|MUST-FIX-FOUND|RECOMMENDED-FOUND|PASS
 - `files:` — comma-separated reviewed **production** files, OR a single `*` meaning the whole range.
 - `verdict:` — the review/build/execute outcome.
 
-`pg_range_reviewed(<change-range>)` returns TRUE iff some artifact's `range` **contains** the
-change's commits OR its `files` set **⊇** the change's production files. An UNRELATED artifact
-(covers other files only) is NOT coverage.
+**Coverage is content-keyed by file CONTENT (blob), not by commit range.** A change is covered
+iff EVERY changed production file's CURRENT content was reviewed by some artifact: file `F`
+(current blob `B`) is covered by artifact `A` iff `F` is in `A`'s `files:` set (or `files: *`)
+AND `F`'s blob at `A`'s reviewed head (the `<head>` of its `range:`) equals `B`. Consequences:
+- **"review already ran in the producing pipeline"** (`write-tests`/`build`/`execute`/`review`
+  all write this artifact on success) → the file's content is already reviewed → **no
+  redundant standalone review** is demanded.
+- **multi-agent shared branch:** a push passes iff EVERY file in it was reviewed by SOME
+  pipeline — regardless of which agent authored which commit. A contaminated `merge-base..HEAD`
+  range does NOT force re-reviewing other agents' already-reviewed work.
+- **no permanent whitelist:** re-editing a reviewed file changes its blob, so the old artifact
+  (different content) no longer covers it — a fresh review is required.
+- **the incident still caught:** a genuinely freelanced file (raw `Edit`/`Write`, no pipeline)
+  has unreviewed content → not covered → blocked.
 
 After the header, the normal human-readable report body follows.
 

@@ -657,6 +657,15 @@ Do NOT treat a file as complete unless both `Blind Audit` and `Adversarial` colu
 
 1. **Backlog persistence:** write unfixed issues to `memory/backlog.md`
 2. **Knowledge curation** per `knowledge-curate.md`
+2b. **Content-keyed review artifact (on success only):** if this run modified any
+   **production** files (the pipeline-entry classifier excludes `*.test.*`/`*.spec.*`
+   test files, so a pure test-writing run has nothing to record here), write the
+   content-keyed artifact `memory/reviews/<base7>..<head7>-<slug>.md` with the
+   `range:`/`files:` header per `../../shared/includes/review-artifact.md`, listing
+   those production files. This run's blind-audit + adversarial review ALREADY reviewed
+   them, so the artifact records that content as reviewed — the pre-push/CI gates then
+   accept it **without demanding a redundant standalone `zuvo:review`**. Skip when only
+   test/docs files changed (those are never gate-eligible).
 
 ### Retrospective (REQUIRED)
 
@@ -702,6 +711,7 @@ COMPLETION GATE CHECK
 [ ] Step 4: Adversarial review ran (result: clean|Nfindings|skipped|blocked|not_run)
 [ ] Step 5: coverage.md row has Status + Blind Audit + Adversarial columns filled
 [ ] Step 5: backlog.md updated if any unfixed findings
+[ ] Step 2b: content-keyed memory/reviews artifact written IF production files changed (skip if test-only)
 [ ] Final test run: all tests pass (N/N)
 ```
 

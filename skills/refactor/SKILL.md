@@ -665,6 +665,16 @@ After committing: `index_file(path=<changed-file>)` for every changed file.
 
 Read `../../shared/includes/backlog-protocol.md`. Persist ONLY the items Phase 3.5 deferred — fixes needing files outside the scope fence, and behavior decisions the user declined. **Mechanical bugs were already fixed in Phase 3.5; they do NOT belong in the backlog.** Persist to `memory/backlog.md`. Fingerprint: `file|rule-id|signature`. Source: `zuvo:refactor` or `zuvo:refactor/cq-auditor`. Deduplicate per `backlog-protocol.md`.
 
+### Content-keyed review artifact (on success only)
+
+A refactor that completed its in-skill review layer (CQ post-audit + blind audit + adversarial)
+has ALREADY reviewed the production files it changed. Record that so the pipeline-entry gates
+do not demand a redundant standalone review: write `memory/reviews/<base7>..<head7>-<slug>.md`
+with the `range:`/`files:` header per `../../shared/includes/review-artifact.md`, listing the
+production files this refactor touched (range head = the refactor/fix commit). Coverage is
+content-keyed (by blob), so this only vouches for the exact reviewed content. Skip in no-commit
+mode (nothing committed to vouch for).
+
 ### Aggregate Review Hand-off (single FULL mode)
 
 A single refactor is fully reviewed by its in-skill layer (CQ post-audit + independent blind audit + adversarial). That layer is scoped to ONE contract's scope fence. When several refactors run back-to-back as separate invocations (a refactor sweep — the common real-world case), nothing reviews their **combined** blast radius: a symbol renamed in refactor A and consumed by refactor B's new module, two extractions that now duplicate each other, a re-export chain broken across several commits.
