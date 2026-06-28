@@ -76,6 +76,12 @@ else
   bad "(6) antigravity build missing block-no-verify or lib (tail: $(printf '%s' "$antig_log" | tail -3))"
 fi
 
+# (6b) install_codex + install_antigravity must ship hooks/lib/ recursively (regression:
+# v1.3.122 shipped with non-recursive `cp $DIST/hooks/*` that dropped lib/ on Codex+Antigravity)
+libcopies=$(grep -c 'cp -R "\$DIST/hooks/lib"' "$ROOT/scripts/install.sh" 2>/dev/null || echo 0)
+[ "${libcopies:-0}" -ge 3 ] && pass "(6b) install ships hooks/lib recursively to codex+antigravity ($libcopies sites)" \
+  || bad "(6b) install drops hooks/lib (found $libcopies recursive lib copies, need >=3)"
+
 # (7) syntax check on all four scripts (shellcheck absent → bash -n)
 for s in scripts/install.sh scripts/build-codex-skills.sh scripts/build-antigravity-skills.sh scripts/build-cursor-skills.sh; do
   if command -v shellcheck >/dev/null 2>&1; then

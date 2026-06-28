@@ -661,9 +661,11 @@ install_codex() {
       cp "$DIST/.codex-plugin/plugin.json" "$CODEX_PLUGIN_CACHE/.codex-plugin/plugin.json"
     fi
 
-    # Copy hook scripts
+    # Copy hook scripts + hooks/lib/ (recursive — the pre-push + commit gates SOURCE
+    # pipeline-gate-lib.sh; a non-recursive cp would drop lib/ and degrade the gates).
     if [[ -d "$DIST/hooks" ]]; then
       cp "$DIST"/hooks/* "$CODEX_PLUGIN_CACHE/hooks/" 2>/dev/null || true
+      [[ -d "$DIST/hooks/lib" ]] && { cp -R "$DIST/hooks/lib" "$CODEX_PLUGIN_CACHE/hooks/" 2>/dev/null || true; chmod +x "$CODEX_PLUGIN_CACHE"/hooks/lib/*.sh 2>/dev/null || true; }
       chmod +x "$CODEX_PLUGIN_CACHE"/hooks/*.sh 2>/dev/null || true
       chmod +x "$CODEX_PLUGIN_CACHE"/hooks/session-start 2>/dev/null || true
     fi
@@ -700,6 +702,7 @@ install_codex() {
     if [[ -d "$DIST/hooks" ]]; then
       mkdir -p "$CODEX_PLUGIN_DIR/hooks"
       cp "$DIST"/hooks/* "$CODEX_PLUGIN_DIR/hooks/" 2>/dev/null || true
+      [[ -d "$DIST/hooks/lib" ]] && { cp -R "$DIST/hooks/lib" "$CODEX_PLUGIN_DIR/hooks/" 2>/dev/null || true; chmod +x "$CODEX_PLUGIN_DIR"/hooks/lib/*.sh 2>/dev/null || true; }
       chmod +x "$CODEX_PLUGIN_DIR"/hooks/*.sh 2>/dev/null || true
       chmod +x "$CODEX_PLUGIN_DIR"/hooks/session-start 2>/dev/null || true
     fi
@@ -909,10 +912,11 @@ install_antigravity() {
     ok "Scripts installed"
   fi
 
-  # Step 7: Copy hooks + merge into ~/.gemini/settings.json
+  # Step 7: Copy hooks (+ hooks/lib/ recursively — gates source the lib) + merge settings.json
   if [[ -d "$DIST/hooks" ]]; then
     mkdir -p "$HOME/.gemini/antigravity/hooks"
     cp "$DIST"/hooks/* "$HOME/.gemini/antigravity/hooks/" 2>/dev/null || true
+    [[ -d "$DIST/hooks/lib" ]] && { cp -R "$DIST/hooks/lib" "$HOME/.gemini/antigravity/hooks/" 2>/dev/null || true; chmod +x "$HOME/.gemini/antigravity"/hooks/lib/*.sh 2>/dev/null || true; }
     chmod +x "$HOME/.gemini/antigravity"/hooks/*.sh 2>/dev/null || true
     chmod +x "$HOME/.gemini/antigravity/hooks/session-start" 2>/dev/null || true
     ok "Hook scripts installed"
