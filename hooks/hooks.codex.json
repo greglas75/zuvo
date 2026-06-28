@@ -18,6 +18,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash ./hooks/block-no-verify.sh",
+            "async": false
+          },
+          {
+            "type": "command",
             "command": "bash ./hooks/pre-push-gate.sh",
             "async": false
           },

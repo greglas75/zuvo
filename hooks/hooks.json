@@ -18,6 +18,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/block-no-verify.sh\"",
+            "async": false
+          },
+          {
+            "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/pre-push-gate.sh\"",
             "async": false
           },
@@ -88,6 +93,11 @@
       {
         "matcher": "*",
         "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/zuvo-stop-pipeline-gate.sh\"",
+            "async": false
+          },
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/zuvo-rewake-reset.sh\"",
