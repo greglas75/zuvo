@@ -758,6 +758,15 @@ Persist ALL findings to `memory/backlog.md`:
 
 Save the full report to `memory/reviews/YYYY-MM-DD-<scope>.md`.
 
+**Content-keyed pipeline-entry artifact (REQUIRED — on successful completion only).**
+In addition (or as the same file's first lines), write the content-keyed review artifact
+`memory/reviews/<base7>..<head7>-<slug>.md` carrying the machine-readable
+`range:` / `files:` header per `../../shared/includes/review-artifact.md`. This is the
+signal the pipeline-entry gates read (`pg_range_reviewed`) — the path encodes the reviewed
+`<base7>..<head7>` range and the `files:` line records the reviewed production files (or `*`).
+Write it **only on success** — a crashed/aborted review must leave no artifact, so a failed
+run never grants pipeline coverage. Skip for `staged`/`uncommitted` scope (no committed range).
+
 ### Tag Reviewed Commits (per-commit audit trail)
 
 Naming convention: `reviewed/<short-hash>` tags the individual commits that were examined. This is distinct from the post-execute wrapper tag (`review-YYYY-MM-DD-<slug>`) that marks the fix commit produced by Phase 4.
@@ -802,6 +811,7 @@ COMPLETION GATE CHECK
 [ ] Backlog persistence ran (memory/backlog.md updated or explicitly N/A)
 [ ] No localized RECOMMENDED silently backlogged — every backlogged RECOMMENDED carries a defer-reason of [NIT] or [structural-refactor (multi-file)]; any single-file fix in backlog = drift, route it to Phase 4 instead
 [ ] Report saved to memory/reviews/YYYY-MM-DD-<scope>.md (TIER 1+)
+[ ] Content-keyed artifact memory/reviews/<base7>..<head7>-<slug>.md written with range:/files: header (on success; skip staged/uncommitted) — pipeline-entry signal
 [ ] reviewed/<hash> tags created (skip for staged/uncommitted scope)
 [ ] Knowledge curation ran (if knowledge-curate.md loaded)
 [ ] Retrospective ran OR explicit "RETRO: skipped (<reason>)" printed

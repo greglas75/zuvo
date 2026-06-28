@@ -686,6 +686,17 @@ substantial one dispatches `Skill(skill="zuvo:docs", args="update <target>")`. T
 no-docs path is an explicit `[DOC: N/A — internal-only, no behavior/API/contract change]`.
 Record the doc paths for the `### Documentation` line in the BUILD COMPLETE block.
 
+### 4.7b Content-keyed review artifact (REQUIRED — on success only)
+
+After verify + acceptance proofs pass (and ONLY then), write the content-keyed review
+artifact `memory/reviews/<base7>..<head7>-<slug>.md` carrying the machine-readable
+`range:` / `files:` header per `../../shared/includes/review-artifact.md`. Compute the
+range worktree-safe (`git -C "$repo_root" merge-base HEAD <default-branch>..HEAD`) and list
+the production files this build touched in `files:` (or `*`). This is the signal the
+pipeline-entry gates read (`pg_range_reviewed`) so the just-built, reviewed change can be
+pushed without re-blocking. Write it **only on success** — if any verification or acceptance
+proof FAILED/BLOCKED, write nothing, so a failed build never grants itself pipeline coverage.
+
 ### 4.8 Retrospective (REQUIRED — no opt-out)
 
 Follow the retrospective protocol from `retrospective.md`.
@@ -709,6 +720,7 @@ COMPLETION GATE CHECK
 [ ] Acceptance Proofs (Phase 4.2b) — every AP ran and VERIFIED, artifact paths recorded
 [ ] All verification commands ran and exited 0
 [ ] Documentation created/updated (per documentation-mandate.md) or explicit [DOC: N/A — <reason>]
+[ ] Content-keyed artifact memory/reviews/<base7>..<head7>-<slug>.md written with range:/files: header (on success only — pipeline-entry signal)
 [ ] Retrospective ran (no "trivial session" opt-out)
 [ ] Backlog updated with deferred findings or "none"
 [ ] Run: line printed and appended to log

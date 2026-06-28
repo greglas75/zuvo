@@ -848,6 +848,8 @@ Rationale: prior practice was to either (a) skip post-execute review entirely or
 
 6. **Carry the verdict into Final Summary.** Add an `### Aggregate Review` block (see Final Summary template) listing must/rec/nit counts, deployment risk, and the artifact path. The user reads ONE place to know what `/zuvo:review` would have said.
 
+7. **Write the content-keyed pipeline-entry artifact (REQUIRED — on success only).** After the aggregate review passes, ensure a content-keyed review artifact `memory/reviews/<base7>..<head7>-<slug>.md` exists for the whole plan range, carrying the machine-readable `range:` / `files:` header per `../../shared/includes/review-artifact.md`. Use the same `${BASE_SHA}..${HEAD_SHA}` computed in step 1 (`git -C "$repo_root"`, worktree-safe) and list the production files the plan touched in `files:` (or `*`). This is the signal the pre-push + CI gates read (`pg_range_reviewed`) so the just-completed, reviewed work can be pushed without re-blocking. Write it **only on success** — if Phase Final-2 ended `BLOCKED`, write nothing, so an unreviewed plan never grants itself pipeline coverage. (The `zuvo:review` dispatch in step 2 already emits a `memory/reviews/` report; this step guarantees that artifact carries the `range:`/`files:` header for the full plan range.)
+
 ### Session State Close
 
 Set `status: completed` in `zuvo/context/execution-state.md`. Update `zuvo/plans/active-plan.md` to `status: completed`.
@@ -982,6 +984,7 @@ COMPLETION GATE CHECK (per task):
 COMPLETION GATE CHECK (final):
 [ ] Whole-feature Smoke Proofs ran (or [GATE: smoke-verified] / explicit "Not applicable" with justification)
 [ ] End-of-plan aggregate review ran (or [GATE: aggregate-review] PASS|RECOMMENDED-FOUND|MUST-FIX-FOUND|SKIPPED|NO-OP|BLOCKED — never silently omitted)
+[ ] Content-keyed artifact memory/reviews/<base7>..<head7>-<slug>.md written with range:/files: header for the plan range (on success only — pipeline-entry signal read by pre-push/CI gates)
 [ ] Aggregate review was the REAL `Skill(zuvo:review)` dispatch — `[GATE: aggregate-review]` PASS/FOUND carries `via=zuvo:review` + a `report=<memory/reviews/...>` path that EXISTS on disk. A PASS via Explore/inline/adversarial substitute, or with no review artifact, is INVALID → re-run as the real dispatch (see Phase Final-2 NO-SUBSTITUTION)
 [ ] If `[GATE: aggregate-review] BLOCKED`: the reason is a GENUINE skill-missing/dispatch error — NOT "worktree"/"CWD reset"/"isolation" (those are solved with `git -C $repo_root` + the explicit content-SHA range and must be dispatched, never punted to the user)
 [ ] Final summary table printed with all tasks AND all smoke proofs AND the Aggregate Review block
