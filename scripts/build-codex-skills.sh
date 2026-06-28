@@ -16,8 +16,12 @@ echo "  Source: $PLUGIN_DIR"
 echo "  Output: $DIST"
 echo ""
 
-# Clean previous build (preserve manually-created agents if any)
-rm -rf "$DIST/skills" "$DIST/rules" "$DIST/protocols" "$DIST/shared"
+# Clean previous build. $DIST/agents MUST be cleaned too: the TOML loop below
+# skips regeneration when a file already exists, so leaving stale TOMLs here
+# froze every agent config at its first-ever build (model/sandbox/instruction
+# changes never propagated). All TOMLs are generated from skills/*/agents/*.md,
+# so a clean rebuild loses nothing — there are no hand-authored TOMLs in dist.
+rm -rf "$DIST/skills" "$DIST/rules" "$DIST/protocols" "$DIST/shared" "$DIST/agents"
 mkdir -p "$DIST/skills" "$DIST/agents"
 
 # --- Platform Block Stripping (reusable) ---
@@ -668,7 +672,8 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
     prefix=$(get_skill_prefix "$skill")
     toml_name="${prefix}-${name}"
 
-    # Check for existing manually-created TOML (write-e2e)
+    # $DIST/agents is cleaned at build start, so this only guards against a
+    # duplicate write within the same run (two source .md mapping to one name).
     if [ -f "$DIST/agents/${toml_name}.toml" ]; then
       echo "    toml: $toml_name (existing, kept)"
     else

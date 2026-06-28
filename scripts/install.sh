@@ -593,11 +593,28 @@ install_codex() {
   SKILL_COUNT=$(ls -d "$HOME/.codex/skills"/*/ 2>/dev/null | wc -l | tr -d ' ')
   ok "Skills installed ($SKILL_COUNT total)"
 
-  # Step 4: Copy agents (TOML configs)
+  # Step 4: Copy agents (TOML configs), then prune zuvo-managed orphans.
   if [[ -d "$DIST/agents" ]] && ls "$DIST"/agents/*.toml &>/dev/null; then
     cp "$DIST"/agents/*.toml "$HOME/.codex/agents/"
+    # Prune stale zuvo TOMLs: present in ~/.codex/agents but no longer in the
+    # fresh dist (e.g. a renamed/removed skill like content-optimize). Only
+    # delete files we manage — identified by the "zuvo:" marker the generator
+    # writes into every TOML — never the user's own Codex agents.
+    local pruned=0 installed base
+    for installed in "$HOME/.codex/agents"/*.toml; do
+      [[ -f "$installed" ]] || continue
+      base=$(basename "$installed")
+      if [[ ! -f "$DIST/agents/$base" ]] && grep -q "zuvo:" "$installed" 2>/dev/null; then
+        rm -f "$installed"
+        pruned=$((pruned + 1))
+      fi
+    done
     AGENT_COUNT=$(ls "$HOME/.codex/agents"/*.toml 2>/dev/null | wc -l | tr -d ' ')
-    ok "Agent TOMLs installed ($AGENT_COUNT total)"
+    if [[ $pruned -gt 0 ]]; then
+      ok "Agent TOMLs installed ($AGENT_COUNT total, $pruned stale pruned)"
+    else
+      ok "Agent TOMLs installed ($AGENT_COUNT total)"
+    fi
   fi
 
   # Step 5: Copy shared includes
