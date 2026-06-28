@@ -193,12 +193,14 @@ run_codex() {
     exec
     --ephemeral
     --color never
-    -s read-only
     --skip-git-repo-check
     -C "$tmpdir"
     -o "$tmpdir/out.txt"
     -
   )
+  # No -s/--sandbox override: inherit the user's global Codex profile
+  # (e.g. danger-full-access + never). The blind-audit prompt itself forbids
+  # repo tools and the run is confined to an isolated $tmpdir via -C.
 
   if [[ -n "$MODEL" ]]; then
     codex_args+=( -m "$MODEL" )

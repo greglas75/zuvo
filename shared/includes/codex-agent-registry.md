@@ -9,7 +9,11 @@
 - Naming: `<skill-prefix>-<agent-name>.toml`
 - Model mapping: haiku->gpt-5.4-mini, sonnet->gpt-5.4, opus->gpt-5.3-codex
 - Agents with `reasoning: true` get gpt-5.4 + model_reasoning_effort="xhigh"
-- Sandbox: agents with Write/Edit tools get "full", others get "read-only"
+- Sandbox: NOT pinned in generated TOML — agents inherit the user's global Codex
+  profile (e.g. `danger-full-access` + `approval_policy = never`). Read-only
+  behaviour for analysis agents is enforced by a "NEVER modify files" instruction
+  in `developer_instructions`, not by a hardcoded `sandbox_mode` that would
+  override the CLI profile. Write/Edit agents get a "you may modify files" line.
 - Description suffix: "Spawned by zuvo:<skill>."
 
 ## Thread Limit

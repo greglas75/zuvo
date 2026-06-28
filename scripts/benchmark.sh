@@ -213,13 +213,19 @@ run_codex_fast() {
   local tmp_home="$JSON_TMPDIR/codex_home_fast"
   mkdir -p "$tmp_home"
 
+  # Isolated CODEX_HOME doesn't read ~/.codex/config.toml — pin the profile keys
+  # explicitly (danger-full-access + never) instead of the old read-only sandbox.
   [[ -f "$real_home/auth.json" ]] && cp "$real_home/auth.json" "$tmp_home/"
-  printf 'model = "gpt-5.4"\n' > "$tmp_home/config.toml"
+  {
+    printf 'model = "gpt-5.4"\n'
+    printf 'sandbox_mode = "danger-full-access"\n'
+    printf 'approval_policy = "never"\n'
+  } > "$tmp_home/config.toml"
 
   local err_file="$JSON_TMPDIR/err_codex-fast.txt"
   printf '%s' "$TASK_PROMPT" \
     | CODEX_HOME="$tmp_home" timeout "$PROVIDER_TIMEOUT" \
-      "$codex_cmd" exec --sandbox read-only 2>"$err_file"
+      "$codex_cmd" exec 2>"$err_file"
   # Exit code propagates: 0=success, 124=timeout, other=error
 }
 

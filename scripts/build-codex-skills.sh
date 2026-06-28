@@ -219,15 +219,17 @@ generate_agent_toml() {
   local is_reasoning
   is_reasoning=$(head -20 "$agent_md" | grep -c "^reasoning: true" || true)
 
-  local prefix codex_model sandbox capability_line
+  local prefix codex_model capability_line
   prefix=$(get_skill_prefix "$skill")
   codex_model=$(map_model "$model")
 
+  # Sandbox is intentionally NOT pinned here. Generated agents inherit the
+  # user's global Codex profile (e.g. danger-full-access + never) instead of a
+  # hardcoded sandbox_mode that would override the CLI profile. Analysis agents
+  # stay read-only via the instruction below, not via a seatbelt sandbox.
   if [ "$has_write" -gt 0 ]; then
-    sandbox="full"
     capability_line="You ARE allowed to create and modify files. Follow write policy strictly."
   else
-    sandbox="read-only"
     capability_line="NEVER modify files -- analyze and report only."
   fi
 
@@ -246,7 +248,6 @@ generate_agent_toml() {
 name = "${toml_name}"
 description = "${full_desc}"
 model = "${codex_model}"
-sandbox_mode = "${sandbox}"
 developer_instructions = """
 You are a ${agent_name} for the zuvo:${skill} skill.
 Read your full instructions at ~/.codex/skills/${skill}/agents/${agent_name}.md

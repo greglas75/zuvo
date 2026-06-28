@@ -668,15 +668,22 @@ run_codex() {
   local tmp_home="$JSON_TMPDIR/codex_home_${provider_name}"
   mkdir -p "$tmp_home"
 
-  # Copy auth (required) but create empty config (no MCP servers)
+  # Copy auth (required) but create minimal config (no MCP servers).
+  # The isolated CODEX_HOME does NOT read ~/.codex/config.toml, so "inherit the
+  # global profile" means pinning the same keys here: danger-full-access + never,
+  # replacing the old hardcoded read-only sandbox.
   [[ -f "$real_home/auth.json" ]] && cp "$real_home/auth.json" "$tmp_home/"
-  printf 'model = "%s"\n' "$model" > "$tmp_home/config.toml"
+  {
+    printf 'model = "%s"\n' "$model"
+    printf 'sandbox_mode = "danger-full-access"\n'
+    printf 'approval_policy = "never"\n'
+  } > "$tmp_home/config.toml"
 
   local err_file="$JSON_TMPDIR/err_${provider_name}.txt"
   local status=0
   printf '%s' "$REVIEW_PROMPT" \
     | CODEX_HOME="$tmp_home" timeout "$PROVIDER_TIMEOUT" \
-      "$codex_cmd" exec --sandbox read-only 2>"$err_file" \
+      "$codex_cmd" exec 2>"$err_file" \
     || status=$?
   if [[ $status -ne 0 ]]; then
     if [[ $status -eq 124 ]]; then
