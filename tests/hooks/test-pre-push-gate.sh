@@ -90,8 +90,41 @@ printf 'refs/heads/x %s refs/heads/x %s\n' "$FHEAD" "$MAIN" | ZUVO_AGENT=1 PG_RE
 printf 'refs/heads/feature NOTAHEXSHA refs/heads/feature %s\n' "$MAIN" | agent_gate >/dev/null 2>&1
 [ "$?" -eq 0 ] && pass "(h3) garbled sha line skipped → fail-open (exit 0)" || bad "(h3) garbled sha should skip"
 
-# legacy mode preserved: 'git push' JSON with no runs.log review (fresh HOME) → warns, exit 0
-printf '{"command":"git push origin feature"}\n' | env HOME="$TMP/fakehome" ZUVO_AGENT=1 PG_REPO_ROOT="$TMP" bash "$GATE" >/dev/null 2>&1
-[ "$?" -eq 0 ] && pass "legacy: git push JSON, no runs.log → warn+pass (exit 0)" || bad "legacy mode regressed"
+# --- PreToolUse mode (Claude/Codex): content-keyed via merge-base..HEAD ---
+# HEAD = the 3-prod-file commit, so merge-base(main)..HEAD = src/a,b,c only.
+git checkout -q -B ptu "$FHEAD" 2>/dev/null
+rm -f memory/reviews/cov.md
+pj() { printf '{"command":"git push origin ptu"}'; }
+
+# (p1) agent + substantial unreviewed → BLOCK (works for Claude AND Codex via PreToolUse)
+pj | env ZUVO_AGENT=1 PG_REPO_ROOT="$TMP" bash "$GATE" >/dev/null 2>&1
+[ "$?" -eq 1 ] && pass "(p1) PreToolUse: agent push substantial unreviewed → BLOCK (exit 1)" || bad "(p1) should block"
+
+# (p2) content-covering artifact → pass (no redundant review)
+mkdir -p memory/reviews
+cat > memory/reviews/cov.md <<ART
+<!-- zuvo-review -->
+range: $MAIN..$FHEAD
+files: *
+verdict: PASS
+-->
+ART
+pj | env ZUVO_AGENT=1 PG_REPO_ROOT="$TMP" bash "$GATE" >/dev/null 2>&1
+[ "$?" -eq 0 ] && pass "(p2) PreToolUse: content-covered → pass (exit 0)" || bad "(p2) covered should pass"
+
+# (p3) ZUVO_ALLOW_ADHOC → pass
+rm -f memory/reviews/cov.md
+pj | env ZUVO_ALLOW_ADHOC=1 ZUVO_AGENT=1 PG_REPO_ROOT="$TMP" bash "$GATE" >/dev/null 2>&1
+[ "$?" -eq 0 ] && pass "(p3) PreToolUse: ZUVO_ALLOW_ADHOC=1 → pass (exit 0)" || bad "(p3) adhoc should pass"
+
+# (p4) human (no agent env) → pass even though unreviewed (G8)
+pj | env -i PATH="$PATH" PG_REPO_ROOT="$TMP" bash "$GATE" >/dev/null 2>&1
+[ "$?" -eq 0 ] && pass "(p4) PreToolUse: human push exempt (exit 0)" || bad "(p4) human should pass"
+
+# (p5) legacy fallback when lib unavailable: point at a dir with no hooks/lib → runs.log path
+NOLIB="$TMP/nolibhome"; mkdir -p "$NOLIB"
+cp "$GATE" "$NOLIB/pre-push-gate.sh"   # copied alone → no sibling lib/ → PG_LIB_LOADED unset
+printf '{"command":"git push origin ptu"}\n' | env HOME="$TMP/fakehome" ZUVO_AGENT=1 PG_REPO_ROOT="$TMP" bash "$NOLIB/pre-push-gate.sh" >/dev/null 2>&1
+[ "$?" -eq 0 ] && pass "(p5) lib-absent → legacy runs.log fallback (no runs.log → warn+pass)" || bad "(p5) legacy fallback regressed"
 
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "SOME FAILED"; exit 1; fi

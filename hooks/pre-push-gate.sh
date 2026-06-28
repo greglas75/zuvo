@@ -88,28 +88,58 @@ EOF
   return 0
 }
 
-# ---- mode 2: legacy PreToolUse runs.log review check (preserved) ------------
+# ---- mode 2: PreToolUse (Claude/Codex) — content-keyed block via merge-base ---
+# git-native stdin (canonical ref range) isn't available here, so we evaluate the
+# branch's work as merge-base(HEAD, default)..HEAD. With the content-keyed lib this
+# blocks an agent's `git push` of substantial unreviewed work on BOTH Claude and
+# Codex (Codex has no Stop hook, so this is its main local block). Coverage is
+# per-file-content, so already-pipeline-reviewed work + multi-agent shared branches
+# pass; only genuinely unreviewed file content blocks. Falls back to the legacy
+# runs.log check only when the lib is unavailable.
 gate_legacy() {
   case "$INPUT" in
     *"git push"*|*"gh pr create"*) ;;
     *) return 0 ;;
   esac
 
+  if [ "${PG_LIB_LOADED:-}" = "1" ]; then
+    pg_is_agent_env || return 0          # human push exempt (G8)
+    if pg_allow_adhoc; then
+      echo "zuvo pre-push: ZUVO_ALLOW_ADHOC=1 set — pipeline gate bypassed (logged)." >&2
+      return 0
+    fi
+    local range rr
+    range="$(pg_mergebase_range 2>/dev/null)" || return 0   # can't compute → fail-open
+    [ -n "$range" ] || return 0
+    pg_is_substantial "$range" || return 0
+    pg_range_reviewed "$range"; rr=$?
+    if [ "$rr" -eq 1 ]; then              # definitively NOT content-reviewed → block
+      {
+        echo "BLOCKED: pushing substantial unreviewed work ($range)."
+        echo "  Some changed production file's content has no covering review in memory/reviews/."
+        echo "  Fix: run zuvo:build / zuvo:review on it (a producing pipeline writes the covering"
+        echo "       artifact), OR isolate your work in a worktree so the range is clean."
+        echo "  Escape (logged): ZUVO_ALLOW_ADHOC=1 git push"
+        echo "  Note: the CI gate enforces the same check server-side."
+      } >&2
+      return 1
+    fi
+    return 0                              # reviewed, or unknown(2) → fail-open (CI is backstop)
+  fi
+
+  # --- legacy fallback (lib unavailable): runs.log review check ---
   local PROJECT BRANCH LOG
   PROJECT=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
   BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
   LOG="$HOME/.zuvo/runs.log"
-
   if [ ! -f "$LOG" ]; then
     echo "WARNING: No ~/.zuvo/runs.log found. Run zuvo:review before pushing for full enforcement." >&2
     return 0
   fi
-
   if awk -F'\t' -v proj="$PROJECT" -v branch="$BRANCH" \
     '$2 == "review" && $3 == proj && $10 == branch { found=1 } END { exit !found }' "$LOG"; then
     return 0
   fi
-
   echo "BLOCKED: zuvo:review not found in runs.log for ${PROJECT}/${BRANCH}." >&2
   echo "Run /review or zuvo:review before pushing." >&2
   return 1
