@@ -38,11 +38,13 @@ fi
 out=$(stop '{"stop_hook_active": true}'); rc=$?
 [ "$rc" -eq 0 ] && pass "(b) stop_hook_active:true → loop guard exit 0" || bad "(b) loop guard failed (rc=$rc)"
 
-# (c) reviewed → exit 0
+# (c) reviewed → exit 0  (artifact must cover the REAL merge-base..HEAD range)
 mkdir -p "$TMP/memory/reviews"
-cat > "$TMP/memory/reviews/cov.md" <<'ART'
+MB=$(git -C "$TMP" merge-base HEAD main 2>/dev/null || git -C "$TMP" rev-parse main)
+FH=$(git -C "$TMP" rev-parse HEAD)
+cat > "$TMP/memory/reviews/cov.md" <<ART
 <!-- zuvo-review -->
-range: dead..beef
+range: $MB..$FH
 files: src/a.sh, src/b.sh, src/c.sh
 verdict: PASS
 -->

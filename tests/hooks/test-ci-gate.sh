@@ -50,9 +50,9 @@ ZUVO_CI_RANGE="$SMALL..$DOCS" ci >/dev/null 2>&1
 
 # (b) reviewed range → 0
 mkdir -p memory/reviews
-cat > memory/reviews/cov.md <<'ART'
+cat > memory/reviews/cov.md <<ART
 <!-- zuvo-review -->
-range: dead..beef
+range: $MAIN..$FHEAD
 files: src/a.sh, src/b.sh, src/c.sh
 verdict: PASS
 -->

@@ -36,11 +36,13 @@ else
   bad "(a) expected nudge + exit 0 (rc=$rc, out=$out)"
 fi
 
-# (b) reviewed → silent, exit 0
+# (b) reviewed → silent, exit 0  (artifact must cover the REAL merge-base..HEAD range)
 mkdir -p "$TMP/memory/reviews"
-cat > "$TMP/memory/reviews/cov.md" <<'ART'
+MB=$(git -C "$TMP" merge-base HEAD main 2>/dev/null || git -C "$TMP" rev-parse main)
+FH=$(git -C "$TMP" rev-parse HEAD)
+cat > "$TMP/memory/reviews/cov.md" <<ART
 <!-- zuvo-review -->
-range: dead..beef
+range: $MB..$FH
 files: src/a.sh, src/b.sh, src/c.sh
 verdict: PASS
 -->

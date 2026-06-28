@@ -143,16 +143,18 @@ staged_substantial() {
   # substantial in the STAGED diff alone (the commit crossing the threshold)
   local root f a d p nfiles=0 lines=0
   root="$(pg_repo_root)" || return 1
-  while IFS= read -r f; do
+  # --no-renames: a rename from an excluded dir into production reports as
+  # delete(old)+add(new) with clean paths, so the new production code is counted.
+  while IFS= read -r -d '' f; do
     [ -n "$f" ] || continue; pg_is_production "$f" && nfiles=$((nfiles+1))
-  done < <(git -C "$root" diff --cached --name-only --diff-filter=ACMR 2>/dev/null)
+  done < <(git -C "$root" -c core.quotePath=false diff --cached --name-only --no-renames --diff-filter=ACMR -z 2>/dev/null)
   [ "$nfiles" -ge "$(pg_min_files)" ] && return 0
   while IFS=$'\t' read -r a d p; do
     [ -n "$p" ] || continue; pg_is_production "$p" || continue
     [ "$a" = "-" ] && a=0; [ "$d" = "-" ] && d=0
     case "$a$d" in *[!0-9]*) continue ;; esac
     lines=$((lines+a+d))
-  done < <(git -C "$root" diff --cached --numstat 2>/dev/null)
+  done < <(git -C "$root" -c core.quotePath=false diff --cached --numstat --no-renames 2>/dev/null)
   [ "$lines" -ge "$(pg_min_lines)" ] && return 0
   return 1
 }

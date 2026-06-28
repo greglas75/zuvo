@@ -90,11 +90,13 @@ pg_changed_production() {
   local range="$1" root f
   [ -n "$range" ] || return 1
   root="$(pg_repo_root)" || return 1
-  # --no-renames: report renames as delete(old)+add(new) with CLEAN paths, so a
-  # rename into a production path is not hidden behind a `old => new` string.
-  git -C "$root" diff --name-only --no-renames "$range" 2>/dev/null | while IFS= read -r f; do
-    [ -n "$f" ] && pg_is_production "$f" && printf '%s\n' "$f"
-  done
+  # --no-renames: report renames as delete(old)+add(new) with CLEAN paths.
+  # -z + core.quotePath=false: NUL-delimited, UNquoted paths, so filenames with
+  # spaces/specials are classified correctly (git would otherwise quote them).
+  git -C "$root" -c core.quotePath=false diff --name-only --no-renames -z "$range" 2>/dev/null \
+    | while IFS= read -r -d '' f; do
+        [ -n "$f" ] && pg_is_production "$f" && printf '%s\n' "$f"
+      done
 }
 
 # Total add+del across PRODUCTION files in <range> (binary files counted as 0).
@@ -109,7 +111,7 @@ pg_changed_lines() {
     [ "$d" = "-" ] && d=0
     case "$a$d" in *[!0-9]*) continue ;; esac
     total=$(( total + a + d ))
-  done < <(git -C "$root" diff --numstat --no-renames "$range" 2>/dev/null)
+  done < <(git -C "$root" -c core.quotePath=false diff --numstat --no-renames "$range" 2>/dev/null)
   printf '%s\n' "$total"
 }
 
@@ -168,8 +170,15 @@ EOF
 }
 
 # 0 = covered, 1 = definitively NOT covered, 2 = unknown/error (fail-open).
+#
+# Coverage is RANGE-BOUND: an artifact covers a change iff its commit range
+# CONTAINS every commit of the change AND its files-set covers the change's
+# production files (or files: *). The two conditions are ANDed — NOT ORed.
+# This is what prevents a permanent whitelist: a NEW commit (not inside any
+# reviewed range) is never covered, even if it touches a file some old artifact
+# once listed, and `files: *` only ever covers WITHIN its own reviewed range.
 pg_range_reviewed() {
-  local range="$1" root reviews change_files change_commits art art_range art_files found=0
+  local range="$1" root reviews change_files change_commits art art_range art_files
   [ -n "$range" ] || return 2
   root="$(pg_repo_root)" || return 2
   reviews="$root/memory/reviews"
@@ -181,18 +190,22 @@ pg_range_reviewed() {
   if [ -z "$change_commits" ] && ! git -C "$root" rev-list "$range" >/dev/null 2>&1; then
     return 2
   fi
+  [ -n "$change_commits" ] || return 1     # no commits to cover → nothing grants coverage
 
   for art in "$reviews"/*.md; do
     [ -e "$art" ] || continue
     grep -q '<!-- zuvo-review -->' "$art" 2>/dev/null || continue
-    found=1
     art_range="$(sed -n 's/^range:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
     art_files="$(sed -n 's/^files:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
-    pg_files_covered "$change_files" "$art_files" && return 0
-    pg_range_covers "$root" "$art_range" "$change_commits" && return 0
+    # BOTH must hold: the artifact's range contains the change's commits, AND
+    # its files-set covers the change's production files (or is `*`).
+    if pg_range_covers "$root" "$art_range" "$change_commits" \
+       && pg_files_covered "$change_files" "$art_files"; then
+      return 0
+    fi
   done
 
-  # Artifacts may or may not exist, but NONE cover this change → NOT covered.
+  # No artifact's reviewed range+files covers this change → NOT covered.
   return 1
 }
 

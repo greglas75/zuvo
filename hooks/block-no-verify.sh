@@ -20,6 +20,14 @@ CMD="$RAW"
 if command -v jq >/dev/null 2>&1; then
   _c=$(printf '%s' "$RAW" | jq -r '.tool_input.command // .command // empty' 2>/dev/null || true)
   [ -n "${_c:-}" ] && CMD="$_c"
+else
+  # jq absent: if the payload looks like JSON, extract "command":"..." by regex so
+  # a JSON tool-input cannot silently evade the scan (closes the jq-missing bypass).
+  case "$RAW" in
+    *'"command"'*)
+      _c=$(printf '%s' "$RAW" | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+      [ -n "${_c:-}" ] && CMD="$_c" ;;
+  esac
 fi
 [ -n "$CMD" ] || exit 0
 
@@ -110,27 +118,35 @@ violates_segment() {
   return 1
 }
 
-# Strip QUOTED substrings before segmenting so shell metacharacters inside a
-# commit message (e.g. -m "fix UI & tests") cannot split a real --no-verify off
-# the git segment, and a --no-verify mentioned INSIDE a message does not cause a
-# false block. Real (unquoted) flags survive.
-SCAN=$(printf '%s' "$CMD" | sed -E "s/\"[^\"]*\"//g; s/'[^']*'//g")
-
-# split on connectors, tokenize each segment, check
-segments=$(printf '%s' "$SCAN" | sed -E 's/(\&\&|\|\||;|\||&)/\
-/g')
+# QUOTE-AWARE tokenization via xargs (not regex). xargs respects single/double
+# quotes and treats newlines as whitespace, so:
+#   - a commit message stays ONE token → a real `--no-verify` FLAG remains a
+#     separate token (blocked), while `--no-verify` text INSIDE a message is part
+#     of the message token (not blocked) — no false positive, no metachar/newline/
+#     nested-quote bypass.
+# Connectors are space-padded first so `a&&git commit --no-verify` (no spaces) and
+# `a ; git ...` both split into connector tokens. Padding inside a quoted string is
+# harmless (we only scan tokens for flags, never reconstruct the command).
+TOKS=()
+while IFS= read -r _tk; do TOKS+=("$_tk"); done < <(
+  printf '%s' "$CMD" | sed -E 's/[&|;]/ & /g' | xargs -n1 printf '%s\n' 2>/dev/null
+)
 
 block=0
-while IFS= read -r seg; do
-  [ -n "$seg" ] || continue
-  # shellcheck disable=SC2206
-  read -ra toks <<< "$seg"
-  if [ "${#toks[@]}" -gt 0 ] && violates_segment "${toks[@]}"; then
-    block=1; break
+if [ "${#TOKS[@]}" -gt 0 ]; then
+  group=()
+  for _tk in "${TOKS[@]}"; do
+    case "$_tk" in
+      "&"|"|"|";")   # connector token → evaluate the group so far, then reset
+        if [ "${#group[@]}" -gt 0 ] && violates_segment "${group[@]}"; then block=1; break; fi
+        group=() ;;
+      *) group+=("$_tk") ;;
+    esac
+  done
+  if [ "$block" -eq 0 ] && [ "${#group[@]}" -gt 0 ] && violates_segment "${group[@]}"; then
+    block=1
   fi
-done <<EOF
-$segments
-EOF
+fi
 
 if [ "$block" -eq 1 ]; then
   {

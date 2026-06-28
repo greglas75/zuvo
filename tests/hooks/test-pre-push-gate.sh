@@ -57,11 +57,11 @@ printf 'refs/heads/feature %s refs/heads/feature %s\n' "$FHEAD" "$MAIN" | ZUVO_A
 printf 'refs/heads/feature %s refs/heads/feature %s\n' "$FHEAD" "$MAIN" | human_gate >/dev/null 2>&1
 [ "$?" -eq 0 ] && pass "(g) human push exempt (exit 0)" || bad "(g) human push should pass"
 
-# now make it reviewed: artifact covering src/a,b,c
+# now make it reviewed: artifact covering the REAL range MAIN..FHEAD + files a/b/c
 mkdir -p memory/reviews
-cat > memory/reviews/cov.md <<'ART'
+cat > memory/reviews/cov.md <<ART
 <!-- zuvo-review -->
-range: dead..beef
+range: $MAIN..$FHEAD
 files: src/a.sh, src/b.sh, src/c.sh
 verdict: PASS
 -->

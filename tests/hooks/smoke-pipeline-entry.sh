@@ -109,30 +109,40 @@ prepush_native "$FHEAD" "$MAIN" | env ZUVO_ALLOW_ADHOC=1 ZUVO_AGENT=1 PG_REPO_RO
 ZUVO_CI_RANGE="$MAIN..$FHEAD" ZUVO_CI_LABELS="zuvo:adhoc-approved" PG_REPO_ROOT="$TMP" bash "$CI" >/dev/null 2>&1
 [ "$?" -eq 0 ] && ok "G6 zuvo:adhoc-approved label → CI passes" || no "G6 CI label escape"
 
-# === (4) NO WHITELIST: an unrelated review artifact does NOT grant coverage (G4) ===
+# === (4) NO WHITELIST: an artifact whose RANGE matches but FILES don't (and vice
+# versa) does NOT grant coverage — coverage is range-containment AND files (G4) ===
 mkdir -p memory/reviews
-cat > memory/reviews/unrelated.md <<'ART'
+cat > memory/reviews/unrelated.md <<ART
 <!-- zuvo-review -->
-range: dead..beef
+range: $MAIN..$FHEAD
 files: src/zzz.sh, src/qqq.sh
 verdict: PASS
 -->
 ART
 prepush_native "$FHEAD" "$MAIN" | env ZUVO_AGENT=1 PG_REPO_ROOT="$TMP" bash "$PREPUSH" >/dev/null 2>&1
-[ "$?" -eq 1 ] && ok "G4 unrelated review artifact ≠ coverage (still blocked)" || no "G4 no-whitelist"
+[ "$?" -eq 1 ] && ok "G4 range-match but files-mismatch ≠ coverage (still blocked)" || no "G4 no-whitelist (files)"
 
-# === (3) covering artifact → pre-push + CI both pass (content-keyed) (G4) ===
-cat > memory/reviews/cov.md <<'ART'
+# === (3) covering artifact (real range AND files) → pre-push + CI both pass (G4) ===
+cat > memory/reviews/cov.md <<ART
 <!-- zuvo-review -->
-range: dead..beef
+range: $MAIN..$FHEAD
 files: src/a.sh, src/b.sh, src/c.sh
 verdict: PASS
 -->
 ART
 prepush_native "$FHEAD" "$MAIN" | env ZUVO_AGENT=1 PG_REPO_ROOT="$TMP" bash "$PREPUSH" >/dev/null 2>&1
-[ "$?" -eq 0 ] && ok "G4 covering artifact → pre-push passes (exit 0)" || no "G4 covering pre-push"
+[ "$?" -eq 0 ] && ok "G4 covering artifact (range+files) → pre-push passes (exit 0)" || no "G4 covering pre-push"
 ZUVO_CI_RANGE="$MAIN..$FHEAD" PG_REPO_ROOT="$TMP" bash "$CI" >/dev/null 2>&1
 [ "$?" -eq 0 ] && ok "G4 covering artifact → CI passes (exit 0)" || no "G4 covering CI"
+
+# === (10) R3-1 NO PERMANENT WHITELIST: re-edit a covered file with a NEW commit
+# beyond the reviewed range → blocked again (cov.md must not whitelist a.sh forever) ===
+echo "new work" >> src/a.sh; git add -A; git commit -qm "re-edit a.sh beyond reviewed range"
+NEWHEAD=$(git rev-parse HEAD)
+prepush_native "$NEWHEAD" "$MAIN" | env ZUVO_AGENT=1 PG_REPO_ROOT="$TMP" bash "$PREPUSH" >/dev/null 2>&1
+[ "$?" -eq 1 ] && ok "G4/R3-1 re-edit beyond reviewed range → blocked (no permanent whitelist)" || no "R3-1 permanent-whitelist hole"
+ZUVO_CI_RANGE="$MAIN..$NEWHEAD" PG_REPO_ROOT="$TMP" bash "$CI" >/dev/null 2>&1
+[ "$?" -eq 1 ] && ok "G4/R3-1 CI also blocks the new range" || no "R3-1 CI permanent-whitelist hole"
 
 echo ""
 if [ "$fail" -eq 0 ]; then echo "SMOKE PASS"; else echo "SMOKE FAIL"; exit 1; fi

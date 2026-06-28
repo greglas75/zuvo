@@ -69,28 +69,38 @@ pg_is_substantial "$HEAD3..$HEAD4" && pass "substantial: 1 file 200 lines (line 
   && bad "raised thresholds should make it not substantial" \
   || pass "thresholds env-overridable (ZUVO_GATE_MIN_LINES/FILES)"
 
-# ---------- content-keyed review coverage ----------
+# ---------- content-keyed review coverage (RANGE-bound: range AND files) ----------
 mkdir -p memory/reviews
-cat > memory/reviews/files-cov.md <<'ART'
+# covering artifact MUST record the REAL reviewed range (range-containment) + files.
+cat > memory/reviews/files-cov.md <<ART
 <!-- zuvo-review -->
-range: dead..beef
+range: $BASE..$HEAD
 files: src/a.sh, src/b.sh, src/c.sh
 verdict: PASS
 -->
 body
 ART
 pg_range_reviewed "$BASE..$HEAD"; rc=$?
-[ "$rc" -eq 0 ] && pass "range_reviewed: covered by files-set (a/b/c)" || bad "files coverage should be 0, got $rc"
+[ "$rc" -eq 0 ] && pass "range_reviewed: covered (range contains commits AND files a/b/c)" || bad "coverage should be 0, got $rc"
 
-# no-whitelist: an UNRELATED file change is NOT covered by the a/b/c artifact
+# no-whitelist (file): an UNRELATED file change is NOT covered by the a/b/c artifact
 echo y > src/unrelated.sh; git add src/unrelated.sh; git commit -qm unrelated
 HEAD5=$(git rev-parse HEAD)
 pg_range_reviewed "$HEAD4..$HEAD5"; rc=$?
-[ "$rc" -eq 1 ] && pass "range_reviewed: unrelated change != coverage (NO whitelist)" || bad "unrelated should be NOT covered (1), got $rc"
+[ "$rc" -eq 1 ] && pass "range_reviewed: unrelated change != coverage (NO file whitelist)" || bad "unrelated should be NOT covered (1), got $rc"
 
-# range containment: artifact whose range covers the change commits (files don't match)
+# *** R3-1 regression: NO PERMANENT WHITELIST ***
+# Re-edit a PREVIOUSLY-REVIEWED file (src/a.sh) with a NEW commit. The old
+# files-cov artifact lists src/a.sh AND has files:* siblings, but its RANGE does
+# not contain the new commit → must be NOT covered (a new review is required).
+echo "changed again" >> src/a.sh; git add src/a.sh; git commit -qm "re-edit a.sh"
+HEAD_A2=$(git rev-parse HEAD)
+pg_range_reviewed "$HEAD5..$HEAD_A2"; rc=$?
+[ "$rc" -eq 1 ] && pass "R3-1: re-edit of reviewed file w/ NEW commit NOT covered (no permanent whitelist)" || bad "R3-1: permanent-whitelist hole — re-edit should NOT be covered (got $rc)"
+
+# range+files BOTH required: artifact whose range covers but files DON'T → NOT covered
 rb=$(git rev-parse "$HEAD4"); rh=$(git rev-parse "$HEAD5")
-cat > memory/reviews/range-cov.md <<ART
+cat > memory/reviews/range-only.md <<ART
 <!-- zuvo-review -->
 range: $rb..$rh
 files: src/nomatch.sh
@@ -98,26 +108,38 @@ verdict: PASS
 -->
 ART
 pg_range_reviewed "$HEAD4..$HEAD5"; rc=$?
-[ "$rc" -eq 0 ] && pass "range_reviewed: covered by range containment" || bad "range containment should be 0, got $rc"
-
-# ADV-4 (gemini): a reviewed filename containing SPACES must stay intact (comma-split only)
-out="$(pg_files_covered "src/api specs.sh" "src/api specs.sh, src/b.sh")" ; rc=$?
-[ "$rc" -eq 0 ] && pass "range_reviewed: filename-with-spaces preserved (ADV-4)" || bad "ADV-4: spaced filename should be covered (rc=$rc)"
-out="$(pg_files_covered "src/other.sh" "src/api specs.sh, src/b.sh")" ; rc=$?
-[ "$rc" -eq 1 ] && pass "range_reviewed: spaced-list still rejects unrelated file (ADV-4)" || bad "ADV-4: unrelated should not be covered (rc=$rc)"
-
-# files: '*' wildcard grants coverage
-cat > memory/reviews/star.md <<'ART'
+[ "$rc" -eq 1 ] && pass "range_reviewed: range covers but files don't → NOT covered (AND, not OR)" || bad "range-only (no file match) should NOT cover, got $rc"
+# same range but files:* → covered (within range)
+cat > memory/reviews/range-only.md <<ART
 <!-- zuvo-review -->
-range: zz..zz
+range: $rb..$rh
 files: *
 verdict: PASS
 -->
 ART
+pg_range_reviewed "$HEAD4..$HEAD5"; rc=$?
+[ "$rc" -eq 0 ] && pass "range_reviewed: range covers AND files:* → covered (within range)" || bad "range + files:* should cover, got $rc"
+rm -f memory/reviews/range-only.md
+
+# ADV-4 (gemini): a reviewed filename containing SPACES must stay intact (comma-split only)
+out="$(pg_files_covered "src/api specs.sh" "src/api specs.sh, src/b.sh")" ; rc=$?
+[ "$rc" -eq 0 ] && pass "pg_files_covered: filename-with-spaces preserved (ADV-4)" || bad "ADV-4: spaced filename should be covered (rc=$rc)"
+out="$(pg_files_covered "src/other.sh" "src/api specs.sh, src/b.sh")" ; rc=$?
+[ "$rc" -eq 1 ] && pass "pg_files_covered: spaced-list still rejects unrelated file (ADV-4)" || bad "ADV-4: unrelated should not be covered (rc=$rc)"
+
+# files: '*' wildcard grants coverage WITHIN its reviewed range
 echo z > src/z.sh; git add src/z.sh; git commit -qm z
 HEAD6=$(git rev-parse HEAD)
-pg_range_reviewed "$HEAD5..$HEAD6"; rc=$?
-[ "$rc" -eq 0 ] && pass "range_reviewed: files:'*' wildcard covers" || bad "wildcard should be 0, got $rc"
+zb=$(git rev-parse "$HEAD_A2"); zh=$(git rev-parse "$HEAD6")
+cat > memory/reviews/star.md <<ART
+<!-- zuvo-review -->
+range: $zb..$zh
+files: *
+verdict: PASS
+-->
+ART
+pg_range_reviewed "$HEAD_A2..$HEAD6"; rc=$?
+[ "$rc" -eq 0 ] && pass "range_reviewed: files:'*' covers within its range" || bad "wildcard should be 0, got $rc"
 
 # ---------- fail-open ----------
 pg_is_substantial "zzz..yyy" && bad "bad range should NOT be substantial" || pass "fail-open: bad range not substantial"
