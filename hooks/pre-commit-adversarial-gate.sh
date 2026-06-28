@@ -117,13 +117,15 @@ adversarial_gate() {
 
   artifact_mtime=$(file_mtime "$artifact_path")
   latest_staged_mtime=0
-  while IFS= read -r path; do
+  # -z: NUL-delimited, UNquoted paths — so filenames with spaces/specials are
+  # checked, not silently skipped (git quotes them without -z).
+  while IFS= read -r -d '' path; do
     [[ -z "$path" ]] && continue
     if [[ -e "$PWD/$path" ]]; then
       path_mtime=$(file_mtime "$PWD/$path")
       if [[ "$path_mtime" -gt "$latest_staged_mtime" ]]; then latest_staged_mtime="$path_mtime"; fi
     fi
-  done < <(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null || true)
+  done < <(git diff --cached --name-only --diff-filter=ACMR -z 2>/dev/null || true)
 
   if [[ "$latest_staged_mtime" -gt 0 && "$artifact_mtime" -lt "$latest_staged_mtime" ]]; then
     echo "BLOCKED: adversarial artifact for task ${task_id} is stale." >&2

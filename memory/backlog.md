@@ -138,3 +138,13 @@ type: project
 - **Issue:** ALL named-script cp lines (benchmark.sh, adversarial-review.sh, reviewer-model-route.sh, blind-audit-codex.sh, infra-collect.sh) use `cp ... 2>/dev/null || true`, so a missing/failed copy still prints "Scripts installed". Task 10 conformed to this convention for infra-collect.sh; the gap is pre-existing and repo-wide.
 - **v2 fix:** add a post-copy verification loop asserting each expected script exists at its dest; warn/exit on any missing. Repo-wide (not infra-audit-specific).
 - **Confidence:** 50 (pre-existing convention; `|| true` is intentional install robustness, but silent-fail masks real breakage)
+
+## B-noverify-hardening (RECOMMENDED, deferred — best-effort layer)
+- **Date:** 2026-06-28
+- **Source:** zuvo:review aggregate (Phase Final-2) of pipeline-entry enforcement; adversarial=gemini.
+- **Scope:** `hooks/block-no-verify.sh`, `scripts/git-noverify-shim.sh`, `hooks/pre-commit-adversarial-gate.sh`.
+- **Residual bypasses of the `--no-verify` best-effort layer** (CI is the unbypassable backstop; see docs/pipeline.md "Known bypasses"):
+  1. git aliases — resolve `git config --get alias.<sub>` before validating the subcommand (recursion-guarded).
+  2. quoted flag in command-string hook — `git commit "--no-verify"` evades the string parser (the PATH-shim already catches it via real argv); a quote-aware tokenizer would close it.
+  3. commit-gate mtime TOCTOU — switch the freshness check from working-tree mtime to staged blob-hash comparison (`git ls-files -s`) recorded at review time.
+- **Why deferred:** structural hardening of a layer the architecture defines as best-effort; not a guarantee gap. Real complexity (subprocess alias resolution, blob-hash tracking) for marginal local gain. Route via `zuvo:refactor`/`zuvo:build` when prioritized.

@@ -234,3 +234,28 @@ with `ZUVO_GATE_MIN_FILES` (default 3) and `ZUVO_GATE_MIN_LINES` (default 150).
   constrain agents, not you.
 - Codex and Antigravity have **no Stop hook**; their coverage is the commit-gate nudge +
   pre-push + CI. Cursor inherits the Claude cache wiring.
+
+#### Known bypasses of the `--no-verify` defense layer (block-no-verify + git-shim)
+
+Adversarial review (gemini, 2026-06-28) confirmed the `--no-verify` defense is a *best-effort*
+layer with a residual bypass surface — which is precisely why **CI is the guarantee**. The
+gates harden the common holes (quoted metacharacters in messages, `-c core.hooksPath` in
+key=value / attached / boolean forms, `git config core.hooksPath`, `GIT_CONFIG_*` env in the
+shim, `--no-verify` abbreviations, `-uno` false-positive, `-nm` clustering). The following
+residue is **documented, not chased** — each defeats only the local best-effort layer and is
+caught server-side by the CI gate (which re-checks review coverage on the actual pushed
+content, regardless of how the commit was produced):
+
+- **git aliases** — `git config alias.x "commit --no-verify"; git x`. Resolving aliases would
+  require a `git config --get alias.*` subprocess per call (recursion / latency risk).
+- **quoted flag in a command STRING** — `git commit "--no-verify"` seen by the PreToolUse
+  command-string hook (`block-no-verify`). The git **PATH-shim** does catch this (it receives
+  the real, shell-tokenized argv), so an installed shim closes it; the string-parser does not.
+- **commit-gate mtime TOCTOU** — staging via `git update-index` / `git apply --cached` leaves
+  the working-tree mtime old, so the commit-gate's freshness check can miss it. The commit-gate
+  is an early *nudge* (non-blocking) by design; pre-push + CI re-evaluate the real content.
+
+Backlog item `B-noverify-hardening` tracks an optional deeper pass (alias resolution, index
+blob-hash tracking) if the local layer ever needs to be more than best-effort. **None of these
+weaken the guarantee:** the CI gate fails any unreviewed substantial change in the merged
+range no matter how the local hooks were evaded.

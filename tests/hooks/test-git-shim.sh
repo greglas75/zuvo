@@ -78,6 +78,26 @@ else
   bad "(7) uninstall failed (rc=$rc, exists=$([ -e "$TMP/home/bin/git" ] && echo yes || echo no))"
 fi
 
+# (ADV-2) agent: -c core.hooksPath override → blocked
+PATH="$REALBIN:$PATH" ZUVO_AGENT=1 bash "$SHIM" -c core.hooksPath=/dev/null commit -m x >/dev/null 2>&1
+[ "$?" -eq 1 ] && pass "(ADV-2) agent -c core.hooksPath commit → blocked" || bad "(ADV-2) hooksPath override should block"
+# (ADV-3) agent: commit -uno (= -u no) → NOT blocked (pass-through)
+o=$(PATH="$REALBIN:$PATH" ZUVO_AGENT=1 bash "$SHIM" commit -uno -m ok 2>&1)
+printf '%s' "$o" | grep -q REAL_GIT_CALLED && pass "(ADV-3) agent commit -uno → pass-through" || bad "(ADV-3) -uno should pass through"
+
+# round-2: deeper hooksPath bypasses in the shim
+PATH="$REALBIN:$PATH" ZUVO_AGENT=1 bash "$SHIM" -ccore.hooksPath=/dev/null commit -m x >/dev/null 2>&1
+[ "$?" -eq 1 ] && pass "(R2) attached -ccore.hooksPath= → blocked" || bad "(R2) attached hooksPath should block"
+PATH="$REALBIN:$PATH" ZUVO_AGENT=1 bash "$SHIM" config core.hooksPath /dev/null >/dev/null 2>&1
+[ "$?" -eq 1 ] && pass "(R2) git config core.hooksPath → blocked" || bad "(R2) config hooksPath should block"
+PATH="$REALBIN:$PATH" ZUVO_AGENT=1 bash "$SHIM" commit --no-veri >/dev/null 2>&1
+[ "$?" -eq 1 ] && pass "(R2) abbreviated --no-veri → blocked" || bad "(R2) abbreviation should block"
+PATH="$REALBIN:$PATH" ZUVO_AGENT=1 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null bash "$SHIM" commit -m x >/dev/null 2>&1
+[ "$?" -eq 1 ] && pass "(R2) GIT_CONFIG_* env hooksPath → blocked" || bad "(R2) env hooksPath should block"
+# benign config still passes through
+o=$(PATH="$REALBIN:$PATH" ZUVO_AGENT=1 bash "$SHIM" config user.name "Me" 2>&1)
+printf '%s' "$o" | grep -q REAL_GIT_CALLED && pass "(R2) benign git config → pass-through" || bad "(R2) benign config should pass"
+
 # (8) shim self-skip: invoking via a PATH where the shim is the only 'git' but a
 #     real git exists later → still finds real git (skips shim copies by marker)
 cp "$SHIM" "$TMP/realbin2-shim-git" 2>/dev/null || true

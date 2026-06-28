@@ -100,6 +100,12 @@ ART
 pg_range_reviewed "$HEAD4..$HEAD5"; rc=$?
 [ "$rc" -eq 0 ] && pass "range_reviewed: covered by range containment" || bad "range containment should be 0, got $rc"
 
+# ADV-4 (gemini): a reviewed filename containing SPACES must stay intact (comma-split only)
+out="$(pg_files_covered "src/api specs.sh" "src/api specs.sh, src/b.sh")" ; rc=$?
+[ "$rc" -eq 0 ] && pass "range_reviewed: filename-with-spaces preserved (ADV-4)" || bad "ADV-4: spaced filename should be covered (rc=$rc)"
+out="$(pg_files_covered "src/other.sh" "src/api specs.sh, src/b.sh")" ; rc=$?
+[ "$rc" -eq 1 ] && pass "range_reviewed: spaced-list still rejects unrelated file (ADV-4)" || bad "ADV-4: unrelated should not be covered (rc=$rc)"
+
 # files: '*' wildcard grants coverage
 cat > memory/reviews/star.md <<'ART'
 <!-- zuvo-review -->

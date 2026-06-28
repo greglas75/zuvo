@@ -66,38 +66,75 @@ is_agent() {
   return 1
 }
 
+# Short cluster contains -n as a flag (before any arg-taking short option)?
+short_has_n() {
+  local cluster="${1#-}" j c
+  for (( j=0; j<${#cluster}; j++ )); do
+    c="${cluster:$j:1}"
+    case "$c" in
+      n) return 0 ;;
+      m|c|C|F|u|S|t|G|O) return 1 ;;
+    esac
+  done
+  return 1
+}
+
+is_hookspath_kv() {
+  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+    core.hookspath|core.hookspath=*|*core.hookspath=*) return 0 ;;
+  esac
+  return 1
+}
+
+# core.hooksPath injected via GIT_CONFIG_* environment (GIT_CONFIG_KEY_N=core.hooksPath)?
+env_hookspath() {
+  env | grep -iqE '^GIT_CONFIG_KEY_[0-9]+=core\.hookspath$'
+}
+
 # --- does this git invocation skip hooks? -----------------------------------
+# (args come from the real shell argv, so they are already quote-resolved — no
+#  metacharacter-split bypass here; only the -c hooksPath and short-cluster
+#  cases need the same hardening as block-no-verify.sh.)
 violates_args() {
-  local args=("$@") n=$# i=0 t sub has_nv=0 has_cn=0
+  local args=("$@") n=$# i=0 t sub has_nv=0 has_cn=0 hookspath=0 config_hookspath=0
   [ "$n" -ge 1 ] || return 1
+  env_hookspath && hookspath=1                      # GIT_CONFIG_* env injection
   while [ "$i" -lt "$n" ]; do
     t="${args[$i]}"
     case "$t" in
-      -c|-C|--git-dir|--work-tree|--namespace|--exec-path|--super-prefix) i=$((i+2)); continue ;;
+      -c|--config-env) is_hookspath_kv "${args[$((i+1))]:-}" && hookspath=1; i=$((i+2)); continue ;;
+      -c*) is_hookspath_kv "${t#-c}" && hookspath=1; i=$((i+1)); continue ;;   # attached -ccore.hooksPath=
+      -C|--git-dir|--work-tree|--namespace|--exec-path|--super-prefix) i=$((i+2)); continue ;;
       --git-dir=*|--work-tree=*|--namespace=*|--exec-path=*) i=$((i+1)); continue ;;
       -p|-P|--paginate|--no-pager|--bare|--no-replace-objects|\
       --literal-pathspecs|--icase-pathspecs|--noglob-pathspecs|--glob-pathspecs) i=$((i+1)); continue ;;
-      --*=*) i=$((i+1)); continue ;;
+      --*=*) is_hookspath_kv "$t" && hookspath=1; i=$((i+1)); continue ;;
       -*) i=$((i+1)); continue ;;
       *) break ;;
     esac
   done
-  [ "$i" -ge "$n" ] && return 1
+  [ "$i" -ge "$n" ] && { [ "$hookspath" -eq 1 ] && return 0; return 1; }
   sub="${args[$i]}"; i=$((i+1))
   while [ "$i" -lt "$n" ]; do
     t="${args[$i]}"
     case "$t" in
       --) break ;;
-      --no-verify) has_nv=1 ;;
+      --no-verify|--no-v|--no-ve|--no-ver|--no-veri|--no-verif) has_nv=1 ;;
       -n) [ "$sub" = "commit" ] && has_cn=1 ;;
       --*) ;;
-      -*) case "$sub" in commit) case "$t" in *n*) has_cn=1 ;; esac ;; esac ;;
+      -[!-]*) [ "$sub" = "commit" ] && short_has_n "$t" && has_cn=1 ;;
     esac
+    [ "$sub" = "config" ] && is_hookspath_kv "$t" && config_hookspath=1
     i=$((i+1))
   done
   case "$sub" in
-    commit|push|merge|cherry-pick|rebase|am) [ "$has_nv" -eq 1 ] && return 0 ;;
+    commit|push|merge|cherry-pick|rebase|am)
+      [ "$has_nv" -eq 1 ] && return 0
+      [ "$hookspath" -eq 1 ] && return 0 ;;
+    config)
+      [ "$config_hookspath" -eq 1 ] && return 0 ;;
   esac
+  [ "$hookspath" -eq 1 ] && return 0      # core.hooksPath override on any subcommand
   [ "$sub" = "commit" ] && [ "$has_cn" -eq 1 ] && return 0
   return 1
 }

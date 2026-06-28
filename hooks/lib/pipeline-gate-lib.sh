@@ -90,7 +90,9 @@ pg_changed_production() {
   local range="$1" root f
   [ -n "$range" ] || return 1
   root="$(pg_repo_root)" || return 1
-  git -C "$root" diff --name-only "$range" 2>/dev/null | while IFS= read -r f; do
+  # --no-renames: report renames as delete(old)+add(new) with CLEAN paths, so a
+  # rename into a production path is not hidden behind a `old => new` string.
+  git -C "$root" diff --name-only --no-renames "$range" 2>/dev/null | while IFS= read -r f; do
     [ -n "$f" ] && pg_is_production "$f" && printf '%s\n' "$f"
   done
 }
@@ -107,7 +109,7 @@ pg_changed_lines() {
     [ "$d" = "-" ] && d=0
     case "$a$d" in *[!0-9]*) continue ;; esac
     total=$(( total + a + d ))
-  done < <(git -C "$root" diff --numstat "$range" 2>/dev/null)
+  done < <(git -C "$root" diff --numstat --no-renames "$range" 2>/dev/null)
   printf '%s\n' "$total"
 }
 
@@ -136,8 +138,9 @@ pg_files_covered() {
   [ -n "$art_files" ] || return 1
   [ "$art_files" = "*" ] && return 0
   [ -n "$change_files" ] || return 1
-  # normalize art_files (comma/space separated) into ,a,b,c,
-  norm=",$(printf '%s' "$art_files" | tr ' ,' '\n\n' | grep -v '^$' | paste -sd, -),"
+  # normalize art_files into ,a,b,c, — split on COMMA only (NOT spaces, so a
+  # reviewed filename containing spaces stays intact), trimming surrounding ws.
+  norm=",$(printf '%s' "$art_files" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' | paste -sd, -),"
   while IFS= read -r cf; do
     [ -n "$cf" ] || continue
     case "$norm" in *",$cf,"*) ;; *) return 1 ;; esac
