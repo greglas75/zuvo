@@ -11,9 +11,12 @@
 #   Codex:       runs build-codex-skills.sh, then copies dist to ~/.codex/
 #   Cursor:      runs build-cursor-skills.sh, then copies dist to ~/.cursor/
 
-set -euo pipefail
+# NOTE: `set -euo pipefail` is deliberately NOT global — it is enabled inside the
+# main run guard at the bottom. This file is source-able (tests source it to call
+# install_hook_tree / install_pipeline_artifacts / install_git_shim) and a global
+# `set -e` would leak into and abort the sourcing shell.
 
-ZUVO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+ZUVO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 TARGET="${1:-all}"
 
 # --- Colors ---
@@ -25,6 +28,56 @@ NC='\033[0m'
 ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
 warn() { echo -e "  ${YELLOW}!${NC} $1"; }
 fail() { echo -e "  ${RED}✗${NC} $1"; }
+
+# =======================================
+# PIPELINE-ENTRY HOOK INSTALL HELPERS (source-able + reused by every target)
+# =======================================
+
+# Copy the FULL hooks tree (incl. lib/) to a target hooks dir. Recursive,
+# idempotent (cp overwrites; re-runs never duplicate). This is what makes the
+# pipeline-gate lib + new hooks reach a target.
+install_hook_tree() {
+  local dst="$1"
+  [ -n "$dst" ] || return 1
+  mkdir -p "$dst/lib"
+  cp "$ZUVO_DIR"/hooks/*.sh "$dst/" 2>/dev/null || true
+  cp "$ZUVO_DIR"/hooks/*.json "$dst/" 2>/dev/null || true
+  [ -f "$ZUVO_DIR/hooks/run-hook.cmd" ] && cp "$ZUVO_DIR/hooks/run-hook.cmd" "$dst/" 2>/dev/null || true
+  [ -f "$ZUVO_DIR/hooks/session-start" ] && cp "$ZUVO_DIR/hooks/session-start" "$dst/" 2>/dev/null || true
+  if [ -d "$ZUVO_DIR/hooks/lib" ]; then
+    cp "$ZUVO_DIR"/hooks/lib/*.sh "$dst/lib/" 2>/dev/null || true
+  fi
+  chmod +x "$dst"/*.sh "$dst"/lib/*.sh 2>/dev/null || true
+}
+
+# Copy the CI check script, the git PATH-shim, and the CI workflow template
+# under <base>/scripts and <base>/ci.
+install_pipeline_artifacts() {
+  local base="$1"
+  [ -n "$base" ] || return 1
+  mkdir -p "$base/scripts" "$base/ci"
+  [ -f "$ZUVO_DIR/scripts/zuvo-pipeline-entry-ci.sh" ] && cp "$ZUVO_DIR/scripts/zuvo-pipeline-entry-ci.sh" "$base/scripts/" 2>/dev/null || true
+  [ -f "$ZUVO_DIR/scripts/git-noverify-shim.sh" ] && cp "$ZUVO_DIR/scripts/git-noverify-shim.sh" "$base/scripts/" 2>/dev/null || true
+  [ -f "$ZUVO_DIR/ci/zuvo-pipeline-entry.yml" ] && cp "$ZUVO_DIR/ci/zuvo-pipeline-entry.yml" "$base/ci/" 2>/dev/null || true
+  chmod +x "$base"/scripts/zuvo-pipeline-entry-ci.sh "$base"/scripts/git-noverify-shim.sh 2>/dev/null || true
+}
+
+# Opt-in git PATH-shim install/uninstall. Reads ZUVO_INSTALL_GIT_SHIM /
+# ZUVO_UNINSTALL_GIT_SHIM. No-op unless one is set (never installs by default —
+# a git wrapper is intrusive, so it stays opt-in).
+install_git_shim() {
+  local shim_dst="${ZUVO_SHIM_PATH:-$HOME/bin/git}"
+  if [ "${ZUVO_UNINSTALL_GIT_SHIM:-0}" = "1" ]; then
+    if [ -e "$shim_dst" ]; then rm -f "$shim_dst" && ok "git shim removed ($shim_dst)"; else warn "no git shim at $shim_dst (nothing to remove)"; fi
+    return 0
+  fi
+  [ "${ZUVO_INSTALL_GIT_SHIM:-0}" = "1" ] || return 0
+  [ -f "$ZUVO_DIR/scripts/git-noverify-shim.sh" ] || { warn "git-noverify-shim.sh not found — shim not installed"; return 0; }
+  mkdir -p "$(dirname "$shim_dst")"
+  cp "$ZUVO_DIR/scripts/git-noverify-shim.sh" "$shim_dst"
+  chmod +x "$shim_dst"
+  ok "git shim installed ($shim_dst) — ensure $(dirname "$shim_dst") is EARLY on PATH (before the real git)"
+}
 
 materialize_claude_reviewer_lanes() {
   local target_root="$1"
@@ -158,11 +211,11 @@ install_claude() {
       chmod +x "$CACHE_DIR"/bin/* 2>/dev/null || true
     fi
 
-    # Copy hooks (pre-push gate, session hooks)
+    # Copy hooks — FULL tree incl. hooks/lib/ (recursive) so the pipeline-gate
+    # lib reaches the cache, plus the CI script + git shim + CI workflow template.
     if [[ -d "$ZUVO_DIR/hooks" ]]; then
-      mkdir -p "$CACHE_DIR/hooks"
-      cp "$ZUVO_DIR"/hooks/* "$CACHE_DIR/hooks/" 2>/dev/null || true
-      chmod +x "$CACHE_DIR"/hooks/*.sh 2>/dev/null || true
+      install_hook_tree "$CACHE_DIR/hooks"
+      install_pipeline_artifacts "$CACHE_DIR"
     fi
 
     # Copy docs (if dir exists in cache)
@@ -465,6 +518,15 @@ PYEOF
   else
     warn "hooks/skill-usage-logger.sh not found in repo — skill-usage logger not installed"
   fi
+
+  # ── Pipeline-entry hooks: full tree (incl. lib/) into ~/.claude/hooks/ (the
+  # core.hooksPath target) + CI script + git shim + CI workflow template into
+  # ~/.claude/scripts and ~/.claude/ci. The plugin hooks.json (in the cache)
+  # already registers the gates + the SINGLE Stop site; install does NOT register
+  # the Stop nudge in settings.json (one site, no double-fire).
+  install_hook_tree "$hooks_dir"
+  install_pipeline_artifacts "$HOME/.claude"
+  ok "pipeline-entry hooks + lib + CI artifacts installed (~/.claude/hooks, ~/.claude/scripts, ~/.claude/ci)"
 }
 
 # =======================================
@@ -909,7 +971,14 @@ print(f'  \u2713 Hooks merged into settings.json (removed {removed} stale zuvo e
 # =======================================
 # MAIN
 # =======================================
+# VERSION is computed unconditionally (functions reference it; harmless when sourced).
 VERSION=$(grep '"version"' "$ZUVO_DIR/package.json" | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
+
+# Only RUN the installer when executed directly — not when sourced (tests source
+# this file to call install_hook_tree / install_pipeline_artifacts / install_git_shim).
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+set -euo pipefail
+
 echo "Installing zuvo v${VERSION} from $ZUVO_DIR"
 
 echo "Validating banned-vocabulary contracts..."
@@ -925,6 +994,9 @@ case "$TARGET" in
   both|all) install_claude; install_codex; install_cursor; install_antigravity; install_zuvo_home; install_claude_home ;;
   *)      echo "Usage: $0 [claude|codex|cursor|antigravity|all]"; exit 1 ;;
 esac
+
+# Opt-in git PATH-shim (ZUVO_INSTALL_GIT_SHIM / ZUVO_UNINSTALL_GIT_SHIM); no-op otherwise.
+install_git_shim
 
 echo ""
 echo "======================================"
@@ -987,3 +1059,5 @@ check_cross_providers() {
 }
 
 check_cross_providers
+
+fi  # end main run guard (skipped when sourced)

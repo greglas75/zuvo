@@ -716,7 +716,9 @@ if [ -f "$PLUGIN_DIR/hooks/hooks.codex.json" ]; then
 fi
 
 # Copy hook scripts with path replacement
-for hook_script in pre-push-gate.sh pre-commit-adversarial-gate.sh session-start; do
+# block-no-verify.sh added (Codex PreToolUse Bash). zuvo-stop-pipeline-gate.sh is
+# NOT shipped — Codex has no Stop hook; pre-push + CI cover it.
+for hook_script in block-no-verify.sh pre-push-gate.sh pre-commit-adversarial-gate.sh session-start; do
   if [ -f "$PLUGIN_DIR/hooks/$hook_script" ]; then
     cat "$PLUGIN_DIR/hooks/$hook_script" \
       | replace_paths \
@@ -725,6 +727,17 @@ for hook_script in pre-push-gate.sh pre-commit-adversarial-gate.sh session-start
     echo "  + hooks/$hook_script"
   fi
 done
+
+# Copy hooks/lib/ recursively (pre-push + commit gates source pipeline-gate-lib.sh)
+if [ -d "$PLUGIN_DIR/hooks/lib" ]; then
+  mkdir -p "$DIST/hooks/lib"
+  for lib_file in "$PLUGIN_DIR"/hooks/lib/*.sh; do
+    [ -f "$lib_file" ] || continue
+    cat "$lib_file" | replace_paths > "$DIST/hooks/lib/$(basename "$lib_file")"
+    chmod +x "$DIST/hooks/lib/$(basename "$lib_file")"
+    echo "  + hooks/lib/$(basename "$lib_file")"
+  done
+fi
 
 # Copy run-hook.cmd as-is (polyglot wrapper, no path replacement needed)
 if [ -f "$PLUGIN_DIR/hooks/run-hook.cmd" ]; then
