@@ -1,0 +1,36 @@
+# zuvo pipeline-entry CI gate — THE GUARANTEE (unbypassable, server-side).
+#
+# Copy this file to .github/workflows/zuvo-pipeline-entry.yml to enable.
+# It fails a PR/push that introduces a substantial production change with no
+# committed review coverage (memory/reviews/ content-keyed artifact). Agents
+# cannot bypass a server-side check; the only escape is the human-applied
+# 'zuvo:adhoc-approved' PR label.
+#
+# Requires full history (fetch-depth: 0) so merge-base / rev-list resolve.
+name: zuvo-pipeline-entry
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  push:
+    branches: ["**"]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  pipeline-entry:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: zuvo pipeline-entry gate
+        shell: bash
+        run: bash scripts/zuvo-pipeline-entry-ci.sh
+        # Optional overrides:
+        #   ZUVO_GATE_MIN_FILES / ZUVO_GATE_MIN_LINES — thresholds
+        #   ZUVO_DEFAULT_BRANCH — if origin/HEAD is not set
