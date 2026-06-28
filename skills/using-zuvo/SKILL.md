@@ -45,6 +45,12 @@ If the session context includes the compressed response protocol, apply it by su
 
 **Pipeline order is recommended but not mandatory.** `brainstorm` produces a spec. `plan` works best with a spec but also accepts a direct description. `execute` requires a plan. If the user says "plan this" without a spec, `plan` runs in inline mode. If they say "build this feature" and it's large (5+ files), suggest `brainstorm` first but don't block.
 
+#### Production-code work routes THROUGH the pipeline (threshold = the gate contract)
+
+**Do NOT implement a substantial production-code change ad-hoc (freelance, file-by-file).** Route it through the pipeline so it gets reviewed: **`zuvo:build`** for scoped work (1–5 files) or **`zuvo:execute`** (from a plan) for larger features. "Substantial" is the SAME threshold the gates enforce: **≥3 production files OR ≥150 changed lines** (add+del), env-overridable via `ZUVO_GATE_MIN_FILES` (default 3) / `ZUVO_GATE_MIN_LINES` (default 150). Test/docs/config changes don't count (the classifier excludes `tests/`, `*.test.*`, `docs/`, `*.md`, config).
+
+This is the SOFT top layer — it sets intent. The actual **enforcement is deterministic**: the **pre-push gate** blocks pushing an unreviewed substantial change locally, and the **CI gate** fails it server-side (unbypassable — an agent cannot `--no-verify` or skip it). The **commit-gate and Stop-gate** surface an early nudge so you self-correct before you hit the push/CI block. Writing the same multi-file feature with raw `Edit`/`Write` and committing — without ever invoking `zuvo:build`/`zuvo:execute` — is exactly the freelance pattern these gates exist to catch: the review never happens, then the push/CI gate blocks it. Enter the pipeline up front instead. Escape (logged): `ZUVO_ALLOW_ADHOC=1` locally, or the human-applied `zuvo:adhoc-approved` PR label in CI.
+
 ### Priority 2 — Task (scoped work)
 
 | User intent | Skill |
