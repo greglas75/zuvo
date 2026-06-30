@@ -1,0 +1,20 @@
+#!/bin/sh
+# zuvo dev-hooks (tracked, versioned) — gate THIS repo's own pushes so zuvo dogfoods its
+# pipeline-entry + work gates. Activated by `scripts/setup-dev-hooks.sh` (core.hooksPath=.githooks).
+# FAIL-OPEN: a missing/erroring gate exits 0 — never bricks `git push`. Self-contained: calls the
+# repo's OWN hooks/ by repo-root path (no external install needed for the dev repo).
+R=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+input=$(cat)                                    # pre-push stdin (ref lines) — consumed once, fed to both
+rc=0
+# feed: replay the captured stdin to each gate. When input is EMPTY (no refs), emit NOTHING —
+# `printf '%s\n' ""` would synthesise a blank ref line; instead the gate gets empty stdin and allows.
+feed() { [ -n "$input" ] && printf '%s\n' "$input"; }
+# work-gate: refactor CONTRACT Prove + plan→execute bind
+if [ -x "$R/hooks/refactor-safety-gate.sh" ]; then
+  feed | "$R/hooks/refactor-safety-gate.sh" pre-push || rc=1
+fi
+# pipeline-entry gate: substantial unreviewed change
+if [ -x "$R/hooks/pre-push-gate.sh" ]; then
+  feed | "$R/hooks/pre-push-gate.sh" || rc=1
+fi
+exit $rc

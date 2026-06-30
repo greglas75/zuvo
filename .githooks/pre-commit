@@ -1,0 +1,5 @@
+#!/bin/sh
+# zuvo dev-hooks (tracked) — pre-commit work-gate for THIS repo. FAIL-OPEN.
+R=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+[ -x "$R/hooks/refactor-safety-gate.sh" ] && exec "$R/hooks/refactor-safety-gate.sh" pre-commit
+exit 0
