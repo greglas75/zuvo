@@ -57,7 +57,7 @@ for mode in pre-commit pre-push; do
   {
     echo "#!/bin/sh"
     echo "$MARK  (auto-installed by zuvo:refactor; fail-open)"
-    echo "[ -x \"$GATE_ABS\" ] && exec \"$GATE_ABS\" $mode"
+    echo "[ -x \"$GATE_ABS\" ] && exec \"$GATE_ABS\" \"$mode\""
     echo "exit 0"
     echo "# <<< zuvo:refactor-gate"
   } > "$f"

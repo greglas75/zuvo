@@ -27,14 +27,19 @@ refactor_gate_check() {
   for c in "$cdir"/refactor-*.json; do
     [ -f "$c" ] || continue
     grep -q '"stage"[[:space:]]*:[[:space:]]*"COMPLETE"' "$c" && continue
-    # intersect scope_fence with the file list
+    # intersect scope_fence with the file list.
+    #  set -f: a '*'/'?' in a path must NOT glob-expand against the filesystem.
+    #  grep -Fq --: fixed-string match — a '.'/'['/']' in a path is a literal, not a regex
+    #  (BRE would let 'src/[i].ts' match the wrong fence entry, or fail to match its own).
     hit=0
     oldifs=$IFS; IFS='
 '
+    set -f
     for f in $staged; do
       [ -n "$f" ] || continue
-      if grep -q "\"$f\"" "$c"; then hit=1; break; fi
+      if grep -Fq -- "\"$f\"" "$c"; then hit=1; break; fi
     done
+    set +f
     IFS=$oldifs
     [ "$hit" = 1 ] || continue
     # HUMAN BYPASS — the gate is for AI runs; never lock a human out

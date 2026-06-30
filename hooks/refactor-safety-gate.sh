@@ -14,21 +14,34 @@ LIB="$(dirname "$0")/lib/refactor-gate-lib.sh"
 [ -f "$LIB" ] || { echo "zuvo refactor-gate: lib not found ($LIB) -> fail-open" >&2; exit 0; }
 . "$LIB" || exit 0
 
+# --no-renames: a renamed scope-fence file must still surface its OLD path (else the
+#   contract never matches the new name -> bypass). core.quotePath=false: don't C-quote
+#   non-ASCII paths (a quoted "..." path would never match the fence -> bypass).
+ZERO=0000000000000000000000000000000000000000
 case "$MODE" in
   pre-commit)
-    files=$(git diff --cached --name-only 2>/dev/null) || exit 0
+    files=$(git -c core.quotePath=false diff --cached --name-only --no-renames 2>/dev/null) || exit 0
     ;;
   pre-push)
     # stdin: <local ref> <local sha> <remote ref> <remote sha>
     files=""
     while read -r _lref lsha _rref rsha; do
-      [ -n "$lsha" ] || continue
-      case "$lsha" in *[!0]*) : ;; *) continue ;; esac   # skip deletes (all-zero local sha)
-      if [ -z "${rsha##*[!0]*}" ] || [ "$rsha" = "0000000000000000000000000000000000000000" ]; then
-        rng="$lsha"                                       # new branch: inspect the tip commit
-        diffargs="$(git diff --name-only "${lsha}^" "$lsha" 2>/dev/null || git show --name-only --pretty=format: "$lsha" 2>/dev/null)"
+      [ -n "$lsha" ] && [ -n "$rsha" ] || continue        # malformed line -> skip
+      case "$lsha" in *[!0]*) : ;; *) continue ;; esac     # all-zero local sha = delete -> skip
+      if [ "$rsha" = "$ZERO" ]; then
+        # NEW branch: gate EVERY commit being introduced (not just the tip)
+        diffargs=""
+        for c in $(git rev-list "$lsha" --not --remotes 2>/dev/null); do
+          diffargs="$diffargs
+$(git -c core.quotePath=false show --name-only --no-renames --pretty=format: "$c" 2>/dev/null)"
+        done
+        # conservative fallback: if enumeration produced nothing (git error / odd object
+        # state), still gate the tip commit rather than silently passing an empty list
+        [ -n "$(printf '%s' "$diffargs" | tr -d '[:space:]')" ] || \
+          diffargs="$(git -c core.quotePath=false show --name-only --no-renames --pretty=format: "$lsha" 2>/dev/null)"
       else
-        diffargs="$(git diff --name-only "$rsha" "$lsha" 2>/dev/null)"
+        # EXISTING branch: the full pushed range rsha..lsha (NOT just the tip)
+        diffargs="$(git -c core.quotePath=false diff --name-only --no-renames "$rsha" "$lsha" 2>/dev/null)"
       fi
       files="$files
 $diffargs"

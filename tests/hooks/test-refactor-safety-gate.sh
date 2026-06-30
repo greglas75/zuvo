@@ -64,5 +64,28 @@ ZUVO_AI_RUN=1 git commit -q --no-verify -m bypass >/dev/null 2>&1   # skips pre-
 out=$(ZUVO_AI_RUN=1 git push origin "$br" 2>&1); rc=$?
 [ "$rc" -ne 0 ] && ok "pre-push blocks --no-verify-bypassed refactor commit" || bad "pre-push backstop (push succeeded)"
 
+echo "=== regression: regex-metachar path gated (grep -F, not BRE) ==="
+newrepo; install_hook "$GATE"
+contract 'x[1].ts' skipped clean
+[ "$(ZUVO_AI_RUN=1 bash -c "$(declare -f trycommit); trycommit 'x[1].ts'")" -ne 0 ] && ok "regex-char path blocked (no BRE bypass)" || bad "regex-char path bypassed gate"
+
+echo "=== regression: renamed scope-fence file still gated (--no-renames) ==="
+newrepo; install_hook "$GATE"
+echo a > old.ts; git add old.ts; git commit -q -m base >/dev/null 2>&1
+contract old.ts skipped clean
+git mv old.ts new.ts
+ZUVO_AI_RUN=1 git commit -q -m rename >/dev/null 2>&1
+[ $? -ne 0 ] && ok "renamed fence file blocked (old path surfaced)" || bad "rename evaded gate"
+
+echo "=== regression: pre-push gates the FULL range, not just the tip ==="
+newrepo; install_hook "$GATE"
+echo base > app.ts; git add app.ts; git commit -q -m base >/dev/null 2>&1
+git init -q --bare "$TMP/rem3.git"; git remote add origin "$TMP/rem3.git"; git push -q origin HEAD >/dev/null 2>&1
+br=$(git branch --show-current); contract app.ts skipped clean
+echo a >> app.ts; git add app.ts; ZUVO_AI_RUN=1 git commit -q --no-verify -m "A violates app.ts" >/dev/null 2>&1
+echo z > unrelated.ts; git add unrelated.ts; ZUVO_AI_RUN=1 git commit -q --no-verify -m "B clean tip" >/dev/null 2>&1
+ZUVO_AI_RUN=1 git push origin "$br" >/dev/null 2>&1
+[ $? -ne 0 ] && ok "non-tip violation caught (full-range pre-push)" || bad "non-tip commit slipped (range bug regressed)"
+
 echo "=== RESULT ==="
 [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
