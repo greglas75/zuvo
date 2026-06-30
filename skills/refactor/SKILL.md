@@ -91,7 +91,10 @@ gate is the bind that makes the Definition of Done real — an agent cannot skip
 when the repo has no active refactor CONTRACT, fail-opens if anything is missing (never blocks setup).
 
 ```bash
-export ZUVO_AI_RUN=1
+# (No ZUVO_AI_RUN export — it would not survive into the agent's later, separate commit shell.
+#  The gate detects an AI run from the ambient harness env: CLAUDECODE / CODEX_SANDBOX /
+#  CURSOR_TRACE_ID / ANTIGRAVITY_SESSION_ID — always set at session level, so the gate fires
+#  on real commits without any export. Verified end-to-end in a temp repo.)
 _GATE=$(ls ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/hooks/refactor-safety-gate.sh 2>/dev/null | head -1)
 _INST=$(ls ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/install-refactor-gate.sh 2>/dev/null | head -1)
 if [ -n "$_GATE" ] && [ -n "$_INST" ]; then
