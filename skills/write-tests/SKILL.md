@@ -416,7 +416,16 @@ Resolve the writer hint using environment precedence:
 - `ANTIGRAVITY_MODEL`
 - otherwise treat the writer hint as `unknown`
 
-Run `../../scripts/reviewer-model-route.sh` with **no override flags** before selecting the blind-audit reviewer artifact. Enforce a **5s timeout**. Runtime callers must not `eval` resolver output.
+**Resolve the plugin base first.** Bash resolves `../../` against the current working directory — which during a run is the user's PROJECT, not the plugin — so `../../scripts/...` does not exist when a skill shells out, and any absolute version dir captured earlier dies on the next release. Set `$ZUVO_BASE` once (canonical recipe in `../../shared/includes/env-compat.md`), then call every script/resource by absolute path:
+
+```bash
+ZUVO_BASE="${ZUVO_BASE:-$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*zuvo[^"]*\)".*/\1/p' \
+  "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null | head -1)}"
+[ -d "$ZUVO_BASE/scripts" ] || ZUVO_BASE=$(ls -d "$HOME/.claude/plugins/cache/zuvo-marketplace/zuvo"/*/ \
+  2>/dev/null | grep -E '/[0-9]+\.[0-9]+\.[0-9]+/$' | sort -V | tail -1 | sed 's:/$::')
+```
+
+Run `$ZUVO_BASE/scripts/reviewer-model-route.sh` with **no override flags** before selecting the blind-audit reviewer artifact. Enforce a **5s timeout**. Runtime callers must not `eval` resolver output.
 
 Treat resolver output as valid only when stdout contains exactly one single-line `KEY=VALUE` entry for each required key:
 - `platform`
@@ -447,10 +456,10 @@ If the resolver is missing, exits non-zero, times out, or emits malformed output
 
 **Execution paths:**
 
-- **Required:** isolated read-only `blind-coverage-auditor` or `blind-coverage-auditor-alt`, chosen from the resolver output above, or the canonical fresh-subprocess wrapper `../../scripts/blind-audit-codex.sh`
+- **Required:** isolated read-only `blind-coverage-auditor` or `blind-coverage-auditor-alt`, chosen from the resolver output above, or the canonical fresh-subprocess wrapper `$ZUVO_BASE/scripts/blind-audit-codex.sh`
 
 Strict isolated execution receives only:
-- `../../shared/includes/blind-coverage-audit.md`
+- `$ZUVO_BASE/shared/includes/blind-coverage-audit.md`
 - production file
 - test file
 - optional repo identifier
@@ -460,8 +469,8 @@ Do not use CodeSift in strict mode.
 **Canonical fresh-subprocess fallback:** when agent-based strict isolation is unavailable or routing is `routing-failed`, use:
 
 ```bash
-../../scripts/blind-audit-codex.sh \
-  --protocol ../../shared/includes/blind-coverage-audit.md \
+$ZUVO_BASE/scripts/blind-audit-codex.sh \
+  --protocol "$ZUVO_BASE/shared/includes/blind-coverage-audit.md" \
   --production "<absolute-path-to-production-file>" \
   --test "<absolute-path-to-test-file>"
 ```
@@ -563,11 +572,11 @@ The provider sees both files and focuses on gaps between production behavior and
 **Adversarial routing priority:**
 
 1. **Primary path:** external cross-provider `adversarial-review --rotate`
-2. **Fallback-local path:** same environment, different-from-writer read-only agent selected via `../../scripts/reviewer-model-route.sh`
+2. **Fallback-local path:** same environment, different-from-writer read-only agent selected via `$ZUVO_BASE/scripts/reviewer-model-route.sh`
 3. **Final degraded state:** `SKIPPED_REVIEW`
 
 If the primary path is missing, exits non-zero, or every provider returns empty:
-- run `../../scripts/reviewer-model-route.sh` with the same 5s timeout and parser rules used in Step 3.5
+- run `$ZUVO_BASE/scripts/reviewer-model-route.sh` with the same 5s timeout and parser rules used in Step 3.5
 - print:
   ```text
   Adversarial routing: path=fallback-local, writer=<model>, reviewer=<model>, lane=<review-primary|review-alt>, status=<ok|same-model-fallback|unknown-writer-model|routing-failed>
@@ -614,7 +623,7 @@ Fallback-local path (only if the primary path never produced a successful provid
 
 **Stub fidelity rule for ORCHESTRATOR:** Route module stubs MUST use `all()` (catch-all). Testing HTTP methods (GET vs POST) is the responsibility of route module tests, not orchestrator tests. If adversarial flags "stubs don't verify HTTP methods" — REJECT with "scope mismatch, route module responsibility".
 
-If `adversarial-review` is not found: check `../../scripts/adversarial-review.sh`. If missing entirely, attempt fallback-local routing. If fallback-local is unavailable or not safely different-from-writer, mark file `SKIPPED_REVIEW`, record a degraded completion note, and proceed.
+If `adversarial-review` is not found: check `$ZUVO_BASE/scripts/adversarial-review.sh`. If missing entirely, attempt fallback-local routing. If fallback-local is unavailable or not safely different-from-writer, mark file `SKIPPED_REVIEW`, record a degraded completion note, and proceed.
 
 **Fix policy per pass:**
 

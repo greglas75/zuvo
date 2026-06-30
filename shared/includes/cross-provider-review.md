@@ -32,9 +32,18 @@ The script outputs structured findings with severity, file:line, and suggested f
 ### Step 1: Check availability
 
 ```bash
-# adversarial-review resolves automatically — the skill's fallback line handles path lookup.
-# Just call: adversarial-review --json --mode {MODE} ...
-# If not in PATH, use the fallback from the calling skill's adversarial section.
+# Resolve $AR_CMD once (canonical resolver: shared/includes/env-compat.md). On Claude Code
+# `adversarial-review` is NOT on PATH, so resolve the absolute wrapper instead of calling bare.
+if command -v adversarial-review >/dev/null 2>&1; then
+  AR_CMD=adversarial-review
+else
+  ZUVO_BASE="${ZUVO_BASE:-$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*zuvo[^"]*\)".*/\1/p' \
+    "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null | head -1)}"
+  [ -d "$ZUVO_BASE/scripts" ] || ZUVO_BASE=$(ls -d "$HOME/.claude/plugins/cache/zuvo-marketplace/zuvo"/*/ \
+    2>/dev/null | grep -E '/[0-9]+\.[0-9]+\.[0-9]+/$' | sort -V | tail -1 | sed 's:/$::')
+  AR_CMD="$ZUVO_BASE/scripts/adversarial-review.sh"   # Codex/Cursor/Antigravity: built absolute
+fi
+# Then call: "$AR_CMD" --json --mode {MODE} ...
 ```
 
 ### Step 2: Run the review

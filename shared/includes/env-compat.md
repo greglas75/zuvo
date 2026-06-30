@@ -13,6 +13,27 @@
 | Scripts path | `<install-root>/scripts/` | `~/.codex/scripts/` | `~/.gemini/antigravity/scripts/` | `~/.cursor/scripts/` |
 | Adversarial self-exclude | `claude` | `codex-5.3` | `gemini` | `cursor-agent` |
 
+## Resolving plugin scripts & resources in bash
+
+A bash command resolves relative paths against the **current working directory**, which during a real run is the **user's project**, not the plugin. So `../../scripts/foo.sh` and a `../../shared/includes/bar.md` passed as a script argument — both correct for the Claude skill-loader / `Read` tool — **break the instant a skill shells out**: they resolve to `<project>/../../…`, which does not exist. They also rot on every release (the install dir is renamed `zuvo/<old>` → `zuvo/<new>` and the old one is deleted, so any absolute base captured earlier in the session dies mid-run).
+
+**Rule:** never place a `../../` path inside a Bash command, and never pass one as a script argument. Resolve the install root once, then use absolute `$ZUVO_BASE/...`. (A `../../shared/includes/…` reference that a skill tells you to **Read** is fine — that is loader-resolved, not bash-resolved. The rule is only about paths a shell touches.)
+
+**Canonical resolver — Claude Code (copy verbatim; honors a `$ZUVO_BASE` override for tests):**
+
+```bash
+ZUVO_BASE="${ZUVO_BASE:-$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*zuvo[^"]*\)".*/\1/p' \
+  "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null | head -1)}"
+[ -d "$ZUVO_BASE/scripts" ] || ZUVO_BASE=$(ls -d "$HOME/.claude/plugins/cache/zuvo-marketplace/zuvo"/*/ \
+  2>/dev/null | grep -E '/[0-9]+\.[0-9]+\.[0-9]+/$' | sort -V | tail -1 | sed 's:/$::')
+```
+
+- `installPath` from `installed_plugins.json` is **authoritative** — it is exactly the directory Claude Code loads, so it is always the live version even mid-session after a bump.
+- The fallback glob is **semver-filtered** on purpose: a plain `ls … | sort -V | tail -1` picks the SHA-named cache dir (`17ea…`) over `1.4.0`, because `17` sorts highest — a real, silent mis-resolution. The `grep -E '/[0-9]+\.[0-9]+\.[0-9]+/$'` excludes it.
+- Then invoke `"$ZUVO_BASE/scripts/<name>.sh"` and pass `"$ZUVO_BASE/shared/includes/<file>.md"` as arguments.
+
+**Other harnesses** use build-time-absolute roots — no runtime resolve needed: Codex `~/.codex`, Cursor `~/.cursor`, Antigravity `~/.gemini/antigravity` (see the Execution Models table). Their build step rewrites `../../scripts/` → `<root>/scripts/` at install time.
+
 ## Secondary Worktree Bootstrap
 
 Refactor/build runs frequently execute inside a **secondary git worktree** (`zuvo:worktree`, or a `refactor/*` branch checked out elsewhere). A worktree shares the repo's git objects but **not** its `node_modules` — and a half-populated, package-local `node_modules` produces type/build/test failures that look like real regressions but are pure environment noise. In the field this was the single largest time-sink for worktree refactors: *"dependency setup and unrelated full-suite failures consumed the most time for the least signal."*

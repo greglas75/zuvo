@@ -77,14 +77,18 @@ adversarial-review --json --mode {MODE} --files "path/to/changed/file.ts"
 
 **IMPORTANT:** Run as foreground Bash call. Wait for complete output before proceeding. Do NOT use background execution.
 
-**If `adversarial-review` is not in PATH**, use the platform-specific fallback:
+**If `adversarial-review` is not in PATH** — on Claude Code it usually is NOT; no command is installed on PATH — resolve an absolute `$AR_CMD` and substitute it for `adversarial-review` in the calls above and below. Do **not** use a bare `zuvo/*/scripts/...` glob: with both a version dir and a SHA-named cache dir present it expands to two paths and runs the wrong one.
 
-| Platform | Fallback path |
-|----------|---------------|
-| Claude Code | `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh` |
-| Codex | `~/.codex/scripts/adversarial-review.sh` |
-| Antigravity | `~/.gemini/antigravity/scripts/adversarial-review.sh` |
-| Cursor | `~/.cursor/scripts/adversarial-review.sh` |
+```bash
+# Claude Code — canonical resolver (single source of truth: shared/includes/env-compat.md)
+ZUVO_BASE="${ZUVO_BASE:-$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*zuvo[^"]*\)".*/\1/p' \
+  "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null | head -1)}"
+[ -d "$ZUVO_BASE/scripts" ] || ZUVO_BASE=$(ls -d "$HOME/.claude/plugins/cache/zuvo-marketplace/zuvo"/*/ \
+  2>/dev/null | grep -E '/[0-9]+\.[0-9]+\.[0-9]+/$' | sort -V | tail -1 | sed 's:/$::')
+AR_CMD="$ZUVO_BASE/scripts/adversarial-review.sh"
+```
+
+On other harnesses `$AR_CMD` is the build-time-absolute path: Codex `~/.codex/scripts/adversarial-review.sh`, Antigravity `~/.gemini/antigravity/scripts/adversarial-review.sh`, Cursor `~/.cursor/scripts/adversarial-review.sh`.
 
 **Host auto-exclusion:** The script auto-detects which IDE/CLI is the host (via `CLAUDECODE`, `CODEX_SANDBOX`, `VSCODE_GIT_ASKPASS_MAIN`) and excludes the host's provider from review. This prevents self-review (e.g., Gemini reviewing Gemini's work inside Antigravity). Override with explicit `--exclude` or `--provider`.
 
