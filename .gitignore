@@ -4,6 +4,12 @@ node_modules/
 dist/
 .aider*
 
+# local agent/editor state — never committed. Without this, dev-push.sh step 2
+# (`git add -A`) would sweep ~/.claude local settings into a pushed release.
+.claude/
+__pycache__/
+*.pyc
+
 # zuvo session state (local runtime, not committed)
 .zuvo/
 
