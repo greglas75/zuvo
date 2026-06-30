@@ -43,7 +43,7 @@ refactor_gate_check() {
     IFS=$oldifs
     [ "$hit" = 1 ] || continue
     # HUMAN BYPASS — the gate is for AI runs; never lock a human out
-    if [ -z "${ZUVO_AI_RUN:-}${CLAUDECODE:-}${CURSOR_TRACE_ID:-}${CODEX_SANDBOX:-}" ]; then
+    if [ -z "${ZUVO_AI_RUN:-}${CLAUDECODE:-}${CURSOR_TRACE_ID:-}${CODEX_SANDBOX:-}${ANTIGRAVITY_SESSION_ID:-}" ]; then
       echo "zuvo refactor-gate: human committer (no AI-harness env) -> bypass [$c]" >&2
       continue
     fi
@@ -82,7 +82,7 @@ plan_execute_gate_check() {
   plan_files=$(grep '^\*\*Files:\*\*' -- "$plan" 2>/dev/null | tr -d '\r' | sed 's/^\*\*Files:\*\*//; s/`//g')
   [ -n "$(printf '%s' "$plan_files" | tr -d '[:space:]')" ] || return 0 # fail-OPEN: no **Files:**
   # HUMAN BYPASS — a human committing the plan's files is not hand-rolling AI work
-  if [ -z "${ZUVO_AI_RUN:-}${CLAUDECODE:-}${CURSOR_TRACE_ID:-}${CODEX_SANDBOX:-}" ]; then
+  if [ -z "${ZUVO_AI_RUN:-}${CLAUDECODE:-}${CURSOR_TRACE_ID:-}${CODEX_SANDBOX:-}${ANTIGRAVITY_SESSION_ID:-}" ]; then
     echo "zuvo plan-gate: human committer (no AI-harness env) -> bypass [$ap]" >&2
     return 0
   fi
