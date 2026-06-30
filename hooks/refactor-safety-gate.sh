@@ -50,12 +50,17 @@ $diffargs"
   *) exit 0 ;;
 esac
 
-refactor_gate_check "$files" || {
+# Run BOTH gate checks (each prints its own BLOCK: line + returns non-zero on block).
+blk=0
+refactor_gate_check "$files" || blk=1
+plan_execute_gate_check "$files" || blk=1
+if [ "$blk" != 0 ]; then
   echo "" >&2
-  echo "zuvo refactor-gate: $MODE BLOCKED — a refactor CONTRACT's Prove step is not complete." >&2
-  echo "  Run the blind-audit + adversarial review and record them in the CONTRACT's prove fields," >&2
-  echo "  or (human/abandoned run) the gate auto-bypasses. Override (logged): ZUVO_ALLOW_ADHOC=1." >&2
-  [ "${ZUVO_ALLOW_ADHOC:-}" = "1" ] && { echo "zuvo refactor-gate: ZUVO_ALLOW_ADHOC=1 -> escape (logged)" >&2; exit 0; }
+  echo "zuvo work-gate: $MODE BLOCKED (see the BLOCK line above)." >&2
+  echo "  refactor → complete the CONTRACT Prove step (blind-audit + adversarial)." >&2
+  echo "  plan     → run \`zuvo:execute\` (do not hand-roll the implementation)." >&2
+  echo "  human / abandoned runs auto-bypass. Override (logged): ZUVO_ALLOW_ADHOC=1." >&2
+  [ "${ZUVO_ALLOW_ADHOC:-}" = "1" ] && { echo "zuvo work-gate: ZUVO_ALLOW_ADHOC=1 -> escape (logged)" >&2; exit 0; }
   exit 1
-}
+fi
 exit 0

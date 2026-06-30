@@ -62,3 +62,47 @@ refactor_gate_check() {
   done
   return $blocked
 }
+
+# plan_execute_gate_check — the plan→execute bind. If an Approved plan is PENDING (execute
+# never started) and the staged/pushed files intersect the plan's declared **Files:**, BLOCK:
+# the work must go through `zuvo:execute`, not be hand-rolled. Fail-OPEN on any missing/odd
+# input. Only `status: pending` blocks — execute flips it to `in-progress` before its commits.
+plan_execute_gate_check() {
+  staged=$1
+  ap="${ZUVO_PLANS_DIR:-zuvo/plans}/active-plan.md"
+  [ -f "$ap" ] || return 0
+  # tr -d '\r' + cut at first whitespace: tolerate CRLF endings and a `pending # note` suffix
+  # (otherwise `status: pending\r` != `pending` would silently fail-open — caught in review).
+  st=$(sed -n 's/^status:[[:space:]]*//p' "$ap" | head -1 | tr -d '\r' | sed 's/[[:space:]].*//')
+  [ "$st" = "pending" ] || return 0                                # only a pending plan blocks
+  plan=$(sed -n 's/^plan:[[:space:]]*//p' "$ap" | head -1 | tr -d '\r' | sed 's/[[:space:]]*$//')
+  { [ -n "$plan" ] && [ -f "$plan" ]; } || return 0               # fail-OPEN: missing plan doc
+  # `-- "$plan"` guards a leading-hyphen path; keep commas (split on them, NOT on spaces,
+  # so a plan filename containing a space stays one token — caught in review).
+  files=$(grep '^\*\*Files:\*\*' -- "$plan" 2>/dev/null | tr -d '\r' | sed 's/^\*\*Files:\*\*//; s/`//g')
+  [ -n "$(printf '%s' "$files" | tr -d '[:space:]')" ] || return 0 # fail-OPEN: no **Files:**
+  # HUMAN BYPASS — a human committing the plan's files is not hand-rolling AI work
+  if [ -z "${ZUVO_AI_RUN:-}${CLAUDECODE:-}${CURSOR_TRACE_ID:-}${CODEX_SANDBOX:-}" ]; then
+    echo "zuvo plan-gate: human committer (no AI-harness env) -> bypass [$ap]" >&2
+    return 0
+  fi
+  blocked=0; oldifs=$IFS; set -f            # set -f: a '*' in a path must not glob the filesystem
+  # split plan files on comma AND newline: a multi-task plan has many **Files:** lines (one per
+  # task) which grep joins with newlines — comma-only IFS merged them into unmatchable tokens
+  # (caught in review). Space is NOT in IFS, so a filename with a space stays one token.
+  IFS=',
+'
+  for pf in $files; do
+    pf=$(printf '%s' "$pf" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')   # trim
+    [ -n "$pf" ] || continue
+    IFS='
+'                                           # staged is newline-delimited; exact compare (no regex/glob)
+    for sf in $staged; do [ "$sf" = "$pf" ] && { blocked=1; break; }; done
+    IFS=',
+'
+    [ "$blocked" = 1 ] && break
+  done
+  IFS=$oldifs; set +f
+  [ "$blocked" = 1 ] && echo "BLOCK: Approved plan is PENDING ($plan) — run \`zuvo:execute\`, do not hand-roll the implementation [$ap]"
+  return $blocked
+}
