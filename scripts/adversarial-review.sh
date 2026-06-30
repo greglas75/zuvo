@@ -538,8 +538,17 @@ detect_host_platform() {
 
 HOST_PROVIDER=$(detect_host_platform)
 if [[ -n "$HOST_PROVIDER" && -z "$EXCLUDE_PROVIDER" ]]; then
-  EXCLUDE_PROVIDER="$HOST_PROVIDER"
-  echo "  Host detected: $HOST_PROVIDER -- auto-excluding to prevent self-review" >&2
+  if [[ "$HOST_PROVIDER" == "claude" ]]; then
+    # KEEP claude on a Claude host: run_claude reviews with the OPPOSITE model
+    # (Opus author -> Sonnet reviewer, and vice versa), so it is genuinely cross-model,
+    # NOT self-review. Excluding it threw away the local Opus<->Sonnet independent check
+    # and degraded to single_provider_only when external CLIs were down. gemini/codex/cursor
+    # DO review with the same model as their host IDE, so those stay auto-excluded below.
+    echo "  Host detected: claude -- KEPT as cross-model reviewer (run_claude flips Opus<->Sonnet)" >&2
+  else
+    EXCLUDE_PROVIDER="$HOST_PROVIDER"
+    echo "  Host detected: $HOST_PROVIDER -- auto-excluding to prevent self-review" >&2
+  fi
 fi
 
 # ─── Provider detection ─────────────────────────────────────────
@@ -700,10 +709,14 @@ run_codex_53() { run_codex "gpt-5.3-codex-spark"  "codex-5.3"; }
 
 run_claude() {
   local model
-  if [[ "${CLAUDE_MODEL:-}" == *opus* ]]; then
-    model="claude-sonnet-4-6"
+  # Pick the OPPOSITE model to the author so this is a cross-model check, never self-review.
+  # CLAUDE_MODEL is usually UNSET in Claude Code, so the default branch must be the SAFE one:
+  # default to Sonnet (correct for the common Opus author), and only flip to Opus when the host
+  # is explicitly Sonnet. This way an unset env never silently degrades to Opus-reviews-Opus.
+  if [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]]; then
+    model="claude-opus-4-8"
   else
-    model="claude-opus-4-6"
+    model="claude-sonnet-4-6"
   fi
 
   local err_file="$JSON_TMPDIR/err_claude.txt"
@@ -917,7 +930,7 @@ provider_model() {
     gemini-api)   echo "${ZUVO_GEMINI_API_MODEL:-gemini-3.1-pro-preview}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
     cursor-agent) echo "cursor" ;;
-    claude)       [[ "${CLAUDE_MODEL:-}" == *opus* ]] && echo "claude-sonnet-4-6" || echo "claude-opus-4-6" ;;
+    claude)       [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]] && echo "claude-opus-4-8" || echo "claude-sonnet-4-6" ;;
     *)            echo "unknown" ;;
   esac
 }
