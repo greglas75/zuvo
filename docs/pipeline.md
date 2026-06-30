@@ -299,3 +299,29 @@ action; the hook gates it.
 Cross-harness because git's global `core.hooksPath` (`~/.claude/hooks`, set by `install.sh`) is a
 git-level setting — every harness's commits route through it. Tests: `tests/hooks/test-refactor-safety-gate.sh`
 and `tests/hooks/test-refactor-gate-install.sh`.
+
+## plan→execute bind + dogfooding the gates
+
+Two enforcement gaps the v1.4.0 self-review exposed, now closed:
+
+### plan→execute bind (Gap 1)
+
+`zuvo:plan` writes `zuvo/plans/active-plan.md` with `status: pending` after a plan is Approved.
+The work-gate's `plan_execute_gate_check` (in `hooks/lib/refactor-gate-lib.sh`, run by the same
+`refactor-safety-gate.sh` entry as the refactor CONTRACT check) **blocks** a commit/push whose
+staged files intersect that plan's declared `**Files:**` while the plan is still `pending` — i.e.
+**hand-rolling the implementation instead of running `zuvo:execute`**. `zuvo:execute` flips the
+plan to `in-progress` before its own commits, so the execute path passes; only `pending` blocks.
+This is the bind that was missing when the v1.4.0 rebuild was hand-rolled past `zuvo:execute`.
+Same safety as the refactor gate: fail-open, human-committer bypass, `ZUVO_ALLOW_ADHOC=1` escape,
+no-op when there is no pending plan or no file intersection.
+
+### Dogfooding (Gap 2)
+
+The pipeline-entry pre-push gate is opt-in per repo, and `zuvo-plugin` never opted in — so its own
+substantial unreviewed push to main was caught by nothing. Fixed with a **tracked `.githooks/`**
+dir (`pre-push`, `pre-commit`) that chains the repo's own `hooks/pre-push-gate.sh` (pipeline-entry)
++ `hooks/refactor-safety-gate.sh` (work-gate), activated per-clone by `scripts/setup-dev-hooks.sh`
+(`git config core.hooksPath .githooks` — the one step, since `.git/config` cannot be versioned).
+After cloning zuvo-plugin, run `./scripts/setup-dev-hooks.sh` once; the repo then gates its own
+commits/pushes. The hooks are versioned and reviewable; `core.hooksPath` is the only per-clone bit.
