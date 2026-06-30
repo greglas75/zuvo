@@ -1,0 +1,59 @@
+#!/bin/sh
+# refactor-gate-lib.sh — zuvo:refactor commit-boundary safety gate (core logic).
+#
+# The ONLY agent-independent, cross-harness bind for the refactor pipeline: a git
+# hook reads the refactor CONTRACT (the artifact of record) and BLOCKS a commit/push
+# whose staged/pushed files intersect an ACTIVE refactor whose Prove step is not
+# recorded complete. Prose says "MANDATORY"; this makes it true regardless of which
+# agent (or harness) is driving — git hooks fire for everyone.
+#
+# Proven by docs/specs/2026-06-30-refactor-skill-rebuild-plan.md Task 1 spike (6/6).
+# POSIX sh, jq-free. Fail-OPEN by contract: callers exit 0 on any internal error so a
+# broken/absent gate can NEVER brick a user's `git commit`.
+#
+# refactor_gate_check "<newline-separated file list>"  -> 0 allow, 1 block
+#   Env:
+#     ZUVO_CONTRACTS_DIR   contracts dir (default zuvo/contracts)
+#     ZUVO_GATE_TTL_SEC    stale-contract bypass TTL seconds (default 86400)
+#     AI-harness markers (ANY set => AI run; NONE set => human => bypass):
+#                          ZUVO_AI_RUN CLAUDECODE CURSOR_TRACE_ID CODEX_SANDBOX
+
+refactor_gate_check() {
+  staged=$1
+  cdir=${ZUVO_CONTRACTS_DIR:-zuvo/contracts}
+  [ -d "$cdir" ] || return 0
+  ttl=${ZUVO_GATE_TTL_SEC:-86400}
+  blocked=0
+  for c in "$cdir"/refactor-*.json; do
+    [ -f "$c" ] || continue
+    grep -q '"stage"[[:space:]]*:[[:space:]]*"COMPLETE"' "$c" && continue
+    # intersect scope_fence with the file list
+    hit=0
+    oldifs=$IFS; IFS='
+'
+    for f in $staged; do
+      [ -n "$f" ] || continue
+      if grep -q "\"$f\"" "$c"; then hit=1; break; fi
+    done
+    IFS=$oldifs
+    [ "$hit" = 1 ] || continue
+    # HUMAN BYPASS — the gate is for AI runs; never lock a human out
+    if [ -z "${ZUVO_AI_RUN:-}${CLAUDECODE:-}${CURSOR_TRACE_ID:-}${CODEX_SANDBOX:-}" ]; then
+      echo "zuvo refactor-gate: human committer (no AI-harness env) -> bypass [$c]" >&2
+      continue
+    fi
+    # STALE BYPASS — an abandoned (crashed/timed-out) run must not block anyone
+    now=$(date +%s)
+    mt=$(stat -f %m "$c" 2>/dev/null || stat -c %Y "$c" 2>/dev/null || echo "$now")
+    if [ $((now - mt)) -gt "$ttl" ]; then
+      echo "zuvo refactor-gate: stale contract (> ${ttl}s) -> bypass [$c]" >&2
+      continue
+    fi
+    # PROVE checks — the CONTRACT is the artifact (commit is LAST, so no fix-commit exists yet)
+    ba=$(sed -n 's/.*"blind_audit"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$c" | head -1)
+    av=$(sed -n 's/.*"adversarial"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$c" | head -1)
+    case "$ba" in skipped|not_run|"") echo "BLOCK: refactor CONTRACT prove.blind_audit='$ba' not satisfied [$c]"; blocked=1 ;; esac
+    case "$av" in skipped|not_run|"") echo "BLOCK: refactor CONTRACT prove.adversarial='$av' not satisfied [$c]"; blocked=1 ;; esac
+  done
+  return $blocked
+}
