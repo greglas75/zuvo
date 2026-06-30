@@ -7,7 +7,7 @@
 - One TOML per `agents/*.md` file that has `description:` frontmatter
 - `team-lead.md` is excluded (not a dispatched agent)
 - Naming: `<skill-prefix>-<agent-name>.toml`
-- Model mapping: haiku->gpt-5.4-mini, sonnet->gpt-5.4, opus->gpt-5.3-codex
+- Model mapping: haiku->gpt-5.4-mini, sonnet->gpt-5.4, opus->gpt-5.3-codex-spark
 - Agents with `reasoning: true` get gpt-5.4 + model_reasoning_effort="xhigh"
 - Sandbox: NOT pinned in generated TOML — agents inherit the user's global Codex
   profile (e.g. `danger-full-access` + `approval_policy = never`). Read-only

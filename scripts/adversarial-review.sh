@@ -696,7 +696,7 @@ run_codex() {
 }
 
 run_codex_54() { run_codex "gpt-5.4"        "codex-5.4"; }
-run_codex_53() { run_codex "gpt-5.3-codex"  "codex-5.3"; }
+run_codex_53() { run_codex "gpt-5.3-codex-spark"  "codex-5.3"; }
 
 run_claude() {
   local model
@@ -912,7 +912,7 @@ fi
 provider_model() {
   case "$1" in
     codex-5.4)    echo "gpt-5.4" ;;
-    codex-5.3)    echo "gpt-5.3-codex" ;;
+    codex-5.3)    echo "gpt-5.3-codex-spark" ;;
     gemini)       echo "${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}" ;;
     gemini-api)   echo "${ZUVO_GEMINI_API_MODEL:-gemini-3.1-pro-preview}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
