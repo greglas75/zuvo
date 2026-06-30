@@ -53,6 +53,26 @@ codesift_tools:
 
 A senior architect executing a structured refactoring workflow. Every refactoring follows ETAP stages (Evaluate, Test, Act, Prove) with quality gates at each transition.
 
+## Definition of Done (non-negotiable — read before you start)
+
+A refactor is **BLOCKED until proven**, and the proof is the **CONTRACT**, not your say-so. The
+canonical order is **Prove → record in CONTRACT → Gate → Commit (LAST)**. The commit is the final
+action, and an external git hook (`refactor-safety-gate`, self-installed at Phase 0) **enforces**
+this: a `git commit` whose staged files intersect this refactor's scope fence is **rejected** until
+the CONTRACT records a completed Prove step. There is **no condensed / light / "5-step" path** that
+skips this — git hooks fire on every harness, so it cannot be narrated past.
+
+The four **SAFETY** gates — never skippable, never reducible by "user scope", never "looks small so I skipped it":
+1. **Characterization coverage** of every moved unit, green on the PRE-refactor code (before touching it).
+2. **Independent CQ Auditor** (blind audit) → record `prove.blind_audit ∉ {skipped,not_run}`.
+3. **Adversarial review** on the final diff → record `prove.adversarial ∉ {skipped,not_run}`.
+4. **Remediation**: in-fence bugs the audit/adversarial surface are FIXED in this run (staged before
+   the gated commit), NOT backlogged. Only out-of-fence / user-declined items defer (each documented).
+
+**TELEMETRY** (CONTRACT, retro, run-log) is cheap — always do it. **BUILD SCOPE** (targeted vs full
+`turbo build`) the user MAY narrow, but only by DECLARING it. Skipping a SAFETY gate, or running it
+and parking its findings, = the run is `BLOCKED(unsafe)`. Full stop. Everything below is HOW; this is WHAT.
+
 ## Mandatory File Loading
 
 ### PHASE 0 — Bootstrap (always, before reading any input)
@@ -63,6 +83,25 @@ A senior architect executing a structured refactoring workflow. Every refactorin
 ```
 
 These files are loaded before reading the refactor target.
+
+### PHASE 0 — Commit-gate self-install (run this bash; ungated, fail-open)
+
+Export the AI-run marker and ensure the external refactor commit-gate is active for this repo. The
+gate is the bind that makes the Definition of Done real — an agent cannot skip a git hook. It no-ops
+when the repo has no active refactor CONTRACT, fail-opens if anything is missing (never blocks setup).
+
+```bash
+export ZUVO_AI_RUN=1
+_GATE=$(ls "$HOME"/.claude/hooks/refactor-safety-gate.sh \
+        "$HOME"/.claude/plugins/cache/zuvo-marketplace/zuvo/*/hooks/refactor-safety-gate.sh 2>/dev/null | head -1)
+_INST=$(ls "$HOME"/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/install-refactor-gate.sh \
+        "$HOME"/.claude/hooks/install-refactor-gate.sh 2>/dev/null | head -1)
+if [ -n "$_GATE" ] && [ -n "$_INST" ]; then
+  sh "$_INST" "$_GATE" "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+else
+  echo "[refactor-gate] gate/install script not found — in-skill self-check still applies"
+fi
+```
 
 ### PHASE 0.5 — Classify (read target, determine refactor type)
 
@@ -277,6 +316,7 @@ Where `{target-hash}` is the first 8 chars of SHA-1 of the relative target path 
   "plan": {},
   "test_mode": "",
   "test_audit_before": { "test_file": null, "q7": 0, "q11": 0, "q13": 0, "units_total": 0, "units_covered": 0, "uncovered_units": [] },
+  "prove": { "blind_audit": "not_run", "adversarial": "not_run", "findings_disposition": "pending" },
   "progress": []
 }
 ```
@@ -635,6 +675,7 @@ This phase OWNS all committing (Phase 4 no longer commits — it records).
 
 **Procedure:**
 
+0. **Record the Prove step in the CONTRACT — BEFORE you commit (the external gate reads it).** After the blind audit + adversarial passes (Phase 3), write their outcomes into the contract's `prove`: `prove.blind_audit` = the blind-audit telemetry (`clean:strict` / `clean:degraded` / `fix:N`, never `skipped`/`not_run`); `prove.adversarial` = `clean` / `Nfindings` / `Nfindings:preserved`. The `refactor-safety-gate` hook reads these on `git commit` — if either is still `skipped`/`not_run`/empty and the staged files are in this refactor's scope fence, the commit is **rejected**. That is the bind: you literally cannot commit a refactor whose Prove step you skipped.
 1. **Commit the pure refactor (always).** Stage scope-fence files → `git commit -m "refactor([scope]): [what moved]"`. This is the behavior-preserving proof: the Phase-2 characterization/existing tests, UNCHANGED, still pass. Record `REFACTOR_SHA`. (no-commit mode: show the diff + message, don't commit.)
 2. **Triage** the CQ-auditor + adversarial findings into the table above.
 3. **If fix-now items exist:**
@@ -744,31 +785,29 @@ COMPLETION GATE CHECK
 **Run this verifier verbatim and paste its output — cross-harness (plain shell, no MCP; Claude/Codex/Cursor/Antigravity):**
 
 ```bash
-g=0; t=0
-R=$(grep '^RETRO:' ~/.zuvo/retros.log 2>/dev/null | tail -1)
-# Class 1 — SAFETY (skipped ⇒ UNSAFE ⇒ BLOCKED)
-if [ -n "$R" ]; then
-  printf '%s\n' "$R" | awk -F'\t' '$14 ~ /skipped|not_run/{exit 1}' || { echo "BLOCK(unsafe): blind_audit skipped/not_run — Independent CQ Auditor HARD GATE not run"; g=1; }
-  printf '%s\n' "$R" | awk -F'\t' '$15 ~ /skipped|not_run/{exit 1}' || { echo "BLOCK(unsafe): adversarial skipped/not_run — MANDATORY review not run"; g=1; }
-  # Class 1b — findings must be FIXED in-run, NOT parked in the backlog (running the gate then ignoring its verdict)
-  FA=$(printf '%s\n' "$R" | awk -F'\t' '{print $14" "$15}')
-  if printf '%s\n' "$FA" | grep -qE '(^| )[1-9][0-9]*findings( |$)|fix:[1-9]'; then
-    git log -3 --pretty=%s 2>/dev/null | grep -qiE '^fix(\(|:)' || { echo "BLOCK(unsafe): blind-audit/adversarial recorded findings ($FA) but NO fix(...) commit in the run — default reading: findings were PARKED, not fixed. CLEAR IT one of two ways: (a) add the Phase 3.5 fix(...) commit for the in-fence bugs, or (b) paste a per-finding disposition where EVERY finding is out-of-fence / user-declined / false-positive / preserved. 'Moved verbatim' and 'infra was down' are NOT valid defers — infra-down ⇒ mark the run BLOCKED, never backlog-and-claim-done."; g=1; }
-  fi
+# REFACTOR SELF-CHECK — mirrors the external refactor-safety-gate (the real bind).
+# Reads the CONTRACT prove fields — the SAME artifact the git hook reads at commit time —
+# so this self-check and the hook can never disagree. Single source of truth = the CONTRACT
+# (not a global ~/.zuvo log tail, not a commit range; the commit is LAST, gated by the hook).
+C=$(ls -t zuvo/contracts/refactor-*.json 2>/dev/null | head -1)
+if [ -z "$C" ]; then
+  echo "GATE: N/A — no CONTRACT found (trivial/aborted refactor). If this WAS a real production refactor, that itself is the bug: create the CONTRACT (Phase 1) and run the pipeline."
 else
-  echo "UNPROVEN: no retro row — cannot confirm blind_audit/adversarial ran. If you DID run them, write the retro now (30s, records them). If you did NOT, RUN them first — that is the real block."; t=1
+  g=0
+  ba=$(sed -n 's/.*"blind_audit"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$C" | head -1)
+  av=$(sed -n 's/.*"adversarial"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$C" | head -1)
+  fd=$(sed -n 's/.*"findings_disposition"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$C" | head -1)
+  case "$ba" in skipped|not_run|"") echo "BLOCK(unsafe): prove.blind_audit='$ba' — run the Independent CQ Auditor and record it in $C"; g=1 ;; esac
+  case "$av" in skipped|not_run|"") echo "BLOCK(unsafe): prove.adversarial='$av' — run the adversarial review and record it in $C"; g=1 ;; esac
+  # findings parked? adversarial recorded N>0 findings (not ':preserved') but disposition unresolved
+  case "$av" in *findings) case "$fd" in pending|unresolved|"") echo "BLOCK(unsafe): prove.adversarial='$av' but findings_disposition='$fd' — FIX the in-fence bugs in Phase 3.5 (or document each as out-of-fence/declined/false-positive/preserved). 'Moved verbatim' / 'infra was down' are NOT valid defers."; g=1 ;; esac ;; esac
+  [ "$g" = 0 ] \
+    && echo "GATE: PASS — CONTRACT prove complete (blind_audit=$ba adversarial=$av disposition=$fd); the refactor-safety hook will allow the commit." \
+    || echo "GATE: BLOCKED(unsafe) — resolve the BLOCK lines above (RUN the gate / FIX the findings). The git hook will reject the commit until prove is complete; never relabel BLOCKED→PASS, never park a HARD GATE as 'awaiting user decision'."
 fi
-# Class 2 — TELEMETRY/PROCESS (run is unrecorded, not unsafe)
-ls zuvo/contracts/refactor-*.json >/dev/null 2>&1 || { echo "INCOMPLETE(telemetry): no CONTRACT (zuvo/contracts/refactor-*.json)"; t=1; }
-ls -t ~/.zuvo/adversarial-inputs/*.diff >/dev/null 2>&1 || echo "WARN: no adversarial-inputs/*.diff artifact — confirm the review dispatched, not just self-reported"
-git log -3 --name-only --pretty=format: 2>/dev/null | grep -q 'backlog.md' && echo "WARN: backlog.md grew this run — confirm ONLY out-of-fence / user-declined items were deferred, NOT adversarial-found in-fence bugs (especially CRITICAL/HIGH races)."
-# Verdict
-if   [ "$g" != 0 ]; then echo "GATE: BLOCKED (unsafe) — a SAFETY gate was skipped; RUN it, never relabel BLOCKED→PASS."
-elif [ "$t" != 0 ]; then echo "GATE: INCOMPLETE (unrecorded) — gates may have run but proof is missing; write retro+runlog (+CONTRACT) to close. Safe, but NOT done."
-else echo "GATE: PASS — safety gates proven non-skipped + telemetry recorded."; fi
 ```
 
-`BLOCKED (unsafe)` → run the missing safety gate; never relabel it `PASS`/`WARN`, never park it as "awaiting user decision." `INCOMPLETE (unrecorded)` → you did the hard part; spend the 30s to record it (this is the proof, and the history you lose otherwise). Only `GATE: PASS` is `COMPLETE`. (This gate exists because in one day three field refactors skipped the SAFETY gates and self-reported as done; a fourth ran them but skipped only telemetry; and a fifth ran adversarial, surfaced 8 production bugs including 2 CRITICAL races, and **backlogged all of them** instead of fixing the in-fence ones — the worst case, because the gate ran and its verdict was discarded. The verifier tells these apart: skipped gate and parked-findings are both `BLOCKED(unsafe)`; missing-telemetry-only is `INCOMPLETE`.)
+This self-check reads the CONTRACT — the SAME `prove` fields the external `refactor-safety-gate` hook reads on `git commit`. So if the self-check says `BLOCKED(unsafe)`, the hook will reject the commit too; they cannot disagree. `BLOCKED(unsafe)` → run the missing safety gate (or fix the parked findings) and record it in the CONTRACT; never relabel `BLOCKED→PASS`, never park a HARD GATE as "awaiting user decision." `GATE: N/A` is only for a genuinely trivial/aborted run with no CONTRACT — for a real production refactor, no CONTRACT is itself the bug. Only `GATE: PASS` is `COMPLETE`. (This whole gate exists because in one day five field refactors failed: three skipped the SAFETY gates and self-reported done; a fourth ran them but skipped telemetry; a fifth ran adversarial, surfaced 8 production bugs incl. 2 CRITICAL races, and **backlogged all of them** — the worst case, gate ran and verdict discarded. Prose said MANDATORY in 24 places and was ignored; the external hook is what finally makes it true.)
 
 ### Post-Completion Summary
 
