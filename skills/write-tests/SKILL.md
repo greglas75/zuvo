@@ -326,13 +326,13 @@ You just read the production code. **Before** planning tests, scan for bugs:
 - Security gaps (missing auth check, unsanitized input, unbounded query)
 - Edge cases the code doesn't handle (null, empty, duplicates)
 
-If you find a bug: log it to `memory/backlog.md` with file:line and description.
+If you find a bug: note it (file:line + description) as a **fix-in-run candidate for Step 4.5** — do NOT silently route it to `memory/backlog.md` and walk away. A fixable production bug surfaced by this skill is fixed in this run, not parked.
 
 - If the strongest honest regression test would be **red** against current production code, do NOT weaken the assertion just to satisfy Step 2.
-- Instead: backlog the bug, mark the file `FAILED`, and hand off the production fix to `zuvo:debug` or `zuvo:build`.
-- Only add a regression test in this skill when it can pass against the current production contract.
+- Instead, write a **characterization test** that documents current (buggy) behavior so Step 2 stays green and the bug is provably captured — then FIX the bug in Step 4.5 and flip that test to assert the corrected contract.
+- Hand-off/backlog is reserved for fixes whose scope reaches **outside** the production file under test (see Step 4.5 disposition) — never for an in-scope bug you can fix here.
 
-This prevents a deadlock between bug exposure and Step 2's green-test requirement.
+This converts the old bug-exposure/green-test deadlock into a fix-in-run: capture the behavior now, correct it before the file closes.
 
 Print: `[BUG-SCAN] Found {N} potential issues.` or `[BUG-SCAN] Clean.`
 
@@ -371,7 +371,7 @@ Print: `[file]: [type] [complexity] [testability] → [N] tests planned`
    - `Invalid Chai property: toBeInTheDocument` or similar -> inspect setup for DOM matcher registration; add the local matcher import only when global setup does not already provide it
    - repeated `Found multiple elements ...` after sequential runs -> inspect cleanup pattern from setup/exemplar; add local `afterEach(cleanup)` only when cleanup is not already global
 
-Red regression tests for known production bugs are not a valid terminal state for `write-tests`. If the truthful test stays red, backlog the bug and fail the file instead of weakening the assertion.
+Red regression tests for known production bugs are not a valid terminal state for `write-tests`. If the truthful test stays red: do NOT weaken the assertion and do NOT park the bug. Either (a) write it as a characterization test of current behavior now and fix the bug in Step 4.5 — flipping the assertion to the corrected contract — or (b) if the fix is out-of-scope, escalate per Step 4.5 disposition. Backlogging a fixable bug and failing the file is no longer a valid exit.
 
 ### Step 3: Verify
 
@@ -535,11 +535,11 @@ Run adversarial passes sequentially, one RANDOM provider per pass (`--rotate`). 
 
 Agent data shows passes 3-4 yield 0 new findings and cost ~60K tokens. 99% of value is in first 2 passes.
 
-**Production bug hard block:** If any adversarial finding is a high-confidence production bug (not a test gap) and the strongest honest regression test would be RED against current production code:
-- Backlog the bug with file:line and provider citation
-- Mark the file `FAILED` with `Adversarial=blocked:prod-bug`
-- Stop the write-tests run for this file and hand off to `zuvo:build` or `zuvo:debug`
-- Do NOT close the file as PASS or WARN while that production bug remains unfixed
+**Production bug → fix in-run (NOT hand-off):** If any adversarial finding is a high-confidence production bug (not a test gap) and the strongest honest regression test would be RED against current production code:
+- Verify it against source first (reject false positives with an attack-vector refutation — e.g. an "unreachable when callers pre-normalize" path is NOT a bug).
+- Route the confirmed bug to **Step 4.5** and fix it in this run. Do NOT mark the file `FAILED` and hand it to `zuvo:build`/`zuvo:debug` when the fix is in-scope — that backlog-and-walk-away is the behavior this skill no longer permits.
+- The file is still not closed as PASS while the bug is unfixed — but the resolution is to **FIX it (Step 4.5)**, not to defer it.
+- Only a fix whose scope reaches outside the production file under test is escalated (see Step 4.5 disposition), and even then loudly, with the in-scope portion still fixed.
 
 **Input: production + test file** (not just diff). Reviewer needs to see what's being tested to find gaps:
 
@@ -629,6 +629,29 @@ If `adversarial-review` is not found: check `../../scripts/adversarial-review.sh
 | **After final pass with unresolved CRITICAL** | Mark file **FAILED** in coverage.md. Backlog findings. |
 | **Provider unavailable on all passes and fallback-local unavailable** | Mark file **SKIPPED_REVIEW** in coverage.md. |
 
+### Step 4.5: Fix surfaced production bugs (in-run)
+
+A `write-tests` run that surfaces a real production bug **fixes it before the file closes** — it does not backlog it and hand off. This mirrors `zuvo:refactor` Phase 3.5 (see [[refactor-fix-in-run]]) and `zuvo:review`'s no-silent-deferral rule (see [[no-silent-backlog-deferral]]): a test run leaves the file **tested AND correct**, not "tested but still buggy with a note in the backlog." Parking a fixable bug — especially while writing the tests that just proved it — is exactly what the user has repeatedly rejected ([[proper-solutions-only]]).
+
+**Trigger:** Step 1.5, Step 2, or Step 4 surfaced one or more confirmed-real production bugs (verified against source — false positives are rejected with an attack-vector refutation, NOT carried here).
+
+**Disposition is fix-SCOPE, not severity.** Severity decides merge-blocking and follow-up breadth; it does NOT decide fix-now-vs-defer. A HIGH-severity security bug with a clear in-scope fix is fixed now, exactly like a trivial one:
+
+| Situation | Action |
+|-----------|--------|
+| Real bug, fix is within the production file under test (or a clearly-owned helper) | **FIX it now.** Any size. Then write/flip the regression test to assert corrected behavior. |
+| Fix needs changes OUTSIDE the test's production target (cross-module reorder, shared guard, schema/migration) | Escalate **loudly** to `zuvo:build` / `zuvo:security-audit` with file:line + repro — AND fix any clearly in-scope portion. Record the escalation; never a silent backlog row. |
+| The "bug" is a behavior/product DECISION (e.g. partial-result vs hard-error on total failure) | Interactive: ask. Batch/`--auto`: pick the safe default, log it, proceed. Backlog only if the user declines. |
+| HIGH/CRITICAL **security** bug, in-scope | Fix now AND surface to `zuvo:security-audit` for breadth (is this a class of holes?). Fixing the instance is mandatory; the audit is the follow-up, never a substitute for the fix. |
+
+**Stacked-commit structure (preserves characterization purity):**
+1. Commit 1 — the test file written against current behavior (characterization). For a buggy path, this is the test that documents/exposes the bug.
+2. Commit 2 — the production fix + the regression test flipped to the corrected contract (red on the commit-1 SHA, green now). The two commits together prove "this is what it did → this is the fix."
+
+Use the auto-commit policy already in effect. Do NOT weaken an assertion to dodge a fix; do NOT collapse the two concerns into one hidden edit.
+
+**After Step 4.5** the file's terminal state is `PASS` (bug fixed, regression test green) — NOT `FAILED`. Re-run the touched tests and re-run the blind audit on the new (production, test) hash pair if production code changed (the freshness guard invalidates the prior CLEAN). Only genuinely out-of-scope or user-declined items remain in `memory/backlog.md`. Record fixed files in `Files tested: ... ([J] fixed)` and in the Step 2b review artifact.
+
 ### Step 5: Log
 
 Update `memory/coverage.md`:
@@ -658,8 +681,9 @@ Do NOT treat a file as complete unless both `Blind Audit` and `Adversarial` colu
 1. **Backlog persistence:** write unfixed issues to `memory/backlog.md`
 2. **Knowledge curation** per `knowledge-curate.md`
 2b. **Content-keyed review artifact (on success only):** if this run modified any
-   **production** files (the pipeline-entry classifier excludes `*.test.*`/`*.spec.*`
-   test files, so a pure test-writing run has nothing to record here), write the
+   **production** files — which now includes any **Step 4.5 in-run fix** (the
+   pipeline-entry classifier excludes `*.test.*`/`*.spec.*`, so a test-only run records
+   nothing here, but a run that fixed a production bug DOES) — write the
    content-keyed artifact `memory/reviews/<base7>..<head7>-<slug>.md` with the
    `range:`/`files:` header per `../../shared/includes/review-artifact.md`, listing
    those production files. This run's blind-audit + adversarial review ALREADY reviewed
@@ -709,6 +733,7 @@ COMPLETION GATE CHECK
 [ ] Step 3: Q-score self-eval printed with per-gate evidence (Q7,Q11,Q13,Q15,Q17)
 [ ] Step 3.5: Blind audit ran (result: clean:strict|clean:degraded|skipped|blocked_infra)
 [ ] Step 4: Adversarial review ran (result: clean|Nfindings|skipped|blocked|not_run)
+[ ] Step 4.5: every confirmed in-scope production bug FIXED in-run (not backlogged/handed off); out-of-scope items escalated loudly with in-scope portion fixed
 [ ] Step 5: coverage.md row has Status + Blind Audit + Adversarial columns filled
 [ ] Step 5: backlog.md updated if any unfixed findings
 [ ] Step 2b: content-keyed memory/reviews artifact written IF production files changed (skip if test-only)
