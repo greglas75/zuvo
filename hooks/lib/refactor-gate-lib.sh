@@ -79,8 +79,8 @@ plan_execute_gate_check() {
   { [ -n "$plan" ] && [ -f "$plan" ]; } || return 0               # fail-OPEN: missing plan doc
   # `-- "$plan"` guards a leading-hyphen path; keep commas (split on them, NOT on spaces,
   # so a plan filename containing a space stays one token — caught in review).
-  files=$(grep '^\*\*Files:\*\*' -- "$plan" 2>/dev/null | tr -d '\r' | sed 's/^\*\*Files:\*\*//; s/`//g')
-  [ -n "$(printf '%s' "$files" | tr -d '[:space:]')" ] || return 0 # fail-OPEN: no **Files:**
+  plan_files=$(grep '^\*\*Files:\*\*' -- "$plan" 2>/dev/null | tr -d '\r' | sed 's/^\*\*Files:\*\*//; s/`//g')
+  [ -n "$(printf '%s' "$plan_files" | tr -d '[:space:]')" ] || return 0 # fail-OPEN: no **Files:**
   # HUMAN BYPASS — a human committing the plan's files is not hand-rolling AI work
   if [ -z "${ZUVO_AI_RUN:-}${CLAUDECODE:-}${CURSOR_TRACE_ID:-}${CODEX_SANDBOX:-}" ]; then
     echo "zuvo plan-gate: human committer (no AI-harness env) -> bypass [$ap]" >&2
@@ -92,7 +92,7 @@ plan_execute_gate_check() {
   # (caught in review). Space is NOT in IFS, so a filename with a space stays one token.
   IFS=',
 '
-  for pf in $files; do
+  for pf in $plan_files; do
     pf=$(printf '%s' "$pf" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')   # trim
     [ -n "$pf" ] || continue
     IFS='
