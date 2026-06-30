@@ -266,3 +266,36 @@ argv, so quoting/metachar bypasses don't apply to it). Backlog `B-noverify-harde
 optional deeper pass (alias resolution, index blob-hash tracking). **None of this weakens the
 guarantee:** the CI gate fails any unreviewed substantial change in the merged range no matter
 how the local hooks were evaded.
+
+## Refactor commit-gate (the Prove-before-commit bind)
+
+`zuvo:refactor` has its own enforcement, distinct from pipeline-entry: it stops an agent
+from committing a refactor whose **Prove** step (blind audit + adversarial review) it skipped
+or whose findings it parked. Prose said "MANDATORY" in 24 places and was ignored by five field
+refactors in one day; the bind is now an external git hook, because a hook fires on every harness
+and an agent cannot narrate past it.
+
+### How it works
+
+| Piece | Role |
+|-------|------|
+| **CONTRACT `prove` fields** (`zuvo/contracts/refactor-*.json` → `prove.{blind_audit,adversarial,findings_disposition}`) | the artifact of record — written at Phase 3.5 step 0, BEFORE the commit |
+| **`hooks/refactor-safety-gate.sh`** (pre-commit + pre-push) | reads the CONTRACT on `git commit`; **rejects** a commit whose staged files intersect a refactor scope fence whose `prove` is incomplete |
+| **`scripts/install-refactor-gate.sh`** | self-installs the hook into the target repo at refactor Phase 0 (idempotent, fail-open) |
+| **in-skill self-check** (Completion Gate) | reads the SAME CONTRACT, so it can never disagree with the hook |
+
+Canonical order: **Prove → record in CONTRACT → Gate → Commit (LAST)**. The commit is the final
+action; the hook gates it.
+
+### Safe by construction
+
+- **Fail-OPEN** — a missing/broken gate lib `exit 0`s; it can never brick a user's `git commit`.
+- **Human bypass** — a commit with no AI-harness env marker (`ZUVO_AI_RUN`/`CLAUDECODE`/…) is never blocked; a crashed AI run never locks a human out.
+- **Stale bypass** — a contract older than `ZUVO_GATE_TTL_SEC` (24h) is ignored.
+- **Never clobbers** a foreign hook or a version-controlled hooksPath (Husky's `.husky/`).
+- **No active refactor CONTRACT ⇒ no-op** — ordinary commits are untouched.
+- Escape (logged): `ZUVO_ALLOW_ADHOC=1`.
+
+Cross-harness because git's global `core.hooksPath` (`~/.claude/hooks`, set by `install.sh`) is a
+git-level setting — every harness's commits route through it. Tests: `tests/hooks/test-refactor-safety-gate.sh`
+and `tests/hooks/test-refactor-gate-install.sh`.
