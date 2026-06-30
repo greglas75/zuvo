@@ -517,7 +517,18 @@ detect_host_platform() {
      || [[ "${CODEX_INTERNAL_ORIGINATOR_OVERRIDE:-}" == "Codex Desktop" ]] \
      || [[ "${CODEX_SHELL:-}" == "1" ]] \
      || [[ "${__CFBundleIdentifier:-}" == "com.openai.codex" ]]; then
-    echo "codex-5.3" && return
+    # Like claude, codex has multiple models (gpt-5.4 "codex-5.4" vs gpt-5.3-codex-spark
+    # "codex-5.3"). Exclude only the SAME model as the host so a DIFFERENT codex model still
+    # reviews cross-model, instead of dropping codex wholesale. Read the host model from
+    # CODEX_MODEL or ~/.codex/config.toml; default to the newer model when unknown, so the
+    # spark reviewer (codex-5.3, in the auto-list) stays. detect_providers adds codex-5.4 back
+    # when the host IS spark (so a 5.4 reviewer is available there).
+    local hm="${CODEX_MODEL:-}"
+    [[ -z "$hm" ]] && hm=$(sed -n 's/^[[:space:]]*model[[:space:]]*=[[:space:]]*"\{0,1\}\([^"#]*\)"\{0,1\}.*/\1/p' "${CODEX_HOME:-$HOME/.codex}/config.toml" 2>/dev/null | head -1)
+    case "$hm" in
+      *spark*|*5.3*) echo "codex-5.3" && return ;;   # host = spark -> exclude spark
+      *)             echo "codex-5.4" && return ;;    # host = 5.4/5.5/unknown -> exclude 5.4 (spark stays as reviewer)
+    esac
   fi
 
   # Antigravity (Google IDE): VS Code fork with Antigravity in app paths
@@ -574,6 +585,9 @@ detect_providers() {
     codex_bin="/Applications/Codex.app/Contents/Resources/codex"
   fi
   [[ -n "$codex_bin" ]] && providers="codex-5.3"
+  # If the host IS the spark codex (HOST_PROVIDER=codex-5.3 → excluded below), add codex-5.4 so a
+  # CROSS-MODEL codex reviewer still runs (mirrors keeping claude with the opposite model).
+  [[ -n "$codex_bin" && "${HOST_PROVIDER:-}" == "codex-5.3" ]] && providers="$providers codex-5.4"
 
   # 2. gemini CLI (10-15s, unique findings)
   command -v gemini &>/dev/null && providers="$providers gemini"
@@ -716,6 +730,11 @@ run_claude() {
   if [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]]; then
     model="claude-opus-4-8"
   else
+    # CLAUDE_MODEL unset → assume the common Opus author and review with Sonnet. This is a
+    # heuristic, not proof: a Sonnet author with CLAUDE_MODEL unset would get Sonnet-reviews-Sonnet.
+    # WARN so that degradation is never SILENT (the caller/orchestrator should export CLAUDE_MODEL
+    # to guarantee cross-model). Found by the cross-model review of this very change.
+    [[ -z "${CLAUDE_MODEL:-}" ]] && echo "  NOTE: CLAUDE_MODEL unset — assuming Opus author, reviewing with Sonnet. Export CLAUDE_MODEL=<host-model> to guarantee a cross-model check." >&2
     model="claude-sonnet-4-6"
   fi
 
