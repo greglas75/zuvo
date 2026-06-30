@@ -92,10 +92,8 @@ when the repo has no active refactor CONTRACT, fail-opens if anything is missing
 
 ```bash
 export ZUVO_AI_RUN=1
-_GATE=$(ls "$HOME"/.claude/hooks/refactor-safety-gate.sh \
-        "$HOME"/.claude/plugins/cache/zuvo-marketplace/zuvo/*/hooks/refactor-safety-gate.sh 2>/dev/null | head -1)
-_INST=$(ls "$HOME"/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/install-refactor-gate.sh \
-        "$HOME"/.claude/hooks/install-refactor-gate.sh 2>/dev/null | head -1)
+_GATE=$(ls ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/hooks/refactor-safety-gate.sh 2>/dev/null | head -1)
+_INST=$(ls ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/install-refactor-gate.sh 2>/dev/null | head -1)
 if [ -n "$_GATE" ] && [ -n "$_INST" ]; then
   sh "$_INST" "$_GATE" "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 else

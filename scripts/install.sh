@@ -47,6 +47,9 @@ install_hook_tree() {
   if [ -d "$ZUVO_DIR/hooks/lib" ]; then
     cp "$ZUVO_DIR"/hooks/lib/*.sh "$dst/lib/" 2>/dev/null || true
   fi
+  # refactor commit-gate self-installer (lives in scripts/, needed in the hooks dir so
+  # zuvo:refactor Phase 0 can find it at ~/.claude/hooks/install-refactor-gate.sh)
+  [ -f "$ZUVO_DIR/scripts/install-refactor-gate.sh" ] && cp "$ZUVO_DIR/scripts/install-refactor-gate.sh" "$dst/" 2>/dev/null || true
   chmod +x "$dst"/*.sh "$dst"/lib/*.sh 2>/dev/null || true
 }
 
