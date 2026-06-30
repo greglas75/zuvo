@@ -41,7 +41,12 @@ out="$(sh "$INSTALL" "$GATE" "$TMP/r")"
 [ "$(cat .husky/pre-commit)" = "$hbefore" ] && ok "tracked .husky NOT mutated" || bad "tracked hooksPath mutated (infra leak!)"
 echo "$out" | grep -qi "version-controlled" && ok "manual-install instruction printed" || bad "no instruction for tracked hooksPath"
 
-# 5 fail-open: empty gate path -> graceful exit 0
+# 5 external hooksPath (zuvo-global-dispatcher style) -> installs to .git/hooks (dispatcher bridges)
+newrepo; ext="$TMP/exthooks"; mkdir -p "$ext"; git config core.hooksPath "$ext"
+sh "$INSTALL" "$GATE" "$TMP/r" >/dev/null
+{ [ -f .git/hooks/pre-commit ] && grep -q "$GATE" .git/hooks/pre-commit; } && ok "external hooksPath -> installs to .git/hooks (bridged)" || bad "external hooksPath targeting"
+
+# 6 fail-open: empty gate path -> graceful exit 0
 newrepo
 sh "$INSTALL" "" "$TMP/r" >/dev/null 2>&1 && ok "empty gate path -> graceful exit 0" || bad "empty path crashed"
 
