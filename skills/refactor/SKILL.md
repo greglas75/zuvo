@@ -546,6 +546,8 @@ Run the verification suite (scoped per above when in a worktree):
 4. CQ self-eval on all modified files
 5. Q1-Q19 on all modified test files
 
+> ⛔ **This 5-item suite is NOT the finish line — it is a mid-pipeline checkpoint.** Reaching the end of it does NOT mean the refactor is verified, done, or committable. **There is no "condensed", "light", or "5-step" refactor path in FULL mode** — if you find yourself treating this list as the whole workflow, you are mid-pipeline, not done. The Independent CQ Auditor (blind audit, next section), the CQ1-CQ29 pre/post audit, and the Adversarial Review are part of the SAME non-optional sequence. Do **not** commit-as-done, do **not** report `COMPLETE`, and **never** defer the blind audit or adversarial review to a "user decision" / "awaiting approval" — they are HARD GATES that run automatically without asking. A refactor that stopped here is **BLOCKED, not done** (see Completion Gate Check).
+
 ### Independent CQ Auditor (FULL mode — HARD GATE, non-skippable, default tier, read-only)
 
 After the lead's post-audit, dispatch an independent CQ Auditor agent. Run CQ1-CQ29 independently on ALL modified/created files. Does NOT trust the lead's scores. Catches N/A abuse and rubber-stamped gates.
@@ -716,7 +718,7 @@ If gate check skips: print "RETRO: skipped (trivial session)" and proceed to out
 
 ## Completion Gate Check
 
-Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
+**A refactor is BLOCKED until proven COMPLETE — and proof is an ARTIFACT, not a self-assessment.** Each gate below leaves evidence: a file, a telemetry row, a log line. "I did it" / "dependency impact = 0, so I skipped the scanner" / "I went with the condensed flow" without the artifact = it did NOT happen = verdict is `BLOCKED`. This gate runs AFTER the code change, so **if you already committed the code, that commit is provisional** — the run is not finished, and you may not present it as done, until every item below has its artifact. Skipping a HARD GATE because the change "looks small/safe" is exactly the failure this gate exists to catch: triviality is an output of the gates, not an excuse to skip them.
 
 ```
 COMPLETION GATE CHECK
@@ -733,6 +735,34 @@ COMPLETION GATE CHECK
 [ ] Documentation updated if public surface changed, else explicit [DOC: N/A — internal-only] (per documentation-mandate.md)
 [ ] Run: line printed and appended to log
 ```
+
+**Do not conflate three different things** — the verifier separates them, and so must you:
+- **SAFETY gates** — blind-audit (Independent CQ Auditor), adversarial review, characterization coverage. These prove the refactor did not break behavior. **Never skippable, never reducible by user scope, never "looks small so I skipped it."** Skipping one = the code is *unsafe* = `BLOCKED`.
+- **BUILD SCOPE** — targeted package type-check/tests vs full `turbo build/test --force`. The user *may* legitimately narrow this ("just type-check + targeted tests"), but only if you **declare it**: `[SCOPE: user-reduced — targeted type-check+tests; full build skipped per user]`. Silent narrowing is not allowed; declared narrowing is fine.
+- **TELEMETRY** — retro, run-log, CONTRACT, review artifact. These don't make the code safer, but they are the durable PROOF the gates ran and the history the skill improves from (losing them is exactly how months of retros vanished). Cheap; always do them. Missing telemetry ⇒ the run is *unrecorded* (`INCOMPLETE`), not necessarily unsafe — but it is **not done** either.
+
+**Run this verifier verbatim and paste its output — cross-harness (plain shell, no MCP; Claude/Codex/Cursor/Antigravity):**
+
+```bash
+g=0; t=0
+R=$(grep '^RETRO:' ~/.zuvo/retros.log 2>/dev/null | tail -1)
+# Class 1 — SAFETY (skipped ⇒ UNSAFE ⇒ BLOCKED)
+if [ -n "$R" ]; then
+  printf '%s\n' "$R" | awk -F'\t' '$14 ~ /skipped|not_run/{exit 1}' || { echo "BLOCK(unsafe): blind_audit skipped/not_run — Independent CQ Auditor HARD GATE not run"; g=1; }
+  printf '%s\n' "$R" | awk -F'\t' '$15 ~ /skipped|not_run/{exit 1}' || { echo "BLOCK(unsafe): adversarial skipped/not_run — MANDATORY review not run"; g=1; }
+else
+  echo "UNPROVEN: no retro row — cannot confirm blind_audit/adversarial ran. If you DID run them, write the retro now (30s, records them). If you did NOT, RUN them first — that is the real block."; t=1
+fi
+# Class 2 — TELEMETRY/PROCESS (run is unrecorded, not unsafe)
+ls zuvo/contracts/refactor-*.json >/dev/null 2>&1 || { echo "INCOMPLETE(telemetry): no CONTRACT (zuvo/contracts/refactor-*.json)"; t=1; }
+ls -t ~/.zuvo/adversarial-inputs/*.diff >/dev/null 2>&1 || echo "WARN: no adversarial-inputs/*.diff artifact — confirm the review dispatched, not just self-reported"
+# Verdict
+if   [ "$g" != 0 ]; then echo "GATE: BLOCKED (unsafe) — a SAFETY gate was skipped; RUN it, never relabel BLOCKED→PASS."
+elif [ "$t" != 0 ]; then echo "GATE: INCOMPLETE (unrecorded) — gates may have run but proof is missing; write retro+runlog (+CONTRACT) to close. Safe, but NOT done."
+else echo "GATE: PASS — safety gates proven non-skipped + telemetry recorded."; fi
+```
+
+`BLOCKED (unsafe)` → run the missing safety gate; never relabel it `PASS`/`WARN`, never park it as "awaiting user decision." `INCOMPLETE (unrecorded)` → you did the hard part; spend the 30s to record it (this is the proof, and the history you lose otherwise). Only `GATE: PASS` is `COMPLETE`. (This gate exists because in one day three field refactors skipped the SAFETY gates and self-reported as done, while a fourth ran them but skipped only telemetry — the verifier tells those two apart instead of punishing them identically.)
 
 ### Post-Completion Summary
 
