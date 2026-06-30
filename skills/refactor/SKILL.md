@@ -536,10 +536,12 @@ Post-audit score must not be lower than pre-audit. Any regression is a bug in th
 
 ### Verification
 
-Run the full verification suite:
+**If running in a secondary worktree, bootstrap dependencies and scope the suite first** — see `env-compat.md` → "Secondary Worktree Bootstrap". A worktree does not inherit `node_modules`; verify the toolchain matches the main checkout, reuse the root install (never a partial package-local one), then scope type-check/tests to the **touched package(s)** (`--filter=<pkg>`). A pre-existing failure in an unrelated package is `pre-existing-out-of-scope`, not a blocker — do not burn the run rediscovering errors that were red before you started.
+
+Run the verification suite (scoped per above when in a worktree):
 
 1. Type checking (tsc, mypy, or equivalent)
-2. Full test suite
+2. Test suite — scoped to touched package(s) in a worktree; full suite in the primary checkout
 3. Lint (if configured)
 4. CQ self-eval on all modified files
 5. Q1-Q19 on all modified test files

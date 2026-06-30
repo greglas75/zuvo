@@ -13,6 +13,19 @@
 | Scripts path | `<install-root>/scripts/` | `~/.codex/scripts/` | `~/.gemini/antigravity/scripts/` | `~/.cursor/scripts/` |
 | Adversarial self-exclude | `claude` | `codex-5.3` | `gemini` | `cursor-agent` |
 
+## Secondary Worktree Bootstrap
+
+Refactor/build runs frequently execute inside a **secondary git worktree** (`zuvo:worktree`, or a `refactor/*` branch checked out elsewhere). A worktree shares the repo's git objects but **not** its `node_modules` — and a half-populated, package-local `node_modules` produces type/build/test failures that look like real regressions but are pure environment noise. In the field this was the single largest time-sink for worktree refactors: *"dependency setup and unrelated full-suite failures consumed the most time for the least signal."*
+
+**Before running any verification (tsc / type-check / tests) in a worktree, bootstrap dependencies once:**
+
+1. **Match the toolchain to the main checkout** — same Node major (`node -v` vs the repo's `.nvmrc` / `engines`), same package manager. A version skew alone produces phantom type errors.
+2. **Prefer the root install over a fresh per-worktree install.** For a monorepo, reuse the primary checkout's hoisted modules (`ln -s <main-checkout>/node_modules <worktree>/node_modules`) rather than running a full `install` in the worktree.
+3. **Reject a partial package-local `node_modules`.** One that exists but is missing workspace deps is worse than none — it makes the resolver fail mid-build. Remove a partial/ignored install and re-link or re-install cleanly before verifying.
+4. **Clean ignored partial installs first**, then record the bootstrap state so a later failure is attributable to *code*, not setup.
+
+**Scope verification to the changed surface.** In a secondary worktree, run type-check/tests for the **touched package(s)** (`turbo run type-check --filter=<pkg>`, or the package's own test script) — **not** the whole monorepo. A pre-existing failure in an unrelated package is **out-of-scope** for a behavior-preserving refactor: record it as `pre-existing-out-of-scope`, do not treat it as a blocker, and do not burn the run "rediscovering" errors that were already red before you started. (CodeSift availability is orthogonal — a worktree is a `path=` argument, never a reason to drop to degraded mode.)
+
 ## Agent Dispatch
 
 ### Claude Code (primary)

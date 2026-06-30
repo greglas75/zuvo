@@ -50,6 +50,12 @@ tests: <N>/<N> pass | extension=<.spec.ts|.test.ts>
 status: <PASS|FAILED|BLOCKED_INFRA> | failure_cause=<none|blind-audit-timeout|prod-bug|...>
 ```
 
+**Adversarial disposition for behavior-preserving refactors (compact template).** A refactor that moves code verbatim will draw findings on patterns it *preserved* but did not introduce. Do not "fix" them (that changes behavior); do not leave them as open `Nfindings`. Disposition each on the `adversarial:` line and set field 15 to `Nfindings:preserved` when none required a behavior change:
+```
+adversarial: pass1=<provider>(NC,NW,NI) | cross_provider=<...> | timeout=<Ns> | disposition=preserved:<N> fixed:<N> pre-existing-out-of-scope:<N> false-positive:<N>
+```
+`preserved` = flagged-but-intentionally-unchanged (moved-verbatim, behavior-identical); `pre-existing-out-of-scope` = real but outside the refactor fence; `fixed` = drove a change (then field 15 is `Nfindings`, not `:preserved`).
+
 ### Part C: Gaps and Proposals (always required)
 
 | # | Field | Fill with |
@@ -98,7 +104,7 @@ RETRO: DATE\tSKILL\tPROJECT\tCODE_TYPE\tFRICTION_CATEGORY\tMISSING_TEMPLATE\tCON
 | 12 | BRANCH | string | current git branch |
 | 13 | SHA7 | string | short commit hash |
 | 14 | BLIND_AUDIT | enum | `clean:strict`, `clean:degraded`, `fix:N`, `rewrite`, `skipped`, `blocked_infra`, `not_run` |
-| 15 | ADVERSARIAL | enum | `clean`, `Nfindings`, `skipped`, `blocked`, `not_run`, `blocked:prod-bug` |
+| 15 | ADVERSARIAL | enum | `clean`, `Nfindings`, `Nfindings:preserved`, `skipped`, `blocked`, `not_run`, `blocked:prod-bug`. Use **`Nfindings:preserved`** for a behavior-preserving refactor where all N findings were dispositioned as pre-existing / intentionally-preserved (moved-verbatim code the reviewer flags as "looks wrong" but which the refactor did not introduce and must not change) — i.e. zero findings required a behavior change. Distinct from `clean` (reviewer found nothing) and `Nfindings` (findings that drove fixes). |
 | 16 | CODESIFT | enum | `indexed`, `transport_closed`, `not_indexed`, `unavailable`, `N/A` |
 | 17 | ROUTING_STATUS | enum | `ok`, `same-model-fallback`, `unknown-writer-model`, `routing-failed`, `N/A` |
 
