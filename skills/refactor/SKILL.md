@@ -737,7 +737,7 @@ COMPLETION GATE CHECK
 ```
 
 **Do not conflate three different things** — the verifier separates them, and so must you:
-- **SAFETY gates** — blind-audit (Independent CQ Auditor), adversarial review, characterization coverage. These prove the refactor did not break behavior. **Never skippable, never reducible by user scope, never "looks small so I skipped it."** Skipping one = the code is *unsafe* = `BLOCKED`.
+- **SAFETY gates** — blind-audit (Independent CQ Auditor), adversarial review, characterization coverage. These prove the refactor did not break behavior. **Never skippable, never reducible by user scope, never "looks small so I skipped it."** Skipping one = the code is *unsafe* = `BLOCKED`. **Running a gate and then parking its findings is the same failure** — an adversarial pass that surfaces 8 bugs and backlogs them (instead of fixing the in-fence ones in Phase 3.5) is `BLOCKED(unsafe)`, not done. The gate's value is the remediation, not the ceremony of having run it.
 - **BUILD SCOPE** — targeted package type-check/tests vs full `turbo build/test --force`. The user *may* legitimately narrow this ("just type-check + targeted tests"), but only if you **declare it**: `[SCOPE: user-reduced — targeted type-check+tests; full build skipped per user]`. Silent narrowing is not allowed; declared narrowing is fine.
 - **TELEMETRY** — retro, run-log, CONTRACT, review artifact. These don't make the code safer, but they are the durable PROOF the gates ran and the history the skill improves from (losing them is exactly how months of retros vanished). Cheap; always do them. Missing telemetry ⇒ the run is *unrecorded* (`INCOMPLETE`), not necessarily unsafe — but it is **not done** either.
 
@@ -750,19 +750,25 @@ R=$(grep '^RETRO:' ~/.zuvo/retros.log 2>/dev/null | tail -1)
 if [ -n "$R" ]; then
   printf '%s\n' "$R" | awk -F'\t' '$14 ~ /skipped|not_run/{exit 1}' || { echo "BLOCK(unsafe): blind_audit skipped/not_run — Independent CQ Auditor HARD GATE not run"; g=1; }
   printf '%s\n' "$R" | awk -F'\t' '$15 ~ /skipped|not_run/{exit 1}' || { echo "BLOCK(unsafe): adversarial skipped/not_run — MANDATORY review not run"; g=1; }
+  # Class 1b — findings must be FIXED in-run, NOT parked in the backlog (running the gate then ignoring its verdict)
+  FA=$(printf '%s\n' "$R" | awk -F'\t' '{print $14" "$15}')
+  if printf '%s\n' "$FA" | grep -qE '(^| )[1-9][0-9]*findings( |$)|fix:[1-9]'; then
+    git log -3 --pretty=%s 2>/dev/null | grep -qiE '^fix(\(|:)' || { echo "BLOCK(unsafe): blind-audit/adversarial recorded findings ($FA) but NO fix(...) commit in the run — default reading: findings were PARKED, not fixed. CLEAR IT one of two ways: (a) add the Phase 3.5 fix(...) commit for the in-fence bugs, or (b) paste a per-finding disposition where EVERY finding is out-of-fence / user-declined / false-positive / preserved. 'Moved verbatim' and 'infra was down' are NOT valid defers — infra-down ⇒ mark the run BLOCKED, never backlog-and-claim-done."; g=1; }
+  fi
 else
   echo "UNPROVEN: no retro row — cannot confirm blind_audit/adversarial ran. If you DID run them, write the retro now (30s, records them). If you did NOT, RUN them first — that is the real block."; t=1
 fi
 # Class 2 — TELEMETRY/PROCESS (run is unrecorded, not unsafe)
 ls zuvo/contracts/refactor-*.json >/dev/null 2>&1 || { echo "INCOMPLETE(telemetry): no CONTRACT (zuvo/contracts/refactor-*.json)"; t=1; }
 ls -t ~/.zuvo/adversarial-inputs/*.diff >/dev/null 2>&1 || echo "WARN: no adversarial-inputs/*.diff artifact — confirm the review dispatched, not just self-reported"
+git log -3 --name-only --pretty=format: 2>/dev/null | grep -q 'backlog.md' && echo "WARN: backlog.md grew this run — confirm ONLY out-of-fence / user-declined items were deferred, NOT adversarial-found in-fence bugs (especially CRITICAL/HIGH races)."
 # Verdict
 if   [ "$g" != 0 ]; then echo "GATE: BLOCKED (unsafe) — a SAFETY gate was skipped; RUN it, never relabel BLOCKED→PASS."
 elif [ "$t" != 0 ]; then echo "GATE: INCOMPLETE (unrecorded) — gates may have run but proof is missing; write retro+runlog (+CONTRACT) to close. Safe, but NOT done."
 else echo "GATE: PASS — safety gates proven non-skipped + telemetry recorded."; fi
 ```
 
-`BLOCKED (unsafe)` → run the missing safety gate; never relabel it `PASS`/`WARN`, never park it as "awaiting user decision." `INCOMPLETE (unrecorded)` → you did the hard part; spend the 30s to record it (this is the proof, and the history you lose otherwise). Only `GATE: PASS` is `COMPLETE`. (This gate exists because in one day three field refactors skipped the SAFETY gates and self-reported as done, while a fourth ran them but skipped only telemetry — the verifier tells those two apart instead of punishing them identically.)
+`BLOCKED (unsafe)` → run the missing safety gate; never relabel it `PASS`/`WARN`, never park it as "awaiting user decision." `INCOMPLETE (unrecorded)` → you did the hard part; spend the 30s to record it (this is the proof, and the history you lose otherwise). Only `GATE: PASS` is `COMPLETE`. (This gate exists because in one day three field refactors skipped the SAFETY gates and self-reported as done; a fourth ran them but skipped only telemetry; and a fifth ran adversarial, surfaced 8 production bugs including 2 CRITICAL races, and **backlogged all of them** instead of fixing the in-fence ones — the worst case, because the gate ran and its verdict was discarded. The verifier tells these apart: skipped gate and parked-findings are both `BLOCKED(unsafe)`; missing-telemetry-only is `INCOMPLETE`.)
 
 ### Post-Completion Summary
 
