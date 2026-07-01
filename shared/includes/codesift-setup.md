@@ -10,7 +10,7 @@ At the start of any skill that analyzes code, check whether CodeSift MCP tools a
 
 - **Claude Code / Codex / Cursor with MCP:** look for `mcp__codesift__*` tools in the tool list.
 - **Deferred-tool MCP hosts:** if `mcp__codesift__*` tools appear under "deferred tools" in the system reminder rather than directly in the tool list, run Step 2.5 (Deferred Tool Preload) before any other CodeSift call. Calling deferred tools without preload returns `InputValidationError`.
-- **If absent (not in tool list and not in deferred list):** CodeSift is unavailable. Skip to Degraded Mode below.
+- **If absent (not in tool list and not in deferred list):** do NOT immediately declare CodeSift unavailable — a `select:mcp__codesift__<name>` can return 0 simply because the `mcp__codesift__*` namespace has not been revealed in THIS session yet (a discovery-ordering artifact, not a real absence). First run the **namespace-reveal fallback**: a general *keyword* `ToolSearch(query="codesift plan_turn search_text search_symbols get_file_tree")` (keywords, NOT `select:`) to surface the namespace, THEN retry `ToolSearch(query="select:mcp__codesift__plan_turn")`. Only if the namespace is STILL absent after that keyword fallback is CodeSift genuinely unavailable → Degraded Mode. A single negative `select:` is a false alarm, never proof of absence.
 
 Do not call `discover_tools` just to check availability — inspect the tool list directly.
 
@@ -139,7 +139,7 @@ Take the UNION of all matched groups + `always`. Build one `select:` query with 
 1. Run: `~/.zuvo/compute-preload <skill_name> "$PWD"` (or pass an explicit project path).
 2. Copy the output trace block VERBATIM into the audit output.
 3. Issue the helper's three printed steps in order, no edits:
-   - **Step A** — `ToolSearch(query="select:mcp__codesift__describe_tools")` to bootstrap `describe_tools`.
+   - **Step A** — `ToolSearch(query="select:mcp__codesift__describe_tools")` to bootstrap `describe_tools`. **If Step A returns 0 matches, do NOT conclude CodeSift is absent** — the `mcp__codesift__*` namespace may just be unrevealed in this session. Run the namespace-reveal fallback FIRST: a general *keyword* `ToolSearch(query="codesift plan_turn search_text search_symbols get_file_tree")`, then retry `select:mcp__codesift__describe_tools`. Only a 0 result AFTER the keyword fallback means genuine absence → Degraded Mode. (This closes the false-alarm where a first negative `select:` before namespace reveal wrongly forced degraded mode — 2026-07-01.)
    - **Step B** — `mcp__codesift__describe_tools(names=[...], reveal=true)` with the full union list. This makes CodeSift's hidden tools (~95 of 175, `is_core: false`) enter ListTools so the next ToolSearch can resolve them. Skipping this step is the most common cause of `[PRELOAD MATH MISMATCH]` — the `select:` query silently drops names that aren't yet visible.
    - **Step C** — `ToolSearch(query="select:...")` with the full union list to load every schema.
 4. After Step C, print `[CodeSift loaded] tools=<N>` where `<N>` matches the helper's `[Expected after load] tools=<N>`.
