@@ -524,10 +524,16 @@ detect_host_platform() {
     # spark reviewer (codex-5.3, in the auto-list) stays. detect_providers adds codex-5.4 back
     # when the host IS spark (so a 5.4 reviewer is available there).
     local hm="${CODEX_MODEL:-}"
-    [[ -z "$hm" ]] && hm=$(sed -n 's/^[[:space:]]*model[[:space:]]*=[[:space:]]*"\{0,1\}\([^"#]*\)"\{0,1\}.*/\1/p' "${CODEX_HOME:-$HOME/.codex}/config.toml" 2>/dev/null | head -1)
+    # `/^[[:space:]]*\[/q`: stop at the first TOML table header so ONLY the top-level `model`
+    # key is read — a `[profiles.*]` model= must NOT be mistaken for the active host model
+    # (that mis-detection could re-introduce self-review — caught in review).
+    [[ -z "$hm" ]] && hm=$(sed -n '/^[[:space:]]*\[/q; s/^[[:space:]]*model[[:space:]]*=[[:space:]]*"\{0,1\}\([^"#]*\)"\{0,1\}.*/\1/p' "${CODEX_HOME:-$HOME/.codex}/config.toml" 2>/dev/null | head -1)
     case "$hm" in
       *spark*|*5.3*) echo "codex-5.3" && return ;;   # host = spark -> exclude spark
-      *)             echo "codex-5.4" && return ;;    # host = 5.4/5.5/unknown -> exclude 5.4 (spark stays as reviewer)
+      "") # unknown host model -> default to newer (keep spark as reviewer), but do NOT be SILENT
+          echo "  NOTE: codex host model unknown (no CODEX_MODEL / no top-level model= in config.toml) — assuming gpt-5.4, reviewing with spark codex-5.3. Export CODEX_MODEL to guarantee cross-model (a spark host here would be spark-reviews-spark)." >&2
+          echo "codex-5.4" && return ;;
+      *)  echo "codex-5.4" && return ;;              # host = 5.4/5.5 -> exclude 5.4 (spark stays as reviewer)
     esac
   fi
 
@@ -734,7 +740,10 @@ run_claude() {
     # heuristic, not proof: a Sonnet author with CLAUDE_MODEL unset would get Sonnet-reviews-Sonnet.
     # WARN so that degradation is never SILENT (the caller/orchestrator should export CLAUDE_MODEL
     # to guarantee cross-model). Found by the cross-model review of this very change.
-    [[ -z "${CLAUDE_MODEL:-}" ]] && echo "  NOTE: CLAUDE_MODEL unset — assuming Opus author, reviewing with Sonnet. Export CLAUDE_MODEL=<host-model> to guarantee a cross-model check." >&2
+    # Fire the NOTE whenever we DEFAULT to Sonnet without proof the host is Opus — i.e. unset OR a
+    # CLAUDE_MODEL alias with no recognized `opus` token (a custom/snapshot id). Otherwise a Sonnet
+    # host with such an alias would silently get Sonnet-reviews-Sonnet (caught in review, Point 2c).
+    [[ "${CLAUDE_MODEL:-}" != *opus* ]] && echo "  NOTE: CLAUDE_MODEL='${CLAUDE_MODEL:-unset}' has no recognized Opus token — assuming Opus author, reviewing with Sonnet. Export CLAUDE_MODEL=<host-model> to guarantee a cross-model check (a Sonnet author here would be Sonnet-reviews-Sonnet)." >&2
     model="claude-sonnet-4-6"
   fi
 
