@@ -192,6 +192,85 @@ x
 - ../../shared/includes/does-not-exist.md
 EOF
 
+# --- ERROR class (j): non-canonical include depth in a SKILL.md-level file ---
+# ../../../ is only filesystem-correct in agent-level files; in a SKILL.md it
+# must be flagged (and must NOT be substring-truncated into a passing ../../).
+mkskill deep-include <<'EOF'
+---
+name: deep-include
+description: "References an include with too many ../ levels."
+---
+
+# zuvo:deep-include
+
+## Argument Parsing
+x
+## Mandatory File Loading
+- ../../../shared/includes/run-logger.md
+EOF
+
+# --- ERROR class (k): too-shallow include depth (single ../) in a SKILL.md ---
+mkskill shallow-include <<'EOF'
+---
+name: shallow-include
+description: "References an include with too few ../ levels."
+---
+
+# zuvo:shallow-include
+
+## Argument Parsing
+x
+## Mandatory File Loading
+- ../shared/includes/run-logger.md
+EOF
+
+# --- ERROR class (l): 4-deep include depth in a SKILL.md ---
+mkskill too-deep-include <<'EOF'
+---
+name: too-deep-include
+description: "References an include with four ../ levels."
+---
+
+# zuvo:too-deep-include
+
+## Argument Parsing
+x
+## Mandatory File Loading
+- ../../../../shared/includes/run-logger.md
+EOF
+
+# --- ERROR class (m): dangling ../../../ include at AGENT depth ---
+# ../../../ is canonical in agents/*.md, but the target must still resolve.
+mkskill agent-dangle <<'EOF'
+---
+name: agent-dangle
+description: "Valid skill whose agent references a dangling deep include."
+---
+
+# zuvo:agent-dangle
+
+## Argument Parsing
+x
+## Mandatory File Loading
+- ../../shared/includes/run-logger.md
+EOF
+mkdir -p "$TMP/skills/agent-dangle/agents"
+cat > "$TMP/skills/agent-dangle/agents/deep-dangle.md" <<'EOF'
+# Deep Dangle Agent
+
+Load ../../../shared/includes/does-not-exist-agent.md before starting.
+EOF
+
+# --- Positive agent-depth fixture: ../../../ IS canonical in agents/*.md ---
+# (matches the real repo, e.g. skills/refactor/agents/cq-auditor.md); lives
+# under clean-skill so any false ERROR would trip the clean-skill assertion.
+mkdir -p "$TMP/skills/clean-skill/agents"
+cat > "$TMP/skills/clean-skill/agents/helper.md" <<'EOF'
+# Helper Agent
+
+Load ../../../shared/includes/run-logger.md before starting.
+EOF
+
 # --- Exemption fixture: using-zuvo (router H1, no run-logger/argparse/mfl) ---
 mkskill using-zuvo <<'EOF'
 ---
@@ -258,16 +337,39 @@ WARN_LINES="$(printf '%s\n' "$FIX_OUT" | grep '^WARN:' || true)"
 
 # every broken skill must surface at least one ERROR naming it
 for name in no-name wrong-name bad-h1 has-plugin-root no-runlogger \
-            no-open-fence no-close-fence no-description dangling-include; do
+            no-open-fence no-close-fence no-description dangling-include \
+            deep-include shallow-include too-deep-include agent-dangle; do
   printf '%s\n' "$ERR_LINES" | grep -Fq -- "$name" \
     || fail "expected an ERROR mentioning '$name' (errors: $ERR_LINES)"
 done
-pass "each of the 9 broken skills produced an ERROR"
+pass "each of the 13 broken skills produced an ERROR"
 
 # the dangling-include ERROR must contain the dangling path itself
 printf '%s\n' "$ERR_LINES" | grep -Fq -- "../../shared/includes/does-not-exist.md" \
   || fail "expected the dangling include path in an ERROR line (errors: $ERR_LINES)"
 pass "dangling include ERROR names the unresolved path"
+
+# the deep-include ERROR must be the non-canonical-depth class with the token
+printf '%s\n' "$ERR_LINES" | grep -F -- "non-canonical include depth" \
+  | grep -Fq -- "../../../shared/includes/run-logger.md" \
+  || fail "expected a non-canonical-depth ERROR with the ../../../ token (errors: $ERR_LINES)"
+pass "SKILL.md-level ../../../ include produces the non-canonical-depth ERROR"
+
+# depth-branch coverage: shallow (../) and 4-deep are non-canonical too
+printf '%s\n' "$ERR_LINES" | grep -F -- "shallow-include" \
+  | grep -Fq -- "non-canonical include depth" \
+  || fail "expected shallow-include's ERROR to be non-canonical-depth (errors: $ERR_LINES)"
+printf '%s\n' "$ERR_LINES" | grep -F -- "too-deep-include" \
+  | grep -Fq -- "non-canonical include depth" \
+  || fail "expected too-deep-include's ERROR to be non-canonical-depth (errors: $ERR_LINES)"
+pass "shallow (../) and 4-deep includes produce non-canonical-depth ERRORs"
+
+# agent-depth dangling: ../../../ accepted in agents/ but must still resolve
+printf '%s\n' "$ERR_LINES" | grep -F -- "agent-dangle" \
+  | grep -F -- "dangling include" \
+  | grep -Fq -- "does-not-exist-agent.md" \
+  || fail "expected a dangling-include ERROR at agent depth (errors: $ERR_LINES)"
+pass "dangling ../../../ include at agent depth produces a dangling-include ERROR"
 
 # clean / exemption / WARN fixtures must NOT produce any ERROR
 for name in clean-skill using-zuvo worktree no-argparse no-mfl; do
@@ -374,7 +476,7 @@ description: "Mini router fixture with banner and routing table."
 | Intent | Skill |
 |--------|-------|
 | build stuff | `zuvo:alpha` |
-| ad-hoc label | `zuvo:extra-token` |
+| ad-hoc label | `zuvo:adhoc-approved` |
 
 ## Next Section
 
@@ -387,10 +489,13 @@ cat > "$TMP2/.claude-plugin/plugin.json" <<'EOF'
 }
 EOF
 
+# NESTED interface.longDescription — mirrors the real .codex-plugin manifest
 cat > "$TMP2/.codex-plugin/plugin.json" <<'EOF'
 {
   "description": "Fixture ecosystem. 2 skills with quality gates.",
-  "longDescription": "Long form: 2 skills across fixture categories."
+  "interface": {
+    "longDescription": "Long form: 2 skills across fixture categories."
+  }
 }
 EOF
 
@@ -452,6 +557,26 @@ printf '%s\n' "$CONSIST_OUT" | grep -Fq -- "count-consistency: OK (2)" \
 printf '%s\n' "$CONSIST_OUT" | grep -Fq -- "include-integrity: OK" \
   || fail "consistent mini-repo should print 'include-integrity: OK' (output: $CONSIST_OUT)"
 pass "fully consistent mini-repo passes with both OK lines"
+
+# nested-drift variant: interface.longDescription (NESTED) says 3 → must be
+# caught, proving the dotted-path extraction is not inert on nested keys
+cat > "$TMP2/.codex-plugin/plugin.json" <<'EOF'
+{
+  "description": "Fixture ecosystem. 2 skills with quality gates.",
+  "interface": {
+    "longDescription": "Long form: 3 skills across fixture categories."
+  }
+}
+EOF
+set +e
+NESTED_OUT="$(bash "$SCRIPT" --root "$TMP2" 2>&1)"
+NESTED_RC=$?
+set -e
+[ "$NESTED_RC" -eq 1 ] || fail "nested longDescription drift should exit 1, got $NESTED_RC (output: $NESTED_OUT)"
+printf '%s\n' "$NESTED_OUT" | grep '^ERROR:' | grep -F -- ".codex-plugin/plugin.json" \
+  | grep -Fq -- "interface.longDescription" \
+  || fail "expected a count ERROR naming .codex-plugin/plugin.json interface.longDescription (output: $NESTED_OUT)"
+pass "NESTED interface.longDescription drift (3 vs 2) produces ERROR naming the file"
 
 # ---------- run the validator against the REAL repo ----------
 set +e

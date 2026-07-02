@@ -218,27 +218,55 @@ check_plugin_root() {
 
 # include tokens checked: files DIRECTLY under shared/includes/ or rules/
 # (subdirectory references like banned-vocabulary/core.md are out of scope).
-INCLUDE_TOKEN_RE='\.\./\.\./(shared/includes|rules)/[A-Za-z0-9._-]+\.md'
+# Broad (\.\./)+ prefix so ../../../ forms are captured WHOLE — a narrow
+# \.\./\.\./ pattern substring-truncates them and silently passes them.
+INCLUDE_TOKEN_RE='(\.\./)+(shared/includes|rules)/[A-Za-z0-9._-]+\.md'
 INCLUDE_INTEGRITY_OK=0
 COUNT_CONSISTENCY_OK=0
 ACTUAL_SKILLS=0
 
-# --- ERROR: every ../../shared/includes|rules/*.md token must exist on disk ---
+# routing-table tokens that are NOT skills (PR labels etc.) — filtered before
+# comparing the routed-skill count against the actual skill count
+ROUTING_NONSKILL_TOKENS="zuvo:adhoc-approved"
+
+# --- ERROR: every shared/includes|rules include token must exist on disk ---
+# --- AND use the canonical depth for the referencing file's level ---
 check_include_integrity() {
-  local before="$ERRORS" f tok rel
+  local before="$ERRORS" f tok rel fileloc skill
   while IFS= read -r -d '' f; do
-    # RESOLUTION RULE: tokens resolve against $ROOT/shared/includes and
-    # $ROOT/rules — NEVER relative to the referencing file's dirname.
-    # skills/*/agents/*.md are one level deeper than skills/*/SKILL.md but
-    # use the same ../../ convention; dirname-relative resolution would
-    # produce ~87 false positives on this repo.
+    fileloc="${f#"$SKILLS_DIR"/}"   # e.g. build/SKILL.md or refactor/agents/x.md
+    skill="$(skill_name_of "$f")"
+    # RESOLUTION RULE: ../../ tokens resolve against $ROOT — NEVER relative
+    # to the referencing file's dirname (agents/*.md mostly use the same
+    # root-anchored ../../ convention one level deeper; dirname-relative
+    # resolution would produce ~87 false positives on this repo).
+    # DEPTH RULE (empirical 2026-07, 15 tokens verified): ../../../ appears
+    # ONLY in agent-level files (>=2 levels below skills/), where it is
+    # filesystem-correct (three levels up IS the repo root) — accepted there,
+    # still root-resolved. In a SKILL.md-level file, or at any other depth
+    # (../ or ../../../../), it is a non-canonical-depth ERROR.
     # sort -u dedupes repeated identical tokens per file (no ERROR spam).
     while IFS= read -r tok; do
       [ -n "$tok" ] || continue
-      rel="${tok#../../}"
-      if [ ! -f "$ROOT/$rel" ]; then
-        fail_err "$(skill_name_of "$f"): dangling include $tok in ${f#"$ROOT"/} (no $rel under root)"
-      fi
+      case "$tok" in
+        ../../../../*)
+          fail_err "$skill: non-canonical include depth (must be ../../): $tok in ${f#"$ROOT"/}" ;;
+        ../../../*)
+          if [ "${fileloc#*/*/}" = "$fileloc" ]; then
+            # fewer than 2 path levels below skills/ → SKILL.md level → too deep
+            fail_err "$skill: non-canonical include depth (must be ../../): $tok in ${f#"$ROOT"/}"
+          else
+            rel="${tok#../../../}"
+            [ -f "$ROOT/$rel" ] \
+              || fail_err "$skill: dangling include $tok in ${f#"$ROOT"/} (no $rel under root)"
+          fi ;;
+        ../../*)
+          rel="${tok#../../}"
+          [ -f "$ROOT/$rel" ] \
+            || fail_err "$skill: dangling include $tok in ${f#"$ROOT"/} (no $rel under root)" ;;
+        *)
+          fail_err "$skill: non-canonical include depth (must be ../../): $tok in ${f#"$ROOT"/}" ;;
+      esac
     done < <(grep -oE -- "$INCLUDE_TOKEN_RE" "$f" | sort -u)
   done < <(find "$SKILLS_DIR" -type f -name '*.md' -print0)
   [ "$ERRORS" -eq "$before" ] && INCLUDE_INTEGRITY_OK=1
@@ -259,14 +287,35 @@ first_skills_num() {
 }
 
 cc_assert() {
-  # cc_assert <file-label> <what> <extracted-value>
+  # cc_assert <file-label> <what> <extracted-value> [expected]
   # Empty value = anchor not present in this tree (fixture roots) → skip.
-  local file="$1" what="$2" val="$3"
+  # expected defaults to the actual skill-dir count.
+  local file="$1" what="$2" val="$3" expect="${4:-$ACTUAL_SKILLS}"
   [ -n "$val" ] || return 0
-  if [ "$val" != "$ACTUAL_SKILLS" ]; then
-    fail_err "count-consistency: $file: $what says $val, actual skill count is $ACTUAL_SKILLS"
+  if [ "$val" != "$expect" ]; then
+    fail_err "count-consistency: $file: $what says $val, expected $expect (actual skill dirs: $ACTUAL_SKILLS)"
   else
-    pass "count-consistency: $file $what = $ACTUAL_SKILLS"
+    pass "count-consistency: $file $what = $expect"
+  fi
+}
+
+json_string_field() {
+  # print a string field from a JSON file; supports dotted paths for nested
+  # keys (e.g. 'interface.longDescription'); empty on error or missing hop.
+  # python3 preferred (repo precedent: install.sh / dev-push.sh parse JSON
+  # with python3); line-grep approximation kept as fallback (matches the
+  # LAST path segment anywhere in the file, so it is nesting-agnostic).
+  local file="$1" key="$2"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c '
+import json, sys
+obj = json.load(open(sys.argv[1], encoding="utf-8"))
+for k in sys.argv[2].split("."):
+    obj = obj.get(k) if isinstance(obj, dict) else None
+print(obj if isinstance(obj, str) else "")
+' "$file" "$key" 2>/dev/null
+  else
+    grep -- "\"${key##*.}\"" "$file" | head -n1
   fi
 }
 
@@ -282,20 +331,32 @@ sum_category_table() {
   ' "$1"
 }
 
-# --- count sources (a): plugin manifests + package.json description lines ---
+cc_json_skills_count() {
+  # extract '<N> skills' from a JSON field and assert it; the file is known
+  # to exist here, so an EMPTY extraction means the field vanished or lost
+  # its count — fail LOUD instead of letting the check go silently inert.
+  local file="$1" key="$2" v
+  v="$(json_string_field "$ROOT/$file" "$key" | first_skills_num)"
+  if [ -z "$v" ]; then
+    fail_err "count-consistency: $file: expected field $key not found (check went inert?)"
+    return 0
+  fi
+  cc_assert "$file" "$key" "$v"
+}
+
+# --- count sources (a): plugin manifests + package.json description fields ---
+# NOTE: description is TOP-LEVEL in all three files; codex longDescription is
+# NESTED at interface.longDescription (verified 2026-07 on the real manifest).
 cc_check_json_files() {
-  local f v
+  local f
   for f in ".claude-plugin/plugin.json" "package.json"; do
     [ -f "$ROOT/$f" ] || continue
-    v="$(grep -- '"description"' "$ROOT/$f" | head -n1 | first_skills_num)"
-    cc_assert "$f" "description" "$v"
+    cc_json_skills_count "$f" "description"
   done
   f=".codex-plugin/plugin.json"
   if [ -f "$ROOT/$f" ]; then
-    v="$(grep -- '"description"' "$ROOT/$f" | head -n1 | first_skills_num)"
-    cc_assert "$f" "description" "$v"
-    v="$(grep -- '"longDescription"' "$ROOT/$f" | head -n1 | first_skills_num)"
-    cc_assert "$f" "longDescription" "$v"
+    cc_json_skills_count "$f" "description"
+    cc_json_skills_count "$f" "interface.longDescription"
   fi
 }
 
@@ -320,14 +381,18 @@ cc_check_using_zuvo() {
     | grep -oE '\| *[0-9]+ skills' | grep -oE '[0-9]+' | head -n1)"
   cc_assert "skills/using-zuvo/SKILL.md" "banner" "$v"
   # Routing table: unique zuvo:<name> tokens between '## Routing Table' and
-  # the next '^## ' heading. EMPIRICAL (2026-07, verified on this repo): the
-  # table lists 53 skills (the router itself is excluded) PLUS the
-  # zuvo:adhoc-approved PR-label token = 54 unique tokens == ACTUAL, so the
-  # raw unique count is compared as-is — no +1 adjustment.
+  # the next '^## ' heading, minus known non-skill tokens (PR labels listed
+  # in ROUTING_NONSKILL_TOKENS). The router (using-zuvo) is not routed in
+  # its own table, so the filtered count is compared against ACTUAL - 1.
+  # EMPIRICAL (2026-07, this repo): 54 raw unique tokens = 53 routed skills
+  # + zuvo:adhoc-approved; filtered 53 == 54 - 1.
   if grep -qE '^##[[:space:]]+Routing Table' "$f"; then
+    local nonskill_pat
+    nonskill_pat="$(printf '%s' "$ROUTING_NONSKILL_TOKENS" | tr ' ' '|')"
     v="$(awk '/^##[[:space:]]+Routing Table/ {t=1; next} t && /^## / {exit} t' "$f" \
-      | grep -oE 'zuvo:[a-z][a-z0-9-]*' | sort -u | wc -l | tr -d ' ')"
-    cc_assert "skills/using-zuvo/SKILL.md" "routing-table unique skill tokens" "$v"
+      | grep -oE 'zuvo:[a-z][a-z0-9-]*' | sort -u \
+      | grep -vE "^(${nonskill_pat})\$" | wc -l | tr -d ' ')"
+    cc_assert "skills/using-zuvo/SKILL.md" "routing-table routed skills" "$v" "$((ACTUAL_SKILLS - 1))"
   fi
 }
 
@@ -335,9 +400,12 @@ cc_check_using_zuvo() {
 cc_check_claude_md() {
   local f="$ROOT/CLAUDE.md" v
   [ -f "$f" ] || return 0
+  # only '(N total)' anchors on skill-related lines are counted (both real
+  # anchors match '[Ss]kill': "skill definitions (54 total)" and
+  # "## Skill categories (54 total)") — unrelated "(N total)" prose is ignored
   while IFS= read -r v; do
     cc_assert "CLAUDE.md" "'(N total)' anchor" "$v"
-  done < <(grep -oE '\([0-9]+ total\)' "$f" | grep -oE '[0-9]+')
+  done < <(grep -E '[Ss]kill' "$f" | grep -oE '\([0-9]+ total\)' | grep -oE '[0-9]+')
   if grep -qE '^\| *Category *\| *Count *\|' "$f"; then
     cc_assert "CLAUDE.md" "category-table sum" "$(sum_category_table "$f")"
   fi
