@@ -11,7 +11,17 @@
 # file's own directory. FAIL-OPEN: a missing gate script never bricks `git push`.
 # Human pushes are exempt inside the gates (pg_is_agent_env G8); ZUVO_ALLOW_ADHOC=1
 # passes through untouched — this dispatcher adds NO env/exempt logic (dumb pipe).
-D=$(CDPATH= cd -- "$(dirname "$0")" && pwd) || exit 0   # CDPATH= : poisoning must not redirect the gate dir (fail-open would bypass)
+# Resolve $0 through symlinks FIRST: a dispatcher symlinked into a repo's .git/hooks would
+# otherwise look for its gates in .git/hooks and silently fail-open (caught in review).
+SELF="$0"; n=0
+while [ -L "$SELF" ] && [ $n -lt 8 ]; do
+  t=$(readlink "$SELF" 2>/dev/null) || break
+  case "$t" in /*) SELF="$t" ;; *) SELF="$(dirname "$SELF")/$t" ;; esac
+  n=$((n+1))
+done
+# depth cap hit with SELF still a link -> gates may not resolve; fail-open BY DESIGN but never silently
+[ -L "$SELF" ] && echo "zuvo dispatch: symlink chain >8 for $0 — gate dir may not resolve (fail-open)" >&2
+D=$(CDPATH= cd -- "$(dirname "$SELF")" && pwd) || exit 0   # CDPATH= : poisoning must not redirect the gate dir (fail-open would bypass)
 HOOK_NAME=$(basename "$0")
 R=$(git rev-parse --show-toplevel 2>/dev/null) || R=""
 input=$(cat)                                   # consumed once; replayed to local hook + gates

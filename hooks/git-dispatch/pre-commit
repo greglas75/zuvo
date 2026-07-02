@@ -1,0 +1,47 @@
+#!/bin/sh
+# zuvo global pre-commit dispatcher (tracked source: hooks/git-dispatch/pre-commit).
+# Installed to ~/.claude/hooks/pre-commit (global core.hooksPath) by scripts/install.sh.
+#
+# Runs the repo-local .git/hooks/pre-commit first WITHOUT exec (its failure propagates),
+# then ALWAYS chains the zuvo work-gate (refactor CONTRACT prove + plan->execute bind).
+# FAIL-OPEN: a missing gate never bricks `git commit`. Human commits are exempt inside
+# the gate (AI-marker bypass); this dispatcher adds NO env logic (dumb pipe).
+#
+# NO stdin capture here — git-native pre-commit inherits the terminal's stdin with no EOF
+# contract, so an `input=$(cat)` would HANG interactive commits (cross-model CRITICAL at
+# plan review). The local hook inherits stdin naturally; the gate reads `git diff --cached`,
+# not stdin, and is invoked </dev/null.
+# pre-commit-adversarial-gate.sh is deliberately NOT chained: it is a PreToolUse-Bash hook
+# (reads tool-input JSON; exits 0 on git-native empty stdin) — wired via hooks.json instead.
+# Resolve $0 through symlinks FIRST: a dispatcher symlinked into a repo's .git/hooks would
+# otherwise look for its gates in .git/hooks and silently fail-open (caught in review).
+SELF="$0"; n=0
+while [ -L "$SELF" ] && [ $n -lt 8 ]; do
+  t=$(readlink "$SELF" 2>/dev/null) || break
+  case "$t" in /*) SELF="$t" ;; *) SELF="$(dirname "$SELF")/$t" ;; esac
+  n=$((n+1))
+done
+# depth cap hit with SELF still a link -> gates may not resolve; fail-open BY DESIGN but never silently
+[ -L "$SELF" ] && echo "zuvo dispatch: symlink chain >8 for $0 — gate dir may not resolve (fail-open)" >&2
+D=$(CDPATH= cd -- "$(dirname "$SELF")" && pwd) || exit 0   # CDPATH= : poisoning must not redirect the gate dir
+HOOK_NAME=$(basename "$0")
+R=$(git rev-parse --show-toplevel 2>/dev/null) || R=""
+pp() { CDPATH= cd -- "$(dirname "$1")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$1")"; }
+rc=0
+
+# repo-local hook first (worktrees share hooks under the common gitdir; NOT --git-path hooks —
+# that honors core.hooksPath, which points back at this dispatcher). Scoped latch = hard stop.
+GCD=$(git rev-parse --git-common-dir 2>/dev/null)
+case "$GCD" in ""|/*) ;; *) GCD="$R/$GCD" ;; esac
+LOCAL="${GCD:-$R/.git}/hooks/$HOOK_NAME"
+if [ -n "$R" ] && [ -x "$LOCAL" ] && [ "${ZUVO_DISPATCH_ACTIVE:-}" != "$HOOK_NAME:$R" ]; then
+  lp=$(pp "$LOCAL"); sp=$(pp "$0")
+  if [ -z "$lp" ] || [ -z "$sp" ] || [ "$lp" != "$sp" ]; then
+    ZUVO_DISPATCH_ACTIVE="$HOOK_NAME:$R"; export ZUVO_DISPATCH_ACTIVE
+    "$LOCAL" "$@" || rc=1
+  fi
+fi
+
+# zuvo work-gate — ALWAYS; fail-open when absent.
+[ -x "$D/refactor-safety-gate.sh" ] && { "$D/refactor-safety-gate.sh" pre-commit </dev/null || rc=1; }
+exit $rc

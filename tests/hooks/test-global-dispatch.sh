@@ -89,4 +89,70 @@ err=$(printf '%s\n' "$REFLINE" | ZUVO_AI_RUN=1 "$HD/pre-push" 2>&1); rc=$?
 { [ $rc -ne 0 ] && printf '%s' "$err" | grep -q 'WT-LOCAL-FAIL'; } && ok "9 worktree: common-gitdir local hook found + propagates (exit $rc)" || bad "9 (rc=$rc err=$err)"
 cd "$TMP/r"; git worktree remove -f "$TMP/wt" 2>/dev/null
 
+echo "=== pre-commit dispatcher (7 cases) ==="
+# helper: real refactor-safety-gate + lib into HD (pre-commit cases use the REAL work-gate)
+realgate() { cp "$ROOT/hooks/refactor-safety-gate.sh" "$HD/"; mkdir -p "$HD/lib"; cp "$ROOT/hooks/lib/refactor-gate-lib.sh" "$HD/lib/"; chmod +x "$HD"/*.sh "$HD"/lib/*.sh; }
+
+# (1) no local hook + agent env + prove-skipped refactor CONTRACT -> work-gate BLOCKs
+newenv none; realgate
+mkdir -p zuvo/contracts
+printf '{"stage":"PHASE-3","scope_fence":["app.ts"],"prove":{"blind_audit":"skipped","adversarial":"clean","findings_disposition":"none"}}' > zuvo/contracts/refactor-a.json
+echo y > app.ts; git add app.ts
+err=$(ZUVO_AI_RUN=1 "$HD/pre-commit" 2>&1); rc=$?
+{ [ $rc -ne 0 ] && printf '%s' "$err" | grep -q 'BLOCK:'; } && ok "p1 CONTRACT prove-skip blocked (exit $rc)" || bad "p1 (rc=$rc err=$err)"
+
+# (2) local pre-commit exits 7 -> propagates (no exec-swallow)
+newenv none; realgate
+printf '#!/bin/sh\necho PC-LOCAL-FAIL >&2\nexit 7\n' > .git/hooks/pre-commit; chmod +x .git/hooks/pre-commit
+err=$(ZUVO_AI_RUN=1 "$HD/pre-commit" 2>&1); rc=$?
+{ [ $rc -ne 0 ] && printf '%s' "$err" | grep -q 'PC-LOCAL-FAIL'; } && ok "p2 local-fail propagates" || bad "p2 (rc=$rc)"
+
+# (3) local passes + PENDING plan intersecting staged -> plan->execute bind blocks
+newenv none; realgate
+printf '#!/bin/sh\nexit 0\n' > .git/hooks/pre-commit; chmod +x .git/hooks/pre-commit
+mkdir -p zuvo/plans docs/specs
+printf '# plan\n\n### Task 1\n**Files:** app.ts\n' > docs/specs/p-plan.md
+printf -- '---\nplan: docs/specs/p-plan.md\nstatus: pending\n---\n' > zuvo/plans/active-plan.md
+echo y > app.ts; git add app.ts
+err=$(ZUVO_AI_RUN=1 "$HD/pre-commit" 2>&1); rc=$?
+{ [ $rc -ne 0 ] && printf '%s' "$err" | grep -q 'zuvo:execute'; } && ok "p3 pending-plan bind blocks after passing local" || bad "p3 (rc=$rc err=$err)"
+
+# (4) human env (no AI markers) -> gate bypasses, exit 0
+newenv none; realgate
+mkdir -p zuvo/contracts
+printf '{"stage":"PHASE-3","scope_fence":["app.ts"],"prove":{"blind_audit":"skipped","adversarial":"clean","findings_disposition":"none"}}' > zuvo/contracts/refactor-a.json
+echo y > app.ts; git add app.ts
+rc=$(env -u ZUVO_AI_RUN -u CLAUDECODE -u CURSOR_TRACE_ID -u CODEX_SANDBOX -u ANTIGRAVITY_SESSION_ID "$HD/pre-commit" >/dev/null 2>&1; echo $?)
+[ "$rc" -eq 0 ] && ok "p4 human exempt" || bad "p4 (rc=$rc)"
+
+# (5) gate absent -> fail-open exit 0
+newenv none
+rc=$(ZUVO_AI_RUN=1 "$HD/pre-commit" >/dev/null 2>&1; echo $?)
+[ "$rc" -eq 0 ] && ok "p5 fail-open (no gate)" || bad "p5 (rc=$rc)"
+
+# (6) recursion guard: local pre-commit symlinked to dispatcher -> terminates
+newenv none; realgate
+ln -s "$HD/pre-commit" .git/hooks/pre-commit
+rc=$(ZUVO_AI_RUN=1 timeout 10 "$HD/pre-commit" >/dev/null 2>&1; echo $?)
+[ "$rc" -ne 124 ] && ok "p6 recursion terminates (exit $rc)" || bad "p6 fork bomb"
+
+# (7) HANG-GUARD: stdin = open-but-silent pipe; a re-introduced input=$(cat) would timeout(124)
+newenv none; realgate
+mkfifo "$TMP/silent.fifo"
+( exec 3>"$TMP/silent.fifo"; sleep 8 ) &   # hold the write end open, send nothing
+holder=$!
+rc=$(ZUVO_AI_RUN=1 timeout 5 "$HD/pre-commit" < "$TMP/silent.fifo" >/dev/null 2>&1; echo $?)
+kill $holder 2>/dev/null; rm -f "$TMP/silent.fifo"
+[ "$rc" -ne 124 ] && ok "p7 hang-guard: completes with silent-open stdin (exit $rc)" || bad "p7 HANGS on stdin (cat regression)"
+
+# (p8) SYMLINK-INSTALL: dispatcher symlinked INTO .git/hooks (git invokes the symlink) must still
+# resolve its OWN dir for the gates (a raw dirname $0 would look in .git/hooks -> silent fail-open)
+newenv none; realgate
+mkdir -p zuvo/contracts
+printf '{"stage":"PHASE-3","scope_fence":["app.ts"],"prove":{"blind_audit":"skipped","adversarial":"clean","findings_disposition":"none"}}' > zuvo/contracts/refactor-a.json
+echo y > app.ts; git add app.ts
+ln -s "$HD/pre-commit" .git/hooks/pre-commit
+err=$(ZUVO_AI_RUN=1 timeout 10 .git/hooks/pre-commit 2>&1); rc=$?
+{ [ $rc -ne 0 ] && [ $rc -ne 124 ] && printf '%s' "$err" | grep -q 'BLOCK:'; } && ok "p8 symlink-install still finds gates + blocks (exit $rc)" || bad "p8 (rc=$rc err=$err)"
+
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
