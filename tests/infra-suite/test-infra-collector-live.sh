@@ -184,10 +184,21 @@ fi
 OK_COUNT="$(jq -r '[.checks[] | select(.needs_sudo==true and .status=="ok")] | length' "$BUNDLE_B")"
 require_eq "$OK_COUNT" "0" "(b) needs_sudo checks must never be 'ok' when unprivileged (AC4)"
 pass "(b) zero needs_sudo checks are 'ok'"
-# all insufficient-data
-NON_ISD="$(jq -r '[.checks[] | select(.needs_sudo==true and .status!="insufficient-data")] | length' "$BUNDLE_B")"
-require_eq "$NON_ISD" "0" "(b) every needs_sudo check should be insufficient-data; statuses seen: $SUDO_STATUSES"
-pass "(b) all needs_sudo:true checks are insufficient-data (AC4)"
+# all insufficient-data, EXCEPT checks that the E3 limited-sudo allowlist-aware
+# probe (commit b4c8759) ran directly and annotated with the
+# "[via limited-sudo allowlist]" evidence marker — those are excluded from the
+# must-be-insufficient-data set because they legitimately surface a real result.
+NON_ISD="$(jq -r '[.checks[] | select(.needs_sudo==true and .status!="insufficient-data" and ((.evidence // "") | contains("[via limited-sudo allowlist]") | not))] | length' "$BUNDLE_B")"
+require_eq "$NON_ISD" "0" "(b) every needs_sudo check (excl. limited-sudo allowlist probes) should be insufficient-data; statuses seen: $SUDO_STATUSES"
+pass "(b) all needs_sudo:true checks are insufficient-data, except limited-sudo allowlist probes (AC4/E3)"
+
+# E3 exception, explicit (commit b4c8759): IS1-sshd-permitrootlogin reads a
+# world-readable file directly under limited-sudo (no allowlist grant needed),
+# so on the misconfigured fixture (PermitRootLogin yes) it must surface as a
+# real "finding" — not insufficient-data. Documents the intentional exception.
+IS1_STATUS_B="$(jq -r '.checks[] | select(.id=="IS1-sshd-permitrootlogin") | .status' "$BUNDLE_B")"
+require_eq "$IS1_STATUS_B" "finding" "(b) IS1-sshd-permitrootlogin should be status=finding under limited-sudo (E3 world-readable exception)"
+pass "(b) IS1-sshd-permitrootlogin status=finding on misconfigured fixture under limited-sudo (E3)"
 
 # ===========================================================================
 # Scenario (c): AC5 redaction — 5 seeded secrets grep ZERO across bundle+raw.

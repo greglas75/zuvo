@@ -10,7 +10,7 @@ source "$ASSERT_SH"
 
 assert_file_exists "$YAML_FILE"
 
-assert_contains "$YAML_FILE" 'value: "66"'
+assert_contains "$YAML_FILE" 'value: "67"'
 assert_contains "$YAML_FILE" 'user-proxy'
 assert_contains "$YAML_FILE" '--profile <marketing|docs|blog|ecommerce|app-shell>'
 assert_contains "$YAML_FILE" 'Strengths'

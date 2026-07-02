@@ -143,7 +143,7 @@ FIXABLE_COUNT="$(fixable_count)"
 
 [ "$BOT_COUNT" = "15" ] && pass "Bot registry contains 15 canonical bots" || fail "Bot registry expected 15 canonical bots, found $BOT_COUNT"
 [ "$PROFILE_COUNT" = "5" ] && pass "Page profile registry contains 5 canonical profiles" || fail "Page profile registry expected 5 profiles, found $PROFILE_COUNT"
-[ "$CHECK_COUNT" = "66" ] && pass "Check registry exposes 66 checks" || fail "Check registry expected 66 checks, found $CHECK_COUNT"
+[ "$CHECK_COUNT" = "67" ] && pass "Check registry exposes 67 checks" || fail "Check registry expected 67 checks, found $CHECK_COUNT"
 [ "$FIX_TOTAL_COUNT" = "15" ] && pass "Fix registry exposes 15 total contracts" || fail "Fix registry expected 15 contracts, found $FIX_TOTAL_COUNT"
 [ "$FIXABLE_COUNT" = "12" ] && pass "Fix registry exposes 12 executable fix types" || fail "Fix registry expected 12 executable fix types, found $FIXABLE_COUNT"
 
@@ -256,7 +256,7 @@ expect_fixed '"version": "1.1"' "$FIX_SKILL" "seo-fix JSON example uses v1.1"
 echo ""
 echo "--- Website Claim Drift ---"
 
-[ "$(yaml_stat_value "Checks" "$AUDIT_YAML")" = "66" ] && pass "seo-audit website advertises 66 checks" || fail "seo-audit website check stat drifted from contract"
+[ "$(yaml_stat_value "Checks" "$AUDIT_YAML")" = "67" ] && pass "seo-audit website advertises 67 checks" || fail "seo-audit website check stat drifted from contract"
 [ "$(yaml_stat_value "Bot Profiles" "$AUDIT_YAML")" = "15" ] && pass "seo-audit website advertises 15 bot profiles" || fail "seo-audit website bot stat drifted from contract"
 expect_fixed '--profile <marketing|docs|blog|ecommerce|app-shell>' "$AUDIT_YAML" "seo-audit website documents canonical profile flag"
 expect_fixed '--live-sample-bots <default|all|bot1,bot2>' "$AUDIT_YAML" "seo-audit website documents live bot sampling flag"

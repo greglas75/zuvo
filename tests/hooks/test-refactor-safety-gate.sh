@@ -2,6 +2,7 @@
 # Tests the REAL hooks/refactor-safety-gate.sh + hooks/lib/refactor-gate-lib.sh.
 # 6 gate cases + cross-harness (POSIX sh) + --no-verify pre-push backstop.
 set -u
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$ROOT/hooks/refactor-safety-gate.sh"
 LIB="$ROOT/hooks/lib/refactor-gate-lib.sh"

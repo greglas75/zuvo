@@ -21,8 +21,8 @@ assert_contains "$REGISTRY" '| `json-ld-duplicate-types` |'
 assert_contains "$REGISTRY" '| `og-type` |'
 assert_contains "$REGISTRY" "llms-spec-compliance"
 assert_contains "$REGISTRY" "llms-best-practice"
-assert_contains "$REGISTRY" "| D5 | 11 |"
+assert_contains "$REGISTRY" "| D5 | 12 |"
 assert_contains "$REGISTRY" "| D11 | 7 |"
-assert_contains "$REGISTRY" "| **Total** | **66** |"
+assert_contains "$REGISTRY" "| **Total** | **67** |"
 
 pass "seo-check-registry"

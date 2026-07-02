@@ -19,7 +19,7 @@ assert_contains "$AUDIT_SCHEMA" '`render_diff`'
 assert_contains "$AUDIT_SCHEMA" '`coverage.fixable_ratio`'
 assert_contains "$AUDIT_SCHEMA" '`manual_checks`'
 
-assert_contains "$FIX_SCHEMA" '# Fix Output Schema (v1.1)'
+assert_contains "$FIX_SCHEMA" '# Fix Output Schema (v1.2)'
 assert_contains "$FIX_SCHEMA" '`estimated_time`'
 assert_contains "$FIX_SCHEMA" '`manual_checks`'
 assert_contains "$FIX_SCHEMA" '`advisory_scaffolds`'
