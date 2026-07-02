@@ -44,11 +44,15 @@ fi
 # a command that carries an explicit `ZUVO_ALLOW_ADHOC=1` is a deliberate, visible-in-transcript
 # override (same logged-escape semantics as the pipeline/work gates honor). Allow it LOUDLY.
 # Legit use: removing a stale repo-local core.hooksPath override to RESTORE the global gate layer.
-case "$CMD" in
-  *ZUVO_ALLOW_ADHOC=1*)
-    echo "block-no-verify: ZUVO_ALLOW_ADHOC=1 escape honored (logged) — command allowed despite hook-skip pattern" >&2
-    exit 0 ;;
-esac
+# Word-boundary match (not bare substring): the token must stand alone, so an incidental
+# occurrence glued inside another word does not trip it. Residue: a QUOTED argument containing
+# the standalone token still matches — acceptable for a BEST-EFFORT layer (see header): writing
+# the escape marker anywhere is a deliberate, transcript-visible act, and the robust layers
+# (git PATH-shim, CI gate) are unaffected by this hook's decisions.
+if printf '%s' "$CMD" | grep -qE '(^|[[:space:]])ZUVO_ALLOW_ADHOC=1([[:space:]]|$)'; then
+  echo "block-no-verify: ZUVO_ALLOW_ADHOC=1 escape honored (logged) — command allowed despite hook-skip pattern" >&2
+  exit 0
+fi
 
 # Short cluster contains -n as a flag (before any arg-taking short option)?
 short_has_n() {
