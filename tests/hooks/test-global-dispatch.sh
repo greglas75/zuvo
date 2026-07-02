@@ -171,7 +171,8 @@ if [ -s "$FD" ]; then
   [ "$(cksum < "$FH/hook-chain.sh")" = "$chainsum" ] || a_ok=0        # chain uncorrupted
   [ "$(cksum < "$FH/post-commit")" = "$postsum" ] || a_ok=0           # post-commit untouched
   [ -L "$FH/commit-msg" ] || a_ok=0                                    # commit-msg still a symlink
-  [ "$a_ok" = 1 ] && ok "i1 symlink layout preserved (hook-chain/commit-msg/post-commit intact)" || bad "i1 corruption"
+  [ -f "$FH/pre-push" ] && [ ! -L "$FH/pre-push" ] || a_ok=0           # install HAPPENED (not a no-op — anti-tautology)
+  [ "$a_ok" = 1 ] && ok "i1 symlink layout preserved AND install happened" || bad "i1 corruption/no-op"
   # (i2) dispatchers land as REGULAR files identical to tracked sources
   { [ ! -L "$FH/pre-push" ] && [ ! -L "$FH/pre-commit" ] && cmp -s "$FH/pre-push" "$ROOT/hooks/git-dispatch/pre-push" && cmp -s "$FH/pre-commit" "$ROOT/hooks/git-dispatch/pre-commit" && [ -x "$FH/pre-push" ]; } \
     && ok "i2 dispatchers = regular files == tracked sources" || bad "i2"

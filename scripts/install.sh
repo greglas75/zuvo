@@ -69,9 +69,14 @@ install_git_dispatchers() {
     fi
   done
   for d in pre-push pre-commit; do
-    rm -f "$hooks_dir/$d"
-    cp "$ZUVO_DIR/hooks/git-dispatch/$d" "$hooks_dir/$d"
-    chmod +x "$hooks_dir/$d"
+    # Atomic replace: cp to a tmp name + mv -f (rename(2)) so there is NO window where the
+    # hook is absent mid-install (TOCTOU fail-open) and a symlink target is never written
+    # through (mv replaces the link itself). rm -rf first only for the stray-DIRECTORY edge
+    # (mv cannot replace a dir). cp rc checked so a failed copy never half-installs.
+    [ -d "$hooks_dir/$d" ] && rm -rf "$hooks_dir/$d"
+    cp "$ZUVO_DIR/hooks/git-dispatch/$d" "$hooks_dir/.$d.tmp" || { fail "dispatcher copy failed: $d"; return 1; }
+    chmod +x "$hooks_dir/.$d.tmp"
+    mv -f "$hooks_dir/.$d.tmp" "$hooks_dir/$d" || { fail "dispatcher install failed: $d"; rm -f "$hooks_dir/.$d.tmp"; return 1; }
   done
   ok "global git dispatchers installed (pre-push, pre-commit) — zuvo gates now run in EVERY repo"
 }
@@ -429,6 +434,11 @@ install_claude_home() {
   # repo's .git/hooks (C2). Uninstall: git config --global --unset core.hooksPath.
   local hooks_dir="$HOME/.claude/hooks"
   install_git_dispatchers "$hooks_dir"
+  # Install the GATE TREE (pre-push-gate.sh, refactor-safety-gate.sh, lib/) BEFORE wiring
+  # core.hooksPath — otherwise an interrupt in the window between wiring and the later tree
+  # install leaves live dispatchers with NO gates (silent ungated fail-open). Idempotent;
+  # the later pipeline-artifacts section re-copies harmlessly. (Aggregate-review MUST-FIX.)
+  install_hook_tree "$hooks_dir"
 
   # Wire global git core.hooksPath to ~/.claude/hooks/ so the codesift-mcp
   # dispatcher actually runs (which in turn fires our post-commit-review-backlog).
@@ -436,9 +446,10 @@ install_claude_home() {
   # leaked tmp paths like /var/folders/.../codesift-setup-XXXXXX/.claude/hooks
   # into the user's real ~/.gitconfig, silently breaking every git hook on the
   # machine until manual unset.
-  # Wire when OUR dispatchers are installed (they always are after install_git_dispatchers
-  # above) — no longer gated on codesift's post-commit; its absence is informational only.
-  if [[ -x "$hooks_dir/pre-push" && -x "$hooks_dir/pre-commit" ]]; then
+  # Wire when OUR dispatchers AND the gates they chain are installed — checking only the
+  # dispatchers verified the wrong invariant (dispatchers-without-gates = ungated fail-open).
+  if [[ -x "$hooks_dir/pre-push" && -x "$hooks_dir/pre-commit" \
+        && -x "$hooks_dir/pre-push-gate.sh" && -x "$hooks_dir/refactor-safety-gate.sh" ]]; then
     local current_hooks_path
     current_hooks_path=$(git config --global --get core.hooksPath 2>/dev/null || true)
     if [[ -z "$current_hooks_path" ]]; then
@@ -456,7 +467,7 @@ install_claude_home() {
       ok "core.hooksPath already → $hooks_dir"
     fi
   else
-    warn "~/.claude/hooks/post-commit not found — install codesift-mcp setup first to populate the dispatcher (then rerun this)"
+    warn "global git dispatchers/gates incomplete in ~/.claude/hooks (need pre-push, pre-commit, pre-push-gate.sh, refactor-safety-gate.sh from hooks/ + hooks/git-dispatch/) — core.hooksPath NOT wired; fix the checkout and rerun"
   fi
 
   # ── Claude Code Stop-hook: zuvo-stop-retro-sweep (added 2026-05-29)

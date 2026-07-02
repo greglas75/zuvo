@@ -7,7 +7,15 @@ HD="$HOME/.claude/hooks"                       # object under test: the INSTALLE
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 fails=0; ok(){ echo "  ✓ $1"; }; bad(){ echo "  ✗ $1"; fails=$((fails+1)); }
 
-[ -x "$HD/pre-push" ] && [ -x "$HD/pre-push-gate.sh" ] || { echo "installed dispatchers/gates missing — run scripts/install.sh"; exit 1; }
+# Preflight: FULL chain present (a partial install — dispatchers without gates — must FAIL here,
+# not silently pass) + INSTALLED copies match the tracked sources (stale-install detection).
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+for f in pre-push pre-commit pre-push-gate.sh refactor-safety-gate.sh; do
+  [ -x "$HD/$f" ] || { echo "PREFLIGHT FAIL: $HD/$f missing/not executable — run scripts/install.sh"; exit 1; }
+done
+for d in pre-push pre-commit; do
+  cmp -s "$HD/$d" "$ROOT/hooks/git-dispatch/$d" || { echo "PREFLIGHT FAIL: installed $d differs from tracked source (stale install) — run scripts/install.sh"; exit 1; }
+done
 
 # QuotasMobi-like repo: substantial (>=3 prod files, >=150 lines) UNREVIEWED range, no local hooks
 mkdir -p "$TMP/r"; cd "$TMP/r"
@@ -38,5 +46,16 @@ printf '#!/bin/sh\nexit 0\n' > .git/hooks/pre-push
 err=$(printf '%s\n' "$REF" | ZUVO_AI_RUN=1 ZUVO_AGENT=1 "$HD/pre-push" 2>&1); rc=$?
 { [ $rc -ne 0 ] && printf '%s' "$err" | grep -qiE 'unreviewed|review'; } \
   && ok "S3b passing local hook does NOT shadow the gate (agent still blocked, exit $rc)" || bad "S3b shadowed (rc=$rc)"
+
+echo "=== S4: pre-commit dispatcher e2e (no hang + work-gate fires) ==="
+mkdir -p zuvo/contracts
+printf '{"stage":"PHASE-3","scope_fence":["src_a.ts"],"prove":{"blind_audit":"skipped","adversarial":"clean","findings_disposition":"none"}}' > zuvo/contracts/refactor-s.json
+echo more >> src_a.ts; git add src_a.ts
+err=$(ZUVO_AI_RUN=1 timeout 10 "$HD/pre-commit" 2>&1); rc=$?
+{ [ $rc -ne 0 ] && [ $rc -ne 124 ] && printf '%s' "$err" | grep -q 'BLOCK:'; } \
+  && ok "S4a agent prove-skip commit BLOCKED, no hang (exit $rc)" || bad "S4a (rc=$rc)"
+rm -f zuvo/contracts/refactor-s.json
+rc=$(ZUVO_AI_RUN=1 timeout 10 "$HD/pre-commit" >/dev/null 2>&1; echo $?)
+{ [ "$rc" -eq 0 ]; } && ok "S4b no active work -> commit passes, no hang" || bad "S4b (rc=$rc)"
 
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL SMOKE PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
