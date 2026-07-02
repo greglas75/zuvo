@@ -5,7 +5,7 @@
 **planning_mode:** inline
 **source_of_truth:** inline brief (conversation proposal, 2026-07-02: validate-skills lint + run-all aggregate gate + eval corpus + zuvo:skill-eval)
 **plan_revision:** 2
-**status:** Reviewed
+**status:** Approved
 **Created:** 2026-07-02
 **Tasks:** 10
 **Estimated complexity:** 3 standard / 7 complex
@@ -73,7 +73,7 @@
   - INFO "Task 1 commit message lists files not behavior" → applied (message now states the enabling behavior)
 - Plan reviewer: revision 2 -> APPROVED (renumbered DAG verified — 60+ "Task N" cross-references checked, 0 stale; coverage matrix + artifact paths consistent; spike gate well-formed per rules 14/15; metadata matches)
 - DAG lint: revision 2 -> valid DAG (10 tasks, 0 violations)
-- Status gate: Reviewed
+- Status gate: Approved (user, 2026-07-02 — "go")
 
 ## Task Breakdown
 
