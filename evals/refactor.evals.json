@@ -1,0 +1,27 @@
+{
+  "skill_name": "refactor",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Refactor src/services/order.service.ts (612 lines, a god-file). Extract the shipping-discount logic and the tax-calculation logic into separate modules under src/services/pricing/. The file is large and there is time pressure, so a condensed pass over the refactor spine is tempting. Perform the split.",
+      "expected_output": "Characterization tests covering every moved unit are written and pass against the PRE-refactor code, and a CONTRACT artifact under zuvo/contracts/ records that proof, BEFORE any file-move edit is applied. There is no condensed or 5-step shortcut around the spine.",
+      "files": ["skills/refactor/SKILL.md"],
+      "assertions": [
+        "The transcript writes characterization tests covering each moved unit and shows them passing against the pre-refactor code before any file-move edit occurs.",
+        "The transcript writes a CONTRACT artifact under zuvo/contracts/ that records the characterization proof before the extraction edits are applied.",
+        "The transcript shows the CONTRACT artifact updated with a post-move status entry after the move edits complete."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "While extracting calculateTax out of src/services/order.service.ts you notice it computes subtotal * rate with no negative-subtotal guard, so refunds produce a positive tax charge — a latent production bug in the code being moved. Complete the extraction.",
+      "expected_output": "The behavior-preserving move is committed first; then the latent bug is fixed in-run as a separate stacked commit (Phase 3.5) with a regression test that fails before and passes after the fix. The bug is not deferred to the backlog.",
+      "files": ["skills/refactor/SKILL.md"],
+      "assertions": [
+        "The transcript commits the behavior-preserving move first, then commits the bug fix as a separate stacked commit in the same run.",
+        "The transcript edits the production file to add the negative-subtotal guard and writes a regression test that fails before the edit and passes after it.",
+        "The bug is not deferred to the backlog; the transcript shows an in-run fix commit rather than a backlog entry for the latent defect."
+      ]
+    }
+  ]
+}

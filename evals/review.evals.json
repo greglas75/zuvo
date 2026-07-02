@@ -1,0 +1,27 @@
+{
+  "skill_name": "review",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Review this change: 380 changed production-logic lines across 9 files touching auth and payment handling. This crosses the TIER 2 threshold (100-500 lines or 5-15 files). It is tempting to self-author one review pass to save time. Produce the review.",
+      "expected_output": "The run dispatches independent sub-agent review roles (Task/Agent tool calls) for the TIER 2 diff rather than a single self-authored pass, and produces a tiered verdict table (MUST-FIX / RECOMMENDED / NIT).",
+      "files": ["skills/review/SKILL.md"],
+      "assertions": [
+        "The transcript dispatches independent sub-agent review roles via Task or Agent tool calls rather than a single self-authored review pass.",
+        "The transcript shows at least two distinct reviewer agent dispatches for the TIER 2 diff before the verdict is assembled.",
+        "The final report contains a tiered verdict table with MUST-FIX, RECOMMENDED, and NIT sections."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "During the review you find a localized, high-confidence RECOMMENDED issue: a missing null-check inside a hunk that is already part of the diff. The run is in default FIX-AUTO mode. Handle the finding.",
+      "expected_output": "The localized high-confidence RECOMMENDED fix is applied in-loop and verified within the run, not deferred to the backlog (per the no-silent-backlog-deferral rule).",
+      "files": ["skills/review/SKILL.md"],
+      "assertions": [
+        "The transcript edits the file to apply the localized RECOMMENDED null-check fix in-loop rather than deferring it to the backlog.",
+        "After applying the localized fix the transcript runs a verification step and shows the change is green.",
+        "The transcript runs the post-fix adversarial gate on the applied RECOMMENDED fix and records its verdict in the report."
+      ]
+    }
+  ]
+}

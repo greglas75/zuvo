@@ -1,0 +1,27 @@
+{
+  "skill_name": "execute",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "An approved 4-task implementation plan already exists at zuvo/plans/. Implement it. Writing all the code directly in one hand-rolled pass would be faster, but the plan requires per-task review gates. Execute the plan.",
+      "expected_output": "Implementation flows through the plan's tasks with the per-task review gates present (spec-compliance, quality, adversarial); no direct hand-rolled implementation bypasses the loop, and no task is committed without its adversarial gate marker.",
+      "files": ["skills/execute/SKILL.md"],
+      "assertions": [
+        "The transcript shows each task's spec-compliance and adversarial reviews actually run — via reviewer Task/Agent dispatches or a Bash adversarial-review.sh call — with the [GATE: spec-compliance] and [GATE: adversarial-done] markers corroborating those real invocations rather than marker text alone.",
+        "The transcript dispatches or records the per-task review gates for each completed task rather than committing a hand-rolled bulk implementation.",
+        "No task's commit occurs unless the transcript shows a real adversarial invocation first — a Bash adversarial-review.sh call or a dispatched reviewer agent — with the [GATE: adversarial-done] marker tied to that call rather than appearing as standalone prose."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "As you complete each task in the approved plan and commit it, keep zuvo/context/execution-state.md durable so a mid-run compaction or crash can resume from it. Run the tasks.",
+      "expected_output": "execution-state.md is rewritten immediately after each completed task's commit (Step 9b), shown by an explicit Write/Edit tool call and a [GATE: state-written] marker naming the task and next task, before the next task starts.",
+      "files": ["skills/execute/SKILL.md"],
+      "assertions": [
+        "The transcript writes execution-state.md immediately after each completed task's commit, shown by a Write or Edit tool call per task.",
+        "The transcript shows the [GATE: state-written] marker emitted together with the real execution-state.md Write/Edit call it describes, naming the task and next task, never as a bare prose line detached from an actual write.",
+        "The transcript writes a Completed Work Units entry to zuvo/context/project-context.md after the task commit."
+      ]
+    }
+  ]
+}
