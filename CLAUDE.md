@@ -103,7 +103,7 @@ This does: version bump → commit → push → tag → update marketplace SHA �
 ## File structure
 
 ```
-skills/<name>/SKILL.md          — skill definitions (51 total)
+skills/<name>/SKILL.md          — skill definitions (54 total)
 skills/<name>/agents/<name>.md  — sub-agent instructions (28 agents)
 shared/includes/*.md            — shared procedural includes (38 files):
                                     knowledge-prime.md, knowledge-curate.md (knowledge store)
@@ -183,21 +183,22 @@ full layer table + honest limits):
 - **Escapes (logged):** `ZUVO_ALLOW_ADHOC=1` locally; the human-applied `zuvo:adhoc-approved`
   PR label in CI (an agent cannot self-apply it). Hooks/tests live in `hooks/` + `tests/hooks/`.
 
-## Skill categories (51 total)
+## Skill categories (54 total)
 
 | Category | Count | Skills |
 |----------|-------|--------|
 | Pipeline | 5 | brainstorm, plan, execute, worktree, receive-review |
 | Core | 4 | build, review, refactor, debug |
 | Code/Test audits | 5 | code-audit, test-audit, api-audit, security-audit, pentest |
-| Infra audits | 5 | performance-audit, db-audit, dependency-audit, ci-audit, env-audit |
+| Infra audits | 6 | performance-audit, db-audit, dependency-audit, ci-audit, env-audit, infra-audit |
 | Structure/SEO/GEO | 6 | structure-audit, seo-audit, seo-fix, geo-audit, geo-fix, architecture |
 | Content | 5 | content-audit, content-fix, content-migration, write-article, content-expand |
 | Design | 3 | design, design-review, ui-design-team |
 | Testing | 5 | write-tests, fix-tests, write-e2e, tests-performance, mutation-test |
 | Accessibility | 1 | a11y-audit |
 | Release | 5 | ship, deploy, canary, release-docs, retro |
-| Utility | 7 | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo |
+| Utility | 8 | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo, context-audit |
+| Lead Generation | 1 | leads |
 
 ## Common tasks
 

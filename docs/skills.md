@@ -126,6 +126,7 @@ Scoped task execution for common development work.
 | `zuvo:presentation` | Generate PowerPoint (PPTX) presentations using python-pptx. Consistent theming, speaker notes, visual variety. | Creating slide decks | `[topic]`, `from [file]`, `--slides N`, `--theme dark\|light\|corporate`, `--outline-only` |
 | `zuvo:incident` | Incident response and postmortem generation from git/deploy context. Builds timeline, identifies suspect commits, assesses impact, generates structured postmortem with action items and comms templates. | When something breaks in production, after outages, post-incident review | `[description]`, `--since [time]`, `--service [name]`, `--sev [1-4]`, `--revert`, `--comms`, `--dry-run` |
 | `zuvo:using-zuvo` | Meta-skill router, always loaded at session start. Routes user intent to the correct skill. | Automatic -- you never invoke this directly |
+| `zuvo:context-audit` | Context health monitoring. Analyzes include loading trends from context-metrics.log, audits CLAUDE.md/rules/settings for bloat, scores setup health. | Periodic context health check, when context feels bloated, before/after adding rules or includes | `trend` (default), `--full`, `--baseline`, `--since N` |
 
 ---
 
@@ -143,7 +144,7 @@ Scoped task execution for common development work.
 | Testing | 5 | write-tests, fix-tests, write-e2e, tests-performance, mutation-test |
 | Accessibility | 1 | a11y-audit |
 | Release | 5 | ship, deploy, canary, release-docs, retro |
-| Utility | 7 | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo |
+| Utility | 8 | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo, context-audit |
 | Lead Generation | 1 | leads |
 | **Total** | **54** | |
 

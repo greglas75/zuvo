@@ -373,9 +373,8 @@ Resolve the collector path with a glob fallback (Claude Code distributes it via
 
 ```bash
 COLLECTOR="$(command -v infra-collect.sh 2>/dev/null \
-  || ls "{plugin_root}/scripts/infra-collect.sh" 2>/dev/null \
-  || ls ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/infra-collect.sh 2>/dev/null \
-  || ls ~/.codex/scripts/infra-collect.sh ~/.cursor/scripts/infra-collect.sh 2>/dev/null | head -1)"
+  || ls ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/infra-collect.sh \
+       ~/.codex/scripts/infra-collect.sh ~/.cursor/scripts/infra-collect.sh 2>/dev/null | head -1)"
 [ -n "$COLLECTOR" ] || { echo "ERROR: infra-collect.sh not found (install.sh not run?)"; exit 1; }
 ```
 

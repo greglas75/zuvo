@@ -39,7 +39,7 @@ codesift_tools:
     postgres: [migration_lint]
 ---
 
-# Zuvo Execute
+# zuvo:execute
 
 You are the execution orchestrator. You take an approved implementation plan and drive it to completion, task by task, with automated quality enforcement at every step.
 
