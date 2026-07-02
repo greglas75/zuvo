@@ -40,6 +40,16 @@ else
 fi
 [ -n "$CMD" ] || exit 0
 
+# DOCUMENTED ESCAPE (was promised in the block message but never implemented — fixed 2026-07-02):
+# a command that carries an explicit `ZUVO_ALLOW_ADHOC=1` is a deliberate, visible-in-transcript
+# override (same logged-escape semantics as the pipeline/work gates honor). Allow it LOUDLY.
+# Legit use: removing a stale repo-local core.hooksPath override to RESTORE the global gate layer.
+case "$CMD" in
+  *ZUVO_ALLOW_ADHOC=1*)
+    echo "block-no-verify: ZUVO_ALLOW_ADHOC=1 escape honored (logged) — command allowed despite hook-skip pattern" >&2
+    exit 0 ;;
+esac
+
 # Short cluster contains -n as a flag (before any arg-taking short option)?
 short_has_n() {
   local cluster="${1#-}" j c
