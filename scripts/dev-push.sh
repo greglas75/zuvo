@@ -38,6 +38,15 @@ if [[ ! -d "$MARKETPLACE_DIR/.claude-plugin" ]]; then
   fail "Marketplace repo not found at $MARKETPLACE_DIR"
 fi
 
+# >>> zuvo:test-gate  (Step 0: run the aggregate suite before ANY mutation)
+if [[ "${ZUVO_SKIP_TESTS:-}" != "1" ]]; then
+  bash "$ZUVO_DIR/tests/run-all.sh" || fail "Tests failed — fix or ZUVO_SKIP_TESTS=1 to bypass (logged)"
+  ok "Step 0: test suite green"
+else
+  warn "Step 0 SKIPPED (ZUVO_SKIP_TESTS=1)"
+fi
+# <<< zuvo:test-gate
+
 # ═══════════════════════════════════════
 # Step 1: Version bump
 # ═══════════════════════════════════════
