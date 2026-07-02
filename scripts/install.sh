@@ -56,6 +56,26 @@ install_hook_tree() {
 
 # Copy the CI check script, the git PATH-shim, and the CI workflow template
 # under <base>/scripts and <base>/ci.
+# Install the tracked global git dispatchers (hooks/git-dispatch/{pre-push,pre-commit})
+# into a hooks dir. rm -f first: the existing files may be SYMLINKS to a shared
+# hook-chain.sh — writing through them corrupts commit-msg/prepare-commit-msg.
+install_git_dispatchers() {
+  local hooks_dir="$1" d
+  mkdir -p "$hooks_dir"
+  for d in pre-push pre-commit; do
+    if [[ ! -f "$ZUVO_DIR/hooks/git-dispatch/$d" ]]; then
+      warn "hooks/git-dispatch/$d missing from repo — global dispatcher NOT installed"
+      return 0
+    fi
+  done
+  for d in pre-push pre-commit; do
+    rm -f "$hooks_dir/$d"
+    cp "$ZUVO_DIR/hooks/git-dispatch/$d" "$hooks_dir/$d"
+    chmod +x "$hooks_dir/$d"
+  done
+  ok "global git dispatchers installed (pre-push, pre-commit) — zuvo gates now run in EVERY repo"
+}
+
 install_pipeline_artifacts() {
   local base="$1"
   [ -n "$base" ] || return 1
@@ -400,14 +420,25 @@ install_claude_home() {
     ok "$name installed (~/.claude/scripts/$name)"
   done
 
+  # ── Global git dispatchers: tracked hooks/git-dispatch/* → ~/.claude/hooks (2026-07-02)
+  # These REPLACE the codesift pass-through dispatchers: run the repo-local hook first
+  # (no exec), then ALWAYS chain the zuvo gates — so freestyle-agent pushes are gated in
+  # EVERY repo. SYMLINK TRAP: pre-push/commit-msg/prepare-commit-msg here are symlinks to
+  # a shared hook-chain.sh; rm -f FIRST so cp lands as a regular file and never writes
+  # through the link (that would corrupt commit-msg/prepare-commit-msg). Never touches any
+  # repo's .git/hooks (C2). Uninstall: git config --global --unset core.hooksPath.
+  local hooks_dir="$HOME/.claude/hooks"
+  install_git_dispatchers "$hooks_dir"
+
   # Wire global git core.hooksPath to ~/.claude/hooks/ so the codesift-mcp
   # dispatcher actually runs (which in turn fires our post-commit-review-backlog).
   # Self-heals against stale paths — codesift-mcp's setup test had a bug that
   # leaked tmp paths like /var/folders/.../codesift-setup-XXXXXX/.claude/hooks
   # into the user's real ~/.gitconfig, silently breaking every git hook on the
   # machine until manual unset.
-  local hooks_dir="$HOME/.claude/hooks"
-  if [[ -x "$hooks_dir/post-commit" ]]; then
+  # Wire when OUR dispatchers are installed (they always are after install_git_dispatchers
+  # above) — no longer gated on codesift's post-commit; its absence is informational only.
+  if [[ -x "$hooks_dir/pre-push" && -x "$hooks_dir/pre-commit" ]]; then
     local current_hooks_path
     current_hooks_path=$(git config --global --get core.hooksPath 2>/dev/null || true)
     if [[ -z "$current_hooks_path" ]]; then

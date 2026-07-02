@@ -155,4 +155,33 @@ ln -s "$HD/pre-commit" .git/hooks/pre-commit
 err=$(ZUVO_AI_RUN=1 timeout 10 .git/hooks/pre-commit 2>&1); rc=$?
 { [ $rc -ne 0 ] && [ $rc -ne 124 ] && printf '%s' "$err" | grep -q 'BLOCK:'; } && ok "p8 symlink-install still finds gates + blocks (exit $rc)" || bad "p8 (rc=$rc err=$err)"
 
+echo "=== install_git_dispatchers (3 cases — REAL function extracted from install.sh) ==="
+# extract the real function; stub install.sh's ok/warn helpers
+FD="$TMP/igd.sh"
+sed -n '/^install_git_dispatchers()/,/^}/p' "$ROOT/scripts/install.sh" > "$FD"
+if [ -s "$FD" ]; then
+  # (i1) SYMLINK LAYOUT: pre-push/commit-msg -> shared hook-chain.sh; install must NOT write through
+  FH="$TMP/fakehooks"; rm -rf "$FH"; mkdir -p "$FH"
+  printf '#!/bin/bash\nHOOK_NAME=$(basename "$0")\n' > "$FH/hook-chain.sh"
+  printf '#!/bin/sh\nexit 0\n' > "$FH/post-commit"
+  ln -s "$FH/hook-chain.sh" "$FH/pre-push"; ln -s "$FH/hook-chain.sh" "$FH/commit-msg"
+  chainsum=$(cksum < "$FH/hook-chain.sh"); postsum=$(cksum < "$FH/post-commit")
+  ( ok(){ :; }; warn(){ :; }; ZUVO_DIR="$ROOT"; . "$FD"; install_git_dispatchers "$FH" ) >/dev/null 2>&1
+  a_ok=1
+  [ "$(cksum < "$FH/hook-chain.sh")" = "$chainsum" ] || a_ok=0        # chain uncorrupted
+  [ "$(cksum < "$FH/post-commit")" = "$postsum" ] || a_ok=0           # post-commit untouched
+  [ -L "$FH/commit-msg" ] || a_ok=0                                    # commit-msg still a symlink
+  [ "$a_ok" = 1 ] && ok "i1 symlink layout preserved (hook-chain/commit-msg/post-commit intact)" || bad "i1 corruption"
+  # (i2) dispatchers land as REGULAR files identical to tracked sources
+  { [ ! -L "$FH/pre-push" ] && [ ! -L "$FH/pre-commit" ] && cmp -s "$FH/pre-push" "$ROOT/hooks/git-dispatch/pre-push" && cmp -s "$FH/pre-commit" "$ROOT/hooks/git-dispatch/pre-commit" && [ -x "$FH/pre-push" ]; } \
+    && ok "i2 dispatchers = regular files == tracked sources" || bad "i2"
+  # (i3) C2: no repo .git/hooks touched by install
+  rm -rf "$TMP/c2"; mkdir -p "$TMP/c2"; cd "$TMP/c2"; git init -q
+  before=$(ls .git/hooks | cksum)
+  ( ok(){ :; }; warn(){ :; }; ZUVO_DIR="$ROOT"; . "$FD"; install_git_dispatchers "$FH" ) >/dev/null 2>&1
+  [ "$(ls .git/hooks | cksum)" = "$before" ] && ok "i3 repo .git/hooks untouched (C2)" || bad "i3"
+else
+  bad "install_git_dispatchers not found in scripts/install.sh"
+fi
+
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
