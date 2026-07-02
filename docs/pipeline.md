@@ -325,3 +325,26 @@ dir (`pre-push`, `pre-commit`) that chains the repo's own `hooks/pre-push-gate.s
 (`git config core.hooksPath .githooks` — the one step, since `.git/config` cannot be versioned).
 After cloning zuvo-plugin, run `./scripts/setup-dev-hooks.sh` once; the repo then gates its own
 commits/pushes. The hooks are versioned and reviewable; `core.hooksPath` is the only per-clone bit.
+
+## Global git-dispatch layer (every repo, freestyle included)
+
+The tracked dispatchers `hooks/git-dispatch/{pre-push,pre-commit}` are installed by
+`scripts/install.sh` to `~/.claude/hooks/` (global `core.hooksPath`), replacing the old
+pass-throughs that ran only a repo-local hook and silently exited otherwise. Each dispatcher:
+captures pre-push stdin once (`feed()`, empty input emits nothing; pre-commit deliberately
+never reads stdin — no EOF contract on a terminal), runs the repo-local `.git/hooks/<hook>`
+first WITHOUT `exec` (its failure propagates; `exec`-shadowing is dead), then ALWAYS chains
+the zuvo gates from its own directory: pre-push → `pre-push-gate.sh` (pipeline-entry) +
+`refactor-safety-gate.sh pre-push`; pre-commit → `refactor-safety-gate.sh pre-commit`.
+Local hooks are resolved via `--git-common-dir` (worktree-correct; NOT `--git-path hooks`,
+which honors `core.hooksPath` and would self-resolve); `$0` symlinks are resolved so a
+symlink-installed dispatcher still finds its gates; a scoped `ZUVO_DISPATCH_ACTIVE=hook:repo`
+latch stops recursion. Fail-open everywhere — and never silently (WARN on unresolved paths).
+
+**Honest limits:** a repo-local `core.hooksPath` (Husky, or a stray local override — e.g.
+QuotasMobi had `core.hooksPath=.git/hooks` set locally) bypasses the global layer entirely;
+Windows relies on Git-for-Windows bash executing the extensionless `#!/bin/sh` hooks; repos
+that opted into local gate hooks double-run them harmlessly (gates are read-only/idempotent).
+**Uninstall:** `git config --global --unset core.hooksPath` restores stock git behavior.
+Human commits/pushes are exempt inside the gates (G8 / AI-marker bypass); `ZUVO_ALLOW_ADHOC=1`
+remains the logged escape.

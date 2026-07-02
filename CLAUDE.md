@@ -170,6 +170,11 @@ full layer table + honest limits):
 - **CI gate** (`ci/zuvo-pipeline-entry.yml` + `scripts/zuvo-pipeline-entry-ci.sh`) — THE
   GUARANTEE, fail-closed, unbypassable server-side. Enable: `cp ci/zuvo-pipeline-entry.yml .github/workflows/`.
 - **pre-push gate** — primary local block (canonical pushed range).
+- **global git-dispatch layer** (`hooks/git-dispatch/` → `~/.claude/hooks`, global
+  `core.hooksPath`) — runs the repo-local hook (no exec) then ALWAYS chains the pipeline-entry +
+  work gates in EVERY repo, so freestyle-agent pushes are gated even where no local hook exists.
+  Limits: repo-local `core.hooksPath` overrides (Husky) bypass it; uninstall:
+  `git config --global --unset core.hooksPath`.
 - **commit-gate + Stop-gate nudges** — best-effort early warnings (bypassable by design).
 - **`hooks/lib/pipeline-gate-lib.sh`** — single-source detection (range-arg, content-keyed
   review coverage via `memory/reviews/<base7>..<head7>-<slug>.md`, fail-open).
