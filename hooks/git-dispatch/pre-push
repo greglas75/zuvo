@@ -1,0 +1,46 @@
+#!/bin/sh
+# zuvo global pre-push dispatcher (tracked source: hooks/git-dispatch/pre-push).
+# Installed to ~/.claude/hooks/pre-push (global core.hooksPath) by scripts/install.sh.
+#
+# Replaces the pass-through dispatcher that ran ONLY the repo-local hook (exec) and
+# silently exited 0 otherwise — which left every repo without a local hook UNGATED and
+# let any local hook (e.g. a type-check) exec-shadow the zuvo gates.
+#
+# Contract: capture pre-push stdin ONCE -> run the repo-local .git/hooks/pre-push first
+# WITHOUT exec (its failure propagates) -> then ALWAYS chain the zuvo gates from this
+# file's own directory. FAIL-OPEN: a missing gate script never bricks `git push`.
+# Human pushes are exempt inside the gates (pg_is_agent_env G8); ZUVO_ALLOW_ADHOC=1
+# passes through untouched — this dispatcher adds NO env/exempt logic (dumb pipe).
+D=$(CDPATH= cd -- "$(dirname "$0")" && pwd) || exit 0   # CDPATH= : poisoning must not redirect the gate dir (fail-open would bypass)
+HOOK_NAME=$(basename "$0")
+R=$(git rev-parse --show-toplevel 2>/dev/null) || R=""
+input=$(cat)                                   # consumed once; replayed to local hook + gates
+feed() { [ -n "$input" ] && printf '%s\n' "$input"; }   # empty input -> emit NOTHING (no synthetic ref)
+# portable physical-path resolver (readlink -f is not universal); empty on error (fail-open)
+pp() { CDPATH= cd -- "$(dirname "$1")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$1")"; }
+rc=0
+
+# 1) repo-local hook first, WITHOUT exec, failure propagates.
+#    Re-entry latch scoped to hook:repo is the HARD recursion stop (a local hook symlinked
+#    back to this dispatcher re-enters with the same pair and skips this branch); the pp()
+#    compare is the cheap first line of defense.
+# Resolve the repo's OWN hooks dir via --git-common-dir: in a worktree `.git` is a file and
+# hooks live under the common gitdir (worktrees share them), so a hardcoded "$R/.git/hooks"
+# misses them (caught in review). Deliberately NOT --git-path hooks — that honors
+# core.hooksPath, which in this deployment points back at THIS dispatcher (self-resolution
+# would skip every repo-local hook).
+GCD=$(git rev-parse --git-common-dir 2>/dev/null)
+case "$GCD" in ""|/*) ;; *) GCD="$R/$GCD" ;; esac      # relative (".git") -> repo-anchored
+LOCAL="${GCD:-$R/.git}/hooks/$HOOK_NAME"
+if [ -n "$R" ] && [ -x "$LOCAL" ] && [ "${ZUVO_DISPATCH_ACTIVE:-}" != "$HOOK_NAME:$R" ]; then
+  lp=$(pp "$LOCAL"); sp=$(pp "$0")
+  if [ -z "$lp" ] || [ -z "$sp" ] || [ "$lp" != "$sp" ]; then
+    ZUVO_DISPATCH_ACTIVE="$HOOK_NAME:$R"; export ZUVO_DISPATCH_ACTIVE
+    feed | "$LOCAL" "$@" || rc=1
+  fi
+fi
+
+# 2) zuvo gates — ALWAYS, from this dispatcher's own dir; each fail-open when absent.
+[ -x "$D/pre-push-gate.sh" ]        && { feed | "$D/pre-push-gate.sh" || rc=1; }
+[ -x "$D/refactor-safety-gate.sh" ] && { feed | "$D/refactor-safety-gate.sh" pre-push || rc=1; }
+exit $rc
