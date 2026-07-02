@@ -1,7 +1,57 @@
 # Zuvo Competitive Analysis — May 2026
 
 > Comprehensive review of the AI coding tools ecosystem. 90+ competitors analyzed across Claude Code plugins, Cursor extensions, Codex/Windsurf/Copilot ecosystems, and DevOps trends.
-> Last updated: 2026-05-01 (prior: 2026-04-08) · **2026-06-25 June refresh appended below (⚠️ UNVERIFIED leads)**
+> Last updated: 2026-05-01 (prior: 2026-04-08) · 2026-06-25 June refresh · **2026-07-03 July refresh below (deep-research; 14 claims verified 3-0; June's 3 open leads RESOLVED)**
+
+---
+
+## July 2026 Refresh — Deep-Research Sweep (2026-07-03)
+
+> **Provenance.** Deep-research fan-out (5 angles → 104 agents, 460 tool calls). **14 claims verified 3-0** by the adversarial-verify phase; a further batch (Qodo, Agent Governance Toolkit, Endor Labs) had its verification votes killed by a session-limit storm — those are marked ⚠️ UNVERIFIED below, same convention as June. Synthesis performed by the lead (the workflow's synthesize step also hit the limit). Full claim dump: 110 unique sourced claims in the run journal.
+
+### A. June's 3 open leads — ALL RESOLVED ✓
+
+1. **Anthropic "Code Review for Claude Code" — CONFIRMED, and bigger than the lead suggested.** Launched **2026-03-09** (predates our May doc — we missed it): first-party GitHub PR review that dispatches a **team of parallel bug-hunting agents + a verification pass filtering false positives + severity ranking**; internal adoption 16%→54% of PRs with substantive comments, <1% findings marked wrong. **Advisory ONLY — "it won't approve PRs", no merge/push blocking, no sandboxed execution, no autofix.** Research preview, **Team/Enterprise only, ~$15–25/review, ~20 min latency**, ZDR-incompatible. AND it moved in-harness within our window: v2.1.186 (23 Jun) made `/review <pr>` use the same engine as `/code-review medium`; v2.1.196 (30 Jun) merged five cleanup finders (~25% token cut). → **Threat:** first-party parallel-agents+verify review erodes zuvo:review's advisory value on Team/Enterprise. **Moat intact:** enforcement (git-hook/CI gates that BLOCK) remains uncontested first-party. **Opportunity:** Pro/individual users have NO first-party PR review — zuvo's install base; and ours is local, free, fast vs $15–25/20min.
+2. **SWE-bench Pro — CONFIRMED real, but stale (not a July development).** Scale AI, arXiv 2509.16941 (Sep 2025). Contamination resistance is structural: 1,865 tasks / 41 repos split copyleft-public (731) + held-out (858) + never-published commercial (276). June 2026 standardized leaderboard: GPT-5.4 (xHigh) 59.1%, Muse Spark 55.0%, Claude Opus 4.6 (thinking) 51.9% (47.1% commercial). Commercial-set scores consistently below public — external evidence that agent output on unseen commercial code underperforms benchmarks → cite in enforcement rationale. → adopt methodology in `benchmark`/`agent-benchmark` (June action stands).
+3. **ASDLC.io Builder/Critic — CONFIRMED real, and it's validation, not threat.** Live pattern page (last updated 2026-01-31): separate Critic session reviews Builder output against spec, FAIL feeds back as a new Builder task, only PASS advances; explicitly recommends **cross-model routing** (high-throughput Builder, independent high-reasoning Critic). **It is documentation of a MANUAL workflow** — CI/Claude-SDK orchestration listed only as future work. zuvo automates exactly this pattern with real blocking.
+
+### B. Genuinely NEW since 2026-06-25 — Claude Code harness (first-party)
+
+| What | Date/version | Zuvo impact |
+|---|---|---|
+| **Sonnet 5 default in Claude Code**, native 1M ctx, $2/$10 promo to 31 Aug | v2.1.197, 1 Jul | Cheaper long-context sub-agents; recheck adversarial-review model IDs |
+| **First-party skills management**: "Skills" section in `/plugin`, `disableBundledSkills` (Anthropic now ships BUNDLED first-party skills), marketplace search bar | v2.1.172–2.1.186, ~17–23 Jun | Bundled-skills channel = default-visibility competition inside the harness |
+| **In-harness governance**: `sandbox.credentials` (blocks sandboxed cmds reading secrets), org-enforced model restrictions | v2.1.187, 24 Jun | First-party policy-gate overlap with the governance category |
+| **`post-session` lifecycle hook** (runs after session end, before workspace delete) | v2.1.169, 24 Jun | Natural attachment point for our retro/runlog capture — wire `zuvo-stop-retro-sweep` class logic to it |
+| **anthropics/skills retooled for Claude 5** (claude-api skill updates 27 Jun + 1 Jul) | 27 Jun–1 Jul | First-party skill library actively maintained around model launches |
+| **Fable 5 / Mythos 5** launch ($10/$50 — less than half Mythos Preview) | 9 Jun (pre-baseline, impact new) | Multi-pass/multi-provider review gets materially cheaper; Stripe's "50M-line migration in a day" testimonial = more agent code volume = **higher stakes for gates** |
+
+### C. Agentic review tooling — the sandboxed-execution trend is now a PATTERN
+
+- **Greptile TREX** ✓ (public beta **15 Jun** — 10 days before June refresh, we missed it): during PR review it **generates targeted tests and EXECUTES them in an isolated sandbox** (+20% bugs claimed), attaching failure evidence (logs, screenshots, traces, videos) to comments. Second major sandboxed-execution reviewer after Vercel OpenReview → **the June "sandboxed-execution gate" action rises from lead to trend-confirmed priority.** Also: **Greptile CLI** (4 Jun, `greptile review --diff --json --agent`) moves them into the terminal where our git-hook gates live; "Fix with Your Agent" (8 Apr) routes findings to Claude Code/Codex/Cursor/Devin (overlaps zuvo:receive-review); memory learns from team comments/reactions/commits (12 May). **Changelog shows NO enforcement/merge-blocking** — blocking-gate moat undisputed by Greptile.
+- **Cursor Bugbot** ✓: **local pre-push `/review`** (Cursor 3.7+) — review moves to our pre-push turf, but **no blocking mechanism described**; **diff-level review dedup** (re-opened PR with same diff skips re-review) — independent convergence on our content-keyed `memory/reviews` blob-keyed artifacts; 3× faster / 22% cheaper / Composer 2.5 in-house (single-vendor, no cross-model).
+- ⚠️ UNVERIFIED (verification rate-limited, sourced leads): **Qodo 2.4 (16 Jun) / 2.5 (30 Jun)** — "compliance to replace review" + **merge-blocking enforcement** claims (if true, the FIRST commercial tool contesting our blocking-gate moat — **verify first, highest priority**); **Endor Labs** blocking AI-code review (blog 12 May); **MS Agent Governance Toolkit v4.0/v4.1** (9 Jun) dynamic policy updates.
+
+### D. Marketplaces & distribution (mostly "missed", still live)
+
+- **anthropics/claude-plugins-official** — 31.4k★, active thru 2 Jul. Ships Anthropic-authored `code-review` + `pr-review-toolkit` plugins (the June lead's substance) + `hookify`/`security-guidance`/`commit-commands` (adjacent to our differentiators; **no blocking gates, no cross-model adversarial**). Accepts third-party submissions via public form; `strict:false` skill-bundles lower the entry barrier. → **Action: submit zuvo** (default-visibility channel; also where curated competitors gain it).
+- **anthropics/skills** — **157.6k★** gravity, bundled into paid Claude.ai plans + API. **Contains NO code-review/quality-gate/pipeline-enforcement skills** — our niche is unoccupied first-party (as of 2 Jul).
+- **claude-code-plugins-plus-skills** (jeremylongshore) — ~425 plugins/~2.8k skills/2.5k★, own `ccpi` CLI + tonsofskills.com, releases thru 2 Jul; its "quality gate" is catalog metadata validation, not runtime enforcement.
+
+### E. Memory / self-improvement — strongest external validation of the gate thesis yet
+
+- **TRACE** (arXiv, new): mines user corrections → compiles them into **runtime-ENFORCED checks** that must pass before task completion. Empirics: Mem0-style memory alone leaves **57.5% of preference checks violated**; TRACE cuts violations 100%→2% (OOD). Deployable skill released. → **This is our thesis with data** ("memory needs enforcement"): cite it, and prototype the pattern — compile retro/knowledge-store lessons into gate checks (extends the plan→execute-bind family).
+- **CODESKILL** (arXiv 2605.25430, 25 May): RL-learned distillation of agent trajectories into procedural skills (+9.69 pass vs no-skill; +4.01 vs best memory baseline) — academic challenger to hand-authored SKILL.md; skill quality rewarded by verified execution outcomes.
+- **RetroAgent** (v6, 9 Jun): retrospective self-improvement RL; **SimUtil-UCB** lesson-retrieval (relevance+utility+exploration) is a citable upgrade path for `knowledge-prime`'s heuristic selection. Non-coding benchmarks only.
+
+### F. Top actions (supersedes June's list where overlapping)
+
+1. **Verify Qodo 2.4/2.5 merge-blocking claims** — the only sourced lead that would contest the blocking-gate moat.
+2. **Submit zuvo to claude-plugins-official** — distribution beats stars we don't have.
+3. **Sandboxed-execution review** — two-competitor convergence (OpenReview + TREX); promote from June's #1 lead to a spike (`review`/`write-tests`: generate+run tests in sandbox, attach evidence).
+4. **TRACE-pattern retro→gate compilation** — turn knowledge-store lessons into enforced checks; cite TRACE + self-preference-bias + SWE-bench-Pro commercial-set numbers in the enforcement rationale.
+5. **Wire retro capture to the new `post-session` hook** (v2.1.169) — sturdier than Stop-hook sweeps.
+6. Recheck adversarial-review model IDs after Sonnet 5 default + Claude 5 rollout.
 
 ---
 

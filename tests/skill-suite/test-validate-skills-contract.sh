@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Contract test for scripts/validate-skills.sh (Task 2: structural skill lint).
+# Contract test for scripts/validate-skills.sh (Task 2 + Task 3 structural lint).
 #
 # Builds a synthetic skills/ tree with one broken skill per ERROR class, plus
 # clean, exemption, and WARN fixtures, then asserts the two-tier severity
 # output: ERRORs fail the run (exit 1), WARNs are advisory (do not fail).
+# Task 3 adds: include-integrity (dangling ../../shared/includes|rules tokens)
+# and count-consistency (declared skill counts vs actual dirs) — exercised via
+# a dangling-include fixture and a second mini-repo fixture with count drift.
 # Also runs the validator against the REAL repo and asserts a clean bill
 # (exit 0, ERRORS: 0) so structural regressions are caught in CI.
 set -euo pipefail
@@ -16,7 +19,14 @@ SCRIPT="$ROOT_DIR/scripts/validate-skills.sh"
 source "$ASSERT_SH"
 
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+TMP2="$(mktemp -d)"
+EMPTYROOT="$(mktemp -d)"
+trap 'rm -rf "$TMP" "$TMP2" "$EMPTYROOT"' EXIT
+
+# real include files so include-resolution is exercised positively too
+mkdir -p "$TMP/shared/includes"
+echo "# Run Logger (fixture)" > "$TMP/shared/includes/run-logger.md"
+echo "# Something Else (fixture)" > "$TMP/shared/includes/something-else.md"
 
 # mkskill <dir-name> — writes stdin to $TMP/skills/<dir-name>/SKILL.md
 mkskill() {
@@ -164,6 +174,24 @@ x
 - ../../shared/includes/run-logger.md
 EOF
 
+# --- ERROR class (i): dangling include reference (Task 3 include-integrity) ---
+# Valid skill in every other respect; references an include that does not
+# exist under the fixture root. run-logger.md DOES exist (positive resolution).
+mkskill dangling-include <<'EOF'
+---
+name: dangling-include
+description: "References an include file that does not exist."
+---
+
+# zuvo:dangling-include
+
+## Argument Parsing
+x
+## Mandatory File Loading
+- ../../shared/includes/run-logger.md
+- ../../shared/includes/does-not-exist.md
+EOF
+
 # --- Exemption fixture: using-zuvo (router H1, no run-logger/argparse/mfl) ---
 mkskill using-zuvo <<'EOF'
 ---
@@ -230,11 +258,16 @@ WARN_LINES="$(printf '%s\n' "$FIX_OUT" | grep '^WARN:' || true)"
 
 # every broken skill must surface at least one ERROR naming it
 for name in no-name wrong-name bad-h1 has-plugin-root no-runlogger \
-            no-open-fence no-close-fence no-description; do
+            no-open-fence no-close-fence no-description dangling-include; do
   printf '%s\n' "$ERR_LINES" | grep -Fq -- "$name" \
     || fail "expected an ERROR mentioning '$name' (errors: $ERR_LINES)"
 done
-pass "each of the 8 broken skills produced an ERROR"
+pass "each of the 9 broken skills produced an ERROR"
+
+# the dangling-include ERROR must contain the dangling path itself
+printf '%s\n' "$ERR_LINES" | grep -Fq -- "../../shared/includes/does-not-exist.md" \
+  || fail "expected the dangling include path in an ERROR line (errors: $ERR_LINES)"
+pass "dangling include ERROR names the unresolved path"
 
 # clean / exemption / WARN fixtures must NOT produce any ERROR
 for name in clean-skill using-zuvo worktree no-argparse no-mfl; do
@@ -296,6 +329,130 @@ printf '%s\n' "$NOVAL_OUT" | grep -Fq -- "--root requires a value" \
   || fail "bare --root should report a requires-a-value error (output: $NOVAL_OUT)"
 pass "bare --root without a value exits 2 with error message"
 
+set +e
+NOSKILLS_OUT="$(bash "$SCRIPT" --root "$EMPTYROOT" 2>&1)"
+NOSKILLS_RC=$?
+set -e
+[ "$NOSKILLS_RC" -eq 2 ] || fail "--root <existing-dir-without-skills/> should exit 2, got $NOSKILLS_RC (output: $NOSKILLS_OUT)"
+printf '%s\n' "$NOSKILLS_OUT" | grep -Fq -- "no skills/ directory" \
+  || fail "explicit root without skills/ should report the no-skills error (output: $NOSKILLS_OUT)"
+pass "explicit --root without a skills/ dir exits 2 with error message"
+
+# ---------- Task 3: count-consistency mini-repo fixture ----------
+# 2 actual skill dirs (alpha + using-zuvo); every count-declaring source says
+# 2 EXCEPT .claude-plugin/plugin.json which drifts to 3.
+mkdir -p "$TMP2/skills/alpha" "$TMP2/skills/using-zuvo" \
+         "$TMP2/shared/includes" "$TMP2/.claude-plugin" "$TMP2/.codex-plugin" "$TMP2/docs"
+echo "# Run Logger (fixture)" > "$TMP2/shared/includes/run-logger.md"
+
+cat > "$TMP2/skills/alpha/SKILL.md" <<'EOF'
+---
+name: alpha
+description: "Tiny valid fixture skill."
+---
+
+# zuvo:alpha
+
+## Argument Parsing
+x
+## Mandatory File Loading
+- ../../shared/includes/run-logger.md
+EOF
+
+cat > "$TMP2/skills/using-zuvo/SKILL.md" <<'EOF'
+---
+name: using-zuvo
+description: "Mini router fixture with banner and routing table."
+---
+
+# Zuvo Skill Router
+
+> **Zuvo v9.9** | 2 skills | fixture banner
+
+## Routing Table
+
+| Intent | Skill |
+|--------|-------|
+| build stuff | `zuvo:alpha` |
+| ad-hoc label | `zuvo:extra-token` |
+
+## Next Section
+
+Nothing else.
+EOF
+
+cat > "$TMP2/.claude-plugin/plugin.json" <<'EOF'
+{
+  "description": "Fixture ecosystem. 3 skills with quality gates."
+}
+EOF
+
+cat > "$TMP2/.codex-plugin/plugin.json" <<'EOF'
+{
+  "description": "Fixture ecosystem. 2 skills with quality gates.",
+  "longDescription": "Long form: 2 skills across fixture categories."
+}
+EOF
+
+cat > "$TMP2/package.json" <<'EOF'
+{
+  "description": "Fixture ecosystem. 2 skills with quality gates."
+}
+EOF
+
+cat > "$TMP2/docs/skills.md" <<'EOF'
+# Skills Reference
+
+Fixture includes 2 skills organized into 2 categories.
+
+| Category | Count | Skills |
+|----------|-------|--------|
+| Core | 1 | alpha |
+| Utility | 1 | using-zuvo |
+| **Total** | **2** | |
+EOF
+
+cat > "$TMP2/CLAUDE.md" <<'EOF'
+# Fixture Guide
+
+skills/<name>/SKILL.md — skill definitions (2 total)
+
+## Skill categories (2 total)
+
+| Category | Count | Skills |
+|----------|-------|--------|
+| Core | 1 | alpha |
+| Utility | 1 | using-zuvo |
+EOF
+
+set +e
+DRIFT_OUT="$(bash "$SCRIPT" --root "$TMP2" 2>&1)"
+DRIFT_RC=$?
+set -e
+[ "$DRIFT_RC" -eq 1 ] || fail "count-drift fixture should exit 1, got $DRIFT_RC (output: $DRIFT_OUT)"
+printf '%s\n' "$DRIFT_OUT" | grep '^ERROR:' | grep -Fq -- ".claude-plugin/plugin.json" \
+  || fail "expected a count ERROR naming .claude-plugin/plugin.json (output: $DRIFT_OUT)"
+pass "count drift (3 declared vs 2 actual) produces ERROR naming the drifted file"
+
+# fully consistent variant: fix the drifted file -> zero count ERRORs, both OK lines
+cat > "$TMP2/.claude-plugin/plugin.json" <<'EOF'
+{
+  "description": "Fixture ecosystem. 2 skills with quality gates."
+}
+EOF
+set +e
+CONSIST_OUT="$(bash "$SCRIPT" --root "$TMP2" 2>&1)"
+CONSIST_RC=$?
+set -e
+[ "$CONSIST_RC" -eq 0 ] || fail "consistent mini-repo should exit 0, got $CONSIST_RC (output: $CONSIST_OUT)"
+printf '%s\n' "$CONSIST_OUT" | grep -Fq -- "ERRORS: 0" \
+  || fail "consistent mini-repo should report ERRORS: 0 (output: $CONSIST_OUT)"
+printf '%s\n' "$CONSIST_OUT" | grep -Fq -- "count-consistency: OK (2)" \
+  || fail "consistent mini-repo should print 'count-consistency: OK (2)' (output: $CONSIST_OUT)"
+printf '%s\n' "$CONSIST_OUT" | grep -Fq -- "include-integrity: OK" \
+  || fail "consistent mini-repo should print 'include-integrity: OK' (output: $CONSIST_OUT)"
+pass "fully consistent mini-repo passes with both OK lines"
+
 # ---------- run the validator against the REAL repo ----------
 set +e
 REAL_OUT="$(bash "$SCRIPT" 2>&1)"
@@ -306,5 +463,11 @@ set -e
 printf '%s\n' "$REAL_OUT" | grep -Fq -- "ERRORS: 0" \
   || fail "real-repo run should report 'ERRORS: 0' (output: $REAL_OUT)"
 pass "real-repo run exits 0 with ERRORS: 0"
+
+printf '%s\n' "$REAL_OUT" | grep -Fq -- "include-integrity: OK" \
+  || fail "real-repo run should print 'include-integrity: OK' (output: $REAL_OUT)"
+printf '%s\n' "$REAL_OUT" | grep -Fq -- "count-consistency: OK (54)" \
+  || fail "real-repo run should print 'count-consistency: OK (54)' (output: $REAL_OUT)"
+pass "real-repo run prints include-integrity and count-consistency OK lines"
 
 pass "validate-skills-contract"

@@ -8,7 +8,10 @@
 #
 # ERROR checks : frontmatter (opening/closing '---', name matches dir,
 #                description present), H1 == '# zuvo:<dir>', run-logger
-#                reference present, no literal '{plugin_root}' token.
+#                reference present, no literal '{plugin_root}' token,
+#                include-integrity (every ../../shared/includes|rules/*.md
+#                token resolves on disk), count-consistency (declared skill
+#                counts in plugin manifests/docs/router match actual dirs).
 # WARN checks  : an arg-parsing signal is present, a Mandatory File Loading
 #                section is present.
 #
@@ -211,6 +214,146 @@ check_plugin_root() {
   done < <(find "$SKILLS_DIR" -type f -name '*.md' -print0)
 }
 
+# --- Task 3 checks (include-integrity, count-consistency) ---
+
+# include tokens checked: files DIRECTLY under shared/includes/ or rules/
+# (subdirectory references like banned-vocabulary/core.md are out of scope).
+INCLUDE_TOKEN_RE='\.\./\.\./(shared/includes|rules)/[A-Za-z0-9._-]+\.md'
+INCLUDE_INTEGRITY_OK=0
+COUNT_CONSISTENCY_OK=0
+ACTUAL_SKILLS=0
+
+# --- ERROR: every ../../shared/includes|rules/*.md token must exist on disk ---
+check_include_integrity() {
+  local before="$ERRORS" f tok rel
+  while IFS= read -r -d '' f; do
+    # RESOLUTION RULE: tokens resolve against $ROOT/shared/includes and
+    # $ROOT/rules — NEVER relative to the referencing file's dirname.
+    # skills/*/agents/*.md are one level deeper than skills/*/SKILL.md but
+    # use the same ../../ convention; dirname-relative resolution would
+    # produce ~87 false positives on this repo.
+    # sort -u dedupes repeated identical tokens per file (no ERROR spam).
+    while IFS= read -r tok; do
+      [ -n "$tok" ] || continue
+      rel="${tok#../../}"
+      if [ ! -f "$ROOT/$rel" ]; then
+        fail_err "$(skill_name_of "$f"): dangling include $tok in ${f#"$ROOT"/} (no $rel under root)"
+      fi
+    done < <(grep -oE -- "$INCLUDE_TOKEN_RE" "$f" | sort -u)
+  done < <(find "$SKILLS_DIR" -type f -name '*.md' -print0)
+  [ "$ERRORS" -eq "$before" ] && INCLUDE_INTEGRITY_OK=1
+}
+
+# --- count-consistency helpers ---
+count_actual_skills() {
+  local n=0 d
+  for d in "$SKILLS_DIR"/*/; do
+    [ -f "${d}SKILL.md" ] && n=$((n + 1))
+  done
+  printf '%s' "$n"
+}
+
+first_skills_num() {
+  # first '<N> skills' number in stdin; empty if absent
+  grep -oE '[0-9]+ skills' | head -n1 | grep -oE '^[0-9]+'
+}
+
+cc_assert() {
+  # cc_assert <file-label> <what> <extracted-value>
+  # Empty value = anchor not present in this tree (fixture roots) → skip.
+  local file="$1" what="$2" val="$3"
+  [ -n "$val" ] || return 0
+  if [ "$val" != "$ACTUAL_SKILLS" ]; then
+    fail_err "count-consistency: $file: $what says $val, actual skill count is $ACTUAL_SKILLS"
+  else
+    pass "count-consistency: $file $what = $ACTUAL_SKILLS"
+  fi
+}
+
+sum_category_table() {
+  # sum of the Count column after the '| Category | Count |' header row,
+  # excluding the bold '**Total**' row; stops at the end of the table
+  awk -F'|' '
+    /^\| *Category *\| *Count *\|/ { in_t=1; next }
+    in_t && /\*\*Total\*\*/        { exit }
+    in_t && /^\|/                  { v=$3; gsub(/[^0-9]/,"",v); if (v != "") sum += v; next }
+    in_t                           { exit }
+    END                            { print sum + 0 }
+  ' "$1"
+}
+
+# --- count sources (a): plugin manifests + package.json description lines ---
+cc_check_json_files() {
+  local f v
+  for f in ".claude-plugin/plugin.json" "package.json"; do
+    [ -f "$ROOT/$f" ] || continue
+    v="$(grep -- '"description"' "$ROOT/$f" | head -n1 | first_skills_num)"
+    cc_assert "$f" "description" "$v"
+  done
+  f=".codex-plugin/plugin.json"
+  if [ -f "$ROOT/$f" ]; then
+    v="$(grep -- '"description"' "$ROOT/$f" | head -n1 | first_skills_num)"
+    cc_assert "$f" "description" "$v"
+    v="$(grep -- '"longDescription"' "$ROOT/$f" | head -n1 | first_skills_num)"
+    cc_assert "$f" "longDescription" "$v"
+  fi
+}
+
+# --- count source (b): docs/skills.md intro + category table + Total row ---
+cc_check_docs_skills() {
+  local f="$ROOT/docs/skills.md" v
+  [ -f "$f" ] || return 0
+  v="$(first_skills_num < "$f")"
+  cc_assert "docs/skills.md" "intro" "$v"
+  if grep -qE '^\| *Category *\| *Count *\|' "$f"; then
+    cc_assert "docs/skills.md" "category-table sum" "$(sum_category_table "$f")"
+  fi
+  v="$(awk -F'|' '/^\| *\*\*Total\*\*/ { gsub(/[^0-9]/, "", $3); print $3; exit }' "$f")"
+  cc_assert "docs/skills.md" "Total row" "$v"
+}
+
+# --- count source (c): using-zuvo banner + routing table ---
+cc_check_using_zuvo() {
+  local f="$SKILLS_DIR/using-zuvo/SKILL.md" v
+  [ -f "$f" ] || return 0
+  v="$(grep -E -- '^> \*\*Zuvo' "$f" | head -n1 \
+    | grep -oE '\| *[0-9]+ skills' | grep -oE '[0-9]+' | head -n1)"
+  cc_assert "skills/using-zuvo/SKILL.md" "banner" "$v"
+  # Routing table: unique zuvo:<name> tokens between '## Routing Table' and
+  # the next '^## ' heading. EMPIRICAL (2026-07, verified on this repo): the
+  # table lists 53 skills (the router itself is excluded) PLUS the
+  # zuvo:adhoc-approved PR-label token = 54 unique tokens == ACTUAL, so the
+  # raw unique count is compared as-is — no +1 adjustment.
+  if grep -qE '^##[[:space:]]+Routing Table' "$f"; then
+    v="$(awk '/^##[[:space:]]+Routing Table/ {t=1; next} t && /^## / {exit} t' "$f" \
+      | grep -oE 'zuvo:[a-z][a-z0-9-]*' | sort -u | wc -l | tr -d ' ')"
+    cc_assert "skills/using-zuvo/SKILL.md" "routing-table unique skill tokens" "$v"
+  fi
+}
+
+# --- count source (d): CLAUDE.md '(N total)' anchors + category table ---
+cc_check_claude_md() {
+  local f="$ROOT/CLAUDE.md" v
+  [ -f "$f" ] || return 0
+  while IFS= read -r v; do
+    cc_assert "CLAUDE.md" "'(N total)' anchor" "$v"
+  done < <(grep -oE '\([0-9]+ total\)' "$f" | grep -oE '[0-9]+')
+  if grep -qE '^\| *Category *\| *Count *\|' "$f"; then
+    cc_assert "CLAUDE.md" "category-table sum" "$(sum_category_table "$f")"
+  fi
+}
+
+# --- ERROR: every declared skill count must equal the actual dir count ---
+check_count_consistency() {
+  local before="$ERRORS"
+  ACTUAL_SKILLS="$(count_actual_skills)"
+  cc_check_json_files
+  cc_check_docs_skills
+  cc_check_using_zuvo
+  cc_check_claude_md
+  [ "$ERRORS" -eq "$before" ] && COUNT_CONSISTENCY_OK=1
+}
+
 # --- run ---
 if [ ! -d "$SKILLS_DIR" ]; then
   if [ "$ROOT_EXPLICIT" -eq 1 ]; then
@@ -229,8 +372,11 @@ check_arg_parsing
 check_mfl
 check_run_logger
 check_plugin_root
+check_include_integrity
+check_count_consistency
 
-# --- Task 3 checks (include-integrity, count-consistency) appended below ---
+[ "$INCLUDE_INTEGRITY_OK" -eq 1 ] && echo "include-integrity: OK"
+[ "$COUNT_CONSISTENCY_OK" -eq 1 ] && echo "count-consistency: OK ($ACTUAL_SKILLS)"
 
 echo "ERRORS: $ERRORS  WARNINGS: $WARNINGS"
 [ "$ERRORS" -gt 0 ] && exit 1
