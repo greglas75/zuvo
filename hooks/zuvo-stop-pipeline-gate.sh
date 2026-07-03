@@ -39,7 +39,15 @@ fi
 pg_is_agent_env || exit 0          # only nudge agent sessions
 pg_allow_adhoc && exit 0           # escape valve → silent
 
-range="$(pg_mergebase_range 2>/dev/null)" || exit 0
+# Prefer the un-pushed-only range so already-pushed history reviewed in other sessions
+# (e.g. a long develop far ahead of main) is NOT counted as this session's unreviewed work.
+# No remotes → merge-base fallback. Nothing un-pushed → nothing to nudge (clean exit).
+range="$(pg_unpushed_range 2>/dev/null)"; _pur=$?
+case "$_pur" in
+  0) : ;;                                                       # un-pushed local work → use $range
+  1) range="$(pg_mergebase_range 2>/dev/null)" || exit 0 ;;     # remote-less repo → merge-base
+  *) exit 0 ;;                                                  # all pushed → nothing to review
+esac
 [ -n "$range" ] || exit 0
 pg_is_substantial "$range" || exit 0          # small/docs/test-only → silent
 

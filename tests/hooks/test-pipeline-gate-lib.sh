@@ -181,6 +181,95 @@ pg_range_reviewed "$A3..$A4"; rc=$?   # range = just the tampered-foo commit
 [ "$rc" -eq 1 ] && pass "content-coverage: tampered (re-edited) reviewed file → NOT covered" || bad "tampered file should not be covered, got $rc"
 git checkout -q feature 2>/dev/null || true
 
+# ---------- R-DEL: deleted-file coverage (pg_file_blob --verify) ----------
+# absent path → EMPTY blob (not the literal "ref:path" that made every deleted file an
+# un-matchable "blob" and so permanently "uncovered" — the 360/409 false-block report).
+[ -z "$(pg_file_blob "$TMP" HEAD "src/does-not-exist.sh")" ] \
+  && pass "R-DEL: pg_file_blob absent path → empty (not literal 'ref:path')" \
+  || bad "R-DEL: absent path should be empty (deleted-file literal-string bug)"
+
+echo d1 > src/todelete.sh; git add src/todelete.sh; git commit -qm "add todelete"
+DELB=$(git rev-parse HEAD)
+git rm -q src/todelete.sh; git commit -qm "delete todelete (reviewed)"
+DELH=$(git rev-parse HEAD)
+cat > memory/reviews/del-cov.md <<ART
+<!-- zuvo-review -->
+range: $DELB..$DELH
+files: src/todelete.sh
+verdict: PASS
+-->
+ART
+pg_range_reviewed "$DELB..$DELH"; rc=$?
+[ "$rc" -eq 0 ] && pass "R-DEL: reviewed deletion COVERED (was falsely blocked)" || bad "R-DEL: reviewed deletion should be covered (got $rc)"
+rm -f memory/reviews/del-cov.md
+
+# UNreviewed deletion still blocks — even with a broad files:'*' artifact from an unrelated
+# range where the file never existed ('*' must NOT silently cover a deletion).
+echo d2 > src/todelete2.sh; git add src/todelete2.sh; git commit -qm "add todelete2"
+D2B=$(git rev-parse HEAD)
+git rm -q src/todelete2.sh; git commit -qm "delete todelete2 (UNreviewed)"
+D2H=$(git rev-parse HEAD)
+cat > memory/reviews/wild.md <<ART
+<!-- zuvo-review -->
+range: $BASE..$HEAD
+files: *
+verdict: PASS
+-->
+ART
+pg_range_reviewed "$D2B..$D2H"; rc=$?
+[ "$rc" -eq 1 ] && pass "R-DEL: unreviewed deletion NOT covered by unrelated files:'*' (no hole)" || bad "R-DEL: '*' must not cover an unreviewed deletion (got $rc)"
+rm -f memory/reviews/wild.md
+
+# an artifact that EXPLICITLY lists the file but whose range NEVER contained it (F absent at
+# BOTH its base and head) must NOT cover the deletion — the review didn't see this removal.
+cat > memory/reviews/explicit-unrelated.md <<ART
+<!-- zuvo-review -->
+range: $BASE..$HEAD
+files: src/todelete2.sh
+verdict: PASS
+-->
+ART
+pg_range_reviewed "$D2B..$D2H"; rc=$?
+[ "$rc" -eq 1 ] && pass "R-DEL: explicit artifact whose range never had F → does NOT cover deletion" || bad "R-DEL: artifact not removing F must not cover (got $rc)"
+rm -f memory/reviews/explicit-unrelated.md
+
+# range-containment: an artifact reviewing a DIFFERENT deletion of the SAME path (its range
+# does NOT contain THIS deletion commit) must NOT cover it — coverage is tied to the commit.
+cat > memory/reviews/other-del.md <<ART
+<!-- zuvo-review -->
+range: $DELB..$DELH
+files: src/todelete2.sh
+verdict: PASS
+-->
+ART
+pg_range_reviewed "$D2B..$D2H"; rc=$?
+[ "$rc" -eq 1 ] && pass "R-DEL: artifact for a DIFFERENT deletion of same path → NOT covered (range-containment)" || bad "R-DEL: cross-range same-path deletion must not cover (got $rc)"
+rm -f memory/reviews/other-del.md
+
+# ---------- R-UNPUSHED: pg_unpushed_range excludes already-pushed history ----------
+UPT="$(mktemp -d)"; UPR="$(mktemp -d)"
+(
+  cd "$UPR" && git init -q --bare
+  cd "$UPT" && git init -q -b main
+  git config user.email t@t; git config user.name t; git config commit.gpgsign false
+  git remote add origin "$UPR"
+  echo r1 > f1.sh; git add -A; git commit -qm c1
+  for i in 1 2 3; do echo "x$i" > "d$i.sh"; git add -A; git commit -qm "d$i"; done  # "develop-ahead" delta
+  git push -q origin main
+  git checkout -q -b feature
+  echo local > local.sh; git add -A; git commit -qm "local unpushed work"
+) >/dev/null 2>&1
+r="$(cd "$UPT" && PG_REPO_ROOT="$UPT" bash -c '. "'"$LIB"'"; pg_unpushed_range' 2>/dev/null)"; urc=$?
+n="$(cd "$UPT" && git rev-list --count "$r" 2>/dev/null || echo x)"
+{ [ "$urc" -eq 0 ] && [ "$n" = "1" ]; } \
+  && pass "R-UNPUSHED: range = only the 1 local commit (excludes pushed 'develop-ahead' delta)" \
+  || bad "R-UNPUSHED: should scope to 1 unpushed commit (rc=$urc n=$n range=$r)"
+( cd "$UPT" && git push -q origin feature >/dev/null 2>&1
+  PG_REPO_ROOT="$UPT" bash -c '. "'"$LIB"'"; pg_unpushed_range' >/dev/null 2>&1; [ "$?" -eq 3 ] ) \
+  && pass "R-UNPUSHED: everything pushed → exit 3 (nothing to gate)" \
+  || bad "R-UNPUSHED: all-pushed should be exit 3"
+rm -rf "$UPT" "$UPR"
+
 # ---------- fail-open ----------
 pg_is_substantial "zzz..yyy" && bad "bad range should NOT be substantial" || pass "fail-open: bad range not substantial"
 pg_range_reviewed "zzz..yyy"; rc=$?

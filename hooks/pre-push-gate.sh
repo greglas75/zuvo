@@ -55,11 +55,21 @@ gate_native() {
     [ -z "${lsha//0/}" ] && continue                   # all-zero local sha = deleted ref → skip
 
     if [ -z "${rsha//0/}" ]; then
-      # new branch (no remote tracking) → range from merge-base with default branch
-      base="$(git -C "$root" merge-base "$lsha" "$db" 2>/dev/null)"
-      [ -n "$base" ] || base="$(git -C "$root" rev-list --max-parents=0 "$lsha" 2>/dev/null | tail -1)"
-      [ -n "$base" ] || continue
-      range="$base..$lsha"
+      # new branch (no remote tracking). Gate only commits NOT already on a remote —
+      # merge-base(default) would drag in a long-lived integration branch (develop far
+      # ahead of main) that was reviewed in its own sessions, falsely blocking the push.
+      range="$(pg_unpushed_range "$lsha" 2>/dev/null)"; ur=$?
+      case "$ur" in
+        0) : ;;                                     # base..lsha of genuinely-new commits
+        3) continue ;;                              # remotes exist, nothing new on this ref → skip
+        *) # no remotes at all → merge-base(default); orphan/brand-new history → EMPTY TREE
+           # base so the ROOT commit's files are gated too (a plain root^..lsha would silently
+           # exclude the root commit's payload).
+           base="$(git -C "$root" merge-base "$lsha" "$db" 2>/dev/null)"
+           [ -n "$base" ] || base="$(git -C "$root" hash-object -t tree /dev/null 2>/dev/null)"
+           [ -n "$base" ] || continue
+           range="$base..$lsha" ;;
+      esac
     else
       range="$rsha..$lsha"
     fi
@@ -108,8 +118,15 @@ gate_legacy() {
       echo "zuvo pre-push: ZUVO_ALLOW_ADHOC=1 set — pipeline gate bypassed (logged)." >&2
       return 0
     fi
-    local range rr
-    range="$(pg_mergebase_range 2>/dev/null)" || return 0   # can't compute → fail-open
+    local range rr _ur
+    # Prefer the un-pushed range so already-pushed history (reviewed elsewhere; its
+    # memory/reviews/ artifacts may live in another checkout) is not re-blocked.
+    range="$(pg_unpushed_range 2>/dev/null)"; _ur=$?
+    case "$_ur" in
+      0) : ;;
+      1) range="$(pg_mergebase_range 2>/dev/null)" || return 0 ;;   # no remotes → merge-base
+      *) return 0 ;;                                                # all pushed → nothing to block
+    esac
     [ -n "$range" ] || return 0
     pg_is_substantial "$range" || return 0
     pg_range_reviewed "$range"; rr=$?

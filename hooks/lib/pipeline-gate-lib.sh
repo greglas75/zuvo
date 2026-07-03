@@ -55,6 +55,31 @@ pg_mergebase_range() {
   printf '%s..HEAD\n' "$base"
 }
 
+# Range of genuinely-NEW local work: commits reachable from HEAD but not from ANY
+# remote-tracking branch. Already-pushed commits cleared the pre-push/CI gate in their
+# own session — and their memory/reviews/ artifacts may live in a DIFFERENT checkout
+# (memory/reviews is git-ignored, per-checkout), so re-scrutinizing them here is the
+# develop-far-ahead-of-main false alarm: a fresh worktree branched off origin/develop
+# dragged the whole develop..main delta in as "unreviewed". Only un-pushed local
+# commits are this session's responsibility.
+# Optional arg = tip ref (default HEAD), so the pre-push gate can pass the pushed sha.
+#   exit 0 + "<base>..<tip>" → un-pushed local work to check
+#   exit 1                   → no remote-tracking refs (caller falls back to merge-base)
+#   exit 3                   → remotes exist but nothing un-pushed (caller: nothing to gate)
+pg_unpushed_range() {
+  local root oldest base tip="${1:-HEAD}"
+  root="$(pg_repo_root)" || return 1
+  [ -n "$(git -C "$root" for-each-ref --count=1 --format='%(refname)' refs/remotes 2>/dev/null)" ] || return 1
+  oldest="$(git -C "$root" rev-list --reverse "$tip" --not --remotes 2>/dev/null | head -1)"
+  [ -n "$oldest" ] || return 3                     # every commit is on a remote → nothing new
+  # orphan branch / shallow-clone boundary / root commit → no resolvable parent. Do NOT
+  # return "nothing to gate" (that would silently bypass an orphan branch's work): return 1
+  # so the caller falls back to merge-base, which has its own root-commit handling.
+  base="$(git -C "$root" rev-parse --verify "${oldest}^" 2>/dev/null)" || return 1
+  [ -n "$base" ] || return 1
+  printf '%s..%s\n' "$base" "$tip"
+}
+
 # --- classification ---------------------------------------------------------
 # A path is PRODUCTION unless it matches a test/docs/config/generated pattern.
 # Fail-toward-enforcement: anything not clearly non-production counts as prod.
@@ -153,8 +178,12 @@ EOF
 }
 
 # Blob hash of <path> at <ref> (a committish), via the repo at <root>. Empty if absent.
+# --verify is MANDATORY: without it, `git rev-parse ref:missing` echoes the LITERAL
+# "ref:missing" string (non-empty, even with 2>/dev/null) for a DELETED path instead of
+# failing — which made every deleted file present a bogus, un-matchable "blob" and so look
+# permanently "uncovered". A refactor deleting N files then wrongly blocked on all N.
 pg_file_blob() {
-  git -C "$1" rev-parse "$2:$3" 2>/dev/null
+  git -C "$1" rev-parse --verify "$2:$3" 2>/dev/null
 }
 
 # 0 = covered, 1 = definitively NOT covered, 2 = unknown/error (fail-open).
@@ -190,9 +219,18 @@ pg_range_reviewed() {
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     any=1
+    # bcur empty ⇒ F is DELETED at head (no shippable content). A deletion is COVERED when
+    # an artifact reviewed the SAME deletion — F in its files-set AND F also absent at its
+    # reviewed head (so both blobs empty). --verify guarantees absent⇒empty, so a "" == ""
+    # match is a genuine reviewed-deletion, never a stray literal string. Do NOT hard-block
+    # on bcur empty (that made every reviewed deletion look "uncovered").
     bcur="$(pg_file_blob "$root" "$head" "$f")"
-    [ -n "$bcur" ] || { return 1; }        # file gone/unreadable at head → not coverable → block
     this=0
+    # For a DELETION (bcur empty), resolve the exact commit that removed F within THIS checked
+    # range, so coverage can require the artifact's range to CONTAIN that specific commit —
+    # content-keying alone cannot tell two deletions of the same path apart.
+    delc=""
+    [ -z "$bcur" ] && delc="$(git -C "$root" log --diff-filter=D --no-renames --format=%H "$range" -- "$f" 2>/dev/null | head -1)"
     for art in "$reviews"/*.md; do
       [ -e "$art" ] || continue
       grep -q '<!-- zuvo-review -->' "$art" 2>/dev/null || continue
@@ -200,8 +238,21 @@ pg_range_reviewed() {
       pg_files_covered "$f" "$art_files" || continue          # F in artifact's files-set (or *)
       art_range="$(sed -n 's/^range:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
       art_head="${art_range##*..}"; [ -n "$art_head" ] || continue
-      bart="$(pg_file_blob "$root" "$art_head" "$f")"
-      [ -n "$bart" ] && [ "$bart" = "$bcur" ] && { this=1; break; }   # SAME content reviewed
+      if [ -n "$bcur" ]; then
+        bart="$(pg_file_blob "$root" "$art_head" "$f")"
+        [ "$bart" = "$bcur" ] && { this=1; break; }          # existing file: SAME content (incl. files:*)
+      else
+        # DELETED file: covered iff the artifact EXPLICITLY lists F (not '*') AND its reviewed
+        # range CONTAINS the exact commit that deleted F — delc reachable from art_head but NOT
+        # from art_base. That ties coverage to THIS deletion; a same-path deletion reviewed in
+        # an unrelated range/branch (or a files:'*' artifact) does not silently cover it.
+        art_base="${art_range%%..*}"
+        if [ "$art_files" != "*" ] && [ -n "$delc" ] && [ -n "$art_base" ] \
+           && git -C "$root" merge-base --is-ancestor "$delc" "$art_head" 2>/dev/null \
+           && ! git -C "$root" merge-base --is-ancestor "$delc" "$art_base" 2>/dev/null; then
+          this=1; break
+        fi
+      fi
     done
     [ "$this" -eq 1 ] || return 1          # this file's current content is not reviewed → NOT covered
   done <<EOF

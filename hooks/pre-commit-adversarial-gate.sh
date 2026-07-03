@@ -169,7 +169,14 @@ pipeline_nudge() {
   pg_allow_adhoc && return 0                       # escape → silent
 
   local range substantial=1 reviewed
-  range="$(pg_mergebase_range 2>/dev/null)" || range=""
+  # un-pushed local work first (ignores already-pushed history reviewed elsewhere);
+  # merge-base only when there are no remotes; empty when everything is already pushed
+  # (the staged-diff check below still fires on genuinely new staged work).
+  range="$(pg_unpushed_range 2>/dev/null)"; case "$?" in
+    0) : ;;
+    1) range="$(pg_mergebase_range 2>/dev/null)" || range="" ;;
+    *) range="" ;;
+  esac
 
   # substantial if committed-since-merge-base OR the staged diff is substantial
   if [ -n "$range" ] && pg_is_substantial "$range"; then

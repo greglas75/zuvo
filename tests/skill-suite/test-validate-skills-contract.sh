@@ -591,8 +591,11 @@ pass "real-repo run exits 0 with ERRORS: 0"
 
 printf '%s\n' "$REAL_OUT" | grep -Fq -- "include-integrity: OK" \
   || fail "real-repo run should print 'include-integrity: OK' (output: $REAL_OUT)"
-printf '%s\n' "$REAL_OUT" | grep -Fq -- "count-consistency: OK (54)" \
-  || fail "real-repo run should print 'count-consistency: OK (54)' (output: $REAL_OUT)"
+# 'OK (55)' followed by a non-digit or end-of-line: rejects a spurious 'OK (550)' match
+# WITHOUT the full-line '^...$' anchor (which would be brittle to any prefix/ANSI code and
+# diverge from the sibling unanchored 'include-integrity: OK' check above).
+printf '%s\n' "$REAL_OUT" | grep -qE 'count-consistency: OK \(55\)([^0-9]|$)' \
+  || fail "real-repo run should print 'count-consistency: OK (55)' (output: $REAL_OUT)"
 pass "real-repo run prints include-integrity and count-consistency OK lines"
 
 pass "validate-skills-contract"

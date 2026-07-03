@@ -71,8 +71,9 @@ out=$(printf '%s' '{"stop_hook_active": false}' | env ZUVO_AGENT=1 PG_REPO_ROOT=
 out=$(printf '%s' '{"stop_hook_active": false}' | env -i PATH="$PATH" PG_REPO_ROOT="$TMP" bash "$HOOK" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && pass "(e2) human session → exit 0 (no nudge)" || bad "(e2) human should exit 0 (rc=$rc)"
 
-# (f) fail-open: bad JSON + no repo → exit 0
-out=$(printf 'not json at all' | env ZUVO_AGENT=1 bash "$HOOK" 2>&1); rc=$?
+# (f) fail-open: bad JSON + no repo → exit 0  (PG_REPO_ROOT=$NOREPO: isolate from the
+# ambient repo, which may legitimately have un-pushed unreviewed work that would nudge)
+out=$(printf 'not json at all' | env ZUVO_AGENT=1 PG_REPO_ROOT="$NOREPO" bash "$HOOK" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && pass "(f1) bad JSON + no repo → fail-open exit 0" || bad "(f1) should fail-open (rc=$rc)"
 # (f2) empty stdin + no repo → exit 0
 out=$(printf '' | env ZUVO_AGENT=1 PG_REPO_ROOT="$NOREPO" bash "$HOOK" 2>&1); rc=$?
