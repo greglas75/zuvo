@@ -1,6 +1,6 @@
 # Skills Reference
 
-Zuvo includes 54 skills organized into 13 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
+Zuvo includes 55 skills organized into 13 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
 
 ---
 
@@ -127,6 +127,7 @@ Scoped task execution for common development work.
 | `zuvo:incident` | Incident response and postmortem generation from git/deploy context. Builds timeline, identifies suspect commits, assesses impact, generates structured postmortem with action items and comms templates. | When something breaks in production, after outages, post-incident review | `[description]`, `--since [time]`, `--service [name]`, `--sev [1-4]`, `--revert`, `--comms`, `--dry-run` |
 | `zuvo:using-zuvo` | Meta-skill router, always loaded at session start. Routes user intent to the correct skill. | Automatic -- you never invoke this directly |
 | `zuvo:context-audit` | Context health monitoring. Analyzes include loading trends from context-metrics.log, audits CLAUDE.md/rules/settings for bloat, scores setup health. | Periodic context health check, when context feels bloated, before/after adding rules or includes | `trend` (default), `--full`, `--baseline`, `--since N` |
+| `zuvo:skill-eval` | Behavioral evaluator for zuvo skills. Runs a skill against its `evals/<skill>.evals.json` corpus in isolated executor sub-agents, grades each run transcript against the corpus assertions with an injection-hardened grader, and writes a per-assertion report to `zuvo/reports/`. Dev-only. | Measuring whether a skill's instructions produce correct behavior; comparing an old vs new skill version | `[skill-name]`, `--compare <ref>`, `--all-evals`, `--dry-run` |
 
 ---
 
@@ -144,9 +145,9 @@ Scoped task execution for common development work.
 | Testing | 5 | write-tests, fix-tests, write-e2e, tests-performance, mutation-test |
 | Accessibility | 1 | a11y-audit |
 | Release | 5 | ship, deploy, canary, release-docs, retro |
-| Utility | 8 | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo, context-audit |
+| Utility | 9 | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo, context-audit, skill-eval |
 | Lead Generation | 1 | leads |
-| **Total** | **54** | |
+| **Total** | **55** | |
 
 ## Shared Infrastructure
 

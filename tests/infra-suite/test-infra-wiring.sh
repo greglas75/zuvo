@@ -29,10 +29,17 @@ grep -q 'zuvo:infra-audit' "$ROUTER" \
   || fail "skills/using-zuvo/SKILL.md: missing routing row for zuvo:infra-audit"
 pass "router has zuvo:infra-audit routing row"
 
-# ── 2. Router: banner contains "54 skills" ───────────────────────────────────
-grep -q '54 skills' "$ROUTER" \
-  || fail "skills/using-zuvo/SKILL.md: banner does not contain '54 skills'"
-pass "router banner contains '54 skills'"
+# ── 2. Router: banner contains "55 skills" ───────────────────────────────────
+grep -q '55 skills' "$ROUTER" \
+  || fail "skills/using-zuvo/SKILL.md: banner does not contain '55 skills'"
+pass "router banner contains '55 skills'"
+
+# ── 2b. Router: zuvo:skill-eval routing row present ──────────────────────────
+# banner count alone is a NUMBER, not a name — without this the routing row could be
+# deleted and the count check would still pass. Mirrors the infra-audit check above.
+grep -q 'zuvo:skill-eval' "$ROUTER" \
+  || fail "skills/using-zuvo/SKILL.md: no zuvo:skill-eval routing row"
+pass "router has zuvo:skill-eval routing row"
 
 # ── 3. severity-vocabulary: infra-audit row with CRITICAL/HIGH/MEDIUM/LOW→S1/S2/S3/S4 ──
 [ -f "$SEVVOC" ] || fail "severity-vocabulary.md missing"

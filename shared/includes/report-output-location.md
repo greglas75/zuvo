@@ -29,7 +29,7 @@ All paths are under `$ZUVO_DIR` (default `<project-root>/zuvo/`):
 | Subfolder | Contents | Written by |
 |-----------|----------|------------|
 | `audits/` | Audit reports (`.md` + `.json`), tier reports, per-finding artifacts | code-audit, security-audit, api-audit, performance-audit, db-audit, ci-audit, env-audit, dependency-audit, structure-audit, test-audit, seo-audit, geo-audit, content-audit, a11y-audit, design-review, architecture (review mode), pentest (bundle under `audits/pentest/`), infra-audit |
-| `reports/` | Non-audit generated reports | canary, content-migration, benchmark, agent-benchmark, retro, release-docs |
+| `reports/` | Non-audit generated reports | canary, content-migration, benchmark, agent-benchmark, retro, release-docs, skill-eval |
 | `plans/` | Implementation plans, task DAGs | plan, build, execute, brainstorm |
 | `contracts/` | Refactor CONTRACT files | refactor |
 | `context/` | Session state, execution state, adversarial-review artifacts, acceptance proofs | execute, review, build, write-tests, session-state, adversarial gate |

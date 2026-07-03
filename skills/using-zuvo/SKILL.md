@@ -3,7 +3,7 @@ name: using-zuvo
 description: "ALWAYS LOADED — Zuvo skill router. Injected at session start. Determines which zuvo skill to invoke for the current task."
 ---
 
-> **Zuvo v1.6.0** | 54 skills | 4 adversarial providers | CQ1-CQ29 + Q1-Q19
+> **Zuvo v1.6.0** | 55 skills | 4 adversarial providers | CQ1-CQ29 + Q1-Q19
 
 # Zuvo Skill Router
 
@@ -110,6 +110,7 @@ This is the SOFT top layer — it sets intent. The actual **enforcement is deter
 | Respond to code review feedback | `zuvo:receive-review` |
 | Isolate work in a git worktree | `zuvo:worktree` |
 | Incident response, postmortem, root cause analysis | `zuvo:incident` |
+| Evaluate a zuvo SKILL against its eval corpus / compare skill versions (dev, needs `evals/`) | `zuvo:skill-eval` |
 
 ### Priority 5 — Release (post-code lifecycle)
 
