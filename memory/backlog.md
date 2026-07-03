@@ -167,3 +167,17 @@ type: project
 - **Impact:** `dev-push.sh` Step 0 test-gate (Task 5) will block in any environment where these Docker fixtures can't build/health-check, unless `ZUVO_SKIP_TESTS=1`.
 - **Not a Task 7 regression** — Task 7 (eval corpus + eval-schema + skill-suite test) touches nothing infra/docker.
 - **Decision (out-of-fence for skill-testing plan):** consider gating the Docker-dependent infra e2e behind a `full`-only + docker-available guard so `fast` scope stays dependency-light. Owner/timing TBD.
+
+## [obs] agent-count prose drift across manifests + CLAUDE.md (2026-07-03)
+Manifests (.claude-plugin/.codex-plugin/package.json) say "26 specialized agents";
+CLAUDE.md says "(28 agents)" / project guide implies ~48 agent files. Pre-existing
+drift surfaced by Task-9 (skill-eval registration) adversarial review; deliberately
+LEFT UNTOUCHED per the plan (Task 9 fence = skill count only). Needs a canonical agent
+count reconciled across all 3 manifests + CLAUDE.md, ideally derived from an actual
+`skills/*/agents/*.md` scan. Not blocking; tracked here.
+
+## [obs] auto-derive advertised skill/agent counts at build (2026-07-03)
+Task-9 adversarial (codex#5) noted counts are hand-maintained across 6+ files. The
+validate-skills.sh count-consistency checker already fails the build on drift (the
+real guardrail), but generating the advertised counts from a `skills/` directory scan
+during install/build would remove the manual step entirely. Enhancement, not a defect.
