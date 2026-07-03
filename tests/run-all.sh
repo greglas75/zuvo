@@ -59,6 +59,13 @@ case "$SCOPE" in
     exit 2 ;;
 esac
 
+# Hermetic gate-test env: strip ambient escape-hatch / agent markers so the gate suites'
+# "should block" assertions are not spuriously bypassed by a caller's environment. Each
+# suite still sets these per-assertion (local prefix) where it means to. Without this, a
+# release run invoked as `ZUVO_ALLOW_ADHOC=1 ./scripts/release.sh` leaks the escape into
+# every gate suite and fails all block assertions (observed 2026-07-03).
+unset ZUVO_ALLOW_ADHOC ZUVO_AGENT ZUVO_AI_RUN 2>/dev/null || true
+
 # ── child-list assembly ───────────────────────────────────────────────────────
 
 # emit_glob GLOB [EXCLUDE_BASENAME]
