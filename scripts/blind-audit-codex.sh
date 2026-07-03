@@ -129,7 +129,7 @@ if [[ -z "$MODEL" ]]; then
   # Use ZUVO_*_MODEL env vars (explicit overrides), NOT host env vars like
   # GEMINI_MODEL or CLAUDE_MODEL which reflect the WRITER model, not the auditor.
   case "$PROVIDER" in
-    codex) MODEL="${ZUVO_CODEX_MODEL:-gpt-5.3-codex-spark}" ;;
+    codex) MODEL="${ZUVO_CODEX_MODEL:-gpt-5.5}" ;;
     gemini) MODEL="${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}" ;;
     claude) MODEL="${ZUVO_CLAUDE_AUDIT_MODEL:-opus}" ;;
   esac

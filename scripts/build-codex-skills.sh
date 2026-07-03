@@ -124,38 +124,38 @@ strip_tool_names() {
 replace_claude_refs() {
   sed \
     -e 's/\*\*Sonnet\*\*/\*\*gpt-5.4\*\*/g' \
-    -e 's/\*\*Opus\*\*/\*\*gpt-5.3-codex-spark\*\*/g' \
+    -e 's/\*\*Opus\*\*/\*\*gpt-5.5\*\*/g' \
     -e 's/\*\*Haiku\*\*/\*\*gpt-5.4-mini\*\*/g' \
     -e 's/\*\*Model:\*\* Sonnet/\*\*Model:\*\* gpt-5.4/g' \
-    -e 's/\*\*Model:\*\* Opus/\*\*Model:\*\* gpt-5.3-codex-spark/g' \
+    -e 's/\*\*Model:\*\* Opus/\*\*Model:\*\* gpt-5.5/g' \
     -e 's/\*\*Model:\*\* Haiku/\*\*Model:\*\* gpt-5.4-mini/g' \
-    -e 's/\*\*Model routing:\*\* Sonnet | Opus/\*\*Model routing:\*\* gpt-5.4 | gpt-5.3-codex-spark/g' \
+    -e 's/\*\*Model routing:\*\* Sonnet | Opus/\*\*Model routing:\*\* gpt-5.4 | gpt-5.5/g' \
     -e 's/model: Sonnet/model: gpt-5.4/g' \
-    -e 's/model: Opus/model: gpt-5.3-codex-spark/g' \
+    -e 's/model: Opus/model: gpt-5.5/g' \
     -e 's/model: Haiku/model: gpt-5.4-mini/g' \
     -e 's/model: "sonnet"/model: "gpt-5.4"/g' \
-    -e 's/model: "opus"/model: "gpt-5.3-codex-spark"/g' \
+    -e 's/model: "opus"/model: "gpt-5.5"/g' \
     -e 's/model: "haiku"/model: "gpt-5.4-mini"/g' \
     -e 's/| Sonnet |/| gpt-5.4 |/g' \
-    -e 's/| Opus |/| gpt-5.3-codex-spark |/g' \
+    -e 's/| Opus |/| gpt-5.5 |/g' \
     -e 's/| Haiku |/| gpt-5.4-mini |/g' \
     -e 's/(model: sonnet)/(model: gpt-5.4)/g' \
     -e 's/(model: haiku)/(model: gpt-5.4-mini)/g' \
     -e 's/Use Sonnet for/Use gpt-5.4 for/g' \
-    -e 's/Use Opus for/Use gpt-5.3-codex-spark for/g' \
+    -e 's/Use Opus for/Use gpt-5.5 for/g' \
     -e 's/Use Haiku for/Use gpt-5.4-mini for/g' \
     -e 's/Sonnet for standard/gpt-5.4 for standard/g' \
-    -e 's/Opus for complex/gpt-5.3-codex-spark for complex/g' \
-    -e 's/Opus when TIER/gpt-5.3-codex-spark when TIER/g' \
+    -e 's/Opus for complex/gpt-5.5 for complex/g' \
+    -e 's/Opus when TIER/gpt-5.5 when TIER/g' \
     -e 's/Sonnet (TIER/gpt-5.4 (TIER/g' \
     -e 's/Haiku (fast, low-cost)/gpt-5.4-mini (fast, low-cost)/g' \
     -e 's/Model: Sonnet/Model: gpt-5.4/g' \
-    -e 's/Model: Opus/Model: gpt-5.3-codex-spark/g' \
+    -e 's/Model: Opus/Model: gpt-5.5/g' \
     -e 's/Model: Haiku/Model: gpt-5.4-mini/g' \
     -e 's/Sonnet, Explore/gpt-5.4, Explore/g' \
     -e 's/always Sonnet/always gpt-5.4/g' \
     -e 's/-> Sonnet/-> gpt-5.4/g' \
-    -e 's/-> Opus/-> gpt-5.3-codex-spark/g' \
+    -e 's/-> Opus/-> gpt-5.5/g' \
     -e 's/-> Haiku/-> gpt-5.4-mini/g' \
     -e 's/Sonnet implementer/gpt-5.4 implementer/g' \
     -e 's/CLAUDE\.md/AGENTS.md/g' \
@@ -164,7 +164,7 @@ replace_claude_refs() {
 }
 
 replace_reviewer_lane_refs_codex() {
-  perl -pe 's/\breview-primary\b/gpt-5.4/g; s/\breview-alt\b/gpt-5.3-codex-spark/g'
+  perl -pe 's/\breview-primary\b/gpt-5.4/g; s/\breview-alt\b/gpt-5.5/g'
 }
 
 # --- Strip Team/Multi-Agent Sections from Protocols (reusable) ---
@@ -195,9 +195,9 @@ map_model() {
   case "$model" in
     haiku)   echo "gpt-5.4-mini" ;;
     sonnet)  echo "gpt-5.4" ;;
-    opus)    echo "gpt-5.3-codex-spark" ;;
+    opus)    echo "gpt-5.5" ;;
     review-primary) echo "gpt-5.4" ;;
-    review-alt) echo "gpt-5.3-codex-spark" ;;
+    review-alt) echo "gpt-5.5" ;;
     per-task) echo "gpt-5.4" ;; # implementer has "per-task: sonnet for standard..."
     *)       echo "gpt-5.4" ;;
   esac
@@ -261,9 +261,9 @@ ${capability_line}
 """
 TOML
 
-  # Reasoning agents use gpt-5.4 with high reasoning, not gpt-5.3-codex-spark
+  # Reasoning agents use gpt-5.4 with high reasoning, not gpt-5.5
   if [ "$is_reasoning" -gt 0 ]; then
-    sed -i '' "s|model = \"gpt-5.3-codex-spark\"|model = \"gpt-5.4\"|" "$toml_path"
+    sed -i '' "s|model = \"gpt-5.5\"|model = \"gpt-5.4\"|" "$toml_path"
     echo 'model_reasoning_effort = "xhigh"' >> "$toml_path"
   fi
 }
@@ -875,7 +875,7 @@ fi
 # TOML validation: no CC model names in generated TOMLs
 bad_models=$(grep -rn 'model = "sonnet"\|model = "haiku"\|model = "opus"' "$DIST"/agents/*.toml 2>/dev/null || true)
 if [ -n "$bad_models" ]; then
-  echo "  ERROR: CC model names in TOMLs (should be gpt-5.4/gpt-5.4-mini/gpt-5.3-codex-spark):"
+  echo "  ERROR: CC model names in TOMLs (should be gpt-5.4/gpt-5.4-mini/gpt-5.5):"
   echo "$bad_models"
   errors=$((errors + 1))
 fi
@@ -895,7 +895,7 @@ if [ ! -f "$reviewer_primary_toml" ] || [ ! -f "$reviewer_alt_toml" ]; then
   errors=$((errors + 1))
 else
   grep -q 'model = "gpt-5.4"' "$reviewer_primary_toml" || { echo "  ERROR: Codex primary reviewer TOML did not resolve to gpt-5.4"; errors=$((errors + 1)); }
-  grep -q 'model = "gpt-5.3-codex-spark"' "$reviewer_alt_toml" || { echo "  ERROR: Codex alt reviewer TOML did not resolve to gpt-5.3-codex-spark"; errors=$((errors + 1)); }
+  grep -q 'model = "gpt-5.5"' "$reviewer_alt_toml" || { echo "  ERROR: Codex alt reviewer TOML did not resolve to gpt-5.5"; errors=$((errors + 1)); }
 fi
 
 # TOML validation: developer_instructions paths exist

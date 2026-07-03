@@ -517,7 +517,7 @@ detect_host_platform() {
      || [[ "${CODEX_INTERNAL_ORIGINATOR_OVERRIDE:-}" == "Codex Desktop" ]] \
      || [[ "${CODEX_SHELL:-}" == "1" ]] \
      || [[ "${__CFBundleIdentifier:-}" == "com.openai.codex" ]]; then
-    # Like claude, codex has multiple models (gpt-5.4 "codex-5.4" vs gpt-5.3-codex-spark
+    # Like claude, codex has multiple models (gpt-5.4 "codex-5.4" vs gpt-5.5
     # "codex-5.3"). Exclude only the SAME model as the host so a DIFFERENT codex model still
     # reviews cross-model, instead of dropping codex wholesale. Read the host model from
     # CODEX_MODEL or ~/.codex/config.toml; default to the newer model when unknown, so the
@@ -725,7 +725,7 @@ run_codex() {
 }
 
 run_codex_54() { run_codex "gpt-5.4"        "codex-5.4"; }
-run_codex_53() { run_codex "gpt-5.3-codex-spark"  "codex-5.3"; }
+run_codex_53() { run_codex "gpt-5.5"  "codex-5.3"; }
 
 run_claude() {
   local model
@@ -953,7 +953,7 @@ fi
 provider_model() {
   case "$1" in
     codex-5.4)    echo "gpt-5.4" ;;
-    codex-5.3)    echo "gpt-5.3-codex-spark" ;;
+    codex-5.3)    echo "gpt-5.5" ;;
     gemini)       echo "${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}" ;;
     gemini-api)   echo "${ZUVO_GEMINI_API_MODEL:-gemini-3.1-pro-preview}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;

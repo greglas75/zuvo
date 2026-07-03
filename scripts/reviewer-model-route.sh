@@ -74,7 +74,7 @@ detect_writer_model() {
 
   case "$platform" in
     claude) printf '%s\n' "${CLAUDE_MODEL:-sonnet}" ;;
-    codex) printf '%s\n' "${ZUVO_CODEX_MODEL:-gpt-5.3-codex-spark}" ;;
+    codex) printf '%s\n' "${ZUVO_CODEX_MODEL:-gpt-5.5}" ;;
     cursor) printf '%s\n' "${CURSOR_AGENT_MODEL:-${CURSOR_MODEL:-unknown}}" ;;
     antigravity) printf '%s\n' "${GEMINI_MODEL:-${ANTIGRAVITY_MODEL:-gemini-3.1-pro-low}}" ;;
     *) printf 'unknown\n' ;;
@@ -134,10 +134,10 @@ case "$platform" in
       gpt-5.4)
         writer_lane="strong_primary"
         reviewer_lane="review-alt"
-        reviewer_model="gpt-5.3-codex-spark"
+        reviewer_model="gpt-5.5"
         routing_status="ok"
         ;;
-      gpt-5.3-codex-spark)
+      gpt-5.5)
         writer_lane="strong_alt"
         reviewer_lane="review-primary"
         reviewer_model="gpt-5.4"
