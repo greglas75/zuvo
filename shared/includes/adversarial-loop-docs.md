@@ -50,13 +50,15 @@ The script (`adversarial-review.sh`) handles this internally — the calling ski
 
 ### Step 2: Dispatch
 
-Run the script in a **single foreground Bash call**. The script auto-detects all available providers, runs them in parallel, and returns merged results. Do NOT manage providers yourself.
+Run the script in a **single Bash call with a long timeout**. The script auto-detects all available providers, runs them in parallel, and returns merged results. Do NOT manage providers yourself.
+
+> **The Bash-tool timeout — NOT the script — is the #1 cause of spurious "adversarial timed out/skipped".** The Bash tool defaults to **120s**; the script runs each provider up to `PROVIDER_TIMEOUT` (**240s** default; **360s** for article/spec/plan/audit/tests/migrate). A foreground call at the 120s default is KILLED before findings arrive. Either run with `run_in_background: true` and WAIT for the completion notification, or set the Bash tool's `timeout` to **≥ 420000**.
 
 ```bash
 adversarial-review --json --mode {MODE} --files "{ARTIFACT_PATH}"
 ```
 
-**IMPORTANT:** Run as a foreground Bash call. Wait for the complete output before proceeding to Step 3. Do NOT read results early or use background execution.
+**IMPORTANT — always WAIT for the complete artifact before Step 3.** Whether background (wait for the completion notification) or foreground-with-`timeout: 420000`, never read results early or triage a partial artifact. (The former "do NOT use background" rule is REMOVED — with the Bash tool's 120s default it guaranteed the pre-findings cutoff.)
 
 **If `adversarial-review` is not in PATH:** try `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh` as fallback.
 

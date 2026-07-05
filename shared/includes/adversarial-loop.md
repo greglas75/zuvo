@@ -59,7 +59,13 @@ IF HIGH_RISK AND file paths match */migrations/*, schema.prisma, *.sql:
 
 ### Step 2: Run adversarial review
 
-Run the script as a **single foreground Bash call**. The script auto-detects available providers and returns results. Do NOT manage providers yourself.
+Run the script as a **single Bash call with a long timeout**. The script auto-detects available providers and returns results. Do NOT manage providers yourself.
+
+> **The Bash-tool timeout — NOT the script — is the #1 cause of spurious "adversarial timed out/skipped".** The Bash tool defaults to **120s**, but the script runs each provider up to `PROVIDER_TIMEOUT` (**240s** default; **360s** for plan/audit/tests/spec/article/migrate). A foreground call left at the 120s default is KILLED before findings arrive (retros 2026-07-03/04: repeated "multi timed out under CPU load", "single-provider forced"). **Do ONE of these, always:**
+> - **Background + wait (preferred):** run with `run_in_background: true`, then WAIT for the completion notification before reading the artifact. No timeout guessing; survives 600s runs.
+> - **Foreground with an explicit timeout:** set the Bash tool's `timeout` parameter to **≥ 420000** (420s — covers the 360s modes + buffer). The bare 120s default is never enough.
+>
+> **On a loaded machine** (concurrent builds/tests/other agents), providers can exceed even the 240/360s *script* timeout and force a single-provider fallback (retros 2026-07-04 "cpu-contention-forced-single-provider"). When you know the box is busy, export `ZUVO_REVIEW_TIMEOUT=480` (or higher) and run in the background — do NOT record the reduced coverage as "done"; a rate-limited/contended pass is retried, per `stall-recovery.md`, not a quality lever.
 
 ```bash
 git add -u
@@ -75,7 +81,7 @@ Default is multi-provider (all available run in parallel). The script handles pr
 adversarial-review --json --mode {MODE} --files "path/to/changed/file.ts"
 ```
 
-**IMPORTANT:** Run as foreground Bash call. Wait for complete output before proceeding. Do NOT use background execution.
+**IMPORTANT — always WAIT for the complete artifact before triage.** Whether you ran background (wait for the completion notification) or foreground-with-`timeout: 420000`, never triage before the full output/artifact is on disk — a truncated read drops the first providers' CRITICALs. (The former "run foreground, do NOT background" rule is REMOVED — with the Bash tool's 120s default it guaranteed the cutoff this whole section now prevents.)
 
 **If `adversarial-review` is not in PATH** — on Claude Code it usually is NOT; no command is installed on PATH — resolve an absolute `$AR_CMD` and substitute it for `adversarial-review` in the calls above and below. Do **not** use a bare `zuvo/*/scripts/...` glob: with both a version dir and a SHA-named cache dir present it expands to two paths and runs the wrong one.
 
