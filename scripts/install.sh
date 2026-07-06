@@ -163,18 +163,31 @@ install_claude() {
     return 1
   fi
 
-  # Ensure a cache dir exists for the CURRENT version
+  # Ensure a cache dir exists for the CURRENT version.
+  # ATOMIC creation: Claude Code discovers a version dir by its existence, and dev-push points
+  # installPath at it BEFORE this sync runs — so a version dir that is mkdir'd empty and
+  # populated later has a window where a concurrent session loads it with EMPTY shared/includes
+  # and rules → skills run degraded (the 2026-07-05 report: a parallel plan run fell back to
+  # SKILL.md + project rules). Build the dir under a temp name, fully seeded from an existing
+  # populated cache dir (upgrade) or bare structure (fresh install), then rename(2) it into
+  # place so it NEVER appears half-populated. The sync loop below then updates it in place
+  # (overwrite — never empties it).
   local current_version="$VERSION"
   if [[ ! -d "$CACHE_BASE/$current_version" ]]; then
-    echo "  Creating cache dir for v${current_version}..."
-    mkdir -p "$CACHE_BASE/$current_version"
-    # Bootstrap directory structure
-    mkdir -p "$CACHE_BASE/$current_version/skills"
-    mkdir -p "$CACHE_BASE/$current_version/shared/includes"
-    mkdir -p "$CACHE_BASE/$current_version/rules"
-    mkdir -p "$CACHE_BASE/$current_version/scripts"
-    mkdir -p "$CACHE_BASE/$current_version/bin"
-    mkdir -p "$CACHE_BASE/$current_version/docs"
+    echo "  Creating cache dir for v${current_version} (atomic)..."
+    local _seed _tmp="$CACHE_BASE/.$current_version.tmp.$$"
+    rm -rf "$_tmp"
+    _seed=$(ls -d "$CACHE_BASE"/*/ 2>/dev/null | grep -v '/\.' | head -1)
+    if [[ -n "$_seed" ]]; then
+      cp -R "${_seed%/}" "$_tmp" 2>/dev/null || mkdir -p "$_tmp"
+    else
+      mkdir -p "$_tmp"/skills "$_tmp"/shared/includes "$_tmp"/rules "$_tmp"/scripts "$_tmp"/bin "$_tmp"/docs
+    fi
+    if [[ -d "$CACHE_BASE/$current_version" ]]; then
+      rm -rf "$_tmp"                                     # lost a race to another installer — fine
+    else
+      mv "$_tmp" "$CACHE_BASE/$current_version" 2>/dev/null || { rm -rf "$_tmp"; mkdir -p "$CACHE_BASE/$current_version"/skills "$CACHE_BASE/$current_version"/shared/includes "$CACHE_BASE/$current_version"/rules; }
+    fi
   fi
 
   # Sync to ALL existing cache dirs (Claude Code may have version + SHA dirs)
