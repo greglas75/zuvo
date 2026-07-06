@@ -1,0 +1,15 @@
+version: 2
+updates:
+  # npm — root package. Currently has no runtime/dev dependencies, so this is a
+  # future-proofing entry: Dependabot activates automatically once deps are added.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      timezone: "Europe/Warsaw"
+    labels:
+      - "dependencies"
+      - "npm"
+    commit-message:
+      prefix: "chore"
