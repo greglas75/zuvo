@@ -6,6 +6,12 @@
 # fail-open behavior on bad range / no repo.
 set -u
 
+# Isolate every fixture from THIS machine's global git config + hooks. Without this, a fixture's
+# own `git push` is intercepted by the real global zuvo pre-push gate (core.hooksPath=~/.claude/
+# hooks) and blocked as "substantial unreviewed work" — which corrupts the fixture's remote state
+# (the pushed ref never advances) and makes a correct gate look broken. Fixtures must be hermetic.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
+
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LIB="$ROOT/hooks/lib/pipeline-gate-lib.sh"
 fail=0
@@ -269,6 +275,25 @@ n="$(cd "$UPT" && git rev-list --count "$r" 2>/dev/null || echo x)"
   && pass "R-UNPUSHED: everything pushed → exit 3 (nothing to gate)" \
   || bad "R-UNPUSHED: all-pushed should be exit 3"
 rm -rf "$UPT" "$UPR"
+
+# R-MERGE: a branch that MERGED a remote branch in (not rebased) must scope to FEATURE-ONLY.
+# The merged-in remote commits live in the branch's tree, so a fork-point two-dot diff wrongly
+# dragged their whole surface in and demanded coverage for it (2026-07-07 over-scope report).
+MGT="$(mktemp -d)"; MGR="$(mktemp -d)"
+(
+  cd "$MGR" && git init -q --bare
+  cd "$MGT" && git init -q -b main; git config user.email t@t; git config user.name t; git config commit.gpgsign false
+  git remote add origin "$MGR"
+  echo base > base.js; git add -A; git commit -qm base; git push -q origin main
+  git checkout -q -b feat; echo feat > feature.js; git add -A; git commit -qm feat
+  git checkout -q main; for i in 1 2 3; do echo "m$i" > "mainbig$i.js"; git add -A; git commit -qm "main $i"; done; git push -q origin main
+  git checkout -q feat; git merge -q main -m "merge main"; echo more > feature2.js; git add -A; git commit -qm feat2
+) >/dev/null 2>&1
+mfiles="$(cd "$MGT" && PG_REPO_ROOT="$MGT" bash -c '. "'"$LIB"'"; r=$(pg_unpushed_range); pg_changed_production "$r"' 2>/dev/null | sort | tr '\n' ' ')"
+[ "$mfiles" = "feature.js feature2.js " ] \
+  && pass "R-MERGE: merged-in remote commits excluded — scope is feature-only" \
+  || bad "R-MERGE: merge branch over-scoped (got: [$mfiles])"
+rm -rf "$MGT" "$MGR"
 
 # ---------- fail-open ----------
 pg_is_substantial "zzz..yyy" && bad "bad range should NOT be substantial" || pass "fail-open: bad range not substantial"
