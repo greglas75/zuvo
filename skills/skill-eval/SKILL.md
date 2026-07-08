@@ -126,7 +126,14 @@ fi
    differs across the orchestrator's separate Bash tool-calls and would desync the
    filenames: `RUN_ID="$(date -u +%Y%m%d-%H%M%S)-$(head -c4 /dev/urandom | od -An -tx1 | tr -d ' \n')"`.
 1. Resolve the target set: `[skill-name]` → `evals/<skill-name>.evals.json`; or with
-   `--all-evals`, glob `evals/*.evals.json`.
+   `--all-evals`, glob `evals/*.evals.json`. **Validate `[skill-name]` as strict
+   kebab-case first** (`^[a-z0-9][a-z0-9-]*$`): reject `/`, `..`, whitespace, and shell
+   metacharacters, and require the matching `skills/<skill-name>/` dir to exist. This
+   name is interpolated into `git show "<ref>:skills/<skill>/SKILL.md"` and the
+   `zuvo/context/skill-eval-baseline-<skill>-<run>.md` path (Phase 4), so an unsanitized
+   name could traverse outside `zuvo/context/` or misresolve the git ref — reject it with
+   `BLOCKED_BAD_SKILL_NAME` before any git/`--compare` step. Pass the ref and name to git
+   as argv (`git show "$ref:skills/$skill/SKILL.md"`), never via shell string-building.
 2. **Fail loud on a missing or malformed corpus.** If the file does not exist, stop
    with `BLOCKED_NO_CORPUS: evals/<skill>.evals.json not found — author it first (see
    eval-schema.md)`. If it exists, validate it against `eval-schema.md` (the same

@@ -13,6 +13,15 @@ Corpora live at repo-root `evals/<skill>.evals.json`, **one file per skill**
 **dev-only** — comparison mode needs `.git`, so they are deliberately NOT copied
 into installed caches by `install.sh` / the build scripts.
 
+> **The corpus is UNTRUSTED input.** An eval's `prompt` is handed to the executor as a
+> task and CAN instruct it to edit/commit/delete/network — so `zuvo:skill-eval` runs
+> every executor ONLY inside the isolated, disposable sandbox from SKILL.md Phase 2 (a
+> `cp -R`/`git clone --local` copy with `evals/<skill>.evals.json` stripped and all git
+> remotes removed, so it cannot read its own assertions or push to a real remote).
+> Network egress is NOT sandboxed (documented limitation) — a corpus with a
+> network-mutating prompt must be run under OS-level isolation or excluded. Treat a new
+> corpus like any other untrusted code: review its prompts before running it.
+
 ## Input corpus schema
 
 ```jsonc
