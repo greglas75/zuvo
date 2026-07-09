@@ -366,6 +366,59 @@ NRT="$(mktemp -d)"
   && pass "T3/G6: remote-less repo → exit 1 (merge-base fallback, not sentinel)" || bad "T3/G6: remote-less should exit 1"
 rm -rf "$SRT" "$SRR" "$NRT"
 
+# ---------- Task 4: topology regression — close the whole class (G2 multi-merge, G3 conflict) ----------
+# R-MULTIMERGE: a branch that merged TWO divergent remote branches → feature-only, NEITHER dragged
+# in (the case the newest-remote-ancestor patch still over-scoped — now closed base-free).
+MMT="$(mktemp -d)"; MMR="$(mktemp -d)"
+(
+  cd "$MMR" && git init -q --bare
+  cd "$MMT" && git init -q -b main; git config user.email t@t; git config user.name t; git config commit.gpgsign false
+  git remote add origin "$MMR"
+  echo base > base.js; git add -A; git commit -qm base; git push -q origin main
+  git tag basepoint                                     # fork point BEFORE main advances
+  git checkout -q -b other basepoint; echo o > other1.js; git add -A; git commit -qm other; git push -q origin other
+  git checkout -q main; echo m > main1.js; git add -A; git commit -qm main; git push -q origin main
+  # feat forks from BASEPOINT (before main1) so BOTH merges bring real new commits (not no-ops)
+  git checkout -q -b feat basepoint; echo f > feature.js; git add -A; git commit -qm feat
+  git merge -q origin/main -m "merge main"; git merge -q origin/other -m "merge other"
+  echo f2 > feature2.js; git add -A; git commit -qm feat2
+) >/dev/null 2>&1
+# fixture fidelity: origin/main and origin/other must be DIVERGENT (neither an ancestor of the
+# other) — else the test would not exercise the multi-merge case it claims.
+( cd "$MMT" && ! git merge-base --is-ancestor origin/other origin/main 2>/dev/null && ! git merge-base --is-ancestor origin/main origin/other 2>/dev/null ) \
+  && pass "R-MULTIMERGE fixture: origin/main and origin/other are genuinely divergent" \
+  || bad "R-MULTIMERGE fixture: branches are NOT divergent — test would be vacuous"
+mmf="$(cd "$MMT" && PG_REPO_ROOT="$MMT" bash -c '. "'"$LIB"'"; pg_changed_production "@unpushed..HEAD"' 2>/dev/null | sort | tr '\n' ' ')"
+[ "$mmf" = "feature.js feature2.js " ] \
+  && pass "R-MULTIMERGE/G2: two merged remote branches → feature-only (neither dragged in; old fork-point base leaked other1.js)" \
+  || bad "R-MULTIMERGE/G2: got [$mmf] (expected feature.js feature2.js)"
+rm -rf "$MMT" "$MMR"
+
+# R-CONFLICT: a merge with a hand-resolved conflict → the resolved file IS in scope (no under-scope
+# hole — the reviewer must see conflict-resolution changes). Uses the -c combined-diff retention.
+CFT="$(mktemp -d)"; CFR="$(mktemp -d)"
+(
+  cd "$CFR" && git init -q --bare
+  cd "$CFT" && git init -q -b main; git config user.email t@t; git config user.name t; git config commit.gpgsign false
+  git remote add origin "$CFR"
+  echo base > base.js; printf 'line-A\n' > shared.js; git add -A; git commit -qm base; git push -q origin main
+  git checkout -q -b feat; printf 'feat-version\n' > shared.js; git add -A; git commit -qm "feat edits shared"
+  git checkout -q main; printf 'main-version\n' > shared.js; git add -A; git commit -qm "main edits shared"; git push -q origin main
+  git checkout -q feat; git merge origin/main >/tmp/cf-merge.out 2>&1   # WILL conflict; capture, do not mask
+  printf 'resolved-both\n' > shared.js; git add shared.js; git commit -qm "resolve conflict"
+) >/dev/null 2>&1
+# prove the merge actually CONFLICTed (else the -c conflict-retention path is not exercised)
+grep -qi 'conflict' /tmp/cf-merge.out 2>/dev/null \
+  && pass "R-CONFLICT fixture: merge genuinely conflicted on shared.js (exercises -c retention)" \
+  || bad "R-CONFLICT fixture: merge did NOT conflict — test would not exercise conflict retention"
+cff="$(cd "$CFT" && PG_REPO_ROOT="$CFT" bash -c '. "'"$LIB"'"; pg_changed_production "@unpushed..HEAD"' 2>/dev/null | tr '\n' ' ')"
+case " $cff " in *" shared.js "*) pass "R-CONFLICT/G3: conflict-resolved file IS in scope (no under-scope hole)";; *) bad "R-CONFLICT/G3: conflict file dropped (got [$cff])";; esac
+# and the merge-branch is SUBSTANTIAL/reviewable via the full sentinel flow (pg_is_substantial delegates)
+( cd "$CFT" && PG_REPO_ROOT="$CFT" ZUVO_GATE_MIN_FILES=1 bash -c '. "'"$LIB"'"; pg_is_substantial "@unpushed..HEAD"' ) \
+  && pass "R-CONFLICT: sentinel flows through pg_is_substantial (min-files=1 → substantial)" \
+  || bad "R-CONFLICT: pg_is_substantial did not see the sentinel scope"
+rm -rf "$CFT" "$CFR"
+
 # ---------- fail-open ----------
 pg_is_substantial "zzz..yyy" && bad "bad range should NOT be substantial" || pass "fail-open: bad range not substantial"
 pg_range_reviewed "zzz..yyy"; rc=$?
