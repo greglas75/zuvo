@@ -267,7 +267,16 @@ pg_range_reviewed() {
     # range, so coverage can require the artifact's range to CONTAIN that specific commit —
     # content-keying alone cannot tell two deletions of the same path apart.
     delc=""
-    [ -z "$bcur" ] && delc="$(git -C "$root" log --diff-filter=D --no-renames --format=%H "$range" -- "$f" 2>/dev/null | head -1)"
+    if [ -z "$bcur" ]; then
+      # Resolve the deleting commit over the SAME commit set the range denotes. For the @unpushed
+      # sentinel, `git log "@unpushed..HEAD"` is a bad revision — use the un-pushed walk
+      # (HEAD --not --remotes); any real A..B range uses the two-dot form directly.
+      if [ "${range%%..*}" = "@unpushed" ]; then
+        delc="$(git -C "$root" log --diff-filter=D --no-renames --format=%H "${range##*..}" --not --remotes -- "$f" 2>/dev/null | head -1)"
+      else
+        delc="$(git -C "$root" log --diff-filter=D --no-renames --format=%H "$range" -- "$f" 2>/dev/null | head -1)"
+      fi
+    fi
     for art in "$reviews"/*.md; do
       [ -e "$art" ] || continue
       grep -q '<!-- zuvo-review -->' "$art" 2>/dev/null || continue

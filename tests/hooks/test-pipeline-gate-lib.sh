@@ -340,6 +340,24 @@ rm -rf "$CVT" "$CVR"
 fo="$(cd "$NOREPO" && PG_REPO_ROOT="$NOREPO" bash -c '. "'"$LIB"'"; pg_changed_production "@unpushed..HEAD"' 2>/dev/null)"
 [ -z "$fo" ] && pass "SENTINEL/G8: @unpushed in non-repo → empty (fail-open)" || bad "SENTINEL/G8: expected empty, got [$fo]"
 
+# SENTINEL deletion coverage: pg_range_reviewed must resolve the deleting commit over the @unpushed
+# walk (git log "@unpushed..HEAD" is a BAD REVISION — the aggregate-review bug). A reviewed deletion
+# in an un-pushed commit must be COVERED (rc 0), not falsely blocked.
+DST="$(mktemp -d)"; DSR="$(mktemp -d)"
+(
+  cd "$DSR" && git init -q --bare
+  cd "$DST" && git init -q -b main; git config user.email t@t; git config user.name t; git config commit.gpgsign false
+  git remote add origin "$DSR"
+  echo keep > keep.js; echo doomed > doomed.js; git add -A; git commit -qm base; git push -q origin main
+  git checkout -q -b feat; git rm -q doomed.js; git commit -qm "delete doomed"
+  mkdir -p memory/reviews
+  printf '<!-- zuvo-review -->\nrange: @unpushed..HEAD\nfiles: doomed.js\nverdict: PASS\n' > memory/reviews/cov.md
+) >/dev/null 2>&1
+( cd "$DST" && PG_REPO_ROOT="$DST" bash -c '. "'"$LIB"'"; pg_range_reviewed "@unpushed..HEAD"'; [ "$?" -eq 0 ] ) \
+  && pass "SENTINEL: reviewed deletion in un-pushed commit is COVERED (delc resolved via --not --remotes)" \
+  || bad "SENTINEL: reviewed deletion falsely blocked (git log @unpushed..HEAD bad-revision bug)"
+rm -rf "$DST" "$DSR"
+
 # ---------- Task 3: pg_unpushed_range emits @unpushed, NO merge-base loop ----------
 # G5: no merge-base call inside pg_unpushed_range (O(N) loop deleted)
 # count only merge-base INVOCATIONS — strip trailing '# ...' comments first so a comment that
