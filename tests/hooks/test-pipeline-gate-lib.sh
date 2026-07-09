@@ -295,6 +295,49 @@ mfiles="$(cd "$MGT" && PG_REPO_ROOT="$MGT" bash -c '. "'"$LIB"'"; r=$(pg_unpushe
   || bad "R-MERGE: merge branch over-scoped (got: [$mfiles])"
 rm -rf "$MGT" "$MGR"
 
+# ---------- SENTINEL: pg_changed_* recognise @unpushed → git log -c --not --remotes (Task 2) ----------
+STT="$(mktemp -d)"; STR="$(mktemp -d)"
+(
+  cd "$STR" && git init -q --bare
+  cd "$STT" && git init -q -b main; git config user.email t@t; git config user.name t; git config commit.gpgsign false
+  git remote add origin "$STR"
+  echo base > base.js; git add -A; git commit -qm base; git push -q origin main
+  git checkout -q -b feat; echo feat > feature.js; git add -A; git commit -qm feat
+  git checkout -q main; for i in 1 2 3; do echo "m$i" > "mainbig$i.js"; git add -A; git commit -qm "main $i"; done; git push -q origin main
+  git checkout -q feat; git merge -q main -m "merge main"; printf 'l1\nl2\nl3\n' > feature2.js; git add -A; git commit -qm feat2
+) >/dev/null 2>&1
+sf="$(cd "$STT" && PG_REPO_ROOT="$STT" bash -c '. "'"$LIB"'"; pg_changed_production "@unpushed..HEAD"' 2>/dev/null | sort | tr '\n' ' ')"
+[ "$sf" = "feature.js feature2.js " ] \
+  && pass "SENTINEL: pg_changed_production @unpushed → feature-only (merged main excluded)" \
+  || bad "SENTINEL: pg_changed_production @unpushed got [$sf]"
+sl="$(cd "$STT" && PG_REPO_ROOT="$STT" bash -c '. "'"$LIB"'"; pg_changed_lines "@unpushed..HEAD"' 2>/dev/null)"
+{ [ "${sl:-0}" -ge 1 ] 2>/dev/null && [ "${sl:-0}" -lt 10 ]; } \
+  && pass "SENTINEL: pg_changed_lines @unpushed counts feature lines only (=$sl, merged main excluded)" \
+  || bad "SENTINEL: pg_changed_lines @unpushed got [$sl] (expected small feature-only count)"
+nf="$(cd "$STT" && git checkout -q main 2>/dev/null; PG_REPO_ROOT="$STT" bash -c '. "'"$LIB"'"; pg_changed_production "HEAD~1..HEAD"' 2>/dev/null | tr '\n' ' ')"
+case " $nf " in *mainbig3.js*) pass "SENTINEL/G7: non-sentinel range still uses git diff (HEAD~1..HEAD → mainbig3.js)";; *) bad "SENTINEL/G7: non-sentinel git-diff path broke (got [$nf])";; esac
+rm -rf "$STT" "$STR"
+
+# SENTINEL line-count is SAFE OVER-COUNT (churn ≥ final delta): edit-then-revert across un-pushed
+# commits sums churn, so the count is ≥ the net delta — never under (adversarial-noted, by design).
+CVT="$(mktemp -d)"; CVR="$(mktemp -d)"
+(
+  cd "$CVR" && git init -q --bare
+  cd "$CVT" && git init -q -b main; git config user.email t@t; git config user.name t; git config commit.gpgsign false
+  git remote add origin "$CVR"
+  printf 'x\n' > f.js; git add -A; git commit -qm base; git push -q origin main
+  git checkout -q -b feat
+  printf 'a\nb\nc\nd\ne\n' > f.js; git add -A; git commit -qm add5   # +5 churn
+  printf 'x\n' > f.js; git add -A; git commit -qm revert            # -5 churn (net delta = 0)
+) >/dev/null 2>&1
+cl="$(cd "$CVT" && PG_REPO_ROOT="$CVT" bash -c '. "'"$LIB"'"; pg_changed_lines "@unpushed..HEAD"' 2>/dev/null)"
+{ [ "${cl:-0}" -ge 10 ] 2>/dev/null; } \
+  && pass "SENTINEL: line-count is safe over-count (churn=$cl ≥ net delta 0, never under-scopes)" \
+  || bad "SENTINEL: expected churn≥10, got [$cl]"
+rm -rf "$CVT" "$CVR"
+fo="$(cd "$NOREPO" && PG_REPO_ROOT="$NOREPO" bash -c '. "'"$LIB"'"; pg_changed_production "@unpushed..HEAD"' 2>/dev/null)"
+[ -z "$fo" ] && pass "SENTINEL/G8: @unpushed in non-repo → empty (fail-open)" || bad "SENTINEL/G8: expected empty, got [$fo]"
+
 # ---------- fail-open ----------
 pg_is_substantial "zzz..yyy" && bad "bad range should NOT be substantial" || pass "fail-open: bad range not substantial"
 pg_range_reviewed "zzz..yyy"; rc=$?

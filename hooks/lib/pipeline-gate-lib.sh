@@ -133,9 +133,23 @@ pg_classify_files() {
 
 # Production files changed in <range>.
 pg_changed_production() {
-  local range="$1" root f
+  local range="$1" root f tip
   [ -n "$range" ] || return 1
   root="$(pg_repo_root)" || return 1
+  # @unpushed sentinel: the topology-agnostic un-pushed file set via `git log -c --not --remotes`,
+  # NOT a two-dot diff. `--not --remotes` excludes everything already on a remote (merged-in main,
+  # develop-ahead, every merged branch) across ALL topologies without a base; `-c` keeps merge
+  # conflict resolutions but not the merged-in content (Task 1 spike proved a-i). sort -u dedups a
+  # file touched by several un-pushed commits.
+  if [ "${range%%..*}" = "@unpushed" ]; then
+    tip="${range##*..}"
+    # -z: NUL-delimited, path-safe (matches the git-diff path below — a filename with a newline
+    # cannot split a record). core.quotePath=false: unquoted UTF-8 paths.
+    git -C "$root" -c core.quotePath=false log --format= --name-only -z -c "$tip" --not --remotes 2>/dev/null \
+      | while IFS= read -r -d '' f; do [ -n "$f" ] && pg_is_production "$f" && printf '%s\n' "$f"; done \
+      | sort -u
+    return 0
+  fi
   # --no-renames: report renames as delete(old)+add(new) with CLEAN paths.
   # -z + core.quotePath=false: NUL-delimited, UNquoted paths, so filenames with
   # spaces/specials are classified correctly (git would otherwise quote them).
@@ -147,9 +161,31 @@ pg_changed_production() {
 
 # Total add+del across PRODUCTION files in <range> (binary files counted as 0).
 pg_changed_lines() {
-  local range="$1" root a d p total=0
+  local range="$1" root a d p total=0 tip
   [ -n "$range" ] || { printf '0\n'; return 0; }
   root="$(pg_repo_root)" || { printf '0\n'; return 0; }
+  # @unpushed sentinel → un-pushed numstat via git log (mirrors pg_changed_production). The
+  # numeric-first-field guard below skips a merge's combined-numstat rows safely (files carry the
+  # merge signal via pg_changed_production); non-merge un-pushed lines sum correctly.
+  #   SEMANTICS (deliberate, adversarial-noted): this is per-commit CHURN across the un-pushed
+  #   commits, not a single final-range delta — a base-free log has no single boundary to diff
+  #   against (that base is exactly what this rewrite removes). Churn ≥ final delta, so the only
+  #   effect is that edit-then-revert across commits may cross the line threshold slightly sooner:
+  #   a SAFE OVER-COUNT (more review, never less — never an under-scope). The authoritative gate
+  #   signal is the exact FILE count (pg_changed_production, ≥MIN_FILES); the line threshold is the
+  #   secondary trip. Merge conflict-resolution files still count toward FILES via
+  #   pg_changed_production even when their combined-numstat rows are skipped here.
+  if [ "${range%%..*}" = "@unpushed" ]; then
+    tip="${range##*..}"
+    while IFS=$'\t' read -r a d p; do
+      [ -n "$p" ] || continue
+      pg_is_production "$p" || continue
+      [ "$a" = "-" ] && a=0; [ "$d" = "-" ] && d=0
+      case "$a$d" in *[!0-9]*) continue ;; esac
+      total=$(( total + a + d ))
+    done < <(git -C "$root" -c core.quotePath=false log --format= --numstat -c "$tip" --not --remotes 2>/dev/null)
+    printf '%s\n' "$total"; return 0
+  fi
   while IFS=$'\t' read -r a d p; do
     [ -n "$p" ] || continue
     pg_is_production "$p" || continue
