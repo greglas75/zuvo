@@ -348,3 +348,43 @@ that opted into local gate hooks double-run them harmlessly (gates are read-only
 **Uninstall:** `git config --global --unset core.hooksPath` restores stock git behavior.
 Human commits/pushes are exempt inside the gates (G8 / AI-marker bypass); `ZUVO_ALLOW_ADHOC=1`
 remains the logged escape.
+
+### Un-pushed range computation — topology-complete (`@unpushed` sentinel, v1.6.4)
+
+The gate answers "which production files does this push introduce, and are they reviewed?" by
+computing an un-pushed file set, then checking content-keyed coverage. Computing that set used to
+mean picking a diff **base** (`base..HEAD` + `git diff`), and the right base is git-topology-
+dependent — a linear branch, a branch off a far-ahead `develop`, a branch that merged `main` in,
+and a branch that merged two remote branches each need a different base. Each shape was a separate
+patch (deleted-file `--verify`, `--not --remotes` for develop-ahead, newest-remote-ancestor for
+single-merge) and multi-merge still over-scoped — whack-a-mole.
+
+`pg_unpushed_range` now emits a base-free **`@unpushed..<tip>` sentinel**; `pg_changed_production`
+/`pg_changed_lines` resolve it with:
+
+```
+git log --format= --name-only -z -c <tip> --not --remotes
+```
+
+- `--not --remotes` excludes everything already on ANY remote (already pushed ⇒ already gated) —
+  develop-ahead deltas, merged-in `main`, every merged branch — for **all** topologies, with no
+  base to mis-pick. Linear / develop-ahead / single-merge / multi-merge / octopus all collapse to
+  one mechanism.
+- `-c` keeps merge **conflict resolutions** but not the merged-in content (no under-scope hole); a
+  clean merge contributes nothing.
+
+This closed the whole range-scoping class (incl. the multi-merge case, ex-`B-gate-multimerge`) and
+deleted the O(N)-over-remote-refs merge-base loop. Remote-less repos (`pg_unpushed_range` exit 1)
+keep the `pg_mergebase_range` fallback — `--not --remotes` with no remotes would select the whole
+history. The line count is a deliberate **safe over-count** (per-commit churn ≥ net delta → the
+secondary threshold only trips sooner; the authoritative signal is the exact FILE count). The
+native pre-push path (`rsha..lsha` from git stdin) is an exact range and still uses `git diff`.
+
+> **Trust assumption (by design):** `--not --remotes` treats anything reachable from a remote-tracking
+> ref as already-gated. That holds because a push to any remote had to clear the pre-push + CI gates
+> (or a logged `ZUVO_ALLOW_ADHOC` escape). If a remote-tracking ref is stale (never fetched) or points
+> at history that bypassed the gates by other means, the un-pushed set is computed against that stale
+> view — the CI gate (fail-closed, server-side, recomputes on the PR) is the backstop for that case.
+> The sentinel is only ever emitted when remotes exist AND there is un-pushed work; `pg_unpushed_range`
+> returns exit 1 (→ merge-base fallback) for a remote-less repo, so the whole-history `--not --remotes`
+> footgun is never reached through the gate path.
