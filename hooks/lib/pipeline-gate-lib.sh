@@ -67,38 +67,18 @@ pg_mergebase_range() {
 #   exit 1                   → no remote-tracking refs (caller falls back to merge-base)
 #   exit 3                   → remotes exist but nothing un-pushed (caller: nothing to gate)
 pg_unpushed_range() {
-  local root tip="${1:-HEAD}" R mb best=""
+  local root tip="${1:-HEAD}"
   root="$(pg_repo_root)" || return 1
-  [ -n "$(git -C "$root" for-each-ref --count=1 --format='%(refname)' refs/remotes 2>/dev/null)" ] || return 1
-  [ -n "$(git -C "$root" rev-list "$tip" --not --remotes 2>/dev/null | head -1)" ] || return 3  # all pushed
-  # base = the NEWEST remote-tracking commit that is an ancestor of tip. The old fork-point base
-  # (oldest-unpushed^) with a two-dot diff wrongly re-included commits MERGED IN from a remote
-  # branch — they live in tip's tree, so `git diff fork..HEAD` surfaced the entire merged surface
-  # (2026-07-07: a branch that merged origin/main in was over-scoped over ~100 main commits).
-  # Diffing against the newest remote ancestor excludes them: for a merged-in origin/main that
-  # ancestor IS origin/main's tip, so the diff is feature-only (+ conflict resolutions).
-  # Candidate bases, MOST-LIKELY first then a CAPPED scan of the rest, so the per-ref merge-base
-  # cost stays bounded on repos with thousands of remote branches (a bare `for-each-ref` over all
-  # of them is the O(N) push-latency hit codex flagged). The branch's own upstream and the default
-  # branch cover the overwhelming majority (a branch that merged origin/main in, or forked from a
-  # far-ahead origin/develop); the capped tail catches merged-in feature branches.
-  # LIMIT: a divergent MULTI-merge (a branch that merged two UNRELATED remote branches) can land on
-  # one branch's base and over-scope over the other. That is a rare case whose failure is a false
-  # BLOCK — it never UNDER-scopes (no missed-review bypass); ZUVO_ALLOW_ADHOC is the escape. A full
-  # topology-agnostic fix (git log -c --not --remotes) is tracked in backlog B-gate-multimerge.
-  # --sort=-committerdate so the cap keeps the 100 MOST-RECENT remote branches (relevance order,
-  # not refname order) — the branch merged in is almost always recently active; and it spans ALL
-  # remotes (origin, upstream, …), not just origin, for fork workflows.
-  for R in $(git -C "$root" rev-parse --abbrev-ref "${tip}@{u}" 2>/dev/null
-             printf 'origin/%s\n' "$(pg_default_branch)"
-             git -C "$root" for-each-ref --sort=-committerdate --count=100 --format='%(objectname)' refs/remotes 2>/dev/null); do
-    [ -n "$R" ] || continue
-    mb="$(git -C "$root" merge-base "$tip" "$R" 2>/dev/null)" || continue
-    [ -n "$mb" ] || continue
-    if [ -z "$best" ] || git -C "$root" merge-base --is-ancestor "$best" "$mb" 2>/dev/null; then best="$mb"; fi
-  done
-  [ -n "$best" ] || return 1                        # no common ancestor (orphan/shallow) → fall back
-  printf '%s..%s\n' "$best" "$tip"
+  [ -n "$(git -C "$root" for-each-ref --count=1 --format='%(refname)' refs/remotes 2>/dev/null)" ] || return 1  # no remotes → merge-base fallback
+  [ -n "$(git -C "$root" rev-list "$tip" --not --remotes 2>/dev/null | head -1)" ] || return 3  # all pushed → nothing to gate
+  # Emit the @unpushed SENTINEL — pg_changed_production/pg_changed_lines resolve it to the exact
+  # un-pushed file/line set via `git log -c --not --remotes` (base-free, topology-complete). This
+  # replaced the old per-topology base computation (fork-point / newest-remote-ancestor) and its
+  # O(N)-over-remote-refs merge-base loop: `--not --remotes` excludes everything already on a remote
+  # for ALL shapes (linear / develop-ahead / single- AND multi-merge / octopus) with no base to
+  # mis-pick, so the whole class of range-scoping edge cases (and B-gate-multimerge) is closed.
+  # `..$tip` keeps head-parsing (${range##*..}) working in every consumer unchanged.
+  printf '@unpushed..%s\n' "$tip"
 }
 
 # --- classification ---------------------------------------------------------

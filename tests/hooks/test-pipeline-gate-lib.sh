@@ -265,11 +265,13 @@ UPT="$(mktemp -d)"; UPR="$(mktemp -d)"
   git checkout -q -b feature
   echo local > local.sh; git add -A; git commit -qm "local unpushed work"
 ) >/dev/null 2>&1
+# pg_unpushed_range now emits the @unpushed sentinel; assert the RESOLVED file set (the real
+# signal) is the 1 local file, excluding the pushed develop-ahead delta.
 r="$(cd "$UPT" && PG_REPO_ROOT="$UPT" bash -c '. "'"$LIB"'"; pg_unpushed_range' 2>/dev/null)"; urc=$?
-n="$(cd "$UPT" && git rev-list --count "$r" 2>/dev/null || echo x)"
-{ [ "$urc" -eq 0 ] && [ "$n" = "1" ]; } \
-  && pass "R-UNPUSHED: range = only the 1 local commit (excludes pushed 'develop-ahead' delta)" \
-  || bad "R-UNPUSHED: should scope to 1 unpushed commit (rc=$urc n=$n range=$r)"
+uf="$(cd "$UPT" && PG_REPO_ROOT="$UPT" bash -c '. "'"$LIB"'"; pg_changed_production "@unpushed..HEAD"' 2>/dev/null | tr '\n' ' ')"
+{ [ "$urc" -eq 0 ] && [ "$uf" = "local.sh " ]; } \
+  && pass "R-UNPUSHED: range = only the 1 local file (excludes pushed 'develop-ahead' delta)" \
+  || bad "R-UNPUSHED: should scope to local.sh only (rc=$urc files=[$uf] range=$r)"
 ( cd "$UPT" && git push -q origin feature >/dev/null 2>&1
   PG_REPO_ROOT="$UPT" bash -c '. "'"$LIB"'"; pg_unpushed_range' >/dev/null 2>&1; [ "$?" -eq 3 ] ) \
   && pass "R-UNPUSHED: everything pushed → exit 3 (nothing to gate)" \
@@ -337,6 +339,32 @@ cl="$(cd "$CVT" && PG_REPO_ROOT="$CVT" bash -c '. "'"$LIB"'"; pg_changed_lines "
 rm -rf "$CVT" "$CVR"
 fo="$(cd "$NOREPO" && PG_REPO_ROOT="$NOREPO" bash -c '. "'"$LIB"'"; pg_changed_production "@unpushed..HEAD"' 2>/dev/null)"
 [ -z "$fo" ] && pass "SENTINEL/G8: @unpushed in non-repo → empty (fail-open)" || bad "SENTINEL/G8: expected empty, got [$fo]"
+
+# ---------- Task 3: pg_unpushed_range emits @unpushed, NO merge-base loop ----------
+# G5: no merge-base call inside pg_unpushed_range (O(N) loop deleted)
+# count only merge-base INVOCATIONS — strip trailing '# ...' comments first so a comment that
+# merely mentions "merge-base fallback" on a for-each-ref line is not miscounted as a call.
+mbloop="$(awk '/^pg_unpushed_range\(\)/{f=1} f{line=$0; sub(/#.*/,"",line); if(line ~ /git .*merge-base/) c++} f&&/^}/{exit} END{print c+0}' "$LIB")"
+[ "$mbloop" = "0" ] && pass "T3/G5: pg_unpushed_range has NO merge-base call (O(N) loop deleted)" || bad "T3/G5: $mbloop merge-base calls remain in pg_unpushed_range"
+# emits the sentinel when remotes exist + un-pushed work
+SRT="$(mktemp -d)"; SRR="$(mktemp -d)"
+(
+  cd "$SRR" && git init -q --bare
+  cd "$SRT" && git init -q -b main; git config user.email t@t; git config user.name t; git config commit.gpgsign false
+  git remote add origin "$SRR"
+  echo b > b.js; git add -A; git commit -qm base; git push -q origin main
+  git checkout -q -b feat; echo f > f.js; git add -A; git commit -qm feat
+) >/dev/null 2>&1
+r3="$(cd "$SRT" && PG_REPO_ROOT="$SRT" bash -c '. "'"$LIB"'"; pg_unpushed_range')"
+[ "$r3" = "@unpushed..HEAD" ] && pass "T3: pg_unpushed_range emits @unpushed..HEAD (un-pushed work)" || bad "T3: expected @unpushed..HEAD got [$r3]"
+( cd "$SRT" && git push -q origin feat >/dev/null 2>&1; PG_REPO_ROOT="$SRT" bash -c '. "'"$LIB"'"; pg_unpushed_range' >/dev/null 2>&1; [ "$?" -eq 3 ] ) \
+  && pass "T3: everything pushed → exit 3" || bad "T3: all-pushed should exit 3"
+# G6: remote-less repo → exit 1 (merge-base fallback), NOT the sentinel
+NRT="$(mktemp -d)"
+( cd "$NRT" && git init -q -b main; git config user.email t@t; git config user.name t; echo x>x.js; git add -A; git commit -qm x ) >/dev/null 2>&1
+( cd "$NRT" && PG_REPO_ROOT="$NRT" bash -c '. "'"$LIB"'"; pg_unpushed_range' >/dev/null 2>&1; [ "$?" -eq 1 ] ) \
+  && pass "T3/G6: remote-less repo → exit 1 (merge-base fallback, not sentinel)" || bad "T3/G6: remote-less should exit 1"
+rm -rf "$SRT" "$SRR" "$NRT"
 
 # ---------- fail-open ----------
 pg_is_substantial "zzz..yyy" && bad "bad range should NOT be substantial" || pass "fail-open: bad range not substantial"
