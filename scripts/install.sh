@@ -175,9 +175,20 @@ install_claude() {
   local current_version="$VERSION"
   if [[ ! -d "$CACHE_BASE/$current_version" ]]; then
     echo "  Creating cache dir for v${current_version} (atomic)..."
-    local _seed _tmp="$CACHE_BASE/.$current_version.tmp.$$"
+    local _seed="" _d _tmp="$CACHE_BASE/.$current_version.tmp.$$"
     rm -rf "$_tmp"
-    _seed=$(ls -d "$CACHE_BASE"/*/ 2>/dev/null | grep -v '/\.' | head -1)
+    # Pick the first NON-hidden existing cache dir as the seed. Filter hidden dirs
+    # by BASENAME — the old `ls | grep -v '/\.'` matched "/." anywhere in the
+    # ABSOLUTE path, and $HOME/.claude/... always contains "/.": it filtered every
+    # candidate, grep exited 1, and `set -euo pipefail` killed the whole install at
+    # this line (the real root cause of the 2026-07-08 RELEASE_EXIT=1 incidents —
+    # dev-push's old Step 6 grep pipeline then masked it). No pipeline: no set -e hazard.
+    for _d in "$CACHE_BASE"/*/; do
+      [[ -d "$_d" ]] || continue
+      case "$(basename "$_d")" in .*) continue ;; esac
+      _seed="${_d%/}"
+      break
+    done
     if [[ -n "$_seed" ]]; then
       cp -R "${_seed%/}" "$_tmp" 2>/dev/null || mkdir -p "$_tmp"
     else
