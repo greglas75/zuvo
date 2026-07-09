@@ -337,6 +337,25 @@ cl="$(cd "$CVT" && PG_REPO_ROOT="$CVT" bash -c '. "'"$LIB"'"; pg_changed_lines "
   && pass "SENTINEL: line-count is safe over-count (churn=$cl ≥ net delta 0, never under-scopes)" \
   || bad "SENTINEL: expected churn≥10, got [$cl]"
 rm -rf "$CVT" "$CVR"
+
+# SENTINEL: a MERGE's conflict-resolution lines are COUNTED (combined-numstat first-pair parse),
+# not silently dropped — the merge-only line under-count the aggregate review flagged.
+MLT="$(mktemp -d)"; MLR="$(mktemp -d)"
+(
+  cd "$MLR" && git init -q --bare
+  cd "$MLT" && git init -q -b main; git config user.email t@t; git config user.name t; git config commit.gpgsign false
+  git remote add origin "$MLR"
+  printf 'l1\nl2\n' > s.js; git add -A; git commit -qm base; git push -q origin main
+  git checkout -q -b feat; printf 'feat1\nfeat2\nfeat3\n' > s.js; git add -A; git commit -qm "feat edits"
+  git checkout -q main; printf 'main1\nmain2\nmain3\n' > s.js; git add -A; git commit -qm "main edits"; git push -q origin main
+  git checkout -q feat; git merge origin/main >/dev/null 2>&1 || true
+  printf 'r1\nr2\nr3\nr4\nr5\n' > s.js; git add s.js; git commit -qm "resolve"   # conflict-resolution churn
+) >/dev/null 2>&1
+ml="$(cd "$MLT" && PG_REPO_ROOT="$MLT" bash -c '. "'"$LIB"'"; pg_changed_lines "@unpushed..HEAD"' 2>/dev/null)"
+{ [ "${ml:-0}" -ge 1 ] 2>/dev/null; } \
+  && pass "SENTINEL: merge conflict-resolution lines COUNTED (=$ml, not dropped — no line under-count)" \
+  || bad "SENTINEL: merge line-count dropped to [$ml] (combined-numstat under-count bug)"
+rm -rf "$MLT" "$MLR"
 fo="$(cd "$NOREPO" && PG_REPO_ROOT="$NOREPO" bash -c '. "'"$LIB"'"; pg_changed_production "@unpushed..HEAD"' 2>/dev/null)"
 [ -z "$fo" ] && pass "SENTINEL/G8: @unpushed in non-repo → empty (fail-open)" || bad "SENTINEL/G8: expected empty, got [$fo]"
 

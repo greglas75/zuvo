@@ -156,10 +156,17 @@ pg_changed_lines() {
   #   secondary trip. Merge conflict-resolution files still count toward FILES via
   #   pg_changed_production even when their combined-numstat rows are skipped here.
   if [ "${range%%..*}" = "@unpushed" ]; then
-    tip="${range##*..}"
-    while IFS=$'\t' read -r a d p; do
-      [ -n "$p" ] || continue
+    tip="${range##*..}"; TAB=$(printf '\t')
+    # A merge's COMBINED numstat row is `a1<tab>d1<tab>a2<tab>d2<tab>…<tab>path` (one add/del pair
+    # per parent). Parse path = LAST field and add/del = FIRST pair (churn vs parent-1 = the
+    # conflict-resolution size), instead of `read -r a d p` which mis-binds path and silently
+    # dropped every merge row — an UNDER-count for merge-conflict churn (adversarial-noted). A
+    # non-merge row `a<tab>d<tab>path` parses identically. Binary rows ('-') count 0.
+    while IFS= read -r row; do
+      [ -n "$row" ] || continue
+      p=${row##*"$TAB"}
       pg_is_production "$p" || continue
+      a=${row%%"$TAB"*}; rest=${row#*"$TAB"}; d=${rest%%"$TAB"*}
       [ "$a" = "-" ] && a=0; [ "$d" = "-" ] && d=0
       case "$a$d" in *[!0-9]*) continue ;; esac
       total=$(( total + a + d ))
@@ -272,7 +279,7 @@ pg_range_reviewed() {
       # sentinel, `git log "@unpushed..HEAD"` is a bad revision — use the un-pushed walk
       # (HEAD --not --remotes); any real A..B range uses the two-dot form directly.
       if [ "${range%%..*}" = "@unpushed" ]; then
-        delc="$(git -C "$root" log --diff-filter=D --no-renames --format=%H "${range##*..}" --not --remotes -- "$f" 2>/dev/null | head -1)"
+        delc="$(git -C "$root" log --diff-filter=D --no-renames --format=%H -c "${range##*..}" --not --remotes -- "$f" 2>/dev/null | head -1)"
       else
         delc="$(git -C "$root" log --diff-filter=D --no-renames --format=%H "$range" -- "$f" 2>/dev/null | head -1)"
       fi
