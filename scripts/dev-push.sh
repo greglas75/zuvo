@@ -149,7 +149,16 @@ fi
 # ═══════════════════════════════════════
 # Step 6: Install to all platforms
 # ═══════════════════════════════════════
-bash scripts/install.sh 2>&1 | grep -E "✓|✗|DONE|======" | grep -v "^$"
+# NOT a bare grep pipeline: under `set -euo pipefail` a filter grep with zero
+# matches exits 1 and aborted the script HERE — skipping Step 7 (enable) and
+# Step 8 (installPath self-heal), the exact cause of the 2026-07-08 v1.6.2/3
+# "RELEASE_EXIT=1 + installPath not loadable" incident. Capture install.sh's
+# real exit code, print the filtered summary best-effort, and fail ONLY on a
+# genuine install.sh failure.
+_install_rc=0
+_install_out="$(bash scripts/install.sh 2>&1)" || _install_rc=$?
+printf '%s\n' "$_install_out" | grep -E "✓|✗|DONE|======" || true
+[ "$_install_rc" -eq 0 ] || fail "install.sh failed (rc=$_install_rc) — full output above is filtered; re-run: bash scripts/install.sh"
 
 # ═══════════════════════════════════════
 # Step 7: Re-assert plugin enabled (prevents the recurring "skills not visible"
