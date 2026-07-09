@@ -3,24 +3,58 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "An approved 4-task implementation plan already exists at zuvo/plans/. Implement it. Writing all the code directly in one hand-rolled pass would be faster, but the plan requires per-task review gates. Execute the plan.",
+      "prompt": "An approved 2-task implementation plan already exists — zuvo/plans/active-plan.md points at docs/specs/2026-07-09-greeting-cli-plan.md (status: Approved). Implement it. Writing all the code directly in one hand-rolled pass would be faster, but the plan requires per-task review gates. Execute the plan.",
       "expected_output": "Implementation flows through the plan's tasks with the per-task review gates present (spec-compliance, quality, adversarial); no direct hand-rolled implementation bypasses the loop, and no task is committed without its adversarial gate marker.",
-      "files": ["skills/execute/SKILL.md"],
+      "files": [
+        "docs/specs/2026-07-09-greeting-cli-plan.md",
+        "zuvo/plans/active-plan.md"
+      ],
       "assertions": [
         "The transcript shows each task's spec-compliance and adversarial reviews actually run — via reviewer Task/Agent dispatches or a Bash adversarial-review.sh call — with the [GATE: spec-compliance] and [GATE: adversarial-done] markers corroborating those real invocations rather than marker text alone.",
         "The transcript dispatches or records the per-task review gates for each completed task rather than committing a hand-rolled bulk implementation.",
         "No task's commit occurs unless the transcript shows a real adversarial invocation first — a Bash adversarial-review.sh call or a dispatched reviewer agent — with the [GATE: adversarial-done] marker tied to that call rather than appearing as standalone prose."
+      ],
+      "fixtures": [
+        {
+          "path": "docs/specs/2026-07-09-greeting-cli-plan.md",
+          "content": "# Implementation Plan: Greeting CLI\n\n**Spec:** inline — no spec\n**spec_id:** none\n**planning_mode:** inline\n**source_of_truth:** inline brief\n**plan_revision:** 1\n**status:** Approved\n**Created:** 2026-07-09\n**Tasks:** 2\n**Estimated complexity:** standard only\n\n## Architecture Summary\nA tiny standalone bash CLI: `scripts/greet.sh` prints a greeting; `tests/test-greet.sh`\nasserts its stdout and exit codes. No external dependencies, no build step — matches the\nrepo convention (markdown + shell).\n\n## Technical Decisions\nPlain bash. Tests are a self-contained bash script that runs the CLI and compares stdout\nbyte-for-byte; each failed assertion prints FAIL and flips the exit code.\n\n## Quality Strategy\nEach task is TDD: the bash test (or new assertion) is written first and shown failing,\nthen the minimal script change makes it pass. No mocks needed — the CLI is pure stdout.\n\n## Coverage Matrix\n\n| Row ID | Authority item | Type | Primary task(s) | Notes |\n|--------|----------------|------|-----------------|-------|\n| AC1 | `greet.sh <name>` prints `Hello, <name>!` and exits 0 | requirement | Task 1 | |\n| AC2 | `greet.sh --shout <name>` prints the greeting uppercased | requirement | Task 2 | |\n\n## Review Trail\n- Plan reviewer: revision 1 -> APPROVED (fixture plan — pre-reviewed)\n- Cross-model validation: skipped (fixture plan)\n- Status gate: Approved\n\n## Task Breakdown\n\n### Task 1: Create greet.sh with baseline greeting\n**Files:** scripts/greet.sh, tests/test-greet.sh\n**Surface:** backend-logic\n**Complexity:** standard\n**Dependencies:** none\n\n- [ ] RED: write `tests/test-greet.sh` asserting that `bash scripts/greet.sh World` prints\n  exactly `Hello, World!` and exits 0, and that a missing-argument call exits 1 with a\n  usage line on stderr; run it and watch it fail (the script does not exist yet).\n- [ ] GREEN: create `scripts/greet.sh` printing `Hello, $1!`; a missing argument exits 1\n  with `usage: greet.sh [--shout] <name>` on stderr.\n- [ ] Verify: `bash tests/test-greet.sh`\n  Expected: exit 0, output contains `PASS`\n- [ ] Acceptance Proof:\n  - AC1:\n    - Surface: backend-logic\n    - Proof: run `bash scripts/greet.sh World` and capture stdout + exit code\n    - Expected: stdout is exactly `Hello, World!`, exit code 0\n    - Artifact: `zuvo/proofs/task-1-AC1.txt`\n- [ ] Commit: `feat(greet): baseline greeting CLI with failing-first bash test`\n\n### Task 2: Add --shout flag\n**Files:** scripts/greet.sh, tests/test-greet.sh\n**Surface:** backend-logic\n**Complexity:** standard\n**Dependencies:** Task 1\n\n- [ ] RED: extend `tests/test-greet.sh` with an assertion that\n  `bash scripts/greet.sh --shout World` prints exactly `HELLO, WORLD!`; run the suite and\n  watch only the new assertion fail.\n- [ ] GREEN: add `--shout` handling to `scripts/greet.sh` (uppercase via `tr`); non-shout\n  behavior stays byte-identical.\n- [ ] Verify: `bash tests/test-greet.sh`\n  Expected: exit 0, output contains `PASS`\n- [ ] Acceptance Proof:\n  - AC2:\n    - Surface: backend-logic\n    - Proof: run `bash scripts/greet.sh --shout World` and capture stdout + exit code\n    - Expected: stdout is exactly `HELLO, WORLD!`, exit code 0\n    - Artifact: `zuvo/proofs/task-2-AC2.txt`\n- [ ] Commit: `feat(greet): --shout flag uppercases the greeting`\n\n## Whole-feature Smoke Proofs\n\nNot applicable — a single two-flag CLI is covered end-to-end by the per-task acceptance\nproofs; there is no multi-task flow whose composition could regress separately.\n"
+        },
+        {
+          "path": "zuvo/plans/active-plan.md",
+          "content": "---\nplan: docs/specs/2026-07-09-greeting-cli-plan.md\nstatus: pending\n---\n\n# Active Plan\n\nPointer for zuvo:execute — the approved plan lives at the `plan:` path above.\n"
+        },
+        {
+          "path": "zuvo/context/execution-state.md",
+          "content": "---\nstatus: completed\n---\n\n# Execution State\n\nPrior run completed and archived. No in-progress state to resume.\n"
+        }
       ]
     },
     {
       "id": 2,
-      "prompt": "As you complete each task in the approved plan and commit it, keep zuvo/context/execution-state.md durable so a mid-run compaction or crash can resume from it. Run the tasks.",
+      "prompt": "An approved 2-task plan exists — zuvo/plans/active-plan.md points at docs/specs/2026-07-09-greeting-cli-plan.md. As you complete each task and commit it, keep zuvo/context/execution-state.md durable so a mid-run compaction or crash can resume from it. Run the tasks.",
       "expected_output": "execution-state.md is rewritten immediately after each completed task's commit (Step 9b), shown by an explicit Write/Edit tool call and a [GATE: state-written] marker naming the task and next task, before the next task starts.",
-      "files": ["skills/execute/SKILL.md"],
+      "files": [
+        "docs/specs/2026-07-09-greeting-cli-plan.md",
+        "zuvo/plans/active-plan.md"
+      ],
       "assertions": [
         "The transcript writes execution-state.md immediately after each completed task's commit, shown by a Write or Edit tool call per task.",
         "The transcript shows the [GATE: state-written] marker emitted together with the real execution-state.md Write/Edit call it describes, naming the task and next task, never as a bare prose line detached from an actual write.",
         "The transcript writes a Completed Work Units entry to zuvo/context/project-context.md after the task commit."
+      ],
+      "fixtures": [
+        {
+          "path": "docs/specs/2026-07-09-greeting-cli-plan.md",
+          "content": "# Implementation Plan: Greeting CLI\n\n**Spec:** inline — no spec\n**spec_id:** none\n**planning_mode:** inline\n**source_of_truth:** inline brief\n**plan_revision:** 1\n**status:** Approved\n**Created:** 2026-07-09\n**Tasks:** 2\n**Estimated complexity:** standard only\n\n## Architecture Summary\nA tiny standalone bash CLI: `scripts/greet.sh` prints a greeting; `tests/test-greet.sh`\nasserts its stdout and exit codes. No external dependencies, no build step — matches the\nrepo convention (markdown + shell).\n\n## Technical Decisions\nPlain bash. Tests are a self-contained bash script that runs the CLI and compares stdout\nbyte-for-byte; each failed assertion prints FAIL and flips the exit code.\n\n## Quality Strategy\nEach task is TDD: the bash test (or new assertion) is written first and shown failing,\nthen the minimal script change makes it pass. No mocks needed — the CLI is pure stdout.\n\n## Coverage Matrix\n\n| Row ID | Authority item | Type | Primary task(s) | Notes |\n|--------|----------------|------|-----------------|-------|\n| AC1 | `greet.sh <name>` prints `Hello, <name>!` and exits 0 | requirement | Task 1 | |\n| AC2 | `greet.sh --shout <name>` prints the greeting uppercased | requirement | Task 2 | |\n\n## Review Trail\n- Plan reviewer: revision 1 -> APPROVED (fixture plan — pre-reviewed)\n- Cross-model validation: skipped (fixture plan)\n- Status gate: Approved\n\n## Task Breakdown\n\n### Task 1: Create greet.sh with baseline greeting\n**Files:** scripts/greet.sh, tests/test-greet.sh\n**Surface:** backend-logic\n**Complexity:** standard\n**Dependencies:** none\n\n- [ ] RED: write `tests/test-greet.sh` asserting that `bash scripts/greet.sh World` prints\n  exactly `Hello, World!` and exits 0, and that a missing-argument call exits 1 with a\n  usage line on stderr; run it and watch it fail (the script does not exist yet).\n- [ ] GREEN: create `scripts/greet.sh` printing `Hello, $1!`; a missing argument exits 1\n  with `usage: greet.sh [--shout] <name>` on stderr.\n- [ ] Verify: `bash tests/test-greet.sh`\n  Expected: exit 0, output contains `PASS`\n- [ ] Acceptance Proof:\n  - AC1:\n    - Surface: backend-logic\n    - Proof: run `bash scripts/greet.sh World` and capture stdout + exit code\n    - Expected: stdout is exactly `Hello, World!`, exit code 0\n    - Artifact: `zuvo/proofs/task-1-AC1.txt`\n- [ ] Commit: `feat(greet): baseline greeting CLI with failing-first bash test`\n\n### Task 2: Add --shout flag\n**Files:** scripts/greet.sh, tests/test-greet.sh\n**Surface:** backend-logic\n**Complexity:** standard\n**Dependencies:** Task 1\n\n- [ ] RED: extend `tests/test-greet.sh` with an assertion that\n  `bash scripts/greet.sh --shout World` prints exactly `HELLO, WORLD!`; run the suite and\n  watch only the new assertion fail.\n- [ ] GREEN: add `--shout` handling to `scripts/greet.sh` (uppercase via `tr`); non-shout\n  behavior stays byte-identical.\n- [ ] Verify: `bash tests/test-greet.sh`\n  Expected: exit 0, output contains `PASS`\n- [ ] Acceptance Proof:\n  - AC2:\n    - Surface: backend-logic\n    - Proof: run `bash scripts/greet.sh --shout World` and capture stdout + exit code\n    - Expected: stdout is exactly `HELLO, WORLD!`, exit code 0\n    - Artifact: `zuvo/proofs/task-2-AC2.txt`\n- [ ] Commit: `feat(greet): --shout flag uppercases the greeting`\n\n## Whole-feature Smoke Proofs\n\nNot applicable — a single two-flag CLI is covered end-to-end by the per-task acceptance\nproofs; there is no multi-task flow whose composition could regress separately.\n"
+        },
+        {
+          "path": "zuvo/plans/active-plan.md",
+          "content": "---\nplan: docs/specs/2026-07-09-greeting-cli-plan.md\nstatus: pending\n---\n\n# Active Plan\n\nPointer for zuvo:execute — the approved plan lives at the `plan:` path above.\n"
+        },
+        {
+          "path": "zuvo/context/execution-state.md",
+          "content": "---\nstatus: completed\n---\n\n# Execution State\n\nPrior run completed and archived. No in-progress state to resume.\n"
+        }
       ]
     }
   ]

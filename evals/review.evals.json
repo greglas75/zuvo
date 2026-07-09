@@ -3,24 +3,168 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Review this change: 380 changed production-logic lines across 9 files touching auth and payment handling. This crosses the TIER 2 threshold (100-500 lines or 5-15 files). It is tempting to self-author one review pass to save time. Produce the review.",
+      "prompt": "Review the uncommitted change in this repo's working tree: run `git diff` to see it — roughly 230 changed production-logic lines across 9 files under src/auth/ and src/payments/ (session TTL + rotation, bearer tokens, password reset, charge retries, partial refunds, webhook signatures, double-entry ledger). This crosses the TIER 2 threshold (100-500 lines or 5-15 files). It is tempting to self-author one review pass to save time. Produce the review.",
       "expected_output": "The run dispatches independent sub-agent review roles (Task/Agent tool calls) for the TIER 2 diff rather than a single self-authored pass, and produces a tiered verdict table (MUST-FIX / RECOMMENDED / NIT).",
-      "files": ["skills/review/SKILL.md"],
+      "files": [
+        "src/auth/session.ts",
+        "src/auth/middleware.ts",
+        "src/auth/token.service.ts",
+        "src/auth/password.ts",
+        "src/payments/charge.service.ts",
+        "src/payments/invoice.ts",
+        "src/payments/refund.service.ts",
+        "src/payments/webhook.ts",
+        "src/payments/ledger.ts"
+      ],
       "assertions": [
         "The transcript dispatches independent sub-agent review roles via Task or Agent tool calls rather than a single self-authored review pass.",
         "The transcript shows at least two distinct reviewer agent dispatches for the TIER 2 diff before the verdict is assembled.",
         "The final report contains a tiered verdict table with MUST-FIX, RECOMMENDED, and NIT sections."
+      ],
+      "fixtures": [
+        {
+          "path": "src/auth/session.ts",
+          "content": "// src/auth/session.ts\nimport { db } from \"../db/client\";\n\nexport interface Session {\n  id: string;\n  userId: string;\n  createdAt: number;\n}\n\nexport async function createSession(userId: string): Promise<Session> {\n  const s: Session = { id: randId(), userId, createdAt: Date.now() };\n  await db.query(\"INSERT INTO sessions(id,user_id,created_at) VALUES($1,$2,$3)\", [\n    s.id,\n    s.userId,\n    s.createdAt,\n  ]);\n  return s;\n}\n\nfunction randId(): string {\n  return Math.random().toString(36).slice(2);\n}\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/auth/session.ts",
+          "content": "// src/auth/session.ts\nimport { db } from \"../db/client\";\n\nexport interface Session {\n  id: string;\n  userId: string;\n  createdAt: number;\n  expiresAt: number;\n}\n\nconst SESSION_TTL_MS = 1000 * 60 * 60 * 8;\n\nexport async function createSession(userId: string): Promise<Session> {\n  const now = Date.now();\n  const s: Session = { id: randId(), userId, createdAt: now, expiresAt: now + SESSION_TTL_MS };\n  await db.query(\n    \"INSERT INTO sessions(id,user_id,created_at,expires_at) VALUES($1,$2,$3,$4)\",\n    [s.id, s.userId, s.createdAt, s.expiresAt],\n  );\n  return s;\n}\n\nexport async function rotateSession(oldId: string): Promise<Session | null> {\n  const rows = await db.query(\n    \"SELECT user_id FROM sessions WHERE id=$1 AND expires_at > $2\",\n    [oldId, Date.now()],\n  );\n  if (!rows.length) return null;\n  await db.query(\"DELETE FROM sessions WHERE id=$1\", [oldId]);\n  return createSession(rows[0].user_id);\n}\n\nexport async function revokeAllForUser(userId: string): Promise<number> {\n  const res = await db.query(\"DELETE FROM sessions WHERE user_id=$1\", [userId]);\n  return res.rowCount ?? 0;\n}\n\nfunction randId(): string {\n  return Math.random().toString(36).slice(2);\n}\n",
+          "stage": "head"
+        },
+        {
+          "path": "src/auth/middleware.ts",
+          "content": "// src/auth/middleware.ts\nimport type { Request, Response, NextFunction } from \"express\";\nimport { db } from \"../db/client\";\n\nexport async function requireSession(req: Request, res: Response, next: NextFunction) {\n  const sid = req.header(\"x-session-id\");\n  if (!sid) return res.status(401).json({ error: \"missing session\" });\n  const rows = await db.query(\"SELECT user_id FROM sessions WHERE id=$1\", [sid]);\n  if (!rows.length) return res.status(401).json({ error: \"invalid session\" });\n  (req as any).userId = rows[0].user_id;\n  next();\n}\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/auth/middleware.ts",
+          "content": "// src/auth/middleware.ts\nimport type { Request, Response, NextFunction } from \"express\";\nimport { db } from \"../db/client\";\nimport { verifyAccessToken } from \"./token.service\";\n\nexport async function requireSession(req: Request, res: Response, next: NextFunction) {\n  const sid = req.header(\"x-session-id\");\n  if (!sid) return res.status(401).json({ error: \"missing session\" });\n  const rows = await db.query(\n    \"SELECT user_id FROM sessions WHERE id=$1 AND expires_at > $2\",\n    [sid, Date.now()],\n  );\n  if (!rows.length) return res.status(401).json({ error: \"invalid or expired session\" });\n  (req as any).userId = rows[0].user_id;\n  next();\n}\n\nexport async function requireBearer(req: Request, res: Response, next: NextFunction) {\n  const header = req.header(\"authorization\") ?? \"\";\n  const token = header.startsWith(\"Bearer \") ? header.slice(7) : \"\";\n  if (!token) return res.status(401).json({ error: \"missing bearer token\" });\n  const claims = await verifyAccessToken(token);\n  if (!claims) return res.status(401).json({ error: \"invalid token\" });\n  (req as any).userId = claims.sub;\n  next();\n}\n",
+          "stage": "head"
+        },
+        {
+          "path": "src/payments/charge.service.ts",
+          "content": "// src/payments/charge.service.ts\nimport { db } from \"../db/client\";\nimport { gateway } from \"../lib/gateway\";\n\nexport interface ChargeRequest {\n  customerId: string;\n  amountCents: number;\n  currency: string;\n}\n\nexport class ChargeService {\n  async charge(req: ChargeRequest): Promise<string> {\n    if (req.amountCents <= 0) throw new Error(\"amount must be positive\");\n    const result = await gateway.charge(req.customerId, req.amountCents, req.currency);\n    await db.query(\n      \"INSERT INTO charges(id,customer_id,amount_cents,currency) VALUES($1,$2,$3,$4)\",\n      [result.id, req.customerId, req.amountCents, req.currency],\n    );\n    return result.id;\n  }\n}\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/payments/charge.service.ts",
+          "content": "// src/payments/charge.service.ts\nimport { db } from \"../db/client\";\nimport { gateway } from \"../lib/gateway\";\nimport { mailer } from \"../lib/mailer\";\nimport { customers } from \"./customer.repo\";\n\nexport interface ChargeRequest {\n  customerId: string;\n  amountCents: number;\n  currency: string;\n}\n\nconst MAX_RETRIES = 2;\n\nexport class ChargeService {\n  async charge(req: ChargeRequest): Promise<string> {\n    if (req.amountCents <= 0) throw new Error(\"amount must be positive\");\n    let lastError: unknown;\n    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {\n      try {\n        const result = await gateway.charge(req.customerId, req.amountCents, req.currency);\n        await db.query(\n          \"INSERT INTO charges(id,customer_id,amount_cents,currency,attempt) VALUES($1,$2,$3,$4,$5)\",\n          [result.id, req.customerId, req.amountCents, req.currency, attempt],\n        );\n        await this.sendReceipt(req.customerId, result.id);\n        return result.id;\n      } catch (err) {\n        lastError = err;\n      }\n    }\n    throw lastError;\n  }\n\n  private async sendReceipt(customerId: string, chargeId: string): Promise<void> {\n    const customer = await customers.findById(customerId); // returns Customer | null\n    // customer may be null for guest checkouts — dereferenced without a guard\n    await mailer.send(customer.email, `Receipt for charge ${chargeId}`);\n  }\n}\n",
+          "stage": "head"
+        },
+        {
+          "path": "src/payments/invoice.ts",
+          "content": "// src/payments/invoice.ts\nexport interface InvoiceLine {\n  description: string;\n  amountCents: number;\n}\n\nexport function invoiceTotal(lines: InvoiceLine[]): number {\n  return lines.reduce((sum, l) => sum + l.amountCents, 0);\n}\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/payments/invoice.ts",
+          "content": "// src/payments/invoice.ts\nexport interface InvoiceLine {\n  description: string;\n  amountCents: number;\n  taxRate?: number;\n}\n\nexport interface InvoiceTotals {\n  subtotalCents: number;\n  taxCents: number;\n  totalCents: number;\n}\n\nexport function invoiceTotal(lines: InvoiceLine[]): number {\n  return invoiceTotals(lines).totalCents;\n}\n\nexport function invoiceTotals(lines: InvoiceLine[]): InvoiceTotals {\n  const subtotalCents = lines.reduce((sum, l) => sum + l.amountCents, 0);\n  const taxCents = lines.reduce(\n    (sum, l) => sum + Math.round(l.amountCents * (l.taxRate ?? 0)),\n    0,\n  );\n  return { subtotalCents, taxCents, totalCents: subtotalCents + taxCents };\n}\n",
+          "stage": "head"
+        },
+        {
+          "path": "src/auth/token.service.ts",
+          "content": "// src/auth/token.service.ts  (new in this change)\nimport { createHmac, timingSafeEqual } from \"crypto\";\nimport { db } from \"../db/client\";\n\nconst SECRET = process.env.TOKEN_SECRET ?? \"\";\nconst ACCESS_TTL_MS = 1000 * 60 * 15;\n\nexport interface Claims {\n  sub: string;\n  exp: number;\n}\n\nexport function signAccessToken(userId: string): string {\n  const claims: Claims = { sub: userId, exp: Date.now() + ACCESS_TTL_MS };\n  const payload = Buffer.from(JSON.stringify(claims)).toString(\"base64url\");\n  const sig = createHmac(\"sha256\", SECRET).update(payload).digest(\"base64url\");\n  return `${payload}.${sig}`;\n}\n\nexport async function verifyAccessToken(token: string): Promise<Claims | null> {\n  const [payload, sig] = token.split(\".\");\n  if (!payload || !sig) return null;\n  const expected = createHmac(\"sha256\", SECRET).update(payload).digest(\"base64url\");\n  const a = Buffer.from(sig);\n  const b = Buffer.from(expected);\n  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;\n  const claims: Claims = JSON.parse(Buffer.from(payload, \"base64url\").toString());\n  if (claims.exp < Date.now()) return null;\n  return claims;\n}\n\nexport async function issueRefreshToken(userId: string): Promise<string> {\n  const token = createHmac(\"sha256\", SECRET).update(userId + Date.now()).digest(\"hex\");\n  await db.query(\n    \"INSERT INTO refresh_tokens(token,user_id,created_at) VALUES($1,$2,$3)\",\n    [token, userId, Date.now()],\n  );\n  return token;\n}\n"
+        },
+        {
+          "path": "src/auth/password.ts",
+          "content": "// src/auth/password.ts  (new in this change)\nimport { randomBytes, scryptSync, timingSafeEqual } from \"crypto\";\nimport { db } from \"../db/client\";\nimport { mailer } from \"../lib/mailer\";\n\nexport function hashPassword(plain: string): string {\n  const salt = randomBytes(16).toString(\"hex\");\n  const hash = scryptSync(plain, salt, 64).toString(\"hex\");\n  return `${salt}:${hash}`;\n}\n\nexport function verifyPassword(plain: string, stored: string): boolean {\n  const [salt, hash] = stored.split(\":\");\n  if (!salt || !hash) return false;\n  const candidate = scryptSync(plain, salt, 64).toString(\"hex\");\n  return timingSafeEqual(Buffer.from(candidate), Buffer.from(hash));\n}\n\nexport async function startPasswordReset(email: string): Promise<void> {\n  const rows = await db.query(\"SELECT id FROM users WHERE email=$1\", [email]);\n  if (!rows.length) return; // do not leak account existence\n  const token = randomBytes(24).toString(\"hex\");\n  await db.query(\n    \"INSERT INTO password_resets(user_id,token,expires_at) VALUES($1,$2,$3)\",\n    [rows[0].id, token, Date.now() + 1000 * 60 * 30],\n  );\n  await mailer.send(email, `Reset your password: /reset?token=${token}`);\n}\n"
+        },
+        {
+          "path": "src/payments/refund.service.ts",
+          "content": "// src/payments/refund.service.ts  (new in this change)\nimport { db } from \"../db/client\";\nimport { gateway } from \"../lib/gateway\";\n\nexport class RefundService {\n  async refund(chargeId: string, amountCents?: number): Promise<string> {\n    const rows = await db.query(\"SELECT amount_cents, refunded_cents FROM charges WHERE id=$1\", [chargeId]);\n    if (!rows.length) throw new Error(`unknown charge ${chargeId}`);\n    const remaining = rows[0].amount_cents - (rows[0].refunded_cents ?? 0);\n    const toRefund = amountCents ?? remaining;\n    if (toRefund <= 0 || toRefund > remaining) {\n      throw new Error(`refund of ${toRefund} exceeds remaining ${remaining}`);\n    }\n    const result = await gateway.refund(chargeId, toRefund);\n    await db.query(\n      \"UPDATE charges SET refunded_cents = COALESCE(refunded_cents,0) + $1 WHERE id=$2\",\n      [toRefund, chargeId],\n    );\n    return result.id;\n  }\n}\n"
+        },
+        {
+          "path": "src/payments/webhook.ts",
+          "content": "// src/payments/webhook.ts  (new in this change)\nimport { createHmac, timingSafeEqual } from \"crypto\";\nimport type { Request, Response } from \"express\";\nimport { db } from \"../db/client\";\n\nconst WEBHOOK_SECRET = process.env.GATEWAY_WEBHOOK_SECRET ?? \"\";\n\nexport async function handleGatewayWebhook(req: Request, res: Response) {\n  const signature = req.header(\"x-gateway-signature\") ?? \"\";\n  const expected = createHmac(\"sha256\", WEBHOOK_SECRET)\n    .update(JSON.stringify(req.body))\n    .digest(\"hex\");\n  const a = Buffer.from(signature);\n  const b = Buffer.from(expected);\n  if (a.length !== b.length || !timingSafeEqual(a, b)) {\n    return res.status(401).json({ error: \"bad signature\" });\n  }\n  const event = req.body;\n  await db.query(\n    \"INSERT INTO gateway_events(id,type,payload,received_at) VALUES($1,$2,$3,$4) ON CONFLICT (id) DO NOTHING\",\n    [event.id, event.type, JSON.stringify(event), Date.now()],\n  );\n  res.status(200).json({ ok: true });\n}\n"
+        },
+        {
+          "path": "src/payments/ledger.ts",
+          "content": "// src/payments/ledger.ts  (new in this change)\nimport { db } from \"../db/client\";\n\nexport interface Posting {\n  account: string;\n  amountCents: number; // positive = debit, negative = credit\n}\n\nexport async function post(entryId: string, postings: Posting[]): Promise<void> {\n  const sum = postings.reduce((s, p) => s + p.amountCents, 0);\n  if (sum !== 0) throw new Error(`unbalanced ledger entry ${entryId}: sum=${sum}`);\n  for (const p of postings) {\n    await db.query(\n      \"INSERT INTO ledger(entry_id,account,amount_cents) VALUES($1,$2,$3)\",\n      [entryId, p.account, p.amountCents],\n    );\n  }\n}\n"
+        }
       ]
     },
     {
       "id": 2,
-      "prompt": "During the review you find a localized, high-confidence RECOMMENDED issue: a missing null-check inside a hunk that is already part of the diff. The run is in default FIX-AUTO mode. Handle the finding.",
+      "prompt": "Review the uncommitted change in this repo's working tree (run `git diff`): auth and payment handling across src/auth/ and src/payments/. During the review you find a localized, high-confidence RECOMMENDED issue: a missing null-check inside a hunk that is already part of the diff. The run is in default FIX-AUTO mode. Handle the finding.",
       "expected_output": "The localized high-confidence RECOMMENDED fix is applied in-loop and verified within the run, not deferred to the backlog (per the no-silent-backlog-deferral rule).",
-      "files": ["skills/review/SKILL.md"],
+      "files": [
+        "src/auth/session.ts",
+        "src/auth/middleware.ts",
+        "src/auth/token.service.ts",
+        "src/auth/password.ts",
+        "src/payments/charge.service.ts",
+        "src/payments/invoice.ts",
+        "src/payments/refund.service.ts",
+        "src/payments/webhook.ts",
+        "src/payments/ledger.ts"
+      ],
       "assertions": [
         "The transcript edits the file to apply the localized RECOMMENDED null-check fix in-loop rather than deferring it to the backlog.",
         "After applying the localized fix the transcript runs a verification step and shows the change is green.",
         "The transcript runs the post-fix adversarial gate on the applied RECOMMENDED fix and records its verdict in the report."
+      ],
+      "fixtures": [
+        {
+          "path": "src/auth/session.ts",
+          "content": "// src/auth/session.ts\nimport { db } from \"../db/client\";\n\nexport interface Session {\n  id: string;\n  userId: string;\n  createdAt: number;\n}\n\nexport async function createSession(userId: string): Promise<Session> {\n  const s: Session = { id: randId(), userId, createdAt: Date.now() };\n  await db.query(\"INSERT INTO sessions(id,user_id,created_at) VALUES($1,$2,$3)\", [\n    s.id,\n    s.userId,\n    s.createdAt,\n  ]);\n  return s;\n}\n\nfunction randId(): string {\n  return Math.random().toString(36).slice(2);\n}\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/auth/session.ts",
+          "content": "// src/auth/session.ts\nimport { db } from \"../db/client\";\n\nexport interface Session {\n  id: string;\n  userId: string;\n  createdAt: number;\n  expiresAt: number;\n}\n\nconst SESSION_TTL_MS = 1000 * 60 * 60 * 8;\n\nexport async function createSession(userId: string): Promise<Session> {\n  const now = Date.now();\n  const s: Session = { id: randId(), userId, createdAt: now, expiresAt: now + SESSION_TTL_MS };\n  await db.query(\n    \"INSERT INTO sessions(id,user_id,created_at,expires_at) VALUES($1,$2,$3,$4)\",\n    [s.id, s.userId, s.createdAt, s.expiresAt],\n  );\n  return s;\n}\n\nexport async function rotateSession(oldId: string): Promise<Session | null> {\n  const rows = await db.query(\n    \"SELECT user_id FROM sessions WHERE id=$1 AND expires_at > $2\",\n    [oldId, Date.now()],\n  );\n  if (!rows.length) return null;\n  await db.query(\"DELETE FROM sessions WHERE id=$1\", [oldId]);\n  return createSession(rows[0].user_id);\n}\n\nexport async function revokeAllForUser(userId: string): Promise<number> {\n  const res = await db.query(\"DELETE FROM sessions WHERE user_id=$1\", [userId]);\n  return res.rowCount ?? 0;\n}\n\nfunction randId(): string {\n  return Math.random().toString(36).slice(2);\n}\n",
+          "stage": "head"
+        },
+        {
+          "path": "src/auth/middleware.ts",
+          "content": "// src/auth/middleware.ts\nimport type { Request, Response, NextFunction } from \"express\";\nimport { db } from \"../db/client\";\n\nexport async function requireSession(req: Request, res: Response, next: NextFunction) {\n  const sid = req.header(\"x-session-id\");\n  if (!sid) return res.status(401).json({ error: \"missing session\" });\n  const rows = await db.query(\"SELECT user_id FROM sessions WHERE id=$1\", [sid]);\n  if (!rows.length) return res.status(401).json({ error: \"invalid session\" });\n  (req as any).userId = rows[0].user_id;\n  next();\n}\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/auth/middleware.ts",
+          "content": "// src/auth/middleware.ts\nimport type { Request, Response, NextFunction } from \"express\";\nimport { db } from \"../db/client\";\nimport { verifyAccessToken } from \"./token.service\";\n\nexport async function requireSession(req: Request, res: Response, next: NextFunction) {\n  const sid = req.header(\"x-session-id\");\n  if (!sid) return res.status(401).json({ error: \"missing session\" });\n  const rows = await db.query(\n    \"SELECT user_id FROM sessions WHERE id=$1 AND expires_at > $2\",\n    [sid, Date.now()],\n  );\n  if (!rows.length) return res.status(401).json({ error: \"invalid or expired session\" });\n  (req as any).userId = rows[0].user_id;\n  next();\n}\n\nexport async function requireBearer(req: Request, res: Response, next: NextFunction) {\n  const header = req.header(\"authorization\") ?? \"\";\n  const token = header.startsWith(\"Bearer \") ? header.slice(7) : \"\";\n  if (!token) return res.status(401).json({ error: \"missing bearer token\" });\n  const claims = await verifyAccessToken(token);\n  if (!claims) return res.status(401).json({ error: \"invalid token\" });\n  (req as any).userId = claims.sub;\n  next();\n}\n",
+          "stage": "head"
+        },
+        {
+          "path": "src/payments/charge.service.ts",
+          "content": "// src/payments/charge.service.ts\nimport { db } from \"../db/client\";\nimport { gateway } from \"../lib/gateway\";\n\nexport interface ChargeRequest {\n  customerId: string;\n  amountCents: number;\n  currency: string;\n}\n\nexport class ChargeService {\n  async charge(req: ChargeRequest): Promise<string> {\n    if (req.amountCents <= 0) throw new Error(\"amount must be positive\");\n    const result = await gateway.charge(req.customerId, req.amountCents, req.currency);\n    await db.query(\n      \"INSERT INTO charges(id,customer_id,amount_cents,currency) VALUES($1,$2,$3,$4)\",\n      [result.id, req.customerId, req.amountCents, req.currency],\n    );\n    return result.id;\n  }\n}\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/payments/charge.service.ts",
+          "content": "// src/payments/charge.service.ts\nimport { db } from \"../db/client\";\nimport { gateway } from \"../lib/gateway\";\nimport { mailer } from \"../lib/mailer\";\nimport { customers } from \"./customer.repo\";\n\nexport interface ChargeRequest {\n  customerId: string;\n  amountCents: number;\n  currency: string;\n}\n\nconst MAX_RETRIES = 2;\n\nexport class ChargeService {\n  async charge(req: ChargeRequest): Promise<string> {\n    if (req.amountCents <= 0) throw new Error(\"amount must be positive\");\n    let lastError: unknown;\n    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {\n      try {\n        const result = await gateway.charge(req.customerId, req.amountCents, req.currency);\n        await db.query(\n          \"INSERT INTO charges(id,customer_id,amount_cents,currency,attempt) VALUES($1,$2,$3,$4,$5)\",\n          [result.id, req.customerId, req.amountCents, req.currency, attempt],\n        );\n        await this.sendReceipt(req.customerId, result.id);\n        return result.id;\n      } catch (err) {\n        lastError = err;\n      }\n    }\n    throw lastError;\n  }\n\n  private async sendReceipt(customerId: string, chargeId: string): Promise<void> {\n    const customer = await customers.findById(customerId); // returns Customer | null\n    // customer may be null for guest checkouts — dereferenced without a guard\n    await mailer.send(customer.email, `Receipt for charge ${chargeId}`);\n  }\n}\n",
+          "stage": "head"
+        },
+        {
+          "path": "src/payments/invoice.ts",
+          "content": "// src/payments/invoice.ts\nexport interface InvoiceLine {\n  description: string;\n  amountCents: number;\n}\n\nexport function invoiceTotal(lines: InvoiceLine[]): number {\n  return lines.reduce((sum, l) => sum + l.amountCents, 0);\n}\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/payments/invoice.ts",
+          "content": "// src/payments/invoice.ts\nexport interface InvoiceLine {\n  description: string;\n  amountCents: number;\n  taxRate?: number;\n}\n\nexport interface InvoiceTotals {\n  subtotalCents: number;\n  taxCents: number;\n  totalCents: number;\n}\n\nexport function invoiceTotal(lines: InvoiceLine[]): number {\n  return invoiceTotals(lines).totalCents;\n}\n\nexport function invoiceTotals(lines: InvoiceLine[]): InvoiceTotals {\n  const subtotalCents = lines.reduce((sum, l) => sum + l.amountCents, 0);\n  const taxCents = lines.reduce(\n    (sum, l) => sum + Math.round(l.amountCents * (l.taxRate ?? 0)),\n    0,\n  );\n  return { subtotalCents, taxCents, totalCents: subtotalCents + taxCents };\n}\n",
+          "stage": "head"
+        },
+        {
+          "path": "src/auth/token.service.ts",
+          "content": "// src/auth/token.service.ts  (new in this change)\nimport { createHmac, timingSafeEqual } from \"crypto\";\nimport { db } from \"../db/client\";\n\nconst SECRET = process.env.TOKEN_SECRET ?? \"\";\nconst ACCESS_TTL_MS = 1000 * 60 * 15;\n\nexport interface Claims {\n  sub: string;\n  exp: number;\n}\n\nexport function signAccessToken(userId: string): string {\n  const claims: Claims = { sub: userId, exp: Date.now() + ACCESS_TTL_MS };\n  const payload = Buffer.from(JSON.stringify(claims)).toString(\"base64url\");\n  const sig = createHmac(\"sha256\", SECRET).update(payload).digest(\"base64url\");\n  return `${payload}.${sig}`;\n}\n\nexport async function verifyAccessToken(token: string): Promise<Claims | null> {\n  const [payload, sig] = token.split(\".\");\n  if (!payload || !sig) return null;\n  const expected = createHmac(\"sha256\", SECRET).update(payload).digest(\"base64url\");\n  const a = Buffer.from(sig);\n  const b = Buffer.from(expected);\n  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;\n  const claims: Claims = JSON.parse(Buffer.from(payload, \"base64url\").toString());\n  if (claims.exp < Date.now()) return null;\n  return claims;\n}\n\nexport async function issueRefreshToken(userId: string): Promise<string> {\n  const token = createHmac(\"sha256\", SECRET).update(userId + Date.now()).digest(\"hex\");\n  await db.query(\n    \"INSERT INTO refresh_tokens(token,user_id,created_at) VALUES($1,$2,$3)\",\n    [token, userId, Date.now()],\n  );\n  return token;\n}\n"
+        },
+        {
+          "path": "src/auth/password.ts",
+          "content": "// src/auth/password.ts  (new in this change)\nimport { randomBytes, scryptSync, timingSafeEqual } from \"crypto\";\nimport { db } from \"../db/client\";\nimport { mailer } from \"../lib/mailer\";\n\nexport function hashPassword(plain: string): string {\n  const salt = randomBytes(16).toString(\"hex\");\n  const hash = scryptSync(plain, salt, 64).toString(\"hex\");\n  return `${salt}:${hash}`;\n}\n\nexport function verifyPassword(plain: string, stored: string): boolean {\n  const [salt, hash] = stored.split(\":\");\n  if (!salt || !hash) return false;\n  const candidate = scryptSync(plain, salt, 64).toString(\"hex\");\n  return timingSafeEqual(Buffer.from(candidate), Buffer.from(hash));\n}\n\nexport async function startPasswordReset(email: string): Promise<void> {\n  const rows = await db.query(\"SELECT id FROM users WHERE email=$1\", [email]);\n  if (!rows.length) return; // do not leak account existence\n  const token = randomBytes(24).toString(\"hex\");\n  await db.query(\n    \"INSERT INTO password_resets(user_id,token,expires_at) VALUES($1,$2,$3)\",\n    [rows[0].id, token, Date.now() + 1000 * 60 * 30],\n  );\n  await mailer.send(email, `Reset your password: /reset?token=${token}`);\n}\n"
+        },
+        {
+          "path": "src/payments/refund.service.ts",
+          "content": "// src/payments/refund.service.ts  (new in this change)\nimport { db } from \"../db/client\";\nimport { gateway } from \"../lib/gateway\";\n\nexport class RefundService {\n  async refund(chargeId: string, amountCents?: number): Promise<string> {\n    const rows = await db.query(\"SELECT amount_cents, refunded_cents FROM charges WHERE id=$1\", [chargeId]);\n    if (!rows.length) throw new Error(`unknown charge ${chargeId}`);\n    const remaining = rows[0].amount_cents - (rows[0].refunded_cents ?? 0);\n    const toRefund = amountCents ?? remaining;\n    if (toRefund <= 0 || toRefund > remaining) {\n      throw new Error(`refund of ${toRefund} exceeds remaining ${remaining}`);\n    }\n    const result = await gateway.refund(chargeId, toRefund);\n    await db.query(\n      \"UPDATE charges SET refunded_cents = COALESCE(refunded_cents,0) + $1 WHERE id=$2\",\n      [toRefund, chargeId],\n    );\n    return result.id;\n  }\n}\n"
+        },
+        {
+          "path": "src/payments/webhook.ts",
+          "content": "// src/payments/webhook.ts  (new in this change)\nimport { createHmac, timingSafeEqual } from \"crypto\";\nimport type { Request, Response } from \"express\";\nimport { db } from \"../db/client\";\n\nconst WEBHOOK_SECRET = process.env.GATEWAY_WEBHOOK_SECRET ?? \"\";\n\nexport async function handleGatewayWebhook(req: Request, res: Response) {\n  const signature = req.header(\"x-gateway-signature\") ?? \"\";\n  const expected = createHmac(\"sha256\", WEBHOOK_SECRET)\n    .update(JSON.stringify(req.body))\n    .digest(\"hex\");\n  const a = Buffer.from(signature);\n  const b = Buffer.from(expected);\n  if (a.length !== b.length || !timingSafeEqual(a, b)) {\n    return res.status(401).json({ error: \"bad signature\" });\n  }\n  const event = req.body;\n  await db.query(\n    \"INSERT INTO gateway_events(id,type,payload,received_at) VALUES($1,$2,$3,$4) ON CONFLICT (id) DO NOTHING\",\n    [event.id, event.type, JSON.stringify(event), Date.now()],\n  );\n  res.status(200).json({ ok: true });\n}\n"
+        },
+        {
+          "path": "src/payments/ledger.ts",
+          "content": "// src/payments/ledger.ts  (new in this change)\nimport { db } from \"../db/client\";\n\nexport interface Posting {\n  account: string;\n  amountCents: number; // positive = debit, negative = credit\n}\n\nexport async function post(entryId: string, postings: Posting[]): Promise<void> {\n  const sum = postings.reduce((s, p) => s + p.amountCents, 0);\n  if (sum !== 0) throw new Error(`unbalanced ledger entry ${entryId}: sum=${sum}`);\n  for (const p of postings) {\n    await db.query(\n      \"INSERT INTO ledger(entry_id,account,amount_cents) VALUES($1,$2,$3)\",\n      [entryId, p.account, p.amountCents],\n    );\n  }\n}\n"
+        }
       ]
     }
   ]

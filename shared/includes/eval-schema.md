@@ -35,7 +35,8 @@ into installed caches by `install.sh` / the build scripts.
       "files": ["src/services/order.service.ts"], // repo-RELATIVE literal paths, may be empty — no absolute paths, no globs, no ../ escapes; each must resolve to an existing repo file OR be declared in this eval's `fixtures`
       "assertions": ["…", "…"],       // non-empty array of strings, each a checkable transcript fact
       "fixtures": [                    // OPTIONAL — files materialized into the sandbox before the executor runs (see below)
-        { "path": "src/services/order.service.ts", "content": "…file body…" }
+        { "path": "src/services/order.service.ts", "content": "…file body…" },
+        { "path": "src/auth/session.ts", "content": "…pre-change body…", "stage": "base" }  // optional stage: "base"|"head" (default "head") — git-state scenarios
       ]
     }
   ]
@@ -59,9 +60,19 @@ sandbox** (SKILL.md Phase 2) after the isolation-hardening steps and before disp
 executor — so the target file physically exists on disk for the run.
 
 - `path` — sandbox-relative literal path (same contract as `files[]`: no absolute path,
-  no glob metacharacters, no `../` escape; unique within the eval). Written under the
-  workspace root, parent dirs created as needed.
+  no glob metacharacters, no `../` escape; unique within the eval **per stage** — the same
+  path may appear once as `base` and once as `head`, which is exactly how a modified-file
+  diff is expressed). Written under the workspace root, parent dirs created as needed.
 - `content` — non-empty string, the exact file body (embed the god-file / buggy module here).
+- `stage` — OPTIONAL, `"base"` or `"head"` (default `"head"`). Enables **git-state
+  scenarios** (a review diff, a resumable execute state), not just plain files:
+  - `"head"` — written last, left uncommitted in the sandbox tree.
+  - `"base"` — the pre-change git state. When any base fixture exists, skill-eval first
+    snapshot-commits the sandbox's entire working tree (so developer WIP copied in by the
+    `cp -R` isolation never pollutes the eval's diff), then writes + commits the base
+    fixtures, then writes the head fixtures on top — `git diff` in the sandbox then shows
+    EXACTLY the eval's intended change. Base fixtures in a non-git sandbox are
+    `BLOCKED_FIXTURE_NEEDS_GIT`.
 - A `files[]` entry MAY name a `fixtures[]` path — it is then exempt from the
   repo-existence check (it exists after materialization). This is how a corpus points the
   executor at a target that lives only in the fixture, not in the repo tree.

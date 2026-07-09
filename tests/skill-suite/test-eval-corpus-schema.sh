@@ -23,10 +23,13 @@
 #       the offending file;
 #   (f) shared/includes/eval-schema.md exists and documents the input schema keys
 #       + the report output-path convention (skill_name, assertions, zuvo/reports/).
-#   (g) OPTIONAL `fixtures` (self-contained corpus): if present, an array of exactly
-#       {path, content} objects — path a repo-relative literal (no absolute/glob/../),
-#       unique per eval; content a non-empty string. A files[] entry naming a declared
-#       fixture path is EXEMPT from the repo-existence check (materialized at run time).
+#   (g) OPTIONAL `fixtures` (self-contained corpus): if present, an array of
+#       {path, content} (+ optional stage) objects — path a repo-relative literal
+#       (no absolute/glob/../), unique per (stage, path); content a non-empty string;
+#       stage is "base"|"head" (default head; base = committed pre-change git state,
+#       so the same path once-as-base + once-as-head expresses a modified-file diff).
+#       A files[] entry naming a declared fixture path is EXEMPT from the
+#       repo-existence check (materialized at run time).
 #
 # The heuristic + structural rules are additionally proven to REJECT (not just
 # accept) via inline negative fixtures — a no-op validator that always prints OK
@@ -120,6 +123,7 @@ for i, ev in enumerate(evals):
     # runs (SKILL.md Phase 2). Parse FIRST so a files[] entry may name a fixture path
     # and be exempt from the repo-existence check below (self-contained corpus).
     fixture_paths = set()
+    fixture_stage_paths = set()
     if "fixtures" in ev:
         fx = ev["fixtures"]
         if not isinstance(fx, list):
@@ -127,9 +131,15 @@ for i, ev in enumerate(evals):
         for k, fxe in enumerate(fx):
             if not isinstance(fxe, dict):
                 die("eval[%d].fixtures[%d] must be an object" % (i, k))
-            if set(fxe.keys()) != {"path", "content"}:
-                die("eval[%d].fixtures[%d] keys must be exactly {path, content}, got %s"
-                    % (i, k, sorted(fxe.keys())))
+            fkeys = set(fxe.keys())
+            if not {"path", "content"} <= fkeys or (fkeys - {"path", "content", "stage"}):
+                die("eval[%d].fixtures[%d] keys must be {path, content} (+ optional stage), got %s"
+                    % (i, k, sorted(fkeys)))
+            # optional stage: "base" (committed pre-change git state) | "head" (default,
+            # uncommitted). Anything else is a schema error, never silently defaulted.
+            stage = fxe.get("stage", "head")
+            if stage not in ("base", "head"):
+                die("eval[%d].fixtures[%d].stage must be 'base' or 'head', got %r" % (i, k, fxe.get("stage")))
             fp = fxe["path"]
             if not isinstance(fp, str) or not fp.strip():
                 die("eval[%d].fixtures[%d].path must be a non-empty string" % (i, k))
@@ -140,8 +150,12 @@ for i, ev in enumerate(evals):
             fnorm = os.path.normpath(fp)
             if fnorm == ".." or fnorm.startswith(".." + os.sep):
                 die("eval[%d].fixtures[%d].path escapes the sandbox root: %r" % (i, k, fp))
-            if fnorm in fixture_paths:
-                die("eval[%d].fixtures[%d].path is duplicated: %r" % (i, k, fp))
+            # dedup per (stage, path): the same path ONCE as base + ONCE as head is the
+            # canonical modified-file diff; the same path twice in ONE stage is an error
+            # (last-write-wins would silently mask a corpus author mistake).
+            if (stage, fnorm) in fixture_stage_paths:
+                die("eval[%d].fixtures[%d].path is duplicated within stage %r: %r" % (i, k, stage, fp))
+            fixture_stage_paths.add((stage, fnorm))
             fixture_paths.add(fnorm)
             if not isinstance(fxe["content"], str) or not fxe["content"]:
                 die("eval[%d].fixtures[%d].content must be a non-empty string" % (i, k))
@@ -451,10 +465,24 @@ FXEC="$TMP/fxec.evals.json"
 printf '{"skill_name":"fxec","evals":[{"id":1,"prompt":"p","expected_output":"e","files":[],"assertions":%s,"fixtures":[{"path":"a.ts","content":""}]},{"id":2,"prompt":"p","expected_output":"e","files":[],"assertions":%s}]}' "$V" "$V" > "$FXEC"
 expect_reject "$FXEC" "fxec" "(fx) fixture content empty"
 
-# duplicate fixtures[].path
+# duplicate fixtures[].path (same stage — both default head)
 FXDP="$TMP/fxdp.evals.json"
 printf '{"skill_name":"fxdp","evals":[{"id":1,"prompt":"p","expected_output":"e","files":[],"assertions":%s,"fixtures":[{"path":"a.ts","content":"x"},{"path":"a.ts","content":"y"}]},{"id":2,"prompt":"p","expected_output":"e","files":[],"assertions":%s}]}' "$V" "$V" > "$FXDP"
-expect_reject "$FXDP" "fxdp" "(fx) duplicate fixture path"
+expect_reject "$FXDP" "fxdp" "(fx) duplicate fixture path (same stage)"
+
+# invalid stage value — must reject, never silently default
+FXSV="$TMP/fxsv.evals.json"
+printf '{"skill_name":"fxsv","evals":[{"id":1,"prompt":"p","expected_output":"e","files":[],"assertions":%s,"fixtures":[{"path":"a.ts","content":"x","stage":"middle"}]},{"id":2,"prompt":"p","expected_output":"e","files":[],"assertions":%s}]}' "$V" "$V" > "$FXSV"
+expect_reject "$FXSV" "fxsv" "(fx) invalid stage value"
+
+# positive: same path once as base + once as head (the canonical modified-file diff) MUST pass
+FXBH="$TMP/fxbh.evals.json"
+printf '{"skill_name":"fxbh","evals":[{"id":1,"prompt":"p","expected_output":"e","files":[],"assertions":%s,"fixtures":[{"path":"a.ts","content":"old","stage":"base"},{"path":"a.ts","content":"new","stage":"head"}]},{"id":2,"prompt":"p","expected_output":"e","files":[],"assertions":%s}]}' "$V" "$V" > "$FXBH"
+if validate "$FXBH" "fxbh" >/dev/null 2>&1; then
+  pass "(fx) same path as base+head accepted (modified-file diff)"
+else
+  bad "(fx) same path as base+head REJECTED: $(validate "$FXBH" fxbh 2>&1)"
+fi
 
 # positive: a files[] entry that names a DECLARED fixture path (absent from the repo)
 # MUST pass even when root-resolved existence-checking is active — this is the whole

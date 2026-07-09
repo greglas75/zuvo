@@ -193,29 +193,64 @@ carries a `fixtures[]` array (eval-schema.md → "Self-contained fixtures"), wri
 `{path, content}` into the hardened workspace so the target the `prompt` names actually
 exists on disk — without this, a corpus whose prompt references `src/services/order.service.ts`
 (a file not in this repo) forces an all-`false` run that reflects a missing fixture, not
-skill behavior. This step is fail-closed on path safety: for each fixture, resolve
-`path` against the workspace root and **reject any `..`/absolute escape or glob
-metacharacter** (`BLOCKED_BAD_FIXTURE` for that case) BEFORE writing — the executor gets
-unrestricted `Bash`, but the orchestrator must never let a fixture `path` write outside the
-disposable sandbox. `mkdir -p` the parent, then write `content` verbatim. Because the
-workspace is already an independent copy, these writes never touch the developer's checkout:
+skill behavior. Fixtures carry an optional `stage` so GIT-STATE scenarios (a review diff,
+a pre-existing plan for execute) work, not just plain files:
+
+- `stage: "head"` (default) — written LAST, left uncommitted in the sandbox tree.
+- `stage: "base"` — the pre-change git state. When ANY base fixture exists: (1)
+  snapshot-commit the sandbox's ENTIRE working tree first, so developer WIP copied in by
+  the `cp -R` isolation never pollutes the eval's `git diff`; (2) write the base fixtures
+  and commit them; (3) then write the head fixtures on top — `git diff` in the sandbox now
+  shows EXACTLY the eval's intended change and nothing else. These scaffold commits use
+  `--no-verify` deliberately: they are setup plumbing inside a disposable, remote-less
+  sandbox, and repo/global commit hooks (pipeline gates) must not fire on eval scaffolding
+  — this never touches the real checkout and is not a work commit. A base fixture in a
+  NON-git sandbox is `BLOCKED_FIXTURE_NEEDS_GIT` (single-skill mode halts; `--all-evals`
+  records that corpus and continues).
+
+This step is fail-closed on path safety: for each fixture, resolve `path` against the
+workspace root and **reject any `..`/absolute escape or glob metacharacter**
+(`BLOCKED_BAD_FIXTURE` for that case) BEFORE writing — the executor gets unrestricted
+`Bash`, but the orchestrator must never let a fixture `path` write outside the disposable
+sandbox. `mkdir -p` the parent, then write `content` verbatim. Because the workspace is
+already an independent copy, these writes never touch the developer's checkout:
 
 ```bash
 # $WS = hardened workspace root; $FIXTURES_JSON = this eval's fixtures array (may be absent/empty)
 python3 - "$WS" "$FIXTURES_JSON" <<'PY'
-import json, os, sys
+import json, os, subprocess, sys
 ws = os.path.realpath(sys.argv[1])
 fixtures = json.loads(sys.argv[2] or "[]")
-for k, fx in enumerate(fixtures):
-    p = fx["path"]
-    if os.path.isabs(p) or any(c in p for c in "*?[]"):
+
+def safe_dest(k, p):
+    if not isinstance(p, str) or os.path.isabs(p) or any(c in p for c in "*?[]"):
         sys.exit("BLOCKED_BAD_FIXTURE: fixtures[%d].path not a safe relative literal: %r" % (k, p))
     dest = os.path.realpath(os.path.join(ws, p))
     if dest != ws and not dest.startswith(ws + os.sep):
         sys.exit("BLOCKED_BAD_FIXTURE: fixtures[%d].path escapes the sandbox: %r" % (k, p))
+    return dest
+
+def write(k, fx):
+    dest = safe_dest(k, fx["path"])
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     with open(dest, "w", encoding="utf-8") as f:
         f.write(fx["content"])
+
+base = [(k, fx) for k, fx in enumerate(fixtures) if fx.get("stage") == "base"]
+head = [(k, fx) for k, fx in enumerate(fixtures) if fx.get("stage", "head") == "head"]
+if base:
+    if not os.path.isdir(os.path.join(ws, ".git")):
+        sys.exit("BLOCKED_FIXTURE_NEEDS_GIT: base-stage fixtures need a git sandbox")
+    git = ["git", "-C", ws, "-c", "user.name=skill-eval", "-c", "user.email=skill-eval@localhost"]
+    def commit(msg):
+        subprocess.run(git + ["add", "-A"], check=True)
+        subprocess.run(git + ["commit", "-q", "--no-verify", "--allow-empty", "-m", msg], check=True)
+    commit("eval-fixture: sandbox snapshot (pre-existing WIP)")  # keep dev WIP out of the eval diff
+    for k, fx in base:
+        write(k, fx)
+    commit("eval-fixture: base state")
+for k, fx in head:
+    write(k, fx)
 PY
 ```
 
