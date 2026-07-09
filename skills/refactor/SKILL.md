@@ -424,7 +424,7 @@ Phase 2: test-quality-rules.md -- READ (WRITE_NEW, IMPROVE_TESTS, or CHARACTERIZ
 
 ### Test Mode Execution
 
-**RUN_EXISTING:** Run the existing test suite. Verify all tests pass. This establishes the behavioral baseline. If any test fails, investigate before proceeding -- the refactoring must not start from a broken state.
+**RUN_EXISTING:** Run the existing test suite. Verify all tests pass. This establishes the behavioral baseline. If any test fails, investigate before proceeding -- the refactoring must not start from a broken state. Then record the lock: `prove.characterization = "existing:<test path>:green:<pre-refactor sha7>"` in the CONTRACT — the commit gate blocks on a missing/`not_run` value in every test mode.
 
 **CHARACTERIZE_GAP:** The existing test does not exercise every unit being moved (`coverage_gap > 0`). Close the gap BEFORE any production edit:
 1. For **each** uncovered unit in `uncovered_units`, write a characterization (pin-down) test that executes it with a representative input and asserts on real output — mount/render the component, or call the function, with a payload that reaches actual logic (not an empty-state/early-return path). Source representative inputs from existing fixtures, sample data, or recover them from git history (e.g. `git show <sha>:<path>`) when they were deleted; never invent shapes the code never sees.
@@ -432,9 +432,9 @@ Phase 2: test-quality-rules.md -- READ (WRITE_NEW, IMPROVE_TESTS, or CHARACTERIZ
    - A parameterized table over the units (one case per unit) is the canonical shape for SPLIT_FILE / GOD_CLASS.
 2. Run the new tests against the **pre-refactor** code and confirm they pass. This is the lock — they must be green on the OLD code, or they are not characterizing current behavior. If a unit genuinely cannot be exercised (truly dead), record it in the contract as `dead:<unit>` with evidence and exclude it from the move; do not silently skip it.
 3. Apply Q1-Q19 self-eval on the new tests. Only after `coverage_gap` reaches 0 (every moved unit now exercised, or proven dead) does execution proceed.
-4. Record `test_audit_after` with the closed gap, **and record the characterization LOCK in the CONTRACT `prove` block NOW — before any production edit**: `prove.characterization` = the pin-down tests that pass on the PRE-refactor code with `coverage_gap: 0` (test path + unit count + the pre-refactor SHA they were green against). The Prove step is not only blind_audit + adversarial recorded at commit time — the characterization lock is the FIRST proof and belongs in the CONTRACT the moment tests are green on the old code (between green tests and the move), not backfilled at commit. The completion checklist gates on this.
+4. Record `test_audit_after` with the closed gap, **and record the characterization LOCK in the CONTRACT `prove` block NOW — before any production edit**: `prove.characterization = "green:<pre-refactor sha7>:<N>u:<test path>"` — a STRING (like the other prove fields) naming the pre-refactor SHA the pin-down tests were green against, the unit count, and the test path, with `coverage_gap: 0`. The Prove step is not only blind_audit + adversarial recorded at commit time — the characterization lock is the FIRST proof and belongs in the CONTRACT the moment tests are green on the old code (between green tests and the move), not backfilled at commit. **This is a gated artifact, not advice: the `refactor-safety-gate` hook and the completion self-check both BLOCK on a missing/`not_run` `prove.characterization`** (added after the 2026-07-09 skill-eval run proved prose alone gets skipped).
 
-**WRITE_NEW:** Write tests for the target file before refactoring. The tests capture the current behavior so that the refactoring can be verified against them. Apply Q1-Q19 self-eval on the new tests. Same coverage bar as CHARACTERIZE_GAP: every unit being moved must be exercised, not just the file's entry point.
+**WRITE_NEW:** Write tests for the target file before refactoring. The tests capture the current behavior so that the refactoring can be verified against them. Apply Q1-Q19 self-eval on the new tests. Same coverage bar as CHARACTERIZE_GAP: every unit being moved must be exercised, not just the file's entry point. **Same LOCK recording as CHARACTERIZE_GAP step 4** — the moment the new suite is green on the PRE-refactor code, write `prove.characterization = "green:<pre-refactor sha7>:<N>u:<test path>"` into the CONTRACT, BEFORE any move edit (the commit gate blocks without it; this mode is where the 2026-07-09 eval caught the backfill gap).
 
 **IMPROVE_TESTS:** When the refactoring type is IMPROVE_TESTS (target is a test file):
 1. Run Q1-Q19 self-eval on the existing tests to identify gaps
@@ -497,7 +497,7 @@ Apply the planned changes according to the extraction list, following these rule
 
 1. List the files to audit = the **scope-fence** files, INCLUDING the new modules this split created. A split EXTENDS its own scope-fence to the files it extracts — those new modules are in-fence by definition, so "audit every extracted module" and "stay inside the scope-fence" are the SAME set, not a contradiction. A file modified OUTSIDE the scope-fence is a fence VIOLATION to surface (backlog / ask), never an extra audit-and-ship target.
 2. Run CQ1-CQ29 self-eval on EACH of those scope-fence files (orchestrator + every extracted module — the bugs move with the code)
-3. Any CQ critical gate failure (CQ3/4/5/6/8/14 = 0) in ANY module blocks the commit
+3. Any CQ critical gate failure (CQ3/4/5/6/8/14 = 0) in ANY module blocks the commit — **when the failure is in code this refactor moved, touched, or created**. A PRE-EXISTING critical failure confined to UNTOUCHED units of an in-fence file (e.g. CQ8 in `persist()` while you extract `calculateTax`) is NOT a commit-blocker: it is identical before and after the diff, fixing it usually needs its own characterization tests + product decisions, and blocking on it would make incremental extraction of legacy god-files impossible. Disposition: verify it is byte-identical pre/post (no regression), disclose it loudly in the post-audit (`pre-existing, out-of-fence-unit`), and backlog it per Phase 3.5/Phase 4 — never silently, never as an excuse for a failure your diff introduced. (Both 2026-07-09 skill-eval executors independently hit this ambiguity and resolved it this way; this paragraph makes that the written rule.)
 
 ### CodeSift Post-Audit Verification (when CodeSift available)
 
@@ -724,6 +724,7 @@ COMPLETION GATE CHECK
 [ ] Refactor type classified and printed: [RENAME/EXTRACT/SPLIT/INLINE/RESTRUCTURE]
 [ ] CQ pre-audit printed on target file (all gates before changes)
 [ ] Coverage gate: `units_total`/`units_covered` printed; if gap > 0, characterization tests were written for EVERY uncovered moved unit and ran green on the PRE-refactor code (build/type-check/static-resolution do NOT satisfy this item)
+[ ] Characterization LOCK recorded: `prove.characterization` written into the CONTRACT the moment the suite went green on the PRE-refactor code — BEFORE the first move edit, in every test mode (WRITE_NEW/CHARACTERIZE_GAP/RUN_EXISTING), never backfilled at commit time (the refactor-safety-gate hook blocks on a missing value)
 [ ] Baseline test suite ran green before first change
 [ ] After each change: tests ran and green (not just at the end)
 [ ] CQ post-audit printed — score must not regress
@@ -755,6 +756,8 @@ else
   ba=$(sed -n 's/.*"blind_audit"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$C" | head -1)
   av=$(sed -n 's/.*"adversarial"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$C" | head -1)
   fd=$(sed -n 's/.*"findings_disposition"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$C" | head -1)
+  ch=$(sed -n 's/.*"characterization"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$C" | head -1)
+  case "$ch" in skipped|not_run|"") echo "BLOCK(unsafe): prove.characterization='$ch' — record the pin-down lock (tests green on PRE-refactor code, written the moment the suite goes green, BEFORE any move edit) in $C"; g=1 ;; esac
   case "$ba" in skipped|not_run|"") echo "BLOCK(unsafe): prove.blind_audit='$ba' — run the Independent CQ Auditor and record it in $C"; g=1 ;; esac
   case "$av" in skipped|not_run|"") echo "BLOCK(unsafe): prove.adversarial='$av' — run the adversarial review and record it in $C"; g=1 ;; esac
   # findings parked? adversarial recorded N>0 findings (not ':preserved') but disposition unresolved

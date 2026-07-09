@@ -57,8 +57,14 @@ refactor_gate_check() {
     # PROVE checks — the CONTRACT is the artifact (commit is LAST, so no fix-commit exists yet)
     ba=$(sed -n 's/.*"blind_audit"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$c" | head -1)
     av=$(sed -n 's/.*"adversarial"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$c" | head -1)
+    # characterization lock: the pin-down tests proven green on the PRE-refactor code,
+    # recorded in the CONTRACT BEFORE any move edit. Prose alone was skipped in the field
+    # (skill-eval 2026-07-09: CONTRACT written at PHASE-1, next touched only at prove-time)
+    # — so the gate enforces the artifact, same as blind_audit/adversarial.
+    ch=$(sed -n 's/.*"characterization"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$c" | head -1)
     case "$ba" in skipped|not_run|"") echo "BLOCK: refactor CONTRACT prove.blind_audit='$ba' not satisfied [$c]"; blocked=1 ;; esac
     case "$av" in skipped|not_run|"") echo "BLOCK: refactor CONTRACT prove.adversarial='$av' not satisfied [$c]"; blocked=1 ;; esac
+    case "$ch" in skipped|not_run|"") echo "BLOCK: refactor CONTRACT prove.characterization='$ch' not satisfied — record the pin-down lock (tests green on PRE-refactor code) when the suite goes green, BEFORE the move [$c]"; blocked=1 ;; esac
   done
   return $blocked
 }
