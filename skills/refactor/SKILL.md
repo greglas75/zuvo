@@ -432,7 +432,7 @@ Phase 2: test-quality-rules.md -- READ (WRITE_NEW, IMPROVE_TESTS, or CHARACTERIZ
    - A parameterized table over the units (one case per unit) is the canonical shape for SPLIT_FILE / GOD_CLASS.
 2. Run the new tests against the **pre-refactor** code and confirm they pass. This is the lock — they must be green on the OLD code, or they are not characterizing current behavior. If a unit genuinely cannot be exercised (truly dead), record it in the contract as `dead:<unit>` with evidence and exclude it from the move; do not silently skip it.
 3. Apply Q1-Q19 self-eval on the new tests. Only after `coverage_gap` reaches 0 (every moved unit now exercised, or proven dead) does execution proceed.
-4. Record `test_audit_after` with the closed gap. The completion checklist gates on this.
+4. Record `test_audit_after` with the closed gap, **and record the characterization LOCK in the CONTRACT `prove` block NOW — before any production edit**: `prove.characterization` = the pin-down tests that pass on the PRE-refactor code with `coverage_gap: 0` (test path + unit count + the pre-refactor SHA they were green against). The Prove step is not only blind_audit + adversarial recorded at commit time — the characterization lock is the FIRST proof and belongs in the CONTRACT the moment tests are green on the old code (between green tests and the move), not backfilled at commit. The completion checklist gates on this.
 
 **WRITE_NEW:** Write tests for the target file before refactoring. The tests capture the current behavior so that the refactoring can be verified against them. Apply Q1-Q19 self-eval on the new tests. Same coverage bar as CHARACTERIZE_GAP: every unit being moved must be exercised, not just the file's entry point.
 
@@ -495,8 +495,8 @@ Apply the planned changes according to the extraction list, following these rule
 
 **After any refactoring that creates new files:** Run CQ self-eval on EACH extracted module, not just the orchestrator. The bugs move with the code. CQ failures (CQ5, CQ8, CQ9, CQ17, CQ19) live in the modules where the actual logic resides.
 
-1. List ALL files created or modified during the refactoring
-2. Run CQ1-CQ29 self-eval on EACH file
+1. List the files to audit = the **scope-fence** files, INCLUDING the new modules this split created. A split EXTENDS its own scope-fence to the files it extracts — those new modules are in-fence by definition, so "audit every extracted module" and "stay inside the scope-fence" are the SAME set, not a contradiction. A file modified OUTSIDE the scope-fence is a fence VIOLATION to surface (backlog / ask), never an extra audit-and-ship target.
+2. Run CQ1-CQ29 self-eval on EACH of those scope-fence files (orchestrator + every extracted module — the bugs move with the code)
 3. Any CQ critical gate failure (CQ3/4/5/6/8/14 = 0) in ANY module blocks the commit
 
 ### CodeSift Post-Audit Verification (when CodeSift available)
