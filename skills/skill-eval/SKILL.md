@@ -188,6 +188,37 @@ revision then HARDENED (all four steps verified safe on an independent copy):
   cannot reach any real remote (edits only the copy's config). Strip any other file that
   would leak this skill's grading criteria.
 
+**Materialize the eval's `fixtures` (AFTER hardening, BEFORE dispatch).** If the eval
+carries a `fixtures[]` array (eval-schema.md → "Self-contained fixtures"), write each
+`{path, content}` into the hardened workspace so the target the `prompt` names actually
+exists on disk — without this, a corpus whose prompt references `src/services/order.service.ts`
+(a file not in this repo) forces an all-`false` run that reflects a missing fixture, not
+skill behavior. This step is fail-closed on path safety: for each fixture, resolve
+`path` against the workspace root and **reject any `..`/absolute escape or glob
+metacharacter** (`BLOCKED_BAD_FIXTURE` for that case) BEFORE writing — the executor gets
+unrestricted `Bash`, but the orchestrator must never let a fixture `path` write outside the
+disposable sandbox. `mkdir -p` the parent, then write `content` verbatim. Because the
+workspace is already an independent copy, these writes never touch the developer's checkout:
+
+```bash
+# $WS = hardened workspace root; $FIXTURES_JSON = this eval's fixtures array (may be absent/empty)
+python3 - "$WS" "$FIXTURES_JSON" <<'PY'
+import json, os, sys
+ws = os.path.realpath(sys.argv[1])
+fixtures = json.loads(sys.argv[2] or "[]")
+for k, fx in enumerate(fixtures):
+    p = fx["path"]
+    if os.path.isabs(p) or any(c in p for c in "*?[]"):
+        sys.exit("BLOCKED_BAD_FIXTURE: fixtures[%d].path not a safe relative literal: %r" % (k, p))
+    dest = os.path.realpath(os.path.join(ws, p))
+    if dest != ws and not dest.startswith(ws + os.sep):
+        sys.exit("BLOCKED_BAD_FIXTURE: fixtures[%d].path escapes the sandbox: %r" % (k, p))
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    with open(dest, "w", encoding="utf-8") as f:
+        f.write(fx["content"])
+PY
+```
+
 Fresh-per-case is mandatory: if case 1 commits/mutates a file, case 2 must not inherit it
 (cross-case bleed reads as a false regression). **Two distinct failure semantics, never
 conflated:** if the *workspace cannot be created* (`cp`/`clone`/`checkout` fails) →

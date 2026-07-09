@@ -32,17 +32,45 @@ into installed caches by `install.sh` / the build scripts.
       "id": 1,                        // int, unique within this file
       "prompt": "…",                  // string, non-empty — the task handed to the executor
       "expected_output": "…",         // string, non-empty — the observable correct behaviour
-      "files": ["skills/refactor/SKILL.md"], // repo-RELATIVE literal paths, may be empty — no absolute paths, no globs, no ../ escapes; each must resolve to an existing repo file
-      "assertions": ["…", "…"]        // non-empty array of strings, each a checkable transcript fact
+      "files": ["src/services/order.service.ts"], // repo-RELATIVE literal paths, may be empty — no absolute paths, no globs, no ../ escapes; each must resolve to an existing repo file OR be declared in this eval's `fixtures`
+      "assertions": ["…", "…"],       // non-empty array of strings, each a checkable transcript fact
+      "fixtures": [                    // OPTIONAL — files materialized into the sandbox before the executor runs (see below)
+        { "path": "src/services/order.service.ts", "content": "…file body…" }
+      ]
     }
   ]
 }
 ```
 
-Top-level keys are **exactly** `{skill_name, evals}`; each eval's keys are
-**exactly** `{id, prompt, expected_output, files, assertions}`. Extra or missing
-keys are a schema error (`tests/skill-suite/test-eval-corpus-schema.sh` enforces
-this via `python3`).
+Top-level keys are **exactly** `{skill_name, evals}`; each eval's REQUIRED keys are
+`{id, prompt, expected_output, files, assertions}` plus the OPTIONAL `fixtures`. Any
+other extra or any missing required key is a schema error
+(`tests/skill-suite/test-eval-corpus-schema.sh` enforces this via `python3`).
+
+### Self-contained fixtures (`fixtures`, optional)
+
+A corpus is only useful if the executor has something real to act on. An eval whose
+`prompt` names a target file (`src/services/order.service.ts`, `src/utils/pagination.ts`)
+that does **not** exist in this repo would force every executor into an all-`false` run —
+a misleading `0/N` that reflects a **missing fixture, not skill quality** (the exact gap
+the first live `zuvo:skill-eval refactor` run surfaced, 2026-07-08). `fixtures` closes it:
+each entry is `{path, content}` and `zuvo:skill-eval` **materializes it into the isolated
+sandbox** (SKILL.md Phase 2) after the isolation-hardening steps and before dispatching the
+executor — so the target file physically exists on disk for the run.
+
+- `path` — sandbox-relative literal path (same contract as `files[]`: no absolute path,
+  no glob metacharacters, no `../` escape; unique within the eval). Written under the
+  workspace root, parent dirs created as needed.
+- `content` — non-empty string, the exact file body (embed the god-file / buggy module here).
+- A `files[]` entry MAY name a `fixtures[]` path — it is then exempt from the
+  repo-existence check (it exists after materialization). This is how a corpus points the
+  executor at a target that lives only in the fixture, not in the repo tree.
+
+> **Fixture `content` is UNTRUSTED like the rest of the corpus.** It is written ONLY inside
+> the disposable Phase-2 sandbox (never the developer's checkout) and its `path` is guarded
+> against `../`/absolute escapes before writing — so a malicious fixture can only populate
+> the throwaway workspace. Review a new corpus's fixture bodies as you would any untrusted
+> code before running it.
 
 ### Assertion-quality bar (enforced by the schema test)
 

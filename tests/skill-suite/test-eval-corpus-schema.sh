@@ -23,6 +23,10 @@
 #       the offending file;
 #   (f) shared/includes/eval-schema.md exists and documents the input schema keys
 #       + the report output-path convention (skill_name, assertions, zuvo/reports/).
+#   (g) OPTIONAL `fixtures` (self-contained corpus): if present, an array of exactly
+#       {path, content} objects — path a repo-relative literal (no absolute/glob/../),
+#       unique per eval; content a non-empty string. A files[] entry naming a declared
+#       fixture path is EXEMPT from the repo-existence check (materialized at run time).
 #
 # The heuristic + structural rules are additionally proven to REJECT (not just
 # accept) via inline negative fixtures — a no-op validator that always prints OK
@@ -94,9 +98,15 @@ total_assertions = 0
 for i, ev in enumerate(evals):
     if not isinstance(ev, dict):
         die("eval[%d] must be an object" % i)
-    if set(ev.keys()) != {"id", "prompt", "expected_output", "files", "assertions"}:
-        die("eval[%d] keys must be exactly {id, prompt, expected_output, files, assertions}, got %s"
-            % (i, sorted(ev.keys())))
+    # REQUIRED keys are exact; `fixtures` is the one OPTIONAL key (self-contained
+    # corpus support). Any other extra key, or any missing required key, is an error.
+    REQUIRED = {"id", "prompt", "expected_output", "files", "assertions"}
+    keys = set(ev.keys())
+    extra = keys - REQUIRED - {"fixtures"}
+    missing = REQUIRED - keys
+    if extra or missing:
+        die("eval[%d] keys must be exactly {id, prompt, expected_output, files, assertions} "
+            "(+ optional fixtures); missing=%s extra=%s" % (i, sorted(missing), sorted(extra)))
     _id = ev["id"]
     if not isinstance(_id, int) or isinstance(_id, bool):
         die("eval[%d].id must be an int, got %r" % (i, _id))
@@ -106,6 +116,35 @@ for i, ev in enumerate(evals):
     for k in ("prompt", "expected_output"):
         if not isinstance(ev[k], str) or not ev[k].strip():
             die("eval[%d].%s must be a non-empty string" % (i, k))
+    # optional `fixtures`: files materialized into the sandbox before the executor
+    # runs (SKILL.md Phase 2). Parse FIRST so a files[] entry may name a fixture path
+    # and be exempt from the repo-existence check below (self-contained corpus).
+    fixture_paths = set()
+    if "fixtures" in ev:
+        fx = ev["fixtures"]
+        if not isinstance(fx, list):
+            die("eval[%d].fixtures must be an array" % i)
+        for k, fxe in enumerate(fx):
+            if not isinstance(fxe, dict):
+                die("eval[%d].fixtures[%d] must be an object" % (i, k))
+            if set(fxe.keys()) != {"path", "content"}:
+                die("eval[%d].fixtures[%d] keys must be exactly {path, content}, got %s"
+                    % (i, k, sorted(fxe.keys())))
+            fp = fxe["path"]
+            if not isinstance(fp, str) or not fp.strip():
+                die("eval[%d].fixtures[%d].path must be a non-empty string" % (i, k))
+            if os.path.isabs(fp):
+                die("eval[%d].fixtures[%d].path must be repo-relative, got absolute: %r" % (i, k, fp))
+            if any(c in fp for c in "*?[]"):
+                die("eval[%d].fixtures[%d].path must be a literal path (no glob metacharacters): %r" % (i, k, fp))
+            fnorm = os.path.normpath(fp)
+            if fnorm == ".." or fnorm.startswith(".." + os.sep):
+                die("eval[%d].fixtures[%d].path escapes the sandbox root: %r" % (i, k, fp))
+            if fnorm in fixture_paths:
+                die("eval[%d].fixtures[%d].path is duplicated: %r" % (i, k, fp))
+            fixture_paths.add(fnorm)
+            if not isinstance(fxe["content"], str) or not fxe["content"]:
+                die("eval[%d].fixtures[%d].content must be a non-empty string" % (i, k))
     if not isinstance(ev["files"], list):
         die("eval[%d].files must be an array" % i)
     for j, fn in enumerate(ev["files"]):
@@ -127,8 +166,11 @@ for i, ev in enumerate(evals):
             norm = os.path.normpath(fn)
             if norm == ".." or norm.startswith(".." + os.sep):
                 die("eval[%d].files[%d] escapes repo root: %r" % (i, j, fn))
-            if not os.path.isfile(os.path.join(root, norm)):
-                die("eval[%d].files[%d] references nonexistent repo file: %r" % (i, j, fn))
+            # a files[] entry may name a fixture materialized at run time (self-contained
+            # corpus) — exempt declared fixture paths from the repo-existence check.
+            if norm not in fixture_paths and not os.path.isfile(os.path.join(root, norm)):
+                die("eval[%d].files[%d] references nonexistent repo file (and is not a declared fixture): %r"
+                    % (i, j, fn))
     a = ev["assertions"]
     if not isinstance(a, list) or len(a) < 1:
         die("eval[%d].assertions must be a non-empty array" % i)
@@ -369,6 +411,61 @@ expect_reject "$ESC" "esc" "(c) files[] ../ escapes repo root" "$ROOT"
 NSP="$TMP/nsp.evals.json"
 printf '{"skill_name":"nsp","evals":[{"id":1,"prompt":123,"expected_output":"e","files":[],"assertions":%s},{"id":2,"prompt":"p","expected_output":"e","files":[],"assertions":%s}]}' "$V" "$V" > "$NSP"
 expect_reject "$NSP" "nsp" "(c) non-string prompt (int)"
+
+# ── fixtures branches: prove the optional `fixtures` gates reject bad input ─────
+# (each isolates one die() in the fixtures block; a validator that ignored fixtures
+#  would ACCEPT these and fail the test.)
+
+# fixtures is not an array
+FXNA="$TMP/fxna.evals.json"
+printf '{"skill_name":"fxna","evals":[{"id":1,"prompt":"p","expected_output":"e","files":[],"assertions":%s,"fixtures":"nope"},{"id":2,"prompt":"p","expected_output":"e","files":[],"assertions":%s}]}' "$V" "$V" > "$FXNA"
+expect_reject "$FXNA" "fxna" "(fx) fixtures not an array"
+
+# a fixtures[] entry is not an object
+FXNO="$TMP/fxno.evals.json"
+printf '{"skill_name":"fxno","evals":[{"id":1,"prompt":"p","expected_output":"e","files":[],"assertions":%s,"fixtures":["nope"]},{"id":2,"prompt":"p","expected_output":"e","files":[],"assertions":%s}]}' "$V" "$V" > "$FXNO"
+expect_reject "$FXNO" "fxno" "(fx) fixtures entry not an object"
+
+# fixtures[] entry has the wrong key set (extra key)
+FXWK="$TMP/fxwk.evals.json"
+printf '{"skill_name":"fxwk","evals":[{"id":1,"prompt":"p","expected_output":"e","files":[],"assertions":%s,"fixtures":[{"path":"a.ts","content":"x","extra":1}]},{"id":2,"prompt":"p","expected_output":"e","files":[],"assertions":%s}]}' "$V" "$V" > "$FXWK"
+expect_reject "$FXWK" "fxwk" "(fx) fixture wrong key set"
+
+# fixtures[].path absolute
+FXAB="$TMP/fxab.evals.json"
+printf '{"skill_name":"fxab","evals":[{"id":1,"prompt":"p","expected_output":"e","files":[],"assertions":%s,"fixtures":[{"path":"/tmp/a.ts","content":"x"}]},{"id":2,"prompt":"p","expected_output":"e","files":[],"assertions":%s}]}' "$V" "$V" > "$FXAB"
+expect_reject "$FXAB" "fxab" "(fx) fixture path absolute"
+
+# fixtures[].path glob metacharacter
+FXGL="$TMP/fxgl.evals.json"
+printf '{"skill_name":"fxgl","evals":[{"id":1,"prompt":"p","expected_output":"e","files":[],"assertions":%s,"fixtures":[{"path":"src/*.ts","content":"x"}]},{"id":2,"prompt":"p","expected_output":"e","files":[],"assertions":%s}]}' "$V" "$V" > "$FXGL"
+expect_reject "$FXGL" "fxgl" "(fx) fixture path glob metacharacter"
+
+# fixtures[].path ../ escape
+FXES="$TMP/fxes.evals.json"
+printf '{"skill_name":"fxes","evals":[{"id":1,"prompt":"p","expected_output":"e","files":[],"assertions":%s,"fixtures":[{"path":"../a.ts","content":"x"}]},{"id":2,"prompt":"p","expected_output":"e","files":[],"assertions":%s}]}' "$V" "$V" > "$FXES"
+expect_reject "$FXES" "fxes" "(fx) fixture path ../ escapes sandbox"
+
+# fixtures[].content empty string
+FXEC="$TMP/fxec.evals.json"
+printf '{"skill_name":"fxec","evals":[{"id":1,"prompt":"p","expected_output":"e","files":[],"assertions":%s,"fixtures":[{"path":"a.ts","content":""}]},{"id":2,"prompt":"p","expected_output":"e","files":[],"assertions":%s}]}' "$V" "$V" > "$FXEC"
+expect_reject "$FXEC" "fxec" "(fx) fixture content empty"
+
+# duplicate fixtures[].path
+FXDP="$TMP/fxdp.evals.json"
+printf '{"skill_name":"fxdp","evals":[{"id":1,"prompt":"p","expected_output":"e","files":[],"assertions":%s,"fixtures":[{"path":"a.ts","content":"x"},{"path":"a.ts","content":"y"}]},{"id":2,"prompt":"p","expected_output":"e","files":[],"assertions":%s}]}' "$V" "$V" > "$FXDP"
+expect_reject "$FXDP" "fxdp" "(fx) duplicate fixture path"
+
+# positive: a files[] entry that names a DECLARED fixture path (absent from the repo)
+# MUST pass even when root-resolved existence-checking is active — this is the whole
+# point of self-contained corpora.
+FXOK="$TMP/fxok.evals.json"
+printf '{"skill_name":"fxok","evals":[{"id":1,"prompt":"p","expected_output":"e","files":["src/gen/does-not-exist-in-repo.ts"],"assertions":%s,"fixtures":[{"path":"src/gen/does-not-exist-in-repo.ts","content":"export const x = 1;"}]},{"id":2,"prompt":"p","expected_output":"e","files":[],"assertions":%s}]}' "$V" "$V" > "$FXOK"
+if validate "$FXOK" "fxok" "$ROOT" >/dev/null 2>&1; then
+  pass "(fx) files[] naming a declared fixture accepted despite absent-from-repo (root-resolved)"
+else
+  bad "(fx) files[] naming a declared fixture REJECTED: $(validate "$FXOK" fxok "$ROOT" 2>&1)"
+fi
 
 # positive control: a minimal well-formed corpus MUST pass (guards always-fail validator)
 GOOD="$TMP/control.evals.json"
