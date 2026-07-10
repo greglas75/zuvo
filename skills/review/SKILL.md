@@ -587,6 +587,18 @@ If the file changed after the reviewed range:
 
 Cross-model adversarial review using external providers. Runs **sequentially** via `--rotate` — each pass uses a different random provider. Text mode (no `--json`).
 
+**PROPORTIONALITY (HARD — a tiny diff gets a FAST pass, not a 20-minute grind).** Adversarial still runs at every tier (a 3-line change CAN hide an inverted comparison), but the COST must match the diff. The 2026-07-10 pathology: a 3-line icon swap ran the full multi-pass rotate with each hung provider eating the 240s `PROVIDER_TIMEOUT` × several passes ≈ **20 minutes**. That is a defect, not diligence. Scale the pass by tier:
+
+| Tier | Diff | Adversarial shape |
+|------|------|-------------------|
+| **TIER 0 (NANO)** | <15 prod-logic lines, 1 file, no risk signal | **ONE `--single` pass, `ZUVO_REVIEW_TIMEOUT=60`.** No rotate, no second pass. `git diff … \| ZUVO_REVIEW_TIMEOUT=60 adversarial-review --single --mode code`. ~60s ceiling. |
+| **TIER 1 (LIGHT)** | 15–100 lines | Up to **2** `--rotate` passes, default timeout; stop early on a clean pass. |
+| **TIER 2–3** | larger / risk signals | Full sequential `--rotate` (2–3 passes) as below. |
+
+- **Self-review overrides tier-down for correctness, but keep the timeout tight on tiny diffs:** SELF-REVIEW still forces `--multi` (section 1.1) — but on a TIER 0 diff run it as ONE `--multi` pass with `ZUVO_REVIEW_TIMEOUT=60`, not multi-pass. One cross-model look, bounded to ~60s.
+- **A hung/timed-out provider is NEVER retried in a manual loop on a tiny diff.** If a provider times out at TIER 0/1, record `Adversarial: partial (<provider> only, others timed out)` and finalize — do NOT hand-retry the remaining providers (that hand-retry loop is exactly what turned 3 lines into 20 minutes). Chunking/retry is a TIER 2–3 concern for genuinely large diffs.
+- **Always run in the background or with a long Bash `timeout`** per `adversarial-loop.md` — never let the 120s Bash-tool default kill the pass mid-flight.
+
 If `adversarial-review` not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
 
 **Self-review escalation:** If SELF-REVIEW marker set in 1.1, pass `--multi` flag.

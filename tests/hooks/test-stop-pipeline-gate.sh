@@ -26,13 +26,18 @@ stop() { # $1=json $2..=env ; runs under PG_REPO_ROOT=$TMP unless overridden
   printf '%s' "$1" | env ZUVO_AGENT=1 PG_REPO_ROOT="$TMP" "${@:2}" bash "$HOOK" 2>&1
 }
 
-# (a) not-active + substantial + unreviewed → nudge + exit 2
+# (a) not-active + substantial + unreviewed → warn-only heads-up + exit 0 (DEFAULT)
+# The nudge prints but does NOT force a review at stop (2026-07-10: forcing a heavy multi-provider
+# review on the whole un-pushed pile after a 3-line edit was disproportionate). pre-push+CI still block push.
 out=$(stop '{"stop_hook_active": false}'); rc=$?
-if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q 'unreviewed work'; then
-  pass "(a) substantial unreviewed at Stop → nudge + exit 2 (blocks on Claude)"
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'unreviewed work'; then
+  pass "(a) substantial unreviewed at Stop → heads-up printed + exit 0 (warn-only default, no forced review)"
 else
-  bad "(a) expected nudge + exit 2 (rc=$rc, out=$out)"
+  bad "(a) expected heads-up + exit 0 default (rc=$rc, out=$out)"
 fi
+# (a2) opt-in force: ZUVO_STOP_NUDGE_EXIT=2 restores the blocking force-review behavior
+out=$(stop '{"stop_hook_active": false}' ZUVO_STOP_NUDGE_EXIT=2); rc=$?
+[ "$rc" -eq 2 ] && pass "(a2) ZUVO_STOP_NUDGE_EXIT=2 → exit 2 (force-review opt-in preserved)" || bad "(a2) force override failed (rc=$rc)"
 
 # (b) stop_hook_active:true → loop guard → exit 0
 out=$(stop '{"stop_hook_active": true}'); rc=$?
