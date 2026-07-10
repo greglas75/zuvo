@@ -160,7 +160,15 @@ from that executor's OWN workspace** (so a `--compare` baseline case gets the OL
 never the current tree's); the eval's `prompt`; its `files`; and — when the runtime
 cannot auto-capture sub-agent tool calls — an explicit `ACTION_LOG=<path>` for the
 executor to self-log to (executor.md "Action log"). Do **NOT** give it `expected_output`
-or `assertions` — the executor must not know what it is graded on.
+or `assertions` — the executor must not know what it is graded on. The dispatch prompt
+MUST also restate executor.md's HARD BOUNDARY: **no writes outside the workspace —
+in particular `$HOME/.zuvo` / `$HOME/.claude` and their append helpers**; HOME-global
+telemetry steps in the target skill are declared `[SKIPPED-FOR-ISOLATION]`, never run
+for real. The filesystem sandbox only guarantees where the executor STARTS, not where
+it can write — a 2026-07-10 run invoked `~/.zuvo/append-retro` from the sandbox,
+polluted the real global logs, and destroyed (then Time-Machine-recovered) the user's
+real `retros.log` during its own cleanup. The prohibition is part of the dispatch
+contract, not optional guidance.
 
 **Isolation (MANDATORY, fail-closed, PER-CASE).** Executors have unrestricted `Bash`, so
 isolation is enforced by WHERE they run — in a fresh, fully-INDEPENDENT copy of the repo

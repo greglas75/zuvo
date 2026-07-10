@@ -381,7 +381,7 @@ If there is genuine uncertainty after planning, present questions to the user (m
 
 In BATCH mode: skip questions, proceed with the safest default.
 
-### Approval Gate (full mode only; skipped in batch)
+### Plan Display (full mode only; skipped in batch) — NO approval pause
 
 Display the plan:
 
@@ -395,19 +395,30 @@ Test mode: [RUN_EXISTING / CHARACTERIZE_GAP / WRITE_NEW / IMPROVE_TESTS / VERIFY
 Coverage: units_total=[N] units_covered=[M] gap=[N-M]
 ```
 
-Wait for user input. If the user changes the type or plan:
+Then **proceed immediately to Phase 2, printing `[AUTO-APPROVED]`** — do NOT ask
+"Zatwierdzasz?" / "Approve this scope?" / present an options menu and wait. The user's
+invocation of `zuvo:refactor <target>` IS the approval; pausing after every plan is the
+exact friction the no-approval-gates policy removed (skills execute; only `plan-only`
+and `--dry-run` gate output). The user can always interrupt.
+
+Legitimate stops are ONLY: (a) `plan-only` mode — stop here by design; (b) the genuine-
+uncertainty questions from the section above (contradictory instructions, destructive
+ambiguity — max 4, and only when planning genuinely cannot resolve them). "Which of two
+reasonable scopes?" is NOT genuine uncertainty — pick the one that best matches the
+user's words, state the choice in one line, and proceed.
+
+If the user replies mid-run with a plan change (they interrupted or answered a genuine-
+uncertainty question):
 
 **Cosmetic change** (wording, extraction names, minor scope adjustments within same files):
 1. The orchestrator recomputes scope, extractions, and test mode inline.
 2. Sub-agents are NOT re-dispatched — their analysis remains valid.
-3. Re-display the updated plan. Wait for confirmation again.
+3. Print the updated plan and continue (no new pause).
 
 **Material change** (different type, new files added to scope, fundamentally different extraction strategy):
 1. Re-dispatch Dependency Mapper and Existing Code Scanner with updated inputs.
 2. Recompute plan incorporating new agent results.
-3. Re-display. Wait for confirmation again.
-
-Proceed only after explicit confirmation. In `plan-only` mode: stop here (do not proceed to Phase 2).
+3. Print the updated plan and continue (no new pause).
 
 ---
 
@@ -639,8 +650,20 @@ This phase OWNS all committing (Phase 4 no longer commits — it records).
 3. **If fix-now items exist:**
    a. Apply every fix-now fix.
    b. Behavior now CHANGES, so update the characterization test that pinned the OLD (buggy) behavior to assert the NEW correct behavior, and add a regression test that is **red on `REFACTOR_SHA`, green on the fix**.
-   c. Re-verify: type-check + full suite + ONE adversarial pass over the fix diff (`adversarial-review --mode code`) — must converge (no new CRITICAL).
-   d. **Commit separately:** `git commit -m "fix([scope]): [bug summary]"` (`feat`/`perf` if that fits better). NEVER fold the fix into the refactor commit — that erases the move-vs-change boundary that makes commit 1 trustworthy.
+   c. **DEMONSTRATE the red — a logical implication is not proof.** Run the NEW assertions
+      against the PRE-fix code with a real tool call and capture the failing output (e.g.
+      `git stash`/`git show REFACTOR_SHA:<file>` into a scratch copy, or a `/tmp` runner
+      importing the pre-fix module), then run them against the fixed code and capture the
+      pass. "The old test asserted +20 and passed, so -20 would have failed" is the exact
+      inference two consecutive skill-eval runs (2026-07-10) showed agents substituting for
+      the actual red run — and one of those runs even logged a self-contradictory 'RED'
+      entry. Record the proof in the CONTRACT NOW:
+      `prove.regression_red = "red@<REFACTOR_SHA7>:green@<fix-verify>:<test path>"` —
+      the commit gate BLOCKS the fix commit when fix-now items were applied but
+      `prove.regression_red` is missing/`not_run` (runs with NO fix-now items set nothing;
+      the gate keys on the disposition containing a fix).
+   d. Re-verify: type-check + full suite + ONE adversarial pass over the fix diff (`adversarial-review --mode code`) — must converge (no new CRITICAL).
+   e. **Commit separately:** `git commit -m "fix([scope]): [bug summary]"` (`feat`/`perf` if that fits better). NEVER fold the fix into the refactor commit — that erases the move-vs-change boundary that makes commit 1 trustworthy.
    Else: print `[REMEDIATION: none — no fixable bugs surfaced]`.
 4. **Decisions:** resolve per the table (ask / safe-default+log). Out-of-scope-fence items → backlog (Phase 4).
 
@@ -731,6 +754,7 @@ COMPLETION GATE CHECK
 [ ] Independent CQ Auditor (blind audit) RAN — telemetry is clean:strict or clean:degraded, NOT skipped/not_run (HARD GATE; if it could not be dispatched the verdict is BLOCKED, never PASS/WARN — CodeSift being unavailable does NOT excuse skipping it)
 [ ] Adversarial review ran on final diff
 [ ] Bug remediation (Phase 3.5): every fix-now bug fixed + tested IN THIS RUN as a separate fix commit; nothing parked by size; only out-of-scope-fence items or user-declined decisions deferred. If bugs were fixed, the run has 2 commits (refactor, then fix)
+[ ] Regression red DEMONSTRATED (only when fix-now items were applied): the new regression assertions were actually RUN against the pre-fix code with the failing output captured — not inferred from the old assertion's flip — and `prove.regression_red` recorded in the CONTRACT (the gate blocks the fix commit without it)
 [ ] Aggregate review hand-off evaluated: if 2+ sibling refactor commits this session, the `zuvo:review <range>` line is surfaced (per Aggregate Review Hand-off)
 [ ] Documentation updated if public surface changed, else explicit [DOC: N/A — internal-only] (per documentation-mandate.md)
 [ ] Run: line printed and appended to log
@@ -760,6 +784,11 @@ else
   case "$ch" in skipped|not_run|"") echo "BLOCK(unsafe): prove.characterization='$ch' — record the pin-down lock (tests green on PRE-refactor code, written the moment the suite goes green, BEFORE any move edit) in $C"; g=1 ;; esac
   case "$ba" in skipped|not_run|"") echo "BLOCK(unsafe): prove.blind_audit='$ba' — run the Independent CQ Auditor and record it in $C"; g=1 ;; esac
   case "$av" in skipped|not_run|"") echo "BLOCK(unsafe): prove.adversarial='$av' — run the adversarial review and record it in $C"; g=1 ;; esac
+  # regression-red proof required only when a fix was actually applied (disposition names a fix)
+  case "$fd" in *fix*)
+    rr=$(sed -n 's/.*"regression_red"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$C" | head -1)
+    case "$rr" in skipped|not_run|"") echo "BLOCK(unsafe): prove.regression_red='$rr' — a fix was applied (disposition='$fd'); DEMONSTRATE the regression test red on the pre-fix code (run it, capture the fail) and record it in $C"; g=1 ;; esac ;;
+  esac
   # findings parked? adversarial recorded N>0 findings (not ':preserved') but disposition unresolved
   case "$av" in *findings) case "$fd" in pending|unresolved|"") echo "BLOCK(unsafe): prove.adversarial='$av' but findings_disposition='$fd' — FIX the in-fence bugs in Phase 3.5 (or document each as out-of-fence/declined/false-positive/preserved). 'Moved verbatim' / 'infra was down' are NOT valid defers."; g=1 ;; esac ;; esac
   [ "$g" = 0 ] \

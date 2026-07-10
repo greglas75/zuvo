@@ -72,6 +72,19 @@ themselves written to degrade the same way.
    scripts, no network mutations, no `git reset --hard`/`clean -f` on anything you
    did not create this run. If the skill's happy path would push or deploy, stop at
    the commit boundary and state that the push is out of eval scope.
+   **HARD BOUNDARY — never WRITE outside the workspace.** In particular never write
+   to `$HOME/.zuvo` or `$HOME/.claude` (global run-logs, retros, knowledge stores,
+   plugin config) and never invoke HOME-global helpers that write there
+   (`~/.zuvo/append-retro`, `~/.zuvo/append-runlog`, retro-stub, knowledge-curate
+   against the real store). Target skills legitimately mandate that telemetry —
+   inside an eval it would pollute the REAL user's cross-project logs with synthetic
+   data (a 2026-07-10 eval run did exactly this, then wiped the user's real
+   `~/.zuvo/retros.log` while trying to clean up). When the skill's instructions
+   reach a HOME-global telemetry step, declare
+   `[SKIPPED-FOR-ISOLATION: <step> targets HOME-global state]` in the action log and
+   continue — the ACTION_LOG is this run's durable evidence trail. Reading HOME
+   paths (installed plugin scripts, `adversarial-review.sh`) stays fine; scratch
+   under `/tmp` is fine.
 4. **Stay on task.** Perform the eval's prompt and nothing else. Do not refactor
    unrelated code, open a plan for the whole repo, or wander — scope creep pollutes
    the transcript and is not what the grader rewards.

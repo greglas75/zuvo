@@ -34,7 +34,7 @@ Where `{target-hash}` is the first 8 chars of SHA-1 of the relative target path 
   "plan": {},
   "test_mode": "",
   "test_audit_before": { "test_file": null, "q7": 0, "q11": 0, "q13": 0, "units_total": 0, "units_covered": 0, "uncovered_units": [] },
-  "prove": { "characterization": "not_run", "blind_audit": "not_run", "adversarial": "not_run", "findings_disposition": "pending" },
+  "prove": { "characterization": "not_run", "blind_audit": "not_run", "adversarial": "not_run", "regression_red": "not_run", "findings_disposition": "pending" },
   "progress": []
 }
 ```

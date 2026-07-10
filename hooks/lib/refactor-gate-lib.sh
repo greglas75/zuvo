@@ -65,6 +65,16 @@ refactor_gate_check() {
     case "$ba" in skipped|not_run|"") echo "BLOCK: refactor CONTRACT prove.blind_audit='$ba' not satisfied [$c]"; blocked=1 ;; esac
     case "$av" in skipped|not_run|"") echo "BLOCK: refactor CONTRACT prove.adversarial='$av' not satisfied [$c]"; blocked=1 ;; esac
     case "$ch" in skipped|not_run|"") echo "BLOCK: refactor CONTRACT prove.characterization='$ch' not satisfied — record the pin-down lock (tests green on PRE-refactor code) when the suite goes green, BEFORE the move [$c]"; blocked=1 ;; esac
+    # regression-red proof: required ONLY when Phase 3.5 actually APPLIED a fix (the
+    # disposition names a fix). Two consecutive skill-eval runs (2026-07-10) showed agents
+    # substituting "the flip logically implies red" for an actual red run — gate the artifact.
+    fd=$(sed -n 's/.*"findings_disposition"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$c" | head -1)
+    case "$fd" in
+      *fix*)
+        rr=$(sed -n 's/.*"regression_red"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$c" | head -1)
+        case "$rr" in skipped|not_run|"") echo "BLOCK: refactor CONTRACT prove.regression_red='$rr' not satisfied — findings_disposition='$fd' says a fix was applied, so the regression test's RED on the pre-fix code must be DEMONSTRATED (run it, capture the fail) and recorded [$c]"; blocked=1 ;; esac
+        ;;
+    esac
   done
   return $blocked
 }

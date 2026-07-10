@@ -26,9 +26,12 @@ exec "\$G" pre-push
 H
   chmod +x .git/hooks/pre-commit .git/hooks/pre-push; }
 contract(){ # $1 file  $2 blind_audit  $3 adversarial  [$4 characterization (default green)]
+  #           [$5 findings_disposition (default none)]  [$6 regression_red (omitted when empty)]
+  local rr=""
+  [ -n "${6:-}" ] && rr="\"regression_red\":\"$6\", "
   cat > zuvo/contracts/refactor-aaaa1111.json <<J
 { "version":3, "file":"$1", "stage":"PHASE-3", "scope_fence":["$1"],
-  "prove": { "characterization":"${4:-green:aaaa111:2u}", "blind_audit":"$2", "adversarial":"$3", "findings_disposition":"none" } }
+  "prove": { "characterization":"${4:-green:aaaa111:2u}", ${rr}"blind_audit":"$2", "adversarial":"$3", "findings_disposition":"${5:-none}" } }
 J
 }
 trycommit(){ echo "x$RANDOM" >> "$1"; git add "$1"; git commit -q -m t >/dev/null 2>&1; echo $?; }
@@ -62,6 +65,20 @@ J
 [ "$(ZUVO_AI_RUN=1 bash -c "$(declare -f trycommit); trycommit app.ts")" -ne 0 ] && ok "BLOCK (characterization field absent)" || bad "BLOCK characterization absent"
 contract app.ts clean:strict clean "green:abc1234:4u"
 [ "$(ZUVO_AI_RUN=1 bash -c "$(declare -f trycommit); trycommit app.ts")" -eq 0 ] && ok "PASS (characterization recorded)" || bad "PASS characterization recorded"
+
+echo "=== regression-red gated when fix-now items applied (eval finding 2026-07-10: red implied, never demonstrated) ==="
+# disposition says a fix was applied but regression_red missing -> BLOCK
+contract app.ts clean:strict 3findings "green:abc1234:4u" "fixed:2/backlog:4" ""
+[ "$(ZUVO_AI_RUN=1 bash -c "$(declare -f trycommit); trycommit app.ts")" -ne 0 ] && ok "BLOCK (disposition has fix, regression_red absent)" || bad "BLOCK regression_red absent"
+# disposition has fix and regression_red=not_run -> BLOCK
+contract app.ts clean:strict 3findings "green:abc1234:4u" "1fixed,1backlogged" "not_run"
+[ "$(ZUVO_AI_RUN=1 bash -c "$(declare -f trycommit); trycommit app.ts")" -ne 0 ] && ok "BLOCK (regression_red=not_run)" || bad "BLOCK regression_red=not_run"
+# disposition has fix and regression_red recorded -> PASS
+contract app.ts clean:strict 3findings "green:abc1234:4u" "fixed:2/backlog:4" "red@abc1234:green@def5678:src/x.test.ts"
+[ "$(ZUVO_AI_RUN=1 bash -c "$(declare -f trycommit); trycommit app.ts")" -eq 0 ] && ok "PASS (regression_red recorded)" || bad "PASS regression_red recorded"
+# NO fix applied (disposition=backlogged only) and regression_red absent -> PASS (field not required)
+contract app.ts clean:strict 3findings "green:abc1234:4u" "backlogged:3" ""
+[ "$(ZUVO_AI_RUN=1 bash -c "$(declare -f trycommit); trycommit app.ts")" -eq 0 ] && ok "PASS (no fix applied, regression_red not required)" || bad "PASS no-fix regression_red optional"
 
 echo "=== cross-harness: lib runs under POSIX sh ==="
 sh -c ". '$LIB'; type refactor_gate_check >/dev/null 2>&1" && ok "lib loads under /bin/sh" || bad "lib /bin/sh"
