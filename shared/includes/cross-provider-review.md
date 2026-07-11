@@ -10,9 +10,17 @@ The same model family shares systematic blind spots. Code written by Claude and 
 
 The script `adversarial-review` auto-detects the best available provider and runs a hostile review:
 
-1. **Gemini CLI** (free, recommended) — different model family, zero cost
+1. **agy** (Antigravity CLI) — Google's Gemini 3.x via the paid Antigravity subscription. This is the
+   sanctioned Gemini channel; the free `gemini` CLI is DEAD for individuals (Google returns
+   `IneligibleTierError: UNSUPPORTED_CLIENT` → "migrate to Antigravity"). Install:
+   `curl -fsSL https://antigravity.google/cli/install.sh | bash`, then sign in via the Antigravity app.
 2. **Codex CLI** (OpenAI) — GPT-based, needs ChatGPT subscription or API key
-3. **Ollama** (local) — runs Qwen2.5-Coder locally, zero cost, needs GPU
+3. **claude** (Anthropic) — kept as a cross-model reviewer (flips Opus↔Sonnet on a Claude host)
+4. **cursor-agent** (Cursor) — needs `cursor-agent login` or `CURSOR_API_KEY`
+5. **gemini-api** (curl) — only with a billing-enabled `GEMINI_API_KEY` (fallback where agy is absent)
+
+A genuine cross-model pass needs ≥2 DIFFERENT vendors. Working headless set as of 2026-07-11:
+**agy (Google) + codex (OpenAI) + claude (Anthropic)**.
 
 The script outputs structured findings with severity, file:line, and suggested fixes.
 
@@ -113,15 +121,21 @@ If no cross-provider tool is available:
 npm install -g @openai/codex
 codex    # first run: login with ChatGPT
 
-# Alternative: Gemini CLI (free)
-npm install -g @google/gemini-cli
-gemini   # first run: login with Google account
+# Google Gemini: agy (Antigravity CLI) — the paid, WORKING channel.
+# The free @google/gemini-cli is dead for individuals (IneligibleTierError: UNSUPPORTED_CLIENT),
+# so do NOT rely on it — Google forces the Antigravity suite.
+curl -fsSL https://antigravity.google/cli/install.sh | bash   # installs ~/.local/bin/agy
+# then sign in via the Antigravity app; verify: agy -p "reply OK" --dangerously-skip-permissions
 
-# Alternative: Claude CLI (comes with Claude Code)
-# Already installed if you use Claude Code.
+# Claude CLI (comes with Claude Code) — already installed if you use Claude Code.
 
-# Alternative: Gemini API (free tier, 250 req/day)
+# Cursor: cursor-agent (login required)
+curl https://cursor.com/install -fsS | bash
+cursor-agent login          # or: export CURSOR_API_KEY=<key>
+
+# Fallback: Gemini API (curl) — needs a billing-enabled key (free tier may hit IneligibleTier on 3.x-pro)
 export GEMINI_API_KEY=<key from aistudio.google.com>
+# export ZUVO_GEMINI_API_MODEL=gemini-2.0-flash   # if the pro-preview model is tier-blocked
 ```
 
 ## JSON Status Enum (2026-05-17 — adversarial-robustness A1+A2)

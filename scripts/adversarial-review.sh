@@ -115,7 +115,12 @@ Input:
 Environment variables:
   ZUVO_REVIEW_PROVIDER     Force provider
   ZUVO_REVIEW_TIMEOUT      Per-provider timeout in seconds (default: 240, 360 for article/spec/plan/audit)
-  ZUVO_GEMINI_MODEL        Gemini CLI model (default: gemini-3.1-pro-preview)
+  ZUVO_AGY_MODEL           agy (Antigravity CLI) model — the sanctioned paid Gemini channel.
+                           Display name from 'agy models' (default: "Gemini 3.1 Pro (High)";
+                           e.g. "Gemini 3.5 Flash (High)" for speed). Preferred over the gemini CLI,
+                           which Google disabled for individuals (IneligibleTierError).
+  ZUVO_GEMINI_MODEL        gemini CLI model (default: gemini-3.1-pro-preview) — legacy fallback; the
+                           OAuth CLI is dead for individuals, use agy or GEMINI_API_KEY instead.
   ZUVO_GEMINI_API_MODEL    Gemini API model (default: gemini-3.1-pro-preview)
   GEMINI_API_KEY           Required for gemini-api provider
   CODESTRAL_API_KEY        Required for codestral provider (manual: --provider codestral)
@@ -537,11 +542,12 @@ detect_host_platform() {
     esac
   fi
 
-  # Antigravity (Google IDE): VS Code fork with Antigravity in app paths
+  # Antigravity (Google IDE): VS Code fork with Antigravity in app paths. The host's own model is
+  # Gemini via agy — exclude the agy provider so an Antigravity host does not self-review.
   if [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"Antigravity"* ]] \
      || [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"antigravity"* ]] \
      || [[ -n "${ANTIGRAVITY_SESSION_ID:-}" ]]; then
-    echo "gemini" && return
+    echo "agy" && return
   fi
 
   # Cursor: VS Code fork with Cursor in app paths
@@ -595,8 +601,16 @@ detect_providers() {
   # CROSS-MODEL codex reviewer still runs (mirrors keeping claude with the opposite model).
   [[ -n "$codex_bin" && "${HOST_PROVIDER:-}" == "codex-5.3" ]] && providers="$providers codex-5.4"
 
-  # 2. gemini CLI (10-15s, unique findings)
-  command -v gemini &>/dev/null && providers="$providers gemini"
+  # 2. Google Gemini — prefer agy (Antigravity CLI, the SANCTIONED paid channel) over the free
+  #    gemini CLI. Google killed the gemini CLI for individuals (IneligibleTierError: UNSUPPORTED_CLIENT
+  #    -> "migrate to Antigravity"), so `command -v gemini` = installed-but-dead. agy authenticates via
+  #    the paid Antigravity subscription and reaches Gemini 3.x headless (agy -p). Fall back to the
+  #    gemini CLI only where agy is not installed (older hosts) — a liveness probe still skips it if dead.
+  if command -v agy &>/dev/null; then
+    providers="$providers agy"
+  elif command -v gemini &>/dev/null; then
+    providers="$providers gemini"
+  fi
 
   # 3. cursor-agent — fast fallback (~11s), redundancy for codex
   command -v cursor-agent &>/dev/null && providers="$providers cursor-agent"
@@ -808,6 +822,33 @@ run_gemini() {
   printf '%s\n' "$result"
 }
 
+run_agy() {
+  # Antigravity CLI (agy) — Google's SANCTIONED headless Gemini channel via the paid Antigravity
+  # auth. Replaces the free `gemini` CLI, which Google killed for individuals (IneligibleTierError:
+  # UNSUPPORTED_CLIENT -> "migrate to the Antigravity suite of products"). Two invocation facts,
+  # both verified on 2026-07-11:
+  #   * the prompt is passed as an ARGUMENT (`agy -p "$PROMPT"`), NOT via stdin — piping stdin makes
+  #     agy answer an empty/default prompt (it hallucinated instead of echoing the test string).
+  #   * --model takes the DISPLAY name from `agy models` (e.g. "Gemini 3.1 Pro (High)").
+  # --dangerously-skip-permissions is required so a headless run never blocks on a tool-permission
+  # prompt. Override the model with ZUVO_AGY_MODEL (e.g. "Gemini 3.5 Flash (High)" for speed).
+  local model="${ZUVO_AGY_MODEL:-Gemini 3.1 Pro (High)}"
+  local err_file="$JSON_TMPDIR/err_agy.txt"
+  local result status=0
+  result=$(timeout "$PROVIDER_TIMEOUT" agy -p "$REVIEW_PROMPT" \
+    --model "$model" --dangerously-skip-permissions 2>"$err_file") || status=$?
+  if [[ $status -ne 0 || -z "$result" ]]; then
+    if [[ $status -eq 124 ]]; then
+      echo "  WARN: agy timed out after ${PROVIDER_TIMEOUT}s" >&2
+    else
+      echo "  WARN: agy failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
+    fi
+    [[ $status -eq 0 ]] && status=1
+    return "$status"
+  fi
+  printf '%s\n' "$result"
+}
+
 run_codestral() {
   # Codestral API — Mistral's coding model, OpenAI-compatible chat endpoint
   [[ -z "${CODESTRAL_API_KEY:-}" ]] && return 1
@@ -954,6 +995,7 @@ provider_model() {
   case "$1" in
     codex-5.4)    echo "gpt-5.4" ;;
     codex-5.3)    echo "gpt-5.5" ;;
+    agy)          echo "${ZUVO_AGY_MODEL:-Gemini 3.1 Pro (High)}" ;;
     gemini)       echo "${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}" ;;
     gemini-api)   echo "${ZUVO_GEMINI_API_MODEL:-gemini-3.1-pro-preview}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
@@ -987,6 +1029,7 @@ dispatch_provider() {
     codex-5.4)     run_codex_54 ;;
     codex-5.3)     run_codex_53 ;;
     cursor-agent)  run_cursor_agent ;;
+    agy)           run_agy ;;
     gemini)        run_gemini ;;
     claude)        run_claude ;;
     gemini-api)    run_gemini_api ;;  # manual only: --provider gemini-api
