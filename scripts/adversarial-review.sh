@@ -116,9 +116,11 @@ Environment variables:
   ZUVO_REVIEW_PROVIDER     Force provider
   ZUVO_REVIEW_TIMEOUT      Per-provider timeout in seconds (default: 240, 360 for article/spec/plan/audit)
   ZUVO_AGY_MODEL           agy (Antigravity CLI) model — the sanctioned paid Gemini channel.
-                           Display name from 'agy models' (default: "Gemini 3.1 Pro (High)";
-                           e.g. "Gemini 3.5 Flash (High)" for speed). Preferred over the gemini CLI,
+                           Display name from 'agy models' (default: "Gemini 3.5 Flash (High)";
+                           e.g. "Gemini 3.1 Pro (High)" for max depth). Preferred over the gemini CLI,
                            which Google disabled for individuals (IneligibleTierError).
+  ZUVO_CURSOR_MODEL        cursor-agent model (default: composer-2.5-fast; id from 'cursor-agent models')
+  ZUVO_CLAUDE_REVIEWER_MODEL  claude reviewer's Sonnet model when the author is Opus (default: claude-sonnet-5)
   ZUVO_GEMINI_MODEL        gemini CLI model (default: gemini-3.1-pro-preview) — legacy fallback; the
                            OAuth CLI is dead for individuals, use agy or GEMINI_API_KEY instead.
   ZUVO_GEMINI_API_MODEL    Gemini API model (default: gemini-3.1-pro-preview)
@@ -758,7 +760,7 @@ run_claude() {
     # CLAUDE_MODEL alias with no recognized `opus` token (a custom/snapshot id). Otherwise a Sonnet
     # host with such an alias would silently get Sonnet-reviews-Sonnet (caught in review, Point 2c).
     [[ "${CLAUDE_MODEL:-}" != *opus* ]] && echo "  NOTE: CLAUDE_MODEL='${CLAUDE_MODEL:-unset}' has no recognized Opus token — assuming Opus author, reviewing with Sonnet. Export CLAUDE_MODEL=<host-model> to guarantee a cross-model check (a Sonnet author here would be Sonnet-reviews-Sonnet)." >&2
-    model="claude-sonnet-4-6"
+    model="${ZUVO_CLAUDE_REVIEWER_MODEL:-claude-sonnet-5}"
   fi
 
   local err_file="$JSON_TMPDIR/err_claude.txt"
@@ -777,11 +779,14 @@ run_claude() {
 }
 
 run_cursor_agent() {
-  # --workspace /tmp avoids loading project context (~3.5K tokens saved)
+  # --workspace /tmp avoids loading project context (~3.5K tokens saved).
+  # --model composer-2.5-fast: Cursor's own fast Composer model (id from `cursor-agent models`;
+  # "Composer 2.5 Fast (current)"). Override with ZUVO_CURSOR_MODEL (e.g. gpt-5.5-high-fast).
+  local model="${ZUVO_CURSOR_MODEL:-composer-2.5-fast}"
   local err_file="$JSON_TMPDIR/err_cursor-agent.txt"
   local status=0
   printf '%s' "$REVIEW_PROMPT" \
-    | timeout "$PROVIDER_TIMEOUT" cursor-agent -p --mode ask --trust --workspace /tmp 2>"$err_file" \
+    | timeout "$PROVIDER_TIMEOUT" cursor-agent -p --model "$model" --mode ask --trust --workspace /tmp 2>"$err_file" \
     || status=$?
   if [[ $status -ne 0 ]]; then
     if [[ $status -eq 124 ]]; then
@@ -831,8 +836,8 @@ run_agy() {
   #     agy answer an empty/default prompt (it hallucinated instead of echoing the test string).
   #   * --model takes the DISPLAY name from `agy models` (e.g. "Gemini 3.1 Pro (High)").
   # --dangerously-skip-permissions is required so a headless run never blocks on a tool-permission
-  # prompt. Override the model with ZUVO_AGY_MODEL (e.g. "Gemini 3.5 Flash (High)" for speed).
-  local model="${ZUVO_AGY_MODEL:-Gemini 3.1 Pro (High)}"
+  # prompt. Override the model with ZUVO_AGY_MODEL (e.g. "Gemini 3.1 Pro (High)" for max depth).
+  local model="${ZUVO_AGY_MODEL:-Gemini 3.5 Flash (High)}"
   local err_file="$JSON_TMPDIR/err_agy.txt"
   local result status=0
   result=$(timeout "$PROVIDER_TIMEOUT" agy -p "$REVIEW_PROMPT" \
@@ -995,12 +1000,12 @@ provider_model() {
   case "$1" in
     codex-5.4)    echo "gpt-5.4" ;;
     codex-5.3)    echo "gpt-5.5" ;;
-    agy)          echo "${ZUVO_AGY_MODEL:-Gemini 3.1 Pro (High)}" ;;
+    agy)          echo "${ZUVO_AGY_MODEL:-Gemini 3.5 Flash (High)}" ;;
     gemini)       echo "${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}" ;;
     gemini-api)   echo "${ZUVO_GEMINI_API_MODEL:-gemini-3.1-pro-preview}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
-    cursor-agent) echo "cursor" ;;
-    claude)       [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]] && echo "claude-opus-4-8" || echo "claude-sonnet-4-6" ;;
+    cursor-agent) echo "${ZUVO_CURSOR_MODEL:-composer-2.5-fast}" ;;
+    claude)       [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]] && echo "claude-opus-4-8" || echo "${ZUVO_CLAUDE_REVIEWER_MODEL:-claude-sonnet-5}" ;;
     *)            echo "unknown" ;;
   esac
 }
