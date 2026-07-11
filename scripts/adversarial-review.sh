@@ -603,28 +603,31 @@ detect_providers() {
   # CROSS-MODEL codex reviewer still runs (mirrors keeping claude with the opposite model).
   [[ -n "$codex_bin" && "${HOST_PROVIDER:-}" == "codex-5.3" ]] && providers="$providers codex-5.4"
 
-  # 2. Google Gemini — prefer agy (Antigravity CLI, the SANCTIONED paid channel) over the free
-  #    gemini CLI. Google killed the gemini CLI for individuals (IneligibleTierError: UNSUPPORTED_CLIENT
-  #    -> "migrate to Antigravity"), so `command -v gemini` = installed-but-dead. agy authenticates via
-  #    the paid Antigravity subscription and reaches Gemini 3.x headless (agy -p). Fall back to the
-  #    gemini CLI only where agy is not installed (older hosts) — a liveness probe still skips it if dead.
-  if command -v agy &>/dev/null; then
-    providers="$providers agy"
-  elif command -v gemini &>/dev/null; then
-    providers="$providers gemini"
+  # 2. Google Gemini — strict priority: agy > gemini-api > the free gemini CLI. Google killed the
+  #    gemini CLI for individuals (IneligibleTierError: UNSUPPORTED_CLIENT -> "migrate to Antigravity"),
+  #    so `command -v gemini` = installed-but-DEAD. agy (Antigravity, paid) reaches Gemini 3.x headless;
+  #    a billing-enabled GEMINI_API_KEY reaches it via curl. The dead CLI is the LAST resort so a host
+  #    that still has it installed does NOT get trapped on it while a working key sits unused (the old
+  #    `!command -v gemini` guard on gemini-api structurally blocked the working fallback — fixed
+  #    2026-07-11 after the docs audit flagged the trap).
+  #    Self-review guard: on a Gemini/Antigravity host (HOST_PROVIDER=agy) skip the ENTIRE Gemini
+  #    family — excluding only the `agy` provider left the gemini-api/gemini lanes open, so a Gemini
+  #    host could still review itself through the API (docs audit 2026-07-11).
+  if [[ "${HOST_PROVIDER:-}" != "agy" ]]; then
+    if command -v agy &>/dev/null; then
+      providers="$providers agy"
+    elif [[ -n "${GEMINI_API_KEY:-}" ]]; then
+      providers="$providers gemini-api"
+    elif command -v gemini &>/dev/null; then
+      providers="$providers gemini"
+    fi
   fi
 
   # 3. cursor-agent — fast fallback (~11s), redundancy for codex
   command -v cursor-agent &>/dev/null && providers="$providers cursor-agent"
 
-  # 4. claude — opposite model, different vendor (Anthropic, 10-30s)
+  # 4. claude — opposite-model reviewer (Anthropic; run_claude flips Opus<->Sonnet, 10-40s)
   command -v claude &>/dev/null && providers="$providers claude"
-
-  # 5. gemini-api — fast API fallback (2-5s curl), auto-enabled when key is set
-  #    and gemini CLI is NOT available (avoids redundancy)
-  if [[ -n "${GEMINI_API_KEY:-}" ]] && ! command -v gemini &>/dev/null; then
-    providers="$providers gemini-api"
-  fi
 
   # Manual-only providers (use --provider <name>):
   # codex-5.4 — slower, overlaps with 5.3
