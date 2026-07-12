@@ -854,6 +854,17 @@ run_agy() {
     [[ $status -eq 0 ]] && status=1
     return "$status"
   fi
+  # agy can exit 0 while printing a quota/auth error AS its output (verified 2026-07-12:
+  # "Error: Individual quota reached. Please upgrade your subscription…"; also "Authentication
+  # required"). The status/empty check above does NOT catch that (exit 0, non-empty), so without
+  # this guard a quota'd or de-authed agy would pass its error string downstream as a CLEAN review
+  # with zero findings — a false-clean adversarial pass. Treat an error-shaped result as a failure
+  # so agy is WARNed + skipped (honest coverage reduction), never counted as a passing reviewer.
+  case "$result" in
+    Error:*|*"quota reached"*|*"Please upgrade your subscription"*|*"Authentication required"*|*"IneligibleTier"*|*"Please run 'agy login'"*|*"Please sign in"*)
+      echo "  WARN: agy unusable (quota/auth), not a review: $(printf '%s' "$result" | head -1 | head -c 100 | tr '\n' ' ')" >&2
+      return 1 ;;
+  esac
   printf '%s\n' "$result"
 }
 
