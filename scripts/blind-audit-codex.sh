@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+# Central model registry (fail-safe: inline `:-<id>` fallbacks below keep this working if missing).
+_zuvo_reg="$(dirname "${BASH_SOURCE[0]:-$0}")/../shared/includes/model-registry.sh"
+[ -f "$_zuvo_reg" ] && . "$_zuvo_reg"
+
 PROTOCOL_FILE=""
 PRODUCTION_FILE=""
 TEST_FILE=""
@@ -129,8 +133,8 @@ if [[ -z "$MODEL" ]]; then
   # Use ZUVO_*_MODEL env vars (explicit overrides), NOT host env vars like
   # GEMINI_MODEL or CLAUDE_MODEL which reflect the WRITER model, not the auditor.
   case "$PROVIDER" in
-    codex) MODEL="${ZUVO_CODEX_MODEL:-gpt-5.5}" ;;
-    gemini) MODEL="${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}" ;;
+    codex) MODEL="${ZUVO_CODEX_MODEL:-${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.5}}" ;;
+    gemini) MODEL="${ZUVO_GEMINI_MODEL:-${ZUVO_MODEL_GEMINI_API:-gemini-3.1-pro-preview}}" ;;
     claude) MODEL="${ZUVO_CLAUDE_AUDIT_MODEL:-opus}" ;;
   esac
 fi

@@ -126,8 +126,8 @@ If any core file is missing, proceed in degraded mode and note it in the BENCHMA
 ### Model Selection (opposite-model rule)
 
 The judge must be a different model than the one running this skill to reduce self-serving bias:
-- If `$CLAUDE_MODEL` contains "opus" → use `claude-sonnet-4-6`
-- Otherwise (sonnet, haiku, or unset) → use `claude-opus-4-6`
+- If `$CLAUDE_MODEL` contains "opus" → use `claude-sonnet-5`
+- Otherwise (sonnet, haiku, or unset) → use `claude-opus-4-8`
 
 This is the **opposite** model from the one executing this skill.
 
@@ -285,7 +285,7 @@ The JSON file must conform to the schema version `"2.0"` defined in `../../share
   "scored": ["claude", "gemini", "codex-fast"],
   "leaderboard": [...],
   "scorecards": {...},
-  "meta_judge_model": "claude-opus-4-6",
+  "meta_judge_model": "claude-opus-4-8",
   "judge_presentation_order": ["gemini", "claude", "codex-fast"],
   "judge_input_truncated": false
 }

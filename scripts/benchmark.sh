@@ -36,6 +36,11 @@ set -euo pipefail
 
 BENCHMARK_VERSION="2.0"
 
+# Central model registry — single source of truth for concrete model ids (fail-safe: inline
+# `:-<id>` fallbacks below keep the runner working if the registry is ever missing).
+_zuvo_reg="$(dirname "${BASH_SOURCE[0]:-$0}")/../shared/includes/model-registry.sh"
+[ -f "$_zuvo_reg" ] && . "$_zuvo_reg"
+
 # ─── Argument parsing ───────────────────────────────────────────
 
 MODE="default"
@@ -217,24 +222,27 @@ run_codex_fast() {
   # explicitly (danger-full-access + never) instead of the old read-only sandbox.
   [[ -f "$real_home/auth.json" ]] && cp "$real_home/auth.json" "$tmp_home/"
   {
-    printf 'model = "gpt-5.4"\n'
+    printf 'model = "%s"\n' "${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}"
     printf 'sandbox_mode = "danger-full-access"\n'
     printf 'approval_policy = "never"\n'
   } > "$tmp_home/config.toml"
 
   local err_file="$JSON_TMPDIR/err_codex-fast.txt"
+  # --skip-git-repo-check: the isolated CODEX_HOME has no trusted-directories list, so `codex exec`
+  # otherwise dies with "Not inside a trusted directory" regardless of CWD (same bug fixed in
+  # adversarial-review.sh). danger-full-access is already set, so the trust gate adds nothing.
   printf '%s' "$TASK_PROMPT" \
     | CODEX_HOME="$tmp_home" timeout "$PROVIDER_TIMEOUT" \
-      "$codex_cmd" exec 2>"$err_file"
+      "$codex_cmd" exec --skip-git-repo-check 2>"$err_file"
   # Exit code propagates: 0=success, 124=timeout, other=error
 }
 
 run_claude() {
   local model
   if [[ "${CLAUDE_MODEL:-}" == *opus* ]]; then
-    model="claude-sonnet-4-6"
+    model="${ZUVO_MODEL_CLAUDE_SONNET:-claude-sonnet-5}"   # opus author -> sonnet reviewer (was stale claude-sonnet-4-6)
   else
-    model="claude-opus-4-6"
+    model="${ZUVO_MODEL_CLAUDE_OPUS:-claude-opus-4-8}"     # sonnet author -> opus reviewer (was stale claude-opus-4-6)
   fi
 
   local err_file="$JSON_TMPDIR/err_claude.txt"

@@ -2,6 +2,11 @@
 
 set -euo pipefail
 
+# NOTE: this file is an explicit writer->reviewer ROUTING TABLE keyed on concrete model ids
+# (case patterns), plus Antigravity-IDE model ids (gemini-3.1-pro-low/high — a different namespace
+# than agy's display names). It is intentionally NOT wired to shared/includes/model-registry.sh:
+# the registry is for "which model a provider DEFAULTS to", this is a mapping. Bump ids here directly.
+
 PLATFORM_OVERRIDE=""
 WRITER_OVERRIDE=""
 

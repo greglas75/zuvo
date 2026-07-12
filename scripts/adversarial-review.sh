@@ -23,6 +23,11 @@ START_TIME=$(date +%s)
 
 # ─── Configuration ──────────────────────────────────────────────
 
+# Central model registry — single source of truth for concrete model ids (agy/codex/claude/cursor/
+# gemini). Sourced fail-safe: if it is missing, every usage below keeps an inline `:-<id>` fallback.
+_zuvo_reg="$(dirname "${BASH_SOURCE[0]:-$0}")/../shared/includes/model-registry.sh"
+[ -f "$_zuvo_reg" ] && . "$_zuvo_reg"
+
 GEMINI_MODEL="${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}"
 
 # ─── Argument parsing ───────────────────────────────────────────
@@ -748,8 +753,8 @@ run_codex() {
   fi
 }
 
-run_codex_54() { run_codex "gpt-5.4"        "codex-5.4"; }
-run_codex_53() { run_codex "gpt-5.5"  "codex-5.3"; }
+run_codex_54() { run_codex "${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}"     "codex-5.4"; }
+run_codex_53() { run_codex "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.5}" "codex-5.3"; }
 
 run_claude() {
   local model
@@ -758,7 +763,7 @@ run_claude() {
   # default to Sonnet (correct for the common Opus author), and only flip to Opus when the host
   # is explicitly Sonnet. This way an unset env never silently degrades to Opus-reviews-Opus.
   if [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]]; then
-    model="claude-opus-4-8"
+    model="${ZUVO_MODEL_CLAUDE_OPUS:-claude-opus-4-8}"
   else
     # CLAUDE_MODEL unset → assume the common Opus author and review with Sonnet. This is a
     # heuristic, not proof: a Sonnet author with CLAUDE_MODEL unset would get Sonnet-reviews-Sonnet.
@@ -768,7 +773,7 @@ run_claude() {
     # CLAUDE_MODEL alias with no recognized `opus` token (a custom/snapshot id). Otherwise a Sonnet
     # host with such an alias would silently get Sonnet-reviews-Sonnet (caught in review, Point 2c).
     [[ "${CLAUDE_MODEL:-}" != *opus* ]] && echo "  NOTE: CLAUDE_MODEL='${CLAUDE_MODEL:-unset}' has no recognized Opus token — assuming Opus author, reviewing with Sonnet. Export CLAUDE_MODEL=<host-model> to guarantee a cross-model check (a Sonnet author here would be Sonnet-reviews-Sonnet)." >&2
-    model="${ZUVO_CLAUDE_REVIEWER_MODEL:-claude-sonnet-5}"
+    model="${ZUVO_CLAUDE_REVIEWER_MODEL:-${ZUVO_MODEL_CLAUDE_SONNET:-claude-sonnet-5}}"
   fi
 
   local err_file="$JSON_TMPDIR/err_claude.txt"
@@ -851,8 +856,9 @@ run_agy() {
   #     agy answer an empty/default prompt (it hallucinated instead of echoing the test string).
   #   * --model takes the DISPLAY name from `agy models` (e.g. "Gemini 3.1 Pro (High)").
   # --dangerously-skip-permissions is required so a headless run never blocks on a tool-permission
-  # prompt. Override the model with ZUVO_AGY_MODEL (e.g. "Gemini 3.1 Pro (High)" for max depth).
-  local model="${ZUVO_AGY_MODEL:-Gemini 3.5 Flash (High)}"
+  # prompt. Override the model with ZUVO_AGY_MODEL (e.g. "Gemini 3.1 Pro (High)" for max depth);
+  # default comes from the central model registry (ZUVO_MODEL_AGY).
+  local model="${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.5 Flash (High)}}"
   local err_file="$JSON_TMPDIR/err_agy.txt"
   local result status=0
   result=$(timeout "$PROVIDER_TIMEOUT" agy -p "$REVIEW_PROMPT" \
@@ -1024,14 +1030,14 @@ fi
 
 provider_model() {
   case "$1" in
-    codex-5.4)    echo "gpt-5.4" ;;
-    codex-5.3)    echo "gpt-5.5" ;;
-    agy)          echo "${ZUVO_AGY_MODEL:-Gemini 3.5 Flash (High)}" ;;
+    codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}" ;;
+    codex-5.3)    echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.5}" ;;
+    agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.5 Flash (High)}}" ;;
     gemini)       echo "${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}" ;;
-    gemini-api)   echo "${ZUVO_GEMINI_API_MODEL:-gemini-3.1-pro-preview}" ;;
+    gemini-api)   echo "${ZUVO_GEMINI_API_MODEL:-${ZUVO_MODEL_GEMINI_API:-gemini-3.1-pro-preview}}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
-    cursor-agent) echo "${ZUVO_CURSOR_MODEL:-composer-2.5-fast}" ;;
-    claude)       [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]] && echo "claude-opus-4-8" || echo "${ZUVO_CLAUDE_REVIEWER_MODEL:-claude-sonnet-5}" ;;
+    cursor-agent) echo "${ZUVO_CURSOR_MODEL:-${ZUVO_MODEL_CURSOR:-composer-2.5-fast}}" ;;
+    claude)       [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]] && echo "${ZUVO_MODEL_CLAUDE_OPUS:-claude-opus-4-8}" || echo "${ZUVO_CLAUDE_REVIEWER_MODEL:-${ZUVO_MODEL_CLAUDE_SONNET:-claude-sonnet-5}}" ;;
     *)            echo "unknown" ;;
   esac
 }
