@@ -27,14 +27,14 @@
     {
       "id": 2,
       "prompt": "Run a code-quality audit on src/lib/money.ts and give me its CQ tier.",
-      "expected_output": "The audit recognizes src/lib/money.ts as clean, compliant code and gives it a passing tier (A or B) with no critical CQ-gate failure. It does NOT fabricate an empty-catch, missing-validation, or god-function finding: both functions are small, pure, fully typed, validate their inputs (throwing RangeError), and use a named constant instead of a magic number. Any observation stays at NIT level. The audit writes a tiered per-file report to zuvo/audits/ and modifies no source file — precision, not hallucinated defects.",
+      "expected_output": "The audit recognizes src/lib/money.ts as clean, compliant code and gives it a passing tier (A or B) with no critical CQ-gate failure. It does NOT fabricate an empty-catch, missing-validation, or god-function finding: both functions are small, pure, fully typed, validate their inputs (throwing RangeError), and use a named constant instead of a magic number. Any observation stays at NIT level. The audit writes a tiered per-file report recording money.ts's tier to zuvo/audits/ and modifies no source file — precision, not hallucinated defects.",
       "files": [
         "src/lib/money.ts"
       ],
       "assertions": [
         "The audit records a passing tier (A or B) for src/lib/money.ts and records no critical CQ-gate failure against it.",
         "The audit records no empty-catch, missing-input-validation, or god-function finding against money.ts — its guarded, small, fully-typed functions are recognized as compliant.",
-        "The audit writes a tiered per-file CQ report in which each reported finding cites a file:line that resolves in the fixture, and it modifies no source file."
+        "The audit writes a tiered per-file CQ report to zuvo/audits/ recording money.ts's tier, and it modifies no source file."
       ],
       "fixtures": [
         {

@@ -74,17 +74,23 @@ themselves written to degrade the same way.
    the commit boundary and state that the push is out of eval scope.
    **HARD BOUNDARY — never WRITE outside the workspace.** In particular never write
    to `$HOME/.zuvo` or `$HOME/.claude` (global run-logs, retros, knowledge stores,
-   plugin config) and never invoke HOME-global helpers that write there
-   (`~/.zuvo/append-retro`, `~/.zuvo/append-runlog`, retro-stub, knowledge-curate
-   against the real store). Target skills legitimately mandate that telemetry —
-   inside an eval it would pollute the REAL user's cross-project logs with synthetic
-   data (a 2026-07-10 eval run did exactly this, then wiped the user's real
-   `~/.zuvo/retros.log` while trying to clean up). When the skill's instructions
-   reach a HOME-global telemetry step, declare
-   `[SKIPPED-FOR-ISOLATION: <step> targets HOME-global state]` in the action log and
-   continue — the ACTION_LOG is this run's durable evidence trail. Reading HOME
-   paths (installed plugin scripts, `adversarial-review.sh`) stays fine; scratch
-   under `/tmp` is fine.
+   plugin config) and never invoke HOME-global helpers that write there:
+   `~/.zuvo/append-retro`, `~/.zuvo/append-runlog`, retro-stub, knowledge-curate
+   against the real store, **AND `adversarial-review.sh` / any cross-model validation
+   or `--mode audit|plan|spec|security` review script** — those write review inputs to
+   `$HOME/.zuvo/adversarial-inputs/` + append `$HOME/.zuvo/adversarial.log` with no
+   override AND dispatch real external provider CLIs (a network + cost side effect).
+   INVOKING such a script is forbidden even though READING it is fine — reading a path
+   is not running it. Target skills legitimately mandate this telemetry and this
+   cross-model review (Phase 3b / cross-model validation) — inside an eval both would
+   pollute the REAL user's cross-project state with synthetic data (a 2026-07-10 eval
+   run wiped the user's real `~/.zuvo/retros.log` while trying to clean up; a
+   2026-07-12 code-audit eval fired `adversarial-review.sh --mode audit` and leaked
+   `.diff` inputs into `$HOME/.zuvo`). When the skill's instructions reach ANY
+   HOME-global telemetry step OR its adversarial/cross-model review step, declare
+   `[SKIPPED-FOR-ISOLATION: <step> targets HOME-global state / external providers]` in
+   the action log and continue — the ACTION_LOG is this run's durable evidence trail.
+   Scratch under `/tmp` is fine.
 4. **Stay on task.** Perform the eval's prompt and nothing else. Do not refactor
    unrelated code, open a plan for the whole repo, or wander — scope creep pollutes
    the transcript and is not what the grader rewards.
