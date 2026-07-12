@@ -727,11 +727,16 @@ run_codex() {
     printf 'approval_policy = "never"\n'
   } > "$tmp_home/config.toml"
 
+  # --skip-git-repo-check: the isolated CODEX_HOME above has NO trusted-directories list, so
+  # `codex exec` fails with "Not inside a trusted directory and --skip-git-repo-check was not
+  # specified" REGARDLESS of the CWD — which silently killed the codex-5.3/5.4 reviewer lane on a
+  # codex host (field report 2026-07-12: "none returned usable review output"). We already run with
+  # sandbox_mode=danger-full-access + approval_policy=never, so the git-repo trust gate adds nothing.
   local err_file="$JSON_TMPDIR/err_${provider_name}.txt"
   local status=0
   printf '%s' "$REVIEW_PROMPT" \
     | CODEX_HOME="$tmp_home" timeout "$PROVIDER_TIMEOUT" \
-      "$codex_cmd" exec 2>"$err_file" \
+      "$codex_cmd" exec --skip-git-repo-check 2>"$err_file" \
     || status=$?
   if [[ $status -ne 0 ]]; then
     if [[ $status -eq 124 ]]; then
