@@ -1,0 +1,51 @@
+{
+  "skill_name": "security-audit",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run a security audit on src/api/users.ts — it's a public Express router for our user API. Find the vulnerabilities.",
+      "expected_output": "The audit catches all three planted OWASP-class vulnerabilities in src/api/users.ts: (1) SQL injection where req.query.email is concatenated into the SELECT text; (2) a hardcoded signing secret (JWT_SECRET literal) instead of an env var; (3) broken access control / IDOR where GET /users/:id returns any record with no owner/authorization check. Each is reported at its file:line with a remediation, in a severity-tiered report (the injection and access-control issues are Critical/High) where every finding carries a confidence tier — and the audit writes to zuvo/audits/, never modifying the source.",
+      "files": [
+        "src/api/users.ts"
+      ],
+      "assertions": [
+        "The audit records a SQL-injection finding against the string-concatenated query in src/api/users.ts at its file:line, with a parameterized-query remediation.",
+        "The audit records both the hardcoded signing secret (the JWT_SECRET string literal) and the broken-access-control / IDOR issue (GET /users/:id returns any record with no owner check) at their file:line locations.",
+        "The audit writes a severity-tiered report in which each reported finding carries a confidence tier and a file:line citation that resolves in the fixture, and it modifies no source file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/api/users.ts",
+          "content": "// src/api/users.ts\nimport express from \"express\";\nimport { db } from \"../db/client.ts\";\nimport jwt from \"jsonwebtoken\";\n\n// PLANTED (secrets): a signing secret hardcoded in source instead of read from env.\nconst JWT_SECRET = \"s3cr3t-hardcoded-signing-key-prod-2024\";\n\nexport const router = express.Router();\n\n// PLANTED (S1 injection): the `email` query param is string-concatenated straight\n// into the SQL text — classic SQL injection (' OR '1'='1 etc.).\nrouter.get(\"/users/search\", async (req, res) => {\n  const email = req.query.email as string;\n  const rows = await db.query(\n    \"SELECT id, email, role FROM users WHERE email = '\" + email + \"'\",\n  );\n  res.json(rows);\n});\n\n// PLANTED (A01 broken access control / IDOR): returns ANY user by id with no check\n// that the authenticated caller owns or is authorized to read that record.\nrouter.get(\"/users/:id\", async (req, res) => {\n  const rows = await db.query(\"SELECT * FROM users WHERE id = $1\", [req.params.id]);\n  res.json(rows[0]);\n});\n\nexport function signToken(userId: string): string {\n  return jwt.sign({ sub: userId }, JWT_SECRET);\n}\n"
+        },
+        {
+          "path": "src/db/client.ts",
+          "content": "// src/db/client.ts  (thin pg-style client stub)\nexport const db = {\n  // Parameterized when called as query(text, params); vulnerable only if the\n  // CALLER concatenates user input into `text` themselves.\n  async query(_text: string, _params?: unknown[]): Promise<any[]> {\n    return [];\n  },\n};\n"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run a security audit on src/api/orders.ts — an authenticated Express router for our orders API. Report what's exploitable.",
+      "expected_output": "The audit shows PRECISION, not just pattern-matching: it does NOT flag the parameterized+authz-scoped query (id = $1 AND customer_id = $2) as SQL injection or IDOR, and it does NOT flag the process.env secret read as a hardcoded secret — those patterns are mitigated. It DOES catch the one genuine vulnerability: SSRF at POST /orders/import, where a fully attacker-controlled req.body.sourceUrl is passed to fetch() with no allowlist/scheme/private-range validation, reaching internal metadata endpoints. The SSRF is reported at its file:line with a remediation in a severity-tiered, confidence-scored report; the safe decoys stay out of the findings.",
+      "files": [
+        "src/api/orders.ts"
+      ],
+      "assertions": [
+        "The audit records no SQL-injection or IDOR finding against the parameterized, customer-scoped query (SELECT ... WHERE id = $1 AND customer_id = $2) and records no hardcoded-secret finding against the process.env read — the mitigated patterns are correctly excluded.",
+        "The audit records the genuine SSRF vulnerability at POST /orders/import in src/api/orders.ts — an unvalidated fetch of the attacker-controlled req.body.sourceUrl — at its file:line with a remediation.",
+        "The audit writes a severity-tiered report in which the SSRF finding carries a confidence tier and a file:line citation that resolves in the fixture, and it modifies no source file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/api/orders.ts",
+          "content": "// src/api/orders.ts\nimport express from \"express\";\nimport { db } from \"../db/client.ts\";\n\n// SAFE (decoy): secret is read from the environment, NOT hardcoded. Must NOT be\n// flagged as a hardcoded secret.\nconst STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY ?? \"\";\n\nexport const router = express.Router();\n\nfunction requireAuth(\n  req: express.Request & { user?: { id: string } },\n  res: express.Response,\n  next: express.NextFunction,\n) {\n  if (!(req as any).user) {\n    res.status(401).end();\n    return;\n  }\n  next();\n}\n\n// SAFE (decoy): fully parameterized query ($1, $2) AND scoped to the caller's own\n// customer_id — no SQL injection and no IDOR. Must NOT be flagged as SQLi or IDOR.\nrouter.get(\"/orders/:id\", requireAuth, async (req: any, res) => {\n  const rows = await db.query(\n    \"SELECT * FROM orders WHERE id = $1 AND customer_id = $2\",\n    [req.params.id, req.user.id],\n  );\n  res.json(rows[0]);\n});\n\n// PLANTED (S3 SSRF): fetches a fully attacker-controlled URL with no allowlist,\n// scheme check, or private-range block — reaches internal metadata endpoints\n// (e.g. http://169.254.169.254/) and internal services.\nrouter.post(\"/orders/import\", requireAuth, async (req: any, res) => {\n  const resp = await fetch(req.body.sourceUrl);\n  const data = await resp.json();\n  res.json({ imported: data, keyPresent: STRIPE_SECRET_KEY.length > 0 });\n});\n"
+        },
+        {
+          "path": "src/db/client.ts",
+          "content": "// src/db/client.ts  (thin pg-style client stub)\nexport const db = {\n  // Parameterized when called as query(text, params); vulnerable only if the\n  // CALLER concatenates user input into `text` themselves.\n  async query(_text: string, _params?: unknown[]): Promise<any[]> {\n    return [];\n  },\n};\n"
+        }
+      ]
+    }
+  ]
+}
