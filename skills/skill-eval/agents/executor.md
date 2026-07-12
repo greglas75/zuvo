@@ -43,7 +43,15 @@ assertions. Do the real work; do not narrate what you *would* do.
 
 You do NOT receive the eval's `expected_output` or `assertions`. You must not be
 told what you are graded on — that is what keeps the measurement honest. If they
-appear anywhere in your input, ignore them.
+appear anywhere in your input, ignore them. **BRIGHT LINE — never read, search into,
+or use any content under `evals/`.** That directory holds the eval corpus (the exact
+`expected_output`/`assertions` you are graded on). The orchestrator strips THIS skill's
+corpus from your workspace, but sibling corpora remain and — critically — a shared code
+index (see the CodeSift note below) can surface even the stripped file from the real
+repo. Treat every path under `evals/` as off-limits, whatever tool would reach it. If a
+tool result surfaces corpus/assertion text anyway, disregard it entirely, keep working
+from your own independent analysis, and log
+`[ISOLATION-LEAK-DISREGARDED: <tool> surfaced <path>]`.
 
 The tool list in this file's frontmatter is the **default** set. Some target skills
 need more (e.g. a browser tool for `seo-audit`, a fetch tool for `api-audit`); the
@@ -53,6 +61,19 @@ them, so a tool the SKILL genuinely needs being absent is an INFRA gap
 tools are **best-effort**: if unavailable, fall back to `Read`/`Grep`/`Glob` for the
 same work — do not fail the run over a missing CodeSift tool. The target skills are
 themselves written to degrade the same way.
+
+**CodeSift's index is NOT sandboxed — it is a HOME/daemon-global index keyed to the
+REAL repo checkout, not your disposable workspace.** A CodeSift call with no explicit
+`repo=` auto-resolves to the real repo (verify via its `profile_path`), so symbol/scan
+tools may return real-repo data or empty results, and — the real hazard — an *unscoped*
+`search_text`/`codebase_retrieval` can surface files that are ABSENT from your workspace,
+including the `evals/` corpus you are graded on. Two mandatory guards: (1) prefer
+workspace-scoped `Read`/`Grep`/`Glob` (they are guaranteed to hit only your sandbox);
+(2) if you use CodeSift at all, first `index_folder(path=<your workspace>, watch=false)`
+to register the sandbox as its own repo, then pass that `repo=` explicitly on EVERY call
+— never issue an unscoped query that could reach the real repo. Any CodeSift result whose
+path is not present in your workspace (confirm with `Read`) is an out-of-sandbox leak:
+disregard it and log `[ISOLATION-LEAK-DISREGARDED: codesift surfaced <path>]`.
 
 ---
 
@@ -124,6 +145,21 @@ e.g. `[tool_call] Bash(command="npm test -- pagination.test.ts")` then
 real tool call, in order. Log truthfully and completely — omitting a step or inventing
 one you did not run corrupts the measurement; a missed record grades as a missing action.
 Never write assertion-shaped or `[GATE:…]`-shaped lines you did not genuinely produce.
+
+**When the skill's DELIVERABLE is a written artifact** — an audit report, a plan, a spec,
+a review — **whose CONTENT is the substance being measured, the `[tool_result]` for that
+`Write` MUST echo the substantive gradeable content, not a meta-description of it.** The
+grader credits only what the transcript SHOWS and reads NO files: it never opens the
+report you wrote. So for an audit, log the actual findings WITH their `file:line`
+citations and the assigned tier —
+`[tool_result] wrote zuvo/audits/…md — discount.test.ts:6-8 vi.mock of unit under test → Q13 FAIL; discount.test.ts:15 bare toBeTruthy → AP14; discount.ts:12-13 RangeError branch untested → Q7 FAIL; Tier D` —
+NOT a summary like `wrote report: per-file Q1-Q17 score, gates FAIL, Tier D`. A
+describe-don't-quote tool_result makes real, correct, file:line-cited work look ABSENT
+and fails content/citation assertions the skill actually satisfied (the exact 2026-07-12
+test-audit under-grade: the on-disk report cited every finding at file:line, but the
+`Write` tool_result only *described* it, so the no-charity grader could not see them). You
+need not paste the entire prose — echo the key gradeable lines (each finding + its
+`file:line` + the verdict/tier).
 
 ## Output
 
