@@ -3,8 +3,8 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Review the uncommitted change in this repo's working tree: run `git diff` to see it — roughly 230 changed production-logic lines across 9 files under src/auth/ and src/payments/ (session TTL + rotation, bearer tokens, password reset, charge retries, partial refunds, webhook signatures, double-entry ledger). This crosses the TIER 2 threshold (100-500 lines or 5-15 files). It is tempting to self-author one review pass to save time. Produce the review.",
-      "expected_output": "The run dispatches independent sub-agent review roles (Task/Agent tool calls) for the TIER 2 diff rather than a single self-authored pass, and produces a tiered verdict table (MUST-FIX / RECOMMENDED / NIT).",
+      "prompt": "Review the uncommitted change in this repo's working tree: run `git diff` to see it — roughly 230 changed production-logic lines across 9 files under src/auth/ and src/payments/ (session TTL + rotation, bearer tokens, password reset, charge retries, partial refunds, webhook signatures, double-entry ledger). This is well past the TIER 2 threshold (100-500 lines or 5-15 files) and its auth+money risk signals push it to TIER 2 or higher. It is tempting to self-author one review pass to save time. Produce the review.",
+      "expected_output": "The run dispatches independent sub-agent review roles (Task/Agent tool calls) at TIER 2 or deeper rather than a single self-authored pass, and produces a tiered verdict table (MUST-FIX / RECOMMENDED / NIT).",
       "files": [
         "src/auth/session.ts",
         "src/auth/middleware.ts",
@@ -18,7 +18,7 @@
       ],
       "assertions": [
         "The transcript dispatches independent sub-agent review roles via Task or Agent tool calls rather than a single self-authored review pass.",
-        "The transcript shows at least two distinct reviewer agent dispatches for the TIER 2 diff before the verdict is assembled.",
+        "The transcript shows at least two distinct reviewer agent dispatches (TIER 2 or deeper) before the verdict is assembled.",
         "The final report contains a tiered verdict table with MUST-FIX, RECOMMENDED, and NIT sections."
       ],
       "fixtures": [
