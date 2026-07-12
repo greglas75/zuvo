@@ -1,0 +1,53 @@
+{
+  "skill_name": "test-audit",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Audit the test quality of src/lib/discount.test.ts against the Q gates. Give me its tier and tell me what's wrong with it.",
+      "expected_output": "The audit catches that src/lib/discount.test.ts is a low-quality suite: it mocks the module under test (vi.mock('./discount')) so the real applyDiscount() is never exercised — a tautological mock (AP10) and a Q13 critical-gate failure; its only assertions are a bare toBeTruthy() (AP14, Q4/Q15 fail) and an input-echo assertion (Q17 fail); and the RangeError branch for an unknown code is never tested (Q7 fail). Because multiple critical gates (Q7/Q13/Q15/Q17) fail, the file gets a failing tier (C or D). Findings cite file:line and the audit writes to zuvo/audits/, modifying no source or test file.",
+      "files": [
+        "src/lib/discount.test.ts",
+        "src/lib/discount.ts"
+      ],
+      "assertions": [
+        "The audit records that discount.test.ts mocks the module under test (vi.mock('./discount')) so the real applyDiscount() is never exercised — a tautological mock / Q13 critical-gate failure — citing its file:line.",
+        "The audit records the weak/non-behavioral assertions (bare toBeTruthy and the input-echo assertion) and the missing RangeError error-path coverage (the unknown-code throwing branch is never tested) against discount.test.ts.",
+        "The audit records a failing tier (C or D) for discount.test.ts driven by a critical-gate failure, and writes a tiered test-quality report to zuvo/audits/ without modifying any source or test file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/lib/discount.ts",
+          "content": "// src/lib/discount.ts\nexport interface Cart {\n  subtotal: number;\n}\n\n/**\n * Apply a percentage discount code to a cart subtotal.\n * Throws RangeError for an unknown code — the branch tests must exercise.\n */\nexport function applyDiscount(cart: Cart, code: string): number {\n  const table: Record<string, number> = { SAVE10: 0.1, SAVE25: 0.25 };\n  if (!(code in table)) {\n    throw new RangeError(`unknown discount code: ${code}`);\n  }\n  const pct = table[code];\n  return Math.round(cart.subtotal * (1 - pct) * 100) / 100;\n}\n"
+        },
+        {
+          "path": "src/lib/discount.test.ts",
+          "content": "// src/lib/discount.test.ts\nimport { describe, it, expect, vi } from \"vitest\";\n\n// AP10 + Q13 fail: the module UNDER TEST is mocked, so the real applyDiscount()\n// never runs — every assertion below verifies the mock, not production code.\nvi.mock(\"./discount\", () => ({\n  applyDiscount: vi.fn(() => 90),\n}));\nimport { applyDiscount } from \"./discount\";\n\ndescribe(\"applyDiscount\", () => {\n  it(\"works\", () => {\n    const result = applyDiscount({ subtotal: 100 }, \"SAVE10\");\n    // AP14 + Q4/Q15 fail: sole assertion is toBeTruthy on the mock's return.\n    expect(result).toBeTruthy();\n  });\n\n  it(\"returns a number\", () => {\n    const input = 90;\n    (applyDiscount as any).mockReturnValueOnce(input);\n    const result = applyDiscount({ subtotal: 100 }, \"SAVE25\");\n    // Q17 fail: asserts the value we just fed the mock — input echo, not computed.\n    expect(result).toBe(input);\n  });\n});\n"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run a test-quality audit on src/lib/slugify.test.ts and give me its tier.",
+      "expected_output": "The audit recognizes src/lib/slugify.test.ts as a solid suite and gives it a passing tier (A or B) with the critical gates (Q7/Q11/Q13/Q15/Q17) passing: it imports and calls the real slugify(), tests the RangeError error path with both type and message, exercises the transform branches (punctuation, trimming, digits, multi-word), and asserts COMPUTED output (exact expected slugs) rather than echoing input or checking only truthiness. It does NOT fabricate a tautological-mock, missing-error-path, or weak-assertion finding — there are none. The audit writes a tiered test-quality report to zuvo/audits/ recording the file's tier and modifies no source or test file — precision, not hallucinated defects.",
+      "files": [
+        "src/lib/slugify.test.ts",
+        "src/lib/slugify.ts"
+      ],
+      "assertions": [
+        "The audit records a passing tier (A or B) for src/lib/slugify.test.ts with the critical gates (Q7/Q11/Q13/Q15/Q17) recorded as passing — it imports the real slugify(), tests the RangeError path with type and message, and asserts computed output.",
+        "The audit records no tautological-mock (AP10), no missing-error-path (Q7), and no weak-assertion (toBeTruthy/AP14) finding against slugify.test.ts — its exact, behavioral assertions are recognized as compliant, not fabricated defects.",
+        "The audit writes a tiered test-quality report to zuvo/audits/ recording slugify.test.ts's tier, and it modifies no source or test file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/lib/slugify.ts",
+          "content": "// src/lib/slugify.ts\n/**\n * Convert a title into a URL slug: lowercase, spaces→hyphens, strip non-alphanumerics,\n * collapse repeated hyphens. Throws RangeError on blank input.\n */\nexport function slugify(input: string): string {\n  if (input.trim().length === 0) {\n    throw new RangeError(\"slugify: input must be non-empty\");\n  }\n  return input\n    .toLowerCase()\n    .replace(/[^a-z0-9]+/g, \"-\")\n    .replace(/^-+|-+$/g, \"\");\n}\n"
+        },
+        {
+          "path": "src/lib/slugify.test.ts",
+          "content": "// src/lib/slugify.test.ts\nimport { describe, it, expect } from \"vitest\";\nimport { slugify } from \"./slugify\";\n\ndescribe(\"slugify\", () => {\n  it(\"lowercases and hyphenates a multi-word title\", () => {\n    expect(slugify(\"Hello World\")).toBe(\"hello-world\");\n  });\n\n  it(\"strips punctuation and collapses repeated separators\", () => {\n    expect(slugify(\"Rock & Roll!!!\")).toBe(\"rock-roll\");\n  });\n\n  it(\"trims leading and trailing separators produced by edge punctuation\", () => {\n    expect(slugify(\"  ...Draft... \")).toBe(\"draft\");\n  });\n\n  it(\"preserves digits\", () => {\n    expect(slugify(\"Top 10 Songs\")).toBe(\"top-10-songs\");\n  });\n\n  it(\"throws RangeError with a descriptive message on blank input\", () => {\n    expect(() => slugify(\"   \")).toThrow(RangeError);\n    expect(() => slugify(\"\")).toThrow(\"input must be non-empty\");\n  });\n});\n"
+        }
+      ]
+    }
+  ]
+}

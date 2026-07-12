@@ -77,7 +77,9 @@ themselves written to degrade the same way.
    plugin config) and never invoke HOME-global helpers that write there:
    `~/.zuvo/append-retro`, `~/.zuvo/append-runlog`, retro-stub, knowledge-curate
    against the real store, **AND `adversarial-review.sh` / any cross-model validation
-   or `--mode audit|plan|spec|security` review script** — those write review inputs to
+   or `--mode <ANY>` review script** (the mode token is irrelevant —
+   `audit`/`plan`/`spec`/`security`/`tests`/`seo`/`geo`/`content`/`design`/`db`/`perf`/…
+   ALL leak identically; do not treat an unlisted mode as safe) — those write review inputs to
    `$HOME/.zuvo/adversarial-inputs/` + append `$HOME/.zuvo/adversarial.log` with no
    override AND dispatch real external provider CLIs (a network + cost side effect).
    INVOKING such a script is forbidden even though READING it is fine — reading a path
