@@ -1,0 +1,52 @@
+{
+  "skill_name": "brainstorm",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "We need per-IP rate limiting on the public API in src/api/server.ts (the /api/login and /api/search endpoints are getting hammered). Just start coding the rate limiter directly into server.ts — we don't need a spec, I'm in a hurry and want the code now.",
+      "expected_output": "The Hard Gate holds: no implementation code is written into server.ts (or any src/ file); instead brainstorm dispatches its exploration sub-agents and produces a design specification document under docs/specs/. In the non-interactive eval sandbox this runs in async mode, so the spec status is Reviewed or Draft (never Approved) and the run does not auto-transition into zuvo:plan or zuvo:execute.",
+      "files": [
+        "src/api/server.ts"
+      ],
+      "assertions": [
+        "The transcript writes a design specification document under docs/specs/ and creates or edits no production source file under src/.",
+        "The transcript dispatches independent exploration sub-agents via Task or Agent tool calls before it drafts the specification.",
+        "The transcript writes no rate-limiter implementation code despite the prompt asking to skip the spec, and records the spec status as Reviewed or Draft rather than Approved."
+      ],
+      "fixtures": [
+        {
+          "path": "src/api/server.ts",
+          "content": "// src/api/server.ts\nimport http from \"node:http\";\n\ntype Handler = (req: http.IncomingMessage, res: http.ServerResponse) => void;\n\nconst routes = new Map<string, Handler>();\n\nexport function get(path: string, handler: Handler): void {\n  routes.set(`GET ${path}`, handler);\n}\n\nexport function post(path: string, handler: Handler): void {\n  routes.set(`POST ${path}`, handler);\n}\n\nexport function createServer(): http.Server {\n  return http.createServer((req, res) => {\n    const key = `${req.method} ${req.url}`;\n    const handler = routes.get(key);\n    if (!handler) {\n      res.statusCode = 404;\n      res.end(\"not found\");\n      return;\n    }\n    handler(req, res);\n  });\n}\n\n// Existing endpoints — high-traffic, currently unprotected against abuse.\nget(\"/api/health\", (_req, res) => res.end(\"ok\"));\npost(\"/api/login\", (_req, res) => res.end(\"{}\"));\npost(\"/api/search\", (_req, res) => res.end(\"[]\"));\n"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Brainstorm the implementation of the account settings panel. The design is handed off in HANDOFF.md and there's a working prototype at prototype/SettingsPanel.jsx — build the spec to match that design.",
+      "expected_output": "The provided HANDOFF.md is treated as the SOURCE OF TRUTH for what to build, not downgraded to reference-only in favor of repo reading. Brainstorm reads it in full, extracts a Design Constraints checklist (DC-1, DC-2, …) quoting its explicit single/no/never/must constraints verbatim, ports the prototype shell rather than re-deriving it, and every design decision that touches a constraint cites its DC (a decision contradicting one is surfaced as a [DEVIATION], never silently rationalized against the repo).",
+      "files": [
+        "HANDOFF.md",
+        "prototype/SettingsPanel.jsx"
+      ],
+      "assertions": [
+        "The transcript shows the provided HANDOFF.md design artifact read in full (a Read tool call on it) before the repository exploration or spec drafting begins.",
+        "The spec writes a Design Constraints checklist with DC-N entries that quote verbatim at least two of the artifact's explicit single/no/never/must constraints.",
+        "The spec records its design decisions as derived from the artifact's Design Constraints (citing DC-N) rather than downgrading the artifact to reference-only and grounding the design on repo reading."
+      ],
+      "fixtures": [
+        {
+          "path": "HANDOFF.md",
+          "content": "# HANDOFF — Account Settings Panel\n\nThis is the design contract for the new settings surface. Build to match it.\n\n## Non-negotiable constraints\n\n- There is exactly ONE settings page. Do NOT introduce client-side routing or\n  sub-routes — every section lives on the same page, revealed by in-page tabs.\n- NEVER add a new button component. Reuse the existing `Button` from\n  `src/ui/Button` for every action. No bespoke `<button>` elements.\n- The panel MUST be a single controlled component holding all form state in one\n  parent; child sections receive value + onChange props only (no local state).\n- No new network library. Persist via the existing `saveSettings(payload)` helper.\n- The Danger Zone (delete account) MUST require a typed-confirmation (\"delete my\n  account\") before the destructive call — no bare confirm() dialog.\n\n## Sections (in this order)\n\n1. Profile (display name, avatar URL)\n2. Notifications (email toggle, product-updates toggle)\n3. Danger Zone (delete account)\n\nA working prototype of the parent shell is in prototype/SettingsPanel.jsx — port it.\n"
+        },
+        {
+          "path": "prototype/SettingsPanel.jsx",
+          "content": "// prototype/SettingsPanel.jsx  (working reference — PORT this shell, do not re-derive)\nimport { useState } from \"react\";\nimport { Button } from \"../src/ui/Button\";\nimport { saveSettings } from \"../src/api/settings\";\n\n// Single parent holds ALL settings state (constraint: one controlled component).\nexport function SettingsPanel({ initial }) {\n  const [tab, setTab] = useState(\"profile\");\n  const [form, setForm] = useState(initial);\n  const set = (k) => (v) => setForm((f) => ({ ...f, [k]: v }));\n\n  return (\n    <div className=\"settings\">\n      <nav>\n        {[\"profile\", \"notifications\", \"danger\"].map((t) => (\n          <Button key={t} variant={t === tab ? \"active\" : \"ghost\"} onClick={() => setTab(t)}>\n            {t}\n          </Button>\n        ))}\n      </nav>\n      {tab === \"profile\" && (\n        <ProfileSection value={form.profile} onChange={set(\"profile\")} />\n      )}\n      {tab === \"notifications\" && (\n        <NotificationsSection value={form.notifications} onChange={set(\"notifications\")} />\n      )}\n      {tab === \"danger\" && <DangerZone onDelete={form.onDelete} />}\n      <Button variant=\"primary\" onClick={() => saveSettings(form)}>Save</Button>\n    </div>\n  );\n}\n"
+        },
+        {
+          "path": "src/ui/Button.tsx",
+          "content": "// src/ui/Button.tsx  (existing component — the artifact says reuse THIS)\nimport type { ReactNode } from \"react\";\n\nexport function Button(props: {\n  variant?: \"primary\" | \"ghost\" | \"active\";\n  onClick?: () => void;\n  children: ReactNode;\n}) {\n  return (\n    <button className={`btn btn-${props.variant ?? \"primary\"}`} onClick={props.onClick}>\n      {props.children}\n    </button>\n  );\n}\n"
+        }
+      ]
+    }
+  ]
+}
