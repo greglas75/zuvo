@@ -772,9 +772,16 @@ run_claude() {
   fi
 
   local err_file="$JSON_TMPDIR/err_claude.txt"
+  # Lean reviewer subprocess: an empty --strict-mcp-config drops project MCP servers (starting
+  # CodeSift via `npx` on every call can HANG inside a codex/agent sandbox → the field timeout
+  # 2026-07-12), and --dangerously-skip-permissions stops a tool/permission prompt from blocking a
+  # headless run. --bare would be leaner but forces ANTHROPIC_API_KEY (fails on OAuth-authed claude).
+  local mcp_empty="$JSON_TMPDIR/claude_empty_mcp.json"
+  printf '{"mcpServers":{}}' > "$mcp_empty"
   local status=0
   printf '%s' "$REVIEW_PROMPT" \
-    | timeout "$PROVIDER_TIMEOUT" claude --model "$model" --print --output-format text 2>"$err_file" \
+    | timeout "$PROVIDER_TIMEOUT" claude --model "$model" --print --output-format text \
+        --mcp-config "$mcp_empty" --strict-mcp-config --dangerously-skip-permissions 2>"$err_file" \
     || status=$?
   if [[ $status -ne 0 ]]; then
     if [[ $status -eq 124 ]]; then
