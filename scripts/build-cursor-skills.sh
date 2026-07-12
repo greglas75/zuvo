@@ -378,7 +378,14 @@ if [ -d "$PLUGIN_DIR/shared/includes" ]; then
       | replace_reviewer_lane_refs_cursor \
       | normalize_unicode > "$DIST/shared/includes/$rel"
   done < <(find "$PLUGIN_DIR/shared/includes" -type f -name "*.md" -print0)
-  echo "  + shared/includes/ ($(find "$PLUGIN_DIR/shared/includes" -type f -name '*.md' | wc -l | tr -d ' ') files)"
+  # shell includes (e.g. model-registry.sh) — PLAIN copy, NO markdown transforms (they would mangle
+  # the concrete model ids the registry holds).
+  while IFS= read -r -d '' f; do
+    rel="${f#$PLUGIN_DIR/shared/includes/}"
+    mkdir -p "$DIST/shared/includes/$(dirname "$rel")"
+    cp "$f" "$DIST/shared/includes/$rel"
+  done < <(find "$PLUGIN_DIR/shared/includes" -type f -name "*.sh" -print0)
+  echo "  + shared/includes/ ($(find "$PLUGIN_DIR/shared/includes" -type f \( -name '*.md' -o -name '*.sh' \) | wc -l | tr -d ' ') files)"
 fi
 
 # ============================================================

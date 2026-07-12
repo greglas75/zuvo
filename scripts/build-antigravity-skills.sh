@@ -369,7 +369,13 @@ if [ -d "$PLUGIN_DIR/shared/includes" ]; then
     # Config refs for shared: CLAUDE.md -> GEMINI.md but NOT Claude Code -> Antigravity
     sed -i '' 's/CLAUDE\.md/GEMINI.md/g' "$DIST/shared/includes/$(basename "$f")"
   done
-  echo "  + shared/includes/ ($(ls "$PLUGIN_DIR"/shared/includes/*.md 2>/dev/null | wc -l | tr -d ' ') files)"
+  # shell includes (e.g. model-registry.sh) — PLAIN copy, NO transforms: replace_model_refs /
+  # reviewer-lane rewrites would turn the registry's claude/codex ids into gemini and corrupt it.
+  for f in "$PLUGIN_DIR"/shared/includes/*.sh; do
+    [ -f "$f" ] || continue
+    cp "$f" "$DIST/shared/includes/$(basename "$f")"
+  done
+  echo "  + shared/includes/ ($(ls "$PLUGIN_DIR"/shared/includes/*.md "$PLUGIN_DIR"/shared/includes/*.sh 2>/dev/null | wc -l | tr -d ' ') files)"
 fi
 
 # --- Scripts ---
