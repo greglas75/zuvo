@@ -1,0 +1,47 @@
+{
+  "skill_name": "code-audit",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run a code-quality audit on src/services/report.service.ts. Score it against the CQ gates and tell me what needs fixing.",
+      "expected_output": "The audit catches the planted CQ violations in src/services/report.service.ts: the empty catch block (CQ8) that swallows every error, the oversized/deeply-nested generate() method (CQ11) with hardcoded magic numbers (CQ12), and the missing input validation (CQ3) on its untyped parameters (CQ2). Each is reported at its file:line. Because a critical CQ gate (empty catch) is tripped, the file receives a failing tier (C or D); the audit writes to zuvo/audits/ and modifies no source file.",
+      "files": [
+        "src/services/report.service.ts"
+      ],
+      "assertions": [
+        "The audit records a CQ8 empty-catch finding against the `catch (e) {}` in src/services/report.service.ts at its file:line.",
+        "The audit records the oversized/high-complexity generate() method (deep nesting plus magic numbers) and the missing input validation on its parameters at their file:line locations.",
+        "The audit records a failing tier (C or D) for report.service.ts driven by a critical CQ-gate failure, and every reported finding cites a file:line that resolves in the fixture."
+      ],
+      "fixtures": [
+        {
+          "path": "src/services/report.service.ts",
+          "content": "// src/services/report.service.ts\nimport { db } from \"../db/client.ts\";\n\nexport class ReportService {\n  // CQ2: no explicit param/return types. CQ3: params never validated.\n  // CQ11: oversized + deeply nested. CQ12: magic numbers. CQ8: empty catch below.\n  async generate(userId, opts) {\n    let out = [];\n    try {\n      const rows = await db.query(\"SELECT * FROM events WHERE user_id = \" + userId);\n      for (const r of rows) {\n        if (r.type === 1) {\n          if (r.amount > 1000) {\n            if (r.status === \"active\") {\n              if (r.region === 3) {\n                out.push({ ...r, flag: true, tier: \"gold\" });\n              } else {\n                out.push({ ...r, flag: true, tier: \"silver\" });\n              }\n            } else {\n              out.push({ ...r, flag: false });\n            }\n          }\n        }\n      }\n    } catch (e) {}\n    return out;\n  }\n}\n"
+        },
+        {
+          "path": "src/db/client.ts",
+          "content": "// src/db/client.ts\nexport const db = {\n  async query(_text: string, _params?: unknown[]): Promise<any[]> {\n    return [];\n  },\n};\n"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run a code-quality audit on src/lib/money.ts and give me its CQ tier.",
+      "expected_output": "The audit recognizes src/lib/money.ts as clean, compliant code and gives it a passing tier (A or B) with no critical CQ-gate failure. It does NOT fabricate an empty-catch, missing-validation, or god-function finding: both functions are small, pure, fully typed, validate their inputs (throwing RangeError), and use a named constant instead of a magic number. Any observation stays at NIT level. The audit writes a tiered per-file report to zuvo/audits/ and modifies no source file — precision, not hallucinated defects.",
+      "files": [
+        "src/lib/money.ts"
+      ],
+      "assertions": [
+        "The audit records a passing tier (A or B) for src/lib/money.ts and records no critical CQ-gate failure against it.",
+        "The audit records no empty-catch, missing-input-validation, or god-function finding against money.ts — its guarded, small, fully-typed functions are recognized as compliant.",
+        "The audit writes a tiered per-file CQ report in which each reported finding cites a file:line that resolves in the fixture, and it modifies no source file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/lib/money.ts",
+          "content": "// src/lib/money.ts\nconst CENTS_PER_DOLLAR = 100;\n\n/** Convert a dollar amount to integer cents. Rejects invalid/negative input. */\nexport function toCents(dollars: number): number {\n  if (!Number.isFinite(dollars) || dollars < 0) {\n    throw new RangeError(`invalid dollar amount: ${dollars}`);\n  }\n  return Math.round(dollars * CENTS_PER_DOLLAR);\n}\n\n/** Format integer cents as a $-prefixed 2-decimal string. */\nexport function formatCents(cents: number): string {\n  if (!Number.isInteger(cents)) {\n    throw new RangeError(`cents must be an integer: ${cents}`);\n  }\n  return `$${(cents / CENTS_PER_DOLLAR).toFixed(2)}`;\n}\n"
+        }
+      ]
+    }
+  ]
+}
