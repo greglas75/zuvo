@@ -61,12 +61,13 @@ Understand the problem thoroughly. Design a solution collaboratively. Write a sp
 1. `../../shared/includes/codesift-setup.md` -- CodeSift discovery and initialization
 2. `../../shared/includes/env-compat.md` -- Agent dispatch patterns per environment
 3. `../../shared/includes/acceptance-proof-protocol.md` -- Per-AC proof contract for plan/execute
+4. `../../shared/includes/provided-artifact-supremacy.md` -- Design-artifact supremacy (the Provided-Design Check runs BEFORE Phase 1, so this is Phase-0 mandatory, not deferred)
 
 ### Deferred — Load when needed (NOT at startup)
 
-4. `../../rules/cq-patterns.md` -- Load at Phase 3 (design decisions), NOT at Phase 0
-5. `../../shared/includes/run-logger.md` -- Load at completion only
-6. `../../shared/includes/retrospective.md` -- Load at completion only
+5. `../../rules/cq-patterns.md` -- Load at Phase 3 (design decisions), NOT at Phase 0
+6. `../../shared/includes/run-logger.md` -- Load at completion only
+7. `../../shared/includes/retrospective.md` -- Load at completion only
 
 Print the checklist:
 
