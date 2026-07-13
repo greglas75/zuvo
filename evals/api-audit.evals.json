@@ -1,0 +1,51 @@
+{
+  "skill_name": "api-audit",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run a static API audit (--static) on src/api/reports.ts. Score it across the D dimensions and tell me what's failing.",
+      "expected_output": "The audit catches the planted API-dimension violations in src/api/reports.ts: (D1) POST /reports writes req.body to the DB with no input validation/schema on its untyped body; (D9) DELETE /reports/:id is an unauthenticated mutation with no auth middleware or ownership check — any caller can delete any report; (D3) GET /reports returns every row with no pagination or limit. Each is reported at its file:line. Because a critical gate trips (D9<8 auth gap on a mutation, and D1 validation absent), the file gets a failing grade (AT RISK / CRITICAL). The audit writes a dimensional report to zuvo/audits/ and modifies no source file.",
+      "files": [
+        "src/api/reports.ts"
+      ],
+      "assertions": [
+        "The audit records a D1 input-validation finding against POST /reports in src/api/reports.ts — req.body is persisted with no schema/validation — citing its file:line.",
+        "The audit records the D9 unauthenticated-mutation finding on DELETE /reports/:id (no auth middleware / ownership check) and the D3 unbounded/unpaginated list on GET /reports, at their file:line locations.",
+        "The audit records a failing grade (AT RISK or CRITICAL) or a tripped critical gate (D9<8 / D1 absent) for reports.ts, and writes a dimensional API report to zuvo/audits/ without modifying any source file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/api/reports.ts",
+          "content": "// src/api/reports.ts\nimport express from \"express\";\nimport { db } from \"../db/client.ts\";\n\nexport const router = express.Router();\n\n// D3 (unbounded query): returns EVERY report row — no limit, no pagination, no cap.\n// On a large table this ships the whole dataset in one response.\nrouter.get(\"/reports\", async (_req, res) => {\n  const rows = await db.query(\"SELECT * FROM reports\");\n  res.json(rows);\n});\n\n// D1 (no input validation): req.body is written straight to the DB with no schema,\n// no type check, no required-field check — any shape is accepted. `amount` is a raw\n// float (D2 money-as-float).\nrouter.post(\"/reports\", async (req, res) => {\n  const { title, amount } = req.body;\n  await db.query(\"INSERT INTO reports(title, amount) VALUES($1, $2)\", [title, amount]);\n  res.status(201).json({ title, amount });\n});\n\n// D9 (auth gap on a mutation): DELETE with NO auth middleware and NO ownership check —\n// any unauthenticated caller can delete any report by id.\nrouter.delete(\"/reports/:id\", async (req, res) => {\n  await db.query(\"DELETE FROM reports WHERE id = $1\", [req.params.id]);\n  res.status(204).end();\n});\n"
+        },
+        {
+          "path": "src/db/client.ts",
+          "content": "// src/db/client.ts  (thin query stub)\nexport const db = {\n  async query(_text: string, _params?: unknown[]): Promise<any[]> {\n    return [];\n  },\n};\n"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run a static API audit (--static) on src/api/invoices.ts and give me its grade.",
+      "expected_output": "The audit shows grading discipline, not pattern-matching: it does NOT flag a missing input-validation gap (POST /invoices validates its body with a Zod schema and returns 400 on failure), does NOT flag an auth gap (both the list and the mutation are behind requireAuth, and the mutation additionally behind requireRole('admin')), and does NOT flag an unbounded query (GET /invoices clamps limit to [1,100] with an offset). Money is integer cents with an explicit currency (D2 clean). It gives the file a healthy/passing grade with the critical gates (D1, D9, D3) passing, and writes a dimensional report to zuvo/audits/ recording the grade — modifying no source file. Any note stays advisory, not a fabricated critical finding.",
+      "files": [
+        "src/api/invoices.ts"
+      ],
+      "assertions": [
+        "The audit records a healthy/passing grade for src/api/invoices.ts with the critical gates (D1 validation, D9 auth, D3 pagination) recorded as passing.",
+        "The audit records no fabricated D1 missing-validation, D9 auth-gap, or D3 unbounded-query finding against invoices.ts — the Zod-validated body, the requireAuth+requireRole mutation, and the clamped limit are recognized as mitigated.",
+        "The audit writes a dimensional API report to zuvo/audits/ recording invoices.ts's grade, and it modifies no source file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/api/invoices.ts",
+          "content": "// src/api/invoices.ts\nimport express from \"express\";\nimport { z } from \"zod\";\nimport { db } from \"../db/client.ts\";\n\nexport const router = express.Router();\n\n// Auth middleware: rejects unauthenticated callers; requireRole scopes mutations.\nfunction requireAuth(\n  req: express.Request & { user?: { id: string; role: string } },\n  res: express.Response,\n  next: express.NextFunction,\n) {\n  if (!req.user) {\n    res.status(401).end();\n    return;\n  }\n  next();\n}\nfunction requireRole(role: string) {\n  return (\n    req: express.Request & { user?: { id: string; role: string } },\n    res: express.Response,\n    next: express.NextFunction,\n  ) => {\n    if (req.user?.role !== role) {\n      res.status(403).end();\n      return;\n    }\n    next();\n  };\n}\n\n// D3 (bounded pagination): limit is parsed and CLAMPED to [1, 100]; offset defaults to 0.\nrouter.get(\"/invoices\", requireAuth, async (req, res) => {\n  const limit = Math.min(Math.max(parseInt(String(req.query.limit ?? \"20\"), 10) || 20, 1), 100);\n  const offset = Math.max(parseInt(String(req.query.offset ?? \"0\"), 10) || 0, 0);\n  const rows = await db.query(\n    \"SELECT id, amount_cents, currency FROM invoices ORDER BY id LIMIT $1 OFFSET $2\",\n    [limit, offset],\n  );\n  res.json({ items: rows, limit, offset });\n});\n\n// D1 (input validation): body is validated by a Zod schema; 400 on failure. D2: money is\n// integer cents with an explicit currency, never a float.\nconst CreateInvoice = z.object({\n  amountCents: z.number().int().nonnegative(),\n  currency: z.string().length(3),\n});\nrouter.post(\"/invoices\", requireAuth, requireRole(\"admin\"), async (req, res) => {\n  const parsed = CreateInvoice.safeParse(req.body);\n  if (!parsed.success) {\n    res.status(400).json({ error: parsed.error.flatten() });\n    return;\n  }\n  await db.query(\n    \"INSERT INTO invoices(amount_cents, currency) VALUES($1, $2)\",\n    [parsed.data.amountCents, parsed.data.currency],\n  );\n  res.status(201).json(parsed.data);\n});\n"
+        },
+        {
+          "path": "src/db/client.ts",
+          "content": "// src/db/client.ts  (thin query stub)\nexport const db = {\n  async query(_text: string, _params?: unknown[]): Promise<any[]> {\n    return [];\n  },\n};\n"
+        }
+      ]
+    }
+  ]
+}
