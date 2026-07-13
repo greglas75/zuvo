@@ -1,0 +1,53 @@
+{
+  "skill_name": "db-audit",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run a database audit on src/data/users.repo.ts. Score its query patterns and security, and tell me what's failing.",
+      "expected_output": "The audit catches the planted DB anti-patterns in src/data/users.repo.ts: (DB1) an N+1 where loadUsers awaits db.user.findUnique sequentially inside a for-loop (one query per id); (DB12) a SQL injection where searchByEmail concatenates the email into a $queryRawUnsafe string; and (DB1) an unbounded db.order.findMany with no take in allOrders. Each is reported at its file:line. Because a critical gate trips (DB1=0 N+1 in a hot path, and/or DB12=0 SQL injection), the grade is FAIL. The audit writes its report to zuvo/audits/ and modifies no source file.",
+      "files": [
+        "src/data/users.repo.ts",
+        "src/data/client.ts"
+      ],
+      "assertions": [
+        "The audit records a DB1 N+1 finding against loadUsers in src/data/users.repo.ts — db.user.findUnique is awaited sequentially inside the for-loop, one query per id — citing its file:line.",
+        "The audit records the DB12 SQL-injection finding (email concatenated into the $queryRawUnsafe string in searchByEmail) and the DB1 unbounded db.order.findMany with no take in allOrders, at their file:line locations.",
+        "The audit records a FAIL grade via a tripped critical gate (DB1=0 N+1 or DB12=0 SQL injection) and writes the db-audit report to zuvo/audits/ without modifying any source file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/data/users.repo.ts",
+          "content": "// src/data/users.repo.ts\nimport { db } from \"./client.ts\";\n\n// DB1 (N+1): one query PER id, issued sequentially inside the loop — for a 500-id\n// batch this fires 500 round-trips instead of one. Classic N+1 in a hot path.\nexport async function loadUsers(ids: string[]) {\n  const users = [];\n  for (const id of ids) {\n    users.push(await db.user.findUnique({ where: { id } }));\n  }\n  return users;\n}\n\n// DB12 (SQL injection): the caller's email is concatenated straight into raw SQL and\n// run via $queryRawUnsafe — an attacker sending ' OR '1'='1 rewrites the query.\nexport async function searchByEmail(email: string) {\n  return db.$queryRawUnsafe(\n    \"SELECT id, email FROM users WHERE email = '\" + email + \"'\",\n  );\n}\n\n// DB1 (unbounded): findMany with no take/limit — loads the entire orders table into\n// memory, an OOM risk as the table grows.\nexport async function allOrders() {\n  return db.order.findMany();\n}\n"
+        },
+        {
+          "path": "src/data/client.ts",
+          "content": "// src/data/client.ts  (thin ORM-style client stub)\nexport const db = {\n  user: {\n    async findUnique(_args: { where: { id: string } }): Promise<unknown> { return null; },\n    async findMany(_args?: unknown): Promise<unknown[]> { return []; },\n  },\n  order: {\n    async findMany(_args?: unknown): Promise<unknown[]> { return []; },\n  },\n  // Tagged-template raw query (parameterized/safe).\n  async $queryRaw(_strings: TemplateStringsArray, ..._values: unknown[]): Promise<unknown[]> { return []; },\n  // Unsafe raw query (caller-built string — injection sink).\n  async $queryRawUnsafe(_sql: string): Promise<unknown[]> { return []; },\n};\n"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run a database audit on src/data/users.repo.ts and give me its grade.",
+      "expected_output": "The audit shows false-positive discipline: it does NOT flag an N+1 (loadUsers issues a single batched db.user.findMany with an `in` filter, not a per-id loop), does NOT flag a SQL injection (searchByEmail uses a tagged-template $queryRaw that binds the email as a parameter, not string concatenation), and does NOT flag an unbounded query (recentOrders has an explicit clamped take). It gives the file a passing grade with the critical gates (DB1/DB12) not tripped, and writes the db-audit report to zuvo/audits/ — modifying no source file. Defenses recognized, not hallucinated findings.",
+      "files": [
+        "src/data/users.repo.ts",
+        "src/data/client.ts"
+      ],
+      "assertions": [
+        "The audit records no DB1 N+1 finding against loadUsers in src/data/users.repo.ts — the single batched db.user.findMany with an `in` filter is recognized as one query, not a per-id loop.",
+        "The audit records no DB12 SQL-injection finding against searchByEmail (the tagged-template $queryRaw binds the email as a parameter) and no unbounded-query finding against recentOrders (explicit clamped take) — the parameterized query and bounded pagination are recognized as mitigated.",
+        "The audit records a passing grade with the critical gates (DB1/DB12) not tripped, and writes the db-audit report to zuvo/audits/ without modifying any source file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/data/users.repo.ts",
+          "content": "// src/data/users.repo.ts\nimport { db } from \"./client.ts\";\n\n// SAFE: a single batched query with an `in` filter fetches every id at once — no N+1.\nexport async function loadUsers(ids: string[]) {\n  return db.user.findMany({ where: { id: { in: ids } } });\n}\n\n// SAFE: the email is interpolated through a TAGGED TEMPLATE ($queryRaw), so the ORM binds\n// it as a parameter — no string concatenation, no injection.\nexport async function searchByEmail(email: string) {\n  return db.$queryRaw`SELECT id, email FROM users WHERE email = ${email}`;\n}\n\n// SAFE: findMany is bounded by an explicit take (clamped page size) with a stable order —\n// no unbounded full-table scan.\nexport async function recentOrders(limit = 50) {\n  return db.order.findMany({ take: Math.min(limit, 100), orderBy: { id: \"desc\" } });\n}\n"
+        },
+        {
+          "path": "src/data/client.ts",
+          "content": "// src/data/client.ts  (thin ORM-style client stub)\nexport const db = {\n  user: {\n    async findUnique(_args: { where: { id: string } }): Promise<unknown> { return null; },\n    async findMany(_args?: unknown): Promise<unknown[]> { return []; },\n  },\n  order: {\n    async findMany(_args?: unknown): Promise<unknown[]> { return []; },\n  },\n  // Tagged-template raw query (parameterized/safe).\n  async $queryRaw(_strings: TemplateStringsArray, ..._values: unknown[]): Promise<unknown[]> { return []; },\n  // Unsafe raw query (caller-built string — injection sink).\n  async $queryRawUnsafe(_sql: string): Promise<unknown[]> { return []; },\n};\n"
+        }
+      ]
+    }
+  ]
+}
