@@ -1,0 +1,43 @@
+{
+  "skill_name": "performance-audit",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run a performance audit on src/lib/dedupe.ts. Look at the algorithms and concurrency and tell me the hot spots.",
+      "expected_output": "The audit catches two performance problems in src/lib/dedupe.ts: (D5) findDuplicates is O(n^2) — a nested for-loop compares every pair of items, quadratic in the list size; and (D8) enrich awaits fetchOne sequentially inside a for-loop, so N ids incur N serial round-trips instead of running concurrently. Each is reported at its file:line with an impact model / severity (the quadratic scan and serial I/O both degrade with scale). The audit writes its report to zuvo/audits/ and modifies no source file.",
+      "files": [
+        "src/lib/dedupe.ts"
+      ],
+      "assertions": [
+        "The audit records an O(n^2) / quadratic-complexity finding against findDuplicates in src/lib/dedupe.ts — the nested for-loop comparing every pair of items — at its file:line.",
+        "The audit records a sequential-await / serial-I/O finding against enrich in src/lib/dedupe.ts — fetchOne is awaited one id at a time inside the loop with no concurrency — at its file:line.",
+        "The audit writes a performance-audit report to zuvo/audits/ recording the quadratic and sequential-await findings with a severity/impact model, and it modifies no source file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/lib/dedupe.ts",
+          "content": "// src/lib/dedupe.ts\n\n// D5 (algorithmic hot spot): O(n^2) — a nested loop compares every pair of items to\n// find duplicates. On a 10k-item list that is ~50M comparisons.\nexport function findDuplicates(items: { id: string }[]): string[] {\n  const dupes: string[] = [];\n  for (let i = 0; i < items.length; i++) {\n    for (let j = i + 1; j < items.length; j++) {\n      if (items[i].id === items[j].id) {\n        dupes.push(items[i].id);\n      }\n    }\n  }\n  return dupes;\n}\n\n// D8 (concurrency): sequential await inside the loop — each fetch waits for the previous\n// one to finish, so N ids take N round-trips of latency instead of one.\nexport async function enrich(\n  ids: string[],\n  fetchOne: (id: string) => Promise<unknown>,\n): Promise<unknown[]> {\n  const out: unknown[] = [];\n  for (const id of ids) {\n    out.push(await fetchOne(id));\n  }\n  return out;\n}\n"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run a performance audit on src/lib/dedupe.ts and tell me if the algorithms and concurrency are OK.",
+      "expected_output": "The audit shows discipline, not loop-phobia: it does NOT flag an O(n^2) hot spot (findDuplicates is a Set-based O(n) single pass — each id is an O(1) has/add, not a nested pairwise scan), and it does NOT flag a sequential-await problem (enrich uses Promise.all over ids.map, firing the fetches concurrently). It records a healthy algorithms/concurrency result and writes its report to zuvo/audits/, modifying no source file — no fabricated quadratic or serial-I/O finding.",
+      "files": [
+        "src/lib/dedupe.ts"
+      ],
+      "assertions": [
+        "The audit records no O(n^2) / quadratic-complexity finding against findDuplicates in src/lib/dedupe.ts — the Set-based single-pass dedupe is recognized as O(n), not a nested-loop hot spot.",
+        "The audit records no sequential-await / serial-I/O finding against enrich in src/lib/dedupe.ts — Promise.all over ids.map fires the fetches concurrently, recognized as correct.",
+        "The audit writes a performance-audit report to zuvo/audits/ recording a healthy algorithms/concurrency result, and it modifies no source file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/lib/dedupe.ts",
+          "content": "// src/lib/dedupe.ts\n\n// EFFICIENT: O(n) single pass with a Set — each id is checked/inserted in O(1), so the\n// whole scan is linear, not quadratic.\nexport function findDuplicates(items: { id: string }[]): string[] {\n  const seen = new Set<string>();\n  const dupes: string[] = [];\n  for (const item of items) {\n    if (seen.has(item.id)) {\n      dupes.push(item.id);\n    } else {\n      seen.add(item.id);\n    }\n  }\n  return dupes;\n}\n\n// EFFICIENT: Promise.all fires every fetch concurrently, so N ids cost ~one round-trip of\n// latency instead of N serial ones.\nexport async function enrich(\n  ids: string[],\n  fetchOne: (id: string) => Promise<unknown>,\n): Promise<unknown[]> {\n  return Promise.all(ids.map((id) => fetchOne(id)));\n}\n"
+        }
+      ]
+    }
+  ]
+}
