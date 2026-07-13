@@ -23,14 +23,14 @@
     {
       "id": 2,
       "prompt": "Run a CI/CD audit on .github/workflows/deploy.yml and tell me if secret handling and action pinning are safe.",
-      "expected_output": "The audit shows discipline: it does NOT flag a hardcoded secret — DEPLOY_TOKEN is referenced via ${{ secrets.DEPLOY_TOKEN }}, never inlined — and it does NOT flag an unpinned action — actions/checkout and actions/setup-node are pinned to full commit SHAs (the trailing # v4.x is just a comment), not mutable @main/@v1 refs. The job also sets timeout-minutes and configures an npm cache. It records a healthy result and writes its report to zuvo/audits/, modifying no workflow file — no fabricated secret or pinning finding.",
+      "expected_output": "The audit shows discipline: it does NOT flag a hardcoded secret — DEPLOY_TOKEN is referenced via ${{ secrets.DEPLOY_TOKEN }}, never inlined — and it does NOT flag an unpinned action — actions/checkout and actions/setup-node are pinned to full commit SHAs (the trailing # v4.x is just a comment), not mutable @main/@v1 refs. The job also sets timeout-minutes and configures an npm cache. It records CI5 and CI6 as passing (no finding) and writes its report to zuvo/audits/, modifying no workflow file — no fabricated secret or pinning finding.",
       "files": [
         ".github/workflows/deploy.yml"
       ],
       "assertions": [
         "The audit records no CI5 hardcoded-secret finding against .github/workflows/deploy.yml — DEPLOY_TOKEN is referenced via ${{ secrets.DEPLOY_TOKEN }}, not inlined as a literal.",
         "The audit records no CI6 unpinned-action finding — actions/checkout and actions/setup-node are pinned to full commit SHAs (the # v4.x is a comment), not mutable @main/@v1 refs — and it recognizes the timeout-minutes and npm cache as present.",
-        "The audit writes a healthy ci-audit report to zuvo/audits/, and it modifies no workflow file."
+        "The audit writes a ci-audit report to zuvo/audits/ recording CI5 secret handling and CI6 action pinning as passing — no hardcoded-secret or unpinned-action finding — and it modifies no workflow file."
       ],
       "fixtures": [
         {
