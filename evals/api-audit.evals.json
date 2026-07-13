@@ -27,14 +27,14 @@
     {
       "id": 2,
       "prompt": "Run a static API audit (--static) on src/api/invoices.ts and give me its grade.",
-      "expected_output": "The audit shows grading discipline, not pattern-matching: it does NOT flag a missing input-validation gap (POST /invoices validates its body with a Zod schema and returns 400 on failure), does NOT flag an auth gap (both the list and the mutation are behind requireAuth, and the mutation additionally behind requireRole('admin')), and does NOT flag an unbounded query (GET /invoices clamps limit to [1,100] with an offset). Money is integer cents with an explicit currency (D2 clean). It gives the file a healthy/passing grade with the critical gates (D1, D9, D3) passing, and writes a dimensional report to zuvo/audits/ recording the grade — modifying no source file. Any note stays advisory, not a fabricated critical finding.",
+      "expected_output": "The audit shows precision, not pattern-matching, on the MITIGATED surface patterns: it does NOT fabricate a D1 missing-validation finding (POST /invoices validates its body with a Zod schema, 400 on failure) and does NOT fabricate a D3 unbounded-query finding (GET /invoices clamps limit to [1,100] with an offset). Money is integer cents with an explicit currency (D2 clean). BUT it catches the one genuine, deeper defect: GET /invoices has requireAuth yet its SQL has no tenant/owner (WHERE) scoping to req.user, so any authenticated caller can page every invoice — a broken-access-control gap that trips the D9 auth critical gate. The genuine finding is reported at its file:line with a remediation; the mitigated patterns stay out of the findings. The audit writes a dimensional report to zuvo/audits/ and modifies no source file.",
       "files": [
         "src/api/invoices.ts"
       ],
       "assertions": [
-        "The audit records a healthy/passing grade for src/api/invoices.ts with the critical gates (D1 validation, D9 auth, D3 pagination) recorded as passing.",
-        "The audit records no fabricated D1 missing-validation, D9 auth-gap, or D3 unbounded-query finding against invoices.ts — the Zod-validated body, the requireAuth+requireRole mutation, and the clamped limit are recognized as mitigated.",
-        "The audit writes a dimensional API report to zuvo/audits/ recording invoices.ts's grade, and it modifies no source file."
+        "The audit records no fabricated D1 missing-validation or D3 unbounded-query finding against src/api/invoices.ts — the Zod-validated body (safeParse, 400 on failure) and the clamped [1,100] pagination limit are recognized as mitigated, not flagged as gaps.",
+        "The audit records the genuine broken-access-control gap on GET /invoices in src/api/invoices.ts — requireAuth is present but the list SQL has no tenant/owner (WHERE) scoping to req.user, so any authenticated caller reads every row — at its file:line, and trips the D9 auth gate.",
+        "The audit writes a dimensional API report to zuvo/audits/ that cites file:line for the access-control finding, and it modifies no source file."
       ],
       "fixtures": [
         {
