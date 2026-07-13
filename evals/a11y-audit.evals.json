@@ -1,0 +1,43 @@
+{
+  "skill_name": "a11y-audit",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run an accessibility audit on public/index.html using the browser (zuvo:a11y-audit --live-url). Point it at the local file. Report the WCAG violations and the tier.",
+      "expected_output": "The audit catches the planted WCAG 2.2 violations in public/index.html: (A6/1.1.1) the <img> has no alt attribute; (A5/3.3.2/4.1.2) the email <input> has no associated <label> or aria-label; (A4/1.4.3) the Submit button's #999-on-#bbb text is far below the 4.5:1 contrast minimum — an A4 critical-gate failure; (A2/2.1.1) the <div onclick> Menu control is not keyboard-operable — an A2 critical-gate failure; and (A9/3.1.1) <html> has no lang. Each finding cites its file:line and WCAG criterion. Because A2 and/or A4 critical gates fail, the page gets a failing tier. The audit writes its report to zuvo/audits/ and modifies no source file.",
+      "files": [
+        "public/index.html"
+      ],
+      "assertions": [
+        "The audit records a missing-alt image finding (WCAG 1.1.1, A6) and a missing-label form-input finding (WCAG 3.3.2/4.1.2, A5) against public/index.html, at their file:line.",
+        "The audit records the A4 contrast critical-gate failure (the #999-on-#bbb Submit button below the 4.5:1 minimum, WCAG 1.4.3) and/or the A2 keyboard critical-gate failure (the <div onclick> Menu not keyboard-operable, WCAG 2.1.1), citing the WCAG criteria.",
+        "The audit records a failing tier driven by a critical-gate failure (A2 keyboard or A4 contrast) and writes an a11y-audit report to zuvo/audits/ without modifying any source file."
+      ],
+      "fixtures": [
+        {
+          "path": "public/index.html",
+          "content": "<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"utf-8\">\n  <title>Sign up</title>\n</head>\n<body>\n  <!-- WCAG 1.1.1 (A6): image has no alt attribute. -->\n  <img src=\"logo.png\" width=\"120\" height=\"40\">\n\n  <h1>Create your account</h1>\n\n  <form>\n    <!-- WCAG 3.3.2 / 4.1.2 (A5): input has no associated <label> and no aria-label. -->\n    <input type=\"email\" name=\"email\" placeholder=\"Email\">\n\n    <!-- WCAG 1.4.3 (A4 contrast, CRITICAL): #999 text on #bbb background ~1.4:1, far below 4.5:1. -->\n    <button type=\"submit\" style=\"color:#999;background:#bbb;border:none;padding:8px\">Submit</button>\n  </form>\n\n  <!-- WCAG 2.1.1 (A2 keyboard, CRITICAL): a div with onclick is not focusable or\n       operable by keyboard — mouse-only. -->\n  <div onclick=\"openMenu()\" style=\"cursor:pointer\">Menu</div>\n\n  <script>function openMenu(){}</script>\n</body>\n</html>\n"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run an accessibility audit on public/index.html using the browser (zuvo:a11y-audit --live-url). Point it at the local file. Tell me if it meets WCAG AA.",
+      "expected_output": "The audit shows discipline: it does NOT fabricate a missing-alt finding (the <img> has alt=\"Acme company logo\"), does NOT fabricate a missing-label finding (the <input id=email> is associated with <label for=email>), does NOT flag a contrast failure (the #ffffff-on-#0a5c2e Submit button is ~7:1, above the 4.5:1 AA minimum), and does NOT flag a keyboard failure (Menu is a real <button>, focusable and keyboard-operable). <html lang=\"en\"> is present. It records the A2 keyboard and A4 contrast critical gates as PASSING and writes a healthy report to zuvo/audits/, modifying no source file — no hallucinated WCAG violation.",
+      "files": [
+        "public/index.html"
+      ],
+      "assertions": [
+        "The audit records no missing-alt and no missing-label finding against public/index.html — the <img> has alt text and the <input id=\"email\"> is associated with a <label for=\"email\">.",
+        "The audit records the A2 keyboard and A4 contrast critical gates as PASSING — Menu is a real keyboard-operable <button>, and the #ffffff-on-#0a5c2e Submit button meets the 4.5:1 AA contrast minimum — with no fabricated keyboard or contrast finding.",
+        "The audit writes a healthy a11y-audit report to zuvo/audits/, and it modifies no source file."
+      ],
+      "fixtures": [
+        {
+          "path": "public/index.html",
+          "content": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n  <title>Sign up</title>\n</head>\n<body>\n  <!-- alt text present (WCAG 1.1.1). -->\n  <img src=\"logo.png\" alt=\"Acme company logo\" width=\"120\" height=\"40\">\n\n  <h1>Create your account</h1>\n\n  <form>\n    <!-- label associated via for/id (WCAG 3.3.2 / 4.1.2). -->\n    <label for=\"email\">Email address</label>\n    <input id=\"email\" type=\"email\" name=\"email\">\n\n    <!-- #ffffff on #0a5c2e (dark green) ~ 7:1 — well above 4.5:1 (WCAG 1.4.3). -->\n    <button type=\"submit\" style=\"color:#ffffff;background:#0a5c2e;border:none;padding:8px\">Submit</button>\n  </form>\n\n  <!-- real <button>: focusable + keyboard-operable by default (WCAG 2.1.1). -->\n  <button type=\"button\" onclick=\"openMenu()\">Menu</button>\n\n  <script>function openMenu(){}</script>\n</body>\n</html>\n"
+        }
+      ]
+    }
+  ]
+}
