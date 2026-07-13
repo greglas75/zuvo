@@ -1,0 +1,43 @@
+{
+  "skill_name": "ci-audit",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run a CI/CD audit on .github/workflows/deploy.yml. Check secret handling and action pinning and tell me what's unsafe.",
+      "expected_output": "The audit catches the planted CI problems in .github/workflows/deploy.yml: (CI5) a hardcoded secret — DEPLOY_TOKEN is inlined as a literal value in the job env instead of referencing ${{ secrets.DEPLOY_TOKEN }}; (CI6) unpinned actions — actions/checkout@main and some-vendor/deploy-action@v1 use mutable refs rather than pinned commit SHAs; and (CI7) the deploy job has no timeout-minutes. Each is reported at its file:line (secret value scrubbed). The audit writes its report to zuvo/audits/ and modifies no workflow file.",
+      "files": [
+        ".github/workflows/deploy.yml"
+      ],
+      "assertions": [
+        "The audit records a CI5 hardcoded-secret finding against .github/workflows/deploy.yml — DEPLOY_TOKEN is inlined as a literal value in the job env instead of a ${{ secrets.* }} reference — citing its file:line.",
+        "The audit records a CI6 unpinned-action finding — actions/checkout@main and/or some-vendor/deploy-action@v1 use a mutable ref (@main/@v1) rather than a pinned commit SHA — and/or the missing timeout-minutes (CI7), at their file:line locations.",
+        "The audit writes a ci-audit report to zuvo/audits/ recording the hardcoded-secret and unpinned-action findings, and it modifies no workflow file."
+      ],
+      "fixtures": [
+        {
+          "path": ".github/workflows/deploy.yml",
+          "content": "name: Deploy\n\non:\n  push:\n    branches: [main]\n\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    # CI7: no timeout-minutes — a hung step can run for the 6-hour default max.\n    env:\n      # CI5 (hardcoded secret): a real-looking token inlined in the workflow instead of\n      # referencing ${{ secrets.DEPLOY_TOKEN }}. Anyone with repo read sees it.\n      DEPLOY_TOKEN: \"dpl_live_hardcoded_abcdef1234567890\"\n    steps:\n      # CI6 (unpinned action): @main is a mutable ref — a compromised upstream tag runs\n      # arbitrary code in a job that holds secrets.\n      - uses: actions/checkout@main\n      # CI6 (unpinned action): @v1 is a mutable major tag, not a pinned commit SHA.\n      - uses: some-vendor/deploy-action@v1\n      - name: Install\n        run: npm install\n      - name: Deploy\n        run: ./deploy.sh --token \"$DEPLOY_TOKEN\"\n"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run a CI/CD audit on .github/workflows/deploy.yml and tell me if secret handling and action pinning are safe.",
+      "expected_output": "The audit shows discipline: it does NOT flag a hardcoded secret — DEPLOY_TOKEN is referenced via ${{ secrets.DEPLOY_TOKEN }}, never inlined — and it does NOT flag an unpinned action — actions/checkout and actions/setup-node are pinned to full commit SHAs (the trailing # v4.x is just a comment), not mutable @main/@v1 refs. The job also sets timeout-minutes and configures an npm cache. It records a healthy result and writes its report to zuvo/audits/, modifying no workflow file — no fabricated secret or pinning finding.",
+      "files": [
+        ".github/workflows/deploy.yml"
+      ],
+      "assertions": [
+        "The audit records no CI5 hardcoded-secret finding against .github/workflows/deploy.yml — DEPLOY_TOKEN is referenced via ${{ secrets.DEPLOY_TOKEN }}, not inlined as a literal.",
+        "The audit records no CI6 unpinned-action finding — actions/checkout and actions/setup-node are pinned to full commit SHAs (the # v4.x is a comment), not mutable @main/@v1 refs — and it recognizes the timeout-minutes and npm cache as present.",
+        "The audit writes a healthy ci-audit report to zuvo/audits/, and it modifies no workflow file."
+      ],
+      "fixtures": [
+        {
+          "path": ".github/workflows/deploy.yml",
+          "content": "name: Deploy\n\non:\n  push:\n    branches: [main]\n\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    timeout-minutes: 15\n    steps:\n      # SHA-pinned to a full commit (immutable), with the human-readable tag in a comment.\n      - uses: actions/checkout@8ade135a41bc03ea155e62e844d188df1ea18608 # v4.1.0\n      - uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8 # v4.0.2\n        with:\n          node-version: \"20\"\n          cache: \"npm\"\n      - name: Install\n        run: npm ci\n      - name: Deploy\n        # Secret is referenced from the GitHub secrets store, never inlined.\n        run: ./deploy.sh --token \"$DEPLOY_TOKEN\"\n        env:\n          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}\n"
+        }
+      ]
+    }
+  ]
+}
