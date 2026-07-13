@@ -1,0 +1,58 @@
+{
+  "skill_name": "env-audit",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run an environment-variable audit on this project. Check the .env files and config for secret exposure, completeness, and validation.",
+      "expected_output": "The audit catches the planted env problems: (ENV4) the committed .env holds real configured secret values — the DATABASE_URL password and JWT_SECRET — instead of .env.example placeholders, so secrets are exposed in a tracked file; (ENV1) process.env.API_TOKEN is read in src/config.ts but is absent from .env.example, a completeness gap; and (ENV3) config has no startup validation, so a missing required var fails silently instead of fast. The secret exposure is cited at its file:line (values scrubbed). The audit writes its report to zuvo/audits/ and modifies no .env or source file.",
+      "files": [
+        ".env",
+        ".env.example",
+        "src/config.ts"
+      ],
+      "assertions": [
+        "The audit records an ENV4 secret-exposure finding — the committed .env holds real configured secret values (the DATABASE_URL password and/or JWT_SECRET) rather than .env.example placeholders — citing its file:line.",
+        "The audit records that process.env.API_TOKEN is read in src/config.ts but is absent from .env.example (an ENV1 completeness gap), and that the config performs no startup validation of required vars (ENV3).",
+        "The audit writes an env-audit report to zuvo/audits/ recording the secret-exposure finding, and it modifies no .env or source file."
+      ],
+      "fixtures": [
+        {
+          "path": ".env",
+          "content": "# .env — committed to the repo with REAL configured values (should be .env.example\n# placeholders instead; this file should be gitignored, not tracked).\nDATABASE_URL=postgres://appuser:h4rdc0ded-prod-pass-2024@prod-db.internal:5432/app\nJWT_SECRET=hardcoded-prod-signing-key-2024-do-not-commit\n"
+        },
+        {
+          "path": ".env.example",
+          "content": "# .env.example\nDATABASE_URL=\nJWT_SECRET=\n# NOTE: API_TOKEN is read by the app (src/config.ts) but is MISSING from this example.\n"
+        },
+        {
+          "path": "src/config.ts",
+          "content": "// src/config.ts\n// No startup validation: if any of these is undefined the app silently runs with\n// `undefined` config instead of failing fast.\nexport const config = {\n  databaseUrl: process.env.DATABASE_URL,\n  jwtSecret: process.env.JWT_SECRET,\n  // API_TOKEN is read here but is not declared in .env.example (completeness gap).\n  apiToken: process.env.API_TOKEN,\n};\n"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run an environment-variable audit on this project and tell me if the config is healthy.",
+      "expected_output": "The audit shows discipline: it does NOT flag a secret exposure — the only env file is .env.example with placeholder values (your-api-token-here, a localhost password), which are placeholders per the .env.example exception, not real committed secrets — and it does NOT flag a completeness or validation gap, because every var read in src/config.ts (DATABASE_URL, API_TOKEN) is documented in .env.example AND validated at startup by the required() guard that throws on a missing var. It records a healthy result and writes its report to zuvo/audits/, modifying no file — no fabricated secret or missing-var finding.",
+      "files": [
+        ".env.example",
+        "src/config.ts"
+      ],
+      "assertions": [
+        "The audit records no ENV4 secret-exposure finding — the only env file is .env.example with placeholder values (your-api-token-here, a localhost password), recognized as placeholders (the .env.example exception), not real committed secrets.",
+        "The audit records that the env vars read in src/config.ts (DATABASE_URL, API_TOKEN) are documented in .env.example and validated at startup via the required() guard — no ENV1 completeness gap and no ENV3 missing-validation gap.",
+        "The audit writes a healthy env-audit report to zuvo/audits/, and it modifies no .env or source file."
+      ],
+      "fixtures": [
+        {
+          "path": ".env.example",
+          "content": "# .env.example — placeholders only, no real secrets.\nDATABASE_URL=postgres://user:password@localhost:5432/app\nAPI_TOKEN=your-api-token-here\n"
+        },
+        {
+          "path": "src/config.ts",
+          "content": "// src/config.ts\n// Startup validation: a missing required var fails fast with a clear error.\nfunction required(name: string): string {\n  const value = process.env[name];\n  if (!value) {\n    throw new Error(`Missing required environment variable: ${name}`);\n  }\n  return value;\n}\n\nexport const config = {\n  databaseUrl: required(\"DATABASE_URL\"),\n  apiToken: required(\"API_TOKEN\"),\n};\n"
+        }
+      ]
+    }
+  ]
+}
