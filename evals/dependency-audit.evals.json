@@ -1,0 +1,78 @@
+{
+  "skill_name": "dependency-audit",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run a dependency audit on pkg/ — check the coupling and dependency health, especially dead dependencies and circular imports.",
+      "expected_output": "The audit catches the two planted dependency problems in pkg/: (D6) a circular dependency between pkg/src/a.ts and pkg/src/b.ts, which import each other (a imports b's formatB, b imports a's NAME_A); and (D3) a dead dependency — `left-pad` is declared in pkg/package.json but imported by no file in the package (lodash, by contrast, is used in index.ts). The cycle is cited with the two files, and left-pad is named as unused. The audit writes its report to zuvo/audits/ and modifies no source file.",
+      "files": [
+        "pkg/package.json",
+        "pkg/src/a.ts",
+        "pkg/src/b.ts",
+        "pkg/src/index.ts"
+      ],
+      "assertions": [
+        "The audit records a D6 circular-dependency finding between pkg/src/a.ts and pkg/src/b.ts — the two modules import each other (a imports b, b imports a) — citing the files in the cycle.",
+        "The audit records a D3 dead/unused-dependency finding for `left-pad`, declared in pkg/package.json but imported by no file in the package (while lodash is correctly recognized as used in index.ts).",
+        "The audit writes a dependency-audit report to zuvo/audits/ recording the circular-dependency and dead-dependency findings, and it modifies no source file."
+      ],
+      "fixtures": [
+        {
+          "path": "pkg/package.json",
+          "content": "{\n  \"name\": \"acme-widgets\",\n  \"version\": \"1.0.0\",\n  \"private\": true,\n  \"dependencies\": {\n    \"lodash\": \"^4.17.21\",\n    \"left-pad\": \"^1.3.0\"\n  }\n}\n"
+        },
+        {
+          "path": "pkg/src/a.ts",
+          "content": "// pkg/src/a.ts\n// CIRCULAR (D6): a imports b, and b imports a back — a dependency cycle.\nimport { formatB } from \"./b.ts\";\n\nexport function formatA(x: number): string {\n  return \"A:\" + formatB(x);\n}\n\nexport const NAME_A = \"alpha\";\n"
+        },
+        {
+          "path": "pkg/src/b.ts",
+          "content": "// pkg/src/b.ts\n// CIRCULAR (D6): b imports a, closing the a <-> b cycle.\nimport { NAME_A } from \"./a.ts\";\n\nexport function formatB(x: number): string {\n  return NAME_A + \":\" + String(x);\n}\n"
+        },
+        {
+          "path": "pkg/src/index.ts",
+          "content": "// pkg/src/index.ts\nimport { chunk } from \"lodash\";        // lodash IS used → not a dead dependency\nimport { formatA } from \"./a.ts\";\n\nexport function run(xs: number[]): string[][] {\n  return chunk(xs.map(formatA), 2);\n}\n// NOTE: `left-pad` is declared in package.json but imported by NO file → dead dependency (D3).\n"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run a dependency audit on pkg/ and tell me the coupling and dependency health.",
+      "expected_output": "The audit shows discipline, not noise: it does NOT report a circular dependency (the imports form a clean acyclic chain a → b → c, no module imports one that imports it back), and it does NOT report a dead dependency (the sole declared dependency, lodash, is imported and used in pkg/src/c.ts). It records a healthy coupling/dependency result and writes its report to zuvo/audits/, modifying no source file — no fabricated cycle or phantom unused-dependency finding.",
+      "files": [
+        "pkg/package.json",
+        "pkg/src/a.ts",
+        "pkg/src/b.ts",
+        "pkg/src/c.ts",
+        "pkg/src/index.ts"
+      ],
+      "assertions": [
+        "The audit records no circular-dependency finding against pkg/ — the imports form an acyclic chain (a → b → c, no back-edge), recognized as a clean DAG.",
+        "The audit records no dead/unused-dependency finding against pkg/package.json — the only declared dependency, lodash, is imported and used in pkg/src/c.ts.",
+        "The audit writes a dependency-audit report to zuvo/audits/ recording a healthy coupling/dependency result, and it modifies no source file."
+      ],
+      "fixtures": [
+        {
+          "path": "pkg/package.json",
+          "content": "{\n  \"name\": \"acme-widgets\",\n  \"version\": \"1.0.0\",\n  \"private\": true,\n  \"dependencies\": {\n    \"lodash\": \"^4.17.21\"\n  }\n}\n"
+        },
+        {
+          "path": "pkg/src/a.ts",
+          "content": "// pkg/src/a.ts\n// Clean DAG: a depends on b only (no back-edge).\nimport { stepB } from \"./b.ts\";\n\nexport function stepA(x: number): number {\n  return stepB(x) + 1;\n}\n"
+        },
+        {
+          "path": "pkg/src/b.ts",
+          "content": "// pkg/src/b.ts\n// Clean DAG: b depends on c only.\nimport { stepC } from \"./c.ts\";\n\nexport function stepB(x: number): number {\n  return stepC(x) * 2;\n}\n"
+        },
+        {
+          "path": "pkg/src/c.ts",
+          "content": "// pkg/src/c.ts\n// Leaf module: uses lodash, imports nothing local.\nimport { clamp } from \"lodash\";\n\nexport function stepC(x: number): number {\n  return clamp(x, 0, 100);\n}\n"
+        },
+        {
+          "path": "pkg/src/index.ts",
+          "content": "// pkg/src/index.ts\nimport { stepA } from \"./a.ts\";\n\nexport function run(xs: number[]): number[] {\n  return xs.map(stepA);\n}\n"
+        }
+      ]
+    }
+  ]
+}
