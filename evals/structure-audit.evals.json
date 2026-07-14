@@ -1,0 +1,73 @@
+{
+  "skill_name": "structure-audit",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run a structure audit on src/widgets/. Check the naming conventions and file sizes and tell me what's inconsistent or oversized.",
+      "expected_output": "The audit catches the structural problems in src/widgets/: (SA2) the module mixes three file-naming conventions — PascalCase (UserWidget.ts), kebab-case (order-widget.ts), and snake_case (payment_widget.ts) — an inconsistency; and (SA7) mega-widget.ts is an oversized file, well past the ~300-line service/module cap. The naming inconsistency names the offending files and the oversized file is cited with its line count. The audit writes its report to zuvo/audits/ and modifies no source file.",
+      "files": [
+        "src/widgets/UserWidget.ts",
+        "src/widgets/order-widget.ts",
+        "src/widgets/payment_widget.ts",
+        "src/widgets/mega-widget.ts"
+      ],
+      "assertions": [
+        "The audit records an SA2 naming-convention inconsistency in src/widgets/ — the module mixes PascalCase (UserWidget.ts), kebab-case (order-widget.ts), and snake_case (payment_widget.ts) file naming — naming the offending files.",
+        "The audit records an SA7 oversized-file finding for src/widgets/mega-widget.ts — it exceeds the ~300-line file-size cap — citing its path and (approximate) line count.",
+        "The audit writes a structure-audit report to zuvo/audits/ recording the naming-inconsistency and oversized-file findings, and it modifies no source file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/widgets/UserWidget.ts",
+          "content": "// user widget\nexport function user0(x: number): number { return x + 0; }\nexport function user1(x: number): number { return x + 1; }\nexport function user2(x: number): number { return x + 2; }\n"
+        },
+        {
+          "path": "src/widgets/order-widget.ts",
+          "content": "// order widget\nexport function order0(x: number): number { return x + 0; }\nexport function order1(x: number): number { return x + 1; }\nexport function order2(x: number): number { return x + 2; }\n"
+        },
+        {
+          "path": "src/widgets/payment_widget.ts",
+          "content": "// payment widget\nexport function payment0(x: number): number { return x + 0; }\nexport function payment1(x: number): number { return x + 1; }\nexport function payment2(x: number): number { return x + 2; }\n"
+        },
+        {
+          "path": "src/widgets/mega-widget.ts",
+          "content": "// src/widgets/mega-widget.ts — a single file that has grown well past the\n// ~300-line service/module cap in file-limits.md (SA7 oversized-file smell).\nexport function handleCase0(input: { id: string; value: number }): number {\n  const scaled = input.value * 1;\n  if (scaled > 100) {\n    return scaled - 0;\n  }\n  return scaled;\n}\n\nexport function handleCase1(input: { id: string; value: number }): number {\n  const scaled = input.value * 2;\n  if (scaled > 200) {\n    return scaled - 1;\n  }\n  return scaled;\n}\n\nexport function handleCase2(input: { id: string; value: number }): number {\n  const scaled = input.value * 3;\n  if (scaled > 300) {\n    return scaled - 2;\n  }\n  return scaled;\n}\n\nexport function handleCase3(input: { id: string; value: number }): number {\n  const scaled = input.value * 4;\n  if (scaled > 400) {\n    return scaled - 3;\n  }\n  return scaled;\n}\n\nexport function handleCase4(input: { id: string; value: number }): number {\n  const scaled = input.value * 5;\n  if (scaled > 500) {\n    return scaled - 4;\n  }\n  return scaled;\n}\n\nexport function handleCase5(input: { id: string; value: number }): number {\n  const scaled = input.value * 6;\n  if (scaled > 600) {\n    return scaled - 5;\n  }\n  return scaled;\n}\n\nexport function handleCase6(input: { id: string; value: number }): number {\n  const scaled = input.value * 7;\n  if (scaled > 700) {\n    return scaled - 6;\n  }\n  return scaled;\n}\n\nexport function handleCase7(input: { id: string; value: number }): number {\n  const scaled = input.value * 8;\n  if (scaled > 800) {\n    return scaled - 7;\n  }\n  return scaled;\n}\n\nexport function handleCase8(input: { id: string; value: number }): number {\n  const scaled = input.value * 9;\n  if (scaled > 900) {\n    return scaled - 8;\n  }\n  return scaled;\n}\n\nexport function handleCase9(input: { id: string; value: number }): number {\n  const scaled = input.value * 10;\n  if (scaled > 1000) {\n    return scaled - 9;\n  }\n  return scaled;\n}\n\nexport function handleCase10(input: { id: string; value: number }): number {\n  const scaled = input.value * 11;\n  if (scaled > 1100) {\n    return scaled - 10;\n  }\n  return scaled;\n}\n\nexport function handleCase11(input: { id: string; value: number }): number {\n  const scaled = input.value * 12;\n  if (scaled > 1200) {\n    return scaled - 11;\n  }\n  return scaled;\n}\n\nexport function handleCase12(input: { id: string; value: number }): number {\n  const scaled = input.value * 13;\n  if (scaled > 1300) {\n    return scaled - 12;\n  }\n  return scaled;\n}\n\nexport function handleCase13(input: { id: string; value: number }): number {\n  const scaled = input.value * 14;\n  if (scaled > 1400) {\n    return scaled - 13;\n  }\n  return scaled;\n}\n\nexport function handleCase14(input: { id: string; value: number }): number {\n  const scaled = input.value * 15;\n  if (scaled > 1500) {\n    return scaled - 14;\n  }\n  return scaled;\n}\n\nexport function handleCase15(input: { id: string; value: number }): number {\n  const scaled = input.value * 16;\n  if (scaled > 1600) {\n    return scaled - 15;\n  }\n  return scaled;\n}\n\nexport function handleCase16(input: { id: string; value: number }): number {\n  const scaled = input.value * 17;\n  if (scaled > 1700) {\n    return scaled - 16;\n  }\n  return scaled;\n}\n\nexport function handleCase17(input: { id: string; value: number }): number {\n  const scaled = input.value * 18;\n  if (scaled > 1800) {\n    return scaled - 17;\n  }\n  return scaled;\n}\n\nexport function handleCase18(input: { id: string; value: number }): number {\n  const scaled = input.value * 19;\n  if (scaled > 1900) {\n    return scaled - 18;\n  }\n  return scaled;\n}\n\nexport function handleCase19(input: { id: string; value: number }): number {\n  const scaled = input.value * 20;\n  if (scaled > 2000) {\n    return scaled - 19;\n  }\n  return scaled;\n}\n\nexport function handleCase20(input: { id: string; value: number }): number {\n  const scaled = input.value * 21;\n  if (scaled > 2100) {\n    return scaled - 20;\n  }\n  return scaled;\n}\n\nexport function handleCase21(input: { id: string; value: number }): number {\n  const scaled = input.value * 22;\n  if (scaled > 2200) {\n    return scaled - 21;\n  }\n  return scaled;\n}\n\nexport function handleCase22(input: { id: string; value: number }): number {\n  const scaled = input.value * 23;\n  if (scaled > 2300) {\n    return scaled - 22;\n  }\n  return scaled;\n}\n\nexport function handleCase23(input: { id: string; value: number }): number {\n  const scaled = input.value * 24;\n  if (scaled > 2400) {\n    return scaled - 23;\n  }\n  return scaled;\n}\n\nexport function handleCase24(input: { id: string; value: number }): number {\n  const scaled = input.value * 25;\n  if (scaled > 2500) {\n    return scaled - 24;\n  }\n  return scaled;\n}\n\nexport function handleCase25(input: { id: string; value: number }): number {\n  const scaled = input.value * 26;\n  if (scaled > 2600) {\n    return scaled - 25;\n  }\n  return scaled;\n}\n\nexport function handleCase26(input: { id: string; value: number }): number {\n  const scaled = input.value * 27;\n  if (scaled > 2700) {\n    return scaled - 26;\n  }\n  return scaled;\n}\n\nexport function handleCase27(input: { id: string; value: number }): number {\n  const scaled = input.value * 28;\n  if (scaled > 2800) {\n    return scaled - 27;\n  }\n  return scaled;\n}\n\nexport function handleCase28(input: { id: string; value: number }): number {\n  const scaled = input.value * 29;\n  if (scaled > 2900) {\n    return scaled - 28;\n  }\n  return scaled;\n}\n\nexport function handleCase29(input: { id: string; value: number }): number {\n  const scaled = input.value * 30;\n  if (scaled > 3000) {\n    return scaled - 29;\n  }\n  return scaled;\n}\n\nexport function handleCase30(input: { id: string; value: number }): number {\n  const scaled = input.value * 31;\n  if (scaled > 3100) {\n    return scaled - 30;\n  }\n  return scaled;\n}\n\nexport function handleCase31(input: { id: string; value: number }): number {\n  const scaled = input.value * 32;\n  if (scaled > 3200) {\n    return scaled - 31;\n  }\n  return scaled;\n}\n\nexport function handleCase32(input: { id: string; value: number }): number {\n  const scaled = input.value * 33;\n  if (scaled > 3300) {\n    return scaled - 32;\n  }\n  return scaled;\n}\n\nexport function handleCase33(input: { id: string; value: number }): number {\n  const scaled = input.value * 34;\n  if (scaled > 3400) {\n    return scaled - 33;\n  }\n  return scaled;\n}\n\nexport function handleCase34(input: { id: string; value: number }): number {\n  const scaled = input.value * 35;\n  if (scaled > 3500) {\n    return scaled - 34;\n  }\n  return scaled;\n}\n\nexport function handleCase35(input: { id: string; value: number }): number {\n  const scaled = input.value * 36;\n  if (scaled > 3600) {\n    return scaled - 35;\n  }\n  return scaled;\n}\n\nexport function handleCase36(input: { id: string; value: number }): number {\n  const scaled = input.value * 37;\n  if (scaled > 3700) {\n    return scaled - 36;\n  }\n  return scaled;\n}\n\nexport function handleCase37(input: { id: string; value: number }): number {\n  const scaled = input.value * 38;\n  if (scaled > 3800) {\n    return scaled - 37;\n  }\n  return scaled;\n}\n\nexport function handleCase38(input: { id: string; value: number }): number {\n  const scaled = input.value * 39;\n  if (scaled > 3900) {\n    return scaled - 38;\n  }\n  return scaled;\n}\n\nexport function handleCase39(input: { id: string; value: number }): number {\n  const scaled = input.value * 40;\n  if (scaled > 4000) {\n    return scaled - 39;\n  }\n  return scaled;\n}\n\nexport function handleCase40(input: { id: string; value: number }): number {\n  const scaled = input.value * 41;\n  if (scaled > 4100) {\n    return scaled - 40;\n  }\n  return scaled;\n}\n\nexport function handleCase41(input: { id: string; value: number }): number {\n  const scaled = input.value * 42;\n  if (scaled > 4200) {\n    return scaled - 41;\n  }\n  return scaled;\n}\n\nexport function handleCase42(input: { id: string; value: number }): number {\n  const scaled = input.value * 43;\n  if (scaled > 4300) {\n    return scaled - 42;\n  }\n  return scaled;\n}\n\nexport function handleCase43(input: { id: string; value: number }): number {\n  const scaled = input.value * 44;\n  if (scaled > 4400) {\n    return scaled - 43;\n  }\n  return scaled;\n}\n\nexport function handleCase44(input: { id: string; value: number }): number {\n  const scaled = input.value * 45;\n  if (scaled > 4500) {\n    return scaled - 44;\n  }\n  return scaled;\n}\n\nexport function handleCase45(input: { id: string; value: number }): number {\n  const scaled = input.value * 46;\n  if (scaled > 4600) {\n    return scaled - 45;\n  }\n  return scaled;\n}\n\nexport function handleCase46(input: { id: string; value: number }): number {\n  const scaled = input.value * 47;\n  if (scaled > 4700) {\n    return scaled - 46;\n  }\n  return scaled;\n}\n\nexport function handleCase47(input: { id: string; value: number }): number {\n  const scaled = input.value * 48;\n  if (scaled > 4800) {\n    return scaled - 47;\n  }\n  return scaled;\n}\n\n"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run a structure audit on src/widgets/ and tell me if the naming and file sizes are clean.",
+      "expected_output": "The audit shows discipline: it does NOT flag a naming inconsistency — every file in src/widgets/ uses the same kebab-case convention (user-widget.ts, order-widget.ts, payment-widget.ts, report-widget.ts) — and it does NOT flag an oversized file, because every file is small (a few dozen lines), comfortably under the ~300-line cap. It records a healthy structural result and writes its report to zuvo/audits/, modifying no source file — no fabricated naming or size finding.",
+      "files": [
+        "src/widgets/user-widget.ts",
+        "src/widgets/order-widget.ts",
+        "src/widgets/payment-widget.ts",
+        "src/widgets/report-widget.ts"
+      ],
+      "assertions": [
+        "The audit records no SA2 naming-convention inconsistency in src/widgets/ — every file uses the same kebab-case convention (user-widget.ts, order-widget.ts, payment-widget.ts, report-widget.ts).",
+        "The audit records no SA7 oversized-file finding against src/widgets/ — every file is well under the ~300-line size cap.",
+        "The audit writes a healthy structure-audit report to zuvo/audits/, and it modifies no source file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/widgets/user-widget.ts",
+          "content": "// user widget\nexport function user0(x: number): number { return x + 0; }\nexport function user1(x: number): number { return x + 1; }\nexport function user2(x: number): number { return x + 2; }\nexport function user3(x: number): number { return x + 3; }\n"
+        },
+        {
+          "path": "src/widgets/order-widget.ts",
+          "content": "// order widget\nexport function order0(x: number): number { return x + 0; }\nexport function order1(x: number): number { return x + 1; }\nexport function order2(x: number): number { return x + 2; }\nexport function order3(x: number): number { return x + 3; }\n"
+        },
+        {
+          "path": "src/widgets/payment-widget.ts",
+          "content": "// payment widget\nexport function payment0(x: number): number { return x + 0; }\nexport function payment1(x: number): number { return x + 1; }\nexport function payment2(x: number): number { return x + 2; }\nexport function payment3(x: number): number { return x + 3; }\n"
+        },
+        {
+          "path": "src/widgets/report-widget.ts",
+          "content": "// report widget\nexport function report0(x: number): number { return x + 0; }\nexport function report1(x: number): number { return x + 1; }\nexport function report2(x: number): number { return x + 2; }\nexport function report3(x: number): number { return x + 3; }\n"
+        }
+      ]
+    }
+  ]
+}
