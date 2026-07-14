@@ -1,0 +1,48 @@
+{
+  "skill_name": "content-audit",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run a content-quality audit on content/article.md (zuvo:content-audit --quick). Check for encoding artifacts, broken markdown, migration debris, and broken links.",
+      "expected_output": "The audit catches the planted content problems in content/article.md: (CC1) a mojibake sequence (cafÃ© — UTF-8 é rendered as Ã©) plus a non-breaking space and a zero-width space in the prose; (CC2) an unclosed *italic and an orphan trailing backslash; (CC3) CMS migration leftovers — a Joomla {loadposition user_signup} and a WordPress <!-- wp:paragraph --> block wrapper; and (CC6) a broken link to ./guide.md, which does not exist. Each is cited at its file:line. The audit writes its report to zuvo/audits/ and modifies no content file.",
+      "files": [
+        "content/article.md"
+      ],
+      "assertions": [
+        "The audit records a CC1 encoding-artifact finding in content/article.md — the mojibake `cafÃ©` and/or the non-breaking-space / zero-width-space characters in the prose — at its file:line.",
+        "The audit records a CC2 broken-markdown finding (the unclosed *italic or the orphan trailing backslash) and a CC3 CMS-migration-artifact finding (the Joomla {loadposition} or the WordPress <!-- wp:paragraph --> leftover), at their file:line locations.",
+        "The audit records a CC6 broken-link finding — the markdown link to ./guide.md, which does not exist — and writes a content-audit report to zuvo/audits/ without modifying any content file."
+      ],
+      "fixtures": [
+        {
+          "path": "content/article.md",
+          "content": "---\ntitle: Our Story\n---\n\n# Our Story\n\nWe started in a small cafÃ© in Paris, serving espresso and pastries.\nThe​team grew quickly.\n\nThis *is an unclosed italic that never terminates on the line.\nA stray backslash sits at the end of this sentence.\\\n\n{loadposition user_signup}\n\n<!-- wp:paragraph -->\n<p>Legacy WordPress block wrapper left over from migration.</p>\n<!-- /wp:paragraph -->\n\nRead our [full guide](./guide.md) for details.\n"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run a content-quality audit on content/article.md (zuvo:content-audit --quick) and tell me if the encoding, markdown, and links are clean.",
+      "expected_output": "The audit shows discipline: it does NOT flag an encoding artifact (the text is clean UTF-8 — 'café' is correctly encoded, no NBSP/zero-width), does NOT flag broken markdown (the *italic* is properly closed, no orphan backslash), does NOT flag a CMS migration artifact (no Joomla/WordPress leftovers), and does NOT flag a broken link (the link to ./guide.md resolves — content/guide.md exists). It records content/article.md as clean and writes its report to zuvo/audits/, modifying no content file — no fabricated finding.",
+      "files": [
+        "content/article.md",
+        "content/guide.md"
+      ],
+      "assertions": [
+        "The audit records no CC1 encoding-artifact finding against content/article.md — the prose is clean UTF-8 ('café' correctly encoded), with no mojibake, non-breaking space, or zero-width character.",
+        "The audit records no CC2 broken-markdown finding and no CC3 CMS-migration-artifact finding against content/article.md — the *italic* is properly closed and there are no Joomla/WordPress leftovers.",
+        "The audit records no CC6 broken-link finding — the markdown link to ./guide.md resolves to the existing content/guide.md — and writes a content-audit report to zuvo/audits/ without modifying any content file."
+      ],
+      "fixtures": [
+        {
+          "path": "content/article.md",
+          "content": "---\ntitle: Our Story\n---\n\n# Our Story\n\nWe started in a small café in Paris, serving espresso and pastries.\nThe team grew quickly.\n\nThis *is a properly closed italic* on the line.\nNo stray backslashes here.\n\nRead our [full guide](./guide.md) for details.\n"
+        },
+        {
+          "path": "content/guide.md",
+          "content": "---\ntitle: Full Guide\n---\n\n# Full Guide\n\nEverything you need to know.\n"
+        }
+      ]
+    }
+  ]
+}
