@@ -1,0 +1,58 @@
+{
+  "skill_name": "architecture",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run an architecture review (zuvo:architecture --mode review src/) focusing on layering and module dependencies. Tell me about any dependency-direction or cycle problems.",
+      "expected_output": "The architecture review catches the structural problems in src/: a layering / dependency-direction violation — src/domain/order.ts (the domain layer) imports persist() from src/infra/repository.ts (the infrastructure layer), which inverts the correct dependency direction (infrastructure should depend on the domain, never the reverse) — and the resulting circular dependency between the domain and infra layers (order.ts ↔ repository.ts). Each is cited at its file:line. The review writes its report to zuvo/audits/ and modifies no source file.",
+      "files": [
+        "src/domain/order.ts",
+        "src/infra/repository.ts"
+      ],
+      "assertions": [
+        "The review records a layering / dependency-direction violation — src/domain/order.ts (domain layer) imports persist() from src/infra/repository.ts (infrastructure layer), inverting the correct infra→domain direction — citing its file:line.",
+        "The review records the resulting circular dependency between the domain and infrastructure layers (src/domain/order.ts ↔ src/infra/repository.ts import each other), citing the cycle.",
+        "The review writes an architecture review report to zuvo/audits/ recording the layering-violation finding, and it modifies no source file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/domain/order.ts",
+          "content": "// src/domain/order.ts — DOMAIN layer (should be pure: no dependency on infra).\n// VIOLATION: the domain entity imports the infrastructure repository, inverting the\n// correct dependency direction (infra should depend on domain, never the reverse).\nimport { persist } from \"../infra/repository.ts\";\n\nexport interface Order {\n  id: string;\n  total: number;\n}\n\nexport function checkout(order: Order): void {\n  // domain logic reaching straight into infrastructure\n  persist(order);\n}\n"
+        },
+        {
+          "path": "src/infra/repository.ts",
+          "content": "// src/infra/repository.ts — INFRASTRUCTURE layer.\n// Imports the domain type (this direction is fine on its own), but combined with\n// order.ts importing persist() back, it closes a domain↔infra dependency cycle.\nimport type { Order } from \"../domain/order.ts\";\n\nconst store: Order[] = [];\n\nexport function persist(order: Order): void {\n  store.push(order);\n}\n"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run an architecture review (zuvo:architecture --mode review src/) focusing on layering and module dependencies. Tell me if the layering is clean.",
+      "expected_output": "The architecture review shows discipline: it does NOT flag a layering / dependency-direction violation — the domain layer (order.ts) is pure and imports nothing inward, infrastructure (repository.ts) depends INWARD on the domain (the correct direction), and the application layer (checkout-service.ts) composes both — and it does NOT flag a circular dependency, because the module graph is acyclic (app → {domain, infra}, infra → domain). It records the architecture as clean on layering and coupling and writes its report to zuvo/audits/, modifying no source file — no fabricated finding.",
+      "files": [
+        "src/domain/order.ts",
+        "src/infra/repository.ts",
+        "src/app/checkout-service.ts"
+      ],
+      "assertions": [
+        "The review records no layering / dependency-direction violation — the domain layer (src/domain/order.ts) is pure and imports nothing inward, and infrastructure (src/infra/repository.ts) correctly depends on the domain (infra→domain direction).",
+        "The review records no circular dependency in src/ — the module graph is acyclic (app → domain and infra; infra → domain; domain imports nothing local).",
+        "The review records the architecture as clean on layering and coupling — no layering-violation and no circular-dependency finding — and writes its report to zuvo/audits/ without modifying any source file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/domain/order.ts",
+          "content": "// src/domain/order.ts — DOMAIN layer: pure. Imports nothing from infra or app.\nexport interface Order {\n  id: string;\n  total: number;\n}\n\nexport function isLarge(order: Order): boolean {\n  return order.total > 1000;\n}\n"
+        },
+        {
+          "path": "src/infra/repository.ts",
+          "content": "// src/infra/repository.ts — INFRASTRUCTURE layer: depends INWARD on the domain only\n// (correct direction). Never imported by the domain.\nimport type { Order } from \"../domain/order.ts\";\n\nconst store: Order[] = [];\n\nexport function persist(order: Order): void {\n  store.push(order);\n}\n"
+        },
+        {
+          "path": "src/app/checkout-service.ts",
+          "content": "// src/app/checkout-service.ts — APPLICATION layer: composes domain + infra.\nimport { type Order, isLarge } from \"../domain/order.ts\";\nimport { persist } from \"../infra/repository.ts\";\n\nexport function checkout(order: Order): void {\n  if (isLarge(order)) {\n    // ... apply large-order policy\n  }\n  persist(order);\n}\n"
+        }
+      ]
+    }
+  ]
+}
