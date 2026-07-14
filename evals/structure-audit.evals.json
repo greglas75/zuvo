@@ -38,7 +38,7 @@
     {
       "id": 2,
       "prompt": "Run a structure audit on src/widgets/ and tell me if the naming and file sizes are clean.",
-      "expected_output": "The audit shows discipline: it does NOT flag a naming inconsistency — every file in src/widgets/ uses the same kebab-case convention (user-widget.ts, order-widget.ts, payment-widget.ts, report-widget.ts) — and it does NOT flag an oversized file, because every file is small (a few dozen lines), comfortably under the ~300-line cap. It records a healthy structural result and writes its report to zuvo/audits/, modifying no source file — no fabricated naming or size finding.",
+      "expected_output": "The audit shows discipline: it does NOT flag a naming inconsistency — every file in src/widgets/ uses the same kebab-case convention (user-widget.ts, order-widget.ts, payment-widget.ts, report-widget.ts) — and it does NOT flag an oversized file, because every file is small (a few dozen lines), comfortably under the ~300-line cap. It records the module as clean on naming and size (no SA2/SA7 finding) and writes its report to zuvo/audits/, modifying no source file — no fabricated naming or size finding.",
       "files": [
         "src/widgets/user-widget.ts",
         "src/widgets/order-widget.ts",
@@ -48,7 +48,7 @@
       "assertions": [
         "The audit records no SA2 naming-convention inconsistency in src/widgets/ — every file uses the same kebab-case convention (user-widget.ts, order-widget.ts, payment-widget.ts, report-widget.ts).",
         "The audit records no SA7 oversized-file finding against src/widgets/ — every file is well under the ~300-line size cap.",
-        "The audit writes a healthy structure-audit report to zuvo/audits/, and it modifies no source file."
+        "The audit records src/widgets/ as structurally clean on naming and size — no SA2 naming-inconsistency and no SA7 oversized-file finding — and writes its structure-audit report to zuvo/audits/ without modifying any source file."
       ],
       "fixtures": [
         {
