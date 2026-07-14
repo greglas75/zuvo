@@ -1,0 +1,43 @@
+{
+  "skill_name": "seo-audit",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run an SEO audit on public/index.html using the browser (zuvo:seo-audit --live-url). Point it at the local file. Report the SEO gaps and the grade.",
+      "expected_output": "The audit catches the missing critical SEO elements in public/index.html: there is no <title> tag, no <meta name=\"description\">, no <link rel=\"canonical\">, no Open Graph tags (og:title/og:description/og:image), and no JSON-LD structured data; the page also has two <h1> elements. Each gap is cited at its file:line / DOM location. Because critical meta (title/description) is absent, the page gets a failing SEO grade. The audit writes its report to zuvo/audits/ and modifies no source file.",
+      "files": [
+        "public/index.html"
+      ],
+      "assertions": [
+        "The audit records a missing-<title> finding and a missing meta-description finding against public/index.html, citing their file:line / absence in the document head.",
+        "The audit records the missing canonical link, the missing Open Graph tags, and/or the missing JSON-LD structured data in public/index.html, and it notes the duplicate <h1> (two h1 elements).",
+        "The audit records a failing SEO grade driven by the missing critical meta (title/description), and writes an seo-audit report to zuvo/audits/ without modifying any source file."
+      ],
+      "fixtures": [
+        {
+          "path": "public/index.html",
+          "content": "<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"utf-8\">\n  <!-- MISSING: <title>, <meta name=\"description\">, <link rel=\"canonical\">,\n       Open Graph tags, and JSON-LD structured data are all absent. -->\n</head>\n<body>\n  <h1>Welcome</h1>\n  <p>We sell artisanal coffee beans sourced from small farms.</p>\n  <h1>Our Beans</h1>\n  <p>Single-origin, small-batch roasted.</p>\n</body>\n</html>\n"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run an SEO audit on public/index.html using the browser (zuvo:seo-audit --live-url). Point it at the local file. Tell me if the SEO meta is complete.",
+      "expected_output": "The audit shows discipline: it does NOT flag a missing <title> (present, ~60 chars), does NOT flag a missing meta description (present, ~155 chars), does NOT flag a missing canonical (present), does NOT flag missing Open Graph tags (og:title/description/image/type all present), and does NOT flag missing structured data (a JSON-LD Product schema is present). The page has a single <h1> and <html lang=\"en\">. It records the SEO meta as complete and writes its report to zuvo/audits/, modifying no source file — no fabricated missing-tag finding.",
+      "files": [
+        "public/index.html"
+      ],
+      "assertions": [
+        "The audit records no missing-<title> and no missing meta-description finding against public/index.html — both a <title> and a <meta name=\"description\"> are present.",
+        "The audit records no missing-canonical, no missing Open Graph, and no missing structured-data finding — public/index.html has <link rel=\"canonical\">, og:title/description/image tags, and a JSON-LD schema block.",
+        "The audit records the page's critical SEO meta (title, description, canonical, Open Graph, structured data) as present — no missing-critical-tag finding — and writes an seo-audit report to zuvo/audits/ without modifying any source file."
+      ],
+      "fixtures": [
+        {
+          "path": "public/index.html",
+          "content": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <title>Artisanal Coffee Beans — Single-Origin, Small-Batch Roasted | Acme</title>\n  <meta name=\"description\" content=\"Acme sources single-origin, small-batch roasted coffee beans from small farms. Shop artisanal beans with tasting notes, roast dates, and free shipping over $30.\">\n  <link rel=\"canonical\" href=\"https://acme.example.com/beans\">\n  <meta property=\"og:title\" content=\"Artisanal Coffee Beans — Acme\">\n  <meta property=\"og:description\" content=\"Single-origin, small-batch roasted coffee beans from small farms.\">\n  <meta property=\"og:image\" content=\"https://acme.example.com/og/beans.jpg\">\n  <meta property=\"og:type\" content=\"website\">\n  <script type=\"application/ld+json\">\n  {\n    \"@context\": \"https://schema.org\",\n    \"@type\": \"Product\",\n    \"name\": \"Artisanal Coffee Beans\",\n    \"description\": \"Single-origin, small-batch roasted coffee beans.\",\n    \"brand\": { \"@type\": \"Brand\", \"name\": \"Acme\" }\n  }\n  </script>\n</head>\n<body>\n  <h1>Artisanal Coffee Beans</h1>\n  <p>We sell artisanal coffee beans sourced from small farms — single-origin, small-batch roasted.</p>\n</body>\n</html>\n"
+        }
+      ]
+    }
+  ]
+}
