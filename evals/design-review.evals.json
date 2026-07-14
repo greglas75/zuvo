@@ -1,0 +1,43 @@
+{
+  "skill_name": "design-review",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run a design review on src/components/IconButton.tsx (zuvo:design-review). Check design-token consistency, interactive states, and accessibility. Report what's off.",
+      "expected_output": "The design review catches the problems in src/components/IconButton.tsx: (DAP) arbitrary 'magic' Tailwind values — px-[13px], py-[7px], mt-[23px] — instead of the spacing scale, and hardcoded hex colors (#3a7bd5, #eeeeee) instead of design tokens; (DX states) the button has no hover, focus-visible, or disabled states; and (DX a11y) it is an icon-only button with no aria-label, so it has no accessible name. Each is cited at its file:line. The audit writes its report to zuvo/audits/ and modifies no source file.",
+      "files": [
+        "src/components/IconButton.tsx"
+      ],
+      "assertions": [
+        "The audit records a DAP magic-value finding — arbitrary Tailwind values (px-[13px], py-[7px], mt-[23px]) instead of scale tokens — and a hardcoded-color finding (#3a7bd5 / #eeeeee instead of design tokens) against src/components/IconButton.tsx, at file:line.",
+        "The audit records a DX missing-interactive-states finding (no hover / focus-visible / disabled states on the button) and the missing aria-label on the icon-only button, at their file:line locations.",
+        "The audit writes a design-review report to zuvo/audits/ recording the magic-value and missing-state / missing-a11y findings, and it modifies no source file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/components/IconButton.tsx",
+          "content": "// src/components/IconButton.tsx\nimport { save } from \"../lib/actions.ts\";\n\n// DAP: arbitrary/magic Tailwind values (px-[13px], py-[7px], mt-[23px]) instead of the\n// spacing scale; hardcoded hex colors instead of design tokens; NO hover/focus/disabled\n// states; and an icon-only button with NO aria-label (inaccessible name).\nexport function IconButton() {\n  return (\n    <button\n      className=\"px-[13px] py-[7px] mt-[23px] rounded\"\n      style={{ color: \"#3a7bd5\", background: \"#eeeeee\" }}\n      onClick={() => save()}\n    >\n      <svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\">\n        <path d=\"M2 8l4 4 8-8\" />\n      </svg>\n    </button>\n  );\n}\n"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run a design review on src/components/IconButton.tsx (zuvo:design-review). Check design-token consistency, interactive states, and accessibility. Tell me if it's clean.",
+      "expected_output": "The design review shows discipline: it does NOT flag a magic-value or hardcoded-color issue — the component uses spacing-scale tokens (px-3, py-2, mt-6) and semantic color tokens (text-primary, bg-surface) — and does NOT flag missing interactive states (it has hover:, focus-visible:, and disabled: variants) or a missing accessible name (it has aria-label=\"Save\", and the decorative svg is aria-hidden). It records the component as consistent on tokens, states, and accessibility and writes its report to zuvo/audits/, modifying no source file — no fabricated finding.",
+      "files": [
+        "src/components/IconButton.tsx"
+      ],
+      "assertions": [
+        "The audit records no magic-value and no hardcoded-color finding against src/components/IconButton.tsx — the component uses spacing-scale tokens (px-3, py-2, mt-6) and semantic color tokens (text-primary, bg-surface), not arbitrary values or hex literals.",
+        "The audit records no missing-interactive-states and no missing-aria-label finding — the button has hover / focus-visible / disabled states and an aria-label=\"Save\" (with the decorative svg aria-hidden).",
+        "The audit records the component as consistent on design tokens, interactive states, and accessibility — no magic-value / missing-state / missing-aria finding — and writes a design-review report to zuvo/audits/ without modifying any source file."
+      ],
+      "fixtures": [
+        {
+          "path": "src/components/IconButton.tsx",
+          "content": "// src/components/IconButton.tsx\nimport { save } from \"../lib/actions.ts\";\n\n// Consistent: spacing scale tokens (px-3/py-2/mt-6), semantic color tokens, full interactive\n// states (hover/focus-visible/disabled), and an accessible name (aria-label) with the\n// decorative icon hidden from the a11y tree.\nexport function IconButton() {\n  return (\n    <button\n      type=\"button\"\n      aria-label=\"Save\"\n      className=\"px-3 py-2 mt-6 rounded text-primary bg-surface hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50 disabled:pointer-events-none\"\n      onClick={() => save()}\n    >\n      <svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" aria-hidden=\"true\">\n        <path d=\"M2 8l4 4 8-8\" />\n      </svg>\n    </button>\n  );\n}\n"
+        }
+      ]
+    }
+  ]
+}
