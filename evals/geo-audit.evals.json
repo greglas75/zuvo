@@ -1,0 +1,58 @@
+{
+  "skill_name": "geo-audit",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run a GEO (Generative Engine Optimization) audit on this project (zuvo:geo-audit). Check AI crawler access, llms.txt, and content structure. Report the GEO readiness and tier.",
+      "expected_output": "The audit catches the GEO-readiness problems: (G1) robots.txt blocks the AI crawlers GPTBot, ClaudeBot, and PerplexityBot with Disallow: /, so AI answer engines cannot access or cite the site; (G3) there is no llms.txt file; and (G9/G10) content/guide.md buries its answer behind preamble under a weak generic heading ('Information') instead of leading bottom-line-up-front. Each is cited at its file:line. Because AI access is blocked, the GEO tier fails. The audit writes its report to zuvo/audits/ and modifies no source file.",
+      "files": [
+        "robots.txt",
+        "content/guide.md"
+      ],
+      "assertions": [
+        "The audit records a G1 AI-crawler-access finding — robots.txt blocks AI crawlers (GPTBot / ClaudeBot / PerplexityBot with Disallow: /), preventing AI answer engines from citing the site — citing its file:line.",
+        "The audit records the missing llms.txt (G3) and the weak content structure in content/guide.md (the answer is buried behind preamble instead of bottom-line-up-front, under a generic 'Information' heading).",
+        "The audit records a failing GEO tier driven by the blocked AI crawler access, and writes a geo-audit report to zuvo/audits/ without modifying any source file."
+      ],
+      "fixtures": [
+        {
+          "path": "robots.txt",
+          "content": "# robots.txt — BLOCKS AI crawlers, preventing GEO citation (G1).\nUser-agent: GPTBot\nDisallow: /\n\nUser-agent: ClaudeBot\nDisallow: /\n\nUser-agent: PerplexityBot\nDisallow: /\n\nUser-agent: *\nAllow: /\n"
+        },
+        {
+          "path": "content/guide.md",
+          "content": "# Information\n\nCoffee is a beverage enjoyed worldwide. Its history is long and varied, spanning many centuries and cultures across many continents over a very long time. Many people have opinions about it. There are many considerations. After much background and context and preamble and throat-clearing that buries the point, we eventually get to it: the ideal espresso extraction time is 25 to 30 seconds.\n"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run a GEO (Generative Engine Optimization) audit on this project (zuvo:geo-audit). Check AI crawler access, llms.txt, and content structure. Tell me if it's GEO-ready.",
+      "expected_output": "The audit shows discipline: it does NOT flag blocked AI crawler access — robots.txt explicitly Allows GPTBot, ClaudeBot, and PerplexityBot — and does NOT flag a missing llms.txt (llms.txt is present with a summary and guide links), and does NOT flag weak content structure (content/guide.md leads bottom-line-up-front: 'The ideal espresso extraction time is 25 to 30 seconds' in the first line, under a descriptive question heading, with author/date/source citation signals). It records the GEO signals as present and writes its report to zuvo/audits/, modifying no source file — no fabricated finding.",
+      "files": [
+        "robots.txt",
+        "llms.txt",
+        "content/guide.md"
+      ],
+      "assertions": [
+        "The audit records no G1 AI-crawler-blocking finding — robots.txt Allows the AI crawlers (GPTBot / ClaudeBot / PerplexityBot), so AI answer engines can access the site.",
+        "The audit records no missing-llms.txt finding — llms.txt is present — and recognizes content/guide.md's bottom-line-up-front structure (the answer leads the page) with a descriptive question heading and author/date/source citation signals.",
+        "The audit records the GEO signals (AI crawler access, llms.txt, BLUF content) as present — no blocked-access or missing-signal finding — and writes a geo-audit report to zuvo/audits/ without modifying any source file."
+      ],
+      "fixtures": [
+        {
+          "path": "robots.txt",
+          "content": "# robots.txt — allows AI crawlers (GEO-friendly, G1).\nUser-agent: GPTBot\nAllow: /\n\nUser-agent: ClaudeBot\nAllow: /\n\nUser-agent: PerplexityBot\nAllow: /\n\nUser-agent: *\nAllow: /\n\nSitemap: https://acme.example.com/sitemap.xml\n"
+        },
+        {
+          "path": "llms.txt",
+          "content": "# Acme Coffee\n\n> Acme sells single-origin, small-batch roasted coffee beans with brewing guides.\n\n## Guides\n- [Espresso extraction guide](https://acme.example.com/guide): ideal extraction times and troubleshooting.\n"
+        },
+        {
+          "path": "content/guide.md",
+          "content": "# What is the ideal espresso extraction time?\n\n**The ideal espresso extraction time is 25 to 30 seconds** for a standard double shot.\n\n## Why 25-30 seconds?\n\nUnder 25 seconds under-extracts (sour); over 30 seconds over-extracts (bitter).\n\n## How to adjust\n\nGrind finer to slow the flow, coarser to speed it up.\n\n_Author: Acme Coffee Lab · Updated: 2026-06-01 · Source: SCA brewing standards._\n"
+        }
+      ]
+    }
+  ]
+}
