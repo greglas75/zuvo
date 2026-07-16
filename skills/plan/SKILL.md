@@ -164,6 +164,28 @@ The sequential order is mandatory because each agent's analysis depends on what 
 
 Pass the prior reports in full when practical. If you must compress for token budget, preserve concrete file paths, symbols, risk rankings, and open questions. Do not reduce a prior report to generic prose.
 
+### Model policy — planning runs on the STRONGEST model
+
+Planning is the most reasoning-critical step in the pipeline: a weak plan cascades into weak execution
+across every task. So the Architect / Tech Lead / QA / plan-reviewer sub-agents dispatch on **Opus**
+(the strongest tier — each platform resolves the "Opus" label to its top model), NOT Sonnet. Override
+with `--model` only when you deliberately accept a cheaper/faster plan.
+
+**Session-model preflight (WARN — never let a weak model quietly author a plan).** Team Lead synthesis
+(Step 4) and light-mode direct analysis run on the MAIN SESSION model, which zuvo cannot change (it is
+the CLI you launched). If that session model is NOT a top-tier reasoning model — e.g. a `codex-5.4` /
+mid-tier / generation-behind model is driving — print, before authoring:
+
+```
+[MODEL WARNING] Planning is running on <session-model>, not a top-tier model. A plan sets the ceiling
+for the entire build — every execute task inherits its quality. Re-run planning from your STRONGEST
+agent (Claude Opus / the newest codex / etc.) for a materially better plan.
+```
+
+Proceed only if the user continues, but the warning must be loud. Detect the driver from the ambient
+env (`CLAUDE_MODEL`, `CODEX_MODEL`, the codex `config.toml` `model=`, `ANTIGRAVITY_MODEL`); if unknown,
+warn generically that planning should be on the strongest available agent.
+
 ### Agent 1: Architect
 
 Read `agents/architect.md` for full instructions.
@@ -172,7 +194,7 @@ Read `agents/architect.md` for full instructions.
 
 | Field | Value |
 |-------|-------|
-| Model | Sonnet |
+| Model | Opus (strongest — planning is reasoning-critical; `--model` overrides) |
 | Type | Explore (read-only) |
 | Input | The spec document (spec-driven) or user description + codebase context (inline) |
 | Token budget | 5000 for CodeSift calls |
@@ -189,7 +211,7 @@ Read `agents/tech-lead.md` for full instructions.
 
 | Field | Value |
 |-------|-------|
-| Model | Sonnet |
+| Model | Opus (strongest — planning is reasoning-critical; `--model` overrides) |
 | Type | Explore (read-only) |
 | Input | The planning input (spec or user description) AND the Architect's report |
 | Token budget | 5000 for CodeSift calls |
@@ -206,7 +228,7 @@ Read `agents/qa-engineer.md` for full instructions.
 
 | Field | Value |
 |-------|-------|
-| Model | Sonnet |
+| Model | Opus (strongest — planning is reasoning-critical; `--model` overrides) |
 | Type | Explore (read-only) |
 | Input | The planning input (spec or user description), Architect's report, AND Tech Lead's report |
 | Token budget | 5000 for CodeSift calls |
@@ -358,7 +380,7 @@ Read `agents/plan-reviewer.md` for full instructions.
 
 | Field | Value |
 |-------|-------|
-| Model | Sonnet |
+| Model | Opus (strongest — planning is reasoning-critical; `--model` overrides) |
 | Type | Explore (read-only) |
 | Input | The planning input (spec or user description) AND the plan document |
 

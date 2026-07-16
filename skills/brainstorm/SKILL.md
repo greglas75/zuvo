@@ -186,22 +186,29 @@ Follow the instructions in `codesift-setup.md`:
 
 Refer to `env-compat.md` for the correct dispatch pattern per environment.
 
+**Model policy:** a spec sets the ceiling for the whole plan→execute pipeline, so the exploration and
+spec-reviewer agents dispatch on **Opus** (strongest tier; each platform resolves the label to its top
+model), not Sonnet — `--model` overrides only when you deliberately accept a cheaper spec. If the MAIN
+SESSION model driving synthesis is not top-tier (e.g. a `codex-5.4` / generation-behind model), print
+`[MODEL WARNING] Spec is being authored on <session-model>, not a top-tier model — re-run from your
+strongest agent for a materially better spec.` before writing the spec.
+
 **Claude Code:** Use the Task tool to run all three agents in parallel:
 
 ```
 Agent 1: Code Explorer
-  model: "sonnet"
+  model: "opus"
   type: "Explore"
   instructions: [read agents/code-explorer.md]
   input: user request + repo hints + CodeSift availability
 
 Agent 2: Domain Researcher
-  model: "sonnet"
+  model: "opus"
   instructions: [read agents/domain-researcher.md]
   input: user request + detected tech stack
 
 Agent 3: Business Analyst
-  model: "sonnet"
+  model: "opus"
   type: "Explore"
   instructions: [read agents/business-analyst.md]
   input: user request + repo hints + CodeSift availability
@@ -485,7 +492,7 @@ Dispatch the spec reviewer agent:
 
 ```
 Agent: Spec Reviewer
-  model: "sonnet"
+  model: "opus"
   type: "Explore"
   instructions: [read agents/spec-reviewer.md]
   input: the spec document content + original user request
