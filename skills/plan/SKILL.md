@@ -330,7 +330,14 @@ Copy each smoke proof from the spec's `## Whole-feature Smoke Proofs` section. I
 
 ### Task Authoring Rules
 
-1. **Scope per task:** Each task should take 2-5 minutes to implement and represent one logical unit of work. If it would take longer, split it.
+1. **Scope per task = a MILESTONE, not a micro-step. (HARD — 2026-07-17 post-mortem.)** A task is a
+   coherent, independently-committable slice of the feature taking roughly **20-60 minutes** of
+   implementation — NOT a 2-5-minute micro-step. Micro-steps (individual RED/GREEN pairs, small
+   refactors, wiring) are grouped INSIDE the task as an ordered internal checklist; they do NOT get
+   their own task, review cycle, proof artifact, or commit. Target **5-10 tasks per plan; >12 is a
+   planning smell** that requires explicit justification in the plan header or a scope split (rule 17).
+   The 37-task questions-cutover run measured 37h wall / 51 commits / 171 proof artifacts / 12+ full
+   suite runs — per-micro-step gating multiplied a fixed overhead into days. Each task still represents one logical unit of work. If it would take longer, split it.
 2. **Boundary size:** A task touching more than 5 files, more than one new public surface, or more than two system boundaries is oversized by default. Split it unless you can justify why the files are inseparable. Test fixtures and test-data files (`.json`/`.html`/`.csv` under `tests/fixtures/` or equivalent fixture dirs) do NOT count toward the 5-file boundary. Count only production code plus their direct test files, and state the fixture count separately.
 3. **Task intent over exact code:** RED steps include test intent, target assertions, and file path. GREEN steps include symbols to add/change, invariants to maintain, interfaces to implement, and reuse obligations. Include scaffold code only when the pattern is non-obvious, and keep scaffolds at or below 20 LOC. Do NOT write the full implementation.
 4. **Exact verification:** The Verify step must include an exact shell command whose exit code proves the claimed invariant. If the expected output mentions a specific value or behavior, the command must assert that value or behavior rather than merely running a script.
@@ -346,6 +353,12 @@ Copy each smoke proof from the spec's `## Whole-feature Smoke Proofs` section. I
 14. **Feasibility spike for novel infra:** When the plan introduces infrastructure with real unknowns (a new queue, a new auth provider, a protocol the codebase has never used), make the FIRST dependent task a small de-risking spike that proves the core mechanism works, before tasks build on it. A spike that fails reshapes the plan cheaply; discovering the dead-end at task 12 does not.
 15. **Conditional/decision tasks are always-executed gates:** A task whose body is "decide X, then maybe do Y" must be modeled as an always-run gate task that prints an explicit `[DECISION: <X>] → SKIPPED|COMPLETE` marker, never as a task that silently no-ops. `zuvo:execute` must see it ran and what it decided.
 16. **Data Model verification before migration/schema tasks:** Before authoring any task that adds a migration or reads an existing table, grep-verify the spec's `## Data Model` column names / types / nullability against the LIVE schema (the actual migration/model files), not the spec's memory. A schema-drift mismatch caught at plan time is one edit; caught at execute adversarial review it is a CRITICAL + a ~600s round.
+17. **Scope split / max-3-PR rule. (HARD — 2026-07-17 post-mortem.)** If the plan exceeds ~10
+    milestones, spans more than one deliverable boundary, or is a migration/cutover: SPLIT it into
+    sequential PLANS shipped as separate PRs (canonical cutover shape: **compat → runtime cutover →
+    legacy removal**, max 3). A single long-lived branch that drifts from main for days ends in
+    conflict hell (measured: 37h isolated branch → divergence + merge conflicts). Each split plan
+    lands on main independently before the next starts.
 17. **Literal-string adversarial dispositions:** A plan-review/adversarial finding that targets a literal string (a log message, an error-text constant, a fixture value) with no behavioral consequence is almost always a false positive — disposition it as `FP: literal-string, no behavior change` in the Review Trail rather than churning the plan to satisfy it.
 
 ---

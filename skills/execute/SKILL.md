@@ -325,6 +325,22 @@ backlog-adds=1
 - **No parallel same-file tasks.** If you ever batch task dispatch, never run two tasks that touch the SAME production file concurrently (lost-edit hazard) — the plan's rule 13 should already have serialized them; if it did not, serialize here.
 - **DB integration tasks.** For a task that changes schema, generate the migration via `migrate diff` / hand-written SQL applied with `psql` against a clean DB — NEVER `migrate dev` against a drifted local DB (it silently rewrites history / drops data). Verify the migration applies forward AND the rollback is present.
 
+## SCOPE-FREEZE (HARD — the plan you approved is the plan that ships)
+
+Work discovered MID-EXECUTION that the plan does not contain — an adjacent API, an extra fixture
+system, a tempting refactor, a "while we're here" migration — is NEVER appended to the running plan.
+The 2026-07-17 post-mortem measured a plan growing 32→37 tasks in flight, dragging in an API layer,
+Playwright, DB fixtures, live preview and reducer refactors: scope creep turned one feature into a
+37-hour, 127-file branch. Rules:
+
+1. The task list is FROZEN at plan approval. New work → `memory/backlog.md` (with a one-line reason)
+   or a NEW plan/PR after this one lands. No new task numbers mid-run, ever.
+2. A discovered BLOCKER that genuinely prevents a planned task (missing migration, broken contract)
+   is handled as that task's fix-scope — the minimal unblocking change, recorded in telemetry — not
+   as a new feature task.
+3. If ≥2 tasks turn out to be un-implementable as planned (the plan's model of the code was wrong),
+   STOP; the honest move is re-planning the remainder as a fresh plan, not improvising a bigger one.
+
 ## Execution Loop
 
 Process tasks in **dependency order**. If task B depends on task A (directly or transitively), do not start B until A is marked completed.

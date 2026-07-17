@@ -110,7 +110,12 @@ artifact_path: zuvo/proofs/<task-N>-AC1.png + zuvo/proofs/<task-N>-AC1-dom.txt
 4b. **Dual-allocate smoke proofs.** Every whole-feature smoke proof must appear in TWO places: (a) the plan's `## Whole-feature Smoke Proofs` section (run at execute Phase Final), AND (b) at least one task's RED sub-suite as a runnable (possibly-mocked) end-to-end exercise. Phase-Final-only smoke surfaces a cross-task regression only at the very end, after 15 commits; the per-task RED copy makes it fail the moment the breaking task lands. A plan whose smoke proofs map to no task's RED is rejected by plan-reviewer.
 5. **Proof failure = task BLOCKED, not WARN.** A proof that does not produce its expected outcome blocks the task. The implementer is re-dispatched with the failure evidence. After 3 cycles, surface to user.
 6. **Deterministic preferred.** Use LLM judge only when no deterministic check expresses the AC. Prefer `assert response.target === '[[g1]]hello[[/g1]]'` over `LLM-judge: does this look right?`.
-7. **Artifact retention.** Every proof writes its artifact to `zuvo/proofs/<task-N>-<ac-id>.<ext>` so retros and post-hoc audits can verify the proof actually ran with real outputs.
+7. **Artifact retention — ONE report per task. (2026-07-17: 171 separate proof files in one run.)**
+   Each task appends its proofs to a SINGLE consolidated report `zuvo/proofs/task-<N>-report.md`
+   (one `## <ac-id>` section per AC: command, expected, observed, verdict; binary evidence like
+   screenshots may sit alongside as `task-<N>-<ac-id>.png` and be linked). Do NOT create one text
+   artifact per AC/micro-step. Telemetry's `acceptance-verified` cites `<ac-id>@zuvo/proofs/task-<N>-report.md`.
+   Legacy per-AC paths (`zuvo/proofs/<task-N>-<ac-id>.<ext>`) so retros and post-hoc audits can verify the proof actually ran with real outputs.
 
 ## Proof writing recipe (for plan authors)
 
