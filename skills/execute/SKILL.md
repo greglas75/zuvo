@@ -55,7 +55,7 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 
 Detect the environment per `env-compat.md`:
 
-**Multi-agent mode (Claude Code, Codex when dispatch is actually available):**
+**Multi-agent mode (Claude Code ONLY — its Task tool wakes the parent by EVENT when a sub-agent finishes):**
 Dispatch implementer, spec-reviewer, and quality-reviewer as separate agents. This is the preferred mode described in the execution loop below.
 
 **Fallback rule (MANDATORY):**
@@ -321,6 +321,7 @@ backlog-adds=1
 
 - **Worktree / shared-tree pre-flight — RESOLVE `repo_root`, don't bail to single-agent.** Run `git worktree list`. Determine the ONE tree this plan targets (the worktree checked out on the plan's `branch:`, else the current checkout), set `repo_root` to its absolute path, and **store it in `project-context.md`** so every sub-agent dispatch (Step 2) and the resume path get the same root. Sub-agents then `cd $repo_root` + use absolute paths, so **multi-agent runs correctly even when the session CWD is the main checkout and the work lives in a worktree** — you do NOT need a worktree-rooted session and you do NOT drop to single-agent for this. STOP (ask the user) ONLY on genuine ambiguity: the plan's branch is checked out in **two** worktrees, or in **none** (can't locate the tree). Otherwise resolve and proceed. (Pairs with `zuvo:worktree`.)
 - **Baseline test snapshot.** Run the suite ONCE at session start and record which tests are already red (`baseline-failures: [...]` in `execution-state.md`). Per-task verification then compares against this baseline — a test that was red before your change is a pre-existing failure to backlog, NOT a regression to re-investigate every task.
+- **Per-task verification is TARGETED, full suite runs ONCE at Phase Final. (HARD — measured sink.)** A task's Verify step runs the tests/type-check for the TOUCHED package/files (`turbo run test --filter=<pkg>`, the package's own script, or the specific test files) — NEVER the whole monorepo suite. The FULL suite + build runs exactly twice per plan: the baseline snapshot above and once at Phase Final (smoke). The 2026-07-17 timing forensics measured execute/plan sessions re-running the full turbo-test suite on EVERY task and every plan revision — pure multiplication of a fixed cost by N tasks with near-zero added signal (the baseline already isolates pre-existing reds). A reviewer or fix-loop iteration re-verifies with the SAME targeted scope, not an escalated one.
 - **No parallel same-file tasks.** If you ever batch task dispatch, never run two tasks that touch the SAME production file concurrently (lost-edit hazard) — the plan's rule 13 should already have serialized them; if it did not, serialize here.
 - **DB integration tasks.** For a task that changes schema, generate the migration via `migrate diff` / hand-written SQL applied with `psql` against a clean DB — NEVER `migrate dev` against a drifted local DB (it silently rewrites history / drops data). Verify the migration applies forward AND the rollback is present.
 
@@ -411,7 +412,7 @@ Files: [list from plan]
 Dispatch per environment:
 - **Claude Code:** use the Task tool.
 <!-- PLATFORM:CODEX -->
-- **Codex:** use native agents in `~/.codex/agents/` (see `env-compat.md`).
+- **Codex:** SINGLE-AGENT sequential checkpoint pass — do NOT spawn agent threads (no event wake: measured 13h of wait_agent polls + 19.5h dead-air per session; see `env-compat.md` Codex section).
 <!-- /PLATFORM:CODEX -->
 
 **Model routing** (set by the plan author in task metadata):
@@ -502,7 +503,7 @@ If the user picks option 1, re-dispatch the implementer with the provided contex
 Dispatch per environment:
 - **Claude Code:** use the Task tool.
 <!-- PLATFORM:CODEX -->
-- **Codex:** use native agents in `~/.codex/agents/`.
+- **Codex:** perform this review yourself as a sequential checkpoint pass (thread dispatch forbidden — see `env-compat.md`).
 <!-- /PLATFORM:CODEX -->
 
 ```
@@ -540,7 +541,7 @@ The agent decides and continues — it does not wake the user. Every `[POST-CAP:
 Dispatch per environment:
 - **Claude Code:** use the Task tool.
 <!-- PLATFORM:CODEX -->
-- **Codex:** use native agents in `~/.codex/agents/`.
+- **Codex:** perform this review yourself as a sequential checkpoint pass (thread dispatch forbidden — see `env-compat.md`).
 <!-- /PLATFORM:CODEX -->
 
 ```

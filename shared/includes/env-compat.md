@@ -6,7 +6,7 @@
 
 | Capability | Claude Code | Codex | Antigravity | Cursor |
 |-----------|-------------|-------|-------------|--------|
-| Sub-agent dispatch | `Agent` tool — parallel, model-routed | TOML agents in `~/.codex/agents/` | Sequential (no spawning) | Sequential (no spawning) |
+| Sub-agent dispatch | `Agent` tool — parallel, model-routed | **Single-agent sequential** (thread dispatch FORBIDDEN for pipeline stages — no event wake; see Codex section) | Sequential (no spawning) | Sequential (no spawning) |
 | Concurrency | Unrestricted background tasks | Limited | Sequential | Sequential |
 | User interaction | Native interactive prompts | `[AUTO-DECISION]` | `[AUTO-DECISION]` | `[AUTO-DECISION]` |
 | Install root | `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/` | `~/.codex/` | `~/.gemini/antigravity/` | `~/.cursor/` |
@@ -69,17 +69,34 @@ Agent(
 <!-- PLATFORM:CODEX -->
 ### Codex
 
-Agents are defined as TOML configs in `~/.codex/agents/`. Skills reference agents by name. Codex resolves and spawns them natively.
+**SINGLE-AGENT SEQUENTIAL — do NOT spawn agent threads for pipeline stages. (HARD RULE, measured.)**
 
-```toml
-name = "blast-radius-mapper"
-model = "gpt-5.4"
-sandbox_mode = "read-only"
-developer_instructions = """
-Read your instructions at ~/.codex/skills/build/agents/blast-radius.md
-NEVER modify files — analyze and report only.
-"""
-```
+Codex CAN spawn native agent threads (TOML configs in `~/.codex/agents/`), but its harness has NO
+event-driven wake: the parent learns a sub-agent finished only by `wait_agent` POLLING, and a parent
+turn that ends after a dispatch stays DEAD until a human resumes the session. A 28-session timing
+forensics run (2026-07-15..17, timestamp-level) measured what that does to zuvo pipelines:
+
+- `wait_agent` 30s busy-poll loops: **1,583 timed-out calls (~13 h) in one execute session**, ~88 h
+  of pure polling across the fleet window;
+- orchestrator dead-air after dispatch: **19.5 h, 10 h, 8 h silent blocks**, each ended only by the
+  user manually typing "kontynuuj";
+- sub-agents idle **78-92% of their lifetime** waiting to be re-dispatched (a plan session: 380 of
+  413 min idle — the plan itself computed in ~3-12 min per turn);
+- every poll re-feeds the whole context (one session accumulated **747M input tokens**), causing
+  35-60 min model stalls.
+
+The per-task review cycle (implementer → spec → quality → acceptance) is SEQUENTIAL by design, so
+thread-dispatch buys zero parallelism here — and a codex thread reviewing a codex author is the same
+model anyway (real model-independence comes from the cross-model `adversarial-review` script, which
+measured only ~38 min total in the same window). Therefore on Codex:
+
+1. Read the agent's instruction file (e.g., `agents/blast-radius.md`)
+2. Perform that analysis yourself in the current context as a SEQUENTIAL CHECKPOINT PASS
+   (single-agent mode with all gates — same checkpoints, same output format, same quality bar)
+3. NEVER use `wait_agent`/agent-thread dispatch for spec-review / quality-review / plan-review /
+   acceptance stages. Cross-model independence = the `adversarial-review` script, not a same-model thread.
+4. Genuinely PARALLEL, independent work (e.g. two plan tasks touching disjoint files) may still use
+   threads — but only with an explicit bounded wait and never as the review chain.
 <!-- /PLATFORM:CODEX -->
 
 <!-- PLATFORM:CURSOR -->
