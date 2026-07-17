@@ -117,6 +117,19 @@ capture is simply skipped for that degraded environment. When a marker *is*
 written, `append-runlog` clears it on a clean terminal retro; if brainstorm
 is abandoned first, the next skill's `--sweep` emits an ABANDONED stub.
 
+### Phase 0.2 — Arm the stall-recovery watchdog
+
+Follow the **ARM** section of `../../shared/includes/stall-recovery.md` with `skill=brainstorm`: seed
+`zuvo/context/brainstorm.heartbeat` (`status: running`, `resume: zuvo:brainstorm`) and — **if `CronCreate` is
+available** — arm a `*/3 * * * *` cron tagged `[zuvo-watchdog skill=brainstorm project=…]` that runs
+`zuvo-watchdog-check` and re-invokes `zuvo:brainstorm` on a RESUME verdict. This closes the measured gap
+where a brainstorm turn killed by an API error sat DEAD for 168 minutes until the user re-prompted
+(2026-07-16, rs_be) — the watchdog resumes it in ~3 min. Idempotent (skip if this run's tag is in
+`CronList`); if `CronCreate` is absent print the `/loop 3m zuvo:brainstorm` fallback line and continue.
+Never block on watchdog setup. **Disarm on clean completion** (right after the run-log append):
+write `status: done` to the heartbeat and `CronDelete` the id from its `cron_id:` line (belt:
+`CronList` → delete any job whose prompt contains `[zuvo-watchdog skill=brainstorm`).
+
 ## Interaction Modes
 
 Detect the environment per `env-compat.md`:

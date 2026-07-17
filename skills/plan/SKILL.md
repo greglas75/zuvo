@@ -138,6 +138,19 @@ marker is written and plan proceeds normally. When a marker *is* written,
 `append-runlog` clears it on a clean terminal retro; if plan is abandoned
 first, the next skill's `--sweep` emits an ABANDONED stub.
 
+### Phase 0.2 — Arm the stall-recovery watchdog
+
+Follow the **ARM** section of `../../shared/includes/stall-recovery.md` with `skill=plan`: seed
+`zuvo/context/plan.heartbeat` (`status: running`, `resume: zuvo:plan`) and — **if `CronCreate` is
+available** — arm a `*/3 * * * *` cron tagged `[zuvo-watchdog skill=plan project=…]` that runs
+`zuvo-watchdog-check` and re-invokes `zuvo:plan` on a RESUME verdict. This closes the measured gap
+where a plan turn killed by an API error sat DEAD for 168 minutes until the user re-prompted
+(2026-07-16, rs_be) — the watchdog resumes it in ~3 min. Idempotent (skip if this run's tag is in
+`CronList`); if `CronCreate` is absent print the `/loop 3m zuvo:plan` fallback line and continue.
+Never block on watchdog setup. **Disarm on clean completion** (right after the run-log append):
+write `status: done` to the heartbeat and `CronDelete` the id from its `cron_id:` line (belt:
+`CronList` → delete any job whose prompt contains `[zuvo-watchdog skill=plan`).
+
 **If 1-2 files missing:** Proceed in degraded mode. Note which files are unavailable in the final output.
 **If 3+ files missing:** Stop. The plugin installation is incomplete.
 
@@ -365,6 +378,13 @@ Copy each smoke proof from the spec's `## Whole-feature Smoke Proofs` section. I
     legacy removal**, max 3). A single long-lived branch that drifts from main for days ends in
     conflict hell (measured: 37h isolated branch → divergence + merge conflicts). Each split plan
     lands on main independently before the next starts.
+18. **Reality pre-check — verify what ALREADY EXISTS before authoring tasks. (HARD — 2026-07-16
+    invalid plan.)** Before writing the Task Breakdown, check the CODEBASE for each spec item:
+    CodeSift (`search_symbols`/`search_text`/`find_references`) or Read the target modules. Every
+    task MUST cite the gap it fills (file/symbol that is missing or wrong TODAY). A task whose
+    target behavior already exists is NOT authored — it becomes a one-line `already-implemented`
+    note in the plan header. The rs_be antifraud plan authored T1-T18 for code that was already
+    implemented; the whole plan was invalid and the execute run burned hours discovering it.
 17. **Literal-string adversarial dispositions:** A plan-review/adversarial finding that targets a literal string (a log message, an error-text constant, a fixture value) with no behavioral consequence is almost always a false positive — disposition it as `FP: literal-string, no behavior change` in the Review Trail rather than churning the plan to satisfy it.
 
 ---
