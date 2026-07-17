@@ -182,6 +182,12 @@ Follow the instructions in `codesift-setup.md`:
 4. If CodeSift is available and the task shape is unclear, run `plan_turn(query=<user request>)` once before manual exploration to get tool and file recommendations
 5. Pass CodeSift availability status plus any concrete repo hints (key directories, files, or recommended tools) to each agent
 
+<!-- PLATFORM:CODEX -->
+**🔒 CODEX: SINGLE-AGENT ONLY.** No event wake on this harness (measured: threads = hours of
+poll/dead-air). Perform every agent role below YOURSELF, inline and sequentially — read the agent's
+instruction file and do that analysis in this context. Thread spawning / `wait_agent` FORBIDDEN.
+<!-- /PLATFORM:CODEX -->
+
 ### Agent Dispatch
 
 Refer to `env-compat.md` for the correct dispatch pattern per environment.

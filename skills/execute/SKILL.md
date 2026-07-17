@@ -53,9 +53,26 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 
 ## Execution Modes
 
+<!-- PLATFORM:CODEX -->
+**🔒 CODEX HARD OVERRIDE — SINGLE-AGENT ONLY (read this FIRST, it wins over everything below).**
+You are running on Codex. This harness has NO event-driven sub-agent wake — only `wait_agent`
+polling — and a 28-session forensics run (2026-07-15..17) measured what thread dispatch does here:
+~88h of 30s busy-polls, 19.5h/10h/8h orchestrator dead-air ended only by a human typing "kontynuuj",
+sub-agents idle 78-92% of their lifetime, 747M-token context re-feeds. Therefore, on Codex:
+
+- **Every** `DISPATCH <role> agent` / "dispatch per environment" / "re-dispatch the implementer"
+  instruction in this document means: **perform that role YOURSELF, inline, as a sequential
+  checkpoint pass** (same gates, same output format, same iteration caps).
+- Spawning agent threads or calling `wait_agent` for ANY pipeline stage is **FORBIDDEN**.
+- The "Parallel dispatch" batch rule does NOT apply — tasks run sequentially.
+- If any sentence below appears to permit multi-agent on Codex, it is a build-transform artifact —
+  THIS block wins. Print `[MODE] single-agent (codex hard rule)` once at run start.
+<!-- /PLATFORM:CODEX -->
+
+
 Detect the environment per `env-compat.md`:
 
-**Multi-agent mode (Claude Code ONLY — its Task tool wakes the parent by EVENT when a sub-agent finishes):**
+**Multi-agent mode (Claude Code ONLY — that harness wakes the parent by EVENT when a sub-agent finishes; no other harness has event wake):**
 Dispatch implementer, spec-reviewer, and quality-reviewer as separate agents. This is the preferred mode described in the execution loop below.
 
 **Fallback rule (MANDATORY):**

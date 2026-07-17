@@ -383,14 +383,14 @@ transform_skill_for_codex() {
       -e 's/Task(model: "sonnet", prompt:/Codex agent with prompt:/g' \
       -e 's/Task(model: "opus", prompt:/Codex agent with prompt:/g' \
       -e 's/Task(model: "haiku", prompt:/Codex agent with prompt:/g' \
-      -e 's/Spawn via Task tool\./Spawn Codex native agents./g' \
+      -e 's/Spawn via Task tool\./Single-agent on Codex: perform each role INLINE as a sequential checkpoint pass (thread spawning forbidden)./g' \
       -e 's/run_in_background=true//g' \
       -e 's/run_in_background: true//g' \
       -e 's/`Task` tool to spawn parallel sub-agents/Codex native sub-agents/g' \
-      -e 's/`Task` tool/Codex native agent spawning/g' \
-      -e 's/Task tool/Codex native agent spawning/g' \
-      -e 's/`Agent` tool/Codex native agent spawning/g' \
-      -e 's/Agent tool/Codex native agent spawning/g' \
+      -e 's/`Task` tool/Task tool (Claude-only; on Codex run this role INLINE, single-agent)/g' \
+      -e 's/Task tool/Task tool (Claude-only; on Codex run this role INLINE, single-agent)/g' \
+      -e 's/`Agent` tool/Task tool (Claude-only; on Codex run this role INLINE, single-agent)/g' \
+      -e 's/Agent tool/Task tool (Claude-only; on Codex run this role INLINE, single-agent)/g' \
       -e 's/These run in background while/These run in parallel while/g' \
       -e 's/(Sonnet, background)/(/g' \
       -e 's/(Haiku, background)/(/g' \
@@ -408,10 +408,10 @@ transform_skill_for_codex() {
       -e 's/Spawn applicable agents in parallel (use Codex native agent spawning, )\./Spawn applicable Codex native agents in parallel./' \
       -e 's/spawn via Task, , /spawn native sub-agents /g' \
       -e 's/IF Codex native agent spawning available: spawn native sub-agents/IF Codex: spawn native sub-agents/g' \
-      -e 's/\*\*Spawn via Codex native agent spawning\*\* (Claude Code only):/\*\*Spawn Codex native agents:\*\*/' \
+      -e 's/\*\*Spawn via Codex native agent spawning\*\* (Claude Code only):/\*\*On Codex: run these roles INLINE, sequentially (no threads):\*\*/' \
       -e 's/parallel when Codex native agent spawning is available, sequential otherwise/parallel with Codex native agents, sequential otherwise/g' \
-      -e 's/\*\*Parallel\*\* (Claude Code with Codex native agent spawning available):/\*\*Parallel\*\* (Codex native agents):/' \
-      -e 's/\*\*Parallel\*\* (Claude Code with Codex native agent spawning):/\*\*Parallel\*\* (Codex native agents):/' \
+      -e 's/\*\*Parallel\*\* (Claude Code with Codex native agent spawning available):/\*\*Sequential on Codex (parallel is Claude-only):\*\*/' \
+      -e 's/\*\*Parallel\*\* (Claude Code with Codex native agent spawning):/\*\*Sequential on Codex (parallel is Claude-only):\*\*/' \
       -e 's/\*\*Sequential\*\* (Cursor, Codex, no Codex native agent spawning):/\*\*Sequential\*\* (Cursor, Antigravity -- no native agents):/' \
       -e 's/\*\*All other environments\*\* (Cursor, Antigravity, Codex)/\*\*All other environments\*\* (Cursor, Antigravity)/' \
       -e 's/Process all batches \*\*sequentially inline\*\* yourself/Process all batches \*\*sequentially\*\* yourself/' \

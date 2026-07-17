@@ -186,6 +186,12 @@ Proceed only if the user continues, but the warning must be loud. Detect the dri
 env (`CLAUDE_MODEL`, `CODEX_MODEL`, the codex `config.toml` `model=`, `ANTIGRAVITY_MODEL`); if unknown,
 warn generically that planning should be on the strongest available agent.
 
+<!-- PLATFORM:CODEX -->
+**🔒 CODEX: SINGLE-AGENT ONLY.** No event wake on this harness (measured: threads = hours of
+poll/dead-air). Perform every agent role below YOURSELF, inline and sequentially — read the agent's
+instruction file and do that analysis in this context. Thread spawning / `wait_agent` FORBIDDEN.
+<!-- /PLATFORM:CODEX -->
+
 ### Agent 1: Architect
 
 Read `agents/architect.md` for full instructions.
