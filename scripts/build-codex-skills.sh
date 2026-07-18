@@ -539,6 +539,18 @@ if [ -d "$PLUGIN_DIR/shared/includes" ]; then
   echo "  + shared/includes/ ($(find "$PLUGIN_DIR/shared/includes" -type f \( -name '*.md' -o -name '*.sh' \) | wc -l | tr -d ' ') files)"
 fi
 
+
+# --- Codex single-agent banner (injected into EVERY built SKILL.md) ---
+# One systemic rule instead of per-skill blocks: 26 of 55 skills carry dispatch/parallel-agent
+# language with no codex override (2026-07-18 sweep). The banner reinterprets ALL of it inline.
+inject_codex_banner() {
+  local f="$1"
+  grep -q "CODEX SINGLE-AGENT RULE" "$f" && return 0
+  awk 'BEGIN{done=0}
+    /^# / && !done { print; print "";       print "> **[LOCK] CODEX SINGLE-AGENT RULE (applies to this whole skill).** This harness has no";       print "> event-driven sub-agent wake -- thread dispatch means 30s wait_agent polling, orchestrator";       print "> dead-air and context re-feeds (measured 2026-07-15..17: ~88h polling, 19.5h dead blocks,";       print "> 747M-token re-feeds). Therefore ANY instruction below like \"Dispatch agent\", \"Agent N:\",";       print "> \"run agents in parallel\", or \"re-dispatch\" means: perform that role YOURSELF, inline and";       print "> sequentially, with the same gates, iteration caps and output format. Spawning agent";       print "> threads / wait_agent is FORBIDDEN for pipeline stages. Cross-model independence comes";       print "> from the adversarial-review script, not from same-model threads.";       done=1; next }
+    { print }' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+}
+
 # ============================================================
 # 2. Assemble skills
 # ============================================================
@@ -560,6 +572,9 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
     transform_skill_for_codex "$skill_dir/SKILL.md" "$DIST/skills/$skill/SKILL.md" "$skill"
     echo "  + $skill (auto-transform)"
   fi
+
+  # Systemic codex rule — every skill, both overlay and auto-transform paths
+  inject_codex_banner "$DIST/skills/$skill/SKILL.md"
 
   # --- Inject AUTO-DECISION mode annotation for interactive skills ---
   if [ "$skill" = "brainstorm" ] || [ "$skill" = "design" ]; then
