@@ -638,6 +638,16 @@ Wait for complete output. Then:
 - **WARNING** (< 10 lines, localized) → re-dispatch implementer to fix, re-run quality reviewer, then re-run adversarial.
 - **WARNING** (large/cross-file) or **INFO** → proceed only if logged as known concerns (max 3, one line each) and persisted to backlog.
 
+**Re-run ECONOMY (HARD caps — the loop multiplier measured 2026-07-18: ~10 full 4-min adversarial
+invocations for ONE task).** Per task: at most **2 FULL-diff runs + 1 DELTA run**, total. After a fix,
+re-run on the **DELTA since the last artifact** (`git diff <last-reviewed-staged>..HEAD` equivalent —
+the 2.2KB fix diff, not the whole task again). If the wrapper's 30k cap omitted files, run ONE
+supplement on the omitted set — never per-file supplement chains. When the cap is exhausted: triage
+remaining findings by EVIDENCE (base-code comparison) without another run — a finding refuted once
+with base-code proof becomes KNOWN: record it in the FACTS block of any later invocation and NEVER
+re-triage it (the field run re-litigated the same legacy-RS-403 semantics three times because each
+fresh provider pass re-discovered it).
+
 **Retry limit (distinct vs. relooped).** Track a finding fingerprint (`file|rule-id|signature`, same scheme as Backlog Persistence) for each CRITICAL across iterations:
 - Each iteration surfaces a NEW distinct CRITICAL fingerprint (progressive hardening) → allow continued iteration up to a ceiling of 6. A blunt 3-cap would ship a real bug when several distinct CRITICALs are legitimately found in sequence.
 - The SAME CRITICAL fingerprint reappears after a fix attempt (relooped, not converging) → hard-stop at 3 with `BLOCKED_ADVERSARIAL_LOOP` and surface the exact findings to the user.
@@ -705,7 +715,11 @@ Only after spec review (COMPLIANT), quality review (PASS), and adversarial revie
 
 1. Stage only the files listed in the task's "Files" field: `git add <file1> <file2> ...`
 2. Never use `git add -A` or `git add .`
-3. Verify `zuvo/context/adversarial-task-<task-N>.txt` exists, is non-empty, and is newer than the latest staged edit for this task
+3. Verify `zuvo/context/adversarial-task-<task-N>.txt` exists, is non-empty, and covers the task's
+   SUBSTANTIVE diff. **Freshness is SEMANTIC, not mtime (HARD — the 2026-07-18 field run lost 40+
+   min to this):** a post-adversarial edit invalidates the artifact ONLY if it changes production
+   logic. Lint/format/whitespace fixes, comment edits, test-only/snapshot changes, and renames do
+   NOT invalidate it — committing them under the existing artifact is correct, not a gate bypass
 4. Commit with the message from the task's Commit step
 5. The implementer does NOT commit — it only writes files and runs verification
 

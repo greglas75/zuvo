@@ -705,7 +705,7 @@ install_codex() {
   if [[ -d "$ZUVO_DIR/scripts" ]]; then
     mkdir -p "$HOME/.codex/scripts"
     cp "$ZUVO_DIR"/scripts/benchmark.sh "$HOME/.codex/scripts/" 2>/dev/null || true
-    cp "$ZUVO_DIR"/scripts/adversarial-review.sh "$HOME/.codex/scripts/" 2>/dev/null || true
+    cp "$ZUVO_DIR"/scripts/adversarial-review.sh "$HOME/.codex/scripts/adversarial-review.sh".zuvo-tmp.$$ 2>/dev/null && mv -f "$HOME/.codex/scripts/adversarial-review.sh".zuvo-tmp.$$ "$HOME/.codex/scripts/adversarial-review.sh" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/reviewer-model-route.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/blind-audit-codex.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/infra-collect.sh "$HOME/.codex/scripts/" 2>/dev/null || true
@@ -881,7 +881,7 @@ install_cursor() {
   if [[ -d "$ZUVO_DIR/scripts" ]]; then
     mkdir -p "$HOME/.cursor/scripts"
     cp "$ZUVO_DIR"/scripts/benchmark.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
-    cp "$ZUVO_DIR"/scripts/adversarial-review.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
+    cp "$ZUVO_DIR"/scripts/adversarial-review.sh "$HOME/.cursor/scripts/adversarial-review.sh".zuvo-tmp.$$ 2>/dev/null && mv -f "$HOME/.cursor/scripts/adversarial-review.sh".zuvo-tmp.$$ "$HOME/.cursor/scripts/adversarial-review.sh" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/reviewer-model-route.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/blind-audit-codex.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/infra-collect.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
