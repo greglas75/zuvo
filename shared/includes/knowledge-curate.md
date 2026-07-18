@@ -79,6 +79,13 @@ If the answer is "probably not" — discard. Only record things with lasting val
 
 **Temporary workaround rule:** If the insight depends on a workaround, hotfix, or known-temporary state — record it as `confidence: "low"` unless you have direct confirmation it reflects stable behavior.
 
+**Exception — `decision` entries are EXEMPT from the generalization filter.** An architectural
+decision is project-specific BY NATURE ("we chose X over Y here because Z") — requiring it to
+generalize is why field projects accumulated 24-46 gotchas/patterns but ~0 decisions (measured
+2026-07-18 across 4 repos). A decision qualifies if it (a) chose between real alternatives, (b) has
+a WHY, and (c) would surprise or redirect a future session. Record it even though it only applies
+to this repo.
+
 If nothing passes all filters: print `KNOWLEDGE CURATED: No generalizable insights extracted from this session.` This is acceptable — not every task produces new knowledge.
 
 ### Step 2: Check for duplicates
