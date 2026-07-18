@@ -669,7 +669,7 @@ This phase OWNS all committing (Phase 4 no longer commits — it records).
       the commit gate BLOCKS the fix commit when fix-now items were applied but
       `prove.regression_red` is missing/`not_run` (runs with NO fix-now items set nothing;
       the gate keys on the disposition containing a fix).
-   d. Re-verify: type-check + full suite + ONE adversarial pass over the fix diff (`adversarial-review --mode code`) — must converge (no new CRITICAL).
+   d. Re-verify: type-check + **targeted suite** (touched package/files, compared against the session baseline — a test that was red before the correction or broken by the local env is `pre-existing-out-of-scope`, recorded, NOT a blocker; the FULL suite runs once at the end per the targeted-tests rule) + ONE adversarial pass over the fix diff (`adversarial-review --mode code`) — must converge (no new CRITICAL).
    e. **Commit separately:** `git commit -m "fix([scope]): [bug summary]"` (`feat`/`perf` if that fits better). NEVER fold the fix into the refactor commit — that erases the move-vs-change boundary that makes commit 1 trustworthy.
    Else: print `[REMEDIATION: none — no fixable bugs surfaced]`.
 4. **Decisions:** resolve per the table (ask / safe-default+log). Out-of-scope-fence items → backlog (Phase 4).
@@ -740,6 +740,13 @@ change is the COMMON case here — but it must still be DECLARED, not silently s
 DID change public surface (moved a module, renamed an exported symbol, split a package,
 changed an import path others use) → update the architecture/onboarding note + CHANGELOG.
 Record the doc paths (or the N/A line) for the Post-Completion Summary.
+
+### Follow-up ideas (optional — ZERO ceremony)
+
+If genuinely new IDEAS surfaced this run — feature possibilities, "we could also X" spotted while
+restructuring — append ONE line each to `memory/ideas.md` (create if missing):
+`- [YYYY-MM-DD] [refactor] <idea> — <one-line context>`. Ideas only (debt/findings → backlog).
+**If nothing surfaced, skip silently** — no marker, no gate, no telemetry.
 
 ### Retrospective (REQUIRED)
 
