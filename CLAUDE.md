@@ -77,6 +77,18 @@ claude plugin uninstall zuvo@zuvo-marketplace && claude plugin install zuvo
 ```
 Claude Code also creates multiple cache dirs (by version AND by SHA); `install.sh` syncs all of them, but `installPath` is the one that actually loads.
 
+### Codex gotcha: the app indexes skills at LAUNCH — restart AFTER install finishes (found 2026-07-18)
+
+The Codex app snapshots `~/.codex/skills/` into memory when it starts (its marker:
+`~/.codex/skills/.system/.codex-system-skills.marker` — the mtime is the LAST index time). Running
+`install.sh` while the app is open changes the files on disk but NOT what running/new sessions read.
+The 2026-07-17 failure: the app indexed at 20:58, the v1.6.10 install finished 21:09 — every session
+that evening (64 of them, 575 thread-spawns) ran on the pre-fix snapshot even though the user had
+"restarted Codex" (before the install completed). Rule: **finish install.sh first, THEN restart the
+Codex app**; verify uptake by checking the marker mtime is newer than the install, and that a fresh
+zuvo run prints `[MODE] single-agent (codex hard rule)`. Note: zuvo is NOT a codex `[plugins.*]`
+entry — Codex loads it via `~/.codex/skills/` (the legacy path install.sh writes).
+
 ### What install.sh does
 
 | Platform | Action |
