@@ -65,6 +65,7 @@ Systematic evaluation of unit and integration test files through the Q1-Q19 bina
 | `--include-e2e` | Include E2E test files in scope |
 | `--details` | Save per-file reports to `zuvo/audits/test-audit-details/` |
 | `--commit=ask\|auto\|off` | Commit behavior after fix workflow (default: `ask`) |
+| `--read-only` | Report only: skip Phases 4-6 (coverage.md/backlog.md writes) and Phase 7; no repo mutation beyond the `zuvo/audits/` report |
 
 Default: `all --quick --commit=ask`
 
@@ -434,6 +435,8 @@ Wait for complete output. Then:
 - **INFO** → ignore
 
 ## Phase 4: Coverage Registry Update
+
+Under `--read-only`: skip Phases 4-6 entirely and present the report (Phase 7 fix workflow is also off).
 
 Read `memory/coverage.md`. If it does not exist, create it now.
 

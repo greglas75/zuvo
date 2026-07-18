@@ -177,6 +177,8 @@ The sequential order is mandatory because each agent's analysis depends on what 
 
 Pass the prior reports in full when practical. If you must compress for token budget, preserve concrete file paths, symbols, risk rankings, and open questions. Do not reduce a prior report to generic prose.
 
+**Explore dispatch note (Claude Code):** Explore sub-agents have NO `mcp__codesift__*` access — do not instruct them to preload or call CodeSift (the tables' "Token budget for CodeSift calls" applies only on harnesses where the dispatched type has MCP). Have them use Read/Grep/Glob and compensate by passing concrete file:line pointers in the dispatch prompt; for doc-only re-reviews, do the analysis inline instead of dispatching.
+
 ### Model policy — planning runs on the STRONGEST model
 
 Planning is the most reasoning-critical step in the pipeline: a weak plan cascades into weak execution
@@ -407,7 +409,7 @@ fi
 # <<< zuvo:plan-dag-check
 ```
 
-Fail-loud on exit 1 (fix the dependency/cycle/forward-ref in the plan, then re-run). Warn-only if the script is missing. Re-run after ANY task renumber.
+Fail-loud on exit 1 (fix the dependency/cycle/forward-ref in the plan, then re-run). Warn-only if the script is missing. Re-run after ANY task renumber. In the same pass (no extra dispatch), scan the plan text once for: unresolved placeholders (`YYYY-MM-DD`/`<topic>`/TBD file paths), tasks over the rule-2 file boundary with no stated justification, and AC#s cited in tasks but absent from the Coverage Matrix — each is a one-edit fix here versus a full reviewer revision.
 
 Dispatch the plan reviewer agent to verify the plan against the spec.
 
@@ -436,8 +438,11 @@ Read `agents/plan-reviewer.md` for full instructions.
 After the plan-reviewer converges, run cross-model validation on the plan file. This catches task bloat, hidden ordering violations, and AC orphans.
 
 ```bash
-adversarial-review --mode plan --files "docs/specs/YYYY-MM-DD-<topic>-plan.md"
+adversarial-review --mode plan --files "docs/specs/YYYY-MM-DD-<topic>-plan.md" --json \
+  > zuvo/context/adversarial-plan.json 2> zuvo/context/adversarial-plan.err
 ```
+
+Read findings from `zuvo/context/adversarial-plan.json`, never from live stdout (truncated stdout cost 4 recovery calls in one field run). Belt: each pass also appends per-provider SUMMARY lines to `~/.zuvo/adversarial.log` — if the capture file is lost, the last SUMMARY row gives status/providers.
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
 
@@ -446,6 +451,8 @@ Wait for complete output. Then apply fix policy:
 - **WARNING** that changes task size, ordering, dependencies, verification, or coverage → fix in plan, increment `plan_revision`, re-run plan-reviewer
 - **WARNING** that does NOT change execution semantics or coverage → append as note to the affected task and record it in `## Review Trail`
 - **INFO** → ignore
+
+**Stop rule:** the 3-iteration cap governs the initial plan-reviewer loop only. An adversarial-driven revision gets exactly ONE re-review of the current revision. Once the current revision holds a reviewer APPROVED verdict and a cross-model pass with zero CRITICAL findings, disposition remaining WARNINGs in `## Review Trail` and STOP — never spin another revision solely for optional reordering, task splitting, or duplicated wording.
 
 **Status handling (D2+D3+D4, 2026-05-17):** parse `--json` output (or the script's text-mode summary banners) for non-`ok` status:
 - **`status: "single_provider_only"` (exit 3)** — `--rotate`/`--multi` requested but only 1 provider remains after host exclusion. Re-invoke with `--single` and record in `## Review Trail`: `Cross-model validation: single-provider-only (note: install additional provider for diversity)`. Plan may still advance to Reviewed — single-provider validation is a real signal, just narrower.

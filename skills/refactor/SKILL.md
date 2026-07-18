@@ -321,6 +321,8 @@ Agent 2: Existing Code Scanner
 
 Trace all importers and callers of the target file. Build a dependency map: direct importers, transitive dependents (one level up), exported symbols and where each is consumed, risk assessment for export changes.
 
+For DELETE_DEAD targets, consumer proof additionally requires a repo-wide search for concrete route-path/string literals (a string caller in clients, tests, or proxies is a live contract consumer even when the unit has zero imports) and a scan of docs/specs/runbooks for the symbol. A docs-only reference is not runtime use, but it must be dispositioned before scope freeze — update the doc in-fence or backlog it — never ignored.
+
 **CodeSift:** `find_references(repo, symbol_name)` for each export, `trace_call_chain(repo, symbol_name, direction="callers", depth=2)` for critical functions. **Fallback:** grep for imports.
 
 #### Agent 2: Existing Code Scanner (lightweight tier, read-only)
@@ -370,6 +372,8 @@ Produce the refactoring plan incorporating sub-agent results (when available):
 | 5 | Test found AND (Q7=0 OR Q11=0 OR Q13=0) AND `coverage_gap = 0` | IMPROVE_TESTS |
 
 Note: priority 1 (VERIFY_COMPILATION) is checked **before** test discovery runs. If the target is a type/config file, skip test discovery entirely.
+
+**DELETE_DEAD exception (overrides priorities 2-5 for the deleted units):** when the refactor DELETES a unit and zero production consumers are proven (symbol references + repo-wide import/re-export/dynamic/string-literal search per the Dependency Mapper), do NOT write or improve tests for the code being removed — the green pre-edit package baseline is the characterization lock. Record `prove.characterization = "dead:<pre-refactor sha7>:<N>u:<evidence>"` before editing. Tests whose sole subject is the deleted unit are deleted with it; tests-only consumers do not make dead code live.
 
 **Why priority 3 outranks RUN_EXISTING (the failure this prevents):** a single test that passes Q7/Q11/Q13 can still exercise only one of N units being relocated. `RUN_EXISTING` would then go green while proving nothing about the other N−1 units — the refactor "verifies" against a test that never touches most of the moved code. Whenever `coverage_gap > 0`, you MUST write characterization tests for the uncovered units **before** touching production code. Build success, type-check, and static import resolution are NOT substitutes — they prove the code links, not that behavior is preserved. This gate is non-negotiable for SPLIT_FILE / GOD_CLASS / EXTRACT_CLASS, where moving unexercised units is the whole job.
 
@@ -589,15 +593,17 @@ git add [specific files from scope fence]
  echo "CQ-PRE: [pre-audit score]. CQ-POST: [post-audit score]. Critical: [gates]";
  echo "SCOPE-FENCE: [file list]";
  echo "MOVED_VERBATIM: [files moved without changes]. Focus on new/changed logic. Verbatim-moved code is out of scope unless the move itself creates an issue.";
- echo "---ORIGINAL SOURCE---";
- cat [target file before refactoring];
  echo "---NEW/MODIFIED FILES---";
  cat [each new or modified file in scope fence];
+ echo "---ORIGINAL SOURCE (excerpt-capped)---";
+ head -c 40000 [target file before refactoring];
  echo "---DIFF---";
  git diff --staged) | adversarial-review --rotate --mode [code|security]
 ```
 
-The provider receives: (1) original file — can check nothing was lost in extraction, (2) new files in full — can evaluate as standalone modules, (3) diff — sees exact changes. This prevents false positives on moved-verbatim code while catching real issues like dropped branches, changed signatures, or broken re-exports.
+The provider receives: (1) every new/modified in-fence file in full — placed FIRST so provider truncation can never drop the files under review, (2) the original file (excerpt-capped) — can check nothing was lost in extraction, (3) diff — sees exact changes. This prevents false positives on moved-verbatim code while catching real issues like dropped branches, changed signatures, or broken re-exports.
+
+**DELETE_DEAD reviews:** prepend the verified production caller count and the zero-consumer evidence to the CONTEXT line, plus `UNTOUCHED_NOT_REPLACEMENT: <symbol> (<reason>)` for any name-similar unit the plan deliberately leaves alone. Reviewers flag only behavior removed from a LIVE path. Proposals to port or implement never-wired behavior are feature gaps (backlog), and documented-but-unmounted behavior is documentation drift (backlog) — neither is a refactor regression nor an in-fence blocker unless the staged deletion changes current runtime behavior.
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
 
@@ -622,7 +628,7 @@ If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplac
 
 The old "WARNING > 10 lines → backlog" rule is gone: line count is not a proxy for scope. A big mechanical fix is still a fix; a one-line product decision is still a decision.
 
-**Meta-review:** If pass 1 returns 0 findings AND diff_lines > 150: add false-negative warning — large diffs with zero findings suggest insufficient review depth. Run pass 2 regardless.
+**Meta-review:** If pass 1 returns 0 findings AND diff_lines > 150: add false-negative warning — large diffs with zero findings suggest insufficient review depth. Run pass 2 regardless. (`diff_lines` = the sum from `git diff --staged --numstat`, computed BEFORE prompt enrichment — never derived from reviewer input or prompt line count.)
 
 Do NOT discard findings based on confidence alone. "Pre-existing" is NOT a reason to skip — if the issue is in a file you are editing, fix it now.
 
@@ -646,6 +652,7 @@ This phase OWNS all committing (Phase 4 no longer commits — it records).
 
 0. **Record the Prove step in the CONTRACT — BEFORE you commit (the external gate reads it).** After the blind audit + adversarial passes (Phase 3), write their outcomes into the contract's `prove`: `prove.blind_audit` = the blind-audit telemetry (`clean:strict` / `clean:degraded` / `fix:N`, never `skipped`/`not_run`); `prove.adversarial` = `clean` / `Nfindings` / `Nfindings:preserved`. The `refactor-safety-gate` hook reads these on `git commit` — if either is still `skipped`/`not_run`/empty and the staged files are in this refactor's scope fence, the commit is **rejected**. That is the bind: you literally cannot commit a refactor whose Prove step you skipped.
 1. **Commit the pure refactor (always).** Stage scope-fence files → `git commit -m "refactor([scope]): [what moved]"`. This is the behavior-preserving proof: the Phase-2 characterization/existing tests, UNCHANGED, still pass. Record `REFACTOR_SHA`. (no-commit mode: show the diff + message, don't commit.)
+   If adversarial passes recorded findings destined for fix-now, set `findings_disposition = "stacked-correction-pending"` BEFORE this commit — a transition value the gate accepts (it is not empty/`pending`/`unresolved` and does not contain `fix`, so `regression_red` is not demanded yet); after the demonstrated red in step 3, replace it with `fixed:<N>`. If any fix was already applied to the working tree during Phase 3 passes ("CRITICAL — fix immediately"), separate it out (stash, or stage move-hunks only) so THIS commit is the pure move; the fix hunks land in commit 2.
 2. **Triage** the CQ-auditor + adversarial findings into the table above.
 3. **If fix-now items exist:**
    a. Apply every fix-now fix.
@@ -678,6 +685,8 @@ This phase OWNS all committing (Phase 4 no longer commits — it records).
 Phase 3.5 has already committed: the pure refactor (`REFACTOR_SHA`), and — when fix-now bugs existed — a separate `fix(…)` commit. Record BOTH SHAs in the contract and the Post-Completion Summary. If no bugs surfaced, there is just the one refactor commit.
 
 In no-commit mode: Phase 3.5 showed both diffs + proposed messages instead of committing; nothing to record here beyond the proposed messages.
+
+**Telemetry vs commits:** everything Phase 4 writes (CONTRACT, review artifact, backlog, retro, doc notes) is LOCAL telemetry — never stage it into the refactor/fix commits. If the repo tracks these paths, ONE trailing `chore(refactor): telemetry` commit MAY carry them; the `commits` array still lists only the production refactor/fix commits. Expected final `git status`: clean, or dirty only with untracked/ignored telemetry paths — that is the intended end state, not an unfinished run.
 
 ### Update Contract State
 
@@ -772,7 +781,9 @@ COMPLETION GATE CHECK
 # Reads the CONTRACT prove fields — the SAME artifact the git hook reads at commit time —
 # so this self-check and the hook can never disagree. Single source of truth = the CONTRACT
 # (not a global ~/.zuvo log tail, not a commit range; the commit is LAST, gated by the hook).
-C=$(ls -t zuvo/contracts/refactor-*.json 2>/dev/null | head -1)
+# Resolve by the Phase-1 target hash — NEVER newest-by-mtime (concurrent/resumed sweeps share the checkout)
+C="zuvo/contracts/refactor-${TARGET_HASH}.json"
+[ -f "$C" ] || C=$(ls -t zuvo/contracts/refactor-*.json 2>/dev/null | head -1)
 if [ -z "$C" ]; then
   echo "GATE: N/A — no CONTRACT found (trivial/aborted refactor). If this WAS a real production refactor, that itself is the bug: create the CONTRACT (Phase 1) and run the pipeline."
 else

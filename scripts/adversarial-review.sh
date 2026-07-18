@@ -214,13 +214,25 @@ fi
 MAX_CHARS=30000
 [[ "$REVIEW_MODE" =~ ^(spec|plan|audit|migrate)$ ]] && MAX_CHARS=50000
 
+ORIG_CHARS=${#INPUT}
+INPUT_TRUNCATED=false
 if [[ ${#INPUT} -gt $MAX_CHARS ]]; then
-  INPUT=$(printf '%s' "$INPUT" | head -c "$MAX_CHARS" || true)
+  INPUT_TRUNCATED=true
+  FULL_INPUT="$INPUT"
+  # Pure-bash substring: CHARACTER-indexed, consistent with the ${#INPUT}/${FULL_INPUT:offset}
+  # arithmetic below (head -c cuts BYTES — a multibyte char at the boundary skewed the omitted-
+  # content offset and could split a UTF-8 sequence).
+  INPUT="${INPUT:0:$MAX_CHARS}"
   # Trim to last complete line
   INPUT="${INPUT%$'\n'*}"
+  # Manifest of files whose content fell past the cutoff, so the reviewer never reports
+  # omitted sections as "missing" and the caller can re-run --files on just the omitted set.
+  OMITTED_FILES=$(printf '%s' "${FULL_INPUT:${#INPUT}}" | grep -E '^(diff --git |=== FILE: )' | sed -E 's#^diff --git a/(.*) b/.*#\1#; s/^=== FILE: (.*) ===$/\1/' | head -20 | tr '\n' ' ')
+  unset FULL_INPUT
   INPUT="${INPUT}
 
-... [TRUNCATED — input exceeds ${MAX_CHARS} chars. Review focused on first portion.]"
+... [TRUNCATED — input was ${ORIG_CHARS} chars; only this first portion was sent.${OMITTED_FILES:+ Files NOT included: ${OMITTED_FILES}.} Do NOT report content beyond this point as missing or absent — review only what is present above.]"
+  echo "  WARN: input truncated ${ORIG_CHARS} -> ${MAX_CHARS} chars${OMITTED_FILES:+ (omitted: ${OMITTED_FILES})}" >&2
 fi
 
 # ─── Min-size threshold for document modes (check early, before prompt build) ──
@@ -804,9 +816,9 @@ run_cursor_agent() {
   # "Composer 2.5 Fast (current)"). Override with ZUVO_CURSOR_MODEL (e.g. gpt-5.5-high-fast).
   local model="${ZUVO_CURSOR_MODEL:-composer-2.5-fast}"
   local err_file="$JSON_TMPDIR/err_cursor-agent.txt"
-  local status=0
-  printf '%s' "$REVIEW_PROMPT" \
-    | timeout "$PROVIDER_TIMEOUT" cursor-agent -p --model "$model" --mode ask --trust --workspace /tmp 2>"$err_file" \
+  local result status=0
+  result=$(printf '%s' "$REVIEW_PROMPT" \
+    | timeout "$PROVIDER_TIMEOUT" cursor-agent -p --model "$model" --mode ask --trust --workspace /tmp 2>"$err_file") \
     || status=$?
   if [[ $status -ne 0 ]]; then
     if [[ $status -eq 124 ]]; then
@@ -816,6 +828,14 @@ run_cursor_agent() {
     fi
     return "$status"
   fi
+  # A detached session that prints only `SESSION_ID=<digits>` is not a review — treat as
+  # failure so the caller moves on instead of recording it as a completed adversarial pass
+  # (same class of guard as run_agy's quota/auth error-output check).
+  if [[ "$(printf '%s' "$result" | tr -d '[:space:]')" =~ ^SESSION_ID=[0-9]+$ ]]; then
+    echo "  WARN: cursor-agent returned only a session id (detached session), not a review" >&2
+    return 1
+  fi
+  printf '%s\n' "$result"
 }
 
 run_gemini() {
@@ -1094,6 +1114,8 @@ write_artifact() {
     printf 'providers_used=%s\n' "$PROVIDERS_USED"
     printf 'provider_count=%s\n' "$PROVIDER_COUNT"
     printf 'input_chars=%s\n' "${#INPUT}"
+    printf 'input_chars_original=%s\n' "${ORIG_CHARS:-${#INPUT}}"
+    printf 'input_truncated=%s\n' "${INPUT_TRUNCATED:-false}"
     printf 'total_findings=%s\n' "$TOTAL_FINDINGS"
     printf 'critical=%s\n' "$CRITICAL_COUNT"
     printf 'warning=%s\n' "$WARNING_COUNT"
@@ -1397,9 +1419,11 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     --argjson attempted "$ATTEMPTED_COUNT" \
     --argjson timeouts "$TIMEOUT_COUNT" \
     --argjson input_size "${#INPUT}" \
+    --argjson input_original "${ORIG_CHARS:-${#INPUT}}" \
+    --argjson truncated "${INPUT_TRUNCATED:-false}" \
     --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --argjson results "$json_results" \
-    '{status: $status, mode: $mode, providers_used: $providers, providers_used_list: ($providers | split(", ")), provider_count: $count, attempted_count: $attempted, timeout_count: $timeouts, input_size: $input_size, date: $date, results: $results}')
+    '{status: $status, mode: $mode, providers_used: $providers, providers_used_list: ($providers | split(", ")), provider_count: $count, attempted_count: $attempted, timeout_count: $timeouts, input_size: $input_size, input_chars_original: $input_original, input_truncated: $truncated, date: $date, results: $results}')
 else
   # Text output with banners
   FINAL_OUTPUT=$(cat <<HEADER

@@ -61,6 +61,8 @@ TARGET_REPO=$(git -C "<scope-path>" rev-parse --show-toplevel 2>/dev/null)
 
 A worktree is NEVER a reason to drop the whole analysis to degraded mode — it is a `path=` argument.
 
+**Multi-git-root workspace** (CWD is NOT a git repo but contains N sub-repos): detect via `git rev-parse --show-toplevel` failing at CWD but succeeding in subdirs. Then `analyze_hotspots` returns empty (churn cannot span sub-roots) and `analyze_project` reports the largest sub-repo's stack as the whole workspace. Fall back to per-sub-repo `git log --name-only` for churn, and detect stack per sub-repo from each manifest — do not trust root-level `analyze_project` here.
+
 ## Step 2.5: Deferred Tool Preload (MCP-host environments)
 
 Some MCP hosts (Claude Code, Codex Plugins) defer tool schemas to keep the system prompt small. When `mcp__codesift__*` tools appear under "deferred tools" in the session-start system reminder rather than directly in the tool list, calling them produces `InputValidationError`.
@@ -198,13 +200,14 @@ Before aborting on a mismatch, run the **host-disabled probe** below. Hard-abort
 
 A non-deferrable or host-disabled manifest tool produces a `got < expected` delta even when the preload is correct. Aborting here blocks otherwise-valid brainstorm/audit/review/pentest/performance-audit runs. Before any abort:
 
-1. For each manifest tool in `expected_tools` but absent from `got`, probe whether it is genuinely host-disabled: `ToolSearch(query="select:mcp__codesift__<name>")` returns `No matching deferred tools` AND `discover_tools(query="<name>")` shows no such tool (or `is_core:false` and not in this host's deferrable pool).
+1. For each manifest tool in `expected_tools` but absent from `got`, probe whether it is genuinely host-disabled: `ToolSearch(query="select:mcp__codesift__<name>")` returns `No matching deferred tools` AND `discover_tools(query="<name>")` shows no such tool (or `is_core:false` and not in this host's deferrable pool). **Reveal is not callability:** on some hosts (Codex MCP bridge) `describe_tools(..., reveal=true)` succeeds — the tool shows up in discovery — yet the callable surface never refreshes. If a tool is still not callable after Step C, classify it host-disabled and go straight to steps 2-3; do not re-run the reveal.
 2. **Confirmed host-disabled with a known equivalent** → record `[PRELOAD SUBSTITUTION] <tool> -> <equivalent>`, route the affected dimension to the substitute, and count it as satisfied. Known equivalences:
    - `find_clones` → `audit_scan` (CQ14)
    - `sql_audit` → `migration_lint` + `search_text` over `*.sql`
    - `review_diff` / `changed_symbols` / `diff_outline` / `scan_secrets` → `audit_scan` + `get_file_outline` + `impact_analysis` + `search_patterns` + Grep secret scan
 3. **Confirmed host-disabled with no equivalent** → record `[PRELOAD HOST-DISABLED tools=<names>]`, drop those names from `expected_tools`, route the affected dimensions to Degraded Mode, and recompute the gate so dropped tools count as satisfied.
 4. Recompute: if `got` now equals the adjusted `expected_tools` (substitutions + host-disabled drops applied), continue — do NOT abort. Hard-abort only on a residual *unexplained* delta (cause #3, select-string truncation).
+5. Print the delta ONCE, compactly (names only, never full tool descriptions): `[CodeSift capability delta] absent=[<names>] substitutions=[<tool>-><sub>, ...]`. Downstream phases, gates, and sub-agent dispatch inputs reuse this line verbatim — never re-run discovery for the same missing tools in the same session.
 
 Then issue the three-step preload (bootstrap → reveal → load) as printed by the helper.
 

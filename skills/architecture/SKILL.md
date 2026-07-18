@@ -365,7 +365,7 @@ Score each option across:
 [2-4 sentences: situation + forces. No solution yet.]
 
 ## Decision
-[One clear sentence.]
+[One clear sentence. For security/credential decisions, pin the observable lifecycle semantics here or in Action Items -- expiry, revocation/kill-switch, retention, residual-exposure ownership -- implementers must not invent them.]
 
 ## Options Considered
 

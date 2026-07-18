@@ -58,6 +58,8 @@ Understand the problem thoroughly. Design a solution collaboratively. Write a sp
 
 ### Phase 0 — Bootstrap (load before any work)
 
+Include paths resolve relative to THIS SKILL.md's directory (not CWD): a `../../shared/includes/` reference means `<plugin-root>/shared/includes/` — never resolve it against the project being worked on.
+
 1. `../../shared/includes/codesift-setup.md` -- CodeSift discovery and initialization
 2. `../../shared/includes/env-compat.md` -- Agent dispatch patterns per environment
 3. `../../shared/includes/acceptance-proof-protocol.md` -- Per-AC proof contract for plan/execute
@@ -179,6 +181,8 @@ Run `provided-artifact-supremacy.md` now. If the user provided a design artifact
 
 This is the gate that stops the dominant expensive failure: building the wrong thing correctly because the agent grounded on its own repo reading instead of the design the user handed it.
 
+Also scan `docs/specs/*.md` for an existing `status: Approved` spec whose topic overlaps this brainstorm. If found, treat it as a provided design artifact (supremacy applies): frame the new spec around it — never author a parallel or conflicting spec.
+
 ---
 
 ## Phase 1: Code Exploration
@@ -249,7 +253,7 @@ Collect all three reports before proceeding to Phase 2. Agent roles have differe
 - Business Analyst -- without edge cases, the spec will miss critical scenarios
 
 **Optional agent:**
-- Domain Researcher -- external context enriches the spec but is not essential
+- Domain Researcher -- external context enriches the spec but is not essential. If an existing research/analysis document already covers the domain dimension, cite it instead of dispatching this agent and note `domain=from-artifact` in the retro.
 
 **Failure handling:**
 - **Required agent fails:** Retry once. If still fails, proceed but set spec status to "Draft (incomplete -- missing [agent name] analysis)". Note the gap in the spec's Problem Statement. Do NOT auto-approve a spec with missing required analysis.
@@ -484,7 +488,7 @@ If the spec describes only an internal subsystem with no end-user flow (e.g., a 
 
 ## Backward Compatibility
 
-[What existing state (files, schemas, configs, APIs) is affected. Which has precedence during migration. When old format is deprecated. Migration path if applicable.]
+[What existing state (files, schemas, configs, APIs) is affected. Which has precedence during migration. When old format is deprecated. Migration path if applicable. For gated/versioned cross-stack formats also state: legacy-client behavior, how deployed clients signal compatibility, gate parity across instances, persistence capacity, historical-version lookup, and rollback/read-repair behavior.]
 
 ## Out of Scope
 
@@ -543,7 +547,7 @@ If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplac
 
 Wait for complete output. Then update the spec's `## Adversarial Review` section and metadata:
 - **No provider / empty output:** set `adversarial_review: skipped-no-provider` and write the exact skip reason in `## Adversarial Review`
-- **CRITICAL** (hallucinated capability, internal contradiction) → fix in spec. **Before re-running adversarial, run a self-consistency sweep:** grep the spec for every constant/identifier/predicate/status-code/key-name/lock-form you changed this round and confirm a SINGLE consistent value across Design Decisions, Solution Overview, Detailed Design, Integration Points, Edge Cases, Failure Modes, Rollback Strategy, ACs, and Smoke Proofs. When a CRITICAL targets a cross-cutting property (auth, status, locking, a shared key), update ALL referencing sections in ONE pass. Stale cross-references are the dominant source of round-2+ CRITICALs and are cheaper to fix by grep than by another ~600s provider round. Then re-run spec-reviewer, then re-run adversarial review.
+- **CRITICAL** (hallucinated capability, internal contradiction) → fix in spec. **Before re-running adversarial, run a self-consistency sweep:** first `LC_ALL=C grep -nP '[\x00-\x08\x0B\x0C\x0E-\x1F]' <spec>` — any raw C0 control byte is invisible in review and MUST be removed; then grep the spec for every constant/identifier/predicate/status-code/key-name/lock-form you changed this round and confirm a SINGLE consistent value across Design Decisions, Solution Overview, Detailed Design, Integration Points, Edge Cases, Failure Modes, Rollback Strategy, ACs, and Smoke Proofs. When a CRITICAL targets a cross-cutting property (auth, status, locking, a shared key), update ALL referencing sections in ONE pass. Stale cross-references are the dominant source of round-2+ CRITICALs and are cheaper to fix by grep than by another ~600s provider round. Then re-run spec-reviewer, then re-run adversarial review.
 - **WARNING** (missing edge case, vague AC) → append actionable items to `Open Questions` or explicitly resolve them in the spec; set `adversarial_review: warnings`
 - **INFO** → summarize briefly in `## Adversarial Review`
 

@@ -189,12 +189,20 @@ git add -u && git diff --staged | adversarial-review --mode code
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
 
+Exceptions (user authority wins over MANDATORY):
+- User forbade staging: do NOT `git add` — pipe the scoped unstaged diff instead (`git diff -- <touched files> | adversarial-review --mode code`) and confirm the staged diff stays empty.
+- User explicitly forbade invoking other AI / adversarial review: skip it and record `ADVERSARIAL: skipped (user directive: <quote>)` in the completion summary.
+
+If the review output reports truncation (diff exceeds the reviewer input cap), split the diff on file boundaries, review each chunk, and aggregate findings — a truncated review is NOT full coverage.
+
 Wait for complete output. Handle findings by severity:
 - **CRITICAL** — fix immediately, regardless of confidence. If confidence is low, verify first (check the code), then fix if confirmed.
 - **WARNING** — fix if localized (< 10 lines). If fix is larger, add to backlog with specific file:line.
 - **INFO** — known concerns (max 3, one line each).
 
 Do NOT discard findings based on confidence alone. Confidence measures how sure the reviewer is, not how important the issue is. A CRITICAL with low confidence means "verify this — if true, it's serious."
+
+If a finding contradicts an explicit user instruction or stated invariant, do not silently apply either side: verify the finding's premise, then disposition it as a Step 5 pushback (citing the invariant) or a fix, and record the decision in the summary.
 
 "Pre-existing" is NOT a reason to skip a finding. If the issue is in a file you are already editing, fix it now. If not, add it to backlog with file:line. The adversarial review found a real problem — don't dismiss it just because it existed before your changes.
 

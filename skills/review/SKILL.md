@@ -533,19 +533,19 @@ Refer to `env-compat.md` for the correct dispatch pattern per environment.
 ```
 Agent 1: Behavior Auditor
   model: "sonnet"
-  type: "Explore"
+  type: "general-purpose"   # NOT Explore — Explore lacks mcp__codesift__* and CodeSift precheck hooks reject the dispatch
   instructions: read agents/behavior-auditor.md
   input: diff, tech stack, change intent, PRECOMPUTED_DATA, PROJECT_CONTEXT
 
 Agent 2: Structure Auditor
   model: "sonnet"
-  type: "Explore"
+  type: "general-purpose"
   instructions: read agents/structure-auditor.md
   input: diff, tech stack, change intent, PRECOMPUTED_DATA, PROJECT_CONTEXT
 
 Agent 3: CQ Auditor
   model: "sonnet"
-  type: "Explore"
+  type: "general-purpose"
   instructions: read agents/cq-auditor.md
   input: diff, tech stack, change intent, PRECOMPUTED_DATA, PROJECT_CONTEXT
 ```
@@ -692,7 +692,7 @@ Max 2 fix attempts per provider finding. Max 3 passes total.
 ```
 Agent: Confidence Re-Scorer
   model: "sonnet"
-  type: "Explore"
+  type: "general-purpose"
   instructions: read agents/confidence-rescorer.md
   input: full candidate list, PRECOMPUTED_DATA, adversarial findings
 ```
@@ -846,6 +846,10 @@ VALIDITY GATE
     # VIOLATES_TRIGGER fires ONLY when the tool IS present in this build's surface
     # but was not called. `absent-in-build (<equivalent>: <result>)` = PASS (see
     # MANDATORY TOOL CALLS substitution map). NOT_CALLED on a present tool = violation.
+    # A tool CALLED but erroring in-provider (`Transport closed`, provider crash) is
+    # neither NOT_CALLED nor an infinite retry: per codesift-setup.md's transport
+    # protocol, record `<tool>: call-failed(<error>) (<substitution-map fallback>:
+    # <result>)` = PASS, and list the failure under SKIPPED STEPS.
     review_diff: [<N> findings across 9 checks | absent-in-build (audit_scan: <findings>) | NOT_CALLED — VIOLATES_TRIGGER]
     changed_symbols: [<N> symbols | absent-in-build (impact_analysis+get_file_outline: <result>) | NOT_CALLED — VIOLATES_TRIGGER]
     diff_outline: [<N> files outlined | absent-in-build (get_file_outline: <result>) | NOT_CALLED — VIOLATES_TRIGGER]
@@ -859,6 +863,11 @@ VALIDITY GATE
       # nextjs_route_map is a SUBSET (routes only) and does NOT satisfy it —
       # framework_audit also covers client-boundary, data-flow, and server-actions.
   tier2_subagents:   # TIER 2-3 only; for TIER 0-1 print "not_required (tier<2)"
+    # Single-agent environments (Codex/Cursor/Antigravity — env-compat.md forbids
+    # pipeline-stage thread dispatch there): SEQUENTIAL_CHECKPOINT(<role>, <evidence>)
+    # is a PASS value for every role below and satisfies the Completion Gate
+    # "DISPATCHED as sub-agents" item — the env-mandated checkpoint pass IS the
+    # required result, not VIOLATES_TIER2. Adversarial coverage still required as usual.
     behavior_auditor: [DISPATCHED(<agent-return-marker>) | not_required (no new prod files / tier<2) | NOT_DISPATCHED — VIOLATES_TIER2]
     cq_auditor: [DISPATCHED(<agent-return-marker>) | NOT_DISPATCHED — VIOLATES_TIER2]
     confidence_rescorer: [DISPATCHED(<agent-return-marker>) | NOT_DISPATCHED — VIOLATES_TIER2]
