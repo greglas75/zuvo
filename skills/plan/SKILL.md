@@ -169,7 +169,7 @@ Run `provided-artifact-supremacy.md`. `zuvo:plan` is frequently invoked directly
 
 ## Phase 1: Architecture Analysis
 
-**Light mode (small scope):** If the planning input is inline (no spec doc), scope is ≤5 tasks (excluding test fixtures/data files), no new public contract is introduced, AND the orchestrator has CodeSift on an indexed repo with the feature spanning ≤7 files, the Team Lead MAY perform Phase 1 analysis directly (CodeSift + Read) and SKIP the Architect/Tech-Lead/QA sub-agent fan-out. Rationale: Explore sub-agents lack CodeSift and re-explore with weaker tools, making them slower and less accurate than self-analysis on an indexed repo. Record `Phase 1: direct (small/light scope)` in `## Review Trail`. plan-reviewer (Phase 3) + cross-model validation still run normally. Spec-driven and >5-task / new-contract plans stay on the mandatory full fan-out below.
+**Light mode (small scope):** If the planning input is inline (no spec doc), scope is ≤5 tasks (excluding test fixtures/data files), no new public contract is introduced, AND the orchestrator has CodeSift on an indexed repo with the feature spanning ≤7 files, the Team Lead MAY perform Phase 1 analysis directly (CodeSift + Read) and SKIP the Architect/Tech-Lead/QA sub-agent fan-out. Rationale: for a tiny/light scope, spinning up 3 sequential sub-agents costs more than the Team Lead analyzing directly with CodeSift + Read on an already-indexed repo (the fan-out agents are now `general-purpose` with CodeSift, so they are no longer crippled — but for ≤7 files the direct pass is still cheaper). Record `Phase 1: direct (small/light scope)` in `## Review Trail`. plan-reviewer (Phase 3) + cross-model validation still run normally. Spec-driven and >5-task / new-contract plans stay on the mandatory full fan-out below.
 
 Dispatch 3 agents SEQUENTIALLY. Each agent receives the output of the previous agent(s) as input context. The 4th step is performed by you (the main agent) as Team Lead synthesis.
 
@@ -177,7 +177,7 @@ The sequential order is mandatory because each agent's analysis depends on what 
 
 Pass the prior reports in full when practical. If you must compress for token budget, preserve concrete file paths, symbols, risk rankings, and open questions. Do not reduce a prior report to generic prose.
 
-**Explore dispatch note (Claude Code):** Explore sub-agents have NO `mcp__codesift__*` access — do not instruct them to preload or call CodeSift (the tables' "Token budget for CodeSift calls" applies only on harnesses where the dispatched type has MCP). Have them use Read/Grep/Glob and compensate by passing concrete file:line pointers in the dispatch prompt; for doc-only re-reviews, do the analysis inline instead of dispatching.
+**Dispatch-type note (Claude Code):** these sub-agents dispatch as `general-purpose`, NOT `Explore` — because `Explore` has NO `mcp__codesift__*` access and would re-explore the repo with grep, slower and less accurate (same reason `zuvo:review` uses general-purpose). `general-purpose` HAS CodeSift, so the tables' "Token budget for CodeSift calls" genuinely applies: instruct each agent to run the CodeSift preload and use `search_text` / `search_symbols` / `get_file_tree` / `codebase_retrieval` / `trace_call_chain` for its analysis. Keep them READ-ONLY BY INSTRUCTION — Read + CodeSift only, never `Edit`/`Write`/`git commit` (they produce reports, not code); `general-purpose` *can* write, so the read-only discipline is enforced by the prompt, not the agent type. Where CodeSift is genuinely unavailable, they fall back to Read/Grep/Glob; for doc-only re-reviews, do the analysis inline instead of dispatching.
 
 ### Model policy — planning runs on the STRONGEST model
 
@@ -216,7 +216,7 @@ Read `agents/architect.md` for full instructions.
 | Field | Value |
 |-------|-------|
 | Model | Opus (strongest — planning is reasoning-critical; `--model` overrides) |
-| Type | Explore (read-only) |
+| Type | general-purpose (read-only: Read + CodeSift only, no Edit/Write) |
 | Input | The spec document (spec-driven) or user description + codebase context (inline) |
 | Token budget | 5000 for CodeSift calls |
 
@@ -233,7 +233,7 @@ Read `agents/tech-lead.md` for full instructions.
 | Field | Value |
 |-------|-------|
 | Model | Opus (strongest — planning is reasoning-critical; `--model` overrides) |
-| Type | Explore (read-only) |
+| Type | general-purpose (read-only: Read + CodeSift only, no Edit/Write) |
 | Input | The planning input (spec or user description) AND the Architect's report |
 | Token budget | 5000 for CodeSift calls |
 
@@ -250,7 +250,7 @@ Read `agents/qa-engineer.md` for full instructions.
 | Field | Value |
 |-------|-------|
 | Model | Opus (strongest — planning is reasoning-critical; `--model` overrides) |
-| Type | Explore (read-only) |
+| Type | general-purpose (read-only: Read + CodeSift only, no Edit/Write) |
 | Input | The planning input (spec or user description), Architect's report, AND Tech Lead's report |
 | Token budget | 5000 for CodeSift calls |
 
@@ -422,7 +422,7 @@ Read `agents/plan-reviewer.md` for full instructions.
 | Field | Value |
 |-------|-------|
 | Model | Opus (strongest — planning is reasoning-critical; `--model` overrides) |
-| Type | Explore (read-only) |
+| Type | general-purpose (read-only: Read + CodeSift only, no Edit/Write) |
 | Input | The planning input (spec or user description) AND the plan document |
 
 **Expected output:** Review verdict — either APPROVED or ISSUES FOUND with specific items.
