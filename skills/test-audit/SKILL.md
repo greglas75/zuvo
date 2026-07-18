@@ -205,7 +205,7 @@ Each Task agent dispatch:
 ```
 Agent: Test Quality Auditor (per batch)
   model: "sonnet"
-  type: "Explore"
+  type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   instructions: evaluate test files against Q1-Q19 and AP anti-patterns (see Agent Prompt below)
   input: batch file list with paired production files, CODESIFT_AVAILABLE
 ```

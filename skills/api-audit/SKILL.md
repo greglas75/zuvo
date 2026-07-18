@@ -310,7 +310,7 @@ Each Task agent dispatch:
 ```
 Agent: API Dimension Auditor (per batch)
   model: "sonnet"
-  type: "Explore"
+  type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   instructions: evaluate endpoints in batch against D1-D11 dimensions
   input: batch endpoint list (one controller/module), detected stack, CODESIFT_AVAILABLE
 ```

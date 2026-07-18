@@ -143,25 +143,25 @@ In environments supporting parallel dispatch (Claude Code), run all 4 simultaneo
 ```
 Agent 1: UX Researcher
   model: "sonnet"
-  type: "Explore"
+  type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   instructions: evaluate UX, cognitive load, mobile usability (see Agent 1 section below)
   input: source code, detected stack, token file, screenshots (if available)
 
 Agent 2: Visual Designer
   model: "sonnet"
-  type: "Explore"
+  type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   instructions: evaluate token compliance, visual hierarchy, interaction states (see Agent 2 section below)
   input: source code, detected stack, token file, screenshots (if available)
 
 Agent 3: i18n and Multilingual QA
   model: "sonnet"
-  type: "Explore"
+  type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   instructions: evaluate text overflow, RTL support, character sets (see Agent 3 section below)
   input: source code, detected stack, screenshots (if available)
 
 Agent 4: Accessibility and Performance Auditor
   model: "sonnet"
-  type: "Explore"
+  type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   instructions: evaluate semantic HTML, keyboard nav, visual a11y, bundle impact (see Agent 4 section below)
   input: source code, detected stack, screenshots (if available)
 ```

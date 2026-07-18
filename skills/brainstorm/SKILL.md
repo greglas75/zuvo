@@ -221,7 +221,7 @@ strongest agent for a materially better spec.` before writing the spec.
 ```
 Agent 1: Code Explorer
   model: "opus"
-  type: "Explore"
+  type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   instructions: [read agents/code-explorer.md]
   input: user request + repo hints + CodeSift availability
 
@@ -232,7 +232,7 @@ Agent 2: Domain Researcher
 
 Agent 3: Business Analyst
   model: "opus"
-  type: "Explore"
+  type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   instructions: [read agents/business-analyst.md]
   input: user request + repo hints + CodeSift availability
 ```
@@ -516,7 +516,7 @@ Dispatch the spec reviewer agent:
 ```
 Agent: Spec Reviewer
   model: "opus"
-  type: "Explore"
+  type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   instructions: [read agents/spec-reviewer.md]
   input: the spec document content + original user request
 ```

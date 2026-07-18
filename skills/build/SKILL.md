@@ -250,7 +250,7 @@ Dispatch agents with the concrete scope from Phase 1a. In environments without p
 
 ```
 Dispatch with:
-  type: Explore
+  type: general-purpose  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   model: Sonnet
   run_in_background: true (if supported)
 
@@ -293,7 +293,7 @@ This is lighter than the DEEP agent but catches the most common case: AI rewriti
 
 ```
 Dispatch with:
-  type: Explore
+  type: general-purpose  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   model: Haiku
   run_in_background: true (if supported)
 
@@ -506,7 +506,7 @@ Dispatch two read-only agents in parallel:
 
 ```
 Dispatch with:
-  type: Explore
+  type: general-purpose  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   model: Sonnet
 
   prompt:
@@ -528,7 +528,7 @@ Dispatch with:
 
 ```
 Dispatch with:
-  type: Explore
+  type: general-purpose  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   model: Sonnet
 
   prompt:

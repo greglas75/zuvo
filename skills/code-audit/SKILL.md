@@ -350,7 +350,7 @@ Each Task agent dispatch:
 ```
 Agent: Code Quality Auditor (per batch)
   model: "sonnet"
-  type: "Explore"
+  type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   instructions: evaluate files against CQ1-CQ29 checklist (see Agent Prompt below)
   input: batch file list, PROJECT_CONTEXT, CODESIFT_AVAILABLE
 ```

@@ -373,25 +373,25 @@ Run discovery patterns for Injection (S1), XSS (S2), SSRF (S3), and Input Valida
 ```
 Agent 1: Injection Auditor (S1)
   model: "sonnet"
-  type: "Explore"
+  type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   instructions: audit codebase for injection vulnerabilities (see Per-Dimension Agent Instructions below)
   input: target path/scope, exclusion list, framework stack, CODESIFT_AVAILABLE
 
 Agent 2: XSS Auditor (S2)
   model: "sonnet"
-  type: "Explore"
+  type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   instructions: audit codebase for XSS vulnerabilities (see Per-Dimension Agent Instructions below)
   input: target path/scope, exclusion list, framework stack, CODESIFT_AVAILABLE
 
 Agent 3: SSRF Auditor (S3)
   model: "sonnet"
-  type: "Explore"
+  type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   instructions: audit codebase for SSRF vulnerabilities (see Per-Dimension Agent Instructions below)
   input: target path/scope, exclusion list, framework stack, CODESIFT_AVAILABLE
 
 Agent 4: Input Validation Auditor (S9)
   model: "sonnet"
-  type: "Explore"
+  type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   instructions: audit codebase for input validation gaps (see Per-Dimension Agent Instructions below)
   input: target path/scope, exclusion list, framework stack, CODESIFT_AVAILABLE
 ```

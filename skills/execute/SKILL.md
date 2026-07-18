@@ -542,7 +542,7 @@ Dispatch per environment:
 ```
 Agent: Spec Reviewer
   model: "sonnet"   # unless the user passed --model (opus/inherit/…) — then use that, per Model routing
-  type: "Explore"
+  type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   instructions: read agents/spec-reviewer.md
   input: task spec from plan, spec document, list of files implementer created/modified,
          CODESIFT_AVAILABLE, repo identifier
@@ -580,7 +580,7 @@ Dispatch per environment:
 ```
 Agent: Quality Reviewer
   model: "sonnet"   # unless the user passed --model (opus/inherit/…) — then use that, per Model routing
-  type: "Explore"
+  type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   instructions: read agents/quality-reviewer.md
   input: list of production files modified, list of test files modified,
          CODESIFT_AVAILABLE, repo identifier, content of shared/includes/quality-gates.md

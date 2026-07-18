@@ -306,13 +306,13 @@ Dispatch two agents in parallel (background) to inform the plan:
 ```
 Agent 1: Dependency Mapper
   model: "sonnet"
-  type: "Explore"
+  type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   instructions: trace all importers and callers of the target file (see details below)
   input: target file, CODESIFT_AVAILABLE, repo identifier
 
 Agent 2: Existing Code Scanner
   model: "sonnet"
-  type: "Explore"
+  type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
   instructions: search codebase for helpers/utilities similar to planned extractions (see details below)
   input: target file, CODESIFT_AVAILABLE, repo identifier, planned extraction list
 ```
