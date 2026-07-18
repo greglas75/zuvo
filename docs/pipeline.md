@@ -33,11 +33,17 @@ If you are unsure, the router will ask: "This could be handled as a scoped task 
 
 | Agent | Role | Model |
 |-------|------|-------|
-| Code Explorer | Scans the codebase for relevant modules, patterns, similar code, and blast radius | Sonnet |
-| Domain Researcher | Researches libraries, APIs, established approaches, and prior art | Sonnet |
-| Business Analyst | Identifies edge cases, failure modes (per-component with cost-benefit analysis), and acceptance criteria (ship + success tiers) | Sonnet |
+| Code Explorer | Scans the codebase for relevant modules, patterns, similar code, and blast radius | Opus |
+| Domain Researcher | Researches libraries, APIs, established approaches, and prior art | Opus |
+| Business Analyst | Identifies edge cases, failure modes (per-component with cost-benefit analysis), and acceptance criteria (ship + success tiers) | Opus |
 
-All three agents run in parallel. Their reports feed the design dialogue.
+Exploration/spec agents dispatch on **Opus** (strongest tier — a spec sets the ceiling for the whole
+pipeline; `--model` overrides for a deliberately cheaper run). On **Codex** there is no agent
+spawning: every role runs inline, single-agent, sequentially (hard rule in `env-compat.md` — the
+harness has no event wake, measured 2026-07). A stall watchdog (`*/3` cron + heartbeat) auto-resumes
+a brainstorm turn killed by an API error.
+
+All three agents run in parallel (Claude Code only). Their reports feed the design dialogue.
 
 ### Design dialogue
 
@@ -95,9 +101,15 @@ After writing the spec, a Spec Reviewer agent validates 14 checkpoints (C1-C12 i
 
 | Agent | Role | Model | Why sequential |
 |-------|------|-------|----------------|
-| Architect | Maps component boundaries, data flow, interfaces, dependency graph | Sonnet | Establishes the terrain |
-| Tech Lead | Selects patterns, libraries, makes implementation decisions based on Architect's map | Sonnet | Needs architecture context |
-| QA Engineer | Assesses testability of Tech Lead's decisions, identifies test boundaries | Sonnet | Needs implementation decisions |
+| Architect | Maps component boundaries, data flow, interfaces, dependency graph | Opus | Establishes the terrain |
+| Tech Lead | Selects patterns, libraries, makes implementation decisions based on Architect's map | Opus | Needs architecture context |
+| QA Engineer | Assesses testability of Tech Lead's decisions, identifies test boundaries | Opus | Needs implementation decisions |
+
+Planning is reasoning-critical, so these dispatch on **Opus** (override with `--model`). Light mode
+(inline input, ≤5 tasks, ≤7 files, indexed CodeSift) lets the Team Lead skip the fan-out and analyze
+directly. A `[MODEL WARNING]` is printed if a non-top-tier session model is authoring the plan. The
+same stall watchdog as brainstorm auto-resumes an API-killed plan turn (168-min dead stall measured
+2026-07-16 before this existed).
 
 After all three agents report, the main agent acts as **Team Lead**, synthesizing their outputs into an ordered task list.
 
@@ -112,7 +124,16 @@ Each task follows the TDD protocol:
 - [ ] Commit: [message]
 ```
 
-A Plan Reviewer agent validates the task ordering, dependency correctness, and coverage of spec requirements.
+**Granularity (v1.6.9, hard rules):** a task is a **MILESTONE** — a coherent, independently
+committable slice taking ~20-60 min — NOT a 2-5-min micro-step (micro-steps live inside the task as
+an internal checklist without their own review/proof/commit). Target **5-10 tasks per plan; >12 is a
+planning smell**. Plans exceeding ~10 milestones, spanning deliverable boundaries, or doing a
+migration/cutover are SPLIT into sequential plans shipped as separate PRs (max 3: compat → cutover →
+legacy removal). Before authoring tasks the plan runs a **reality pre-check** — every task must cite
+the concrete gap it fills in TODAY's codebase; already-implemented targets become header notes, never
+tasks (rule 18; an 18-task plan for already-implemented code shipped 2026-07-16 before this rule).
+
+A Plan Reviewer agent validates the task ordering, dependency correctness, and coverage of spec requirements (max 3 review iterations, then cross-model validation whose findings are read from the JSON artifact, not truncated stdout).
 
 ### Output artifact
 
@@ -131,16 +152,32 @@ For each task in the plan:
 1. **Implementer agent** writes a failing test (RED), then the minimal code to pass it (GREEN), then refactors
 2. **Spec Reviewer agent** verifies the implementation matches the spec
 3. **Quality Reviewer agent** runs CQ1-CQ29 (code quality) and Q1-Q19 (test quality) with evidence
+4. **Cross-model adversarial review** on the staged diff — with a hard **re-run economy** (v1.6.14):
+   max 2 FULL + 1 DELTA runs per task; artifact freshness is SEMANTIC (lint/format/test-only edits do
+   NOT invalidate it); a finding refuted once with base-code proof becomes KNOWN and is never
+   re-triaged
+5. **Acceptance proof** — the task's ACs are exercised for real; all proofs append to ONE
+   consolidated report per task (`zuvo/proofs/task-<N>-report.md`)
+6. Orchestrator commits (stage-listed files only), rewrites `execution-state.md`, moves on
 
-If a quality reviewer finds a critical gate violation, the task is sent back to the implementer for correction before moving to the next task.
+**Verification is TARGETED:** each task runs tests/type-check for the touched package only; the FULL
+suite runs exactly twice per plan (baseline + Phase Final smoke). **SCOPE-FREEZE:** the task list is
+frozen at approval — mid-run discoveries go to backlog or a follow-up plan, never new task numbers.
+
+If a reviewer finds a critical gate violation introduced by this task's diff, the task is sent back to the implementer (max 3 iterations, then post-cap autonomous disposition — the pipeline does not stall waiting for a human).
 
 ### Agents per task
 
 | Agent | Role | Model | Type |
 |-------|------|-------|------|
-| Implementer | Writes tests and production code following TDD | Sonnet | Code (read-write) |
+| Implementer | Writes tests and production code following TDD | Sonnet (std) / Opus (complex) | Code (read-write) |
 | Spec Reviewer | Verifies code matches spec requirements | Sonnet | Explore (read-only) |
 | Quality Reviewer | Runs CQ1-CQ29 and Q1-Q19 gates with evidence | Sonnet | Explore (read-only) |
+
+**Platform note:** the multi-agent table applies to Claude Code only (event-driven Task wake). On
+**Codex/Cursor/Antigravity** every role executes inline as a sequential checkpoint pass — same
+gates, no threads (`[MODE] single-agent (codex hard rule)`); thread dispatch on Codex measured 2026-07
+at ~88h of wait_agent polling and 19.5h orchestrator dead-air across a 3-day window.
 
 ### Verification protocol
 
@@ -173,6 +210,11 @@ These are approximate costs per phase for a medium-complexity feature (5-10 file
 | Execute (full, ~8 tasks) | All task cycles | 120-200K |
 
 Total pipeline for a medium feature: approximately 200-300K tokens. Smaller features (3-4 tasks) run closer to 100-150K.
+
+> Wall-clock note (post-v1.6.14): with milestone granularity + the adversarial re-run economy, a
+> task should close in ~15-25 min and a plan in minutes-to-tens-of-minutes. The 2026-07 forensics
+> measured the OLD pipeline at 5h plans / 20-48h executes — the dominant costs were orchestration
+> dead-air and unbounded gate re-runs, both now capped, not model compute.
 
 CodeSift reduces token usage by 15-30% compared to degraded mode (Grep/Read fallback) because it returns more precise results with fewer tokens.
 
@@ -388,3 +430,20 @@ native pre-push path (`rsha..lsha` from git stdin) is an exact range and still u
 > The sentinel is only ever emitted when remotes exist AND there is un-pushed work; `pg_unpushed_range`
 > returns exit 1 (→ merge-base fallback) for a remote-less repo, so the whole-history `--not --remotes`
 > footgun is never reached through the gate path.
+
+<!-- Evidence Map (updated sections, 2026-07-18)
+| Section | Source |
+|---------|--------|
+| Brainstorm agents (Opus) | skills/brainstorm/SKILL.md: model:"opus" x4 + Model policy note |
+| Brainstorm/plan watchdog | skills/{brainstorm,plan}/SKILL.md: Phase 0.2 Arm the stall-recovery watchdog |
+| Plan agents (Opus) + light mode + [MODEL WARNING] | skills/plan/SKILL.md: Model policy section + Light mode para |
+| Milestone granularity / >12 smell | skills/plan/SKILL.md: Task Authoring Rules rule 1 |
+| Max-3-PR split | skills/plan/SKILL.md: rule 17 |
+| Reality pre-check | skills/plan/SKILL.md: rule 18 |
+| Adversarial re-run economy (2 FULL + 1 DELTA, semantic freshness, KNOWN) | skills/execute/SKILL.md: Step 7b Re-run ECONOMY + Step 8 pt 3 |
+| One proof report per task | shared/includes/acceptance-proof-protocol.md: rule 7 |
+| Targeted tests / full suite 2x | skills/execute/SKILL.md: Pre-loop guards (TARGETED, full suite runs ONCE at Phase Final) |
+| SCOPE-FREEZE | skills/execute/SKILL.md: SCOPE-FREEZE section |
+| Codex single-agent + measured polling numbers | shared/includes/env-compat.md: Codex section (SINGLE-AGENT SEQUENTIAL, HARD RULE, measured) |
+| Post-cap disposition | skills/execute/SKILL.md: Retry Limits + no-pause-protocol refs |
+-->
