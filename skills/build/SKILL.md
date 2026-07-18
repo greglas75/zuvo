@@ -666,6 +666,14 @@ git tag build-[YYYY-MM-DD]-[short-slug]
 
 Do not push. Pushing is a separate user decision.
 
+### Follow-up ideas (optional — ZERO ceremony)
+
+If genuinely new IDEAS surfaced this session — feature possibilities, "we could also X", better
+approaches for later — append ONE line each to `memory/ideas.md` (create if missing):
+`- [YYYY-MM-DD] [build] <idea> — <one-line context>`. Ideas only: debt/findings go to backlog, not
+here. **If nothing surfaced, skip silently** — no marker, no gate, no telemetry. This file is read
+by knowledge-prime so future sessions see it.
+
 ### 4.6 Knowledge Curation
 
 After all work is done (code written, tests passing, CQ/Q scored), run the knowledge curation protocol from `knowledge-curate.md`:

@@ -17,6 +17,10 @@ Called by skills at the start of work, before any implementation or analysis. Th
 
 ```
 Glob("knowledge/*.jsonl")
+
+Also, if `memory/ideas.md` exists: read its LAST ~10 lines and surface any relevant to
+WORK_KEYWORDS as `IDEA: <line>` context (one line each, max 3) — captured follow-up ideas from
+prior sessions that may inform this work. Absent file = skip silently.
 ```
 
 If no files found: print `[KNOWLEDGE] No knowledge base found — starting fresh.` and exit. Do NOT create the directory.
