@@ -792,7 +792,7 @@ run_codex() {
 }
 
 run_codex_54() { run_codex "${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}"     "codex-5.4"; }
-run_codex_53() { run_codex "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.5}" "codex-5.3"; }
+run_codex_53() { run_codex "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}" "codex-5.3"; }
 
 run_claude() {
   local model
@@ -1177,7 +1177,7 @@ fi
 provider_model() {
   case "$1" in
     codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}" ;;
-    codex-5.3)    echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.5}" ;;
+    codex-5.3)    echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}" ;;
     agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.5 Flash (High)}}" ;;
     gemini)       echo "${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}" ;;
     gemini-api)   echo "${ZUVO_GEMINI_API_MODEL:-${ZUVO_MODEL_GEMINI_API:-gemini-3.1-pro-preview}}" ;;

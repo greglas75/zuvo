@@ -22,8 +22,11 @@ ZUVO_MODEL_CLAUDE_SONNET="${ZUVO_MODEL_CLAUDE_SONNET:-claude-sonnet-5}"
 ZUVO_MODEL_CLAUDE_HAIKU="${ZUVO_MODEL_CLAUDE_HAIKU:-claude-haiku-4-5-20251001}"
 
 # ── OpenAI (Codex) ──────────────────────────────────────────────────
-ZUVO_MODEL_CODEX_PRIMARY="${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.5}"   # codex-5.3 lane (spark)
-ZUVO_MODEL_CODEX_ALT="${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}"           # codex-5.4 lane (host-flip)
+# gpt-5.6 family (GA 2026-07-09): Sol=flagship, Terra=mid, Luna=fast. Benchmarked 2026-07-19
+# on identical planted-bug review @ medium: sol 18s/5 findings (most complete), terra 15s/4,
+# luna 13s/3 — all caught the bug. Requires codex CLI ≥0.144 (0.142 rejects 5.6 ids).
+ZUVO_MODEL_CODEX_PRIMARY="${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}"  # codex-5.3 lane (spark)
+ZUVO_MODEL_CODEX_ALT="${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}"              # codex-5.4 lane (host-flip)
 
 # ── Google (Gemini) ─────────────────────────────────────────────────
 ZUVO_MODEL_AGY="${ZUVO_MODEL_AGY:-Gemini 3.5 Flash (High)}"          # agy default (fast, display name from `agy models`)
