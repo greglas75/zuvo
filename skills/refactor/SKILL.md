@@ -744,7 +744,7 @@ Record the doc paths (or the N/A line) for the Post-Completion Summary.
 ### Follow-up ideas (optional — ZERO ceremony)
 
 If genuinely new IDEAS surfaced this run — feature possibilities, "we could also X" spotted while
-restructuring — append ONE line each to `memory/ideas.md` (create if missing):
+restructuring — append ONE line each to `memory/ideas.md` **at the MAIN checkout root** (worktree-safe resolution per `backlog-protocol.md`; create if missing):
 `- [YYYY-MM-DD] [refactor] <idea> — <one-line context>`. Ideas only (debt/findings → backlog).
 **If nothing surfaced, skip silently** — no marker, no gate, no telemetry.
 

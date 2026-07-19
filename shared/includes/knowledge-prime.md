@@ -13,6 +13,15 @@ Called by skills at the start of work, before any implementation or analysis. Th
 
 ## Protocol
 
+**Path anchor (worktree-safe):** `knowledge/` and `memory/ideas.md` live at the **MAIN checkout root**, never per-worktree. Resolve once and prefix every path below:
+
+```bash
+MAIN_ROOT=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')
+[ -z "$MAIN_ROOT" ] && MAIN_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+```
+
+In a linked worktree, `$MAIN_ROOT` differs from CWD — read/write `$MAIN_ROOT/knowledge/*.jsonl` and `$MAIN_ROOT/memory/ideas.md`, not the worktree-local copies (see `backlog-protocol.md` → "Where the Backlog Lives").
+
 ### Step 1: Check for knowledge base
 
 ```

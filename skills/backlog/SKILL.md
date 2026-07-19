@@ -12,7 +12,7 @@ description: >
 
 Add, list, and manage backlog items. The backlog tracks technical debt discovered by audit skills, review agents, and manual entries.
 
-**Backlog location:** `memory/backlog.md` in the project root. If `memory/` does not exist, create it. If the file does not exist, create it from the template at the bottom of this skill.
+**Backlog location:** `memory/backlog.md` at the **MAIN checkout root** — resolve worktree-safe per `../../shared/includes/backlog-protocol.md` ("Where the Backlog Lives"): `MAIN_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')`, fallback `--show-toplevel`. NEVER create or write a `memory/backlog.md` inside a linked worktree — one backlog per repository. If `memory/` does not exist at MAIN_ROOT, create it. If the file does not exist, create it from the template at the bottom of this skill. If a legacy worktree-local copy exists, merge its unique entries (by Fingerprint) into the main copy before proceeding.
 
 **Scope:** Managing the tech debt backlog -- viewing, adding, resolving, prioritizing, and suggesting batch actions.
 **Out of scope:** Actually fixing the issues (use `zuvo:fix-tests`, `zuvo:refactor`, or the suggested command from `suggest` mode).

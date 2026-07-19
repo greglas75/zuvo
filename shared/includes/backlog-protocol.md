@@ -4,7 +4,23 @@
 
 ## Where the Backlog Lives
 
-The backlog file is at `memory/backlog.md` in the project's memory directory (the same directory shown in the system prompt's auto-memory section). If the file does not exist, create it with the template below.
+The backlog file is at `memory/backlog.md` under the **MAIN checkout root** — never inside a linked worktree. There is exactly ONE backlog per repository.
+
+**Resolution (MANDATORY — worktree-safe):**
+
+```bash
+# Main-checkout root: first entry of `git worktree list` is ALWAYS the main worktree,
+# even when CWD is a linked worktree. `--show-toplevel` alone is WRONG here — in a
+# worktree it returns the worktree root and forks the backlog (field incident 2026-07-19:
+# 17 diverged copies per repo).
+MAIN_ROOT=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')
+[ -z "$MAIN_ROOT" ] && MAIN_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+BACKLOG="$MAIN_ROOT/memory/backlog.md"
+```
+
+If `$MAIN_ROOT/memory/backlog.md` does not exist, create it with the template below. If you are in a linked worktree and a **local** `memory/backlog.md` exists there (legacy fork), do NOT write to it — write to the main copy; migrate any entries the local fork has that the main copy lacks (dedupe by Fingerprint), then note the migration in the run output.
+
+This main-checkout anchor applies to the whole durable project-state family: `memory/backlog.md`, `memory/ideas.md`, `knowledge/*.jsonl`. Per-run pipeline state (`zuvo/plans`, `zuvo/contracts`, `zuvo/context`) stays worktree-local by design.
 
 ## Backlog Table Format
 

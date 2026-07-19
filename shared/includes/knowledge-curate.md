@@ -3,6 +3,8 @@
 Extract learnings from completed work and persist them to the project knowledge base.
 Called after work is done — by `zuvo:ship` before commit, by `zuvo:execute` after all tasks complete.
 
+**Path anchor (worktree-safe):** `knowledge/` lives at the **MAIN checkout root**, never per-worktree. Resolve `MAIN_ROOT=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')` (fallback `--show-toplevel`) and write `$MAIN_ROOT/knowledge/*.jsonl` — in a linked worktree this differs from CWD (see `backlog-protocol.md` → "Where the Backlog Lives").
+
 ---
 
 ## JSONL Schema
