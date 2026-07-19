@@ -132,6 +132,10 @@ Environment variables:
   GEMINI_API_KEY           Required for gemini-api provider
   CODESTRAL_API_KEY        Required for codestral provider (manual: --provider codestral)
   ZUVO_CODESTRAL_MODEL     Codestral model (default: codestral-latest)
+  ZUVO_KIMI_CLI_MODEL      kimi CLI -m alias (default: empty = CLI default, kimi-code/k3)
+  MOONSHOT_API_KEY         Enables kimi-api fallback when the kimi CLI is absent (Moonshot Kimi K2)
+  ZUVO_KIMI_MODEL          Kimi model (default: kimi-k2.6; kimi-k2.7-code = coding variant)
+  ZUVO_KIMI_BASE_URL       Kimi endpoint (default: https://api.moonshot.ai/v1; .cn for China accounts)
   CLAUDE_MODEL             Used for opposite-model detection (claude provider)
 HELP
       exit 0
@@ -643,6 +647,15 @@ detect_providers() {
   # 3. cursor-agent — fast fallback (~11s), redundancy for codex
   command -v cursor-agent &>/dev/null && providers="$providers cursor-agent"
 
+  # 3b. Moonshot Kimi — strict priority: kimi CLI (OAuth subscription, K3, verified E2E
+  #     2026-07-19 ~7s) > kimi-api (curl, needs MOONSHOT_API_KEY). Distinct vendor/model
+  #     family from every host we run under (claude/codex/cursor/agy) — no self-review guard.
+  if command -v kimi &>/dev/null; then
+    providers="$providers kimi"
+  elif [[ -n "${MOONSHOT_API_KEY:-}" ]]; then
+    providers="$providers kimi-api"
+  fi
+
   # 4. claude — opposite-model reviewer (Anthropic; run_claude flips Opus<->Sonnet, 10-40s)
   command -v claude &>/dev/null && providers="$providers claude"
 
@@ -989,6 +1002,106 @@ run_gemini_api() {
   printf '%s\n' "$text"
 }
 
+run_kimi() {
+  # Moonshot Kimi CLI (kimi-code, OAuth) — headless -p mode, default model K3 (~7s verified).
+  # stream-json gives clean {"role":"assistant","content":...} lines (plain text mode leaks
+  # reasoning bullets + a resume-hint footer into the review). Prompt is an ARG like agy.
+  # Run from the JSON tmpdir so the agent has no repo workspace to wander; NEVER pass -y
+  # (no tool auto-approval — the review prompt embeds the diff, no tools needed).
+  command -v kimi &>/dev/null || return 1
+
+  # NOTE: no empty-array expansion here — macOS ships bash 3.2 where `"${arr[@]}"` on an
+  # empty array trips `set -u` (unbound variable) and silently killed this provider.
+  local model_flag="${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-}}"
+
+  local raw_file="$JSON_TMPDIR/kimi_raw.jsonl"
+  local err_file="$JSON_TMPDIR/err_kimi.txt"
+  local status=0
+  if [[ -n "$model_flag" ]]; then
+    (cd "$JSON_TMPDIR" && timeout "$PROVIDER_TIMEOUT" \
+      kimi -p "$REVIEW_PROMPT" --output-format stream-json -m "$model_flag" \
+      > "$raw_file" 2>"$err_file") || status=$?
+  else
+    (cd "$JSON_TMPDIR" && timeout "$PROVIDER_TIMEOUT" \
+      kimi -p "$REVIEW_PROMPT" --output-format stream-json \
+      > "$raw_file" 2>"$err_file") || status=$?
+  fi
+  if [[ $status -eq 124 ]]; then
+    echo "  WARN: kimi timed out after ${PROVIDER_TIMEOUT}s" >&2
+    return 124
+  fi
+  if [[ $status -ne 0 ]]; then
+    echo "  WARN: kimi failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
+    return "$status"
+  fi
+
+  # Extract assistant messages only (drops meta/resume-hint/tool lines)
+  local text
+  text=$(jq -r 'select(.role=="assistant") | .content // empty' "$raw_file" 2>/dev/null)
+
+  # Error-as-output guard (agy lesson): exit-0 body carrying an error/quota message
+  # must not be consumed as a CLEAN review.
+  case "$text" in
+    ""|Error:*|*"quota reached"*|*"rate limit"*|*"login required"*|*"not authenticated"*)
+      echo "  WARN: kimi returned empty/error output: $(printf '%s' "$text" | head -c 120)" >&2
+      return 1 ;;
+  esac
+  printf '%s\n' "$text"
+}
+
+run_kimi_api() {
+  # Moonshot Kimi — OpenAI-compatible chat completions via curl, 2-5s, no CLI overhead.
+  # Distinct vendor (Moonshot) + distinct model family (K2) = real cross-model diversity.
+  [[ -z "${MOONSHOT_API_KEY:-}" ]] && return 1
+
+  # Sanitize model name (prevent URL/JSON injection); id like kimi-k2.6 / kimi-k2.7-code
+  local model
+  model=$(printf '%s' "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" | tr -cd 'a-zA-Z0-9._-')
+
+  # Build JSON payload via temp file (avoids ARG_MAX on large prompts)
+  local payload_file="$JSON_TMPDIR/kimi_api_payload.json"
+  printf '%s' "$REVIEW_PROMPT" | jq -Rs --arg m "$model" \
+    '{model:$m, messages:[{role:"user", content:.}], temperature:0.2}' > "$payload_file"
+
+  local err_file="$JSON_TMPDIR/err_kimi-api.txt"
+  local response
+  local status=0
+  response=$(curl -sf --max-time "$PROVIDER_TIMEOUT" \
+    "${ZUVO_KIMI_BASE_URL:-https://api.moonshot.ai/v1}/chat/completions" \
+    -H "Authorization: Bearer $MOONSHOT_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d @"$payload_file" \
+    2>"$err_file") || status=$?
+  if [[ $status -ne 0 ]]; then
+    if [[ $status -eq 28 ]]; then
+      echo "  WARN: kimi-api timed out after ${PROVIDER_TIMEOUT}s" >&2
+      return 124
+    fi
+    echo "  WARN: kimi-api failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
+    return "$status"
+  fi
+
+  # Error-as-output guard (agy lesson 2026-07-17: an exit-0 body carrying an error
+  # message was consumed as a CLEAN review). API errors come as {"error":{...}}.
+  local api_err
+  api_err=$(printf '%s' "$response" | jq -r '.error.message // empty' 2>/dev/null)
+  if [[ -n "$api_err" ]]; then
+    echo "  WARN: kimi-api returned error: $api_err" >&2
+    return 1
+  fi
+
+  # Log token usage to stderr
+  local input_tokens output_tokens
+  input_tokens=$(printf '%s' "$response" | jq -r '.usage.prompt_tokens // "?"')
+  output_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens // "?"')
+  echo "  Kimi API tokens: ${input_tokens} in / ${output_tokens} out" >&2
+
+  local text
+  text=$(printf '%s' "$response" | jq -r '.choices[0].message.content // empty')
+  [[ -z "$text" ]] && return 1
+  printf '%s\n' "$text"
+}
+
 # ─── Determine mode ────────────────────────────────────────────
 
 # Capture caller's original intent before mode normalization (rotate→single).
@@ -1056,6 +1169,8 @@ provider_model() {
     gemini)       echo "${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}" ;;
     gemini-api)   echo "${ZUVO_GEMINI_API_MODEL:-${ZUVO_MODEL_GEMINI_API:-gemini-3.1-pro-preview}}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
+    kimi-api)     echo "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" ;;
+    kimi)         echo "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3}}" ;;
     cursor-agent) echo "${ZUVO_CURSOR_MODEL:-${ZUVO_MODEL_CURSOR:-composer-2.5-fast}}" ;;
     claude)       [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]] && echo "${ZUVO_MODEL_CLAUDE_OPUS:-claude-opus-4-8}" || echo "${ZUVO_CLAUDE_REVIEWER_MODEL:-${ZUVO_MODEL_CLAUDE_SONNET:-claude-sonnet-5}}" ;;
     *)            echo "unknown" ;;
@@ -1090,6 +1205,8 @@ dispatch_provider() {
     gemini)        run_gemini ;;
     claude)        run_claude ;;
     gemini-api)    run_gemini_api ;;  # manual only: --provider gemini-api
+    kimi)          run_kimi ;;        # auto when kimi CLI on PATH (OAuth, K3)
+    kimi-api)      run_kimi_api ;;    # fallback when MOONSHOT_API_KEY set, no CLI
     codestral)     run_codestral ;;
     *) return 1 ;;
   esac

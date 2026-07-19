@@ -33,6 +33,8 @@ self-exclusion below enforces it.
 | `cursor-agent` | Cursor | `composer-2.5-fast` | `ZUVO_CURSOR_MODEL` | `… \| cursor-agent -p --model <m> --mode ask --trust --workspace /tmp` (prompt = **stdin**) |
 | `gemini-api` | Google (API) | `gemini-3.1-pro-preview` | `ZUVO_GEMINI_API_MODEL` | `curl` to Gemini API (needs `GEMINI_API_KEY`) — fallback only |
 | `gemini` (CLI) | Google (free/OAuth) | `gemini-3.1-pro-preview` | `ZUVO_GEMINI_MODEL` | **DEAD for individuals** — see below |
+| `kimi` | Moonshot (Kimi) | CLI default (`kimi-code/k3`, OAuth) | `ZUVO_KIMI_CLI_MODEL` (`-m` alias; empty = CLI default) | `kimi -p "<prompt>" --output-format stream-json` (prompt = **arg**; assistant lines extracted via jq — plain text mode leaks reasoning bullets + resume footer). Runs from tmpdir, never `-y`. |
+| `kimi-api` | Moonshot (Kimi) | `kimi-k2.6` | `ZUVO_KIMI_MODEL` (`kimi-k2.7-code` = coding variant) | `curl` to `api.moonshot.ai/v1/chat/completions` (OpenAI-compatible) — fallback when the CLI is absent and `MOONSHOT_API_KEY` is set; `ZUVO_KIMI_BASE_URL` for the `.cn` endpoint |
 | `codestral` | Mistral | `codestral-latest` | `ZUVO_CODESTRAL_MODEL` | manual only (`--provider codestral`, needs `CODESTRAL_API_KEY`) |
 
 The prompt is passed to `agy -p` as an **argument, not stdin** (stdin makes agy answer an empty
@@ -50,6 +52,8 @@ prompt). `--model` values for `agy`/`cursor-agent` are the **display / id string
 | `claude` | Sonnet 5 (Opus author) | ✅ working | ~40s |
 | `cursor-agent` | Composer 2.5 Fast | ✅ working (after `cursor-agent login`) | ~19s |
 | `gemini` (free CLI) | — | ❌ dead: `IneligibleTierError: UNSUPPORTED_CLIENT` | — |
+| `kimi` (CLI) | kimi-code/k3 (K3, OAuth) | ✅ working — verified E2E 2026-07-19: standalone caught a planted missing-`/100` discount bug; full pipeline returned structured findings | ~7-60s |
+| `kimi-api` | kimi-k2.6 | ⏸ wired fallback, activates only when CLI absent + `MOONSHOT_API_KEY` set (smoke-tested: bad key → provider FAIL, not fake CLEAN) | ~2-5s expected |
 
 > **The free `gemini` CLI is dead for individuals.** Google returns
 > `IneligibleTierError … "migrate to the Antigravity suite of products"` and upgrading the CLI does
@@ -90,7 +94,9 @@ export GEMINI_API_KEY=<key from aistudio.google.com>
 2. Google Gemini — strict priority: **`agy`** → **`gemini-api`** (if `GEMINI_API_KEY` set) → the free
    `gemini` CLI (last resort, dead for individuals). So a working key is never shadowed by the dead CLI.
 3. `cursor-agent` if installed
-4. `claude` if installed
+4. Moonshot Kimi — strict priority: **`kimi`** CLI (OAuth, K3) → **`kimi-api`** (if `MOONSHOT_API_KEY`
+   set). Distinct vendor from every host we run under — never subject to self-review exclusion.
+5. `claude` if installed
 
 `codestral` is manual-only (`--provider codestral`, needs `CODESTRAL_API_KEY`).
 
