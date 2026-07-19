@@ -100,6 +100,22 @@ export GEMINI_API_KEY=<key from aistudio.google.com>
 
 `codestral` is manual-only (`--provider codestral`, needs `CODESTRAL_API_KEY`).
 
+## Doctor — verify providers actually WORK (not just exist)
+
+`command -v <cli>` proves presence, not a working login. Field lesson 2026-07-19: fleet bots had
+codex/gemini/claude on PATH with expired/revoked OAuth tokens — every review burned full provider
+timeouts before discovering nothing could run. After provisioning a host or bot (and whenever
+reviews start failing across the board), run:
+
+```bash
+adversarial-review --doctor        # probes each detected provider with a tiny prompt, 60s cap each
+```
+
+Output: `WORKING (Ns, model: …)` / `FAILED (exit N: first error line)` / `TIMEOUT` per provider +
+a `usable providers: N/M` summary. Exit 0 when ≥1 works. Override per-probe cap with
+`ZUVO_DOCTOR_TIMEOUT`. Verified 2026-07-19 on the Mac host: 5/5 WORKING (codex-5.3, agy,
+cursor-agent, kimi, claude) in ~45s total.
+
 Then the mode flag picks how many run:
 
 | Flag | Behavior |

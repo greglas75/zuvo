@@ -42,11 +42,13 @@ FILES=""
 ARTIFACT_PATH=""
 INPUT_MODE="stdin"  # stdin | diff | files
 DRY_RUN=false
+DOCTOR=false         # --doctor: live auth probe of every detected provider, then exit
 EXCLUDE_PROVIDER=""  # --exclude: skip this provider (used by --rotate to avoid repeat)
 EXCLUDE_LAST=""      # --exclude-last: cross-call rotation handoff (D4)
 
 while [[ $# -gt 0 ]]; do
   case $1 in
+    --doctor)    DOCTOR=true; shift ;;
     --provider)  PROVIDER="$2"; shift 2 ;;
     --multi)     MULTI_MODE="multi"; shift ;;
     --single)    MULTI_MODE="single"; shift ;;
@@ -105,6 +107,11 @@ Review modes:
   --mode audit     Audit report: score inflation, gate inconsistency, N/A abuse
   --mode tests     Test audit report: Q-score inflation, coverage theater
   --mode migrate   Migration/schema: irreversible DDL, missing backfill, index locks
+
+Diagnostics:
+  --doctor         Live auth+dispatch probe of every detected provider (tiny prompt,
+                   ZUVO_DOCTOR_TIMEOUT=60s each). Presence on PATH ≠ working login —
+                   run this after provisioning a host/bot. Exit 0 if ≥1 provider works.
 
 Output:
   --json           Machine-readable JSON (for agent-in-the-loop)
@@ -206,7 +213,13 @@ collect_input() {
   esac
 }
 
-INPUT=$(collect_input)
+# Doctor mode needs no review input (it sends its own probe prompt) — skipping
+# collect_input also avoids the 10s stdin wait on a bare `adversarial-review --doctor`.
+if [[ "$DOCTOR" == "true" ]]; then
+  INPUT="(doctor probe)"
+else
+  INPUT=$(collect_input)
+fi
 
 if [[ -z "$INPUT" ]]; then
   echo "ERROR: No input provided. Pipe a diff or use --diff/--files." >&2
@@ -1211,6 +1224,41 @@ dispatch_provider() {
     *) return 1 ;;
   esac
 }
+
+# ─── Doctor mode: live auth probe of every detected provider ───
+# `command -v <cli>` proves presence, NOT a working login (field lesson 2026-07-19:
+# fleet bots had codex/gemini/claude on PATH with expired/revoked tokens — every
+# review burned full provider timeouts before discovering nothing could run).
+# --doctor sends each detected provider a tiny prompt with a short timeout and
+# reports WORKING / FAILED / TIMEOUT. Exit 0 if ≥1 provider works, else 1.
+
+if [[ "$DOCTOR" == "true" ]]; then
+  echo "PROVIDER DOCTOR (auth + dispatch probe, ${ZUVO_DOCTOR_TIMEOUT:-60}s timeout each)"
+  # The run_* functions need JSON_TMPDIR, normally created in the Execute section
+  # we exit before reaching — create our own and clean it on exit.
+  JSON_TMPDIR=$(mktemp -d)
+  trap 'rm -rf "$JSON_TMPDIR"' EXIT
+  REVIEW_PROMPT="Reply with exactly: PROVIDER-OK"
+  PROVIDER_TIMEOUT="${ZUVO_DOCTOR_TIMEOUT:-60}"
+  working=0
+  for p in $PROVIDERS; do
+    p_start=$(date +%s)
+    p_out=$(dispatch_provider "$p" 2>"$JSON_TMPDIR/doctor_$p.err"); p_rc=$?
+    p_secs=$(( $(date +%s) - p_start ))
+    if [[ $p_rc -eq 0 && -n "$p_out" ]]; then
+      printf '  %-14s WORKING (%ss, model: %s)\n' "$p" "$p_secs" "$(provider_model "$p")"
+      working=$((working+1))
+    elif [[ $p_rc -eq 124 ]]; then
+      printf '  %-14s TIMEOUT after %ss\n' "$p" "$p_secs"
+    else
+      printf '  %-14s FAILED (exit %s): %s\n' "$p" "$p_rc" \
+        "$(head -c 160 "$JSON_TMPDIR/doctor_$p.err" 2>/dev/null | tr '\n' ' ')"
+    fi
+  done
+  echo "  ---"
+  echo "  usable providers: $working / $(echo "$PROVIDERS" | wc -w | tr -d ' ')"
+  [[ $working -ge 1 ]] && exit 0 || exit 1
+fi
 
 # ─── Execute ───────────────────────────────────────────────────
 
