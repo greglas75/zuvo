@@ -25,9 +25,11 @@ In a linked worktree, `$MAIN_ROOT` differs from CWD — read/write `$MAIN_ROOT/k
 ### Step 1: Check for knowledge base
 
 ```
-Glob("knowledge/*.jsonl")
+Glob("$MAIN_ROOT/knowledge/*.jsonl")   # MAIN_ROOT from the anchor above — in a linked
+                                       # worktree a bare Glob("knowledge/*.jsonl") looks at
+                                       # the worktree and finds nothing.
 
-Also, if `memory/ideas.md` exists: read its LAST ~10 lines and surface any relevant to
+Also, if `$MAIN_ROOT/memory/ideas.md` exists: read its LAST ~10 lines and surface any relevant to
 WORK_KEYWORDS as `IDEA: <line>` context (one line each, max 3) — captured follow-up ideas from
 prior sessions that may inform this work. Absent file = skip silently.
 ```

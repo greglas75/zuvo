@@ -533,7 +533,7 @@ Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <proje
 
 ## Backlog Integration (ALL MODES)
 
-After completing any mode, persist actionable items to `memory/backlog.md`:
+After completing any mode, persist actionable items to `memory/backlog.md` — at the MAIN checkout root, resolved per `../../shared/includes/backlog-protocol.md` "Where the Backlog Lives" (never a worktree-local copy):
 
 **Review mode:** Each Critical and Needs-work issue from the report.
 **ADR mode:** "Harder" consequences, "Revisit when" triggers, incomplete action items.

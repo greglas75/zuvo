@@ -553,7 +553,7 @@ Save to: `zuvo/audits/structure-audit-YYYY-MM-DD.md` — at the **project root**
 
 ### 5.3 Backlog Integration
 
-For HIGH and CRITICAL findings, persist to `memory/backlog.md`:
+For HIGH and CRITICAL findings, persist to `memory/backlog.md` — at the MAIN checkout root, resolved per `../../shared/includes/backlog-protocol.md` "Where the Backlog Lives" (never a worktree-local copy):
 - Fingerprint format: `file|SA-dimension|check-id`
 - Deduplicate against existing entries
 

@@ -336,7 +336,7 @@ For high-risk changes (DB migrations, security/auth, API contracts, payment/mone
 
 ### Knowledge Prime
 
-Check if knowledge base exists BEFORE loading the protocol: `Glob("knowledge/*.jsonl")` (the path knowledge-curate actually writes; the old `memory/knowledge*.md` pre-check pointed at a path NO skill writes, so review never primed knowledge that existed). If no files found, skip — do NOT load `knowledge-prime.md` (saves ~140L / ~1.6K tokens). If files exist, then load and run:
+Check if knowledge base exists BEFORE loading the protocol — **worktree-aware**: resolve `MAIN_ROOT=$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')` (fallback `--show-toplevel`) and check `Glob("$MAIN_ROOT/knowledge/*.jsonl")` (knowledge lives at the MAIN checkout per `backlog-protocol.md`; a CWD-relative glob in a linked worktree finds nothing and silently skips priming — same bug class as the old `memory/knowledge*.md` pre-check that pointed at a path NO skill writes). If no files found, skip — do NOT load `knowledge-prime.md` (saves ~140L / ~1.6K tokens). If files exist, then load and run:
 ```
 WORK_TYPE = "review"
 WORK_KEYWORDS = <keywords from diff file paths and commit messages>

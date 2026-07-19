@@ -792,7 +792,30 @@ run_codex() {
 }
 
 run_codex_54() { run_codex "${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}"     "codex-5.4"; }
-run_codex_53() { run_codex "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}" "codex-5.3"; }
+run_codex_53() {
+  local model="${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}"
+  # R-18: gpt-5.6 ids need codex CLI >=0.144 (0.142 rejects them with an opaque 400).
+  # On fleet hosts with an older CLI, fall back to gpt-5.5 with a loud warning instead
+  # of failing every codex review until someone reads the error.
+  if [[ "$model" == gpt-5.6* ]]; then
+    local cv
+    cv=$(codex --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
+    # Unparsable/missing version counts as TOO OLD (fix-pass finding): wrongly
+    # downgrading a weird-but-new CLI costs one generation (gpt-5.5 still works);
+    # wrongly keeping 5.6 on an old CLI costs every review an opaque 400.
+    if [[ -z "$cv" ]]; then
+      echo "  WARN: cannot parse codex CLI version — falling back to gpt-5.5 for safety (set ZUVO_MODEL_CODEX_PRIMARY to force)" >&2
+      model="gpt-5.5"
+    else
+      local cv_major="${cv%%.*}" cv_minor="${cv#*.}"
+      if [[ "$cv_major" -eq 0 && "$cv_minor" -lt 144 ]]; then
+        echo "  WARN: codex CLI $cv is too old for $model (needs >=0.144) — falling back to gpt-5.5. Upgrade: brew upgrade --cask codex" >&2
+        model="gpt-5.5"
+      fi
+    fi
+  fi
+  run_codex "$model" "codex-5.3"
+}
 
 run_claude() {
   local model
@@ -1025,7 +1048,10 @@ run_kimi() {
 
   # NOTE: no empty-array expansion here — macOS ships bash 3.2 where `"${arr[@]}"` on an
   # empty array trips `set -u` (unbound variable) and silently killed this provider.
-  local model_flag="${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-}}"
+  # Sanitized like run_kimi_api's model (R-15): arg-quoting prevents shell breakout, but a
+  # flag-like or quoted env value could still confuse the CLI's own arg parser.
+  local model_flag
+  model_flag=$(printf '%s' "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-}}" | tr -cd 'a-zA-Z0-9./_-')
 
   local raw_file="$JSON_TMPDIR/kimi_raw.jsonl"
   local err_file="$JSON_TMPDIR/err_kimi.txt"
@@ -1045,6 +1071,12 @@ run_kimi() {
   fi
   if [[ $status -ne 0 ]]; then
     echo "  WARN: kimi failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
+    # R-12: an installed-but-dead CLI must not black-hole the vendor (the documented
+    # dead-gemini-CLI-shadows-working-key trap). If a key exists, try the API lane.
+    if [[ -n "${MOONSHOT_API_KEY:-}" ]]; then
+      echo "  INFO: kimi CLI failed — falling back to kimi-api (MOONSHOT_API_KEY set)" >&2
+      run_kimi_api && return 0
+    fi
     return "$status"
   fi
 
@@ -1053,12 +1085,31 @@ run_kimi() {
   text=$(jq -r 'select(.role=="assistant") | .content // empty' "$raw_file" 2>/dev/null)
 
   # Error-as-output guard (agy lesson): exit-0 body carrying an error/quota message
-  # must not be consumed as a CLEAN review.
-  case "$text" in
-    ""|Error:*|*"quota reached"*|*"rate limit"*|*"login required"*|*"not authenticated"*)
-      echo "  WARN: kimi returned empty/error output: $(printf '%s' "$text" | head -c 120)" >&2
-      return 1 ;;
-  esac
+  # must not be consumed as a CLEAN review. Case-insensitive (R-11). Length-gated
+  # (fix-pass findings 3+5 in tension): genuine provider error bodies are SHORT —
+  # scan those fully; a LONG body is a real review that may legitimately QUOTE
+  # "rate limit"/"not authenticated" in findings, so only an error: PREFIX rejects it.
+  local text_lc
+  text_lc=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
+  if [[ ${#text} -lt 1000 ]]; then
+    case "$text_lc" in
+      ""|error:*|*"quota reached"*|*"rate limit"*|*"login required"*|*"not authenticated"*)
+        echo "  WARN: kimi returned empty/error output: $(printf '%s' "$text" | head -c 120)" >&2
+        # Fix-pass finding 4: an exit-0 error body must ALSO try the API lane (R-12
+        # only covered non-zero exits) — otherwise a rate-limited CLI blocks a working key.
+        if [[ -n "${MOONSHOT_API_KEY:-}" ]]; then
+          echo "  INFO: kimi CLI error-body — falling back to kimi-api (MOONSHOT_API_KEY set)" >&2
+          run_kimi_api && return 0
+        fi
+        return 1 ;;
+    esac
+  else
+    case "$text_lc" in
+      error:*)
+        echo "  WARN: kimi returned error-prefixed output: $(printf '%s' "$text" | head -c 120)" >&2
+        return 1 ;;
+    esac
+  fi
   printf '%s\n' "$text"
 }
 
@@ -1076,13 +1127,29 @@ run_kimi_api() {
   printf '%s' "$REVIEW_PROMPT" | jq -Rs --arg m "$model" \
     '{model:$m, messages:[{role:"user", content:.}], temperature:0.2}' > "$payload_file"
 
+  # R-14: pass the Authorization header via a curl config file, not argv — `-H "Bearer …"`
+  # is visible to every process on the host via `ps` for the request's lifetime.
+  # Fix-pass CRITICAL: the key is interpolated into quoted config syntax — reject keys
+  # containing quote/backslash/CR/LF (would break the line or inject a header). Real
+  # Moonshot keys are URL-safe; anything else here is corruption or an attack.
+  case "$MOONSHOT_API_KEY" in
+    *['"\\'$'\n\r']*)
+      echo "  WARN: MOONSHOT_API_KEY contains quote/backslash/newline — refusing to build curl config" >&2
+      return 1 ;;
+  esac
+  local curl_cfg="$JSON_TMPDIR/kimi_api_curl.cfg"
+  printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' \
+    "$MOONSHOT_API_KEY" > "$curl_cfg"
+  chmod 600 "$curl_cfg"
+
   local err_file="$JSON_TMPDIR/err_kimi-api.txt"
   local response
   local status=0
-  response=$(curl -sf --max-time "$PROVIDER_TIMEOUT" \
+  # No -f (R-6): -f discards HTTP>=400 bodies, which made the {"error":...} guard below
+  # dead code exactly when it matters (401/429 diagnostics).
+  response=$(curl -s --max-time "$PROVIDER_TIMEOUT" \
     "${ZUVO_KIMI_BASE_URL:-https://api.moonshot.ai/v1}/chat/completions" \
-    -H "Authorization: Bearer $MOONSHOT_API_KEY" \
-    -H "Content-Type: application/json" \
+    -K "$curl_cfg" \
     -d @"$payload_file" \
     2>"$err_file") || status=$?
   if [[ $status -ne 0 ]]; then
@@ -1105,13 +1172,31 @@ run_kimi_api() {
 
   # Log token usage to stderr
   local input_tokens output_tokens
-  input_tokens=$(printf '%s' "$response" | jq -r '.usage.prompt_tokens // "?"')
-  output_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens // "?"')
+  input_tokens=$(printf '%s' "$response" | jq -r '.usage.prompt_tokens // "?"' 2>/dev/null)
+  output_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens // "?"' 2>/dev/null)
   echo "  Kimi API tokens: ${input_tokens} in / ${output_tokens} out" >&2
 
   local text
-  text=$(printf '%s' "$response" | jq -r '.choices[0].message.content // empty')
-  [[ -z "$text" ]] && return 1
+  text=$(printf '%s' "$response" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
+  # R-16: same error-as-output guard as the CLI lane — an HTTP-200 body whose CONTENT is
+  # an error/quota message must not pass as a clean review; empty text gets a WARN.
+  # Length-gated like run_kimi: short body = full scan; long body = real review that may
+  # quote "rate limit" in findings, only an error: prefix rejects it.
+  local text_lc
+  text_lc=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
+  if [[ ${#text} -lt 1000 ]]; then
+    case "$text_lc" in
+      ""|error:*|*"quota reached"*|*"rate limit"*|*"login required"*|*"not authenticated"*)
+        echo "  WARN: kimi-api returned empty/error content: $(printf '%s' "$response" | head -c 160)" >&2
+        return 1 ;;
+    esac
+  else
+    case "$text_lc" in
+      error:*)
+        echo "  WARN: kimi-api returned error-prefixed content: $(printf '%s' "$text" | head -c 120)" >&2
+        return 1 ;;
+    esac
+  fi
   printf '%s\n' "$text"
 }
 
@@ -1243,11 +1328,20 @@ if [[ "$DOCTOR" == "true" ]]; then
   working=0
   for p in $PROVIDERS; do
     p_start=$(date +%s)
-    p_out=$(dispatch_provider "$p" 2>"$JSON_TMPDIR/doctor_$p.err"); p_rc=$?
+    # R-1 (MUST-FIX): the `|| p_rc=$?` guard is load-bearing — a plain `p_out=$(...); p_rc=$?`
+    # assignment aborts the whole doctor under `set -e` on the FIRST failing provider
+    # (the exact expired-token scenario doctor exists to report).
+    p_rc=0
+    p_out=$(dispatch_provider "$p" 2>"$JSON_TMPDIR/doctor_$p.err") || p_rc=$?
     p_secs=$(( $(date +%s) - p_start ))
-    if [[ $p_rc -eq 0 && -n "$p_out" ]]; then
+    # R-17: WORKING requires the actual probe echo, not just any non-empty exit-0 output —
+    # an exit-0 error body (the agy failure mode) must read FAILED here.
+    if [[ $p_rc -eq 0 && "$p_out" == *"PROVIDER-OK"* ]]; then
       printf '  %-14s WORKING (%ss, model: %s)\n' "$p" "$p_secs" "$(provider_model "$p")"
       working=$((working+1))
+    elif [[ $p_rc -eq 0 && -n "$p_out" ]]; then
+      printf '  %-14s SUSPECT (%ss, replied but without probe echo: %s)\n' "$p" "$p_secs" \
+        "$(printf '%s' "$p_out" | head -c 100 | tr '\n' ' ')"
     elif [[ $p_rc -eq 124 ]]; then
       printf '  %-14s TIMEOUT after %ss\n' "$p" "$p_secs"
     else

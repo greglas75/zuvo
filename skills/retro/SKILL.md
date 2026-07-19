@@ -134,7 +134,7 @@ Filter out empty lines. Report as a ranked list: filename (N changes).
 
 ## Phase 2: Backlog Health
 
-Read `memory/backlog.md` if it exists.
+Read `memory/backlog.md` if it exists — at the MAIN checkout root, resolved per `../../shared/includes/backlog-protocol.md` "Where the Backlog Lives" (in a linked worktree a CWD-relative read silently sees no backlog).
 
 If the file **does not exist**: note "No backlog tracked. Run `zuvo:review` or `zuvo:code-audit` to populate." Skip all backlog metrics.
 
