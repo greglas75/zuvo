@@ -1,0 +1,6 @@
+# Follow-up ideas (zero-ceremony inbox — one line per idea; read by knowledge-prime)
+
+- [2026-07-19] [session] Weekly retro-miner as a scheduled agent — cron: mine ~/.zuvo/retros.md weekly, fleet-triage proposals vs current sources (the 2026-07-18 pattern: 94 proposals → 36 fixes), deliver a ranked fix-list instead of letting the mine sit unread for weeks
+- [2026-07-19] [session] Fleet host provisioning script — one command per host: install agy + verify login, cursor-agent login check, adversarial provider liveness matrix; today each host is hand-configured and silently degrades to single-provider
+- [2026-07-19] [session] Promote ~/.zuvo/profile-session.py to a zuvo skill (zuvo:profile-session) — "why was this session slow" answered from transcript timestamps in minutes; proven during the 2026-07 forensics (28 sessions, found the wait_agent/dead-air pathology)
+- [2026-07-19] [session] gemini-api (billing GEMINI_API_KEY) as the headless Gemini channel for VPS fleet hosts — agy needs interactive OAuth so it can't serve headless runners; a key-based curl channel restores 3-vendor adversarial on servers
