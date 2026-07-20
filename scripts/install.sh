@@ -257,6 +257,15 @@ install_claude() {
       chmod +x "$CACHE_DIR"/scripts/*.sh 2>/dev/null || true
     fi
 
+    # Copy the VERSION marker to the target root AND skills/ — so ANY install,
+    # including a bare skills-only fleet deploy with no manifest, is version-
+    # identifiable (`cat <root>/VERSION` or `cat <root>/skills/VERSION`).
+    if [[ -f "$ZUVO_DIR/VERSION" ]]; then
+      cp "$ZUVO_DIR/VERSION" "$CACHE_DIR/VERSION" 2>/dev/null || true
+      mkdir -p "$CACHE_DIR/skills"
+      cp "$ZUVO_DIR/VERSION" "$CACHE_DIR/skills/VERSION" 2>/dev/null || true
+    fi
+
     # Copy bin/ (CLI wrappers — Claude Code adds {plugin_root}/bin to PATH)
     if [[ -d "$ZUVO_DIR/bin" ]]; then
       mkdir -p "$CACHE_DIR/bin"

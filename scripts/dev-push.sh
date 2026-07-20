@@ -74,7 +74,12 @@ sed -i '' "s/\"version\": \"${CURRENT_VERSION}\"/\"version\": \"${NEW_VERSION}\"
 sed -i '' "s/\"version\": \"${CURRENT_VERSION}\"/\"version\": \"${NEW_VERSION}\"/" .codex-plugin/plugin.json
 # Update version banner in skill router
 sed -i '' "s/Zuvo v${CURRENT_VERSION}/Zuvo v${NEW_VERSION}/" skills/using-zuvo/SKILL.md 2>/dev/null || true
-ok "Version bumped: v${NEW_VERSION}"
+# Machine-readable VERSION marker — the ONE file that survives a bare skills-only
+# deploy (e.g. a synced fleet bot that has no package.json/plugin.json to read).
+# install.sh copies it into every target root AND skills/, so any install can be
+# version-identified with `cat .../VERSION` or `cat .../skills/VERSION`.
+printf '%s\n' "${NEW_VERSION}" > VERSION
+ok "Version bumped: v${NEW_VERSION} (VERSION file + manifests + banner)"
 
 # ═══════════════════════════════════════
 # Step 2: Commit
