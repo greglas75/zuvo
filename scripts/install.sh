@@ -1104,47 +1104,64 @@ echo ""
 # Warn if no cross-providers are available.
 
 check_cross_providers() {
-  local has_codex="" has_gemini="" has_cursor="" has_claude=""
+  # Mirror adversarial-review.sh detect_providers (the source of truth): the real
+  # auto-detected set is codex → agy → cursor-agent → kimi → claude. The free
+  # `gemini` CLI is DEAD for individuals (agy is the live Google channel), and
+  # kimi (Moonshot, OAuth CLI) was added in v1.6.18 — an install check that still
+  # probes `gemini` and omits `kimi` is exactly the stale list that misleads.
+  local has_codex="" has_agy="" has_gemini="" has_cursor="" has_kimi="" has_claude=""
   command -v codex &>/dev/null && has_codex=1
   [[ -x "/Applications/Codex.app/Contents/Resources/codex" ]] && has_codex=1
-  command -v gemini &>/dev/null && has_gemini=1
+  command -v agy &>/dev/null && has_agy=1
+  command -v gemini &>/dev/null && has_gemini=1   # legacy/dead CLI — only counts if agy absent
   command -v cursor-agent &>/dev/null && has_cursor=1
+  { command -v kimi &>/dev/null || [[ -n "${MOONSHOT_API_KEY:-}" ]]; } && has_kimi=1
   command -v claude &>/dev/null && has_claude=1
+
+  # Google is ONE vendor: count agy OR gemini once (agy preferred).
+  local has_google=""
+  [[ -n "$has_agy" || -n "$has_gemini" ]] && has_google=1
 
   local count=0
   [[ -n "$has_codex" ]] && count=$((count + 1))
-  [[ -n "$has_gemini" ]] && count=$((count + 1))
+  [[ -n "$has_google" ]] && count=$((count + 1))
   [[ -n "$has_cursor" ]] && count=$((count + 1))
+  [[ -n "$has_kimi" ]] && count=$((count + 1))
   [[ -n "$has_claude" ]] && count=$((count + 1))
+
+  print_providers() {
+    [[ -n "$has_codex" ]] && echo "    ✓ codex (OpenAI)"
+    [[ -n "$has_agy" ]] && echo "    ✓ agy (Google/Antigravity)" || { [[ -n "$has_gemini" ]] && echo "    ✓ gemini (Google — legacy CLI, dead for individuals; prefer agy)"; }
+    [[ -n "$has_cursor" ]] && echo "    ✓ cursor-agent (Cursor)"
+    [[ -n "$has_kimi" ]] && echo "    ✓ kimi (Moonshot — OAuth CLI, no API key needed)"
+    [[ -n "$has_claude" ]] && echo "    ✓ claude (Anthropic)"
+  }
 
   if [[ $count -eq 0 ]]; then
     echo "  ⚠ WARNING: No adversarial review providers found!"
     echo ""
     echo "  Zuvo uses cross-model review — a DIFFERENT AI reviews code"
-    echo "  written by your primary AI. Install at least one:"
+    echo "  written by your primary AI. Install at least one (different vendor from your host):"
     echo ""
-    echo "    npm install -g @openai/codex     # Codex CLI (fastest)"
-    echo "    npm install -g @google/gemini-cli # Gemini CLI (free)"
-    echo "    # Claude CLI — already included with Claude Code"
+    echo "    npm install -g @openai/codex              # Codex CLI (OpenAI)"
+    echo "    curl -fsSL https://antigravity.google/cli/install.sh | bash   # agy (Google/Gemini)"
+    echo "    # kimi (Moonshot) — install the kimi CLI, then: kimi login"
+    echo "    # claude CLI — already included with Claude Code"
     echo ""
     echo "  Without a cross-provider, adversarial review will be skipped."
+    echo "  Verify what actually works: adversarial-review --doctor"
     echo ""
   elif [[ $count -eq 1 ]]; then
-    echo "  Cross-provider check: 1 provider found."
+    echo "  Cross-provider check: 1 vendor found."
     echo "  Adversarial review needs a provider DIFFERENT from your host IDE."
-    [[ -n "$has_codex" ]] && echo "    ✓ codex (excluded in Codex — need another for Codex users)"
-    [[ -n "$has_gemini" ]] && echo "    ✓ gemini (excluded in Antigravity — need another for Antigravity users)"
-    [[ -n "$has_claude" ]] && echo "    ✓ claude (excluded in Claude Code — need another for Claude Code users)"
-    [[ -n "$has_cursor" ]] && echo "    ✓ cursor-agent (excluded in Cursor — need another for Cursor users)"
+    print_providers
     echo ""
     echo "  For full coverage, install one more provider from a different vendor."
+    echo "  Verify: adversarial-review --doctor"
     echo ""
   else
-    echo "  Cross-provider check: $count providers found ✓"
-    [[ -n "$has_codex" ]] && echo "    ✓ codex"
-    [[ -n "$has_gemini" ]] && echo "    ✓ gemini"
-    [[ -n "$has_claude" ]] && echo "    ✓ claude"
-    [[ -n "$has_cursor" ]] && echo "    ✓ cursor-agent"
+    echo "  Cross-provider check: $count vendors found ✓"
+    print_providers
     echo ""
   fi
 }
