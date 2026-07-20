@@ -1313,6 +1313,29 @@ dispatch_provider() {
   esac
 }
 
+# ─── Auth-error output is NOT a review ───
+# A provider CLI can exit 0 while printing only an auth error (claude:
+# "Not logged in · Please run /login"; codex/kimi: login_required). That output is
+# non-empty, so an `-s`/`-n` test alone counted it as a working reviewer: the header
+# claimed "(4 total)" while only 3 produced anything, and in SINGLE mode the loop
+# `break`s on it so no other provider is ever tried. Verified in the field
+# 2026-07-20 — a container whose nested claude had no credentials file.
+# Guarded by length: a REAL review that merely discusses login code must not be
+# discarded, so only a short payload can qualify as an auth stub.
+is_auth_failure_output() {
+  local src="$1" bytes
+  if [[ -f "$src" ]]; then
+    [[ -s "$src" ]] || return 1
+    bytes=$(wc -c < "$src")
+    (( bytes > 600 )) && return 1
+    grep -qiE 'not logged in|please run /login|login_required|requires login|invalid_grant|unauthorized|not authenticated' "$src"
+  else
+    [[ -n "$src" ]] || return 1
+    (( ${#src} > 600 )) && return 1
+    printf '%s' "$src" | grep -qiE 'not logged in|please run /login|login_required|requires login|invalid_grant|unauthorized|not authenticated'
+  fi
+}
+
 # ─── Doctor mode: live auth probe of every detected provider ───
 # `command -v <cli>` proves presence, NOT a working login (field lesson 2026-07-19:
 # fleet bots had codex/gemini/claude on PATH with expired/revoked tokens — every
@@ -1486,6 +1509,14 @@ if [[ "$MULTI_MODE" == "multi" ]]; then
     provider_status=1
     [[ -f "$status_file" ]] && provider_status=$(cat "$status_file")
 
+    # Exclude a provider that only printed an auth error — it contributed no
+    # review, and counting it inflates "(N total)" into a false coverage claim.
+    if is_auth_failure_output "$result_file"; then
+      echo "  WARN: ${local_name} not authenticated (auth error, no review) — excluded from tally" >&2
+      : > "$result_file"
+      provider_status=1
+    fi
+
     if [[ -s "$result_file" ]]; then
       PROVIDER_COUNT=$((PROVIDER_COUNT + 1))
       PROVIDERS_USED="${PROVIDERS_USED:+$PROVIDERS_USED, }$local_name"
@@ -1523,6 +1554,15 @@ else
 
     status=0
     RESULT=$(dispatch_provider "$p" 2>"$JSON_TMPDIR/provider_${p}.stderr") || status=$?
+
+    # An auth stub must NOT satisfy "first successful provider" — otherwise the
+    # loop breaks on it and no other provider is ever tried, turning the whole
+    # review into a single "Not logged in" line.
+    if [[ $status -eq 0 ]] && is_auth_failure_output "$RESULT"; then
+      echo "  WARN: $p not authenticated (auth error, no review) — trying next provider." >&2
+      RESULT=""
+      status=1
+    fi
 
     if [[ $status -eq 0 && -n "$RESULT" ]]; then
       PROVIDER_COUNT=$((PROVIDER_COUNT + 1))
