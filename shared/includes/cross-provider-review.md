@@ -10,17 +10,21 @@ The same model family shares systematic blind spots. Code written by Claude and 
 
 The script `adversarial-review` auto-detects the best available provider and runs a hostile review:
 
-1. **agy** (Antigravity CLI) — Google's Gemini 3.x via the paid Antigravity subscription. This is the
+1. **codex-5.3** (OpenAI) — GPT-based (default `gpt-5.6-sol`), needs ChatGPT subscription or API key
+2. **agy** (Antigravity CLI) — Google's Gemini 3.x via the paid Antigravity subscription. This is the
    sanctioned Gemini channel; the free `gemini` CLI is DEAD for individuals (Google returns
    `IneligibleTierError: UNSUPPORTED_CLIENT` → "migrate to Antigravity"). Install:
    `curl -fsSL https://antigravity.google/cli/install.sh | bash`, then sign in via the Antigravity app.
-2. **Codex CLI** (OpenAI) — GPT-based, needs ChatGPT subscription or API key
-3. **claude** (Anthropic) — kept as a cross-model reviewer (flips Opus↔Sonnet on a Claude host)
-4. **cursor-agent** (Cursor) — needs `cursor-agent login` or `CURSOR_API_KEY`
-5. **gemini-api** (curl) — only with a billing-enabled `GEMINI_API_KEY` (fallback where agy is absent)
+3. **cursor-agent** (Cursor) — needs `cursor-agent login` or `CURSOR_API_KEY`
+4. **kimi** (Moonshot) — Kimi K3 via the `kimi` CLI (OAuth subscription; **no API key needed** — sign in
+   with `kimi login`). Distinct vendor from every host we run under, so it is NEVER excluded by the
+   self-review guard. Fallback `kimi-api` (curl, needs `MOONSHOT_API_KEY`) only when the CLI is absent.
+5. **claude** (Anthropic) — kept as a cross-model reviewer (flips Opus↔Sonnet on a Claude host)
+6. **gemini-api** (curl) — only with a billing-enabled `GEMINI_API_KEY` (fallback where agy is absent)
 
-A genuine cross-model pass needs ≥2 DIFFERENT vendors. Working headless set as of 2026-07-11:
-**agy (Google) + codex (OpenAI) + claude (Anthropic)**.
+A genuine cross-model pass needs ≥2 DIFFERENT vendors. Working headless set as of 2026-07-19:
+**codex-5.3 (OpenAI) + agy (Google) + cursor-agent (Cursor) + kimi (Moonshot) + claude (Anthropic)** — 5 vendors,
+all verified WORKING via `adversarial-review --doctor`. Kimi's default model is `kimi-code/k3`.
 
 The script outputs structured findings with severity, file:line, and suggested fixes.
 

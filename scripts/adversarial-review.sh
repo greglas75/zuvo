@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # adversarial-review.sh — Cross-provider adversarial code review
 #
-# Auto-detects available review providers (Gemini CLI, Codex CLI, Ollama)
-# and runs an adversarial review of the given diff or files.
+# Auto-detects available review providers and runs an adversarial review of the
+# given diff or files. Detection order (detect_providers): codex-5.3 (OpenAI) →
+# agy (Google/Antigravity) → cursor-agent (Cursor) → kimi (Moonshot K3, OAuth CLI;
+# kimi-api curl fallback needs MOONSHOT_API_KEY) → claude (Anthropic). A genuine
+# cross-model pass needs ≥2 vendors; verify what actually works with --doctor.
 #
 # Usage:
 #   git diff HEAD~1 | ./scripts/adversarial-review.sh
 #   ./scripts/adversarial-review.sh --files "src/auth.ts src/user.ts"
 #   ./scripts/adversarial-review.sh --diff HEAD~3
-#   ./scripts/adversarial-review.sh --provider gemini --diff HEAD~1
-#   ./scripts/adversarial-review.sh --provider ollama --model qwen2.5-coder:14b --diff HEAD~1
+#   ./scripts/adversarial-review.sh --provider kimi --diff HEAD~1
+#   ./scripts/adversarial-review.sh --doctor        # live auth probe of every detected provider
 #
 # Exit codes:
 #   0 — review completed (output on stdout)
