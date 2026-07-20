@@ -718,6 +718,12 @@ echo "Copying manifests..."
 # Copy plugin manifest and MCP config
 mkdir -p "$DIST/.codex-plugin"
 cp "$PLUGIN_DIR/.codex-plugin/plugin.json" "$DIST/.codex-plugin/plugin.json"
+# Machine-readable VERSION marker (root + skills/) so a Codex fleet install is
+# version-identifiable even without a manifest reader.
+if [ -f "$PLUGIN_DIR/VERSION" ]; then
+  cp "$PLUGIN_DIR/VERSION" "$DIST/VERSION"
+  mkdir -p "$DIST/skills"; cp "$PLUGIN_DIR/VERSION" "$DIST/skills/VERSION"
+fi
 if [ -f "$PLUGIN_DIR/.mcp.json" ]; then
   cp "$PLUGIN_DIR/.mcp.json" "$DIST/.mcp.json"
 fi

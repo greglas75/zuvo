@@ -469,6 +469,13 @@ if [ -f "$PLUGIN_DIR/skills/using-zuvo/agents/openai.yaml" ]; then
   cp "$PLUGIN_DIR/skills/using-zuvo/agents/openai.yaml" "$DIST/skills/using-zuvo/agents/openai.yaml"
 fi
 
+# Machine-readable VERSION marker (root + skills/) so a Cursor fleet install is
+# version-identifiable even without a manifest reader.
+if [ -f "$PLUGIN_DIR/VERSION" ]; then
+  cp "$PLUGIN_DIR/VERSION" "$DIST/VERSION"
+  mkdir -p "$DIST/skills"; cp "$PLUGIN_DIR/VERSION" "$DIST/skills/VERSION"
+fi
+
 # ============================================================
 # 2.5. Platform Block Stripping
 # Cursor build: keep CURSOR blocks, strip CODEX and ANTIGRAVITY.
