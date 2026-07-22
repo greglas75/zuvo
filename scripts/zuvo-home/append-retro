@@ -217,22 +217,23 @@ printf 'RETRO: %s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%
   "$DATE" "$SKILL" "$PROJECT" "$CODE_TYPE" "$FRICTION" "$MT" "$CONTEXT_GAP" \
   "$TURNS" "$TOOLS" "$FREAD" "$FMOD" "$BRANCH" "$SHA7" "$BLIND" "$ADV" "$CODESIFT" "$ROUTING" >> "$RETRO_LOG"
 
-# Count-based rotation (preserve header, keep last 100 data lines).
-LC=$(wc -l < "$RETRO_LOG")
-if [ "$LC" -gt 101 ]; then
-  T="$RETRO_LOG.tmp.$$.$(date +%s)"
-  head -1 "$RETRO_LOG" > "$T"; tail -n 100 "$RETRO_LOG" >> "$T"; mv "$T" "$RETRO_LOG"
-fi
+# NO rotation here. This file is APPEND-ONLY; retention is age-based archival, and it belongs
+# to `rotate-retros` (which MOVES old entries into retros-archive-YYYY-QN.log instead of
+# destroying them).
+#
+# Why the old `tail -n 100` had to go: at the observed peak of 36 retros/day a 100-line cap held
+# ~2.8 days, while `retro-mine.py` asks for `--days 7`. The miner was structurally unable to see
+# its own window — entries were deleted before anything mined them. The cap was inherited from
+# the pre-centralization prose path (`shared/includes/retrospective.md` Append Commands) and,
+# because it ran on EVERY append, it silently overrode the 90-day archival that already existed
+# next to it. Cost of keeping everything: ~3.1 MB/year at peak rate (the whole log is 19 KB
+# today) — there was never a size problem to solve.
 
 # Optional markdown block (verbatim from --md file). The free-form NARRATIVE
 # lives in retros.md ONLY — never in retros.log (that was the NF==1 drift).
 if [ -n "$MD_FILE" ] && [ -f "$MD_FILE" ]; then
   cat "$MD_FILE" >> "$RETRO_MD"
-  EC=$(grep -c '^<!-- RETRO -->' "$RETRO_MD" 2>/dev/null || echo 0)
-  if [ "$EC" -gt 100 ]; then
-    T="$RETRO_MD.tmp.$$.$(date +%s)"
-    awk '/^<!-- RETRO -->/{c++} c>=('"$EC"'-99){print}' "$RETRO_MD" > "$T" && mv "$T" "$RETRO_MD"
-  fi
+  # Append-only, same reasoning as retros.log above: `rotate-retros` archives by age.
 fi
 
 _release; trap - INT TERM EXIT

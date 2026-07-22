@@ -250,7 +250,7 @@ rm -f "$RETRO_MD_BLOCK"
 
 Exit 0 = appended (or idempotent no-op if this run's retro already exists);
 exit 2 = a field failed validation (the per-field error tells you what to fix);
-exit 3 = lock busy (retry). The wrapper handles header creation, rotation, and
+exit 3 = lock busy (retry). The wrapper handles header creation and
 markdown coupling — there is nothing else to run for retros.
 
 ### Codex / Cursor fallback (append-retro absent)
@@ -281,7 +281,16 @@ The inline cap above is a safety net — it preserves last-100 in a single file 
 
 Behavior: groups `<!-- RETRO -->` entries by quarter of their parsed ISO date and appends them to `~/.zuvo/retros-archive-YYYY-QN.md`, leaving only recent entries in `retros.md`. Idempotent — safe to re-run (each invocation adds a rotated-on marker). Entries without parseable dates are kept in place (never silently archived). The pre-rotation file is preserved as `retros.md.pre-rotate.<pid>` until the user verifies and deletes.
 
-Run manually after multi-week sessions, or hook into a periodic schedule (e.g. zuvo:schedule). The retros.log file has its own count-based rotation built into the TSV Append block above and does not need this helper.
+Run manually after multi-week sessions, or hook into a periodic schedule (e.g. zuvo:schedule).
+
+**`retros.log` uses the SAME helper** — `~/.zuvo/rotate-retros --apply --target ~/.zuvo/retros.log`.
+Both files are **append-only**; retention is age-based archival, never truncation.
+
+The old count-based cap (`tail -n 100`, previously built into the TSV Append block) was removed:
+at the observed peak of 36 retros/day it held ~2.8 days of history while `retro-mine.py` asks for
+`--days 7`, so entries were destroyed before anything mined them — and because it ran on every
+append it silently overrode the 90-day archival that already existed. Keeping everything costs
+~3.1 MB/year at peak rate. Do not reintroduce a count cap.
 
 ## Enforcement Rules
 

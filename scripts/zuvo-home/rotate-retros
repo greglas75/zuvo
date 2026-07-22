@@ -54,6 +54,51 @@ CUTOFF_DATE=$(date -u -r "$CUTOFF_EPOCH" +%Y-%m-%d 2>/dev/null || date -u -d "@$
 
 echo "rotate-retros: target=$TARGET days=$DAYS cutoff=$CUTOFF_DATE apply=$APPLY"
 
+# ── TSV branch: retros.log ───────────────────────────────────────────────────
+# retros.log is one entry per LINE (`RETRO: <ISO>\t...`), so it needs none of the
+# marker-boundary machinery below — but it does need the same guarantee: entries move to an
+# archive, they are never destroyed. `append-retro` used to `tail -n 100` this file on every
+# write, which at 36 retros/day left ~2.8 days while `retro-mine.py --days 7` wanted a week.
+# Undated / malformed lines are KEPT (same safe default as the markdown path).
+case "$TARGET" in
+  *.log)
+    HDR=$(head -1 "$TARGET")
+    TOTAL=$(grep -c '^RETRO:' "$TARGET" 2>/dev/null || echo 0)
+    OLD=$(awk -F'\t' -v c="$CUTOFF_DATE" '/^RETRO:/ { split($1,a," "); if (substr(a[2],1,10) < c) n++ } END{print n+0}' "$TARGET")
+    echo "rotate-retros: retros.log — $TOTAL entries, $OLD older than $DAYS days"
+    [ "$OLD" -eq 0 ] && { echo "rotate-retros: nothing to archive — done"; exit 0; }
+    # group the old ones per quarter so archives match the markdown naming scheme
+    QS=$(awk -F'\t' -v c="$CUTOFF_DATE" '/^RETRO:/ { split($1,a," "); d=substr(a[2],1,10);
+           if (d < c) { y=substr(d,1,4); m=substr(d,6,2)+0; printf "%s-Q%d\n", y, int((m-1)/3)+1 } }' "$TARGET" | sort -u)
+    for q in $QS; do
+      n=$(awk -F'\t' -v c="$CUTOFF_DATE" -v q="$q" '/^RETRO:/ { split($1,a," "); d=substr(a[2],1,10);
+            if (d < c) { y=substr(d,1,4); m=substr(d,6,2)+0; k=sprintf("%s-Q%d",y,int((m-1)/3)+1); if (k==q) n++ } } END{print n+0}' "$TARGET")
+      echo "  $ARCHIVE_DIR/retros-archive-${q}.log  ← $n entries"
+    done
+    if [ "$APPLY" -eq 0 ]; then
+      echo "rotate-retros: dry-run — re-run with --apply to commit changes"; exit 0
+    fi
+    for q in $QS; do
+      AF="$ARCHIVE_DIR/retros-archive-${q}.log"
+      [ -f "$AF" ] || printf '%s\n' "$HDR" > "$AF"
+      awk -F'\t' -v c="$CUTOFF_DATE" -v q="$q" '/^RETRO:/ { split($1,a," "); d=substr(a[2],1,10);
+        if (d < c) { y=substr(d,1,4); m=substr(d,6,2)+0; k=sprintf("%s-Q%d",y,int((m-1)/3)+1); if (k==q) print } }' "$TARGET" >> "$AF"
+    done
+    T="$TARGET.tmp.$$.$(date +%s)"
+    # keep: the header, every non-RETRO line, and every RETRO line NOT older than the cutoff
+    awk -F'\t' -v c="$CUTOFF_DATE" 'NR==1 { print; next }
+      !/^RETRO:/ { print; next }
+      { split($1,a," "); d=substr(a[2],1,10); if (d=="" || d >= c) print }' "$TARGET" > "$T"
+    KEPT=$(grep -c '^RETRO:' "$T" 2>/dev/null || echo 0)
+    # refuse to shrink to nothing on a parse failure — data loss is the thing this prevents
+    if [ "$KEPT" -eq 0 ] && [ "$TOTAL" -gt "$OLD" ]; then
+      rm -f "$T"; echo "rotate-retros: ABORT — rebuild kept 0 of $TOTAL entries (parse failure); $TARGET untouched" >&2; exit 1
+    fi
+    mv "$T" "$TARGET"
+    echo "rotate-retros: archived $OLD, kept $KEPT in $TARGET"
+    exit 0 ;;
+esac
+
 # ── extract entries with metadata: [start_line, end_line, parsed_date, quarter_key]
 # Two-pass awk: pass 1 finds entry boundaries; pass 2 dates them.
 # Output one line per entry: START\tEND\tDATE_OR_BLANK\tQUARTER_OR_BLANK
