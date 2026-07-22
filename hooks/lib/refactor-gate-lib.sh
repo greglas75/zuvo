@@ -321,6 +321,114 @@ _expand_plan_files() {
     }'
 }
 
+# _plan_intersects <plan-doc> <staged> — 0 when a staged file is one of the plan's declared
+# **Files:**. Factored so the plan→execute bind and the spec-approval bind cannot drift into
+# judging "is this commit covered by the plan?" differently.
+_plan_intersects() {
+  _pi_files=$(_expand_plan_files "$1")
+  [ -n "$(printf '%s' "$_pi_files" | tr -d '[:space:]')" ] || return 1   # no **Files:** -> no claim
+  # Save the caller's glob state instead of forcing it off on return — a caller that had
+  # `set -f` active would otherwise get pathname expansion silently re-enabled underneath it.
+  case "$-" in *f*) _pi_hadf=1 ;; *) _pi_hadf=0 ;; esac
+  _pi_hit=1; _pi_oldifs=$IFS; set -f      # set -f: a '*' in a path must not glob the filesystem
+  IFS='
+'
+  for _pi_p in $_pi_files; do
+    _pi_p=$(printf '%s' "$_pi_p" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+    [ -n "$_pi_p" ] || continue
+    for _pi_s in $2; do [ "$_pi_s" = "$_pi_p" ] && { _pi_hit=0; break; }; done  # exact, no regex
+    [ "$_pi_hit" = 0 ] && break
+  done
+  IFS=$_pi_oldifs; [ "$_pi_hadf" = 1 ] || set +f
+  return $_pi_hit
+}
+
+# _spec_status <spec-doc> — the spec's status, lowercased, first word only.
+# Specs use a THIRD dialect, distinct from active-plan.md and execution-state.md: the
+# brainstorm template emits a blockquoted bold field, `> **status:** Approved`. Real files on
+# disk also carry `> **Status:** complete (MVP shipped)`, `Status: Active — ...`,
+# `**status:** Ready for implementation` — hence "first word, lowercased" rather than an exact
+# match, and hence the caller blocks only on an explicit draft/reviewed (see below).
+_spec_status() {
+  sed -n 's/^[[:space:]>*+-]*[Ss][Tt][Aa][Tt][Uu][Ss]:[[:space:]*]*//p' "$1" 2>/dev/null \
+    | head -1 | tr -d '\r*' | tr 'A-Z' 'a-z' | sed 's/[^a-z].*//'
+}
+
+# spec_approval_gate_check — the brainstorm->plan bind.
+#
+# `zuvo:plan` does NOT stop when the spec is unapproved: it prints "Spec exists but is not
+# approved. Using it as reference in inline mode." and carries on (skills/plan/SKILL.md:63).
+# The async path is worse by design — a converged review sets `Reviewed`, NOT `Approved`, and
+# the human is expected to flip it by hand before planning. That hand-flip is exactly the step
+# an agent skips. Live example on this machine the same day this was written:
+# ResearchShieldNew/2026-07-22-adaptive-interactive-challenges-spec.md sits at `reviewed` with
+# its run log saying "change status to Approved before running zuvo:plan" — and nothing stopped
+# anyone from planning and executing straight past it.
+#
+# So: when the work being committed is claimed by a plan whose spec is EXPLICITLY unapproved,
+# block. Approval is the user's decision; an agent must not inherit it by proceeding.
+#
+# Polarity is deliberately inverted from "must equal Approved". Of 147 specs with a status on
+# this machine, 115 are Approved, 19 are draft/reviewed, and the rest are free-text (`complete
+# (MVP shipped)`, `Active — Wave 1`, `Ready for implementation`), plus 24 specs with no status
+# at all. A "not exactly Approved -> block" rule would false-block all of those. Only an
+# explicit `draft` or `reviewed` blocks; unknown, free-text, missing and unreadable all pass.
+spec_approval_gate_check() {
+  sag_staged=$1
+  sag_ap="${ZUVO_PLANS_DIR:-zuvo/plans}/active-plan.md"
+  [ -f "$sag_ap" ] || return 0
+  case "$(_ap_status "$sag_ap")" in pending|in-progress) ;; *) return 0 ;; esac   # only live plans
+  sag_plan=$(_ap_plan "$sag_ap")
+  [ -n "$sag_plan" ] || return 0
+  sag_root=$(git rev-parse --show-toplevel 2>/dev/null) || sag_root=""
+  case "$sag_plan" in
+    /*) : ;;
+    *)  [ -n "$sag_root" ] && [ -f "$sag_root/$sag_plan" ] && sag_plan="$sag_root/$sag_plan" ;;
+  esac
+  [ -f "$sag_plan" ] || return 0                                  # fail-OPEN: no plan doc
+
+  # The plan names its spec as `**Spec:** <path>` (backticks optional). `inline — no spec` is a
+  # legitimate, documented mode — planning without a spec is allowed, so it must never block.
+  # `-`/`+` in the leading class: 6 real plans on this machine write `- **Spec:** <path>`,
+  # which the original class silently skipped (fail-open, so a missed block not a false one).
+  sag_spec=$(sed -n 's/^[[:space:]>*+-]*\**[Ss]pec:\**[[:space:]]*//p' "$sag_plan" 2>/dev/null \
+             | head -1 | tr -d '\r`' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+  [ -n "$sag_spec" ] || return 0
+  # "inline — no spec" / "none" are documented no-spec modes. Match them only when the value
+  # is NOT a path: a real spec at `inline-editor-spec.md` starts with "inline" too, and the
+  # loose prefix would have waved it through.
+  case "$sag_spec" in
+    *.md|*/*) : ;;                                    # looks like a path -> keep checking
+    [Ii]nline*|[Nn]one*|-|"") return 0 ;;
+  esac
+  # Resolve relative to the repo root OR to the plan document's own directory — plans live in
+  # docs/specs/ and commonly reference a sibling spec by bare filename.
+  case "$sag_spec" in
+    /*) : ;;
+    *)  if [ -n "$sag_root" ] && [ -f "$sag_root/$sag_spec" ]; then sag_spec="$sag_root/$sag_spec"
+        elif [ -f "$(dirname "$sag_plan")/$sag_spec" ]; then sag_spec="$(dirname "$sag_plan")/$sag_spec"
+        fi ;;
+  esac
+  [ -f "$sag_spec" ] || return 0                                  # fail-OPEN: spec not on disk
+
+  sag_st=$(_spec_status "$sag_spec")
+  case "$sag_st" in draft|reviewed) ;; *) return 0 ;; esac         # approved / free-text / absent
+
+  _plan_intersects "$sag_plan" "$sag_staged" || return 0          # commit not claimed by this plan
+  if ! _is_agent_env; then
+    echo "zuvo spec-gate: human committer -> bypass [$sag_spec]" >&2
+    return 0
+  fi
+  echo "BLOCK: this work is planned from a spec that is still '$sag_st', not Approved."
+  echo "         spec: $sag_spec"
+  echo "         plan: $sag_plan"
+  echo "       Approval is the USER's decision. 'Reviewed' means the review converged, not that"
+  echo "       anyone signed off — zuvo:plan would silently downgrade to inline mode rather than"
+  echo "       stop. Have the user approve the spec (status: Approved), or re-plan without it if"
+  echo "       the spec is genuinely not the source of truth."
+  return 1
+}
+
 # plan_execute_gate_check — the plan→execute bind. If an Approved plan is not being executed and
 # the staged/pushed files intersect the plan's declared **Files:**, BLOCK: the work must go
 # through `zuvo:execute`, not be hand-rolled. Fail-OPEN on any missing/odd input.
