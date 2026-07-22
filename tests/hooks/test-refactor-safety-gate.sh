@@ -34,7 +34,11 @@ contract(){ # $1 file  $2 blind_audit  $3 adversarial  [$4 characterization (def
   "prove": { "characterization":"${4:-green:aaaa111:2u}", ${rr}"blind_audit":"$2", "adversarial":"$3", "findings_disposition":"${5:-none}" } }
 J
 }
-trycommit(){ echo "x$RANDOM" >> "$1"; git add "$1"; git commit -q -m t >/dev/null 2>&1; echo $?; }
+# Unstage after a blocked commit: the file stays in the index otherwise, so the NEXT case
+# carries it along and can be blocked for the previous case's reason — one failure cascading
+# into unrelated assertions.
+trycommit(){ echo "x$RANDOM" >> "$1"; git add "$1"; git commit -q -m t >/dev/null 2>&1; rc=$?
+  [ $rc -ne 0 ] && git reset -q >/dev/null 2>&1; echo $rc; }
 
 chmod +x "$GATE" "$LIB" 2>/dev/null
 
@@ -44,8 +48,16 @@ contract app.ts skipped clean
 [ "$(ZUVO_AI_RUN=1 bash -c "$(declare -f trycommit); trycommit app.ts")" -ne 0 ] && ok "BLOCK (prove incomplete)" || bad "BLOCK"
 contract app.ts clean:strict clean
 [ "$(ZUVO_AI_RUN=1 bash -c "$(declare -f trycommit); trycommit app.ts")" -eq 0 ] && ok "PASS (prove complete)" || bad "PASS"
+# A source file outside every fence used to be a NOOP here — and that hole IS the 2026-07-22
+# field failure: one `zuvo:refactor` run, then ~39 files hand-rolled, none of them in any
+# fence, gate silent for all of them. refactor_scope_gate_check now binds them (its own suite
+# is tests/hooks/test-refactor-scope-gate.sh). refactor_gate_check itself still ignores
+# out-of-fence files — that separation is what this case pins down.
 contract other.ts skipped clean
-[ "$(ZUVO_AI_RUN=1 bash -c "$(declare -f trycommit); trycommit app.ts")" -eq 0 ] && ok "NOOP (outside fence)" || bad "NOOP"
+[ "$(ZUVO_AI_RUN=1 bash -c "$(declare -f trycommit); trycommit app.ts")" -ne 0 ] && ok "off-fence source file now blocked (scope gate)" || bad "off-fence file still sails through"
+# ...and a NON-source file outside the fence stays a genuine NOOP: the scope gate is narrow,
+# so an active refactor must not block docs/config churn.
+[ "$(ZUVO_AI_RUN=1 bash -c "$(declare -f trycommit); trycommit notes.md")" -eq 0 ] && ok "NOOP (non-source outside fence)" || bad "NOOP non-source"
 contract app.ts skipped clean; install_hook "$TMP/NOPE.sh"
 [ "$(ZUVO_AI_RUN=1 bash -c "$(declare -f trycommit); trycommit app.ts")" -eq 0 ] && ok "FAIL-OPEN (gate missing)" || bad "FAIL-OPEN"
 install_hook "$GATE"

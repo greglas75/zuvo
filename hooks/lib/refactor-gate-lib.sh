@@ -81,6 +81,141 @@ refactor_gate_check() {
   return $blocked
 }
 
+# refactor_scope_gate_check — the OFF-CONTRACT bind, and the reason it exists.
+#
+# refactor_gate_check above only inspects a file that is INSIDE some contract's scope_fence.
+# That leaves the actual field failure wide open: the agent runs `zuvo:refactor` once (contract
+# for file A), then keeps refactoring B, C, D… by hand. None of them is in any fence, so the
+# gate is silent for every one of them. Observed 2026-07-22: one run of the skill, then ~39
+# hand-rolled changes reported as "done, verified" — commits on a red suite, UI rewritten with
+# no verification, a coverage gate argued past in prose.
+#
+# The mechanism is not dishonesty, it is CONTEXT. skills/refactor/SKILL.md is 861 lines plus
+# ~10 includes, injected ONCE at invocation; nothing re-injects it. After compaction the agent
+# is running a SUMMARY of the skill ("I do refactors with an ETAP process") — the 28 CQ gates,
+# the blind audit, the characterization lock are simply not in the window any more. Prose
+# cannot fix that: you cannot obey a MANDATORY line that no longer exists in your context.
+#
+# So this gate is not a punishment for cheating — it is a CONTEXT-RELOAD TRIGGER. While a
+# refactor is active in this repo, a source file outside every fence blocks the commit, and
+# the only way to obtain a fence for it is to invoke the skill on it — which re-injects those
+# 861 lines at exactly the moment they are needed.
+#
+# Deliberately narrow, because a false block on 68 repos is worse than a missed one:
+#   * only fires when an ACTIVE contract exists (not COMPLETE, not past ZUVO_GATE_TTL_SEC)
+#   * only source-code files (docs/config/state/lockfiles never block)
+#   * human committers and ZUVO_ALLOW_ADHOC=1 bypass unchanged
+#   * any parse problem returns 0 (fail-OPEN is still the contract)
+refactor_scope_gate_check() {
+  rsg_staged=$1
+  rsg_cdir=${ZUVO_CONTRACTS_DIR:-zuvo/contracts}
+  [ -d "$rsg_cdir" ] || return 0
+  # Sanitize TTL: a non-numeric ZUVO_GATE_TTL_SEC would make the arithmetic below a shell
+  # error, which under a caller's `set -e` turns this fail-OPEN gate into an abort.
+  rsg_ttl=$(printf '%s' "${ZUVO_GATE_TTL_SEC:-86400}" | tr -cd '0-9')
+  [ -n "$rsg_ttl" ] || rsg_ttl=86400
+  rsg_now=$(date +%s)
+
+  # Is a refactor genuinely in flight? Collect the fences of every ACTIVE contract.
+  rsg_active=0
+  rsg_fences=""
+  for rsg_c in "$rsg_cdir"/refactor-*.json; do
+    [ -f "$rsg_c" ] || continue
+    grep -q '"stage"[[:space:]]*:[[:space:]]*"COMPLETE"' "$rsg_c" && continue
+    [ $(( rsg_now - $(_mtime "$rsg_c" "$rsg_now") )) -gt "$rsg_ttl" ] && continue  # abandoned run
+    rsg_active=1
+    # An active contract whose scope_fence cannot be read (malformed JSON, field absent) makes
+    # the in-scope set UNKNOWN — and this gate's whole judgement is "file is outside every
+    # fence". Unknown scope must therefore fail OPEN, not block every source file in the repo.
+    grep -q '"scope_fence"[[:space:]]*:[[:space:]]*\[' "$rsg_c" || {
+      echo "zuvo refactor-scope: contract has no readable scope_fence -> fail-open [$rsg_c]" >&2
+      return 0
+    }
+    # Extract the scope_fence array's quoted entries, QUOTE-AWARE.
+    #
+    # The obvious sed (`\[\([^]]*\)\]`) is wrong: `[^]]*` cannot cross a `]`, so it stops at the
+    # first one ANYWHERE after the array opens — including a `]` inside a filename. Next.js /
+    # Nuxt / SvelteKit dynamic routes (`app/[id]/page.tsx`, `[...slug].ts`) are exactly that,
+    # and they are common across this fleet. Measured on `["app/[id]/page.tsx","src/normal.ts"]`
+    # the sed returned NOTHING: every fence entry vanished, so either the gate went silently
+    # dead (empty set -> fail-open) or, with a different entry order, real in-scope files read
+    # as off-fence and got FALSE-BLOCKED — a block on the very refactor in flight.
+    #
+    # So walk the text instead: after "scope_fence", take the first `[`, then collect quoted
+    # strings until a `]` seen OUTSIDE quotes. A `]` inside a filename is just a character.
+    # Backslash escapes are honoured so `\"` cannot end a path early.
+    rsg_fences="$rsg_fences
+$(tr -d '\n' < "$rsg_c" | awk '
+  {
+    s = $0
+    k = index(s, "\"scope_fence\"")
+    if (k == 0) exit
+    s = substr(s, k)
+    b = index(s, "[")
+    if (b == 0) exit
+    s = substr(s, b + 1)
+    inq = 0; esc = 0; cur = ""
+    n = length(s)
+    for (i = 1; i <= n; i++) {
+      ch = substr(s, i, 1)
+      if (inq) {
+        if (esc)            { cur = cur ch; esc = 0 }
+        else if (ch == "\\") { esc = 1 }
+        else if (ch == "\"") { inq = 0; if (cur != "") print cur; cur = "" }
+        else                 { cur = cur ch }
+      } else {
+        if (ch == "\"")      { inq = 1; cur = "" }
+        else if (ch == "]")  { exit }
+      }
+    }
+  }')"
+  done
+  [ "$rsg_active" = 1 ] || return 0                      # no refactor in flight -> nothing to bind
+  # Same reasoning as the per-contract guard above, applied to the collected set: no fence
+  # entries at all means the in-scope set is unknown, so every file would look off-contract.
+  [ -n "$(printf '%s' "$rsg_fences" | tr -d '[:space:]')" ] || {
+    echo "zuvo refactor-scope: active contract(s) yielded no fence paths -> fail-open" >&2
+    return 0
+  }
+
+  if ! _is_agent_env; then
+    echo "zuvo refactor-scope: human committer -> bypass" >&2
+    return 0
+  fi
+
+  rsg_off=""; rsg_oldifs=$IFS; set -f
+  IFS='
+'
+  for rsg_f in $rsg_staged; do
+    [ -n "$rsg_f" ] || continue
+    # Only source code can be "refactored". Everything else is noise for this gate.
+    case "$rsg_f" in
+      *.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|*.py|*.go|*.rs|*.java|*.kt|*.rb|*.php|*.swift|*.c|*.h|*.cc|*.cpp|*.sh|*.vue|*.svelte|*.astro) ;;
+      *) continue ;;
+    esac
+    case "$rsg_f" in
+      node_modules/*|*/node_modules/*|dist/*|*/dist/*|build/*|*/build/*|vendor/*|*/vendor/*|.git/*|*/.git/*) continue ;;
+    esac
+    rsg_hit=0
+    for rsg_p in $rsg_fences; do
+      [ -n "$rsg_p" ] || continue
+      [ "$rsg_p" = "$rsg_f" ] && { rsg_hit=1; break; }   # exact compare, no regex/glob
+    done
+    [ "$rsg_hit" = 0 ] && rsg_off="$rsg_off $rsg_f"
+  done
+  IFS=$rsg_oldifs; set +f
+
+  [ -n "$rsg_off" ] || return 0
+  echo "BLOCK: a zuvo:refactor is ACTIVE in this repo, but these files are in no contract's scope_fence:"
+  for rsg_p in $rsg_off; do echo "         $rsg_p"; done
+  echo "       Refactoring them outside the skill skips the parts that are NOT in your context"
+  echo "       right now: characterization tests proven green on the PRE-refactor code, the"
+  echo "       independent blind audit, cross-model adversarial, and the per-file backup branch."
+  echo "       Run \`zuvo:refactor <file>\` for each — that re-loads the protocol and writes the"
+  echo "       contract. If the active refactor is finished, mark its contract stage COMPLETE."
+  return 1
+}
+
 # ---------------------------------------------------------------------------
 # Shared micro-helpers. Factored from idioms that were already duplicated in this
 # file (and again in pipeline-gate-lib.sh) so the gate and its diagnostic

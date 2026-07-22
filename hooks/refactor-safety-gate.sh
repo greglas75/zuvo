@@ -53,11 +53,13 @@ esac
 # Run BOTH gate checks (each prints its own BLOCK: line + returns non-zero on block).
 blk=0
 refactor_gate_check "$files" || blk=1
+refactor_scope_gate_check "$files" || blk=1
 plan_execute_gate_check "$files" || blk=1
 if [ "$blk" != 0 ]; then
   echo "" >&2
   echo "zuvo work-gate: $MODE BLOCKED (see the BLOCK line above)." >&2
   echo "  refactor → complete the CONTRACT Prove step (blind-audit + adversarial)." >&2
+  echo "  scope    → run \`zuvo:refactor <file>\` for off-contract files (reloads the protocol)." >&2
   echo "  plan     → run \`zuvo:execute\` (do not hand-roll the implementation)." >&2
   echo "  human / abandoned runs auto-bypass. Override (logged): ZUVO_ALLOW_ADHOC=1." >&2
   [ "${ZUVO_ALLOW_ADHOC:-}" = "1" ] && { echo "zuvo work-gate: ZUVO_ALLOW_ADHOC=1 -> escape (logged)" >&2; exit 0; }
