@@ -494,6 +494,8 @@ mkdir -p zuvo/plans
 
 Write `zuvo/plans/active-plan.md` with `status: pending`. If the plan is only `Reviewed`, do not write the pointer yet. This keeps `zuvo:execute` aligned with the same approval gate as the plan header.
 
+**Write `status:` and `plan:` as plain lines, never inside an HTML comment** — a git hook parses this file and fail-opens silently if it cannot (see the format contract in `session-state.md`). Verify with `scripts/zuvo-phase.sh status`.
+
 ---
 
 ## Output

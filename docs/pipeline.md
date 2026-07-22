@@ -231,9 +231,31 @@ review ever runs. The enforcement below makes that fail deterministically.
 |-------|------|-------------|
 | **CI gate** (`ci/zuvo-pipeline-entry.yml` + `scripts/zuvo-pipeline-entry-ci.sh`) | **THE GUARANTEE** — fails the PR/push server-side | **No** — an agent cannot `--no-verify` or skip a server-side check (FAIL-CLOSED) |
 | **pre-push gate** (`hooks/pre-push-gate.sh`) | **primary local enforcement** — blocks the push | only via `--no-verify` → blocked by the next two rows |
+| **work gate** (`hooks/refactor-safety-gate.sh` → `refactor_gate_check` + `plan_execute_gate_check`) | blocks a commit/push that hand-rolls an approved plan, or moves a refactor past an unproven CONTRACT | human committers auto-bypass; `ZUVO_ALLOW_ADHOC=1` (logged) |
 | **commit-gate + Stop-gate nudges** | **early warning** — surface before the push/CI block | yes, by design (best-effort, NOT the guarantee) |
 | **block-no-verify + git PATH-shim** | `--no-verify` defense | — |
 | **using-zuvo router rule** | soft top layer (sets intent) | yes — the gates enforce |
+
+A parallel bind covers the **plan → execute** step (`hooks/lib/refactor-gate-lib.sh ::
+plan_execute_gate_check`, chained by `hooks/refactor-safety-gate.sh` on pre-commit and
+pre-push): when an approved plan is not being executed and the staged files intersect its
+declared `**Files:**`, the commit is blocked — the work must go through `zuvo:execute` rather
+than be hand-rolled.
+
+`status: in-progress` in `zuvo/plans/active-plan.md` does **not** on its own buy an exemption.
+That field is a free, unverified write, so flipping it was a one-line way around the gate.
+The exemption must be **corroborated** by evidence of a real run: an `execution-state.md` that
+is in-progress, modified within `ZUVO_GATE_GRACE` (default 6h), and naming the **same plan** —
+or an `execute-*.marker` whose `repo_root` matches and whose mtime is inside the same window.
+Uncorroborated `in-progress` is treated exactly like `pending`. A stale pointer left behind by a
+finished run therefore gates later work: set `status: completed` when a run ends.
+
+**Diagnosing it:** `scripts/zuvo-phase.sh status` shows what the gate actually sees in a repo;
+`doctor` gives an ARMED / BLIND / IDLE verdict; `doctor --all` sweeps the fleet;
+`normalize [--write]` rewrites a pointer into the dialect the gate reads. This exists because a
+gate that fail-opens does so **silently** — the parser and the documented template had drifted
+apart (`<!-- status: -->` vs a plain `status:` line) and the gate was dead in 8 of 19 real repos
+with nothing reporting it. The doctor shares the gate's own parser, so the two cannot disagree.
 
 The **signal** is content-keyed review coverage: `zuvo:review`/`zuvo:build`/`zuvo:execute`
 write `memory/reviews/<base7>..<head7>-<slug>.md` (with a machine-readable `range:`/`files:`

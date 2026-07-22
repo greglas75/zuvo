@@ -122,7 +122,11 @@ newenv none; realgate
 mkdir -p zuvo/contracts
 printf '{"stage":"PHASE-3","scope_fence":["app.ts"],"prove":{"blind_audit":"skipped","adversarial":"clean","findings_disposition":"none"}}' > zuvo/contracts/refactor-a.json
 echo y > app.ts; git add app.ts
-rc=$(env -u ZUVO_AI_RUN -u CLAUDECODE -u CURSOR_TRACE_ID -u CODEX_SANDBOX -u ANTIGRAVITY_SESSION_ID "$HD/pre-commit" >/dev/null 2>&1; echo $?)
+# Clear EVERY var _is_agent_env() inspects — a partial unset is an agent, not a human.
+rc=$(env -u ZUVO_AGENT -u ZUVO_AI_RUN -u CLAUDECODE -u CLAUDE_PLUGIN_ROOT \
+         -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_SESSION -u CODEX_SANDBOX -u CODEX_WORKSPACE \
+         -u CODEX_HOME -u CURSOR_TRACE_ID -u CURSOR_AGENT -u GEMINI_CLI -u ANTIGRAVITY \
+         -u GEMINI_ANTIGRAVITY -u ANTIGRAVITY_SESSION_ID "$HD/pre-commit" >/dev/null 2>&1; echo $?)
 [ "$rc" -eq 0 ] && ok "p4 human exempt" || bad "p4 (rc=$rc)"
 
 # (5) gate absent -> fail-open exit 0

@@ -120,17 +120,36 @@ codesift-repo: <repo identifier or "unavailable">
 
 ### `zuvo/plans/active-plan.md`
 
-Written by `zuvo:plan` after user approval. Used only for fresh-start plan discovery.
+Written by `zuvo:plan` after user approval. Used for fresh-start plan discovery **and read by a
+git hook** — see the format contract below.
 
 ```markdown
 # Active Plan
-<!-- approved: <ISO-8601> -->
-<!-- status: pending | in-progress | completed -->
-
+status: pending | in-progress | completed
 plan: <path to plan file>
 spec_id: <spec_id>
 tasks: <N>
+approved: <ISO-8601>
 ```
+
+**The format is a contract, not cosmetics.** `hooks/lib/refactor-gate-lib.sh ::
+plan_execute_gate_check` parses `status:` and `plan:` from this file on every AI commit and
+push. It fail-OPENs when it cannot read them — silently, with no warning. This file previously
+documented `<!-- status: ... -->` while the gate read only a plain `status:` line, so 8 of 19
+real repos had a completely dead plan→execute gate.
+
+- Write `status:` and `plan:` as **plain lines**, exactly as above. Do not wrap them in an HTML
+  comment, and do not rename `plan:` to `plan_file:`.
+- The gate now also *accepts* the `<!-- status: -->` and `plan_file:` variants so existing repos
+  keep working, but new writes must use the canonical form.
+- `zuvo/plans/active-plan.md` is **local runtime state** (gitignored) — but a stale
+  `status: in-progress` pointer left behind after a finished run is not free: the gate treats
+  uncorroborated `in-progress` as `pending`. Set it to `completed` when the run ends.
+- Verify what the gate actually sees with `scripts/zuvo-phase.sh status` (or `doctor`).
+
+Note the contrast with `execution-state.md` above, which keeps the `<!-- status: ... -->`
+comment form: `hooks/pre-commit-adversarial-gate.sh` matches that literal string. The two files
+deliberately use different dialects; do not "harmonize" one without updating its reader.
 
 ---
 
@@ -331,7 +350,10 @@ After user approves the plan, write `zuvo/plans/active-plan.md`:
 mkdir -p zuvo/plans
 ```
 
-Fields: `plan`, `spec_id`, `tasks`, `approved` (timestamp), `status: pending`.
+Fields: `plan`, `spec_id`, `tasks`, `approved` (timestamp), `status: pending` — each as a
+**plain line**, per the format contract in the `active-plan.md` section above. A git hook parses
+`status:`/`plan:` on every AI commit; an HTML-comment wrapper makes it unreadable and the gate
+fail-opens silently. Confirm with `scripts/zuvo-phase.sh status` after writing.
 
 ---
 

@@ -249,8 +249,10 @@ Record the detected stack. Pass it to every implementer dispatch.
 
 Before the first agent dispatch, initialize session state using the WRITE protocol from `session-state.md`:
 
-1. Write `zuvo/plans/active-plan.md` — set `status: in-progress`.
+1. Write `zuvo/plans/active-plan.md` — set `status: in-progress` (plain line, not an HTML comment).
 2. Write `zuvo/context/execution-state.md` — `status: in-progress`, `completed: []`, `next-task: <lowest task number from the plan>`.
+
+Steps 1 and 2 are a pair: the commit gate does **not** accept `active-plan.md: in-progress` on its own (that field is a free, unverified write). It requires corroboration — an `in-progress` `execution-state.md`, or an execute run-marker newer than `ZUVO_GATE_GRACE`. Skipping step 2 means every commit in this run is blocked. At Phase Final, set `status: completed` in BOTH files: a stale `in-progress` pointer makes the gate treat later unrelated work as `pending`.
 3. Write `zuvo/context/project-context.md` — stack, test-runner, codesift-repo.
 4. Ensure `zuvo/` is in `.gitignore` (add if missing).
 
