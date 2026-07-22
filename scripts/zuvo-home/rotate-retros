@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
-# ~/.zuvo/rotate-retros — quarterly archival of ~/.zuvo/retros.md
+# ~/.zuvo/rotate-retros — quarterly archival of ~/.zuvo/retros.md AND retros.log
 #
-# Why this exists: retros.md grows monotonically (~7 entries/day in active
-# weeks, ~3K bytes/entry). With no rotation it hits 1MB in ~3 months and
-# becomes unreadable to humans + slow for tools to grep. The companion
-# retros.log has a 100-line rotation built into shared/includes/retrospective.md
-# Append Commands; retros.md needed an equivalent but markdown rotation by
-# count is harder (entries vary in size, must respect entry boundaries).
+# Why this exists: both files grow monotonically (~7 entries/day in active weeks; retros.md
+# ~3K bytes/entry). Left alone retros.md hits 1MB in ~3 months and becomes unreadable to
+# humans + slow to grep.
 #
-# This script splits entries older than N days (default 90) into a per-quarter
-# archive file `~/.zuvo/retros-archive-YYYY-QN.md` and leaves only recent
-# entries in retros.md. Idempotent — safe to re-run.
+# This is the ONLY retention mechanism for either file — both are append-only at the write
+# path. `append-retro` previously ALSO truncated retros.log to the last 100 lines on every
+# write; that cap was removed (2026-07-22) because at 36 retros/day it held ~2.8 days while
+# `retro-mine.py` asks for 7, so entries were destroyed before anything mined them — and,
+# running on every append, it silently pre-empted this script's archival. Do not reintroduce
+# a count cap in the writer; extend this script instead.
+#
+# This script splits entries older than N days (default 90) into a per-quarter archive file
+# (`retros-archive-YYYY-QN.md` / `.log`) and leaves only recent entries in the live file.
+# Idempotent — safe to re-run. Takes the same lock as append-retro so a concurrent write is
+# never lost.
 #
 # Usage:
 #   ~/.zuvo/rotate-retros                  # dry-run (default, no changes)
@@ -62,35 +67,83 @@ echo "rotate-retros: target=$TARGET days=$DAYS cutoff=$CUTOFF_DATE apply=$APPLY"
 # Undated / malformed lines are KEPT (same safe default as the markdown path).
 case "$TARGET" in
   *.log)
+    # Serialize against append-retro / retro-stub. Without this, a retro written by another
+    # session between our read and our `mv` is silently destroyed by the rebuild — the exact
+    # data loss this whole change exists to stop. Same dir-lock protocol as append-retro.
+    RLOCK="${ZUVO_HOME:-$HOME/.zuvo}/.retro.lock.d"
+    _rr_release() {
+      [ "$(cat "$RLOCK/pid" 2>/dev/null || echo)" = "$$" ] || return 0
+      rm -f "$RLOCK/pid" 2>/dev/null || true; rmdir "$RLOCK" 2>/dev/null || true
+    }
+    RWAIT="${ZUVO_LOCK_WAIT:-5}"; racq=0; rwaited=0
+    while :; do
+      if mkdir "$RLOCK" 2>/dev/null; then
+        if echo "$$" > "$RLOCK/pid" 2>/dev/null; then racq=1; break; fi
+        rmdir "$RLOCK" 2>/dev/null || true
+      fi
+      if [ -d "$RLOCK" ]; then
+        rlpid=$(cat "$RLOCK/pid" 2>/dev/null || echo "")
+        rlmt=$(stat -f %m "$RLOCK" 2>/dev/null || stat -c %Y "$RLOCK" 2>/dev/null || echo "")
+        if [ -n "$rlpid" ]; then
+          kill -0 "$rlpid" 2>/dev/null || { rm -f "$RLOCK/pid" 2>/dev/null || true; rmdir "$RLOCK" 2>/dev/null || true; }
+        elif [ -n "$rlmt" ] && [ "$(( $(date +%s) - rlmt ))" -gt 30 ]; then
+          rmdir "$RLOCK" 2>/dev/null || true
+        fi
+      fi
+      rwaited=$((rwaited + 1)); [ "$rwaited" -ge "$((RWAIT * 5))" ] && break; sleep 0.2
+    done
+    [ "$racq" -eq 1 ] || { echo "rotate-retros: lock busy (ZUVO_LOCK_WAIT=${RWAIT}s) — nothing rotated; retry" >&2; exit 3; }
+    trap '_rr_release' INT TERM EXIT
+
+    # Only a real comment line is a header. Treating line 1 as a header unconditionally
+    # duplicated the first entry when the file had none: it was copied into the archive AND
+    # kept by the rebuild's `NR==1 {print}` (measured: 3 entries became 4). Also stops a
+    # telemetry row from being written as an archive "header".
     HDR=$(head -1 "$TARGET")
-    TOTAL=$(grep -c '^RETRO:' "$TARGET" 2>/dev/null || echo 0)
-    OLD=$(awk -F'\t' -v c="$CUTOFF_DATE" '/^RETRO:/ { split($1,a," "); if (substr(a[2],1,10) < c) n++ } END{print n+0}' "$TARGET")
+    case "$HDR" in \#*) HAS_HDR=1 ;; *) HAS_HDR=0; HDR='# v2 DATE\tSKILL\tPROJECT' ;; esac
+    TOTAL=$(grep -c '^RETRO:' "$TARGET" 2>/dev/null | head -1); TOTAL=${TOTAL:-0}
+    # `d != ""` is load-bearing. A RETRO line whose date field is empty/missing yields d="",
+    # and in awk's string comparison "" < "2026-04-23" is TRUE — so the archive pass claimed it
+    # while the keep pass (which tests d=="" explicitly) also kept it: the entry landed in BOTH
+    # files. Measured: 3 entries became 5. Undated lines are KEPT, never archived.
+    OLD=$(awk -F'\t' -v c="$CUTOFF_DATE" '/^RETRO:/ { split($1,a," "); d=substr(a[2],1,10); if (d != "" && d < c) n++ } END{print n+0}' "$TARGET")
     echo "rotate-retros: retros.log — $TOTAL entries, $OLD older than $DAYS days"
     [ "$OLD" -eq 0 ] && { echo "rotate-retros: nothing to archive — done"; exit 0; }
     # group the old ones per quarter so archives match the markdown naming scheme
     QS=$(awk -F'\t' -v c="$CUTOFF_DATE" '/^RETRO:/ { split($1,a," "); d=substr(a[2],1,10);
-           if (d < c) { y=substr(d,1,4); m=substr(d,6,2)+0; printf "%s-Q%d\n", y, int((m-1)/3)+1 } }' "$TARGET" | sort -u)
+           if (d != "" && d < c) { y=substr(d,1,4); m=substr(d,6,2)+0; printf "%s-Q%d\n", y, int((m-1)/3)+1 } }' "$TARGET" | sort -u)
     for q in $QS; do
       n=$(awk -F'\t' -v c="$CUTOFF_DATE" -v q="$q" '/^RETRO:/ { split($1,a," "); d=substr(a[2],1,10);
-            if (d < c) { y=substr(d,1,4); m=substr(d,6,2)+0; k=sprintf("%s-Q%d",y,int((m-1)/3)+1); if (k==q) n++ } } END{print n+0}' "$TARGET")
+            if (d != "" && d < c) { y=substr(d,1,4); m=substr(d,6,2)+0; k=sprintf("%s-Q%d",y,int((m-1)/3)+1); if (k==q) n++ } } END{print n+0}' "$TARGET")
       echo "  $ARCHIVE_DIR/retros-archive-${q}.log  ← $n entries"
     done
     if [ "$APPLY" -eq 0 ]; then
       echo "rotate-retros: dry-run — re-run with --apply to commit changes"; exit 0
     fi
+    # Archive append is DEDUPED against what the archive already holds. The archive is written
+    # before the source is rebuilt, so a crash between the two steps leaves entries in both
+    # files; the next run would then append them to the archive a second time. Skipping lines
+    # already present makes that recovery path idempotent instead of duplicating.
     for q in $QS; do
       AF="$ARCHIVE_DIR/retros-archive-${q}.log"
-      [ -f "$AF" ] || printf '%s\n' "$HDR" > "$AF"
+      [ -f "$AF" ] || printf '%b\n' "$HDR" > "$AF"
+      QT="$AF.new.$$"
       awk -F'\t' -v c="$CUTOFF_DATE" -v q="$q" '/^RETRO:/ { split($1,a," "); d=substr(a[2],1,10);
-        if (d < c) { y=substr(d,1,4); m=substr(d,6,2)+0; k=sprintf("%s-Q%d",y,int((m-1)/3)+1); if (k==q) print } }' "$TARGET" >> "$AF"
+        if (d != "" && d < c) { y=substr(d,1,4); m=substr(d,6,2)+0; k=sprintf("%s-Q%d",y,int((m-1)/3)+1); if (k==q) print } }' "$TARGET" > "$QT"
+      grep -F -x -v -f "$AF" "$QT" >> "$AF" 2>/dev/null || true
+      rm -f "$QT"
     done
     T="$TARGET.tmp.$$.$(date +%s)"
     # keep: the header, every non-RETRO line, and every RETRO line NOT older than the cutoff
-    awk -F'\t' -v c="$CUTOFF_DATE" 'NR==1 { print; next }
+    awk -F'\t' -v c="$CUTOFF_DATE" -v hh="$HAS_HDR" 'NR==1 && hh==1 { print; next }
       !/^RETRO:/ { print; next }
       { split($1,a," "); d=substr(a[2],1,10); if (d=="" || d >= c) print }' "$TARGET" > "$T"
-    KEPT=$(grep -c '^RETRO:' "$T" 2>/dev/null || echo 0)
-    # refuse to shrink to nothing on a parse failure — data loss is the thing this prevents
+    KEPT=$(grep -c '^RETRO:' "$T" 2>/dev/null | head -1); KEPT=${KEPT:-0}
+    # refuse to shrink to nothing on a parse failure — data loss is the thing this prevents.
+    # NOTE: KEPT is piped through `head -1`, never `grep -c ... || echo 0`: grep -c PRINTS 0 and
+    # ALSO exits 1 on zero matches, so the `||` appended a second zero and KEPT became the
+    # two-line string "0\n0". `[ "0\n0" -eq 0 ]` errors out and the guard silently never fired —
+    # exactly at the only moment it is load-bearing. Found by cross-model adversarial review.
     if [ "$KEPT" -eq 0 ] && [ "$TOTAL" -gt "$OLD" ]; then
       rm -f "$T"; echo "rotate-retros: ABORT — rebuild kept 0 of $TOTAL entries (parse failure); $TARGET untouched" >&2; exit 1
     fi
@@ -139,8 +192,8 @@ done <<< "$ENTRIES_TSV")
 TO_ARCHIVE=$(echo "$RESOLVED" | awk -F'\t' -v cutoff="$CUTOFF_DATE" '$3!="" && $3 < cutoff')
 TO_KEEP=$(echo "$RESOLVED" | awk -F'\t' -v cutoff="$CUTOFF_DATE" '$3=="" || $3 >= cutoff')
 
-ARCHIVE_COUNT=$(echo "$TO_ARCHIVE" | grep -c '^' 2>/dev/null || echo 0)
-KEEP_COUNT=$(echo "$TO_KEEP" | grep -c '^' 2>/dev/null || echo 0)
+ARCHIVE_COUNT=$(echo "$TO_ARCHIVE" | grep -c '^' 2>/dev/null | head -1); ARCHIVE_COUNT=${ARCHIVE_COUNT:-0}
+KEEP_COUNT=$(echo "$TO_KEEP" | grep -c '^' 2>/dev/null | head -1); KEEP_COUNT=${KEEP_COUNT:-0}
 [ -z "$TO_ARCHIVE" ] && ARCHIVE_COUNT=0
 [ -z "$TO_KEEP" ] && KEEP_COUNT=0
 
