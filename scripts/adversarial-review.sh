@@ -157,6 +157,50 @@ done
 # Allow env var override
 PROVIDER="${PROVIDER:-${ZUVO_REVIEW_PROVIDER:-}}"
 
+# ─── Plan-review round budget (deterministic circuit-breaker) ────────────────
+# WHY: zuvo:plan splits a large scope into up to 3 sequential plan documents, and each one runs
+# its own plan-reviewer loop + this adversarial pass. The skill's caps ("max 3 iterations",
+# "adversarial gets ONE re-review") are PROSE — they do not COMPOSE across the 3-document split
+# and the agent does not enforce them. Observed: a single zuvo:plan ran ~10 `--mode plan`
+# adversarial passes (each 185-225s) across r1..r4 of three documents plus "one more independent
+# review", for a 6-hour run. Each pass here shells out to 4-5 external provider CLIs.
+#
+# This is the composing global budget the prose lacks: it counts `--mode plan` invocations PER
+# REPO within a rolling window (a plan run keeps hitting adversarial every few minutes, so the
+# count accumulates; a genuinely new run 30min+ later starts fresh). Past the budget the tool
+# REFUSES to run the providers and exits 7, so the loop cannot continue no matter what the agent
+# decides — it must finalize the current revision. Only --mode plan is affected; code/security/
+# etc. are untouched. Disable with ZUVO_PLAN_BUDGET_OFF=1 for a deliberately long session.
+if [[ "$REVIEW_MODE" == "plan" && "${ZUVO_PLAN_BUDGET_OFF:-}" != "1" && "$DOCTOR" != "true" && "$DRY_RUN" != "true" ]]; then
+  _pb_budget="${ZUVO_PLAN_ROUND_BUDGET:-8}"
+  _pb_window="${ZUVO_PLAN_BUDGET_WINDOW:-1800}"          # 30 min: gap that separates two runs
+  _pb_home="${ZUVO_HOME:-$HOME/.zuvo}"
+  _pb_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  _pb_key="$(printf '%s' "$_pb_root" | (shasum 2>/dev/null || sha1sum 2>/dev/null) | cut -c1-16)"
+  _pb_dir="$_pb_home/plan-budget"; _pb_file="$_pb_dir/$_pb_key"
+  mkdir -p "$_pb_dir" 2>/dev/null || true
+  _pb_now="$(date +%s)"
+  _pb_count=0; _pb_last=0
+  if [[ -f "$_pb_file" ]]; then
+    read -r _pb_count _pb_last < "$_pb_file" 2>/dev/null || { _pb_count=0; _pb_last=0; }
+    case "$_pb_count$_pb_last" in *[!0-9]*|"") _pb_count=0; _pb_last=0 ;; esac
+  fi
+  # A gap longer than the window means a new plan run — reset the counter.
+  [ $(( _pb_now - _pb_last )) -gt "$_pb_window" ] && _pb_count=0
+  _pb_count=$(( _pb_count + 1 ))
+  if [ "$_pb_count" -gt "$_pb_budget" ]; then
+    printf '%s\n' "PLAN REVIEW BUDGET EXHAUSTED: $_pb_budget adversarial --mode plan passes already ran for this plan within ${_pb_window}s." >&2
+    printf '%s\n' "  This is the deterministic circuit-breaker for the plan review loop (the skill's prose caps do" >&2
+    printf '%s\n' "  not compose across the 3-document split). STOP revising: finalize the CURRENT revision, disposition" >&2
+    printf '%s\n' "  remaining WARNINGs in ## Review Trail, set the plan status, and hand it to the user." >&2
+    printf '%s\n' "  Override for a deliberately long session: ZUVO_PLAN_BUDGET_OFF=1. Reset: wait ${_pb_window}s or rm $_pb_file" >&2
+    echo '{"status":"budget_exhausted","mode":"plan","passes":'"$_pb_count"',"budget":'"$_pb_budget"'}'
+    exit 7
+  fi
+  printf '%s %s\n' "$_pb_count" "$_pb_now" > "$_pb_file" 2>/dev/null || true
+  echo "  plan-review budget: pass $_pb_count/$_pb_budget (window ${_pb_window}s)" >&2
+fi
+
 # ─── Input collection ───────────────────────────────────────────
 
 collect_input() {
