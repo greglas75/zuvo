@@ -2,6 +2,10 @@
 # Task 5 — CI gate. Runs scripts/zuvo-pipeline-entry-ci.sh headless on a fixture
 # repo. CI is FAIL-CLOSED. Asserts exit codes + that the workflow YAML is valid.
 set -u
+# Content-key / topology suite: the 2026-07-23 adversarial proof-of-work layer is covered
+# by test-review-proof-gate.sh; grandfather it off here so these fixtures test their own
+# concern in isolation.
+export PG_REVIEW_PROOF_CUTOFF=99999999999
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CI="$ROOT/scripts/zuvo-pipeline-entry-ci.sh"

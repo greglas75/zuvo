@@ -3,6 +3,10 @@
 # ("<localref> <localsha> <remoteref> <remotesha>") and asserts exit codes.
 # Agent cases force ZUVO_AGENT=1 for determinism; the human case strips env.
 set -u
+# This suite exercises the CONTENT-KEY logic; the adversarial proof-of-work layer (added
+# 2026-07-23) is covered by test-review-proof-gate.sh. Grandfather it off here so these
+# fixtures test content-keying in isolation, exactly as they did before that layer existed.
+export PG_REVIEW_PROOF_CUTOFF=99999999999
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$ROOT/hooks/pre-push-gate.sh"

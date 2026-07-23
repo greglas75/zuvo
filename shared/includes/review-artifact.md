@@ -38,13 +38,59 @@ art="memory/reviews/${base7}..${head7}-<slug>.md"
 <!-- zuvo-review -->
 range: <base_sha>..<head_sha>
 files: path/one.ts, path/two.ts        # union of reviewed production files (or `*` = whole range)
+adversarial: zuvo/proofs/<slug>-adversarial.txt   # REQUIRED (see Proof-of-work) — real cross-model run
 verdict: APPROVE|CHANGES|MUST-FIX-FOUND|RECOMMENDED-FOUND|PASS
 -->
 ```
 
 - `range:` — the full (non-abbreviated) `<base>..<head>` the review covered.
 - `files:` — comma-separated reviewed **production** files, OR a single `*` meaning the whole range.
+- `adversarial:` — path (repo-relative) to the adversarial run's saved output. **Required for any
+  artifact written on/after 2026-07-23** — see Proof-of-work below.
 - `verdict:` — the review/build/execute outcome.
+
+## Proof-of-work (REQUIRED for coverage — content-key alone is not enough)
+
+The content-key proves an artifact is **fresh** (its reviewed content is what is shipped), NOT
+that a review **happened**. A fabricated artifact — `range: <base>..HEAD`, `files: *`, the
+marker, and zero actual review — passes the content-key trivially, because its head *is* the
+push head so every blob matches itself. This was demonstrated and done in the field. So the
+artifact must also cite a real cross-model adversarial run, the most expensive thing to fake
+here (it shells out to external provider CLIs).
+
+**How to satisfy it (the skill already runs adversarial — just SAVE the output):**
+
+```bash
+# When you run the mandatory adversarial pass, save it with --artifact:
+git diff <range> | adversarial-review --multi --mode code --artifact "zuvo/proofs/<slug>-adversarial.txt"
+# then put that path in the header:
+#   adversarial: zuvo/proofs/<slug>-adversarial.txt
+```
+
+`hooks/lib/pipeline-gate-lib.sh :: pg_artifact_proven` verifies, for any artifact newer than
+`PG_REVIEW_PROOF_CUTOFF` (2026-07-23T00:00:00Z), that the referenced file **resolves inside the
+repo** (no `..` traversal, no absolute path) and holds **≥2 `REVIEW BY:` provider lines** (a
+genuine multi-model run). A genuine single-provider machine still produces a file with **one**
+`REVIEW BY:` line plus a single-provider note — that is accepted too. The bare literal
+`single_provider_only` with **no file** is NOT accepted: that was a "type the magic words"
+shortcut. An artifact that fails this does not grant coverage, exactly as if it had no marker.
+
+**Honest limits (this is a guardrail, not a security boundary — extends B-gate-6).**
+- The referenced file is still agent-writable, so coverage is not *unforgeable* — this only
+  raises the cost of a fake from one text edit to fabricating a convincing multi-provider
+  transcript (an overtly dishonest act).
+- Enforced **forward-only**: every artifact already on disk predates the cutoff and is
+  grandfathered, so rollout false-blocks nobody (measured: 0 proofless post-cutoff artifacts
+  back unpushed work).
+- Grandfathering keys on the artifact **file mtime**, which does not survive `git clone`. In
+  repos that COMMIT their review artifacts (memory/reviews tracked), a fresh clone stamps every
+  file with "now" → legacy artifacts look post-cutoff. On CI this is handled — the CI entry
+  script sets `PG_PROOF_OPTIONAL=1`, degrading an absent proof to the content-key backstop
+  (proof files are gitignored and absent server-side anyway; **the proof-of-work is a LOCAL
+  anti-fabrication layer, CI stays content-key as before**). A local fresh clone of such a repo
+  is the one residual false-block; the escape is a fresh review or `ZUVO_ALLOW_ADHOC=1`.
+- `touch -t` backdating a new artifact under the cutoff evades it — filesystem forgery, the same
+  category this layer never claimed to defend against.
 
 **Coverage is content-keyed by file CONTENT (blob), not by commit range.** A change is covered
 iff EVERY changed production file's CURRENT content was reviewed by some artifact: file `F`

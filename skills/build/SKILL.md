@@ -615,7 +615,7 @@ EXECUTION VERIFICATION
 ### 4.4 Adversarial Review (MANDATORY — do NOT skip)
 
 ```bash
-git add -u && git diff --staged | adversarial-review --mode code
+git add -u && git diff --staged | adversarial-review --mode code --artifact "zuvo/proofs/build-<slug>-adversarial.txt"
 ```
 
 If diff touches auth, payment, crypto, PII, or migration files, use `--mode security` instead. If diff touches migrations/schema, use `--mode migrate`.
@@ -698,12 +698,15 @@ Record the doc paths for the `### Documentation` line in the BUILD COMPLETE bloc
 
 After verify + acceptance proofs pass (and ONLY then), write the content-keyed review
 artifact `memory/reviews/<base7>..<head7>-<slug>.md` carrying the machine-readable
-`range:` / `files:` header per `../../shared/includes/review-artifact.md`. Compute the
-range worktree-safe (`git -C "$repo_root" merge-base HEAD <default-branch>..HEAD`) and list
-the production files this build touched in `files:` (or `*`). This is the signal the
-pipeline-entry gates read (`pg_range_reviewed`) so the just-built, reviewed change can be
-pushed without re-blocking. Write it **only on success** — if any verification or acceptance
-proof FAILED/BLOCKED, write nothing, so a failed build never grants itself pipeline coverage.
+`range:` / `files:` / **`adversarial:`** header per `../../shared/includes/review-artifact.md`.
+Compute the range worktree-safe (`git -C "$repo_root" merge-base HEAD <default-branch>..HEAD`)
+and list the production files this build touched in `files:` (or `*`). Set `adversarial:` to the
+`zuvo/proofs/build-<slug>-adversarial.txt` you saved with `--artifact` in Phase 4.4 — the
+pipeline-entry gate now REQUIRES a real proof (`pg_artifact_proven`: the file must hold ≥2
+`REVIEW BY:` provider lines), so an artifact without it does not grant coverage. This is the
+signal the pipeline-entry gates read (`pg_range_reviewed`) so the just-built, reviewed change
+can be pushed without re-blocking. Write it **only on success** — if any verification or
+acceptance proof FAILED/BLOCKED, write nothing, so a failed build never grants itself coverage.
 
 ### 4.8 Retrospective (REQUIRED — no opt-out)
 
@@ -728,7 +731,7 @@ COMPLETION GATE CHECK
 [ ] Acceptance Proofs (Phase 4.2b) — every AP ran and VERIFIED, artifact paths recorded
 [ ] All verification commands ran and exited 0
 [ ] Documentation created/updated (per documentation-mandate.md) or explicit [DOC: N/A — <reason>]
-[ ] Content-keyed artifact memory/reviews/<base7>..<head7>-<slug>.md written with range:/files: header (on success only — pipeline-entry signal)
+[ ] Content-keyed artifact memory/reviews/<base7>..<head7>-<slug>.md written with range:/files:/adversarial: header — the adversarial: field points at the saved `--artifact` output (≥2 providers); an artifact without a real proof no longer grants coverage (on success only)
 [ ] Retrospective ran (no "trivial session" opt-out)
 [ ] Backlog updated with deferred findings or "none"
 [ ] Run: line printed and appended to log

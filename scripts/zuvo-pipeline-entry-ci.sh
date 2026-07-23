@@ -98,6 +98,11 @@ main() {
     exit 0
   fi
 
+  # Proof files (zuvo/proofs/) are commonly gitignored, so they are not in a CI checkout even
+  # when the review artifact is committed. The adversarial proof-of-work is a LOCAL anti-
+  # fabrication guardrail (enforced at pre-push, where the proof file exists); on CI, degrade an
+  # absent proof to the content-key backstop rather than block every push. See pg_artifact_proven.
+  PG_PROOF_OPTIONAL=1; export PG_PROOF_OPTIONAL
   pg_range_reviewed "$range"; local rr=$?
   if [ "$rr" -eq 0 ]; then
     echo "zuvo-ci: range is review-covered (memory/reviews/) — pass."

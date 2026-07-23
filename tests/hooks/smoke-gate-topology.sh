@@ -3,6 +3,10 @@
 # repo exactly as a real project wires it, scopes a merge / multi-merge branch to feature-only
 # end-to-end. SMOKE1 = single-merge (the reported bug); SMOKE2 = multi-merge (previously over-scoped).
 set -u
+# Content-key / topology suite: the 2026-07-23 adversarial proof-of-work layer is covered
+# by test-review-proof-gate.sh; grandfather it off here so these fixtures test their own
+# concern in isolation.
+export PG_REVIEW_PROOF_CUTOFF=99999999999
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$ROOT/hooks/pre-push-gate.sh"; LIB="$ROOT/hooks/lib/pipeline-gate-lib.sh"

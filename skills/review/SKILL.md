@@ -831,7 +831,7 @@ COMPLETION GATE CHECK
 [ ] Backlog persistence ran (memory/backlog.md updated or explicitly N/A)
 [ ] No localized RECOMMENDED silently backlogged — every backlogged RECOMMENDED carries a defer-reason of [NIT] or [structural-refactor (multi-file)]; any single-file fix in backlog = drift, route it to Phase 4 instead
 [ ] Report saved to memory/reviews/YYYY-MM-DD-<scope>.md (TIER 1+)
-[ ] Content-keyed artifact memory/reviews/<base7>..<head7>-<slug>.md written with range:/files: header (on success; skip staged/uncommitted) — pipeline-entry signal
+[ ] Content-keyed artifact memory/reviews/<base7>..<head7>-<slug>.md written with range:/files:/adversarial: header — the adversarial: field points at the saved `--artifact` output (≥2 providers); an artifact without a real proof no longer grants coverage (on success; skip staged/uncommitted)
 [ ] reviewed/<hash> tags created (skip for staged/uncommitted scope)
 [ ] Knowledge curation ran (if knowledge-curate.md loaded)
 [ ] Retrospective ran OR explicit "RETRO: skipped (<reason>)" printed

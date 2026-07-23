@@ -230,6 +230,81 @@ pg_file_blob() {
   git -C "$1" rev-parse --verify "$2:$3" 2>/dev/null
 }
 
+# ---------------------------------------------------------------------------
+# Proof-of-work for a review artifact (2026-07-23).
+#
+# The content-key proves an artifact is FRESH (its reviewed content == what is shipped), NOT
+# that a review actually happened. A fabricated artifact — `range: <base>..HEAD`, `files: *`,
+# the marker, zero review — passes trivially, because its head IS the push head so every
+# blob matches itself. Demonstrated, and done in the field (an agent hit this gate, found the
+# marker requirement, and just added the marker). So a NEW artifact must additionally reference
+# a real cross-model adversarial run: the single most expensive thing to fake here, since it
+# shells out to external provider CLIs.
+#
+# This cannot make coverage UNFORGEABLE — the referenced file is still agent-writable (extends
+# B-gate-6: these gates are guardrails against drift, not a security boundary). It raises the
+# cost of a fake from "one text edit" to "fabricate a convincing multi-provider transcript",
+# which is a categorically more overt dishonest act.
+#
+# GRANDFATHER: enforced only for artifacts whose FILE mtime is >= PG_REVIEW_PROOF_CUTOFF
+# (default 2026-07-23T00:00:00Z). Every artifact already on disk predates that, so this is
+# forward-only and false-blocks nobody on rollout — measured: 0 pre-existing proofless
+# artifacts newer than the cutoff back any unpushed work. (Residual: `touch -t <past>` on a new
+# artifact backdates it under the cutoff — overt filesystem forgery, the same category as any
+# other FS tampering this layer does not defend against.)
+PG_REVIEW_PROOF_CUTOFF="${PG_REVIEW_PROOF_CUTOFF:-1784764800}"   # 2026-07-23T00:00:00Z
+
+# pg_artifact_proven <repo_root> <artifact_path> -> 0 = proven (or grandfathered), 1 = NOT.
+# Proven when the artifact carries `adversarial: <path>` (alias `adv-proof:`) whose target
+# resolves under the repo and either holds >=2 `REVIEW BY:` provider lines (real cross-model)
+# OR an explicit honest single-provider marker (`single_provider_only` / `SINGLE PROVIDER`) —
+# the same degraded value the review skill is allowed to record when only one model exists.
+pg_artifact_proven() {
+  _pap_root="$1"; _pap_art="$2"
+  # mtime, GNU-first then BSD, sanitized to digits. `stat -f %m` on GNU/Linux means
+  # `--file-system` and prints a mount identifier, NOT the mtime — so BSD-first would put a
+  # non-numeric value in _pap_mt and the `-lt` below would error on the CI host (Linux). Try
+  # `stat -c %Y` (GNU) first, fall back to `stat -f %m` (BSD/macOS), and strip to digits so a
+  # stray value can never break the comparison.
+  _pap_mt="$(stat -c %Y "$_pap_art" 2>/dev/null || stat -f %m "$_pap_art" 2>/dev/null || echo 0)"
+  _pap_mt="$(printf '%s' "$_pap_mt" | tr -cd '0-9')"; [ -n "$_pap_mt" ] || _pap_mt=0
+  [ "$_pap_mt" -lt "$PG_REVIEW_PROOF_CUTOFF" ] && return 0        # legacy -> grandfathered
+  # Two passes, not `\(a\|b\)`: BSD sed (macOS) has no `\|` alternation in BRE.
+  _pap_ref="$(sed -n 's/^[[:space:]]*adversarial:[[:space:]]*//p' "$_pap_art" 2>/dev/null | head -1)"
+  [ -n "$_pap_ref" ] || _pap_ref="$(sed -n 's/^[[:space:]]*adv-proof:[[:space:]]*//p' "$_pap_art" 2>/dev/null | head -1)"
+  _pap_ref="$(printf '%s' "$_pap_ref" | tr -d '\r`' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  [ -n "$_pap_ref" ] || return 1                                  # post-cutoff, no proof ref
+  # NOTE: the bare literal `single_provider_only` (no file) is deliberately NOT accepted here —
+  # it was a "type the magic words" bypass (write the field, skip the run). A genuine single-
+  # provider run still PRODUCES a file with one `REVIEW BY:` line, which the >=1-provider +
+  # honest-note path below accepts. So honest degraded needs a real file; only fabrication is
+  # denied a shortcut.
+  # Containment: a proof path must stay inside the repo — reject `..` traversal and absolute
+  # paths, so an artifact cannot point coverage at an arbitrary file that happens to hold two
+  # "REVIEW BY:" lines.
+  case "$_pap_ref" in
+    /*|*..*) return 1 ;;
+  esac
+  _pap_ref="$_pap_root/$_pap_ref"
+  if [ ! -f "$_pap_ref" ]; then
+    # Proof referenced but not in this checkout. This is the SERVER-SIDE / CI case: proof files
+    # (zuvo/proofs/) are commonly gitignored, so a CI runner has the committed artifact but not
+    # the proof. The proof-of-work is a LOCAL guardrail — it stops an agent FABRICATING an
+    # artifact to slip past its own pre-push hook, where the proof file IS in the working tree.
+    # CI is the "was this reviewed at all" backstop (content-key), not the proof layer, so the
+    # CI entry script sets PG_PROOF_OPTIONAL=1 to degrade an absent proof to content-key rather
+    # than block every push. Locally (unset) an absent proof is NOT proven — the hole stays shut
+    # exactly where fabrication happens.
+    [ "${PG_PROOF_OPTIONAL:-}" = "1" ] && return 0
+    return 1
+  fi
+  _pap_n="$(grep -c 'REVIEW BY:' "$_pap_ref" 2>/dev/null | head -1)"; _pap_n="${_pap_n:-0}"
+  [ "$_pap_n" -ge 2 ] && return 0
+  # A single provider genuinely producing output is honest too (only one model configured).
+  [ "$_pap_n" -ge 1 ] && grep -qiE 'single.provider|1 of|provider timed out|only.*provider' "$_pap_ref" 2>/dev/null && return 0
+  return 1
+}
+
 # 0 = covered, 1 = definitively NOT covered, 2 = unknown/error (fail-open).
 #
 # CONTENT-KEYED coverage (by file CONTENT, not commit range): a change is covered
@@ -287,6 +362,7 @@ pg_range_reviewed() {
     for art in "$reviews"/*.md; do
       [ -e "$art" ] || continue
       grep -q '<!-- zuvo-review -->' "$art" 2>/dev/null || continue
+      pg_artifact_proven "$root" "$art" || continue           # post-cutoff artifact must cite a real adversarial run
       art_files="$(sed -n 's/^files:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
       pg_files_covered "$f" "$art_files" || continue          # F in artifact's files-set (or *)
       art_range="$(sed -n 's/^range:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
