@@ -23,7 +23,7 @@ Flags:
   --reset    ignore the cursor and (with --push) re-send everything (use sparingly)
   --no-retros  skip retros.log, send runs.log only
 """
-import os, sys, json, time, socket, gzip, urllib.request
+import os, sys, json, time, socket, gzip, hashlib, urllib.request
 
 HOME = os.path.expanduser("~")
 ZUVO = os.environ.get("ZUVO_DIR", os.path.join(HOME, ".zuvo"))
@@ -41,19 +41,27 @@ RETRO_FIELDS = ["date", "skill", "project", "code_type", "friction", "missing_te
 
 
 def read_cursor():
-    """Last ISO date already uploaded. Empty string => nothing sent yet."""
+    """Return (date, ids_at_that_date). Compound so same-second events are neither lost nor
+    re-sent: `date` is the newest ISO uploaded; `ids` are the idempotency keys of the entries
+    AT that exact date already sent. Tolerates the legacy bare-date file. ('', set()) => fresh."""
     try:
         with open(CURSOR) as f:
-            return f.read().strip()
+            raw = f.read().strip()
+        if not raw:
+            return "", set()
+        if raw.startswith("{"):
+            d = json.loads(raw)
+            return d.get("date", ""), set(d.get("ids", []))
+        return raw, set()                       # legacy: bare date, no id set
     except Exception:
-        return ""
+        return "", set()
 
 
-def write_cursor(iso):
+def write_cursor(date, ids):
     try:
         os.makedirs(os.path.dirname(CURSOR), exist_ok=True)
         with open(CURSOR, "w") as f:
-            f.write(iso)
+            json.dump({"date": date, "ids": sorted(ids)}, f)
     except Exception:
         pass
 
@@ -80,6 +88,11 @@ def parse_log(path, fields, prefix):
             continue
         rec = {fields[i]: cells[i] for i in range(min(len(fields), len(cells)))}
         rec["kind"] = prefix
+        # Stable idempotency key: sha1 of host + the raw line. Delivery is at-least-once (a
+        # partial-batch failure or an inclusive-cursor boundary re-send can put an event on the
+        # wire twice), so every entry carries an `id` the READER dedups on — that turns
+        # at-least-once into effectively-once WITHOUT a fragile exactly-once cursor.
+        rec["id"] = hashlib.sha1((HOST + "\t" + line).encode()).hexdigest()[:16]
         out.append(rec)
     return out
 
@@ -125,24 +138,39 @@ if __name__ == "__main__":
     want_retros = "--no-retros" not in sys.argv
 
     runs, retros = collect(want_retros)
-    cursor = "" if reset else read_cursor()
+    cdate, cids = ("", set()) if reset else read_cursor()
+    allrecs = runs + retros
 
-    # Incremental: only entries strictly newer than the cursor. ISO-8601 Z sorts lexically.
-    fresh = [r for r in (runs + retros) if r.get("date", "") > cursor]
+    # Compound-cursor selection: an entry is fresh if its date is strictly newer than the cursor
+    # date, OR it shares the cursor date but its id was not already sent. This loses nothing at a
+    # same-second boundary (runs.log + retros.log routinely stamp the same second) and re-sends
+    # nothing already delivered. ISO-8601 Z sorts lexically.
+    fresh = [r for r in allrecs
+             if r.get("date", "") > cdate
+             or (r.get("date", "") == cdate and r.get("id") not in cids)]
     fresh.sort(key=lambda r: r.get("date", ""))
 
-    new_max = max([r.get("date", "") for r in fresh], default=cursor)
-    run_id = "%s%s" % (int(time.time_ns()), len(fresh))
-    run_id = run_id[-18:]
+    new_max = max([r.get("date", "") for r in allrecs], default=cdate) if fresh else cdate
+    # New cursor id-set = every entry AT the new max date (all now delivered). Union keeps the
+    # prior ids when the max date did not advance.
+    new_ids = {r["id"] for r in allrecs if r.get("date") == new_max}
+    if new_max == cdate:
+        new_ids |= cids
+    run_id = ("%s%s" % (int(time.time_ns()), len(fresh)))[-18:]
 
     status, ok = ("dry-run (not requested)", 0)
     if do_push and fresh:
         status, ok = push(fresh, run_id)
-        # Advance the cursor only on a fully successful push (all batches sent).
-        if ok and ok == ((len(fresh) + BATCH - 1) // BATCH or 1):
-            write_cursor(new_max)
+        # Advance only on a FULLY successful push (all batches). On partial failure the cursor
+        # stays put -> next run re-sends from the old cursor (at-least-once); the per-entry `id`
+        # lets the reader collapse the duplicates (effectively-once).
+        expected = (len(fresh) + BATCH - 1) // BATCH or 1
+        if ok == expected:
+            write_cursor(new_max, new_ids)
     elif do_push and not fresh:
         status = "nothing new since cursor"
+
+    cursor = cdate
 
     print(f"host={HOST} runs={len(runs)} retros={len(retros)} cursor={cursor or '(none)'} "
           f"new={len(fresh)} -> {new_max or '(none)'}")
