@@ -51,4 +51,18 @@ r=$(echo x | ZUVO_PLAN_ROUND_BUDGET=1 timeout 8 bash "$AR" --mode code --single 
 r=$(echo x | ZUVO_PLAN_ROUND_BUDGET=1 timeout 8 bash "$AR" --mode security --single >/dev/null 2>&1; echo $?)
 [ "$r" -ne 7 ] && ok "--mode security is NOT subject to the plan budget" || bad "security hit the plan budget"
 
+echo "=== race safety: parallel passes never UNDER-count (the CRITICAL) ==="
+# The motivating run reviewed the 3 split documents in PARALLEL. A read-modify-write counter
+# races and loses increments (under-enforcement). Append-then-count cannot: the invariant is
+# proceeded <= budget always. (A burst larger than the budget may refuse ALL — over-enforcement,
+# the safe direction for a circuit-breaker.)
+repo
+rc="$TMP/race-rc"; : > "$rc"
+for i in 1 2 3 4 5 6 7 8; do
+  ( r="$(pass 4)"; echo "$r" >> "$rc" ) &
+done
+wait
+proceeded="$(grep -vc '^7$' "$rc")"
+[ "$proceeded" -le 4 ] && ok "8 parallel passes, budget 4: proceeded=$proceeded <= 4 (no lost increments)" || bad "under-enforced: $proceeded > 4"
+
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

@@ -180,14 +180,22 @@ if [[ "$REVIEW_MODE" == "plan" && "${ZUVO_PLAN_BUDGET_OFF:-}" != "1" && "$DOCTOR
   _pb_dir="$_pb_home/plan-budget"; _pb_file="$_pb_dir/$_pb_key"
   mkdir -p "$_pb_dir" 2>/dev/null || true
   _pb_now="$(date +%s)"
-  _pb_count=0; _pb_last=0
-  if [[ -f "$_pb_file" ]]; then
-    read -r _pb_count _pb_last < "$_pb_file" 2>/dev/null || { _pb_count=0; _pb_last=0; }
-    case "$_pb_count$_pb_last" in *[!0-9]*|"") _pb_count=0; _pb_last=0 ;; esac
-  fi
-  # A gap longer than the window means a new plan run — reset the counter.
-  [ $(( _pb_now - _pb_last )) -gt "$_pb_window" ] && _pb_count=0
-  _pb_count=$(( _pb_count + 1 ))
+  # Append-then-count, NOT read-modify-write. The transcript that motivated this ran the three
+  # split documents' reviews in PARALLEL, so a read/increment/write counter races and loses
+  # increments — under-counting under-enforces the breaker. A single `>>` of one epoch line is
+  # atomic for a short write; the budget is then the number of appended lines still inside the
+  # window. A race can only make two passes both append and both see the higher count, so it
+  # errs toward stopping EARLIER — the safe direction for a circuit-breaker (over-enforce, never
+  # under-enforce). The window also doubles as the new-run reset: old lines age out of the count.
+  printf '%s\n' "$_pb_now" >> "$_pb_file" 2>/dev/null || true
+  _pb_cutoff=$(( _pb_now - _pb_window ))
+  _pb_count="$(awk -v c="$_pb_cutoff" '$1 ~ /^[0-9]+$/ && $1 >= c' "$_pb_file" 2>/dev/null | wc -l | tr -d ' ')"
+  _pb_count="${_pb_count:-1}"
+  # NO inline prune. Rewriting the file (awk > tmp; mv) races with a concurrent append — a line
+  # appended between the read and the mv is lost, which UNDER-counts and re-opens the very hole
+  # this fixes. The count already filters to the window with awk, so out-of-window lines are
+  # simply ignored; they cost ~11 bytes each and a runaway adds only tens per day, so the file
+  # is bounded in practice without ever rewriting it. (Append-only is the whole point.)
   if [ "$_pb_count" -gt "$_pb_budget" ]; then
     printf '%s\n' "PLAN REVIEW BUDGET EXHAUSTED: $_pb_budget adversarial --mode plan passes already ran for this plan within ${_pb_window}s." >&2
     printf '%s\n' "  This is the deterministic circuit-breaker for the plan review loop (the skill's prose caps do" >&2
@@ -197,7 +205,6 @@ if [[ "$REVIEW_MODE" == "plan" && "${ZUVO_PLAN_BUDGET_OFF:-}" != "1" && "$DOCTOR
     echo '{"status":"budget_exhausted","mode":"plan","passes":'"$_pb_count"',"budget":'"$_pb_budget"'}'
     exit 7
   fi
-  printf '%s %s\n' "$_pb_count" "$_pb_now" > "$_pb_file" 2>/dev/null || true
   echo "  plan-review budget: pass $_pb_count/$_pb_budget (window ${_pb_window}s)" >&2
 fi
 
