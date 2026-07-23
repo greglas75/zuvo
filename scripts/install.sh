@@ -399,6 +399,17 @@ install_zuvo_home() {
     warn "scripts/zuvo-home/log-ideas not found in repo — skipping"
   fi
 
+  # Fleet telemetry uploader for runs.log/retros.log -> collector /ingest/zuvo (event stream,
+  # incremental cursor). The SCRIPT is deployed here; the per-host sync wrapper + scheduler
+  # (LaunchAgent / cron that fetch the collector token) are provisioned separately per machine,
+  # same as backlog-collect.py — they are host-specific (SSH target, secret path), not plugin.
+  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/runlog-collect.py" ]]; then
+    cp "$ZUVO_DIR/scripts/zuvo-home/runlog-collect.py" "$HOME/.zuvo/runlog-collect.py"
+    ok "runlog-collect.py installed (~/.zuvo/runlog-collect.py) — schedule a --push wrapper per host"
+  else
+    warn "scripts/zuvo-home/runlog-collect.py not found in repo — skipping"
+  fi
+
   if [[ -f "$ZUVO_DIR/scripts/zuvo-home/verify-plan-dag" ]]; then
     cp "$ZUVO_DIR/scripts/zuvo-home/verify-plan-dag" "$HOME/.zuvo/verify-plan-dag"
     chmod +x "$HOME/.zuvo/verify-plan-dag"
