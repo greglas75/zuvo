@@ -391,6 +391,14 @@ install_zuvo_home() {
     warn "scripts/zuvo-home/append-retro not found in repo — skipping"
   fi
 
+  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/log-ideas" ]]; then
+    cp "$ZUVO_DIR/scripts/zuvo-home/log-ideas" "$HOME/.zuvo/log-ideas"
+    chmod +x "$HOME/.zuvo/log-ideas"
+    ok "log-ideas installed (~/.zuvo/log-ideas)"
+  else
+    warn "scripts/zuvo-home/log-ideas not found in repo — skipping"
+  fi
+
   if [[ -f "$ZUVO_DIR/scripts/zuvo-home/verify-plan-dag" ]]; then
     cp "$ZUVO_DIR/scripts/zuvo-home/verify-plan-dag" "$HOME/.zuvo/verify-plan-dag"
     chmod +x "$HOME/.zuvo/verify-plan-dag"

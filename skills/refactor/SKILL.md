@@ -741,12 +741,13 @@ DID change public surface (moved a module, renamed an exported symbol, split a p
 changed an import path others use) → update the architecture/onboarding note + CHANGELOG.
 Record the doc paths (or the N/A line) for the Post-Completion Summary.
 
-### Follow-up ideas (optional — ZERO ceremony)
+### Follow-up ideas (optional — ZERO ceremony, leaves a receipt)
 
-If genuinely new IDEAS surfaced this run — feature possibilities, "we could also X" spotted while
-restructuring — append ONE line each to `memory/ideas.md` **at the MAIN checkout root** (worktree-safe resolution per `backlog-protocol.md`; create if missing):
-`- [YYYY-MM-DD] [refactor] <idea> — <one-line context>`. Ideas only (debt/findings → backlog).
-**If nothing surfaced, skip silently** — no marker, no gate, no telemetry.
+Follow `../../shared/includes/followup-ideas.md` with `<skill> = refactor`: append genuine new
+ideas to `memory/ideas.md` at the MAIN checkout root if any surfaced, then ALWAYS record the
+receipt `~/.zuvo/log-ideas --skill refactor --count <N>` (N=0 is the normal, honest outcome — do
+not invent ideas to inflate it). The receipt makes the un-gated step's silence auditable in
+`~/.zuvo/ideas.log` without forcing ideation.
 
 ### Retrospective (REQUIRED)
 

@@ -614,13 +614,13 @@ COMPLETION GATE CHECK
 
 **Phase order is non-negotiable.** Retro append → log append → final Run: block. Printing the Run: line and the retrospective markdown without executing bash leaves `~/.zuvo/retros.log`, `~/.zuvo/retros.md`, and `~/.zuvo/runs.log` empty — observed failure mode for new projects (e.g. `uptime` 2026-05-09).
 
-### Follow-up ideas (optional — ZERO ceremony)
+### Follow-up ideas (optional — ZERO ceremony, leaves a receipt)
 
-If genuinely new IDEAS surfaced this session — feature possibilities, "we could also X", better
-approaches for later — append ONE line each to `memory/ideas.md` **at the MAIN checkout root** (worktree-safe resolution per `backlog-protocol.md`; create if missing):
-`- [YYYY-MM-DD] [brainstorm] <idea> — <one-line context>`. Ideas only: debt/findings go to backlog, not
-here. **If nothing surfaced, skip silently** — no marker, no gate, no telemetry. This file is read
-by knowledge-prime so future sessions see it.
+Follow `../../shared/includes/followup-ideas.md` with `<skill> = brainstorm`: append genuine new
+ideas to `memory/ideas.md` at the MAIN checkout root if any surfaced, then ALWAYS record the
+receipt `~/.zuvo/log-ideas --skill brainstorm --count <N>` (N=0 is the normal, honest outcome — do
+not invent ideas to inflate it). The receipt makes the un-gated step's silence auditable in
+`~/.zuvo/ideas.log` without forcing ideation.
 
 ### Retrospective (REQUIRED, before final Run: block)
 

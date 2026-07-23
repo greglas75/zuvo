@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# ~/.zuvo/log-ideas — one-line receipt that a skill's "Follow-up ideas" step RAN.
+#
+# Why this exists: the ideas step is deliberately zero-ceremony ("if nothing surfaced, skip
+# silently — no marker, no gate, no telemetry"). The cost of that silence is that after many
+# sessions memory/ideas.md is near-empty and you cannot tell WHY: did the step run and honestly
+# yield nothing (expected for heads-down execute/refactor), or did the agent just skip it? This
+# closes that blind spot WITHOUT forcing ideas: the skill calls this once at the ideas step —
+# with the real count, which is legitimately 0 most of the time — and the receipt lands in
+# ~/.zuvo/ideas.log. It never demands an idea; it only records that the step was reached.
+#
+# Usage:
+#   ~/.zuvo/log-ideas --skill build [--count N] [--project P]
+#     --count defaults to 0 (nothing surfaced). PROJECT self-resolves from the git repo like
+#     append-retro; the inherited $PROJECT env var is ignored (an orchestrator exports a
+#     plan-slug that would mis-attribute the row).
+#
+# Append-only, no rotation here — rotate-retros-style age archival can be added if it ever
+# grows (one ~40-byte line per session; trivial). Best-effort: any error exits 0 so it can
+# never break a skill's completion path.
+set -u
+
+ZUVO_HOME="${ZUVO_HOME:-$HOME/.zuvo}"
+mkdir -p "$ZUVO_HOME" 2>/dev/null || exit 0
+LOG="$ZUVO_HOME/ideas.log"
+
+SKILL="" PROJECT="" COUNT="0"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --skill)   SKILL="${2:-}"; shift 2 ;;
+    --skill=*) SKILL="${1#*=}"; shift ;;
+    --count)   COUNT="${2:-0}"; shift 2 ;;
+    --count=*) COUNT="${1#*=}"; shift ;;
+    --project) PROJECT="${2:-}"; shift 2 ;;
+    --project=*) PROJECT="${1#*=}"; shift ;;
+    *) shift ;;                                   # tolerate stray args, never fail a skill
+  esac
+done
+
+[ -n "$SKILL" ] || SKILL="unknown"
+SKILL="$(printf '%s' "$SKILL" | tr -cd 'a-zA-Z0-9:_-')"
+COUNT="$(printf '%s' "$COUNT" | tr -cd '0-9')"; [ -n "$COUNT" ] || COUNT=0
+
+# PROJECT: --project wins, else git repo basename (worktree-safe: the MAIN checkout), else pwd.
+if [ -z "$PROJECT" ]; then
+  _main="$(git worktree list --porcelain 2>/dev/null | head -1 | sed 's/^worktree //')"
+  [ -n "$_main" ] || _main="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  PROJECT="$(basename "$_main")"
+fi
+PROJECT="$(printf '%s' "$PROJECT" | tr -cd 'a-zA-Z0-9._-')"; [ -n "$PROJECT" ] || PROJECT="unknown"
+
+DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+[ -f "$LOG" ] || printf '# DATE\tSKILL\tPROJECT\tIDEAS\n' > "$LOG" 2>/dev/null || exit 0
+printf '%s\t%s\t%s\t%s\n' "$DATE" "$SKILL" "$PROJECT" "$COUNT" >> "$LOG" 2>/dev/null || exit 0
+echo "log-ideas: recorded $COUNT idea(s) for $SKILL on $PROJECT"
+exit 0
