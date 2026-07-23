@@ -177,6 +177,12 @@ if [[ "$REVIEW_MODE" == "plan" && "${ZUVO_PLAN_BUDGET_OFF:-}" != "1" && "$DOCTOR
   _pb_home="${ZUVO_HOME:-$HOME/.zuvo}"
   _pb_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
   _pb_key="$(printf '%s' "$_pb_root" | (shasum 2>/dev/null || sha1sum 2>/dev/null) | cut -c1-16)"
+  # SHA-free fallback: if neither shasum nor sha1sum exists, an empty key would make _pb_file a
+  # bare directory path — the append fails, count stays 0, and the breaker SILENTLY never fires.
+  # A sanitized tail of the repo path is a non-empty, per-repo key that needs no SHA tool.
+  _pb_key="$(printf '%s' "$_pb_key" | tr -cd 'a-f0-9')"
+  [ -n "$_pb_key" ] || _pb_key="$(printf '%s' "$_pb_root" | tr -c 'a-zA-Z0-9' '_' | tail -c 48)"
+  [ -n "$_pb_key" ] || _pb_key="default"
   _pb_dir="$_pb_home/plan-budget"; _pb_file="$_pb_dir/$_pb_key"
   mkdir -p "$_pb_dir" 2>/dev/null || true
   _pb_now="$(date +%s)"
