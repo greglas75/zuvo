@@ -25,13 +25,16 @@ mkdir -p "$ZUVO_HOME" 2>/dev/null || exit 0
 LOG="$ZUVO_HOME/ideas.log"
 
 SKILL="" PROJECT="" COUNT="0"
+# `shift 2` is UNSAFE for a value-taking flag that arrives LAST: when $#==1, `shift 2` fails
+# (n > $#), does NOT shift, and `$1` stays the flag -> the while loop spins forever at 100% CPU.
+# So each value flag shifts the flag, then the value only if one is actually present.
 while [ $# -gt 0 ]; do
   case "$1" in
-    --skill)   SKILL="${2:-}"; shift 2 ;;
+    --skill)   SKILL="${2:-}";  shift; [ $# -gt 0 ] && shift ;;
     --skill=*) SKILL="${1#*=}"; shift ;;
-    --count)   COUNT="${2:-0}"; shift 2 ;;
+    --count)   COUNT="${2:-0}"; shift; [ $# -gt 0 ] && shift ;;
     --count=*) COUNT="${1#*=}"; shift ;;
-    --project) PROJECT="${2:-}"; shift 2 ;;
+    --project) PROJECT="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --project=*) PROJECT="${1#*=}"; shift ;;
     *) shift ;;                                   # tolerate stray args, never fail a skill
   esac
