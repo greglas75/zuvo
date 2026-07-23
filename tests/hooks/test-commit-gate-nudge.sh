@@ -2,6 +2,9 @@
 # Task 6 — commit-gate best-effort nudge. The nudge NEVER blocks (exit 0 in all
 # nudge cases); the pre-existing execute-run adversarial block is preserved.
 set -u
+# The 2026-07-23 adversarial proof-of-work layer is covered by test-review-proof-gate.sh;
+# this nudge test grandfathers it off so its proofless coverage fixture behaves as before.
+export PG_REVIEW_PROOF_CUTOFF=99999999999
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 HOOK="$ROOT/hooks/pre-commit-adversarial-gate.sh"
