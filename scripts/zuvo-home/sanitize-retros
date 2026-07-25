@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""Normalize drifted `key=value` RETRO lines in retros.log into the canonical 17-field TSV.
+
+Why: retrospective.md mandates calling `~/.zuvo/append-retro` (which emits canonical TSV) and
+forbids hand-assembly — but agents (notably Codex/gpt models) sometimes ignore that and append a
+`RETRO: skill=X project=Y at=Z findings=N verdict=V ...` key=value line straight to retros.log.
+Those are unparseable by the append-runlog gate and the miner, so the run's learning is present
+but uncounted. Rather than depend on agent compliance (which failed), this SELF-HEALS the format
+deterministically: it rewrites every key=value RETRO line to the 17-field positional schema,
+mapping the keys it recognizes and leaving `-` for the rest. Canonical lines pass through
+untouched. Idempotent. Wire it into the rotate-retros schedule so drift never accumulates.
+
+Usage:
+  ~/.zuvo/sanitize-retros              # dry-run: report how many would be normalized
+  ~/.zuvo/sanitize-retros --apply      # rewrite retros.log in place (backup kept)
+  ~/.zuvo/sanitize-retros --apply --target <file>
+"""
+import os, sys, re
+
+ZUVO = os.environ.get("ZUVO_DIR", os.path.expanduser("~/.zuvo"))
+FIELDS = ["date", "skill", "project", "code_type", "friction", "missing_template", "context_gap",
+          "turns", "tool_calls", "files_read", "files_modified", "branch", "sha7",
+          "blind_audit", "adversarial", "codesift", "routing"]
+# key=value aliases -> canonical field. Unmapped keys are ignored; unfilled fields become '-'.
+ALIAS = {
+    "at": "date", "ts": "date", "date": "date",
+    "skill": "skill", "project": "project", "proj": "project",
+    "code_type": "code_type", "codetype": "code_type",
+    "friction": "friction", "friction_category": "friction",
+    "missing_template": "missing_template", "context_gap": "context_gap",
+    "turns": "turns", "turns_wasted": "turns", "tool_calls": "tool_calls", "tools": "tool_calls",
+    "files_read": "files_read", "files_modified": "files_modified",
+    "branch": "branch", "sha7": "sha7", "sha": "sha7",
+    "blind_audit": "blind_audit", "adversarial": "adversarial", "adversarial_passes": "adversarial",
+    "codesift": "codesift", "routing": "routing", "routing_status": "routing",
+}
+ISO = re.compile(r'(20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ)')
+CANON_SKILLS = re.compile(r'^(plan|execute|review|build|brainstorm|refactor|design|debug|ship|docs|'
+    r'[a-z]+-audit|pentest|mutation-test|write-tests|fix-tests|write-e2e|tests-performance|'
+    r'content-fix|content-migration|write-article|content-expand|canary|deploy|release-docs|retro|'
+    r'incident|benchmark|agent-benchmark|context-audit|skill-eval|leads|geo-fix|seo-fix|'
+    r'architecture|ui-design-team|design-review|receive-review|worktree|backlog|presentation)$')
+
+
+def is_drifted(line):
+    """A RETRO line whose field 2 is not a bare skill name (i.e. it holds key=value text)."""
+    if not line.startswith("RETRO:"):
+        return False
+    cells = line.split("\t")
+    if len(cells) >= 17 and cells[0].startswith("RETRO: 20") and CANON_SKILLS.match(cells[1] if len(cells) > 1 else ""):
+        return False                                  # already canonical
+    return "=" in line                                 # key=value drift
+
+
+def parse_kv(line):
+    kv = {}
+    for k, v in re.findall(r'([a-z_]+)=([^\s]+(?:\s(?![a-z_]+=)[^\s]+)*)', line):
+        f = ALIAS.get(k)
+        if f and f not in kv:
+            kv[f] = v.strip()
+    if "date" not in kv:
+        m = ISO.search(line)
+        if m:
+            kv["date"] = m.group(1)
+    return kv
+
+
+def to_canonical(line):
+    kv = parse_kv(line)
+    if not kv.get("date") or not kv.get("skill"):
+        return None                                    # too little to place — leave as-is
+    row = [kv.get(f, "-") or "-" for f in FIELDS]
+    # sanitize each cell: no tabs/newlines (they would break the 17-field shape)
+    row = [re.sub(r'[\t\r\n]', ' ', c) for c in row]
+    return "RETRO: " + "\t".join(row)
+
+
+def run(target, apply):
+    try:
+        lines = open(target, errors="replace").read().splitlines()
+    except Exception as e:
+        print(f"sanitize-retros: cannot read {target}: {e}", file=sys.stderr)
+        return 1
+    out, changed, skipped = [], 0, 0
+    for ln in lines:
+        if is_drifted(ln):
+            c = to_canonical(ln)
+            if c:
+                out.append(c); changed += 1
+            else:
+                out.append(ln); skipped += 1        # keep undecodable drift rather than drop data
+        else:
+            out.append(ln)
+    print(f"sanitize-retros: {target} — {changed} normalized, {skipped} kept as-is (undecodable)")
+    if apply and changed:
+        bak = f"{target}.pre-sanitize"
+        try:
+            open(bak, "w").write("\n".join(lines) + "\n")
+            open(target, "w").write("\n".join(out) + "\n")
+            print(f"  rewritten (backup: {bak})")
+        except Exception as e:
+            print(f"  write failed: {e}", file=sys.stderr); return 1
+    elif apply:
+        print("  nothing to rewrite")
+    return 0
+
+
+if __name__ == "__main__":
+    apply = "--apply" in sys.argv
+    target = os.path.join(ZUVO, "retros.log")
+    if "--target" in sys.argv:
+        i = sys.argv.index("--target")
+        if i + 1 < len(sys.argv):
+            target = sys.argv[i + 1]
+    sys.exit(run(target, apply))

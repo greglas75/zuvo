@@ -410,6 +410,14 @@ install_zuvo_home() {
     warn "scripts/zuvo-home/runlog-collect.py not found in repo — skipping"
   fi
 
+  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/sanitize-retros" ]]; then
+    cp "$ZUVO_DIR/scripts/zuvo-home/sanitize-retros" "$HOME/.zuvo/sanitize-retros"
+    chmod +x "$HOME/.zuvo/sanitize-retros"
+    ok "sanitize-retros installed (~/.zuvo/sanitize-retros) — normalizes key=value retro drift; wire into rotate schedule"
+  else
+    warn "scripts/zuvo-home/sanitize-retros not found in repo — skipping"
+  fi
+
   if [[ -f "$ZUVO_DIR/scripts/zuvo-home/verify-plan-dag" ]]; then
     cp "$ZUVO_DIR/scripts/zuvo-home/verify-plan-dag" "$HOME/.zuvo/verify-plan-dag"
     chmod +x "$HOME/.zuvo/verify-plan-dag"
