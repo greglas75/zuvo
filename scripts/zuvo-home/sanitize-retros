@@ -35,7 +35,21 @@ def acquire_lock(wait=5.0):
             pass
         try:
             st = os.stat(LOCK)
-            if time.time() - st.st_mtime > 30:      # stale -> break it
+            # Break a stale lock ONLY when its holder is provably gone — a live-but-slow writer
+            # (append-retro/rotate on a big file or slow disk) can legitimately hold it past 30s,
+            # and stealing it there would let two processes write and lose entries. Prefer the
+            # pid-liveness check (matches append-retro's `kill -0`); fall back to the mtime age
+            # only when there is no readable pid.
+            dead = False
+            try:
+                pid = int(open(os.path.join(LOCK, "pid")).read().strip())
+                try:
+                    os.kill(pid, 0)                 # raises if the pid is gone
+                except (ProcessLookupError, PermissionError) as e:
+                    dead = isinstance(e, ProcessLookupError)   # gone -> dead; alive-but-not-ours -> keep
+            except (FileNotFoundError, ValueError):
+                dead = (time.time() - st.st_mtime > 30)        # no pid: age-based break
+            if dead:
                 try:
                     os.remove(os.path.join(LOCK, "pid"))
                 except Exception:
@@ -79,7 +93,7 @@ ALIAS = {
 }
 ISO = re.compile(r'(20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ)')
 CANON_SKILLS = re.compile(r'^(plan|execute|review|build|brainstorm|refactor|design|debug|ship|docs|'
-    r'[a-z]+-audit|pentest|mutation-test|write-tests|fix-tests|write-e2e|tests-performance|'
+    r'[a-z][a-z0-9]*-audit|pentest|mutation-test|write-tests|fix-tests|write-e2e|tests-performance|'
     r'content-fix|content-migration|write-article|content-expand|canary|deploy|release-docs|retro|'
     r'incident|benchmark|agent-benchmark|context-audit|skill-eval|leads|geo-fix|seo-fix|'
     r'architecture|ui-design-team|design-review|receive-review|worktree|backlog|presentation)$')

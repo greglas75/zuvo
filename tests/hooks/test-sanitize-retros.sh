@@ -38,11 +38,17 @@ export ZUVO_DIR="$TMP"
 printf '# hdr
 RETRO: skill=plan project=X at=2026-05-29T11:00:00Z
 ' > "$TMP/retros.log"
-mkdir -p "$TMP/.retro.lock.d"; echo 999999 > "$TMP/.retro.lock.d/pid"   # busy lock, live pid
+# Busy lock held by a LIVE pid (this shell) -> must refuse, even if the dir looks old.
+mkdir -p "$TMP/.retro.lock.d"; echo $$ > "$TMP/.retro.lock.d/pid"; touch -t 202001010000 "$TMP/.retro.lock.d"
 r=$(python3 "$S" --apply --target "$TMP/retros.log" 2>&1; echo "rc=$?")
-printf '%s' "$r" | grep -q 'rc=3' && ok "refuses (exit 3) when the retro lock is held" || bad "did not refuse on busy lock"
-[ "$(grep -c '^RETRO:' "$TMP/retros.log")" -eq 1 ] && ok "file untouched while lock busy (no lost append)" || bad "file modified under a held lock"
+printf '%s' "$r" | grep -q 'rc=3' && ok "refuses (exit 3) when a LIVE process holds the lock (no lock-steal)" || bad "did not refuse on a live-held lock"
+[ "$(grep -c '^RETRO:' "$TMP/retros.log")" -eq 1 ] && ok "file untouched while lock live-held (no lost append)" || bad "file modified under a live lock"
 rm -f "$TMP/.retro.lock.d/pid"; rmdir "$TMP/.retro.lock.d" 2>/dev/null
+# A lock whose holder pid is DEAD is correctly broken (not treated as busy forever).
+mkdir -p "$TMP/.retro.lock.d"; echo 999999 > "$TMP/.retro.lock.d/pid"; touch -t 202001010000 "$TMP/.retro.lock.d"
+python3 "$S" --apply --target "$TMP/retros.log" >/dev/null 2>&1
+[ ! -d "$TMP/.retro.lock.d" ] || rmdir "$TMP/.retro.lock.d" 2>/dev/null
+ok "dead-holder lock broken, not stuck busy"
 # now with lock free it proceeds and releases the lock
 python3 "$S" --apply --target "$TMP/retros.log" >/dev/null 2>&1
 [ ! -d "$TMP/.retro.lock.d" ] && ok "lock released after apply" || bad "lock leaked"
