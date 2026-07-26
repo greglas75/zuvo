@@ -15,9 +15,52 @@ Usage:
   ~/.zuvo/sanitize-retros --apply      # rewrite retros.log in place (backup kept)
   ~/.zuvo/sanitize-retros --apply --target <file>
 """
-import os, sys, re
+import os, sys, re, time
 
 ZUVO = os.environ.get("ZUVO_DIR", os.path.expanduser("~/.zuvo"))
+LOCK = os.path.join(ZUVO, ".retro.lock.d")          # SAME lock append-retro / rotate-retros use
+
+
+def acquire_lock(wait=5.0):
+    """Serialize against append-retro / rotate-retros so a concurrent append is not lost.
+    Dir-lock (mkdir is atomic); pid + 30s stale-break. Returns True if held."""
+    deadline = time.time() + wait
+    while True:
+        try:
+            os.mkdir(LOCK)
+            with open(os.path.join(LOCK, "pid"), "w") as f:
+                f.write(str(os.getpid()))
+            return True
+        except FileExistsError:
+            pass
+        try:
+            st = os.stat(LOCK)
+            if time.time() - st.st_mtime > 30:      # stale -> break it
+                try:
+                    os.remove(os.path.join(LOCK, "pid"))
+                except Exception:
+                    pass
+                try:
+                    os.rmdir(LOCK)
+                except Exception:
+                    pass
+                continue
+        except FileNotFoundError:
+            continue
+        if time.time() > deadline:
+            return False
+        time.sleep(0.1)
+
+
+def release_lock():
+    try:
+        os.remove(os.path.join(LOCK, "pid"))
+    except Exception:
+        pass
+    try:
+        os.rmdir(LOCK)
+    except Exception:
+        pass
 FIELDS = ["date", "skill", "project", "code_type", "friction", "missing_template", "context_gap",
           "turns", "tool_calls", "files_read", "files_modified", "branch", "sha7",
           "blind_audit", "adversarial", "codesift", "routing"]
@@ -75,12 +118,7 @@ def to_canonical(line):
     return "RETRO: " + "\t".join(row)
 
 
-def run(target, apply):
-    try:
-        lines = open(target, errors="replace").read().splitlines()
-    except Exception as e:
-        print(f"sanitize-retros: cannot read {target}: {e}", file=sys.stderr)
-        return 1
+def _classify(lines):
     out, changed, skipped = [], 0, 0
     for ln in lines:
         if is_drifted(ln):
@@ -91,17 +129,49 @@ def run(target, apply):
                 out.append(ln); skipped += 1        # keep undecodable drift rather than drop data
         else:
             out.append(ln)
-    print(f"sanitize-retros: {target} — {changed} normalized, {skipped} kept as-is (undecodable)")
-    if apply and changed:
-        bak = f"{target}.pre-sanitize"
+    return out, changed, skipped
+
+
+def run(target, apply):
+    # Dry run needs no lock (read-only). An --apply rewrites the whole file, so it MUST hold the
+    # writers' lock AND write atomically — otherwise a retro appended by a concurrent session
+    # between our read and our write is silently lost, and a partial write truncates the log.
+    if not apply:
         try:
-            open(bak, "w").write("\n".join(lines) + "\n")
-            open(target, "w").write("\n".join(out) + "\n")
-            print(f"  rewritten (backup: {bak})")
+            lines = open(target, errors="replace").read().splitlines()
         except Exception as e:
+            print(f"sanitize-retros: cannot read {target}: {e}", file=sys.stderr); return 1
+        _, changed, skipped = _classify(lines)
+        print(f"sanitize-retros: {target} — {changed} normalized, {skipped} kept as-is (undecodable) [dry-run]")
+        return 0
+
+    if not acquire_lock():
+        print("sanitize-retros: lock busy — retros.log NOT modified; retry later", file=sys.stderr)
+        return 3
+    try:
+        try:
+            lines = open(target, errors="replace").read().splitlines()   # read UNDER the lock
+        except Exception as e:
+            print(f"sanitize-retros: cannot read {target}: {e}", file=sys.stderr); return 1
+        out, changed, skipped = _classify(lines)
+        print(f"sanitize-retros: {target} — {changed} normalized, {skipped} kept as-is (undecodable)")
+        if not changed:
+            print("  nothing to rewrite"); return 0
+        try:
+            open(f"{target}.pre-sanitize", "w").write("\n".join(lines) + "\n")
+            tmp = f"{target}.tmp.{os.getpid()}"
+            with open(tmp, "w") as f:
+                f.write("\n".join(out) + "\n")
+            os.replace(tmp, target)                  # atomic: a partial write can never truncate target
+            print(f"  rewritten atomically (backup: {target}.pre-sanitize)")
+        except Exception as e:
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
             print(f"  write failed: {e}", file=sys.stderr); return 1
-    elif apply:
-        print("  nothing to rewrite")
+    finally:
+        release_lock()
     return 0
 
 

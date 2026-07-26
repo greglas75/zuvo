@@ -33,4 +33,19 @@ printf 'RETRO: garbage=only nothing=here\n' >> "$F"
 python3 "$S" --apply --target "$F" >/dev/null 2>&1
 grep -q 'garbage=only' "$F" && ok "undecodable line kept (data never dropped)" || bad "undecodable line lost"
 
+echo "=== concurrency: lock held on --apply, refuses when busy (no lost append) ==="
+export ZUVO_DIR="$TMP"
+printf '# hdr
+RETRO: skill=plan project=X at=2026-05-29T11:00:00Z
+' > "$TMP/retros.log"
+mkdir -p "$TMP/.retro.lock.d"; echo 999999 > "$TMP/.retro.lock.d/pid"   # busy lock, live pid
+r=$(python3 "$S" --apply --target "$TMP/retros.log" 2>&1; echo "rc=$?")
+printf '%s' "$r" | grep -q 'rc=3' && ok "refuses (exit 3) when the retro lock is held" || bad "did not refuse on busy lock"
+[ "$(grep -c '^RETRO:' "$TMP/retros.log")" -eq 1 ] && ok "file untouched while lock busy (no lost append)" || bad "file modified under a held lock"
+rm -f "$TMP/.retro.lock.d/pid"; rmdir "$TMP/.retro.lock.d" 2>/dev/null
+# now with lock free it proceeds and releases the lock
+python3 "$S" --apply --target "$TMP/retros.log" >/dev/null 2>&1
+[ ! -d "$TMP/.retro.lock.d" ] && ok "lock released after apply" || bad "lock leaked"
+unset ZUVO_DIR
+
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }
