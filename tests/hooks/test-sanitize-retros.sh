@@ -4,6 +4,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 S="$ROOT/scripts/zuvo-home/sanitize-retros"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+export ROOT="$ROOT"
 fails=0; ok(){ echo "  ✓ $1"; }; bad(){ echo "  ✗ $1"; fails=$((fails+1)); }
 F="$TMP/retros.log"
 
@@ -52,6 +53,43 @@ ok "dead-holder lock broken, not stuck busy"
 # now with lock free it proceeds and releases the lock
 python3 "$S" --apply --target "$TMP/retros.log" >/dev/null 2>&1
 [ ! -d "$TMP/.retro.lock.d" ] && ok "lock released after apply" || bad "lock leaked"
+unset ZUVO_DIR
+
+echo "=== structural canonical detection: unknown/digit skills are not drift ==="
+export ZUVO_DIR="$TMP"
+python3 - <<'PYEOF'
+import os
+from importlib.machinery import SourceFileLoader
+S=SourceFileLoader('s',os.path.join(os.environ['ROOT'] if 'ROOT' in os.environ else '.','scripts/zuvo-home/sanitize-retros')).load_module()
+c17='RETRO: 2026-07-25T10:00:00Z\tbrand-new-2027\tp\t-\t-\t-\t-\t1\t1\t1\t1\tm\ts\tc\t2f\ti\tok'
+a='RETRO: 2026-07-24T10:00:00Z\ta11y-audit\tp\t-\t-\t-\t-\t1\t1\t1\t1\tm\ts\tc\t2f\ti\tok'
+d='RETRO: skill=plan project=X at=2026-05-29T11:00:00Z'
+assert S.is_drifted(c17) is False, 'unknown skill flagged'
+assert S.is_drifted(a) is False, 'a11y-audit flagged'
+assert S.is_drifted(d) is True, 'real drift missed'
+print('OK')
+PYEOF
+[ "$(ROOT="$ROOT" python3 - <<'PYEOF' 2>/dev/null
+import os
+from importlib.machinery import SourceFileLoader
+S=SourceFileLoader('s',os.path.join(os.environ['ROOT'],'scripts/zuvo-home/sanitize-retros')).load_module()
+c='RETRO: 2026-07-25T10:00:00Z\tbrand-new-2027\tp\t-\t-\t-\t-\t1\t1\t1\t1\tm\ts\tc\t2f\ti\tok'
+print('yes' if S.is_drifted(c) is False else 'no')
+PYEOF
+)" = "yes" ] && ok "canonical line for an unknown/new skill is NOT rewritten (structural, not list-based)" || bad "unknown-skill canonical line misclassified"
+
+echo "=== release only removes OUR lock (never another process's) ==="
+python3 - <<'PYEOF'
+import os
+from importlib.machinery import SourceFileLoader
+S=SourceFileLoader('s',os.path.join(os.environ['ROOT'],'scripts/zuvo-home/sanitize-retros')).load_module()
+os.makedirs(S.LOCK, exist_ok=True); open(os.path.join(S.LOCK,'pid'),'w').write('999999')
+S.release_lock()
+assert os.path.isdir(S.LOCK), 'released another process lock'
+import shutil; shutil.rmtree(S.LOCK)
+print('OK')
+PYEOF
+[ $? -eq 0 ] && ok "release_lock leaves a lock owned by another pid intact" || bad "release_lock removed a foreign lock"
 unset ZUVO_DIR
 
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

@@ -67,6 +67,15 @@ def acquire_lock(wait=5.0):
 
 
 def release_lock():
+    # Release ONLY a lock we still own: verify the pid file is ours before deleting, so we can
+    # never remove a lock another process has since acquired (defense in depth — matches
+    # append-retro's `[ "$(cat pid)" = "$$" ]`).
+    try:
+        owner = int(open(os.path.join(LOCK, "pid")).read().strip())
+    except Exception:
+        owner = None
+    if owner is not None and owner != os.getpid():
+        return                                        # not ours — leave it alone
     try:
         os.remove(os.path.join(LOCK, "pid"))
     except Exception:
@@ -100,13 +109,18 @@ CANON_SKILLS = re.compile(r'^(plan|execute|review|build|brainstorm|refactor|desi
 
 
 def is_drifted(line):
-    """A RETRO line whose field 2 is not a bare skill name (i.e. it holds key=value text)."""
+    """A RETRO line is drifted iff it is NOT already a well-formed positional TSV and carries
+    key=value text. 'Well-formed' is checked STRUCTURALLY — 17 fields, an ISO date in field 0,
+    and a bare skill token in field 1 (no '=') — NOT by membership in a hardcoded skill list:
+    a canonical line for a newly-added skill must never be treated as drift (that would risk
+    rewriting a valid entry). CANON_SKILLS is used only as a soft signal elsewhere, never as the
+    gate for 'is this already canonical'."""
     if not line.startswith("RETRO:"):
         return False
     cells = line.split("\t")
-    if len(cells) >= 17 and cells[0].startswith("RETRO: 20") and CANON_SKILLS.match(cells[1] if len(cells) > 1 else ""):
-        return False                                  # already canonical
-    return "=" in line                                 # key=value drift
+    if len(cells) >= 17 and ISO.search(cells[0]) and "=" not in (cells[1] if len(cells) > 1 else "="):
+        return False                                  # already positional-canonical, any skill name
+    return "=" in line                                 # otherwise: key=value drift
 
 
 def parse_kv(line):
