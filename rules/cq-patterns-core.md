@@ -11,10 +11,10 @@ Writing patterns only. Read BEFORE producing code. Full version with examples: `
 - **Typed exceptions**: `throw new NotFoundException()` — never generic `throw new Error` in framework services.
 
 ## Security
-- **Timing-safe compare**: `crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b))` — never `===` for secrets.
+- **Timing-safe compare**: hash to a fixed width, then compare — `timingSafeEqual(sha256(a), sha256(b))`. Never `===` for secrets, and never `timingSafeEqual` on raw buffers: it THROWS on a length mismatch (uncaught 500 + length oracle).
 - **Defense in depth**: auth guard AND `WHERE { organizationId: orgId }` in query — guard alone is NOT sufficient.
 - **PII in logs**: log correlation IDs only — no email, password, token in logs, error messages, or API responses.
-- **Path traversal**: `path.normalize()` + `startsWith(baseDir)` guard — never user input directly in `path.join`.
+- **Path traversal**: `path.resolve()` + containment via `path.relative()` (reject `..`/absolute), then `realpath` for symlinks — never user input directly in `path.join`, and never `normalize()`+`startsWith()`: that passes `/var/data-evil` for base `/var/data`.
 - **No hardcoded secrets**: runtime env + `.env` in `.gitignore` — never secrets in source.
 - **Non-literal RegExp**: escape special chars before `new RegExp(userInput)`.
 - **Child process**: `execFileSync('cmd', [args])` — avoid `shell: true`.
@@ -30,7 +30,7 @@ Writing patterns only. Read BEFORE producing code. Full version with examples: `
 - **Bounded queries**: `findMany({ take: 100, select: { id: true } })` — never unbounded findMany.
 - **Cap user limits**: `Math.min(limit ?? DEFAULT, MAX_PAGE_SIZE)` — never pass uncapped user input.
 - **Timeout on outbound**: `AbortSignal.timeout(10_000)` on every fetch/HTTP call.
-- **Timeout hierarchy**: client timeout < server timeout < DB timeout — never inverted.
+- **Timeout hierarchy**: DB timeout < server timeout < client timeout — the deadline shrinks with depth, so the innermost layer fails first and the caller is still there to receive the error. Inverting it exhausts the connection pool.
 - **Concurrency limit**: `pLimit(5)` on dynamic fan-out — never unbounded `Promise.all` on user-sized arrays.
 - **Cache TTL**: every `redis.set` needs `EX`/`PX` — never cache without expiration (CQ23).
 

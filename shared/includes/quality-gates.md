@@ -35,7 +35,7 @@ This is a condensed reference. Full details, evidence examples, and N/A rules ar
 | CQ25 | Structure | New code follows existing project patterns. No special snowflakes. |
 | CQ26 | Observability | Structured logger with context (requestId, userId), not plain console.log. |
 | CQ27 | Observability | Log levels correct. `error` for infrastructure failures only, not validation. |
-| CQ28 | Resilience | Timeout hierarchy correct: client < server < DB. |
+| CQ28 | Resilience | Timeout hierarchy correct: DB < server < client (deadline shrinks with depth). |
 | CQ29 | Structure | Workspace path alias (`@/`, `~/`, `#/`) used for imports >=3 hops deep when alias is configured. N/A if no alias in workspace. |
 
 ### Critical Gates (Static)

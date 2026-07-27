@@ -60,7 +60,8 @@ const filePath = path.join(uploadDir, req.params.filename);
 
 // ALWAYS — normalize and verify containment
 const resolved = path.resolve(uploadDir, req.params.filename);
-if (!resolved.startsWith(path.resolve(uploadDir))) throw new Error("Path traversal");
+const rel = path.relative(path.resolve(uploadDir), resolved);
+if (rel.startsWith("..") || path.isAbsolute(rel)) throw new Error("Path traversal");  // startsWith() alone passes /uploads-evil for base /uploads
 ```
 
 ## File Upload Security

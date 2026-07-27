@@ -37,7 +37,7 @@ Each gate is scored **1** (pass with evidence), **0** (fail or unproven), or **N
 | CQ25 | Structure | New code follows existing project patterns. No special snowflakes. |
 | CQ26 | Observability | Structured logger with context (requestId, userId), not plain console.log. |
 | CQ27 | Observability | Log levels correct. `error` for infrastructure failures only, not validation. |
-| CQ28 | Resilience | Timeout hierarchy correct: client < server < DB. |
+| CQ28 | Resilience | Timeout hierarchy correct: DB < server < client (deadline shrinks with depth). |
 | CQ29 | Structure | Workspace path alias (`@/`, `~/`, `#/`) used for imports >=3 hops deep when alias is configured. N/A if no alias in workspace. |
 
 ### Critical gates -- static (always block)
@@ -133,7 +133,7 @@ Self-eval: Q1=1 Q2=1 Q3=0 Q4=1 Q5=1 Q6=1 Q7=1 Q8=0 Q9=1 Q10=1 Q11=1 Q12=0 Q13=1 
 
 ## N/A abuse prevention
 
-If more than 60% of gates (17+ of 28 for CQ, or 12+ of 19 for Q) are scored N/A, the evaluation is flagged as **low-signal audit**. Every N/A requires a one-sentence justification explaining why the precondition is inactive. N/A counts as 1 for scoring but must be defensible.
+If more than 9 of the 29 CQ gates (or 10+ of 19 Q gates) are scored N/A, the evaluation is flagged as **low-signal audit**. Every N/A requires a one-sentence justification explaining why the precondition is inactive. N/A counts as 1 for scoring but must be defensible.
 
 This prevents agents from marking everything N/A to avoid doing the evaluation work.
 

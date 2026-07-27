@@ -18,19 +18,25 @@ For each gate, score as:
 These gates are absolute pass/fail. Any critical gate at 0 = FAIL regardless of total score.
 
 ```
-Q7  — Tests verify behavior, not implementation details
-Q11 — No flaky patterns (timers, random, network without mock)
-Q13 — Error paths tested (every throw/reject has a catching test)
-Q15 — Mocks verified with toHaveBeenCalledWith
-Q17 — No tautological oracles (mock returns X, assert X)
+Q7  — Every error-throwing path tested with a specific error TYPE and MESSAGE
+Q11 — All code branches exercised (if/else, switch, early return)
+Q13 — Tests import the ACTUAL production function (not a local copy of it)
+Q15 — Assertions verify content/values, not just counts or shape
+Q17 — No tautological oracles (mock returns X, assert X) — expected values from spec, not echoed input
 ```
+
+> These five IDs are the canonical critical gates, but the labels above were previously WRONG:
+> Q7 carried Q14's text, Q11 carried Q18's, Q13 carried Q7's, and Q15 carried Q3's. Any skill
+> reading this file scored a different gate than `review`/`test-audit` scored under the same ID.
+> If a label here ever disagrees with `rules/testing.md`, that file wins — re-read it rather than
+> trusting this summary.
 
 ## Scoring Thresholds
 
 ```
 16+/19, all critical gates = 1  →  PASS
-12-15/19, all critical gates = 1  →  FIX (improve weak gates)
-<12/19 OR any critical gate = 0  →  REWRITE
+10-15/19, all critical gates = 1  →  FIX (improve weak gates)
+<10/19 OR any critical gate = 0  →  REWRITE
 ```
 
 ## N/A Abuse Check

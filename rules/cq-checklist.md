@@ -37,7 +37,7 @@ Each gate is scored 1 (pass with evidence), 0 (fail or unproven), or N/A (precon
 | CQ25 | Structure | New endpoint/component/service follows existing project patterns? Same naming convention, same file structure, same error handling approach as existing code? "Special snowflake" = violation. |
 | CQ26 | Observability | Log statements use structured logger with context (requestId, userId, traceId), not plain `console.log` strings? Every service/controller uses the project's standard logger. |
 | CQ27 | Observability | Log levels used correctly? `logger.error` reserved for unrecoverable failures and infrastructure errors, not validation failures or expected business conditions. `logger.warn` for recoverable but unexpected situations. Validation failure logged as `error` = violation. Stack trace logged as `info` = violation. |
-| CQ28 | Resilience | Client timeout < server timeout < DB timeout (not inverted)? If code defines timeouts at multiple layers, verify the hierarchy is correct. Inverted timeout hierarchy = violation. |
+| CQ28 | Resilience | DB timeout < server timeout < client timeout (deadline shrinks with depth, not inverted)? If code defines timeouts at multiple layers, verify the hierarchy is correct. Inverted timeout hierarchy = violation. |
 | CQ29 | Structure | Workspace path alias used for imports ≥3 hops deep when the alias is configured? Aliases must come from the project's actual `tsconfig.compilerOptions.paths` / `jsconfig` / `vite.config.alias` — common patterns are `@/`, `#/`, `~/` but only count those declared in the workspace config. Files mixing `../../../` with a configured alias = violation. No alias configured = N/A. |
 
 ---
@@ -74,6 +74,24 @@ FAIL              iff any active critical gate = 0  OR  pass_count / denominator
 Reference table at zero N/A (denominator = 29): PASS ≥ 25, CONDITIONAL PASS = 23-24, FAIL < 23.
 At higher N/A counts the absolute pass count drops proportionally — always recompute against
 the actual `denominator`. Critical gates can never be N/A; they are either 1 or 0.
+
+**N/A cannot raise the score (anti-gaming — this is a HARD rule, not advice).**
+Because N/A shrinks the denominator, re-labelling failures as N/A converts a FAIL into a PASS
+with zero code change: 20 pass / 9 fail = 20/29 = 69% → FAIL; re-mark six of those failures N/A
+and it is 20/23 = 87% → PASS. The gate is only meaningful if that path is closed:
+
+1. **N/A requires the same evidence rigour as a 0.** An N/A must cite the exhaustive negative
+   search under "Negative Evidence" below (`rg "redis|cache" file.ts → 0 matches`). A one-sentence
+   assertion is **not** an N/A — score the gate. This removes the evidence asymmetry that made
+   N/A the cheapest route from FAIL to PASS.
+2. **Report both ratios; the LOWER one is the verdict.**
+   `score = min(pass_count / (29 - count(N/A)), pass_count / 29)`.
+   N/A can then only ever hold the score down, never lift it.
+3. **Denominator floor.** `29 - count(N/A)` may not go below 20. More than 9 N/A ⇒ verdict is
+   `INCOMPLETE`, never PASS — too little of the file was actually evaluated to certify it.
+4. **Gates listed for the file's code type (see "High-Risk Gates by Code Type") cannot be N/A.**
+   A SERVICE cannot mark CQ18 or CQ23 N/A; a CONTROLLER cannot mark CQ19 N/A. If the gate truly
+   does not apply, the classification is wrong — fix the classification, not the gate.
 
 ---
 

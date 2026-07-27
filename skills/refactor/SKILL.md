@@ -299,7 +299,7 @@ The GOD_CLASS protocol uses iterative decomposition: extract one responsibility 
 
 ### CQ Pre-Audit
 
-Before displaying the plan, run CQ1-CQ29 on the target file. Print ALL 28 gates:
+Before displaying the plan, run CQ1-CQ29 on the target file. Print ALL 29 gates:
 
 ```
 CQ PRE-AUDIT: [filename] ([N]L)
@@ -576,7 +576,7 @@ When CodeSift unavailable: skip machine verification. Pass empty `machine_checks
 
 ### CQ Post-Audit
 
-Run CQ1-CQ29 on every modified and created file. Print ALL 28 gates per file:
+Run CQ1-CQ29 on every modified and created file. Print ALL 29 gates per file:
 
 ```
 CQ POST-AUDIT: order.service.ts (132L)

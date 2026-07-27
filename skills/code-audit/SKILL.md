@@ -415,7 +415,7 @@ CQ24: CONDITIONAL -- API changes additive only? Breaking changes have deprecatio
 CQ25: New code follows existing project patterns? No special snowflakes?
 CQ26: Structured logger with context (requestId, userId), not plain console.log?
 CQ27: Log levels correct? `error` for infra failures only, not validation?
-CQ28: CONDITIONAL -- Timeout hierarchy correct? client < server < DB?
+CQ28: CONDITIONAL -- Timeout hierarchy correct? DB < server < client (innermost shortest)?
 CQ29: Workspace path alias (@/, ~/, #/) used for imports >=3 hops deep when alias is configured? N/A if no alias in workspace.
 
 ANTI-PATTERNS (each found = noted, severity attached):

@@ -141,10 +141,16 @@ logger.info('Login', { requestId }); throw new NotFoundException('User not found
 ```typescript
 // NEVER — timing attack leaks secret length via === short-circuit
 if (botSecret !== expectedSecret) throw new UnauthorizedException();
-// ALWAYS — constant-time comparison (crypto.timingSafeEqual)
-import { timingSafeEqual } from 'crypto';
-const a = Buffer.from(botSecret ?? ''); const b = Buffer.from(expectedSecret);
-if (a.length !== b.length || !timingSafeEqual(a, b)) throw new UnauthorizedException();
+// ALSO NEVER — timingSafeEqual on raw buffers THROWS ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH when
+// the lengths differ, so any wrong-length token becomes an uncaught 500: a remote DoS, and a
+// length oracle (crash = wrong length, 401 = right length). Guarding it with
+// `a.length !== b.length || ...` avoids the throw by leaking the length through short-circuit —
+// the exact weakness this pattern exists to remove.
+// ALWAYS — hash to a fixed width first, then compare in constant time. Length is unobservable
+// and the comparison can never throw.
+import { createHash, timingSafeEqual } from 'node:crypto';
+const digest = (s: string) => createHash('sha256').update(s, 'utf8').digest(); // always 32 bytes
+if (!timingSafeEqual(digest(botSecret ?? ''), digest(expectedSecret))) throw new UnauthorizedException();
 ```
 
 ### Timeout on every outbound fetch (CQ8)
@@ -593,19 +599,22 @@ this.logger.warn('Invalid email format', { requestId }); // expected, recoverabl
 this.logger.error('Database connection lost', { error: err.message }); // infrastructure, unrecoverable
 ```
 
-### Timeout hierarchy — client < server < DB (CQ28)
+### Timeout hierarchy — DB < server < client (CQ28)
 ```typescript
-// NEVER — client waits longer than server (gets a connection reset instead of proper error)
-// Client: fetch(url, { signal: AbortSignal.timeout(30_000) })
-// Server: server.setTimeout(10_000)
-// DB: statement_timeout = '5s'
-// ALWAYS — outer layer times out first, gets a meaningful error
+// NEVER — the INNER layer outlives the outer one. Client gives up at 10s; the server keeps
+// working for 20s more and the DB holds a pooled connection for 50s more, serving a request
+// nobody is waiting for → pool exhaustion, orphaned work, and the caller sees a bare
+// AbortError instead of the server's real error.
 // Client: 10s → Server: 30s → DB: 60s
-// Client timeout < Server timeout < DB timeout
-fetch(url, { signal: AbortSignal.timeout(10_000) }); // client: 10s
-// server.setTimeout(30_000);  // server: 30s
-// SET statement_timeout = '60s';  // DB: 60s
+// ALWAYS — the deadline SHRINKS with depth, so the innermost layer fails first and each
+// caller has headroom to catch that failure and return a meaningful error.
+// DB: 5s → Server: 10s → Client: 30s
+// SET statement_timeout = '5s';        // DB fails first, returns a typed error
+// server.setTimeout(10_000);           // server catches it, responds 504 with context
+fetch(url, { signal: AbortSignal.timeout(30_000) }); // client still waiting → receives that 504
 ```
+Rule of thumb: a caller's timeout must exceed the sum of the budgets it waits on, plus overhead.
+A client that times out first converts a diagnosable server error into an unexplained abort.
 
 ---
 
@@ -625,9 +634,16 @@ const apiKey = process.env.API_KEY;
 ```typescript
 // NEVER — user input directly in path.join
 const file = path.join(uploadDir, req.params.filename);
-// ALWAYS — normalize + startsWith guard
-const safePath = path.normalize(path.join(baseDir, userInput));
-if (!safePath.startsWith(baseDir)) throw new Error('Path traversal blocked');
+// ALWAYS — resolve to absolute, then prove containment with path.relative.
+// (normalize() does NOT make the path absolute and startsWith() matches sibling directories:
+//  base /var/data + "../data-evil/secret" normalizes to /var/data-evil/secret, which
+//  startsWith('/var/data') === true — the guard passes on a real escape.)
+const base = path.resolve(baseDir);
+const target = path.resolve(base, userInput);
+const rel = path.relative(base, target);
+if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) throw new Error('Path traversal blocked');
+const real = await fs.promises.realpath(target);                       // symlink escape
+if (path.relative(base, real).startsWith('..')) throw new Error('Symlink escape');
 ```
 
 ### Non-literal RegExp — escape user input
