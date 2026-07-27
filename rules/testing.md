@@ -167,6 +167,24 @@ Before writing any mock, ask: "Can I use the real implementation?" Tests with re
 
 **Diagnostic:** If you need `as unknown as FooService` → use the real class. If a mock has 10+ method stubs → use the real class with faked dependencies.
 
+**A WHERE-ignoring DB fake INVALIDATES ownership / scoping tests.** The common in-memory ORM fake
+returns whatever rows it holds and ignores the predicate. That is fine for shape assertions and
+actively dangerous for the assertion people care most about: "user A cannot read/modify user B's
+row." A handler that forgot its `tenant_id` / `owner_id` filter — the exact multi-tenant leak —
+still passes, because the fake never applied a filter in the first place. The green test is
+evidence of nothing.
+
+For any test asserting ownership, tenancy, or identifier scoping:
+
+1. **Seed two competing rows** (target + a same-shape row owned by someone else).
+2. **Bind the predicate values** the fake receives, so the test can assert *which* filter was used,
+   not just what came back.
+3. **Assert the non-target row is unchanged / not returned** — that is the assertion the missing
+   `WHERE` actually breaks.
+
+If the fake cannot evaluate predicates, use a real in-memory database (priority 2 above) —
+sqlite/pglite runs the real SQL. A scoping test on a predicate-blind fake is a Q17 quick-fail.
+
 **Exception: ORCHESTRATOR files** (app.ts, server.ts, main.ts) that wire middleware + routes. These REQUIRE mocks even for "your own" modules because transitive dependency chains make real imports impractical. Mock route modules as stub Hono/Express apps. Mock middleware with external deps as pass-through with spy tracking. Keep pure middleware real.
 
 ### Composition / Ordering Test Pattern
@@ -488,6 +506,20 @@ After tests pass, run with coverage to verify branch coverage:
 
 # Python (pytest)
 pytest --cov=[module] --cov-branch [test-file]
+```
+
+**If `coverage/` is tracked in git, redirect the report OUT of the repo first.** Vitest and Jest
+*clean the coverage output directory* before writing, so running the command above in a repo that
+versions its coverage artifacts (badges, published HTML reports) deletes them — a verification step
+that destroys committed files. Point the output at a temp path instead:
+
+```bash
+# check once: is it tracked?
+git ls-files --error-unmatch coverage >/dev/null 2>&1 && TRACKED=1
+
+[runner] --coverage --coverage.reportsDirectory="$(mktemp -d)"   # Vitest
+[runner] --coverage --coverageDirectory="$(mktemp -d)"           # Jest
+pytest --cov=[module] --cov-branch --cov-report=html:"$(mktemp -d)" [test-file]
 ```
 
 Check that:

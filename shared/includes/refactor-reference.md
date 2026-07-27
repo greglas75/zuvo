@@ -15,6 +15,24 @@ Create a resumable state file per target. The path is scoped so batch mode can t
 
 Where `{target-hash}` is the first 8 chars of SHA-1 of the relative target path (e.g., `sha1("src/services/order.service.ts")[:8]`).
 
+**Archive before overwriting (the contract is the only durable record of a run).** The path is
+keyed by target hash ALONE, so refactoring the same file a second time writes over the first run's
+contract — destroying its `prove` telemetry, findings, and commit SHAs, the very evidence the
+completion gate and later retros read. Before creating a new active contract, if one already
+exists for that hash with `stage: "COMPLETE"` **and** current HEAD is not among its recorded
+commits (i.e. it describes an *earlier, already-shipped* refactor, not this session):
+
+```bash
+C="zuvo/contracts/refactor-${HASH}.json"
+[ -f "$C" ] && mv "$C" "zuvo/contracts/refactor-${HASH}-$(git rev-parse --short=7 HEAD).json"
+# move its findings ledger alongside it, same suffix, so the pair stays together
+[ -f "zuvo/contracts/${HASH}-findings.json" ] && mv "zuvo/contracts/${HASH}-findings.json" \
+   "zuvo/contracts/${HASH}-$(git rev-parse --short=7 HEAD)-findings.json"
+```
+
+Never overwrite a COMPLETE contract in place. An *incomplete* contract for the same hash is a
+resumable run, not an archive candidate — resume it per the rules below instead of replacing it.
+
 **Resume contract:**
 - `continue <path>`: compute hash from relative path, load `zuvo/contracts/refactor-{hash}.json`.
 - `continue` (no argument): scan `zuvo/contracts/refactor-*.json` for `stage != "COMPLETE"`. 0 active: stop. 1 active: resume. 2+: list candidates, ask user to pick (do NOT auto-pick "most recent").

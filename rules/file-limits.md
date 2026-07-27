@@ -174,6 +174,33 @@ Split when any of the following apply:
 7. Constants exceed 30 lines → extract to .constants.ts
 8. Validation logic exceeds 60 lines → extract to .validators.ts
 
+### What must NOT move (stateful boundary / adapter classes)
+
+The rules above say what to extract; this says what stays, because a split that is "clean" by
+line count and breaks every consumer is a failed refactor. When the file is a stateful
+boundary — an SDK wrapper, adapter, client, or facade other modules import through:
+
+1. **Keep on the class anything tests call on the instance.** Pure logic can move to a sibling
+   module, but if the suite does `svc.normalize(x)`, moving `normalize` to a free function
+   breaks the instance API. Either keep the method (delegating to the extracted helper) or
+   migrate the tests in the same commit — never leave the instance surface silently smaller.
+2. **Keep identity re-exports of contract types the module historically exposed.** Consumers
+   import types *from this module's path*; a split that relocates them without re-exporting
+   turns into a broken-import sweep across the repo. Re-export from the facade so the public
+   path is unchanged.
+3. **Verify the re-exports BEFORE moving anything** with an identity test — assert the symbol
+   is still reachable at the original path and is the *same* object, not a structurally
+   similar copy:
+
+```ts
+import { OrderStatus } from './order.service';        // historical public path
+import { OrderStatus as Internal } from './order.types';
+expect(OrderStatus).toBe(Internal);                    // identity, not shape
+```
+
+A re-export that is a distinct object still breaks `instanceof`, enum comparison, and
+declaration merging — a shape assertion would pass while consumers fail.
+
 ### Effective split boundaries
 
 ```

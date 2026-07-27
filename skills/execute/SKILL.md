@@ -917,6 +917,33 @@ Then, if a watchdog cron was armed (Claude Code), read `cron_id:` from the heart
 
 The files remain on disk — they serve as a record of what was done. `zuvo:execute` will detect `status: completed` on next run and start fresh rather than attempting to resume.
 
+### Phase Final-3: CI parity (run what CI runs, BEFORE claiming complete)
+
+Per-task gates and the aggregate review verify what *this plan touched*. CI verifies the **whole
+repository**, with its own command set — and that is where a plan that looks complete turns red
+minutes later (observed: 61 legacy-test failures and a TS rootDir error that every scoped gate
+missed, because the scoped commands never ran the full suite or the app's tsconfig).
+
+Before setting `status: completed`, for **each in-scope repository**: read its active CI workflow
+(`.github/workflows/*.yml`, the job that runs on push/PR to the default branch) and run that job's
+**exact** lint, full-test, build, and any secondary typecheck commands locally — not your own
+approximations of them.
+
+```bash
+ls .github/workflows/*.yml 2>/dev/null | head
+# extract the `run:` steps of the push/PR job and execute those commands verbatim
+```
+
+Disposition:
+- **All green** → emit `[GATE: ci-parity] repo=<name> commands=<n>` and continue.
+- **Failures inside the plan's changed scope** → they are yours: fix and re-verify. Not completable.
+- **Failures outside the changed scope** → re-run the exact failing case in isolation to confirm it
+  reproduces, then report BOTH outcomes (suite run + isolated run). A reproducible pre-existing
+  failure does not block, but it MUST be disclosed as `verification debt: <cmd> <n> failing
+  (pre-existing, out-of-scope)`. Never classify the plan as a product pass while any **scoped**
+  suite is red.
+- **No CI workflow present** → record `ci-parity: n/a (no workflow)` and continue; do not invent one.
+
 ### Final Summary
 
 Print a completion report:

@@ -37,6 +37,29 @@ else
   bad "classify wrong: [$out]"
 fi
 
+# Extensionless repo-metadata files must NOT count as production: otherwise a pure
+# release commit (VERSION bump; every other file in it already excluded as *.md/*.json)
+# reads as production work and demands its own review artifact.
+out="$(printf '%s\n' \
+  VERSION pkg/VERSION CHANGELOG LICENSE LICENCE NOTICE AUTHORS CONTRIBUTORS \
+  CODEOWNERS .github/CODEOWNERS \
+  | pg_classify_files | tr '\n' ' ')"
+if [ -z "$out" ]; then
+  pass "classify drops extensionless repo-metadata (VERSION/CHANGELOG/LICENSE/...)"
+else
+  bad "metadata wrongly classified production: [$out]"
+fi
+
+# ...but build logic with no extension is STILL production — the exclusion above must not
+# turn into "anything without a dot is metadata".
+out="$(printf '%s\n' Makefile Dockerfile scripts/release.sh src/app.ts \
+  | pg_classify_files | sort | tr '\n' ' ')"
+if [ "$out" = "Dockerfile Makefile scripts/release.sh src/app.ts " ]; then
+  pass "classify keeps build logic (Makefile/Dockerfile/*.sh) as production"
+else
+  bad "build logic wrongly dropped: [$out]"
+fi
+
 # ---------- git fixture ----------
 TMP="$(mktemp -d)"
 NOREPO="$(mktemp -d)"

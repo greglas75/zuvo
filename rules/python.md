@@ -231,6 +231,28 @@ def greet(name: str) -> str:
     return f"Hello {name}"
 ```
 
+### Exception: facade re-exports when splitting a module
+
+The rule above has one counter-case, and it bites on every module split. When a large module is
+split, symbols that siblings already import from the old path -- **including private ones**
+(`from x import _y`) -- must stay reachable at that path or every importer breaks. A re-export
+looks exactly like an unused import to ruff, so `F401` deletes it and the split silently breaks
+consumers. Re-export from the facade **and** list the names in `__all__`; that is what makes the
+intent explicit and satisfies F401.
+
+```python
+# orders/__init__.py  (facade -- the historical import path)
+from ._helpers import _normalize_status, build_cache_key   # noqa: F401 -- re-export
+from .types import OrderStatus                             # noqa: F401 -- re-export
+
+# __all__ is the contract, not decoration: it declares the re-export is deliberate
+__all__ = ["OrderStatus", "build_cache_key", "_normalize_status"]
+```
+
+Verify before moving anything: `python -c "from orders import _normalize_status"` must still
+work, and for classes/enums assert **identity** (`orders.OrderStatus is orders.types.OrderStatus`)
+-- a re-export that is a distinct object still breaks `isinstance` and enum comparison.
+
 ---
 
 ## Semgrep-Derived Patterns

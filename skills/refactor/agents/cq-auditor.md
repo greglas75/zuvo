@@ -125,10 +125,23 @@ AGREEMENT: 27/29 gates match
 
 VERDICT: [PASS | CONDITIONAL PASS | FAIL]
 FIX-NOW: N | DEFER: N
+PROVENANCE: provider=[dispatched | inline-single-agent-lock] coverage=[full | partial:<what was skipped>] machine_checks=[ok | absent]
 
 ### Summary
 
 [One paragraph: N files audited, N gates evaluated, N discrepancies found vs orchestrator, N FIX-NOW, overall verdict]
+
+<!-- PROVENANCE drives the orchestrator's `prove.blind_audit` value — report it honestly, do not
+     infer a stronger one. Where you ran is a fact you know and the orchestrator does not:
+       provider=inline-single-agent-lock  → you ran INLINE because the harness forbids sub-agent
+         dispatch (Codex). Say so; it is a valid way to run this gate, but it is same-model, so the
+         orchestrator must record `clean:degraded:same-model`, never `clean:strict`.
+       coverage=partial                   → any mandatory file or gate you could not read IN FULL.
+       machine_checks=absent              → CodeSift unavailable → `clean:degraded:no-machine-checks`.
+     `clean:strict` is legitimate ONLY when provider=dispatched, coverage=full, machine_checks=ok.
+     Reporting a strict-looking audit you did not actually perform is the failure this gate exists
+     to prevent. -->
+
 
 ### BACKLOG ITEMS
 

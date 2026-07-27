@@ -97,6 +97,19 @@ pg_is_production() {
     *.lock)                            return 1 ;;
     .*rc|*/.*rc)                       return 1 ;;
     zuvo/*|*/zuvo/*)                   return 1 ;;
+    # Extensionless repo-metadata files. Without these the `*)` catch-all below
+    # classifies them as production, so a pure release/metadata commit (which
+    # bumps VERSION and nothing else — every other file in it is already excluded
+    # as *.md/*.json) counts as production work and demands its own review
+    # artifact. They carry no logic; excluding them keeps the gate on real code.
+    # Build logic (Makefile, Dockerfile, *.sh) is deliberately NOT listed here.
+    VERSION|*/VERSION)                 return 1 ;;
+    CHANGELOG|*/CHANGELOG)             return 1 ;;
+    LICENSE|*/LICENSE|LICENCE|*/LICENCE) return 1 ;;
+    NOTICE|*/NOTICE)                   return 1 ;;
+    AUTHORS|*/AUTHORS)                 return 1 ;;
+    CONTRIBUTORS|*/CONTRIBUTORS)       return 1 ;;
+    CODEOWNERS|*/CODEOWNERS)           return 1 ;;
     *)                                 return 0 ;;
   esac
 }
