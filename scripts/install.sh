@@ -418,6 +418,14 @@ install_zuvo_home() {
     warn "scripts/zuvo-home/sanitize-retros not found in repo — skipping"
   fi
 
+  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/digest-proposals" ]]; then
+    cp "$ZUVO_DIR/scripts/zuvo-home/digest-proposals" "$HOME/.zuvo/digest-proposals"
+    chmod +x "$HOME/.zuvo/digest-proposals"
+    ok "digest-proposals installed (~/.zuvo/digest-proposals) — surfaces retro-mine change proposals"
+  else
+    warn "scripts/zuvo-home/digest-proposals not found in repo — skipping"
+  fi
+
   if [[ -f "$ZUVO_DIR/scripts/zuvo-home/verify-plan-dag" ]]; then
     cp "$ZUVO_DIR/scripts/zuvo-home/verify-plan-dag" "$HOME/.zuvo/verify-plan-dag"
     chmod +x "$HOME/.zuvo/verify-plan-dag"
