@@ -19,8 +19,14 @@ Usage:
   ~/.zuvo/digest-proposals --all           # include the below-bar "consider" proposals too
   ~/.zuvo/digest-proposals --json          # machine-readable (for a review/apply step)
   ~/.zuvo/digest-proposals --min-recur N   # tune the recurrence bar (default 2)
+  ~/.zuvo/digest-proposals --show-done     # include already-dispositioned proposals
+
+Disposition ledger (mining/proposals-ledger.tsv) — so a run shows only what is still OPEN:
+  ~/.zuvo/digest-proposals --mark applied  --file skills/review/SKILL.md --section "1.6 Adversarial" --ref v1.6.35
+  ~/.zuvo/digest-proposals --mark rejected --file X --section Y --note "contradicts never-reindex rule"
+  dispositions: applied | rejected | covered | not-ours | deferred
 """
-import os, sys, re, glob, json
+import os, sys, re, glob, json, time
 
 ZUVO = os.environ.get("ZUVO_DIR", os.path.expanduser("~/.zuvo"))
 MINING = os.path.join(ZUVO, "mining")
@@ -80,6 +86,69 @@ def parse_all():
     return list(props.values())
 
 
+# ── disposition ledger ───────────────────────────────────────────────────────────────────
+# Without this, EVERY run re-surfaces every proposal — including the ones already implemented,
+# which is the same dead end one level up: proposals used to be written and never read; then
+# they were read and never dispositioned. Identity is (normalized file, section) — the same key
+# this script already dedups on, so a disposition sticks across digests. Append-only, latest row
+# per identity wins (same shape as the refactor finding-disposition ledger).
+LEDGER = os.path.join(MINING, "proposals-ledger.tsv")
+DISPOSITIONS = ("applied", "rejected", "covered", "not-ours", "deferred")
+
+
+def read_ledger():
+    """(file, section) -> {disposition, ref, note, date}; latest row wins."""
+    out = {}
+    try:
+        with open(LEDGER, errors="replace") as fh:
+            for line in fh:
+                if not line.strip() or line.startswith("#"):
+                    continue
+                c = line.rstrip("\n").split("\t")
+                if len(c) < 4:
+                    continue
+                date, f, sec, disp = c[0], c[1], c[2], c[3]
+                out[(norm_file(f), sec.strip())] = {
+                    "disposition": disp, "ref": c[4] if len(c) > 4 else "",
+                    "note": c[5] if len(c) > 5 else "", "date": date}
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass                                   # a corrupt ledger must never break reporting
+    return out
+
+
+def mark(argv):
+    """`--mark <disposition> --file F --section S [--ref R] [--note N]` — append one row.
+    A single short line written with O_APPEND is atomic on POSIX, so concurrent agents
+    cannot interleave a half-row; no lock needed for an append-only log."""
+    def arg(name, default=""):
+        return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else default
+    disp = arg("--mark")
+    f, sec = arg("--file"), arg("--section")
+    if disp not in DISPOSITIONS:
+        print(f"digest-proposals: --mark must be one of {', '.join(DISPOSITIONS)}", file=sys.stderr)
+        return 2
+    if not f or not sec:
+        print("digest-proposals: --mark needs --file and --section", file=sys.stderr)
+        return 2
+    row = [time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), f, sec, disp,
+           arg("--ref"), arg("--note")]
+    row = [re.sub(r"[\t\r\n]", " ", c) for c in row]      # never break the TSV shape
+    try:
+        os.makedirs(MINING, exist_ok=True)
+        new = not os.path.exists(LEDGER)
+        with open(LEDGER, "a") as fh:
+            if new:
+                fh.write("# DATE\tFILE\tSECTION\tDISPOSITION\tREF\tNOTE\n")
+            fh.write("\t".join(row) + "\n")
+    except Exception as e:
+        print(f"digest-proposals: cannot write ledger: {e}", file=sys.stderr)
+        return 1
+    print(f"marked {disp}: {norm_file(f)} :: {sec}")
+    return 0
+
+
 def qualifies(p):
     return p["count"] >= MIN_RECUR or p["best_prio"] == 0
 
@@ -90,23 +159,47 @@ def rank(props):
 
 
 def main():
+    if "--mark" in sys.argv:
+        return mark(sys.argv)
+
     props = rank(parse_all())
     if not props:
         print("digest-proposals: no change proposals found (no digests, or none parsed)")
         return 0
     show_all = "--all" in sys.argv
+    ledger = read_ledger()
+    for p in props:                                   # attach disposition to each identity
+        p["status"] = ledger.get((p["file"], p["section"]), {})
+
+    # Dispositioned proposals are DONE work — hide them by default so each run shows only what
+    # is still open. `--all` (or --show-done) brings them back with their disposition.
+    open_props = [p for p in props if not p["status"]]
+    done = len(props) - len(open_props)
+    show_done = show_all or "--show-done" in sys.argv
+    visible = props if show_done else open_props
+
     if "--json" in sys.argv:
-        out = [dict(p, qualifies=qualifies(p)) for p in props if show_all or qualifies(p)]
+        out = [dict(p, qualifies=qualifies(p)) for p in visible if show_all or qualifies(p)]
         print(json.dumps(out, indent=2))
         return 0
 
-    q = [p for p in props if qualifies(p)]
+    q = [p for p in visible if qualifies(p)]
     print(f"# Digest change-proposals — {len(props)} unique (file,section), "
-          f"{len(q)} meet the apply bar (>= {MIN_RECUR} recurrences OR P0)\n")
-    for p in props:
+          f"{done} dispositioned, {len(open_props)} open, "
+          f"{len(q)} of the shown meet the apply bar (>= {MIN_RECUR} recurrences OR P0)\n")
+    for p in visible:
         if not (show_all or qualifies(p)):
             continue
         bar = "APPLY" if qualifies(p) else "consider"
+        if p["status"]:
+            s = p["status"]
+            bar = s["disposition"].upper()
+            ref = f" {s['ref']}" if s.get("ref") else ""
+            print(f"[{bar}{ref}] P{p['best_prio']}  ×{p['count']}  {p['file']}  ::  {p['section']}")
+            if s.get("note"):
+                print(f"      {s['note']}")
+            print()
+            continue
         print(f"[{bar}] P{p['best_prio']}  ×{p['count']}  {p['file']}  ::  {p['section']}")
         if p["contents"]:
             first = p["contents"][0].splitlines()
@@ -118,9 +211,11 @@ def main():
             print(f"      WHY: {p['rationales'][0][:120]}")
         print()
     if not show_all:
-        below = len(props) - len(q)
+        below = len([p for p in visible if not qualifies(p)])
         if below:
             print(f"({below} more below the apply bar — pass --all to see them)")
+    if done and not show_done:
+        print(f"({done} dispositioned — pass --show-done to see them)")
     return 0
 
 

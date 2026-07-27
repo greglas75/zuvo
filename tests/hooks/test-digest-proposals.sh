@@ -64,6 +64,25 @@ print('OK')" >/dev/null 2>&1 && ok "P0 qualifies even as a single occurrence" ||
 python3 "$DP" 2>&1 | grep -q 'skills/build/SKILL.md' && bad "one-off (P5 ×1) wrongly in apply set" || ok "one-off below bar (not in apply set)"
 python3 "$DP" --all 2>&1 | grep -q 'skills/build/SKILL.md' && ok "one-off visible under --all" || bad "one-off missing from --all"
 
+
+echo "=== disposition ledger ==="
+# marking a proposal hides it from the default (open-only) view but keeps it under --show-done
+python3 "$DP" --mark applied --file skills/refactor/SKILL.md --section "Adversarial Review" --ref v9.9.9 >/dev/null 2>&1 \
+  && ok "--mark applied writes a row" || bad "--mark failed"
+python3 "$DP" 2>&1 | grep -q 'Adversarial Review' && bad "dispositioned proposal still shown by default" || ok "dispositioned hidden from default view"
+python3 "$DP" --show-done 2>&1 | grep -q 'APPLIED v9.9.9' && ok "--show-done shows it with disposition + ref" || bad "--show-done lost the disposition"
+python3 "$DP" 2>&1 | grep -q '1 dispositioned' && ok "header counts dispositioned vs open" || bad "header count wrong"
+# latest row wins (append-only, re-mark flips it)
+python3 "$DP" --mark rejected --file skills/refactor/SKILL.md --section "Adversarial Review" --note "changed mind" >/dev/null 2>&1
+python3 "$DP" --show-done 2>&1 | grep -q 'REJECTED' && ok "latest row wins on re-mark" || bad "re-mark did not override"
+# validation: bad disposition and missing args are rejected, not silently written
+python3 "$DP" --mark bogus --file a --section b >/dev/null 2>&1 && bad "invalid disposition accepted" || ok "invalid disposition rejected"
+python3 "$DP" --mark applied --file a >/dev/null 2>&1 && bad "missing --section accepted" || ok "missing --section rejected"
+# a corrupt ledger must not break reporting
+printf 'garbage line without tabs\n' >> "$TMP/mining/proposals-ledger.tsv"
+python3 "$DP" >/dev/null 2>&1 && ok "corrupt ledger line tolerated (report still runs)" || bad "corrupt ledger broke the report"
+rm -f "$TMP/mining/proposals-ledger.tsv"
+
 echo "=== empty state ==="
 rm -f "$TMP/mining"/*.md
 python3 "$DP" 2>&1 | grep -qi 'no change proposals' && ok "no digests -> clean message, no crash" || bad "empty state crashed"
