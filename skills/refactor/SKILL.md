@@ -123,14 +123,23 @@ half-refactored state as the baseline: the CQ pre-audit scores partially-extract
 
 ```bash
 git status --porcelain -- <target>          # empty → clean start, proceed normally
-git diff HEAD -- <target> | head -60        # non-empty → see what a previous attempt already did
+git diff HEAD -- <target> | head -60        # tracked changes ('??' in status = untracked, no diff)
 ```
 
-When it is non-empty: diff against `HEAD` first, treat the **staged/current** state as the "before"
-for the CQ pre-audit (that is what you are actually refactoring from), and reconcile with any
-CONTRACT for this target and any CHANGELOG entry the earlier attempt already wrote — so the run
-continues the previous work instead of duplicating or reverting it. Record which baseline was used;
-a "before" score measured against the wrong tree makes the whole before/after comparison meaningless.
+**A dirty target is NOT automatically a resumable attempt** — it may be the user's unrelated
+work-in-progress, and absorbing that into the baseline would quietly make their edits part of "the
+code before my refactor" (and part of your commit). Decide by evidence, not assumption:
+
+- A CONTRACT exists for this target with `stage != COMPLETE` → this IS a resumed run. Treat the
+  current state as "before" for the CQ pre-audit, and reconcile with the CONTRACT and any CHANGELOG
+  entry the earlier attempt wrote, so the run continues rather than duplicates or reverts it.
+- No CONTRACT, or the changes do not look like the recorded plan → treat it as **foreign WIP**.
+  Do not absorb it and do not stash it silently: say what is uncommitted and ask (or, when
+  non-interactive, stop with `BLOCKED_DIRTY_TARGET`). Refactoring on top of someone's unfinished
+  edit produces a diff neither of you can review.
+
+Record which baseline was used either way — a "before" score measured against the wrong tree makes
+the whole before/after comparison meaningless.
 
 ### PHASE 1 — Conditional Load (based on refactor type)
 
@@ -705,9 +714,13 @@ router already validates and the schema already constrains. Before dispositionin
 - **One layer inward** — persistence: does a NOT NULL / UNIQUE / CHECK constraint or transaction
   already enforce the invariant the finding says is missing?
 
-If either layer already enforces it, the finding is a false positive — record it as such **with the
-citation** (`router.ts:42 validates`, `schema.sql:17 UNIQUE`), not as a bare dismissal. If neither
-does, it is real and in scope. This check is what separates "the reviewer lacked context" from "the
+Dismiss ONLY when a layer enforces **the specific invariant the finding names**, on **every** path
+that reaches this code — a guard that validates a different field, or that sits on one of three
+routes (plus a queue consumer and a CLI entry point) mounting the same service, is not enforcement.
+`grep` the call sites before concluding "the router handles it". When that holds, the finding is a
+false positive — record it as such **with the citation** (`router.ts:42 validates`, `schema.sql:17
+UNIQUE`), not as a bare dismissal. Partial enforcement is a REAL finding, narrowed to the unguarded
+paths. If neither layer enforces it, it is real and in scope. This check is what separates "the reviewer lacked context" from "the
 guard is genuinely absent" — and citing the enforcing line is what stops the next pass re-raising it.
 
 ---

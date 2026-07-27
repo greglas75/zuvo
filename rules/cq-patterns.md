@@ -162,21 +162,33 @@ const data = await feedbackClient.list(sessionId, { signal: AbortSignal.timeout(
 const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
 for await (const chunk of res.body) { ... }   // same 30s budget covers the whole stream
 
-// ALWAYS — reset the clock on every successful read; abort only on true inactivity.
-const ac = new AbortController();
-let idle = setTimeout(() => ac.abort(new Error('stream idle')), 30_000);
-const res = await fetch(url, { signal: ac.signal });
-for await (const chunk of res.body) {
-  clearTimeout(idle);                                   // progress = not stuck
-  idle = setTimeout(() => ac.abort(new Error('stream idle')), 30_000);
-  handle(chunk);
+// ALWAYS — separate handshake budget from stream-idle budget; reset the clock on every read;
+// race the pending read against abort; clean the timer up on EVERY exit path.
+const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });   // handshake budget only
+if (!res.body) throw new Error('no response body');                      // body-less (204/HEAD)
+
+const reader = res.body.getReader();
+let idle: ReturnType<typeof setTimeout> | undefined;
+const armIdle = () => new Promise<never>((_, rej) => {
+  idle = setTimeout(() => rej(new Error('stream idle')), 30_000);        // idle budget starts HERE
+});
+try {
+  for (;;) {
+    // race: an abort/timeout does NOT settle a read already parked on the socket,
+    // so without this the "timeout" hangs forever instead of throwing.
+    const { done, value } = await Promise.race([reader.read(), armIdle()]);
+    clearTimeout(idle);                                                   // progress = not stuck
+    if (done) break;
+    handle(value);
+  }
+} finally {
+  clearTimeout(idle);                                                     // also on throw
+  await reader.cancel().catch(() => {});                                  // release the socket
 }
-clearTimeout(idle);
 ```
-Connection/handshake timeouts and stream-inactivity timeouts are different budgets — never reuse
-one as the other. Also race the pending read against the abort signal: an aborted controller does
-not by itself settle a read already parked on the socket, so without the race the "timeout" never
-actually returns and you get a hang instead of an error.
+Connection/handshake and stream-inactivity are different budgets — never reuse one as the other.
+Note `AbortSignal.timeout` on the fetch covers only the handshake here; the idle clock must not
+start before the response arrives, or a slow handshake eats the stream's budget.
 
 ### Bounded queries with limits
 ```typescript

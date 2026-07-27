@@ -57,8 +57,15 @@ code failures. Before verifying, pin all three explicitly:
 # 1. which interpreter — never rely on inherited PATH inside a worktree
 VENV="$(git -C . rev-parse --show-toplevel)/.venv"
 [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"        # per-worktree venv, cheap and correct
-"$VENV/bin/python" -m pip install -q -e ".[dev]" 2>/dev/null || \
+# Install the PROJECT ITSELF (editable) — a requirements-only env resolves imports of the
+# dependencies but not of the package under test. Do NOT hide the error: a failed editable
+# install is a setup fact you need, and swallowing it produces a half-built env that then
+# fails as if the code were broken.
+"$VENV/bin/python" -m pip install -q -e ".[dev]" || {
+  echo "editable install failed — see error above; falling back to requirements + PYTHONPATH"
   "$VENV/bin/python" -m pip install -q -r requirements-dev.txt
+  export PYTHONPATH="$(pwd)/src:$(pwd)"       # so the package is importable at all
+}
 # 2. run tools THROUGH it, not by bare name
 "$VENV/bin/python" -m pytest ...    # not `pytest`
 "$VENV/bin/python" -m mypy ...      # not `mypy`
@@ -68,13 +75,21 @@ Do NOT symlink the main checkout's `.venv` (unlike `node_modules`, it embeds abs
 an editable install points back at the *original* source tree — you would be type-checking the
 code you did not change). Record which interpreter was used, so a failure is attributable to code.
 
-**mypy: preflight before blaming the target.** A mypy run that explodes on missing/broken
-dependency stubs reports errors attributed to *your* files, and the run gets recorded as a target
-failure it is not. Run a one-file preflight first (`python -m mypy <one untouched file>`); if that
-already errors, the environment is the problem. Then split the report by attribution: errors whose
-path is inside the scoped source vs errors from `site-packages`/stub syntax. Only the first group
-is a target failure; the second is recorded as `typecheck: degraded (stub/env errors: N)` — precise
-telemetry instead of conflating environment breakage with code defects.
+**mypy: attribute errors before blaming the target.** A mypy run that trips over missing or broken
+dependency stubs emits errors that get counted against *your* files, and the run is recorded as a
+target failure it is not. The disposition rule is **attribution, not a preflight verdict**:
+
+- Split every diagnostic by the path it is reported *at*: inside the scoped source vs inside
+  `site-packages`/`.pyi` stubs/the cache. Only the first group can be a target failure.
+- `typecheck: degraded (stub/env errors: N)` records the second group — it never cancels the first.
+  **A stub error present does NOT excuse errors in your own files**; both are reported.
+- A one-file preflight (`python -m mypy <a file this run did not touch>`) is a *hint* about
+  environment health, not a verdict: an untouched file can legitimately have real type errors, so a
+  failing preflight never converts scoped-source errors into "environment". Treat it as environment
+  only when the failure is itself attributed to stubs/site-packages.
+
+This keeps the gate honest in both directions — no silenced type errors, no environment breakage
+misreported as code defects.
 
 **Scope verification to the changed surface.** In a secondary worktree, run type-check/tests for the **touched package(s)** (`turbo run type-check --filter=<pkg>`, or the package's own test script) — **not** the whole monorepo. A pre-existing failure in an unrelated package is **out-of-scope** for a behavior-preserving refactor: record it as `pre-existing-out-of-scope`, do not treat it as a blocker, and do not burn the run "rediscovering" errors that were already red before you started. (CodeSift availability is orthogonal — a worktree is a `path=` argument, never a reason to drop to degraded mode.)
 

@@ -67,10 +67,19 @@ result = await asyncio.wait_for(asyncio.to_thread(sync_client.get, url), timeout
 # CORRECT — push the deadline into the blocking call, which CAN honor it
 result = await asyncio.to_thread(functools.partial(sync_client.get, url, timeout=5))
 
-# and bound concurrency so a slow provider cannot exhaust the default thread pool
-_sem = asyncio.Semaphore(10)
+# and bound concurrency so a slow provider cannot exhaust the default thread pool.
+# Create the semaphore INSIDE the loop that uses it -- a module-level asyncio.Semaphore()
+# can bind to the wrong event loop (fresh loop per test, asyncio.run twice) and then
+# deadlocks or raises "attached to a different loop".
+_sem: asyncio.Semaphore | None = None
+def _limiter() -> asyncio.Semaphore:
+    global _sem
+    if _sem is None:
+        _sem = asyncio.Semaphore(10)     # first call happens on the running loop
+    return _sem
+
 async def call():
-    async with _sem:
+    async with _limiter():
         return await asyncio.to_thread(functools.partial(sync_client.get, url, timeout=5))
 ```
 
@@ -263,13 +272,28 @@ Third-party JSON is the classic source of "validated, then crashed anyway". Vali
 if isinstance(payload.get("offers"), list):
     return [o["price"] for o in payload["offers"]]        # KeyError / TypeError at runtime
 
-# ALWAYS -- validate down to the leaf you actually read
+# ALWAYS -- validate down to the leaf, and RAISE on malformed instead of filtering it away
 offers = payload.get("offers")
 if not isinstance(offers, list):
     raise MalformedResponse("offers must be a list")
-prices = [o["price"] for o in offers
-          if isinstance(o, dict) and isinstance(o.get("price"), (int, float, str))]
+
+prices = []
+for i, o in enumerate(offers):
+    if not isinstance(o, dict):
+        raise MalformedResponse(f"offers[{i}] must be an object")
+    p = o.get("price")
+    if p is None:                       # explicitly absent/null -> documented optional
+        continue
+    # NOTE: bool is a subclass of int in Python -- `isinstance(True, int)` is True,
+    # so a bare (int, float) check accepts `"price": true`. Exclude bool explicitly.
+    if isinstance(p, bool) or not isinstance(p, (int, float, str)):
+        raise MalformedResponse(f"offers[{i}].price has type {type(p).__name__}")
+    prices.append(p)
 ```
+
+A comprehension with an `isinstance` filter looks like validation but is the opposite: it *hides*
+provider breakage by silently shrinking the result. Skip only what the contract says is optional;
+raise on everything else.
 
 Three rules that come up on every adapter:
 
