@@ -55,6 +55,28 @@ async def fetch_data():
         result = await client.get(url)
 ```
 
+**When no async client exists (`asyncio.to_thread`), do NOT hand-roll a timeout wrapper.** The
+usual invention is subtly unsafe: `wait_for` cancels the *await*, but the worker thread keeps
+running — it cannot be interrupted — so the "timed out" call still holds its connection, still
+writes its result, and under load you accumulate live threads while reporting failures.
+
+```python
+# WRONG — looks like a timeout, actually leaks a running thread per call
+result = await asyncio.wait_for(asyncio.to_thread(sync_client.get, url), timeout=5)
+
+# CORRECT — push the deadline into the blocking call, which CAN honor it
+result = await asyncio.to_thread(functools.partial(sync_client.get, url, timeout=5))
+
+# and bound concurrency so a slow provider cannot exhaust the default thread pool
+_sem = asyncio.Semaphore(10)
+async def call():
+    async with _sem:
+        return await asyncio.to_thread(functools.partial(sync_client.get, url, timeout=5))
+```
+
+Rule: the timeout belongs to whatever owns the socket. `wait_for` around `to_thread` is only
+acceptable as an outer *backstop* when the inner call already has its own timeout.
+
 ## Exception Handling
 
 ```python
@@ -230,6 +252,36 @@ def greet(name: str) -> str:  # only str used
 def greet(name: str) -> str:
     return f"Hello {name}"
 ```
+
+### External JSON boundaries (provider adapters)
+
+Third-party JSON is the classic source of "validated, then crashed anyway". Validate the
+**container and the leaf types**, not just the top level:
+
+```python
+# NEVER -- container-only check; items can still be anything
+if isinstance(payload.get("offers"), list):
+    return [o["price"] for o in payload["offers"]]        # KeyError / TypeError at runtime
+
+# ALWAYS -- validate down to the leaf you actually read
+offers = payload.get("offers")
+if not isinstance(offers, list):
+    raise MalformedResponse("offers must be a list")
+prices = [o["price"] for o in offers
+          if isinstance(o, dict) and isinstance(o.get("price"), (int, float, str))]
+```
+
+Three rules that come up on every adapter:
+
+- **Scalar-or-array fields are a documented shape, model them explicitly.** JSON-LD and many
+  vendor APIs return `"author": {...}` or `"author": [{...}]` for the same field. Normalize once
+  (`v if isinstance(v, list) else [v]`) instead of scattering `isinstance` checks at each use.
+- **`null` is not the same as malformed.** An explicitly-null optional field is valid data → use
+  the default. A wrong-typed field is a contract violation → raise. Collapsing both into
+  `except (TypeError, KeyError): return default` silently swallows real provider breakage.
+- **Retry transport failures only.** Timeouts, connection resets, and 5xx are retryable. A schema
+  violation or a 4xx is not — retrying it just multiplies the latency before the same failure.
+  Keep the retry wrapper around the *transport* call, never around the parse/validate step.
 
 ### Exception: facade re-exports when splitting a module
 

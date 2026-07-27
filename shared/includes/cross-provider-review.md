@@ -117,6 +117,25 @@ If no cross-provider tool is available:
 
 1. **Chunk or rotate above ~3000 lines.** For diffs over ~3000 lines, use `--rotate` (one provider per pass) instead of `--all-providers`, and/or pre-chunk the diff by file group and run a pass per group.
 2. **Always verify the artifact exists and is non-empty** before treating a pass as complete: `[ -s "$ARTIFACT" ] || { echo "[CROSS-REVIEW] empty artifact — diff too large; rotate/chunk and retry"; }`. Exit 0 alone does NOT prove the pass produced findings.
+3. **A truncated pass is NOT coverage for the files it dropped.** The wrapper caps input (30K code/test, 50K document modes) and prints `WARN: input truncated … (omitted: <files>)` on stderr. Exit 0 and a populated artifact are still produced — so a pass that never saw the highest-risk file looks exactly like a clean one. Whenever that warning appears (or `input_truncated: true` in `--json`), re-run per file for the omitted set before accepting the result, and never report the omitted files as reviewed. Ordering matters too: put the files under review FIRST in the enriched input, so what falls off the end is context, not the subject.
+
+## Bounding adversarial whack-a-mole (finding closure)
+
+Rotated passes each bring a fresh provider with no memory of what earlier passes settled, so an
+unbounded loop drifts from "find real defects" into "invent one more hypothetical convention".
+That burns passes without raising quality. Bound it without suppressing genuine bypasses:
+
+1. **State the supported input conventions up front** for the boundary under review (what the
+   sanitizer/parser/validator is contracted to accept). A finding against an unsupported,
+   never-produced input shape is a feature request, not a defect.
+2. **After two clean fixes at the same boundary**, a *newly invented* unsupported convention drops
+   below threshold — UNLESS the provider demonstrates a **live call site** that can actually
+   produce it. Evidence promotes it back immediately; speculation does not.
+3. **Concrete bypasses are never suppressed by this rule.** A finding with a reachable path,
+   reproduction, or cited call site is in scope no matter which pass surfaced it.
+
+Where a skill keeps a finding-disposition ledger (see `zuvo:refactor` Phase 3), record these as
+dispositioned rather than dropping them silently — the point is to stop re-litigating, not to hide.
 
 ## Installation (for users)
 

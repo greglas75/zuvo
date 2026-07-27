@@ -86,6 +86,21 @@ For EACH file in the modified files list:
    - `complexity` → maps to CQ11 (structure/complexity)
    - `breaking-changes` → maps to CQ24 (backward compat)
    - For machine-verified gates: confirm the machine finding, do not re-audit from scratch
+   - **Dead-code output is advisory, not a verdict.** `find_dead_code` reliably false-positives on
+     symbols that ARE live: state setters and event handlers referenced only from JSX/templates,
+     constants consumed via a barrel or dynamic key, private helpers called from the same file's
+     class body, framework-invoked entry points (route handlers, lifecycle hooks, CLI commands,
+     DI-registered providers), and anything reached by a string literal. Before scoring CQ13 on a
+     reported symbol, confirm zero references with an explicit search (including string/template
+     usage). Report unconfirmed entries as `dead-code: unverified (N candidates)`, never as findings.
+   - **FastAPI splits — verify the framework contract before scoring CQ19/CQ24.** Moving handlers
+     between modules silently changes what FastAPI infers. Check four things and cite them:
+     `APIRoute.response_model` still resolves the same (a relocated model or a lost `from __future__
+     import annotations` changes inference), the `Depends()` graph resolves in the same order,
+     callable identity is preserved for anything compared or overridden (`dependency_overrides`
+     keys on the function object — a re-exported copy breaks test overrides), and
+     `inspect.signature` still matches (FastAPI reads it to build the request model; `functools.wraps`
+     or a decorator swap alters it). These are the recurring false positives AND the real breakages.
 3. **Score CQ1-CQ29** independently for all non-machine-verified gates. Focus manual effort on:
    - **CQ5** (PII in logs) — machines cannot detect semantic PII
    - **CQ8** (error strategy) — requires understanding business context

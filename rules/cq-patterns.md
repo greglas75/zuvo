@@ -155,6 +155,29 @@ const data = await feedbackClient.list(sessionId);
 const data = await feedbackClient.list(sessionId, { signal: AbortSignal.timeout(10_000) });
 ```
 
+### Streaming bodies need an INACTIVITY timeout, not a total deadline (CQ8)
+```typescript
+// NEVER — a total deadline applied to a stream: a healthy 90s download/SSE feed is
+// aborted at 30s purely for being long. The timeout measures the WRONG thing.
+const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+for await (const chunk of res.body) { ... }   // same 30s budget covers the whole stream
+
+// ALWAYS — reset the clock on every successful read; abort only on true inactivity.
+const ac = new AbortController();
+let idle = setTimeout(() => ac.abort(new Error('stream idle')), 30_000);
+const res = await fetch(url, { signal: ac.signal });
+for await (const chunk of res.body) {
+  clearTimeout(idle);                                   // progress = not stuck
+  idle = setTimeout(() => ac.abort(new Error('stream idle')), 30_000);
+  handle(chunk);
+}
+clearTimeout(idle);
+```
+Connection/handshake timeouts and stream-inactivity timeouts are different budgets — never reuse
+one as the other. Also race the pending read against the abort signal: an aborted controller does
+not by itself settle a read already parked on the socket, so without the race the "timeout" never
+actually returns and you get a hang instead of an error.
+
 ### Bounded queries with limits
 ```typescript
 // NEVER — returns entire table, causes OOM

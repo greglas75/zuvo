@@ -45,6 +45,37 @@ Refactor/build runs frequently execute inside a **secondary git worktree** (`zuv
 3. **Reject a partial package-local `node_modules`.** One that exists but is missing workspace deps is worse than none — it makes the resolver fail mid-build. Remove a partial/ignored install and re-link or re-install cleanly before verifying.
 4. **Clean ignored partial installs first**, then record the bootstrap state so a later failure is attributable to *code*, not setup.
 
+### Python worktrees (the venv does not come with the checkout)
+
+The section above is Node-shaped; Python fails the same way for a different reason. A worktree gets
+the source but **not** the virtualenv, and a `.venv/` in the main checkout hardcodes absolute paths
+— so `python`/`pytest`/`mypy` in the worktree either resolve to the system interpreter (missing every
+dependency) or to the main checkout's venv (running against the WRONG source tree). Both look like
+code failures. Before verifying, pin all three explicitly:
+
+```bash
+# 1. which interpreter — never rely on inherited PATH inside a worktree
+VENV="$(git -C . rev-parse --show-toplevel)/.venv"
+[ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"        # per-worktree venv, cheap and correct
+"$VENV/bin/python" -m pip install -q -e ".[dev]" 2>/dev/null || \
+  "$VENV/bin/python" -m pip install -q -r requirements-dev.txt
+# 2. run tools THROUGH it, not by bare name
+"$VENV/bin/python" -m pytest ...    # not `pytest`
+"$VENV/bin/python" -m mypy ...      # not `mypy`
+```
+
+Do NOT symlink the main checkout's `.venv` (unlike `node_modules`, it embeds absolute paths and
+an editable install points back at the *original* source tree — you would be type-checking the
+code you did not change). Record which interpreter was used, so a failure is attributable to code.
+
+**mypy: preflight before blaming the target.** A mypy run that explodes on missing/broken
+dependency stubs reports errors attributed to *your* files, and the run gets recorded as a target
+failure it is not. Run a one-file preflight first (`python -m mypy <one untouched file>`); if that
+already errors, the environment is the problem. Then split the report by attribution: errors whose
+path is inside the scoped source vs errors from `site-packages`/stub syntax. Only the first group
+is a target failure; the second is recorded as `typecheck: degraded (stub/env errors: N)` — precise
+telemetry instead of conflating environment breakage with code defects.
+
 **Scope verification to the changed surface.** In a secondary worktree, run type-check/tests for the **touched package(s)** (`turbo run type-check --filter=<pkg>`, or the package's own test script) — **not** the whole monorepo. A pre-existing failure in an unrelated package is **out-of-scope** for a behavior-preserving refactor: record it as `pre-existing-out-of-scope`, do not treat it as a blocker, and do not burn the run "rediscovering" errors that were already red before you started. (CodeSift availability is orthogonal — a worktree is a `path=` argument, never a reason to drop to degraded mode.)
 
 ## Agent Dispatch

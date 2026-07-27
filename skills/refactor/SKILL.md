@@ -115,6 +115,23 @@ After CodeSift setup, read the target file(s). Determine refactor type:
 
 Print: `[CLASSIFIED] Refactor type: {RENAME|EXTRACT|SPLIT|INLINE|RESTRUCTURE}`
 
+**First check the working tree — a prior interrupted attempt changes what "before" means.** If the
+target already has staged or unstaged modifications (`git status --porcelain -- <target>`), this is
+almost certainly a resumed/retried run, and reading the file as-is silently measures a
+half-refactored state as the baseline: the CQ pre-audit scores partially-extracted code, the
+"before" snapshot is wrong, and the run may re-extract what is already extracted.
+
+```bash
+git status --porcelain -- <target>          # empty → clean start, proceed normally
+git diff HEAD -- <target> | head -60        # non-empty → see what a previous attempt already did
+```
+
+When it is non-empty: diff against `HEAD` first, treat the **staged/current** state as the "before"
+for the CQ pre-audit (that is what you are actually refactoring from), and reconcile with any
+CONTRACT for this target and any CHANGELOG entry the earlier attempt already wrote — so the run
+continues the previous work instead of duplicating or reverting it. Record which baseline was used;
+a "before" score measured against the wrong tree makes the whole before/after comparison meaningless.
+
 ### PHASE 1 — Conditional Load (based on refactor type)
 
 | Include | RENAME | EXTRACT/SPLIT | INLINE | RESTRUCTURE |
@@ -531,6 +548,21 @@ diff_outline(repo, since=PRE_REFACTOR_SHA)
 - **CQ Auditor integration:** Pass `review_diff` output as `machine_checks` input. Auditor uses machine checks as baseline and focuses on domain-specific gates (CQ5, CQ8, CQ9, CQ14, CQ19, CQ25).
 - **Boundaries:** If `check_boundaries` rules exist: run `check_boundaries(repo, rules=PROJECT_RULES)`. Otherwise skip.
 
+**CLI-only CodeSift: an empty result is NOT a clean result.** The calls above pass `until="STAGED"`;
+the CodeSift *CLI* does not necessarily support comparing against the staged tree. When only the CLI
+is available, first determine whether staged comparison is supported. If it is not, do **NOT** fall
+back to a commit-only diff command and read its empty output as "no problems found" — the staged
+changes were never examined, and an empty answer to the wrong question is the most dangerous
+possible input to a safety gate. Instead:
+
+1. Record `machine_checks=degraded:cli-no-staged-diff` (it flows to the CQ Auditor and the report).
+2. Refresh the structural index for the changed files (`index_file` per file — not a full re-index).
+3. Substitute what the CLI *can* do on staged content: `git diff --staged --check` for whitespace/
+   conflict damage, plus symbol-reference scans over the moved/renamed symbols to catch dropped
+   consumers.
+
+Never spend a second round trip re-issuing the unsupported form once it has failed.
+
 When CodeSift unavailable: skip machine verification. Pass empty `machine_checks` to CQ Auditor. Log `[DEGRADED: CodeSift unavailable — machine verification skipped]`.
 
 ### CQ Post-Audit
@@ -663,6 +695,21 @@ The old "WARNING > 10 lines → backlog" rule is gone: line count is not a proxy
 
 Do NOT discard findings based on confidence alone. "Pre-existing" is NOT a reason to skip — if the issue is in a file you are editing, fix it now.
 
+**Boundary/security findings: trace one layer OUT and one layer IN before classifying.** A provider
+reviewing a service file in isolation cannot see the guards around it, so it reliably reports
+"missing rate limiting", "unbounded input", "no auth check", "missing uniqueness" on code where the
+router already validates and the schema already constrains. Before dispositioning such a finding:
+
+- **One layer outward** — the router/middleware: is the input already validated, authenticated,
+  size-capped, or rate-limited before it reaches this function?
+- **One layer inward** — persistence: does a NOT NULL / UNIQUE / CHECK constraint or transaction
+  already enforce the invariant the finding says is missing?
+
+If either layer already enforces it, the finding is a false positive — record it as such **with the
+citation** (`router.ts:42 validates`, `schema.sql:17 UNIQUE`), not as a bare dismissal. If neither
+does, it is real and in scope. This check is what separates "the reviewer lacked context" from "the
+guard is genuinely absent" — and citing the enforcing line is what stops the next pass re-raising it.
+
 ---
 
 ## Phase 3.5: Bug Remediation + Commit (in-process — leave the file CORRECT, not just tidier)
@@ -730,6 +777,14 @@ After committing: `index_file(path=<changed-file>)` for every changed file.
 ### Backlog Persistence (FULL mode)
 
 Read `../../shared/includes/backlog-protocol.md`. Persist ONLY the items Phase 3.5 deferred — fixes needing files outside the scope fence, and behavior decisions the user declined. **Mechanical bugs were already fixed in Phase 3.5; they do NOT belong in the backlog.** Persist to `memory/backlog.md`. Fingerprint: `file|rule-id|signature`. Source: `zuvo:refactor` or `zuvo:refactor/cq-auditor`. Deduplicate per `backlog-protocol.md`.
+
+**Transactional / concurrency residuals need an atomicity boundary line.** A deferred item like
+"read-modify-write race in `applyCredit`" is unactionable months later — the next person re-derives
+the whole analysis. When the deferral is an out-of-fence data race, add ONE line naming: (a) the
+operations that must share a transaction, (b) the current race window (what interleaving loses or
+duplicates data), and (c) the migration/constraint/RPC that would close it (unique index, `SELECT
+… FOR UPDATE`, atomic RPC). That keeps the fix cheap to pick up without dragging schema work into
+a behavior-preserving refactor.
 
 ### Content-keyed review artifact (on success only)
 

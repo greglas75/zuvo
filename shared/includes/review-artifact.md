@@ -116,3 +116,4 @@ After the header, the normal human-readable report body follows.
 | `zuvo:review` | Report Persistence (Phase 3), on completion | Already writes a `memory/reviews/` report — this just standardizes the header + content-keyed name. |
 | `zuvo:build`  | Phase 4, **only after** verify + acceptance pass | Skip on any FAIL/BLOCKED. |
 | `zuvo:execute`| Phase Final-2, **only after** the aggregate review passes | Skip on BLOCKED/abort. |
+| `zuvo:refactor` | Phase 4, **only after** Prove (blind audit + adversarial) and the repository gates pass | List only the production files inside the CONTRACT's scope fence — a refactor's artifact must not claim coverage for files it never touched. Two commits (pure move + fix) are one artifact spanning both. Skip on BLOCKED/unsafe. |

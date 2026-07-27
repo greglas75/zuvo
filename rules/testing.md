@@ -167,6 +167,13 @@ Before writing any mock, ask: "Can I use the real implementation?" Tests with re
 
 **Diagnostic:** If you need `as unknown as FooService` → use the real class. If a mock has 10+ method stubs → use the real class with faked dependencies.
 
+**Keep failure output readable.** When asserting over large payloads (API responses, dependency
+graphs, fixtures), a failed `toEqual` serializes both sides — multi-megabyte diffs that scroll the
+actual failure out of view and, in an agent run, evict useful context. Assert on the specific
+fields you care about rather than the whole object; when a full-object comparison is genuinely
+right, capture the concise summary (suite, failing test names, first diagnostic sample) and
+truncate serialized values after that first sample. One readable example beats fifty full dumps.
+
 **A WHERE-ignoring DB fake INVALIDATES ownership / scoping tests.** The common in-memory ORM fake
 returns whatever rows it holds and ignores the predicate. That is fine for shape assertions and
 actively dangerous for the assertion people care most about: "user A cannot read/modify user B's
