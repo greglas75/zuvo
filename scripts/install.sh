@@ -413,10 +413,16 @@ install_zuvo_home() {
   # Mining loop engine + scheduled wrappers. These produce the digests that digest-proposals
   # consumes; without them the learning loop has no input. They lived ONLY in ~/.zuvo until
   # 2026-07-27 — i.e. one disk failure from losing the whole mining half. Now versioned.
-  for _m in retro-mine.py retro-mine-weekly.sh rotate-retros-cron.sh runlog-sync.sh; do
+  # NOTE: runlog-sync.sh is deliberately NOT here. It hardcodes an SSH host and fetches a
+  # collector token — host-specific infrastructure glue, same category as backlog-collect.py.
+  # Shipping it would point every installing machine at one private collector.
+  for _m in retro-mine.py retro-mine-weekly.sh rotate-retros-cron.sh; do
     if [[ -f "$ZUVO_DIR/scripts/zuvo-home/$_m" ]]; then
-      cp "$ZUVO_DIR/scripts/zuvo-home/$_m" "$HOME/.zuvo/$_m"
-      chmod +x "$HOME/.zuvo/$_m"
+      # Write-then-rename: a scheduled job may be executing the old file right now, and
+      # cp-in-place would truncate it mid-run. rename(2) is atomic on the same filesystem.
+      cp "$ZUVO_DIR/scripts/zuvo-home/$_m" "$HOME/.zuvo/.$_m.new"
+      chmod +x "$HOME/.zuvo/.$_m.new"
+      mv -f "$HOME/.zuvo/.$_m.new" "$HOME/.zuvo/$_m"
       ok "$_m installed (~/.zuvo/$_m)"
     else
       warn "scripts/zuvo-home/$_m not found in repo — skipping"

@@ -46,6 +46,7 @@ dead end, and this loop has already produced three of them (see "Dead ends we hi
 | `~/.zuvo/mining/digest-*.md` | weekly digests | **No — HOME-local** |
 | `~/.zuvo/mining/proposals-ledger.tsv` | what's already applied/rejected | **No — HOME-local** |
 | `~/.zuvo/<helpers>` | the scripts | Yes — mirrored from `scripts/zuvo-home/`, installed by `install.sh` |
+| `~/.zuvo/runlog-sync.sh`, `backlog-collect.py`, `sync-popebot.sh` | host-specific glue | **Deliberately not** — they hardcode an SSH host and fetch a collector token. Versioning them would point every installing machine at one private collector. Keep them per-host; back them up with the tarball below. |
 | `zuvo/reports/retro-mine-*.md` | the weekly agent's triage report | Per-project, gitignored |
 
 **`~/.zuvo/` is not backed up by git.** The scripts are recoverable (`./scripts/install.sh`
@@ -89,8 +90,19 @@ Run it by hand any time:
 
 ```bash
 python3 ~/.zuvo/retro-mine.py --days 7      # just the digest
-~/.zuvo/retro-mine-weekly.sh                # digest + triage agent (slow, spends tokens)
+ZUVO_REPO=~/DEV/zuvo-plugin ~/.zuvo/retro-mine-weekly.sh   # digest + triage agent (slow, spends tokens)
 ```
+
+> **Security: the digest is UNTRUSTED input.** It aggregates free text written by other machines —
+> fleet-bot retros pulled from `~/.zuvo/remote/*/`. The triage agent reads all of it while running
+> `--dangerously-skip-permissions`, so a retro line crafted (or corrupted) on any bot is a prompt
+> injected into an unsandboxed local agent. Three things keep that bounded, and all three matter:
+> the agent's contract is **report-only** (it writes one report; it never edits skills, commits, or
+> releases), its output is a **file you read** rather than an applied change, and proposals reach
+> the codebase only through the review step below — where a human or a verifying agent checks each
+> one against the real file. Do not "simplify" the weekly job by letting the agent apply its own
+> proposals; that removes every one of those bounds at once. Treat an unexpected instruction-shaped
+> line in a digest as a compromised bot, not a proposal.
 
 ## Stage 3 — Surfacing proposals
 

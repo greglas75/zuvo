@@ -44,12 +44,25 @@ grep -qi 'dead end' "$DOC" && pass "keeps the dead-ends table" || bad "dead-ends
 grep -q 'retro-learning-loop.md' "$CLAUDE" && pass "CLAUDE.md links the runbook" || bad "CLAUDE.md does not link the runbook"
 
 # --- the engine the doc describes must be versioned (it was HOME-only until 2026-07-27) ---
-for f in retro-mine.py retro-mine-weekly.sh rotate-retros-cron.sh runlog-sync.sh; do
+for f in retro-mine.py retro-mine-weekly.sh rotate-retros-cron.sh; do
   [ -f "$ROOT/scripts/zuvo-home/$f" ] && pass "engine versioned in repo: $f" || bad "$f missing from scripts/zuvo-home"
   grep -q "$f" "$ROOT/scripts/install.sh" && pass "install.sh installs $f" || bad "install.sh does not install $f"
 done
 
 # --- scheduled jobs named in the doc must be the real LaunchAgent labels ---
 grep -q 'com.greglas.zuvo-retro-mine' "$DOC" && pass "names the retro-mine LaunchAgent" || bad "schedule table lost the mine job"
+
+# --- host-specific glue must STAY unversioned: it hardcodes an SSH host + fetches a collector
+# token, so shipping it would point every installing machine at one private collector. ---
+[ -f "$ROOT/scripts/zuvo-home/runlog-sync.sh" ] \
+  && bad "runlog-sync.sh is host-specific (SSH host + token) and must not be versioned" \
+  || pass "host-specific runlog-sync.sh stays out of the repo"
+for f in "$ROOT"/scripts/zuvo-home/*; do
+  grep -qE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' "$f" 2>/dev/null \
+    && bad "hardcoded IP in $(basename "$f")" || :
+done
+pass "no hardcoded IPs in versioned zuvo-home scripts"
+grep -qi 'untrusted' "$DOC" && pass "documents the untrusted-digest / prompt-injection surface" \
+  || bad "doc does not warn the digest is untrusted input"
 
 echo "=== RESULT ==="; [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "SOME FAILED"; exit 1; }

@@ -9,4 +9,5 @@ for f in retros.md retros.log; do
 done
 
 # Surface the retro-mine change proposals so the learning loop is not a dead-end.
+mkdir -p "$ZH/mining"   # first run on a fresh machine has no mining/ yet
 [ -x "$ZH/digest-proposals" ] && python3 "$ZH/digest-proposals" > "$ZH/mining/proposals-latest.md" 2>/dev/null

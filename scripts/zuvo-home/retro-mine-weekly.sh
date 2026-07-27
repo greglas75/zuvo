@@ -3,8 +3,11 @@
 # REPORT-ONLY by contract: the agent analyzes and ranks, never edits skills or releases unattended.
 set -u
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
-cd "$HOME/DEV/zuvo-plugin" || exit 1
+# Repo path is configurable — the miner must not be tied to one developer's checkout.
+ZUVO_REPO="${ZUVO_REPO:-$HOME/DEV/zuvo-plugin}"
+cd "$ZUVO_REPO" || { echo "ZUVO_REPO not found: $ZUVO_REPO" >&2; exit 1; }
 D=$(date +%F)
+mkdir -p "$HOME/.zuvo/mining"
 python3 "$HOME/.zuvo/retro-mine.py" --days 7 > "$HOME/.zuvo/mining/collect-$D.log" 2>&1 || exit 1
 DIGEST=$(ls -t "$HOME"/.zuvo/mining/digest-*.md | head -1)
 claude -p "You are the weekly zuvo retro-miner (report-only; NEVER edit skills, commit, or release in this run).
@@ -15,4 +18,11 @@ claude -p "You are the weekly zuvo retro-miner (report-only; NEVER edit skills, 
 5. Print the TOP-5 list as your final output." \
   --dangerously-skip-permissions \
   > "$HOME/.zuvo/mining/agent-$D.log" 2>&1
+rc=$?
+# Do NOT report success when the agent failed — a swallowed non-zero here is how a week of
+# triage silently goes missing while the log says DONE.
+if [ "$rc" -ne 0 ]; then
+  echo "WEEKLY MINE FAILED $D (claude rc=$rc): see ~/.zuvo/mining/agent-$D.log" >&2
+  exit "$rc"
+fi
 echo "WEEKLY MINE DONE $D: report=zuvo/reports/retro-mine-$D.md log=~/.zuvo/mining/agent-$D.log"
