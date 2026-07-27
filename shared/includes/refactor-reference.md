@@ -24,10 +24,18 @@ commits (i.e. it describes an *earlier, already-shipped* refactor, not this sess
 
 ```bash
 C="zuvo/contracts/refactor-${HASH}.json"
-[ -f "$C" ] && mv "$C" "zuvo/contracts/refactor-${HASH}-$(git rev-parse --short=7 HEAD).json"
-# move its findings ledger alongside it, same suffix, so the pair stays together
-[ -f "zuvo/contracts/${HASH}-findings.json" ] && mv "zuvo/contracts/${HASH}-findings.json" \
-   "zuvo/contracts/${HASH}-$(git rev-parse --short=7 HEAD)-findings.json"
+if [ -f "$C" ]; then
+  STAGE=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("stage",""))' "$C")
+  HEAD7=$(git rev-parse --short=7 HEAD)
+  # BOTH conditions, or we are destroying a RESUMABLE run — the exact loss this rule prevents.
+  if [ "$STAGE" = "COMPLETE" ] && ! grep -q "$HEAD7" "$C"; then
+    mv "$C" "zuvo/contracts/refactor-${HASH}-${HEAD7}.json"
+    [ -f "zuvo/contracts/${HASH}-findings.json" ] && \
+      mv "zuvo/contracts/${HASH}-findings.json" "zuvo/contracts/${HASH}-${HEAD7}-findings.json"
+  else
+    echo "contract ${HASH}: stage=$STAGE — RESUME it, do not archive or overwrite"
+  fi
+fi
 ```
 
 Never overwrite a COMPLETE contract in place. An *incomplete* contract for the same hash is a

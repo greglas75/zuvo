@@ -132,7 +132,7 @@ def looks_like_finding(header: str) -> bool:
     # pattern below (`[A-Z]{1,3}\d+`) matches `CQ3`/`Q7`, classified them as findings, and
     # REJECTED otherwise-valid reports for "no file:line citation". Exclude the BARE token
     # only: a variant-suffixed `CQ8-001` is a real finding id and still counts.
-    first = h.split()[0].rstrip(":—–-").strip("*_") if h.split() else ""
+    first = h.split()[0].rstrip(":—–-.").strip("*_") if h.split() else ""
     if re.fullmatch(r"(?:CQ|Q)\d+", first, re.IGNORECASE):
         return False
 

@@ -924,15 +924,21 @@ repository**, with its own command set — and that is where a plan that looks c
 minutes later (observed: 61 legacy-test failures and a TS rootDir error that every scoped gate
 missed, because the scoped commands never ran the full suite or the app's tsconfig).
 
-Before setting `status: completed`, for **each in-scope repository**: read its active CI workflow
-(`.github/workflows/*.yml`, the job that runs on push/PR to the default branch) and run that job's
-**exact** lint, full-test, build, and any secondary typecheck commands locally — not your own
-approximations of them.
+Before setting `status: completed`, for **each in-scope repository**: read the workflows triggered
+by `push`/`pull_request` on the default branch (there is usually more than one — CI, typecheck,
+lint are often separate files; deploy/nightly/release are NOT in scope) and run their **verification**
+commands locally, exactly as written, instead of your own approximations.
 
 ```bash
-ls .github/workflows/*.yml 2>/dev/null | head
-# extract the `run:` steps of the push/PR job and execute those commands verbatim
+grep -rlE '^\s*on:|pull_request|push' .github/workflows/*.y*ml 2>/dev/null   # candidates, then READ them
 ```
+
+**Run verification steps ONLY — never the whole job.** Copy the `run:` lines whose purpose is
+lint / test / build / typecheck. **Do NOT execute** any step that deploys, publishes, releases,
+pushes images or tags, writes to a registry/bucket, or calls an external API with credentials —
+a CI job legitimately contains those, and "run the job's steps verbatim" locally would fire them
+for real. Skip steps needing secrets, service containers, or CI-only runners and record them as
+`ci-parity: <step> skipped (needs <secret|service|runner>)` rather than faking a pass.
 
 Disposition:
 - **All green** → emit `[GATE: ci-parity] repo=<name> commands=<n>` and continue.

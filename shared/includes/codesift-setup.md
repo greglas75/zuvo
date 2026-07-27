@@ -44,7 +44,7 @@ If CodeSift succeeds at indexing/init but later queries fail with `Transport clo
 
 **A quoted line count is advisory.** When a Read-block/hook message quotes a file's line count, that number comes from the index and can be stale for exactly the reason above. Before scoping a refactor (especially a SPLIT) off it, confirm with `wc -l`; treat a disagreement of more than a few lines as stale-index and use the `wc -l` value. (A stale 215-vs-457 count once nearly under-scoped a split by half.)
 
-**Worktree path rejected by `index_file`:** do not retry and do not index the worktree. Translate the worktree-relative path to the canonical repo path (`git -C <worktree> rev-parse --path-format=absolute --git-common-dir` → its parent) and run the check read-only against that, per the worktree section below.
+**Worktree path rejected by `index_file`:** do not retry and do not index the worktree — but do **NOT** redirect the check to the canonical checkout either. The whole point of a worktree is that it holds *different* code; auditing the main checkout's copy of the file would report on code you are not reviewing, which is the stale-analysis trap the worktree section below exists to prevent. Run the check natively against the worktree path instead (`wc -l`, bounded `Read`, `git -C <worktree> diff`) and record `codesift: degraded` for that file.
 
 **Revealed but not callable:** if a tool appears after `describe_tools(..., reveal=true)` yet calls still fail, that is a *host-disabled* tool, not an index problem — go to "Host-disabled probe (degrade, don't false-abort)" in Step 2.5, record the substitution once, and never re-run the reveal.
 

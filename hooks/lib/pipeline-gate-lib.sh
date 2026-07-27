@@ -109,7 +109,8 @@ pg_is_production() {
     NOTICE|*/NOTICE)                   return 1 ;;
     AUTHORS|*/AUTHORS)                 return 1 ;;
     CONTRIBUTORS|*/CONTRIBUTORS)       return 1 ;;
-    CODEOWNERS|*/CODEOWNERS)           return 1 ;;
+    # CODEOWNERS is deliberately NOT exempt: it decides who must review what, so editing it
+    # is a governance change and exactly the kind of edit the gate should still see.
     *)                                 return 0 ;;
   esac
 }

@@ -193,13 +193,21 @@ boundary — an SDK wrapper, adapter, client, or facade other modules import thr
    similar copy:
 
 ```ts
-import { OrderStatus } from './order.service';        // historical public path
+// RUNTIME values only (enum, class, const) — these exist at runtime, so assert identity:
+import { OrderStatus } from './order.service';         // historical public path
 import { OrderStatus as Internal } from './order.types';
 expect(OrderStatus).toBe(Internal);                    // identity, not shape
+
+// PURE types (interface / type alias) are erased at compile time — `expect(T)` does not
+// compile. Check them at the TYPE level instead:
+import type { OrderFilters } from './order.service';   // must still resolve from the old path
+const _contract: OrderFilters = {} as import('./order.types').OrderFilters;  // assignable both ways
 ```
 
-A re-export that is a distinct object still breaks `instanceof`, enum comparison, and
-declaration merging — a shape assertion would pass while consumers fail.
+For runtime values a re-export that is a *distinct object* still breaks `instanceof` and enum
+comparison, so a shape assertion would pass while consumers fail. For pure types the risk is not
+identity but **reachability** — the old import path must still typecheck, which `tsc --noEmit` on
+the assertion above proves.
 
 ### Effective split boundaries
 
