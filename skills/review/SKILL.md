@@ -374,6 +374,8 @@ Copy the printed `[CodeSift matching trace]` block verbatim and issue the printe
 | `changed_symbols` + `diff_outline` | `impact_analysis` + `get_file_outline` | `changed_symbols: absent-in-build (impact_analysis+get_file_outline: <result>)` |
 | `scan_secrets` | `grep` secret-scan (high-entropy/key patterns on diff) | `scan_secrets: absent-in-build (grep secret-scan: <count>)` |
 
+**Fence the substitute's output to the reviewed file set.** `audit_scan` (and the other compound substitutes) scan the **repository**, not your diff — a scoped review that scores their raw output drowns in repo-wide pre-existing findings that this change never touched, and the CQ score stops describing the diff. After each substitute call, discard findings whose file is outside the reviewed file set (`git diff --name-only {REVIEWED_FROM}..{REVIEWED_THROUGH}`) BEFORE CQ scoring, and record whether the tool honored the requested fence: `audit_scan: fence-honored` or `audit_scan: fence-ignored (filtered <N>→<M>)`. Findings outside the fence are not silently dropped knowledge — they are pre-existing debt, so backlog them separately rather than scoring them against this diff.
+
 ### Forbidden escape hatches
 
 | Value | Forbidden when | Required value instead |
@@ -601,6 +603,17 @@ Cross-model adversarial review using external providers. Runs **sequentially** v
 
 If `adversarial-review` not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
 
+**BASE PREFLIGHT (run BEFORE piping any commit-range diff — a stale base wastes the whole pass).** A two-dot `<base>..<tip>` diff computed against a base that is no longer an ancestor of the tip shows **reverse hunks of other sessions' pushes** — code being "deleted" that was actually added elsewhere. Every provider then reports a confident CRITICAL about a revert that does not exist (observed: one full multi-provider pass burned, 5/5 providers false-CRITICAL). Before the pipe:
+
+```bash
+git fetch -q origin                                    # the base may have moved since you resolved it
+git merge-base --is-ancestor "$REVIEWED_FROM" "$REVIEWED_THROUGH" || echo "STALE BASE"
+```
+
+If it is NOT an ancestor: either merge/rebase first, or review `$(git merge-base "$REVIEWED_FROM" "$REVIEWED_THROUGH")..$REVIEWED_THROUGH` instead. Never send a known-stale range to the providers "to see what they say" — the findings are unfalsifiable noise you then have to disprove one by one.
+
+**TRUNCATED INPUT INVALIDATES THE PASS FOR THE OMITTED FILES.** The staircase above is proactive; this is the reactive backstop for when it was not applied. If the wrapper prints `input truncated` (or the piped diff exceeds the provider cap), the pass did NOT review the files that fell off the end — and the highest-risk file is as likely to be dropped as any other. Do not accept that pass as coverage: re-run per production file (staircase step 1) for the omitted files before triage, and never let a nominal "pass 1 clean" stand for a file the provider never received.
+
 **Self-review escalation:** If SELF-REVIEW marker set in 1.1, pass `--multi` flag.
 
 **Status handling (D2+D3+D4, 2026-05-17):** When the script exits non-zero or returns non-`ok` JSON status, branch:
@@ -608,6 +621,10 @@ If `adversarial-review` not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/z
 - **exit 3 / `single_provider_only`** — `--rotate` was requested but post-host-exclusion only 1 provider remains. Two options: re-invoke with `--single` (accept reduced consensus and note it in the review header) OR skip this pass and note `Adversarial: skipped (single_provider_only — install second provider for diversity)` in the review output.
 - **exit 124 / `status: "timeout"`** — ALL providers timed out. Record `Adversarial: skipped (timeout)` and continue to next pass (or finalize if last pass).
 - **`status: "partial"` with exit 0** — some providers returned, others did not. Surface `timeout_count` in the review header (e.g. `Adversarial pass 1: cursor-agent (1 of 2 providers; gemini timed out)`) so the user sees coverage was reduced.
+
+**Provider accounting — a block is only "used" if it actually reviewed.** Count a provider toward `providers_used` only when its block contains at least one verdict or finding. A block that holds nothing but an execution error, a usage/auth message, or an empty result is `provider_failed`, NOT a used provider. Otherwise the aggregate header claims cross-provider coverage that never happened — the same fake-coverage failure the Validity Gate exists to catch. If that drops the count below the tier's minimum, treat it as reduced coverage (`Adversarial: partial (…)`), never as a satisfied gate.
+
+**Unhealthy-provider short-circuit.** Within one review run, after a provider returns two empty/error-only blocks, mark it unhealthy and stop dispatching to it for the remaining passes (including fix-delta passes) — repeated 5–8 minute waits buy nothing. Keep dispatching to the rest, and preserve the floor of **two** independent providers; if dropping the unhealthy one would take you below two, the run is reduced-coverage and must say so rather than silently continuing.
 
 **Cross-call rotation:** between passes, capture `providers_used_list[0]` (array field) from each pass's JSON output and thread it into the next `--rotate` call via `--exclude-last <name>`. Forces a different provider on each successive pass even when host exclusion limits the pool. (The string field `providers_used` cannot be indexed with `[0]` in jq.)
 
@@ -770,6 +787,15 @@ Persist ALL findings to `memory/backlog.md`:
 
 Save the full report to `memory/reviews/YYYY-MM-DD-<scope>.md`.
 
+**ORDERING (persistence artifacts are SHA-keyed — a later commit invalidates them).** Both gates
+here key on the head SHA: `verify-audit` rejects a report whose `Verified-against:` stamp is not
+the **current** SHA, and the content-keyed artifact below encodes `<base7>..<head7>` in its own
+filename. So finish ALL commits first — including any late CQ/complexity cleanup — and only then
+write the report, the artifact, the tags, and the retro. If a commit does land after persistence,
+the stamp and the `<head7>` are stale: re-stamp and rewrite the artifact for the new head rather
+than shipping a report the verifier will reject. Do the final complexity/structure checks
+*before* this section, not after it.
+
 **Content-keyed pipeline-entry artifact (REQUIRED — on successful completion only).**
 In addition (or as the same file's first lines), write the content-keyed review artifact
 `memory/reviews/<base7>..<head7>-<slug>.md` carrying the machine-readable
@@ -784,11 +810,20 @@ run never grants pipeline coverage. Skip for `staged`/`uncommitted` scope (no co
 Naming convention: `reviewed/<short-hash>` tags the individual commits that were examined. This is distinct from the post-execute wrapper tag (`review-YYYY-MM-DD-<slug>`) that marks the fix commit produced by Phase 4.
 
 ```bash
-for H in $(git log --format='%H' REVIEWED_FROM..REVIEWED_THROUGH); do
-  h=$(git log --format='%h' -1 "$H")
-  git tag -f "reviewed/$h" "$H"
-done
+# Namespace-collision guard: git refs are FILES, so a flat tag named `reviewed`
+# and the directory `reviewed/<hash>` cannot coexist. NEVER delete the flat tag
+# to make room — it is someone else's ref and deleting it is unrecoverable here.
+if git rev-parse -q --verify refs/tags/reviewed >/dev/null; then
+  echo "per-commit tags: skipped: namespace-collision(refs/tags/reviewed)"
+else
+  for H in $(git log --format='%H' REVIEWED_FROM..REVIEWED_THROUGH); do
+    h=$(git log --format='%h' -1 "$H")
+    git tag -f "reviewed/$h" "$H"
+  done
+fi
 ```
+
+If the collision is hit, record `per-commit tags: skipped: namespace-collision(<target>)` in the report and still create the non-conflicting `review-YYYY-MM-DD-<slug>` wrapper tag — the audit trail degrades to the wrapper, it does not become a licence to rewrite existing tags. (`git tag -f` above only ever force-updates the *same* `reviewed/<hash>` name, which is the intended re-review behavior.)
 
 Skip tagging when scope is `staged` or `uncommitted`.
 
@@ -1005,6 +1040,7 @@ Input:
 Applying fixes without re-checking is how a "fix" silently becomes a regression (2026-05-30: an auto-applied resize fix removed the width floor → the dock could collapse to 0px and `aria-valuemin > valuemax`; caught only by the next adversarial pass). After applying ANY fixes, before declaring done:
 
 1. **Verify** — run the project's test/typecheck/build. A fix that leaves the suite red is reverted, not shipped.
+   - **Pre-existing failure in an UNTOUCHED workspace is not your regression** (and reverting a good fix over it is the actual harm). If the full suite fails only outside the reviewed file set: re-run that workspace once to confirm it reproduces, then compare the failing files against the reviewed diff. A **reproducible** failure in files this review never touched does NOT invalidate a green targeted suite + typecheck — but the verdict MUST disclose it: `verification debt: <workspace> <N> failing (pre-existing, out-of-scope)`, with the exact files/counts. Silence here is the escape hatch: an undisclosed "the suite was already broken" is indistinguishable from a fix that broke it. If the failure touches ANY reviewed file, it is yours — revert or fix, no debt option.
 2. **Adversarial re-validation** — run one cross-provider adversarial pass on the FIX diff (`adversarial-review --mode code` on the applied changes). It must **converge** (no new CRITICAL): a new CRITICAL introduced by a fix is itself fixed (cap 3 passes per `adversarial-loop.md`), residual non-CRITICAL → backlog. Do NOT print the FIX-COMPLETE block while a fix-introduced CRITICAL is open.
 3. **Commit** only after 1+2 pass. Record applied vs deferred (backlog IDs) in the FIX summary.
 

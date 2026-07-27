@@ -125,6 +125,17 @@ def looks_like_finding(header: str) -> bool:
        - <DIM>[.<SUB>][-<VARIANT>]<digit*>  e.g. DB12-NEW-001, S2.3-A, PT4-001, CC1-encoding
     """
     h = header.lstrip("#").lstrip("*").lstrip("_").strip()
+
+    # Quality-GATE ids are zuvo's SCORING vocabulary, not finding ids: CQ1-CQ29 (code),
+    # Q1-Q19 (test). A section headed `CQ3 validation scores` / `Q7 test quality` reports a
+    # score, so it has no file:line and no per-finding stamp — but the generic dimension
+    # pattern below (`[A-Z]{1,3}\d+`) matches `CQ3`/`Q7`, classified them as findings, and
+    # REJECTED otherwise-valid reports for "no file:line citation". Exclude the BARE token
+    # only: a variant-suffixed `CQ8-001` is a real finding id and still counts.
+    first = h.split()[0].rstrip(":—–-").strip("*_") if h.split() else ""
+    if re.fullmatch(r"(?:CQ|Q)\d+", first, re.IGNORECASE):
+        return False
+
     return bool(
         re.match(r"^[HMLC]\d+\b", h, re.IGNORECASE)
         or re.match(r"^(?:HIGH|MEDIUM|LOW|CRITICAL)-\d+\b", h, re.IGNORECASE)

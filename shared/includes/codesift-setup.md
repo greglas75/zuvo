@@ -36,6 +36,18 @@ Do not abandon CodeSift after the first repo/index failure when initialization h
 
 If CodeSift succeeds at indexing/init but later queries fail with `Transport closed` (or equivalent transport/session teardown), stop retrying CodeSift for the rest of the current skill run. Print one degraded-mode note and switch to native tools immediately.
 
+**Stale index after an edit (the query SUCCEEDS but the answer is old).** This failure is silent — no error to react to. If `index_file` returns `skipped=true`, or `get_file_outline` / `analyze_complexity` / `search_symbols` still describe the **pre-edit** structure after an edit you confirmed on disk, the index is stale. Do **NOT** keep re-calling `index_file` and do **NOT** escalate to `index_folder(force=true)` — a re-index that was already skipped will be skipped again, and a full re-index is minutes of cost for a one-file staleness. Instead:
+
+1. Confirm on disk, not through the index: `wc -l <file>` (size) + a bounded `Read` (offset/limit) of the changed region.
+2. Do the affected check natively for this file only — `wc -l` for size, manual/`grep -c` counting for branch complexity, `git diff` for what actually changed.
+3. Log it once and move on: `[DEGRADED: codesift index stale — manual verification for <file>]`, and record `codesift: degraded` in the run's telemetry.
+
+**A quoted line count is advisory.** When a Read-block/hook message quotes a file's line count, that number comes from the index and can be stale for exactly the reason above. Before scoping a refactor (especially a SPLIT) off it, confirm with `wc -l`; treat a disagreement of more than a few lines as stale-index and use the `wc -l` value. (A stale 215-vs-457 count once nearly under-scoped a split by half.)
+
+**Worktree path rejected by `index_file`:** do not retry and do not index the worktree. Translate the worktree-relative path to the canonical repo path (`git -C <worktree> rev-parse --path-format=absolute --git-common-dir` → its parent) and run the check read-only against that, per the worktree section below.
+
+**Revealed but not callable:** if a tool appears after `describe_tools(..., reveal=true)` yet calls still fail, that is a *host-disabled* tool, not an index problem — go to "Host-disabled probe (degrade, don't false-abort)" in Step 2.5, record the substitution once, and never re-run the reveal.
+
 ### Worktree / branch-not-in-index scope (decide ONCE, up front — do not rediscover per agent)
 
 CodeSift indexes a repo's **main checkout**. When the scope you are about to analyze is a **git
@@ -308,6 +320,21 @@ Fall back to built-ins:
 | `analyze_project` | Manual file scanning | No auto-detected stack profile |
 | `assemble_context` | Read files manually | Lower coverage, higher token cost |
 
+### When the fallback itself is blocked (hooks active, MCP offline)
+
+The table above assumes Grep/Read are available. On a host with CodeSift's **precheck hooks installed** (`codesift setup claude --hooks`) they may not be: those hooks redirect `Read` on large code files and `grep`/`rg`/`find` in Bash *to CodeSift*. If the MCP server is offline while the hooks stay active, the prescribed fallback is the exact thing the hooks block — CodeSift is unreachable and Grep is refused, so the run deadlocks and agents burn turns retrying both.
+
+Recognize it by the shape: a CodeSift call fails/times out **and** a Grep or Bash `grep`/`rg` comes back with a hook message telling you to use CodeSift instead. When that happens, use the substitutions the hooks never intercept:
+
+| Blocked | Use instead |
+|---------|-------------|
+| `Grep` / Bash `grep`/`rg` | `python3 -c` with `re` over the target files, or `git grep` scoped to a path |
+| `Read` on a large file | bounded `Read` with `offset`+`limit` (always permitted), paged |
+| `find` / file discovery | `git ls-files <glob>` |
+| diff-scoped search | `git diff <range> -- <path>` piped into `python3 -c` |
+
+Record the affected rows as `HOOKS-BLOCKED (<fallback used>)` in the Tool Availability block (that status string is in the vocabulary below) so the report shows *why* the analysis is degraded. Do not retry the blocked tool more than once, and never conclude "the codebase has no matches" from a hook-refused search — that is a blocked call, not a result.
+
 ### Text-Stub Languages
 
 When `get_extractor_versions()` shows the project's language as text-stub only (kotlin, swift, dart, scala, php), **do NOT call** symbol-based tools — they return empty silently: `search_symbols`, `get_file_outline`, `get_symbol`, `find_references`, `trace_call_chain`.
@@ -384,6 +411,7 @@ Audit skills MUST emit this block at the top of their report (after the audit ti
 - `TRANSPORT-CLOSED` — MCP transport died mid-run; switched to native fallback
 - `EMPTY-RESULT (<fallback>)` — tool returned empty on a non-empty repo (anomaly); used `<fallback>`
 - `UNAVAILABLE` — CodeSift MCP not present in tool list at all
+- `HOOKS-BLOCKED (<fallback>)` — CodeSift unreachable AND its precheck hooks refused the native fallback (Grep/Read/find); used `<fallback>` per "When the fallback itself is blocked"
 
 **One status per row.** Do NOT concatenate values with `|` inside a cell — that breaks downstream grep parsing of acceptance gates. If a tool was unavailable for one dimension and `OK` for another, emit two separate rows scoped by dimension:
 

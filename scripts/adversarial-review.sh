@@ -304,7 +304,13 @@ if [[ ${#INPUT} -gt $MAX_CHARS ]]; then
   INPUT="${INPUT%$'\n'*}"
   # Manifest of files whose content fell past the cutoff, so the reviewer never reports
   # omitted sections as "missing" and the caller can re-run --files on just the omitted set.
-  OMITTED_FILES=$(printf '%s' "${FULL_INPUT:${#INPUT}}" | grep -E '^(diff --git |=== FILE: )' | sed -E 's#^diff --git a/(.*) b/.*#\1#; s/^=== FILE: (.*) ===$/\1/' | head -20 | tr '\n' ' ')
+  # `|| true` is LOAD-BEARING: with `set -euo pipefail` (line 22) a grep that matches nothing
+  # exits 1, pipefail propagates it, and the command substitution kills the script HERE —
+  # before a single provider is dispatched, with no output. That is the exact shape of a
+  # remainder with no file header: one file's diff cut mid-content, i.e. every single-file /
+  # single-test input just over MAX_CHARS silently produced NO review at all. The manifest is
+  # a diagnostic; failing to build it must never abort the review.
+  OMITTED_FILES=$(printf '%s' "${FULL_INPUT:${#INPUT}}" | { grep -E '^(diff --git |=== FILE: )' || true; } | sed -E 's#^diff --git a/(.*) b/.*#\1#; s/^=== FILE: (.*) ===$/\1/' | head -20 | tr '\n' ' ')
   unset FULL_INPUT
   INPUT="${INPUT}
 
