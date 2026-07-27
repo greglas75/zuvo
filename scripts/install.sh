@@ -410,6 +410,19 @@ install_zuvo_home() {
     warn "scripts/zuvo-home/runlog-collect.py not found in repo — skipping"
   fi
 
+  # Mining loop engine + scheduled wrappers. These produce the digests that digest-proposals
+  # consumes; without them the learning loop has no input. They lived ONLY in ~/.zuvo until
+  # 2026-07-27 — i.e. one disk failure from losing the whole mining half. Now versioned.
+  for _m in retro-mine.py retro-mine-weekly.sh rotate-retros-cron.sh runlog-sync.sh; do
+    if [[ -f "$ZUVO_DIR/scripts/zuvo-home/$_m" ]]; then
+      cp "$ZUVO_DIR/scripts/zuvo-home/$_m" "$HOME/.zuvo/$_m"
+      chmod +x "$HOME/.zuvo/$_m"
+      ok "$_m installed (~/.zuvo/$_m)"
+    else
+      warn "scripts/zuvo-home/$_m not found in repo — skipping"
+    fi
+  done
+
   if [[ -f "$ZUVO_DIR/scripts/zuvo-home/sanitize-retros" ]]; then
     cp "$ZUVO_DIR/scripts/zuvo-home/sanitize-retros" "$HOME/.zuvo/sanitize-retros"
     chmod +x "$HOME/.zuvo/sanitize-retros"

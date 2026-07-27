@@ -149,6 +149,24 @@ Every SKILL.md follows this structure:
 
 Reference: `skills/build/SKILL.md` is the canonical template.
 
+## The retro learning loop (how zuvo improves itself)
+
+Runs write retros → weekly mining turns them into digests → digests carry change proposals →
+proposals get surfaced, implemented, and **marked done**. Full runbook, including every dead end
+this loop already produced and how each was closed: **`docs/retro-learning-loop.md`**. Read it
+before touching anything under `scripts/zuvo-home/` or `~/.zuvo/`.
+
+The two rules worth repeating here:
+
+- **After implementing a proposal, disposition it in the same session** —
+  `~/.zuvo/digest-proposals --mark applied --file <F> --section <S> --ref <version>`. Skip this and
+  the item re-surfaces forever; that exact gap left 57 finished proposals looking open.
+- **Never edit `~/.zuvo/<helper>` directly** — `./scripts/install.sh` overwrites it from
+  `scripts/zuvo-home/<helper>` on the next run. Edit the repo copy, then install.
+
+`~/.zuvo/` data (retros, digests, the disposition ledger) is HOME-local and NOT in git. Before a
+machine migration: `tar czf ~/zuvo-state-$(date +%F).tgz -C "$HOME" .zuvo`.
+
 ## Output location convention (where reports/state are written)
 
 **Single source of truth: `shared/includes/report-output-location.md`.** All project-local
