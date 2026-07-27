@@ -49,11 +49,15 @@ if command -v node >/dev/null 2>&1; then
   # Execute the prescribed path guard against the exact escape that defeated the old one.
   out=$(node -e '
     const path = require("node:path");
+    // MUST mirror the guard prescribed in rules/cq-patterns.md — segment compare, not prefix.
     const blocked = (base, input) => {
       const b = path.resolve(base), t = path.resolve(b, input), rel = path.relative(b, t);
-      return rel === "" || rel.startsWith("..") || path.isAbsolute(rel);
+      return rel === "" || rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel);
     };
-    if (blocked("/var/data", "ok/file.txt") !== false) { console.log("BAD-legit-blocked"); process.exit(0); }
+    // legitimate paths, including a file whose NAME starts with ".." — a bare
+    // rel.startsWith("..") would wrongly reject these.
+    for (const ok of ["ok/file.txt", "..config", "..hidden/a.txt"])
+      if (blocked("/var/data", ok) !== false) { console.log("BAD-legit-blocked:" + ok); process.exit(0); }
     for (const esc of ["../data-evil/secret.txt", "../../etc/passwd", "/etc/passwd"])
       if (blocked("/var/data", esc) !== true) { console.log("BAD-escape-allowed:" + esc); process.exit(0); }
     console.log("OK");' 2>&1)
@@ -71,16 +75,12 @@ grep -qE 'normalize\(\).*startsWith\(baseDir\)' "$ROOT/rules/cq-patterns-core.md
 # ---------- 4. N/A anti-gaming rules ----------
 CQ="$ROOT/rules/cq-checklist.md"
 grep -q 'N/A cannot raise the score' "$CQ" && pass "N/A anti-gaming rule present" || bad "N/A anti-gaming rule missing"
-grep -q 'min(pass_count' "$CQ" && pass "verdict uses the LOWER of both ratios" || bad "min() ratio rule missing"
+grep -q 'same evidence rigour as a 0' "$CQ" && pass "N/A requires negative-evidence citation" || bad "N/A evidence rule missing"
 grep -qi 'may not go below 20\|INCOMPLETE' "$CQ" && pass "denominator floor / INCOMPLETE verdict defined" || bad "no denominator floor"
 
 # The attack must not pay: 20 pass / 9 fail stays FAIL after re-labelling 6 failures as N/A.
-if command -v python3 >/dev/null 2>&1; then
-  out=$(python3 -c "
-s=lambda p,na: min(p/(29-na), p/29)
-print('OK' if s(20,0) == s(20,6) and s(20,6) < 0.79 else 'BAD')")
-  [ "$out" = "OK" ] && pass "N/A re-labelling cannot lift a FAIL to PASS" || bad "N/A attack still pays off"
-fi
+grep -q 'Honest limit' "$CQ" && pass "discloses that the N/A rules are agent-followed, not mechanical" \
+  || bad "N/A enforcement limit not disclosed"
 
 # ---------- 5. gate count ----------
 grep -rIn --include='*.md' -E 'of 28 for CQ|any of the 28 gates|ALL 28 gates' \

@@ -39,6 +39,10 @@ Q17 — No tautological oracles (mock returns X, assert X) — expected values f
 <10/19 OR any critical gate = 0  →  REWRITE
 ```
 
+The FIX band is 10-15, not 12-15: this file previously disagreed with `rules/testing.md:446`,
+`rules/testing-slim.md`, `shared/includes/quality-gates.md` and `skills/build/SKILL.md`, which all
+use 16+/10-15/<10. Aligned to that canon rather than keeping the outlier.
+
 ## N/A Abuse Check
 
 Count N/A scores. If more than 50% (10+ gates) are N/A:

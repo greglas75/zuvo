@@ -610,7 +610,9 @@ this.logger.error('Database connection lost', { error: err.message }); // infras
 // caller has headroom to catch that failure and return a meaningful error.
 // DB: 5s → Server: 10s → Client: 30s
 // SET statement_timeout = '5s';        // DB fails first, returns a typed error
-// server.setTimeout(10_000);           // server catches it, responds 504 with context
+// server: enforce the deadline IN the handler (AbortSignal.timeout / framework request timeout)
+//   so it can catch the DB error and reply 504 with context. NOTE: server.setTimeout() is a
+//   socket-inactivity timeout — it destroys the socket, it does not produce a response.
 fetch(url, { signal: AbortSignal.timeout(30_000) }); // client still waiting → receives that 504
 ```
 Rule of thumb: a caller's timeout must exceed the sum of the budgets it waits on, plus overhead.
@@ -641,9 +643,20 @@ const file = path.join(uploadDir, req.params.filename);
 const base = path.resolve(baseDir);
 const target = path.resolve(base, userInput);
 const rel = path.relative(base, target);
-if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) throw new Error('Path traversal blocked');
-const real = await fs.promises.realpath(target);                       // symlink escape
-if (path.relative(base, real).startsWith('..')) throw new Error('Symlink escape');
+// Compare the SEGMENT, not the prefix: a file legitimately named "..config" yields
+// rel === "..config", which rel.startsWith('..') would wrongly reject.
+// path.isAbsolute(rel) also covers a different Windows drive, where relative() gives an abs path.
+const escapes = rel === '' || rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel);
+if (escapes) throw new Error('Path traversal blocked');
+// Symlinks: resolve the PARENT, not the target — the target may not exist yet (upload/create),
+// and realpath() throws ENOENT on a missing file.
+const realParent = await fs.promises.realpath(path.dirname(target));
+const relReal = path.relative(base, path.join(realParent, path.basename(target)));
+if (relReal === '..' || relReal.startsWith('..' + path.sep) || path.isAbsolute(relReal)) {
+  throw new Error('Symlink escape');
+}
+// NOTE: this is check-then-use — a symlink swapped between the check and the open() still wins.
+// Where that matters, open with O_NOFOLLOW (fs.constants.O_NOFOLLOW) and validate the fd.
 ```
 
 ### Non-literal RegExp — escape user input

@@ -14,7 +14,7 @@ Writing patterns only. Read BEFORE producing code. Full version with examples: `
 - **Timing-safe compare**: hash to a fixed width, then compare — `timingSafeEqual(sha256(a), sha256(b))`. Never `===` for secrets, and never `timingSafeEqual` on raw buffers: it THROWS on a length mismatch (uncaught 500 + length oracle).
 - **Defense in depth**: auth guard AND `WHERE { organizationId: orgId }` in query — guard alone is NOT sufficient.
 - **PII in logs**: log correlation IDs only — no email, password, token in logs, error messages, or API responses.
-- **Path traversal**: `path.resolve()` + containment via `path.relative()` (reject `..`/absolute), then `realpath` for symlinks — never user input directly in `path.join`, and never `normalize()`+`startsWith()`: that passes `/var/data-evil` for base `/var/data`.
+- **Path traversal**: `path.resolve()` + containment via `path.relative()` — reject `rel === '..'`, `rel.startsWith('..'+sep)` or an absolute `rel` (segment compare, so a file named `..config` still works). Symlinks: `realpath` the PARENT dir (the target may not exist yet). Never `normalize()`+`startsWith()`: that passes `/base-evil` for base `/base`.
 - **No hardcoded secrets**: runtime env + `.env` in `.gitignore` — never secrets in source.
 - **Non-literal RegExp**: escape special chars before `new RegExp(userInput)`.
 - **Child process**: `execFileSync('cmd', [args])` — avoid `shell: true`.

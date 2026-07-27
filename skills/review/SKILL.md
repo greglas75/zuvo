@@ -437,6 +437,11 @@ Detect tech stack and load matching rules:
 | next.config.* or app/layout | `../../rules/react-nextjs.md` |
 | nest-cli.json or @nestjs/* | `../../rules/nestjs.md` |
 | requirements.txt / pyproject | `../../rules/python.md` |
+| composer.json | `../../rules/php.md` |
+| go.mod | `../../rules/go.md` |
+| Cargo.toml | `../../rules/rust.md` |
+| *.csproj / *.sln | `../../rules/dotnet.md` |
+| Gemfile | `../../rules/ruby.md` |
 
 Load at most 2 rules files. Pass to agents as STACK_RULES input.
 

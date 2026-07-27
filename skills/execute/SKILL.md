@@ -239,7 +239,7 @@ Before dispatching any agent, detect the project stack:
 
 1. Check project `AGENTS.md` or `CLAUDE.md` for a declared tech stack
 2. If absent, check config files (`tsconfig.json`, `package.json`, `pyproject.toml`, `composer.json`, etc.)
-3. Load the matching rules file path for the implementer: `rules/typescript.md`, `rules/react-nextjs.md`, `rules/nestjs.md`, `rules/python.md`
+3. Load the matching rules file path for the implementer: `rules/typescript.md`, `rules/react-nextjs.md`, `rules/nestjs.md`, `rules/python.md`, `rules/php.md`, `rules/go.md`, `rules/rust.md`, `rules/dotnet.md`, `rules/ruby.md` — pick by stack signal (go.mod / Cargo.toml / *.csproj / Gemfile / composer.json / pyproject.toml).
 
 Record the detected stack. Pass it to every implementer dispatch.
 

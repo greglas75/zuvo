@@ -61,7 +61,9 @@ const filePath = path.join(uploadDir, req.params.filename);
 // ALWAYS — normalize and verify containment
 const resolved = path.resolve(uploadDir, req.params.filename);
 const rel = path.relative(path.resolve(uploadDir), resolved);
-if (rel.startsWith("..") || path.isAbsolute(rel)) throw new Error("Path traversal");  // startsWith() alone passes /uploads-evil for base /uploads
+// segment compare — bare startsWith("..") also rejects a legit file named "..config";
+// startsWith(baseDir) alone would pass /uploads-evil for base /uploads
+if (rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel)) throw new Error("Path traversal");
 ```
 
 ## File Upload Security

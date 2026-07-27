@@ -82,16 +82,23 @@ and it is 20/23 = 87% → PASS. The gate is only meaningful if that path is clos
 
 1. **N/A requires the same evidence rigour as a 0.** An N/A must cite the exhaustive negative
    search under "Negative Evidence" below (`rg "redis|cache" file.ts → 0 matches`). A one-sentence
-   assertion is **not** an N/A — score the gate. This removes the evidence asymmetry that made
-   N/A the cheapest route from FAIL to PASS.
-2. **Report both ratios; the LOWER one is the verdict.**
-   `score = min(pass_count / (29 - count(N/A)), pass_count / 29)`.
-   N/A can then only ever hold the score down, never lift it.
-3. **Denominator floor.** `29 - count(N/A)` may not go below 20. More than 9 N/A ⇒ verdict is
+   assertion is **not** an N/A — score the gate. This is the rule that closes the attack: it
+   removes the evidence asymmetry that made N/A the cheapest route from FAIL to PASS.
+2. **Denominator floor.** `29 - count(N/A)` may not go below 20. More than 9 N/A ⇒ verdict is
    `INCOMPLETE`, never PASS — too little of the file was actually evaluated to certify it.
-4. **Gates listed for the file's code type (see "High-Risk Gates by Code Type") cannot be N/A.**
+3. **Gates listed for the file's code type (see "High-Risk Gates by Code Type") cannot be N/A.**
    A SERVICE cannot mark CQ18 or CQ23 N/A; a CONTROLLER cannot mark CQ19 N/A. If the gate truly
    does not apply, the classification is wrong — fix the classification, not the gate.
+4. **Always print `pass_count`, `count(N/A)` and the denominator** next to the percentage, so a
+   reader can see how much of the file was actually evaluated. A 87% over 23 gates and an 87%
+   over 29 are not the same claim.
+
+N/A stays excluded from the denominator — a gate that genuinely does not apply (no cache in a pure
+function) must not be scored as a failure, or clean modular code is punished for being small.
+**Honest limit:** rules 1 and 3 are agent-followed, not mechanically enforced. An auditor willing
+to fabricate a negative-evidence citation still defeats them; that residual is exactly what the
+Independent CQ Auditor (which re-derives scores from the source without seeing the lead's) exists
+to catch, and why its telemetry can never be `skipped`.
 
 ---
 

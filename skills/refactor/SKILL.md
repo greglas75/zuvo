@@ -217,6 +217,11 @@ Detect the project's tech stack from config files:
 | `package.json` with `next` | Next.js | `../../rules/react-nextjs.md` |
 | `package.json` with `@nestjs/core` | NestJS | `../../rules/nestjs.md` |
 | `pyproject.toml` or `.py` files | Python | `../../rules/python.md` |
+| `composer.json` | PHP | `../../rules/php.md` |
+| `go.mod` | Go | `../../rules/go.md` |
+| `Cargo.toml` | Rust | `../../rules/rust.md` |
+| `*.csproj` / `*.sln` | .NET | `../../rules/dotnet.md` |
+| `Gemfile` | Ruby | `../../rules/ruby.md` |
 | `vitest.config.*` | Vitest test runner | |
 | `jest.config.*` | Jest test runner | |
 

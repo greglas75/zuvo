@@ -225,6 +225,10 @@ Detect the project's tech stack to know which rules to Read when writing code di
 | `package.json` with `@nestjs/core` | `../../rules/nestjs.md` |
 | `pyproject.toml`, `.py` files | `../../rules/python.md` |
 | `composer.json` with PHP framework | `../../rules/php.md` |
+| `go.mod` | `../../rules/go.md` |
+| `Cargo.toml` | `../../rules/rust.md` |
+| `*.csproj` / `*.sln` | `../../rules/dotnet.md` |
+| `Gemfile` | `../../rules/ruby.md` |
 
 When writing security-sensitive code (auth, input, API): Read `../../rules/security.md`.
 
