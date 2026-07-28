@@ -153,7 +153,7 @@ grader credits only what the transcript SHOWS and reads NO files: it never opens
 report you wrote. So for an audit, log the actual findings WITH their `file:line`
 citations and the assigned tier —
 `[tool_result] wrote zuvo/audits/…md — discount.test.ts:6-8 vi.mock of unit under test → Q13 FAIL; discount.test.ts:15 bare toBeTruthy → AP14; discount.ts:12-13 RangeError branch untested → Q7 FAIL; Tier D` —
-NOT a summary like `wrote report: per-file Q1-Q17 score, gates FAIL, Tier D`. A
+NOT a summary like `wrote report: per-file Q1-Q19 score, gates FAIL, Tier D`. A
 describe-don't-quote tool_result makes real, correct, file:line-cited work look ABSENT
 and fails content/citation assertions the skill actually satisfied (the exact 2026-07-12
 test-audit under-grade: the on-disk report cited every finding at file:line, but the

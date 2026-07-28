@@ -246,6 +246,7 @@ COMPLEXITY EXPECTATIONS:
 | COMPLEX | 40-80 (split files) | all branches + combos | full checklist + matrix |
 
 CHECKLIST (score 1=YES, 0=NO):
+<!-- GATES:BEGIN kind=q-prompt -->
 Q1:  Every test name describes expected behavior?
 Q2:  Tests grouped in logical describe blocks?
 Q3:  Every mock has CalledWith + not.toHaveBeenCalled?
@@ -263,17 +264,21 @@ Q14: Behavioral assertions (not just mock-was-called)?
 Q15: CRITICAL -- Content/values assertions, not just counts/shape?
 Q16: Cross-cutting isolation: change to A verified not to affect B?
 Q17: CRITICAL -- Assertions verify COMPUTED output, not input echo?
+Q18: No flaky signals? No Date.now() without fake timers, no setTimeout for timing, no Math.random(), no real network?
+Q19: Tests fully isolated? No shared mutable state between tests; each runs independently in any order?
+<!-- GATES:END kind=q-prompt -->
 
 ANTI-PATTERNS (each unique AP = -1 from score, max -5):
-AP1:  try/catch in test swallowing errors
-AP2:  Conditional assertions (if/else in test)
-AP3:  Re-implementing production logic in test
-AP4:  Snapshot as only test for component
-AP5:  `as any` -> `as never` bypassing types
-AP6:  Testing CSS classes instead of behavior
-AP7:  .catch(() => {}) swallowing errors
-AP8:  document.querySelector bypassing Testing Library
-AP9:  Always-true assertion (expect(true).toBe(true))
+<!-- GATES:BEGIN kind=ap-list -->
+AP1: try/catch in test swallowing errors
+AP2: Conditional assertions (if/else in test)
+AP3: Re-implementing production logic in test
+AP4: Snapshot as only test for component
+AP5: `as any` -> `as never` bypassing types
+AP6: Testing CSS classes instead of behavior
+AP7: .catch(() => {}) swallowing errors
+AP8: document.querySelector bypassing Testing Library
+AP9: Always-true assertion (expect(true).toBe(true))
 AP10: Tautological mock (call mock -> verify mock called, no production code)
 AP11: vi.mocked(vi.fn()) -- mock targeting fresh fn
 AP12: waitForTimeout(N) hardcoded delays
@@ -291,18 +296,23 @@ AP23: Inline mockRestore() with afterEach present (redundant)
 AP24: consoleSpy typed as `any`
 AP25: Mocking own code that could be instantiated with real implementation
 AP26: Real timers in time-dependent tests (Date.now/setTimeout without useFakeTimers)
+<!-- GATES:END kind=ap-list -->
 
 N/A HANDLING: N/A items excluded from both numerator and denominator. Score = passed / applicable.
 Q16 N/A: score N/A when test covers single function/hook with no shared mutable state.
 Q17 PASS-THROUGH: For thin controllers that are pure delegation, `expect(result).toEqual(mockReturn)` with CalledWith on service mock = Q17=1.
 
-CRITICAL GATE: Q7, Q11, Q13, Q15, Q17 -- any = 0 -> capped at Tier B.
+CRITICAL GATE: Q7, Q11, Q13, Q15, Q17 -- any = 0 -> Tier C floor (see TIER CLASSIFICATION).
 
 SCORING MATH:
-  Applicable = 17 - N/A-count
+  Applicable = 19 - N/A-count          # 19 gates, Q1-Q19. Was hardcoded 17 while the checklist
+                                       # claimed Q1-Q19 — Q18 (flaky) and Q19 (isolation) were
+                                       # advertised and never scored.
   Score = yes-count / applicable (percentage)
   AP deduction: each unique AP = -1 from yes-count (max -5)
-  Thresholds: PASS >= 82%, FIX 53-81%, BLOCK < 53%. Critical gates still override.
+  ONE SCALE ONLY: the percentage below is the verdict. Do not also compare raw counts —
+  that produced two answers for one file (14/17 was simultaneously "PASS" and "Tier B")
+  and left score 9 belonging to no tier at all.
 
 FOR AUTO TIER-D FILES, use SHORT format:
 ### [filename]
@@ -319,18 +329,23 @@ Complexity: [THIN/STANDARD/COMPLEX] ([LOC] LOC, [N] branches)
 Red flags: ["none"]
 Phantom mocks: [list or "none"]
 Untested methods: [list of public methods with no test coverage, or "all covered"]
-Score: Q1=[0/1] Q2=[0/1] ... Q17=[0/1]
+Score: Q1=[0/1] Q2=[0/1] ... Q19=[0/1]
 Anti-patterns: [AP IDs found, or "none"]
 Total: [yes]/[applicable] ([%]) - [AP count] = [adjusted%]
 Critical gate: Q7=[0/1] Q11=[0/1] Q13=[0/1] Q15=[0/1] Q17=[0/1] -> [PASS/FAIL]
 Tier: [A/B/C/D]
 Top 3 gaps: [brief]
 
-TIER CLASSIFICATION:
-  A (>=16, critical gate PASS): No action needed
-  B (10-15, or critical gate FAIL with score >=10): Fix gaps -- 2-5 targeted fixes
-  C (5-8): Major rewrite needed
-  D (<5 or AUTO TIER-D red flag): Delete and rewrite from scratch
+TIER CLASSIFICATION (derived from the percentage above — no separate count scale):
+  A (>= 82%, all critical gates = 1): No action needed
+  B (53-81%, all critical gates = 1): Fix gaps -- 2-5 targeted fixes
+  C (< 53%, OR any critical gate = 0): Major rewrite needed
+  D (AUTO TIER-D red flag: AP13 or AP16): Delete and rewrite from scratch
+
+  A critical gate at 0 is a FLOOR (Tier C), not a ceiling. Previously it "capped at Tier B",
+  so a tautological suite scoring 16/17 landed in the same bucket as an honest 10/17 — and
+  test quality punished a critical failure LESS than code quality does (where critical = 0
+  is a hard FAIL). Now the two families agree.
 
 IMPORTANT:
 - Read BOTH the test file AND its production file

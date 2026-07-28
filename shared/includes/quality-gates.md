@@ -6,37 +6,39 @@ This is a condensed reference. Full details, evidence examples, and N/A rules ar
 
 ## CQ1-CQ29: Code Quality Gates
 
-| # | Category | What it checks |
-|---|----------|---------------|
-| CQ1 | Types | No loose strings/numbers where unions fit. No `==`/`!=`. |
-| CQ2 | Types | Public functions have explicit return types. No implicit `any`. No `as unknown as X`. No unjustified `!`. |
-| CQ3 | Validation | Boundary inputs validated: required fields, format/range, runtime schema. |
-| CQ4 | Security | Auth guards backed by query-level filtering. Guard alone is not enough. |
-| CQ5 | Security | No PII in logs (ALL outputs including structured logger), error messages, response bodies, headers, or query params. |
-| CQ6 | Resources | No unbounded memory from external data. Pagination or streaming enforced. |
-| CQ7 | Resources | DB queries bounded with LIMIT/cursor. List endpoints return slim payloads. |
-| CQ8 | Errors | Infrastructure failures handled. Timeouts on outbound calls. `response.ok` checked. No empty catch blocks. |
-| CQ9 | Data | Multi-table mutations wrapped in transactions. FK order respected. |
-| CQ10 | Data | Nullable values guarded. No `.find()` without null check. No unsafe `as`/`!`. |
-| CQ11 | Structure | File and function sizes within limits. No deep nesting (>4). Max 5 params. |
-| CQ12 | Structure | No magic strings or numbers. Named constants used. |
-| CQ13 | Hygiene | No dead code, no TODO without ticket, no stale flags (>30d = stale), no mixed logging. |
-| CQ14 | Hygiene | No duplicated logic (blocks >10 lines repeated, or same pattern 5+ times). |
-| CQ15 | Async | Every async call awaited or has `.catch()`. `return await` in try/catch. |
-| CQ16 | Data | Money uses integer-cents or Decimal. No float arithmetic on currency. |
-| CQ17 | Performance | No sequential await in parallelizable loops. No N+1. No `.find()` in loop. |
-| CQ18 | Data | Cross-system consistency handled. Partial sync failures addressed. |
-| CQ19 | Contract | API request and response validated by runtime schema. |
-| CQ20 | Contract | Single canonical source per data point. No dual fields stored independently. |
-| CQ21 | Concurrency | No TOCTOU races. Mutations idempotent or CAS-protected. Mutating endpoints safe to retry (idempotency key). |
-| CQ22 | Resources | Listeners, timers, observers cleaned up on unmount. No stale closures. |
-| CQ23 | Resources | Cache has TTL or explicit invalidation. No stale-forever entries. |
-| CQ24 | Contract | API changes additive only. Breaking changes have deprecation path. |
-| CQ25 | Structure | New code follows existing project patterns. No special snowflakes. |
-| CQ26 | Observability | Structured logger with context (requestId, userId), not plain console.log. |
-| CQ27 | Observability | Log levels correct. `error` for infrastructure failures only, not validation. |
-| CQ28 | Resilience | Timeout hierarchy correct: DB < server < client (deadline shrinks with depth). |
-| CQ29 | Structure | Workspace path alias (`@/`, `~/`, `#/`) used for imports >=3 hops deep when alias is configured. N/A if no alias in workspace. |
+<!-- GATES:BEGIN kind=cq-table -->
+| Gate | Domain | Check |
+|------|--------|-------|
+| CQ1 | Types | Unions, enums, or branded types used where plain `string`/`number` is too loose? No `==`/`!=` loose equality? |
+| CQ2 | Types | Explicit return types on all public functions? No implicit `any` anywhere? No `as unknown as X` casts? No `!` non-null assertions without justification? |
+| CQ3 | Validation | **CRITICAL** — Input validated at every boundary? (a) required fields enforced, (b) format/range/allowlist applied, (c) runtime schema at entry point? |
+| CQ4 | Security | **CRITICAL** — Auth guards paired with query-level tenant scoping? Guard alone is insufficient — `organizationId` must appear in service WHERE clauses. If any public method requires orgId, all must (or document exemptions). **For public/unauthenticated routes accepting opaque tokens, the security gate is server-side: (a) the SERVER MUST canonically validate token format and existence before any side effect, (b) the server MUST collapse "expired" / "invalid" / "not found" / "revoked" into a single opaque error (no enumeration leak), (c) rate-limit token-lookup endpoints. Optional UX: client may pre-validate format (UUID/ULID/regex) to skip a round-trip on obvious typos — this is NOT a security control and does not satisfy CQ4 on its own.** |
+| CQ5 | Security | **CRITICAL** — Zero sensitive data in logs (ALL log outputs including structured logger), errors, response bodies (including stack traces gated by NODE_ENV), headers, or query params? No raw `dangerouslySetInnerHTML`? (Header like `x-modified-by: user@email.com` = violation; `stack: err.stack` in non-dev response = violation; `logger.info('User login', { email })` = violation.) |
+| CQ6 | Resources | **CRITICAL** — No unbounded memory growth from external data? Pagination, streaming, or batching used? |
+| CQ7 | Resources | All database queries bounded (LIMIT / cursor)? List responses return slim payloads (`select` fields)? |
+| CQ8 | Errors | **CRITICAL** — Infrastructure failures handled? No empty `catch {}`. Timeouts on outbound calls. `response.ok` checked before `.json()`. `return await` inside try/catch. No infra details leaked. Frontend: `AbortSignal.timeout()` on every fetch. Node.js `execFile`/`exec` with callback: use `promisify(execFile)` or wrap in try/catch (sync throw before spawn = callback never fires = hang). |
+| CQ9 | Data | Multi-table mutations wrapped in transactions? FK order respected during delete/create sequences? |
+| CQ10 | Data | Nullable values guarded before access? No unsafe `.find()` without null check? No unvalidated `as Type` / `!` non-null assertion? |
+| CQ11 | Structure | **File** within its type limit (service 300-450L, component 200-300L, hook 250L, util 100L)? **Functions** within limits (public 50L, private 30L, handler 25L, $tx 60L, useEffect 20L)? No deeper than 4 nesting levels? 5 params max? **Inline sub-components or helper closures ≥50 LOC inside a parent component file = violation regardless of total file size — extract to sibling.** **Hard gate: file exceeding 2x the type limit = automatic CQ11 FAIL.** |
+| CQ12 | Structure | No magic strings or numbers? No index-based mapping (`row[0]`)? Named constants in use? |
+| CQ13 | Hygiene | No dead code (unreachable branches, unused exports)? No TODO without a ticket reference? No stale feature flags (>30 days since full rollout = stale)? No mixed `console.*` and structured logger in same file? **Note: commented-out old implementations and debug leftovers are dead code. Explanatory comments, API examples, and documented workarounds are NOT.** |
+| CQ14 | Hygiene | **CRITICAL** — No duplicated logic? (a) block exceeding 10 lines repeated, OR (b) same structural pattern appearing 5+ times, OR (c) **block ≥3 lines repeated 4+ times across files when duplicates target the same module/action (high-fan-out: URL builders, mock factories, query-string helpers), OR (d) `vi.mock`/`jest.mock` for the same module duplicated 10+ times across the test suite — extract to `test-utils/`**? |
+| CQ15 | Async | Every async call awaited or explicitly fire-and-forget with `.catch()`? `return await` used inside try/catch? No `await` inside `Promise.all()` argument list? |
+| CQ16 | Data | **CONDITIONAL** — Monetary values use exact arithmetic (integer-cents, Decimal.js)? No `toFixed()` during computation? **Scope: actual currency amounts only.** Indices, ratios, scores = N/A. |
+| CQ17 | Performance | No sequential `await` in loops where batch or `Promise.all` suffices? No N+1 queries? No `.find()` inside a loop? |
+| CQ18 | Data | Cross-system consistency maintained? Multi-store operations handle partial failures? |
+| CQ19 | Contract | **CONDITIONAL** — API request AND response shapes validated by runtime schema? No hope-based typing? **Identity validators (`(v: unknown) => v`, bare `as T` after `await res.json()`, untyped `assertRecord`) do NOT satisfy CQ19 — they pass nothing through. Acceptable: Zod / Yup / Valibot parse, hand-written `assertObjectShape({...})` with at least one field check, typed tRPC client (note `// validated by tRPC schema` once per file).** |
+| CQ20 | Contract | **CONDITIONAL** — Single canonical source per data point? No dual fields stored independently for the same concept? |
+| CQ21 | Concurrency | **CONDITIONAL** — No time-of-check-to-time-of-use races? Mutations idempotent or CAS-protected? Mutating API endpoints safe to retry (idempotency key or CAS guard)? No shared mutable state? |
+| CQ22 | Resources | **CONDITIONAL** — All listeners, timers, and observers cleaned up on unmount/destroy? No stale closures in callbacks? |
+| CQ23 | Resources | **CONDITIONAL** — Cache entries have TTL or explicit invalidation? No stale-forever entries? Redis `SET` without `EX`/`PX` = violation. In-memory cache without eviction policy = violation. |
+| CQ24 | Contract | **CONDITIONAL** — API changes are additive only (new optional fields, new endpoints)? Removing or renaming fields has a deprecation path with migration guide? Breaking changes without versioning or deprecation = violation. |
+| CQ25 | Structure | New endpoint/component/service follows existing project patterns? Same naming convention, same file structure, same error handling approach as existing code? "Special snowflake" = violation. |
+| CQ26 | Observability | Log statements use structured logger with context (requestId, userId, traceId), not plain `console.log` strings? Every service/controller uses the project's standard logger. |
+| CQ27 | Observability | Log levels used correctly? `logger.error` reserved for unrecoverable failures and infrastructure errors, not validation failures or expected business conditions. `logger.warn` for recoverable but unexpected situations. Validation failure logged as `error` = violation. Stack trace logged as `info` = violation. |
+| CQ28 | Resilience | **CONDITIONAL** — DB timeout < server timeout < client timeout (deadline shrinks with depth, not inverted)? If code defines timeouts at multiple layers, verify the hierarchy is correct. Inverted timeout hierarchy = violation. |
+| CQ29 | Structure | Workspace path alias used for imports ≥3 hops deep when the alias is configured? Aliases must come from the project's actual `tsconfig.compilerOptions.paths` / `jsconfig` / `vite.config.alias` — common patterns are `@/`, `#/`, `~/` but only count those declared in the workspace config. Files mixing `../../../` with a configured alias = violation. No alias configured = N/A. |
+<!-- GATES:END kind=cq-table -->
 
 ### Critical Gates (Static)
 
@@ -88,27 +90,29 @@ If more than 60% of gates (17+) are scored N/A, flag the evaluation as "low-sign
 
 ## Q1-Q19: Test Quality Gates
 
-| # | What it checks |
-|---|---------------|
-| Q1 | Test names describe expected behavior (not "should work") |
-| Q2 | Tests grouped in logical describe blocks |
-| Q3 | Every mock verified with `CalledWith` (positive) and `not.toHaveBeenCalled` (negative) |
-| Q4 | Assertions use exact values (`toEqual`/`toBe`), not loose checks (`toBeTruthy`) |
-| Q5 | Mocks are properly typed (no `as any` or `as never`). Note: `as unknown as ServiceType` is acceptable when no mock factory exists — it avoids `as any` while preserving the target type. Score Q5=1 for `as unknown as X`, Q5=0 only for `as any` or `as never`. |
-| Q6 | Mock state reset between tests (proper `beforeEach`, no shared mutable state) |
-| Q7 | Every error-throwing path tested with specific error type AND message (not just "at least one") |
-| Q8 | Null, undefined, and empty inputs tested where applicable |
-| Q9 | Repeated setup (3+ tests) extracted to helper or factory |
-| Q10 | No magic values — test data is self-documenting |
-| Q11 | All code branches exercised (if/else, switch, early return) |
-| Q12 | Symmetric testing: "does X when Y" paired with "does NOT do X when not-Y" |
-| Q13 | Tests import the actual production function (not a local copy) |
-| Q14 | Assertions verify behavior, not just that a mock was called |
-| Q15 | Assertions verify content and values, not just counts or shapes |
-| Q16 | Cross-cutting isolation: changes to A verified not to affect B |
-| Q17 | Assertions verify computed output, not input echo. Expected values from spec, not copied from implementation. |
-| Q18 | No flaky signals: no `Date.now()` without fake timers, no `setTimeout` for timing, no `Math.random()` without seed, no execution-order dependence. |
-| Q19 | Tests fully isolated: no shared mutable state between tests, each test runs independently in any order. |
+<!-- GATES:BEGIN kind=q-table -->
+| Gate | Check |
+|------|-------|
+| Q1 | Every test name describes expected behavior (not "should work")? |
+| Q2 | Tests grouped in logical describe blocks? |
+| Q3 | Every mock has `CalledWith` (positive) AND `not.toHaveBeenCalled` (negative)? |
+| Q4 | Known-data assertions use exact values (`toEqual`/`toBe`, not `toBeTruthy`)? |
+| Q5 | Mocks are typed (not `as any`/`as never`)? Note: `as unknown as ServiceType` is acceptable when no mock factory exists — it avoids `as any` while preserving the target type. Score Q5=1 for `as unknown as X`, Q5=0 only for `as any` or `as never`. |
+| Q6 | Mock state is fresh per test (proper `beforeEach`, no shared mutable)? |
+| Q7 | **CRITICAL** — Every error-throwing path tested with specific error type AND message? (not just "at least one") |
+| Q8 | Null/undefined/empty inputs tested where applicable? |
+| Q9 | Repeated setup (3+ tests) extracted to helper/factory? |
+| Q10 | No magic values — test data is self-documenting? |
+| Q11 | **CRITICAL** — All code branches exercised (if/else, switch, early return)? |
+| Q12 | Symmetric: every "does X when Y" has "does NOT do X when not-Y"? **For each repeated pattern (auth guard, validation, error), verify every method has it.** |
+| Q13 | **CRITICAL** — Tests import the actual production function (not a local copy)? |
+| Q14 | Assertions verify behavior, not just that a mock was called? |
+| Q15 | **CRITICAL** — Assertions verify content/values, not just counts or shape? |
+| Q16 | Cross-cutting isolation: change to A verified not to affect B? |
+| Q17 | **CRITICAL** — Assertions verify computed output, not input echo? Expected values from spec/manual calc, not copied from implementation (P-70). |
+| Q18 | No flaky test signals? No `Date.now()` without fake timers, no `setTimeout` for timing, no `Math.random()` without seed, no reliance on execution order, no real network calls? |
+| Q19 | Tests fully isolated? No shared mutable state between tests (global variables, module-level `let`, database rows without cleanup)? Each test can run independently in any order? |
+<!-- GATES:END kind=q-table -->
 
 ### Critical Gates
 

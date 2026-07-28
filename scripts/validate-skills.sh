@@ -446,6 +446,18 @@ check_count_consistency
 [ "$INCLUDE_INTEGRITY_OK" -eq 1 ] && echo "include-integrity: OK"
 [ "$COUNT_CONSISTENCY_OK" -eq 1 ] && echo "count-consistency: OK ($ACTUAL_SKILLS)"
 
+# --- gate registry: every GENERATED region must match shared/includes/gate-registry.md ---
+# Without this, the registry is just a seventh copy. Editing a generated region instead of the
+# registry is the exact failure mode that let CQ14 lose three clauses and CQ28 stay inverted.
+if [ -f "$ROOT/scripts/gen-gate-copies.py" ]; then
+  if python3 "$ROOT/scripts/gen-gate-copies.py" >/dev/null 2>&1; then
+    echo "gate-registry: OK (all generated regions fresh)"
+  else
+    echo "ERROR: gate regions are stale — run: python3 scripts/gen-gate-copies.py --write"
+    ERRORS=$((ERRORS + 1))
+  fi
+fi
+
 echo "ERRORS: $ERRORS  WARNINGS: $WARNINGS"
 [ "$ERRORS" -gt 0 ] && exit 1
 exit 0

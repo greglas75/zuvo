@@ -381,7 +381,7 @@ describe.skip('FeedbackService', () => { /* 200 lines never run */ });
 
 ## Red Flags -- Quick Heuristics
 
-These indicators correlate with low test quality. Use as pre-screening before full Q1-Q17 evaluation.
+These indicators correlate with low test quality. Use as pre-screening before full Q1-Q19 evaluation.
 
 | Indicator | Avg Score | What it signals |
 |-----------|-----------|-----------------|
@@ -417,13 +417,14 @@ Score every question individually. Never group or estimate.
 
 **19 binary gates (1 = YES, 0 = NO):**
 
-| # | Gate |
-|---|------|
+<!-- GATES:BEGIN kind=q-table -->
+| Gate | Check |
+|------|-------|
 | Q1 | Every test name describes expected behavior (not "should work")? |
 | Q2 | Tests grouped in logical describe blocks? |
 | Q3 | Every mock has `CalledWith` (positive) AND `not.toHaveBeenCalled` (negative)? |
 | Q4 | Known-data assertions use exact values (`toEqual`/`toBe`, not `toBeTruthy`)? |
-| Q5 | Mocks are typed (not `as any`/`as never`)? |
+| Q5 | Mocks are typed (not `as any`/`as never`)? Note: `as unknown as ServiceType` is acceptable when no mock factory exists — it avoids `as any` while preserving the target type. Score Q5=1 for `as unknown as X`, Q5=0 only for `as any` or `as never`. |
 | Q6 | Mock state is fresh per test (proper `beforeEach`, no shared mutable)? |
 | Q7 | **CRITICAL** — Every error-throwing path tested with specific error type AND message? (not just "at least one") |
 | Q8 | Null/undefined/empty inputs tested where applicable? |
@@ -438,6 +439,7 @@ Score every question individually. Never group or estimate.
 | Q17 | **CRITICAL** — Assertions verify computed output, not input echo? Expected values from spec/manual calc, not copied from implementation (P-70). |
 | Q18 | No flaky test signals? No `Date.now()` without fake timers, no `setTimeout` for timing, no `Math.random()` without seed, no reliance on execution order, no real network calls? |
 | Q19 | Tests fully isolated? No shared mutable state between tests (global variables, module-level `let`, database rows without cleanup)? Each test can run independently in any order? |
+<!-- GATES:END kind=q-table -->
 
 **N/A handling:** Q3/Q5/Q6 = 1 (N/A) for pure functions with zero mocks. Q16 = 1 (N/A) for simple single-responsibility units. Q18 = 1 (N/A) for pure synchronous tests with no timing or randomness. Q19 = 1 (N/A) for single-test files.
 

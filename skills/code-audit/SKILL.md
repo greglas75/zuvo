@@ -388,6 +388,7 @@ QUICK HEURISTICS (not Tier-D triggers, but predict score):
 CLASSIFY the file first (SERVICE / CONTROLLER / GUARD / HOOK / REACT / ORM / ORCHESTRATOR / PURE / API-CALL).
 
 CHECKLIST (score 1=YES, 0=NO, N/A=not applicable with justification):
+<!-- GATES:BEGIN kind=cq-prompt -->
 CQ1:  No string/number where union/enum/branded type appropriate?
 CQ2:  All public function return types explicit? No implicit any?
 CQ3:  CRITICAL -- Boundary validation complete? Required fields, format/range, runtime schema?
@@ -398,16 +399,16 @@ CQ7:  DB queries bounded? LIMIT/cursor present? Slim payloads?
 CQ8:  CRITICAL -- Infra failures handled? Timeouts on outbound? No empty catch?
 CQ9:  Multi-table mutations in transactions? FK order correct?
 CQ10: Nullable values handled? No silent null propagation? No unsafe array[0]/.find()?
-CQ11: Functions <= 50 lines? Single responsibility?
-CQ12: No magic strings/numbers? No duplicate config keys?
-CQ13: No dead code? No commented-out blocks?
-CQ14: CRITICAL -- No duplicated logic (>10 lines repeated)?
+CQ11: File within its type limit? Functions within limits (public 50L, private 30L)? Nesting <=4? Params <=5? (2x any limit = automatic FAIL)
+CQ12: No magic strings/numbers? No index-based mapping (row[0])? Named constants in use?
+CQ13: No dead code (unreachable branches, unused exports)? No TODO without a ticket? No mixed logging?
+CQ14: CRITICAL -- No duplicated logic? (a) >10-line block repeated, (b) same pattern 5+ times, (c) >=3-line block 4+ times cross-file, (d) same mock 10+ times
 CQ15: Every async awaited or fire-and-forget with .catch()? No dropped promises?
-CQ16: Money uses exact arithmetic (Decimal/integer-cents)? No float for money?
+CQ16: CONDITIONAL -- Money uses exact arithmetic (Decimal/integer-cents)? No float for money?
 CQ17: No sequential await in loops where batch/parallel works?
 CQ18: Cross-system data consistency? Multi-store writes handle partial failures?
-CQ19: API request AND response validated by runtime schema?
-CQ20: Each data point ONE canonical source? No dual fields?
+CQ19: CONDITIONAL -- API request AND response validated by runtime schema?
+CQ20: CONDITIONAL -- Each data point ONE canonical source? No dual fields?
 CQ21: CONDITIONAL -- No TOCTOU? State machine transitions use CAS? Mutations idempotent?
 CQ22: CONDITIONAL -- All listeners/timers/subscriptions cleaned up on unmount?
 CQ23: CONDITIONAL -- Cache has TTL or explicit invalidation? No stale-forever entries?
@@ -417,27 +418,30 @@ CQ26: Structured logger with context (requestId, userId), not plain console.log?
 CQ27: Log levels correct? `error` for infra failures only, not validation?
 CQ28: CONDITIONAL -- Timeout hierarchy correct? DB < server < client (innermost shortest)?
 CQ29: Workspace path alias (@/, ~/, #/) used for imports >=3 hops deep when alias is configured? N/A if no alias in workspace.
+<!-- GATES:END kind=cq-prompt -->
 
 ANTI-PATTERNS (each found = noted, severity attached):
-CAP1:  Empty catch block -- HIGH
-CAP2:  Plain `console.log` in production -- MEDIUM. `console.warn`/`console.error` allowed ONLY when paired with Sentry.captureMessage/captureException on the same code path; otherwise MEDIUM.
-CAP3:  `as any` / `as unknown as X` without validation -- MEDIUM (x5+ = HIGH). `as unknown as <DomainType>` after Prisma/ORM queries = HIGH (silent contract bypass).
-CAP4:  @ts-ignore without justification -- MEDIUM
-CAP5:  Hardcoded secret -- AUTO TIER-D
-CAP6:  Unsanitized HTML reaching DOM or persistence -- AUTO TIER-D. Covers `dangerouslySetInnerHTML` without DOMPurify, `editor.commands.setContent(rawHtml)`/raw-HTML mode without pre-save sanitization, paste-as-HTML, programmatic raw HTML writes. Display-time sanitization alone is INSUFFICIENT if persistence path is unsanitized.
-CAP7:  eval() / new Function() with dynamic input -- AUTO TIER-D
-CAP8:  SQL string concatenation OR `$queryRaw`/`$executeRawUnsafe` against tenant tables without organizationId in WHERE -- AUTO TIER-D
-CAP9:  File exceeds type limit (service <=450, controller <=300, hook <=250, component <=200, helper <=100) OR inline sub-component >=50 LOC nested in a parent component file -- HIGH (2x file limit = AUTO TIER-D)
+<!-- GATES:BEGIN kind=cap-list -->
+CAP1: Empty catch block -- HIGH
+CAP2: Plain `console.log` in production. `console.warn`/`console.error` allowed ONLY when paired with Sentry.captureMessage/captureException on the same code path; otherwise MEDIUM. -- MEDIUM
+CAP3: `as any` / `as unknown as X` without validation (x5+ = HIGH). `as unknown as <DomainType>` after Prisma/ORM queries = HIGH (silent contract bypass). -- MEDIUM
+CAP4: @ts-ignore without justification -- MEDIUM
+CAP5: Hardcoded secret -- AUTO TIER-D
+CAP6: Unsanitized HTML reaching DOM or persistence. Covers `dangerouslySetInnerHTML` without DOMPurify, `editor.commands.setContent(rawHtml)`/raw-HTML mode without pre-save sanitization, paste-as-HTML, programmatic raw HTML writes. Display-time sanitization alone is INSUFFICIENT if persistence path is unsanitized. -- AUTO TIER-D
+CAP7: eval() / new Function() with dynamic input -- AUTO TIER-D
+CAP8: SQL string concatenation OR `$queryRaw`/`$executeRawUnsafe` against tenant tables without organizationId in WHERE -- AUTO TIER-D
+CAP9: File exceeds type limit (service <=450, controller <=300, hook <=250, component <=200, helper <=100) OR inline sub-component >=50 LOC nested in a parent component file (2x file limit = AUTO TIER-D) -- HIGH
 CAP10: Function > 100 lines (2x the 50L limit) -- HIGH
 CAP11: parseFloat/Number() on money field -- HIGH
 CAP12: await inside for/while without batch alternative -- MEDIUM
-CAP13: 7+ useState in one component, OR >=3 mutually-exclusive dialog/modal boolean flags (collapse to discriminated union `dialog: { kind: '...' } | null`), OR state mirroring URL params managed via local useState (use router query API) -- MEDIUM
+CAP13: 7+ useState in one component, OR >=3 mutually-exclusive dialog/modal boolean flags (collapse to discriminated union `dialog: { kind: '...' } -- null`), OR state mirroring URL params managed via local useState (use router query API)
 CAP14: Business logic >10 lines in component body that has no DOM dependency -- MEDIUM
-CAP15: API URL built without `encodeURIComponent` on dynamic path segments, OR hardcoded base URL string-concat (`` `${BASE}/api/foo/${id}` ``), OR unencoded user-controlled token in URL path/query -- HIGH. MUST use a single `buildApiUrl(path, pathParams)` helper and validate enum-typed segments against an allowlist before interpolation.
+CAP15: API URL built without `encodeURIComponent` on dynamic path segments, OR hardcoded base URL string-concat (`` `${BASE}/api/foo/${id}` ``), OR unencoded user-controlled token in URL path/query. MUST use a single `buildApiUrl(path, pathParams)` helper and validate enum-typed segments against an allowlist before interpolation. -- HIGH
 CAP16: Client auth-token plumbing race (deferred-promise wait for provider, token injected mid-flight, no readiness gate before first request), OR missing 401-> refresh-> retry-once on REST clients while tRPC has it (or vice versa), OR unsigned/dev-only tokens accepted as auth credentials in any environment -- HIGH
-CAP17: `error.message` rendered directly to UI/DOM without a curated `userMessageFor(error)` mapping -- HIGH. Leaks server stack/PII; map known error types to safe messages and fall back to a generic "Something went wrong".
-CAP18: `throw new Error(...)` from a service/injectable/handler -- MEDIUM. Use a typed exception class instead (BadRequestException, NotFoundException, custom DomainError); bare Error loses HTTP status mapping and can leak the original message into 5xx response bodies.
-CAP19: Mutating endpoint, AI/expensive operation (LLM call, export, generation), webhook receiver, or tRPC procedure without a rate limiter (ThrottlerGuard, custom limiter, queue with concurrency cap) -- HIGH. tRPC bypassing the project-wide ThrottlerGuard = always violation.
+CAP17: `error.message` rendered directly to UI/DOM without a curated `userMessageFor(error)` mapping. Leaks server stack/PII; map known error types to safe messages and fall back to a generic "Something went wrong". -- HIGH
+CAP18: `throw new Error(...)` from a service/injectable/handler. Use a typed exception class instead (BadRequestException, NotFoundException, custom DomainError); bare Error loses HTTP status mapping and can leak the original message into 5xx response bodies. -- MEDIUM
+CAP19: Mutating endpoint, AI/expensive operation (LLM call, export, generation), webhook receiver, or tRPC procedure without a rate limiter (ThrottlerGuard, custom limiter, queue with concurrency cap). tRPC bypassing the project-wide ThrottlerGuard = always violation. -- HIGH
+<!-- GATES:END kind=cap-list -->
 
 N/A HANDLING: N/A items are excluded from both numerator and denominator. Score = passed / applicable. N/A requires justification.
 
