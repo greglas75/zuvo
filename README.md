@@ -2,7 +2,7 @@
 
 Auto-activating, multi-agent skill ecosystem for Claude Code, Codex, and Cursor.
 
-55 skills, 50 specialized sub-agents, quality gates, knowledge store, session recovery, and structured workflows — all in one plugin.
+55 skills, 50 sub-agent definitions (48 distinct roles), quality gates, knowledge store, session recovery, and structured workflows — all in one plugin.
 
 ## Install
 
@@ -117,7 +117,7 @@ args = ["-y", "codesift-mcp"]
 ## What's inside
 
 - **Pipeline skills** — `zuvo:brainstorm` → `zuvo:plan` → `zuvo:execute` with multi-agent exploration, quality gates, and evidence-based review
-- **50 task skills** — build, review, refactor, debug, 16 audits, write-article, content-expand, design, docs, ship, deploy, canary, retro, incident, mutation-test, benchmark, and more
+- **50 non-pipeline skills** (5 pipeline + 50 = 55) — build, review, refactor, debug, 16 audits, write-article, content-expand, design, docs, ship, deploy, canary, retro, incident, mutation-test, benchmark, and more
 - **Release pipeline** — `zuvo:ship` → `zuvo:deploy` → `zuvo:canary` for the full post-code lifecycle
 - **Knowledge Store** — JSONL-based project memory. Skills learn from past sessions (patterns, gotchas, decisions). Auto-primed at session start and per-skill
 - **Session Recovery** — execution state persisted to `.zuvo/context/`. Resume after context compaction or crashes without losing progress

@@ -45,9 +45,6 @@ When skills dispatch sub-agents, each agent receives the CodeSift availability s
 | One call instead of five | `audit_scan` — dead code + patterns + clones + complexity + hotspots |
 | Whole-project health (Python) | `python_audit` — 8 checks with a health score |
 | Framework audits | `framework_audit` (Next.js), `analyze_hono_app`, `astro_audit`, `nest_audit` |
-
-**Prefer the compound tools.** `audit_scan` replaces five separate calls with one consistent
-snapshot of the index; the same applies to `python_audit` and the framework audits.
 | Get function return/param types | `get_type_info` (LSP hover) |
 | Cross-file rename | `rename_symbol` (type-safe, updates imports) |
 | Find unused exports | `find_dead_code` |
@@ -55,6 +52,9 @@ snapshot of the index; the same applies to `python_audit` and the framework audi
 | Git churn hotspots | `analyze_hotspots` |
 | Find past conversation about code | `find_conversations_for_symbol` |
 | Search conversation history | `search_conversations` |
+
+**Prefer the compound tools.** `audit_scan` replaces five separate calls with one consistent
+snapshot of the index; the same applies to `python_audit` and the framework audits.
 
 ### After editing files
 
