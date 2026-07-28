@@ -87,7 +87,7 @@
 
 ## Executive Summary
 
-Zuvo's 51-skill depth across audits, testing, security, deployment, design, pipeline management, knowledge accumulation, and session recovery is **mid-pack on count** but unique on quality-gate depth. No competitor matches: structured multi-agent workflows, adversarial review (4 providers), quality gates (CQ1-CQ40 + Q1-Q25 + AP1-AP30 + CAP1-CAP14), evidence enforcement, knowledge store, and tri-platform build (Claude Code + Codex + Cursor; Antigravity build target evaluated).
+Zuvo's 55-skill depth across audits, testing, security, deployment, design, pipeline management, knowledge accumulation, and session recovery is **mid-pack on count** but unique on quality-gate depth. No competitor matches: structured multi-agent workflows, adversarial review (4 providers), quality gates (CQ1-CQ40 + Q1-Q25 + AP1-AP30 + CAP1-CAP29), evidence enforcement, knowledge store, and tri-platform build (Claude Code + Codex + Cursor; Antigravity build target evaluated).
 
 **Critical context shift since 2026-04-08:**
 - **Skill count is no longer a differentiator.** compound-engineering 36 skills + 51 agents (v3.0.3); claude-octopus 52 skills; alirezarezvani 235; jeremylongshore 2,849.
@@ -336,7 +336,7 @@ Added in v1.3.x. 10 dimensions (A1-A10), WCAG 2.2 AA/AAA, 2 critical gates (keyb
 1. **Adversarial review is unique** — No competitor does multi-provider adversarial verification at Zuvo's depth. Double down.
 2. **Full pipeline is unique** — brainstorm > plan > execute > review > ship > deploy > canary > retro. No competitor covers end-to-end.
 3. **Audit breadth is unique** — 10+ audit dimensions with structured scoring. Closest is Trail of Bits (security only).
-4. **Quality gates are unique** — CQ1-CQ40 + Q1-Q25 + AP1-AP30 + CAP1-CAP14. No competitor has this systematic approach.
+4. **Quality gates are unique** — CQ1-CQ40 + Q1-Q25 + AP1-AP30 + CAP1-CAP29. No competitor has this systematic approach.
 
 ---
 

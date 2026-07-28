@@ -424,9 +424,9 @@ CQ32: CONDITIONAL -- Lockfile committed, new deps pinned and CVE-checked?
 CQ33: CONDITIONAL -- CSPRNG for tokens? Credential hashing argon2/bcrypt, not SHA? No bespoke crypto?
 CQ34: CONDITIONAL -- Role checked for THIS operation (not just authenticated)? Write payload field-allowlisted?
 CQ35: CONDITIONAL -- Cancellation handle accepted + forwarded downstream, not re-created? Derived handles released?
-CQ36: CONDITIONAL -- Every spawn has an owner that joins/aborts it? Fan-out bounded?  [stack: go,rust,jvm,dotnet]
-CQ37: CONDITIONAL -- Race-free by construction AND proven by -race/TSan? No lock held across await?  [stack: go,rust,jvm,dotnet]
-CQ38: CONDITIONAL -- Deterministic release on every exit path? No defer inside an unbounded loop?  [stack: go,rust,jvm,dotnet]
+CQ36: CONDITIONAL -- Every spawn has an owner that joins/aborts it? Fan-out bounded?  [stack: go,rust,jvm,dotnet,python]
+CQ37: CONDITIONAL -- Race-free by construction AND proven by -race/TSan? No lock held across await?  [stack: go,rust,jvm,dotnet,python]
+CQ38: CONDITIONAL -- Deterministic release on every exit path? No defer inside an unbounded loop?  [stack: go,rust,jvm,dotnet,python]
 CQ39: CONDITIONAL -- Queues/channels/fan-out bounded? Backpressure honoured on streams?
 CQ40: CONDITIONAL -- Language meta-linter configured, pinned and clean in CI? No config = 0
 <!-- GATES:END kind=cq-prompt -->

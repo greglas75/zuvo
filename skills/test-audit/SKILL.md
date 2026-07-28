@@ -268,11 +268,11 @@ Q16: Cross-cutting isolation: change to A verified not to affect B?
 Q17: CRITICAL -- Assertions verify COMPUTED output, not input echo?
 Q18: No flaky signals? No Date.now() without fake timers, no setTimeout for timing, no Math.random(), no real network?
 Q19: Tests fully isolated? No shared mutable state between tests; each runs independently in any order?
-Q20: Test level declared (small/medium/large) and not mixed?
+Q20: CONDITIONAL -- Test level declared (small/medium/large) and not mixed?
 Q21: CONDITIONAL -- Mutation score >= 70% on changed files, or every survivor triaged?
 Q22: CONDITIONAL -- Pure/validator unit has a property test with a recorded seed?
 Q23: CONDITIONAL -- Cross-service contract verified against a shared artifact, not a hand-written mock?
-Q24: Suite green under randomized order, seed logged?
+Q24: CONDITIONAL -- Suite green under randomized order, seed logged?
 Q25: CONDITIONAL -- Patch coverage >= 90% on changed lines, enforced in CI?
 <!-- GATES:END kind=q-prompt -->
 

@@ -52,15 +52,21 @@ Q_N=$(echo "$counts"   | sed -n 's/^Q=[0-9]*:\([0-9]*\)/\1/p')
 [ "$Q_MAX" = "$Q_N" ] && pass "Q ids are contiguous 1..$Q_MAX (no gaps)" \
   || bad "Q ids have a gap: max=$Q_MAX but only $Q_N defined"
 
-# Any file claiming a DIFFERENT range than the registry is drift.
-drift=$(grep -rIn --include='*.md' -oE 'CQ1-CQ[0-9]+|Q1-Q[0-9]+' \
+CAP_MAX=$(echo "$counts" | sed -n 's/^CAP=\([0-9]*\):.*/\1/p')
+AP_MAX=$(echo "$counts"  | sed -n 's/^AP=\([0-9]*\):.*/\1/p')
+
+# Any file claiming a DIFFERENT range than the registry is drift. All four families, not just
+# CQ/Q — CAP drifted to CAP1-CAP14 (15 behind) precisely because nothing checked it.
+drift=$(grep -rIn --include='*.md' -oE 'CQ1-CQ[0-9]+|Q1-Q[0-9]+|CAP1-CAP[0-9]+|AP1-AP[0-9]+' \
           "$ROOT/rules" "$ROOT/shared/includes" "$ROOT/docs" "$ROOT/skills" 2>/dev/null \
-        | grep -vE ":CQ1-CQ${CQ_MAX}$|:Q1-Q${Q_MAX}$" \
+        | grep -vE ":CQ1-CQ${CQ_MAX}$|:Q1-Q${Q_MAX}$|:CAP1-CAP${CAP_MAX}$|:AP1-AP${AP_MAX}$" \
         | grep -vE 'gate-registry\.md|/docs/specs/|/docs/[a-z-]*20[0-9]{2}-[0-9]{2}' || true)
 # (dated reports and specs under docs/specs are historical records of the state at their time —
 #  rewriting them would falsify the record, so they are excluded rather than "fixed".)
+# Note: "AP1-AP30" also matches the CAP pattern's tail, so CAP rows are filtered first by the
+# longer alternative winning in the -oE alternation order above.
 if [ -z "$drift" ]; then
-  pass "no file claims a gate range other than CQ1-CQ$CQ_MAX / Q1-Q$Q_MAX"
+  pass "no file claims a stale range (CQ1-CQ$CQ_MAX / Q1-Q$Q_MAX / CAP1-CAP$CAP_MAX / AP1-AP$AP_MAX)"
 else
   bad "stale gate range(s) claimed:"; printf '%s\n' "$drift" | head -8 | sed 's/^/      /'
 fi

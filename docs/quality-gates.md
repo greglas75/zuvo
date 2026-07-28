@@ -45,12 +45,12 @@ Each gate is scored **1** (pass with evidence), **0** (fail or unproven), or **N
 | CQ32 | Security | **CONDITIONAL** — Supply chain controlled? Lockfile committed, no floating ranges or `latest` on a newly added dependency, and new dependencies checked against an advisory source. OWASP A03:2025 (Software Supply Chain Failures) is rank 3 and had no gate anywhere in CQ/CAP. |
 | CQ33 | Security | **CONDITIONAL** — Cryptographic material handled correctly? Tokens/IDs/nonces from a CSPRNG (`crypto.randomUUID`/`randomBytes`/`secrets`), never `Math.random()`/`Date.now()`; credential hashing via argon2id or bcrypt (cost >= 12), never a bare SHA-*; no bespoke crypto; secrets read from config, never literals in source or a client bundle. |
 | CQ34 | Security | **CONDITIONAL** — Authorization complete at BOTH levels? (a) function-level: the handler asserts the caller's role/permission for THIS operation, not just that the caller is authenticated (BFLA); (b) field-level: write payloads are field-allowlisted, never a blanket spread into the ORM (mass assignment / BOPLA). CQ4 covers object/tenant scoping only — these two levels had no gate. |
-| CQ35 | Concurrency | **CONDITIONAL** — Cancellation propagated, not merely applied? The ambient cancellation handle (`AbortSignal` / `context.Context` / `CancellationToken` / `CoroutineScope`) is ACCEPTED as a parameter and forwarded to every downstream call — never re-created mid-request (`context.Background()`, a fresh `AbortController`) and never stored in a struct/field. Every derived handle is released (`defer cancel()`). A timeout no caller can cancel is not cancellation. |
-| CQ36 | Concurrency | **CONDITIONAL** — Every spawned unit of work has a named owner that joins it, aborts it, or documents it as process-lifetime? No `go func()` / `tokio::spawn` / `Task.Run` / `GlobalScope.launch` whose handle is dropped. Fan-out is bounded (`errgroup.SetLimit`, `JoinSet`, `Semaphore`), never an unbounded loop-spawn. (TS/JS: dropped async work is CQ15.) *(stack: go,rust,jvm,dotnet — `out-of-scope` on any other stack)* |
-| CQ37 | Concurrency | **CONDITIONAL** — Shared mutable state race-free BY CONSTRUCTION (owned by one task, or behind a lock/atomic) AND proven by tooling — `go test -race`, TSan, `-ea` + `@GuardedBy`? No lock or guard copied by value (`go vet copylocks`), no `unsafe impl Send/Sync` without a written argument, no lock held across an `await`/`.await`/blocking call. A review opinion is not proof; the race detector is. *(stack: go,rust,jvm,dotnet — `out-of-scope` on any other stack)* |
-| CQ38 | Resources | **CONDITIONAL** — Deterministic release on EVERY exit path — `defer x.Close()` placed after the error check, try-with-resources, `using`/`await using`, or an RAII guard? HTTP bodies, rows, statements and files enumerated. No `defer` inside an unbounded loop. Cleanup only on the happy path = violation. (TS/JS listener + timer cleanup is CQ22.) *(stack: go,rust,jvm,dotnet — `out-of-scope` on any other stack)* |
+| CQ35 | Concurrency | **CONDITIONAL** — Cancellation propagated, not merely applied? The ambient cancellation handle (`AbortSignal` / `context.Context` / `CancellationToken` / `CoroutineScope`) is ACCEPTED as a parameter and forwarded to every downstream call — never re-created MID-CHAIN (`context.Background()` or a fresh `AbortController` deep inside a call that was handed one) and never stored in a struct/field. Creating one at an ENTRY POINT — `main`, a request handler, a CLI command, a top-level job — is correct and expected; the violation is a function that RECEIVES a handle and ignores it. Every derived handle is released (`defer cancel()`). A timeout no caller can cancel is not cancellation. |
+| CQ36 | Concurrency | **CONDITIONAL** — Every spawned unit of work has a named owner that joins it, aborts it, or documents it as process-lifetime? No `go func()` / `tokio::spawn` / `Task.Run` / `GlobalScope.launch` / `asyncio.create_task` whose handle is dropped (Python: `TaskGroup`, or a module-level set + `add_done_callback`). Fan-out is bounded (`errgroup.SetLimit`, `JoinSet`, `Semaphore`), never an unbounded loop-spawn. (TS/JS: dropped async work is CQ15.) *(stack: go,rust,jvm,dotnet,python — `out-of-scope` on any other stack)* |
+| CQ37 | Concurrency | **CONDITIONAL** — Shared mutable state race-free BY CONSTRUCTION (owned by one task, or behind a lock/atomic) AND proven by tooling — `go test -race`, TSan, `-ea` + `@GuardedBy`? Python: `x += 1` on a module global is NOT atomic and free-threaded 3.13+ removes the incidental GIL protection — guard with `threading.Lock`. No lock or guard copied by value (`go vet copylocks`), no `unsafe impl Send/Sync` without a written argument, no lock held across an `await`/`.await`/blocking call. A review opinion is not proof; the race detector is. *(stack: go,rust,jvm,dotnet,python — `out-of-scope` on any other stack)* |
+| CQ38 | Resources | **CONDITIONAL** — Deterministic release on EVERY exit path — `defer x.Close()` placed after the error check, try-with-resources, `using`/`await using`, `with`/`async with`, or an RAII guard? HTTP bodies, rows, statements and files enumerated. No `defer` inside an unbounded loop. Cleanup only on the happy path = violation. (TS/JS listener + timer cleanup is CQ22.) *(stack: go,rust,jvm,dotnet,python — `out-of-scope` on any other stack)* |
 | CQ39 | Resources | **CONDITIONAL** — Every queue, channel and fan-out bounded? An unbounded producer is CQ6 (unbounded memory) wearing a different hat: bounded channels, `SetLimit`, a semaphore, `BoundedChannelOptions`, or explicit backpressure (`writable.write()` return value honoured, `drain` awaited). Unbounded + a fast producer = OOM under load, not under test. |
-| CQ40 | Hygiene | **CONDITIONAL** — The language's meta-linter is configured, pinned, and clean in CI — `golangci-lint` (errcheck/govet/staticcheck/gosec/bodyclose/contextcheck), `clippy -D warnings` + cargo-deny, typescript-eslint type-checked (or Biome/oxlint type-aware), ruff + mypy, ErrorProne + NullAway, `TreatWarningsAsErrors`. **No config present = 0.** Roughly a third of the CQ set is mechanically checkable; a configured linter enforces those deterministically instead of an LLM re-deriving them per file. |
+| CQ40 | Hygiene | **CONDITIONAL** — The language's meta-linter is configured, pinned, and clean in CI — `golangci-lint` (errcheck/govet/staticcheck/gosec/bodyclose/contextcheck), `clippy -D warnings` + cargo-deny, typescript-eslint type-checked (or Biome/oxlint type-aware), ruff + mypy, ErrorProne + NullAway, `TreatWarningsAsErrors`. **No config present = 0** — that is the point of the gate, so its trigger is the LANGUAGE having a linter, not the project already having configured one (a trigger keyed on "has a config" would make the failure case unreachable). Scored on the config + the CI invocation; a local run with no CI may score on the config alone and note `ci: not-verified`. Roughly a third of the CQ set is mechanically checkable; a configured linter enforces those deterministically instead of an LLM re-deriving them per file. |
 <!-- GATES:END kind=cq-table -->
 
 ### Critical gates -- static (always block)
@@ -106,11 +106,11 @@ Any of these scored 0 is an immediate FAIL, regardless of the total score.
 | Q17 | **CRITICAL** — Assertions verify computed output, not input echo? Expected values from spec/manual calc, not copied from implementation (P-70). |
 | Q18 | No flaky test signals? No `Date.now()` without fake timers, no `setTimeout` for timing, no `Math.random()` without seed, no reliance on execution order, no real network calls? |
 | Q19 | Tests fully isolated? No shared mutable state between tests (global variables, module-level `let`, database rows without cleanup)? Each test can run independently in any order? |
-| Q20 | Test level declared and respected? The file states whether it is a small (in-process, no I/O, no sleep), medium, or large test, and stays in that level — no file mixes in-process units with real network, DB, filesystem, or `sleep`. A "unit" test that opens a socket is the flake nobody can reproduce. |
+| Q20 | **CONDITIONAL** — Test level declared and respected? The file states whether it is a small (in-process, no I/O, no sleep), medium, or large test, and stays in that level — no file mixes in-process units with real network, DB, filesystem, or `sleep`. A "unit" test that opens a socket is the flake nobody can reproduce. |
 | Q21 | **CONDITIONAL** — Changed production files reach a mutation score >= 70%, or every surviving mutant is triaged as equivalent/arid with a written reason? This is the only gate that measures test STRENGTH rather than test STYLE — coverage says a line ran, a surviving mutant says nothing checked what it did. (Stryker / mutmut / PIT / go-mutesting / cargo-mutants.) |
 | Q22 | **CONDITIONAL** — Every pure/validator unit has at least one property or invariant test over generated inputs, with the seed recorded (fast-check / Hypothesis / proptest / jqwik)? `test-code-types-core.md` already MANDATES property-based tests for PURE units — until now no gate scored them, so the writing rule was unenforceable. |
 | Q23 | **CONDITIONAL** — The request/response contract is verified against a SHARED artifact — a Pact file, or an OpenAPI/JSON-Schema validated on BOTH consumer and provider — rather than a hand-written mock that only proves the mock matches itself? This is the test-side twin of CQ19, which had no test gate at all. |
-| Q24 | The suite passes under RANDOMIZED order with the seed logged (`--sequence.shuffle`, `-p randomly`, `go test -shuffle=on`, `MethodOrderer.Random`)? Order dependency causes 59% of flaky tests in the largest published study; Q18 greps for hazard tokens, this proves determinism by construction — it fails the suite Q18 passes when the dependency hides in a shared module-level fixture. |
+| Q24 | **CONDITIONAL** — The suite passes under RANDOMIZED order with the seed logged (`--sequence.shuffle`, `-p randomly`, `go test -shuffle=on`, `MethodOrderer.Random`)? Order dependency causes 59% of flaky tests in the largest published study; Q18 greps for hazard tokens, this proves determinism by construction — it fails the suite Q18 passes when the dependency hides in a shared module-level fixture. |
 | Q25 | **CONDITIONAL** — Changed lines reach >= 90% patch coverage with zero new uncovered branches, enforced server-side? Patch coverage gates the diff; project-level coverage lets a large green codebase hide an untested change. |
 <!-- GATES:END kind=q-table -->
 
@@ -174,16 +174,44 @@ Adding a WHERE clause, null guard, try/catch, or type annotation is never "out o
 
 ## Test anti-patterns (AP1-AP30)
 
-Test audits check for 29 anti-patterns in addition to the Q1-Q25 gates. These are common structural problems that reduce test value:
+Test audits check for 30 anti-patterns in addition to the Q1-Q25 gates. These are common structural problems that reduce test value:
 
-| Range | Coverage |
-|-------|----------|
-| AP1-AP18 | Core anti-patterns: skip in new tests, mock-as-implementation, tautological tests, leaking state, .toBeDefined-only, etc. |
-| AP25 | `expect(x.length).toBe(N)` instead of `.toHaveLength(N)` — worse error messages, masks missing property (Q4) |
-| AP26 | Real timers in time-dependent tests without `useFakeTimers` — causes flaky tests |
-| AP27 | `expect(x.length).toBeGreaterThan(0)` when exact fixture count is known — masks off-by-one and duplicates (Q4/Q15) |
-| AP28 | Persistent `it.skip`/`describe.skip` without backlog tracking — dead code and coverage gaps |
-| AP29 | Mock return value echoed in assertion — proves mock setup, not production logic (Q17). Most common audit failure. |
+The full catalogue, generated from `../shared/includes/gate-registry.md` — this used to be a
+hand-written summary that glossed the first eighteen entries with descriptions matching none
+of them, and skipped six more entirely.
+
+<!-- GATES:BEGIN kind=ap-list -->
+AP1: try/catch in test swallowing errors
+AP2: Conditional assertions (if/else in test)
+AP3: Re-implementing production logic in test
+AP4: Snapshot as only test for component
+AP5: `as any` -> `as never` bypassing types
+AP6: Testing CSS classes instead of behavior
+AP7: .catch(() => {}) swallowing errors
+AP8: document.querySelector bypassing Testing Library
+AP9: Always-true assertion (expect(true).toBe(true))
+AP10: Tautological mock (call mock -> verify mock called, no production code)
+AP11: vi.mocked(vi.fn()) -- mock targeting fresh fn
+AP12: waitForTimeout(N) hardcoded delays
+AP13: Test with zero expect() calls -- AUTO TIER-D
+AP14: toBeTruthy()/toBeDefined() as sole assertion on complex object
+AP15: Testing private methods directly
+AP16: Fixture:assertion ratio > 20:1 -- AUTO TIER-D
+AP17: Unused test data declared but never used
+AP18: Duplicate test names (copy-paste indicator)
+AP19: expect.anything() hiding callback contract
+AP20: Mock returns same data for ALL methods
+AP21: .calls[N] magic index (fragile)
+AP22: CSS selector in test
+AP23: Inline mockRestore() with afterEach present (redundant)
+AP24: consoleSpy typed as `any`
+AP25: `expect(x.length).toBe(N)` instead of `.toHaveLength(N)` — worse failure output, masks a missing property (Q4). JS-only: pytest/Go/Rust have no equivalent, mark N/A there
+AP26: Real timers in time-dependent tests (Date.now/setTimeout without useFakeTimers)
+AP27: `expect(x.length).toBeGreaterThan(0)` when the fixture's exact count is known — masks off-by-one and duplicates (Q4/Q15)
+AP28: Persistent `it.skip`/`describe.skip`/`@Ignore`/`#[ignore]`/`@pytest.mark.skip` with no ticket or expiry — dead code plus a silent coverage gap
+AP29: Mock return value echoed in the assertion — proves the mock setup, not production logic (Q17). The most common audit failure
+AP30: Mocking own code that could run with a real implementation (was AP25 until the numbering fork was resolved; overlaps `fix-tests` P-68 and Q13)
+<!-- GATES:END kind=ap-list -->
 
 Full AP definitions with detection heuristics and fix guidance are in `rules/testing.md`.
 
