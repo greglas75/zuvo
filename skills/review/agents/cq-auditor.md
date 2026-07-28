@@ -1,6 +1,6 @@
 ---
 name: cq-auditor
-description: "Independent CQ1-CQ34 evaluation with PROJECT_CONTEXT awareness. Catches N/A abuse and CQ8 false positives."
+description: "Independent CQ1-CQ40 evaluation with PROJECT_CONTEXT awareness. Catches N/A abuse and CQ8 false positives."
 model: sonnet
 reasoning: false
 tools:
@@ -126,4 +126,4 @@ Fall back to Read for full file source. Use Grep for pattern searches (`grep -n 
 - Do not score CQ8 as 0 on non-critical services when PROJECT_CONTEXT shows global error handling
 - Do not score CQ4 as 0 on `test-utils/`, `__mocks__/`, or `fixtures/` files unless they implement real auth or tenant logic
 - Do not score >60% N/A without per-gate justification
-- Do not skip any of the 34 gates
+- Do not skip any of the 40 gates

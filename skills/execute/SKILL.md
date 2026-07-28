@@ -94,7 +94,7 @@ Execute all roles yourself in sequential passes with explicit checkpoints:
 1. **Pre-write contracts:** For complex tasks, fill the code contract (from `code-contract.md`) before writing production code, and the test contract (from `test-contract.md`) before writing tests. Print: `[CHECKPOINT: contracts complete, starting implementation]`
 2. **Implementer pass:** Write the code following the task spec and contracts. Run verification. Print: `[CHECKPOINT: implementation complete, switching to spec review]`
 3. **Spec reviewer pass:** Re-read the task spec and the code you just wrote. Compare independently. Do NOT trust your implementation pass — review as if seeing the code for the first time. Print findings and: `[GATE: spec-compliance] <3 plan requirements satisfied, or BLOCKED with exact gap>`
-4. **Quality reviewer pass:** Run CQ1-CQ34 on production files, Q1-Q19 on test files. Run anti-tautology checks on test files. **Report per-file scores — aggregate scoring is forbidden.** Print scores and: `[GATE: cq-critical] <critical gates checked + evidence>`
+4. **Quality reviewer pass:** Run CQ1-CQ40 on production files, Q1-Q19 on test files. Run anti-tautology checks on test files. **Report per-file scores — aggregate scoring is forbidden.** Print scores and: `[GATE: cq-critical] <critical gates checked + evidence>`
 5. **Independent test auditor pass:** Re-read tests as if seeing them for the first time. Compare Q scores with self-eval. Print: `[CHECKPOINT: independent test audit complete]`
 6. **Adversarial pass:** Run the same adversarial review required in Step 7b. Print: `[GATE: adversarial-done] PASS|WARNING|CRITICAL|BLOCKED <mode + artifact path or exact blocker>`
 7. **Acceptance verifier pass (MANDATORY):** Read the task's Acceptance Proof block from the plan. Set up preconditions, run the proof, capture artifact to `zuvo/proofs/task-<N>-<ac-id>.<ext>`. Behavior must match Expected. Print: `[CHECKPOINT: switching to acceptance-verifier role]` then `[GATE: acceptance-verified] <ac-ids passed | BLOCKED with failing AC# + observed-vs-expected>`
@@ -588,7 +588,7 @@ Agent: Quality Reviewer
          CODESIFT_AVAILABLE, repo identifier, content of shared/includes/quality-gates.md
 ```
 
-The quality reviewer applies CQ1-CQ34 on production code and Q1-Q19 on test code from the provided quality-gates.md. It also checks file size limits. For complex tasks, it verifies the test contract was filled correctly (all branches listed, no implementation-derived expected values, all mutations have catching tests).
+The quality reviewer applies CQ1-CQ40 on production code and Q1-Q19 on test code from the provided quality-gates.md. It also checks file size limits. For complex tasks, it verifies the test contract was filled correctly (all branches listed, no implementation-derived expected values, all mutations have catching tests).
 
 ### Step 7: Handle Quality Reviewer Verdict
 
@@ -1128,7 +1128,7 @@ From `shared/includes/tdd-protocol.md`: no production code without a failing tes
 ### Quality Gates
 
 From `shared/includes/quality-gates.md`:
-- CQ1-CQ34 on production code (critical gates: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 + conditional: CQ16, CQ19-CQ24, CQ28)
+- CQ1-CQ40 on production code (critical gates: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 + conditional: CQ16, CQ19-CQ24, CQ28)
 - Q1-Q19 on test code (critical gates: Q7, Q11, Q13, Q15, Q17)
 - Any critical gate = 0 -> FAIL, regardless of total score
 

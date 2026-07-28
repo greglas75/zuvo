@@ -247,7 +247,7 @@ const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
 
 ## Hook-Specific CQ Adjustments
 
-When evaluating hooks (`use*.ts` files) against CQ1-CQ34:
+When evaluating hooks (`use*.ts` files) against CQ1-CQ40:
 
 - **CQ11:** Hook body limit is 100 lines (not 50). The 50L limit applies to each `useCallback`/`useEffect` body individually.
 - **CQ8:** `AbortController.abort()` causing `AbortError` is intentional control flow. `if (err.name === 'AbortError') return;` is correct.

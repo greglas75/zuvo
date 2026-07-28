@@ -1,6 +1,6 @@
 ---
 name: code-audit
-description: "Batch audit of production files against CQ1-CQ34 quality gates and CAP1-CAP19 anti-patterns. Tiered output (A/B/C/D), critical gate enforcement, evidence-backed scoring, cross-file pattern analysis, and prioritized execution plan. Flags: zuvo:code-audit all | [path] | [file] | --deep | --quick | --services | --controllers"
+description: "Batch audit of production files against CQ1-CQ40 quality gates and CAP1-CAP19 anti-patterns. Tiered output (A/B/C/D), critical gate enforcement, evidence-backed scoring, cross-file pattern analysis, and prioritized execution plan. Flags: zuvo:code-audit all | [path] | [file] | --deep | --quick | --services | --controllers"
 codesift_tools:
   always:
     - analyze_project       # stack detection (used by codesift-setup orchestrator)
@@ -109,7 +109,7 @@ codesift_tools:
 
 # zuvo:code-audit â€” Production Code Quality Triage
 
-Systematic evaluation of production source files through the CQ1-CQ34 binary checklist and CAP anti-pattern catalog. Every file receives a tier classification based on its score, critical gate status, and detected anti-patterns. The output is a prioritized report with actionable fix plans.
+Systematic evaluation of production source files through the CQ1-CQ40 binary checklist and CAP anti-pattern catalog. Every file receives a tier classification based on its score, critical gate status, and detected anti-patterns. The output is a prioritized report with actionable fix plans.
 
 **When to use:** Periodic health checks, before major releases, after adding many production files, when onboarding a new codebase, when code quality feels inconsistent.
 **Out of scope:** Single-file code review (use `zuvo:review`), refactoring (use `zuvo:refactor`), test quality assessment (use `zuvo:test-audit`), feature development (use `zuvo:build`).
@@ -256,7 +256,7 @@ When CodeSift is available, run these checks before the manual CQ evaluation to 
 
 TOOL_VERIFIED findings have deterministic HIGH confidence and bypass the confidence gate. They go directly to the report.
 
-Manual CQ1-CQ34 evaluation still runs for all 34 gates. CodeSift pre-scan accelerates 3 of 29 checks.
+Manual CQ1-CQ40 evaluation still runs for all 40 gates. CodeSift pre-scan accelerates 3 of 29 checks.
 
 ### Degraded Mode (CodeSift unavailable)
 
@@ -336,7 +336,7 @@ If `semgrep` is installed and the project has `.semgrep/` config:
 npx semgrep --config .semgrep/ --json --quiet 2>/dev/null
 ```
 
-Semgrep findings auto-score the matching CQ as 0 for affected files (deterministic = HIGH confidence). Exception: CQ4 findings from semgrep need dataflow verification before auto-scoring. LLM evaluation still runs full CQ1-CQ34 but skips deep analysis on CQs already flagged.
+Semgrep findings auto-score the matching CQ as 0 for affected files (deterministic = HIGH confidence). Exception: CQ4 findings from semgrep need dataflow verification before auto-scoring. LLM evaluation still runs full CQ1-CQ40 but skips deep analysis on CQs already flagged.
 
 If semgrep unavailable: skip silently. This enhances the audit but does not gate it.
 
@@ -351,20 +351,20 @@ Each Task agent dispatch:
 Agent: Code Quality Auditor (per batch)
   model: "sonnet"
   type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
-  instructions: evaluate files against CQ1-CQ34 checklist (see Agent Prompt below)
+  instructions: evaluate files against CQ1-CQ40 checklist (see Agent Prompt below)
   input: batch file list, PROJECT_CONTEXT, CODESIFT_AVAILABLE
 ```
 
 ### Agent Prompt (provided to each batch agent)
 
 ```
-You are a production code quality auditor. Evaluate each file below against the CQ1-CQ34 binary checklist.
+You are a production code quality auditor. Evaluate each file below against the CQ1-CQ40 binary checklist.
 
 PROJECT_CONTEXT:
 [INSERT: global error handler info, or "No global error handler detected"]
 
 RED FLAG PRE-SCAN (do this FIRST, before full checklist):
-Scan for these. If any found, use TIER-D SHORT FORMAT and skip full CQ1-CQ34:
+Scan for these. If any found, use TIER-D SHORT FORMAT and skip full CQ1-CQ40:
 - Hardcoded secret (API key, password, token in source) -> AUTO TIER-D
 - SQL string concatenation with user input -> AUTO TIER-D
 - eval() / new Function() with non-literal input -> AUTO TIER-D
@@ -423,6 +423,12 @@ CQ31: CONDITIONAL -- User input reaching path/shell/deserializer/outbound URL â€
 CQ32: CONDITIONAL -- Lockfile committed, new deps pinned and CVE-checked?
 CQ33: CONDITIONAL -- CSPRNG for tokens? Credential hashing argon2/bcrypt, not SHA? No bespoke crypto?
 CQ34: CONDITIONAL -- Role checked for THIS operation (not just authenticated)? Write payload field-allowlisted?
+CQ35: CONDITIONAL -- Cancellation handle accepted + forwarded downstream, not re-created? Derived handles released?
+CQ36: CONDITIONAL -- Every spawn has an owner that joins/aborts it? Fan-out bounded?  [stack: go,rust,jvm,dotnet]
+CQ37: CONDITIONAL -- Race-free by construction AND proven by -race/TSan? No lock held across await?  [stack: go,rust,jvm,dotnet]
+CQ38: CONDITIONAL -- Deterministic release on every exit path? No defer inside an unbounded loop?  [stack: go,rust,jvm,dotnet]
+CQ39: CONDITIONAL -- Queues/channels/fan-out bounded? Backpressure honoured on streams?
+CQ40: CONDITIONAL -- Language meta-linter configured, pinned and clean in CI? No config = 0
 <!-- GATES:END kind=cq-prompt -->
 
 ANTI-PATTERNS (each found = noted, severity attached):

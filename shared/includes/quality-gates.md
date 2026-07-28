@@ -1,10 +1,10 @@
 # Quality Gates — Quick Reference
 
-> Summary of CQ1-CQ34 (code quality) and Q1-Q19 (test quality) gates for agent use.
+> Summary of CQ1-CQ40 (code quality) and Q1-Q19 (test quality) gates for agent use.
 
 This is a condensed reference. Full details, evidence examples, and N/A rules are in `rules/cq-checklist.md` (code) and `rules/testing.md` (tests). Agents should read the full files when performing detailed evaluations. CQ23-CQ28 and Q18-Q19 were added in v1.3.0. CQ29 (import-depth) added in v1.4.0.
 
-## CQ1-CQ34: Code Quality Gates
+## CQ1-CQ40: Code Quality Gates
 
 <!-- GATES:BEGIN kind=cq-table -->
 | Gate | Domain | Check |
@@ -43,6 +43,12 @@ This is a condensed reference. Full details, evidence examples, and N/A rules ar
 | CQ32 | Security | **CONDITIONAL** — Supply chain controlled? Lockfile committed, no floating ranges or `latest` on a newly added dependency, and new dependencies checked against an advisory source. OWASP A03:2025 (Software Supply Chain Failures) is rank 3 and had no gate anywhere in CQ/CAP. |
 | CQ33 | Security | **CONDITIONAL** — Cryptographic material handled correctly? Tokens/IDs/nonces from a CSPRNG (`crypto.randomUUID`/`randomBytes`/`secrets`), never `Math.random()`/`Date.now()`; credential hashing via argon2id or bcrypt (cost >= 12), never a bare SHA-*; no bespoke crypto; secrets read from config, never literals in source or a client bundle. |
 | CQ34 | Security | **CONDITIONAL** — Authorization complete at BOTH levels? (a) function-level: the handler asserts the caller's role/permission for THIS operation, not just that the caller is authenticated (BFLA); (b) field-level: write payloads are field-allowlisted, never a blanket spread into the ORM (mass assignment / BOPLA). CQ4 covers object/tenant scoping only — these two levels had no gate. |
+| CQ35 | Concurrency | **CONDITIONAL** — Cancellation propagated, not merely applied? The ambient cancellation handle (`AbortSignal` / `context.Context` / `CancellationToken` / `CoroutineScope`) is ACCEPTED as a parameter and forwarded to every downstream call — never re-created mid-request (`context.Background()`, a fresh `AbortController`) and never stored in a struct/field. Every derived handle is released (`defer cancel()`). A timeout no caller can cancel is not cancellation. |
+| CQ36 | Concurrency | **CONDITIONAL** — Every spawned unit of work has a named owner that joins it, aborts it, or documents it as process-lifetime? No `go func()` / `tokio::spawn` / `Task.Run` / `GlobalScope.launch` whose handle is dropped. Fan-out is bounded (`errgroup.SetLimit`, `JoinSet`, `Semaphore`), never an unbounded loop-spawn. (TS/JS: dropped async work is CQ15.) *(stack: go,rust,jvm,dotnet — `out-of-scope` on any other stack)* |
+| CQ37 | Concurrency | **CONDITIONAL** — Shared mutable state race-free BY CONSTRUCTION (owned by one task, or behind a lock/atomic) AND proven by tooling — `go test -race`, TSan, `-ea` + `@GuardedBy`? No lock or guard copied by value (`go vet copylocks`), no `unsafe impl Send/Sync` without a written argument, no lock held across an `await`/`.await`/blocking call. A review opinion is not proof; the race detector is. *(stack: go,rust,jvm,dotnet — `out-of-scope` on any other stack)* |
+| CQ38 | Resources | **CONDITIONAL** — Deterministic release on EVERY exit path — `defer x.Close()` placed after the error check, try-with-resources, `using`/`await using`, or an RAII guard? HTTP bodies, rows, statements and files enumerated. No `defer` inside an unbounded loop. Cleanup only on the happy path = violation. (TS/JS listener + timer cleanup is CQ22.) *(stack: go,rust,jvm,dotnet — `out-of-scope` on any other stack)* |
+| CQ39 | Resources | **CONDITIONAL** — Every queue, channel and fan-out bounded? An unbounded producer is CQ6 (unbounded memory) wearing a different hat: bounded channels, `SetLimit`, a semaphore, `BoundedChannelOptions`, or explicit backpressure (`writable.write()` return value honoured, `drain` awaited). Unbounded + a fast producer = OOM under load, not under test. |
+| CQ40 | Hygiene | **CONDITIONAL** — The language's meta-linter is configured, pinned, and clean in CI — `golangci-lint` (errcheck/govet/staticcheck/gosec/bodyclose/contextcheck), `clippy -D warnings` + cargo-deny, typescript-eslint type-checked (or Biome/oxlint type-aware), ruff + mypy, ErrorProne + NullAway, `TreatWarningsAsErrors`. **No config present = 0.** Roughly a third of the CQ set is mechanically checkable; a configured linter enforces those deterministically instead of an LLM re-deriving them per file. |
 <!-- GATES:END kind=cq-table -->
 
 ### Critical Gates (Static)

@@ -122,6 +122,15 @@ def _crit_prefix(crit):
     return ""
 
 
+def _scope_suffix(scope):
+    """Stack-scoped gates must SAY so, or an auditor cannot tell 'does not apply to this project'
+    (out-of-scope, free) from 'applies but not here' (N/A, budgeted)."""
+    if not scope or scope == "universal":
+        return ""
+    stacks = scope.split(":", 1)[1] if ":" in scope else scope
+    return f" *(stack: {stacks} — `out-of-scope` on any other stack)*"
+
+
 def _crit_short(crit):
     if crit.startswith("critical"):
         return "CRITICAL -- "
@@ -133,7 +142,8 @@ def _crit_short(crit):
 # ---- renderers: kind -> lines ------------------------------------------------------------
 def r_cq_table(g):
     out = ["| Gate | Domain | Check |", "|------|--------|-------|"]
-    out += [f"| {x['id']} | {esc(x['domain'])} | {_crit_prefix(x['crit'])}{esc(x['text'])} |" for x in g["CQ"]]
+    out += [f"| {x['id']} | {esc(x['domain'])} | {_crit_prefix(x['crit'])}{esc(x['text'])}"
+            f"{_scope_suffix(x.get('scope', ''))} |" for x in g["CQ"]]
     return out
 
 
@@ -145,7 +155,9 @@ def r_q_table(g):
 
 def r_cq_prompt(g):
     w = max(len(x["id"]) for x in g["CQ"]) + 1
-    return [f"{(x['id'] + ':').ljust(w)} {_crit_short(x['crit'])}{x['short']}" for x in g["CQ"]]
+    return [f"{(x['id'] + ':').ljust(w)} {_crit_short(x['crit'])}{x['short']}"
+            + (f"  [stack: {x['scope'].split(':', 1)[1]}]" if x.get("scope", "universal") != "universal" else "")
+            for x in g["CQ"]]
 
 
 def r_q_prompt(g):
