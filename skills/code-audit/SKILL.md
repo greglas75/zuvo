@@ -1,6 +1,6 @@
 ---
 name: code-audit
-description: "Batch audit of production files against CQ1-CQ40 quality gates and CAP1-CAP19 anti-patterns. Tiered output (A/B/C/D), critical gate enforcement, evidence-backed scoring, cross-file pattern analysis, and prioritized execution plan. Flags: zuvo:code-audit all | [path] | [file] | --deep | --quick | --services | --controllers"
+description: "Batch audit of production files against CQ1-CQ40 quality gates and CAP1-CAP29 anti-patterns. Tiered output (A/B/C/D), critical gate enforcement, evidence-backed scoring, cross-file pattern analysis, and prioritized execution plan. Flags: zuvo:code-audit all | [path] | [file] | --deep | --quick | --services | --controllers"
 codesift_tools:
   always:
     - analyze_project       # stack detection (used by codesift-setup orchestrator)
@@ -452,6 +452,16 @@ CAP16: Client auth-token plumbing race (deferred-promise wait for provider, toke
 CAP17: `error.message` rendered directly to UI/DOM without a curated `userMessageFor(error)` mapping. Leaks server stack/PII; map known error types to safe messages and fall back to a generic "Something went wrong". -- HIGH
 CAP18: `throw new Error(...)` from a service/injectable/handler. Use a typed exception class instead (BadRequestException, NotFoundException, custom DomainError); bare Error loses HTTP status mapping and can leak the original message into 5xx response bodies. -- MEDIUM
 CAP19: Mutating endpoint, AI/expensive operation (LLM call, export, generation), webhook receiver, or tRPC procedure without a rate limiter (ThrottlerGuard, custom limiter, queue with concurrency cap). tRPC bypassing the project-wide ThrottlerGuard = always violation. -- HIGH
+CAP20: Mutable object as a default argument or dataclass field default (`def f(x=[])`, `field: list = []`) -- HIGH  [stack: python]
+CAP21: `except Exception: pass`, bare `except:`, or catch-and-return-None with no log and no re-raise -- HIGH  [stack: python]
+CAP22: `assert` used as a runtime precondition in production code — stripped under `python -O`, silently deleting the check (CWE-703) -- HIGH  [stack: python]
+CAP23: `asyncio.create_task`/`ensure_future` whose result is not retained — the loop keeps only a weak reference, so the task can vanish mid-flight -- HIGH  [stack: python]
+CAP24: Blocking call inside `async def` — `requests`, `time.sleep`, bare `open`, a sync DB driver, `boto3` -- HIGH  [stack: python]
+CAP25: `pickle`/`marshal`/`dill` load, or `yaml.load` without `SafeLoader`, on non-first-party bytes -- AUTO TIER-D  [stack: python]
+CAP26: `subprocess`/`os.system` with `shell=True` or a non-literal command string (CWE-78) -- AUTO TIER-D  [stack: python]
+CAP27: Naive `datetime.now()`/`utcnow()` stored, compared, or serialized (`utcnow` is deprecated in 3.12) -- MEDIUM  [stack: python]
+CAP28: Module-import-time side effect — DB engine, HTTP client, network call, or `os.environ[k]` at import -- MEDIUM  [stack: python]
+CAP29: `__del__` used for resource release, or `.close()` without `with`/`try-finally` — GC timing is unguaranteed and `__del__` exceptions are swallowed -- MEDIUM  [stack: python]
 <!-- GATES:END kind=cap-list -->
 
 N/A HANDLING: N/A items are excluded from both numerator and denominator. Score = passed / applicable. N/A requires justification.

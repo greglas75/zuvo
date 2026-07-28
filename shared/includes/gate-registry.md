@@ -113,29 +113,39 @@ line; print one summary line instead: `out-of-scope: N gates (stack=<detected>)`
 | Q18 | — | No flaky test signals? No `Date.now()` without fake timers, no `setTimeout` for timing, no `Math.random()` without seed, no reliance on execution order, no real network calls? | No flaky signals? No Date.now() without fake timers, no setTimeout for timing, no Math.random(), no real network? |
 | Q19 | — | Tests fully isolated? No shared mutable state between tests (global variables, module-level `let`, database rows without cleanup)? Each test can run independently in any order? | Tests fully isolated? No shared mutable state between tests; each runs independently in any order? |
 
-## CAP1-CAP19 — Code Anti-Patterns
+## CAP1-CAP29 — Code Anti-Patterns
 
-| ID | Finding | Severity |
-|----|---------|----------|
-| CAP1 | Empty catch block | HIGH |
-| CAP2 | Plain `console.log` in production. `console.warn`/`console.error` allowed ONLY when paired with Sentry.captureMessage/captureException on the same code path; otherwise MEDIUM. | MEDIUM |
-| CAP3 | `as any` / `as unknown as X` without validation (x5+ = HIGH). `as unknown as <DomainType>` after Prisma/ORM queries = HIGH (silent contract bypass). | MEDIUM |
-| CAP4 | @ts-ignore without justification | MEDIUM |
-| CAP5 | Hardcoded secret | AUTO TIER-D |
-| CAP6 | Unsanitized HTML reaching DOM or persistence. Covers `dangerouslySetInnerHTML` without DOMPurify, `editor.commands.setContent(rawHtml)`/raw-HTML mode without pre-save sanitization, paste-as-HTML, programmatic raw HTML writes. Display-time sanitization alone is INSUFFICIENT if persistence path is unsanitized. | AUTO TIER-D |
-| CAP7 | eval() / new Function() with dynamic input | AUTO TIER-D |
-| CAP8 | SQL string concatenation OR `$queryRaw`/`$executeRawUnsafe` against tenant tables without organizationId in WHERE | AUTO TIER-D |
-| CAP9 | File exceeds type limit (service <=450, controller <=300, hook <=250, component <=200, helper <=100) OR inline sub-component >=50 LOC nested in a parent component file (2x file limit = AUTO TIER-D) | HIGH |
-| CAP10 | Function > 100 lines (2x the 50L limit) | HIGH |
-| CAP11 | parseFloat/Number() on money field | HIGH |
-| CAP12 | await inside for/while without batch alternative | MEDIUM |
-| CAP13 | 7+ useState in one component, OR >=3 mutually-exclusive dialog/modal boolean flags (collapse to discriminated union `dialog: { kind: '...' } | null`), OR state mirroring URL params managed via local useState (use router query API) | MEDIUM |
-| CAP14 | Business logic >10 lines in component body that has no DOM dependency | MEDIUM |
-| CAP15 | API URL built without `encodeURIComponent` on dynamic path segments, OR hardcoded base URL string-concat (`` `${BASE}/api/foo/${id}` ``), OR unencoded user-controlled token in URL path/query. MUST use a single `buildApiUrl(path, pathParams)` helper and validate enum-typed segments against an allowlist before interpolation. | HIGH |
-| CAP16 | Client auth-token plumbing race (deferred-promise wait for provider, token injected mid-flight, no readiness gate before first request), OR missing 401-> refresh-> retry-once on REST clients while tRPC has it (or vice versa), OR unsigned/dev-only tokens accepted as auth credentials in any environment | HIGH |
-| CAP17 | `error.message` rendered directly to UI/DOM without a curated `userMessageFor(error)` mapping. Leaks server stack/PII; map known error types to safe messages and fall back to a generic "Something went wrong". | HIGH |
-| CAP18 | `throw new Error(...)` from a service/injectable/handler. Use a typed exception class instead (BadRequestException, NotFoundException, custom DomainError); bare Error loses HTTP status mapping and can leak the original message into 5xx response bodies. | MEDIUM |
-| CAP19 | Mutating endpoint, AI/expensive operation (LLM call, export, generation), webhook receiver, or tRPC procedure without a rate limiter (ThrottlerGuard, custom limiter, queue with concurrency cap). tRPC bypassing the project-wide ThrottlerGuard = always violation. | HIGH |
+| ID | Finding | Severity | Scope |
+|----|---------|----------|-------|
+| CAP1 | Empty catch block | HIGH | universal |
+| CAP2 | Plain `console.log` in production. `console.warn`/`console.error` allowed ONLY when paired with Sentry.captureMessage/captureException on the same code path; otherwise MEDIUM. | MEDIUM | universal |
+| CAP3 | `as any` / `as unknown as X` without validation (x5+ = HIGH). `as unknown as <DomainType>` after Prisma/ORM queries = HIGH (silent contract bypass). | MEDIUM | universal |
+| CAP4 | @ts-ignore without justification | MEDIUM | universal |
+| CAP5 | Hardcoded secret | AUTO TIER-D | universal |
+| CAP6 | Unsanitized HTML reaching DOM or persistence. Covers `dangerouslySetInnerHTML` without DOMPurify, `editor.commands.setContent(rawHtml)`/raw-HTML mode without pre-save sanitization, paste-as-HTML, programmatic raw HTML writes. Display-time sanitization alone is INSUFFICIENT if persistence path is unsanitized. | AUTO TIER-D | universal |
+| CAP7 | eval() / new Function() with dynamic input | AUTO TIER-D | universal |
+| CAP8 | SQL string concatenation OR `$queryRaw`/`$executeRawUnsafe` against tenant tables without organizationId in WHERE | AUTO TIER-D | universal |
+| CAP9 | File exceeds type limit (service <=450, controller <=300, hook <=250, component <=200, helper <=100) OR inline sub-component >=50 LOC nested in a parent component file (2x file limit = AUTO TIER-D) | HIGH | universal |
+| CAP10 | Function > 100 lines (2x the 50L limit) | HIGH | universal |
+| CAP11 | parseFloat/Number() on money field | HIGH | universal |
+| CAP12 | await inside for/while without batch alternative | MEDIUM | universal |
+| CAP13 | 7+ useState in one component, OR >=3 mutually-exclusive dialog/modal boolean flags (collapse to discriminated union `dialog: { kind: '...' } | null`), OR state mirroring URL params managed via local useState (use router query API) | MEDIUM | universal |
+| CAP14 | Business logic >10 lines in component body that has no DOM dependency | MEDIUM | universal |
+| CAP15 | API URL built without `encodeURIComponent` on dynamic path segments, OR hardcoded base URL string-concat (`` `${BASE}/api/foo/${id}` ``), OR unencoded user-controlled token in URL path/query. MUST use a single `buildApiUrl(path, pathParams)` helper and validate enum-typed segments against an allowlist before interpolation. | HIGH | universal |
+| CAP16 | Client auth-token plumbing race (deferred-promise wait for provider, token injected mid-flight, no readiness gate before first request), OR missing 401-> refresh-> retry-once on REST clients while tRPC has it (or vice versa), OR unsigned/dev-only tokens accepted as auth credentials in any environment | HIGH | universal |
+| CAP17 | `error.message` rendered directly to UI/DOM without a curated `userMessageFor(error)` mapping. Leaks server stack/PII; map known error types to safe messages and fall back to a generic "Something went wrong". | HIGH | universal |
+| CAP18 | `throw new Error(...)` from a service/injectable/handler. Use a typed exception class instead (BadRequestException, NotFoundException, custom DomainError); bare Error loses HTTP status mapping and can leak the original message into 5xx response bodies. | MEDIUM | universal |
+| CAP19 | Mutating endpoint, AI/expensive operation (LLM call, export, generation), webhook receiver, or tRPC procedure without a rate limiter (ThrottlerGuard, custom limiter, queue with concurrency cap). tRPC bypassing the project-wide ThrottlerGuard = always violation. | HIGH | universal |
+| CAP20 | Mutable object as a default argument or dataclass field default (`def f(x=[])`, `field: list = []`) | HIGH | stack:python |
+| CAP21 | `except Exception: pass`, bare `except:`, or catch-and-return-None with no log and no re-raise | HIGH | stack:python |
+| CAP22 | `assert` used as a runtime precondition in production code — stripped under `python -O`, silently deleting the check (CWE-703) | HIGH | stack:python |
+| CAP23 | `asyncio.create_task`/`ensure_future` whose result is not retained — the loop keeps only a weak reference, so the task can vanish mid-flight | HIGH | stack:python |
+| CAP24 | Blocking call inside `async def` — `requests`, `time.sleep`, bare `open`, a sync DB driver, `boto3` | HIGH | stack:python |
+| CAP25 | `pickle`/`marshal`/`dill` load, or `yaml.load` without `SafeLoader`, on non-first-party bytes | AUTO TIER-D | stack:python |
+| CAP26 | `subprocess`/`os.system` with `shell=True` or a non-literal command string (CWE-78) | AUTO TIER-D | stack:python |
+| CAP27 | Naive `datetime.now()`/`utcnow()` stored, compared, or serialized (`utcnow` is deprecated in 3.12) | MEDIUM | stack:python |
+| CAP28 | Module-import-time side effect — DB engine, HTTP client, network call, or `os.environ[k]` at import | MEDIUM | stack:python |
+| CAP29 | `__del__` used for resource release, or `.close()` without `with`/`try-finally` — GC timing is unguaranteed and `__del__` exceptions are swallowed | MEDIUM | stack:python |
 
 ## AP1-AP30 — Test Anti-Patterns
 
@@ -190,6 +200,26 @@ Now: **3 steps.**
 Generated regions currently live in: `rules/cq-checklist.md`, `rules/testing.md`,
 `shared/includes/quality-gates.md`, `docs/quality-gates.md`, `skills/code-audit/SKILL.md`,
 `skills/test-audit/SKILL.md`. Run `python3 scripts/gen-gate-copies.py --list` for the live list.
+
+## Detector evidence (Python CAPs)
+
+CAP20-CAP27 are not opinions — each has a deterministic detector, verified by running `ruff`
+0.15.20 against a file containing all of them (9/9 fired):
+
+| CAP | Rule |
+|-----|------|
+| CAP20 mutable default | `B006` |
+| CAP21 blind except / except-pass | `BLE001` + `S110` |
+| CAP22 assert in production | `S101` (bandit B101 → CWE-703) |
+| CAP23 dangling create_task | `RUF006` |
+| CAP24 blocking call in async | `ASYNC210` (also 212/230/240/251) |
+| CAP25 pickle / unsafe yaml | `S301` / `S506` |
+| CAP26 shell=True | `S602` (also 604/605) |
+| CAP27 naive datetime | `DTZ003` / `DTZ005` |
+
+Where a deterministic detector exists, prefer running it (see **CQ40**) over having an LLM
+re-derive the finding per file. The CAP entry exists so the audit REPORTS it consistently and
+attaches a severity, not so an agent hunts for it by hand.
 
 ## Known gaps (stated, not hidden)
 

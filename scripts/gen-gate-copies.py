@@ -77,7 +77,7 @@ def parse_registry(path=REGISTRY, strict=True):
             continue          # skip, so it does not also trip the contiguity check with a confusing message
         seen.add(key)
         cells = split_cells(m.group(3))
-        expected = {"CQ": 5, "Q": 3, "CAP": 2, "AP": 1}[fam]   # CQ: domain, crit, scope, text, short
+        expected = {"CQ": 5, "Q": 3, "CAP": 3, "AP": 1}[fam]   # CAP: text, severity, scope   # CQ: domain, crit, scope, text, short
         if len(cells) != expected:
             # Too FEW means a column is missing. Too MANY means an unescaped '|' inside the text
             # split one cell into two — the silent-corruption case, where the gate's text is
@@ -93,8 +93,9 @@ def parse_registry(path=REGISTRY, strict=True):
         elif fam == "Q" and len(cells) >= 3:
             out["Q"].append({"id": f"Q{num}", "n": num, "crit": cells[0],
                              "text": cells[1], "short": cells[2]})
-        elif fam == "CAP" and len(cells) >= 2:
-            out["CAP"].append({"id": f"CAP{num}", "n": num, "text": cells[0], "sev": cells[1]})
+        elif fam == "CAP" and len(cells) >= 3:
+            out["CAP"].append({"id": f"CAP{num}", "n": num, "text": cells[0],
+                               "sev": cells[1], "scope": cells[2]})
         elif fam == "AP" and len(cells) >= 1:
             out["AP"].append({"id": f"AP{num}", "n": num, "text": cells[0]})
     for k in out:
@@ -166,7 +167,9 @@ def r_q_prompt(g):
 
 
 def r_cap_list(g):
-    return [f"{x['id']}: {x['text']} -- {x['sev']}" for x in g["CAP"]]
+    return [f"{x['id']}: {x['text']} -- {x['sev']}"
+            + (f"  [stack: {x['scope'].split(':', 1)[1]}]" if x.get("scope", "universal") != "universal" else "")
+            for x in g["CAP"]]
 
 
 def r_ap_list(g):

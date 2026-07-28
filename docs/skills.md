@@ -35,7 +35,7 @@ Scoped task execution for common development work.
 
 | Skill | Description | When to use | Key flags |
 |-------|-------------|-------------|-----------|
-| `zuvo:code-audit` | Batch audit against CQ1-CQ40 gates and CAP1-CAP19 anti-patterns. Tiered output (A/B/C/D) with evidence-backed scoring. | Periodic health check, before releases, after adding many files | `all`, `[path]`, `[file]`, `--deep`, `--quick`, `--services`, `--controllers` |
+| `zuvo:code-audit` | Batch audit against CQ1-CQ40 gates and CAP1-CAP29 anti-patterns. Tiered output (A/B/C/D) with evidence-backed scoring. | Periodic health check, before releases, after adding many files | `all`, `[path]`, `[file]`, `--deep`, `--quick`, `--services`, `--controllers` |
 | `zuvo:test-audit` | Batch audit against Q1-Q19 gates and AP1-AP30 anti-patterns. Detects orphan tests, phantom mocks, untested public methods, input echo assertions, weak matchers. | After mass test writing, when test quality is uncertain | `all`, `[path]`, `[file]`, `--deep`, `--quick`, `--include-e2e`, `--details` |
 | `zuvo:api-audit` | API endpoint integrity across 10 dimensions (D1-D10): validation, payloads, pagination, errors, caching, auth, rate limiting, docs. | Before releases, after adding endpoints | `full`, `[path]`, `--static` |
 | `zuvo:security-audit` | OWASP Top 10 + OWASP LLM Top 10, auth/authz, secrets, injection, multi-tenant isolation, AI/LLM security (S15: prompt injection, MCP, RAG poisoning, cost control), infrastructure. Sentry 3-tier confidence model. 15 dimensions (S1-S15). | Before releases, after auth/payment/AI changes, quarterly | `[path]`, `full`, `--live-url <url>`, `--static`, `--quick`, `--persist-backlog` |
