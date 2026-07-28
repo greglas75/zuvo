@@ -1,6 +1,6 @@
 ---
 name: test-audit
-description: "Batch audit of test files against Q1-Q19 quality gates and AP1-AP29 anti-patterns. Detects orphan tests, phantom mocks, untested public methods. Tiered output (A/B/C/D) with critical gate enforcement and optional post-audit fix workflow. Flags: zuvo:test-audit all | [path] | [file] | --deep | --quick | --include-e2e | --details | --commit=ask|auto|off"
+description: "Batch audit of test files against Q1-Q19 quality gates and AP1-AP30 anti-patterns. Detects orphan tests, phantom mocks, untested public methods. Tiered output (A/B/C/D) with critical gate enforcement and optional post-audit fix workflow. Flags: zuvo:test-audit all | [path] | [file] | --deep | --quick | --include-e2e | --details | --commit=ask|auto|off"
 codesift_tools:
   always:
     - analyze_project
@@ -14,12 +14,14 @@ codesift_tools:
     - search_symbols           # untested public methods (production-side)
     - get_symbol
     - get_symbols
-    - find_references          # AP6 orphan test, untested public method detection
-    - find_dead_code           # AP7 orphan helpers, AP25 unused fixtures
-    - find_clones              # AP19 copy-paste tests
+    - find_references          # orphan-test + untested-public-method detection (no AP id — this is the
+                               #   pre-scan's ORPHAN/untested-methods signal, not an anti-pattern)
+    - find_dead_code           # AP17 unused test data declared but never referenced
+    - find_clones              # AP18 duplicate test names / copy-pasted test bodies
     - search_patterns
     - audit_scan
-    - scan_secrets             # AP24 hardcoded creds in fixtures
+    - scan_secrets             # hardcoded credentials in fixtures (no AP id — a security finding,
+                               #   reported separately from the AP deduction)
   by_stack:
     typescript: [get_type_info]
     javascript: []
@@ -106,12 +108,12 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 
 | Tool | Trigger | Skip allowed? |
 |------|---------|---------------|
-| `find_dead_code` | Always | **NO** — AP6 orphan tests + AP7 orphan helpers |
-| `find_clones` | Always | **NO** — AP19 copy-paste tests |
-| `find_references` | Always | **NO** — untested public methods detection |
+| `find_dead_code` | Always | **NO** — AP17 unused test data |
+| `find_clones` | Always | **NO** — AP18 duplicate test names / copy-pasted bodies |
+| `find_references` | Always | **NO** — orphan tests + untested public methods (no AP id) |
 | `search_patterns` | Always | **NO** — Q-checklist anti-patterns |
 | `audit_scan` | Always | **NO** — compound check |
-| `scan_secrets` | Always | **NO** — AP24 hardcoded creds in fixtures |
+| `scan_secrets` | Always | **NO** — hardcoded credentials in fixtures (security, not an AP) |
 | Stack-specific tools | Framework/language detected | **NO** when matches |
 
 Forbidden: `find_dead_code: skipped`, `codesift: unavailable` (when deferred), `retrospective: skipped` — all REJECTED.
@@ -294,8 +296,12 @@ AP21: .calls[N] magic index (fragile)
 AP22: CSS selector in test
 AP23: Inline mockRestore() with afterEach present (redundant)
 AP24: consoleSpy typed as `any`
-AP25: Mocking own code that could be instantiated with real implementation
+AP25: `expect(x.length).toBe(N)` instead of `.toHaveLength(N)` — worse failure output, masks a missing property (Q4). JS-only: pytest/Go/Rust have no equivalent, mark N/A there
 AP26: Real timers in time-dependent tests (Date.now/setTimeout without useFakeTimers)
+AP27: `expect(x.length).toBeGreaterThan(0)` when the fixture's exact count is known — masks off-by-one and duplicates (Q4/Q15)
+AP28: Persistent `it.skip`/`describe.skip`/`@Ignore`/`#[ignore]`/`@pytest.mark.skip` with no ticket or expiry — dead code plus a silent coverage gap
+AP29: Mock return value echoed in the assertion — proves the mock setup, not production logic (Q17). The most common audit failure
+AP30: Mocking own code that could run with a real implementation (was AP25 until the numbering fork was resolved; overlaps `fix-tests` P-68 and Q13)
 <!-- GATES:END kind=ap-list -->
 
 N/A HANDLING: N/A items excluded from both numerator and denominator. Score = passed / applicable.

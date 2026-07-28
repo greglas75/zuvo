@@ -81,12 +81,12 @@ Default with no arguments: `--triage`.
 | P-63 | Silent E2E conditionals | E2E tests with `if (isVisible())` guards that silently skip assertions |
 | P-64 | Hardcoded credentials | Passwords and secrets as string literals in test files |
 | P-65 | Under-tested API routes | Route handler tests with fewer than 6 test cases |
-| P-68 | Mocking own code | Mocks of internal services/utils that could use real implementations |
+| P-68 | Mocking own code | Mocks of internal services/utils that could use real implementations. (Same smell as the canonical **AP30**; keep the P-68 ID here since the fix recipes are keyed to it.) |
 | P-70 | Tautological oracle | Expected values computed from the same formula as the production code |
 | G-43 | Opaque dispatch | Tests asserting `typeof dispatch === 'function'` instead of verifying dispatch arguments |
 | AP2 | Conditional assertions | `if (x) { expect(...) }` patterns that silently skip when the condition is false |
 | AP5 | as-any mock casts | `as any` or `as never` casts on mock objects instead of typed factories |
-| AP10 | Delegation-only | `toHaveBeenCalled()` as the sole assertion without `toHaveBeenCalledWith` or return-value checks |
+| AP10 | Tautological mock | Test exercises only the mock — calls it, then asserts it was called; no production code runs. (The weaker "`toHaveBeenCalled()` with no `CalledWith`" case is the `Q3-CalledWith` row below — it used to sit here under AP10, which collided with the canonical meaning.) |
 | AP14 | toBeDefined sole assertion | `toBeDefined()` or `toBeTruthy()` as the only assertion in a test |
 | AP21 | Raw mock.calls index | Direct `.mock.calls[0][1]` access instead of `toHaveBeenNthCalledWith` |
 | NestJS-P3 | Self-mock | `spyOn(service, method)` mocking the service under test instead of its dependencies |

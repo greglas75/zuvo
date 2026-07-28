@@ -155,7 +155,7 @@ Adding a WHERE clause, null guard, try/catch, or type annotation is never "out o
 
 ---
 
-## Test anti-patterns (AP1-AP29)
+## Test anti-patterns (AP1-AP30)
 
 Test audits check for 29 anti-patterns in addition to the Q1-Q19 gates. These are common structural problems that reduce test value:
 

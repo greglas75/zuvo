@@ -106,7 +106,7 @@
 | CAP18 | `throw new Error(...)` from a service/injectable/handler. Use a typed exception class instead (BadRequestException, NotFoundException, custom DomainError); bare Error loses HTTP status mapping and can leak the original message into 5xx response bodies. | MEDIUM |
 | CAP19 | Mutating endpoint, AI/expensive operation (LLM call, export, generation), webhook receiver, or tRPC procedure without a rate limiter (ThrottlerGuard, custom limiter, queue with concurrency cap). tRPC bypassing the project-wide ThrottlerGuard = always violation. | HIGH |
 
-## AP1-AP26 — Test Anti-Patterns
+## AP1-AP30 — Test Anti-Patterns
 
 > Deduction: -1 per unique AP, capped at -5. AP13 and AP16 are AUTO TIER-D triggers.
 
@@ -136,8 +136,12 @@
 | AP22 | CSS selector in test |
 | AP23 | Inline mockRestore() with afterEach present (redundant) |
 | AP24 | consoleSpy typed as `any` |
-| AP25 | Mocking own code that could be instantiated with real implementation |
+| AP25 | `expect(x.length).toBe(N)` instead of `.toHaveLength(N)` — worse failure output, masks a missing property (Q4). JS-only: pytest/Go/Rust have no equivalent, mark N/A there |
 | AP26 | Real timers in time-dependent tests (Date.now/setTimeout without useFakeTimers) |
+| AP27 | `expect(x.length).toBeGreaterThan(0)` when the fixture's exact count is known — masks off-by-one and duplicates (Q4/Q15) |
+| AP28 | Persistent `it.skip`/`describe.skip`/`@Ignore`/`#[ignore]`/`@pytest.mark.skip` with no ticket or expiry — dead code plus a silent coverage gap |
+| AP29 | Mock return value echoed in the assertion — proves the mock setup, not production logic (Q17). The most common audit failure |
+| AP30 | Mocking own code that could run with a real implementation (was AP25 until the numbering fork was resolved; overlaps `fix-tests` P-68 and Q13) |
 
 ## Cost of changing a gate
 
@@ -158,9 +162,14 @@ Generated regions currently live in: `rules/cq-checklist.md`, `rules/testing.md`
 
 ## Known gaps (stated, not hidden)
 
-- **AP27-AP29** are referenced by `rules/testing.md` and `docs/quality-gates.md` but are NOT in the
-  executable registry above. Until they are defined here with agreed text, no skill should claim
-  "AP1-AP29". The three-way numbering fork (AP25 means two different smells depending on the file)
-  is unresolved and must be settled before those IDs are reused.
+- **AP numbering fork — RESOLVED 2026-07-28.** `AP25` meant two different smells depending on which
+  file you opened: `.length`-instead-of-`.toHaveLength` in `rules/testing.md` + `docs/quality-gates.md`,
+  and "mocking own code" in the executable `test-audit` checklist. Resolved in favour of the PUBLISHED
+  prose meaning (it had already shipped to the website and to two rule files), with the executable
+  meaning re-homed to **AP30**. `AP27`-`AP29` were defined in prose and never executable; they are now
+  in the registry, so `AP1-AP30` is a truthful claim for the first time.
+  The tie-break rule for any future collision: **the meaning that already shipped to users wins**;
+  the newer one takes a fresh ID. Renumbering a published ID silently re-labels every historical
+  report that cites it.
 - **Q18/Q19 prompt forms** are authored here rather than lifted from `test-audit`, which shipped
   Q1-Q17 only. Their canonical text comes from `rules/testing.md`.
