@@ -24,20 +24,69 @@ import os, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REGISTRY = os.path.join(ROOT, "shared/includes/gate-registry.md")
-BEGIN = re.compile(r'<!--\s*GATES:BEGIN\s+kind=([a-z0-9-]+)\s*-->')
-END = re.compile(r'<!--\s*GATES:END\s+kind=([a-z0-9-]+)\s*-->')
+# Accept kind=x, kind="x" and kind='x' — a quoted attribute that silently failed to match would
+# leave the region unrecognised, i.e. unverified, which is worse than a hard error.
+BEGIN = re.compile(r'<!--\s*GATES:BEGIN\s+kind=["\']?([a-z0-9-]+)["\']?\s*-->')
+END = re.compile(r'<!--\s*GATES:END\s+kind=["\']?([a-z0-9-]+)["\']?\s*-->')
 
 
-def parse_registry(path=REGISTRY):
-    """Return {'CQ': [...], 'Q': [...], 'CAP': [...], 'AP': [...]} of dicts, in ID order."""
+def split_cells(row):
+    r"""Split a markdown table row on unescaped pipes that are NOT inside a `code span`.
+
+    A naive row.split("|") corrupts any gate whose text contains a pipe — `a \| b`, a union type,
+    or a shell example. No gate needs one today, which is exactly why it would be a silent
+    landmine: the first gate that does would have its text truncated and its short form filled
+    with the tail, with nothing to notice.
+    """
+    cells, buf, tick, i = [], [], False, 0
+    while i < len(row):
+        c = row[i]
+        if c == "\\" and i + 1 < len(row) and row[i + 1] == "|":
+            buf.append("|"); i += 2; continue          # escaped pipe -> literal
+        if c == "`":
+            tick = not tick
+        if c == "|" and not tick:
+            cells.append("".join(buf).strip()); buf = []; i += 1; continue
+        buf.append(c); i += 1
+    cells.append("".join(buf).strip())
+    return cells
+
+
+def parse_registry(path=REGISTRY, strict=True):
+    """Return {'CQ': [...], 'Q': [...], 'CAP': [...], 'AP': [...]} of dicts, in ID order.
+
+    strict=True raises on anything that would silently produce a WRONG generated region:
+    a malformed row, a duplicate ID, or a gap in the numbering. Dropping such a row quietly is
+    how a gate disappears from every consumer at once.
+    """
     out = {"CQ": [], "Q": [], "CAP": [], "AP": []}
-    for line in open(path, errors="replace"):
-        line = line.rstrip("\n")
-        m = re.match(r'^\|\s*(CQ|CAP|AP|Q)(\d+)\s*\|(.*)\|\s*$', line)
+    problems, seen = [], set()
+    # No errors="replace": a mojibaked registry must fail loudly, not propagate corruption
+    # into six files.
+    with open(path, encoding="utf-8") as fh:
+        raw = fh.read()
+    for lineno, line in enumerate(raw.split("\n"), 1):
+        line = line.rstrip()
+        m = re.match(r'^\s*\|\s*(CQ|CAP|AP|Q)(\d+)\s*\|(.*)\|\s*$', line)
         if not m:
             continue
         fam, num = m.group(1), int(m.group(2))
-        cells = [c.strip() for c in m.group(3).split("|")]
+        key = (fam, num)
+        if key in seen:
+            problems.append(f"line {lineno}: duplicate {fam}{num} — a gate may be defined once")
+            continue          # skip, so it does not also trip the contiguity check with a confusing message
+        seen.add(key)
+        cells = split_cells(m.group(3))
+        expected = {"CQ": 4, "Q": 3, "CAP": 2, "AP": 1}[fam]
+        if len(cells) != expected:
+            # Too FEW means a column is missing. Too MANY means an unescaped '|' inside the text
+            # split one cell into two — the silent-corruption case, where the gate's text is
+            # truncated and its short form is filled with the tail. Both are hard errors.
+            problems.append(
+                f"line {lineno}: {fam}{num} has {len(cells)} cell(s), expected exactly {expected}"
+                + (" — an unescaped '|' in the text must be written as '\\|' or wrapped in `backticks`"
+                   if len(cells) > expected else " — a column is missing"))
+            continue
         if fam == "CQ" and len(cells) >= 4:
             out["CQ"].append({"id": f"CQ{num}", "n": num, "domain": cells[0],
                               "crit": cells[1], "text": cells[2], "short": cells[3]})
@@ -50,7 +99,19 @@ def parse_registry(path=REGISTRY):
             out["AP"].append({"id": f"AP{num}", "n": num, "text": cells[0]})
     for k in out:
         out[k].sort(key=lambda g: g["n"])
+        nums = [g["n"] for g in out[k]]
+        if nums and nums != list(range(1, len(nums) + 1)):
+            missing = sorted(set(range(1, max(nums) + 1)) - set(nums))
+            problems.append(f"{k} numbering is not contiguous 1..{max(nums)} — missing {missing}")
+    if problems and strict:
+        raise SystemExit("gate-registry.md is malformed:\n  " + "\n  ".join(problems))
     return out
+
+
+def esc(s):
+    """Escape pipes when emitting INTO a markdown table, so a gate text containing '|'
+    cannot break the generated table's column structure."""
+    return re.sub(r'(?<!\\)\|', r'\\|', s)
 
 
 def _crit_prefix(crit):
@@ -72,13 +133,13 @@ def _crit_short(crit):
 # ---- renderers: kind -> lines ------------------------------------------------------------
 def r_cq_table(g):
     out = ["| Gate | Domain | Check |", "|------|--------|-------|"]
-    out += [f"| {x['id']} | {x['domain']} | {_crit_prefix(x['crit'])}{x['text']} |" for x in g["CQ"]]
+    out += [f"| {x['id']} | {esc(x['domain'])} | {_crit_prefix(x['crit'])}{esc(x['text'])} |" for x in g["CQ"]]
     return out
 
 
 def r_q_table(g):
     out = ["| Gate | Check |", "|------|-------|"]
-    out += [f"| {x['id']} | {_crit_prefix(x['crit'])}{x['text']} |" for x in g["Q"]]
+    out += [f"| {x['id']} | {_crit_prefix(x['crit'])}{esc(x['text'])} |" for x in g["Q"]]
     return out
 
 

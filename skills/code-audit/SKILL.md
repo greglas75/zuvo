@@ -434,7 +434,7 @@ CAP9: File exceeds type limit (service <=450, controller <=300, hook <=250, comp
 CAP10: Function > 100 lines (2x the 50L limit) -- HIGH
 CAP11: parseFloat/Number() on money field -- HIGH
 CAP12: await inside for/while without batch alternative -- MEDIUM
-CAP13: 7+ useState in one component, OR >=3 mutually-exclusive dialog/modal boolean flags (collapse to discriminated union `dialog: { kind: '...' } -- null`), OR state mirroring URL params managed via local useState (use router query API)
+CAP13: 7+ useState in one component, OR >=3 mutually-exclusive dialog/modal boolean flags (collapse to discriminated union `dialog: { kind: '...' } | null`), OR state mirroring URL params managed via local useState (use router query API) -- MEDIUM
 CAP14: Business logic >10 lines in component body that has no DOM dependency -- MEDIUM
 CAP15: API URL built without `encodeURIComponent` on dynamic path segments, OR hardcoded base URL string-concat (`` `${BASE}/api/foo/${id}` ``), OR unencoded user-controlled token in URL path/query. MUST use a single `buildApiUrl(path, pathParams)` helper and validate enum-typed segments against an allowlist before interpolation. -- HIGH
 CAP16: Client auth-token plumbing race (deferred-promise wait for provider, token injected mid-flight, no readiness gate before first request), OR missing 401-> refresh-> retry-once on REST clients while tRPC has it (or vice versa), OR unsigned/dev-only tokens accepted as auth credentials in any environment -- HIGH

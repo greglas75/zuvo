@@ -111,7 +111,32 @@ else
   bad "empty-registry guard did not behave as expected"
 fi
 
-# ---------- 5. criticality vocabulary is respected ----------
+# ---------- 5. pipe-in-text must survive a round trip ----------
+# CAP13's text contains a literal '|' inside backticks (`dialog: { kind: '...' } | null`). A naive
+# row.split("|") turned that into '-- null' — silent corruption of a shipped anti-pattern, found
+# only because the generated region stopped matching. This asserts the round trip stays lossless.
+if grep -qF "} | null" "$ROOT/skills/code-audit/SKILL.md"; then
+  pass "pipe inside a code span survives generation (CAP13 intact)"
+else
+  bad "CAP13's '| null' was mangled — the cell splitter is back to a naive split"
+fi
+
+roundtrip=$(python3 - "$GEN" <<'PYCHK'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("g", sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+c = m.split_cells(r"CQ1 | Types | x | code `a|b` and escaped \| pipe | short")
+ok = len(c) == 5 and "a|b" in c[3] and "| pipe" in c[3]
+print("OK" if ok else "BAD:%d:%s" % (len(c), c[3][:40]))
+PYCHK
+)
+if [ "$roundtrip" = "OK" ]; then
+  pass "cell splitter honours code spans and escaped pipes"
+else
+  bad "cell splitter mis-parses pipes: $roundtrip"
+fi
+
+# ---------- 6. criticality vocabulary is respected ----------
 badcrit=$(grep -oE '^\| CQ[0-9]+ \|[^|]*\|([^|]*)\|' "$REG" \
           | sed 's/.*|\([^|]*\)|$/\1/' | tr -d ' ' \
           | grep -vE '^(critical|conditional:.*|—)$' || true)
