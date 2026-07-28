@@ -87,7 +87,7 @@
 
 ## Executive Summary
 
-Zuvo's 51-skill depth across audits, testing, security, deployment, design, pipeline management, knowledge accumulation, and session recovery is **mid-pack on count** but unique on quality-gate depth. No competitor matches: structured multi-agent workflows, adversarial review (4 providers), quality gates (CQ1-CQ29 + Q1-Q19 + AP1-AP30 + CAP1-CAP14), evidence enforcement, knowledge store, and tri-platform build (Claude Code + Codex + Cursor; Antigravity build target evaluated).
+Zuvo's 51-skill depth across audits, testing, security, deployment, design, pipeline management, knowledge accumulation, and session recovery is **mid-pack on count** but unique on quality-gate depth. No competitor matches: structured multi-agent workflows, adversarial review (4 providers), quality gates (CQ1-CQ34 + Q1-Q19 + AP1-AP30 + CAP1-CAP14), evidence enforcement, knowledge store, and tri-platform build (Claude Code + Codex + Cursor; Antigravity build target evaluated).
 
 **Critical context shift since 2026-04-08:**
 - **Skill count is no longer a differentiator.** compound-engineering 36 skills + 51 agents (v3.0.3); claude-octopus 52 skills; alirezarezvani 235; jeremylongshore 2,849.
@@ -336,7 +336,7 @@ Added in v1.3.x. 10 dimensions (A1-A10), WCAG 2.2 AA/AAA, 2 critical gates (keyb
 1. **Adversarial review is unique** — No competitor does multi-provider adversarial verification at Zuvo's depth. Double down.
 2. **Full pipeline is unique** — brainstorm > plan > execute > review > ship > deploy > canary > retro. No competitor covers end-to-end.
 3. **Audit breadth is unique** — 10+ audit dimensions with structured scoring. Closest is Trail of Bits (security only).
-4. **Quality gates are unique** — CQ1-CQ29 + Q1-Q19 + AP1-AP30 + CAP1-CAP14. No competitor has this systematic approach.
+4. **Quality gates are unique** — CQ1-CQ34 + Q1-Q19 + AP1-AP30 + CAP1-CAP14. No competitor has this systematic approach.
 
 ---
 
@@ -577,7 +577,7 @@ Added in v1.3.x. 10 dimensions (A1-A10), WCAG 2.2 AA/AAA, 2 critical gates (keyb
 | Section | Source |
 |---------|--------|
 | Header skill count (51) | /Users/greglas/DEV/zuvo-plugin/CLAUDE.md, skills/using-zuvo/SKILL.md banner |
-| CQ/Q/CAP gate counts | skills/using-zuvo/SKILL.md banner: "CQ1-CQ29 + Q1-Q19" |
+| CQ/Q/CAP gate counts | skills/using-zuvo/SKILL.md banner: "CQ1-CQ34 + Q1-Q19" |
 | zuvo daily-active 30/51 | /Users/greglas/.zuvo/runs.log (33-day window 2026-03-28→2026-04-29, 485 entries) |
 | write-article 96-100% friction | /Users/greglas/.zuvo/retros.log (105 structured entries 2026-04-12→2026-04-29) |
 | Superpowers 42K→150K | web research 2026-04-30 (general-purpose agent) |

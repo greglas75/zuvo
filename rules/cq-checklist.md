@@ -4,7 +4,7 @@ Run after writing production code, before writing tests. Companion patterns are 
 
 ---
 
-## 29 Evaluation Gates
+## 34 Evaluation Gates
 
 Each gate is scored 1 (pass with evidence), 0 (fail or unproven), or N/A (precondition inactive, justify in one sentence).
 
@@ -40,6 +40,11 @@ Each gate is scored 1 (pass with evidence), 0 (fail or unproven), or N/A (precon
 | CQ27 | Observability | Log levels used correctly? `logger.error` reserved for unrecoverable failures and infrastructure errors, not validation failures or expected business conditions. `logger.warn` for recoverable but unexpected situations. Validation failure logged as `error` = violation. Stack trace logged as `info` = violation. |
 | CQ28 | Resilience | **CONDITIONAL** — DB timeout < server timeout < client timeout (deadline shrinks with depth, not inverted)? If code defines timeouts at multiple layers, verify the hierarchy is correct. Inverted timeout hierarchy = violation. |
 | CQ29 | Structure | Workspace path alias used for imports ≥3 hops deep when the alias is configured? Aliases must come from the project's actual `tsconfig.compilerOptions.paths` / `jsconfig` / `vite.config.alias` — common patterns are `@/`, `#/`, `~/` but only count those declared in the workspace config. Files mixing `../../../` with a configured alias = violation. No alias configured = N/A. |
+| CQ30 | Security | **CONDITIONAL** — CSRF defence present on state-changing endpoints? `SameSite=Lax\|Strict` on the session cookie AND an anti-CSRF token (or a non-cookie bearer transport)? A cookie-authenticated mutation with neither = violation. CWE-352 is rank 3 of the CWE Top 25 and had no gate. |
+| CQ31 | Security | **CONDITIONAL** — User input never reaches a dangerous sink unvalidated? (a) filesystem paths resolved + containment-checked (never `normalize`+`startsWith`), (b) subprocess arguments passed as an argv array, never an interpolated shell string, (c) no `pickle`/`yaml.load`/`unserialize` on non-first-party bytes, (d) outbound URLs allowlisted (SSRF, incl. IPv6 and redirect re-validation). Covers CWE-22/77/78/502/918 — none previously gated. |
+| CQ32 | Security | **CONDITIONAL** — Supply chain controlled? Lockfile committed, no floating ranges or `latest` on a newly added dependency, and new dependencies checked against an advisory source. OWASP A03:2025 (Software Supply Chain Failures) is rank 3 and had no gate anywhere in CQ/CAP. |
+| CQ33 | Security | **CONDITIONAL** — Cryptographic material handled correctly? Tokens/IDs/nonces from a CSPRNG (`crypto.randomUUID`/`randomBytes`/`secrets`), never `Math.random()`/`Date.now()`; credential hashing via argon2id or bcrypt (cost >= 12), never a bare SHA-*; no bespoke crypto; secrets read from config, never literals in source or a client bundle. |
+| CQ34 | Security | **CONDITIONAL** — Authorization complete at BOTH levels? (a) function-level: the handler asserts the caller's role/permission for THIS operation, not just that the caller is authenticated (BFLA); (b) field-level: write payloads are field-allowlisted, never a blanket spread into the ORM (mass assignment / BOPLA). CQ4 covers object/tenant scoping only — these two levels had no gate. |
 <!-- GATES:END kind=cq-table -->
 
 ---
@@ -65,7 +70,7 @@ When a conditional gate is active and scored 0: FAIL.
 **Thresholds (single canonical formula — use this, not approximations elsewhere):**
 
 ```
-denominator = 29 - count(N/A)            # N/A gates excluded from both numerator and denominator
+denominator = (gates in scope) - count(N/A)            # N/A gates excluded from both numerator and denominator
 pass_count  = count(score == 1)          # 1s only; N/A does NOT count as a pass
 
 PASS              iff pass_count / denominator >= 0.86  AND  every active critical gate = 1
@@ -77,6 +82,19 @@ Reference table at zero N/A (denominator = 29): PASS ≥ 25, CONDITIONAL PASS = 
 At higher N/A counts the absolute pass count drops proportionally — always recompute against
 the actual `denominator`. Critical gates can never be N/A; they are either 1 or 0.
 
+**Three states, not two — `out-of-scope` is not `N/A`.**
+A gate whose STACK does not match the project (a Go gate on a TypeScript repo) is `out-of-scope`:
+excluded from the denominator AND from the N/A budget, because stack mismatch is mechanical
+(`go.mod` is absent), not a judgement an auditor makes. `N/A` stays reserved for "this gate applies
+to my stack, but its precondition does not hold in this file" — a judgement, and therefore
+budgeted. Print `out-of-scope: N gates (stack=<detected>)` as one summary line; do not list them
+individually. See `../shared/includes/gate-registry.md` for each gate's `Scope`.
+
+```
+in_scope    = 34 - count(out-of-scope)
+denominator = in_scope - count(N/A)
+```
+
 **N/A cannot raise the score (anti-gaming — this is a HARD rule, not advice).**
 Because N/A shrinks the denominator, re-labelling failures as N/A converts a FAIL into a PASS
 with zero code change: 20 pass / 9 fail = 20/29 = 69% → FAIL; re-mark six of those failures N/A
@@ -86,8 +104,10 @@ and it is 20/23 = 87% → PASS. The gate is only meaningful if that path is clos
    search under "Negative Evidence" below (`rg "redis|cache" file.ts → 0 matches`). A one-sentence
    assertion is **not** an N/A — score the gate. This is the rule that closes the attack: it
    removes the evidence asymmetry that made N/A the cheapest route from FAIL to PASS.
-2. **Denominator floor.** `29 - count(N/A)` may not go below 20. More than 9 N/A ⇒ verdict is
-   `INCOMPLETE`, never PASS — too little of the file was actually evaluated to certify it.
+2. **N/A cap is proportional, not a fixed number.** `count(N/A)` may not exceed **one third of the
+   in-scope gates** (`floor(in_scope / 3)`). At 29 in-scope that is 9, matching the previous fixed
+   cap; it stays proportional as the gate set grows instead of silently tightening. Exceeding it ⇒
+   verdict `INCOMPLETE`, never PASS — too little of the file was actually evaluated to certify it.
 3. **Gates listed for the file's code type (see "High-Risk Gates by Code Type") cannot be N/A.**
    A SERVICE cannot mark CQ18 or CQ23 N/A; a CONTROLLER cannot mark CQ19 N/A. If the gate truly
    does not apply, the classification is wrong — fix the classification, not the gate.
@@ -205,7 +225,7 @@ N/A scores are excluded from both numerator and denominator (see canonical formu
 
 **Abuse check:** If 17+ gates are N/A, justify each one, flag the audit as low-signal, and do not count it toward aggregate metrics.
 
-> **Reminder:** apply the canonical formula at the top of this file. Do not re-derive thresholds — `denominator = 29 - count(N/A)`, `PASS ≥ 86%`, `CONDITIONAL ≥ 79%`.
+> **Reminder:** apply the canonical formula at the top of this file. Do not re-derive thresholds — `denominator = (gates in scope) - count(N/A)`, `PASS ≥ 86%`, `CONDITIONAL ≥ 79%`.
 
 ---
 

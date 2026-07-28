@@ -304,7 +304,7 @@ The GOD_CLASS protocol uses iterative decomposition: extract one responsibility 
 
 ### CQ Pre-Audit
 
-Before displaying the plan, run CQ1-CQ29 on the target file. Print ALL 29 gates:
+Before displaying the plan, run CQ1-CQ34 on the target file. Print ALL 34 gates:
 
 ```
 CQ PRE-AUDIT: [filename] ([N]L)
@@ -542,7 +542,7 @@ Apply the planned changes according to the extraction list, following these rule
 **After any refactoring that creates new files:** Run CQ self-eval on EACH extracted module, not just the orchestrator. The bugs move with the code. CQ failures (CQ5, CQ8, CQ9, CQ17, CQ19) live in the modules where the actual logic resides.
 
 1. List the files to audit = the **scope-fence** files, INCLUDING the new modules this split created. A split EXTENDS its own scope-fence to the files it extracts — those new modules are in-fence by definition, so "audit every extracted module" and "stay inside the scope-fence" are the SAME set, not a contradiction. A file modified OUTSIDE the scope-fence is a fence VIOLATION to surface (backlog / ask), never an extra audit-and-ship target.
-2. Run CQ1-CQ29 self-eval on EACH of those scope-fence files (orchestrator + every extracted module — the bugs move with the code)
+2. Run CQ1-CQ34 self-eval on EACH of those scope-fence files (orchestrator + every extracted module — the bugs move with the code)
 3. Any CQ critical gate failure (CQ3/4/5/6/8/14 = 0) in ANY module blocks the commit — **when the failure is in code this refactor moved, touched, or created**. A PRE-EXISTING critical failure confined to UNTOUCHED units of an in-fence file (e.g. CQ8 in `persist()` while you extract `calculateTax`) is NOT a commit-blocker: it is identical before and after the diff, fixing it usually needs its own characterization tests + product decisions, and blocking on it would make incremental extraction of legacy god-files impossible. Disposition: verify it is byte-identical pre/post (no regression), disclose it loudly in the post-audit (`pre-existing, out-of-fence-unit`), and backlog it per Phase 3.5/Phase 4 — never silently, never as an excuse for a failure your diff introduced. (Both 2026-07-09 skill-eval executors independently hit this ambiguity and resolved it this way; this paragraph makes that the written rule.)
 
 ### CodeSift Post-Audit Verification (when CodeSift available)
@@ -581,7 +581,7 @@ When CodeSift unavailable: skip machine verification. Pass empty `machine_checks
 
 ### CQ Post-Audit
 
-Run CQ1-CQ29 on every modified and created file. Print ALL 29 gates per file:
+Run CQ1-CQ34 on every modified and created file. Print ALL 34 gates per file:
 
 ```
 CQ POST-AUDIT: order.service.ts (132L)
@@ -605,17 +605,17 @@ Run the verification suite (scoped per above when in a worktree):
 4. CQ self-eval on all modified files
 5. Q1-Q19 on all modified test files
 
-> ⛔ **This 5-item suite is NOT the finish line — it is a mid-pipeline checkpoint.** Reaching the end of it does NOT mean the refactor is verified, done, or committable. **There is no "condensed", "light", or "5-step" refactor path in FULL mode** — if you find yourself treating this list as the whole workflow, you are mid-pipeline, not done. The Independent CQ Auditor (blind audit, next section), the CQ1-CQ29 pre/post audit, and the Adversarial Review are part of the SAME non-optional sequence. Do **not** commit-as-done, do **not** report `COMPLETE`, and **never** defer the blind audit or adversarial review to a "user decision" / "awaiting approval" — they are HARD GATES that run automatically without asking. A refactor that stopped here is **BLOCKED, not done** (see Completion Gate Check).
+> ⛔ **This 5-item suite is NOT the finish line — it is a mid-pipeline checkpoint.** Reaching the end of it does NOT mean the refactor is verified, done, or committable. **There is no "condensed", "light", or "5-step" refactor path in FULL mode** — if you find yourself treating this list as the whole workflow, you are mid-pipeline, not done. The Independent CQ Auditor (blind audit, next section), the CQ1-CQ34 pre/post audit, and the Adversarial Review are part of the SAME non-optional sequence. Do **not** commit-as-done, do **not** report `COMPLETE`, and **never** defer the blind audit or adversarial review to a "user decision" / "awaiting approval" — they are HARD GATES that run automatically without asking. A refactor that stopped here is **BLOCKED, not done** (see Completion Gate Check).
 
 ### Independent CQ Auditor (FULL mode — HARD GATE, non-skippable, default tier, read-only)
 
-After the lead's post-audit, dispatch an independent CQ Auditor agent. Run CQ1-CQ29 independently on ALL modified/created files. Does NOT trust the lead's scores. Catches N/A abuse and rubber-stamped gates.
+After the lead's post-audit, dispatch an independent CQ Auditor agent. Run CQ1-CQ34 independently on ALL modified/created files. Does NOT trust the lead's scores. Catches N/A abuse and rubber-stamped gates.
 
 **This is a HARD GATE, not best-effort.** The lead's own CQ post-audit is NOT a substitute — the whole point is a second, independent pass that never sees the lead's scores. In FULL mode (single and batch), the run CANNOT reach `COMPLETE`/PASS without it. Allowed telemetry values for `blind_audit` are `clean:strict` or `clean:degraded[:<reason>]` (findings applied or deferred) — the optional `:<reason>` suffix (`:no-machine-checks` when CodeSift is offline, `:same-model` under a single-agent lock) records *why* it was degraded and is still a PASS value, just lower-confidence; it never blocks on its own. **`skipped` and `not_run` are pipeline FAILURES, not neutral states** — if the auditor genuinely cannot be dispatched in this environment, mark the run `BLOCKED` and say so loudly; never claim PASS/WARN with the blind audit absent. A self-rolled lighter pass reported as "done" is forbidden — run the real independent pass or report BLOCKED.
 
 **CodeSift availability does NOT gate the auditor.** The auditor is an LLM agent that reads the full source + CQ checklist itself; CodeSift only enriches the optional `machine_checks` input. When CodeSift is unavailable, pass empty `machine_checks` and record `blind_audit: clean:degraded:no-machine-checks` — **but still RUN it.** "CodeSift unavailable" is never a reason to skip the blind audit. (This is the exact regression seen in the field: `codesift:unavailable` was being conflated with `blind_audit:skipped`.)
 
-**Single-agent-lock environments (Codex): run the auditor role INLINE, do not BLOCK.** Where the harness forbids sub-agent dispatch (Codex's single-agent lock — see `env-compat.md`), "cannot dispatch a separate agent" is NOT the "cannot run it at all" case above. Run the CQ Auditor role inline as a distinct blind pass: re-read the full source against the CQ1-CQ29 checklist WITHOUT consulting the lead's scores, and record `blind_audit: clean:degraded:same-model` (a distinct marker from the CodeSift-offline `clean:degraded:no-machine-checks` case, so downstream can tell weaker same-model independence apart from a merely un-enriched cross-model run). Cross-model independence is then carried by the adversarial-review gate below **when rotation selects a different model family** — so under the single-agent lock, ensure the rotation pool includes a provider outside the orchestrator's own family; if it cannot, record `adversarial: …:degraded:same-family` rather than implying independence that did not happen. `BLOCKED` is reserved for when neither an inline nor a dispatched blind pass can run at all — the single-agent lock is not that case.
+**Single-agent-lock environments (Codex): run the auditor role INLINE, do not BLOCK.** Where the harness forbids sub-agent dispatch (Codex's single-agent lock — see `env-compat.md`), "cannot dispatch a separate agent" is NOT the "cannot run it at all" case above. Run the CQ Auditor role inline as a distinct blind pass: re-read the full source against the CQ1-CQ34 checklist WITHOUT consulting the lead's scores, and record `blind_audit: clean:degraded:same-model` (a distinct marker from the CodeSift-offline `clean:degraded:no-machine-checks` case, so downstream can tell weaker same-model independence apart from a merely un-enriched cross-model run). Cross-model independence is then carried by the adversarial-review gate below **when rotation selects a different model family** — so under the single-agent lock, ensure the rotation pool includes a provider outside the orchestrator's own family; if it cannot, record `adversarial: …:degraded:same-family` rather than implying independence that did not happen. `BLOCKED` is reserved for when neither an inline nor a dispatched blind pass can run at all — the single-agent lock is not that case.
 
 **Input:** Full source of each file, CQ checklist, CQ patterns, tech stack, `machine_checks` from CodeSift (if available).
 

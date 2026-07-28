@@ -96,7 +96,7 @@ Process a queue of files through the full pipeline autonomously. Zero interactiv
    - `- [ ]`: process (pending)
    - Bare file paths: process (first run)
 2. Validate each file exists. Non-existent files: mark `[!] FILE NOT FOUND`, skip.
-3. For each pending file: quick CQ1-CQ29 pre-scan, detect type.
+3. For each pending file: quick CQ1-CQ34 pre-scan, detect type.
 4. Compute **PriorityScore** for ordering (range 0.00-1.00):
 
    ```
@@ -130,10 +130,10 @@ For each `[ ]` entry, run the full pipeline -- not a shortcut:
 
 **Steps (ALL mandatory, in order):**
 
-1. **Analysis:** Dispatch Dependency Mapper + Existing Code Scanner (parallel) → CQ1-CQ29 BEFORE (all 29 gates) → type detect → scope freeze → create contract
+1. **Analysis:** Dispatch Dependency Mapper + Existing Code Scanner (parallel) → CQ1-CQ34 BEFORE (all 34 gates) → type detect → scope freeze → create contract
 2. **Test handling:** Write/verify tests per test mode routing
 3. **Execution:** Execute fixes per CONTRACT → verify (type check + tests)
-4. **Post-Audit:** Dispatch CQ Auditor (read-only; the **orchestrator** applies FIX-NOW items). Print CQ1-CQ29 AFTER (all 29 gates).
+4. **Post-Audit:** Dispatch CQ Auditor (read-only; the **orchestrator** applies FIX-NOW items). Print CQ1-CQ34 AFTER (all 34 gates).
 5. **Adversarial:** Run iterative adversarial review (`--rotate`) on staged diff with context-enriched input (same protocol as Phase 3). Pass count by diff size.
 6. **Remediate + Commit (Phase 3.5):** commit the pure refactor first; then if fix-now bugs surfaced, fix them + update/add tests and add a SEPARATE `fix(…)` commit. Behavior DECISIONS take the safe default + `[DECISION-DEFAULT: …]` log — batch is zero-stop, never ask. Clean file = 1 commit; file with bugs = 2 commits (GOD_CLASS exception still applies: multi-commit per extracted responsibility, plus its fix commit).
 7. **Queue update:** Update line with CQ before/after and commit hash(es).
@@ -147,7 +147,7 @@ GOD_CLASS files in batch mode produce multiple commits (one per extracted respon
 
 ### CQ Before/After (Non-Negotiable)
 
-Every file in the batch gets a full CQ1-CQ29 evaluation, even if the agent believes it is already fixed. No file gets `[x]` without proof.
+Every file in the batch gets a full CQ1-CQ34 evaluation, even if the agent believes it is already fixed. No file gets `[x]` without proof.
 
 ```
 - [x] path | TYPE | CQ: 12/18->17/18 | CQ3,CQ21 fixed | commit: abc1234

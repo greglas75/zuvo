@@ -172,7 +172,7 @@ Check for these in the feature description and target files:
 | Discovery pass (Phase 1a) | Yes | Yes | Yes |
 | Analysis agents (Phase 1b) | No | Blast Radius agent + inline duplication check | Blast Radius + Duplication Scanner agents |
 | Implementation plan | Inline, brief | Full plan with all sections | Full plan with all sections |
-| CQ self-eval (CQ1-CQ29) | Critical gates only | Full CQ1-CQ29 | Full CQ1-CQ29 |
+| CQ self-eval (CQ1-CQ34) | Critical gates only | Full CQ1-CQ34 | Full CQ1-CQ34 |
 | Test quality self-eval (Q1-Q19) | Inline check | Full Q1-Q19 | Full Q1-Q19 |
 | Pre-write code contract | No | Yes | Yes |
 | Pre-write test contract | No | Yes | Yes |
@@ -432,7 +432,7 @@ Rules:
 
 **LIGHT tier:** Check critical gates only (CQ3, CQ4, CQ5, CQ6, CQ8, CQ14) + any conditional gates activated by context (CQ16/CQ19/CQ20/CQ21/CQ22). Provide evidence for each. Fix any gate = 0.
 
-**STANDARD and DEEP tiers:** Read `../../rules/cq-checklist.md`. Run full CQ1-CQ29 on every production file written or modified. Condensed reference: `../../shared/includes/quality-gates.md`.
+**STANDARD and DEEP tiers:** Read `../../rules/cq-checklist.md`. Run full CQ1-CQ34 on every production file written or modified. Condensed reference: `../../shared/includes/quality-gates.md`.
 
 - Score each gate (1 = satisfied, 0 = violated, N/A = not applicable)
 - Static critical gates: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 — any = 0 means FIX before tests
@@ -539,7 +539,7 @@ Dispatch with:
 
   Tasks:
   1. Read each file completely.
-  2. Run CQ1-CQ29 with file:function:line evidence.
+  2. Run CQ1-CQ34 with file:function:line evidence.
   3. Classify: FIX-NOW (< 5 min), CRITICAL-BLOCKED (critical gate failure), DEFER (backlog).
   4. Check file sizes against limits.
 
@@ -602,7 +602,7 @@ EXECUTION VERIFICATION
 [ALL] [ ] CQ CRITICAL: All critical gates pass (with evidence)
 [ALL] [ ] TYPES: Type checker passes (if checker exists; skip with note if none)
 [ALL] [ ] AP: Every Acceptance Proof from plan section 7 ran and returned VERIFIED (artifact paths recorded) — or "Not applicable" with reason
-[STD+] [ ] CQ FULL: CQ1-CQ29 self-eval, PER-FILE scores + evidence (aggregate forbidden)
+[STD+] [ ] CQ FULL: CQ1-CQ34 self-eval, PER-FILE scores + evidence (aggregate forbidden)
 [STD+] [ ] Q FULL: Q1-Q19 self-eval on each test file, PER-FILE scores
 [STD+] [ ] ANTI-TAUTOLOGY: Automated echo pattern check passed
 [STD+] [ ] TEST AUDITOR: Independent auditor score matches self-eval (±1)

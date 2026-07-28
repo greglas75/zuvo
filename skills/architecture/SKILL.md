@@ -131,7 +131,7 @@ Understanding and evaluating an existing codebase -- before a major refactor, on
 | Code style and formatting | Linter configuration |
 | Test quality | `zuvo:test-audit` |
 | Business logic correctness | `zuvo:review` |
-| Individual file quality (CQ1-CQ29) | `zuvo:code-audit` |
+| Individual file quality (CQ1-CQ34) | `zuvo:code-audit` |
 
 **Exception:** Architectural security (A8) IS in scope -- auth boundaries, input validation placement, security layer design.
 

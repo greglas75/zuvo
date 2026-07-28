@@ -84,7 +84,7 @@ The execute pipeline's `q_gates: 19/19 aggregate` reporting is misleading by con
 | Gate | What it checks | Can it observe a running browser? |
 |------|---------------|----------------------------------|
 | Spec Reviewer | Code matches plan task spec | No |
-| Quality Reviewer | CQ1-CQ29 + Q1-Q19 on source files | No |
+| Quality Reviewer | CQ1-CQ34 + Q1-Q19 on source files | No |
 | Adversarial Review | LLM diff review across providers | No |
 | Verification | Shell command exit code (test runner, type checker) | No |
 

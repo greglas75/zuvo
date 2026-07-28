@@ -1,10 +1,10 @@
 # Quality Gates
 
-Zuvo enforces two quality gate systems: **CQ1-CQ29** for production code and **Q1-Q19** for test code. Every skill that writes or reviews code runs these evaluations with evidence requirements. Scores determine whether work can proceed.
+Zuvo enforces two quality gate systems: **CQ1-CQ34** for production code and **Q1-Q19** for test code. Every skill that writes or reviews code runs these evaluations with evidence requirements. Scores determine whether work can proceed.
 
 ---
 
-## CQ1-CQ29: Code Quality Gates
+## CQ1-CQ34: Code Quality Gates
 
 Each gate is scored **1** (pass with evidence), **0** (fail or unproven), or **N/A** (precondition not active, requires justification).
 
@@ -40,6 +40,11 @@ Each gate is scored **1** (pass with evidence), **0** (fail or unproven), or **N
 | CQ27 | Observability | Log levels used correctly? `logger.error` reserved for unrecoverable failures and infrastructure errors, not validation failures or expected business conditions. `logger.warn` for recoverable but unexpected situations. Validation failure logged as `error` = violation. Stack trace logged as `info` = violation. |
 | CQ28 | Resilience | **CONDITIONAL** — DB timeout < server timeout < client timeout (deadline shrinks with depth, not inverted)? If code defines timeouts at multiple layers, verify the hierarchy is correct. Inverted timeout hierarchy = violation. |
 | CQ29 | Structure | Workspace path alias used for imports ≥3 hops deep when the alias is configured? Aliases must come from the project's actual `tsconfig.compilerOptions.paths` / `jsconfig` / `vite.config.alias` — common patterns are `@/`, `#/`, `~/` but only count those declared in the workspace config. Files mixing `../../../` with a configured alias = violation. No alias configured = N/A. |
+| CQ30 | Security | **CONDITIONAL** — CSRF defence present on state-changing endpoints? `SameSite=Lax\|Strict` on the session cookie AND an anti-CSRF token (or a non-cookie bearer transport)? A cookie-authenticated mutation with neither = violation. CWE-352 is rank 3 of the CWE Top 25 and had no gate. |
+| CQ31 | Security | **CONDITIONAL** — User input never reaches a dangerous sink unvalidated? (a) filesystem paths resolved + containment-checked (never `normalize`+`startsWith`), (b) subprocess arguments passed as an argv array, never an interpolated shell string, (c) no `pickle`/`yaml.load`/`unserialize` on non-first-party bytes, (d) outbound URLs allowlisted (SSRF, incl. IPv6 and redirect re-validation). Covers CWE-22/77/78/502/918 — none previously gated. |
+| CQ32 | Security | **CONDITIONAL** — Supply chain controlled? Lockfile committed, no floating ranges or `latest` on a newly added dependency, and new dependencies checked against an advisory source. OWASP A03:2025 (Software Supply Chain Failures) is rank 3 and had no gate anywhere in CQ/CAP. |
+| CQ33 | Security | **CONDITIONAL** — Cryptographic material handled correctly? Tokens/IDs/nonces from a CSPRNG (`crypto.randomUUID`/`randomBytes`/`secrets`), never `Math.random()`/`Date.now()`; credential hashing via argon2id or bcrypt (cost >= 12), never a bare SHA-*; no bespoke crypto; secrets read from config, never literals in source or a client bundle. |
+| CQ34 | Security | **CONDITIONAL** — Authorization complete at BOTH levels? (a) function-level: the handler asserts the caller's role/permission for THIS operation, not just that the caller is authenticated (BFLA); (b) field-level: write payloads are field-allowlisted, never a blanket spread into the ORM (mass assignment / BOPLA). CQ4 covers object/tenant scoping only — these two levels had no gate. |
 <!-- GATES:END kind=cq-table -->
 
 ### Critical gates -- static (always block)

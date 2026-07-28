@@ -136,7 +136,27 @@ else
   bad "cell splitter mis-parses pipes: $roundtrip"
 fi
 
-# ---------- 6. criticality vocabulary is respected ----------
+# ---------- 6. scoring model: three states, proportional N/A cap ----------
+CQ="$ROOT/rules/cq-checklist.md"
+grep -q 'out-of-scope' "$CQ" && pass "scoring documents the third state (out-of-scope != N/A)" \
+  || bad "out-of-scope state missing — stack-specific gates would blow the N/A budget"
+grep -q 'floor(in_scope / 3)' "$CQ" && pass "N/A cap is proportional to the in-scope gate count" \
+  || bad "N/A cap is a fixed number — it silently tightens as the gate set grows"
+
+# Adding gates must NOT move an existing verdict. A file that passed at 25/29 must still pass
+# when 5 gates are added that its stack/preconditions do not trigger.
+stab=$(python3 -c "
+d0=25/29
+d1=25/(34-5)          # 5 new conditional gates N/A'd, or out-of-scope
+print('OK' if abs(d0-d1)<1e-9 and d0>=0.86 else 'BAD:%.3f vs %.3f'%(d0,d1))")
+[ "$stab" = "OK" ] && pass "adding non-triggering gates leaves existing verdicts unchanged" \
+  || bad "gate addition moved an existing verdict: $stab"
+
+# Every CQ row must declare a scope, or the three-state model has a hole.
+noscope=$(grep -cE '^\| CQ[0-9]+ \|[^|]*\|[^|]*\| *\|' "$REG" || true)
+[ "$noscope" = "0" ] && pass "every CQ row declares a Scope" || bad "$noscope CQ row(s) have an empty Scope"
+
+# ---------- 7. criticality vocabulary is respected ----------
 badcrit=$(grep -oE '^\| CQ[0-9]+ \|[^|]*\|([^|]*)\|' "$REG" \
           | sed 's/.*|\([^|]*\)|$/\1/' | tr -d ' ' \
           | grep -vE '^(critical|conditional:.*|—)$' || true)

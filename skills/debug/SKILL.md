@@ -328,7 +328,7 @@ Condensed reference: `../../shared/includes/quality-gates.md`
 
 ### 4.6 CQ Self-Evaluation (on production code changes)
 
-Run CQ1-CQ29 on each modified production file. Read `../../rules/cq-checklist.md` for the full protocol.
+Run CQ1-CQ34 on each modified production file. Read `../../rules/cq-checklist.md` for the full protocol.
 
 - Static critical gates: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 -- any = 0 means FAIL
 - Conditional gates: CQ16 (money), CQ19 (API boundary), CQ20 (dual fields), CQ21 (concurrency), CQ22 (subscriptions), CQ23-CQ28 -- activated by code context

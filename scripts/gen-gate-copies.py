@@ -77,7 +77,7 @@ def parse_registry(path=REGISTRY, strict=True):
             continue          # skip, so it does not also trip the contiguity check with a confusing message
         seen.add(key)
         cells = split_cells(m.group(3))
-        expected = {"CQ": 4, "Q": 3, "CAP": 2, "AP": 1}[fam]
+        expected = {"CQ": 5, "Q": 3, "CAP": 2, "AP": 1}[fam]   # CQ: domain, crit, scope, text, short
         if len(cells) != expected:
             # Too FEW means a column is missing. Too MANY means an unescaped '|' inside the text
             # split one cell into two — the silent-corruption case, where the gate's text is
@@ -87,9 +87,9 @@ def parse_registry(path=REGISTRY, strict=True):
                 + (" — an unescaped '|' in the text must be written as '\\|' or wrapped in `backticks`"
                    if len(cells) > expected else " — a column is missing"))
             continue
-        if fam == "CQ" and len(cells) >= 4:
+        if fam == "CQ" and len(cells) >= 5:
             out["CQ"].append({"id": f"CQ{num}", "n": num, "domain": cells[0],
-                              "crit": cells[1], "text": cells[2], "short": cells[3]})
+                              "crit": cells[1], "scope": cells[2], "text": cells[3], "short": cells[4]})
         elif fam == "Q" and len(cells) >= 3:
             out["Q"].append({"id": f"Q{num}", "n": num, "crit": cells[0],
                              "text": cells[1], "short": cells[2]})
