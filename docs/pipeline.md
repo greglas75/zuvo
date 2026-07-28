@@ -151,7 +151,7 @@ For each task in the plan:
 
 1. **Implementer agent** writes a failing test (RED), then the minimal code to pass it (GREEN), then refactors
 2. **Spec Reviewer agent** verifies the implementation matches the spec
-3. **Quality Reviewer agent** runs CQ1-CQ40 (code quality) and Q1-Q19 (test quality) with evidence
+3. **Quality Reviewer agent** runs CQ1-CQ40 (code quality) and Q1-Q25 (test quality) with evidence
 4. **Cross-model adversarial review** on the staged diff — with a hard **re-run economy** (v1.6.14):
    max 2 FULL + 1 DELTA runs per task; artifact freshness is SEMANTIC (lint/format/test-only edits do
    NOT invalidate it); a finding refuted once with base-code proof becomes KNOWN and is never
@@ -172,7 +172,7 @@ If a reviewer finds a critical gate violation introduced by this task's diff, th
 |-------|------|-------|------|
 | Implementer | Writes tests and production code following TDD | Sonnet (std) / Opus (complex) | Code (read-write) |
 | Spec Reviewer | Verifies code matches spec requirements | Sonnet | Explore (read-only) |
-| Quality Reviewer | Runs CQ1-CQ40 and Q1-Q19 gates with evidence | Sonnet | Explore (read-only) |
+| Quality Reviewer | Runs CQ1-CQ40 and Q1-Q25 gates with evidence | Sonnet | Explore (read-only) |
 
 **Platform note:** the multi-agent table applies to Claude Code only (event-driven Task wake). On
 **Codex/Cursor/Antigravity** every role executes inline as a sequential checkpoint pass — same

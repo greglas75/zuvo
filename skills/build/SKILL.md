@@ -106,7 +106,7 @@ Print: `[CLASSIFIED] Tier: {TIER}`
 | `../../rules/test-quality-rules.md` | **SKIP** | Full | Full |
 | `../../rules/cq-checklist.md` | **SKIP** | **SKIP** | Full |
 | `../../shared/includes/test-contract.md` | **SKIP** | Full | Full |
-| `../../shared/includes/quality-gates.md` | **SKIP** | **SKIP** | Q1-Q19 section only |
+| `../../shared/includes/quality-gates.md` | **SKIP** | **SKIP** | Q1-Q25 section only |
 
 Print loaded files:
 ```
@@ -173,7 +173,7 @@ Check for these in the feature description and target files:
 | Analysis agents (Phase 1b) | No | Blast Radius agent + inline duplication check | Blast Radius + Duplication Scanner agents |
 | Implementation plan | Inline, brief | Full plan with all sections | Full plan with all sections |
 | CQ self-eval (CQ1-CQ40) | Critical gates only | Full CQ1-CQ40 | Full CQ1-CQ40 |
-| Test quality self-eval (Q1-Q19) | Inline check | Full Q1-Q19 | Full Q1-Q19 |
+| Test quality self-eval (Q1-Q25) | Inline check | Full Q1-Q25 | Full Q1-Q25 |
 | Pre-write code contract | No | Yes | Yes |
 | Pre-write test contract | No | Yes | Yes |
 | Independent CQ Auditor agent | No | No | Yes |
@@ -479,7 +479,7 @@ When claiming an exemption, cite the covering test: `[exempt: covered by integra
 
 **LIGHT tier:** Inline check — verify Q7 (error path — every error-throwing path with specific type+message), Q11 (branches), Q13 (real imports), Q15 (value assertions), Q17 (oracle independence). Fix any = 0.
 
-**STANDARD and DEEP tiers:** Run full Q1-Q19 on every test file. Score threshold: >= 16 = PASS, 10-15 = FIX worst gaps, < 10 = REWRITE. Provide evidence for critical gates (Q7, Q11, Q13, Q15, Q17).
+**STANDARD and DEEP tiers:** Run full Q1-Q25 on every test file. Score threshold: >= 16 = PASS, 10-15 = FIX worst gaps, < 10 = REWRITE. Provide evidence for critical gates (Q7, Q11, Q13, Q15, Q17).
 
 **Anti-Tautology Check (STANDARD+):** After self-eval, run the anti-tautology automation from `rules/testing.md`:
 1. Grep for echo patterns (mock-return-echoed-in-assertion)
@@ -488,7 +488,7 @@ When claiming an exemption, cite the covering test: `[exempt: covered by integra
 
 **Independent Test Auditor (STANDARD+ when sub-agent dispatch available):**
 
-Spawn a Test Quality Auditor (Sonnet, Explore) to independently verify Q1-Q19 scores. The auditor receives: production file, test file, and the test contract. Auditor's score wins ties — self-evaluation is biased toward the author.
+Spawn a Test Quality Auditor (Sonnet, Explore) to independently verify Q1-Q25 scores. The auditor receives: production file, test file, and the test contract. Auditor's score wins ties — self-evaluation is biased toward the author.
 
 In single-agent mode: perform the audit as a separate pass with checkpoint: `[CHECKPOINT: switching to independent test auditor role]`.
 
@@ -517,7 +517,7 @@ Dispatch with:
 
   Tasks:
   1. Read each test file completely.
-  2. Run Q1-Q19 evaluation with evidence.
+  2. Run Q1-Q25 evaluation with evidence.
   3. Check for auto-fail patterns: empty bodies, assertions on mock inputs, tests passing with implementation deleted, toBeTruthy on objects.
   4. Report PASS (>= 16, all critical gates), FIX (gaps identified), or BLOCK (< 10).
 
@@ -603,7 +603,7 @@ EXECUTION VERIFICATION
 [ALL] [ ] TYPES: Type checker passes (if checker exists; skip with note if none)
 [ALL] [ ] AP: Every Acceptance Proof from plan section 7 ran and returned VERIFIED (artifact paths recorded) — or "Not applicable" with reason
 [STD+] [ ] CQ FULL: CQ1-CQ40 self-eval, PER-FILE scores + evidence (aggregate forbidden)
-[STD+] [ ] Q FULL: Q1-Q19 self-eval on each test file, PER-FILE scores
+[STD+] [ ] Q FULL: Q1-Q25 self-eval on each test file, PER-FILE scores
 [STD+] [ ] ANTI-TAUTOLOGY: Automated echo pattern check passed
 [STD+] [ ] TEST AUDITOR: Independent auditor score matches self-eval (±1)
 [DEEP] [ ] LINT: Linter passes

@@ -1,10 +1,10 @@
-# Q1-Q19 Test Quality Scoring Protocol
+# Q1-Q25 Test Quality Scoring Protocol
 
 > Shared protocol for evaluating test quality. Used by write-tests, execute, fix-tests, write-e2e, and any skill that scores test files.
 
 ## Scoring Rules
 
-**Source of truth:** Q1-Q19 gate definitions from `quality-gates.md`. Do NOT use memorized definitions — read the canonical file.
+**Source of truth:** Q1-Q25 gate definitions from `quality-gates.md`. Do NOT use memorized definitions — read the canonical file.
 
 For each gate, score as:
 - **1** — gate satisfied, with evidence (file:function:line or specific quote)
@@ -34,14 +34,17 @@ Q17 — No tautological oracles (mock returns X, assert X) — expected values f
 ## Scoring Thresholds
 
 ```
-16+/19, all critical gates = 1  →  PASS
-10-15/19, all critical gates = 1  →  FIX (improve weak gates)
-<10/19 OR any critical gate = 0  →  REWRITE
+>= 82% of applicable, all critical gates = 1   →  PASS
+53-81% of applicable, all critical gates = 1  →  FIX (improve weak gates)
+< 53% OR any critical gate = 0                →  REWRITE
+
+applicable = 25 - count(N/A) - count(out-of-scope)
 ```
 
-The FIX band is 10-15, not 12-15: this file previously disagreed with `rules/testing.md:446`,
-`rules/testing-slim.md`, `shared/includes/quality-gates.md` and `skills/build/SKILL.md`, which all
-use 16+/10-15/<10. Aligned to that canon rather than keeping the outlier.
+**Percentages, not raw counts.** The gate set grows (19 -> 25 in v1.6.41), and an absolute
+threshold silently changes meaning when it does: "16+" was 84% of 19 and would have become 64% of
+25 — a two-band loosening produced by arithmetic, not by any decision about quality. The bands
+above are the ones `test-audit` already applies, so the two now agree.
 
 ## N/A Abuse Check
 

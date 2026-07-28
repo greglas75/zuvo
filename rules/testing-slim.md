@@ -39,11 +39,11 @@ Mocks NOT justified for: your own services, transformers, validators, simple cla
 - Tautological oracle (expected mirrors implementation: `expect(fn(100,2)).toBe(100*2*1.1)`)
 - Vague quantity on known fixture (`toBeGreaterThan(0)` instead of exact count)
 
-## Q1-Q19 Gates (score after writing)
+## Q1-Q25 Gates (score after writing)
 
 Critical gates (any=0 caps at FIX): **Q7** error paths, **Q11** branches, **Q13** imports real fn, **Q15** value assertions, **Q17** no tautology.
 
-16+/19 = PASS, 10-15 = FIX, <10 = BLOCK.
+>= 82% of applicable = PASS, 53-81% = FIX, < 53% = BLOCK. (Percentages, not counts: the gate set grows.)
 
 ## Mutation Check (M1-M5)
 

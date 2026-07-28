@@ -318,7 +318,7 @@ Write a test that:
 2. Asserts the correct behavior (the bug no longer occurs)
 3. Would have caught this bug if it had existed before the original code was written
 
-Run Q1-Q19 self-evaluation on the regression test. Read `../../rules/testing.md` for the full protocol.
+Run Q1-Q25 self-evaluation on the regression test. Read `../../rules/testing.md` for the full protocol.
 
 Condensed reference: `../../shared/includes/quality-gates.md`
 

@@ -269,7 +269,7 @@ When CodeSift unavailable: skip pre-scan. Log `[DEGRADED: classify_roles/find_ci
 
 ### Test File Auto-Detection
 
-If the target is a test file (`.test.*`, `.spec.*`, `__tests__/*`), auto-set type to IMPROVE_TESTS. Skip keyword detection and use Q1-Q19 as the primary audit framework.
+If the target is a test file (`.test.*`, `.spec.*`, `__tests__/*`), auto-set type to IMPROVE_TESTS. Skip keyword detection and use Q1-Q25 as the primary audit framework.
 
 ### Keyword-Based Detection (production files)
 
@@ -384,7 +384,7 @@ Produce the refactoring plan incorporating sub-agent results (when available):
 
    Steps:
    a. Search for test file: co-located `.test.*` / `.spec.*`, `__tests__/` directory, grep for imports of target
-   b. If test file found: read it, run quick Q-audit on 3 critical gates only (Q7=error-path coverage, Q11=branch coverage, Q13=imports actual production function). This is a partial triage, not a full Q1-Q19 audit.
+   b. If test file found: read it, run quick Q-audit on 3 critical gates only (Q7=error-path coverage, Q11=branch coverage, Q13=imports actual production function). This is a partial triage, not a full Q1-Q25 audit.
    c. **Coverage of the refactoring surface (CRITICAL — separate from Q-triage).** Q-triage measures how *good* the found test is; coverage measures whether it actually *exercises the code being moved*. A test can score Q7=Q11=Q13=1 and still touch only one of many units. Compute:
       - `units_total` = the count of independent units this refactor will move/extract/relocate. For SPLIT_FILE / GOD_CLASS / EXTRACT_CLASS: every top-level component/function/class that lands in a new module. For EXTRACT_METHODS: the public methods whose internals change. Get this from the planned extractions, not a guess.
       - `units_covered` = how many of those units the existing test **actually executes at runtime** (rendered/called with real input and asserted on — not merely imported, and not landing in an empty-state/early-return branch). When unsure whether a unit is truly exercised, count it as NOT covered.
@@ -474,19 +474,19 @@ Phase 2: test-quality-rules.md -- READ (WRITE_NEW, IMPROVE_TESTS, or CHARACTERIZ
 
 **CHARACTERIZE_GAP:** The existing test does not exercise every unit being moved (`coverage_gap > 0`). Close the gap BEFORE any production edit:
 1. For **each** uncovered unit in `uncovered_units`, write a characterization (pin-down) test that executes it with a representative input and asserts on real output — mount/render the component, or call the function, with a payload that reaches actual logic (not an empty-state/early-return path). Source representative inputs from existing fixtures, sample data, or recover them from git history (e.g. `git show <sha>:<path>`) when they were deleted; never invent shapes the code never sees.
-   - The bar is "fails loudly if behavior changes," not full Q1-Q19. A smoke test that mounts the unit and asserts `does not throw` + a stable output snapshot is the minimum; prefer a value assertion where the unit returns something checkable.
+   - The bar is "fails loudly if behavior changes," not full Q1-Q25. A smoke test that mounts the unit and asserts `does not throw` + a stable output snapshot is the minimum; prefer a value assertion where the unit returns something checkable.
    - A parameterized table over the units (one case per unit) is the canonical shape for SPLIT_FILE / GOD_CLASS.
 2. Run the new tests against the **pre-refactor** code and confirm they pass. This is the lock — they must be green on the OLD code, or they are not characterizing current behavior. If a unit genuinely cannot be exercised (truly dead), record it in the contract as `dead:<unit>` with evidence and exclude it from the move; do not silently skip it.
-3. Apply Q1-Q19 self-eval on the new tests. Only after `coverage_gap` reaches 0 (every moved unit now exercised, or proven dead) does execution proceed.
+3. Apply Q1-Q25 self-eval on the new tests. Only after `coverage_gap` reaches 0 (every moved unit now exercised, or proven dead) does execution proceed.
 4. Record `test_audit_after` with the closed gap, **and record the characterization LOCK in the CONTRACT `prove` block NOW — before any production edit**: `prove.characterization = "green:<pre-refactor sha7>:<N>u:<test path>"` — a STRING (like the other prove fields) naming the pre-refactor SHA the pin-down tests were green against, the unit count, and the test path, with `coverage_gap: 0`. The Prove step is not only blind_audit + adversarial recorded at commit time — the characterization lock is the FIRST proof and belongs in the CONTRACT the moment tests are green on the old code (between green tests and the move), not backfilled at commit. **This is a gated artifact, not advice: the `refactor-safety-gate` hook and the completion self-check both BLOCK on a missing/`not_run` `prove.characterization`** (added after the 2026-07-09 skill-eval run proved prose alone gets skipped).
 
-**WRITE_NEW:** Write tests for the target file before refactoring. The tests capture the current behavior so that the refactoring can be verified against them. Apply Q1-Q19 self-eval on the new tests. Same coverage bar as CHARACTERIZE_GAP: every unit being moved must be exercised, not just the file's entry point. **Same LOCK recording as CHARACTERIZE_GAP step 4** — the moment the new suite is green on the PRE-refactor code, write `prove.characterization = "green:<pre-refactor sha7>:<N>u:<test path>"` into the CONTRACT, BEFORE any move edit (the commit gate blocks without it; this mode is where the 2026-07-09 eval caught the backfill gap).
+**WRITE_NEW:** Write tests for the target file before refactoring. The tests capture the current behavior so that the refactoring can be verified against them. Apply Q1-Q25 self-eval on the new tests. Same coverage bar as CHARACTERIZE_GAP: every unit being moved must be exercised, not just the file's entry point. **Same LOCK recording as CHARACTERIZE_GAP step 4** — the moment the new suite is green on the PRE-refactor code, write `prove.characterization = "green:<pre-refactor sha7>:<N>u:<test path>"` into the CONTRACT, BEFORE any move edit (the commit gate blocks without it; this mode is where the 2026-07-09 eval caught the backfill gap).
 
 **IMPROVE_TESTS:** When the refactoring type is IMPROVE_TESTS (target is a test file):
-1. Run Q1-Q19 self-eval on the existing tests to identify gaps
+1. Run Q1-Q25 self-eval on the existing tests to identify gaps
 2. Classify gaps and plan improvements
 3. Execute structural cleanup first, then assertion strengthening
-4. Re-score -- gate: improvement of at least 2 points (or reach 16+/19)
+4. Re-score -- gate: improvement of at least 2 points (or reach 16+/25)
 
 ### Test Results Display
 
@@ -603,7 +603,7 @@ Run the verification suite (scoped per above when in a worktree):
 2. Test suite — scoped to touched package(s) in a worktree; full suite in the primary checkout
 3. Lint (if configured)
 4. CQ self-eval on all modified files
-5. Q1-Q19 on all modified test files
+5. Q1-Q25 on all modified test files
 
 > ⛔ **This 5-item suite is NOT the finish line — it is a mid-pipeline checkpoint.** Reaching the end of it does NOT mean the refactor is verified, done, or committable. **There is no "condensed", "light", or "5-step" refactor path in FULL mode** — if you find yourself treating this list as the whole workflow, you are mid-pipeline, not done. The Independent CQ Auditor (blind audit, next section), the CQ1-CQ40 pre/post audit, and the Adversarial Review are part of the SAME non-optional sequence. Do **not** commit-as-done, do **not** report `COMPLETE`, and **never** defer the blind audit or adversarial review to a "user decision" / "awaiting approval" — they are HARD GATES that run automatically without asking. A refactor that stopped here is **BLOCKED, not done** (see Completion Gate Check).
 

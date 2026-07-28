@@ -14,7 +14,7 @@ After a skill produces a document artifact (design spec, implementation plan, au
 | Design spec (brainstorm) | **Always** | `--mode spec` |
 | Implementation plan (plan) | **Always** | `--mode plan` |
 | Audit report (code-audit, test-audit, security-audit, etc.) | Score < 75% OR any FAIL gate | `--mode audit` |
-| Test audit report (test-audit Q1-Q19 output) | **Always** | `--mode tests` |
+| Test audit report (test-audit Q1-Q25 output) | **Always** | `--mode tests` |
 | Changelog (ship, release-docs) | **Always** | `--mode spec` (reuse spec mode) |
 | Article (write-article, content-expand) | After internal review converges | `--mode article` |
 

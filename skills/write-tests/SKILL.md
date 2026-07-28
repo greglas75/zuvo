@@ -121,7 +121,7 @@ If an include is missing:
 |---------|-------|----------|-------|-----------|
 | `../../shared/includes/test-contract.md` | Full | Full | Full | Full |
 | `../../shared/includes/test-blocklist.md` | Full | Full | Full | Full |
-| `../../shared/includes/quality-gates.md` | Q1-Q19 only* | Q1-Q19 only* | Q1-Q19 only* | Q1-Q19 only* |
+| `../../shared/includes/quality-gates.md` | Q1-Q25 only* | Q1-Q25 only* | Q1-Q25 only* | Q1-Q25 only* |
 | `../../rules/testing.md` | Full | Full | Full | Full |
 | `../../shared/includes/test-mock-safety-core.md` | Full | Full | Full | Full |
 | `../../shared/includes/test-code-types-core.md` | Full | Full | Full | Full |
@@ -144,13 +144,13 @@ If multiple manifests are equally near, prefer `package.json` > `composer.json` 
 
 Load at most one stack-specific include family. Python uses `test-mock-safety-core.md`, `test-code-types-core.md`, and `test-edge-cases.md`; rows 8-9 are `SKIP` until Python-specific split includes exist.
 
-\* **quality-gates.md:** Read ONLY from `## Q1-Q19: Test Quality Gates` to end of file. Skip CQ1-CQ40.
+\* **quality-gates.md:** Read ONLY from `## Q1-Q25: Test Quality Gates` to end of file. Skip CQ1-CQ40.
 
 ```
 PHASE 1 — LOADED:
   2. test-contract.md              -- [READ]
   3. test-blocklist.md             -- [READ]
-  4. quality-gates.md              -- [READ Q1-Q19 only]
+  4. quality-gates.md              -- [READ Q1-Q25 only]
   5. testing.md                    -- [READ]
   6. test-mock-safety-core.md      -- [READ]
   7. test-code-types-core.md       -- [READ]
@@ -383,7 +383,7 @@ Red regression tests for known production bugs are not a valid terminal state fo
    - If the production file forwards callbacks and the test file has **0** interaction calls, STOP and add flow tests before self-eval.
    - For every distinct owned routing decision where the same child prop slot can receive different handlers by mode, type, or state, add at least one representative interaction test proving the correct handler fires and the competing handler does **not**.
    - Render-only assertions and label-only assertions do **not** satisfy Q3 or Q14 for callback-routing rows.
-2. **Q1-Q19 self-eval** per `quality-gates.md`. Print scorecard with evidence:
+2. **Q1-Q25 self-eval** per `quality-gates.md`. Print scorecard with evidence:
    ```
    Self-eval: Q1=1 Q2=1 Q3=0 ... → [N]/19 [PASS|FIX|REWRITE]
    Critical gates: Q7=[0|1] Q11=[0|1] Q13=[0|1] Q15=[0|1] Q17=[0|1]

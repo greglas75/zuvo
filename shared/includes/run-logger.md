@@ -56,7 +56,7 @@ DATE\tSKILL\tPROJECT\tCQ_SCORE\tQ_SCORE\tVERDICT\tTASKS\tDURATION\tNOTES\tBRANCH
 | 2 | SKILL | Skill name without `zuvo:` prefix | `build` |
 | 3 | PROJECT | Git root directory basename (see Field Resolution) | `tgm-survey-platform` |
 | 4 | CQ_SCORE | `N/29`, `N-critical` (audits), or `-` | `26/29` |
-| 5 | Q_SCORE | `N/19`, `N-total` (audits), or `-` | `16/19` |
+| 5 | Q_SCORE | `N/<applicable>`, `N-total` (audits), or `-`. The denominator is the APPLICABLE count for that run (gate set minus N/A minus out-of-scope), never a hardcoded total — it changes as the registry grows. | `16/19` |
 | 6 | VERDICT | `PASS`, `WARN`, `FAIL`, `BLOCKED`, or `ABORTED` only | `PASS` |
 | 7 | TASKS | Number of tasks completed, or `-` | `4` |
 | 8 | DURATION | `N-phase`, `N-tasks`, `tier-N`, or skill-specific label | `standard` |

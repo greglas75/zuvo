@@ -1,6 +1,6 @@
 # Test Quality Standards
 
-Applies to every test-writing workflow. Read before producing any test. Companion to `testing.md` Q1-Q19 evaluation.
+Applies to every test-writing workflow. Read before producing any test. Companion to `testing.md` Q1-Q25 evaluation.
 
 ---
 

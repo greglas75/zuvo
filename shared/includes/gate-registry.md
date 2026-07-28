@@ -11,7 +11,7 @@
 > Why this exists: the definitions previously lived in 4-6 copies each and drifted — CQ14 lost
 > three of its four clauses in the audit prompt, CQ28 was inverted in 7 places, `q-scoring-protocol`
 > carried four gates' labels under the wrong IDs, and test-audit shipped Q1-Q17 while claiming
-> Q1-Q19. Adding one gate meant ~30 edits across 27 files, which is why CQ29 shipped with six
+> Q1-Q25. Adding one gate meant ~30 edits across 27 files, which is why CQ29 shipped with six
 > places still saying 28.
 >
 > **Self-containment is preserved:** the generator INLINES the text into each consuming skill, so
@@ -28,7 +28,8 @@ A gate has three possible outcomes, not two:
 | `out-of-scope` | the gate's STACK does not match the project at all (mechanical, not a judgement) | no | **no** |
 
 Why the third state exists: adding stack-specific gates to a flat list breaks every existing
-score. 25/29 is a PASS at 86%; the same file against 43 gates is 58%, a FAIL, with nothing about
+score: a file scoring twenty-five of twenty-nine is a PASS at 86%, and the same file measured
+against forty-three gates is 58% — a FAIL, with nothing about
 the code changed. And forcing a TypeScript project to N/A ten Go gates would blow the N/A cap and
 turn a clean audit into `INCOMPLETE`. Stack mismatch is not a judgement an auditor makes — it is
 `go.mod` being absent — so it must not be spent from the N/A budget.
@@ -89,29 +90,35 @@ line; print one summary line instead: `out-of-scope: N gates (stack=<detected>)`
 | CQ39 | Resources | conditional: the code has a queue, channel, buffer, or fan-out whose size depends on external input | universal | Every queue, channel and fan-out bounded? An unbounded producer is CQ6 (unbounded memory) wearing a different hat: bounded channels, `SetLimit`, a semaphore, `BoundedChannelOptions`, or explicit backpressure (`writable.write()` return value honoured, `drain` awaited). Unbounded + a fast producer = OOM under load, not under test. | Queues/channels/fan-out bounded? Backpressure honoured on streams? |
 | CQ40 | Hygiene | conditional: the project has a linter config, or the language has a standard one | universal | The language's meta-linter is configured, pinned, and clean in CI — `golangci-lint` (errcheck/govet/staticcheck/gosec/bodyclose/contextcheck), `clippy -D warnings` + cargo-deny, typescript-eslint type-checked (or Biome/oxlint type-aware), ruff + mypy, ErrorProne + NullAway, `TreatWarningsAsErrors`. **No config present = 0.** Roughly a third of the CQ set is mechanically checkable; a configured linter enforces those deterministically instead of an LLM re-deriving them per file. | Language meta-linter configured, pinned and clean in CI? No config = 0 |
 
-## Q1-Q19 — Test Quality
+## Q1-Q25 — Test Quality
 
-| ID | Criticality | Gate (canonical) | Prompt short form |
-|----|-------------|------------------|-------------------|
-| Q1 | — | Every test name describes expected behavior (not "should work")? | Every test name describes expected behavior? |
-| Q2 | — | Tests grouped in logical describe blocks? | Tests grouped in logical describe blocks? |
-| Q3 | — | Every mock has `CalledWith` (positive) AND `not.toHaveBeenCalled` (negative)? | Every mock has CalledWith + not.toHaveBeenCalled? |
-| Q4 | — | Known-data assertions use exact values (`toEqual`/`toBe`, not `toBeTruthy`)? | Assertions use exact matchers (toEqual/toBe, not toBeTruthy)? |
-| Q5 | — | Mocks are typed (not `as any`/`as never`)? Note: `as unknown as ServiceType` is acceptable when no mock factory exists — it avoids `as any` while preserving the target type. Score Q5=1 for `as unknown as X`, Q5=0 only for `as any` or `as never`. | Mocks are typed (no `as any`)? |
-| Q6 | — | Mock state is fresh per test (proper `beforeEach`, no shared mutable)? | Mock state fresh per test (beforeEach, no shared mutable)? |
-| Q7 | critical | Every error-throwing path tested with specific error type AND message? (not just "at least one") | Every error-throwing path tested with specific type+message? |
-| Q8 | — | Null/undefined/empty inputs tested where applicable? | Null/empty/edge inputs tested? |
-| Q9 | — | Repeated setup (3+ tests) extracted to helper/factory? | Repeated setup (3+ tests) extracted to helper/factory? |
-| Q10 | — | No magic values — test data is self-documenting? | No magic values -- test data is self-documenting? |
-| Q11 | critical | All code branches exercised (if/else, switch, early return)? | All code branches exercised? |
-| Q12 | — | Symmetric: every "does X when Y" has "does NOT do X when not-Y"? **For each repeated pattern (auth guard, validation, error), verify every method has it.** | Symmetric: "does X when Y" has "does NOT do X when not-Y"? |
-| Q13 | critical | Tests import the actual production function (not a local copy)? | Tests import actual production function? |
-| Q14 | — | Assertions verify behavior, not just that a mock was called? | Behavioral assertions (not just mock-was-called)? |
-| Q15 | critical | Assertions verify content/values, not just counts or shape? | Content/values assertions, not just counts/shape? |
-| Q16 | — | Cross-cutting isolation: change to A verified not to affect B? | Cross-cutting isolation: change to A verified not to affect B? |
-| Q17 | critical | Assertions verify computed output, not input echo? Expected values from spec/manual calc, not copied from implementation (P-70). | Assertions verify COMPUTED output, not input echo? |
-| Q18 | — | No flaky test signals? No `Date.now()` without fake timers, no `setTimeout` for timing, no `Math.random()` without seed, no reliance on execution order, no real network calls? | No flaky signals? No Date.now() without fake timers, no setTimeout for timing, no Math.random(), no real network? |
-| Q19 | — | Tests fully isolated? No shared mutable state between tests (global variables, module-level `let`, database rows without cleanup)? Each test can run independently in any order? | Tests fully isolated? No shared mutable state between tests; each runs independently in any order? |
+| ID | Criticality | Scope | Gate (canonical) | Prompt short form |
+|----|-------------|-------|------------------|-------------------|
+| Q1 | — | universal | Every test name describes expected behavior (not "should work")? | Every test name describes expected behavior? |
+| Q2 | — | universal | Tests grouped in logical describe blocks? | Tests grouped in logical describe blocks? |
+| Q3 | — | universal | Every mock has `CalledWith` (positive) AND `not.toHaveBeenCalled` (negative)? | Every mock has CalledWith + not.toHaveBeenCalled? |
+| Q4 | — | universal | Known-data assertions use exact values (`toEqual`/`toBe`, not `toBeTruthy`)? | Assertions use exact matchers (toEqual/toBe, not toBeTruthy)? |
+| Q5 | — | universal | Mocks are typed (not `as any`/`as never`)? Note: `as unknown as ServiceType` is acceptable when no mock factory exists — it avoids `as any` while preserving the target type. Score Q5=1 for `as unknown as X`, Q5=0 only for `as any` or `as never`. | Mocks are typed (no `as any`)? |
+| Q6 | — | universal | Mock state is fresh per test (proper `beforeEach`, no shared mutable)? | Mock state fresh per test (beforeEach, no shared mutable)? |
+| Q7 | critical | universal | Every error-throwing path tested with specific error type AND message? (not just "at least one") | Every error-throwing path tested with specific type+message? |
+| Q8 | — | universal | Null/undefined/empty inputs tested where applicable? | Null/empty/edge inputs tested? |
+| Q9 | — | universal | Repeated setup (3+ tests) extracted to helper/factory? | Repeated setup (3+ tests) extracted to helper/factory? |
+| Q10 | — | universal | No magic values — test data is self-documenting? | No magic values -- test data is self-documenting? |
+| Q11 | critical | universal | All code branches exercised (if/else, switch, early return)? | All code branches exercised? |
+| Q12 | — | universal | Symmetric: every "does X when Y" has "does NOT do X when not-Y"? **For each repeated pattern (auth guard, validation, error), verify every method has it.** | Symmetric: "does X when Y" has "does NOT do X when not-Y"? |
+| Q13 | critical | universal | Tests import the actual production function (not a local copy)? | Tests import actual production function? |
+| Q14 | — | universal | Assertions verify behavior, not just that a mock was called? | Behavioral assertions (not just mock-was-called)? |
+| Q15 | critical | universal | Assertions verify content/values, not just counts or shape? | Content/values assertions, not just counts/shape? |
+| Q16 | — | universal | Cross-cutting isolation: change to A verified not to affect B? | Cross-cutting isolation: change to A verified not to affect B? |
+| Q17 | critical | universal | Assertions verify computed output, not input echo? Expected values from spec/manual calc, not copied from implementation (P-70). | Assertions verify COMPUTED output, not input echo? |
+| Q18 | — | universal | No flaky test signals? No `Date.now()` without fake timers, no `setTimeout` for timing, no `Math.random()` without seed, no reliance on execution order, no real network calls? | No flaky signals? No Date.now() without fake timers, no setTimeout for timing, no Math.random(), no real network? |
+| Q19 | — | universal | Tests fully isolated? No shared mutable state between tests (global variables, module-level `let`, database rows without cleanup)? Each test can run independently in any order? | Tests fully isolated? No shared mutable state between tests; each runs independently in any order? |
+| Q20 | — | universal | Test level declared and respected? The file states whether it is a small (in-process, no I/O, no sleep), medium, or large test, and stays in that level — no file mixes in-process units with real network, DB, filesystem, or `sleep`. A "unit" test that opens a socket is the flake nobody can reproduce. | Test level declared (small/medium/large) and not mixed? |
+| Q21 | conditional: a mutation-testing runner is configured for this project | universal | Changed production files reach a mutation score >= 70%, or every surviving mutant is triaged as equivalent/arid with a written reason? This is the only gate that measures test STRENGTH rather than test STYLE — coverage says a line ran, a surviving mutant says nothing checked what it did. (Stryker / mutmut / PIT / go-mutesting / cargo-mutants.) | Mutation score >= 70% on changed files, or every survivor triaged? |
+| Q22 | conditional: the unit under test is PURE or a VALIDATOR | universal | Every pure/validator unit has at least one property or invariant test over generated inputs, with the seed recorded (fast-check / Hypothesis / proptest / jqwik)? `test-code-types-core.md` already MANDATES property-based tests for PURE units — until now no gate scored them, so the writing rule was unenforceable. | Pure/validator unit has a property test with a recorded seed? |
+| Q23 | conditional: the code under test crosses a service boundary | universal | The request/response contract is verified against a SHARED artifact — a Pact file, or an OpenAPI/JSON-Schema validated on BOTH consumer and provider — rather than a hand-written mock that only proves the mock matches itself? This is the test-side twin of CQ19, which had no test gate at all. | Cross-service contract verified against a shared artifact, not a hand-written mock? |
+| Q24 | — | universal | The suite passes under RANDOMIZED order with the seed logged (`--sequence.shuffle`, `-p randomly`, `go test -shuffle=on`, `MethodOrderer.Random`)? Order dependency causes 59% of flaky tests in the largest published study; Q18 greps for hazard tokens, this proves determinism by construction — it fails the suite Q18 passes when the dependency hides in a shared module-level fixture. | Suite green under randomized order, seed logged? |
+| Q25 | conditional: the project reports coverage in CI | universal | Changed lines reach >= 90% patch coverage with zero new uncovered branches, enforced server-side? Patch coverage gates the diff; project-level coverage lets a large green codebase hide an untested change. | Patch coverage >= 90% on changed lines, enforced in CI? |
 
 ## CAP1-CAP29 — Code Anti-Patterns
 
@@ -200,6 +207,15 @@ Now: **3 steps.**
 Generated regions currently live in: `rules/cq-checklist.md`, `rules/testing.md`,
 `shared/includes/quality-gates.md`, `docs/quality-gates.md`, `skills/code-audit/SKILL.md`,
 `skills/test-audit/SKILL.md`. Run `python3 scripts/gen-gate-copies.py --list` for the live list.
+
+## Why Q24 is not (yet) critical
+
+Order-dependency is the single largest measured cause of flaky tests — 59% in the largest published
+study — and Q24 proves determinism by construction where Q18 only greps for hazard tokens. It is
+still scored as a NORMAL gate, deliberately: almost no suite in the fleet runs shuffled today, so
+making it critical would drop every test audit to the Tier C floor overnight for a property nobody
+has had a chance to fix. Promote it to `critical` once the fleet's runners are configured for
+randomized order — at that point a red Q24 means a real order dependency, not a missing flag.
 
 ## Detector evidence (Python CAPs)
 

@@ -1,6 +1,6 @@
 ---
 name: test-audit
-description: "Batch audit of test files against Q1-Q19 quality gates and AP1-AP30 anti-patterns. Detects orphan tests, phantom mocks, untested public methods. Tiered output (A/B/C/D) with critical gate enforcement and optional post-audit fix workflow. Flags: zuvo:test-audit all | [path] | [file] | --deep | --quick | --include-e2e | --details | --commit=ask|auto|off"
+description: "Batch audit of test files against Q1-Q25 quality gates and AP1-AP30 anti-patterns. Detects orphan tests, phantom mocks, untested public methods. Tiered output (A/B/C/D) with critical gate enforcement and optional post-audit fix workflow. Flags: zuvo:test-audit all | [path] | [file] | --deep | --quick | --include-e2e | --details | --commit=ask|auto|off"
 codesift_tools:
   always:
     - analyze_project
@@ -48,7 +48,7 @@ codesift_tools:
 
 # zuvo:test-audit — Test Quality Triage
 
-Systematic evaluation of unit and integration test files through the Q1-Q19 binary checklist and AP anti-pattern catalog. Each test file is paired with its production source, scored against behavioral coverage standards, and assigned a tier.
+Systematic evaluation of unit and integration test files through the Q1-Q25 binary checklist and AP anti-pattern catalog. Each test file is paired with its production source, scored against behavioral coverage standards, and assigned a tier.
 
 **Scope:** Unit and integration tests only. E2E tests (`*/e2e/*`, `*.e2e.*`) are excluded by default. Use `--include-e2e` to include them.
 
@@ -208,14 +208,14 @@ Each Task agent dispatch:
 Agent: Test Quality Auditor (per batch)
   model: "sonnet"
   type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
-  instructions: evaluate test files against Q1-Q19 and AP anti-patterns (see Agent Prompt below)
+  instructions: evaluate test files against Q1-Q25 and AP anti-patterns (see Agent Prompt below)
   input: batch file list with paired production files, CODESIFT_AVAILABLE
 ```
 
 ### Agent Prompt (provided to each batch agent)
 
 ```
-You are a test quality auditor. Evaluate each test file below against Q1-Q19.
+You are a test quality auditor. Evaluate each test file below against Q1-Q25.
 
 RED FLAG PRE-SCAN (do FIRST, before full evaluation):
 - Tests with zero expect() calls (AP13) -> AUTO TIER-D. RTL exception: getByRole/getByText/getByLabelText are implicit assertions.
@@ -268,6 +268,12 @@ Q16: Cross-cutting isolation: change to A verified not to affect B?
 Q17: CRITICAL -- Assertions verify COMPUTED output, not input echo?
 Q18: No flaky signals? No Date.now() without fake timers, no setTimeout for timing, no Math.random(), no real network?
 Q19: Tests fully isolated? No shared mutable state between tests; each runs independently in any order?
+Q20: Test level declared (small/medium/large) and not mixed?
+Q21: CONDITIONAL -- Mutation score >= 70% on changed files, or every survivor triaged?
+Q22: CONDITIONAL -- Pure/validator unit has a property test with a recorded seed?
+Q23: CONDITIONAL -- Cross-service contract verified against a shared artifact, not a hand-written mock?
+Q24: Suite green under randomized order, seed logged?
+Q25: CONDITIONAL -- Patch coverage >= 90% on changed lines, enforced in CI?
 <!-- GATES:END kind=q-prompt -->
 
 ANTI-PATTERNS (each unique AP = -1 from score, max -5):
@@ -311,8 +317,8 @@ Q17 PASS-THROUGH: For thin controllers that are pure delegation, `expect(result)
 CRITICAL GATE: Q7, Q11, Q13, Q15, Q17 -- any = 0 -> Tier C floor (see TIER CLASSIFICATION).
 
 SCORING MATH:
-  Applicable = 19 - N/A-count          # 19 gates, Q1-Q19. Was hardcoded 17 while the checklist
-                                       # claimed Q1-Q19 — Q18 (flaky) and Q19 (isolation) were
+  Applicable = 25 - N/A-count - out-of-scope-count          # 19 gates, Q1-Q25. Was hardcoded 17 while the checklist
+                                       # claimed Q1-Q25 — Q18 (flaky) and Q19 (isolation) were
                                        # advertised and never scored.
   Score = yes-count / applicable (percentage)
   AP deduction: each unique AP = -1 from yes-count (max -5)
@@ -335,7 +341,7 @@ Complexity: [THIN/STANDARD/COMPLEX] ([LOC] LOC, [N] branches)
 Red flags: ["none"]
 Phantom mocks: [list or "none"]
 Untested methods: [list of public methods with no test coverage, or "all covered"]
-Score: Q1=[0/1] Q2=[0/1] ... Q19=[0/1]
+Score: Q1=[0/1] Q2=[0/1] ... Q25=[0/1]
 Anti-patterns: [AP IDs found, or "none"]
 Total: [yes]/[applicable] ([%]) - [AP count] = [adjusted%]
 Critical gate: Q7=[0/1] Q11=[0/1] Q13=[0/1] Q15=[0/1] Q17=[0/1] -> [PASS/FAIL]
@@ -512,7 +518,7 @@ After presenting the report, the user may request fixes:
    - Only test files modified (no production code changes)
    - Full test suite green
    - All modified test files <= 400 lines
-   - Q1-Q19 self-eval on each fixed file
+   - Q1-Q25 self-eval on each fixed file
    - Tier improvement confirmed (D->C+, C->B+, B->A)
 4. **Commit** -- behavior per `--commit` flag (ask/auto/off)
 5. **Re-audit** -- optionally re-run on fixed files to verify improvement

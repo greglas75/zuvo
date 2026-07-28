@@ -1,6 +1,6 @@
 # Quality Gates
 
-Zuvo enforces two quality gate systems: **CQ1-CQ40** for production code and **Q1-Q19** for test code. Every skill that writes or reviews code runs these evaluations with evidence requirements. Scores determine whether work can proceed.
+Zuvo enforces two quality gate systems: **CQ1-CQ40** for production code and **Q1-Q25** for test code. Every skill that writes or reviews code runs these evaluations with evidence requirements. Scores determine whether work can proceed.
 
 ---
 
@@ -82,7 +82,7 @@ Any of these scored 0 is an immediate FAIL, regardless of the total score.
 
 ---
 
-## Q1-Q19: Test Quality Gates
+## Q1-Q25: Test Quality Gates
 
 <!-- GATES:BEGIN kind=q-table -->
 | Gate | Check |
@@ -106,6 +106,12 @@ Any of these scored 0 is an immediate FAIL, regardless of the total score.
 | Q17 | **CRITICAL** — Assertions verify computed output, not input echo? Expected values from spec/manual calc, not copied from implementation (P-70). |
 | Q18 | No flaky test signals? No `Date.now()` without fake timers, no `setTimeout` for timing, no `Math.random()` without seed, no reliance on execution order, no real network calls? |
 | Q19 | Tests fully isolated? No shared mutable state between tests (global variables, module-level `let`, database rows without cleanup)? Each test can run independently in any order? |
+| Q20 | Test level declared and respected? The file states whether it is a small (in-process, no I/O, no sleep), medium, or large test, and stays in that level — no file mixes in-process units with real network, DB, filesystem, or `sleep`. A "unit" test that opens a socket is the flake nobody can reproduce. |
+| Q21 | **CONDITIONAL** — Changed production files reach a mutation score >= 70%, or every surviving mutant is triaged as equivalent/arid with a written reason? This is the only gate that measures test STRENGTH rather than test STYLE — coverage says a line ran, a surviving mutant says nothing checked what it did. (Stryker / mutmut / PIT / go-mutesting / cargo-mutants.) |
+| Q22 | **CONDITIONAL** — Every pure/validator unit has at least one property or invariant test over generated inputs, with the seed recorded (fast-check / Hypothesis / proptest / jqwik)? `test-code-types-core.md` already MANDATES property-based tests for PURE units — until now no gate scored them, so the writing rule was unenforceable. |
+| Q23 | **CONDITIONAL** — The request/response contract is verified against a SHARED artifact — a Pact file, or an OpenAPI/JSON-Schema validated on BOTH consumer and provider — rather than a hand-written mock that only proves the mock matches itself? This is the test-side twin of CQ19, which had no test gate at all. |
+| Q24 | The suite passes under RANDOMIZED order with the seed logged (`--sequence.shuffle`, `-p randomly`, `go test -shuffle=on`, `MethodOrderer.Random`)? Order dependency causes 59% of flaky tests in the largest published study; Q18 greps for hazard tokens, this proves determinism by construction — it fails the suite Q18 passes when the dependency hides in a shared module-level fixture. |
+| Q25 | **CONDITIONAL** — Changed lines reach >= 90% patch coverage with zero new uncovered branches, enforced server-side? Patch coverage gates the diff; project-level coverage lets a large green codebase hide an untested change. |
 <!-- GATES:END kind=q-table -->
 
 ### Critical gates (always block)
@@ -116,7 +122,7 @@ Any of these scored 0 is an immediate FAIL, regardless of the total score.
 
 | Result | Criteria |
 |--------|---------|
-| **PASS** | Score >= 16/19, all critical gates = 1 |
+| **PASS** | Score >= 16/25, all critical gates = 1 |
 | **FIX** | Score 10-15/19, or any critical gate = 0 -- fix worst gaps, re-score |
 | **REWRITE** | Score < 10 -- tests need fundamental rework |
 
@@ -168,7 +174,7 @@ Adding a WHERE clause, null guard, try/catch, or type annotation is never "out o
 
 ## Test anti-patterns (AP1-AP30)
 
-Test audits check for 29 anti-patterns in addition to the Q1-Q19 gates. These are common structural problems that reduce test value:
+Test audits check for 29 anti-patterns in addition to the Q1-Q25 gates. These are common structural problems that reduce test value:
 
 | Range | Coverage |
 |-------|----------|

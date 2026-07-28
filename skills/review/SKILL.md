@@ -142,15 +142,15 @@ Print: `[CLASSIFIED] Diff type: {prod-only|test-only|mixed}`
 | Include | prod-only | test-only | mixed |
 |---------|-----------|-----------|-------|
 | `../../shared/includes/env-compat.md` | Full | Full | Full |
-| `../../shared/includes/quality-gates.md` | CQ1-CQ40 section only* | Q1-Q19 section only** | Full |
+| `../../shared/includes/quality-gates.md` | CQ1-CQ40 section only* | Q1-Q25 section only** | Full |
 | `../../shared/includes/cross-provider-review.md` | Full | Full | Full |
 | `../../rules/cq-patterns.md` or `cq-patterns-core.md` | Per code type*** | **SKIP** | Per code type*** |
 | `../../rules/cq-checklist.md` | TIER 1+ | **SKIP** | TIER 1+ |
 | `../../rules/testing.md` | **SKIP** | Full | Full |
 | `../../rules/security.md` | If security signals | **SKIP** | If security signals |
 
-\* **CQ section only:** Read from start of file to the `## Q1-Q19` heading. Skip Q section.
-\*\* **Q section only:** Read from `## Q1-Q19: Test Quality Gates` heading to end of file. Skip CQ section.
+\* **CQ section only:** Read from start of file to the `## Q1-Q25` heading. Skip Q section.
+\*\* **Q section only:** Read from `## Q1-Q25: Test Quality Gates` heading to end of file. Skip CQ section.
 \*\*\* **cq-patterns loading rule:** After Step 1 (classify code type), check the "High-Risk Gates by Code Type" table in `cq-checklist.md`. If the code type has <=10 relevant gates, load `cq-patterns-core.md` (~500 tok) instead of `cq-patterns.md` (~8.4K tok).
 
 Print loaded files:
@@ -281,7 +281,7 @@ If `PROD_LOGIC_LINES = 0`:
 | Inline diff scan | Yes | Yes | Yes | Yes |
 | CQ patterns loaded | Skip | Core (500 tok) | Full (8.4K tok) | Full (8.4K tok) |
 | CQ1-CQ40 evaluation | Skip | Yes (lead inline) | Yes (CQ Auditor agent) | Yes (CQ Auditor agent) |
-| Q1-Q19 on test files | Skip | If present (lead) | Yes | Yes |
+| Q1-Q25 on test files | Skip | If present (lead) | Yes | Yes |
 | Audit agents | None | None | Behavior + CQ (if new files) | All 3 (Behavior + Structure + CQ) |
 | Adversarial (bash script) | Yes (all available) | Yes (all available) | Yes (all available) | Yes (all available) |
 | CodeSift pre-compute | Optional | Yes (light ops) | Yes (core ops) | Yes (core ops) |
@@ -508,7 +508,7 @@ Pass results as `PRECOMPUTED_DATA` to each agent:
 
 ## Phase 1: Audit
 
-**Steps:** 1.1 Self-Review Disclosure -> 1.2 Review Header -> 1.3 Agent Dispatch / Inline Audit -> 1.4 CQ (TIER 1+) -> 1.5 Q1-Q19 (if tests) -> 1.6 Adversarial (ALL tiers) -> 1.7 Result Merging
+**Steps:** 1.1 Self-Review Disclosure -> 1.2 Review Header -> 1.3 Agent Dispatch / Inline Audit -> 1.4 CQ (TIER 1+) -> 1.5 Q1-Q25 (if tests) -> 1.6 Adversarial (ALL tiers) -> 1.7 Result Merging
 
 **With --thorough:** steps 1.3-1.5 become 3 independent passes in parallel, merged via majority voting, then adversarial runs after merge.
 
@@ -569,9 +569,9 @@ Each agent receives: diff, tech stack, change intent, PRECOMPUTED_DATA, PROJECT_
 
 For each changed production file, run CQ1-CQ40. Print all 40 gates. Format: `CQ EVAL: file.ts (NL) | CQ1=1 CQ2=0 ... | Score: X/Y -> PASS/FAIL | Critical gates: CQ4=0(no orgId:87)`. CQ critical gate failures (CQ3, CQ4, CQ5, CQ6, CQ8, CQ14) always produce MUST-FIX.
 
-### 1.5 Q1-Q19 Evaluation (if test files in diff)
+### 1.5 Q1-Q25 Evaluation (if test files in diff)
 
-For each test file, run Q1-Q19. Format: `Q EVAL: file.spec.ts | Q1=1 Q2=1 ... | Score: X/Y -> PASS | Critical: Q7=1 Q11=1 Q13=1 Q15=1 Q17=1 -> PASS`.
+For each test file, run Q1-Q25. Format: `Q EVAL: file.spec.ts | Q1=1 Q2=1 ... | Score: X/Y -> PASS | Critical: Q7=1 Q11=1 Q13=1 Q15=1 Q17=1 -> PASS`.
 
 ### Pre-Existing Issues
 
@@ -863,7 +863,7 @@ Before printing `REVIEW COMPLETE` or the NEXT STEPS block, verify every item bel
 COMPLETION GATE CHECK
 [ ] Diff type classified and printed: [prod-only/test-only/mixed]
 [ ] CQ self-eval printed for each changed production file
-[ ] Q1-Q19 printed for each changed test file (if any)
+[ ] Q1-Q25 printed for each changed test file (if any)
 [ ] TIER 2-3: Behavior Auditor (if new prod files) + CQ Auditor + Confidence Re-Scorer DISPATCHED as sub-agents — NOT done inline as "lead" (or explicit [DEGRADED: ...] line, forbidden on self-review)
 [ ] TIER 2-3 Next.js: framework_audit called (nextjs_route_map alone does NOT satisfy it)
 [ ] Adversarial review ran — at least 2 sequential passes with findings printed; SELF-REVIEW used --multi (not --rotate)

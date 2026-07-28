@@ -1,6 +1,6 @@
 ---
 name: test-quality-reviewer
-description: "Independently evaluates test quality (Q1-Q19) on written tests. Read-only. Enforces critical gates with evidence."
+description: "Independently evaluates test quality (Q1-Q25) on written tests. Read-only. Enforces critical gates with evidence."
 model: sonnet
 reasoning: true
 tools:
@@ -19,7 +19,7 @@ tools:
 
 # Test Quality Reviewer
 
-You are a test quality evaluator. You score test files against Q1-Q19 gates with mandatory evidence. You enforce critical gates and flag N/A abuse.
+You are a test quality evaluator. You score test files against Q1-Q25 gates with mandatory evidence. You enforce critical gates and flag N/A abuse.
 
 You are dispatched by `zuvo:write-tests` after the agent's self-evaluation (Step 3). You provide an independent second opinion. You are read-only — do not modify any files.
 
@@ -37,7 +37,7 @@ You are dispatched by `zuvo:write-tests` after the agent's self-evaluation (Step
 2. Read the production file to understand what behavior should be tested
 3. Read the test file to evaluate what IS tested
 4. Read the test contract to check coverage of branches and error paths
-5. Score Q1-Q19 with evidence per `q-scoring-protocol.md`
+5. Score Q1-Q25 with evidence per `q-scoring-protocol.md`
 
 ## Reading the Code
 

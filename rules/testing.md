@@ -36,7 +36,7 @@ When formulating a plan, it MUST include a Test Strategy containing:
 2. **Key patterns** to apply (G-/P- IDs from pattern lookup)
 3. **Test files** to create or modify (paths and scope)
 4. **Critical scenarios** (error paths, edge cases, infra failures)
-5. **Self-eval target**: minimum 16/19
+5. **Self-eval target**: minimum 82% of applicable gates
 
 A plan without a Test Strategy is incomplete.
 
@@ -381,7 +381,7 @@ describe.skip('FeedbackService', () => { /* 200 lines never run */ });
 
 ## Red Flags -- Quick Heuristics
 
-These indicators correlate with low test quality. Use as pre-screening before full Q1-Q19 evaluation.
+These indicators correlate with low test quality. Use as pre-screening before full Q1-Q25 evaluation.
 
 | Indicator | Avg Score | What it signals |
 |-----------|-----------|-----------------|
@@ -439,6 +439,12 @@ Score every question individually. Never group or estimate.
 | Q17 | **CRITICAL** — Assertions verify computed output, not input echo? Expected values from spec/manual calc, not copied from implementation (P-70). |
 | Q18 | No flaky test signals? No `Date.now()` without fake timers, no `setTimeout` for timing, no `Math.random()` without seed, no reliance on execution order, no real network calls? |
 | Q19 | Tests fully isolated? No shared mutable state between tests (global variables, module-level `let`, database rows without cleanup)? Each test can run independently in any order? |
+| Q20 | Test level declared and respected? The file states whether it is a small (in-process, no I/O, no sleep), medium, or large test, and stays in that level — no file mixes in-process units with real network, DB, filesystem, or `sleep`. A "unit" test that opens a socket is the flake nobody can reproduce. |
+| Q21 | **CONDITIONAL** — Changed production files reach a mutation score >= 70%, or every surviving mutant is triaged as equivalent/arid with a written reason? This is the only gate that measures test STRENGTH rather than test STYLE — coverage says a line ran, a surviving mutant says nothing checked what it did. (Stryker / mutmut / PIT / go-mutesting / cargo-mutants.) |
+| Q22 | **CONDITIONAL** — Every pure/validator unit has at least one property or invariant test over generated inputs, with the seed recorded (fast-check / Hypothesis / proptest / jqwik)? `test-code-types-core.md` already MANDATES property-based tests for PURE units — until now no gate scored them, so the writing rule was unenforceable. |
+| Q23 | **CONDITIONAL** — The request/response contract is verified against a SHARED artifact — a Pact file, or an OpenAPI/JSON-Schema validated on BOTH consumer and provider — rather than a hand-written mock that only proves the mock matches itself? This is the test-side twin of CQ19, which had no test gate at all. |
+| Q24 | The suite passes under RANDOMIZED order with the seed logged (`--sequence.shuffle`, `-p randomly`, `go test -shuffle=on`, `MethodOrderer.Random`)? Order dependency causes 59% of flaky tests in the largest published study; Q18 greps for hazard tokens, this proves determinism by construction — it fails the suite Q18 passes when the dependency hides in a shared module-level fixture. |
+| Q25 | **CONDITIONAL** — Changed lines reach >= 90% patch coverage with zero new uncovered branches, enforced server-side? Patch coverage gates the diff; project-level coverage lets a large green codebase hide an untested change. |
 <!-- GATES:END kind=q-table -->
 
 **N/A handling:** Q3/Q5/Q6 = 1 (N/A) for pure functions with zero mocks. Q16 = 1 (N/A) for simple single-responsibility units. Q18 = 1 (N/A) for pure synchronous tests with no timing or randomness. Q19 = 1 (N/A) for single-test files.
@@ -450,7 +456,7 @@ Score every question individually. Never group or estimate.
 **Output format:**
 ```
 Self-eval: Q1=1 Q2=1 Q3=0 Q4=1 Q5=1 Q6=1 Q7=1 Q8=0 Q9=1 Q10=1 Q11=1 Q12=0 Q13=1 Q14=1 Q15=1 Q16=1 Q17=1 Q18=1 Q19=1
-  Score: 16/19 → PASS | Critical gate: Q7=1 Q11=1 Q13=1 Q15=1 Q17=1 → PASS
+  Score: 84% of applicable → PASS | Critical gate: Q7=1 Q11=1 Q13=1 Q15=1 Q17=1 → PASS
 ```
 
 ## Post-Test Mutation Check (mandatory)
@@ -544,7 +550,7 @@ Before declaring a task complete, verify every item:
 
 - [ ] New code has tests (if production files > 0 and test files = 0 → write tests)
 - [ ] Tests pass locally (run the test command, do not assume)
-- [ ] Self-eval 16/19+ with all critical gates passing (Q7 + Q11 + Q13 + Q15 + Q17)
+- [ ] Self-eval >= 82% of applicable with all critical gates passing (Q7 + Q11 + Q13 + Q15 + Q17)
 - [ ] Oracle check: no expected values copied from implementation (P-70)
 - [ ] Mutation check: M1-M5 all caught
 - [ ] Coverage did not decrease

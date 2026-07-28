@@ -3,7 +3,7 @@ name: using-zuvo
 description: "ALWAYS LOADED — Zuvo skill router. Injected at session start. Determines which zuvo skill to invoke for the current task."
 ---
 
-> **Zuvo v1.6.32** | 55 skills | 5 adversarial providers | CQ1-CQ40 + Q1-Q19
+> **Zuvo v1.6.32** | 55 skills | 5 adversarial providers | CQ1-CQ40 + Q1-Q25
 
 # Zuvo Skill Router
 
@@ -201,7 +201,7 @@ Before writing ANY code, verify:
 | G1 | **New code → tests** | Any new `.ts`/`.tsx`/`.py`/`.php` file | Write tests BEFORE or WITH the code. Zero exceptions. |
 | G2 | **3+ files → /build** | Feature touches 3+ files | Use `zuvo:build`, NOT direct coding. |
 | G3 | **CQ self-eval** | Any production code written | Read `../../rules/cq-checklist.md`. Run CQ1-CQ40. Print score. |
-| G4 | **Test self-eval** | Any test code written | Read `../../rules/testing.md`. Run Q1-Q19. Print score. |
+| G4 | **Test self-eval** | Any test code written | Read `../../rules/testing.md`. Run Q1-Q25. Print score. |
 
 Tests are part of implementation, not a follow-up. NEVER ask "should I write tests?" — the answer is always yes. NEVER say "implementation complete" when test files = 0.
 
