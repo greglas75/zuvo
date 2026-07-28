@@ -44,6 +44,17 @@ NEVER create or write a `memory/backlog.md` inside a linked worktree — one bac
 
 ---
 
+## Mandatory File Loading
+
+### PHASE 0 — Bootstrap (before reading the backlog)
+
+```
+  1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> WARN]
+  2. ../../shared/includes/backlog-protocol.md    -- [READ | MISSING -> STOP] (the file format is the contract)
+```
+
+`retrospective.md` and `run-logger.md` are END-of-run includes — they are loaded at completion, not here.
+
 ## Run Logging
 
 Read `../../shared/includes/run-logger.md` for log format and file path resolution.

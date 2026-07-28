@@ -50,6 +50,17 @@ Measurement-driven optimization of the test suite. Establishes a baseline, audit
 
 ---
 
+## Mandatory File Loading
+
+### PHASE 0 — Bootstrap (before measuring anything)
+
+```
+  1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> WARN]
+  2. ../../shared/includes/env-compat.md          -- [READ | MISSING -> WARN]
+```
+
+`retrospective.md` and `run-logger.md` are END-of-run includes — they are loaded at completion, not here.
+
 ## Environment Compatibility
 
 Read `../../shared/includes/env-compat.md` for progress tracking and user interaction patterns.

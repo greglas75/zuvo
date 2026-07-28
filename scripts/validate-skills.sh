@@ -180,6 +180,15 @@ check_mfl() {
     is_exempt "$dir" "$MFL_EXEMPT" && continue
     if grep -qi 'Mandatory File Loading' "$f"; then
       pass "$dir: MFL section present"
+    elif ! grep -qE '\.\./\.\./(shared/includes|rules)/' "$f"; then
+      pass "$dir: MFL n/a (loads no shared includes)"
+    elif [ -z "$(grep -oE '\.\./\.\./(shared/includes|rules)/[a-z0-9-]+\.md' "$f" \
+                 | grep -vE '(retrospective|run-logger)\.md' | head -1)" ]; then
+      # A bootstrap block says "read these BEFORE you start". A skill whose only shared includes
+      # are retrospective.md and run-logger.md has nothing to load at start — both run at
+      # COMPLETION. Demanding the block there would document something untrue, so this is a
+      # pass with a stated reason rather than a warning nobody can action.
+      pass "$dir: MFL n/a (only end-of-run includes: retrospective/run-logger)"
     else
       fail_warn "$dir: no 'Mandatory File Loading' section"
     fi

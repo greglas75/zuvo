@@ -95,7 +95,7 @@ Read `../../shared/includes/codesift-setup.md` for initialization.
 
 ---
 
-## Mandatory File Reading
+## Mandatory File Loading
 
 ```
 CORE FILES LOADED:

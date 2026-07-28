@@ -48,7 +48,7 @@ codesift_tools:
 
 Protocol for responding to code review feedback. Every review comment gets the same structured treatment: understand it, verify it against the actual code, decide whether to fix or push back, then implement precisely.
 
-## Mandatory File Reading
+## Mandatory File Loading
 
 Before starting work, read each file below. Print the checklist with status.
 

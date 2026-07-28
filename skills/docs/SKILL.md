@@ -78,6 +78,17 @@ Generate or update documentation by reading the actual codebase -- not from temp
 
 ---
 
+## Mandatory File Loading
+
+### PHASE 0 — Bootstrap (before reading any source)
+
+```
+  1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> WARN]
+  2. ../../shared/includes/env-compat.md          -- [READ | MISSING -> WARN]
+```
+
+`retrospective.md` and `run-logger.md` are END-of-run includes — they are loaded at completion, not here.
+
 ## Environment Compatibility
 
 Read `../../shared/includes/env-compat.md` for user interaction patterns.

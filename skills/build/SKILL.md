@@ -77,7 +77,7 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 
 CodeSift setup completed in PHASE 0. Use CodeSift tools for all discovery and analysis when available.
 
-## Mandatory File Reading
+## Mandatory File Loading
 
 ### PHASE 0 — Bootstrap (always, before reading any input)
 

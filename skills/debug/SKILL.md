@@ -85,7 +85,7 @@ Read `../../shared/includes/codesift-setup.md` for the full initialization seque
 | 3 | File structure around the bug | `get_file_outline(repo, file_path)` | Read the file |
 | Any | Batch 3+ lookups | `codebase_retrieval(repo, queries=[...])` | Sequential Grep/Read |
 
-## Mandatory File Reading
+## Mandatory File Loading
 
 ### PHASE 0 — Bootstrap (always, before reading error/file)
 
