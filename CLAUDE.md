@@ -116,16 +116,17 @@ This does: version bump → commit → push → tag → update marketplace SHA �
 
 ```
 skills/<name>/SKILL.md          — skill definitions (55 total)
-skills/<name>/agents/<name>.md  — sub-agent instructions (28 agents)
-shared/includes/*.md            — shared procedural includes (38 files):
+skills/<name>/agents/<name>.md  — sub-agent instructions (50 agent files, 48 unique names)
+shared/includes/*.md            — shared procedural includes (78 files):
+                                    gate-registry.md (SSOT for all 124 CQ/Q/CAP/AP gates)
                                     knowledge-prime.md, knowledge-curate.md (knowledge store)
                                     session-state.md (session recovery)
                                     report-output-location.md (canonical zuvo/ output dir)
                                     severity-vocabulary.md (unified severity mapping)
                                     adversarial-loop.md, adversarial-loop-docs.md (evidence enforcement)
                                     quality-gates.md, env-compat.md, codesift-setup.md, run-logger.md
-                                    + 22 registries, schemas, protocols
-rules/*.md                      — code quality rules (12 files: cq-patterns, testing, security, file-limits, etc.)
+                                    + registries, schemas, protocols
+rules/*.md                      — code quality rules (22 files: cq-patterns, testing, security, file-limits, etc.)
 scripts/install.sh              — local install to Claude + Codex + Cursor
 scripts/release.sh              — release to marketplace
 scripts/build-codex-skills.sh   — build Codex distribution (called by install.sh)

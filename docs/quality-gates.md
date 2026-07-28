@@ -1,6 +1,28 @@
 # Quality Gates
 
-Zuvo enforces two quality gate systems: **CQ1-CQ40** for production code and **Q1-Q25** for test code. Every skill that writes or reviews code runs these evaluations with evidence requirements. Scores determine whether work can proceed.
+Zuvo enforces two quality gate systems: **CQ1-CQ40** for production code and **Q1-Q25** for test code, plus two anti-pattern catalogues (**CAP1-CAP29** for code, **AP1-AP30** for tests). Every skill that writes or reviews code runs these evaluations with evidence requirements. Scores determine whether work can proceed.
+
+> **Where gates are defined, and how to change one.** Every gate on this page is GENERATED from
+> [`../shared/includes/gate-registry.md`](../shared/includes/gate-registry.md) — the single source
+> of truth for all 124 gates. Editing a table here is overwritten on the next build and caught by
+> `tests/gates/test-gate-consistency.sh`.
+>
+> To add or change a gate: **(1)** edit the row in the registry, **(2)** run
+> `python3 scripts/gen-gate-copies.py --write`, **(3)** commit both. The definitions previously
+> lived in 4-6 hand-maintained copies each and drifted — CQ14 lost three of its four clauses in the
+> audit prompt, CQ28's timeout hierarchy was inverted in seven places, and adding one gate meant
+> ~30 edits across 27 files (which is why CQ29 shipped with six places still saying "28").
+
+### Three outcomes, not two
+
+A gate can be `1`/`0` (evaluated), **`N/A`** (applies to this stack, but its precondition does not
+hold in this file — a judgement, so it needs the same negative-evidence citation as a `0` and is
+capped at one third of the in-scope gates), or **`out-of-scope`** (the gate's stack does not match
+the project at all — mechanical, so it costs nothing). Only `out-of-scope` is free; that is what
+lets stack-specific gates be added without taxing every other project.
+
+All verdict thresholds are **percentages of applicable**, never raw counts over a fixed
+denominator — a fixed count silently changes meaning every time the gate set grows.
 
 ---
 

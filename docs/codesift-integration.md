@@ -16,7 +16,11 @@ Every skill that analyzes code begins with:
 ToolSearch(query="codesift", max_results=20)
 ```
 
-If CodeSift tools are found, the skill initializes with `list_repos()` (called once per session, never repeated) to get the repo identifier.
+The `repo` parameter auto-resolves from the working directory, so `list_repos()` is unnecessary in a single-repo session.
+
+**Start with `plan_turn`.** For any non-trivial task, `plan_turn(query="<the task>")` is the preferred entry point: it returns ranked tools, symbols and files for that query and reveals the ones it recommends — in one call. It replaces guessing which of ~150 tools fits.
+
+**A first negative search is not proof of absence.** On MCP hosts most CodeSift tools are *deferred* — present but not yet loaded — so a `select:` lookup can miss them while a keyword search finds them. Retry with a keyword query before concluding CodeSift is unavailable; declaring degraded mode early costs the whole run its analysis quality.
 
 If CodeSift is not found, the skill falls back to built-in tools (Grep, Glob, Read) and notifies the user once:
 
@@ -38,6 +42,12 @@ When skills dispatch sub-agents, each agent receives the CodeSift availability s
 | Search by meaning (not keyword) | `codebase_retrieval` with `type: "semantic"` |
 | Batch multiple queries | `codebase_retrieval` with mixed query types |
 | Jump to symbol definition | `go_to_definition` (LSP-backed when available) |
+| One call instead of five | `audit_scan` — dead code + patterns + clones + complexity + hotspots |
+| Whole-project health (Python) | `python_audit` — 8 checks with a health score |
+| Framework audits | `framework_audit` (Next.js), `analyze_hono_app`, `astro_audit`, `nest_audit` |
+
+**Prefer the compound tools.** `audit_scan` replaces five separate calls with one consistent
+snapshot of the index; the same applies to `python_audit` and the framework audits.
 | Get function return/param types | `get_type_info` (LSP hover) |
 | Cross-file rename | `rename_symbol` (type-safe, updates imports) |
 | Find unused exports | `find_dead_code` |
@@ -49,6 +59,23 @@ When skills dispatch sub-agents, each agent receives the CodeSift availability s
 ### After editing files
 
 Skills that modify files call `index_file(path)` after each edit to keep the CodeSift index current. This takes ~9ms per file. The full `index_folder` (3-8 seconds) is never used for single-file updates.
+
+## Two traps worth knowing
+
+**A stale index answers confidently with old data.** If `index_file` returns `skipped=true`, or an
+outline still shows the pre-edit structure after an edit you confirmed on disk, the index is stale.
+Do NOT loop on `index_file` and do NOT escalate to a full `index_folder` — verify on disk
+(`wc -l`, a bounded `Read`) and record the check as degraded. A line count quoted back to you in a
+hook message comes from the index and can be stale for the same reason.
+
+**The hooks can block the fallback.** `codesift setup claude --hooks` installs precheck hooks that
+redirect `Read` on large files and `grep`/`rg`/`find` to CodeSift. If the MCP server is offline
+while those hooks stay active, the prescribed fallback is exactly what they refuse and the run
+deadlocks. Use what the hooks never intercept: `python3 -c` with `re`, `git grep`, `git ls-files`,
+and bounded `Read` with `offset`/`limit`.
+
+Full operational detail — the version skills actually load — is in
+[`../shared/includes/codesift-setup.md`](../shared/includes/codesift-setup.md).
 
 ## Degraded mode without CodeSift
 

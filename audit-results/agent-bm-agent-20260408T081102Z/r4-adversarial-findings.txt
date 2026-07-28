@@ -1,9 +1,0 @@
-R4 adversarial findings (final pass)
-
-Providers used: codex-5.4, codex-5.3, cursor-agent, codestral
-Aggregate findings: 2 critical, 15 warning, 5 info
-
-Primary remaining themes:
-- Transaction tests still rely on mock-level rollback behavior rather than a real DB transaction.
-- Several cache assertions still couple to cache-key serialization details.
-- Hook tests still lean on fake timers and simplified fetch mocks for async/race coverage.

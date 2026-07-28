@@ -2,7 +2,7 @@
 
 Auto-activating, multi-agent skill ecosystem for Claude Code, Codex, and Cursor.
 
-51 skills, 26 specialized agents, quality gates, knowledge store, session recovery, and structured workflows — all in one plugin.
+55 skills, 50 specialized sub-agents, quality gates, knowledge store, session recovery, and structured workflows — all in one plugin.
 
 ## Install
 
@@ -117,14 +117,14 @@ args = ["-y", "codesift-mcp"]
 ## What's inside
 
 - **Pipeline skills** — `zuvo:brainstorm` → `zuvo:plan` → `zuvo:execute` with multi-agent exploration, quality gates, and evidence-based review
-- **45 task skills** — build, review, refactor, debug, 19 audits, write-article, content-expand, design, docs, ship, deploy, canary, retro, incident, mutation-test, benchmark, and more
+- **50 task skills** — build, review, refactor, debug, 16 audits, write-article, content-expand, design, docs, ship, deploy, canary, retro, incident, mutation-test, benchmark, and more
 - **Release pipeline** — `zuvo:ship` → `zuvo:deploy` → `zuvo:canary` for the full post-code lifecycle
 - **Knowledge Store** — JSONL-based project memory. Skills learn from past sessions (patterns, gotchas, decisions). Auto-primed at session start and per-skill
 - **Session Recovery** — execution state persisted to `.zuvo/context/`. Resume after context compaction or crashes without losing progress
-- **Adversarial review** — 4-provider cross-model verification with evidence enforcement (findings without file:line auto-downgraded)
+- **Adversarial review** — 5-provider cross-model verification with evidence enforcement (findings without file:line auto-downgraded)
 - **Auto-activation** — routing engine matches your intent to the right skill automatically
 - **CodeSift integration** — semantic search, community detection, call chain tracing, complexity analysis
-- **Quality gates** — CQ1-CQ29 (code quality) and Q1-Q19 (test quality) with unified severity vocabulary
+- **Quality gates** — CQ1-CQ40 (code quality) and Q1-Q25 (test quality) with unified severity vocabulary
 
 ## Platform support
 
@@ -152,10 +152,12 @@ args = ["-y", "codesift-mcp"]
 
 ## Documentation
 
-- [All 51 Skills](docs/skills.md)
+- [All 55 Skills](docs/skills.md)
 - [Pipeline](docs/pipeline.md) — brainstorm → plan → execute
-- [Quality Gates](docs/quality-gates.md) — CQ1-CQ29 + Q1-Q19
+- [Quality Gates](docs/quality-gates.md) — CQ1-CQ40 + Q1-Q25 + CAP1-CAP29 + AP1-AP30
 - [CodeSift Integration](docs/codesift-integration.md)
+- [Adversarial Review Providers](docs/adversarial-providers.md) — which models cross-check the work, and how to authenticate them
+- [Retro Learning Loop](docs/retro-learning-loop.md) — how zuvo mines its own runs for improvements
 - [Configuration](docs/configuration.md)
 - [Changelog](https://github.com/greglas75/zuvo/tags)
 

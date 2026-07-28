@@ -482,7 +482,10 @@ install_zuvo_home() {
 # =======================================
 # CLAUDE HOME (~/.claude/scripts)
 # Shared helper scripts that live alongside the user's Claude config.
-# Currently: post-commit hook that feeds review-backlog.md / review-queue.md.
+# Currently: post-commit hook that appends each commit to
+# ~/.claude/projects/<project>/memory/review-backlog.md (a HOME-local list, per project).
+# It does NOT write docs/review-queue.md — that file was removed 2026-07-28 as a dead artifact:
+# nothing wrote to it and zuvo:review had already moved to content-keyed memory/reviews/ coverage.
 # Per-project activation is opt-in (user wires .git/hooks/post-commit themselves);
 # we just make sure the script is present and up-to-date for every machine.
 # =======================================
