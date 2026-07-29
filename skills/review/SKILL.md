@@ -916,9 +916,9 @@ VALIDITY GATE
     # is a PASS value for every role below and satisfies the Completion Gate
     # "DISPATCHED as sub-agents" item — the env-mandated checkpoint pass IS the
     # required result, not VIOLATES_TIER2. Adversarial coverage still required as usual.
-    behavior_auditor: [DISPATCHED(<agent-return-marker>) | not_required (no new prod files / tier<2) | NOT_DISPATCHED — VIOLATES_TIER2]
-    cq_auditor: [DISPATCHED(<agent-return-marker>) | NOT_DISPATCHED — VIOLATES_TIER2]
-    confidence_rescorer: [DISPATCHED(<agent-return-marker>) | NOT_DISPATCHED — VIOLATES_TIER2]
+    behavior_auditor: [DISPATCHED(<agent-return-marker>) | INLINE-SINGLE-AGENT-LOCK(<marker>) | not_required (no new prod files / tier<2) | NOT_DISPATCHED — VIOLATES_TIER2]
+    cq_auditor: [DISPATCHED(<agent-return-marker>) | INLINE-SINGLE-AGENT-LOCK(<marker>) | NOT_DISPATCHED — VIOLATES_TIER2]
+    confidence_rescorer: [DISPATCHED(<agent-return-marker>) | INLINE-SINGLE-AGENT-LOCK(<marker>) | NOT_DISPATCHED — VIOLATES_TIER2]
     # DEGRADED is allowed ONLY when self_review_flag=no AND you print a one-line
     # [DEGRADED: <agent> skipped because <concrete reason>] — a DELIBERATE,
     # logged decision, never a silent omission. On SELF-REVIEW the sub-agents are
@@ -972,6 +972,29 @@ The point: a clean `APPROVE` requires every mandatory gate to be either freshly 
 3. Append `[TIER2-SUBAGENT-SKIP:<which>]` to the Run line NOTES.
 4. Add backlog item `B-review-tier2-skip-<date>` with the verbatim rationalization quote.
 A DEGRADED line (`[DEGRADED: <agent> skipped because <reason>]`) is acceptable ONLY for non-self-review AND only as a printed, deliberate choice — never the default. On self-review there is NO degraded path.
+
+**Harness single-agent lock is NOT a skip — run the roles INLINE.** The rule above targets *drift*:
+a lead that COULD dispatch and chose not to, then rationalized it. It does not target a harness
+that forbids dispatch outright (Codex's single-agent lock — see `env-compat.md`). Treating those as
+the same thing made TIER 2+ unpassable on that harness: the skill mandated the one action the
+environment prohibits, so every run was `INCOMPLETE` no matter how well it was done. Three retros
+this week reported exactly that conflict.
+
+Where dispatch is impossible, run each role's prompt INLINE as a distinct pass — read
+`agents/<role>.md`, execute it against the diff WITHOUT consulting your own earlier scoring, and
+record it as such:
+
+```
+behavior_auditor: INLINE-SINGLE-AGENT-LOCK(<marker>)
+cq_auditor:       INLINE-SINGLE-AGENT-LOCK(<marker>)
+```
+
+`INLINE-SINGLE-AGENT-LOCK` satisfies the gate but caps the verdict at `degraded:same-model` — it is
+the same model doing both passes, so it is weaker than dispatch and must never be reported as
+`strict`. Cross-model independence still comes from the adversarial rotation, which is unaffected
+by the lock. **This carve-out applies ONLY when the harness genuinely forbids dispatch.** If
+dispatch is available and you scored inline anyway, that is the drift above and stays
+`NOT_DISPATCHED — VIOLATES_TIER2`.
 
 **Localized-deferral drift handling (NEW — closes the "RECOMMENDED → backlog" reflex that grows the backlog with things that should have been fixed in-loop):** The recurring failure is the lead reflexively routing a localized, single-file RECOMMENDED fix (add `try/catch`, add a guard, add a missing affordance) to backlog *because* it is "only RECOMMENDED" — conflating merge-severity with fix-scope. The backlog then accretes one-line fixes that the AUTO-FIX default already mandates applying. If any backlogged RECOMMENDED item carries a `defer-reason` OUTSIDE the whitelist `{NIT, structural-refactor (multi-file)}` — or carries none — then:
 1. Set `gate_status = FAIL — localized RECOMMENDED deferred to backlog (<B-id>)`.
