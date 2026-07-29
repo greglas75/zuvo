@@ -80,6 +80,7 @@ and parking its findings, = the run is `BLOCKED(unsafe)`. Full stop. Everything 
 ```
   1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> STOP]
   2. ../../shared/includes/no-pause-protocol.md   -- [READ | MISSING -> WARN] (HARD: no mid-batch pauses)
+  3. ../../shared/includes/regression-fence.md    -- [READ | MISSING -> WARN] (proves MOVED_VERBATIM instead of asserting it)
 ```
 
 These files are loaded before reading the refactor target.
@@ -667,7 +668,7 @@ git add [specific files from scope fence]
 (echo "CONTEXT: refactor [TYPE] [TARGET] scope:[N files]";
  echo "CQ-PRE: [pre-audit score]. CQ-POST: [post-audit score]. Critical: [gates]";
  echo "SCOPE-FENCE: [file list]";
- echo "MOVED_VERBATIM: [files moved without changes]. Focus on new/changed logic. Verbatim-moved code is out of scope unless the move itself creates an issue.";
+ echo "MOVED_VERBATIM: [files PROVEN byte-identical to PRE_REFACTOR_SHA — see regression-fence.md; assert the list only after the check passes]. Focus on new/changed logic. Verbatim-moved code is out of scope unless the move itself creates an issue.";
  echo "---NEW/MODIFIED FILES---";
  cat [each new or modified file in scope fence];
  echo "---ORIGINAL SOURCE (excerpt-capped)---";

@@ -918,6 +918,8 @@ Then, if a watchdog cron was armed (Claude Code), read `cron_id:` from the heart
 The files remain on disk — they serve as a record of what was done. `zuvo:execute` will detect `status: completed` on next run and start fresh rather than attempting to resume.
 
 ### Phase Final-3: CI parity (run what CI runs, BEFORE claiming complete)
+**Regression fence.** When an acceptance criterion says something must stay UNCHANGED (a flag-off path, a pre-existing suite), declare that path set before the work and verify it is byte-identical at every verification step — see `../../shared/includes/regression-fence.md`. An "unchanged" AC asserted rather than checked is the one nobody catches.
+
 
 Per-task gates and the aggregate review verify what *this plan touched*. CI verifies the **whole
 repository**, with its own command set — and that is where a plan that looks complete turns red
