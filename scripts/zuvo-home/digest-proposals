@@ -118,6 +118,13 @@ def read_ledger():
     return out
 
 
+def _similar(a, b):
+    """Loose match for the did-you-mean hint: shared significant words."""
+    wa = {w for w in re.findall(r"[A-Za-z][A-Za-z0-9-]{2,}", a.lower())}
+    wb = {w for w in re.findall(r"[A-Za-z][A-Za-z0-9-]{2,}", b.lower())}
+    return bool(wa & wb)
+
+
 def mark(argv):
     """`--mark <disposition> --file F --section S [--ref R] [--note N]` — append one row.
     A single short line written with O_APPEND is atomic on POSIX, so concurrent agents
@@ -132,6 +139,32 @@ def mark(argv):
     if not f or not sec:
         print("digest-proposals: --mark needs --file and --section", file=sys.stderr)
         return 2
+    # Validate the identity EXISTS before writing. Without this, a disposition can be recorded
+    # against a (file, section) that matches no proposal — it looks like the item was handled and
+    # silently marks nothing. Every orphan in this ledger came from typing the name of the SECTION
+    # EDITED instead of the name of the PROPOSAL being dispositioned (e.g. "Recovery When a Query
+    # Fails", the heading in codesift-setup.md, vs "Recovery / Read gate", the proposal).
+    known = {(p["file"], p["section"]) for p in parse_all()}
+    nf = norm_file(f)
+    if (nf, sec) not in known and "--force" not in argv:
+        near = sorted({p["section"] for p in parse_all()
+                       if p["file"] == nf and _similar(sec, p["section"])})[:5]
+        print(f"digest-proposals: no proposal matches {nf} :: {sec}", file=sys.stderr)
+        if near:
+            print("  did you mean one of these sections?", file=sys.stderr)
+            for n in near:
+                print(f"    - {n}", file=sys.stderr)
+        else:
+            same = sorted({p["section"] for p in parse_all() if p["file"] == nf})[:6]
+            if same:
+                print(f"  sections known for {nf}:", file=sys.stderr)
+                for n in same:
+                    print(f"    - {n}", file=sys.stderr)
+            else:
+                print(f"  no proposals at all target {nf} — check the path", file=sys.stderr)
+        print("  (use --force to record it anyway, e.g. pre-marking a not-yet-mined item)", file=sys.stderr)
+        return 2
+
     row = [time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), f, sec, disp,
            arg("--ref"), arg("--note")]
     row = [re.sub(r"[\t\r\n]", " ", c) for c in row]      # never break the TSV shape
@@ -210,6 +243,20 @@ def main():
         if p["rationales"]:
             print(f"      WHY: {p['rationales'][0][:120]}")
         print()
+    # Orphaned ledger rows: a disposition whose (file, section) matches no proposal. They mark
+    # NOTHING, so they must be visible rather than sitting silently in the log — every one so far
+    # came from recording the edited section's heading instead of the proposal's name.
+    known = {(p["file"], p["section"]) for p in props}
+    orphans = [k for k in ledger if k not in known]
+    if orphans:
+        print(f"NOTE: {len(orphans)} ledger row(s) match no proposal and therefore mark nothing:")
+        for f, s in orphans[:5]:
+            print(f"  - {f} :: {s}")
+        if len(orphans) > 5:
+            print(f"  … and {len(orphans) - 5} more")
+        print("  (--mark now rejects these; pre-existing rows are harmless no-ops, left in place"
+              " because the ledger is append-only)\n")
+
     if not show_all:
         below = len([p for p in visible if not qualifies(p)])
         if below:

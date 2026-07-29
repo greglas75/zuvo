@@ -83,6 +83,22 @@ printf 'garbage line without tabs\n' >> "$TMP/mining/proposals-ledger.tsv"
 python3 "$DP" >/dev/null 2>&1 && ok "corrupt ledger line tolerated (report still runs)" || bad "corrupt ledger broke the report"
 rm -f "$TMP/mining/proposals-ledger.tsv"
 
+
+echo "=== identity validation on --mark ==="
+# The failure this prevents: recording a disposition against the heading you EDITED instead of the
+# proposal you dispositioned. It writes cleanly, marks nothing, and nobody notices.
+python3 "$DP" --mark applied --file skills/refactor/SKILL.md --section "Totally Made Up Section" >/dev/null 2>&1 \
+  && bad "--mark accepted an identity that matches no proposal" \
+  || ok "--mark rejects an identity that matches no proposal"
+python3 "$DP" --mark applied --file skills/refactor/SKILL.md --section "Totally Made Up Section" 2>&1 \
+  | grep -qi 'sections known for\|did you mean' && ok "rejection suggests the real section names" \
+  || bad "rejection gives no hint about the correct identity"
+python3 "$DP" --mark applied --file skills/refactor/SKILL.md --section "Made Up" --force >/dev/null 2>&1 \
+  && ok "--force still allows a deliberate pre-mark" || bad "--force escape does not work"
+# an orphan already in the ledger must be REPORTED, never silent
+python3 "$DP" 2>&1 | grep -qi 'match no proposal' && ok "existing orphans are reported, not silent" \
+  || bad "orphaned ledger rows are invisible"
+
 echo "=== empty state ==="
 rm -f "$TMP/mining"/*.md
 python3 "$DP" 2>&1 | grep -qi 'no change proposals' && ok "no digests -> clean message, no crash" || bad "empty state crashed"
