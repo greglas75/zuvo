@@ -1,5 +1,12 @@
-#!/usr/bin/env python3
-"""zuvo backlog — ONE place for every backlog in the fleet (Mac + VPS + bots).
+#!/bin/sh
+# Polyglot sh/python header. `#!/usr/bin/env python3` fails on Windows: python.org installs
+# `python` and `py`, Git Bash ships neither, and the shebang dies with
+#     env: python3: No such file or directory
+# (reproduced). /bin/sh executes the next line, which re-execs this file with whatever Python 3
+# the machine actually has; Python parses that same line as a string literal and ignores it.
+# Keep it on ONE line and do not "tidy" the quoting — both interpreters depend on it exactly.
+''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
+USAGE = """zuvo backlog — ONE place for every backlog in the fleet (Mac + VPS + bots).
 
     ~/.zuvo/backlog sync              collect this host, push, pull merged fleet index
     ~/.zuvo/backlog pull              pull merged fleet index only (no local scan)
@@ -185,4 +192,5 @@ if __name__ == "__main__":
     {"sync": lambda: cmd_sync(), "pull": lambda: cmd_pull(), "ls": lambda: cmd_ls(),
      "open": lambda: cmd_open(rest), "crit": lambda: cmd_crit(),
      "grep": lambda: cmd_grep(rest), "strays": lambda: cmd_strays(),
-     }.get(cmd, lambda: sys.exit(__doc__))()
+     }.get(cmd, lambda: sys.exit(USAGE))()   # USAGE, not __doc__: the polyglot header line is
+                                          # the module docstring now (see the top of this file).

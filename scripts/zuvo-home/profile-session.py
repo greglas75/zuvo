@@ -1,4 +1,11 @@
-#!/usr/bin/env python3
+#!/bin/sh
+# Polyglot sh/python header. `#!/usr/bin/env python3` fails on Windows: python.org installs
+# `python` and `py`, Git Bash ships neither, and the shebang dies with
+#     env: python3: No such file or directory
+# (reproduced). /bin/sh executes the next line, which re-execs this file with whatever Python 3
+# the machine actually has; Python parses that same line as a string literal and ignores it.
+# Keep it on ONE line and do not "tidy" the quoting — both interpreters depend on it exactly.
+''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
 # Rozbiera transkrypt agenta (Claude Code JSONL lub Codex rollout JSONL) na kategorie czasu.
 # Uzycie: python3 profile_session.py <plik.jsonl> [window_start_iso] [window_end_iso]
 import sys, json, re, datetime, os

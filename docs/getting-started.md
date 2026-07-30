@@ -36,10 +36,16 @@ Git's "Git Bash only" install option, which deliberately does NOT add bash to th
 If you install Git with "Git from the command line" instead, both paths work.
 
 **3. Python.** `python3` is not a command on Windows — python.org installs `python` and `py`, and
-Git Bash ships neither. The scripts resolve an interpreter via `zuvo_python`
-(`scripts/lib/portable.sh`): `$ZUVO_PYTHON` → `python3` → `python` (major version checked) →
-`py -3`. If none exists it says so rather than failing obscurely. Install Python 3 from python.org
-and tick **"Add python.exe to PATH"**, or set `ZUVO_PYTHON=/c/Python312/python.exe`.
+Git Bash ships neither, so `#!/usr/bin/env python3` dies with `env: python3: No such file or
+directory`. Nothing needs configuring: shell scripts resolve an interpreter via `zuvo_python`
+(`scripts/lib/portable.sh`), and every Python helper in `~/.zuvo/` carries a sh/python polyglot
+header that re-execs itself with whatever Python 3 the machine has. Resolution order is
+`$ZUVO_PYTHON` → `python3` → `python` (major version checked, so a Python 2 or the Windows Store
+stub is rejected) → `py -3`.
+
+You still need **a** Python 3 installed. If it lives somewhere unusual, set
+`ZUVO_PYTHON=/c/Python312/python.exe`; if none is found the tools say so rather than failing
+obscurely.
 
 **4. `sed`.** Git Bash ships GNU sed, where the BSD form `sed -i ''` dies with
 `No such file or directory`. Repo scripts use the `sed_i` helper, which works on BSD, GNU and

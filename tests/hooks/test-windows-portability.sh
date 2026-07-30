@@ -116,6 +116,45 @@ for f in "$ROOT"/scripts/zuvo-home/*.sh; do
     && ok "$(basename "$f") resolves PY_BIN before use" \
     || bad "$(basename "$f") uses \$PY_BIN without resolving it"
 done
+# Shebangs: `#!/usr/bin/env python3` dies on Windows the same way (verified:
+# "env: python3: No such file or directory"), and a shell function cannot be put in a shebang.
+# Every Python helper therefore carries a sh/python polyglot header that re-execs with whatever
+# Python 3 exists. Skills invoke these directly (compute-preload 19x, verify-audit 6x), so a
+# shebang that only resolves python3 is a runtime failure, not a developer inconvenience.
+echo "  -- python helpers must not depend on a literal python3 shebang --"
+for f in "$ROOT"/scripts/zuvo-home/*; do
+  [ -f "$f" ] || continue
+  head -1 "$f" | grep -q '^#!.*python3$' || continue
+  bad "$(basename "$f") still has a bare python3 shebang"
+done
+poly=$(grep -l 'command -v python3 || command -v python' "$ROOT"/scripts/zuvo-home/* 2>/dev/null | wc -l | tr -d ' ')
+[ "${poly:-0}" -ge 10 ] && ok "$poly Python helpers carry the polyglot header" \
+                        || bad "only $poly helper(s) carry the polyglot header (expected >=10)"
+
+# The header must work in all three invocation modes AND with python3 absent.
+PB2="$T/pybin"; mkdir -p "$PB2"; ln -sf "$real" "$PB2/python"
+probe="$T/probe-poly"
+# Take everything up to and including the exec line, located by NUMBER. Matching it by pattern
+# needs four literal quotes inside nested shell quoting; a wrong count silently matches nothing
+# and copies the WHOLE helper into the probe, which then fails for unrelated reasons and reads
+# as "polyglot broken" — a false negative that cost a debugging round here.
+hdr_end=$(grep -n 'exec "$(command -v python3' "$ROOT/scripts/zuvo-home/verify-audit" | head -1 | cut -d: -f1)
+{ head -n "${hdr_end:-8}" "$ROOT/scripts/zuvo-home/verify-audit"
+  printf 'import sys\nprint("POLY_OK")\n'; } > "$probe"
+chmod +x "$probe"
+[ "$(bash "$probe" 2>&1)" = "POLY_OK" ] && ok "polyglot runs under sh" || bad "polyglot broken under sh"
+[ "$(PATH="$PB2:$STUB" "$probe" 2>&1)" = "POLY_OK" ] \
+  && ok "polyglot runs with NO python3 on PATH" \
+  || bad "polyglot fails when python3 is absent — the whole point of the header"
+# And every converted helper must still be valid Python.
+for f in "$ROOT"/scripts/zuvo-home/*; do
+  [ -f "$f" ] || continue
+  grep -q 'command -v python3 || command -v python' "$f" 2>/dev/null || continue
+  "$real" -c "import ast,sys;ast.parse(open(sys.argv[1],encoding='utf-8').read())" "$f" 2>/dev/null \
+    || bad "$(basename "$f") no longer parses as Python"
+done
+ok "all polyglot helpers still parse as Python"
+
 rm -rf "$T"
 
 echo "=== RESULT ==="; [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fail FAILED"; exit 1; }
