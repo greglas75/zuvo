@@ -1,0 +1,697 @@
+#!/usr/bin/env bash
+# e2e-preflight — Playwright readiness probe + e2e coverage-registry upsert.
+#
+# Usage:
+#   e2e-preflight probe [dir]
+#       stdout: exactly one of READY | GENERATE_ONLY | BOOTSTRAP_REQUIRED
+#       stderr: human-readable reasons.  exit 0 on any successful classification.
+#       exit 2 when [dir] does not exist / is not a directory (no stdout token).
+#
+#   e2e-preflight coverage-upsert --file <registry.md> --flow <id> --state <STATE>
+#                                 [--spec <path>] [--score <N>] [--confidence <L>]
+#       Upserts one markdown-table row keyed by flow id (atomic tmp+mv).
+#       <STATE> ∈ GENERATED|STATIC_CHECKED|VERIFIED_LOCAL|VALIDATED_LIVE|BLOCKED|FAILED
+#       Cell values must not contain CR, LF or TAB; --flow must not contain '|';
+#       --score must be digits only.  Violations exit 2, registry untouched.
+#
+# Exit codes: 0 ok · 2 usage / invalid state or cell value / malformed registry /
+#             bad probe path (file untouched).
+#
+# NEVER invokes npx and never installs anything — probing must not mutate the
+# user's machine.  The local binary is executed FROM the project dir only, and
+# `--version` is capped at ~5s so a hung install cannot block the caller.
+# Portable to macOS bash 3.2 (no associative arrays, no `mapfile`).
+
+LC_ALL=C
+export LC_ALL
+
+VALID_STATES="GENERATED STATIC_CHECKED VERIFIED_LOCAL VALIDATED_LIVE BLOCKED FAILED"
+V2_COLS="Flow ID|Name|Score|Confidence|Status|Spec File|Last Updated|State"
+
+# help_text → STDOUT (explicit `-h|--help` request, exit 0).
+# usage     → STDERR (error diagnostics, exit 2).  Same split as verify-plan-dag.
+help_text() {
+  sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
+}
+usage() {
+  help_text >&2
+}
+
+# ── probe ────────────────────────────────────────────────────────────────────
+dir_nonempty() {
+  [ -d "$1" ] || return 1
+  for _e in "$1"/* "$1"/.[!.]*; do
+    [ -e "$_e" ] && return 0
+  done
+  return 1
+}
+
+browsers_present() {
+  # $PLAYWRIGHT_BROWSERS_PATH wins; "0" means "inside node_modules".
+  if [ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ]; then
+    if [ "$PLAYWRIGHT_BROWSERS_PATH" = "0" ]; then
+      dir_nonempty "$1/node_modules/playwright-core/.local-browsers" && return 0
+      return 1
+    fi
+    # A RELATIVE value is resolved against the PROBED project, not the caller's
+    # cwd — playwright itself runs from the project dir, so resolving it here
+    # against $PWD would answer a different question than the one asked.
+    case "$PLAYWRIGHT_BROWSERS_PATH" in
+      /*) _bp_path="$PLAYWRIGHT_BROWSERS_PATH" ;;
+      *)  _bp_path="$1/$PLAYWRIGHT_BROWSERS_PATH" ;;
+    esac
+    dir_nonempty "$_bp_path" && return 0
+    return 1
+  fi
+  dir_nonempty "$HOME/Library/Caches/ms-playwright" && return 0
+  dir_nonempty "$HOME/.cache/ms-playwright" && return 0
+  return 1
+}
+
+# _kill_tree <pid> <signal> — signal a process and every descendant, deepest
+# first.  Killing only the backgrounded shell leaves the real `node` grandchild
+# running (playwright is a node script), so the hang we timed out on survives us.
+# `setsid` is Linux-only and `set -m` would emit job-control notices onto the
+# probe's stderr contract, so the tree is walked explicitly with pgrep.
+_kill_tree() {
+  # `local` is mandatory here: without it the recursive call overwrites the
+  # caller's _kt_pid and every outer frame then signals the wrong process.
+  local _kt_pid="$1" _kt_sig="$2" _kt_child
+  if command -v pgrep >/dev/null 2>&1; then
+    for _kt_child in $(pgrep -P "$_kt_pid" 2>/dev/null); do
+      _kill_tree "$_kt_child" "$_kt_sig"
+    done
+  fi
+  kill "-$_kt_sig" "$_kt_pid" 2>/dev/null || true
+}
+
+# _playwright_version_rc <dir> → 0 runnable · 1 ran and failed · 124 timed out.
+# A broken/half-installed playwright can hang forever on `--version` (postinstall
+# download, corrupt node binary, network mount).  macOS ships no timeout(1), so
+# the run is backgrounded and polled: 25 × 0.2s ≈ 5s, then the whole tree dies.
+# The child writes its status through tmp+mv inside a PRIVATE directory, so the
+# poll never reads a half-written file, never depends on how promptly the shell
+# reaps a zombie, and a late-writing survivor cannot leave a stray file behind
+# (its target directory is gone by then).
+_playwright_version_rc() {
+  _pv_dir="$1"
+  # No guessable fallback path: `mkdir -p` succeeds on an existing directory, so
+  # a predictable $TMPDIR name would let anyone pre-create it and feed us a
+  # status.  If mktemp cannot give us a private directory, fail loudly (125).
+  _pv_wd=$(mktemp -d "${TMPDIR:-/tmp}/e2e-preflight.XXXXXX" 2>/dev/null) || _pv_wd=""
+  [ -n "$_pv_wd" ] && [ -d "$_pv_wd" ] || return 125
+  _pv_sf="$_pv_wd/status"
+  (
+    cd "$_pv_dir" 2>/dev/null && ./node_modules/.bin/playwright --version >/dev/null 2>&1
+    printf '%s' "$?" > "$_pv_sf.tmp" 2>/dev/null && mv -f "$_pv_sf.tmp" "$_pv_sf" 2>/dev/null
+  ) >/dev/null 2>&1 &
+  _pv_bg=$!
+
+  _pv_i=0
+  while [ "$_pv_i" -lt 25 ]; do
+    [ -f "$_pv_sf" ] && break
+    sleep 0.2
+    _pv_i=$((_pv_i + 1))
+  done
+
+  if [ -f "$_pv_sf" ]; then
+    _pv_st=$(cat "$_pv_sf" 2>/dev/null || printf '1')
+    rm -rf "$_pv_wd" 2>/dev/null || true
+    wait "$_pv_bg" 2>/dev/null
+    case "$_pv_st" in ''|*[!0-9]*) _pv_st=1 ;; esac
+    return "$_pv_st"
+  fi
+
+  # Timed out: TERM the whole tree, give it a tick, then KILL whatever is left.
+  _kill_tree "$_pv_bg" TERM
+  sleep 0.2
+  _kill_tree "$_pv_bg" KILL
+  wait "$_pv_bg" 2>/dev/null       # reap it — an unwaited job stays a zombie
+  rm -rf "$_pv_wd" 2>/dev/null || true
+  return 124
+}
+
+# _pkg_declares_playwright <package.json> → 0 declared · 1 not declared
+# The dependency must be looked up INSIDE a dependency map: a raw substring
+# match over the file text counts "@playwright/test" mentioned in a description,
+# a script comment or a resolutions note.  python3 (already a documented
+# dependency of the other zuvo-home helpers) does the JSON read; the substring
+# check remains only as the no-python3 / unparsable-JSON fallback.
+_pkg_declares_playwright() {
+  _pk_file="$1"
+  _pk_rc=3
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(2)
+if not isinstance(d, dict):
+    sys.exit(2)
+for k in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+    v = d.get(k)
+    if isinstance(v, dict) and "@playwright/test" in v:
+        sys.exit(0)
+sys.exit(1)
+' "$_pk_file" >/dev/null 2>&1
+    _pk_rc=$?
+  fi
+  case "$_pk_rc" in
+    0) return 0 ;;
+    1) return 1 ;;
+  esac
+  # no python3, or the file is not parsable JSON → degrade to the text match
+  case "$(cat "$_pk_file" 2>/dev/null)" in
+    *'"@playwright/test"'*) return 0 ;;
+  esac
+  return 1
+}
+
+cmd_probe() {
+  dir="${1:-$PWD}"
+  # A bad path is a CALLER bug, not a project state: emitting GENERATE_ONLY here
+  # made "no playwright" and "wrong directory" indistinguishable.  Keep stdout to
+  # the three states and fail loudly instead.
+  if [ ! -e "$dir" ]; then
+    echo "e2e-preflight: probe: path does not exist: $dir" >&2
+    return 2
+  fi
+  if [ ! -d "$dir" ]; then
+    echo "e2e-preflight: probe: not a directory: $dir" >&2
+    return 2
+  fi
+
+  has_config=0
+  for c in playwright.config.ts playwright.config.js playwright.config.mjs playwright.config.cts; do
+    [ -f "$dir/$c" ] && { has_config=1; break; }
+  done
+
+  has_dep=0
+  [ -d "$dir/node_modules/@playwright/test" ] && has_dep=1
+
+  declared=0
+  if [ -f "$dir/package.json" ]; then
+    _pkg_declares_playwright "$dir/package.json" && declared=1
+  fi
+
+  runnable=0
+  bin="$dir/node_modules/.bin/playwright"
+  # TRUST ASSUMPTION (dispositioned): asking the project's own binary for its
+  # version executes project-controlled code.  That is inherent to a readiness
+  # probe — the surrounding pipeline already runs this project's tests and
+  # builds — and it is why the run is bounded, output-discarded and npx-free.
+  if [ -x "$bin" ]; then
+    _playwright_version_rc "$dir"; vrc=$?
+    if [ "$vrc" -eq 0 ]; then
+      runnable=1
+    elif [ "$vrc" -eq 125 ]; then
+      echo "e2e-preflight: probe: could not create a private temp dir for the bounded --version run" >&2
+      return 2
+    elif [ "$vrc" -eq 124 ]; then
+      echo "e2e-preflight: local playwright binary is not runnable ($bin --version did not answer within 5s — killed)" >&2
+    else
+      echo "e2e-preflight: local playwright binary is not runnable ($bin --version failed)" >&2
+    fi
+  fi
+
+  browsers=0
+  browsers_present "$dir" && browsers=1
+
+  if [ "$runnable" -eq 1 ] && [ "$browsers" -eq 1 ] && { [ "$has_config" -eq 1 ] || [ "$has_dep" -eq 1 ]; }; then
+    echo "e2e-preflight: runnable binary + browser cache + config/dep present" >&2
+    echo "READY"
+    return 0
+  fi
+  if [ "$runnable" -eq 1 ] && [ "$browsers" -eq 0 ]; then
+    echo "e2e-preflight: playwright binary runs but the browser cache is empty — specs can be generated, not executed (run: playwright install)" >&2
+    echo "GENERATE_ONLY"
+    return 0
+  fi
+  if [ "$runnable" -eq 0 ] && { [ "$has_config" -eq 1 ] || [ "$declared" -eq 1 ] || [ "$has_dep" -eq 1 ]; }; then
+    echo "e2e-preflight: playwright is configured/declared but has no runnable local binary — install deps first" >&2
+    echo "BOOTSTRAP_REQUIRED"
+    return 0
+  fi
+  echo "e2e-preflight: no playwright config, dependency or binary found in $dir" >&2
+  echo "GENERATE_ONLY"
+  return 0
+}
+
+# ── cell-value validation (runs BEFORE the lock and before any awk) ──────────
+# A CR/LF splits one row into two (or truncates the table); a TAB survives the
+# awk trim() and corrupts alignment; a '|' invents a column.  All of them reach
+# the registry as data, so they are rejected at the door — the registry file is
+# never opened, and no lock directory is created, for a rejected value.
+_has_ctrl() {
+  _hc_v="$1"
+  _hc_stripped=$(printf '%s' "$_hc_v" | tr -d '\r\n\t')
+  [ "${#_hc_stripped}" -ne "${#_hc_v}" ]
+}
+
+_reject_ctrl() {   # <flag-name> <value> → 2 if the value carries CR/LF/TAB or '|'
+  if _has_ctrl "$2"; then
+    echo "e2e-preflight: coverage-upsert: $1 must not contain a carriage return, newline or tab" >&2
+    return 2
+  fi
+  # Every cell value is treated alike: a '|' is rejected rather than quietly
+  # rewritten to '/' by clean().  Silently altering one flag's value while
+  # rejecting another's was an asymmetry callers could not predict.
+  case "$2" in
+    *'|'*)
+      echo "e2e-preflight: coverage-upsert: $1 must not contain '|' (it is the table cell separator)" >&2
+      return 2 ;;
+  esac
+  return 0
+}
+
+# _registry_path_ok <path> → 2 unless the path is absent or a plain regular file.
+# Checked twice: once as a fast pre-lock reject, and again INSIDE the lock right
+# before the create/replace decision — the pre-lock check alone is a TOCTOU gap
+# (a directory appearing in between made `[ ! -f ]` read as "registry missing",
+# and the mv then landed the temp file INSIDE that directory, reporting success).
+_registry_path_ok() {
+  if [ -L "$1" ]; then
+    echo "e2e-preflight: coverage-upsert: --file is a symlink; refusing to write through it: $1" >&2
+    return 2
+  fi
+  if [ -e "$1" ] && [ ! -f "$1" ]; then
+    echo "e2e-preflight: coverage-upsert: --file exists but is not a regular file: $1" >&2
+    return 2
+  fi
+  return 0
+}
+
+# ── coverage-upsert ──────────────────────────────────────────────────────────
+cmd_coverage_upsert() {
+  file=""; flow=""; state=""; spec=""; score=""; conf=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --file)       file="${2:-}"; shift 2 || return 2 ;;
+      --flow)       flow="${2:-}"; shift 2 || return 2 ;;
+      --state)      state="${2:-}"; shift 2 || return 2 ;;
+      --spec)       spec="${2:-}"; shift 2 || return 2 ;;
+      --score)      score="${2:-}"; shift 2 || return 2 ;;
+      --confidence) conf="${2:-}"; shift 2 || return 2 ;;
+      *) echo "e2e-preflight: coverage-upsert: unknown argument: $1" >&2; usage; return 2 ;;
+    esac
+  done
+
+  [ -n "$file" ] || { echo "e2e-preflight: coverage-upsert: --file is required" >&2; usage; return 2; }
+  [ -n "$flow" ] || { echo "e2e-preflight: coverage-upsert: --flow is required" >&2; usage; return 2; }
+  [ -n "$state" ] || { echo "e2e-preflight: coverage-upsert: --state is required" >&2; usage; return 2; }
+
+  ok=0
+  for s in $VALID_STATES; do [ "$s" = "$state" ] && ok=1; done
+  if [ "$ok" -ne 1 ]; then
+    echo "e2e-preflight: invalid --state '$state' (expected one of: $VALID_STATES)" >&2
+    return 2
+  fi
+
+  _reject_ctrl --flow       "$flow"  || return 2
+  _reject_ctrl --spec       "$spec"  || return 2
+  _reject_ctrl --score      "$score" || return 2
+  _reject_ctrl --confidence "$conf"  || return 2
+  if [ -n "$score" ]; then
+    case "$score" in
+      *[!0-9]*)
+        echo "e2e-preflight: coverage-upsert: --score must be digits only (got '$score')" >&2
+        return 2 ;;
+    esac
+  fi
+  # A flow that is only whitespace survives the -n test and then normalizes to
+  # the empty string — it would be matched and written as an empty key.
+  if [ -z "$(printf '%s' "$flow" | tr -d ' \t')" ]; then
+    echo "e2e-preflight: coverage-upsert: --flow must not be empty or whitespace-only" >&2
+    return 2
+  fi
+  # Fast pre-lock reject; re-checked under the lock (see _registry_path_ok).
+  _registry_path_ok "$file" || return 2
+
+  today="$(date -u +%Y-%m-%d)"
+  dir="$(dirname "$file")"
+  mkdir -p "$dir" 2>/dev/null || { echo "e2e-preflight: cannot create $dir" >&2; return 2; }
+
+  # The registry is a SHARED file (parallel spec agents upsert their own flow
+  # into it).  Everything from the first read through the atomic mv runs under
+  # a write-lock, released on EVERY exit path (including the exit-2 ones).
+  UPSERT_LOCK="$dir/.$(basename "$file").lock.d"
+  UPSERT_LOCK_MINE=0
+  UPSERT_DONE=0
+  trap '_upsert_on_signal' INT TERM HUP
+  if ! _lock_acquire; then
+    echo "e2e-preflight: coverage-upsert: registry busy, lock not acquired: $UPSERT_LOCK" >&2
+    trap - INT TERM HUP
+    return 2
+  fi
+  _upsert_locked "$file" "$flow" "$state" "$spec" "$score" "$conf" "$today"
+  rc=$?
+  _lock_release
+  trap - INT TERM HUP
+  return "$rc"
+}
+
+# A signal arriving AFTER the atomic mv landed must not report failure for a
+# write that is already on disk: _upsert_locked flips UPSERT_DONE=1 in the same
+# breath as the mv, and the handler reports the truth for whichever side of that
+# instant the signal fell on.  The lock is released either way.
+UPSERT_DONE=0
+_upsert_on_signal() {
+  _lock_release
+  [ "${UPSERT_DONE:-0}" -eq 1 ] && exit 0
+  exit 2
+}
+
+# ── portable mkdir-based write-lock ──────────────────────────────────────────
+# Same convention as scripts/zuvo-home/append-runlog (no flock — macOS ships
+# none): bounded retry (ZUVO_LOCK_WAIT seconds, default 5, 5 ticks/s), pid
+# liveness check + 30s stale reclaim, PID-guarded release.  bash 3.2 safe.
+# DISPOSITIONED (adversarial review), deliberately NOT changed:
+#   · pid-liveness is not NFS-safe, and the 30s stale reclaim of a pid-less lock
+#     can in principle race a just-created one — both match the append-runlog
+#     precedent and are correct for ~/.zuvo + local project registries (no
+#     shared FS).
+#   · tmp+mv does not preserve the registry's mode/owner/xattrs — it is a plain
+#     markdown file the user owns and tracks; default perms are the right answer.
+#   · devDep detection degrades to a whole-file substring match when python3 is
+#     missing or the JSON is unparsable (documented at _pkg_declares_playwright).
+#   · a read-only registry directory makes the lock retry burn the full
+#     ZUVO_LOCK_WAIT before the loud exit 2 — acceptable, it fails closed.
+UPSERT_LOCK=""
+UPSERT_LOCK_MINE=0
+_lock_acquire() {
+  _lk_waited=0
+  while :; do
+    # CLAIM = mkdir + pid stamp, and signals are IGNORED across the pair: bash
+    # runs a pending trap at the next command boundary, so a TERM arriving
+    # between the two left a lock directory nobody would ever recognise as
+    # theirs (verified: (14) failed intermittently until this became atomic).
+    # A signal delivered inside these ~2 ms is dropped, not queued — the run
+    # finishes normally and reports honestly, which is the safe trade.
+    trap '' INT TERM HUP
+    if mkdir "$UPSERT_LOCK" 2>/dev/null; then
+      UPSERT_LOCK_MINE=1
+      # A lock we cannot stamp ownership of is NOT held: if the pid write fails
+      # (full/slow FS) release and retry, so a held lock ALWAYS has a readable
+      # pid and the no-pid steal path only covers a genuine -9 between the
+      # mkdir and the echo.
+      if echo "$$" > "$UPSERT_LOCK/pid" 2>/dev/null; then
+        trap '_upsert_on_signal' INT TERM HUP
+        return 0
+      fi
+      rmdir "$UPSERT_LOCK" 2>/dev/null || true
+      UPSERT_LOCK_MINE=0
+    fi
+    trap '_upsert_on_signal' INT TERM HUP
+    if [ -d "$UPSERT_LOCK" ]; then
+      _lk_pid=$(cat "$UPSERT_LOCK/pid" 2>/dev/null || echo "")
+      _lk_mt=$(stat -f %m "$UPSERT_LOCK" 2>/dev/null || stat -c %Y "$UPSERT_LOCK" 2>/dev/null || echo "")
+      # Never steal from a provably-live holder; reclaim is best-effort and
+      # falls THROUGH to the bounded wait below (a failing rmdir must not spin).
+      if [ -n "$_lk_pid" ]; then
+        kill -0 "$_lk_pid" 2>/dev/null || { rm -f "$UPSERT_LOCK/pid" 2>/dev/null || true; rmdir "$UPSERT_LOCK" 2>/dev/null || true; }
+      elif [ -n "$_lk_mt" ] && [ "$(( $(date +%s) - _lk_mt ))" -gt 30 ]; then
+        rmdir "$UPSERT_LOCK" 2>/dev/null || true
+      fi
+    fi
+    _lk_waited=$((_lk_waited + 1))
+    [ "$_lk_waited" -ge "$(( ${ZUVO_LOCK_WAIT:-5} * 5 ))" ] && return 1
+    sleep 0.2
+  done
+}
+_lock_release() {
+  [ -n "$UPSERT_LOCK" ] || return 0
+  _lr_pid=$(cat "$UPSERT_LOCK/pid" 2>/dev/null || echo)
+  if [ "$_lr_pid" = "$$" ] || { [ -z "$_lr_pid" ] && [ "${UPSERT_LOCK_MINE:-0}" -eq 1 ]; }; then
+    rm -f "$UPSERT_LOCK/pid" 2>/dev/null || true
+    rmdir "$UPSERT_LOCK" 2>/dev/null || true
+    UPSERT_LOCK_MINE=0
+  fi
+}
+
+# v2_header_lines → the canonical V2 header + separator, derived from V2_COLS so
+# the two can never drift apart.
+v2_header_lines() {
+  _vh_h="|"; _vh_s="|"; _vh_rest="$V2_COLS"
+  while [ -n "$_vh_rest" ]; do
+    _vh_c="${_vh_rest%%|*}"
+    _vh_h="$_vh_h $_vh_c |"
+    _vh_d=""; _vh_n=0
+    while [ "$_vh_n" -lt "$(( ${#_vh_c} + 2 ))" ]; do _vh_d="$_vh_d-"; _vh_n=$((_vh_n + 1)); done
+    _vh_s="$_vh_s$_vh_d|"
+    case "$_vh_rest" in
+      *'|'*) _vh_rest="${_vh_rest#*|}" ;;
+      *)     _vh_rest="" ;;
+    esac
+  done
+  printf '%s\n%s\n' "$_vh_h" "$_vh_s"
+}
+
+# _work_file <dir> → an unpredictable, O_EXCL-created temp file in <dir>.
+# `$file.tmp.$$` was guessable and opened with truncation, so a symlink planted
+# at that name redirected the write; mktemp both randomises the name and refuses
+# to reuse an existing path.  It lives in the registry's own directory so the
+# final `mv` stays a same-filesystem atomic rename.
+_work_file() {
+  mktemp "$1/.e2e-cov.XXXXXX" 2>/dev/null
+}
+
+# _mode_of <path> → octal permission bits, portable (BSD stat, then GNU stat).
+_mode_of() {
+  stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1" 2>/dev/null || echo ""
+}
+
+# _upsert_locked <file> <flow> <state> <spec> <score> <conf> <today>
+# Read-modify-write body — callers MUST hold the lock.
+_upsert_locked() {
+  file="$1"; flow="$2"; state="$3"; spec="$4"; score="$5"; conf="$6"; today="$7"
+  wdir="$(dirname "$file")"
+
+  # AUTHORITATIVE path check: the pre-lock one can be overtaken between the two
+  # (TOCTOU).  Everything below this line runs under the lock.
+  _registry_path_ok "$file" || return 2
+
+  # mktemp defaults to 0600; keep the registry's own mode across the replace
+  # (a fresh registry gets the usual umask-derived 0644).
+  keep_mode="$(_mode_of "$file")"
+  [ -n "$keep_mode" ] || keep_mode=644
+
+  if [ ! -f "$file" ]; then
+    tmp="$(_work_file "$wdir")" || return 2
+    [ -n "$tmp" ] || return 2
+    tmp2="$(_work_file "$wdir")" || { rm -f "$tmp"; return 2; }
+    [ -n "$tmp2" ] || { rm -f "$tmp"; return 2; }
+    {
+      echo "# E2E Coverage Registry"
+      echo ""
+      v2_header_lines
+    } > "$tmp" || { rm -f "$tmp" "$tmp2"; return 2; }
+    # Reuse the same awk row builder on the freshly-created skeleton.
+    upsert_awk "$tmp" "$flow" "$state" "$spec" "$score" "$conf" "$today" > "$tmp2" || {
+      rm -f "$tmp" "$tmp2"; return 2; }
+    chmod "$keep_mode" "$tmp2" 2>/dev/null || true
+    # The mv and the record that it happened must be INDIVISIBLE to the signal
+    # handler: bash runs a pending trap at the boundary between two statements,
+    # so `mv; UPSERT_DONE=1` let a TERM land after the write with the flag still
+    # 0 — the handler then reported failure for a registry row already on disk
+    # (reproduced at ~20%).  Same remedy as the mkdir+pid lock claim above.
+    trap '' INT TERM HUP
+    if mv -f "$tmp2" "$file"; then
+      UPSERT_DONE=1
+      rm -f "$tmp"
+      trap '_upsert_on_signal' INT TERM HUP
+      return 0
+    fi
+    rm -f "$tmp" "$tmp2"
+    trap '_upsert_on_signal' INT TERM HUP
+    return 2
+  fi
+
+  tmp="$(_work_file "$wdir")" || return 2
+  [ -n "$tmp" ] || return 2
+  if ! upsert_awk "$file" "$flow" "$state" "$spec" "$score" "$conf" "$today" > "$tmp"; then
+    rm -f "$tmp"
+    return 2
+  fi
+  chmod "$keep_mode" "$tmp" 2>/dev/null || true
+  trap '' INT TERM HUP                     # mv + flag: indivisible (see above)
+  if mv -f "$tmp" "$file"; then
+    UPSERT_DONE=1
+    trap '_upsert_on_signal' INT TERM HUP
+    return 0
+  fi
+  rm -f "$tmp"
+  trap '_upsert_on_signal' INT TERM HUP
+  return 2
+}
+
+# upsert_awk <file> <flow> <state> <spec> <score> <conf> <today> → new content on stdout
+#
+# Values are handed to awk through the ENVIRONMENT, never `awk -v`: -v runs the
+# value through escape-sequence processing, so a Windows spec path such as
+# e2e\flows\login.spec.ts silently becomes formfeed + "lows..." in the registry.
+# ENVIRON[] is byte-verbatim.
+upsert_awk() {
+  ZP_FLOW="$2" ZP_STATE="$3" ZP_SPEC="$4" ZP_SCORE="$5" ZP_CONF="$6" ZP_TODAY="$7" \
+  awk '
+    # A CR is whitespace too: a registry edited on Windows (Git Bash is a
+    # supported target) ends every line with \r, and leaving it in made the flow
+    # id compare unequal to itself — one duplicate row appended per run.
+    function trim(s) { gsub(/\r/, "", s); sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+    function clean(s) { gsub(/\|/, "/", s); return trim(s) }
+    # cells(row, arr) → number of cells, arr[1..n], for BOTH markdown shapes:
+    # `| a | b |` and the leading/trailing-pipe-less `a | b`.  The old
+    # `split(...) - 2` assumed both pipes and undercounted an unclosed row by one,
+    # which shifted every downstream column index.
+    function cells(s, arr) {
+      sub(/^[[:space:]]*\|/, "", s)
+      sub(/\|[[:space:]]*$/, "", s)
+      return split(s, arr, "|")
+    }
+    # pad a legacy data row out to the migrated column count so the markdown
+    # table keeps rendering after the header gained a column.
+    function pad(s,   t, n, k, closed) {
+      n = cells(s, t)
+      if (n >= ncol) return s
+      sub(/[ \t]+$/, "", s)
+      closed = (s ~ /\|$/)
+      for (k = n; k < ncol; k++) s = closed ? (s " - |") : (s " | -")
+      return s
+    }
+    BEGIN {
+      flow  = ENVIRON["ZP_FLOW"];  state = ENVIRON["ZP_STATE"]
+      spec  = ENVIRON["ZP_SPEC"];  score = ENVIRON["ZP_SCORE"]
+      conf  = ENVIRON["ZP_CONF"];  today = ENVIRON["ZP_TODAY"]
+      # ONE normalized flow id, used for BOTH matching and writing — writing
+      # clean(flow) while matching the raw value appended a duplicate row on
+      # every run for any id the normalization touched.
+      nflow = clean(flow)
+    }
+    # Line endings are stripped for analysis and REMEMBERED per line, so a CRLF
+    # registry is written back as CRLF (and a mixed file keeps its mix) instead
+    # of being silently normalized to LF under the user.
+    {
+      l = $0
+      if (sub(/\r$/, "", l)) cr[NR] = "\r"; else cr[NR] = ""
+      line[NR] = l
+    }
+    END {
+      # ── locate header + separator ──────────────────────────────────────
+      hdr = 0
+      for (i = 1; i <= NR; i++) {
+        if (line[i] ~ /^[[:space:]]*\|/ && index(line[i], "Flow ID") > 0) { hdr = i; break }
+      }
+      if (hdr == 0) {
+        print "e2e-preflight: malformed registry — no `| Flow ID |` table header found" > "/dev/stderr"
+        exit 2
+      }
+      sep = hdr + 1
+      # The trailing pipe is optional in markdown (see cells()), so the
+      # separator is matched in both shapes: `|---|---|` and `|---|---`.
+      if (sep > NR || line[sep] !~ /^[[:space:]]*\|[-: |]+[[:space:]]*$/) {
+        print "e2e-preflight: malformed registry — table header is not followed by a separator row" > "/dev/stderr"
+        exit 2
+      }
+
+      # ── header columns ─────────────────────────────────────────────────
+      ncol = cells(line[hdr], hc)
+      if (ncol < 1) {
+        print "e2e-preflight: malformed registry — empty table header" > "/dev/stderr"
+        exit 2
+      }
+      migrate = 1
+      for (c = 1; c <= ncol; c++) {
+        name = tolower(trim(hc[c]))
+        col[name] = c
+        if (name == "state") migrate = 0
+      }
+      if (migrate) {
+        # Legacy header → APPEND a State column.  Every existing header cell is
+        # re-emitted VERBATIM (rebuilding it from the canonical column list
+        # relabelled columns whose legacy names differ, silently renaming data
+        # the user owns).  The separator likewise only grows by one ---| cell.
+        newhdr = "|"
+        for (c = 1; c <= ncol; c++) newhdr = newhdr hc[c] "|"
+        newhdr = newhdr " State |"
+        newsep = line[sep]
+        sub(/[ \t]+$/, "", newsep)
+        if (newsep !~ /\|$/) newsep = newsep "|"   # close an unclosed separator first
+        line[hdr] = newhdr
+        line[sep] = newsep "---|"
+        ncol++
+        col["state"] = ncol
+      }
+
+      # ── flow-id column index (matching MUST use it, not a hardcoded 2) ──
+      fi = col["flow id"] + 0
+      if (fi < 1) {
+        print "e2e-preflight: malformed registry — table header has no `Flow ID` column" > "/dev/stderr"
+        exit 2
+      }
+
+      # ── the table ENDS at the first non-pipe line ──────────────────────
+      # Scanning to EOF treated a second, unrelated table (or a `|`-prefixed
+      # quote in prose) as part of the registry: rows outside the coverage table
+      # were matched, padded and appended after.  Everything past `end` is
+      # re-emitted verbatim.
+      end = sep
+      for (i = sep + 1; i <= NR; i++) {
+        if (line[i] !~ /^[[:space:]]*\|/) break
+        end = i
+      }
+
+      # ── locate the row for this flow, within the table region only ─────
+      match_i = 0
+      for (i = sep + 1; i <= end; i++) {
+        n = cells(line[i], rc)
+        if (n < 1) continue
+        if (trim(rc[fi]) == nflow) {
+          if (match_i == 0) match_i = i
+          else dupe[i] = 1     # pre-existing duplicate key → collapse to one row
+        }
+      }
+
+      # ── build the row (preserving cells we were not given) ─────────────
+      if (match_i > 0) {
+        cells(line[match_i], rc)
+        for (c = 1; c <= ncol; c++) val[c] = trim(rc[c])
+      } else {
+        for (c = 1; c <= ncol; c++) val[c] = ""
+      }
+      val[fi] = nflow
+      if (col["state"])        val[col["state"]] = state
+      if (col["last updated"]) val[col["last updated"]] = today
+      if (spec  != "" && col["spec file"])  val[col["spec file"]] = clean(spec)
+      if (score != "" && col["score"])      val[col["score"]] = clean(score)
+      if (conf  != "" && col["confidence"]) val[col["confidence"]] = clean(conf)
+
+      row = "|"
+      for (c = 1; c <= ncol; c++) row = row " " (val[c] == "" ? "-" : val[c]) " |"
+      # an appended row inherits the line ending of the table it joins
+      rowcr = (match_i > 0 ? cr[match_i] : cr[end])
+
+      # ── emit ───────────────────────────────────────────────────────────
+      for (i = 1; i <= NR; i++) {
+        if (i in dupe) continue
+        if (i == match_i) print row cr[i]
+        else if (migrate && i > sep && i <= end) print pad(line[i]) cr[i]
+        else print line[i] cr[i]
+        if (match_i == 0 && i == end) print row rowcr
+      }
+      exit 0
+    }
+  ' "$1"
+}
+
+# ── dispatch ─────────────────────────────────────────────────────────────────
+sub="${1:-}"
+[ "$#" -gt 0 ] && shift
+case "$sub" in
+  probe)           cmd_probe "$@"; exit $? ;;
+  coverage-upsert) cmd_coverage_upsert "$@"; exit $? ;;
+  -h|--help)       help_text; exit 0 ;;
+  *)
+    echo "e2e-preflight: unknown subcommand: '${sub}'" >&2
+    usage
+    exit 2 ;;
+esac
