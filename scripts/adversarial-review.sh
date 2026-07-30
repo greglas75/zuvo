@@ -320,6 +320,17 @@ if [[ ${#INPUT} -gt $MAX_CHARS ]]; then
   INPUT="${INPUT:0:$MAX_CHARS}"
   # Trim to last complete line
   INPUT="${INPUT%$'\n'*}"
+  # …then back to the last complete FILE boundary. A cut mid-file hands the reviewer a partial
+  # implementation that reads as broken code — it reports the missing half as the defect, and the
+  # real findings never get budget. Only applied when at least one whole file survives the trim:
+  # for a single file larger than the cap there is no boundary to fall back to, and half of one
+  # file still beats none. `|| true` for the same pipefail reason as the manifest below.
+  _last_hdr=$(printf '%s\n' "$INPUT" | grep -n -E '^(diff --git |=== FILE: )' | tail -1 | cut -d: -f1) || _last_hdr=""
+  _hdr_count=$(printf '%s\n' "$INPUT" | { grep -c -E '^(diff --git |=== FILE: )' || true; })
+  if [[ -n "$_last_hdr" && "${_hdr_count:-0}" -gt 1 ]]; then
+    INPUT=$(printf '%s\n' "$INPUT" | sed -n "1,$((_last_hdr - 1))p")
+    echo "  Input trimmed back to a whole-file boundary (dropped the partial trailing file)." >&2
+  fi
   # Manifest of files whose content fell past the cutoff, so the reviewer never reports
   # omitted sections as "missing" and the caller can re-run --files on just the omitted set.
   # `|| true` is LOAD-BEARING: with `set -euo pipefail` (line 22) a grep that matches nothing
@@ -537,6 +548,9 @@ esac
 
 OUTPUT_INSTRUCTION="REVIEW RULES:
 - Base findings ONLY on the provided artifact. Do not infer missing systems, files, or behaviors unless directly implied.
+- When a type, schema, or DTO exists in several variants (create / update / patch / response), a
+  field present in one and absent from another is a DELIBERATE contract, not a bug. Report it only
+  if a code path in the artifact actually reads or writes that field on the variant lacking it.
 - Maximum 7 findings. Sort by severity (CRITICAL first), then confidence (high first).
 - Do not report the same root cause twice. One finding per root cause.
 - Do not force a finding for every category — report only the strongest supported issues.
@@ -562,6 +576,9 @@ If no issues found, say: NO ISSUES FOUND."
 if [[ "$OUTPUT_FORMAT" == "json" ]]; then
   OUTPUT_INSTRUCTION='REVIEW RULES:
 - Base findings ONLY on the provided artifact. Do not infer missing systems, files, or behaviors unless directly implied.
+- When a type, schema, or DTO exists in several variants (create / update / patch / response), a
+  field present in one and absent from another is a DELIBERATE contract, not a bug. Report it only
+  if a code path in the artifact actually reads or writes that field on the variant lacking it.
 - Maximum 7 findings. Sort by severity (CRITICAL first), then confidence (high first).
 - Do not report the same root cause twice. One finding per root cause.
 - Do not force a finding for every category — report only the strongest supported issues.

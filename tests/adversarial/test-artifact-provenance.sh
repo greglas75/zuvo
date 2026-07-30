@@ -100,3 +100,38 @@ out=$(ZUVO_RUN_ID="$cache_key" ZUVO_REVIEW_TEST_PROVIDERS="mock-success" \
   bash "$ADV" --files "$EMPTY" --artifact "$TD/a8.md" 2>&1) || true
 assert_contains "$out" "ignoring it and retrying all" "fail-open: a fully-stale cache is discarded"
 assert_contains "$(hdr "$TD/a8.md")" "provider_count=1" "the review still ran"
+
+# ─── Case 6: truncation must cut on a FILE boundary, not mid-file ──────────
+
+start_test "PROV.9 oversized multi-file input drops the trailing file WHOLE and names it"
+BIG="$TD/big.diff"
+python3 - "$BIG" <<'PYEOF'
+import sys
+def f(n,c): return f"diff --git a/{n} b/{n}\n" + "".join(f"+line {i} of {n}\n" for i in range(c))
+open(sys.argv[1],'w').write(f('one.ts',700)+f('two.ts',700)+f('three.ts',700))
+PYEOF
+out=$(bash "$ADV" --dry-run < "$BIG" 2>"$TD/trunc.err")
+sent=$(printf '%s' "$out" | grep -c '^diff --git' || true)
+assert_eq "2" "$sent" "only whole files are sent (the partial third is dropped)"
+assert_contains "$out" "Files NOT included: three.ts" "the dropped file is named in the prompt manifest"
+assert_contains "$(cat "$TD/trunc.err")" "whole-file boundary" "the trim is reported on stderr"
+# The regression: before v1.6.47 the cut landed inside three.ts, so its header stayed in the kept
+# portion, the omitted manifest came out EMPTY, and the reviewer silently judged half a file.
+if printf '%s' "$out" | grep -q 'line 699 of two.ts'; then
+  pass "the last kept file is complete"
+else
+  fail "PROV.9" "the last kept file was itself truncated"
+fi
+
+start_test "PROV.10 a single oversized file still gets reviewed (no boundary to fall back to)"
+python3 - "$TD/one.diff" <<'PYEOF'
+import sys
+open(sys.argv[1],'w').write("diff --git a/solo.ts b/solo.ts\n" + "".join(f"+line {i}\n" for i in range(3000)))
+PYEOF
+out=$(bash "$ADV" --dry-run < "$TD/one.diff" 2>/dev/null)
+assert_contains "$out" "diff --git a/solo.ts" "half of one file beats none"
+assert_contains "$out" "TRUNCATED" "and it is labelled as truncated"
+
+start_test "PROV.11 prompt tells the reviewer that create/update variants differ by design"
+out=$(printf 'x' | bash "$ADV" --dry-run 2>/dev/null)
+assert_contains "$out" "DELIBERATE contract" "type-variant rule present in the code prompt"
