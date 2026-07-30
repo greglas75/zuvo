@@ -4,7 +4,14 @@
 # multi-session run finalizes ONE coherent retro (stub OR full, never both).
 
 S="$ROOT/shared/includes/session-state.md"
-BASE=323   # session-state.md line count before this task (verified 2026-05-18)
+# This is a RATCHET, not a fixed budget: it exists so nobody grows a widely-loaded include by
+# accident. Re-baselining is allowed — deliberately, in the commit that adds the content, with a
+# line saying what earned the space. It went red and STAYED red for ~7 weeks (349L on 2026-06-02,
+# 371L on 2026-07-22) because two features legitimately grew the file and neither re-set the base;
+# a permanently-red assertion teaches the suite to be ignored, which is worse than no assertion.
+# 2026-07-30 re-baseline: 371 = 347 (task base) + the zuvo/ output-location contract (1a9e94f)
+# + the plan→execute active-plan dialect contract (1428d2c, a format git hooks parse).
+BASE=371   # verified 2026-07-30; see ratchet note above before raising
 # Plan estimate +20; raised to +25 after adversarial iter2 MANDATED two
 # correctness wordings the estimate didn't foresee: (a) retro-session-id is
 # the RUN identity inherited unchanged on resume — NOT the per-process
@@ -12,8 +19,10 @@ BASE=323   # session-state.md line count before this task (verified 2026-05-18)
 # "distinct runs keep distinct ids, no cross-run dedup / no data loss".
 # Squeezing these out re-introduces the exact CRITICALs review caught. 24
 # lines for the run-identity contract in a widely-loaded include is lean.
-# Same user-approved disposition class as Task 2 (B-2). HARD gate at +25.
-BUDGET=25
+# Same user-approved disposition class as Task 2 (B-2). Budget tightened to +10 at the 2026-07-30
+# re-baseline: the original +25 was headroom for one planned task that has long since landed, so
+# carrying it forward would silently license another 25 lines of unreviewed drift.
+BUDGET=10
 
 start_test "T6.1 Retro State block defines the carry fields"
 if grep -qiE '^#+ .*Retro State' "$S"; then pass "Retro State section present"

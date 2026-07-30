@@ -48,6 +48,14 @@ DRY_RUN=false
 DOCTOR=false         # --doctor: live auth probe of every detected provider, then exit
 EXCLUDE_PROVIDER=""  # --exclude: skip this provider (used by --rotate to avoid repeat)
 EXCLUDE_LAST=""      # --exclude-last: cross-call rotation handoff (D4)
+APPEND_ARTIFACT=false  # --append-artifact: append this pass to an existing artifact (rotations)
+KNOWN_FINDINGS=""      # --known-finding FP (repeatable): fingerprints already dispositioned
+# Run-scoped provider-failure cache. A rotation is N separate invocations of this script, so a
+# provider whose auth/subscription is dead costs the full per-provider timeout on EVERY pass
+# unless the failure is remembered between them. Keyed by ZUVO_RUN_ID when the caller sets one,
+# else by repo+day so an unrelated run never inherits a stale exclusion.
+_ar_cache_key="${ZUVO_RUN_ID:-$(git rev-parse --show-toplevel 2>/dev/null | tr '/' '_')-$(date -u +%Y%m%d)}"
+PROVIDER_FAIL_CACHE="${TMPDIR:-/tmp}/zuvo-adv-failed-providers.${_ar_cache_key//[^A-Za-z0-9._-]/_}"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -75,6 +83,12 @@ while [[ $# -gt 0 ]]; do
     --diff)      DIFF_REF="$2"; INPUT_MODE="diff"; shift 2 ;;
     --files)     FILES="$2"; INPUT_MODE="files"; shift 2 ;;
     --artifact)  ARTIFACT_PATH="$2"; shift 2 ;;
+    --append-artifact) APPEND_ARTIFACT=true; shift ;;
+    --known-finding)
+      if [[ $# -lt 2 || -z "${2:-}" || "$2" == -* ]]; then
+        echo "ERROR: --known-finding requires a fingerprint value, got '${2:-<missing>}'." >&2; exit 2
+      fi
+      KNOWN_FINDINGS="${KNOWN_FINDINGS:+$KNOWN_FINDINGS$'\n'}$2"; shift 2 ;;
     --dry-run)   DRY_RUN=true; shift ;;
     --help|-h)
       cat <<'HELP'
@@ -125,6 +139,10 @@ Input:
   --diff REF       Review diff from REF to HEAD
   --files "f1\nf2"  Review specific files (newline-separated, supports spaces in paths)
   --artifact PATH  Save review output + metadata to PATH for downstream gates
+  --append-artifact  Append this pass to an existing --artifact instead of overwriting it
+                   (use for sequential --rotate passes so pass 1 is not lost)
+  --known-finding FP  Fingerprint already dispositioned in a previous pass (repeatable).
+                   Repeats are reported separately and do not consume the finding budget.
   (stdin)          Pipe a diff
 
 Environment variables:
@@ -554,19 +572,44 @@ OUTPUT FORMAT — respond with ONLY valid JSON, no markdown, no explanation:
 {
   "findings": [
     {
+      "id": "<file-basename>:<line>:<3-5 lowercase-hyphenated keywords from the issue>",
       "severity": "CRITICAL|WARNING|INFO",
       "confidence": "high|medium|low",
       "file": "path:line or path or unknown",
       "issue": "one-line description",
       "attack_vector": "how this breaks in production",
-      "fix": "brief, minimal, actionable fix"
+      "fix": "brief, minimal, actionable fix",
+      "disposition": "new"
     }
+  ],
+  "repeated_known_findings": [
+    { "id": "<fingerprint supplied to you>", "disposition": "confirmed|contradicted", "evidence": "one sentence" }
   ]
 }
+
+The "id" is a fingerprint, so derive it ONLY from what is stable across reviews: the file, the
+line, and the defect itself — never from your phrasing of it. Two reviewers finding the same bug
+must produce the same id. Set "disposition" to "new" for everything under "findings";
+"repeated_known_findings" is empty unless fingerprints were supplied to you.
 
 Confidence: high = deterministic bug provable from artifact, medium = plausible but context-dependent, low = speculative.
 
 If no issues found, respond: {"findings": []}'
+fi
+
+# Known-finding block: fingerprints a previous pass already dispositioned. Reported SEPARATELY
+# so a repeat neither consumes the 7-finding budget nor reads as new evidence — the failure mode
+# is a rotation where every pass rediscovers the same top finding and pass 4 surfaces nothing new.
+KNOWN_BLOCK=""
+if [[ -n "$KNOWN_FINDINGS" ]]; then
+  KNOWN_BLOCK="
+ALREADY-DISPOSITIONED FINDINGS (from previous passes on this same work):
+$(printf '%s' "$KNOWN_FINDINGS" | sed 's/^/  - /')
+
+If your analysis lands on one of these, do NOT list it among your findings. Instead list it under
+a separate heading 'REPEATED KNOWN FINDINGS' with one line each: the fingerprint plus, in a
+sentence, whether the evidence you see CONFIRMS or CONTRADICTS the earlier disposition. Findings
+under that heading do not count toward your finding limit. Spend the budget on NEW ground."
 fi
 
 # ─── Review prompt ──────────────────────────────────────────────
@@ -585,6 +628,7 @@ $OUTPUT_INSTRUCTION
 
 Do NOT flag style preferences or alternative approaches as CRITICAL or WARNING. Focus on structural defects, contradictions, and gaps.
 Focus on what a DIFFERENT reviewer with DIFFERENT blind spots would find.
+${KNOWN_BLOCK}
 
 --- ARTIFACT BEGIN ---
 $INPUT
@@ -604,6 +648,7 @@ $OUTPUT_INSTRUCTION
 
 Do NOT repeat obvious issues that a standard code review would catch (formatting, naming, simple type errors).
 Focus on what a DIFFERENT reviewer with DIFFERENT blind spots would find.
+${KNOWN_BLOCK}
 
 --- CODE TO REVIEW ---
 $INPUT"
@@ -771,6 +816,24 @@ if [[ -n "$EXCLUDE_LAST" && -n "$PROVIDERS" ]]; then
     echo "  Excluding from rotation: $EXCLUDE_LAST (--exclude-last)" >&2
   else
     echo "  WARN: --exclude-last value not in current provider list: $EXCLUDE_LAST (proceeding with full set)" >&2
+  fi
+fi
+
+# Run-scoped auth-failure cache: drop providers already proven unauthenticated in THIS run.
+# A rotation is N invocations; without this, a dead subscription burns the full per-provider
+# timeout on every one of them. Never filters down to zero — if every candidate is cached as
+# failed, the cache is stale (subscription restored, token refreshed), so ignore it and retry:
+# a slow review beats a review that silently stops running.
+CACHED_FAILED=""
+if [[ -s "$PROVIDER_FAIL_CACHE" && -n "$PROVIDERS" ]]; then
+  _kept=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -vxF -f "$PROVIDER_FAIL_CACHE" | tr '\n' ' ' | sed 's/ *$//') || _kept=""
+  if [[ -n "$_kept" ]]; then
+    CACHED_FAILED=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -xF -f "$PROVIDER_FAIL_CACHE" | tr '\n' ' ' | sed 's/ *$//') || CACHED_FAILED=""
+    [[ -n "$CACHED_FAILED" ]] && echo "  Skipping (auth failed earlier this run): $CACHED_FAILED" >&2
+    PROVIDERS="$_kept"
+  else
+    echo "  WARN: every provider is in the run's auth-failure cache — ignoring it and retrying all." >&2
+    : > "$PROVIDER_FAIL_CACHE"
   fi
 fi
 
@@ -1450,8 +1513,23 @@ write_artifact() {
   local final_output="$2"
 
   [[ -z "$artifact_path" ]] && return 0
+  local tmp_out="${artifact_path}.zuvo-tmp.$$"
 
   mkdir -p "$(dirname "$artifact_path")"
+
+  # Why only one provider ran — the single most misread field downstream. "1 provider" can mean
+  # a deliberate --single, everyone-else-excluded, or three providers dying quietly; a gate that
+  # cannot tell them apart treats a collapsed review as a passing one.
+  local single_note=""
+  if [[ "$PROVIDER_COUNT" -le 1 ]]; then
+    if [[ "$MULTI_MODE" == "single" || "$MULTI_MODE" == "rotate" ]]; then
+      single_note="by design (--${MULTI_MODE})"
+    elif [[ "$ATTEMPTED_COUNT" -le 1 ]]; then
+      single_note="only $ATTEMPTED_COUNT provider available after exclusions${EXCLUDE_PROVIDER:+ (--exclude: $EXCLUDE_PROVIDER)}${CACHED_FAILED:+ (auth-cached: $CACHED_FAILED)}"
+    else
+      single_note="$((ATTEMPTED_COUNT - PROVIDER_COUNT)) of $ATTEMPTED_COUNT providers produced no review — see provider_outcomes"
+    fi
+  fi
 
   {
     printf 'artifact_kind=adversarial-review\n'
@@ -1461,6 +1539,9 @@ write_artifact() {
     printf 'output_format=%s\n' "$OUTPUT_FORMAT"
     printf 'providers_used=%s\n' "$PROVIDERS_USED"
     printf 'provider_count=%s\n' "$PROVIDER_COUNT"
+    printf 'providers_attempted=%s\n' "${ATTEMPTED_COUNT:-0}"
+    printf 'provider_outcomes=%s\n' "${PROVIDER_OUTCOMES:-none}"
+    [[ -n "$single_note" ]] && printf 'single_provider_note=%s\n' "$single_note"
     printf 'input_chars=%s\n' "${#INPUT}"
     printf 'input_chars_original=%s\n' "${ORIG_CHARS:-${#INPUT}}"
     printf 'input_truncated=%s\n' "${INPUT_TRUNCATED:-false}"
@@ -1468,9 +1549,23 @@ write_artifact() {
     printf 'critical=%s\n' "$CRITICAL_COUNT"
     printf 'warning=%s\n' "$WARNING_COUNT"
     printf 'info=%s\n' "$INFO_COUNT"
+    # These counts are keyword-line tallies over provider output, NOT parsed finding records.
+    # Labelled so a downstream reader never mistakes "3 lines mention CRITICAL" for "3 findings".
+    printf 'count_method=keyword-lines\n'
+    printf 'known_findings_supplied=%s\n' "$(printf '%s' "$KNOWN_FINDINGS" | grep -c . || true)"
     printf -- '---\n'
     printf '%s\n' "$final_output"
-  } > "$artifact_path"
+  } > "$tmp_out"
+
+  if [[ "$APPEND_ARTIFACT" == true && -s "$artifact_path" ]]; then
+    # Sequential rotation passes: keep every pass. Written to a temp file first and moved into
+    # place, so an interrupted append can never leave a half-written artifact a gate would read.
+    { cat "$artifact_path"
+      printf '\n=== APPENDED PASS %s ===\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      cat "$tmp_out"
+    } > "$tmp_out.merged" && mv -f "$tmp_out.merged" "$tmp_out"
+  fi
+  mv -f "$tmp_out" "$artifact_path"
 }
 
 # ─── Dry run ───────────────────────────────────────────────────
@@ -1504,6 +1599,10 @@ echo "  Review: $REVIEW_MODE | Output: $OUTPUT_FORMAT | Dispatch: $MULTI_MODE" >
 ALL_RESULTS=""
 PROVIDERS_USED=""
 PROVIDER_COUNT=0
+# Per-provider outcome ledger: "claude:ok,gemini:timeout,codex:auth". Downstream gates read the
+# artifact, not stderr — without this a one-provider artifact is indistinguishable from a
+# deliberate single-provider run and a run where three providers silently died.
+PROVIDER_OUTCOMES=""
 FINAL_STATUS="ok"
 TIMEOUT_COUNT=0
 JSON_TMPDIR=$(mktemp -d)
@@ -1576,6 +1675,9 @@ if [[ "$MULTI_MODE" == "multi" ]]; then
     # review, and counting it inflates "(N total)" into a false coverage claim.
     if is_auth_failure_output "$result_file"; then
       echo "  WARN: ${local_name} not authenticated (auth error, no review) — excluded from tally" >&2
+      # Remember it so the next rotation pass in this run does not pay the timeout again.
+      grep -qxF "$local_name" "$PROVIDER_FAIL_CACHE" 2>/dev/null || printf '%s\n' "$local_name" >> "$PROVIDER_FAIL_CACHE"
+      PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:auth"
       : > "$result_file"
       provider_status=1
     fi
@@ -1594,12 +1696,18 @@ if [[ "$MULTI_MODE" == "multi" ]]; then
 $RESULT
 "
       echo "  Done: $local_name" >&2
+      PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:ok"
     else
       if [[ "$provider_status" -eq 124 ]]; then
         TIMEOUT_COUNT=$((TIMEOUT_COUNT + 1))
         echo "  WARN: $local_name timed out." >&2
+        PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:timeout"
       else
         echo "  WARN: $local_name failed or returned empty." >&2
+        # Only record if the auth branch above did not already classify it.
+        case ",$PROVIDER_OUTCOMES," in *",${local_name}:"*) ;; *)
+          PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${local_name}:empty" ;;
+        esac
       fi
     fi
   done
@@ -1623,6 +1731,8 @@ else
     # review into a single "Not logged in" line.
     if [[ $status -eq 0 ]] && is_auth_failure_output "$RESULT"; then
       echo "  WARN: $p not authenticated (auth error, no review) — trying next provider." >&2
+      grep -qxF "$p" "$PROVIDER_FAIL_CACHE" 2>/dev/null || printf '%s\n' "$p" >> "$PROVIDER_FAIL_CACHE"
+      PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:auth"
       RESULT=""
       status=1
     fi
@@ -1630,6 +1740,7 @@ else
     if [[ $status -eq 0 && -n "$RESULT" ]]; then
       PROVIDER_COUNT=$((PROVIDER_COUNT + 1))
       PROVIDERS_USED="$p"
+      PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:ok"
       [[ -d "$JSON_TMPDIR" ]] && echo "$RESULT" > "$JSON_TMPDIR/result_${p}.txt"
       ALL_RESULTS="$RESULT"
       break
