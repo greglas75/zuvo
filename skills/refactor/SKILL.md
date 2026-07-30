@@ -478,6 +478,20 @@ Phase 2: test-quality-rules.md -- READ (WRITE_NEW, IMPROVE_TESTS, or CHARACTERIZ
    - The bar is "fails loudly if behavior changes," not full Q1-Q25. A smoke test that mounts the unit and asserts `does not throw` + a stable output snapshot is the minimum; prefer a value assertion where the unit returns something checkable.
    - A parameterized table over the units (one case per unit) is the canonical shape for SPLIT_FILE / GOD_CLASS.
 2. Run the new tests against the **pre-refactor** code and confirm they pass. This is the lock — they must be green on the OLD code, or they are not characterizing current behavior. If a unit genuinely cannot be exercised (truly dead), record it in the contract as `dead:<unit>` with evidence and exclude it from the move; do not silently skip it.
+   - **When the unit does not exist yet (SPLIT / EXTRACT that CREATES it), the lock as written is
+     unsatisfiable** — the test cannot import a symbol that has no pre-refactor definition, and
+     that ambiguity has stalled real runs. It is not a licence to skip the lock. Satisfy it the
+     equivalent way: write the characterization test against the **extracted** unit, and assert
+     outputs that match the inline pre-refactor behaviour verbatim — which is checkable, because
+     the extracted body must be byte-identical to the moved lines (prove that with
+     `../../shared/includes/regression-fence.md`, do not assert it). Record
+     `prove.characterization = "extracted-identical:<pre-refactor sha7>:<N>u:<test path>"` so the
+     variant is visible in telemetry rather than hidden behind the same string as a true
+     green-on-old lock.
+   - This variant is ONLY for units the refactor creates by moving existing lines. A unit whose
+     body is rewritten, merged, or newly authored is not byte-identical to anything, so it has no
+     pre-refactor behaviour to characterize — that is `WRITE_NEW` plus a behaviour decision, and
+     claiming `extracted-identical` for it is a false lock.
 3. Apply Q1-Q25 self-eval on the new tests. Only after `coverage_gap` reaches 0 (every moved unit now exercised, or proven dead) does execution proceed.
 4. Record `test_audit_after` with the closed gap, **and record the characterization LOCK in the CONTRACT `prove` block NOW — before any production edit**: `prove.characterization = "green:<pre-refactor sha7>:<N>u:<test path>"` — a STRING (like the other prove fields) naming the pre-refactor SHA the pin-down tests were green against, the unit count, and the test path, with `coverage_gap: 0`. The Prove step is not only blind_audit + adversarial recorded at commit time — the characterization lock is the FIRST proof and belongs in the CONTRACT the moment tests are green on the old code (between green tests and the move), not backfilled at commit. **This is a gated artifact, not advice: the `refactor-safety-gate` hook and the completion self-check both BLOCK on a missing/`not_run` `prove.characterization`** (added after the 2026-07-09 skill-eval run proved prose alone gets skipped).
 
@@ -670,18 +684,54 @@ git add [specific files from scope fence]
  echo "SCOPE-FENCE: [file list]";
  echo "MOVED_VERBATIM: [files PROVEN byte-identical to PRE_REFACTOR_SHA — see regression-fence.md; assert the list only after the check passes]. Focus on new/changed logic. Verbatim-moved code is out of scope unless the move itself creates an issue.";
  echo "---NEW/MODIFIED FILES---";
- cat [each new or modified file in scope fence];
+ cat [each new or modified PRODUCTION file in scope fence];   # NOT the test files — see below
+ echo "---TESTS: [N] characterization tests green on <pre-refactor sha7>, [M] existing suites pass---";
+ echo "---FACADE + COLLABORATORS (SPLIT/EXTRACT only)---";
+ cat [the composing facade]; sed -n '1,80p' [each direct collaborator];
  echo "---ORIGINAL SOURCE (excerpt-capped)---";
  head -c 40000 [target file before refactoring];
  echo "---DIFF---";
  git diff --staged) | adversarial-review --rotate --mode [code|security]
 ```
 
+**Measure the payload BEFORE dispatch, do not discover the cap by being truncated.** Pipe the
+assembled input through `wc -c` first. The wrapper caps at 30K (code/test) and truncates silently
+enough that a pass which never saw the highest-risk file is indistinguishable from a clean one:
+
+```bash
+SIZE=$(…assembly… | wc -c)
+[ "$SIZE" -gt 28000 ] && echo "SPLIT REQUIRED: ${SIZE}c"
+```
+
+Over the cap, split **by extracted responsibility** — one pass per extracted module, each carrying
+only the ORIGINAL segment that module came from — rather than letting the tail fall off. Aggregate
+the findings across passes; a file that received no pass is not reviewed, and saying so is
+mandatory (`../../shared/includes/cross-provider-review.md`).
+
+**Tests are summarized, not pasted.** `cat`-ing a large characterization suite displaces the
+production files the review exists to look at — the promised context gets evicted by the very
+tests that prove it works. Send the one-line green summary above instead. Same for lockfiles and
+generated output.
+
+**SPLIT/EXTRACT must carry the facade.** When behaviour is assembled across files, a module-only
+prompt makes reviewers report that fields, guards or gates "disappeared" — they were reattached
+one layer up, in the composing facade the prompt omitted. Include the facade in full and the first
+~80 lines (signatures) of each direct collaborator. This is the single largest source of
+false-positive findings in split refactors.
+
 The provider receives: (1) every new/modified in-fence file in full — placed FIRST so provider truncation can never drop the files under review, (2) the original file (excerpt-capped) — can check nothing was lost in extraction, (3) diff — sees exact changes. This prevents false positives on moved-verbatim code while catching real issues like dropped branches, changed signatures, or broken re-exports.
 
 **DELETE_DEAD reviews:** prepend the verified production caller count and the zero-consumer evidence to the CONTEXT line, plus `UNTOUCHED_NOT_REPLACEMENT: <symbol> (<reason>)` for any name-similar unit the plan deliberately leaves alone. Reviewers flag only behavior removed from a LIVE path. Proposals to port or implement never-wired behavior are feature gaps (backlog), and documented-but-unmounted behavior is documentation drift (backlog) — neither is a refactor regression nor an in-fence blocker unless the staged deletion changes current runtime behavior.
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+
+**Preflight the providers ONCE, before the first dispatch.** Run discovery a single time
+(`adversarial-review --doctor`, or the first pass's provider list). If NO provider is reachable,
+record `adversarial: blocked:no-provider` and go straight to the independent local CQ/security
+pass — do **not** retry the dispatch per pass. Repeated zero-output attempts against an unreachable
+provider are the most common way a refactor burns its budget without producing a single finding,
+and the outcome is identical after the first attempt. `blocked:no-provider` is an honest degraded
+state that must appear in the report; it is NOT `clean`.
 
 **Pass count by diff size:**
 
@@ -691,7 +741,20 @@ If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplac
 | 50-200 lines | 3 | Standard refactor — most issues found in 2-3 passes |
 | > 200 lines or GOD_CLASS | 4 | Large split — fixes on fixes need full depth |
 
-**Convergence at the pass cap (the last pass is never the finish line for a CRITICAL).** The cap bounds *review* effort, not *remediation*. If the LAST permitted pass surfaces a CRITICAL, apply the fix and run ONE verification-only pass beyond the cap. That pass may ONLY confirm the CRITICAL is gone and (via the ledger) that the fix introduced nothing new — it may **not** open a new remediation loop for fresh WARNINGs. If a CRITICAL is still unresolved after that verification pass, **or the verification pass surfaces a NEW CRITICAL** (introduced by the fix or otherwise), that CRITICAL counts as unresolved and the run is **BLOCKED (unsafe), not "shipped at cap"** — do not spin another fix loop past the cap. An unfixed CRITICAL blocks completion no matter how many passes were spent.
+**Remediation review MUST pass `--rotate`.** The wrapper's default `MULTI_MODE` is empty, which
+means *auto: multi if 2+ providers are available* — so omitting `--rotate` on a fix-verification
+pass silently fans out to EVERY configured provider in parallel, producing duplicate findings for
+one small diff and burning the budget the cap exists to protect. Bounded verification is one
+provider per pass, by construction.
+
+**Convergence at the pass cap (the last pass is never the finish line for a CRITICAL).** The cap bounds *review* effort, not *remediation*. If the LAST permitted pass surfaces a CRITICAL, apply the fix and run ONE verification-only pass beyond the cap. That pass may ONLY confirm the CRITICAL is gone and (via the ledger) that the fix introduced nothing new — it may **not** open a new remediation loop for fresh WARNINGs. **Non-CRITICAL findings on the last pass do NOT earn an extra pass.** When the final permitted pass
+returns only WARNING/INFO: apply every in-fence mechanical fix, run the focused tests, record each
+disposition in the ledger, and stop. Spending another full rotated pass to re-confirm a set of
+one-line fixes is the loop this cap exists to end — the ledger already records what was done, and
+the tests already prove it. The extra pass is reserved for the CRITICAL case below, where the
+question is whether a *safety* claim still holds.
+
+If a CRITICAL is still unresolved after that verification pass, **or the verification pass surfaces a NEW CRITICAL** (introduced by the fix or otherwise), that CRITICAL counts as unresolved and the run is **BLOCKED (unsafe), not "shipped at cap"** — do not spin another fix loop past the cap. An unfixed CRITICAL blocks completion no matter how many passes were spent.
 
 **Per-pass fix policy (disposition by fix-SCOPE, never by line count):**
 

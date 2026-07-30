@@ -30,6 +30,9 @@ import os, sys, re, glob, json, time
 
 ZUVO = os.environ.get("ZUVO_DIR", os.path.expanduser("~/.zuvo"))
 MINING = os.path.join(ZUVO, "mining")
+# Where the SOURCE files live, for resolving bare filenames to canonical paths. Overridable so the
+# helper works from any checkout; falls back to the usual dev location.
+REPO_ROOT = os.environ.get("ZUVO_REPO", os.path.expanduser("~/DEV/zuvo-plugin"))
 MIN_RECUR = 2
 for i, a in enumerate(sys.argv):
     if a == "--min-recur" and i + 1 < len(sys.argv):
@@ -55,6 +58,24 @@ def norm_file(f):
     # bare "refactor/SKILL.md" / "execute/SKILL.md" -> skills/…
     if re.match(r'^[a-z][a-z0-9-]*/SKILL\.md$', f):
         f = 'skills/' + f
+    # "refactor SKILL.md" (space instead of slash) — retros write it both ways
+    m = re.match(r'^([a-z][a-z0-9-]*)\s+SKILL\.md$', f)
+    if m:
+        f = f'skills/{m.group(1)}/SKILL.md'
+    # "shared/includes (CHARACTERIZE_GAP section)" — a parenthetical hint, not part of the path
+    f = re.sub(r'\s*\([^)]*\)\s*$', '', f).strip()
+    # A BARE filename ("review-artifact.md", "testing.md") is the same file as its canonical
+    # location. Resolve it against the known source dirs so the two spellings aggregate into ONE
+    # identity instead of splitting the recurrence count across two rows — which is how a ×6 item
+    # can look like two ×3 items and miss the apply bar.
+    if "/" not in f and f.endswith(".md"):
+        for d in ("shared/includes", "rules", "docs"):
+            if os.path.isfile(os.path.join(REPO_ROOT, d, f)):
+                f = f"{d}/{f}"
+                break
+    elif "/" not in f and f.endswith(".sh"):
+        if os.path.isfile(os.path.join(REPO_ROOT, "scripts", f)):
+            f = f"scripts/{f}"
     return f
 CONTENT = re.compile(r'CONTENT:\s*\n```[a-z]*\n(.*?)\n```', re.S)
 RATIONALE = re.compile(r'RATIONALE:\s*([^\n]+)')
