@@ -44,6 +44,30 @@ for i, a in enumerate(sys.argv):
 # A proposal block: "### P<n> …" then FILE:/SECTION:, a ```fenced``` CONTENT, and RATIONALE:.
 BLOCK = re.compile(r'###\s*P(\d+)\b(.*?)(?=\n###\s*P\d|\Z)', re.S)
 FILESEC = re.compile(r'FILE:\s*([^\|\n]+?)\s*\|\s*SECTION:\s*([^\n]+)')
+# The SOURCE RETRO a proposal came from. Counting must key on this, NOT on how many digest files
+# mention the proposal — mining windows OVERLAP (07-29 covered 07-22..29, 07-30 covered
+# 07-23..30), so one retro lands in several digests and every ×1 in the overlap silently inflates
+# to ×2 and crosses the apply bar. That is not recurrence, it is the same report counted twice:
+# on 2026-07-30, 9 genuinely new retros turned into 111 "recurring" proposals this way.
+#
+# Identity is the block's HEADER LINE, normalized — not a parsed date. Headers come in at least
+# three dialects that a date regex splits apart while they name the same run:
+#   "[mac] ## 2026-07-28T17:14:36Z refactor rs_fe six dead frontend modules"
+#   "[mac] ## 2026-07-24 review exclude-invoicing exclude-invoicing-performance"
+#   "[mac] ## [2026-07-24] [DEGRADED-CONTEXT] execute tgm-survey-platform CBC 05b …"
+# Two blocks with the same header are the same retro; two retros never share one (the timestamp
+# or the title differs). So the whole line is both the most faithful key and dialect-proof.
+HOSTTAG = re.compile(r'\[[^\]]{0,24}\]')          # [mac], [DEGRADED-CONTEXT], … — not the title
+
+
+def src_retro(body, dg, offset):
+    """Identity of the retro a proposal block came from (dialect-independent)."""
+    head = body.split("\n", 1)[0]
+    head = HOSTTAG.sub(" ", head).replace("#", " ")
+    head = " ".join(head.split()).lower()
+    # An empty/degenerate header must NOT collapse unrelated blocks together — fall back to a
+    # per-block key so a parse miss can only ever over-count, never silently under-count.
+    return head if len(head) >= 12 else f"{os.path.basename(dg)}#{offset}"
 
 
 def norm_file(f):
@@ -97,13 +121,21 @@ def parse_all():
             c = CONTENT.search(body); r = RATIONALE.search(body)
             key = (f, s)
             agg = props.setdefault(key, {"file": f, "section": s, "count": 0,
-                                         "best_prio": 9, "contents": [], "rationales": []})
+                                         "best_prio": 9, "contents": [], "rationales": [],
+                                         "_srcs": set()})
+            # Distinct source retros, not digest occurrences.
+            src = src_retro(body, dg, m.start())
+            if src in agg["_srcs"]:
+                continue
+            agg["_srcs"].add(src)
             agg["count"] += 1
             agg["best_prio"] = min(agg["best_prio"], prio)
             if c and c.group(1).strip() not in agg["contents"]:
                 agg["contents"].append(c.group(1).strip())
             if r:
                 agg["rationales"].append(r.group(1).strip())
+    for agg in props.values():
+        agg.pop("_srcs", None)                  # internal; must not reach --json consumers
     return list(props.values())
 
 

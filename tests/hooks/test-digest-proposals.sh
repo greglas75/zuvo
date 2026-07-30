@@ -99,6 +99,64 @@ python3 "$DP" --mark applied --file skills/refactor/SKILL.md --section "Made Up"
 python3 "$DP" 2>&1 | grep -qi 'match no proposal' && ok "existing orphans are reported, not silent" \
   || bad "orphaned ledger rows are invisible"
 
+echo "=== overlapping mining windows must NOT inflate the count ==="
+# The 2026-07-30 failure: retro-mine windows overlap (07-29 covered 07-22..29, 07-30 covered
+# 07-23..30), so ONE retro lands in several digests. Counting digest occurrences turned 9 genuinely
+# new retros into 111 "recurring" proposals — every ×1 in the overlap crossed the apply bar. The
+# count must key on the source retro (its header line), not on how many digests mention it.
+rm -f "$TMP/mining"/*.md "$TMP/mining/proposals-ledger.tsv"
+for d in 2026-08-01 2026-08-02; do
+  cat > "$TMP/mining/digest-$d.md" <<'D'
+## Change proposals
+### P3 [mac] ## 2026-07-31T10:00:00Z refactor demo one and the same run
+FILE: skills/refactor/SKILL.md | SECTION: Overlap Section
+CONTENT:
+```
+identical proposal, mined twice from ONE retro
+```
+RATIONALE: window overlap.
+D
+done
+out=$(python3 "$DP" --all 2>&1)
+echo "$out" | grep -q '×1  skills/refactor/SKILL.md  ::  Overlap Section'   && ok "one retro in two overlapping digests counts ×1"   || bad "overlap inflated the count: $(echo "$out" | grep -o '×[0-9]*  skills/refactor/SKILL.md  ::  Overlap Section')"
+echo "$out" | grep -q '\[APPLY\].*Overlap Section'   && bad "phantom recurrence crossed the apply bar"   || ok "phantom recurrence stays below the apply bar"
+
+echo "=== …but two DIFFERENT retros still count as a real recurrence ==="
+cat > "$TMP/mining/digest-2026-08-03.md" <<'D'
+## Change proposals
+### P3 [mac] ## 2026-08-02T11:00:00Z refactor demo a genuinely different run
+FILE: skills/refactor/SKILL.md | SECTION: Overlap Section
+CONTENT:
+```
+same section, different retro
+```
+RATIONALE: real recurrence.
+D
+out=$(python3 "$DP" --all 2>&1)
+echo "$out" | grep -q '×2  skills/refactor/SKILL.md  ::  Overlap Section'   && ok "two distinct retros count ×2 (dedup does not under-count)"   || bad "real recurrence was collapsed: $(echo "$out" | grep -o '×[0-9]*  skills/refactor/SKILL.md  ::  Overlap Section')"
+
+echo "=== header dialects: same retro written three ways ==="
+# Date-only, full-ISO and bracketed-tag headers are the SAME run reported by different miners;
+# a date regex splits them apart, the normalized header line does not.
+rm -f "$TMP/mining"/*.md
+i=0
+for h in '## 2026-08-05T09:00:00Z review demo shared title'          '## 2026-08-05T09:00:00Z review demo shared title'          '[DEGRADED-CONTEXT] ## 2026-08-05T09:00:00Z review demo shared title'; do
+  i=$((i+1))
+  { printf '## Change proposals
+### P3 [mac] %s
+' "$h"
+    printf 'FILE: skills/review/SKILL.md | SECTION: Dialect Section
+CONTENT:
+```
+x
+```
+RATIONALE: y.
+'
+  } > "$TMP/mining/digest-2026-09-0$i.md"
+done
+out=$(python3 "$DP" --all 2>&1)
+echo "$out" | grep -q '×1  skills/review/SKILL.md  ::  Dialect Section'   && ok "host-tag dialect does not split one retro into several"   || bad "dialects split one retro: $(echo "$out" | grep -o '×[0-9]*  skills/review/SKILL.md  ::  Dialect Section')"
+
 echo "=== empty state ==="
 rm -f "$TMP/mining"/*.md
 python3 "$DP" 2>&1 | grep -qi 'no change proposals' && ok "no digests -> clean message, no crash" || bad "empty state crashed"

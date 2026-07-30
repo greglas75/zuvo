@@ -199,9 +199,36 @@ output that nothing consumed, and nothing in the system said so.
 | `ideas` step "ran" but yielded nothing | `ideas.md` near-empty; no way to tell skipped-vs-empty | `log-ideas` receipt |
 | Retro drift (`key=value` rows) | learning present but uncounted by the miner | `sanitize-retros` in the rotate job |
 | Mining engine unversioned | `retro-mine.py` existed only in `~/.zuvo` — one disk failure from losing the loop | versioned in `scripts/zuvo-home/` (v1.6.38) |
+| Overlapping mining windows inflated recurrence | clearing the apply bar to 0, then one mining run put **111** items straight back on it — while only **9** new retros existed | count distinct SOURCE RETROS, not digest occurrences (v1.6.47) |
 
 **The lesson, stated once:** when you add a stage, name its consumer in the same change. If you
 cannot name one, you are building the next dead end.
+
+### The recurrence-inflation trap (worth understanding, not just knowing)
+
+`retro-mine.py` mines a **7-day window** and never asks what previous digests already covered, so
+consecutive weekly runs overlap almost entirely (`07-29` covered `07-22..29`, `07-30` covered
+`07-23..30`). `digest-proposals` used to count how many times a `(file, section)` appeared across
+digest files — so a single retro mined twice looked like **two independent reports of the same
+problem**, which is precisely what the `≥2 recurrences` apply bar is supposed to mean. On
+2026-07-30 that turned 9 new retros into 111 "recurring" proposals: **every one of them a ghost of
+work already dispositioned.**
+
+The fix is in the consumer, not the miner: identity is the **normalized block header line** (the
+retro's own `## <date> <skill> <project> <title>` line), so the same retro mined into five digests
+counts once, and two different retros proposing the same edit still count twice. Header lines come
+in at least three dialects (full-ISO, date-only, bracketed `[DEGRADED-CONTEXT]` tags) that a date
+regex splits apart while they name the same run — the whole normalized line is dialect-proof.
+Regression-tested in `tests/hooks/test-digest-proposals.sh` in both directions: overlap must not
+inflate, and a genuine recurrence must still register.
+
+**Why the miner was left alone:** deduplicating at mining time would need the miner to know what
+every prior digest consumed, and a re-mine after a bug fix must still be able to re-derive
+everything. Counting correctly at read time gets both.
+
+**How you notice this class of bug:** the apply-bar count and the new-retro count should move
+together. If the bar jumps by 100 and the retro log gained 9 entries, the counter is measuring
+mentions, not problems — check before working the list.
 
 ---
 
