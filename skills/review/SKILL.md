@@ -424,7 +424,19 @@ When the REVIEWED scope path resolves to a repo or worktree that is NOT the CWD,
 
 1. **Resolve `TARGET_REPO`.** `git -C <scope-path> rev-parse --show-toplevel`. If it differs from CWD's toplevel, set `TARGET_REPO=<that path>`.
 2. **Pass `repo=`/`path=` explicitly** to `review_diff`, `changed_symbols`, `scan_secrets`, `find_references` (and `index_folder`) so they target `TARGET_REPO`, not CWD.
-3. **Fresh worktree staleness.** Run `index_status(path=TARGET_REPO)`. If the worktree's branch commits are not yet indexed, run `index_folder(path=TARGET_REPO)` BEFORE any symbol/pattern tool — otherwise semantic tools silently scan the stale main checkout. If indexing the worktree is not possible, fall back to git-diff-scoped `grep` over `git diff {REVIEWED_FROM}..{REVIEWED_THROUGH}`.
+3. **Fresh worktree staleness — do NOT index the worktree to fix it.** Run
+   `index_status(path=TARGET_REPO)`. If the branch's commits are not indexed, the semantic tools
+   would silently answer from the stale main checkout, so they are not usable for this scope. The
+   resolution is **not** `index_folder` on the worktree: many repos (this one included) forbid
+   indexing worktrees, and doing so pollutes the main repo's index with duplicate symbols that
+   then mis-answer later queries. Use the authoritative local source instead — git-diff-scoped
+   `grep` over `git diff {REVIEWED_FROM}..{REVIEWED_THROUGH}`, plus bounded `Read` on the changed
+   files — and record `codesift: degraded (worktree not indexed)` for the affected checks.
+   This is the same rule as `../../shared/includes/codesift-setup.md` → "Worktree path rejected by
+   `index_file`"; that include is the single source of truth, and it also covers the sibling-
+   worktree case (a fresh index that is simply WIDER than your scope). Neither branch permits
+   redirecting the check at the main checkout: that reports on code you are not reviewing, which
+   is the stale-analysis trap this section exists to prevent.
 4. **Keep `TARGET_REPO` consistent** with the Phase 3 destructive-persistence precondition (the repo `REVIEWED_FROM..REVIEWED_THROUGH` is resolved against MUST be the same `TARGET_REPO` analysis and tagging both reference).
 
 ### Stack Detection (TIER 2+)
@@ -567,7 +579,22 @@ Each agent receives: diff, tech stack, change intent, PRECOMPUTED_DATA, PROJECT_
 
 ### 1.4 CQ Self-Evaluation (TIER 1+)
 
-For each changed production file, run CQ1-CQ40. Print all 40 gates. Format: `CQ EVAL: file.ts (NL) | CQ1=1 CQ2=0 ... | Score: X/Y -> PASS/FAIL | Critical gates: CQ4=0(no orgId:87)`. CQ critical gate failures (CQ3, CQ4, CQ5, CQ6, CQ8, CQ14) always produce MUST-FIX.
+For each changed production file, run CQ1-CQ40. Format: `CQ EVAL: file.ts (NL) | CQ1=1 CQ2=0 ... | Score: X/Y -> PASS/FAIL | Critical gates: CQ4=0(no orgId:87)`. CQ critical gate failures (CQ3, CQ4, CQ5, CQ6, CQ8, CQ14) always produce MUST-FIX.
+
+**Where the 40 gates go (TIER 3, many files).** Every gate must be EVALUATED for every file — that
+is not negotiable and no summary form relaxes it. What changes is where the evidence is printed:
+40 gates × 15 files buries the findings the report exists to deliver. So:
+
+- **The full per-file gate line always goes into the review artifact** (`memory/reviews/…`), for
+  every file. That is the auditable record, and it must be complete.
+- **In the chat report**, print the full line for any file with a `0`, an `N/A`, or a critical-gate
+  failure; for a fully clean file print one line: `CQ EVAL: file.ts (NL) | 40/40 clean`.
+- **Never aggregate across files** (`cq=38/40 overall`). Per-file scores are what caught Q7=0 and
+  Q11=0 hiding under an aggregate; the compact form above is per-file, just shorter.
+
+A clean-file summary line is only honest if the gates really ran. If some were not evaluated, that
+file is not `clean` — print the full line with the unevaluated gates marked, per
+`../../shared/includes/gate-registry.md`.
 
 ### 1.5 Q1-Q25 Evaluation (if test files in diff)
 

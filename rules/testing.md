@@ -544,6 +544,27 @@ Check that:
 
 If coverage runner is not available, skip this step (informational, not blocking).
 
+## Full-suite verification: keep pre-existing failures visible, not verbose
+
+A full-suite run at the end of a change almost always includes failures that were already red. Both
+usual reactions are wrong: pasting every failure floods the transcript until the real result is
+unreadable, and filtering them out silently means a genuine regression in an "unrelated" file
+disappears.
+
+1. **Snapshot the baseline BEFORE touching code.** Run the suite once at session start and record
+   the failing test IDs. Without this the pre-existing/regression split is a guess, and after the
+   fact everything looks pre-existing.
+2. **Report unrelated failures as a COUNT plus the file list**, not their output:
+   `pre-existing: 7 failing (auth.spec.ts, billing.spec.ts, …) — matches baseline`.
+   One line, fully attributable, nothing hidden.
+3. **Print full output only for failures NOT in the baseline** — those are yours until proven
+   otherwise, however unrelated the file looks.
+4. **A baseline failure that changes shape is a new failure.** Same file, different assertion or
+   error means your change reached it. Compare test IDs, not counts: 7-failing before and 7-failing
+   after can be seven different tests.
+5. **Never delete or skip a baseline failure to get a green run.** Record it; making the suite quiet
+   is not making it pass.
+
 ## Completion Checklist (do not skip)
 
 Before declaring a task complete, verify every item:

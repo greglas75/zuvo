@@ -409,6 +409,15 @@ fi
 # <<< zuvo:plan-dag-check
 ```
 
+**Also check the plan's TAIL actually reaches the reviewer.** `adversarial-review` caps its input
+(50K chars in `--mode plan`) and trims to a whole-section boundary — so on a long plan the LAST
+sections silently fall outside the reviewed text, and those are exactly Acceptance Criteria,
+Verification and Rollback. A reviewer that never saw them reports no findings about them, which
+reads identically to "they are fine". Compare `wc -c` on the plan against the cap; if it exceeds,
+either split the plan (preferred — see the 3-document split) or run a SECOND pass with
+`--files` pointing at the tail sections alone, and record in `## Review Trail` which sections each
+pass covered. Never let "no findings" stand for a section that was never sent.
+
 Fail-loud on exit 1 (fix the dependency/cycle/forward-ref in the plan, then re-run). Warn-only if the script is missing. Re-run after ANY task renumber. In the same pass (no extra dispatch), scan the plan text once for: unresolved placeholders (`YYYY-MM-DD`/`<topic>`/TBD file paths), tasks over the rule-2 file boundary with no stated justification, and AC#s cited in tasks but absent from the Coverage Matrix — each is a one-edit fix here versus a full reviewer revision.
 
 Dispatch the plan reviewer agent to verify the plan against the spec.
@@ -438,9 +447,14 @@ Read `agents/plan-reviewer.md` for full instructions.
 After the plan-reviewer converges, run cross-model validation on the plan file. This catches task bloat, hidden ordering violations, and AC orphans.
 
 ```bash
-adversarial-review --mode plan --files "docs/specs/YYYY-MM-DD-<topic>-plan.md" --json \
+timeout 480 adversarial-review --mode plan --files "docs/specs/YYYY-MM-DD-<topic>-plan.md" --json \
   > zuvo/context/adversarial-plan.json 2> zuvo/context/adversarial-plan.err
 ```
+
+**The explicit `timeout 480` (or `run_in_background`) is required, not defensive.** A 5-provider
+`--mode plan` pass measured **178s on a 7-task plan** and grows with plan size, while the default
+Bash tool timeout is 120s — so the pass is killed mid-run, the JSON capture is empty or truncated,
+and the round is spent for nothing. This is a measured failure, not a hypothetical.
 
 Read findings from `zuvo/context/adversarial-plan.json`, never from live stdout (truncated stdout cost 4 recovery calls in one field run). Belt: each pass also appends per-provider SUMMARY lines to `~/.zuvo/adversarial.log` — if the capture file is lost, the last SUMMARY row gives status/providers.
 
@@ -451,6 +465,12 @@ Wait for complete output. Then apply fix policy:
 - **WARNING** that changes task size, ordering, dependencies, verification, or coverage → fix in plan, increment `plan_revision`, re-run plan-reviewer
 - **WARNING** that does NOT change execution semantics or coverage → append as note to the affected task and record it in `## Review Trail`
 - **INFO** → ignore
+
+**What "re-run plan-reviewer" does and does NOT mean.** A fix applied for an adversarial finding
+re-runs the **plan-reviewer** (cheap, same-model) — it does **not** automatically earn another
+`adversarial-review` pass. A second cross-model pass happens only when the revision materially
+changed what gets built (tasks added/removed/reordered, ACs or coverage changed); a wording or
+note-level edit does not. Deciding this per-run is what produced the repeated-pass loops.
 
 **Stop rule:** the 3-iteration cap governs the initial plan-reviewer loop only. An adversarial-driven revision gets exactly ONE re-review of the current revision. Once the current revision holds a reviewer APPROVED verdict and a cross-model pass with zero CRITICAL findings, disposition remaining WARNINGs in `## Review Trail` and STOP — never spin another revision solely for optional reordering, task splitting, or duplicated wording.
 
