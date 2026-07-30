@@ -1550,8 +1550,13 @@ dispatch_provider() {
   # produces, and those die EARLY — reporting them as "every provider exceeded ${PROVIDER_TIMEOUT}s"
   # sends the reader after a slowness problem that isn't there. So only remap when the budget was
   # actually consumed; an early SIGKILL stays a plain failure and keeps its own exit code.
+  #
+  # The comparison carries 2s of slack because `date +%s` is whole-second and truncating: the
+  # hard kill actually lands at PROVIDER_TIMEOUT + grace, so a genuine timeout-kill can measure
+  # one second SHORT of the budget purely from rounding. Erring the other way would throw away
+  # the timeout signal this remap exists to preserve.
   if [[ "$status" -eq 137 ]]; then
-    if [[ "$d_elapsed" -ge "$PROVIDER_TIMEOUT" ]]; then
+    if [[ "$d_elapsed" -ge $(( PROVIDER_TIMEOUT > 2 ? PROVIDER_TIMEOUT - 2 : PROVIDER_TIMEOUT )) ]]; then
       status=124
     else
       echo "  WARN: $provider was SIGKILLed after ${d_elapsed}s, well inside its ${PROVIDER_TIMEOUT}s budget — not a timeout (OOM kill / external kill?)" >&2
@@ -1797,7 +1802,9 @@ LOG_HEADER=$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\
 LOG_SCHEMA_MARKER="#schema	$LOG_HEADER"
 
 init_log_header() {
-  if [[ ! -f "$LOG_FILE" ]]; then
+  # `-s`, not `-f`: a truncated (0-byte) log still exists, and treating it as "already has a
+  # header" leaves every subsequent row undescribed.
+  if [[ ! -s "$LOG_FILE" ]]; then
     printf '%s\n' "$LOG_HEADER" > "$LOG_FILE" 2>/dev/null || true
     return 0
   fi
@@ -1812,9 +1819,13 @@ init_log_header() {
   local sentinel="${LOG_FILE}.schema16"
   [[ -f "$sentinel" ]] && return 0
   if ! grep -qxF "$LOG_SCHEMA_MARKER" "$LOG_FILE" 2>/dev/null; then
-    printf '%s\n' "$LOG_SCHEMA_MARKER" >> "$LOG_FILE" 2>/dev/null || true
+    printf '%s\n' "$LOG_SCHEMA_MARKER" >> "$LOG_FILE" 2>/dev/null || return 0
   fi
-  : > "$sentinel" 2>/dev/null || true
+  # Drop the sentinel only once the marker is CONFIRMED on disk. Writing it unconditionally
+  # would make a failed append permanent: the next run sees the sentinel, skips the check, and
+  # the log never gets its schema line.
+  grep -qxF "$LOG_SCHEMA_MARKER" "$LOG_FILE" 2>/dev/null && { : > "$sentinel" 2>/dev/null || true; }
+  return 0
 }
 
 # adversarial_log_row <model> <duration> <exit> <output_chars> <crit> <warn> <info> \
@@ -1850,8 +1861,12 @@ preserve_failure_evidence() {
   # 0700, both levels. This copies THIRD-PARTY CLI stderr verbatim and keeps it for a week; an
   # auth failure can print a token or a config dump, and until now that content died with the
   # tmpdir. Persisting it at the ambient umask would be a new, durable exposure.
+  # `mkdir -m` sets the mode only on directories it CREATES — an evidence root left over from a
+  # pre-0700 run would keep its looser mode forever, so tighten explicitly as well.
   mkdir -m 700 -p "$evidence_root" 2>/dev/null || return 0
+  chmod 700 "$evidence_root" 2>/dev/null || true
   mkdir -m 700 -p "$dest" 2>/dev/null || return 0
+  chmod 700 "$dest" 2>/dev/null || true
   # `|| true` on both: only one of the two patterns matches in most runs, and an unmatched
   # glob reaches cp as a literal path. Under `set -e` that failure aborted the whole failure
   # path — the run died before it could report WHY it failed.
