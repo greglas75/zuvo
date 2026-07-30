@@ -42,6 +42,8 @@ require_text "test-coverage-gate.py" "skill invokes the executable validator"
 require_text "reviewer-preflight.sh" "skill preflights reviewer infrastructure in Phase 0"
 require_text "Production Surface Inventory" "skill has an inventory step"
 require_text "INVENTORY FROZEN" "inventory is frozen with printed metrics"
+require_text "zuvo:test-audit" "final quality audit dispatches the real test-audit skill"
+require_text "Tier A" "final audit targets tier A with fix-in-run"
 
 if [ -f "$ROOT/scripts/test-coverage-gate.py" ] && [ -x "$ROOT/scripts/test-coverage-gate.py" ]; then
   pass "scripts/test-coverage-gate.py exists and is executable"

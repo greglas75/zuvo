@@ -137,6 +137,7 @@ Load ONLY the includes matching tier AND stack. Print READ/SKIP per file. If an 
   D1. ../../shared/includes/run-logger.md           -- [READ at completion]
   D2. ../../shared/includes/retrospective.md        -- [READ at completion]
   D3. ../../shared/includes/knowledge-curate.md     -- [READ at completion]
+  D4. ../../shared/includes/test-quality-gate.md    -- [READ at completion] (final zuvo:test-audit gate → tier A)
 ```
 
 ---
@@ -362,6 +363,36 @@ Per-file summary print: `[status] [file] — methods [N]/[N], rows [N]/[N], Q [N
 2. **Knowledge curation** per `knowledge-curate.md`
 2b. **Content-keyed review artifact (success only):** if the run modified any **production** file (incl. Step 4.5 fixes), write `memory/reviews/<base7>..<head7>-<slug>.md` with `range:`/`files:` headers per `review-artifact.md` — this run's blind audit + adversarial already reviewed that content, so pipeline gates accept it without a redundant `zuvo:review`. Skip when only test/docs files changed.
 
+### Final Test Quality Audit (REQUIRED — separate audit and fix steps, before the retro)
+
+The per-file gates prove coverage; this closing gate proves QUALITY across
+everything the run touched, graded by the real auditor. Read
+`../../shared/includes/test-quality-gate.md` now and run its sequence — the
+literal `Skill(zuvo:test-audit ...)` dispatch with an on-disk `zuvo/audits/`
+report as proof; an inline Q-rescoring pass reported as this gate is a
+substituted gate = INVALID.
+
+**Step A1 — Audit** per the include, with:
+- `TEST_SCOPE` = every test file this run created, extended, or rewrote, PLUS
+  every pre-existing test file covering this run's production files (Step 1
+  duplicates, sibling suites — the "already weak before we got here" tests).
+- `FIX_COMMIT_PREFIX` = `test(write-tests):`
+
+**Step A2 — Fix to Tier A** per the include (target: Tier A per file, ≥82% +
+all critical gates; strengthening only, test files only, max 2 fix→re-audit
+iterations, below-A after the cap = loud WARN + backlog, never silence). Two
+write-tests-specific additions on top of the include:
+
+- Tier D (AP13/AP16) on a PRE-EXISTING file is a rewrite, not a patch: route
+  it through this skill's own Step 1 REWRITE path.
+- Fixing tests invalidates prior evidence: for every file A2 modified, re-run
+  the Step 2.5 validator (evidence lines may have shifted) and one blind-audit
+  pass on the new pair per the freshness guard. Cosmetic-only fixes still
+  count — the hash decides, not intent.
+
+Print the include's `[GATE: test-quality]` line and record
+`test_quality=<PASS|WARN|N/A>:<worst tier>:<report path>` in the run telemetry.
+
 ### Retrospective (REQUIRED)
 
 Follow `retrospective.md`: gate check → structured questions → TSV emit → markdown append. Write the retro BEFORE the terminal report.
@@ -381,6 +412,7 @@ COMPLETION GATE CHECK
 [ ] Step 4: adversarial ran (clean|Nfindings|skipped|blocked|not_run)
 [ ] Step 4.5: every confirmed in-scope production bug FIXED in-run; escalations loud
 [ ] Step 5: coverage.md rows fully populated (Status+Gate+Blind+Adversarial)
+[ ] Step A1/A2: [GATE: test-quality] emitted from a REAL zuvo:test-audit dispatch (on-disk zuvo/audits report) over touched + pre-existing in-scope test files; sub-A files fixed (or WARN + backlog); validator + blind audit re-run for A2-modified files
 [ ] Step 2b: review artifact written IF production files changed
 [ ] Final test run: all tests pass (N/N)
 ```
@@ -395,6 +427,8 @@ Surface:       methods [N]/[N] FULL, owned rows [N]/[N], error paths [N]/[N]
 Coverage gate: [N] pass, [M] degraded, [K] fail
 Target cov:    st [%] / br [%] / fn [%] / ln [%] (scoped to production files)
 Mutation:      [N]/[N] probes killed
+Test audit:    [GATE: test-quality] [PASS|WARN|N/A] tier=[worst] files=[N] ([M] fixed up in-run) report=[zuvo/audits/...]
+Below tier A:  [list with blocking findings, or "none"]
 Q gates:       [N]/19 avg (critical gates: all pass)
 Blind audit:   [N] clean, [M] failed/rewrite, [K] skipped
 Validation:    [full-suite|scoped:touched-tests]
@@ -418,7 +452,7 @@ Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <proje
 
 Run one final full-suite validation, or explicitly scope the failure count to touched test files before printing `new in scope: 0`.
 
-**Do NOT print WRITE-TESTS COMPLETE if any file is missing Status/Coverage Gate/Blind Audit/Adversarial, has uncovered owned rows, a failing or unrun validator, Q7=0 or Q11=0, a surviving mutation probe, or status `BLOCKED_INCOMPLETE`/`BLOCKED_INFRA`.** (A run that is DRAFT/BLOCKED_INFRA from preflight reports its terminal block instead — with Q7=1 and Q11=1 still required of every written file, so the tests are sound even though review could not run.)
+**Do NOT print WRITE-TESTS COMPLETE if any file is missing Status/Coverage Gate/Blind Audit/Adversarial, has uncovered owned rows, a failing or unrun validator, Q7=0 or Q11=0, a surviving mutation probe, an undispatched final test audit (Step A1), or status `BLOCKED_INCOMPLETE`/`BLOCKED_INFRA`.** A file legitimately below Tier A after 2 fix cycles does not block the report — it blocks only its own silent inclusion in the tier-A count. (A run that is DRAFT/BLOCKED_INFRA from preflight reports its terminal block instead — with Q7=1 and Q11=1 still required of every written file, so the tests are sound even though review could not run.)
 
 ---
 
