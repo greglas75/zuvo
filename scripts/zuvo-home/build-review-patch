@@ -1,0 +1,490 @@
+#!/usr/bin/env bash
+# build-review-patch — emit a scoped review patch on STDOUT without touching the git index.
+#
+# Usage:
+#   build-review-patch [--base <ref>] [--] [PATH...]
+#
+# What it emits (stdout is the patch and NOTHING else; all diagnostics go to stderr):
+#   no --base   ONE `git diff HEAD` — a single coherent worktree-vs-HEAD snapshot that
+#               spans staged AND unstaged work. (The older two-part
+#               `git diff` + `git diff --cached` emitted OVERLAPPING, mutually
+#               incompatible hunks for a partially-staged file: the same region
+#               appeared twice, from two different pre-images, so the patch could
+#               not be applied and a reviewer saw a phantom conflict.)
+#               On an UNBORN HEAD (fresh repo, no commits) the empty tree is used
+#               as the pre-image, so a first-commit-in-progress is still reviewable.
+#   --base REF  a single `git diff REF` spanning committed-since-REF + staged + unstaged
+#   plus        untracked, non-ignored files rendered via `git diff --no-index /dev/null <f>`
+#
+# Untracked files are INCLUDED BY DEFAULT (a review that cannot see brand-new files
+# is a review with a hole in it). Set ZUVO_REVIEW_PATCH_NO_UNTRACKED=1 to exclude them.
+# With PATH args, only untracked files under those paths are included.
+# An untracked file that yields no diff text (binary, or empty) is NOT dropped —
+# it gets a marker block naming the path, so the reviewer sees it exists and a
+# repo whose only change is one binary/empty file never masquerades as "no changes".
+#
+# Every pathspec-taking git call uses --literal-pathspecs: a filename is a NAME,
+# never a glob or pathspec magic. Without it, scoping to a file literally named
+# `star*.txt` would silently widen the review to every `star…​.txt` in the tree.
+#
+# The index is NEVER written: no `git add`, no `git stash`, no `--intent-to-add`.
+# That is the whole point — a review helper that stages the caller's work would
+# silently change what their next commit captures.
+#
+# Exit codes — a caller MUST be able to tell "clean" from "you asked for the wrong thing":
+#   0 — a non-empty patch was emitted on stdout; review it.
+#   2 — the REQUEST was wrong: usage/flag error, not a git repo, bad --base, a path
+#       outside the repo root, an unreadable file, or a PATH argument that matches
+#       nothing git knows about (a typo, a renamed/moved file, or — the common one —
+#       a whole list accidentally passed as ONE space-joined argument).
+#   3 — every supplied path RESOLVED and nothing in that scope changed. Genuinely
+#       clean; stdout is empty. With no PATH arguments: a clean working tree.
+# git's own exit 1 ("differences found") is never leaked.
+#
+# Exit 3 must NEVER mean "your paths matched nothing". That conflation turns a
+# caller typo into a silently skipped review — the exact failure this tool exists
+# to prevent — because "nothing to review" and "I could not find what you asked
+# for" are indistinguishable to the caller.
+#
+# Portable to macOS bash 3.2 (no mapfile, no `declare -A`) and Linux.
+
+set -u
+LC_ALL=C
+export LC_ALL
+
+PROG="build-review-patch"
+
+err() { printf '%s: %s\n' "$PROG" "$*" >&2; }
+
+usage_text() {
+  cat <<'USAGE'
+Usage: build-review-patch [--base <ref>] [--] [PATH...]
+
+  --base <ref>   diff against <ref> (committed-since-ref + staged + unstaged in one patch)
+  PATH...        restrict the patch to these paths (relative to the current directory)
+  --             end of flags; everything after it is a PATH (use for names starting with -)
+
+Env:
+  ZUVO_REVIEW_PATCH_NO_UNTRACKED=1   exclude untracked files (included by default).
+                                     ONLY the exact value "1" disables them —
+                                     "true", "yes", "on" and "0" all leave
+                                     untracked files INCLUDED. Fail-open on
+                                     purpose: a typo must not silently shrink
+                                     the reviewed surface.
+
+Exit:
+  0   a patch was emitted on stdout
+  2   the request was wrong: usage/flag error, not a git repo, bad --base, a path
+      outside the repo root, an unreadable file, or a PATH that matches nothing
+      git knows about — most often a whole list passed as ONE space-joined
+      argument ("a.ts b.ts") instead of separate arguments
+  3   every supplied path resolved and nothing in that scope changed (genuinely
+      clean; stdout empty). Never means "your paths matched nothing".
+USAGE
+}
+
+# Explicit `-h`/`--help` prints to stdout (the caller asked for it); every other
+# usage print is a diagnostic and goes to stderr with the rest of them.
+usage() { usage_text >&2; }
+
+# ── argv ─────────────────────────────────────────────────────────────────────
+BASE=""
+have_base=0
+nraw=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --base)
+      shift
+      if [ "$#" -eq 0 ]; then err "--base requires a <ref> argument"; usage; exit 2; fi
+      # Same emptiness check as the `--base=` form. Without it, `--base ""` from
+      # an unset "$BASE_VAR" reaches git as `^{commit}`, which quietly resolves
+      # to HEAD — the caller asks for a range review and silently gets a
+      # working-tree review instead.
+      if [ -z "$1" ]; then err "--base requires a non-empty <ref>"; usage; exit 2; fi
+      BASE="$1"; have_base=1; shift ;;
+    --base=*)
+      BASE="${1#--base=}"; have_base=1
+      if [ -z "$BASE" ]; then err "--base requires a non-empty <ref>"; usage; exit 2; fi
+      shift ;;
+    -h|--help) usage_text; exit 0 ;;
+    --)
+      shift
+      # After `--` even dash-leading names are paths — but an empty one is still
+      # a caller bug, never a silent widen-to-repo-root.
+      while [ "$#" -gt 0 ]; do
+        [ -n "$1" ] || { err "empty PATH argument (an unset or empty variable expanded to \"\")"; usage; exit 2; }
+        raw[$nraw]="$1"; nraw=$((nraw + 1)); shift
+      done ;;
+    # Any unrecognised dash-leading token is a flag typo, NOT a path. Falling
+    # through to the PATH branch would make `-x` scope the patch to a file that
+    # does not exist (or, worse, silently to nothing). `--` is the escape hatch.
+    -*) err "unknown flag: $1"; usage; exit 2 ;;
+    # An empty PATH ("" from an unset "$SCOPE_VAR") canonicalises to the repo
+    # root and would WIDEN the review scope — fail loud instead.
+    *)
+      [ -n "$1" ] || { err "empty PATH argument (an unset or empty variable expanded to \"\")"; usage; exit 2; }
+      raw[$nraw]="$1"; nraw=$((nraw + 1)); shift ;;
+  esac
+done
+
+# ── repo root (physical, so it compares against `pwd -P` on symlinked TMPDIRs) ─
+top="$(git rev-parse --show-toplevel 2>/dev/null)" || top=""
+if [ -z "$top" ]; then
+  err "not a git repository (or no work tree) — run inside a checkout"
+  usage
+  exit 2
+fi
+TOP_PHYS="$(cd -- "$top" 2>/dev/null && pwd -P)" || TOP_PHYS=""
+if [ -z "$TOP_PHYS" ]; then err "cannot resolve repository root: $top"; exit 2; fi
+CWD_PHYS="$(pwd -P)" || { err "cannot resolve current directory"; exit 2; }
+
+# ── --base validation (bad or missing ref must fail loudly, not diff HEAD) ────
+if [ "$have_base" -eq 1 ]; then
+  # Flag-shaped refs are rejected BEFORE they ever reach git. `--base --output=/x`
+  # would otherwise be handed to rev-parse/diff as an option, not a revision —
+  # git would parse it and act on it. Refs cannot start with '-' anyway
+  # (git check-ref-format forbids it), so nothing legitimate is lost.
+  case "$BASE" in
+    -*) err "--base: ref must not start with '-' (refusing a flag-shaped ref): $BASE"; usage; exit 2 ;;
+  esac
+  if ! git -C "$top" rev-parse --verify --quiet "$BASE^{commit}" >/dev/null 2>&1; then
+    err "--base: not a commit-ish in this repository: $BASE"
+    usage
+    exit 2
+  fi
+fi
+
+# ── PATH canonicalisation: caller-relative → repo-root-relative ──────────────
+# Done BEFORE any diffing, because every git call below uses `git -C "$top"`,
+# which would otherwise silently reinterpret a caller-relative path against the
+# repo root (a subdirectory invocation would scope to the wrong files).
+lexnorm() {  # collapse . / .. / // in an absolute path, lexically (for paths that no longer exist)
+  local p="$1" out="" c oldifs="$IFS"
+  IFS=/
+  set -f
+  for c in $p; do
+    case "$c" in
+      ''|.) ;;
+      ..)   out="${out%/*}" ;;
+      *)    out="$out/$c" ;;
+    esac
+  done
+  set +f
+  IFS="$oldifs"
+  printf '%s' "${out:-/}"
+}
+
+canon_abs() {  # physical resolution that does NOT dereference the final component
+  local p="$1" d b dp
+  if [ -d "$p" ]; then
+    (cd -- "$p" 2>/dev/null && pwd -P) || return 1
+    return 0
+  fi
+  d="${p%/*}"; [ -n "$d" ] || d="/"
+  b="${p##*/}"
+  [ -d "$d" ] || return 1
+  dp="$(cd -- "$d" 2>/dev/null && pwd -P)" || return 1
+  printf '%s' "${dp%/}/$b"
+}
+
+npaths=0
+i=0
+while [ "$i" -lt "$nraw" ]; do
+  p="${raw[$i]}"
+  i=$((i + 1))
+  case "$p" in
+    /*) abs="$p" ;;
+    *)  abs="$CWD_PHYS/$p" ;;
+  esac
+  # Deleted files have no directory to resolve against — fall back to lexical.
+  c="$(canon_abs "$abs" 2>/dev/null)" || c="$(lexnorm "$abs")"
+  if [ "$c" = "$TOP_PHYS" ]; then
+    rel[$npaths]="."
+  else
+    case "$c" in
+      "$TOP_PHYS"/*) rel[$npaths]="${c#"$TOP_PHYS"/}" ;;
+      *) err "path is outside the repository root ($TOP_PHYS): $p"; exit 2 ;;
+    esac
+  fi
+  npaths=$((npaths + 1))
+done
+
+# ── git wrappers ─────────────────────────────────────────────────────────────
+# Two non-negotiables baked in here:
+#   `--` ALWAYS precedes pathspecs — a file named `main` must not be read as a revision.
+#   `--literal-pathspecs` — a PATH argument is a NAME, never a glob or pathspec
+#     magic. Git's default pathspec matching is wildcard-aware, so scoping a
+#     review to a file literally named `star*.txt` would otherwise silently pull
+#     in every other `star….txt` in the tree. A scoping tool that widens its own
+#     scope on a filename is worse than no scoping at all.
+gitdiff() {
+  if [ "$npaths" -gt 0 ]; then
+    git -C "$top" --literal-pathspecs diff --no-color --no-ext-diff "$@" -- "${rel[@]}"
+  else
+    git -C "$top" --literal-pathspecs diff --no-color --no-ext-diff "$@" --
+  fi
+}
+gitothers() {
+  if [ "$npaths" -gt 0 ]; then
+    git -C "$top" --literal-pathspecs ls-files --others --exclude-standard -z -- "${rel[@]}"
+  else
+    git -C "$top" --literal-pathspecs ls-files --others --exclude-standard -z --
+  fi
+}
+
+TMPD="$(mktemp -d)" || { err "cannot create a temporary directory"; exit 2; }
+# Split traps on purpose: a bare `trap '…' EXIT INT TERM` runs the handler on a
+# signal and then RESUMES the script mid-flight with its scratch dir already
+# deleted — every later write fails and the patch is silently truncated. The
+# signal handler must clean up AND exit (130 = 128+SIGINT, the shell convention).
+trap 'rm -rf "$TMPD"' EXIT
+trap 'rm -rf "$TMPD"; trap - EXIT; exit 130' INT TERM HUP
+
+# ── PATH resolvability: "matched nothing" is a BAD REQUEST, never "clean" ────
+# Without this, a typo'd path, a renamed file, or a whole list collapsed into one
+# space-joined argument all produce an empty patch and exit 3 — indistinguishable
+# from a genuinely clean scope, so the caller skips the review believing there was
+# nothing to review. Every supplied path must correspond to something git knows
+# about; if any does not, that is a usage error and it fails loudly.
+path_known() {  # $1 = repo-root-relative pathspec
+  # tracked (this also covers worktree-only deletions: `rm` without `git rm`
+  # leaves the index entry intact, so ls-files still reports the path)
+  git -C "$top" --literal-pathspecs ls-files -z -- "$1" > "$TMPD/pk" 2>/dev/null
+  [ -s "$TMPD/pk" ] && return 0
+  # PENDING CHANGE with no surviving index entry. `git rm foo` deletes the index
+  # entry outright, so ls-files reports nothing — yet the staged deletion is a
+  # completely ordinary thing to review, and refusing it would make this helper
+  # unusable on any commit that removes a file. The rule this restores: exit 2
+  # means "git knows nothing about this path", NOT "this path is gone from disk".
+  git -C "$top" --literal-pathspecs diff --cached --name-only -z -- "$1" > "$TMPD/pk" 2>/dev/null
+  [ -s "$TMPD/pk" ] && return 0
+  # Symmetric worktree probe. Belt-and-braces: every case it catches today is
+  # already caught by ls-files above, but it costs one cheap call and keeps the
+  # predicate honest if either side's bookkeeping changes.
+  git -C "$top" --literal-pathspecs diff --name-only -z -- "$1" > "$TMPD/pk" 2>/dev/null
+  [ -s "$TMPD/pk" ] && return 0
+  # untracked and not ignored (a brand-new file is a legitimate review scope)
+  git -C "$top" --literal-pathspecs ls-files --others --exclude-standard -z -- "$1" > "$TMPD/pk" 2>/dev/null
+  [ -s "$TMPD/pk" ] && return 0
+  # in --base mode a path may exist ONLY in the base ref (deleted and committed
+  # since); the deletion is exactly what the caller wants to review.
+  if [ "$have_base" -eq 1 ]; then
+    git -C "$top" --literal-pathspecs ls-tree -r --name-only -z "$BASE" -- "$1" > "$TMPD/pk" 2>/dev/null
+    [ -s "$TMPD/pk" ] && return 0
+  fi
+  return 1
+}
+
+if [ "$npaths" -gt 0 ]; then
+  nbad=0
+  badlist=""
+  i=0
+  while [ "$i" -lt "$npaths" ]; do
+    if ! path_known "${rel[$i]}"; then
+      nbad=$((nbad + 1))
+      badlist="$badlist${badlist:+, }${raw[$i]}"
+    fi
+    i=$((i + 1))
+  done
+  if [ "$nbad" -gt 0 ]; then
+    if [ "$nbad" -eq "$npaths" ]; then
+      err "no supplied path matched anything in the repository: $badlist"
+    else
+      err "some supplied paths matched nothing in the repository: $badlist"
+    fi
+    # Named because it is by far the most common cause and the least obvious:
+    # `"$FILES"` where FILES="a.ts b.ts" arrives as ONE argument containing a
+    # space, which is a perfectly legal (and nonexistent) filename.
+    err "  if you meant several paths, pass them as SEPARATE arguments — a quoted"
+    err "  \"a.ts b.ts\" is one filename containing a space, not two paths"
+    err "  (exiting 2: a scope that matches nothing is a bad request, not a clean tree)"
+    exit 2
+  fi
+fi
+
+OUTF="$TMPD/patch"
+: > "$OUTF" || { err "cannot initialise the patch buffer: $OUTF"; exit 2; }
+
+# ── patch-buffer writes: EVERY append is checked ─────────────────────────────
+# An unchecked `>>` turns a mid-run I/O error (full disk, full tmpfs) into a
+# SHORT patch emitted with exit 0 — the reviewer then reviews a partial diff
+# believing it complete, which is the worst failure this tool can have. Both
+# `cat` and `printf` report write errors, so the only thing missing was the check.
+out_cat() {  # append a file to the patch buffer
+  cat "$1" >> "$OUTF" || {
+    err "failed to append to the patch buffer (disk full or I/O error) while adding: ${2:-$1}"
+    exit 2
+  }
+}
+out_printf() {  # append a preformatted line to the patch buffer
+  printf '%s\n' "$1" >> "$OUTF" || {
+    err "failed to append to the patch buffer (disk full or I/O error)"
+    exit 2
+  }
+}
+
+# ── git-style path quoting for fabricated patch headers ──────────────────────
+# Real git C-quotes any path containing a control character, a double quote or a
+# backslash. A fabricated header that interpolates the raw name does not: a file
+# whose name contains a NEWLINE would inject extra lines into the patch stream
+# and could forge a `diff --git` record the reviewer reads as a real file.
+quote_path() {
+  local p="$1" out="" i=0 n c
+  case "$p" in
+    *[!\ -~]*|*'"'*|*'\'*) : ;;            # needs quoting
+    *) printf '%s' "$p"; return 0 ;;       # plain — emit verbatim, like git
+  esac
+  n=${#p}
+  while [ "$i" -lt "$n" ]; do
+    c="${p:$i:1}"
+    i=$((i + 1))
+    case "$c" in
+      '"')    out="$out\\\"" ;;
+      '\')    out="$out\\\\" ;;
+      # Named escapes in git's own order, so the rendering is byte-identical to
+      # what `git diff` would print for the same path (octal would be legal C
+      # quoting too, but tooling diffs are easier when the bytes match git).
+      $'\a')  out="$out\\a" ;;
+      $'\b')  out="$out\\b" ;;
+      $'\f')  out="$out\\f" ;;
+      $'\n')  out="$out\\n" ;;
+      $'\r')  out="$out\\r" ;;
+      $'\t')  out="$out\\t" ;;
+      $'\v')  out="$out\\v" ;;
+      [\ -~]) out="$out$c" ;;
+      *)      out="$out$(printf '\\%03o' "'$c")" ;;
+    esac
+  done
+  printf '"%s"' "$out"
+}
+
+# ── visibility marker for any file whose contents cannot be rendered ─────────
+# The unifying rule: a change the helper cannot SHOW must still be VISIBLE.
+# Dropping it silently is what makes a repo whose only change is an untracked
+# binary / nested repo / symlink report "no changes" (exit 3) and get skipped
+# for review entirely. $1 = repo-relative path, $2 = why it is not shown.
+emit_marker() {
+  local q
+  q="$(quote_path "$1")"
+  out_printf "diff --git a/$q b/$q"
+  out_printf "$2: $q"
+}
+
+# ── tracked changes ──────────────────────────────────────────────────────────
+# SCOPE NOTE (accepted, not a defect): the tracked diff below and the untracked
+# enumeration further down are two separate git invocations, so the patch is not
+# an atomic snapshot of the working tree. Closing that would require locking the
+# tree, which no non-locking git tool does; a working tree mutated MID-RUN is
+# out of contract for this helper.
+#
+# NOTE: plain git diff/--cached return 0 even with differences (only --exit-code/
+# --no-index return 1), so `|| exit 2` here catches REAL git failures only.
+# Verified 2026-07-31 — do not "fix" this into a rc==1 special case.
+if [ "$have_base" -eq 1 ]; then
+  gitdiff "$BASE" >> "$OUTF" || { rc=$?; err "git diff $BASE failed (rc=$rc)"; exit 2; }
+else
+  # ONE snapshot, not two. `git diff` + `git diff --cached` describe the same
+  # file from two different pre-images, so a partially-staged file lands in the
+  # patch twice with overlapping, un-appliable hunks. `git diff HEAD` spans
+  # staged+unstaged coherently in a single pre-image.
+  if git -C "$top" rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
+    SNAPBASE="HEAD"
+  else
+    # Unborn HEAD (fresh repo, nothing committed yet): diff against the empty
+    # tree so a first-commit-in-progress is still reviewable instead of erroring.
+    SNAPBASE="$(git -C "$top" hash-object -t tree /dev/null 2>/dev/null)" || SNAPBASE=""
+    # The literal is git's well-known empty-tree SHA-1 and is only reached if
+    # `hash-object` itself fails; it is deliberately NOT the primary path, so a
+    # SHA-256 repository gets the correct object id from git rather than this.
+    [ -n "$SNAPBASE" ] || SNAPBASE="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+  fi
+  gitdiff "$SNAPBASE" >> "$OUTF" || { rc=$?; err "git diff $SNAPBASE failed (rc=$rc)"; exit 2; }
+fi
+
+# ── untracked, non-ignored files ─────────────────────────────────────────────
+if [ "${ZUVO_REVIEW_PATCH_NO_UNTRACKED:-0}" != "1" ]; then
+  gitothers > "$TMPD/others" || { rc=$?; err "git ls-files --others failed (rc=$rc)"; exit 2; }
+  nunt=0
+  manifest="$TMPD/manifest"
+  : > "$manifest" || { err "cannot initialise the untracked-file manifest"; exit 2; }
+  note_included() {  # record a path for the stderr summary
+    printf '%s\n' "$1" >> "$manifest" || { err "failed to record $1 in the untracked manifest"; exit 2; }
+    nunt=$((nunt + 1))
+  }
+  while IFS= read -r -d '' f; do
+    [ -n "$f" ] || continue
+    # Entries whose contents must NOT be rendered. Each gets a marker rather
+    # than a stderr-only note: a stderr note leaves the patch empty, so a repo
+    # whose only change is one of these exits 3 "no changes" and the caller
+    # skips review altogether. Marker = visible + patch non-empty + rc 0.
+    #
+    # Symlinks first: `-f`/`-r` both FOLLOW links, so a symlink pointing outside
+    # the repo would otherwise be handed to `--no-index`, which follows it too
+    # and embeds the target's contents in the patch — a scoping tool leaking
+    # files from outside its own scope.
+    if [ -L "$top/$f" ]; then
+      err "skipping untracked symlink (target not followed — it may point outside the repo): $f"
+      emit_marker "$f" "new entry (symlink, target contents not shown)"
+      note_included "$f"
+      continue
+    fi
+    # A residual TOCTOU remains between this check and `--no-index` below (the
+    # working tree can change under any non-locking git tool). Skip-and-continue
+    # plus the marker keeps that case visible instead of fatal or silent.
+    if [ ! -e "$top/$f" ]; then
+      err "skipping untracked entry that vanished after listing: $f"
+      emit_marker "$f" "new entry (vanished after listing, contents not shown)"
+      note_included "$f"
+      continue
+    fi
+    # `ls-files --others` reports an untracked NESTED REPOSITORY as a single
+    # `path/` entry; that and fifos/devices are git fatals for `--no-index`.
+    if [ ! -f "$top/$f" ]; then
+      err "skipping untracked entry that is not a regular file (nested repo, directory or special file): $f"
+      emit_marker "$f" "new entry (not a regular file — nested repo/directory/special, contents not shown)"
+      note_included "$f"
+      continue
+    fi
+    if [ ! -r "$top/$f" ]; then
+      err "cannot read untracked file (permission denied): $f"
+      exit 2
+    fi
+    # Explicit rc capture — NEVER `|| true`. `git diff --no-index` returns 1 for
+    # "files differ" (the normal case here) but >=2 for real failures; collapsing
+    # them would turn an unreadable/corrupt file into a silently truncated patch.
+    git -C "$top" diff --no-index --no-color --no-ext-diff -- /dev/null "$f" \
+      > "$TMPD/one" 2> "$TMPD/one.err"
+    rc=$?
+    if [ "$rc" -ge 2 ]; then
+      cat "$TMPD/one.err" >&2
+      err "git diff --no-index failed (rc=$rc) for untracked file: $f"
+      exit 2
+    fi
+    # A binary file (contents not renderable) and an empty file (nothing to
+    # render) both produce no usable diff text. DROPPING them is the dangerous
+    # option: if such a file is the ONLY change, the patch comes out empty, the
+    # helper exits 3 "no changes", and the caller SKIPS the review entirely — a
+    # brand-new binary asset ships unreviewed. Emit a deterministic marker
+    # instead, so the path is visible to the reviewer and the patch is non-empty.
+    if [ ! -s "$TMPD/one" ] || grep -q '^Binary files ' "$TMPD/one"; then
+      err "untracked file included as a marker only (binary or empty): $f"
+      emit_marker "$f" "new file (binary or empty, contents not shown)"
+      note_included "$f"
+      continue
+    fi
+    out_cat "$TMPD/one" "$f"
+    note_included "$f"
+  done < "$TMPD/others"
+  if [ "$nunt" -gt 0 ]; then
+    err "untracked files included in the patch ($nunt):"
+    while IFS= read -r u; do printf '  %s\n' "$u" >&2; done < "$manifest"
+  fi
+fi
+
+# ── emit ─────────────────────────────────────────────────────────────────────
+if [ ! -s "$OUTF" ]; then
+  err "no changes to review (clean working tree for the requested scope)"
+  exit 3
+fi
+cat "$OUTF" || { err "failed to write the patch to stdout"; exit 2; }
+exit 0
