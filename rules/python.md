@@ -44,6 +44,25 @@ def add_item(item: str, items: list[str] | None = None) -> list[str]:
 
 ## Pitfall: Blocking Calls in Async Context
 
+**Enumerate every blocking path in the function, not the one that was flagged.** A coroutine
+usually has more than one, and fixing only the reported call leaves the loop just as blocked while
+the review reads as resolved — the recurring shape is a review that catches the HTTP call and
+misses the `time.sleep` and the sync ORM query two lines down. Sweep for the whole family before
+declaring the function fixed:
+
+| Blocking | Async form |
+|----------|-----------|
+| `requests` / `urllib` | `httpx.AsyncClient` / `aiohttp` |
+| `time.sleep` | `await asyncio.sleep` |
+| sync ORM (`Model.objects…`, `session.query`) | the async session, or `sync_to_async` / `asyncio.to_thread` |
+| `open()` / file reads in a hot path | `aiofiles`, or `to_thread` |
+| `subprocess.run` | `asyncio.create_subprocess_exec` |
+| CPU-bound loops | `run_in_executor` with a process pool |
+
+`analyze_async_correctness` (CodeSift) finds these across a file in one call; without it, grep the
+coroutine bodies for the left column. Record which method you used — "no blocking calls found" from
+a single-symbol read is a much weaker claim than a whole-file scan, and the difference matters.
+
 ```python
 # WRONG — synchronous I/O blocks the event loop
 async def fetch_data():

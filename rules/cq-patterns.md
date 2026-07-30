@@ -329,6 +329,30 @@ return this.db.transaction(async () => { this.email.send(order).catch(/* ... */)
 const order = await this.db.transaction(async () => { /* mutations only */ }); this.email.send(order).catch(logWarn);
 ```
 
+### Re-entry locks must be released by token, never unconditionally
+A completion callback that clears a shared "in flight" flag releases whatever is in flight NOW —
+not necessarily the call it belongs to. When the guarded identity can change while one long-lived
+object stays mounted (a route/param change with the same mutation object, a retried request, a
+component that outlives its own request), the stale callback unlocks the NEWER call and the guard
+silently stops guarding. Key the lock to the identity it protects and release only your own token.
+```typescript
+// NEVER — the first request's onSettled clears the flag the second request set
+const busy = useRef(false);
+const submit = () => { if (busy.current) return; busy.current = true;
+  mutate(payload, { onSettled: () => { busy.current = false; } }); };
+
+// ALWAYS — one token per acquisition; a stale callback's release is a no-op
+const lock = useRef<{ key: string; token: number } | null>(null);
+const submit = (key: string) => {
+  if (lock.current?.key === key) return;
+  const token = ++seq.current;
+  lock.current = { key, token };
+  mutate(payload, { onSettled: () => { if (lock.current?.token === token) lock.current = null; } });
+};
+```
+The same rule covers server-side idempotency keys and distributed locks: the release must present
+the token it acquired with, or a slow worker's release frees another worker's hold.
+
 ### Stream safety: errors, backpressure, finalization
 ```typescript
 // NEVER — write without error handling, backpressure, or stream end

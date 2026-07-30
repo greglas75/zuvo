@@ -700,9 +700,26 @@ Score: 24/24 applicable -> PASS
 
 Post-audit score must not be lower than pre-audit. Any regression is a bug in the refactoring.
 
+**A tool response is not the audit.** `audit_scan`, `python_audit`, `framework_audit` and friends
+answer a handful of checks each; printing their result and calling it `Score: 29/29` claims 29
+evaluated gates when five ran. Every gate in the printed line must be one of: `1`/`0` (you
+evaluated it), or `N/A` **with a reason** — a gate no tool covered and you did not read for is
+neither, so evaluate it or record it as unevaluated and say the audit is partial. Report the
+denominator honestly per `../../shared/includes/gate-registry.md`: `score` over the full set,
+`applicable_score` over what applied, and never a total larger than what was actually checked.
+
 ### Verification
 
 **If running in a secondary worktree, bootstrap dependencies and scope the suite first** — see `env-compat.md` → "Secondary Worktree Bootstrap". A worktree does not inherit `node_modules`; verify the toolchain matches the main checkout, reuse the root install (never a partial package-local one), then scope type-check/tests to the **touched package(s)** (`--filter=<pkg>`). A pre-existing failure in an unrelated package is `pre-existing-out-of-scope`, not a blocker — do not burn the run rediscovering errors that were red before you started.
+
+**When the full suite fails only in files this refactor never touched**, do not silently widen the
+fence and do not wave it through either. Do all three: (a) record each failing file and its error,
+(b) re-run the SCOPED suite plus type-check/build to show the touched surface is green, (c) re-run
+the failing files alone — local parallelism and shared fixtures produce timeout flakes that vanish
+when they are not competing. Then report **WARN with that evidence attached**, not PASS. Expand the
+scope fence only if the failure reproduces through a dependency path this refactor actually changed
+— that makes it a regression, and the fence was wrong. Otherwise it is pre-existing or
+environmental, and the honest record says which one and how you told them apart.
 
 Run the verification suite (scoped per above when in a worktree):
 
@@ -832,6 +849,22 @@ provider are the most common way a refactor burns its budget without producing a
 and the outcome is identical after the first attempt. `blocked:no-provider` is an honest degraded
 state that must appear in the report; it is NOT `clean`.
 
+**Fallback order when a provider is down** — follow it in order, stop at the first that works, and
+record which step produced the pass. Guessing at this per-run is where the trial-and-error goes:
+
+| # | Try | Record as |
+|---|-----|-----------|
+| 1 | Another provider in the pool, different model family | `clean`/`Nfindings` (full strength) |
+| 2 | Another provider, SAME family as the orchestrator | `…:degraded:same-family` |
+| 3 | The orchestrator itself, inline, as a blind second pass on the diff alone | `…:degraded:same-model` |
+| 4 | Nothing reachable | `blocked:no-provider` + the local CQ/security pass |
+
+Steps 2-4 are progressively weaker independence, and each has its own marker precisely so the
+report cannot present them as the same thing. Never skip to step 4 because step 1 failed once —
+`--doctor` tells you which providers are actually reachable, so the choice is a lookup, not a
+search. An auth failure is cached for the run (`adversarial-review.sh` remembers it), so trying the
+next provider costs one dispatch, not another full timeout.
+
 **Pass count by diff size:**
 
 | Diff size | Max passes | Rationale |
@@ -907,9 +940,33 @@ This phase OWNS all committing (Phase 4 no longer commits — it records).
 | Real bug, fix needs files OUTSIDE the scope fence | Backlog with file:line — genuinely out of this contract's reach. |
 | Behavior/product DECISION (partial vs hard error on failure; swallow vs surface a cost; etc.) | **Not a bug — a choice.** Interactive: ask the user (≤1 question), apply the chosen fix into commit 2. Batch/`--auto`/`no-pause`: pick the safe, conservative default, log `[DECISION-DEFAULT: …]`, surface in the report; backlog only if the user later declines. |
 
+**Before applying the FIRST fix, size its blast radius.** When a finding changes the *error*,
+*validation*, or *authorization* behaviour of an **exported** symbol, the fix is a contract change,
+not a local repair: every production caller and every HTTP/RPC boundary that reaches it inherits
+the new behaviour. Enumerate them (`find_references` + a route/handler trace, or grep for the
+symbol and its route path) BEFORE editing, and then either add those files to the scope fence or
+disposition each one explicitly in the ledger. Doing this after the fix means the next adversarial
+pass raises the callers you did not look at, and the run spends a whole extra pass on it. Fixes
+that stay inside the symbol — a wrong constant, a missing null-guard, a swapped argument — do not
+need this.
+
+**Draft-only / unwired parity repairs.** A repair that only brings a path with **no live consumers**
+up to parity with the wired path has no live behaviour to regress, so a red-on-pre-fix regression
+test is unsatisfiable by construction. This is a narrow carve-out, not a way around step 3c: it
+applies only when the path's zero-consumer status is PROVEN with the same evidence DELETE_DEAD
+requires (symbol references + repo-wide import/re-export/dynamic/string-literal search), and it is
+recorded, not skipped — `prove.regression_red = "n/a-unreachable:<evidence>"`. The gate accepts that
+value (it is not empty/`skipped`/`not_run`) and it stays visible in telemetry. If ANY consumer
+exists, or you cannot prove none does, the demonstrated red is required as normal.
+
 **Procedure:**
 
-0. **Record the Prove step in the CONTRACT — BEFORE you commit (the external gate reads it).** After the blind audit + adversarial passes (Phase 3), write their outcomes into the contract's `prove`: `prove.blind_audit` = the blind-audit telemetry (`clean:strict` / `clean:degraded` / `fix:N`, never `skipped`/`not_run`); `prove.adversarial` = `clean` / `Nfindings` / `Nfindings:preserved`. The `refactor-safety-gate` hook reads these on `git commit` — if either is still `skipped`/`not_run`/empty and the staged files are in this refactor's scope fence, the commit is **rejected**. That is the bind: you literally cannot commit a refactor whose Prove step you skipped.
+0. **Record the Prove step in the CONTRACT — BEFORE you commit (the external gate reads it).** After the blind audit + adversarial passes (Phase 3), write their outcomes into the contract's `prove`: `prove.blind_audit` = the blind-audit telemetry (`clean:strict` / `clean:degraded` / `fix:N`, never `skipped`/`not_run`); `prove.adversarial` = `clean` / `Nfindings` / `Nfindings:preserved`. **Both record what the pass
+FOUND, not how the run ended.** An audit that surfaced four bugs you then fixed stays `fix:4` — do
+not rewrite it to `clean:strict` because the tree is clean now. The completion state lives in
+`findings_disposition` and `cq_after`; overwriting the audit value erases the only record that the
+gate caught anything, and makes a run that needed remediation indistinguishable from one that never
+had a finding. The `refactor-safety-gate` hook reads these on `git commit` — if either is still `skipped`/`not_run`/empty and the staged files are in this refactor's scope fence, the commit is **rejected**. That is the bind: you literally cannot commit a refactor whose Prove step you skipped.
 1. **Commit the pure refactor (always).** Stage scope-fence files → `git commit -m "refactor([scope]): [what moved]"`. This is the behavior-preserving proof: the Phase-2 characterization/existing tests, UNCHANGED, still pass. Record `REFACTOR_SHA`. (no-commit mode: show the diff + message, don't commit.)
    If adversarial passes recorded findings destined for fix-now, set `findings_disposition = "stacked-correction-pending"` BEFORE this commit — a transition value the gate accepts (it is not empty/`pending`/`unresolved` and does not contain `fix`, so `regression_red` is not demanded yet); after the demonstrated red in step 3, replace it with `fixed:<N>`. If any fix was already applied to the working tree during Phase 3 passes ("CRITICAL — fix immediately"), separate it out (stash, or stage move-hunks only) so THIS commit is the pure move; the fix hunks land in commit 2.
 2. **Triage** the CQ-auditor + adversarial findings into the table above.
