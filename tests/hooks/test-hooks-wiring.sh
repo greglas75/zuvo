@@ -57,4 +57,24 @@ has "$ANTIG" 'zuvo-stop-pipeline-gate' && bad "Antigravity: Stop nudge should be
 n=$(countall 'zuvo-stop-pipeline-gate')
 [ "$n" -eq 1 ] && pass "single Stop registration across all configs (count=1)" || bad "Stop nudge registered $n times (must be exactly 1)"
 
+# ── Windows: EVERY Claude Code hook must go through run-hook.cmd ──────────────
+# `bash "${CLAUDE_PLUGIN_ROOT}/hooks/x.sh"` requires bash on the system PATH. Git for Windows
+# does not always put it there — its "Git Bash only" install option deliberately does not. Only
+# run-hook.cmd carries the fallback that probes C:\Program Files\Git\bin\bash.exe, so a hook
+# wired directly to bash is silently dead on exactly the machines that need the fallback.
+# Before this test, 10 of 11 hooks were wired directly and only SessionStart used the shim.
+direct=$(jq -r '[.hooks[][] | .hooks[] | .command | select(startswith("bash "))] | length' "$CLAUDE" 2>/dev/null || echo -1)
+[ "$direct" = "0" ] \
+  && pass "Claude: no hook bypasses run-hook.cmd (bash-on-PATH not assumed)" \
+  || bad "Claude: $direct hook(s) call bash directly — no bash-discovery fallback on Windows"
+shimmed=$(jq -r '[.hooks[][] | .hooks[] | .command | select(contains("run-hook.cmd"))] | length' "$CLAUDE" 2>/dev/null || echo 0)
+total=$(jq -r '[.hooks[][] | .hooks[]] | length' "$CLAUDE" 2>/dev/null || echo 0)
+[ "$shimmed" = "$total" ] && [ "$total" != "0" ] \
+  && pass "Claude: all $total hooks routed through the shim" \
+  || bad "Claude: only $shimmed of $total hooks routed through run-hook.cmd"
+# The shim itself must keep its bash-discovery fallback — that is the whole point of routing here.
+grep -q 'Program Files\\Git\\bin\\bash.exe' "$ROOT/hooks/run-hook.cmd" \
+  && pass "run-hook.cmd retains the Git-for-Windows bash fallback" \
+  || bad "run-hook.cmd lost its bash-discovery fallback"
+
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "SOME FAILED"; exit 1; fi

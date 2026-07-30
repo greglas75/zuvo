@@ -2,13 +2,18 @@
 # retro-mine-weekly.sh — weekly retro-miner: deterministic digest + headless Claude triage agent.
 # REPORT-ONLY by contract: the agent analyzes and ranks, never edits skills or releases unattended.
 set -u
+# Portable Python resolution — `python3` is not a command on Windows (python.org installs
+# `python` and `py`; Git Bash ships neither). portable.sh is installed alongside these helpers.
+. "$(dirname "$0")/portable.sh" 2>/dev/null || true
+PY_BIN="$(command -v zuvo_python >/dev/null 2>&1 && zuvo_python || echo python3)"
+
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 # Repo path is configurable — the miner must not be tied to one developer's checkout.
 ZUVO_REPO="${ZUVO_REPO:-$HOME/DEV/zuvo-plugin}"
 cd "$ZUVO_REPO" || { echo "ZUVO_REPO not found: $ZUVO_REPO" >&2; exit 1; }
 D=$(date +%F)
 mkdir -p "$HOME/.zuvo/mining"
-python3 "$HOME/.zuvo/retro-mine.py" --days 7 > "$HOME/.zuvo/mining/collect-$D.log" 2>&1 || exit 1
+"$PY_BIN" "$HOME/.zuvo/retro-mine.py" --days 7 > "$HOME/.zuvo/mining/collect-$D.log" 2>&1 || exit 1
 DIGEST=$(ls -t "$HOME"/.zuvo/mining/digest-*.md | head -1)
 claude -p "You are the weekly zuvo retro-miner (report-only; NEVER edit skills, commit, or release in this run).
 1. Read the digest: $DIGEST (window stats, friction histogram, ALL change proposals from Mac + fleet bots, new ideas).

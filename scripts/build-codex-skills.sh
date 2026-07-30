@@ -11,6 +11,11 @@ set -euo pipefail
 PLUGIN_DIR="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 DIST="$PLUGIN_DIR/dist/codex"
 
+# Portable primitives (sed_i, zuvo_python) — Windows/Git-Bash is a supported target and
+# the BSD-only `sed -i ''` it replaces breaks there. See scripts/lib/portable.sh.
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/portable.sh"
+
+
 echo "Building Codex skills..."
 echo "  Source: $PLUGIN_DIR"
 echo "  Output: $DIST"
@@ -263,7 +268,7 @@ TOML
 
   # Reasoning agents use gpt-5.4 with high reasoning, not gpt-5.5
   if [ "$is_reasoning" -gt 0 ]; then
-    sed -i '' "s|model = \"gpt-5.5\"|model = \"gpt-5.4\"|" "$toml_path"
+    sed_i "s|model = \"gpt-5.5\"|model = \"gpt-5.4\"|" "$toml_path"
     echo 'model_reasoning_effort = "xhigh"' >> "$toml_path"
   fi
 }
@@ -580,12 +585,12 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
   if [ "$skill" = "brainstorm" ] || [ "$skill" = "design" ]; then
     # Add Codex mode note after Phase 2 heading if present
     if grep -q "## Phase 2" "$DIST/skills/$skill/SKILL.md"; then
-      sed -i '' '/## Phase 2/a\
+      sed_i '/## Phase 2/a\
 \
 > **Codex mode:** This skill runs autonomously. Every design decision is annotated with `[AUTO-DECISION]` including rationale and alternatives. Review the spec before running zuvo:plan.' "$DIST/skills/$skill/SKILL.md"
     fi
     # Replace interactive Q&A instructions
-    sed -i '' \
+    sed_i \
       -e 's/Ask questions \*\*one at a time\*\*/Make decisions autonomously. Annotate each with \[AUTO-DECISION\]/g' \
       -e 's/Get a thumbs-up on each section/Annotate each decision with \[AUTO-DECISION\] and rationale/g' \
       "$DIST/skills/$skill/SKILL.md"
@@ -792,7 +797,7 @@ echo "Stripping non-Codex platform blocks..."
 strip_count=0
 while IFS= read -r -d '' md; do
   if grep -q "<!-- PLATFORM:" "$md" 2>/dev/null; then
-    sed -i '' \
+    sed_i \
       -e '/<!-- PLATFORM:CURSOR -->/,/<!-- \/PLATFORM:CURSOR -->/d' \
       -e '/<!-- PLATFORM:ANTIGRAVITY -->/,/<!-- \/PLATFORM:ANTIGRAVITY -->/d' \
       -e '/<!-- PLATFORM:CODEX -->/d' \

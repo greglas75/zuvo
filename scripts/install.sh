@@ -17,6 +17,11 @@
 # `set -e` would leak into and abort the sourcing shell.
 
 ZUVO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
+
+# Portable primitives (sed_i, zuvo_python) — Windows/Git-Bash is a supported target and
+# the BSD-only `sed -i ''` it replaces breaks there. See scripts/lib/portable.sh.
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/portable.sh"
+
 TARGET="${1:-all}"
 
 # --- Colors ---
@@ -220,8 +225,12 @@ install_claude() {
     done
     # Replace {plugin_root} placeholder with actual resolved path in all skill files
     local resolved_root="${CACHE_DIR%/}"
+    # `find -exec` cannot call the sed_i shell function, so use the portable -i.<suffix> form
+    # directly and sweep the backups. The old `sed -i ''` here was BSD-only AND swallowed by
+    # `|| true`, so on Git Bash the install "succeeded" with {plugin_root} never substituted.
     find "$CACHE_DIR/skills" -name "*.md" -exec \
-      sed -i '' "s|{plugin_root}|${resolved_root}|g" {} + 2>/dev/null || true
+      sed -i.zbak "s|{plugin_root}|${resolved_root}|g" {} + 2>/dev/null || true
+    find "$CACHE_DIR/skills" -name "*.md.zbak" -delete 2>/dev/null || true
     # Clean up any orphan files at skills/ root level
     rm -f "$CACHE_DIR/skills/SKILL.md" 2>/dev/null || true
     rm -rf "$CACHE_DIR/skills/agents" 2>/dev/null || true
@@ -229,7 +238,7 @@ install_claude() {
     # Strip non-Claude-Code platform blocks (CODEX, CURSOR, ANTIGRAVITY)
     # Each block is delimited by <!-- PLATFORM:X --> ... <!-- /PLATFORM:X -->
     find "$CACHE_DIR/skills" -name "*.md" -exec \
-      sed -i '' -e '/<!-- PLATFORM:CODEX -->/,/<!-- \/PLATFORM:CODEX -->/d' \
+      sed_i -e '/<!-- PLATFORM:CODEX -->/,/<!-- \/PLATFORM:CODEX -->/d' \
                 -e '/<!-- PLATFORM:CURSOR -->/,/<!-- \/PLATFORM:CURSOR -->/d' \
                 -e '/<!-- PLATFORM:ANTIGRAVITY -->/,/<!-- \/PLATFORM:ANTIGRAVITY -->/d' \
                 {} + 2>/dev/null || true
@@ -239,7 +248,7 @@ install_claude() {
       cp -R "$ZUVO_DIR"/shared/includes/. "$CACHE_DIR/shared/includes/" 2>/dev/null || true
       # Strip non-Claude-Code platform blocks from shared includes too
       find "$CACHE_DIR/shared/includes" -name "*.md" -exec \
-        sed -i '' -e '/<!-- PLATFORM:CODEX -->/,/<!-- \/PLATFORM:CODEX -->/d' \
+        sed_i -e '/<!-- PLATFORM:CODEX -->/,/<!-- \/PLATFORM:CODEX -->/d' \
                   -e '/<!-- PLATFORM:CURSOR -->/,/<!-- \/PLATFORM:CURSOR -->/d' \
                   -e '/<!-- PLATFORM:ANTIGRAVITY -->/,/<!-- \/PLATFORM:ANTIGRAVITY -->/d' \
                   {} + 2>/dev/null || true
@@ -387,6 +396,15 @@ install_zuvo_home() {
     ok "$_installed zuvo-home helpers installed to ~/.zuvo/ ($_skipped skipped)"
   else
     ok "$_installed zuvo-home helpers installed to ~/.zuvo/"
+  fi
+
+  # portable.sh must sit NEXT TO the helpers: retro-mine-weekly.sh / rotate-retros-cron.sh /
+  # runlog-sync.sh source it as "$(dirname "$0")/portable.sh" to resolve a Python 3 interpreter,
+  # and `python3` is not a command on Windows.
+  if [[ -f "$ZUVO_DIR/scripts/lib/portable.sh" ]]; then
+    cp "$ZUVO_DIR/scripts/lib/portable.sh" "$HOME/.zuvo/.portable.sh.tmp.$$" 2>/dev/null \
+      && mv -f "$HOME/.zuvo/.portable.sh.tmp.$$" "$HOME/.zuvo/portable.sh" \
+      && ok "portable.sh installed (~/.zuvo/portable.sh — sed_i + zuvo_python)"
   fi
 
   # Local, NEVER-versioned config for host-coupled helpers (collector SSH target). Created empty

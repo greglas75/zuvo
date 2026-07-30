@@ -13,6 +13,11 @@ set -euo pipefail
 PLUGIN_DIR="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 DIST="$PLUGIN_DIR/dist/cursor"
 
+# Portable primitives (sed_i, zuvo_python) — Windows/Git-Bash is a supported target and
+# the BSD-only `sed -i ''` it replaces breaks there. See scripts/lib/portable.sh.
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/portable.sh"
+
+
 echo "Building Cursor skills..."
 echo "  Source: $PLUGIN_DIR"
 echo "  Output: $DIST"
@@ -485,7 +490,7 @@ echo "Stripping non-Cursor platform blocks..."
 strip_count=0
 while IFS= read -r -d '' md; do
   if grep -q "<!-- PLATFORM:" "$md" 2>/dev/null; then
-    sed -i '' \
+    sed_i \
       -e '/<!-- PLATFORM:CODEX -->/,/<!-- \/PLATFORM:CODEX -->/d' \
       -e '/<!-- PLATFORM:ANTIGRAVITY -->/,/<!-- \/PLATFORM:ANTIGRAVITY -->/d' \
       -e '/<!-- PLATFORM:CURSOR -->/d' \

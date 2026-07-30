@@ -5,9 +5,47 @@
 - **One supported IDE/CLI:** Claude Code, Codex, Google Antigravity, or Cursor
 - **Node.js** 18+ (for package.json resolution and hook execution)
 - **GNU coreutils** — required for adversarial review (`brew install coreutils` on macOS)
-- **Bash** available (macOS/Linux native; Windows requires Git Bash or WSL)
+- **Bash** available (macOS/Linux native; Windows requires Git Bash or WSL — see below)
 - **At least one cross-provider CLI** for adversarial review (see cross-provider table below)
 - **Optional:** [codesift-mcp](https://github.com/nicobailey/codesift-mcp) for deep code exploration (semantic search, call chain tracing, complexity analysis). Zuvo works without it but runs in degraded mode.
+
+## Windows
+
+Windows is supported through **Git Bash** (WSL also works and behaves like Linux). Four things
+differ from macOS/Linux, and all four are handled by the repo — this section says what to check if
+something still misbehaves.
+
+**1. Line endings.** Git for Windows defaults to `core.autocrlf=true`. A CRLF checkout turns every
+script into a syntax error (`syntax error near unexpected token '{'`) and silently disables the git
+hooks, i.e. the quality gates. `.gitattributes` pins the whole tree to LF, so a fresh clone is
+correct. If you cloned BEFORE that file existed, fix an existing checkout once:
+
+```bash
+git rm --cached -r . && git reset --hard      # re-checkout under the new rules
+```
+
+Verify: `git ls-files --eol | grep -v 'i/lf'` should return only the one pinned CSV test vector.
+Note `hooks/run-hook.cmd` is LF despite being a `.cmd`: it is a bash/batch polyglot that every hook
+routes through, so bash reads it on macOS/Linux and does not tolerate CRLF. Its batch half uses
+single-line conditionals so LF is safe for `cmd.exe` too — do not reformat them into multi-line
+`( … )` blocks.
+
+**2. `bash` on PATH.** Every Claude Code hook is invoked through `hooks/run-hook.cmd`, which probes
+`C:\Program Files\Git\bin\bash.exe` before falling back to PATH. So the hooks work even with
+Git's "Git Bash only" install option, which deliberately does NOT add bash to the system PATH.
+If you install Git with "Git from the command line" instead, both paths work.
+
+**3. Python.** `python3` is not a command on Windows — python.org installs `python` and `py`, and
+Git Bash ships neither. The scripts resolve an interpreter via `zuvo_python`
+(`scripts/lib/portable.sh`): `$ZUVO_PYTHON` → `python3` → `python` (major version checked) →
+`py -3`. If none exists it says so rather than failing obscurely. Install Python 3 from python.org
+and tick **"Add python.exe to PATH"**, or set `ZUVO_PYTHON=/c/Python312/python.exe`.
+
+**4. `sed`.** Git Bash ships GNU sed, where the BSD form `sed -i ''` dies with
+`No such file or directory`. Repo scripts use the `sed_i` helper, which works on BSD, GNU and
+busybox alike. Only relevant if you write new scripts here — use `sed_i`, not `sed -i ''`.
+
+Regression-tested by `tests/hooks/test-windows-portability.sh`.
 
 ## Adversarial review providers (optional but recommended)
 

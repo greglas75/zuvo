@@ -12,6 +12,11 @@ set -euo pipefail
 PLUGIN_DIR="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 DIST="$PLUGIN_DIR/dist/antigravity"
 
+# Portable primitives (sed_i, zuvo_python) — Windows/Git-Bash is a supported target and
+# the BSD-only `sed -i ''` it replaces breaks there. See scripts/lib/portable.sh.
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/portable.sh"
+
+
 echo "Building Antigravity skills..."
 echo "  Source: $PLUGIN_DIR"
 echo "  Output: $DIST"
@@ -96,10 +101,10 @@ replace_reviewer_lane_refs_antigravity() {
 replace_config_refs() {
   local file="$1"
   # Always safe: config file name
-  sed -i '' 's/CLAUDE\.md/GEMINI.md/g' "$file"
+  sed_i 's/CLAUDE\.md/GEMINI.md/g' "$file"
   # Platform name — only in skills, NOT shared includes
   if [[ "$file" == *"/skills/"* ]] && [[ "$file" != *"/shared/"* ]]; then
-    sed -i '' 's/Claude Code/Antigravity/g' "$file"
+    sed_i 's/Claude Code/Antigravity/g' "$file"
   fi
 }
 
@@ -351,7 +356,7 @@ for f in "$PLUGIN_DIR"/rules/*.md; do
     | replace_reviewer_lane_refs_antigravity \
     | normalize_unicode > "$DIST/rules/$(basename "$f")"
   # Config refs for rules: CLAUDE.md -> GEMINI.md but NOT Claude Code -> Antigravity
-  sed -i '' 's/CLAUDE\.md/GEMINI.md/g' "$DIST/rules/$(basename "$f")"
+  sed_i 's/CLAUDE\.md/GEMINI.md/g' "$DIST/rules/$(basename "$f")"
 done
 echo "  + rules/ ($(ls "$PLUGIN_DIR"/rules/*.md 2>/dev/null | wc -l | tr -d ' ') files)"
 
@@ -367,7 +372,7 @@ if [ -d "$PLUGIN_DIR/shared/includes" ]; then
       | replace_reviewer_lane_refs_antigravity \
       | normalize_unicode > "$DIST/shared/includes/$(basename "$f")"
     # Config refs for shared: CLAUDE.md -> GEMINI.md but NOT Claude Code -> Antigravity
-    sed -i '' 's/CLAUDE\.md/GEMINI.md/g' "$DIST/shared/includes/$(basename "$f")"
+    sed_i 's/CLAUDE\.md/GEMINI.md/g' "$DIST/shared/includes/$(basename "$f")"
   done
   # shell includes (e.g. model-registry.sh) — PLAIN copy, NO transforms: replace_model_refs /
   # reviewer-lane rewrites would turn the registry's claude/codex ids into gemini and corrupt it.

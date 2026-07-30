@@ -19,6 +19,11 @@
 set -euo pipefail
 
 ZUVO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Portable primitives (sed_i, zuvo_python) — Windows/Git-Bash is a supported target and
+# the BSD-only `sed -i ''` it replaces breaks there. See scripts/lib/portable.sh.
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/portable.sh"
+
 MARKETPLACE_DIR="${ZUVO_DIR}/../zuvo-marketplace"
 
 GREEN='\033[0;32m'
@@ -69,11 +74,11 @@ echo "════════════════════════�
 echo ""
 
 # Update version in all files
-sed -i '' "s/\"version\": \"${CURRENT_VERSION}\"/\"version\": \"${NEW_VERSION}\"/" package.json
-sed -i '' "s/\"version\": \"${CURRENT_VERSION}\"/\"version\": \"${NEW_VERSION}\"/" .claude-plugin/plugin.json
-sed -i '' "s/\"version\": \"${CURRENT_VERSION}\"/\"version\": \"${NEW_VERSION}\"/" .codex-plugin/plugin.json
+sed_i "s/\"version\": \"${CURRENT_VERSION}\"/\"version\": \"${NEW_VERSION}\"/" package.json
+sed_i "s/\"version\": \"${CURRENT_VERSION}\"/\"version\": \"${NEW_VERSION}\"/" .claude-plugin/plugin.json
+sed_i "s/\"version\": \"${CURRENT_VERSION}\"/\"version\": \"${NEW_VERSION}\"/" .codex-plugin/plugin.json
 # Update version banner in skill router
-sed -i '' "s/Zuvo v${CURRENT_VERSION}/Zuvo v${NEW_VERSION}/" skills/using-zuvo/SKILL.md 2>/dev/null || true
+sed_i "s/Zuvo v${CURRENT_VERSION}/Zuvo v${NEW_VERSION}/" skills/using-zuvo/SKILL.md 2>/dev/null || true
 # Machine-readable VERSION marker — the ONE file that survives a bare skills-only
 # deploy (e.g. a synced fleet bot that has no package.json/plugin.json to read).
 # install.sh copies it into every target root AND skills/, so any install can be
@@ -111,7 +116,7 @@ ok "Pushed + tagged v${NEW_VERSION} (${NEW_SHA:0:7})"
 # ═══════════════════════════════════════
 cd "$MARKETPLACE_DIR"
 git pull --rebase --quiet 2>/dev/null || true
-sed -i '' "s/\"sha\": \"[a-f0-9]*\"/\"sha\": \"${NEW_SHA}\"/" .claude-plugin/marketplace.json
+sed_i "s/\"sha\": \"[a-f0-9]*\"/\"sha\": \"${NEW_SHA}\"/" .claude-plugin/marketplace.json
 git add -A
 git commit -m "bump: zuvo v${NEW_VERSION} (${NEW_SHA:0:7})" --quiet
 git push --quiet

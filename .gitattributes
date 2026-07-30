@@ -1,0 +1,81 @@
+# Line endings — the single highest-impact Windows setting in this repo.
+#
+# Git for Windows ships with core.autocrlf=true by default. Without the rules below, EVERY one of
+# this repo's ~196 shell scripts is checked out with CRLF, and bash then fails on the very first
+# function definition:
+#
+#   ./zuvo-collector-host.sh: line 21: syntax error near unexpected token `{'
+#   bash: zuvo_collector_host: command not found
+#
+# (Demonstrated on this repo's own file before writing this.) The failure is not confined to
+# scripts a developer runs — skills call ~/.zuvo/append-runlog 73 times at runtime, and every git
+# hook is a shell script, so a CRLF checkout silently disables the quality gates too.
+#
+# `* text=auto eol=lf` normalises everything Git detects as text to LF in the working tree,
+# regardless of the user's core.autocrlf. Binary files are matched explicitly below so Git never
+# tries to translate them.
+
+* text=auto eol=lf
+
+# --- Executables and anything a shell/interpreter reads -----------------------
+# Listed explicitly rather than relying on text=auto: a file Git heuristically classifies as
+# binary (e.g. one containing an unlucky byte) would otherwise skip normalisation and ship CRLF.
+*.sh            text eol=lf
+*.bash          text eol=lf
+*.bats          text eol=lf
+*.py            text eol=lf
+*.js            text eol=lf
+*.mjs           text eol=lf
+*.cjs           text eol=lf
+
+# Extensionless helpers (scripts/zuvo-home/append-runlog, retro-stub, backlog, …) and hook
+# entry points. These have shebangs and are executed directly.
+scripts/zuvo-home/*     text eol=lf
+hooks/*                 text eol=lf
+bin/*                   text eol=lf
+.githooks/*             text eol=lf
+
+# --- Data and docs ------------------------------------------------------------
+*.md            text eol=lf
+*.json          text eol=lf
+*.yaml          text eol=lf
+*.yml           text eol=lf
+*.toml          text eol=lf
+*.tsv           text eol=lf
+*.txt           text eol=lf
+*.html          text eol=lf
+
+# --- Batch files: CRLF, EXCEPT the polyglot ----------------------------------
+# cmd.exe mis-parses LF-only batch in multi-line parenthesised blocks, so plain batch keeps CRLF.
+#
+# hooks/run-hook.cmd is the exception and MUST stay LF. It is a bash/batch polyglot that every
+# Claude Code hook routes through, so bash on macOS/Linux reads it on every hook invocation — and
+# bash does NOT tolerate CRLF there. Verified before writing this: a CRLF copy produces
+# "line 37: : command not found" and fails to resolve the hook. An earlier draft of this file
+# pinned *.cmd to CRLF and would have broken every hook on macOS. The batch section inside
+# run-hook.cmd is written with single-line conditionals precisely so LF is safe for cmd.exe too.
+*.cmd           text eol=crlf
+*.bat           text eol=crlf
+*.ps1           text eol=crlf
+hooks/run-hook.cmd  text eol=lf
+
+# --- Binary: never translate --------------------------------------------------
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.ico           binary
+*.pdf           binary
+*.zip           binary
+*.gz            binary
+*.tgz           binary
+*.db            binary
+*.sqlite        binary
+*.db-shm        binary
+*.db-wal        binary
+
+# --- Deliberately preserved CRLF test vector ----------------------------------
+# A real CSV exported by a Windows tool has CRLF, and this fixture is the ONLY CRLF input the
+# leads dedup path ever sees. Normalising it to LF keeps the test green (verified) — which is
+# precisely why it must be pinned: the coverage would vanish silently, with nothing failing.
+scripts/tests/fixtures/leads-dedup/existing.csv -text
