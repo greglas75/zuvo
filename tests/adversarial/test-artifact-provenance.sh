@@ -135,3 +135,39 @@ assert_contains "$out" "TRUNCATED" "and it is labelled as truncated"
 start_test "PROV.11 prompt tells the reviewer that create/update variants differ by design"
 out=$(printf 'x' | bash "$ADV" --dry-run 2>/dev/null)
 assert_contains "$out" "DELIBERATE contract" "type-variant rule present in the code prompt"
+
+# ─── Case 7: proof-of-work markers in EVERY dispatch mode and format ───────
+# The gate (pipeline-gate-lib :: pg_artifact_proven) counts `REVIEW BY:` lines. They used to come
+# only from the MULTI path's body banner, so a genuine --single / --rotate / --json review produced
+# an artifact with ZERO markers and had its coverage refused. 19 retro hits.
+
+start_test "PROV.12 single-provider artifact carries exactly one REVIEW BY marker"
+ZUVO_RUN_ID=mk1 ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-success" \
+  bash "$ADV" --single --files "$EMPTY" --artifact "$TD/m1.md" >/dev/null 2>&1 || true
+n=$(grep -c 'REVIEW BY:' "$TD/m1.md" || true)
+assert_eq "1" "$n" "one marker for one provider"
+assert_contains "$(cat "$TD/m1.md")" "single_provider_note=" "…plus the single-provider note the gate accepts"
+
+start_test "PROV.13 multi-provider artifact carries exactly one marker PER provider"
+ZUVO_RUN_ID=mk2 ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-success" \
+  bash "$ADV" --multi --files "$EMPTY" --artifact "$TD/m2.md" >/dev/null 2>&1 || true
+n=$(grep -c 'REVIEW BY:' "$TD/m2.md" || true)
+assert_eq "2" "$n" "two providers -> exactly two markers (not doubled by the body banner)"
+
+start_test "PROV.14 JSON output still carries markers and a parseable body"
+ZUVO_RUN_ID=mk3 ZUVO_REVIEW_TEST_PROVIDERS="mock-success" \
+  bash "$ADV" --json --files "$EMPTY" --artifact "$TD/m3.md" >/dev/null 2>&1 || true
+n=$(grep -c 'REVIEW BY:' "$TD/m3.md" || true)
+assert_eq "1" "$n" "JSON mode is not exempt from proof-of-work"
+body=$(sed -n '/^---$/,$p' "$TD/m3.md" | tail -n +2)
+if printf '%s' "$body" | jq . >/dev/null 2>&1; then
+  pass "JSON body survived marker injection (markers live in the header)"
+else
+  fail "PROV.14" "artifact body is no longer valid JSON"
+fi
+
+start_test "PROV.15 a failed provider contributes no marker"
+ZUVO_RUN_ID=mk4 ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail" \
+  bash "$ADV" --multi --files "$EMPTY" --artifact "$TD/m4.md" >/dev/null 2>&1 || true
+n=$(grep -c 'REVIEW BY:' "$TD/m4.md" || true)
+assert_eq "1" "$n" "markers count reviews, not attempts"

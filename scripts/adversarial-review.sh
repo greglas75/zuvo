@@ -1558,6 +1558,20 @@ write_artifact() {
     printf 'provider_count=%s\n' "$PROVIDER_COUNT"
     printf 'providers_attempted=%s\n' "${ATTEMPTED_COUNT:-0}"
     printf 'provider_outcomes=%s\n' "${PROVIDER_OUTCOMES:-none}"
+    # Canonical proof-of-work markers. pipeline-gate-lib.sh :: pg_artifact_proven counts
+    # `REVIEW BY:` lines to decide whether a review actually happened. They used to be emitted
+    # only by the MULTI dispatch path's body banner, so every --single / --rotate / --json run
+    # produced an artifact with ZERO markers and had its genuine review refused by the gate.
+    # Emitting them here makes them independent of dispatch mode AND output format (a JSON body
+    # stays valid JSON), and exactly one per provider that actually returned a review.
+    if [[ -n "$PROVIDERS_USED" ]]; then
+      # `printf '%s\n'` — NOT '%s': `while read` never runs its body for a final unterminated
+      # line, which silently emitted zero markers (caught by PROV.12-15).
+      printf '%s\n' "$PROVIDERS_USED" | tr ',' '\n' | while IFS= read -r _prov; do
+        _prov="$(printf '%s' "$_prov" | tr -d ' ')"
+        [[ -n "$_prov" ]] && printf 'REVIEW BY: %s\n' "$(printf '%s' "$_prov" | tr '[:lower:]' '[:upper:]')"
+      done
+    fi
     [[ -n "$single_note" ]] && printf 'single_provider_note=%s\n' "$single_note"
     printf 'input_chars=%s\n' "${#INPUT}"
     printf 'input_chars_original=%s\n' "${ORIG_CHARS:-${#INPUT}}"
@@ -1707,7 +1721,7 @@ if [[ "$MULTI_MODE" == "multi" ]]; then
       ALL_RESULTS="${ALL_RESULTS}
 
 ###############################################################
-###   REVIEW BY: ${upper_name}
+###   PROVIDER: ${upper_name}
 ###############################################################
 
 $RESULT
