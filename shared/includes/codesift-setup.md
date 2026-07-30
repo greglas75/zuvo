@@ -231,12 +231,38 @@ The orchestrator's stack-matching algorithm is deterministic. Its output must th
 
 Before aborting on a mismatch, run the **host-disabled probe** below. Hard-abort with `[PRELOAD MATH MISMATCH] expected=<X> got=<Y>` ONLY when the delta is a true select-string truncation (cause #3 — names that ARE in the deferrable pool but failed to load). If the delta is fully accounted for by host-disabled tools, degrade and continue instead of aborting.
 
+### Frozen-tool-list hosts (Codex): there is nothing left to reveal
+
+CodeSift ≥ 0.10.3 detects hosts that cache their tool list at session start (Codex) and enables the
+**entire language-appropriate tool surface during the MCP handshake**, before the host's first
+`tools/list`. Verified by handshake probe: Codex sees 181 tools where Claude Code sees 60, and a
+TypeScript-only project correctly gets 148 (no Python/PHP/Kotlin tools).
+
+Consequences for Step 2.5 on Codex:
+
+- **Skip the reveal entirely. Call the tool.** Nothing is hidden there, so a preload/reveal round
+  trip buys nothing. If a call genuinely fails, the CodeSift server predates 0.10.3 — say so
+  explicitly rather than silently substituting.
+- **A negative `select:` probe is not evidence of absence.** The Codex bridge answers `select:`
+  with a semantic sample of the namespace rather than the requested names: measured 2026-07-30, a
+  20-name `select:` returned 20-25 codesift tools of which *zero* were the ones asked for —
+  including always-visible core tools like `search_text` and `plan_turn` that the same session then
+  called successfully 44 times. Treat `select:` output as advisory; the only authoritative test is
+  whether a direct call works.
+- `plan_turn` returns an empty `reveal_required` and no `[hidden]` marks on these hosts, and
+  `describe_tools(..., reveal=true)` answers with `reveal_ineffective: true` plus a `reveal_note`.
+  When you see either, do not retry the reveal and do not mark the run BLOCKED on that basis.
+
+This closes the 2026-07-30 failure mode where `write-tests` ended `BLOCKED_INFRA` and `test-audit`
+ended `INCOMPLETE` purely because `find_dead_code` / `find_clones` / `scan_secrets` were revealed
+but never became callable.
+
 ### Host-disabled probe (degrade, don't false-abort)
 
 A non-deferrable or host-disabled manifest tool produces a `got < expected` delta even when the preload is correct. Aborting here blocks otherwise-valid brainstorm/audit/review/pentest/performance-audit runs. Before any abort:
 
 1. For each manifest tool in `expected_tools` but absent from `got`, probe whether it is genuinely host-disabled: `ToolSearch(query="select:mcp__codesift__<name>")` returns `No matching deferred tools` AND `discover_tools(query="<name>")` shows no such tool (or `is_core:false` and not in this host's deferrable pool). **Reveal is not callability:** on some hosts (Codex MCP bridge) `describe_tools(..., reveal=true)` succeeds — the tool shows up in discovery — yet the callable surface never refreshes. If a tool is still not callable after Step C, classify it host-disabled and go straight to steps 2-3; do not re-run the reveal.
-2. **Confirmed host-disabled with a known equivalent** → record `[PRELOAD SUBSTITUTION] <tool> -> <equivalent>`, route the affected dimension to the substitute, and count it as satisfied. Known equivalences:
+2. **Confirmed host-disabled with a known equivalent** → record `[PRELOAD SUBSTITUTION] <tool> -> <equivalent>`, route the affected dimension to the substitute, and count it as satisfied. **On a frozen-list host (Codex + CodeSift ≥ 0.10.3) this step does not apply — every applicable tool is already callable, so call it instead of substituting.** Known equivalences:
    - `find_clones` → `audit_scan` (CQ14)
    - `sql_audit` → `migration_lint` + `search_text` over `*.sql`
    - `review_diff` / `changed_symbols` / `diff_outline` / `scan_secrets` → `audit_scan` + `get_file_outline` + `impact_analysis` + `search_patterns` + Grep secret scan
