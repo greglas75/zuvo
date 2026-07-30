@@ -11,11 +11,25 @@ PRODUCTION_FILE=""
 TEST_FILE=""
 MODEL=""
 PROVIDER=""
-TIMEOUT_SECONDS="${ZUVO_BLIND_AUDIT_TIMEOUT:-180}"
+# Default raised from 180s: Codex cuts an idle stream at 300_000 ms of its own,
+# so a 180s wrapper killed long audits BEFORE the client could report why, and
+# every such run looked like blocked infrastructure. The wrapper must outlive the
+# client's own limit so the real cause surfaces.
+TIMEOUT_SECONDS="${ZUVO_BLIND_AUDIT_TIMEOUT:-600}"
+
+# Reasoning effort for the audit subprocess.
+#
+# Without this the run inherits `model_reasoning_effort` from the user's global
+# ~/.codex/config.toml. At "xhigh" a large audit thinks for >5 minutes without
+# emitting a single stream event, and Codex's 300s idle timeout kills it:
+#   stream disconnected before completion: idle timeout waiting for websocket
+# Observed on both 0.144.6 and 0.146.0-alpha.3.1, so it is not a CLI-version bug.
+# "high" keeps audit quality while staying well inside the idle window.
+REASONING_EFFORT="${ZUVO_BLIND_AUDIT_EFFORT:-high}"
 
 usage() {
   cat <<'EOF'
-Usage: blind-audit-codex.sh --protocol <blind-coverage-audit.md> --production <file> --test <file> [--model <model>] [--provider codex|gemini|claude] [--timeout <seconds>]
+Usage: blind-audit-codex.sh --protocol <blind-coverage-audit.md> --production <file> --test <file> [--model <model>] [--provider codex|gemini|claude] [--timeout <seconds>] [--effort <low|medium|high|xhigh>]
 
 Runs a strict blind coverage audit in a platform-aware subprocess.
 Success requires a non-empty final message containing:
@@ -50,6 +64,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --timeout)
       TIMEOUT_SECONDS="${2:-}"
+      shift 2
+      ;;
+    --effort)
+      REASONING_EFFORT="${2:-}"
       shift 2
       ;;
     -h|--help)
@@ -200,15 +218,24 @@ run_codex() {
     --skip-git-repo-check
     -C "$tmpdir"
     -o "$tmpdir/out.txt"
-    -
   )
   # No -s/--sandbox override: inherit the user's global Codex profile
   # (e.g. danger-full-access + never). The blind-audit prompt itself forbids
   # repo tools and the run is confined to an isolated $tmpdir via -C.
+  #
+  # Reasoning effort, however, must NOT be inherited: a global "xhigh" makes the
+  # model think silently past Codex's 300s stream-idle limit and the run dies as
+  # "idle timeout waiting for websocket" — reported as blocked infrastructure.
+  if [[ -n "$REASONING_EFFORT" ]]; then
+    codex_args+=( -c "model_reasoning_effort=$REASONING_EFFORT" )
+  fi
 
   if [[ -n "$MODEL" ]]; then
     codex_args+=( -m "$MODEL" )
   fi
+
+  # The bare "-" (read prompt from stdin) is positional and must come last.
+  codex_args+=( - )
 
   run_with_timeout codex "${codex_args[@]}" < "$tmpdir/prompt.txt" > "$tmpdir/stdout.txt" 2> "$tmpdir/stderr.txt"
 }
