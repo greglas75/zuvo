@@ -54,8 +54,24 @@ KNOWN_FINDINGS=""      # --known-finding FP (repeatable): fingerprints already d
 # provider whose auth/subscription is dead costs the full per-provider timeout on EVERY pass
 # unless the failure is remembered between them. Keyed by ZUVO_RUN_ID when the caller sets one,
 # else by repo+day so an unrelated run never inherits a stale exclusion.
-_ar_cache_key="${ZUVO_RUN_ID:-$(git rev-parse --show-toplevel 2>/dev/null | tr '/' '_')-$(date -u +%Y%m%d)}"
-PROVIDER_FAIL_CACHE="${TMPDIR:-/tmp}/zuvo-adv-failed-providers.${_ar_cache_key//[^A-Za-z0-9._-]/_}"
+# No date component: a rotation that straddles UTC midnight would otherwise silently get a fresh
+# key and re-probe every provider it had just proven dead. The dir is per-boot temp storage, so it
+# is naturally short-lived without a date in the name.
+_ar_cache_key="${ZUVO_RUN_ID:-$(git rev-parse --show-toplevel 2>/dev/null | tr '/' '_')}"
+# Own the directory before writing into it. A predictable name under a world-writable /tmp lets
+# another user on the host pre-create it as a SYMLINK, and then `>>` appends to — or `: >`
+# truncates — whatever it points at (CWE-59). zuvo runs on shared VPS hosts where that is a real
+# neighbour, not a theoretical one. mkdir with 0700 fails if the path already exists as a symlink
+# or is owned by someone else, so a hostile pre-create makes us fall back to a private mktemp dir
+# rather than writing through it.
+_ar_cache_dir="${TMPDIR:-/tmp}/zuvo-adv-$(id -u)"
+if ! mkdir -m 700 -p "$_ar_cache_dir" 2>/dev/null \
+   || [ -L "$_ar_cache_dir" ] || [ ! -d "$_ar_cache_dir" ] || [ ! -O "$_ar_cache_dir" ]; then
+  _ar_cache_dir="$(mktemp -d 2>/dev/null)" || _ar_cache_dir=""
+fi
+PROVIDER_FAIL_CACHE="${_ar_cache_dir:+$_ar_cache_dir/}failed-providers.${_ar_cache_key//[^A-Za-z0-9._-]/_}"
+# Empty dir (mktemp also failed) => disable the cache rather than write to a guessable path.
+[ -n "$_ar_cache_dir" ] || PROVIDER_FAIL_CACHE="/dev/null"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -623,10 +639,11 @@ if [[ -n "$KNOWN_FINDINGS" ]]; then
 ALREADY-DISPOSITIONED FINDINGS (from previous passes on this same work):
 $(printf '%s' "$KNOWN_FINDINGS" | sed 's/^/  - /')
 
-If your analysis lands on one of these, do NOT list it among your findings. Instead list it under
-a separate heading 'REPEATED KNOWN FINDINGS' with one line each: the fingerprint plus, in a
-sentence, whether the evidence you see CONFIRMS or CONTRADICTS the earlier disposition. Findings
-under that heading do not count toward your finding limit. Spend the budget on NEW ground."
+If your analysis lands on one of these, do NOT list it among your findings. Report it separately —
+in JSON mode under the \`repeated_known_findings\` array, otherwise under a heading 'REPEATED KNOWN
+FINDINGS' — with the fingerprint plus, in a sentence, whether the evidence CONFIRMS or CONTRADICTS
+the earlier disposition. Either way it does not count toward your finding limit; spend the budget
+on NEW ground. In JSON mode emit ONLY the JSON object: never add a textual heading beside it."
 fi
 
 # ─── Review prompt ──────────────────────────────────────────────
@@ -1768,6 +1785,19 @@ else
       status=1
     fi
 
+    if [[ $status -ne 0 || -z "$RESULT" ]]; then
+      # Record the NON-success outcomes too. Recording only auth/ok left a timed-out single
+      # provider reporting `provider_outcomes=none` — the exact ambiguity this field exists to
+      # remove. Skip when the auth branch above already classified it.
+      case ",$PROVIDER_OUTCOMES," in
+        *",${p}:"*) ;;
+        *) if [[ $status -eq 124 ]]; then
+             PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:timeout"
+           else
+             PROVIDER_OUTCOMES="${PROVIDER_OUTCOMES:+$PROVIDER_OUTCOMES,}${p}:empty"
+           fi ;;
+      esac
+    fi
     if [[ $status -eq 0 && -n "$RESULT" ]]; then
       PROVIDER_COUNT=$((PROVIDER_COUNT + 1))
       PROVIDERS_USED="$p"

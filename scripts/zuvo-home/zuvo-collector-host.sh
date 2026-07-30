@@ -22,8 +22,15 @@ zuvo_collector_host() {
   local conf="${ZUVO_HOME:-$HOME/.zuvo}/collector.conf"
   if [ -z "${ZUVO_COLLECTOR_SSH:-}" ] && [ -r "$conf" ]; then
     # Parse, do NOT source: collector.conf is user-edited config, not a script to execute.
+    # Strip an inline `# comment`, then surrounding quotes/whitespace — but NOT interior spaces.
+    # `tr -d ' '` mangled any target carrying options, and without comment-stripping
+    # `ZUVO_COLLECTOR_SSH=host  # prod` resolved to the literal `host#prod`.
     ZUVO_COLLECTOR_SSH="$(sed -n 's/^[[:space:]]*ZUVO_COLLECTOR_SSH[[:space:]]*=[[:space:]]*//p' "$conf" \
-      | tail -1 | tr -d '"'"'"' \t\r')"
+      | tail -1 | tr -d '\r' \
+      | sed -e 's/[[:space:]]*#.*$//' \
+            -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+            -e 's/^["'"'"']//' -e 's/["'"'"']$//' \
+            -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
   fi
   if [ -z "${ZUVO_COLLECTOR_SSH:-}" ]; then
     echo "zuvo: no collector host configured — set ZUVO_COLLECTOR_SSH in $conf (or the environment)." >&2

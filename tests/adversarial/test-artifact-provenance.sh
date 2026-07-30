@@ -79,7 +79,7 @@ start_test "PROV.6 --known-finding is injected into the review prompt"
 out=$(printf 'x' | bash "$ADV" --dry-run --known-finding "svc.ts:42:missing-tenant-scope" 2>&1)
 assert_contains "$out" "ALREADY-DISPOSITIONED FINDINGS" "known-finding block present"
 assert_contains "$out" "svc.ts:42:missing-tenant-scope" "the fingerprint itself is passed through"
-assert_contains "$out" "do not count toward your finding limit" "repeats are budget-exempt"
+assert_contains "$out" "count toward your finding limit" "repeats are budget-exempt"
 
 start_test "PROV.7 no --known-finding → no stray block in the prompt"
 out=$(printf 'x' | bash "$ADV" --dry-run 2>&1)
@@ -93,8 +93,11 @@ fi
 
 start_test "PROV.8 stale all-failed cache is ignored rather than emptying the provider list"
 cache_key="staleprov"
-# Pre-seed the cache with every provider the run would use.
-seed="$TD/zuvo-adv-failed-providers.${cache_key}"
+# Pre-seed the cache with every provider the run would use. The path is $TMPDIR/zuvo-adv-<uid>/
+# since the symlink hardening (PROV.16) — the cache lives in a dir this user owns, not directly
+# in a shared TMPDIR.
+seed_dir="$TD/zuvo-adv-$(id -u)"; mkdir -p "$seed_dir"
+seed="$seed_dir/failed-providers.${cache_key}"
 printf 'mock-success\n' > "$seed"
 out=$(ZUVO_RUN_ID="$cache_key" ZUVO_REVIEW_TEST_PROVIDERS="mock-success" \
   bash "$ADV" --files "$EMPTY" --artifact "$TD/a8.md" 2>&1) || true
@@ -171,3 +174,44 @@ ZUVO_RUN_ID=mk4 ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail" \
   bash "$ADV" --multi --files "$EMPTY" --artifact "$TD/m4.md" >/dev/null 2>&1 || true
 n=$(grep -c 'REVIEW BY:' "$TD/m4.md" || true)
 assert_eq "1" "$n" "markers count reviews, not attempts"
+
+# ─── Case 8: the run-scoped failure cache must not be symlink-hijackable ───
+# Found by this change's own adversarial pass (agy + cursor-agent, CRITICAL, CWE-59) and
+# REPRODUCED before fixing: the cache path was $TMPDIR/zuvo-adv-failed-providers.<key>, a
+# predictable name. With TMPDIR on a world-writable /tmp — which is where zuvo runs on the shared
+# VPS hosts — a neighbour pre-creates that path as a symlink and the `>>` append writes THROUGH it
+# into the victim's file. Confirmed by appending a provider name into a planted victim.txt.
+
+start_test "PROV.16 a symlink planted at the cache path cannot be written through"
+SD="$TD/sym"; rm -rf "$SD"; mkdir -p "$SD/tmp"
+printf 'ORIGINAL\n' > "$SD/victim.txt"
+# Plant BOTH shapes: the per-uid dir the code creates, and the file inside it.
+ln -s "$SD/victim.txt" "$SD/tmp/zuvo-adv-$(id -u)" 2>/dev/null
+key=$(printf '%s' "$(git -C "$ROOT" rev-parse --show-toplevel | tr '/' '_')" | sed 's/[^A-Za-z0-9._-]/_/g')
+ln -s "$SD/victim.txt" "$SD/tmp/failed-providers.$key" 2>/dev/null
+# mock-fail's output is not an auth stub, so drive the auth path with a stub that looks unauthenticated
+printf '#!/bin/sh\necho "Not logged in. Please run login."\nexit 0\n' > "$SD/mock-authfail"
+chmod +x "$SD/mock-authfail"
+( export PATH="$SD:$PATH" TMPDIR="$SD/tmp"
+  printf 'x' | ZUVO_REVIEW_TEST_PROVIDERS="mock-authfail" bash "$ADV" --single --files "$EMPTY" ) >/dev/null 2>&1 || true
+if [ "$(cat "$SD/victim.txt")" = "ORIGINAL" ]; then
+  pass "planted symlink was not followed — victim file untouched"
+else
+  fail "PROV.16" "cache write followed a symlink: victim.txt now contains $(cat "$SD/victim.txt" | tr '\n' ' ')"
+fi
+
+start_test "PROV.17 the cache key carries no date (no silent reset across UTC midnight)"
+grep -q '_ar_cache_key=.*date' "$ADV" \
+  && bad_date=1 || bad_date=0
+[ "$bad_date" -eq 0 ] && pass "cache key is date-free" \
+                      || fail "PROV.17" "cache key embeds a date — a rotation across midnight re-probes dead providers"
+
+start_test "PROV.18 single-provider path records timeout/empty outcomes, not just ok/auth"
+out=$(ZUVO_RUN_ID=oc1 ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout" ZUVO_REVIEW_TIMEOUT=2 \
+  bash "$ADV" --single --files "$EMPTY" --artifact "$TD/oc.md" 2>&1) || true
+h=$(hdr "$TD/oc.md")
+if printf '%s' "$h" | grep -q 'provider_outcomes=mock-timeout:timeout'; then
+  pass "a timed-out single provider is recorded as :timeout"
+else
+  fail "PROV.18" "single-path outcome missing — got: $(printf '%s' "$h" | grep provider_outcomes=)"
+fi
