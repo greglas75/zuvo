@@ -13,4 +13,21 @@
 | `canConnectToDb()` guard wrapping most tests | Mixing unit and integration | Choose one strategy per file |
 | `if (condition) { expect(...) }` / ternary expect | Assertion silently skipped when condition is false — test is green but verifies nothing | Assert precondition first (`expect(condition).toBe(true)`), then assert outcome unconditionally. Or use separate tests for each branch. |
 
+## Typed mock gate (JS/TS)
+
+Untyped mocks compile against ANY production refactor — they keep passing when
+the real service signature changes, which is exactly when tests should fail.
+
+| Blocked Pattern | Why | Do Instead |
+|----------------|-----|------------|
+| `Record<string, jest.Mock>` / `Record<string, vi.Mock>` as a service mock | Erases the service's method names AND signatures — a renamed method never fails the test | Typed subset: `Pick<RespondentService, 'findOne' \| 'create'>` or a `MockedMethods<T, K>` helper |
+| `as never` on a mock or argument | Silences every type error the compiler would have caught | Fix the mock's type; if the cast feels necessary, the mock shape is wrong |
+| Broad `as any` on a mock object or domain argument | Same signature-blindness as `Record<string, Mock>` | `as unknown as Pick<T, ...>` at most, scoped to one property with a comment |
+| Mock defined but never asserted or consumed | Dead setup — implies coverage that doesn't exist and hides which collaborators matter | Delete it, or assert on it (`toHaveBeenCalledWith`) |
+| `expect.anything()` on a DOMAIN argument (id, payload, entity) | Accepts every wrong value — the delegation contract is untested | Assert the concrete value or a typed `expect.objectContaining({...})` with the domain fields |
+
+`expect.anything()` remains acceptable for genuinely incidental arguments
+(loggers, abort signals, framework-injected context) — name the reason in the
+test when used.
+
 **If reaching for a blocked pattern:** wrong testability decision. Go back to testability classification (in `test-code-types.md`) and choose NEEDS_INTEGRATION.
