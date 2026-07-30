@@ -110,6 +110,46 @@ for probe in '.codex/scripts/refactor-safety-gate.sh' '.cursor/scripts/refactor-
     || bad "(6c) refactor PHASE 0 does not probe ~/$probe"
 done
 
+# (8) EVERY zuvo-home helper must be installed, and none may carry a host or secret.
+# Two failures this locks. (a) install.sh used explicit per-file cp blocks and had silently
+# drifted: retro-mine.py, retro-mine-weekly.sh and rotate-retros-cron.sh were versioned but never
+# installed — the file was in git and nothing was in ~/.zuvo. It is a loop now, so the list cannot
+# drift again. (b) six helpers were unversioned because they hardcoded a private SSH host; the
+# address moved to ~/.zuvo/collector.conf (machine-local, never in git) so the CODE can ship.
+grep -q 'for _src in "\$ZUVO_DIR"/scripts/zuvo-home/\*' "$ROOT/scripts/install.sh"   && pass "(8) install.sh installs zuvo-home helpers by LOOP, not a driftable list"   || bad "(8) install.sh is back to per-file blocks — new helpers will be forgotten"
+
+viol=0
+for f in "$ROOT"/scripts/zuvo-home/*; do
+  [ -f "$f" ] || continue
+  case "$f" in *.pyc) continue ;; esac
+  # any dotted quad that is not a loopback/wildcard placeholder
+  if grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' "$f" 2>/dev/null      | grep -qvE '^(127\.0\.0\.1|0\.0\.0\.0)$'; then
+    bad "(8) versioned helper names a host address: $(basename "$f")"; viol=$((viol+1))
+  fi
+  if grep -qiE '(token|secret|api[_-]?key)[[:space:]]*=[[:space:]]*["'"'"'][A-Za-z0-9_-]{16,}' "$f" 2>/dev/null; then
+    bad "(8) versioned helper embeds a literal secret: $(basename "$f")"; viol=$((viol+1))
+  fi
+done
+[ "$viol" -eq 0 ] && pass "(8) no versioned helper carries a host address or literal secret"
+
+# the resolver must fail LOUDLY rather than defaulting to somebody else's collector
+grep -q 'There is deliberately NO fallback default' "$ROOT/scripts/zuvo-home/zuvo-collector-host.sh"   && pass "(8) collector-host resolver documents why it has no default"   || bad "(8) collector-host resolver lost its no-default contract"
+_t=$(mktemp -d)
+if ( export ZUVO_HOME="$_t"; unset ZUVO_COLLECTOR_SSH
+     . "$ROOT/scripts/zuvo-home/zuvo-collector-host.sh"; zuvo_collector_host ) 2>/dev/null; then
+  bad "(8) resolver succeeded with no config — it must fail closed"
+else
+  pass "(8) resolver fails closed when no host is configured"
+fi
+# config is PARSED, never sourced: a config that contains code must not execute it
+printf 'ZUVO_COLLECTOR_SSH=safe@host
+touch %s/PWNED
+' "$_t" > "$_t/collector.conf"
+( export ZUVO_HOME="$_t"; unset ZUVO_COLLECTOR_SSH
+  . "$ROOT/scripts/zuvo-home/zuvo-collector-host.sh"; zuvo_collector_host ) >/dev/null 2>&1
+[ -f "$_t/PWNED" ] && bad "(8) collector.conf was SOURCED — arbitrary code ran"                    || pass "(8) collector.conf is parsed, not sourced (no code execution)"
+rm -rf "$_t"
+
 # (7) syntax check on all four scripts (shellcheck absent → bash -n)
 for s in scripts/install.sh scripts/build-codex-skills.sh scripts/build-antigravity-skills.sh scripts/build-cursor-skills.sh; do
   if command -v shellcheck >/dev/null 2>&1; then

@@ -351,122 +351,35 @@ install_zuvo_home() {
 
   mkdir -p "$HOME/.zuvo"
 
-  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/append-runlog" ]]; then
-    cp "$ZUVO_DIR/scripts/zuvo-home/append-runlog" "$HOME/.zuvo/append-runlog"
-    chmod +x "$HOME/.zuvo/append-runlog"
-    ok "append-runlog installed (~/.zuvo/append-runlog)"
-  else
-    warn "scripts/zuvo-home/append-runlog not found in repo — skipping"
-  fi
-
-  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/compute-preload" ]]; then
-    cp "$ZUVO_DIR/scripts/zuvo-home/compute-preload" "$HOME/.zuvo/compute-preload"
-    chmod +x "$HOME/.zuvo/compute-preload"
-    ok "compute-preload installed (~/.zuvo/compute-preload)"
-  else
-    warn "scripts/zuvo-home/compute-preload not found in repo — skipping"
-  fi
-
-  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/verify-audit" ]]; then
-    cp "$ZUVO_DIR/scripts/zuvo-home/verify-audit" "$HOME/.zuvo/verify-audit"
-    chmod +x "$HOME/.zuvo/verify-audit"
-    ok "verify-audit installed (~/.zuvo/verify-audit)"
-  else
-    warn "scripts/zuvo-home/verify-audit not found in repo — skipping"
-  fi
-
-  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/retro-stub" ]]; then
-    cp "$ZUVO_DIR/scripts/zuvo-home/retro-stub" "$HOME/.zuvo/retro-stub"
-    chmod +x "$HOME/.zuvo/retro-stub"
-    ok "retro-stub installed (~/.zuvo/retro-stub)"
-  else
-    warn "scripts/zuvo-home/retro-stub not found in repo — skipping"
-  fi
-
-  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/append-retro" ]]; then
-    cp "$ZUVO_DIR/scripts/zuvo-home/append-retro" "$HOME/.zuvo/append-retro"
-    chmod +x "$HOME/.zuvo/append-retro"
-    ok "append-retro installed (~/.zuvo/append-retro)"
-  else
-    warn "scripts/zuvo-home/append-retro not found in repo — skipping"
-  fi
-
-  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/log-ideas" ]]; then
-    cp "$ZUVO_DIR/scripts/zuvo-home/log-ideas" "$HOME/.zuvo/log-ideas"
-    chmod +x "$HOME/.zuvo/log-ideas"
-    ok "log-ideas installed (~/.zuvo/log-ideas)"
-  else
-    warn "scripts/zuvo-home/log-ideas not found in repo — skipping"
-  fi
-
-  # Fleet telemetry uploader for runs.log/retros.log -> collector /ingest/zuvo (event stream,
-  # incremental cursor). The SCRIPT is deployed here; the per-host sync wrapper + scheduler
-  # (LaunchAgent / cron that fetch the collector token) are provisioned separately per machine,
-  # same as backlog-collect.py — they are host-specific (SSH target, secret path), not plugin.
-  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/runlog-collect.py" ]]; then
-    cp "$ZUVO_DIR/scripts/zuvo-home/runlog-collect.py" "$HOME/.zuvo/runlog-collect.py"
-    ok "runlog-collect.py installed (~/.zuvo/runlog-collect.py) — schedule a --push wrapper per host"
-  else
-    warn "scripts/zuvo-home/runlog-collect.py not found in repo — skipping"
-  fi
-
-  # Mining loop engine + scheduled wrappers. These produce the digests that digest-proposals
-  # consumes; without them the learning loop has no input. They lived ONLY in ~/.zuvo until
-  # 2026-07-27 — i.e. one disk failure from losing the whole mining half. Now versioned.
-  # NOTE: runlog-sync.sh is deliberately NOT here. It hardcodes an SSH host and fetches a
-  # collector token — host-specific infrastructure glue, same category as backlog-collect.py.
-  # Shipping it would point every installing machine at one private collector.
-  for _m in retro-mine.py retro-mine-weekly.sh rotate-retros-cron.sh; do
-    if [[ -f "$ZUVO_DIR/scripts/zuvo-home/$_m" ]]; then
-      # Write-then-rename: a scheduled job may be executing the old file right now, and
-      # cp-in-place would truncate it mid-run. rename(2) is atomic on the same filesystem.
-      cp "$ZUVO_DIR/scripts/zuvo-home/$_m" "$HOME/.zuvo/.$_m.new"
-      chmod +x "$HOME/.zuvo/.$_m.new"
-      mv -f "$HOME/.zuvo/.$_m.new" "$HOME/.zuvo/$_m"
-      ok "$_m installed (~/.zuvo/$_m)"
+  # Install EVERY helper in scripts/zuvo-home/ — a loop, not a per-file block. The explicit list
+  # this replaces had silently drifted: retro-mine.py, retro-mine-weekly.sh and rotate-retros-cron.sh
+  # were versioned in the repo but never installed, so a fresh machine got the file in git and
+  # nothing in ~/.zuvo. Adding a helper must not require remembering to add an install block.
+  local _installed=0 _skipped=0
+  for _src in "$ZUVO_DIR"/scripts/zuvo-home/*; do
+    [[ -f "$_src" ]] || continue
+    local _name; _name="$(basename "$_src")"
+    case "$_name" in *.pyc|__pycache__|.*) continue ;; esac
+    if cp "$_src" "$HOME/.zuvo/$_name" 2>/dev/null; then
+      chmod +x "$HOME/.zuvo/$_name" 2>/dev/null || true
+      _installed=$((_installed + 1))
     else
-      warn "scripts/zuvo-home/$_m not found in repo — skipping"
+      warn "could not install ~/.zuvo/$_name"
+      _skipped=$((_skipped + 1))
     fi
   done
+  ok "$_installed zuvo-home helpers installed to ~/.zuvo/${_skipped:+ ($_skipped skipped)}"
 
-  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/sanitize-retros" ]]; then
-    cp "$ZUVO_DIR/scripts/zuvo-home/sanitize-retros" "$HOME/.zuvo/sanitize-retros"
-    chmod +x "$HOME/.zuvo/sanitize-retros"
-    ok "sanitize-retros installed (~/.zuvo/sanitize-retros) — normalizes key=value retro drift; wire into rotate schedule"
-  else
-    warn "scripts/zuvo-home/sanitize-retros not found in repo — skipping"
-  fi
-
-  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/digest-proposals" ]]; then
-    cp "$ZUVO_DIR/scripts/zuvo-home/digest-proposals" "$HOME/.zuvo/digest-proposals"
-    chmod +x "$HOME/.zuvo/digest-proposals"
-    ok "digest-proposals installed (~/.zuvo/digest-proposals) — surfaces retro-mine change proposals"
-  else
-    warn "scripts/zuvo-home/digest-proposals not found in repo — skipping"
-  fi
-
-  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/verify-plan-dag" ]]; then
-    cp "$ZUVO_DIR/scripts/zuvo-home/verify-plan-dag" "$HOME/.zuvo/verify-plan-dag"
-    chmod +x "$HOME/.zuvo/verify-plan-dag"
-    ok "verify-plan-dag installed (~/.zuvo/verify-plan-dag)"
-  else
-    warn "scripts/zuvo-home/verify-plan-dag not found in repo — skipping"
-  fi
-
-  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/rotate-retros" ]]; then
-    cp "$ZUVO_DIR/scripts/zuvo-home/rotate-retros" "$HOME/.zuvo/rotate-retros"
-    chmod +x "$HOME/.zuvo/rotate-retros"
-    ok "rotate-retros installed (~/.zuvo/rotate-retros)"
-  else
-    warn "scripts/zuvo-home/rotate-retros not found in repo — skipping"
-  fi
-
-  if [[ -f "$ZUVO_DIR/scripts/zuvo-home/zuvo-watchdog-check" ]]; then
-    cp "$ZUVO_DIR/scripts/zuvo-home/zuvo-watchdog-check" "$HOME/.zuvo/zuvo-watchdog-check"
-    chmod +x "$HOME/.zuvo/zuvo-watchdog-check"
-    ok "zuvo-watchdog-check installed (~/.zuvo/zuvo-watchdog-check)"
-  else
-    warn "scripts/zuvo-home/zuvo-watchdog-check not found in repo — skipping"
+  # Local, NEVER-versioned config for host-coupled helpers (collector SSH target). Created empty
+  # so the file exists to edit; the helpers fail loudly with instructions when it has no host.
+  if [[ ! -f "$HOME/.zuvo/collector.conf" ]]; then
+    cat > "$HOME/.zuvo/collector.conf" <<'CONF'
+# ~/.zuvo/collector.conf — machine-local, NOT in git (it names a private host).
+# Set this to the telemetry collector's SSH target to enable backlog/runlog/popebot sync.
+# ZUVO_COLLECTOR_SSH=user@host
+CONF
+    chmod 600 "$HOME/.zuvo/collector.conf"
+    ok "collector.conf stub created (~/.zuvo/collector.conf — set ZUVO_COLLECTOR_SSH to enable sync)"
   fi
 
   # B-9 (v1.3.109): per-platform `zuvo-home` subcommand is a pre-existing gap

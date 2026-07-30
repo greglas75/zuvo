@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+"""zuvo backlog — ONE place for every backlog in the fleet (Mac + VPS + bots).
+
+    ~/.zuvo/backlog sync              collect this host, push, pull merged fleet index
+    ~/.zuvo/backlog pull              pull merged fleet index only (no local scan)
+    ~/.zuvo/backlog ls                per-repo summary (open/done/oldest), all hosts
+    ~/.zuvo/backlog open [--repo R]   open items, newest first
+    ~/.zuvo/backlog crit              critical+high items across the whole fleet
+    ~/.zuvo/backlog grep <text>       full-text search across every backlog
+    ~/.zuvo/backlog strays            worktree-fork copies that should not exist
+
+Write surface stays per-repo `memory/backlog.md` (git-tracked, reviewable, offline).
+This is the READ model: a merged index at ~/.zuvo/backlog-index.jsonl, rebuilt from
+the collector so the Mac sees VPS/bot debt without SSH-ing to each box.
+
+Merge rule: per host, only the LATEST run_id counts (a re-run replaces, never
+duplicates). Requires SSH to the collector host for `pull`.
+"""
+import os, sys, json, subprocess, collections
+
+HOME = os.path.expanduser("~")
+ZUVO = os.environ.get("ZUVO_DIR", os.path.join(HOME, ".zuvo"))
+INDEX = os.path.join(ZUVO, "backlog-index.jsonl")
+META = os.path.join(ZUVO, "backlog-index.meta.json")
+def _collector_host():
+    """SSH target for the shared collector. Env, else ~/.zuvo/collector.conf, else none.
+    No hardcoded default on purpose — a wrong one would push this machine's backlog to
+    somebody else's host. Callers treat "" as "sync disabled", never as an error."""
+    v = os.environ.get("ZUVO_COLLECTOR_SSH", "").strip()
+    if v:
+        return v
+    conf = os.path.join(os.environ.get("ZUVO_HOME") or os.path.expanduser("~/.zuvo"), "collector.conf")
+    try:
+        for line in open(conf, encoding="utf-8", errors="replace"):
+            line = line.strip()
+            if line.startswith("ZUVO_COLLECTOR_SSH"):
+                return line.split("=", 1)[1].strip().strip('"\'')
+    except OSError:
+        pass
+    return ""
+
+
+VPS = _collector_host()
+DATA = "/home/gha/telemetry-collector/data/backlog"
+
+
+def pull():
+    """Read every backlog record off the collector, keep the newest run per host."""
+    raw = subprocess.run(
+        ["ssh", "-o", "ConnectTimeout=10", VPS, f"cat {DATA}/*.jsonl 2>/dev/null"],
+        capture_output=True, text=True, timeout=120).stdout
+    newest = {}          # host -> (received_at, run_id)
+    batches = collections.defaultdict(list)   # (host, run_id) -> items
+    strays = {}
+    for line in raw.splitlines():
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        p = rec.get("payload") or {}
+        host, run = p.get("host"), p.get("run_id", "")
+        if not host:
+            continue
+        ts = rec.get("received_at", 0)
+        batches[(host, run)].extend(p.get("items") or [])
+        if p.get("stray_worktree_copies"):
+            strays[(host, run)] = p["stray_worktree_copies"]
+        if host not in newest or ts > newest[host][0]:
+            newest[host] = (ts, run)
+    items, stray_out = [], []
+    for host, (ts, run) in newest.items():
+        items.extend(batches.get((host, run), []))
+        for s in strays.get((host, run), []):
+            stray_out.append({"host": host, "path": s})
+    os.makedirs(ZUVO, exist_ok=True)
+    with open(INDEX, "w") as f:
+        for it in items:
+            f.write(json.dumps(it) + "\n")
+    json.dump({"hosts": {h: {"received_at": t, "run_id": r} for h, (t, r) in newest.items()},
+               "strays": stray_out, "items": len(items)}, open(META, "w"), indent=2)
+    return items, stray_out, newest
+
+
+def load():
+    if not os.path.exists(INDEX):
+        sys.exit(f"no index yet — run: {sys.argv[0]} sync")
+    items = [json.loads(l) for l in open(INDEX) if l.strip()]
+    meta = json.load(open(META)) if os.path.exists(META) else {}
+    return items, meta
+
+
+def cmd_sync():
+    tok = os.environ.get("CODESIFT_COLLECTOR_TOKEN") or os.environ.get("ZUVO_COLLECTOR_TOKEN")
+    if not tok:  # fetch it from the collector host so cron needs no local secret
+        tok = subprocess.run(["ssh", "-o", "ConnectTimeout=10", VPS,
+                              ". /home/gha/telemetry-collector/collector.env; echo $CODESIFT_COLLECTOR_TOKEN"],
+                             capture_output=True, text=True, timeout=60).stdout.strip()
+    env = dict(os.environ, CODESIFT_COLLECTOR_TOKEN=tok)
+    out = subprocess.run([sys.executable, os.path.join(ZUVO, "backlog-collect.py"), "--push"],
+                         capture_output=True, text=True, env=env, timeout=300)
+    print(out.stdout.strip() or out.stderr.strip())
+    cmd_pull()
+
+
+def cmd_pull():
+    items, strays, newest = pull()
+    print(f"index: {INDEX} — {len(items)} items from {len(newest)} host(s)")
+    for h, (ts, r) in sorted(newest.items()):
+        n = sum(1 for i in items if i.get("host") == h)
+        print(f"  {h}: {n} items (run {r})")
+    if strays:
+        print(f"  ⚠ {len(strays)} worktree-fork copies flagged (see `backlog strays`)")
+
+
+def cmd_ls():
+    items, meta = load()
+    per = collections.defaultdict(lambda: {"open": 0, "done": 0, "oldest": "", "host": ""})
+    for i in items:
+        k = f"{i.get('host','?').split('.')[0]}:{i.get('repo','?')}"
+        d = per[k]
+        d["host"] = i.get("host", "")
+        d[i.get("status", "open")] = d.get(i.get("status", "open"), 0) + 1
+        a = i.get("added") or ""
+        if a and (not d["oldest"] or a < d["oldest"]):
+            d["oldest"] = a
+    rows = sorted(per.items(), key=lambda kv: -kv[1]["open"])
+    print(f"{'repo':<46} {'open':>6} {'done':>6}  oldest")
+    print("-" * 74)
+    for k, d in rows:
+        print(f"{k[:45]:<46} {d['open']:>6} {d['done']:>6}  {d['oldest'] or '-'}")
+    print("-" * 74)
+    print(f"TOTAL open={sum(d['open'] for _, d in rows)} done={sum(d['done'] for _, d in rows)} "
+          f"across {len(rows)} repos / {len(meta.get('hosts', {}))} hosts")
+
+
+def cmd_open(args):
+    items, _ = load()
+    repo = None
+    if "--repo" in args:
+        repo = args[args.index("--repo") + 1]
+    sel = [i for i in items if i.get("status") == "open" and (not repo or repo in i.get("repo", ""))]
+    sel.sort(key=lambda i: i.get("added") or "", reverse=True)
+    for i in sel[:60]:
+        print(f"[{i.get('added') or '----------'}] {i.get('host','?').split('.')[0]}:{i.get('repo')} "
+              f"{i.get('item_id')} {(i.get('severity') or '-'):>8} | {i.get('text','')[:110]}")
+    print(f"\n({len(sel)} open{' in ' + repo if repo else ''}, showing {min(60, len(sel))})")
+
+
+def cmd_crit():
+    items, _ = load()
+    sel = [i for i in items if i.get("status") == "open" and i.get("severity") in ("critical", "high")]
+    sel.sort(key=lambda i: (i.get("severity") != "critical", i.get("added") or ""))
+    for i in sel[:60]:
+        print(f"{i.get('severity','').upper():>8} {i.get('host','?').split('.')[0]}:{i.get('repo')} "
+              f"{i.get('item_id')} | {i.get('text','')[:110]}")
+    print(f"\n({len(sel)} critical/high open across the fleet, showing {min(60, len(sel))})")
+
+
+def cmd_grep(args):
+    if not args:
+        sys.exit("usage: backlog grep <text>")
+    q = " ".join(args).lower()
+    items, _ = load()
+    sel = [i for i in items if q in (i.get("text", "") + i.get("repo", "")).lower()]
+    for i in sel[:60]:
+        print(f"{i.get('status','?'):>4} {i.get('host','?').split('.')[0]}:{i.get('repo')} "
+              f"{i.get('item_id')} | {i.get('text','')[:110]}")
+    print(f"\n({len(sel)} matches, showing {min(60, len(sel))})")
+
+
+def cmd_strays():
+    _, meta = load()
+    st = meta.get("strays", [])
+    if not st:
+        print("no worktree-fork backlog copies — clean ✓")
+        return
+    print(f"{len(st)} worktree-fork copies (protocol says ONE backlog per repo, at the MAIN checkout):")
+    for s in st:
+        print(f"  {s['host'].split('.')[0]}: {s['path']}")
+
+
+if __name__ == "__main__":
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "ls"
+    rest = sys.argv[2:]
+    {"sync": lambda: cmd_sync(), "pull": lambda: cmd_pull(), "ls": lambda: cmd_ls(),
+     "open": lambda: cmd_open(rest), "crit": lambda: cmd_crit(),
+     "grep": lambda: cmd_grep(rest), "strays": lambda: cmd_strays(),
+     }.get(cmd, lambda: sys.exit(__doc__))()

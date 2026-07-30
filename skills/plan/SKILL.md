@@ -451,7 +451,8 @@ timeout 480 adversarial-review --mode plan --files "docs/specs/YYYY-MM-DD-<topic
   > zuvo/context/adversarial-plan.json 2> zuvo/context/adversarial-plan.err
 ```
 
-**The explicit `timeout 480` (or `run_in_background`) is required, not defensive.** A 5-provider
+**The explicit `timeout 480` is required, not defensive** (or run the pass in the background, if
+your harness offers that). A 5-provider
 `--mode plan` pass measured **178s on a 7-task plan** and grows with plan size, while the default
 Bash tool timeout is 120s — so the pass is killed mid-run, the JSON capture is empty or truncated,
 and the round is spent for nothing. This is a measured failure, not a hypothetical.
