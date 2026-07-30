@@ -10,8 +10,10 @@
 #                description present), H1 == '# zuvo:<dir>', run-logger
 #                reference present, no literal '{plugin_root}' token,
 #                include-integrity (every ../../shared/includes|rules/*.md
-#                token resolves on disk), count-consistency (declared skill
-#                counts in plugin manifests/docs/router match actual dirs).
+#                token resolves on disk), references-layout (references/ is
+#                flat — the platform builds copy one level only),
+#                count-consistency (declared skill counts in plugin
+#                manifests/docs/router match actual dirs).
 # WARN checks  : an arg-parsing signal is present, a Mandatory File Loading
 #                section is present.
 #
@@ -241,10 +243,31 @@ ROUTING_NONSKILL_TOKENS="zuvo:adhoc-approved"
 # --- ERROR: every shared/includes|rules include token must exist on disk ---
 # --- AND use the canonical depth for the referencing file's level ---
 check_include_integrity() {
-  local before="$ERRORS" f tok rel fileloc skill
+  local before="$ERRORS" f tok rel fileloc skill is_ref canon
   while IFS= read -r -d '' f; do
     fileloc="${f#"$SKILLS_DIR"/}"   # e.g. build/SKILL.md or refactor/agents/x.md
     skill="$(skill_name_of "$f")"
+    # references/ EXCEPTION to the root-anchored rule below: reference docs are
+    # read as standalone prose (and are copied verbatim into every platform
+    # dist), so their include paths must be filesystem-correct RELATIVE TO THE
+    # FILE. agents/ and SKILL.md keep the root-anchored convention, so the ~87
+    # legitimate root-anchored uses (incl. plan/agents/plan-reviewer.md,
+    # write-tests/agents/test-quality-reviewer.md,
+    # execute/agents/quality-reviewer.md) stay clean.
+    # Scoped to the EXACT shipped layout skills/<name>/references/<file>.md —
+    # a nested skills/<name>/references/sub/x.md is NOT given dirname
+    # resolution here (its depth is different and it never ships at all; the
+    # hard ERROR for it lives in check_references_layout).
+    is_ref=0
+    case "${fileloc#*/}" in
+      references/*/*) : ;;            # nested → unsupported, see references-layout
+      references/*.md) is_ref=1 ;;
+    esac
+    # canonical depth for THIS file: root-anchored files say ../../ (convention),
+    # a shipped references/ file is one level deeper on disk, so its
+    # filesystem-correct depth to the repo root is ../../../
+    canon="../../"
+    [ "$is_ref" -eq 1 ] && canon="../../../"
     # RESOLUTION RULE: ../../ tokens resolve against $ROOT — NEVER relative
     # to the referencing file's dirname (agents/*.md mostly use the same
     # root-anchored ../../ convention one level deeper; dirname-relative
@@ -259,11 +282,11 @@ check_include_integrity() {
       [ -n "$tok" ] || continue
       case "$tok" in
         ../../../../*)
-          fail_err "$skill: non-canonical include depth (must be ../../): $tok in ${f#"$ROOT"/}" ;;
+          fail_err "$skill: non-canonical include depth (must be $canon): $tok in ${f#"$ROOT"/}" ;;
         ../../../*)
           if [ "${fileloc#*/*/}" = "$fileloc" ]; then
             # fewer than 2 path levels below skills/ → SKILL.md level → too deep
-            fail_err "$skill: non-canonical include depth (must be ../../): $tok in ${f#"$ROOT"/}"
+            fail_err "$skill: non-canonical include depth (must be $canon): $tok in ${f#"$ROOT"/}"
           else
             rel="${tok#../../../}"
             [ -f "$ROOT/$rel" ] \
@@ -271,14 +294,55 @@ check_include_integrity() {
           fi ;;
         ../../*)
           rel="${tok#../../}"
-          [ -f "$ROOT/$rel" ] \
-            || fail_err "$skill: dangling include $tok in ${f#"$ROOT"/} (no $rel under root)" ;;
+          if [ "$is_ref" -eq 1 ]; then
+            # resolve against the file's OWN dirname (skills/<n>/references/ →
+            # ../../ lands on skills/, not the repo root). Two DISTINCT defects,
+            # reported separately so the message is never misleading:
+            #   depth wrong  — target exists at root, the token just needs one
+            #                  more ../ ; suggest the fix
+            #   dangling     — target exists NOWHERE; a depth suggestion would
+            #                  send the reader chasing a file that isn't there
+            if [ ! -f "$(dirname "$f")/../../$rel" ]; then
+              if [ -f "$ROOT/$rel" ]; then
+                fail_err "$skill: wrong-depth include $tok in ${f#"$ROOT"/} (references/ resolves relative to its own dir — use ../../../$rel)"
+              else
+                fail_err "$skill: dangling include $tok in ${f#"$ROOT"/} (no $rel relative to the file or under root)"
+              fi
+            fi
+          else
+            [ -f "$ROOT/$rel" ] \
+              || fail_err "$skill: dangling include $tok in ${f#"$ROOT"/} (no $rel under root)"
+          fi ;;
         *)
-          fail_err "$skill: non-canonical include depth (must be ../../): $tok in ${f#"$ROOT"/}" ;;
+          fail_err "$skill: non-canonical include depth (must be $canon): $tok in ${f#"$ROOT"/}" ;;
       esac
     done < <(grep -oE -- "$INCLUDE_TOKEN_RE" "$f" | sort -u)
   done < <(find "$SKILLS_DIR" -type f -name '*.md' -print0)
   [ "$ERRORS" -eq "$before" ] && INCLUDE_INTEGRITY_OK=1
+}
+
+# --- ERROR: references/ must be FLAT — nested subdirs never reach any dist ---
+# All three platform builds copy exactly one level, non-recursively:
+#   for ref in "$skill_dir/references/"*.md   (build-codex-skills.sh,
+#   build-cursor-skills.sh, build-antigravity-skills.sh)
+# So a file at skills/<name>/references/sub/x.md — or a references/ dir that is
+# not directly under the skill — is not merely mis-validated, it is
+# architecturally unshippable: it exists in the repo and reaches no platform.
+# Fail loudly at lint time instead of silently dropping it at build time.
+check_references_layout() {
+  local f fileloc rest
+  while IFS= read -r -d '' f; do
+    fileloc="${f#"$SKILLS_DIR"/}"
+    case "$fileloc" in */references/*) ;; *) continue ;; esac
+    rest="${fileloc#*/}"             # everything below skills/<name>/
+    case "$rest" in
+      references/*/*)
+        fail_err "$(skill_name_of "$f"): unsupported references/ layout ${f#"$ROOT"/} — platform builds copy skills/<name>/references/*.md ONE level only, so nested references/ subdirs never ship" ;;
+      references/*) ;;               # the supported flat layout
+      *)
+        fail_err "$(skill_name_of "$f"): unsupported references/ layout ${f#"$ROOT"/} — platform builds copy skills/<name>/references/*.md ONE level only, so a references/ dir nested elsewhere never ships" ;;
+    esac
+  done < <(find "$SKILLS_DIR" -type f -name '*.md' -print0)
 }
 
 # --- count-consistency helpers ---
@@ -450,6 +514,7 @@ check_mfl
 check_run_logger
 check_plugin_root
 check_include_integrity
+check_references_layout
 check_count_consistency
 
 [ "$INCLUDE_INTEGRITY_OK" -eq 1 ] && echo "include-integrity: OK"

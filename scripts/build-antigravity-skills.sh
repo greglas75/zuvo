@@ -520,9 +520,11 @@ errors=0
 warnings=0
 
 # Check for Claude Code-specific tool references
+# references/*.md is IN SCOPE: it is copied verbatim into the dist above, so
+# without it a Claude-only tool name just has to move out of SKILL.md to ship.
 tool_refs=$(grep -rln \
   'EnterPlanMode\|ExitPlanMode\|AskUserQuestion\|TeamCreate\|SendMessage' \
-  "$DIST"/skills/*/SKILL.md "$DIST"/rules/ 2>/dev/null || true)
+  "$DIST"/skills/*/SKILL.md "$DIST"/skills/*/references/*.md "$DIST"/rules/ 2>/dev/null || true)
 
 if [ -n "$tool_refs" ]; then
   echo "  ERROR: Claude Code tool references found:"

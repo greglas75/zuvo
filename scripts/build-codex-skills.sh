@@ -817,9 +817,11 @@ errors=0
 warnings=0
 
 # Check for Claude Code-specific tool references (excluding agents/ which may have legacy text)
+# references/*.md is IN SCOPE: it is copied verbatim into the dist above, so
+# without it a Claude-only tool name just has to move out of SKILL.md to ship.
 tool_refs=$(grep -rln \
   'TaskCreate\|TaskUpdate\|TaskList\|EnterPlanMode\|ExitPlanMode\|AskUserQuestion\|run_in_background\|TeamCreate\|SendMessage' \
-  "$DIST"/skills/*/SKILL.md "$DIST"/rules/ "$DIST"/protocols/ 2>/dev/null || true)
+  "$DIST"/skills/*/SKILL.md "$DIST"/skills/*/references/*.md "$DIST"/rules/ "$DIST"/protocols/ 2>/dev/null || true)
 
 if [ -n "$tool_refs" ]; then
   echo "  ERROR: Claude Code tool references found:"
