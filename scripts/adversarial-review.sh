@@ -37,8 +37,16 @@ START_TIME=$(date +%s)
 mono_now() { python3 -c 'import time;print(int(time.monotonic()))' 2>/dev/null || echo ""; }
 MONO_START="$(mono_now)"
 
-# Seconds of this run the host spent suspended. Args: <wall_elapsed> <expected_budget>.
+# Seconds of this run the host spent suspended. Args: <wall_elapsed> <whole_run_budget>.
 # Prints an integer; 0 means "no suspension detected".
+#
+# The budget argument MUST be the ceiling for the WHOLE run, not one provider's timeout.
+# --single and --rotate walk their candidates sequentially, so N slow providers legitimately
+# take N × the per-provider budget; measuring the fallback against a single provider's budget
+# reported three genuinely-timed-out mock providers as "host suspended for ~16s … safe to
+# repeat" (reproduced with python3 off PATH — i.e. exactly the Windows/Git-Bash environment
+# this release also targets). A false `suspended` is not cosmetic: the calling skills are
+# documented to retry it once, so it buys a wasted full retry cycle.
 suspended_seconds() {
   local wall="$1" budget="$2" mono_end drift
   if [[ -n "$MONO_START" ]]; then
@@ -59,7 +67,10 @@ suspended_seconds() {
   fi
 }
 # Below this many seconds a drift is clock jitter / scheduling noise, not a suspend.
-SUSPEND_THRESHOLD="${ZUVO_SUSPEND_THRESHOLD:-60}"
+# Sanitized like ZUVO_TIMEOUT_GRACE: a non-numeric override would silently evaluate to 0 in the
+# arithmetic comparison below and class every run as suspended.
+SUSPEND_THRESHOLD="$(printf '%s' "${ZUVO_SUSPEND_THRESHOLD:-60}" | tr -cd '0-9')"
+[[ -n "$SUSPEND_THRESHOLD" ]] || SUSPEND_THRESHOLD=60
 
 # ─── Hard timeout ───────────────────────────────────────────────
 # `timeout N cmd` only sends SIGTERM. A provider CLI that ignores or slow-walks TERM then runs
@@ -1526,13 +1537,26 @@ run_mock() {
 }
 
 dispatch_provider() {
-  local provider="$1" status=0
+  local provider="$1" status=0 d_start d_elapsed
+  d_start=$(date +%s)
   _dispatch_provider_inner "$provider" || status=$?
+  d_elapsed=$(( $(date +%s) - d_start ))
   # `timeout` reports 124 only when SIGTERM alone ended the command. When the hard kill has to
   # escalate it exits 137 (128+SIGKILL) instead — and that is precisely the case the hard kill
   # was added for, so leaving 137 unmapped would file every TERM-ignoring provider under
   # "failed or returned empty" and lose the timeout signal the callers branch on.
-  [[ "$status" -eq 137 ]] && status=124
+  #
+  # But 137 is also what an OOM killer, a container memory limit or an operator's `kill -9`
+  # produces, and those die EARLY — reporting them as "every provider exceeded ${PROVIDER_TIMEOUT}s"
+  # sends the reader after a slowness problem that isn't there. So only remap when the budget was
+  # actually consumed; an early SIGKILL stays a plain failure and keeps its own exit code.
+  if [[ "$status" -eq 137 ]]; then
+    if [[ "$d_elapsed" -ge "$PROVIDER_TIMEOUT" ]]; then
+      status=124
+    else
+      echo "  WARN: $provider was SIGKILLed after ${d_elapsed}s, well inside its ${PROVIDER_TIMEOUT}s budget — not a timeout (OOM kill / external kill?)" >&2
+    fi
+  fi
   return "$status"
 }
 
@@ -1781,8 +1805,16 @@ init_log_header() {
   # Existing file: never rewrite it in place. Parallel runs append to this log and an atomic
   # replace would silently drop rows written through a file descriptor pointing at the old
   # inode. Append a one-time schema marker instead — appends are safe, rewrites are not.
-  grep -qxF "$LOG_SCHEMA_MARKER" "$LOG_FILE" 2>/dev/null \
-    || printf '%s\n' "$LOG_SCHEMA_MARKER" >> "$LOG_FILE" 2>/dev/null || true
+  #
+  # The sentinel is what makes "one-time" cheap. Grepping the log itself would re-read the whole
+  # file on EVERY invocation (already 3.7 MB here, append-only, so it only grows) to answer a
+  # question that never changes after the first run.
+  local sentinel="${LOG_FILE}.schema16"
+  [[ -f "$sentinel" ]] && return 0
+  if ! grep -qxF "$LOG_SCHEMA_MARKER" "$LOG_FILE" 2>/dev/null; then
+    printf '%s\n' "$LOG_SCHEMA_MARKER" >> "$LOG_FILE" 2>/dev/null || true
+  fi
+  : > "$sentinel" 2>/dev/null || true
 }
 
 # adversarial_log_row <model> <duration> <exit> <output_chars> <crit> <warn> <info> \
@@ -1815,7 +1847,11 @@ preserve_failure_evidence() {
   [[ "$found" -eq 1 ]] || return 0
   local evidence_root="${ZUVO_HOME:-$HOME/.zuvo}/adversarial-failures"
   local dest="$evidence_root/$RUN_ID"
-  mkdir -p "$dest" 2>/dev/null || return 0
+  # 0700, both levels. This copies THIRD-PARTY CLI stderr verbatim and keeps it for a week; an
+  # auth failure can print a token or a config dump, and until now that content died with the
+  # tmpdir. Persisting it at the ambient umask would be a new, durable exposure.
+  mkdir -m 700 -p "$evidence_root" 2>/dev/null || return 0
+  mkdir -m 700 -p "$dest" 2>/dev/null || return 0
   # `|| true` on both: only one of the two patterns matches in most runs, and an unmatched
   # glob reaches cp as a literal path. Under `set -e` that failure aborted the whole failure
   # path — the run died before it could report WHY it failed.
@@ -1885,6 +1921,10 @@ else
   RUN_DEADLINE=$(( (PROVIDER_TIMEOUT + ZUVO_TIMEOUT_GRACE) * ATTEMPTED_COUNT + 120 ))
 fi
 RUN_DEADLINE="$(printf '%s' "${ZUVO_RUN_DEADLINE:-$RUN_DEADLINE}" | tr -cd '0-9')"
+# The whole-run ceiling is also what the no-monotonic-clock suspend heuristic must measure
+# against — see suspended_seconds(). Anything smaller misreads sequential dispatch as a sleep.
+SUSPEND_BUDGET="${RUN_DEADLINE:-$PROVIDER_TIMEOUT}"
+[[ -n "$SUSPEND_BUDGET" && "$SUSPEND_BUDGET" -gt 0 ]] || SUSPEND_BUDGET="$PROVIDER_TIMEOUT"
 if [[ -n "$RUN_DEADLINE" && "$RUN_DEADLINE" -gt 0 ]]; then
   # The redirects are load-bearing, not tidiness: skills invoke this script as `out=$(...)`, and
   # a command substitution does not return until EVERY process holding the pipe closes it. A
@@ -2055,7 +2095,7 @@ if [[ -z "$ALL_RESULTS" ]]; then
   END_TIME=$(date +%s)
   DURATION=$((END_TIME - START_TIME))
   DISPATCHED_COUNT=$(echo "$DISPATCHED_LIST" | wc -w | tr -d ' ')
-  SUSPENDED_S=$(suspended_seconds "$DURATION" "$PROVIDER_TIMEOUT")
+  SUSPENDED_S=$(suspended_seconds "$DURATION" "$SUSPEND_BUDGET")
 
   # ── Classify the failure. "Every provider returned nothing" has at least three causes and
   # they call for different actions, but until now they all collapsed into one exit code and
@@ -2215,7 +2255,7 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     --argjson attempted "$ATTEMPTED_COUNT" \
     --argjson dispatched "$DISPATCHED_COUNT" \
     --argjson timeouts "$TIMEOUT_COUNT" \
-    --argjson suspended "$(suspended_seconds "$(( $(date +%s) - START_TIME ))" "$PROVIDER_TIMEOUT")" \
+    --argjson suspended "$(suspended_seconds "$(( $(date +%s) - START_TIME ))" "$SUSPEND_BUDGET")" \
     --arg outcomes "${PROVIDER_OUTCOMES:-none}" \
     --argjson input_size "${#INPUT}" \
     --argjson input_original "${ORIG_CHARS:-${#INPUT}}" \
@@ -2258,7 +2298,7 @@ set +e
 
 END_TIME=$(date +%s)
 TOTAL_DURATION=$((END_TIME - START_TIME))
-SUSPENDED_S=$(suspended_seconds "$TOTAL_DURATION" "$PROVIDER_TIMEOUT")
+SUSPENDED_S=$(suspended_seconds "$TOTAL_DURATION" "$SUSPEND_BUDGET")
 
 # Save input for later investigation (cleanup files older than 7 days)
 printf '%s' "$INPUT" > "$INPUT_FILE" 2>/dev/null || true

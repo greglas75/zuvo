@@ -81,6 +81,31 @@ assert_exit_code "125" "$rc" "exit 125 (distinct from 2 = provider error)"
 assert_eq "suspended" "$(echo "$out" | jq -r '.status' 2>/dev/null)" "status"
 assert_eq "true"      "$(echo "$out" | jq -r '.retryable' 2>/dev/null)" "retryable"
 
+start_test "HT.4b sequential dispatch of N slow providers is NOT 'suspended' without a monotonic clock"
+# Regression for the review of b45603e..26299e4. suspended_seconds()'s no-python3 fallback used to
+# be measured against ONE provider's budget, so --single walking three genuinely-timed-out
+# candidates (a legitimate N × budget) was reported as `suspended … safe to repeat` — a false free
+# retry, in exactly the no-python3 environment this release's Windows work targets.
+STUB_PATH="$ADV_TEST_HOME/nopy-bin"
+mkdir -p "$STUB_PATH"
+for b in bash sh env timeout cat date grep sed awk wc tr head tail mkdir rm cp ls find jq \
+         printf sleep pgrep pkill kill git dirname basename id mktemp shasum sort uniq cut; do
+  p=$(command -v "$b" 2>/dev/null) && ln -sf "$p" "$STUB_PATH/$b" 2>/dev/null
+done
+ln -sf "$MOCKS/mock-hang" "$STUB_PATH/mock-hang" 2>/dev/null
+if [[ -n "$(PATH="$STUB_PATH" command -v python3 2>/dev/null)" ]]; then
+  fail "stub PATH still exposes python3" "cannot exercise the no-monotonic-clock fallback"
+else
+  out=$(PATH="$STUB_PATH" ZUVO_HOME="$ADV_TEST_HOME/nopy-home" \
+        ZUVO_REVIEW_TEST_PROVIDERS="mock-hang mock-hang mock-hang" \
+        ZUVO_REVIEW_TIMEOUT=8 ZUVO_TIMEOUT_GRACE=2 \
+        bash "$ADV" --single --json --files "$EMPTY" 2>/dev/null)
+  rc=$?
+  assert_exit_code "124" "$rc" "exit 124 (timeout), not 125 (suspended)"
+  assert_eq "timeout" "$(echo "$out" | jq -r '.status' 2>/dev/null)" "status"
+  assert_eq "0" "$(echo "$out" | jq -r '.suspended_seconds' 2>/dev/null)" "suspended_seconds stays 0"
+fi
+
 start_test "HT.5 genuine provider failure stays exit 2, not retryable"
 out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-fail" bash "$ADV" --json --files "$EMPTY" 2>/dev/null)
 rc=$?
