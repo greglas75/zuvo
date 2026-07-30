@@ -99,7 +99,17 @@ adversarial_gate() {
     echo "BLOCKED: missing adversarial artifact for execute task ${task_id}." >&2
     echo "Expected: $artifact_rel" >&2
     echo "Run Step 7b before commit." >&2
-    echo "Example: git add -u && git diff --staged | adversarial-review --mode code --artifact \"$artifact_rel\"" >&2
+    echo "Build the review patch with the scoped helper (it NEVER stages / touches the index):" >&2
+    cat >&2 <<EOF
+  if [ -x "\$HOME/.zuvo/build-review-patch" ]; then
+    _prc=0; _patch=\$("\$HOME/.zuvo/build-review-patch") || _prc=\$?   # || not ; — survives set -e
+    if [ "\$_prc" -eq 3 ]; then echo "adversarial review: skipped (no changes)"
+    elif [ "\$_prc" -ne 0 ]; then echo "BLOCKED: build-review-patch failed (rc=\$_prc). Adversarial review did NOT run; do NOT proceed to commit and do NOT report this skill complete" >&2; exit 1
+    else printf '%s\n' "\$_patch" | adversarial-review --mode code --artifact "$artifact_rel"; fi
+  else
+    adversarial-review --mode code --artifact "$artifact_rel" --files "<changed files>"
+  fi
+EOF
     echo "Use --mode security or --mode migrate when the diff is high-risk." >&2
     return 1
   fi

@@ -67,23 +67,63 @@ Run the script as a **single Bash call with a long timeout**. The script auto-de
 >
 > **On a loaded machine** (concurrent builds/tests/other agents), providers can exceed even the 240/360s *script* timeout and force a single-provider fallback (retros 2026-07-04 "cpu-contention-forced-single-provider"). When you know the box is busy, export `ZUVO_REVIEW_TIMEOUT=480` (or higher) and run in the background — do NOT record the reduced coverage as "done"; a rate-limited/contended pass is retried, per `stall-recovery.md`, not a quality lever.
 
+**Build the review input with the scoped patch helper — never by staging.** `~/.zuvo/build-review-patch` (installed by `scripts/install.sh`) emits the review patch on **stdout** and **never writes the git index**: no `git add`, no `git stash`, no `--intent-to-add`. Staging the caller's work to build a diff silently changes what their next commit captures, and `--staged` alone still misses brand-new untracked files — the helper covers tracked changes (unstaged + staged) *and* untracked, non-ignored files in one patch.
+
+Helper contract: `build-review-patch [--base <ref>] [--] [PATH...]`. With no `PATH` args it covers the whole dirty tree — **including every untracked, non-ignored file, and all of that content is sent to the configured external providers**, which the old staged-diff form never did; prefer an explicit list and treat the no-PATH form as the fallback for a skill that genuinely cannot know its file set. With `PATH` args (each quoted **separately** — never one space-joined string) it scopes to exactly the files the skill wrote. `--base <ref>` widens the patch to include commits since `<ref>`.
+
+The three exit codes are disjoint, so none of them needs caller-side corroboration:
+
+- **0** — a non-empty patch is on stdout.
+- **3** — the supplied paths RESOLVED and nothing in them changed. A genuine, quiet success; review is legitimately skippable. It never means "your paths were wrong".
+- **2** — the caller made a mistake: not a repo, bad `--base`, a path outside the repo, an unreadable file, or **paths that matched nothing** (the space-joined-list trap below). Never read 2 as "no changes".
+
+Because an unmatched path is 2 and never 3, an exit 3 does **not** need cross-checking against `git status` — believe it.
+
+| Helper exit | Meaning | Caller action |
+|-------------|---------|---------------|
+| `0` | patch on stdout | pipe it into `adversarial-review` |
+| `3` | paths resolved, nothing in them changed | record `adversarial review: skipped (no changes)` and proceed — a genuine success, NOT an error, and NOT something to double-check |
+| `2` | caller error: not a repo, bad `--base`, path outside the repo, unreadable file, **or paths that matched nothing** | BLOCKED — surface it and fail the branch; never read it as "no changes" |
+
+**Pass paths as SEPARATE, individually-quoted arguments — never a single space-joined string.** Word-splitting differs between shells: bash splits an unquoted `$FILES` into several arguments, **zsh does not** — so `build-review-patch --base <ref> $FILES` hands zsh's helper ONE argument that is the whole joined list. Nothing matches it, so the helper exits **2** (caller error) — which your BLOCKED branch must surface and fail on. It is deliberately NOT exit 3: conflating "your paths were wrong" with "nothing changed" is what would turn a typo into a silently skipped review. Safe shapes:
+
 ```bash
-git add -u
-git diff --staged | adversarial-review --json --artifact /tmp/adv-pass1.json --mode {MODE}
+"$HOME/.zuvo/build-review-patch" "src/a.ts" "src/b.ts"       # literal quoted list
+FILES=("src/a.ts" "src/b.ts")                                 # bash array …
+"$HOME/.zuvo/build-review-patch" "${FILES[@]}"                # … expanded element-wise
+```
+
+**Failure signature — recognise it instantly:** exit **2** with stderr naming a single "directory" that is really several paths — `could not open directory '<the whole joined list>'`. One "directory" made of several paths means the arguments were joined. (Before the helper distinguished these, this surfaced as a misleading exit 3; if you ever see exit 3 while `git status` shows changes, you are on an old helper.)
+
+**Capture with `|| _prc=$?`, never `; _prc=$?`.** Under `set -e` (which `hooks/post-skill-adversarial-check.sh` and most wrapper scripts enable) `_patch=$(cmd); _prc=$?` **aborts the shell at the assignment** whenever the helper exits non-zero — so exit 3 ("no changes", a normal outcome) becomes a hard abort and exit 2 dies before the BLOCKED message can print. Putting the assignment in an `||` list makes it a *tested* command, which `set -e` exempts. Verified: with `; _prc=$?` a stub returning 2 or 3 never reaches its branch; with `|| _prc=$?` all of 0/2/3 do.
+
+**The failure branch must FAIL, not just print.** A branch that only `echo`s leaves the block's exit status at 0, so a hook, a CI step, a `set -e` wrapper or an `if ! …; then` caller sails straight past a review that never ran — printing is not enforcement. End it with `false` (in a script that owns its exit, `exit 1`). `false` rather than `exit` in a pasteable block, so an inlining caller's shell is not killed. Exit 3 stays a genuine success path and returns 0.
+
+**Then branch on the exit code.** Piping the helper straight into `adversarial-review` is FORBIDDEN: a pipe discards the helper's exit code, and on a clean tree the empty stdin makes `adversarial-review` exit 2 — a no-op reported as a hard error.
+
+```bash
+if [ -x "$HOME/.zuvo/build-review-patch" ]; then
+  _prc=0; _patch=$("$HOME/.zuvo/build-review-patch" "<written-file-1>" "<written-file-2>") || _prc=$?
+  if [ "$_prc" -eq 3 ]; then echo "adversarial review: skipped (no changes)"
+  elif [ "$_prc" -ne 0 ]; then echo "BLOCKED: build-review-patch failed (rc=$_prc). Adversarial review did NOT run; do NOT proceed to commit and do NOT report this skill complete" >&2; false
+  else printf '%s\n' "$_patch" | adversarial-review --json --artifact /tmp/adv-pass1.json --mode {MODE}; fi
+else
+  adversarial-review --json --artifact /tmp/adv-pass1.json --mode {MODE} --files "<changed files>"
+fi
 ```
 
 Default is multi-provider (all available run in parallel). The script handles provider detection and dispatch.
 
 **Capture full output before triage — NEVER pipe through `tail`/`head`.** Multi-provider output exceeds one screen; `tail`/`head` silently truncates the first providers (codex, gemini) and drops their CRITICAL findings (two documented loss-of-finding incidents). Use the `--artifact <path>` flag (or redirect `... > /tmp/adv-passN.txt 2>&1`) and triage from the full file/variable. Prefer `--artifact` — it is a real script flag that also records metadata for downstream gates.
 
-**If staged diff doesn't reflect the skill's changes** (e.g., skill worked on explicit files, not staged): use `--files` instead:
+**If the helper is not installed** (`~/.zuvo/build-review-patch` missing — a Codex/Cursor-only install where `install_zuvo_home` never ran), take the `else` branch above and name the files explicitly:
 ```bash
 adversarial-review --json --mode {MODE} --files "path/to/changed/file.ts"
 ```
 
 **IMPORTANT — always WAIT for the complete artifact before triage.** Whether you ran background (wait for the completion notification) or foreground-with-`timeout: 420000`, never triage before the full output/artifact is on disk — a truncated read drops the first providers' CRITICALs. (The former "run foreground, do NOT background" rule is REMOVED — with the Bash tool's 120s default it guaranteed the cutoff this whole section now prevents.)
 
-**If `adversarial-review` is not in PATH** — on Claude Code it usually is NOT; no command is installed on PATH — resolve an absolute `$AR_CMD` and substitute it for `adversarial-review` in the calls above and below. Do **not** use a bare `zuvo/*/scripts/...` glob: with both a version dir and a SHA-named cache dir present it expands to two paths and runs the wrong one.
+**If `adversarial-review` is not in PATH** — on Claude Code it usually is NOT; no command is installed on PATH — resolve an absolute `$AR_CMD` with the snippet below and substitute it for every bare `adversarial-review` in the calls above and below (including the two inside the Step 2 block). Do **not** use a bare `zuvo/*/scripts/...` glob: with both a version dir and a SHA-named cache dir present it expands to two paths and runs the wrong one.
 
 ```bash
 # Claude Code — canonical resolver (single source of truth: shared/includes/env-compat.md)
@@ -193,9 +233,22 @@ For each finding:
 
 If Step 4 fixed any CRITICAL or WARNING:
 
-1. Stage fixes: `git add -u`
-2. **Append a VERIFIED CONTEXT block to the re-run input**, then re-run:
-   `git diff --staged | adversarial-review --json --mode {MODE}`
+1. Re-build the patch by RE-RUNNING the **same helper invocation** as Step 2 — identical `PATH` args, identical flags. The fixes are already in the working tree, so the fresh patch contains them; there is nothing to stage and nothing to prepare. (If the helper now returns exit 3, the "fixes" changed nothing — investigate, do not report a clean second pass.)
+
+   **Do NOT reuse `$_patch` from Step 2.** Each agent Bash call runs in a FRESH SHELL: `$_patch` is empty here, `printf '%s\n' "$_patch"` would pipe an empty string, and `adversarial-review` would exit 2 on empty input — a silently failed validation run at the exact moment it matters most. Re-invoke the helper.
+
+2. **Prepend the VERIFIED CONTEXT block to the patch and pipe the concatenation** — the block must reach the reviewer's stdin, not merely be written down:
+
+   ```bash
+   # No heredoc on purpose: a heredoc terminator must sit at column 0, so a block
+   # copied with this list's indent would never terminate. A quoted string does not care.
+   _ctx='VERIFIED CONTEXT (checked this session — cite contradicting code to reopen):
+   - schema: orders.tenant_id is NOT NULL + FK (migrations/0042_orders.sql:14)'
+   _prc=0; _patch=$("$HOME/.zuvo/build-review-patch" "<same PATH args as Step 2>") || _prc=$?
+   if [ "$_prc" -eq 3 ]; then echo "BLOCKED: validation re-run produced an empty patch. Exit 3 means the paths resolved and nothing in them changed — so the Step 4 fixes are NOT on disk. Do NOT report this skill complete" >&2; false
+   elif [ "$_prc" -ne 0 ]; then echo "BLOCKED: build-review-patch failed (rc=$_prc). Adversarial review did NOT run; do NOT proceed to commit and do NOT report this skill complete" >&2; false
+   else printf '%s\n\n%s\n' "$_ctx" "$_patch" | adversarial-review --json --mode {MODE}; fi
+   ```
 
    The re-run sees the diff, not the system around it — so it re-derives the same false positives
    the first round produced, and the second pass is spent re-litigating instead of finding

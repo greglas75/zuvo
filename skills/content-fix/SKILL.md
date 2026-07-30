@@ -259,7 +259,26 @@ Build failure → rollback per-file snapshots from Phase 2.0.
 ## Phase 4: Adversarial Review (MANDATORY — do NOT skip)
 
 ```bash
-git add -u && git diff --staged | adversarial-review --mode code
+# Scoped review patch on stdout — the git index is NEVER touched (no staging).
+# PATH args = the content files this run fixed (Phase 2.0 snapshot list).
+# Quote each SEPARATELY — never one space-joined string or a bare $FILES: zsh does
+# not word-split an unquoted expansion, so the helper gets the whole list as ONE
+# path, matches nothing and exits 2. Use "${FILES[@]}" for an array.
+# With NO PATH args the helper reviews the WHOLE dirty tree, untracked files
+# included, and that content is sent to the external providers — always scope it.
+# `|| _prc=$?` (never `; _prc=$?`): under `set -e` the plain form aborts the shell
+# at the assignment, so exit 3 and the BLOCKED branch would never be reached.
+# The BLOCKED branch ends in `false`, so the block's own exit status is non-zero:
+# printing alone lets a `set -e` / `if ! …` caller sail past a review that never
+# ran. `false`, not `exit`, so an inlining caller's shell is not killed.
+if [ -x "$HOME/.zuvo/build-review-patch" ]; then
+  _prc=0; _patch=$("$HOME/.zuvo/build-review-patch" "<fixed-file-1>" "<fixed-file-2>") || _prc=$?
+  if [ "$_prc" -eq 3 ]; then echo "adversarial review: skipped (no changes)"
+  elif [ "$_prc" -ne 0 ]; then echo "BLOCKED: build-review-patch failed (rc=$_prc). Adversarial review did NOT run; do NOT proceed to commit and do NOT report this skill complete" >&2; false
+  else printf '%s\n' "$_patch" | adversarial-review --mode code; fi
+else
+  adversarial-review --mode code --files "<changed files>"
+fi
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

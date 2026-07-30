@@ -611,7 +611,26 @@ Read the failure details. Each failure has a gate ID, file:line reference, and w
 After quality review passes, run cross-model adversarial review. This runs for ALL tasks regardless of complexity.
 
 ```bash
-git add -u && git diff --staged | adversarial-review --mode code --artifact "zuvo/context/adversarial-task-<task-N>.txt"
+# Scoped review patch on stdout — the git index is NEVER touched (no staging).
+# PATH args = this task's written files (execution-state "## Files Changed").
+# Quote each SEPARATELY — never one space-joined string or a bare $FILES: zsh does
+# not word-split an unquoted expansion, so the helper gets the whole list as ONE
+# path, matches nothing and exits 2. Use "${FILES[@]}" for an array.
+# With NO PATH args the helper reviews the WHOLE dirty tree, untracked files
+# included, and that content is sent to the external providers — always scope it.
+# `|| _prc=$?` (never `; _prc=$?`): under `set -e` the plain form aborts the shell
+# at the assignment, so exit 3 and the BLOCKED branch would never be reached.
+# The BLOCKED branch ends in `false`, so the block's own exit status is non-zero:
+# printing alone lets a `set -e` / `if ! …` caller sail past a review that never
+# ran. `false`, not `exit`, so an inlining caller's shell is not killed.
+if [ -x "$HOME/.zuvo/build-review-patch" ]; then
+  _prc=0; _patch=$("$HOME/.zuvo/build-review-patch" "<written-file-1>" "<written-file-2>") || _prc=$?
+  if [ "$_prc" -eq 3 ]; then echo "adversarial review: skipped (no changes)"
+  elif [ "$_prc" -ne 0 ]; then echo "BLOCKED: build-review-patch failed (rc=$_prc). Adversarial review did NOT run; do NOT proceed to commit and do NOT report this skill complete" >&2; false
+  else printf '%s\n' "$_patch" | adversarial-review --mode code --artifact "zuvo/context/adversarial-task-<task-N>.txt"; fi
+else
+  adversarial-review --mode code --artifact "zuvo/context/adversarial-task-<task-N>.txt" --files "<changed files>"
+fi
 ```
 
 Mode selection:
@@ -625,13 +644,29 @@ The captured artifact path is mandatory for commit gating. Use the current task 
 - Task 1 -> `zuvo/context/adversarial-task-1.txt`
 - Task 9 -> `zuvo/context/adversarial-task-9.txt`
 
-**Diff-scope guard (filter findings to changed paths).** The pipe at the command above scopes the *input* to the staged diff, but a reviewer/harness can still emit findings on files outside it. Before applying verdict rules, capture the changed-file set and validate every finding's path against it:
+**Diff-scope guard (filter findings to changed paths).** The command above scopes the *input* to the review patch, but a reviewer/harness can still emit findings on files outside it. Before applying verdict rules, capture the changed-file set and validate every finding's path against it.
+
+**The scope list MUST be derived from the same paths the helper was given** — one source of truth. A scope list built from the whole dirty tree is *wider* than a PATH-scoped patch, so it would accept findings on files that were never reviewed. Do **not** use `git diff --staged --name-only` either: nothing is staged, so it comes back empty and marks every real finding out-of-scope.
 
 ```bash
-git diff --staged --name-only > zuvo/context/task-<task-N>-scope.txt
+# Default: the exact PATH args passed to build-review-patch above.
+printf '%s\n' "<written-file-1>" "<written-file-2>" | sort -u > zuvo/context/task-<task-N>-scope.txt
 ```
 
-For each finding, confirm its file path appears in that scope list. A CRITICAL/WARNING finding targeting a file NOT in the staged diff is a backlog candidate (persist via `backlog-protocol.md`), NOT a task blocker — only findings intersecting the staged diff gate the commit. This prevents whole-repo scans from misattributing pre-existing findings to the task's diff.
+Two variants, matching how the helper was actually invoked. Both ask **git** for the file list — never scrape the file names out of the patch text. Stripping the conventional `b/` prefix off the `+++` header lines looks equivalent and is not: under `diff.noprefix=true` (or `diff.mnemonicPrefix`) that prefix is absent, the expression matches nothing, and an empty scope list makes the guard accept **every** finding, including ones on files that were never reviewed. A silent pass-everything is worse than no guard.
+
+```bash
+# No PATH args — same set the helper covers with no PATH args, by construction.
+{ git diff --name-only; git diff --cached --name-only; git ls-files --others --exclude-standard; } \
+  | sort -u > zuvo/context/task-<task-N>-scope.txt
+
+# --base <ref> — the patch spans commits since <ref>, so the scope must too
+# (untracked files are in the patch either way, so they stay in the list).
+{ git diff --name-only <ref>; git ls-files --others --exclude-standard; } \
+  | sort -u > zuvo/context/task-<task-N>-scope.txt
+```
+
+For each finding, confirm its file path appears in that scope list. A CRITICAL/WARNING finding targeting a file NOT in the review patch is a backlog candidate (persist via `backlog-protocol.md`), NOT a task blocker — only findings intersecting the reviewed file set gate the commit. This prevents whole-repo scans from misattributing pre-existing findings to the task's diff.
 
 Wait for complete output. Then:
 - **Binary unavailable / no verdict produced** → `BLOCKED_ADVERSARIAL_UNAVAILABLE`. Do not commit.

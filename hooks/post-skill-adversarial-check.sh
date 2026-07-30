@@ -59,7 +59,7 @@ cat <<HOOKEOF
 {
   "hookSpecificOutput": {
     "hookEventName": "PostToolUse",
-    "additionalContext": "MANDATORY: zuvo:${SKILL_NAME} requires adversarial review but none was detected. Run NOW: git add -u && git diff --staged | adversarial-review --json --mode ${REVIEW_MODE}. This is Phase 4.5 — it is NOT optional. Do NOT deliver results to the user without running adversarial review first."
+    "additionalContext": "MANDATORY: zuvo:${SKILL_NAME} requires adversarial review but none was detected. Run NOW — build the review patch with the scoped helper (it NEVER stages and never touches the git index), capture its exit code, then pipe the patch in: if [ -x \"\$HOME/.zuvo/build-review-patch\" ]; then _prc=0; _patch=\$(\"\$HOME/.zuvo/build-review-patch\") || _prc=\$?; if [ \"\$_prc\" -eq 3 ]; then echo \"adversarial review: skipped (no changes)\"; elif [ \"\$_prc\" -ne 0 ]; then echo \"BLOCKED: build-review-patch failed (rc=\$_prc). Adversarial review did NOT run; do NOT proceed to commit and do NOT report this skill complete\" >&2; exit 1; else printf '%s\\\\n' \"\$_patch\" | adversarial-review --json --mode ${REVIEW_MODE}; fi; else adversarial-review --json --mode ${REVIEW_MODE} --files \"<changed files>\"; fi — exit 3 (no changes in scope) is the ONLY non-zero code that may proceed. Never build the review input by staging. This is Phase 4.5 — it is NOT optional. Do NOT deliver results to the user without running adversarial review first."
   }
 }
 HOOKEOF
