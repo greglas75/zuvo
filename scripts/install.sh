@@ -775,6 +775,11 @@ install_codex() {
     cp "$ZUVO_DIR"/scripts/reviewer-model-route.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/blind-audit-codex.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/infra-collect.sh "$HOME/.codex/scripts/" 2>/dev/null || true
+    # install-refactor-gate.sh is invoked by zuvo:refactor PHASE 0 to wire the repo git hook.
+    cp "$ZUVO_DIR"/scripts/install-refactor-gate.sh "$HOME/.codex/scripts/" 2>/dev/null || true
+    # …and the gate itself. Kept next to the installer (not only in the plugin cache, which is
+    # created conditionally) so PHASE 0 resolves both halves from one predictable location.
+    cp "$ZUVO_DIR"/hooks/refactor-safety-gate.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     chmod +x "$HOME/.codex"/scripts/*.sh 2>/dev/null || true
     ok "Scripts installed"
   fi
@@ -951,6 +956,11 @@ install_cursor() {
     cp "$ZUVO_DIR"/scripts/reviewer-model-route.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/blind-audit-codex.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/infra-collect.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
+    # install-refactor-gate.sh is invoked by zuvo:refactor PHASE 0 to wire the repo git hook.
+    cp "$ZUVO_DIR"/scripts/install-refactor-gate.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
+    # …and the gate itself. Kept next to the installer (not only in the plugin cache, which is
+    # created conditionally) so PHASE 0 resolves both halves from one predictable location.
+    cp "$ZUVO_DIR"/hooks/refactor-safety-gate.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     chmod +x "$HOME/.cursor"/scripts/*.sh 2>/dev/null || true
     ok "Scripts installed"
   fi

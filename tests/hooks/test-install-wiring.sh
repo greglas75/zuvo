@@ -82,6 +82,34 @@ libcopies=$(grep -c 'cp -R "\$DIST/hooks/lib"' "$ROOT/scripts/install.sh" 2>/dev
 [ "${libcopies:-0}" -ge 3 ] && pass "(6b) install ships hooks/lib recursively to codex+antigravity ($libcopies sites)" \
   || bad "(6b) install drops hooks/lib (found $libcopies recursive lib copies, need >=3)"
 
+# (6c) refactor-safety-gate.sh + install-refactor-gate.sh must reach EVERY host. zuvo:refactor
+# PHASE 0 self-installs the git commit gate from one of them; before v1.6.47 only the Claude
+# marketplace cache carried them, so every Codex/Cursor/Antigravity run printed "not found" and
+# silently ran with no commit bind at all.
+for d in codex antigravity; do
+  [ -f "$ROOT/dist/$d/hooks/refactor-safety-gate.sh" ] \
+    && pass "(6c) $d build ships refactor-safety-gate.sh" \
+    || bad "(6c) $d build missing refactor-safety-gate.sh — PHASE 0 has nothing to install"
+done
+[ -f "$ROOT/dist/antigravity/scripts/install-refactor-gate.sh" ] \
+  && pass "(6c) antigravity build ships install-refactor-gate.sh" \
+  || bad "(6c) antigravity build missing install-refactor-gate.sh"
+for h in .codex .cursor; do
+  grep -q "install-refactor-gate.sh \"\$HOME/$h/scripts/\"" "$ROOT/scripts/install.sh" \
+    && pass "(6c) install.sh ships install-refactor-gate.sh to $h" \
+    || bad "(6c) install.sh does not ship install-refactor-gate.sh to $h"
+  grep -q "hooks/refactor-safety-gate.sh \"\$HOME/$h/scripts/\"" "$ROOT/scripts/install.sh" \
+    && pass "(6c) install.sh ships refactor-safety-gate.sh to $h" \
+    || bad "(6c) install.sh does not ship refactor-safety-gate.sh to $h"
+done
+# and the skill must actually probe those paths (a shipped file nobody looks for is still missing)
+for probe in '.codex/scripts/refactor-safety-gate.sh' '.cursor/scripts/refactor-safety-gate.sh' \
+             '.gemini/antigravity/hooks/refactor-safety-gate.sh'; do
+  grep -q "$probe" "$ROOT/skills/refactor/SKILL.md" \
+    && pass "(6c) refactor PHASE 0 probes ~/$probe" \
+    || bad "(6c) refactor PHASE 0 does not probe ~/$probe"
+done
+
 # (7) syntax check on all four scripts (shellcheck absent → bash -n)
 for s in scripts/install.sh scripts/build-codex-skills.sh scripts/build-antigravity-skills.sh scripts/build-cursor-skills.sh; do
   if command -v shellcheck >/dev/null 2>&1; then

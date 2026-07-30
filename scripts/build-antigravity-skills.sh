@@ -380,7 +380,7 @@ fi
 
 # --- Scripts ---
 mkdir -p "$DIST/scripts"
-for script in adversarial-review.sh benchmark.sh reviewer-model-route.sh blind-audit-codex.sh; do
+for script in adversarial-review.sh benchmark.sh reviewer-model-route.sh blind-audit-codex.sh install-refactor-gate.sh; do
   if [ -f "$PLUGIN_DIR/scripts/$script" ]; then
     cp "$PLUGIN_DIR/scripts/$script" "$DIST/scripts/$script"
     chmod +x "$DIST/scripts/$script"
@@ -404,7 +404,9 @@ fi
 # Copy hook scripts with path replacement
 # block-no-verify.sh added (Antigravity BeforeTool/run_shell_command). The Stop
 # nudge is NOT shipped — Antigravity has no Stop hook; pre-push + CI cover it.
-for hook_script in block-no-verify.sh pre-push-gate.sh pre-commit-adversarial-gate.sh session-start; do
+# refactor-safety-gate.sh is not an event hook — it is the git pre-commit/pre-push gate that
+# zuvo:refactor PHASE 0 installs into the repo. Ship it or that phase has nothing to install.
+for hook_script in block-no-verify.sh pre-push-gate.sh pre-commit-adversarial-gate.sh refactor-safety-gate.sh session-start; do
   if [ -f "$PLUGIN_DIR/hooks/$hook_script" ]; then
     cat "$PLUGIN_DIR/hooks/$hook_script" \
       | replace_paths \

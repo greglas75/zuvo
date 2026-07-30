@@ -96,12 +96,31 @@ when the repo has no active refactor CONTRACT, fail-opens if anything is missing
 #  The gate detects an AI run from the ambient harness env: CLAUDECODE / CODEX_SANDBOX /
 #  CURSOR_TRACE_ID / ANTIGRAVITY_SESSION_ID — always set at session level, so the gate fires
 #  on real commits without any export. Verified end-to-end in a temp repo.)
-_GATE=$(ls ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/hooks/refactor-safety-gate.sh 2>/dev/null | head -1)
-_INST=$(ls ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/install-refactor-gate.sh 2>/dev/null | head -1)
+# Probe EVERY host's install root, not just the Claude marketplace cache: on Codex/Cursor the
+# plugin lives under ~/.codex or ~/.cursor, so a Claude-only probe printed "not found" on every
+# run there — false installer-missing telemetry that hid a genuinely absent gate.
+_GATE=$(ls ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/hooks/refactor-safety-gate.sh \
+           ~/.codex/scripts/refactor-safety-gate.sh ~/.cursor/scripts/refactor-safety-gate.sh \
+           ~/.gemini/antigravity/hooks/refactor-safety-gate.sh \
+           ~/.codex/.tmp/plugins/plugins/zuvo/hooks/refactor-safety-gate.sh 2>/dev/null | head -1)
+_INST=$(ls ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/install-refactor-gate.sh \
+           ~/.codex/scripts/install-refactor-gate.sh ~/.cursor/scripts/install-refactor-gate.sh \
+           ~/.gemini/antigravity/scripts/install-refactor-gate.sh 2>/dev/null | head -1)
+# Is the gate even able to fire? It detects an AI run from the ambient harness env; if none of
+# these is set the gate no-ops on the human's commits by design — say so instead of implying
+# the repo is protected.
+_HARNESS=""
+for v in CLAUDECODE CODEX_SANDBOX CURSOR_TRACE_ID ANTIGRAVITY_SESSION_ID; do
+  eval "[ -n \"\${$v:-}\" ]" && _HARNESS="$_HARNESS $v"
+done
 if [ -n "$_GATE" ] && [ -n "$_INST" ]; then
   sh "$_INST" "$_GATE" "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  echo "[refactor-gate] gate=$_GATE"
+  echo "[refactor-gate] ai-harness-detected:${_HARNESS:- NONE (gate will no-op — commits look human)}"
 else
-  echo "[refactor-gate] gate/install script not found — in-skill self-check still applies"
+  echo "[refactor-gate] NOT INSTALLED — gate='${_GATE:-missing}' installer='${_INST:-missing}';"
+  echo "[refactor-gate] searched ~/.claude/plugins/cache, ~/.codex, ~/.cursor. Re-run scripts/install.sh."
+  echo "[refactor-gate] in-skill self-check still applies, but the commit bind is ABSENT this run."
 fi
 ```
 
@@ -353,6 +372,16 @@ Agent 2: Existing Code Scanner
 
 Trace all importers and callers of the target file. Build a dependency map: direct importers, transitive dependents (one level up), exported symbols and where each is consumed, risk assessment for export changes.
 
+**The opposite decision — WIRING dead code in rather than deleting it — is `surface activation`, and
+it is not a refactor.** The moment previously unreachable production code becomes reachable, every
+path in it is new attack surface that has never run: it was never load-bearing, so nothing about it
+was ever reviewed under load. Classify it explicitly and, **before wiring**, trace every activated
+network/DB call and verify each of: mounted path, authentication source, tenant/contest/user scoping,
+idempotency, timeout, and response validation. Add every file those answers touch to the scope fence
+**before** editing — activation almost always pulls in a route table, an auth middleware, and a
+client caller that the original fence did not list. Front-loading this is the whole point: skipping
+it is what turns one activation into four adversarial passes chasing the same class of finding.
+
 For DELETE_DEAD targets, consumer proof additionally requires a repo-wide search for concrete route-path/string literals (a string caller in clients, tests, or proxies is a live contract consumer even when the unit has zero imports) and a scan of docs/specs/runbooks for the symbol. A docs-only reference is not runtime use, but it must be dispositioned before scope freeze — update the doc in-fence or backlog it — never ignored.
 
 **CodeSift:** `find_references(repo, symbol_name)` for each export, `trace_call_chain(repo, symbol_name, direction="callers", depth=2)` for critical functions. **Fallback:** grep for imports.
@@ -368,6 +397,21 @@ Search the codebase for existing helpers, utilities, or patterns similar to plan
 Produce the refactoring plan incorporating sub-agent results (when available):
 
 1. **Scope freeze** -- List every file that may be modified. No file outside this list may be touched during execution.
+
+   **Order the extraction list by risk, lowest first — and treat that as sequencing, not permission
+   to stop.** When a task bundles units of very different risk (a hook owning one async action is
+   low-risk; a controller owning cross-wired modal state, or a parser-strategy restructure of an
+   untested unit with external I/O and callbacks, is a RESTRUCTURE), do the self-contained,
+   characterizable units FIRST and commit each — so the run banks verified work before it reaches
+   the part that can go wrong. Then attempt the risky unit.
+
+   Scoping *down* is the user's call, not the run's. If the risky unit genuinely cannot be completed
+   — no fixtures can be built, or the work exceeds the remaining window — the run ends **PARTIAL,
+   loudly**: name the unit, state why in one paragraph, give the concrete follow-up, record it in
+   the commit body and the backlog, and print the partial verdict in the completion block. What is
+   forbidden is the quiet version — reporting COMPLETE for a subset, or discovering the deferral
+   only in the backlog. "A verified partial beats an unverifiable full restructure" is true; "a
+   partial reported as done" is the failure it turns into when it is not said out loud.
 2. **Extraction list** -- For each function or block to extract: source location, destination, new signature.
 3. **Dependency impact** -- From the Dependency Mapper: which files need import updates, which tests need adjustment.
 4. **Existing code reuse** -- From the Existing Code Scanner: existing utilities that can replace planned extractions.
@@ -399,6 +443,7 @@ Produce the refactoring plan incorporating sub-agent results (when available):
 |----------|-----------|-----------|
 | 1 | Target is a type file (`.d.ts`, `.types.ts`) or config (`.config.*`, `.*rc`) | VERIFY_COMPILATION |
 | 2 | No test file found (test_file = null) | WRITE_NEW |
+| 2.5 | **Pure structural move** — every precondition below holds | **VERIFY_MOVE** |
 | 3 | **`coverage_gap > 0`** (one or more units being moved are NOT exercised by any test) | **CHARACTERIZE_GAP** |
 | 4 | Test found AND Q7=1 AND Q11=1 AND Q13=1 AND `coverage_gap = 0` | RUN_EXISTING |
 | 5 | Test found AND (Q7=0 OR Q11=0 OR Q13=0) AND `coverage_gap = 0` | IMPROVE_TESTS |
@@ -408,6 +453,38 @@ Note: priority 1 (VERIFY_COMPILATION) is checked **before** test discovery runs.
 **DELETE_DEAD exception (overrides priorities 2-5 for the deleted units):** when the refactor DELETES a unit and zero production consumers are proven (symbol references + repo-wide import/re-export/dynamic/string-literal search per the Dependency Mapper), do NOT write or improve tests for the code being removed — the green pre-edit package baseline is the characterization lock. Record `prove.characterization = "dead:<pre-refactor sha7>:<N>u:<evidence>"` before editing. Tests whose sole subject is the deleted unit are deleted with it; tests-only consumers do not make dead code live.
 
 **Why priority 3 outranks RUN_EXISTING (the failure this prevents):** a single test that passes Q7/Q11/Q13 can still exercise only one of N units being relocated. `RUN_EXISTING` would then go green while proving nothing about the other N−1 units — the refactor "verifies" against a test that never touches most of the moved code. Whenever `coverage_gap > 0`, you MUST write characterization tests for the uncovered units **before** touching production code. Build success, type-check, and static import resolution are NOT substitutes — they prove the code links, not that behavior is preserved. This gate is non-negotiable for SPLIT_FILE / GOD_CLASS / EXTRACT_CLASS, where moving unexercised units is the whole job.
+
+**Priority 2.5 — VERIFY_MOVE (pure structural move).** Authoring DB-mocked characterization tests
+for a split that changes zero bytes of logic is disproportionate, and the barrel + verbatim diff is
+the *stronger* proof anyway. But it is only stronger when the move is genuinely inert, so all five
+preconditions must hold and each must be **shown**, not asserted:
+
+1. Every moved unit is **byte-identical** to its pre-refactor lines — proven per symbol with
+   `../../shared/includes/regression-fence.md` (blob/normalized-diff), not by reading the diff.
+2. The **original path survives as a re-export barrel**, so every existing import specifier still
+   resolves to the same symbol. A moved import path is a public-API change → not this tier.
+3. **No top-level side effects** in the moved lines (no module-init work, no registration call, no
+   mutable module-scope state). Splitting a module changes *when* top-level code runs; byte
+   identity does not protect against that. Grep the moved ranges for statements outside a
+   declaration and record the result.
+4. **No new import cycle** introduced by the split (`find_circular_deps` before and after, or the
+   language's own cycle check). A barrel is the classic way to create one.
+5. Existing **consumer suites run green** before and after, and they actually import through the
+   barrel path (if nothing imports it, there is no proof — fall through to priority 3).
+
+Record `prove.characterization = "verify-move:<pre-refactor sha7>:<N>u:<consumer suite path>"`.
+If ANY precondition fails or cannot be checked with the tools present, this tier does not apply —
+fall through to CHARACTERIZE_GAP. "I could not run the cycle check" is a fall-through, not a pass.
+
+**Transitive coverage (how `units_covered` is counted).** A moved unit counts as covered when a test
+exercises it *directly* — or transitively, under one narrow condition: the unit is **not exported**,
+its **only** caller is a single exported symbol, and an existing test drives that symbol through the
+moved lines. The last part is the catch: it must be **measured** (line/branch coverage over the
+pre-refactor file showing the moved ranges are hit), never inferred from "the test calls the parent."
+Without coverage tooling the condition is unverifiable, so the unit is uncovered → CHARACTERIZE_GAP.
+This exists so pure loop-body and private-helper extractions are not forced into disproportionate
+mock scaffolding; it is not a general "the entry-point test covers everything" licence — an
+independently reachable (exported) unit is never transitively covered.
 
 7. **CQ gate targets** -- Which CQ failures from the pre-audit should be fixed during this refactoring.
 
@@ -427,7 +504,7 @@ Type: [EXTRACT_METHODS / SPLIT_FILE / ...]
 Scope: [N] files
 Extractions: [summary of planned changes]
 CQ targets: [which CQ failures to fix]
-Test mode: [RUN_EXISTING / CHARACTERIZE_GAP / WRITE_NEW / IMPROVE_TESTS / VERIFY_COMPILATION]
+Test mode: [RUN_EXISTING / VERIFY_MOVE / CHARACTERIZE_GAP / WRITE_NEW / IMPROVE_TESTS / VERIFY_COMPILATION]
 Coverage: units_total=[N] units_covered=[M] gap=[N-M]
 ```
 
@@ -495,6 +572,15 @@ Phase 2: test-quality-rules.md -- READ (WRITE_NEW, IMPROVE_TESTS, or CHARACTERIZ
 3. Apply Q1-Q25 self-eval on the new tests. Only after `coverage_gap` reaches 0 (every moved unit now exercised, or proven dead) does execution proceed.
 4. Record `test_audit_after` with the closed gap, **and record the characterization LOCK in the CONTRACT `prove` block NOW — before any production edit**: `prove.characterization = "green:<pre-refactor sha7>:<N>u:<test path>"` — a STRING (like the other prove fields) naming the pre-refactor SHA the pin-down tests were green against, the unit count, and the test path, with `coverage_gap: 0`. The Prove step is not only blind_audit + adversarial recorded at commit time — the characterization lock is the FIRST proof and belongs in the CONTRACT the moment tests are green on the old code (between green tests and the move), not backfilled at commit. **This is a gated artifact, not advice: the `refactor-safety-gate` hook and the completion self-check both BLOCK on a missing/`not_run` `prove.characterization`** (added after the 2026-07-09 skill-eval run proved prose alone gets skipped).
 
+**VERIFY_MOVE:** No characterization authoring — the proof is that nothing changed. Execute in this
+order, BEFORE the move and again after: (1) declare the regression fence over the units being moved
+and the barrel path; (2) run the consumer suites and record the green baseline SHA; (3) do the move;
+(4) re-prove byte identity per symbol, re-run the cycle check, re-run the consumer suites. Record
+`prove.characterization = "verify-move:<pre-refactor sha7>:<N>u:<consumer suite path>"` at step 2 —
+same timing rule as every other mode, before the first production edit, never backfilled. If step 4
+shows any symbol whose bytes moved, the tier was wrong: revert, re-route to CHARACTERIZE_GAP, and
+say so in the run log rather than downgrading the claim in place.
+
 **WRITE_NEW:** Write tests for the target file before refactoring. The tests capture the current behavior so that the refactoring can be verified against them. Apply Q1-Q25 self-eval on the new tests. Same coverage bar as CHARACTERIZE_GAP: every unit being moved must be exercised, not just the file's entry point. **Same LOCK recording as CHARACTERIZE_GAP step 4** — the moment the new suite is green on the PRE-refactor code, write `prove.characterization = "green:<pre-refactor sha7>:<N>u:<test path>"` into the CONTRACT, BEFORE any move edit (the commit gate blocks without it; this mode is where the 2026-07-09 eval caught the backfill gap).
 
 **IMPROVE_TESTS:** When the refactoring type is IMPROVE_TESTS (target is a test file):
@@ -531,6 +617,12 @@ Apply the planned changes according to the extraction list, following these rule
 3. Maintain behavioral equivalence -- the refactored code must produce identical outputs for identical inputs.
 4. Follow CQ patterns from `cq-patterns.md` in all new code.
 5. Respect file size limits throughout. If an extraction creates a file that exceeds the limit, split further.
+6. **Leaves first, entry file last.** For a multi-file split, create every leaf module BEFORE
+   rewiring anything. New leaves are unreferenced until wired, so the repo keeps compiling with the
+   original entry file fully intact — then the entry file becomes ONE switch-over edit. The failure
+   this prevents is specific: half-rewired imports when a run is interrupted (context compaction, a
+   killed session, a timeout) leave a tree that neither builds nor reverts cleanly. Ordering the work
+   this way makes every intermediate state a valid one.
 
 **Behavioral equivalence is scoped to the MOVE, not the whole run.** Rule 3 means the *extraction/move* produces identical outputs — that is what the unchanged-tests-still-pass proof certifies. It does NOT mean "any bug you discover stays in the file." Bugs surfaced by the audits below are fixed in **Phase 3.5 (Bug Remediation)** within this same run, as a SEPARATE commit. A refactor that tidies a file but leaves its bugs is half a job — it forces a second pass over the same code later. "I must preserve behavior, so I'll backlog the bug" is the exact rationalization to avoid: preserve behavior in commit 1, fix the bug in commit 2, same session.
 
@@ -671,6 +763,13 @@ git add [specific files from scope fence]
 - **Over-rated CRITICAL — resolved, never silently downgraded.** If a later assessment judges a CRITICAL was over-rated, it is still resolved the same two ways: `fixed`, or `false-positive` (with the rationale) when the CRITICAL claim itself was unfounded. There is deliberately NO severity-downgrade disposition — a silent downgrade is exactly the laundering vector this gate blocks, so a disputed CRITICAL is dispositioned, not re-rated away.
 - **Open WARNING/INFO do NOT block after the pass cap** — they take the normal Phase 4 disposition (fixed in-fence, or backlogged when out-of-fence). This is why the post-cap verification pass may leave fresh WARNINGs unresolved without spinning a new loop.
 - **Trust boundary (what the ledger does NOT do).** The ledger is orchestrator-owned bookkeeping; it cannot police the orchestrator's own honesty or blind spots. Its integrity rests on the mechanisms already in this skill, not on self-report: (1) the **Independent CQ Auditor** and the **cross-model rotation** are the check on disposition calls — a mis-judged "spurious" or a fix-introduced defect the orchestrator failed to log is caught when the NEXT independent, different-model pass re-raises it; the ledger feeds those passes, it does not replace them. (2) **The orchestrator MUST NOT silently drop a re-report** — every re-report becomes a row (`reopened` for a regression, `reaffirmed` for a spurious one), per the rule above, so the decision is auditable, never invisible. (3) **A `fixed` disposition REQUIRES a `regression_test`** (mandatory for `fixed`, per the schema; `-` is allowed only for non-`fixed` rows): "fixed" is then backed by a test that goes red on regression at the tests-still-pass gate — mechanical proof independent of the ledger, not the orchestrator's say-so. Where none of these can run (no independent pass, no test possible), the run's PROVE telemetry records the weaker `blind_audit`/`adversarial` `degraded` value and the run cannot claim `strict` — the ledger `disposition` enum is unchanged.
+- **The dispositions must ADD UP to the reported count.** `prove.adversarial` records a number
+  (`6findings`); the ledger's dispositioned rows for this run must sum to exactly that. If they do
+  not, either a finding was dropped without a disposition or the count was copied from a different
+  pass — both are silent, and both look identical to a clean run. Count by REPORTED OCCURRENCE (a
+  finding raised in two passes counts twice, matching what `prove.adversarial` saw); when duplicates
+  recur, additionally report the unique root-cause total, because "6 findings, 2 root causes" and
+  "6 independent findings" are very different runs and the single number cannot distinguish them.
 - This is a companion to the run CONTRACT (`zuvo/contracts/<id>.json`), same directory and lifecycle — not a new state location.
 - **Enforcement model & known limits (disclosed, not hidden).** These per-row rules are **agent-followed guidance**, not hook-validated: the deterministic `refactor-safety-gate` hook enforces only the COARSE contract (`prove.blind_audit`, `prove.adversarial`, `findings_disposition`) — it does not parse this ledger row-by-row. So the ledger's integrity has exactly three backstops, and no more: (1) the **independent cross-model rotation + CQ auditor** re-derive findings without trusting the ledger — a mis-judged `false-positive`, a spurious→`reaffirmed` that was really a regression, or two distinct bugs fuzzy-matched into one identity are caught when a different-model pass raises the surviving defect on the actual code (the ledger feeds these passes but is not their source of truth); (2) a `fixed` row's **`regression_test`** goes red at the tests-still-pass gate if the fix regresses — mechanical, ledger-independent; (3) `ACCEPTED_FINDINGS` suppresses *re-listing* a settled item but a provider may always raise it **with new evidence**, so suppression narrows re-litigation without blinding the next pass to a real defect. What this does NOT give: byte-exact identity matching (it is LLM judgment with a `file|rule-id`+evidence fallback), write-time schema validation, cognitive independence for the single-agent-lock *inline* auditor (same context — hence `degraded:same-model`; the cross-model rotation, not the inline pass, is the real independence check), or any guarantee against an orchestrator that is both dishonest AND faces a same-model-only provider pool — that residual is the reason the blind audit and cross-model rotation exist and are themselves HARD GATES. The `degraded` marker is keyed to which providers ACTUALLY ran (not merely the pool's composition): if no cross-family pass in fact executed, the run records `degraded:same-family` and cannot claim `strict`. Record `degraded` telemetry (never `strict`) whenever a backstop cannot run. **When BOTH independence backstops degrade at once — a same-model inline CQ auditor AND a same-family-only adversarial pass — zero independent verification actually occurred; the run records `degraded:no-independent-verification` (never `strict`), and its report must state plainly that no independent eyes reviewed it.** This is disclosure within the existing `strict`/`degraded` telemetry model, not a new verdict enum. ("HARD GATE" for the blind audit and cross-model rotation means the pass must RUN — *absent* is BLOCKED; running *degraded* satisfies the gate but caps the grade at `degraded`, and whether a fully-degraded run is shippable is then the coarse gate's / reviewer's policy call, not something the ledger invents.) **Regression-proof enforcement is run-level, not per-identity:** the mechanically-enforced floor is Phase 3.5's `prove.regression_red` + the tests-still-pass gate, which the coarse hook reads; the ledger's per-row `regression_test` is a finer-grained *record*, not an independently-enforced check, so a multi-CRITICAL fix relies on that run-level proof covering all of its fixes — a bounded, pre-existing limit of the skill's regression machinery, not a hole this ledger introduces. And the residual the cross-model rotation exists to catch is not only re-report misjudgements but a **first-pass omission** — a real defect the orchestrator never logged at all; that is why the independent, different-model pass reads the actual code rather than trusting the ledger's row set.
 
@@ -852,9 +951,30 @@ In no-commit mode: Phase 3.5 showed both diffs + proposed messages instead of co
 
 Mark contract: `"stage": "COMPLETE"`, `"cq_after": { "score": "18/18", "critical_failures": [] }`, `"commits": ["abc1234"]`.
 
+**When any CQ gate is N/A, record BOTH denominators** — a bare `18/18` is ambiguous about whether
+eighteen gates were evaluated or eighteen of thirty applied:
+
+```json
+"cq_after": { "score": "29/29", "applicable_score": "17/17", "na": 12, "critical_failures": [] }
+```
+
+`score` counts every gate in the set (N/A gates score as passing, since a gate that does not apply
+cannot fail); `applicable_score` counts only the evaluated ones. The gate is passing when **every
+applicable check passes AND every N/A carries its evidence** — an N/A without a stated reason is an
+unevaluated gate wearing a passing badge, per the three-state rules in
+`../../shared/includes/gate-registry.md`.
+
 ### CodeSift Index Update
 
 After committing: `index_file(path=<changed-file>)` for every changed file.
+
+**Do not index a secondary worktree.** Many repo instruction files (this one included) forbid it —
+worktree paths pollute the main repo's index with duplicate symbols that then answer later queries
+with the wrong file. If repository instructions forbid worktree indexing, or `index_file` is
+unavailable, **skip it and record the post-index verification as `degraded:<the exact restriction>`**
+rather than reindexing anyway or silently claiming a fresh index. The run still has real evidence
+without it — local complexity, cycle checks, and the test suite — so say which of those carried the
+verification.
 
 ### Backlog Persistence (FULL mode)
 

@@ -752,7 +752,11 @@ fi
 # Copy hook scripts with path replacement
 # block-no-verify.sh added (Codex PreToolUse Bash). zuvo-stop-pipeline-gate.sh is
 # NOT shipped — Codex has no Stop hook; pre-push + CI cover it.
-for hook_script in block-no-verify.sh pre-push-gate.sh pre-commit-adversarial-gate.sh session-start; do
+# refactor-safety-gate.sh is NOT wired as a Codex event hook — it is the git pre-commit/pre-push
+# gate that zuvo:refactor Phase 0 self-installs into the repo. It must still ship, or that phase
+# reports "gate/install script not found" on every Codex run (false installer-missing telemetry,
+# and the Definition-of-Done bind silently absent).
+for hook_script in block-no-verify.sh pre-push-gate.sh pre-commit-adversarial-gate.sh refactor-safety-gate.sh session-start; do
   if [ -f "$PLUGIN_DIR/hooks/$hook_script" ]; then
     cat "$PLUGIN_DIR/hooks/$hook_script" \
       | replace_paths \
