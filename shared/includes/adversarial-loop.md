@@ -191,7 +191,26 @@ For each finding:
 If Step 4 fixed any CRITICAL or WARNING:
 
 1. Stage fixes: `git add -u`
-2. Re-run: `git diff --staged | adversarial-review --json --mode {MODE}`
+2. **Append a VERIFIED CONTEXT block to the re-run input**, then re-run:
+   `git diff --staged | adversarial-review --json --mode {MODE}`
+
+   The re-run sees the diff, not the system around it — so it re-derives the same false positives
+   the first round produced, and the second pass is spent re-litigating instead of finding
+   anything new. State the context you VERIFIED while fixing, each with its evidence:
+
+   ```
+   VERIFIED CONTEXT (checked this session — cite contradicting code to reopen):
+   - schema: orders.tenant_id is NOT NULL + FK (migrations/0042_orders.sql:14)
+   - middleware: requireAuth + tenantScope applied app-wide (src/app.ts:31-33), not per-route
+   - absent by design: no "draft order" concept exists in this product (grep: 0 hits for draft_)
+   ```
+
+   Two halves, and both matter: a reviewer may only reopen a finding covered by this block **by
+   citing code that contradicts it** — and every line in the block must be something you actually
+   checked, with the file:line to prove it. A block full of assertions is worse than no block: it
+   suppresses real findings on the strength of the author's confidence, which is exactly what the
+   adversarial pass exists to bypass. Also pass prior fingerprints via `--known-finding` so settled
+   items are reported separately instead of consuming the new-finding budget.
 3. **This is a validation run, NOT a new repair cycle.** If new issues found:
    - **False-re-raise check FIRST.** If a re-flagged CRITICAL is the SAME issue you just fixed
      (same `file:line` + same root cause) and you can prove the fix holds (the regression test for

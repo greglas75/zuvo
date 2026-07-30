@@ -226,6 +226,13 @@ Before any agent dispatch, establish the scope manually:
 3. **Hotspot detection.** Check if candidate files are churn hotspots (top 10 most-changed files in the project over the last 90 days):
    - CodeSift: `analyze_hotspots(repo, since_days=90)` — flag any candidate in the top 10
    - Fallback: run `git log --name-only --format="" --since="90 days ago" | sort | uniq -c | sort -rn | head -20` to get the project-wide top 20 by commit count, then check if any candidate file appears in that list
+3b. **Hub check.** For every candidate file that already exists, run `find_references` on its main
+   export (fallback: grep for imports of the path). **A file with 5+ importers is a HUB — editing
+   it is not a "1-file change"**, whatever the diff size says, because every importer inherits the
+   behaviour change. Take one of two routes and record which, with the importer count, in the plan:
+   extract into a new file and leave the hub alone, or escalate the tier so the blast radius gets
+   the review it needs. Silently treating a hub as a small edit is how a STANDARD-tier change
+   breaks five call sites.
 4. **Risk signal scan.** Check the candidate files against the risk signals list (including hotspot results from step 3). Update the tier if signals change.
 
 Output:
@@ -581,6 +588,13 @@ For each AP entry from the Phase 2 plan section 7 (Acceptance Proofs):
 4. Verdict per AP: VERIFIED or BROKEN.
 
 **LLM-judge fallback for UI subjective dimensions:** if an AP includes a subjective visual quality the proof cannot deterministically express, after capturing the screenshot dispatch a Sonnet judge with `(AP description, screenshot, DOM)` requiring binary `VERIFIED` / `BROKEN` plus one-sentence justification. Default deterministic.
+
+**When the approved browser tool returns a POLICY BLOCK** (the host refuses the automation, not a
+page error): record `AP=BLOCKED_INFRA` for that proof. Do **not** route around it with an alternate
+automation path — an unapproved driver is not the approved one, and "I got a screenshot somehow" is
+not the proof the AP specified. Continue the deterministic verification that can still run, and
+**a run carrying BLOCKED_INFRA may NOT write a successful content-keyed review artifact** — its UI
+behaviour is unverified, and an artifact would claim coverage the run does not have.
 
 **Verdict handling:**
 - All APs VERIFIED → proceed to 4.3.

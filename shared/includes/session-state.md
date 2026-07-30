@@ -279,6 +279,12 @@ Example: `exec-20260407-1423`
 - `total-tasks`: from plan
 - `completed: []`, `skipped: []`, `blocked: []`
 - `next-task`: set to the lowest task number in the plan (usually 1, but do not hardcode)
+- **Cross-repo plans only** — `repositories:` a list, one entry per repo the plan touches, each with
+  `path`, `branch`, `base`, `head`, `review_artifact`, `pull_request`, `push_remote` and
+  `required_checks`. A single `head`/`branch` at the top level cannot describe a plan spanning two
+  repos, so a resumed run reconstructs the wrong one — and the review artifact, PR and checks are
+  per-repo facts that get silently attributed to whichever repo was last touched. Omit the key
+  entirely for the normal single-repo case; an empty list is not the same as absent.
 
 **Write/update `zuvo/context/project-context.md`:**
 - Update `last-session-id` to current session

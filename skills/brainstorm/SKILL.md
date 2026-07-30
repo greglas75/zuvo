@@ -209,6 +209,21 @@ instruction file and do that analysis in this context. Thread spawning / `wait_a
 
 Refer to `env-compat.md` for the correct dispatch pattern per environment.
 
+**Dispatch FORBIDDEN by host policy is not the same as dispatch being unavailable.** Some hosts
+inject a system-prompt rule against unprompted sub-agent dispatch; the tool exists and would work,
+which is exactly why this gets misread as "dispatch unavailable → skip" or, worse, as something to
+dispatch anyway. Neither. Run all three roles INLINE — read each `agents/*.md` and execute its
+checklist in this context — print `Phase 1 performed inline (sub-agent dispatch forbidden by host
+policy)`, and record `dispatch=policy-forbidden` in the retro so the weaker independence is visible.
+The roles are not optional; only the dispatch mechanism changes.
+
+**Prior-fleet reuse.** If an agent fleet earlier in THIS session already covered a required role's
+brief, cite those reports instead of re-dispatching, and record `code-explorer=from-session` /
+`business-analyst=from-session` in the retro. Re-deriving costs a full agent and returns the same
+answer. This is the allowance the Domain Researcher already has, generalized: it applies to any
+dimension already evidenced this session. It is reuse of *evidence*, not of a verdict — if the
+earlier report predates a change to the code it describes, re-run that role.
+
 **Model policy:** a spec sets the ceiling for the whole plan→execute pipeline, so the exploration and
 spec-reviewer agents dispatch on **Opus** (strongest tier; each platform resolves the label to its top
 model), not Sonnet — `--model` overrides only when you deliberately accept a cheaper spec. If the MAIN
@@ -557,6 +572,13 @@ Wait for complete output. Then update the spec's `## Adversarial Review` section
 - **`status: "single_provider_only"` (exit 3)** — host self-exclusion left only 1 external provider when `--rotate`/`--multi` was requested. Re-invoke with `--single` and note in the spec: `adversarial_review: single-provider-only (install additional provider for diversity)`. Do NOT block spec approval — single-provider review is still a real signal, just narrower.
 - **`status: "timeout"` (exit 124)** — ALL providers timed out. Set `adversarial_review: skipped-timeout` and proceed.
 - **`status: "partial"` (exit 0)** — some providers returned, others timed out (`timeout_count > 0`). Set `adversarial_review: partial (N/M providers)` and surface the timeout_count in the spec's `## Adversarial Review` section so reviewers know coverage was reduced.
+- **exit 1 with EMPTY stdout AND empty stderr, and no new line in `~/.zuvo/adversarial.log`** — the
+  providers were never dispatched at all. This is not a failed review, it is a review that did not
+  happen, and it reads identically to a clean pass if you only check the exit code. The usual cause
+  is a concurrent adversarial run on the same host; confirm with `pgrep -fl adversarial`. Retry at
+  most twice, then set `adversarial_review: <prior-status>; round N undispatched (host contention)`
+  and state plainly in `## Adversarial Review` that this revision is NOT cross-model validated —
+  never carry the previous round's verdict forward as if it covered the new text.
 
 **Cross-call rotation (multi-pass adversarial):** for specs that warrant 2 adversarial passes (CRITICAL findings in pass 1), capture `providers_used_list[0]` from the pass-1 JSON output and thread it via `--exclude-last <name>` into pass 2 — forces a different provider perspective on the revised spec. Use the array field `providers_used_list[0]` (string `providers_used` indexed with `[0]` would error in jq).
 
