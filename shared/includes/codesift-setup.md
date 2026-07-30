@@ -73,6 +73,29 @@ TARGET_REPO=$(git -C "<scope-path>" rev-parse --show-toplevel 2>/dev/null)
 
 A worktree is NEVER a reason to drop the whole analysis to degraded mode — it is a `path=` argument.
 
+**SIBLING worktrees in the index — a different failure from the stale one above.** When the indexed
+root holds several linked worktrees of the same repo (or several repos), a query answers with hits
+from *other* worktrees: same file path suffix, different tree, different branch. The stale-index
+rules do not catch this — the index is perfectly fresh, it is just wider than your scope. Two rules:
+
+- **Key by git-common-dir, not by path.**
+  `git -C <scope> rev-parse --path-format=absolute --git-common-dir` is identical for every linked
+  worktree of one repo and differs between repos, so it is the only stable repository identity
+  here. `--path-format=absolute` is required, not cosmetic: bare `--git-common-dir` returns a
+  RELATIVE `.git` from the main checkout and an absolute path from a linked worktree, so the two
+  never compare equal and the key silently splits the repo it was meant to unify. Scope framework audits (`framework_audit`, `python_audit`,
+  `analyze_hono_app`, the `astro_*` family) to that key; a path prefix does not separate siblings.
+- **A sibling hit is not evidence about your target.** If results carry sibling-worktree paths,
+  mark the staged-diff / scope checks **degraded** and treat the native current-worktree commands
+  (`git -C <worktree> diff`, bounded `Read`, `wc -l`) as authoritative. Counting a sibling hit as
+  target-scope evidence is how a check "passes" against code that is not in the change at all.
+
+**A partial parse is not a clean result.** When `python_audit` (or any analyzer) reports `partial`,
+a degraded parse, or a per-file parse error, its *silent* sections are unexamined, not clean. Say
+which files failed to parse and re-check those natively; reporting the run's clean sections without
+that caveat converts a coverage hole into false confidence. The same applies to any tool whose
+response carries a `degraded`/`partial`/`errors[]` field — read it before quoting the result.
+
 **Multi-git-root workspace** (CWD is NOT a git repo but contains N sub-repos): detect via `git rev-parse --show-toplevel` failing at CWD but succeeding in subdirs. Then `analyze_hotspots` returns empty (churn cannot span sub-roots) and `analyze_project` reports the largest sub-repo's stack as the whole workspace. Fall back to per-sub-repo `git log --name-only` for churn, and detect stack per sub-repo from each manifest — do not trust root-level `analyze_project` here.
 
 ## Step 2.5: Deferred Tool Preload (MCP-host environments)

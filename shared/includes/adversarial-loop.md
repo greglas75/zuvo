@@ -269,6 +269,10 @@ Each skill adds the adversarial loop at a specific phase. The loop is **MANDATOR
 
 - **Not a replacement for zuvo:review** — this is a quick multi-provider check during writing. zuvo:review is a full multi-pass audit with confidence scoring.
 - **Not a quality gate** — does not block completion (except: unresolved CRITICAL changes wording).
-- **Not recursive** — max 2 calls. Third opinion is zuvo:review's job.
+- **Not recursive** — max 2 calls by default. Third opinion is zuvo:review's job.
+  A calling skill may raise this **only** when it defines its own larger, risk-based cap
+  (`zuvo:refactor` sizes passes by diff); in that case the caller's explicit cap wins and this
+  default does not override it. Absent such a cap, 2 is the ceiling — "the last pass found
+  something so I ran another" is not a risk-based cap, it is an unbounded loop.
 - **Not proof of correctness** — "clean pass" means one model found nothing. Different model = potentially different findings.
 - **Not optional** — if referenced by a skill, it runs. The agent does not skip it.

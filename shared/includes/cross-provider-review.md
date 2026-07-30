@@ -74,6 +74,20 @@ git diff HEAD~1 | "$AR_CMD" > /tmp/cross-review.md
 "$AR_CMD" --provider gemini --diff HEAD~1 > /tmp/cross-review.md
 ```
 
+**A multi-provider pass takes minutes — do not let it look hung.** Providers run concurrently and
+each has its own timeout, so a 5-provider `--mode plan` pass measured 178s on a 7-task plan and can
+exceed 240s. Two consequences:
+
+- **Never swallow stderr.** It is the progress stream: `Running: <provider>…` on dispatch and
+  `Done: <provider>` on each completion. `2>/dev/null` turns a working run into a blank terminal
+  and is the reason these get killed as "stalled". Redirect stdout only.
+- **Give it a real deadline, or background it.** A 120s default shell timeout kills the pass
+  mid-run and leaves no artifact. Either `timeout 480 "$AR_CMD" …`, or run it in the background
+  and use `--artifact PATH` as the completion signal — the artifact is written atomically at the
+  end, so *the file existing means the pass finished*, and its `provider_outcomes=` header says
+  which providers actually contributed. That is the poll mechanism; no separate status file is
+  needed.
+
 ### Step 3: Parse results
 
 Read the output file. Extract findings between the header/footer markers. Each finding has:

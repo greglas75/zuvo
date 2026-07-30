@@ -91,6 +91,24 @@ target failure it is not. The disposition rule is **attribution, not a preflight
 This keeps the gate honest in both directions — no silenced type errors, no environment breakage
 misreported as code defects.
 
+**TypeScript: a package type-check can silently omit an app's own config.** Monorepo packages often
+have several tsconfigs (`tsconfig.json`, `tsconfig.app.json`, `tsconfig.node.json`), and the package
+script usually runs only the first. Files reachable only through the app config are then never
+checked, and the run reports a green type-check over a subset. When the touched files fall under an
+omitted config, run it explicitly (`tsc -p tsconfig.app.json --noEmit`) — with the **project's own
+declared TypeScript major** (`npx tsc` resolving the local dep, never a globally installed one; a
+version skew invents diagnostics that do not exist for the project). Report its diagnostics split
+into **scoped** (files this run touched) and **pre-existing** — merging them makes an untouched
+file's long-standing error look like a regression you introduced.
+
+**Commit hooks need their binaries on PATH before you commit, not during.** A `lint-staged` /
+`husky` hook that shells out to a tool present only in an `npx` cache fails at commit time with a
+"command not found" that reads like a lint failure. Before the first commit of a run, check every
+command the hook will invoke is executable (`command -v <bin>` for each entry in the lint-staged
+config). If one resolves only inside an npx/pnpm store, prepend that directory to `PATH` for the
+commit and **keep the normal hook flow** — do not reach for `--no-verify`, and do not "fix" it by
+deleting the hook entry. The hook is the gate; making it runnable is the job.
+
 **Scope verification to the changed surface.** In a secondary worktree, run type-check/tests for the **touched package(s)** (`turbo run type-check --filter=<pkg>`, or the package's own test script) — **not** the whole monorepo. A pre-existing failure in an unrelated package is **out-of-scope** for a behavior-preserving refactor: record it as `pre-existing-out-of-scope`, do not treat it as a blocker, and do not burn the run "rediscovering" errors that were already red before you started. (CodeSift availability is orthogonal — a worktree is a `path=` argument, never a reason to drop to degraded mode.)
 
 ## Agent Dispatch

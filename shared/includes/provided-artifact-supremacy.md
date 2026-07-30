@@ -12,7 +12,14 @@ A design artifact is "provided" if the user, this turn or earlier in the session
 - attached/uploaded or referenced a file or folder (`HANDOFF.md`, a downloaded prototype, a spec `.md`/`.docx`/`.pdf`, a design export);
 - pasted/attached a screenshot, mockup, or image of the intended UI;
 - linked a Figma/prototype/reference URL or named a page to "match";
-- said "match this", "1:1", "pixel", "like the prototype/design", "they gave me the full design".
+- said "match this", "1:1", "pixel", "like the prototype/design", "they gave me the full design";
+- established a **live external contract** this session by probing it — real HTTP calls, a CLI
+  round-trip — or pointed at a working reference implementation in another codebase or language.
+  A measured response IS a provided artifact: it constrains the design exactly as a spec does, and
+  it is the one kind that gets forgotten because nobody attached a file. Extract those DCs with
+  the verifying evidence inline (status code + response fragment, or the reference file:line), so
+  a later reader can tell a **measured** constraint from an **assumed** one — the difference
+  decides whether a contradicting finding gets to reopen it.
 
 If ANY holds → this protocol is MANDATORY. If none → skip it (you are designing from scratch; the user's words are the brief).
 

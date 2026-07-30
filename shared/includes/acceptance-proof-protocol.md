@@ -128,6 +128,25 @@ For each AC, ask:
 5. **Is this a main user flow?** If yes, also list it under Whole-feature Smoke Proofs.
 6. **Is this a "must NOT merge / must NOT drop" invariant?** (negative/uniqueness/idempotency) Then the proof MUST seed a deliberate conflict — e.g. two records with colliding keys but different values — and assert BOTH survive distinctly (or that the merge is rejected). A happy-path-only proof lets a silent-drop implementation pass the gate.
 
+7. **Check the exit-code polarity of every proof command.** A proof gates on `$?`, so a command
+   whose output reads correct but whose exit code is inverted is a broken gate that reports green.
+   The three that keep recurring:
+   - `… | grep -c PATTERN` — `grep` exits **1** when the count is 0, so an "expect zero matches"
+     gate is exactly backwards. Use `test "$(… | grep -c PATTERN)" -eq 0`.
+   - `git diff --exit-code -- <paths>` with no commit-ish compares worktree↔index, so it passes
+     vacuously the moment the change is committed. Pin a base:
+     `git diff --exit-code "$(git merge-base HEAD origin/main)" -- <paths>`.
+   - Any pipeline: the exit status is the LAST command's unless `set -o pipefail` is in effect.
+8. **A `-t`-filtered proof MUST assert a non-zero passed count.** `vitest run <file> -t "<title>"`
+   that matches nothing prints `Tests N skipped` and **exits 0** — a proof that verifies nothing
+   while reporting green. Always assert the run happened:
+   ```bash
+   out=$(npx vitest run <file> -t "<title>" 2>&1); echo "$out"
+   echo "$out" | grep -qE 'Tests +[1-9][0-9]* passed' || { echo 'PROOF DID NOT RUN'; exit 1; }
+   ```
+   Corollary for plan authors: naming a test title before the test exists is guessing. Tell the
+   implementer to put the AC id in the test title, so the filter can only match the intended test.
+
 If you cannot answer (1) without using words like "should work" or "looks right", the AC is too vague — return to brainstorm to tighten it.
 
 ## Failure modes this protocol targets
