@@ -120,6 +120,7 @@ PHASE 1 — LOADED:
   ../../shared/includes/run-logger.md        -- [READ at final step]
   ../../shared/includes/retrospective.md     -- [READ at final step]
   ../../shared/includes/documentation-mandate.md -- [READ at final step]
+  ../../shared/includes/test-quality-gate.md -- [READ at Phase 4.6b, STANDARD+] (zuvo:test-audit gate → tier A)
   ../../shared/includes/knowledge-prime.md   -- [READ at start if available | MISSING -> degraded]
   ../../shared/includes/knowledge-curate.md  -- [READ at final step if available | MISSING -> degraded]
 ```
@@ -178,6 +179,7 @@ Check for these in the feature description and target files:
 | Pre-write test contract | No | Yes | Yes |
 | Independent CQ Auditor agent | No | No | Yes |
 | Independent Test Auditor agent | No | Yes (when dispatch available) | Yes |
+| Test Quality Gate (zuvo:test-audit → tier A, Phase 4.6b) | No | Yes | Yes |
 | Verification commands | Tests + types (if checker exists) | Tests + types | Tests + types + lint |
 
 Print the tier after assignment:
@@ -629,7 +631,19 @@ EXECUTION VERIFICATION
 ### 4.4 Adversarial Review (MANDATORY — do NOT skip)
 
 ```bash
-git add -u && git diff --staged | adversarial-review --mode code --artifact "zuvo/proofs/build-<slug>-adversarial.txt"
+# Scoped review patch on stdout — the git index is NEVER touched (no staging).
+# PATH args = the files THIS build wrote (the plan task's "Files:" list), each
+# quoted SEPARATELY (never one space-joined string). Documented fallback when that
+# list is unavailable: call with NO path args — the helper then covers every dirty
+# tracked file plus untracked, non-ignored files.
+if [ -x "$HOME/.zuvo/build-review-patch" ]; then
+  _patch=$("$HOME/.zuvo/build-review-patch" "<written-file-1>" "<written-file-2>"); _prc=$?
+  if [ "$_prc" -eq 3 ]; then echo "adversarial review: skipped (no changes)"
+  elif [ "$_prc" -ne 0 ]; then echo "ERROR: build-review-patch failed (rc=$_prc)"
+  else printf '%s\n' "$_patch" | adversarial-review --mode code --artifact "zuvo/proofs/build-<slug>-adversarial.txt"; fi
+else
+  adversarial-review --mode code --artifact "zuvo/proofs/build-<slug>-adversarial.txt" --files "<changed files>"
+fi
 ```
 
 If diff touches auth, payment, crypto, PII, or migration files, use `--mode security` instead. If diff touches migrations/schema, use `--mode migrate`.
@@ -679,6 +693,25 @@ git tag build-[YYYY-MM-DD]-[short-slug]
 ```
 
 Do not push. Pushing is a separate user decision.
+
+### 4.6b Test Quality Gate (zuvo:test-audit → tier A) — STANDARD and DEEP
+
+The 3.5/4.1 Q1-Q25 evals are in-run self-scoring (the auditor shares the run's context), and
+field runs still shipped weak tests. After the 4.6 commit — behavior is proven, verified, and
+committed — run the gate from `../../shared/includes/test-quality-gate.md` with:
+
+- `TEST_SCOPE` = every test file this build **created or modified** PLUS every **pre-existing**
+  test file covering a production file in the scope fence (co-located `.test.*`/`.spec.*`/
+  `__tests__/*`, or grep for imports of the touched production files).
+- `FIX_COMMIT_PREFIX` = `test(build):`
+
+The include dispatches the REAL `Skill(zuvo:test-audit …)` on that scope, fixes every file below
+tier A in-run (strengthening only, separate `test:` commit after the 4.6 feature commit, suites
+re-run green), re-audits (max 2 iterations), and prints `[GATE: test-quality] PASS|WARN|N/A` with
+the on-disk `zuvo/audits/` report path as proof of dispatch — an inline Q-rescoring pass reported
+as this gate is a substituted gate = INVALID. Below-A after the cap → WARN + per-file backlog,
+never silence. **LIGHT tier:** skip and print `[GATE: test-quality] SKIPPED (LIGHT tier — inline
+Q check per 3.5)` — the tier table is the authority; do not silently omit the line.
 
 ### Follow-up ideas (optional — ZERO ceremony, leaves a receipt)
 
@@ -742,6 +775,7 @@ COMPLETION GATE CHECK
 [ ] CQ self-eval printed with PER-FILE scores and evidence for critical gates (aggregate forbidden)
 [ ] Q self-eval printed PER-FILE (>=16 PASS) with evidence
 [ ] Adversarial review ran and findings handled
+[ ] Test Quality Gate (4.6b, STANDARD+): [GATE: test-quality] PASS|WARN|N/A printed with a REAL zuvo/audits test-audit report path (inline Q-rescoring is a substituted gate = INVALID); below-A files fixed in-run as a test: commit or WARN + backlogged; LIGHT prints the explicit SKIPPED line
 [ ] Acceptance Proofs (Phase 4.2b) — every AP ran and VERIFIED, artifact paths recorded
 [ ] All verification commands ran and exited 0
 [ ] Documentation created/updated (per documentation-mandate.md) or explicit [DOC: N/A — <reason>]
