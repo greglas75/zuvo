@@ -47,7 +47,7 @@ blind_audit: <clean:strict|clean:degraded|fix:N|rewrite|skipped|blocked_infra> |
 adversarial: pass1=<provider>(NC,NW,NI) [pass2=<provider>(NC,NW,NI)] | cross_provider=<true|false|single_provider> | timeout=<Ns>
 q_gates: <N>/19 (Q7=<0|1> Q11=<0|1> Q13=<0|1> Q15=<0|1> Q17=<0|1>)
 tests: <N>/<N> pass | extension=<.spec.ts|.test.ts>
-status: <PASS|FAILED|BLOCKED_INFRA> | failure_cause=<none|blind-audit-timeout|prod-bug|...>
+status: <PASS|FAILED|BLOCKED_INFRA> | failure_cause=<none|blind-audit-timeout|host-suspended|prod-bug|...>
 ```
 
 **Adversarial disposition for behavior-preserving refactors (compact template).** A refactor that moves code verbatim will draw findings on patterns it *preserved* but did not introduce. Do not "fix" them (that changes behavior); do not leave them as open `Nfindings`. Disposition each on the `adversarial:` line and set field 15 to `Nfindings:preserved` when none required a behavior change:

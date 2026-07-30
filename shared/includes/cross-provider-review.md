@@ -183,13 +183,18 @@ The script's `--json` output includes a `status` field. Skills should branch on 
 |----------|------|---------|
 | `ok` | 0 | All requested providers succeeded |
 | `partial` | 0 | Some providers succeeded, others timed out or failed (`provider_count < attempted_count`) — proceed but surface `timeout_count` to user |
-| `timeout` | 124 | ALL providers timed out (`provider_count == 0`) — no inline retry; caller chooses next action |
+| `timeout` | 124 | ALL providers timed out (`provider_count == 0`), or the whole-run deadline fired — no inline retry; caller chooses next action |
+| `suspended` | 125 | The HOST slept mid-run (`suspended_seconds` > 0). Not a provider fault and not reduced coverage — retry once |
 | `single_provider_only` | 3 | `--multi` or `--rotate` requested but only 1 provider available after host self-exclusion — caller must use `--single` or install another provider |
-| `error` | 2 | All providers failed (non-timeout) |
+| `error` | 2 | Every provider was reached and returned no review; `evidence_dir` holds their stderr |
 | (n/a) | 130 | Interrupted (SIGINT — user pressed Ctrl-C) |
 | (n/a) | 143 | Terminated (SIGTERM — orchestrator killed the process) |
 
-Always-present count fields: `attempted_count`, `provider_count`, `timeout_count`.
+Always-present count fields: `attempted_count` (candidates), `dispatched_count` (actually asked),
+`provider_count`, `timeout_count`, `suspended_seconds`, `provider_outcomes`.
+
+Report 124, 125 and 2 as the distinct things they are. "All providers blocked" for any of them is
+a misdiagnosis: 125 means the machine was asleep, 2 has the providers' own error text on disk.
 
 For cross-call rotation (extracting last-used provider for `--exclude-last`), use the **array** field `providers_used_list[0]` — the string field `providers_used` cannot be indexed with `[0]` in jq.
 

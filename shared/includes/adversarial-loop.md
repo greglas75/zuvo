@@ -117,9 +117,12 @@ The script may return a non-clean `status` when not all requested providers ran.
 |---------------|-----------|---------|---------------|
 | `ok` | 0 | All requested providers succeeded | normal delivery |
 | `partial` | 0 | Some succeeded, some timed out or failed (`timeout_count > 0` or `provider_count < attempted_count`) | continue, but surface `timeout_count` + `provider_count` in user-visible output so they know coverage was reduced |
-| `timeout` | 124 | ALL providers timed out (`provider_count == 0`, `timeout_count == attempted_count`) — exit code 124 distinguishes total timeout from partial | record `Adversarial review: skipped (timeout)` and continue — do NOT retry inline |
+| `timeout` | 124 | ALL providers timed out (`provider_count == 0`, `timeout_count == attempted_count`), or the whole-run deadline fired | record `Adversarial review: skipped (timeout)` and continue — do NOT retry inline |
+| `suspended` | 125 | The HOST slept mid-run (lid close / system sleep). `suspended_seconds` says for how long. The providers were never given a chance, so this is NOT reduced coverage — it is a run that did not happen | **retry once**, then treat a second `suspended` as `timeout`. Never report this as a provider or infrastructure outage |
 | `single_provider_only` | 3 | `--multi` or `--rotate` requested but post-exclusion provider count < 2 — exit code 3 is unique to this case | install a second provider, retry with `--single`, or pass `--provider <name>` explicitly |
-| `error` | 2 | All providers failed (non-timeout) | record `Adversarial review: skipped (provider error)` and continue |
+| `error` | 2 | Every provider was reached and returned no review | record `Adversarial review: skipped (provider error)` and continue. Each provider's stderr is preserved under `evidence_dir` (`~/.zuvo/adversarial-failures/<run_id>/`) — read it before claiming a cause |
+
+**Never collapse 124 / 125 / 2 into one "all providers blocked" message.** They have different causes and different correct responses: a slept host is free to retry, a timeout is not, and a refusal has evidence on disk naming the reason. Reporting all three as blocked infrastructure is what produced the 2026-07-30 misdiagnosis — a closed laptop lid reported as five dead providers.
 
 **Cross-call rotation pattern** (D4 — for skills that invoke `adversarial-review` multiple times in the same flow):
 

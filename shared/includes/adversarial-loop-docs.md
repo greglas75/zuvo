@@ -161,11 +161,15 @@ The script's JSON `status` field reports the run's outcome. Skills should branch
 |---------------|-----------|---------|---------------|
 | `ok` | 0 | All requested providers returned a usable artifact | normal delivery |
 | `partial` | 0 | `0 < provider_count < attempted_count` — some succeeded, some did not | continue, but surface `timeout_count` + `provider_count` in user-visible output (reduced consensus is a quality signal) |
-| `timeout` | 124 | ALL providers timed out (`provider_count == 0`, `timeout_count == attempted_count`) | record `Adversarial review: skipped (timeout)` and continue — no inline retry (D1 removed the truncated-retry path; callers wanting recovery use `--rotate` + `--exclude-last`) |
+| `timeout` | 124 | ALL providers timed out (`provider_count == 0`, `timeout_count == attempted_count`), or the whole-run deadline fired | record `Adversarial review: skipped (timeout)` and continue — no inline retry (D1 removed the truncated-retry path; callers wanting recovery use `--rotate` + `--exclude-last`) |
+| `suspended` | 125 | The HOST slept mid-run; `suspended_seconds` says for how long. The providers were never given a chance | **retry once**; a second `suspended` is treated as `timeout`. Never reported as a provider outage |
 | `single_provider_only` | 3 | `--multi` or `--rotate` requested but post-exclusion provider count < 2 | install a second provider, accept with `--single`, or pass `--provider <name>` |
-| `error` | 2 | All providers failed (non-timeout) | record `Adversarial review: skipped (provider error)` and continue |
+| `error` | 2 | Every provider was reached and returned no review | record `Adversarial review: skipped (provider error)` and continue; `evidence_dir` holds each provider's stderr |
 
-`attempted_count` and `timeout_count` are always present in JSON output regardless of status.
+`attempted_count`, `dispatched_count`, `timeout_count`, `provider_outcomes` and `suspended_seconds`
+are always present in JSON output regardless of status. `attempted_count` counts CANDIDATES;
+`dispatched_count` counts providers actually asked — in `--single` they differ by design and only
+the latter belongs in a coverage claim.
 
 ## Cross-call rotation pattern (D4)
 

@@ -149,6 +149,34 @@ Then the mode flag picks how many run:
 | `--provider <name>` | force exactly that provider |
 | `--exclude <name>` / `--exclude-last <name>` | drop a provider (rotation uses this) |
 
+## When nothing comes back
+
+"Every provider returned nothing" has three causes with three different correct responses. The
+script separates them; a caller that collapses them into "provider infrastructure is blocked" is
+guessing. This separation exists because of a concrete misdiagnosis: on 2026-07-30 a run that
+started at 11:52 hit `Clamshell Sleep` at 11:53, woke at 13:32, and reported five dead providers.
+
+| Exit | `status` | What actually happened | Response |
+|------|----------|------------------------|----------|
+| 124 | `timeout` | Providers were reachable and too slow, or the whole-run deadline fired | Do not retry inline; rotate or accept reduced coverage |
+| 125 | `suspended` | The **host** slept mid-run (`suspended_seconds` says how long) | Retry once — nothing was actually attempted |
+| 2 | `error` | Providers were reached and refused or errored | Read `evidence_dir` before naming a cause |
+
+Suspension is measured, not guessed: the script samples a monotonic clock (which does not tick
+while the machine is asleep) alongside the wall clock, and the gap between them is the sleep.
+
+**Failure evidence.** When a run produces no review at all, every provider's stderr is copied to
+`~/.zuvo/adversarial-failures/<run_id>/` with a `meta.txt` (mode, dispatch, providers, outcomes),
+kept 7 days. Before this existed the tmpdir was deleted on exit, which is why the largest class of
+failures — providers that reject in under 30 seconds, i.e. auth or quota or rate limit — could not
+be told apart after the fact.
+
+**Timeouts are hard.** Each provider runs under `timeout -k` (grace: `ZUVO_TIMEOUT_GRACE`, default
+15s), so a CLI that ignores SIGTERM is still killed, and provider output is captured through files
+rather than `$( )` so a surviving grandchild cannot hold the pipe open. A whole-run deadline
+(`ZUVO_RUN_DEADLINE`) is the backstop. Before these, 94 of 5989 runs over 30 days exceeded their
+240/360s budget, the worst at 34273s — 9.5 hours.
+
 ## Host self-exclusion (no self-review)
 
 `detect_host_platform` detects which model is DRIVING the current session and auto-excludes it, so a

@@ -15,14 +15,65 @@
 #   ./scripts/adversarial-review.sh --doctor        # live auth probe of every detected provider
 #
 # Exit codes:
-#   0 — review completed (output on stdout)
-#   1 — no review provider available
-#   2 — review provider failed
+#   0   — review completed (output on stdout)
+#   1   — no review provider available
+#   2   — every provider was reached and produced no review (stderr kept under
+#         ~/.zuvo/adversarial-failures/<run_id>/)
+#   124 — everything timed out, or the whole-run deadline fired
+#   125 — the HOST was suspended mid-run (lid close / sleep). Not a provider fault; retry.
 
 set -euo pipefail
 
 # ─── Timing ────────────────────────────────────────────────────
 START_TIME=$(date +%s)
+
+# Monotonic companion to START_TIME. The monotonic clock does NOT advance while the host is
+# suspended (macOS: CLOCK_UPTIME_RAW, Linux: CLOCK_MONOTONIC), so wall_delta - mono_delta is
+# the number of seconds this run spent asleep. Without it a closed laptop lid is
+# indistinguishable from five dead providers — field case 2026-07-30: run started 11:52, lid
+# shut 11:53 ('Clamshell Sleep' in pmset), host woke 13:32, every provider came back empty
+# after 5998s and the skill reported it as "all provider infrastructure blocked". python3 is
+# optional here; without it elapsed_suspended falls back to a budget-overshoot estimate.
+mono_now() { python3 -c 'import time;print(int(time.monotonic()))' 2>/dev/null || echo ""; }
+MONO_START="$(mono_now)"
+
+# Seconds of this run the host spent suspended. Args: <wall_elapsed> <expected_budget>.
+# Prints an integer; 0 means "no suspension detected".
+suspended_seconds() {
+  local wall="$1" budget="$2" mono_end drift
+  if [[ -n "$MONO_START" ]]; then
+    mono_end="$(mono_now)"
+    if [[ -n "$mono_end" ]]; then
+      drift=$(( wall - (mono_end - MONO_START) ))
+      [[ "$drift" -lt 0 ]] && drift=0
+      printf '%d\n' "$drift"
+      return 0
+    fi
+  fi
+  # No monotonic source: infer. With the hard kill below, the honest ceiling on wall time is
+  # the budget — anything at 2x+ was not spent computing. An estimate, never a measurement.
+  if [[ "$budget" -gt 0 && "$wall" -gt $(( budget * 2 )) ]]; then
+    printf '%d\n' $(( wall - budget ))
+  else
+    printf '0\n'
+  fi
+}
+# Below this many seconds a drift is clock jitter / scheduling noise, not a suspend.
+SUSPEND_THRESHOLD="${ZUVO_SUSPEND_THRESHOLD:-60}"
+
+# ─── Hard timeout ───────────────────────────────────────────────
+# `timeout N cmd` only sends SIGTERM. A provider CLI that ignores or slow-walks TERM then runs
+# unbounded, and the caller blocks with it. Measured over 30 days of ~/.zuvo/adversarial.log:
+# 94 of 5989 runs (1.6%) blew past their 240/360s budget, worst case 34273s (9.5 hours).
+# -k escalates to SIGKILL after a grace period, and because GNU timeout puts the child in its
+# own process group the kill reaches grandchildren still holding the output pipe open.
+ZUVO_TIMEOUT_GRACE="$(printf '%s' "${ZUVO_TIMEOUT_GRACE:-15}" | tr -cd '0-9')"
+[[ -n "$ZUVO_TIMEOUT_GRACE" ]] || ZUVO_TIMEOUT_GRACE=15
+TIMEOUT_KILL_FLAG=""
+if command -v timeout >/dev/null 2>&1 && timeout -k 1 1 true >/dev/null 2>&1; then
+  # Word-split on purpose: a controlled two-token literal, not user input.
+  TIMEOUT_KILL_FLAG="-k $ZUVO_TIMEOUT_GRACE"
+fi
 
 # ─── Configuration ──────────────────────────────────────────────
 
@@ -125,9 +176,10 @@ Provider options:
 Exit codes:
   0    success (or partial: some providers timed out, others succeeded)
   1    no provider available (none detected/installed)
-  2    all providers failed (non-timeout failures)
+  2    all providers failed (reached and refused/errored — see evidence_dir)
   3    single_provider_only (--multi/--rotate requested but <2 providers)
-  124  timeout (all providers timed out)
+  124  timeout (all providers timed out, or the whole-run deadline fired)
+  125  suspended (the HOST slept mid-run; providers never had a chance — safe to retry)
   130  interrupted (SIGINT — Ctrl-C)
   143  terminated (SIGTERM — orchestrator kill)
 
@@ -164,6 +216,12 @@ Input:
 Environment variables:
   ZUVO_REVIEW_PROVIDER     Force provider
   ZUVO_REVIEW_TIMEOUT      Per-provider timeout in seconds (default: 240, 360 for article/spec/plan/audit)
+  ZUVO_TIMEOUT_GRACE       Seconds between SIGTERM and SIGKILL for a provider (default: 15).
+                           Without the hard kill a TERM-ignoring CLI runs unbounded.
+  ZUVO_RUN_DEADLINE        Whole-run wall-clock ceiling in seconds (default: derived from the
+                           per-provider timeout and dispatch mode). Fires SIGTERM → exit 124.
+  ZUVO_SUSPEND_THRESHOLD   Seconds of host sleep before a run is classed `suspended` (default: 60)
+  ZUVO_NO_CAFFEINATE=1     Do not hold off idle sleep for the duration of the run (macOS)
   ZUVO_AGY_MODEL           agy (Antigravity CLI) model — the sanctioned paid Gemini channel.
                            Display name from 'agy models' (default: "Gemini 3.5 Flash (High)";
                            e.g. "Gemini 3.1 Pro (High)" for max depth). Preferred over the gemini CLI,
@@ -941,7 +999,7 @@ run_codex() {
   local err_file="$JSON_TMPDIR/err_${provider_name}.txt"
   local status=0
   printf '%s' "$REVIEW_PROMPT" \
-    | CODEX_HOME="$tmp_home" timeout "$PROVIDER_TIMEOUT" \
+    | CODEX_HOME="$tmp_home" timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" \
       "$codex_cmd" exec --skip-git-repo-check 2>"$err_file" \
     || status=$?
   if [[ $status -ne 0 ]]; then
@@ -1009,7 +1067,7 @@ run_claude() {
   printf '{"mcpServers":{}}' > "$mcp_empty"
   local status=0
   printf '%s' "$REVIEW_PROMPT" \
-    | timeout "$PROVIDER_TIMEOUT" claude --model "$model" --print --output-format text \
+    | timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" claude --model "$model" --print --output-format text \
         --mcp-config "$mcp_empty" --strict-mcp-config --dangerously-skip-permissions 2>"$err_file" \
     || status=$?
   if [[ $status -ne 0 ]]; then
@@ -1028,10 +1086,16 @@ run_cursor_agent() {
   # "Composer 2.5 Fast (current)"). Override with ZUVO_CURSOR_MODEL (e.g. gpt-5.5-high-fast).
   local model="${ZUVO_CURSOR_MODEL:-composer-2.5-fast}"
   local err_file="$JSON_TMPDIR/err_cursor-agent.txt"
+  local out_file="$JSON_TMPDIR/raw_cursor-agent.txt"
   local result status=0
-  result=$(printf '%s' "$REVIEW_PROMPT" \
-    | timeout "$PROVIDER_TIMEOUT" cursor-agent -p --model "$model" --mode ask --trust --workspace /tmp 2>"$err_file") \
+  # Capture through a FILE, never $( ): a command substitution blocks until EVERY process
+  # holding the pipe closes it, so a single grandchild that outlives the timeout hangs the
+  # whole review long past its budget (the 9.5h outlier). A plain > has no such reader.
+  printf '%s' "$REVIEW_PROMPT" \
+    | timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" cursor-agent -p --model "$model" --mode ask --trust --workspace /tmp \
+      > "$out_file" 2>"$err_file" \
     || status=$?
+  result="$(cat "$out_file" 2>/dev/null)"
   if [[ $status -ne 0 ]]; then
     if [[ $status -eq 124 ]]; then
       echo "  WARN: cursor-agent timed out after ${PROVIDER_TIMEOUT}s" >&2
@@ -1061,11 +1125,14 @@ run_gemini() {
 
   # -p "" triggers headless mode; actual prompt is piped via stdin
   local err_file="$JSON_TMPDIR/err_gemini.txt"
+  local out_file="$JSON_TMPDIR/raw_gemini.txt"
   local result status=0
-  result=$(timeout "$PROVIDER_TIMEOUT" $gemini_cmd \
+  # File capture, not $( ) — see run_cursor_agent for why.
+  timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" $gemini_cmd \
     --allowed-mcp-server-names __NONE__ \
     --model "$model" \
-    -p "" < "$prompt_file" 2>"$err_file") || status=$?
+    -p "" < "$prompt_file" > "$out_file" 2>"$err_file" || status=$?
+  result="$(cat "$out_file" 2>/dev/null)"
 
   if [[ $status -ne 0 || -z "$result" ]]; then
     if [[ $status -eq 124 ]]; then
@@ -1092,9 +1159,12 @@ run_agy() {
   # default comes from the central model registry (ZUVO_MODEL_AGY).
   local model="${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.5 Flash (High)}}"
   local err_file="$JSON_TMPDIR/err_agy.txt"
+  local out_file="$JSON_TMPDIR/raw_agy.txt"
   local result status=0
-  result=$(timeout "$PROVIDER_TIMEOUT" agy -p "$REVIEW_PROMPT" \
-    --model "$model" --dangerously-skip-permissions 2>"$err_file") || status=$?
+  # File capture, not $( ) — see run_cursor_agent for why.
+  timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" agy -p "$REVIEW_PROMPT" \
+    --model "$model" --dangerously-skip-permissions > "$out_file" 2>"$err_file" || status=$?
+  result="$(cat "$out_file" 2>/dev/null)"
   if [[ $status -ne 0 || -z "$result" ]]; then
     if [[ $status -eq 124 ]]; then
       echo "  WARN: agy timed out after ${PROVIDER_TIMEOUT}s" >&2
@@ -1220,11 +1290,11 @@ run_kimi() {
   local err_file="$JSON_TMPDIR/err_kimi.txt"
   local status=0
   if [[ -n "$model_flag" ]]; then
-    (cd "$JSON_TMPDIR" && timeout "$PROVIDER_TIMEOUT" \
+    (cd "$JSON_TMPDIR" && timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" \
       kimi -p "$REVIEW_PROMPT" --output-format stream-json -m "$model_flag" \
       > "$raw_file" 2>"$err_file") || status=$?
   else
-    (cd "$JSON_TMPDIR" && timeout "$PROVIDER_TIMEOUT" \
+    (cd "$JSON_TMPDIR" && timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" \
       kimi -p "$REVIEW_PROMPT" --output-format stream-json \
       > "$raw_file" 2>"$err_file") || status=$?
   fi
@@ -1452,10 +1522,21 @@ run_mock() {
     echo "[mock dispatch] $mock_bin not found on PATH" >&2
     return 2
   fi
-  printf '%s' "$REVIEW_PROMPT" | timeout "${PROVIDER_TIMEOUT:-240}" "$mock_bin"
+  printf '%s' "$REVIEW_PROMPT" | timeout $TIMEOUT_KILL_FLAG "${PROVIDER_TIMEOUT:-240}" "$mock_bin"
 }
 
 dispatch_provider() {
+  local provider="$1" status=0
+  _dispatch_provider_inner "$provider" || status=$?
+  # `timeout` reports 124 only when SIGTERM alone ended the command. When the hard kill has to
+  # escalate it exits 137 (128+SIGKILL) instead — and that is precisely the case the hard kill
+  # was added for, so leaving 137 unmapped would file every TERM-ignoring provider under
+  # "failed or returned empty" and lose the timeout signal the callers branch on.
+  [[ "$status" -eq 137 ]] && status=124
+  return "$status"
+}
+
+_dispatch_provider_inner() {
   local provider="$1"
   case "$provider" in
     mock-*)        run_mock "$provider" ;;
@@ -1651,9 +1732,109 @@ PROVIDER_COUNT=0
 # artifact, not stderr — without this a one-provider artifact is indistinguishable from a
 # deliberate single-provider run and a run where three providers silently died.
 PROVIDER_OUTCOMES=""
+# Providers actually DISPATCHED, as opposed to PROVIDERS (candidates). In --single the loop
+# stops at the first success, so the remaining candidates were never asked — counting them as
+# attempted is what makes a perfectly healthy single run report status=partial, and what makes
+# the run log show four "failed" providers that no request was ever sent to.
+DISPATCHED_LIST=""
 FINAL_STATUS="ok"
 TIMEOUT_COUNT=0
 JSON_TMPDIR=$(mktemp -d)
+# One id for the whole invocation: the run log, the saved input diff and any preserved failure
+# evidence must be correlatable. Previously each site minted its own `date +%s-$$`.
+RUN_ID="$(date +%s)-$$"
+DEADLINE_MARKER="$JSON_TMPDIR/.deadline-hit"
+WATCHDOG_PID=""
+CAFFEINATE_PID=""
+FAILURE_EVIDENCE_DIR=""
+
+# ─── Run-log plumbing ───────────────────────────────────────────
+# Set up here rather than at the end of the script because the all-providers-failed path
+# needs to log too, and it exits long before the success-path logging block.
+# ZUVO_HOME (same override the rest of the zuvo helpers honour) keeps test runs out of the real
+# ~/.zuvo — without it the suite writes real run rows and real failure-evidence directories.
+LOG_DIR="${ZUVO_HOME:-$HOME/.zuvo}"
+mkdir -p "$LOG_DIR/adversarial-inputs" 2>/dev/null || LOG_DIR="."
+# ZUVO_ADVERSARIAL_LOG_FILE overrides the default path (tests + ops).
+LOG_FILE="${ZUVO_ADVERSARIAL_LOG_FILE:-$LOG_DIR/adversarial.log}"
+INPUT_FILE="$LOG_DIR/adversarial-inputs/${RUN_ID}.diff"
+# Columns 1-13 are unchanged so existing readers keep working. The three new ones exist
+# because the old row could not answer the questions an incident actually asks:
+#   provider  — column 4 was labelled "provider" in the header but held the MODEL, and the
+#               provider name appeared nowhere. Header said 14 fields, rows had 13.
+#   outcome   — ok|timeout|auth|empty|not-attempted. In --single every candidate after the
+#               first success was logged with exit=1 and zero bytes, indistinguishable from a
+#               provider that was asked and failed. That artefact is what made a healthy day
+#               read as a 68%-failure day.
+#   provider_duration — column 11 is the WHOLE invocation's wall time, repeated on every row.
+LOG_HEADER=$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+  "date" "run_id" "mode" "model" "input_chars" "output_chars" "findings" "critical" \
+  "warning" "info" "duration" "exit" "input_file" "provider" "outcome" "provider_duration")
+LOG_SCHEMA_MARKER="#schema	$LOG_HEADER"
+
+init_log_header() {
+  if [[ ! -f "$LOG_FILE" ]]; then
+    printf '%s\n' "$LOG_HEADER" > "$LOG_FILE" 2>/dev/null || true
+    return 0
+  fi
+  [[ "$(head -1 "$LOG_FILE" 2>/dev/null)" == "$LOG_HEADER" ]] && return 0
+  # Existing file: never rewrite it in place. Parallel runs append to this log and an atomic
+  # replace would silently drop rows written through a file descriptor pointing at the old
+  # inode. Append a one-time schema marker instead — appends are safe, rewrites are not.
+  grep -qxF "$LOG_SCHEMA_MARKER" "$LOG_FILE" 2>/dev/null \
+    || printf '%s\n' "$LOG_SCHEMA_MARKER" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+# adversarial_log_row <model> <duration> <exit> <output_chars> <crit> <warn> <info> \
+#                     <provider> <outcome> <provider_duration>
+adversarial_log_row() {
+  local model="$1" duration="$2" exit_code="$3" out_chars="$4" c="$5" w="$6" i="$7" \
+        provider="$8" outcome="$9" p_dur="${10}"
+  printf '%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%ds\t%d\t%s\t%s\t%s\t%ss\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$RUN_ID" "$REVIEW_MODE" "$model" \
+    "${#INPUT}" "$out_chars" "$(( c + w + i ))" "$c" "$w" "$i" \
+    "$duration" "$exit_code" "$INPUT_FILE" "$provider" "$outcome" "$p_dur" \
+    >> "$LOG_FILE" 2>/dev/null || true
+}
+init_log_header
+
+# Keep every provider's stderr when the run produced NO review at all. Today cleanup deletes
+# the tmpdir and takes all of it with it, which is why 41 of the last 229 all-fail events —
+# the ones rejected in under 30s, so auth or quota or rate limit — cannot be told apart now.
+preserve_failure_evidence() {
+  [[ -n "$FAILURE_EVIDENCE_DIR" ]] && return 0   # already saved (fail path calls it early)
+  [[ "${PROVIDER_COUNT:-0}" -gt 0 ]] && return 0
+  [[ -d "$JSON_TMPDIR" ]] || return 0
+  # Glob test, not `ls a* b*` — BSD ls exits non-zero when EITHER pattern misses, so with a
+  # provider that produced err_ but no provider_ stderr (or vice versa) the guard would bail
+  # and throw away the evidence it is here to keep.
+  local f found=0
+  for f in "$JSON_TMPDIR"/err_*.txt "$JSON_TMPDIR"/provider_*.stderr; do
+    [[ -e "$f" ]] && { found=1; break; }
+  done
+  [[ "$found" -eq 1 ]] || return 0
+  local evidence_root="${ZUVO_HOME:-$HOME/.zuvo}/adversarial-failures"
+  local dest="$evidence_root/$RUN_ID"
+  mkdir -p "$dest" 2>/dev/null || return 0
+  # `|| true` on both: only one of the two patterns matches in most runs, and an unmatched
+  # glob reaches cp as a literal path. Under `set -e` that failure aborted the whole failure
+  # path — the run died before it could report WHY it failed.
+  cp "$JSON_TMPDIR"/err_*.txt "$dest/" 2>/dev/null || true
+  cp "$JSON_TMPDIR"/provider_*.stderr "$dest/" 2>/dev/null || true
+  {
+    printf 'run_id=%s\n' "$RUN_ID"
+    printf 'mode=%s\n' "$REVIEW_MODE"
+    printf 'dispatch=%s\n' "${MULTI_MODE:-auto}"
+    printf 'providers=%s\n' "$PROVIDERS"
+    printf 'provider_outcomes=%s\n' "${PROVIDER_OUTCOMES:-none}"
+    printf 'provider_timeout=%s\n' "$PROVIDER_TIMEOUT"
+  } > "$dest/meta.txt" 2>/dev/null
+  FAILURE_EVIDENCE_DIR="$dest"
+  # Same 7-day retention as the saved input diffs.
+  find "$evidence_root" -mindepth 1 -maxdepth 1 -type d -mtime +7 \
+    -exec rm -rf {} + 2>/dev/null || true
+}
+
 declare -a PIDS=()
 CLEANED_UP=0
 cleanup() {
@@ -1669,8 +1850,16 @@ cleanup() {
   [[ "$CLEANED_UP" -eq 1 ]] && return $rc
   CLEANED_UP=1
   set +e
+  # Kill the watchdog AND its `sleep` child — killing the subshell alone reparents the sleep,
+  # which then idles until the full deadline.
+  if [[ -n "$WATCHDOG_PID" ]]; then
+    pkill -P "$WATCHDOG_PID" 2>/dev/null
+    kill "$WATCHDOG_PID" 2>/dev/null
+  fi
+  [[ -n "$CAFFEINATE_PID" ]] && kill "$CAFFEINATE_PID" 2>/dev/null
   [[ ${#PIDS[@]} -gt 0 ]] && kill "${PIDS[@]}" 2>/dev/null
   wait 2>/dev/null
+  preserve_failure_evidence
   rm -rf "$JSON_TMPDIR" 2>/dev/null
   return $rc
 }
@@ -1679,8 +1868,40 @@ trap cleanup EXIT
 # TERM=143 (standard 128+SIGTERM). Previously both mapped to 124, conflating user-cancel
 # / orchestrator-kill with "all providers timed out". Callers branching on exit 124
 # now reliably mean "timeout" only.
+# The deadline watchdog below also delivers TERM, so the marker is read BEFORE cleanup
+# removes the tmpdir — a self-inflicted deadline is a timeout (124), not an outside kill.
 trap 'cleanup; exit 130' INT
-trap 'cleanup; exit 143' TERM
+trap '_dl=0; [[ -f "$DEADLINE_MARKER" ]] && _dl=1; cleanup; [[ "$_dl" -eq 1 ]] && exit 124; exit 143' TERM
+
+# ─── Whole-run deadline ─────────────────────────────────────────
+# Second line of defence behind `timeout -k`. If a provider wedges somewhere the per-provider
+# kill cannot reach, nothing else bounds this script: the field log holds invocations of 1076s,
+# 5998s and 34273s against a 240s budget. This turns "hangs until someone notices" into
+# "exits 124 late". Generous on purpose — it must never fire on a merely slow provider.
+if [[ "$MULTI_MODE" == "multi" ]]; then
+  RUN_DEADLINE=$(( PROVIDER_TIMEOUT + ZUVO_TIMEOUT_GRACE + 120 ))
+else
+  # single/rotate walk the candidate list sequentially in the worst case.
+  RUN_DEADLINE=$(( (PROVIDER_TIMEOUT + ZUVO_TIMEOUT_GRACE) * ATTEMPTED_COUNT + 120 ))
+fi
+RUN_DEADLINE="$(printf '%s' "${ZUVO_RUN_DEADLINE:-$RUN_DEADLINE}" | tr -cd '0-9')"
+if [[ -n "$RUN_DEADLINE" && "$RUN_DEADLINE" -gt 0 ]]; then
+  # The redirects are load-bearing, not tidiness: skills invoke this script as `out=$(...)`, and
+  # a command substitution does not return until EVERY process holding the pipe closes it. A
+  # watchdog that inherited stdout would keep the caller blocked for the whole deadline even
+  # after the review finished — the exact hang this watchdog exists to prevent.
+  ( sleep "$RUN_DEADLINE"; : > "$DEADLINE_MARKER" 2>/dev/null; kill -TERM $$ 2>/dev/null ) \
+    </dev/null >/dev/null 2>&1 &
+  WATCHDOG_PID=$!
+fi
+
+# Hold off IDLE and disk sleep for the duration (macOS). This does NOT stop a clamshell
+# (lid-close) sleep on battery — no userspace process can — which is why the suspend
+# DETECTION above exists instead of being replaced by this.
+if [[ "${ZUVO_NO_CAFFEINATE:-}" != "1" ]] && command -v caffeinate >/dev/null 2>&1; then
+  caffeinate -sim -w $$ >/dev/null 2>&1 &
+  CAFFEINATE_PID=$!
+fi
 
 if [[ "$MULTI_MODE" == "multi" ]]; then
   # ── PARALLEL: launch providers directly (no run_provider wrapper) ──
@@ -1695,12 +1916,18 @@ if [[ "$MULTI_MODE" == "multi" ]]; then
 
     (
       status=0
+      p_start=$(date +%s)
       dispatch_provider "$p" > "$outfile" 2> "$errfile" || status=$?
       printf '%s\n' "$status" > "$statusfile"
+      # Per-provider wall time. The run log used to record the WHOLE invocation's duration on
+      # every provider row, so a single slow provider made all five look slow and no row ever
+      # answered "which one ate the budget".
+      printf '%s\n' "$(( $(date +%s) - p_start ))" > "$JSON_TMPDIR/dur_${p}.txt"
       exit 0
     ) &
     PIDS+=($!)
     PNAMES+=("$p")
+    DISPATCHED_LIST="${DISPATCHED_LIST:+$DISPATCHED_LIST }$p"
   done
 
   # Wait for all providers — each has its own timeout inside the provider function
@@ -1772,7 +1999,10 @@ else
     echo "  Running: $p..." >&2
 
     status=0
+    p_start=$(date +%s)
+    DISPATCHED_LIST="${DISPATCHED_LIST:+$DISPATCHED_LIST }$p"
     RESULT=$(dispatch_provider "$p" 2>"$JSON_TMPDIR/provider_${p}.stderr") || status=$?
+    printf '%s\n' "$(( $(date +%s) - p_start ))" > "$JSON_TMPDIR/dur_${p}.txt" 2>/dev/null || true
 
     # An auth stub must NOT satisfy "first successful provider" — otherwise the
     # loop breaks on it and no other provider is ever tried, turning the whole
@@ -1824,48 +2054,72 @@ if [[ -z "$ALL_RESULTS" ]]; then
   # Log failed run (per-provider format)
   END_TIME=$(date +%s)
   DURATION=$((END_TIME - START_TIME))
-  mkdir -p "$HOME/.zuvo/adversarial-inputs" 2>/dev/null || true
-  RUN_ID="$(date +%s)-$$"
-  INPUT_FILE="$HOME/.zuvo/adversarial-inputs/${RUN_ID}.diff"
-  printf '%s' "$INPUT" > "$INPUT_FILE" 2>/dev/null || true
-  printf '%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%ds\t%d\t%s\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$RUN_ID" "$REVIEW_MODE" "none" "${#INPUT}" 0 0 0 0 0 "$DURATION" 2 "$INPUT_FILE" \
-    >> "$HOME/.zuvo/adversarial.log" 2>/dev/null || true
+  DISPATCHED_COUNT=$(echo "$DISPATCHED_LIST" | wc -w | tr -d ' ')
+  SUSPENDED_S=$(suspended_seconds "$DURATION" "$PROVIDER_TIMEOUT")
 
-  if [[ "$TIMEOUT_COUNT" -gt 0 ]]; then
-    FINAL_STATUS="timeout"
-    if [[ "$OUTPUT_FORMAT" == "json" ]]; then
-      FINAL_OUTPUT=$(jq -n \
-        --arg status "timeout" \
-        --arg mode "$REVIEW_MODE" \
-        --arg providers "$PROVIDERS" \
-        --argjson attempted "$ATTEMPTED_COUNT" \
-        --argjson count "$TIMEOUT_COUNT" \
-        --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        '{status: $status, mode: $mode, providers_attempted: $providers, providers_attempted_list: ($providers | split(" ")), attempted_count: $attempted, timeout_count: $count, provider_count: 0, findings: [], date: $date}')
-    else
-      FINAL_OUTPUT="Adversarial review: skipped (timeout)"
-    fi
-    if [[ -n "$ARTIFACT_PATH" ]]; then
-      write_artifact "$ARTIFACT_PATH" "$FINAL_OUTPUT" \
-        || { echo "ERROR: Failed to write adversarial artifact to $ARTIFACT_PATH" >&2; exit 124; }
-    fi
-    printf '%s\n' "$FINAL_OUTPUT"
-    exit 124
-  elif [[ "$OUTPUT_FORMAT" == "json" ]]; then
-    FINAL_STATUS="error"
-    FINAL_OUTPUT='{"status":"error","providers":[],"findings":[],"error":"All providers failed"}'
+  # ── Classify the failure. "Every provider returned nothing" has at least three causes and
+  # they call for different actions, but until now they all collapsed into one exit code and
+  # one message ("All providers failed"), which downstream skills relay as BLOCKED_INFRA:
+  #   suspended — the HOST was asleep mid-run. Nothing was wrong with any provider and a
+  #               retry is free. 41 of the last 229 all-fail events look like this.
+  #   timeout   — providers were reachable and too slow. Retrying costs the same again.
+  #   error     — providers were reached and refused/failed. Read the preserved stderr.
+  # Suspension wins the tie: a provider cannot be blamed for a laptop with a closed lid.
+  if [[ "$SUSPENDED_S" -ge "$SUSPEND_THRESHOLD" ]]; then
+    FINAL_STATUS="suspended"; FAIL_EXIT=125; FAIL_OUTCOME="suspended"
+  elif [[ "$TIMEOUT_COUNT" -gt 0 ]]; then
+    FINAL_STATUS="timeout";   FAIL_EXIT=124; FAIL_OUTCOME="all-timeout"
   else
-    echo "ERROR: All providers failed. Tried: $PROVIDERS" >&2
-    FINAL_STATUS="error"
-    FINAL_OUTPUT=""
+    FINAL_STATUS="error";     FAIL_EXIT=2;   FAIL_OUTCOME="all-failed"
   fi
-  if [[ -n "$ARTIFACT_PATH" && -n "$FINAL_OUTPUT" ]]; then
+
+  # Keep the providers' stderr before cleanup deletes the tmpdir, so the message below can
+  # point at it and the "<30s rejection" class stops being undiagnosable.
+  preserve_failure_evidence
+
+  mkdir -p "$LOG_DIR/adversarial-inputs" 2>/dev/null || true
+  printf '%s' "$INPUT" > "$INPUT_FILE" 2>/dev/null || true
+  adversarial_log_row "none" "$DURATION" "$FAIL_EXIT" 0 0 0 0 "none" "$FAIL_OUTCOME" "$DURATION"
+
+  case "$FINAL_STATUS" in
+    suspended)
+      _fail_note="host suspended for ~${SUSPENDED_S}s mid-run (sleep/lid-close) — providers were never given a chance; this run is safe to repeat"
+      _fail_text="Adversarial review: skipped (host suspended ${SUSPENDED_S}s — retry)" ;;
+    timeout)
+      _fail_note="every provider exceeded ${PROVIDER_TIMEOUT}s"
+      _fail_text="Adversarial review: skipped (timeout)" ;;
+    *)
+      _fail_note="every provider was reached and returned no review${FAILURE_EVIDENCE_DIR:+ — stderr kept in $FAILURE_EVIDENCE_DIR}"
+      _fail_text="Adversarial review: skipped (provider error)" ;;
+  esac
+
+  if [[ "$OUTPUT_FORMAT" == "json" ]]; then
+    FINAL_OUTPUT=$(jq -n \
+      --arg status "$FINAL_STATUS" \
+      --arg mode "$REVIEW_MODE" \
+      --arg providers "$PROVIDERS" \
+      --arg outcomes "${PROVIDER_OUTCOMES:-none}" \
+      --arg note "$_fail_note" \
+      --arg evidence "${FAILURE_EVIDENCE_DIR:-}" \
+      --argjson attempted "$ATTEMPTED_COUNT" \
+      --argjson dispatched "$DISPATCHED_COUNT" \
+      --argjson count "$TIMEOUT_COUNT" \
+      --argjson suspended "$SUSPENDED_S" \
+      --argjson retryable "$([[ "$FINAL_STATUS" == "suspended" ]] && echo true || echo false)" \
+      --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      '{status: $status, mode: $mode, providers_attempted: $providers, providers_attempted_list: ($providers | split(" ")), attempted_count: $attempted, dispatched_count: $dispatched, timeout_count: $count, provider_count: 0, provider_outcomes: $outcomes, suspended_seconds: $suspended, retryable: $retryable, note: $note, evidence_dir: $evidence, findings: [], date: $date}')
+  else
+    FINAL_OUTPUT="$_fail_text"
+  fi
+
+  echo "ERROR: no review produced — $_fail_note. Tried: $PROVIDERS (outcomes: ${PROVIDER_OUTCOMES:-none})" >&2
+
+  if [[ -n "$ARTIFACT_PATH" ]]; then
     write_artifact "$ARTIFACT_PATH" "$FINAL_OUTPUT" \
-      || { echo "ERROR: Failed to write adversarial artifact to $ARTIFACT_PATH" >&2; exit 2; }
+      || { echo "ERROR: Failed to write adversarial artifact to $ARTIFACT_PATH" >&2; exit "$FAIL_EXIT"; }
   fi
-  [[ -n "$FINAL_OUTPUT" ]] && printf '%s\n' "$FINAL_OUTPUT"
-  exit 2
+  printf '%s\n' "$FINAL_OUTPUT"
+  exit "$FAIL_EXIT"
 fi
 
 # ─── Count findings (before output, while temp files still exist) ──
@@ -1919,7 +2173,12 @@ FINAL_OUTPUT=""
 # D2 / Task 6: compute DERIVED_STATUS once, regardless of output format. Used by
 # both the JSON status field and the SUMMARY log row. Without this hoist the
 # SUMMARY for text-output runs would always log "ok" even when partial.
-if [[ "$PROVIDER_COUNT" -eq "$ATTEMPTED_COUNT" ]]; then
+# Measured against providers actually DISPATCHED, not candidates. --single stops at the first
+# success by design, so comparing against the candidate list reported every healthy single run
+# as "partial" (302 of 536 runs on 2026-07-30 alone) and taught readers to ignore the field.
+DISPATCHED_COUNT=$(echo "$DISPATCHED_LIST" | wc -w | tr -d ' ')
+[[ "$DISPATCHED_COUNT" -gt 0 ]] || DISPATCHED_COUNT="$ATTEMPTED_COUNT"
+if [[ "$PROVIDER_COUNT" -eq "$DISPATCHED_COUNT" ]]; then
   DERIVED_STATUS="ok"
 else
   DERIVED_STATUS="partial"
@@ -1954,13 +2213,16 @@ if [[ "$OUTPUT_FORMAT" == "json" ]]; then
     --arg providers "$PROVIDERS_USED" \
     --argjson count "$PROVIDER_COUNT" \
     --argjson attempted "$ATTEMPTED_COUNT" \
+    --argjson dispatched "$DISPATCHED_COUNT" \
     --argjson timeouts "$TIMEOUT_COUNT" \
+    --argjson suspended "$(suspended_seconds "$(( $(date +%s) - START_TIME ))" "$PROVIDER_TIMEOUT")" \
+    --arg outcomes "${PROVIDER_OUTCOMES:-none}" \
     --argjson input_size "${#INPUT}" \
     --argjson input_original "${ORIG_CHARS:-${#INPUT}}" \
     --argjson truncated "${INPUT_TRUNCATED:-false}" \
     --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --argjson results "$json_results" \
-    '{status: $status, mode: $mode, providers_used: $providers, providers_used_list: ($providers | split(", ")), provider_count: $count, attempted_count: $attempted, timeout_count: $timeouts, input_size: $input_size, input_chars_original: $input_original, input_truncated: $truncated, date: $date, results: $results}')
+    '{status: $status, mode: $mode, providers_used: $providers, providers_used_list: ($providers | split(", ")), provider_count: $count, attempted_count: $attempted, dispatched_count: $dispatched, timeout_count: $timeouts, provider_outcomes: $outcomes, suspended_seconds: $suspended, input_size: $input_size, input_chars_original: $input_original, input_truncated: $truncated, date: $date, results: $results}')
 else
   # Text output with banners
   FINAL_OUTPUT=$(cat <<HEADER
@@ -1996,30 +2258,14 @@ set +e
 
 END_TIME=$(date +%s)
 TOTAL_DURATION=$((END_TIME - START_TIME))
-
-LOG_DIR="$HOME/.zuvo"
-mkdir -p "$LOG_DIR/adversarial-inputs" 2>/dev/null || LOG_DIR="."
-# Task 6: ZUVO_ADVERSARIAL_LOG_FILE overrides default path (used by tests + ops
-# who want per-run logging without polluting ~/.zuvo/adversarial.log).
-LOG_FILE="${ZUVO_ADVERSARIAL_LOG_FILE:-$LOG_DIR/adversarial.log}"
-
-# Write header if log file is new
-if [[ ! -f "$LOG_FILE" ]]; then
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "date" "run_id" "mode" "provider" "model" "input_chars" "output_chars" "findings" "critical" "warning" "info" "duration" "exit" "input_file" \
-    > "$LOG_FILE" 2>/dev/null || true
-fi
-
-# Generate run ID (groups providers from same invocation)
-RUN_ID="$(date +%s)-$$"
+SUSPENDED_S=$(suspended_seconds "$TOTAL_DURATION" "$PROVIDER_TIMEOUT")
 
 # Save input for later investigation (cleanup files older than 7 days)
-INPUT_FILE="$LOG_DIR/adversarial-inputs/${RUN_ID}.diff"
 printf '%s' "$INPUT" > "$INPUT_FILE" 2>/dev/null || true
 find "$LOG_DIR/adversarial-inputs" -name "*.diff" -mtime +7 -delete 2>/dev/null || true
 
-# Log one line per provider
-# TSV: date  run_id  mode  model  input_chars  output_chars  findings  critical  warning  info  duration_s  exit  input_file
+# Log one line per candidate provider. `outcome` carries what the row really means; a
+# provider the --single loop never reached is `not-attempted`, not a failure.
 for p in $PROVIDERS; do
   result_file="$JSON_TMPDIR/result_${p}.txt"
   p_output=0
@@ -2032,35 +2278,36 @@ for p in $PROVIDERS; do
     p_i=$(grep -ciE '\bINFO\b' "$result_file" 2>/dev/null) || p_i=0
     p_exit=0
   fi
-  p_findings=$((p_c + p_w + p_i))
 
-  printf '%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%ds\t%d\t%s\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    "$RUN_ID" \
-    "$REVIEW_MODE" \
-    "$(provider_model "$p")" \
-    "${#INPUT}" \
-    "$p_output" \
-    "$p_findings" \
-    "$p_c" \
-    "$p_w" \
-    "$p_i" \
-    "$TOTAL_DURATION" \
-    "$p_exit" \
-    "$INPUT_FILE" \
-    >> "$LOG_FILE" 2>/dev/null || true
+  # Outcome from the ledger the dispatch loops already maintain; no entry means the loop
+  # never got to this provider.
+  p_outcome="not-attempted"
+  case ",$PROVIDER_OUTCOMES," in
+    *",${p}:"*) p_outcome=$(printf '%s' "$PROVIDER_OUTCOMES" | tr ',' '\n' \
+                   | grep "^${p}:" | head -1 | cut -d: -f2) ;;
+  esac
+  [[ -n "$p_outcome" ]] || p_outcome="unknown"
+
+  p_dur=0
+  [[ -f "$JSON_TMPDIR/dur_${p}.txt" ]] && p_dur=$(cat "$JSON_TMPDIR/dur_${p}.txt" 2>/dev/null)
+  [[ -n "$p_dur" ]] || p_dur=0
+
+  adversarial_log_row "$(provider_model "$p")" "$TOTAL_DURATION" "$p_exit" \
+    "$p_output" "$p_c" "$p_w" "$p_i" "$p" "$p_outcome" "$p_dur"
 done
 
 # ─── Task 6: SUMMARY row (per-invocation roll-up) ───────────────────────────
 # One TSV line per invocation summarizing the run. Greppable by leading SUMMARY
 # token to distinguish from per-provider rows. Fields: SUMMARY \t ts \t mode \t
-# status \t attempted_count \t timeout_count \t duration_s \t providers_used
+# status \t attempted_count \t timeout_count \t duration_s \t providers_used \t suspended_s
+# suspended_s (col 9) is how many of duration_s the HOST spent asleep — without it a run that
+# straddles a lid-close is a mystery slow run forever after.
 SUMMARY_STATUS="${FINAL_STATUS:-${DERIVED_STATUS:-ok}}"
 SUMMARY_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-printf 'SUMMARY\t%s\t%s\t%s\t%d\t%d\t%d\t%s\n' \
+printf 'SUMMARY\t%s\t%s\t%s\t%d\t%d\t%d\t%s\t%d\n' \
   "$SUMMARY_TS" "$REVIEW_MODE" "$SUMMARY_STATUS" \
   "${ATTEMPTED_COUNT:-0}" "${TIMEOUT_COUNT:-0}" "$TOTAL_DURATION" \
-  "${PROVIDERS_USED:-${PROVIDERS:-none}}" \
+  "${PROVIDERS_USED:-${PROVIDERS:-none}}" "${SUSPENDED_S:-0}" \
   >> "$LOG_FILE" 2>/dev/null || true
 
 # Explicit success exit. Set -e + the logging loop's last assignment can otherwise

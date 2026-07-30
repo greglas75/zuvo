@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# mock-term-ignoring — Mock provider that TRAPS SIGTERM and keeps running.
+#
+# This is the real-world failure shape `timeout -k` exists for: plain `timeout N cmd` only
+# sends SIGTERM, so a CLI that ignores or slow-walks it runs unbounded and takes the caller
+# with it. Field evidence from ~/.zuvo/adversarial.log: 94 of 5989 runs over 30 days blew
+# past their 240/360s budget, the worst at 34273s (9.5 hours).
+trap '' TERM
+cat >/dev/null
+sleep 99999
+exit 0

@@ -571,6 +571,7 @@ Wait for complete output. Then update the spec's `## Adversarial Review` section
 **Status handling (D2+D3+D4, 2026-05-17):** the script may return non-`ok` JSON status:
 - **`status: "single_provider_only"` (exit 3)** — host self-exclusion left only 1 external provider when `--rotate`/`--multi` was requested. Re-invoke with `--single` and note in the spec: `adversarial_review: single-provider-only (install additional provider for diversity)`. Do NOT block spec approval — single-provider review is still a real signal, just narrower.
 - **`status: "timeout"` (exit 124)** — ALL providers timed out. Set `adversarial_review: skipped-timeout` and proceed.
+- **`status: "suspended"` (exit 125)** — the host slept mid-run, so nothing was actually attempted. Re-invoke the pass once; only if the retry is also 125 fall back to `adversarial_review: skipped-timeout`. Do not describe this as a provider outage.
 - **`status: "partial"` (exit 0)** — some providers returned, others timed out (`timeout_count > 0`). Set `adversarial_review: partial (N/M providers)` and surface the timeout_count in the spec's `## Adversarial Review` section so reviewers know coverage was reduced.
 - **exit 1 with EMPTY stdout AND empty stderr, and no new line in `~/.zuvo/adversarial.log`** — the
   providers were never dispatched at all. This is not a failed review, it is a review that did not
