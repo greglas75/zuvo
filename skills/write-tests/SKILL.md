@@ -373,6 +373,42 @@ Print: `[file]: [type] [complexity] [testability] → [N] tests planned`
 
 Red regression tests for known production bugs are not a valid terminal state for `write-tests`. If the truthful test stays red: do NOT weaken the assertion and do NOT park the bug. Either (a) write it as a characterization test of current behavior now and fix the bug in Step 4.5 — flipping the assertion to the corrected contract — or (b) if the fix is out-of-scope, escalate per Step 4.5 disposition. Backlogging a fixable bug and failing the file is no longer a valid exit.
 
+### Step 2.5: LOCAL COVERAGE GATE
+
+Run this deterministic writer-side gate before self-eval or blind review. Its purpose is to catch
+omitted methods and branches cheaply; it does not replace the independent blind audit.
+
+1. Re-read the production file and enumerate **every public entry point** owned by the target:
+   exported functions, public class/controller/service methods, route handlers, component callback
+   routes, and other externally callable behavior. Constructors, private/protected helpers, and
+   pure re-exports are not public entry points.
+2. Add separate inventory rows for each owned conditional branch and each explicit error path
+   (`throw`, rejected dependency, error response, catch/fallback). A public method with multiple
+   owned branches therefore has more than one row. For COMPLEX files, a planned or actual test
+   count is never coverage evidence.
+3. Map every row to specific `test-file:line` evidence and classify it:
+   `FULL | PARTIAL | NONE | N/A`. A describe/test title, mock setup, import, or invocation without
+   a behavioral assertion is `STRUCTURAL_ONLY` and counts as uncovered.
+4. Print the complete matrix and summary:
+
+   ```
+   LOCAL COVERAGE GATE
+   | production symbol/path | production lines | kind | coverage | test-file:line | assertion |
+   Public entry points: [N]/[N] FULL
+   Owned branch/error rows: [N]/[N] FULL
+   Uncovered owned rows: 0
+   ```
+
+5. The only passing condition is: every public entry point has at least one `FULL` behavioral row,
+   every owned branch/error row is `FULL`, and `Uncovered owned rows: 0`. If any row is `PARTIAL`,
+   `NONE`, or `STRUCTURAL_ONLY`, STOP, add or strengthen tests, rerun the target test file, and
+   rebuild the matrix from current file contents.
+
+If a row cannot be tested because required infrastructure or a cross-module contract is unavailable,
+persist `Status=BLOCKED_INCOMPLETE` with the uncovered rows and reason. Do not continue to Step 3.5,
+do not mark the file `PASS`, and do not print `WRITE-TESTS COMPLETE`. Lack of time, a large method
+count, or an already-high test count are not valid reasons to waive this gate.
+
 ### Step 3: Verify
 
 **Context resume guard:** If this session was resumed from a compaction summary AND the test file was previously reverted or rewritten, treat as a first-run session. Do NOT skip Step 3.5 (blind audit) or Step 4 (adversarial) based on prior-session claims in the compaction summary. Re-run both on the current file. Claims like "clean blind audit" or "adversarial pass 1 done" from compaction are UNVERIFIABLE — only tool output in the current window counts.
@@ -395,7 +431,10 @@ Red regression tests for known production bugs are not a valid terminal state fo
    - `Q15:` the assertion line proving content/value, not just count/shape
    - `Q17:` the assertion line plus expected-value source proving the oracle is not echoed from the mock
    If you cannot cite a specific `test-file:line` for a critical gate, score that gate `0`. Do **not** invent scores from memory or from general confidence.
-   Any critical gate at 0: fix immediately and re-score.
+   Any critical gate at 0: fix immediately and re-score. Step 3 passes only when Q7=1 and Q11=1
+   (using an evidence-backed `N/A` only when production truly contains no corresponding paths),
+   along with Q13=1, Q15=1, and Q17=1. A zero critical gate is `BLOCKED_INCOMPLETE`, never a
+   publishable partial result.
 
 Q-score is a quality gate, not an exhaustive coverage map. Step 3 validates test quality. Step 3.5 validates production behavior coverage.
 
@@ -481,7 +520,7 @@ This wrapper is the only allowed subprocess fallback. It is platform-aware and m
 - `INVENTORY COMPLETE:`
 - the required inventory table header from `blind-coverage-audit.md`
 
-If the wrapper script is missing, exits non-zero, times out, or fails validation, do NOT substitute an inline same-run audit. Mark the file `FAILED`, persist `Blind Audit=skipped`, set `Adversarial=blocked`, and stop after backlog persistence.
+If the wrapper script is missing, exits non-zero, times out, or fails validation, do NOT substitute an inline same-run audit. Mark the file `BLOCKED_INFRA`, persist `Blind Audit=skipped`, set `Adversarial=blocked`, and stop after backlog persistence. This is an incomplete run, not evidence that the tests passed or failed review.
 
 **Audit order:**
 
@@ -668,11 +707,13 @@ Update `memory/coverage.md`:
 | File | Status | Tests | Q Score | Blind Audit | Adversarial | Date |
 ```
 
-Statuses: `PASS`, `FAILED`, `SKIPPED_REVIEW`, `SKIPPED_BARREL`
+Statuses: `PASS`, `FAILED`, `BLOCKED_INCOMPLETE`, `BLOCKED_INFRA`, `SKIPPED_REVIEW`, `SKIPPED_BARREL`
 Blind Audit values: `clean:strict`, `fix:<n>`, `rewrite`, `skipped`
 Adversarial values: `clean`, `clean:fallback-local`, `<n> findings`, `<n> findings:fallback-local`, `skipped`, `blocked`, `not_run`
 
 `SKIPPED_REVIEW` is a degraded terminal state, not a clean pass. Never silently collapse it into `PASS`.
+`BLOCKED_INCOMPLETE` and `BLOCKED_INFRA` are non-success states. Never include them in the
+completed-file count or describe their tests as fully covered.
 Rows that never enter Step 4 must persist `Adversarial=blocked` or `Adversarial=not_run`; never leave the column empty.
 
 Persist `Q Score` as a durable value, not prose memory: `<score>/19 (Q7=?,Q11=?,Q13=?,Q15=?,Q17=?)`.
@@ -714,10 +755,13 @@ WRITE-TESTS COMPLETE
 Files tested:  [N] ([M] new, [K] extended, [J] fixed)
 Tests written: [N] total
 Q gates:       [N]/19 avg (critical gates: all pass)
+Local coverage: [N]/[N] public entry points FULL; uncovered owned rows: 0
 Blind audit:   [N] clean, [M] failed/rewrite, [K] skipped
 Validation:    [full-suite|scoped:touched-tests]
 Failures:      pre-existing: [N], new in scope: 0
 FAILED files:  [list or "none"]
+BLOCKED_INCOMPLETE: [list or "none"]
+BLOCKED_INFRA: [list or "none"]
 SKIPPED_REVIEW: [list or "none"]
 SKIPPED_BARREL: [list or "none"]
 Run: <ISO-8601-Z>	write-tests	<project>	-	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
@@ -739,6 +783,7 @@ Run one final full-suite validation, or explicitly scope the final failure count
 ```
 COMPLETION GATE CHECK
 [ ] Step 2: Test file written with Write tool (not sequential Edit)
+[ ] Step 2.5: LOCAL COVERAGE GATE printed; every public entry point FULL; Uncovered owned rows: 0
 [ ] Step 3: Q-score self-eval printed with per-gate evidence (Q7,Q11,Q13,Q15,Q17)
 [ ] Step 3.5: Blind audit ran (result: clean:strict|clean:degraded|skipped|blocked_infra)
 [ ] Step 4: Adversarial review ran (result: clean|Nfindings|skipped|blocked|not_run)
@@ -751,7 +796,7 @@ COMPLETION GATE CHECK
 
 If ANY checkbox is `[ ]` (not done), you MUST go back and complete that step before printing WRITE-TESTS COMPLETE. After context compaction/resume, re-read this checklist and verify each step against actual tool outputs in the current window — not from memory or compaction summary.
 
-**Do NOT print WRITE-TESTS COMPLETE if any file is missing `Status`, `Blind Audit`, or `Adversarial` in coverage.md.**
+**Do NOT print WRITE-TESTS COMPLETE if any file is missing `Status`, `Blind Audit`, or `Adversarial` in coverage.md, has uncovered owned rows, has Q7=0 or Q11=0, or has status `BLOCKED_INCOMPLETE`/`BLOCKED_INFRA`.**
 
 ---
 
@@ -763,6 +808,8 @@ On start, read `memory/coverage.md`. If the file uses the old pre-blind-audit sc
 |--------|-------------|-------------|---------------|
 | PASS | `clean:strict` | present | Skip |
 | FAILED | `fix:<n>` or `rewrite` or `skipped` | any | Skip (already backlogged) |
+| BLOCKED_INCOMPLETE | any | `blocked` or `not_run` | Resume at Step 2.5 and close every uncovered row |
+| BLOCKED_INFRA | `skipped` | `blocked` | Resume at Step 3.5 when reviewer infrastructure is available |
 | SKIPPED_REVIEW | `clean:strict` | `skipped` | Re-process Step 4 only |
 | SKIPPED_BARREL | `skipped` | `not_run` | Skip |
 | status missing or non-terminal legacy row | `fix:<n>` | missing or stale | Re-process Step 3.5 |

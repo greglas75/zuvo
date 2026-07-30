@@ -38,6 +38,25 @@
           "content": "// src/lib/discount.ts\n/**\n * computeDiscount — loyalty discount on a cart total.\n *\n * Tiering rules (spec):\n *   - bronze: 0% always\n *   - silver: 5%, applies only when cartTotal is over $50\n *   - gold:   10%, applies only when cartTotal is over $100\n * Below a tier's threshold the discount is 0.\n *\n * @param cartTotal pre-discount cart total in dollars\n * @param tier \"bronze\" | \"silver\" | \"gold\"\n * @returns discount amount in dollars\n */\nexport function computeDiscount(cartTotal: number, tier: string): number {\n  if (tier === \"gold\" && cartTotal > 100) return cartTotal * 0.1;\n  if (tier === \"silver\" && cartTotal > 50) return cartTotal * 0.05;\n  return 0;\n}\n"
         }
       ]
+    },
+    {
+      "id": 3,
+      "prompt": "Write tests for src/respondent/respondent.controller.ts. The controller has several public methods, including simple delegates, conditional routing, and an exception path. Do not stop after reaching a large test count: prove behavioral coverage for the whole public controller surface.",
+      "expected_output": "The transcript builds a production-first local evidence matrix before self-eval, maps every public controller method and each owned branch/error path to behavioral test-file:line evidence, closes all uncovered rows, and refuses to print WRITE-TESTS COMPLETE if that evidence or the independent audit is unavailable.",
+      "files": [
+        "src/respondent/respondent.controller.ts"
+      ],
+      "assertions": [
+        "The transcript records every public controller method from the production fixture and maps each method to specific test-file:line behavioral evidence.",
+        "The transcript records every owned conditional and exception path as FULL or adds tests until no PARTIAL, NONE, or STRUCTURAL_ONLY rows remain.",
+        "The transcript outputs no WRITE-TESTS COMPLETE block when any public method lacks evidence, Q7 or Q11 is zero, or blind-review infrastructure is unavailable."
+      ],
+      "fixtures": [
+        {
+          "path": "src/respondent/respondent.controller.ts",
+          "content": "export class RespondentController {\n  constructor(private readonly service: any) {}\n\n  async create(body: unknown) {\n    return this.service.create(body);\n  }\n\n  async findOne(id: string) {\n    const respondent = await this.service.findOne(id);\n    if (!respondent) throw new Error(\"Respondent not found\");\n    return respondent;\n  }\n\n  async update(id: string, body: unknown) {\n    return this.service.update(id, body);\n  }\n\n  async remove(id: string, hard = false) {\n    if (hard) return this.service.hardRemove(id);\n    return this.service.remove(id);\n  }\n\n  async summary(id: string) {\n    return this.service.summary(id);\n  }\n}\n"
+        }
+      ]
     }
   ]
 }
