@@ -8,19 +8,30 @@
 I="$ROOT/scripts/install.sh"
 
 # ── T2.1 structural: clause present in install_zuvo_home() body ────────────
-start_test "T2.1 install_zuvo_home has a verify-plan-dag cp+chmod+ok/warn clause"
-FN=$(awk '/^install_zuvo_home\(\) *\{/{f=1} f{print} f&&/^\}/{exit}' "$I")
-if printf '%s' "$FN" | grep -q 'scripts/zuvo-home/verify-plan-dag' \
-   && printf '%s' "$FN" | grep -q 'cp .*verify-plan-dag.*\.zuvo/verify-plan-dag' \
-   && printf '%s' "$FN" | grep -q 'chmod +x .*\.zuvo/verify-plan-dag' \
-   && printf '%s' "$FN" | grep -qi 'verify-plan-dag installed' \
-   && printf '%s' "$FN" | grep -qi 'verify-plan-dag not found'; then
-  pass "verify-plan-dag clause mirrors the retro-stub pattern"
+start_test "T2.1 EMPIRICAL: install_zuvo_home lands +x verify-plan-dag in an overridden HOME"
+# Rewritten 2026-07-30. This asserted the SHAPE of install.sh — a per-file `cp`+`chmod`+ok/warn
+# clause for verify-plan-dag. install.sh now installs every helper in scripts/zuvo-home/ with a LOOP,
+# which is a strictly stronger guarantee: it covers all 23 helpers, not the three that happened
+# to own a test. (The old explicit list had already drifted — retro-mine.py, retro-mine-weekly.sh
+# and rotate-retros-cron.sh were versioned but never installed, and no shape test noticed.)
+# So the check is now the OUTCOME: the file lands, executable, and is named in the install log.
+_T=$(mktemp -d); trap 'rm -rf "$_T"' EXIT INT TERM
+_FN=$(awk '/^install_zuvo_home\(\) *\{/{f=1} f{print} f&&/^\}/{exit}' "$I")
+_LOG=$(HOME="$_T" ZUVO_DIR="$ROOT" bash -c "
+  set -euo pipefail
+  ok()   { echo \"  + \$1\"; }
+  warn() { echo \"  ! \$1\"; }
+  $_FN
+  install_zuvo_home
+" 2>&1); _RC=$?
+if [ "$_RC" -eq 0 ] \
+   && [ -f "$_T/.zuvo/verify-plan-dag" ] && [ -x "$_T/.zuvo/verify-plan-dag" ] \
+   && printf '%s' "$_LOG" | grep -qi 'verify-plan-dag installed'; then
+  pass "verify-plan-dag landed +x in \$HOME/.zuvo and was named in the install log"
 else
-  fail "T2.1" "install_zuvo_home missing a complete verify-plan-dag cp/chmod/ok/warn clause"
+  fail "T2.1" "rc=$_RC file=$([ -f "$_T/.zuvo/verify-plan-dag" ] && echo yes || echo NO) exec=$([ -x "$_T/.zuvo/verify-plan-dag" ] && echo yes || echo NO)"
 fi
 
-# ── T2.2 in-repo binary is present + +x (T1 already shipped it) ────────────
 start_test "T2.2 scripts/zuvo-home/verify-plan-dag exists and is executable in-repo"
 if [ -f "$ROOT/scripts/zuvo-home/verify-plan-dag" ] && [ -x "$ROOT/scripts/zuvo-home/verify-plan-dag" ]; then
   pass "scripts/zuvo-home/verify-plan-dag present + executable"

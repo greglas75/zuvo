@@ -84,13 +84,34 @@ def cat(kind,label):
     if kind=='user_msg': return 'user-idle'
     if kind=='system': return 'system-hooks'
     return kind
+# A gap is charged to the category of the event BEFORE it. That is only sound while the gap is
+# short enough for the preceding activity to plausibly still be running. It was previously guarded
+# for exactly two categories, so a `system` line (a hook message — milliseconds of work) could own
+# a 24-HOUR gap and land 2187 minutes in "system-hooks" on a 38-hour span, burying every real
+# finding. Attribution is now bounded for every category.
+#
+#   <= LONG          attribute normally
+#   LONG..IMPLAUSIBLE attribute only to things that genuinely run long (tests/build, subagent
+#                     dispatch, adversarial review); anything else is a stall or the user away
+#   >  IMPLAUSIBLE    nothing in-session runs this long without emitting an event — session
+#                     boundary, never charged to the preceding activity
+LONG = float(os.environ.get("ZUVO_PROFILE_LONG_GAP_S", 1800))       # 30 min
+IMPLAUSIBLE = float(os.environ.get("ZUVO_PROFILE_MAX_GAP_S", 14400))  # 4 h
+LONG_RUNNERS = {"tests/build", "subagent-dispatch", "adversarial-review"}
+
 cats={}; rows=[]
 for i in range(len(events)-1):
     t,k,lab=events[i]; gap=(events[i+1][0]-t).total_seconds()
     if gap<=0: continue
     c=cat(k,lab)
-    if c=='user-idle' and gap>1800: c='user-idle-long(excluded)'
-    if c=='model-api-thinking' and gap>1800: c='stall/api-error-or-idle>30m'
+    if gap > IMPLAUSIBLE:
+        c = 'session-boundary/away(excluded)'
+    elif gap > LONG:
+        if c == 'user-idle':
+            c = 'user-idle-long(excluded)'
+        elif c not in LONG_RUNNERS:
+            c = f'stall-or-idle>{int(LONG/60)}m'
+        # a long-runner keeps its category — that IS the signal this tool exists to surface
     cats[c]=cats.get(c,0)+gap; rows.append((gap,t,c,lab or k))
 rows.sort(key=lambda r:-r[0])
 out={'file':path.split('/')[-2]+'/'+path.split('/')[-1][:18],'events':len(events),

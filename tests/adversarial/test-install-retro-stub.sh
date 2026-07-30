@@ -8,17 +8,28 @@
 
 I="$ROOT/scripts/install.sh"
 
-start_test "T8.1 install.sh install_zuvo_home has a retro-stub cp+chmod+ok/warn clause"
-# Scope to the install_zuvo_home function body.
-FN=$(awk '/^install_zuvo_home\(\) *\{/{f=1} f{print} f&&/^\}/{exit}' "$I")
-if printf '%s' "$FN" | grep -q 'scripts/zuvo-home/retro-stub' \
-   && printf '%s' "$FN" | grep -q 'cp .*retro-stub.*\.zuvo/retro-stub' \
-   && printf '%s' "$FN" | grep -q 'chmod +x .*\.zuvo/retro-stub' \
-   && printf '%s' "$FN" | grep -qi 'retro-stub installed' \
-   && printf '%s' "$FN" | grep -qi 'retro-stub not found'; then
-  pass "retro-stub clause mirrors the append-runlog pattern"
+start_test "T8.1 EMPIRICAL: install_zuvo_home lands +x retro-stub in an overridden HOME"
+# Rewritten 2026-07-30. This asserted the SHAPE of install.sh — a per-file `cp`+`chmod`+ok/warn
+# clause for retro-stub. install.sh now installs every helper in scripts/zuvo-home/ with a LOOP,
+# which is a strictly stronger guarantee: it covers all 23 helpers, not the three that happened
+# to own a test. (The old explicit list had already drifted — retro-mine.py, retro-mine-weekly.sh
+# and rotate-retros-cron.sh were versioned but never installed, and no shape test noticed.)
+# So the check is now the OUTCOME: the file lands, executable, and is named in the install log.
+_T=$(mktemp -d); trap 'rm -rf "$_T"' EXIT INT TERM
+_FN=$(awk '/^install_zuvo_home\(\) *\{/{f=1} f{print} f&&/^\}/{exit}' "$I")
+_LOG=$(HOME="$_T" ZUVO_DIR="$ROOT" bash -c "
+  set -euo pipefail
+  ok()   { echo \"  + \$1\"; }
+  warn() { echo \"  ! \$1\"; }
+  $_FN
+  install_zuvo_home
+" 2>&1); _RC=$?
+if [ "$_RC" -eq 0 ] \
+   && [ -f "$_T/.zuvo/retro-stub" ] && [ -x "$_T/.zuvo/retro-stub" ] \
+   && printf '%s' "$_LOG" | grep -qi 'retro-stub installed'; then
+  pass "retro-stub landed +x in \$HOME/.zuvo and was named in the install log"
 else
-  fail "T8.1" "install_zuvo_home missing a complete retro-stub cp/chmod/ok/warn clause"
+  fail "T8.1" "rc=$_RC file=$([ -f "$_T/.zuvo/retro-stub" ] && echo yes || echo NO) exec=$([ -x "$_T/.zuvo/retro-stub" ] && echo yes || echo NO)"
 fi
 
 start_test "T8.2 scripts/zuvo-home/retro-stub exists and is executable in-repo"

@@ -3,7 +3,7 @@ name: using-zuvo
 description: "ALWAYS LOADED — Zuvo skill router. Injected at session start. Determines which zuvo skill to invoke for the current task."
 ---
 
-> **Zuvo v1.6.32** | 55 skills | 5 adversarial providers | CQ1-CQ40 + Q1-Q25
+> **Zuvo v1.6.32** | 56 skills | 5 adversarial providers | CQ1-CQ40 + Q1-Q25
 
 # Zuvo Skill Router
 
@@ -122,6 +122,7 @@ This is the SOFT top layer — it sets intent. The actual **enforcement is deter
 | Sync documentation with a release | `zuvo:release-docs` |
 | Engineering retrospective, shipping velocity | `zuvo:retro` |
 | Context health audit, include loading trends, setup bloat | `zuvo:context-audit` |
+| Why was that session slow, where did the wall-clock go, session timing forensics | `zuvo:profile-session` |
 
 ---
 

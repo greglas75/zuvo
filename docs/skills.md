@@ -1,6 +1,6 @@
 # Skills Reference
 
-Zuvo includes 55 skills organized into 13 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
+Zuvo includes 56 skills organized into 13 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
 
 ---
 
@@ -123,6 +123,7 @@ Scoped task execution for common development work.
 |-------|-------------|-------------|-----------|
 | `zuvo:backlog` | Manage tech debt backlog. Supports add, list, fix, wontfix, delete, prioritize, and suggest. Used by audit and review skills to persist findings. | Viewing or managing accumulated tech debt | `list [category]`, `add [desc]`, `fix B-{N}`, `wontfix B-{N}`, `stats`, `prioritize`, `suggest` |
 | `zuvo:docs` | Write and update documentation from actual codebase analysis. README, API reference, runbook, onboarding guide, changelog. Update mode patches stale sections. | After building features, when docs are outdated | `readme [path]`, `api [path]`, `runbook [topic]`, `onboarding`, `update [file]`, `changelog [range]` |
+| `zuvo:profile-session` | Attributes a session's wall-clock time to categories from the agent transcript's own timestamps: tests/build, sub-agent dispatch, adversarial review, model thinking, stalls, user-away. Ranks the biggest gaps and names the command behind each. Reads Claude Code session JSONL and Codex rollout JSONL. | "Why was that session so slow?" — before cutting anything for speed | `[transcript]`, `--last [N]`, `--skill <name>`, `--since <iso>`, `--compare <a> <b>`, `--json` |
 | `zuvo:presentation` | Generate PowerPoint (PPTX) presentations using python-pptx. Consistent theming, speaker notes, visual variety. | Creating slide decks | `[topic]`, `from [file]`, `--slides N`, `--theme dark\|light\|corporate`, `--outline-only` |
 | `zuvo:incident` | Incident response and postmortem generation from git/deploy context. Builds timeline, identifies suspect commits, assesses impact, generates structured postmortem with action items and comms templates. | When something breaks in production, after outages, post-incident review | `[description]`, `--since [time]`, `--service [name]`, `--sev [1-4]`, `--revert`, `--comms`, `--dry-run` |
 | `zuvo:using-zuvo` | Meta-skill router, always loaded at session start. Routes user intent to the correct skill. | Automatic -- you never invoke this directly |
@@ -145,9 +146,9 @@ Scoped task execution for common development work.
 | Testing | 5 | write-tests, fix-tests, write-e2e, tests-performance, mutation-test |
 | Accessibility | 1 | a11y-audit |
 | Release | 5 | ship, deploy, canary, release-docs, retro |
-| Utility | 9 | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo, context-audit, skill-eval |
+| Utility | 10 | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo, context-audit, skill-eval, profile-session |
 | Lead Generation | 1 | leads |
-| **Total** | **55** | |
+| **Total** | **56** | |
 
 ## Shared Infrastructure
 

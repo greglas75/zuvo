@@ -362,9 +362,13 @@ install_zuvo_home() {
     case "$_name" in *.pyc|__pycache__|.*) continue ;; esac
     if cp "$_src" "$HOME/.zuvo/$_name" 2>/dev/null; then
       chmod +x "$HOME/.zuvo/$_name" 2>/dev/null || true
+      # Per-helper line, not just a count: the install log is how you find out WHICH helper
+      # failed to land. Dropping it for a tidy summary lost real information (and an outcome
+      # test caught it), so the loop keeps the same message shape the per-file blocks emitted.
+      ok "$_name installed (~/.zuvo/$_name)"
       _installed=$((_installed + 1))
     else
-      warn "could not install ~/.zuvo/$_name"
+      warn "$_name not installed (~/.zuvo/$_name) — copy failed"
       _skipped=$((_skipped + 1))
     fi
   done

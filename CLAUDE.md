@@ -115,7 +115,7 @@ This does: version bump → commit → push → tag → update marketplace SHA �
 ## File structure
 
 ```
-skills/<name>/SKILL.md          — skill definitions (55 total)
+skills/<name>/SKILL.md          — skill definitions (56 total)
 skills/<name>/agents/<name>.md  — sub-agent instructions (50 agent files, 48 unique names)
 shared/includes/*.md            — shared procedural includes (78 files):
                                     gate-registry.md (SSOT for all 124 CQ/Q/CAP/AP gates)
@@ -214,7 +214,7 @@ full layer table + honest limits):
 - **Escapes (logged):** `ZUVO_ALLOW_ADHOC=1` locally; the human-applied `zuvo:adhoc-approved`
   PR label in CI (an agent cannot self-apply it). Hooks/tests live in `hooks/` + `tests/hooks/`.
 
-## Skill categories (55 total)
+## Skill categories (56 total)
 
 | Category | Count | Skills |
 |----------|-------|--------|
@@ -228,7 +228,7 @@ full layer table + honest limits):
 | Testing | 5 | write-tests, fix-tests, write-e2e, tests-performance, mutation-test |
 | Accessibility | 1 | a11y-audit |
 | Release | 5 | ship, deploy, canary, release-docs, retro |
-| Utility | 9 | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo, context-audit, skill-eval |
+| Utility | 10 | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo, context-audit, skill-eval, profile-session |
 | Lead Generation | 1 | leads |
 
 ## Common tasks

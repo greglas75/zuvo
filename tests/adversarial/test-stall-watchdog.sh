@@ -94,7 +94,22 @@ assert_contains "$(cat "$EX")" "zuvo:stall-watchdog (heartbeat after each task)"
 assert_contains "$(cat "$EX")" "zuvo:stall-watchdog (disarm" "disarm hook present in execute"
 
 start_test "install.sh installs the watchdog helper into ~/.zuvo"
-assert_contains "$(cat "$ROOT/scripts/install.sh")" "zuvo-home/zuvo-watchdog-check" "installer copies the helper"
+# Rewritten 2026-07-30: this grepped install.sh for the literal path "zuvo-home/zuvo-watchdog-check".
+# install.sh now loops over scripts/zuvo-home/ instead of naming each helper, so the literal is gone
+# while the behaviour is stronger. Assert the OUTCOME — the helper actually lands, executable.
+_T=$(mktemp -d)
+_FN=$(awk '/^install_zuvo_home\(\) *\{/{f=1} f{print} f&&/^\}/{exit}' "$ROOT/scripts/install.sh")
+HOME="$_T" ZUVO_DIR="$ROOT" bash -c "
+  set -euo pipefail
+  ok(){ :; }; warn(){ :; }
+  $_FN
+  install_zuvo_home" >/dev/null 2>&1
+if [ -f "$_T/.zuvo/zuvo-watchdog-check" ] && [ -x "$_T/.zuvo/zuvo-watchdog-check" ]; then
+  pass "zuvo-watchdog-check lands +x in \$HOME/.zuvo"
+else
+  fail "installer did not land zuvo-watchdog-check in \$HOME/.zuvo"
+fi
+rm -rf "$_T"
 
 start_test "no-pause-protocol points to stall-recovery as the layer below"
 assert_contains "$(cat "$ROOT/shared/includes/no-pause-protocol.md")" "stall-recovery.md" "no-pause references stall-recovery"

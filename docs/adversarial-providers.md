@@ -116,6 +116,28 @@ a `usable providers: N/M` summary. Exit 0 when ≥1 works. Override per-probe ca
 `ZUVO_DOCTOR_TIMEOUT`. Verified 2026-07-19 on the Mac host: 5/5 WORKING (codex-5.3, agy,
 cursor-agent, kimi, claude) in ~45s total.
 
+### `provision-host.sh` — the doctor plus what to DO about it
+
+`--doctor` answers "what works here". It cannot answer "what is missing and how do I add it",
+because a CLI that was never installed is invisible to a probe over detected providers — which is
+exactly the silent degradation this page opens with. `scripts/provision-host.sh` closes that half:
+
+```bash
+scripts/provision-host.sh                    # matrix + the exact install/login command per gap
+scripts/provision-host.sh --install          # additionally offer to install MISSING CLIs (per-provider prompt)
+scripts/provision-host.sh --remote h1 h2     # read-only probe over SSH, one block per host
+scripts/provision-host.sh --quiet            # matrix only, for cron
+```
+
+Read-only by default; `--install` is local-only and prompts per provider, because remote installs
+need per-host package managers and sudo. **Exit code is the fleet signal:** `0` = ≥2 usable
+providers (real cross-model review possible), `1` = fewer (every review here will be
+single-provider), `2` = the probe could not run at all. That makes it usable as a health check in
+cron without parsing its output.
+
+Its remediation commands mirror the "Install & authenticate" block above —
+`tests/hooks/test-provision-host.sh` asserts they have not drifted apart.
+
 Then the mode flag picks how many run:
 
 | Flag | Behavior |
