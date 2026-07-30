@@ -235,8 +235,28 @@ full layer table + honest limits):
 
 | Task | Command |
 |------|---------|
-| Add a new skill | Create `skills/<name>/SKILL.md`, add to `skills/using-zuvo/SKILL.md` routing table, update counts in plugin.json files + package.json + docs/skills.md, then `./scripts/install.sh` |
+| Add a new skill | See the checklist below — the count lives in **seven** places, and missing one fails a test, not the build |
 | Edit a skill | Edit the SKILL.md, then `./scripts/install.sh` |
 | Test changes locally | `./scripts/install.sh` then restart Claude/Codex |
 | Release to users | `./scripts/release.sh patch "description"` |
 | Add a shared include | Create in `shared/includes/`, reference via `../../shared/includes/` from skills |
+
+### Adding a skill — the full checklist
+
+`validate-skills.sh` catches most of this, but two test suites carry the count independently and
+only fail at release time. Every one of these bit on the 56th skill:
+
+1. `skills/<name>/SKILL.md` — frontmatter, `# zuvo:<name>`, Argument Parsing, Mandatory File
+   Loading, phases, named completion block, run-log append (template: `skills/build/SKILL.md`).
+2. `skills/using-zuvo/SKILL.md` — a routing row **and** the `| N skills |` banner.
+3. `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json` (two strings), `package.json` —
+   the "N skills and M agents" description.
+4. `docs/skills.md` — the per-skill table row, the category-count table, and the `**Total**` row.
+5. `CLAUDE.md` — "skill definitions (N total)", "## Skill categories (N total)", category table.
+6. `./scripts/install.sh` — builds all four targets; the Codex build **fails** on Claude-Code tool
+   names (`run_in_background`, `Task`, …) that `validate-skills.sh` does not check.
+7. `bash scripts/validate-skills.sh` → `count-consistency: OK (N)`, then
+   `bash tests/run-all.sh` — the release script runs it and will block on a stale count.
+
+Counts in tests are now derived from `skills/` rather than hardcoded, so (7) should stay green on
+its own; keep it that way if you touch those assertions.

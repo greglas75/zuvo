@@ -46,7 +46,7 @@ dead end, and this loop has already produced three of them (see "Dead ends we hi
 | `~/.zuvo/mining/digest-*.md` | weekly digests | **No — HOME-local** |
 | `~/.zuvo/mining/proposals-ledger.tsv` | what's already applied/rejected | **No — HOME-local** |
 | `~/.zuvo/<helpers>` | the scripts | Yes — mirrored from `scripts/zuvo-home/`, installed by `install.sh` |
-| `~/.zuvo/runlog-sync.sh`, `backlog-collect.py`, `sync-popebot.sh` | host-specific glue | **Deliberately not** — they hardcode an SSH host and fetch a collector token. Versioning them would point every installing machine at one private collector. Keep them per-host; back them up with the tarball below. |
+| `~/.zuvo/runlog-sync.sh`, `backlog-collect.py`, `backlog-consolidate.py`, `sync-popebot.sh`, `backlog`, `profile-session.py` | sync + analysis helpers | **Yes, since v1.6.47.** They used to be excluded because three of them hardcoded an SSH host — versioning that would point every installing machine at one private collector. The address now lives in `~/.zuvo/collector.conf` (machine-local, `chmod 600`, never in git) and is read by `zuvo-collector-host.sh`, so the CODE ships and the ADDRESS does not. `install.sh` installs every helper in `scripts/zuvo-home/` by loop. |
 | `zuvo/reports/retro-mine-*.md` | the weekly agent's triage report | Per-project, gitignored |
 
 **`~/.zuvo/` is not backed up by git.** The scripts are recoverable (`./scripts/install.sh`

@@ -52,11 +52,26 @@ done
 # --- scheduled jobs named in the doc must be the real LaunchAgent labels ---
 grep -q 'com.greglas.zuvo-retro-mine' "$DOC" && pass "names the retro-mine LaunchAgent" || bad "schedule table lost the mine job"
 
-# --- host-specific glue must STAY unversioned: it hardcodes an SSH host + fetches a collector
-# token, so shipping it would point every installing machine at one private collector. ---
+# --- v1.6.47 inverted this. The old rule was "runlog-sync.sh must stay OUT of the repo because it
+# hardcodes an SSH host". That premise is gone: the address moved to ~/.zuvo/collector.conf
+# (machine-local, never in git) and the script resolves it through zuvo-collector-host.sh. So the
+# helper must now BE versioned — a helper living only on one disk is the dead end this doc
+# documents — and the invariant that replaces it is "versioned, but carrying no host". ---
 [ -f "$ROOT/scripts/zuvo-home/runlog-sync.sh" ] \
-  && bad "runlog-sync.sh is host-specific (SSH host + token) and must not be versioned" \
-  || pass "host-specific runlog-sync.sh stays out of the repo"
+  && pass "runlog-sync.sh is versioned (no longer one disk failure from being lost)" \
+  || bad "runlog-sync.sh is missing from scripts/zuvo-home/ — it must be versioned"
+if grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' "$ROOT/scripts/zuvo-home/runlog-sync.sh" 2>/dev/null \
+   | grep -qvE '^(127\.0\.0\.1|0\.0\.0\.0)$'; then
+  bad "runlog-sync.sh carries a host address again — it must resolve one, not embed one"
+else
+  pass "runlog-sync.sh embeds no host address"
+fi
+grep -q 'zuvo-collector-host.sh' "$ROOT/scripts/zuvo-home/runlog-sync.sh" 2>/dev/null \
+  && pass "runlog-sync.sh resolves its host through the shared resolver" \
+  || bad "runlog-sync.sh no longer uses zuvo-collector-host.sh"
+grep -q 'collector.conf' "$DOC" \
+  && pass "the doc explains where the address lives now" \
+  || bad "doc still implies these helpers cannot be versioned"
 for f in "$ROOT"/scripts/zuvo-home/*; do
   grep -qE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' "$f" 2>/dev/null \
     && bad "hardcoded IP in $(basename "$f")" || :

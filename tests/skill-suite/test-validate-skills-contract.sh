@@ -309,10 +309,15 @@ description: "Valid, has run-logger + MFL, but no arg-parsing signal."
 EOF
 
 # --- WARN fixture: valid but no Mandatory File Loading section ---
+# The include here must be a START-of-run one. 8ca7d9e taught check_mfl that a skill whose ONLY
+# shared includes are retrospective.md / run-logger.md has nothing to load at start (both run at
+# completion), so demanding an MFL block there would document something untrue — it passes with a
+# stated reason. This fixture referenced run-logger.md alone and therefore stopped exercising the
+# warning it exists to prove, silently, for 12 commits. It now loads a real start-of-run include.
 mkskill no-mfl <<'EOF'
 ---
 name: no-mfl
-description: "Valid, has run-logger + arg-parsing, but no MFL section."
+description: "Valid, has arg-parsing and loads a start-of-run include, but no MFL section."
 ---
 
 # zuvo:no-mfl
@@ -320,7 +325,8 @@ description: "Valid, has run-logger + arg-parsing, but no MFL section."
 ## Argument Parsing
 x
 
-References ../../shared/includes/run-logger.md for logging.
+Loads ../../shared/includes/something-else.md during discovery, and
+../../shared/includes/run-logger.md for logging.
 EOF
 
 # ---------- run the validator against the fixture tree ----------
@@ -591,11 +597,14 @@ pass "real-repo run exits 0 with ERRORS: 0"
 
 printf '%s\n' "$REAL_OUT" | grep -Fq -- "include-integrity: OK" \
   || fail "real-repo run should print 'include-integrity: OK' (output: $REAL_OUT)"
-# 'OK (55)' followed by a non-digit or end-of-line: rejects a spurious 'OK (550)' match
-# WITHOUT the full-line '^...$' anchor (which would be brittle to any prefix/ANSI code and
-# diverge from the sibling unanchored 'include-integrity: OK' check above).
-printf '%s\n' "$REAL_OUT" | grep -qE 'count-consistency: OK \(55\)([^0-9]|$)' \
-  || fail "real-repo run should print 'count-consistency: OK (55)' (output: $REAL_OUT)"
+# Count the skill dirs instead of hardcoding the number. The literal 55 here had to be updated by
+# hand on every skill addition, was not on the "add a new skill" checklist, and duly went red the
+# first time a 56th skill landed — a test failing for bookkeeping rather than for a defect. What
+# actually matters is that the validator agrees with the tree, which is what this now asserts.
+# Still anchored on a non-digit/EOL so 'OK (560)' cannot satisfy a check for 'OK (56)'.
+REAL_N=$(find "$ROOT_DIR/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+printf '%s\n' "$REAL_OUT" | grep -qE "count-consistency: OK \($REAL_N\)([^0-9]|$)" \
+  || fail "real-repo run should print 'count-consistency: OK ($REAL_N)' — one per skills/ dir (output: $REAL_OUT)"
 pass "real-repo run prints include-integrity and count-consistency OK lines"
 
 pass "validate-skills-contract"

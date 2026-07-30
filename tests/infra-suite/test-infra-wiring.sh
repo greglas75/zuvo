@@ -29,10 +29,15 @@ grep -q 'zuvo:infra-audit' "$ROUTER" \
   || fail "skills/using-zuvo/SKILL.md: missing routing row for zuvo:infra-audit"
 pass "router has zuvo:infra-audit routing row"
 
-# ── 2. Router: banner contains "55 skills" ───────────────────────────────────
-grep -q '55 skills' "$ROUTER" \
-  || fail "skills/using-zuvo/SKILL.md: banner does not contain '55 skills'"
-pass "router banner contains '55 skills'"
+# ── 2. Router banner names the CURRENT skill count ───────────────────────────
+# Derived from the tree, not hardcoded: the literal "55 skills" here had to be hand-edited on
+# every skill addition, was not on the "add a new skill" checklist, and went red the moment a
+# 56th skill landed. The invariant worth testing is "the banner agrees with skills/", not any
+# particular number.
+SKILL_N=$(find "$REPO_ROOT/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+grep -q "$SKILL_N skills" "$ROUTER" \
+  || fail "skills/using-zuvo/SKILL.md: banner does not say '$SKILL_N skills' (one per skills/ dir)"
+pass "router banner says '$SKILL_N skills', matching the tree"
 
 # ── 2b. Router: zuvo:skill-eval routing row present ──────────────────────────
 # banner count alone is a NUMBER, not a name — without this the routing row could be
