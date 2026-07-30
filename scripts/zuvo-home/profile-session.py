@@ -25,8 +25,15 @@ if not os.path.isfile(path):
 ws = sys.argv[2] if len(sys.argv) > 2 else None
 we = sys.argv[3] if len(sys.argv) > 3 else None
 def pts(s):
-    try: return datetime.datetime.fromisoformat(s.replace('Z','+00:00')).replace(tzinfo=None)
-    except: return None
+    """ISO -> naive UTC. Both Claude Code and Codex emit Z exclusively (verified: 2943 and 4001
+    samples, zero non-Z), so this never fires today — but CONVERTING to UTC before dropping the
+    tzinfo costs nothing and means a future transcript carrying a real offset is not silently
+    mis-ordered by that offset's worth of minutes."""
+    try:
+        d = datetime.datetime.fromisoformat(s.replace('Z', '+00:00'))
+        return d.astimezone(datetime.timezone.utc).replace(tzinfo=None) if d.tzinfo else d
+    except Exception:
+        return None
 events=[]
 with open(path, errors='ignore') as f:
     for line in f:
@@ -67,10 +74,17 @@ with open(path, errors='ignore') as f:
             else: kind='codex_'+str(pt)[:24]
         events.append((t,kind,label))
 events.sort(key=lambda e:e[0])
-if ws:
-    w=pts(ws); events=[e for e in events if e[0]>=w]
-if we:
-    w=pts(we); events=[e for e in events if e[0]<=w]
+for _bound, _val, _keep in (("window_start", ws, True), ("window_end", we, False)):
+    if not _val:
+        continue
+    _w = pts(_val)
+    if _w is None:
+        # A malformed bound used to reach the comparison and raise TypeError (datetime vs None).
+        # Refusing loudly beats both crashing and silently profiling the whole file as if no
+        # window had been asked for.
+        sys.stderr.write(f"profile-session: {_bound} is not an ISO timestamp: {_val!r}\n")
+        sys.exit(2)
+    events = [e for e in events if (e[0] >= _w if _keep else e[0] <= _w)]
 if len(events)<3: print(json.dumps({'file':path,'error':'too few events in window','events':len(events)})); sys.exit()
 def cat(kind,label):
     l=label.lower()
@@ -114,7 +128,10 @@ for i in range(len(events)-1):
         # a long-runner keeps its category — that IS the signal this tool exists to surface
     cats[c]=cats.get(c,0)+gap; rows.append((gap,t,c,lab or k))
 rows.sort(key=lambda r:-r[0])
-out={'file':path.split('/')[-2]+'/'+path.split('/')[-1][:18],'events':len(events),
+# os.path.basename on the parent, NOT split('/')[-2] — a bare `file.jsonl` (no separator) made
+# that index raise IndexError, so the tool crashed on the most natural way to invoke it.
+_parent = os.path.basename(os.path.dirname(os.path.abspath(path)))
+out={'file':(_parent + '/' if _parent else '') + os.path.basename(path)[:18],'events':len(events),
  'window':[events[0][0].isoformat()[:16],events[-1][0].isoformat()[:16]],
  'span_h':round((events[-1][0]-events[0][0]).total_seconds()/3600,2),
  'categories_min':{k:round(v/60,1) for k,v in sorted(cats.items(),key=lambda x:-x[1])},

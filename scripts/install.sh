@@ -360,8 +360,19 @@ install_zuvo_home() {
     [[ -f "$_src" ]] || continue
     local _name; _name="$(basename "$_src")"
     case "$_name" in *.pyc|__pycache__|.*) continue ;; esac
-    if cp "$_src" "$HOME/.zuvo/$_name" 2>/dev/null; then
-      chmod +x "$HOME/.zuvo/$_name" 2>/dev/null || true
+    # Copy to a temp name and mv into place: `cp` over a LIVE executable truncates it first, so a
+    # helper running from cron at that moment reads a half-written file. mv within one filesystem
+    # is atomic. (Not a regression from the loop — the per-file blocks used a plain cp too — but
+    # cheap to get right while the code is being touched.)
+    if cp "$_src" "$HOME/.zuvo/.$_name.tmp.$$" 2>/dev/null; then
+      # Executable bit follows the SOURCE, not a blanket +x. chmod'ing every regular file turned
+      # any future data/README dropped into scripts/zuvo-home/ into a runnable user command.
+      if [[ -x "$_src" ]]; then chmod +x "$HOME/.zuvo/.$_name.tmp.$$" 2>/dev/null || true; fi
+      mv -f "$HOME/.zuvo/.$_name.tmp.$$" "$HOME/.zuvo/$_name" 2>/dev/null || {
+        rm -f "$HOME/.zuvo/.$_name.tmp.$$" 2>/dev/null
+        warn "$_name not installed (~/.zuvo/$_name) — atomic replace failed"
+        _skipped=$((_skipped + 1)); continue
+      }
       # Per-helper line, not just a count: the install log is how you find out WHICH helper
       # failed to land. Dropping it for a tidy summary lost real information (and an outcome
       # test caught it), so the loop keeps the same message shape the per-file blocks emitted.
@@ -372,7 +383,11 @@ install_zuvo_home() {
       _skipped=$((_skipped + 1))
     fi
   done
-  ok "$_installed zuvo-home helpers installed to ~/.zuvo/${_skipped:+ ($_skipped skipped)}"
+  if [[ "$_skipped" -gt 0 ]]; then
+    ok "$_installed zuvo-home helpers installed to ~/.zuvo/ ($_skipped skipped)"
+  else
+    ok "$_installed zuvo-home helpers installed to ~/.zuvo/"
+  fi
 
   # Local, NEVER-versioned config for host-coupled helpers (collector SSH target). Created empty
   # so the file exists to edit; the helpers fail loudly with instructions when it has no host.

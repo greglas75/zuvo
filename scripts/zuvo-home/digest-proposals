@@ -65,8 +65,16 @@ def src_retro(body, dg, offset):
     head = body.split("\n", 1)[0]
     head = HOSTTAG.sub(" ", head).replace("#", " ")
     head = " ".join(head.split()).lower()
-    # An empty/degenerate header must NOT collapse unrelated blocks together — fall back to a
-    # per-block key so a parse miss can only ever over-count, never silently under-count.
+    # Guard against the header NOT being on this line. BLOCK captures everything after `### P<n>`,
+    # so today line 0 is the rest of the heading (`[mac] ## <date> <skill> <project> <title>`) —
+    # verified against every block in the live digests. But if a future emitter puts the heading on
+    # its own line, line 0 becomes the `FILE:` line, which is IDENTICAL across different retros
+    # proposing the same edit: every recurrence would collapse to 1 and the apply bar would sit
+    # permanently empty while looking perfectly clean. That silent false-negative is far worse than
+    # over-counting, so a field-looking line is rejected in favour of the per-block key.
+    if head.startswith(("file:", "section:", "content:", "rationale:")):
+        return f"{os.path.basename(dg)}#{offset}"
+    # An empty/degenerate header must NOT collapse unrelated blocks together either — same reason.
     return head if len(head) >= 12 else f"{os.path.basename(dg)}#{offset}"
 
 

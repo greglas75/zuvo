@@ -101,10 +101,19 @@ if [ "${#REMOTE_HOSTS[@]}" -gt 0 ]; then
     echo "══ $h ══"
     # Probe with the host's OWN installed copy; shipping this script over would then need the
     # whole plugin there too. If zuvo is not installed on the host, say that plainly.
+    # ssh exits 255 for ITS OWN failures (auth, DNS, refused); anything else is the remote
+    # command's exit code. Reporting both as "ssh failed" sent people debugging connectivity when
+    # the box was reachable and the probe itself had failed.
     out=$(ssh -o ConnectTimeout=10 -o BatchMode=yes "$h" \
       'AR=$(command -v adversarial-review 2>/dev/null || ls ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh 2>/dev/null | head -1); \
-       [ -n "$AR" ] || { echo "ZUVO_NOT_INSTALLED"; exit 0; }; sh "$AR" --doctor 2>&1' 2>&1) || {
-      echo "  UNREACHABLE (ssh failed)"; rc=1; continue; }
+       [ -n "$AR" ] || { echo "ZUVO_NOT_INSTALLED"; exit 0; }; sh "$AR" --doctor 2>&1' 2>&1)
+    ssh_rc=$?
+    if [ "$ssh_rc" -eq 255 ]; then
+      echo "  UNREACHABLE (ssh transport failed: $(printf '%s' "$out" | tail -1))"; rc=1; continue
+    elif [ "$ssh_rc" -ne 0 ] && ! printf '%s' "$out" | grep -q 'PROVIDER DOCTOR'; then
+      echo "  REACHABLE, but the probe failed on the host (exit $ssh_rc): $(printf '%s' "$out" | tail -1)"
+      rc=1; continue
+    fi
     case "$out" in
       *ZUVO_NOT_INSTALLED*) echo "  zuvo not installed on this host — nothing to probe"; rc=1 ;;
       *) printf '%s\n' "$out" | sed -n '/PROVIDER DOCTOR/,$p' | sed 's/^/  /' ;;

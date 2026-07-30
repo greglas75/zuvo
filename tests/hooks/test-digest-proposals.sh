@@ -157,6 +157,32 @@ done
 out=$(python3 "$DP" --all 2>&1)
 echo "$out" | grep -q '×1  skills/review/SKILL.md  ::  Dialect Section'   && ok "host-tag dialect does not split one retro into several"   || bad "dialects split one retro: $(echo "$out" | grep -o '×[0-9]*  skills/review/SKILL.md  ::  Dialect Section')"
 
+echo "=== a shifted heading must not collapse distinct retros to one ==="
+# Raised by the adversarial pass on this very change (3 providers, CRITICAL). It does NOT reproduce
+# on today's format — verified: every live block's line 0 is the heading remainder. But if an
+# emitter ever moves the heading to its own line, line 0 becomes the `FILE:` line, which is
+# IDENTICAL for the same proposal across DIFFERENT retros — so every recurrence would collapse to
+# 1 and the apply bar would sit permanently empty while looking clean. Over-counting is the safe
+# direction; this locks it.
+rm -f "$TMP/mining"/*.md "$TMP/mining/proposals-ledger.tsv"
+# The shape that actually reaches the guard is FILE: on the SAME line as `### P<n>` — the two
+# other shifted layouts (heading on its own line, heading absent) leave line 0 empty and hit the
+# length fallback instead. Verified by tracing all three through the BLOCK regex; a fixture using
+# the wrong shape would pass with or without the guard, i.e. prove nothing.
+i=0
+for when in '2026-10-01' '2026-10-02'; do
+  i=$((i+1))
+  { printf '## Change proposals\n### P3 FILE: skills/review/SKILL.md | SECTION: Shifted Heading\n'
+    printf 'CONTENT:\n```\nrun %s on %s\n```\nRATIONALE: y.\n' "$i" "$when"
+  } > "$TMP/mining/digest-2026-11-0$i.md"
+done
+out=$(python3 "$DP" --all 2>&1)
+if echo "$out" | grep -q '×2  skills/review/SKILL.md  ::  Shifted Heading'; then
+  ok "two distinct retros still count ×2 when the heading is on its own line"
+else
+  bad "shifted heading collapsed distinct retros: $(echo "$out" | grep -o '×[0-9]*  skills/review/SKILL.md  ::  Shifted Heading')"
+fi
+
 echo "=== empty state ==="
 rm -f "$TMP/mining"/*.md
 python3 "$DP" 2>&1 | grep -qi 'no change proposals' && ok "no digests -> clean message, no crash" || bad "empty state crashed"
