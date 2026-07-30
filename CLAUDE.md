@@ -117,7 +117,7 @@ This does: version bump → commit → push → tag → update marketplace SHA �
 ```
 skills/<name>/SKILL.md          — skill definitions (56 total)
 skills/<name>/agents/<name>.md  — sub-agent instructions (50 agent files, 48 unique names)
-shared/includes/*.md            — shared procedural includes (78 files):
+shared/includes/*.md            — shared procedural includes (85 files):
                                     gate-registry.md (SSOT for all 124 CQ/Q/CAP/AP gates)
                                     knowledge-prime.md, knowledge-curate.md (knowledge store)
                                     session-state.md (session recovery)

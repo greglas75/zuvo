@@ -840,6 +840,29 @@ Per-task acceptance proofs verify each task's slice in isolation. They cannot de
 
 **The plan cannot transition to `status: completed` without `[GATE: smoke-verified]` or an explicit "Not applicable" with a recorded justification.**
 
+### Phase Final-1b: Test Quality Gate (zuvo:test-audit → tier A)
+
+Per-task quality review scores Q1-Q25 per file, but that is in-run self-scoring — field runs still
+shipped weak tests. After smoke proofs pass and **BEFORE Phase Final-2** (so the aggregate review's
+range covers the test-fix commits), run the gate from
+`../../shared/includes/test-quality-gate.md` with:
+
+- `TEST_SCOPE` = every test file created/modified across the plan range — derive `BASE_SHA` exactly
+  as Phase Final-2 step 1 does, then
+  `git -C "$repo_root" diff --name-only ${BASE_SHA}..HEAD` filtered to
+  `.test.*` / `.spec.*` / `__tests__/` — PLUS pre-existing test files covering production files the
+  plan touched.
+- `FIX_COMMIT_PREFIX` = `test(plan):`
+
+The include dispatches the REAL `Skill(zuvo:test-audit …)` on that scope, fixes every file below
+tier A in-run (separate `test:` commit, targeted suites re-run green vs the session baseline),
+re-audits (max 2 iterations), and emits
+`[GATE: test-quality] PASS|WARN|N/A worst=<tier> report=<zuvo/audits/…>` — the on-disk test-audit
+report path is the proof of dispatch (same NO-SUBSTITUTION rule as Phase Final-2: an inline
+Q-rescoring pass reported as this gate is INVALID). Below-A after the cap → WARN + per-file
+backlog, never silence. Record `test_quality=<verdict>:<worst tier>:<report path>` in final
+telemetry, then proceed to Phase Final-2.
+
 ### Phase Final-2: End-of-Plan Aggregate Review (MANDATORY — every plan)
 
 Per-task gates (Step 4 spec / Step 6 quality / Step 7b adversarial) review ONE task in isolation — 1–3 files, fresh-from-implementer context. They cannot see **cross-task drift**, **integration bugs between tasks**, or **cumulative design decay** across the 10–20+ tasks a `brainstorm → plan → execute` pipeline produces. Phase Final (smoke proofs) catches end-to-end behavioral breakage; this phase catches end-to-end **code quality** breakage.
@@ -1076,6 +1099,7 @@ COMPLETION GATE CHECK (per task):
 
 COMPLETION GATE CHECK (final):
 [ ] Whole-feature Smoke Proofs ran (or [GATE: smoke-verified] / explicit "Not applicable" with justification)
+[ ] Test Quality Gate ran (Phase Final-1b): [GATE: test-quality] PASS|WARN|N/A with a REAL zuvo/audits test-audit report path — inline Q-rescoring is a substituted gate = INVALID; below-A files fixed in-run or WARN + backlogged
 [ ] End-of-plan aggregate review ran (or [GATE: aggregate-review] PASS|RECOMMENDED-FOUND|MUST-FIX-FOUND|SKIPPED|NO-OP|BLOCKED — never silently omitted)
 [ ] Content-keyed artifact memory/reviews/<base7>..<head7>-<slug>.md written with range:/files: header for the plan range (on success only — pipeline-entry signal read by pre-push/CI gates)
 [ ] Aggregate review was the REAL `Skill(zuvo:review)` dispatch — `[GATE: aggregate-review]` PASS/FOUND carries `via=zuvo:review` + a `report=<memory/reviews/...>` path that EXISTS on disk. A PASS via Explore/inline/adversarial substitute, or with no review artifact, is INVALID → re-run as the real dispatch (see Phase Final-2 NO-SUBSTITUTION)

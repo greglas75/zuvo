@@ -994,6 +994,26 @@ had a finding. The `refactor-safety-gate` hook reads these on `git commit` — i
 
 ---
 
+## Phase 3.6: Test Quality Gate (zuvo:test-audit → tier A)
+
+The Phase 2/3 Q1-Q25 evals are self-scored, and field runs still shipped weak tests. After the
+Phase 3.5 commits — behavior is now proven and locked, so improving tests can no longer break the
+characterization proof — run the gate from `../../shared/includes/test-quality-gate.md` with:
+
+- `TEST_SCOPE` = every test file this refactor **created or modified** (characterization/pin-down
+  suites, updated specs) PLUS every **pre-existing** test file covering an in-fence production
+  file (Phase 1 Test Discovery already found these — reuse `test_audit_before.test_file`).
+- `FIX_COMMIT_PREFIX` = `test(<scope>):`
+
+The include dispatches the REAL `Skill(zuvo:test-audit …)` on that scope, fixes every file below
+tier A in-run (separate `test:` commit, suites re-run green), re-audits (max 2 iterations), and
+prints `[GATE: test-quality] PASS|WARN|N/A` with the on-disk `zuvo/audits/` report path as proof
+of dispatch. Record `prove.test_quality = "<PASS|WARN|N/A>:<worst tier>:<report path>"` in the
+CONTRACT. Below-A after the cap → WARN + per-file backlog, never silence. Skip only in
+`plan-only` / VERIFY_COMPILATION runs (nothing test-shaped happened) — and say so.
+
+---
+
 ## Phase 4: Completion
 
 ### Commits (recorded — committing happened in Phase 3.5)
@@ -1117,6 +1137,7 @@ COMPLETION GATE CHECK
 [ ] Adversarial review ran on final diff
 [ ] Bug remediation (Phase 3.5): every fix-now bug fixed + tested IN THIS RUN as a separate fix commit; nothing parked by size; only out-of-scope-fence items or user-declined decisions deferred. If bugs were fixed, the run has 2 commits (refactor, then fix)
 [ ] Regression red DEMONSTRATED (only when fix-now items were applied): the new regression assertions were actually RUN against the pre-fix code with the failing output captured — not inferred from the old assertion's flip — and `prove.regression_red` recorded in the CONTRACT (the gate blocks the fix commit without it)
+[ ] Test Quality Gate (Phase 3.6) ran: `[GATE: test-quality] PASS|WARN|N/A` printed with a REAL `zuvo/audits/` test-audit report path (inline Q-rescoring is a substituted gate = INVALID); below-A files fixed in-run as a `test:` commit or WARN + per-file backlog; `prove.test_quality` recorded
 [ ] Aggregate review hand-off evaluated: if 2+ sibling refactor commits this session, the `zuvo:review <range>` line is surfaced (per Aggregate Review Hand-off)
 [ ] Documentation updated if public surface changed, else explicit [DOC: N/A — internal-only] (per documentation-mandate.md)
 [ ] Run: line printed and appended to log

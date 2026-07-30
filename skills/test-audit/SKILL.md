@@ -62,6 +62,7 @@ Systematic evaluation of unit and integration test files through the Q1-Q25 bina
 | `all` | Audit every test file in the project |
 | `[path]` | Audit test files under a specific directory |
 | `[file]` | Audit a single test file with full evidence (forces deep mode) |
+| `[file file2 …]` | Audit exactly the listed test files (space-separated, forces deep mode) — the form the Test Quality Gate (`../../shared/includes/test-quality-gate.md`, called from refactor/execute/write-tests) uses to scope to touched files |
 | `--deep` | Collect evidence and fix recommendations for every file |
 | `--quick` | Binary pass/fail only, skip evidence |
 | `--include-e2e` | Include E2E test files in scope |
@@ -76,6 +77,7 @@ Default: `all --quick --commit=ask`
 | `all` | Entire project | Standard | `--commit=ask` | Default |
 | `[path]` | Directory | Standard | `--commit=ask` | Scoped |
 | `[file]` | Single file | Deep | `--commit=ask` | Full evidence |
+| `[file file2 …]` | Listed files only | Deep | `--commit=ask` | File-list scope (Test Quality Gate callers pass `--read-only --commit=off`) |
 | `--deep` | Any scope | Full evidence + fixes | Per flag | Thorough |
 | `--quick` | Any scope | Binary only | `--commit=off` | Fast triage |
 | `--include-e2e` | + E2E files | Standard | Per flag | Expanded scope |
