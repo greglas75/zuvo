@@ -84,6 +84,7 @@ references are LAZY — load each when its phase begins, never all at start:
 - Phase 3, per scenario — `references/playwright-patterns.md`: causality contract, oracles, locator hierarchy, gray-box labels, cleanup
 - Phase 3, when a spec touches the network — `references/network-mocking.md`: fail-closed policy, match key, allowed-host list, mutation contracts
 - Phase 3, after each spec is written — `references/quality-gates.md`: E2E-Q1..E2E-Q10, all critical, with evidence formats
+- Phase 4.5 — `../../shared/includes/test-quality-gate.md`: the zuvo:test-audit → tier A gate (dispatched with `--include-e2e`)
 
 ## Agent Routing
 
@@ -205,6 +206,29 @@ When evidence is missing, record the LOWER state — a spec nobody ran is GENERA
 and there is no "skipped" state. Triage red runs by category (locatorMiss / timing / data / auth / backend), which
 this skill diagnoses and does not auto-fix.
 
+## Phase 4.5: Test Quality Gate (zuvo:test-audit --include-e2e → tier A)
+
+The E2E-Q1..Q10 gates and the adversarial pass are in-run scoring — the same self-evaluation that ships weak
+tests elsewhere. After the verification ladder (states earned, behavior proven), run the gate from
+`../../shared/includes/test-quality-gate.md` with two E2E-specific adjustments:
+
+- `TEST_SCOPE` = every spec and fixture file this run **created or modified** (write-e2e touches no production
+  files, so there is no covering-tests half here). The dispatch MUST carry `--include-e2e` — test-audit excludes
+  `*/e2e/*` / `*.e2e.*` by default, so without the flag the audit silently scores nothing and a clean report is
+  a lie: `Skill(skill="zuvo:test-audit", args="<TEST_SCOPE files> --include-e2e --deep --read-only --commit=off")`.
+- **A fixed spec re-earns its state.** Editing a spec stales whatever the ladder recorded for it — after each
+  fix iteration re-run at least the STATIC_CHECKED checks on the touched specs, and re-execute any spec that
+  held VERIFIED_LOCAL/VALIDATED_LIVE (or honestly downgrade its row to GENERATED/STATIC_CHECKED in
+  `memory/e2e-coverage.md`). A tier-A spec wearing a state its current content never earned trades one lie
+  for another.
+
+Everything else follows the include verbatim: fix below-A in-run (strengthening only; `FIX_COMMIT_PREFIX` =
+`test(e2e):` when this run commits, otherwise the fixes stay in the working tree with the specs), max 2
+fix→re-audit iterations, `[GATE: test-quality] PASS|WARN|N/A` with the on-disk `zuvo/audits/` report path as
+proof of dispatch — an inline E2E-Q rescoring pass reported as this gate is a substituted gate = INVALID.
+Below-A after the cap → WARN + per-file backlog, never silence. In `--dry-run`/`--flows` mode (nothing
+written) print `[GATE: test-quality] N/A (no specs written)`.
+
 ## Artifact Contract
 
 State lands in `memory/e2e-coverage.md`, which carries a `State` column. Row shape, exactly what the helper writes:
@@ -227,6 +251,7 @@ COMPLETION GATE CHECK
 [ ] Preflight state printed; effective baseURL resolved and its origin classified before anything executed
 [ ] Scored flow list printed with confidence and reasons; E2E-Q1..E2E-Q10 evidenced on every spec
 [ ] Adversarial review ran (--mode test); every flow carries exactly one verification state
+[ ] Test Quality Gate (Phase 4.5): [GATE: test-quality] PASS|WARN|N/A printed with a REAL zuvo/audits test-audit report path from a dispatch that carried --include-e2e (inline E2E-Q rescoring is a substituted gate = INVALID); below-A specs fixed in-run + states re-earned, or WARN + backlogged
 [ ] memory/e2e-coverage.md upserted via the helper, or hand-written in the row shape when it is absent
 [ ] Run: line printed and appended to log
 
