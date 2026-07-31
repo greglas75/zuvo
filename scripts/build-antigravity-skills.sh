@@ -385,7 +385,7 @@ fi
 
 # --- Scripts ---
 mkdir -p "$DIST/scripts"
-for script in adversarial-review.sh benchmark.sh reviewer-model-route.sh blind-audit-codex.sh install-refactor-gate.sh; do
+for script in adversarial-review.sh benchmark.sh reviewer-model-route.sh blind-audit-codex.sh install-refactor-gate.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh; do
   if [ -f "$PLUGIN_DIR/scripts/$script" ]; then
     cp "$PLUGIN_DIR/scripts/$script" "$DIST/scripts/$script"
     chmod +x "$DIST/scripts/$script"

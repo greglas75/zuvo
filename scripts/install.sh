@@ -259,11 +259,16 @@ install_claude() {
       cp "$ZUVO_DIR"/rules/*.md "$CACHE_DIR/rules/" 2>/dev/null || true
     fi
 
-    # Copy scripts (adversarial-review.sh, etc.)
+    # Copy scripts (adversarial-review.sh, etc.). *.py too — test-coverage-gate.py
+    # is the write-tests executable gate; a *.sh-only copy silently shipped a skill
+    # that calls a nonexistent validator (caught 2026-07-31). scripts/lib/ rides
+    # along for anything that sources it.
     if [[ -d "$ZUVO_DIR/scripts" ]]; then
       mkdir -p "$CACHE_DIR/scripts"
       cp "$ZUVO_DIR"/scripts/*.sh "$CACHE_DIR/scripts/" 2>/dev/null || true
-      chmod +x "$CACHE_DIR"/scripts/*.sh 2>/dev/null || true
+      cp "$ZUVO_DIR"/scripts/*.py "$CACHE_DIR/scripts/" 2>/dev/null || true
+      [[ -d "$ZUVO_DIR/scripts/lib" ]] && cp -R "$ZUVO_DIR"/scripts/lib "$CACHE_DIR/scripts/" 2>/dev/null || true
+      chmod +x "$CACHE_DIR"/scripts/*.sh "$CACHE_DIR"/scripts/*.py 2>/dev/null || true
     fi
 
     # Copy the VERSION marker to the target root AND skills/ — so ANY install,
@@ -725,6 +730,11 @@ install_codex() {
     cp "$ZUVO_DIR"/scripts/reviewer-model-route.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/blind-audit-codex.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/infra-collect.sh "$HOME/.codex/scripts/" 2>/dev/null || true
+    # write-tests executable gate + Phase-0 reviewer canary + artifact pair sync (2026-07-31)
+    cp "$ZUVO_DIR"/scripts/test-coverage-gate.py "$HOME/.codex/scripts/" 2>/dev/null || true
+    cp "$ZUVO_DIR"/scripts/reviewer-preflight.sh "$HOME/.codex/scripts/" 2>/dev/null || true
+    cp "$ZUVO_DIR"/scripts/review-artifact-sync.sh "$HOME/.codex/scripts/" 2>/dev/null || true
+    chmod +x "$HOME/.codex"/scripts/*.py 2>/dev/null || true
     # install-refactor-gate.sh is invoked by zuvo:refactor PHASE 0 to wire the repo git hook.
     cp "$ZUVO_DIR"/scripts/install-refactor-gate.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     # …and the gate itself. Kept next to the installer (not only in the plugin cache, which is
@@ -906,6 +916,11 @@ install_cursor() {
     cp "$ZUVO_DIR"/scripts/reviewer-model-route.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/blind-audit-codex.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/infra-collect.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
+    # write-tests executable gate + Phase-0 reviewer canary + artifact pair sync (2026-07-31)
+    cp "$ZUVO_DIR"/scripts/test-coverage-gate.py "$HOME/.cursor/scripts/" 2>/dev/null || true
+    cp "$ZUVO_DIR"/scripts/reviewer-preflight.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
+    cp "$ZUVO_DIR"/scripts/review-artifact-sync.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
+    chmod +x "$HOME/.cursor"/scripts/*.py 2>/dev/null || true
     # install-refactor-gate.sh is invoked by zuvo:refactor PHASE 0 to wire the repo git hook.
     cp "$ZUVO_DIR"/scripts/install-refactor-gate.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     # …and the gate itself. Kept next to the installer (not only in the plugin cache, which is
@@ -1000,11 +1015,12 @@ install_antigravity() {
     ok "Rules installed"
   fi
 
-  # Step 6: Copy scripts
+  # Step 6: Copy scripts (*.py too — the write-tests executable gate)
   if [[ -d "$DIST/scripts" ]]; then
     mkdir -p "$HOME/.gemini/antigravity/scripts"
     cp "$DIST"/scripts/*.sh "$HOME/.gemini/antigravity/scripts/" 2>/dev/null || true
-    chmod +x "$HOME/.gemini/antigravity"/scripts/*.sh 2>/dev/null || true
+    cp "$DIST"/scripts/*.py "$HOME/.gemini/antigravity/scripts/" 2>/dev/null || true
+    chmod +x "$HOME/.gemini/antigravity"/scripts/*.sh "$HOME/.gemini/antigravity"/scripts/*.py 2>/dev/null || true
     ok "Scripts installed"
   fi
 
