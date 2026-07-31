@@ -233,7 +233,7 @@ python3 "$ZUVO_BASE/scripts/test-coverage-gate.py" validate \
   --phase final --repo-root "$(git rev-parse --show-toplevel)"
 ```
 
-The validator independently re-extracts every public entry point from the production AST and checks: no missing symbols, every owned row `FULL` or excused with a note, every evidence line an existing test-file:line inside a real test, no duplicate/empty evidence, production hash unchanged, `Q7=1 and Q11=1`. Its printed block — including `Uncovered owned rows: 0` — is the ONLY acceptable pass evidence; paste it, never paraphrase it.
+The validator independently re-extracts every public entry point from the production AST and checks: no missing symbols, every owned row `FULL` or excused with a note, every evidence entry an existing test-file:line inside a real test — or the durable form `test-file::exact test name`, which survives formatters and is PREFERRED (convert a line-based manifest once with `test-coverage-gate.py refresh --manifest <m>`) — no duplicate/empty evidence, production hash unchanged, `Q7=1 and Q11=1`. Its printed block — including `Uncovered owned rows: 0` — is the ONLY acceptable pass evidence; paste it, never paraphrase it.
 
 ```
 LOCAL COVERAGE GATE
@@ -293,7 +293,7 @@ Strict contract-blind isolation is required for a passing audit. The audit is pr
 | Wrapper timeout/missing/invalid | No Step 4; `BLOCKED_INFRA` (tests may be fine) | `skipped` + failure cause | skip after backlog |
 | Strict unavailable / inputs unreadable | No Step 4; `BLOCKED_INFRA`, `Adversarial=blocked` | `skipped` | skip after backlog |
 
-**Freshness guard:** sha256 both files before each pass; results are valid only for that exact pair — any later edit invalidates every earlier CLEAN. Emit the exact table schema from `blind-coverage-audit.md`; summary prose is not enough.
+**Freshness guard (semantic):** before each pass record the production file's sha256 AND the test file's normalized hash (`test-coverage-gate.py normhash --file <test>`). A result is valid only for that exact pair. A later edit whose normhash is UNCHANGED (comments/whitespace/line-wrap/trailing-comma only — the program proves it) does NOT invalidate a CLEAN; any production sha change or test normhash change does. Never widen this by judgment — the normhash decides, not intent. Emit the exact table schema from `blind-coverage-audit.md`; summary prose is not enough.
 
 ### Step 4: Adversarial Review (iterative, complexity-tiered)
 
@@ -361,7 +361,7 @@ Per-file summary print: `[status] [file] — methods [N]/[N], rows [N]/[N], Q [N
 
 1. **Backlog persistence:** unfixed out-of-scope issues → `memory/backlog.md`
 2. **Knowledge curation** per `knowledge-curate.md`
-2b. **Content-keyed review artifact (success only):** if the run modified any **production** file (incl. Step 4.5 fixes), write `memory/reviews/<base7>..<head7>-<slug>.md` with `range:`/`files:` headers per `review-artifact.md` — this run's blind audit + adversarial already reviewed that content, so pipeline gates accept it without a redundant `zuvo:review`. Skip when only test/docs files changed.
+2b. **Content-keyed review artifact (success only):** if the run modified any **production** file (incl. Step 4.5 fixes), write `memory/reviews/<base7>..<head7>-<slug>.md` with `range:`/`files:` headers per `review-artifact.md` — this run's blind audit + adversarial already reviewed that content, so pipeline gates accept it without a redundant `zuvo:review`. Skip when only test/docs files changed. **If the reviewed production edits are NOT yet committed** (no-commit session), HEAD cannot content-key them: write the PROVISIONAL form from `review-artifact.md` (working-tree blob hashes, `status: PROVISIONAL`) — it grants no coverage until the upgrade step after commit verifies the blobs and rewrites the range. Never write a normal-form artifact whose head does not contain the reviewed blobs.
 
 ### Final Test Quality Audit (REQUIRED — separate audit and fix steps, before the retro)
 
@@ -385,10 +385,12 @@ write-tests-specific additions on top of the include:
 
 - Tier D (AP13/AP16) on a PRE-EXISTING file is a rewrite, not a patch: route
   it through this skill's own Step 1 REWRITE path.
-- Fixing tests invalidates prior evidence: for every file A2 modified, re-run
-  the Step 2.5 validator (evidence lines may have shifted) and one blind-audit
-  pass on the new pair per the freshness guard. Cosmetic-only fixes still
-  count — the hash decides, not intent.
+- Fixing tests can invalidate prior evidence: for every file A2 modified,
+  re-run the Step 2.5 validator (line-form evidence may have shifted — prefer
+  `path::test name` evidence, or run `test-coverage-gate.py refresh`, to make
+  this a no-op), and re-run one blind-audit pass ONLY when the file's normhash
+  changed per the Step 3.5 semantic freshness guard. The normhash decides, not
+  intent.
 
 Print the include's `[GATE: test-quality]` line and record
 `test_quality=<PASS|WARN|N/A>:<worst tier>:<report path>` in the run telemetry.

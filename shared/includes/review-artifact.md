@@ -109,6 +109,42 @@ AND `F`'s blob at `A`'s reviewed head (the `<head>` of its `range:`) equals `B`.
 
 After the header, the normal human-readable report body follows.
 
+## Provisional form (reviewed edits not yet committed)
+
+When a run completes its review while the reviewed **production edits are still uncommitted**
+(no-commit session, "I'll commit later"), the normal form is a lie waiting to happen: `HEAD`
+does not contain the reviewed blobs, so the artifact either fails the content-key silently or
+tempts a fabricated range. Write the PROVISIONAL form instead — honest, machine-checkable, and
+deliberately **coverage-inert** until upgraded:
+
+```
+memory/reviews/<base7>..worktree-<slug>.md
+```
+
+```
+<!-- zuvo-review -->
+status: PROVISIONAL
+range: <base_sha>..WORKTREE
+files: path/one.ts, path/two.ts
+blobs: path/one.ts=<git hash-object of the WORKING-TREE file>, path/two.ts=<...>
+adversarial: zuvo/proofs/<slug>-adversarial.txt
+verdict: APPROVE|CHANGES|...
+-->
+```
+
+- `blobs:` — `git hash-object <path>` of each reviewed working-tree file at review time.
+  This is what was actually reviewed, recorded in the same currency (blob SHA) the gates use.
+- A PROVISIONAL artifact **grants no pipeline coverage** — by construction: its `range:` head
+  is not a commit, so `pg_range_reviewed` never matches it. That is intended, not a bug.
+  Gates parse only the headers they know; the extra lines are ignored.
+
+**Upgrade (after the edits are committed):** verify each recorded blob still matches —
+`git rev-parse <head>:<path>` must equal the `blobs:` entry for every file. All match → rewrite
+the artifact to the normal form (`<base7>..<head7>-<slug>.md`, real `range:`, drop `status:` and
+`blobs:`). Any mismatch means the file changed AFTER the review — the artifact is stale; a fresh
+review is required, never a silent upgrade. An abandoned PROVISIONAL artifact expires harmlessly
+(it never granted anything).
+
 ## When each skill writes it
 
 | Skill | When | Notes |

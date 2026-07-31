@@ -39,7 +39,7 @@ $ZUVO_DIR/contracts/<production-basename>.coverage.json
           "type": "entry|branch|error_path|side_effect|delegation_contract|async_state",
           "description": "throws Error('Respondent not found') when service returns null",
           "coverage": "FULL|PARTIAL|NONE|STRUCTURAL_ONLY|N/A|PARTIAL-by-constraint|UNREACHABLE",
-          "evidence": "src/respondent/__tests__/respondent.controller.spec.ts:42",
+          "evidence": "spec.ts::throws not-found when service returns null  (PREFERRED — test-name form, formatter-proof)  OR  spec.ts:42 (line form)",
           "note": "required when coverage is N/A / PARTIAL-by-constraint / UNREACHABLE"
         }
       ]
@@ -54,9 +54,11 @@ Rules the validator enforces (do not restate them from memory — run it):
 - production hash still matches (production edits invalidate the manifest)
 - at inventory phase no row may claim `FULL` (nothing is written yet)
 - at final phase every owned row is `FULL` or excused with a `note`;
-  every owned symbol has ≥1 `FULL` row; `evidence` is an existing
-  `test-file:line` that lands inside a real test; no duplicate and no empty
-  evidence; `Q7`/`Q11` are `1`; declared test files exist
+  every owned symbol has ≥1 `FULL` row; `evidence` is either the durable
+  `test-file::exact test name` form (PREFERRED — resolved against the real
+  test declarations, must match exactly one; survives formatters) or an
+  existing `test-file:line` that lands inside a real test; no duplicate and
+  no empty evidence; `Q7`/`Q11` are `1`; declared test files exist
 
 ## Validator invocation
 
@@ -70,6 +72,18 @@ python3 "$ZUVO_BASE/scripts/test-coverage-gate.py" validate \
 python3 "$ZUVO_BASE/scripts/test-coverage-gate.py" validate \
   --manifest "$ZUVO_DIR/contracts/<basename>.coverage.json" \
   --phase final --repo-root "$(git rev-parse --show-toplevel)"
+
+# One-time durability upgrade — rewrite line evidence to test-name form
+# (do this right after the final gate first passes; formatters stop
+# invalidating the manifest from then on):
+python3 "$ZUVO_BASE/scripts/test-coverage-gate.py" refresh \
+  --manifest "$ZUVO_DIR/contracts/<basename>.coverage.json" \
+  --repo-root "$(git rev-parse --show-toplevel)"
+
+# Semantic freshness hash of a test file (blind-audit freshness guard):
+# unchanged output ⇒ the edit was provably non-semantic (comments/whitespace/
+# line-wrap/trailing-comma) ⇒ a prior blind-audit CLEAN survives it.
+python3 "$ZUVO_BASE/scripts/test-coverage-gate.py" normhash --file <test-file>
 ```
 
 ## Exit codes (act on them, never reinterpret)

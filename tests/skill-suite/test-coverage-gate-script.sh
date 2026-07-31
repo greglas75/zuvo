@@ -271,7 +271,74 @@ else
   bad "textual fallback DEGRADED_PASS (exit=$rc): $out"
 fi
 
-# ── 15. usage errors exit 2 ───────────────────────────────────────────────────
+# ── 15. test-name evidence: durable form validates and rejects bad names ──────
+write_manifest "$TMP/name.json" "$SHA" "m['symbols'][2]['rows'][0]['evidence'] = 'tests/test_user_service.py::test_normalize_strips_and_lowers'"
+out="$(run_gate name.json final)"; rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'RESULT: PASS'; then
+  pass "evidence by exact test name (path::name) PASSes"
+else
+  bad "evidence by exact test name PASSes (exit=$rc): $out"
+fi
+
+write_manifest "$TMP/badname.json" "$SHA" "m['symbols'][2]['rows'][0]['evidence'] = 'tests/test_user_service.py::test_does_not_exist'"
+out="$(run_gate badname.json final)"; rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q 'no test named'; then
+  pass "nonexistent test name FAILs the gate"
+else
+  bad "nonexistent test name FAILs (exit=$rc): $out"
+fi
+
+# ── 16. refresh: converts line evidence to test-name form; still passes ───────
+write_manifest "$TMP/refresh.json" "$SHA" ""
+out="$( cd "$TMP" && python3 "$GATE" refresh --manifest refresh.json --repo-root "$TMP" 2>&1 )"; rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'REFRESH: 4 evidence rows converted' \
+   && grep -q 'tests/test_user_service.py::test_create_returns_ok' "$TMP/refresh.json"; then
+  pass "refresh rewrites line evidence to durable test-name form"
+else
+  bad "refresh rewrites line evidence (exit=$rc): $out"
+fi
+out="$(run_gate refresh.json final)"; rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'Uncovered owned rows: 0'; then
+  pass "refreshed manifest still PASSes the final gate"
+else
+  bad "refreshed manifest still PASSes (exit=$rc): $out"
+fi
+
+# ── 17. normhash: formatter-only edits keep the hash, semantic edits change it ─
+cat > "$TMP/norm-a.ts" <<'EOF'
+export function add(a: number, b: number): number {
+  // sum
+  return a + b;
+}
+EOF
+cat > "$TMP/norm-b.ts" <<'EOF'
+export function add(a: number,
+    b: number): number {
+  /* reformatted */
+  return a
+    + b;
+}
+EOF
+cat > "$TMP/norm-c.ts" <<'EOF'
+export function add(a: number, b: number): number {
+  return a - b;
+}
+EOF
+ha="$(python3 "$GATE" normhash --file "$TMP/norm-a.ts")"
+hb="$(python3 "$GATE" normhash --file "$TMP/norm-b.ts")"
+hc="$(python3 "$GATE" normhash --file "$TMP/norm-c.ts")"
+if [ -n "$ha" ] && [ "$ha" = "$hb" ]; then
+  pass "normhash: comment/whitespace/line-wrap churn keeps the hash"
+else
+  bad "normhash: formatter-only churn keeps the hash ($ha vs $hb)"
+fi
+if [ "$ha" != "$hc" ]; then
+  pass "normhash: semantic edit changes the hash"
+else
+  bad "normhash: semantic edit changes the hash"
+fi
+
+# ── 18. usage errors exit 2 ───────────────────────────────────────────────────
 python3 "$GATE" validate --manifest "$TMP/does-not-exist.json" >/dev/null 2>&1; rc=$?
 if [ "$rc" -eq 2 ]; then
   pass "unreadable manifest exits 2 (usage/input error)"

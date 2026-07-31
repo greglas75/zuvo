@@ -481,9 +481,142 @@ class SystemExit2(Exception):
     """Usage/input error — mapped to exit 2 in main()."""
 
 
+# ── Normalized (formatting-insensitive) hashing ───────────────────────────────
+#
+# Guarantee direction matters: an UNCHANGED normhash is proof the edit was
+# non-semantic (comments/whitespace/line-wrap/trailing-comma only), so a prior
+# blind-audit CLEAN may survive it. A CHANGED normhash may still be cosmetic
+# (e.g. quote-style churn) — treat it as semantic and re-audit. Never the other
+# way around.
+
+def _normalize_c_family(source, line_comment_hash=False):
+    """Strip comments, collapse whitespace, drop trailing commas — string-aware."""
+    out = []
+    i, n = 0, len(source)
+    while i < n:
+        c = source[i]
+        if c in "'\"`":
+            quote = c
+            j = i + 1
+            while j < n:
+                if source[j] == "\\":
+                    j += 2
+                    continue
+                if source[j] == quote:
+                    j += 1
+                    break
+                j += 1
+            out.append(source[i:j])
+            i = j
+        elif c == "/" and i + 1 < n and source[i + 1] == "/":
+            while i < n and source[i] != "\n":
+                i += 1
+        elif c == "/" and i + 1 < n and source[i + 1] == "*":
+            end = source.find("*/", i + 2)
+            i = n if end == -1 else end + 2
+        elif line_comment_hash and c == "#":
+            while i < n and source[i] != "\n":
+                i += 1
+        elif c.isspace():
+            out.append(" ")
+            while i < n and source[i].isspace():
+                i += 1
+        else:
+            out.append(c)
+            i += 1
+    collapsed = "".join(out)
+    # spaces are only semantic between two identifier characters
+    ident = r"[A-Za-z0-9_$]"
+    collapsed = re.sub(r"(?<!%s) | (?!%s)" % (ident, ident), "", collapsed)
+    # prettier trailing-comma churn: `,` immediately before a closer is cosmetic
+    collapsed = re.sub(r",(?=[)\]}])", "", collapsed)
+    return collapsed
+
+
+def _normalize_python(source):
+    """Python: whitespace is semantic — only strip comments/trailing space/blank lines."""
+    lines = []
+    for line in source.splitlines():
+        # naive-safe comment strip: only when '#' is not inside a string on that line
+        stripped = ""
+        in_str = None
+        i = 0
+        while i < len(line):
+            ch = line[i]
+            if in_str:
+                stripped += ch
+                if ch == "\\":
+                    if i + 1 < len(line):
+                        stripped += line[i + 1]
+                    i += 2
+                    continue
+                if ch == in_str:
+                    in_str = None
+            elif ch in "'\"":
+                in_str = ch
+                stripped += ch
+            elif ch == "#":
+                break
+            else:
+                stripped += ch
+            i += 1
+        stripped = stripped.rstrip()
+        if stripped:
+            lines.append(stripped)
+    return "\n".join(lines)
+
+
+def normalized_hash(path):
+    with open(path, encoding="utf-8") as f:
+        source = f.read()
+    lang = detect_language(path)
+    if lang == "python":
+        normalized = _normalize_python(source)
+    elif lang == "php":
+        normalized = _normalize_c_family(source, line_comment_hash=True)
+    else:
+        normalized = _normalize_c_family(source)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+# ── Test-name evidence resolution ─────────────────────────────────────────────
+#
+# `path::<test name>` evidence survives formatters (names are stable, line
+# numbers are not). The name must match exactly one test declaration.
+
+TEST_NAME_PATTERNS = [
+    # it('name' / test("name" / it.each(...)`name` — capture the quoted first arg
+    re.compile(r"\b(?:it|test)(?:\.\w+(?:\([^)]*\))?)*\s*\(\s*(['\"`])(?P<name>(?:\\.|(?!\1).)*)\1"),
+    re.compile(r"^\s*(?:async\s+)?def\s+(?P<name>test_\w+)", re.M),
+    re.compile(r"\bpublic\s+function\s+(?P<name>test\w+)", re.I),
+]
+
+
+def find_test_by_name(test_source, name):
+    """Return (line, count) for test declarations whose name == `name`."""
+    hits = []
+    for pat in TEST_NAME_PATTERNS:
+        for m in pat.finditer(test_source):
+            if m.group("name") == name:
+                hits.append(test_source.count("\n", 0, m.start()) + 1)
+    return (hits[0] if hits else None), len(hits)
+
+
+def enclosing_test_name(test_source, line):
+    """Name of the nearest test declaration at or before `line` (1-indexed)."""
+    best_line, best_name = None, None
+    for pat in TEST_NAME_PATTERNS:
+        for m in pat.finditer(test_source):
+            decl_line = test_source.count("\n", 0, m.start()) + 1
+            if decl_line <= line and (best_line is None or decl_line > best_line):
+                best_line, best_name = decl_line, m.group("name")
+    return best_name
+
+
 # ── Validation ────────────────────────────────────────────────────────────────
 
 EVIDENCE_RE = re.compile(r"^(?P<path>.+?):(?P<start>\d+)(?:-(?P<end>\d+))?$")
+EVIDENCE_NAME_RE = re.compile(r"^(?P<path>.+?)::(?P<name>.+)$")
 
 
 def load_manifest(path):
@@ -629,10 +762,41 @@ def validate(manifest_path, phase, repo_root):
             if not evidence or not isinstance(evidence, str):
                 errors.append("symbol %s row %s: FULL with empty evidence" % (name, rid))
                 continue
+
+            # Preferred durable form: 'test-file::exact test name' (survives
+            # formatters — names are stable, line numbers are not).
+            mn = EVIDENCE_NAME_RE.match(evidence.strip())
+            if mn:
+                ev_path = resolve_path(mn.group("path"), repo_root, manifest_dir)
+                key = "%s::%s" % (os.path.normpath(mn.group("path")), mn.group("name"))
+                if key in seen_evidence:
+                    errors.append("DUPLICATE EVIDENCE: %s cited by both %s and %s "
+                                  "— each owned row needs its own assertion"
+                                  % (key, seen_evidence[key], "%s/%s" % (name, rid)))
+                else:
+                    seen_evidence[key] = "%s/%s" % (name, rid)
+                if not os.path.isfile(ev_path):
+                    errors.append("symbol %s row %s: evidence file does not exist: %s"
+                                  % (name, rid, mn.group("path")))
+                    continue
+                with open(ev_path, encoding="utf-8") as f:
+                    test_source = f.read()
+                _line, count = find_test_by_name(test_source, mn.group("name"))
+                if count == 0:
+                    errors.append("symbol %s row %s: no test named %r in %s"
+                                  % (name, rid, mn.group("name"), mn.group("path")))
+                elif count > 1:
+                    errors.append("symbol %s row %s: test name %r is ambiguous "
+                                  "(%d declarations) in %s — rename or fall back "
+                                  "to file:line" % (name, rid, mn.group("name"),
+                                                    count, mn.group("path")))
+                continue
+
             m = EVIDENCE_RE.match(evidence.strip())
             if not m:
                 errors.append("symbol %s row %s: evidence %r is not "
-                              "'test-file:line' or 'test-file:start-end'"
+                              "'test-file:line', 'test-file:start-end', or "
+                              "'test-file::test name'"
                               % (name, rid, evidence))
                 continue
             ev_path = resolve_path(m.group("path"), repo_root, manifest_dir)
@@ -716,6 +880,50 @@ def validate(manifest_path, phase, repo_root):
     return 0
 
 
+# ── Refresh: rewrite line-based evidence to durable test-name evidence ────────
+
+def refresh(manifest_path, repo_root):
+    manifest = load_manifest(manifest_path)
+    manifest_dir = os.path.dirname(os.path.abspath(manifest_path))
+    converted, skipped = 0, 0
+    for sym in manifest["symbols"]:
+        for row in sym.get("rows") or []:
+            if not isinstance(row, dict):
+                continue
+            evidence = (row.get("evidence") or "").strip()
+            m = EVIDENCE_RE.match(evidence)
+            if not m or EVIDENCE_NAME_RE.match(evidence):
+                continue
+            ev_path = resolve_path(m.group("path"), repo_root, manifest_dir)
+            if not os.path.isfile(ev_path):
+                skipped += 1
+                print("SKIP %s/%s: file missing: %s"
+                      % (sym.get("symbol"), row.get("id"), m.group("path")))
+                continue
+            with open(ev_path, encoding="utf-8") as f:
+                test_source = f.read()
+            tname = enclosing_test_name(test_source, int(m.group("start")))
+            if not tname:
+                skipped += 1
+                print("SKIP %s/%s: no enclosing test at %s"
+                      % (sym.get("symbol"), row.get("id"), evidence))
+                continue
+            _line, count = find_test_by_name(test_source, tname)
+            if count != 1:
+                skipped += 1
+                print("SKIP %s/%s: name %r ambiguous (%d) — keeping line form"
+                      % (sym.get("symbol"), row.get("id"), tname, count))
+                continue
+            row["evidence"] = "%s::%s" % (m.group("path"), tname)
+            converted += 1
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+        f.write("\n")
+    print("REFRESH: %d evidence rows converted to test-name form, %d skipped"
+          % (converted, skipped))
+    return 0
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def main(argv):
@@ -731,6 +939,19 @@ def main(argv):
     p_validate.add_argument("--manifest", required=True)
     p_validate.add_argument("--phase", choices=["inventory", "final"], default="final")
     p_validate.add_argument("--repo-root", default=None)
+
+    p_norm = sub.add_parser(
+        "normhash",
+        help="formatting-insensitive sha256 (unchanged hash proves a "
+             "non-semantic edit; used by the blind-audit freshness guard)")
+    p_norm.add_argument("--file", required=True)
+
+    p_refresh = sub.add_parser(
+        "refresh",
+        help="rewrite line-based evidence to durable test-name form "
+             "(path::test name) so formatters stop invalidating manifests")
+    p_refresh.add_argument("--manifest", required=True)
+    p_refresh.add_argument("--repo-root", default=None)
 
     args = parser.parse_args(argv)
     if args.command is None:
@@ -748,6 +969,13 @@ def main(argv):
                 "symbols": symbols,
             }, indent=2))
             return 0 if mode == "ast" else 3
+        if args.command == "normhash":
+            if not os.path.isfile(args.file):
+                raise SystemExit2("file not found: %s" % args.file)
+            print(normalized_hash(args.file))
+            return 0
+        if args.command == "refresh":
+            return refresh(args.manifest, args.repo_root)
         return validate(args.manifest, args.phase, args.repo_root)
     except SystemExit2 as e:
         sys.stderr.write("ERROR: %s\n" % e)

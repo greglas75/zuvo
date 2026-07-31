@@ -89,8 +89,11 @@ respondent.controller.export.spec.ts
 ## Step 2.5 — Map tests to the FROZEN inventory
 
 After writing (per sibling spec order), fill each row's `coverage` + `evidence`
-in the manifest, set `status: "final"`, record `quality_gates.Q7/Q11` from the
-Step 3 self-eval, then run the final validation (see schema doc). The printed
+in the manifest — prefer the durable `test-file::exact test name` evidence form
+(or convert once with `test-coverage-gate.py refresh` after the gate first
+passes; formatters then stop invalidating the manifest) — set
+`status: "final"`, record `quality_gates.Q7/Q11` from the Step 3 self-eval,
+then run the final validation (see schema doc). The printed
 `Uncovered owned rows: 0` from the VALIDATOR — not from the agent — is the only
 passing condition. Evidence rules (existing file, line inside a test, no
 duplicates, no empties) are enforced by the program; a FAIL is closed by adding
