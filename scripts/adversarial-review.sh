@@ -112,6 +112,7 @@ EXCLUDE_PROVIDER=""  # --exclude: skip this provider (used by --rotate to avoid 
 EXCLUDE_LAST=""      # --exclude-last: cross-call rotation handoff (D4)
 APPEND_ARTIFACT=false  # --append-artifact: append this pass to an existing artifact (rotations)
 KNOWN_FINDINGS=""      # --known-finding FP (repeatable): fingerprints already dispositioned
+NO_CHUNK=false         # --no-chunk / ZUVO_ADV_NO_CHUNK=1: disable auto-chunking, fall back to truncation
 # Run-scoped provider-failure cache. A rotation is N separate invocations of this script, so a
 # provider whose auth/subscription is dead costs the full per-provider timeout on EVERY pass
 # unless the failure is remembered between them. Keyed by ZUVO_RUN_ID when the caller sets one,
@@ -168,6 +169,7 @@ while [[ $# -gt 0 ]]; do
       fi
       KNOWN_FINDINGS="${KNOWN_FINDINGS:+$KNOWN_FINDINGS$'\n'}$2"; shift 2 ;;
     --dry-run)   DRY_RUN=true; shift ;;
+    --no-chunk)  NO_CHUNK=true; shift ;;
     --help|-h)
       cat <<'HELP'
 Usage: adversarial-review.sh [OPTIONS] [--diff REF] [--files "path"]
@@ -222,6 +224,9 @@ Input:
                    (use for sequential --rotate passes so pass 1 is not lost)
   --known-finding FP  Fingerprint already dispositioned in a previous pass (repeatable).
                    Repeats are reported separately and do not consume the finding budget.
+  --no-chunk       Disable auto-chunking of oversized input (env: ZUVO_ADV_NO_CHUNK=1).
+                   Default: input over the char cap with 2+ file boundaries is split at
+                   file boundaries and reviewed chunk-by-chunk — no silent truncation.
   (stdin)          Pipe a diff
 
 Environment variables:
@@ -393,6 +398,119 @@ fi
 # Document modes get 50K, code/test modes get 30K (must fit 2+ files from corpus benchmarks)
 MAX_CHARS=30000
 [[ "$REVIEW_MODE" =~ ^(spec|plan|audit|migrate)$ ]] && MAX_CHARS=50000
+
+# ─── Auto-chunk oversized input at FILE boundaries (2026-08-01) ───────────────
+# 32% of all runs on record hit MAX_CHARS (2,214 of 6,920 in ~/.zuvo/adversarial.log;
+# 45% in June) and until the truncation WARN landed the overflow was cut SILENTLY —
+# one 543KB range dropped the file holding five CRITICALs from three providers.
+# Chunking was caller folklore rediscovered per run; now the script owns it: split
+# the input at file boundaries, re-invoke ITSELF once per chunk (ZUVO_ADV_CHUNK is
+# the recursion guard — a child never chunks again), merge outputs and exit codes.
+# Truncation remains only for: document modes (one artifact, no file boundaries to
+# cut at), a single file bigger than the cap (the child's truncate path, loud WARN),
+# or an explicit --no-chunk / ZUVO_ADV_NO_CHUNK=1.
+_chunk_headers=0
+if [[ ${#INPUT} -gt $MAX_CHARS && ! "$REVIEW_MODE" =~ ^(spec|plan|audit|migrate|tests)$ ]]; then
+  _chunk_headers=$(printf '%s\n' "$INPUT" | { grep -c -E '^(diff --git |=== FILE: )' || true; })
+fi
+if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "true" \
+      && "${ZUVO_ADV_NO_CHUNK:-0}" != "1" && "${_chunk_headers:-0}" -ge 2 ]]; then
+  _ck_dir=$(mktemp -d "${TMPDIR:-/tmp}/zuvo-adv-chunks.XXXXXX")
+  trap 'rm -rf "$_ck_dir"' EXIT
+
+  # Pass 1: split into sections (sec-0000 = any preamble before the first header).
+  printf '%s\n' "$INPUT" | awk -v dir="$_ck_dir" '
+    BEGIN { n = 0; fn = sprintf("%s/sec-%04d", dir, n) }
+    /^(diff --git |=== FILE: )/ { close(fn); n++; fn = sprintf("%s/sec-%04d", dir, n) }
+    { print >> fn }
+  '
+  # Pass 2: pack sections greedily into chunks of at most MAX_CHARS-500 (headroom
+  # for the per-chunk context note). A single section over the cap becomes its own
+  # chunk — the child truncates it with the existing loud WARN; half of one file
+  # still beats none, and every OTHER file keeps a full-fidelity review.
+  _ck_budget=$((MAX_CHARS - 500))
+  _ck_n=0; _ck_size=0; _ck_file=""
+  for _sec in "$_ck_dir"/sec-*; do
+    [[ -s "$_sec" ]] || continue
+    _sec_size=$(wc -c < "$_sec" | tr -d ' ')
+    if [[ -z "$_ck_file" || $((_ck_size + _sec_size)) -gt $_ck_budget && $_ck_size -gt 0 ]]; then
+      _ck_n=$((_ck_n + 1)); _ck_file=$(printf '%s/chunk-%03d' "$_ck_dir" "$_ck_n"); _ck_size=0
+    fi
+    cat "$_sec" >> "$_ck_file"
+    _ck_size=$((_ck_size + _sec_size))
+  done
+
+  echo "CHUNKED INPUT: ${#INPUT} chars > ${MAX_CHARS} cap -> ${_ck_n} chunks at file boundaries (no truncation)" >&2
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    echo "=== DRY RUN — chunk plan ===" >&2
+    for _ck in "$_ck_dir"/chunk-*; do
+      echo "  $(basename "$_ck"): $(wc -c < "$_ck" | tr -d ' ') chars, files: $(grep -c -E '^(diff --git |=== FILE: )' "$_ck" 2>/dev/null || echo 0)" >&2
+    done
+    exit 0
+  fi
+
+  # Rebuild the child invocation from parsed state (never forward raw "$@" — the
+  # input flags must not leak; each child reads its chunk on stdin).
+  _ck_base_args=()
+  case "$MULTI_MODE" in
+    multi)  _ck_base_args+=(--multi) ;;
+    single) _ck_base_args+=(--single) ;;
+    rotate) _ck_base_args+=(--rotate) ;;
+  esac
+  [[ -n "$PROVIDER" ]]         && _ck_base_args+=(--provider "$PROVIDER")
+  [[ -n "$EXCLUDE_PROVIDER" ]] && _ck_base_args+=(--exclude "$EXCLUDE_PROVIDER")
+  [[ -n "$EXCLUDE_LAST" ]]     && _ck_base_args+=(--exclude-last "$EXCLUDE_LAST")
+  [[ -n "$REVIEW_MODE" ]]      && _ck_base_args+=(--mode "$REVIEW_MODE")
+  [[ "$OUTPUT_FORMAT" == "json" ]] && _ck_base_args+=(--json)
+  if [[ -n "$KNOWN_FINDINGS" ]]; then
+    while IFS= read -r _kf; do
+      [[ -n "$_kf" ]] && _ck_base_args+=(--known-finding "$_kf")
+    done <<< "$KNOWN_FINDINGS"
+  fi
+
+  _ck_rc=0; _ck_ok=0; _ck_fail=0; _ck_i=0
+  for _ck in "$_ck_dir"/chunk-*; do
+    _ck_i=$((_ck_i + 1))
+    _ck_args=("${_ck_base_args[@]}")
+    _ck_args+=(--context "${CONTEXT_HINT:+$CONTEXT_HINT }[chunk ${_ck_i}/${_ck_n} of a larger range — sibling files are reviewed in other chunks; do NOT report them as missing]")
+    if [[ -n "$ARTIFACT_PATH" ]]; then
+      _ck_args+=(--artifact "$ARTIFACT_PATH")
+      # chunk 1 respects the caller's append choice; later chunks always append
+      # so one artifact accumulates every chunk's REVIEW BY evidence.
+      if [[ "$_ck_i" -gt 1 || "$APPEND_ARTIFACT" == "true" ]]; then
+        _ck_args+=(--append-artifact)
+      fi
+    fi
+    _ck_child_rc=0
+    ZUVO_ADV_CHUNK="${_ck_i}/${_ck_n}" "$0" "${_ck_args[@]}" \
+      < "$_ck" > "$_ck_dir/out-${_ck_i}" 2> "$_ck_dir/err-${_ck_i}" || _ck_child_rc=$?
+    sed "s|^|  [chunk ${_ck_i}/${_ck_n}] |" "$_ck_dir/err-${_ck_i}" >&2 || true
+    if [[ "$_ck_child_rc" -eq 130 || "$_ck_child_rc" -eq 143 ]]; then
+      echo "CHUNKED: interrupted at chunk ${_ck_i}/${_ck_n}" >&2
+      exit "$_ck_child_rc"
+    fi
+    if [[ "$_ck_child_rc" -eq 0 ]]; then _ck_ok=$((_ck_ok + 1)); else _ck_fail=$((_ck_fail + 1)); fi
+    [[ "$_ck_child_rc" -gt "$_ck_rc" ]] && _ck_rc=$_ck_child_rc
+    if [[ "$OUTPUT_FORMAT" != "json" ]]; then
+      printf '=== ADVERSARIAL CHUNK %d/%d ===\n' "$_ck_i" "$_ck_n"
+      cat "$_ck_dir/out-${_ck_i}"
+      printf '\n'
+    fi
+  done
+
+  if [[ "$OUTPUT_FORMAT" == "json" ]]; then
+    # One wrapper object; callers detect .chunked to iterate .results[].
+    if command -v jq >/dev/null 2>&1; then
+      jq -s --argjson n "$_ck_n" '{chunked: true, chunks: $n, results: .}' \
+        "$_ck_dir"/out-* 2>/dev/null || cat "$_ck_dir"/out-*
+    else
+      cat "$_ck_dir"/out-*
+    fi
+  fi
+  echo "CHUNKED: ${_ck_n} chunks — ${_ck_ok} ok, ${_ck_fail} failed. Aggregate exit: ${_ck_rc}." >&2
+  exit "$_ck_rc"
+fi
 
 ORIG_CHARS=${#INPUT}
 INPUT_TRUNCATED=false

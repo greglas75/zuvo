@@ -106,14 +106,18 @@ assert_contains "$(hdr "$TD/a8.md")" "provider_count=1" "the review still ran"
 
 # ─── Case 6: truncation must cut on a FILE boundary, not mid-file ──────────
 
-start_test "PROV.9 oversized multi-file input drops the trailing file WHOLE and names it"
+# Since 2026-08-01 the DEFAULT for oversized multi-file input is auto-chunking
+# (see test-input-chunking.sh) — the legacy whole-file-drop truncation tested
+# here remains reachable via --no-chunk / ZUVO_ADV_NO_CHUNK=1 and inside chunk
+# children, so its contract still needs this coverage.
+start_test "PROV.9 oversized multi-file input (--no-chunk) drops the trailing file WHOLE and names it"
 BIG="$TD/big.diff"
 python3 - "$BIG" <<'PYEOF'
 import sys
 def f(n,c): return f"diff --git a/{n} b/{n}\n" + "".join(f"+line {i} of {n}\n" for i in range(c))
 open(sys.argv[1],'w').write(f('one.ts',700)+f('two.ts',700)+f('three.ts',700))
 PYEOF
-out=$(bash "$ADV" --dry-run < "$BIG" 2>"$TD/trunc.err")
+out=$(bash "$ADV" --dry-run --no-chunk < "$BIG" 2>"$TD/trunc.err")
 sent=$(printf '%s' "$out" | grep -c '^diff --git' || true)
 assert_eq "2" "$sent" "only whole files are sent (the partial third is dropped)"
 assert_contains "$out" "Files NOT included: three.ts" "the dropped file is named in the prompt manifest"

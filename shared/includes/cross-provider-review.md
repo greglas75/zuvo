@@ -127,11 +127,29 @@ If no cross-provider tool is available:
 
 ## Large diffs
 
-`--all-providers`/`--multi` combined with `--artifact` on a >5000-line (~600KB+) aggregate diff can exit 0 yet write NO artifact file — a silent no-artifact failure. Guard against it:
+**Auto-chunking is built in (2026-08-01).** Input over the cap (30K chars code/test, 50K
+document modes) with 2+ file boundaries is split at file boundaries automatically; the script
+re-invokes itself per chunk and merges outputs (`=== ADVERSARIAL CHUNK i/N ===` banners; in
+`--json` a `{chunked: true, chunks: N, results: [...]}` wrapper; one `--artifact` accumulates
+every chunk's evidence). You do NOT pre-chunk by hand any more — 32% of all historical runs hit
+the cap and relied on each agent remembering to. Stderr prints
+`CHUNKED INPUT: <orig> chars > <cap> cap -> N chunks … (no truncation)`.
 
-1. **Chunk or rotate above ~3000 lines.** For diffs over ~3000 lines, use `--rotate` (one provider per pass) instead of `--all-providers`, and/or pre-chunk the diff by file group and run a pass per group.
-2. **Always verify the artifact exists and is non-empty** before treating a pass as complete: `[ -s "$ARTIFACT" ] || { echo "[CROSS-REVIEW] empty artifact — diff too large; rotate/chunk and retry"; }`. Exit 0 alone does NOT prove the pass produced findings.
-3. **A truncated pass is NOT coverage for the files it dropped.** The wrapper caps input (30K code/test, 50K document modes) and prints `WARN: input truncated … (omitted: <files>)` on stderr. Exit 0 and a populated artifact are still produced — so a pass that never saw the highest-risk file looks exactly like a clean one. Whenever that warning appears (or `input_truncated: true` in `--json`), re-run per file for the omitted set before accepting the result, and never report the omitted files as reviewed. Ordering matters too: put the files under review FIRST in the enriched input, so what falls off the end is context, not the subject.
+What still needs caller attention:
+
+1. **Wall time scales with chunk count** — each chunk is a full provider pass. For very large
+   ranges prefer `--rotate` (one provider per chunk) over `--multi`; a 500KB range under
+   `--multi` is N chunks x M providers.
+2. **Always verify the artifact exists and is non-empty** before treating a pass as complete:
+   `[ -s "$ARTIFACT" ] || { echo "[CROSS-REVIEW] empty artifact"; }`. Exit 0 alone does NOT
+   prove the pass produced findings.
+3. **Truncation still exists in three places** and a truncated pass is NOT coverage for what it
+   dropped: a SINGLE file bigger than the cap (no boundary to cut at — its own chunk, tail
+   truncated), an explicit `--no-chunk` / `ZUVO_ADV_NO_CHUNK=1`, and document modes
+   (spec/plan/audit/migrate — one artifact, no file boundaries). Whenever
+   `WARN: input truncated … (omitted: <files>)` appears (or `input_truncated: true` in
+   `--json`), re-run the omitted set before accepting the result, and never report omitted
+   files as reviewed.
 
 ## Bounding adversarial whack-a-mole (finding closure)
 

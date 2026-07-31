@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# mock-echo-files — Mock provider that reports WHICH files it saw in the prompt.
+# Exists for the chunking suite: the silent-truncation regression is precisely
+# "a file was in the input the caller sent but no provider ever saw it", and
+# only a provider that echoes its actual visibility can prove that.
+prompt="$(cat)"
+echo "SEEN FILES:"
+printf '%s\n' "$prompt" | sed -n -E 's#^diff --git a/(.*) b/.*#\1#p; s/^=== FILE: (.*) ===$/\1/p'
+echo "CRITICAL: mock finding anchored to the last seen file"
+exit 0
