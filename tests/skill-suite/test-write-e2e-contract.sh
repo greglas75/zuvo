@@ -627,7 +627,7 @@ fi
 # FIX 1 -- LOCAL is resolution-gated, not name-matched.
 has "$LIVEVAL" 'resolve|resolution'          "LOCAL requires resolving the host, not matching its name"
 has "$LIVEVAL" '127\.0\.0\.0/8'              "resolved address must fall in 127.0.0.0/8"
-has "$LIVEVAL" 'link-local'                  "link-local range named as an accepted resolved destination"
+has "$LIVEVAL" 'link-local'                  "link-local named (see (8c): it must be named as a DENIAL, not an accepted range)"
 if grep -Ei 'name|suffix|regex' "$LIVEVAL" 2>/dev/null \
    | grep -Eqi 'not evidence|insufficient|does not prove|is not a destination|never proof'; then
   pass "live-validation.md states plainly that a hostname is not evidence about the destination"
@@ -701,6 +701,450 @@ check_combo 'no/no/BLOCKED/BLOCKED'    'no consent at all blocks read-only and m
 check_combo 'no/yes/BLOCKED/BLOCKED'   'destructive consent without a permitted destination grants nothing'
 check_combo 'yes/no/ALLOWED/BLOCKED'   'external allowed but destructive NOT consented still blocks mutations'
 check_combo 'yes/yes/ALLOWED/ALLOWED'  'both consents given permits mutating flows'
+
+# ── (8c) live-validation.md: what "loopback" actually means ────────────────
+# Delta adversarial round on the (8b) revision. FIX A is the dangerous one and
+# it came from the INSTRUCTION, not the draft: accepting link-local as LOCAL
+# admits 169.254.169.254 -- the cloud instance metadata endpoint -- which would
+# hand unrestricted mutating traffic to an SSRF target inside the very file
+# whose job is to prevent that.
+#
+#   FIX A  LOCAL == loopback only. Link-local is DENIED, by name and by reason.
+#   FIX B  host.docker.internal resolves to a bridge address on Docker Desktop,
+#          so a listed-but-never-admissible entry had to be decided either way.
+#   FIX C  fast-pathing `localhost` contradicted the file's own "names are not
+#          evidence" thesis -- only literal IPs may skip resolution.
+#   FIX D  re-resolution is TOCTOU-racy; the honest position is pre-flight
+#          heuristic + request-level enforcement, not a fake guarantee.
+
+# FIX A -- link-local is denied, and the metadata endpoint is the stated reason.
+has "$LIVEVAL" '169\.254\.169\.254'   "names the instance metadata endpoint 169.254.169.254"
+if grep -Ei '169\.254\.169\.254|link-local' "$LIVEVAL" 2>/dev/null | grep -Eqi 'metadata'; then
+  pass "live-validation.md gives the metadata-endpoint reason for denying link-local"
+else
+  bad "live-validation.md denies link-local without naming the metadata-endpoint reason"
+fi
+# Structural: EVERY mention of a link-local range must carry a denial. An
+# accepting mention is the exact regression this assertion exists to catch.
+ll_bad=""
+while IFS= read -r line; do
+  [ -n "$line" ] || continue
+  printf '%s' "$line" | grep -Eqi 'not |never|deny|denied|exclude|refus|blocked|must not|no longer' \
+    || ll_bad="$ll_bad [${line%%:*}]"
+done < <(grep -Eni '169\.254\.0\.0/16|fe80::|169\.254\.169\.254' "$LIVEVAL" 2>/dev/null)
+if [ -z "$ll_bad" ]; then
+  pass "every link-local mention in live-validation.md is a denial"
+else
+  bad "link-local mentioned WITHOUT a denial at line(s):$ll_bad (accepting it admits 169.254.169.254)"
+fi
+if grep -Ei 'link-local' "$LIVEVAL" 2>/dev/null | grep -Eqi 'STAGING'; then
+  pass "live-validation.md routes genuine link-local setups through STAGING"
+else
+  bad "live-validation.md does not send a real link-local dev host through the STAGING path"
+fi
+has "$LIVEVAL" 'loopback only|only loopback|means loopback' "LOCAL is defined as loopback ONLY"
+
+# FIX B -- host.docker.internal is decided, not left dangling.
+if grep -Ei 'host\.docker\.internal' "$LIVEVAL" 2>/dev/null | grep -Eqi 'only (if|when)|bridge|non-loopback|not loopback|dropped'; then
+  pass "live-validation.md states the host.docker.internal decision (carve-out or drop)"
+else
+  bad "live-validation.md lists host.docker.internal without deciding whether the rule can ever admit it"
+fi
+has "$LIVEVAL" 'Docker Desktop' "names Docker Desktop as the environment where the bridge address applies"
+
+# FIX C -- only literal IPs skip resolution; `localhost` is a name like any other.
+if grep -Ei 'literal' "$LIVEVAL" 2>/dev/null | grep -Eqi 'only|no-resolution|nothing to resolve'; then
+  pass "live-validation.md limits the no-resolution fast path to literal IP forms"
+else
+  bad "live-validation.md does not restrict the fast path to literal IP addresses"
+fi
+if grep -Ei 'localhost' "$LIVEVAL" 2>/dev/null | grep -Eqi 'resolved like|resolve it|is resolved|no free pass|/etc/hosts'; then
+  pass "live-validation.md resolves (or explicitly justifies) localhost instead of trusting the name"
+else
+  bad "live-validation.md fast-paths localhost with no rationale -- contradicts its own thesis"
+fi
+
+# FIX D -- TOCTOU stated as a limit, with the real enforcement layer named.
+has "$LIVEVAL" 'TOCTOU|time-of-check' "names the TOCTOU race between resolution and connection"
+if grep -Ei 'pre-flight|preflight heuristic|heuristic' "$LIVEVAL" 2>/dev/null | grep -Eqi 'resolution|resolve'; then
+  pass "live-validation.md calls resolution a pre-flight heuristic, not a guarantee"
+else
+  bad "live-validation.md presents resolution as airtight (no pre-flight/heuristic framing)"
+fi
+if grep -Ei 'request-level|request level' "$LIVEVAL" 2>/dev/null | grep -Eqi 'enforce|enforcement'; then
+  pass "live-validation.md names request-level checking as the actual enforcement layer"
+else
+  bad "live-validation.md does not position request-level checking as the enforcement layer"
+fi
+if grep -Ei 'browser' "$LIVEVAL" 2>/dev/null | grep -Eqi 'cache|caches'; then
+  pass "live-validation.md names the browser's own DNS cache as part of the residual risk"
+else
+  bad "live-validation.md omits the browser DNS cache from the TOCTOU limitation"
+fi
+if grep -Ei 'E2E-Q4' "$LIVEVAL" 2>/dev/null | grep -Fq 'network-mocking.md'; then
+  pass "live-validation.md points the enforcement layer at network-mocking.md (E2E-Q4)"
+else
+  bad "live-validation.md does not cite network-mocking.md / E2E-Q4 as the enforcement layer"
+fi
+
+# ── (12) SKILL.md V2 contract ───────────────────────────────────────────────
+# The reference files above only matter if SKILL.md actually POINTS at them. V1
+# carried the same material inline (507 lines) and drifted from it; the size
+# bound is the mechanical guard against that material creeping back.
+SKILL="$ROOT/skills/write-e2e/SKILL.md"
+if [ ! -f "$SKILL" ]; then
+  bad "missing: skills/write-e2e/SKILL.md"
+else
+  # Body of a '## <heading>' up to the next '## ' (heading line excluded).
+  sk_section() { awk -v pat="$1" '$0 ~ pat {f=1; next} f && /^## /{f=0} f' "$SKILL"; }
+
+  # (12a) size bound, BOTH ends. Below 180 the phase skeleton cannot name the
+  # states and gates it must; above 250 the references are being restated inline.
+  sk_lines="$(wc -l < "$SKILL" | tr -d ' ')"
+  if [ "$sk_lines" -ge 180 ] && [ "$sk_lines" -le 250 ]; then
+    pass "SKILL.md is $sk_lines lines (within 180..250)"
+  else
+    bad "SKILL.md is $sk_lines lines -- want 180..250"
+  fi
+
+  # (12b) the V2 argument grammar, plus the positional alias the website page and
+  # existing users depend on -- kept, but marked deprecated so it can eventually go.
+  ARGS="$(sk_section '^## Argument Parsing')"
+  if [ -z "$ARGS" ]; then
+    bad "SKILL.md has no '## Argument Parsing' section"
+  else
+    for a in '--scope <path>' '--flow <name>' '--output <dir>' '--base-url <url>' '--max-flows N'; do
+      if printf '%s\n' "$ARGS" | grep -Fq -- "$a"; then
+        pass "Argument Parsing documents \`$a\`"
+      else
+        bad "Argument Parsing does not document \`$a\`"
+      fi
+    done
+    for a in '--live' '--auto' '--flows' '--dry-run'; do
+      printf '%s\n' "$ARGS" | grep -Fq -- "$a" \
+        && pass "Argument Parsing retains \`$a\`" \
+        || bad "Argument Parsing lost \`$a\`"
+    done
+    if printf '%s\n' "$ARGS" | grep -F '[path]' | grep -Eqi 'deprecat'; then
+      pass "Argument Parsing keeps '[path]' with a deprecation note"
+    else
+      bad "Argument Parsing drops '[path]' or does not mark it deprecated (website page + users depend on it)"
+    fi
+    if printf '%s\n' "$ARGS" | grep -F '[path]' | grep -Fq -- '--scope'; then
+      pass "'[path]' is documented as an alias for --scope"
+    else
+      bad "'[path]' is not tied to --scope as an alias"
+    fi
+  fi
+
+  # (12c) scale defaults 1 / 3 / 20-only-explicit. V1 defaulted MAX_FLOWS to 20 and
+  # Codex+Cursor force --auto, so V1 could emit 20 specs with nobody deciding to.
+  if printf '%s\n' "$ARGS" | grep -Ei 'scope|flow <name>|named' | grep -qE '\| *1 *\|'; then
+    pass "scale default: a scoped/named request generates 1 flow"
+  else
+    bad "scale default for a scoped/named request (1 flow) not stated in Argument Parsing"
+  fi
+  if printf '%s\n' "$ARGS" | grep -F -- '--auto' | grep -qE '\| *3 *\|'; then
+    pass "scale default: bare --auto generates 3 flows"
+  else
+    bad "scale default for bare --auto (3 flows) not stated in Argument Parsing"
+  fi
+  if printf '%s\n' "$ARGS" | grep -F -- '--max-flows' | grep -Fq '20'; then
+    pass "scale default: 20 flows only via --flows / an explicit --max-flows 20"
+  else
+    bad "Argument Parsing does not tie 20 flows to an explicit --max-flows / --flows request"
+  fi
+  hasnt "$SKILL" 'MAX_FLOWS *= *20|\(default: *20\)|default: *`?20' "carries no 20-flow default"
+
+  # (12d) origin classes and the verification states are named in the phase
+  # skeleton itself -- a bare 'LOCAL' is already satisfied by VERIFIED_LOCAL, so
+  # the three origin classes must appear together on one line.
+  if grep -Eq 'Origin:.*LOCAL.*STAGING.*EXTERNAL_UNKNOWN' "$SKILL"; then
+    pass "SKILL.md names all three origin classes on one 'Origin:' line"
+  else
+    bad "SKILL.md has no 'Origin: LOCAL | STAGING | EXTERNAL_UNKNOWN' line in the phase skeleton"
+  fi
+  for st in GENERATED STATIC_CHECKED VERIFIED_LOCAL VALIDATED_LIVE BLOCKED FAILED; do
+    grep -Fq "$st" "$SKILL" \
+      && pass "SKILL.md names validation state $st" \
+      || bad "SKILL.md does not name validation state $st"
+  done
+
+  # (12e) the six references are listed in Mandatory File Loading WITH a per-phase
+  # trigger -- lazy loading is the point; six files loaded at start is the old cost.
+  MFL="$(sk_section '^## Mandatory File Loading')"
+  if [ -z "$MFL" ]; then
+    bad "SKILL.md has no '## Mandatory File Loading' section"
+  else
+    for r in quality-gates playwright-patterns network-mocking discovery-and-scoring scaffold live-validation; do
+      line="$(printf '%s\n' "$MFL" | grep -F "references/$r.md" | head -1)"
+      if [ -z "$line" ]; then
+        bad "Mandatory File Loading does not list references/$r.md"
+      elif printf '%s' "$line" | grep -Eqi 'phase'; then
+        pass "Mandatory File Loading lists references/$r.md with a per-phase trigger"
+      else
+        bad "references/$r.md is listed without a per-phase load trigger"
+      fi
+    done
+    if printf '%s\n' "$MFL" | grep -Eqi 'lazy|when its phase|not at start|not all at start'; then
+      pass "Mandatory File Loading states the references are loaded lazily"
+    else
+      bad "Mandatory File Loading does not say the references load per-phase rather than all at start"
+    fi
+  fi
+
+  # (12f) preflight is asked, never guessed -- and the helper-absent fallback names
+  # all three states on its own line (a Codex/Cursor-only install has no helper).
+  if grep -Fq '~/.zuvo/e2e-preflight' "$SKILL" && grep -Fq 'probe' "$SKILL"; then
+    pass "SKILL.md invokes ~/.zuvo/e2e-preflight probe"
+  else
+    bad "SKILL.md does not invoke '~/.zuvo/e2e-preflight probe'"
+  fi
+  if grep -E 'READY.*GENERATE_ONLY.*BOOTSTRAP_REQUIRED' "$SKILL" | grep -Eqi 'absent|missing|fallback'; then
+    pass "helper-absent fallback line names all three preflight states"
+  else
+    bad "SKILL.md has no helper-absent fallback line naming READY/GENERATE_ONLY/BOOTSTRAP_REQUIRED together"
+  fi
+  if grep -Ei 'BOOTSTRAP_REQUIRED' "$SKILL" | grep -Eqi 'never install|conscious|user to run|does not install'; then
+    pass "BOOTSTRAP_REQUIRED is a conscious-install consent, never an automatic install"
+  else
+    bad "SKILL.md does not state that BOOTSTRAP_REQUIRED never triggers an automatic install"
+  fi
+  if grep -Ei 'GENERATE_ONLY' "$SKILL" | grep -Fq 'STATIC_CHECKED'; then
+    pass "GENERATE_ONLY caps the run at STATIC_CHECKED"
+  else
+    bad "SKILL.md does not cap a GENERATE_ONLY run at STATIC_CHECKED"
+  fi
+
+  # (12g) adversarial block: the Task-2 canonical shape, with PATH args.
+  if grep -qE -- '\|\| _prc=\$\?' "$SKILL" && ! grep -qE -- '\); _prc=\$\?' "$SKILL"; then
+    pass "adversarial block captures rc set -e-safely (|| _prc=\$?)"
+  else
+    bad "adversarial block is not the canonical safe capture (|| _prc=\$?)"
+  fi
+  grep -Fq 'skipped (no changes)' "$SKILL" \
+    && pass "adversarial block handles exit 3 (skipped (no changes))" \
+    || bad "adversarial block has no exit-3 branch"
+  if grep -qE -- '_prc" -ne 0.*BLOCKED.*; false$' "$SKILL"; then
+    pass "adversarial BLOCKED branch ends non-zero (false)"
+  else
+    bad "adversarial BLOCKED branch prints but returns 0"
+  fi
+  grep -Fq -- '--files' "$SKILL" \
+    && pass "adversarial block keeps the --files fallback" \
+    || bad "adversarial block lost the --files fallback"
+  if grep -E 'build-review-patch"? "' "$SKILL" | grep -Eqi 'spec|fixture'; then
+    pass "adversarial block passes PATH args (the specs/fixtures this run wrote)"
+  else
+    bad "adversarial block calls the helper with no scoped PATH args"
+  fi
+
+  # (12h) frontmatter shape -- installs and routing read these keys.
+  fm="$(awk 'NR==1 && /^---/{f=1; next} f && /^---[[:space:]]*$/{exit} f' "$SKILL")"
+  for k in name description codesift_tools; do
+    if printf '%s\n' "$fm" | grep -Eq "^$k:"; then
+      pass "frontmatter keeps key '$k'"
+    else
+      bad "frontmatter lost key '$k' (installs/routing depend on it)"
+    fi
+  done
+
+  # (12i) the conflation bug itself: one string that meant BOTH "no --live" and
+  # "no MCP", so a runnable local Playwright reported nothing verified.
+  hasnt "$SKILL" 'VALIDATION SKIPPED' "no 'VALIDATION SKIPPED' conflation string"
+
+  # V1's testid-first locator order and testid-gated HIGH confidence both live in
+  # references/ now (as their negation); a restated copy here re-creates the drift.
+  hasnt "$SKILL" '[Ll]ocator[^|]*testid|testid[^|]*[Ll]ocator' "does not restate a testid-first locator order"
+  hasnt "$SKILL" 'HIGH[^|]*testid' "does not make HIGH confidence require a testid"
+
+  # (12j) the codex/cursor builds sed on these literal tokens.
+  ROUTING="$(sk_section '^## Agent Routing')"
+  for tok in Sonnet Explore; do
+    if printf '%s\n' "$ROUTING" | grep -Fq "$tok"; then
+      pass "Agent Routing keeps the literal '$tok' form the platform builds recognize"
+    else
+      bad "Agent Routing lost the literal '$tok' form (platform build sed would miss it)"
+    fi
+  done
+
+  # (12k) completion + run-logger wrapper (validate-skills reads these too).
+  grep -Fq 'WRITE-E2E COMPLETE' "$SKILL" \
+    && pass "named completion block 'WRITE-E2E COMPLETE' retained" \
+    || bad "named completion block missing"
+  grep -Fq 'COMPLETION GATE CHECK' "$SKILL" \
+    && pass "completion gate check retained" \
+    || bad "completion gate check missing"
+  grep -Fq 'run-logger.md' "$SKILL" \
+    && pass "run-logger.md include referenced" \
+    || bad "run-logger.md include reference missing (validate-skills ERROR)"
+  grep -Fq '~/.zuvo/append-runlog' "$SKILL" \
+    && pass "run log appended through the append-runlog wrapper" \
+    || bad "run log is not appended through the append-runlog wrapper"
+
+  # (12l) the coverage registry contract the reference defines.
+  if grep -Fq 'memory/e2e-coverage.md' "$SKILL" && grep -Fq 'coverage-upsert' "$SKILL"; then
+    pass "artifact contract names memory/e2e-coverage.md and the coverage-upsert helper"
+  else
+    bad "artifact contract does not name memory/e2e-coverage.md + coverage-upsert"
+  fi
+  if grep -Ei 'State' "$SKILL" | grep -Fq '| Flow ID |'; then
+    pass "coverage registry row shape carries the State column"
+  else
+    bad "coverage registry row shape in SKILL.md has no State column"
+  fi
+
+  # ── (12m) the origin gate is UNCONDITIONAL, not flag-scoped ────────────────
+  # The P0, reached through the default door: a run with no --live and no
+  # --base-url still executes, and `playwright test` then takes its baseURL from
+  # the PROJECT's playwright.config -- which can point at staging or production.
+  # A gate advertised as "--live only" protects the explicit path and leaves the
+  # implicit one, the one most runs take, wide open.
+  oh="$(grep -E '^## Phase 0\.5' "$SKILL" | head -1)"
+  if [ -z "$oh" ]; then
+    bad "SKILL.md has no '## Phase 0.5' origin-gate heading"
+  elif printf '%s' "$oh" | grep -Eqi 'only'; then
+    bad "origin-gate heading scopes the phase to flags -- default runs skip it: $oh"
+  else
+    pass "origin-gate heading is not flag-scoped"
+  fi
+  ORG="$(sk_section '^## Phase 0\.5')"
+  if printf '%s\n' "$ORG" | grep -Eqi 'playwright\.config'; then
+    pass "origin gate resolves the effective baseURL from the project's playwright config"
+  else
+    bad "origin gate never resolves the baseURL from the project's playwright.config (default-path hole)"
+  fi
+  if printf '%s\n' "$ORG" | grep -Eqi 'every run that executes|flagless|before anything executes|any execution'; then
+    pass "origin gate applies to every executing run, flags or not"
+  else
+    bad "origin gate does not state that it covers flagless runs"
+  fi
+  if printf '%s\n' "$ORG" | grep -Fq 'BLOCK' && printf '%s\n' "$ORG" | grep -Fq -- '--allow-destructive'; then
+    pass "a non-LOCAL resolved origin takes the consent path or BLOCKS"
+  else
+    bad "origin gate does not route a non-LOCAL resolved baseURL through consent-or-BLOCK"
+  fi
+  # Structural: parse the VERIFIED_LOCAL row and read its PRECONDITION cell. Prose
+  # elsewhere claiming "against a LOCAL origin" is a description, not a gate --
+  # the requirement column is what a reader treats as the condition to satisfy.
+  vl="$(awk -F'|' '/^\| VERIFIED_LOCAL /{v=$4; gsub(/^[ \t]+|[ \t]+$/, "", v); print v; exit}' "$SKILL")"
+  if [ -z "$vl" ]; then
+    bad "no '| VERIFIED_LOCAL |' row in the verification ladder"
+  elif printf '%s' "$vl" | grep -Fq 'LOCAL' \
+       && printf '%s' "$vl" | grep -Eqi 'classif|resolved|base ?url|phase 0\.5'; then
+    pass "VERIFIED_LOCAL requires the resolved baseURL to classify LOCAL"
+  else
+    bad "VERIFIED_LOCAL precondition cell does not require an origin classification: [$vl]"
+  fi
+  cg="$(grep -E '^\[ \].*[Oo]rigin' "$SKILL" | head -1)"
+  if [ -z "$cg" ]; then
+    bad "completion gate has no origin line"
+  elif printf '%s' "$cg" | grep -Eqi 'execut' && ! printf '%s' "$cg" | grep -Eqi 'whenever --live|only when'; then
+    pass "completion gate asserts the origin was classified for every executing run"
+  else
+    bad "completion gate conditions the origin check on flags: $cg"
+  fi
+
+  # ── (12n) the coverage-registry contract is internally consistent ──────────
+  # Phase 0 documents a helper-absent fallback, so a Codex-only / Cursor-only
+  # install genuinely has no ~/.zuvo/e2e-preflight. "Helper only, never by hand"
+  # plus a completion gate that hard-requires the upsert makes the skill's own
+  # gate unsatisfiable on those hosts.
+  AC="$(sk_section '^## Artifact Contract')"
+  if printf '%s\n' "$AC" | grep -Eqi 'absent|missing'; then
+    pass "artifact contract names the helper-absent install"
+  else
+    bad "artifact contract ignores the helper-absent install documented in Phase 0"
+  fi
+  if printf '%s\n' "$AC" | grep -Ei 'by hand|hand-writ' | grep -Eqi 'shape|format|exact'; then
+    pass "artifact contract documents the exact row shape for the hand-written path"
+  else
+    bad "artifact contract gives no machine-readable row shape for the helper-absent path"
+  fi
+  if printf '%s\n' "$AC" | grep -Eqi 'never by hand|never hand-'; then
+    bad "artifact contract forbids hand-written rows outright, contradicting the Phase 0 fallback"
+  else
+    pass "artifact contract does not forbid the documented hand-written path"
+  fi
+  reg="$(grep -E '^\[ \].*e2e-coverage' "$SKILL" | head -1)"
+  if [ -z "$reg" ]; then
+    bad "completion gate has no coverage-registry line"
+  elif printf '%s' "$reg" | grep -Eqi 'hand'; then
+    pass "completion gate is satisfiable when the helper is absent"
+  else
+    bad "completion gate hard-requires a helper a Codex/Cursor-only install lacks: $reg"
+  fi
+
+  # ── (12o) the ladder pairs each STATE with ITS requirement, keyed by name ──
+  # (12d) only proves the six tokens exist somewhere in the file. Swap two rows of
+  # the Phase 4 table — VERIFIED_LOCAL demanding MCP, VALIDATED_LIVE demanding
+  # nothing — and every assertion above stays green while the exact MCP/local
+  # conflation this rewrite removed is silently restored. Key on the state NAME,
+  # never a row index, so reordering the ladder cannot break the assertion.
+  ladder_req() { # ladder_req <STATE> -> that row's Requires cell
+    awk -F'|' -v st="$1" '$0 ~ "^\\| " st " \\|" { v = $4; gsub(/^[ \t]+|[ \t]+$/, "", v); print v; exit }' "$SKILL"
+  }
+  for st in GENERATED STATIC_CHECKED VERIFIED_LOCAL VALIDATED_LIVE BLOCKED FAILED; do
+    if [ -n "$(ladder_req "$st")" ]; then
+      pass "verification ladder has a row for $st"
+    else
+      bad "verification ladder has no row for $st (the state is named in prose only)"
+    fi
+  done
+  vlr="$(ladder_req VERIFIED_LOCAL)"
+  if printf '%s' "$vlr" | grep -Eqi 'READY'; then
+    pass "VERIFIED_LOCAL's requirement cell names preflight READY"
+  else
+    bad "VERIFIED_LOCAL requirement cell does not name preflight READY: [$vlr]"
+  fi
+  # "no MCP" is a denial, not a requirement — accept a negated mention, reject a demand.
+  if ! printf '%s' "$vlr" | grep -Fq 'MCP' || printf '%s' "$vlr" | grep -Eqi 'no MCP|without MCP|not required'; then
+    pass "VERIFIED_LOCAL does not require MCP (local execution stays decoupled)"
+  else
+    bad "VERIFIED_LOCAL requirement cell demands MCP — the V1 conflation is back: [$vlr]"
+  fi
+  lvr="$(ladder_req VALIDATED_LIVE)"
+  lmiss=""
+  printf '%s' "$lvr" | grep -Fq -- '--live'          || lmiss="$lmiss --live"
+  printf '%s' "$lvr" | grep -Fq 'MCP'                || lmiss="$lmiss MCP"
+  printf '%s' "$lvr" | grep -Eqi 'origin|phase 0\.5' || lmiss="$lmiss origin-gate"
+  if [ -z "$lmiss" ]; then
+    pass "VALIDATED_LIVE requires --live AND MCP AND the origin gate"
+  else
+    bad "VALIDATED_LIVE requirement cell is missing:$lmiss — [$lvr]"
+  fi
+
+  # ── (12p) codesift_tools.always must stay a BLOCK list ────────────────────
+  # scripts/zuvo-home/compute-preload parses `always:` as a block list of `- item`
+  # lines. A flow-style `always: [a, b]` is valid YAML, looks fine in review, and
+  # parses to an EMPTY list there — CodeSift preload then dies for every
+  # write-e2e run with no error anywhere. Asserting the KEY exists tests nothing;
+  # this runs the real consumer's parser over this very file.
+  cp_n="$(python3 - "$ROOT" <<'PY' 2>/dev/null
+import importlib.machinery, importlib.util, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+loader = importlib.machinery.SourceFileLoader("cp", str(root / "scripts/zuvo-home/compute-preload"))
+spec = importlib.util.spec_from_loader("cp", loader)
+mod = importlib.util.module_from_spec(spec)
+loader.exec_module(mod)          # __main__-guarded, so nothing runs on import
+ct = mod.parse_codesift_tools(mod.read_frontmatter(root / "skills/write-e2e/SKILL.md"))
+print(len(ct["always"]))
+PY
+)"
+  if [ -z "$cp_n" ]; then
+    bad "compute-preload's parser could not read SKILL.md frontmatter at all"
+  elif [ "$cp_n" -ge 1 ] 2>/dev/null; then
+    pass "compute-preload parses $cp_n codesift_tools.always entries from SKILL.md"
+  else
+    bad "compute-preload reads codesift_tools.always as EMPTY ($cp_n) — a flow-style list kills CodeSift preload silently"
+  fi
+  # Same invariant asserted on the text, so the failure names the cause directly.
+  if awk '/^  always:[ \t]*$/ { f = 1; next } f && /^    - / { c++ } f && /^  [A-Za-z_]/ { exit } END { exit !(c > 0) }' "$SKILL"; then
+    pass "codesift_tools.always is a block list ('- item' lines), not flow style"
+  else
+    bad "codesift_tools.always is not a block list — compute-preload would read it as empty"
+  fi
+fi
 
 # ── (11) no Claude-only tool tokens in the second trio ──────────────────────
 hits2="$(grep -REn "$TOKENS" "$DISCOVERY" "$SCAFFOLD" "$LIVEVAL" 2>/dev/null || true)"
