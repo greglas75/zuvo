@@ -202,3 +202,96 @@ during install/build would remove the manual step entirely. Enhancement, not a d
 
 - B-polyglot-docstring | scripts/zuvo-home/{backlog-collect,runlog-collect,backlog-consolidate,profile-session,retro-mine}.py + compute-preload, digest-proposals, sanitize-retros, verify-audit | latent-trap | The polyglot `''''exec ...'''` header becomes the module's FIRST statement, so it silently becomes `__doc__` and detaches the real docstring one line below. Inert today — a repo-wide grep found no `__doc__` / `argparse(description=__doc__)` consumer — but `scripts/zuvo-home/backlog` DID get the compensating fix and these 8 did not. Recipe: apply the `USAGE = """..."""` + `sys.exit(USAGE)` pattern from scripts/zuvo-home/backlog:195, or add a one-line comment noting the trade-off, so a future `--help` does not print the exec shim. defer-reason: NIT | seen:1 | confidence:80 | source:review | 2026-07-30
 - B-dispatched-count-dup | scripts/adversarial-review.sh:2057,2179 | duplication | `DISPATCHED_COUNT=$(echo "$DISPATCHED_LIST" | wc -w | tr -d ' ')` appears byte-identically in the all-failed branch and the success-path status derivation. Mutually exclusive at runtime, so not a correctness issue — but inconsistent with the rest of the same change, which extracted `adversarial_log_row` / `preserve_failure_evidence` / `suspended_seconds` specifically to kill duplication. Recipe: extract `dispatched_count()` next to `suspended_seconds()`. defer-reason: NIT | seen:1 | confidence:30 | source:review | 2026-07-30
+
+## B-REFGUARD — test-references-guards fixtures live inside the real skills/ tree
+**Found:** 2026-07-31, during the write-e2e V2 execute run (surfaced by a concurrent-agent stall).
+**Issue:** `tests/skill-suite/test-references-guards.sh` creates `skills/tmp-refguard-$$-test/` inside the
+real repo. Two concurrent runs collide (~4 min stall observed), and while a fixture exists a concurrent
+`validate-skills.sh` sees a foreign skill dir and can mis-count `count-consistency`.
+**Why it was accepted:** the test contract-tests a WHOLE-REPO validator, so it needs a fixture the real
+validator can see. PID-unique naming + an existence guard removed the deletion risk; the residue is a
+false FAIL / mis-count under parallel agents, never a false PASS.
+**Fix direction:** run the validator against a copied tree (a `--root` option) so fixtures can live in
+`mktemp -d` outside the repo — that removes the last shared-state coupling without losing real-repo coverage.
+
+## B-ADV-TRUNC — a truncated adversarial review is reported as a complete one
+**Found:** 2026-07-31, reviewing the Task 8 patch (50583 chars) during the write-e2e V2 execute run.
+**Issue:** `scripts/adversarial-review.sh:394` caps input at `MAX_CHARS=30000`, trims back to a
+whole-file boundary and drops the remaining files with only a stderr `WARN: input truncated ... (omitted: …)`.
+The Task 8 run silently dropped `website/skills/write-e2e.yaml` — the single largest change in the
+patch — yet exited 0 with a normal verdict. Every one of the 12 `adversarial-loop.md` call-sites keys
+its gate on the exit code alone, so a partially-reviewed patch reports as fully reviewed.
+**Why this matters more since 2026-07-30:** `build-review-patch` (Task 1) made call-sites feed the
+review a *correct, complete* patch including untracked files. Bigger, more complete inputs make the
+30000-char ceiling far easier to hit, so the P0 fix increased exposure to this one. The failure mode
+is the same class the P0 addressed: a gate that looks green over work it never saw.
+**Recipe (two parts, either alone is an improvement):**
+1. Make truncation impossible to ignore downstream: emit a `TRUNCATED` marker into the verdict body
+   and set a distinct exit code (or `input_truncated=true` in a machine-readable status line the
+   call-site block checks), so a call-site cannot report a complete review over a trimmed input.
+2. Chunk instead of drop: split at file boundaries into N ≤ MAX_CHARS batches, dispatch each, and
+   merge the findings — cost scales with patch size but coverage stops depending on patch size.
+**Workaround in use meanwhile:** split the patch by hand (`build-review-patch <subset>`) and run one
+pass per batch — that is what Task 8 did after catching the WARN.
+defer-reason: SCOPE — pre-existing in a 2000-line shared script on 12 call-sites; a fix belongs in its
+own task with its own tests, not folded into a docs-sync task | seen:1 | confidence:95 | source:execute-run | 2026-07-31
+
+## B-SKILLPAGES-RED — scripts/validate-skill-pages.sh has been red on main since 440f2fc
+**Found:** 2026-07-31 (write-e2e V2 execute run). **Not caused by that run** — verified by running the
+validator at `b79dad2` (the pre-work commit) and diffing the FAIL sets: byte-identical, 6 failures both
+before and after. A permanently-red validator gates nothing, which is how the four defects below
+accumulated unnoticed.
+**Four independent defects:**
+1. `EXPECTED_COUNT=39` (line 8) while 41 pages exist — `geo-audit` and `geo-fix` pages were added by
+   440f2fc without bumping the constant.
+2. `ALLOW_LIST` (line 98) omits `geo-audit` and `geo-fix`, so the two pages' mutual cross-references
+   are reported as unknown slugs — the pages are correct, the list is stale.
+3. `geo-audit.yaml` meta.description is 156 chars and `geo-fix.yaml` is 160 (max 155). Real content
+   violations; both need a trim.
+4. **Validator design flaw:** line 85 `grep "  description:"` is UNANCHORED, so it matches any line
+   containing two spaces before `description:` — including argument- and mode-level descriptions
+   nested deeper in the file. Two skills legitimately sharing a mode description (e.g. "Apply only
+   fixes of the specified fix_type categories") therefore trip the uniqueness check, which was only
+   ever meant to police `meta.description`. Anchor it: `grep -h '^  description:'`.
+**Note:** the replica of these rules in `tests/skill-suite/test-write-e2e-contract.sh` (14h) already
+uses the anchored form, so it is stricter and more correct than the validator it mirrors — fixing
+defect 4 brings the validator up to the test, not the other way round.
+**Fix direction:** one commit — bump the count, extend the allow-list, trim the two descriptions,
+anchor the grep — then assert the validator exits 0 in `tests/` so it can never rot red again.
+defer-reason: SCOPE — four defects in another component (validator + two geo pages) with a design
+decision in defect 4; discovered during, but unrelated to, the write-e2e V2 plan | seen:1 |
+confidence:95 | source:execute-run | 2026-07-31
+
+## B-ORIGIN-TOCTOU — the origin gate classifies once, but requests resolve DNS again later
+**Found:** 2026-07-31, adversarial review of the write-e2e V2 website page (kimi, low confidence —
+but the mechanism is sound and the wording it attacks is ours).
+**Issue:** `zuvo:write-e2e`'s Phase 0.5 origin gate classifies the resolved base URL as
+LOCAL/STAGING/EXTERNAL_UNKNOWN once, and `--allow-destructive` / `--allow-external-origin` consent is
+recorded against THAT classification. The requests happen later and re-resolve the hostname. With a
+hostname under operator or attacker influence — rebinding-capable DNS, a VPN-managed corp name,
+`/etc/hosts` edited between the gate and the run — a name that classified LOCAL can point elsewhere
+when the mutating request is actually sent. Consent was then granted for one origin and spent on
+another. The skill's own wording ("LOCAL means it actually resolves to a local destination") states a
+check-time answer as if it were a durable property.
+**Scale of the real risk:** low for the dominant case (a developer's own machine, `localhost`, a
+literal IP — none of which re-resolve to anything surprising), higher for the STAGING path where
+hostnames are corporate and DNS is managed elsewhere.
+**Fix direction:** resolve once and pin — connect to the resolved IP with Host/SNI preserved — or
+re-classify per request and abort on a mismatch with the classification consent was granted against.
+Either way, soften the prose to say what the check actually proves.
+defer-reason: SCOPE — needs a design decision (pin-vs-recheck) and touches the origin gate's consent
+model, not a docs sync | seen:1 | confidence:60 | source:review | 2026-07-31
+
+## B-E2EQ2-CONFLATED — E2E-Q2 fuses two independently-failing properties under one ID
+**Found:** 2026-07-31, adversarial review of the write-e2e V2 website page (kimi, INFO).
+**Issue:** E2E-Q2 is "test independence AND unique data". They fail for unrelated reasons — a spec can
+be order-dependent with perfectly unique data, or collision-prone while being fully independent — but
+the gate emits ONE evidence line. The write-e2e contract is "one evidence line per gate; a missing
+line means NOT RUN", so a single line cannot say which half was actually checked, which is precisely
+the auditability the ten-gate design is sold on.
+**Fix direction:** either split into two gates (renumbering the family — the expensive option, and it
+would ripple into the eval corpus, the registry summary and the website page), or keep one ID and
+require the evidence line to name both halves explicitly (cheap, and enough to restore auditability).
+Prefer the second unless the family is being renumbered for another reason anyway.
+defer-reason: NIT — auditability improvement, no false PASS today | seen:1 | confidence:70 |
+source:review | 2026-07-31
