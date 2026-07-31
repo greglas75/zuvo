@@ -39,7 +39,7 @@ problem: |
 
 how_it_works:
   - step: "Preflight — can Playwright actually run here"
-    description: "Probes config, dependency, a runnable local binary and the browser cache to return READY, GENERATE_ONLY or BOOTSTRAP_REQUIRED. READY makes VERIFIED_LOCAL reachable; GENERATE_ONLY caps the run at STATIC_CHECKED and says so; BOOTSTRAP_REQUIRED prints the install command instead of running it. The skill never probes through an unpinned npx, which would install the thing it claims to detect."
+    description: "Probes config, dependency, a runnable local binary and the browser cache to return READY, GENERATE_ONLY or BOOTSTRAP_REQUIRED. READY makes VERIFIED_LOCAL reachable; GENERATE_ONLY caps the run at STATIC_CHECKED and says so; BOOTSTRAP_REQUIRED materializes the project's own pinned deps (lockfile-respecting install + pinned playwright install), re-probes and then executes — declining only on --no-install or when the install fails, where the run caps at STATIC_CHECKED with a WARN verdict. The skill never probes through an unpinned npx, which would install the thing it claims to detect, and never adds, upgrades or lockfile-mutates a dependency."
   - step: "Origin gate — before anything executes"
     description: "Resolves the effective base URL from --base-url or the project's playwright.config, then classifies it LOCAL, STAGING or EXTERNAL_UNKNOWN. A flagless run against a config pointing at production is treated exactly like --live. Two separate consents: --allow-external-origin permits reaching a non-local origin read-only, --allow-destructive names the mutating operations. Anything else BLOCKS instead of degrading quietly."
   - step: "Discovery and scoring"
@@ -154,7 +154,7 @@ faq:
   - q: "How many specs does one run generate?"
     a: "One for --scope or --flow, three for a bare --auto, and twenty only when a human asks by name with --max-flows 20. Volume is treated as a safety property: non-interactive hosts always behave as --auto, so a large default let an unattended run emit twenty unreviewed specs with nobody deciding to."
   - q: "What happens if Playwright is not installed?"
-    a: "Preflight returns GENERATE_ONLY or BOOTSTRAP_REQUIRED and the run adapts instead of guessing. GENERATE_ONLY writes and static-checks specs with STATIC_CHECKED as the ceiling; BOOTSTRAP_REQUIRED prints the exact install command for a human to run. The probe never shells out to an unpinned npx playwright, which would install the runner it is supposed to be detecting."
+    a: "Preflight returns GENERATE_ONLY or BOOTSTRAP_REQUIRED and the run adapts instead of guessing. GENERATE_ONLY writes and static-checks specs with STATIC_CHECKED as the ceiling; BOOTSTRAP_REQUIRED bootstraps the project's own declared, pinned deps (never adding or upgrading anything) and then runs the specs; with --no-install, or when the install fails, it prints the exact commands and caps the run at STATIC_CHECKED with a WARN verdict. The probe never shells out to an unpinned npx playwright, which would install the runner it is supposed to be detecting."
 
 arguments:
   - flag: "--scope <path>"

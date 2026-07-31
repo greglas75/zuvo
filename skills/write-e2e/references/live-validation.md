@@ -28,10 +28,34 @@ fi
 |-----------------|----------|---------------------|
 | READY | Local `playwright` binary answers `--version`, browser cache is non-empty, config or dependency present | Generate specs AND execute them locally. `VERIFIED_LOCAL` is reachable |
 | GENERATE_ONLY | No runnable local binary, or the browser cache is empty | Generate and statically check only. Ceiling is `STATIC_CHECKED`; say so in the output |
-| BOOTSTRAP_REQUIRED | Playwright is configured or declared but has no runnable local binary | Generate, then print the exact install command for the user to run. The run NEVER installs anything itself |
+| BOOTSTRAP_REQUIRED | Playwright is configured or declared but has no runnable local binary | Generate, BOOTSTRAP the project's own declared deps (protocol below), re-probe, then execute. On `--no-install` / `ZUVO_E2E_NO_BOOTSTRAP=1` or a failed install: print the exact commands, ceiling `STATIC_CHECKED`, run verdict caps at WARN |
 
 A `BOOTSTRAP_REQUIRED` project is not broken -- it is uninstalled. Reporting it as a failure
-sends the user hunting for a bug that does not exist.
+sends the user hunting for a bug that does not exist — and shipping its specs unexecuted while
+logging PASS is the mirror error (field feedback 2026-07-31: "czemu nie testują swojej roboty?").
+
+### Bootstrap protocol (BOOTSTRAP_REQUIRED → READY)
+
+Materializing dependencies the project already PINS is normal dev workflow. What stays
+forbidden is CHANGING what the project depends on. The line is the lockfile:
+
+1. Announce: `[BOOTSTRAP] materializing the project's declared Playwright deps to run its tests`.
+2. Install with the package manager the lockfile names, in lockfile-RESPECTING mode only:
+   `yarn install --immutable` / `npm ci` / `pnpm install --frozen-lockfile`. In a worktree whose
+   `node_modules` resolves to the main checkout, run the install THERE (that is where the deps
+   materialize).
+3. Browsers: `yarn exec playwright install <browser>` / `npx --no-install playwright install <browser>` /
+   `pnpm exec playwright install <browser>` — the project's pinned binary, ONLY the browser its
+   config uses. Yarn 4 gotcha: the bare `yarn playwright` shortcut does not expose the binary —
+   use `yarn exec playwright`.
+4. Re-probe. READY → continue to execution; `VERIFIED_LOCAL` is reachable.
+5. Install failed (sandbox, no network, immutable-mode conflict) → do NOT retry with a
+   lockfile-mutating mode; report `BOOTSTRAP_REQUIRED` honestly with the exact commands,
+   ceiling `STATIC_CHECKED`, verdict at most WARN.
+
+Never: add `@playwright/test` to a project that does not declare it (that is GENERATE_ONLY
+territory), upgrade a pinned version, run bare `yarn install` where a lockfile-respecting mode
+exists, or touch a lockfile. Those remain a conscious human decision.
 
 ### Fallback when the helper is absent
 

@@ -53,7 +53,7 @@ scope:** unit tests (`zuvo:write-tests`), a suite audit (`zuvo:test-audit`), fla
 
 ## Argument Parsing
 
-Parse `$ARGUMENTS` as: `[--scope <path>] [--flow <name>] [--output <dir>] [--base-url <url>] [--max-flows N] [--live] [--auto] [--flows] [--dry-run]`
+Parse `$ARGUMENTS` as: `[--scope <path>] [--flow <name>] [--output <dir>] [--base-url <url>] [--max-flows N] [--live] [--auto] [--flows] [--dry-run] [--no-install]`
 
 | Argument | Mode | Flows | Description |
 |----------|------|-------|-------------|
@@ -65,6 +65,7 @@ Parse `$ARGUMENTS` as: `[--scope <path>] [--flow <name>] [--output <dir>] [--bas
 | `--live` | LIVE | — | Permit live DOM/locator inspection against a permitted origin |
 | `--auto` | AUTO | 3 | Skip the selection prompt; take the highest-scored flows |
 | `--flows` / `--dry-run` | DISCOVER / PREVIEW | 0 | Print the scored list and stop / plan through scaffold and write nothing |
+| `--no-install` | NO-BOOTSTRAP | — | Forbid the BOOTSTRAP_REQUIRED dependency materialization (env alias: `ZUVO_E2E_NO_BOOTSTRAP=1`); the run caps at STATIC_CHECKED and verdict WARN |
 
 Volume is a safety property: scoped or named requests generate 1 flow, bare `--auto` generates 3, and a large batch
 happens only when a human asks by name (`--max-flows 20`) — 20 is never assumed. Codex and Cursor always behave as
@@ -104,7 +105,7 @@ Helper absent (a Codex-only or Cursor-only install never ran `install_zuvo_home`
 
 - **READY** — generate AND execute locally; `VERIFIED_LOCAL` is reachable.
 - **GENERATE_ONLY** — generate and static-check only; the ceiling is `STATIC_CHECKED`, and the report says so.
-- **BOOTSTRAP_REQUIRED** — generate, then PRINT the exact install command for the user to run. Installing is a conscious human decision; this run never installs anything.
+- **BOOTSTRAP_REQUIRED** — the project DECLARES Playwright; only the binary/browsers are not materialized. **Bootstrap it and run the tests** — a spec nobody executed is unverified work, and materializing a project's own pinned dependencies is normal dev workflow, not an environment mutation. Protocol in `references/live-validation.md` (lockfile-respecting install + `<pm> exec playwright install <browser>`, then re-probe → READY). Hard limits unchanged: never add or upgrade a dependency, never mutate a lockfile, never unpinned `npx` — those stay a conscious human decision. Skip only on `--no-install` / `ZUVO_E2E_NO_BOOTSTRAP=1`, or when the install itself fails (sandbox, no network): then print the exact commands for the user to run, cap at `STATIC_CHECKED`, and cap the run VERDICT at WARN.
 
 Also detect the CodeSift index (else repository search), Playwright MCP (which gates live DOM inspection ONLY — a
 local `playwright test` run needs no MCP), the framework and the auth provider, then print `PREFLIGHT: <state>
@@ -205,6 +206,9 @@ Load `references/live-validation.md`. A flow carries exactly ONE state, earned b
 When evidence is missing, record the LOWER state — a spec nobody ran is GENERATED however confident this run feels,
 and there is no "skipped" state. Triage red runs by category (locatorMiss / timing / data / auth / backend), which
 this skill diagnoses and does not auto-fix.
+
+**Run-verdict ceiling:** when no spec in the run reached `VERIFIED_LOCAL` or `VALIDATED_LIVE`, the `Run:` verdict is
+at most **WARN** — static checks and source-quality gates, however clean, never make an unexecuted test a PASS.
 
 ## Phase 4.5: Test Quality Gate (zuvo:test-audit --include-e2e → tier A)
 
