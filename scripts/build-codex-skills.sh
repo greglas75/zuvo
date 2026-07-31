@@ -636,9 +636,35 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
   # and the referenced skill ships its own agents/ dir above. A former copy
   # block here grepped for the legacy ~/.claude/skills/... form, which no
   # SKILL.md uses anymore — it silently matched nothing (removed 2026-08-01).
+  # Guard: if the legacy form ever reappears, nothing materializes its agent
+  # in any dist — fail the build instead of shipping a broken reference.
+  if grep -q '~/.claude/skills/[a-z-]*/agents/' "$skill_dir/SKILL.md" 2>/dev/null; then
+    echo "ERROR: $skill/SKILL.md uses the legacy ~/.claude/skills/.../agents/ path form — use ../../skills/<x>/agents/<y>.md" >&2
+    exit 1
+  fi
 
   skill_count=$((skill_count + 1))
 done
+
+# Cross-skill agent reference integrity: every ~/.codex/skills/<x>/agents/<y>.md
+# that a built SKILL.md points at must exist in THIS dist — a missed
+# replace_paths variant or a skill that stopped shipping its agents/ dir would
+# otherwise 404 silently at agent-invocation time (review 81e425d, R-1).
+missing_refs=0
+for built_skill in "$DIST"/skills/*/SKILL.md; do
+  [ -f "$built_skill" ] || continue
+  while IFS= read -r ref; do
+    [ -n "$ref" ] || continue
+    if [ ! -f "$DIST/${ref#\~/.codex/}" ]; then
+      echo "ERROR: $(basename "$(dirname "$built_skill")")/SKILL.md references missing agent in dist: $ref" >&2
+      missing_refs=$((missing_refs + 1))
+    fi
+  done < <(grep -oE '~/.codex/skills/[a-z-]+/agents/[a-z-]+\.md' "$built_skill" | sort -u)
+done
+if [ "$missing_refs" -gt 0 ]; then
+  echo "ERROR: $missing_refs cross-skill agent reference(s) point at files absent from the dist" >&2
+  exit 1
+fi
 
 # ============================================================
 # 3. Generate Codex agent TOMLs

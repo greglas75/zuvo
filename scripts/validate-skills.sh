@@ -470,15 +470,21 @@ cc_check_claude_md() {
   fi
 }
 
-# --- count source (e): README.md intro '<N> skills' ---
+# --- count source (e): README.md — EVERY '<N> skills'/'<N> Skills' mention ---
 # README was the 8th place carrying the count and the only one no check
 # covered — it sat at "55 skills" while everything else said 56 (found
-# 2026-08-01). first_skills_num takes the FIRST match, i.e. the intro line.
+# 2026-08-01). A first-match-only check then missed two MORE stale 55s
+# further down ("= 55" breakdown, "[All 55 Skills]"), so every occurrence
+# is asserted, mirroring the CLAUDE.md multi-anchor loop.
+# DELIBERATE strictness: a future phrase like "5 pipeline skills" would fail
+# this check — that loud false positive is preferred over the silent drift
+# that already happened twice; reword such prose (e.g. "pipeline skills: 5").
 cc_check_readme() {
   local f="$ROOT/README.md" v
   [ -f "$f" ] || return 0
-  v="$(first_skills_num < "$f")"
-  cc_assert "README.md" "intro" "$v"
+  while IFS= read -r v; do
+    cc_assert "README.md" "'<N> skills' mention" "$v"
+  done < <(grep -ioE '[0-9]+ skills' "$f" | grep -oE '[0-9]+')
 }
 
 # --- ERROR: every declared skill count must equal the actual dir count ---

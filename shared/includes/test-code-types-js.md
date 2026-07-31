@@ -170,7 +170,7 @@ const store = mockStore();
 store.get.mockResolvedValue({ id: 1, name: "x" } satisfies User);  // `satisfies` enforces shape
 ```
 
-Rule: the only cast is on the per-test return value (anchored by `satisfies <ConcreteType>`), never on the call site. This catches return-shape drift at compile time while keeping the mock reusable across tests.
+Rule: the factory carries the ONE sanctioned structural cast (`as unknown as vi.Mocked<Store>` — unavoidable, since `vi.fn()` cannot satisfy a generic-method interface); per test, the only addition is `satisfies <ConcreteType>` on the resolved value, and no cast ever appears at the call site. This catches return-shape drift at compile time while keeping the mock reusable across tests.
 
 ## NestJS Logger Spy
 

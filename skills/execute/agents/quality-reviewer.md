@@ -81,7 +81,7 @@ No evidence means the score is 0. "Errors are handled" is not evidence. "order.s
 
 Read `../../../shared/includes/q-scoring-protocol.md` for the full Q1-Q25 scoring protocol: gate definitions, evidence requirements, critical gates, N/A abuse checks, and output format.
 
-Evaluate each test file against all 19 gates using that protocol.
+Evaluate each test file against all 25 gates using that protocol.
 
 ---
 

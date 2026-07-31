@@ -56,7 +56,7 @@ Private/internal methods should be tested through the public API, not directly. 
 
 ### COMPONENT Callback Routing Guard
 
-When a component routes different handlers into the **same child prop slot** depending on mode, type, or state (for example `onNext={handleSubmitAll}` vs `onNext={handleNext}`), label-only or presence-only tests are insufficient.
+When a unit routes different handlers into the **same callback slot** depending on mode, type, or state (a "next" slot receiving a submit-all handler in one mode and a step-advance handler in another), label-only or presence-only tests are insufficient. (Framework-specific example in the JS template file.)
 
 Add interaction tests that prove:
 - the correct handler fires after the user action
