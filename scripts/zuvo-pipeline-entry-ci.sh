@@ -114,6 +114,10 @@ main() {
     echo "FAILED: substantial change with no confirmed review coverage ($range)."
     echo "  This PR changes >=${ZUVO_GATE_MIN_FILES:-3} production files or >=${ZUVO_GATE_MIN_LINES:-150} lines"
     echo "  and no committed memory/reviews/ artifact covers it (content-keyed)."
+    if [ "$rr" -eq 1 ] && command -v pg_explain_uncovered >/dev/null 2>&1; then
+      echo "  Why, per file (each reason has a DIFFERENT fix):"
+      pg_explain_uncovered "$range"
+    fi
     echo "  Fix: run  zuvo:build  or  zuvo:review  on this branch and push the review artifact."
     echo "  Override (human only): add the '$ADHOC_LABEL' label to this PR."
   } >&2

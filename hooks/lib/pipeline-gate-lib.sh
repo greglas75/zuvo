@@ -406,6 +406,105 @@ EOF
   return 1
 }
 
+# --- per-file block diagnostics ---------------------------------------------
+# pg_explain_uncovered <range> — print WHY each uncovered production file is
+# uncovered, one line per file. Purely informational (always returns 0, prints
+# nothing on error): the VERDICT stays with pg_range_reviewed; this exists
+# because "no covering review" collapses five different repair actions into one
+# message — and that ambiguity mis-diagnosed a real incident as "review never
+# happened" when the review existed and only its proof file wasn't in the
+# pushing checkout (2026-07-31, six data-lab refactor PRs).
+#
+# Reasons, most-actionable first (per file, the CLOSEST failure is reported —
+# an artifact that lists the file beats "no artifact"):
+#   proof-missing     artifact matches, but its adversarial: proof file is not
+#                     in THIS checkout → copy the artifact+proof PAIR
+#                     (scripts/review-artifact-sync.sh), don't re-review
+#   proof-weak        proof file present but <2 'REVIEW BY:' lines and no
+#                     honest single-provider note → save the real adversarial
+#                     output with --artifact, or re-run it
+#   stale-content     artifact lists the file but reviewed DIFFERENT content
+#                     (blob mismatch) → the file changed after review; fresh
+#                     review needed for the new content
+#   marker-missing    a memory/reviews file names this path but lacks the
+#                     '<!-- zuvo-review -->' marker → malformed header, fix
+#                     the header (scripts/review-artifact-sync.sh --check)
+#   no-artifact       nothing in memory/reviews/ lists the file → this content
+#                     was never reviewed; run the pipeline (zuvo:review/build)
+pg_explain_uncovered() {
+  _peu_range="$1"
+  _peu_root="$(pg_repo_root 2>/dev/null)" || return 0
+  _peu_head="${_peu_range##*..}"; [ -n "$_peu_head" ] || return 0
+  _peu_reviews="$_peu_root/memory/reviews"
+  _peu_shown=0; _peu_more=0
+
+  pg_changed_production "$_peu_range" 2>/dev/null | while IFS= read -r _peu_f; do
+    [ -n "$_peu_f" ] || continue
+    _peu_bcur="$(pg_file_blob "$_peu_root" "$_peu_head" "$_peu_f")"
+    # rank: 0=covered(skip) 1=proof 2=stale 3=marker 4=none; keep the BEST (lowest) reason
+    _peu_best=4; _peu_why="no artifact in memory/reviews/ lists this file — its content was never reviewed (run zuvo:review / a producing pipeline)"
+    for _peu_art in "$_peu_reviews"/*.md; do
+      [ -e "$_peu_art" ] || continue
+      _peu_files="$(sed -n 's/^files:[[:space:]]*//p' "$_peu_art" 2>/dev/null | head -1)"
+      pg_files_covered "$_peu_f" "$_peu_files" || {
+        # malformed-separator hint: files line has spaces but no commas and
+        # mentions this path → the parser (comma-split) can never match it
+        case "$_peu_files" in
+          *,*) : ;;
+          *" "*) case " $_peu_files " in *" $_peu_f "*)
+                   if [ 3 -lt "$_peu_best" ]; then
+                     _peu_best=3
+                     _peu_why="$(basename "$_peu_art") lists it SPACE-separated — the gate splits files: on commas only; fix the header (scripts/review-artifact-sync.sh --check)"
+                   fi ;;
+                 esac ;;
+        esac
+        continue
+      }
+      if ! grep -q '<!-- zuvo-review -->' "$_peu_art" 2>/dev/null; then
+        if [ 3 -lt "$_peu_best" ]; then
+          _peu_best=3
+          _peu_why="$(basename "$_peu_art") lists it but lacks the '<!-- zuvo-review -->' marker — malformed header, fix it (scripts/review-artifact-sync.sh --check)"
+        fi
+        continue
+      fi
+      _peu_arange="$(sed -n 's/^range:[[:space:]]*//p' "$_peu_art" 2>/dev/null | head -1)"
+      _peu_ahead="${_peu_arange##*..}"
+      _peu_bart=""; [ -n "$_peu_ahead" ] && _peu_bart="$(pg_file_blob "$_peu_root" "$_peu_ahead" "$_peu_f")"
+      if [ -n "$_peu_bcur" ] && [ "$_peu_bart" = "$_peu_bcur" ]; then
+        # content matches — the ONLY remaining reason is the proof layer
+        if pg_artifact_proven "$_peu_root" "$_peu_art"; then
+          _peu_best=0; break   # actually covered (caller race) — say nothing
+        fi
+        _peu_ref="$(sed -n 's/^[[:space:]]*adversarial:[[:space:]]*//p' "$_peu_art" 2>/dev/null | head -1)"
+        [ -n "$_peu_ref" ] || _peu_ref="$(sed -n 's/^[[:space:]]*adv-proof:[[:space:]]*//p' "$_peu_art" 2>/dev/null | head -1)"
+        if [ -z "$_peu_ref" ]; then
+          _peu_msg="$(basename "$_peu_art") covers this content but has NO adversarial: proof line — save the real adversarial output and reference it"
+        elif [ ! -f "$_peu_root/$_peu_ref" ]; then
+          _peu_msg="$(basename "$_peu_art") covers this content but its proof '$_peu_ref' is NOT in this checkout — artifact+proof travel as a PAIR: scripts/review-artifact-sync.sh --from <checkout-that-ran-the-review> --to ."
+        else
+          _peu_msg="$(basename "$_peu_art") covers this content but its proof '$_peu_ref' has <2 'REVIEW BY:' lines and no single-provider note — save the genuine adversarial output"
+        fi
+        if [ 1 -lt "$_peu_best" ]; then _peu_best=1; _peu_why="$_peu_msg"; fi
+      else
+        if [ 2 -lt "$_peu_best" ]; then
+          _peu_best=2
+          _peu_why="$(basename "$_peu_art") lists it but reviewed DIFFERENT content (head ${_peu_ahead:-?}) — the file changed after that review; a fresh review is needed"
+        fi
+      fi
+    done
+    [ "$_peu_best" -eq 0 ] && continue
+    if [ "$_peu_shown" -lt 10 ]; then
+      printf '  %s: %s\n' "$_peu_f" "$_peu_why"
+      _peu_shown=$((_peu_shown + 1))
+    else
+      _peu_more=$((_peu_more + 1))
+    fi
+  done
+  # NOTE: _peu_shown/_peu_more live in the pipeline subshell; the trailing count
+  # is best-effort and intentionally omitted rather than double-counted.
+  return 0
+}
+
 # --- escape valves / env detection ------------------------------------------
 pg_allow_adhoc() {
   [ "${ZUVO_ALLOW_ADHOC:-}" = "1" ] && return 0

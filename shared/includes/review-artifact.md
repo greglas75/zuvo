@@ -109,6 +109,28 @@ AND `F`'s blob at `A`'s reviewed head (the `<head>` of its `range:`) equals `B`.
 
 After the header, the normal human-readable report body follows.
 
+## The artifact and its proof are a PAIR (worktrees / multiple checkouts)
+
+Coverage is TWO files: the `memory/reviews/*.md` artifact AND the proof file its
+`adversarial:` header references. Both are per-checkout (`zuvo/proofs/` is
+gitignored even where `memory/reviews/` is tracked). Consequences, learned from
+a real incident (2026-07-31 — six worktree-pipeline refactors read as "never
+reviewed" because their pairs lived only in the worktrees):
+
+- **A pipeline running in a worktree writes the pair to the MAIN checkout too**
+  (worktree-safe protocol) — a pair that exists only in a disposable worktree
+  dies with it.
+- **Never copy the `.md` alone** between checkouts: without its proof the gate
+  rejects the artifact whole, which looks identical to "review never happened".
+  Move pairs with `scripts/review-artifact-sync.sh --from <src> --to <dst>`.
+- **After writing an artifact, lint it:** `scripts/review-artifact-sync.sh
+  --check` catches the malformed headers the gate otherwise skips silently —
+  missing `<!-- zuvo-review -->` marker, space-separated `files:` (the parser
+  splits on commas ONLY), missing/weak proof.
+- When a push is blocked, the gate prints a per-file reason
+  (`pg_explain_uncovered`): proof-missing, stale-content, marker-missing, and
+  no-artifact each have a DIFFERENT fix — only the last one means re-review.
+
 ## Provisional form (reviewed edits not yet committed)
 
 When a run completes its review while the reviewed **production edits are still uncommitted**

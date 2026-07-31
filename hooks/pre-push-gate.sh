@@ -83,6 +83,10 @@ gate_native() {
         echo "BLOCKED: pushing substantial unreviewed work ($range)."
         echo "  This range changes >=${ZUVO_GATE_MIN_FILES:-3} production files or >=${ZUVO_GATE_MIN_LINES:-150} lines"
         echo "  and has no covering review in memory/reviews/ (content-keyed)."
+        if command -v pg_explain_uncovered >/dev/null 2>&1; then
+          echo "  Why, per file (each reason has a DIFFERENT fix — read before re-reviewing):"
+          pg_explain_uncovered "$range"
+        fi
         echo "  Fix: run  zuvo:build  or  zuvo:review  on this range, then push."
         echo "       The review writes the covering artifact that unlocks the push."
         echo "  Escape (logged): ZUVO_ALLOW_ADHOC=1 git push   (use with a reason)"
@@ -134,6 +138,10 @@ gate_legacy() {
       {
         echo "BLOCKED: pushing substantial unreviewed work ($range)."
         echo "  Some changed production file's content has no covering review in memory/reviews/."
+        if command -v pg_explain_uncovered >/dev/null 2>&1; then
+          echo "  Why, per file (each reason has a DIFFERENT fix — read before re-reviewing):"
+          pg_explain_uncovered "$range"
+        fi
         echo "  Fix: run zuvo:build / zuvo:review on it (a producing pipeline writes the covering"
         echo "       artifact), OR isolate your work in a worktree so the range is clean."
         echo "  Escape (logged): ZUVO_ALLOW_ADHOC=1 git push"
