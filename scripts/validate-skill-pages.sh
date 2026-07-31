@@ -5,7 +5,7 @@
 set -euo pipefail
 
 SKILLS_DIR="website/skills"
-EXPECTED_COUNT=39
+EXPECTED_COUNT=41
 ERRORS=0
 
 echo "=== Zuvo Skill SEO Page Validator ==="
@@ -82,7 +82,15 @@ fi
 # 6. Check description uniqueness
 echo ""
 echo "--- Description Uniqueness ---"
-descs=$(grep "  description:" "$SKILLS_DIR"/*.yaml | grep -v _schema | sed 's/.*description: *//' | sort)
+# ANCHORED to exactly two spaces: this rule polices meta.description only. An
+# unanchored `grep "  description:"` also matches argument- and mode-level
+# descriptions nested deeper in the file, where two skills legitimately share
+# wording ("Apply only fixes of the specified fix_type categories") -- which is
+# how this check reported four false duplicates.
+# The filename prefix is kept until after _schema is filtered out -- `grep -h`
+# would drop it and the `grep -v _schema` would then match on description TEXT
+# instead of the path, silently letting the schema file back in.
+descs=$(grep "^  description:" "$SKILLS_DIR"/*.yaml | grep -v _schema | sed 's/.*description: *//' | sort)
 desc_dupes=$(echo "$descs" | uniq -d)
 if [ -n "$desc_dupes" ]; then
   echo "FAIL: Duplicate descriptions found:"
@@ -95,17 +103,22 @@ fi
 # 7. Check cross-reference slugs are in allow-list
 echo ""
 echo "--- Cross-Reference Integrity ---"
-ALLOW_LIST="api-audit architecture backlog brainstorm build canary ci-audit code-audit db-audit debug deploy dependency-audit design design-review docs env-audit execute fix-tests pentest performance-audit plan presentation receive-review refactor release-docs retro review security-audit seo-audit seo-fix ship structure-audit test-audit tests-performance ui-design-team using-zuvo worktree write-e2e write-tests"
+ALLOW_LIST="api-audit architecture backlog brainstorm build canary ci-audit code-audit db-audit debug deploy dependency-audit design design-review docs env-audit execute fix-tests pentest performance-audit plan presentation receive-review refactor release-docs retro review security-audit seo-audit seo-fix ship structure-audit test-audit tests-performance ui-design-team using-zuvo worktree write-e2e write-tests geo-audit geo-fix"
 
 for f in "$SKILLS_DIR"/*.yaml; do
   [[ "$f" == *"_schema"* ]] && continue
   slug=$(basename "$f" .yaml)
-  grep "  - slug:" "$f" 2>/dev/null | sed 's/.*slug: *//' | while read -r ref_slug; do
+  # Fed by process substitution, NOT a pipe: a pipe runs the loop in a subshell,
+  # so ERRORS incremented inside it is discarded and the script prints
+  # "FAIL: ... unknown slug" and "PASS: all files validated" in the same run,
+  # exiting 0. This check was advisory-only for exactly that reason.
+  while read -r ref_slug; do
+    [ -n "$ref_slug" ] || continue
     if ! echo "$ALLOW_LIST" | grep -qw "$ref_slug"; then
       echo "FAIL: $slug.yaml references unknown slug: $ref_slug"
-      # Note: can't increment ERRORS in subshell, but will print
+      ERRORS=$((ERRORS + 1))
     fi
-  done
+  done < <(grep "  - slug:" "$f" 2>/dev/null | sed 's/.*slug: *//')
 done
 echo "OK: Cross-reference check complete"
 

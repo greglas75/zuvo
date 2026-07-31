@@ -4,7 +4,7 @@ last_synced: "2026-04-07"
 meta:
   slug: geo-fix
   title: "geo-fix — Deterministic GEO Remediation by Safety Tier"
-  description: "Apply geo-audit findings with schema patches, robots AI policy, llms.txt generation, canonical, freshness signals, content scaffolds, and seo-fix deduplication."
+  description: "Apply geo-audit findings: schema patches, robots AI policy, llms.txt generation, canonical, freshness signals, content scaffolds, seo-fix deduplication."
   category: audit
   og_image: /og/skills/geo-fix.png
 

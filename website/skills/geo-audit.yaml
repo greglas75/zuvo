@@ -4,7 +4,7 @@ last_synced: "2026-04-07"
 meta:
   slug: geo-audit
   title: "GEO Audit — 12-Dimension AI Citation Readiness Analysis"
-  description: "GEO/AI readiness audit: 12 dimensions, 4 critical gates, schema graph connectivity, SSR rendering, bot policy, llms.txt, chunkability. Astro, Next.js, Hugo."
+  description: "GEO/AI readiness audit: 12 dimensions, 4 critical gates, schema graph connectivity, SSR rendering, bot policy, llms.txt, chunkability. Astro, Next, Hugo."
   category: audit
   og_image: /og/skills/geo-audit.png
 

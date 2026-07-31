@@ -236,7 +236,20 @@ pass per batch — that is what Task 8 did after catching the WARN.
 defer-reason: SCOPE — pre-existing in a 2000-line shared script on 12 call-sites; a fix belongs in its
 own task with its own tests, not folded into a docs-sync task | seen:1 | confidence:95 | source:execute-run | 2026-07-31
 
-## B-SKILLPAGES-RED — scripts/validate-skill-pages.sh has been red on main since 440f2fc
+## B-SKILLPAGES-RED — RESOLVED 2026-07-31 — validate-skill-pages.sh was red on main since 440f2fc
+**Resolution:** fixed in the same session it was filed, because Task 10's SMOKE3 asserts this
+validator exits 0 and a permanently-red validator would have forced that assertion to be watered
+down. All four defects below are closed, plus a FIFTH found while fixing them:
+5. **The cross-reference check could not fail the run.** Its `while read` loop was fed by a PIPE, so
+   it ran in a subshell and every `ERRORS=$((ERRORS + 1))` inside it was discarded — the script
+   printed `FAIL: … references unknown slug: …` and `PASS: All 41 skill YAML files validated
+   successfully` in the same run and exited 0. Verified by mutation before and after. This is the
+   same false-green class as the P0 this whole plan was written to close, sitting inside the
+   validator that was supposed to catch page rot. Now fed by process substitution so the loop runs
+   in the current shell.
+Retained below as the record of what was wrong and why it went unnoticed for so long.
+
+## B-SKILLPAGES-RED (original entry) — scripts/validate-skill-pages.sh has been red on main since 440f2fc
 **Found:** 2026-07-31 (write-e2e V2 execute run). **Not caused by that run** — verified by running the
 validator at `b79dad2` (the pre-work commit) and diffing the FAIL sets: byte-identical, 6 failures both
 before and after. A permanently-red validator gates nothing, which is how the four defects below
