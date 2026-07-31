@@ -78,17 +78,50 @@ Step 1 -- the URL must match the LOCAL shape:
 ^https?://(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0|host\.docker\.internal|[a-z0-9-]+\.(local|localhost|test))(:\d+)?(/|$)
 ```
 
-Step 2 -- everything except the literal loopback forms must RESOLVE to a loopback or
-link-local destination:
+Step 2 -- **LOCAL means loopback only**: `127.0.0.0/8` and `::1`. Every host form except a
+literal IP address is resolved first, and every address the resolver returns must be loopback:
 
 | Host form | Check |
 |-----------|-------|
-| `localhost`, `127.0.0.1`, `[::1]`, `0.0.0.0` | Fast path: literal loopback, no resolution needed |
-| `host.docker.internal`, `*.local`, `*.localhost`, `*.test` | Resolve the name; EVERY returned address must be in `127.0.0.0/8`, `::1`, or the link-local ranges `169.254.0.0/16` and `fe80::/10` |
+| `127.0.0.1`, `[::1]`, `0.0.0.0` | Literal IP addresses -- nothing to resolve, and the ONLY no-resolution cases in this table. `0.0.0.0` as a destination is handled as loopback by the OS |
+| `localhost` | Resolved like any other name; every returned address must be in `127.0.0.0/8` or `::1` |
+| `*.local`, `*.localhost`, `*.test` | Resolved; every returned address must be in `127.0.0.0/8` or `::1` |
+| `host.docker.internal` | Resolved, and admitted ONLY IF it resolves to loopback -- which on Docker Desktop it does not (see below) |
 
-If resolution fails, returns nothing, or returns any address outside those ranges, the origin is EXTERNAL_UNKNOWN -- regardless of the suffix and regardless of how local the name looks. Mixed answers fail closed: one routable address in the set is enough to disqualify the whole name.
+If resolution fails, returns nothing, or returns any address outside loopback, the origin is EXTERNAL_UNKNOWN -- regardless of the suffix and regardless of how local the name looks. Mixed answers fail closed: one routable address in the set is enough to disqualify the whole name.
+
+**Link-local is NOT loopback and is never LOCAL.** The ranges `169.254.0.0/16` and `fe80::/10`
+must not be accepted by this check, because `169.254.169.254` is the cloud instance metadata
+endpoint: admitting the range would classify a name that resolves to the metadata service as
+LOCAL and hand it unrestricted mutating traffic -- an SSRF target, granted by the very file
+whose job is to prevent that. This is a deliberate exclusion; do not re-add the range as a
+convenience. A genuine link-local dev host goes through STAGING instead -- a human names that
+exact host, which is what consent is for.
+
+**`localhost` gets no free pass.** It is an ordinary name that usually resolves to loopback by
+convention, and `/etc/hosts` can repoint it like any other entry. A document arguing that names
+are not evidence cannot then exempt one name because it reads as trustworthy, so `localhost` is
+resolved and checked. Only literal IP forms are axiomatic, because there is nothing left to
+look up.
+
+**`host.docker.internal` carve-out.** On Docker Desktop it resolves to the host-gateway bridge
+address (a routable private address, not loopback), so under the rule above it classifies as
+EXTERNAL_UNKNOWN and stays there. That is the correct outcome, not a bug to work around: the
+container's view of the host is not evidence about what is listening there. It remains in the
+shape list for the one setup where it is admissible -- an `/etc/hosts` mapping to `127.0.0.1` --
+and the run reaches a containerized app either by publishing the port on loopback and targeting
+`127.0.0.1`, or by naming the host in `ZUVO_E2E_STAGING_HOSTS`.
 
 **A hostname is not evidence about where traffic goes.** The suffix branch of that regex is a naming convention, and names resolve through `/etc/hosts`, mDNS and internal DNS -- every one of them configured by somebody other than this run. `shop.test` can be an `/etc/hosts` line pointing at a production load balancer; `admin.local` can be an mDNS name claimed by any machine on the network. DNS rebinding is the same defect weaponized: a name that resolves to loopback on the first lookup can resolve to a routable address on the next, so a cached classification is not evidence either -- which is the second reason the check is repeated per navigation rather than kept.
+
+**Resolution is a pre-flight heuristic, not a guarantee (TOCTOU).** Re-resolving a name before navigating does not prove the browser will connect to the address that was checked.
+DNS can change between the time of check and the time of connection; the browser keeps its own DNS cache and may reuse an entry this run never observed; a proxy or VPN can route the
+connection somewhere else entirely. So the resolution rule above is triage -- it catches the
+common cases cheaply and honestly, and it is not a boundary.
+The layer that actually enforces the boundary is request-level: the allowed-host list in `network-mocking.md` (E2E-Q4) inspects every real request, redirects and background calls
+included, and fails the run the moment an unexpected host is contacted. Resolution decides what
+the run is willing to attempt; request-level enforcement decides what it is allowed to complete.
+Neither replaces the other, and a run that has only one of them is not gated.
 
 STAGING keeps name matching on purpose: there a HUMAN named the exact host, so the name IS the
 authorization. LOCAL's wildcard suffixes are claimed by the environment, and an environment
