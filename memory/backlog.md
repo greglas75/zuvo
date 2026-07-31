@@ -275,6 +275,40 @@ defer-reason: SCOPE — four defects in another component (validator + two geo p
 decision in defect 4; discovered during, but unrelated to, the write-e2e V2 plan | seen:1 |
 confidence:95 | source:execute-run | 2026-07-31
 
+## B-SHELLCHECK — CQ40 scores 0 on every bash file in the repo; no linter is configured
+**Found:** 2026-07-31, TIER 3 CQ audit of the write-e2e V2 range (b79dad2..17ba54b), confidence 90.
+**Issue:** nothing lints the repo's shell. There is no `.shellcheckrc`, no CI job runs shellcheck
+(`ci/` holds only the opt-in `zuvo-pipeline-entry.yml`, which is not even copied into
+`.github/workflows/`), and the only `shellcheck` strings in the tree are three inline
+`# shellcheck source=/dev/null` suppressions plus a spec note recording that it is not installed.
+Per CQ40's own wording ("No config present = 0 — that is the point of the gate") every bash file
+in this repo scores CQ40=0, including the two new ones this range added.
+**Why it matters more now:** `build-review-patch` and `e2e-preflight` are exactly the shell class
+shellcheck is good at — path containment, symlink refusal, `trap` quoting, locking, and unquoted
+expansions (SC2086/SC2064). The zsh word-splitting trap that bit this very session (an unquoted
+list arriving as ONE argument) is the same family.
+**Why it was NOT fixed in the loop that found it:** shellcheck is not installed on this machine
+(`command -v shellcheck` → not found). Adding a config and a CI job for a linter that cannot be run
+locally would mean committing rules whose output nobody has seen, and discovering the findings for
+the first time in CI across 9 files. The blocker is tool absence, not scope.
+**Fix direction:** install shellcheck → run it over `scripts/**`, `hooks/**`, `tests/**` and read
+the real output → add `.shellcheckrc` pinning the severity floor and any deliberate suppressions
+(with reasons) → fix what it finds → only then wire a CI job, so the job starts green.
+defer-reason: SCOPE — repo-wide tooling addition across 9+ bash files, blocked on a tool that is
+not installed | seen:1 | confidence:90 | source:review | 2026-07-31
+
+## B-UPSERT-AWK-LEN — e2e-preflight upsert helpers exceed the 50-line function guideline
+**Found:** 2026-07-31, TIER 3 CQ audit (CQ11), confidence 70.
+**Issue:** `scripts/zuvo-home/e2e-preflight:534` `upsert_awk()` is a one-line bash wrapper around a
+151-line embedded AWK program, and `_upsert_locked()` at :466 runs 61 lines across two near-symmetric
+create-vs-update branches doing the same trap/mv dance.
+**Why it is a NIT and not a defect:** an embedded AWK program is a DSL block, not sprawling bash
+control flow, and the audit confirmed both branches are individually commented and their overlap
+falls ~15 lines short of the CQ14 repeated-block threshold. No correctness issue was found.
+**Fix direction:** if this file grows further, lift the AWK program into a heredoc constant and
+collapse the two branches into one parameterised write path.
+defer-reason: NIT | seen:1 | confidence:70 | source:review | 2026-07-31
+
 ## B-ORIGIN-TOCTOU — the origin gate classifies once, but requests resolve DNS again later
 **Found:** 2026-07-31, adversarial review of the write-e2e V2 website page (kimi, low confidence —
 but the mechanism is sound and the wording it attacks is ours).

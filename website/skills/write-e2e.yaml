@@ -83,7 +83,10 @@ examples:
 
           test.beforeEach(async ({ context, baseURL }) => {
             // Per test, never per module -- a second test in this file must not
-            // inherit the first one's record.
+            // inherit the first one's record. createdId is cleared here too: a
+            // test that throws before the POST would otherwise leave the previous
+            // test's id in scope and teardown would delete an already-gone record.
+            createdId = undefined;
             unique = `Acme ${Date.now()}-${test.info().parallelIndex}-${randomUUID().slice(0, 8)}`;
 
             // The allow-list is derived from the RESOLVED base URL. A literal

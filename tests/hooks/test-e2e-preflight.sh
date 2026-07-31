@@ -840,4 +840,49 @@ else
   bad "(14) leftover lock dirs: $leftover"
 fi
 
+# (15) every flag that takes a value DIAGNOSES a missing one.
+# Regression guard: a dangling flag used to exit 2 with completely empty stderr,
+# the single silent rejection in a function where every other refusal explains
+# itself — so a caller seeing rc=2 could not tell a typo from a busy lock.
+v15_bad=""
+for flag in --file --flow --state --spec --score --confidence; do
+  out="$(bash "$HELPER" coverage-upsert "$flag" 2>&1 >/dev/null)"
+  rc=$?
+  case "$rc:$out" in
+    2:*"$flag requires a value"*) : ;;
+    2:*) v15_bad="$v15_bad [$flag: rc=2 but no diagnostic naming it]" ;;
+    *)   v15_bad="$v15_bad [$flag: rc=$rc, want 2]" ;;
+  esac
+done
+if [ -z "$v15_bad" ]; then
+  pass "(15) a dangling flag is rejected WITH a diagnostic naming it (all 6 flags)"
+else
+  bad "(15) dangling-flag rejection is silent or wrong:$v15_bad"
+fi
+
+# (15b) a flag swallowed as another flag's value names the RIGHT token.
+# `--flow --state GENERATED` used to consume `--state` as the flow id and then
+# complain about the leftover `GENERATED` — pointing at the one token that was
+# not the problem.
+out="$(bash "$HELPER" coverage-upsert --file "$REGDIR/x.md" --flow --state GENERATED 2>&1 >/dev/null)"
+rc=$?
+case "$rc:$out" in
+  2:*"--flow requires a value, got the flag '--state'"*)
+    pass "(15b) a flag captured as a value is refused and names the real token" ;;
+  2:*"unknown argument: GENERATED"*)
+    bad "(15b) still blames the leftover token instead of the missing --flow value" ;;
+  *) bad "(15b) unexpected rc=$rc / output: $out" ;;
+esac
+
+# (15c) the guard must not have broken the values it is guarding: a legitimate
+# value containing spaces still round-trips into the row verbatim.
+R15="$REGDIR/r15.md"
+bash "$HELPER" coverage-upsert --file "$R15" --flow "my flow" --state VERIFIED_LOCAL \
+     --spec "e2e/a b.spec.ts" >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 0 ] && grep -Fq '| my flow |' "$R15" && grep -Fq 'e2e/a b.spec.ts' "$R15"; then
+  pass "(15c) spaced flag values still round-trip verbatim through the new guard"
+else
+  bad "(15c) the dangling-flag guard mangled a legitimate spaced value (rc=$rc)"
+fi
+
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "SOME FAILED"; exit 1; fi

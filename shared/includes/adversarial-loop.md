@@ -69,7 +69,7 @@ Run the script as a **single Bash call with a long timeout**. The script auto-de
 
 **Build the review input with the scoped patch helper — never by staging.** `~/.zuvo/build-review-patch` (installed by `scripts/install.sh`) emits the review patch on **stdout** and **never writes the git index**: no `git add`, no `git stash`, no `--intent-to-add`. Staging the caller's work to build a diff silently changes what their next commit captures, and `--staged` alone still misses brand-new untracked files — the helper covers tracked changes (unstaged + staged) *and* untracked, non-ignored files in one patch.
 
-Helper contract: `build-review-patch [--base <ref>] [--] [PATH...]`. With no `PATH` args it covers the whole dirty tree — **including every untracked, non-ignored file, and all of that content is sent to the configured external providers**, which the old staged-diff form never did; prefer an explicit list and treat the no-PATH form as the fallback for a skill that genuinely cannot know its file set. With `PATH` args (each quoted **separately** — never one space-joined string) it scopes to exactly the files the skill wrote. `--base <ref>` widens the patch to include commits since `<ref>`.
+Helper contract: `build-review-patch [--base <ref>] [--] [PATH...]`. With no `PATH` args it covers the whole dirty tree — **including every untracked, non-ignored file, and all of that content is sent to the configured external providers**, which the old staged-diff form never did; prefer an explicit list and treat the no-PATH form as the fallback for a skill that genuinely cannot know its file set. **Concretely: `.gitignore` is the only thing standing between an untracked scratch file and an external provider.** A `notes.txt`, a `.env.local` that was never added to `.gitignore`, a downloaded customer CSV sitting in the working tree — all of it is untracked, non-ignored content, and the no-PATH form sends it. There is deliberately NO size cap or file-type filter on this path: a filter that silently drops files is the exact defect this helper exists to remove — the superseded staging form looked "safe" precisely because it omitted things — so the mitigation is naming your files, not trusting a heuristic to guess which ones are private. With `PATH` args (each quoted **separately** — never one space-joined string) it scopes to exactly the files the skill wrote. `--base <ref>` widens the patch to include commits since `<ref>`.
 
 The three exit codes are disjoint, so none of them needs caller-side corroboration:
 
@@ -102,19 +102,34 @@ FILES=("src/a.ts" "src/b.ts")                                 # bash array …
 **Then branch on the exit code.** Piping the helper straight into `adversarial-review` is FORBIDDEN: a pipe discards the helper's exit code, and on a clean tree the empty stdin makes `adversarial-review` exit 2 — a no-op reported as a hard error.
 
 ```bash
+# Per-run artifact path. A FIXED /tmp name is unsafe here for two reasons:
+# parallel agents in the same or different repos overwrite each other's file,
+# and the downstream coverage gates READ this artifact as proof — so one run
+# can be credited with another run's review. /tmp is also world-writable, so a
+# predictable name is a symlink target (CWE-59). mktemp gives a fresh, private
+# path per run; export it once and reuse it for every pass in this flow.
+#
+# The X's MUST be the last characters of the template. BSD mktemp (macOS) does
+# not substitute a template whose X's are followed by a suffix: `…-XXXXXX.json`
+# returns that literal string for the first caller and then fails with "File
+# exists" and prints NOTHING for the next one — so a suffixed template gives you
+# a fixed path AND an empty path under concurrency, which is worse than the
+# hardcoded name it was meant to replace. Verified on macOS bash 3.2.
+_ADV_ART="$(mktemp "${TMPDIR:-/tmp}/zuvo-adv-XXXXXX")"
+
 if [ -x "$HOME/.zuvo/build-review-patch" ]; then
   _prc=0; _patch=$("$HOME/.zuvo/build-review-patch" "<written-file-1>" "<written-file-2>") || _prc=$?
   if [ "$_prc" -eq 3 ]; then echo "adversarial review: skipped (no changes)"
   elif [ "$_prc" -ne 0 ]; then echo "BLOCKED: build-review-patch failed (rc=$_prc). Adversarial review did NOT run; do NOT proceed to commit and do NOT report this skill complete" >&2; false
-  else printf '%s\n' "$_patch" | adversarial-review --json --artifact /tmp/adv-pass1.json --mode {MODE}; fi
+  else printf '%s\n' "$_patch" | adversarial-review --json --artifact "$_ADV_ART" --mode {MODE}; fi
 else
-  adversarial-review --json --artifact /tmp/adv-pass1.json --mode {MODE} --files "<changed files>"
+  adversarial-review --json --artifact "$_ADV_ART" --mode {MODE} --files "<changed files>"
 fi
 ```
 
 Default is multi-provider (all available run in parallel). The script handles provider detection and dispatch.
 
-**Capture full output before triage — NEVER pipe through `tail`/`head`.** Multi-provider output exceeds one screen; `tail`/`head` silently truncates the first providers (codex, gemini) and drops their CRITICAL findings (two documented loss-of-finding incidents). Use the `--artifact <path>` flag (or redirect `... > /tmp/adv-passN.txt 2>&1`) and triage from the full file/variable. Prefer `--artifact` — it is a real script flag that also records metadata for downstream gates.
+**Capture full output before triage — NEVER pipe through `tail`/`head`.** Multi-provider output exceeds one screen; `tail`/`head` silently truncates the first providers (codex, gemini) and drops their CRITICAL findings (two documented loss-of-finding incidents). Use the `--artifact <path>` flag with a `mktemp`-generated path (or redirect `... > "$_ADV_ART" 2>&1`) and triage from the full file/variable. Prefer `--artifact` — it is a real script flag that also records metadata for downstream gates.
 
 **If the helper is not installed** (`~/.zuvo/build-review-patch` missing — a Codex/Cursor-only install where `install_zuvo_home` never ran), take the `else` branch above and name the files explicitly:
 ```bash
@@ -167,12 +182,18 @@ The script may return a non-clean `status` when not all requested providers ran.
 **Cross-call rotation pattern** (D4 — for skills that invoke `adversarial-review` multiple times in the same flow):
 
 ```bash
+# Per-RUN prefix, then a per-PASS suffix under it. Two passes of the same run
+# must not share a file (pass 2 would clobber pass 1's evidence), and two runs
+# must not share a prefix (see the mktemp note above — parallel agents, and the
+# gates that read these artifacts as proof of coverage).
+_ADV_DIR="$(mktemp -d "${TMPDIR:-/tmp}/zuvo-adv-XXXXXX")"
+
 # Pass 1 — capture to a per-pass artifact; never pipe through tail/head
-out1=$(adversarial-review --rotate --json --artifact /tmp/adv-pass1.json --files "$ARTIFACT")
+out1=$(adversarial-review --rotate --json --artifact "$_ADV_DIR/pass1.json" --files "$ARTIFACT")
 last_provider=$(jq -r '.providers_used_list[0] // .providers_used' <<<"$out1")
 
 # Pass 2 — exclude last to force a different provider, distinct artifact
-out2=$(adversarial-review --rotate --exclude-last "$last_provider" --json --artifact /tmp/adv-pass2.json --files "$ARTIFACT")
+out2=$(adversarial-review --rotate --exclude-last "$last_provider" --json --artifact "$_ADV_DIR/pass2.json" --files "$ARTIFACT")
 ```
 
 If only 1 provider remains after the exclusion, pass 2 will exit 3 (`single_provider_only`) — caller chooses whether to fall back to `--single` or accept single-perspective results.

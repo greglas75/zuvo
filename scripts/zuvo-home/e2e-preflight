@@ -285,14 +285,30 @@ _registry_path_ok() {
 # ── coverage-upsert ──────────────────────────────────────────────────────────
 cmd_coverage_upsert() {
   file=""; flow=""; state=""; spec=""; score=""; conf=""
+  # take_value FLAG VALUE — reject a flag whose value is missing or is itself a
+  # flag. Without this, `--file` as the last token exits 2 with NO diagnostic at
+  # all (every other rejection in this function explains itself), and
+  # `--flow --state X` silently consumes `--state` as the flow id and then
+  # complains about the leftover `X` — pointing at the wrong token. Mirrors the
+  # empty-argument guard in the sibling helper build-review-patch:125.
+  take_value() {
+    case "${2-__ZP_UNSET__}" in
+      __ZP_UNSET__|"")
+        echo "e2e-preflight: coverage-upsert: $1 requires a value" >&2; usage; return 2 ;;
+      -*)
+        echo "e2e-preflight: coverage-upsert: $1 requires a value, got the flag '$2'" >&2
+        usage; return 2 ;;
+    esac
+    printf '%s' "$2"
+  }
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --file)       file="${2:-}"; shift 2 || return 2 ;;
-      --flow)       flow="${2:-}"; shift 2 || return 2 ;;
-      --state)      state="${2:-}"; shift 2 || return 2 ;;
-      --spec)       spec="${2:-}"; shift 2 || return 2 ;;
-      --score)      score="${2:-}"; shift 2 || return 2 ;;
-      --confidence) conf="${2:-}"; shift 2 || return 2 ;;
+      --file)       file=$(take_value "$1" "${2-__ZP_UNSET__}")       || return 2; shift 2 ;;
+      --flow)       flow=$(take_value "$1" "${2-__ZP_UNSET__}")       || return 2; shift 2 ;;
+      --state)      state=$(take_value "$1" "${2-__ZP_UNSET__}")      || return 2; shift 2 ;;
+      --spec)       spec=$(take_value "$1" "${2-__ZP_UNSET__}")       || return 2; shift 2 ;;
+      --score)      score=$(take_value "$1" "${2-__ZP_UNSET__}")      || return 2; shift 2 ;;
+      --confidence) conf=$(take_value "$1" "${2-__ZP_UNSET__}")       || return 2; shift 2 ;;
       *) echo "e2e-preflight: coverage-upsert: unknown argument: $1" >&2; usage; return 2 ;;
     esac
   done

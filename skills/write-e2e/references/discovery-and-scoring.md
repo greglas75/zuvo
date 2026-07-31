@@ -66,6 +66,28 @@ Volume is a safety property: twenty unreviewed specs are worse than one that is 
 Print the ranked list with score, confidence and the one-line reason before generating, so the
 selection can be corrected before any file is written.
 
+**Automatic selection is filtered by confidence, not only ranked by score.** Score says how much
+a flow matters; confidence says how well this run understands it, and a high score cannot make up
+for not knowing what to assert. So when the run picks the flows ITSELF — bare `--auto`, `--flows`,
+`--max-flows N` — LOW and CONDITIONAL candidates are excluded from the budget and listed under the
+ranked table with the reason they were held back:
+
+```
+held back (not auto-generated):
+  checkout/apply-coupon   score 71  LOW          no user-visible outcome — testability gap
+  admin/impersonate       score 84  CONDITIONAL  requires the `staff` role this run cannot set
+```
+
+A LOW flow has no observable outcome, so an auto-written spec for it can only assert something
+incidental — the exact non-causal pass E2E-Q3 exists to reject. A CONDITIONAL flow is one this run
+cannot reach, so its spec would be written blind and fail on first execution for a reason that has
+nothing to do with the application.
+
+Naming a flow explicitly overrides the filter: an explicit request is a decision, and the run
+honours it. The spec is still generated at the confidence it earned, carries that level in its
+provenance header, and — for LOW — the testability gap is reported alongside it rather than
+papered over. This is what a scoped request means: the user, not the ranking, chose the risk.
+
 ## Confidence assignment
 
 Confidence describes how well the run understands the flow. It is independent of the score: a

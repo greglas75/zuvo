@@ -114,10 +114,18 @@ for f in "$SKILLS_DIR"/*.yaml; do
   # exiting 0. This check was advisory-only for exactly that reason.
   while read -r ref_slug; do
     [ -n "$ref_slug" ] || continue
-    if ! echo "$ALLOW_LIST" | grep -qw "$ref_slug"; then
-      echo "FAIL: $slug.yaml references unknown slug: $ref_slug"
-      ERRORS=$((ERRORS + 1))
-    fi
+    # Exact whole-token match, NOT `grep -qw`: grep's word boundary treats `-`
+    # as a separator, so `audit` matches inside `code-audit` and `tests` inside
+    # `write-tests` — every hyphenated slug in the list acts as a wildcard for
+    # its own fragments. That made a reference to a NONEXISTENT slug pass. The
+    # space-padded case match compares whole tokens and has no such hole.
+    case " $ALLOW_LIST " in
+      *" $ref_slug "*) ;;
+      *)
+        echo "FAIL: $slug.yaml references unknown slug: $ref_slug"
+        ERRORS=$((ERRORS + 1))
+        ;;
+    esac
   done < <(grep "  - slug:" "$f" 2>/dev/null | sed 's/.*slug: *//')
 done
 echo "OK: Cross-reference check complete"

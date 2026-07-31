@@ -33,7 +33,11 @@ type Rule = {
   fulfill?: FulfillOptions; // omit to let the request reach its real destination
 };
 
-export async function installNetworkPolicy(context: BrowserContext, rules: Rule[]) {
+export async function installNetworkPolicy(
+  context: BrowserContext,
+  rules: Rule[],
+  allowedHosts: string[],          // gates DESTINATIONS; rules gate individual requests
+) {
   const blocked: string[] = [];
   const mutations: Request[] = [];
 
@@ -44,6 +48,15 @@ export async function installNetworkPolicy(context: BrowserContext, rules: Rule[
     const request = route.request();
     const url = new URL(request.url());
     const method = request.method();
+
+    // The host gate is a SEPARATE, earlier check. Deriving it from the rule
+    // list instead would make the allow-list decorative: any rule would
+    // implicitly authorise its own host, and adding a mock for a third party
+    // would silently admit that third party as a destination.
+    if (!allowedHosts.includes(url.hostname)) {
+      blocked.push(`${method} ${url.hostname}${url.pathname} (host not allowed)`);
+      return route.abort('blockedbyclient');
+    }
 
     const rule = rules.find(
       (r) => r.hostname === url.hostname && r.method === method && r.pathname === url.pathname,
@@ -135,6 +148,60 @@ The shape that behaves correctly:
    so the later, more specific handler is consulted first.
 4. A handler that decides not to serve a request calls `route.fallback()` to hand it to the
    next matching handler, rather than continuing it to the network.
+
+**Precedence has a consequence the recording must survive.** The sentinel is what records
+mutations for the E2E-Q5 contract check — and a `page.route()` mock that *serves* a mutating
+request wins over it, so the sentinel never sees that request and the mutation goes unrecorded.
+The spec then passes E2E-Q5 over a mutation nobody checked, which is precisely the blind spot
+this file opens by warning about. `route.fallback()` does not save you here: a handler that
+fulfils the request never falls back.
+
+So a page-level mock that serves a mutating method records it itself. Register such mocks
+through a wrapper rather than raw `page.route`, so the recording cannot be forgotten:
+
+```typescript
+// The mutations array is the one the policy returned — same list, one source.
+export async function mockAndRecord(
+  page: Page, mutations: Request[], allowedHosts: string[],
+  match: string | RegExp,
+  method: string,                 // part of the match key -- see below
+  fulfill: FulfillOptions,
+) {
+  await page.route(match, async (route) => {
+    const request = route.request();
+    const host = new URL(request.url()).hostname;
+
+    // Fulfilling does not egress, so this is not the network gate -- that one is
+    // the sentinel's, and page handlers never continue() past it (below). This
+    // check keeps the spec HONEST instead: without it a mock can be registered
+    // for a host the spec's own allow-list forbids, and the declared list stops
+    // describing what the spec talks to. Fail loudly rather than mock quietly.
+    if (!allowedHosts.includes(host)) {
+      throw new Error(`mock registered for ${host}, which is not in allowedHosts`);
+    }
+
+    // page.route matches on URL ONLY, so without this the mock answers EVERY
+    // method on that path: a GET mock would fulfil a POST with the GET body,
+    // corrupting the flow and hiding the mutation from the sentinel. The match
+    // key for this file is hostname + method + pathname; a wrapper that ignores
+    // the method half is not implementing it.
+    if (request.method() !== method) return route.fallback();
+
+    if (MUTATING.has(request.method())) mutations.push(request);   // BEFORE serving
+    // FULFILL ONLY -- never route.continue() from a page-level handler. Page
+    // handlers win over the context sentinel, so continuing here would reach the
+    // network having skipped the host gate the sentinel enforces: a mock added
+    // for one endpoint would become a hole for its whole host. A page handler
+    // that does not want to serve the request calls route.fallback(), which
+    // hands it back to the sentinel and its checks.
+    return route.fulfill(fulfill);
+  });
+}
+```
+
+A spec claiming E2E-Q5 asserts on the contents of that one array. If a mutation reached the app
+through a handler that did not append to it, the gate's evidence line is describing requests it
+never saw — record it as NOT RUN rather than PASS.
 
 ## Match key: hostname plus method plus pathname
 
