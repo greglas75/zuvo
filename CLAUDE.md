@@ -118,7 +118,10 @@ This does: version bump → commit → push → tag → update marketplace SHA �
 skills/<name>/SKILL.md          — skill definitions (56 total)
 skills/<name>/agents/<name>.md  — sub-agent instructions (50 agent files, 48 unique names)
 shared/includes/*.md            — shared procedural includes (85 files):
-                                    gate-registry.md (SSOT for all 124 CQ/Q/CAP/AP gates)
+                                    gate-registry.md (SSOT for all 124 CQ/Q/CAP/AP gates; E2E-Q by reference)
+                                      E2E-Q is registered there, not defined: the authoritative table
+                                      is skills/write-e2e/references/quality-gates.md, and the
+                                      generator does not parse those rows
                                     knowledge-prime.md, knowledge-curate.md (knowledge store)
                                     session-state.md (session recovery)
                                     report-output-location.md (canonical zuvo/ output dir)

@@ -82,6 +82,34 @@ test.afterEach(async () => {
 });
 ```
 
+### Two kinds of traffic `context.route` does NOT see
+
+"Anything without a matching rule is denied" is true only for traffic Playwright routes, and
+two paths escape it. Both must be closed explicitly, or E2E-Q4 reports a fail-closed policy
+over a spec that still reached the network.
+
+1. **Service workers.** Requests a registered service worker issues do not pass through
+   `page.route` or `context.route`. On any PWA or offline-cached build, the sentinel above sees
+   nothing and the app talks to real third parties while the gate reads green. Block them at
+   the context, which also removes the SW's own cache as a source of nondeterminism:
+
+   ```typescript
+   test.use({ serviceWorkers: 'block' });   // spec-level, or in playwright.config
+   ```
+
+2. **`APIRequestContext`** — the `request` fixture, and `page.request`. These are not browser
+   traffic and no `route` handler applies to them, so a teardown or setup call made through
+   them bypasses the policy entirely. That matters most for mutations: a cleanup `DELETE` is
+   exactly the kind of request the origin gate exists to govern. Send such calls only to the
+   resolved app origin, and treat any other destination as needing the same consent a
+   non-local origin needs in the spec body. Prefer `page.request` over the bare `request`
+   fixture — it carries the browser context's session, whereas `request` does not and will
+   401 on an authenticated route.
+
+A spec claiming E2E-Q4 must therefore emit the service-worker block AND keep its
+`APIRequestContext` calls on the app origin. Neither is optional, because neither is visible
+in the `blocked` list the policy returns — an escaped request leaves no trace there at all.
+
 Rationale: a pass-through default means the test's behavior depends on whatever the machine
 can reach. It hits real third parties from CI, it goes green when an unmocked internal
 endpoint happens to be up, and it hides the fact that the app called something nobody

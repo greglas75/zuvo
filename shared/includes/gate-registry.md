@@ -16,6 +16,11 @@
 >
 > **Self-containment is preserved:** the generator INLINES the text into each consuming skill, so
 > a sub-agent still reads one file. This is a build-time source, not a runtime indirection.
+>
+> **One family is registered by reference, not defined here:** the E2E-Q gates used by
+> `zuvo:write-e2e` are authoritatively defined in `skills/write-e2e/references/quality-gates.md`.
+> This file records their IDs, invariants and criticality so nothing is unregistered; it does not
+> restate the table, and the generator does not parse them. See the E2E-Q section below.
 
 ## Scope vocabulary — the third scoring state
 
@@ -190,6 +195,41 @@ line; print one summary line instead: `out-of-scope: N gates (stack=<detected>)`
 | AP28 | Persistent `it.skip`/`describe.skip`/`@Ignore`/`#[ignore]`/`@pytest.mark.skip` with no ticket or expiry — dead code plus a silent coverage gap |
 | AP29 | Mock return value echoed in the assertion — proves the mock setup, not production logic (Q17). The most common audit failure |
 | AP30 | Mocking own code that could run with a real implementation (was AP25 until the numbering fork was resolved; overlaps `fix-tests` P-68 and Q13) |
+
+## E2E-Q gates — E2E test quality (registered by reference)
+
+**Authoritative definition: `skills/write-e2e/references/quality-gates.md`.** That file carries the
+full table — what each gate checks, whether the fix is auto-applicable, and the evidence line a run
+must emit — and `zuvo:write-e2e` loads it when it scores a generated spec. Change a gate there and
+nowhere else; this section is a registration, not a second copy.
+
+Why the family is registered instead of parsed: `scripts/gen-gate-copies.py` identifies a gate by
+the ID in a row's first cell and enforces one definition per ID plus contiguous numbering within
+each family. A row shaped the way the CQ/Q/CAP/AP tables are shaped would be absorbed into the `Q`
+family, duplicating its low-numbered gates and breaking the contiguity check with a misleading
+error. So nothing in this section is written in that shape, and none of it is inlined into a
+consumer — the skill reads the authoritative file directly.
+
+All ten are **critical**. There is no "flag it and move on" outcome: a failing gate is fixed in the
+run, or the spec is emitted BLOCKED with the failure recorded. A gate with no evidence line counts
+as NOT RUN and fails the same way a violation does.
+
+| Gate | Invariant (one line — full definition in the authoritative file) |
+|------|------------------------------------------------------------------|
+| E2E-Q1 | No arbitrary waits — no `waitForTimeout`, no `waitForLoadState('networkidle')`, no polling sleeps; every wait is a web-first assertion or a response wait tied to the action |
+| E2E-Q2 | Test independence and unique data — no shared mutable state, no ordering dependency between tests, and every record a test creates carries a run-unique key |
+| E2E-Q3 | Causal oracle — the decisive assertion runs AFTER the decisive event and observes state only that event could have produced |
+| E2E-Q4 | Fail-closed network policy — unrouted requests are denied, the allow-list is explicit, and no broad directory glob is used as a route pattern |
+| E2E-Q5 | Mutation contract validation — every intercepted mutation asserts on the request body, query and the headers the server actually depends on |
+| E2E-Q6 | Cleanup for destructive operations — anything created, mutated or deleted is undone or isolated, in a hook that runs even when the test body throws |
+| E2E-Q7 | Runner and browser version compatibility — only APIs present in the project's pinned Playwright version, and no implicit browser download |
+| E2E-Q8 | No external mutation flows without explicit consent — mutating a non-local origin requires a recorded consent decision naming that origin |
+| E2E-Q9 | Gray-box explicitly labeled — a spec reaching into internal stores, app state or private routes is labeled CHARACTERIZATION/GRAYBOX, never counted as pure end-to-end |
+| E2E-Q10 | Spec size limit and helper extraction — the spec file stays under its size limit and repeated multi-step sequences become named helpers |
+
+Generation guidance that is deliberately NOT a gate — locator policy, oracle selection mechanics,
+gray-box labeling detail, cleanup helpers — lives in `skills/write-e2e/references/playwright-patterns.md`
+and `network-mocking.md`. Those files cite these IDs; they never redefine them.
 
 ## Cost of changing a gate
 

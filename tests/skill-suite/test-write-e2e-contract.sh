@@ -45,6 +45,54 @@ fail=0
 pass() { printf 'PASS: %s\n' "$1"; }
 bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
 
+# ── the ONE copy of the V2 ID -> invariant map ──────────────────────────────
+# Adversarial finding F2: this map used to be re-typed in every consumer, and the
+# copies had ALREADY drifted (the registry check demanded `wait|networkidle|sleep`
+# for E2E-Q1 while the website check demanded only `wait|networkidle`) -- the exact
+# split-brain this suite exists to prevent. It is now written down once, here, and
+# every consumer reads it: the authoritative table (section 3), the by-reference
+# registration in gate-registry.md (section 12) and the website page (section 14).
+# Do not re-type these patterns anywhere else in this file.
+#
+# DEPENDENCY NOTE (deliberate, do not "improve"): the python blocks below scan the
+# YAML/markdown with scoped regexes instead of `yaml.safe_load`. PyYAML is a
+# third-party package that nothing else in this repo's tests or scripts imports --
+# scripts/validate-skill-pages.sh parses these same pages with grep -- so requiring
+# it would break `bash tests/run-all.sh` on a fresh machine, and a
+# `try: import yaml / except: <weaker path>` fallback is worse still: the suite
+# would then enforce two different contracts depending on the box. The answer is
+# not free-text grepping either: scope every scan by KEY and INDENTATION so it is
+# structural without a parser dependency.
+E2E_TMP="$(mktemp -d)"
+trap 'rm -rf "$E2E_TMP"' EXIT
+E2E_LIB="$E2E_TMP/e2e_invariants.py"
+cat > "$E2E_LIB" <<'PY'
+INVARIANT = {
+    1:  r'wait|networkidle',
+    2:  r'independen',
+    3:  r'oracle|causal',
+    4:  r'fail-closed|fail closed',
+    5:  r'mutation contract|contract validation',
+    6:  r'cleanup|teardown',
+    7:  r'version',
+    8:  r'consent',
+    9:  r'gray-?box',
+    10: r'size|helper',
+}
+LABEL = {
+    1:  'no arbitrary waits / networkidle',
+    2:  'test independence + unique data',
+    3:  'causal oracle after the decisive event',
+    4:  'fail-closed network policy',
+    5:  'mutation contract validation',
+    6:  'cleanup for destructive operations',
+    7:  'runner/browser version compatibility',
+    8:  'external mutation flows need consent',
+    9:  'gray-box explicitly labeled',
+    10: 'spec size limit + helper extraction',
+}
+PY
+
 # Mirrors the codex/cursor/antigravity build token scan — this does not define
 # the list, it copies it. Keep in sync with tests/skill-suite/test-references-guards.sh.
 TOKENS='TaskCreate|TaskUpdate|TaskList|EnterPlanMode|ExitPlanMode|AskUserQuestion|run_in_background|TeamCreate|SendMessage'
@@ -134,16 +182,27 @@ check_row() { # check_row <id> <ere> <human>
     bad "quality-gates.md: $1 row does not describe '$3' (mapping drift)"
   fi
 }
-check_row 'E2E-Q1'  'wait|networkidle'          'no arbitrary waits / networkidle'
-check_row 'E2E-Q2'  'independen'                'test independence + unique data'
-check_row 'E2E-Q3'  'oracle'                    'causal oracle after the decisive event'
-check_row 'E2E-Q4'  'fail-closed'               'fail-closed network policy'
-check_row 'E2E-Q5'  'mutation contract'         'mutation contract validation'
-check_row 'E2E-Q6'  'cleanup'                   'cleanup for destructive operations'
-check_row 'E2E-Q7'  'version'                   'runner/browser version compatibility'
-check_row 'E2E-Q8'  'consent'                   'external mutation flows need consent'
-check_row 'E2E-Q9'  'gray-?box'                 'gray-box explicitly labeled'
-check_row 'E2E-Q10' 'size|length|lines'         'spec size limit + helper extraction'
+# The ten (id, invariant, label) triples come from the ONE map defined above --
+# they are not re-typed here. If the dump yields anything other than ten rows the
+# loop would silently assert nothing, so the count is asserted too.
+row_checks=0
+while IFS="$(printf '\t')" read -r rc_id rc_re rc_human; do
+  [ -n "$rc_id" ] || continue
+  row_checks=$((row_checks + 1))
+  check_row "$rc_id" "$rc_re" "$rc_human"
+done < <(python3 - "$E2E_LIB" <<'PY' 2>/dev/null
+import sys
+ns = {}
+exec(compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec"), ns)
+for n in sorted(ns["INVARIANT"]):
+    print("E2E-Q%d\t%s\t%s" % (n, ns["INVARIANT"][n], ns["LABEL"][n]))
+PY
+)
+if [ "$row_checks" -eq 10 ]; then
+  pass "all ten row checks ran off the shared invariant map"
+else
+  bad "shared invariant map yielded $row_checks row check(s), want 10 (the ten checks above are vacuous)"
+fi
 
 # ── (3b) cross-file citation consistency ────────────────────────────────────
 # Network policy is Q4/Q5 in V2. V1 numbered network mocking E2E-Q6, which is
@@ -1152,6 +1211,531 @@ if [ -z "$hits2" ]; then
   pass "no Claude-only tool tokens in discovery-and-scoring / scaffold / live-validation"
 else
   bad "Claude-only tool token(s) in the second reference trio: $hits2"
+fi
+
+# ── (12) E2E-Q registered BY REFERENCE in the gate registry ─────────────────
+# The E2E-Q family is NOT a parsed registry family. scripts/gen-gate-copies.py's
+# parse_registry matches rows shaped `^\s*\|\s*(CQ|CAP|AP|Q)(\d+)\s*\|(.*)\|\s*$`
+# and enforces strict duplicate-ID + 1..N contiguity per family, so a row written
+# `| Q1 | ... |` inside an E2E section would be absorbed by the REAL Q family and
+# either duplicate Q1 or break contiguity — a build failure with a misleading
+# message. Registration is therefore by REFERENCE: gate-registry.md points at the
+# authoritative table and re-states only the ID -> invariant mapping, in a shape
+# the row regex cannot match.
+REGISTRY="$ROOT/shared/includes/gate-registry.md"
+CLAUDEMD="$ROOT/CLAUDE.md"
+SITEYAML="$ROOT/website/skills/write-e2e.yaml"
+AUTH_REL="skills/write-e2e/references/quality-gates.md"
+
+if [ ! -f "$REGISTRY" ]; then
+  bad "missing: shared/includes/gate-registry.md"
+else
+  # (12a) the registry names the AUTHORITATIVE file by its full path. A bare
+  # 'quality-gates.md' grep would false-pass on the registry's existing mentions
+  # of shared/includes/quality-gates.md, which is a different file.
+  if grep -Fq "$AUTH_REL" "$REGISTRY"; then
+    pass "gate-registry.md names $AUTH_REL as the authoritative E2E-Q definition"
+  else
+    bad "gate-registry.md does not name $AUTH_REL — E2E-Q is not registered anywhere"
+  fi
+
+  # (12a2) THE assertion that gives "registered by reference" its teeth. Every
+  # other check in this section reads gate-registry.md only, so they all pass on a
+  # registration that points at nothing: delete the authoritative file, rename it,
+  # or re-point the pointer at a path that does not exist, and (12a)-(12e) stay
+  # green while the "definition" the registry defers to is gone. This check follows
+  # the pointer OUT of the registry -- it extracts every path the registry calls
+  # authoritative, resolves it on disk, and re-derives the ten IDs, the shared
+  # invariant map and the criticality claim from the file that was actually found.
+  auth_out="$(python3 - "$REGISTRY" "$ROOT" "$AUTH_REL" "$E2E_LIB" <<'PY' 2>&1
+import pathlib, re, sys
+
+reg_path, root, auth_rel, lib = sys.argv[1:5]
+ns = {}
+exec(compile(open(lib, encoding="utf-8").read(), lib, "exec"), ns)
+INVARIANT = ns["INVARIANT"]
+
+registry = open(reg_path, encoding="utf-8", errors="replace").read()
+
+# Every "authoritative(ly) ... `<something>.md`" claim the registry makes, in the
+# order it makes them. A claim that does not resolve on disk is a dead pointer.
+ptrs = sorted(set(re.findall(r'[Aa]uthoritativ\w*[^`\n]*`([^`\n]+\.md)`', registry)))
+gaps = []
+if not ptrs:
+    gaps.append("no-authoritative-pointer")
+for p in ptrs:
+    if not (pathlib.Path(root) / p).is_file():
+        gaps.append("unresolved:" + p)
+if auth_rel not in ptrs:
+    gaps.append("pointer-is-not-" + auth_rel)
+print("PTR=%s" % (",".join(gaps) if gaps else "none"))
+
+target = pathlib.Path(root) / auth_rel
+if not target.is_file():
+    print("MAP=NOFILE")
+    print("CRIT=NOFILE")
+    sys.exit(0)
+body = target.read_text(encoding="utf-8", errors="replace")
+
+# rows[n] = list of cell lists, so a duplicated ID is a failure and not a silent
+# first-match win.
+rows = {}
+for ln in body.split("\n"):
+    m = re.match(r'^\|\s*E2E-Q(\d+)\s*\|(.*)$', ln)
+    if m:
+        rows.setdefault(int(m.group(1)), []).append(
+            [c.strip() for c in m.group(2).split("|")])
+
+mapgap = []
+for n, pat in sorted(INVARIANT.items()):
+    got = rows.get(n)
+    if not got:
+        mapgap.append("E2E-Q%d:no-row" % n)
+    elif len(got) > 1:
+        mapgap.append("E2E-Q%d:duplicate-row" % n)
+    elif not re.search(pat, got[0][0], re.I):
+        mapgap.append("E2E-Q%d:invariant" % n)
+mapgap += ["E2E-Q%d:undeclared" % n for n in sorted(rows) if n not in INVARIANT]
+print("MAP=%s" % (",".join(mapgap) if mapgap else "none"))
+
+# Criticality, from the same file: the Critical column of every row AND the prose
+# claim the registry repeats. Column 2 of the row body is "Critical".
+critgap = []
+for n, got in sorted(rows.items()):
+    cell = got[0][1] if len(got[0]) > 1 else "?"
+    if cell.strip().lower() != "yes":
+        critgap.append("E2E-Q%d:%s" % (n, cell or "empty"))
+if not re.search(r'(all ten|all 10|every gate)[^.\n]*critical', body, re.I):
+    critgap.append("no-criticality-statement")
+print("CRIT=%s" % (",".join(critgap) if critgap else "none"))
+PY
+)"
+  auth_ptr="$(printf '%s\n' "$auth_out" | sed -n 's/^PTR=//p')"
+  auth_map="$(printf '%s\n' "$auth_out" | sed -n 's/^MAP=//p')"
+  auth_crit="$(printf '%s\n' "$auth_out" | sed -n 's/^CRIT=//p')"
+  if [ -z "$auth_ptr$auth_map$auth_crit" ]; then
+    bad "authoritative-target check produced no verdict: $(printf '%s' "$auth_out" | tr '\n' ' ')"
+  else
+    if [ "$auth_ptr" = "none" ]; then
+      pass "every 'authoritative' pointer in gate-registry.md resolves to a file on disk"
+    else
+      bad "gate-registry.md's authoritative pointer is dead or wrong: $auth_ptr"
+    fi
+    if [ "$auth_map" = "none" ]; then
+      pass "$AUTH_REL defines E2E-Q1..E2E-Q10, one row each, matching the shared invariant map"
+    else
+      bad "the file gate-registry.md points at does not define the registered gates: $auth_map"
+    fi
+    if [ "$auth_crit" = "none" ]; then
+      pass "$AUTH_REL marks every E2E-Q row critical and states it in prose (matches the registry's claim)"
+    else
+      bad "criticality drift between the registry's claim and the authoritative file: $auth_crit"
+    fi
+  fi
+
+  # (12b) all ten IDs present. The trailing `([^0-9]|$)` is load-bearing: a bare
+  # substring grep for `E2E-Q1` also matches inside `E2E-Q10`, so deleting the
+  # E2E-Q1 row would leave this assertion green (verified by mutation).
+  e2e_missing=""
+  for n in 1 2 3 4 5 6 7 8 9 10; do
+    grep -Eq "E2E-Q${n}([^0-9]|\$)" "$REGISTRY" || e2e_missing="$e2e_missing E2E-Q${n}"
+  done
+  if [ -z "$e2e_missing" ]; then
+    pass "gate-registry.md lists E2E-Q1 through E2E-Q10"
+  else
+    bad "gate-registry.md is missing E2E gate id(s):$e2e_missing"
+  fi
+
+  # (12c) criticality summary — all ten are critical, stated in the registry.
+  if grep -Eqi 'all (ten|10)[^.]*critical|ten[^.]*are critical' "$REGISTRY"; then
+    pass "gate-registry.md states that all ten E2E-Q gates are critical"
+  else
+    bad "gate-registry.md does not state the E2E-Q criticality summary (all ten critical)"
+  fi
+
+  # (12d) the ID -> invariant pairing matches the V2 mapping used everywhere else
+  #       in this suite, AND (12e) not one line of the E2E section is parseable as
+  #       a registry gate row. Both run over the SECTION, extracted by heading, so
+  #       a stray E2E mention elsewhere in the file cannot satisfy them.
+  e2e_out="$(python3 - "$REGISTRY" "$E2E_LIB" <<'PY' 2>&1
+import re, sys
+
+ns = {}
+exec(compile(open(sys.argv[2], encoding="utf-8").read(), sys.argv[2], "exec"), ns)
+INVARIANT = ns["INVARIANT"]
+
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read().split("\n")
+
+start = None
+for i, line in enumerate(text):
+    if line.startswith("## ") and "E2E-Q" in line:
+        start = i
+        break
+if start is None:
+    print("NOSECTION")
+    sys.exit(0)
+end = len(text)
+for j in range(start + 1, len(text)):
+    if text[j].startswith("## "):
+        end = j
+        break
+section = text[start:end]
+
+# EXACT copy of the row regex in scripts/gen-gate-copies.py :: parse_registry.
+ROW = re.compile(r'^\s*\|\s*(CQ|CAP|AP|Q)(\d+)\s*\|(.*)\|\s*$')
+collide = [f"{start + k + 1}:{ln}" for k, ln in enumerate(section) if ROW.match(ln.rstrip())]
+
+# The mapping is read off the TABLE ROWS, keyed by ID -- never off the first
+# textual mention. A `re.search` over the section body is satisfied by a sentence
+# of prose, so deleting a row and describing the gate in a paragraph instead used
+# to keep this green; and with ten IDs in one blob the first match for E2E-Q1 can
+# land inside a neighbouring row. Rows first, then the mapping over the invariant
+# cell of each row.
+# (No apostrophes in any of these heredocs on purpose: bash 3.2 tracks quote state
+# while it scans a heredoc nested inside $( ), so a lone apostrophe in a comment
+# swallows the rest of the file and the script dies with an EOF syntax error.)
+rows = {}
+for k, ln in enumerate(section):
+    m = re.match(r'^\|\s*E2E-Q(\d+)\s*\|(.*)$', ln)
+    if m:
+        rows.setdefault(int(m.group(1)), []).append(
+            [c.strip() for c in m.group(2).split("|")])
+
+rowgap = []
+for n in sorted(INVARIANT):
+    got = rows.get(n)
+    if not got:
+        rowgap.append("E2E-Q%d:no-row" % n)
+    elif len(got) > 1:
+        rowgap.append("E2E-Q%d:duplicate-row" % n)
+rowgap += ["E2E-Q%d:undeclared" % n for n in sorted(rows) if n not in INVARIANT]
+
+missing = []
+for n, pat in sorted(INVARIANT.items()):
+    got = rows.get(n)
+    if not got:
+        missing.append(f"E2E-Q{n}:no-row")
+    elif not re.search(pat, got[0][0], re.I):
+        missing.append(f"E2E-Q{n}:invariant")
+
+print("LINES=%d" % len(section))
+print("ROWGAP=%s" % (",".join(rowgap) if rowgap else "none"))
+print("COLLIDE=%s" % ("|".join(collide) if collide else "none"))
+print("MAPGAP=%s" % (",".join(missing) if missing else "none"))
+PY
+)"
+  if printf '%s' "$e2e_out" | grep -q '^NOSECTION'; then
+    bad "gate-registry.md has no '## ...E2E-Q...' section — nothing to register"
+  else
+    e2e_collide="$(printf '%s\n' "$e2e_out" | sed -n 's/^COLLIDE=//p')"
+    e2e_mapgap="$(printf '%s\n' "$e2e_out" | sed -n 's/^MAPGAP=//p')"
+    e2e_rowgap="$(printf '%s\n' "$e2e_out" | sed -n 's/^ROWGAP=//p')"
+    if [ "$e2e_rowgap" = "none" ]; then
+      pass "the E2E-Q section carries exactly one table row for each of E2E-Q1..E2E-Q10"
+    else
+      bad "E2E-Q section row set is wrong (a gate described in prose is not registered): $e2e_rowgap"
+    fi
+    if [ "$e2e_collide" = "none" ]; then
+      pass "no line of the E2E-Q section matches gen-gate-copies parse_registry's row regex"
+    else
+      bad "E2E-Q section line(s) parse as a CQ/Q/CAP/AP gate row — family collision: $e2e_collide"
+    fi
+    if [ "$e2e_mapgap" = "none" ]; then
+      pass "gate-registry.md E2E-Q1..E2E-Q10 invariants match the V2 mapping"
+    else
+      bad "gate-registry.md E2E-Q invariant mismatch for: $e2e_mapgap"
+    fi
+  fi
+fi
+
+# (12f) the generator still parses the registry cleanly. NO ARGS is check mode —
+# only --write is recognised; there is no --check flag.
+# stdout is the generator's normal report and is noise here; stderr is the ONLY
+# place a traceback or a parse error appears, so it is captured and reported. It
+# used to go to /dev/null with stdout, which turned every failure mode -- missing
+# python, a syntax error in the generator, a broken registry row -- into the same
+# blind one-line FAIL.
+gg_err="$( (cd "$ROOT" && python3 scripts/gen-gate-copies.py >/dev/null) 2>&1 )"
+gg_rc=$?
+if [ "$gg_rc" -eq 0 ]; then
+  pass "python3 scripts/gen-gate-copies.py (check mode) exits 0 with the E2E-Q section present"
+else
+  bad "gen-gate-copies.py exits $gg_rc with the E2E-Q section present — registry parse or region drift: $(printf '%s' "$gg_err" | tr '\n' ' ' | cut -c1-600)"
+fi
+
+# ── (13) CLAUDE.md describes the registration honestly ──────────────────────
+if [ ! -f "$CLAUDEMD" ]; then
+  bad "missing: CLAUDE.md"
+else
+  cl_line="$(grep -n 'gate-registry\.md' "$CLAUDEMD" | head -1)"
+  if [ -z "$cl_line" ]; then
+    bad "CLAUDE.md no longer mentions gate-registry.md"
+  elif printf '%s' "$cl_line" | grep -Eqi 'by[ -]reference'; then
+    pass "CLAUDE.md describes E2E-Q as registered by reference: ${cl_line%%:*}"
+  else
+    bad "CLAUDE.md gate-registry description omits the by-reference E2E-Q registration: [$cl_line]"
+  fi
+  if grep -Eqi 'E2E-Q' "$CLAUDEMD"; then
+    pass "CLAUDE.md names the E2E-Q family"
+  else
+    bad "CLAUDE.md never names E2E-Q — the SSOT claim stays silently overbroad"
+  fi
+fi
+
+# ── (14) website/skills/write-e2e.yaml reflects what actually shipped ───────
+if [ ! -f "$SITEYAML" ]; then
+  bad "missing: website/skills/write-e2e.yaml"
+else
+  # (14a) new argument grammar, including the deprecated positional alias.
+  arg_missing=""
+  for a in -- '--scope' '--flow' '--output' '--base-url' '--max-flows' '--live' '--dry-run'; do
+    [ "$a" = "--" ] && continue
+    grep -Fq -- "$a" "$SITEYAML" || arg_missing="$arg_missing $a"
+  done
+  if [ -z "$arg_missing" ]; then
+    pass "website yaml documents the V2 argument grammar (--scope/--flow/--output/--base-url/--max-flows)"
+  else
+    bad "website yaml is missing argument(s):$arg_missing"
+  fi
+  if grep -Eqi 'deprecat' "$SITEYAML" && grep -Fq '[path]' "$SITEYAML"; then
+    pass "website yaml marks the positional [path] as a deprecated alias"
+  else
+    bad "website yaml does not record [path] as a deprecated alias for --scope"
+  fi
+
+  # (14b) the verification-state vocabulary — six states, no invented seventh.
+  st_missing=""
+  for s in GENERATED STATIC_CHECKED VERIFIED_LOCAL VALIDATED_LIVE BLOCKED FAILED; do
+    grep -Fq "$s" "$SITEYAML" || st_missing="$st_missing $s"
+  done
+  if [ -z "$st_missing" ]; then
+    pass "website yaml carries the full validation-state vocabulary"
+  else
+    bad "website yaml is missing validation state(s):$st_missing"
+  fi
+  if grep -Fq 'VALIDATION SKIPPED' "$SITEYAML"; then
+    bad "website yaml still advertises 'VALIDATION SKIPPED' — that state does not exist in V2"
+  else
+    pass "website yaml does not advertise a non-existent 'VALIDATION SKIPPED' state"
+  fi
+
+  # (14c) origin classes and the two consents.
+  or_missing=""
+  for o in LOCAL STAGING EXTERNAL_UNKNOWN --allow-external-origin --allow-destructive; do
+    grep -Fq -- "$o" "$SITEYAML" || or_missing="$or_missing $o"
+  done
+  if [ -z "$or_missing" ]; then
+    pass "website yaml documents the three origin classes and both consents"
+  else
+    bad "website yaml is missing origin/consent term(s):$or_missing"
+  fi
+
+  # (14d) preflight states.
+  pf_missing=""
+  for p in READY GENERATE_ONLY BOOTSTRAP_REQUIRED; do
+    grep -Fq "$p" "$SITEYAML" || pf_missing="$pf_missing $p"
+  done
+  if [ -z "$pf_missing" ]; then
+    pass "website yaml documents the three preflight states"
+  else
+    bad "website yaml is missing preflight state(s):$pf_missing"
+  fi
+
+  # (14e) flow-volume scale — 1 scoped/named, 3 for bare --auto, 20 only on an
+  # explicit --max-flows request. Asserted on the ARGUMENT ENTRIES, not on a bare
+  # '20' anywhere in the file: the V1 page also contained "default: 20", which is
+  # the exact claim this task exists to retire.
+  scale_out="$(python3 - "$SITEYAML" <<'PY' 2>&1
+import re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+gaps = []
+mf = re.search(r'flag:\s*"--max-flows[^"]*"\s*\n\s*description:\s*"([^"]*)"', text)
+if not mf:
+    gaps.append("--max-flows-entry")
+else:
+    if not (re.search(r'\b20\b', mf.group(1)) and re.search(r'explicit|never assumed|by name|asks', mf.group(1), re.I)):
+        gaps.append("--max-flows-explicit-20")
+    # The retired V1 claim ("--max-flows N, default: 20") can only live on THIS
+    # entry, so the ban is scoped to it. Unscoped over the whole page it also fired
+    # on any unrelated future `default: 20` -- a timeout, a retry count, a page
+    # size -- and failed the suite under the misleading label stale-default-20.
+    if re.search(r'default:\s*20\b', mf.group(1), re.I):
+        gaps.append("stale-default-20")
+au = re.search(r'flag:\s*"--auto"\s*\n\s*description:\s*"([^"]*)"', text)
+if not au:
+    gaps.append("--auto-entry")
+elif not re.search(r'\b3\b|three', au.group(1)):
+    gaps.append("--auto-default-3")
+sc = re.search(r'flag:\s*"--scope[^"]*"\s*\n\s*description:\s*"([^"]*)"', text)
+if not sc:
+    gaps.append("--scope-entry")
+elif not re.search(r'\b1\b|one flow|single flow', sc.group(1), re.I):
+    gaps.append("--scope-single-flow")
+print("SCALE=%s" % (",".join(gaps) if gaps else "none"))
+PY
+)"
+  scale_gap="$(printf '%s\n' "$scale_out" | sed -n 's/^SCALE=//p')"
+  if [ "$scale_gap" = "none" ]; then
+    pass "website yaml states the 1/3/20-explicit flow scale on the argument entries"
+  else
+    bad "website yaml flow-scale documentation is wrong/stale: $scale_gap"
+  fi
+
+  # (14f) E2E-Q V2 mapping — the ids AND the invariants, all ten critical.
+  yq_out="$(python3 - "$SITEYAML" "$E2E_LIB" <<'PY' 2>&1
+import re, sys
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+ns = {}
+exec(compile(open(sys.argv[2], encoding="utf-8").read(), sys.argv[2], "exec"), ns)
+INVARIANT = ns["INVARIANT"]
+
+bad_ids, crit_gap = [], []
+for n, pat in sorted(INVARIANT.items()):
+    # Block = this item up to the next `- id:` OR the next top-level key (the last
+    # item has no sibling after it, and without the second alternative the lazy
+    # match would have to swallow the rest of the file and would simply not match).
+    # The body is UNBOUNDED on purpose: an arbitrary `.{0,400}?` cap made the lazy
+    # match unable to reach the lookahead once an item grew past it, and the gate
+    # was then reported `:absent` -- a false failure that reads exactly like a
+    # dropped gate. The lookahead alternatives already bound the match.
+    m = re.search(rf'id:\s*"?E2E-Q{n}"?\s*\n(.*?)(?=\n\s*- id:|\n[A-Za-z_]+:|\Z)', text, re.S)
+    if not m:
+        bad_ids.append(f"E2E-Q{n}:absent"); continue
+    blk = m.group(0)
+    if not re.search(pat, blk, re.I):
+        bad_ids.append(f"E2E-Q{n}:invariant")
+    # A real `critical:` KEY line set to exactly true. The old substring test
+    # matched `critical: trueish`, and matched the phrase inside a description
+    # string while the key itself was absent or false.
+    if not re.search(r'^\s*critical:\s*true\s*$', blk, re.M):
+        crit_gap.append(f"E2E-Q{n}")
+print("IDS=%s" % (",".join(bad_ids) if bad_ids else "none"))
+print("CRIT=%s" % (",".join(crit_gap) if crit_gap else "none"))
+PY
+)"
+  yq_ids="$(printf '%s\n' "$yq_out" | sed -n 's/^IDS=//p')"
+  yq_crit="$(printf '%s\n' "$yq_out" | sed -n 's/^CRIT=//p')"
+  if [ "$yq_ids" = "none" ]; then
+    pass "website yaml carries the V2 E2E-Q1..E2E-Q10 mapping with matching invariants"
+  else
+    bad "website yaml E2E-Q mapping is stale/incomplete: $yq_ids"
+  fi
+  if [ "$yq_crit" = "none" ]; then
+    pass "website yaml marks all ten E2E-Q gates critical: true"
+  else
+    bad "website yaml does not mark these E2E-Q gates critical: $yq_crit"
+  fi
+
+  # V1 gate labels that MUST be gone — Q2 was 'stable locators', Q5 was
+  # 'storageState auth'; both moved and are not gates in V2.
+  v1_left=""
+  grep -Fq 'Stable locators' "$SITEYAML" && v1_left="$v1_left stable-locators-gate"
+  grep -Eq 'E2E-Q5[^\n]*storageState' "$SITEYAML" && v1_left="$v1_left q5-storagestate"
+  if [ -z "$v1_left" ]; then
+    pass "no V1 E2E-Q labels survive in the website yaml"
+  else
+    bad "V1 E2E-Q label(s) still in the website yaml:$v1_left"
+  fi
+
+  # (14g) the references/ structure is what the page describes.
+  if grep -Fq 'references/' "$SITEYAML"; then
+    pass "website yaml describes the references/ structure"
+  else
+    bad "website yaml does not mention the references/ structure the V2 skill ships"
+  fi
+
+  # (14h) the page still satisfies scripts/validate-skill-pages.sh — asserted on
+  # THIS page, not on the suite's global exit code.
+  #
+  # Why scoped: validate-skill-pages.sh has been red on main since 440f2fc for
+  # reasons that have nothing to do with write-e2e — it hard-codes
+  # EXPECTED_COUNT=39 while 41 pages exist, and geo-audit/geo-fix ship 156- and
+  # 160-char descriptions plus slugs missing from its ALLOW_LIST. Asserting the
+  # global exit code here would make this suite fail for a defect in other files
+  # and, worse, would go green later for a reason unrelated to this page. So the
+  # validator's OWN rules are applied to write-e2e.yaml: every required top-level
+  # key, meta.description <= 155 chars, >= 3 faq, >= 3 stats, a valid category,
+  # and related_skills slugs inside its allow-list.
+  vp_out="$(python3 - "$SITEYAML" "$ROOT/scripts/validate-skill-pages.sh" <<'PY' 2>&1
+import re, sys
+page = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+val = open(sys.argv[2], encoding="utf-8", errors="replace").read()
+problems = []
+
+required = ["schema_version", "last_synced", "meta", "stats", "problem", "how_it_works",
+            "examples", "when_to_use", "when_not_to_use", "related_skills", "faq", "arguments"]
+for key in required:
+    if not re.search(rf'^{key}:', page, re.M):
+        problems.append(f"missing-key:{key}")
+
+# Scoped to the `meta:` block by key + indentation rather than grepping the whole
+# page (see the dependency note at the top of this file: structural, no PyYAML).
+meta = re.search(r'^meta:\s*$\n(.*?)(?=^[A-Za-z_])', page, re.M | re.S)
+meta_body = meta.group(1) if meta else ""
+m = re.search(r'^  description:[ \t]*(.*)$', meta_body, re.M)
+if not m:
+    problems.append("no-meta-description")
+else:
+    desc = m.group(1).strip()
+    # A folded/literal block scalar puts the TEXT on the following, more-indented
+    # lines; measuring the indicator instead of the text made an over-long
+    # description pass. Fold it first, then measure.
+    if re.fullmatch(r'[|>][+-]?\d*', desc):
+        tail = meta_body[m.end():].split("\n")[1:]
+        folded = []
+        for ln in tail:
+            if ln.strip() and not ln.startswith("    "):
+                break
+            folded.append(ln.strip())
+        desc = " ".join(x for x in folded if x).strip()
+    desc = desc.strip('"').strip("'")
+    if len(desc) > 155:
+        problems.append(f"description-{len(desc)}-chars")
+
+# The validator greps two-space-indented `  description:` across ALL pages and
+# fails on duplicates, so this page must carry exactly one such line.
+n_desc = len(re.findall(r'^  description:', page, re.M))
+if n_desc != 1:
+    problems.append(f"two-space-description-lines:{n_desc}")
+
+if len(re.findall(r'^  - q:', page, re.M)) < 3:
+    problems.append("faq<3")
+if len(re.findall(r'^  - label:', page, re.M)) < 3:
+    problems.append("stats<3")
+
+# `category: "task"` is valid YAML and identical in meaning to `category: task`,
+# so the quotes are stripped before the enum comparison instead of being carried
+# into it as literal characters.
+cat = re.search(r'^  category:[ \t]*(\S+)', page, re.M)
+cat_val = cat.group(1).strip().strip('"').strip("'") if cat else None
+if cat_val not in "audit task pipeline utility design release".split():
+    problems.append("category-invalid")
+
+allow = re.search(r'ALLOW_LIST="([^"]*)"', val)
+allowed = set(allow.group(1).split()) if allow else set()
+for slug in re.findall(r'^  - slug:\s*(\S+)', page, re.M):
+    if slug not in allowed:
+        problems.append(f"unknown-slug:{slug}")
+
+print("VP=%s" % (",".join(problems) if problems else "none"))
+PY
+)"
+  vp_gap="$(printf '%s\n' "$vp_out" | sed -n 's/^VP=//p')"
+  if [ "$vp_gap" = "none" ]; then
+    pass "write-e2e.yaml satisfies every validate-skill-pages.sh rule (keys, length, cardinality, slugs)"
+  else
+    bad "write-e2e.yaml violates validate-skill-pages.sh rule(s): $vp_gap"
+  fi
+
+  # The suite-wide run is still executed, but its failures are attributed: a FAIL
+  # line naming write-e2e is THIS page's problem and fails here; the pre-existing
+  # geo/count failures are not silently adopted.
+  vp_lines="$( (cd "$ROOT" && bash scripts/validate-skill-pages.sh 2>&1) | grep '^FAIL' | grep 'write-e2e' || true)"
+  if [ -z "$vp_lines" ]; then
+    pass "scripts/validate-skill-pages.sh reports no failure naming write-e2e"
+  else
+    bad "scripts/validate-skill-pages.sh fails on write-e2e: $vp_lines"
+  fi
 fi
 
 echo ""
