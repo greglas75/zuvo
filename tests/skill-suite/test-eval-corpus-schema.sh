@@ -43,7 +43,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 EVALS_DIR="$ROOT/evals"
 SCHEMA_DOC="$ROOT/shared/includes/eval-schema.md"
-SKILLS="refactor write-tests review execute"
+SKILLS="refactor write-tests review execute write-e2e"
 
 fail=0
 pass() { printf 'PASS: %s\n' "$1"; }
@@ -242,6 +242,91 @@ for f in "$EVALS_DIR"/*.evals.json; do
   fi
 done
 [ "$found_any" -eq 1 ] || bad "no evals/*.evals.json corpora discovered under $EVALS_DIR"
+
+# ── write-e2e: the EIGHT V2-regression SCENARIOS must still be present (Task 9) ──
+# A count-only floor (len(evals) >= 8) is not protection: replace all eight cases with
+# trivial ones and it still passes. So each scenario is pinned by a stable MARKER SET —
+# tokens that only that scenario's prompt/expected_output/assertions can carry (the
+# preflight ceiling, the origin consents, the loader-vs-decisive-event oracle, the
+# `**/api/**` glob ban, monorepo scope, index invariance, testid-free HIGH confidence).
+# Ids are deliberately NOT asserted: renumbering is a legitimate edit, losing a scenario
+# is not. The count floor is kept as a cheap first check, and every failure cause is
+# reported distinctly — collapsing "file missing", "invalid JSON", "no evals key" and
+# "python3 absent" into one count complaint sends the next reader after the wrong defect.
+WE2E="$EVALS_DIR/write-e2e.evals.json"
+if ! command -v python3 >/dev/null 2>&1; then
+  bad "write-e2e scenario check NOT RUN [$WE2E]: PYTHON3_UNAVAILABLE (no python3 on PATH — missing interpreter, not a corpus defect)"
+else
+  we2e_out="$(python3 - "$WE2E" <<'PY'
+import json, sys
+
+path = sys.argv[1]
+
+# (label, markers) — every marker must appear in the SAME eval for that scenario to
+# count as present. Keep these in sync with evals/write-e2e.evals.json.
+SCENARIOS = [
+    ("1 ready-Playwright repo reaches VERIFIED_LOCAL with a causal oracle",
+     ["READY", "playwright test", "VERIFIED_LOCAL"]),
+    ("2 Vite/Preact without Playwright -> GENERATE_ONLY, no install, STATIC_CHECKED ceiling",
+     ["GENERATE_ONLY", "STATIC_CHECKED", "npx playwright install"]),
+    ("3 source module with /api/ in its path is not glob-intercepted",
+     ["**/api/**", "src/api/client.ts", "pathname"]),
+    ("4 500-error flow waits for the decisive event, not the initial loader",
+     ["Loading your orders", "role=alert", "decisive event"]),
+    ("5 monorepo without a scope asks instead of generating for both apps",
+     ["apps/web", "apps/admin", "scope"]),
+    ("6 external origin via --live BLOCKS mutations behind two separate consents",
+     ["EXTERNAL_UNKNOWN", "--allow-external-origin", "--allow-destructive"]),
+    ("7 dirty worktree: review patch carries the new spec, foreign staged file untouched",
+     ["build-review-patch", "src/billing/invoice.ts", "git stash"]),
+    ("8 accessible UI with zero testids still yields a HIGH-confidence getByRole flow",
+     ["getByRole", "data-testid", "HIGH confidence"]),
+]
+
+def die(cause, detail):
+    print("write-e2e scenario check FAILED [%s]: %s — %s" % (path, cause, detail))
+    sys.exit(1)
+
+# distinct causes: each names what actually went wrong, never a blanket count complaint
+try:
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+except FileNotFoundError:
+    die("FILE_MISSING", "the corpus file is absent (deleted, or never authored)")
+except UnicodeDecodeError as e:
+    die("ENCODING_ERROR", "file is not valid UTF-8 (%s)" % e)
+except json.JSONDecodeError as e:
+    die("JSON_INVALID", "file exists but does not parse as JSON (%s)" % e)
+except OSError as e:
+    die("UNREADABLE", "file exists but could not be read (%s)" % e)
+
+if not isinstance(data, dict):
+    die("TOP_LEVEL_NOT_OBJECT", "top level is %s, expected a JSON object" % type(data).__name__)
+if "evals" not in data:
+    die("EVALS_KEY_MISSING", "top-level 'evals' key absent; keys present: %s" % sorted(data.keys()))
+evals = data["evals"]
+if not isinstance(evals, list):
+    die("EVALS_NOT_A_LIST", "'evals' is %s, expected an array (len() would be meaningless)" % type(evals).__name__)
+if len(evals) < len(SCENARIOS):
+    die("COUNT_BELOW_FLOOR", "%d evals present, %d required" % (len(evals), len(SCENARIOS)))
+
+blobs = [json.dumps(ev, ensure_ascii=False) for ev in evals]
+missing = [(label, [m for m in markers if not any(m in b for b in blobs)])
+           for label, markers in SCENARIOS
+           if not any(all(m in b for m in markers) for b in blobs)]
+if missing:
+    die("SCENARIO_MISSING",
+        "%d of %d pinned V2 scenarios absent -> %s" % (
+            len(missing), len(SCENARIOS),
+            "; ".join("%s (markers not found together: %s)" % (label, ", ".join(gone) or "markers split across evals")
+                      for label, gone in missing)))
+
+print("evals/write-e2e.evals.json: %d evals, %d/%d pinned V2 scenarios present"
+      % (len(evals), len(SCENARIOS), len(SCENARIOS)))
+PY
+)"
+  if [ $? -eq 0 ]; then pass "$we2e_out"; else bad "$we2e_out"; fi
+fi
 
 echo
 echo "== (f) shared/includes/eval-schema.md =="
