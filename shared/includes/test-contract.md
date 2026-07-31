@@ -225,7 +225,7 @@ TEST CONTRACT (ORCHESTRATOR): [production-file-path]
 4-6: Same as standard contract (MOCK INVENTORY, MUTATION TARGETS, TEST OUTLINE).
 ```
 
-Use this variant when `test-code-types.md` classifies the file as ORCHESTRATOR. The standard contract (sections 1-3 above) is for SERVICE, CONTROLLER, PURE, and other types.
+Use this variant when `test-code-types-core.md` classifies the file as ORCHESTRATOR. The standard contract (sections 1-3 above) is for SERVICE, CONTROLLER, PURE, and other types.
 
 ## Anti-Patterns This Contract Prevents
 

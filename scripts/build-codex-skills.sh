@@ -629,23 +629,13 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
     done
   fi
 
-  # Copy cross-referenced agents (e.g., build references refactor's agents)
-  if [ ! -d "$skill_dir/agents" ]; then
-    cross_agents=$(grep -o '~/.claude/skills/[a-z-]*/agents/[a-z-]*\.md' "$skill_dir/SKILL.md" 2>/dev/null | sort -u || true)
-    if [ -n "$cross_agents" ]; then
-      mkdir -p "$DIST/skills/$skill/agents"
-      echo "$cross_agents" | while IFS= read -r agent_path; do
-        rel_path=$(echo "$agent_path" | sed 's|~/.claude/||')
-        src_file="$PLUGIN_DIR/$rel_path"
-        name=$(basename "$agent_path" .md)
-        if [ -f "$src_file" ]; then
-          adapt_agent_for_codex "$src_file" "$DIST/skills/$skill/agents/$name.md"
-          echo "    agent: $name (cross-ref from $(echo "$rel_path" | sed 's|/agents/.*||'))"
-          agent_file_count=$((agent_file_count + 1))
-        fi
-      done
-    fi
-  fi
+  # Cross-skill agent references need NO copy step: SKILL.md files reference
+  # other skills' agents as ../../skills/<x>/agents/<y>.md (content-expand →
+  # write-article's anti-slop-reviewer, write-article → brainstorm's
+  # code-explorer), replace_paths rewrites that to ~/.codex/skills/<x>/agents/,
+  # and the referenced skill ships its own agents/ dir above. A former copy
+  # block here grepped for the legacy ~/.claude/skills/... form, which no
+  # SKILL.md uses anymore — it silently matched nothing (removed 2026-08-01).
 
   skill_count=$((skill_count + 1))
 done

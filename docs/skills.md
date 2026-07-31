@@ -164,8 +164,7 @@ Scoped task execution for common development work.
 | `env-compat.md` | Multi-platform dispatch (Claude Code, Codex, Cursor, Antigravity) |
 | `banned-vocabulary.md` | Modular banned-vocabulary loader with shared core plus 32 language files (25 European + AR/ID/JA/KO/TH/VI/ZH) and tone-dependent thresholds |
 | `prose-quality-registry.md` | PQ1-PQ18 content quality checks — readability, engagement, SEO, structure, authority, anti-slop |
-| `article-output-schema.md` | JSON output contract for write-article |
-| `content-expand-output-schema.md` | JSON output contract for content-expand (before/after scores, changes, voice delta) |
+| `article-output-schema.md` | JSON output contract for write-article and content-expand |
 
 ## Skill `codesift_tools` manifest
 

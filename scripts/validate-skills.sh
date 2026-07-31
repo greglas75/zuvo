@@ -227,11 +227,13 @@ check_plugin_root() {
 
 # --- Task 3 checks (include-integrity, count-consistency) ---
 
-# include tokens checked: files DIRECTLY under shared/includes/ or rules/
-# (subdirectory references like banned-vocabulary/core.md are out of scope).
+# include tokens checked: any file under shared/includes/ or rules/, INCLUDING
+# subdirectory references like banned-vocabulary/core.md. Placeholder segments
+# (<resolved-lang>.md, {stack}.md) contain chars outside the class and are
+# deliberately never matched.
 # Broad (\.\./)+ prefix so ../../../ forms are captured WHOLE — a narrow
 # \.\./\.\./ pattern substring-truncates them and silently passes them.
-INCLUDE_TOKEN_RE='(\.\./)+(shared/includes|rules)/[A-Za-z0-9._-]+\.md'
+INCLUDE_TOKEN_RE='(\.\./)+(shared/includes|rules)(/[A-Za-z0-9._-]+)+\.md'
 INCLUDE_INTEGRITY_OK=0
 COUNT_CONSISTENCY_OK=0
 ACTUAL_SKILLS=0
@@ -243,49 +245,36 @@ ROUTING_NONSKILL_TOKENS="zuvo:adhoc-approved"
 # --- ERROR: every shared/includes|rules include token must exist on disk ---
 # --- AND use the canonical depth for the referencing file's level ---
 check_include_integrity() {
-  local before="$ERRORS" f tok rel fileloc skill is_ref canon
+  local before="$ERRORS" f tok rel fileloc skill deep canon
   while IFS= read -r -d '' f; do
     fileloc="${f#"$SKILLS_DIR"/}"   # e.g. build/SKILL.md or refactor/agents/x.md
     skill="$(skill_name_of "$f")"
-    # references/ EXCEPTION to the root-anchored rule below: reference docs are
-    # read as standalone prose (and are copied verbatim into every platform
-    # dist), so their include paths must be filesystem-correct RELATIVE TO THE
-    # FILE. agents/ and SKILL.md keep the root-anchored convention, so the ~87
-    # legitimate root-anchored uses (incl. plan/agents/plan-reviewer.md,
-    # write-tests/agents/test-quality-reviewer.md,
-    # execute/agents/quality-reviewer.md) stay clean.
-    # Scoped to the EXACT shipped layout skills/<name>/references/<file>.md —
-    # a nested skills/<name>/references/sub/x.md is NOT given dirname
-    # resolution here (its depth is different and it never ships at all; the
-    # hard ERROR for it lives in check_references_layout).
-    is_ref=0
-    case "${fileloc#*/}" in
-      references/*/*) : ;;            # nested → unsupported, see references-layout
-      references/*.md) is_ref=1 ;;
-    esac
-    # canonical depth for THIS file: root-anchored files say ../../ (convention),
-    # a shipped references/ file is one level deeper on disk, so its
-    # filesystem-correct depth to the repo root is ../../../
-    canon="../../"
-    [ "$is_ref" -eq 1 ] && canon="../../../"
-    # RESOLUTION RULE: ../../ tokens resolve against $ROOT — NEVER relative
-    # to the referencing file's dirname (agents/*.md mostly use the same
-    # root-anchored ../../ convention one level deeper; dirname-relative
-    # resolution would produce ~87 false positives on this repo).
-    # DEPTH RULE (empirical 2026-07, 15 tokens verified): ../../../ appears
-    # ONLY in agent-level files (>=2 levels below skills/), where it is
-    # filesystem-correct (three levels up IS the repo root) — accepted there,
-    # still root-resolved. In a SKILL.md-level file, or at any other depth
-    # (../ or ../../../../), it is a non-canonical-depth ERROR.
+    # DEPTH RULE (filesystem-correct everywhere; 2026-08 rewrite): every token
+    # must reach the repo root RELATIVE TO THE REFERENCING FILE.
+    #   SKILL.md-level files sit 2 levels below the root → ../../
+    #   agents/ and references/ files sit 3 levels below  → ../../../
+    # The former waiver ("root-anchored ../../ accepted in agents/") is GONE:
+    # two coexisting conventions let 4 agent files silently point at
+    # skills/shared/… (fixed 2026-08-01). Nested references/ subdirs still get
+    # their own hard ERROR in check_references_layout.
     # sort -u dedupes repeated identical tokens per file (no ERROR spam).
+    # Nested references/ subdirs are architecturally unshippable and get their
+    # hard ERROR in check_references_layout; any depth advice for them would be
+    # bogus (they sit 3+ levels below skills/), so skip the include checks.
+    case "${fileloc#*/}" in
+      references/*/*) continue ;;
+    esac
+    deep=0
+    [ "${fileloc#*/*/}" != "$fileloc" ] && deep=1   # ≥2 levels below skills/
+    canon="../../"
+    [ "$deep" -eq 1 ] && canon="../../../"
     while IFS= read -r tok; do
       [ -n "$tok" ] || continue
       case "$tok" in
         ../../../../*)
           fail_err "$skill: non-canonical include depth (must be $canon): $tok in ${f#"$ROOT"/}" ;;
         ../../../*)
-          if [ "${fileloc#*/*/}" = "$fileloc" ]; then
-            # fewer than 2 path levels below skills/ → SKILL.md level → too deep
+          if [ "$deep" -eq 0 ]; then
             fail_err "$skill: non-canonical include depth (must be $canon): $tok in ${f#"$ROOT"/}"
           else
             rel="${tok#../../../}"
@@ -294,20 +283,17 @@ check_include_integrity() {
           fi ;;
         ../../*)
           rel="${tok#../../}"
-          if [ "$is_ref" -eq 1 ]; then
-            # resolve against the file's OWN dirname (skills/<n>/references/ →
-            # ../../ lands on skills/, not the repo root). Two DISTINCT defects,
-            # reported separately so the message is never misleading:
+          if [ "$deep" -eq 1 ]; then
+            # Two DISTINCT defects, reported separately so the message is never
+            # misleading:
             #   depth wrong  — target exists at root, the token just needs one
             #                  more ../ ; suggest the fix
             #   dangling     — target exists NOWHERE; a depth suggestion would
             #                  send the reader chasing a file that isn't there
-            if [ ! -f "$(dirname "$f")/../../$rel" ]; then
-              if [ -f "$ROOT/$rel" ]; then
-                fail_err "$skill: wrong-depth include $tok in ${f#"$ROOT"/} (references/ resolves relative to its own dir — use ../../../$rel)"
-              else
-                fail_err "$skill: dangling include $tok in ${f#"$ROOT"/} (no $rel relative to the file or under root)"
-              fi
+            if [ -f "$ROOT/$rel" ]; then
+              fail_err "$skill: wrong-depth include $tok in ${f#"$ROOT"/} (agents/ and references/ resolve relative to their own dir — use ../../../$rel)"
+            else
+              fail_err "$skill: dangling include $tok in ${f#"$ROOT"/} (no $rel relative to the file or under root)"
             fi
           else
             [ -f "$ROOT/$rel" ] \
@@ -484,6 +470,17 @@ cc_check_claude_md() {
   fi
 }
 
+# --- count source (e): README.md intro '<N> skills' ---
+# README was the 8th place carrying the count and the only one no check
+# covered — it sat at "55 skills" while everything else said 56 (found
+# 2026-08-01). first_skills_num takes the FIRST match, i.e. the intro line.
+cc_check_readme() {
+  local f="$ROOT/README.md" v
+  [ -f "$f" ] || return 0
+  v="$(first_skills_num < "$f")"
+  cc_assert "README.md" "intro" "$v"
+}
+
 # --- ERROR: every declared skill count must equal the actual dir count ---
 check_count_consistency() {
   local before="$ERRORS"
@@ -492,6 +489,7 @@ check_count_consistency() {
   cc_check_docs_skills
   cc_check_using_zuvo
   cc_check_claude_md
+  cc_check_readme
   [ "$ERRORS" -eq "$before" ] && COUNT_CONSISTENCY_OK=1
 }
 

@@ -89,7 +89,7 @@ If `codesift-setup.md` is missing, print `[CONTEXT] codesift-setup missing — a
 
 ### PHASE 0.5 — Classify (read production file, determine loading tier)
 
-Read the production file fully, then read `../../shared/includes/test-code-types.md` and classify from that file's canonical table. Do NOT classify from memory.
+Read the production file fully, then read `../../shared/includes/test-code-types-core.md` and classify from that file's canonical table. Do NOT classify from memory. (Phase 1 lists the same file — this Phase 0.5 read IS that load; do not read it twice.)
 
 - **Code type:** VALIDATOR / SERVICE / CONTROLLER / HOOK / PURE / COMPONENT / GUARD / API-CALL / ORCHESTRATOR / STATE-MACHINE / ORM-DB
 - **Complexity:** THIN / STANDARD / COMPLEX

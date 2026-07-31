@@ -33,7 +33,7 @@ All paths are under `$ZUVO_DIR` (default `<project-root>/zuvo/`):
 | `plans/` | Implementation plans, task DAGs | plan, build, execute, brainstorm |
 | `contracts/` | Refactor CONTRACT files | refactor |
 | `context/` | Session state, execution state, adversarial-review artifacts, acceptance proofs | execute, review, build, write-tests, session-state, adversarial gate |
-| (root of `$ZUVO_DIR`) | `project-profile.json`, `profile-overrides/`, `knowledge/` | project-profile-protocol, knowledge store |
+| (root of `$ZUVO_DIR`) | `project-profile.json`, `profile-overrides/`, `knowledge/` | CodeSift `analyze_project()` (profile), knowledge store |
 
 Fix skills (seo-fix, geo-fix, content-fix, content-expand) **read** their input audit JSON
 from `$ZUVO_DIR/audits/`.

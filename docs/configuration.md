@@ -51,7 +51,7 @@ Located in `shared/includes/`. These are protocol files loaded by skills at runt
 | `agent-preamble.md` | Standard rules for read-only audit agents: never modify files, every finding requires evidence (file:line), confidence levels (0-25% discard, 26-50% backlog, 51-100% report), structured output format. |
 | `backlog-protocol.md` | How skills persist findings to `memory/backlog.md`: fingerprint-based deduplication, confidence routing, severity tracking, resolution cleanup. |
 | `run-logger.md` | Centralized skill usage log protocol: append-only writes to `~/.zuvo/runs.log`, Codex path fallback (`~/.codex/zuvo/runs.log`), structured fields (timestamp, skill, env, project). |
-| `codex-agent-registry.md` | TOML generation manifest: agent naming, model mapping, thread/depth limits. Used by `scripts/build-codex-skills.sh`. |
+| `codex-agent-registry.md` | Documents the TOML generation contract of `scripts/build-codex-skills.sh`: agent naming, model mapping, thread/depth limits. Descriptive manifest for skill authors — the build script does NOT read it; keep it in sync when changing the generator. |
 
 ## Bundled rules
 

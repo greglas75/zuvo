@@ -28,7 +28,7 @@ You receive:
 2. The plan document (full text)
 
 Read both documents completely before making any judgments.
-Before the File Limits check, read `../../rules/file-limits.md`.
+Before the File Limits check, read `../../../rules/file-limits.md`.
 
 ---
 
@@ -90,7 +90,7 @@ that cannot fail:
 | Runnable command | The proof names an exact command a reader could paste — binary, file, filter | "run the tests", "verify it works", "check the UI" |
 | Named artifact | The proof names the artifact path it writes, and some task in the plan creates the thing that writes it | An artifact path no task ever produces (execute hits a missing file at Phase Final) |
 | Expected output | An `Expected:` value a skeptic could compare against — a value, a status code, a snapshot | "no errors", "passes", "looks right" |
-| Exit-code polarity | The command FAILS when the behaviour is absent (see `../../shared/includes/acceptance-proof-protocol.md` §7-8: `grep -c`, bare `git diff --exit-code`, and `-t`-filtered test runs all exit 0 while proving nothing) | A proof that exits 0 whether or not the feature exists |
+| Exit-code polarity | The command FAILS when the behaviour is absent (see `../../../shared/includes/acceptance-proof-protocol.md` §7-8: `grep -c`, bare `git diff --exit-code`, and `-t`-filtered test runs all exit 0 while proving nothing) | A proof that exits 0 whether or not the feature exists |
 | Filter matches | A `-t "<title>"`-style proof asserts a non-zero passed count, and the title is one the plan tells the implementer to create | A title guessed before the test exists — the filter matches nothing and reports green |
 
 ### 5. TDD Protocol Compliance

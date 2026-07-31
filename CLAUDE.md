@@ -2,7 +2,7 @@
 
 ## What this repo is
 
-A Claude Code / Codex plugin. All skills are markdown files (SKILL.md). No TypeScript, no Python, no npm dependencies. `package.json` is metadata only (version field) — never run `npm install`.
+A Claude Code / Codex / Cursor / Antigravity plugin. All skills are markdown files (SKILL.md). No TypeScript, no Python, no npm dependencies. `package.json` is metadata only (version field) — never run `npm install`.
 
 ## Tech stack
 
@@ -13,7 +13,7 @@ Markdown. Shell scripts in `scripts/`. That's it.
 ### For yourself (dev testing, no marketplace push)
 
 ```bash
-./scripts/install.sh          # copies to Claude Code cache + Codex + Cursor
+./scripts/install.sh          # copies to Claude Code cache + Codex + Cursor + Antigravity
 ```
 
 Then restart Claude Code / Codex.
@@ -96,6 +96,7 @@ entry — Codex loads it via `~/.codex/skills/` (the legacy path install.sh writ
 | Claude Code | Copies source → ALL directories under `~/.claude/plugins/cache/zuvo-marketplace/zuvo/` (see below) |
 | Codex | Runs `build-codex-skills.sh` (path replacement, unicode normalization, TOML agent generation) → copies to `~/.codex/skills/` + `~/.codex/agents/` + `~/.codex/shared/` |
 | Cursor | Runs `build-cursor-skills.sh` (Cursor v3 agent frontmatter, flat agents with skill prefixes, max 4 parallel) → copies to `~/.cursor/skills/` + `~/.cursor/agents/` + `~/.cursor/shared/` |
+| Antigravity | Runs `build-antigravity-skills.sh` → copies to `~/.gemini/antigravity/skills/` + `~/.gemini/antigravity/shared/` |
 
 **Claude Code cache gotcha:** Claude Code creates TWO cache directories — one named by version (`1.0.0/`) and one named by git SHA (`564a269.../`). It may load from EITHER. `install.sh` syncs to ALL directories. Never copy manually to just one.
 
@@ -116,8 +117,11 @@ This does: version bump → commit → push → tag → update marketplace SHA �
 
 ```
 skills/<name>/SKILL.md          — skill definitions (56 total)
-skills/<name>/agents/<name>.md  — sub-agent instructions (50 agent files, 48 unique names)
-shared/includes/*.md            — shared procedural includes (85 files):
+skills/<name>/agents/<name>.md  — sub-agent instructions (50 agent files, 48 unique names:
+                                    cq-auditor and spec-reviewer each exist TWICE with DIFFERENT
+                                    content — refactor/ vs review/, brainstorm/ vs execute/.
+                                    Same name ≠ same file; never "sync" one onto the other)
+shared/includes/*.md            — shared procedural includes (81 files):
                                     gate-registry.md (SSOT for all 124 CQ/Q/CAP/AP gates; E2E-Q by reference)
                                       E2E-Q is registered there, not defined: the authoritative table
                                       is skills/write-e2e/references/quality-gates.md, and the
@@ -129,11 +133,12 @@ shared/includes/*.md            — shared procedural includes (85 files):
                                     adversarial-loop.md, adversarial-loop-docs.md (evidence enforcement)
                                     quality-gates.md, env-compat.md, codesift-setup.md, run-logger.md
                                     + registries, schemas, protocols
-rules/*.md                      — code quality rules (22 files: cq-patterns, testing, security, file-limits, etc.)
-scripts/install.sh              — local install to Claude + Codex + Cursor
+rules/*.md                      — code quality rules (21 files: cq-patterns, testing, security, file-limits, etc.)
+scripts/install.sh              — local install to Claude + Codex + Cursor + Antigravity
 scripts/release.sh              — release to marketplace
 scripts/build-codex-skills.sh   — build Codex distribution (called by install.sh)
 scripts/build-cursor-skills.sh  — build Cursor v3 distribution (called by install.sh)
+scripts/build-antigravity-skills.sh — build Antigravity distribution (called by install.sh)
 docs/                           — documentation (skills.md, pipeline.md, competitive-analysis.md, etc.)
 .claude-plugin/plugin.json      — Claude Code plugin manifest
 .codex-plugin/plugin.json       — Codex plugin manifest
@@ -238,7 +243,7 @@ full layer table + honest limits):
 
 | Task | Command |
 |------|---------|
-| Add a new skill | See the checklist below — the count lives in **seven** places, and missing one fails a test, not the build |
+| Add a new skill | See the checklist below — the count lives in **eight** places, and missing one fails a test, not the build |
 | Edit a skill | Edit the SKILL.md, then `./scripts/install.sh` |
 | Test changes locally | `./scripts/install.sh` then restart Claude/Codex |
 | Release to users | `./scripts/release.sh patch "description"` |
@@ -256,9 +261,11 @@ only fail at release time. Every one of these bit on the 56th skill:
    the "N skills and M agents" description.
 4. `docs/skills.md` — the per-skill table row, the category-count table, and the `**Total**` row.
 5. `CLAUDE.md` — "skill definitions (N total)", "## Skill categories (N total)", category table.
-6. `./scripts/install.sh` — builds all four targets; the Codex build **fails** on Claude-Code tool
+6. `README.md` — the "N skills, …" intro line (sat stale at 55 until 2026-08-01; now covered by
+   `count-consistency`).
+7. `./scripts/install.sh` — builds all four targets; the Codex build **fails** on Claude-Code tool
    names (`run_in_background`, `Task`, …) that `validate-skills.sh` does not check.
-7. `bash scripts/validate-skills.sh` → `count-consistency: OK (N)`, then
+8. `bash scripts/validate-skills.sh` → `count-consistency: OK (N)`, then
    `bash tests/run-all.sh` — the release script runs it and will block on a stale count.
 
 Counts in tests are now derived from `skills/` rather than hardcoded, so (7) should stay green on

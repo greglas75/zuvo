@@ -25,8 +25,8 @@ Answer: **Does this article read like it was written by a human expert, or does 
 
 You receive from the orchestrator:
 - **Draft file path:** The article draft to review
-- **Banned vocabulary core:** `../../shared/includes/banned-vocabulary/core.md`
-- **Active language file:** `../../shared/includes/banned-vocabulary/languages/<resolved-lang>.md`
+- **Banned vocabulary core:** `../../../shared/includes/banned-vocabulary/core.md`
+- **Active language file:** `../../../shared/includes/banned-vocabulary/languages/<resolved-lang>.md`
 - **Tone setting:** The active `--tone` value
 - **Fact sheet:** The research fact sheet from Phase 1
 - **Language:** Target language

@@ -1,8 +1,8 @@
 # Zuvo
 
-Auto-activating, multi-agent skill ecosystem for Claude Code, Codex, and Cursor.
+Auto-activating, multi-agent skill ecosystem for Claude Code, Codex, Cursor, and Antigravity.
 
-55 skills, 50 sub-agent definitions (48 distinct roles), quality gates, knowledge store, session recovery, and structured workflows — all in one plugin.
+56 skills, 50 sub-agent definitions (48 distinct roles), quality gates, knowledge store, session recovery, and structured workflows — all in one plugin.
 
 ## Install
 
@@ -12,7 +12,7 @@ Auto-activating, multi-agent skill ecosystem for Claude Code, Codex, and Cursor.
 curl -fsSL https://raw.githubusercontent.com/greglas75/zuvo/main/scripts/quick-install.sh | bash
 ```
 
-Installs to Claude Code + Codex + Cursor in one command. Restart your IDE after install.
+Installs to Claude Code + Codex + Cursor + Antigravity in one command. Restart your IDE after install.
 
 ### Claude Code (recommended)
 
@@ -42,6 +42,14 @@ cd zuvo
 ./scripts/install.sh cursor
 ```
 
+### Antigravity
+
+```bash
+git clone https://github.com/greglas75/zuvo.git
+cd zuvo
+./scripts/install.sh antigravity
+```
+
 ### All platforms (for plugin developers)
 
 ```bash
@@ -69,29 +77,31 @@ claude plugin install zuvo
 ```
 Then start a new session.
 
-### Codex / Cursor
+### Codex / Cursor / Antigravity
 
 ```bash
 cd /path/to/zuvo
 git pull
-./scripts/install.sh codex   # or: cursor, all
+./scripts/install.sh codex   # or: cursor, antigravity, all
 ```
 
 ## What `install.sh` does
 
-One script, three platforms:
+One script, four platforms:
 
 | Platform | What it does |
 |----------|-------------|
 | Claude Code | Copies source files to plugin cache (`~/.claude/plugins/cache/...`) |
 | Codex | Builds adapted distribution (path replacement, unicode normalization, TOML agent generation) then copies to `~/.codex/skills/` + `~/.codex/agents/` |
 | Cursor | Builds adapted distribution (Cursor v3 agent frontmatter, flat agents with skill prefixes) then copies to `~/.cursor/skills/` + `~/.cursor/agents/` |
+| Antigravity | Builds adapted distribution (`build-antigravity-skills.sh`) then copies to `~/.gemini/antigravity/skills/` + `~/.gemini/antigravity/shared/` |
 
 ```bash
 ./scripts/install.sh          # all platforms (default)
 ./scripts/install.sh claude   # Claude Code only
 ./scripts/install.sh codex    # Codex only
 ./scripts/install.sh cursor   # Cursor only
+./scripts/install.sh antigravity   # Antigravity only
 ```
 
 ## Local development

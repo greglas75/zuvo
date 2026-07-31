@@ -54,6 +54,17 @@ Private/internal methods should be tested through the public API, not directly. 
 - **1 branch in private method** → cover implicitly through caller tests. No separate describe needed.
 - **Private method called by multiple public methods** → test the shared behavior once in its own describe, then verify each caller delegates correctly.
 
+### COMPONENT Callback Routing Guard
+
+When a component routes different handlers into the **same child prop slot** depending on mode, type, or state (for example `onNext={handleSubmitAll}` vs `onNext={handleNext}`), label-only or presence-only tests are insufficient.
+
+Add interaction tests that prove:
+- the correct handler fires after the user action
+- the competing handler does **not** fire
+- visible state or feedback is asserted when the component owns it
+
+One representative interaction test per distinct routing decision is the minimum. If the file has zero interaction tests, it does not satisfy the COMPONENT flow requirement.
+
 ## Mixed Files
 
 When a file combines types (e.g., a SERVICE with PURE helper functions inside it), apply both classifications. Sum the minimum test counts.

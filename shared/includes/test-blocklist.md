@@ -30,4 +30,4 @@ the real service signature changes, which is exactly when tests should fail.
 (loggers, abort signals, framework-injected context) — name the reason in the
 test when used.
 
-**If reaching for a blocked pattern:** wrong testability decision. Go back to testability classification (in `test-code-types.md`) and choose NEEDS_INTEGRATION.
+**If reaching for a blocked pattern:** wrong testability decision. Go back to testability classification (in `test-code-types-core.md`) and choose NEEDS_INTEGRATION.

@@ -33,6 +33,16 @@ it('renders fallback for unknown type', () => {
 **Always:** `afterEach(cleanup)` for component tests. Extract from exemplar if available.
 **Lazy components:** Use `findByTestId` (async) not `getByTestId` (sync).
 
+### COMPONENT Lazy/Suspense Caveat
+
+When all lazy children are mocked with `vi.mock`, Vitest can resolve `React.lazy()` imports synchronously. Testing Library wraps `render()` in `act()`, which flushes microtasks before control returns. In that setup, a Suspense fallback may never be observable even though the fallback exists in production.
+
+Implications:
+- do **not** write doomed synchronous assertions for the fallback just because the code renders one
+- prefer `findBy...` assertions for the resolved lazy child
+- if you must test the fallback, either export it directly or use a real delayed lazy import instead of sync mocks
+- treat an unobservable fallback under sync mocks as an environment limitation, not automatic missing coverage
+
 ## ORCHESTRATOR Ordering Template
 
 For files that wire middleware/routes in a specific order, use this pattern to test ordering invariants:
@@ -141,6 +151,26 @@ const prismaMock = {
 ```
 
 **Key rule:** Mock the query builder chain, not individual SQL. Test the RESULT of the query (what your service returns), not the query SHAPE (which methods were called).
+
+## Generic-Return Interface Mock (TS)
+
+When the unit-under-test depends on a collaborator whose method returns a **generic** (`get<T>(key): Promise<T>`, `query<R>(sql): R[]`, a repository `findOne<E>()`), do NOT hand-roll a per-test `as any` cast — it loses type-safety and hides shape drift. Mock the interface with a typed factory so each test supplies the concrete return shape:
+
+```typescript
+// Typed mock factory: preserves the generic signature, lets each test pin T.
+function mockStore(): vi.Mocked<Store> {
+  return {
+    get: vi.fn(),      // signature get<T>(key: string): Promise<T>
+    set: vi.fn(),
+  } as unknown as vi.Mocked<Store>;
+}
+
+// In a test — the cast lives ONCE, at the resolved value, typed to the real T:
+const store = mockStore();
+store.get.mockResolvedValue({ id: 1, name: "x" } satisfies User);  // `satisfies` enforces shape
+```
+
+Rule: the only cast is on the per-test return value (anchored by `satisfies <ConcreteType>`), never on the call site. This catches return-shape drift at compile time while keeping the mock reusable across tests.
 
 ## NestJS Logger Spy
 

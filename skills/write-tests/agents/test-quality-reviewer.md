@@ -33,7 +33,7 @@ You are dispatched by `zuvo:write-tests` after the agent's self-evaluation (Step
 
 ## Your Job
 
-1. Read `../../shared/includes/q-scoring-protocol.md` for the scoring rules, thresholds, and output format
+1. Read `../../../shared/includes/q-scoring-protocol.md` for the scoring rules, thresholds, and output format
 2. Read the production file to understand what behavior should be tested
 3. Read the test file to evaluate what IS tested
 4. Read the test contract to check coverage of branches and error paths
