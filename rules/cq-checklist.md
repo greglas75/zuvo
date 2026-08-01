@@ -84,7 +84,8 @@ CONDITIONAL PASS  iff pass_count / denominator >= 0.79  AND  every active critic
 FAIL              iff any active critical gate = 0  OR  pass_count / denominator < 0.79
 ```
 
-Reference table at zero N/A (denominator = 29): PASS ≥ 25, CONDITIONAL PASS = 23-24, FAIL < 23.
+Reference table at zero N/A, zero out-of-scope (denominator = 40): PASS ≥ 35, CONDITIONAL PASS = 32-34, FAIL < 32.
+On a pure-TS repo the three stack-scoped gates (CQ36-CQ38) are out-of-scope → denominator 37: PASS ≥ 32, CONDITIONAL 30-31, FAIL < 30.
 At higher N/A counts the absolute pass count drops proportionally — always recompute against
 the actual `denominator`. Critical gates can never be N/A; they are either 1 or 0.
 
@@ -97,7 +98,7 @@ budgeted. Print `out-of-scope: N gates (stack=<detected>)` as one summary line; 
 individually. See `../shared/includes/gate-registry.md` for each gate's `Scope`.
 
 ```
-in_scope    = 34 - count(out-of-scope)
+in_scope    = 40 - count(out-of-scope)
 denominator = in_scope - count(N/A)
 ```
 
@@ -111,8 +112,8 @@ and it is 20/23 = 87% → PASS. The gate is only meaningful if that path is clos
    assertion is **not** an N/A — score the gate. This is the rule that closes the attack: it
    removes the evidence asymmetry that made N/A the cheapest route from FAIL to PASS.
 2. **N/A cap is proportional, not a fixed number.** `count(N/A)` may not exceed **one third of the
-   in-scope gates** (`floor(in_scope / 3)`). At 29 in-scope that is 9, matching the previous fixed
-   cap; it stays proportional as the gate set grows instead of silently tightening. Exceeding it ⇒
+   in-scope gates** (`floor(in_scope / 3)`). At 37 in-scope (pure-TS repo, CQ36-38 out-of-scope)
+   that is 12; it stays proportional as the gate set grows instead of silently tightening. Exceeding it ⇒
    verdict `INCOMPLETE`, never PASS — too little of the file was actually evaluated to certify it.
 3. **Gates listed for the file's code type (see "High-Risk Gates by Code Type") cannot be N/A.**
    A SERVICE cannot mark CQ18 or CQ23 N/A; a CONTROLLER cannot mark CQ19 N/A. If the gate truly
@@ -196,7 +197,7 @@ Vague claims like "no duplication" or "errors handled" score 0.
 
 ### Before Submitting CQ=1
 
-Can I point to file:function:line? Did I check ALL instances, not just one? Am I scoring what I actually wrote, or what I intended to write? If N/A count exceeds 14: is each justified?
+Can I point to file:function:line? Did I check ALL instances, not just one? Am I scoring what I actually wrote, or what I intended to write? Is every N/A inside the hard cap (`floor(in_scope/3)` — the ONLY threshold; see the HARD rule above) and individually justified?
 
 ---
 
@@ -220,7 +221,6 @@ N/A scores are excluded from both numerator and denominator (see canonical formu
 | CQ20 | No domain entities | "Legacy" — not a valid excuse |
 | CQ21 | Read-only, single-user, no contested resources | "Low traffic" — races happen at any traffic level |
 | CQ22 | Pure sync, stateless, no subscriptions | "One listener" — 1 listener x 1000 mounts = 1000 listeners |
-
 | CQ23 | No caching in this code path | "Small data" — if cache exists, TTL applies |
 | CQ24 | New endpoint only, no existing clients | "Internal API" — if any client calls it, backward compat applies |
 | CQ25 | Single file change, no pattern to compare | "It's better this way" — consistency > preference |
@@ -228,8 +228,18 @@ N/A scores are excluded from both numerator and denominator (see canonical formu
 | CQ27 | No log statements in changed code | "It's just a warning" — if logger.error exists, check its usage |
 | CQ28 | Single-layer timeout, no hierarchy to check | "Defaults are fine" — if multiple layers define timeouts, check order |
 | CQ29 | Workspace has no path alias configured in tsconfig/jsconfig/vite.config | "Alias is ugly" — if a configured alias exists, files with `../../../` violate |
+| CQ1/CQ2 | Practically never — every file has types and equality; score them | "It's markdown/config" — that's out-of-scope handling, not N/A |
+| CQ30 | Endpoint is not cookie/session-authenticated, or read-only | "We use SameSite" — SameSite alone without token/bearer still scores, as 0 or 1 |
+| CQ31 | No user-controlled value reaches path/shell/deserializer/outbound URL (cite the negative search) | "Input is trusted" — provenance, not trust, decides |
+| CQ32 | Diff adds no dependency AND repo has no manifest | "Dependabot handles it" — the lockfile/pinning state still scores |
+| CQ33 | No token/ID generation, hashing, encryption, or secret reads | "It's just an ID" — IDs from Math.random() are the violation |
+| CQ34 | Handler has no role model AND writes no persistence payload | "Auth middleware covers it" — that's authentication, not per-operation authorization |
+| CQ35 | No cancellable I/O or long-running work | "It's fast" — duration is not the trigger, cancellability is |
+| CQ36-CQ38 | (stack-scoped — mark `out-of-scope` on non-matching stacks, never N/A) | Using N/A for a stack mismatch burns the budget wrongly |
+| CQ39 | No queue/channel/buffer sized by external input | "The producer is slow today" — bound it anyway |
+| CQ40 | Practically never — the trigger is the LANGUAGE having a linter | "We lint locally" — score the config + CI invocation |
 
-**Abuse check:** If 17+ gates are N/A, justify each one, flag the audit as low-signal, and do not count it toward aggregate metrics.
+**Abuse check:** the ONLY N/A threshold is the hard cap above (`floor(in_scope/3)`) — exceeding it makes the verdict `INCOMPLETE`, never PASS. Justify each N/A individually and do not count an over-cap audit toward aggregate metrics.
 
 > **Reminder:** apply the canonical formula at the top of this file. Do not re-derive thresholds — `denominator = (gates in scope) - count(N/A)`, `PASS ≥ 86%`, `CONDITIONAL ≥ 79%`.
 
@@ -310,10 +320,14 @@ if (count === 0) throw new ConflictException('Order already transitioned');
 
 **CQ8 — External service timeout:**
 ```typescript
-const result = await Promise.race([
-  paymentProvider.charge(amount),
-  new Promise((_, reject) => setTimeout(() => reject(new Error('Payment timeout')), 5000)),
-]);
+// AbortSignal.timeout: no dangling timer to clear (a bare Promise.race +
+// setTimeout leaks the timer when charge() resolves first — the exact CQ22/CQ8
+// class this pattern exists to prevent).
+const result = await paymentProvider.charge(amount, {
+  signal: AbortSignal.timeout(5000),
+});
+// Provider does not accept a signal? Wrap with a cleared timer:
+// try { return await Promise.race([charge, timeout]) } finally { clearTimeout(h) }
 ```
 
 ---

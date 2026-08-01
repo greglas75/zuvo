@@ -249,7 +249,7 @@ const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
 
 When evaluating hooks (`use*.ts` files) against CQ1-CQ40:
 
-- **CQ11:** Hook body limit is 100 lines (not 50). The 50L limit applies to each `useCallback`/`useEffect` body individually.
+- **CQ11:** Hook top-level body limit is 100 lines (not 50). Per `file-limits.md` and the CQ11 registry row: each `useCallback` body ≤50L, each `useEffect` body ≤20L (extract logic to a callback).
 - **CQ8:** `AbortController.abort()` causing `AbortError` is intentional control flow. `if (err.name === 'AbortError') return;` is correct.
 - **CQ19:** Hooks with internal API response validation ARE the boundary. Hand-rolled validation satisfies CQ19 if all fields have type and range checks.
 - **CQ3:** Hook params validated by TS types satisfy CQ3 if only called from TS code with simple primitives.

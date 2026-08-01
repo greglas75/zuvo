@@ -137,7 +137,7 @@ logger.info('Login', { email, password }); throw new Error(`User ${email} not fo
 logger.info('Login', { requestId }); throw new NotFoundException('User not found');
 ```
 
-### Timing-safe secret comparison (CQ5)
+### Timing-safe secret comparison (CQ33)
 ```typescript
 // NEVER — timing attack leaks secret length via === short-circuit
 if (botSecret !== expectedSecret) throw new UnauthorizedException();
@@ -238,7 +238,7 @@ const data = await response.json(); return { id: data.id, name: data.user.name }
 const raw: unknown = await response.json(); const data = UserResponseSchema.parse(raw);
 ```
 
-### Expose only public fields in API responses (CQ19)
+### Expose only public fields in API responses (CQ5)
 ```typescript
 // NEVER — return raw Prisma/DB object to client (leaks internal fields, timestamps, relations)
 return res.json(await prisma.user.findUnique({ where: { id } }));
@@ -646,7 +646,7 @@ A client that times out first converts a diagnosable server error into an unexpl
 
 ## Security and Infrastructure Patterns
 
-### No hardcoded secrets in source
+### No hardcoded secrets in source (CQ33, CAP5)
 ```typescript
 // NEVER — hardcoded secrets in source or committed .env
 const API_KEY = "sk-abc123...";
@@ -656,7 +656,7 @@ const apiKey = process.env.API_KEY;
 // .env.example with empty values only
 ```
 
-### Path traversal — validate before join/resolve
+### Path traversal — validate before join/resolve (CQ31)
 ```typescript
 // NEVER — user input directly in path.join
 const file = path.join(uploadDir, req.params.filename);
@@ -683,7 +683,7 @@ if (relReal === '..' || relReal.startsWith('..' + path.sep) || path.isAbsolute(r
 // Where that matters, open with O_NOFOLLOW (fs.constants.O_NOFOLLOW) and validate the fd.
 ```
 
-### Non-literal RegExp — escape user input
+### Non-literal RegExp — escape user input (CQ31)
 ```typescript
 // NEVER — user input directly in RegExp constructor (ReDoS risk)
 const regex = new RegExp(userInput);
@@ -692,7 +692,7 @@ const escaped = userInput.replace(/[.*+?^{}()|[\]\\]/g, '\\$&');
 const regex = new RegExp(escaped);
 ```
 
-### Prototype pollution — guard dynamic property assignment
+### Prototype pollution — guard dynamic property assignment (CQ31)
 ```typescript
 // NEVER — unchecked bracket assignment in loop
 for (const [key, val] of Object.entries(input)) { target[key] = val; }
@@ -703,7 +703,7 @@ for (const [key, val] of Object.entries(input)) {
 }
 ```
 
-### GCM decryption needs authTagLength
+### GCM decryption needs authTagLength (CQ33)
 ```typescript
 // NEVER — GCM decipher without expected tag length
 const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
@@ -711,7 +711,7 @@ const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
 const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv, { authTagLength: 16 });
 ```
 
-### External scripts need subresource integrity
+### External scripts need subresource integrity (CQ32)
 ```html
 <!-- NEVER — CDN script without integrity check -->
 <script src="https://cdn.example.com/lib.js"></script>
@@ -720,7 +720,7 @@ const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv, { authTagLength
   integrity="sha384-abc123..." crossorigin="anonymous"></script>
 ```
 
-### Child process — avoid shell: true
+### Child process — avoid shell: true (CQ31)
 ```typescript
 // NEVER — shell: true enables injection
 execSync(`convert ${userFile} output.png`);
@@ -730,7 +730,7 @@ execFileSync('convert', [userFile, 'output.png']);
 spawn('cmd', args); // shell defaults to false
 ```
 
-### as any bypass — extend types instead
+### as any bypass — extend types instead (CQ2, CAP3)
 ```typescript
 // NEVER — cast to any to access/delete fields
 const val = (pricing as any)[field] as number;
@@ -740,7 +740,7 @@ const val = pricing[field as keyof Pricing];
 const { translatedLanguage, ...postData } = rawData;
 ```
 
-### Structured logger over console.log
+### Structured logger over console.log (CQ26)
 ```typescript
 // NEVER — raw console in services/controllers
 console.log('Creating prompt...');
@@ -750,7 +750,7 @@ logger.info('Creating prompt', { requestId, promptType });
 logger.debug('API call', { url, method: 'POST' });
 ```
 
-### Typed exceptions over generic Error
+### Typed exceptions over generic Error (CAP18)
 ```typescript
 // NEVER — generic Error in framework services
 throw new Error('User not found');
