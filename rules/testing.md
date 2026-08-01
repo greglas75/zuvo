@@ -262,7 +262,16 @@ For each expected value, verify its source:
 | Inverse operation (`decode(encode(x)) === x`) | Good |
 | **Copied from implementation** | **Reject (P-70)** |
 
-For financial and algorithmic code: derive expected values from 2 independent sources (dual-oracle). Disagreement = flag for review.
+For financial and algorithmic code: derive expected values from 2 independent sources (dual-oracle). Disagreement = flag for review:
+
+| Oracle 1 | Oracle 2 | Agreement | Action |
+|----------|----------|-----------|--------|
+| Spec/requirements | Manual calculation | Match | Write assertion confidently |
+| Manual calculation | Reference dataset | Match | Write assertion confidently |
+| Spec says X | Manual calc gives Y | **Mismatch** | Flag: `// dual-oracle mismatch — verify` before asserting |
+| Only 1 source available | — | — | Single oracle with a comment: `// Oracle: [source]` |
+
+Always dual-oracle: financial/pricing (CQ16 domain) and transformations with 2+ operations. Simple getters/formatters: single oracle suffices.
 
 ### 4. Assertion Strength Classifier
 

@@ -65,6 +65,30 @@ Add interaction tests that prove:
 
 One representative interaction test per distinct routing decision is the minimum. If the file has zero interaction tests, it does not satisfy the COMPONENT flow requirement.
 
+### VALIDATOR Depth Requirements
+
+For VALIDATOR files (validator/schema/dto, Joi/Zod/class-validator), the Fields × 3 formula expands to:
+
+| Requirement | What to test |
+|-------------|-------------|
+| Each rule individually | One test per validation rule — not just "valid passes, invalid fails" |
+| Error messages | Assert the specific error text, not just that it throws |
+| Boundary values per field | Empty, null, undefined, min/max length, type mismatch, special chars |
+| Multiple errors | Payload with 2+ invalid fields — verify ALL errors returned |
+| Valid edge cases | Minimal valid payload, optional fields omitted, Unicode in strings |
+
+Minimum for N fields: **N × 3 (valid + invalid + boundary) + 1 multi-error + 1 minimal-valid = N × 3 + 2**.
+
+### Delegation and Inheritance (child/derived instances)
+
+When production code creates child or derived instances (factory, `.child()`, `.clone()`, `new X(parentConfig)`):
+
+| What to test | Rationale |
+|-------------|-----------|
+| Inherited properties | Child preserves parent configuration |
+| Override behavior | Child overrides targeted values while the rest stays inherited |
+| Isolation | Child changes must NOT propagate back to the parent |
+
 ## Mixed Files
 
 When a file combines types (e.g., a SERVICE with PURE helper functions inside it), apply both classifications. Sum the minimum test counts.

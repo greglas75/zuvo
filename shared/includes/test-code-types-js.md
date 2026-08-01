@@ -172,6 +172,23 @@ store.get.mockResolvedValue({ id: 1, name: "x" } satisfies User);  // `satisfies
 
 Rule: the factory carries the ONE sanctioned structural cast (`as unknown as vi.Mocked<Store>` — unavoidable, since `vi.fn()` cannot satisfy a generic-method interface); per test, the only addition is `satisfies <ConcreteType>` on the resolved value, and no cast ever appears at the call site. This catches return-shape drift at compile time while keeping the mock reusable across tests.
 
+## Time-Dependent Code Templates (Date.now / setTimeout / setInterval / performance.now)
+
+`vi.useFakeTimers()` in `beforeEach`, `vi.useRealTimers()` in `afterEach`. Never rely on real
+time passing — `await new Promise(r => setTimeout(r, 100))` in a test is the flake pattern.
+
+| Production pattern | Test approach |
+|-------------------|---------------|
+| `setTimeout` / debounce / throttle | `vi.advanceTimersByTime(ms)` + assert fired / not fired at threshold-1 vs threshold |
+| `Date.now()` deltas (cooldowns, elapsed) | `vi.setSystemTime(base)` → act → `vi.setSystemTime(base + delta)` → assert |
+| `setInterval` (periodic) | advance by interval × N, assert N invocations |
+| `performance.now()` timing | `vi.spyOn(performance, 'now').mockReturnValueOnce(0).mockReturnValueOnce(50)` |
+| Timestamp recorded in state | `vi.setSystemTime(12345); handler(e); expect(state.lastEventTime).toBe(12345)` |
+| Burst/rate detection (N events in T ms) | fire N events advancing time between each; assert detection exactly at threshold |
+
+**Common miss:** production uses `Date.now()` for deltas but tests run on the real clock —
+passes locally, flakes in CI. Grep the production file for `Date.now|performance.now|setTimeout|setInterval`; any hit ⇒ fake timers.
+
 ## NestJS Logger Spy
 
 NestJS services create `Logger` internally (not injected). To verify error logging, spy on `Logger.prototype.error` BEFORE constructing the service:
