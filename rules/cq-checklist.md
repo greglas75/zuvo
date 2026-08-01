@@ -40,7 +40,7 @@ Each gate is scored 1 (pass with evidence), 0 (fail or unproven), or N/A (precon
 | CQ27 | Observability | Log levels used correctly? `logger.error` reserved for unrecoverable failures and infrastructure errors, not validation failures or expected business conditions. `logger.warn` for recoverable but unexpected situations. Validation failure logged as `error` = violation. Stack trace logged as `info` = violation. |
 | CQ28 | Resilience | **CONDITIONAL** — DB timeout < server timeout < client timeout (deadline shrinks with depth, not inverted)? If code defines timeouts at multiple layers, verify the hierarchy is correct. Inverted timeout hierarchy = violation. |
 | CQ29 | Structure | Workspace path alias used for imports ≥3 hops deep when the alias is configured? Aliases must come from the project's actual `tsconfig.compilerOptions.paths` / `jsconfig` / `vite.config.alias` — common patterns are `@/`, `#/`, `~/` but only count those declared in the workspace config. Files mixing `../../../` with a configured alias = violation. No alias configured = N/A. |
-| CQ30 | Security | **CONDITIONAL** — CSRF defence present on state-changing endpoints? `SameSite=Lax\|Strict` on the session cookie AND an anti-CSRF token (or a non-cookie bearer transport)? A cookie-authenticated mutation with neither = violation. |
+| CQ30 | Security | **CONDITIONAL** — CSRF defence present on state-changing endpoints? `SameSite=Lax\|Strict` on the session cookie AND one of: an anti-CSRF token, framework server-side origin verification (`Origin`/`Sec-Fetch-Site` checks — Astro `checkOrigin`, SvelteKit/Next server-action origin checks), or a non-cookie bearer transport? A cookie-authenticated mutation with none of these = violation. |
 | CQ31 | Security | **CONDITIONAL** — User input never reaches a dangerous sink unvalidated? (a) filesystem paths resolved + containment-checked (never `normalize`+`startsWith`), (b) subprocess arguments passed as an argv array, never an interpolated shell string, (c) no `pickle`/`yaml.load`/`unserialize` on non-first-party bytes, (d) outbound URLs allowlisted (SSRF, incl. IPv6 and redirect re-validation). Covers CWE-22/77/78/502/918 — none previously gated. |
 | CQ32 | Security | **CONDITIONAL** — Supply chain controlled? Lockfile committed, no floating ranges or `latest` on a newly added dependency, and new dependencies checked against an advisory source. |
 | CQ33 | Security | **CONDITIONAL** — Cryptographic material handled correctly? Tokens/IDs/nonces from a CSPRNG (`crypto.randomUUID`/`randomBytes`/`secrets`), never `Math.random()`/`Date.now()`; credential hashing via argon2id or bcrypt (cost >= 12), never a bare SHA-*; no bespoke crypto; secrets read from config, never literals in source or a client bundle. |
@@ -333,7 +333,8 @@ if (count === 0) throw new ConflictException('Order already transitioned');
 const result = await paymentProvider.charge(amount, {
   signal: AbortSignal.timeout(5000),
 });
-// Provider does not accept a signal? Wrap with a cleared timer:
+// Provider does not accept a signal? Wrap with a cleared timer — NOTE this only bounds the
+// wait; the underlying charge keeps running (race does not cancel it). Prefer signal support.
 // try { return await Promise.race([charge, timeout]) } finally { clearTimeout(h) }
 ```
 

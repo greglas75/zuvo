@@ -418,7 +418,7 @@ CQ26: Structured logger with context (requestId, userId), not plain console.log?
 CQ27: Log levels correct? `error` for infra failures only, not validation?
 CQ28: CONDITIONAL -- Timeout hierarchy correct? DB < server < client (innermost shortest)?
 CQ29: Workspace path alias (@/, ~/, #/) used for imports >=3 hops deep when alias is configured? N/A if no alias in workspace.
-CQ30: CONDITIONAL -- CSRF defence on cookie-authed mutations? SameSite + token, or bearer transport?
+CQ30: CONDITIONAL -- CSRF defence on cookie-authed mutations? SameSite + (token / origin verification / bearer transport)?
 CQ31: CONDITIONAL -- User input reaching path/shell/deserializer/outbound URL — allowlisted and validated?
 CQ32: CONDITIONAL -- Lockfile committed, new deps pinned and CVE-checked?
 CQ33: CONDITIONAL -- CSPRNG for tokens? Credential hashing argon2/bcrypt, not SHA? No bespoke crypto?
@@ -451,8 +451,8 @@ CAP15: API URL built without `encodeURIComponent` on dynamic path segments, OR h
 CAP16: Client auth-token plumbing race (deferred-promise wait for provider, token injected mid-flight, no readiness gate before first request), OR missing 401-> refresh-> retry-once on REST clients while tRPC has it (or vice versa), OR unsigned/dev-only tokens accepted as auth credentials in any environment -- HIGH
 CAP17: `error.message` rendered directly to UI/DOM without a curated `userMessageFor(error)` mapping. Leaks server stack/PII; map known error types to safe messages and fall back to a generic "Something went wrong". -- HIGH
 CAP18: `throw new Error(...)` from a service/injectable/handler. Use a typed exception class instead (BadRequestException, NotFoundException, custom DomainError); bare Error loses HTTP status mapping and can leak the original message into 5xx response bodies. -- MEDIUM
-CAP19: Mutating endpoint, AI/expensive operation (LLM call, export, generation), webhook receiver, or tRPC procedure without a rate limiter (ThrottlerGuard, custom limiter, queue with concurrency cap). tRPC bypassing the project-wide ThrottlerGuard = always violation. -- HIGH
-CAP20: Mutable default argument (`def f(x=[])`), shared mutable class-attribute default, or attrs/pydantic-v1 mutable field default without `default_factory` (stdlib dataclasses already reject `field: list = []` at class definition — the smell survives in the other forms) -- HIGH  [stack: python]
+CAP19: Mutating endpoint, AI/expensive operation (LLM call, export, generation), webhook receiver, public token-lookup/validation endpoint (CQ4 requires rate-limiting these even read-only), or tRPC procedure without a rate limiter (ThrottlerGuard, custom limiter, queue with concurrency cap). tRPC bypassing the project-wide ThrottlerGuard = always violation. -- HIGH
+CAP20: Mutable default argument (`def f(x=[])`), shared mutable class-attribute default, or attrs/pydantic-v1 mutable field default without a factory (attrs: `field(factory=list)`; pydantic v1: `default_factory=list`) — stdlib dataclasses already reject `field: list = []` at class definition; the smell survives in the other forms -- HIGH  [stack: python]
 CAP21: `except Exception: pass`, bare `except:`, or catch-and-return-None with no log and no re-raise -- HIGH  [stack: python]
 CAP22: `assert` used as a runtime precondition in production code — stripped under `python -O`, silently deleting the check (CWE-703) -- HIGH  [stack: python]
 CAP23: `asyncio.create_task`/`ensure_future` whose result is not retained — the loop keeps only a weak reference, so the task can vanish mid-flight -- HIGH  [stack: python]

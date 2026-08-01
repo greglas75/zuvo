@@ -22,9 +22,11 @@ the framework router and decorators are the primary entrypoint.
 // Body size cap (CQ6): default json limit is 100kb — set it explicitly per API shape
 app.use(express.json({ limit: '100kb' }));
 
-// Open redirect (CQ31): never res.redirect(req.query.next) — allowlist relative paths
+// Open redirect (CQ31): never res.redirect(req.query.next) — allow only single-slash-relative
+// paths. Reject "//host" AND "/\host": browsers normalize backslash to slash, so a bare
+// !startsWith('//') check still lets /\evil.com become a protocol-relative redirect.
 const next = String(req.query.next ?? '/');
-res.redirect(next.startsWith('/') && !next.startsWith('//') ? next : '/');
+res.redirect(/^\/(?![/\\])/.test(next) ? next : '/');
 
 // Trust proxy before rate limiting by IP — else every client shares the LB's IP
 app.set('trust proxy', 1);

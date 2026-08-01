@@ -191,7 +191,10 @@ def nums(gate_id):
     return set(re.findall(r'\b(450|300|250|200|100)L?\b', m.group(1))) if m else set()
 cap9, cq11 = nums('CAP9'), nums('CQ11')
 missing = cap9 - cq11
-print('OK' if cap9 and cq11 and not missing else f'CAP9 limits {sorted(cap9)} vs CQ11 {sorted(cq11)} — divergent: {sorted(missing)}')
+if not cap9:   print('CAP9 row not found in registry')
+elif not cq11: print('CQ11 row not found in registry')
+elif missing:  print(f'CAP9 limits {sorted(cap9)} vs CQ11 {sorted(cq11)} — divergent: {sorted(missing)}')
+else:          print('OK')
 PY
 )
 [ "$pairdrift" = "OK" ] && pass "CAP9 file-size limits agree with CQ11 (paired-row drift guard)" \

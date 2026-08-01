@@ -16,8 +16,10 @@ Active when Astro is detected (`astro.config.*`, `.astro` files, or Astro packag
   without an `input` schema accepts arbitrary JSON (same bar as endpoint validation below).
 - Actions are public HTTP endpoints: apply the same auth checks as `src/pages/api` routes;
   `context.locals` auth state must be asserted inside the handler, not assumed from the page.
-- Mutating actions follow CQ30: cookie-session sites keep Astro's CSRF origin-check enabled
-  (`security.checkOrigin`, on by default in Astro 5 — do not disable it for convenience).
+- Mutating actions follow CQ30: keep Astro's origin verification enabled (`security.checkOrigin`,
+  on by default in Astro 5 — never disable it for convenience) — server-side origin verification
+  is one of CQ30's accepted defences — AND set `SameSite` on the session cookie. For endpoints
+  outside Astro's check (custom API routes), add a CSRF token or use a bearer transport.
 
 ## Server Endpoints and Middleware
 

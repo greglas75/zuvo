@@ -285,7 +285,7 @@ Rate each assertion by its detection power (absorbed from the retired `test-qual
 | 4 (behavioral) | Interaction | `toHaveBeenCalledWith(exact_args)` | Interaction changes |
 | 5 (semantic) | Computed output | Verifies output differs from input, tests transformation logic | Logic errors |
 
-**Gate:** at least 60% of assertions in a test file must be level 3 or higher. A majority of level 1-2 assertions provides false confidence (feeds Q15).
+**Gate:** at least 60% of assertions in a test file must be level 3 or higher. A majority of level 1-2 assertions provides false confidence (feeds Q15). Strength and provenance are ORTHOGONAL: a level-3 `toEqual` whose expected value is echoed from mock/fixture setup still fails Q17 — the classifier never exempts an assertion from the echo check.
 
 ### 5. Self-Eval Evidence Requirements (critical gates)
 

@@ -72,13 +72,19 @@ if (url.protocol !== "https:") throw new Error("Only HTTPS allowed");
 // NEVER — path from user input
 const filePath = path.join(uploadDir, req.params.filename);
 
-// ALWAYS — normalize and verify containment (and realpath the parent against symlink escapes)
+// ALWAYS — string-level containment FIRST, then symlink-level via the TARGET's parent realpath
 const base = await fs.promises.realpath(path.resolve(uploadDir));
 const resolved = path.resolve(base, req.params.filename);
 const rel = path.relative(base, resolved);
 // segment compare — bare startsWith("..") also rejects a legit file named "..config";
 // startsWith(baseDir) alone would pass /uploads-evil for base /uploads
 if (rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel)) throw new Error("Path traversal");
+// Symlink escape: a link INSIDE base can point outside — realpath the TARGET'S PARENT
+// (not just base; the target itself may not exist yet) and re-run the compare:
+const realParent = await fs.promises.realpath(path.dirname(resolved));
+const relReal = path.relative(base, path.join(realParent, path.basename(resolved)));
+if (relReal === ".." || relReal.startsWith(".." + path.sep) || path.isAbsolute(relReal)) throw new Error("Symlink escape");
+// Open with O_NOFOLLOW where supported; note this remains check-then-use (see cq-patterns.md).
 ```
 
 ## File Upload Security — CQ31

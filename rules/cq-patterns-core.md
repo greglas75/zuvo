@@ -15,7 +15,7 @@ patterns behind the full file).
 - **Correct log levels (CQ27)**: `error` = unrecoverable/infra only; validation failures are `warn`/`info`.
 
 ## Security
-- **Timing-safe compare (CQ33)**: hash to a fixed width, then compare — `timingSafeEqual(sha256(a), sha256(b))`. Never `===` for secrets, and never `timingSafeEqual` on raw buffers: it THROWS on a length mismatch (uncaught 500 + length oracle).
+- **Timing-safe compare (CQ33)**: hash both to fixed-width BUFFERS, then compare — `timingSafeEqual(sha256buf(a), sha256buf(b))` (`timingSafeEqual` rejects strings; digest() must return Buffer — worked factory in cq-patterns.md). Never `===` for secrets, and never `timingSafeEqual` on raw buffers: it THROWS on a length mismatch (uncaught 500 + length oracle).
 - **CSPRNG + credential hashing (CQ33)**: tokens from `crypto.randomBytes`/`randomUUID`, never `Math.random()`; passwords via argon2id/bcrypt≥12, never bare SHA.
 - **Defense in depth (CQ4)**: auth guard AND `WHERE { organizationId: orgId }` in query — guard alone is NOT sufficient.
 - **Function-level authz + field allowlist (CQ34)**: assert permission for THIS operation (not just authenticated); write payloads through a DTO/allowlist — never `{ ...body }` into the ORM.
