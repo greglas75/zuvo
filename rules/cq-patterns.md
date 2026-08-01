@@ -649,7 +649,206 @@ A client that times out first converts a diagnosable server error into an unexpl
 
 ---
 
+## Reliability and Operational Patterns
+
+### Async singleton / single-flight init — reset on failure (CQ21)
+```typescript
+// NEVER — concurrent callers each start init (double DB pool, token-refresh storm)…
+let pool: Pool | null = null;
+async function getPool() { if (!pool) pool = await createPool(); return pool; }  // check-then-act race
+// …and the promise-cached variant WITHOUT reset stays broken forever after one failure:
+let p: Promise<Pool> | null = null;
+const getPool2 = () => (p ??= createPool());          // first rejection is cached for all callers
+
+// ALWAYS — cache the PROMISE (single-flight) and reset it on failure
+let poolP: Promise<Pool> | null = null;
+function getPoolSafe(): Promise<Pool> {
+  poolP ??= createPool().catch((err) => { poolP = null; throw err; });
+  return poolP;
+}
+// Same shape for token refresh: all concurrent 401s await ONE refresh, and a failed
+// refresh clears the slot so the next request retries instead of rethrowing a stale error.
+```
+
+### Retry — jittered backoff, idempotent ops only, honour Retry-After (CQ8)
+```typescript
+// NEVER — blind retry of a POST (double charge), fixed delay (thundering herd), infinite loop
+while (true) { try { return await pay(order); } catch { await sleep(1000); } }
+
+// ALWAYS — bounded attempts, exponential backoff + full jitter, only when safe to repeat
+async function retry<T>(fn: () => Promise<T>, { attempts = 3, baseMs = 200 } = {}): Promise<T> {
+  for (let i = 0; ; i++) {
+    try { return await fn(); }
+    catch (err: unknown) {
+      const retriable = err instanceof HttpError && (err.status === 429 || err.status >= 500);
+      if (!retriable || i >= attempts - 1) throw err;
+      const retryAfter = err.headers?.get("retry-after");                 // server knows best
+      const delay = retryAfter ? Number(retryAfter) * 1000
+                               : Math.random() * baseMs * 2 ** i;         // full jitter
+      await sleep(delay);
+    }
+  }
+}
+// Retry ONLY: idempotent methods (GET/PUT/DELETE) or mutations carrying an Idempotency-Key
+// (next pattern). 4xx other than 429 is a caller bug — retrying it is a loop, not resilience.
+```
+
+### Idempotency-Key on retried mutations (CQ21)
+```typescript
+// NEVER — retrying a mutation without a key: every retry is a NEW charge/order
+await retry(() => api.post("/charges", { amount }));
+
+// ALWAYS — caller mints ONE key per logical operation; every retry reuses it,
+// the server stores the first result under the key and replays it for duplicates
+const idempotencyKey = crypto.randomUUID();               // per OPERATION, not per attempt
+await retry(() => api.post("/charges", { amount }, { headers: { "Idempotency-Key": idempotencyKey } }));
+// Server side: INSERT key row (unique) inside the same tx as the side effect;
+// on conflict return the stored response. TTL the keys (24h is the common contract).
+```
+
+### Independent fan-out — allSettled + partition, never all-or-nothing (CQ15, CQ17)
+```typescript
+// NEVER — one bad item rejects the whole batch; the 99 successes are thrown away
+const results = await Promise.all(items.map(process));
+// ALSO NEVER — allSettled with rejections silently ignored (CQ15's dropped-error twin)
+const settled = await Promise.allSettled(items.map(process)); return settled.filter(isFulfilled);
+
+// ALWAYS — partition, handle BOTH halves, bound the concurrency
+const settled = await Promise.allSettled(items.map((it) => limit(() => process(it))));  // pLimit
+const ok     = settled.filter((s): s is PromiseFulfilledResult<R> => s.status === "fulfilled");
+const failed = settled.map((s, i) => ({ s, item: items[i] }))
+                      .filter(({ s }) => s.status === "rejected");
+if (failed.length) logger.warn("batch partial failure", { failed: failed.length, total: items.length });
+return { ok: ok.map((s) => s.value), failed: failed.map(({ item }) => item.id) };
+// Use Promise.all ONLY when the results are interdependent and a partial batch is useless.
+```
+
+### Cancellation composition — AbortSignal.any, propagate what you receive (CQ35)
+```typescript
+// NEVER — a fresh controller mid-chain: the caller's cancellation can no longer reach the I/O
+async function fetchUser(id: string, _signal: AbortSignal) {
+  const c = new AbortController();                        // received signal IGNORED
+  return api.get(`/users/${id}`, { signal: AbortSignal.timeout(5000) });  // ditto
+}
+
+// ALWAYS — accept the ambient signal, COMBINE it with the local budget, forward the result
+async function fetchUserSafe(id: string, signal: AbortSignal) {
+  const combined = AbortSignal.any([signal, AbortSignal.timeout(5000)]);  // caller-cancel OR timeout
+  return api.get(`/users/${id}`, { signal: combined });
+}
+// Entry points (request handler, CLI, job runner) CREATE the root signal; everything below
+// only accepts + forwards. A timeout no caller can cancel is not cancellation (CQ35).
+```
+
+### Outbox — side effects atomically WITH the write (CQ18)
+```typescript
+// NEVER — dual-write: DB commit succeeds, event publish fails → the two stores disagree forever
+await db.order.create({ data: order });
+await queue.publish("order.created", order);              // crash here = silent inconsistency
+
+// ALWAYS — write the event into an outbox table IN THE SAME TRANSACTION; a relay delivers it
+await db.$transaction(async (tx) => {
+  await tx.order.create({ data: order });
+  await tx.outbox.create({ data: { topic: "order.created", payload: order, createdAt: new Date() } });
+});
+// Relay (cron/worker): SELECT … FROM outbox WHERE deliveredAt IS NULL ORDER BY id LIMIT 100
+// → publish → mark delivered. At-least-once by design ⇒ consumers must be idempotent
+// (Idempotency-Key pattern above). This is the smallest CQ18-compliant mechanism.
+```
+
+### Cursor pagination — offset drifts under writes (CQ7)
+```typescript
+// NEVER — offset pagination on a live table: rows inserted/deleted between pages
+// shift the window → duplicates on one page, silently missing rows on the next
+const page = await db.order.findMany({ skip: pageNo * 50, take: 50, orderBy: { createdAt: "desc" } });
+
+// ALWAYS — cursor on a STABLE, unique ordering (tiebreaker column!), cursor from the last row
+const page = await db.order.findMany({
+  take: 50,
+  ...(cursor && { cursor: { id: cursor }, skip: 1 }),
+  orderBy: [{ createdAt: "desc" }, { id: "desc" }],       // createdAt alone is not unique
+});
+const nextCursor = page.at(-1)?.id ?? null;
+// Offset stays acceptable for admin UIs over static data; anything user-facing on a
+// growing table paginates by cursor.
+```
+
+### Graceful shutdown — drain before exit (CQ22/CQ38)
+```typescript
+// NEVER — exit on SIGTERM mid-flight: k8s/Fly sends SIGTERM on every deploy,
+// so every deploy truncates requests, half-writes jobs, and leaks pool connections
+process.on("SIGTERM", () => process.exit(0));
+
+// ALWAYS — stop intake, drain in-flight, close resources, force-exit on a deadline
+process.on("SIGTERM", async () => {
+  server.close();                                          // stop accepting; in-flight continue
+  jobRunner.pause();                                       // stop picking up new jobs
+  const deadline = setTimeout(() => process.exit(1), 25_000).unref();  // < platform kill window
+  await Promise.allSettled([server.closeAllConnections?.(), jobRunner.drain(), db.$disconnect()]);
+  clearTimeout(deadline);
+  process.exit(0);
+});
+// The deadline must be SHORTER than the orchestrator's SIGKILL grace period (k8s default 30s).
+```
+
+### Date-only values are not timestamps (CQ-time)
+```typescript
+// NEVER — a birth date as a Date object: "1990-05-10" becomes 1990-05-10T00:00:00Z,
+// which renders as 1990-05-09 in any negative-offset timezone
+const birthDate = new Date("1990-05-10");
+format(birthDate);                                        // off by one day west of UTC
+
+// ALWAYS — date-only stays a STRING (or a date-only type: Temporal.PlainDate, LocalDate,
+// SQL DATE) end to end; construct a Date only for date MATH, pinned to UTC noon
+const birthDate = "1990-05-10";                           // store, transport, compare as string
+const forMath = new Date(`${birthDate}T12:00:00Z`);       // noon: immune to DST/offset day-shift
+// The UTC-canonical rule (above) covers INSTANTS; this covers calendar dates — different type.
+```
+
 ## Security and Infrastructure Patterns
+
+### Webhook verification — HMAC over the RAW body, bounded replay window (CQ33, CQ3)
+```typescript
+// NEVER — verify a re-serialized body: express.json() already parsed it, and
+// JSON.stringify(req.body) ≠ the exact bytes that were signed → false negatives,
+// or worse, verification quietly skipped. Also NEVER accept without a timestamp check.
+app.post("/webhooks/stripe", express.json(), (req, res) => {
+  verify(JSON.stringify(req.body), req.headers["stripe-signature"]);   // wrong bytes
+});
+
+// ALWAYS — raw bytes for THIS route, timing-safe compare, replay window, idempotent handler
+app.post("/webhooks/stripe", express.raw({ type: "application/json" }), (req, res) => {
+  const sig = String(req.headers["stripe-signature"] ?? "");
+  const { timestamp, signature } = parseSigHeader(sig);
+  if (Math.abs(Date.now() / 1000 - timestamp) > 300) return res.status(400).end(); // 5-min window
+  const expected = createHmac("sha256", process.env.WEBHOOK_SECRET!)
+    .update(`${timestamp}.${req.body}`).digest();                       // req.body is a Buffer here
+  if (!timingSafeEqual(expected, Buffer.from(signature, "hex"))) return res.status(400).end();
+  const event = JSON.parse(req.body.toString("utf8"));
+  // Deliveries are at-least-once: dedupe by event.id before side effects.
+  res.status(200).end();                                  // ack fast; process async
+});
+```
+
+### LLM output is untrusted input (CQ31, CQ19, CAP19)
+```typescript
+// NEVER — treat model text as code, a query, or a validated object
+const plan = JSON.parse(llmResponse);  await db.$queryRawUnsafe(plan.sql);   // injection by prompt
+eval(llmResponse);                                                            // never
+await fetch(llmResponse.url);                                                 // SSRF via prompt
+
+// ALWAYS — schema-parse structured output; model text reaching ANY sink (CQ31: path/shell/
+// SQL/URL) goes through the same validation as user input; cap the agent loop's spend
+const Plan = z.object({ action: z.enum(["search", "summarize"]), query: z.string().max(500) });
+const plan = Plan.parse(JSON.parse(llmResponse));          // reject, don't repair silently
+let spentTokens = 0;
+for (const step of agentLoop) {
+  spentTokens += step.usage.totalTokens;
+  if (spentTokens > BUDGET) throw new BudgetExceededError();  // CAP19: expensive-op cap
+}
+// Prompt injection means the model's output can be ATTACKER-chosen: grant the loop only the
+// capabilities the USER has, never ambient admin credentials.
+```
 
 ### No hardcoded secrets in source (CQ33, CAP5)
 ```typescript

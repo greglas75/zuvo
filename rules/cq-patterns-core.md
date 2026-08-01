@@ -13,6 +13,7 @@ patterns behind the full file).
 - **Error strategy by impact**: critical path → rethrow. Non-critical (cache, metrics) → warn + continue. User-facing read → fallback data. Always log before falling back. Never catch-and-continue silently.
 - **Typed exceptions**: `throw new NotFoundException()` — never generic `throw new Error` in framework services.
 - **Correct log levels (CQ27)**: `error` = unrecoverable/infra only; validation failures are `warn`/`info`.
+- **Retry (CQ8)**: bounded attempts, exponential backoff + FULL JITTER, honour `Retry-After`; retry only idempotent ops or key-carrying mutations; 4xx≠429 is a bug, not a retry.
 
 ## Security
 - **Timing-safe compare (CQ33)**: hash both to fixed-width BUFFERS, then compare — `timingSafeEqual(sha256buf(a), sha256buf(b))` (`timingSafeEqual` rejects strings; digest() must return Buffer — worked factory in cq-patterns.md). Never `===` for secrets, and never `timingSafeEqual` on raw buffers: it THROWS on a length mismatch (uncaught 500 + length oracle).
@@ -28,6 +29,8 @@ patterns behind the full file).
 - **Non-literal RegExp**: escape special chars before `new RegExp(userInput)`.
 - **Child process (CQ31)**: `execFileSync('cmd', [args])` — avoid `shell: true`.
 - **Prototype pollution**: guard dynamic keys (`__proto__`, `constructor`, `prototype`) before `obj[key] = v`.
+- **Webhooks (CQ33/CQ3)**: HMAC over the RAW body bytes (never re-serialized JSON), timing-safe compare, ±5-min timestamp window, dedupe by event id.
+- **LLM output = untrusted input (CQ31)**: schema-parse structured output; model text reaching path/shell/SQL/URL sinks gets user-input validation; cap agent-loop spend.
 - **GCM decrypt**: pass `authTagLength` explicitly. **External scripts**: subresource integrity (CQ32).
 
 ## Data Integrity
@@ -37,6 +40,9 @@ patterns behind the full file).
 - **Prisma upsert**: `prisma.upsert()` — never manual `findFirst` + `create/update` (race condition).
 - **Side effects after tx**: fire-and-forget AFTER `$transaction` completes — never inside (rollback fires side effect).
 - **Integer-cents**: `Math.round(priceCents * (100 - discount) / 100)` — never float arithmetic on money.
+- **Idempotency-Key (CQ21)**: one key per logical mutation, reused across retries; server stores first result under the key and replays duplicates.
+- **Outbox (CQ18)**: event row written IN the same transaction as the state change; relay delivers at-least-once; consumers idempotent. Dual-write without it = violation.
+- **Date-only ≠ timestamp**: calendar dates travel as `YYYY-MM-DD` strings/PlainDate — `new Date('1990-05-10')` renders a day early west of UTC.
 - **UTC-canonical time**: store/compare in UTC, convert at the display edge only.
 - **Copy before mutating**: `[...items].sort()` — never mutate a parameter; validate string params too (`!userId?.trim()`).
 - **structuredClone** for deep copies — never `JSON.parse(JSON.stringify(x))` (drops Dates/undefined/Maps).
@@ -53,6 +59,7 @@ patterns behind the full file).
 - **Concurrency limit**: `pLimit(5)` on dynamic fan-out — never unbounded `Promise.all` on user-sized arrays.
 - **Cache TTL (CQ23)**: every `redis.set` needs `EX`/`PX` — never cache without expiration.
 - **Cache expensive computations**: key by version, invalidate on change — never rebuild an index per call.
+- **Cursor pagination (CQ7)**: offset drifts under live writes (dupes/missing rows) — cursor over a stable unique ordering with an `id` tiebreaker.
 
 ## Type Safety & Validation
 - **Exhaustive switch**: `default: const _: never = s; throw new Error(...)` — catches missing cases at compile time.
@@ -70,6 +77,10 @@ patterns behind the full file).
 - **Cleanup listeners (CQ22)**: every `addEventListener`/`subscribe`/`setInterval` needs cleanup in return/destroy.
 - **Functional updater**: `setCount(c => c + 1)` — never stale closure in async callbacks.
 - **Sequential await**: comment the trade-off — use `Promise.all` with concurrency limit if no ordering needed.
+- **Async singleton (CQ21)**: cache the PROMISE (`p ??= init()`) for single-flight, and reset it in `.catch` — a cached rejection bricks every later caller.
+- **Independent fan-out**: `Promise.allSettled` + partition, handle BOTH halves — `Promise.all` throws away 99 successes for 1 failure; ignoring the rejected half drops errors (CQ15).
+- **Cancellation composition (CQ35)**: `AbortSignal.any([received, AbortSignal.timeout(n)])` — accept + forward the ambient signal, never mint a fresh controller mid-chain.
+- **Graceful shutdown (CQ22/CQ38)**: SIGTERM → stop intake, drain in-flight, close pools, force-exit BEFORE the orchestrator's kill window.
 
 ## Structure
 - **Map over find-in-loop**: `new Map(items.map(i => [i.id, i]))` — never `.find()` per iteration (O(n) vs O(n^2)).
