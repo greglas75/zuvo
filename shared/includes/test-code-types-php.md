@@ -19,12 +19,18 @@ $mock = $this->getMockBuilder(S3Client::class)
     ->onlyMethods(['upload'])  // upload() is declared in S3ClientTrait
     ->getMock();
 
-// MAGIC methods (__call-dispatched) on PHPUnit 12+: mock the INTERFACE the SDK provides,
-// or hand-roll a stub — there is no builder API for undeclared methods any more.
-$mock = $this->createMock(S3ClientInterface::class);   // interface declares them for real
-$mock->method('getObject')->willReturn($result);
+// MAGIC methods (__call-dispatched) on PHPUnit 12+: there is no builder API for undeclared
+// methods any more. CAUTION: mocking the SDK INTERFACE usually does NOT help — AWS declares
+// these via `@method` docblocks on the interface too, so PHPUnit still sees no real method.
+// Verify first: does the interface DECLARE the method in code (not a docblock)?
+//   php -r 'var_dump(method_exists(\Aws\S3\S3ClientInterface::class, "getObject"));'
+// true  -> $this->createMock(S3ClientInterface::class) works
+// false -> use the SDK's own test double (preferred for AWS): MockHandler
+use Aws\MockHandler; use Aws\Result;
+$handler = new MockHandler([new Result(['Body' => 'x'])]);   // queue one Result per call
+$s3 = new S3Client(['region' => 'us-east-1', 'version' => 'latest', 'handler' => $handler]);
 
-// No interface? Hand-rolled stub (explicit, version-proof):
+// Any SDK without a test double? Hand-rolled stub (explicit, version-proof):
 $mock = new class extends S3Client {
     public function __construct() {}                    // skip the SDK constructor
     public function getObject(array $args = []): \Aws\Result { return new \Aws\Result([]); }
@@ -55,9 +61,9 @@ AWS SDK services use traits for some methods and `__call()` for others:
 | Method | Type | Mock with (PHPUnit 12+) |
 |--------|------|--------------------------|
 | `upload()` | **real** (declared in `S3ClientTrait`) | `onlyMethods(['upload'])` |
-| `putObject()`, `getObject()`, `deleteObject()` | **magic** (`__call`) | interface mock (`S3ClientInterface`) or hand-rolled stub |
-| `doesObjectExist()` | **magic** | interface mock / stub |
-| `getObjectUrl()` | **magic** | interface mock / stub |
+| `putObject()`, `getObject()`, `deleteObject()` | **magic** (`__call`) | `Aws\MockHandler` (preferred) or hand-rolled stub — interface mocking only if `method_exists` is true |
+| `doesObjectExist()` | **magic** | `MockHandler` / stub |
+| `getObjectUrl()` | **magic** | `MockHandler` / stub |
 
 Verify per SDK version rather than trusting this table: a method that is magic today can become
 declared in a later release, and `onlyMethods()` throws on the mismatch either way.
