@@ -124,7 +124,40 @@ WORK_FILES = <files being touched>
 
 2. **Run the test suite.** Capture exit code, pass count, and fail count.
 
-3. **If tests fail:** Stop. Print the failure summary. Ask the user to fix the failures or explicitly confirm override to continue shipping with failing tests. In non-interactive environments: stop and print `SHIP ABORTED: test failures` — never auto-override test failures.
+3. **If tests fail: TRIAGE, never a bare abort.** A red suite has three different causes with
+   three different fixes — collapsing them into "stop and ask" froze a shippable branch on two
+   inherited snapshots (field feedback 2026-08-01: "czemu nie każe naprawić, tylko blokuje?").
+   Classify EVERY failing test first:
+
+   a. **Baseline the failures against the ship base.** Preferred: run ONLY the failing test
+      files at the merge-base (`git worktree add <tmp> $(git merge-base HEAD <default>)`,
+      reusing installed deps when the lockfile is unchanged; remove the worktree after).
+      Fallback when that is impractical: a failure is treated as pre-existing only when
+      neither the failing test file nor its production target intersects the ship range's
+      changed files.
+   b. **NEW failure (green on base, red now)** — the ship's own regression. FIX it in-run:
+      a production bug per the fix-in-run philosophy, or the test's contract update when the
+      shipped change legitimately altered behavior. Re-run, continue. Only a new failure that
+      cannot be fixed in-scope aborts — print `SHIP ABORTED: new regression <test> — <reason>`
+      with the classification table. That abort is correct and stays.
+   c. **PRE-EXISTING failure (red on base too)** — inherited debt, not this ship's regression:
+      - **In-scope trivially fixable** (stale snapshot whose diff is verifiably benign — e.g. a
+        dependency changed SVG/markup serialization and the diff touches NO shipped code;
+        an assertion obsoleted by an already-landed change) → FIX NOW in a separate
+        `test(ship): ...` commit, re-run, continue. Auto-updating a snapshot REQUIRES that
+        attribution: inspect the snapshot diff and name the benign cause in the commit body;
+        a snapshot diff implicating shipped code is class (b), never a blind `--update`.
+      - **Not in-scope fixable** → do NOT hold the ship hostage to debt the base already has:
+        print `[SHIP] pre-existing failures carried: <list>`, write them to `memory/backlog.md`,
+        continue — and cap the run-line verdict at WARN.
+   d. **Never end the turn asking "may I push despite red tests?"** for a fixable failure —
+      fix it and re-run. The only question ship may ask is a genuine behavior/product decision
+      surfaced by a class-(b) fix (interactive only; batch picks the safe default and logs it).
+
+   Print the triage table before proceeding:
+   ```
+   TEST TRIAGE: [N] failing → [a] new (fixed in-run), [b] new (ABORT), [c] pre-existing fixed, [d] pre-existing carried (WARN)
+   ```
 
 ---
 
@@ -398,7 +431,7 @@ COMPLETION GATE CHECK
 [ ] Phase 2 attestation block printed (all boxes considered, escalation applied if any unchecked)
 [ ] Review depth recorded: none/light/full/full+coverage
 [ ] If invocation form was zuvo:review — actual Skill(skill="zuvo:review") tool call exists in the tool log (not simulated, not summarized)
-[ ] Tests ran and passed before bump
+[ ] Tests ran; failures TRIAGED (new-fixed / new-abort / pre-existing-fixed / pre-existing-carried+WARN) with the TEST TRIAGE table printed — never a bare abort, never an "allow push despite red?" question
 [ ] Version bumped with CHANGELOG section added
 [ ] Only version files staged (never git add -A)
 [ ] memory/last-ship.json written
