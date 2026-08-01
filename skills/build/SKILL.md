@@ -103,7 +103,6 @@ Print: `[CLASSIFIED] Tier: {TIER}`
 | `../../rules/file-limits.md` | Full | Full | Full |
 | `../../shared/includes/code-contract.md` | **SKIP** | Full | Full |
 | `../../rules/testing.md` | Full | Full | Full |
-| `../../rules/test-quality-rules.md` | **SKIP** | Full | Full |
 | `../../rules/cq-checklist.md` | **SKIP** | **SKIP** | Full |
 | `../../shared/includes/test-contract.md` | **SKIP** | Full | Full |
 | `../../shared/includes/quality-gates.md` | **SKIP** | **SKIP** | Q1-Q25 section only |
@@ -453,7 +452,7 @@ Fix all critical gate violations before writing tests.
 
 ### 3.4 Write Tests
 
-Read `../../rules/testing.md` before writing tests. For STANDARD+, also read `../../rules/test-quality-rules.md`.
+Read `../../rules/testing.md` before writing tests (its Self-Eval sections absorbed the retired test-quality-rules.md). For STANDARD+, also read `../../shared/includes/test-edge-cases.md`.
 
 **STANDARD and DEEP tiers — Pre-Write Test Contract (MANDATORY):**
 
@@ -530,7 +529,7 @@ Dispatch with:
   3. Check for auto-fail patterns: empty bodies, assertions on mock inputs, tests passing with implementation deleted, toBeTruthy on objects.
   4. Report PASS (>= 16, all critical gates), FIX (gaps identified), or BLOCK (< 10).
 
-  Read ../../rules/testing.md and ../../rules/test-quality-rules.md."
+  Read ../../rules/testing.md and ../../shared/includes/test-edge-cases.md."
 ```
 
 #### CQ Auditor

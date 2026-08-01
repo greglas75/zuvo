@@ -133,7 +133,7 @@ shared/includes/*.md            — shared procedural includes (81 files):
                                     adversarial-loop.md, adversarial-loop-docs.md (evidence enforcement)
                                     quality-gates.md, env-compat.md, codesift-setup.md, run-logger.md
                                     + registries, schemas, protocols
-rules/*.md                      — code quality rules (21 files: cq-patterns, testing, security, file-limits, etc.)
+rules/*.md                      — code quality rules (20 files: cq-patterns, testing, security, file-limits, etc.)
 scripts/install.sh              — local install to Claude + Codex + Cursor + Antigravity
 scripts/release.sh              — release to marketplace
 scripts/build-codex-skills.sh   — build Codex distribution (called by install.sh)

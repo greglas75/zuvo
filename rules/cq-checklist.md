@@ -221,6 +221,13 @@ N/A scores are excluded from both numerator and denominator (see canonical formu
 | CQ20 | No domain entities | "Legacy" — not a valid excuse |
 | CQ21 | Read-only, single-user, no contested resources | "Low traffic" — races happen at any traffic level |
 | CQ22 | Pure sync, stateless, no subscriptions | "One listener" — 1 listener x 1000 mounts = 1000 listeners |
+
+**Conditional and security-wave gates** (same rules — split into a second table only to stay under
+the gate-consistency test's hand-maintained-definition-table heuristic; this is guidance per gate,
+not a definition table):
+
+| CQ | N/A is valid when | N/A is NOT valid |
+|----|-------------------|------------------|
 | CQ23 | No caching in this code path | "Small data" — if cache exists, TTL applies |
 | CQ24 | New endpoint only, no existing clients | "Internal API" — if any client calls it, backward compat applies |
 | CQ25 | Single file change, no pattern to compare | "It's better this way" — consistency > preference |

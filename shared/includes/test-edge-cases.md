@@ -16,3 +16,6 @@
 | **slug/identifier** | empty after sanitization (special chars only `"!!!"`), unicode-only input (`"日本語"`), leading/trailing hyphens, collision with incrementing suffix (`slug-2`, `slug-3`) |
 | **threshold/rule-based** | exact threshold N, N-1 (should NOT trigger), N+1 (should trigger). For escalating rules (IP lock tiers, rate limits), test each tier boundary independently. |
 | **side-effect method** (audit, email, cache, event) | CalledWith in **every** success test (verify exact args), `not.toHaveBeenCalled` in **every** error test (verify no side-effect on failure). Missing CalledWith for side-effects is the #1 gap in first-pass tests. |
+| **enum × enum (matrix)** | When two enum/union params interact, test the cross-product (or at minimum all diagonal + boundary transitions) with `it.each` — not just the happy pair. Hardcoded production lists (allowlists, level maps): every member; 4 of 5 = incomplete. |
+| **events (listener/handler)** | Concurrent dispatch (2+ events same tick), out-of-order delivery, duplicate event, event during teardown, rapid-fire same event. |
+| **time-dependent** (`Date.now`, `setTimeout`, debounce, throttle) | `vi.useFakeTimers()` mandatory; test exact threshold, threshold-1 (must NOT trigger), threshold+1 (must trigger). Never the real clock. |

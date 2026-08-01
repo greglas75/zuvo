@@ -90,7 +90,7 @@ Read these files from disk before starting. Print the checklist. Do not proceed 
 ```
 CORE FILES LOADED:
   1. ../../rules/testing.md              -- READ/MISSING
-  2. ../../rules/test-quality-rules.md   -- READ/MISSING
+  2. ../../shared/includes/test-edge-cases.md   -- READ/MISSING
   3. ../../shared/includes/env-compat.md -- READ/MISSING
   4. ../../shared/includes/run-logger.md -- READ/MISSING
   5. ../../shared/includes/retrospective.md -- READ/MISSING

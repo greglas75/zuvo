@@ -246,5 +246,5 @@ Full AP definitions with detection heuristics and fix guidance are in `rules/tes
 - **CQ details, scoring rules, evidence examples:** `rules/cq-checklist.md`
 - **CQ code patterns (NEVER/ALWAYS pairs):** `rules/cq-patterns.md`
 - **Q details, test patterns, scoring:** `rules/testing.md`
-- **Test quality enforcement rules:** `rules/test-quality-rules.md`
+- **Test quality enforcement rules:** `rules/testing.md` (incl. Assertion Strength Classifier + Self-Eval Evidence, absorbed from the retired test-quality-rules.md 2026-08-01)
 - **Quick reference for agents:** `shared/includes/quality-gates.md`

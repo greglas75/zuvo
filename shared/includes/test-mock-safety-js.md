@@ -7,6 +7,9 @@
 2. **Reset with `vi.clearAllMocks()` or `vi.resetAllMocks()` in `beforeEach`** — `clearAllMocks()` clears call records but does NOT clear `mockResolvedValue`, `mockReturnValue`, or `mockImplementation`. A mock set in test A can leak into test B. If any test relies on a mock NOT having a return value: use `resetAllMocks()`. For `vi.mock`'d sync parsers/factories driven by `mockReturnValue`, prefer `mockReset()`/`resetAllMocks()` — `clearAllMocks()` keeps the configured return value, leaking stale data across tests. (Exception: passthrough module mocks — see rule 6.)
 3. **Async generators: mock with `async function*`** or iterable factory. Never mock with plain arrays when production code uses `for await`.
 4. **Streams: mock with readable stream from string** — not with bare arrays or sync iterators. Tests must exercise the stream API.
+   - **`stream.pipe(writer)` / finish-promises**: a no-op writer mock never emits `finish`, so `new Promise(res => stream.on('finish', res))` hangs the test silently. Mock as `PassThrough` or emit the terminal event explicitly.
+   - **EventEmitter consumers** (`.on('data')`/`.on('end')`): a bare `vi.fn()` never fires callbacks — mock a real `EventEmitter` and drive it with `.emit('data', chunk)` + `.emit('end')`.
+   - **Verification rule**: trace the mock mentally — can production code iterate, await, or subscribe to what it returns? If not, the test hangs, it doesn't fail.
 5. **NestJS Logger spy** — NestJS services create `Logger` internally (not injected). To verify error logging, spy on `Logger.prototype.error` BEFORE constructing the service:
    ```typescript
    let loggerErrorSpy: ReturnType<typeof vi.spyOn>;

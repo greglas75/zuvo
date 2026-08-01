@@ -113,7 +113,6 @@ Print: `[CLASSIFIED] Bug category: {logic|async|data|integration|test-failure}`
 | `../../rules/cq-patterns.md` | Full | CQ15,CQ21 focus | CQ6,7,9 focus | CQ8,CQ19 focus | **SKIP** |
 | `../../rules/cq-checklist.md` | Full | CQ15,CQ21 focus | CQ6,7,9 focus | CQ8,CQ19 focus | **SKIP** |
 | `../../rules/testing.md` | **SKIP** | **SKIP** | **SKIP** | **SKIP** | Full |
-| `../../rules/test-quality-rules.md` | **SKIP** | **SKIP** | **SKIP** | **SKIP** | Full |
 
 Print loaded files:
 ```

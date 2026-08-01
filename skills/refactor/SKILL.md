@@ -171,7 +171,7 @@ the whole before/after comparison meaningless.
 | `../../rules/cq-checklist.md` | **SKIP** | **SKIP** | **SKIP** | Full |
 | `../../rules/file-limits.md` | **SKIP** | Full | **SKIP** | Full |
 | `../../rules/testing.md` | If tests affected | If tests affected | If tests affected | Full |
-| `../../rules/test-quality-rules.md` | **SKIP** | If tests affected | **SKIP** | If tests affected |
+| `../../shared/includes/test-edge-cases.md` | **SKIP** | If tests affected | **SKIP** | If tests affected |
 | `../../rules/security.md` | **SKIP** | **SKIP** | **SKIP** | If security-sensitive |
 
 Print loaded files:
@@ -545,7 +545,7 @@ Skip for VERIFY_COMPILATION test mode.
 
 ```
 Phase 2: testing.md -- READ
-Phase 2: test-quality-rules.md -- READ (WRITE_NEW, IMPROVE_TESTS, or CHARACTERIZE_GAP)
+Phase 2: test-edge-cases.md -- READ (WRITE_NEW, IMPROVE_TESTS, or CHARACTERIZE_GAP)
 ```
 
 ### Test Mode Execution

@@ -264,6 +264,31 @@ For each expected value, verify its source:
 
 For financial and algorithmic code: derive expected values from 2 independent sources (dual-oracle). Disagreement = flag for review.
 
+### 4. Assertion Strength Classifier
+
+Rate each assertion by its detection power (absorbed from the retired `test-quality-rules.md`, 2026-08-01):
+
+| Level | Category | Example | Catches |
+|-------|----------|---------|---------|
+| 1 (trivial) | Existence | `toBeDefined()`, `toBeTruthy()` | Almost nothing |
+| 2 (structural) | Shape | `toHaveLength(3)`, `toHaveProperty('id')` | Shape changes only |
+| 3 (value) | Exact value | `toEqual(expected)`, `toBe(42)` | Value changes |
+| 4 (behavioral) | Interaction | `toHaveBeenCalledWith(exact_args)` | Interaction changes |
+| 5 (semantic) | Computed output | Verifies output differs from input, tests transformation logic | Logic errors |
+
+**Gate:** at least 60% of assertions in a test file must be level 3 or higher. A majority of level 1-2 assertions provides false confidence (feeds Q15).
+
+### 5. Self-Eval Evidence Requirements (critical gates)
+
+Score inflation is the top quality problem — 19/19 claimed when the real score is 8/19. Every critical gate scored 1 must include a proof line; without proof, score 0:
+
+| Q | Proof required |
+|---|---------------|
+| **Q7** | Name the `it()` block testing an error/rejection path. Quote the assertion. |
+| **Q11** | Enumerate ALL conditional branches in the production code. For each branch, name the test exercising it. Any branch without a test → Q11=0. |
+| **Q15** | Count assertions by type: value vs weak (`toBeDefined`, `toBeTruthy`, `typeof`, argless `toHaveBeenCalled`). Weak > 50% of total → Q15=0. Apply the Assertion Strength Classifier: 60%+ level ≥3 required. |
+| **Q17** | For each key assertion: "Does this verify something the CODE COMPUTED, or something I SET UP?" Expected value sourced from mock/fixture setup = echo; echo > 50% → Q17=0. Apply Oracle Independence. |
+
 ## Prohibited Test Patterns
 
 - `it.todo()` / `it.skip()` / `describe.skip()` for required tests = BLOCKING

@@ -62,7 +62,6 @@ Located in `rules/`. These are reference files that skills load when performing 
 | `cq-checklist.md` | Full CQ1-CQ40 gate definitions, scoring thresholds, evidence standards, N/A rules |
 | `cq-patterns.md` | NEVER/ALWAYS code pairs for 40+ patterns (atomicity, idempotency, errors, money, lookups, cleanup, secrets, path traversal, prototype pollution, Docker, etc.) |
 | `testing.md` | Q1-Q25 gate definitions, test quality scoring, pattern selection |
-| `test-quality-rules.md` | Edge case checklists, mock safety rules, auto-fail patterns, assertion strength |
 | `security.md` | XSS, SSRF, injection, auth patterns for security-sensitive code |
 | `file-limits.md` | File and function size limits by type (service, component, hook, util, handler) |
 | `typescript.md` | TypeScript rules: zero-any policy, Zod type-first, strict typing, error handling types |
