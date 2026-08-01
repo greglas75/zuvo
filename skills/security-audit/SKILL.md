@@ -239,8 +239,18 @@ Based on detection, load the applicable conditional rules from `../../rules/`:
 | Next.js | `../../rules/react-nextjs.md` |
 | NestJS | `../../rules/nestjs.md` |
 | Python (FastAPI/Django/Flask) | `../../rules/python.md` |
+| PHP (composer.json) | `../../rules/php.md` (its SSRF/upload/multi-tenant/CSRF section exists for this skill) |
+| Yii2 (yiisoft/yii2 in composer.json) | `../../rules/yii2.md` (in addition to php.md) |
+| Express (express in package.json, no Next/Nest) | `../../rules/express.md` |
+| Astro (astro.config.*) | `../../rules/astro.md` (Astro security checklist) |
+| Go | `../../rules/go.md` |
+| Rust | `../../rules/rust.md` |
+| .NET | `../../rules/dotnet.md` |
+| Ruby | `../../rules/ruby.md` |
 
-Load ALL that match. Most projects have 2-3 applicable stacks.
+Load ALL that match. Most projects have 2-3 applicable stacks. (Until 2026-08-01 this table
+listed only three stacks — a PHP/Go/Rust/.NET/Ruby project got ZERO stack rules in a security
+audit; do not shrink it back.)
 
 ### 0.2b Entry-Point Inventory (authoritative snapshot for the IC-2 surface gate)
 

@@ -238,6 +238,8 @@ Detect the project's tech stack from config files:
 | `package.json` with `@nestjs/core` | NestJS | `../../rules/nestjs.md` |
 | `pyproject.toml` or `.py` files | Python | `../../rules/python.md` |
 | `composer.json` | PHP | `../../rules/php.md` |
+| `composer.json` with `yiisoft/yii2` | Yii2 | `../../rules/yii2.md` (with php.md) |
+| `astro.config.*` | Astro | `../../rules/astro.md` |
 | `go.mod` | Go | `../../rules/go.md` |
 | `Cargo.toml` | Rust | `../../rules/rust.md` |
 | `*.csproj` / `*.sln` | .NET | `../../rules/dotnet.md` |

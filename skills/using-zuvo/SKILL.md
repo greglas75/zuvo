@@ -226,6 +226,9 @@ Detect the project's tech stack to know which rules to Read when writing code di
 | `package.json` with `@nestjs/core` | `../../rules/nestjs.md` |
 | `pyproject.toml`, `.py` files | `../../rules/python.md` |
 | `composer.json` with PHP framework | `../../rules/php.md` |
+| `composer.json` with `yiisoft/yii2` | `../../rules/yii2.md` (with php.md) |
+| `package.json` with `express` (no Next/Nest) | `../../rules/express.md` |
+| `astro.config.*` | `../../rules/astro.md` |
 | `go.mod` | `../../rules/go.md` |
 | `Cargo.toml` | `../../rules/rust.md` |
 | `*.csproj` / `*.sln` | `../../rules/dotnet.md` |

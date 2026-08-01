@@ -450,6 +450,9 @@ Detect tech stack and load matching rules:
 | nest-cli.json or @nestjs/* | `../../rules/nestjs.md` |
 | requirements.txt / pyproject | `../../rules/python.md` |
 | composer.json | `../../rules/php.md` |
+| composer.json with yiisoft/yii2 | `../../rules/yii2.md` (with php.md — counts as ONE slot) |
+| package.json with express (no Next/Nest) | `../../rules/express.md` |
+| astro.config.* | `../../rules/astro.md` |
 | go.mod | `../../rules/go.md` |
 | Cargo.toml | `../../rules/rust.md` |
 | *.csproj / *.sln | `../../rules/dotnet.md` |
