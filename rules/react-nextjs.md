@@ -13,6 +13,11 @@ Active when React or Next.js is detected in the project. Not applicable to non-R
 
 ## Hook Discipline
 
+> **React 19 note:** with the React Compiler enabled, manual `useMemo`/`useCallback` is
+> no longer the default lever — write plain code and let the compiler memoize; keep manual
+> memoization only where a profiler shows the compiler missed it (or the project has the
+> compiler off). The rules below on dependencies, cleanup and stale closures are unchanged.
+
 - Place hooks at the top of the component, before any conditionals or early returns
 - Custom hooks belong in separate files (`useFeatureName.ts`)
 - Never call hooks inside loops, conditions, or nested functions
@@ -162,6 +167,9 @@ Is this SERVER data? (API, database)
 
 ### Server Actions
 - Validate inputs with Zod in every server action
+- Prefer the React 19 form hooks over hand-wired action state: `useActionState` for
+  submit-state + result, `useFormStatus` for pending UI, `useOptimistic` for optimistic
+  updates — manual `useState`+`startTransition` wiring around actions is the legacy shape
 - Check auth in every server action (not just pages)
 - Use `revalidatePath`/`revalidateTag` after mutations
 - Never expose sensitive data in action responses

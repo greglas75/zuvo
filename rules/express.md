@@ -6,6 +6,30 @@ the framework router and decorators are the primary entrypoint.
 
 ---
 
+## Express 5 vs 4 — async error semantics (behavior change)
+
+- **Express 5**: a rejected promise in a route handler is auto-forwarded to error middleware —
+  `app.get('/x', async () => { throw new Error('boom') })` reaches your error handler.
+- **Express 4**: the same rejection is SILENTLY swallowed (request hangs until client timeout)
+  unless every async handler is wrapped (`asyncHandler`/try-catch-next). Check the installed
+  major before removing wrappers — and never remove them in a codebase that still runs 4.
+- Either major: exactly ONE error-handling middleware signature `(err, req, res, next)`,
+  registered LAST; it must not leak `err.message`/stack to the client (CQ5, CAP17).
+
+## Concrete Express patterns
+
+```typescript
+// Body size cap (CQ6): default json limit is 100kb — set it explicitly per API shape
+app.use(express.json({ limit: '100kb' }));
+
+// Open redirect (CQ31): never res.redirect(req.query.next) — allowlist relative paths
+const next = String(req.query.next ?? '/');
+res.redirect(next.startsWith('/') && !next.startsWith('//') ? next : '/');
+
+// Trust proxy before rate limiting by IP — else every client shares the LB's IP
+app.set('trust proxy', 1);
+```
+
 ## Input Validation
 
 - Validate `req.body`, `req.query`, `req.params`, headers, and cookies before

@@ -179,6 +179,24 @@ else
   printf '%s\n' "$absthr" | head -4 | sed 's/^/      /'
 fi
 
+# ---------- 7b. CAP<->CQ paired numeric limits must agree ----------
+# CAP rows restate CQ limits in finding-vocabulary form; the pair is a known drift surface —
+# CAP9's component limit sat at a value CQ11/file-limits.md contradicted until 2026-08-01.
+# Mechanical guard: the file-size numbers in CAP9 must be a subset of CQ11's.
+pairdrift=$(python3 - "$REG" <<'PY'
+import re,sys
+reg=open(sys.argv[1],encoding='utf-8').read()
+def nums(gate_id):
+    m=re.search(r'^\| %s \|(.*)\|$' % gate_id, reg, re.M)
+    return set(re.findall(r'\b(450|300|250|200|100)L?\b', m.group(1))) if m else set()
+cap9, cq11 = nums('CAP9'), nums('CQ11')
+missing = cap9 - cq11
+print('OK' if cap9 and cq11 and not missing else f'CAP9 limits {sorted(cap9)} vs CQ11 {sorted(cq11)} — divergent: {sorted(missing)}')
+PY
+)
+[ "$pairdrift" = "OK" ] && pass "CAP9 file-size limits agree with CQ11 (paired-row drift guard)" \
+  || bad "CAP9/CQ11 paired limits drifted: $pairdrift"
+
 # ---------- 8. criticality vocabulary is respected ----------
 badcrit=$(grep -oE '^\| CQ[0-9]+ \|[^|]*\|([^|]*)\|' "$REG" \
           | sed 's/.*|\([^|]*\)|$/\1/' | tr -d ' ' \

@@ -98,6 +98,14 @@ $label = match($status) {
 
 ---
 
+## Modern PHP (8.1-8.3) — prefer these over legacy shapes
+
+- **Enums (8.1)** over class constants for closed sets — `enum OrderStatus: string { case Pending = 'pending'; }`; gives exhaustive `match` checking (CQ1's union-type rule, PHP edition).
+- **`readonly` properties (8.1) / readonly classes (8.2)** for DTOs and value objects — mutation attempts throw instead of silently corrupting state.
+- **First-class callable syntax (8.1)**: `$fn = $service->method(...)` — over `[$service, 'method']` arrays and `Closure::fromCallable`.
+- **Typed class constants (8.3)**: `const string VERSION = '1.0';` — the type is enforced in children.
+- Code written to 7.4 idioms (untyped constants, arrays-as-enums, mutable DTOs) is not a violation by itself, but NEW code in an 8.1+ project follows the modern shapes (CQ25).
+
 ## Semgrep-Derived Patterns
 
 ### unserialize -- use json_decode instead
@@ -177,6 +185,9 @@ return $this->redirect($url);
 
 ## SSRF Prevention (curl / Guzzle / file_get_contents)
 
+> Canonical cross-stack treatment (incl. IPv6/CGNAT ranges + redirect re-validation):
+> `security.md` -> SSRF. This section keeps the PHP-specific call sites.
+
 Any code making HTTP requests to user-supplied URLs must apply all three layers:
 
 **Layer 1: Protocol allowlist**
@@ -205,6 +216,8 @@ $client = new \GuzzleHttp\Client([
 ---
 
 ## File Upload Security
+
+> Canonical cross-stack checklist: `security.md` -> File Upload Security. PHP specifics below.
 
 ```php
 // Size limit in server code, not just nginx

@@ -248,3 +248,13 @@ dto/order-filters.dto.ts  (query param DTO)
 │ Function params             │   5      │ use options object for 5+  │
 └─────────────────────────────┴──────────┴────────────────────────────┘
 ```
+
+## Other stacks (Go / Python / Rust / JVM / .NET)
+
+The tables above are TS/NestJS/React-calibrated. For other stacks (registry gates CQ36-CQ38
+apply there) the FUNCTION limits carry over unchanged — public 50L, private/helper 30L,
+handler 25L — because they measure comprehension, not language. For FILE limits use the
+project's own convention if one exists; otherwise default to **<= 400 lines per module** and
+treat 2x (800) as the automatic CQ11 FAIL, same escalation as the typed table. A Go package
+file of handlers follows the controller row (300L). Do not stretch the React rows onto
+non-component code.

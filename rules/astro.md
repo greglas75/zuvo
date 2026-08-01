@@ -10,6 +10,15 @@ Active when Astro is detected (`astro.config.*`, `.astro` files, or Astro packag
 - Markdown, CMS content, and frontmatter-derived rich content must be sanitized before raw rendering.
 - Redirect targets must be relative-only or allowlisted.
 
+## Astro Actions (`astro:actions`)
+
+- Every `defineAction` handler validates its `input` with the built-in Zod schema — an action
+  without an `input` schema accepts arbitrary JSON (same bar as endpoint validation below).
+- Actions are public HTTP endpoints: apply the same auth checks as `src/pages/api` routes;
+  `context.locals` auth state must be asserted inside the handler, not assumed from the page.
+- Mutating actions follow CQ30: cookie-session sites keep Astro's CSRF origin-check enabled
+  (`security.checkOrigin`, on by default in Astro 5 — do not disable it for convenience).
+
 ## Server Endpoints and Middleware
 
 - Validate all params and query values in Astro endpoints under `src/pages/api` or server routes.

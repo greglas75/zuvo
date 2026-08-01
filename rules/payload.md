@@ -2,6 +2,10 @@
 
 Active when Payload is detected (`payload.config.*`, collection configs, or Payload imports). Not applicable to non-Payload projects.
 
+> **Version assumption:** written for standalone Payload 2.x (its own Express server). Payload 3.x
+> (2024+) runs embedded in a Next.js app — the access-control and hook rules below still apply, but
+> the deployment/endpoint topology (incl. the Astro overlay) assumes the pre-3.0 architecture.
+
 ---
 
 ## Access Control
