@@ -164,7 +164,7 @@ args = ["-y", "codesift-mcp"]
 
 - [All 56 Skills](docs/skills.md)
 - [Pipeline](docs/pipeline.md) — brainstorm → plan → execute
-- [Quality Gates](docs/quality-gates.md) — CQ1-CQ40 + Q1-Q25 + CAP1-CAP29 + AP1-AP30
+- [Quality Gates](docs/quality-gates.md) — CQ1-CQ40 + Q1-Q25 + CAP1-CAP29 + AP1-AP32
 - [CodeSift Integration](docs/codesift-integration.md)
 - [Adversarial Review Providers](docs/adversarial-providers.md) — which models cross-check the work, and how to authenticate them
 - [Retro Learning Loop](docs/retro-learning-loop.md) — how zuvo mines its own runs for improvements

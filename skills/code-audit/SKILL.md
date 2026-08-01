@@ -406,7 +406,7 @@ CQ14: CRITICAL -- No duplicated logic? (a) >10-line block repeated, (b) same pat
 CQ15: Every async awaited or fire-and-forget with .catch()? No dropped promises?
 CQ16: CONDITIONAL -- Money uses exact arithmetic (Decimal/integer-cents)? No float for money?
 CQ17: No sequential await in loops where batch/parallel works?
-CQ18: Cross-system data consistency? Multi-store writes handle partial failures?
+CQ18: Multi-store writes use outbox/saga/compensation or documented reconciliation? Partial-failure path tested?
 CQ19: CONDITIONAL -- API request AND response validated by runtime schema?
 CQ20: CONDITIONAL -- Each data point ONE canonical source? No dual fields?
 CQ21: CONDITIONAL -- No TOCTOU? State machine transitions use CAS? Mutations idempotent?
@@ -441,7 +441,7 @@ CAP5: Hardcoded secret -- AUTO TIER-D
 CAP6: Unsanitized HTML reaching DOM or persistence. Covers `dangerouslySetInnerHTML` without DOMPurify, `editor.commands.setContent(rawHtml)`/raw-HTML mode without pre-save sanitization, paste-as-HTML, programmatic raw HTML writes. Display-time sanitization alone is INSUFFICIENT if persistence path is unsanitized. -- AUTO TIER-D
 CAP7: eval() / new Function() with dynamic input -- AUTO TIER-D
 CAP8: SQL string concatenation OR `$queryRaw`/`$executeRawUnsafe` against tenant tables without organizationId in WHERE -- AUTO TIER-D
-CAP9: File exceeds type limit (service <=450, controller <=300, hook <=250, component <=200, helper <=100) OR inline sub-component >=50 LOC nested in a parent component file (2x file limit = AUTO TIER-D) -- HIGH
+CAP9: File exceeds type limit (service <=450, controller <=300, hook <=250, component <=200 single-responsibility / <=300 page-container, helper <=100) OR inline sub-component >=50 LOC nested in a parent component file (2x file limit = AUTO TIER-D) -- HIGH
 CAP10: Function > 100 lines (2x the 50L limit) -- HIGH
 CAP11: parseFloat/Number() on money field -- HIGH
 CAP12: await inside for/while without batch alternative -- MEDIUM
@@ -452,7 +452,7 @@ CAP16: Client auth-token plumbing race (deferred-promise wait for provider, toke
 CAP17: `error.message` rendered directly to UI/DOM without a curated `userMessageFor(error)` mapping. Leaks server stack/PII; map known error types to safe messages and fall back to a generic "Something went wrong". -- HIGH
 CAP18: `throw new Error(...)` from a service/injectable/handler. Use a typed exception class instead (BadRequestException, NotFoundException, custom DomainError); bare Error loses HTTP status mapping and can leak the original message into 5xx response bodies. -- MEDIUM
 CAP19: Mutating endpoint, AI/expensive operation (LLM call, export, generation), webhook receiver, or tRPC procedure without a rate limiter (ThrottlerGuard, custom limiter, queue with concurrency cap). tRPC bypassing the project-wide ThrottlerGuard = always violation. -- HIGH
-CAP20: Mutable object as a default argument or dataclass field default (`def f(x=[])`, `field: list = []`) -- HIGH  [stack: python]
+CAP20: Mutable default argument (`def f(x=[])`), shared mutable class-attribute default, or attrs/pydantic-v1 mutable field default without `default_factory` (stdlib dataclasses already reject `field: list = []` at class definition — the smell survives in the other forms) -- HIGH  [stack: python]
 CAP21: `except Exception: pass`, bare `except:`, or catch-and-return-None with no log and no re-raise -- HIGH  [stack: python]
 CAP22: `assert` used as a runtime precondition in production code — stripped under `python -O`, silently deleting the check (CWE-703) -- HIGH  [stack: python]
 CAP23: `asyncio.create_task`/`ensure_future` whose result is not retained — the loop keeps only a weak reference, so the task can vanish mid-flight -- HIGH  [stack: python]

@@ -1,6 +1,6 @@
 ---
 name: test-audit
-description: "Batch audit of test files against Q1-Q25 quality gates and AP1-AP30 anti-patterns. Detects orphan tests, phantom mocks, untested public methods. Tiered output (A/B/C/D) with critical gate enforcement and optional post-audit fix workflow. Flags: zuvo:test-audit all | [path] | [file] | --deep | --quick | --include-e2e | --details | --commit=ask|auto|off"
+description: "Batch audit of test files against Q1-Q25 quality gates and AP1-AP32 anti-patterns. Detects orphan tests, phantom mocks, untested public methods. Tiered output (A/B/C/D) with critical gate enforcement and optional post-audit fix workflow. Flags: zuvo:test-audit all | [path] | [file] | --deep | --quick | --include-e2e | --details | --commit=ask|auto|off"
 codesift_tools:
   always:
     - analyze_project
@@ -310,6 +310,8 @@ AP27: `expect(x.length).toBeGreaterThan(0)` when the fixture's exact count is kn
 AP28: Persistent `it.skip`/`describe.skip`/`@Ignore`/`#[ignore]`/`@pytest.mark.skip` with no ticket or expiry — dead code plus a silent coverage gap
 AP29: Mock return value echoed in the assertion — proves the mock setup, not production logic (Q17). The most common audit failure
 AP30: Mocking own code that could run with a real implementation (was AP25 until the numbering fork was resolved; overlaps `fix-tests` P-68 and Q13)
+AP31: Committed focus marker — `it.only`/`describe.only`/`test.only`/`fit`/`fdescribe`/`@pytest.mark.only`-style filter left in a committed test file. Silently disables the REST of the suite while CI reports green — a whole-suite coverage collapse, worse than a skip. Deterministic detector: grep / Biome `noFocusedTests`. **AUTO TIER-D**
+AP32: Flake-masking retries — per-test/per-suite `retries:`/`@Retry`/`flaky=True` annotation with no ticket or expiry (same contract as AP28's skip rule). Retry hides the nondeterminism Q18/Q24 exist to surface
 <!-- GATES:END kind=ap-list -->
 
 N/A HANDLING: N/A items excluded from both numerator and denominator. Score = passed / applicable.
