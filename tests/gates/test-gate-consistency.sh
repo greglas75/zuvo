@@ -198,7 +198,7 @@ else:          print('OK')
 PY
 )
 [ "$pairdrift" = "OK" ] && pass "CAP9 file-size limits agree with CQ11 (paired-row drift guard)" \
-  || bad "CAP9/CQ11 paired limits drifted: $pairdrift"
+  || bad "CAP9/CQ11 paired-row check failed: $pairdrift"
 
 # ---------- 8. criticality vocabulary is respected ----------
 badcrit=$(grep -oE '^\| CQ[0-9]+ \|[^|]*\|([^|]*)\|' "$REG" \
