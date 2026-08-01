@@ -132,9 +132,19 @@ WORK_FILES = <files being touched>
    a. **Baseline the failures against the ship base.** Preferred: run ONLY the failing test
       files at the merge-base (`git worktree add <tmp> $(git merge-base HEAD <default>)`,
       reusing installed deps when the lockfile is unchanged; remove the worktree after).
-      Fallback when that is impractical: a failure is treated as pre-existing only when
-      neither the failing test file nor its production target intersects the ship range's
-      changed files.
+      Fallback when that is impractical — **fail-CLOSED, and weaker than it looks**: direct
+      file intersection is NOT sufficient evidence of innocence. A shipped change to a shared
+      util, a type, a fixture, a config or a mock breaks tests whose own file and whose direct
+      production target both sit outside the range. So the fallback treats a failure as
+      pre-existing ONLY when all three hold: (1) neither the failing test file nor its
+      production target is in the ship range, (2) nothing the failing test transitively imports
+      is in the range (`impact_analysis` / `find_references` on the changed symbols, or a
+      dependency-graph grep), and (3) the failure mode is unrelated to what shipped (a network
+      timeout, a stale snapshot of untouched markup). **Ambiguity resolves to class (b) NEW,
+      never to pre-existing** — misclassifying a regression as inherited debt ships the
+      regression under a WARN, which is the one outcome this triage exists to prevent. Record
+      which of the three tests carried the decision: `[SHIP] fallback classification: <test> →
+      pre-existing (no range intersection, no transitive import, unrelated failure mode)`.
    b. **NEW failure (green on base, red now)** — the ship's own regression. FIX it in-run:
       a production bug per the fix-in-run philosophy, or the test's contract update when the
       shipped change legitimately altered behavior. Re-run, continue. Only a new failure that
@@ -154,10 +164,15 @@ WORK_FILES = <files being touched>
       fix it and re-run. The only question ship may ask is a genuine behavior/product decision
       surfaced by a class-(b) fix (interactive only; batch picks the safe default and logs it).
 
-   Print the triage table before proceeding:
+   Print the triage table before proceeding. The counters are OUTCOMES — deliberately not
+   labelled a-d, because those letters already name the procedure steps above and reusing them
+   made the table unreadable (fixed 2026-08-01):
    ```
-   TEST TRIAGE: [N] failing → [a] new (fixed in-run), [b] new (ABORT), [c] pre-existing fixed, [d] pre-existing carried (WARN)
+   TEST TRIAGE: [N] failing → NEW-FIXED [n1], NEW-ABORT [n2], PRE-FIXED [n3], PRE-CARRIED [n4]
+     (NEW-* come from step b, PRE-* from step c; n1+n2+n3+n4 MUST equal N)
    ```
+   A count that does not add up to N means some failure was never classified — classify it
+   before proceeding, do not print a partial table.
 
 ---
 
