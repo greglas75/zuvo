@@ -406,7 +406,12 @@ const adjacency = buildAdjacencyIndex(index.symbols); // every call!
 const cache = new Map(); if (!cache.has(key)) cache.set(key, buildAdjacencyIndex(symbols)); return cache.get(key);
 ```
 
-### Identical conditions in if/else-if — copy-paste bug
+<!-- The ~14 structural bug patterns below map to CQ13 (dead/unreachable code: identical
+     conditions, identical operands, boolean-literal compare, useless increment, commented-out
+     code), CQ14 (duplication: identical functions, duplicated string literals) and CQ11
+     (cognitive complexity, collapsible if). Audits cite those IDs when reporting them. -->
+
+### Identical conditions in if/else-if — copy-paste bug (CQ13)
 ```typescript
 // NEVER — same condition checked twice (second branch unreachable)
 if (status === 'active') { activate(); }
@@ -654,6 +659,62 @@ SUPABASE_KEY=eyJhbGc...  // .env committed to git
 // ALWAYS — runtime env, .env in .gitignore
 const apiKey = process.env.API_KEY;
 // .env.example with empty values only
+```
+
+### CSRF defence on cookie-authenticated mutations (CQ30)
+```typescript
+// NEVER — session-cookie auth + state-changing endpoint with neither SameSite nor a CSRF token:
+// any third-party page can POST here with the victim's cookie attached
+app.post('/api/transfer', sessionAuth, transferHandler);
+res.cookie('session', sid, { httpOnly: true, secure: true }); // no sameSite
+// ALWAYS — SameSite on the cookie AND an anti-CSRF token (double-submit or synchronizer),
+// or move the endpoint to a bearer transport the browser cannot auto-attach
+res.cookie('session', sid, { httpOnly: true, secure: true, sameSite: 'lax' });
+app.post('/api/transfer', sessionAuth, csrfProtection, transferHandler); // csurf/fastify-csrf/etc.
+// SPA + API on another origin? Prefer Authorization: Bearer — no cookie, no CSRF surface.
+```
+
+### SSRF — allowlist outbound URLs, re-validate redirects (CQ31)
+```typescript
+// NEVER — user-controlled URL fetched directly (or after a hostname-only check that a 302 defeats)
+const res = await fetch(req.body.webhookUrl);
+// ALWAYS — protocol + host allowlist, block private IPv4 AND IPv6 ranges, no auto-redirects
+const url = new URL(req.body.webhookUrl);
+if (url.protocol !== 'https:' || !ALLOWED_HOSTS.has(url.hostname)) throw new BadRequestException();
+const res = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(5000) });
+// Full range list (incl. ::ffff:169.254.169.254 and CGNAT) + DNS-rebinding note: rules/security.md → SSRF.
+```
+
+### Supply chain — pin new dependencies, commit the lockfile (CQ32)
+```bash
+# NEVER — floating range or `latest` on a newly added dependency; lockfile out of the commit
+npm i left-pad@latest          # package.json: "left-pad": "^999.0.0", package-lock.json not staged
+# ALWAYS — exact pin on NEW deps, lockfile committed in the same change, advisory check run
+npm i -E left-pad@1.3.0 && npm audit --omit=dev
+git add package.json package-lock.json
+```
+
+### CSPRNG for tokens, argon2/bcrypt for passwords (CQ33)
+```typescript
+// NEVER — Math.random()/Date.now() identifiers; bare SHA for passwords
+const resetToken = Math.random().toString(36).slice(2);
+const stored = createHash('sha256').update(password).digest('hex');
+// ALWAYS — crypto source for anything an attacker must not predict; slow KDF for credentials
+const resetToken = crypto.randomBytes(32).toString('base64url');
+const stored = await argon2.hash(password);            // or bcrypt.hash(password, 12)
+const ok = await argon2.verify(stored, password);       // library verify = constant-time
+```
+
+### Function-level authz + field-allowlisted writes (CQ34)
+```typescript
+// NEVER — authenticated != authorized; blanket spread = mass assignment (role/orgId overwrite)
+@Patch(':id') update(@Body() body: any) { return this.users.update(id, { ...body }); }
+// ALWAYS — assert the caller's permission for THIS operation, allowlist writable fields
+@Patch(':id') @RequirePermission('user:update')
+update(@Body() dto: UpdateUserDto) {                    // DTO = the allowlist
+  const { displayName, avatarUrl } = dto;               // role/orgId/id not writable here
+  return this.users.update(id, { displayName, avatarUrl });
+}
 ```
 
 ### Path traversal — validate before join/resolve (CQ31)

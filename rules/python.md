@@ -26,7 +26,7 @@ class Serializable(Protocol):
 - Prefer `list[str]` over `List[str]` (Python 3.9+)
 - Use `X | None` over `Optional[X]` (Python 3.10+)
 
-## Pitfall: Mutable Default Arguments
+## Pitfall: Mutable Default Arguments (CAP20)
 
 ```python
 # WRONG — shared mutable default accumulates across calls
@@ -105,7 +105,7 @@ async def call():
 Rule: the timeout belongs to whatever owns the socket. `wait_for` around `to_thread` is only
 acceptable as an outer *backstop* when the inner call already has its own timeout.
 
-## Exception Handling
+## Exception Handling (CAP21)
 
 ```python
 # WRONG — bare except catches SystemExit, KeyboardInterrupt
@@ -185,34 +185,62 @@ src/
 
 ## Defensive Patterns
 
-### Mutable default argument -- use None sentinel
-```python
-# NEVER -- mutable default shared across calls
-def add_item(item, items=[]):
-    items.append(item)
-    return items           # second call sees first call's data!
+### Mutable default argument (CAP20) / bare except (CAP21)
 
-# ALWAYS -- None sentinel
-def add_item(item, items=None):
-    if items is None:
-        items = []
-    items.append(item)
-    return items
+Both taught in full above — see "Pitfall: Mutable Default Arguments" and "Exception Handling".
+(They were duplicated verbatim here until 2026-08-01; one home each now.)
+
+### Dangling create_task -- retain the handle (CAP23)
+```python
+# NEVER -- the event loop keeps only a weak ref; the task can be GC'd MID-FLIGHT
+asyncio.create_task(send_webhook(payload))
+
+# ALWAYS -- TaskGroup (3.11+) owns and awaits its children...
+async with asyncio.TaskGroup() as tg:
+    tg.create_task(send_webhook(payload))
+# ...or, for true fire-and-forget, retain + reap explicitly
+_tasks: set[asyncio.Task] = set()
+t = asyncio.create_task(send_webhook(payload))
+_tasks.add(t); t.add_done_callback(_tasks.discard)
 ```
 
-### Bare except -- catch specific exceptions
+### subprocess -- argv list, never shell=True (CAP26)
 ```python
-# NEVER -- bare except catches SystemExit, KeyboardInterrupt
-try:
-    process(data)
-except:              # catches EVERYTHING, even Ctrl+C
-    pass
+# NEVER -- shell string with interpolated input (CWE-78)
+subprocess.run(f"convert {filename} out.png", shell=True)
 
-# ALWAYS -- catch specific
-try:
-    process(data)
-except (ValueError, KeyError) as e:
-    logger.error(f"Processing failed: {e}")
+# ALWAYS -- argv list, no shell; validate the path separately (CQ31)
+subprocess.run(["convert", filename, "out.png"], check=True, timeout=30)
+```
+
+### Naive datetime -- always timezone-aware (CAP27)
+```python
+# NEVER -- naive now()/utcnow() stored or compared (utcnow deprecated in 3.12)
+created_at = datetime.utcnow()
+
+# ALWAYS -- aware UTC; convert at the display edge only
+created_at = datetime.now(timezone.utc)
+```
+
+### Import-time side effects -- construct lazily (CAP28)
+```python
+# NEVER -- engine/client/env access at module import (breaks tests, ties import order to config)
+engine = create_engine(os.environ["DATABASE_URL"])
+
+# ALWAYS -- lazy factory or app-startup wiring
+@lru_cache(maxsize=1)
+def get_engine() -> Engine:
+    return create_engine(settings().database_url)
+```
+
+### Resource release -- with/try-finally, never __del__ (CAP29)
+```python
+# NEVER -- __del__ for cleanup (GC timing unguaranteed, exceptions swallowed) or bare .close()
+def __del__(self): self.conn.close()
+
+# ALWAYS -- context manager (or contextlib.closing / ExitStack for foreign objects)
+with open(path) as f, closing(pool.connection()) as conn:
+    process(f, conn)
 ```
 
 ### f-string in logging -- use lazy % formatting
