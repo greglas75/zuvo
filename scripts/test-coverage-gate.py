@@ -29,6 +29,7 @@ Manifest schema: shared/includes/coverage-manifest-schema.md (zuvo-coverage-mani
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
@@ -36,6 +37,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tokenize
 
 SCHEMA_ID = "zuvo-coverage-manifest/v1"
 
@@ -534,36 +536,47 @@ def _normalize_c_family(source, line_comment_hash=False):
 
 
 def _normalize_python(source):
-    """Python: whitespace is semantic — only strip comments/trailing space/blank lines."""
-    lines = []
-    for line in source.splitlines():
-        # naive-safe comment strip: only when '#' is not inside a string on that line
-        stripped = ""
-        in_str = None
-        i = 0
-        while i < len(line):
-            ch = line[i]
-            if in_str:
-                stripped += ch
-                if ch == "\\":
-                    if i + 1 < len(line):
-                        stripped += line[i + 1]
-                    i += 2
-                    continue
-                if ch == in_str:
-                    in_str = None
-            elif ch in "'\"":
-                in_str = ch
-                stripped += ch
-            elif ch == "#":
-                break
-            else:
-                stripped += ch
-            i += 1
-        stripped = stripped.rstrip()
-        if stripped:
-            lines.append(stripped)
-    return "\n".join(lines)
+    """Python: whitespace is semantic — only strip comments/trailing space/blank lines.
+
+    Tokenizer-based ON PURPOSE. The previous hand-rolled scanner tracked string state
+    with a single quote char RESET ON EVERY LINE, so it had no idea a triple-quoted
+    string was open: any line inside a docstring/SQL blob was truncated at the first
+    `#`, and editing the text after that `#` left the hash UNCHANGED. That inverts this
+    module's entire guarantee (an unchanged normhash is proof the edit was cosmetic —
+    see the comment above), letting a stale blind-audit CLEAN survive a semantic edit.
+    `tokenize` gets multi-line strings, f-strings, escapes and line continuations right
+    by construction. (4 of 5 adversarial providers converged on this independently.)
+    """
+    try:
+        toks = list(tokenize.generate_tokens(io.StringIO(source).readline))
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        # Unparseable file (partial edit, py2 syntax, template): fall back to the
+        # STRICTEST possible answer — hash the raw source. A false "changed" costs one
+        # re-audit; a false "unchanged" ships a stale CLEAN, which is the failure this
+        # function exists to prevent.
+        return source
+
+    out = []
+    for tok in toks:
+        if tok.type in (tokenize.COMMENT, tokenize.NL):
+            continue  # cosmetic by definition
+        if tok.type == tokenize.NEWLINE:
+            out.append("\n")
+            continue
+        if tok.type in (tokenize.INDENT, tokenize.DEDENT):
+            # Indentation IS semantic in Python: keep it as an explicit marker rather
+            # than raw spaces, so a tab/space reindent does not read as a logic change.
+            out.append("\x01" if tok.type == tokenize.INDENT else "\x02")
+            continue
+        if tok.type == tokenize.ENDMARKER:
+            continue
+        out.append(tok.string)
+        out.append(" ")  # one separator; collapsed below
+    normalized = "".join(out)
+    # collapse the separators we just inserted, but never across a newline marker
+    normalized = re.sub(r"[ \t]+", " ", normalized)
+    normalized = re.sub(r" ?\n ?", "\n", normalized)
+    return normalized.strip()
 
 
 def normalized_hash(path):

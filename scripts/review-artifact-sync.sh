@@ -32,16 +32,31 @@ SLUG=""
 
 usage() { sed -n '3,26p' "$0" | sed 's/^# \{0,1\}//'; }
 
+# `shift 2` with one arg left FAILS and leaves $# unchanged — and this script runs
+# without `set -e`, so the failure is swallowed and the same case arm re-matches
+# forever. `--from` with no value used to hang with zero output, in the very script
+# the push gate prints as its remediation command. Require the value explicitly.
+need_value() {
+  [ "$2" -ge 2 ] || { echo "Missing value for $1" >&2; usage >&2; exit 2; }
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --check) MODE="check"; shift; [ $# -gt 0 ] && [ "${1#--}" = "$1" ] && { SRC="$1"; shift; } ;;
-    --from)  MODE="${MODE:-sync}"; SRC="${2:-}"; shift 2 ;;
-    --to)    DST="${2:-}"; shift 2 ;;
-    --slug)  SLUG="${2:-}"; shift 2 ;;
+    --from)  need_value "$1" "$#"; MODE="${MODE:-sync}"; SRC="$2"; shift 2 ;;
+    --to)    need_value "$1" "$#"; DST="$2"; shift 2 ;;
+    --slug)  need_value "$1" "$#"; SLUG="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+# --check inspects the current checkout; --from/--to are the sync-mode pair. Silently
+# ignoring them under --check made a wrong command look like a passing check.
+if [ "$MODE" = "check" ] && { [ -n "$DST" ] || [ -n "$SLUG" ]; }; then
+  echo "--check does not take --to/--slug (it inspects one checkout)" >&2
+  usage >&2; exit 2
+fi
 
 fail=0
 

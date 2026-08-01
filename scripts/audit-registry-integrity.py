@@ -38,6 +38,21 @@ def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def expect_nonempty(label: str, parsed: set[str], minimum: int = 1) -> list[str]:
+    """A regex that suddenly matches nothing is a BROKEN CHECKER, not a clean registry.
+
+    Every check here is regex-over-markdown, so a table reformat (column reorder,
+    backtick style change) silently empties both sides of every set-difference and the
+    script reports OK — disabling itself while looking green. Assert a floor instead.
+    """
+    if len(parsed) < minimum:
+        return [
+            f"parser produced {len(parsed)} {label} (expected >= {minimum}) — "
+            "the registry format probably changed and this check is now blind, NOT clean"
+        ]
+    return []
+
+
 def check_pentest() -> list[str]:
     """Probe templates, finding types and safe patterns must all resolve against each other."""
     reg = read(INC / "pentest-finding-registry.md")
@@ -52,6 +67,9 @@ def check_pentest() -> list[str]:
         used_types |= {t.strip(" `") for t in row.split(",") if t.strip()}
 
     findings = []
+    findings += expect_nonempty("pentest probe definitions", defined, 20)
+    findings += expect_nonempty("pentest finding types", finding_types, 20)
+    findings += expect_nonempty("safe-pattern finding_types", used_types, 10)
     for label, missing in (
         ("probe templates referenced but never defined", referenced - defined),
         ("probe templates defined but never referenced", defined - referenced),
@@ -81,6 +99,8 @@ def check_check_fix_pairs() -> list[str]:
             emitted |= set(re.findall(r"`([a-z][a-z0-9-]*)`", cells[-1]))
 
         declared = set(re.findall(r"^\|\s*`([a-z][a-z0-9-]*)`\s*\|", fix, re.M))
+        findings += expect_nonempty(f"{family} fix types", declared, 3)
+        findings += expect_nonempty(f"{family} emittable fix types (check rows)", emitted, 3)
         unreachable = declared - emitted - KNOWN_MANUAL_FIX_TYPES.get(family, set())
         if unreachable:
             findings.append(
