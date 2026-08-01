@@ -22,7 +22,7 @@ the real service signature changes, which is exactly when tests should fail.
 |----------------|-----|------------|
 | `Record<string, jest.Mock>` / `Record<string, vi.Mock>` as a service mock | Erases the service's method names AND signatures — a renamed method never fails the test | Typed subset: `Pick<RespondentService, 'findOne' \| 'create'>` or a `MockedMethods<T, K>` helper |
 | `as never` on a mock or argument | Silences every type error the compiler would have caught | Fix the mock's type; if the cast feels necessary, the mock shape is wrong |
-| Broad `as any` on a mock object or domain argument | Same signature-blindness as `Record<string, Mock>` | `as unknown as Pick<T, ...>` at most, scoped to one property with a comment |
+| Broad `as any` on a mock object or domain argument | Same signature-blindness as `Record<string, Mock>` | `as unknown as Pick<T, ...>` at most, scoped to one property with a comment (same rule as `test-mock-safety-js.md` rule 1: `as unknown as X` is the sanctioned form when no typed factory exists; `as any`/`as never` never are) |
 | Mock defined but never asserted or consumed | Dead setup — implies coverage that doesn't exist and hides which collaborators matter | Delete it, or assert on it (`toHaveBeenCalledWith`) |
 | `expect.anything()` on a DOMAIN argument (id, payload, entity) | Accepts every wrong value — the delegation contract is untested | Assert the concrete value or a typed `expect.objectContaining({...})` with the domain fields |
 

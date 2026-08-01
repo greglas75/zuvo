@@ -7,51 +7,60 @@
 
 ### `getMockBuilder` — real methods vs magic methods
 
+> **`addMethods()` IS GONE.** Deprecated in PHPUnit 10.1, warning in 11, **removed without
+> replacement in PHPUnit 12** (Feb 2025; PHPUnit 11 went EOL Feb 2026). Any example calling it
+> fatals on every currently-supported PHPUnit. Detect the project's major
+> (`composer show phpunit/phpunit`) before choosing a pattern below.
+
 ```php
-// REAL methods (defined in class or trait): use onlyMethods()
+// REAL methods (declared in the class or a trait): onlyMethods() — unchanged in every major
 $mock = $this->getMockBuilder(S3Client::class)
     ->disableOriginalConstructor()
-    ->onlyMethods(['upload'])  // upload() exists in AwsClientTrait
+    ->onlyMethods(['upload'])  // upload() is declared in S3ClientTrait
     ->getMock();
 
-// MAGIC methods (__call dispatched): use addMethods()
-$mock = $this->getMockBuilder(S3Client::class)
-    ->disableOriginalConstructor()
-    ->addMethods(['getObject', 'deleteObject'])  // these go through __call()
-    ->getMock();
+// MAGIC methods (__call-dispatched) on PHPUnit 12+: mock the INTERFACE the SDK provides,
+// or hand-roll a stub — there is no builder API for undeclared methods any more.
+$mock = $this->createMock(S3ClientInterface::class);   // interface declares them for real
+$mock->method('getObject')->willReturn($result);
 
-// MIXED (real + magic): combine both
-$mock = $this->getMockBuilder(S3Client::class)
-    ->disableOriginalConstructor()
-    ->onlyMethods(['upload'])         // real
-    ->addMethods(['getObject'])       // magic
-    ->getMock();
+// No interface? Hand-rolled stub (explicit, version-proof):
+$mock = new class extends S3Client {
+    public function __construct() {}                    // skip the SDK constructor
+    public function getObject(array $args = []): \Aws\Result { return new \Aws\Result([]); }
+};
+
+// PHPUnit <= 11 ONLY (legacy repos): addMethods() still exists but warns.
+// $mock = $this->getMockBuilder(S3Client::class)->addMethods(['getObject'])->getMock();
 ```
 
-**Key rule:** `onlyMethods()` auto-stubs ALL other real methods (they return null/default). `addMethods()` declares methods that don't exist on the class — required for `__call()` magic.
+**Key rule:** `onlyMethods()` auto-stubs ALL other real methods (they return null/default) and REJECTS a method the class does not declare — that rejection is the whole point, and on PHPUnit 12 there is no `addMethods()` escape hatch. For `__call()`-dispatched SDK methods, mock the interface or hand-roll a stub.
 
-**When unsure if a method is real or magic:** Check if the method exists in the class or its traits. If not found → it's dispatched via `__call()` → use `addMethods()`.
+**When unsure if a method is real or magic:** check whether it is declared in the class or its traits. Not found → `__call()` → interface/stub route above (never `onlyMethods()`, which will throw).
 
 ### `createMock()` vs `getMockBuilder()`
 
 - `createMock(Foo::class)` — auto-stubs ALL methods (returns null/default). Quick for simple cases.
-- `getMockBuilder(Foo::class)` — gives control: `disableOriginalConstructor()`, `onlyMethods()`, `addMethods()`.
+- `getMockBuilder(Foo::class)` — gives control: `disableOriginalConstructor()`, `onlyMethods()` (and, on PHPUnit <= 11 only, the removed `addMethods()`).
 
 Use `getMockBuilder()` when:
 - Constructor has side effects (SDK clients, DB connections)
-- You need to mix real + magic methods
+- You need partial control over which real methods stay real
 - You need partial mocking (`onlyMethods` leaves others real)
 
 ## AWS SDK Mock Patterns
 
 AWS SDK services use traits for some methods and `__call()` for others:
 
-| Method | Type | Mock with |
-|--------|------|-----------|
-| `upload()`, `putObject()` | **real** (AwsClientTrait) | `onlyMethods()` |
-| `getObject()`, `deleteObject()` | **magic** (`__call`) | `addMethods()` |
-| `doesObjectExist()` | **magic** | `addMethods()` |
-| `getObjectUrl()` | **magic** | `addMethods()` |
+| Method | Type | Mock with (PHPUnit 12+) |
+|--------|------|--------------------------|
+| `upload()` | **real** (declared in `S3ClientTrait`) | `onlyMethods(['upload'])` |
+| `putObject()`, `getObject()`, `deleteObject()` | **magic** (`__call`) | interface mock (`S3ClientInterface`) or hand-rolled stub |
+| `doesObjectExist()` | **magic** | interface mock / stub |
+| `getObjectUrl()` | **magic** | interface mock / stub |
+
+Verify per SDK version rather than trusting this table: a method that is magic today can become
+declared in a later release, and `onlyMethods()` throws on the mismatch either way.
 
 **S3Exception requires CommandInterface:**
 ```php

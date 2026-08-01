@@ -25,7 +25,7 @@ If top two detected niches score within 20% of each other → `domain=mixed`, us
 | 9 | `marketing` | Article | Organization, FAQPage | Standard | CTA placement; social proof; benefit-first copy; conversion structure |
 | 10 | `market-research` | Article | Dataset reference | Standard | Statistics with attribution; methodology section; date-stamped data; charts/tables |
 | 11 | `events` | Event | Organization, Offer, VirtualLocation | Standard | startDate/endDate; location; ticket pricing; performer/speaker |
-| 12 | `education` | Article | FAQPage, Person (instructor) | Standard | Instructor bio; learning objectives; syllabus structure (Course schema deprecated 2025) |
+| 12 | `education` | Article | FAQPage, Person (instructor) | Standard | Instructor bio; learning objectives; syllabus structure (Course rich results were retired by Google in 2025; the schema.org `Course` TYPE is not deprecated — emit it for semantics, do not expect a rich result) |
 | 13 | `real-estate` | RealEstateListing | Place, GeoCoordinates, Offer | Trust-heavy | Location; pricing; property details; neighborhood; gallery placeholders |
 | 14 | `saas-product` | SoftwareApplication | Offer, FAQPage, AggregateRating | Standard | Pricing table; feature comparison; changelog; OS/platform; free trial CTA |
 | 15 | `personal-brand` | Person | ProfilePage, Organization | Standard | Portfolio links; speaking/media; about page structure; social profiles |

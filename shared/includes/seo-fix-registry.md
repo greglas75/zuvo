@@ -23,8 +23,8 @@
 | `alt-text-add` | Add empty alt text to decorative images only | Yes | SAFE | 10 | Universal |
 | `viewport-add` | Add a missing viewport tag | Yes | SAFE | 5 | Universal |
 | `hreflang-add` | Add or normalize `hreflang` metadata | No — MANUAL only | MANUAL | 45 | Manual |
-| `noindex-change` | Change `noindex` behavior | No — MANUAL only | MANUAL | 20 | Manual |
-| `redirect-add` | Add or change redirects | No — MANUAL only | MANUAL | 30 | Manual |
+| `noindex-change` | Change `noindex` behavior | No — MANUAL only | MANUAL | 20 | Manual — no check row emits this `fix_type`; it exists as a manual escalation label for findings an operator raises by hand |
+| `redirect-add` | Add or change redirects | No — MANUAL only | MANUAL | 30 | Manual — no check row emits this `fix_type` (same manual-escalation status as `noindex-change`) |
 
 **Audit agents:** For checks that result in `FAIL`, set `fix_type` to the
 matching value above. If no fix type matches, set `fix_type: null`.

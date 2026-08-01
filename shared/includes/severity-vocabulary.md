@@ -27,6 +27,10 @@ Four severity levels, ordered by impact:
 | `/a11y-audit` | Critical gate FAIL / grade | Gate FAIL | Grade C/FAIL | Grade B | Grade A |
 | `/seo-audit` | Critical gate / grade | CG FAIL | Grade C/FAIL | Grade B | Grade A |
 | CQ/Q gates | FAIL / PASS | Critical gate = 0 | Score < threshold | Score >= threshold | N/A |
+| `/pentest` | CRITICAL / HIGH / MEDIUM / LOW (same categorical set as `/security-audit`; the 0-10 per-dimension numbers are POSTURE scores, never finding severity) | CRITICAL | HIGH | MEDIUM | LOW |
+| `/geo-audit`, `/geo-fix` | Critical gate (GCG) / grade | GCG FAIL | Grade C/FAIL | Grade B | Grade A |
+| `/content-audit`, `/content-fix` | Critical check / grade | Blocking check FAIL | Grade C/FAIL | Grade B | Grade A |
+| `/write-e2e` (E2E-Q) | binary — every gate is critical | Any gate FAIL or NOT RUN | — | — | All gates PASS |
 
 ## When to Use This Mapping
 

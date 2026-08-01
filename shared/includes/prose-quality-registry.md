@@ -43,7 +43,7 @@ Each check scores 0 (fail) or 1 (pass). Dimension scores are the percentage of p
 - C: 50-74
 - D: 0-49
 
-**Critical gate:** PQ15 (hard-banned vocabulary) = 0 → caps tier at D regardless of composite score.
+**Critical gate:** PQ15 scores 0 (i.e. hard-banned vocabulary WAS found — 0 = check failed) → caps tier at D regardless of composite score.
 
 ## Dimension Grouping
 

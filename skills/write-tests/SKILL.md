@@ -121,13 +121,17 @@ Load ONLY the includes matching tier AND stack. Print READ/SKIP per file. If an 
 | `../../shared/includes/test-mock-safety-core.md` | Full | Full | Full | Full |
 | `../../shared/includes/test-code-types-core.md` | Full | Full | Full | Full |
 | `../../shared/includes/test-bugfix-protocol.md` | Full | Full | Full | Full |
-| `test-mock-safety-{stack}.md` (js/php) | **SKIP** | Full | Full | **SKIP** |
-| `test-code-types-{stack}.md` (js/php) | **SKIP** | Full | Full | **SKIP** |
+| `test-mock-safety-{stack}.md` (js/php) | **SKIP** | Full | Full | Full‡ |
+| `test-code-types-{stack}.md` (js/php) | **SKIP** | Full | Full | Full‡ |
 | `../../shared/includes/test-edge-cases.md` | **SKIP** | Full | Full | Full |
 | `../../shared/includes/test-mutation-probes.md` | **SKIP**† | Full | Full | Full |
 
 \* **quality-gates.md:** Read ONLY `## Q1-Q25: Test Quality Gates` to end of file. Skip CQ1-CQ40.
 † LIGHT loads it only when the file has an error fallback (probe class 2).
+‡ COMPONENT loads the stack files too (fixed 2026-08-01): `test-code-types-core.md`'s
+COMPONENT Callback Routing Guard explicitly defers its framework example to
+`test-code-types-js.md` (Dispatch/Router template, Lazy/Suspense caveat, Time-Dependent
+fake-timer table) — skipping them left that pointer dangling for the one tier that needs it.
 
 **Stack detection:** nearest manifest — `package.json` => JS/TS, `composer.json` => PHP, `pyproject.toml` => Python (core-only mode). Ties: `package.json` > `composer.json` > `pyproject.toml`; print the conflict decision. Target-file extension beats the manifest winner. Load at most one stack-specific include family.
 

@@ -95,6 +95,14 @@ passes; formatters then stop invalidating the manifest) — set
 `status: "final"`, record `quality_gates.Q7/Q11` from the Step 3 self-eval,
 then run the final validation (see schema doc). The printed
 `Uncovered owned rows: 0` from the VALIDATOR — not from the agent — is the only
+
+> **Freeze taxonomy ⊂ blind-audit taxonomy (deliberate).** The manifest tracks entry, branch,
+> error path and side effect. `blind-coverage-audit.md` judges nine owned-behavior kinds —
+> it additionally owns fallback, callback_forwarding, prop_forwarding, a11y_output,
+> async_state and delegation_contract. A file can therefore freeze at `Uncovered owned rows: 0`
+> and still fail the later blind audit on a category the freeze never tracked. That is the
+> design: the freeze is a mechanical pre-write floor, the blind audit is the semantic
+> ceiling — do NOT read a clean freeze as a predicted clean audit.
 passing condition. Evidence rules (existing file, line inside a test, no
 duplicates, no empties) are enforced by the program; a FAIL is closed by adding
 or strengthening tests, never by editing rows into excused states without a

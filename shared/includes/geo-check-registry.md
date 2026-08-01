@@ -35,7 +35,9 @@
 
 | check_slug | Check | owner_agent | layer | enforcement | evidence_mode | GCG? | fix_type |
 |------------|-------|-------------|-------|-------------|---------------|------|----------|
-| `schema-type-present` | ≥1 JSON-LD schema type present (Organization/Article/FAQPage/WebSite/Person) | `geo-schema-render` | geo | scored | code | — | `schema-org-add` |
+| `schema-type-present` | ≥1 JSON-LD schema type present (Organization/Article/FAQPage/WebSite/Person) | `geo-schema-render` | geo | scored | code | — | `schema-org-add` (site-level) / `schema-article-add` (article or blog-post page) / `schema-faq-add` (page with Q&A content) — pick the variant matching the page type; templates for all three are in `geo-fix-registry.md` |
+| `schema-shape-valid` | Existing JSON-LD is well-formed and its required properties are present (no empty `@type`, no orphan nodes, no duplicate conflicting blocks) | `geo-schema-render` | geo | scored | code | — | `schema-restructure` |
+| `robots-ai-policy-explicit` | `robots.txt` states an explicit allow/deny decision for AI training and user-proxy bot tiers (per `seo-bot-registry.md`) rather than leaving them to the default | `geo-crawl-access` | geo | scored | code | — | `robots-ai-policy-change` |
 | `schema-id-connected` | Schemas connected via @id references | `geo-schema-render` | geo | blocking | code | GCG2 | `schema-id-link` |
 | `schema-attribute-rich` | Required + recommended fields populated per type | `geo-schema-render` | geo | scored | code | — | — |
 | `schema-graph-pattern` | Uses @graph array (preferred over scattered schemas) | `geo-schema-render` | hygiene | advisory | code | — | — |

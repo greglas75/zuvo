@@ -59,16 +59,17 @@ N/A is valid when the gate genuinely does not apply (e.g., Q11 for pure synchron
 ## Output Format
 
 ```
-Q SCORE: [N]/19 → [PASS | FIX | REWRITE]
+Q SCORE: [passed]/[applicable] → [PASS | FIX | REWRITE]
+  (applicable = 25 - count(N/A) - count(out-of-scope) — never a fixed denominator)
 Critical gates: Q7=[0|1] Q11=[0|1] Q13=[0|1] Q15=[0|1] Q17=[0|1]
 
 Q1=[score]  [evidence or N/A justification]
 Q2=[score]  [evidence]
 ...
-Q19=[score] [evidence]
+Q25=[score] [evidence]
 ```
 
-Every gate has a line. Every score has evidence. No exceptions.
+Every gate Q1-Q25 has a line. Every score has evidence. No exceptions — a run that stops at Q19 is INCOMPLETE, not a clean score.
 
 ## Guardrails
 

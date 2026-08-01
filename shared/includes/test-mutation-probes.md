@@ -13,7 +13,7 @@
   file has an error fallback — then run probe class 2 only.
 - Skip entirely in `--dry-run`.
 
-## Probe classes (pick from the MUTATION TARGETS of the test contract)
+## Probe classes (pick from the MUTATION TARGETS of the test contract. **Relationship to M1-M5** (`rules/testing.md`): these five probe classes are an EXECUTABLE SUPERSET, not a renaming — class 1 ≈ M1 (invert condition) and class 5 ≈ M4 (change return); M2 (null-guard removal), M3 (operator swap) and M5 (error-message change) remain valid contract targets and are probed via classes 1/5 with the corresponding edit; classes 2-4 (delete error catch, skip side effect, change delegation argument) have no M-equivalent and exist only here)
 
 1. invert the main condition (`if (x)` → `if (!x)`, `>=` → `<`)
 2. delete an error catch/fallback (rethrow raw / return undefined)

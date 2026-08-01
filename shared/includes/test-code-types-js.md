@@ -191,12 +191,6 @@ passes locally, flakes in CI. Grep the production file for `Date.now|performance
 
 ## NestJS Logger Spy
 
-NestJS services create `Logger` internally (not injected). To verify error logging, spy on `Logger.prototype.error` BEFORE constructing the service:
-```typescript
-let loggerErrorSpy: ReturnType<typeof vi.spyOn>;
-beforeEach(() => {
-  loggerErrorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
-  service = new MyService(mockDeps);
-});
-afterEach(() => { loggerErrorSpy.mockRestore(); });
-```
+Single home: `test-mock-safety-js.md` rule 5 (spy on `Logger.prototype.error` BEFORE constructing
+the service). Duplicated verbatim here until 2026-08-01; both files load together at STANDARD/HEAVY,
+so the copy was double context for zero information.

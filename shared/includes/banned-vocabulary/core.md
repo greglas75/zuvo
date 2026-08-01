@@ -16,7 +16,7 @@ Dedicated language files currently cover 32 languages:
 - All languages added beyond `en` and `pl` use conservative seed lists built around the same high-signal AI cliches already enforced in English and Polish: "as an AI", "it's worth noting", "in today's world", "in the realm/domain of", and generic transition-heavy scaffolding like "furthermore" / "in conclusion".
 - Extend local lists when corpus evidence shows recurring language-specific slop patterns.
 - Hard bans are precision-first and intentionally shorter. Soft bans carry most multilingual coverage and are expected to be larger.
-- The cross-language contract lives in `./banned-vocabulary/registry.tsv` and is enforced by `scripts/validate-banned-vocabulary.sh`.
+- The cross-language contract lives in `./registry.tsv` (sibling of this file) and is enforced by `scripts/validate-banned-vocabulary.sh`.
 
 ## Evidence Model
 
