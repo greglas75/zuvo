@@ -140,6 +140,8 @@ scripts/build-codex-skills.sh   — build Codex distribution (called by install.
 scripts/build-cursor-skills.sh  — build Cursor v3 distribution (called by install.sh)
 scripts/build-antigravity-skills.sh — build Antigravity distribution (called by install.sh)
 docs/                           — documentation (skills.md, pipeline.md, competitive-analysis.md, etc.)
+docs/runbook/testing.md         — HOW TO VERIFY THIS REPO: the 5 commands, per-change checklist,
+                                  the quarterly deep-audit procedure, failure triage
 .claude-plugin/plugin.json      — Claude Code plugin manifest
 .codex-plugin/plugin.json       — Codex plugin manifest
 package.json                    — version metadata only (no npm)
@@ -246,6 +248,8 @@ full layer table + honest limits):
 | Add a new skill | See the checklist below — the count lives in **eight** places, and missing one fails a test, not the build |
 | Edit a skill | Edit the SKILL.md, then `./scripts/install.sh` |
 | Test changes locally | `./scripts/install.sh` then restart Claude/Codex |
+| Verify the repo (any change) | `docs/runbook/testing.md` §1 — validate-skills → gen-gate-copies → gate-consistency → registry-integrity → run-all |
+| Periodic deep audit | `docs/runbook/testing.md` §4 — the 5 questions per file; question 3 ("does the example implement its own prose?") is the highest-yield |
 | Release to users | `./scripts/release.sh patch "description"` |
 | Add a shared include | Create in `shared/includes/`, reference via `../../shared/includes/` from skills |
 

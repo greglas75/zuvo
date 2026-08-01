@@ -109,6 +109,10 @@ build_child_list() {
   emit_glob "tests/geo-suite/test-suite-e2e.sh"
   emit_glob "tests/pentest-suite/test-suite-e2e.sh"
   emit_glob "tests/infra-suite/test-suite-e2e.sh"
+  # 3b. gate/registry invariant tests. These were NOT in the child list until
+  #     2026-08-01 — test-gate-consistency.sh existed for weeks and only ran when
+  #     somebody remembered the runbook, which is exactly how a guard rots.
+  emit_glob "tests/gates/test-*.sh"
   # 4. benchmark suite
   emit_glob "tests/benchmark-suite/test-*.sh"
   # 5. skill suite — EXCLUDE this runner's own wiring test: it invokes run-all.sh,
