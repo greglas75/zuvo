@@ -398,7 +398,7 @@ FORBIDDEN: files outside these lists, unrelated improvements, opportunistic refa
 [Genuine uncertainties. Empty if none.]
 ```
 
-If section 10 is non-empty: ask the user (max 4 questions), wait for answers, update plan.
+If section 10 is non-empty — **interactive:** ask the user (max 4 questions), wait for answers, update plan. **Non-interactive/batch (Codex, Cursor, --auto):** do NOT stall the pipeline on questions nobody can answer — apply the Autonomous Disposition from `no-pause-protocol.md` per question: derive the safest defensible answer from the spec + codebase evidence, log it as `[AUTO-DECISION] <question> → <choice> — <why>`, update the plan, proceed. A genuinely undecidable product question → implement the smallest reversible interpretation, log it, and backlog the question for the user; never hang, never guess silently.
 
 ---
 
@@ -432,7 +432,7 @@ The contract prevents the most common CQ failures (CQ3, CQ8, CQ10, CQ22, CQ25) b
 **LIGHT tier:** Skip the formal contract. Critical CQ gates still apply at self-eval time.
 
 Rules:
-- Touch only files in the scope fence. If a dependency forces a change outside, log the expansion with justification. Structural splits (file-limits.md thresholds) may auto-expand up to +2 production files; beyond +2, ask the user. Any non-structural expansion requires user approval.
+- Touch only files in the scope fence. If a dependency forces a change outside, log the expansion with justification. Structural splits (file-limits.md thresholds) may auto-expand up to +2 production files; beyond +2 — **interactive:** ask the user; **non-interactive/batch:** do NOT expand and do NOT hang: complete the in-fence portion, print `[SCOPE] expansion needed: <files> — <reason>`, backlog the blocked dependency, and cap the run verdict at WARN. Any non-structural expansion follows the same split: interactive asks, batch declines-loudly-and-continues. Silent expansion is never an option in either mode.
 - Follow project conventions from CLAUDE.md and rules directory.
 - After each file, check line count against limits. Split immediately if approaching threshold.
 
