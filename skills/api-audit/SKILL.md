@@ -1,6 +1,6 @@
 ---
 name: api-audit
-description: "API and endpoint integrity audit across 10 dimensions (D1-D10) plus optional contract stability (D11). Covers validation, payloads, pagination, errors, caching, HTTP semantics, waterfalls, rate limiting, auth, and documentation. Supports NestJS, Cloudflare Workers, FastAPI, and frontend call patterns. Optional GET probing on non-production targets. Flags: zuvo:api-audit full | [path] | --static"
+description: "API and endpoint integrity audit across 10 dimensions (D1-D10) plus optional contract stability (D11) and optional OWASP API Security Top 10 (D12: BOLA/BOPLA/BFLA, mass assignment, JWT alg-confusion, GraphQL introspection). Covers validation, payloads, pagination, errors, caching, HTTP semantics, waterfalls, rate limiting, auth, documentation, and API-specific authorization security. Supports NestJS, Cloudflare Workers, FastAPI, and frontend call patterns. Optional GET probing on non-production targets. Flags: zuvo:api-audit full | [path] | --static | --security"
 codesift_tools:
   always:
     - analyze_project
@@ -57,6 +57,7 @@ Standalone audit of how the application exposes, consumes, and validates data ac
 | `full` | Audit all endpoints in the project |
 | `[path]` | Audit endpoints in a specific directory or module |
 | `--static` | Static analysis only -- skip Phase 2 (GET probing). Use when no running server is available. |
+| `--security` | Activate D12 (OWASP API Security Top 10): BOLA, BOPLA/mass-assignment, BFLA, JWT alg-confusion, sensitive business flows, shadow endpoints, GraphQL introspection/depth. Auto-activates when an auth surface is detected. |
 
 ## Mandatory File Loading
 
@@ -85,7 +86,7 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 
 | Tool | Trigger | Reason | Skip allowed? |
 |------|---------|--------|---------------|
-| `trace_route` | Always | KEY — endpoint enumeration. The audit cannot evaluate D1-D11 without a route inventory | **NO** |
+| `trace_route` | Always | KEY — endpoint enumeration. The audit cannot evaluate D1-D12 without a route inventory | **NO** |
 | `audit_scan` | Always | Compound check covering money fields, eval, error swallow, missing validation | **NO** |
 | `search_patterns` | Always | D1-D9 anti-patterns (overfetching, n+1, missing rate-limit, etc.) | **NO** |
 | `scan_secrets` | Always | API keys hardcoded in client/server | **NO** |
@@ -251,7 +252,7 @@ Completeness: [high/medium]
 
 ---
 
-## Phase 1: Dimension Analysis (D1-D11)
+## Phase 1: Dimension Analysis (D1-D12)
 
 For EACH dimension, evaluate all endpoints in scope and assign a score.
 
@@ -268,8 +269,26 @@ For EACH dimension, evaluate all endpoints in scope and assign a score.
 | D9 | Authentication and Authorization | 15% | 15 | D9<8 -> auto-fail |
 | D10 | Documentation and Contracts (DEEP only) | 5% | 5 | -- |
 | D11 | Contract Stability via oasdiff (conditional) | 5% | 5 | D11=0 -> auto-fail |
+| D12 | OWASP API Security Top 10 (conditional -- `--security`) | 15% | 15 | ANY confirmed BOLA/BFLA/mass-assignment on a data-bearing endpoint -> auto-fail (finding-presence, not score threshold) |
 
 **D11 activation:** Only if OpenAPI spec exists. If no spec -> D11=N/A.
+
+**D12 activation:** D12 runs when EITHER `--security` is passed OR an auth surface is detected
+(guards, middleware, JWT/session) — an authed API is exactly where BOLA/BFLA bite, so it is in-scope
+by default there. "Optional" means D12=N/A (excluded from the denominator) ONLY for a repo with no
+auth surface and no `--security`; when it flips from N/A to active the report prints
+`D12: activated (auth surface detected)` so the denominator change is never silent. `--security`
+forces D12 even without a detected auth surface.
+
+**D9 vs D12 (score each finding ONCE):** D9 = *does auth EXIST* on the endpoint (presence). D12 = *is
+that auth object/function-CORRECT* (BOLA/BFLA/mass-assignment). A missing-auth finding is D9; a
+present-but-not-owner-scoped finding is D12. Do not double-count.
+
+**OWASP API Top 10 coverage map (D12 owns the authz/exposure classes; the rest are delegated, not
+dropped):** API1/API3/API5/API6/API9 + JWT(API2) + GraphQL → D12 here. API4 (resource consumption /
+rate limit) → **D8**. API7 (SSRF) → **`zuvo:security-audit` S3**. API8 (misconfiguration) + API10
+(unsafe consumption of 3rd-party APIs) → `zuvo:security-audit`. D12 states this so "Top 10" is not
+read as "all ten audited in this dimension".
 
 **N/A-aware scoring:** Dimensions not applicable to the tier or codebase context are excluded from both score sum and max denominator.
 
@@ -297,7 +316,26 @@ Always report ratio alongside score: `D1: 11/15 (3/18 endpoints lack validation 
 - 40-59%: AT RISK
 - < 40%: CRITICAL
 
-**Critical gate:** D9<8 (auth gaps on mutations), D1=0 (no validation), D3<3 with >10K records, D11=0 (critical breaking change) -> auto-fail regardless of total.
+**Critical gate:** D9<8 (auth gaps on mutations), D1=0 (no validation), D3<3 with >10K records, D11=0 (critical breaking change), and — when D12 is active — ANY confirmed BOLA / BFLA / mass-assignment on a data-bearing endpoint (finding-presence, independent of the D12 numeric score: one real BOLA auto-fails even if D12 otherwise scores high) -> auto-fail regardless of total.
+
+### D12: OWASP API Security Top 10 (when active)
+
+Per-endpoint checks against the OWASP API Security Top 10 (2023). Findings cite `method path` + `file:line`.
+
+| API# | Class | Good | Bad | Severity |
+|------|-------|------|-----|----------|
+| API1 | BOLA (object-level authz) | Every object fetch/mutation filters by owner/tenant, not just "is authenticated" | `GET /orders/:id` returns any id; no `where owner=caller` | CRITICAL |
+| API3 | BOPLA — excessive data exposure | Response DTO allow-lists fields | Endpoint returns the full model (password hash, internal flags) and relies on the client to hide | HIGH |
+| API3 | BOPLA — mass assignment | Input bound to an explicit allow-list DTO | `Object.assign(user, req.body)` / `create(req.body)` lets caller set `role`/`isAdmin` | CRITICAL |
+| API5 | BFLA (function-level authz) | Admin/privileged routes gated by role, not obscurity | `POST /admin/*` reachable by a normal user; method-based bypass (GET-gated, POST open) | CRITICAL |
+| API2 | Broken auth — JWT | `alg` pinned server-side; signature verified; no `none` | Accepts `alg:none` / algorithm-confusion (RS256↔HS256 key confusion) | CRITICAL |
+| API6 | Sensitive business flows | Rate/abuse controls on high-value flows (purchase, invite, password-reset) | No anti-automation on a money/invite flow | HIGH |
+| API9 | Improper inventory — shadow/zombie | All exposed routes are documented + intended | Undocumented/`/v1`-legacy/debug endpoints still routable | MEDIUM |
+| GraphQL | introspection + depth | Introspection off in prod; query depth/complexity limited | `__schema` exposed in prod; unbounded nested query = DoS | HIGH (introspection) / MEDIUM (depth) |
+
+Detection: guards/decorators (`@UseGuards`, `@Roles`), ORM calls lacking a tenant/owner predicate,
+`req.body` spread into a create/update, `jsonwebtoken.verify` options, `graphql` schema config.
+Defer basic "is there auth at all" to D9; D12 is about whether that auth is *object/function-correct*.
 
 ### Execution
 
@@ -311,7 +349,7 @@ Each Task agent dispatch:
 Agent: API Dimension Auditor (per batch)
   model: "sonnet"
   type: "general-purpose"  # read-only: Read + CodeSift only, no Edit/Write (Explore lacks mcp__codesift__*)
-  instructions: evaluate endpoints in batch against D1-D11 dimensions
+  instructions: evaluate endpoints in batch against D1-D11 dimensions, plus D12 (OWASP API Top 10) ONLY when D12 is active (--security or auth surface detected); if D12 is N/A, skip it
   input: batch endpoint list (one controller/module), detected stack, CODESIFT_AVAILABLE
 ```
 
@@ -419,6 +457,7 @@ Save to: `zuvo/audits/api-audit-[date].md` — at the **project root** (`zuvo/` 
 | D9. Auth | {X} | 15 |
 | D10. Documentation | {X} | 5 |
 | D11. Contract Stability | {X or N/A} | 5 |
+| D12. OWASP API Security Top 10 | {X or N/A} | 15 |
 | **TOTAL** | **{X}** | **{max}** | **{grade} ({%})** |
 
 ## Critical Findings
@@ -467,6 +506,7 @@ Full protocol: `../../shared/includes/backlog-protocol.md`.
 | D10<3 (undocumented) | `zuvo:docs api [path]` -- generate API reference |
 | D1+D9 both critical | Fix D9 first -- security before correctness |
 | D11=0 (breaking change) | Fix breaking changes before release |
+| D12 BOLA/BFLA/mass-assignment | `zuvo:security-audit --static` (deep authz trace) or `zuvo:pentest --dimensions PT3` -- verify exploitability |
 | All dimensions >= 8 | No action needed. Schedule next audit in 30 days. |
 
 ## Phase 6b: Adversarial Review on Audit Report (MANDATORY — do NOT skip)
