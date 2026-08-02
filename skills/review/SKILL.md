@@ -921,17 +921,27 @@ Enforcement: print the gate check as a checklist with actual `[x]` / `[ ]` marks
 
 ### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
 
-> **Honest limit: this gate is SELF-ATTESTED, and knowing that is the point.** No script reads the
-> fields below. `~/.zuvo/append-runlog` checks only that a matching retro exists and that
-> `verify-audit` finds a resolvable `file:line` in every MUST-FIX/RECOMMENDED — it never parses
-> `tier2_subagents`, `adversarial`, or any `VIOLATES_*` token. So `cq_auditor: DISPATCHED(<marker>)`
-> typed without a dispatch is indistinguishable from the real thing to every downstream consumer.
-> Two things ARE machine-checked and are therefore the real backstops: the content-keyed artifact
-> (`pg_range_reviewed`) and its adversarial proof file with >=2 `REVIEW BY:` lines
-> (`pg_artifact_proven`) — a fabricated review cannot forge a multi-provider transcript cheaply.
-> Adding more forbidden phrasings to this file does NOT close the gap; treat the gate as a
-> discipline aid whose teeth live in the artifact pair, and never cite "the Validity Gate passed"
-> as evidence that the work happened.
+> **What is machine-checked, and what is not.** Three of these fields now have independent
+> evidence behind them; the rest are self-attested and you should treat them that way.
+>
+> **RUN THIS after printing the gate** (it is cheap and it is the point):
+> ```bash
+> printf '%s' "$VALIDITY_GATE_BLOCK" | python3 scripts/verify-review-claims.py \
+>   --claims - --anchor "<the reviewed range or artifact slug>" --strict
+> ```
+> `verify-review-claims.py` reads the HARNESS-written session transcript
+> (`~/.claude/projects/<munged-cwd>/*.jsonl`) and compares `tier2_subagents.*: DISPATCHED(...)`,
+> `adversarial.passes_run` and `self_review_flag: yes — used --multi` against the `Agent`/`Task`
+> and `adversarial-review` tool calls that ACTUALLY executed. A `DISPATCHED(<marker>)` typed
+> without a dispatch is now a reported disagreement, not an invisible one.
+>
+> Plus the two pre-existing mechanical backstops: the content-keyed artifact (`pg_range_reviewed`)
+> and its adversarial proof file carrying >=2 `REVIEW BY:` lines (`pg_artifact_proven`).
+>
+> Still self-attested (no verifier exists): the per-gate CQ/Q scores, the confidence numbers, the
+> finding severities, and every `not_required`/`N/A` justification. Adding more forbidden phrasings
+> does not change that — cite the transcript check and the artifact pair as evidence, never "the
+> Validity Gate passed" on its own.
 
 ```
 VALIDITY GATE

@@ -35,6 +35,7 @@ absent is a legitimate SKIP; `rg` absent is a broken run that LOOKS like a test 
 | 2 | `python3 scripts/gen-gate-copies.py` | ~1 s | Every GENERATED gate region matches the registry (no `--write` = read-only check; prints `N stale`) |
 | 3 | `bash tests/gates/test-gate-consistency.sh` | ~5 s | Gate-family invariants: contiguous IDs, no hand-maintained copy outside the registry, no stale `AP1-APnn` range claims, percentage-not-count thresholds, criticality vocabulary, CAP9↔CQ11 paired limits |
 | 4 | `python3 scripts/audit-registry-integrity.py` | ~1 s | Cross-registry referential integrity: pentest probes ↔ finding types ↔ safe patterns, check↔fix pairing, severity-vocabulary rows |
+| 4b | `python3 scripts/verify-review-claims.py --claims <artifact> --anchor <range>` | ~1 s | Review's Validity Gate claims (sub-agent dispatches, adversarial passes, self-review `--multi`) against the HARNESS-written session transcript — the only check that can catch a typed-but-not-done gate |
 | 5 | `bash tests/run-all.sh` | ~6-10 min | The 60-child suite (hooks, seo/geo/pentest/infra/benchmark/skill suites). `RESULT: PASS=n FAIL=0` is the only acceptable outcome |
 
 Anything that edits a gate: run 1→2→3. Anything that edits a registry: add 4. Anything else: 1 then 5.
@@ -168,6 +169,13 @@ range with `/zuvo:review` and fix what the providers find.
 ---
 
 ## 7. What none of this catches (stated, not hidden)
+
+- **Self-attested review fields other than the three verified ones.** `verify-review-claims.py`
+  checks dispatches, adversarial passes and the self-review `--multi` rule against the transcript.
+  The per-gate CQ/Q scores, confidence numbers, severities and every `N/A` justification remain
+  the agent's word. Anchor the check on a value the WORK produced (a post-work SHA, the artifact
+  filename) — the transcript contains the conversation, so an anchor you merely discussed matches
+  itself.
 
 - **Behavioral quality of the skills themselves.** The suite checks contracts and structure; only
   `zuvo:skill-eval` (against `evals/*.evals.json`, 24 corpora) measures whether a skill actually
