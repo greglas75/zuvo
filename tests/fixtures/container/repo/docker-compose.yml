@@ -1,0 +1,10 @@
+services:
+  app:
+    build: .
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD","node","health.js"]
+    ports: ["127.0.0.1:3000:3000"]

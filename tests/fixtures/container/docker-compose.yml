@@ -1,0 +1,16 @@
+# EXPECT: none
+services:
+  api:
+    build: .
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "node", "healthcheck.js"]
+      interval: 30s
+    ports:
+      - "127.0.0.1:3000:3000"

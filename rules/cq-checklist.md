@@ -68,6 +68,11 @@ Each gate is scored 1 (pass with evidence), 0 (fail or unproven), or N/A (precon
 - **CQ23** — critical when code uses Redis, Memcached, or in-memory caching. Not critical for code without caching.
 - **CQ24** — critical when code modifies existing API endpoint signatures (request/response shapes, route paths). Not critical for new endpoints.
 - **CQ28** — critical when code defines timeouts at 2+ architectural layers (client, server, DB).
+- **CQ30-CQ40** — each carries its own trigger; read them from the `Criticality` column of
+  `../shared/includes/gate-registry.md` (the canonical source) rather than from a copy here.
+  This list stopped at CQ28 while eleven further conditional-critical gates landed, so anything
+  reading only this file treated CQ30-CQ40 failures as ordinary deductions. Re-derive, don't extend:
+  `grep -E '^\| CQ(3[0-9]|40) ' shared/includes/gate-registry.md`.
 
 **Always-on non-critical gates (new):** CQ25, CQ26, CQ27, CQ29 — scored normally. Failure is a deduction, not an auto-FAIL.
 

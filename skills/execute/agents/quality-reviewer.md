@@ -104,7 +104,7 @@ Apply the file and function size limits from file-limits.md. Key thresholds:
 
 ## N/A Abuse Check
 
-Count the number of N/A scores across CQ1-CQ40. If more than 60% of the in-scope gates (24+ of 40, or 23+ when the 3 stack-scoped gates CQ36-38 are out-of-scope) are scored N/A:
+Count the number of N/A scores across CQ1-CQ40. If at least 60% of the in-scope gates (24+ of 40, or 23+ when the 3 stack-scoped gates CQ36-38 are out-of-scope) are scored N/A:
 
 1. Flag the evaluation as "low-signal audit"
 2. Justify each N/A individually with a one-sentence explanation

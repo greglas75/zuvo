@@ -68,7 +68,7 @@ If CODESIFT_AVAILABLE=false: fall back to Read for full file source, Grep for pa
    a. Read the full source (not just the diff)
    b. Score all 40 CQ gates as 1/0/N/A with file:line evidence
    c. Use PRECOMPUTED_DATA pattern matches as pre-validated evidence (e.g., empty-catch match at line 45 = CQ8 pre-confirmed)
-   d. Count N/A scores — if >60% of in-scope gates (24+ of 40), flag as "low-signal audit" and justify each N/A
+   d. Count N/A scores — if >=60% of in-scope gates (24+ of 40), flag as "low-signal audit" and justify each N/A
 3. CQ8 context rule: if PROJECT_CONTEXT has a global exception filter AND the service is non-critical-path, CQ8 per-method catch is N/A (not 0)
 
 ### Special Case — Test Utilities and Mocks

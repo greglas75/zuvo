@@ -63,14 +63,27 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
 import time
 from pathlib import Path
 
 DISPATCH_TOOLS = {"Agent", "Task"}          # Task = older harness name for the same thing
-ADVERSARIAL_RE = re.compile(r"adversarial-review(?:\.sh)?\b")
+
+# An INVOCATION, not a mention. A bare substring match counted `adversarial-review --help`
+# (a probe `skills/review/SKILL.md` explicitly recommends), `grep adversarial-review …`, and any
+# echoed command text as a completed pass — so the tool cleared the exact fabricated
+# `passes_run` claim it exists to catch. Anchor to a command position: start of line or after a
+# pipe/semicolon/&&/subshell, allowing leading VAR=value env assignments and a path prefix.
+# `args` captures the rest of THAT command (up to the next separator) so --help can be excluded
+# and --multi attributed to the invocation that actually carried it.
+ADVERSARIAL_RE = re.compile(
+    r"(?:^|[|;&({]|\n)"                             # command position
+    r"(?:\s*(?:if|then|do|else|elif|while|until|time|exec)\b|\s*!)*"  # control-flow lead-ins
+    r"(?:\s*[A-Za-z_][A-Za-z0-9_]*=\S*)*"           # optional env assignments
+    r"\s*(?:[\w./~-]*/)?adversarial-review(?:\.sh)?\b"
+    r"(?P<args>[^|;&\n]*)"                          # this command's own arguments
+)
 
 
 def munge(path: Path) -> str:
@@ -123,22 +136,35 @@ def parse_tool_calls(path: Path) -> list[tuple[str, dict]]:
                 continue
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
-                    calls.append((block.get("name", "?"), block.get("input") or {}))
+                    inp = block.get("input")
+                    # a non-dict `input` (truncated record, future schema) must not crash the
+                    # verifier — an unreadable record is missing evidence, not a usage error
+                    calls.append((block.get("name", "?"), inp if isinstance(inp, dict) else {}))
     return calls
+
+
+def adversarial_invocations(command: str) -> list[str]:
+    """Argument strings of the real `adversarial-review` invocations in one Bash command.
+
+    Excludes `--help` (a capability probe, not a review pass) and anything that merely NAMES
+    the tool — see ADVERSARIAL_RE.
+    """
+    return [m.group("args") for m in ADVERSARIAL_RE.finditer(command)
+            if "--help" not in m.group("args")]
 
 
 def observed(calls: list[tuple[str, dict]]) -> dict:
     dispatches = [inp for name, inp in calls if name in DISPATCH_TOOLS]
     adversarial = [
-        inp for name, inp in calls
-        if name == "Bash" and ADVERSARIAL_RE.search(str(inp.get("command", "")))
+        args for name, inp in calls if name == "Bash"
+        for args in adversarial_invocations(str(inp.get("command", "")))
     ]
     return {
         "dispatches": len(dispatches),
         "dispatch_labels": [str(d.get("description") or d.get("subagent_type") or "")[:60]
                             for d in dispatches],
         "adversarial_calls": len(adversarial),
-        "adversarial_multi": sum(1 for a in adversarial if "--multi" in str(a.get("command", ""))),
+        "adversarial_multi": sum(1 for args in adversarial if "--multi" in args),
     }
 
 
@@ -201,8 +227,19 @@ def main() -> int:
     ap.add_argument("--strict", action="store_true", help="exit 1 on any disagreement")
     args = ap.parse_args()
 
-    text = sys.stdin.read() if args.claims == "-" else Path(args.claims).read_text(
-        encoding="utf-8", errors="replace")
+    if args.claims == "-":
+        text = sys.stdin.read()
+    else:
+        # symmetric with the --transcript guard below: a missing claims file is a USAGE error
+        # (exit 2), not a traceback and not exit 1 — exit 1 means "disagreement found", so a
+        # caller branching on the code could not tell a crash from a real finding. A review that
+        # ended BLOCKED never writes its artifact, so this path is reached in normal operation.
+        cpath = Path(args.claims)
+        try:
+            text = cpath.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            print(f"ERROR: cannot read claims file {cpath}: {exc}", file=sys.stderr)
+            return 2
 
     if args.transcript:
         tpaths, note = [Path(args.transcript)], "explicit --transcript"

@@ -1,0 +1,5 @@
+# EXPECT: K6-host-network
+services:
+  proxy:
+    image: nginx:1.25@sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899
+    network_mode: host

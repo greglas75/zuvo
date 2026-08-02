@@ -101,7 +101,12 @@ No evidence = score is 0. Vague claims ("errors handled") are not evidence.
 
 ### N/A Abuse Rule
 
-If more than 60% of gates (17+) are scored N/A, flag the evaluation as "low-signal audit" and justify each N/A individually. N/A counts as 1 for scoring but requires a one-sentence explanation.
+If at least 60% of gates are scored N/A (24+ of 40, or 23+ when CQ36-38 are out of scope for the
+stack), flag the evaluation as "low-signal audit" and justify each N/A individually. N/A counts as 1
+for scoring but requires a one-sentence explanation. The count is over the FULL gate set, not a
+frozen denominator — this line said "17+" until 2026-08-02, which was 60% of the old 29 gates and
+only 42% of the real 40, so it stopped firing on exactly the low-signal audits it was written to
+catch. Same drift class as the CQ Scoring thresholds three sections above.
 
 ---
 

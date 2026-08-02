@@ -684,7 +684,13 @@ Each pass uses `--rotate` (script picks a random unused provider). Prepend prior
 # pipeline-gate-lib.sh::pg_artifact_proven REJECTS an artifact whose adversarial:
 # path does not resolve or holds <2 "REVIEW BY:" lines. A review that skips this
 # writes an artifact the push gate silently ignores.
-ADV_PROOF="zuvo/proofs/${SLUG:-review}-adversarial.txt"
+# The filename must be unique per REVIEWED RANGE, not a fixed word. With a literal `review`
+# default, two concurrent reviews (parallel agents on the same repo — routine here) both
+# --append-artifact into ONE file, and pg_artifact_proven's ">=2 REVIEW BY: lines" check is then
+# satisfied by lines belonging to the OTHER review. That defeats the proof gate with no error
+# anywhere: the mechanical backstop passes on evidence about a different range.
+RANGE_KEY=$(printf '%s' "${REVIEWED_FROM}..${REVIEWED_THROUGH}" | shasum | cut -c1-10)
+ADV_PROOF="zuvo/proofs/${SLUG:+${SLUG}-}${RANGE_KEY}-adversarial.txt"   # range hash ALWAYS present
 
 # Pass 1 (--artifact CREATES the proof):
 git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}" | adversarial-review --rotate --mode code --artifact "$ADV_PROOF"

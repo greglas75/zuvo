@@ -386,3 +386,26 @@ in-spec this round (no residual carried to Open Questions):
 Coverage note: `partial` means 2 providers (gemini, kimi) returned empty, so cross-model diversity was
 3-wide, not 5. Given zero CRITICAL and full in-spec resolution of every WARNING, this converges without
 a second pass (per `adversarial-loop-docs.md` 2-run cap; no novel architectural concern surfaced).
+
+### Second pass — 2026-08-02, `zuvo:review` on `fd57e11..fc0c83e` (OPEN — resolve before implementing)
+
+The spec was re-reviewed as part of the commit range that introduced it (`--mode code`, chunked,
+providers `codex-5.3` + `cursor-agent` + `claude`). These are **not** resolved in-spec: they are
+design decisions the implementer must make, recorded here rather than dropped. Nothing below blocks
+the range from merging — the skill does not exist yet — but each is a defect if it reaches the build.
+
+| # | Finding | Why it matters |
+|---|---------|----------------|
+| 1 | Effective-compose merge covers only `*.override.y*ml` | Misses `COMPOSE_FILE` multi-file stacks, `docker-compose.prod.yml`, `extends`, and profiles — the "effective config" K2/K6 score would not be the one that runs in production |
+| 2 | "Merged config" is specified as a YAML deep-merge | Compose replaces most list values wholesale rather than appending, and interpolates `${VAR}`; a hand-rolled merge silently yields a different config than `docker compose config` |
+| 3 | K2 treats a missing final-stage `USER` as root | Ignores a `USER` inherited from base-image metadata — false CRITICAL on images that already drop privileges |
+| 4 | K1 accepts a version tag as "pinned" | Registry tags are mutable; `node:20.11.0` can be re-pushed. Either accept it and stop claiming mutable refs are rejected, or require a digest |
+| 5 | K5 promises to scan the resulting image's dependencies | The skill never builds an image and does not define how a Dockerfile maps to an existing image ref |
+| 6 | `--static` allows `trivy config`, DD5's offline guarantee rests on `--skip-check-update` | `--static` never mandates that flag, so "pure-static" can still hit the network |
+| 7 | K3 flags only `KEY/SECRET/TOKEN/PASSWORD` names; Gate 2 censors any surfaced secret value | Two different thresholds for the same concept — a value censored as secret can still pass K3 |
+| 8 | Report filename is date-only | Two audits on one day overwrite each other; no run disambiguator |
+| 9 | GATE 3's consent prompt has no non-interactive contract | A cron/CI/agent run hits a `[y/N]` on a closed stdin with unspecified behavior |
+| 10 | GATE 3 logs the raw image `<ref>` | A ref can embed registry credentials; the log has no sanitization rule |
+| 11 | Scoring is ambiguous between numeric dimension scores and binary critical gates | "sum of applicable dim scores" vs "K1=0 → FAIL"; unclear when only some of several base refs are unpinned |
+| 12 | AC-S2 vendors a de-secreted copy of an internal repo's Dockerfile/compose | The fixture ships inside a publicly distributed plugin — "de-secreted" is a manual step with no gate behind it |
+| 13 | Distroless/scratch edge case groups "no USER support" with "`:nonroot` variant satisfies K2" | Reads as a blanket K2 exemption for all distroless bases |

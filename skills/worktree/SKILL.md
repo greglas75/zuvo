@@ -245,6 +245,16 @@ Run it when the user asks to clean up worktrees, and as a report-only precheck a
 
 PRUNE never uses `--force`, never touches a worktree with uncommitted or unmerged work, and never runs `git fetch`. It removes only what is provably reclaimable.
 
+### Step 0: Resolve paths (PRUNE is a standalone entry point)
+
+PRUNE is normally invoked on its own, so it cannot inherit anything from CREATE. Re-derive the two
+paths its later steps use, exactly as CREATE Step 1 does:
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+DEFAULT_WTDIR="${ZUVO_WORKTREE_DIR:-$(dirname "$REPO_ROOT")/$(basename "$REPO_ROOT")-worktrees}"
+```
+
 ### Step 1: Reconcile bookkeeping
 
 ```bash

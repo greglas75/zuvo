@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sample
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: sample }
+  template:
+    metadata:
+      labels: { app: sample }
+    spec:
+      containers:
+        - name: sample
+          image: registry.example.com/sample@sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false

@@ -170,7 +170,7 @@ noscope=$(grep -cE '^\| CQ[0-9]+ \|[^|]*\|[^|]*\| *\|' "$REG" || true)
 # became 64% of 25 during the v1.6.41 expansion — a two-band loosening produced by arithmetic, not
 # by any decision about quality. This catches the next one.
 absthr=$(grep -rIn --include='*.md' -E '[0-9]+\+?/(19|25|29|34|40)[^0-9/].*(PASS|FIX|BLOCK|REWRITE)' \
-           "$ROOT/rules" "$ROOT/shared/includes" "$ROOT/skills" 2>/dev/null \
+           "$ROOT/rules" "$ROOT/shared/includes" "$ROOT/skills" "$ROOT/docs" 2>/dev/null \
          | grep -viE 'applicable|Run:|telemetry|example|per-file' || true)
 if [ -z "$absthr" ]; then
   pass "verdict thresholds are percentages, not counts over a fixed denominator"

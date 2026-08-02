@@ -122,7 +122,9 @@ WORK_FILES = <files being touched>
    ```bash
    HEAD_MSG=$(git log -1 --format='%s')
    case "$HEAD_MSG" in
-     release:\ v*) HALF_DONE_VER=$(printf '%s' "$HEAD_MSG" | sed -n 's/^release: v\([0-9.]*\).*/\1/p') ;;
+     # capture the FULL version token, not just [0-9.] — truncating `v1.2.3-rc.1` to `1.2.3` makes
+    # the tag lookup below miss the real tag and declare a completed release "half-done"
+    release:\ v*) HALF_DONE_VER=$(printf '%s' "$HEAD_MSG" | sed -n 's/^release: v\([0-9A-Za-z.+-]*\).*/\1/p') ;;
      *) HALF_DONE_VER="" ;;
    esac
    # a release commit whose tag does NOT exist = the previous run stopped between commit and tag

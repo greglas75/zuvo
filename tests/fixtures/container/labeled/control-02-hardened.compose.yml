@@ -1,0 +1,11 @@
+# EXPECT: none
+services:
+  api:
+    image: registry.example.com/api@sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD","/api","health"]
+    ports: ["127.0.0.1:9000:9000"]

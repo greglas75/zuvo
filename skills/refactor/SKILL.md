@@ -1169,7 +1169,25 @@ COMPLETION GATE CHECK
 # TARGET_HASH is DERIVED HERE from the target path, because a shell variable does not survive
 # between phases (it was referenced but never assigned until 2026-08-02 — so every run silently
 # took the mtime fallback the line above forbids, and could self-check a DIFFERENT file's contract).
-# TARGET is the repo-relative path of the file this run refactored (Phase 1 recorded it in the CONTRACT).
+# SUBSTITUTE the literal repo-relative path of the file this run refactored for <TARGET-PATH>
+# below — Phase 1 recorded it in the CONTRACT. Leaving the placeholder (or exporting nothing) made
+# every run hash the SAME empty string to da39a3ee, which is not a per-target key at all: it either
+# hard-BLOCKs every refactor or, if that one file ever exists, validates every run against it.
+TARGET="<TARGET-PATH>"
+case "$TARGET" in
+  "<TARGET-PATH>")
+    # placeholder still here = the agent never substituted the path, i.e. the check never ran.
+    # That is an ERROR, not a trivial run: exiting 0 here would hand every lazy run a free PASS.
+    echo "GATE: BLOCKED — <TARGET-PATH> was never substituted, so this check verified nothing."
+    echo "  Replace it with the repo-relative path this run refactored (Phase 1 recorded it),"
+    echo "  or set TARGET=\"\" if this genuinely was a trivial/aborted run with no CONTRACT."
+    exit 1 ;;
+  "")
+    echo "GATE: N/A — no target (trivial or aborted refactor: Phase 1 never ran)."
+    echo "  If this WAS a real production refactor, that itself is the bug: create the CONTRACT"
+    echo "  (Phase 1) and run the pipeline. Do NOT hand-edit this check to make it pass."
+    exit 0 ;;
+esac
 TARGET_HASH=$(printf '%s' "$TARGET" | shasum | cut -c1-8)
 C="zuvo/contracts/refactor-${TARGET_HASH}.json"
 if [ ! -f "$C" ]; then
@@ -1178,9 +1196,7 @@ if [ ! -f "$C" ]; then
   echo "  a different file's refactor and prints PASS for work never checked."
   exit 1
 fi
-if [ -z "$C" ]; then
-  echo "GATE: N/A — no CONTRACT found (trivial/aborted refactor). If this WAS a real production refactor, that itself is the bug: create the CONTRACT (Phase 1) and run the pipeline."
-else  # unreachable when TARGET is set (the resolver above exits first) — kept for the no-TARGET call path
+if true; then  # CONTRACT resolved for this run's target — evaluate its prove fields
   g=0
   ba=$(sed -n 's/.*"blind_audit"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$C" | head -1)
   av=$(sed -n 's/.*"adversarial"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$C" | head -1)

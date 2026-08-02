@@ -556,10 +556,13 @@ Mode: [quick/deep]
 
 | Tier | Count | % | Action |
 |------|-------|---|--------|
-| A (>=86% of applicable) | [N] | [%] | Production-ready |
-| B (79-85% of applicable) | [N] | [%] | Targeted fixes before merge |
-| C (53-78% of applicable) | [N] | [%] | Significant rework |
-| D (<53% of applicable, or any red flag) | [N] | [%] | Critical -- immediate fix |
+| A (ratio >= 0.86) | [N] | [%] | Production-ready |
+| B (>= 0.79 and < 0.86) | [N] | [%] | Targeted fixes before merge |
+| C (>= 0.53 and < 0.79) | [N] | [%] | Significant rework |
+| D (< 0.53, or any red flag) | [N] | [%] | Critical -- immediate fix |
+
+Compare the raw ratio, never a rounded integer percentage: written as `79-85` / `86+`, a score of
+85.5% belonged to no tier at all.
 
 ## Summary by Code Type
 
@@ -664,6 +667,7 @@ If `--deep` mode: also save per-file detail to `zuvo/audits/code-audit-details/[
 
 Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
 
+```
 COMPLETION GATE CHECK
 [ ] Domain classified and printed: [data/async/security/general]
 [ ] Red flag pre-scan ran on every batch
@@ -726,7 +730,6 @@ The wrapper:
 If the wrapper exits non-zero: do NOT manually append to runs.log. Fix the cause (add retro, add file:line citations to findings, etc.) and re-run.
 
 VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+ critical), INCOMPLETE (Validity Gate FAIL).
-```
 
 ## Phase 5: Backlog Persistence
 
@@ -739,10 +742,14 @@ Persist findings to `memory/backlog.md`:
 Full protocol: `../../shared/includes/backlog-protocol.md`.
 
 **Which findings to persist:**
-- **Tier D** (red flags, <16): ALL findings -- CRITICAL severity
-- **Tier C** (critical gate FAIL or 16-20): ALL critical gate failures -- HIGH severity
-- **Tier B** (21-23): only critical gate near-misses -- MEDIUM severity
-- **Tier A** (>=86% of applicable): do NOT persist. Delete any open backlog items for Tier A files.
+Tier boundaries are the ONES DEFINED IN "Summary by Tier" above — percentages of applicable, never
+raw counts. (These four lines read `<16` / `16-20` / `21-23` until 2026-08-02: absolute counts over
+the old 29-gate set, sitting one section below the percentage table they contradict.)
+
+- **Tier D** (ratio < 0.53, or any red flag): ALL findings -- CRITICAL severity
+- **Tier C** (critical gate FAIL, or ratio >= 0.53 and < 0.79): ALL critical gate failures -- HIGH severity
+- **Tier B** (ratio >= 0.79 and < 0.86): only critical gate near-misses -- MEDIUM severity
+- **Tier A** (ratio >= 0.86): do NOT persist. Delete any open backlog items for Tier A files.
 
 ## Phase 6: Next-Action Routing
 

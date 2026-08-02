@@ -93,14 +93,20 @@ Any of these scored 0 is an immediate FAIL, regardless of the total score.
 | CQ23 | Code uses Redis, Memcached, or in-memory caching |
 | CQ24 | Code modifies existing API endpoint signatures |
 | CQ28 | Code defines timeouts at 2+ architectural layers |
+| CQ30-CQ40 | Each carries its own trigger — see the `Criticality` column in `shared/includes/gate-registry.md` (the canonical source). Do NOT re-enumerate them here: this table sat frozen at CQ28 while eleven more conditional-critical gates landed, which is how a "critical" gate becomes invisible to anything reading this page. |
 
 ### CQ scoring thresholds
 
 | Result | Criteria |
 |--------|---------|
-| **PASS** | Score >= 25/29 AND all active critical gates = 1 |
-| **CONDITIONAL PASS** | Score 23-24/29 AND all active critical gates = 1 |
-| **FAIL** | Any active critical gate = 0, OR total score < 23 |
+| **PASS** | Score >= 86% of applicable AND all active critical gates = 1 |
+| **CONDITIONAL PASS** | Score 79-85% of applicable AND all active critical gates = 1 |
+| **FAIL** | Any active critical gate = 0, OR score < 79% of applicable |
+
+`applicable = 40 - count(out-of-scope) - count(N/A)` — a PERCENTAGE, never a fixed denominator.
+These read `>= 25/29` until 2026-08-02; the set has been 40 gates since CQ30-CQ40 landed, so the
+threshold silently decayed to 62% of the real set and passed files that should have failed.
+Canonical: `shared/includes/quality-gates.md` → CQ Scoring.
 
 ---
 
@@ -144,9 +150,13 @@ Any of these scored 0 is an immediate FAIL, regardless of the total score.
 
 | Result | Criteria |
 |--------|---------|
-| **PASS** | Score >= 16/25, all critical gates = 1 |
-| **FIX** | Score 10-15/19, or any critical gate = 0 -- fix worst gaps, re-score |
-| **REWRITE** | Score < 10 -- tests need fundamental rework |
+| **PASS** | Score >= 82% of applicable, all critical gates = 1 |
+| **FIX** | Score 53-81% of applicable, or any critical gate = 0 -- fix worst gaps, re-score |
+| **REWRITE** | Score < 53% of applicable -- tests need fundamental rework |
+
+Same rule as CQ: a percentage of applicable gates, never a fixed denominator. This table mixed two
+frozen denominators (`/25` and `/19`) until 2026-08-02. Canonical:
+`shared/includes/quality-gates.md` → Q Scoring.
 
 ---
 
@@ -168,15 +178,16 @@ Vague claims like "errors handled" are not evidence. Specific file paths, functi
 ### Q evidence
 
 ```
-Self-eval: Q1=1 Q2=1 Q3=0 Q4=1 Q5=1 Q6=1 Q7=1 Q8=0 Q9=1 Q10=1 Q11=1 Q12=0 Q13=1 Q14=1 Q15=1 Q16=1 Q17=1 Q18=1 Q19=1
-  Score: 16/19 -> PASS | Critical gate: Q7=1 Q11=1 Q13=1 Q15=1 Q17=1 -> PASS
+Self-eval: Q1=1 Q2=1 Q3=0 Q4=1 Q5=1 Q6=1 Q7=1 Q8=0 Q9=1 Q10=1 Q11=1 Q12=0 Q13=1 Q14=1 Q15=1
+           Q16=1 Q17=1 Q18=1 Q19=1 Q20=1 Q21=N/A Q22=1 Q23=N/A Q24=1 Q25=1
+  Score: 20/23 applicable (87%) -> PASS | Critical gate: Q7=1 Q11=1 Q13=1 Q15=1 Q17=1 -> PASS
 ```
 
 ---
 
 ## N/A abuse prevention
 
-If more than 9 of the 29 CQ gates (or 10+ of 19 Q gates) are scored N/A, the evaluation is flagged as **low-signal audit**. Every N/A requires a one-sentence justification explaining why the precondition is inactive. N/A counts as 1 for scoring but must be defensible.
+If at least 60% of gates are scored N/A (24+ of the 40 CQ gates, or 15+ of the 25 Q gates), the evaluation is flagged as **low-signal audit**. Every N/A requires a one-sentence justification explaining why the precondition is inactive. N/A counts as 1 for scoring but must be defensible.
 
 This prevents agents from marking everything N/A to avoid doing the evaluation work.
 
