@@ -123,8 +123,8 @@ Systematic evaluation of production source files through the CQ1-CQ40 binary che
 | `[file]` | Audit a single file with full evidence (forces deep mode) |
 | `--deep` | Collect per-gate evidence and fix recommendations for every file |
 | `--quick` | Binary pass/fail only, skip evidence gathering |
-| `--services` | Restrict scope to service and business logic files |
-| `--controllers` | Restrict scope to controller, handler, and route files |
+| `--services` (filter Phase 0.1 discovery to files classified SERVICE in 0.3; without that filter this flag is a no-op) | Restrict scope to service and business logic files |
+| `--controllers` (same: filter Phase 0.1 to CONTROLLER-classified files) | Restrict scope to controller, handler, and route files |
 
 Default behavior: `all --quick`
 
@@ -374,7 +374,7 @@ TIER-D SHORT FORMAT:
 ### [filename]
 Code type: [TYPE]
 Lines: [count]
-Red flags: [CAP5/CAP6/CAP7/CAP8] -> AUTO TIER-D
+Red flags: [CAP5/CAP6/CAP7/CAP8/CAP25/CAP26] -> AUTO TIER-D
 Details: [what was found, line number]
 Tier: D
 
@@ -464,7 +464,7 @@ CAP28: Module-import-time side effect — DB engine, HTTP client, network call, 
 CAP29: `__del__` used for resource release, or `.close()` without `with`/`try-finally` — GC timing is unguaranteed and `__del__` exceptions are swallowed -- MEDIUM  [stack: python]
 <!-- GATES:END kind=cap-list -->
 
-N/A HANDLING: N/A items are excluded from both numerator and denominator. Score = passed / applicable. N/A requires justification.
+N/A HANDLING: N/A items are excluded from both numerator and denominator. **HARD CAP:** `count(N/A)` may not exceed `floor(in_scope/3)`; exceeding it makes the verdict `INCOMPLETE`, never a tier — without this the documented attack works (re-label six failures N/A and 69% FAIL becomes a PASS with zero code change, `cq-checklist.md`). Score = passed / applicable. N/A requires justification.
 
 STATIC CRITICAL GATE: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 -- any = 0 -> capped at Tier C.
 CONDITIONAL CRITICAL GATE:
@@ -476,6 +476,18 @@ CONDITIONAL CRITICAL GATE:
 - CQ23 -> critical if uses Redis, Memcached, or in-memory cache
 - CQ24 -> critical if modifies existing API endpoint signatures
 - CQ28 -> critical if defines timeouts at 2+ architectural layers
+- CQ30 -> critical if the endpoint mutates state AND authenticates via cookie/session
+- CQ31 -> critical if user input reaches a filesystem path, shell argv, deserializer, or outbound URL
+- CQ32 -> critical if the change adds/updates a dependency, or the repo has a manifest
+- CQ33 -> critical if code generates a token/ID/nonce, hashes/encrypts, or reads a secret
+- CQ34 -> critical if the handler has roles, or a payload is written into persistence
+- CQ35 -> critical if the code performs cancellable I/O or long-running work
+- CQ36/CQ37/CQ38 -> critical on go/rust/jvm/dotnet/python (spawn ownership, races, handle release)
+- CQ39 -> critical if a queue/channel/fan-out is sized by external input
+- CQ40 -> critical if the project's language has a standard meta-linter (i.e. always)
+  (This list froze at CQ28 until 2026-08-02, so the whole security wave was invisible here and a
+  CQ30=0 or CQ34=0 file still reached Tier A/B. Canonical source is gate-registry.md's
+  Criticality column — re-derive rather than extending this copy by hand.)
 
 CQ8 NOTE: Check PROJECT_CONTEXT. If global error handler exists, services that let errors propagate = CQ8 PASS. Only CQ8=0 when errors are swallowed.
 CQ15 NOTE: `return somePromise` inside async function is NOT a missing await -- async auto-flattens. Only flag when promise is neither returned nor awaited.
@@ -486,7 +498,7 @@ OUTPUT FORMAT per file:
 Code type: [TYPE]
 Lines: [count]
 Red flags: [CAP5/6/7/8 = auto Tier-D; or "none"]
-Score: CQ1=[0/1] CQ2=[0/1] ... CQ29=[0/1/N/A]
+Score: CQ1=[0/1] CQ2=[0/1] ... CQ40=[0/1/N/A]   (ALL 40 — a line stopping at CQ29 silently drops 11 gates)
 Anti-patterns: [CAP IDs found, or "none"]
 Total: [passed]/[applicable] ([%]) -- N/A excluded
 Static gate: CQ3=... CQ4=... CQ5=... CQ6=... CQ8=... CQ14=... -> [PASS/FAIL]
@@ -545,9 +557,9 @@ Mode: [quick/deep]
 | Tier | Count | % | Action |
 |------|-------|---|--------|
 | A (>=86% of applicable) | [N] | [%] | Production-ready |
-| B (21-23) | [N] | [%] | Targeted fixes before merge |
-| C (16-20) | [N] | [%] | Significant rework |
-| D (<16 or red flag) | [N] | [%] | Critical -- immediate fix |
+| B (79-85% of applicable) | [N] | [%] | Targeted fixes before merge |
+| C (53-78% of applicable) | [N] | [%] | Significant rework |
+| D (<53% of applicable, or any red flag) | [N] | [%] | Critical -- immediate fix |
 
 ## Summary by Code Type
 
@@ -646,12 +658,12 @@ If `--deep` mode: also save per-file detail to `zuvo/audits/code-audit-details/[
 
 | CQ/CAP | Before | After | Files affected |
 |--------|--------|-------|----------------|
+```
 
 ## Completion Gate Check
 
 Before printing the final output block, verify every item. Unfinished items = pipeline incomplete.
 
-```
 COMPLETION GATE CHECK
 [ ] Domain classified and printed: [data/async/security/general]
 [ ] Red flag pre-scan ran on every batch
@@ -730,7 +742,7 @@ Full protocol: `../../shared/includes/backlog-protocol.md`.
 - **Tier D** (red flags, <16): ALL findings -- CRITICAL severity
 - **Tier C** (critical gate FAIL or 16-20): ALL critical gate failures -- HIGH severity
 - **Tier B** (21-23): only critical gate near-misses -- MEDIUM severity
-- **Tier A** (>=24): do NOT persist. Delete any open backlog items for Tier A files.
+- **Tier A** (>=86% of applicable): do NOT persist. Delete any open backlog items for Tier A files.
 
 ## Phase 6: Next-Action Routing
 

@@ -19,6 +19,7 @@ Four severity levels, ordered by impact:
 |-------|-----------------|-------------|----------------|----------|---------|
 | `/review` | MUST-FIX / RECOMMENDED / NIT | MUST-FIX | RECOMMENDED | NIT | — |
 | `/code-audit` | Tier A / B / C / D | Tier D | Tier C | Tier B | Tier A |
+| `/test-audit` | Tier A / B / C / D (SAME labels as `/code-audit` but over the Q1-Q25 family with its own thresholds — do not normalize the two by label alone) | Tier D | Tier C | Tier B | Tier A |
 | `/security-audit` | CRITICAL / HIGH / MEDIUM / LOW | CRITICAL | HIGH | MEDIUM | LOW |
 | `/infra-audit` | CRITICAL / HIGH / MEDIUM / LOW | CRITICAL | HIGH | MEDIUM | LOW |
 | `/ship` review-light | BLOCKER / WARNING | BLOCKER | WARNING | — | — |

@@ -356,7 +356,7 @@ TIER CLASSIFICATION (derived from the percentage above — no separate count sca
   A (>= 82%, all critical gates = 1): No action needed
   B (53-81%, all critical gates = 1): Fix gaps -- 2-5 targeted fixes
   C (< 53%, OR any critical gate = 0): Major rewrite needed
-  D (AUTO TIER-D red flag: AP13 or AP16): Delete and rewrite from scratch
+  D (AUTO TIER-D red flag: AP13, AP16, or AP31 (committed `.only`/focus marker — it disables the REST of the suite while CI stays green, so it is the most destructive of the three)): Delete and rewrite from scratch
 
   A critical gate at 0 is a FLOOR (Tier C), not a ceiling. Previously it "capped at Tier B",
   so a tautological suite scoring 16/17 landed in the same bucket as an honest 10/17 — and
@@ -404,9 +404,9 @@ Total tests: [count from test runner]
 
 | Tier | Count | % | Action |
 |------|-------|---|--------|
-| A (>=16) | [N] | [%] | No action |
-| B (10-15) | [N] | [%] | Fix gaps |
-| C (5-8) | [N] | [%] | Major rewrite |
+| A (>=82% of applicable) | [N] | [%] | No action |
+| B (53-81% of applicable) | [N] | [%] | Fix gaps |
+| C (<53% of applicable) | [N] | [%] | Major rewrite |
 | D (<5 or red flag) | [N] | [%] | Delete + rewrite |
 | ORPHAN | [N] | [%] | Verify or delete |
 
@@ -477,7 +477,7 @@ For each audited test file, find its production file row in coverage.md:
 |-----------|----------------|-----------|
 | A (>=16, gate PASS) | COVERED | Tests are solid |
 | B (10-15 or gate FAIL >=10) | PARTIAL-QUALITY | Has tests but quality issues |
-| C (5-8) | PARTIAL-QUALITY | Major quality gaps |
+| C (<53% of applicable) | PARTIAL-QUALITY | Major quality gaps |
 | D (<5 or red flag) | PARTIAL | Effectively untested |
 
 Only downgrade coverage status, never upgrade. If production file is not yet in coverage.md, add it.
@@ -531,7 +531,7 @@ After presenting the report, the user may request fixes:
 
 | Finding | Action | Command |
 |---------|--------|---------|
-| Tier D files (score < 10) | Rewrite tests | `zuvo:write-tests [path]` |
+| Tier D files (any AUTO TIER-D red flag, or a critical Q gate = 0) | Rewrite tests | `zuvo:write-tests [path]` |
 | Same AP across 10+ files | Batch fix | `zuvo:fix-tests --pattern [AP-ID]` |
 | Tier B-C with Q7=0 | Add error tests | `zuvo:write-tests [path]` |
 | Coverage gaps (methods untested) | Write missing tests | `zuvo:write-tests [path]` |
