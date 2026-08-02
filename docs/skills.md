@@ -1,6 +1,6 @@
 # Skills Reference
 
-Zuvo includes 56 skills organized into 13 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
+Zuvo includes 57 skills organized into 13 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
 
 ---
 
@@ -53,6 +53,7 @@ Scoped task execution for common development work.
 | `zuvo:ci-audit` | CI/CD pipeline optimization across 10 dimensions (CI1-CI10): caching, parallelism, secrets, action pinning, Docker, test integration. Primary: GitHub Actions. | After changing CI workflows, when pipelines are slow | `full`, `[path]`, `--speed-only`, `--security-only` |
 | `zuvo:env-audit` | Environment config across 8 dimensions (ENV1-ENV8): completeness, unused vars, validation, secret exposure, parity, type safety. | After adding env vars, before deploy, config-related debugging | `full`, `[path]`, `--secrets-only`, `--parity` |
 | `zuvo:infra-audit` | Server and infrastructure security across 12 dimensions (IS1-IS12): SSH hardening, network exposure, container security, data-layer access, secret redaction. Multi-host fleet audit with internal+external vantage via SOCKS proxy, parallel analyst agents, and deterministic CVE evidence gate. | Before production deployments, quarterly infra reviews, after server provisioning | `[hosts.yaml]`, `--host user@addr`, `--quick`, `--dimensions <list>`, `--no-install`, `--dry-run`, `--resume <dir>`, `--proxy <url>`, `--external direct`, `--skip-external`, `--deep-scan`, `--confirm-targets` |
+| `zuvo:container-audit` | Static Docker/container security audit across 6 dimensions (K1-K6): base image pinning, privilege/runtime hardening, secrets baked into layers, image minimalism, CVE scan (Trivy/Grype), and compose/orchestration hardening. Static-first (zero Docker/network, CI-safe); K5 uses Trivy/Grype when present else degrades to N/A. Reserved K7-K10 (Kubernetes) behind `--k8s`. Distinct from infra-audit (live host daemon) and ci-audit (build speed). | Before shipping a Dockerized service, after editing a Dockerfile/compose, pre-deploy | `[path]`, `--static`, `--scan`, `--dockerfile <p>`, `--compose <p>`, `--quick`, `--k8s`, `--persist-backlog` |
 
 ---
 
@@ -139,7 +140,7 @@ Scoped task execution for common development work.
 | Pipeline | 5 | brainstorm, plan, execute, worktree, receive-review |
 | Core | 4 | build, review, refactor, debug |
 | Code/Test audits | 5 | code-audit, test-audit, api-audit, security-audit, pentest |
-| Infra audits | 6 | performance-audit, db-audit, dependency-audit, ci-audit, env-audit, infra-audit |
+| Infra audits | 7 | performance-audit, db-audit, dependency-audit, ci-audit, env-audit, infra-audit, container-audit |
 | Structure/SEO/GEO | 6 | structure-audit, seo-audit, seo-fix, geo-audit, geo-fix, architecture |
 | Content | 5 | content-audit, content-fix, content-migration, write-article, content-expand |
 | Design | 3 | design, design-review, ui-design-team |
@@ -148,7 +149,7 @@ Scoped task execution for common development work.
 | Release | 5 | ship, deploy, canary, release-docs, retro |
 | Utility | 10 | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo, context-audit, skill-eval, profile-session |
 | Lead Generation | 1 | leads |
-| **Total** | **56** | |
+| **Total** | **57** | |
 
 ## Shared Infrastructure
 

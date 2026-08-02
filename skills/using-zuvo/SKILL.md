@@ -3,7 +3,7 @@ name: using-zuvo
 description: "ALWAYS LOADED — Zuvo skill router. Injected at session start. Determines which zuvo skill to invoke for the current task."
 ---
 
-> **Zuvo v1.6.53** | 56 skills | 5 adversarial providers | CQ1-CQ40 + Q1-Q25
+> **Zuvo v1.6.53** | 57 skills | 5 adversarial providers | CQ1-CQ40 + Q1-Q25
 
 # Zuvo Skill Router
 
@@ -84,6 +84,7 @@ This is the SOFT top layer — it sets intent. The actual **enforcement is deter
 | Audit CI/CD pipelines | `zuvo:ci-audit` |
 | Audit environment config and secrets | `zuvo:env-audit` |
 | Audit server and infrastructure security (SSH, services, CVEs, misconfigs) | `zuvo:infra-audit` |
+| Audit Dockerfile / docker-compose / container image security (root, :latest, baked secrets, docker.sock, CVEs) | `zuvo:container-audit` |
 | Audit SEO and structured data | `zuvo:seo-audit` |
 | GEO readiness audit — AI citation optimization, llms.txt, schema graph, generative engine visibility | `zuvo:geo-audit` |
 | Audit content quality (encoding, links, formatting, CMS artifacts) | `zuvo:content-audit` |

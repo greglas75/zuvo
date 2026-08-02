@@ -2,7 +2,7 @@
 
 Auto-activating, multi-agent skill ecosystem for Claude Code, Codex, Cursor, and Antigravity.
 
-56 skills, 50 sub-agent definitions (48 distinct roles), quality gates, knowledge store, session recovery, and structured workflows — all in one plugin.
+57 skills, 50 sub-agent definitions (48 distinct roles), quality gates, knowledge store, session recovery, and structured workflows — all in one plugin.
 
 ## Install
 
@@ -127,7 +127,7 @@ args = ["-y", "codesift-mcp"]
 ## What's inside
 
 - **Pipeline skills** — `zuvo:brainstorm` → `zuvo:plan` → `zuvo:execute` with multi-agent exploration, quality gates, and evidence-based review
-- **51 non-pipeline skills** (5 pipeline + 51 = 56) — build, review, refactor, debug, 16 audits, write-article, content-expand, design, docs, ship, deploy, canary, retro, incident, mutation-test, benchmark, and more
+- **52 non-pipeline skills** (5 pipeline + 52 = 57) — build, review, refactor, debug, 17 audits, write-article, content-expand, design, docs, ship, deploy, canary, retro, incident, mutation-test, benchmark, and more
 - **Release pipeline** — `zuvo:ship` → `zuvo:deploy` → `zuvo:canary` for the full post-code lifecycle
 - **Knowledge Store** — JSONL-based project memory. Skills learn from past sessions (patterns, gotchas, decisions). Auto-primed at session start and per-skill
 - **Session Recovery** — execution state persisted to `.zuvo/context/`. Resume after context compaction or crashes without losing progress
@@ -162,7 +162,7 @@ args = ["-y", "codesift-mcp"]
 
 ## Documentation
 
-- [All 56 Skills](docs/skills.md)
+- [All 57 Skills](docs/skills.md)
 - [Pipeline](docs/pipeline.md) — brainstorm → plan → execute
 - [Quality Gates](docs/quality-gates.md) — CQ1-CQ40 + Q1-Q25 + CAP1-CAP29 + AP1-AP32
 - [CodeSift Integration](docs/codesift-integration.md)
