@@ -6,6 +6,7 @@ description: >
   Supports update mode that patches stale sections without rewriting from
   scratch. Modes: readme [path], api [path], runbook [topic], onboarding,
   update [file], changelog [range].
+category: Utility
 codesift_tools:
   always:
     - analyze_project

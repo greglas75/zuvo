@@ -6,6 +6,7 @@ description: >
   systems from requirements. Modes: --mode review [path], --mode adr,
   --mode design. Uses CodeSift for module discovery, dependency mapping,
   structural metrics, and temporal coupling detection.
+category: Structure/SEO/GEO
 codesift_tools:
   always:
     - analyze_project

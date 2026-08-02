@@ -1,6 +1,7 @@
 ---
 name: execute
 description: "Activated when an implementation plan exists. Executes plan tasks in dependency order (independent, non-same-file tasks may run in parallel batches) with enforced review gates, adversarial validation, and resumable session state."
+category: Pipeline
 codesift_tools:
   always:
     - analyze_project

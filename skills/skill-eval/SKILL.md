@@ -1,6 +1,7 @@
 ---
 name: skill-eval
 description: "Behavioral evaluator for zuvo skills. Runs a skill against its eval corpus (evals/<skill>.evals.json) in fresh executor sub-agents, grades each run transcript against the corpus assertions with an injection-hardened grader, and writes a per-assertion pass/fail report to zuvo/reports/. Supports old-vs-new comparison via --compare <ref>. Dev-only (needs the repo's evals/ + .git)."
+category: Utility
 ---
 
 # zuvo:skill-eval — Behavioral skill evaluator

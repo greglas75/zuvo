@@ -6,6 +6,7 @@ description: >
   Supports Astro, Next.js, Hugo. Modes: default (SAFE only), --auto (SAFE+MODERATE),
   --all (all tiers, requires confirmation), --dry-run, --finding F1,F3,
   --fix-type sitemap-add,robots-fix,schema-cleanup.
+category: Structure/SEO/GEO
 codesift_tools:
   always:
     - analyze_project

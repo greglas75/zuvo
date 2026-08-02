@@ -6,6 +6,7 @@ description: >
   encoding artifacts (NBSP, mojibake), broken markdown, CMS migration debris,
   and typography issues. Modes: default (SAFE only), --auto (SAFE+MODERATE),
   --dry-run, --finding CC1-nbsp-present, --fix-type encoding-strip.
+category: Content
 codesift_tools:
   always:
     - analyze_project

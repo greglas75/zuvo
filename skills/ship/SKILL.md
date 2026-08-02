@@ -5,6 +5,7 @@ description: >
   changelog generation, git tag, push or PR. Auto-detects branch context (direct
   push on main, PR on feature branch). Scales review depth by diff size.
   Flags: --full, --no-bump, --no-tag, --dry-run, patch/minor/major.
+category: Release
 codesift_tools:
   always:
     - analyze_project

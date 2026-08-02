@@ -4,6 +4,7 @@ description: >
   Engineering retrospective from git metrics. Reports deployment frequency,
   release cycle span, churn hotspots, backlog health. Outputs narrative report
   with 3+ actionable items. Flags: --since, --path, explicit range argument.
+category: Release
 codesift_tools:
   always:
     - analyze_project

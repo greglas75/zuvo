@@ -1,6 +1,7 @@
 ---
 name: context-audit
 description: "Context health monitoring. Analyzes include loading trends from context-metrics.log, audits CLAUDE.md/rules/settings for bloat, scores setup health. Modes: trend (default), full (with /context data), baseline (save snapshot)."
+category: Utility
 ---
 
 # zuvo:context-audit — Context Health Monitor

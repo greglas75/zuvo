@@ -11,6 +11,7 @@ description: >
   with critical gates. Distinct from infra-audit (live host daemon over SSH) and
   ci-audit (Docker build speed in the pipeline).
   Switches: zuvo:container-audit full | [path] | --static | --scan | --dockerfile <p> | --compose <p> | --quick | --k8s | --persist-backlog
+category: Infra audits
 codesift_tools:
   always:
     - analyze_project

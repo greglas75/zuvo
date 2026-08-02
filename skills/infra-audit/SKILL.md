@@ -1,6 +1,7 @@
 ---
 name: infra-audit
 description: "Server / infrastructure security audit of LIVE hosts over SSH (12 dimensions IS1-IS12: SSH hardening, accounts, network exposure, TLS, firewall, patch posture, logging, web services, Docker, databases, filesystem, host secrets). Deterministic collector + parallel LLM analysts; dual-vantage (internal SSH + external via proxy); per-target authorization gate; consent-gated tool installs; read-only with one consented exception. Flags: --host user@addr[:port] (single ad-hoc host), --quick (IS1+IS3+IS4, <3 min/host), --dimensions IS1,IS3,… (explicit subset), --no-install (hard read-only), --dry-run (print commands, no connections), --resume <run-dir> (continue interrupted run), --proxy <url> (external-scan proxy), --external direct (proxyless external scan, polite timing), --skip-external (internal vantage only), --deep-scan (nmap -p- full port sweep), --confirm-targets <sha256> (non-interactive authorization)."
+category: Infra audits
 codesift_tools:
   always:
     - plan_turn

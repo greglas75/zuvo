@@ -7,6 +7,7 @@ description: >
   and pipeline speed. Primary support: GitHub Actions. Detection-level: GitLab CI,
   CircleCI.
   Switches: zuvo:ci-audit full | [path] | --speed-only | --security-only
+category: Infra audits
 codesift_tools:
   always:
     - analyze_project

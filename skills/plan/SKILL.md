@@ -1,6 +1,7 @@
 ---
 name: plan
 description: "Analyzes architecture, selects patterns, assesses testability, then decomposes work into ordered TDD tasks with exact verification commands and explicit acceptance mapping. Works from an approved spec (zuvo:brainstorm output) or directly from a user-provided description."
+category: Pipeline
 codesift_tools:
   always:
     - analyze_project

@@ -9,6 +9,7 @@ description: >
   assessment (ADA Title II, EAA, Section 508). Critical gates on keyboard (A2)
   and contrast (A4). Flags: [path] | full | --live-url <url> | --quick |
   --fix | --standard AA|AAA | --legal ada|eaa|508.
+category: Accessibility
 codesift_tools:
   always:
     - analyze_project
