@@ -11,7 +11,14 @@ S="$ROOT/shared/includes/session-state.md"
 # a permanently-red assertion teaches the suite to be ignored, which is worse than no assertion.
 # 2026-07-30 re-baseline: 371 = 347 (task base) + the zuvo/ output-location contract (1a9e94f)
 # + the plan→execute active-plan dialect contract (1428d2c, a format git hooks parse).
-BASE=371   # verified 2026-07-30; see ratchet note above before raising
+# 2026-08-02 re-baseline: 482 = 377 (tree at the time) + 105 for the task-telemetry.jsonl file
+# contract, which is a whole new state file and needs a whole new section: the 19-key schema table
+# (the SSOT a test diffs the writer against), APPEND-ONLY stated against execution-state.md's
+# opposite "full rewrite" rule, and — added by cross-model adversarial review, all three
+# all-providers-agree findings — the flock/parallel-batch rule, the reader's skip-a-malformed-line
+# rule, and the no-`pwd`-fallback output-root rule. Prose was tightened in the same pass; the
+# section is a contract table plus one paragraph per rule, not narrative.
+BASE=482   # verified 2026-08-02; see ratchet note above before raising
 # Plan estimate +20; raised to +25 after adversarial iter2 MANDATED two
 # correctness wordings the estimate didn't foresee: (a) retro-session-id is
 # the RUN identity inherited unchanged on resume — NOT the per-process

@@ -807,6 +807,159 @@ Verify: [command -> exit code]
 
 Then print the task telemetry block from `Required Telemetry`.
 
+**Then persist it.** Printing alone loses it — the block is chat output and nothing downstream can
+read it. Append one JSON line to `zuvo/context/task-telemetry.jsonl` (contract:
+`../../shared/includes/session-state.md` → `zuvo/context/task-telemetry.jsonl`).
+
+**This append is a DIAGNOSTIC, never a gate.** If it fails — for any reason, including a missing
+`python3` — print the `[WARN]` line and continue to Step 10. It is never a failed test, never a
+`BLOCKED_*` state, and it never halts or retries the task. Do not add a retry, a preflight check, or
+an abort on failure. (Stated here and again in `session-state.md` on purpose: the file it sits next
+to, `execution-state.md`, is blocking-by-contract, and that default must not bleed across.)
+
+**Why here and not in Step 9 or Step 10.** Step 9 is blocking-by-contract in four separate places —
+a must-never-block write placed inside it invites exactly the harden-into-a-gate drift above. Step 10
+is explicitly best-effort maintenance that may be skipped entirely, so a write there would silently
+lose records. Accepted cost of this placement: Step 10 can downgrade `codesift` to `index-failed`
+*after* the line is written, and the file is append-only, so that downgrade is not back-written. Do
+not "fix" that by moving the write to Step 10.
+
+Fill each `TT_*` value from the `[TELEMETRY]` block you just printed. Every value is passed to
+`python3` as its **own `argv` element** — the shell quotes exactly once and python never re-parses,
+so a task name containing `"`, a `verify` string containing `=` and spaces, or an
+`acceptance-verified` entry containing `@` all survive verbatim (**CQ31**: argv array, never an
+interpolated command string).
+
+Three value rules that are easy to get wrong:
+
+- **`TT_ACCEPTANCE_VERIFIED` is ONE JSON array literal** — `'["AC2@zuvo/proofs/task-4-report.md"]'`,
+  not a comma-separated string. An AC id or an artifact path may legally contain a comma, and
+  splitting on `,` silently turns one element into two. (Same rule as `degraded:<desc>` in
+  `failure-strategy`: never tokenise a value that can contain the separator.) Empty is `[]`.
+- **`TT_TASK` and `TT_BACKLOG_ADDS` default to `-1`, not `0`.** Both are ints, so a forgotten
+  substitution still parses and the record still lands (never a gate) — but `-1` is an impossible
+  value a reader can spot, where `0` would read as "task 0, zero backlog adds" and lie plausibly.
+- **The output root is `$ZUVO_OUTPUT_DIR`, else the git root** — the same derivation
+  `execution-state.md` uses. There is deliberately **no `pwd` fallback**: if neither resolves, the
+  block takes the `[WARN]` path instead of dropping telemetry into whatever directory the shell
+  happens to sit in.
+
+```bash
+# >>> zuvo:task-telemetry
+TT_AT="${TT_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+TT_SESSION_ID="${TT_SESSION_ID:-<session-id>}"
+TT_RETRO_SESSION_ID="${TT_RETRO_SESSION_ID:-<retro-session-id>}"
+TT_TASK="${TT_TASK:--1}"                                 # int; -1 = unsubstituted sentinel
+TT_TASK_NAME="${TT_TASK_NAME:-<task-name>}"
+TT_SURFACE="${TT_SURFACE:-<surface>}"
+TT_MODE="${TT_MODE:-<mode>}"
+TT_FALLBACK_PATH="${TT_FALLBACK_PATH:-none}"
+TT_WRITER_MODEL="${TT_WRITER_MODEL:-<writer-model>}"
+TT_REVIEWER_ROUTE="${TT_REVIEWER_ROUTE:-<reviewer-route>}"
+TT_IMPLEMENTER_STATUS="${TT_IMPLEMENTER_STATUS:-<implementer-status>}"
+TT_SPEC_REVIEW="${TT_SPEC_REVIEW:-<spec-review>}"
+TT_QUALITY_REVIEW="${TT_QUALITY_REVIEW:-<quality-review>}"   # FULL per-file string, never decomposed
+TT_ADVERSARIAL="${TT_ADVERSARIAL:-<adversarial>}"
+TT_VERIFY="${TT_VERIFY:-<verify>}"
+TT_ACCEPTANCE_VERIFIED="${TT_ACCEPTANCE_VERIFIED:-[]}"   # ONE JSON array literal, never comma-split
+TT_CODESIFT="${TT_CODESIFT:-<codesift>}"
+TT_BACKLOG_ADDS="${TT_BACKLOG_ADDS:--1}"                 # int; -1 = unsubstituted sentinel
+TT_FAILURE_STRATEGY="${TT_FAILURE_STRATEGY:-halt}"       # defaults to halt, never null
+# Output root: the SAME derivation execution-state.md uses (report-output-location.md).
+# NO `pwd` fallback on purpose — telemetry written into whatever directory the shell
+# happens to sit in is worse than telemetry not written, so an unresolvable root
+# yields an empty path and the python tail below turns that into the documented [WARN].
+ZUVO_DIR="${ZUVO_OUTPUT_DIR:-}"
+if [ -z "$ZUVO_DIR" ]; then
+  _TT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -n "$_TT_ROOT" ]; then ZUVO_DIR="$_TT_ROOT/zuvo"; fi
+fi
+TT_PATH="${ZUVO_DIR:+$ZUVO_DIR/context/task-telemetry.jsonl}"
+python3 - \
+  "$TT_AT" "$TT_SESSION_ID" "$TT_RETRO_SESSION_ID" "$TT_TASK" "$TT_TASK_NAME" \
+  "$TT_SURFACE" "$TT_MODE" "$TT_FALLBACK_PATH" "$TT_WRITER_MODEL" "$TT_REVIEWER_ROUTE" \
+  "$TT_IMPLEMENTER_STATUS" "$TT_SPEC_REVIEW" "$TT_QUALITY_REVIEW" "$TT_ADVERSARIAL" \
+  "$TT_VERIFY" "$TT_ACCEPTANCE_VERIFIED" "$TT_CODESIFT" "$TT_BACKLOG_ADDS" \
+  "$TT_FAILURE_STRATEGY" "$TT_PATH" <<'PY' \
+  || echo "[WARN] task-telemetry append failed — continuing (diagnostic file, never a gate)"
+import json, os, sys
+
+# fcntl is POSIX-only; import it defensively so a platform without it degrades
+# to an unlocked append instead of failing the import and losing the record.
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+
+# Schema SSOT: shared/includes/session-state.md -> zuvo/context/task-telemetry.jsonl.
+# Key list and order must match that table exactly; a test diffs the two.
+K = ["at", "session-id", "retro-session-id", "task", "task-name", "surface",
+     "mode", "fallback-path", "writer-model", "reviewer-route",
+     "implementer-status", "spec-review", "quality-review", "adversarial",
+     "verify", "acceptance-verified", "codesift", "backlog-adds",
+     "failure-strategy"]
+
+args = sys.argv[1:]
+if len(args) != len(K) + 1:
+    raise SystemExit("task-telemetry: expected %d argv values + path, got %d"
+                     % (len(K), len(args)))
+path = args[-1]
+# An empty path means the output root could not be resolved (no ZUVO_OUTPUT_DIR and
+# no git root). Refuse rather than invent a location -> the shell tail WARNs.
+if not path:
+    raise SystemExit("task-telemetry: could not resolve the zuvo output root")
+rec = dict(zip(K, args[:-1]))
+
+# Typed fields. int() on a non-numeric placeholder raises -> the shell tail WARNs.
+# The -1 wrapper defaults are deliberate: they parse (so an unsubstituted record
+# still lands, per the never-a-gate contract) yet are impossible values, so a
+# reader can spot them. A 0 default would read as a real "task 0 / 0 adds".
+rec["task"] = int(rec["task"])
+rec["backlog-adds"] = int(rec["backlog-adds"])
+
+# ONE JSON array value, never `split(",")`: an AC id or an artifact path may legally
+# contain a comma, and splitting silently turns one element into two. Accepted cost
+# of the [] fallback: a malformed value loses its content rather than aborting the
+# whole record — this is a diagnostic, and dropping 19 fields to preserve 1 is worse.
+try:
+    _ac = json.loads(rec["acceptance-verified"] or "[]")
+except (ValueError, TypeError):
+    _ac = []
+rec["acceptance-verified"] = [str(s) for s in _ac] if isinstance(_ac, list) else []
+rec["failure-strategy"] = rec["failure-strategy"] or "halt"
+
+line = json.dumps(rec, ensure_ascii=False) + "\n"
+
+# open(...,"a") raises FileNotFoundError when the parent is missing, which would
+# degrade this to "always WARN, never persists" on a fresh checkout.
+os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+
+# LOCK_EX because zuvo:execute dispatches tasks in PARALLEL BATCHES — two per-task
+# appends can hit this file at the same moment. Unlocked, their bytes interleave
+# inside one physical line and BOTH records are lost to a json.loads reader. The
+# lock is held across write+flush+fsync, so a crash can at worst leave a truncated
+# TRAILING line (readers skip it; see session-state.md "Reader contract").
+# A lock failure is intentionally NOT caught: it propagates to the `|| echo` tail as
+# the documented [WARN], exactly like every other failure here. Never a gate.
+# Retention: unbounded by contract — see session-state.md "Retention".
+# fcntl is None on a platform where it could not be imported (see the try/except
+# above); the record is still persisted unlocked there, since a lost record is
+# worse than a theoretically interleavable one and a single-writer platform
+# cannot race with itself anyway.
+with open(path, "a", encoding="utf-8") as fh:
+    if fcntl is not None:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+    try:
+        fh.write(line)
+        fh.flush()
+        os.fsync(fh.fileno())
+    finally:
+        if fcntl is not None:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+PY
+# <<< zuvo:task-telemetry
+```
+
 ### Step 10: Update Project Context + Optional CodeSift Reindex
 
 If CodeSift is available, call `index_file(path)` for each created or modified file after the task commit. This is maintenance, not a release gate.
