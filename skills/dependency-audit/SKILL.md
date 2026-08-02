@@ -2,7 +2,7 @@
 name: dependency-audit
 description: >
   Dependency health and internal coupling audit for Node.js/TypeScript projects.
-  10 dimensions: supply chain vulnerabilities, freshness, dead dependencies,
+  11 dimensions: supply chain CVEs, supply-chain integrity (typosquat/dependency-confusion/malicious-package/SBOM), freshness, dead dependencies,
   license compliance, bundle weight, circular dependencies, coupling metrics,
   architecture boundary violations, barrel file health, and change coupling.
   Tiered tooling with graceful degradation.
@@ -50,8 +50,7 @@ codesift_tools:
 
 # zuvo:dependency-audit
 
-Audit external dependency health and internal module coupling. Scores 10
-dimensions with tiered tooling -- gracefully degrades when specialized tools
+Audit external dependency health and internal module coupling. Scores 11 dimensions with tiered tooling -- gracefully degrades when specialized tools
 are unavailable.
 
 **Scope:** Node.js / TypeScript projects (npm, pnpm, yarn, bun).
@@ -98,9 +97,9 @@ If any file is MISSING, STOP. Do not proceed from memory.
 
 | Token | Behavior |
 |-------|----------|
-| _(empty)_ or `full` | All 10 dimensions, scope = project root |
+| _(empty)_ or `full` | All 11 dimensions, scope = project root |
 | `[path]` | Scope to a package or directory (see scope rules below) |
-| `--supply-chain` | D1 only |
+| `--supply-chain` | D1 (CVE) + D11 (integrity) only |
 | `--coupling` | D6, D7, D8, D9 only |
 | `--dead` | D3 only |
 | `--bundle` | D5 only |
@@ -109,7 +108,7 @@ If any file is MISSING, STOP. Do not proceed from memory.
 
 **Path scope rules:**
 
-| Path points to | Manifest found? | D1-D5 (external) | D6-D10 (internal) |
+| Path points to | Manifest found? | D1-D5, D11 (external) | D6-D10 (internal) |
 |----------------|-----------------|-------------------|---------------------|
 | Package root (own `package.json`) | Yes | Score for this package | Score within path |
 | Subdirectory within a package | Inherited from parent | Mark INHERITED | Score within path |
@@ -171,7 +170,7 @@ Step 3: Validate package manager works: <pm> ls --json 2>&1
 Decision matrix:
   | Manifest | Lockfile | node_modules | Action |
   |----------|----------|-------------|--------|
-  | Yes | Yes | Yes | Full audit D1-D10 |
+  | Yes | Yes | Yes | Full audit D1-D11 |
   | Yes | Yes | No | STOP: "Run <pm> install first." |
   | Yes | No | Yes | D1 capped at 6/15. D1.5 = CRITICAL. |
   | Yes | No | No | STOP: "No lockfile and no node_modules." |
@@ -255,7 +254,7 @@ Search for import/export statements to build an approximate dependency graph.
 
 ---
 
-## Phase 2: Dimension Analysis (D1-D10)
+## Phase 2: Dimension Analysis (D1-D11)
 
 ### Agent Dispatch
 
@@ -265,7 +264,7 @@ Refer to `env-compat.md` for the dispatch pattern.
 
 | Agent | Dimensions | Input |
 |-------|-----------|-------|
-| Supply Chain Scanner | D1, D4 | PM audit, lockfile, license data |
+| Supply Chain Scanner | D1, D4, D11 | PM audit, lockfile, license data, OSV/Socket + typosquat/confusion/postinstall heuristics |
 | Coupling Analyzer | D6, D7, D8, D9 | dep-cruiser/madge output |
 | Freshness Checker | D2, D3, D5 | PM outdated, knip output |
 
@@ -373,6 +372,28 @@ git log --name-only --pretty=format:"---COMMIT---" --since="6 months ago" -- TAR
 | Shotgun surgery | Feature change touches 1-3 files | Every feature touches 10+ files | HIGH |
 | God module churn | Hot files are small and well-tested | Largest file is also most-changed | CRITICAL |
 
+### D11: Supply-Chain Integrity -- Weight 10, Max 10
+
+Distinct from D1 (known-CVE vulnerabilities) and D4 (licence): D11 is about whether a dependency is
+**the package you think it is, from a trustworthy source, with a verifiable provenance**. Scan the
+manifest + lockfile.
+
+| Check | Good | Bad | Severity |
+|-------|------|-----|----------|
+| Typosquatting | Package names match the intended, popular library | A near-miss name (`reqeust`, `crossenv`, `lodahs`, `discord.js-selfbot`) — likely typosquat | CRITICAL |
+| Dependency confusion | Internal/scoped packages pinned to the private registry; scope reserved on the public registry | An unscoped internal name also resolvable from the public npm/PyPI (attacker can publish a higher version) | CRITICAL |
+| Malicious-package signals | No install-time exfiltration | `postinstall`/`preinstall` running `curl`/`wget`/base64-decoded payloads, or a dep flagged by OSV/Socket/npm advisories as malware — **after excluding well-known build tools per the Phase-3 False Positive Filters (esbuild/sharp/prisma/@swc/core legitimately use postinstall)**; a lifecycle script alone is not malware | CRITICAL |
+| Lockfile integrity | Committed lockfile with integrity hashes; CI uses `npm ci`/`--frozen-lockfile` | No lockfile, or install resolves floating versions in CI | HIGH |
+| Provenance / signing | Releases verified (npm provenance, Sigstore/cosign, SLSA attestation) for critical deps | No provenance on any dependency; unsigned artifacts | MEDIUM |
+| SBOM | An SBOM (CycloneDX/SPDX) is generated and current | No SBOM — cannot answer "am I affected by X" fast | MEDIUM |
+
+Tools (tiered, graceful degradation): OSV-Scanner / `npm audit signatures` / Socket CLI when present;
+otherwise heuristic name-distance + `postinstall` grep + lockfile presence. Findings cite the manifest
+`package.json:LINE` / lockfile entry. `--supply-chain` scopes the run to D1 + D11.
+
+Critical gate: ANY confirmed typosquat, dependency-confusion exposure, or malicious-package signal in
+production dependencies triggers FAIL (finding-presence, whatever the numeric score).
+
 ---
 
 ## Phase 3: Verification and Scoring
@@ -399,6 +420,7 @@ git log --name-only --pretty=format:"---COMMIT---" --since="6 months ago" -- TAR
 | D4 | a GPL-family licence in a closed-source production app |
 | D6 | a runtime circular dependency causing an initialization bug |
 | D8 | a secret leaked to the client bundle |
+| D11 | a confirmed typosquat, dependency-confusion exposure, or malicious-package signal in production deps |
 
 **These gates fire on the FINDING, not on an aggregate score of zero.** Read as "the dimension
 scored 0" they are nearly unreachable, because every one of them spreads several checks over its
@@ -464,10 +486,11 @@ Save to: `zuvo/audits/dependency-audit-[YYYY-MM-DD].md` — at the **project roo
 | D8 | Architecture | [N] | 12 | dep-cruiser / grep | |
 | D9 | Barrel Health | [N] | 7 | grep | |
 | D10 | Change Coupling | [N] | 8 | git log | |
+| D11 | Supply-Chain Integrity | [N] | 10 | OSV / Socket / heuristic | |
 | **Total** | | **[N]** | **[M]** | | |
 
 ## Critical Gate Status
-[D1, D4, D6, D8 -- PASS/FAIL per gate]
+[D1, D4, D6, D8, D11 -- PASS/FAIL per gate]
 
 ## Delete These Tomorrow
 [Unused deps that can be removed with zero code changes]
@@ -498,6 +521,9 @@ Save to: `zuvo/audits/dependency-audit-[YYYY-MM-DD].md` — at the **project roo
 RECOMMENDED NEXT ACTION
 ------------------------------------
 D1 CRITICAL (CVE)           -> npm audit fix or manual upgrade
+D11 typosquat/malicious pkg -> REMOVE the package immediately + rotate any exposed creds; report to registry
+D11 dependency confusion    -> for an UNSCOPED internal name: rename to a private @scope (or defensively publish a placeholder on the public registry) + pin the private registry in .npmrc; for a scoped one: reserve the @scope publicly
+D11 no lockfile/provenance  -> commit lockfile, enable `npm ci`, add SBOM (CycloneDX) + provenance
 D4 GPL in production        -> replace with MIT/Apache alternative
 D6 runtime circular dep     -> zuvo:refactor [module path]
 D8 boundary violation       -> zuvo:refactor [violating file]
@@ -520,7 +546,7 @@ COMPLETION GATE CHECK
 [ ] D1 supply chain: CRITICAL/HIGH CVEs checked for reachability
 [ ] D4 license: GPL/AGPL in production flagged
 [ ] D6 circular dependency detection ran
-[ ] Critical gates printed: D1, D4, D6, D8
+[ ] Critical gates printed: D1, D4, D6, D8, D11
 [ ] "Delete These Tomorrow" section present
 [ ] Report saved to zuvo/audits/
 [ ] Run: line printed and appended to log
