@@ -1,11 +1,11 @@
 schema_version: 1
 
-last_synced: "2026-03-29"
+last_synced: "2026-08-02"
 
 meta:
   slug: worktree
   title: "worktree — Safe Branch Isolation Before Risky Operations"
-  description: "Create or finish git worktrees with 2 modes and 4 finish options. Verifies baseline tests, gitignore coverage, and dependency setup in under 60 seconds."
+  description: "Create, finish, or prune git worktrees. Placed outside the repo so indexers and clone scans stay accurate. Verifies baseline tests and setup in under 60s."
   category: utility
   og_image: /og/skills/worktree.png
 
@@ -20,14 +20,14 @@ seo:
 
 stats:
   - label: "Modes"
-    value: "2"
-    detail: "CREATE and FINISH"
+    value: "3"
+    detail: "CREATE, FINISH and PRUNE"
   - label: "Finish Options"
     value: "4"
     detail: "Merge, Push+PR, Keep, Discard"
   - label: "Safety Rules"
-    value: "7"
-    detail: "No force-push, no main deletion, tests before merge"
+    value: "9"
+    detail: "No force-push, no main deletion, tests before merge, no forced prune"
   - label: "Package Managers"
     value: "10"
     detail: "npm, yarn, pnpm, bun, pip, poetry, cargo, go, bundle, composer"
@@ -35,15 +35,18 @@ stats:
 problem: |
   Working directly on a branch in the main checkout risks contaminating ongoing work with experimental
   changes, and makes it hard to switch context cleanly. Git worktrees solve this by placing each branch
-  in its own directory — but setting one up correctly (gitignore, dependency install, baseline tests)
-  takes multiple manual steps that are easy to skip. `/worktree` automates the full CREATE-to-FINISH
-  lifecycle with safety checks at every step.
+  in its own directory — but setting one up correctly (location, dependency install, baseline tests)
+  takes multiple manual steps that are easy to skip, and nothing ever cleans them up afterwards. Put
+  them inside the repo as `.worktrees/` and every filesystem-level tool — code indexers, cloc,
+  duplication scans, glob-based test discovery — counts every file N+1 times. `/worktree` automates the
+  full CREATE-to-FINISH lifecycle with safety checks at every step, defaults to a sibling directory
+  outside the repo, and adds a PRUNE mode that reclaims finished worktrees.
 
 how_it_works:
   - step: "Mode Detection"
-    description: "Automatically detects whether the current directory is inside a worktree (FINISH) or the main checkout (CREATE). Respects explicit user override."
-  - step: "CREATE — Directory + gitignore"
-    description: "Checks for an existing .worktrees/ convention or CLAUDE.md preference. Adds the worktree directory to .gitignore if not already covered and commits the change."
+    description: "Automatically detects whether the current directory is inside a worktree (FINISH) or the main checkout (CREATE), and honors an explicit create/finish/prune override."
+  - step: "CREATE — Directory outside the repo"
+    description: "Defaults to a sibling ../<repo>-worktrees/ so nested checkouts never pollute indexers or duplication scans. Honors $ZUVO_WORKTREE_DIR, a CLAUDE.md preference, or an existing layout — warning when that layout is nested. No .gitignore entry is needed for the sibling default."
   - step: "CREATE — Branch + Setup"
     description: "Creates the worktree on a new branch, then auto-detects the dependency system (10 package managers supported) and runs the appropriate install command."
   - step: "CREATE — Baseline Verification"
@@ -52,6 +55,8 @@ how_it_works:
     description: "Reports branch name, commits ahead of base, and uncommitted changes. Blocks all finish options if uncommitted changes exist."
   - step: "FINISH — Completion"
     description: "User selects 1 of 4 options: Merge Locally (runs tests, merges, removes worktree), Push+PR (pushes, creates gh pr, removes worktree), Keep As-Is (preserves everything), or Discard (requires typed confirmation)."
+  - step: "PRUNE — Reclaim and relocate"
+    description: "Reconciles git bookkeeping, then classifies every live worktree as reclaimable (clean and merged into base), idle (clean, unmerged, older than 30 days) or active. Removes only the reclaimable ones — never with --force — migrates nested worktrees out of the repo with git worktree move, and flags when the code index needs rebuilding."
 
 output:
   artifact: "No file artifact — worktree lifecycle managed in-place"
@@ -62,6 +67,7 @@ output:
     - "Baseline test pass/fail count"
     - "FINISH state summary (commits ahead, clean/dirty)"
     - "Completion report (merge result, PR URL, or preserved path)"
+    - "PRUNE report (records cleared, reclaimed, skipped, idle, active, layout, re-index flag)"
 
 examples:
   - title: "Create a worktree for a new feature"
@@ -69,8 +75,9 @@ examples:
     command: "zuvo:worktree"
     result: |
       Mode: CREATE (current dir is main checkout)
-      Directory: .worktrees/ (existing convention detected)
-      .gitignore: already covers .worktrees/ ✓
+      Worktrees in this repo: 0 live (0 reclaimable, 0 idle >30d). Layout: sibling.
+      Directory: ../myapp-worktrees/ (default — outside the repo)
+      .gitignore: not needed (worktree dir is outside the repo) ✓
       Branch: feat/user-notifications
 
       Running: npm ci
@@ -80,7 +87,7 @@ examples:
       Baseline: 142/142 passing ✓
 
       Worktree created.
-        Path:   /Users/dev/myapp/.worktrees/feat/user-notifications
+        Path:   /Users/dev/myapp-worktrees/feat/user-notifications
         Branch: feat/user-notifications
         Base:   main @ a4ed959
         Setup:  npm ci (142 packages)
@@ -107,6 +114,22 @@ examples:
       PR created: https://github.com/org/repo/pull/47
 
       PR created: https://github.com/org/repo/pull/47. Worktree removed. Branch preserved on remote.
+
+  - title: "Reclaim worktrees that piled up inside the repo"
+    type: invocation
+    command: "zuvo:worktree prune"
+    result: |
+      Mode: PRUNE
+      git worktree prune -v: 3 records cleared (directories already gone)
+
+      WORKTREE PRUNE COMPLETE
+        Records cleared:  3 (directories already gone)
+        Reclaimed:        6  k4-export, k6-stats, t12-result-export, t15-slice-12, t15-slice-17, test-aggregation
+        Skipped:          1  .worktrees/security-audit-fixes — untracked .env present
+        Idle (>30d):      2  open-end-fraud-tier0 — 6 weeks ago, k7-archive — 5 weeks ago
+        Active:           4
+        Layout:           migrated 7 out of .worktrees/ → ../rs_be-worktrees/
+        Re-index:         required — 94 stale paths from .worktrees/ still in the code index
 
 when_to_use: |
   Use `/worktree` at the start of a plan execution (`zuvo:execute`) to isolate work from the main
@@ -138,6 +161,10 @@ faq:
     a: "Typically under 60 seconds: branch creation is instant, dependency install matches your package manager speed (npm ci on a cached node_modules is under 10 seconds), and baseline test run time depends on your suite size."
   - q: "What happens if I have uncommitted changes when I run FINISH?"
     a: "All 4 FINISH options are blocked until uncommitted changes are resolved. /worktree will report the uncommitted file count and ask you to commit or stash before proceeding. This prevents accidental work loss across all completion paths."
+  - q: "Why does zuvo:worktree create worktrees outside the repo instead of in .worktrees/?"
+    a: "Because a worktree nested inside the repo is a second full copy of the same files living in the tree. .gitignore hides it from git and from nothing else — code indexers, cloc, duplication scans, glob-based test discovery and Docker build context all still walk it, so every file is counted N+1 times. Indexers that resolve a repo by path ancestry attribute edits made in the worktree to the parent repo, silently filling its index with duplicates. A sibling ../<repo>-worktrees/ has no ancestor relationship with the repo root, so the problem cannot occur — and no .gitignore entry is needed."
+  - q: "What does PRUNE actually delete?"
+    a: "Only worktrees that are both clean (no uncommitted changes) and fully merged into the base branch, verified against the local and the remote-tracking base. Those carry zero data risk — every commit already exists in base. Idle worktrees (clean but unmerged) are reported, never removed, because unmerged commits are work. Prune never passes --force, so git itself refuses to remove anything holding untracked files such as a local .env."
   - q: "Can zuvo:worktree push to a protected main branch?"
     a: "No — a safety rule prevents creating a worktree directly on main or master without explicit typed confirmation. Force-push is also blocked regardless of branch. For normal feature branches, Option 2 (Push+PR) pushes and opens a PR without force-pushing."
 
@@ -148,6 +175,12 @@ arguments:
     description: "Explicitly run CREATE mode regardless of current directory."
   - flag: "finish"
     description: "Explicitly run FINISH mode. Prompts for completion option (Merge/PR/Keep/Discard)."
+  - flag: "prune"
+    description: "Explicitly run PRUNE mode: reclaim merged-and-clean worktrees, report idle ones, migrate nested worktrees out of the repo."
+  - flag: "$ZUVO_WORKTREE_DIR"
+    description: "Env var. Overrides the default ../<repo>-worktrees/ location for new worktrees."
+  - flag: "$ZUVO_WORKTREE_IDLE_DAYS"
+    description: "Env var, default 30. Age at which a clean unmerged worktree is reported as idle by PRUNE."
 
 checks: null
 
@@ -155,9 +188,11 @@ frameworks: []
 
 modes:
   - name: "CREATE"
-    description: "Set up a new worktree: directory check, gitignore, branch creation, dependency install, baseline test."
+    description: "Set up a new worktree: accumulation precheck, sibling directory outside the repo, branch creation, dependency install, baseline test."
   - name: "FINISH"
     description: "Complete work in current worktree: summarize state, choose from Merge / Push+PR / Keep / Discard."
+  - name: "PRUNE"
+    description: "Reclaim finished worktrees: bookkeeping reconcile, reclaimable/idle/active classification, non-forced removal, nested-to-sibling migration, index-rebuild flag."
 
 agents: null
 
@@ -166,7 +201,7 @@ benchmarks:
     type: coverage
     verifiable: true
     source: "SKILL.md Step 4 — dependency system detection table"
-  - claim: "7 safety rules enforced: no force-push, no main deletion, test before merge, typed confirmation for discard"
+  - claim: "9 safety rules enforced: no force-push, no main deletion, test before merge, typed confirmation for discard, no worktree nested in the repo by default, no forced prune"
     type: coverage
     verifiable: true
     source: "SKILL.md Safety Rules section"

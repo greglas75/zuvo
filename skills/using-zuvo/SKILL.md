@@ -109,6 +109,7 @@ This is the SOFT top layer — it sets intent. The actual **enforcement is deter
 | Create a presentation | `zuvo:presentation` |
 | Respond to code review feedback | `zuvo:receive-review` |
 | Isolate work in a git worktree | `zuvo:worktree` |
+| Clean up accumulated / stale worktrees, or move nested `.worktrees/` out of the repo | `zuvo:worktree prune` |
 | Incident response, postmortem, root cause analysis | `zuvo:incident` |
 | Evaluate a zuvo SKILL against its eval corpus / compare skill versions (dev, needs `evals/`) | `zuvo:skill-eval` |
 

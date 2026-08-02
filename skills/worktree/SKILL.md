@@ -2,8 +2,9 @@
 name: worktree
 description: >
   Isolate work in a git worktree. Activates when the user needs branch isolation
-  before executing a plan, wants a clean environment for a feature, or is ready
-  to finish work in an existing worktree.
+  before executing a plan, wants a clean environment for a feature, is ready
+  to finish work in an existing worktree, or wants to reclaim worktrees that
+  accumulated and are now polluting filesystem-level measurement.
 codesift_tools:
   always:
     - analyze_project
@@ -17,41 +18,72 @@ codesift_tools:
 
 Git worktree isolation with structured completion options.
 
-Two modes: **CREATE** (set up a new worktree) and **FINISH** (wrap up work in the current worktree).
+Three modes: **CREATE** (set up a new worktree), **FINISH** (wrap up work in the current worktree), and **PRUNE** (reclaim finished worktrees and fix a nested layout).
 
 Detect mode automatically:
+- If the user explicitly says "create", "finish", or "prune"/"cleanup", honor that regardless.
 - If the current directory IS inside a worktree (check `git worktree list`), default to FINISH.
 - If the current directory is the main checkout, default to CREATE.
-- If the user explicitly says "create" or "finish", honor that regardless.
 
 ---
 
 ## CREATE Mode
 
+### Step 0: Accumulation Precheck
+
+Run PRUNE steps 1-2 (bookkeeping reconcile + classification) in report-only form. Removing nothing, print one line:
+
+```
+Worktrees in this repo: <n> live (<n> reclaimable, <n> idle >30d). Layout: <sibling | NESTED>.
+```
+
+If reclaimable or nested worktrees exist, point at `zuvo:worktree prune` and continue with CREATE. Never block CREATE on cleanup.
+
 ### Step 1: Determine Worktree Directory
 
-Check these sources in order. Use the first match:
+Compute the default first -- it is a **sibling of the repo, never a child**:
 
-1. **Existing convention** -- Run `ls -d .worktrees 2>/dev/null`. If `.worktrees/` exists at repo root, use it.
-2. **Project instructions preference** -- Search project `AGENTS.md` or `CLAUDE.md` for a `worktree` or `worktrees` section that declares a preferred directory path.
-3. **Ask the user** -- Present two options:
-   - `.worktrees/` (recommended, keeps repo root clean)
-   - Custom path
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+REPO_NAME=$(basename "$REPO_ROOT")
+DEFAULT_WTDIR="$(dirname "$REPO_ROOT")/${REPO_NAME}-worktrees"
+```
+
+Resolution order. Use the first match, do NOT ask the user:
+
+1. **`$ZUVO_WORKTREE_DIR`** if set -- absolute path, or relative to `$REPO_ROOT`.
+2. **Project instructions preference** -- a `worktree`/`worktrees` section in the project `AGENTS.md` or `CLAUDE.md` that declares a directory. If the declared path is inside `$REPO_ROOT`, honor it but emit the nested-layout warning below.
+3. **Existing sibling** -- `$DEFAULT_WTDIR` already exists.
+4. **Existing nested directory (LEGACY)** -- `.worktrees/`, `worktrees/`, or `.claude/worktrees/` inside `$REPO_ROOT`. Use it so worktrees for one repo do not end up split across two locations, but you MUST emit the nested-layout warning and offer the PRUNE-mode migration in the same turn.
+5. **Default** -- `$DEFAULT_WTDIR`. Create it with `mkdir -p`.
 
 Store the chosen directory as `WTDIR`.
 
+**Why the default is a sibling, not `.worktrees/` inside the repo.** A nested worktree is a second full checkout of the same files living inside the tree. `.gitignore` hides it from git and from nothing else -- every filesystem-level consumer still walks it: code indexers, `find`/`rg`, cloc, test globs, bundler entry scans, Docker build context. Worse, an indexer that resolves a repo from a path resolves a nested worktree to its **path ancestor**, i.e. the parent repo, so edits made inside the worktree land in the parent's index (this is CodeSift hint `H19`). Measured on one repo 2026-08-02: 94 of 916 files in the index were duplicate copies from `.worktrees/`, which corrupted clone detection, boundary checks and role classification. A sibling directory has no ancestor relationship with the repo root, so none of it happens -- and no `.gitignore` entry is needed at all.
+
+**Nested-layout warning** (emit verbatim when `WTDIR` resolves inside `$REPO_ROOT`):
+
+```
+NESTED WORKTREE LAYOUT -- measurement is unreliable in this repo.
+  <WTDIR> is inside the repo, so filesystem-level tools count every file N+1 times
+  (indexers, cloc, duplication scans, glob-based test discovery).
+  Fix: zuvo:worktree prune  -- migrates existing worktrees to <DEFAULT_WTDIR>.
+```
+
 ### Step 2: Verify .gitignore Coverage
 
-Check whether `WTDIR` is covered by `.gitignore`:
+Only applies when `WTDIR` is inside `$REPO_ROOT` (legacy layouts). A sibling `WTDIR` is outside the repo and needs no ignore rule -- skip this step entirely and say so.
+
+For a nested `WTDIR`, check coverage:
 
 ```bash
 git check-ignore -q "$WTDIR" 2>/dev/null
 ```
 
 If exit code is non-zero (not ignored):
-1. Append `WTDIR` pattern to `.gitignore` (e.g., `.worktrees/`).
+1. Append the `WTDIR` pattern to `.gitignore`.
 2. Stage and commit: `git add .gitignore && git commit -m "chore: add worktree directory to .gitignore"`.
-3. Report what was done.
+3. Report what was done -- and repeat that ignoring it does not remove the measurement problem, only the git noise.
 
 ### Step 3: Create Worktree
 
@@ -205,6 +237,89 @@ Report: "Worktree and branch <name> discarded."
 
 ---
 
+## PRUNE Mode
+
+Worktrees accumulate. CREATE makes them, FINISH removes only the one you are standing in, and nothing ever revisits the rest -- so a repo silently grows dozens of stale checkouts that keep inflating every filesystem-level measurement. PRUNE is the sweep that closes that loop.
+
+Run it when the user asks to clean up worktrees, and as a report-only precheck at the start of CREATE (steps 1-2 only; never remove anything during CREATE).
+
+PRUNE never uses `--force`, never touches a worktree with uncommitted or unmerged work, and never runs `git fetch`. It removes only what is provably reclaimable.
+
+### Step 1: Reconcile bookkeeping
+
+```bash
+git worktree prune -v
+```
+
+This drops admin records for worktree directories that no longer exist. It deletes no files and touches no branches. Report how many records were cleared.
+
+### Step 2: Classify every live worktree
+
+Determine the default branch once:
+
+```bash
+BASE=$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's|^origin/||')
+BASE=${BASE:-$(git rev-parse --verify -q main >/dev/null && echo main || echo master)}
+```
+
+For each entry in `git worktree list --porcelain`, excluding the main checkout and the worktree the current directory is in:
+
+| Signal | Command | Meaning |
+|--------|---------|---------|
+| Dirty | `git -C <wt> status --porcelain` non-empty | uncommitted work |
+| Merged | `git -C <wt> merge-base --is-ancestor HEAD "$BASE"` exit 0, **or** the same against `origin/$BASE` | every commit already in base |
+| Age | `git -C <wt> log -1 --format=%cr` | how long since last commit |
+
+Classify:
+
+- **RECLAIMABLE** -- clean AND merged. Zero data at risk: the commits exist in the base branch and nothing is uncommitted.
+- **IDLE** -- clean, not merged, last commit older than `$ZUVO_WORKTREE_IDLE_DAYS` (default 30). Report only. Never removed automatically -- unmerged commits are work.
+- **ACTIVE** -- everything else. Not listed as a candidate.
+
+Checking against both the local and the remote-tracking base means a stale local `main` produces false ACTIVE/IDLE, never a false RECLAIMABLE.
+
+### Step 3: Remove RECLAIMABLE only
+
+For each RECLAIMABLE worktree:
+
+```bash
+git worktree remove "<path>"        # NEVER --force
+git branch -d "<branch>"            # safe delete; refuses if unmerged
+```
+
+Both commands are safe by construction. `git worktree remove` without `--force` refuses when untracked files are present (a local `.env`, a build artifact, an uncommitted scratch file) -- that refusal is the intended backstop, not an error. Collect those as SKIPPED with the reason and move on.
+
+### Step 4: Layout check -- the part that prevents recurrence
+
+If any remaining worktree path is under `$REPO_ROOT`, migrate it out:
+
+```bash
+git worktree move "<repo>/.worktrees/<name>" "$DEFAULT_WTDIR/<name>"
+```
+
+`git worktree move` relocates the checkout and rewrites its gitdir pointers, so no work is lost and no branch changes. It fails on a locked worktree, one containing submodules, or one with a dirty index -- report those individually and leave them in place rather than forcing.
+
+Once the nested directory is empty, remove it and drop its now-dead `.gitignore` entry.
+
+### Step 5: Index hygiene
+
+Removing a directory does not remove what it already put in a code index -- stale worktree paths and their duplicate symbols persist until the repo is re-indexed. After any removal or migration, tell the user to re-index (CodeSift: `index_folder(path=<repo root>)`), otherwise clone, boundary and centrality metrics stay corrupted by files that no longer exist.
+
+### PRUNE Output
+
+```
+WORKTREE PRUNE COMPLETE
+  Records cleared:  <n> (directories already gone)
+  Reclaimed:        <n>  <branch list>
+  Skipped:          <n>  <path -- reason>
+  Idle (>30d):      <n>  <branch -- last commit age>
+  Active:           <n>
+  Layout:           <sibling, clean | migrated <n> out of <nested dir> | NESTED, <n> not migrated>
+  Re-index:         <required | not needed>
+```
+
+---
+
 ## Safety Rules
 
 These apply across both modes:
@@ -216,3 +331,5 @@ These apply across both modes:
 5. **Always confirm before discard.** Option 4 requires typed confirmation. No shortcuts.
 6. **Uncommitted changes block FINISH.** All four finish options require a clean working tree. Prompt the user to commit or stash first.
 7. **Report, do not assume.** When detecting base branches, test runners, or setup commands, report what was detected and what will run before running it.
+8. **Never default a worktree inside the repo.** New worktrees go to `../<repo>-worktrees/`. A nested directory is honored only when it already exists or a project instruction declares it, and only alongside the nested-layout warning.
+9. **PRUNE removes only provably reclaimable worktrees.** Clean AND merged into base, verified against both the local and remote-tracking base. No `--force` in any prune command, ever. Dirty, unmerged, locked, or current-directory worktrees are reported, never touched.
