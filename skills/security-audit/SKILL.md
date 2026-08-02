@@ -570,7 +570,7 @@ merge into S14 with their rule id + severity; the manual checklist remains the f
 rg "openai|anthropic|@google/generative|langchain|llamaindex|ai/sdk|@ai-sdk|mcp|claude|gpt|gemini" --type ts --type py --type js -l
 ```
 
-If matches found, audit these 8 check areas:
+If matches found, audit these 9 check areas (S15.9 applies only when an MCP server or agentic tool loop is present):
 
 ### S15.1 Prompt Injection (OWASP LLM01)
 
@@ -651,18 +651,28 @@ registrations, an MCP manifest) or any **agentic tool loop** (anthropic/openai t
 Complements S15.6 (which scopes the AGENT's action bounds) by auditing the **tool-definition and
 MCP-transport layer**. If no MCP server / tool loop is present, this sub-dimension is N/A.
 
+**Consolidation (avoid double-counting):** S15.9 is the SINGLE home for MCP/tool-invocation findings.
+The earlier scattered MCP rows — S15.1's "MCP tool input validation" and S15.3's "MCP server trust /
+unreviewed tool descriptions" — are subsumed here; score an MCP finding ONCE under S15.9, and keep
+S15.1/S15.3 for their non-MCP scope (generic prompt-injection / supply-chain). **Severity split for
+tool descriptions:** an *injected/instruction-shaped* description from an untrusted server is CRITICAL
+(active hijack), whereas a merely *unreviewed* third-party description is HIGH (matches S15.3) — an
+instruction-shaped string is a flag-for-review, not an automatic CRITICAL unless it is a real payload.
+
 | Check | Good | Bad | Severity |
 |-------|------|-----|----------|
 | Tool-description poisoning | Tool `description`/schema fields are static, reviewed, free of instruction-shaped text | Tool metadata carries hidden/injected instructions, zero-width chars, or "ignore previous"-style payloads a calling agent will read | CRITICAL |
 | Tool-arg validation | Every tool input validated/sanitized before use (path allowlist, URL scheme allowlist, no shell interpolation) | Tool passes raw args to `fs`, `exec`, or an HTTP client — path traversal / command / SSRF via the tool | CRITICAL |
-| Confused-deputy / SSRF via tool | Fetch/file tools deny internal ranges + metadata endpoints (169.254.169.254, localhost, RFC-1918) and enforce the caller's tenant scope | A fetch tool reachable to cloud metadata / internal services on behalf of untrusted prompt input | CRITICAL |
+| Confused-deputy / SSRF via tool | Fetch/file tools deny internal ranges + metadata endpoints (169.254.169.254, localhost, RFC-1918), **re-validate after DNS resolution and on every redirect hop** (denylists alone miss DNS-rebinding + open-redirect bypass), and enforce the caller's tenant scope | A fetch tool reachable to cloud metadata / internal services on behalf of untrusted prompt input; denylist that resolves once then follows a rebinding/redirect | CRITICAL |
 | Untrusted tool output → context | Tool results (web/file/DB) marked as untrusted data, not concatenated into the system/instruction channel | Retrieved tool output injected into the prompt as if trusted — indirect prompt injection | HIGH |
 | Tool-response secret/PII leakage | Tool responses redact secrets/credentials/PII before returning to the model | A tool returns raw `.env`, tokens, or PII rows into the model context | HIGH |
 | Destructive-tool gating | Destructive/high-privilege MCP tools require allowlist + confirmation (see also S15.6) | MCP server exposes delete/write/network tools ungated | HIGH |
 | Tool-loop / step budget | Agent tool-call loops bounded by a max-step / cost guard | Unbounded tool-call recursion — runaway agency / cost DoS | MEDIUM |
 
-Detection signals: `@modelcontextprotocol/sdk`, `server.tool(`/`registerTool`/`setRequestHandler`,
-MCP manifests, `tools: [...]` in anthropic/openai calls, agent step loops. Findings cite `file:line`
+Detection signals — MCP: `@modelcontextprotocol/sdk`, `server.tool(`/`registerTool`/`setRequestHandler`,
+MCP manifests. Non-MCP agentic loops (S15.9 covers these too): `tools: [...]` / `tool_choice` in
+anthropic/openai calls, LangChain/LlamaIndex agents/`AgentExecutor`, a while-loop that re-invokes the
+model on tool results, function-calling dispatch tables. Findings cite `file:line`
 and route through the Sentry 3-tier confidence model like S15.1-S15.8.
 
 ### S15 Scoring
