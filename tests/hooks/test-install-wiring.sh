@@ -150,10 +150,17 @@ touch %s/PWNED
 [ -f "$_t/PWNED" ] && bad "(8) collector.conf was SOURCED — arbitrary code ran"                    || pass "(8) collector.conf is parsed, not sourced (no code execution)"
 rm -rf "$_t"
 
-# (7) syntax check on all four scripts (shellcheck absent → bash -n)
+# (7) syntax check on all four scripts (shellcheck absent → bash -n).
+# --severity=error, matching this check's stated contract ("syntax check"): the
+# default severity includes style/info findings the four scripts have carried for
+# months. That stricter path was LATENT — it activates the moment anyone installs
+# shellcheck, which happened 2026-08-02 11:55 and turned an unchanged installer
+# into 4 FAILs that blocked a release of unrelated work. Error severity still
+# upgrades on bash -n (catches real defects, not just parse errors); the style
+# warning cleanup is tracked as its own task, not a silent gate downgrade.
 for s in scripts/install.sh scripts/build-codex-skills.sh scripts/build-antigravity-skills.sh scripts/build-cursor-skills.sh; do
   if command -v shellcheck >/dev/null 2>&1; then
-    shellcheck "$ROOT/$s" >/dev/null 2>&1 && pass "(7) shellcheck $s" || bad "(7) shellcheck failed: $s"
+    shellcheck --severity=error "$ROOT/$s" >/dev/null 2>&1 && pass "(7) shellcheck -Serror $s" || bad "(7) shellcheck (error severity) failed: $s"
   else
     bash -n "$ROOT/$s" 2>/dev/null && pass "(7) bash -n $s (shellcheck absent)" || bad "(7) syntax error: $s"
   fi
