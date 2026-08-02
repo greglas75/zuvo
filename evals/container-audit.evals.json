@@ -1,0 +1,257 @@
+{
+  "skill_name": "container-audit",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run zuvo:container-audit --dockerfile bad.Dockerfile on this repo.",
+      "expected_output": "The audit flags K1 CRITICAL (base on :latest), K2 CRITICAL (no USER -> runs as root), K3 CRITICAL (API_KEY secret baked into ENV and blind COPY . . with no .dockerignore). Because K1/K2/K3 critical gates trip, the overall verdict is FAIL. Report written to zuvo/audits/, no source file modified.",
+      "files": [
+        "bad.Dockerfile"
+      ],
+      "assertions": [
+        "The audit records a K1 CRITICAL finding for the `FROM node:latest` mutable/unpinned base, at bad.Dockerfile:LINE.",
+        "The audit records a K2 CRITICAL finding for the image running as root (no USER directive), and a K3 CRITICAL for the API_KEY secret in ENV baked into a layer, each citing bad.Dockerfile:LINE.",
+        "Because K1/K2/K3 critical gates trip, the overall VERDICT is FAIL (a tripped critical gate wins over the finding-count band); a report is written to zuvo/audits/ and no source file is modified."
+      ],
+      "fixtures": [
+        {
+          "path": "bad.Dockerfile",
+          "content": "# EXPECT: K1-latest-tag K2-root-user K3-secret-in-env K3-no-dockerignore\nFROM node:latest\nWORKDIR /app\nENV API_KEY=sk-live-51H8xExampleSecretValue0000\nCOPY . .\nRUN npm install\nCMD [\"node\", \"server.js\"]\n"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run zuvo:container-audit --dockerfile good.Dockerfile. Assume neither trivy nor grype is installed on PATH.",
+      "expected_output": "K5 is marked N/A (scanner unavailable) and dropped from the denominator (90->75). The audit still completes with a valid score over K1-K4/K6 and a verdict, not an error.",
+      "files": [
+        "good.Dockerfile"
+      ],
+      "assertions": [
+        "K5 (Known Vulnerability Scan) is reported N/A (scanner unavailable), not a failure or a zero score.",
+        "The score denominator excludes K5 (75, not 90) per the variable-denominator rule, and the audit produces a final grade/verdict rather than aborting."
+      ],
+      "fixtures": [
+        {
+          "path": "good.Dockerfile",
+          "content": "# EXPECT: none\n# Multi-stage: builder + distroless nonroot runtime, digest-pinned, no baked secrets\nFROM node:20.11.1-slim@sha256:2f0b0c0d1e2f3a4b5c6d7e8f90112233445566778899aabbccddeeff00112233 AS builder\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci --omit=dev && npm cache clean --force\nCOPY . .\n\nFROM gcr.io/distroless/nodejs20-debian12:nonroot@sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899\nWORKDIR /app\nCOPY --from=builder /app /app\nUSER nonroot\nCMD [\"server.js\"]\n"
+        },
+        {
+          "path": ".dockerignore",
+          "content": ".env\n.env.*\n.git\nnode_modules\n*.pem\n*.key\n"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Run zuvo:container-audit --dockerfile bad.Dockerfile. Assume trivy IS installed and available on PATH.",
+      "expected_output": "With a scanner present, K5 runs (trivy config statically, plus a consent-gated image scan of the base image) and is scored, so the denominator includes K5 (90). K5 scans the declared BASE image, never a built final image.",
+      "files": [
+        "bad.Dockerfile"
+      ],
+      "assertions": [
+        "With trivy present, K5 is an active scored dimension (not N/A) and the denominator includes its weight (90, not 75).",
+        "The audit describes K5 scanning the declared base image (pullable FROM ref) with consent-gating, not a built final image, consistent with the read-only no-build gate."
+      ],
+      "fixtures": [
+        {
+          "path": "bad.Dockerfile",
+          "content": "# EXPECT: K1-latest-tag K2-root-user K3-secret-in-env K3-no-dockerignore\nFROM node:latest\nWORKDIR /app\nENV API_KEY=sk-live-51H8xExampleSecretValue0000\nCOPY . .\nRUN npm install\nCMD [\"node\", \"server.js\"]\n"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Run zuvo:container-audit on good.Dockerfile plus the hardened docker-compose.yml.",
+      "expected_output": "Zero critical findings; the distroless nonroot base + digest pin + multi-stage + .dockerignore + hardened compose score HEALTHY (>=80%). The distroless :nonroot base satisfies K2 without a USER line (no false-flag).",
+      "files": [
+        "good.Dockerfile",
+        "docker-compose.yml"
+      ],
+      "assertions": [
+        "The audit reports 0 critical findings and a HEALTHY grade (score >= 80%).",
+        "The distroless `:nonroot` base is accepted as non-root (K2 satisfied) WITHOUT being false-flagged for a missing USER directive."
+      ],
+      "fixtures": [
+        {
+          "path": "good.Dockerfile",
+          "content": "# EXPECT: none\n# Multi-stage: builder + distroless nonroot runtime, digest-pinned, no baked secrets\nFROM node:20.11.1-slim@sha256:2f0b0c0d1e2f3a4b5c6d7e8f90112233445566778899aabbccddeeff00112233 AS builder\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci --omit=dev && npm cache clean --force\nCOPY . .\n\nFROM gcr.io/distroless/nodejs20-debian12:nonroot@sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899\nWORKDIR /app\nCOPY --from=builder /app /app\nUSER nonroot\nCMD [\"server.js\"]\n"
+        },
+        {
+          "path": ".dockerignore",
+          "content": ".env\n.env.*\n.git\nnode_modules\n*.pem\n*.key\n"
+        },
+        {
+          "path": "docker-compose.yml",
+          "content": "# EXPECT: none\nservices:\n  api:\n    build: .\n    read_only: true\n    security_opt:\n      - no-new-privileges:true\n    cap_drop:\n      - ALL\n    mem_limit: 512m\n    cpus: 0.5\n    healthcheck:\n      test: [\"CMD\", \"node\", \"healthcheck.js\"]\n      interval: 30s\n    ports:\n      - \"127.0.0.1:3000:3000\"\n"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "Run zuvo:container-audit (default, NO --k8s flag) on a scope that contains k8s-sample/deploy.yaml alongside good.Dockerfile.",
+      "expected_output": "Without --k8s, dimensions K7-K10 are reported N/A (requires --k8s), excluded from the denominator, and emit ZERO Kubernetes findings even though a manifest is present. The score is identical to a run without the manifest.",
+      "files": [
+        "good.Dockerfile",
+        "k8s-sample/deploy.yaml"
+      ],
+      "assertions": [
+        "K7-K10 are reported `N/A (requires --k8s)` and excluded from the scoring denominator.",
+        "No Kubernetes finding is emitted for k8s-sample/deploy.yaml in a default (no --k8s) run \u2014 the manifest's presence does not change the K1-K6 score."
+      ],
+      "fixtures": [
+        {
+          "path": "good.Dockerfile",
+          "content": "# EXPECT: none\n# Multi-stage: builder + distroless nonroot runtime, digest-pinned, no baked secrets\nFROM node:20.11.1-slim@sha256:2f0b0c0d1e2f3a4b5c6d7e8f90112233445566778899aabbccddeeff00112233 AS builder\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci --omit=dev && npm cache clean --force\nCOPY . .\n\nFROM gcr.io/distroless/nodejs20-debian12:nonroot@sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899\nWORKDIR /app\nCOPY --from=builder /app /app\nUSER nonroot\nCMD [\"server.js\"]\n"
+        },
+        {
+          "path": ".dockerignore",
+          "content": ".env\n.env.*\n.git\nnode_modules\n*.pem\n*.key\n"
+        },
+        {
+          "path": "k8s-sample/deploy.yaml",
+          "content": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: sample\nspec:\n  replicas: 2\n  selector:\n    matchLabels: { app: sample }\n  template:\n    metadata:\n      labels: { app: sample }\n    spec:\n      containers:\n        - name: sample\n          image: registry.example.com/sample@sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899\n          securityContext:\n            runAsNonRoot: true\n            allowPrivilegeEscalation: false\n"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "Run zuvo:container-audit on the labeled/ fixture directory. Each file's leading `# EXPECT: <rule_id>` comment is the ground-truth label (control files are `# EXPECT: none`).",
+      "expected_output": "The audit's emitted rule_ids cover at least 90% of the EXPECT labels across the defective files, and it raises ZERO critical findings on the two clean control files (control-01-distroless, control-02-hardened).",
+      "files": [
+        "labeled/01-root.Dockerfile",
+        "labeled/02-latest.Dockerfile",
+        "labeled/03-secret-arg.Dockerfile",
+        "labeled/04-no-multistage.Dockerfile",
+        "labeled/05-unpinned-builder.Dockerfile",
+        "labeled/06-docker-sock.compose.yml",
+        "labeled/07-host-network.compose.yml",
+        "labeled/08-no-healthcheck.compose.yml",
+        "labeled/09-secret-env.Dockerfile",
+        "labeled/10-mutable-version.Dockerfile",
+        "labeled/control-01-distroless.Dockerfile",
+        "labeled/control-02-hardened.compose.yml"
+      ],
+      "assertions": [
+        "The audit's emitted rule_ids match at least 90% (>= 9 of 10) of the `# EXPECT:` labels on the defective labeled files (e.g. K2-root-user, K1-latest-tag, K3-secret-in-arg, K4-no-multistage, K1-unpinned-builder, K6-docker-sock, K6-host-network, K6-no-healthcheck, K3-secret-in-env, K1-mutable-version-tag).",
+        "The two clean control files (control-01-distroless.Dockerfile, control-02-hardened.compose.yml, both `# EXPECT: none`) receive ZERO critical findings \u2014 no false positive, in particular no K2 false-flag on the distroless nonroot control."
+      ],
+      "fixtures": [
+        {
+          "path": "labeled/01-root.Dockerfile",
+          "content": "# EXPECT: K2-root-user\nFROM node:20.11.1@sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899\nWORKDIR /app\nCOPY --chown=node:node . .\nCMD [\"node\",\"server.js\"]\n"
+        },
+        {
+          "path": "labeled/02-latest.Dockerfile",
+          "content": "# EXPECT: K1-latest-tag\nFROM python:latest\nUSER 1000\nCMD [\"python\",\"app.py\"]\n"
+        },
+        {
+          "path": "labeled/03-secret-arg.Dockerfile",
+          "content": "# EXPECT: K3-secret-in-arg\nFROM alpine:3.19@sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899\nARG AWS_SECRET_ACCESS_KEY\nRUN echo \"using build secret\"\nUSER 1000\n"
+        },
+        {
+          "path": "labeled/04-no-multistage.Dockerfile",
+          "content": "# EXPECT: K4-no-multistage\nFROM node:20.11.1@sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899\nRUN apt-get update && apt-get install -y build-essential curl\nCOPY . .\nRUN npm install && npm run build\nUSER node\nCMD [\"node\",\"dist/server.js\"]\n"
+        },
+        {
+          "path": "labeled/05-unpinned-builder.Dockerfile",
+          "content": "# EXPECT: K1-unpinned-builder\nFROM node:latest AS builder\nWORKDIR /app\nCOPY . .\nRUN npm ci && npm run build\nFROM gcr.io/distroless/nodejs20-debian12:nonroot@sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899\nCOPY --from=builder /app/dist /app\nUSER nonroot\nCMD [\"/app/server.js\"]\n"
+        },
+        {
+          "path": "labeled/06-docker-sock.compose.yml",
+          "content": "# EXPECT: K6-docker-sock\nservices:\n  agent:\n    image: registry.example.com/agent@sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock\n"
+        },
+        {
+          "path": "labeled/07-host-network.compose.yml",
+          "content": "# EXPECT: K6-host-network\nservices:\n  proxy:\n    image: nginx:1.25@sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899\n    network_mode: host\n"
+        },
+        {
+          "path": "labeled/08-no-healthcheck.compose.yml",
+          "content": "# EXPECT: K6-no-healthcheck\nservices:\n  web:\n    image: nginx:1.25@sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899\n    mem_limit: 256m\n    ports:\n      - \"127.0.0.1:8080:80\"\n"
+        },
+        {
+          "path": "labeled/09-secret-env.Dockerfile",
+          "content": "# EXPECT: K3-secret-in-env\nFROM alpine:3.19@sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899\nENV DATABASE_PASSWORD=hunter2placeholder\nUSER 1000\nCMD [\"/bin/app\"]\n"
+        },
+        {
+          "path": "labeled/10-mutable-version.Dockerfile",
+          "content": "# EXPECT: K1-mutable-version-tag\nFROM node:20.11.1-slim\nUSER node\nCOPY --chown=node:node . /app\nCMD [\"node\",\"/app/server.js\"]\n"
+        },
+        {
+          "path": "labeled/control-01-distroless.Dockerfile",
+          "content": "# EXPECT: none\nFROM gcr.io/distroless/static-debian12:nonroot@sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899\nCOPY --chmod=0755 app /app\nCMD [\"/app\"]\n"
+        },
+        {
+          "path": "labeled/control-02-hardened.compose.yml",
+          "content": "# EXPECT: none\nservices:\n  api:\n    image: registry.example.com/api@sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899\n    read_only: true\n    security_opt: [no-new-privileges:true]\n    cap_drop: [ALL]\n    mem_limit: 512m\n    healthcheck:\n      test: [\"CMD\",\"/api\",\"health\"]\n    ports: [\"127.0.0.1:9000:9000\"]\n"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "Run zuvo:container-audit on the real-sample/ directory (a vendored, de-secreted real Dockerfile + compose; secret values already scrubbed to ***).",
+      "expected_output": "Every finding cites a path/to/file:LINE that resolves in real-sample/, at least one actionable fix is given, and NO secret value appears in the report (Gate 2 \u2014 values shown as *** only).",
+      "files": [
+        "real-sample/Dockerfile",
+        "real-sample/docker-compose.yml"
+      ],
+      "assertions": [
+        "Every finding cites a concrete `real-sample/<file>:LINE` reference and at least one actionable fix is provided.",
+        "No secret VALUE appears anywhere in the report (Gate 2 secret censorship); variable names may show but values are `***`."
+      ],
+      "fixtures": [
+        {
+          "path": "real-sample/Dockerfile",
+          "content": "# Vendored, de-secreted sample (real-shape; secret values scrubbed to ***).\nFROM node:20-alpine\nWORKDIR /usr/src/app\nENV NODE_ENV=production\nENV SESSION_SECRET=***\nCOPY . .\nRUN npm install --production\nEXPOSE 3000\nCMD [\"npm\",\"start\"]\n"
+        },
+        {
+          "path": "real-sample/docker-compose.yml",
+          "content": "services:\n  web:\n    build: .\n    ports:\n      - \"3000:3000\"\n    environment:\n      - DATABASE_URL=***\n"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "Run zuvo:container-audit on the repo/ directory (multi-stage Dockerfile + hardened compose + .dockerignore).",
+      "expected_output": "A full round-trip: all six dimensions K1-K6 are scored or marked N/A, the critical-gate section is present, a report is written to zuvo/audits/ (both .md and .json), and the Validity Gate passes.",
+      "files": [
+        "repo/Dockerfile",
+        "repo/docker-compose.yml"
+      ],
+      "assertions": [
+        "All six dimensions K1-K6 appear in the report, each with a numeric score or an explicit N/A.",
+        "A report is written to zuvo/audits/container-audit-<date>.md AND a sibling .json, the critical-gate section is present, and the Validity Gate is PASS."
+      ],
+      "fixtures": [
+        {
+          "path": "repo/Dockerfile",
+          "content": "FROM node:20.11.1-slim@sha256:aa11bb22cc33dd44ee55ff6677889900aabbccddeeff00112233445566778899 AS builder\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci && npm cache clean --force\nCOPY . .\nRUN npm run build\n\nFROM gcr.io/distroless/nodejs20-debian12:nonroot@sha256:bb22cc33dd44ee55ff6677889900aabbccddeeff001122334455667788990011\nWORKDIR /app\nCOPY --from=builder /app/dist /app\nUSER nonroot\nCMD [\"server.js\"]\n"
+        },
+        {
+          "path": "repo/docker-compose.yml",
+          "content": "services:\n  app:\n    build: .\n    read_only: true\n    security_opt: [no-new-privileges:true]\n    cap_drop: [ALL]\n    mem_limit: 512m\n    healthcheck:\n      test: [\"CMD\",\"node\",\"health.js\"]\n    ports: [\"127.0.0.1:3000:3000\"]\n"
+        },
+        {
+          "path": "repo/.dockerignore",
+          "content": ".env\n.env.*\n.git\nnode_modules\n*.key\n"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "Run zuvo:container-audit on an empty directory that contains no Dockerfile, no compose file, and no container artifacts.",
+      "expected_output": "The audit reports 'no container artifacts' and exits HEALTHY (N/A - nothing to audit). This is NOT a failure. get_file_tree still ran; the artifact-scanning tools are recorded N/A(no-artifacts), not skipped.",
+      "files": [],
+      "assertions": [
+        "The audit reports 'no container artifacts' and returns HEALTHY (N/A - nothing to audit), NOT a FAIL or an error.",
+        "The mandatory-tools gate is satisfied: get_file_tree ran (that is how 'none found' was determined) and the artifact-scanning tools are recorded as N/A(no-artifacts) rather than skipped."
+      ],
+      "fixtures": [
+        {
+          "path": "empty/.gitkeep",
+          "content": ""
+        }
+      ]
+    }
+  ]
+}
