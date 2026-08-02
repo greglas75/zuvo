@@ -28,8 +28,8 @@ stats:
     value: "6+"
     detail: "Node, Python, Rust, Go, PHP, Generic"
   - label: Flags
-    value: "7"
-    detail: "--fast, --full, --no-bump, --no-tag, --dry-run, patch/minor/major"
+    value: "6"
+    detail: "--full, --no-bump, --no-tag, --dry-run, patch/minor/major"
 
 problem: |
   Shipping a release manually is error-prone: teams forget to bump the version, skip the
@@ -43,7 +43,7 @@ how_it_works:
   - step: Tests
     description: Auto-detects the test runner (npm, pytest, cargo, composer, make) and runs the full suite. Stops on failure — never auto-overrides failing tests in non-interactive environments.
   - step: Review Scaling
-    description: Computes diff LOC since last tag and dispatches the appropriate review depth — fast path (<20 LOC), light agent (20-100), full review (100+), or full+coverage (300+). Override with --fast or --full.
+    description: Computes diff LOC since last tag and dispatches the appropriate review depth — fast path (<20 LOC), light agent (20-100), full review (100+), or full+coverage (300+). The only override is --full (escalation up) — there is no review-skip flag; small diffs already fast-path automatically.
   - step: Version Bump
     description: Detects the version file (package.json, pyproject.toml, Cargo.toml, VERSION, etc.), infers bump type from conventional commits, updates the file, and generates or updates CHANGELOG.md.
   - step: Stage, Tag, Push
@@ -126,8 +126,6 @@ faq:
 arguments:
   - flag: "(no flags)"
     description: "Auto-scaled pipeline based on diff LOC since last tag"
-  - flag: "--fast"
-    description: "Force fast path — tests + bump + push only, skip all review"
   - flag: "--full"
     description: "Force full pipeline — tests + review + design-review + coverage + bump + push"
   - flag: "--no-bump"

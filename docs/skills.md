@@ -109,7 +109,7 @@ Scoped task execution for common development work.
 
 | Skill | Description | When to use | Key flags |
 |-------|-------------|-------------|-----------|
-| `zuvo:ship` | Pre-merge release pipeline with auto-scaled review by diff size. Tests, version bump, changelog, tag, push or PR. | Code is ready to ship | `--fast`, `--full`, `--no-bump`, `--dry-run`, `patch`/`minor`/`major` |
+| `zuvo:ship` | Pre-merge release pipeline with auto-scaled review by diff size. Tests, version bump, changelog, tag, push or PR. | Code is ready to ship | `--full`, `--no-bump`, `--dry-run`, `patch`/`minor`/`major` |
 | `zuvo:deploy` | Platform-aware deployment with health check and rollback. Detects Vercel, Fly, Netlify, Railway, GHA. | After ship, ready for production | `--url`, `--skip-ci-wait`, `--skip-health`, `#<number>` |
 | `zuvo:canary` | Post-deploy monitoring with browser or HTTP mode. Configurable duration and interval. | After deploy, to verify production health | `--duration`, `--interval`, `--quick`, `--max-errors` |
 | `zuvo:release-docs` | Diff-driven documentation sync. Delegates to zuvo:docs for changelog and staleness fixing. | After shipping, to keep docs current | `--dry-run`, `<range>` |

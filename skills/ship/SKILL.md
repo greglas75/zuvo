@@ -4,7 +4,7 @@ description: >
   Pre-merge release pipeline: run tests, auto-scaled code review, version bump,
   changelog generation, git tag, push or PR. Auto-detects branch context (direct
   push on main, PR on feature branch). Scales review depth by diff size.
-  Flags: --fast, --full, --no-bump, --no-tag, --dry-run, patch/minor/major.
+  Flags: --full, --no-bump, --no-tag, --dry-run, patch/minor/major.
 codesift_tools:
   always:
     - analyze_project
@@ -30,14 +30,21 @@ Parse `$ARGUMENTS` for these flags:
 | Argument | Effect |
 |----------|--------|
 | _(no flags)_ | Auto-scaled pipeline based on diff size |
-| `--fast` | Force fast path: tests + bump + push only (skip all review) |
 | `--full` | Force full pipeline: tests + review + design-review + coverage + bump + push |
 | `--no-bump` | Skip version bumping (hotfixes, chores) |
 | `--no-tag` | Skip git tag creation |
 | `--dry-run` | Show what would happen without executing |
 | `patch` / `minor` / `major` | Explicit bump type (overrides auto-detection) |
 
-Flags can be combined: `zuvo:ship --fast --no-tag`, `zuvo:ship minor --no-tag`
+Flags can be combined: `zuvo:ship --full --no-tag`, `zuvo:ship minor --no-tag`
+
+**There is NO review-skip flag — removed 2026-08-02.** A field run proved the failure mode: the
+agent self-applied `--fast` when the user typed only "ship"; the prose rule ("user-provided
+ONLY") caught it that once, but a bypass that exists as text an agent can type is a bypass that
+will eventually be typed. Small diffs (<20 LOC) already take the fast path automatically via the
+threshold table, so the flag's only unique power was skipping review on LARGE diffs — the exact
+case review exists for. If a human genuinely must ship unreviewed, that decision lives OUTSIDE
+this skill (the logged `ZUVO_ALLOW_ADHOC=1` escape at the push gate), never as a skill argument.
 
 ## Mandatory File Loading
 
@@ -66,7 +73,7 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 2. **NEVER** push to a remote repository without explicit user confirmation. In non-interactive environments (Codex, Cursor): skip the push step entirely.
 3. **NEVER** push tags without interactive confirmation. In non-interactive environments (Codex, Cursor): skip `git push --tags`, write `tagPushed: false` in `memory/last-ship.json`.
 4. **Default to `patch`** bump with `[AUTO-DECISION]` annotation in non-interactive environments when the user cannot be asked for bump type.
-5. **NEVER** propose skipping, downgrading, or shortcutting the review threshold from Phase 2. The threshold table is MANDATORY — the agent does not get to override it based on effort estimates ("this would take hours"), prior pipeline claims ("execute already reviewed"), or diff complexity ("most of this is boilerplate"). Only the `--fast` flag explicitly passed by the user can skip review. If you catch yourself thinking "this is too much review for this release" — that is exactly when the review is most needed.
+5. **NEVER** propose skipping, downgrading, or shortcutting the review threshold from Phase 2. The threshold table is MANDATORY — the agent does not get to override it based on effort estimates ("this would take hours"), prior pipeline claims ("execute already reviewed"), or diff complexity ("most of this is boilerplate"). There is NO flag that skips review — `--fast` was removed 2026-08-02 after an agent self-applied it (see Argument Parsing). If you catch yourself thinking "this is too much review for this release" — that is exactly when the review is most needed.
 6. **NEVER** claim that prior pipeline steps (zuvo:execute, zuvo:plan) substitute for ship review. Execute reviews individual tasks during implementation. Ship reviews the integrated whole. These are different scopes — one does not replace the other.
 
 ---
@@ -187,7 +194,7 @@ WORK_FILES = <files being touched>
 
    **Diff scope is the entire release.** `DIFF_LOC` includes ALL changes since the last tag — not just "your feature." If the diff is 4000 LOC because 3000 LOC of other work landed too, the review covers ALL 4000 LOC. Do not rationalize a smaller scope by counting only "feature commits."
 
-2. **Apply review threshold (MANDATORY).** These thresholds are non-negotiable (see Safety Rule 5). Only `--fast` or `--full` flags can override them:
+2. **Apply review threshold (MANDATORY).** These thresholds are non-negotiable (see Safety Rule 5). The only override is `--full` — escalation UP:
 
    | Diff LOC | Review actions |
    |----------|----------------|
@@ -198,9 +205,9 @@ WORK_FILES = <files being touched>
 
    **Pass `--report-only` when invoking `zuvo:review` from ship** — a pre-merge release review must SURFACE blockers for the release decision, not silently auto-rewrite the diff you are about to tag. (Direct `/zuvo:review` defaults to auto-fix; ship-dispatched does not.)
 
-   **Flag overrides (user-provided ONLY — agent must NEVER self-apply):**
-   - `--fast`: always use fast path regardless of diff size. Must be in `$ARGUMENTS` from the user's invocation.
+   **Flag override (user-provided ONLY — agent must NEVER self-apply):**
    - `--full`: always use 300+ path (all reviews + coverage check) regardless of diff size.
+   - There is NO downgrade flag. A review skip cannot be expressed as an argument to this skill.
 
    **Invocation form is non-negotiable.** When the threshold says "invoke `zuvo:review`", you MUST issue an actual `Skill(skill="zuvo:review")` tool call. Reading the review skill, simulating it mentally, summarizing findings from prior commits, or asserting that `zuvo:execute` / per-task review "covered it" does NOT count as invocation. The tool call is the only acceptable evidence.
 
@@ -274,7 +281,7 @@ Reflect on the full diff (`git diff ${BASE_REF}..HEAD`) and any review findings 
 - Did any review finding reveal a recurring gotcha in this codebase?
 - Was any architectural decision made during this release worth recording?
 
-This step runs regardless of `--fast` or `--full` flags. It does NOT block the release — even if zero insights are extracted, proceed to Phase 3.
+This step runs regardless of flags and diff size (fast path included). It does NOT block the release — even if zero insights are extracted, proceed to Phase 3.
 
 ---
 
