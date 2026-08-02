@@ -643,11 +643,19 @@ Backlog: [N items added | "none"]
 
 Run: <ISO-8601-Z>\tdebug\t<project>\t<CQ>\t<Q>\t<VERDICT>\t-\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
 
+
+Next steps:
+  zuvo:review [fixed-files]  -- verify fix quality
+  git commit -m "fix: [issue summary]"
+----------------------------------------------------
+```
+
 **Append via wrapper (REQUIRED).** Never `>>` directly to `~/.zuvo/runs.log` — the wrapper is the gate that verifies a retro entry exists for this run. Order: retro bash executed → wrapper invoked → completion claimed.
 
 ```bash
 printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
+
 
 Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <project>)`. If exit 2 with `RETRO_REQUIRED` — go execute the retro bash from `retrospective.md` first; never bypass with `ZUVO_SKIP_RETRO_GATE=1`. After the wrapper succeeds, print a `Logs:` evidence line (`tail -1 ~/.zuvo/retros.log`, `grep -c "^<!-- RETRO -->" ~/.zuvo/retros.md`, `tail -1 ~/.zuvo/runs.log`) before claiming completion. Printing the markdown retro section without executing the bash leaves all three log files empty.
 
@@ -658,11 +666,6 @@ TASKS: `-` (debug does not track task count).
 DURATION: mode label (e.g., `standard`, `regression-bisect`).
 NOTES: 1-line root cause summary (max 80 chars).
 
-Next steps:
-  zuvo:review [fixed-files]  -- verify fix quality
-  git commit -m "fix: [issue summary]"
-----------------------------------------------------
-```
 
 ---
 

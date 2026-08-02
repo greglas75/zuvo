@@ -443,6 +443,7 @@ If `gate_status = FAIL` → VERDICT = INCOMPLETE. Append the Run line via the re
 printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
+```
 Run: <ISO-8601-Z>	design-review	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 -----
 ```
