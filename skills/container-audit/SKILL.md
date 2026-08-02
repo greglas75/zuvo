@@ -205,8 +205,8 @@ the same file) are exempt.
 | Var-interpolated `FROM $REG/img` | Resolvable + pinned | Unresolvable build-arg base | HIGH (flag, do not silent-pass) |
 
 Only a `@sha256:` digest is truly immutable; a specific version tag is pinned-enough to clear the
-critical gate but is flagged MEDIUM (recommend a digest). Critical gate: K1=0 (any final-image
-external base on `:latest`/`:stable`/no-tag) triggers FAIL.
+critical gate but is flagged MEDIUM (recommend a digest). Critical gate: any final-image external base on `:latest`/`:stable`/no-tag → FAIL. The gate fires
+on that FINDING; a K1 score of 0 also fires it but is not required.
 rule_ids: `K1-latest-tag`, `K1-no-tag`, `K1-mutable-version-tag`, `K1-untrusted-registry`, `K1-unpinned-builder`.
 
 ### K2: Privilege & Runtime Hardening -- Weight 18, Critical Gate
@@ -221,7 +221,8 @@ rule_ids: `K1-latest-tag`, `K1-no-tag`, `K1-mutable-version-tag`, `K1-untrusted-
 | Read-only rootfs (compose) | `read_only: true` where feasible | writable rootfs unnecessarily | MEDIUM |
 
 Distroless `:nonroot` variants satisfy the non-root check even without a `USER` line — do NOT
-false-flag them. Critical gate: K2=0 (runs as root AND/OR `privileged: true`) triggers FAIL.
+false-flag them. Critical gate: the image runs as root AND/OR `privileged: true` → FAIL. The gate fires on that
+FINDING; a K2 score of 0 also fires it but is not required.
 rule_ids: `K2-root-user`, `K2-privileged`, `K2-no-cap-drop`, `K2-no-new-privileges`.
 
 ### K3: Secret & Build-Context Hygiene -- Weight 18, Critical Gate
@@ -234,8 +235,8 @@ rule_ids: `K2-root-user`, `K2-privileged`, `K2-no-cap-drop`, `K2-no-new-privileg
 | No hardcoded creds | secrets via runtime env / manager | literal password/token in Dockerfile | CRITICAL |
 
 K3 only flags ENV/ARG whose NAME matches secret patterns (`*KEY*`, `*SECRET*`, `*TOKEN*`,
-`*PASSWORD*`, `*CRED*`), never benign build config (`VERSION`, `NODE_ENV`). Critical gate:
-K3=0 (any secret baked, OR blind `COPY . .` with no `.dockerignore`) triggers FAIL.
+`*PASSWORD*`, `*CRED*`), never benign build config (`VERSION`, `NODE_ENV`). Critical gate: any secret baked into the image, OR a blind `COPY . .` with no `.dockerignore`
+→ FAIL. The gate fires on that FINDING; a K3 score of 0 also fires it but is not required.
 rule_ids: `K3-secret-in-env`, `K3-secret-in-arg`, `K3-no-dockerignore`, `K3-hardcoded-cred`.
 
 ### K4: Image Minimalism & Attack Surface -- Weight 12
