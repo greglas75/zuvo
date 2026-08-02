@@ -258,6 +258,11 @@ missing-directory hole) → T2 → T6 → T3 → T1 → T7. T7 has the *lowest* 
   Reviewer's process note, recorded because it is the reason this loop terminates:
   *"revision 3's fixes are all real and none of them introduced a new defect — the recurring
   'fixes create the next round's must-fixes' pattern broke this round."*
+- **[POST-CAP: SPEC-AMENDED] Task 1 / G15** (execute, 2026-08-02): revision 4's G15 expected a
+  stripped-table copy to print `category-consistency: n/a`. The Task-1 adversarial pass then
+  NARROWED the skip — a file that exists without its table is now a loud ERROR, and `n/a` is
+  reserved for roots where neither anchor file exists. The code is strictly stronger than the
+  contract; the contract was amended to the two-branch form, not the code weakened.
 - Status gate: **Approved.** Reviewer converged (iteration 3 must-fix already closed by revision 4),
   cross-model run over two passes with full document coverage and every CRITICAL fixed or
   dispositioned. Remaining WARNINGs are dispositioned above, not re-looped — per the plan skill's
@@ -324,9 +329,10 @@ missing-directory hole) → T2 → T6 → T3 → T1 → T7. T7 has the *lowest* 
     - Artifact: `zuvo/proofs/task-1-report.md`
   - G15:
     - Surface: config
-    - Proof: `C=$(mktemp -d); cp -R . "$C"; python3 - "$C" <<'PY'` … strip the `## Skill categories` table from `CLAUDE.md` and the category table from `docs/skills.md` … `PY`; then `bash scripts/validate-skills.sh --root "$C" 2>&1 | grep -q 'category-consistency: n/a'`
-    - Expected: the stripped copy prints `n/a` (exit 0 for the grep); the real-repo fail-open assertion from RED (e) is what keeps `n/a` from ever appearing here.
+    - Proof: **two branches — the skip is narrower than revision 4 assumed.** (A) copy the repo to `mktemp -d`, strip the `| Category | Count |` table out of BOTH `docs/skills.md` and `CLAUDE.md` but LEAVE the files present, run `bash scripts/validate-skills.sh --root "$C"`. (B) a `mktemp -d` root that has `skills/` but NEITHER anchor file, same command.
+    - Expected: (A) an explicit `ERROR: category-consistency: <file> exists but has no '| Category | Count |' table` for EACH file — **not** `n/a`; (B) exactly the `category-consistency: n/a (…; per-skill 'category:' presence/label checks were skipped too)` line. Plus: the REAL repo must never print `n/a` (asserted unconditionally by the contract test, not gated on Task 2 having landed).
     - Artifact: `zuvo/proofs/task-1-report.md`
+
   - G19:
     - Surface: config
     - Proof: `! git diff <task-base-sha>..HEAD -- scripts/validate-skills.sh | grep '^+' | grep -qE 'pip install|npm install|npm i |require\('` and, for python imports, `git diff <task-base-sha>..HEAD -- scripts/validate-skills.sh | grep '^+' | grep -oE '^\+[[:space:]]*import [a-z_]+' | grep -qvE 'import (json|sys|os|re)$' && exit 1 || exit 0`
