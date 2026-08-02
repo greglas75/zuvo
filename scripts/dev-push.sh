@@ -112,6 +112,45 @@ NEW_SHA=$(git rev-parse HEAD)
 ok "Pushed + tagged v${NEW_VERSION} (${NEW_SHA:0:7})"
 
 # ═══════════════════════════════════════
+# Step 3b: GitHub Release (2026-08-02)
+# ═══════════════════════════════════════
+# Tags alone are invisible on the Releases page — v1.6.52 was the first ever
+# formal Release and had to be hand-authored. Notes = the non-release commit
+# subjects since the previous tag. Best-effort by design: a missing `gh`, no
+# auth, or an API blip must never fail a release whose tag is already pushed
+# (the release object can be created by hand later). `gh release create` on an
+# EXISTING tag attaches to it and creates nothing new.
+if command -v gh >/dev/null 2>&1; then
+  PREV_TAG=$(git describe --tags --abbrev=0 "v${NEW_VERSION}^" 2>/dev/null || true)
+  if [ -n "$PREV_TAG" ]; then
+    REL_NOTES=$(git log --format='- %s' "${PREV_TAG}..v${NEW_VERSION}" | grep -v '^- release:' || true)
+  else
+    REL_NOTES=""
+  fi
+  [ -n "$REL_NOTES" ] || REL_NOTES="- ${MSG}"
+  REL_NOTES="${REL_NOTES}
+
+## Install / update
+\`\`\`bash
+claude plugin marketplace add greglas75/zuvo-marketplace   # first install
+claude plugin install zuvo
+# update: claude plugin marketplace update zuvo-marketplace && claude plugin update zuvo@zuvo-marketplace
+\`\`\`
+Then restart Claude Code (and the Codex app — it indexes skills at launch)."
+  if gh release view "v${NEW_VERSION}" >/dev/null 2>&1; then
+    ok "GitHub Release v${NEW_VERSION} already exists — skipped"
+  elif gh release create "v${NEW_VERSION}" \
+        --title "v${NEW_VERSION} — ${MSG}" \
+        --notes "$REL_NOTES" >/dev/null 2>&1; then
+    ok "GitHub Release created: https://github.com/greglas75/zuvo/releases/tag/v${NEW_VERSION}"
+  else
+    warn "GitHub Release creation failed (tag is pushed; create by hand: gh release create v${NEW_VERSION})"
+  fi
+else
+  warn "gh not installed — no GitHub Release object (tag v${NEW_VERSION} is pushed)"
+fi
+
+# ═══════════════════════════════════════
 # Step 4: Update marketplace
 # ═══════════════════════════════════════
 cd "$MARKETPLACE_DIR"
