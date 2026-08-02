@@ -47,6 +47,11 @@ bash scripts/validate-skills.sh && python3 scripts/gen-gate-copies.py \
   && python3 scripts/audit-registry-integrity.py --strict && bash tests/run-all.sh
 ```
 
+**Container-starting tests need patience, not a timeout.** `tests/infra-suite/*` brings up Docker
+fixtures on fixed loopback ports. Run them in the background and WAIT; a timeout kills the script
+and orphans the containers, and the next run then fails on a port conflict that looks like a flake.
+If you must stop one, run the compose `down -v --remove-orphans` shown in §5 afterwards.
+
 **Scope switch:** `ZUVO_TEST_SCOPE=full bash tests/run-all.sh` adds `tests/adversarial/run.sh`
 (hits real provider CLIs — slow, needs auth). Default `fast` is what you run per change.
 
@@ -151,6 +156,7 @@ range with `/zuvo:review` and fix what the providers find.
 | `stale gate range(s) claimed` | A family grew and a `AP1-APnn`-style claim was left behind |
 | `hand-maintained gate table outside the registry` | A table of ≥12 gate-ID rows appeared outside a GENERATED region — split it or move it into the registry |
 | seo-suite fails at "Shared Registries" | `rg` is not installed (see §0) — an environment failure wearing a test failure's clothes |
+| infra-suite: `Bind for 127.0.0.1:220x failed: port is already allocated` | An EARLIER run of this suite was killed (timeout, Ctrl-C, harness stop) and its containers outlived the script. **Never kill a container-starting test with a timeout** — the script dies, the containers do not. Clean with `cd tests/infra-suite/fixtures && docker compose -p zuvo-infra-fixtures down -v --remove-orphans`, then re-run. Misreading this as a pre-existing baseline is the trap: it presents as a flaky Docker test and is actually your own debris (happened 2026-08-02, and was written into a commit message as "pre-existing" before being diagnosed). |
 | `smoke-skill-testing.sh` step 1 FATAL, children green | It re-runs the whole suite; a concurrent session committing mid-run races it. Re-run on a quiet tree |
 | Suite green, behavior wrong in the client | The install/cache path, not the code: `./scripts/install.sh`, then restart the app; verify `installPath` in `installed_plugins.json` |
 
@@ -167,6 +173,22 @@ range with `/zuvo:review` and fix what the providers find.
 | When a retro repeats a theme 3× | Audit that specific area early — the retro loop (`docs/retro-learning-loop.md`) is the trigger, not the calendar |
 
 ---
+
+## 6b. Never test an old commit by checking it out in a shared checkout
+
+To answer "did this fail before my work?", the obvious move is `git stash && git checkout <old>
+&& run && git checkout - && git stash pop`. **Do not.** This repo regularly has a second agent
+session working in the same tree (it happened three times on 2026-08-02). That sequence stashes
+THEIR uncommitted work, makes their files vanish from disk for the duration, and relies on a clean
+pop. It worked when I did it — and it was luck, not method.
+
+Use a throwaway worktree instead; it touches nothing:
+
+```bash
+git worktree add /tmp/base-check <old-sha>
+( cd /tmp/base-check && bash tests/<the-one-test>.sh ); echo "exit=$?"
+git worktree remove --force /tmp/base-check
+```
 
 ## 7. What none of this catches (stated, not hidden)
 
