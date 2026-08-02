@@ -111,6 +111,20 @@ fi
   && pass "a real piped invocation with env prefix is counted (no false accusation)" \
   || bad "real invocation behind a pipe/env prefix was NOT counted (rc=$rc): $out"
 
+# ── 6b. a backslash-continued invocation keeps its flags ───────────────────
+# The `args` capture used to stop at the newline, so `adversarial-review \<NL>  --multi …`
+# captured only `\` — a REAL --multi pass scored 0 and the verifier ACCUSED an honest reviewer of
+# DID_NOT_USE_--multi (Validity Gate -> FAIL, verdict -> INCOMPLETE). An undercount is the one
+# failure mode this tool's design forbids: it is trusted precisely BECAUSE it never under-counts.
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"git diff a..b | adversarial-review \\\n  --multi --mode code"}}]}}' > "$TMP/cont-invoke.jsonl"
+out="$(printf 'adversarial:\n  passes_run: 1\n  self_review_flag: yes — used --multi\n' \
+  | python3 "$V" --claims - --transcript "$TMP/cont-invoke.jsonl" --strict 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "(--multi: 1)"; then
+  pass "a backslash-continued invocation keeps --multi (no false accusation)"
+else
+  bad "backslash-continued --multi was lost -> false accusation (rc=$rc): $out"
+fi
+
 # ── 7. partial mismatch (some evidence, not enough) is accused ─────────────
 # the elif branches: observed > 0 but fewer than claimed. Previously untested — a bug here would
 # only surface as a silent clear on a half-done review.

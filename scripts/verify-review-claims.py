@@ -82,8 +82,14 @@ ADVERSARIAL_RE = re.compile(
     r"(?:\s*(?:if|then|do|else|elif|while|until|time|exec)\b|\s*!)*"  # control-flow lead-ins
     r"(?:\s*[A-Za-z_][A-Za-z0-9_]*=\S*)*"           # optional env assignments
     r"\s*(?:[\w./~-]*/)?adversarial-review(?:\.sh)?\b"
-    r"(?P<args>[^|;&\n]*)"                          # this command's own arguments
+    r"(?P<args>(?:\\\n|[^|;&\n])*)"                 # this command's own arguments
 )
+# `args` deliberately consumes a backslash-newline continuation rather than stopping at it.
+# Stopping made `… | adversarial-review \<newline>  --multi --mode code` capture just `\`, so a
+# real `--multi` pass scored adversarial_multi=0 and the verifier ACCUSED an honest reviewer of
+# `DID_NOT_USE_--multi` — which flips the Validity Gate to FAIL and the verdict to INCOMPLETE.
+# That inverts this tool's stated bias (over-count, never under-count; trusted when it ACCUSES):
+# an undercount is the one failure mode the design forbids, because it manufactures a violation.
 
 
 def munge(path: Path) -> str:

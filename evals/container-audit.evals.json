@@ -11,7 +11,7 @@
       "assertions": [
         "The audit records a K1 CRITICAL finding for the `FROM node:latest` mutable/unpinned base, at bad.Dockerfile:LINE.",
         "The audit records a K2 CRITICAL finding for the image running as root (no USER directive), and a K3 CRITICAL for the API_KEY secret in ENV baked into a layer, each citing bad.Dockerfile:LINE.",
-        "Because K1/K2/K3 critical gates trip, the overall VERDICT is FAIL (a tripped critical gate wins over the finding-count band); a report is written to zuvo/audits/ and no source file is modified."
+        "Because K1/K2/K3 critical gates trip, the run outputs overall VERDICT=FAIL (a tripped critical gate wins over the finding-count band); it writes a report to zuvo/audits/ and edits no source file."
       ],
       "fixtures": [
         {
@@ -28,8 +28,8 @@
         "good.Dockerfile"
       ],
       "assertions": [
-        "K5 (Known Vulnerability Scan) is reported N/A (scanner unavailable), not a failure or a zero score.",
-        "The score denominator excludes K5 (75, not 90) per the variable-denominator rule, and the audit produces a final grade/verdict rather than aborting."
+        "The report shows K5 (Known Vulnerability Scan) as N/A (scanner unavailable), not as a failure or a zero score.",
+        "The score denominator excludes K5 (the report shows 75, not 90) per the variable-denominator rule, and the run outputs a final grade/verdict rather than aborting."
       ],
       "fixtures": [
         {
@@ -50,8 +50,8 @@
         "bad.Dockerfile"
       ],
       "assertions": [
-        "With trivy present, K5 is an active scored dimension (not N/A) and the denominator includes its weight (90, not 75).",
-        "The audit describes K5 scanning the declared base image (pullable FROM ref) with consent-gating, not a built final image, consistent with the read-only no-build gate."
+        "With trivy present, the report shows K5 as an active scored dimension (not N/A) and a denominator that includes its weight (90, not 75).",
+        "The report shows K5 scanning the declared base image (pullable FROM ref) with consent-gating, not a built final image, consistent with the read-only no-build gate."
       ],
       "fixtures": [
         {
@@ -69,8 +69,8 @@
         "docker-compose.yml"
       ],
       "assertions": [
-        "The audit reports 0 critical findings and a HEALTHY grade (score >= 80%).",
-        "The distroless `:nonroot` base is accepted as non-root (K2 satisfied) WITHOUT being false-flagged for a missing USER directive."
+        "The report shows 0 critical findings and outputs a HEALTHY grade (score >= 80%).",
+        "The report shows the distroless `:nonroot` base accepted as non-root (K2 satisfied) and contains no K2 false-flag for a missing USER directive."
       ],
       "fixtures": [
         {
@@ -96,8 +96,8 @@
         "k8s-sample/deploy.yaml"
       ],
       "assertions": [
-        "K7-K10 are reported `N/A (requires --k8s)` and excluded from the scoring denominator.",
-        "No Kubernetes finding is emitted for k8s-sample/deploy.yaml in a default (no --k8s) run \u2014 the manifest's presence does not change the K1-K6 score."
+        "The report shows K7-K10 as `N/A (requires --k8s)` and excludes them from the scoring denominator.",
+        "A default (no --k8s) run outputs no Kubernetes finding for k8s-sample/deploy.yaml — the manifest's presence does not change the K1-K6 score."
       ],
       "fixtures": [
         {
@@ -133,8 +133,8 @@
         "labeled/control-02-hardened.compose.yml"
       ],
       "assertions": [
-        "The audit's emitted rule_ids match at least 90% (>= 9 of 10) of the `# EXPECT:` labels on the defective labeled files (e.g. K2-root-user, K1-latest-tag, K3-secret-in-arg, K4-no-multistage, K1-unpinned-builder, K6-docker-sock, K6-host-network, K6-no-healthcheck, K3-secret-in-env, K1-mutable-version-tag).",
-        "The two clean control files (control-01-distroless.Dockerfile, control-02-hardened.compose.yml, both `# EXPECT: none`) receive ZERO critical findings \u2014 no false positive, in particular no K2 false-flag on the distroless nonroot control."
+        "The emitted rule_id set matches at least 90% (>= 9 of 10) of the `# EXPECT:` labels on the defective labeled files (e.g. K2-root-user, K1-latest-tag, K3-secret-in-arg, K4-no-multistage, K1-unpinned-builder, K6-docker-sock, K6-host-network, K6-no-healthcheck, K3-secret-in-env, K1-mutable-version-tag).",
+        "For the two clean control files (control-01-distroless.Dockerfile, control-02-hardened.compose.yml, both `# EXPECT: none`) the report contains ZERO critical findings — no false positive, in particular no K2 false-flag on the distroless nonroot control."
       ],
       "fixtures": [
         {
@@ -190,14 +190,14 @@
     {
       "id": 7,
       "prompt": "Run zuvo:container-audit on the real-sample/ directory (a vendored, de-secreted real Dockerfile + compose; secret values already scrubbed to ***).",
-      "expected_output": "Every finding cites a path/to/file:LINE that resolves in real-sample/, at least one actionable fix is given, and NO secret value appears in the report (Gate 2 \u2014 values shown as *** only).",
+      "expected_output": "Every finding cites a path/to/file:LINE that resolves in real-sample/, at least one actionable fix is given, and NO secret value appears in the report (Gate 2 — values shown as *** only).",
       "files": [
         "real-sample/Dockerfile",
         "real-sample/docker-compose.yml"
       ],
       "assertions": [
-        "Every finding cites a concrete `real-sample/<file>:LINE` reference and at least one actionable fix is provided.",
-        "No secret VALUE appears anywhere in the report (Gate 2 secret censorship); variable names may show but values are `***`."
+        "Every finding contains a concrete `real-sample/<file>:LINE` reference and shows at least one actionable fix.",
+        "The report contains no secret VALUE anywhere (Gate 2 secret censorship); it shows variable names but outputs values as `***`."
       ],
       "fixtures": [
         {
@@ -219,8 +219,8 @@
         "repo/docker-compose.yml"
       ],
       "assertions": [
-        "All six dimensions K1-K6 appear in the report, each with a numeric score or an explicit N/A.",
-        "A report is written to zuvo/audits/container-audit-<date>.md AND a sibling .json, the critical-gate section is present, and the Validity Gate is PASS."
+        "The report contains all six dimensions K1-K6, each showing a numeric score or an explicit N/A.",
+        "The run writes a report to zuvo/audits/container-audit-<date>.md AND a sibling .json, the report contains the critical-gate section, and the Validity Gate outputs PASS."
       ],
       "fixtures": [
         {
@@ -243,13 +243,13 @@
       "expected_output": "The audit reports 'no container artifacts' and exits HEALTHY (N/A - nothing to audit). This is NOT a failure. get_file_tree still ran; the artifact-scanning tools are recorded N/A(no-artifacts), not skipped.",
       "files": [],
       "assertions": [
-        "The audit reports 'no container artifacts' and returns HEALTHY (N/A - nothing to audit), NOT a FAIL or an error.",
-        "The mandatory-tools gate is satisfied: get_file_tree ran (that is how 'none found' was determined) and the artifact-scanning tools are recorded as N/A(no-artifacts) rather than skipped."
+        "The report shows 'no container artifacts' and outputs HEALTHY (N/A - nothing to audit), NOT a FAIL or an error.",
+        "The mandatory-tools gate outputs PASS: it records that get_file_tree ran (that is how 'none found' was determined) and shows the artifact-scanning tools as N/A(no-artifacts) rather than skipped."
       ],
       "fixtures": [
         {
-          "path": "empty/.gitkeep",
-          "content": ""
+          "path": "empty/README.md",
+          "content": "This directory intentionally contains no container artifacts:\nno Dockerfile, no docker-compose.yml, no k8s manifest.\n"
         }
       ]
     }

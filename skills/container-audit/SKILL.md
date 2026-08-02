@@ -318,14 +318,33 @@ as `api-audit` D11=N/A — NOT env-audit's fixed denominator.) Under `--quick`, 
 the critical-gate trio only; note `mode=quick (K1-K3)` in the report so the narrower denominator
 is explicit.
 
-**Critical gates:** K1=0 OR K2=0 OR K3=0 OR (K5 ran AND a critical CVE present) → overall **FAIL**.
+**Critical gates fire on the FINDING, not on an aggregate score of zero.** Any one of these →
+overall **FAIL**, whatever the dimension's numeric score:
+
+| Gate | Fires on |
+|------|----------|
+| K1 | any `K1-latest-tag` / `K1-no-tag` finding on a **final-image** external base |
+| K2 | any `K2-root-user` or `K2-privileged` finding (incl. a compose `user: root`/`"0"` override) |
+| K3 | any CRITICAL-severity K3 finding (secret value reachable in image, ARG/ENV, or build context) |
+| K5 | K5 actually ran AND a critical CVE is present |
+
+Read literally as "the dimension scored 0", these gates would be nearly unreachable and the audit
+would pass containers it exists to fail: K2 carries six checks across 18 points, so an image that
+runs as **root** but sets `cap_drop: [ALL]`, `no-new-privileges` and `read_only: true` scores well
+above zero — the root finding alone must FAIL it, and under a score-based reading it would not.
+A dimension score of 0 remains sufficient to fire the gate; it is simply not necessary.
 
 | Grade | Score |
 |-------|-------|
 | HEALTHY | ≥ 80% |
-| NEEDS ATTENTION | 60–79% |
-| AT RISK | 40–59% |
+| NEEDS ATTENTION | ≥ 60% and < 80% |
+| AT RISK | ≥ 40% and < 60% |
 | CRITICAL | < 40% |
+
+Bands are explicit inequalities because the variable denominator makes a fractional score the
+norm, not the exception: 62/90 = 68.9% and 51/75 = 68% both land between the hyphenated `60–79`
+and `80` bands, so a `60–79%` row would leave real scores ungraded (or silently rounded into a
+different grade).
 
 ---
 

@@ -100,7 +100,7 @@ Any of these scored 0 is an immediate FAIL, regardless of the total score.
 | Result | Criteria |
 |--------|---------|
 | **PASS** | Score >= 86% of applicable AND all active critical gates = 1 |
-| **CONDITIONAL PASS** | Score 79-85% of applicable AND all active critical gates = 1 |
+| **CONDITIONAL PASS** | Score >= 0.79 and < 0.86 of applicable AND all active critical gates = 1 |
 | **FAIL** | Any active critical gate = 0, OR score < 79% of applicable |
 
 `applicable = 40 - count(out-of-scope) - count(N/A)` — a PERCENTAGE, never a fixed denominator.
@@ -151,8 +151,8 @@ Canonical: `shared/includes/quality-gates.md` → CQ Scoring.
 | Result | Criteria |
 |--------|---------|
 | **PASS** | Score >= 82% of applicable, all critical gates = 1 |
-| **FIX** | Score 53-81% of applicable, or any critical gate = 0 -- fix worst gaps, re-score |
-| **REWRITE** | Score < 53% of applicable -- tests need fundamental rework |
+| **FIX** | Score >= 0.53 and < 0.82 of applicable, all critical gates = 1 -- fix worst gaps, re-score |
+| **REWRITE** | Score < 0.53 of applicable, OR any critical gate = 0 -- tests need fundamental rework |
 
 Same rule as CQ: a percentage of applicable gates, never a fixed denominator. This table mixed two
 frozen denominators (`/25` and `/19`) until 2026-08-02. Canonical:
@@ -187,7 +187,31 @@ Self-eval: Q1=1 Q2=1 Q3=0 Q4=1 Q5=1 Q6=1 Q7=1 Q8=0 Q9=1 Q10=1 Q11=1 Q12=0 Q13=1 
 
 ## N/A abuse prevention
 
-If at least 60% of gates are scored N/A (24+ of the 40 CQ gates, or 15+ of the 25 Q gates), the evaluation is flagged as **low-signal audit**. Every N/A requires a one-sentence justification explaining why the precondition is inactive. N/A counts as 1 for scoring but must be defensible.
+`count(N/A)` may not exceed **one third of the in-scope gates** — the proportional cap in
+`rules/cq-checklist.md`, which is the canonical rule. Over that, the evaluation is a **low-signal
+audit**. Every N/A requires a one-sentence justification, held to the same evidence rigour as a 0
+(an exhaustive negative assertion, not "probably not applicable").
+
+**N/A does NOT count as a pass.** It leaves both the numerator and the denominator:
+
+```
+in_scope    = 40 - count(out-of-scope)
+denominator = in_scope - count(N/A)
+pass_count  = count(score == 1)        # 1s only
+```
+
+The ratio alone is **not** an anti-gaming guard — read plainly it rewards abuse, because dropping
+a `0` out of the denominator raises the percentage — three passes against two failures scores 60%,
+and re-marking both failures N/A scores 100% on identical code. What actually closes that path is
+the four HARD rules in `rules/cq-checklist.md`
+→ "N/A cannot raise the score": an N/A needs the SAME exhaustive negative evidence as a 0, the
+one-third cap above, gates listed for the file's code type can never be N/A, and `pass_count` /
+`count(N/A)` / denominator are printed next to every percentage. Quote the formula only together
+with those rules.
+
+This page said "N/A counts as 1 for scoring" with a 60% cap until 2026-08-02 — both errors pushed
+the same way, and they compounded: counting N/A as a pass *while* shrinking the denominator made
+re-labelling a failure a double upgrade, and a 60% cap left room to do it to most of the set.
 
 This prevents agents from marking everything N/A to avoid doing the evaluation work.
 

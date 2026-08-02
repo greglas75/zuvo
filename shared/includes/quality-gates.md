@@ -78,7 +78,7 @@ pointer now and not a longer table.)
 | Result | Criteria |
 |--------|---------|
 | PASS | Score >= 86% of applicable AND all active critical gates = 1 |
-| CONDITIONAL PASS | Score 79-85% of applicable AND all active critical gates = 1 |
+| CONDITIONAL PASS | Score >= 0.79 and < 0.86 of applicable AND all active critical gates = 1 |
 | FAIL | Any active critical gate = 0, OR score < 79% of applicable |
 
 `applicable = 40 - count(out-of-scope) - count(N/A)` — a PERCENTAGE, never a fixed denominator.
@@ -101,12 +101,31 @@ No evidence = score is 0. Vague claims ("errors handled") are not evidence.
 
 ### N/A Abuse Rule
 
-If at least 60% of gates are scored N/A (24+ of 40, or 23+ when CQ36-38 are out of scope for the
-stack), flag the evaluation as "low-signal audit" and justify each N/A individually. N/A counts as 1
-for scoring but requires a one-sentence explanation. The count is over the FULL gate set, not a
-frozen denominator — this line said "17+" until 2026-08-02, which was 60% of the old 29 gates and
-only 42% of the real 40, so it stopped firing on exactly the low-signal audits it was written to
-catch. Same drift class as the CQ Scoring thresholds three sections above.
+`count(N/A)` may not exceed **one third of the in-scope gates** — `floor(in_scope / 3)`, where
+`in_scope = 40 - count(out-of-scope)`. Exceeding it ⇒ verdict **`INCOMPLETE`**, never PASS: too
+little of the file was actually evaluated to certify it.
+
+**N/A does NOT count as a pass.** It leaves both sides of the ratio:
+
+```
+in_scope    = 40 - count(out-of-scope)
+denominator = in_scope - count(N/A)
+pass_count  = count(score == 1)        # 1s only
+```
+
+Because N/A shrinks the denominator, re-labelling failures as N/A would otherwise convert a FAIL
+into a PASS with zero code change: a file sitting at 69% (FAIL) reaches 87% (PASS) purely by
+re-marking six of its failing gates N/A — same code, smaller denominator.
+What closes that path is not the formula but the four HARD rules in `../../rules/cq-checklist.md`
+→ "N/A cannot raise the score": an N/A needs the SAME negative-evidence rigour as a 0, the
+proportional cap above, code-type gates can never be N/A, and `pass_count` / `count(N/A)` /
+denominator are always printed next to the percentage. Apply them together; the ratio alone is
+not a guard.
+
+This section said "60% of gates … N/A counts as 1 for scoring" until 2026-08-02 — a cap roughly
+double the canonical one, paired with treating N/A as a free pass. Both errors pushed the same
+way, and this file is the one skills LOAD at audit time, so the runtime rule was the lenient one
+while `rules/cq-checklist.md` carried the strict one.
 
 ---
 
@@ -153,7 +172,7 @@ These are always critical. If any scores 0, the evaluation is capped at FIX:
 | Result | Criteria |
 |--------|---------|
 | PASS | Score >= 82% of applicable, all critical gates = 1 |
-| FIX | Score 53-81% of applicable, all critical gates = 1 |
+| FIX | Score >= 0.53 and < 0.82 of applicable, all critical gates = 1 |
 | REWRITE | Score < 53%, or any critical gate = 0 |
 
 ### Q Evidence Format
