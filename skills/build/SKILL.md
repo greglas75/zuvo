@@ -71,7 +71,7 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 - Plan approval and commit confirmation follow env-compat rules for the detected environment.
 - `--auto` and `--auto-commit` flags are additive overrides on top of env-compat defaults (they loosen, never tighten).
 
-**Agent dispatch model:** This skill uses **inline prompt dispatch** (see env-compat.md). Agent instructions are embedded in Phase 1b and Phase 4.1 — there are no separate `agents/*.md` files for build.
+**Agent dispatch model:** This skill uses **inline prompt dispatch** (see env-compat.md). Agent instructions are embedded in Phase 1b and Phase 4.1 — there are no separate `agents/*.md` files for build — so on Codex/Cursor single-agent mode, where `env-compat.md` says "read the agent's instruction file (e.g. `agents/blast-radius.md`)", use the EMBEDDED prompt block for that stage (Phase 1b blast-radius, Phase 4.1 auditors) instead; there is no file to read and looking for one is the bug.
 
 ## CodeSift Integration
 
@@ -628,6 +628,12 @@ EXECUTION VERIFICATION
 ```
 
 ### 4.4 Adversarial Review (MANDATORY — do NOT skip)
+
+> **Capture the script's OWN status, not just the patch helper's exit code.** `adversarial-review`
+> distinguishes ok / partial / timeout(124) / suspended(125) / single_provider_only(3) / error. A
+> suspended-host or all-timeout run produces NO findings — which is indistinguishable from a clean
+> pass unless you read the status. Treat 124/125 as NOT RUN (re-invoke once for 125 per
+> `adversarial-loop.md`), and never let "no findings" from an unrun pass satisfy this gate.
 
 ```bash
 # Scoped review patch on stdout — the git index is NEVER touched (no staging).

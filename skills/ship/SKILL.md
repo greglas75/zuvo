@@ -59,6 +59,7 @@ CORE FILES LOADED:
   5. ../../shared/includes/knowledge-curate.md — READ/MISSING
   6. ../../shared/includes/knowledge-prime.md  — READ/MISSING
   7. ../../shared/includes/no-pause-protocol.md — READ/MISSING (HARD: no mid-pipeline pauses)
+  8. ../../shared/includes/documentation-mandate.md — READ/MISSING (Phase 3 cites it as a completion-gate item)
 ```
 
 If any file is missing: proceed in degraded mode. Note which files are unavailable in the Phase 5 output.
@@ -202,6 +203,12 @@ WORK_FILES = <files being touched>
 ---
 
 ## Phase 2: Review Scaling
+
+**0. Secret scan — unconditional, BEFORE the threshold branch.** The frontmatter calls
+`scan_secrets` "the last-line check before push"; it belongs on every path, including the <20 LOC
+fast path that skips review entirely (a one-line commit is exactly how a credential ships).
+Run `scan_secrets` over the release range; any high-confidence hit BLOCKS the ship until removed
+AND rotated — a leaked secret is not a WARN.
 
 1. **Compute diff LOC.** Count insertions + deletions since the last tag:
    ```bash
@@ -371,6 +378,16 @@ This step runs regardless of flags and diff size (fast path included). It does N
 
 ## Phase 4: Stage, Commit, Tag, Push, Artifact
 
+> **The push WILL hit the pipeline-entry pre-push gate.** `hooks/pre-push-gate.sh` runs on every
+> agent push and BLOCKS a range that changes >=3 production files or >=150 lines without a
+> content-keyed review artifact covering the CURRENT blob of each file. Ship does not write that
+> artifact — only `zuvo:review`/`zuvo:build`/`zuvo:execute` do. Its threshold is INDEPENDENT of
+> ship's own LOC bands (production files only, 3-or-150), so a change ship fast-paths can still be
+> gate-substantial. On `BLOCKED: pushing substantial unreviewed work`: read the per-file reason it
+> prints (each reason has a DIFFERENT fix), then run `zuvo:review ${BASE_REF}..HEAD` to produce the
+> artifact+proof pair and push again. Never reach for `ZUVO_ALLOW_ADHOC=1` on ship's behalf — that
+> escape is the human's to type, not the skill's.
+
 ### Step 1: Stage files
 
 Stage **only** files that were actually generated or modified:
@@ -519,6 +536,8 @@ SHIP COMPLETE
   Tag:         v<new-version> / skipped (--no-tag)
   Diff:        <N> LOC (<review-depth> path)
   Tests:       <PASS|WARN (pre-existing carried)|SKIPPED (no runner)> (<N> passed, <N> failed)
+  DOC:         <changelog-only — feature docs current | updated: <paths> | N/A — <reason>>
+  Coverage:    <PASS|WARN|FAIL — from coverage-check, or 'not dispatched (<300 LOC)'>
   Review:      <depth> (<details>) [escalated-from <table-depth> due to attestation: <reason>]
   Changelog:   CHANGELOG.md updated / skipped
   Push:        pushed to origin/<branch> / skipped (non-interactive) / skipped (user declined)

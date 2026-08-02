@@ -921,6 +921,18 @@ Enforcement: print the gate check as a checklist with actual `[x]` / `[ ]` marks
 
 ### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
 
+> **Honest limit: this gate is SELF-ATTESTED, and knowing that is the point.** No script reads the
+> fields below. `~/.zuvo/append-runlog` checks only that a matching retro exists and that
+> `verify-audit` finds a resolvable `file:line` in every MUST-FIX/RECOMMENDED — it never parses
+> `tier2_subagents`, `adversarial`, or any `VIOLATES_*` token. So `cq_auditor: DISPATCHED(<marker>)`
+> typed without a dispatch is indistinguishable from the real thing to every downstream consumer.
+> Two things ARE machine-checked and are therefore the real backstops: the content-keyed artifact
+> (`pg_range_reviewed`) and its adversarial proof file with >=2 `REVIEW BY:` lines
+> (`pg_artifact_proven`) — a fabricated review cannot forge a multi-provider transcript cheaply.
+> Adding more forbidden phrasings to this file does NOT close the gap; treat the gate as a
+> discipline aid whose teeth live in the artifact pair, and never cite "the Validity Gate passed"
+> as evidence that the work happened.
+
 ```
 VALIDITY GATE
   triggers_held:

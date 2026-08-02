@@ -97,7 +97,7 @@ Execute all roles yourself in sequential passes with explicit checkpoints:
 4. **Quality reviewer pass:** Run CQ1-CQ40 on production files, Q1-Q25 on test files. Run anti-tautology checks on test files. **Report per-file scores — aggregate scoring is forbidden.** Print scores and: `[GATE: cq-critical] <critical gates checked + evidence>`
 5. **Independent test auditor pass:** Re-read tests as if seeing them for the first time. Compare Q scores with self-eval. Print: `[CHECKPOINT: independent test audit complete]`
 6. **Adversarial pass:** Run the same adversarial review required in Step 7b. Print: `[GATE: adversarial-done] PASS|WARNING|CRITICAL|BLOCKED <mode + artifact path or exact blocker>`
-7. **Acceptance verifier pass (MANDATORY):** Read the task's Acceptance Proof block from the plan. Set up preconditions, run the proof, capture artifact to `zuvo/proofs/task-<N>-<ac-id>.<ext>`. Behavior must match Expected. Print: `[CHECKPOINT: switching to acceptance-verifier role]` then `[GATE: acceptance-verified] <ac-ids passed | BLOCKED with failing AC# + observed-vs-expected>`
+7. **Acceptance verifier pass (MANDATORY):** Read the task's Acceptance Proof block from the plan. Set up preconditions, run the proof, capture artifact to `zuvo/proofs/task-<N>-report.md` (ONE consolidated report per task, one `## <ac-id>` section each — protocol hard rule #7 after the 2026-07-17 "171 proof files in one run" incident; binary evidence like `task-<N>-<ac-id>.png` may sit alongside and be linked). Behavior must match Expected. Print: `[CHECKPOINT: switching to acceptance-verifier role]` then `[GATE: acceptance-verified] <ac-ids passed | BLOCKED with failing AC# + observed-vs-expected>`
 8. **Commit** (only if all reviews and acceptance gates pass)
 9. **Session durability pass:** Rewrite `execution-state.md` immediately after the commit. Print: `[GATE: state-written] <task N, sha7, next-task>`
 
@@ -245,10 +245,21 @@ Record the detected stack. Pass it to every implementer dispatch.
 
 ---
 
+
+**Acceptance-Proof presence check (protocol-mandated).** Before task 1, scan the plan for an
+Acceptance Proof block per task. If a task has none AND the spec carries none for it, abort with
+`BLOCKED_NO_ACCEPTANCE_PROOF: task <N>` — `acceptance-proof-protocol.md` requires this abort and
+execute never implemented it, so a legacy plan only surfaced the gap deep inside Step 7d with no
+defined recovery.
+
 ## Session State Initialization
 
 Before the first agent dispatch, initialize session state using the WRITE protocol from `session-state.md`:
 
+0. Write `plan_base_sha: <HEAD sha>` into `zuvo/context/execution-state.md` — captured NOW,
+   before task 1's first commit. Phase Final-2 READS this field to compute the aggregate-review
+   range; it was read but never written until 2026-08-02, so every run fell through to a
+   merge-base guess that is wrong whenever the branch already carried commits.
 1. Write `zuvo/plans/active-plan.md` — set `status: in-progress` (plain line, not an HTML comment).
 2. Write `zuvo/context/execution-state.md` — `status: in-progress`, `completed: []`, `next-task: <lowest task number from the plan>`.
 
@@ -329,7 +340,7 @@ spec-review=COMPLIANT
 quality-review=PASS cq=34/37@tenant.ts,35/37@guards.ts q=22/24@tenant.test.ts
 adversarial=PASS mode=security
 verify="pnpm vitest run src/foo.spec.ts" exit=0
-acceptance-verified=AC2@zuvo/proofs/task-4-AC2.txt,AC5@zuvo/proofs/task-4-AC5.txt
+acceptance-verified=AC2@zuvo/proofs/task-4-report.md,AC5@zuvo/proofs/task-4-report.md
 codesift=available
 backlog-adds=1
 ```
@@ -341,7 +352,7 @@ backlog-adds=1
 - **Worktree / shared-tree pre-flight — RESOLVE `repo_root`, don't bail to single-agent.** Run `git worktree list`. Determine the ONE tree this plan targets (the worktree checked out on the plan's `branch:`, else the current checkout), set `repo_root` to its absolute path, and **store it in `project-context.md`** so every sub-agent dispatch (Step 2) and the resume path get the same root. Sub-agents then `cd $repo_root` + use absolute paths, so **multi-agent runs correctly even when the session CWD is the main checkout and the work lives in a worktree** — you do NOT need a worktree-rooted session and you do NOT drop to single-agent for this. STOP (ask the user) ONLY on genuine ambiguity: the plan's branch is checked out in **two** worktrees, or in **none** (can't locate the tree). Otherwise resolve and proceed. (Pairs with `zuvo:worktree`.)
 - **Baseline test snapshot.** Run the suite ONCE at session start and record which tests are already red (`baseline-failures: [...]` in `execution-state.md`). Per-task verification then compares against this baseline — a test that was red before your change is a pre-existing failure to backlog, NOT a regression to re-investigate every task.
 - **Per-task verification is TARGETED, full suite runs ONCE at Phase Final. (HARD — measured sink.)** A task's Verify step runs the tests/type-check for the TOUCHED package/files (`turbo run test --filter=<pkg>`, the package's own script, or the specific test files) — NEVER the whole monorepo suite. The FULL suite + build runs exactly twice per plan: the baseline snapshot above and once at Phase Final (smoke). The 2026-07-17 timing forensics measured execute/plan sessions re-running the full turbo-test suite on EVERY task and every plan revision — pure multiplication of a fixed cost by N tasks with near-zero added signal (the baseline already isolates pre-existing reds). A reviewer or fix-loop iteration re-verifies with the SAME targeted scope, not an escalated one.
-- **No parallel same-file tasks.** If you ever batch task dispatch, never run two tasks that touch the SAME production file concurrently (lost-edit hazard) — the plan's rule 13 should already have serialized them; if it did not, serialize here.
+- **No parallel same-file tasks.** If you ever batch task dispatch, never run two tasks that touch the SAME file concurrently — **production OR test** (a shared test file loses edits exactly like a shared service; the rule said "production" until 2026-08-02) (lost-edit hazard) — the plan's rule 13 should already have serialized them; if it did not, serialize here.
 - **DB integration tasks.** For a task that changes schema, generate the migration via `migrate diff` / hand-written SQL applied with `psql` against a clean DB — NEVER `migrate dev` against a drifted local DB (it silently rewrites history / drops data). Verify the migration applies forward AND the rollback is present.
 
 ## SCOPE-FREEZE (HARD — the plan you approved is the plan that ships)
@@ -742,7 +753,7 @@ For the current task:
    - Any AC BROKEN → re-dispatch the implementer with the BROKEN list and observed-vs-expected detail. Re-run from Step 4 (spec review) on the next iteration. Maximum 3 acceptance iterations per task. After 3 unresolved iterations, mark BLOCKED with `BLOCKED_ACCEPTANCE_PROOF_FAILURE` and surface to user.
    - Proof cannot run (missing precondition, broken environment) → BLOCKED with `BLOCKED_PROOF_PRECONDITION_FAILED`. Do not commit the task — fixing preconditions is the next action.
 
-6. **Artifact retention.** Every successful proof writes to `zuvo/proofs/task-<N>-<ac-id>.<ext>`. The path is recorded in telemetry's `acceptance-verified` field for retro and audit. Failed proofs write to the same path with a `.failed` suffix and are kept for the implementer's re-dispatch context.
+6. **Artifact retention.** Every successful proof writes to `zuvo/proofs/task-<N>-report.md` (ONE consolidated report per task, one `## <ac-id>` section each — protocol hard rule #7 after the 2026-07-17 "171 proof files in one run" incident; binary evidence like `task-<N>-<ac-id>.png` may sit alongside and be linked). The path is recorded in telemetry's `acceptance-verified` field for retro and audit. Failed proofs write to the same path with a `.failed` suffix and are kept for the implementer's re-dispatch context.
 
 **No `[GATE: acceptance-verified]` marker = task remains IN_PROGRESS, no commit allowed.**
 
@@ -958,22 +969,11 @@ Rationale: prior practice was to either (a) skip post-execute review entirely or
 
 7. **Write the content-keyed pipeline-entry artifact (REQUIRED — on success only).** After the aggregate review passes, ensure a content-keyed review artifact `memory/reviews/<base7>..<head7>-<slug>.md` exists for the whole plan range, carrying the machine-readable `range:` / `files:` header per `../../shared/includes/review-artifact.md`. Use `BASE_SHA` from step 1, but the range END is `CODE_HEAD=$(git -C "$repo_root" rev-parse HEAD)` recomputed immediately after review's last FIX-AUTO fix commit and BEFORE committing any report/backlog artifacts — step 1's `HEAD_SHA` predates review's fix commits (they would fall outside the artifact and re-block push), while a post-report HEAD makes the range self-referential; a later report commit must not rewrite this machine-readable range. Write `range: ${BASE_SHA}..${CODE_HEAD}` and list the production files the plan touched in `files:` (or `*`). This is the signal the pre-push + CI gates read (`pg_range_reviewed`) so the just-completed, reviewed work can be pushed without re-blocking. Write it **only on success** — if Phase Final-2 ended `BLOCKED`, write nothing, so an unreviewed plan never grants itself pipeline coverage. (The `zuvo:review` dispatch in step 2 already emits a `memory/reviews/` report; this step guarantees that artifact carries the `range:`/`files:` header for the full plan range.)
 
-### Session State Close
-
-Set `status: completed` in `zuvo/context/execution-state.md`. Update `zuvo/plans/active-plan.md` to `status: completed`.
-
-**Disarm the stall watchdog** (per `stall-recovery.md`) — clean finish, so the watchdog must never auto-resume this run again:
-
-```bash
-# >>> zuvo:stall-watchdog (disarm — clean finish)
-_HB="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.zuvo/context/execute.heartbeat"
-[ -f "$_HB" ] && { sed -i.bak 's/^status:.*/status: done/' "$_HB" 2>/dev/null && rm -f "$_HB.bak"; } || true
-# <<< zuvo:stall-watchdog
-```
-
-Then, if a watchdog cron was armed (Claude Code), read `cron_id:` from the heartbeat and `CronDelete` it — and as belt-and-suspenders, `CronList` → `CronDelete` any job whose prompt contains `[zuvo-watchdog skill=execute project=…]`. Writing `status: done` means even a missed `CronDelete` self-cleans: the next cron fire reads `DONE` and deletes itself.
-
-The files remain on disk — they serve as a record of what was done. `zuvo:execute` will detect `status: completed` on next run and start fresh rather than attempting to resume.
+> **Ordering matters — CI parity runs BEFORE Session State Close (fixed 2026-08-02).**
+> Close writes `status: completed` and DISARMS the stall watchdog. When it ran first, a crash
+> during CI parity left a plan that looked finished, with no auto-resume — while CI parity's own
+> disposition says a scoped failure is "not completable". The durable state must never claim
+> completion before the last gate that can withhold it has run.
 
 ### Phase Final-3: CI parity (run what CI runs, BEFORE claiming complete)
 **Regression fence.** When an acceptance criterion says something must stay UNCHANGED (a flag-off path, a pre-existing suite), declare that path set before the work and verify it is byte-identical at every verification step — see `../../shared/includes/regression-fence.md`. An "unchanged" AC asserted rather than checked is the one nobody catches.
@@ -1009,6 +1009,23 @@ Disposition:
   (pre-existing, out-of-scope)`. Never classify the plan as a product pass while any **scoped**
   suite is red.
 - **No CI workflow present** → record `ci-parity: n/a (no workflow)` and continue; do not invent one.
+
+### Session State Close
+
+Set `status: completed` in `zuvo/context/execution-state.md`. Update `zuvo/plans/active-plan.md` to `status: completed`.
+
+**Disarm the stall watchdog** (per `stall-recovery.md`) — clean finish, so the watchdog must never auto-resume this run again:
+
+```bash
+# >>> zuvo:stall-watchdog (disarm — clean finish)
+_HB="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.zuvo/context/execute.heartbeat"
+[ -f "$_HB" ] && { sed -i.bak 's/^status:.*/status: done/' "$_HB" 2>/dev/null && rm -f "$_HB.bak"; } || true
+# <<< zuvo:stall-watchdog
+```
+
+Then, if a watchdog cron was armed (Claude Code), read `cron_id:` from the heartbeat and `CronDelete` it — and as belt-and-suspenders, `CronList` → `CronDelete` any job whose prompt contains `[zuvo-watchdog skill=execute project=…]`. Writing `status: done` means even a missed `CronDelete` self-cleans: the next cron fire reads `DONE` and deletes itself.
+
+The files remain on disk — they serve as a record of what was done. `zuvo:execute` will detect `status: completed` on next run and start fresh rather than attempting to resume.
 
 ### Final Summary
 
@@ -1136,7 +1153,7 @@ COMPLETION GATE CHECK (final):
 [ ] Whole-feature Smoke Proofs ran (or [GATE: smoke-verified] / explicit "Not applicable" with justification)
 [ ] Test Quality Gate ran (Phase Final-1b): [GATE: test-quality] PASS|WARN|N/A with a REAL zuvo/audits test-audit report path — inline Q-rescoring is a substituted gate = INVALID; below-A files fixed in-run or WARN + backlogged
 [ ] End-of-plan aggregate review ran (or [GATE: aggregate-review] PASS|RECOMMENDED-FOUND|MUST-FIX-FOUND|SKIPPED|NO-OP|BLOCKED — never silently omitted)
-[ ] Content-keyed artifact memory/reviews/<base7>..<head7>-<slug>.md written with range:/files: header for the plan range (on success only — pipeline-entry signal read by pre-push/CI gates)
+[ ] Content-keyed artifact memory/reviews/<base7>..<head7>-<slug>.md written with range:/files:/**adversarial:** header for the plan range (the adversarial proof path is REQUIRED — pg_artifact_proven rejects an artifact whose proof does not resolve or holds <2 `REVIEW BY:` lines, so an artifact without it grants ZERO coverage) (on success only — pipeline-entry signal read by pre-push/CI gates)
 [ ] Aggregate review was the REAL `Skill(zuvo:review)` dispatch — `[GATE: aggregate-review]` PASS/FOUND carries `via=zuvo:review` + a `report=<memory/reviews/...>` path that EXISTS on disk. A PASS via Explore/inline/adversarial substitute, or with no review artifact, is INVALID → re-run as the real dispatch (see Phase Final-2 NO-SUBSTITUTION)
 [ ] If `[GATE: aggregate-review] BLOCKED`: the reason is a GENUINE skill-missing/dispatch error — NOT "worktree"/"CWD reset"/"isolation" (those are solved with `git -C $repo_root` + the explicit content-SHA range and must be dispatched, never punted to the user)
 [ ] Final summary table printed with all tasks AND all smoke proofs AND the Aggregate Review block
@@ -1189,7 +1206,7 @@ From `shared/includes/tdd-protocol.md`: no production code without a failing tes
 ### Quality Gates
 
 From `shared/includes/quality-gates.md`:
-- CQ1-CQ40 on production code (critical gates: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 + conditional: CQ16, CQ19-CQ24, CQ28)
+- CQ1-CQ40 on production code (always-critical: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14; conditional-critical: CQ16, CQ19-CQ24, CQ28 **and CQ30-CQ40** — the security/concurrency wave is conditional-critical too, and this list froze at CQ28 until 2026-08-02. Canonical triggers: the `Criticality` column of `gate-registry.md`, never a copy)
 - Q1-Q25 on test code (critical gates: Q7, Q11, Q13, Q15, Q17)
 - Any critical gate = 0 -> FAIL, regardless of total score
 
