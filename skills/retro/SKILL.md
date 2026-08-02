@@ -285,7 +285,7 @@ RETRO COMPLETE
   2. zuvo:refactor src/auth/guard.ts — 8 changes suggest instability
   3. zuvo:backlog fix BD-007 — critical debt item open 21 days
 
-  Run: <ISO-8601-Z>	retro	<project>	-	-	<VERDICT>	-	6-phase	<NOTES>	<BRANCH>	<SHA7>
+  Run: <ISO-8601-Z>	retro	<project>	-	-	<VERDICT>	-	6-phase	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 
   After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 ```
@@ -301,7 +301,7 @@ RETRO COMPLETE [QUALITATIVE ONLY — <10 commits in window]
   Actions:
   1. [derived from backlog only]
 
-  Run: <ISO-8601-Z>	retro	<project>	-	-	<VERDICT>	-	qualitative	<NOTES>	<BRANCH>	<SHA7>
+  Run: <ISO-8601-Z>	retro	<project>	-	-	<VERDICT>	-	qualitative	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 
   After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 ```

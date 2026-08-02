@@ -59,7 +59,7 @@ Parse `$ARGUMENTS` for mode, pattern ID, and scope:
 
 | Argument | Behavior |
 |----------|----------|
-| _(empty)_ or `--triage` | Scan all known anti-patterns, report counts, ask which to fix |
+| _(empty)_ or `--triage` | Scan all known anti-patterns, report counts, then fix every pattern with a non-zero count (no menu — see Step 1) |
 | `--pattern [ID]` | Fix the specified pattern across all matching test files |
 | `--pattern [ID] [path]` | Fix the pattern, scoped to the given directory |
 | `--dry-run` | Show triage counts and affected files, do not modify anything |
@@ -132,6 +132,8 @@ CORE FILES LOADED:
   5. ../../shared/includes/knowledge-curate.md -- READ/MISSING
   6. ../../shared/includes/retrospective.md    -- RETRO PROTOCOL
   7. ../../shared/includes/no-pause-protocol.md -- READ/MISSING (HARD: no mid-batch pauses)
+  8. ../../shared/includes/test-bugfix-protocol.md -- READ/MISSING (in-run fix of surfaced production bugs)
+  9. ../../shared/includes/backlog-protocol.md -- READ/MISSING (out-of-scope items only)
 ```
 
 **Conditional (loaded when the pattern requires domain knowledge):**
@@ -197,7 +199,11 @@ TRIAGE RESULTS
 -----
 ```
 
-**Triage mode:** Show full report, ask "Which patterns to fix? (all / list IDs)".
+**Triage mode:** Show the full report, then **fix every pattern with a non-zero count**, highest count first, without
+asking. `no-pause-protocol.md` is loaded as a HARD include and names this skill in scope: presenting an
+`(all / list IDs)` menu is precisely the approval-gate it forbids, and on Codex/Cursor — which run non-interactively —
+the question is answered by nobody and the run stalls having fixed nothing. A user who wants a subset asks for it up
+front with `--pattern [ID]`; a user who wants counts only asks with `--dry-run`.
 **Pattern mode:** Report only the count for the specified pattern, proceed to Step 2.
 **Dry-run mode:** Show triage report and affected file list, then STOP.
 
@@ -272,7 +278,26 @@ All tests must pass. If a fix introduces a failure:
 1. Read the error message
 2. Determine if the failure is from the fix (incorrect assertion) or from a real production bug discovered by the stronger assertion
 3. If incorrect assertion: revise the fix
-4. If production bug discovered: note it in the report and persist to backlog
+4. If production bug discovered: **fix it in-run** per `../../shared/includes/test-bugfix-protocol.md`
+
+#### Step 5a: Production bugs surfaced by a strengthened assertion
+
+Strengthening assertions is exactly how this skill finds real bugs — a weak test that passed and a strong test that
+fails means the production code was wrong all along. That discovery is the skill working, and parking it in the
+backlog throws away the run's most valuable output while leaving the repo with a test that now documents a defect
+nobody is fixing.
+
+Follow `test-bugfix-protocol.md` verbatim; its disposition table is **fix-scope, not severity**. The fix-tests
+mapping of its terms:
+
+- **Trigger** — Step 5 (a strengthened assertion goes red) or Step 5b (adversarial), instead of write-tests' Steps 1.5/2/4.
+- **In-scope** = the production file that is this test file's counterpart (Step 2), or a clearly-owned helper → **fix now, any size**, then flip the assertion to the corrected contract.
+- **Out-of-scope** (cross-module, shared guard, schema/migration) → escalate loudly to `zuvo:build` with file:line + repro, fix any in-scope portion, record the escalation. Never a silent backlog row.
+- **Behavior DECISION rather than a bug** → batch mode picks the safe default, logs it, continues (this skill runs under `no-pause-protocol.md`).
+- **Stacked commits** — commit 1: the strengthened test as written against current behavior; commit 2: the production fix + the assertion flipped. Never one hidden edit.
+- **After the fix** — re-run the modified test files (the write-tests manifest re-freeze has no analogue here) and count the file under `Needs review` only if something genuinely remains out of scope.
+
+`memory/backlog.md` receives only what is genuinely out-of-scope or user-declined.
 
 ### Step 5b: Adversarial Review (MANDATORY — do NOT skip)
 
@@ -321,7 +346,8 @@ FIX-TESTS: [PATTERN ID] COMPLETE
 -----
 Files fixed:     [N]
 Files skipped:   [N] (orphan: [N], already-clean: [N])
-Needs review:    [N] (production bugs discovered)
+Prod bugs:       [N] surfaced -> [F] fixed in-run, [E] escalated out-of-scope
+Needs review:    [N] (escalated or user-declined only)
 Tests passing:   [N]/[N]
 -----
 ```
@@ -363,9 +389,9 @@ COMPLETION GATE CHECK
 [ ] Production context read for each affected test file
 [ ] All modified test files ran and pass
 [ ] Adversarial review ran (--mode test)
-[ ] Needs-review count printed: production bugs discovered
+[ ] Every production bug surfaced by a strengthened assertion was FIXED in-run (test-bugfix-protocol.md) or escalated loudly with file:line — a backlog row for an in-scope bug is an incomplete run
 [ ] fix-tests-progress.md updated
-[ ] Backlog updated for discovered production bugs
+[ ] Backlog holds only genuinely out-of-scope or user-declined items
 [ ] Run: line printed and appended to log
 ```
 

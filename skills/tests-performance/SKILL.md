@@ -26,7 +26,12 @@ codesift_tools:
 Measurement-driven optimization of the test suite. Establishes a baseline, audits the runner configuration, identifies slow tests, and ranks fixes by expected impact.
 
 **Scope:** Test suite speed and runner configuration. Reducing wall-clock time of the test suite.
-**Out of scope:** Test quality (use `zuvo:test-audit`), flaky test investigation (use `zuvo:fix-tests`), CI pipeline optimization (use `zuvo:ci-audit`), test correctness issues (use `zuvo:fix-tests`).
+**Out of scope:** Test quality (use `zuvo:test-audit`), flaky/intermittent test investigation (use `zuvo:debug` — it
+owns reproduction and bisect; `zuvo:fix-tests` repairs known anti-patterns, it does not diagnose nondeterminism), CI
+pipeline optimization (use `zuvo:ci-audit`), systematic test anti-patterns (use `zuvo:fix-tests`).
+
+**This skill does not write.** It measures, scores and proposes exact config diffs; applying them is the user's call.
+Phase 5 re-measures after *they* have been applied.
 
 ## Core Principles
 
@@ -45,7 +50,7 @@ Measurement-driven optimization of the test suite. Establishes a baseline, audit
 | _(empty)_ | Full audit: baseline + config audit + slow scan + action plan |
 | `baseline` | Phase 1 only: measure and save baseline |
 | `verify` | Phase 5 only: re-measure and compare to saved baseline |
-| `--no-run` | Skip test execution, audit config only (Phase 2-4) |
+| `--no-run` | Skip test execution: Phase 2 (config audit), Phase 3.2 (pattern scan) and Phase 4, with **no Phase 3.1** — per-file slow-test ranking reads the baseline JSON that only Phase 1 produces. Report the action plan without measured impact, and print `TP Score` with `baseline: none (--no-run)` |
 | `--path <dir>` | Scope runner detection and test execution to a specific directory |
 
 ---
@@ -223,15 +228,22 @@ From baseline JSON data, extract the top 10 slowest files. For each:
 
 Scan all test files for slow patterns:
 
+Always pass an explicit search root and exclude dependency/build trees — a bare `grep -r … --include="*.test.*"`
+walks `node_modules`, whose vendored specs outnumber the project's own and turn every count into noise.
+
 ```bash
+SCAN_ROOT="${path_arg:-.}"
+EXCL=(--exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist --exclude-dir=build
+      --exclude-dir=coverage --exclude-dir=.next --exclude-dir=vendor --exclude-dir=.venv)
+
 # Real timers in test files
-grep -rn "setTimeout\|sleep\|waitFor" --include="*.test.*" | wc -l
+grep -rn "${EXCL[@]}" --include="*.test.*" "setTimeout\|sleep\|waitFor" "$SCAN_ROOT" | wc -l
 
 # Heavy setup
-grep -rn "beforeEach.*prisma\|beforeAll.*seed\|beforeEach.*render" --include="*.test.*" | wc -l
+grep -rn "${EXCL[@]}" --include="*.test.*" "beforeEach.*prisma\|beforeAll.*seed\|beforeEach.*render" "$SCAN_ROOT" | wc -l
 
 # Explicit waits
-grep -rn "waitForTimeout\|sleep(" --include="*.test.*" | wc -l
+grep -rn "${EXCL[@]}" --include="*.test.*" "waitForTimeout\|sleep(" "$SCAN_ROOT" | wc -l
 ```
 
 ---
@@ -312,11 +324,11 @@ TESTS-PERFORMANCE COMPLETE
 -----
   Runner:      [runner] ([config path])
   Baseline:    X.Xs (N tests)
-  TP Score:    [N]/17 optimal ([M] suboptimal, [K] N/A)
+  TP Score:    [N]/15 performance items optimal ([M] suboptimal, [K] N/A) | governance: TP8 [set|not set], TP10 [set|not set]
   Slow tests:  [N] files classified
   Action plan: [N] items ([M] config, [K] code)
   Top impact:  [description of #1 change] -> expected [P]% improvement
-  Run: <ISO-8601-Z>	tests-performance	<project>	-	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>
+  Run: <ISO-8601-Z>	tests-performance	<project>	-	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 -----
 ```
 
@@ -336,5 +348,10 @@ printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <project>)`. If exit 2 with `RETRO_REQUIRED` — go execute the retro bash from `retrospective.md` first; never bypass with `ZUVO_SKIP_RETRO_GATE=1`. After the wrapper succeeds, print a `Logs:` evidence line (`tail -1 ~/.zuvo/retros.log`, `grep -c "^<!-- RETRO -->" ~/.zuvo/retros.md`, `tail -1 ~/.zuvo/runs.log`) before claiming completion. Printing the markdown retro section without executing the bash leaves all three log files empty.
 
 `<DURATION>`: use `full` (full audit) or `baseline` (baseline-only run).
-`<Q>`: TP score as `N/17`, or `-` for baseline-only.
+`<Q>`: performance TP score as `N/15` (TP8 and TP10 are excluded — see Scoring Rules), or `-` for baseline-only.
 `<TASKS>`: number of action plan items.
+`<INCLUDES>`: the include list per `run-logger.md` field 12, or `-`.
+`<TIER>`: `-` — this skill does not tier.
+
+All 13 fields are mandatory (`run-logger.md`: "tab count must be exactly 12"); write `-` for anything with no value
+rather than dropping the field.

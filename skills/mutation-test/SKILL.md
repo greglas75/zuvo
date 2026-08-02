@@ -379,15 +379,18 @@ Note: TIMEOUT and ERROR count as killed (the mutation was detected).
 | Score | Grade |
 |-------|-------|
 | >= 80% | A |
-| 60-79% | B |
-| 40-59% | C |
+| >= 60% and < 80% | B |
+| >= 40% and < 60% | C |
 | < 40% | D |
+
+Bands are stated as explicit inequalities, not as `60-79%`: a real score of 79.6% falls in no band under the
+hyphenated form, and rounding it into one silently changes the grade.
 
 **Verdict mapping (for run log):**
 | Score | Verdict |
 |-------|---------|
 | >= 80% | PASS |
-| 60-79% | WARN |
+| >= 60% and < 80% | WARN |
 | < 60% | FAIL |
 
 ### 4.2 Survived Mutation Analysis
@@ -449,7 +452,7 @@ MUTATION SCORE: [N]% -- Grade [A/B/C/D]
 - zuvo:mutation-test [file] --category [weakest] -- retest after fixes
 
 Run: <ISO-8601-Z>	mutation-test	<project>	<score>%	<killed>/<total>	<VERDICT>	-	<N>-files	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
-
+```
 
 ### Retrospective (REQUIRED)
 
@@ -471,8 +474,6 @@ Q_SCORE field: `<killed>/<total>` (killed count / total mutations).
 TASKS: `-` (no file modifications).
 DURATION: `<N>-files` (number of production files tested).
 NOTES: `mutation-test [scope] [grade]` (max 80 chars).
-===============================================
-```
 
 ### 4.4 Dry-Run Report
 
@@ -514,5 +515,5 @@ These are non-negotiable:
 2. **Never modify test files.** Mutations apply only to production code.
 3. **Always verify restoration.** After each mutation, confirm the original file is intact.
 4. **Timeout protection.** No single mutation test can run longer than 3x baseline per file.
-5. **Clean state on exit.** If the skill is interrupted, ensure `git checkout -- [file]` or `git stash pop` is run.
+5. **Clean state on exit.** If the skill is interrupted, restore through the Phase 3.1 temp-copy path — `cp /tmp/zuvo-mutation-[hash]-[filename] [file]` for every file still mutated, then delete the temp copies. Do **not** reach for `git stash pop` or `git checkout -- [file]`: §3.1 forbids both (pop consumes the stash on the first iteration; a bare `checkout --` discards uncommitted work that is not this skill's to destroy). `git checkout HEAD -- [file]` is the last resort named in §3.2 error recovery, valid only because Phase 3.1 verified the tree was clean at start — and it needs the user's go-ahead, since it is a destructive git operation.
 6. **No side effects.** Mutations that would affect databases, external APIs, or file system state outside the project are not generated.

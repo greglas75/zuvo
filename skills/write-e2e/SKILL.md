@@ -49,11 +49,11 @@ codesift_tools:
 Discover routes and user flows, rank them by criticality, generate Playwright specs that assert causality, and — when
 the project can actually run Playwright — execute them and report exactly what was proven; a spec is a draft until a
 state on the verification ladder says otherwise. **Scope:** web apps with routes, forms, interactions. **Out of
-scope:** unit tests (`zuvo:write-tests`), a suite audit (`zuvo:test-audit`), flaky specs (`zuvo:fix-tests`).
+scope:** unit tests (`zuvo:write-tests`), a suite audit (`zuvo:test-audit`), diagnosing flaky specs (`zuvo:debug`), batch anti-pattern repair (`zuvo:fix-tests`).
 
 ## Argument Parsing
 
-Parse `$ARGUMENTS` as: `[--scope <path>] [--flow <name>] [--output <dir>] [--base-url <url>] [--max-flows N] [--live] [--auto] [--flows] [--dry-run] [--no-install]`
+Parse `$ARGUMENTS` as: `[--scope <path>] [--flow <name>] [--output <dir>] [--base-url <url>] [--max-flows N] [--live] [--auto] [--flows] [--dry-run] [--no-install] [--allow-external-origin] [--allow-destructive <ops>]`
 
 | Argument | Mode | Flows | Description |
 |----------|------|-------|-------------|
@@ -66,6 +66,11 @@ Parse `$ARGUMENTS` as: `[--scope <path>] [--flow <name>] [--output <dir>] [--bas
 | `--auto` | AUTO | 3 | Skip the selection prompt; take the highest-scored flows |
 | `--flows` / `--dry-run` | DISCOVER / PREVIEW | 0 | Print the scored list and stop / plan through scaffold and write nothing |
 | `--no-install` | NO-BOOTSTRAP | — | Forbid the BOOTSTRAP_REQUIRED dependency materialization (env alias: `ZUVO_E2E_NO_BOOTSTRAP=1`); the run caps at STATIC_CHECKED and verdict WARN |
+| `--allow-external-origin` | CONSENT 1 | — | Permits READ-ONLY execution against a non-local origin, and is the only thing (besides an exact `ZUVO_E2E_STAGING_HOSTS` match) that classifies an origin STAGING. Grants nothing mutating |
+| `--allow-destructive <ops>` | CONSENT 2 | — | Authorizes the **named** mutating operations only, comma-separated. Independent of consent 1 — neither implies the other, and an unnamed operation stays BLOCKED |
+
+Both are parsed here because Phase 0.5 refuses to execute without them (semantics: `references/live-validation.md`).
+A flag the parser does not recognize is a flag the user cannot grant.
 
 Volume is a safety property: scoped or named requests generate 1 flow, bare `--auto` generates 3, and a large batch
 happens only when a human asks by name (`--max-flows 20`) — 20 is never assumed. Codex and Cursor always behave as
@@ -262,7 +267,7 @@ COMPLETION GATE CHECK
 WRITE-E2E COMPLETE
 Preflight: [READY | GENERATE_ONLY | BOOTSTRAP_REQUIRED]   Origin: [LOCAL | STAGING | EXTERNAL_UNKNOWN | n/a]
 Flows:     [N] generated ([M] high, [K] medium) | [X] spec + [Y] fixture files | gates [N]/[N] evidenced
-States:    [a] STATIC_CHECKED, [b] VERIFIED_LOCAL, [c] VALIDATED_LIVE, [d] BLOCKED, [e] FAILED
+States:    [a] GENERATED, [b] STATIC_CHECKED, [c] VERIFIED_LOCAL, [d] VALIDATED_LIVE, [e] BLOCKED, [f] FAILED
 Run: <ISO-8601-Z>	write-e2e	<project>	-	<Q>	<VERDICT>	<TASKS>	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 ```
 
