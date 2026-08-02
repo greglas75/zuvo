@@ -1,4 +1,4 @@
-# Lightweight Mutation Probes (write-tests Step 3.7)
+# Lightweight Mutation Probes (write-tests Step 3.3)
 
 > A cheap, planned substitute for full mutation testing: 3–5 hand-picked
 > mutations that the new test suite MUST kill. A suite that survives an
@@ -7,7 +7,7 @@
 
 ## When
 
-- STANDARD tier: 3 probes. HEAVY/COMPLEX: 5 probes, at least one per major
+- STANDARD tier: 3 probes. COMPONENT tier: 3 probes (5 when complexity == COMPLEX). HEAVY/COMPLEX: 5 probes, at least one per major
   behavior group (session/profile/export/... as split by the inventory).
 - LIGHT tier: skip (branch surface too small to justify the runs) unless the
   file has an error fallback — then run probe class 2 only.

@@ -65,9 +65,10 @@ Comprehensive security assessment across 15 dimensions (S1-S15) covering OWASP T
 
 ### v2 class grace (CI-safety) — shared by security-audit AND pentest
 
-The **11** v2 vulnerability `finding_type`s — `xxe`, `prototype_pollution`, `redos`,
+The **14** v2 vulnerability `finding_type`s — `xxe`, `prototype_pollution`, `redos`,
 `graphql_introspection`, `graphql_depth_unbounded`, `ldap_injection`, `insecure_deserialization`,
-`mass_assignment`, `ssji`, `jwt_weak`, `xss_dom` (the GraphQL pair is TWO distinct classes) — ship
+`mass_assignment`, `ssji`, `jwt_weak`, `xss_dom`, `header_injection`, `token_compare_bypass`,
+`weak_credential_storage` (the GraphQL pair is TWO distinct classes) — ship
 **warning-only through the grace window: the minor that introduces them up to but excluding the next
 minor** (introduced in the `1.4.x` line; they graduate to full gate weight in `1.5.0`). During the
 window they are reported in the findings list AND persisted to backlog (`--persist-backlog`
@@ -375,6 +376,26 @@ Check for secrets in logs, error disclosure to clients, auth failure logging.
 
 ## Phase 3: Code Pattern Audit (S1, S2, S3, S9)
 
+#### Dispatch-Failure Fallback (breadth is non-negotiable)
+
+Ported verbatim-in-spirit from `pentest` (which had it and this skill did not, so a rate-limited
+Phase 3 could silently become a spot-check while `entry_points_enumerated` still marked the surface
+covered — a false-clean on injection/XSS/SSRF/validation, the most expensive failure this audit has).
+
+If agent dispatch is throttled, errors out, or returns partial output (API rate-limit, token
+exhaustion, a workflow that dies with 0 usable output), you MUST NOT silently fall back to "inline,
+go deep on a few high-signal entry points and call it done." Do exactly one of:
+
+1. **Complete breadth inline.** Re-run the remaining dimensions yourself sequentially (reduce
+   parallelism, add backoff/retries) until every entry point in `entry_points_in_scope` has been
+   examined for every in-scope dimension. Slower is fine; partial is not.
+2. **Declare it incomplete.** Set `VERDICT = INCOMPLETE`, label the run **DEGRADED**, and list every
+   unexamined entry point. Do not emit a passing or partial grade.
+
+A coverage shortfall caused by infrastructure failure is still a coverage shortfall. "The dispatch
+rate-limited so I checked the obvious sinks inline" is an IC-2 surface-gate FAIL, never a PASS with
+a footnote.
+
 Run discovery patterns for Injection (S1), XSS (S2), SSRF (S3), and Input Validation (S9).
 
 **Parallel** (Claude Code with Task tool): one agent per dimension, max 4 concurrent.
@@ -631,7 +652,7 @@ S15=[0-10]
 
 **Weight: 10** (same as S4/S5 — AI integrations are a primary attack surface in 2025+)
 
-**Critical gate:** S15<3 when AI integration is present -> auto-escalate to AT RISK.
+**Critical gate:** S15<3 when AI integration is present (and S15 != N/A) -> auto-fail to **CRITICAL**, exactly like S1/S4/S5/S7. (This line said AT RISK and the scoring block said CRITICAL — both shipped in the same commit, so identical input produced different verdicts depending on which line the agent read. CRITICAL wins: S15 is a peer of the other critical gates.)
 
 **S15 N/A:** If no AI/LLM integration detected, S15=N/A (excluded from score).
 
@@ -755,7 +776,7 @@ Always show both scores in Executive Summary.
 Save to: `zuvo/audits/security-audit-[date].md` — at the **project root** (`zuvo/` resolves via `git rev-parse --show-toplevel`; override `$ZUVO_OUTPUT_DIR`. See `../../shared/includes/report-output-location.md`).
 Artifacts to: `zuvo/audits/artifacts/security/`
 
-Report includes: metadata, threat model, executive summary, dimension scores (S1-S14), auth matrix, top 3 attack paths, all findings (grouped CRITICAL -> HIGH -> MEDIUM -> Needs Verification), dependency vulnerabilities, infrastructure findings, defense gap analysis, remediation roadmap (immediate / short-term / medium-term / long-term).
+Report includes: metadata, threat model, executive summary, dimension scores (S1-S15 — S15 is scored and weighted, so it must appear in the printed table, not only in its own section), auth matrix, top 3 attack paths, all findings (grouped CRITICAL -> HIGH -> MEDIUM -> Needs Verification), dependency vulnerabilities, infrastructure findings, defense gap analysis, remediation roadmap (immediate / short-term / medium-term / long-term).
 
 ### Finding Format
 

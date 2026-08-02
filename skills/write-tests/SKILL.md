@@ -67,9 +67,9 @@ program, not the writer's own claim.
 | `[directory/]` | Write tests for all production files in the directory |
 | `auto` | Discover uncovered files, process one at a time until done |
 | `--dry-run` | Run Phase 0 + Step 1 for all files, print plan, stop |
-| `--no-cache` | Force regeneration of project profile before test planning |
+| `--no-cache` | Re-run discovery/classification from scratch: ignore any cached CodeSift index answer and any previously built queue for this run |
 
-`--no-cache` clears cached project-profile and queue hints before discovery/classification.
+`--no-cache` forces Step 7's queue build to re-derive from a fresh scan rather than reusing a queue computed earlier in the session. (It used to promise clearing a "project-profile cache" that no step in this skill ever reads or writes — a dead flag until 2026-08-02.)
 
 ---
 
@@ -95,13 +95,16 @@ Read the production file fully, then read `../../shared/includes/test-code-types
 - **Complexity:** THIN / STANDARD / COMPLEX
 - **Testability:** UNIT_MOCKABLE / UNIT_REFLECTION / NEEDS_INTEGRATION / MIXED
 
+**Evaluate TOP-DOWN, FIRST MATCH WINS** (the list was unordered until 2026-08-02, so a COMPLEX
+COMPONENT was assignable to two different tiers depending on reading order):
+
 ```
+IF complexity == COMPLEX                                       → HEAVY
 IF code_type IN (PURE, VALIDATOR) AND complexity == THIN       → LIGHT
 IF code_type IN (PURE, VALIDATOR) AND complexity == STANDARD   → STANDARD
 IF code_type IN (STATE-MACHINE) AND complexity == THIN         → LIGHT
 IF code_type IN (COMPONENT, HOOK)                              → COMPONENT
 IF code_type IN (CONTROLLER, ORCHESTRATOR)                     → HEAVY
-IF complexity == COMPLEX                                       → HEAVY
 IF module mixes code types                                     → STANDARD (HEAVY if any unit is COMPLEX)
 ELSE                                                           → STANDARD
 ```

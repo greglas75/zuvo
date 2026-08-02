@@ -52,7 +52,7 @@ You are dispatched by `zuvo:write-tests` after the agent's self-evaluation (Step
 ## What You Must NOT Do
 
 - Do not modify any files — you are read-only
-- Do not skip gates — evaluate all 19 Q gates
+- Do not skip gates — evaluate all 25 Q gates (Q1-Q25; a run that stops at Q19 is INCOMPLETE, not a clean score)
 - Do not score a gate as 1 without file:line evidence
 - Do not score N/A to avoid hard evaluation — justify every N/A
 - Do not pass tests with a critical gate at 0
