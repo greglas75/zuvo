@@ -11,12 +11,15 @@
 # proof-of-work. Diagnosed as "review never happened" twice. It had happened.
 #
 # Usage:
-#   review-artifact-sync.sh --check [<checkout>]
-#       Lint every memory/reviews/*.md in the checkout (default: cwd's repo):
-#       marker present, range: parseable, files: comma-separated, adversarial:
-#       line present, proof file resolves and holds >=2 'REVIEW BY:' lines (or
-#       1 + an honest single-provider note). Exit 0 = no FAILs (warnings ok),
-#       exit 1 = at least one FAIL, exit 2 = usage error.
+#   review-artifact-sync.sh --check [<checkout>] [--slug <substr>]
+#       Lint memory/reviews/*.md in the checkout (default: cwd's repo) —
+#       all artifacts, or only those whose filename contains <substr> (use
+#       right after writing an artifact to validate JUST that pair; a slug
+#       matching nothing FAILs, never a silent pass). Checks: marker present,
+#       range: parseable, files: comma-separated, adversarial: line present,
+#       proof file resolves and holds >=2 'REVIEW BY:' lines (or 1 + an honest
+#       single-provider note). Exit 0 = no FAILs (warnings ok), exit 1 = at
+#       least one FAIL, exit 2 = usage error.
 #
 #   review-artifact-sync.sh --from <src-checkout> --to <dst-checkout> [--slug <substr>]
 #       Copy artifact+proof PAIRS from src to dst (all marker-bearing artifacts,
@@ -52,9 +55,11 @@ while [ $# -gt 0 ]; do
 done
 
 # --check inspects the current checkout; --from/--to are the sync-mode pair. Silently
-# ignoring them under --check made a wrong command look like a passing check.
-if [ "$MODE" = "check" ] && { [ -n "$DST" ] || [ -n "$SLUG" ]; }; then
-  echo "--check does not take --to/--slug (it inspects one checkout)" >&2
+# ignoring --to under --check made a wrong command look like a passing check. --slug IS
+# valid with --check (field retro 2026-08-02: post-run validation wants to lint ONLY the
+# artifact this run just wrote, not re-print every historical artifact in the checkout).
+if [ "$MODE" = "check" ] && [ -n "$DST" ]; then
+  echo "--check does not take --to (it inspects one checkout; use --slug to narrow)" >&2
   usage >&2; exit 2
 fi
 
@@ -128,10 +133,21 @@ do_check() {
   root="$(resolve_root "${SRC:-.}")" || { echo "Not a git checkout: ${SRC:-.}" >&2; exit 2; }
   for art in "$root"/memory/reviews/*.md; do
     [ -e "$art" ] || continue
+    if [ -n "$SLUG" ]; then
+      case "$(basename "$art")" in *"$SLUG"*) : ;; *) continue ;; esac
+    fi
     found=1
     lint_artifact "$root" "$art" || fail=1
   done
-  [ "$found" -eq 1 ] || echo "No artifacts under $root/memory/reviews/"
+  if [ "$found" -ne 1 ]; then
+    if [ -n "$SLUG" ]; then
+      # A slug that matches nothing must FAIL: post-run validation citing a typo'd
+      # slug would otherwise print nothing and exit 0 — a passing-looking no-op.
+      echo "FAIL: no artifact matching --slug '$SLUG' under $root/memory/reviews/" >&2
+      exit 1
+    fi
+    echo "No artifacts under $root/memory/reviews/"
+  fi
   exit "$fail"
 }
 

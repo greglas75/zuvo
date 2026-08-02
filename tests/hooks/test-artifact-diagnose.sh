@@ -125,6 +125,24 @@ else
   bad "--check lint (rc=$rc): $out"
 fi
 
+echo "=== check --slug: lints only the matching artifact; empty match FAILs ==="
+newrepo; proof 2
+printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/mod.ts\nadversarial: zuvo/proofs/adv.txt\n' "$BASE" "$HEAD" > memory/reviews/current-run.md
+printf 'range: broken\n' > memory/reviews/old-broken.md
+out="$(bash "$SYNC" --check "$TMP/r" --slug current-run 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'current-run.md' \
+   && ! printf '%s' "$out" | grep -q 'old-broken.md'; then
+  ok "--slug scopes the lint to the current run's artifact (historical FAILs invisible)"
+else
+  bad "--check --slug scoping (rc=$rc): $out"
+fi
+out="$(bash "$SYNC" --check "$TMP/r" --slug no-such-slug 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q "no artifact matching"; then
+  ok "a slug matching nothing FAILs loudly (typo'd slug is never a silent pass)"
+else
+  bad "empty-slug-match FAIL (rc=$rc): $out"
+fi
+
 echo "=== check: a healthy pair passes ==="
 newrepo; proof 2
 printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/mod.ts\nadversarial: zuvo/proofs/adv.txt\n' "$BASE" "$HEAD" > memory/reviews/good.md

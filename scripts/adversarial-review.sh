@@ -161,6 +161,15 @@ while [[ $# -gt 0 ]]; do
     --context)   CONTEXT_HINT="$2"; shift 2 ;;
     --diff)      DIFF_REF="$2"; INPUT_MODE="diff"; shift 2 ;;
     --files)     FILES="$2"; INPUT_MODE="files"; shift 2 ;;
+    --file)
+      # Repeatable single-path form (field retro 2026-08-02): a shell-quoted
+      # newline list passed as --files was interpreted as ONE filename twice in
+      # one day — 2 attempts + ~8 min per hit. --file has no quoting ambiguity:
+      # one path per flag, appended newline-separated internally.
+      if [[ $# -lt 2 || -z "${2:-}" || "$2" == -* ]]; then
+        echo "ERROR: --file requires a path, got '${2:-<missing>}'." >&2; exit 2
+      fi
+      FILES="${FILES:+$FILES$'\n'}$2"; INPUT_MODE="files"; shift 2 ;;
     --artifact)  ARTIFACT_PATH="$2"; shift 2 ;;
     --append-artifact) APPEND_ARTIFACT=true; shift ;;
     --known-finding)
@@ -219,6 +228,8 @@ Output:
 Input:
   --diff REF       Review diff from REF to HEAD
   --files "f1\nf2"  Review specific files (newline-separated, supports spaces in paths)
+  --file PATH      Review one file; REPEAT --file for multiple. Prefer this over --files —
+                   no shell quoting ambiguity (a mis-quoted newline list reads as ONE filename)
   --artifact PATH  Save review output + metadata to PATH for downstream gates
   --append-artifact  Append this pass to an existing --artifact instead of overwriting it
                    (use for sequential --rotate passes so pass 1 is not lost)

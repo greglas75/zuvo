@@ -107,7 +107,20 @@ else
   fail "JSON wrapper malformed" "$(printf '%s' "$out7" | head -c 160)"
 fi
 
-# ─── 8: one artifact accumulates every chunk's evidence ───────────────────────
+# ─── 8: repeatable --file (field retro 2026-08-02: newline-quoting bit twice) ──
+
+start_test "CK.10 repeatable --file collects multiple paths without quoting ambiguity"
+out10=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-files" bash "$ADV" --single \
+  --file "$CK_TMP/src/module-1.ts" --file "$CK_TMP/src/module-2.ts" 2>/dev/null) || true
+if printf '%s' "$out10" | grep -q 'module-1.ts' && printf '%s' "$out10" | grep -q 'module-2.ts'; then
+  pass "both --file paths reached the provider"
+else
+  fail "--file paths not both visible" "$(printf '%s' "$out10" | head -c 160)"
+fi
+ZUVO_REVIEW_TEST_PROVIDERS="mock-echo-files" bash "$ADV" --single --file --json >/dev/null 2>&1
+assert_eq "2" "$?" "--file with a flag-shaped value exits 2 (no silent swallow)"
+
+# ─── 9: one artifact accumulates every chunk's evidence ───────────────────────
 
 start_test "CK.9 --artifact holds evidence from ALL chunks"
 ART="$CK_TMP/proof.txt"
