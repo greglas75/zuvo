@@ -487,7 +487,7 @@ When claiming an exemption, cite the covering test: `[exempt: covered by integra
 
 **LIGHT tier:** Inline check — verify Q7 (error path — every error-throwing path with specific type+message), Q11 (branches), Q13 (real imports), Q15 (value assertions), Q17 (oracle independence). Fix any = 0.
 
-**STANDARD and DEEP tiers:** Run full Q1-Q25 on every test file. Score threshold: >= 16 = PASS, 10-15 = FIX worst gaps, < 10 = REWRITE. Provide evidence for critical gates (Q7, Q11, Q13, Q15, Q17).
+**STANDARD and DEEP tiers:** Run full Q1-Q25 on every test file. Score threshold (PERCENT of applicable, per `quality-gates.md` — never an absolute count): >= 82% = PASS, 53-81% = FIX worst gaps, < 53% = REWRITE. Provide evidence for critical gates (Q7, Q11, Q13, Q15, Q17).
 
 **Anti-Tautology Check (STANDARD+):** After self-eval, run the anti-tautology automation from `rules/testing.md`:
 1. Grep for echo patterns (mock-return-echoed-in-assertion)
@@ -527,7 +527,7 @@ Dispatch with:
   1. Read each test file completely.
   2. Run Q1-Q25 evaluation with evidence.
   3. Check for auto-fail patterns: empty bodies, assertions on mock inputs, tests passing with implementation deleted, toBeTruthy on objects.
-  4. Report PASS (>= 16, all critical gates), FIX (gaps identified), or BLOCK (< 10).
+  4. Report PASS (>= 82% of applicable, all critical gates), FIX (gaps identified), or BLOCK (< 53%).
 
   Read ../../rules/testing.md and ../../shared/includes/test-edge-cases.md."
 ```
@@ -602,7 +602,7 @@ behaviour is unverified, and an artifact would claim coverage the run does not h
 - Any AP BROKEN → fix the implementation, re-run from 4.1 (or from 3.2 if the fix is non-trivial). Maximum 3 AP iterations. After 3, abort with `BLOCKED_ACCEPTANCE_PROOF_FAILURE` and surface to user.
 - AP marked "Not applicable" in plan → skip with a note. Reason must already be in plan section 7.
 
-**Aggregate scoring forbidden.** Telemetry must report per-file CQ/Q scores (e.g. `cq=27/29@codec.ts,28/29@parser.ts`), never `cq=27/29 aggregate`. The 2026-04-22 codec session shipped Q7=0 and Q11=0 hidden under `q_gates: 19/19 aggregate` — per-file enforcement prevents recurrence.
+**Aggregate scoring forbidden.** Telemetry must report per-file CQ/Q scores (e.g. `cq=34/37@codec.ts,35/37@parser.ts`), never `cq=27/29 aggregate`. The 2026-04-22 codec session shipped Q7=0 and Q11=0 hidden under `q_gates: 19/19 aggregate` — per-file enforcement prevents recurrence.
 
 ### 4.3 Execution Checklist
 
@@ -727,7 +727,7 @@ receipt `~/.zuvo/log-ideas --skill build --count <N>` (N=0 is the normal, honest
 not invent ideas to inflate it). The receipt makes the un-gated step's silence auditable in
 `~/.zuvo/ideas.log` without forcing ideation.
 
-### 4.6 Knowledge Curation
+### 4.7 Knowledge Curation
 
 After all work is done (code written, tests passing, CQ/Q scored), run the knowledge curation protocol from `knowledge-curate.md`:
 
@@ -737,7 +737,7 @@ CALLER = "zuvo:build"
 REFERENCE = <git SHA of the commit>
 ```
 
-### 4.7 Documentation (REQUIRED — no silent skip)
+### 4.8 Documentation (REQUIRED — no silent skip)
 
 Follow `documentation-mandate.md`. The feature you just built MUST land with docs:
 pick the target by what changed (new capability → README/`docs/<feature>.md` + CHANGELOG;
@@ -747,7 +747,7 @@ substantial one dispatches `Skill(skill="zuvo:docs", args="update <target>")`. T
 no-docs path is an explicit `[DOC: N/A — internal-only, no behavior/API/contract change]`.
 Record the doc paths for the `### Documentation` line in the BUILD COMPLETE block.
 
-### 4.7b Content-keyed review artifact (REQUIRED — on success only)
+### 4.8b Content-keyed review artifact (REQUIRED — on success only)
 
 After verify + acceptance proofs pass (and ONLY then), write the content-keyed review
 artifact `memory/reviews/<base7>..<head7>-<slug>.md` carrying the machine-readable
@@ -761,7 +761,7 @@ signal the pipeline-entry gates read (`pg_range_reviewed`) so the just-built, re
 can be pushed without re-blocking. Write it **only on success** — if any verification or
 acceptance proof FAILED/BLOCKED, write nothing, so a failed build never grants itself coverage.
 
-### 4.8 Retrospective (REQUIRED — no opt-out)
+### 4.9 Retrospective (REQUIRED — no opt-out)
 
 Follow the retrospective protocol from `retrospective.md`.
 Gate check -> structured questions -> TSV emit -> markdown append.
@@ -779,7 +779,7 @@ COMPLETION GATE CHECK
 [ ] Code contract filled (STANDARD+) before production code written
 [ ] Test contract filled (STANDARD+) before tests written
 [ ] CQ self-eval printed with PER-FILE scores and evidence for critical gates (aggregate forbidden)
-[ ] Q self-eval printed PER-FILE (>=16 PASS) with evidence
+[ ] Q self-eval printed PER-FILE (>=82% of applicable = PASS) with evidence
 [ ] Adversarial review ran and findings handled
 [ ] Test Quality Gate (4.6b, STANDARD+): [GATE: test-quality] PASS|WARN|N/A printed with a REAL zuvo/audits test-audit report path (inline Q-rescoring is a substituted gate = INVALID); below-A files fixed in-run as a test: commit or WARN + backlogged; LIGHT prints the explicit SKIPPED line
 [ ] Acceptance Proofs (Phase 4.2b) — every AP ran and VERIFIED, artifact paths recorded
@@ -791,7 +791,7 @@ COMPLETION GATE CHECK
 [ ] Run: line printed and appended to log
 ```
 
-### 4.8 Output
+### 4.10 Output
 
 ```
 BUILD COMPLETE
@@ -801,8 +801,8 @@ Tier: [LIGHT / STANDARD / DEEP]
 Files created: [N] | Files modified: [N]
 Tests: [N files], all passing
 Verification: tests PASS [| types PASS] [| lint PASS]
-CQ: [critical gates PASS | score/29 on N files]
-Q: [critical gates PASS | score/19 on N test files]
+CQ: [critical gates PASS | score/applicable on N files]
+Q: [critical gates PASS | score/applicable on N test files]
 Backlog: [N items persisted | "none"]
 Commit: [hash] — [message]
 [Tag: [tag name]]
@@ -818,8 +818,8 @@ printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <project>)`. If exit 2 with `RETRO_REQUIRED` — go execute the retro bash from `retrospective.md` first; never bypass with `ZUVO_SKIP_RETRO_GATE=1`. After the wrapper succeeds, print a `Logs:` evidence line (`tail -1 ~/.zuvo/retros.log`, `grep -c "^<!-- RETRO -->" ~/.zuvo/retros.md`, `tail -1 ~/.zuvo/runs.log`) before claiming completion. Printing the markdown retro section without executing the bash leaves all three log files empty.
 
 VERDICT: PASS / WARN / FAIL / BLOCKED / ABORTED only.
-CQ: LIGHT → `critical-only`, STANDARD+ → `N/29`.
-Q: LIGHT → `critical-only`, STANDARD+ → `N/19`.
+CQ: LIGHT → `critical-only`, STANDARD+ → `N/<applicable>` (40-gate set).
+Q: LIGHT → `critical-only`, STANDARD+ → `N/<applicable>` (25-gate set).
 TASKS: number of production files created + modified.
 DURATION: `light` / `standard` / `deep` (tier label).
 NOTES: `[TIER] feature description` (max 80 chars).
@@ -837,7 +837,7 @@ Next steps:
 | Flag | Effect |
 |------|--------|
 | `--auto` | Skip user approval at Phase 2 |
-| `--auto-commit` | Skip commit confirmation at Phase 4.5 |
+| `--auto-commit` | Skip commit confirmation at Phase 4.6 |
 | `--tag` | Create a rollback tag after commit |
 | `--deep` | Force DEEP tier regardless of signals |
 

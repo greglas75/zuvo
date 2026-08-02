@@ -115,6 +115,24 @@ WORK_FILES = <files being touched>
    ```
    - If no commits in range: print "Nothing to ship. No commits since the last tag." and exit cleanly.
 
+   **Half-completed prior run (idempotency — this HAPPENED on 2026-08-01).** A previous ship can
+   have committed the release and then died before tagging/pushing (e.g. the pre-push gate blocked
+   it). Detect it before bumping anything:
+   ```bash
+   HEAD_MSG=$(git log -1 --format='%s')
+   case "$HEAD_MSG" in
+     release:\ v*) HALF_DONE_VER=$(printf '%s' "$HEAD_MSG" | sed -n 's/^release: v\([0-9.]*\).*/\1/p') ;;
+     *) HALF_DONE_VER="" ;;
+   esac
+   # a release commit whose tag does NOT exist = the previous run stopped between commit and tag
+   [ -n "$HALF_DONE_VER" ] && ! git rev-parse -q --verify "refs/tags/v$HALF_DONE_VER" >/dev/null \
+     && echo "RESUME: v$HALF_DONE_VER committed but not tagged"
+   ```
+   If that fires: **SKIP Phase 3 entirely** (the version file is already at `$HALF_DONE_VER`;
+   bumping again would ship v+2 and pollute the conventional-commit scan with the previous
+   `release:` message), set `RELEASE_SHA=HEAD`, and resume at Phase 4 Step 3 (tag). Print
+   `[RESUME] half-completed ship detected — skipping bump, resuming at tag`.
+
 4. **Dry-run gate:** If `--dry-run` was passed, walk through each subsequent phase printing what would happen at each step (branch, flow, diff LOC, review depth, bump type, files staged, tag name, push target). Then exit without executing anything.
 
 ---
@@ -200,8 +218,10 @@ WORK_FILES = <files being touched>
    |----------|----------------|
    | < 20 | **Fast path** — skip review entirely |
    | 20 - 100 | Dispatch `review-light` agent (read `skills/ship/agents/review-light.md`) |
-   | 100+ | Dispatch `review-light` + invoke `zuvo:review` via the Skill tool (`Skill(skill="zuvo:review", args="--report-only")`) — runs adversarial pass at TIER 2+ + invoke `Skill(skill="zuvo:design-review")` if frontend files changed (`.tsx`, `.jsx`, `.css`, `.scss`, `.html`) |
-   | 300+ | All of the above + dispatch `coverage-check` agent (read `skills/ship/agents/coverage-check.md`). `Skill(skill="zuvo:review", args="--report-only")` runs at TIER 3 with automatic adversarial pass. |
+   | 100+ | Dispatch `review-light` + invoke `zuvo:review` via the Skill tool (`Skill(skill="zuvo:review", args="${BASE_REF}..HEAD --report-only")`) — runs adversarial pass at TIER 2+ + invoke `Skill(skill="zuvo:design-review")` if frontend files changed (`.tsx`, `.jsx`, `.css`, `.scss`, `.html`) |
+   | 300+ | All of the above + dispatch `coverage-check` agent (read `skills/ship/agents/coverage-check.md`). `Skill(skill="zuvo:review", args="${BASE_REF}..HEAD --report-only")` runs at TIER 3 with automatic adversarial pass. |
+
+   **ALWAYS pass the RANGE `${BASE_REF}..HEAD`, never bare `--report-only`.** Ship runs AFTER the work is committed, so an argument-less `zuvo:review` scopes to *uncommitted* changes — empty at this point — and the "mandatory" review passes on nothing. Use the same range Phase 2 measured `DIFF_LOC` over.
 
    **Pass `--report-only` when invoking `zuvo:review` from ship** — a pre-merge release review must SURFACE blockers for the release decision, not silently auto-rewrite the diff you are about to tag. (Direct `/zuvo:review` defaults to auto-fix; ship-dispatched does not.)
 
@@ -423,7 +443,7 @@ Write the artifact **after** commit/tag/push decisions are complete:
   "flow": "direct" or "pr",
   "pr": <number-or-null>,
   "date": "<ISO-8601>",
-  "tests": "pass",
+  "tests": "<pass|warn-carried|skipped-no-runner>",   // from the Phase 1 triage outcome — NEVER hardcode "pass"
   "reviewDepth": "<none|light|full|full+coverage>",
   "diffLOC": <number>,
   "tagPushed": true or false,
@@ -498,7 +518,7 @@ SHIP COMPLETE
   Version:     <old-version> → <new-version>
   Tag:         v<new-version> / skipped (--no-tag)
   Diff:        <N> LOC (<review-depth> path)
-  Tests:       PASS (<N> passed, <N> failed)
+  Tests:       <PASS|WARN (pre-existing carried)|SKIPPED (no runner)> (<N> passed, <N> failed)
   Review:      <depth> (<details>) [escalated-from <table-depth> due to attestation: <reason>]
   Changelog:   CHANGELOG.md updated / skipped
   Push:        pushed to origin/<branch> / skipped (non-interactive) / skipped (user declined)

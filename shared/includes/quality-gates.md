@@ -59,26 +59,32 @@ These are always critical. If any scores 0, the evaluation is FAIL regardless of
 
 ### Critical Gates (Conditional)
 
-These become critical only when the code context activates them:
+A conditional gate is critical **only when its trigger holds**; otherwise it scores as a normal
+gate. The triggers are NOT restated here — they live in the `Criticality` column of
+`gate-registry.md` as `conditional:<trigger>`, one authoritative copy:
 
-| Gate | Activates when |
-|------|---------------|
-| CQ16 | Code touches prices, costs, discounts, invoices, payouts |
-| CQ19 | Code crosses an API or module boundary |
-| CQ20 | Payload contains `*_id` + `*_name` pairs or number + currency-string |
-| CQ21 | Concurrent mutations on the same resource |
-| CQ22 | Code creates subscriptions, timers, or observers |
-| CQ23 | Code uses Redis, Memcached, or in-memory caching |
-| CQ24 | Code modifies existing API endpoint signatures |
-| CQ28 | Code defines timeouts at 2+ architectural layers |
+```bash
+grep -oE '^\| (CQ[0-9]+) \|[^|]*\| conditional:[^|]*' shared/includes/gate-registry.md
+```
+
+Conditional CQ gates as of 2026-08-02: **CQ16, CQ19, CQ20, CQ21, CQ22, CQ23, CQ24, CQ28, and
+CQ30-CQ40**. (A hand-copied trigger table lived here until 2026-08-02 and had frozen at CQ28,
+so every conditional-critical gate added with the security wave was invisible to any skill
+reading this file — the exact drift the registry exists to prevent, which is why this is a
+pointer now and not a longer table.)
 
 ### CQ Scoring
 
 | Result | Criteria |
 |--------|---------|
-| PASS | Score >= 25/29 AND all active critical gates = 1 |
-| CONDITIONAL PASS | Score 23-24/29 AND all active critical gates = 1 |
-| FAIL | Any active critical gate = 0, OR total score < 23 |
+| PASS | Score >= 86% of applicable AND all active critical gates = 1 |
+| CONDITIONAL PASS | Score 79-85% of applicable AND all active critical gates = 1 |
+| FAIL | Any active critical gate = 0, OR score < 79% of applicable |
+
+`applicable = 40 - count(out-of-scope) - count(N/A)` — a PERCENTAGE, never a fixed denominator.
+These thresholds were absolute counts over 29 gates until 2026-08-02; the set has been 40 since
+CQ30-CQ40 landed, so `>= 25/29` silently became "62% of the real set" and passed files that
+should have failed. Full formula and the N/A cap: `../../rules/cq-checklist.md`.
 
 ### CQ Evidence Format
 

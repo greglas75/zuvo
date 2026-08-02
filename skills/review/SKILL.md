@@ -188,7 +188,7 @@ PHASE 1 — LOADED:
 | `new` | Commits since last review | Backlog/merge-base resolution |
 | `HEAD~N` | Last N commits | `git diff --stat HEAD~N..HEAD` |
 | `abc123..def456` | Specific commit range | `git diff --stat abc123..def456` |
-| `commits A,B,C` | Specific non-consecutive commit hashes | Union-diff via `git show` per hash, concatenated |
+| `commits A,B,C` | Specific non-consecutive commit hashes | Union-diff via `git show` per hash, concatenated. **Range-derived steps use the SPAN**: `REVIEWED_FROM=<oldest-hash>^`, `REVIEWED_THROUGH=<newest-hash>`, and the artifact's `files:` lists ONLY the files from the named commits (never `*`) — the span may contain commits you did not review |
 | `src/services/` | Directory (uncommitted) | `git diff --stat HEAD -- src/services/` |
 
 Tokens combine: `HEAD~3 src/api/` reviews the last 3 commits scoped to `src/api/`.
@@ -374,7 +374,7 @@ Copy the printed `[CodeSift matching trace]` block verbatim and issue the printe
 | `changed_symbols` + `diff_outline` | `impact_analysis` + `get_file_outline` | `changed_symbols: absent-in-build (impact_analysis+get_file_outline: <result>)` |
 | `scan_secrets` | `grep` secret-scan (high-entropy/key patterns on diff) | `scan_secrets: absent-in-build (grep secret-scan: <count>)` |
 
-**Fence the substitute's output to the reviewed file set.** `audit_scan` (and the other compound substitutes) scan the **repository**, not your diff — a scoped review that scores their raw output drowns in repo-wide pre-existing findings that this change never touched, and the CQ score stops describing the diff. After each substitute call, discard findings whose file is outside the reviewed file set (`git diff --name-only {REVIEWED_FROM}..{REVIEWED_THROUGH}`) BEFORE CQ scoring, and record whether the tool honored the requested fence: `audit_scan: fence-honored` or `audit_scan: fence-ignored (filtered <N>→<M>)`. Two exceptions to the fence, both about causality rather than file membership: a finding in an **unchanged** file that this diff *caused* — a caller broken by a changed signature, a consumer of a removed export, a now-unreachable branch — is IN scope and must be triaged normally, because the diff is what made it true. And findings outside the fence that the diff did not cause are not silently dropped knowledge: they are pre-existing debt, so backlog them separately rather than scoring them against this diff.
+**Fence the substitute's output to the reviewed file set.** `audit_scan` (and the other compound substitutes) scan the **repository**, not your diff — a scoped review that scores their raw output drowns in repo-wide pre-existing findings that this change never touched, and the CQ score stops describing the diff. After each substitute call, discard findings whose file is outside the reviewed file set (`git diff --name-only "${REVIEWED_FROM}..${REVIEWED_THROUGH}"`) BEFORE CQ scoring, and record whether the tool honored the requested fence: `audit_scan: fence-honored` or `audit_scan: fence-ignored (filtered <N>→<M>)`. Two exceptions to the fence, both about causality rather than file membership: a finding in an **unchanged** file that this diff *caused* — a caller broken by a changed signature, a consumer of a removed export, a now-unreachable branch — is IN scope and must be triaged normally, because the diff is what made it true. And findings outside the fence that the diff did not cause are not silently dropped knowledge: they are pre-existing debt, so backlog them separately rather than scoring them against this diff.
 
 ### Forbidden escape hatches
 
@@ -430,7 +430,7 @@ When the REVIEWED scope path resolves to a repo or worktree that is NOT the CWD,
    resolution is **not** `index_folder` on the worktree: many repos (this one included) forbid
    indexing worktrees, and doing so pollutes the main repo's index with duplicate symbols that
    then mis-answer later queries. Use the authoritative local source instead — git-diff-scoped
-   `grep` over `git diff {REVIEWED_FROM}..{REVIEWED_THROUGH}`, plus bounded `Read` on the changed
+   `grep` over `git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}"`, plus bounded `Read` on the changed
    files — and record `codesift: degraded (worktree not indexed)` for the affected checks.
    This is the same rule as `../../shared/includes/codesift-setup.md` → "Worktree path rejected by
    `index_file`"; that include is the single source of truth, and it also covers the sibling-
@@ -529,7 +529,7 @@ Pass results as `PRECOMPUTED_DATA` to each agent:
 
 ### 1.1 Self-Review Disclosure
 
-Check whether you wrote any of the code being reviewed in this session. If yes, add a `SELF-REVIEW` marker to the header. Self-review detected -> pass `--multi` to the adversarial script (forces ALL available providers, not a rotating single). **The flag is `--multi` — do NOT pass `--all-providers`** (a phantom flag): `adversarial-review.sh` only accepts `--multi/--single/--rotate/--exclude/--exclude-last/--artifact`; an unknown flag exits 2 and silently drops you to weaker coverage. Probe once if unsure: `adversarial-review --help | grep -- --multi`. `--multi` exits 3 (`single_provider_only`) when <2 providers exist — only then fall back to `--rotate`/`--single`.
+Check whether you wrote any of the code being reviewed in this session. If yes, add a `SELF-REVIEW` marker to the header. Self-review detected -> pass `--multi` to the adversarial script (forces ALL available providers, not a rotating single). **The flag is `--multi` — do NOT pass `--all-providers`** (a phantom flag): the DISPATCH-SHAPE flags are limited to `--multi/--single/--rotate/--exclude/--exclude-last` (other flags such as `--mode`, `--artifact`, `--append-artifact`, `--json` are separate and valid); an unknown flag exits 2 and silently drops you to weaker coverage. Probe once if unsure: `adversarial-review --help | grep -- --multi`. `--multi` exits 3 (`single_provider_only`) when <2 providers exist — only then fall back to `--rotate`/`--single`.
 
 ### 1.2 Review Header (merged banner -- single block replaces 4 separate blocks)
 
@@ -666,9 +666,9 @@ If it is NOT an ancestor: either merge/rebase first, or review `$(git merge-base
 
 **CONTEXT BUDGET handling (the constructive escape valve — read this before invoking the "tight budget" rationalization):**
 
-Adversarial CLI providers have ~150K char input limits (varies: codex ~200K, gemini ~100K, cursor-agent ~150K). If `git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | wc -c` exceeds the smallest provider's limit OR the current session is genuinely close to its own ceiling, do NOT skip adversarial. Take the staircase in order:
+Adversarial CLI providers have ~150K char input limits (varies: codex ~200K, gemini ~100K, cursor-agent ~150K). If `git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}" | wc -c` exceeds the smallest provider's limit OR the current session is genuinely close to its own ceiling, do NOT skip adversarial. Take the staircase in order:
 
-1. **Per-file chunking.** Split the diff per file (`git diff --name-only {REVIEWED_FROM}..{REVIEWED_THROUGH}`) and run adversarial separately on each file's diff. Aggregate findings, dedupe by fingerprint. Per-file passes still satisfy the gate.
+1. **Per-file chunking.** Split the diff per file (`git diff --name-only "${REVIEWED_FROM}..${REVIEWED_THROUGH}"`) and run adversarial separately on each file's diff. Aggregate findings, dedupe by fingerprint. Per-file passes still satisfy the gate.
 2. **Hunk-level chunking** (if a single file's diff is still too large): split on `@@` hunk boundaries with surrounding context. Run per-hunk, aggregate.
 3. **Drop --rotate to --single fastest provider.** Reduces parallelism but keeps adversarial coverage. Note in header: `Adversarial: degraded (--single <provider>, context-budget chunked N files)`.
 4. **Last resort — exit BLOCKED:** if even single-provider per-hunk does not fit, exit with status `BLOCKED_CONTEXT_BUDGET` and surface to the user: "Diff is N chars across M files; adversarial cannot complete. Narrow the scope (e.g. `/zuvo:review path/to/subdir/` or `HEAD~3`) and re-invoke." This blocks the review verdict — does NOT silently produce PASS/APPROVED.
@@ -680,18 +680,24 @@ What "context budget tight" is NOT a license to do: skip the pass, mark `Adversa
 Each pass uses `--rotate` (script picks a random unused provider). Prepend prior findings summary so each provider targets NEW issues.
 
 ```bash
-# Pass 1:
-git diff {REVIEWED_FROM}..{REVIEWED_THROUGH} | adversarial-review --rotate --mode code
+# Proof file FIRST — the artifact you write in Phase 3 must cite it, and
+# pipeline-gate-lib.sh::pg_artifact_proven REJECTS an artifact whose adversarial:
+# path does not resolve or holds <2 "REVIEW BY:" lines. A review that skips this
+# writes an artifact the push gate silently ignores.
+ADV_PROOF="zuvo/proofs/${SLUG:-review}-adversarial.txt"
+
+# Pass 1 (--artifact CREATES the proof):
+git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}" | adversarial-review --rotate --mode code --artifact "$ADV_PROOF"
 # → Read output, extract ADV-1, ADV-2
 
 # Pass 2:
 (echo "PRIOR FINDINGS: ADV-1 [desc], ADV-2 [desc] — find NEW issues only";
- git diff {REVIEWED_FROM}..{REVIEWED_THROUGH}) | adversarial-review --rotate --mode code
+ git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}") | adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
 # → Read output, extract ADV-3
 
 # Pass 3 (if provider available):
 (echo "PRIOR FINDINGS: ADV-1..3 — final pass, find what everyone missed";
- git diff {REVIEWED_FROM}..{REVIEWED_THROUGH}) | adversarial-review --rotate --mode code
+ git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}") | adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
 # → ADV-4 or clean → early exit
 ```
 
@@ -703,15 +709,15 @@ Same `--rotate` pattern but each pass sees the IMPROVED diff after prior fixes.
 
 ```bash
 # Pass 1: review post-primary-fix code
-git diff {REVIEWED_FROM}..HEAD | adversarial-review --rotate --mode code
+git diff "${REVIEWED_FROM}..HEAD" | adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
 # → ADV-1 → apply fix → commit
 
 # Pass 2: validate fix + find new
-git diff {REVIEWED_FROM}..HEAD | adversarial-review --rotate --mode code
+git diff "${REVIEWED_FROM}..HEAD" | adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
 # → validates ADV-1 fix + finds ADV-2 → apply → commit
 
 # Pass 3: final validation
-git diff {REVIEWED_FROM}..HEAD | adversarial-review --rotate --mode code
+git diff "${REVIEWED_FROM}..HEAD" | adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
 # → clean or ADV-3
 ```
 
@@ -759,6 +765,8 @@ Agent: Confidence Re-Scorer
 | 51-100 | KEEP in report | -- |
 
 **Adversarial CRITICAL bypass:** Findings from `adversarial-review.sh` tagged CRITICAL skip the confidence gate. Effective confidence = 100. No exceptions.
+
+**CQ/Q critical-gate bypass (same rule, added 2026-08-02):** a finding sourced from a CRITICAL gate failure — CQ3, CQ4, CQ5, CQ6, CQ8, CQ14, or Q7, Q11, Q13, Q15, Q17 — also skips the confidence gate at effective confidence 100. Without this the skill contradicted itself: "critical gate failures ALWAYS produce MUST-FIX" and "MUST-FIX blocks merge", yet a CQ4 tenant-isolation finding scored 40 by the re-scorer landed in the backlog as `[below-threshold]` and never blocked anything.
 
 **Backlog write timing:** All backlog writes happen AFTER Phase 4 Execute (or after Phase 3 if no execute). This prevents stale entries -- fixed findings are not written to backlog.
 
@@ -852,7 +860,7 @@ Naming convention: `reviewed/<short-hash>` tags the individual commits that were
 if git rev-parse -q --verify refs/tags/reviewed >/dev/null; then
   echo "per-commit tags: skipped: namespace-collision(refs/tags/reviewed)"
 else
-  for H in $(git log --format='%H' REVIEWED_FROM..REVIEWED_THROUGH); do
+  for H in $(git log --format='%H' "${REVIEWED_FROM}..${REVIEWED_THROUGH}"); do
     h=$(git log --format='%h' -1 "$H")
     git tag -f "reviewed/$h" "$H"
   done
@@ -895,7 +903,7 @@ COMPLETION GATE CHECK
 [ ] Diff type classified and printed: [prod-only/test-only/mixed]
 [ ] CQ self-eval printed for each changed production file
 [ ] Q1-Q25 printed for each changed test file (if any)
-[ ] TIER 2-3: Behavior Auditor (if new prod files) + CQ Auditor + Confidence Re-Scorer DISPATCHED as sub-agents — NOT done inline as "lead" (or explicit [DEGRADED: ...] line, forbidden on self-review)
+[ ] TIER 2-3: Behavior Auditor (if new prod files) + CQ Auditor + Confidence Re-Scorer DISPATCHED; TIER 3 additionally Structure Auditor as sub-agents — NOT done inline as "lead" (or explicit [DEGRADED: ...] line, forbidden on self-review)
 [ ] TIER 2-3 Next.js: framework_audit called (nextjs_route_map alone does NOT satisfy it)
 [ ] Adversarial review ran — at least 2 sequential passes with findings printed; SELF-REVIEW used --multi (not --rotate)
 [ ] All findings confidence-scored
@@ -948,6 +956,7 @@ VALIDITY GATE
     # "DISPATCHED as sub-agents" item — the env-mandated checkpoint pass IS the
     # required result, not VIOLATES_TIER2. Adversarial coverage still required as usual.
     behavior_auditor: [DISPATCHED(<agent-return-marker>) | INLINE-SINGLE-AGENT-LOCK(<marker>) | not_required (no new prod files / tier<2) | NOT_DISPATCHED — VIOLATES_TIER2]
+    structure_auditor: [DISPATCHED(<agent-return-marker>) | INLINE-SINGLE-AGENT-LOCK(<marker>) | not_required (tier<3) | NOT_DISPATCHED — VIOLATES_TIER3]
     cq_auditor: [DISPATCHED(<agent-return-marker>) | INLINE-SINGLE-AGENT-LOCK(<marker>) | NOT_DISPATCHED — VIOLATES_TIER2]
     confidence_rescorer: [DISPATCHED(<agent-return-marker>) | INLINE-SINGLE-AGENT-LOCK(<marker>) | NOT_DISPATCHED — VIOLATES_TIER2]
     # DEGRADED is allowed ONLY when self_review_flag=no AND you print a one-line
@@ -960,8 +969,8 @@ VALIDITY GATE
   adversarial:
     passes_run: [<N> | 0 — VIOLATES_MANDATE]
     providers_used: [<provider1,provider2,...> | none]
-    skip_reason: [n/a | single_provider_only | BLOCKED_CONTEXT_BUDGET | <other> — VIOLATES_MANDATE]
-    # rate_limit / timeout are NOT skip reasons — per stall-recovery.md ("Rate-limit
+    skip_reason: [n/a | single_provider_only | timeout | BLOCKED_CONTEXT_BUDGET | <other> — VIOLATES_MANDATE]
+    # rate_limit is NOT a skip reason — per stall-recovery.md ("Rate-limit
     # is a RETRY condition, NEVER a quality lever"), a rate-limited adversarial pass
     # is RE-RUN across watchdog resumes until it completes, never recorded as a skip
     # or a degraded verdict. The only genuine no-retry unavailability reasons are
@@ -995,7 +1004,7 @@ Same handling if `self_review_flag = yes — DID_NOT_USE_--multi` (section 1.1 m
 - `same-session-same-commit(<artifacts>)` — the dimension WAS covered by a real pass on the EXACT commits under review (e.g. adversarial artifacts in `zuvo/context/adversarial-task-*.txt` returning 0 open MUST-FIX). Verify the artifacts exist on disk AND reference these commit SHAs. If so, that dimension is legitimately covered → it does NOT degrade the verdict. (The ONE honest reuse — real coverage on the same code, not a lighter substitute.)
 - `NONE` — no fresh run and no same-commit artifact, and the limit genuinely cannot be retried away. Then: verdict downgrades to **`CONDITIONAL`**; print `[DEGRADED-COVERAGE: <gate> not run — <single_provider_only|BLOCKED_CONTEXT_BUDGET>; re-validate before merge]` + append `[DEGRADED-COVERAGE:<gate>:<reason>]` to the Run line NOTES; record a re-validation obligation (`B-review-revalidate-<date>` + the NEXT STEPS "run `/zuvo:review <range>` to clear the CONDITIONAL"); `gate_status` stays `PASS` with `degraded=<gate>` noted.
 
-The point: a clean `APPROVE` requires every mandatory gate to be either freshly run, proven by a same-commit artifact, or (only for a true capability limit) honestly degraded to CONDITIONAL. Rate-limit is none of these — it is retried until the gate runs. `n/a` (no production logic to review) is the only no-coverage-needed path.
+The point: a clean `APPROVE` requires every mandatory gate to be either freshly run, proven by a same-commit artifact, or (only for a true capability limit) honestly degraded to CONDITIONAL. `timeout` (exit 124, ALL providers timed out) IS a legitimate recorded skip — it is a provider-side dead end, not a retryable rate-limit. Rate-limit is none of these — it is retried until the gate runs. `n/a` (no production logic to review) is the only no-coverage-needed path.
 
 **TIER 2 sub-agent skip handling (NEW — closes the silent-degradation / context-fatigue drift gap):** This is the dominant real-world failure: on a long session the lead does CQ/behavior/confidence scoring *inline as "lead"* instead of dispatching the sub-agents, then rationalizes it after the fact ("adversarial covers it", "scoped check instead"). That is **drift, not a decision**. If any `tier2_subagents.*` reads `NOT_DISPATCHED — VIOLATES_TIER2`:
 1. Set `gate_status = FAIL — tier2 sub-agent(s) not dispatched (<which>)`.

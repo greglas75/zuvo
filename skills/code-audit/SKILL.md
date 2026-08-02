@@ -544,7 +544,7 @@ Mode: [quick/deep]
 
 | Tier | Count | % | Action |
 |------|-------|---|--------|
-| A (>=25/29) | [N] | [%] | Production-ready |
+| A (>=86% of applicable) | [N] | [%] | Production-ready |
 | B (21-23) | [N] | [%] | Targeted fixes before merge |
 | C (16-20) | [N] | [%] | Significant rework |
 | D (<16 or red flag) | [N] | [%] | Critical -- immediate fix |
@@ -624,7 +624,7 @@ If `--deep` mode: also save per-file detail to `zuvo/audits/code-audit-details/[
 ## Recommended Execution Plan
 
 ### Goal
-- Raise score from [current avg]/29 to min [target]/29
+- Raise score from [current avg]% to min [target]% of applicable
 - Close all critical gate FAILs
 - Add regression tests for every P0/P1 change
 

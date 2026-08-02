@@ -260,7 +260,7 @@ If a row cannot be closed because required infrastructure or a cross-module cont
 1b. **COMPONENT interaction gate:** production forwards callbacks + test has 0 `fireEvent`/`userEvent` → STOP, add flow tests. Every owned handler-routing decision gets ≥1 interaction test proving the right handler fires and the competing one does not. Render/label-only assertions never satisfy Q3/Q14 for routing rows.
 2. **Q1-Q25 self-eval** per `quality-gates.md`, with per-gate `test-file:line` evidence for the critical gates:
    ```
-   Self-eval: Q1=1 Q2=1 ... → [N]/19 [PASS|FIX|REWRITE]
+   Self-eval: Q1=1 Q2=1 ... → [N]/[applicable] [PASS|FIX|REWRITE]
    Critical gates: Q7=[0|1] Q11=[0|1] Q13=[0|1] Q15=[0|1] Q17=[0|1]
    ```
    `Q7` error-path proof (or evidence-backed `N/A`), `Q11` per-branch tests, `Q13` real-module import line, `Q15` content-not-shape assertion, `Q17` non-echoed oracle. No citable line = score 0. Step 3 passes only with Q7=1, Q11=1, Q13=1, Q15=1, Q17=1 — a zero critical gate is `BLOCKED_INCOMPLETE`, never a publishable partial result. Sync the final Q7/Q11 values back into the manifest and rerun the Step 2.5 validator if they changed.
@@ -351,11 +351,11 @@ Update `memory/coverage.md`:
 - Coverage Gate: `pass`, `degraded`, `fail:<n>` (verbatim from the validator exit)
 - Blind Audit: `clean:strict`, `clean:degraded`, `fix:<n>`, `rewrite`, `skipped`
 - Adversarial: `clean`, `clean:fallback-local`, `<n> findings`, `<n> findings:fallback-local`, `skipped`, `blocked`, `not_run`
-- Q Score persisted durably: `<score>/19 (Q7=?,Q11=?,Q13=?,Q15=?,Q17=?)`
+- Q Score persisted durably: `<score>/<applicable> (Q7=?,Q11=?,Q13=?,Q15=?,Q17=?)`
 
 `SKIPPED_REVIEW` is degraded, never silently `PASS`. `BLOCKED_*` are non-success — never counted as completed or described as covered. Rows that never enter Step 4 persist `Adversarial=blocked`/`not_run`. A file is complete only when Status, Coverage Gate, Blind Audit, and Adversarial are all populated.
 
-Per-file summary print: `[status] [file] — methods [N]/[N], rows [N]/[N], Q [N]/19, gate: [pass|degraded|fail], blind: [...], adversarial: [...]`
+Per-file summary print: `[status] [file] — methods [N]/[N], rows [N]/[N], Q [N]/[applicable], gate: [pass|degraded|fail], blind: [...], adversarial: [...]`
 
 **→ NEXT file in queue.**
 
@@ -435,7 +435,7 @@ Target cov:    st [%] / br [%] / fn [%] / ln [%] (scoped to production files)
 Mutation:      [N]/[N] probes killed
 Test audit:    [GATE: test-quality] [PASS|WARN|N/A] tier=[worst] files=[N] ([M] fixed up in-run) report=[zuvo/audits/...]
 Below tier A:  [list with blocking findings, or "none"]
-Q gates:       [N]/19 avg (critical gates: all pass)
+Q gates:       [N]/[applicable] avg (critical gates: all pass)
 Blind audit:   [N] clean, [M] failed/rewrite, [K] skipped
 Validation:    [full-suite|scoped:touched-tests]
 Failures:      pre-existing: [N], new in scope: 0

@@ -305,7 +305,7 @@ Minimum fields:
 - `reviewer-route`: `review-primary`, `review-alt`, `same-model-fallback`, or `routing-failed`
 - `implementer-status`: `DONE`, `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, or `BLOCKED`
 - `spec-review`: `COMPLIANT` or `ISSUES FOUND`
-- `quality-review`: `PASS` or `FAIL` — **with per-file scores; aggregate forbidden** (e.g. `cq=27/29@codec.ts,28/29@parser.ts; q=18/19@codec.test.ts,17/19@parser.test.ts` not `cq=27/29 q=18/19 aggregate`)
+- `quality-review`: `PASS` or `FAIL` — **with per-file scores; aggregate forbidden** (e.g. `cq=34/37@codec.ts,35/37@parser.ts; q=18/19@codec.test.ts,17/19@parser.test.ts` not `cq=27/29 q=18/19 aggregate`)
 - `adversarial`: verdict plus mode (`code`, `security`, `migrate`)
 - `verify`: command(s) and exit code(s) — implementation-detail check
 - `acceptance-verified`: list of AC ids passed plus artifact paths (e.g. `AC1@zuvo/proofs/task-4-AC1.txt,AC3@zuvo/proofs/task-4-AC3.txt`) — behavior check
@@ -326,7 +326,7 @@ writer-model=sonnet
 reviewer-route=same-model-fallback
 implementer-status=DONE
 spec-review=COMPLIANT
-quality-review=PASS cq=27/29@tenant.ts,28/29@guards.ts q=18/19@tenant.test.ts
+quality-review=PASS cq=34/37@tenant.ts,35/37@guards.ts q=22/24@tenant.test.ts
 adversarial=PASS mode=security
 verify="pnpm vitest run src/foo.spec.ts" exit=0
 acceptance-verified=AC2@zuvo/proofs/task-4-AC2.txt,AC5@zuvo/proofs/task-4-AC5.txt
@@ -788,7 +788,7 @@ Status: COMPLETED
 Files changed: [list]
 Mode: [multi-agent|single-agent] (fallback: [none|reason])
 Spec review: COMPLIANT (iteration [N])
-Quality review: PASS (CQ: [score]/29, Q: [score]/19)
+Quality review: PASS (CQ: [score]/[applicable], Q: [score]/[applicable])
 Adversarial review: [PASS / N findings (N critical) / BLOCKED]
 Verify: [command -> exit code]
 ```
@@ -1025,8 +1025,8 @@ Print a completion report:
 ### Task Results
 | # | Task | Status | CQ Score | Q Score | Notes |
 |---|------|--------|----------|---------|-------|
-| 1 | [name] | COMPLETED | 26/29 | 17/19 | — |
-| 2 | [name] | COMPLETED | 27/29 | 16/19 | Concern: [brief] |
+| 1 | [name] | COMPLETED | 34/37 | 22/24 | — |
+| 2 | [name] | COMPLETED | 35/37 | 21/24 | Concern: [brief] |
 | 3 | [name] | SKIPPED | — | — | Blocker: [brief] |
 
 ### Files Changed

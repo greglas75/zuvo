@@ -531,8 +531,8 @@ File: [file:line]
 - Targeted tests: PASS ([N] tests)
 - Full suite: PASS (no new failures vs baseline)
 - Original reproduction: RESOLVED
-- CQ self-eval: [score]/29
-- Regression test Q self-eval: [score]/19
+- CQ self-eval: [score]/[applicable]
+- Regression test Q self-eval: [score]/[applicable]
 
 ### Side Effects
 [Any other paths affected, or "None -- change is isolated to [scope]"]
@@ -637,7 +637,7 @@ Breaking commit: [hash -- message] (regression mode only)
 Files fixed: [list]
 Regression test: [test file path]
 Verification: targeted PASS | full suite PASS | repro RESOLVED
-CQ: [score]/29 | Q: [score]/19
+CQ: [score]/[applicable] | Q: [score]/[applicable]
 Confidence: HIGH / MEDIUM / LOW
 Backlog: [N items added | "none"]
 
@@ -652,8 +652,8 @@ printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <project>)`. If exit 2 with `RETRO_REQUIRED` — go execute the retro bash from `retrospective.md` first; never bypass with `ZUVO_SKIP_RETRO_GATE=1`. After the wrapper succeeds, print a `Logs:` evidence line (`tail -1 ~/.zuvo/retros.log`, `grep -c "^<!-- RETRO -->" ~/.zuvo/retros.md`, `tail -1 ~/.zuvo/runs.log`) before claiming completion. Printing the markdown retro section without executing the bash leaves all three log files empty.
 
 VERDICT: PASS / WARN / FAIL / BLOCKED / ABORTED only.
-CQ: from Phase 4.6 CQ self-eval on production fix (`N/29`).
-Q: from Phase 4.5 Q self-eval on regression test (`N/19`).
+CQ: from Phase 4.6 CQ self-eval on production fix (`N/<applicable>`, 40-gate set).
+Q: from Phase 4.5 Q self-eval on regression test (`N/<applicable>`, 25-gate set).
 TASKS: `-` (debug does not track task count).
 DURATION: mode label (e.g., `standard`, `regression-bisect`).
 NOTES: 1-line root cause summary (max 80 chars).

@@ -60,7 +60,7 @@ canonical order is **Prove → record in CONTRACT → Gate → Commit (LAST)**. 
 action, and an external git hook (`refactor-safety-gate`, self-installed at Phase 0) **enforces**
 this: a `git commit` whose staged files intersect this refactor's scope fence is **rejected** until
 the CONTRACT records a completed Prove step. There is **no condensed / light / "5-step" path** that
-skips this — git hooks fire on every harness, so it cannot be narrated past.
+skips this — git hooks fire on every harness, so it cannot be narrated past (two ESCAPES exist and are logged, not hidden: `ZUVO_ALLOW_ADHOC=1` bypasses the hook entirely, and `ZUVO_GATE_TTL_SEC=0` marks any CONTRACT stale so the Prove check is skipped — both are human-attributable env decisions, never something the skill itself sets).
 
 The four **SAFETY** gates — never skippable, never reducible by "user scope", never "looks small so I skipped it":
 1. **Characterization coverage** of every moved unit, green on the PRE-refactor code (before touching it).
@@ -1157,12 +1157,22 @@ COMPLETION GATE CHECK
 # Reads the CONTRACT prove fields — the SAME artifact the git hook reads at commit time —
 # so this self-check and the hook can never disagree. Single source of truth = the CONTRACT
 # (not a global ~/.zuvo log tail, not a commit range; the commit is LAST, gated by the hook).
-# Resolve by the Phase-1 target hash — NEVER newest-by-mtime (concurrent/resumed sweeps share the checkout)
+# Resolve by the Phase-1 target hash — NEVER newest-by-mtime (concurrent/resumed sweeps share the checkout).
+# TARGET_HASH is DERIVED HERE from the target path, because a shell variable does not survive
+# between phases (it was referenced but never assigned until 2026-08-02 — so every run silently
+# took the mtime fallback the line above forbids, and could self-check a DIFFERENT file's contract).
+# TARGET is the repo-relative path of the file this run refactored (Phase 1 recorded it in the CONTRACT).
+TARGET_HASH=$(printf '%s' "$TARGET" | shasum | cut -c1-8)
 C="zuvo/contracts/refactor-${TARGET_HASH}.json"
-[ -f "$C" ] || C=$(ls -t zuvo/contracts/refactor-*.json 2>/dev/null | head -1)
+if [ ! -f "$C" ]; then
+  echo "GATE: BLOCKED — no CONTRACT for target '$TARGET' (expected $C)."
+  echo "  Do NOT fall back to the newest contract: on a concurrent or resumed sweep that validates"
+  echo "  a different file's refactor and prints PASS for work never checked."
+  exit 1
+fi
 if [ -z "$C" ]; then
   echo "GATE: N/A — no CONTRACT found (trivial/aborted refactor). If this WAS a real production refactor, that itself is the bug: create the CONTRACT (Phase 1) and run the pipeline."
-else
+else  # unreachable when TARGET is set (the resolver above exits first) — kept for the no-TARGET call path
   g=0
   ba=$(sed -n 's/.*"blind_audit"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$C" | head -1)
   av=$(sed -n 's/.*"adversarial"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$C" | head -1)

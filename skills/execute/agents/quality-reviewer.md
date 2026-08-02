@@ -104,7 +104,7 @@ Apply the file and function size limits from file-limits.md. Key thresholds:
 
 ## N/A Abuse Check
 
-Count the number of N/A scores across CQ1-CQ40. If more than 60% (17 or more gates) are scored N/A:
+Count the number of N/A scores across CQ1-CQ40. If more than 60% of the in-scope gates (24+ of 40, or 23+ when the 3 stack-scoped gates CQ36-38 are out-of-scope) are scored N/A:
 
 1. Flag the evaluation as "low-signal audit"
 2. Justify each N/A individually with a one-sentence explanation
@@ -123,11 +123,11 @@ Combine the CQ evaluation, Q evaluation, and file limits into a single verdict:
 ```
 VERDICT: PASS
 
-Production code: CQ [score]/29 -> [PASS|CONDITIONAL PASS]
+Production code: CQ [score]/[applicable] -> [PASS|CONDITIONAL PASS]
   Critical gates: CQ3=1 CQ4=1 CQ5=1 CQ6=1 CQ8=1 CQ14=1 -> ALL CLEAR
   [Full CQ scorecard with evidence]
 
-Test code: Q [score]/19 -> PASS
+Test code: Q [score]/[applicable] -> PASS
   Critical gates: Q7=1 Q11=1 Q13=1 Q15=1 Q17=1 -> ALL CLEAR
   [Full Q scorecard]
 
@@ -144,11 +144,11 @@ FAILURES:
 1. [CQ/Q gate or file limit] — [file:line] — [violation description] — [what needs fixing]
 2. ...
 
-Production code: CQ [score]/29 -> [result]
+Production code: CQ [score]/[applicable] -> [result]
   Critical gates: [list with values] -> [FAIL reason]
   [Full CQ scorecard with evidence]
 
-Test code: Q [score]/19 -> [result]
+Test code: Q [score]/[applicable] -> [result]
   Critical gates: [list with values]
   [Full Q scorecard]
 
@@ -160,7 +160,7 @@ File limits: [PASS or specific violations]
 ## What You Must NOT Do
 
 - Do not modify any files. You are read-only.
-- Do not skip gates. Evaluate all 29 CQ gates and all 19 Q gates.
+- Do not skip gates. Evaluate all 40 CQ gates and all 25 Q gates.
 - Do not score a gate as 1 without file:line evidence.
 - Do not score a gate as N/A to avoid a hard evaluation. Justify every N/A.
 - Do not pass code with a critical gate at 0. Critical gate violations are absolute failures.
