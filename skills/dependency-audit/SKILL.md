@@ -283,7 +283,7 @@ Refer to `env-compat.md` for the dispatch pattern.
 | Git dependencies | Zero git deps in production | `git+` URLs bypass registry auditing | HIGH |
 | Lockfile integrity | Committed, matches manifest, reproducible | Missing or diverged lockfile | HIGH |
 
-Critical gate: D1=0 (known exploit-grade CVE in production) triggers FAIL.
+Critical gate: known exploit-grade CVE in production → triggers FAIL. The gate fires on that FINDING; a D1 score of 0 also fires it but is not required.
 
 ### D2: Freshness and Maintenance Health -- Weight 10, Max 10
 
@@ -312,7 +312,7 @@ cross-reference against `package.json` dependencies.
 | Unknown licenses | All deps have declared licenses | Missing license field | MEDIUM |
 | License compatibility | All licenses compatible with project license | Conflicting license chain | HIGH |
 
-Critical gate: D4=0 (GPL in production closed-source app) triggers FAIL.
+Critical gate: GPL in production closed-source app → triggers FAIL. The gate fires on that FINDING; a D4 score of 0 also fires it but is not required.
 
 ### D5: Bundle and Weight Impact -- Weight 8, Max 8
 
@@ -330,8 +330,7 @@ Critical gate: D4=0 (GPL in production closed-source app) triggers FAIL.
 | Type-only cycles | Type-only imports (`import type`) are acceptable | Type cycle causes runtime initialization bug | LOW |
 | Cycle depth | N/A | 4+ module cycle chain | HIGH |
 
-Critical gate: D6=0 (runtime circular dependency causing initialization bug)
-triggers FAIL.
+Critical gate: runtime circular dependency causing initialization bug → triggers FAIL. The gate fires on that FINDING; a D6 score of 0 also fires it but is not required.
 
 ### D7: Coupling Metrics -- Weight 10, Max 10
 
@@ -350,7 +349,7 @@ triggers FAIL.
 | Secret in client | Server-only vars never imported in client code | Client bundle imports `process.env.SECRET` | CRITICAL |
 | Domain boundaries | Features do not cross-import internal modules | Feature A reaches into Feature B internals | MEDIUM |
 
-Critical gate: D8=0 (secret leaked to client bundle) triggers FAIL.
+Critical gate: secret leaked to client bundle → triggers FAIL. The gate fires on that FINDING; a D8 score of 0 also fires it but is not required.
 
 ### D9: Barrel File Health -- Weight 7, Max 7
 
@@ -392,7 +391,19 @@ git log --name-only --pretty=format:"---COMMIT---" --since="6 months ago" -- TAR
 
 ### Scoring
 
-**Critical gates:** D1=0, D4=0, D6=0, D8=0 -- any triggers FAIL.
+**Critical gates — any ONE of these findings triggers FAIL, whatever the numeric score:**
+
+| Gate | Fires on |
+|------|----------|
+| D1 | a known exploit-grade CVE reachable in production |
+| D4 | a GPL-family licence in a closed-source production app |
+| D6 | a runtime circular dependency causing an initialization bug |
+| D8 | a secret leaked to the client bundle |
+
+**These gates fire on the FINDING, not on an aggregate score of zero.** Read as "the dimension
+scored 0" they are nearly unreachable, because every one of them spreads several checks over its
+weight: D8 carries three checks across 12 points, so a secret in the client bundle beside clean layering and clean domain boundaries scores about 8/12 — the leak never blocks the audit. The named condition in each parenthesis IS the trigger — a dimension score of 0
+remains sufficient to fire the gate, it is simply not necessary.
 
 **N/A handling:** Exclude dimensions with INSUFFICIENT DATA, SKIPPED, or
 INHERITED from both numerator and denominator.
@@ -400,8 +411,8 @@ INHERITED from both numerator and denominator.
 | Grade | Percentage |
 |-------|-----------|
 | A | >= 85% |
-| B | 70-84% |
-| C | 50-69% |
+| B | >= 70% and < 85% |
+| C | >= 50% and < 70% |
 | D | < 50% |
 
 ---

@@ -608,7 +608,7 @@ Refer to `env-compat.md` for the dispatch pattern.
 | Bulk operations | `createMany`, `updateMany`, bulk insert | Individual create/update in loop | HIGH |
 | Raw query safety | Parameterized queries (`$queryRaw` with template, `%s` params) | String concatenation in SQL | CRITICAL |
 
-Critical gate: DB1=0 (N+1 in hot path) triggers audit FAIL.
+Critical gate: N+1 in hot path → triggers FAIL. The gate fires on that FINDING; a DB1 score of 0 also fires it but is not required.
 
 ### DB2: Index Strategy -- Weight 15, Max 15
 
@@ -637,7 +637,7 @@ Critical gate: DB1=0 (N+1 in hot path) triggers audit FAIL.
 | Connection limits | Pool size matches deployment (serverless: small, container: tuned) | Default unlimited | HIGH |
 | Client instantiation | Single PrismaClient/DataSource instance | Multiple `new PrismaClient()` calls | HIGH |
 
-Critical gate: DB4=0 (no pooling) triggers audit FAIL.
+Critical gate: no pooling → triggers FAIL. The gate fires on that FINDING; a DB4 score of 0 also fires it but is not required.
 
 ### DB5: Transaction Safety -- Weight 12, Max 12, Critical Gate
 
@@ -648,7 +648,7 @@ Critical gate: DB4=0 (no pooling) triggers audit FAIL.
 | Rollback handling | Explicit error handling, compensation logic | Silent swallow on transaction failure | HIGH |
 | Deadlock prevention | Consistent lock ordering, timeout on transactions | Arbitrary ordering, no timeout | MEDIUM |
 
-Critical gate: DB5=0 (multi-table mutations without transaction) triggers FAIL.
+Critical gate: multi-table mutations without transaction → triggers FAIL. The gate fires on that FINDING; a DB5 score of 0 also fires it but is not required.
 
 ### DB6: Migration Safety -- Weight 8, Max 8
 
@@ -718,7 +718,7 @@ without `take`, `$transaction` with long-running operations.
 | Connection encryption | SSL/TLS required in connection string | Plaintext database connection | HIGH |
 | Sensitive data | PII encrypted at rest, column-level encryption for secrets | Plaintext passwords or tokens in DB | CRITICAL |
 
-Critical gate: DB12=0 (SQL injection) triggers audit FAIL.
+Critical gate: SQL injection → triggers FAIL. The gate fires on that FINDING; a DB12 score of 0 also fires it but is not required.
 
 ### DB13: Migration Deployment Safety -- Weight 8, Max 8
 
@@ -860,21 +860,29 @@ Flag compound patterns:
 
 Score each dimension per the rubric. Calculate weighted total.
 
-**Critical gate check:**
-- DB1=0 (N+1 in hot path) -> FAIL
-- DB4=0 (no connection pooling) -> FAIL
-- DB5=0 (multi-table mutations without transaction) -> FAIL
-- DB12=0 (SQL injection) -> FAIL
+**Critical gate check — each fires on the FINDING, whatever the dimension's numeric score:**
 
-Any critical gate = 0 overrides the overall grade to **FAIL**.
+| Gate | Fires on |
+|------|----------|
+| DB1 | an N+1 query in a hot path |
+| DB4 | no connection pooling |
+| DB5 | a multi-table mutation with no transaction |
+| DB12 | SQL built by concatenation / `$queryRawUnsafe`, or plaintext credentials or PII at rest |
+
+Any one of them overrides the overall grade to **FAIL**.
+
+Read as "the dimension scored 0" these gates are nearly unreachable, and the most severe one is
+the worst affected: DB12 carries four checks across four points, so a codebase with an actual SQL
+injection but least-privilege, TLS and encrypted PII in place scores 3/4 — and the injection
+never fails the audit. A dimension score of 0 still fires the gate; it is simply not necessary.
 
 **Grade calculation (excluding N/A dimensions):**
 
 | Grade | Percentage |
 |-------|-----------|
 | A | >= 85% |
-| B | 70-84% |
-| C | 50-69% |
+| B | >= 70% and < 85% |
+| C | >= 50% and < 70% |
 | D | < 50% |
 
 ---

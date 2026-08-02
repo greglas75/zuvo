@@ -1,6 +1,6 @@
 ---
 name: security-audit
-description: "Application security audit covering OWASP Top 10, injection, XSS, SSRF, auth/authz, multi-tenant isolation, secrets, headers, dependencies, business logic, and infrastructure. Uses Sentry 3-tier confidence model. Supports Next.js, NestJS, Express, FastAPI, Django, Flask. Dual scoring: static posture + runtime exploitability. Flags: zuvo:security-audit [path] | full | --live-url <url> | --static | --quick | --persist-backlog"
+description: "Application security audit covering OWASP Top 10, injection, XSS, SSRF, auth/authz, multi-tenant isolation, secrets, headers, dependencies, business logic, infrastructure, and AI/LLM + MCP tool-invocation security (S15, incl. tool poisoning and confused-deputy). Uses Sentry 3-tier confidence model. Supports Next.js, NestJS, Express, FastAPI, Django, Flask. Dual scoring: static posture + runtime exploitability. Flags: zuvo:security-audit [path] | full | --live-url <url> | --static | --quick | --persist-backlog"
 codesift_tools:
   always:
     - analyze_project
@@ -644,13 +644,36 @@ If matches found, audit these 8 check areas:
 | AI proxy isolation | AI calls routed through a dedicated proxy/gateway service | Direct AI API calls from frontend/client code | HIGH |
 | Audit trail | AI interactions logged (input hash, model, tokens, cost, latency) | No audit trail for AI API calls | MEDIUM |
 
+### S15.9 MCP and Tool-Invocation Security (OWASP LLM01/LLM06/LLM08)
+
+For a repo that **implements or consumes an MCP server** (`@modelcontextprotocol` SDK, tool/handler
+registrations, an MCP manifest) or any **agentic tool loop** (anthropic/openai tool definitions).
+Complements S15.6 (which scopes the AGENT's action bounds) by auditing the **tool-definition and
+MCP-transport layer**. If no MCP server / tool loop is present, this sub-dimension is N/A.
+
+| Check | Good | Bad | Severity |
+|-------|------|-----|----------|
+| Tool-description poisoning | Tool `description`/schema fields are static, reviewed, free of instruction-shaped text | Tool metadata carries hidden/injected instructions, zero-width chars, or "ignore previous"-style payloads a calling agent will read | CRITICAL |
+| Tool-arg validation | Every tool input validated/sanitized before use (path allowlist, URL scheme allowlist, no shell interpolation) | Tool passes raw args to `fs`, `exec`, or an HTTP client — path traversal / command / SSRF via the tool | CRITICAL |
+| Confused-deputy / SSRF via tool | Fetch/file tools deny internal ranges + metadata endpoints (169.254.169.254, localhost, RFC-1918) and enforce the caller's tenant scope | A fetch tool reachable to cloud metadata / internal services on behalf of untrusted prompt input | CRITICAL |
+| Untrusted tool output → context | Tool results (web/file/DB) marked as untrusted data, not concatenated into the system/instruction channel | Retrieved tool output injected into the prompt as if trusted — indirect prompt injection | HIGH |
+| Tool-response secret/PII leakage | Tool responses redact secrets/credentials/PII before returning to the model | A tool returns raw `.env`, tokens, or PII rows into the model context | HIGH |
+| Destructive-tool gating | Destructive/high-privilege MCP tools require allowlist + confirmation (see also S15.6) | MCP server exposes delete/write/network tools ungated | HIGH |
+| Tool-loop / step budget | Agent tool-call loops bounded by a max-step / cost guard | Unbounded tool-call recursion — runaway agency / cost DoS | MEDIUM |
+
+Detection signals: `@modelcontextprotocol/sdk`, `server.tool(`/`registerTool`/`setRequestHandler`,
+MCP manifests, `tools: [...]` in anthropic/openai calls, agent step loops. Findings cite `file:line`
+and route through the Sentry 3-tier confidence model like S15.1-S15.8.
+
 ### S15 Scoring
 
 ```
 S15=[0-10]
 ```
 
-**Weight: 10** (same as S4/S5 — AI integrations are a primary attack surface in 2025+)
+**Weight: 10** (same as S4/S5 — AI integrations are a primary attack surface in 2025+). S15's 0-10
+score aggregates all sub-checks S15.1-S15.9; S15.9 (MCP/tool-invocation) contributes only when an MCP
+server or agentic tool loop is present (else that sub-part is N/A and does not lower the score).
 
 **Critical gate:** S15<3 when AI integration is present (and S15 != N/A) -> auto-fail to **CRITICAL**, exactly like S1/S4/S5/S7. (This line said AT RISK and the scoring block said CRITICAL — both shipped in the same commit, so identical input produced different verdicts depending on which line the agent read. CRITICAL wins: S15 is a peer of the other critical gates.)
 
@@ -824,7 +847,7 @@ Full protocol: `../../shared/includes/backlog-protocol.md`.
 | Secrets found (S7=0) | Rotate secrets immediately, add pre-commit gitleaks hook |
 | Multi-tenant gaps (S6<5) | `zuvo:code-audit [services]` -- audit query-level isolation |
 | Header/transport gaps (S8) | Quick config fix -- add Helmet/CSP/HSTS |
-| AI integration gaps (S15<5) | `zuvo:ai-security-audit` -- deep dive on prompt injection, RAG poisoning, MCP security |
+| AI integration gaps (S15<5) | No deep-dive skill exists yet (`zuvo:ai-security-audit` is not available, and `zuvo:pentest` carries no LLM probes) -- S15 in THIS report is the coverage. Work the S15 findings manually: prompt injection, RAG poisoning, tool poisoning, confused-deputy on MCP tool invocation |
 | All dimensions >= 8 | No urgent action. Schedule next audit in 90 days. |
 
 ## Completion Gate Check
