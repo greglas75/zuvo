@@ -480,10 +480,18 @@ Read deferred files:
 | Grade | Score | Condition |
 |-------|-------|-----------|
 | A | >= 85% | All critical gates pass |
-| B | 70-84% | All critical gates pass |
-| FAIL | < 70% | OR any critical gate below threshold |
+| B | >= 70% and < 85% | All critical gates pass |
+| FAIL | < 70% | OR any critical gate fails |
 
-VERDICT mapping for run log: PASS (A or B), WARN (B with critical gate borderline), FAIL (below 70% or critical gate failure).
+VERDICT mapping for run log — **A → PASS, B → WARN, FAIL → FAIL**; a failing critical gate forces
+FAIL at any score.
+
+Two things this table used to get wrong. The bands were written `70-84` / `>= 85`, so a real 84.4%
+matched neither. And the verdict line said "PASS (A or B), WARN (B with critical gate borderline)",
+which both contradicted the field-resolution section below (there, 70-84% maps to WARN, not PASS)
+and invented a state the table forbids — B already requires every critical gate to pass, so
+"B with a borderline gate" cannot occur, and "borderline" is defined nowhere. A critical gate is
+PASS or FAIL; there is no third position.
 
 ### 5.3 Report Output
 
@@ -611,6 +619,10 @@ Critical gates: A2=[PASS/FAIL] A4=[PASS/FAIL]
 Findings: [N] CRITICAL, [N] HIGH, [N] MEDIUM
 Fixes generated: [N] (if --fix)
 Legal: [status summary]
+Run: <ISO-8601-Z>	a11y-audit	<project>	<score>%	-	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
+-----
+```
+
 ### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
 
 ```
@@ -635,10 +647,6 @@ If `gate_status = FAIL` → VERDICT = INCOMPLETE. Append the Run line via the re
 printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
-Run: <ISO-8601-Z>	a11y-audit	<project>	<score>%	-	<VERDICT>	-	<N>-dimensions	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
------
-```
-
 
 ### Retrospective (REQUIRED)
 
@@ -651,7 +659,7 @@ After printing this block, append the `Run:` line value (without the `Run: ` pre
 **Field resolution:**
 - `CQ_SCORE`: `<score>%` (overall percentage)
 - `Q_SCORE`: `-` (not applicable)
-- `VERDICT`: `PASS` (>=85%), `WARN` (70-84%), `FAIL` (<70% or critical gate = 0)
+- `VERDICT`: `PASS` (>= 85%), `WARN` (>= 70% and < 85%), `FAIL` (< 70%, or any critical gate fails)
 - `TASKS`: `-`
 - `DURATION`: `<N>-dimensions` (number of dimensions scored, typically 10)
 - `NOTES`: `WCAG2.2-[AA|AAA] [N]-findings [legal-status]` (max 80 chars)
