@@ -296,8 +296,17 @@ pg_artifact_proven() {
   # Containment: a proof path must stay inside the repo — reject `..` traversal and absolute
   # paths, so an artifact cannot point coverage at an arbitrary file that happens to hold two
   # "REVIEW BY:" lines.
+  # Reject an ABSOLUTE path, or a path SEGMENT that is exactly `..`. Testing for the substring
+  # `..` instead denied coverage to every proof named with the `<base7>..<head7>` convention the
+  # review skill prescribes for its own artifacts — `zuvo/proofs/fd57e11..fc0c83e-adversarial.txt`
+  # is one filename segment containing dots, not a traversal, yet it failed containment and the
+  # honest review that produced it granted no proof coverage. Fail-closed in the wrong place is
+  # still wrong: it blocks real reviews while stopping nothing a segment check does not.
   case "$_pap_ref" in
-    /*|*..*) return 1 ;;
+    /*) return 1 ;;
+  esac
+  case "/$_pap_ref" in
+    */../*|*/..) return 1 ;;
   esac
   _pap_ref="$_pap_root/$_pap_ref"
   if [ ! -f "$_pap_ref" ]; then

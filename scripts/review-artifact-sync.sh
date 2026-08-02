@@ -107,7 +107,13 @@ lint_artifact() {
     return 0
   fi
   case "$ref" in
-    /*|*..*) echo "FAIL $name: proof path '$ref' escapes the repo (absolute or ..) — the gate rejects it"; return 1 ;;
+    /*) echo "FAIL $name: proof path '$ref' is absolute — the gate rejects it"; return 1 ;;
+  esac
+  # Real traversal only: a path SEGMENT equal to `..`. A range-named proof
+  # (`fd57e11..fc0c83e-adversarial.txt`) is one segment containing dots — matching the bare
+  # substring `..` rejected every artifact following the skill's own naming convention.
+  case "/$ref" in
+    */../*|*/..) echo "FAIL $name: proof path '$ref' escapes the repo (.. traversal) — the gate rejects it"; return 1 ;;
   esac
   if [ ! -f "$root/$ref" ]; then
     echo "WARN $name: proof '$ref' not present in THIS checkout — pair incomplete here; sync it or pushes from here won't count this artifact"
@@ -187,7 +193,8 @@ do_sync() {
     [ -n "$ref" ] || ref="$(sed -n 's/^[[:space:]]*adv-proof:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
     if [ -n "$ref" ]; then
       case "$ref" in
-        /*|*..*) echo "WARN $name: proof path '$ref' escapes the repo — artifact copied, proof NOT" ;;
+        /*) echo "WARN $name: proof path '$ref' is absolute — artifact copied, proof NOT" ;;
+        */../*|*/..) echo "WARN $name: proof path '$ref' escapes the repo — artifact copied, proof NOT" ;;
         *)
           if [ -f "$sroot/$ref" ]; then
             copy_preserving "$sroot/$ref" "$droot/$ref" || fail=1
