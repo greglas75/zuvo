@@ -846,6 +846,12 @@ if [ -f "$ROOT/scripts/check-skill-structure.py" ]; then
     ERRORS=$((ERRORS + 1))
   fi
   unset _css_out
+else
+  # Absent is legitimate for a fixture tree (--root DIR), so this is not an
+  # ERROR — but it must never be SILENT. A missing linter that prints nothing is
+  # indistinguishable from a linter that found nothing, which is the fail-open
+  # shape this whole release exists to remove.
+  echo "skill-structure: SKIP (scripts/check-skill-structure.py not present under $ROOT)"
 fi
 
 # --- gate registry: every GENERATED region must match shared/includes/gate-registry.md ---
@@ -858,6 +864,8 @@ if [ -f "$ROOT/scripts/gen-gate-copies.py" ]; then
     echo "ERROR: gate regions are stale — run: python3 scripts/gen-gate-copies.py --write"
     ERRORS=$((ERRORS + 1))
   fi
+else
+  echo "gate-registry: SKIP (scripts/gen-gate-copies.py not present under $ROOT)"
 fi
 
 echo "ERRORS: $ERRORS  WARNINGS: $WARNINGS"
