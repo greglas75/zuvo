@@ -195,53 +195,55 @@ this section can never truncate the schema it sees. Add rows inside the markers,
 | `acceptance-verified` | array of string | AC ids plus artifact paths, one element each (`["AC2@zuvo/proofs/task-4-report.md", ...]`). Empty array when none. **Written as ONE JSON array literal, never comma-split** — an AC id or an artifact path may legally contain a comma, and splitting turns one element into two silently. A value that does not parse as a JSON array degrades to `[]` rather than aborting the record. |
 | `codesift` | string | `available` \| `unavailable` \| `index-failed` |
 | `backlog-adds` | int | Backlog entries added by this task. **`-1` is the unsubstituted sentinel** — same reasoning as `task`; `0` would be a plausible real value. |
-| `failure-strategy` | string | `halt` \| `skip-and-continue` \| `degraded:<desc>` — the task's declared failure strategy. **Defaults to `halt`, never null.** Defined here now; populated from the plan by a later change. |
+| `failure-strategy` | string | `halt` \| `skip-and-continue` \| `degraded:<desc>` — the task's declared failure strategy. **Defaults to `halt`, never null.** Populated from the plan's declared strategy (Task 9, commit 23a207a). |
 
 <!-- zuvo:telemetry-schema:end -->
 
-**APPEND-ONLY — one line per task.** This is the opposite of the rule that governs
-`execution-state.md` ("full rewrite — never append", WRITE Protocol below). Do not read this file
-before writing, do not rewrite it, do not truncate it. **The READ Protocol does not touch this file
-and must not start to** — a resumed run *appends* its records after the ones already there; it never
-rebuilds or replays them. A record is a fact about a task that finished; facts are not edited later.
+**APPEND-ONLY — one line per task.** Opposite of `execution-state.md`'s rule ("full rewrite — never
+append", WRITE Protocol below): never read, rewrite, or truncate this file before writing. **The READ
+Protocol does not touch it and must not start to** — a resumed run *appends* after the records already
+there, never rebuilding or replaying them. A record is a fact about a finished task, never edited later.
 
 **Accepted cost of append-only:** Step 10 runs after the append and can downgrade `codesift` to
-`index-failed`. That later value is *not* back-written into the record. This is deliberate — moving
-the write to Step 10 would put it inside an explicitly best-effort maintenance step, so a real
-telemetry record would be lost every time reindexing was skipped.
+`index-failed`, but that later value is *not* back-written — moving the write to Step 10 would put it
+inside an explicitly best-effort maintenance step, losing a real record every time reindexing is
+skipped. **Consequence:** `index-failed` is unreachable from execute's own writer today — its records
+only ever carry `available` or `unavailable`; the value stays documented for a future writer appending
+after Step 10.
 
 **Output root — resolved exactly like `execution-state.md`'s:** `$ZUVO_OUTPUT_DIR`, else
-`<git root>/zuvo` (`report-output-location.md`). **No `pwd` fallback:** if neither resolves the
-writer takes the `[WARN]` path and writes nothing, because records dropped into whatever directory
-the shell happened to sit in split one project's history across unrelated trees.
-
-The execute (writer) and retro (reader) fences each carry their **own copy** of this resolution
-(prefix `TT_`/`RT_`) — deliberate, since each is extracted and run standalone, and no parity test
-pins them (byte-identity cannot survive the rename). **This paragraph is the SSOT instead:** change
-it here first, then both fences. No parity assertion is not the same as no contract.
+`<git root>/zuvo` (`report-output-location.md`). **No `pwd` fallback:** if neither resolves, the
+writer takes the `[WARN]` path and writes nothing — dropping records into whatever directory the
+shell happens to sit in would split one project's history across unrelated trees. The execute (writer)
+and retro (reader) fences each carry their **own copy** of this resolution (prefix `TT_`/`RT_`) — each
+is extracted and run standalone, so no parity test can pin them byte-identical. **This paragraph is
+the SSOT instead:** change it here first, then both fences.
 
 **Concurrent appends are locked.** `zuvo:execute` dispatches tasks in **parallel batches**, so two
 appends can reach this file at once; the writer holds an exclusive `flock` across write+flush+fsync.
 Unlocked, two records interleave inside one physical line and **both** are lost. A lock failure is a
-`[WARN]` like every other failure here — never a gate. `fcntl` is POSIX-only, so on a platform where
-it cannot be imported the writer persists the record unlocked instead of not at all — a lost record
-is worse than a theoretically interleavable one, and a single-writer platform cannot race with itself.
+`[WARN]` like every other failure here — never a gate. **`flock` is taken BEFORE the write, not inside
+a try wrapping it**, so a lock failure propagates before a byte is written — no partial record to
+clean up, only a WARN and nothing appended. `fcntl` is POSIX-only, so where it cannot be imported the
+writer persists unlocked instead of not at all — a lost record is worse than a theoretically
+interleavable one, and a single-writer platform cannot race with itself.
 
 **Reader contract — skip a malformed line, never abort on one.** Parse line by line, `continue` past
-anything that does not parse, and count the skips. A kill between `write` and `fsync` can leave a
-truncated **trailing** line (the lock prevents interleaved lines, not truncated ones), and a hand
-edit can corrupt any line. The platform without `fcntl` above is the one place an *interleaved* line,
-not just a truncated one, is possible — the same skip-and-count handling covers it without a special
-case. Dying on a bad line turns a diagnostic into an outage; dropping one without saying so hides
-data loss.
+anything that does not parse, and count the skips. **Exception:** a blank/whitespace-only line is not
+a record — the ordinary trailing newline of an append-only file — so it counts toward neither
+`records=` nor the skip count; say so explicitly, never drop it silently. A kill between `write` and
+`fsync` can leave a truncated **trailing** line (the lock prevents interleaved lines, not truncated
+ones), and a hand edit can corrupt any line. The platform without `fcntl` above is the one place an
+*interleaved* line, not just a truncated one, is possible — the same skip-and-count handling covers it
+without a special case. Dying on a bad line turns a diagnostic into an outage; dropping one without
+saying so hides data loss.
 
-**Lifetime and retention:** the same as `project-context.md` — survives across sessions, **never
-renamed, never truncated, no cap, no rotation**. That is a decision, not an omission: rotation means
-rewriting (which APPEND-ONLY forbids) and truncation deletes the cross-session history the file
-exists for, while growth is bounded by finished tasks — ~600 bytes each, under 2 MB/year at 50
-tasks/week, streamed line by line by readers. A project that wants it smaller prunes with
-`tail -n <N>` **by hand**, accepting the loss; no skill does it mid-run. Explicitly **NOT**
-`execution-state.md`'s lifetime: the `.completed`/`.stale` rename in the Cleanup Reference would
+**Lifetime and retention:** same as `project-context.md` — survives across sessions, **never renamed,
+never truncated, no cap, no rotation** (rotation means rewriting, which APPEND-ONLY forbids;
+truncation would delete the cross-session history the file exists for). Growth is bounded by finished
+tasks (~600 bytes each, under 2 MB/year at 50 tasks/week) and read line by line. A project wanting it
+smaller prunes with `tail -n <N>` **by hand**, accepting the loss — no skill does this mid-run.
+Explicitly **NOT** `execution-state.md`'s lifetime: that file's `.completed`/`.stale` rename would
 split one resumed run's records across two files.
 
 **Gitignored for free** — it lives under `zuvo/`, which the WRITE Protocol already ensures is in
@@ -479,13 +481,11 @@ fail-opens silently. Confirm with `scripts/zuvo-phase.sh status` after writing.
 | Stale validation fail | Renamed to `.stale` immediately | Keep as-is | Unchanged |
 | Fresh start (next execute) | Writes new file | Updates last-session-id, appends history | `status: in-progress` |
 
-**`task-telemetry.jsonl` is absent from every row of that table on purpose.** No event above
-touches it — not "all tasks complete", not "user abort", not "stale validation fail", not "fresh
-start". It is **never renamed and never truncated** in any of them; a fresh run simply keeps
-appending to the same file. Giving it a `.completed`/`.stale` rename like `execution-state.md`
-would split one resumed run's records across two files and defeat the cross-session view the file
-exists for. (The table is Event × File; this paragraph is that file's column, kept as a footnote so
-the four-column table stays readable.)
+**`task-telemetry.jsonl` is absent from every row of that table on purpose.** No event above touches
+it — not "all tasks complete", "user abort", or "stale validation fail". It is **never renamed and
+never truncated**; a fresh run simply keeps appending to the same file. A `.completed`/`.stale` rename
+like `execution-state.md`'s would split one resumed run's records across two files and defeat the
+cross-session view the file exists for. (Kept as a footnote so the Event × File table stays readable.)
 
 **Rename timing:** Terminal states (`completed`, `aborted`) are written immediately but the file stays as `execution-state.md`. The rename to `.completed`/`.stale` happens on the **next startup** (READ protocol Step 1). Stale validation failures rename immediately (READ protocol Step 2).
 

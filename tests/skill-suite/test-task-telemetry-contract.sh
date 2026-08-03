@@ -138,6 +138,24 @@
 #                     long run. Several distinct descriptions must collapse to a
 #                     single `degraded=<N>` with `degraded-distinct-descriptions`
 #                     alongside.
+#   (ab) MISSING-GATE — a record with NO spec-review/quality-review/adversarial
+#                     keys at all must land in `gate-missing=`, never `gate-
+#                     failures=`. Absence is not a declared failure.
+#   (ac) NONSTRING-GATE — a JSON bool/int/object gate value (str(True)=="True",
+#                     str(3)=="3") is malformed input, not a verdict, and must
+#                     also land in `gate-missing=`, never get stringified into a
+#                     passing or failing comparison.
+#   (ad) CASE-SENSITIVE — a lowercased/mixed-case "pass ..." value must count as
+#                     a gate FAILURE, pinning the deliberate case-sensitive
+#                     `PASS`-prefix contract as a regression guard.
+#   (ae) DEGRADED-CAP — 70 records with 70 DISTINCT `degraded:<desc>` tails must
+#                     cap the tracked set at `DEGRADED_DESC_CAP` and report the
+#                     remainder as an approximate `(+N more)` overflow, never
+#                     grow the tracked set without bound.
+#   (af) BLANK-LINE — a blank line and a whitespace-only line between two real
+#                     records must count toward NEITHER `records=` nor
+#                     `skipped=` — the ordinary trailing newline of an
+#                     append-only file is not a record to begin with.
 #   (y) READER SSOT — the reader's field-name literals are checked against the
 #                     `zuvo:telemetry-schema` table, the same discipline the
 #                     WRITER's `K = [...]` already follows. CONTAINMENT, not the
@@ -1234,6 +1252,7 @@ JSONL
 
 EXPECTED_P='records=3 skipped=0
 gate-failures spec-review=1 quality-review=1 adversarial=1
+gate-missing spec-review=0 quality-review=0 adversarial=0
 reviewer-route review-alt=1 review-primary=2
 implementer-status BLOCKED=1 DONE=2
 failure-strategy degraded=1 halt=1 skip-and-continue=1 degraded-distinct-descriptions=1'
@@ -1273,6 +1292,7 @@ JSONL
 
 EXPECTED_Q='records=2 skipped=1
 gate-failures spec-review=0 quality-review=0 adversarial=0
+gate-missing spec-review=0 quality-review=0 adversarial=0
 reviewer-route review-primary=2
 implementer-status DONE=2
 failure-strategy halt=2'
@@ -1353,6 +1373,7 @@ mkdir -p "$FIXT/context"
 
 EXPECTED_T='records=2 skipped=3
 gate-failures spec-review=0 quality-review=0 adversarial=0
+gate-missing spec-review=0 quality-review=0 adversarial=0
 reviewer-route review-primary=2
 implementer-status DONE=2
 failure-strategy halt=2'
@@ -1400,6 +1421,7 @@ raise SystemExit("fixture decodes as valid UTF-8 — the truncation was not writ
 
   EXPECTED_U='records=2 skipped=1
 gate-failures spec-review=0 quality-review=0 adversarial=0
+gate-missing spec-review=0 quality-review=0 adversarial=0
 reviewer-route review-primary=2
 implementer-status DONE=2
 failure-strategy halt=2'
@@ -1433,6 +1455,7 @@ mkdir -p "$FIXV/context"
 
 EXPECTED_V='records=4 skipped=0
 gate-failures spec-review=0 quality-review=0 adversarial=0
+gate-missing spec-review=0 quality-review=0 adversarial=0
 reviewer-route review-primary=4
 implementer-status DONE=4
 failure-strategy halt=1 missing=2 unknown=1'
@@ -1523,6 +1546,7 @@ mkdir -p "$FIXX/context"
 
 EXPECTED_X='records=4 skipped=0
 gate-failures spec-review=0 quality-review=0 adversarial=0
+gate-missing spec-review=0 quality-review=0 adversarial=0
 reviewer-route review-primary=4
 implementer-status DONE=4
 failure-strategy degraded=4 degraded-distinct-descriptions=3'
@@ -1541,6 +1565,140 @@ if printf '%s' "$OUT_X" | grep -qE '(no-agents|rate-limited|index stale)='; then
   bad "(x) a free-text description became a tally key — one entry per task, no signal: got=[$OUT_X]"
 else
   pass "(x) no free-text description leaked into the tally as its own key"
+fi
+
+# ── (ab) MISSING-GATE: absent gate fields land in gate-missing, never gate-failures ──
+# A pre-schema or truncated record that never had spec-review/quality-review/adversarial
+# at all must not inflate the failure tally — session-state.md's Reader contract gives
+# these fields the same missing/unknown treatment failure-strategy already has.
+FIXAB="$TMP_ROOT/retro-fixab"
+mkdir -p "$FIXAB/context"
+cat > "$FIXAB/context/task-telemetry.jsonl" <<'JSONL'
+{"at":"2026-08-02T10:00:00Z","session-id":"exec-1","retro-session-id":"retro-1","task":1,"task-name":"A","surface":"api","mode":"multi-agent","fallback-path":"none","writer-model":"opus","reviewer-route":"review-primary","implementer-status":"DONE","verify":"x exit=0","acceptance-verified":[],"codesift":"available","backlog-adds":0,"failure-strategy":"halt"}
+JSONL
+
+EXPECTED_AB='records=1 skipped=0
+gate-failures spec-review=0 quality-review=0 adversarial=0
+gate-missing spec-review=1 quality-review=1 adversarial=1
+reviewer-route review-primary=1
+implementer-status DONE=1
+failure-strategy halt=1'
+
+run_retro "$FIXAB"
+RC_AB=$RC; OUT_AB="$OUT"; ERR_AB="$ERR"
+
+if [ "$RC_AB" -eq 0 ] && [ "$OUT_AB" = "$EXPECTED_AB" ] && [ -z "$ERR_AB" ]; then
+  pass "(ab) a record with NO spec-review/quality-review/adversarial keys at all lands in gate-missing=1/1/1, NOT gate-failures — absence is not a declared failure"
+else
+  bad "(ab) missing-gate-field handling wrong: rc=$RC_AB expected=[$EXPECTED_AB] got=[$OUT_AB] stderr=[$ERR_AB]"
+fi
+
+# ── (ac) NONSTRING-GATE: a bool/int/object gate value is malformed, never a verdict ──
+# str(True) == "True" and str(3) == "3" must never be compared against "PASS"/"COMPLIANT"
+# as if they were real verdicts — that is the exact corruption this closes.
+FIXACN="$TMP_ROOT/retro-fixacn"
+mkdir -p "$FIXACN/context"
+cat > "$FIXACN/context/task-telemetry.jsonl" <<'JSONL'
+{"at":"2026-08-02T10:00:00Z","session-id":"exec-1","retro-session-id":"retro-1","task":1,"task-name":"A","surface":"api","mode":"multi-agent","fallback-path":"none","writer-model":"opus","reviewer-route":"review-primary","implementer-status":"DONE","spec-review":true,"quality-review":3,"adversarial":{"verdict":"PASS"},"verify":"x exit=0","acceptance-verified":[],"codesift":"available","backlog-adds":0,"failure-strategy":"halt"}
+JSONL
+
+EXPECTED_ACN='records=1 skipped=0
+gate-failures spec-review=0 quality-review=0 adversarial=0
+gate-missing spec-review=1 quality-review=1 adversarial=1
+reviewer-route review-primary=1
+implementer-status DONE=1
+failure-strategy halt=1'
+
+run_retro "$FIXACN"
+RC_ACN=$RC; OUT_ACN="$OUT"; ERR_ACN="$ERR"
+
+if [ "$RC_ACN" -eq 0 ] && [ "$OUT_ACN" = "$EXPECTED_ACN" ] && [ -z "$ERR_ACN" ]; then
+  pass "(ac) a JSON bool/int/object gate value (spec-review=true, quality-review=3, adversarial={...}) is treated as malformed -> gate-missing, never stringified into a passing or failing verdict"
+else
+  bad "(ac) non-string gate value handling wrong: rc=$RC_ACN expected=[$EXPECTED_ACN] got=[$OUT_ACN] stderr=[$ERR_ACN]"
+fi
+
+# ── (ad) CASE-SENSITIVE: a lowercased PASS-prefix value must FAIL, not pass ──────────
+# The writer always emits the literal uppercase "PASS ..."/"COMPLIANT" forms, so a
+# lowercased or mixed-case value is itself a sign of a hand-edited/corrupt record.
+# This pins the deliberate case-sensitive decision as a regression guard.
+FIXCS="$TMP_ROOT/retro-fixcs"
+mkdir -p "$FIXCS/context"
+cat > "$FIXCS/context/task-telemetry.jsonl" <<'JSONL'
+{"at":"2026-08-02T10:00:00Z","session-id":"exec-1","retro-session-id":"retro-1","task":1,"task-name":"A","surface":"api","mode":"multi-agent","fallback-path":"none","writer-model":"opus","reviewer-route":"review-primary","implementer-status":"DONE","spec-review":"COMPLIANT","quality-review":"pass cq=1/1","adversarial":"Pass mode=code","verify":"x exit=0","acceptance-verified":[],"codesift":"available","backlog-adds":0,"failure-strategy":"halt"}
+JSONL
+
+EXPECTED_CS='records=1 skipped=0
+gate-failures spec-review=0 quality-review=1 adversarial=1
+gate-missing spec-review=0 quality-review=0 adversarial=0
+reviewer-route review-primary=1
+implementer-status DONE=1
+failure-strategy halt=1'
+
+run_retro "$FIXCS"
+RC_CS=$RC; OUT_CS="$OUT"; ERR_CS="$ERR"
+
+if [ "$RC_CS" -eq 0 ] && [ "$OUT_CS" = "$EXPECTED_CS" ] && [ -z "$ERR_CS" ]; then
+  pass "(ad) lowercase/mixed-case 'pass ...' values are counted as gate-failures (case-sensitive by contract), not silently accepted as passing"
+else
+  bad "(ad) case-sensitivity handling wrong: rc=$RC_CS expected=[$EXPECTED_CS] got=[$OUT_CS] stderr=[$ERR_CS]"
+fi
+
+# ── (ae) DEGRADED-CAP: distinct descriptions beyond the cap collapse to "+N more" ────
+# 70 records, each with a DISTINCT degraded:<desc> tail. DEGRADED_DESC_CAP=64 in the
+# fence, so the tracked set fills at 64 and the remaining 6 distinct descriptions must
+# be reported as an approximate overflow, never grown into the set without bound.
+FIXCAP="$TMP_ROOT/retro-fixcap"
+mkdir -p "$FIXCAP/context"
+: > "$FIXCAP/context/task-telemetry.jsonl"
+_dc=1
+while [ "$_dc" -le 70 ]; do
+  retro_rec "$_dc" ",\"failure-strategy\":\"degraded:reason-$_dc\"" >> "$FIXCAP/context/task-telemetry.jsonl"
+  _dc=$((_dc + 1))
+done
+
+EXPECTED_CAP='records=70 skipped=0
+gate-failures spec-review=0 quality-review=0 adversarial=0
+gate-missing spec-review=0 quality-review=0 adversarial=0
+reviewer-route review-primary=70
+implementer-status DONE=70
+failure-strategy degraded=70 degraded-distinct-descriptions=64 (+6 more)'
+
+run_retro "$FIXCAP"
+RC_CAP=$RC; OUT_CAP="$OUT"; ERR_CAP="$ERR"
+
+if [ "$RC_CAP" -eq 0 ] && [ "$OUT_CAP" = "$EXPECTED_CAP" ] && [ -z "$ERR_CAP" ]; then
+  pass "(ae) 70 distinct degraded descriptions cap at 64 tracked + '(+6 more)' overflow — the tracked set never grows past the documented bound"
+else
+  bad "(ae) degraded-description cap handling wrong: rc=$RC_CAP expected=[$EXPECTED_CAP] got=[$OUT_CAP] stderr=[$ERR_CAP]"
+fi
+
+# ── (af) BLANK-LINE: blank/whitespace-only physical lines count toward NEITHER bucket ─
+# A trailing newline (or a stray blank line) in an append-only file is not a record —
+# it must not inflate skipped= (it isn't corrupt) or records= (it isn't a task).
+FIXBL="$TMP_ROOT/retro-fixbl"
+mkdir -p "$FIXBL/context"
+{
+  retro_rec 1 ',"failure-strategy":"halt"'
+  printf '\n'
+  printf '   \n'
+  retro_rec 2 ',"failure-strategy":"halt"'
+} > "$FIXBL/context/task-telemetry.jsonl"
+
+EXPECTED_BL='records=2 skipped=0
+gate-failures spec-review=0 quality-review=0 adversarial=0
+gate-missing spec-review=0 quality-review=0 adversarial=0
+reviewer-route review-primary=2
+implementer-status DONE=2
+failure-strategy halt=2'
+
+run_retro "$FIXBL"
+RC_BL=$RC; OUT_BL="$OUT"; ERR_BL="$ERR"
+
+if [ "$RC_BL" -eq 0 ] && [ "$OUT_BL" = "$EXPECTED_BL" ] && [ -z "$ERR_BL" ]; then
+  pass "(af) a blank line and a whitespace-only line between two real records count toward NEITHER records= nor skipped= (records=2 skipped=0)"
+else
+  bad "(af) blank-line handling wrong: rc=$RC_BL expected=[$EXPECTED_BL] got=[$OUT_BL] stderr=[$ERR_BL]"
 fi
 
 # ── (y) READER SSOT: the reader's field names diffed against session-state.md ─
@@ -1650,6 +1808,7 @@ mkdir -p "$FIXZM/context"
 retro_rec 1 ',"failure-strategy":"halt"' > "$FIXZM/context/task-telemetry.jsonl"
 EXPECTED_ZM='records=1 skipped=0
 gate-failures spec-review=0 quality-review=0 adversarial=0
+gate-missing spec-review=0 quality-review=0 adversarial=0
 reviewer-route review-primary=1
 implementer-status DONE=1
 failure-strategy halt=1'
@@ -1721,7 +1880,6 @@ else
 fi
 
 # ── (h) PURITY ────────────────────────────────────────────────────────────────
-GIT_AFTER="$( (cd "$ROOT" && git status --porcelain) 2>/dev/null )"
 # ── (aa) NEVER-A-GATE holds even when the WARN itself cannot be printed ───────
 # The fence ends `python3 … || echo "[WARN] …" || true`. The trailing `|| true`
 # looks redundant and is not: without it, a run whose stdout is closed or full
@@ -1749,6 +1907,11 @@ else
   bad "(aa) closed stdout made the never-a-gate path return rc=$RC_AA — the WARN tail must not be able to fail the compound"
 fi
 
+# Captured HERE, after the LAST case that executes the fence — not earlier. It
+# previously sat above case (aa), so (aa)'s own runner invocation was outside the
+# purity window: a case that dirtied the repo would have gone unnoticed by the very
+# assertion that exists to notice it. Any case added later must go ABOVE this line.
+GIT_AFTER="$( (cd "$ROOT" && git status --porcelain) 2>/dev/null )"
 if [ "$GIT_BEFORE" = "$GIT_AFTER" ]; then
   pass "(h) repo working tree unchanged by test run"
 else

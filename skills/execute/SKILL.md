@@ -618,7 +618,7 @@ outright and NOTHING in branch B applies:
 **Branch B — every other case** (`halt`, or no `**Failure:**` line at all):
 - Set task to BLOCKED
 - Propagate BLOCKED_BY_DEPENDENCY to dependent tasks (per Dependency State Contract)
-- Emit the terminal-state telemetry block + `task-telemetry.jsonl` append per `Required Telemetry` (`implementer-status=BLOCKED`, `failure-strategy=halt`)
+- Emit the terminal-state telemetry block + `task-telemetry.jsonl` append per `Required Telemetry` (`implementer-status=BLOCKED`, and `failure-strategy=` **the value the plan actually declared** — `halt` when there is no `**Failure:**` line, but a task declaring `degraded:<desc>` takes branch B too and must be recorded as `degraded:<desc>`, not flattened to `halt`)
 - Continue executing any PENDING tasks that are NOT blocked by this dependency
 - Include all BLOCKED tasks with their blockers in the final summary
 - Do NOT wait inline — the pipeline continues on independent branches

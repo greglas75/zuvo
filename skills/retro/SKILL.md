@@ -196,10 +196,12 @@ not merely redundant.
 If the file **does not exist**: note "No per-task telemetry found." Skip this section — the same
 degradation shape Phase 3 already uses for a missing `runs.log`.
 
-If the file **exists**, parse it line by line. Each line is one JSON record: **every line is either
-fully counted in `records=` or fully counted in `skipped=`** — never dropped in between. A kill
-between `write` and `fsync` can leave a truncated trailing line, and this file is never rewritten to
-repair one (see `session-state.md`'s "Reader contract").
+If the file **exists**, parse it line by line. A blank or whitespace-only physical line — the normal
+trailing newline of an append-only file, not a corrupt one — is not a record and is excluded from
+BOTH counts below; every **non-blank** line is then either fully counted in `records=` or fully
+counted in `skipped=`, never dropped in between. A kill between `write` and `fsync` can leave a
+truncated trailing line, and this file is never rewritten to repair one (see `session-state.md`'s
+"Reader contract").
 
 Three corruption shapes must each become a *counted* skip, because each of them aborts a naive
 reader **outside** a `try` that wraps only `json.loads`, and an abort discards every record already
@@ -219,8 +221,15 @@ any other failure are reported by the reader with its partial counts intact. The
 tail stays as a last resort, not the normal error path.
 
 From the well-formed records, aggregate:
-- **Gate-failure counts** — records where `spec-review` != `COMPLIANT`, where `quality-review` does
-  not start with `PASS`, and where `adversarial` does not start with `PASS`.
+- **Gate-failure counts** — a gate field (`spec-review`, `quality-review`, `adversarial`) lands in one
+  of three states, never a plain pass/fail: **failed** (present, a string, and not the passing
+  value), **missing** (absent, `null`, or any non-string JSON value — a bool/number/nested object
+  stringified into `"True"`/`"3"` is malformed input, not a real verdict, and must never be compared
+  as one), or passing. `gate-failures=` counts only the **failed** state; `gate-missing=` reports the
+  missing state **separately**, so a pre-schema or truncated record can never inflate the failure
+  tally. The `PASS` prefix match on `quality-review`/`adversarial` is **case-sensitive by contract** —
+  the writer always emits the literal uppercase form, so a lowercased value is itself a sign of a
+  hand-edited or corrupt record and must fail, not silently pass.
 - **Reviewer-route distribution** — tally by `reviewer-route` (`review-primary`, `review-alt`,
   `same-model-fallback`, `routing-failed`).
 - **Implementer-status tally** (blocked/skipped reasons) — tally by `implementer-status` (`DONE`,
@@ -231,8 +240,10 @@ From the well-formed records, aggregate:
     an absent one means an OLD or CORRUPT record — reporting it as `halt` would present silence as a
     deliberate decision.
   - **`degraded:<desc>` collapses to one `degraded` bucket**, with
-    `degraded-distinct-descriptions=<N>` printed alongside. `<desc>` is free text; keying the tally
-    by it yields one entry per task on a long run — a distribution with no signal.
+    `degraded-distinct-descriptions=<N>` printed alongside — **capped** at 64 distinct descriptions
+    tracked for that count; past the cap, further distinct text is tallied as an approximate
+    `(+N more)` overflow instead of growing the tracked set without bound. `<desc>` is free text;
+    keying the tally by it yields one entry per task on a long run — a distribution with no signal.
 
 ```bash
 # >>> zuvo:retro-telemetry
@@ -266,14 +277,23 @@ F_ROUTE = "reviewer-route"
 F_STATUS = "implementer-status"
 F_STRATEGY = "failure-strategy"
 
+# Bound on distinct free-text `degraded:<desc>` tails tracked for the
+# degraded-distinct-descriptions count below. Free text is author-controlled
+# and a long-lived file could carry many distinct ones; past this many the
+# reader stops trying to dedup exactly and reports the remainder as an
+# approximate "+N more" overflow instead of growing the tracked set forever.
+DEGRADED_DESC_CAP = 64
+
 path = sys.argv[1]
 n = 0
 skipped = 0
 gate = {F_SPEC: 0, F_QUALITY: 0, F_ADVERSARIAL: 0}
+gate_missing = {F_SPEC: 0, F_QUALITY: 0, F_ADVERSARIAL: 0}
 reviewer_route = {}
 implementer_status = {}
 failure_strategy = {}
 degraded_descs = set()
+degraded_overflow = 0
 
 
 def bump(tally, key):
@@ -283,6 +303,24 @@ def bump(tally, key):
 def enum_str(rec, key):
     val = rec.get(key)
     return val if isinstance(val, str) and val else "unknown"
+
+
+def gate_status(rec, key, mode):
+    # Same isinstance/non-empty guard as strategy_bucket() below: an ABSENT
+    # field and a non-string field (a bool/int/nested value that str() would
+    # otherwise stringify into a fake "True"/"3" verdict) are BOTH "missing",
+    # never "failed" — a pre-schema or truncated record must not inflate the
+    # failure tally, and a non-string value must never be compared as a verdict.
+    val = rec.get(key)
+    if not isinstance(val, str) or not val:
+        return "missing"
+    if mode == "exact":
+        return "passed" if val == "COMPLIANT" else "failed"
+    # mode == "prefix": case-sensitive BY CONTRACT, not an oversight — the
+    # writer always emits the literal uppercase "PASS ..." form (schema in
+    # session-state.md), so a lowercased/mixed-case value is itself a sign of
+    # a hand-edited or corrupt record and must fail, never silently pass.
+    return "passed" if val.startswith("PASS") else "failed"
 
 
 def strategy_bucket(rec):
@@ -305,11 +343,15 @@ def emit():
     print("records=%d skipped=%d" % (n, skipped))
     print("gate-failures spec-review=%d quality-review=%d adversarial=%d"
           % (gate[F_SPEC], gate[F_QUALITY], gate[F_ADVERSARIAL]))
+    print("gate-missing spec-review=%d quality-review=%d adversarial=%d"
+          % (gate_missing[F_SPEC], gate_missing[F_QUALITY], gate_missing[F_ADVERSARIAL]))
     print("reviewer-route " + " ".join("%s=%d" % kv for kv in sorted(reviewer_route.items())))
     print("implementer-status " + " ".join("%s=%d" % kv for kv in sorted(implementer_status.items())))
     strategies = " ".join("%s=%d" % kv for kv in sorted(failure_strategy.items()))
     if degraded_descs:
         strategies += " degraded-distinct-descriptions=%d" % len(degraded_descs)
+        if degraded_overflow:
+            strategies += " (+%d more)" % degraded_overflow
     print("failure-strategy " + strategies)
 
 
@@ -336,13 +378,19 @@ try:
             try:
                 line = raw.decode("utf-8", "replace").strip()
                 if not line:
+                    # A blank/whitespace-only physical line is NOT a record —
+                    # the normal trailing newline of an append-only file, not
+                    # a corrupt one. Excluded from BOTH records= and skipped=
+                    # on purpose: the Reader contract counts every REAL line
+                    # into one bucket or the other, and a blank line is not a
+                    # real line to begin with.
                     continue
                 rec = json.loads(line)
                 if not isinstance(rec, dict):
                     raise ValueError("record is not a JSON object")
-                spec_fail = rec.get(F_SPEC) != "COMPLIANT"
-                quality_fail = not str(rec.get(F_QUALITY, "")).startswith("PASS")
-                adversarial_fail = not str(rec.get(F_ADVERSARIAL, "")).startswith("PASS")
+                spec_status = gate_status(rec, F_SPEC, "exact")
+                quality_status = gate_status(rec, F_QUALITY, "prefix")
+                adversarial_status = gate_status(rec, F_ADVERSARIAL, "prefix")
                 route = enum_str(rec, F_ROUTE)
                 status = enum_str(rec, F_STATUS)
                 strategy, desc = strategy_bucket(rec)
@@ -350,17 +398,26 @@ try:
                 skipped += 1
                 continue
             n += 1
-            if spec_fail:
+            if spec_status == "failed":
                 gate[F_SPEC] += 1
-            if quality_fail:
+            elif spec_status == "missing":
+                gate_missing[F_SPEC] += 1
+            if quality_status == "failed":
                 gate[F_QUALITY] += 1
-            if adversarial_fail:
+            elif quality_status == "missing":
+                gate_missing[F_QUALITY] += 1
+            if adversarial_status == "failed":
                 gate[F_ADVERSARIAL] += 1
+            elif adversarial_status == "missing":
+                gate_missing[F_ADVERSARIAL] += 1
             bump(reviewer_route, route)
             bump(implementer_status, status)
             bump(failure_strategy, strategy)
             if desc is not None:
-                degraded_descs.add(desc)
+                if desc in degraded_descs or len(degraded_descs) < DEGRADED_DESC_CAP:
+                    degraded_descs.add(desc)
+                else:
+                    degraded_overflow += 1
 except Exception as exc:
     # A read that dies mid-file still reports what it already aggregated. Partial
     # results plus the skip count beat the shell fallback's total silence.
