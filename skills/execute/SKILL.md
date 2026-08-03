@@ -1183,10 +1183,15 @@ The files remain on disk — they serve as a record of what was done. `zuvo:exec
 
 ### Final Summary
 
-Print a completion report:
+Print a completion report. **The header is conditional:** `<k>` IS the number of
+`[AC-UNPROVEN: …]` lines the AC-coverage item of the final Completion Gate emitted (one per
+unproven AC — see that item for the single definition of PROVEN), so if it emitted `k > 0` of
+them, the header MUST read `## Execution Complete (AC-UNPROVEN: <k>)` — a bare
+`## Execution Complete` is a contract violation whenever `k > 0`, because it hides that the plan
+landed with an AC nothing verified.
 
 ```
-## Execution Complete
+## Execution Complete [(AC-UNPROVEN: <k>) — suffix present iff k > 0]
 
 **Plan:** [plan document path]
 **Tasks:** N completed, M skipped, K blocked
@@ -1219,6 +1224,23 @@ Print a completion report:
  changed: README section, docs/<feature>.md, API ref, CHANGELOG entry, runbook, .env.example),
  or the explicit `[DOC: N/A — <reason>]` line. A multi-task plan with no docs and no declared
  N/A is INCOMPLETE.]
+
+### Unproven Acceptance Criteria
+[AC-COVERAGE CONTRACT — one line per UNPROVEN Coverage Matrix AC, copied verbatim from the
+ final Completion Gate: `[AC-UNPROVEN: <AC-id> — claimed by task(s) N,M; final states <states>]`.
+ PROVEN/UNPROVEN is defined in exactly ONE place — the AC COVERAGE item of the Completion Gate
+ Check — and is NOT re-derived here: an AC is PROVEN iff a claiming task ended COMPLETED *and*
+ that task's `acceptance-verified=` names that AC's own id. So this section also lists ACs whose
+ claiming task ended COMPLETED with no proof or with proof for a DIFFERENT AC (reported as
+ `COMPLETED (no proof for this AC)`), and Coverage Matrix rows with no claiming task at all
+ (reported as `claimed by task(s) none; final states UNMAPPED`) — not only the skipped/blocked ones.
+ These are the ACs this run shipped with NO behavioural verification while every other gate
+ reported green. The count here MUST equal the `(AC-UNPROVEN: <k>)` suffix in the header above,
+ and both ARE the number of `[AC-UNPROVEN: …]` lines the gate emitted — one per unproven AC,
+ so the three can never disagree.
+ If none, write "none — all <N> Coverage Matrix ACs have a COMPLETED claiming task whose acceptance-verified names them",
+ where `<N>` is the same `checked=<N>` value the `[GATE: ac-coverage]` marker printed — a wrong
+ `<N>` is checkable against the plan's Coverage Matrix, unlike a fixed sentence.]
 
 ### Post-Cap Dispositions
 [MORNING-REVIEW CONTRACT — list every `[POST-CAP: FIXED|SPEC-AMENDED|DEFERRED]` the run made
@@ -1305,6 +1327,7 @@ COMPLETION GATE CHECK (per task):
 
 COMPLETION GATE CHECK (final):
 [ ] Whole-feature Smoke Proofs ran (or [GATE: smoke-verified] / explicit "Not applicable" with justification)
+[ ] AC COVERAGE: every AC in the plan's Coverage Matrix is PROVEN. **PROVEN is defined HERE, once, and every other mention of it in this skill points back to this line: an AC is PROVEN iff at least ONE of its claiming tasks ended COMPLETED *and* that task's `acceptance-verified=` value names that AC's OWN id.** Everything else is UNPROVEN — including (a) a claiming task that ended COMPLETED with a missing or empty `acceptance-verified=`, (b) a claiming task that ended COMPLETED with an `acceptance-verified=` naming only OTHER ACs, (c) all claiming tasks ending SKIPPED / SKIPPED_BY_DEPENDENCY / BLOCKED / BLOCKED_BY_DEPENDENCY, and (d) a Coverage Matrix row with NO claiming task at all. A task's overall COMPLETED status alone NEVER proves an AC. This is the SAME per-AC rule the per-task `[GATE: acceptance-verified]` gate applies to the ACs one task claims — this item is that gate's whole-plan backstop, re-asked over every Coverage Matrix row, and it is therefore never weaker than it. Enumerate every Coverage Matrix row and emit `[GATE: ac-coverage] checked=<N> unproven=<k>` on EVERY run — never silently omitted, even when `k=0` — where `<N>` is the number of Coverage Matrix rows actually enumerated (the AC count, NOT the task count: a plan may have more or fewer ACs than tasks, so deriving `<N>` from the task count is a contract violation). Print EXACTLY ONE `[AC-UNPROVEN: <AC-id> — claimed by task(s) N,M; final states <states>]` line per UNPROVEN AC — no more, no fewer — and `<k>` **is defined as the number of those lines**, so the suffix count and the emitted lines cannot drift apart; if they differ, the gate output is wrong. `<states>` reports each claiming task's ACTUAL final state so the line reads truthfully: use `COMPLETED (no proof for this AC)` for case (a)/(b) rather than any state implying the task was skipped or blocked, and for case (d) the line reads `[AC-UNPROVEN: <AC-id> — claimed by task(s) none; final states UNMAPPED]` — an unmapped Coverage Matrix row is REPORTED, never silently skipped by a vacuously-true "all claiming tasks failed" test over an empty set. ZERO such lines = closed; one or more = the Final Summary header reads `## Execution Complete (AC-UNPROVEN: <k>)`, NEVER a bare `## Execution Complete`, and each line is repeated verbatim in `### Unproven Acceptance Criteria`
 [ ] Test Quality Gate ran (Phase Final-1b): [GATE: test-quality] PASS|WARN|N/A with a REAL zuvo/audits test-audit report path — inline Q-rescoring is a substituted gate = INVALID; below-A files fixed in-run or WARN + backlogged
 [ ] End-of-plan aggregate review ran (or [GATE: aggregate-review] PASS|RECOMMENDED-FOUND|MUST-FIX-FOUND|SKIPPED|NO-OP|BLOCKED — never silently omitted)
 [ ] Content-keyed artifact memory/reviews/<base7>..<head7>-<slug>.md written with range:/files:/**adversarial:** header for the plan range (the adversarial proof path is REQUIRED — pg_artifact_proven rejects an artifact whose proof does not resolve or holds <2 `REVIEW BY:` lines, so an artifact without it grants ZERO coverage) (on success only — pipeline-entry signal read by pre-push/CI gates)
@@ -1318,6 +1341,36 @@ COMPLETION GATE CHECK (final):
 [ ] append-runlog wrapper invoked and exited 0
 [ ] Logs evidence block printed with real `tail` output
 ```
+
+**AC coverage needs NO new state — and the hole it closes exists TODAY.** Wire the check from
+three sources you already have: AC → task from the plan's **Coverage Matrix** (`Primary task(s)`
+column), each task's final outcome from `completed[] / skipped[] / blocked[]` in
+`zuvo/context/execution-state.md` (plus the `BLOCKED_BY_DEPENDENCY` / `SKIPPED_BY_DEPENDENCY`
+propagation in the Dependency State Contract), and per-task proof from the `acceptance-verified=`
+field of the task's `[TELEMETRY]` block. Do NOT invent a new file, field or marker for this.
+Matching an AC id against `acceptance-verified=` is an exact id match on the list's entries
+(`AC1@zuvo/proofs/task-4-report.md` proves AC1 and nothing else) — never a substring test, or
+`AC1` would be "proven" by an `AC10` entry.
+
+Why it is needed: the per-task gate asserts an acceptance proof ran "for each AC **the task
+claims**" — and a task that ends SKIPPED or BLOCKED claims nothing, so that gate is *vacuously*
+satisfied. Nothing downstream then re-asks the whole-plan question. Both paths that produce those
+states are live today, independent of any newer failure-strategy work: the user-chosen **"Skip this
+task"** option at the BLOCKED prompt (Step 3), and the **async auto-BLOCKED** branch (Codex App /
+Cursor, no `AskUserQuestion`) that sets BLOCKED, propagates `BLOCKED_BY_DEPENDENCY`, and keeps
+executing independent tasks. Before this item, either path could reach `## Execution Complete` with
+every gate green and an AC that was never behaviourally verified. The `(AC-UNPROVEN: <k>)` header
+suffix exists so that outcome cannot be skimmed past.
+
+**Why it is defined per-AC and not per-task.** A backstop that certifies an AC from its claiming
+task's overall COMPLETED status would be *weaker* than the per-task gate it exists to back up, and
+would wave through exactly the cases a whole-plan re-ask is for: a task claiming AC1, AC2 and AC3
+that proved only AC1 (the other two ride in on the task's status), a task that reached COMPLETED
+with a missing or empty `acceptance-verified=` at all, and — because "ALL claiming tasks ended in a
+bad state" is vacuously TRUE over the empty set — a Coverage Matrix row that names no claiming task,
+which would be silently skipped instead of reported. Per-AC matching plus the explicit `UNMAPPED`
+row closes all three, and reporting a COMPLETED-without-proof task with its ACTUAL state keeps the
+line honest instead of implying the work was skipped or blocked.
 
 **Phase order is non-negotiable.** Retro append → log append → final Run: block. Past failure mode (e.g. `uptime` 2026-05-09): agent prints final summary + Run: line in chat, never executes the bash, all logs stay empty.
 
