@@ -41,8 +41,8 @@ Before starting work, read each file below. Print the checklist with status.
 CORE FILES LOADED:
   1. ../../shared/includes/benchmark-output-schema.md  -- READ/MISSING
   2. ../../shared/includes/run-logger.md               -- READ/MISSING
-  3. ../../shared/includes/retrospective.md               -- READ/MISSING
-  3. ../../shared/includes/env-compat.md               -- READ/MISSING
+  3. ../../shared/includes/retrospective.md            -- READ/MISSING
+  4. ../../shared/includes/env-compat.md               -- READ/MISSING
 ```
 
 If any core file is missing, proceed in degraded mode and note it in the BENCHMARK COMPLETE block.

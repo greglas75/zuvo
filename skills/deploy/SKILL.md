@@ -44,7 +44,7 @@ CORE FILES LOADED:
   1. ../../shared/includes/env-compat.md          — READ/MISSING
   2. ../../shared/includes/run-logger.md           — READ/MISSING
   3. ../../shared/includes/retrospective.md           — READ/MISSING
-  3. ../../shared/includes/platform-detection.md   — READ/MISSING
+  4. ../../shared/includes/platform-detection.md   — READ/MISSING
 ```
 
 If any file is missing: proceed in degraded mode. Note which files are unavailable in the Phase 7 output.

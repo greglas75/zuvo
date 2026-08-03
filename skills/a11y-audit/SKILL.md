@@ -94,7 +94,7 @@ CORE FILES LOADED:
 ```
   3. ../../shared/includes/run-logger.md      -- [READ | MISSING -> STOP]
   4. ../../shared/includes/retrospective.md      -- [READ | MISSING -> STOP]
-  4. ../../shared/includes/backlog-protocol.md -- [READ | MISSING -> degraded]
+  5. ../../shared/includes/backlog-protocol.md -- [READ | MISSING -> degraded]
 ```
 
 Stage 2 deferred to save upfront context.
@@ -463,7 +463,7 @@ Read deferred files:
 ```
   3. ../../shared/includes/run-logger.md      -- [READ | MISSING -> STOP]
   4. ../../shared/includes/retrospective.md      -- [READ | MISSING -> STOP]
-  4. ../../shared/includes/backlog-protocol.md -- [READ | MISSING -> degraded]
+  5. ../../shared/includes/backlog-protocol.md -- [READ | MISSING -> degraded]
 ```
 
 ### 5.2 Scoring
