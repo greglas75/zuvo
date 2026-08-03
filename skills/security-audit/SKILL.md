@@ -117,9 +117,9 @@ fall back to built-in patterns per Phase 3):**
 
 **Stage 2 -- Before Phase 10 (report writing):**
 ```
-  5. ../../shared/includes/backlog-protocol.md -- READ/MISSING
-  6. ../../shared/includes/run-logger.md       -- READ/MISSING
-  7. ../../shared/includes/retrospective.md       -- READ/MISSING
+   9. ../../shared/includes/backlog-protocol.md -- READ/MISSING
+  10. ../../shared/includes/run-logger.md       -- READ/MISSING
+  11. ../../shared/includes/retrospective.md    -- READ/MISSING
 ```
 
 Stage 2 deferred to save ~300 lines of upfront context.

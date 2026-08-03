@@ -524,6 +524,20 @@ check_count_consistency
 [ "$INCLUDE_INTEGRITY_OK" -eq 1 ] && echo "include-integrity: OK"
 [ "$COUNT_CONSISTENCY_OK" -eq 1 ] && echo "count-consistency: OK ($ACTUAL_SKILLS)"
 
+# --- skill structure: mis-paired fences + loading-list integrity ---
+# Both defect classes survived careful manual reading of the same files. A fence
+# closed in the WRONG PLACE still passes a parity count, and a duplicate ordinal
+# in a loading list is what hid three skills printing a file as READ that their
+# prose never told the agent to open. Mechanical or not caught at all.
+if [ -f "$ROOT/scripts/check-skill-structure.py" ]; then
+  if python3 "$ROOT/scripts/check-skill-structure.py" >/dev/null 2>&1; then
+    echo "skill-structure: OK"
+  else
+    python3 "$ROOT/scripts/check-skill-structure.py" || true
+    ERRORS=$((ERRORS + 1))
+  fi
+fi
+
 # --- gate registry: every GENERATED region must match shared/includes/gate-registry.md ---
 # Without this, the registry is just a seventh copy. Editing a generated region instead of the
 # registry is the exact failure mode that let CQ14 lose three clauses and CQ28 stay inverted.
