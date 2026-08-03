@@ -15,6 +15,19 @@ of the fixes turned out to contain the very defect they were fixing.
 
 ### Added
 
+- **Per-task failure strategy and telemetry** (from #1). A plan task can now
+  declare its own failure strategy instead of inheriting one global retry
+  policy, and `verify-plan-dag` rejects `skip-and-continue` on a task something
+  else depends on. `zuvo:execute` honours a declared skip without weakening the
+  never-silently-skip rule, reports ACs left unproven by skipped or blocked
+  tasks, and persists per-task telemetry to `zuvo/context/task-telemetry.jsonl`
+  — `runs.log` is per-run, but the hotspots are per-task.
+- **Category as a single source of truth** (from #1). Every `SKILL.md`
+  frontmatter now declares `category:`, and `validate-skills.sh` checks the
+  per-category counts against it. The category column in the docs used to be
+  summed but never compared against reality; `dev-push.sh` now also syncs the
+  marketplace skill count before pushing, which had gone stale in both
+  published files.
 - **`zuvo:container-audit`** — 57th skill. Docker/compose security audit across
   K1-K6 (base-image provenance, privilege/runtime hardening, secret and
   build-context hygiene, image size, CVEs, healthchecks), with reserved K7-K10
@@ -77,6 +90,9 @@ of the fixes turned out to contain the very defect they were fixing.
   content-audit, code-audit and geo-audit, burning the whole cross-model pass.
 - `install.sh` no longer copies `skills/tmp-*` test fixtures into the install
   cache.
+- **"Shipped" meant "not shipped" on two of four platforms** (from #1) — push is
+  part of shipping, and `zuvo:ship` did not treat it that way.
+- The retro reader counted absent fields as failures (from #1).
 
 ### Changed
 
