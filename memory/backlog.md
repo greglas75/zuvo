@@ -414,7 +414,7 @@ Recipe:
      Raised by the cross-provider pass on the fix diff (2026-08-03); deferred with the rest of
      this item because it belongs in the one shared function, not a fourth inline copy.
 
-## B-INSTALL-CLAUDE-MANIFEST — install.sh never refreshes the Claude Code cache manifest
+## B-INSTALL-CLAUDE-MANIFEST — RESOLVED 2026-08-04 (install.sh + test-install-wiring.sh case 9)
 Surfaced by: zuvo:ship v1.6.54 post-merge verification (2026-08-03).
 `scripts/install.sh` copies `.codex-plugin/plugin.json` into the Codex targets (lines ~767,
 ~801) but has NO equivalent copy of `.claude-plugin/plugin.json` into
@@ -436,3 +436,8 @@ Recipe:
      cache manifest's `version` equals package.json's `version`. That is the check whose
      absence let this sit for 40 releases.
   3. Check whether the Cursor and Antigravity targets have the same omission.
+
+RESOLUTION: steps 1 and 2 done. Step 3 answered: Cursor and Antigravity load from
+skills directories and carry no plugin manifest, so there is nothing to sync there —
+only Claude (was missing, now fixed) and Codex (already had it) have one. Measured
+after the fix: both cache dirs report 1.6.55 / 57 skills, matching package.json.

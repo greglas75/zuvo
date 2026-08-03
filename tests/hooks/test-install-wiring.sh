@@ -166,4 +166,43 @@ for s in scripts/install.sh scripts/build-codex-skills.sh scripts/build-antigrav
   fi
 done
 
+# (9) the Claude Code cache manifest must be refreshed by an install.
+#
+# install.sh copied skills/, shared/, rules/, scripts/, bin/, docs/ and VERSION
+# into every cache dir, and .codex-plugin/plugin.json into the Codex targets —
+# but never .claude-plugin/plugin.json into the Claude cache. So each cache dir
+# kept whatever manifest Claude Code itself wrote when it created the directory,
+# and nothing ever refreshed it. Measured 2026-08-03 verifying the v1.6.54
+# install (backlog B-INSTALL-CLAUDE-MANIFEST): after installing 1.6.54, the
+# manifest in the 1.6.53 cache dir still declared 1.6.16 and the one in 1.6.54
+# declared 1.6.47. Skills still loaded, which is why ~40 releases went by without
+# anyone noticing — metadata drift is silent.
+# A freshly-created cache dir does NOT show the drift (Claude Code writes a
+# correct manifest when it creates one); it appears only in dirs that later
+# installs write into. So this asserts the copy exists in install.sh and that
+# the copy itself produces a version-matching manifest — it deliberately does
+# NOT assert against the live cache, which would pass vacuously right after a
+# fresh install and fail for reasons unrelated to this code.
+if grep -q 'CACHE_DIR/\.claude-plugin' "$INSTALL"; then
+  pass "(9) install.sh copies .claude-plugin/plugin.json into the Claude cache"
+else
+  bad "(9) install.sh never refreshes the Claude cache manifest — it will drift silently"
+fi
+
+# End-to-end: run the copy the way install.sh does and compare versions. Uses a
+# throwaway CACHE_DIR so it never touches the real install.
+_c="$(mktemp -d)"
+if [ -n "$_c" ] && [ -d "$_c" ] && [ -f "$ROOT/.claude-plugin/plugin.json" ]; then
+  mkdir -p "$_c/.claude-plugin"
+  cp "$ROOT/.claude-plugin/plugin.json" "$_c/.claude-plugin/plugin.json"
+  _repo_v="$(grep -o '"version"[^,]*' "$ROOT/package.json" | head -1 | grep -o '[0-9][0-9.]*')"
+  _cache_v="$(grep -o '"version"[^,]*' "$_c/.claude-plugin/plugin.json" | head -1 | grep -o '[0-9][0-9.]*')"
+  if [ -n "$_repo_v" ] && [ "$_repo_v" = "$_cache_v" ]; then
+    pass "(9) copied manifest version matches package.json ($_repo_v)"
+  else
+    bad "(9) manifest/package.json version mismatch: cache=$_cache_v repo=$_repo_v"
+  fi
+  rm -rf "$_c"
+fi
+
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "SOME FAILED"; exit 1; fi
