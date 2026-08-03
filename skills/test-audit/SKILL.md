@@ -354,7 +354,7 @@ Top 3 gaps: [brief]
 
 TIER CLASSIFICATION (derived from the percentage above — no separate count scale):
   A (>= 82%, all critical gates = 1): No action needed
-  B (53-81%, all critical gates = 1): Fix gaps -- 2-5 targeted fixes
+  B (>= 53% and < 82%, all critical gates = 1): Fix gaps -- 2-5 targeted fixes
   C (< 53%, OR any critical gate = 0): Major rewrite needed
   D (AUTO TIER-D red flag: AP13, AP16, or AP31 (committed `.only`/focus marker — it disables the REST of the suite while CI stays green, so it is the most destructive of the three)): Delete and rewrite from scratch
 
@@ -405,7 +405,7 @@ Total tests: [count from test runner]
 | Tier | Count | % | Action |
 |------|-------|---|--------|
 | A (>=82% of applicable) | [N] | [%] | No action |
-| B (53-81% of applicable) | [N] | [%] | Fix gaps |
+| B (>= 53% and < 82% of applicable) | [N] | [%] | Fix gaps |
 | C (<53% of applicable) | [N] | [%] | Major rewrite |
 | D (<5 or red flag) | [N] | [%] | Delete + rewrite |
 | ORPHAN | [N] | [%] | Verify or delete |

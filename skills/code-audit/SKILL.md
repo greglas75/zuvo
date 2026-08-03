@@ -511,7 +511,7 @@ TIER CLASSIFICATION (percentages of APPLICABLE — never raw counts over a fixed
 because the gate set grows and ">=25/29" silently becomes a different bar at 40 gates):
   applicable = (gates in scope) - count(N/A)      # out-of-scope excluded before N/A
   A (>= 86% of applicable, all active gates PASS): Production-ready
-  B (79-85% of applicable, all active gates PASS): Conditional pass
+  B (>= 79% and < 86% of applicable, all active gates PASS): Conditional pass
   C (< 79%, OR any critical gate = 0):             Significant rework
   D (AUTO TIER-D red flag: CAP5/6/7/8/25/26):      Critical -- immediate fix
 

@@ -303,10 +303,13 @@ percentage = score / max x 100
 | Ratio | Interpretation | Score impact |
 |-------|---------------|-------------|
 | 0% | No violations | Full score |
-| 1-20% | Isolated gaps | -1 to -3 |
-| 21-50% | Systemic issue | -4 to -8 |
-| 51-80% | Pervasive failure | -8 to -12 |
-| >80% | Absent practice | Score 0-2 |
+| > 0% and <= 20% | Isolated gaps | -1 to -3 |
+| > 20% and <= 50% | Systemic issue | -4 to -8 |
+| > 50% and <= 80% | Pervasive failure | -8 to -12 |
+| > 80% | Absent practice | Score 0-2 |
+
+The ratio is `violations / endpoints` and is fractional — 3/18 is 16.7%, not an integer.
+Written as `1-20% / 21-50%`, a ratio of 20.5% belonged to no row at all.
 
 Always report ratio alongside score: `D1: 11/15 (3/18 endpoints lack validation = 17%)`.
 

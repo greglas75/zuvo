@@ -804,7 +804,8 @@ S13=[0-5]  S14=[0-5]  S15=[0-10]
 
 **Critical gates:** S1=0 OR S4<3 OR S5<3 OR S7=0 OR (S15<3 AND S15!=N/A) -> auto-fail to CRITICAL.
 
-**Health grades:** >=80% HEALTHY, 60-79% NEEDS ATTENTION, 40-59% AT RISK, <40% CRITICAL.
+**Health grades:** >= 80% HEALTHY, >= 60% and < 80% NEEDS ATTENTION, >= 40% and < 60% AT RISK,
+< 40% CRITICAL. Inequalities, not hyphenated bands — the score is fractional.
 
 ### Dual Score Computation
 

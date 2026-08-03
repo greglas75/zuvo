@@ -487,7 +487,7 @@ When claiming an exemption, cite the covering test: `[exempt: covered by integra
 
 **LIGHT tier:** Inline check — verify Q7 (error path — every error-throwing path with specific type+message), Q11 (branches), Q13 (real imports), Q15 (value assertions), Q17 (oracle independence). Fix any = 0.
 
-**STANDARD and DEEP tiers:** Run full Q1-Q25 on every test file. Score threshold (PERCENT of applicable, per `quality-gates.md` — never an absolute count). Compare the raw ratio, do not round first, so no score falls between two bands: `>= 0.82` = PASS, `>= 0.53 and < 0.82` = FIX worst gaps, `< 0.53` = REWRITE. (Written as "53-81%" a score of 18/22 = 81.8% belonged to neither band and three agents could label the same file three ways.) Provide evidence for critical gates (Q7, Q11, Q13, Q15, Q17).
+**STANDARD and DEEP tiers:** Run full Q1-Q25 on every test file. Score threshold (PERCENT of applicable, per `quality-gates.md` — never an absolute count). Compare the raw ratio, do not round first, so no score falls between two bands: `>= 82%` = PASS, `>= 53% and < 82%` = FIX worst gaps, `< 53%` = REWRITE. (Written as "53-81%" a score of 18/22 = 81.8% belonged to neither band and three agents could label the same file three ways.) Provide evidence for critical gates (Q7, Q11, Q13, Q15, Q17).
 
 **Anti-Tautology Check (STANDARD+):** After self-eval, run the anti-tautology automation from `rules/testing.md`:
 1. Grep for echo patterns (mock-return-echoed-in-assertion)
