@@ -418,6 +418,9 @@ DESIGN-REVIEW COMPLETE
 -----
 Views audited: [N]
 Avg DX score:  [N]%
+-----
+```
+
 ### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
 
 ```
@@ -445,7 +448,6 @@ printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 
 ```
 Run: <ISO-8601-Z>	design-review	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
------
 ```
 
 

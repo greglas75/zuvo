@@ -178,7 +178,7 @@ After the output block, print and append the run log line:
 
 ```
 Run: <ISO-8601-Z>\trelease-docs\t<project>\t-\t-\t<VERDICT>\t-\t5-phase\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
-
+```
 
 ### Retrospective (REQUIRED)
 

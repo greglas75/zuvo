@@ -537,8 +537,13 @@ Fix any discrepancies before presenting to user.
 
 After the audit report is generated, run cross-model validation to catch score inflation and gate inconsistency. Runs on ALL audits.
 
+Point `--files` at the report you just wrote — a literal `[date]` placeholder matches nothing and burns the pass.
+
 ```bash
-adversarial-review --mode audit --files "zuvo/audits/geo-audit-[date].md"
+# The report auto-increments (-2.md, -3.md) on same-day reruns — take the newest match.
+REPORT=$(ls -t zuvo/audits/geo-audit-$(date +%F)*.md 2>/dev/null | head -1)
+[ -n "$REPORT" ] && adversarial-review --mode audit --files "$REPORT" \
+  || echo "adversarial: report not found — write it first"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

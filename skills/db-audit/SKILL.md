@@ -895,7 +895,7 @@ Save to: `zuvo/audits/db-audit-[YYYY-MM-DD].md` — at the **project root** (`zu
 
 ### Report Structure
 
-```markdown
+````markdown
 # Database Audit Report
 
 ## Metadata
@@ -1020,7 +1020,7 @@ List only findings with effort=S. If none qualify, omit this section.
 
 ## Backlog Entries
 [/backlog add commands for HIGH+ findings]
-```
+````
 
 ### Report Validation
 

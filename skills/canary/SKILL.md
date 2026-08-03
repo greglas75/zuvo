@@ -223,7 +223,7 @@ CANARY COMPLETE
 
 ```
 Run: <ISO-8601-Z>\tcanary\t<project>\t-\t-\t<VERDICT>\t-\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
-
+```
 
 ### Retrospective (REQUIRED)
 
@@ -235,7 +235,6 @@ After printing this block, append the `Run:` line value (without the `Run: ` pre
 
 VERDICT mapping: HEALTHY → PASS, DEGRADED → WARN, BROKEN → FAIL.
 DURATION: resolved monitoring duration (e.g., `one-shot`, `10m`, `30m`).
-```
 
 ---
 

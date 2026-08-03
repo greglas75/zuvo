@@ -492,7 +492,7 @@ Source: `debug/[date]`. Zero silent discards.
 
 ## Output: Standard Debug Report
 
-```
+````
 ## Debug Report: [issue summary]
 
 ### Reproduction
@@ -544,11 +544,11 @@ it('should [describe the bug scenario]', () => {
   // Assert correct behavior
 });
 ```
-```
+````
 
 ## Output: Regression Bisect Report
 
-```
+````
 ## Debug Report: [issue summary] (Regression Bisect)
 
 ### Regression Detection
@@ -582,7 +582,7 @@ it('should [describe the bug scenario]', () => {
 - Original reproduction: RESOLVED
 - CQ self-eval: [score]/29
 - Regression test Q self-eval: [score]/19
-```
+````
 
 ---
 

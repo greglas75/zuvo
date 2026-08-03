@@ -620,7 +620,7 @@ Postmortem:    [file path or "DRY RUN -- not created"]
 Comms:         [generated / not requested]
 
 Run: <ISO-8601-Z>	incident	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
-
+```
 
 ### Retrospective (REQUIRED)
 

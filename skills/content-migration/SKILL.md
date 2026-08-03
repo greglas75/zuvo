@@ -245,7 +245,12 @@ trust badges).
 
 ### PARTIAL Detection
 
-- Paragraph: 50-90% word overlap
+PARTIAL is the middle band. Anything above it is MATCHED, anything below is
+MISSING — state the boundary explicitly, because the parity score below counts
+MATCHED and PARTIAL alike and MISSING not at all, so a coin-flip on an exact
+boundary value moves the grade.
+
+- Paragraph: `>= 50 and < 90` % word overlap (`>= 90` MATCHED, `< 50` MISSING)
 - Heading: new is <60% character length of old
 - Title tag: new is <50% character length of old
 - Meta description: new is <70% character length of old
@@ -264,12 +269,15 @@ Match images between old and new page in this order:
 score = (MATCHED + PARTIAL) / total elements in old page * 100
 ```
 
+The formula is fractional, so the bands are inequalities — a hyphenated `75-89`
+leaves 74.5 ungraded.
+
 | Grade | Score |
 |-------|-------|
-| **A** | 90-100% |
-| **B** | 75-89% |
-| **C** | 50-74% |
-| **D** | 0-49% |
+| **A** | `>= 90` |
+| **B** | `>= 75 and < 90` |
+| **C** | `>= 50 and < 75` |
+| **D** | `< 50` |
 
 ### Verdict
 
