@@ -485,10 +485,13 @@ Save to: `docs/design/[slug].md`
 
 ## Adversarial Review on Output (MANDATORY — do NOT skip)
 
-After generating the architecture output (review report, ADR, or design document), run cross-model validation.
+After generating the architecture output (review report, ADR, or design document), run cross-model validation. Point `--files` at the file you just wrote — do NOT run the literal placeholder (it matches nothing and burns a pass).
 
 ```bash
-adversarial-review --mode audit --files "[output file path]"
+# review mode → zuvo/audits/architecture-review-<date>.md; adr/design mode → the docs/ file you wrote
+OUT="$(ls -t zuvo/audits/architecture-review-*.md 2>/dev/null | head -1)"   # or set to your ADR/design path
+[ -n "$OUT" ] && [ -f "$OUT" ] && adversarial-review --mode audit --files "$OUT" \
+  || echo "adversarial: set OUT to the architecture file you just wrote"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

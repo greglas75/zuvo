@@ -758,8 +758,17 @@ Build summary table: input validation coverage, auth coverage, authZ depth (CQ4)
 
 Security audits benefit the most from cross-model review. Runs on ALL security audits.
 
+**Build the file list from the audit's own findings — do NOT run the literal placeholder.** Collect
+the DISTINCT source files cited by this run's HIGH/CRITICAL findings (auth handlers, middleware,
+guards, env/config the report flagged) into a shell array, and pass each path SEPARATELY (an
+unquoted expansion or one space-joined string matches nothing). A security audit is read-only, so
+there is no diff to build — the file list IS the reviewed surface.
+
 ```bash
-adversarial-review --mode security --files "[auth files, middleware, controllers, env config]"
+# FILES = the real paths this audit's findings cite (fill from the report, do not paste the example)
+FILES=(src/auth/session.ts src/middleware/authGuard.ts src/config/env.ts)
+[ ${#FILES[@]} -eq 0 ] && echo "adversarial: skipped (no HIGH/CRITICAL findings to re-review)" \
+  || adversarial-review --mode security --files "${FILES[@]}"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

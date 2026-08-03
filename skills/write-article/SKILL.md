@@ -217,7 +217,7 @@ If topic is medical, legal, or financial AND `--tone` is `casual` or `marketing`
 
 ### 4.3 Cross-Model Adversarial Review
 
-Run: `adversarial-review --json --mode article --files "[draft path]"` (fallback: `--json --mode audit` with WARNING). If not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`. CRITICAL → fix. WARNING → fix if localized. INFO → ignore.
+Run `adversarial-review --json --mode article --files "$DRAFT"` where `$DRAFT` is the draft file you just wrote (fallback: `--json --mode audit` with WARNING) — substitute the real path, do NOT run a literal `[draft path]` placeholder (it matches nothing and burns a pass). If not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`. CRITICAL → fix. WARNING → fix if localized. INFO → ignore.
 
 **Status handling (D2+D3+D4, 2026-05-17):** parse the JSON `status` field:
 - **`status: "timeout"` / exit `124`** — record `Adversarial review: skipped (timeout)` and continue without blocking publication.

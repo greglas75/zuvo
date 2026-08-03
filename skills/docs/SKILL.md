@@ -382,10 +382,12 @@ If target file exists, ask before overwriting (except in update mode). Non-inter
 
 ## Adversarial Review on Generated Docs (MANDATORY — do NOT skip)
 
-After generating or updating documentation, run cross-model validation to catch inaccuracies and stale content.
+After generating or updating documentation, run cross-model validation to catch inaccuracies and stale content. Point `--files` at the doc file(s) you just wrote — do NOT run the literal placeholder (it matches nothing and burns a pass).
 
 ```bash
-adversarial-review --mode audit --files "[generated doc path]"
+DOC="<the doc path you just wrote, e.g. README.md or docs/<feature>.md>"
+[ -f "$DOC" ] && adversarial-review --mode audit --files "$DOC" \
+  || echo "adversarial: set DOC to the generated/updated doc path first"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
