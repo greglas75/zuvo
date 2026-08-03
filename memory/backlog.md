@@ -371,3 +371,31 @@ source:review | 2026-07-31
 - **Scope:** scripts/install.sh, build-codex-skills.sh, build-antigravity-skills.sh, build-cursor-skills.sh — default-severity shellcheck findings (SC2115, SC2011, SC2012, SC2088, SC1091...)
 - **Done when:** all four pass plain `shellcheck` (no severity filter); then tighten test-install-wiring (7) back from --severity=error to default
 - **Priority:** MEDIUM (style/robustness, no known functional defect)
+
+## B-CQ40-METALINTER — no meta-linter configured repo-wide (CQ40=0)
+Surfaced by: zuvo:review v1.6.53..HEAD (CQ auditor, 2026-08-03). Pre-existing, repo-wide.
+`find` for pyproject.toml / ruff.toml / .flake8 / .shellcheckrc returns nothing, and no
+workflow invokes ruff/mypy/shellcheck. gate-registry.md CQ40 says "No config present = 0 —
+that is the point of the gate". This release added ~520 lines of new unlinted Python
+(check-skill-structure.py, verify-review-claims.py) plus shell, roughly doubling the surface.
+Defer-reason: structural-refactor (multi-file) — new config files + CI wiring, not a
+single-file fix.
+Recipe:
+  1. Add `pyproject.toml` with `[tool.ruff]` (select E,F,B,SIM) and `[tool.mypy]` for scripts/.
+  2. Add `.shellcheckrc`; run `shellcheck scripts/*.sh hooks/**/*.sh tests/**/*.sh`.
+  3. Wire both into scripts/validate-skills.sh as an optional-tool check (SKIP-if-absent,
+     like the existing bats group) so a missing binary is a SKIP, not a false failure.
+
+## B-PATH-CONTAIN-SHARED-FN — the containment rule lives in 3 copies
+Surfaced by: zuvo:review v1.6.53..HEAD (CQ-1 root cause, 2026-08-03).
+The absolute + `..`-segment proof-path check is implemented three times:
+hooks/lib/pipeline-gate-lib.sh::pg_artifact_proven, scripts/review-artifact-sync.sh::lint_artifact,
+and ::do_sync. d568825 fixed two and missed the third, which reopened a real traversal
+(fixed in 9df7c06). Fixing the instance does not fix the shape.
+Defer-reason: structural-refactor (multi-file).
+Recipe:
+  1. Create scripts/lib/path-contain.sh exporting `path_contained <ref>` (0=safe, 1=reject),
+     carrying the leading-slash comment that explains why `../x` needs the prefix.
+  2. Source it from all three call sites; delete the inline case blocks.
+  3. Point tests/hooks/test-proof-path-containment.sh at the shared function AND keep the
+     end-to-end do_sync case — the re-implementation trap is what hid the drift.

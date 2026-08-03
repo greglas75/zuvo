@@ -482,10 +482,15 @@ TSV emit → markdown append. If gate check skips: print "RETRO: skipped (trivia
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log
 file path resolved per `run-logger.md`.
 
-VERDICT: **FAIL** if any critical GATE trips (K1=0 OR K2=0 OR K3=0 OR a K5 critical CVE) OR ≥4
-critical findings; **WARN** if 1-3 critical findings and no gate tripped; **PASS** if 0 critical
-findings. (A tripped critical gate always wins over the finding-count band — a single K2=0 is FAIL,
-not WARN.)
+VERDICT: **FAIL** if any critical GATE trips OR ≥4 critical findings; **WARN** if 1-3 critical
+findings and no gate tripped; **PASS** if 0 critical findings. (A tripped critical gate always wins
+over the finding-count band — one tripped K2 is FAIL, not WARN.)
+
+A gate "trips" per the **Gate / Fires on** table above — on the FINDING, not on `Kn=0`. Do not
+restate the trip condition here as `K1=0 OR K2=0 OR K3=0`: that is the score-based reading the
+table exists to replace, and it makes the gates nearly unreachable (K2 spreads six checks over 18
+points, so a root-running privileged container still scores well above 0 and would pass the very
+gate meant to fail it). One table, one place — this line points at it.
 
 ---
 

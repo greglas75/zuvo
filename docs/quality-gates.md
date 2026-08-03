@@ -100,7 +100,7 @@ Any of these scored 0 is an immediate FAIL, regardless of the total score.
 | Result | Criteria |
 |--------|---------|
 | **PASS** | Score >= 86% of applicable AND all active critical gates = 1 |
-| **CONDITIONAL PASS** | Score >= 0.79 and < 0.86 of applicable AND all active critical gates = 1 |
+| **CONDITIONAL PASS** | Score >= 79% and < 86% of applicable AND all active critical gates = 1 |
 | **FAIL** | Any active critical gate = 0, OR score < 79% of applicable |
 
 `applicable = 40 - count(out-of-scope) - count(N/A)` — a PERCENTAGE, never a fixed denominator.
@@ -151,8 +151,8 @@ Canonical: `shared/includes/quality-gates.md` → CQ Scoring.
 | Result | Criteria |
 |--------|---------|
 | **PASS** | Score >= 82% of applicable, all critical gates = 1 |
-| **FIX** | Score >= 0.53 and < 0.82 of applicable, all critical gates = 1 -- fix worst gaps, re-score |
-| **REWRITE** | Score < 0.53 of applicable, OR any critical gate = 0 -- tests need fundamental rework |
+| **FIX** | Score >= 53% and < 82% of applicable, all critical gates = 1 -- fix worst gaps, re-score |
+| **REWRITE** | Score < 53% of applicable, OR any critical gate = 0 -- tests need fundamental rework |
 
 Same rule as CQ: a percentage of applicable gates, never a fixed denominator. This table mixed two
 frozen denominators (`/25` and `/19`) until 2026-08-02. Canonical:
