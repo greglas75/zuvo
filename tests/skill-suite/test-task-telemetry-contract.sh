@@ -295,9 +295,17 @@ fi
 # A substring check ("contains [WARN]") would pass with debug echoes, a doubled
 # warning, or a mangled message appended to it — all shape changes this contract
 # exists to catch.
+# The capture is `[^"]*` (up to the CLOSING quote), not `.*` anchored at
+# end-of-line: the tail legitimately carries a trailing `|| true` so that a
+# failure of `echo` ITSELF cannot make the compound return non-zero. An
+# end-anchored `.*"` stopped matching the moment that guard was added and
+# silently produced an EMPTY expectation — which then made every WARN-path
+# assertion below compare stdout against "", i.e. fail loudly rather than pass
+# vacuously. Keeping the message capture quote-delimited decouples it from
+# whatever follows the closing quote.
 WARN_COUNT="$(printf '%s\n' "$BLOCK" | grep -c '^[[:space:]]*|| echo "\[WARN\]')"
 WARN_EXPECTED="$(printf '%s\n' "$BLOCK" \
-  | sed -n 's/^[[:space:]]*|| echo "\(\[WARN\].*\)"[[:space:]]*$/\1/p')"
+  | sed -n 's/^[[:space:]]*|| echo "\(\[WARN\][^"]*\)".*$/\1/p')"
 if [ "$WARN_COUNT" -eq 1 ] && [ -n "$WARN_EXPECTED" ]; then
   pass "(g) fence carries exactly one '|| echo \"[WARN] …\"' tail; expected stdout derived from it"
 else
@@ -1714,6 +1722,33 @@ fi
 
 # ── (h) PURITY ────────────────────────────────────────────────────────────────
 GIT_AFTER="$( (cd "$ROOT" && git status --porcelain) 2>/dev/null )"
+# ── (aa) NEVER-A-GATE holds even when the WARN itself cannot be printed ───────
+# The fence ends `python3 … || echo "[WARN] …" || true`. The trailing `|| true`
+# looks redundant and is not: without it, a run whose stdout is closed or full
+# makes `echo` fail, and the compound then returns NON-ZERO on the very path the
+# contract says can never gate. Under `set -e`, or any caller that checks the
+# status, a failed DIAGNOSTIC would abort the task.
+#
+# Asserted BEHAVIOURALLY (run it with stdout closed), not by grepping for the
+# literal `|| true`: a shape assertion passes for any tail that merely looks
+# right, and this contract is about the exit status, not the spelling. Verified
+# to discriminate — deleting `|| true` from the fence turns this case RED while
+# every other case in this file stays green (it was the ONLY thing that caught
+# that regression, which is why it exists).
+AA_STUB="$TMP_ROOT/bin-aa"
+build_shadow "$AA_STUB" no
+printf '#!/usr/bin/env bash\nexit 127\n' > "$AA_STUB/python3"
+chmod +x "$AA_STUB/python3"
+env ZUVO_OUTPUT_DIR="$TMP_ROOT/fix-aa" PATH="$AA_STUB" \
+    TT_AT="2026-08-02T10:00:00Z" TT_SESSION_ID="exec-aa" \
+    bash "$RUNNER" >&- 2>/dev/null
+RC_AA=$?
+if [ "$RC_AA" -eq 0 ]; then
+  pass "(aa) append fails AND stdout is closed (echo cannot run) → still exit 0; a failed diagnostic can never gate"
+else
+  bad "(aa) closed stdout made the never-a-gate path return rc=$RC_AA — the WARN tail must not be able to fail the compound"
+fi
+
 if [ "$GIT_BEFORE" = "$GIT_AFTER" ]; then
   pass "(h) repo working tree unchanged by test run"
 else

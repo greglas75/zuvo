@@ -215,6 +215,11 @@ telemetry record would be lost every time reindexing was skipped.
 writer takes the `[WARN]` path and writes nothing, because records dropped into whatever directory
 the shell happened to sit in split one project's history across unrelated trees.
 
+The execute (writer) and retro (reader) fences each carry their **own copy** of this resolution
+(prefix `TT_`/`RT_`) — deliberate, since each is extracted and run standalone, and no parity test
+pins them (byte-identity cannot survive the rename). **This paragraph is the SSOT instead:** change
+it here first, then both fences. No parity assertion is not the same as no contract.
+
 **Concurrent appends are locked.** `zuvo:execute` dispatches tasks in **parallel batches**, so two
 appends can reach this file at once; the writer holds an exclusive `flock` across write+flush+fsync.
 Unlocked, two records interleave inside one physical line and **both** are lost. A lock failure is a

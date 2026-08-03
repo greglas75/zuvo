@@ -154,6 +154,14 @@ BEGIN {
 }
 /\*\*Dependencies:\*\*/ {
   if (cur == 0) next                                  # before any task header
+
+  # This line may ALSO carry an inline Failure declaration (the documented
+  # middot layout). Capture it BEFORE any of the next statements below, all of
+  # which mean only "stop parsing Dependencies here" and must not also discard a
+  # Failure field that happens to share the line. capture_failure is a no-op when
+  # the marker is absent or is a prose mention.
+  capture_failure()
+
   if (depcapt[cur]) next                              # first deps line wins
 
   # Anchor: capture ONLY when the marker is at line-start (whitespace prefix
@@ -188,16 +196,35 @@ BEGIN {
 # 3,136 plan files under ~/DEV there were 0 exact-literal occurrences and 46
 # near misses in 17 spellings, and this file is installed to ~/.zuvo/ for every
 # project on the machine — a loose matcher would red-light 9 unrelated repos.
-/\*\*Failure:\*\*/ {
-  if (cur == 0) next                                  # before any task header
-  if (failcapt[cur]) next                             # first Failure line wins
+# Capture is a FUNCTION, not only a pattern-action rule, because the inline
+# middot layout documented at the top of this file puts Dependencies and Failure
+# on ONE line:
+#   **Dependencies:** none · **Failure:** skip-and-continue
+# The Dependencies rule above matches that line first and ends with next, so a
+# Failure rule alone never sees it — the declaration was silently invisible and
+# the whole check passed with "0 violations". Reordering the two rules would just
+# mirror the bug onto Dependencies. So the Dependencies rule calls this directly,
+# and the rule below handles the standalone layout.
+function capture_failure(   mpos, line, val) {
+  if (cur == 0) return                                # before any task header
 
   # Same anchor as the Dependencies matcher: line-start (whitespace prefix only)
-  # or immediately after an inline `·` bullet. Prose such as
+  # or immediately after an inline middot bullet. Prose such as
   #   "rule 20 says the **Failure:** field is optional"
   # must NOT be read as a declaration, nor shadow a later real one.
   mpos = index($0, "**Failure:**")
-  if (!anchored(substr($0, 1, mpos - 1))) next        # prose mention — ignore
+  if (mpos == 0) return
+  if (!anchored(substr($0, 1, mpos - 1))) return      # prose mention — ignore
+
+  # A SECOND anchored declaration on the same task is an authoring error, not
+  # something to resolve silently. The anchored() test above runs FIRST so a
+  # prose mention after a real declaration is still merely ignored — only a
+  # genuine second declaration lands here. Reporting it beats first-wins:
+  # first-wins is invisible, so appending `**Failure:** skip-and-continue`
+  # under an existing `halt` on a depended-on task left the linter green while
+  # a reader (human or a runner honouring the last line) saw the opposite
+  # strategy. Which one "wins" is unknowable from the file; the file is wrong.
+  if (failcapt[cur]) { faildup[cur]++; return }
 
   line = substr($0, mpos + length("**Failure:**"))
   line = cut_at_bullet(line)
@@ -205,17 +232,38 @@ BEGIN {
   failraw[cur] = val
   failcapt[cur] = 1
 
-  # Classify by PREFIX into a closed set. Everything after `degraded` is the
+  # Classify by PREFIX into a closed set. Everything after `degraded:` is the
   # authored free-text description and is discarded UNREAD — never tokenised,
   # never split on `,`. That is what keeps the Dependencies-parser
   # non-numeric-token `exit 2` unreachable from this code path.
+  # The COLON is part of the recognised token, not optional. Matching a bare
+  # 8-char `degraded` prefix would accept `degraded` (no description) and
+  # `degradedTypo` here, while the retro reader in skills/retro/SKILL.md tests
+  # `val.startswith("degraded:")` — so a colon-less value passed plan-lint and
+  # was then silently bucketed `unknown` by the very tally it was declared for.
   # >>> failure-enum (closed set; parity-checked by
   #     tests/skill-suite/test-plan-dag-failure-strategy.sh against rule 20)
   if (val == "halt")                          fstrat[cur] = "halt"
   else if (val == "skip-and-continue")        fstrat[cur] = "skip-and-continue"
-  else if (substr(val, 1, 8) == "degraded")   fstrat[cur] = "degraded"
+  else if (substr(val, 1, 9) == "degraded:")  fstrat[cur] = "degraded"
   else                                        fstrat[cur] = "?"   # unrecognised / blank → violation (exit 1)
   # <<< failure-enum
+
+  # A degraded: with nothing after the colon is not a declaration, it is a
+  # half-typed one: the rule 20 form is degraded:<one-line description>, and the
+  # Post-Cap disposition that consumes it needs that text to name the fallback.
+  # Checked OUTSIDE the fence on purpose — the parity extractor above reads the
+  # quoted tokens in the fence, and folding this into the branch would put a
+  # second literal in it.
+  # NB: no apostrophes and no backticks in comments inside this awk program —
+  # it is single-quoted, so an apostrophe ends the quote and any backtick after
+  # it becomes live command substitution.
+  if (fstrat[cur] == "degraded" && trim(substr(val, 10)) == "") fstrat[cur] = "?"
+}
+
+# Standalone layout: a line whose Failure marker is not shared with Dependencies.
+/\*\*Failure:\*\*/ {
+  capture_failure()
   next
 }
 
@@ -304,6 +352,16 @@ END {
     t = order[i]
     if (!(t in fstrat)) continue                   # absent line = halt = legal
     s = fstrat[t]
+    if (faildup[t] > 0) {
+      # Reported even when the captured value is otherwise legal — the defect
+      # is the ambiguity itself, not the strategy that happened to be first.
+      n_fs++
+      fs_task[n_fs] = t
+      fs_kind[n_fs] = "duplicate"
+      fs_val[n_fs] = failraw[t]
+      fs_deps[n_fs] = ""
+      continue
+    }
     if (s == "halt" || s == "degraded") continue
     if (s == "skip-and-continue") {
       # Legal ONLY on a task nothing depends on. Rule 9 makes Dependencies trace
@@ -446,6 +504,8 @@ END {
           dlist = fs_deps[i]
           gsub(/,/, ", Task ", dlist)
           printf "  failure-strategy: Task %d declares skip-and-continue but is depended on by Task %s (skip-and-continue is legal only when no other task lists it in **Dependencies:**)\n", fs_task[i], dlist
+        } else if (fs_kind[i] == "duplicate") {
+          printf "  failure-strategy: Task %d declares **Failure:** more than once (first value \"%s\" was used; which declaration is authoritative cannot be determined from the file — keep exactly one)\n", fs_task[i], fs_val[i]
         } else if (fs_kind[i] == "blank") {
           printf "  failure-strategy: Task %d has a blank **Failure:** value (omit the line entirely for the default \"halt\"; a blank value is an authoring error)\n", fs_task[i]
         } else {

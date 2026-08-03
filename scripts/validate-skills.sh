@@ -626,7 +626,7 @@ check_count_consistency() {
 # the per-category Count column in docs/skills.md and CLAUDE.md has a machine-
 # checkable single source of truth: count-consistency only ever SUMMED that
 # column, so any distribution passed as long as the total held.
-CATEGORY_TABLE_FILES="docs/skills.md CLAUDE.md"
+CATEGORY_TABLE_FILES="docs/skills.md CLAUDE.md README.md"
 CATEGORY_STATUS=""
 
 # --- ERROR: a category-table file may declare at most ONE '| Category | Count |'

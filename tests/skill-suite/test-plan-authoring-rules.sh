@@ -277,6 +277,38 @@ else
   bad "(d) no '**Failure:**' template line to check the enum against (see (b))"
 fi
 
+# ── (d2) the THIRD side of the enum: execute's own restatement ────────────────
+# The failure-strategy enum is stated in three independent places: rule 20 in
+# plan/SKILL.md (asserted by (d) above), the `# >>> failure-enum` fence in
+# verify-plan-dag (diffed against rule 20 by test-plan-dag-failure-strategy.sh
+# case (h)), and the telemetry-field list in execute/SKILL.md — which was pinned
+# by NOTHING. Two of three sides were checked, so execute could rename or add a
+# token and both existing suites stayed green; the drift would surface only when
+# a human happened to cross-read the prose. This closes the triangle.
+EXEC_SK="$ROOT/skills/execute/SKILL.md"
+if [ ! -f "$EXEC_SK" ]; then
+  bad "(d2) skills/execute/SKILL.md not found — cannot pin the third side of the enum"
+else
+  EXEC_FS_LINE="$(grep -n '^- `failure-strategy`:' "$EXEC_SK" | head -1)"
+  if [ -z "$EXEC_FS_LINE" ]; then
+    # Re-point this assertion at the new location; do NOT delete it. A missing
+    # anchor means the restatement moved, not that the contract stopped existing.
+    bad "(d2) no '- \`failure-strategy\`:' line in execute/SKILL.md — the enum restatement moved or was renamed; re-point this assertion"
+  else
+    EXEC_FS_TEXT="${EXEC_FS_LINE#*:}"        # drop the grep line-number prefix
+    EXEC_ENUM="${EXEC_FS_TEXT%%—*}"          # keep the enum, drop the trailing prose
+    EXEC_TOKENS="$(printf '%s\n' "$EXEC_ENUM" \
+      | grep -o '`[^`]*`' | tr -d '`' \
+      | sed -e 's/<[^>]*>//' -e 's/[[:space:]]*$//' \
+      | grep -v '^failure-strategy$' | sort -u | tr '\n' ' ')"
+    if [ "$EXEC_TOKENS" = "degraded: halt skip-and-continue " ]; then
+      pass "(d2) execute/SKILL.md restates the SAME three tokens as rule 20 (halt | skip-and-continue | degraded:)"
+    else
+      bad "(d2) execute/SKILL.md enum drifted from rule 20 — parsed [$EXEC_TOKENS], expected [degraded: halt skip-and-continue ]"
+    fi
+  fi
+fi
+
 # ── informational only: confirm scope boundary with Task 7, never asserted ───
 # Not a pass/fail check — a note in the RED evidence trail. Task 7 teaches
 # verify-plan-dag about these tokens; until then it must have none, or the

@@ -308,6 +308,17 @@ This loads project-specific patterns, gotchas, and decisions accumulated from pr
 
 For every task, emit a compact telemetry block after verification and include mode shifts again in the final summary.
 
+**"Every task" means every task that reaches a TERMINAL state — COMPLETED, SKIPPED, or BLOCKED — not
+only the ones that commit.** A task the run gave up on is exactly the task a retro most needs to see;
+emitting only for COMPLETED tasks makes `implementer-status=BLOCKED` structurally unreachable in
+`task-telemetry.jsonl` and silently under-counts every skip, so a reader tallying blocked/skipped
+reasons always sees zero no matter how many tasks were actually blocked. For a non-COMPLETED task
+emit the same block from the same fence, filling what is known and leaving the rest at its documented
+sentinel: `implementer-status=BLOCKED` (the status the implementer actually reported),
+`failure-strategy=` the value the plan declared, `acceptance-verified=[]`, and the review/verify
+fields at whatever they reached before the task terminated. The append is the same never-a-gate
+diagnostic it is on the COMPLETED path.
+
 Minimum fields:
 - `task`: number and name
 - `surface`: from plan task header (backend-logic / api / db / db-data / ui / integration / config / docs)
@@ -539,7 +550,7 @@ loudly. Which of the two you are in is decided by the blocked task's `**Failure:
 | Blocked task's plan `**Failure:**` value | What happens when the implementer reports BLOCKED |
 |---|---|
 | `halt`, or no `**Failure:**` line at all | Present the three options below and wait for the user's decision. Nothing is auto-resolved, nothing is auto-skipped. |
-| `skip-and-continue` | No prompt. Mark the task SKIPPED with reason code `skipped-plan-declared` (`session-state.md`), print `[AUTO-DECISION]: Task N blocked; plan declares Failure: skip-and-continue → SKIPPED. Blocker: <one line>.`, propagate `SKIPPED_BY_DEPENDENCY` to dependents per the Dependency State Contract (their reason code is `skipped-dependency`, NEVER `skipped-plan-declared` — only the task that actually declared the strategy carries that code), and continue with the next task. Record it in the final summary like any other non-COMPLETED task. |
+| `skip-and-continue` | No prompt. Mark the task SKIPPED with reason code `skipped-plan-declared` (`session-state.md`), print `[AUTO-DECISION]: Task N blocked; plan declares Failure: skip-and-continue → SKIPPED. Blocker: <one line>.`, propagate `SKIPPED_BY_DEPENDENCY` to dependents per the Dependency State Contract (their reason code is `skipped-dependency`, NEVER `skipped-plan-declared` — only the task that actually declared the strategy carries that code), **emit the task telemetry block and its `task-telemetry.jsonl` append exactly as `Required Telemetry` specifies for a terminal non-COMPLETED task** (`implementer-status=BLOCKED`, `failure-strategy=skip-and-continue`, `acceptance-verified=[]`), and continue with the next task. Record it in the final summary like any other non-COMPLETED task. |
 <!-- zuvo:blocked-carveout-end -->
 
 **`skip-and-continue` is the ONLY declared value that changes what an implementer-reported BLOCKED
@@ -550,8 +561,11 @@ exactly ONE site, the Post-Cap Autonomous Disposition described two paragraphs d
 **Value matching is EXACT — trim, and nothing else.** The declared value is read verbatim from the
 plan's `**Failure:**` line with only leading/trailing whitespace stripped: no case folding, no
 punctuation normalisation, no synonyms. `halt` and `skip-and-continue` must match those lowercase
-tokens byte-for-byte, and a `degraded:` declaration is recognised by the exact lowercase `degraded`
-prefix (everything after it is opaque free text). So a `**Failure:**` line whose value is padded with
+tokens byte-for-byte, and a `degraded:` declaration is recognised by the exact lowercase `degraded:`
+prefix — **colon included** (everything after the colon is opaque free text). A bare `degraded` with
+no colon is NOT a recognised value: plan-lint rejects it, because the retro reader matches
+`degraded:` and a colon-less value would otherwise pass the lint and then be tallied `unknown` by the
+very report it was declared for. So a `**Failure:**` line whose value is padded with
 extra spaces IS still `halt`, while `Halt`, `SKIP-AND-CONTINUE`, or `Degraded: …` are NOT — they are
 unrecognised values, and `scripts/zuvo-home/verify-plan-dag` rejects them at plan-lint time with
 `failure-strategy: Task N declares unrecognised failure strategy "<val>"` and exit 1, so a plan
@@ -588,9 +602,23 @@ If the user picks option 1, re-dispatch the implementer with the provided contex
 
 <!-- PLATFORM:CURSOR -->
 **Async mode (Codex App, Cursor — no AskUserQuestion):**
-- **Check the carve-out table above FIRST.** Everything in this block is the `halt` path. If the blocked task declares `**Failure:** skip-and-continue`, that row wins outright: the task is SKIPPED with reason code `skipped-plan-declared` and the `[AUTO-DECISION]: … plan declares Failure: skip-and-continue → SKIPPED` line — **not** BLOCKED and not the generic line below. Having no user to ask does not change which strategy the plan declared. **Its dependents still propagate:** they go to `SKIPPED_BY_DEPENDENCY` with reason code `skipped-dependency` (NOT `BLOCKED_BY_DEPENDENCY`, which is this block's `halt`-path propagation below, and NOT `skipped-plan-declared`, which only the declaring task carries), exactly as the carve-out row says — then continue with the next task.
+**This block is a two-way BRANCH, not a checklist. Take branch A or branch B — never both.** The
+steps below were once a single flat bullet list guarded only by the sentence "check the carve-out
+first"; read top-to-bottom, a `skip-and-continue` task could be marked SKIPPED by the first bullet and
+then BLOCKED by the next one, leaving its dependents split between `SKIPPED_BY_DEPENDENCY` and
+`BLOCKED_BY_DEPENDENCY`. The branch is now structural so that reading cannot happen.
+
+**Branch A — the blocked task declares `**Failure:** skip-and-continue`.** The carve-out row wins
+outright and NOTHING in branch B applies:
+- Mark the task SKIPPED with reason code `skipped-plan-declared`; print the `[AUTO-DECISION]: … plan declares Failure: skip-and-continue → SKIPPED` line — **not** BLOCKED and not branch B's generic line. Having no user to ask does not change which strategy the plan declared.
+- Propagate `SKIPPED_BY_DEPENDENCY` to dependents with reason code `skipped-dependency` (NOT `BLOCKED_BY_DEPENDENCY`, which is branch B's propagation, and NOT `skipped-plan-declared`, which only the declaring task carries).
+- Emit the terminal-state telemetry block + `task-telemetry.jsonl` append per `Required Telemetry`.
+- Continue with the next task. **STOP — do not read branch B.**
+
+**Branch B — every other case** (`halt`, or no `**Failure:**` line at all):
 - Set task to BLOCKED
 - Propagate BLOCKED_BY_DEPENDENCY to dependent tasks (per Dependency State Contract)
+- Emit the terminal-state telemetry block + `task-telemetry.jsonl` append per `Required Telemetry` (`implementer-status=BLOCKED`, `failure-strategy=halt`)
 - Continue executing any PENDING tasks that are NOT blocked by this dependency
 - Include all BLOCKED tasks with their blockers in the final summary
 - Do NOT wait inline — the pipeline continues on independent branches
@@ -933,7 +961,7 @@ python3 - \
   "$TT_IMPLEMENTER_STATUS" "$TT_SPEC_REVIEW" "$TT_QUALITY_REVIEW" "$TT_ADVERSARIAL" \
   "$TT_VERIFY" "$TT_ACCEPTANCE_VERIFIED" "$TT_CODESIFT" "$TT_BACKLOG_ADDS" \
   "$TT_FAILURE_STRATEGY" "$TT_PATH" <<'PY' \
-  || echo "[WARN] task-telemetry append failed — continuing (diagnostic file, never a gate)"
+  || echo "[WARN] task-telemetry append failed — continuing (diagnostic file, never a gate)" || true
 import json, os, sys
 
 # fcntl is POSIX-only; import it defensively so a platform without it degrades
@@ -1379,7 +1407,7 @@ COMPLETION GATE CHECK (per task):
 
 COMPLETION GATE CHECK (final):
 [ ] Whole-feature Smoke Proofs ran (or [GATE: smoke-verified] / explicit "Not applicable" with justification)
-[ ] AC COVERAGE: every AC in the plan's Coverage Matrix is PROVEN. **PROVEN is defined HERE, once, and every other mention of it in this skill points back to this line: an AC is PROVEN iff at least ONE of its claiming tasks ended COMPLETED *and* that task's `acceptance-verified=` value names that AC's OWN id.** Everything else is UNPROVEN — including (a) a claiming task that ended COMPLETED with a missing or empty `acceptance-verified=`, (b) a claiming task that ended COMPLETED with an `acceptance-verified=` naming only OTHER ACs, (c) all claiming tasks ending SKIPPED / SKIPPED_BY_DEPENDENCY / BLOCKED / BLOCKED_BY_DEPENDENCY, and (d) a Coverage Matrix row with NO claiming task at all. A task's overall COMPLETED status alone NEVER proves an AC. This is the SAME per-AC rule the per-task `[GATE: acceptance-verified]` gate applies to the ACs one task claims — this item is that gate's whole-plan backstop, re-asked over every Coverage Matrix row, and it is therefore never weaker than it. Enumerate every Coverage Matrix row and emit `[GATE: ac-coverage] checked=<N> unproven=<k>` on EVERY run — never silently omitted, even when `k=0` — where `<N>` is the number of Coverage Matrix rows actually enumerated (the AC count, NOT the task count: a plan may have more or fewer ACs than tasks, so deriving `<N>` from the task count is a contract violation). Print EXACTLY ONE `[AC-UNPROVEN: <AC-id> — claimed by task(s) N,M; final states <states>]` line per UNPROVEN AC — no more, no fewer — and `<k>` **is defined as the number of those lines**, so the suffix count and the emitted lines cannot drift apart; if they differ, the gate output is wrong. `<states>` reports each claiming task's ACTUAL final state so the line reads truthfully: use `COMPLETED (no proof for this AC)` for case (a)/(b) rather than any state implying the task was skipped or blocked, and for case (d) the line reads `[AC-UNPROVEN: <AC-id> — claimed by task(s) none; final states UNMAPPED]` — an unmapped Coverage Matrix row is REPORTED, never silently skipped by a vacuously-true "all claiming tasks failed" test over an empty set. ZERO such lines = closed; one or more = the Final Summary header reads `## Execution Complete (AC-UNPROVEN: <k>)`, NEVER a bare `## Execution Complete`, and each line is repeated verbatim in `### Unproven Acceptance Criteria`
+[ ] AC COVERAGE: every AC in the plan's Coverage Matrix has been CLASSIFIED as PROVEN or UNPROVEN and the result REPORTED. This item is satisfied by emitting the gate honestly, **not** by every AC being PROVEN — `k>0` is a legitimate terminal outcome (it surfaces as the `(AC-UNPROVEN: k)` header below), never a reason to withhold `## Execution Complete`, retry, or halt. What fails this item is not reporting: a missing `[GATE: ac-coverage]` line, a `<k>` that disagrees with the emitted `[AC-UNPROVEN: …]` lines, or an unenumerated Coverage Matrix row. **PROVEN is defined HERE, once, and every other mention of it in this skill points back to this line: an AC is PROVEN iff at least ONE of its claiming tasks ended COMPLETED *and* that task's `acceptance-verified=` value names that AC's OWN id.** Everything else is UNPROVEN — including (a) a claiming task that ended COMPLETED with a missing or empty `acceptance-verified=`, (b) a claiming task that ended COMPLETED with an `acceptance-verified=` naming only OTHER ACs, (c) all claiming tasks ending SKIPPED / SKIPPED_BY_DEPENDENCY / BLOCKED / BLOCKED_BY_DEPENDENCY, and (d) a Coverage Matrix row with NO claiming task at all. A task's overall COMPLETED status alone NEVER proves an AC. This is the SAME per-AC rule the per-task `[GATE: acceptance-verified]` gate applies to the ACs one task claims — this item is that gate's whole-plan backstop, re-asked over every Coverage Matrix row, and it is therefore never weaker than it. Enumerate every Coverage Matrix row and emit `[GATE: ac-coverage] checked=<N> unproven=<k>` on EVERY run — never silently omitted, even when `k=0` — where `<N>` is the number of Coverage Matrix rows actually enumerated (the AC count, NOT the task count: a plan may have more or fewer ACs than tasks, so deriving `<N>` from the task count is a contract violation). Print EXACTLY ONE `[AC-UNPROVEN: <AC-id> — claimed by task(s) N,M; final states <states>]` line per UNPROVEN AC — no more, no fewer — and `<k>` **is defined as the number of those lines**, so the suffix count and the emitted lines cannot drift apart; if they differ, the gate output is wrong. `<states>` reports each claiming task's ACTUAL final state so the line reads truthfully: use `COMPLETED (no proof for this AC)` for case (a)/(b) rather than any state implying the task was skipped or blocked, and for case (d) the line reads `[AC-UNPROVEN: <AC-id> — claimed by task(s) none; final states UNMAPPED]` — an unmapped Coverage Matrix row is REPORTED, never silently skipped by a vacuously-true "all claiming tasks failed" test over an empty set. ZERO such lines = closed; one or more = the Final Summary header reads `## Execution Complete (AC-UNPROVEN: <k>)`, NEVER a bare `## Execution Complete`, and each line is repeated verbatim in `### Unproven Acceptance Criteria`
 [ ] Test Quality Gate ran (Phase Final-1b): [GATE: test-quality] PASS|WARN|N/A with a REAL zuvo/audits test-audit report path — inline Q-rescoring is a substituted gate = INVALID; below-A files fixed in-run or WARN + backlogged
 [ ] End-of-plan aggregate review ran (or [GATE: aggregate-review] PASS|RECOMMENDED-FOUND|MUST-FIX-FOUND|SKIPPED|NO-OP|BLOCKED — never silently omitted)
 [ ] Content-keyed artifact memory/reviews/<base7>..<head7>-<slug>.md written with range:/files:/**adversarial:** header for the plan range (the adversarial proof path is REQUIRED — pg_artifact_proven rejects an artifact whose proof does not resolve or holds <2 `REVIEW BY:` lines, so an artifact without it grants ZERO coverage) (on success only — pipeline-entry signal read by pre-push/CI gates)

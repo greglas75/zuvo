@@ -56,9 +56,31 @@ fail=0
 pass() { printf 'PASS: %s\n' "$1"; }
 bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
 
-SUM_BEFORE="$(cksum "$V" "$SKILL" 2>/dev/null)"
+SKIP_COUNT=0
+skip() { SKIP_COUNT=$((SKIP_COUNT + 1)); printf 'SKIP: %s\n' "$1"; }
 
-TMP_ROOT="$(mktemp -d)"
+# item 6: an unreadable target here would make SUM_BEFORE/SUM_AFTER compare
+# two empty (or partial) cksum outputs and vacuously "pass" the byte-unchanged
+# check at the bottom of this file — guard readability explicitly instead of
+# trusting `2>/dev/null` to fail loudly.
+if [ ! -r "$V" ] || [ ! -r "$SKILL" ]; then
+  echo "FATAL: cannot read $V and/or $SKILL — the byte-unchanged check cannot run" >&2
+  echo "SOME FAILED"
+  exit 1
+fi
+SUM_BEFORE="$(cksum "$V" "$SKILL")"
+
+# item 4: a bare `mktemp -d` failure leaves TMP_ROOT empty/unset, and every
+# downstream `mk()` fixture would then be written under an absolute path like
+# `/none.md` while the "every fixture lives outside the repo" purity check
+# (which only checks the string doesn't start with $ROOT) would still pass —
+# a silent, misleading green. Abort loudly instead.
+TMP_ROOT="$(mktemp -d)" || { echo "FATAL: mktemp -d failed" >&2; echo "SOME FAILED"; exit 1; }
+if [ -z "$TMP_ROOT" ] || [ ! -d "$TMP_ROOT" ]; then
+  echo "FATAL: mktemp -d produced an unusable path: '$TMP_ROOT'" >&2
+  echo "SOME FAILED"
+  exit 1
+fi
 _cleanup() { rm -rf "$TMP_ROOT"; }
 trap _cleanup EXIT
 trap '_cleanup; exit 1' INT TERM
@@ -83,8 +105,12 @@ run() {                     # run <plan> [--json] → sets RC / OUT
   OUT="$("$V" "$@" "$p" 2>&1)"; RC=$?
 }
 
-# Extract the body of a JSON array field (no brackets/strings nesting in these
-# fixtures, so a depth counter over `[`/`]` is sufficient). Avoids a jq dep.
+# Extract the body of a JSON array field. String-aware bracket-depth counter
+# (item 2): a naive char-by-char `[`/`]` count ignores JSON string quoting, so
+# a `]`, `,` or `[` inside a string VALUE (e.g. an unrecognised **Failure:**
+# free-text value with a stray bracket) would prematurely close the array or
+# mis-split it. Tracks in-string state and treats a backslash escape as
+# consuming the next character verbatim, even if it is a quote.
 json_array() {              # json_array <json> <key> → array body on stdout
   printf '%s' "$1" | awk -v key="$2" '
     {
@@ -92,20 +118,60 @@ json_array() {              # json_array <json> <key> → array body on stdout
       p = index($0, k)
       if (p == 0) { exit 1 }
       rest = substr($0, p + length(k))
-      depth = 1; out = ""
-      for (i = 1; i <= length(rest); i++) {
+      n = length(rest)
+      depth = 1; out = ""; instr = 0
+      i = 1
+      while (i <= n) {
         c = substr(rest, i, 1)
-        if (c == "[") depth++
-        else if (c == "]") { depth--; if (depth == 0) break }
+        if (instr) {
+          out = out c
+          if (c == "\\") {
+            i++
+            if (i <= n) out = out substr(rest, i, 1)
+          } else if (c == "\"") {
+            instr = 0
+          }
+          i++
+          continue
+        }
+        if (c == "\"") { instr = 1; out = out c; i++; continue }
+        if (c == "[") { depth++; out = out c; i++; continue }
+        if (c == "]") { depth--; if (depth == 0) { i++; break }; out = out c; i++; continue }
         out = out c
+        i++
       }
       print out
     }'
 }
 
+# ── self-test: json_array is string-aware (item 2) ───────────────────────────
+# Synthetic input, not linter output — isolates the property directly instead
+# of hoping some real fixture happens to embed a stray bracket. A naive
+# depth-counter (the pre-fix version) breaks on the unmatched `]` inside the
+# first object's string value below and truncates before the second object.
+JA_INPUT='{"a":[{"x":"has ] bracket, and comma","y":2},{"x":"clean","y":5}]}'
+JA_OUT="$(json_array "$JA_INPUT" a)"
+case "$JA_OUT" in
+  *'"y":5'*) pass "(json_array) a stray ]/, inside a string value does not truncate the array" ;;
+  *) bad "(json_array) truncated on ]/, inside a string value: got [$JA_OUT] from [$JA_INPUT]" ;;
+esac
+
 expect_rc() {               # expect_rc <want> <label>
   if [ "$RC" -eq "$1" ]; then pass "$2 (rc=$RC)"
   else bad "$2 — expected rc $1, got $RC; output: $OUT"; fi
+}
+
+task_word_present() {       # task_word_present <haystack> <N> → 0 iff "Task N"
+  # appears as a WHOLE task number, not merely as a leading-digit substring of
+  # a larger id (item 1: "Task 1" is a substring of "Task 12"). "Task " is a
+  # fixed literal, so the digits are always left-anchored already; only the
+  # right side needs guarding — require the char right after the digits to be
+  # a non-digit, or end-of-string.
+  case "$1" in
+    *"Task $2"[!0-9]*) return 0 ;;
+    *"Task $2") return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 # ── (d) no **Failure:** line at all → exit 0 (backward compatibility) ─────────
@@ -161,9 +227,12 @@ if [ -z "$FSLINE" ]; then
   bad "(b) no failure-strategy line in text output: $OUT"
 else
   ok=1
-  case "$FSLINE" in *"Task 1"*) ;; *) ok=0 ;; esac
-  case "$FSLINE" in *"Task 2"*) ;; *) ok=0 ;; esac
-  case "$FSLINE" in *"Task 3"*) ;; *) ok=0 ;; esac
+  # Word-boundary checks (item 1), not `*"Task 1"*` substring probes — those
+  # are satisfied by "Task 12" too, which would let a wrong-task-id message
+  # pass unnoticed.
+  task_word_present "$FSLINE" 1 || ok=0
+  task_word_present "$FSLINE" 2 || ok=0
+  task_word_present "$FSLINE" 3 || ok=0
   if [ "$ok" -eq 1 ]; then
     pass "(b) message names the offending task and BOTH dependents: $FSLINE"
   else
@@ -179,12 +248,16 @@ if [ -z "$FSV" ]; then
 else
   ok=1
   case "$OUT" in *'"valid":false'*) ;; *) ok=0; bad "(b) --json valid must be false" ;; esac
-  case "$FSV" in *'"task":1'*) ;; *) ok=0; bad "(b) --json entry must name task 1; got: $FSV" ;; esac
+  # Exact match: each violation object starts with the literal `{"task":N,` —
+  # anchoring on the opening brace AND the trailing comma rules out a false
+  # hit on task 10-19 (item 1: `*'"task":1'*` would match `"task":12` too).
+  case "$FSV" in *'{"task":1,'*) ;; *) ok=0; bad "(b) --json entry must name task 1 exactly; got: $FSV" ;; esac
   DEPARR="$(json_array "$FSV" dependents)"
-  case "$DEPARR" in
-    *2*) case "$DEPARR" in *3*) ;; *) ok=0; bad "(b) --json dependents missing 3: $FSV" ;; esac ;;
-    *) ok=0; bad "(b) --json dependents missing 2: $FSV" ;;
-  esac
+  # Exact equality against the full expected list, not `*2*`/`*3*` substring
+  # probes (item 1: those are satisfied by dependents "12,13" too).
+  if [ "$DEPARR" != "2,3" ]; then
+    ok=0; bad "(b) --json dependents must be exactly [2,3]; got: $DEPARR (from $FSV)"
+  fi
   [ "$ok" -eq 1 ] && pass "(b) --json carries a populated failure_strategy_violations entry: $FSV"
 fi
 
@@ -248,6 +321,15 @@ esac
 # and `\`. A literal TAB (or any other control byte) landing in an authored
 # value — e.g. pasted from a terminal — must not produce output that
 # `json.loads` rejects with "Invalid control character".
+#
+# DELIBERATE CHOICE (item 5): keep the skip rather than hard-requiring
+# python3, because this suite runs in the DEFAULT fast scope on every machine
+# `tests/run-all.sh` executes on, and some of those runners may genuinely
+# lack python3 — turning a missing interpreter into a suite-wide hard failure
+# would block unrelated work. Instead the skip can no longer disappear
+# silently: `skip()` increments SKIP_COUNT, which is surfaced in the final
+# summary line, so "ALL PASSED" on a python3-less runner reads as visibly
+# qualified rather than as full coverage.
 if command -v python3 >/dev/null 2>&1; then
   P_K="$TMP_ROOT/ctrlchar.md"
   printf '### Task 1: alpha\n**Dependencies:** none\n**Failure:** ba%sd%sx\n### Task 2: beta\n**Dependencies:** Task 1\n' \
@@ -263,13 +345,16 @@ if command -v python3 >/dev/null 2>&1; then
     *) bad "(k) expected an escaped \\t in the JSON output: $OUT" ;;
   esac
 else
-  echo "SKIP: (k) python3 not found — cannot validate --json control-character escaping"
+  skip "(k) python3 not found — cannot validate --json control-character escaping"
 fi
 
 # ── (f) near-miss spellings: none is a declaration ───────────────────────────
-# Real spellings measured across 3,136 plan files under ~/DEV (46 near misses in
-# 17 spellings, 0 exact literals). Each carries a value that WOULD be a
-# violation if the marker matched loosely, so a loose matcher cannot pass here.
+# Real near-miss spellings measured across 3,136 plan files under ~/DEV: 46
+# occurrences across 17 distinct spellings, 0 exact literals. The 6 fixtures
+# below are a representative SAMPLE of those 17 (not a full enumeration —
+# item 9: this comment previously implied 1:1 coverage it didn't have). Each
+# carries a value that WOULD be a violation if the marker matched loosely, so
+# a loose matcher cannot pass here.
 nearmiss_case() {           # nearmiss_case <slug> <marker-line>
   # Separate `local` statements on purpose: bash expands every word of a single
   # `local a=$1 b=$a` BEFORE applying any assignment, so `$slug` would be unset.
@@ -323,18 +408,12 @@ esac
 # ── (g) the enum never touches the graph ─────────────────────────────────────
 # g1: a clean fixture — the ENTIRE --json payload is byte-identical with and
 # without the line (same plan path both runs), so task count, cycles,
-# forward_refs and missing_deps cannot have moved.
+# forward_refs and missing_deps cannot have moved. Task 3 is the in-degree-
+# zero declarer (Task 1 and Task 2 are each depended on here, so
+# skip-and-continue on either would itself be a violation).
+# (item 8: this used to write a first, immediately-overwritten heredoc here —
+# removed; it was never read.)
 G1="$TMP_ROOT/graph_clean.md"
-cat > "$G1" <<'EOF'
-### Task 1: alpha
-**Dependencies:** none
-**Failure:** skip-and-continue
-### Task 2: beta
-**Dependencies:** none
-### Task 3: gamma
-**Dependencies:** Task 1, Task 2
-EOF
-# Task 1 IS depended on here, so strip it down to an in-degree-zero declarer:
 cat > "$G1" <<'EOF'
 ### Task 1: alpha
 **Dependencies:** none
@@ -370,7 +449,13 @@ EOF
 run "$G2" --json; E_WITH="$OUT"
 /usr/bin/grep -vF '**Failure:**' "$G2" > "$G2.tmp" && mv "$G2.tmp" "$G2"
 run "$G2" --json; E_WITHOUT="$OUT"
-count_edges() { json_array "$1" forward_refs | tr ',' '\n' | /usr/bin/grep -c '"task"'; }
+# Count object-start markers directly instead of splitting on every comma
+# (item 3): a comma inside any string field of the extracted sub-array would
+# otherwise fragment an object across two "lines" and miscount it. Scoping to
+# the forward_refs array body first (via the now string-aware json_array)
+# keeps this from also counting `{"task":` inside missing_deps or
+# failure_strategy_violations, which share the same field name.
+count_edges() { json_array "$1" forward_refs | /usr/bin/grep -o '{"task":' | /usr/bin/wc -l | tr -d '[:space:]'; }
 NW="$(count_edges "$E_WITH")"; NO="$(count_edges "$E_WITHOUT")"
 TW="$(printf '%s' "$E_WITH"    | /usr/bin/sed -n 's/.*"tasks":\([0-9]*\).*/\1/p')"
 TO="$(printf '%s' "$E_WITHOUT" | /usr/bin/sed -n 's/.*"tasks":\([0-9]*\).*/\1/p')"
@@ -472,7 +557,7 @@ fi
 # violation (exit 1). Root can read anything regardless of mode bits, so this
 # case cannot be enforced when running as root — skip rather than false-pass.
 if [ "$(id -u)" -eq 0 ]; then
-  echo "SKIP: (l) running as root — permission bits cannot be enforced, skipping unreadable-plan test"
+  skip "(l) running as root — permission bits cannot be enforced, skipping unreadable-plan test"
 else
   P_L="$TMP_ROOT/unreadable.md"
   printf '### Task 1: alpha\n**Dependencies:** none\n' > "$P_L"
@@ -480,8 +565,23 @@ else
   run "$P_L"
   chmod 644 "$P_L"   # restore before cleanup so trap rm -rf is unaffected
   expect_rc 2 "(l) unreadable plan file is an IO error (exit 2), not a content violation"
+  # Case-insensitive on purpose (item 7): today's message is verify-plan-dag's
+  # OWN hardcoded literal "permission denied" — the script never reaches the
+  # shell's own `< "$PLAN"` redirect-failure fallback, whose OS-level errno
+  # text is capitalized ("Permission denied") on macOS/Linux — so an exact
+  # lowercase match happens to pass by construction, not because the check is
+  # actually robust to which code path produced the text. Match
+  # case-insensitively so a reword, or a future regression back onto the
+  # shell fallback path, is judged on substance (does it name the real
+  # cause?) rather than on incidental capitalization.
   case "$OUT" in
-    *"verify-plan-dag:"*"permission denied"*) pass "(l) message is prefixed and names permission denied" ;;
+    *"verify-plan-dag:"*)
+      if printf '%s' "$OUT" | LC_ALL=C /usr/bin/grep -qi 'permission denied'; then
+        pass "(l) message is prefixed and names permission denied"
+      else
+        bad "(l) expected a 'permission denied' (any case) message; got: $OUT"
+      fi
+      ;;
     *) bad "(l) expected a 'verify-plan-dag: ... permission denied' message; got: $OUT" ;;
   esac
 fi
@@ -497,14 +597,81 @@ case "$TMP_ROOT" in
   "$ROOT"/*|"$ROOT") bad "fixture root $TMP_ROOT is inside the repo" ;;
   *)                 pass "every fixture lives outside the repo ($TMP_ROOT)" ;;
 esac
-SUM_AFTER="$(cksum "$V" "$SKILL" 2>/dev/null)"
-if [ "$SUM_BEFORE" = "$SUM_AFTER" ]; then
+# item 6: no `2>/dev/null` here — an unreadable/vanished target must surface
+# as a genuine mismatch (stderr text lands in SUM_AFTER, so it cannot equal
+# the clean SUM_BEFORE captured above), and an empty result on either side is
+# treated as an explicit failure rather than a vacuous pass.
+SUM_AFTER="$(cksum "$V" "$SKILL" 2>&1)"
+if [ -z "$SUM_BEFORE" ] || [ -z "$SUM_AFTER" ]; then
+  bad "cksum produced no output for \$V/\$SKILL — an unreadable target must fail this check, not vacuously pass: before=[$SUM_BEFORE] after=[$SUM_AFTER]"
+elif [ "$SUM_BEFORE" = "$SUM_AFTER" ]; then
   pass "the parser and skills/plan/SKILL.md are byte-unchanged by this run"
 else
   bad "this run modified its own inputs — before=[$SUM_BEFORE] after=[$SUM_AFTER]"
 fi
 
+# ── (m) INLINE MIDDOT LAYOUT: Dependencies and Failure sharing ONE line ───────
+# The file header documents the inline layout
+#   **Surface:** … · **Dependencies:** Task 1 · **Execution routing:** deep
+# so a plan may legitimately write Dependencies and Failure on the same line.
+# The Dependencies pattern-action rule matches such a line FIRST and ends with
+# `next`, which used to mean the Failure matcher never ran: the declaration was
+# invisible and a skip-and-continue on a depended-on task linted CLEAN (rc=0,
+# "0 violations"). The capture is now a function the Dependencies rule calls,
+# so both layouts are read. Asserted against BOTH layouts, because the bug was
+# invisible from the standalone layout alone — that one always worked.
+INLINE_PLAN="$(mk m-inline <<'EOF'
+### Task 1: A
+**Dependencies:** none · **Failure:** skip-and-continue
+- [ ] RED: x
+### Task 2: B
+**Dependencies:** 1
+- [ ] RED: y
+EOF
+)"
+STANDALONE_PLAN="$(mk m-standalone <<'EOF'
+### Task 1: A
+**Dependencies:** none
+**Failure:** skip-and-continue
+- [ ] RED: x
+### Task 2: B
+**Dependencies:** 1
+- [ ] RED: y
+EOF
+)"
+run "$INLINE_PLAN";     RC_INLINE=$RC;     OUT_INLINE="$OUT"
+run "$STANDALONE_PLAN"; RC_STANDALONE=$RC; OUT_STANDALONE="$OUT"
+if [ "$RC_INLINE" -eq 1 ] && printf '%s' "$OUT_INLINE" | grep -q 'failure-strategy: Task 1 declares skip-and-continue'; then
+  pass "(m) inline '· **Failure:**' sharing a line with **Dependencies:** is still read — depended-on skip-and-continue is caught"
+else
+  bad "(m) inline layout hid the **Failure:** declaration — rc=$RC_INLINE out=[$OUT_INLINE]"
+fi
+if [ "$RC_INLINE" -eq "$RC_STANDALONE" ]; then
+  pass "(m) inline and standalone layouts agree (rc=$RC_INLINE) — layout must not change the verdict"
+else
+  bad "(m) layout changed the verdict: inline rc=$RC_INLINE vs standalone rc=$RC_STANDALONE"
+fi
+# A legal inline declaration must NOT become a false positive.
+INLINE_OK="$(mk m-inline-ok <<'EOF'
+### Task 1: A
+**Surface:** api · **Dependencies:** none · **Failure:** halt
+- [ ] RED: x
+### Task 2: B
+**Dependencies:** 1
+- [ ] RED: y
+EOF
+)"
+run "$INLINE_OK"
+if [ "$RC" -eq 0 ]; then
+  pass "(m) inline **Failure:** halt on a depended-on task stays legal (no false positive from the shared-line path)"
+else
+  bad "(m) inline halt false-positived — rc=$RC out=[$OUT]"
+fi
+
 echo "----"
+if [ "$SKIP_COUNT" -gt 0 ]; then
+  printf 'SKIPPED: %d assertion group(s) — see SKIP lines above (not counted as coverage)\n' "$SKIP_COUNT"
+fi
 if [ "$fail" -eq 0 ]; then
   echo "ALL PASSED"
   exit 0
