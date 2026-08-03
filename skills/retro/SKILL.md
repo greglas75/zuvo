@@ -179,6 +179,202 @@ From the filtered entries, aggregate:
 
 ---
 
+## Phase 3b: Per-Task Telemetry (optional)
+
+Read the per-task telemetry file `zuvo:execute` appends at Step 9b — one JSON line per finished
+task, schema documented in `../../shared/includes/session-state.md` →
+`zuvo/context/task-telemetry.jsonl`. This is a project-local, per-task counterpart to Phase 3's
+HOME-global `~/.zuvo/runs.log`: gate-failure counts, reviewer-route distribution, and retry hotspots
+that Phase 3's one-line-per-run log cannot surface.
+
+Resolve the file the same way the writer does: `$ZUVO_OUTPUT_DIR`, else `<git root>/zuvo`, then
+`context/task-telemetry.jsonl` under it — no `pwd` fallback (deliberately removed from the writer;
+do not reintroduce one here). **No project-name filter** — unlike `runs.log` (shared across every
+project on the machine), this file is project-local by construction, so filtering would be wrong,
+not merely redundant.
+
+If the file **does not exist**: note "No per-task telemetry found." Skip this section — the same
+degradation shape Phase 3 already uses for a missing `runs.log`.
+
+If the file **exists**, parse it line by line. Each line is one JSON record: **every line is either
+fully counted in `records=` or fully counted in `skipped=`** — never dropped in between. A kill
+between `write` and `fsync` can leave a truncated trailing line, and this file is never rewritten to
+repair one (see `session-state.md`'s "Reader contract").
+
+Three corruption shapes must each become a *counted* skip, because each of them aborts a naive
+reader **outside** a `try` that wraps only `json.loads`, and an abort discards every record already
+parsed — uncounted in both `records=` and `skipped=`, which is precisely the silent data loss the
+Reader contract forbids:
+
+1. **Unparseable text** — plain garbage; `json.loads` raises `ValueError`.
+2. **Valid JSON that is not an object** — `null`, a bare number, `[]`. These parse *fine* and then
+   raise `AttributeError` at the first `.get`, so the guard must wrap the whole per-line body, not
+   just the parse, and must reject a non-`dict` explicitly.
+3. **A truncated multi-byte UTF-8 tail** — the exact "crash between `write` and `fsync`" case. Text
+   mode decodes **eagerly**, so `UnicodeDecodeError` is raised by the *iteration itself*, before any
+   per-line `try` is reached. Read the file in **binary** and decode each line defensively.
+
+Reading is also this reader's own responsibility, not the shell's: an unreadable/vanished path and
+any other failure are reported by the reader with its partial counts intact. The `|| echo "[WARN]"`
+tail stays as a last resort, not the normal error path.
+
+From the well-formed records, aggregate:
+- **Gate-failure counts** — records where `spec-review` != `COMPLIANT`, where `quality-review` does
+  not start with `PASS`, and where `adversarial` does not start with `PASS`.
+- **Reviewer-route distribution** — tally by `reviewer-route` (`review-primary`, `review-alt`,
+  `same-model-fallback`, `routing-failed`).
+- **Implementer-status tally** (blocked/skipped reasons) — tally by `implementer-status` (`DONE`,
+  `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, `BLOCKED`).
+- **Failure-strategy distribution** — bucketed into `halt`, `skip-and-continue`, `degraded`,
+  `unknown` and `missing`. Two rules matter here:
+  - **`missing` is its own bucket, never folded into `halt`.** The writer always emits the field, so
+    an absent one means an OLD or CORRUPT record — reporting it as `halt` would present silence as a
+    deliberate decision.
+  - **`degraded:<desc>` collapses to one `degraded` bucket**, with
+    `degraded-distinct-descriptions=<N>` printed alongside. `<desc>` is free text; keying the tally
+    by it yields one entry per task on a long run — a distribution with no signal.
+
+```bash
+# >>> zuvo:retro-telemetry
+RT_DIR="${ZUVO_OUTPUT_DIR:-}"
+if [ -z "$RT_DIR" ]; then
+  _RT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -n "$_RT_ROOT" ]; then RT_DIR="$_RT_ROOT/zuvo"; fi
+fi
+RT_PATH="${RT_DIR:+$RT_DIR/context/task-telemetry.jsonl}"
+if [ -z "$RT_PATH" ] || [ ! -f "$RT_PATH" ]; then
+  echo "No per-task telemetry found."
+else
+  python3 - "$RT_PATH" <<'PY' \
+    || echo "[WARN] per-task telemetry read failed — continuing (diagnostic, never a gate)"
+import json, sys
+
+# SCHEMA SSOT — every `F_* = "<key>"` below is a telemetry field name this reader
+# touches, and they are declared HERE, once. Case (y) of tests/skill-suite/test-
+# task-telemetry-contract.sh checks these literals against the
+# `zuvo:telemetry-schema` table in shared/includes/session-state.md — the same
+# discipline the WRITER's `K = [...]` follows, but as CONTAINMENT rather than the
+# writer's equality diff, because this reader deliberately touches only a subset
+# of the documented keys. Without that check a schema rename is invisible here:
+# `rec.get(key, default)` never raises on a renamed key, so retro would report
+# 100% gate failure forever and nothing would say so. Never inline a field name at
+# a use site — the test forbids a literal `.get("<key>"` here for that reason.
+F_SPEC = "spec-review"
+F_QUALITY = "quality-review"
+F_ADVERSARIAL = "adversarial"
+F_ROUTE = "reviewer-route"
+F_STATUS = "implementer-status"
+F_STRATEGY = "failure-strategy"
+
+path = sys.argv[1]
+n = 0
+skipped = 0
+gate = {F_SPEC: 0, F_QUALITY: 0, F_ADVERSARIAL: 0}
+reviewer_route = {}
+implementer_status = {}
+failure_strategy = {}
+degraded_descs = set()
+
+
+def bump(tally, key):
+    tally[key] = tally.get(key, 0) + 1
+
+
+def enum_str(rec, key):
+    val = rec.get(key)
+    return val if isinstance(val, str) and val else "unknown"
+
+
+def strategy_bucket(rec):
+    # An ABSENT failure-strategy is NOT a declared `halt`: the writer always emits
+    # the field, so absence means an old or corrupt record. `missing` keeps silence
+    # from being reported as a decision. `degraded:<desc>` is BUCKETED rather than
+    # keyed by its free-text description (one key per task is not a distribution);
+    # the distinct-description count is printed alongside so variety is not lost.
+    val = rec.get(F_STRATEGY)
+    if not isinstance(val, str) or not val:
+        return "missing", None
+    if val in ("halt", "skip-and-continue"):
+        return val, None
+    if val.startswith("degraded:"):
+        return "degraded", val[len("degraded:"):]
+    return "unknown", None
+
+
+def emit():
+    print("records=%d skipped=%d" % (n, skipped))
+    print("gate-failures spec-review=%d quality-review=%d adversarial=%d"
+          % (gate[F_SPEC], gate[F_QUALITY], gate[F_ADVERSARIAL]))
+    print("reviewer-route " + " ".join("%s=%d" % kv for kv in sorted(reviewer_route.items())))
+    print("implementer-status " + " ".join("%s=%d" % kv for kv in sorted(implementer_status.items())))
+    strategies = " ".join("%s=%d" % kv for kv in sorted(failure_strategy.items()))
+    if degraded_descs:
+        strategies += " degraded-distinct-descriptions=%d" % len(degraded_descs)
+    print("failure-strategy " + strategies)
+
+
+try:
+    # Binary, deliberately: a text-mode `for raw in fh` decodes EAGERLY, so a
+    # truncated multi-byte tail raises UnicodeDecodeError from the ITERATION —
+    # outside any per-line try — and kills the read after records already counted.
+    fh = open(path, "rb")
+except OSError as exc:
+    # This reader owns its errors. Falling through to the shell's `|| echo` would
+    # discard the counts entirely and say nothing about which path failed.
+    print("per-task telemetry unreadable (%s) — skipping" % (exc,))
+    print("records=0 skipped=0")
+    sys.exit(0)
+
+try:
+    with fh:
+        for raw in fh:
+            # The WHOLE per-line body is guarded, not just the parse: valid JSON
+            # that is not an object (`null`, `3`, `[]`) parses fine and then raises
+            # AttributeError at the first `.get`. Values are computed into locals
+            # first and committed only afterwards, so a line can never land in
+            # BOTH records= and skipped=.
+            try:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line:
+                    continue
+                rec = json.loads(line)
+                if not isinstance(rec, dict):
+                    raise ValueError("record is not a JSON object")
+                spec_fail = rec.get(F_SPEC) != "COMPLIANT"
+                quality_fail = not str(rec.get(F_QUALITY, "")).startswith("PASS")
+                adversarial_fail = not str(rec.get(F_ADVERSARIAL, "")).startswith("PASS")
+                route = enum_str(rec, F_ROUTE)
+                status = enum_str(rec, F_STATUS)
+                strategy, desc = strategy_bucket(rec)
+            except Exception:
+                skipped += 1
+                continue
+            n += 1
+            if spec_fail:
+                gate[F_SPEC] += 1
+            if quality_fail:
+                gate[F_QUALITY] += 1
+            if adversarial_fail:
+                gate[F_ADVERSARIAL] += 1
+            bump(reviewer_route, route)
+            bump(implementer_status, status)
+            bump(failure_strategy, strategy)
+            if desc is not None:
+                degraded_descs.add(desc)
+except Exception as exc:
+    # A read that dies mid-file still reports what it already aggregated. Partial
+    # results plus the skip count beat the shell fallback's total silence.
+    print("per-task telemetry read aborted after %d records (%s)" % (n, exc))
+
+emit()
+sys.exit(0)
+PY
+fi
+# <<< zuvo:retro-telemetry
+```
+
+---
+
 ## Phase 4: Actionable Items
 
 Generate **at least 3** specific, actionable items. Each item must:

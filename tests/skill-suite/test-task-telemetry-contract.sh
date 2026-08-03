@@ -85,6 +85,89 @@
 # a group that prints nothing at all is indistinguishable from a group that
 # passed, and that is how a broken writer reads as green.
 #
+# Task 5 extends this suite to the READER side: `# >>> zuvo:retro-telemetry` in
+# skills/retro/SKILL.md ("Phase 3b: Per-Task Telemetry"), which consumes the file
+# this suite's writer cases above already pin. A bare `grep '^## Phase 3b'` would
+# pass on any prose heading, so these cases instead extract and EXECUTE the fence
+# against fixtures, exactly like the writer cases do:
+#   (p) AGGREGATE   — a 3-record fixture (2 DONE/COMPLIANT/PASS, 1 BLOCKED/ISSUES
+#                     FOUND/FAIL) yields the exact expected gate-failure counts,
+#                     reviewer-route distribution, and implementer-status tally —
+#                     asserted as an exact string, not "produced some output".
+#   (q) SKIP-COUNT  — a fixture whose 2nd line is malformed JSON does not crash:
+#                     the other two records are still aggregated, the skipped-line
+#                     count is reported (skipped=1), and stderr is empty (no
+#                     traceback for what the Reader Contract in session-state.md
+#                     calls an expected, not exceptional, condition).
+#   (r) MISSING     — a non-existent telemetry file prints the documented
+#                     "No per-task telemetry found." note, byte-exact, and exits 0.
+#   (s) ENUM        — a fixture carrying all three documented `failure-strategy`
+#                     shapes (`halt`, `skip-and-continue`, `degraded:<desc>`) is
+#                     tallied — `halt` and `skip-and-continue` under their exact
+#                     keys, `degraded:<desc>` under the bucketed `degraded` key
+#                     plus `degraded-distinct-descriptions=<N>` (see (x)).
+#
+# (q) alone did NOT cover the Reader Contract's own threat model: its only
+# malformed line is plain ASCII garbage, which `except ValueError` around
+# `json.loads` catches. The two corruption shapes that actually occur crash
+# OUTSIDE such a guard, fall through to the coarse shell-level `|| echo`, and
+# discard every record already parsed — uncounted in BOTH `records=` and
+# `skipped=`, which is the silent data loss session-state.md forbids by name.
+# Hence:
+#   (t) NON-OBJECT  — `null`, a bare number and `[]` are VALID JSON that parse
+#                     fine and then raise AttributeError at the first `.get`.
+#                     Each must be a COUNTED skip; the surrounding records must
+#                     still aggregate; exit 0; stderr empty.
+#   (u) UTF8-TRUNC  — a record truncated mid em-dash: the exact "crash between
+#                     write and fsync" case session-state.md names by example,
+#                     and em-dashes are explicitly permitted in `task-name`. A
+#                     text-mode `for raw in fh` decodes EAGERLY, so this raises
+#                     UnicodeDecodeError from the ITERATION, before any per-line
+#                     try is entered. Must be a COUNTED skip, not a fatal.
+#   (v) NO-STRATEGY — a record with NO `failure-strategy` must NOT be tallied as
+#                     `halt`. The writer always emits the field, so absence means
+#                     an old or corrupt record; folding it into `halt` reports
+#                     silence as a deliberate decision. `missing` is its own
+#                     bucket, and a value outside the documented set is `unknown`.
+#   (w) UNREADABLE  — an existing-but-unreadable file is handled INSIDE python: a
+#                     specific unreadable-path message plus `records=0 skipped=0`,
+#                     exit 0, empty stdout-only shape. Relying on the shell `||
+#                     echo` here would report nothing about which path failed.
+#   (x) DEGRADED    — `degraded:<desc>` is free text; one tally key per distinct
+#                     description yields one entry per task and no signal on a
+#                     long run. Several distinct descriptions must collapse to a
+#                     single `degraded=<N>` with `degraded-distinct-descriptions`
+#                     alongside.
+#   (y) READER SSOT — the reader's field-name literals are checked against the
+#                     `zuvo:telemetry-schema` table, the same discipline the
+#                     WRITER's `K = [...]` already follows. CONTAINMENT, not the
+#                     writer's equality diff: the reader legitimately touches a
+#                     SUBSET of the documented keys (6 of 19), so equality would
+#                     be permanently red. `.get(key, default)` never raises on a
+#                     renamed key, so without this a schema rename would make
+#                     retro report 100% gate failure FOREVER, undetected. Also
+#                     forbids an inline `.get("<key>"` literal, which would
+#                     bypass the check.
+#   (z) NO-PYTHON   — mirrors the writer's (f)/(m) groups on the READER fence's
+#     (reader)        own `|| echo "[WARN] per-task telemetry read failed …"`
+#                     tail: a shadow PATH built from the reader fence's OWN
+#                     derived command dependencies (git, python3 — python3
+#                     omitted) reaches that fallback with NO fixture mutation,
+#                     exactly like the writer's shadow-PATH technique. This
+#                     closes a gap a prior round left open by conflating two
+#                     different claims: that no fixture can reach the fallback
+#                     (false — this group is the counter-proof) with the
+#                     narrower, true claim that no DATA fixture can make python
+#                     exit non-zero mid-loop (the exhaustive `except Exception`
+#                     plus the unconditional `emit()`/`sys.exit(0)` make THAT
+#                     path unreachable by design). Also covers the stub-python3-
+#                     exits-127 variant, same discipline as the writer's (f).
+# Every reader fixture sets ZUVO_OUTPUT_DIR explicitly (same pattern as run_block
+# above), so none of it depends on `git rev-parse --show-toplevel` succeeding.
+# Each new group asserts the EXACT `records=`/`skipped=` numbers, exit 0 and empty
+# stderr — a reader that silently swallows is the failure mode here, so "it did
+# not crash" is not an assertion.
+#
 # awk-fence extraction + hermetic-runner idiom from tests/skill-suite/test-dev-push-gate.sh.
 # bash 3.2-compatible (macOS default): no mapfile, no associative arrays.
 set -uo pipefail
@@ -92,7 +175,9 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SKILL="$ROOT/skills/execute/SKILL.md"
 STATE_DOC="$ROOT/shared/includes/session-state.md"
+RETRO_SKILL="$ROOT/skills/retro/SKILL.md"
 FENCE='zuvo:task-telemetry'
+RETRO_FENCE='zuvo:retro-telemetry'
 SCHEMA_START='<!-- zuvo:telemetry-schema:start -->'
 SCHEMA_END='<!-- zuvo:telemetry-schema:end -->'
 
@@ -131,6 +216,10 @@ if [ ! -f "$SKILL" ]; then
 fi
 if [ ! -f "$STATE_DOC" ]; then
   bad "shared/includes/session-state.md not found at $STATE_DOC"
+  echo "----"; echo "SOME FAILED"; exit 1
+fi
+if [ ! -f "$RETRO_SKILL" ]; then
+  bad "skills/retro/SKILL.md not found at $RETRO_SKILL"
   echo "----"; echo "SOME FAILED"; exit 1
 fi
 
@@ -314,9 +403,12 @@ else
   bad "(m) derived dependency set does not contain python3 — the derivation is broken, shadow PATH would be meaningless. Got [$DEP_LIST]"
 fi
 
-# build_shadow <dir> <include-python3: yes|no>
+# build_shadow <dir> <include-python3: yes|no> [deps-file, default $FENCE_DEPS]
+# The deps-file parameter lets the same builder serve a DIFFERENT fence's derived
+# dependency set (the reader fence's (z) group below) without hand-duplicating
+# this function against a second hardcoded list.
 build_shadow() {
-  local dir="$1" want_py="$2" t p
+  local dir="$1" want_py="$2" deps="${3:-$FENCE_DEPS}" t p
   mkdir -p "$dir"
   # `env` and `bash` are how the runner itself is launched under the shadow PATH,
   # so they belong to the harness, not to the fence's dependency set.
@@ -329,7 +421,7 @@ build_shadow() {
     if [ "$t" = "python3" ] && [ "$want_py" != "yes" ]; then continue; fi
     p="$(command -v "$t" 2>/dev/null)" || continue
     [ -n "$p" ] && ln -sf "$p" "$dir/$t"
-  done < "$FENCE_DEPS"
+  done < "$deps"
 }
 
 # ── hermetic runner ───────────────────────────────────────────────────────────
@@ -1047,6 +1139,577 @@ print("well-formed record carries no <...> placeholder and no -1 sentinel in any
   fi
 else
   skipped "(j) well-formed record carries no unsubstituted marker — $JSONL1 was never created"
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Task 5 — READER: `# >>> zuvo:retro-telemetry` in skills/retro/SKILL.md
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── fence markers: EXACTLY ONE PAIR, correctly ordered ────────────────────────
+RETRO_PAIR="$(fence_pair "$RETRO_FENCE" "$RETRO_SKILL")" || true
+RF_START="$(printf '%s' "$RETRO_PAIR" | grep -E '^[0-9]+ [0-9]+$' | cut -d' ' -f1)"
+RF_END="$(printf '%s' "$RETRO_PAIR" | grep -E '^[0-9]+ [0-9]+$' | cut -d' ' -f2)"
+
+if [ -n "$RF_START" ] && [ -n "$RF_END" ]; then
+  pass "fenced $RETRO_FENCE block present, exactly one >>>/<<< pair (lines $RF_START/$RF_END)"
+else
+  bad "fenced $RETRO_FENCE block MISSING or not exactly one >>>/<<< pair — fence_pair said [$RETRO_PAIR]"
+fi
+
+# ── placement: strictly between the Phase 3 and Phase 4 headings. This is a
+# structural sanity check, NOT the verification for this task — a heading grep
+# alone (`grep '^## Phase 3b'`) would pass on prose with no working fence, which
+# is exactly what the executable cases below actually prove.
+P3_LINE="$(grep -nF '## Phase 3: Skill Usage Trends' "$RETRO_SKILL" | head -1 | cut -d: -f1)"
+P4_LINE="$(grep -nF '## Phase 4: Actionable Items' "$RETRO_SKILL" | head -1 | cut -d: -f1)"
+if [ -n "$RF_START" ] && [ -n "$P3_LINE" ] && [ -n "$P4_LINE" ] \
+   && [ "$RF_START" -gt "$P3_LINE" ] && [ "$RF_END" -lt "$P4_LINE" ]; then
+  pass "fence ($RF_START-$RF_END) lies between Phase 3 ($P3_LINE) and Phase 4 ($P4_LINE) — 4/5/6 not renumbered"
+else
+  bad "fence must sit between Phase 3 and Phase 4: got fence=$RF_START-$RF_END phase3=$P3_LINE phase4=$P4_LINE"
+fi
+
+if [ -z "$RF_START" ] || [ -z "$RF_END" ] || [ "$RF_END" -le "$RF_START" ]; then
+  bad "retro-telemetry fence markers absent/misordered (>>> '$RF_START' <<< '$RF_END') — refusing block extraction/execution"
+  echo "----"; echo "SOME FAILED"; exit 1
+fi
+
+RETRO_BLOCK="$(awk -v s="# >>> $RETRO_FENCE" -v e="# <<< $RETRO_FENCE" \
+  'index($0,s){f=1;next} index($0,e){exit} f{print}' "$RETRO_SKILL")"
+
+if [ -z "$RETRO_BLOCK" ]; then
+  bad "extracted $RETRO_FENCE block is EMPTY"
+  echo "----"; echo "SOME FAILED"; exit 1
+fi
+
+# ── the documented missing-file note, derived from the fence (never hardcoded) ─
+RETRO_NOTE_COUNT="$(printf '%s\n' "$RETRO_BLOCK" | grep -c '^[[:space:]]*echo "No per-task telemetry found\."$')"
+RETRO_NOTE="$(printf '%s\n' "$RETRO_BLOCK" \
+  | sed -n 's/^[[:space:]]*echo "\(No per-task telemetry found\.\)"[[:space:]]*$/\1/p')"
+if [ "$RETRO_NOTE_COUNT" -eq 1 ] && [ -n "$RETRO_NOTE" ]; then
+  pass "(r) fence carries exactly one missing-file echo; expected note derived from it: [$RETRO_NOTE]"
+else
+  bad "(r) expected exactly one missing-file echo in the fence; found $RETRO_NOTE_COUNT, parsed [$RETRO_NOTE]"
+fi
+
+RETRO_RUNNER="$TMP_ROOT/retro-runner.sh"
+{
+  printf '%s\n' "$SET_OPTS"
+  printf '%s\n' "$RETRO_BLOCK"
+} > "$RETRO_RUNNER"
+
+# run_retro <outdir> [extra env assignments...] — ZUVO_OUTPUT_DIR IS the zuvo dir
+# directly (report-output-location.md convention, same as run_block above), so
+# the file the fence reads lives at <outdir>/context/task-telemetry.jsonl. Extra
+# args (e.g. "PATH=$SHADOW") are forwarded to `env`, same shape as run_block's
+# trailing "$@" — this is what lets the (z) group below run the reader fence
+# under a shadow PATH without a second bespoke runner.
+run_retro() {
+  local outdir="$1"; shift
+  local o="$TMP_ROOT/retro.stdout.$$" e="$TMP_ROOT/retro.stderr.$$"
+  env ZUVO_OUTPUT_DIR="$outdir" "$@" bash "$RETRO_RUNNER" >"$o" 2>"$e"
+  RC=$?
+  OUT="$(cat "$o")"; ERR="$(cat "$e")"
+  rm -f "$o" "$e"
+}
+
+# ── (p) AGGREGATE: 3 well-formed records → exact deterministic aggregate ──────
+# Also doubles as (s) ENUM: all three documented failure-strategy shapes appear
+# in this one fixture (halt, skip-and-continue, degraded:<desc>).
+FIXP="$TMP_ROOT/retro-fixp"
+mkdir -p "$FIXP/context"
+cat > "$FIXP/context/task-telemetry.jsonl" <<'JSONL'
+{"at":"2026-08-02T10:00:00Z","session-id":"exec-1","retro-session-id":"retro-1","task":1,"task-name":"A","surface":"api","mode":"multi-agent","fallback-path":"none","writer-model":"opus","reviewer-route":"review-primary","implementer-status":"DONE","spec-review":"COMPLIANT","quality-review":"PASS cq=1/1","adversarial":"PASS mode=code","verify":"x exit=0","acceptance-verified":[],"codesift":"available","backlog-adds":0,"failure-strategy":"halt"}
+{"at":"2026-08-02T10:01:00Z","session-id":"exec-1","retro-session-id":"retro-1","task":2,"task-name":"B","surface":"api","mode":"multi-agent","fallback-path":"none","writer-model":"opus","reviewer-route":"review-alt","implementer-status":"BLOCKED","spec-review":"ISSUES FOUND","quality-review":"FAIL cq=0/1","adversarial":"FAIL mode=code","verify":"x exit=1","acceptance-verified":[],"codesift":"available","backlog-adds":0,"failure-strategy":"skip-and-continue"}
+{"at":"2026-08-02T10:02:00Z","session-id":"exec-1","retro-session-id":"retro-1","task":3,"task-name":"C","surface":"api","mode":"multi-agent","fallback-path":"none","writer-model":"opus","reviewer-route":"review-primary","implementer-status":"DONE","spec-review":"COMPLIANT","quality-review":"PASS cq=1/1","adversarial":"PASS mode=code","verify":"x exit=0","acceptance-verified":[],"codesift":"available","backlog-adds":0,"failure-strategy":"degraded:no-agents"}
+JSONL
+
+EXPECTED_P='records=3 skipped=0
+gate-failures spec-review=1 quality-review=1 adversarial=1
+reviewer-route review-alt=1 review-primary=2
+implementer-status BLOCKED=1 DONE=2
+failure-strategy degraded=1 halt=1 skip-and-continue=1 degraded-distinct-descriptions=1'
+
+run_retro "$FIXP"
+RC_P=$RC; OUT_P="$OUT"; ERR_P="$ERR"
+
+if [ "$RC_P" -eq 0 ] && [ "$OUT_P" = "$EXPECTED_P" ]; then
+  pass "(p) 3-record fixture yields the exact deterministic aggregate (gate-failures, reviewer-route, implementer-status)"
+else
+  bad "(p) aggregate mismatch: rc=$RC_P expected=[$EXPECTED_P] got=[$OUT_P] stderr=[$ERR_P]"
+fi
+
+if [ "$RC_P" -eq 0 ] && [ -z "$ERR_P" ]; then
+  pass "(p) well-formed aggregate wrote nothing to stderr"
+else
+  bad "(p) well-formed aggregate wrote to stderr (expected none): rc=$RC_P [$ERR_P]"
+fi
+
+# (s) All three documented shapes present and distinguishable. `degraded:<desc>`
+# is deliberately BUCKETED (see (x)) — the assertion is that it is neither dropped
+# nor merged into another bucket, not that its free text becomes a tally key.
+if [ "$RC_P" -eq 0 ] && printf '%s' "$OUT_P" | grep -qF 'failure-strategy degraded=1 halt=1 skip-and-continue=1 degraded-distinct-descriptions=1'; then
+  pass "(s) all three documented failure-strategy shapes tallied distinctly (halt, skip-and-continue, and the bucketed degraded + its distinct-description count)"
+else
+  bad "(s) failure-strategy distribution missing/merging one of the three documented shapes: got=[$OUT_P]"
+fi
+
+# ── (q) SKIP-COUNT: 2nd line malformed JSON does not crash ────────────────────
+FIXQ="$TMP_ROOT/retro-fixq"
+mkdir -p "$FIXQ/context"
+cat > "$FIXQ/context/task-telemetry.jsonl" <<'JSONL'
+{"at":"2026-08-02T10:00:00Z","session-id":"exec-1","retro-session-id":"retro-1","task":1,"task-name":"A","surface":"api","mode":"multi-agent","fallback-path":"none","writer-model":"opus","reviewer-route":"review-primary","implementer-status":"DONE","spec-review":"COMPLIANT","quality-review":"PASS cq=1/1","adversarial":"PASS mode=code","verify":"x exit=0","acceptance-verified":[],"codesift":"available","backlog-adds":0,"failure-strategy":"halt"}
+{this line is not valid JSON at all
+{"at":"2026-08-02T10:02:00Z","session-id":"exec-1","retro-session-id":"retro-1","task":3,"task-name":"C","surface":"api","mode":"multi-agent","fallback-path":"none","writer-model":"opus","reviewer-route":"review-primary","implementer-status":"DONE","spec-review":"COMPLIANT","quality-review":"PASS cq=1/1","adversarial":"PASS mode=code","verify":"x exit=0","acceptance-verified":[],"codesift":"available","backlog-adds":0,"failure-strategy":"halt"}
+JSONL
+
+EXPECTED_Q='records=2 skipped=1
+gate-failures spec-review=0 quality-review=0 adversarial=0
+reviewer-route review-primary=2
+implementer-status DONE=2
+failure-strategy halt=2'
+
+run_retro "$FIXQ"
+RC_Q=$RC; OUT_Q="$OUT"; ERR_Q="$ERR"
+
+if [ "$RC_Q" -eq 0 ] && [ "$OUT_Q" = "$EXPECTED_Q" ]; then
+  pass "(q) malformed 2nd line skipped — other 2 records still aggregated, skipped count reported (skipped=1)"
+else
+  bad "(q) skip-and-count mismatch: rc=$RC_Q expected=[$EXPECTED_Q] got=[$OUT_Q] stderr=[$ERR_Q]"
+fi
+
+if [ -z "$ERR_Q" ]; then
+  pass "(q) no traceback on stderr for the malformed-line case"
+else
+  bad "(q) malformed-line case wrote to stderr (expected none): [$ERR_Q]"
+fi
+
+# ── (r) MISSING: non-existent telemetry file → the documented note, exit 0 ────
+FIXR="$TMP_ROOT/retro-fixr"
+mkdir -p "$FIXR"
+if [ -e "$FIXR/context/task-telemetry.jsonl" ]; then
+  bad "(r) fixture precondition broken: telemetry file already exists at $FIXR"
+fi
+run_retro "$FIXR"
+RC_R=$RC; OUT_R="$OUT"; ERR_R="$ERR"
+
+if [ "$RC_R" -eq 0 ] && [ "$OUT_R" = "$RETRO_NOTE" ] && [ -z "$ERR_R" ]; then
+  pass "(r) missing telemetry file → exit 0, stdout is byte-exactly the documented note, no stderr"
+else
+  bad "(r) missing-file handling wrong: rc=$RC_R expected=[$RETRO_NOTE] got=[$OUT_R] stderr=[$ERR_R]"
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Task 5 fix round — the corruption shapes (q) never covered, plus the reader's
+# own schema SSOT. (q)'s single malformed line is plain ASCII garbage, which any
+# `except ValueError` around `json.loads` catches; the shapes below crash OUTSIDE
+# such a guard and discard every record already parsed.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# One well-formed record generator, so each group below differs ONLY in the field
+# under test. Hand-copying a 19-key JSON line per group is how a fixture ends up
+# silently asserting something other than its comment claims.
+#   $1 = task number
+#   $2 = the `failure-strategy` fragment, spliced in verbatim. EMPTY omits the key
+#        entirely — that is the (v) case, and it must stay expressible.
+retro_rec() {
+  printf '{"at":"2026-08-02T10:00:00Z","session-id":"exec-1","retro-session-id":"retro-1","task":%s,"task-name":"T%s","surface":"api","mode":"multi-agent","fallback-path":"none","writer-model":"opus","reviewer-route":"review-primary","implementer-status":"DONE","spec-review":"COMPLIANT","quality-review":"PASS cq=1/1","adversarial":"PASS mode=code","verify":"x exit=0","acceptance-verified":[],"codesift":"available","backlog-adds":0%s}\n' \
+    "$1" "$1" "$2"
+}
+
+# Sanity-check the generator itself before five groups depend on it. A fixture
+# builder that emits an unparseable line would make every group below report the
+# reader's skip path while the comments claim it is exercising something else.
+if printf '%s' "$(retro_rec 1 ',"failure-strategy":"halt"')" \
+   | python3 -c 'import json,sys; r=json.loads(sys.stdin.read()); sys.exit(0 if r["failure-strategy"]=="halt" and r["task"]==1 else 1)' 2>/dev/null \
+   && printf '%s' "$(retro_rec 2 '')" \
+   | python3 -c 'import json,sys; r=json.loads(sys.stdin.read()); sys.exit(0 if "failure-strategy" not in r else 1)' 2>/dev/null; then
+  pass "(t-x) fixture generator emits valid records and can genuinely OMIT failure-strategy"
+else
+  bad "(t-x) fixture generator is broken — the groups below would assert against malformed input"
+fi
+
+# ── (t) NON-OBJECT: valid JSON that is not an object ──────────────────────────
+# `null`, a bare number and `[]` all parse fine, then raise AttributeError at the
+# first `.get`. Each must be a COUNTED skip and the surrounding records must still
+# aggregate — the whole per-line body has to be guarded, not just the parse.
+FIXT="$TMP_ROOT/retro-fixt"
+mkdir -p "$FIXT/context"
+{
+  retro_rec 1 ',"failure-strategy":"halt"'
+  printf 'null\n'
+  printf '3\n'
+  printf '[]\n'
+  retro_rec 2 ',"failure-strategy":"halt"'
+} > "$FIXT/context/task-telemetry.jsonl"
+
+EXPECTED_T='records=2 skipped=3
+gate-failures spec-review=0 quality-review=0 adversarial=0
+reviewer-route review-primary=2
+implementer-status DONE=2
+failure-strategy halt=2'
+
+run_retro "$FIXT"
+RC_T=$RC; OUT_T="$OUT"; ERR_T="$ERR"
+
+if [ "$RC_T" -eq 0 ] && [ "$OUT_T" = "$EXPECTED_T" ] && [ -z "$ERR_T" ]; then
+  pass "(t) null / bare number / [] are each a COUNTED skip (records=2 skipped=3), surrounding records still aggregate, exit 0, empty stderr"
+else
+  bad "(t) non-object lines mishandled: rc=$RC_T expected=[$EXPECTED_T] got=[$OUT_T] stderr=[$ERR_T]"
+fi
+
+# ── (u) UTF8-TRUNC: a record truncated mid em-dash ────────────────────────────
+# The exact "crash between write and fsync" case. Text mode decodes EAGERLY, so
+# `for raw in fh` raises UnicodeDecodeError from the ITERATION — before any
+# per-line try is entered — and kills the read after records were already counted.
+# Em-dashes are explicitly permitted in `task-name`, so this is a real record
+# shape, not a synthetic byte soup.
+FIXU="$TMP_ROOT/retro-fixu"
+mkdir -p "$FIXU/context"
+{
+  retro_rec 1 ',"failure-strategy":"halt"'
+  retro_rec 2 ',"failure-strategy":"halt"'
+  # 0xE2 0x80 = the first TWO bytes of U+2014 EM DASH (0xE2 0x80 0x94). The third
+  # byte is the one the kill took with it.
+  printf '{"at":"2026-08-02T10:02:00Z","task-name":"Tenant hardening \xe2\x80'
+} > "$FIXU/context/task-telemetry.jsonl"
+
+# LOUD precondition: if this host's printf did not emit the raw bytes, the file is
+# valid UTF-8 and the group would pass for the wrong reason (it would be testing
+# (q)'s ASCII-garbage path again).
+if python3 -c '
+import sys
+data = open(sys.argv[1], "rb").read()
+tail = data.rsplit(b"\n", 1)[-1]
+assert tail.endswith(b"\xe2\x80"), "fixture tail is not the truncated em-dash prefix: %r" % (tail[-8:],)
+try:
+    data.decode("utf-8")
+except UnicodeDecodeError:
+    sys.exit(0)
+raise SystemExit("fixture decodes as valid UTF-8 — the truncation was not written")
+' "$FIXU/context/task-telemetry.jsonl" 2>"$TMP_ROOT/perr_u"; then
+  pass "(u) fixture precondition: trailing record really is truncated mid em-dash and the file is NOT valid UTF-8"
+
+  EXPECTED_U='records=2 skipped=1
+gate-failures spec-review=0 quality-review=0 adversarial=0
+reviewer-route review-primary=2
+implementer-status DONE=2
+failure-strategy halt=2'
+
+  run_retro "$FIXU"
+  RC_U=$RC; OUT_U="$OUT"; ERR_U="$ERR"
+
+  if [ "$RC_U" -eq 0 ] && [ "$OUT_U" = "$EXPECTED_U" ] && [ -z "$ERR_U" ]; then
+    pass "(u) truncated multi-byte UTF-8 tail is a COUNTED skip (records=2 skipped=1) — the two records before it survive, exit 0, empty stderr"
+  else
+    bad "(u) truncated UTF-8 tail mishandled: rc=$RC_U expected=[$EXPECTED_U] got=[$OUT_U] stderr=[$ERR_U]"
+  fi
+else
+  bad "(u) fixture precondition broken: $(tail -2 "$TMP_ROOT/perr_u" | tr '\n' ' ')"
+  skipped "(u) truncated multi-byte UTF-8 tail is a counted skip"
+fi
+
+# ── (v) NO-STRATEGY: absence is `missing`, never `halt` ───────────────────────
+# The writer ALWAYS emits failure-strategy, so an absent one means an old or
+# corrupt record. Folding it into `halt` reports silence as a deliberate decision.
+# A null value is the same shape (no declared strategy); a value outside the
+# documented set is `unknown`.
+FIXV="$TMP_ROOT/retro-fixv"
+mkdir -p "$FIXV/context"
+{
+  retro_rec 1 ',"failure-strategy":"halt"'
+  retro_rec 2 ''
+  retro_rec 3 ',"failure-strategy":"retry-forever"'
+  retro_rec 4 ',"failure-strategy":null'
+} > "$FIXV/context/task-telemetry.jsonl"
+
+EXPECTED_V='records=4 skipped=0
+gate-failures spec-review=0 quality-review=0 adversarial=0
+reviewer-route review-primary=4
+implementer-status DONE=4
+failure-strategy halt=1 missing=2 unknown=1'
+
+run_retro "$FIXV"
+RC_V=$RC; OUT_V="$OUT"; ERR_V="$ERR"
+
+if [ "$RC_V" -eq 0 ] && [ "$OUT_V" = "$EXPECTED_V" ] && [ -z "$ERR_V" ]; then
+  pass "(v) absent/null failure-strategy lands in the missing bucket (2) and an undocumented value in unknown (1) — halt stays at the ONE record that declared it"
+else
+  bad "(v) failure-strategy default mishandled: rc=$RC_V expected=[$EXPECTED_V] got=[$OUT_V] stderr=[$ERR_V]"
+fi
+
+# The same claim stated as the regression it guards: `halt=3` here would mean two
+# silent records were reported as a deliberate halt.
+if printf '%s' "$OUT_V" | grep -q 'failure-strategy .*halt=1' \
+   && ! printf '%s' "$OUT_V" | grep -q 'halt=[234]'; then
+  pass "(v) the two strategy-less records were NOT absorbed into the halt bucket"
+else
+  bad "(v) strategy-less records folded into halt — silence reported as a decision: got=[$OUT_V]"
+fi
+
+# ── (w) UNREADABLE: handled INSIDE python, not by the shell `|| echo` ─────────
+# The expected message is derived from the fence (same discipline as $RETRO_NOTE
+# and $WARN_EXPECTED), so it cannot drift into a hardcoded copy here.
+RETRO_UNREADABLE_FMT="$(printf '%s\n' "$RETRO_BLOCK" \
+  | sed -n 's/^[[:space:]]*print("\(per-task telemetry unreadable .*\)" % (exc,))[[:space:]]*$/\1/p')"
+RETRO_ZERO_LINE="$(printf '%s\n' "$RETRO_BLOCK" \
+  | sed -n 's/^[[:space:]]*print("\(records=0 skipped=0\)")[[:space:]]*$/\1/p')"
+
+if [ -n "$RETRO_UNREADABLE_FMT" ] && [ -n "$RETRO_ZERO_LINE" ]; then
+  pass "(w) fence carries an in-python unreadable-path message and a zero-count line; expected shape derived from it: [$RETRO_UNREADABLE_FMT] + [$RETRO_ZERO_LINE]"
+else
+  bad "(w) fence does not handle open() itself — expected a print(\"per-task telemetry unreadable …\" % (exc,)) plus a records=0 line; parsed fmt=[$RETRO_UNREADABLE_FMT] zero=[$RETRO_ZERO_LINE]"
+fi
+
+FIXW="$TMP_ROOT/retro-fixw"
+mkdir -p "$FIXW/context"
+retro_rec 1 ',"failure-strategy":"halt"' > "$FIXW/context/task-telemetry.jsonl"
+chmod 000 "$FIXW/context/task-telemetry.jsonl"
+
+# LOUD precondition: running as root (or on a filesystem ignoring the mode) makes
+# the file readable anyway, and the group would silently test the happy path.
+if [ -r "$FIXW/context/task-telemetry.jsonl" ] || cat "$FIXW/context/task-telemetry.jsonl" >/dev/null 2>&1; then
+  bad "(w) fixture precondition broken: chmod 000 file is still readable (running as root?) — the unreadable branch was not exercised"
+  skipped "(w) unreadable path is handled inside python with its counts intact"
+elif [ -z "$RETRO_UNREADABLE_FMT" ] || [ -z "$RETRO_ZERO_LINE" ]; then
+  skipped "(w) unreadable path shape — the expected message could not be derived from the fence"
+else
+  run_retro "$FIXW"
+  RC_W=$RC; OUT_W="$OUT"; ERR_W="$ERR"
+
+  W_OUT="$TMP_ROOT/retro_w_out.txt"
+  if python3 -c '
+import sys
+got, fmt, zero, path = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+lines = got.split("\n")
+assert len(lines) == 2, "expected exactly 2 stdout lines, got %d: %r" % (len(lines), lines)
+head, tail = fmt.split("%s", 1)
+assert lines[0].startswith(head), "line 1 does not start with the fence message: %r" % (lines[0],)
+assert lines[0].endswith(tail), "line 1 does not end with the fence message: %r" % (lines[0],)
+assert path in lines[0], "line 1 never names the path that failed: %r" % (lines[0],)
+assert lines[1] == zero, "line 2 must be the zero-count line %r, got %r" % (zero, lines[1])
+print("in-python unreadable handling: names the path, reports %r, no shell fallback" % (zero,))
+' "$OUT_W" "$RETRO_UNREADABLE_FMT" "$RETRO_ZERO_LINE" "$FIXW/context/task-telemetry.jsonl" >"$W_OUT" 2>&1 \
+     && [ "$RC_W" -eq 0 ] && [ -z "$ERR_W" ]; then
+    pass "(w) $(cat "$W_OUT") (exit 0, empty stderr)"
+  else
+    bad "(w) unreadable file mishandled: rc=$RC_W stderr=[$ERR_W] got=[$OUT_W] detail=[$(tail -2 "$W_OUT" 2>/dev/null | tr '\n' ' ')]"
+  fi
+fi
+chmod 644 "$FIXW/context/task-telemetry.jsonl" 2>/dev/null || true
+
+# ── (x) DEGRADED: free-text descriptions must not become tally keys ───────────
+# `degraded:<desc>` is free text. Keying the tally by it yields one entry per task
+# on a long run — a distribution with no signal. The bucket collapses to a single
+# `degraded` count with the distinct-description count alongside.
+FIXX="$TMP_ROOT/retro-fixx"
+mkdir -p "$FIXX/context"
+{
+  retro_rec 1 ',"failure-strategy":"degraded:no-agents"'
+  retro_rec 2 ',"failure-strategy":"degraded:rate-limited"'
+  retro_rec 3 ',"failure-strategy":"degraded:no-agents"'
+  # A description carrying a comma and spaces: whatever the tally does with it
+  # must not depend on its punctuation.
+  retro_rec 4 ',"failure-strategy":"degraded:codesift missing, index stale"'
+} > "$FIXX/context/task-telemetry.jsonl"
+
+EXPECTED_X='records=4 skipped=0
+gate-failures spec-review=0 quality-review=0 adversarial=0
+reviewer-route review-primary=4
+implementer-status DONE=4
+failure-strategy degraded=4 degraded-distinct-descriptions=3'
+
+run_retro "$FIXX"
+RC_X=$RC; OUT_X="$OUT"; ERR_X="$ERR"
+
+if [ "$RC_X" -eq 0 ] && [ "$OUT_X" = "$EXPECTED_X" ] && [ -z "$ERR_X" ]; then
+  pass "(x) 4 degraded records / 3 distinct descriptions collapse to degraded=4 + degraded-distinct-descriptions=3 (exit 0, empty stderr)"
+else
+  bad "(x) degraded bucketing wrong: rc=$RC_X expected=[$EXPECTED_X] got=[$OUT_X] stderr=[$ERR_X]"
+fi
+
+# Stated as the regression: the free text must appear NOWHERE as a tally key.
+if printf '%s' "$OUT_X" | grep -qE '(no-agents|rate-limited|index stale)='; then
+  bad "(x) a free-text description became a tally key — one entry per task, no signal: got=[$OUT_X]"
+else
+  pass "(x) no free-text description leaked into the tally as its own key"
+fi
+
+# ── (y) READER SSOT: the reader's field names diffed against session-state.md ─
+# The WRITER's `K = [...]` is already diffed against the zuvo:telemetry-schema
+# table by (a). The READER had no equivalent: `rec.get(key, default)` never raises
+# on a renamed key, so a rename would make retro report 100% gate failure FOREVER
+# and nothing would say so.
+READER_KEYS="$TMP_ROOT/reader-keys.txt"
+printf '%s\n' "$RETRO_BLOCK" \
+  | sed -nE 's/^F_[A-Z_]+ = "([^"]+)".*$/\1/p' | sort -u > "$READER_KEYS"
+READER_KEY_COUNT="$(grep -c . "$READER_KEYS")"
+
+if [ "$READER_KEY_COUNT" -gt 0 ]; then
+  pass "(y) reader declares $READER_KEY_COUNT telemetry field names as F_* literals (count derived from the fence)"
+else
+  bad "(y) no F_* = \"<key>\" declarations found in the retro fence — the reader has no schema SSOT to diff"
+fi
+
+# The reader legitimately touches a SUBSET of the documented keys, so this is a
+# containment check, not an equality diff: every literal it reads must be a
+# documented key. A rename in session-state.md then fails here instead of silently
+# turning every gate into a failure.
+if [ "$READER_KEY_COUNT" -gt 0 ] && [ "$DOC_KEY_COUNT" -gt 0 ]; then
+  UNDOC="$(comm -23 "$READER_KEYS" "$DOC_KEYS" | tr '\n' ' ')"
+  if [ -z "${UNDOC// /}" ]; then
+    pass "(y) every reader field literal is a documented zuvo:telemetry-schema key ($READER_KEY_COUNT of $DOC_KEY_COUNT) — a schema rename cannot pass unnoticed"
+  else
+    bad "(y) reader reads field name(s) that session-state.md does not document: [$UNDOC]"
+  fi
+else
+  skipped "(y) reader-vs-doc key containment — one of the two key lists is empty"
+fi
+
+# An inline `.get("<key>"` would bypass the SSOT entirely, so the literal form is
+# forbidden outright. `.get(F_SPEC)` / `.get(key, 0)` are the permitted shapes.
+# Whole-line comments are dropped first — the fence documents this very rule in
+# prose, and a check that fires on its own documentation is unfixable. A `.get("`
+# followed by a trailing comment is NOT a whole-line comment and is still caught.
+INLINE_GETS="$(printf '%s\n' "$RETRO_BLOCK" \
+  | grep -vE '^[[:space:]]*#' \
+  | grep -nE '\.get\([[:space:]]*["'"'"']' || true)"
+if [ -z "$INLINE_GETS" ]; then
+  pass "(y) no inline .get(\"<key>\") literal in the reader — every field name goes through the F_* SSOT"
+else
+  bad "(y) inline .get(\"<key>\") literal bypasses the reader SSOT: [$(printf '%s' "$INLINE_GETS" | tr '\n' ' ')]"
+fi
+
+# ── (z) NO-PYTHON (reader): shadow PATH built from the READER fence's own deps ─
+# A prior round claimed the reader's outer `|| echo "[WARN] …"` fallback was
+# unfalsifiable without mutating the fence. It is not: the SAME shadow-PATH
+# technique groups (f)/(m) already use for the WRITER fence reaches it here with
+# zero mutation. The dependency set is DERIVED from the reader fence itself
+# (never hand-listed), so a future dependency the fence gains fails loudly here
+# instead of silently letting this group pass for the wrong reason.
+RETRO_SHELL_PART="$TMP_ROOT/retro-fence-shell.txt"
+printf '%s\n' "$RETRO_BLOCK" | awk '
+  inbody { if ($0 ~ /^PY[[:space:]]*$/) { inbody = 0 } ; next }
+  { print }
+  /^[[:space:]]*\|\| echo/ { inbody = 1 }
+' > "$RETRO_SHELL_PART"
+
+RETRO_FENCE_TOKENS="$TMP_ROOT/retro-fence-tokens.txt"
+{
+  grep -vE '^[[:space:]]*#' "$RETRO_SHELL_PART" \
+    | grep -vE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=' \
+    | sed -E 's/^[[:space:]]+//' \
+    | grep -oE '^[A-Za-z0-9_./-]+'
+  grep -oE '\$\([[:space:]]*[A-Za-z0-9_./-]+' "$RETRO_SHELL_PART" \
+    | sed -E 's/^\$\([[:space:]]*//'
+} | sort -u > "$RETRO_FENCE_TOKENS"
+
+RETRO_FENCE_DEPS="$TMP_ROOT/retro-fence-deps.txt"
+: > "$RETRO_FENCE_DEPS"
+while IFS= read -r _tok; do
+  [ -n "$_tok" ] || continue
+  if [ "$(type -t "$_tok" 2>/dev/null || true)" = "file" ]; then
+    printf '%s\n' "$_tok" >> "$RETRO_FENCE_DEPS"
+  fi
+done < "$RETRO_FENCE_TOKENS"
+sort -u -o "$RETRO_FENCE_DEPS" "$RETRO_FENCE_DEPS"
+
+RETRO_DEP_LIST="$(tr '\n' ' ' < "$RETRO_FENCE_DEPS")"
+if grep -qx 'python3' "$RETRO_FENCE_DEPS"; then
+  pass "(z) reader fence command dependencies derived from the fence itself: [$RETRO_DEP_LIST]"
+else
+  bad "(z) derived reader dependency set does not contain python3 — shadow PATH would be meaningless. Got [$RETRO_DEP_LIST]"
+fi
+
+# The documented [WARN] text, derived from the READER fence (never hardcoded) —
+# same discipline as $WARN_EXPECTED (writer) and $RETRO_NOTE (missing-file) above.
+RETRO_WARN_COUNT="$(printf '%s\n' "$RETRO_BLOCK" | grep -c '^[[:space:]]*|| echo "\[WARN\]')"
+RETRO_WARN_EXPECTED="$(printf '%s\n' "$RETRO_BLOCK" \
+  | sed -n 's/^[[:space:]]*|| echo "\(\[WARN\].*\)"[[:space:]]*$/\1/p')"
+if [ "$RETRO_WARN_COUNT" -eq 1 ] && [ -n "$RETRO_WARN_EXPECTED" ]; then
+  pass "(z) reader fence carries exactly one '|| echo \"[WARN] …\"' tail; expected stdout derived from it"
+else
+  bad "(z) expected exactly one '|| echo \"[WARN] …\"' tail in the reader fence; found $RETRO_WARN_COUNT, parsed [$RETRO_WARN_EXPECTED]"
+fi
+
+# A shadow WITH python3 (built from the SAME derived deps) must still succeed —
+# mirrors the writer's (m): if the derivation missed a command, this fails loudly
+# instead of letting the no-python3 case below pass for the wrong reason.
+RETRO_SHADOW_FULL="$TMP_ROOT/retro-bin-full"
+build_shadow "$RETRO_SHADOW_FULL" yes "$RETRO_FENCE_DEPS"
+FIXZM="$TMP_ROOT/retro-fixzm"
+mkdir -p "$FIXZM/context"
+retro_rec 1 ',"failure-strategy":"halt"' > "$FIXZM/context/task-telemetry.jsonl"
+EXPECTED_ZM='records=1 skipped=0
+gate-failures spec-review=0 quality-review=0 adversarial=0
+reviewer-route review-primary=1
+implementer-status DONE=1
+failure-strategy halt=1'
+run_retro "$FIXZM" "PATH=$RETRO_SHADOW_FULL"
+RC_ZM=$RC; OUT_ZM="$OUT"; ERR_ZM="$ERR"
+if [ "$RC_ZM" -eq 0 ] && [ "$OUT_ZM" = "$EXPECTED_ZM" ] && [ -z "$ERR_ZM" ]; then
+  pass "(z) shadow PATH covers every command the reader fence actually needs (run under it succeeds with the expected aggregate)"
+else
+  bad "(z) reader fence needs a command the derived shadow lacks — derived=[$RETRO_DEP_LIST] rc=$RC_ZM expected=[$EXPECTED_ZM] out=[$OUT_ZM] err=[$ERR_ZM]"
+fi
+
+# The no-python3 shadow itself.
+RETRO_SHADOW="$TMP_ROOT/retro-bin"
+build_shadow "$RETRO_SHADOW" no "$RETRO_FENCE_DEPS"
+if [ -e "$RETRO_SHADOW/python3" ]; then
+  bad "(z) shadow PATH precondition broken: python3 present in $RETRO_SHADOW"
+fi
+
+FIXZ="$TMP_ROOT/retro-fixz"
+mkdir -p "$FIXZ/context"
+retro_rec 1 ',"failure-strategy":"halt"' > "$FIXZ/context/task-telemetry.jsonl"
+
+if [ -z "$RETRO_WARN_EXPECTED" ]; then
+  skipped "(z) NO-PYTHON reader fallback (absent python3) — expected [WARN] text could not be derived from the fence"
+else
+  run_retro "$FIXZ" "PATH=$RETRO_SHADOW"
+  RC_Z=$RC; OUT_Z="$OUT"; ERR_Z="$ERR"
+  # Exact-equality (not "contains [WARN]") proves nothing else appears on stdout
+  # — a `||` bound to the wrong command is the realistic way this silently
+  # changes shape, and it is only visible as extra/missing stdout. Stderr is
+  # NOT asserted empty here: bash itself writes "python3: command not found" to
+  # stderr when resolving the absent binary (mirrors the writer's (f)/(g), which
+  # makes the same call for the identical reason).
+  if [ "$RC_Z" -eq 0 ] && [ "$OUT_Z" = "$RETRO_WARN_EXPECTED" ]; then
+    pass "(z) reader python3 absent → exit 0, stdout byte-exactly the documented [WARN] line, nothing else on stdout"
+  else
+    bad "(z) reader python3 absent → expected rc=0 + exactly [$RETRO_WARN_EXPECTED]; got rc=$RC_Z out=[$OUT_Z] err=[$ERR_Z]"
+  fi
+
+  if printf '%s\n' "$OUT_Z" "$ERR_Z" | grep -Fq 'BLOCKED'; then
+    bad "(z) reader python3 absent → output contains a BLOCKED token; a failed read is a WARNING, never a blocked state"
+  else
+    pass "(z) reader python3 absent → no BLOCKED token anywhere in stdout/stderr"
+  fi
+fi
+
+# stub python3 exiting 127 — `command not found` (no such binary) and a child
+# that EXITS 127 travel different code paths in bash; both must reach the same
+# `|| echo` tail (mirrors the writer's (f) stub-127 case).
+RETRO_SHADOW2="$TMP_ROOT/retro-bin2"
+build_shadow "$RETRO_SHADOW2" no "$RETRO_FENCE_DEPS"
+printf '#!/usr/bin/env bash\nexit 127\n' > "$RETRO_SHADOW2/python3"
+chmod +x "$RETRO_SHADOW2/python3"
+
+FIXZ2="$TMP_ROOT/retro-fixz2"
+mkdir -p "$FIXZ2/context"
+retro_rec 1 ',"failure-strategy":"halt"' > "$FIXZ2/context/task-telemetry.jsonl"
+
+if [ -z "$RETRO_WARN_EXPECTED" ]; then
+  skipped "(z) stub python3 exiting 127 (reader) — expected [WARN] text could not be derived from the fence"
+else
+  run_retro "$FIXZ2" "PATH=$RETRO_SHADOW2"
+  RC_Z2=$RC; OUT_Z2="$OUT"; ERR_Z2="$ERR"
+  if [ "$RC_Z2" -eq 0 ] && [ "$OUT_Z2" = "$RETRO_WARN_EXPECTED" ]; then
+    pass "(z) stub python3 exiting 127 (reader) → exit 0, stdout byte-exactly the documented [WARN] line"
+  else
+    bad "(z) stub python3 exit 127 (reader) → expected rc=0 + exactly [$RETRO_WARN_EXPECTED]; got rc=$RC_Z2 out=[$OUT_Z2] err=[$ERR_Z2]"
+  fi
 fi
 
 # ── (h) PURITY ────────────────────────────────────────────────────────────────
