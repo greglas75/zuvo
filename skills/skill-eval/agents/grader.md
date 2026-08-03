@@ -123,8 +123,8 @@ assertion at that position — so **copy each `text` EXACTLY from the input; do 
 truncate, summarize, or reorder** (a truncated or reordered `text` makes the run look
 like a grader failure and hides the skill's real behavior). Emitting prose or an array
 whose length/order differs from the input assertions is a grading failure. A markdown
-code fence around the array is NOT a failure — the orchestrator strips a stray
-```json … ``` fence before parsing — but still prefer bare JSON as instructed.
+code fence around the array is NOT a failure — the orchestrator strips a stray ```json
+… ``` fence before parsing — but still prefer bare JSON as instructed.
 Per-assertion `evidence` strings must be usable in a human-facing report — a correct
 boolean with empty/generic evidence (`"yes"`, `"absent"` with no detail) does not
 satisfy the contract.

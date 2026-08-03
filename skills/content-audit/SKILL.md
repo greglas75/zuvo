@@ -42,7 +42,7 @@ Read these files before any work begins:
 7. `../../shared/includes/live-probe-protocol.md` -- Live URL safety rules
 8. `../../shared/includes/run-logger.md` -- Run logging contract
 9. `../../shared/includes/retrospective.md` -- Retrospective protocol
-9. `../../shared/includes/verification-protocol.md` -- Fresh-evidence rules
+10. `../../shared/includes/verification-protocol.md` -- Fresh-evidence rules
 
 Print the checklist:
 
@@ -56,8 +56,8 @@ CORE FILES LOADED:
   6. content-fix-registry.md    -- [READ | MISSING -> STOP]
   7. live-probe-protocol.md     -- [READ | MISSING -> STOP]
   8. run-logger.md              -- [READ | MISSING -> STOP]
-  9. retrospective.md              -- [READ | MISSING -> STOP]
-  9. verification-protocol.md   -- [READ | MISSING -> STOP]
+  9. retrospective.md           -- [READ | MISSING -> STOP]
+ 10. verification-protocol.md   -- [READ | MISSING -> STOP]
 ```
 
 If any file is missing, STOP.
@@ -285,12 +285,15 @@ overall_score = sum(dimension_scores) / dimensions_with_applicable_checks
 
 Grade mapping:
 
+Both formulas produce fractional scores, so the bands are stated as inequalities —
+a hyphenated `75-89` would leave 74.5 ungraded.
+
 | Grade | Score range | Meaning |
 |-------|-----------|---------|
-| **A** | 90-100% | Clean content, minor advisory items |
-| **B** | 75-89% | Some issues, no blocking findings |
-| **C** | 50-74% | Significant issues affecting quality |
-| **D** | 0-49% | Critical issues, CMS migration incomplete |
+| **A** | `>= 90` | Clean content, minor advisory items |
+| **B** | `>= 75 and < 90` | Some issues, no blocking findings |
+| **C** | `>= 50 and < 75` | Significant issues affecting quality |
+| **D** | `< 50` | Critical issues, CMS migration incomplete |
 
 **Blocking gate cap:** If ANY blocking finding exists (`mojibake-detected`,
 `php-tag`, `fm-yaml-malformed`, `img-404-live`), the grade is capped at **D**
@@ -305,7 +308,7 @@ fix_type and safety classification from `content-fix-registry.md`.
 
 ## Phase 3: Report
 
-### 4.1 Markdown report
+### 3.1 Markdown report
 
 Write to `zuvo/audits/content-audit-YYYY-MM-DD.md`. Auto-increment
 `-2.md`, `-3.md` for same-day runs.
@@ -337,6 +340,12 @@ FINDINGS:
 SKIPPED FILES:
   [list of binary files skipped]
 
+NEXT STEPS:
+  1. Run zuvo:content-fix to apply [N] auto-fixable findings
+  2. Review MODERATE fixes before applying with --auto
+  3. Address MANUAL findings listed above
+```
+
 ### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
 
 ```
@@ -358,12 +367,8 @@ If `gate_status = FAIL` → VERDICT = INCOMPLETE. Append the Run line via the re
 printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
+```
 Run: <ISO-8601-Z>	content-audit	<project>	-	-	<VERDICT>	-	8-dim	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
-
-NEXT STEPS:
-  1. Run zuvo:content-fix to apply [N] auto-fixable findings
-  2. Review MODERATE fixes before applying with --auto
-  3. Address MANUAL findings listed above
 ```
 
 
@@ -376,7 +381,7 @@ If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 After printing this block, append the `Run:` line value (without the `Run:`
 prefix) to the log file path resolved per `run-logger.md`.
 
-### 4.2 JSON report
+### 3.2 JSON report
 
 Write to `zuvo/audits/content-audit-YYYY-MM-DD.json` conforming to
 `audit-output-schema.md` v1.1.
@@ -439,10 +444,15 @@ mode).
 
 ## Phase 4: Adversarial Review (MANDATORY — do NOT skip)
 
-Run AFTER report files are generated (Phase 3).
+Run AFTER report files are generated (Phase 3). Point `--files` at the report you
+just wrote — a literal `[date]` placeholder matches nothing and burns the pass.
 
 ```bash
-adversarial-review --mode audit --files "zuvo/audits/content-audit-[date].md"
+# Phase 3 auto-increments (-2.md, -3.md) on same-day reruns, so take the newest
+# match rather than assuming the base name.
+REPORT=$(ls -t zuvo/audits/content-audit-$(date +%F)*.md 2>/dev/null | head -1)
+[ -n "$REPORT" ] && adversarial-review --mode audit --files "$REPORT" \
+  || echo "adversarial: report not found — write it first"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

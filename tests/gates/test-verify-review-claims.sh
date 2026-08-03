@@ -73,11 +73,30 @@ fi
 # conversation, so an anchor merely MENTIONED in the session matches itself (this tool's own
 # first run of this test proved it). Exercise the no-evidence path from a cwd that has no
 # transcript directory at all instead.
+#
+# Two different things must both hold, and they are NOT the same exit code:
+#   rc 1 = "I checked and the claims are false" — an ACCUSATION. Must never fire
+#          on missing data; that was this case's original point and it still holds.
+#   rc 2 = "I could not check" — not an accusation, and the ONLY honest answer for
+#          --strict. Returning 0 there made the verifier unfalsifiable in exactly the
+#          environment it polices: delete the transcript, pass the gate. Caught by the
+#          cross-provider adversarial pass on v1.6.53..HEAD (2026-08-03); the module
+#          docstring had documented "2 usage/no transcript" all along while the code
+#          returned 0. Non-strict keeps 0 so an interactive run stays useful.
 out="$(cd "$TMP" && printf '%s' "$CLAIMS_2" | python3 "$V" --claims - --strict 2>&1)"; rc=$?
-if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "SKIP"; then
-  pass "absent evidence SKIPs (never accuses on missing data)"
+if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q "SKIP"; then
+  pass "--strict with absent evidence exits 2 (cannot-verify), never 0"
+elif [ "$rc" -eq 1 ]; then
+  bad "missing-transcript path ACCUSED (rc=1) — it must never accuse on missing data: $out"
 else
-  bad "missing-transcript path did not SKIP cleanly (rc=$rc): $out"
+  bad "--strict missing-transcript expected rc=2, got rc=$rc: $out"
+fi
+
+out="$(cd "$TMP" && printf '%s' "$CLAIMS_2" | python3 "$V" --claims - 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "SKIP"; then
+  pass "non-strict with absent evidence still SKIPs cleanly (rc=0)"
+else
+  bad "non-strict missing-transcript expected rc=0 SKIP, got rc=$rc: $out"
 fi
 
 # ── 5. a `--help` probe is NOT a review pass ───────────────────────────────

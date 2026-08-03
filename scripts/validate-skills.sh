@@ -831,6 +831,29 @@ check_categories
 [ "$COUNT_CONSISTENCY_OK" -eq 1 ] && echo "count-consistency: OK ($ACTUAL_SKILLS)"
 [ -n "$CATEGORY_STATUS" ] && echo "$CATEGORY_STATUS"
 
+# --- skill structure: mis-paired fences + loading-list integrity ---
+# Both defect classes survived careful manual reading of the same files. A fence
+# closed in the WRONG PLACE still passes a parity count, and a duplicate ordinal
+# in a loading list is what hid three skills printing a file as READ that their
+# prose never told the agent to open. Mechanical or not caught at all.
+if [ -f "$ROOT/scripts/check-skill-structure.py" ]; then
+  # Capture once — running the checker twice (silently for the exit code, then
+  # again for the output) doubled the work over 107 files for nothing.
+  if _css_out="$(python3 "$ROOT/scripts/check-skill-structure.py" 2>&1)"; then
+    echo "skill-structure: OK"
+  else
+    printf '%s\n' "$_css_out"
+    ERRORS=$((ERRORS + 1))
+  fi
+  unset _css_out
+else
+  # Absent is legitimate for a fixture tree (--root DIR), so this is not an
+  # ERROR — but it must never be SILENT. A missing linter that prints nothing is
+  # indistinguishable from a linter that found nothing, which is the fail-open
+  # shape this whole release exists to remove.
+  echo "skill-structure: SKIP (scripts/check-skill-structure.py not present under $ROOT)"
+fi
+
 # --- gate registry: every GENERATED region must match shared/includes/gate-registry.md ---
 # Without this, the registry is just a seventh copy. Editing a generated region instead of the
 # registry is the exact failure mode that let CQ14 lose three clauses and CQ28 stay inverted.
@@ -841,6 +864,8 @@ if [ -f "$ROOT/scripts/gen-gate-copies.py" ]; then
     echo "ERROR: gate regions are stale — run: python3 scripts/gen-gate-copies.py --write"
     ERRORS=$((ERRORS + 1))
   fi
+else
+  echo "gate-registry: SKIP (scripts/gen-gate-copies.py not present under $ROOT)"
 fi
 
 echo "ERRORS: $ERRORS  WARNINGS: $WARNINGS"

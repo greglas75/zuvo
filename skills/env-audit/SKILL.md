@@ -194,8 +194,7 @@ Are all required env vars defined and documented?
 set defined in `.env.example`. Report both directions: used-but-undocumented
 and documented-but-unused.
 
-Critical gate: ENV1=0 (no `.env.example` OR multiple critical vars
-undocumented) triggers FAIL.
+Critical gate: no `.env.example` OR multiple critical vars undocumented → triggers FAIL. The gate fires on that FINDING; an ENV1 score of 0 also fires it but is not required.
 
 ### ENV2: Unused Variables -- Weight 5, Max 5
 
@@ -225,7 +224,7 @@ Does the app fail fast on missing or invalid configuration?
 - Raw usage: `process.env.VAR` without validation wrapper
 - NestJS: `ConfigModule.forRoot()` with `validationSchema`
 
-Critical gate: ENV3=0 (no validation anywhere) triggers FAIL.
+Critical gate: no validation anywhere → triggers FAIL. The gate fires on that FINDING; an ENV3 score of 0 also fires it but is not required.
 
 ### ENV4: Secret Exposure -- Weight 15, Max 15, Critical Gate
 
@@ -245,8 +244,7 @@ Critical gate: ENV3=0 (no validation anywhere) triggers FAIL.
   excluding test/mock/example files
 - Check `.dockerignore` for `.env`
 
-Critical gate: ENV4=0 (secrets committed or API keys in client-side vars)
-triggers FAIL.
+Critical gate: secrets committed or API keys in client-side vars → triggers FAIL. The gate fires on that FINDING; an ENV4 score of 0 also fires it but is not required.
 
 ### ENV5: Environment Parity -- Weight 10, Max 10
 
@@ -313,13 +311,24 @@ ENV8 = [0-5]    Documentation
 
 **Score = sum / 80 x 100**
 
-**Critical gates:** ENV1=0 OR ENV3=0 OR ENV4=0 triggers FAIL.
+**Critical gates — any ONE of these findings triggers FAIL, whatever the numeric score:**
+
+| Gate | Fires on |
+|------|----------|
+| ENV1 | no `.env.example`, OR multiple critical vars undocumented |
+| ENV3 | no startup validation anywhere |
+| ENV4 | any secret committed to the repo, OR an API key in a client-side (`NEXT_PUBLIC_`/`VITE_`) var, OR a hardcoded secret |
+
+**These gates fire on the FINDING, not on an aggregate score of zero.** Read as "the dimension
+scored 0" they are nearly unreachable, because every one of them spreads several checks over its
+weight: ENV4 carries five checks across 15 points, so a repo with a committed `.env` but a correct `.gitignore`, no client-side leak and no hardcoded key still scores about 12/15 — and the committed secret never blocks the audit. The named condition in each parenthesis IS the trigger — a dimension score of 0
+remains sufficient to fire the gate, it is simply not necessary.
 
 | Grade | Percentage |
 |-------|-----------|
 | HEALTHY | >= 80% |
-| NEEDS ATTENTION | 60-79% |
-| AT RISK | 40-59% |
+| NEEDS ATTENTION | >= 60% and < 80% |
+| AT RISK | >= 40% and < 60% |
 | CRITICAL | < 40% |
 
 ---

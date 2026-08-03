@@ -137,6 +137,20 @@ that cites `severity-vocabulary.md` has a row in it. Each of those was a real de
 2026-08-01 — 11 dangling probes, 2 undefined finding types, 4 unreachable geo fix types with
 ~140 lines of dead templates, 4 missing severity rows.
 
+```bash
+python3 scripts/check-skill-structure.py --verbose     # per-skill, run 1 already calls it silently
+```
+
+Two classes that reading the files does NOT catch, both proven on real defects. A code fence
+closed in the WRONG PLACE still passes a parity count of ```` ``` ````, and that hid eight skills
+whose `### Retrospective (REQUIRED)` section sat inside the completion block's fence — rendering
+as sample output to print rather than an instruction to follow. Those are the exact steps the
+retro-gate enforces, so a skill could reach COMPLETE with all three log files empty. Separately,
+a duplicate ordinal in a Mandatory File Loading list is cosmetic, but it hid four skills printing
+a file as READ that their prose never told the agent to open — one of them `no-pause-protocol.md`,
+the HARD rule against mid-batch pauses. Both are locked by `tests/gates/test-skill-structure.sh`,
+which also pins the false-positive classes (template headings inside a fence are legitimate).
+
 ### 4.4 Output
 
 Write findings to `zuvo/reports/<topic>-audit-YYYY-MM-DD.md` with a prioritized change plan
@@ -157,6 +171,8 @@ range with `/zuvo:review` and fix what the providers find.
 | `hand-maintained gate table outside the registry` | A table of ≥12 gate-ID rows appeared outside a GENERATED region — split it or move it into the registry |
 | seo-suite fails at "Shared Registries" | `rg` is not installed (see §0) — an environment failure wearing a test failure's clothes |
 | infra-suite: `Bind for 127.0.0.1:220x failed: port is already allocated` | An EARLIER run of this suite was killed (timeout, Ctrl-C, harness stop) and its containers outlived the script. **Never kill a container-starting test with a timeout** — the script dies, the containers do not. Clean with `cd tests/infra-suite/fixtures && docker compose -p zuvo-infra-fixtures down -v --remove-orphans`, then re-run. Misreading this as a pre-existing baseline is the trap: it presents as a flaky Docker test and is actually your own debris (happened 2026-08-02, and was written into a commit message as "pre-existing" before being diagnosed). |
+| `test-suite-e2e.sh` FAILs in the suite but PASSes standalone | Two different things hide behind that one child, and they need opposite responses. **Attribute before you label** (2026-08-03): `test-infra-collector-hardening.sh` fails identically at the previous commit — deterministic and pre-existing, NOT flaky. `test-infra-collector-live.sh` passes 2/2 standalone and fails under the full suite (lynis emits no `Hardening index` marker) — context-dependent on suite load. Calling the whole child "flaky" because the standalone run was green is wrong on the first half. Attribute with `git worktree add --detach /tmp/base-check HEAD~1` and run the same child there (§6b); a standalone pass alone proves nothing. |
+| A dozen `tests/hooks/*` children FAIL under `rt` (i9 farm) but PASS locally | **Do not run this repo's hook tests on the farm.** Measured 2026-08-03: `rt bash tests/run-all.sh` reported 13 failures in 108 s; every one of them passed standalone both at HEAD and at the previous commit. The hook suite asserts on real git state, `~/.claude`, `~/.zuvo` and gitignored `memory/reviews/` artifacts, none of which the farm's delta mirror carries — so gates that should see a covered range see an unreviewed one and cases like `(d1) small should pass` fail. This is an environment mismatch wearing a regression's clothes, and it is the reason a farm run of the FULL suite here is not a valid green/red signal. `rt` stays correct for the parts of the suite that are pure file analysis. Attribute the same way as the row above before believing any farm failure. |
 | `smoke-skill-testing.sh` step 1 FATAL, children green | It re-runs the whole suite; a concurrent session committing mid-run races it. Re-run on a quiet tree |
 | Suite green, behavior wrong in the client | The install/cache path, not the code: `./scripts/install.sh`, then restart the app; verify `installPath` in `installed_plugins.json` |
 

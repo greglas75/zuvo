@@ -44,5 +44,49 @@ else
   pass "pipeline-gate-lib.sh uses segment-based traversal detection"
 fi
 
+# --- do_sync end-to-end (the copy actually runs; the reimplementation above does not) ---
+#
+# The rule lived in THREE places and only two were fixed: review-artifact-sync.sh's
+# do_sync() kept `case "$ref"` (unprefixed), so `../x` matched neither `*/../*` nor
+# `*/..`, fell to the default branch, and was copied OUTSIDE the destination repo.
+# `../../x` still matched, which is why a two-segment case hides it. The contained()
+# helper above is a re-implementation — it cannot catch a drift in do_sync's own case
+# block, so this exercises the real script.
+SYNC="$ROOT/scripts/review-artifact-sync.sh"
+if [ -x "$SYNC" ] || [ -f "$SYNC" ]; then
+  sbox="$(mktemp -d)" || { bad "mktemp failed"; sbox=""; }
+  if [ -n "$sbox" ] && [ -d "$sbox" ]; then
+    mkdir -p "$sbox/src/memory/reviews" "$sbox/nested/dst/memory/reviews"
+    (cd "$sbox/src" && git init -q . 2>/dev/null) || true
+    (cd "$sbox/nested/dst" && git init -q . 2>/dev/null) || true
+    printf 'SECRET-CANARY\n' > "$sbox/outside-secret.txt"
+    cat > "$sbox/src/memory/reviews/aaaaaaa..bbbbbbb-t.md" <<'ART'
+<!-- zuvo-review -->
+range: aaaaaaa..bbbbbbb
+files: *
+adversarial: ../outside-secret.txt
+REVIEW BY: a
+REVIEW BY: b
+ART
+    sync_out="$(bash "$SYNC" --from "$sbox/src" --to "$sbox/nested/dst" 2>&1)"
+    # POSITIVE control FIRST. Asserting only "the secret was not copied" passes
+    # trivially when the sync errored out or did nothing at all — a test that
+    # cannot fail, which is the exact class this whole release is about. So first
+    # prove the run actually did its job, then prove what it refused.
+    if [ ! -f "$sbox/nested/dst/memory/reviews/aaaaaaa..bbbbbbb-t.md" ]; then
+      bad "do_sync did not copy the artifact — the traversal assertion below would be vacuous. Output: $sync_out"
+    elif [ -e "$sbox/nested/outside-secret.txt" ]; then
+      bad "do_sync copied a ../ proof path OUTSIDE the destination repo (traversal reopened)"
+    elif ! printf '%s' "$sync_out" | grep -q "escapes the repo"; then
+      bad "do_sync neither copied nor reported the escaping proof path — silent drop. Output: $sync_out"
+    else
+      pass "do_sync copies the artifact, refuses the '../' proof, and says so"
+    fi
+    rm -rf "$sbox"
+  fi
+else
+  pass "review-artifact-sync.sh absent — do_sync case skipped"
+fi
+
 echo "=== RESULT ==="
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "SOME FAILED"; exit 1; }

@@ -621,7 +621,7 @@ Postmortem:    [file path or "DRY RUN -- not created"]
 Comms:         [generated / not requested]
 
 Run: <ISO-8601-Z>	incident	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
-
+```
 
 ### Retrospective (REQUIRED)
 
@@ -637,8 +637,7 @@ printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 
 Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <project>)`. If exit 2 with `RETRO_REQUIRED` — go execute the retro bash from `retrospective.md` first; never bypass with `ZUVO_SKIP_RETRO_GATE=1`. After the wrapper succeeds, print a `Logs:` evidence line (`tail -1 ~/.zuvo/retros.log`, `grep -c "^<!-- RETRO -->" ~/.zuvo/retros.md`, `tail -1 ~/.zuvo/runs.log`) before claiming completion. Printing the markdown retro section without executing the bash leaves all three log files empty.
 
-Field mapping (aligned with run-logger.md contract):
-Field mapping (aligned with retrospective.md contract):
+Field mapping (aligned with the `run-logger.md` 13-field contract):
 - CQ_SCORE: `-` (not applicable)
 - Q_SCORE: `-` (not applicable)  
 - VERDICT: RESOLVED→PASS, MITIGATED→WARN, INVESTIGATING→BLOCKED
@@ -654,6 +653,7 @@ RCA Confidence: [CONFIRMED / LIKELY / POSSIBLE / UNCONFIRMED]
 Duration:      [Xh Ym]
 ```
 
+```
 Next steps:
   zuvo:debug [suspect-file]   -- investigate and fix root cause
   zuvo:build [fix]            -- implement a hotfix

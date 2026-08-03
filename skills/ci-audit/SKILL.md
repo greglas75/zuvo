@@ -225,7 +225,7 @@ Score 0-15 based on coverage.
 | Permissions | Minimal `permissions:` declared | Default write-all permissions | HIGH |
 | Hardcoded secrets | Zero hardcoded secrets | Secrets in workflow YAML | CRITICAL |
 
-Critical gate: CI5=0 (hardcoded secrets or secrets likely logged) triggers FAIL.
+Critical gate: hardcoded secrets or secrets likely logged → triggers FAIL. The gate fires on that FINDING; a CI5 score of 0 also fires it but is not required.
 
 **Verification:** For each secret reference found, read the surrounding step
 to check whether it is set via `env:` block (safe) or inlined in `run:` script
@@ -242,7 +242,7 @@ to check whether it is set via `env:` block (safe) or inlined in `run:` script
 | Dependabot | Dependabot configured for `github-actions` updates | No automated update mechanism | MEDIUM |
 | Tag pinning | First-party actions at `@vN` (acceptable) | Third-party at `@vN` (risky) | MEDIUM |
 
-Critical gate: CI6=0 (unverified actions from unknown sources) triggers FAIL.
+Critical gate: unverified actions from unknown sources → triggers FAIL. The gate fires on that FINDING; a CI6 score of 0 also fires it but is not required.
 
 ### CI7: Timeout and Resource Config -- Weight 8, Max 8
 
@@ -274,7 +274,7 @@ Critical gate: CI6=0 (unverified actions from unknown sources) triggers FAIL.
 gate -- it is just reporting. A gate requires a threshold that fails the build
 (e.g., `--coverageThreshold`, `fail_under`, Codecov `threshold` in config).
 
-Critical gate: CI9=0 (no tests in CI) triggers FAIL.
+Critical gate: no tests in CI → triggers FAIL. The gate fires on that FINDING; a CI9 score of 0 also fires it but is not required.
 
 ### CI10: Pipeline Speed -- Weight 10, Max 10
 
@@ -312,13 +312,24 @@ Excluded from both score and max.
 
 **Score = sum / applicable_max x 100**
 
-**Critical gates:** CI5=0 OR CI6=0 (GHA only) OR CI9=0 triggers FAIL.
+**Critical gates — any ONE of these findings triggers FAIL, whatever the numeric score:**
+
+| Gate | Fires on |
+|------|----------|
+| CI5 | any hardcoded secret in a workflow, or a secret reaching the log |
+| CI6 | any unverified/unpinned action from an unknown source (GitHub Actions only; N/A elsewhere) |
+| CI9 | no tests run in CI |
+
+**These gates fire on the FINDING, not on an aggregate score of zero.** Read as "the dimension
+scored 0" they are nearly unreachable, because every one of them spreads several checks over its
+weight: CI5 spreads its checks across its full weight, so one hardcoded secret beside several passing checks scores well above zero. The named condition in each parenthesis IS the trigger — a dimension score of 0
+remains sufficient to fire the gate, it is simply not necessary.
 
 | Grade | Percentage |
 |-------|-----------|
 | HEALTHY | >= 80% |
-| NEEDS ATTENTION | 60-79% |
-| AT RISK | 40-59% |
+| NEEDS ATTENTION | >= 60% and < 80% |
+| AT RISK | >= 40% and < 60% |
 | CRITICAL | < 40% |
 
 ---

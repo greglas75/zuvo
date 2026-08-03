@@ -65,9 +65,10 @@ Read these files before any work begins:
 6. `../../shared/includes/seo-bot-registry.md` -- Canonical AI/search bot policy taxonomy for robots fixes
 7. `../../shared/includes/run-logger.md` -- Run logging contract
 8. `../../shared/includes/retrospective.md` -- Retrospective protocol
-8. `../../shared/includes/verification-protocol.md` -- Fresh-evidence rules for build and endpoint verification
-9. `../../shared/includes/knowledge-prime.md` -- Project knowledge priming
-10. `../../shared/includes/knowledge-curate.md` -- Learning extraction after work
+9. `../../shared/includes/verification-protocol.md` -- Fresh-evidence rules for build and endpoint verification
+10. `../../shared/includes/knowledge-prime.md` -- Project knowledge priming
+11. `../../shared/includes/knowledge-curate.md` -- Learning extraction after work
+12. `../../shared/includes/no-pause-protocol.md` -- HARD rule: no mid-batch pauses
 
 Print the checklist:
 
@@ -81,10 +82,10 @@ CORE FILES LOADED:
   6. seo-bot-registry.md        -- [READ | MISSING -> STOP]
   7. run-logger.md              -- [READ | MISSING -> STOP]
   8. retrospective.md              -- [READ | MISSING -> STOP]
-  8. verification-protocol.md   -- [READ | MISSING -> STOP]
-  9. ../../shared/includes/knowledge-prime.md  -- READ/MISSING
-  10. ../../shared/includes/knowledge-curate.md -- READ/MISSING
-  11. ../../shared/includes/no-pause-protocol.md -- READ/MISSING (HARD: no mid-batch pauses)
+  9. verification-protocol.md   -- [READ | MISSING -> STOP]
+  10. ../../shared/includes/knowledge-prime.md  -- READ/MISSING
+  11. ../../shared/includes/knowledge-curate.md -- READ/MISSING
+  12. ../../shared/includes/no-pause-protocol.md -- READ/MISSING (HARD: no mid-batch pauses)
 ```
 
 If any file is missing, STOP.

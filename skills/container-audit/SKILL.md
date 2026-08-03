@@ -7,7 +7,7 @@ description: >
   and compose/orchestration hardening. Static-first — parses Dockerfile, Containerfile,
   and docker-compose (incl. override/merge files) with zero Docker and zero network;
   the CVE dimension (K5) runs Trivy/Grype only when present, else degrades to N/A.
-  Reserved dimensions K7-K10 (Kubernetes) activate behind --k8s. Tiered A/B/C/D report
+  Reserved dimensions K7-K10 (Kubernetes) activate behind --k8s. HEALTHY/NEEDS ATTENTION/AT RISK/CRITICAL grade
   with critical gates. Distinct from infra-audit (live host daemon over SSH) and
   ci-audit (Docker build speed in the pipeline).
   Switches: zuvo:container-audit full | [path] | --static | --scan | --dockerfile <p> | --compose <p> | --quick | --k8s | --persist-backlog
@@ -206,8 +206,8 @@ the same file) are exempt.
 | Var-interpolated `FROM $REG/img` | Resolvable + pinned | Unresolvable build-arg base | HIGH (flag, do not silent-pass) |
 
 Only a `@sha256:` digest is truly immutable; a specific version tag is pinned-enough to clear the
-critical gate but is flagged MEDIUM (recommend a digest). Critical gate: K1=0 (any final-image
-external base on `:latest`/`:stable`/no-tag) triggers FAIL.
+critical gate but is flagged MEDIUM (recommend a digest). Critical gate: any final-image external base on `:latest`/`:stable`/no-tag → FAIL. The gate fires
+on that FINDING; a K1 score of 0 also fires it but is not required.
 rule_ids: `K1-latest-tag`, `K1-no-tag`, `K1-mutable-version-tag`, `K1-untrusted-registry`, `K1-unpinned-builder`.
 
 ### K2: Privilege & Runtime Hardening -- Weight 18, Critical Gate
@@ -222,7 +222,8 @@ rule_ids: `K1-latest-tag`, `K1-no-tag`, `K1-mutable-version-tag`, `K1-untrusted-
 | Read-only rootfs (compose) | `read_only: true` where feasible | writable rootfs unnecessarily | MEDIUM |
 
 Distroless `:nonroot` variants satisfy the non-root check even without a `USER` line — do NOT
-false-flag them. Critical gate: K2=0 (runs as root AND/OR `privileged: true`) triggers FAIL.
+false-flag them. Critical gate: the image runs as root AND/OR `privileged: true` → FAIL. The gate fires on that
+FINDING; a K2 score of 0 also fires it but is not required.
 rule_ids: `K2-root-user`, `K2-privileged`, `K2-no-cap-drop`, `K2-no-new-privileges`.
 
 ### K3: Secret & Build-Context Hygiene -- Weight 18, Critical Gate
@@ -235,8 +236,8 @@ rule_ids: `K2-root-user`, `K2-privileged`, `K2-no-cap-drop`, `K2-no-new-privileg
 | No hardcoded creds | secrets via runtime env / manager | literal password/token in Dockerfile | CRITICAL |
 
 K3 only flags ENV/ARG whose NAME matches secret patterns (`*KEY*`, `*SECRET*`, `*TOKEN*`,
-`*PASSWORD*`, `*CRED*`), never benign build config (`VERSION`, `NODE_ENV`). Critical gate:
-K3=0 (any secret baked, OR blind `COPY . .` with no `.dockerignore`) triggers FAIL.
+`*PASSWORD*`, `*CRED*`), never benign build config (`VERSION`, `NODE_ENV`). Critical gate: any secret baked into the image, OR a blind `COPY . .` with no `.dockerignore`
+→ FAIL. The gate fires on that FINDING; a K3 score of 0 also fires it but is not required.
 rule_ids: `K3-secret-in-env`, `K3-secret-in-arg`, `K3-no-dockerignore`, `K3-hardcoded-cred`.
 
 ### K4: Image Minimalism & Attack Surface -- Weight 12
@@ -482,10 +483,15 @@ TSV emit → markdown append. If gate check skips: print "RETRO: skipped (trivia
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log
 file path resolved per `run-logger.md`.
 
-VERDICT: **FAIL** if any critical GATE trips (K1=0 OR K2=0 OR K3=0 OR a K5 critical CVE) OR ≥4
-critical findings; **WARN** if 1-3 critical findings and no gate tripped; **PASS** if 0 critical
-findings. (A tripped critical gate always wins over the finding-count band — a single K2=0 is FAIL,
-not WARN.)
+VERDICT: **FAIL** if any critical GATE trips OR ≥4 critical findings; **WARN** if 1-3 critical
+findings and no gate tripped; **PASS** if 0 critical findings. (A tripped critical gate always wins
+over the finding-count band — one tripped K2 is FAIL, not WARN.)
+
+A gate "trips" per the **Gate / Fires on** table above — on the FINDING, not on `Kn=0`. Do not
+restate the trip condition here as `K1=0 OR K2=0 OR K3=0`: that is the score-based reading the
+table exists to replace, and it makes the gates nearly unreachable (K2 spreads six checks over 18
+points, so a root-running privileged container still scores well above 0 and would pass the very
+gate meant to fail it). One table, one place — this line points at it.
 
 ---
 

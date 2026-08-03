@@ -754,10 +754,12 @@ Same format used by seo-fix for backlog updates. Deduplicate against existing en
 
 ## Phase 7b: Adversarial Review on Audit Report (MANDATORY — do NOT skip)
 
-After the audit report is generated, run cross-model validation to catch score inflation and gate inconsistency.
+After the audit report is generated, run cross-model validation to catch score inflation and gate inconsistency. Point `--files` at the report you just wrote — do NOT run the literal placeholder (it matches nothing and burns a pass).
 
 ```bash
-adversarial-review --mode audit --files "[audit report path]"
+REPORT="zuvo/audits/seo-audit-$(date +%F).md"   # the report this run wrote
+[ -f "$REPORT" ] && adversarial-review --mode audit --files "$REPORT" \
+  || echo "adversarial: report not found — write it first"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

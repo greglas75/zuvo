@@ -45,7 +45,7 @@ CORE FILES LOADED:
   1. ../../shared/includes/env-compat.md          — READ/MISSING
   2. ../../shared/includes/run-logger.md           — READ/MISSING
   3. ../../shared/includes/retrospective.md           — READ/MISSING
-  3. ../../shared/includes/platform-detection.md   — READ/MISSING
+  4. ../../shared/includes/platform-detection.md   — READ/MISSING
 ```
 
 If any file is missing: proceed in degraded mode. Note which files are unavailable in the Phase 7 output.
@@ -273,7 +273,7 @@ DEPLOY COMPLETE
   Next: zuvo:canary <url> (optional monitoring)
 
 Run: <ISO-8601-Z>\tdeploy\t<project>\t-\t-\t<VERDICT>\t-\t7-phase\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
-
+```
 
 ### Retrospective (REQUIRED)
 
@@ -284,7 +284,6 @@ If gate check skips: print "RETRO: skipped (trivial session)" and proceed.
 After printing this block, append the `Run:` line value (without the `Run: ` prefix) to the log file path resolved per `run-logger.md`.
 
 VERDICT mapping: successful deploy → PASS, PARTIAL → WARN, failed → FAIL, cancelled → ABORTED.
-```
 
 ---
 

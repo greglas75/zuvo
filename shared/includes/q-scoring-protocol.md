@@ -35,7 +35,7 @@ Q17 — No tautological oracles (mock returns X, assert X) — expected values f
 
 ```
 >= 82% of applicable, all critical gates = 1   →  PASS
->= 0.53 and < 0.82 of applicable, all critical gates = 1  →  FIX (improve weak gates)
+>= 53% and < 82% of applicable, all critical gates = 1  →  FIX (improve weak gates)
 < 53% OR any critical gate = 0                →  REWRITE
 
 applicable = 25 - count(N/A) - count(out-of-scope)

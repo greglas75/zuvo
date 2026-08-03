@@ -179,7 +179,7 @@ After the output block, print and append the run log line:
 
 ```
 Run: <ISO-8601-Z>\trelease-docs\t<project>\t-\t-\t<VERDICT>\t-\t5-phase\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
-
+```
 
 ### Retrospective (REQUIRED)
 
@@ -194,4 +194,3 @@ printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
 Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <project>)`. If exit 2 with `RETRO_REQUIRED` — go execute the retro bash from `retrospective.md` first; never bypass with `ZUVO_SKIP_RETRO_GATE=1`. After the wrapper succeeds, print a `Logs:` evidence line (`tail -1 ~/.zuvo/retros.log`, `grep -c "^<!-- RETRO -->" ~/.zuvo/retros.md`, `tail -1 ~/.zuvo/runs.log`) before claiming completion. Printing the markdown retro section without executing the bash leaves all three log files empty.
-```

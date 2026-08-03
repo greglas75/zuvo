@@ -41,12 +41,12 @@ Take an existing article, research the topic, add what's missing, and optimize t
 
 **Lazy-loaded (Phase 2 only):**
 
-7. `../../shared/includes/prose-quality-registry.md` -- PQ1-PQ18 (scoring)
-8. `../../shared/includes/adversarial-loop-docs.md` -- Cross-model review (end of Phase 2)
-9. `../../shared/includes/article-output-schema.md` -- JSON output
-10. `../../shared/includes/retrospective.md` -- RETRO PROTOCOL
+8. `../../shared/includes/prose-quality-registry.md` -- PQ1-PQ18 (scoring)
+9. `../../shared/includes/adversarial-loop-docs.md` -- Cross-model review (end of Phase 2)
+10. `../../shared/includes/article-output-schema.md` -- JSON output
+11. `../../shared/includes/retrospective.md` -- RETRO PROTOCOL
 
-Print `CORE FILES LOADED:` for items 1-6. After language detection, print `LANGUAGE FILE:` with the resolved banned-vocabulary language file and whether English fallback was used. Lazy items loaded inline when needed.
+Print `CORE FILES LOADED:` for items 1-7. After language detection, print `LANGUAGE FILE:` with the resolved banned-vocabulary language file and whether English fallback was used. Lazy items loaded inline when needed.
 
 ## Safety Gates
 

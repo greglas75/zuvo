@@ -78,7 +78,7 @@ pointer now and not a longer table.)
 | Result | Criteria |
 |--------|---------|
 | PASS | Score >= 86% of applicable AND all active critical gates = 1 |
-| CONDITIONAL PASS | Score >= 0.79 and < 0.86 of applicable AND all active critical gates = 1 |
+| CONDITIONAL PASS | Score >= 79% and < 86% of applicable AND all active critical gates = 1 |
 | FAIL | Any active critical gate = 0, OR score < 79% of applicable |
 
 `applicable = 40 - count(out-of-scope) - count(N/A)` — a PERCENTAGE, never a fixed denominator.
@@ -172,7 +172,7 @@ These are always critical. If any scores 0, the evaluation is capped at FIX:
 | Result | Criteria |
 |--------|---------|
 | PASS | Score >= 82% of applicable, all critical gates = 1 |
-| FIX | Score >= 0.53 and < 0.82 of applicable, all critical gates = 1 |
+| FIX | Score >= 53% and < 82% of applicable, all critical gates = 1 |
 | REWRITE | Score < 53%, or any critical gate = 0 |
 
 ### Q Evidence Format

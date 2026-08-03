@@ -69,6 +69,8 @@ Read these files before any work begins:
 1. `../../shared/includes/codesift-setup.md` -- CodeSift discovery and tool selection
 2. `../../shared/includes/env-compat.md` -- Agent dispatch and environment adaptation
 3. `../../rules/file-limits.md` -- Size limits for SA7 file categorization
+4. `../../shared/includes/run-logger.md` -- Run logging contract
+5. `../../shared/includes/retrospective.md` -- Retrospective protocol
 
 Print the checklist:
 
@@ -78,10 +80,10 @@ CORE FILES LOADED:
   2. env-compat.md       -- [READ | MISSING -> STOP]
   3. file-limits.md      -- [READ | MISSING -> use defaults: 300L service, 200L component]
   4. run-logger.md       -- [READ | MISSING -> STOP]
-  5. retrospective.md       -- [READ | MISSING -> STOP]
+  5. retrospective.md    -- [READ | MISSING -> STOP]
 ```
 
-If file 1 or 2 is missing, STOP.
+If file 1, 2, 4, or 5 is missing, STOP. File 3 has a documented fallback.
 
 ## Environment Compatibility
 

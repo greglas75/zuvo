@@ -220,6 +220,12 @@ install_claude() {
     # Copy skills (new + updated), resolve {plugin_root} to actual cache path
     for skill_dir in "$ZUVO_DIR"/skills/*/; do
       skill_name=$(basename "$skill_dir")
+      # Never carry a test fixture out of the repo. tests/skill-suite/test-references-guards.sh
+      # creates skills/tmp-refguard-$$-test/ inside the real tree (B-REFGUARD); an install that
+      # overlaps a running guard test — or follows a killed one — copied it into the cache, where
+      # it persisted indefinitely. Found in BOTH 1.6.52 and 1.6.53 on 2026-08-03 and removed by
+      # hand. Skipping `tmp-*` makes the leak impossible regardless of timing.
+      case "$skill_name" in tmp-*) continue ;; esac
       mkdir -p "$CACHE_DIR/skills/$skill_name"
       cp -r "$skill_dir"* "$CACHE_DIR/skills/$skill_name/" 2>/dev/null || true
     done

@@ -221,7 +221,9 @@ If >30 views (or `--max-files` limit), audit top files by size, capped at limit.
 
 Score: 1 = YES, 0 = NO, N/A with justification. N/A excludes from denominator.
 
-**Thresholds:** PASS >= 80%, CONDITIONAL 70-79%, FAIL < 70%.
+**Thresholds:** PASS >= 80%, CONDITIONAL >= 70% and < 80%, FAIL < 70%. Inequalities, not
+`70-79%`: the score is a percentage of applicable gates and can be fractional, so a hyphenated
+band leaves 79.5% ungraded.
 
 ### Step 3: Batch Code Analysis
 
@@ -419,6 +421,9 @@ DESIGN-REVIEW COMPLETE
 -----
 Views audited: [N]
 Avg DX score:  [N]%
+-----
+```
+
 ### Validity Gate (REQUIRED — print BEFORE Run line, AFTER retro append + append-runlog)
 
 ```
@@ -444,8 +449,8 @@ If `gate_status = FAIL` → VERDICT = INCOMPLETE. Append the Run line via the re
 printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 ```
 
+```
 Run: <ISO-8601-Z>	design-review	<project>	-	-	<VERDICT>	-	<DURATION>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
------
 ```
 
 

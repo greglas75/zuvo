@@ -67,7 +67,7 @@ COVERAGE-CHECK REPORT
   GAP: src/orders/service.ts — no test file found
   GAP: src/auth/guard.ts — test exists but doesn't cover newMethod()
 
-  Verdict: PASS (≥80%) / WARN (50-79%) / FAIL (<50%)
+  Verdict: PASS (>= 80%) / WARN (>= 50% and < 80%) / FAIL (< 50%)
 ```
 
 ## Critical Rule

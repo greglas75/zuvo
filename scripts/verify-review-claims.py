@@ -257,7 +257,14 @@ def main() -> int:
         if not tpaths:
             print(f"verify-review-claims: SKIP — {note}")
             print("  (no transcript = no independent evidence; the gate stays self-attested here)")
-            return 0
+            # In --strict this MUST NOT be success. Strict mode is what a gate or CI
+            # calls, and "I could not find the evidence" is the opposite of "the claims
+            # check out" — returning 0 made the whole verifier unfalsifiable in exactly
+            # the environment it exists to police: delete the transcript, pass the gate.
+            # The module docstring already documented "2 usage/no transcript"; the code
+            # disagreed with its own contract. Non-strict keeps the informative 0 so an
+            # interactive run without a transcript is still useful.
+            return 2 if args.strict else 0
 
     calls: list[tuple[str, dict]] = []
     for tp in tpaths:

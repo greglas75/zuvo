@@ -389,7 +389,7 @@ Otherwise score from `package.json` dependency analysis and import patterns.
 | Index coverage | Indexes on filter/sort columns, composite indexes for common queries | Sequential scan on large tables | HIGH |
 | Connection pooling | Configured pool with limits, singleton client | New client per request, no pool | HIGH |
 
-Critical gate: D7=0 (N+1 in hot path) triggers audit FAIL.
+Critical gate: N+1 in hot path → triggers FAIL. The gate fires on that FINDING; a D7 score of 0 also fires it but is not required.
 
 ### D8: Caching Strategy -- Weight 8, Max 8
 
@@ -593,11 +593,14 @@ numerator and denominator.
 | Grade | Percentage |
 |-------|-----------|
 | A | >= 85% |
-| B | 70-84% |
-| C | 50-69% |
+| B | >= 70% and < 85% |
+| C | >= 50% and < 70% |
 | D | < 50% |
 
-Critical gate: D7=0 (N+1 in hot path) overrides to FAIL regardless of total.
+Critical gate: an N+1 query in a hot path overrides to FAIL regardless of total. The gate fires on
+that FINDING, not on D7 scoring 0 — D7 spreads several checks over its weight, so a real N+1
+alongside passing checks scores well above zero and would otherwise never block the audit. A D7
+score of 0 still fires it; it is simply not necessary.
 
 ### Backlog Integration
 

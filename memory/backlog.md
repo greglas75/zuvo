@@ -211,8 +211,17 @@ real repo. Two concurrent runs collide (~4 min stall observed), and while a fixt
 **Why it was accepted:** the test contract-tests a WHOLE-REPO validator, so it needs a fixture the real
 validator can see. PID-unique naming + an existence guard removed the deletion risk; the residue is a
 false FAIL / mis-count under parallel agents, never a false PASS.
+**Escapes the repo entirely (observed 2026-08-03).** The residue is not confined to a false FAIL.
+`install.sh` copies `skills/*` into every install target, so an `install.sh` that overlaps a running
+guard test — or that follows a killed one — carries the fixture out of the repo and leaves it there
+permanently. Found `tmp-refguard-56836-test` and `tmp-refguard-82399-test` sitting in the Claude Code
+plugin cache under BOTH `zuvo/1.6.52/skills/` and `zuvo/1.6.53/skills/` (4 directories), long after the
+test that made them had finished. They are inert, but they inflate the installed skill count (59 dirs
+against 57 in source) and would be read by anything that enumerates the cache. Removed by hand.
 **Fix direction:** run the validator against a copied tree (a `--root` option) so fixtures can live in
-`mktemp -d` outside the repo — that removes the last shared-state coupling without losing real-repo coverage.
+`mktemp -d` outside the repo — that removes the last shared-state coupling without losing real-repo
+coverage, and closes the escape path above at the same time. Until then, `install.sh` could refuse to
+copy a `skills/tmp-*` directory — a one-line guard that makes the leak impossible regardless of timing.
 
 ## B-ADV-TRUNC — a truncated adversarial review is reported as a complete one
 **Found:** 2026-07-31, reviewing the Task 8 patch (50583 chars) during the write-e2e V2 execute run.
@@ -371,3 +380,36 @@ are the only items that genuinely left the fence — each with the concrete reas
 - B-skillmd-size-policy | skills/*/SKILL.md (execute is 1501L, +259 this range) | policy | NO rule is being violated — `rules/file-limits.md` is explicitly TS/NestJS/React-calibrated and does not govern markdown SKILL.md files, and the only per-file bound in the repo is write-e2e's bespoke body-line test. So there is nothing to fix, only something to DECIDE: either give validate-skills a generous SKILL.md ceiling with a documented rationale, or state in file-limits.md/CLAUDE.md that SKILL.md files are exempt by design. defer-reason: repo-wide policy decision for the maintainer, genuinely outside this diff's fence | seen:1 | confidence:75 | source:review-struct | 2026-08-03
 - B-retro-stub-t64-flaky | tests/adversarial/test-session-retro-carry.sh :: T6.4 | flaky-test | "no new stub added (full retro supersedes — idempotent)" fails intermittently: observed RED mid-review, and RED at the BASE commit 50eeeaf when run against an extracted base tree, then GREEN on a later run of the same unchanged file. So it is state-dependent (leftover markers under ~/.zuvo/run-markers), not a regression from this range — this range touched only the BASE line-budget constant in that file, and `scripts/zuvo-home/retro-stub` (the code under test) is not in 50eeeaf..23a207a at all. Recipe: make the case hermetic w.r.t. $ZUVO_HOME rather than reading the real one. defer-reason: pre-existing debt, out of fence — belongs to whatever last touched retro-stub | seen:1 | confidence:80 | source:review-cq | 2026-08-03
 - B-devpush-marketplace-dirty-tree | scripts/dev-push.sh Step 0b (~55-97) vs Step 4 | crash-safety | FOUR providers independently (codex, cursor, kimi, claude — kimi and claude rated it CRITICAL). Step 0b rewrites the SIBLING marketplace working tree but does not commit it; the commit lands only at Step 4. Any failure or interrupt in Steps 1-3 leaves the marketplace repo dirty, and the next run's mandatory `git pull --rebase` then fails on a dirty tree — a trap that needs manual recovery in a repo the user was told is self-healing. Related, same area: an orphaned `.zuvo-count-*` mkstemp file after a kill, and no rollback if `os.replace` fails on the second of two staged files. Recipe: either commit the count fix immediately in Step 0b as its own commit, or register a trap that restores the marketplace tree on any non-zero exit before Step 4. defer-reason: NOT localized — changing where the marketplace commit happens reorders dev-push's push/rollback contract and needs its own RED test against the 32-assertion gate suite; that is a scoped change, not a review-loop edit | seen:1 | confidence:90 | source:review-adversarial | 2026-08-03
+
+## B-CQ40-METALINTER — no meta-linter configured repo-wide (CQ40=0)
+Surfaced by: zuvo:review v1.6.53..HEAD (CQ auditor, 2026-08-03). Pre-existing, repo-wide.
+`find` for pyproject.toml / ruff.toml / .flake8 / .shellcheckrc returns nothing, and no
+workflow invokes ruff/mypy/shellcheck. gate-registry.md CQ40 says "No config present = 0 —
+that is the point of the gate". This release added ~520 lines of new unlinted Python
+(check-skill-structure.py, verify-review-claims.py) plus shell, roughly doubling the surface.
+Defer-reason: structural-refactor (multi-file) — new config files + CI wiring, not a
+single-file fix.
+Recipe:
+  1. Add `pyproject.toml` with `[tool.ruff]` (select E,F,B,SIM) and `[tool.mypy]` for scripts/.
+  2. Add `.shellcheckrc`; run `shellcheck scripts/*.sh hooks/**/*.sh tests/**/*.sh`.
+  3. Wire both into scripts/validate-skills.sh as an optional-tool check (SKIP-if-absent,
+     like the existing bats group) so a missing binary is a SKIP, not a false failure.
+
+## B-PATH-CONTAIN-SHARED-FN — the containment rule lives in 3 copies
+Surfaced by: zuvo:review v1.6.53..HEAD (CQ-1 root cause, 2026-08-03).
+The absolute + `..`-segment proof-path check is implemented three times:
+hooks/lib/pipeline-gate-lib.sh::pg_artifact_proven, scripts/review-artifact-sync.sh::lint_artifact,
+and ::do_sync. d568825 fixed two and missed the third, which reopened a real traversal
+(fixed in 9df7c06). Fixing the instance does not fix the shape.
+Defer-reason: structural-refactor (multi-file).
+Recipe:
+  1. Create scripts/lib/path-contain.sh exporting `path_contained <ref>` (0=safe, 1=reject),
+     carrying the leading-slash comment that explains why `../x` needs the prefix.
+  2. Source it from all three call sites; delete the inline case blocks.
+  3. Point tests/hooks/test-proof-path-containment.sh at the shared function AND keep the
+     end-to-end do_sync case — the re-implementation trap is what hid the drift.
+  4. While there: make the shared helper CANONICAL, not lexical. `case` segment matching is
+     defeated by a symlink — a ref with no `..` at all can still resolve outside the repo.
+     `realpath -e -- "$root/$ref"` and require the result to be prefixed by `realpath "$root"`.
+     Raised by the cross-provider pass on the fix diff (2026-08-03); deferred with the rest of
+     this item because it belongs in the one shared function, not a fourth inline copy.

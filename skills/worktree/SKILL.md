@@ -155,6 +155,24 @@ Worktree created.
 
 ## FINISH Mode
 
+### Step 0: Resolve paths (FINISH is a standalone entry point)
+
+FINISH is reached by standing INSIDE a worktree in a fresh invocation, so it inherits nothing from
+CREATE — `WTDIR` does not exist here. Resolve the two paths every option below needs, from git:
+
+```bash
+WT_PATH=$(git rev-parse --show-toplevel)                              # the worktree being finished
+MAIN_ROOT=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')   # the main checkout
+```
+
+Use `$WT_PATH` for removal — never `$WTDIR/<branch>`. Until 2026-08-02 all three options removed
+`"$WTDIR/<branch-name>"` with `WTDIR` unset, so the path collapsed to `/<branch-name>`:
+`git worktree remove` failed, the worktree survived, and the skill still reported "Worktree
+removed." A silent no-op on the cleanup step, and Option 4 ran it with `--force`.
+
+You cannot remove the worktree you are standing in — `cd "$MAIN_ROOT"` first in every option that
+removes.
+
 Present four completion options. The user picks one.
 
 Before presenting options, summarize the current state:
@@ -172,12 +190,12 @@ Steps:
 1. Ensure working tree is clean (`git status --porcelain` produces no output).
 2. Run tests in the worktree. If failures exist, report and ask whether to proceed.
 3. Determine base branch: `git log --oneline --merges --first-parent -1` or parse from worktree creation context. If unclear, ask.
-4. Switch to main checkout: `cd` to the main worktree path (from `git worktree list`).
+4. Switch to the main checkout: `cd "$MAIN_ROOT"`.
 5. Pull latest base: `git checkout <base> && git pull`.
 6. Merge: `git merge <feature-branch>`.
 7. If merge conflict occurs: report conflicts and STOP. Do not auto-resolve. Tell the user which files conflict and wait for instructions.
 8. If merge succeeds: run tests again on the merged result. Report pass/fail.
-9. Cleanup worktree: `git worktree remove "$WTDIR/<branch-name>"`.
+9. Cleanup worktree: `git worktree remove "$WT_PATH"`.
 10. Delete feature branch: `git branch -d <feature-branch>`.
 
 Report: "Merged <branch> into <base>. Tests: N passing. Worktree removed."
@@ -199,7 +217,7 @@ Steps:
    gh pr create --title "<title>" --body "<body>" --base "<base-branch>"
    ```
 6. Report the PR URL.
-7. Cleanup worktree: `git worktree remove "$WTDIR/<branch-name>"`.
+7. Leave the worktree first, then remove it: `cd "$MAIN_ROOT" && git worktree remove "$WT_PATH"`.
 8. Do NOT delete the branch (it is now tracked by the PR).
 
 Report: "PR created: <url>. Worktree removed. Branch preserved on remote."
@@ -229,8 +247,8 @@ Steps:
 1. Require explicit confirmation. Ask the user to type the word `discard` (case-insensitive).
 2. If the user types anything else, abort and return to option selection.
 3. After confirmation:
-   - `cd` to main worktree path.
-   - Remove worktree: `git worktree remove --force "$WTDIR/<branch-name>"`.
+   - `cd "$MAIN_ROOT"`.
+   - Remove worktree: `git worktree remove --force "$WT_PATH"`.
    - Delete branch: `git branch -D <feature-branch>`.
 4. If the branch was pushed to remote, warn: "Branch exists on remote. Delete remote branch too?" If yes: `git push origin --delete <feature-branch>`.
 
@@ -331,9 +349,35 @@ WORKTREE PRUNE COMPLETE
 
 ---
 
+## Run Log (REQUIRED)
+
+This skill removes worktrees, deletes branches, and can delete a remote branch — the only three
+destructive-git skills in the set, and until 2026-08-02 the only one of the 57 that recorded
+nothing. Load `../../shared/includes/run-logger.md` and append one line per invocation:
+
+```
+Run: <ISO-8601-Z>	worktree	<project>	-	-	<VERDICT>	-	<MODE>	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
+```
+
+`<MODE>`: `create` | `finish-<option>` | `prune`. `<VERDICT>`: `PASS` when the mode completed,
+`WARN` when something was skipped (dirty worktree, refused removal), `FAIL` on an aborted merge or
+a removal that errored. `<NOTES>`: what was actually destroyed — `removed <n> wt, deleted <n>
+branch` — capped at 80 chars. `<TIER>`: `-`.
+
+Append via the wrapper, never `>>` directly:
+
+```bash
+printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
+```
+
+On exit 2 with `RETRO_REQUIRED`, run the retrospective from
+`../../shared/includes/retrospective.md` first; never bypass with `ZUVO_SKIP_RETRO_GATE=1`.
+
+---
+
 ## Safety Rules
 
-These apply across both modes:
+These apply across all three modes:
 
 1. **Never force-push.** If a push is rejected, report the conflict and ask for instructions.
 2. **Never rebase without consent.** If the user asks for rebase, confirm they understand it rewrites history.

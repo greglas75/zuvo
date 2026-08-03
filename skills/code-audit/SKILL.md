@@ -512,7 +512,7 @@ TIER CLASSIFICATION (percentages of APPLICABLE — never raw counts over a fixed
 because the gate set grows and ">=25/29" silently becomes a different bar at 40 gates):
   applicable = (gates in scope) - count(N/A)      # out-of-scope excluded before N/A
   A (>= 86% of applicable, all active gates PASS): Production-ready
-  B (79-85% of applicable, all active gates PASS): Conditional pass
+  B (>= 79% and < 86% of applicable, all active gates PASS): Conditional pass
   C (< 79%, OR any critical gate = 0):             Significant rework
   D (AUTO TIER-D red flag: CAP5/6/7/8/25/26):      Critical -- immediate fix
 
@@ -618,8 +618,13 @@ Add findings under a `## Cross-File Issues` section.
 
 After the audit report is generated, run cross-model validation to catch score inflation and gate inconsistency. Runs on ALL audits (not just --deep).
 
+Point `--files` at the report you just wrote — a literal `[date]` placeholder matches nothing and burns the pass.
+
 ```bash
-adversarial-review --mode audit --files "zuvo/audits/code-quality-audit-[date].md"
+# The report auto-increments (-2.md, -3.md) on same-day reruns — take the newest match.
+REPORT=$(ls -t zuvo/audits/code-quality-audit-$(date +%F)*.md 2>/dev/null | head -1)
+[ -n "$REPORT" ] && adversarial-review --mode audit --files "$REPORT" \
+  || echo "adversarial: report not found — write it first"
 ```
 
 If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`

@@ -55,11 +55,20 @@ Before starting work, read each file below. Print the checklist with status.
 
 ```
 CORE FILES LOADED:
-  1. ../../shared/includes/run-logger.md       -- READ/MISSING
-  2. ../../shared/includes/retrospective.md       -- READ/MISSING
-  2. ../../shared/includes/knowledge-prime.md  -- READ/MISSING
-  3. ../../shared/includes/knowledge-curate.md -- READ/MISSING
+  1. ../../shared/includes/codesift-setup.md    -- READ/MISSING
+  2. ../../shared/includes/run-logger.md        -- READ/MISSING
+  3. ../../shared/includes/retrospective.md     -- READ/MISSING
+  4. ../../shared/includes/knowledge-prime.md   -- READ/MISSING
+  5. ../../shared/includes/knowledge-curate.md  -- READ/MISSING
+  6. ../../shared/includes/backlog-protocol.md  -- READ/MISSING
 ```
+
+`codesift-setup.md` is first because the frontmatter declares 14 CodeSift tools and Step 3 (VERIFY)
+depends on them — without the setup they are never preloaded, and the step that exists to catch a
+reviewer citing stale code falls back to reading from memory, which is the failure it guards against.
+`backlog-protocol.md` is loaded because the adversarial handling below routes non-localized WARNINGs
+to backlog; instructing a backlog write without the protocol that defines its format and location
+produces an entry nothing can read back.
 
 ---
 
