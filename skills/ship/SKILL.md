@@ -72,8 +72,18 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 **Read these before executing any phase. Violations are non-recoverable.**
 
 1. **NEVER** use `git add -A` or `git add .`. Stage ONLY source files that were actually generated or modified by the release step: the version file (only if bump was performed) and `CHANGELOG.md` (only if created/updated). `memory/last-ship.json` is runtime release state and MUST be written locally after the release commit is finalized; do not commit it.
-2. **NEVER** push to a remote repository without explicit user confirmation. In non-interactive environments (Codex, Cursor): skip the push step entirely.
-3. **NEVER** push tags without interactive confirmation. In non-interactive environments (Codex, Cursor): skip `git push --tags`, write `tagPushed: false` in `memory/last-ship.json`.
+2. **PUSH IS PART OF SHIP — do not stop before it and do not ask for it.** Invoking `zuvo:ship`
+   IS the authorization to push: the user asked to ship, and a release sitting unpushed on the
+   local machine is not shipped. Push the branch (and the tag, if one was created) on every
+   platform, interactive or not. Do NOT print "run this manually" — that hands the user back the
+   one step they invoked the skill to avoid. The gates that make this safe are the ones ALREADY in
+   this skill: tests must be green, the review threshold in Phase 2 is mandatory and unskippable,
+   and `scan_secrets` runs as the last-line check before push. If those pass, push.
+3. **NEVER** force-push (`--force`, `--force-with-lease`), never push to a branch other than the
+   one ship is on, and never rewrite history. Those are a different blast radius from a
+   fast-forward push and are out of scope for ship entirely — they stay a human decision. Likewise,
+   if the pre-push gate BLOCKS (see Phase 4), fix the cause; never reach for `ZUVO_ALLOW_ADHOC=1`
+   on ship's behalf.
 4. **Default to `patch`** bump with `[AUTO-DECISION]` annotation in non-interactive environments when the user cannot be asked for bump type.
 5. **NEVER** propose skipping, downgrading, or shortcutting the review threshold from Phase 2. The threshold table is MANDATORY — the agent does not get to override it based on effort estimates ("this would take hours"), prior pipeline claims ("execute already reviewed"), or diff complexity ("most of this is boilerplate"). There is NO flag that skips review — `--fast` was removed 2026-08-02 after an agent self-applied it (see Argument Parsing). If you catch yourself thinking "this is too much review for this release" — that is exactly when the review is most needed.
 6. **NEVER** claim that prior pipeline steps (zuvo:execute, zuvo:plan) substitute for ship review. Execute reviews individual tasks during implementation. Ship reviews the integrated whole. These are different scopes — one does not replace the other.
@@ -424,19 +434,21 @@ If `--no-tag` was passed, do not create a tag and record `newTag: null` in the a
 
 ### Step 4: Push
 
-<!-- PLATFORM:CURSOR -->
-**Non-interactive environments (Codex App, Cursor):** Skip ALL remote pushes. Print the exact manual commands:
-```
-[NON-INTERACTIVE] Remote push skipped. Run manually:
-  git push origin <branch>
-  git push origin v<version>   # only if tag was created
-```
-<!-- /PLATFORM:CURSOR -->
+**Push. Every platform, no confirmation prompt** (SAFETY RULE 2 — invoking ship IS the
+authorization; the mandatory tests + review + `scan_secrets` upstream are what make it safe).
 
-**Interactive environments (Claude Code, Codex CLI):**
+- **Direct flow:** `git push origin <branch>`, then `git push origin v<version>` if a tag was created.
+- **PR flow:** `git push -u origin <branch>`, then `gh pr create --base <targetBranch>`.
 
-- **Direct flow:** require explicit confirmation before each push command.
-- **PR flow:** require explicit confirmation before `git push -u origin <branch>` and before any `gh pr create`.
+There is deliberately no non-interactive carve-out. It used to skip the push on Codex App and
+Cursor and print the commands for the user to run by hand — which is the single step they invoked
+ship to get, so "shipped" meant "not shipped" on two of four platforms.
+
+**If the push is BLOCKED** (pre-push gate, auth failure, non-fast-forward): do NOT silently record
+`pushed: false` and print SHIP COMPLETE. Read the reason, fix it if it is fixable (a missing review
+artifact → produce it; a stale `zuvo/plans/active-plan.md` still saying `in-progress` on a finished
+plan → set it to `completed`), and push again. If it genuinely cannot be resolved here, the block is
+`SHIP INCOMPLETE` with the verbatim gate output — never a success banner over an unpushed release.
 
 Track final local state in variables:
 ```
