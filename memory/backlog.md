@@ -399,3 +399,8 @@ Recipe:
   2. Source it from all three call sites; delete the inline case blocks.
   3. Point tests/hooks/test-proof-path-containment.sh at the shared function AND keep the
      end-to-end do_sync case — the re-implementation trap is what hid the drift.
+  4. While there: make the shared helper CANONICAL, not lexical. `case` segment matching is
+     defeated by a symlink — a ref with no `..` at all can still resolve outside the repo.
+     `realpath -e -- "$root/$ref"` and require the result to be prefixed by `realpath "$root"`.
+     Raised by the cross-provider pass on the fix diff (2026-08-03); deferred with the rest of
+     this item because it belongs in the one shared function, not a fourth inline copy.

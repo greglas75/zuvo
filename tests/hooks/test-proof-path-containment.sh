@@ -68,11 +68,19 @@ adversarial: ../outside-secret.txt
 REVIEW BY: a
 REVIEW BY: b
 ART
-    bash "$SYNC" --from "$sbox/src" --to "$sbox/nested/dst" >/dev/null 2>&1 || true
-    if [ -e "$sbox/nested/outside-secret.txt" ] || [ -e "$sbox/nested/dst/../outside-secret.txt" ]; then
+    sync_out="$(bash "$SYNC" --from "$sbox/src" --to "$sbox/nested/dst" 2>&1)"
+    # POSITIVE control FIRST. Asserting only "the secret was not copied" passes
+    # trivially when the sync errored out or did nothing at all — a test that
+    # cannot fail, which is the exact class this whole release is about. So first
+    # prove the run actually did its job, then prove what it refused.
+    if [ ! -f "$sbox/nested/dst/memory/reviews/aaaaaaa..bbbbbbb-t.md" ]; then
+      bad "do_sync did not copy the artifact — the traversal assertion below would be vacuous. Output: $sync_out"
+    elif [ -e "$sbox/nested/outside-secret.txt" ]; then
       bad "do_sync copied a ../ proof path OUTSIDE the destination repo (traversal reopened)"
+    elif ! printf '%s' "$sync_out" | grep -q "escapes the repo"; then
+      bad "do_sync neither copied nor reported the escaping proof path — silent drop. Output: $sync_out"
     else
-      pass "do_sync refuses a single-segment '../' proof path"
+      pass "do_sync copies the artifact, refuses the '../' proof, and says so"
     fi
     rm -rf "$sbox"
   fi

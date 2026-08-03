@@ -204,7 +204,7 @@ def main():
         (root / "skills").glob("*/agents/*.md")
     )
     if not skills:
-        print("ERROR: no skills/*/SKILL.md found", file=sys.stderr)
+        print("ERROR: no skills/*/SKILL.md or skills/*/agents/*.md found", file=sys.stderr)
         return 2
 
     n_err = 0
