@@ -348,8 +348,6 @@ WORKTREE PRUNE COMPLETE
 
 ---
 
----
-
 ## Run Log (REQUIRED)
 
 This skill removes worktrees, deletes branches, and can delete a remote branch — the only three
