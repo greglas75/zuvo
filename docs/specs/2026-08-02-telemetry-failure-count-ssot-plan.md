@@ -765,7 +765,7 @@ async auto-BLOCKED path (`:537-545`). So it is provable on today's behaviour alo
       `acceptance-verified=` (`execute:322`).
       **State in the commit body that this closes a hole that exists TODAY** — it is not a guard
       invented for `skip-and-continue`.
-- [ ] Verify: `bash tests/skill-suite/test-eval-corpus-schema.sh 2>&1 | grep -Fq 'PASS: evals/execute.evals.json' && python3 -c "import json;assert len(json.load(open('evals/execute.evals.json'))['evals'])==3" && bash scripts/validate-skills.sh`
+- [ ] Verify: `bash tests/skill-suite/test-eval-corpus-schema.sh 2>&1 | grep -Fq 'PASS: evals/execute.evals.json' && python3 -c "import json;d=json.load(open('evals/execute.evals.json'));ids=[e['id'] for e in d['evals']];assert len(ids)==len(set(ids)), f'duplicate eval ids: {ids}';assert max(ids)==len(ids), f'eval ids are not a contiguous 1..N run: {ids}'" && bash scripts/validate-skills.sh`
   Expected: exit 0. The `-Fq 'PASS: …'` is deliberate — a `(PASS|FAIL)` alternation would match either and could never fail. The pre-existing `evals/container-audit.evals.json` FAIL is unchanged and is not this task's.
 - [ ] Acceptance Proof:
   - G11:
@@ -843,7 +843,7 @@ this task's required mitigation. Tasks 1, 2 and 5: this task owns SMOKE1-3, whos
       5. Dependency State Contract (`:821-840`): **no change** — `skip-and-continue` reuses
          `SKIPPED`/`SKIPPED_BY_DEPENDENCY` and `:836-837` already covers propagation. Say so in the
          commit body so a reviewer does not hunt for a missing edit.
-- [ ] Verify: `bash tests/skill-suite/test-plan-authoring-rules.sh && bash scripts/validate-skills.sh && grep -Fq 'Never silently skip or auto-resolve a BLOCKED task.' skills/execute/SKILL.md && bash tests/skill-suite/test-eval-corpus-schema.sh 2>&1 | grep -Fq 'PASS: evals/execute.evals.json' && python3 -c "import json;assert len(json.load(open('evals/execute.evals.json'))['evals'])==4"`
+- [ ] Verify: `bash tests/skill-suite/test-plan-authoring-rules.sh && bash scripts/validate-skills.sh && grep -Fq 'Never silently skip or auto-resolve a BLOCKED task.' skills/execute/SKILL.md && bash tests/skill-suite/test-eval-corpus-schema.sh 2>&1 | grep -Fq 'PASS: evals/execute.evals.json' && python3 -c "import json;d=json.load(open('evals/execute.evals.json'));ids=[e['id'] for e in d['evals']];assert len(ids)==len(set(ids)), f'duplicate eval ids: {ids}';assert max(ids)==len(ids), f'eval ids are not a contiguous 1..N run: {ids}'"`
   Expected: exit 0; the verbatim clause is present; the cross-file assertions pass; the corpus validates **and** actually holds 4 cases — the count is asserted, not claimed in prose (Task 8 asserts its own `==3` the same way).
 - [ ] Acceptance Proof:
   - G9:

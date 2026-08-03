@@ -70,6 +70,7 @@ next-task: <N>
 | Code | Meaning |
 |------|---------|
 | `skipped-user` | User explicitly chose to skip at a BLOCKED prompt |
+| `skipped-plan-declared` | The task hit a hard blocker and its plan task declared **Failure:** skip-and-continue |
 | `skipped-dependency` | A prerequisite task was BLOCKED or SKIPPED |
 | `blocked-build-failure` | Test/lint/type-check failed and could not be resolved |
 | `blocked-external` | Missing external dependency, credential, or environment |

@@ -323,6 +323,7 @@ Minimum fields:
 - `acceptance-verified`: list of AC ids passed plus artifact paths (e.g. `AC1@zuvo/proofs/task-4-AC1.txt,AC3@zuvo/proofs/task-4-AC3.txt`) — behavior check
 - `codesift`: `available`, `unavailable`, or `index-failed`
 - `backlog-adds`: integer count for this task
+- `failure-strategy`: `halt`, `skip-and-continue`, or `degraded:<one-line description>` — the value the task's `**Failure:**` line declares in the approved plan, copied verbatim (the `degraded:` description is opaque text: never tokenised, never split). **Defaults to `halt` when the plan line is absent**, which is byte-identical to pre-rule-20 behavior. Never inferred, upgraded, or invented at run time — it is read from the plan or it is `halt`.
 
 **Per-file scoring is mandatory.** A telemetry block reporting `q_gates: 19/19 aggregate` is rejected by the completion gate. Aggregate averaging hides per-file zeros — the documented proximate cause of the 2026-04-22 codec session shipping with Q7=0 and Q11=0 in specific files while telemetry reported all-green.
 
@@ -344,6 +345,7 @@ verify="pnpm vitest run src/foo.spec.ts" exit=0
 acceptance-verified=AC2@zuvo/proofs/task-4-report.md,AC5@zuvo/proofs/task-4-report.md
 codesift=available
 backlog-adds=1
+failure-strategy=halt
 ```
 
 ---
@@ -528,6 +530,55 @@ The implementer cannot proceed due to a hard blocker (missing dependency, broken
 
 **Present to the user immediately.** Never silently skip or auto-resolve a BLOCKED task.
 
+**`silently` is the load-bearing word.** The rule forbids a skip nobody asked for and nobody can see
+— it does not forbid a skip the approved plan explicitly authorized in writing and the run announces
+loudly. Which of the two you are in is decided by the blocked task's `**Failure:**` field (plan rule
+20), and by nothing else:
+
+<!-- zuvo:blocked-carveout-start -->
+| Blocked task's plan `**Failure:**` value | What happens when the implementer reports BLOCKED |
+|---|---|
+| `halt`, or no `**Failure:**` line at all | Present the three options below and wait for the user's decision. Nothing is auto-resolved, nothing is auto-skipped. |
+| `skip-and-continue` | No prompt. Mark the task SKIPPED with reason code `skipped-plan-declared` (`session-state.md`), print `[AUTO-DECISION]: Task N blocked; plan declares Failure: skip-and-continue → SKIPPED. Blocker: <one line>.`, propagate `SKIPPED_BY_DEPENDENCY` to dependents per the Dependency State Contract (their reason code is `skipped-dependency`, NEVER `skipped-plan-declared` — only the task that actually declared the strategy carries that code), and continue with the next task. Record it in the final summary like any other non-COMPLETED task. |
+<!-- zuvo:blocked-carveout-end -->
+
+**`skip-and-continue` is the ONLY declared value that changes what an implementer-reported BLOCKED
+does.** Every other value takes the `halt` row above — including `degraded:<desc>`, which is
+deliberately absent from the table because it is not a BLOCKED disposition at all: it is consumed at
+exactly ONE site, the Post-Cap Autonomous Disposition described two paragraphs down.
+
+**Value matching is EXACT — trim, and nothing else.** The declared value is read verbatim from the
+plan's `**Failure:**` line with only leading/trailing whitespace stripped: no case folding, no
+punctuation normalisation, no synonyms. `halt` and `skip-and-continue` must match those lowercase
+tokens byte-for-byte, and a `degraded:` declaration is recognised by the exact lowercase `degraded`
+prefix (everything after it is opaque free text). So a `**Failure:**` line whose value is padded with
+extra spaces IS still `halt`, while `Halt`, `SKIP-AND-CONTINUE`, or `Degraded: …` are NOT — they are
+unrecognised values, and `scripts/zuvo-home/verify-plan-dag` rejects them at plan-lint time with
+`failure-strategy: Task N declares unrecognised failure strategy "<val>"` and exit 1, so a plan
+carrying one never reaches execution. This is the same trim-only, case-sensitive rule that script
+applies; the two must never disagree.
+
+That table is CLOSED — those two rows are every case. **An agent may NEVER infer, upgrade, or invent
+a Failure strategy at run time. It reads the one the approved plan declares, or it prompts.** An
+approved plan's `**Failure:**` line was written by a human and approved at the entry gate, so a skip
+taken under it is human-attributable; a strategy the agent picked mid-run would not be, and that is
+exactly the self-granted bypass this rule exists to prevent. "The blocker looks minor", "the task
+seems optional", and "the plan probably meant skip" are not `skip-and-continue`.
+
+`degraded:<one-line description>` is read at exactly ONE site, and it is not this one: the **Post-Cap
+Autonomous Disposition** in `../../shared/includes/no-pause-protocol.md`, where it pre-authorises
+case (c) with a named fallback and is recorded through the existing
+`[POST-CAP: DEFERRED] … default=<X>` form into the existing `### Post-Cap Dispositions` section of
+the Final Summary. It gets no parallel section here and no state of its own.
+
+<!-- zuvo:degraded-not-blocked-start -->
+**Taking a plan-declared `degraded:` fallback NEVER yields a `BLOCKED_*` state** — a reduced-but-delivered result is the outcome the approved plan chose, not a hard gate failure. The ONE case where a task whose plan line says `degraded:` still ends `BLOCKED` is unrelated to the fallback: the implementer reported a hard blocker, which takes the `halt` row of the BLOCKED carve-out table in `skills/execute/SKILL.md` (and, with no user to ask, the async branch sets that task `BLOCKED` and propagates `BLOCKED_BY_DEPENDENCY`) — there the `degraded:` fallback was never reached, so no `degraded:` outcome was ever produced.
+<!-- zuvo:degraded-not-blocked-end -->
+
+(That paragraph is byte-identical between these anchors in `no-pause-protocol.md`; a test reads it
+out of that file and asserts this one agrees, because that file also lists `BLOCKED_*` as a
+legitimate stop and a literal-minded agent reads "reduced outcome" as a gate failure.)
+
 Provide three options:
 1. **Provide context** — "I can provide the missing information: [user types it]"
 2. **Skip this task** — "Skip and continue with the next task. This task will be marked SKIPPED."
@@ -537,6 +588,7 @@ If the user picks option 1, re-dispatch the implementer with the provided contex
 
 <!-- PLATFORM:CURSOR -->
 **Async mode (Codex App, Cursor — no AskUserQuestion):**
+- **Check the carve-out table above FIRST.** Everything in this block is the `halt` path. If the blocked task declares `**Failure:** skip-and-continue`, that row wins outright: the task is SKIPPED with reason code `skipped-plan-declared` and the `[AUTO-DECISION]: … plan declares Failure: skip-and-continue → SKIPPED` line — **not** BLOCKED and not the generic line below. Having no user to ask does not change which strategy the plan declared. **Its dependents still propagate:** they go to `SKIPPED_BY_DEPENDENCY` with reason code `skipped-dependency` (NOT `BLOCKED_BY_DEPENDENCY`, which is this block's `halt`-path propagation below, and NOT `skipped-plan-declared`, which only the declaring task carries), exactly as the carve-out row says — then continue with the next task.
 - Set task to BLOCKED
 - Propagate BLOCKED_BY_DEPENDENCY to dependent tasks (per Dependency State Contract)
 - Continue executing any PENDING tasks that are NOT blocked by this dependency
@@ -981,14 +1033,14 @@ Each task has one of these states:
 | PENDING | Not yet started |
 | IN_PROGRESS | Currently being executed |
 | COMPLETED | All review gates passed, committed |
-| SKIPPED | User chose to skip (via BLOCKED options) |
+| SKIPPED | User chose to skip at the BLOCKED prompt, OR the plan task declared `**Failure:** skip-and-continue` (reason code `skipped-plan-declared`) |
 | BLOCKED | Hard blocker, awaiting user decision |
 | BLOCKED_BY_DEPENDENCY | A prerequisite task is BLOCKED |
-| SKIPPED_BY_DEPENDENCY | A prerequisite task is SKIPPED |
+| SKIPPED_BY_DEPENDENCY | A prerequisite task is SKIPPED (reason code `skipped-dependency`) |
 
 **Propagation rules:**
 - When a task transitions to BLOCKED, all dependent tasks transition to BLOCKED_BY_DEPENDENCY.
-- When a task transitions to SKIPPED, all dependent tasks transition to SKIPPED_BY_DEPENDENCY.
+- When a task transitions to SKIPPED, all dependent tasks transition to SKIPPED_BY_DEPENDENCY **with reason code `skipped-dependency`** — never `skipped-plan-declared` and never `skipped-user`. Those two codes name *why the prerequisite itself* was skipped and belong ONLY to the task that was actually skipped for that reason; a dependent inherits the state, not the cause. Tagging a whole dependent subtree `skipped-plan-declared` would claim a plan declaration those tasks never carried and would inflate the plan-declared count in the retro/telemetry tally.
 - A BLOCKED_BY_DEPENDENCY task cannot be started without explicit user override.
 - If the user provides an override ("proceed despite missing dependency"), the task transitions back to PENDING and can be dispatched.
 - In the final summary, BLOCKED_BY_DEPENDENCY tasks are listed separately from BLOCKED tasks.
