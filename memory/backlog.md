@@ -413,3 +413,26 @@ Recipe:
      `realpath -e -- "$root/$ref"` and require the result to be prefixed by `realpath "$root"`.
      Raised by the cross-provider pass on the fix diff (2026-08-03); deferred with the rest of
      this item because it belongs in the one shared function, not a fourth inline copy.
+
+## B-INSTALL-CLAUDE-MANIFEST — install.sh never refreshes the Claude Code cache manifest
+Surfaced by: zuvo:ship v1.6.54 post-merge verification (2026-08-03).
+`scripts/install.sh` copies `.codex-plugin/plugin.json` into the Codex targets (lines ~767,
+~801) but has NO equivalent copy of `.claude-plugin/plugin.json` into
+`~/.claude/plugins/cache/zuvo-marketplace/zuvo/<version>/`. Measured after installing
+v1.6.54: the manifest inside cache dir 1.6.53 still declared version 1.6.16, and inside
+1.6.54 it declared 1.6.47 — each frozen at whatever Claude Code itself wrote when it
+created that directory. Skills still load (install.sh does sync skills/, scripts/, rules/,
+shared/ to every cache dir), so this is metadata drift, not a load failure — but the
+plugin's advertised version and skill count in that manifest have been wrong for
+~40 releases and nobody noticed, which is exactly the shape of the count-consistency bugs
+this release fixed elsewhere.
+Defer-reason: NOT deferred for size — deferred because it is an unreviewed change to the
+install path made minutes after merging v1.6.54, and shipping it without review would
+contradict the gate discipline this release is about. Next session, first item.
+Recipe:
+  1. In install.sh's Claude Code loop, after the scripts/ copy: create
+     `$CACHE_DIR/.claude-plugin/` and copy `$ZUVO_DIR/.claude-plugin/plugin.json` into it.
+  2. Add an assertion to tests/hooks/test-install-wiring.sh: after a simulated install, the
+     cache manifest's `version` equals package.json's `version`. That is the check whose
+     absence let this sit for 40 releases.
+  3. Check whether the Cursor and Antigravity targets have the same omission.
