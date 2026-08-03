@@ -73,36 +73,26 @@ LOADING_LINE = re.compile(
 LOADING_BARE = re.compile(r"^\s*(\d+)\.\s+([a-z0-9-]+\.md)\s*(?:--|—)")
 
 
-def scan_fences(lines):
-    """Yield (line_no, opener_line_no) for structural headings inside a block.
+def fence_map(lines):
+    """Walk fences ONCE with CommonMark rules. The single source of the rule.
 
-    Returns (findings, unclosed_opener_or_None).
+    Returns (inside, opener, unclosed) for 1-based line numbers:
+      inside[i]  — True if line i is a fence marker or sits inside a block
+      opener[i]  — line number of the fence enclosing i (0 when outside)
+      unclosed   — line number of a fence still open at EOF, else None
+
+    CommonMark: a closing fence carries NO info string, uses the same character,
+    and is at least as long as its opener. A ```lang line while a block is open
+    is therefore literal content, not a close — that is exactly how a same-length
+    nested fence truncates a report template.
+
+    Extracted deliberately: both scanners need this state machine, and this file's
+    whole purpose is catching rules that drift between copies. Two hand-maintained
+    copies of the fence rule inside the fence linter would be the joke writing
+    itself — one edit away from the two callers disagreeing.
     """
-    findings = []
-    open_at = None
-    open_marker = ""
-    for i, line in enumerate(lines, 1):
-        m = FENCE.match(line)
-        if m:
-            marker, info = m.group(2), m.group(3).strip()
-            if open_at is None:
-                open_at, open_marker = i, marker
-                continue
-            # closing fence: no info string, same char, at least as long
-            if not info and marker[0] == open_marker[0] and len(marker) >= len(open_marker):
-                open_at = None
-                continue
-            # otherwise (```lang while open) it is literal content
-        if open_at is not None and STRUCTURAL_HEADING.match(line):
-            findings.append((i, open_at, line.strip()))
-    return findings, open_at
-
-
-def scan_loading(lines):
-    """Return (numbering_errors, printed_only_files)."""
-    errors = []
-    # classify each line as inside/outside a fence, reusing the same walker
     inside = [False] * (len(lines) + 1)
+    opener = [0] * (len(lines) + 1)
     open_at, open_marker = None, ""
     for i, line in enumerate(lines, 1):
         m = FENCE.match(line)
@@ -110,13 +100,33 @@ def scan_loading(lines):
             marker, info = m.group(2), m.group(3).strip()
             if open_at is None:
                 open_at, open_marker = i, marker
-                inside[i] = True
+                inside[i], opener[i] = True, i
                 continue
             if not info and marker[0] == open_marker[0] and len(marker) >= len(open_marker):
-                inside[i] = True
+                inside[i], opener[i] = True, open_at
                 open_at = None
                 continue
+            # a ```lang line while open: literal content, falls through
         inside[i] = open_at is not None
+        opener[i] = open_at or 0
+    return inside, opener, open_at
+
+
+def scan_fences(lines):
+    """Return (findings, unclosed_opener_or_None) — structural headings in a block."""
+    inside, opener, unclosed = fence_map(lines)
+    findings = []
+    for i, line in enumerate(lines, 1):
+        # opener[i] == i marks the fence line itself; a heading cannot live there
+        if inside[i] and opener[i] != i and STRUCTURAL_HEADING.match(line):
+            findings.append((i, opener[i], line.strip()))
+    return findings, unclosed
+
+
+def scan_loading(lines):
+    """Return (numbering_errors, printed_only_files)."""
+    errors = []
+    inside, _opener, _unclosed = fence_map(lines)
 
     runs, cur = [], []
     for i, line in enumerate(lines, 1):
@@ -185,14 +195,23 @@ def scan_loading(lines):
 def main():
     verbose = "--verbose" in sys.argv
     root = Path(__file__).resolve().parent.parent
-    skills = sorted((root / "skills").glob("*/SKILL.md"))
+    # Agent files carry the same defect classes and are dispatched the same way:
+    # skills/plan/agents/architect.md had its whole "## Constraints" section —
+    # including "You are read-only. Do not create, modify, or delete any files" —
+    # sealed inside an unclosed fence, i.e. the read-only mandate of a read-only
+    # agent rendered as sample text. Scanning only SKILL.md missed it.
+    skills = sorted((root / "skills").glob("*/SKILL.md")) + sorted(
+        (root / "skills").glob("*/agents/*.md")
+    )
     if not skills:
         print("ERROR: no skills/*/SKILL.md found", file=sys.stderr)
         return 2
 
     n_err = 0
     for path in skills:
-        name = path.parent.name
+        # Label by repo-relative path, not parent dir: every agent file would
+        # otherwise report as "agents" and you could not tell which one failed.
+        name = path.relative_to(root / "skills").as_posix()
         lines = path.read_text(encoding="utf-8").split("\n")
 
         findings, unclosed = scan_fences(lines)

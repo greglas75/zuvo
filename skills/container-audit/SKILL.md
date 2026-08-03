@@ -7,7 +7,7 @@ description: >
   and compose/orchestration hardening. Static-first — parses Dockerfile, Containerfile,
   and docker-compose (incl. override/merge files) with zero Docker and zero network;
   the CVE dimension (K5) runs Trivy/Grype only when present, else degrades to N/A.
-  Reserved dimensions K7-K10 (Kubernetes) activate behind --k8s. Tiered A/B/C/D report
+  Reserved dimensions K7-K10 (Kubernetes) activate behind --k8s. HEALTHY/NEEDS ATTENTION/AT RISK/CRITICAL grade
   with critical gates. Distinct from infra-audit (live host daemon over SSH) and
   ci-audit (Docker build speed in the pipeline).
   Switches: zuvo:container-audit full | [path] | --static | --scan | --dockerfile <p> | --compose <p> | --quick | --k8s | --persist-backlog

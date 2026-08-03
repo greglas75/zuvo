@@ -530,12 +530,15 @@ check_count_consistency
 # in a loading list is what hid three skills printing a file as READ that their
 # prose never told the agent to open. Mechanical or not caught at all.
 if [ -f "$ROOT/scripts/check-skill-structure.py" ]; then
-  if python3 "$ROOT/scripts/check-skill-structure.py" >/dev/null 2>&1; then
+  # Capture once — running the checker twice (silently for the exit code, then
+  # again for the output) doubled the work over 107 files for nothing.
+  if _css_out="$(python3 "$ROOT/scripts/check-skill-structure.py" 2>&1)"; then
     echo "skill-structure: OK"
   else
-    python3 "$ROOT/scripts/check-skill-structure.py" || true
+    printf '%s\n' "$_css_out"
     ERRORS=$((ERRORS + 1))
   fi
+  unset _css_out
 fi
 
 # --- gate registry: every GENERATED region must match shared/includes/gate-registry.md ---

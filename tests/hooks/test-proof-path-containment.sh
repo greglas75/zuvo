@@ -44,5 +44,41 @@ else
   pass "pipeline-gate-lib.sh uses segment-based traversal detection"
 fi
 
+# --- do_sync end-to-end (the copy actually runs; the reimplementation above does not) ---
+#
+# The rule lived in THREE places and only two were fixed: review-artifact-sync.sh's
+# do_sync() kept `case "$ref"` (unprefixed), so `../x` matched neither `*/../*` nor
+# `*/..`, fell to the default branch, and was copied OUTSIDE the destination repo.
+# `../../x` still matched, which is why a two-segment case hides it. The contained()
+# helper above is a re-implementation — it cannot catch a drift in do_sync's own case
+# block, so this exercises the real script.
+SYNC="$ROOT/scripts/review-artifact-sync.sh"
+if [ -x "$SYNC" ] || [ -f "$SYNC" ]; then
+  sbox="$(mktemp -d)" || { bad "mktemp failed"; sbox=""; }
+  if [ -n "$sbox" ] && [ -d "$sbox" ]; then
+    mkdir -p "$sbox/src/memory/reviews" "$sbox/nested/dst/memory/reviews"
+    (cd "$sbox/src" && git init -q . 2>/dev/null) || true
+    (cd "$sbox/nested/dst" && git init -q . 2>/dev/null) || true
+    printf 'SECRET-CANARY\n' > "$sbox/outside-secret.txt"
+    cat > "$sbox/src/memory/reviews/aaaaaaa..bbbbbbb-t.md" <<'ART'
+<!-- zuvo-review -->
+range: aaaaaaa..bbbbbbb
+files: *
+adversarial: ../outside-secret.txt
+REVIEW BY: a
+REVIEW BY: b
+ART
+    bash "$SYNC" --from "$sbox/src" --to "$sbox/nested/dst" >/dev/null 2>&1 || true
+    if [ -e "$sbox/nested/outside-secret.txt" ] || [ -e "$sbox/nested/dst/../outside-secret.txt" ]; then
+      bad "do_sync copied a ../ proof path OUTSIDE the destination repo (traversal reopened)"
+    else
+      pass "do_sync refuses a single-segment '../' proof path"
+    fi
+    rm -rf "$sbox"
+  fi
+else
+  pass "review-artifact-sync.sh absent — do_sync case skipped"
+fi
+
 echo "=== RESULT ==="
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "SOME FAILED"; exit 1; }

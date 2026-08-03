@@ -31,7 +31,16 @@ bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
 
 [ -f "$CHK" ] || { bad "check-skill-structure.py missing"; echo "SOME FAILED"; exit 1; }
 
-TMP="$(mktemp -d)"
+# Guard the mktemp result before ANY rm -rf below touches it. `set -u` does not
+# help here: a failed command substitution assigns the empty string, which is SET,
+# so `rm -rf "$TMP/skills"` in reset_tree would expand to `rm -rf /skills` — a path
+# outside the sandbox. The sibling gate tests only ever `rm -rf "$TMP"` (harmless
+# `rm -rf ''` when empty), so this file is the one that needs the guard.
+TMP="$(mktemp -d)" || { echo "FAIL: mktemp -d failed"; exit 1; }
+case "$TMP" in
+  ""|/) echo "FAIL: refusing to run with TMP='$TMP'"; exit 1 ;;
+esac
+[ -d "$TMP" ] || { echo "FAIL: mktemp returned a non-directory: '$TMP'"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
 
 # Build a throwaway tree the checker can scan: it resolves its root from its own

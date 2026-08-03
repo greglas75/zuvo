@@ -192,8 +192,17 @@ do_sync() {
     ref="$(sed -n 's/^[[:space:]]*adversarial:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
     [ -n "$ref" ] || ref="$(sed -n 's/^[[:space:]]*adv-proof:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
     if [ -n "$ref" ]; then
+      # Segment-based containment, same rule as lint_artifact() above and
+      # pg_artifact_proven(). The leading "/" on the second case is load-bearing:
+      # without it, `../x` and a bare `..` match NEITHER `*/../*` (needs a slash
+      # before the dots) NOR `*/..`, fall through to the default branch, and get
+      # copied to a path outside both checkouts. `../../x` happens to still match,
+      # which is why a two-segment test case hides the bug. Verified by
+      # tests/hooks/test-proof-path-containment.sh (do_sync cases).
       case "$ref" in
-        /*) echo "WARN $name: proof path '$ref' is absolute — artifact copied, proof NOT" ;;
+        /*) echo "WARN $name: proof path '$ref' is absolute — artifact copied, proof NOT"; copied=$((copied + 1)); lint_artifact "$droot" "$droot/memory/reviews/$name" || fail=1; continue ;;
+      esac
+      case "/$ref" in
         */../*|*/..) echo "WARN $name: proof path '$ref' escapes the repo — artifact copied, proof NOT" ;;
         *)
           if [ -f "$sroot/$ref" ]; then

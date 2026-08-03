@@ -316,7 +316,7 @@ Minimum fields:
 - `reviewer-route`: `review-primary`, `review-alt`, `same-model-fallback`, or `routing-failed`
 - `implementer-status`: `DONE`, `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, or `BLOCKED`
 - `spec-review`: `COMPLIANT` or `ISSUES FOUND`
-- `quality-review`: `PASS` or `FAIL` — **with per-file scores; aggregate forbidden** (e.g. `cq=34/37@codec.ts,35/37@parser.ts; q=18/19@codec.test.ts,17/19@parser.test.ts` not `cq=27/29 q=18/19 aggregate`)
+- `quality-review`: `PASS` or `FAIL` — **with per-file scores; aggregate forbidden** (e.g. `cq=34/37@codec.ts,35/37@parser.ts; q=21/23@codec.test.ts,20/23@parser.test.ts` not `cq=27/29 q=18/19 aggregate`)
 - `adversarial`: verdict plus mode (`code`, `security`, `migrate`)
 - `verify`: command(s) and exit code(s) — implementation-detail check
 - `acceptance-verified`: list of AC ids passed plus artifact paths (e.g. `AC1@zuvo/proofs/task-4-AC1.txt,AC3@zuvo/proofs/task-4-AC3.txt`) — behavior check

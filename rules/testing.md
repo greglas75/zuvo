@@ -449,7 +449,7 @@ These indicators correlate with low test quality. Use as pre-screening before fu
 
 Score every question individually. Never group or estimate.
 
-**19 binary gates (1 = YES, 0 = NO):**
+**25 binary gates (1 = YES, 0 = NO)** — Q20-Q25 are CONDITIONAL, N/A when their trigger does not hold:
 
 <!-- GATES:BEGIN kind=q-table -->
 | Gate | Check |
@@ -481,11 +481,23 @@ Score every question individually. Never group or estimate.
 | Q25 | **CONDITIONAL** — Changed lines reach >= 90% patch coverage with zero new uncovered branches, enforced server-side? Patch coverage gates the diff; project-level coverage lets a large green codebase hide an untested change. |
 <!-- GATES:END kind=q-table -->
 
-**N/A handling:** Q3/Q5/Q6 = 1 (N/A) for pure functions with zero mocks. Q16 = 1 (N/A) for simple single-responsibility units. Q18 = 1 (N/A) for pure synchronous tests with no timing or randomness. Q19 = 1 (N/A) for single-test files.
+**N/A handling:** Q3/Q5/Q6 are N/A for pure functions with zero mocks. Q16 is N/A for
+simple single-responsibility units. Q18 is N/A for pure synchronous tests with no timing
+or randomness. Q19 is N/A for single-test files. An N/A gate leaves the **denominator**,
+it does not enter the numerator — marking it N/A is not the same as passing it, and the
+one-third N/A cap in `../shared/includes/quality-gates.md` applies here too.
 
 **Critical gate:** Q7, Q11, Q13, Q15, Q17 — any scored 0 caps the result at FIX regardless of total.
 
-**Scoring:** Total count of yes answers (N/A counts as 1). 16+ = PASS, 10-15 = FIX (fix worst gap, re-score), below 10 = BLOCK (rewrite).
+**Scoring — canonical rule lives in `../shared/includes/quality-gates.md` → Q Scoring.**
+Score as a **percentage of applicable gates**, never an absolute count against a fixed
+denominator: `score = passed / (total - N/A - out-of-scope)`. This file deliberately does
+NOT restate the bands — until 2026-08-03 it carried its own `16+ = PASS, 10-15 = FIX,
+below 10 = BLOCK` over a stale 19-gate denominator while the gate table below it had
+already grown to Q1-Q25, and the output example three lines down already used the
+percentage form. Four skills load this file in full (`write-tests`, `fix-tests`,
+`test-audit`, `mutation-test`), so a second copy of the bands here is a second thing to
+drift. Read them from the canonical file.
 
 **Output format:**
 ```

@@ -155,7 +155,7 @@ From the results, answer:
 
 Produce your report in this exact structure:
 
-```markdown
+````markdown
 ## Architecture Report
 
 ### Components
@@ -192,7 +192,7 @@ graph TD
     B --> C[Component C]
     ...
 ```
-```
+````
 
 ---
 
