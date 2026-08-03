@@ -211,8 +211,17 @@ real repo. Two concurrent runs collide (~4 min stall observed), and while a fixt
 **Why it was accepted:** the test contract-tests a WHOLE-REPO validator, so it needs a fixture the real
 validator can see. PID-unique naming + an existence guard removed the deletion risk; the residue is a
 false FAIL / mis-count under parallel agents, never a false PASS.
+**Escapes the repo entirely (observed 2026-08-03).** The residue is not confined to a false FAIL.
+`install.sh` copies `skills/*` into every install target, so an `install.sh` that overlaps a running
+guard test — or that follows a killed one — carries the fixture out of the repo and leaves it there
+permanently. Found `tmp-refguard-56836-test` and `tmp-refguard-82399-test` sitting in the Claude Code
+plugin cache under BOTH `zuvo/1.6.52/skills/` and `zuvo/1.6.53/skills/` (4 directories), long after the
+test that made them had finished. They are inert, but they inflate the installed skill count (59 dirs
+against 57 in source) and would be read by anything that enumerates the cache. Removed by hand.
 **Fix direction:** run the validator against a copied tree (a `--root` option) so fixtures can live in
-`mktemp -d` outside the repo — that removes the last shared-state coupling without losing real-repo coverage.
+`mktemp -d` outside the repo — that removes the last shared-state coupling without losing real-repo
+coverage, and closes the escape path above at the same time. Until then, `install.sh` could refuse to
+copy a `skills/tmp-*` directory — a one-line guard that makes the leak impossible regardless of timing.
 
 ## B-ADV-TRUNC — a truncated adversarial review is reported as a complete one
 **Found:** 2026-07-31, reviewing the Task 8 patch (50583 chars) during the write-e2e V2 execute run.
