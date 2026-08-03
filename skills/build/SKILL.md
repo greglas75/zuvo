@@ -1,6 +1,7 @@
 ---
 name: build
 description: "Scoped feature development for changes spanning 1-5 production files. Auto-tiers to LIGHT/STANDARD/DEEP based on risk signals. Flags: --auto (skip plan approval), --auto-commit (commit without confirmation), --tag (create rollback tag)."
+category: Core
 codesift_tools:
   always:
     - analyze_project

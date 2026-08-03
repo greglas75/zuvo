@@ -7,6 +7,7 @@ description: >
   architecture boundary violations, barrel file health, and change coupling.
   Tiered tooling with graceful degradation.
   Switches: zuvo:dependency-audit full | [path] | --supply-chain | --coupling | --dead | --bundle | --lock-in
+category: Infra audits
 codesift_tools:
   always:
     - analyze_project

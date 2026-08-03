@@ -6,6 +6,7 @@ description: >
   and review skills to persist findings, and directly by users to manage
   accumulated debt. Modes: list [category], add [description], fix B-{N},
   wontfix B-{N} [reason], delete B-{N}, stats, prioritize, suggest.
+category: Utility
 ---
 
 # zuvo:backlog — Tech Debt Management

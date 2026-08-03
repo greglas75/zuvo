@@ -1,6 +1,7 @@
 ---
 name: geo-audit
 description: "GEO (Generative Engine Optimization) readiness audit. Scans source code for AI citation signals across 12 dimensions: AI crawler access, schema graph connectivity, llms.txt, SSR rendering, freshness, chunkability, canonicalization, sitemap, BLUF structure, heading quality, citation signals, and anti-patterns. Produces tiered report (A/B/C/D) with evidence-backed findings and JSON output for geo-fix consumption."
+category: Structure/SEO/GEO
 tools:
   - Read
   - Edit

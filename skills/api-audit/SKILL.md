@@ -1,6 +1,7 @@
 ---
 name: api-audit
 description: "API and endpoint integrity audit across 10 dimensions (D1-D10) plus optional contract stability (D11) and optional OWASP API Security Top 10 (D12: BOLA/BOPLA/BFLA, mass assignment, JWT alg-confusion, GraphQL introspection). Covers validation, payloads, pagination, errors, caching, HTTP semantics, waterfalls, rate limiting, auth, documentation, and API-specific authorization security. Supports NestJS, Cloudflare Workers, FastAPI, and frontend call patterns. Optional GET probing on non-production targets. Flags: zuvo:api-audit full | [path] | --static | --security"
+category: Code/Test audits
 codesift_tools:
   always:
     - analyze_project

@@ -5,6 +5,7 @@ description: >
   before executing a plan, wants a clean environment for a feature, is ready
   to finish work in an existing worktree, or wants to reclaim worktrees that
   accumulated and are now polluting filesystem-level measurement.
+category: Pipeline
 codesift_tools:
   always:
     - analyze_project

@@ -8,6 +8,7 @@ description: >
   spelling/typography. Language-agnostic with multi-encoding mojibake detection.
   Companion fix skill: content-fix. Flags: [path], --live-url <url>, --quick,
   --content-path <dir>, --lang <code>, --check-external, --profile <type>, --persist-backlog.
+category: Content
 codesift_tools:
   always:
     - analyze_project

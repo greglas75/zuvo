@@ -146,19 +146,20 @@ args = ["-y", "codesift-mcp"]
 
 ## Skills
 
-| Category | Skills |
-|----------|--------|
-| Pipeline | brainstorm, plan, execute, worktree, receive-review |
-| Core | build, review, refactor, debug |
-| Code audits | code-audit, test-audit, api-audit, security-audit, pentest |
-| Infra audits | performance-audit, db-audit, dependency-audit, ci-audit, env-audit |
-| Structure/SEO/GEO | structure-audit, seo-audit, seo-fix, geo-audit, geo-fix, architecture |
-| Content | content-audit, content-fix, content-migration, write-article, content-expand |
-| Design | design, design-review, ui-design-team |
-| Testing | write-tests, fix-tests, write-e2e, tests-performance, mutation-test |
-| Accessibility | a11y-audit |
-| Release | ship, deploy, canary, release-docs, retro |
-| Utility | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo |
+| Category | Count | Skills |
+|----------|-------|--------|
+| Pipeline | 5 | brainstorm, plan, execute, worktree, receive-review |
+| Core | 4 | build, review, refactor, debug |
+| Code/Test audits | 5 | code-audit, test-audit, api-audit, security-audit, pentest |
+| Infra audits | 7 | performance-audit, db-audit, dependency-audit, ci-audit, env-audit, infra-audit, container-audit |
+| Structure/SEO/GEO | 6 | structure-audit, seo-audit, seo-fix, geo-audit, geo-fix, architecture |
+| Content | 5 | content-audit, content-fix, content-migration, write-article, content-expand |
+| Design | 3 | design, design-review, ui-design-team |
+| Testing | 5 | write-tests, fix-tests, write-e2e, tests-performance, mutation-test |
+| Accessibility | 1 | a11y-audit |
+| Release | 5 | ship, deploy, canary, release-docs, retro |
+| Utility | 10 | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo, context-audit, skill-eval, profile-session |
+| Lead Generation | 1 | leads |
 
 ## Documentation
 

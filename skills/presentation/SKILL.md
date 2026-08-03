@@ -6,6 +6,7 @@ description: >
   theming and typography. Modes: [topic] (from scratch), from [file] (from
   markdown), --slides N, --theme dark|light|corporate, --outline-only,
   --out [path], --lang [code].
+category: Utility
 codesift_tools:
   always:
     - analyze_project

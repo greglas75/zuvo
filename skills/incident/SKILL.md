@@ -5,6 +5,7 @@ description: >
   breaks in production, this skill builds a timeline, identifies the probable cause,
   and generates a structured postmortem document. Flags: --since, --service, --sev,
   --revert, --comms, --dry-run.
+category: Utility
 codesift_tools:
   always:
     - analyze_project

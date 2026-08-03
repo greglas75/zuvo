@@ -7,6 +7,7 @@ description: >
   construction with mandatory checkpoints, and craft validation tests. Modes:
   init, [component], improve [path], extract [path], status, --quick, --dry-run.
   NOT for auditing existing UI (use zuvo:design-review).
+category: Design
 codesift_tools:
   always:
     - analyze_project

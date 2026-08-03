@@ -4,6 +4,7 @@ description: >
   Diff-driven documentation sync after a release. Determines what source files
   changed, delegates changelog to zuvo:docs, updates only docs whose source changed.
   Flags: --dry-run, explicit range argument.
+category: Release
 codesift_tools:
   always:
     - analyze_project

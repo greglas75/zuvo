@@ -5,6 +5,7 @@ description: >
   specification before any code is written. Use when the user wants to create a new
   feature, add significant functionality, redesign a subsystem, or build something
   that touches multiple parts of the project.
+category: Pipeline
 codesift_tools:
   always:
     - analyze_project

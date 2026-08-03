@@ -9,6 +9,7 @@ description: >
   site-aware output with frontmatter auto-detection, batch mode for multi-article
   sessions, and graceful degradation when web search is unavailable. Flags:
   --lang, --tone, --length, --site-dir, --format, --keyword, --audience, --batch-mode.
+category: Content
 codesift_tools:
   always:
     - analyze_project

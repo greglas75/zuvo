@@ -7,6 +7,7 @@ description: >
   and security guard removals. Generates mutations, executes them against the
   relevant tests, and reports which mutations survived (tests need strengthening).
   Flags: [path] (scope), full, --max N, --category, --dry-run, --quick.
+category: Testing
 codesift_tools:
   always:
     - analyze_project

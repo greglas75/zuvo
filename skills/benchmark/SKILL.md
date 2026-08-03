@@ -1,6 +1,7 @@
 ---
 name: benchmark
 description: "Multi-provider AI coding benchmark. Dispatches a task to Codex, Gemini, Claude, and Cursor-Agent in parallel, scores responses with a Claude meta-judge, and produces a ranked leaderboard with cost, time, quality, and self-eval bias metrics. Supports corpus mode (fixed OrderService + useSearchProducts tasks) for apples-to-apples comparison across runs."
+category: Utility
 ---
 
 # zuvo:benchmark — Multi-Provider Coding Benchmark

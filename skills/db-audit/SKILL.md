@@ -7,6 +7,7 @@ description: >
   data lifecycle, DB security, and migration deployment safety. Code-level checks for all ORMs. Optional
   live analysis via PostgreSQL or MySQL connection.
   Switches: zuvo:db-audit full | [path] | [file] | --schema | --queries | --connections | --live <conn>
+category: Infra audits
 codesift_tools:
   always:
     - analyze_project

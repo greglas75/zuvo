@@ -1,6 +1,7 @@
 ---
 name: execute
 description: "Activated when an implementation plan exists. Executes plan tasks in dependency order (independent, non-same-file tasks may run in parallel batches) with enforced review gates, adversarial validation, and resumable session state."
+category: Pipeline
 codesift_tools:
   always:
     - analyze_project
@@ -307,6 +308,17 @@ This loads project-specific patterns, gotchas, and decisions accumulated from pr
 
 For every task, emit a compact telemetry block after verification and include mode shifts again in the final summary.
 
+**"Every task" means every task that reaches a TERMINAL state — COMPLETED, SKIPPED, or BLOCKED — not
+only the ones that commit.** A task the run gave up on is exactly the task a retro most needs to see;
+emitting only for COMPLETED tasks makes `implementer-status=BLOCKED` structurally unreachable in
+`task-telemetry.jsonl` and silently under-counts every skip, so a reader tallying blocked/skipped
+reasons always sees zero no matter how many tasks were actually blocked. For a non-COMPLETED task
+emit the same block from the same fence, filling what is known and leaving the rest at its documented
+sentinel: `implementer-status=BLOCKED` (the status the implementer actually reported),
+`failure-strategy=` the value the plan declared, `acceptance-verified=[]`, and the review/verify
+fields at whatever they reached before the task terminated. The append is the same never-a-gate
+diagnostic it is on the COMPLETED path.
+
 Minimum fields:
 - `task`: number and name
 - `surface`: from plan task header (backend-logic / api / db / db-data / ui / integration / config / docs)
@@ -322,6 +334,7 @@ Minimum fields:
 - `acceptance-verified`: list of AC ids passed plus artifact paths (e.g. `AC1@zuvo/proofs/task-4-AC1.txt,AC3@zuvo/proofs/task-4-AC3.txt`) — behavior check
 - `codesift`: `available`, `unavailable`, or `index-failed`
 - `backlog-adds`: integer count for this task
+- `failure-strategy`: `halt`, `skip-and-continue`, or `degraded:<one-line description>` — the value the task's `**Failure:**` line declares in the approved plan, copied verbatim (the `degraded:` description is opaque text: never tokenised, never split). **Defaults to `halt` when the plan line is absent**, which is byte-identical to pre-rule-20 behavior. Never inferred, upgraded, or invented at run time — it is read from the plan or it is `halt`.
 
 **Per-file scoring is mandatory.** A telemetry block reporting `q_gates: 19/19 aggregate` is rejected by the completion gate. Aggregate averaging hides per-file zeros — the documented proximate cause of the 2026-04-22 codec session shipping with Q7=0 and Q11=0 in specific files while telemetry reported all-green.
 
@@ -343,6 +356,7 @@ verify="pnpm vitest run src/foo.spec.ts" exit=0
 acceptance-verified=AC2@zuvo/proofs/task-4-report.md,AC5@zuvo/proofs/task-4-report.md
 codesift=available
 backlog-adds=1
+failure-strategy=halt
 ```
 
 ---
@@ -527,6 +541,58 @@ The implementer cannot proceed due to a hard blocker (missing dependency, broken
 
 **Present to the user immediately.** Never silently skip or auto-resolve a BLOCKED task.
 
+**`silently` is the load-bearing word.** The rule forbids a skip nobody asked for and nobody can see
+— it does not forbid a skip the approved plan explicitly authorized in writing and the run announces
+loudly. Which of the two you are in is decided by the blocked task's `**Failure:**` field (plan rule
+20), and by nothing else:
+
+<!-- zuvo:blocked-carveout-start -->
+| Blocked task's plan `**Failure:**` value | What happens when the implementer reports BLOCKED |
+|---|---|
+| `halt`, or no `**Failure:**` line at all | Present the three options below and wait for the user's decision. Nothing is auto-resolved, nothing is auto-skipped. |
+| `skip-and-continue` | No prompt. Mark the task SKIPPED with reason code `skipped-plan-declared` (`session-state.md`), print `[AUTO-DECISION]: Task N blocked; plan declares Failure: skip-and-continue → SKIPPED. Blocker: <one line>.`, propagate `SKIPPED_BY_DEPENDENCY` to dependents per the Dependency State Contract (their reason code is `skipped-dependency`, NEVER `skipped-plan-declared` — only the task that actually declared the strategy carries that code), **emit the task telemetry block and its `task-telemetry.jsonl` append exactly as `Required Telemetry` specifies for a terminal non-COMPLETED task** (`implementer-status=BLOCKED`, `failure-strategy=skip-and-continue`, `acceptance-verified=[]`), and continue with the next task. Record it in the final summary like any other non-COMPLETED task. |
+<!-- zuvo:blocked-carveout-end -->
+
+**`skip-and-continue` is the ONLY declared value that changes what an implementer-reported BLOCKED
+does.** Every other value takes the `halt` row above — including `degraded:<desc>`, which is
+deliberately absent from the table because it is not a BLOCKED disposition at all: it is consumed at
+exactly ONE site, the Post-Cap Autonomous Disposition described two paragraphs down.
+
+**Value matching is EXACT — trim, and nothing else.** The declared value is read verbatim from the
+plan's `**Failure:**` line with only leading/trailing whitespace stripped: no case folding, no
+punctuation normalisation, no synonyms. `halt` and `skip-and-continue` must match those lowercase
+tokens byte-for-byte, and a `degraded:` declaration is recognised by the exact lowercase `degraded:`
+prefix — **colon included** (everything after the colon is opaque free text). A bare `degraded` with
+no colon is NOT a recognised value: plan-lint rejects it, because the retro reader matches
+`degraded:` and a colon-less value would otherwise pass the lint and then be tallied `unknown` by the
+very report it was declared for. So a `**Failure:**` line whose value is padded with
+extra spaces IS still `halt`, while `Halt`, `SKIP-AND-CONTINUE`, or `Degraded: …` are NOT — they are
+unrecognised values, and `scripts/zuvo-home/verify-plan-dag` rejects them at plan-lint time with
+`failure-strategy: Task N declares unrecognised failure strategy "<val>"` and exit 1, so a plan
+carrying one never reaches execution. This is the same trim-only, case-sensitive rule that script
+applies; the two must never disagree.
+
+That table is CLOSED — those two rows are every case. **An agent may NEVER infer, upgrade, or invent
+a Failure strategy at run time. It reads the one the approved plan declares, or it prompts.** An
+approved plan's `**Failure:**` line was written by a human and approved at the entry gate, so a skip
+taken under it is human-attributable; a strategy the agent picked mid-run would not be, and that is
+exactly the self-granted bypass this rule exists to prevent. "The blocker looks minor", "the task
+seems optional", and "the plan probably meant skip" are not `skip-and-continue`.
+
+`degraded:<one-line description>` is read at exactly ONE site, and it is not this one: the **Post-Cap
+Autonomous Disposition** in `../../shared/includes/no-pause-protocol.md`, where it pre-authorises
+case (c) with a named fallback and is recorded through the existing
+`[POST-CAP: DEFERRED] … default=<X>` form into the existing `### Post-Cap Dispositions` section of
+the Final Summary. It gets no parallel section here and no state of its own.
+
+<!-- zuvo:degraded-not-blocked-start -->
+**Taking a plan-declared `degraded:` fallback NEVER yields a `BLOCKED_*` state** — a reduced-but-delivered result is the outcome the approved plan chose, not a hard gate failure. The ONE case where a task whose plan line says `degraded:` still ends `BLOCKED` is unrelated to the fallback: the implementer reported a hard blocker, which takes the `halt` row of the BLOCKED carve-out table in `skills/execute/SKILL.md` (and, with no user to ask, the async branch sets that task `BLOCKED` and propagates `BLOCKED_BY_DEPENDENCY`) — there the `degraded:` fallback was never reached, so no `degraded:` outcome was ever produced.
+<!-- zuvo:degraded-not-blocked-end -->
+
+(That paragraph is byte-identical between these anchors in `no-pause-protocol.md`; a test reads it
+out of that file and asserts this one agrees, because that file also lists `BLOCKED_*` as a
+legitimate stop and a literal-minded agent reads "reduced outcome" as a gate failure.)
+
 Provide three options:
 1. **Provide context** — "I can provide the missing information: [user types it]"
 2. **Skip this task** — "Skip and continue with the next task. This task will be marked SKIPPED."
@@ -536,8 +602,23 @@ If the user picks option 1, re-dispatch the implementer with the provided contex
 
 <!-- PLATFORM:CURSOR -->
 **Async mode (Codex App, Cursor — no AskUserQuestion):**
+**This block is a two-way BRANCH, not a checklist. Take branch A or branch B — never both.** The
+steps below were once a single flat bullet list guarded only by the sentence "check the carve-out
+first"; read top-to-bottom, a `skip-and-continue` task could be marked SKIPPED by the first bullet and
+then BLOCKED by the next one, leaving its dependents split between `SKIPPED_BY_DEPENDENCY` and
+`BLOCKED_BY_DEPENDENCY`. The branch is now structural so that reading cannot happen.
+
+**Branch A — the blocked task declares `**Failure:** skip-and-continue`.** The carve-out row wins
+outright and NOTHING in branch B applies:
+- Mark the task SKIPPED with reason code `skipped-plan-declared`; print the `[AUTO-DECISION]: … plan declares Failure: skip-and-continue → SKIPPED` line — **not** BLOCKED and not branch B's generic line. Having no user to ask does not change which strategy the plan declared.
+- Propagate `SKIPPED_BY_DEPENDENCY` to dependents with reason code `skipped-dependency` (NOT `BLOCKED_BY_DEPENDENCY`, which is branch B's propagation, and NOT `skipped-plan-declared`, which only the declaring task carries).
+- Emit the terminal-state telemetry block + `task-telemetry.jsonl` append per `Required Telemetry`.
+- Continue with the next task. **STOP — do not read branch B.**
+
+**Branch B — every other case** (`halt`, or no `**Failure:**` line at all):
 - Set task to BLOCKED
 - Propagate BLOCKED_BY_DEPENDENCY to dependent tasks (per Dependency State Contract)
+- Emit the terminal-state telemetry block + `task-telemetry.jsonl` append per `Required Telemetry` (`implementer-status=BLOCKED`, and `failure-strategy=` **the value the plan actually declared** — `halt` when there is no `**Failure:**` line, but a task declaring `degraded:<desc>` takes branch B too and must be recorded as `degraded:<desc>`, not flattened to `halt`)
 - Continue executing any PENDING tasks that are NOT blocked by this dependency
 - Include all BLOCKED tasks with their blockers in the final summary
 - Do NOT wait inline — the pipeline continues on independent branches
@@ -806,6 +887,159 @@ Verify: [command -> exit code]
 
 Then print the task telemetry block from `Required Telemetry`.
 
+**Then persist it.** Printing alone loses it — the block is chat output and nothing downstream can
+read it. Append one JSON line to `zuvo/context/task-telemetry.jsonl` (contract:
+`../../shared/includes/session-state.md` → `zuvo/context/task-telemetry.jsonl`).
+
+**This append is a DIAGNOSTIC, never a gate.** If it fails — for any reason, including a missing
+`python3` — print the `[WARN]` line and continue to Step 10. It is never a failed test, never a
+`BLOCKED_*` state, and it never halts or retries the task. Do not add a retry, a preflight check, or
+an abort on failure. (Stated here and again in `session-state.md` on purpose: the file it sits next
+to, `execution-state.md`, is blocking-by-contract, and that default must not bleed across.)
+
+**Why here and not in Step 9 or Step 10.** Step 9 is blocking-by-contract in four separate places —
+a must-never-block write placed inside it invites exactly the harden-into-a-gate drift above. Step 10
+is explicitly best-effort maintenance that may be skipped entirely, so a write there would silently
+lose records. Accepted cost of this placement: Step 10 can downgrade `codesift` to `index-failed`
+*after* the line is written, and the file is append-only, so that downgrade is not back-written. Do
+not "fix" that by moving the write to Step 10.
+
+Fill each `TT_*` value from the `[TELEMETRY]` block you just printed. Every value is passed to
+`python3` as its **own `argv` element** — the shell quotes exactly once and python never re-parses,
+so a task name containing `"`, a `verify` string containing `=` and spaces, or an
+`acceptance-verified` entry containing `@` all survive verbatim (**CQ31**: argv array, never an
+interpolated command string).
+
+Three value rules that are easy to get wrong:
+
+- **`TT_ACCEPTANCE_VERIFIED` is ONE JSON array literal** — `'["AC2@zuvo/proofs/task-4-report.md"]'`,
+  not a comma-separated string. An AC id or an artifact path may legally contain a comma, and
+  splitting on `,` silently turns one element into two. (Same rule as `degraded:<desc>` in
+  `failure-strategy`: never tokenise a value that can contain the separator.) Empty is `[]`.
+- **`TT_TASK` and `TT_BACKLOG_ADDS` default to `-1`, not `0`.** Both are ints, so a forgotten
+  substitution still parses and the record still lands (never a gate) — but `-1` is an impossible
+  value a reader can spot, where `0` would read as "task 0, zero backlog adds" and lie plausibly.
+- **The output root is `$ZUVO_OUTPUT_DIR`, else the git root** — the same derivation
+  `execution-state.md` uses. There is deliberately **no `pwd` fallback**: if neither resolves, the
+  block takes the `[WARN]` path instead of dropping telemetry into whatever directory the shell
+  happens to sit in.
+
+```bash
+# >>> zuvo:task-telemetry
+TT_AT="${TT_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+TT_SESSION_ID="${TT_SESSION_ID:-<session-id>}"
+TT_RETRO_SESSION_ID="${TT_RETRO_SESSION_ID:-<retro-session-id>}"
+TT_TASK="${TT_TASK:--1}"                                 # int; -1 = unsubstituted sentinel
+TT_TASK_NAME="${TT_TASK_NAME:-<task-name>}"
+TT_SURFACE="${TT_SURFACE:-<surface>}"
+TT_MODE="${TT_MODE:-<mode>}"
+TT_FALLBACK_PATH="${TT_FALLBACK_PATH:-none}"
+TT_WRITER_MODEL="${TT_WRITER_MODEL:-<writer-model>}"
+TT_REVIEWER_ROUTE="${TT_REVIEWER_ROUTE:-<reviewer-route>}"
+TT_IMPLEMENTER_STATUS="${TT_IMPLEMENTER_STATUS:-<implementer-status>}"
+TT_SPEC_REVIEW="${TT_SPEC_REVIEW:-<spec-review>}"
+TT_QUALITY_REVIEW="${TT_QUALITY_REVIEW:-<quality-review>}"   # FULL per-file string, never decomposed
+TT_ADVERSARIAL="${TT_ADVERSARIAL:-<adversarial>}"
+TT_VERIFY="${TT_VERIFY:-<verify>}"
+TT_ACCEPTANCE_VERIFIED="${TT_ACCEPTANCE_VERIFIED:-[]}"   # ONE JSON array literal, never comma-split
+TT_CODESIFT="${TT_CODESIFT:-<codesift>}"
+TT_BACKLOG_ADDS="${TT_BACKLOG_ADDS:--1}"                 # int; -1 = unsubstituted sentinel
+TT_FAILURE_STRATEGY="${TT_FAILURE_STRATEGY:-halt}"       # defaults to halt, never null
+# Output root: the SAME derivation execution-state.md uses (report-output-location.md).
+# NO `pwd` fallback on purpose — telemetry written into whatever directory the shell
+# happens to sit in is worse than telemetry not written, so an unresolvable root
+# yields an empty path and the python tail below turns that into the documented [WARN].
+ZUVO_DIR="${ZUVO_OUTPUT_DIR:-}"
+if [ -z "$ZUVO_DIR" ]; then
+  _TT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -n "$_TT_ROOT" ]; then ZUVO_DIR="$_TT_ROOT/zuvo"; fi
+fi
+TT_PATH="${ZUVO_DIR:+$ZUVO_DIR/context/task-telemetry.jsonl}"
+python3 - \
+  "$TT_AT" "$TT_SESSION_ID" "$TT_RETRO_SESSION_ID" "$TT_TASK" "$TT_TASK_NAME" \
+  "$TT_SURFACE" "$TT_MODE" "$TT_FALLBACK_PATH" "$TT_WRITER_MODEL" "$TT_REVIEWER_ROUTE" \
+  "$TT_IMPLEMENTER_STATUS" "$TT_SPEC_REVIEW" "$TT_QUALITY_REVIEW" "$TT_ADVERSARIAL" \
+  "$TT_VERIFY" "$TT_ACCEPTANCE_VERIFIED" "$TT_CODESIFT" "$TT_BACKLOG_ADDS" \
+  "$TT_FAILURE_STRATEGY" "$TT_PATH" <<'PY' \
+  || echo "[WARN] task-telemetry append failed — continuing (diagnostic file, never a gate)" || true
+import json, os, sys
+
+# fcntl is POSIX-only; import it defensively so a platform without it degrades
+# to an unlocked append instead of failing the import and losing the record.
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+
+# Schema SSOT: shared/includes/session-state.md -> zuvo/context/task-telemetry.jsonl.
+# Key list and order must match that table exactly; a test diffs the two.
+K = ["at", "session-id", "retro-session-id", "task", "task-name", "surface",
+     "mode", "fallback-path", "writer-model", "reviewer-route",
+     "implementer-status", "spec-review", "quality-review", "adversarial",
+     "verify", "acceptance-verified", "codesift", "backlog-adds",
+     "failure-strategy"]
+
+args = sys.argv[1:]
+if len(args) != len(K) + 1:
+    raise SystemExit("task-telemetry: expected %d argv values + path, got %d"
+                     % (len(K), len(args)))
+path = args[-1]
+# An empty path means the output root could not be resolved (no ZUVO_OUTPUT_DIR and
+# no git root). Refuse rather than invent a location -> the shell tail WARNs.
+if not path:
+    raise SystemExit("task-telemetry: could not resolve the zuvo output root")
+rec = dict(zip(K, args[:-1]))
+
+# Typed fields. int() on a non-numeric placeholder raises -> the shell tail WARNs.
+# The -1 wrapper defaults are deliberate: they parse (so an unsubstituted record
+# still lands, per the never-a-gate contract) yet are impossible values, so a
+# reader can spot them. A 0 default would read as a real "task 0 / 0 adds".
+rec["task"] = int(rec["task"])
+rec["backlog-adds"] = int(rec["backlog-adds"])
+
+# ONE JSON array value, never `split(",")`: an AC id or an artifact path may legally
+# contain a comma, and splitting silently turns one element into two. Accepted cost
+# of the [] fallback: a malformed value loses its content rather than aborting the
+# whole record — this is a diagnostic, and dropping 19 fields to preserve 1 is worse.
+try:
+    _ac = json.loads(rec["acceptance-verified"] or "[]")
+except (ValueError, TypeError):
+    _ac = []
+rec["acceptance-verified"] = [str(s) for s in _ac] if isinstance(_ac, list) else []
+rec["failure-strategy"] = rec["failure-strategy"] or "halt"
+
+line = json.dumps(rec, ensure_ascii=False) + "\n"
+
+# open(...,"a") raises FileNotFoundError when the parent is missing, which would
+# degrade this to "always WARN, never persists" on a fresh checkout.
+os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+
+# LOCK_EX because zuvo:execute dispatches tasks in PARALLEL BATCHES — two per-task
+# appends can hit this file at the same moment. Unlocked, their bytes interleave
+# inside one physical line and BOTH records are lost to a json.loads reader. The
+# lock is held across write+flush+fsync, so a crash can at worst leave a truncated
+# TRAILING line (readers skip it; see session-state.md "Reader contract").
+# A lock failure is intentionally NOT caught: it propagates to the `|| echo` tail as
+# the documented [WARN], exactly like every other failure here. Never a gate.
+# Retention: unbounded by contract — see session-state.md "Retention".
+# fcntl is None on a platform where it could not be imported (see the try/except
+# above); the record is still persisted unlocked there, since a lost record is
+# worse than a theoretically interleavable one and a single-writer platform
+# cannot race with itself anyway.
+with open(path, "a", encoding="utf-8") as fh:
+    if fcntl is not None:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+    try:
+        fh.write(line)
+        fh.flush()
+        os.fsync(fh.fileno())
+    finally:
+        if fcntl is not None:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+PY
+# <<< zuvo:task-telemetry
+```
+
 ### Step 10: Update Project Context + Optional CodeSift Reindex
 
 If CodeSift is available, call `index_file(path)` for each created or modified file after the task commit. This is maintenance, not a release gate.
@@ -827,14 +1061,14 @@ Each task has one of these states:
 | PENDING | Not yet started |
 | IN_PROGRESS | Currently being executed |
 | COMPLETED | All review gates passed, committed |
-| SKIPPED | User chose to skip (via BLOCKED options) |
+| SKIPPED | User chose to skip at the BLOCKED prompt, OR the plan task declared `**Failure:** skip-and-continue` (reason code `skipped-plan-declared`) |
 | BLOCKED | Hard blocker, awaiting user decision |
 | BLOCKED_BY_DEPENDENCY | A prerequisite task is BLOCKED |
-| SKIPPED_BY_DEPENDENCY | A prerequisite task is SKIPPED |
+| SKIPPED_BY_DEPENDENCY | A prerequisite task is SKIPPED (reason code `skipped-dependency`) |
 
 **Propagation rules:**
 - When a task transitions to BLOCKED, all dependent tasks transition to BLOCKED_BY_DEPENDENCY.
-- When a task transitions to SKIPPED, all dependent tasks transition to SKIPPED_BY_DEPENDENCY.
+- When a task transitions to SKIPPED, all dependent tasks transition to SKIPPED_BY_DEPENDENCY **with reason code `skipped-dependency`** — never `skipped-plan-declared` and never `skipped-user`. Those two codes name *why the prerequisite itself* was skipped and belong ONLY to the task that was actually skipped for that reason; a dependent inherits the state, not the cause. Tagging a whole dependent subtree `skipped-plan-declared` would claim a plan declaration those tasks never carried and would inflate the plan-declared count in the retro/telemetry tally.
 - A BLOCKED_BY_DEPENDENCY task cannot be started without explicit user override.
 - If the user provides an override ("proceed despite missing dependency"), the task transitions back to PENDING and can be dispatched.
 - In the final summary, BLOCKED_BY_DEPENDENCY tasks are listed separately from BLOCKED tasks.
@@ -1029,10 +1263,15 @@ The files remain on disk — they serve as a record of what was done. `zuvo:exec
 
 ### Final Summary
 
-Print a completion report:
+Print a completion report. **The header is conditional:** `<k>` IS the number of
+`[AC-UNPROVEN: …]` lines the AC-coverage item of the final Completion Gate emitted (one per
+unproven AC — see that item for the single definition of PROVEN), so if it emitted `k > 0` of
+them, the header MUST read `## Execution Complete (AC-UNPROVEN: <k>)` — a bare
+`## Execution Complete` is a contract violation whenever `k > 0`, because it hides that the plan
+landed with an AC nothing verified.
 
 ```
-## Execution Complete
+## Execution Complete [(AC-UNPROVEN: <k>) — suffix present iff k > 0]
 
 **Plan:** [plan document path]
 **Tasks:** N completed, M skipped, K blocked
@@ -1065,6 +1304,23 @@ Print a completion report:
  changed: README section, docs/<feature>.md, API ref, CHANGELOG entry, runbook, .env.example),
  or the explicit `[DOC: N/A — <reason>]` line. A multi-task plan with no docs and no declared
  N/A is INCOMPLETE.]
+
+### Unproven Acceptance Criteria
+[AC-COVERAGE CONTRACT — one line per UNPROVEN Coverage Matrix AC, copied verbatim from the
+ final Completion Gate: `[AC-UNPROVEN: <AC-id> — claimed by task(s) N,M; final states <states>]`.
+ PROVEN/UNPROVEN is defined in exactly ONE place — the AC COVERAGE item of the Completion Gate
+ Check — and is NOT re-derived here: an AC is PROVEN iff a claiming task ended COMPLETED *and*
+ that task's `acceptance-verified=` names that AC's own id. So this section also lists ACs whose
+ claiming task ended COMPLETED with no proof or with proof for a DIFFERENT AC (reported as
+ `COMPLETED (no proof for this AC)`), and Coverage Matrix rows with no claiming task at all
+ (reported as `claimed by task(s) none; final states UNMAPPED`) — not only the skipped/blocked ones.
+ These are the ACs this run shipped with NO behavioural verification while every other gate
+ reported green. The count here MUST equal the `(AC-UNPROVEN: <k>)` suffix in the header above,
+ and both ARE the number of `[AC-UNPROVEN: …]` lines the gate emitted — one per unproven AC,
+ so the three can never disagree.
+ If none, write "none — all <N> Coverage Matrix ACs have a COMPLETED claiming task whose acceptance-verified names them",
+ where `<N>` is the same `checked=<N>` value the `[GATE: ac-coverage]` marker printed — a wrong
+ `<N>` is checkable against the plan's Coverage Matrix, unlike a fixed sentence.]
 
 ### Post-Cap Dispositions
 [MORNING-REVIEW CONTRACT — list every `[POST-CAP: FIXED|SPEC-AMENDED|DEFERRED]` the run made
@@ -1151,6 +1407,7 @@ COMPLETION GATE CHECK (per task):
 
 COMPLETION GATE CHECK (final):
 [ ] Whole-feature Smoke Proofs ran (or [GATE: smoke-verified] / explicit "Not applicable" with justification)
+[ ] AC COVERAGE: every AC in the plan's Coverage Matrix has been CLASSIFIED as PROVEN or UNPROVEN and the result REPORTED. This item is satisfied by emitting the gate honestly, **not** by every AC being PROVEN — `k>0` is a legitimate terminal outcome (it surfaces as the `(AC-UNPROVEN: k)` header below), never a reason to withhold `## Execution Complete`, retry, or halt. What fails this item is not reporting: a missing `[GATE: ac-coverage]` line, a `<k>` that disagrees with the emitted `[AC-UNPROVEN: …]` lines, or an unenumerated Coverage Matrix row. **PROVEN is defined HERE, once, and every other mention of it in this skill points back to this line: an AC is PROVEN iff at least ONE of its claiming tasks ended COMPLETED *and* that task's `acceptance-verified=` value names that AC's OWN id.** Everything else is UNPROVEN — including (a) a claiming task that ended COMPLETED with a missing or empty `acceptance-verified=`, (b) a claiming task that ended COMPLETED with an `acceptance-verified=` naming only OTHER ACs, (c) all claiming tasks ending SKIPPED / SKIPPED_BY_DEPENDENCY / BLOCKED / BLOCKED_BY_DEPENDENCY, and (d) a Coverage Matrix row with NO claiming task at all. A task's overall COMPLETED status alone NEVER proves an AC. This is the SAME per-AC rule the per-task `[GATE: acceptance-verified]` gate applies to the ACs one task claims — this item is that gate's whole-plan backstop, re-asked over every Coverage Matrix row, and it is therefore never weaker than it. Enumerate every Coverage Matrix row and emit `[GATE: ac-coverage] checked=<N> unproven=<k>` on EVERY run — never silently omitted, even when `k=0` — where `<N>` is the number of Coverage Matrix rows actually enumerated (the AC count, NOT the task count: a plan may have more or fewer ACs than tasks, so deriving `<N>` from the task count is a contract violation). Print EXACTLY ONE `[AC-UNPROVEN: <AC-id> — claimed by task(s) N,M; final states <states>]` line per UNPROVEN AC — no more, no fewer — and `<k>` **is defined as the number of those lines**, so the suffix count and the emitted lines cannot drift apart; if they differ, the gate output is wrong. `<states>` reports each claiming task's ACTUAL final state so the line reads truthfully: use `COMPLETED (no proof for this AC)` for case (a)/(b) rather than any state implying the task was skipped or blocked, and for case (d) the line reads `[AC-UNPROVEN: <AC-id> — claimed by task(s) none; final states UNMAPPED]` — an unmapped Coverage Matrix row is REPORTED, never silently skipped by a vacuously-true "all claiming tasks failed" test over an empty set. ZERO such lines = closed; one or more = the Final Summary header reads `## Execution Complete (AC-UNPROVEN: <k>)`, NEVER a bare `## Execution Complete`, and each line is repeated verbatim in `### Unproven Acceptance Criteria`
 [ ] Test Quality Gate ran (Phase Final-1b): [GATE: test-quality] PASS|WARN|N/A with a REAL zuvo/audits test-audit report path — inline Q-rescoring is a substituted gate = INVALID; below-A files fixed in-run or WARN + backlogged
 [ ] End-of-plan aggregate review ran (or [GATE: aggregate-review] PASS|RECOMMENDED-FOUND|MUST-FIX-FOUND|SKIPPED|NO-OP|BLOCKED — never silently omitted)
 [ ] Content-keyed artifact memory/reviews/<base7>..<head7>-<slug>.md written with range:/files:/**adversarial:** header for the plan range (the adversarial proof path is REQUIRED — pg_artifact_proven rejects an artifact whose proof does not resolve or holds <2 `REVIEW BY:` lines, so an artifact without it grants ZERO coverage) (on success only — pipeline-entry signal read by pre-push/CI gates)
@@ -1164,6 +1421,36 @@ COMPLETION GATE CHECK (final):
 [ ] append-runlog wrapper invoked and exited 0
 [ ] Logs evidence block printed with real `tail` output
 ```
+
+**AC coverage needs NO new state — and the hole it closes exists TODAY.** Wire the check from
+three sources you already have: AC → task from the plan's **Coverage Matrix** (`Primary task(s)`
+column), each task's final outcome from `completed[] / skipped[] / blocked[]` in
+`zuvo/context/execution-state.md` (plus the `BLOCKED_BY_DEPENDENCY` / `SKIPPED_BY_DEPENDENCY`
+propagation in the Dependency State Contract), and per-task proof from the `acceptance-verified=`
+field of the task's `[TELEMETRY]` block. Do NOT invent a new file, field or marker for this.
+Matching an AC id against `acceptance-verified=` is an exact id match on the list's entries
+(`AC1@zuvo/proofs/task-4-report.md` proves AC1 and nothing else) — never a substring test, or
+`AC1` would be "proven" by an `AC10` entry.
+
+Why it is needed: the per-task gate asserts an acceptance proof ran "for each AC **the task
+claims**" — and a task that ends SKIPPED or BLOCKED claims nothing, so that gate is *vacuously*
+satisfied. Nothing downstream then re-asks the whole-plan question. Both paths that produce those
+states are live today, independent of any newer failure-strategy work: the user-chosen **"Skip this
+task"** option at the BLOCKED prompt (Step 3), and the **async auto-BLOCKED** branch (Codex App /
+Cursor, no `AskUserQuestion`) that sets BLOCKED, propagates `BLOCKED_BY_DEPENDENCY`, and keeps
+executing independent tasks. Before this item, either path could reach `## Execution Complete` with
+every gate green and an AC that was never behaviourally verified. The `(AC-UNPROVEN: <k>)` header
+suffix exists so that outcome cannot be skimmed past.
+
+**Why it is defined per-AC and not per-task.** A backstop that certifies an AC from its claiming
+task's overall COMPLETED status would be *weaker* than the per-task gate it exists to back up, and
+would wave through exactly the cases a whole-plan re-ask is for: a task claiming AC1, AC2 and AC3
+that proved only AC1 (the other two ride in on the task's status), a task that reached COMPLETED
+with a missing or empty `acceptance-verified=` at all, and — because "ALL claiming tasks ended in a
+bad state" is vacuously TRUE over the empty set — a Coverage Matrix row that names no claiming task,
+which would be silently skipped instead of reported. Per-AC matching plus the explicit `UNMAPPED`
+row closes all three, and reporting a COMPLETED-without-proof task with its ACTUAL state keeps the
+line honest instead of implying the work was skipped or blocked.
 
 **Phase order is non-negotiable.** Retro append → log append → final Run: block. Past failure mode (e.g. `uptime` 2026-05-09): agent prints final summary + Run: line in chat, never executes the bash, all logs stay empty.
 

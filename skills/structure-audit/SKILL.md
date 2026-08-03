@@ -8,6 +8,7 @@ description: >
   Tool-driven with CodeSift primary and CLI fallbacks (cloc, knip, dep-cruiser,
   jscpd, eslint, git mining). Flags: full (default), [path], --naming, --size,
   --dead-code, --duplication, --hotspots, --quick, --fix.
+category: Structure/SEO/GEO
 codesift_tools:
   always:
     - analyze_project

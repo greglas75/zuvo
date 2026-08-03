@@ -7,6 +7,7 @@ description: >
   into prioritized fixes with exact code. Works with any stack: React, Astro,
   vanilla HTML/CSS, Tailwind, CSS-in-JS. Flags: [file/path], --screenshot,
   --mobile, --fix.
+category: Design
 codesift_tools:
   always:
     - analyze_project

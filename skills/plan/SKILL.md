@@ -1,6 +1,7 @@
 ---
 name: plan
 description: "Analyzes architecture, selects patterns, assesses testability, then decomposes work into ordered TDD tasks with exact verification commands and explicit acceptance mapping. Works from an approved spec (zuvo:brainstorm output) or directly from a user-provided description."
+category: Pipeline
 codesift_tools:
   always:
     - analyze_project
@@ -313,6 +314,11 @@ Write the plan document to `docs/specs/YYYY-MM-DD-<topic>-plan.md` using today's
 **Surface:** backend-logic | api | db | db-data | ui | integration | config | docs
 **Complexity:** standard | complex
 **Dependencies:** none | Task N, Task M
+**Failure:** halt | skip-and-continue | degraded:<one-line description>
+  [MUST be its own line — never appended to the Dependencies line, even after a
+  `·` bullet. `verify-plan-dag`'s Dependencies parser truncates at `(`/`>` and
+  hard-exits 2 on a non-numeric token, so a `degraded:` description containing
+  a comma would be tokenized as a dependency and crash the linter.]
 **Execution routing:** default implementation tier | deep implementation tier
 
 - [ ] RED: [test goal — what behavior to assert, which file, which assertions]
@@ -387,7 +393,33 @@ Copy each smoke proof from the spec's `## Whole-feature Smoke Proofs` section. I
     target behavior already exists is NOT authored — it becomes a one-line `already-implemented`
     note in the plan header. The rs_be antifraud plan authored T1-T18 for code that was already
     implemented; the whole plan was invalid and the execute run burned hours discovering it.
-17. **Literal-string adversarial dispositions:** A plan-review/adversarial finding that targets a literal string (a log message, an error-text constant, a fixture value) with no behavioral consequence is almost always a false positive — disposition it as `FP: literal-string, no behavior change` in the Review Trail rather than churning the plan to satisfy it.
+19. **Literal-string adversarial dispositions:** A plan-review/adversarial finding that targets a literal string (a log message, an error-text constant, a fixture value) with no behavioral consequence is almost always a false positive — disposition it as `FP: literal-string, no behavior change` in the Review Trail rather than churning the plan to satisfy it.
+20. **Failure strategy (MANDATORY field, HARD default):** Every task declares a `**Failure:**`
+    field with exactly ONE of three tokens: `halt`, `skip-and-continue`, or
+    `degraded:<one-line description>` — never more than one value. The template's
+    `**Failure:** halt | skip-and-continue | degraded:<one-line description>` line is notation for
+    "pick one"; that pipe-union appears ONLY in the template and must never be copied verbatim into
+    an authored task. A task with no `**Failure:**` line is `halt` — byte-identical to today's
+    behavior, so every pre-existing plan is still valid. A `**Failure:**` line that IS present but
+    carries no value (blank after the label) is a plan defect, not a silent `halt` — omitting the
+    line entirely means `halt`; writing it blank is an authoring error, distinct because one is a
+    legacy plan and the other is a typo. `skip-and-continue` is legal **only** when no other task
+    in the plan lists it on a `**Dependencies:**` line — because rule 9 already requires
+    Dependencies to trace concrete reads, so "B depends on A but A is optional" means B fails
+    mid-RED against a symbol A never wrote, trading a clean `BLOCKED_BY_DEPENDENCY` for a worse,
+    harder-to-diagnose failure downstream. For `degraded:<one-line description>`, the description
+    is free text on its OWN line, must not contain a `·` bullet, and must be treated as unread past
+    the `degraded:` marker — discarded whole, never tokenised or split on commas — so a later
+    linter has no license to invent a stricter parse of that free text. The enum changes a
+    task's OUTCOME at execute time only — never the task graph: there is no alternative task, no
+    fail branch, no rerouting. Choosing `skip-and-continue` or `degraded` does not add, remove, or
+    reorder any task or dependency edge in this plan.
+21. **Failure strategy — AC coverage (advisory, plan-reviewer-enforced, not mechanical):** A task may
+    declare `skip-and-continue` only if every AC in its Acceptance Proof block is also claimed by at
+    least one other task, or its Acceptance Proof is explicitly `none — <reason>`. This cannot be
+    checked mechanically because the Coverage Matrix's "Primary task(s)" cell (rule 7) is free text —
+    the plan-reviewer must verify it by reading the matrix. Skipping this check lets a plan authorize
+    a run that reaches `## Execution Complete` with an unproven AC.
 
 ---
 
@@ -540,6 +572,8 @@ COMPLETION GATE CHECK
 [ ] All 3 Phase 1 agents ran sequentially (Architect → Tech Lead → QA Engineer) — OR Light mode used and `Phase 1: direct (small/light scope)` recorded in Review Trail
 [ ] Every spec AC maps to at least one task's Acceptance Proof field
 [ ] EVERY task has Surface field + Acceptance Proof block (inline, not just AC# reference)
+[ ] every task either declares a valid `**Failure:**` value, or omits the line entirely (= `halt`);
+    a present-but-empty or unrecognised value fails this gate
 [ ] Whole-feature Smoke Proofs section present (or "Not applicable" with reason)
 [ ] Plan-reviewer ran and converged — APPROVED verdict
 [ ] Adversarial validation ran (--mode plan)

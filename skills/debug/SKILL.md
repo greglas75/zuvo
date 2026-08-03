@@ -1,6 +1,7 @@
 ---
 name: debug
 description: "Systematic bug investigation with a five-phase framework: reproduce, narrow, diagnose, fix, verify. Supports automated regression bisect via --regression flag. Produces a structured debug report with root cause analysis, regression test, and CQ/Q self-evaluations."
+category: Core
 codesift_tools:
   always:
     - analyze_project

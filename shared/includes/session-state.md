@@ -2,7 +2,9 @@
 
 Persist execution progress so sessions can resume after context compaction, crashes, or interruption.
 State files live in `zuvo/context/` in the project root. They are local runtime state — never committed.
-For `zuvo:execute`, rewriting state after each successful commit is a blocking durability step, not a best-effort note.
+For `zuvo:execute`, rewriting `execution-state.md` after each successful commit is a blocking
+durability step, not a best-effort note. That blocking rule is specific to the resume state files —
+`task-telemetry.jsonl` is a diagnostic append whose failure is a WARNING; see its own section.
 
 ---
 
@@ -68,6 +70,7 @@ next-task: <N>
 | Code | Meaning |
 |------|---------|
 | `skipped-user` | User explicitly chose to skip at a BLOCKED prompt |
+| `skipped-plan-declared` | The task hit a hard blocker and its plan task declared **Failure:** skip-and-continue |
 | `skipped-dependency` | A prerequisite task was BLOCKED or SKIPPED |
 | `blocked-build-failure` | Test/lint/type-check failed and could not be resolved |
 | `blocked-external` | Missing external dependency, credential, or environment |
@@ -150,6 +153,108 @@ real repos had a completely dead plan→execute gate.
 Note the contrast with `execution-state.md` above, which keeps the `<!-- status: ... -->`
 comment form: `hooks/pre-commit-adversarial-gate.sh` matches that literal string. The two files
 deliberately use different dialects; do not "harmonize" one without updating its reader.
+
+---
+
+### `zuvo/context/task-telemetry.jsonl`
+
+Written by `zuvo:execute` at the end of Step 9b — one JSON line per finished task, carrying the
+same fields as the printed `[TELEMETRY]` block. Before this file existed the block was printed to
+chat and then lost, so nothing downstream (`zuvo:retro`, gate-failure trends, reviewer-route
+distribution) could ever read it.
+
+```jsonl
+{"at":"2026-08-02T10:00:00Z","session-id":"exec-20260802-1000","retro-session-id":"retro-20260802-1000","task":4,"task-name":"Tenant extension hardening","surface":"api","mode":"multi-agent","fallback-path":"none","writer-model":"opus","reviewer-route":"review-alt","implementer-status":"DONE","spec-review":"COMPLIANT","quality-review":"PASS cq=34/37@tenant.ts,35/37@guards.ts q=22/24@tenant.test.ts","adversarial":"PASS mode=code","verify":"npx vitest run src/tenant.spec.ts exit=0","acceptance-verified":["AC2@zuvo/proofs/task-4-report.md","AC5@zuvo/proofs/task-4-report.md"],"codesift":"available","backlog-adds":1,"failure-strategy":"halt"}
+```
+
+**Field contract — exactly these 19 keys, in this order, on every record.** This table is the
+schema's single source of truth: `tests/skill-suite/test-task-telemetry-contract.sh` derives the
+key list from it and diffs it against the writer's own list, so the two cannot drift. The
+`zuvo:telemetry-schema` markers are the parser's bounds — prose, a `---` rule, or another table in
+this section can never truncate the schema it sees. Add rows inside the markers, never outside.
+
+<!-- zuvo:telemetry-schema:start -->
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `at` | string | ISO-8601 UTC timestamp of the append |
+| `session-id` | string | The per-process session (`exec-<YYYYMMDD>-<HHMM>`). Changes on resume. |
+| `retro-session-id` | string | Stable identity of the whole RUN. Inherited unchanged on resume — this is what stitches a resumed run's records back together. |
+| `task` | int | Task number from the plan. **`-1` is the unsubstituted sentinel** — an impossible task number, so a forgotten substitution is visible instead of reading as a real "task 0". |
+| `task-name` | string | Task name, verbatim (may contain quotes, em-dashes, commas) |
+| `surface` | string | `backend-logic` \| `api` \| `db` \| `db-data` \| `ui` \| `integration` \| `config` \| `docs` |
+| `mode` | string | `multi-agent` \| `single-agent` |
+| `fallback-path` | string | `none` \| `dispatch-unavailable` \| `dispatch-disallowed` \| `agent-failure` \| `same-model-fallback` |
+| `writer-model` | string | Implementer model/lane actually used |
+| `reviewer-route` | string | `review-primary` \| `review-alt` \| `same-model-fallback` \| `routing-failed` |
+| `implementer-status` | string | `DONE` \| `DONE_WITH_CONCERNS` \| `NEEDS_CONTEXT` \| `BLOCKED` |
+| `spec-review` | string | `COMPLIANT` \| `ISSUES FOUND` |
+| `quality-review` | string | The **full per-file** string exactly as printed (`PASS cq=34/37@a.ts,35/37@b.ts q=22/24@a.test.ts`). **Stored whole, never decomposed** into per-file sub-objects — a schema a reader has to reassemble is precisely how the aggregate collapse comes back. Per-file scoring is mandatory; see `skills/execute/SKILL.md` → Required Telemetry. |
+| `adversarial` | string | Verdict plus mode, e.g. `PASS mode=code` |
+| `verify` | string | Command(s) and exit code(s) |
+| `acceptance-verified` | array of string | AC ids plus artifact paths, one element each (`["AC2@zuvo/proofs/task-4-report.md", ...]`). Empty array when none. **Written as ONE JSON array literal, never comma-split** — an AC id or an artifact path may legally contain a comma, and splitting turns one element into two silently. A value that does not parse as a JSON array degrades to `[]` rather than aborting the record. |
+| `codesift` | string | `available` \| `unavailable` \| `index-failed` |
+| `backlog-adds` | int | Backlog entries added by this task. **`-1` is the unsubstituted sentinel** — same reasoning as `task`; `0` would be a plausible real value. |
+| `failure-strategy` | string | `halt` \| `skip-and-continue` \| `degraded:<desc>` — the task's declared failure strategy. **Defaults to `halt`, never null.** Populated from the plan's declared strategy (Task 9, commit 23a207a). |
+
+<!-- zuvo:telemetry-schema:end -->
+
+**APPEND-ONLY — one line per task.** Opposite of `execution-state.md`'s rule ("full rewrite — never
+append", WRITE Protocol below): never read, rewrite, or truncate this file before writing. **The READ
+Protocol does not touch it and must not start to** — a resumed run *appends* after the records already
+there, never rebuilding or replaying them. A record is a fact about a finished task, never edited later.
+
+**Accepted cost of append-only:** Step 10 runs after the append and can downgrade `codesift` to
+`index-failed`, but that later value is *not* back-written — moving the write to Step 10 would put it
+inside an explicitly best-effort maintenance step, losing a real record every time reindexing is
+skipped. **Consequence:** `index-failed` is unreachable from execute's own writer today — its records
+only ever carry `available` or `unavailable`; the value stays documented for a future writer appending
+after Step 10.
+
+**Output root — resolved exactly like `execution-state.md`'s:** `$ZUVO_OUTPUT_DIR`, else
+`<git root>/zuvo` (`report-output-location.md`). **No `pwd` fallback:** if neither resolves, the
+writer takes the `[WARN]` path and writes nothing — dropping records into whatever directory the
+shell happens to sit in would split one project's history across unrelated trees. The execute (writer)
+and retro (reader) fences each carry their **own copy** of this resolution (prefix `TT_`/`RT_`) — each
+is extracted and run standalone, so no parity test can pin them byte-identical. **This paragraph is
+the SSOT instead:** change it here first, then both fences.
+
+**Concurrent appends are locked.** `zuvo:execute` dispatches tasks in **parallel batches**, so two
+appends can reach this file at once; the writer holds an exclusive `flock` across write+flush+fsync.
+Unlocked, two records interleave inside one physical line and **both** are lost. A lock failure is a
+`[WARN]` like every other failure here — never a gate. **`flock` is taken BEFORE the write, not inside
+a try wrapping it**, so a lock failure propagates before a byte is written — no partial record to
+clean up, only a WARN and nothing appended. `fcntl` is POSIX-only, so where it cannot be imported the
+writer persists unlocked instead of not at all — a lost record is worse than a theoretically
+interleavable one, and a single-writer platform cannot race with itself.
+
+**Reader contract — skip a malformed line, never abort on one.** Parse line by line, `continue` past
+anything that does not parse, and count the skips. **Exception:** a blank/whitespace-only line is not
+a record — the ordinary trailing newline of an append-only file — so it counts toward neither
+`records=` nor the skip count; say so explicitly, never drop it silently. A kill between `write` and
+`fsync` can leave a truncated **trailing** line (the lock prevents interleaved lines, not truncated
+ones), and a hand edit can corrupt any line. The platform without `fcntl` above is the one place an
+*interleaved* line, not just a truncated one, is possible — the same skip-and-count handling covers it
+without a special case. Dying on a bad line turns a diagnostic into an outage; dropping one without
+saying so hides data loss.
+
+**Lifetime and retention:** same as `project-context.md` — survives across sessions, **never renamed,
+never truncated, no cap, no rotation** (rotation means rewriting, which APPEND-ONLY forbids;
+truncation would delete the cross-session history the file exists for). Growth is bounded by finished
+tasks (~600 bytes each, under 2 MB/year at 50 tasks/week) and read line by line. A project wanting it
+smaller prunes with `tail -n <N>` **by hand**, accepting the loss — no skill does this mid-run.
+Explicitly **NOT** `execution-state.md`'s lifetime: that file's `.completed`/`.stale` rename would
+split one resumed run's records across two files.
+
+**Gitignored for free** — it lives under `zuvo/`, which the WRITE Protocol already ensures is in
+`.gitignore`. No separate ignore rule is needed.
+
+**If the append fails: WARN and continue.** A failed append is **not** a failed test, **not** a
+`BLOCKED_*` state, and never halts or retries the task. The writer prints
+`[WARN] task-telemetry append failed — continuing (diagnostic file, never a gate)` and execution
+proceeds to Step 10. The unqualified rule *"Treat a failed rewrite exactly like a failed test"* in
+the WRITE Protocol below governs **`execution-state.md` only** — that file is the resume source of
+truth; this one is a diagnostic. Do not harden this into a gate.
 
 ---
 
@@ -320,7 +425,11 @@ Append to `zuvo/context/project-context.md` → `## Completed Work Units`:
 ```
 Trim to last 20 entries if over limit.
 
-MANDATORY:
+Append one record to `zuvo/context/task-telemetry.jsonl` at the end of Step 9b (see that file's
+section above). Append-only; a failure there is a WARNING, never a gate.
+
+MANDATORY (**`execution-state.md` only** — these three rules do NOT extend to
+`task-telemetry.jsonl`, whose failure behaviour is a WARNING by contract):
 - Rewrite the file immediately after each successful commit
 - Treat a failed rewrite exactly like a failed test
 - Do not start the next task until the file on disk reflects the new `completed[]`, `next-task`, and `last-updated` values
@@ -371,6 +480,12 @@ fail-opens silently. Confirm with `scripts/zuvo-phase.sh status` after writing.
 | User abort | `status: aborted` (renamed to `.stale` on next startup) | Keep as-is | `status: aborted` |
 | Stale validation fail | Renamed to `.stale` immediately | Keep as-is | Unchanged |
 | Fresh start (next execute) | Writes new file | Updates last-session-id, appends history | `status: in-progress` |
+
+**`task-telemetry.jsonl` is absent from every row of that table on purpose.** No event above touches
+it — not "all tasks complete", "user abort", or "stale validation fail". It is **never renamed and
+never truncated**; a fresh run simply keeps appending to the same file. A `.completed`/`.stale` rename
+like `execution-state.md`'s would split one resumed run's records across two files and defeat the
+cross-session view the file exists for. (Kept as a footnote so the Event × File table stays readable.)
 
 **Rename timing:** Terminal states (`completed`, `aborted`) are written immediately but the file stays as `execution-state.md`. The rename to `.completed`/`.stale` happens on the **next startup** (READ protocol Step 1). Stale validation failures rename immediately (READ protocol Step 2).
 

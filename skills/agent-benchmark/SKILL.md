@@ -1,6 +1,7 @@
 ---
 name: agent-benchmark
 description: "Self-benchmark: YOU write the code, adversarial reviews it (multi-provider), you fix, you write tests, adversarial reviews tests, you fix. Measures YOUR quality as an agent. Run in different models (Opus, Sonnet, Haiku) and compare results."
+category: Utility
 ---
 
 # zuvo:agent-benchmark — Self-Benchmark

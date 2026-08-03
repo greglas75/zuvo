@@ -1,6 +1,7 @@
 ---
 name: code-audit
 description: "Batch audit of production files against CQ1-CQ40 quality gates and CAP1-CAP29 anti-patterns. Tiered output (A/B/C/D), critical gate enforcement, evidence-backed scoring, cross-file pattern analysis, and prioritized execution plan. Flags: zuvo:code-audit all | [path] | [file] | --deep | --quick | --services | --controllers"
+category: Code/Test audits
 codesift_tools:
   always:
     - analyze_project       # stack detection (used by codesift-setup orchestrator)

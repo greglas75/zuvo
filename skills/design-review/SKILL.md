@@ -7,6 +7,7 @@ description: >
   accessibility via axe-core. DAP1-DAP12 anti-pattern detection. Modes: [path],
   visual, --fix-critical, --dry-run, --max-files, --quick, loop. NOT for code
   quality (use zuvo:code-audit) or test quality (use zuvo:test-audit).
+category: Design
 codesift_tools:
   always:
     - analyze_project

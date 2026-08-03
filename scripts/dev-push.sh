@@ -52,6 +52,252 @@ else
 fi
 # <<< zuvo:test-gate
 
+# >>> zuvo:marketplace-count  (Step 0b: rewrite + verify the sibling marketplace's skill count)
+# The marketplace is a SEPARATE repo, so scripts/validate-skills.sh — which knows
+# only this repo's count locations — structurally cannot see its "<N> skills"
+# strings. They rotted unnoticed: .claude-plugin/marketplace.json said 51 and
+# README.md said 49 while the real count was 57. Both are user-visible product
+# metadata on the marketplace listing.
+#
+# WHY HERE (before Step 1, after the Step-0 suite): Step 4 runs AFTER
+# `git push origin main` + `git push --tags`, so a `fail` there would leave an
+# irrecoverable half-shipped release. It sits just after the test gate rather
+# than at the marketplace-dir check above so that the Step-0 "no mutation before
+# a green suite" invariant still holds — this block writes to the sibling repo.
+#
+# WHY IT REWRITES INSTEAD OF ASSERTING: a mismatch-only pre-flight would dead-end
+# on the real 51/49 — Step 4 would never run, nothing would ever be rewritten, and
+# dev-push.sh would be unusable until someone hand-edited the marketplace. Step
+# 4's existing `git add -A` + commit + push carries this rewrite; no new commit or
+# push path is introduced here.
+#
+# WHY THE PULL IS HERE, NOT ONLY IN STEP 4: Step 4's own `git pull --rebase`
+# runs BEFORE its `git add -A`, so on a self-heal run the marketplace tree is
+# already dirty by then and that rebase is deterministically refused — silently,
+# via its `|| true` — leaving the unprotected `git push --quiet` to hard-fail a
+# release whose tag is already pushed. Pulling here, on a still-clean tree, makes
+# Step 4's pull a harmless no-op.
+#
+# WHY THAT PULL FAILS CLOSED (no `|| true`): Step 4 can tolerate a refused pull
+# because all it then does is substitute a SHA it computed itself. This block is
+# different in kind — it rewrites CONTENT from a value computed in another repo,
+# and Step 4 afterwards commits and pushes whatever it produced. On a failed pull
+# (offline, diverged, rebase in progress) the rewrite would land on a stale base
+# and Step 4 would publish it over the remote, clobbering it. A blocked release
+# is strictly better than a published wrong count, so an unsynced checkout is
+# never mutated. Positioned before the tag push, so failing here cannot half-ship.
+#
+# python3, not sed: `sed` exits 0 whether or not it substituted, so a renamed key
+# or a moved string would silently no-op (precedent: Step 5 below,
+# validate-skills.sh). The pattern is deliberately narrow — the adjacent
+# "26 specialized agents" and the plugin-level "category": "development" key must
+# stay byte-identical. Not best-effort (`&& ok … || warn …` like Step 5): a
+# missing installed_plugins.json must not fail a release, but stale user-visible
+# metadata in a repo this script already treats as mandatory is not in that class.
+git -C "$MARKETPLACE_DIR" pull --rebase --quiet \
+  || fail "Could not sync $MARKETPLACE_DIR (git pull --rebase failed — offline, diverged, or a rebase in progress). Sync that repo by hand, then re-run. Refusing to rewrite an unsynced checkout: Step 4 would commit and push that stale base over the remote."
+MKT_SKILL_COUNT="$(bash "$ZUVO_DIR/scripts/validate-skills.sh" --print-count)" \
+  || fail "Could not read the skill count — run: bash scripts/validate-skills.sh --print-count"
+case "$MKT_SKILL_COUNT" in
+  ''|*[!0-9]*)
+    fail "validate-skills.sh --print-count returned '${MKT_SKILL_COUNT}' (not an integer) — refusing to rewrite $MARKETPLACE_DIR" ;;
+  0*)
+    # `057` and `0` are digit-only but not canonical counts; writing either into
+    # user-visible metadata is a silent corruption, so reject rather than coerce.
+    fail "validate-skills.sh --print-count returned '${MKT_SKILL_COUNT}' (zero or a leading zero — not a canonical count) — refusing to rewrite $MARKETPLACE_DIR" ;;
+esac
+# The python source is read into a variable and passed with `-c`, NOT written as
+# `$(python3 - <<'PY' … PY)`. Bash scans the body of a command substitution for
+# quote characters even inside a QUOTED heredoc, so one apostrophe in a python
+# comment there breaks the parse of this entire script. `read` sits outside any
+# substitution, so the body is opaque to the parser and future edits are safe.
+# (`read -d ''` exits 1 at EOF when no NUL is found — hence the `|| true`.)
+IFS= read -r -d '' MKT_COUNT_PY <<'PY' || true
+import os
+import re
+import stat
+import sys
+import tempfile
+
+root, want = sys.argv[1], sys.argv[2]
+
+# EXPLICIT ALLOWLIST, not a recursive walk. A walk over the whole marketplace
+# tree rewrote far more than the two metadata strings it exists to fix: it
+# descended into every doc (a historical changelog line such as "grew from 49
+# skills" becomes history corruption), could follow a symlink out of the repo, and
+# treated an unreadable file as "nothing to rewrite" — letting a stale survivor
+# hide behind a read error. These two files are the ONLY ones that carry the
+# count; if the marketplace ever renames them the release must STOP, not
+# quietly publish a stale number, so a missing entry is a hard failure below.
+ALLOWLIST = ('.claude-plugin/marketplace.json', 'README.md')
+
+# "<digits> skills" ONLY — never "<digits> specialized agents", never a bare
+# number. Matched case-insensitively so a capitalised "57 Skills" cannot slip
+# past unverified; the canonical strings are lowercase, and the original casing
+# of the matched word is preserved in the replacement.
+#
+# The (?<![\d.]) lookbehind exists because a plain \b let the pattern match the
+# TAIL of a decimal: in "1.5 skills", \b sits between "." and "5", so "5 skills"
+# matched and would have been rewritten to "57 skills", producing "1.57 skills".
+# Refusing to start a match immediately after a digit or a dot kills that whole
+# class (version strings, "10.5 skills", "v2.3 skills") at the regex level.
+PAT = re.compile(r'(?<![\d.])(\d+) (skills)\b', re.I)
+
+
+def rewrite(match):
+    # Substitute ONLY a count that actually differs. An occurrence that already
+    # equals `want` is returned byte-identical, which makes idempotence
+    # structural instead of incidental.
+    if match.group(1) == want:
+        return match.group(0)
+    return '%s %s' % (want, match.group(2))
+
+
+# PASS 1 — read everything, compute every intended edit, and prove the whole set
+# can be written. Nothing is written until this pass is clean, so a problem on
+# the second file cannot leave the first one already rewritten.
+problems = []
+edits = []
+
+for rel in ALLOWLIST:
+    path = os.path.join(root, rel)
+    if os.path.islink(path):
+        problems.append('%s is a symlink — refusing to write through it' % rel)
+        continue
+    if not os.path.exists(path):
+        problems.append('%s is MISSING (renamed or moved?) — the count cannot be verified' % rel)
+        continue
+    if not os.path.isfile(path):
+        problems.append('%s is not a regular file' % rel)
+        continue
+    try:
+        with open(path, encoding='utf-8') as fh:
+            text = fh.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        problems.append('%s could not be read (%s)' % (rel, exc))
+        continue
+    if not PAT.search(text):
+        problems.append('%s contains no "<N> skills" string — the count location moved' % rel)
+        continue
+    # EXACTLY ONE rewritable occurrence, or STOP. The allowlist narrowed which
+    # FILES may be touched; it says nothing about which occurrence INSIDE one of
+    # them is the metadata. A genuinely historical line — "grew from 49 skills"
+    # in README.md — is indistinguishable from the live count by pattern alone,
+    # and rewriting it corrupts prose that was never wrong. Rewriting is only
+    # provably correct when there is a single count to rewrite; two or more
+    # disagreeing occurrences make the choice a guess, so the release stops and
+    # a human disambiguates. (Occurrences already equal to `want` are ignored
+    # here: they need no decision, which is what makes the mixed
+    # "49 skills today, 57 skills after" case still resolvable.)
+    stale = [m for m in PAT.finditer(text) if m.group(1) != want]
+    if len(stale) > 1:
+        where = ', '.join(
+            'line %d ("%s %s")' % (text.count('\n', 0, m.start()) + 1, m.group(1), m.group(2))
+            for m in stale)
+        problems.append(
+            '%s has %d differing "<N> skills" occurrences (%s) — refusing to guess which one is '
+            'the metadata; correct the live count by hand (or reword the historical ones), then re-run'
+            % (rel, len(stale), where))
+        continue
+    fixed = PAT.sub(rewrite, text)
+    if fixed == text:
+        continue
+    if not os.access(path, os.W_OK) or not os.access(os.path.dirname(path), os.W_OK):
+        problems.append('%s needs the count corrected but is not writable' % rel)
+        continue
+    edits.append((rel, path, fixed))
+
+if problems:
+    print('; '.join(problems))
+    sys.exit(1)
+
+# PASS 2 — STAGE EVERYTHING, THEN COMMIT. Two sub-phases:
+#   2a STAGE  — for every edit, write a temp file in the SAME directory as its
+#               target, flush + fsync + chmod it. Nothing is renamed yet.
+#   2b COMMIT — only once EVERY temp exists, run the os.replace() calls
+#               back-to-back with no other work between them.
+#
+# WHY, and what this does NOT buy. The previous shape wrote and renamed one file
+# at a time, so an error anywhere in the second file's read/encode/write/fsync/
+# chmod path left the FIRST file already rewritten: a half-updated marketplace,
+# dirty in git. That dirty tree is not merely untidy — the pre-flight above pulls
+# fail-closed, so the NEXT run's `git pull --rebase` refuses on the unstaged
+# changes and every subsequent release is blocked until a human intervenes. The
+# two hardenings deadlock with each other exactly there. Staging first removes
+# that: any failure before 2b leaves ZERO targets modified (the temps are
+# unlinked) and the marketplace stays clean, so the next run still pulls.
+#
+# There is NO true cross-file atomicity here and none is achievable without a
+# transactional filesystem — POSIX has no multi-file commit, so a crash BETWEEN
+# the two os.replace() calls still leaves one file new and one old. What changed
+# is the size of that window: it is now two adjacent metadata-only renames rather
+# than an arbitrary amount of I/O, and the only thing that can still land in it
+# is a process/host death, not an ordinary error.
+staged = []
+cur_rel = None
+cur_tmp = None
+try:
+    for rel, path, fixed in edits:
+        cur_rel, cur_tmp = rel, None
+        fd, cur_tmp = tempfile.mkstemp(prefix='.zuvo-count-', dir=os.path.dirname(path))
+        with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+            fh.write(fixed)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(cur_tmp, stat.S_IMODE(os.stat(path).st_mode))  # mkstemp is 0600
+        staged.append((rel, path, cur_tmp))
+        cur_tmp = None
+except (OSError, UnicodeError) as exc:
+    leftovers = [t for _r, _p, t in staged]
+    if cur_tmp is not None:
+        leftovers.append(cur_tmp)
+    for leftover in leftovers:
+        try:
+            os.unlink(leftover)
+        except OSError:
+            pass
+    print('%s could not be staged (%s) — NO marketplace file was modified' % (cur_rel, exc))
+    sys.exit(1)
+
+for rel, path, tmp in staged:
+    try:
+        os.replace(tmp, path)
+    except OSError as exc:
+        # Reachable only if a rename fails after its temp was already written —
+        # rare, and the one case where a partial rewrite can survive. Say so, so
+        # nobody debugs a wedged next run from a clean-looking error message.
+        print('%s could not be committed (%s) — an earlier file in the set may already be '
+              'rewritten; check `git -C <marketplace> status` before re-running' % (rel, exc))
+        sys.exit(1)
+
+# PASS 3 — re-read and verify. Redundant by construction, kept as the backstop
+# that a survivor can never be reported as a success.
+survivors = []
+for rel in ALLOWLIST:
+    path = os.path.join(root, rel)
+    try:
+        with open(path, encoding='utf-8') as fh:
+            text = fh.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        survivors.append('%s could not be re-read for verification (%s)' % (rel, exc))
+        continue
+    found = False
+    for match in PAT.finditer(text):
+        found = True
+        if match.group(1) != want:
+            survivors.append('%s (says "%s %s")' % (rel, match.group(1), match.group(2)))
+    if not found:
+        survivors.append('%s (no "<N> skills" string after rewrite)' % rel)
+
+if survivors:
+    print('; '.join(sorted(set(survivors))))
+    sys.exit(1)
+PY
+MKT_DIAG="$(python3 -c "$MKT_COUNT_PY" "$MARKETPLACE_DIR" "$MKT_SKILL_COUNT")" \
+  || fail "Marketplace skill count sync FAILED: ${MKT_DIAG:-<no detail>} — fix by hand in $MARKETPLACE_DIR (Step 4 commits it), then re-run"
+ok "Step 0b: marketplace skill count synced (${MKT_SKILL_COUNT} skills)"
+# <<< zuvo:marketplace-count
+
 # ═══════════════════════════════════════
 # Step 1: Version bump
 # ═══════════════════════════════════════

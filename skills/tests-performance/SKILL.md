@@ -6,6 +6,7 @@ description: >
   slowest tests, and produces an impact-ranked action plan. Modes: full
   audit (default), baseline (measure only), verify (compare to saved
   baseline), --no-run (config audit only), --path <dir> (monorepo scope).
+category: Testing
 codesift_tools:
   always:
     - analyze_project

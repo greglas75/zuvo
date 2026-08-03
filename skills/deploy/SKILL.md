@@ -5,6 +5,7 @@ description: >
   detects platform (Vercel/Fly/Netlify/Railway/Render/GHA), waits for CI, triggers
   deploy, runs health check, offers rollback on failure.
   Flags: --url, --skip-ci-wait, --skip-health, #<number>.
+category: Release
 codesift_tools:
   always:
     - analyze_project

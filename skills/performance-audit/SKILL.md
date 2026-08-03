@@ -6,6 +6,7 @@ description: >
   backend runtime, concurrency, and framework-specific pathologies. Evidence-based
   Impact Models with confidence tiers and a prioritized optimization roadmap.
   Switches: zuvo:performance-audit full | [path] | [file] | --frontend | --backend | --db | --bundle
+category: Infra audits
 codesift_tools:
   always:
     - analyze_project

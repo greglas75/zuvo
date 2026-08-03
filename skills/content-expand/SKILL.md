@@ -7,6 +7,7 @@ description: >
   topic and auto-discovery of internal links from your content collection.
   Replaces content-optimize. Flags: [file], --dry-run, --lang, --tone,
   --site-dir, --domain, --skip-research, --light.
+category: Content
 codesift_tools:
   always:
     - analyze_project

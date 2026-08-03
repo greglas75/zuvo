@@ -9,6 +9,7 @@ description: >
   --content-only, --geo, --profile <marketing|docs|blog|ecommerce|app-shell>,
   --content-profile auto|marketing|docs|blog|ecommerce|app-shell,
   --live-sample-bots <default|all|bot1,bot2>, --persist-backlog.
+category: Structure/SEO/GEO
 codesift_tools:
   always:
     - analyze_project

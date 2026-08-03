@@ -5,6 +5,7 @@ description: >
   and optional auto-fix. Examines uncommitted changes, staged diffs, commit
   ranges, or specific paths. Produces a tiered report (MUST-FIX / RECOMMENDED /
   NIT) backed by evidence, then optionally applies fixes with verification.
+category: Core
 codesift_tools:
   always:
     # Stack detection (used by codesift-setup orchestrator)

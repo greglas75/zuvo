@@ -1,6 +1,7 @@
 ---
 name: geo-fix
 description: "Apply fixes from geo-audit findings. Reads geo-audit JSON, classifies by safety tier (SAFE/MODERATE/DANGEROUS), applies framework-aware code patches for schema, robots.txt, canonical, sitemap, llms.txt, and freshness fixes. Emits content scaffolds for advisory findings. Deduplicates against seo-fix to prevent double-application."
+category: Structure/SEO/GEO
 tools:
   - Read
   - Edit
