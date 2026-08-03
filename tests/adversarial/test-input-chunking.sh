@@ -132,3 +132,74 @@ if [[ -f "$ART" ]]; then
 else
   fail "artifact file not written"
 fi
+
+# ─── 11: DOCUMENT modes chunk at section headings, not truncate ────────────────
+#
+# Until 2026-08-03 spec/plan/audit/migrate were chunk-EXEMPT, on the reasoning
+# that a document is "one artifact, no boundaries to cut at". Measured cost of
+# that reasoning in ~/.zuvo/adversarial.log: 264 of 1,601 doc-mode runs hit the
+# 50K cap and were silently cut, so ~16% of plan reviews judged ~60% of a plan
+# with no way to know which 40% they never saw. These cases pin the fix.
+
+CK_DOC="$CK_TMP/doc"; mkdir -p "$CK_DOC"
+# 3 real h2 sections (25k each = 75k > the 50000 doc cap) + 4 DECOY headings
+# inside a fenced bash block. A naive `^##+ ` counter sees 7 boundaries; a
+# fence-aware one sees 3. Plans are full of fenced bash, so this is the case
+# that decides whether the split is usable at all.
+{ printf '# Plan Title\n\n## Alpha\n'
+  awk 'BEGIN{for(i=0;i<25000;i++)printf "a"}'
+  printf '\n\n```bash\n## decoy one\n## decoy two\n#### decoy three\n## decoy four\n```\n\n## Beta\n'
+  awk 'BEGIN{for(i=0;i<25000;i++)printf "b"}'
+  printf '\n\n## Gamma\n'
+  awk 'BEGIN{for(i=0;i<25000;i++)printf "c"}'
+  printf '\n'; } > "$CK_DOC/plan.md"
+
+start_test "CK.11 plan mode chunks at h2 headings instead of truncating"
+bash "$ADV" --mode plan --dry-run < "$CK_DOC/plan.md" >/dev/null 2>"$CK_DOC/err" || true
+grep -q 'CHUNKED INPUT:' "$CK_DOC/err" && ! grep -q 'WARN: input truncated' "$CK_DOC/err" \
+  && pass "doc input chunked, not truncated" \
+  || fail "doc mode still truncates" "$(grep -E 'CHUNKED|truncated' "$CK_DOC/err" | head -2)"
+
+start_test "CK.12 no content is lost — chunk sizes sum to the input"
+doc_size=$(wc -c < "$CK_DOC/plan.md" | tr -d ' ')
+sum=$(awk '/chunk-[0-9]+: [0-9]+ chars/ { for (i=1;i<=NF;i++) if ($i ~ /^[0-9]+$/ && $(i+1) ~ /^chars/) s += $i } END { print s+0 }' "$CK_DOC/err")
+# >= size-64: the splitter re-emits whole lines, so the sum can exceed the byte
+# count by a trailing newline per chunk; it must never be LESS.
+[[ "$sum" -ge $((doc_size - 64)) ]] \
+  && pass "chunk bytes ${sum} >= input ${doc_size} (nothing dropped)" \
+  || fail "content lost in doc chunking" "chunks=${sum} input=${doc_size}"
+
+start_test "CK.13 headings inside code fences are NOT boundaries"
+naive=$(awk '/^##+ /{n++} END{print n+0}' "$CK_DOC/plan.md")
+chunks=$(grep -c 'chunk-[0-9]*:' "$CK_DOC/err")
+assert_eq "7" "$naive" "decoy corpus really does fool a naive counter"
+assert_eq "3" "$chunks" "fence-aware split yields one chunk per REAL section"
+
+start_test "CK.14 the per-chunk note says 'document', not 'files'"
+# A plan reviewer told that sibling FILES exist elsewhere reports the document as
+# truncated or flags cross-references it cannot see. The note must match reality.
+# NB: the verdict must come back through pass/fail — a python `print("PASS")`
+# is invisible to the harness and would gate nothing while looking green.
+if python3 - "$ADV" <<'PY'
+import re,sys
+s=open(sys.argv[1],encoding='utf-8',errors='replace').read()
+doc_note = 'of ONE document split at section headings' in s
+guarded  = re.search(r'_ck_fence.*-eq 1.*\n(.*\n)*?\s*_ck_note=.*ONE document', s) is not None
+sys.exit(0 if (doc_note and guarded) else 1)
+PY
+then pass "doc-specific chunk note present and gated on doc mode"
+else fail "chunk note wording" "expected a doc-mode-gated 'ONE document split at section headings' note"
+fi
+
+start_test "CK.15 a small document is left alone"
+head -c 4000 "$CK_DOC/plan.md" > "$CK_DOC/small.md"
+bash "$ADV" --mode plan --dry-run < "$CK_DOC/small.md" >/dev/null 2>"$CK_DOC/err_small" || true
+grep -q 'CHUNKED INPUT:' "$CK_DOC/err_small" \
+  && fail "under-cap document was chunked" "$(head -2 "$CK_DOC/err_small")" \
+  || pass "under-cap document not chunked"
+
+start_test "CK.16 code mode still splits at FILE boundaries (no cross-mode regression)"
+bash "$ADV" --single --dry-run --files "$FILE_LIST" >/dev/null 2>"$CK_DOC/err_code" || true
+grep -q 'chunks at file boundaries' "$CK_DOC/err_code" \
+  && pass "code mode boundary unchanged" \
+  || fail "code-mode boundary changed" "$(grep 'CHUNKED INPUT' "$CK_DOC/err_code" | head -1)"

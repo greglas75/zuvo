@@ -417,12 +417,39 @@ MAX_CHARS=30000
 # Chunking was caller folklore rediscovered per run; now the script owns it: split
 # the input at file boundaries, re-invoke ITSELF once per chunk (ZUVO_ADV_CHUNK is
 # the recursion guard — a child never chunks again), merge outputs and exit codes.
-# Truncation remains only for: document modes (one artifact, no file boundaries to
-# cut at), a single file bigger than the cap (the child's truncate path, loud WARN),
-# or an explicit --no-chunk / ZUVO_ADV_NO_CHUNK=1.
+# Truncation remains only for: input with fewer than 2 boundaries to cut at, a
+# single section bigger than the cap (the child's truncate path, loud WARN), or an
+# explicit --no-chunk / ZUVO_ADV_NO_CHUNK=1.
+#
+# 2026-08-03 — document modes were chunk-EXEMPT until now, on the reasoning that a
+# spec/plan is "one artifact, no file boundaries to cut at". That reasoning was
+# wrong, and it was expensive: a plan has `### Task 7:` per task and a spec has
+# `## `, which are boundaries every bit as real as `diff --git`. Measured over
+# ~/.zuvo/adversarial.log (47,912 rows): 264 of 1,601 plan/spec/audit/migrate runs
+# hit the 50K cap and were SILENTLY CUT — ~16% of every plan review ever run judged
+# roughly 60% of the plan it was asked to review, and the reviewer had no way to
+# know which 40% it never saw. Chunking these needs no new machinery; it only ever
+# needed the right boundary regex.
+#
+# Boundary by input shape, not by mode name:
+#   docs  -> `^##+ ` (h2+). Deliberately NOT `^#+ `: a plan is full of fenced bash
+#            whose `# comment` lines would otherwise split it into confetti. The
+#            h1 title is also skipped — there is exactly one and it is not a
+#            section boundary.
+#   diffs -> the file headers, unchanged.
+_ck_boundary_re='^(diff --git |=== FILE: )'
+_ck_fence=0
+if [[ "$REVIEW_MODE" =~ ^(spec|plan|audit|migrate)$ ]]; then
+  _ck_boundary_re='^##+ '
+  _ck_fence=1   # ignore headings inside ``` / ~~~ blocks (see the awk below)
+fi
 _chunk_headers=0
-if [[ ${#INPUT} -gt $MAX_CHARS && ! "$REVIEW_MODE" =~ ^(spec|plan|audit|migrate|tests)$ ]]; then
-  _chunk_headers=$(printf '%s\n' "$INPUT" | { grep -c -E '^(diff --git |=== FILE: )' || true; })
+if [[ ${#INPUT} -gt $MAX_CHARS && "$REVIEW_MODE" != "tests" ]]; then
+  _chunk_headers=$(printf '%s\n' "$INPUT" \
+    | awk -v re="$_ck_boundary_re" -v fence="$_ck_fence" '
+        fence && /^[[:space:]]*(```|~~~)/ { infence = !infence; next }
+        !(fence && infence) && $0 ~ re    { n++ }
+        END { print n + 0 }')
 fi
 if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "true" \
       && "${ZUVO_ADV_NO_CHUNK:-0}" != "1" && "${_chunk_headers:-0}" -ge 2 ]]; then
@@ -430,9 +457,14 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
   trap 'rm -rf "$_ck_dir"' EXIT
 
   # Pass 1: split into sections (sec-0000 = any preamble before the first header).
-  printf '%s\n' "$INPUT" | awk -v dir="$_ck_dir" '
-    BEGIN { n = 0; fn = sprintf("%s/sec-%04d", dir, n) }
-    /^(diff --git |=== FILE: )/ { close(fn); n++; fn = sprintf("%s/sec-%04d", dir, n) }
+  # Fence tracking is enabled ONLY for document modes. A diff of a markdown file
+  # legitimately contains ``` lines; letting those toggle in-fence state there
+  # would suppress a real `diff --git` boundary and silently merge two files into
+  # one chunk — so the toggle is gated on $_ck_fence, not applied universally.
+  printf '%s\n' "$INPUT" | awk -v dir="$_ck_dir" -v re="$_ck_boundary_re" -v fence="$_ck_fence" '
+    BEGIN { n = 0; infence = 0; fn = sprintf("%s/sec-%04d", dir, n) }
+    fence && /^[[:space:]]*(```|~~~)/ { infence = !infence; print >> fn; next }
+    !(fence && infence) && $0 ~ re { close(fn); n++; fn = sprintf("%s/sec-%04d", dir, n) }
     { print >> fn }
   '
   # Pass 2: pack sections greedily into chunks of at most MAX_CHARS-500 (headroom
@@ -451,12 +483,21 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
     _ck_size=$((_ck_size + _sec_size))
   done
 
-  echo "CHUNKED INPUT: ${#INPUT} chars > ${MAX_CHARS} cap -> ${_ck_n} chunks at file boundaries (no truncation)" >&2
+  _ck_bnd_label="file boundaries"
+  [[ "$_ck_fence" -eq 1 ]] && _ck_bnd_label="section headings (h2+, outside code fences)"
+  echo "CHUNKED INPUT: ${#INPUT} chars > ${MAX_CHARS} cap -> ${_ck_n} chunks at ${_ck_bnd_label} (no truncation)" >&2
 
   if [[ "$DRY_RUN" == "true" ]]; then
     echo "=== DRY RUN — chunk plan ===" >&2
     for _ck in "$_ck_dir"/chunk-*; do
-      echo "  $(basename "$_ck"): $(wc -c < "$_ck" | tr -d ' ') chars, files: $(grep -c -E '^(diff --git |=== FILE: )' "$_ck" 2>/dev/null || echo 0)" >&2
+      # Count with the SAME boundary the split used — hardcoding the diff regex
+      # here reported "files: 0" for every document chunk, which reads as "this
+      # chunk is empty" in the one output a caller uses to sanity-check the plan.
+      _ck_units=$(awk -v re="$_ck_boundary_re" -v fence="$_ck_fence" '
+          fence && /^[[:space:]]*(```|~~~)/ { infence = !infence; next }
+          !(fence && infence) && $0 ~ re    { n++ }
+          END { print n + 0 }' "$_ck")
+      echo "  $(basename "$_ck"): $(wc -c < "$_ck" | tr -d ' ') chars, $([[ "$_ck_fence" -eq 1 ]] && echo sections || echo files): ${_ck_units}" >&2
     done
     exit 0
   fi
@@ -484,7 +525,16 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
   for _ck in "$_ck_dir"/chunk-*; do
     _ck_i=$((_ck_i + 1))
     _ck_args=("${_ck_base_args[@]}")
-    _ck_args+=(--context "${CONTEXT_HINT:+$CONTEXT_HINT }[chunk ${_ck_i}/${_ck_n} of a larger range — sibling files are reviewed in other chunks; do NOT report them as missing]")
+    # The note must match what was actually split. Telling a plan reviewer that
+    # "sibling FILES are reviewed in other chunks" invites it to report the
+    # document as truncated or to flag cross-references it cannot see; say
+    # plainly that this is one document cut into parts.
+    if [[ "$_ck_fence" -eq 1 ]]; then
+      _ck_note="[part ${_ck_i}/${_ck_n} of ONE document split at section headings — the other sections are reviewed in sibling parts; do NOT report the document as incomplete/truncated, and do NOT report a section or cross-reference you cannot see here as missing]"
+    else
+      _ck_note="[chunk ${_ck_i}/${_ck_n} of a larger range — sibling files are reviewed in other chunks; do NOT report them as missing]"
+    fi
+    _ck_args+=(--context "${CONTEXT_HINT:+$CONTEXT_HINT }${_ck_note}")
     if [[ -n "$ARTIFACT_PATH" ]]; then
       _ck_args+=(--artifact "$ARTIFACT_PATH")
       # chunk 1 respects the caller's append choice; later chunks always append
