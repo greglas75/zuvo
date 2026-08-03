@@ -3,6 +3,7 @@ name: receive-review
 description: >
   Process code review feedback with technical rigor. Activates when the user
   shares review comments, PR feedback, or asks to address reviewer suggestions.
+category: Pipeline
 codesift_tools:
   always:
     - analyze_project

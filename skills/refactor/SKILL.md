@@ -6,6 +6,7 @@ description: >
   files, breaking circular dependencies, or cleaning up god classes. NOT for
   new features (use zuvo:build). Execution modes: full (default), batch <file>
   (queue processing). Control flags: plan-only, no-commit, continue.
+category: Core
 codesift_tools:
   always:
     - analyze_project

@@ -4,6 +4,7 @@ description: >
   Engineering retrospective from git metrics. Reports deployment frequency,
   release cycle span, churn hotspots, backlog health. Outputs narrative report
   with 3+ actionable items. Flags: --since, --path, explicit range argument.
+category: Release
 codesift_tools:
   always:
     - analyze_project
@@ -175,6 +176,259 @@ From the filtered entries, aggregate:
 - **Average Q score** — same approach as CQ
 - **Pass/fail ratio** — count PASS vs FAIL vs WARN verdicts
 - **Branch distribution:** [branch: N runs, ...] (e.g., `main: 8, feature/x: 2`) — only display when at least one 11-field entry exists in the filtered window
+
+---
+
+## Phase 3b: Per-Task Telemetry (optional)
+
+Read the per-task telemetry file `zuvo:execute` appends at Step 9b — one JSON line per finished
+task, schema documented in `../../shared/includes/session-state.md` →
+`zuvo/context/task-telemetry.jsonl`. This is a project-local, per-task counterpart to Phase 3's
+HOME-global `~/.zuvo/runs.log`: gate-failure counts, reviewer-route distribution, and retry hotspots
+that Phase 3's one-line-per-run log cannot surface.
+
+Resolve the file the same way the writer does: `$ZUVO_OUTPUT_DIR`, else `<git root>/zuvo`, then
+`context/task-telemetry.jsonl` under it — no `pwd` fallback (deliberately removed from the writer;
+do not reintroduce one here). **No project-name filter** — unlike `runs.log` (shared across every
+project on the machine), this file is project-local by construction, so filtering would be wrong,
+not merely redundant.
+
+If the file **does not exist**: note "No per-task telemetry found." Skip this section — the same
+degradation shape Phase 3 already uses for a missing `runs.log`.
+
+If the file **exists**, parse it line by line. A blank or whitespace-only physical line — the normal
+trailing newline of an append-only file, not a corrupt one — is not a record and is excluded from
+BOTH counts below; every **non-blank** line is then either fully counted in `records=` or fully
+counted in `skipped=`, never dropped in between. A kill between `write` and `fsync` can leave a
+truncated trailing line, and this file is never rewritten to repair one (see `session-state.md`'s
+"Reader contract").
+
+Three corruption shapes must each become a *counted* skip, because each of them aborts a naive
+reader **outside** a `try` that wraps only `json.loads`, and an abort discards every record already
+parsed — uncounted in both `records=` and `skipped=`, which is precisely the silent data loss the
+Reader contract forbids:
+
+1. **Unparseable text** — plain garbage; `json.loads` raises `ValueError`.
+2. **Valid JSON that is not an object** — `null`, a bare number, `[]`. These parse *fine* and then
+   raise `AttributeError` at the first `.get`, so the guard must wrap the whole per-line body, not
+   just the parse, and must reject a non-`dict` explicitly.
+3. **A truncated multi-byte UTF-8 tail** — the exact "crash between `write` and `fsync`" case. Text
+   mode decodes **eagerly**, so `UnicodeDecodeError` is raised by the *iteration itself*, before any
+   per-line `try` is reached. Read the file in **binary** and decode each line defensively.
+
+Reading is also this reader's own responsibility, not the shell's: an unreadable/vanished path and
+any other failure are reported by the reader with its partial counts intact. The `|| echo "[WARN]"`
+tail stays as a last resort, not the normal error path.
+
+From the well-formed records, aggregate:
+- **Gate-failure counts** — a gate field (`spec-review`, `quality-review`, `adversarial`) lands in one
+  of three states, never a plain pass/fail: **failed** (present, a string, and not the passing
+  value), **missing** (absent, `null`, or any non-string JSON value — a bool/number/nested object
+  stringified into `"True"`/`"3"` is malformed input, not a real verdict, and must never be compared
+  as one), or passing. `gate-failures=` counts only the **failed** state; `gate-missing=` reports the
+  missing state **separately**, so a pre-schema or truncated record can never inflate the failure
+  tally. The `PASS` prefix match on `quality-review`/`adversarial` is **case-sensitive by contract** —
+  the writer always emits the literal uppercase form, so a lowercased value is itself a sign of a
+  hand-edited or corrupt record and must fail, not silently pass.
+- **Reviewer-route distribution** — tally by `reviewer-route` (`review-primary`, `review-alt`,
+  `same-model-fallback`, `routing-failed`).
+- **Implementer-status tally** (blocked/skipped reasons) — tally by `implementer-status` (`DONE`,
+  `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, `BLOCKED`).
+- **Failure-strategy distribution** — bucketed into `halt`, `skip-and-continue`, `degraded`,
+  `unknown` and `missing`. Two rules matter here:
+  - **`missing` is its own bucket, never folded into `halt`.** The writer always emits the field, so
+    an absent one means an OLD or CORRUPT record — reporting it as `halt` would present silence as a
+    deliberate decision.
+  - **`degraded:<desc>` collapses to one `degraded` bucket**, with
+    `degraded-distinct-descriptions=<N>` printed alongside — **capped** at 64 distinct descriptions
+    tracked for that count; past the cap, further distinct text is tallied as an approximate
+    `(+N more)` overflow instead of growing the tracked set without bound. `<desc>` is free text;
+    keying the tally by it yields one entry per task on a long run — a distribution with no signal.
+
+```bash
+# >>> zuvo:retro-telemetry
+RT_DIR="${ZUVO_OUTPUT_DIR:-}"
+if [ -z "$RT_DIR" ]; then
+  _RT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -n "$_RT_ROOT" ]; then RT_DIR="$_RT_ROOT/zuvo"; fi
+fi
+RT_PATH="${RT_DIR:+$RT_DIR/context/task-telemetry.jsonl}"
+if [ -z "$RT_PATH" ] || [ ! -f "$RT_PATH" ]; then
+  echo "No per-task telemetry found."
+else
+  python3 - "$RT_PATH" <<'PY' \
+    || echo "[WARN] per-task telemetry read failed — continuing (diagnostic, never a gate)"
+import json, sys
+
+# SCHEMA SSOT — every `F_* = "<key>"` below is a telemetry field name this reader
+# touches, and they are declared HERE, once. Case (y) of tests/skill-suite/test-
+# task-telemetry-contract.sh checks these literals against the
+# `zuvo:telemetry-schema` table in shared/includes/session-state.md — the same
+# discipline the WRITER's `K = [...]` follows, but as CONTAINMENT rather than the
+# writer's equality diff, because this reader deliberately touches only a subset
+# of the documented keys. Without that check a schema rename is invisible here:
+# `rec.get(key, default)` never raises on a renamed key, so retro would report
+# 100% gate failure forever and nothing would say so. Never inline a field name at
+# a use site — the test forbids a literal `.get("<key>"` here for that reason.
+F_SPEC = "spec-review"
+F_QUALITY = "quality-review"
+F_ADVERSARIAL = "adversarial"
+F_ROUTE = "reviewer-route"
+F_STATUS = "implementer-status"
+F_STRATEGY = "failure-strategy"
+
+# Bound on distinct free-text `degraded:<desc>` tails tracked for the
+# degraded-distinct-descriptions count below. Free text is author-controlled
+# and a long-lived file could carry many distinct ones; past this many the
+# reader stops trying to dedup exactly and reports the remainder as an
+# approximate "+N more" overflow instead of growing the tracked set forever.
+DEGRADED_DESC_CAP = 64
+
+path = sys.argv[1]
+n = 0
+skipped = 0
+gate = {F_SPEC: 0, F_QUALITY: 0, F_ADVERSARIAL: 0}
+gate_missing = {F_SPEC: 0, F_QUALITY: 0, F_ADVERSARIAL: 0}
+reviewer_route = {}
+implementer_status = {}
+failure_strategy = {}
+degraded_descs = set()
+degraded_overflow = 0
+
+
+def bump(tally, key):
+    tally[key] = tally.get(key, 0) + 1
+
+
+def enum_str(rec, key):
+    val = rec.get(key)
+    return val if isinstance(val, str) and val else "unknown"
+
+
+def gate_status(rec, key, mode):
+    # Same isinstance/non-empty guard as strategy_bucket() below: an ABSENT
+    # field and a non-string field (a bool/int/nested value that str() would
+    # otherwise stringify into a fake "True"/"3" verdict) are BOTH "missing",
+    # never "failed" — a pre-schema or truncated record must not inflate the
+    # failure tally, and a non-string value must never be compared as a verdict.
+    val = rec.get(key)
+    if not isinstance(val, str) or not val:
+        return "missing"
+    if mode == "exact":
+        return "passed" if val == "COMPLIANT" else "failed"
+    # mode == "prefix": case-sensitive BY CONTRACT, not an oversight — the
+    # writer always emits the literal uppercase "PASS ..." form (schema in
+    # session-state.md), so a lowercased/mixed-case value is itself a sign of
+    # a hand-edited or corrupt record and must fail, never silently pass.
+    return "passed" if val.startswith("PASS") else "failed"
+
+
+def strategy_bucket(rec):
+    # An ABSENT failure-strategy is NOT a declared `halt`: the writer always emits
+    # the field, so absence means an old or corrupt record. `missing` keeps silence
+    # from being reported as a decision. `degraded:<desc>` is BUCKETED rather than
+    # keyed by its free-text description (one key per task is not a distribution);
+    # the distinct-description count is printed alongside so variety is not lost.
+    val = rec.get(F_STRATEGY)
+    if not isinstance(val, str) or not val:
+        return "missing", None
+    if val in ("halt", "skip-and-continue"):
+        return val, None
+    if val.startswith("degraded:"):
+        return "degraded", val[len("degraded:"):]
+    return "unknown", None
+
+
+def emit():
+    print("records=%d skipped=%d" % (n, skipped))
+    print("gate-failures spec-review=%d quality-review=%d adversarial=%d"
+          % (gate[F_SPEC], gate[F_QUALITY], gate[F_ADVERSARIAL]))
+    print("gate-missing spec-review=%d quality-review=%d adversarial=%d"
+          % (gate_missing[F_SPEC], gate_missing[F_QUALITY], gate_missing[F_ADVERSARIAL]))
+    print("reviewer-route " + " ".join("%s=%d" % kv for kv in sorted(reviewer_route.items())))
+    print("implementer-status " + " ".join("%s=%d" % kv for kv in sorted(implementer_status.items())))
+    strategies = " ".join("%s=%d" % kv for kv in sorted(failure_strategy.items()))
+    if degraded_descs:
+        strategies += " degraded-distinct-descriptions=%d" % len(degraded_descs)
+        if degraded_overflow:
+            strategies += " (+%d more)" % degraded_overflow
+    print("failure-strategy " + strategies)
+
+
+try:
+    # Binary, deliberately: a text-mode `for raw in fh` decodes EAGERLY, so a
+    # truncated multi-byte tail raises UnicodeDecodeError from the ITERATION —
+    # outside any per-line try — and kills the read after records already counted.
+    fh = open(path, "rb")
+except OSError as exc:
+    # This reader owns its errors. Falling through to the shell's `|| echo` would
+    # discard the counts entirely and say nothing about which path failed.
+    print("per-task telemetry unreadable (%s) — skipping" % (exc,))
+    print("records=0 skipped=0")
+    sys.exit(0)
+
+try:
+    with fh:
+        for raw in fh:
+            # The WHOLE per-line body is guarded, not just the parse: valid JSON
+            # that is not an object (`null`, `3`, `[]`) parses fine and then raises
+            # AttributeError at the first `.get`. Values are computed into locals
+            # first and committed only afterwards, so a line can never land in
+            # BOTH records= and skipped=.
+            try:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line:
+                    # A blank/whitespace-only physical line is NOT a record —
+                    # the normal trailing newline of an append-only file, not
+                    # a corrupt one. Excluded from BOTH records= and skipped=
+                    # on purpose: the Reader contract counts every REAL line
+                    # into one bucket or the other, and a blank line is not a
+                    # real line to begin with.
+                    continue
+                rec = json.loads(line)
+                if not isinstance(rec, dict):
+                    raise ValueError("record is not a JSON object")
+                spec_status = gate_status(rec, F_SPEC, "exact")
+                quality_status = gate_status(rec, F_QUALITY, "prefix")
+                adversarial_status = gate_status(rec, F_ADVERSARIAL, "prefix")
+                route = enum_str(rec, F_ROUTE)
+                status = enum_str(rec, F_STATUS)
+                strategy, desc = strategy_bucket(rec)
+            except Exception:
+                skipped += 1
+                continue
+            n += 1
+            if spec_status == "failed":
+                gate[F_SPEC] += 1
+            elif spec_status == "missing":
+                gate_missing[F_SPEC] += 1
+            if quality_status == "failed":
+                gate[F_QUALITY] += 1
+            elif quality_status == "missing":
+                gate_missing[F_QUALITY] += 1
+            if adversarial_status == "failed":
+                gate[F_ADVERSARIAL] += 1
+            elif adversarial_status == "missing":
+                gate_missing[F_ADVERSARIAL] += 1
+            bump(reviewer_route, route)
+            bump(implementer_status, status)
+            bump(failure_strategy, strategy)
+            if desc is not None:
+                if desc in degraded_descs or len(degraded_descs) < DEGRADED_DESC_CAP:
+                    degraded_descs.add(desc)
+                else:
+                    degraded_overflow += 1
+except Exception as exc:
+    # A read that dies mid-file still reports what it already aggregated. Partial
+    # results plus the skip count beat the shell fallback's total silence.
+    print("per-task telemetry read aborted after %d records (%s)" % (n, exc))
+
+emit()
+sys.exit(0)
+PY
+fi
+# <<< zuvo:retro-telemetry
+```
 
 ---
 

@@ -10,6 +10,7 @@ description: >
   supplying --domains triggers enrichment; --industry + --geo triggers discovery.
   Interactive checkpoints after Phase 1 and Phase 2. Output: CSV + JSON + Markdown in
   docs/leads/. Optional --gdpr-strict for EU/EEA compliance.
+category: Lead Generation
 ---
 
 # zuvo:leads

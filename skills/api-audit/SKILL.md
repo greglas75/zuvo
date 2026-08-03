@@ -1,6 +1,7 @@
 ---
 name: api-audit
 description: "API and endpoint integrity audit across 10 dimensions (D1-D10) plus optional contract stability (D11). Covers validation, payloads, pagination, errors, caching, HTTP semantics, waterfalls, rate limiting, auth, and documentation. Supports NestJS, Cloudflare Workers, FastAPI, and frontend call patterns. Optional GET probing on non-production targets. Flags: zuvo:api-audit full | [path] | --static"
+category: Code/Test audits
 codesift_tools:
   always:
     - analyze_project

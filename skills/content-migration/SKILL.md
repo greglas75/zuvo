@@ -6,6 +6,7 @@ description: >
   gaps in local .md files. Use when content was migrated from Joomla/WordPress/
   Drupal to Astro/Hugo/Next.js and you need to verify nothing was lost.
   Flags: --old <url>, --new <url>, --fix, --source-file <path>, --status.
+category: Content
 codesift_tools:
   always:
     - analyze_project

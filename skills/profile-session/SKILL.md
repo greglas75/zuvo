@@ -1,6 +1,7 @@
 ---
 name: profile-session
 description: "Answers \"why was that session slow?\" from the agent transcript's own timestamps. Attributes wall-clock time to categories (tests/build, subagent dispatch, adversarial review, model thinking, stalls, user-away), ranks the biggest gaps, and names the specific commands behind them. Reads Claude Code session JSONL and Codex rollout JSONL. Modes: [transcript], --last, --skill <name>, --since <iso>, --compare <a> <b>."
+category: Utility
 ---
 
 # zuvo:profile-session — Where a session's wall-clock actually went

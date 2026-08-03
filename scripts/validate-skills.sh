@@ -13,44 +13,92 @@
 #                token resolves on disk), references-layout (references/ is
 #                flat — the platform builds copy one level only),
 #                count-consistency (declared skill counts in plugin
-#                manifests/docs/router match actual dirs).
+#                manifests/docs/router match actual dirs),
+#                category-consistency (every SKILL.md declares a 'category:'
+#                that is a row of the '| Category | Count |' tables, and each
+#                row's Count equals the number of skills declaring it — the
+#                column used to be summed but never compared; a doc that EXISTS
+#                without its table, or a label repeated across rows, is an
+#                ERROR, not a skip).
 # WARN checks  : an arg-parsing signal is present, a Mandatory File Loading
 #                section is present.
 #
 # Usage:
 #   scripts/validate-skills.sh              # lint the whole repo (default root)
 #   scripts/validate-skills.sh --root DIR   # lint a fixture/other tree
+#   scripts/validate-skills.sh --print-count [--root DIR]
+#   scripts/validate-skills.sh --root DIR --print-count
+#                                           # print ONLY the skill count, exit 0
+#                                           # (flag order is irrelevant)
 #
 # Exit codes: 0 = clean (WARNs allowed), 1 = conformance ERRORs found,
-#             2 = usage error (unknown flag, or --root missing/without skills/).
+#             2 = usage error (unknown flag, or a root — explicit OR implicit —
+#                 that is missing/has no skills/ while --print-count is asked).
 #
 # bash 3.2-compatible (macOS default): no mapfile, no associative arrays.
 
 set -uo pipefail
 
-# --- root resolution (banned-vocabulary form, hardened arg handling) ---
+# --- argument parsing (order-independent) ---
+# Parsed in a LOOP so `--print-count --root DIR` and `--root DIR --print-count`
+# are the same invocation. The first cut only recognised --print-count as $1,
+# which made the second form die with "unexpected extra arguments" — a caller
+# that appends flags (CI, dev-push.sh) hit a hard exit 2 for a documented
+# combination.
+# --print-count is ACTED ON far below, after the checks are defined and after
+# the skills/ guard, so a root without skills/ still exits 2 instead of
+# confidently printing 0.
+usage_line() { echo "Usage: $0 [--print-count] [--root <path>]" >&2; }
+
+PRINT_COUNT=0
 ROOT_EXPLICIT=0
-if [[ "${1:-}" == "--root" ]]; then
-  if [ "$#" -lt 2 ]; then
-    echo "ERROR: --root requires a value" >&2
-    echo "Usage: $0 [--root <path>]" >&2
-    exit 2
-  fi
-  ROOT="$2"
-  ROOT_EXPLICIT=1
-  if [ "$#" -gt 2 ]; then
-    echo "ERROR: unexpected extra arguments: ${*:3}" >&2
-    echo "Usage: $0 [--root <path>]" >&2
-    exit 2
-  fi
+ROOT=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --print-count)
+      PRINT_COUNT=1
+      shift
+      ;;
+    --root)
+      if [ "$#" -lt 2 ]; then
+        echo "ERROR: --root requires a value" >&2
+        usage_line
+        exit 2
+      fi
+      # A second --root used to silently last-win (ROOT overwritten with no
+      # complaint), which is exactly the kind of invocation a caller building
+      # up flags programmatically (or fat-fingering a copy-paste) would never
+      # notice went wrong. Reject it the same way every other malformed
+      # invocation is rejected: loud, exit 2, before any lint work happens.
+      if [ "$ROOT_EXPLICIT" -eq 1 ]; then
+        echo "ERROR: --root specified more than once" >&2
+        usage_line
+        exit 2
+      fi
+      ROOT="$2"
+      ROOT_EXPLICIT=1
+      shift 2
+      ;;
+    *)
+      # Both historical exit-2 messages are preserved verbatim: a stray token
+      # AFTER --root <dir> has always been reported as "unexpected extra
+      # arguments", anything else as "unknown argument".
+      if [ "$ROOT_EXPLICIT" -eq 1 ]; then
+        echo "ERROR: unexpected extra arguments: $*" >&2
+      else
+        echo "ERROR: unknown argument: $1" >&2
+      fi
+      usage_line
+      exit 2
+      ;;
+  esac
+done
+
+if [ "$ROOT_EXPLICIT" -eq 1 ]; then
   if [ ! -d "$ROOT" ]; then
     echo "ERROR: --root path does not exist: $ROOT" >&2
     exit 2
   fi
-elif [ -n "${1:-}" ]; then
-  echo "ERROR: unknown argument: $1" >&2
-  echo "Usage: $0 [--root <path>]" >&2
-  exit 2
 else
   ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 fi
@@ -64,6 +112,10 @@ MFL_EXEMPT="using-zuvo worktree"
 
 # arg-parsing signals: any one satisfies the WARN check.
 ARGPARSE_SIGNAL='(^#+[[:space:]]+(Argument Parsing|Arguments|Input Resolution|Execution Modes|Invocation Format))|(^#+.*Parse \$ARGUMENTS)'
+
+# field separator for the 'count<TAB>label' rows the category helpers exchange;
+# a tab is used because category labels contain spaces
+TAB="$(printf '\t')"
 
 # --- counters + reporters ---
 ERRORS=0
@@ -378,16 +430,82 @@ print(obj if isinstance(obj, str) else "")
   fi
 }
 
-sum_category_table() {
-  # sum of the Count column after the '| Category | Count |' header row,
-  # excluding the bold '**Total**' row; stops at the end of the table
-  awk -F'|' '
-    /^\| *Category *\| *Count *\|/ { in_t=1; next }
+# THE single expression of the '| Category | Count |' header anchor (CQ14).
+# Written with a bracketed [|] rather than a backslash-escaped \| so the SAME
+# string is a valid ERE for BOTH consumers: `grep -E` below and awk's dynamic
+# regex in category_rows (which receives it via -v and would otherwise have to
+# survive awk's escape processing of '\|', whose result is implementation-
+# defined — gawk warns, and a degraded '|' would turn the anchor into an
+# alternation that matches EVERY line).
+# It previously existed twice: this constant plus an inline copy inside the awk
+# body. Two expressions of one anchor drift; there is now exactly one.
+CATEGORY_TABLE_HEADER_RE='^[|] *Category *[|] *Count *[|]'
+
+# Sentinel emitted by category_rows for a malformed mid-table line (see below).
+# Deliberately carries NO tab character, so every TAB-split consumer downstream
+# (category_labels, category_dup_labels, category_count_of — all gated on
+# `NF > 1` against $TAB) ignores it for free without a second table walker.
+MALFORMED_ROW_MARKER='##CATEGORY-TABLE-MALFORMED##'
+
+has_category_table() {
+  grep -qE -- "$CATEGORY_TABLE_HEADER_RE" "$1"
+}
+
+category_rows() {
+  # ONE walker over the '| Category | Count |' table, two consumers
+  # (count-consistency sums it, category-consistency compares it row by row).
+  # Emits 'count<TAB>label' per data row: starts after the header, stops at the
+  # bold '**Total**' row, a markdown heading line, or EOF. The |---|---|
+  # separator row yields an empty count and is dropped.
+  # Not every real table has a '**Total**' row — CLAUDE.md's '## Skill
+  # categories' table ends at the next '## ' heading with no Total line, while
+  # docs/skills.md's DOES have one. A heading is an unambiguous, structural end
+  # of the table's section, so it terminates the walk cleanly (same as Total),
+  # never flagged as malformed.
+  # Blank lines INSIDE the table are skipped, not treated as the end: a stray
+  # empty line mid-table used to truncate the walk and silently drop every row
+  # after it, producing a partial tally that still compared "successfully".
+  # A non-blank, non-row, non-heading line mid-table (stray prose) is the SAME
+  # defect class, half-fixed: it is now ALSO skipped rather than truncating the
+  # walk (rows after it are never silently dropped), but the table IS
+  # malformed, so a no-tab marker line ('MALFORMED_ROW_MARKER:<lineno>') is
+  # emitted for it. category_malformed_lines() below pulls those back out for
+  # a loud, file-and-line-numbered ERROR — never a silently-accepted partial
+  # table.
+  # Labels are carried WHOLE — they contain spaces ('Infra audits') and a slash
+  # ('Code/Test audits'), so they are only ever compared with [ "$a" = "$b" ]
+  # or grep -Fx, never spliced into a regex, a sed script or a case glob.
+  awk -F'|' -v tab="$TAB" -v hdr="$CATEGORY_TABLE_HEADER_RE" -v marker="$MALFORMED_ROW_MARKER" '
+    $0 ~ hdr                       { in_t=1; next }
     in_t && /\*\*Total\*\*/        { exit }
-    in_t && /^\|/                  { v=$3; gsub(/[^0-9]/,"",v); if (v != "") sum += v; next }
-    in_t                           { exit }
-    END                            { print sum + 0 }
+    in_t && /^#/                   { exit }
+    in_t && /^[[:space:]]*$/       { next }
+    in_t && /^\|/ {
+      label=$2; count=$3
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", label)
+      gsub(/[^0-9]/, "", count)
+      if (count != "" && label != "") print count tab label
+      next
+    }
+    in_t                           { print marker ":" NR; next }
   ' "$1"
+}
+
+category_malformed_lines() {
+  # category_malformed_lines <category_rows output> → the line numbers of any
+  # malformed mid-table rows found in that SAME walk (no second awk pass over
+  # the table — one walker, filtered two ways). Empty when the table is clean.
+  local rows="$1" line
+  while IFS= read -r line; do
+    case "$line" in
+      "$MALFORMED_ROW_MARKER":*) printf '%s\n' "${line#"$MALFORMED_ROW_MARKER":}" ;;
+    esac
+  done <<< "$rows"
+}
+
+sum_category_table() {
+  # sum of the Count column, derived from the shared walker
+  category_rows "$1" | awk '{ sum += $1 } END { print sum + 0 }'
 }
 
 cc_json_skills_count() {
@@ -425,7 +543,7 @@ cc_check_docs_skills() {
   [ -f "$f" ] || return 0
   v="$(first_skills_num < "$f")"
   cc_assert "docs/skills.md" "intro" "$v"
-  if grep -qE '^\| *Category *\| *Count *\|' "$f"; then
+  if has_category_table "$f"; then
     cc_assert "docs/skills.md" "category-table sum" "$(sum_category_table "$f")"
   fi
   v="$(awk -F'|' '/^\| *\*\*Total\*\*/ { gsub(/[^0-9]/, "", $3); print $3; exit }' "$f")"
@@ -465,7 +583,7 @@ cc_check_claude_md() {
   while IFS= read -r v; do
     cc_assert "CLAUDE.md" "'(N total)' anchor" "$v"
   done < <(grep -E '[Ss]kill' "$f" | grep -oE '\([0-9]+ total\)' | grep -oE '[0-9]+')
-  if grep -qE '^\| *Category *\| *Count *\|' "$f"; then
+  if has_category_table "$f"; then
     cc_assert "CLAUDE.md" "category-table sum" "$(sum_category_table "$f")"
   fi
 }
@@ -499,15 +617,201 @@ check_count_consistency() {
   [ "$ERRORS" -eq "$before" ] && COUNT_CONSISTENCY_OK=1
 }
 
+# --- category-consistency ---------------------------------------------------
+# `category:` in SKILL.md frontmatter is REPO-SIDE DOCUMENTATION ONLY. All three
+# platform builds rewrite the frontmatter and drop every key they do not emit —
+# the `in_fm { next }` catch-all at build-codex-skills.sh:298,
+# build-cursor-skills.sh:154 and build-antigravity-skills.sh:177 — so
+# `category:` never reaches a dist and is not a runtime contract. It exists so
+# the per-category Count column in docs/skills.md and CLAUDE.md has a machine-
+# checkable single source of truth: count-consistency only ever SUMMED that
+# column, so any distribution passed as long as the total held.
+CATEGORY_TABLE_FILES="docs/skills.md CLAUDE.md README.md"
+CATEGORY_STATUS=""
+
+# --- ERROR: a category-table file may declare at most ONE '| Category | Count |'
+# anchor line. Both consumers of that anchor — sum_category_table (count-
+# consistency) and category_rows (category-consistency) — are ONE walker each,
+# and that walker's awk state machine locks onto the FIRST header match
+# (`$0 ~ hdr { in_t=1; next }`) and never re-arms, so a second table anywhere
+# below it is silently invisible to both: its rows are counted nowhere and
+# compared against nothing. Rather than teach the one walker to also handle
+# N tables per file (which would have to reinvent Total-vs-heading
+# termination per table, doubling the surface this file's own history shows
+# is easy to get subtly wrong — see the CLAUDE.md-vs-docs/skills.md comment
+# on category_rows), a second anchor is treated as a doc defect and reported
+# loudly. This keeps the real two files working unchanged (each has exactly
+# one anchor today) while turning the silent-ignore into a loud ERROR the
+# moment a second table appears.
+check_category_table_uniqueness() {
+  local f fpath n
+  for f in $CATEGORY_TABLE_FILES; do
+    fpath="$ROOT/$f"
+    [ -f "$fpath" ] || continue
+    n="$(grep -cE -- "$CATEGORY_TABLE_HEADER_RE" "$fpath")"
+    if [ "$n" -gt 1 ]; then
+      fail_err "category-consistency: $f contains $n '| Category | Count |' table anchors — only the first is validated (both count- and category-consistency stop at the first table); consolidate into one table or remove the extra"
+    fi
+  done
+}
+
+category_tally() {
+  # every declared category across skills/*/SKILL.md, as 'count<TAB>label'
+  local f label
+  for f in "$SKILLS_DIR"/*/SKILL.md; do
+    [ -f "$f" ] || continue
+    label="$(strip "$(fm_value category "$f")")"
+    [ -n "$label" ] && printf '%s\n' "$label"
+  done | sort | uniq -c \
+       | awk -v tab="$TAB" '{ c=$1; sub(/^[[:space:]]*[0-9]+[[:space:]]+/, ""); print c tab $0 }'
+}
+
+category_labels() {
+  # the label column of 'count<TAB>label' lines, deduped, blanks dropped
+  printf '%s\n' "$1" | awk -F"$TAB" 'NF > 1 && $2 != "" { print $2 }' | sort -u
+}
+
+category_dup_labels() {
+  # labels that appear on MORE THAN ONE row of a 'count<TAB>label' block.
+  # DECISION (finding 5): a duplicated label is an ERROR, not something to
+  # aggregate. Aggregating would let '| Core | 2 |' + '| Core | 2 |' silently
+  # satisfy a 4-skill Core category while the table reads as two contradictory
+  # rows to every human; the doc defect is the thing worth reporting. This also
+  # means category_count_of's first-match-wins is never ambiguous in a tree that
+  # passes the lint — the ambiguity is reported before it can be relied on.
+  printf '%s\n' "$1" | awk -F"$TAB" 'NF > 1 && $2 != "" { print $2 }' | sort | uniq -d
+}
+
+category_count_of() {
+  # category_count_of <label> <'count<TAB>label' lines> → that label's count,
+  # or empty when the label is absent from the given side.
+  # First match wins; duplicates are rejected up-front by category_dup_labels.
+  local want="$1" rows="$2" c l
+  while IFS="$TAB" read -r c l; do
+    [ "$l" = "$want" ] || continue
+    printf '%s' "$c"
+    return 0
+  done <<< "$rows"
+  return 1
+}
+
+check_category_table() {
+  # compare ONE doc's Count column against the frontmatter tally, label by
+  # label, over the union of both sides so a row missing from either is caught
+  local file="$1" rows="$2" tally="$3" label declared actual
+  while IFS= read -r label; do
+    [ -n "$label" ] || continue
+    declared="$(category_count_of "$label" "$rows")"
+    actual="$(category_count_of "$label" "$tally")"
+    [ -n "$declared" ] || declared=0
+    [ -n "$actual" ] || actual=0
+    if [ "$declared" != "$actual" ]; then
+      fail_err "category-consistency: $file: category '$label' says $declared, actual SKILL.md 'category:' tally is $actual"
+    else
+      pass "category-consistency: $file: $label = $actual"
+    fi
+  done <<< "$(printf '%s\n%s\n' "$(category_labels "$rows")" "$(category_labels "$tally")" | sort -u)"
+}
+
+# --- ERROR: declared categories must match the category tables ---
+check_categories() {
+  local before="$ERRORS" tally f fpath rows all_labels="" tables=0 present=0 dup dir label ncat
+  tally="$(category_tally)"
+
+  for f in $CATEGORY_TABLE_FILES; do
+    fpath="$ROOT/$f"
+    [ -f "$fpath" ] || continue
+    present=$((present + 1))
+    if ! has_category_table "$fpath"; then
+      # A file that EXISTS but lost its table is a defect, never a skip: the
+      # old `tables == 0` skip covered this case too, so deleting the table
+      # from docs/skills.md and CLAUDE.md silently disabled every per-category
+      # assertion and the run still printed green.
+      fail_err "category-consistency: $f exists but has no '| Category | Count |' table — deleting it would silently disable every per-category check"
+      continue
+    fi
+    tables=$((tables + 1))
+    rows="$(category_rows "$fpath")"
+    while IFS= read -r mline; do
+      [ -n "$mline" ] || continue
+      fail_err "category-consistency: $f: line $mline is inside the category table but is neither blank nor a table row — malformed table (rows after it were still parsed, not silently dropped)"
+    done <<< "$(category_malformed_lines "$rows")"
+    while IFS= read -r dup; do
+      [ -n "$dup" ] || continue
+      fail_err "category-consistency: $f: category '$dup' appears on more than one row of the category table"
+    done <<< "$(category_dup_labels "$rows")"
+    all_labels="$(printf '%s\n%s\n' "$all_labels" "$(category_labels "$rows")")"
+    check_category_table "$f" "$rows" "$tally"
+  done
+
+  if [ "$tables" -eq 0 ]; then
+    if [ "$present" -gt 0 ]; then
+      # Every present file already produced its own ERROR above. There is no
+      # label set to compare skills against, so the per-skill loop would only
+      # add one bogus "not a row of the category table" line per skill; the
+      # named file ERRORs are the actionable verdict.
+      return 0
+    fi
+    # Anchor-absent skip (the cc_assert idiom), now RESERVED for roots where
+    # NONE of $CATEGORY_TABLE_FILES exists — the fixture-root case it was
+    # designed for. Reported LOUDLY rather than silently, and the contract test
+    # asserts the real repo never prints this line.
+    # The message spells out exactly what "n/a" disables: not just the table
+    # comparison itself, but EVERY per-skill check that depends on it — the
+    # 'category:' presence check and the unlisted-label check both live inside
+    # the per-skill loop below, which never runs when there is no label set to
+    # compare against. Without this a reader could mistake "n/a" for "checked,
+    # nothing wrong" instead of "not checked at all".
+    CATEGORY_STATUS="category-consistency: n/a (no category table in $ROOT; per-skill 'category:' presence/label checks were skipped too)"
+    return 0
+  fi
+
+  all_labels="$(printf '%s\n' "$all_labels" | awk 'NF' | sort -u)"
+
+  for fpath in "$SKILLS_DIR"/*/SKILL.md; do
+    [ -f "$fpath" ] || continue
+    dir="$(skill_dir "$fpath")"
+    label="$(strip "$(fm_value category "$fpath")")"
+    if [ -z "$label" ]; then
+      fail_err "category-consistency: $dir: missing 'category:' in SKILL.md frontmatter"
+    elif ! printf '%s\n' "$all_labels" | grep -Fxq -- "$label"; then
+      fail_err "category-consistency: $dir: category '$label' is not a row of the category table in $CATEGORY_TABLE_FILES"
+    else
+      pass "category-consistency: $dir: $label"
+    fi
+  done
+
+  if [ "$ERRORS" -eq "$before" ]; then
+    ncat="$(printf '%s\n' "$all_labels" | awk 'NF' | wc -l | tr -d ' ')"
+    CATEGORY_STATUS="category-consistency: OK ($ncat categories)"
+  fi
+}
+
 # --- run ---
 if [ ! -d "$SKILLS_DIR" ]; then
-  if [ "$ROOT_EXPLICIT" -eq 1 ]; then
-    # an explicitly requested root without skills/ is a user error, not a clean pass
+  # --print-count has exactly TWO possible outcomes on every path: one integer
+  # line on stdout + rc 0, or this error on stderr + rc 2. It must never fall
+  # through into the lint's "nothing to lint" success branch — a caller doing
+  # N="$(validate-skills.sh --print-count)" would silently bind N to a two-line
+  # lint summary while rc claimed success, which is the exact poisoning the flag
+  # exists to prevent. The implicit root is no different from an explicit one
+  # here: no skills/ means there is no count to print.
+  if [ "$ROOT_EXPLICIT" -eq 1 ] || [ "$PRINT_COUNT" -eq 1 ]; then
+    # an explicitly requested root (or any count request) without skills/ is a
+    # user error, not a clean pass
     echo "ERROR: no skills/ directory under $ROOT — nothing to lint" >&2
     exit 2
   fi
   echo "ERRORS: 0  WARNINGS: 0"
   echo "no skills/ directory under $ROOT — nothing to lint"
+  exit 0
+fi
+
+if [ "$PRINT_COUNT" -eq 1 ]; then
+  # Deliberately BEFORE any check runs: a caller asking "how many skills are
+  # there?" must get the number even while the tree is failing the lint, so an
+  # unrelated ERROR can never poison the answer. Exactly the integer + '\n'.
+  printf '%s\n' "$(count_actual_skills)"
   exit 0
 fi
 
@@ -519,10 +823,13 @@ check_run_logger
 check_plugin_root
 check_include_integrity
 check_references_layout
+check_category_table_uniqueness
 check_count_consistency
+check_categories
 
 [ "$INCLUDE_INTEGRITY_OK" -eq 1 ] && echo "include-integrity: OK"
 [ "$COUNT_CONSISTENCY_OK" -eq 1 ] && echo "count-consistency: OK ($ACTUAL_SKILLS)"
+[ -n "$CATEGORY_STATUS" ] && echo "$CATEGORY_STATUS"
 
 # --- gate registry: every GENERATED region must match shared/includes/gate-registry.md ---
 # Without this, the registry is just a seventh copy. Editing a generated region instead of the

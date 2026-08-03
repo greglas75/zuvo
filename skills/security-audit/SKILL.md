@@ -1,6 +1,7 @@
 ---
 name: security-audit
 description: "Application security audit covering OWASP Top 10, injection, XSS, SSRF, auth/authz, multi-tenant isolation, secrets, headers, dependencies, business logic, and infrastructure. Uses Sentry 3-tier confidence model. Supports Next.js, NestJS, Express, FastAPI, Django, Flask. Dual scoring: static posture + runtime exploitability. Flags: zuvo:security-audit [path] | full | --live-url <url> | --static | --quick | --persist-backlog"
+category: Code/Test audits
 codesift_tools:
   always:
     - analyze_project

@@ -7,6 +7,7 @@ description: >
   STATIC_CHECKED, VERIFIED_LOCAL or VALIDATED_LIVE. Modes: --scope <path>,
   --flow <name>, --output <dir>, --base-url <url>, --max-flows N, --live,
   --auto, --flows, --dry-run.
+category: Testing
 codesift_tools:
   always:
     - analyze_project

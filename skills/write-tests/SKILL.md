@@ -7,6 +7,7 @@ description: >
   log. Uses CodeSift for discovery and analysis when available. Modes: [path]
   (specific target), auto (discover and loop until done), --dry-run (plan only;
   skips suite verification).
+category: Testing
 codesift_tools:
   always:
     - analyze_project

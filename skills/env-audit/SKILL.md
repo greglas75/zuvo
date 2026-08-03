@@ -7,6 +7,7 @@ description: >
   Node.js (.env/process.env), Python (os.environ/settings), and framework-specific
   patterns (Vite import.meta.env, Next.js NEXT_PUBLIC_).
   Switches: zuvo:env-audit full | [path] | --secrets-only | --parity
+category: Infra audits
 codesift_tools:
   always:
     - analyze_project

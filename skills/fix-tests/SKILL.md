@@ -6,6 +6,7 @@ description: >
   context. Modes: --triage (scan all patterns, report counts), --pattern
   [ID] [path] (fix specific pattern), --dry-run (preview changes),
   --bundle-gates (fix pattern plus adjacent quality gaps).
+category: Testing
 codesift_tools:
   always:
     - analyze_project

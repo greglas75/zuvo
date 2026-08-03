@@ -857,17 +857,55 @@ else
   # Body of a '## <heading>' up to the next '## ' (heading line excluded).
   sk_section() { awk -v pat="$1" '$0 ~ pat {f=1; next} f && /^## /{f=0} f' "$SKILL"; }
 
-  # (12a) size bound, BOTH ends. Below 180 the phase skeleton cannot name the
-  # states and gates it must; above the cap the references are being restated
-  # inline. Cap raised 250→280 on 2026-07-31: the file shipped at 271 (already
-  # over) and the bootstrap-and-run policy + --no-install + WARN ceiling landed
-  # on top; the correct fix at the next touch is trimming restated prose, not
-  # another cap bump.
-  sk_lines="$(wc -l < "$SKILL" | tr -d ' ')"
-  if [ "$sk_lines" -ge 180 ] && [ "$sk_lines" -le 280 ]; then
-    pass "SKILL.md is $sk_lines lines (within 180..280)"
+  # (12a) size bound, BOTH ends. Below the floor the phase skeleton cannot name
+  # the states and gates it must; above the cap the references are being
+  # restated inline. Cap raised 250→280 on 2026-07-31: the file shipped at 271
+  # (already over) and the bootstrap-and-run policy + --no-install + WARN
+  # ceiling landed on top; the correct fix at the next touch is trimming
+  # restated prose, not another cap bump.
+  #
+  # 2026-08-02: the bound now measures the BODY, not the whole file. It was a
+  # whole-file count (180..280) until the mandatory `category:` frontmatter key
+  # pushed this file from exactly 280 to 281 — a schema key, not restated
+  # prose, so paying for it by deleting documentation would have been backwards,
+  # and bumping the cap by one would have re-run this argument at the next
+  # mandatory key. Frontmatter is structural and must not consume the prose
+  # budget. Bounds are the old ones minus the frontmatter block that existed
+  # when they were set (46 lines here), so the anti-bloat intent is unchanged:
+  # both bounds derive from the 45-line frontmatter those commits actually
+  # had (e1359a8 set the floor, 4bb92f0 the cap): 180-45=135, 280-45=235.
+  # Locating the closing fence needs care: 54 of the 57 SKILL.md files use a
+  # bare `---` as a BODY separator too. Taking "the first `---` after line 1"
+  # would silently accept a body rule as the fence whenever the real closing
+  # fence went missing, and the truncated body count lands inside the passing
+  # window — a false PASS, with the guard below never firing. So: line 1 must
+  # open the block, and every line before the closing fence must be
+  # frontmatter-shaped (`key:`, an indented continuation, a comment, or blank).
+  # The first line that is not disqualifies the candidate and reports the
+  # missing fence instead of guessing.
+  sk_fm_end="$(awk '
+    { sub(/\r$/, "") }                     # CRLF: a \r would defeat every anchor below
+    NR==1 { if ($0 !~ /^---[[:space:]]*$/) exit; next }
+    NR > 120 { exit }                      # bounded: no real frontmatter runs this long
+    /^---[[:space:]]*$/ { print NR; exit }
+    /^#{1,6}[[:space:]]/      { exit }     # a markdown heading is BODY, never a YAML comment
+    /^[A-Za-z_][A-Za-z0-9_.-]*:/ { next }  # a frontmatter key (dots and digits allowed)
+    /^[[:space:]]/            { next }     # an indented continuation / list item
+    /^[[:space:]]*#/          { next }     # a YAML comment
+    /^[[:space:]]*$/          { next }     # a blank line
+    { exit }                               # anything else: the block ended without a fence
+  ' "$SKILL")"
+  sk_total="$(wc -l < "$SKILL" | tr -d ' ')"
+  if [ -z "$sk_fm_end" ]; then
+    # Do NOT fall through to the size check with a 0 fallback: on a file whose
+    # TOTAL happens to land inside the window that prints `FAIL: no closing
+    # fence` immediately followed by `PASS: body is N lines` — the same false
+    # PASS this block exists to prevent, one branch further down.
+    bad "SKILL.md has no closing frontmatter fence (or line 1 does not open one) -- body size not checked"
+  elif [ "$(( sk_total - sk_fm_end ))" -ge 135 ] && [ "$(( sk_total - sk_fm_end ))" -le 235 ]; then
+    pass "SKILL.md body is $(( sk_total - sk_fm_end )) lines (within 135..235; frontmatter $sk_fm_end excluded)"
   else
-    bad "SKILL.md is $sk_lines lines -- want 180..280"
+    bad "SKILL.md body is $(( sk_total - sk_fm_end )) lines -- want 135..235 (total $sk_total, frontmatter $sk_fm_end)"
   fi
 
   # (12b) the V2 argument grammar, plus the positional alias the website page and
