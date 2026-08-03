@@ -88,12 +88,10 @@ fi
 
 # ─── Configuration ──────────────────────────────────────────────
 
-# Central model registry — single source of truth for concrete model ids (agy/codex/claude/cursor/
-# gemini). Sourced fail-safe: if it is missing, every usage below keeps an inline `:-<id>` fallback.
+# Central model registry — single source of truth for concrete model ids (agy/codex/claude/cursor).
+# Sourced fail-safe: if it is missing, every usage below keeps an inline `:-<id>` fallback.
 _zuvo_reg="$(dirname "${BASH_SOURCE[0]:-$0}")/../shared/includes/model-registry.sh"
 [ -f "$_zuvo_reg" ] && . "$_zuvo_reg"
-
-GEMINI_MODEL="${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}"
 
 # ─── Argument parsing ───────────────────────────────────────────
 
@@ -120,7 +118,18 @@ NO_CHUNK=false         # --no-chunk / ZUVO_ADV_NO_CHUNK=1: disable auto-chunking
 # No date component: a rotation that straddles UTC midnight would otherwise silently get a fresh
 # key and re-probe every provider it had just proven dead. The dir is per-boot temp storage, so it
 # is naturally short-lived without a date in the name.
-_ar_cache_key="${ZUVO_RUN_ID:-$(git rev-parse --show-toplevel 2>/dev/null | tr '/' '_')}"
+# `|| pwd` is load-bearing, not defensive noise. `git rev-parse --show-toplevel`
+# exits 128 outside a work tree; `set -o pipefail` propagates that through the
+# `| tr` pipeline and `set -e` then kills the script — at line ~121, before a
+# single byte of output. The `2>/dev/null` here made it WORSE by hiding git's own
+# "not a git repository" message, so the whole run looked like a silent rc=128
+# with empty stdout AND empty stderr, on every invocation from a non-repo CWD.
+# Measured 2026-08-04: reproduced identically on macOS and on burst-i9, and it is
+# why that host's adversarial.log showed `provider=none / all-failed` — the run
+# never reached provider detection at all, so a year of "the CI box has no
+# providers" was a misdiagnosis. Line ~292 in this same file already had the
+# `|| pwd` fallback; this line did not.
+_ar_cache_key="${ZUVO_RUN_ID:-$( { git rev-parse --show-toplevel 2>/dev/null || pwd; } | tr '/' '_' )}"
 # Own the directory before writing into it. A predictable name under a world-writable /tmp lets
 # another user on the host pre-create it as a SYMLINK, and then `>>` appends to — or `: >`
 # truncates — whatever it points at (CWE-59). zuvo runs on shared VPS hosts where that is a real
@@ -192,8 +201,8 @@ Provider options:
   --exclude P      Skip provider P (e.g. host self-exclusion)
   --exclude-last P Cross-call rotation: skip P (caller threads providers_used[0]
                    from prior JSON). Stale value → stderr warning, proceeds.
-  --provider P     Auto: codex-5.3, gemini, cursor-agent, claude
-                   Manual: codex-5.4, gemini-api, codestral
+  --provider P     Auto: codex-5.3, agy, cursor-agent, kimi, claude
+                   Manual: codex-5.4, codestral
 
 Exit codes:
   0    success (or partial: some providers timed out, others succeeded)
@@ -249,16 +258,13 @@ Environment variables:
                            per-provider timeout and dispatch mode). Fires SIGTERM → exit 124.
   ZUVO_SUSPEND_THRESHOLD   Seconds of host sleep before a run is classed `suspended` (default: 60)
   ZUVO_NO_CAFFEINATE=1     Do not hold off idle sleep for the duration of the run (macOS)
-  ZUVO_AGY_MODEL           agy (Antigravity CLI) model — the sanctioned paid Gemini channel.
+  ZUVO_AGY_MODEL           agy (Antigravity CLI) model — the sanctioned paid Gemini channel, and the
+                           only Gemini lane this script supports (Google killed the free `gemini` CLI
+                           for individuals — IneligibleTierError — and there is no other fallback).
                            Display name from 'agy models' (default: "Gemini 3.5 Flash (High)";
-                           e.g. "Gemini 3.1 Pro (High)" for max depth). Preferred over the gemini CLI,
-                           which Google disabled for individuals (IneligibleTierError).
+                           e.g. "Gemini 3.1 Pro (High)" for max depth).
   ZUVO_CURSOR_MODEL        cursor-agent model (default: composer-2.5-fast; id from 'cursor-agent models')
   ZUVO_CLAUDE_REVIEWER_MODEL  claude reviewer's Sonnet model when the author is Opus (default: claude-sonnet-5)
-  ZUVO_GEMINI_MODEL        gemini CLI model (default: gemini-3.1-pro-preview) — legacy fallback; the
-                           OAuth CLI is dead for individuals, use agy or GEMINI_API_KEY instead.
-  ZUVO_GEMINI_API_MODEL    Gemini API model (default: gemini-3.1-pro-preview)
-  GEMINI_API_KEY           Required for gemini-api provider
   CODESTRAL_API_KEY        Required for codestral provider (manual: --provider codestral)
   ZUVO_CODESTRAL_MODEL     Codestral model (default: codestral-latest)
   ZUVO_KIMI_CLI_MODEL      kimi CLI -m alias (default: empty = CLI default, kimi-code/k3)
@@ -994,7 +1000,7 @@ if [[ -n "$HOST_PROVIDER" && -z "$EXCLUDE_PROVIDER" ]]; then
     # KEEP claude on a Claude host: run_claude reviews with the OPPOSITE model
     # (Opus author -> Sonnet reviewer, and vice versa), so it is genuinely cross-model,
     # NOT self-review. Excluding it threw away the local Opus<->Sonnet independent check
-    # and degraded to single_provider_only when external CLIs were down. gemini/codex/cursor
+    # and degraded to single_provider_only when external CLIs were down. agy/codex/cursor
     # DO review with the same model as their host IDE, so those stay auto-excluded below.
     echo "  Host detected: claude -- KEPT as cross-model reviewer (run_claude flips Opus<->Sonnet)" >&2
   else
@@ -1030,24 +1036,15 @@ detect_providers() {
   # CROSS-MODEL codex reviewer still runs (mirrors keeping claude with the opposite model).
   [[ -n "$codex_bin" && "${HOST_PROVIDER:-}" == "codex-5.3" ]] && providers="$providers codex-5.4"
 
-  # 2. Google Gemini — strict priority: agy > gemini-api > the free gemini CLI. Google killed the
-  #    gemini CLI for individuals (IneligibleTierError: UNSUPPORTED_CLIENT -> "migrate to Antigravity"),
-  #    so `command -v gemini` = installed-but-DEAD. agy (Antigravity, paid) reaches Gemini 3.x headless;
-  #    a billing-enabled GEMINI_API_KEY reaches it via curl. The dead CLI is the LAST resort so a host
-  #    that still has it installed does NOT get trapped on it while a working key sits unused (the old
-  #    `!command -v gemini` guard on gemini-api structurally blocked the working fallback — fixed
-  #    2026-07-11 after the docs audit flagged the trap).
-  #    Self-review guard: on a Gemini/Antigravity host (HOST_PROVIDER=agy) skip the ENTIRE Gemini
-  #    family — excluding only the `agy` provider left the gemini-api/gemini lanes open, so a Gemini
-  #    host could still review itself through the API (docs audit 2026-07-11).
-  if [[ "${HOST_PROVIDER:-}" != "agy" ]]; then
-    if command -v agy &>/dev/null; then
-      providers="$providers agy"
-    elif [[ -n "${GEMINI_API_KEY:-}" ]]; then
-      providers="$providers gemini-api"
-    elif command -v gemini &>/dev/null; then
-      providers="$providers gemini"
-    fi
+  # 2. Google Gemini — agy (Antigravity CLI, paid) only. The free `gemini` CLI is dead for
+  #    individuals (IneligibleTierError: UNSUPPORTED_CLIENT -> "migrate to Antigravity") and the
+  #    gemini-api curl fallback needs a billing-enabled GEMINI_API_KEY that nothing in this fleet
+  #    provisions — both lanes were pure dead weight, removed 2026-08-04. agy is now the ONLY
+  #    Gemini path, so the self-review guard collapses to excluding just that one provider: on an
+  #    Antigravity host (HOST_PROVIDER=agy) skip it, exactly like the codex/cursor self-exclusions
+  #    above and below.
+  if [[ "${HOST_PROVIDER:-}" != "agy" ]] && command -v agy &>/dev/null; then
+    providers="$providers agy"
   fi
 
   # 3. cursor-agent — fast fallback (~11s), redundancy for codex
@@ -1068,7 +1065,6 @@ detect_providers() {
   # Manual-only providers (use --provider <name>):
   # codex-5.4 — slower, overlaps with 5.3
   # codestral — requires CODESTRAL_API_KEY, weaker findings
-  # gemini-api — also available manually even when gemini CLI exists
 
   echo "$providers"
 }
@@ -1143,15 +1139,16 @@ Install one of these (in order of recommendation):
      npm install -g @openai/codex
      codex    # first run: login with ChatGPT
 
-  2. Gemini CLI (free, recommended):
-     npm install -g @google/gemini-cli
-     gemini   # first run: login with Google account
+  2. agy — Antigravity CLI (Google's sanctioned Gemini channel, paid; the free
+     `gemini` CLI is dead for individuals — IneligibleTierError):
+     curl -fsSL https://antigravity.google/cli/install.sh | bash
+     agy      # first run: login with Google account
 
   3. Claude CLI (needs Anthropic account):
      Already installed if you use Claude Code.
 
-  4. Gemini API (free tier, 250 req/day):
-     export GEMINI_API_KEY=<key from aistudio.google.com>
+  4. Kimi CLI (Moonshot, OAuth subscription):
+     See https://kimi.moonshot.ai for the CLI install, then `kimi` to log in.
 
   5. Codestral API (Mistral coding model):
      export CODESTRAL_API_KEY=<key from console.mistral.ai>
@@ -1304,42 +1301,12 @@ run_cursor_agent() {
   printf '%s\n' "$result"
 }
 
-run_gemini() {
-  local model="${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}"
-
-  # Write full prompt to temp file, pass via stdin with -p flag (headless mode)
-  local prompt_file="$JSON_TMPDIR/gemini_prompt.txt"
-  printf '%s\n' "$REVIEW_PROMPT" > "$prompt_file"
-
-  local gemini_cmd="gemini"
-
-  # -p "" triggers headless mode; actual prompt is piped via stdin
-  local err_file="$JSON_TMPDIR/err_gemini.txt"
-  local out_file="$JSON_TMPDIR/raw_gemini.txt"
-  local result status=0
-  # File capture, not $( ) — see run_cursor_agent for why.
-  timeout $TIMEOUT_KILL_FLAG "$PROVIDER_TIMEOUT" $gemini_cmd \
-    --allowed-mcp-server-names __NONE__ \
-    --model "$model" \
-    -p "" < "$prompt_file" > "$out_file" 2>"$err_file" || status=$?
-  result="$(cat "$out_file" 2>/dev/null)"
-
-  if [[ $status -ne 0 || -z "$result" ]]; then
-    if [[ $status -eq 124 ]]; then
-      echo "  WARN: gemini timed out after ${PROVIDER_TIMEOUT}s" >&2
-    else
-      echo "  WARN: gemini failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
-    fi
-    [[ $status -eq 0 ]] && status=1
-    return "$status"
-  fi
-  printf '%s\n' "$result"
-}
-
 run_agy() {
   # Antigravity CLI (agy) — Google's SANCTIONED headless Gemini channel via the paid Antigravity
-  # auth. Replaces the free `gemini` CLI, which Google killed for individuals (IneligibleTierError:
-  # UNSUPPORTED_CLIENT -> "migrate to the Antigravity suite of products"). Two invocation facts,
+  # auth, and the only Gemini lane this script supports (the free `gemini` CLI is dead for
+  # individuals: IneligibleTierError, UNSUPPORTED_CLIENT -> "migrate to the Antigravity suite of
+  # products"; the gemini-api curl fallback was removed alongside it — both dropped 2026-08-04
+  # since neither had a live credential anywhere in this fleet). Two invocation facts,
   # both verified on 2026-07-11:
   #   * the prompt is passed as an ARGUMENT (`agy -p "$PROMPT"`), NOT via stdin — piping stdin makes
   #     agy answer an empty/default prompt (it hallucinated instead of echoing the test string).
@@ -1415,48 +1382,6 @@ run_codestral() {
 
   local text
   text=$(printf '%s' "$response" | jq -r '.choices[0].message.content // empty')
-  [[ -z "$text" ]] && return 1
-  printf '%s\n' "$text"
-}
-
-run_gemini_api() {
-  # Gemini API — direct curl, 2-5s, no CLI overhead
-  [[ -z "${GEMINI_API_KEY:-}" ]] && return 1
-
-  # Sanitize model name (prevent URL injection)
-  local model
-  model=$(printf '%s' "${ZUVO_GEMINI_API_MODEL:-gemini-3.1-pro-preview}" | tr -cd 'a-zA-Z0-9._-')
-
-  # Build JSON payload via temp file (avoids ARG_MAX on large prompts)
-  local payload_file="$JSON_TMPDIR/gemini_api_payload.json"
-  printf '%s' "$REVIEW_PROMPT" | jq -Rs '{contents:[{parts:[{text:.}]}]}' > "$payload_file"
-
-  local err_file="$JSON_TMPDIR/err_gemini-api.txt"
-  local response
-  local status=0
-  response=$(curl -sf --max-time "$PROVIDER_TIMEOUT" \
-    "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent" \
-    -H "x-goog-api-key: $GEMINI_API_KEY" \
-    -H "Content-Type: application/json" \
-    -d @"$payload_file" \
-    2>"$err_file") || status=$?
-  if [[ $status -ne 0 ]]; then
-    if [[ $status -eq 28 ]]; then
-      echo "  WARN: gemini-api timed out after ${PROVIDER_TIMEOUT}s" >&2
-      return 124
-    fi
-    echo "  WARN: gemini-api failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
-    return "$status"
-  fi
-
-  # Log token usage to stderr
-  local input_tokens output_tokens
-  input_tokens=$(printf '%s' "$response" | jq -r '.usageMetadata.promptTokenCount // "?"')
-  output_tokens=$(printf '%s' "$response" | jq -r '.usageMetadata.candidatesTokenCount // "?"')
-  echo "  Gemini API tokens: ${input_tokens} in / ${output_tokens} out" >&2
-
-  local text
-  text=$(printf '%s' "$response" | jq -r '.candidates[0].content.parts[0].text // empty')
   [[ -z "$text" ]] && return 1
   printf '%s\n' "$text"
 }
@@ -1652,7 +1577,7 @@ if [[ "$ATTEMPTED_COUNT" -lt 2 && "$REQUESTED_MODE" =~ ^(multi|rotate)$ ]]; then
   cat >&2 <<EOF
 ERROR: single_provider_only — --${REQUESTED_MODE} requires 2+ providers but only $ATTEMPTED_COUNT available after exclusions${EXCLUDE_PROVIDER:+ (host/--exclude: $EXCLUDE_PROVIDER)}.
 Options:
-  1. Install a second provider (codex, gemini, cursor-agent, or claude CLI)
+  1. Install a second provider (codex, agy, cursor-agent, kimi, or claude CLI)
   2. Use --single to accept single-provider review explicitly
   3. Use --provider <name> to bypass multi-provider intent
 EOF
@@ -1687,8 +1612,6 @@ provider_model() {
     codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}" ;;
     codex-5.3)    echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}" ;;
     agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.5 Flash (High)}}" ;;
-    gemini)       echo "${ZUVO_GEMINI_MODEL:-gemini-3.1-pro-preview}" ;;
-    gemini-api)   echo "${ZUVO_GEMINI_API_MODEL:-${ZUVO_MODEL_GEMINI_API:-gemini-3.1-pro-preview}}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
     kimi-api)     echo "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" ;;
     kimi)         echo "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3}}" ;;
@@ -1752,9 +1675,7 @@ _dispatch_provider_inner() {
     codex-5.3)     run_codex_53 ;;
     cursor-agent)  run_cursor_agent ;;
     agy)           run_agy ;;
-    gemini)        run_gemini ;;
     claude)        run_claude ;;
-    gemini-api)    run_gemini_api ;;  # manual only: --provider gemini-api
     kimi)          run_kimi ;;        # auto when kimi CLI on PATH (OAuth, K3)
     kimi-api)      run_kimi_api ;;    # fallback when MOONSHOT_API_KEY set, no CLI
     codestral)     run_codestral ;;
@@ -1787,7 +1708,7 @@ is_auth_failure_output() {
 
 # ─── Doctor mode: live auth probe of every detected provider ───
 # `command -v <cli>` proves presence, NOT a working login (field lesson 2026-07-19:
-# fleet bots had codex/gemini/claude on PATH with expired/revoked tokens — every
+# fleet bots had codex/agy/claude on PATH with expired/revoked tokens — every
 # review burned full provider timeouts before discovering nothing could run).
 # --doctor sends each detected provider a tiny prompt with a short timeout and
 # reports WORKING / FAILED / TIMEOUT. Exit 0 if ≥1 provider works, else 1.
@@ -1936,7 +1857,7 @@ echo "  Review: $REVIEW_MODE | Output: $OUTPUT_FORMAT | Dispatch: $MULTI_MODE" >
 ALL_RESULTS=""
 PROVIDERS_USED=""
 PROVIDER_COUNT=0
-# Per-provider outcome ledger: "claude:ok,gemini:timeout,codex:auth". Downstream gates read the
+# Per-provider outcome ledger: "claude:ok,agy:timeout,codex:auth". Downstream gates read the
 # artifact, not stderr — without this a one-provider artifact is indistinguishable from a
 # deliberate single-provider run and a run where three providers silently died.
 PROVIDER_OUTCOMES=""

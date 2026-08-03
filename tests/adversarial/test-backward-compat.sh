@@ -80,3 +80,62 @@ ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout" ZUVO_REVIEW_TIMEOUT=2 bash "$ADV" --js
 # single_provider_only
 ZUVO_REVIEW_TEST_PROVIDERS="mock-success" bash "$ADV" --multi --json --files "$EMPTY" 2>/dev/null | jq . >/dev/null 2>&1 \
   && pass "single_provider_only status JSON valid" || fail "BC.3" "single_provider_only JSON invalid"
+
+# ─── Case 4: dead `gemini`/`gemini-api` lanes stay removed from --help ──────
+# 2026-08-04: Google killed the free `gemini` CLI for individuals and no host in this
+# fleet ever set GEMINI_API_KEY, so both lanes were dead weight — removed in favor of
+# `agy` (Antigravity CLI), the sanctioned paid Gemini channel. This guards the two ways
+# that regression could silently creep back: the --provider Auto: list drifting off the
+# five real auto-detected providers, or a `gemini`/`gemini-api` token reappearing as a
+# selectable provider (the Auto/Manual lines) instead of the historical/explanatory
+# prose that legitimately still says "Gemini" when describing what agy replaced.
+
+start_test "BC.6 --help Auto: list is exactly the 5 sanctioned providers, no gemini lane"
+help_out=$(bash "$ADV" --help 2>&1)
+auto_line=$(printf '%s\n' "$help_out" | grep -E 'Auto:')
+manual_line=$(printf '%s\n' "$help_out" | grep -E 'Manual:')
+auto_list=$(printf '%s\n' "$auto_line" | sed -E 's/^.*Auto:[[:space:]]*//')
+manual_list=$(printf '%s\n' "$manual_line" | sed -E 's/^.*Manual:[[:space:]]*//')
+assert_eq "codex-5.3, agy, cursor-agent, kimi, claude" "$auto_list" \
+  "Auto: list is exactly codex-5.3, agy, cursor-agent, kimi, claude"
+if printf '%s' "$auto_list $manual_list" | grep -qiE '(^|[^-a-z])gemini([^-a-z]|$)'; then
+  fail "BC.6" "gemini still selectable in Auto:/Manual: provider list — <$auto_list> / <$manual_list>"
+else
+  pass "gemini is not a selectable provider in the Auto:/Manual: lists"
+fi
+
+# RED proof (run manually, not part of the suite): a scratch copy with a `gemini` arm
+# reintroduced into the Auto: line makes the exact-match assertion above fail —
+#   sed 's/Auto: codex-5.3, agy,/Auto: codex-5.3, gemini, agy,/' scripts/adversarial-review.sh \
+#     > /tmp/adv-regression-scratch.sh
+#   ADV=/tmp/adv-regression-scratch.sh bash -c '...same BC.6 body...'
+# reports: expected=<codex-5.3, agy, cursor-agent, kimi, claude> actual=<codex-5.3, gemini, agy, cursor-agent, kimi, claude>
+# — i.e. FAIL, proving the assertion discriminates a reintroduced gemini lane.
+
+# ─── Case 5: the harness must run OUTSIDE a git work tree ─────────────────────
+# 2026-08-04. `_ar_cache_key` was built from `git rev-parse --show-toplevel |
+# tr / _`. Outside a work tree git exits 128, `set -o pipefail` propagates it and
+# `set -e` kills the script at ~line 121 — before ANY output. The `2>/dev/null`
+# on that call hid git's own error, so the symptom was rc=128 with empty stdout
+# AND empty stderr: no message, no partial run, nothing to grep for.
+# Reproduced identically on macOS and burst-i9, and it is why burst-i9's
+# adversarial.log read `provider=none / all-failed` — the run never reached
+# provider detection, so "the CI box has no providers" was a misdiagnosis.
+# Asserted from a directory that is definitely NOT a repo, because every other
+# case in this suite runs from inside one and therefore cannot catch it.
+start_test "BC.7 runs from a non-git CWD (no silent rc=128)"
+_ng="$(mktemp -d)"          # mktemp -d is never inside a work tree
+_ng_out="$(cd "$_ng" && bash "$ADV" --help 2>/tmp/bc7.err)"; _ng_rc=$?
+_ng_err_bytes=$(wc -c < /tmp/bc7.err | tr -d ' ')
+if [ "$_ng_rc" -eq 0 ] && [ -n "$_ng_out" ]; then
+  pass "non-git CWD: exit 0 with real output ($(printf '%s' "$_ng_out" | wc -c | tr -d ' ') bytes)"
+else
+  fail "BC.7" "non-git CWD died: rc=$_ng_rc stdout_bytes=$(printf '%s' "$_ng_out" | wc -c | tr -d ' ') stderr_bytes=$_ng_err_bytes"
+fi
+# And the failure mode specifically: a silent death is worse than a loud one.
+if [ "$_ng_rc" -ne 0 ] && [ "$_ng_err_bytes" -eq 0 ]; then
+  fail "BC.7" "failed SILENTLY (rc=$_ng_rc, empty stderr) — the exact shape that hid this for a year"
+else
+  pass "no silent-failure shape (rc/stderr consistent)"
+fi
+rm -rf "$_ng" /tmp/bc7.err
