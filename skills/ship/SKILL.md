@@ -339,7 +339,35 @@ This step runs regardless of flags and diff size (fast path included). It does N
    | `VERSION` | Generic | entire file content |
    | None found | — | Offer to create a `VERSION` file, or skip versioning with user consent (E5) |
 
-2. **Skip gate:** If `--no-bump` was passed, skip this entire phase. Proceed to Phase 4 with the current version unchanged.
+2. **Skip gate — TWO conditions, and the second is not optional:**
+
+   a. `--no-bump` was passed.
+
+   b. **The flow is PR flow** (Phase 0 put you on a non-default branch). On a feature branch,
+      **do not bump the version and do not touch `CHANGELOG.md` at all.** Print
+      `[AUTO-DECISION] PR flow → version + changelog deferred to the release on <TARGET_BRANCH>`
+      and go straight to Phase 4 with the version unchanged.
+
+   **Why this is a correctness rule, not a convenience.** The version belongs to the RELEASE, not
+   to the pull request. `VERSION` is a single line and a `CHANGELOG.md` entry is always prepended
+   at the top, so two open PRs edit the same line of both files and conflict by construction —
+   every PR against every other PR, guaranteed. Worse than the conflict: both branches bump
+   `1.6.55 → 1.6.56`, so whichever merges SECOND declares a version number that is already taken.
+   That ships a wrong version, and no merge resolution catches it because both sides look correct
+   in isolation.
+
+   This matches what the repo has always actually done: every version bump in this project's
+   history is a plain single-parent commit on the default branch (`release: v1.6.50` … `v1.6.56`),
+   made by `scripts/release.sh` → `dev-push.sh` AFTER the merge. Not one arrived through a PR.
+   Ship on a feature branch produces the change; ship (or `release.sh`) on the default branch
+   produces the version.
+
+   **If a PR must carry its own release note**, add a NEW file — `changelog.d/<branch-slug>.md`
+   — rather than editing `CHANGELOG.md`. Distinct new files never conflict, and the release step
+   concatenates them into the changelog section and deletes them. Do NOT reach for
+   `CHANGELOG.md merge=union` in `.gitattributes` as a shortcut: it papers over the changelog
+   collision while doing nothing about `VERSION`, where a union merge yields a two-line version
+   file — a broken release instead of a visible conflict.
 
 3. **Detect conventional commits.** Scan all commits in the release range for prefixes:
    - `BREAKING CHANGE:` or `!:` suffix → major
@@ -406,11 +434,16 @@ This step runs regardless of flags and diff size (fast path included). It does N
 Stage **only** files that were actually generated or modified:
 
 ```bash
-# Only if bump was performed (--no-bump was NOT set):
+# Only if bump was performed (NOT --no-bump AND NOT PR flow — see Phase 3 skip gate):
 git add <version-file>
 
-# Only if CHANGELOG.md was created or updated in Phase 3:
+# Only if CHANGELOG.md was created or updated in Phase 3 (never on PR flow):
 git add CHANGELOG.md
+
+# On PR flow neither of the two lines above runs. If `git status` shows the version
+# file or CHANGELOG.md modified while you are on a feature branch, Phase 3's skip
+# gate did not fire — stop and fix that rather than staging them, or this PR will
+# conflict with every other open PR and claim a version number that is already taken.
 ```
 
 **NEVER** use `git add -A` or `git add .`.
