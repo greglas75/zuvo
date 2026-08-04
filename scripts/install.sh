@@ -286,6 +286,32 @@ install_claude() {
       cp "$ZUVO_DIR/VERSION" "$CACHE_DIR/skills/VERSION" 2>/dev/null || true
     fi
 
+    # Copy the Claude Code plugin manifest. The Codex targets have had this since
+    # forever (see the .codex-plugin copies further down); the Claude cache never
+    # did, so every cache dir kept whatever manifest Claude Code itself wrote when
+    # it created that directory — and nothing refreshed it afterwards.
+    # Measured 2026-08-03 while verifying the v1.6.54 install (backlog
+    # B-INSTALL-CLAUDE-MANIFEST): after installing 1.6.54, the manifest inside the
+    # 1.6.53 cache dir still declared 1.6.16, and the one inside 1.6.54 declared
+    # 1.6.47. Skills still load (everything else here IS synced to every cache
+    # dir), so this is metadata drift rather than a load failure — which is
+    # exactly why it survived ~40 releases unnoticed.
+    # NB the drift is not visible in a dir Claude Code has just created for a
+    # fresh version: it writes a correct manifest at creation time, and only
+    # later installs into that same dir leave it behind. Guarded by
+    # test-install-wiring.sh (9).
+    if [[ -f "$ZUVO_DIR/.claude-plugin/plugin.json" ]]; then
+      mkdir -p "$CACHE_DIR/.claude-plugin"
+      # WARN, not a silent `|| true`. The seven sibling copies in this loop
+      # swallow their failures, and that convention is precisely how this
+      # manifest went stale for ~40 releases without a signal. A copy that fails
+      # here leaves the drift this block exists to fix, so a failed run must at
+      # least SAY so — otherwise "install.sh reported OK" answers a question it
+      # never actually checked.
+      cp "$ZUVO_DIR/.claude-plugin/plugin.json" "$CACHE_DIR/.claude-plugin/plugin.json" 2>/dev/null \
+        || echo "  WARN: could not refresh $CACHE_DIR/.claude-plugin/plugin.json — its version/skill-count metadata stays stale" >&2
+    fi
+
     # Copy bin/ (CLI wrappers — Claude Code adds {plugin_root}/bin to PATH)
     if [[ -d "$ZUVO_DIR/bin" ]]; then
       mkdir -p "$CACHE_DIR/bin"

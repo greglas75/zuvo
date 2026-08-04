@@ -166,4 +166,55 @@ for s in scripts/install.sh scripts/build-codex-skills.sh scripts/build-antigrav
   fi
 done
 
+# (9) the Claude Code cache manifest must be refreshed by an install.
+#
+# install.sh copied skills/, shared/, rules/, scripts/, bin/, docs/ and VERSION
+# into every cache dir, and .codex-plugin/plugin.json into the Codex targets —
+# but never .claude-plugin/plugin.json into the Claude cache. So each cache dir
+# kept whatever manifest Claude Code itself wrote when it created the directory,
+# and nothing ever refreshed it. Measured 2026-08-03 verifying the v1.6.54
+# install (backlog B-INSTALL-CLAUDE-MANIFEST): after installing 1.6.54, the
+# manifest in the 1.6.53 cache dir still declared 1.6.16 and the one in 1.6.54
+# declared 1.6.47. Skills still loaded, which is why ~40 releases went by without
+# anyone noticing — metadata drift is silent.
+# A freshly-created cache dir does NOT show the drift (Claude Code writes a
+# correct manifest when it creates one); it appears only in dirs that later
+# installs write into. So this asserts the copy exists in install.sh and that
+# the copy itself produces a version-matching manifest — it deliberately does
+# NOT assert against the live cache, which would pass vacuously right after a
+# fresh install and fail for reasons unrelated to this code.
+if grep -q 'CACHE_DIR/\.claude-plugin' "$INSTALL"; then
+  pass "(9) install.sh copies .claude-plugin/plugin.json into the Claude cache"
+else
+  bad "(9) install.sh never refreshes the Claude cache manifest — it will drift silently"
+fi
+
+# End-to-end: run the copy the way install.sh does and compare versions. Uses a
+# throwaway CACHE_DIR so it never touches the real install.
+# PLACEMENT is the property, not "does cp work". The previous version of this
+# check re-implemented the mkdir+cp itself against $ROOT and compared versions —
+# which tests coreutils, not install.sh. The failure it needs to catch is the
+# copy drifting OUTSIDE the `for CACHE_DIR` loop, where it would refresh only
+# one cache dir and silently restore the very drift this fixes; a content grep
+# still matches then, and so did the old copy-and-compare. So: parse install.sh,
+# track do/done depth (the inner `for skill_dir` loop has its own `done`, which
+# is exactly what a naive "next done" match gets wrong), and assert the manifest
+# copy lands inside the per-CACHE_DIR loop body.
+_placement="$(awk '
+  /for CACHE_DIR in/           { inloop = 1; depth = 1; next }
+  inloop && /(^|[[:space:]])(do|then)[[:space:]]*$/ { depth++ }
+  inloop && /^[[:space:]]*(done|fi)[[:space:]]*$/   { depth--; if (depth == 0) inloop = 0 }
+  # Match the COPY, not any mention. `CACHE_DIR/.claude-plugin` also appears on
+  # the adjacent `mkdir -p` line, so the loose form reported "inside" even if
+  # only the mkdir stayed behind and the cp moved out — the precise half of the
+  # split that would break the fix.
+  inloop && /^[[:space:]]*cp .*CACHE_DIR\/\.claude-plugin\/plugin\.json/ { found = 1 }
+  END { print (found ? "inside" : "outside") }
+' "$INSTALL")"
+if [ "$_placement" = "inside" ]; then
+  pass "(9) the manifest copy is INSIDE the per-CACHE_DIR loop (every cache dir gets it)"
+else
+  bad "(9) manifest copy is outside the per-CACHE_DIR loop — only one dir would be refreshed, reintroducing the drift"
+fi
+
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "SOME FAILED"; exit 1; fi

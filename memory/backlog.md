@@ -414,7 +414,7 @@ Recipe:
      Raised by the cross-provider pass on the fix diff (2026-08-03); deferred with the rest of
      this item because it belongs in the one shared function, not a fourth inline copy.
 
-## B-INSTALL-CLAUDE-MANIFEST — install.sh never refreshes the Claude Code cache manifest
+## B-INSTALL-CLAUDE-MANIFEST — RESOLVED 2026-08-04 (install.sh + test-install-wiring.sh case 9)
 Surfaced by: zuvo:ship v1.6.54 post-merge verification (2026-08-03).
 `scripts/install.sh` copies `.codex-plugin/plugin.json` into the Codex targets (lines ~767,
 ~801) but has NO equivalent copy of `.claude-plugin/plugin.json` into
@@ -436,3 +436,23 @@ Recipe:
      cache manifest's `version` equals package.json's `version`. That is the check whose
      absence let this sit for 40 releases.
   3. Check whether the Cursor and Antigravity targets have the same omission.
+
+RESOLUTION: steps 1 and 2 done. Step 3 answered: Cursor and Antigravity load from
+skills directories and carry no plugin manifest, so there is nothing to sync there —
+only Claude (was missing, now fixed) and Codex (already had it) have one. Measured
+after the fix: both cache dirs report 1.6.55 / 57 skills, matching package.json.
+
+## B-INSTALL-COPY-IDIOM — install_claude()'s 8 copy sites all swallow their failures
+Surfaced by: zuvo:review of 17fa746..1313b59 (2026-08-04), CQ-4 + confirmed by 2 adversarial providers.
+`install_claude()` repeats the same shape eight times inside its `for CACHE_DIR` loop
+(scripts/install.sh:253, 264, 272, 283, 303, 309, 317, 323): `cp ... 2>/dev/null || true`.
+CQ14(b) is met literally (same structural pattern 5+ times). More importantly the swallow IS the
+mechanism that let the Claude manifest go stale for ~40 releases with no signal — install.sh
+prints OK whether or not any given copy happened.
+The manifest copy (the one this range added) was fixed to WARN; the other seven were left.
+Recipe: extract `copy_if_exists <src> <dst> <label>` that does the guard + copy + a WARN on
+failure, then replace all eight call sites with it. That fixes the duplication and the silent
+swallow in one place instead of eight.
+defer-reason: pre-existing (7 of the 8 predate this range) + it rewrites the copy path of a
+release-critical installer, which wants its own RED test against test-install-wiring.sh rather
+than a review-loop edit. | seen:1 | confidence:85 | source:review-cq | 2026-08-04
