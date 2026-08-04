@@ -204,7 +204,11 @@ _placement="$(awk '
   /for CACHE_DIR in/           { inloop = 1; depth = 1; next }
   inloop && /(^|[[:space:]])(do|then)[[:space:]]*$/ { depth++ }
   inloop && /^[[:space:]]*(done|fi)[[:space:]]*$/   { depth--; if (depth == 0) inloop = 0 }
-  inloop && /CACHE_DIR\/\.claude-plugin/            { found = 1 }
+  # Match the COPY, not any mention. `CACHE_DIR/.claude-plugin` also appears on
+  # the adjacent `mkdir -p` line, so the loose form reported "inside" even if
+  # only the mkdir stayed behind and the cp moved out — the precise half of the
+  # split that would break the fix.
+  inloop && /^[[:space:]]*cp .*CACHE_DIR\/\.claude-plugin\/plugin\.json/ { found = 1 }
   END { print (found ? "inside" : "outside") }
 ' "$INSTALL")"
 if [ "$_placement" = "inside" ]; then

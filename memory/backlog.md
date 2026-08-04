@@ -441,3 +441,18 @@ RESOLUTION: steps 1 and 2 done. Step 3 answered: Cursor and Antigravity load fro
 skills directories and carry no plugin manifest, so there is nothing to sync there —
 only Claude (was missing, now fixed) and Codex (already had it) have one. Measured
 after the fix: both cache dirs report 1.6.55 / 57 skills, matching package.json.
+
+## B-INSTALL-COPY-IDIOM — install_claude()'s 8 copy sites all swallow their failures
+Surfaced by: zuvo:review of 17fa746..1313b59 (2026-08-04), CQ-4 + confirmed by 2 adversarial providers.
+`install_claude()` repeats the same shape eight times inside its `for CACHE_DIR` loop
+(scripts/install.sh:253, 264, 272, 283, 303, 309, 317, 323): `cp ... 2>/dev/null || true`.
+CQ14(b) is met literally (same structural pattern 5+ times). More importantly the swallow IS the
+mechanism that let the Claude manifest go stale for ~40 releases with no signal — install.sh
+prints OK whether or not any given copy happened.
+The manifest copy (the one this range added) was fixed to WARN; the other seven were left.
+Recipe: extract `copy_if_exists <src> <dst> <label>` that does the guard + copy + a WARN on
+failure, then replace all eight call sites with it. That fixes the duplication and the silent
+swallow in one place instead of eight.
+defer-reason: pre-existing (7 of the 8 predate this range) + it rewrites the copy path of a
+release-critical installer, which wants its own RED test against test-install-wiring.sh rather
+than a review-loop edit. | seen:1 | confidence:85 | source:review-cq | 2026-08-04

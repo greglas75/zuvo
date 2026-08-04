@@ -148,11 +148,20 @@ NO_CHUNK=false         # --no-chunk / ZUVO_ADV_NO_CHUNK=1: disable auto-chunking
 _ar_path_for_key="$( { git rev-parse --show-toplevel 2>/dev/null \
                        || pwd 2>/dev/null \
                        || printf '%s' 'unknown-cwd'; } )"
-_ar_cache_key="${ZUVO_RUN_ID:-$(printf '%s' "${_ar_path_for_key:-unknown}" \
-  | { shasum 2>/dev/null || sha1sum 2>/dev/null || cksum; } | cut -c1-16 | tr -cd 'A-Za-z0-9')}"
-# Every digest tool above can be absent on a minimal host; if all three are, the
-# substitution is empty and the key would silently become "" — which is a shared
-# cache for EVERY project, the exact collision this hashing exists to prevent.
+# The trailing `printf` is the same unfailable-tail trick as above, and it is
+# needed for the same reason: if shasum, sha1sum AND cksum are all absent on a
+# minimal host, the pipeline exits 127, `set -euo pipefail` kills the assignment,
+# and the script dies silently — which is the ORIGINAL bug, reintroduced by its
+# own fix. Verified: `k="$(printf a | { nosuch1 || nosuch2 || nosuch3; } | cut -c1-16)"`
+# under `set -euo pipefail` exits 127 with empty stdout. The `nokey` guard below
+# was therefore UNREACHABLE in the first cut of this fix — a fallback that can
+# never run is not a fallback. With the printf present it is reachable, and it
+# stays as a belt for the case where the digest is real but sanitizes to empty.
+_ar_digest="$( { printf '%s' "${_ar_path_for_key:-unknown}" | shasum 2>/dev/null \
+                 || printf '%s' "${_ar_path_for_key:-unknown}" | sha1sum 2>/dev/null \
+                 || printf '%s' "${_ar_path_for_key:-unknown}" | cksum 2>/dev/null \
+                 || printf '%s' "${_ar_path_for_key:-unknown}"; } | cut -c1-16 | tr -cd 'A-Za-z0-9' )"
+_ar_cache_key="${ZUVO_RUN_ID:-$_ar_digest}"
 [ -n "$_ar_cache_key" ] || _ar_cache_key="nokey$$"
 # Own the directory before writing into it. A predictable name under a world-writable /tmp lets
 # another user on the host pre-create it as a SYMLINK, and then `>>` appends to — or `: >`
