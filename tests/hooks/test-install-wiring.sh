@@ -191,18 +191,26 @@ fi
 
 # End-to-end: run the copy the way install.sh does and compare versions. Uses a
 # throwaway CACHE_DIR so it never touches the real install.
-_c="$(mktemp -d)"
-if [ -n "$_c" ] && [ -d "$_c" ] && [ -f "$ROOT/.claude-plugin/plugin.json" ]; then
-  mkdir -p "$_c/.claude-plugin"
-  cp "$ROOT/.claude-plugin/plugin.json" "$_c/.claude-plugin/plugin.json"
-  _repo_v="$(grep -o '"version"[^,]*' "$ROOT/package.json" | head -1 | grep -o '[0-9][0-9.]*')"
-  _cache_v="$(grep -o '"version"[^,]*' "$_c/.claude-plugin/plugin.json" | head -1 | grep -o '[0-9][0-9.]*')"
-  if [ -n "$_repo_v" ] && [ "$_repo_v" = "$_cache_v" ]; then
-    pass "(9) copied manifest version matches package.json ($_repo_v)"
-  else
-    bad "(9) manifest/package.json version mismatch: cache=$_cache_v repo=$_repo_v"
-  fi
-  rm -rf "$_c"
+# PLACEMENT is the property, not "does cp work". The previous version of this
+# check re-implemented the mkdir+cp itself against $ROOT and compared versions —
+# which tests coreutils, not install.sh. The failure it needs to catch is the
+# copy drifting OUTSIDE the `for CACHE_DIR` loop, where it would refresh only
+# one cache dir and silently restore the very drift this fixes; a content grep
+# still matches then, and so did the old copy-and-compare. So: parse install.sh,
+# track do/done depth (the inner `for skill_dir` loop has its own `done`, which
+# is exactly what a naive "next done" match gets wrong), and assert the manifest
+# copy lands inside the per-CACHE_DIR loop body.
+_placement="$(awk '
+  /for CACHE_DIR in/           { inloop = 1; depth = 1; next }
+  inloop && /(^|[[:space:]])(do|then)[[:space:]]*$/ { depth++ }
+  inloop && /^[[:space:]]*(done|fi)[[:space:]]*$/   { depth--; if (depth == 0) inloop = 0 }
+  inloop && /CACHE_DIR\/\.claude-plugin/            { found = 1 }
+  END { print (found ? "inside" : "outside") }
+' "$INSTALL")"
+if [ "$_placement" = "inside" ]; then
+  pass "(9) the manifest copy is INSIDE the per-CACHE_DIR loop (every cache dir gets it)"
+else
+  bad "(9) manifest copy is outside the per-CACHE_DIR loop — only one dir would be refreshed, reintroducing the drift"
 fi
 
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "SOME FAILED"; exit 1; fi

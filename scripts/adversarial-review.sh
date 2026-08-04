@@ -129,7 +129,31 @@ NO_CHUNK=false         # --no-chunk / ZUVO_ADV_NO_CHUNK=1: disable auto-chunking
 # never reached provider detection at all, so a year of "the CI box has no
 # providers" was a misdiagnosis. Line ~292 in this same file already had the
 # `|| pwd` fallback; this line did not.
-_ar_cache_key="${ZUVO_RUN_ID:-$( { git rev-parse --show-toplevel 2>/dev/null || pwd; } | tr '/' '_' )}"
+# The path is HASHED, not slash-substituted. `tr / _` is not injective: `/a/b`
+# and `/a_b` both become `_a_b`, and the later `${...//[^A-Za-z0-9._-]/_}`
+# collapses more characters still — so two unrelated project roots could share
+# one PROVIDER_FAIL_CACHE and one project's "this provider is dead" verdict would
+# suppress probing in the other. Hashing also bounds the filename: the raw
+# fallback embedded the entire CWD, which outside a repo is arbitrarily deep and
+# can exceed NAME_MAX on a long path. Four reviewers flagged the collision
+# independently. A short hex digest is collision-safe enough for a per-boot
+# diagnostic cache and is a fixed 16 chars regardless of input.
+# The final `printf` is what makes this statement UNFAILABLE, and that is the
+# whole point. `git || pwd` still dies if BOTH fail — and `pwd` does fail, on a
+# deleted or unmounted CWD, which is a real condition on CI boxes with tmpdir
+# reapers or dropped network mounts. Under `set -euo pipefail` a failing command
+# substitution kills the assignment, reproducing the exact rc/empty-output shape
+# this line was rewritten to eliminate. A guard that only covers the failure you
+# already knew about is the defect class, not the fix for it.
+_ar_path_for_key="$( { git rev-parse --show-toplevel 2>/dev/null \
+                       || pwd 2>/dev/null \
+                       || printf '%s' 'unknown-cwd'; } )"
+_ar_cache_key="${ZUVO_RUN_ID:-$(printf '%s' "${_ar_path_for_key:-unknown}" \
+  | { shasum 2>/dev/null || sha1sum 2>/dev/null || cksum; } | cut -c1-16 | tr -cd 'A-Za-z0-9')}"
+# Every digest tool above can be absent on a minimal host; if all three are, the
+# substitution is empty and the key would silently become "" — which is a shared
+# cache for EVERY project, the exact collision this hashing exists to prevent.
+[ -n "$_ar_cache_key" ] || _ar_cache_key="nokey$$"
 # Own the directory before writing into it. A predictable name under a world-writable /tmp lets
 # another user on the host pre-create it as a SYMLINK, and then `>>` appends to — or `: >`
 # truncates — whatever it points at (CWE-59). zuvo runs on shared VPS hosts where that is a real
@@ -1070,6 +1094,31 @@ detect_providers() {
 }
 
 if [[ -n "$PROVIDER" ]]; then
+  # Reject an unknown provider HERE, loudly, instead of letting it flow into
+  # dispatch where the `*)` arm just `return 1`s and the run reports the generic
+  # "all providers failed". That message sends you looking for an auth or network
+  # problem when the real cause is a typo — or, since 2026-08-04, a name that no
+  # longer exists: `--provider gemini` was valid for a long time and is in
+  # muscle memory, so the removal makes this the most likely wrong value anyone
+  # passes. Naming the removed lane explicitly turns a dead end into a redirect.
+  case "$PROVIDER" in
+    gemini|gemini-api)
+      echo "ERROR: provider '$PROVIDER' was removed on 2026-08-04." >&2
+      echo "  Google discontinued the free gemini CLI for individuals; use 'agy'" >&2
+      echo "  (Antigravity), which is the sanctioned Gemini channel." >&2
+      exit 2 ;;
+    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude) ;;
+    # `mock-*` is the test harness's provider namespace (tests/adversarial/mocks/,
+    # reachable only under ZUVO_ADVERSARIAL_TEST_HARNESS). The first cut of this
+    # allowlist omitted it and broke D3.4, which drives `--provider mock-success`
+    # directly — a validation that rejects the suite exercising it is a worse bug
+    # than the typo it was added to catch.
+    mock-*) ;;
+    *)
+      echo "ERROR: unknown provider '$PROVIDER'." >&2
+      echo "  Valid: codex-5.3, codex-5.4, agy, cursor-agent, kimi, kimi-api, codestral, claude" >&2
+      exit 2 ;;
+  esac
   PROVIDERS="$PROVIDER"
 else
   PROVIDERS=$(detect_providers)

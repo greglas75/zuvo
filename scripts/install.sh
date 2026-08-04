@@ -302,7 +302,14 @@ install_claude() {
     # test-install-wiring.sh (9).
     if [[ -f "$ZUVO_DIR/.claude-plugin/plugin.json" ]]; then
       mkdir -p "$CACHE_DIR/.claude-plugin"
-      cp "$ZUVO_DIR/.claude-plugin/plugin.json" "$CACHE_DIR/.claude-plugin/plugin.json" 2>/dev/null || true
+      # WARN, not a silent `|| true`. The seven sibling copies in this loop
+      # swallow their failures, and that convention is precisely how this
+      # manifest went stale for ~40 releases without a signal. A copy that fails
+      # here leaves the drift this block exists to fix, so a failed run must at
+      # least SAY so — otherwise "install.sh reported OK" answers a question it
+      # never actually checked.
+      cp "$ZUVO_DIR/.claude-plugin/plugin.json" "$CACHE_DIR/.claude-plugin/plugin.json" 2>/dev/null \
+        || echo "  WARN: could not refresh $CACHE_DIR/.claude-plugin/plugin.json — its version/skill-count metadata stays stale" >&2
     fi
 
     # Copy bin/ (CLI wrappers — Claude Code adds {plugin_root}/bin to PATH)

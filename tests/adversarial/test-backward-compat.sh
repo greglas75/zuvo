@@ -125,8 +125,14 @@ fi
 # case in this suite runs from inside one and therefore cannot catch it.
 start_test "BC.7 runs from a non-git CWD (no silent rc=128)"
 _ng="$(mktemp -d)"          # mktemp -d is never inside a work tree
-_ng_out="$(cd "$_ng" && bash "$ADV" --help 2>/tmp/bc7.err)"; _ng_rc=$?
-_ng_err_bytes=$(wc -c < /tmp/bc7.err | tr -d ' ')
+# stderr goes to a file INSIDE that mktemp dir, not a predictable /tmp/bc7.err.
+# A fixed name under a world-writable /tmp lets another user on a shared host
+# pre-create it as a symlink, and the truncating `2>` then clobbers whatever it
+# points at (CWE-59). adversarial-review.sh guards its own cache dir against
+# exactly this; a test that reintroduces the hole is not a test worth having.
+_ng_err="$_ng/stderr.txt"
+_ng_out="$(cd "$_ng" && bash "$ADV" --help 2>"$_ng_err")"; _ng_rc=$?
+_ng_err_bytes=$(wc -c < "$_ng_err" | tr -d ' ')
 if [ "$_ng_rc" -eq 0 ] && [ -n "$_ng_out" ]; then
   pass "non-git CWD: exit 0 with real output ($(printf '%s' "$_ng_out" | wc -c | tr -d ' ') bytes)"
 else
@@ -138,4 +144,4 @@ if [ "$_ng_rc" -ne 0 ] && [ "$_ng_err_bytes" -eq 0 ]; then
 else
   pass "no silent-failure shape (rc/stderr consistent)"
 fi
-rm -rf "$_ng" /tmp/bc7.err
+rm -rf "$_ng"
