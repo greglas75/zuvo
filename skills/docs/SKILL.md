@@ -391,7 +391,7 @@ DOC="<the doc path you just wrote, e.g. README.md or docs/<feature>.md>"
   || echo "adversarial: set DOC to the generated/updated doc path first"
 ```
 
-If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
 
 Wait for complete output. Then:
 - **CRITICAL** (incorrect API signatures, wrong commands, stale references) → fix in doc before delivery

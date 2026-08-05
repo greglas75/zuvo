@@ -60,7 +60,7 @@ adversarial-review --json --mode {MODE} --files "{ARTIFACT_PATH}"
 
 **IMPORTANT — always WAIT for the complete artifact before Step 3.** Whether background (wait for the completion notification) or foreground-with-`timeout: 420000`, never read results early or triage a partial artifact. (The former "do NOT use background" rule is REMOVED — with the Bash tool's 120s default it guaranteed the pre-findings cutoff.)
 
-**If `adversarial-review` is not in PATH:** try `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh` as fallback.
+**If `adversarial-review` is not in PATH:** try `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release) as fallback.
 
 **If the script exits non-zero with empty output:** no provider was available. Note `adversarial review: skipped (no provider available)` and proceed normally.
 

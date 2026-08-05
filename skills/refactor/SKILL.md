@@ -850,7 +850,7 @@ The provider receives: (1) every new/modified in-fence file in full — placed F
 
 **DELETE_DEAD reviews:** prepend the verified production caller count and the zero-consumer evidence to the CONTEXT line, plus `UNTOUCHED_NOT_REPLACEMENT: <symbol> (<reason>)` for any name-similar unit the plan deliberately leaves alone. Reviewers flag only behavior removed from a LIVE path. Proposals to port or implement never-wired behavior are feature gaps (backlog), and documented-but-unmounted behavior is documentation drift (backlog) — neither is a refactor regression nor an in-fence blocker unless the staged deletion changes current runtime behavior.
 
-If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
 
 **Preflight the providers ONCE, before the first dispatch.** Run discovery a single time
 (`adversarial-review --doctor`, or the first pass's provider list). If NO provider is reachable,

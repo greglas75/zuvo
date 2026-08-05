@@ -190,7 +190,7 @@ else
 fi
 ```
 
-Not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`. Wait for complete
+Not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release). Wait for complete
 output, then act on findings: **CRITICAL** — fix immediately regardless of confidence, verifying against the code
 first when confidence is low; **WARNING** — fix if localized (< 10 lines), else backlog with file:line; **INFO** —
 record, max 3. Confidence measures how sure the reviewer is, not how important the issue is, and "pre-existing" is no

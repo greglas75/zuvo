@@ -559,7 +559,7 @@ After the spec-reviewer converges, run cross-model validation on the spec file. 
 adversarial-review --json --mode spec --files "docs/specs/YYYY-MM-DD-<topic>-spec.md"
 ```
 
-If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
 
 Wait for complete output. Then update the spec's `## Adversarial Review` section and metadata:
 - **No provider / empty output:** set `adversarial_review: skipped-no-provider` and write the exact skip reason in `## Adversarial Review`

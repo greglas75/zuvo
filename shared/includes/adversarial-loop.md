@@ -138,7 +138,16 @@ adversarial-review --json --mode {MODE} --files "path/to/changed/file.ts"
 
 **IMPORTANT — always WAIT for the complete artifact before triage.** Whether you ran background (wait for the completion notification) or foreground-with-`timeout: 420000`, never triage before the full output/artifact is on disk — a truncated read drops the first providers' CRITICALs. (The former "run foreground, do NOT background" rule is REMOVED — with the Bash tool's 120s default it guaranteed the cutoff this whole section now prevents.)
 
-**If `adversarial-review` is not in PATH** — on Claude Code it usually is NOT; no command is installed on PATH — resolve an absolute `$AR_CMD` with the snippet below and substitute it for every bare `adversarial-review` in the calls above and below (including the two inside the Step 2 block). Do **not** use a bare `zuvo/*/scripts/...` glob: with both a version dir and a SHA-named cache dir present it expands to two paths and runs the wrong one.
+**If `adversarial-review` is not in PATH** — on Claude Code it often is NOT, and worse, it can STOP being there mid-session. Claude Code adds `{installPath}/bin` to PATH once, at session start; a release then creates a new cache dir and removes the old one, so a session that was open across a release keeps a PATH entry pointing at a deleted directory. Measured 2026-08-05 after four same-day releases: a live session still had `.../zuvo/1.6.53/bin` on PATH while only 1.6.56 and 1.6.57 existed. `command -v adversarial-review` returned nothing and every call died `127`. That is the "adversarial doesn't work" report — not a provider fault, and nothing in the run says so.
+
+**Prefer `~/.zuvo/adversarial-review`.** `install.sh` puts it there alongside `append-runlog`, `build-review-patch` and `verify-plan-dag`; the path is version-independent, so it cannot be invalidated by a release. Use it directly and skip the resolver entirely:
+
+```bash
+AR_CMD="$HOME/.zuvo/adversarial-review"
+[ -x "$AR_CMD" ] || AR_CMD=""      # fall through to the resolver below only if absent
+```
+
+If it is genuinely absent (a machine that has not re-run `install.sh` since 2026-08-05), resolve an absolute `$AR_CMD` with the snippet below and substitute it for every bare `adversarial-review` in the calls above and below (including the two inside the Step 2 block). Do **not** use a bare `zuvo/*/scripts/...` glob: with both a version dir and a SHA-named cache dir present it expands to two paths and runs the wrong one.
 
 ```bash
 # Claude Code — canonical resolver (single source of truth: shared/includes/env-compat.md)

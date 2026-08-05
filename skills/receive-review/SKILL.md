@@ -216,7 +216,7 @@ else
 fi
 ```
 
-If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
 
 Exceptions (user authority wins over MANDATORY):
 - User forbade staging: nothing to do — the helper never writes the index. If the helper is missing, use the `--files` fallback above (never stage) and confirm the staged diff is unchanged.

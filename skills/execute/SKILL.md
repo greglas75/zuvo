@@ -730,7 +730,7 @@ Mode selection:
 - auth / tenant / payment / crypto / PII -> `--mode security`
 - migrations / schema / DDL -> `--mode migrate`
 
-If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
 
 The captured artifact path is mandatory for commit gating. Use the current task number in the filename:
 - Task 1 -> `zuvo/context/adversarial-task-1.txt`

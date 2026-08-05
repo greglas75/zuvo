@@ -67,7 +67,7 @@ If any file is missing, stop.
    - `scripts/adversarial-review.sh` (if in zuvo-plugin repo)
    - `~/.codex/scripts/adversarial-review.sh` (Codex install)
    - `~/.cursor/scripts/adversarial-review.sh` (Cursor install)
-   - `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh` (Claude Code)
+   - `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release) (Claude Code)
 
 4. Record start time.
 

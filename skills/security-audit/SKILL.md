@@ -772,7 +772,7 @@ FILES=(src/auth/session.ts src/middleware/authGuard.ts src/config/env.ts)
   || adversarial-review --mode security --files "${FILES[@]}"
 ```
 
-If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
 
 Wait for complete output. Then:
 - **CRITICAL** (auth bypass, injection, SSRF) → add to attack path analysis, fix in report before delivery
