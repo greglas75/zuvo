@@ -424,7 +424,7 @@ For each MISSING element (max 5 insertions per run):
    fi
    ```
 
-   If not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+   If not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
    - CRITICAL → undo fix, report as `NEEDS_REVIEW`
    - WARNING (localized, low-risk) → fix
    - WARNING (broad, structural) → report only, do not auto-fix

@@ -402,10 +402,29 @@ install_zuvo_home() {
   # were versioned in the repo but never installed, so a fresh machine got the file in git and
   # nothing in ~/.zuvo. Adding a helper must not require remembering to add an install block.
   local _installed=0 _skipped=0
-  for _src in "$ZUVO_DIR"/scripts/zuvo-home/*; do
+  # `scripts/adversarial-review.sh` is appended to the loop's input even though it
+  # does not live in scripts/zuvo-home/ — it is also shipped as bin/adversarial-review,
+  # so it cannot simply be moved. It belongs in ~/.zuvo/ for the same reason every
+  # helper here does, and its absence was a real fleet-wide outage:
+  #
+  # Claude Code puts {installPath}/bin on PATH ONCE, at session start. A release
+  # creates a new cache dir and removes the old one, so every session that was open
+  # across a release has a PATH entry pointing at a deleted directory and
+  # `adversarial-review` becomes "command not found" mid-run. Measured 2026-08-05
+  # after four same-day releases (1.6.53 -> .57): a live session's PATH still held
+  # .../zuvo/1.6.53/bin while only 1.6.56 and 1.6.57 existed on disk. That is the
+  # "adversarial doesn't work" agents were reporting — not a provider problem.
+  #
+  # ~/.zuvo/ is version-independent, which is exactly why append-runlog,
+  # build-review-patch and verify-plan-dag already live here and never break this way.
+  for _src in "$ZUVO_DIR"/scripts/zuvo-home/* "$ZUVO_DIR"/scripts/adversarial-review.sh; do
     [[ -f "$_src" ]] || continue
     local _name; _name="$(basename "$_src")"
     case "$_name" in *.pyc|__pycache__|.*) continue ;; esac
+    # Installed WITHOUT the .sh, matching how every skill and the bin wrapper name
+    # it. The other *.sh helpers in zuvo-home keep their extension (callers use it),
+    # so this is a targeted rename, not a blanket strip.
+    [[ "$_name" == "adversarial-review.sh" ]] && _name="adversarial-review"
     # Copy to a temp name and mv into place: `cp` over a LIVE executable truncates it first, so a
     # helper running from cron at that moment reads a half-written file. mv within one filesystem
     # is atomic. (Not a regression from the loop — the per-file blocks used a plain cp too — but

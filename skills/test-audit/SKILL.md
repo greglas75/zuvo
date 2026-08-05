@@ -459,7 +459,7 @@ After the audit report is generated, run cross-model validation to catch Q-score
 adversarial-review --mode tests --files "zuvo/audits/test-quality-audit-[date].md"
 ```
 
-If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
 
 Wait for complete output. Then:
 - **CRITICAL** (passing Q-score contradicted by evidence) → fix in report before delivery

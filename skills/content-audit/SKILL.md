@@ -455,7 +455,7 @@ REPORT=$(ls -t zuvo/audits/content-audit-$(date +%F)*.md 2>/dev/null | head -1)
   || echo "adversarial: report not found — write it first"
 ```
 
-If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
 
 Wait for complete output. Fix CRITICAL immediately (update report files).
 WARNING → fix if localized. INFO → ignore.

@@ -637,7 +637,7 @@ Cross-model adversarial review using external providers. Runs **sequentially** v
 - **A hung/timed-out provider is NEVER retried in a manual loop on a tiny diff.** If a provider times out at TIER 0/1, record `Adversarial: partial (<provider> only, others timed out)` and finalize — do NOT hand-retry the remaining providers (that hand-retry loop is exactly what turned 3 lines into 20 minutes). Chunking/retry is a TIER 2–3 concern for genuinely large diffs.
 - **Always run in the background or with a long Bash `timeout`** per `adversarial-loop.md` — never let the 120s Bash-tool default kill the pass mid-flight.
 
-If `adversarial-review` not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+If `adversarial-review` not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
 
 **BASE PREFLIGHT (run BEFORE piping any commit-range diff — a stale base wastes the whole pass).** A two-dot `<base>..<tip>` diff computed against a base that is no longer an ancestor of the tip shows **reverse hunks of other sessions' pushes** — code being "deleted" that was actually added elsewhere. Every provider then reports a confident CRITICAL about a revert that does not exist (observed: one full multi-provider pass burned, 5/5 providers false-CRITICAL). Before the pipe:
 

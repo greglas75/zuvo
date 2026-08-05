@@ -495,7 +495,7 @@ OUT="$(ls -t zuvo/audits/architecture-review-*.md 2>/dev/null | head -1)"   # or
   || echo "adversarial: set OUT to the architecture file you just wrote"
 ```
 
-If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
 
 Wait for complete output. Then:
 - **CRITICAL** (unsupported claims, missing evidence, contradictions) → fix in output before delivery

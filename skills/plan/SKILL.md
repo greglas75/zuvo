@@ -491,7 +491,7 @@ and the round is spent for nothing. This is a measured failure, not a hypothetic
 
 Read findings from `zuvo/context/adversarial-plan.json`, never from live stdout (truncated stdout cost 4 recovery calls in one field run). Belt: each pass also appends per-provider SUMMARY lines to `~/.zuvo/adversarial.log` — if the capture file is lost, the last SUMMARY row gives status/providers.
 
-If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
 
 Wait for complete output. Then apply fix policy:
 - **CRITICAL** (missing dependency, task requires nonexistent file) → fix in plan, increment `plan_revision`, re-run plan-reviewer

@@ -283,7 +283,7 @@ else
 fi
 ```
 
-If `adversarial-review` is not in PATH: `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/adversarial-review.sh`
+If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
 
 Wait for complete output. Fix CRITICAL immediately. WARNING (localized) → fix.
 
