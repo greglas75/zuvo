@@ -153,4 +153,47 @@ else
   bad "--check healthy pair (rc=$rc): $out"
 fi
 
+echo "=== PRECEDENCE: a malformed FRESH artifact must not be masked by a stale OLD one ==="
+# The field failure (2026-08-06, reported after three wasted cycles): the operator
+# was told "a fresh review is needed" for a review that had JUST been written. Every
+# reason was already distinguishable in isolation — which is why the existing cases
+# above all passed — but the RANKING preferred stale over malformed. memory/reviews/
+# accumulates, so any previously-reviewed file has an older artifact listing it with
+# different content; that stale reason masked the malformed header on the artifact
+# the run had just produced. Re-reviewing wrote another malformed artifact and
+# reproduced the identical message, forever.
+#
+# The rule this pins: a reason RE-REVIEWING REPAIRS (stale) must never outrank one
+# it reproduces (missing marker, space-separated files:). Both artifacts present is
+# the normal state, not a corner case, so isolation tests cannot catch this.
+newrepo; proof 2
+printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/mod.ts\nadversarial: zuvo/proofs/adv.txt\n' "$BASE" "$BASE" > memory/reviews/old.md
+printf 'range: %s..%s\nfiles: src/mod.ts\nadversarial: zuvo/proofs/adv.txt\n' "$BASE" "$HEAD" > memory/reviews/fresh.md
+out="$(explain)"
+if printf '%s' "$out" | grep -q "lacks the '<!-- zuvo-review -->' marker"; then
+  ok "marker-missing on the fresh artifact wins over stale-content on the old one"
+else
+  bad "stale masked the actionable marker reason: $out"
+fi
+
+newrepo; proof 2
+printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/mod.ts\nadversarial: zuvo/proofs/adv.txt\n' "$BASE" "$BASE" > memory/reviews/old.md
+printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/mod.ts other.ts\nadversarial: zuvo/proofs/adv.txt\n' "$BASE" "$HEAD" > memory/reviews/fresh.md
+out="$(explain)"
+if printf '%s' "$out" | grep -q "SPACE-separated"; then
+  ok "space-separated on the fresh artifact wins over stale-content on the old one"
+else
+  bad "stale masked the actionable separator reason: $out"
+fi
+
+# The inverse must still hold: with no malformed artifact, stale is the right answer.
+newrepo; proof 2
+printf '<!-- zuvo-review -->\nrange: %s..%s\nfiles: src/mod.ts\nadversarial: zuvo/proofs/adv.txt\n' "$BASE" "$BASE" > memory/reviews/old.md
+out="$(explain)"
+if printf '%s' "$out" | grep -q "a fresh review is needed"; then
+  ok "stale-content still reported when nothing is malformed (no regression)"
+else
+  bad "stale-content lost: $out"
+fi
+
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

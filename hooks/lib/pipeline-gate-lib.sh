@@ -450,7 +450,21 @@ pg_explain_uncovered() {
   pg_changed_production "$_peu_range" 2>/dev/null | while IFS= read -r _peu_f; do
     [ -n "$_peu_f" ] || continue
     _peu_bcur="$(pg_file_blob "$_peu_root" "$_peu_head" "$_peu_f")"
-    # rank: 0=covered(skip) 1=proof 2=stale 3=marker 4=none; keep the BEST (lowest) reason
+    # rank: 0=covered(skip) 1=proof 2=malformed(marker/separator) 3=stale 4=none;
+    # keep the BEST (lowest) reason.
+    #
+    # MALFORMED OUTRANKS STALE, and the order is the whole point (2026-08-06).
+    # It used to be the other way round, which produced a loop: memory/reviews/
+    # always accumulates older artifacts, so any previously-reviewed file had one
+    # listing it with different content. That stale reason (then rank 2) masked
+    # the malformed-header reason (then rank 3) on the artifact the run had JUST
+    # written. The operator was told "a fresh review is needed", re-ran the
+    # review, produced another artifact with the same malformed header, and got
+    # the identical message — three cycles, reported from the field.
+    #
+    # The tie-break rule: a reason that RE-REVIEWING REPAIRS (stale) must never
+    # outrank one that re-reviewing reproduces forever (missing marker,
+    # space-separated files:). Show the message whose repair actually unblocks.
     _peu_best=4; _peu_why="no artifact in memory/reviews/ lists this file — its content was never reviewed (run zuvo:review / a producing pipeline)"
     for _peu_art in "$_peu_reviews"/*.md; do
       [ -e "$_peu_art" ] || continue
@@ -461,8 +475,8 @@ pg_explain_uncovered() {
         case "$_peu_files" in
           *,*) : ;;
           *" "*) case " $_peu_files " in *" $_peu_f "*)
-                   if [ 3 -lt "$_peu_best" ]; then
-                     _peu_best=3
+                   if [ 2 -lt "$_peu_best" ]; then
+                     _peu_best=2
                      _peu_why="$(basename "$_peu_art") lists it SPACE-separated — the gate splits files: on commas only; fix the header (scripts/review-artifact-sync.sh --check)"
                    fi ;;
                  esac ;;
@@ -470,8 +484,8 @@ pg_explain_uncovered() {
         continue
       }
       if ! grep -q '<!-- zuvo-review -->' "$_peu_art" 2>/dev/null; then
-        if [ 3 -lt "$_peu_best" ]; then
-          _peu_best=3
+        if [ 2 -lt "$_peu_best" ]; then
+          _peu_best=2
           _peu_why="$(basename "$_peu_art") lists it but lacks the '<!-- zuvo-review -->' marker — malformed header, fix it (scripts/review-artifact-sync.sh --check)"
         fi
         continue
@@ -495,8 +509,8 @@ pg_explain_uncovered() {
         fi
         if [ 1 -lt "$_peu_best" ]; then _peu_best=1; _peu_why="$_peu_msg"; fi
       else
-        if [ 2 -lt "$_peu_best" ]; then
-          _peu_best=2
+        if [ 3 -lt "$_peu_best" ]; then
+          _peu_best=3
           _peu_why="$(basename "$_peu_art") lists it but reviewed DIFFERENT content (head ${_peu_ahead:-?}) — the file changed after that review; a fresh review is needed"
         fi
       fi
