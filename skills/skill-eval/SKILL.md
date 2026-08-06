@@ -490,7 +490,18 @@ report paths. **For `--all-evals`, add an aggregate headline**: if more than 10%
 corpora came back `INCONCLUSIVE`, print `AGGREGATE: INCONCLUSIVE (<k>/<N> corpora not
 trustworthy)` instead of a suite pass rate — one flaky-infra corpus must not be averaged
 into a clean-looking suite number. Then append the run log via
-`../../shared/includes/run-logger.md`.
+`../../shared/includes/run-logger.md`, using this literal template:
+
+```
+Run: <ISO-8601-Z>	skill-eval	<project>	-	-	<VERDICT>	-	<N>-cases	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
+```
+
+The template is spelled out here rather than left to "append the run log", because a skill
+that names the contract without showing the line makes the agent reconstruct 13 fields from
+memory — which is how `tests-performance` and `retro` ended up appending 11-field rows.
+VERDICT maps: all corpora graded and passing → `PASS`; any corpus `INCONCLUSIVE` → `WARN`;
+a behavioral regression → `FAIL`; `BLOCKED_NO_PYTHON`/`BLOCKED_NO_ISOLATION` → `BLOCKED`.
+TASKS is `-` (skill-eval writes no production files); DURATION is `<N>-cases`.
 
 ---
 
