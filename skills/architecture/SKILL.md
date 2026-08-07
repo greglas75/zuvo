@@ -494,7 +494,7 @@ After generating the architecture output (review report, ADR, or design document
 ```bash
 # review mode → zuvo/audits/architecture-review-<date>.md; adr/design mode → the docs/ file you wrote
 OUT="$(ls -t zuvo/audits/architecture-review-*.md 2>/dev/null | head -1)"   # or set to your ADR/design path
-[ -n "$OUT" ] && [ -f "$OUT" ] && adversarial-review --mode audit --files "$OUT" \
+[ -n "$OUT" ] && [ -f "$OUT" ] && ~/.zuvo/adversarial-review --mode audit --files "$OUT" \
   || echo "adversarial: set OUT to the architecture file you just wrote"
 ```
 

@@ -387,7 +387,7 @@ After generating or updating documentation, run cross-model validation to catch 
 
 ```bash
 DOC="<the doc path you just wrote, e.g. README.md or docs/<feature>.md>"
-[ -f "$DOC" ] && adversarial-review --mode audit --files "$DOC" \
+[ -f "$DOC" ] && ~/.zuvo/adversarial-review --mode audit --files "$DOC" \
   || echo "adversarial: set DOC to the generated/updated doc path first"
 ```
 

@@ -24,7 +24,7 @@ The script `adversarial-review` auto-detects the best available provider and run
 
 A genuine cross-model pass needs ≥2 DIFFERENT vendors. Working headless set as of 2026-07-19:
 **codex-5.3 (OpenAI) + agy (Google) + cursor-agent (Cursor) + kimi (Moonshot) + claude (Anthropic)** — 5 vendors,
-all verified WORKING via `adversarial-review --doctor`. Kimi's default model is `kimi-code/k3`.
+all verified WORKING via `~/.zuvo/adversarial-review --doctor`. Kimi's default model is `kimi-code/k3`.
 
 The script outputs structured findings with severity, file:line, and suggested fixes.
 

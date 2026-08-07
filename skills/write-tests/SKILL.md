@@ -314,7 +314,7 @@ Enter only when Step 3.5 returned `Audit mode: strict` + `Coverage verdict: CLEA
 | COMPLEX | 2 + 3rd ONLY if pass 2 found high-confidence CRITICAL |
 
 ```bash
-adversarial-review --rotate --mode test \
+~/.zuvo/adversarial-review --rotate --mode test \
   --context "STACK: [language+version / test-framework+version]. Code type: [type] [complexity] [testability]. Q-GATES: Q7..Q17. [pass 2+: FIXED/REJECTED/KNOWN lists]" \
   --files "<abs-production> <abs-test>" > zuvo/review.txt 2>&1
 ```

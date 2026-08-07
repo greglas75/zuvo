@@ -530,7 +530,7 @@ Pass results as `PRECOMPUTED_DATA` to each agent:
 
 ### 1.1 Self-Review Disclosure
 
-Check whether you wrote any of the code being reviewed in this session. If yes, add a `SELF-REVIEW` marker to the header. Self-review detected -> pass `--multi` to the adversarial script (forces ALL available providers, not a rotating single). **The flag is `--multi` — do NOT pass `--all-providers`** (a phantom flag): the DISPATCH-SHAPE flags are limited to `--multi/--single/--rotate/--exclude/--exclude-last` (other flags such as `--mode`, `--artifact`, `--append-artifact`, `--json` are separate and valid); an unknown flag exits 2 and silently drops you to weaker coverage. Probe once if unsure: `adversarial-review --help | grep -- --multi`. `--multi` exits 3 (`single_provider_only`) when <2 providers exist — only then fall back to `--rotate`/`--single`.
+Check whether you wrote any of the code being reviewed in this session. If yes, add a `SELF-REVIEW` marker to the header. Self-review detected -> pass `--multi` to the adversarial script (forces ALL available providers, not a rotating single). **The flag is `--multi` — do NOT pass `--all-providers`** (a phantom flag): the DISPATCH-SHAPE flags are limited to `--multi/--single/--rotate/--exclude/--exclude-last` (other flags such as `--mode`, `--artifact`, `--append-artifact`, `--json` are separate and valid); an unknown flag exits 2 and silently drops you to weaker coverage. Probe once if unsure: `~/.zuvo/adversarial-review --help | grep -- --multi`. `--multi` exits 3 (`single_provider_only`) when <2 providers exist — only then fall back to `--rotate`/`--single`.
 
 ### 1.2 Review Header (merged banner -- single block replaces 4 separate blocks)
 
@@ -629,7 +629,7 @@ Cross-model adversarial review using external providers. Runs **sequentially** v
 
 | Tier | Diff | Adversarial shape |
 |------|------|-------------------|
-| **TIER 0 (NANO)** | <15 prod-logic lines, 1 file, no risk signal | **ONE `--single` pass, `ZUVO_REVIEW_TIMEOUT=60`.** No rotate, no second pass. `git diff … \| ZUVO_REVIEW_TIMEOUT=60 adversarial-review --single --mode code`. ~60s ceiling. |
+| **TIER 0 (NANO)** | <15 prod-logic lines, 1 file, no risk signal | **ONE `--single` pass, `ZUVO_REVIEW_TIMEOUT=60`.** No rotate, no second pass. `git diff … \| ZUVO_REVIEW_TIMEOUT=60 ~/.zuvo/adversarial-review --single --mode code`. ~60s ceiling. |
 | **TIER 1 (LIGHT)** | 15–100 lines | Up to **2** `--rotate` passes, default timeout; stop early on a clean pass. |
 | **TIER 2–3** | larger / risk signals | Full sequential `--rotate` (2–3 passes) as below. |
 
@@ -694,17 +694,17 @@ RANGE_KEY=$(printf '%s' "${REVIEWED_FROM}..${REVIEWED_THROUGH}" | shasum | cut -
 ADV_PROOF="zuvo/proofs/${SLUG:+${SLUG}-}${RANGE_KEY}-adversarial.txt"   # range hash ALWAYS present
 
 # Pass 1 (--artifact CREATES the proof):
-git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}" | adversarial-review --rotate --mode code --artifact "$ADV_PROOF"
+git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}" | ~/.zuvo/adversarial-review --rotate --mode code --artifact "$ADV_PROOF"
 # → Read output, extract ADV-1, ADV-2
 
 # Pass 2:
 (echo "PRIOR FINDINGS: ADV-1 [desc], ADV-2 [desc] — find NEW issues only";
- git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}") | adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
+ git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}") | ~/.zuvo/adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
 # → Read output, extract ADV-3
 
 # Pass 3 (if provider available):
 (echo "PRIOR FINDINGS: ADV-1..3 — final pass, find what everyone missed";
- git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}") | adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
+ git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}") | ~/.zuvo/adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
 # → ADV-4 or clean → early exit
 ```
 
@@ -716,15 +716,15 @@ Same `--rotate` pattern but each pass sees the IMPROVED diff after prior fixes.
 
 ```bash
 # Pass 1: review post-primary-fix code
-git diff "${REVIEWED_FROM}..HEAD" | adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
+git diff "${REVIEWED_FROM}..HEAD" | ~/.zuvo/adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
 # → ADV-1 → apply fix → commit
 
 # Pass 2: validate fix + find new
-git diff "${REVIEWED_FROM}..HEAD" | adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
+git diff "${REVIEWED_FROM}..HEAD" | ~/.zuvo/adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
 # → validates ADV-1 fix + finds ADV-2 → apply → commit
 
 # Pass 3: final validation
-git diff "${REVIEWED_FROM}..HEAD" | adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
+git diff "${REVIEWED_FROM}..HEAD" | ~/.zuvo/adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
 # → clean or ADV-3
 ```
 
@@ -1138,7 +1138,7 @@ Applying fixes without re-checking is how a "fix" silently becomes a regression 
 
 1. **Verify** — run the project's test/typecheck/build. A fix that leaves the suite red is reverted, not shipped.
    - **Pre-existing failure in an UNTOUCHED workspace is not your regression** (and reverting a good fix over it is the actual harm). If the full suite fails only outside the reviewed file set: re-run that workspace once to confirm it reproduces, then compare the failing files against the reviewed diff. A **reproducible** failure in files this review never touched does NOT invalidate a green targeted suite + typecheck — but the verdict MUST disclose it: `verification debt: <workspace> <N> failing (pre-existing, out-of-scope)`, with the exact files/counts. Silence here is the escape hatch: an undisclosed "the suite was already broken" is indistinguishable from a fix that broke it. If the failure touches ANY reviewed file, it is yours — revert or fix, no debt option.
-2. **Adversarial re-validation** — run one cross-provider adversarial pass on the FIX diff (`adversarial-review --mode code` on the applied changes). It must **converge** (no new CRITICAL): a new CRITICAL introduced by a fix is itself fixed (cap 3 passes per `adversarial-loop.md`), residual non-CRITICAL → backlog. Do NOT print the FIX-COMPLETE block while a fix-introduced CRITICAL is open.
+2. **Adversarial re-validation** — run one cross-provider adversarial pass on the FIX diff (`~/.zuvo/adversarial-review --mode code` on the applied changes). It must **converge** (no new CRITICAL): a new CRITICAL introduced by a fix is itself fixed (cap 3 passes per `adversarial-loop.md`), residual non-CRITICAL → backlog. Do NOT print the FIX-COMPLETE block while a fix-introduced CRITICAL is open.
 3. **Commit** only after 1+2 pass. Record applied vs deferred (backlog IDs) in the FIX summary.
 
 This gate is what makes auto-fix safe to default: the user never has to eyeball each change, because the verify + adversarial pass catch an over-correction the way a human glance would.

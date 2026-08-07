@@ -479,7 +479,7 @@ Read `agents/plan-reviewer.md` for full instructions.
 After the plan-reviewer converges, run cross-model validation on the plan file. This catches task bloat, hidden ordering violations, and AC orphans.
 
 ```bash
-timeout 480 adversarial-review --mode plan --files "docs/specs/YYYY-MM-DD-<topic>-plan.md" --json \
+timeout 480 ~/.zuvo/adversarial-review --mode plan --files "docs/specs/YYYY-MM-DD-<topic>-plan.md" --json \
   > zuvo/context/adversarial-plan.json 2> zuvo/context/adversarial-plan.err
 ```
 
@@ -507,7 +507,7 @@ note-level edit does not. Deciding this per-run is what produced the repeated-pa
 
 **Stop rule:** the 3-iteration cap governs the initial plan-reviewer loop only. An adversarial-driven revision gets exactly ONE re-review of the current revision. Once the current revision holds a reviewer APPROVED verdict and a cross-model pass with zero CRITICAL findings, disposition remaining WARNINGs in `## Review Trail` and STOP — never spin another revision solely for optional reordering, task splitting, or duplicated wording.
 
-**Hard budget (deterministic — this prose cap did NOT compose across the 3-document split and produced a 6-hour run).** `adversarial-review --mode plan` enforces a per-plan round budget in the tool itself: after `ZUVO_PLAN_ROUND_BUDGET` passes (default 8) within a 30-min window, it REFUSES to run — prints `PLAN REVIEW BUDGET EXHAUSTED`, emits `{"status":"budget_exhausted"}`, and exits **7** WITHOUT calling any provider. This is shared across ALL documents of a split plan, so 3 docs × unbounded re-reviews can no longer accumulate. On exit 7 / `status: "budget_exhausted"`:
+**Hard budget (deterministic — this prose cap did NOT compose across the 3-document split and produced a 6-hour run).** `~/.zuvo/adversarial-review --mode plan` enforces a per-plan round budget in the tool itself: after `ZUVO_PLAN_ROUND_BUDGET` passes (default 8) within a 30-min window, it REFUSES to run — prints `PLAN REVIEW BUDGET EXHAUSTED`, emits `{"status":"budget_exhausted"}`, and exits **7** WITHOUT calling any provider. This is shared across ALL documents of a split plan, so 3 docs × unbounded re-reviews can no longer accumulate. On exit 7 / `status: "budget_exhausted"`:
 - **Do NOT retry, do NOT wait out the window, do NOT `ZUVO_PLAN_BUDGET_OFF=1` to keep looping.** The budget firing means the loop has already done more review than a plan warrants.
 - **Finalize the CURRENT revision:** disposition every outstanding WARNING in `## Review Trail` (apply the trivially-correct ones inline, record the rest as accepted notes), set the plan status (`Reviewed`, or `Approved` per the interactive/async rules), and hand it to the user with a one-line `[BUDGET: N plan-review passes — residual warnings dispositioned, not re-looped]`.
 - `ZUVO_PLAN_BUDGET_OFF=1` exists ONLY for a human who deliberately wants an unbounded session; an agent must never set it to escape the breaker.

@@ -556,7 +556,7 @@ After the internal reviewer converges, update the spec to `status: Reviewed` and
 After the spec-reviewer converges, run cross-model validation on the spec file. This catches hallucinations, contradictions, and scope creep that same-model review misses. Use the shared document-artifact protocol semantics from `adversarial-loop-docs.md` even though this skill implements the call inline.
 
 ```bash
-adversarial-review --json --mode spec --files "docs/specs/YYYY-MM-DD-<topic>-spec.md"
+~/.zuvo/adversarial-review --json --mode spec --files "docs/specs/YYYY-MM-DD-<topic>-spec.md"
 ```
 
 If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)

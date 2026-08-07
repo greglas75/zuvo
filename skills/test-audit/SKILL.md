@@ -456,7 +456,7 @@ rm -rf zuvo/audits/.test-audit-batch
 After the audit report is generated, run cross-model validation to catch Q-score inflation and coverage theater. Runs on ALL audits (not just --deep).
 
 ```bash
-adversarial-review --mode tests --files "zuvo/audits/test-quality-audit-[date].md"
+~/.zuvo/adversarial-review --mode tests --files "zuvo/audits/test-quality-audit-[date].md"
 ```
 
 If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
