@@ -121,9 +121,9 @@ if [ -x "$HOME/.zuvo/build-review-patch" ]; then
   _prc=0; _patch=$("$HOME/.zuvo/build-review-patch" "<written-file-1>" "<written-file-2>") || _prc=$?
   if [ "$_prc" -eq 3 ]; then echo "adversarial review: skipped (no changes)"
   elif [ "$_prc" -ne 0 ]; then echo "BLOCKED: build-review-patch failed (rc=$_prc). Adversarial review did NOT run; do NOT proceed to commit and do NOT report this skill complete" >&2; false
-  else printf '%s\n' "$_patch" | adversarial-review --json --artifact "$_ADV_ART" --mode {MODE}; fi
+  else printf '%s\n' "$_patch" | ~/.zuvo/adversarial-review --json --artifact "$_ADV_ART" --mode {MODE}; fi
 else
-  adversarial-review --json --artifact "$_ADV_ART" --mode {MODE} --files "<changed files>"
+  ~/.zuvo/adversarial-review --json --artifact "$_ADV_ART" --mode {MODE} --files "<changed files>"
 fi
 ```
 
@@ -133,7 +133,7 @@ Default is multi-provider (all available run in parallel). The script handles pr
 
 **If the helper is not installed** (`~/.zuvo/build-review-patch` missing — a Codex/Cursor-only install where `install_zuvo_home` never ran), take the `else` branch above and name the files explicitly:
 ```bash
-adversarial-review --json --mode {MODE} --files "path/to/changed/file.ts"
+~/.zuvo/adversarial-review --json --mode {MODE} --files "path/to/changed/file.ts"
 ```
 
 **IMPORTANT — always WAIT for the complete artifact before triage.** Whether you ran background (wait for the completion notification) or foreground-with-`timeout: 420000`, never triage before the full output/artifact is on disk — a truncated read drops the first providers' CRITICALs. (The former "run foreground, do NOT background" rule is REMOVED — with the Bash tool's 120s default it guaranteed the cutoff this whole section now prevents.)
@@ -198,11 +198,11 @@ The script may return a non-clean `status` when not all requested providers ran.
 _ADV_DIR="$(mktemp -d "${TMPDIR:-/tmp}/zuvo-adv-XXXXXX")"
 
 # Pass 1 — capture to a per-pass artifact; never pipe through tail/head
-out1=$(adversarial-review --rotate --json --artifact "$_ADV_DIR/pass1.json" --files "$ARTIFACT")
+out1=$(~/.zuvo/adversarial-review --rotate --json --artifact "$_ADV_DIR/pass1.json" --files "$ARTIFACT")
 last_provider=$(jq -r '.providers_used_list[0] // .providers_used' <<<"$out1")
 
 # Pass 2 — exclude last to force a different provider, distinct artifact
-out2=$(adversarial-review --rotate --exclude-last "$last_provider" --json --artifact "$_ADV_DIR/pass2.json" --files "$ARTIFACT")
+out2=$(~/.zuvo/adversarial-review --rotate --exclude-last "$last_provider" --json --artifact "$_ADV_DIR/pass2.json" --files "$ARTIFACT")
 ```
 
 If only 1 provider remains after the exclusion, pass 2 will exit 3 (`single_provider_only`) — caller chooses whether to fall back to `--single` or accept single-perspective results.
@@ -277,7 +277,7 @@ If Step 4 fixed any CRITICAL or WARNING:
    _prc=0; _patch=$("$HOME/.zuvo/build-review-patch" "<same PATH args as Step 2>") || _prc=$?
    if [ "$_prc" -eq 3 ]; then echo "BLOCKED: validation re-run produced an empty patch. Exit 3 means the paths resolved and nothing in them changed — so the Step 4 fixes are NOT on disk. Do NOT report this skill complete" >&2; false
    elif [ "$_prc" -ne 0 ]; then echo "BLOCKED: build-review-patch failed (rc=$_prc). Adversarial review did NOT run; do NOT proceed to commit and do NOT report this skill complete" >&2; false
-   else printf '%s\n\n%s\n' "$_ctx" "$_patch" | adversarial-review --json --mode {MODE}; fi
+   else printf '%s\n\n%s\n' "$_ctx" "$_patch" | ~/.zuvo/adversarial-review --json --mode {MODE}; fi
    ```
 
    The re-run sees the diff, not the system around it — so it re-derives the same false positives

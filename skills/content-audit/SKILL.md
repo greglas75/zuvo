@@ -451,7 +451,7 @@ just wrote — a literal `[date]` placeholder matches nothing and burns the pass
 # Phase 3 auto-increments (-2.md, -3.md) on same-day reruns, so take the newest
 # match rather than assuming the base name.
 REPORT=$(ls -t zuvo/audits/content-audit-$(date +%F)*.md 2>/dev/null | head -1)
-[ -n "$REPORT" ] && adversarial-review --mode audit --files "$REPORT" \
+[ -n "$REPORT" ] && ~/.zuvo/adversarial-review --mode audit --files "$REPORT" \
   || echo "adversarial: report not found — write it first"
 ```
 

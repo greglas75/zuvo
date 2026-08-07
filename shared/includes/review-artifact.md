@@ -62,7 +62,7 @@ here (it shells out to external provider CLIs).
 
 ```bash
 # When you run the mandatory adversarial pass, save it with --artifact:
-git diff <range> | adversarial-review --multi --mode code --artifact "zuvo/proofs/<slug>-adversarial.txt"
+git diff <range> | ~/.zuvo/adversarial-review --multi --mode code --artifact "zuvo/proofs/<slug>-adversarial.txt"
 # then put that path in the header:
 #   adversarial: zuvo/proofs/<slug>-adversarial.txt
 ```

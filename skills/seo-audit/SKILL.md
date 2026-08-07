@@ -758,7 +758,7 @@ After the audit report is generated, run cross-model validation to catch score i
 
 ```bash
 REPORT="zuvo/audits/seo-audit-$(date +%F).md"   # the report this run wrote
-[ -f "$REPORT" ] && adversarial-review --mode audit --files "$REPORT" \
+[ -f "$REPORT" ] && ~/.zuvo/adversarial-review --mode audit --files "$REPORT" \
   || echo "adversarial: report not found — write it first"
 ```
 

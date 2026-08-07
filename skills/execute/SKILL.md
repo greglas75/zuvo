@@ -719,9 +719,9 @@ if [ -x "$HOME/.zuvo/build-review-patch" ]; then
   _prc=0; _patch=$("$HOME/.zuvo/build-review-patch" "<written-file-1>" "<written-file-2>") || _prc=$?
   if [ "$_prc" -eq 3 ]; then echo "adversarial review: skipped (no changes)"
   elif [ "$_prc" -ne 0 ]; then echo "BLOCKED: build-review-patch failed (rc=$_prc). Adversarial review did NOT run; do NOT proceed to commit and do NOT report this skill complete" >&2; false
-  else printf '%s\n' "$_patch" | adversarial-review --mode code --artifact "zuvo/context/adversarial-task-<task-N>.txt"; fi
+  else printf '%s\n' "$_patch" | ~/.zuvo/adversarial-review --mode code --artifact "zuvo/context/adversarial-task-<task-N>.txt"; fi
 else
-  adversarial-review --mode code --artifact "zuvo/context/adversarial-task-<task-N>.txt" --files "<changed files>"
+  ~/.zuvo/adversarial-review --mode code --artifact "zuvo/context/adversarial-task-<task-N>.txt" --files "<changed files>"
 fi
 ```
 

@@ -226,7 +226,7 @@ Score expanded article (same 6 dimensions). If ANY dimension regressed → rever
 
 ### 2.7 Adversarial Review
 
-Load `adversarial-loop-docs.md` now. Run: `adversarial-review --json --mode article --files "<temp-file>"` (fallback: `--json --mode audit` + WARNING). CRITICAL → fix. WARNING → fix if localized. If the script returns `status: "timeout"` or exits `124`, record `Adversarial review: skipped (timeout)` and continue without blocking the article.
+Load `adversarial-loop-docs.md` now. Run: `~/.zuvo/adversarial-review --json --mode article --files "<temp-file>"` (fallback: `--json --mode audit` + WARNING). CRITICAL → fix. WARNING → fix if localized. If the script returns `status: "timeout"` or exits `124`, record `Adversarial review: skipped (timeout)` and continue without blocking the article.
 
 ### 2.8 Replace Original
 

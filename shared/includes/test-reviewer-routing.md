@@ -85,7 +85,7 @@ persistence.
 
 Priority:
 
-1. **Primary:** external cross-provider `adversarial-review --rotate`
+1. **Primary:** external cross-provider `~/.zuvo/adversarial-review --rotate`
    (fallback location: `$ZUVO_BASE/scripts/adversarial-review.sh`)
 2. **Fallback-local:** same environment, different-from-writer read-only agent
    via the same resolver + 5s timeout + parser rules as above. Route

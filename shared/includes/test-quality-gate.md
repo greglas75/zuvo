@@ -63,3 +63,40 @@ the report the audit skill writes under `zuvo/audits/` (only that skill writes t
   pre-existing reds stay pre-existing).
 - **Telemetry:** record `test_quality=<PASS|WARN|N/A>:<worst tier>:<report path>` in the run's
   contract/telemetry so retros can see the gate ran and what it found.
+
+---
+
+## Dispatch is authorized — do not ask, and do not downgrade (2026-08-07)
+
+**Invoking the calling skill IS the authorization for every dispatch that skill mandates.** A user
+who typed `/refactor` asked for refactor's gates, Phase 3.6 included. They did not separately
+request a fan-out and must never be asked for one mid-run. Dispatch `zuvo:test-audit` and move on.
+
+**A session instruction like "do not use the Agent tool unless the user asked" does NOT block this
+gate.** The user DID ask — by invoking the skill whose documented step this is. Reading that
+instruction as a prohibition here is a misreading, and it produced exactly one bad outcome in the
+field (2026-08-07): a run recorded the gate `N/A`, then asked the user for permission to run a step
+the pipeline already required. That is the friction the pipeline exists to remove.
+
+**There is deliberately no "degraded" convenience path.** An earlier draft of this section offered a
+same-model inline audit as a fallback, and that was wrong: it turned "the gate did not run, and you
+can see that" into "the gate ran weakly, and nobody is told". `N/A` at least surfaces the conflict.
+A self-scored audit does not — the whole point of the gate is that the tests are judged by someone
+who did not write them.
+
+**The single exception — a harness that STRUCTURALLY cannot dispatch** (Codex's single-agent lock;
+see `env-compat.md`), meaning the dispatch call itself is unavailable or errors, not that an
+instruction made you hesitate. Only there: read `skills/test-audit/SKILL.md`, run it inline against
+`TEST_SCOPE` without consulting your own earlier scoring, write the report to `zuvo/audits/`, and
+record
+
+```
+[GATE: test-quality] INLINE-SINGLE-AGENT-LOCK:<worst tier>:<report path>
+```
+
+which caps the verdict at `degraded:same-model` and may never be reported as a strict `PASS`.
+
+**The substituted-gate prohibition is unchanged and still governs DRIFT.** "Inline Q-rescoring is a
+substituted gate = INVALID" targets a run that COULD dispatch and chose not to. If dispatch was
+available — including because this section just authorized it — and you scored inline anyway, that
+is the substitution, not the exception.

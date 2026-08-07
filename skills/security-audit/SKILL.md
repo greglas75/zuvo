@@ -769,7 +769,7 @@ there is no diff to build — the file list IS the reviewed surface.
 # FILES = the real paths this audit's findings cite (fill from the report, do not paste the example)
 FILES=(src/auth/session.ts src/middleware/authGuard.ts src/config/env.ts)
 [ ${#FILES[@]} -eq 0 ] && echo "adversarial: skipped (no HIGH/CRITICAL findings to re-review)" \
-  || adversarial-review --mode security --files "${FILES[@]}"
+  || ~/.zuvo/adversarial-review --mode security --files "${FILES[@]}"
 ```
 
 If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)

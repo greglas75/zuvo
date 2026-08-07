@@ -818,7 +818,7 @@ is what makes a later audit able to catch a fabrication.
  echo "---ORIGINAL SOURCE (excerpt-capped)---";
  head -c 40000 [target file before refactoring];
  echo "---DIFF---";
- git diff --staged) | adversarial-review --rotate --mode [code|security]
+ git diff --staged) | ~/.zuvo/adversarial-review --rotate --mode [code|security]
 ```
 
 **Measure the payload BEFORE dispatch, do not discover the cap by being truncated.** Pipe the
@@ -853,7 +853,7 @@ The provider receives: (1) every new/modified in-fence file in full — placed F
 If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
 
 **Preflight the providers ONCE, before the first dispatch.** Run discovery a single time
-(`adversarial-review --doctor`, or the first pass's provider list). If NO provider is reachable,
+(`~/.zuvo/adversarial-review --doctor`, or the first pass's provider list). If NO provider is reachable,
 record `adversarial: blocked:no-provider` and go straight to the independent local CQ/security
 pass — do **not** retry the dispatch per pass. Repeated zero-output attempts against an unreachable
 provider are the most common way a refactor burns its budget without producing a single finding,
@@ -996,7 +996,7 @@ had a finding. The `refactor-safety-gate` hook reads these on `git commit` — i
       the commit gate BLOCKS the fix commit when fix-now items were applied but
       `prove.regression_red` is missing/`not_run` (runs with NO fix-now items set nothing;
       the gate keys on the disposition containing a fix).
-   d. Re-verify: type-check + **targeted suite** (touched package/files, compared against the session baseline — a test that was red before the correction or broken by the local env is `pre-existing-out-of-scope`, recorded, NOT a blocker; the FULL suite runs once at the end per the targeted-tests rule) + ONE adversarial pass over the fix diff (`adversarial-review --mode code`) — must converge (no new CRITICAL).
+   d. Re-verify: type-check + **targeted suite** (touched package/files, compared against the session baseline — a test that was red before the correction or broken by the local env is `pre-existing-out-of-scope`, recorded, NOT a blocker; the FULL suite runs once at the end per the targeted-tests rule) + ONE adversarial pass over the fix diff (`~/.zuvo/adversarial-review --mode code`) — must converge (no new CRITICAL).
    e. **Commit separately:** `git commit -m "fix([scope]): [bug summary]"` (`feat`/`perf` if that fits better). NEVER fold the fix into the refactor commit — that erases the move-vs-change boundary that makes commit 1 trustworthy.
    Else: print `[REMEDIATION: none — no fixable bugs surfaced]`.
 4. **Decisions:** resolve per the table (ask / safe-default+log). Out-of-scope-fence items → backlog (Phase 4).
