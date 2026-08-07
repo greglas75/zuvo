@@ -139,12 +139,25 @@ case "$CONTEXT_GAP" in
   no-production-code|no-schema|no-env|no-test-fixture|no-framework-docs|none|other) : ;;
   *) echo "append-retro: --context-gap='$CONTEXT_GAP' invalid" >&2; exit 2 ;;
 esac
+# N/A is REQUIRED here, not a courtesy. Only skills that actually define a blind
+# audit step (today: refactor) can report a verdict for it; every other skill was
+# forced to pick from an enum where every value implies the step existed. Measured
+# 2026-08-06 over 246 retros: 164 blind-audit verdicts, 108 of them (66%) from
+# skills with ZERO mentions of the step in their SKILL.md — `ship` filed 42,
+# `review` 34, `test-audit` 23. Agents were not inventing; the validator rejected
+# the truth, so they picked the safest-sounding lie (`clean:degraded`, 110x).
+# The column was therefore unusable for analysis AND was about to be shipped
+# fleet-wide as `blind_audit_ran`. CODESIFT and ROUTING already allow N/A, which
+# is exactly why those two columns read sanely.
 case "$BLIND" in
-  clean:strict|clean:degraded|rewrite|skipped|blocked_infra|not_run|fix:*) : ;;
+  clean:strict|clean:degraded|rewrite|skipped|blocked_infra|not_run|N/A|fix:*) : ;;
   *) echo "append-retro: --blind-audit='$BLIND' invalid" >&2; exit 2 ;;
 esac
+# Same reasoning as BLIND above. Adversarial applies to nearly every skill, so
+# the fabrication pressure is lower — but "nearly" is not "always", and a column
+# with no way to say "does not apply" only ever collects a plausible-looking value.
 case "$ADV" in
-  clean|skipped|blocked|not_run|blocked:prod-bug|*findings) : ;;
+  clean|skipped|blocked|not_run|N/A|blocked:prod-bug|*findings) : ;;
   *) echo "append-retro: --adversarial='$ADV' invalid (clean|Nfindings|skipped|blocked|not_run|blocked:prod-bug)" >&2; exit 2 ;;
 esac
 case "$CODESIFT" in

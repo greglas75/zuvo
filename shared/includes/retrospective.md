@@ -103,8 +103,8 @@ RETRO: DATE\tSKILL\tPROJECT\tCODE_TYPE\tFRICTION_CATEGORY\tMISSING_TEMPLATE\tCON
 | 11 | FILES_MODIFIED | integer | files created or edited (include backlog, coverage, ALL touched files) |
 | 12 | BRANCH | string | current git branch |
 | 13 | SHA7 | string | short commit hash |
-| 14 | BLIND_AUDIT | enum | `clean:strict`, `clean:degraded`, `fix:N`, `rewrite`, `skipped`, `blocked_infra`, `not_run` |
-| 15 | ADVERSARIAL | enum | `clean`, `Nfindings`, `Nfindings:preserved`, `skipped`, `blocked`, `not_run`, `blocked:prod-bug`. Use **`Nfindings:preserved`** for a behavior-preserving refactor where all N findings were dispositioned as pre-existing / intentionally-preserved (moved-verbatim code the reviewer flags as "looks wrong" but which the refactor did not introduce and must not change) — i.e. zero findings required a behavior change. Distinct from `clean` (reviewer found nothing) and `Nfindings` (findings that drove fixes). |
+| 14 | BLIND_AUDIT | enum | `N/A`, `clean:strict`, `clean:degraded`, `fix:N`, `rewrite`, `skipped`, `blocked_infra`, `not_run`. **Use `N/A` unless your skill defines a blind-audit step** — today only `zuvo:refactor` does; every other value asserts the step ran and reached a verdict. `N/A` was missing from this enum until 2026-08-06, so skills without the step could not answer truthfully: 108 of 164 recorded verdicts (66%) came from skills whose SKILL.md never mentions a blind audit, making the column useless for analysis. `not_run` = "applies, did not happen"; `N/A` = "does not apply". Different facts. |
+| 15 | ADVERSARIAL | enum | `clean`, `Nfindings`, `Nfindings:preserved`, `skipped`, `blocked`, `not_run`, `blocked:prod-bug`. Use **`Nfindings:preserved`** for a behavior-preserving refactor where all N findings were dispositioned as pre-existing / intentionally-preserved (moved-verbatim code the reviewer flags as "looks wrong" but which the refactor did not introduce and must not change) — i.e. zero findings required a behavior change. Distinct from `clean` (reviewer found nothing) and `Nfindings` (findings that drove fixes). `N/A` is also valid, for the rare skill with no adversarial step — same rule as BLIND_AUDIT: do not assert a verdict for a step you do not have. |
 | 16 | CODESIFT | enum | `indexed`, `transport_closed`, `not_indexed`, `unavailable`, `N/A` |
 | 17 | ROUTING_STATUS | enum | `ok`, `same-model-fallback`, `unknown-writer-model`, `routing-failed`, `N/A` |
 
@@ -134,7 +134,7 @@ choke). Field 5 = `abandoned`/`context-out`/`partial-recovery`
 `0`; `0` only if truly unknown). Other unknown fields take their column's
 **valid neutral**: `CODE_TYPE=OTHER`, `MISSING_TEMPLATE=-` (string; `-` ok),
 `CONTEXT_GAP=none`, `BLIND_AUDIT=not_run`, `ADVERSARIAL=not_run`, `CODESIFT=N/A`
-(`skipped` is NOT a CODESIFT value), `ROUTING_STATUS=N/A`. A later full retro
+(`skipped` is NOT a CODESIFT value), `ROUTING_STATUS=N/A` (a stub = ABANDONED run: `not_run` holds either way, and the emitter cannot know whether the step exists — `N/A` is for a FULL retro, see field 14).. A later full retro
 (same `retro-session-id`) supersedes the stub. SKILL/PROJECT/BRANCH/SHA7/DATE
 populated so the predicate works.
 
