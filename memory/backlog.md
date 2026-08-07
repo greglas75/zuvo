@@ -456,3 +456,27 @@ swallow in one place instead of eight.
 defer-reason: pre-existing (7 of the 8 predate this range) + it rewrites the copy path of a
 release-critical installer, which wants its own RED test against test-install-wiring.sh rather
 than a review-loop edit. | seen:1 | confidence:85 | source:review-cq | 2026-08-04
+
+## B-RETRO-GATE-THIRD-STATE — two skills behave exempt from the retro gate without being listed
+Surfaced by: audit of the 17 never-deep-read skills (2026-08-06).
+`~/.zuvo/append-runlog` line 185 hard-codes the exemption by skill name:
+`using-zuvo|backlog|benchmark|agent-benchmark|deploy|canary|worktree`. `retro` and
+`skill-eval` are NOT on it, yet neither loads `retrospective.md` and neither calls
+`append-runlog` — they append directly, which `run-logger.md` permits only by implication
+("For any skill that LOADS retrospective.md, do NOT append directly"). So there is an
+undocumented third state: not exempt, not full-retro. It works today and fails hard the
+moment either skill is routed through the wrapper — `RETRO_REQUIRED`, exit 2, runs.log not
+written, with nothing in the skill explaining why.
+Defer-reason: NOT size — this is a contract decision about which skills owe a retro, and it
+changes the behaviour of a shared gate. Picking an answer unilaterally (adding two names to
+an exemption list) while a parallel session is active in this checkout is how the drift
+these gates exist to prevent gets introduced.
+Recipe:
+  1. Decide the contract: does a skill that produces no code owe a retro? `retro` mines
+     retros and `skill-eval` writes a checkpoint stub (`zuvo:retro-marker`), so both already
+     participate in the loop differently from the 7 exempt ones.
+  2. Whichever way it goes, make it ONE list: the helper's `case` and run-logger.md's prose
+     must be generated from or checked against each other — today they are two hand-kept
+     copies that already disagree by two entries.
+  3. Add a test asserting every skills/*/SKILL.md either loads retrospective.md, or appears
+     in the exemption list. That check is what would have caught this.

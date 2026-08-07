@@ -244,9 +244,12 @@ Each score requires **1-line evidence** with confidence (HIGH/MEDIUM/LOW):
 | Total | Verdict |
 |-------|---------|
 | >= 80% | Healthy |
-| 60-79% | Needs attention |
-| 40-59% | Significant issues |
+| >= 60% and < 80% | Needs attention |
+| >= 40% and < 60% | Significant issues |
 | < 40% | Critical |
+
+Inequalities, not `60-79%`: the total is `sum/27*100`, which is fractional. Of the 28
+reachable scores, `16/27 = 59.26%` belonged to no band at all — above `40-59`, below `60-79`.
 
 **Critical gate:** Any A1-A4 = 0 caps the verdict at "Significant issues" at most. A9 is informational, not gated.
 

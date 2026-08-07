@@ -5,12 +5,6 @@ description: >
   performance, page load. Configurable duration (1m-30m) and interval.
   Reports HEALTHY/DEGRADED/BROKEN. Flags: --duration, --interval, --quick, --max-errors.
 category: Release
-codesift_tools:
-  always:
-    - analyze_project
-    - index_status
-    - plan_turn
-  by_stack: {}                  # browser monitoring — no code analysis
 ---
 
 # zuvo:canary

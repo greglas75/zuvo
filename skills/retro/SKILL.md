@@ -5,19 +5,6 @@ description: >
   release cycle span, churn hotspots, backlog health. Outputs narrative report
   with 3+ actionable items. Flags: --since, --path, explicit range argument.
 category: Release
-codesift_tools:
-  always:
-    - analyze_project
-    - index_status
-    - index_folder
-    - index_file
-    - plan_turn
-    - analyze_hotspots          # KEY — git churn × complexity for retrospective
-    - changed_symbols           # what changed in the period
-    - diff_outline
-    - get_file_tree
-    - search_text
-  by_stack: {}                  # narrative report — no framework-specific tools needed
 ---
 
 # zuvo:retro
@@ -129,6 +116,11 @@ Find the top 5 most-changed files in the window:
 ```bash
 git log --name-only --pretty=format: <range> | sort | uniq -c | sort -rn | head -5
 ```
+Git, deliberately — not CodeSift `analyze_hotspots`. A retrospective must run on any
+checkout, including one with no index and no MCP server, and churn-by-commit-count is
+exactly what this section reports. The frontmatter used to declare `analyze_hotspots` as
+"KEY" alongside nine other tools that no step ever called; `compute-preload` reads that
+field, so it was instructing agents to load ten tools for a skill that uses none.
 Filter out empty lines. Report as a ranked list: filename (N changes).
 
 ---

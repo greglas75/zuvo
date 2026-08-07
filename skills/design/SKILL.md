@@ -254,7 +254,24 @@ After building, run ALL validation tests:
 
 Print pass/fail for each with evidence. **If ANY test fails, iterate before showing to user.**
 
-**Persist gate:** At least 3/4 craft tests must PASS before proceeding. If <3 pass after iteration, warn user and require explicit approval.
+**Persist gate:** At least 3/4 craft tests must PASS before proceeding.
+
+If fewer than 3 pass after iteration, do NOT stop and wait for approval — record and
+continue, per `no-pause-protocol.md`'s Post-Cap Autonomous Disposition:
+
+```
+[CRAFT-GATE: BELOW-BAR] <n>/4 passed after <k> iterations
+  failing: <test> — <what specifically failed, with the value>
+  persisted anyway: <file>   (marked PROVISIONAL in the craft-validation report)
+```
+
+Then proceed and surface every `[CRAFT-GATE: BELOW-BAR]` line in the final summary.
+Until 2026-08-06 this read "warn user and require explicit approval", which made `design`
+the only one of 57 skills with an approval gate — against `no-pause-protocol.md` and against
+the convention `skill-eval` states outright ("No approval gates. Execute end-to-end; only
+`--dry-run` gates output"). A design run left half-finished waiting on a human is the
+friction that rule exists to kill; the honest alternative is to persist it clearly labelled
+as below-bar, not to block on a question nobody is awake to answer.
 
 ### Step 7.5: Save Craft Validation Report
 

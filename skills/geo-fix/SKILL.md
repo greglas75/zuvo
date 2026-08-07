@@ -177,7 +177,11 @@ WORK_FILES = <files being touched>
 
 1. If `[json-path]` provided: use that file
 2. Otherwise: glob `zuvo/audits/geo-audit-*.json`, parse `timestamp` from each, select most recent by timestamp (not filename)
-3. If no JSON found: "No audit JSON found. Run `zuvo:seo-audit` first (GEO dimensions are included)." STOP.
+3. If no JSON found: "No geo-audit JSON found. Run `zuvo:geo-audit` first." STOP.
+   Name `geo-audit`, not `seo-audit`: step 2 globs `geo-audit-*.json` and 0.2 below STOPs
+   outright when `"skill"` is `"seo-audit"`. Pointing the recovery at seo-audit sent the user
+   to produce the one file this skill both fails to glob and explicitly refuses — the same
+   STOP fires again, with no way out of the loop.
 
 ### 0.2 Validate schema and version
 
