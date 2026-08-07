@@ -28,7 +28,17 @@ refactor_gate_check() {
   blocked=0
   for c in "$cdir"/refactor-*.json; do
     [ -f "$c" ] || continue
-    grep -q '"stage"[[:space:]]*:[[:space:]]*"COMPLETE"' "$c" && continue
+    # TERMINAL stages — the gate exists to protect an IN-FLIGHT refactor from being
+    # committed around. A refactor that stopped is not in flight. `BLOCKED` is a
+    # terminal outcome (the run hit a hard blocker and halted), but only `COMPLETE`
+    # was recognised, so a blocked contract kept its fence enforced until its mtime
+    # aged past the 24h TTL. Reported 2026-08-07: six BLOCKED contracts from earlier
+    # sessions, each still holding its fence, and the operator's escape was to widen
+    # a live contract's fence to cover the file it wanted to commit — a scope stretch
+    # the gate should never have made attractive.
+    # `EXECUTION_COMPLETE` is deliberately NOT here: skills/refactor/SKILL.md:220 uses
+    # it for `no-commit` runs precisely so `continue` can resume, i.e. still in flight.
+    grep -qE '"stage"[[:space:]]*:[[:space:]]*"(COMPLETE|BLOCKED|ABORTED)"' "$c" && continue
     # intersect scope_fence with the file list.
     #  set -f: a '*'/'?' in a path must NOT glob-expand against the filesystem.
     #  grep -Fq --: fixed-string match — a '.'/'['/']' in a path is a literal, not a regex
@@ -121,7 +131,11 @@ refactor_scope_gate_check() {
   rsg_fences=""
   for rsg_c in "$rsg_cdir"/refactor-*.json; do
     [ -f "$rsg_c" ] || continue
-    grep -q '"stage"[[:space:]]*:[[:space:]]*"COMPLETE"' "$rsg_c" && continue
+    # Same terminal set as the prove gate above — see the comment there. This is the
+    # scope guard ("every staged file must sit in some fence"), which is the one that
+    # actually blocked unrelated work: a halted refactor made every later commit prove
+    # membership in a fence nobody was working inside.
+    grep -qE '"stage"[[:space:]]*:[[:space:]]*"(COMPLETE|BLOCKED|ABORTED)"' "$rsg_c" && continue
     [ $(( rsg_now - $(_mtime "$rsg_c" "$rsg_now") )) -gt "$rsg_ttl" ] && continue  # abandoned run
     rsg_active=1
     # An active contract whose scope_fence cannot be read (malformed JSON, field absent) makes
@@ -212,7 +226,8 @@ $(tr -d '\n' < "$rsg_c" | awk '
   echo "       right now: characterization tests proven green on the PRE-refactor code, the"
   echo "       independent blind audit, cross-model adversarial, and the per-file backup branch."
   echo "       Run \`zuvo:refactor <file>\` for each — that re-loads the protocol and writes the"
-  echo "       contract. If the active refactor is finished, mark its contract stage COMPLETE."
+  echo "       contract. If the active refactor is finished, mark its contract stage COMPLETE"
+  echo "       (or BLOCKED if it halted — both are terminal and release the fence)."
   return 1
 }
 
