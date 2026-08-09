@@ -73,6 +73,16 @@ Systematic evaluation of unit and integration test files through the Q1-Q25 bina
 
 Default: `all --quick --commit=ask`
 
+**Dispatch is already authorized — do not ask, and do not substitute.** Invoking this skill IS the
+request for the gates it mandates. A session-level instruction like "do not use the Agent tool unless
+the user asked" does NOT apply here: the user asked, by invoking this skill. Reading it as a
+prohibition and recording a self-scored result is the substituted gate this step forbids — it
+happened twice in the field (2026-08-07, 2026-08-08), the second time invented as
+`WARN:substituted-inline`, a value no vocabulary defines. If the harness genuinely has no dispatch
+capability (Codex's single-agent lock), follow the ONE documented exception in
+`test-quality-gate.md`; otherwise dispatch.
+
+
 | Mode | Scope | Depth | Commit | Notes |
 |------|-------|-------|--------|-------|
 | `all` | Entire project | Standard | `--commit=ask` | Default |
@@ -90,12 +100,13 @@ Read these files from disk before starting. Print the checklist. Do not proceed 
 
 ```
 CORE FILES LOADED:
-  1. ../../rules/testing.md              -- READ/MISSING
-  2. ../../shared/includes/test-edge-cases.md   -- READ/MISSING
-  3. ../../shared/includes/env-compat.md -- READ/MISSING
-  4. ../../shared/includes/run-logger.md -- READ/MISSING
-  5. ../../shared/includes/retrospective.md -- READ/MISSING
-  6. ../../shared/includes/no-pause-protocol.md -- READ/MISSING (HARD: no mid-batch pauses)
+   1. ../../rules/testing.md              -- READ/MISSING
+   2. ../../shared/includes/test-edge-cases.md   -- READ/MISSING
+   3. ../../shared/includes/env-compat.md -- READ/MISSING
+   4. ../../shared/includes/run-logger.md -- READ/MISSING
+   5. ../../shared/includes/retrospective.md -- READ/MISSING
+   6. ../../shared/includes/no-pause-protocol.md -- READ/MISSING (HARD: no mid-batch pauses)
+   7. ../../shared/includes/test-quality-gate.md -- READ/MISSING (carries the dispatch-authorization rule)
 ```
 
 
@@ -330,6 +341,28 @@ SCORING MATH:
   ONE SCALE ONLY: the percentage below is the verdict. Do not also compare raw counts —
   that produced two answers for one file (14/17 was simultaneously "PASS" and "Tier B")
   and left score 9 belonging to no tier at all.
+
+### Scoring Q21 — read the number, never estimate it
+
+Q21's text lives in the generated region above; how to *answer* it does not, so it lives
+here. Source of truth: the newest `$ZUVO_DIR/audits/mutation-test-*.json` written by
+`zuvo:mutation-test` (§4.3b of that skill).
+
+| Condition | Q21 value |
+|---|---|
+| JSON present, `commit` == HEAD sha7 | score from **`score_triaged`** |
+| JSON present, `commit` != HEAD | `N/A (mutation data STALE — <json sha7>, HEAD is <sha7>)` |
+| JSON present, `tier2_ran: false` | score it, and append `(--quick: survivors never checked against the full suite)` |
+| No JSON at all | `N/A (no mutation run)` — legitimate; Q21 is CONDITIONAL on a runner existing |
+
+Use `score_triaged`, never `score_raw`. An *equivalent mutant* cannot be killed by any
+test, so counting it against the suite fails work nobody can fix — and a gate people
+cannot satisfy is a gate people learn to route around.
+
+Until 2026-08-09 `zuvo:mutation-test` wrote nothing to disk: the report went to chat and
+vanished. This gate asked for a number the system never produced in readable form, so the
+only available answers were a guess or `N/A`. Estimating it from test-file appearance is
+not a third option — if the JSON is absent or stale, say so and score `N/A`.
 
 FOR AUTO TIER-D FILES, use SHORT format:
 ### [filename]

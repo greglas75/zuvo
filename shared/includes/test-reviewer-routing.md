@@ -28,7 +28,43 @@ bash "$ZUVO_BASE/scripts/reviewer-preflight.sh"   # add --no-canary to skip the 
 |--------------------|------|-----------------|
 | `ok` | 0 | proceed normally |
 | `degraded-routing` | 0 | proceed; blind audit will be `clean:degraded` at best — say so up front |
-| `no-provider` / `canary-failed` | 1 | print `review infrastructure unavailable` IMMEDIATELY; the run is `DRAFT/BLOCKED_INFRA` from the start. Tests MAY still be written (they have standalone value) but no file may be reported `PASS`, and the completion block must carry the BLOCKED_INFRA list. Never burn a full pipeline pretending review will appear later. |
+| `no-provider` / `canary-failed` | 1 | **First run the out-of-band check below.** If it finds nothing, print `review infrastructure unavailable` IMMEDIATELY; the run is `DRAFT/BLOCKED_INFRA` from the start. Tests MAY still be written (they have standalone value) but no file may be reported `PASS`, and the completion block must carry the BLOCKED_INFRA list. Never burn a full pipeline pretending review will appear later. |
+
+### `canary-failed` is NOT proof that cross-model review is unavailable
+
+The preflight probes exactly three names — `codex`, `gemini`, `claude` — and stops at
+the first one on PATH. A dead account on that one yields `canary-failed` even when a
+working cross-model client sits right next to it. Treating that exit as "no reviewer
+exists" downgrades a whole run to same-model for no reason.
+
+**On `canary-failed` / `no-provider`, probe the known out-of-band clients before
+declaring BLOCKED_INFRA:**
+
+```bash
+for c in agy cursor-agent; do
+  command -v "$c" >/dev/null 2>&1 && echo "candidate: $c"
+done
+# agy = Antigravity CLI. Verify it actually answers, don't just trust `command -v`:
+agy -p "Respond with exactly this token and nothing else: ZUVO_PREFLIGHT_OK"
+```
+
+If a candidate answers, use it as the Step 3.5 reviewer (see the manual invocation
+under "Canonical fresh-subprocess fallback") and report the audit as genuinely
+cross-model — not `clean:degraded`.
+
+**Known client health (re-verify, do not assume — these are account-level facts that
+change):**
+
+| Client | Status as last measured (2026-08-07) | Notes |
+|--------|--------------------------------------|-------|
+| `agy` | **WORKS** — the reliable cross-model reviewer | Antigravity CLI. `agy models` lists them; `agy --model gemini-3.1-pro-high -p "<prompt>"`. Pick a model from a DIFFERENT family than the writer. |
+| `codex` | dead at the ACCOUNT level | `codex login status` says logged in, but the API returns `400 "The '<model>' model is not supported when using Codex with a ChatGPT account"` for every model tried. A different `-m` does not help. |
+| `gemini` | dead at the ACCOUNT level | `IneligibleTierError: This client is no longer supported for Gemini Code Assist for individuals`. Raised in `_doSetupUser`, i.e. BEFORE any model is chosen — `-m` is irrelevant. |
+| `claude` | works, but it is the HOST | Same-model. Valid only as the degraded fallback, never as cross-model. |
+
+Do not burn turns cycling through models on `codex`/`gemini`: both failures are
+authorization, not model selection. One canary per client is enough — if the error
+mentions the account, tier, or client support, stop and move to the next client.
 
 ## Reviewer resolution (Step 3.5)
 
@@ -80,6 +116,32 @@ header). If it is missing, exits non-zero, times out, or fails validation: do
 NOT substitute an inline same-run audit. Mark the file `BLOCKED_INFRA`, persist
 `Blind Audit=skipped`, set `Adversarial=blocked`, stop after backlog
 persistence.
+
+### Driving a client the wrapper does not know (`agy`)
+
+`blind-audit-codex.sh --provider` accepts only `codex|gemini|claude`. When those are
+dead but `agy` answers, the wrapper cannot be used — assemble the same strict input by
+hand. The subprocess is fresh either way, so isolation is preserved:
+
+```bash
+{ cat "$ZUVO_BASE/shared/includes/blind-coverage-audit.md"
+  printf '\n=== PRODUCTION FILE: %s ===\n' "$PROD"; cat "$PROD"
+  printf '\n=== TEST FILE: %s ===\n' "$SPEC";      cat "$SPEC"
+} > /tmp/blind-in.txt
+
+agy --model gemini-3.1-pro-high -p "$(cat /tmp/blind-in.txt)" > /tmp/blind-out.txt 2>&1
+grep -E '^(Audit mode|Coverage verdict|INVENTORY COMPLETE):' /tmp/blind-out.txt
+```
+
+Validate the output exactly as the wrapper would (the three header lines plus the
+table). A run audited this way is genuinely cross-model — record it as such, not as
+`clean:degraded`.
+
+**This is worth the extra step.** Measured on one spec (2026-08-07): the same-model
+audit returned clean, and `agy/gemini-3.1-pro-high` found 8 uncovered rows on the same
+pair — every one a defensive fallback (absent collections, non-list inputs, a
+zero-division guard, a size-dependent branch). Same-model audits systematically
+under-report the paths the writer already believed were handled.
 
 ## Adversarial routing (Step 4)
 

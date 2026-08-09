@@ -5,8 +5,9 @@ description: >
   selects mutations that test meaningful behavior: boundary conditions, logic
   inversions, null returns, error path removals, state mutations, async hazards,
   and security guard removals. Generates mutations, executes them against the
-  relevant tests, and reports which mutations survived (tests need strengthening).
-  Flags: [path] (scope), full, --max N, --category, --dry-run, --quick.
+  relevant tests, and FIXES the tests whose gaps let a mutation survive — surviving
+  mutants are closed in-run, not handed to another skill.
+  Flags: [path] (scope), full, --max N, --category, --dry-run, --quick, --report-only.
 category: Testing
 codesift_tools:
   always:
@@ -49,15 +50,20 @@ codesift_tools:
 
 # zuvo:mutation-test -- LLM-Guided Mutation Testing
 
-Intelligent mutation testing that targets meaningful behavioral gaps rather than random code changes. For each production file, the LLM generates mutations in 7 categories (boundary, logic, null, error, state, async, security), runs only the tests that cover that file, and reports which mutations survived -- revealing exactly where tests need strengthening.
+Intelligent mutation testing that targets meaningful behavioral gaps rather than random code changes. For each production file, the LLM generates mutations in 7 categories (boundary, logic, null, error, state, async, security), runs only the tests that cover that file, and closes the gaps it finds: every survivor is triaged
+as a real gap or an equivalent mutant, and each real gap gets the missing assertion added and
+re-probed in the same run.
 
 **Scope:** Production files that have associated test files. Measures how well existing tests detect real behavioral changes.
 **When to use:** After writing tests, before releases, when mutation score is unknown, when test suite feels shallow despite high line coverage.
-**Out of scope:** Writing new tests (use `zuvo:write-tests`), fixing systematic test anti-patterns (use `zuvo:fix-tests`), auditing test quality without execution (use `zuvo:test-audit`), code quality review (use `zuvo:review`).
+**Out of scope:** Writing a test suite from scratch (use `zuvo:write-tests`), fixing systematic test
+anti-patterns across many files (use `zuvo:fix-tests`), auditing test quality without execution (use
+`zuvo:test-audit`), code quality review (use `zuvo:review`). Adding the single missing assertion that
+a surviving mutant exposes is IN scope — that is the point of finding it.
 
 ## Argument Parsing
 
-Parse `$ARGUMENTS` as: `[path | full] [--max N] [--category CATEGORY] [--dry-run] [--quick]`
+Parse `$ARGUMENTS` as: `[path | full] [--max N] [--category CATEGORY] [--dry-run] [--quick] [--report-only]`
 
 | Flag | Effect |
 |------|--------|
@@ -67,6 +73,7 @@ Parse `$ARGUMENTS` as: `[path | full] [--max N] [--category CATEGORY] [--dry-run
 | `--category CATEGORY` | Only generate mutations of this category: `BOUNDARY`, `LOGIC`, `NULL`, `ERROR`, `STATE`, `ASYNC`, `SECURITY` |
 | `--dry-run` | Generate mutations and show the plan, but do not execute any |
 | `--quick` | Max 3 mutations per file, max 20 total |
+| `--report-only` | Report the score; do NOT fix surviving gaps (skips 4.2b). The only way to skip the fix loop. |
 
 Flags can be combined: `zuvo:mutation-test src/services/ --max 30 --category SECURITY`
 
@@ -83,6 +90,7 @@ CORE FILES LOADED:
   3. ../../shared/includes/env-compat.md   -- READ/MISSING
   4. ../../shared/includes/run-logger.md   -- READ/MISSING
   5. ../../shared/includes/retrospective.md   -- READ/MISSING
+  6. ../../shared/includes/report-output-location.md -- READ/MISSING (canonical $ZUVO_DIR for 4.3b)
 ```
 
 **If any file is missing:** Proceed in degraded mode. Note "DEGRADED -- [file] unavailable" in the final report.
@@ -402,6 +410,70 @@ For each SURVIVED mutation, analyze:
 3. **Which test file:** The test file(s) that should have caught it
 4. **Suggested test:** A 1-3 line description of the test to add (not full code)
 
+**Triage each survivor as `gap` or `equivalent` — this is not optional.** An
+*equivalent mutant* changes the source without changing any observable behavior, so no
+test can kill it and counting it against the score punishes the suite for something it
+cannot fix. Establish equivalence by tracing how the mutated value is consumed, and
+record that trace as the reason — never assert it from intuition.
+
+Measured example (translation-qa `resync-units.ts`, 2026-08-09): dropping the
+`s.entryId !== null` guard survived. `segByEntryId` is only ever `.set()` and
+`.get(<numeric id>)` — never iterated, never `.keys()` — so a null-keyed entry is
+unreachable and the mutation is `equivalent`. In the same run, flipping
+`count > bestCount` to `>=` also survived and IS a `gap`: it changes which unit wins a
+tie, and the test file's own header names "a wrong primary-unit pick silently scatters a
+proofreader's work" as the top risk. Raw score 75%, triaged 86% — the difference decides
+whether Q21 passes.
+
+`score_triaged` (below) is the number downstream consumers read. A gate that reads the
+raw score punishes suites for unkillable mutants, and a gate people cannot satisfy is a
+gate people learn to ignore.
+
+### 4.2b Close the gaps IN THIS RUN (default — not a hand-off)
+
+**For every survivor triaged `gap`, strengthen the test here and prove the fix.** Do not
+end the run by naming the gap and pointing at another skill.
+
+Until 2026-08-09 this skill finished with "Recommended Next Steps: `zuvo:write-tests`
+[file]". That is the drift `no-silent-backlog-deferral` names: the finding is already
+localized to one assertion in one test file, the fix is two lines, and handing it to
+another skill means re-running discovery, re-reading the file, and hoping the next run
+targets the same mutation. `write-tests` closes its own probe gaps in-run
+(`test-mutation-probes.md`: "add the missing behavioral assertion, re-run, and
+re-probe — do not close the file with a surviving probe"). Standalone mutation-test
+was the one path that surfaced a gap and walked away.
+
+**Ordering is a safety property, not a preference.** Phase 3 must be fully complete
+first: every mutation reverted, every production file verified byte-identical against
+its temp copy. Only then does this step touch anything, and it touches **test files
+only**. Production code is never edited by this skill — that guarantee is unchanged
+(see Safety Guarantees 2).
+
+Per `gap` survivor:
+
+```
+1. Add the missing assertion to the covering test file. Smallest change that
+   would fail on the mutated behaviour — not a rewrite of the test.
+2. Run the mapped tests unmutated. They must still PASS (a fix that breaks the
+   green suite is reverted, not shipped).
+3. Re-apply THAT ONE mutation, run the mapped tests, revert, verify byte-identical.
+   The mutation must now be KILLED.
+4. If it still survives after 2 attempts: stop attempting, leave the test change
+   ONLY if step 2 stayed green, and record the survivor as `gap-unfixed` with what
+   was tried. Two attempts, then honesty — not a third guess.
+```
+
+Record per survivor: `fixed` (killed on re-probe), `gap-unfixed` (cap reached), or
+`equivalent` (never entered this loop).
+
+`--report-only` skips this step entirely — for when you want the number and nothing
+else. It is the ONLY way to skip it; "the fix looked big" is not one, and if a fix
+genuinely spans several files it is a `gap-unfixed` with that stated as the reason.
+
+Re-run the score after this step. The report and JSON below carry the POST-fix numbers,
+with `score_triaged_before` kept alongside so the run's own effect is visible rather
+than hidden by improving the thing being measured.
+
 ### 4.3 Report Output
 
 ```
@@ -448,12 +520,98 @@ MUTATION SCORE: [N]% -- Grade [A/B/C/D]
 
 ## Recommended Next Steps
 
-- zuvo:write-tests [file] -- for files with <60% mutation score
-- zuvo:fix-tests -- for files where tests exist but don't catch mutations
-- zuvo:mutation-test [file] --category [weakest] -- retest after fixes
+- [only if any `gap-unfixed` remains] zuvo:write-tests [file] -- the gap needed more than
+  an assertion; name the mutation ID so the next run targets it
+- [only if score is still low AFTER 4.2b] zuvo:fix-tests -- systematic anti-patterns, not
+  single missing assertions (those were already fixed in this run)
+- zuvo:mutation-test [file] --category [weakest] -- widen coverage to a category not sampled
+Print NOTHING here when every gap was fixed and nothing is left — an empty next-steps list
+is the honest output of a run that finished its own work.
 
 Run: <ISO-8601-Z>	mutation-test	<project>	<score>%	<killed>/<total>	<VERDICT>	-	<N>-files	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 ```
+
+### 4.3b Machine-readable artifact (REQUIRED — not optional, and not for humans)
+
+Write both files to the canonical output dir per `report-output-location.md`:
+
+- `$ZUVO_DIR/audits/mutation-test-YYYY-MM-DD.md` — the block above
+- `$ZUVO_DIR/audits/mutation-test-YYYY-MM-DD.json` — the contract below
+
+Auto-increment `-2`, `-3` for same-day runs, like every other audit.
+
+**This exists because Q21 had no input.** `gate-registry.md` Q21 asks whether changed
+production files reach a mutation score >= 70%, and `test-audit` scores it — but until
+2026-08-09 this skill wrote nothing to disk at all. The report went to chat and vanished,
+so the only honest answers an auditor could give were a guess or `N/A`. A gate whose
+input nobody produces is not a gate.
+
+```json
+{
+  "version": "1.0",
+  "skill": "mutation-test",
+  "timestamp": "<ISO-8601>",
+  "project": "<basename of git root>",
+  "commit": "<HEAD sha7 — the code these numbers describe>",
+  "scope": "<path or 'full'>",
+  "tier2_ran": true,
+  "fix_loop_ran": true,
+  "score_raw": 75,
+  "score_triaged_before": 86,
+  "score_triaged": 100,
+  "tests_strengthened": ["__tests__/.../resync-units.test.ts"],
+  "totals": { "generated": 8, "killed": 6, "survived_gap": 0, "survived_equivalent": 1, "gap_unfixed": 0 },
+  "files": [
+    {
+      "path": "lib/services/proofreading/grouping/resync-units.ts",
+      "killed": 6,
+      "survived_gap": 1,
+      "survived_equivalent": 1,
+      "score_triaged": 86
+    }
+  ],
+  "survivors": [
+    {
+      "id": "MUT-004",
+      "file": "lib/services/proofreading/grouping/resync-units.ts",
+      "line": 208,
+      "category": "BOUNDARY",
+      "triage": "gap",
+      "outcome": "fixed",
+      "reason": "ties pick the last unit instead of the first; no test constructs a tie",
+      "fix": "added a two-unit tie case asserting the first-seen unit wins; re-probed KILLED"
+    },
+    {
+      "id": "MUT-006",
+      "file": "lib/services/proofreading/grouping/resync-units.ts",
+      "line": 161,
+      "category": "NULL",
+      "triage": "equivalent",
+      "reason": "segByEntryId is only .set()/.get(numeric); a null key is unreachable"
+    }
+  ]
+}
+```
+
+Field notes, each earning its place:
+
+- **`score_triaged` is the number consumers read.** `score_raw` is kept for comparison, not
+  for gating — see 4.2.
+- **`commit`** — these numbers describe one tree. A consumer reading a JSON whose `commit`
+  is not the current HEAD must treat it as STALE and say so, not silently score against it.
+  This is the same rule the review artifacts use, for the same reason.
+- **`tier2_ran`** — `false` under `--quick`, where survivors were never checked against the
+  full suite. A consumer must not treat a `--quick` score as equivalent coverage; label it.
+- **`survived_equivalent`** must carry a `reason` naming how the value is consumed. Without
+  it, "equivalent" becomes the escape hatch that turns any inconvenient survivor into a
+  free pass.
+- **`score_triaged_before` vs `score_triaged`** — the run improves the thing it measures, so
+  the final number alone would hide its own effect. `before` is the score as found;
+  `score_triaged` is after 4.2b. A consumer gating on quality reads `score_triaged`; a
+  consumer asking "how good were the tests when we arrived" reads `before`.
+- **`fix_loop_ran`** — `false` under `--report-only`, where `before` == `score_triaged` by
+  construction. `gap_unfixed` counts survivors the loop tried and could not kill within its
+  2-attempt cap; those are the only ones that belong in Recommended Next Steps.
 
 ### Retrospective (REQUIRED)
 
@@ -472,7 +630,9 @@ Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <proje
 VERDICT: PASS (>= 80%), WARN (>= 60% and < 80%), FAIL (< 60%).
 CQ_SCORE field: `<score>%` (the overall mutation score).
 Q_SCORE field: `<killed>/<total>` (killed count / total mutations).
-TASKS: `-` (no file modifications).
+TASKS: `<N>` — the count of test files strengthened by the 4.2b fix loop; `-` under
+`--report-only` or when every survivor was equivalent. It used to be hardcoded `-`
+("no file modifications"), which stopped being true the moment the fix loop existed.
 DURATION: `<N>-files` (number of production files tested).
 NOTES: `mutation-test [scope] [grade]` (max 80 chars).
 
@@ -513,7 +673,12 @@ To execute: zuvo:mutation-test [same args without --dry-run]
 These are non-negotiable:
 
 1. **Never commit mutations.** All mutations are temporary. Original code is always restored.
-2. **Never modify test files.** Mutations apply only to production code.
+2. **A MUTATION never modifies a test file.** Mutations apply only to production code —
+   mutating a test to make it pass would invert the entire measurement. The 4.2b fix loop
+   DOES edit test files, deliberately and separately: it runs only after Phase 3 has
+   reverted every mutation and verified production byte-identical, and it never touches
+   production. Stating both halves because "never modify test files" read alone would
+   forbid the step that closes the gaps this skill exists to find.
 3. **Always verify restoration.** After each mutation, confirm the original file is intact.
 4. **Timeout protection.** No single mutation test can run longer than 3x baseline per file.
 5. **Clean state on exit.** If the skill is interrupted, restore through the Phase 3.1 temp-copy path — `cp /tmp/zuvo-mutation-[hash]-[filename] [file]` for every file still mutated, then delete the temp copies. Do **not** reach for `git stash pop` or `git checkout -- [file]`: §3.1 forbids both (pop consumes the stash on the first iteration; a bare `checkout --` discards uncommitted work that is not this skill's to destroy). `git checkout HEAD -- [file]` is the last resort named in §3.2 error recovery, valid only because Phase 3.1 verified the tree was clean at start — and it needs the user's go-ahead, since it is a destructive git operation.
