@@ -83,6 +83,7 @@ CORE FILES LOADED:
   3. ../../shared/includes/env-compat.md   -- READ/MISSING
   4. ../../shared/includes/run-logger.md   -- READ/MISSING
   5. ../../shared/includes/retrospective.md   -- READ/MISSING
+  6. ../../shared/includes/report-output-location.md -- READ/MISSING (canonical $ZUVO_DIR for 4.3b)
 ```
 
 **If any file is missing:** Proceed in degraded mode. Note "DEGRADED -- [file] unavailable" in the final report.
@@ -402,6 +403,25 @@ For each SURVIVED mutation, analyze:
 3. **Which test file:** The test file(s) that should have caught it
 4. **Suggested test:** A 1-3 line description of the test to add (not full code)
 
+**Triage each survivor as `gap` or `equivalent` — this is not optional.** An
+*equivalent mutant* changes the source without changing any observable behavior, so no
+test can kill it and counting it against the score punishes the suite for something it
+cannot fix. Establish equivalence by tracing how the mutated value is consumed, and
+record that trace as the reason — never assert it from intuition.
+
+Measured example (translation-qa `resync-units.ts`, 2026-08-09): dropping the
+`s.entryId !== null` guard survived. `segByEntryId` is only ever `.set()` and
+`.get(<numeric id>)` — never iterated, never `.keys()` — so a null-keyed entry is
+unreachable and the mutation is `equivalent`. In the same run, flipping
+`count > bestCount` to `>=` also survived and IS a `gap`: it changes which unit wins a
+tie, and the test file's own header names "a wrong primary-unit pick silently scatters a
+proofreader's work" as the top risk. Raw score 75%, triaged 86% — the difference decides
+whether Q21 passes.
+
+`score_triaged` (below) is the number downstream consumers read. A gate that reads the
+raw score punishes suites for unkillable mutants, and a gate people cannot satisfy is a
+gate people learn to ignore.
+
 ### 4.3 Report Output
 
 ```
@@ -454,6 +474,77 @@ MUTATION SCORE: [N]% -- Grade [A/B/C/D]
 
 Run: <ISO-8601-Z>	mutation-test	<project>	<score>%	<killed>/<total>	<VERDICT>	-	<N>-files	<NOTES>	<BRANCH>	<SHA7>	<INCLUDES>	<TIER>
 ```
+
+### 4.3b Machine-readable artifact (REQUIRED — not optional, and not for humans)
+
+Write both files to the canonical output dir per `report-output-location.md`:
+
+- `$ZUVO_DIR/audits/mutation-test-YYYY-MM-DD.md` — the block above
+- `$ZUVO_DIR/audits/mutation-test-YYYY-MM-DD.json` — the contract below
+
+Auto-increment `-2`, `-3` for same-day runs, like every other audit.
+
+**This exists because Q21 had no input.** `gate-registry.md` Q21 asks whether changed
+production files reach a mutation score >= 70%, and `test-audit` scores it — but until
+2026-08-09 this skill wrote nothing to disk at all. The report went to chat and vanished,
+so the only honest answers an auditor could give were a guess or `N/A`. A gate whose
+input nobody produces is not a gate.
+
+```json
+{
+  "version": "1.0",
+  "skill": "mutation-test",
+  "timestamp": "<ISO-8601>",
+  "project": "<basename of git root>",
+  "commit": "<HEAD sha7 — the code these numbers describe>",
+  "scope": "<path or 'full'>",
+  "tier2_ran": true,
+  "score_raw": 75,
+  "score_triaged": 86,
+  "totals": { "generated": 8, "killed": 6, "survived_gap": 1, "survived_equivalent": 1 },
+  "files": [
+    {
+      "path": "lib/services/proofreading/grouping/resync-units.ts",
+      "killed": 6,
+      "survived_gap": 1,
+      "survived_equivalent": 1,
+      "score_triaged": 86
+    }
+  ],
+  "survivors": [
+    {
+      "id": "MUT-004",
+      "file": "lib/services/proofreading/grouping/resync-units.ts",
+      "line": 208,
+      "category": "BOUNDARY",
+      "triage": "gap",
+      "reason": "ties pick the last unit instead of the first; no test constructs a tie",
+      "suggested_test": "two units each holding 1 of 2 group segments — assert the first-seen unit wins"
+    },
+    {
+      "id": "MUT-006",
+      "file": "lib/services/proofreading/grouping/resync-units.ts",
+      "line": 161,
+      "category": "NULL",
+      "triage": "equivalent",
+      "reason": "segByEntryId is only .set()/.get(numeric); a null key is unreachable"
+    }
+  ]
+}
+```
+
+Field notes, each earning its place:
+
+- **`score_triaged` is the number consumers read.** `score_raw` is kept for comparison, not
+  for gating — see 4.2.
+- **`commit`** — these numbers describe one tree. A consumer reading a JSON whose `commit`
+  is not the current HEAD must treat it as STALE and say so, not silently score against it.
+  This is the same rule the review artifacts use, for the same reason.
+- **`tier2_ran`** — `false` under `--quick`, where survivors were never checked against the
+  full suite. A consumer must not treat a `--quick` score as equivalent coverage; label it.
+- **`survived_equivalent`** must carry a `reason` naming how the value is consumed. Without
+  it, "equivalent" becomes the escape hatch that turns any inconvenient survivor into a
+  free pass.
 
 ### Retrospective (REQUIRED)
 

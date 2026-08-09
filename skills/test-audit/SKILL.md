@@ -331,6 +331,28 @@ SCORING MATH:
   that produced two answers for one file (14/17 was simultaneously "PASS" and "Tier B")
   and left score 9 belonging to no tier at all.
 
+### Scoring Q21 — read the number, never estimate it
+
+Q21's text lives in the generated region above; how to *answer* it does not, so it lives
+here. Source of truth: the newest `$ZUVO_DIR/audits/mutation-test-*.json` written by
+`zuvo:mutation-test` (§4.3b of that skill).
+
+| Condition | Q21 value |
+|---|---|
+| JSON present, `commit` == HEAD sha7 | score from **`score_triaged`** |
+| JSON present, `commit` != HEAD | `N/A (mutation data STALE — <json sha7>, HEAD is <sha7>)` |
+| JSON present, `tier2_ran: false` | score it, and append `(--quick: survivors never checked against the full suite)` |
+| No JSON at all | `N/A (no mutation run)` — legitimate; Q21 is CONDITIONAL on a runner existing |
+
+Use `score_triaged`, never `score_raw`. An *equivalent mutant* cannot be killed by any
+test, so counting it against the suite fails work nobody can fix — and a gate people
+cannot satisfy is a gate people learn to route around.
+
+Until 2026-08-09 `zuvo:mutation-test` wrote nothing to disk: the report went to chat and
+vanished. This gate asked for a number the system never produced in readable form, so the
+only available answers were a guess or `N/A`. Estimating it from test-file appearance is
+not a third option — if the JSON is absent or stale, say so and score `N/A`.
+
 FOR AUTO TIER-D FILES, use SHORT format:
 ### [filename]
 Production file: [path or ORPHAN]
