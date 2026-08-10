@@ -1,7 +1,9 @@
 #!/bin/bash
 # Build Antigravity-adapted skills from zuvo-plugin source skills.
 # Antigravity uses native agent subdirectories (no flat renaming),
-# Gemini model mapping, and ~/.gemini/antigravity/ as install root.
+# Gemini model mapping. Skills install to ~/.gemini/config/skills (Antigravity's GLOBAL
+# CUSTOMIZATION ROOT -- proven by A/B canary 2026-08-11); shared/rules/scripts stay under
+# ~/.gemini/antigravity/ and are referenced by absolute path, which works from anywhere.
 #
 # Template: build-cursor-skills.sh (simplified — no TOML, no flat agents)
 #
@@ -54,7 +56,7 @@ replace_paths() {
   sed \
     -e 's|{plugin_root}/shared/|~/.gemini/antigravity/shared/|g' \
     -e 's|{plugin_root}/rules/|~/.gemini/antigravity/rules/|g' \
-    -e 's|{plugin_root}/skills/|~/.gemini/antigravity/skills/|g' \
+    -e 's|{plugin_root}/skills/|~/.gemini/config/skills/|g' \
     -e 's|{plugin_root}|~/.gemini/antigravity|g' \
     -e 's|CLAUDE_PLUGIN_ROOT|GEMINI_HOME|g' \
     -e 's|~/\.claude/plugins/cache/zuvo-marketplace/zuvo/[^/]*/scripts/adversarial-review\.sh|~/.gemini/antigravity/scripts/adversarial-review.sh|g' \
@@ -65,7 +67,7 @@ replace_paths() {
     -e 's|../../shared/|~/.gemini/antigravity/shared/|g' \
     -e 's|../../scripts/|~/.gemini/antigravity/scripts/|g' \
     -e 's|../../rules/|~/.gemini/antigravity/rules/|g' \
-    -e 's|../../skills/|~/.gemini/antigravity/skills/|g'
+    -e 's|../../skills/|~/.gemini/config/skills/|g'
 }
 
 # --- Model Replacement (Antigravity — Gemini tiers) ---

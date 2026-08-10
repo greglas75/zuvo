@@ -217,4 +217,40 @@ else
   bad "(9) manifest copy is outside the per-CACHE_DIR loop — only one dir would be refreshed, reintroducing the drift"
 fi
 
+# (10) Antigravity skills must land in its GLOBAL CUSTOMIZATION ROOT.
+#
+# Wrong since the Antigravity target was added: skills installed to
+# ~/.gemini/antigravity/skills/, which the app never reads. install.sh reported
+# success, `ls` showed 57 skills on disk, and zuvo was simply absent from every
+# Antigravity session — the failure had no symptom other than nothing happening.
+# The read path is ~/.gemini/config/skills (the app's own language_server says
+# "Global Discovery: `~/.gemini/config/`" and "Location: skills/<skill_name>/
+# (relative to the customization root)"), confirmed by an A/B canary: the same
+# skill name in both directories resolved to the ~/.gemini/config copy.
+#
+# Asserted on the install script rather than on a live $HOME because the bug is a
+# hardcoded destination, and that is exactly what a path typo would reintroduce.
+if grep -qE 'AG_SKILLS=.*\.gemini/config/skills' "$INSTALL"; then
+  pass "(10) Antigravity skills install into ~/.gemini/config/skills (the customization root)"
+else
+  bad "(10) Antigravity skill destination is not ~/.gemini/config/skills — the app will not load them"
+fi
+
+# The legacy directory must be actively removed, not merely abandoned: a machine
+# that ran an older install.sh otherwise keeps a full stale copy of every skill
+# that no longer updates and that nothing reads.
+if grep -qE 'rm -rf "\$HOME/\.gemini/antigravity/skills"' "$INSTALL"; then
+  pass "(10b) the legacy ~/.gemini/antigravity/skills copy is cleaned up"
+else
+  bad "(10b) the legacy ~/.gemini/antigravity/skills copy is left behind (stale, never-loaded skills)"
+fi
+
+# The build's cross-skill path rewrites must agree with where skills actually
+# live, or a skill referencing another skill points into the dead directory.
+if grep -qE "skills/\|~/\.gemini/config/skills/" "$ROOT/scripts/build-antigravity-skills.sh"; then
+  pass "(10c) build rewrites cross-skill paths to the customization root"
+else
+  bad "(10c) build still rewrites ../../skills/ to the unread ~/.gemini/antigravity/skills path"
+fi
+
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "SOME FAILED"; exit 1; fi

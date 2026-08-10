@@ -1036,21 +1036,36 @@ install_antigravity() {
   fi
   ok "Build complete"
 
+  # Antigravity's GLOBAL CUSTOMIZATION ROOT is ~/.gemini/config -- skills are read
+  # from "skills/<name>/" relative to THAT, not from ~/.gemini/antigravity/.
+  #
+  # This was wrong from the first Antigravity release: every skill installed to
+  # ~/.gemini/antigravity/skills/, which the app never reads, so zuvo was silently
+  # absent while `install.sh` reported success and the files were visibly on disk.
+  # Established 2026-08-11 by the app's own language_server strings ("Global
+  # Discovery: `~/.gemini/config/`", "Location: skills/<skill_name>/ (relative to
+  # the customization root)") and then PROVEN by an A/B canary: the same skill name
+  # placed in both directories resolved to the ~/.gemini/config copy.
+  local AG_SKILLS="$HOME/.gemini/config/skills"
+
   # Step 2: Clean old symlinks and stale files
-  rm -rf "$HOME/.gemini/antigravity/skills"
+  rm -rf "$AG_SKILLS"
   rm -rf "$HOME/.gemini/antigravity/shared"
   rm -rf "$HOME/.gemini/antigravity/rules"
   rm -rf "$HOME/.gemini/antigravity/scripts"
-  ok "Cleaned old installation"
+  # Remove the pre-fix location so a machine that ran an older install.sh does not
+  # keep a full, stale, never-loaded copy of every skill lying around.
+  rm -rf "$HOME/.gemini/antigravity/skills"
+  ok "Cleaned old installation (incl. the legacy ~/.gemini/antigravity/skills path)"
 
   # Step 3: Copy skills (agents stay in subdirectories)
-  mkdir -p "$HOME/.gemini/antigravity/skills"
+  mkdir -p "$AG_SKILLS"
   for skill_dir in "$DIST"/skills/*/; do
     skill_name=$(basename "$skill_dir")
-    cp -r "$skill_dir" "$HOME/.gemini/antigravity/skills/$skill_name"
+    cp -r "$skill_dir" "$AG_SKILLS/$skill_name"
   done
   SKILL_COUNT=$(ls -d "$DIST/skills"/*/ 2>/dev/null | wc -l | tr -d ' ')
-  ok "Skills installed ($SKILL_COUNT total, agents in subdirectories)"
+  ok "Skills installed ($SKILL_COUNT total) -> $AG_SKILLS"
 
   # Step 4: Copy shared includes
   if [[ -d "$DIST/shared" ]]; then
