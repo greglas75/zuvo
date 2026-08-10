@@ -902,10 +902,19 @@ else
     # fence` immediately followed by `PASS: body is N lines` — the same false
     # PASS this block exists to prevent, one branch further down.
     bad "SKILL.md has no closing frontmatter fence (or line 1 does not open one) -- body size not checked"
-  elif [ "$(( sk_total - sk_fm_end ))" -ge 135 ] && [ "$(( sk_total - sk_fm_end ))" -le 235 ]; then
-    pass "SKILL.md body is $(( sk_total - sk_fm_end )) lines (within 135..235; frontmatter $sk_fm_end excluded)"
+  # Cap raised 235 -> 245 on 2026-08-10, deliberately and for one reason: the
+  # dispatch-authorization rule became mandatory in every skill that delegates
+  # (all 47 of them; see test-gate-dispatch-authorization.sh). This file sat at
+  # exactly 235, so it could absorb nothing, and the two alternatives were both
+  # worse — delete documentation to pay for a safety rule, which the reasoning
+  # above already rejects for mandatory additions, or give this one skill a
+  # shorter variant of a rule whose whole point is being identical everywhere.
+  # The anti-bloat intent is unchanged: 245 is the old cap plus the rule, not
+  # headroom for prose.
+  elif [ "$(( sk_total - sk_fm_end ))" -ge 135 ] && [ "$(( sk_total - sk_fm_end ))" -le 245 ]; then
+    pass "SKILL.md body is $(( sk_total - sk_fm_end )) lines (within 135..245; frontmatter $sk_fm_end excluded)"
   else
-    bad "SKILL.md body is $(( sk_total - sk_fm_end )) lines -- want 135..235 (total $sk_total, frontmatter $sk_fm_end)"
+    bad "SKILL.md body is $(( sk_total - sk_fm_end )) lines -- want 135..245 (total $sk_total, frontmatter $sk_fm_end)"
   fi
 
   # (12b) the V2 argument grammar, plus the positional alias the website page and

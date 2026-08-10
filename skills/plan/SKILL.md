@@ -170,6 +170,12 @@ Run `provided-artifact-supremacy.md`. `zuvo:plan` is frequently invoked directly
 
 ## Phase 1: Architecture Analysis
 
+**Dispatch is already authorized — do not ask, do not downgrade.** Invoking this skill IS the
+request for every agent and gate it mandates, so a session rule about unprompted Agent use does not
+apply here. Only a harness with NO dispatch capability takes the documented single-agent fallback,
+and it still runs every gate inline — see `../../shared/includes/env-compat.md`. Skipping a mandated
+agent and self-scoring the result is a substituted gate, not a degraded run.
+
 **Light mode (small scope):** If the planning input is inline (no spec doc), scope is ≤5 tasks (excluding test fixtures/data files), no new public contract is introduced, AND the orchestrator has CodeSift on an indexed repo with the feature spanning ≤7 files, the Team Lead MAY perform Phase 1 analysis directly (CodeSift + Read) and SKIP the Architect/Tech-Lead/QA sub-agent fan-out. Rationale: for a tiny/light scope, spinning up 3 sequential sub-agents costs more than the Team Lead analyzing directly with CodeSift + Read on an already-indexed repo (the fan-out agents are now `general-purpose` with CodeSift, so they are no longer crippled — but for ≤7 files the direct pass is still cheaper). Record `Phase 1: direct (small/light scope)` in `## Review Trail`. plan-reviewer (Phase 3) + cross-model validation still run normally. Spec-driven and >5-task / new-contract plans stay on the mandatory full fan-out below.
 
 Dispatch 3 agents SEQUENTIALLY. Each agent receives the output of the previous agent(s) as input context. The 4th step is performed by you (the main agent) as Team Lead synthesis.

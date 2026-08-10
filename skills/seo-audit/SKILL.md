@@ -248,6 +248,12 @@ If `--live-sample-bots` is set:
 
 ## Phase 2: Code Audit (Parallel Agent Dispatch)
 
+**Dispatch is already authorized — do not ask, do not downgrade.** Invoking this skill IS the
+request for every agent and gate it mandates, so a session rule about unprompted Agent use does not
+apply here. Only a harness with NO dispatch capability takes the documented single-agent fallback,
+and it still runs every gate inline — see `../../shared/includes/env-compat.md`. Skipping a mandated
+agent and self-scoring the result is a substituted gate, not a degraded run.
+
 Dispatch 3 agents in parallel. Each agent evaluates its assigned dimensions independently.
 
 ### Dimension grouping

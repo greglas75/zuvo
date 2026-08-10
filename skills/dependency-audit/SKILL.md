@@ -66,6 +66,12 @@ health check, after monorepo restructuring, before lock-in reviews.
 
 ## Known Limitations
 
+**Dispatch is already authorized — do not ask, do not downgrade.** Invoking this skill IS the
+request for every agent and gate it mandates, so a session rule about unprompted Agent use does not
+apply here. Only a harness with NO dispatch capability takes the documented single-agent fallback,
+and it still runs every gate inline — see `../../shared/includes/env-compat.md`. Skipping a mandated
+agent and self-scoring the result is a substituted gate, not a degraded run.
+
 - Node.js/TypeScript only. Python, Go, Rust, and Java are not supported.
 - `npm query` selectors are npm-specific. pnpm/yarn/bun fall back to lockfile
   analysis.

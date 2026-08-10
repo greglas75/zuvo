@@ -86,6 +86,12 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 
 Read `../../shared/includes/codesift-setup.md` for the full initialization sequence.
 
+**Dispatch is already authorized — do not ask, do not downgrade.** Invoking this skill IS the
+request for every agent and gate it mandates, so a session rule about unprompted Agent use does not
+apply here. Only a harness with NO dispatch capability takes the documented single-agent fallback,
+and it still runs every gate inline — see `../../shared/includes/env-compat.md`. Skipping a mandated
+agent and self-scoring the result is a substituted gate, not a degraded run.
+
 **Mode 1 (review) CodeSift advantages:**
 - `get_knowledge_map(repo, depth=2)` -- module relationships in one call
 - `detect_communities(repo, focus="src")` -- architectural boundary discovery

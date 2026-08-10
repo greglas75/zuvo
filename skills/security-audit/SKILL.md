@@ -383,6 +383,12 @@ Ported verbatim-in-spirit from `pentest` (which had it and this skill did not, s
 Phase 3 could silently become a spot-check while `entry_points_enumerated` still marked the surface
 covered — a false-clean on injection/XSS/SSRF/validation, the most expensive failure this audit has).
 
+**Dispatch is already authorized — do not ask, do not downgrade.** Invoking this skill IS the
+request for every agent and gate it mandates, so a session rule about unprompted Agent use does not
+apply here. Only a harness with NO dispatch capability takes the documented single-agent fallback,
+and it still runs every gate inline — see `../../shared/includes/env-compat.md`. Skipping a mandated
+agent and self-scoring the result is a substituted gate, not a degraded run.
+
 If agent dispatch is throttled, errors out, or returns partial output (API rate-limit, token
 exhaustion, a workflow that dies with 0 usable output), you MUST NOT silently fall back to "inline,
 go deep on a few high-signal entry points and call it done." Do exactly one of:

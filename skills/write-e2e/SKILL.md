@@ -190,6 +190,12 @@ else
 fi
 ```
 
+**Dispatch is already authorized — do not ask, do not downgrade.** Invoking this skill IS the
+request for every agent and gate it mandates, so a session rule about unprompted Agent use does not
+apply here. Only a harness with NO dispatch capability takes the documented single-agent fallback,
+and it still runs every gate inline — see `../../shared/includes/env-compat.md`. Skipping a mandated
+agent and self-scoring the result is a substituted gate, not a degraded run.
+
 Not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release). Wait for complete
 output, then act on findings: **CRITICAL** — fix immediately regardless of confidence, verifying against the code
 first when confidence is low; **WARNING** — fix if localized (< 10 lines), else backlog with file:line; **INFO** —

@@ -52,42 +52,45 @@ check() { # check <label> <condition-rc>
 
 echo "== gate dispatch-authorization contract =="
 
-# Which skills mandate the gate? Derived from the tree, never hardcoded — a new
-# skill that references the include is covered the moment it is added.
+# EVERY skill that mandates ANY delegation — a sub-agent, a fan-out, another
+# zuvo skill, the adversarial gate — must carry the authorization rule. Scoping
+# this to the test-quality gate alone was the 2026-08-09 miss: that fix landed,
+# and the very next day `zuvo:plan` skipped its Architect/Tech-Lead/QA fan-out
+# AND its dedicated plan-reviewer, citing the same session policy, because
+# `plan` was never in scope. One instance was fixed; the class was not.
+DELEGATES='DISPATCH [A-Za-z]|dispatch (a |an |the |[0-9]+ )?[a-z]*[[:space:]]*(sub-)?agents?|fan-out|Agent tool|subagent_type|agents/[a-z-]+\.md|Skill\((zuvo:)?[a-z-]+\)|adversarial-review|cross-model'
+
+# Derived from the tree, never hardcoded — a new skill is covered the moment it
+# is added, which is the only way this stops recurring.
 mandating=""
 for f in "$ROOT"/skills/*/SKILL.md; do
-  grep -q 'test-quality-gate\.md' "$f" || continue
+  grep -Eiq "$DELEGATES" "$f" || continue
   mandating="$mandating $(basename "$(dirname "$f")")"
 done
 
-# (a) the premise itself — if nothing mandates the gate, the rest would pass
-#     vacuously and this test would be a decoration.
-n=$(printf '%s\n' $mandating | grep -c . || true)
-[ "${n:-0}" -ge 5 ]
-check "(a) at least 5 skills mandate the gate (found ${n:-0}) — premise not stale" $?
+# (a) the premise — if the tree scan finds almost nothing, every per-skill
+#     assertion below passes vacuously and this file becomes a decoration.
+n=$(printf '%s\n' $mandating | tr ' ' '\n' | grep -c . || true)
+[ "${n:-0}" -ge 30 ]
+check "(a) at least 30 skills mandate delegation (found ${n:-0}) — premise not stale" $?
 
+# (b) THE CLASS: every delegating skill carries the rule in its own text. Counted
+#     rather than printed per-skill so the output stays readable at ~47 skills;
+#     the failure message names every offender, which is what a fix needs.
+missing=""
 for s in $mandating; do
-  f="$ROOT/skills/$s/SKILL.md"
+  grep -q "$RULE" "$ROOT/skills/$s/SKILL.md" || missing="$missing $s"
+done
+[ -z "$missing" ]
+check "(b) all $n delegating skills carry the dispatch-authorization rule —${missing:- none missing}" $?
 
-  # (b) the include is in a Mandatory File Loading list, not merely mentioned in
-  #     prose. Anchored on the load-line grammar so a bare "see
-  #     test-quality-gate.md" reference does NOT satisfy it.
+# (c) the test-quality gate keeps its stricter, older contract: the include must
+#     be a LOAD DECLARATION, not a prose mention, in every skill that mandates it.
+for f in "$ROOT"/skills/*/SKILL.md; do
+  grep -q 'test-quality-gate\.md' "$f" || continue
+  s="$(basename "$(dirname "$f")")"
   grep -Eq "$LOAD_RE" "$f"
-  check "(b) $s loads $INCLUDE in its file-loading block" $?
-
-  # (c) the rule must be readable at the point of use. Two ways to satisfy that,
-  #     and only two: repeat it locally, OR load the include lazily AT the gate's
-  #     own phase, which forces the agent to read it exactly there. A bootstrap
-  #     load does NOT count -- that is the case that failed in the field: read at
-  #     Phase 0, forgotten by Phase 3.6. Skills with a line budget (write-e2e)
-  #     legitimately take the lazy route instead of duplicating prose.
-  if grep -Eq "$LAZY_RE" "$f"; then
-    grep -Eq "$LAZY_RE" "$f"
-    check "(c) $s loads the include AT the gate's phase (rule read at point of use)" $?
-  else
-    grep -q "$RULE" "$f"
-    check "(c) $s carries the dispatch-authorization rule at its call site" $?
-  fi
+  check "(c) $s declares $INCLUDE in its file-loading block" $?
 done
 
 # (d) the include remains the single source of truth the local copies point at —

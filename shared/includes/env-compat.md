@@ -113,6 +113,34 @@ deleting the hook entry. The hook is the gate; making it runnable is the job.
 
 ## Agent Dispatch
 
+### Dispatch mandated by a skill is ALREADY AUTHORIZED — do not ask, do not downgrade
+
+**Invoking a skill IS the request for every agent that skill mandates.** A session-level instruction
+like "do not call the Agent tool unless the user requested it" is about *unprompted* dispatch — it
+does not apply to a fan-out the skill you were asked to run requires. The user asked, by invoking
+the skill. Reading that instruction as a prohibition and running the roles inline instead is a
+substituted gate, not a degraded-but-valid run.
+
+Measured field failures, three skills, three days:
+
+| date | skill | what was skipped | how it was reported |
+|------|-------|------------------|---------------------|
+| 2026-08-07 | refactor | `zuvo:test-audit` (Phase 3.6) | `degraded:same-model` |
+| 2026-08-08 | refactor | `zuvo:test-audit` (Phase 3.6) | `WARN:substituted-inline` (a value no vocabulary defines) |
+| 2026-08-09 | plan | Architect / Tech-Lead / QA fan-out **and** the plan-reviewer | "two cross-review rounds instead", noted in Review Trail |
+
+The 08-09 one is the clearest: a plan is the artifact every downstream execute task inherits, and it
+shipped without the three analyses and the dedicated reviewer that `plan` mandates — because the
+skill pointed at this file but never repeated the rule where the dispatch happens.
+
+**The only genuine exception is a harness with NO dispatch capability** (Codex's single-agent hard
+rule — see the `PLATFORM:CODEX` blocks). There, run the roles inline as sequential passes with the
+same gates, and record the fallback reason. Rate limits, cost, "it would be slow", and a session
+policy about unprompted agents are NOT that exception.
+
+If you genuinely cannot dispatch, the run is `BLOCKED_MISSING_GATE` or an explicitly-recorded
+single-agent fallback — never a gate reported as satisfied by the substitution it forbids.
+
 ### Claude Code (primary)
 
 Dispatch sub-agents with the Agent tool:

@@ -241,6 +241,12 @@ Store as `PROJECT_CONTEXT` for per-view scoring.
 
 For each view, read the full component and evaluate DX1-DX20.
 
+**Dispatch is already authorized — do not ask, do not downgrade.** Invoking this skill IS the
+request for every agent and gate it mandates, so a session rule about unprompted Agent use does not
+apply here. Only a harness with NO dispatch capability takes the documented single-agent fallback,
+and it still runs every gate inline — see `../../shared/includes/env-compat.md`. Skipping a mandated
+agent and self-scoring the result is a substituted gate, not a degraded run.
+
 **If >8 views:** Split into batches of 4 and dispatch background agents where possible. Each agent receives the PROJECT_CONTEXT and scores independently.
 
 Output per view:
