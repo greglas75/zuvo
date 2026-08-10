@@ -109,5 +109,16 @@ bad=$(grep -rhn 'substituted-inline' "$ROOT"/skills/*/SKILL.md "$ROOT/$INCLUDE" 
 [ "${bad:-0}" -eq 0 ]
 check "(e) every 'substituted-inline' mention is a prohibition, not a permitted value (${bad:-0} stray)" $?
 
+# (f) env-compat.md is the SSOT the 47 local copies point at, and NOTHING pinned
+#     it until now — found while verifying the installed 1.6.65, not by a test.
+#     It must carry the section AND the one legitimate exception, because a
+#     version that states the rule without bounding the exception is how
+#     "rate limits" becomes a reason to skip a fan-out.
+ENVC="shared/includes/env-compat.md"
+grep -q 'ALREADY AUTHORIZED' "$ROOT/$ENVC"
+check "(f) $ENVC carries the authoritative dispatch-authorization section" $?
+grep -q 'NO dispatch capability' "$ROOT/$ENVC"
+check "(f2) $ENVC bounds the exception to a harness with no dispatch capability" $?
+
 echo "  ---- $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
