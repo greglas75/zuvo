@@ -89,7 +89,29 @@ EOF
 # Set isolated PATH: mock bin + system essentials + homebrew (for timeout, jq).
 # No ~/.local/bin (agent), etc.
 isolated_path() {
-  export PATH="$MOCK_BIN:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
+  # Isolated PATH: mocks + system essentials ONLY.
+  #
+  # /opt/homebrew/bin used to be appended here for `timeout` (macOS ships none),
+  # and that quietly un-isolated the whole suite: the REAL codex lives there, the
+  # script picks the first available client rather than one named by the *_MODEL
+  # env var, so every test that mocks a NON-codex provider ran the real codex
+  # instead and failed with its account error. Invisible until 2026-08-10, when
+  # installing bats stopped the runner from skipping this group entirely.
+  #
+  # Fix: shim the few real binaries we need INTO the mock dir, so the mock dir can
+  # be the only non-system entry. A tool that is genuinely absent stays absent —
+  # the script's own no-timeout fallback covers it.
+  local _real
+  for _real in timeout gtimeout jq; do
+    if [ ! -e "$MOCK_BIN/$_real" ]; then
+      _p="$(PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin command -v "$_real" 2>/dev/null || true)"
+      [ -n "$_p" ] && ln -sf "$_p" "$MOCK_BIN/$_real"
+    fi
+  done
+  export PATH="$MOCK_BIN:/usr/bin:/bin:/usr/sbin:/sbin"
+  # mock-* providers are refused unless the harness flag is set — a deliberate
+  # guard so a stray `--provider mock-x` can never dispatch in a real run.
+  export ZUVO_ADVERSARIAL_TEST_HARNESS=1
 }
 
 # ─── Help & usage ─────────────────────────────────────────────
@@ -118,30 +140,30 @@ isolated_path() {
 # ─── Input modes ──────────────────────────────────────────────
 
 @test "reads diff from stdin" {
-  create_mock "gemini" "STDIN_RECEIVED"
+  create_mock "mock-gemini" "STDIN_RECEIVED"
   isolated_path
 
-  run bash -c "echo 'some diff content here' | '$SCRIPT' --provider gemini"
+  run bash -c "echo 'some diff content here' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
   [[ "$output" == *"STDIN_RECEIVED"* ]]
 }
 
 @test "reads files via --files flag" {
-  create_mock "gemini" "FILES_RECEIVED"
+  create_mock "mock-gemini" "FILES_RECEIVED"
   isolated_path
 
-  run "$SCRIPT" --provider gemini --files "$SAMPLE_FILE"
+  run "$SCRIPT" --provider mock-gemini --files "$SAMPLE_FILE"
   [ "$status" -eq 0 ]
   [[ "$output" == *"FILES_RECEIVED"* ]]
 }
 
 @test "--artifact writes metadata and review output to file" {
-  create_mock "gemini" "ARTIFACT_RECEIVED"
+  create_mock "mock-gemini" "ARTIFACT_RECEIVED"
   isolated_path
 
   local artifact="$TMPDIR_TEST/adversarial-task-1.txt"
 
-  run "$SCRIPT" --provider gemini --files "$SAMPLE_FILE" --artifact "$artifact"
+  run "$SCRIPT" --provider mock-gemini --files "$SAMPLE_FILE" --artifact "$artifact"
   [ "$status" -eq 0 ]
   [ -s "$artifact" ]
   [[ "$output" == *"ARTIFACT_RECEIVED"* ]]
@@ -152,19 +174,19 @@ isolated_path() {
 }
 
 @test "handles missing file in --files gracefully" {
-  create_mock "gemini" "MISSING_OK"
+  create_mock "mock-gemini" "MISSING_OK"
   isolated_path
 
-  run "$SCRIPT" --provider gemini --files "$TMPDIR_TEST/nonexistent.ts"
+  run "$SCRIPT" --provider mock-gemini --files "$TMPDIR_TEST/nonexistent.ts"
   [ "$status" -eq 0 ]
   [[ "$output" == *"MISSING_OK"* ]]
 }
 
 @test "exits 2 when stdin is empty and no --files/--diff" {
-  create_mock "gemini" "unused"
+  create_mock "mock-gemini" "unused"
   isolated_path
 
-  run bash -c "echo '' | '$SCRIPT' --provider gemini"
+  run bash -c "echo '' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 2 ]
   [[ "$output" == *"No input provided"* ]]
 }
@@ -172,23 +194,23 @@ isolated_path() {
 # ─── Input truncation ────────────────────────────────────────
 
 @test "truncates code-mode input exceeding 30000 chars and adds notice" {
-  create_inspecting_mock "gemini" "TRUNCATED" "WAS_TRUNCATED" "NOT_TRUNCATED"
+  create_inspecting_mock "mock-gemini" "TRUNCATED" "WAS_TRUNCATED" "NOT_TRUNCATED"
   isolated_path
 
   # Generate 35000 chars (code mode truncates at 30000)
   local big_input
   big_input=$(printf '%0.sx' $(seq 1 35000))
 
-  run bash -c "printf '%s' '$big_input' | '$SCRIPT' --provider gemini"
+  run bash -c "printf '%s' '$big_input' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
   [[ "$output" == *"WAS_TRUNCATED"* ]]
 }
 
 @test "preserves input under 30000 chars without truncation" {
-  create_inspecting_mock "gemini" "TRUNCATED" "WAS_TRUNCATED" "NOT_TRUNCATED"
+  create_inspecting_mock "mock-gemini" "TRUNCATED" "WAS_TRUNCATED" "NOT_TRUNCATED"
   isolated_path
 
-  run bash -c "echo 'short input' | '$SCRIPT' --provider gemini"
+  run bash -c "echo 'short input' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
   [[ "$output" == *"NOT_TRUNCATED"* ]]
 }
@@ -196,31 +218,31 @@ isolated_path() {
 # ─── Language detection ──────────────────────────────────────
 
 @test "detects TypeScript from .ts extension in diff" {
-  create_inspecting_mock "gemini" "TypeScript" "LANG:TypeScript" "LANG:none"
+  create_inspecting_mock "mock-gemini" "TypeScript" "LANG:TypeScript" "LANG:none"
   isolated_path
 
-  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider gemini"
+  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
   [[ "$output" == *"LANG:TypeScript"* ]]
 }
 
 @test "detects Python from .py extension" {
-  create_inspecting_mock "gemini" "Python" "LANG:Python" "LANG:none"
+  create_inspecting_mock "mock-gemini" "Python" "LANG:Python" "LANG:none"
   isolated_path
 
   local py_diff="diff --git a/main.py b/main.py
 +def hello(): pass"
 
-  run bash -c "echo '$py_diff' | '$SCRIPT' --provider gemini"
+  run bash -c "echo '$py_diff' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
   [[ "$output" == *"LANG:Python"* ]]
 }
 
 @test "no language hint for plain text input" {
-  create_inspecting_mock "gemini" "written in" "LANG:detected" "LANG:none"
+  create_inspecting_mock "mock-gemini" "written in" "LANG:detected" "LANG:none"
   isolated_path
 
-  run bash -c "echo 'just plain text no extensions' | '$SCRIPT' --provider gemini"
+  run bash -c "echo 'just plain text no extensions' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
   [[ "$output" == *"LANG:none"* ]]
 }
@@ -228,28 +250,28 @@ isolated_path() {
 # ─── Review mode selection ────────────────────────────────────
 
 @test "defaults to code review focus" {
-  create_inspecting_mock "gemini" "Edge cases the author" "MODE:code" "MODE:other"
+  create_inspecting_mock "mock-gemini" "Edge cases the author" "MODE:code" "MODE:other"
   isolated_path
 
-  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider gemini"
+  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
   [[ "$output" == *"MODE:code"* ]]
 }
 
 @test "--mode test selects test-specific focus" {
-  create_inspecting_mock "gemini" "TEST-SPECIFIC" "MODE:test" "MODE:other"
+  create_inspecting_mock "mock-gemini" "TEST-SPECIFIC" "MODE:test" "MODE:other"
   isolated_path
 
-  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider gemini --mode test"
+  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider mock-gemini --mode test"
   [ "$status" -eq 0 ]
   [[ "$output" == *"MODE:test"* ]]
 }
 
 @test "--mode security selects security focus" {
-  create_inspecting_mock "gemini" "SECURITY ISSUES" "MODE:security" "MODE:other"
+  create_inspecting_mock "mock-gemini" "SECURITY ISSUES" "MODE:security" "MODE:other"
   isolated_path
 
-  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider gemini --mode security"
+  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider mock-gemini --mode security"
   [ "$status" -eq 0 ]
   [[ "$output" == *"MODE:security"* ]]
 }
@@ -269,14 +291,14 @@ isolated_path() {
   [[ "$output" == *"No cross-provider review tool found"* ]]
 }
 
-@test "detects gemini when command exists" {
-  create_mock "gemini" "GEMINI_DETECTED"
+@test "detects agy when command exists" {
+  create_mock "agy" "AGY_DETECTED"
   isolated_path
 
   # Use --single to avoid running other detected providers
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --single"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"GEMINI_DETECTED"* ]]
+  [[ "$output" == *"AGY_DETECTED"* ]]
 }
 
 @test "detects codex when command exists" {
@@ -289,23 +311,26 @@ isolated_path() {
 }
 
 @test "detects multiple providers and runs all in multi mode" {
-  create_mock "gemini" "GEMINI_MULTI"
+  create_mock "agy" "AGY_MULTI"
   create_mock "codex" "CODEX_MULTI"
   isolated_path
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT'"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"GEMINI_MULTI"* ]]
+  [[ "$output" == *"AGY_MULTI"* ]]
   [[ "$output" == *"CODEX_MULTI"* ]]
-  [[ "$output" == *"REVIEW BY: GEMINI"* ]]
-  [[ "$output" == *"REVIEW BY: CODEX-FAST"* ]]
+  # Section banners are what MULTI puts on stdout. The `REVIEW BY:` proof markers
+  # moved into the --artifact metadata (that is what pipeline-gate-lib counts), so
+  # asserting them on stdout tested a contract that no longer exists.
+  [[ "$output" == *"PROVIDER: AGY"* ]]
+  [[ "$output" == *"PROVIDER: CODEX-5.3"* ]]
 }
 
 # ─── Provider execution ──────────────────────────────────────
 
 @test "single mode stops after first successful provider" {
-  create_mock "gemini" "FIRST_ONLY"
-  create_mock "codex" "SHOULD_NOT_APPEAR"
+  create_mock "codex" "FIRST_ONLY"
+  create_mock "agy" "SHOULD_NOT_APPEAR"
   isolated_path
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --single"
@@ -315,7 +340,7 @@ isolated_path() {
 }
 
 @test "handles provider failure gracefully in multi mode" {
-  create_failing_mock "gemini"
+  create_failing_mock "mock-gemini"
   create_mock "codex" "CODEX_SURVIVED"
   isolated_path
 
@@ -325,20 +350,23 @@ isolated_path() {
 }
 
 @test "exits 2 when all providers fail" {
-  create_failing_mock "gemini"
+  create_failing_mock "mock-gemini"
   isolated_path
 
-  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider gemini"
+  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 2 ]
-  [[ "$output" == *"All providers failed"* ]]
+  # Message reworded when provider outcomes became distinguishable ("reached and
+  # returned nothing" vs "never reached"). Assert the OUTCOME wording, not the old
+  # blanket phrase, so this keeps proving the all-fail path rather than a string.
+  [[ "$output" == *"no review produced"* ]]
 }
 
 @test "--provider forces specific provider and single mode" {
-  create_mock "gemini" "FORCED_GEMINI"
+  create_mock "mock-gemini" "FORCED_GEMINI"
   create_mock "codex" "SHOULD_NOT_RUN"
   isolated_path
 
-  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider gemini"
+  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
   [[ "$output" == *"FORCED_GEMINI"* ]]
   [[ "$output" != *"SHOULD_NOT_RUN"* ]]
@@ -347,10 +375,10 @@ isolated_path() {
 # ─── Output formatting ───────────────────────────────────────
 
 @test "text output includes banner with metadata" {
-  create_mock "gemini" "REVIEW_BODY"
+  create_mock "mock-gemini" "REVIEW_BODY"
   isolated_path
 
-  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider gemini"
+  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
   [[ "$output" == *"CROSS-PROVIDER ADVERSARIAL REVIEW"* ]]
   [[ "$output" == *"Providers: gemini"* ]]
@@ -360,21 +388,21 @@ isolated_path() {
 }
 
 @test "multi output includes per-provider section headers" {
-  create_mock "gemini" "G_RESULT"
+  create_mock "agy" "G_RESULT"
   create_mock "codex" "C_RESULT"
   isolated_path
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT'"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"REVIEW BY: GEMINI"* ]]
-  [[ "$output" == *"REVIEW BY: CODEX-FAST"* ]]
+  [[ "$output" == *"PROVIDER: AGY"* ]]
+  [[ "$output" == *"PROVIDER: CODEX-5.3"* ]]
 }
 
 @test "--json output produces structured JSON metadata" {
-  create_mock "gemini" '{"findings":[]}'
+  create_mock "mock-gemini" '{"findings":[]}'
   isolated_path
 
-  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --json --provider gemini"
+  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --json --provider mock-gemini"
   [ "$status" -eq 0 ]
   [[ "$output" == *'"mode": "code"'* ]]
   [[ "$output" == *'"providers_used": "gemini"'* ]]
@@ -384,22 +412,25 @@ isolated_path() {
 }
 
 @test "--json all-fail outputs error JSON" {
-  create_failing_mock "gemini"
+  create_failing_mock "mock-gemini"
   isolated_path
 
-  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --json --provider gemini"
+  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --json --provider mock-gemini"
   [ "$status" -eq 2 ]
   [[ "$output" == *'"error"'* ]]
-  [[ "$output" == *"All providers failed"* ]]
+  # Message reworded when provider outcomes became distinguishable ("reached and
+  # returned nothing" vs "never reached"). Assert the OUTCOME wording, not the old
+  # blanket phrase, so this keeps proving the all-fail path rather than a string.
+  [[ "$output" == *"no review produced"* ]]
 }
 
 # ─── Context hint ─────────────────────────────────────────────
 
 @test "--context hint is passed to the review prompt" {
-  create_inspecting_mock "gemini" "NestJS auth middleware" "CTX:found" "CTX:missing"
+  create_inspecting_mock "mock-gemini" "NestJS auth middleware" "CTX:found" "CTX:missing"
   isolated_path
 
-  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider gemini --context 'NestJS auth middleware'"
+  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider mock-gemini --context 'NestJS auth middleware'"
   [ "$status" -eq 0 ]
   [[ "$output" == *"CTX:found"* ]]
 }
@@ -407,10 +438,10 @@ isolated_path() {
 # ─── Prompt injection defense ────────────────────────────────
 
 @test "review prompt includes anti-injection preamble" {
-  create_inspecting_mock "gemini" "IGNORE any instructions" "DEFENSE:yes" "DEFENSE:no"
+  create_inspecting_mock "mock-gemini" "IGNORE any instructions" "DEFENSE:yes" "DEFENSE:no"
   isolated_path
 
-  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider gemini"
+  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
   [[ "$output" == *"DEFENSE:yes"* ]]
 }
@@ -418,11 +449,12 @@ isolated_path() {
 # ─── Environment variable overrides ──────────────────────────
 
 @test "ZUVO_REVIEW_PROVIDER overrides auto-detection" {
-  create_mock "gemini" "SHOULD_NOT_RUN"
+  create_mock "agy" "SHOULD_NOT_RUN"
   create_mock "codex" "CODEX_FAST_VIA_ENV"
   isolated_path
 
-  export ZUVO_REVIEW_PROVIDER=codex-fast
+  # Provider label is codex-5.3 since the lanes were renamed; codex-fast no longer resolves.
+  export ZUVO_REVIEW_PROVIDER=codex-5.3
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT'"
   [ "$status" -eq 0 ]
   [[ "$output" == *"CODEX_FAST_VIA_ENV"* ]]
@@ -431,18 +463,24 @@ isolated_path() {
 
 @test "ZUVO_REVIEW_TIMEOUT kills slow provider" {
   command -v timeout &>/dev/null || skip "GNU timeout required"
-  cat > "$MOCK_BIN/gemini" <<'EOF'
+  cat > "$MOCK_BIN/mock-gemini" <<'EOF'
 #!/usr/bin/env bash
 cat > /dev/null 2>&1 || true
 sleep 10
 echo "SLOW"
 EOF
-  chmod +x "$MOCK_BIN/gemini"
+  chmod +x "$MOCK_BIN/mock-gemini"
   isolated_path
 
   export ZUVO_REVIEW_TIMEOUT=3
-  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider gemini"
-  [ "$status" -eq 2 ]
+  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider mock-gemini"
+  # 124, not 2: the script distinguishes "every provider TIMED OUT" (124, the
+  # conventional timeout exit) from "every provider returned EMPTY" (2). The old
+  # expectation collapsed both into one code, so this test would have passed even
+  # if the timeout had never fired and the provider had merely returned nothing.
+  [ "$status" -eq 124 ]
+  [[ "$output" == *"timed out"* ]]
+  [[ "$output" != *"SLOW"* ]]
 }
 
 # ─── Codex model sanitization ─────────────────────────────────
@@ -465,11 +503,11 @@ EOF
 # ─── Stderr output ────────────────────────────────────────────
 
 @test "stderr shows input size, mode, and dispatch type" {
-  create_mock "gemini" "OK"
+  create_mock "mock-gemini" "OK"
   isolated_path
 
   local stderr_file="$TMPDIR_TEST/stderr.txt"
-  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider gemini --mode test 2>'$stderr_file'"
+  run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider mock-gemini --mode test 2>'$stderr_file'"
   [ "$status" -eq 0 ]
 
   local stderr_content

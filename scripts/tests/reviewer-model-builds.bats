@@ -21,9 +21,24 @@ setup() {
   [ -f "$fallback_alt" ]
   run rg -n 'review-primary|review-alt' "$primary" "$alt" "$fallback_primary" "$fallback_alt"
   [ "$status" -eq 1 ]
-  run rg -n 'model = "gpt-5.4"' "$primary" "$fallback_primary"
+  # DERIVE the expected models from the router instead of hardcoding them. The old
+  # literals ("gpt-5.4" / "gpt-5.3-codex") were a FOURTH copy of the model list,
+  # alongside model-registry.sh, the router table and the build itself — and
+  # gpt-5.3-codex had already left the registry a generation earlier, so this
+  # asserted a pairing that could no longer be produced. What is worth pinning is
+  # that the BUILD and the ROUTER agree; a model rename should move both together
+  # or fail here, not be re-typed in a third place.
+  local want_primary want_alt
+  want_primary="$(env -u CLAUDECODE -u CODEX_SANDBOX ZUVO_CODEX_MODEL=gpt-5.5 \
+      bash "$REPO_ROOT/scripts/reviewer-model-route.sh" | sed -n 's/^reviewer_model=//p')"
+  want_alt="$(env -u CLAUDECODE -u CODEX_SANDBOX ZUVO_CODEX_MODEL=gpt-5.4 \
+      bash "$REPO_ROOT/scripts/reviewer-model-route.sh" | sed -n 's/^reviewer_model=//p')"
+  [ -n "$want_primary" ]
+  [ -n "$want_alt" ]
+  [ "$want_primary" != "$want_alt" ]   # a build that collapsed both lanes to one model is broken
+  run rg -n "model = \"$want_primary\"" "$primary" "$fallback_primary"
   [ "$status" -eq 0 ]
-  run rg -n 'model = "gpt-5.3-codex"' "$alt" "$fallback_alt"
+  run rg -n "model = \"$want_alt\"" "$alt" "$fallback_alt"
   [ "$status" -eq 0 ]
 }
 

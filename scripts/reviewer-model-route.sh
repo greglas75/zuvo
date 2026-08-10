@@ -148,6 +148,19 @@ case "$platform" in
         reviewer_model="gpt-5.4"
         routing_status="ok"
         ;;
+      gpt-5.6-sol)
+        # model-registry.sh designates this ZUVO_MODEL_CODEX_PRIMARY, but this
+        # table never learned it, so the registry's OWN primary resolved to
+        # `unknown-writer-model` -> same-model-fallback: a Codex session on the
+        # default model reviewed its own work with itself, which is exactly what
+        # the cross-model routing exists to prevent. Found 2026-08-11 while
+        # repairing these tests — the two registries had drifted the same way the
+        # CLIENT lists had (f5a8a10), just for MODELS instead.
+        writer_lane="strong_primary"
+        reviewer_lane="review-alt"
+        reviewer_model="gpt-5.4"
+        routing_status="ok"
+        ;;
     esac
     ;;
   cursor)

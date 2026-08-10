@@ -38,7 +38,33 @@ teardown() {
 }
 
 isolated_path() {
-  export PATH="$MOCK_BIN:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
+  # Isolated PATH: mocks + system essentials ONLY.
+  #
+  # /opt/homebrew/bin used to be appended here for `timeout` (macOS ships none),
+  # and that quietly un-isolated the whole suite: the REAL codex lives there, the
+  # script picks the first available client rather than one named by the *_MODEL
+  # env var, so every test that mocks a NON-codex provider ran the real codex
+  # instead and failed with its account error. Invisible until 2026-08-10, when
+  # installing bats stopped the runner from skipping this group entirely.
+  #
+  # Fix: shim the few real binaries we need INTO the mock dir, so the mock dir can
+  # be the only non-system entry. A tool that is genuinely absent stays absent —
+  # the script's own no-timeout fallback covers it.
+  local _real
+  for _real in timeout gtimeout jq; do
+    if [ ! -e "$MOCK_BIN/$_real" ]; then
+      _p="$(PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin command -v "$_real" 2>/dev/null || true)"
+      [ -n "$_p" ] && ln -sf "$_p" "$MOCK_BIN/$_real"
+    fi
+  done
+  export PATH="$MOCK_BIN:/usr/bin:/bin:/usr/sbin:/sbin"
+
+  # Neutralise HOST auto-exclusion. The script deliberately refuses to audit with
+  # the client it is RUNNING under (CLAUDECODE=1 -> skip claude, etc.), which is
+  # correct behaviour and separately tested below. Left set, it made the claude
+  # case unpassable from inside Claude Code and passable elsewhere — a test whose
+  # result depended on who ran it.
+  unset CLAUDECODE CODEX_SANDBOX ANTIGRAVITY_SESSION_ID VSCODE_GIT_ASKPASS_MAIN
 }
 
 valid_block() {
@@ -148,4 +174,25 @@ EOF
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"Coverage verdict: CLEAN"* ]]
+}
+
+@test "host auto-exclusion: CLAUDECODE=1 refuses to blind-audit with claude" {
+  # The behaviour the neutralisation above removes from the other cases, pinned
+  # here on its own: a claude host must not review its own work, even when claude
+  # is the only client available.
+  create_claude_mock
+  isolated_path
+
+  run env CLAUDECODE=1 CLAUDE_MODEL=sonnet "$SCRIPT" \
+    --protocol "$PROTOCOL_FILE" \
+    --production "$PRODUCTION_FILE" \
+    --test "$TEST_FILE" \
+    --timeout 5
+
+  [ "$status" -ne 0 ]
+  # Assert the REASON, not merely a non-zero exit: any crash would satisfy the
+  # exit code alone, so this must name the exclusion the test exists to prove.
+  [[ "$output" == *"Host detected: claude"* ]]
+  [[ "$output" == *"auto-excluding"* ]]
+  [[ "$output" != *"Coverage verdict: CLEAN"* ]]
 }

@@ -3,7 +3,16 @@
 SCRIPT="$BATS_TEST_DIRNAME/../reviewer-model-route.sh"
 
 run_route() {
-  run env "$@" "$SCRIPT"
+  # Strip the AMBIENT host markers before applying the case's own env.
+  #
+  # The script derives `platform` from them, so every Codex/Antigravity case
+  # asserted platform=codex/gemini while the harness inherited CLAUDECODE=1 from
+  # whatever agent ran the suite — the test's result depended on WHO ran it, and
+  # the Claude cases passed for the wrong reason (ambient, not the case's env).
+  # Invisible until 2026-08-10, when installing bats stopped the runner from
+  # skipping this whole group.
+  run env -u CLAUDECODE -u CODEX_SANDBOX -u ANTIGRAVITY_SESSION_ID \
+      -u VSCODE_GIT_ASKPASS_MAIN -u CLAUDE_CODE_ENTRYPOINT "$@" "$SCRIPT"
 }
 
 assert_line() {
@@ -55,26 +64,43 @@ assert_line() {
   assert_line "routing_status=ok"
 }
 
-@test "routes Codex gpt-5.4 writer to gpt-5.3-codex alternate reviewer" {
+@test "routes Codex gpt-5.4 writer to gpt-5.5 alternate reviewer" {
   run_route ZUVO_CODEX_MODEL=gpt-5.4
   [ "$status" -eq 0 ]
   assert_line "platform=codex"
   assert_line "writer_model=gpt-5.4"
   assert_line "writer_lane=strong_primary"
   assert_line "reviewer_lane=review-alt"
-  assert_line "reviewer_model=gpt-5.3-codex"
+  assert_line "reviewer_model=gpt-5.5"
   assert_line "routing_status=ok"
 }
 
-@test "routes Codex gpt-5.3-codex writer to gpt-5.4 primary reviewer" {
-  run_route ZUVO_CODEX_MODEL=gpt-5.3-codex
+@test "routes Codex gpt-5.5 writer to gpt-5.4 primary reviewer" {
+  # gpt-5.3-codex left the registry a generation ago, so the old pair asserted a
+  # route that could no longer exist. This covers the model that actually holds
+  # the strong_alt lane now.
+  run_route ZUVO_CODEX_MODEL=gpt-5.5
   [ "$status" -eq 0 ]
   assert_line "platform=codex"
-  assert_line "writer_model=gpt-5.3-codex"
+  assert_line "writer_model=gpt-5.5"
   assert_line "writer_lane=strong_alt"
   assert_line "reviewer_lane=review-primary"
   assert_line "reviewer_model=gpt-5.4"
   assert_line "routing_status=ok"
+}
+
+@test "the registry's OWN Codex primary must not fall back to itself" {
+  # Regression lock for a real defect this repair uncovered: model-registry.sh
+  # names gpt-5.6-sol as ZUVO_MODEL_CODEX_PRIMARY, but the router's table never
+  # learned it, so the DEFAULT Codex model resolved to unknown-writer-model and
+  # then same-model-fallback — a Codex session reviewing its own work with the
+  # same model, which is the one outcome cross-model routing exists to prevent.
+  run_route ZUVO_CODEX_MODEL=gpt-5.6-sol
+  [ "$status" -eq 0 ]
+  assert_line "routing_status=ok"
+  [[ "$output" != *"same-model-fallback"* ]]
+  [[ "$output" != *"unknown-writer-model"* ]]
+  [[ "$output" != *"reviewer_model=gpt-5.6-sol"* ]]
 }
 
 @test "falls back explicitly when environment is unsupported" {
