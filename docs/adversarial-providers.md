@@ -27,9 +27,9 @@ self-exclusion below enforces it.
 
 | Provider | Vendor | Default model | Override env | Invocation (headless) |
 |----------|--------|---------------|--------------|-----------------------|
-| `agy` | Google (Antigravity) | `Gemini 3.5 Flash (High)` | `ZUVO_AGY_MODEL` | `agy -p "<prompt>" --model <m> --dangerously-skip-permissions` (prompt = **arg**) |
+| `agy` | Google (Antigravity) | `Gemini 3.6 Flash (High)` | `ZUVO_AGY_MODEL` | `agy -p "<prompt>" --model <m> --dangerously-skip-permissions` (prompt = **arg**) |
 | `codex-5.3` / `codex-5.4` | OpenAI | `gpt-5.6-sol` / `gpt-5.4` | `ZUVO_MODEL_CODEX_PRIMARY` / `ZUVO_MODEL_CODEX_ALT` | `codex` (spark/gpt lane; 5.6 needs codex CLI ≥0.144) |
-| `claude` | Anthropic | Opposite of author: `claude-sonnet-5` (Opus author) or `claude-opus-4-8` (Sonnet/Haiku author) | `ZUVO_CLAUDE_REVIEWER_MODEL` (Sonnet branch) | `claude --model <m> --print --output-format text` |
+| `claude` | Anthropic | Opposite of author: `claude-sonnet-5` (Opus author) or `claude-opus-5` (Sonnet/Haiku author) | `ZUVO_CLAUDE_REVIEWER_MODEL` (Sonnet branch) | `claude --model <m> --print --output-format text` |
 | `cursor-agent` | Cursor | `composer-2.5-fast` | `ZUVO_CURSOR_MODEL` | `… \| cursor-agent -p --model <m> --mode ask --trust --workspace /tmp` (prompt = **stdin**) |
 | `gemini-api` | Google (API) | `gemini-3.1-pro-preview` | `ZUVO_GEMINI_API_MODEL` | `curl` to Gemini API (needs `GEMINI_API_KEY`) — fallback only |
 | `gemini` (CLI) | Google (free/OAuth) | `gemini-3.1-pro-preview` | `ZUVO_GEMINI_MODEL` | **DEAD for individuals** — see below |
@@ -47,7 +47,7 @@ prompt). `--model` values for `agy`/`cursor-agent` are the **display / id string
 
 | Provider | Model | Status | Typical latency |
 |----------|-------|--------|-----------------|
-| `agy` | Gemini 3.5 Flash (High) | ✅ working | ~9s |
+| `agy` | Gemini 3.6 Flash (High) | ✅ working | ~9s |
 | `codex-5.3` | gpt-5.6-sol | ✅ working (benchmarked 2026-07-19: 18s, most complete findings of the 5.6 family; needs codex CLI ≥0.144) | ~10-30s |
 | `claude` | Sonnet 5 (Opus author) | ✅ working | ~40s |
 | `cursor-agent` | Composer 2.5 Fast | ✅ working (after `cursor-agent login`) | ~19s |

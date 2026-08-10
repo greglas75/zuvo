@@ -134,7 +134,7 @@ agent and self-scoring the result is a substituted gate, not a degraded run.
 
 The judge must be a different model than the one running this skill to reduce self-serving bias:
 - If `$CLAUDE_MODEL` contains "opus" → use `claude-sonnet-5`
-- Otherwise (sonnet, haiku, or unset) → use `claude-opus-4-8`
+- Otherwise (sonnet, haiku, or unset) → use `claude-opus-5`
 
 This is the **opposite** model from the one executing this skill.
 
@@ -292,7 +292,7 @@ The JSON file must conform to the schema version `"2.0"` defined in `../../share
   "scored": ["claude", "gemini", "codex-fast"],
   "leaderboard": [...],
   "scorecards": {...},
-  "meta_judge_model": "claude-opus-4-8",
+  "meta_judge_model": "claude-opus-5",
   "judge_presentation_order": ["gemini", "claude", "codex-fast"],
   "judge_input_truncated": false
 }

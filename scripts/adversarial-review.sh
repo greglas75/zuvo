@@ -106,6 +106,7 @@ ARTIFACT_PATH=""
 INPUT_MODE="stdin"  # stdin | diff | files
 DRY_RUN=false
 DOCTOR=false         # --doctor: live auth probe of every detected provider, then exit
+LIST_PROVIDERS=false     # --list-providers: print detected clients, one per line, and exit
 EXCLUDE_PROVIDER=""  # --exclude: skip this provider (used by --rotate to avoid repeat)
 EXCLUDE_LAST=""      # --exclude-last: cross-call rotation handoff (D4)
 APPEND_ARTIFACT=false  # --append-artifact: append this pass to an existing artifact (rotations)
@@ -181,6 +182,7 @@ PROVIDER_FAIL_CACHE="${_ar_cache_dir:+$_ar_cache_dir/}failed-providers.${_ar_cac
 while [[ $# -gt 0 ]]; do
   case $1 in
     --doctor)    DOCTOR=true; shift ;;
+    --list-providers) LIST_PROVIDERS=true; shift ;;
     --provider)  PROVIDER="$2"; shift 2 ;;
     --multi)     MULTI_MODE="multi"; shift ;;
     --single)    MULTI_MODE="single"; shift ;;
@@ -261,6 +263,8 @@ Diagnostics:
   --doctor         Live auth+dispatch probe of every detected provider (tiny prompt,
                    ZUVO_DOCTOR_TIMEOUT=60s each). Presence on PATH ≠ working login —
                    run this after provisioning a host/bot. Exit 0 if ≥1 provider works.
+  --list-providers Print the detected client list (one per line) and exit. The single
+                   source reviewer-preflight.sh reads instead of keeping its own.
 
 Output:
   --json           Machine-readable JSON (for agent-in-the-loop)
@@ -294,7 +298,7 @@ Environment variables:
   ZUVO_AGY_MODEL           agy (Antigravity CLI) model — the sanctioned paid Gemini channel, and the
                            only Gemini lane this script supports (Google killed the free `gemini` CLI
                            for individuals — IneligibleTierError — and there is no other fallback).
-                           Display name from 'agy models' (default: "Gemini 3.5 Flash (High)";
+                           Display name from 'agy models' (default: "Gemini 3.6 Flash (High)";
                            e.g. "Gemini 3.1 Pro (High)" for max depth).
   ZUVO_CURSOR_MODEL        cursor-agent model (default: composer-2.5-fast; id from 'cursor-agent models')
   ZUVO_CLAUDE_REVIEWER_MODEL  claude reviewer's Sonnet model when the author is Opus (default: claude-sonnet-5)
@@ -433,8 +437,8 @@ collect_input() {
 
 # Doctor mode needs no review input (it sends its own probe prompt) — skipping
 # collect_input also avoids the 10s stdin wait on a bare `adversarial-review --doctor`.
-if [[ "$DOCTOR" == "true" ]]; then
-  INPUT="(doctor probe)"
+  if [[ "$DOCTOR" == "true" || "$LIST_PROVIDERS" == "true" ]]; then
+    INPUT="(no review input needed)"
 else
   INPUT=$(collect_input)
 fi
@@ -1102,6 +1106,18 @@ detect_providers() {
   echo "$providers"
 }
 
+# Single source of client detection, exposed as a query. reviewer-preflight.sh kept
+# its own hand-written `for candidate in codex gemini agy claude`, which knew nothing
+# about cursor-agent or kimi and nothing about the /Applications/Codex.app fallback —
+# so the blind audit could reach fewer reviewers than the adversarial pass on the SAME
+# machine. Model IDs were unified into shared/includes/model-registry.sh long ago;
+# client DETECTION never was. Placed here because bash needs the function defined
+# before it is called, and input collection above already skips for this flag.
+if [[ "$LIST_PROVIDERS" == "true" ]]; then
+  detect_providers | tr ' ' '\n' | sed '/^$/d'
+  exit 0
+fi
+
 if [[ -n "$PROVIDER" ]]; then
   # Reject an unknown provider HERE, loudly, instead of letting it flow into
   # dispatch where the `*)` arm just `return 1`s and the run reports the generic
@@ -1290,7 +1306,7 @@ run_claude() {
   # default to Sonnet (correct for the common Opus author), and only flip to Opus when the host
   # is explicitly Sonnet. This way an unset env never silently degrades to Opus-reviews-Opus.
   if [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]]; then
-    model="${ZUVO_MODEL_CLAUDE_OPUS:-claude-opus-4-8}"
+    model="${ZUVO_MODEL_CLAUDE_OPUS:-claude-opus-5}"
   else
     # CLAUDE_MODEL unset → assume the common Opus author and review with Sonnet. This is a
     # heuristic, not proof: a Sonnet author with CLAUDE_MODEL unset would get Sonnet-reviews-Sonnet.
@@ -1372,7 +1388,7 @@ run_agy() {
   # --dangerously-skip-permissions is required so a headless run never blocks on a tool-permission
   # prompt. Override the model with ZUVO_AGY_MODEL (e.g. "Gemini 3.1 Pro (High)" for max depth);
   # default comes from the central model registry (ZUVO_MODEL_AGY).
-  local model="${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.5 Flash (High)}}"
+  local model="${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.6 Flash (High)}}"
   local err_file="$JSON_TMPDIR/err_agy.txt"
   local out_file="$JSON_TMPDIR/raw_agy.txt"
   local result status=0
@@ -1669,12 +1685,12 @@ provider_model() {
   case "$1" in
     codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}" ;;
     codex-5.3)    echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}" ;;
-    agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.5 Flash (High)}}" ;;
+    agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.6 Flash (High)}}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
     kimi-api)     echo "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" ;;
     kimi)         echo "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3}}" ;;
     cursor-agent) echo "${ZUVO_CURSOR_MODEL:-${ZUVO_MODEL_CURSOR:-composer-2.5-fast}}" ;;
-    claude)       [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]] && echo "${ZUVO_MODEL_CLAUDE_OPUS:-claude-opus-4-8}" || echo "${ZUVO_CLAUDE_REVIEWER_MODEL:-${ZUVO_MODEL_CLAUDE_SONNET:-claude-sonnet-5}}" ;;
+    claude)       [[ "${CLAUDE_MODEL:-}" == *sonnet* || "${CLAUDE_MODEL:-}" == *haiku* ]] && echo "${ZUVO_MODEL_CLAUDE_OPUS:-claude-opus-5}" || echo "${ZUVO_CLAUDE_REVIEWER_MODEL:-${ZUVO_MODEL_CLAUDE_SONNET:-claude-sonnet-5}}" ;;
     *)            echo "unknown" ;;
   esac
 }

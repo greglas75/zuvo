@@ -17,7 +17,7 @@
 # `"$(dirname "$0")/../shared/includes/model-registry.sh"` in all of them.
 
 # ── Anthropic (Claude) ──────────────────────────────────────────────
-ZUVO_MODEL_CLAUDE_OPUS="${ZUVO_MODEL_CLAUDE_OPUS:-claude-opus-4-8}"
+ZUVO_MODEL_CLAUDE_OPUS="${ZUVO_MODEL_CLAUDE_OPUS:-claude-opus-5}"
 ZUVO_MODEL_CLAUDE_SONNET="${ZUVO_MODEL_CLAUDE_SONNET:-claude-sonnet-5}"
 ZUVO_MODEL_CLAUDE_HAIKU="${ZUVO_MODEL_CLAUDE_HAIKU:-claude-haiku-4-5-20251001}"
 
@@ -29,7 +29,7 @@ ZUVO_MODEL_CODEX_PRIMARY="${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}"  # codex-5.3
 ZUVO_MODEL_CODEX_ALT="${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}"              # codex-5.4 lane (host-flip)
 
 # ── Google (Gemini) ─────────────────────────────────────────────────
-ZUVO_MODEL_AGY="${ZUVO_MODEL_AGY:-Gemini 3.5 Flash (High)}"          # agy default (fast, display name from `agy models`)
+ZUVO_MODEL_AGY="${ZUVO_MODEL_AGY:-Gemini 3.6 Flash (High)}"          # agy default (fast, display name from `agy models`)
 ZUVO_MODEL_AGY_DEEP="${ZUVO_MODEL_AGY_DEEP:-Gemini 3.1 Pro (High)}"  # agy max-depth alternative
 ZUVO_MODEL_GEMINI_API="${ZUVO_MODEL_GEMINI_API:-gemini-3.1-pro-preview}"  # gemini-api curl fallback (needs GEMINI_API_KEY)
 

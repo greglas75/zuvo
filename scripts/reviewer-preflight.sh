@@ -111,6 +111,13 @@ elif [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"Antigravity"* ]] \
   || [ -n "${ANTIGRAVITY_SESSION_ID:-}" ]; then
   # agy IS the Antigravity CLI, so on that host it is same-model like gemini.
   HOST_EXCLUDE="gemini agy"
+elif [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"Cursor"* ]] \
+  || [ -n "${CURSOR_AGENT_MODEL:-}" ] || [ -n "${CURSOR_MODEL:-}" ]; then
+  # Cursor had no arm here at all. Harmless while cursor-agent was invisible to
+  # this script; the moment detect_providers() made it reachable, the host could
+  # have been picked as its own "cross-model" reviewer — same model, ok status,
+  # no signal that the audit was worthless.
+  HOST_EXCLUDE="cursor-agent"
 fi
 
 # `agy` is in this list because it is the ONLY client test-reviewer-routing.md
@@ -121,8 +128,24 @@ fi
 # ("a working cross-model client sits right next to it"). Measured cost of
 # accepting that degrade: a same-model audit returned CLEAN where agy found 8
 # uncovered defensive paths on the same pair.
+# Ask adversarial-review for the client list instead of keeping a second one.
+# Its detect_providers() knows cursor-agent and kimi and the
+# /Applications/Codex.app fallback; this file's hand-written list knew none of
+# them, so the blind audit could reach fewer reviewers than the adversarial pass
+# on the SAME machine, and listed `gemini` which is dead at the account level.
+# Model IDs were unified into shared/includes/model-registry.sh long ago; client
+# DETECTION is unified here. Fail-safe: if the script is absent, fall back to the
+# old inline list rather than reporting no-provider.
+ADV="$SCRIPT_DIR/adversarial-review.sh"
+DETECTED=""
+if [ -x "$ADV" ] || [ -f "$ADV" ]; then
+  DETECTED="$(run_with_timeout 20 bash "$ADV" --list-providers 2>/dev/null \
+              | sed 's/-[0-9][0-9.]*$//' | tr '\n' ' ')"
+fi
+[ -z "${DETECTED// /}" ] && DETECTED="codex gemini agy claude"
+
 CANDIDATES=""
-for candidate in codex gemini agy claude; do
+for candidate in $DETECTED; do
   case " $HOST_EXCLUDE " in *" $candidate "*) continue ;; esac
   command -v "$candidate" >/dev/null 2>&1 && CANDIDATES="$CANDIDATES $candidate"
 done
@@ -162,6 +185,14 @@ if [ "$CANARY" -eq 1 ]; then
         # prompt as an ARGUMENT, never stdin — piping stdin hangs this client
         # (documented at scripts/adversarial-review.sh, the agy dispatch block).
         run_with_timeout "$TIMEOUT_SECONDS" agy -p "$PROMPT" \
+          > "$tmpout" 2>/dev/null
+        ;;
+      cursor-agent)
+        run_with_timeout "$TIMEOUT_SECONDS" cursor-agent -p "$PROMPT" \
+          > "$tmpout" 2>/dev/null
+        ;;
+      kimi)
+        run_with_timeout "$TIMEOUT_SECONDS" kimi -p "$PROMPT" \
           > "$tmpout" 2>/dev/null
         ;;
       claude)

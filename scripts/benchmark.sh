@@ -242,7 +242,7 @@ run_claude() {
   if [[ "${CLAUDE_MODEL:-}" == *opus* ]]; then
     model="${ZUVO_MODEL_CLAUDE_SONNET:-claude-sonnet-5}"   # opus author -> sonnet reviewer (was stale claude-sonnet-4-6)
   else
-    model="${ZUVO_MODEL_CLAUDE_OPUS:-claude-opus-4-8}"     # sonnet author -> opus reviewer (was stale claude-opus-4-6)
+    model="${ZUVO_MODEL_CLAUDE_OPUS:-claude-opus-5}"     # sonnet author -> opus reviewer (was stale claude-opus-4-6)
   fi
 
   local err_file="$JSON_TMPDIR/err_claude.txt"
