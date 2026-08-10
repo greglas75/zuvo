@@ -151,13 +151,40 @@ case "$platform" in
     esac
     ;;
   cursor)
+    # Glob, not literal: `fast`/`inherit` are what Cursor's model PICKER shows,
+    # but CURSOR_AGENT_MODEL reports the resolved name (`composer-2.5-fast`), so
+    # the literal arms never matched a real run and every Cursor writer was
+    # lane=unknown — which is itself a degrade trigger elsewhere.
     case "$writer_model" in
-      fast) writer_lane="small" ;;
-      inherit) writer_lane="strong_primary" ;;
+      fast|*-fast|*fast*) writer_lane="small" ;;
+      inherit|composer*|*-max|*max*) writer_lane="strong_primary" ;;
     esac
-    routing_status="same-model-fallback"
-    reviewer_lane="same-model-fallback"
-    reviewer_model="$writer_model"
+    # Cursor used to hardcode same-model-fallback here, unconditionally — the only
+    # host that gave up without looking. antigravity, five lines down, routes to a
+    # different model and reports ok. The consequence was not cosmetic: preflight
+    # turns a non-ok routing_status into `degraded-routing`, which per
+    # test-reviewer-routing.md caps the blind audit at `clean:degraded` — and that
+    # include measured a same-model audit returning CLEAN where agy found 8
+    # uncovered defensive paths on the same pair. Every Cursor run took that hit,
+    # forever, even with a working cross-model client installed.
+    #
+    # cursor-agent is the host, so agy / codex / claude are all cross-model from
+    # here. Name the first one present; the preflight canary still has to prove it
+    # answers, so a listed-but-dead client degrades there rather than being
+    # asserted working here.
+    reviewer_model=""
+    for _c in agy codex claude; do
+      if command -v "$_c" >/dev/null 2>&1; then reviewer_model="$_c"; break; fi
+    done
+    if [ -n "$reviewer_model" ]; then
+      reviewer_lane="review-alt"
+      routing_status="ok"
+    else
+      routing_status="same-model-fallback"
+      reviewer_lane="same-model-fallback"
+      reviewer_model="$writer_model"
+    fi
+    unset _c
     ;;
   antigravity)
     case "$writer_model" in

@@ -109,21 +109,28 @@ elif [ -n "${CODEX_SANDBOX:-}" ]; then
 elif [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"Antigravity"* ]] \
   || [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"antigravity"* ]] \
   || [ -n "${ANTIGRAVITY_SESSION_ID:-}" ]; then
-  HOST_EXCLUDE="gemini"
+  # agy IS the Antigravity CLI, so on that host it is same-model like gemini.
+  HOST_EXCLUDE="gemini agy"
 fi
 
-PROVIDER=""
-for candidate in codex gemini claude; do
-  [ "$candidate" = "$HOST_EXCLUDE" ] && continue
-  if command -v "$candidate" >/dev/null 2>&1; then
-    PROVIDER="$candidate"
-    break
-  fi
+# `agy` is in this list because it is the ONLY client test-reviewer-routing.md
+# records as working cross-model (codex and gemini are both dead at the ACCOUNT
+# level; claude is the host). Probing only codex/gemini/claude found a provider,
+# failed to route it, and reported degraded-routing while the one reviewer that
+# works sat unprobed — which is the exact scenario that include warns about
+# ("a working cross-model client sits right next to it"). Measured cost of
+# accepting that degrade: a same-model audit returned CLEAN where agy found 8
+# uncovered defensive paths on the same pair.
+CANDIDATES=""
+for candidate in codex gemini agy claude; do
+  case " $HOST_EXCLUDE " in *" $candidate "*) continue ;; esac
+  command -v "$candidate" >/dev/null 2>&1 && CANDIDATES="$CANDIDATES $candidate"
 done
 
-if [ -z "$PROVIDER" ]; then
+if [ -z "${CANDIDATES// /}" ]; then
   emit_and_exit "no-provider" "none" 1 "$ROUTE_OUT"
 fi
+PROVIDER="${CANDIDATES%% *}"; PROVIDER="${PROVIDER# }"
 
 # ── 3. optional canary round-trip ─────────────────────────────────────────────
 if [ "$CANARY" -eq 1 ]; then
@@ -131,24 +138,44 @@ if [ "$CANARY" -eq 1 ]; then
   PROMPT="Respond with exactly this token and nothing else: $MARKER"
   tmpout="$(mktemp "${TMPDIR:-/tmp}/zuvo-preflight.XXXXXX")"
   trap 'rm -f "$tmpout"' EXIT
-  case "$PROVIDER" in
-    codex)
-      printf '%s\n' "$PROMPT" | run_with_timeout "$TIMEOUT_SECONDS" \
-        codex exec --ephemeral --color never --skip-git-repo-check - \
-        > "$tmpout" 2>/dev/null
-      ;;
-    gemini)
-      printf '%s\n' "$PROMPT" | run_with_timeout "$TIMEOUT_SECONDS" \
-        gemini --allowed-mcp-server-names __NONE__ -p "" \
-        > "$tmpout" 2>/dev/null
-      ;;
-    claude)
-      printf '%s\n' "$PROMPT" | run_with_timeout "$TIMEOUT_SECONDS" \
-        claude --print --output-format text --tools "" \
-        > "$tmpout" 2>/dev/null
-      ;;
-  esac
-  if ! grep -q "$MARKER" "$tmpout" 2>/dev/null; then
+
+  # Try EVERY available candidate, not just the first. A dead account on the
+  # first client is not evidence that cross-model review is unavailable —
+  # test-reviewer-routing.md says so in as many words, and both codex and gemini
+  # are currently dead at the account level while agy works. Stopping at the
+  # first failure is what turned "one bad account" into a whole-run degrade.
+  CANARY_OK=""
+  for cand in $CANDIDATES; do
+    : > "$tmpout"
+    case "$cand" in
+      codex)
+        printf '%s\n' "$PROMPT" | run_with_timeout "$TIMEOUT_SECONDS" \
+          codex exec --ephemeral --color never --skip-git-repo-check - \
+          > "$tmpout" 2>/dev/null
+        ;;
+      gemini)
+        printf '%s\n' "$PROMPT" | run_with_timeout "$TIMEOUT_SECONDS" \
+          gemini --allowed-mcp-server-names __NONE__ -p "" \
+          > "$tmpout" 2>/dev/null
+        ;;
+      agy)
+        # prompt as an ARGUMENT, never stdin — piping stdin hangs this client
+        # (documented at scripts/adversarial-review.sh, the agy dispatch block).
+        run_with_timeout "$TIMEOUT_SECONDS" agy -p "$PROMPT" \
+          > "$tmpout" 2>/dev/null
+        ;;
+      claude)
+        printf '%s\n' "$PROMPT" | run_with_timeout "$TIMEOUT_SECONDS" \
+          claude --print --output-format text --tools "" \
+          > "$tmpout" 2>/dev/null
+        ;;
+    esac
+    if grep -q "$MARKER" "$tmpout" 2>/dev/null; then
+      CANARY_OK="$cand"; PROVIDER="$cand"; break
+    fi
+  done
+
+  if [ -z "$CANARY_OK" ]; then
     emit_and_exit "canary-failed" "$PROVIDER" 1 "$ROUTE_OUT"
   fi
 fi
