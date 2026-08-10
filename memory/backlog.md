@@ -480,3 +480,26 @@ Recipe:
      copies that already disagree by two entries.
   3. Add a test asserting every skills/*/SKILL.md either loads retrospective.md, or appears
      in the exemption list. That check is what would have caught this.
+
+## B-BATS-GROUP-ROTTED — 4 .bats suites broken since ~v1.3.83, hidden by an optional-tool skip
+Surfaced 2026-08-10 when `bats` (1.14.0) appeared on PATH and `tests/run-all.sh` stopped
+printing `SKIP: scripts/tests/*.bats (bats not installed — group skipped)`.
+Failing: adversarial-review.bats, blind-audit-codex.bats, reviewer-model-builds.bats,
+reviewer-model-route.bats. reviewer-model-route.bats reports 5 `not ok` — the same 5 at
+HEAD and at v1.6.65, so this predates the current work entirely; the file was last touched
+at v1.3.83. Sample failure: `assert_line "platform=codex"` — the resolver's output shape and
+the test's expectation have diverged, on both sides of every recent release.
+This is the SECOND instance of the same trap: `test-install-wiring.sh` already documents
+shellcheck activating latently on 2026-08-02 and turning an unchanged installer into 4 FAILs
+that blocked an unrelated release. An optional-tool SKIP is not neutral — it lets a suite rot
+silently and then detonates on whoever installs the tool next.
+Defer-reason: NOT size — the fix needs a decision about whether the resolver or the tests are
+right (its output shape changed deliberately at some point), and that is separate work from
+the release it is currently blocking.
+Recipe:
+  1. Diff `scripts/zuvo-home/reviewer-model-route` (or wherever the resolver lives) output
+     against what the .bats files assert. Decide which is canonical.
+  2. Fix the losing side; re-run all four suites under bats 1.14.
+  3. Then close the CLASS, not just the instance: make `run-all.sh` print optional-tool skips
+     into the RESULT line (e.g. `SKIP=1 (bats)`), so "green" never silently means "green
+     minus a group nobody ran". A skipped group that no one can see is how both of these rotted.
