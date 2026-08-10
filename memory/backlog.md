@@ -481,7 +481,15 @@ Recipe:
   3. Add a test asserting every skills/*/SKILL.md either loads retrospective.md, or appears
      in the exemption list. That check is what would have caught this.
 
-## B-BATS-GROUP-ROTTED — 4 .bats suites broken since ~v1.3.83, hidden by an optional-tool skip
+## B-BATS-GROUP-ROTTED — 4 .bats suites broken since ~v1.3.83, hidden by an optional-tool skip **[DONE 2026-08-11, commit 6811a6a — all four green, 26 tests repaired]**
+> Closing note: the diagnosis here was right about the trap and slightly off about the cause.
+> `reviewer-model-route` was not an output-shape divergence — the tests inherited the AMBIENT
+> host markers (`CLAUDECODE=1`), so they asserted `platform=codex` while the harness forced
+> `platform=claude`. Same class in `blind-audit-codex` (its claude case was unpassable from
+> inside Claude Code) and in `isolated_path()`, which appended `/opt/homebrew/bin` where the
+> REAL codex lives. Repairing them surfaced a genuine defect: `gpt-5.6-sol`
+> (ZUVO_MODEL_CODEX_PRIMARY) was missing from the router table, so the default Codex model
+> fell back to same-model review of its own work.
 Surfaced 2026-08-10 when `bats` (1.14.0) appeared on PATH and `tests/run-all.sh` stopped
 printing `SKIP: scripts/tests/*.bats (bats not installed — group skipped)`.
 Failing: adversarial-review.bats, blind-audit-codex.bats, reviewer-model-builds.bats,
