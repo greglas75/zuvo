@@ -298,7 +298,7 @@ Environment variables:
   ZUVO_AGY_MODEL           agy (Antigravity CLI) model — the sanctioned paid Gemini channel, and the
                            only Gemini lane this script supports (Google killed the free `gemini` CLI
                            for individuals — IneligibleTierError — and there is no other fallback).
-                           Display name from 'agy models' (default: "Gemini 3.6 Flash (High)";
+                           Display name from 'agy models' (default: "Gemini 3.1 Pro (High)";
                            e.g. "Gemini 3.1 Pro (High)" for max depth).
   ZUVO_CURSOR_MODEL        cursor-agent model (default: composer-2.5-fast; id from 'cursor-agent models')
   ZUVO_CLAUDE_REVIEWER_MODEL  claude reviewer's Sonnet model when the author is Opus (default: claude-sonnet-5)
@@ -1388,7 +1388,7 @@ run_agy() {
   # --dangerously-skip-permissions is required so a headless run never blocks on a tool-permission
   # prompt. Override the model with ZUVO_AGY_MODEL (e.g. "Gemini 3.1 Pro (High)" for max depth);
   # default comes from the central model registry (ZUVO_MODEL_AGY).
-  local model="${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.6 Flash (High)}}"
+  local model="${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.1 Pro (High)}}"
   local err_file="$JSON_TMPDIR/err_agy.txt"
   local out_file="$JSON_TMPDIR/raw_agy.txt"
   local result status=0
@@ -1685,7 +1685,7 @@ provider_model() {
   case "$1" in
     codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}" ;;
     codex-5.3)    echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}" ;;
-    agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.6 Flash (High)}}" ;;
+    agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.1 Pro (High)}}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
     kimi-api)     echo "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" ;;
     kimi)         echo "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3}}" ;;

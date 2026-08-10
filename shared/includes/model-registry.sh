@@ -29,8 +29,18 @@ ZUVO_MODEL_CODEX_PRIMARY="${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}"  # codex-5.3
 ZUVO_MODEL_CODEX_ALT="${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}"              # codex-5.4 lane (host-flip)
 
 # ── Google (Gemini) ─────────────────────────────────────────────────
-ZUVO_MODEL_AGY="${ZUVO_MODEL_AGY:-Gemini 3.6 Flash (High)}"          # agy default (fast, display name from `agy models`)
-ZUVO_MODEL_AGY_DEEP="${ZUVO_MODEL_AGY_DEEP:-Gemini 3.1 Pro (High)}"  # agy max-depth alternative
+# Pro, not Flash, and deliberately: the measurement test-reviewer-routing.md cites
+# for agy's advantage (8 uncovered defensive paths a same-model audit returned CLEAN
+# on) was run on Pro (High). Defaulting to Flash made the default weaker than the
+# evidence used to justify the client. `agy models` tops out at 3.1 for the Pro tier
+# — 3.5/3.6 exist only as Flash — so 3.1 Pro (High) IS the current maximum, not a
+# stale pin. Display name, exactly as `agy models` prints it: a wrong string fails
+# silently rather than erroring.
+ZUVO_MODEL_AGY="${ZUVO_MODEL_AGY:-Gemini 3.1 Pro (High)}"
+# Same value as the default today, on purpose: with Pro capped at 3.1 High there is
+# nothing deeper to point at. Kept as a separate name so callers that ask for the
+# deep lane keep working, and so raising it is a one-line change if a higher Pro ships.
+ZUVO_MODEL_AGY_DEEP="${ZUVO_MODEL_AGY_DEEP:-Gemini 3.1 Pro (High)}"
 ZUVO_MODEL_GEMINI_API="${ZUVO_MODEL_GEMINI_API:-gemini-3.1-pro-preview}"  # gemini-api curl fallback (needs GEMINI_API_KEY)
 
 # ── Cursor ──────────────────────────────────────────────────────────
