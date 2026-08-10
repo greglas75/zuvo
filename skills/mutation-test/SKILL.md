@@ -222,18 +222,59 @@ BASELINE FAILED
   Suggestion: run zuvo:fix-tests to repair failing tests first.
 ```
 
-### 1.3 Calculate Timeouts
+### 1.3 Run the tests LOCALLY — never through a remote-runner wrapper
 
-- **Per-file timeout:** 3x the baseline time divided by number of test files, minimum 10 seconds
-- **Total timeout:** 3x the full baseline time, minimum 60 seconds
+**Do not prefix any command in this skill with `rt` (or any other offload wrapper.)**
+A global rule of the form "prefix test commands with `rt`" is correct for one long
+suite run and inverts here: the wrapper's cost is a fixed per-invocation charge
+(mirror sync + queue), and this skill makes N short invocations in a tight loop.
+
+Measured 2026-08-10 on the same single test file:
+
+| Invocation | Wall clock |
+|---|---|
+| `npx vitest run <file>` | **1.4 s** (2.2 s cold) |
+| `rt npx vitest run <file>` | **103.4 s** |
+
+~50-75x, and a single wrapped call alone exceeds the whole run budget below. A
+10-mutant plan that would finish in ~20 s locally cannot complete a single mutant
+through the wrapper. If a project genuinely cannot run its tests locally, this skill
+is not usable there — say so and stop; do not run it wrapped and report the timeout
+as a test-quality result.
+
+### 1.3b Calculate Timeouts — budget per-invocation cost, not suite time
+
+**Measure the real per-invocation cost first.** Run the mapped tests for the first
+target file ONCE, unmutated, and record wall clock as `PER_RUN`. That number carries
+runner startup, transform and setup — which dominate a short targeted run and are
+paid again for every mutation. The full-suite baseline time does NOT predict it.
+
+```
+PER_RUN        = measured wall clock of one unmutated targeted run
+TIER2_RUNS     = expected survivors (unknown up front — budget 30% of MUTATION_COUNT)
+BUDGET         = MUTATION_COUNT * PER_RUN * 1.5          # tier 1, +50% slack
+               + TIER2_RUNS * BASELINE_TIME * 1.5        # tier 2 full-suite passes
+Per-file timeout = max(10s, 3 * PER_RUN)
+```
+
+The old formula was `3 * baseline, minimum 60s` — it budgeted three suite runs while
+the loop actually spends `N * (startup + short run)`. With a 5 s suite the budget was
+60 s regardless of whether the plan had 5 mutants or 50, so a plan was aborted
+mid-way on a limit that had nothing to do with its size. Reported by a user on
+2026-08-10: 7 of 10 mutants dropped, budget consumed by invocation overhead.
+
+**If `BUDGET` looks unreasonable, shrink the PLAN, not the budget** — lower `--max`
+or use `--quick`, and say which. Silently truncating a plan produces a mutation score
+computed over a sample the report presents as the whole plan.
 
 Output:
 ```
 BASELINE
   Tests: [N] passing | [N] suites
-  Baseline time: [N]s
-  Per-file timeout: [N]s
-  Total timeout: [N]s
+  Baseline time: [N]s        (full suite, once)
+  Per-run cost:  [N]s        (one targeted run — what each mutation actually costs)
+  Runner:        local       (never rt/remote — see 1.3)
+  Plan:          [N] mutations -> budget [N]s
 ```
 
 ---
@@ -366,14 +407,37 @@ For each mutation `MUT-NNN`:
 PROGRESS: [N]/[total] mutations executed | [killed] killed | [survived] survived
 ```
 
-### 3.3 Early Termination
+### 3.3 Early Termination — a truncated plan is NOT a score
 
 Stop execution early if:
-- Total timeout exceeded
+- Budget exceeded (1.3b)
 - 5 consecutive restore failures
 - User interrupts
 
-On early termination, report results for mutations completed so far.
+**"Report results for mutations completed so far" was the whole bug.** A run that
+executed 3 of 10 mutants and then printed a mutation score presented a sample as the
+answer — the number looked like every complete run's number, with nothing marking it
+as covering under a third of the plan. Reported by a user on 2026-08-10 after exactly
+that: 7 of 10 dropped on the budget, a score printed anyway.
+
+On early termination:
+
+1. **`result` is `PARTIAL`, never PASS/WARN/FAIL.** A grade over an unfinished plan is
+   not a grade. The JSON sets `"result": "PARTIAL"` and `"plan_completed": false`.
+2. **Lead with what is missing**, before any number:
+   ```
+   MUTATION RUN INCOMPLETE — <executed>/<planned> mutants executed
+     stopped by: <budget | restore-failures | user-interrupt>
+     not executed: MUT-004..MUT-010 (7)
+     measured per-run cost: <N>s   budget was: <N>s
+     partial score over the <executed> that ran: <N>% — NOT the file's mutation score
+   ```
+3. **Downstream must refuse it.** `test-audit` scoring Q21 treats
+   `plan_completed: false` the same as stale data: `N/A (mutation run incomplete —
+   <executed>/<planned>)`. A partial score must never satisfy a coverage gate.
+4. **Name the fix, since it is nearly always the budget and not the tests.** If the
+   stop was `budget`, print the per-run cost next to it — a wrapped/remote runner shows
+   up immediately as a per-run cost 50x the local one (see 1.3).
 
 ---
 
@@ -562,6 +626,11 @@ input nobody produces is not a gate.
   "scope": "<path or 'full'>",
   "tier2_ran": true,
   "fix_loop_ran": true,
+  "result": "COMPLETE",
+  "plan_completed": true,
+  "mutations_planned": 8,
+  "mutations_executed": 8,
+  "per_run_cost_s": 1.4,
   "score_raw": 75,
   "score_triaged_before": 86,
   "score_triaged": 100,
@@ -618,6 +687,14 @@ Field notes, each earning its place:
 - **`fix_loop_ran`** — `false` under `--report-only`, where `before` == `score_triaged` by
   construction. `gap_unfixed` counts survivors the loop tried and could not kill within its
   2-attempt cap; those are the only ones that belong in Recommended Next Steps.
+- **`plan_completed` / `mutations_planned` vs `mutations_executed`** — the field a consumer
+  checks BEFORE reading any score. `false` means the plan was truncated (3.3) and the score
+  covers a sample; `result` is then `PARTIAL` and no gate may accept it. Without this a
+  3-of-10 run is indistinguishable from a 10-of-10 run in the JSON.
+- **`per_run_cost_s`** — the measured cost of one targeted run. It is in the artifact because
+  it is the single number that explains a truncated plan: a value ~50x the local baseline
+  means the tests were routed through a remote/offload wrapper, which this skill forbids
+  (1.3). Diagnosing that from a bare "timeout" took a user a whole run.
 
 ### Retrospective (REQUIRED)
 

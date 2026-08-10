@@ -350,6 +350,7 @@ here. Source of truth: the newest `$ZUVO_DIR/audits/mutation-test-*.json` writte
 
 | Condition | Q21 value |
 |---|---|
+| `plan_completed: false` | `N/A (mutation run incomplete — <executed>/<planned>)` — check this FIRST |
 | JSON present, `commit` == HEAD sha7 | score from **`score_triaged`** |
 | JSON present, `commit` != HEAD | `N/A (mutation data STALE — <json sha7>, HEAD is <sha7>)` |
 | JSON present, `tier2_ran: false` | score it, and append `(--quick: survivors never checked against the full suite)` |
@@ -358,6 +359,11 @@ here. Source of truth: the newest `$ZUVO_DIR/audits/mutation-test-*.json` writte
 Use `score_triaged`, never `score_raw`. An *equivalent mutant* cannot be killed by any
 test, so counting it against the suite fails work nobody can fix — and a gate people
 cannot satisfy is a gate people learn to route around.
+
+`plan_completed` is checked before anything else because a truncated run produces a score
+that looks exactly like a complete one. A user hit this on 2026-08-10: the budget stopped
+the run after 3 of 10 mutants and a score was printed anyway. A sample scored as the whole
+plan is worse than no data — no data is honestly `N/A`.
 
 Until 2026-08-09 `zuvo:mutation-test` wrote nothing to disk: the report went to chat and
 vanished. This gate asked for a number the system never produced in readable form, so the

@@ -23,11 +23,20 @@
 
 ## Protocol (byte-restore, no git commands)
 
+**Run the tests LOCALLY. Never prefix a probe run with `rt` or any other remote/offload
+wrapper.** Probing is N short scoped runs in a loop, and such a wrapper charges a fixed
+per-invocation cost (mirror sync + queue) that dwarfs the run itself. Measured 2026-08-10
+on one test file: `npx vitest run <file>` = **1.4 s**, `rt npx vitest run <file>` =
+**103.4 s** — ~50-75x, per probe. A global "prefix test commands with `rt`" rule is right
+for one long suite run and inverts here; this line is the override. If a project can only
+run its tests through such a wrapper, skip probing and say so — do not run it wrapped and
+report the resulting timeout as a coverage result.
+
 For each probe:
 
 1. Save the production file's exact current content and sha256.
 2. Apply ONE mutation with a targeted `Edit`.
-3. Run the target test file(s) only (scoped, not the whole suite).
+3. Run the target test file(s) only (scoped, not the whole suite), locally per above.
 4. Expected: **at least one test fails** (mutant killed).
 5. Restore the saved content with `Write` (full original bytes) and verify the
    sha256 matches the pre-mutation hash. Never leave a probe applied; never
