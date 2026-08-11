@@ -119,9 +119,19 @@ persistence.
 
 ### Driving a client the wrapper does not know (`agy`)
 
-`blind-audit-codex.sh --provider` accepts only `codex|gemini|claude`. When those are
-dead but `agy` answers, the wrapper cannot be used — assemble the same strict input by
-hand. The subprocess is fresh either way, so isolation is preserved:
+**`agy` no longer needs this path — use the wrapper.** As of 2026-08-11
+`blind-audit-codex.sh --provider` accepts `codex|agy|gemini|claude`, and the `agy` arm
+carries two things a hand-rolled call does not: the quota/auth guard (agy exits 0 while
+printing "Individual quota reached" AS its answer, which a hand-rolled path feeds to the
+verdict parser as a clean audit) and the argv size guard below. Reach for the manual
+assembly ONLY for a client the wrapper genuinely does not know.
+
+When you do, keep the size guard. `agy` takes the prompt as an **argv element**, and the
+kernel caps a single element at 128 KiB — protocol + whole production file + whole test
+file exceeds that on ordinary files, and the failure surfaces as a bare "Argument list
+too long" that reads like the client is broken. Measure **bytes**, not characters:
+`${#var}` counts characters, so 110k chars of em-dashes is 330k bytes and slips a
+char-based check (measured 2026-08-11).
 
 ```bash
 { cat "$ZUVO_BASE/shared/includes/blind-coverage-audit.md"
@@ -129,8 +139,14 @@ hand. The subprocess is fresh either way, so isolation is preserved:
   printf '\n=== TEST FILE: %s ===\n' "$SPEC";      cat "$SPEC"
 } > /tmp/blind-in.txt
 
-agy --model gemini-3.1-pro-high -p "$(cat /tmp/blind-in.txt)" > /tmp/blind-out.txt 2>&1
-grep -E '^(Audit mode|Coverage verdict|INVENTORY COMPLETE):' /tmp/blind-out.txt
+bytes=$(wc -c < /tmp/blind-in.txt | tr -d ' ')
+if [ "$bytes" -gt 120000 ]; then
+  echo "prompt is ${bytes}B — over the ~128KB argv limit; use a stdin-reading client or split the audit" >&2
+else
+  agy --model "${ZUVO_MODEL_AGY:-Gemini 3.1 Pro (High)}" -p "$(cat /tmp/blind-in.txt)" \
+    > /tmp/blind-out.txt 2>&1
+  grep -E '^(Audit mode|Coverage verdict|INVENTORY COMPLETE):' /tmp/blind-out.txt
+fi
 ```
 
 Validate the output exactly as the wrapper would (the three header lines plus the

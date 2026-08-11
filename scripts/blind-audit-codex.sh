@@ -291,7 +291,13 @@ run_agy() {
   # blind audit has no such cap, so a normal-sized entity + spec pair can exceed the limit
   # and `execve` fails with a bare "Argument list too long" that reads like agy is broken.
   # Fail with a legible message instead — an honest, attributable degradation.
-  local prompt_bytes=${#prompt}
+  # Measure the FILE, not the shell string. `${#prompt}` counts CHARACTERS: in a UTF-8
+  # locale 100k chars of em-dashes/arrows/curly quotes — which this codebase's own prose
+  # uses constantly — is well over the 131072-BYTE kernel limit, so a char-count guard
+  # passes and E2BIG fires anyway. `wc -c` on the source file is exact and needs no locale
+  # juggling. (Caught by the post-fix adversarial pass on the guard's first version.)
+  local prompt_bytes
+  prompt_bytes=$(wc -c < "$tmpdir/prompt.txt" | tr -d ' ')
   if [[ $prompt_bytes -gt 120000 ]]; then
     echo "agy prompt is ${prompt_bytes} bytes, over the ~128KB single-argument limit — agy takes the prompt as an argv element, so this cannot be streamed. Use --provider codex|claude for this pair, or split the audit." >&2
     return 2
