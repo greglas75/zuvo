@@ -29,7 +29,7 @@ REASONING_EFFORT="${ZUVO_BLIND_AUDIT_EFFORT:-high}"
 
 usage() {
   cat <<'EOF'
-Usage: blind-audit-codex.sh --protocol <blind-coverage-audit.md> --production <file> --test <file> [--model <model>] [--provider codex|gemini|claude] [--timeout <seconds>] [--effort <low|medium|high|xhigh>]
+Usage: blind-audit-codex.sh --protocol <blind-coverage-audit.md> --production <file> --test <file> [--model <model>] [--provider codex|agy|gemini|claude] [--timeout <seconds>] [--effort <low|medium|high|xhigh>]
 
 Runs a strict blind coverage audit in a platform-aware subprocess.
 Success requires a non-empty final message containing:
@@ -101,6 +101,10 @@ done
 # Same logic as adversarial-review.sh — blind audit must use a DIFFERENT
 # provider than the host to avoid self-review bias.
 
+# HOST_EXCLUDE is a SET, not one name: a host can front more than one client for the same
+# model. Antigravity fronts BOTH Gemini lanes (`gemini` and `agy`), so excluding only
+# "gemini" left `agy` free to audit its own output — the self-audit this block exists to
+# prevent. Same scalar-vs-set defect fixed in adversarial-review.sh --exclude on 2026-08-11.
 HOST_EXCLUDE=""
 if [[ "${CLAUDECODE:-}" == "1" ]]; then
   HOST_EXCLUDE="claude"
@@ -109,37 +113,44 @@ elif [[ -n "${CODEX_SANDBOX:-}" ]]; then
 elif [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"Antigravity"* ]] \
    || [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"antigravity"* ]] \
    || [[ -n "${ANTIGRAVITY_SESSION_ID:-}" ]]; then
-  HOST_EXCLUDE="gemini"
-# Cursor: no blind-audit provider (only codex/gemini/claude supported), nothing to exclude
+  HOST_EXCLUDE="gemini agy"
+# Cursor hosts nothing on this list (cursor-agent is not a blind-audit client), so every
+# provider below stays eligible — notably `agy`, which is what makes a Cursor-hosted blind
+# audit genuinely cross-model instead of silently degraded.
 fi
+
+host_excluded() { [[ " $HOST_EXCLUDE " == *" $1 "* ]]; }
 
 if [[ -n "$HOST_EXCLUDE" ]]; then
   echo "  Host detected: $HOST_EXCLUDE -- auto-excluding to prevent self-audit" >&2
 fi
 
 if [[ -z "$PROVIDER" ]]; then
-  # Build candidate list, excluding host provider
+  # Build candidate list, excluding host provider(s)
   candidates=()
-  if [[ "$HOST_EXCLUDE" != "codex" ]] && command -v codex >/dev/null 2>&1; then
+  if ! host_excluded codex && command -v codex >/dev/null 2>&1; then
     candidates+=("codex")
   fi
-  if [[ "$HOST_EXCLUDE" != "gemini" ]] && command -v gemini >/dev/null 2>&1; then
+  if ! host_excluded agy && command -v agy >/dev/null 2>&1; then
+    candidates+=("agy")
+  fi
+  if ! host_excluded gemini && command -v gemini >/dev/null 2>&1; then
     candidates+=("gemini")
   fi
-  if [[ "$HOST_EXCLUDE" != "claude" ]] && command -v claude >/dev/null 2>&1; then
+  if ! host_excluded claude && command -v claude >/dev/null 2>&1; then
     candidates+=("claude")
   fi
 
   if [[ ${#candidates[@]} -gt 0 ]]; then
     PROVIDER="${candidates[0]}"
   else
-    echo "No supported blind-audit client found (need codex, gemini, or claude — host excluded: ${HOST_EXCLUDE:-none})" >&2
+    echo "No supported blind-audit client found (need codex, agy, gemini, or claude — host excluded: ${HOST_EXCLUDE:-none})" >&2
     exit 2
   fi
 fi
 
 case "$PROVIDER" in
-  codex|gemini|claude) ;;
+  codex|agy|gemini|claude) ;;
   *)
     echo "Unsupported provider: $PROVIDER" >&2
     usage >&2
@@ -152,6 +163,8 @@ if [[ -z "$MODEL" ]]; then
   # GEMINI_MODEL or CLAUDE_MODEL which reflect the WRITER model, not the auditor.
   case "$PROVIDER" in
     codex) MODEL="${ZUVO_CODEX_MODEL:-${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.5}}" ;;
+    # agy takes the DISPLAY name from `agy models`, not an API id.
+    agy) MODEL="${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.1 Pro (High)}}" ;;
     gemini) MODEL="${ZUVO_GEMINI_MODEL:-${ZUVO_MODEL_GEMINI_API:-gemini-3.1-pro-preview}}" ;;
     claude) MODEL="${ZUVO_CLAUDE_AUDIT_MODEL:-opus}" ;;
   esac
@@ -258,6 +271,34 @@ run_gemini() {
   run_with_timeout gemini "${gemini_args[@]}" < "$tmpdir/prompt.txt" > "$tmpdir/stdout.txt" 2> "$tmpdir/stderr.txt"
 }
 
+run_agy() {
+  if ! command -v agy >/dev/null 2>&1; then
+    echo "agy command not found" >&2
+    return 2
+  fi
+
+  # agy takes the prompt as an ARGUMENT, not on stdin — piping makes it answer an empty
+  # prompt and hallucinate (verified 2026-07-11, see run_agy in adversarial-review.sh).
+  # Every other provider here reads $tmpdir/prompt.txt from stdin; agy is the exception.
+  local prompt
+  prompt="$(cat "$tmpdir/prompt.txt")"
+
+  run_with_timeout agy -p "$prompt" \
+    --model "$MODEL" --dangerously-skip-permissions \
+    > "$tmpdir/stdout.txt" 2> "$tmpdir/stderr.txt"
+  local status=$?
+
+  # agy can exit 0 while printing a quota/auth error AS its output. Without this guard a
+  # quota'd agy hands its error string to the verdict parser below, which finds no
+  # "Coverage verdict:" line and would report an unusable audit as a completed one.
+  if [[ $status -eq 0 ]] && head -c 400 "$tmpdir/stdout.txt" 2>/dev/null | grep -qE \
+      '^Error:|quota reached|Please upgrade your subscription|Authentication required|IneligibleTier'; then
+    echo "agy unusable (quota/auth), not an audit: $(head -1 "$tmpdir/stdout.txt" | head -c 120)" >&2
+    return 1
+  fi
+  return $status
+}
+
 run_claude() {
   if ! command -v claude >/dev/null 2>&1; then
     echo "claude command not found" >&2
@@ -275,6 +316,12 @@ run_claude() {
 case "$PROVIDER" in
   codex)
     if ! run_codex; then
+      cat "$tmpdir/stderr.txt" >&2 || true
+      exit 1
+    fi
+    ;;
+  agy)
+    if ! run_agy; then
       cat "$tmpdir/stderr.txt" >&2 || true
       exit 1
     fi

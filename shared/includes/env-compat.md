@@ -158,6 +158,34 @@ Agent(
 - Multiple agents can run in parallel when their work is independent
 - **Consecutive dispatch rate-limits = agent failure.** If sub-agent dispatch returns a rate-limit / overloaded / quota error **twice in a row** for the same stage, treat it as a dispatch failure (not a thing to keep retrying): print `[MODE SWITCH] dispatch rate-limited ×2 → single-agent`, record reason `same-model-fallback`/`rate-limited`, and execute that stage's role inline per the single-agent checkpoint protocol. Do NOT silently spin retrying a rate-limited dispatch — it stalls the pipeline; fall back and keep moving.
 
+### Waiting on a long-running process (ALL platforms)
+
+**A poll is a full model round-trip.** It re-feeds the entire context and returns one line of
+output, so it costs about what a real reasoning turn costs and buys nothing. This is the same
+mechanism the Codex `wait_agent` figures below quantify (1,583 timed-out polls, 747M input
+tokens in one session) — but it applies to *any* backgrounded process on *any* platform, so the
+rule lives here rather than in a platform block. Measured again 2026-08-11 on a single
+`zuvo:write-tests` run: **131 of 280 tool calls were polls** of a reviewer/test process at a
+~10 s cadence — roughly half the run's tool budget spent asking "is it done yet?".
+
+Poll on the process's timescale, not on impatience:
+
+| Process class | First check after | Then every |
+|---------------|-------------------|------------|
+| scoped test run, typecheck, lint (seconds) | 15 s | 15 s |
+| full suite, coverage, build (1-5 min) | 60 s | 45-60 s |
+| external reviewer, adversarial pass (2-15 min) | 90 s | 60-90 s |
+
+- **Never poll faster than 30 s** a process whose normal duration is measured in minutes.
+- **Prefer a blocking wait over a poll loop** where the harness offers one: waiting costs ONE
+  round-trip, N polls cost N. Poll only when no blocking wait exists.
+- If the process writes a machine-readable result (exit-code file, `--json`, a `.rc` marker),
+  read THAT once on completion instead of scraping partial stdout on every poll.
+- Say "waiting for X (~N min)" **once**. Do not narrate each poll; a poll that produces no new
+  information should produce no output either.
+- A poll cadence is not a timeout. Keep whatever hard deadline the stage already has — this
+  rule changes how often you look, never how long you are willing to wait.
+
 <!-- PLATFORM:CODEX -->
 ### Codex
 

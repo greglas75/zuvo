@@ -27,6 +27,18 @@ ZUVO_MODEL_CLAUDE_HAIKU="${ZUVO_MODEL_CLAUDE_HAIKU:-claude-haiku-4-5-20251001}"
 # luna 13s/3 — all caught the bug. Requires codex CLI ≥0.144 (0.142 rejects 5.6 ids).
 ZUVO_MODEL_CODEX_PRIMARY="${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}"  # codex-5.3 lane (spark)
 ZUVO_MODEL_CODEX_ALT="${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}"              # codex-5.4 lane (host-flip)
+# The reviewer this file did not name. reviewer-model-route.sh both DEFAULTS the Codex
+# writer to gpt-5.5 (`${ZUVO_CODEX_MODEL:-gpt-5.5}`) and routes writer=gpt-5.4 to it as
+# the ALTERNATE review lane — so it is dispatched in normal operation, yet appeared nowhere
+# in the "single source of model ids". Registered 2026-08-11 after a build<->registry
+# assertion caught it: this is the third instance of the same drift in one range (the
+# first was gpt-5.6-sol missing from the ROUTER, which made the registry's own primary
+# self-review). Registering it does NOT unify the tables — reviewer-model-route.sh and
+# build-codex-skills.sh still hardcode their own literals; that is B-MODEL-ID-FANOUT.
+# NB: spell the lane as prose, never as the literal token the Codex build greps for — the
+# build rewrites those tokens to concrete ids elsewhere and then asserts none survive in
+# dist/, and this file is copied WITHOUT that rewrite, so the token here fails the build.
+ZUVO_MODEL_CODEX_REVIEW_ALT="${ZUVO_MODEL_CODEX_REVIEW_ALT:-gpt-5.5}" # alternate review lane + default writer
 
 # ── Google (Gemini) ─────────────────────────────────────────────────
 # Pro, not Flash, and deliberately: the measurement test-reviewer-routing.md cites

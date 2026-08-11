@@ -40,6 +40,26 @@ setup() {
   [ "$status" -eq 0 ]
   run rg -n "model = \"$want_alt\"" "$alt" "$fallback_alt"
   [ "$status" -eq 0 ]
+
+  # ANCHOR TO THE REGISTRY, not only to router<->build self-consistency. Deriving both
+  # sides from the router proves those two agree, but says nothing about whether either
+  # matches model-registry.sh — the actual source of truth. One find-and-replace typo
+  # applied to the router AND the build together would keep them agreeing while both
+  # drifted off the registry, and the check above would still pass. That is the narrow
+  # circularity this closes: every model the build emits must be a model the registry
+  # actually names.
+  local reg_known
+  # shellcheck disable=SC1091
+  reg_known="$(bash -c '. "$1"/shared/includes/model-registry.sh
+      printf "%s %s %s" "$ZUVO_MODEL_CODEX_PRIMARY" "$ZUVO_MODEL_CODEX_ALT" "$ZUVO_MODEL_CODEX_REVIEW_ALT"' _ "$REPO_ROOT")"
+  [ -n "${reg_known// /}" ]
+  # Membership, not positional equality: the registry names the LANES, the router decides
+  # which lane reviews which writer, so pinning want_primary=="$reg_primary" would
+  # over-specify routing policy and break on a legitimate lane swap. What must hold is
+  # that the build cannot emit a model the registry has never heard of — the check that
+  # caught gpt-5.5 being dispatched while absent from the "single source of model ids".
+  [[ " $reg_known " == *" $want_primary "* ]]
+  [[ " $reg_known " == *" $want_alt "* ]]
 }
 
 @test "Cursor build degrades both reviewer lanes to inherit" {

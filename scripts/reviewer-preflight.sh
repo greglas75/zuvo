@@ -153,7 +153,13 @@ done
 if [ -z "${CANDIDATES// /}" ]; then
   emit_and_exit "no-provider" "none" 1 "$ROUTE_OUT"
 fi
-PROVIDER="${CANDIDATES%% *}"; PROVIDER="${PROVIDER# }"
+# Strip the leading space BEFORE taking the first word, not after. CANDIDATES is built
+# as `CANDIDATES="$CANDIDATES $candidate"`, so it always starts with a space; then
+# `${CANDIDATES%% *}` matches the WHOLE string (the longest suffix beginning with a
+# space starts at index 0) and yields "". The trailing `${PROVIDER# }` was meant to fix
+# exactly this but ran one step too late, on an already-empty value — so PROVIDER came
+# out unconditionally empty and a `canary-failed` exit never named which provider failed.
+PROVIDER="${CANDIDATES# }"; PROVIDER="${PROVIDER%% *}"
 
 # ── 3. optional canary round-trip ─────────────────────────────────────────────
 if [ "$CANARY" -eq 1 ]; then

@@ -1049,7 +1049,20 @@ install_antigravity() {
   local AG_SKILLS="$HOME/.gemini/config/skills"
 
   # Step 2: Clean old symlinks and stale files
-  rm -rf "$AG_SKILLS"
+  #
+  # Remove ONLY zuvo-owned skill directories, never the whole tree. `$AG_SKILLS` is
+  # Antigravity's SHARED global customization root — the same directory any other
+  # tool or the user puts skills in. The pre-fix code could `rm -rf` its target
+  # safely because that target (~/.gemini/antigravity/skills) belonged to zuvo
+  # alone; moving to the shared root without narrowing the delete turned a safe
+  # line into silent third-party data loss, with install still reporting success.
+  # Caught by the adversarial pass on this very change (2026-08-11).
+  if [[ -d "$AG_SKILLS" ]]; then
+    for skill_dir in "$DIST"/skills/*/; do
+      [[ -d "$skill_dir" ]] || continue
+      rm -rf "$AG_SKILLS/$(basename "$skill_dir")"
+    done
+  fi
   rm -rf "$HOME/.gemini/antigravity/shared"
   rm -rf "$HOME/.gemini/antigravity/rules"
   rm -rf "$HOME/.gemini/antigravity/scripts"

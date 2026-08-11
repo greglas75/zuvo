@@ -107,7 +107,13 @@ INPUT_MODE="stdin"  # stdin | diff | files
 DRY_RUN=false
 DOCTOR=false         # --doctor: live auth probe of every detected provider, then exit
 LIST_PROVIDERS=false     # --list-providers: print detected clients, one per line, and exit
-EXCLUDE_PROVIDER=""  # --exclude: skip this provider (used by --rotate to avoid repeat)
+EXCLUDE_PROVIDER=""  # --exclude: space-separated SET of providers to skip. Repeatable; the
+                     # host auto-exclusion (self-review prevention) ADDS to it rather than
+                     # replacing it. It was a scalar until 2026-08-11, which broke two ways:
+                     # a second --exclude silently dropped the first (a rotation pass came
+                     # back to an already-used provider and burned a full chunk), and passing
+                     # --exclude at all suppressed host auto-exclusion, letting the host
+                     # review its own output.
 EXCLUDE_LAST=""      # --exclude-last: cross-call rotation handoff (D4)
 APPEND_ARTIFACT=false  # --append-artifact: append this pass to an existing artifact (rotations)
 KNOWN_FINDINGS=""      # --known-finding FP (repeatable): fingerprints already dispositioned
@@ -193,7 +199,10 @@ while [[ $# -gt 0 ]]; do
       if [[ $# -lt 2 || ( -n "${2:-}" && "$2" == -* ) ]]; then
         echo "ERROR: --exclude requires a value (provider name or empty string), got '${2:-<missing>}'." >&2; exit 2
       fi
-      EXCLUDE_PROVIDER="$2"; shift 2 ;;
+      # Accumulate — repeated --exclude flags form a SET, they do not overwrite.
+      # Empty string stays a noop (test contract) and must not append a stray separator.
+      [[ -n "$2" ]] && EXCLUDE_PROVIDER="${EXCLUDE_PROVIDER:+$EXCLUDE_PROVIDER }$2"
+      shift 2 ;;
     --exclude-last)
       # Same flag-swallow guard as --exclude. Empty string = explicit noop (test contract).
       if [[ $# -lt 2 || ( -n "${2:-}" && "$2" == -* ) ]]; then
@@ -554,7 +563,9 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
     rotate) _ck_base_args+=(--rotate) ;;
   esac
   [[ -n "$PROVIDER" ]]         && _ck_base_args+=(--provider "$PROVIDER")
-  [[ -n "$EXCLUDE_PROVIDER" ]] && _ck_base_args+=(--exclude "$EXCLUDE_PROVIDER")
+  # One flag PER excluded provider — EXCLUDE_PROVIDER is a set. Passing it as a single
+  # arg would hand the child a provider literally named "codex gemini", matching nothing.
+  for _xp in $EXCLUDE_PROVIDER; do _ck_base_args+=(--exclude "$_xp"); done
   [[ -n "$EXCLUDE_LAST" ]]     && _ck_base_args+=(--exclude-last "$EXCLUDE_LAST")
   [[ -n "$REVIEW_MODE" ]]      && _ck_base_args+=(--mode "$REVIEW_MODE")
   [[ "$OUTPUT_FORMAT" == "json" ]] && _ck_base_args+=(--json)
@@ -1032,7 +1043,12 @@ detect_host_platform() {
 }
 
 HOST_PROVIDER=$(detect_host_platform)
-if [[ -n "$HOST_PROVIDER" && -z "$EXCLUDE_PROVIDER" ]]; then
+# NB: this used to also require `-z "$EXCLUDE_PROVIDER"`, so passing --exclude for an
+# unrelated reason (rotation) silently turned self-review prevention OFF and let the host
+# audit its own output. Host exclusion is a safety property, not a default to be displaced
+# by a user flag — it now ADDS to the set. Line ~1152 already documented this as the
+# intended behaviour ("host auto-exclusion + --exclude flag").
+if [[ -n "$HOST_PROVIDER" ]]; then
   if [[ "$HOST_PROVIDER" == "claude" ]]; then
     # KEEP claude on a Claude host: run_claude reviews with the OPPOSITE model
     # (Opus author -> Sonnet reviewer, and vice versa), so it is genuinely cross-model,
@@ -1040,8 +1056,10 @@ if [[ -n "$HOST_PROVIDER" && -z "$EXCLUDE_PROVIDER" ]]; then
     # and degraded to single_provider_only when external CLIs were down. agy/codex/cursor
     # DO review with the same model as their host IDE, so those stay auto-excluded below.
     echo "  Host detected: claude -- KEPT as cross-model reviewer (run_claude flips Opus<->Sonnet)" >&2
+  elif [[ " $EXCLUDE_PROVIDER " == *" $HOST_PROVIDER "* ]]; then
+    echo "  Host detected: $HOST_PROVIDER -- already excluded by --exclude, no change" >&2
   else
-    EXCLUDE_PROVIDER="$HOST_PROVIDER"
+    EXCLUDE_PROVIDER="${EXCLUDE_PROVIDER:+$EXCLUDE_PROVIDER }$HOST_PROVIDER"
     echo "  Host detected: $HOST_PROVIDER -- auto-excluding to prevent self-review" >&2
   fi
 fi
@@ -1154,7 +1172,10 @@ fi
 if [[ -n "$EXCLUDE_PROVIDER" && -n "$PROVIDERS" ]]; then
   # -Fx: fixed-string + whole-line match. Provider names contain regex-active
   # chars (e.g. codex-5.4, gpt-5.4) — plain `grep -v "^X$"` would over-match.
-  PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -vFx "$EXCLUDE_PROVIDER" | tr '\n' ' ' | sed 's/ *$//')
+  # -f: EXCLUDE_PROVIDER is a SET (space-separated); one pattern per line. Passing it as a
+  # single -Fx pattern would look for a provider literally named "codex gemini".
+  PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' \
+    | grep -vFx -f <(printf '%s\n' $EXCLUDE_PROVIDER) | tr '\n' ' ' | sed 's/ *$//')
 fi
 
 # D4: --exclude-last filters out the named provider for cross-call rotation
@@ -1672,7 +1693,8 @@ fi
 # Rotate mode: shuffle provider list, exclude previous, then behave like single
 if [[ "$MULTI_MODE" == "rotate" ]]; then
   if [[ -n "$EXCLUDE_PROVIDER" ]]; then
-    PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | grep -vFx "$EXCLUDE_PROVIDER" | sort -R | tr '\n' ' ' | sed 's/ *$//')
+    PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' \
+      | grep -vFx -f <(printf '%s\n' $EXCLUDE_PROVIDER) | sort -R | tr '\n' ' ' | sed 's/ *$//')
   else
     PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | sort -R | tr '\n' ' ' | sed 's/ *$//')
   fi
