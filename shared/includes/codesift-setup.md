@@ -44,7 +44,11 @@ If CodeSift succeeds at indexing/init but later queries fail with `Transport clo
 
 **A quoted line count is advisory.** When a Read-block/hook message quotes a file's line count, that number comes from the index and can be stale for exactly the reason above. Before scoping a refactor (especially a SPLIT) off it, confirm with `wc -l`; treat a disagreement of more than a few lines as stale-index and use the `wc -l` value. (A stale 215-vs-457 count once nearly under-scoped a split by half.)
 
-**Worktree path rejected by `index_file`:** do not retry and do not index the worktree — but do **NOT** redirect the check to the canonical checkout either. The whole point of a worktree is that it holds *different* code; auditing the main checkout's copy of the file would report on code you are not reviewing, which is the stale-analysis trap the worktree section below exists to prevent. Run the check natively against the worktree path instead (`wc -l`, bounded `Read`, `git -C <worktree> diff`) and record `codesift: degraded` for that file.
+**Worktree path rejected by `index_file` (`skipped=true`):** this is NOT the stale-index case above, and the remedy is the opposite one. `skipped=true` on a worktree path means the worktree has **no index of its own** — auto-indexing refuses linked worktrees and defers to the parent checkout. So run `index_folder(path=<worktree toplevel>)` **once**, per step 2 of the worktree section below. That is not a re-index; it is the first index of a tree that has none, and it is what makes every later query describe *your* files.
+
+Do **NOT** redirect the check to the canonical checkout: a worktree exists because it holds *different* code, and auditing the main checkout's copy reports on code you are not reviewing. Degrade to native commands (`wc -l`, bounded `Read`, `git -C <worktree> diff`) **only if `index_folder` on the worktree itself also fails**, and record `codesift: degraded` then — not before.
+
+Recognize the state by its symptoms, because every one of them looks like success or like an empty result rather than an error: `index_status` reports `indexed=true` with a `last_indexed` older than your branch and a file count matching the PARENT; `index_file` returns `skipped=true`, or returns `symbol_count: 0` for a file you know has symbols; `scan_secrets`/`search_text` scoped to one of your files answers `scanned 0 files` / `{"matches":[]}`; `find_clones` returns hits from SIBLING worktrees. Measured 2026-08-10 on a `write-tests` run in a linked worktree: 15 CodeSift calls returned usable data twice, the run fell back to `grep`/`cat`, and that fallback cost **21.8M tokens — 13.2% of the whole run** — because this bullet used to say "do not index the worktree" while step 2 below says to index it. If those two ever disagree again, step 2 wins.
 
 **Revealed but not callable:** if a tool appears after `describe_tools(..., reveal=true)` yet calls still fail, that is a *host-disabled* tool, not an index problem — go to "Host-disabled probe (degrade, don't false-abort)" in Step 2.5, record the substitution once, and never re-run the reveal.
 
@@ -57,6 +61,10 @@ independently (the recurring, expensive failure across review/execute/refactor/p
 once, before dispatching agents, and pass the decision to them:
 
 ```bash
+# <scope-path> = a file you are ACTUALLY about to analyze, never a remembered or
+# constructed worktree path. A repo can hold several worktrees at once (e.g. a
+# harness-created `.claude/worktrees/<agent-id>/` alongside a human `<repo>-worktrees/<task>/`);
+# indexing the wrong one indexes files nobody is editing and leaves yours invisible.
 TARGET_REPO=$(git -C "<scope-path>" rev-parse --show-toplevel 2>/dev/null)
 ```
 
