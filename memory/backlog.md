@@ -511,3 +511,46 @@ Recipe:
   3. Then close the CLASS, not just the instance: make `run-all.sh` print optional-tool skips
      into the RESULT line (e.g. `SKIP=1 (bats)`), so "green" never silently means "green
      minus a group nobody ran". A skipped group that no one can see is how both of these rotted.
+
+## B-MODEL-ID-FANOUT — Codex model ids live in 3-4 independent tables
+Surfaced 2026-08-11 by the review of origin/main..HEAD (STRUCT-1, confidence 85). `model-registry.sh`
+names the lanes; `reviewer-model-route.sh` re-types the reviewer literals in its `case` arms and says
+in its own header it is "intentionally NOT wired to" the registry; `build-codex-skills.sh` has a THIRD
+independent hardcode (`map_model()`, `replace_reviewer_lane_refs_codex()`) plus a fourth inside its
+`validate_dist` grep. Two drift instances were found in ONE range: `gpt-5.6-sol` missing from the
+router (the registry's own primary self-reviewed), and `gpt-5.5` dispatched while absent from the
+registry entirely. Patching arms one at a time cannot stop the next one.
+Recipe: (1) resolve the router's Codex reviewer literals from `ZUVO_MODEL_CODEX_*`; (2) replace
+`build-codex-skills.sh`'s `map_model()`/`replace_reviewer_lane_refs_codex()` pairings with a call into
+the router or a shared sourcing of the registry; (3) once unified, `reviewer-model-builds.bats`'s
+membership check becomes a true regression lock rather than a same-generation coincidence.
+`structural-refactor (multi-file)`
+
+## B-INSTALL-WIRING-BEHAVIORAL — checks (10)/(10b) assert on install.sh's source text, not its behaviour
+Surfaced 2026-08-11 (STRUCT-4, confidence 60). Check (9) in the same file carries the documented lesson
+("PLACEMENT is the property, not 'does cp work'") and uses awk do/done depth tracking; (10)/(10b) are
+plain greps and only prove `AG_SKILLS` is ASSIGNED the right value, not that the `cp -r` loop uses it.
+Unlike (9)'s live-cache case, a temp-`$HOME` invocation here would NOT pass vacuously, so the
+behavioural option is available and unused.
+Recipe: (1) source install.sh (already done for check (2)), export `HOME="$TMP"`, invoke
+`install_antigravity`; (2) assert files land in `$TMP/.gemini/config/skills/<name>/` and that
+`$TMP/.gemini/antigravity/skills/` is absent afterwards; (3) keep (10c) as a source-grep — it targets a
+`sed` rewrite pattern, where text is the correct layer.
+
+## B-REVIEW-INCOMPLETE-2026-08-11 — self-review of origin/main..HEAD could not complete its mandated gates
+2 of 3 TIER-3 audit sub-agents stalled (600s watchdog, no recovery) and the re-dispatched anti-tautology
+auditor died on the session token limit (resets 06:00 Europe/Warsaw). On SELF-REVIEW the skill allows NO
+degraded path for sub-agents, so the verdict is INCOMPLETE and NO content-keyed coverage artifact was
+written — the push stays blocked, which is the correct outcome rather than a convenience.
+What DID run and hold: all mandatory CodeSift calls; the Structure Auditor (5 findings); adversarial
+`--multi` across 4 providers x 3 chunks (kimi empty), which found and got fixed 2 CRITICALs.
+Re-run after 06:00: `/zuvo:review origin/main..HEAD`.
+
+## B-DIST-BUILD-RACE — concurrent agents building into the same dist/ corrupt each other's test runs
+Surfaced 2026-08-11. `scripts/tests/reviewer-model-builds.bats` setup does `rm -rf $REPO_ROOT/dist/*`
+while another agent's build writes into the same tree; the rm fails with "Directory not empty" and every
+test in the file then fails for a reason unrelated to the code under test. This produced TWO wrong
+conclusions in one session (a bisect that blamed an innocent registry change, and an earlier "regression"
+that was not one) — both only caught by re-running in a git worktree with its own dist/.
+Recipe: give the bats suite a per-run dist dir (`DIST=$(mktemp -d)` passed to the build scripts) instead
+of the shared `$REPO_ROOT/dist`, so concurrent runs cannot collide.
