@@ -563,7 +563,7 @@ that was not one) — both only caught by re-running in a git worktree with its 
 Recipe: give the bats suite a per-run dist dir (`DIST=$(mktemp -d)` passed to the build scripts) instead
 of the shared `$REPO_ROOT/dist`, so concurrent runs cannot collide.
 
-## B-AG-SKILL-DELETE-BY-NAME — Antigravity install rm -rf's third-party skills that share a zuvo name
+## B-AG-SKILL-DELETE-BY-NAME — Antigravity install rm -rf's third-party skills that share a zuvo name **[DONE 2026-08-11 — marker-based ownership, tests/hooks/test-antigravity-skill-ownership.sh]**
 Surfaced 2026-08-11 by the self-review of d143e71..c2a7723 (CQ auditor #6/#7 + adversarial ×2, independently).
 `scripts/install.sh:1060` narrowed the old unconditional wipe to a per-name delete — a real improvement —
 but it still matches purely by basename against `~/.gemini/config/skills/`, which the same commit's comment
