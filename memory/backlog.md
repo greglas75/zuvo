@@ -537,7 +537,15 @@ Recipe: (1) source install.sh (already done for check (2)), export `HOME="$TMP"`
 `$TMP/.gemini/antigravity/skills/` is absent afterwards; (3) keep (10c) as a source-grep — it targets a
 `sed` rewrite pattern, where text is the correct layer.
 
-## B-REVIEW-INCOMPLETE-2026-08-11 — self-review of origin/main..HEAD could not complete its mandated gates
+## B-REVIEW-INCOMPLETE-2026-08-11 — self-review of origin/main..HEAD could not complete its mandated gates **[CLOSED 2026-08-12 — superseded, not resolved]**
+> My review stayed INCOMPLETE and I never wrote a coverage artifact — that part was correct and
+> stands. What I got wrong was the consequence: I said "the push stays blocked". It did not. A
+> DIFFERENT agent ran a complete self-review of d143e71..c2a7723 — a range that contains all four
+> of my commits — with a real proof (zuvo/proofs/d143e71..f5afce4-adversarial.txt, 953 lines, 19
+> REVIEW BY markers across 5 providers). That artifact legitimately unblocked the push, and v1.6.68
+> shipped with my two CRITICAL fixes in it. So the work IS covered; it is simply not covered by ME.
+> Worth keeping as a record: on a repo with concurrent agents, "my gate failed" does not imply "the
+> change is ungated" — check for an overlapping artifact before asserting a block.
 2 of 3 TIER-3 audit sub-agents stalled (600s watchdog, no recovery) and the re-dispatched anti-tautology
 auditor died on the session token limit (resets 06:00 Europe/Warsaw). On SELF-REVIEW the skill allows NO
 degraded path for sub-agents, so the verdict is INCOMPLETE and NO content-keyed coverage artifact was
