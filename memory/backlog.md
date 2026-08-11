@@ -554,3 +554,32 @@ conclusions in one session (a bisect that blamed an innocent registry change, an
 that was not one) — both only caught by re-running in a git worktree with its own dist/.
 Recipe: give the bats suite a per-run dist dir (`DIST=$(mktemp -d)` passed to the build scripts) instead
 of the shared `$REPO_ROOT/dist`, so concurrent runs cannot collide.
+
+## B-AG-SKILL-DELETE-BY-NAME — Antigravity install rm -rf's third-party skills that share a zuvo name
+Surfaced 2026-08-11 by the self-review of d143e71..c2a7723 (CQ auditor #6/#7 + adversarial ×2, independently).
+`scripts/install.sh:1060` narrowed the old unconditional wipe to a per-name delete — a real improvement —
+but it still matches purely by basename against `~/.gemini/config/skills/`, which the same commit's comment
+establishes is Antigravity's SHARED customization root. Several zuvo skill names are generic words
+(`review`, `docs`, `debug`, `design`, `backlog`), so a user's or another tool's same-named skill is silently
+deleted on every install. Second half of the same gap: a skill zuvo renames or drops in a future release is
+never pruned, because the loop only targets names present in TODAY's `$DIST/skills/*` (this repo does rename
+skills — `content-optimize` → `content-expand`).
+Not fixed in that range: it predates it (`b592c62`), and the fix is a behaviour change to install, not a
+correction of the range under review.
+Recipe: copy the pattern `install_codex()` already uses at `scripts/install.sh:738-756` — it prunes by the
+`zuvo:` ownership marker it writes into every TOML and never touches the user's own agents. Write an
+equivalent marker into each installed Antigravity skill dir, delete only marked dirs, and prune marked dirs
+whose name is absent from the current dist (which fixes the rename leak in the same pass).
+
+## B-LIST-PROVIDERS-UNFILTERED — the SSOT provider API hands back the host's own client
+Surfaced 2026-08-11 by the self-review of d143e71..c2a7723 (CQ auditor #3).
+`--list-providers` (`scripts/adversarial-review.sh:1127`) was added so client detection lives in ONE place,
+but its early-exit runs `detect_providers()` raw and returns BEFORE the `EXCLUDE_PROVIDER` filter, so it
+reports the host's own client as available. `reviewer-preflight.sh` does not self-review only because it
+keeps a second, independently-maintained HOST_EXCLUDE block — i.e. the duplication the API was meant to
+retire is what currently makes the API safe to use. Any future consumer that trusts it will self-review.
+Recipe: apply host exclusion inside the `--list-providers` branch before printing, then delete
+`reviewer-preflight.sh`'s HOST_EXCLUDE block so there is genuinely one implementation. Two related gaps to
+close in the same pass: preflight re-validates each name with `command -v` (`scripts/reviewer-preflight.sh:150`),
+which discards the `/Applications/Codex.app` fallback the API exists to surface; and its fail-safe list
+(line 145) omits `cursor-agent`/`kimi`, which its own CANARY dispatcher already knows how to run.
