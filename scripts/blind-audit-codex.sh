@@ -296,8 +296,18 @@ run_agy() {
   # uses constantly — is well over the 131072-BYTE kernel limit, so a char-count guard
   # passes and E2BIG fires anyway. `wc -c` on the source file is exact and needs no locale
   # juggling. (Caught by the post-fix adversarial pass on the guard's first version.)
+  # No pipeline: `wc` is the assignment's own exit status, so a read failure trips `set -e`
+  # instead of being masked by a trailing `tr`. macOS `wc` pads with spaces, so strip
+  # non-digits with a parameter expansion rather than another process. And fail CLOSED —
+  # an unreadable size must not silently become 0, because `[[ "" -gt 120000 ]]` is FALSE
+  # and would turn the guard into a no-op exactly when something is already wrong.
   local prompt_bytes
-  prompt_bytes=$(wc -c < "$tmpdir/prompt.txt" | tr -d ' ')
+  prompt_bytes=$(LC_ALL=C wc -c < "$tmpdir/prompt.txt")
+  prompt_bytes=${prompt_bytes//[^0-9]/}
+  if [[ -z "$prompt_bytes" ]]; then
+    echo "could not size the agy prompt ($tmpdir/prompt.txt) — refusing to dispatch rather than risk an opaque E2BIG" >&2
+    return 2
+  fi
   if [[ $prompt_bytes -gt 120000 ]]; then
     echo "agy prompt is ${prompt_bytes} bytes, over the ~128KB single-argument limit — agy takes the prompt as an argv element, so this cannot be streamed. Use --provider codex|claude for this pair, or split the audit." >&2
     return 2
