@@ -283,6 +283,20 @@ run_agy() {
   local prompt
   prompt="$(cat "$tmpdir/prompt.txt")"
 
+  # …and being the exception is what makes a size guard necessary HERE and nowhere else.
+  # An argv element is capped by the kernel (Linux MAX_ARG_STRLEN = 128 KiB), and this
+  # script never truncates: the prompt is protocol + the WHOLE production file + the WHOLE
+  # test file. adversarial-review.sh does not hit this because it caps its input at
+  # 30-50 K chars before building the prompt (scripts/adversarial-review.sh:462-463);
+  # blind audit has no such cap, so a normal-sized entity + spec pair can exceed the limit
+  # and `execve` fails with a bare "Argument list too long" that reads like agy is broken.
+  # Fail with a legible message instead — an honest, attributable degradation.
+  local prompt_bytes=${#prompt}
+  if [[ $prompt_bytes -gt 120000 ]]; then
+    echo "agy prompt is ${prompt_bytes} bytes, over the ~128KB single-argument limit — agy takes the prompt as an argv element, so this cannot be streamed. Use --provider codex|claude for this pair, or split the audit." >&2
+    return 2
+  fi
+
   run_with_timeout agy -p "$prompt" \
     --model "$MODEL" --dangerously-skip-permissions \
     > "$tmpdir/stdout.txt" 2> "$tmpdir/stderr.txt"

@@ -425,19 +425,25 @@ When the REVIEWED scope path resolves to a repo or worktree that is NOT the CWD,
 
 1. **Resolve `TARGET_REPO`.** `git -C <scope-path> rev-parse --show-toplevel`. If it differs from CWD's toplevel, set `TARGET_REPO=<that path>`.
 2. **Pass `repo=`/`path=` explicitly** to `review_diff`, `changed_symbols`, `scan_secrets`, `find_references` (and `index_folder`) so they target `TARGET_REPO`, not CWD.
-3. **Fresh worktree staleness — do NOT index the worktree to fix it.** Run
+3. **Fresh worktree staleness — index the worktree ONCE, then proceed.** Run
    `index_status(path=TARGET_REPO)`. If the branch's commits are not indexed, the semantic tools
-   would silently answer from the stale main checkout, so they are not usable for this scope. The
-   resolution is **not** `index_folder` on the worktree: many repos (this one included) forbid
-   indexing worktrees, and doing so pollutes the main repo's index with duplicate symbols that
-   then mis-answer later queries. Use the authoritative local source instead — git-diff-scoped
+   would silently answer from the stale main checkout, so they are not usable for this scope
+   *yet*. The resolution is `index_folder(path=TARGET_REPO)` — auto-indexing refuses linked
+   worktrees and defers to the parent, so a worktree typically has no index of its own and this
+   is its FIRST index, not a re-index. Degrade to the authoritative local source — git-diff-scoped
    `grep` over `git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}"`, plus bounded `Read` on the changed
-   files — and record `codesift: degraded (worktree not indexed)` for the affected checks.
+   files, recorded as `codesift: degraded (worktree not indexed)` — only if that `index_folder`
+   call itself fails.
    This is the same rule as `../../shared/includes/codesift-setup.md` → "Worktree path rejected by
-   `index_file`"; that include is the single source of truth, and it also covers the sibling-
-   worktree case (a fresh index that is simply WIDER than your scope). Neither branch permits
-   redirecting the check at the main checkout: that reports on code you are not reviewing, which
-   is the stale-analysis trap this section exists to prevent.
+   `index_file`"; **that include is the single source of truth — if this section and the include
+   ever disagree, the include wins.** It also covers the sibling-worktree case (a fresh index that
+   is simply WIDER than your scope). Neither branch permits redirecting the check at the main
+   checkout: that reports on code you are not reviewing, which is the stale-analysis trap this
+   section exists to prevent.
+   *(This paragraph carried the pre-2026-08-11 text — "do NOT index the worktree" — for one commit
+   after the include was corrected, which is exactly the drift the "include wins" clause above now
+   makes cheap to resolve. The include's own measurement: 21.8M tokens, 13.2% of one run, spent on
+   a grep fallback that an `index_folder` call would have made unnecessary.)*
 4. **Keep `TARGET_REPO` consistent** with the Phase 3 destructive-persistence precondition (the repo `REVIEWED_FROM..REVIEWED_THROUGH` is resolved against MUST be the same `TARGET_REPO` analysis and tagging both reference).
 
 ### Stack Detection (TIER 2+)

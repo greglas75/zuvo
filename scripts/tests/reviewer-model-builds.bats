@@ -28,11 +28,19 @@ setup() {
   # asserted a pairing that could no longer be produced. What is worth pinning is
   # that the BUILD and the ROUTER agree; a model rename should move both together
   # or fail here, not be re-typed in a third place.
+  # Strip EVERY host marker, not just two. reviewer-model-route.sh picks the reviewer from
+  # the detected HOST, so an ambient ANTIGRAVITY_SESSION_ID / VSCODE_GIT_ASKPASS_MAIN makes
+  # these two probes answer with Gemini or Claude ids and the Codex assertions below fail —
+  # the test's result would depend on WHICH IDE ran the suite. reviewer-model-route.bats:14
+  # already strips the full set; this file stripped a subset until 2026-08-11.
+  route_codex() {
+    env -u CLAUDECODE -u CODEX_SANDBOX -u ANTIGRAVITY_SESSION_ID \
+        -u VSCODE_GIT_ASKPASS_MAIN -u CLAUDE_CODE_ENTRYPOINT "ZUVO_CODEX_MODEL=$1" \
+        bash "$REPO_ROOT/scripts/reviewer-model-route.sh" | sed -n 's/^reviewer_model=//p'
+  }
   local want_primary want_alt
-  want_primary="$(env -u CLAUDECODE -u CODEX_SANDBOX ZUVO_CODEX_MODEL=gpt-5.5 \
-      bash "$REPO_ROOT/scripts/reviewer-model-route.sh" | sed -n 's/^reviewer_model=//p')"
-  want_alt="$(env -u CLAUDECODE -u CODEX_SANDBOX ZUVO_CODEX_MODEL=gpt-5.4 \
-      bash "$REPO_ROOT/scripts/reviewer-model-route.sh" | sed -n 's/^reviewer_model=//p')"
+  want_primary="$(route_codex gpt-5.5)"
+  want_alt="$(route_codex gpt-5.4)"
   [ -n "$want_primary" ]
   [ -n "$want_alt" ]
   [ "$want_primary" != "$want_alt" ]   # a build that collapsed both lanes to one model is broken

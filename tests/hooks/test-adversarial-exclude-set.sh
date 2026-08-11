@@ -78,11 +78,74 @@ if has "$BASE" "cursor-agent"; then
   else
     pass "host auto-exclusion still applies when --exclude is passed (no self-review)"
   fi
-  printf '%s\n' "$out" | grep -q "auto-excluding to prevent self-review" \
+  # Match the shape, not the exact wording: the line now NAMES the excluded clients
+  # ("auto-excluding agy gemini to prevent self-review") because a host can front several.
+  printf '%s\n' "$out" | grep -qE "auto-excluding.*to prevent self-review" \
     && pass "host exclusion is announced on stderr" \
     || bad "host exclusion happened silently — no 'auto-excluding' line"
 else
   pass "cursor-agent not installed — host self-review case unobservable (skipped)"
+fi
+
+# 4b. A host is a SET of clients, not one name. Antigravity reaches the SAME Gemini model
+#     through BOTH `agy` and `gemini`; excluding only `agy` left the sibling lane free to
+#     review its own host's output — exclusion applied, announced, and ineffective. Found by
+#     cross-model adversarial on 2026-08-11 after the identical fix had landed in
+#     blind-audit-codex.sh (HOST_EXCLUDE="gemini agy") but not here.
+ag_out="$(echo x | env -u CLAUDECODE -u CODEX_SANDBOX -u VSCODE_GIT_ASKPASS_MAIN \
+  ANTIGRAVITY_SESSION_ID=probe timeout 90 bash "$ADV" --dry-run --multi 2>&1)"
+ag_list="$(printf '%s\n' "$ag_out" | sed -n 's/^Providers: //p')"
+if [ -z "$ag_list" ]; then
+  pass "no providers detectable under the Antigravity probe — dual-lane case unobservable (skipped)"
+else
+  # Only lanes that are actually INSTALLED here can be observed. Report which ones were
+  # checked — a blanket "excludes BOTH" when `gemini` is not on this machine is fake
+  # coverage: it passes against the pre-fix binary too (verified 2026-08-11), so it would
+  # have reported the sibling-lane self-review as fixed while it was still open.
+  dual_fail=0 checked="" unobservable=""
+  for lane in agy gemini; do
+    if ! has "$BASE" "$lane"; then unobservable="${unobservable:+$unobservable }$lane"; continue; fi
+    checked="${checked:+$checked }$lane"
+    if has "$ag_list" "$lane"; then
+      bad "on an Antigravity host, '$lane' stayed eligible — the sibling Gemini lane can self-review (got: $ag_list)"
+      dual_fail=1
+    fi
+  done
+  if [ -z "$checked" ]; then
+    pass "no Gemini-lane client installed — dual-lane exclusion unobservable here (skipped)"
+  elif [ "$dual_fail" -eq 0 ]; then
+    pass "Antigravity host excludes the installed Gemini lane(s): $checked${unobservable:+ (not installed, unchecked: $unobservable)}"
+  fi
+fi
+
+# 4c. Source guard: detect_host_platform must keep returning both lanes for Antigravity.
+if awk '/Antigravity \(Google IDE\)/,/^  fi/' "$ADV" | grep -qE 'echo "agy gemini"'; then
+  pass "detect_host_platform still returns both Gemini lanes for Antigravity"
+else
+  bad "detect_host_platform no longer returns 'agy gemini' — the sibling-lane self-review is back"
+fi
+
+# 4d. Splitting the set must WORD-SPLIT, not GLOB. `--exclude` takes arbitrary CLI text, so an
+#     unquoted `$EXCLUDE_PROVIDER` expansion also does pathname expansion: run from a directory
+#     holding a file named `claude`, `--exclude 'clau*'` expanded to that filename and excluded
+#     the claude provider that nobody asked to exclude. The mirror case is worse — a value that
+#     globs to nothing or to the wrong name leaves the provider you DID name in the pool, so the
+#     host self-review guard reports "excluded" and does not exclude. Found by the CQ auditor
+#     2026-08-11 (CQ31) on code added the same day; fixed with `set -f` at each split site.
+if has "$BASE" "claude"; then
+  glob_dir="$(mktemp -d)"; : > "$glob_dir/claude"
+  glob_out="$(cd "$glob_dir" && echo x | timeout 90 bash "$ADV" --dry-run --multi --exclude 'clau*' 2>&1 \
+    | sed -n 's/^Providers: //p')"
+  rm -rf "$glob_dir"
+  if [ -z "$glob_out" ]; then
+    pass "glob probe produced no provider list — unobservable here (skipped)"
+  elif has "$glob_out" "claude"; then
+    pass "--exclude splits on whitespace only; a glob pattern does not expand against CWD"
+  else
+    bad "--exclude 'clau*' removed claude by expanding against a CWD file — pathname expansion at the split site (got: $glob_out)"
+  fi
+else
+  pass "claude provider not installed — glob-expansion case unobservable (skipped)"
 fi
 
 # 5. Source guard: the scalar assignment must not come back. A future edit reverting to

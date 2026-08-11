@@ -565,7 +565,14 @@ if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "tr
   [[ -n "$PROVIDER" ]]         && _ck_base_args+=(--provider "$PROVIDER")
   # One flag PER excluded provider — EXCLUDE_PROVIDER is a set. Passing it as a single
   # arg would hand the child a provider literally named "codex gemini", matching nothing.
-  for _xp in $EXCLUDE_PROVIDER; do _ck_base_args+=(--exclude "$_xp"); done
+  # `set -f` is NOT cosmetic here: an unquoted split does pathname expansion as well as
+  # word-splitting, and --exclude takes arbitrary CLI text. With files named `codexAAA`/
+  # `codexZZZ` in CWD, `--exclude 'codex*'` expanded to those filenames and `codex-5.3`
+  # survived the filter — the named provider was NOT excluded, silently defeating the
+  # host self-review guard this mechanism exists to enforce (verified 2026-08-11).
+  # Arrays would be the other fix, but macOS ships bash 3.2 where `"${arr[@]}"` on an
+  # empty array aborts under this script's `set -u`.
+  set -f; for _xp in $EXCLUDE_PROVIDER; do _ck_base_args+=(--exclude "$_xp"); done; set +f
   [[ -n "$EXCLUDE_LAST" ]]     && _ck_base_args+=(--exclude-last "$EXCLUDE_LAST")
   [[ -n "$REVIEW_MODE" ]]      && _ck_base_args+=(--mode "$REVIEW_MODE")
   [[ "$OUTPUT_FORMAT" == "json" ]] && _ck_base_args+=(--json)
@@ -1026,11 +1033,15 @@ detect_host_platform() {
   fi
 
   # Antigravity (Google IDE): VS Code fork with Antigravity in app paths. The host's own model is
-  # Gemini via agy — exclude the agy provider so an Antigravity host does not self-review.
+  # Gemini, and this repo can reach that SAME model through TWO clients — `agy` (Antigravity CLI)
+  # and `gemini` (Google's CLI). Excluding only `agy` left `gemini` eligible, so an Antigravity
+  # host still reviewed its own output through the sibling lane; the exclusion looked applied and
+  # the header even announced it. This returns BOTH — a host is a set of clients, not one name.
+  # (blind-audit-codex.sh got the same fix as HOST_EXCLUDE="gemini agy"; the two must agree.)
   if [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"Antigravity"* ]] \
      || [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"antigravity"* ]] \
      || [[ -n "${ANTIGRAVITY_SESSION_ID:-}" ]]; then
-    echo "agy" && return
+    echo "agy gemini" && return
   fi
 
   # Cursor: VS Code fork with Cursor in app paths
@@ -1056,11 +1067,22 @@ if [[ -n "$HOST_PROVIDER" ]]; then
     # and degraded to single_provider_only when external CLIs were down. agy/codex/cursor
     # DO review with the same model as their host IDE, so those stay auto-excluded below.
     echo "  Host detected: claude -- KEPT as cross-model reviewer (run_claude flips Opus<->Sonnet)" >&2
-  elif [[ " $EXCLUDE_PROVIDER " == *" $HOST_PROVIDER "* ]]; then
-    echo "  Host detected: $HOST_PROVIDER -- already excluded by --exclude, no change" >&2
   else
-    EXCLUDE_PROVIDER="${EXCLUDE_PROVIDER:+$EXCLUDE_PROVIDER }$HOST_PROVIDER"
-    echo "  Host detected: $HOST_PROVIDER -- auto-excluding to prevent self-review" >&2
+    # HOST_PROVIDER may name SEVERAL clients (Antigravity fronts both `agy` and `gemini`),
+    # so iterate — a scalar test here would compare against the literal "agy gemini".
+    _added=""
+    set -f   # word-split only, never glob — see the --exclude split site above
+    for _hp in $HOST_PROVIDER; do
+      if [[ " $EXCLUDE_PROVIDER " == *" $_hp "* ]]; then continue; fi
+      EXCLUDE_PROVIDER="${EXCLUDE_PROVIDER:+$EXCLUDE_PROVIDER }$_hp"
+      _added="${_added:+$_added }$_hp"
+    done
+    set +f
+    if [[ -n "$_added" ]]; then
+      echo "  Host detected: $HOST_PROVIDER -- auto-excluding $_added to prevent self-review" >&2
+    else
+      echo "  Host detected: $HOST_PROVIDER -- already excluded by --exclude, no change" >&2
+    fi
   fi
 fi
 
@@ -1174,8 +1196,10 @@ if [[ -n "$EXCLUDE_PROVIDER" && -n "$PROVIDERS" ]]; then
   # chars (e.g. codex-5.4, gpt-5.4) — plain `grep -v "^X$"` would over-match.
   # -f: EXCLUDE_PROVIDER is a SET (space-separated); one pattern per line. Passing it as a
   # single -Fx pattern would look for a provider literally named "codex gemini".
+  set -f   # word-split only, never glob — see the --exclude split site near _ck_base_args
   PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' \
     | grep -vFx -f <(printf '%s\n' $EXCLUDE_PROVIDER) | tr '\n' ' ' | sed 's/ *$//')
+  set +f
 fi
 
 # D4: --exclude-last filters out the named provider for cross-call rotation
@@ -1693,8 +1717,10 @@ fi
 # Rotate mode: shuffle provider list, exclude previous, then behave like single
 if [[ "$MULTI_MODE" == "rotate" ]]; then
   if [[ -n "$EXCLUDE_PROVIDER" ]]; then
+    set -f   # word-split only, never glob — see the --exclude split site near _ck_base_args
     PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' \
       | grep -vFx -f <(printf '%s\n' $EXCLUDE_PROVIDER) | sort -R | tr '\n' ' ' | sed 's/ *$//')
+    set +f
   else
     PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | sort -R | tr '\n' ' ' | sed 's/ *$//')
   fi
