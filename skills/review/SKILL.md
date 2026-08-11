@@ -923,6 +923,7 @@ COMPLETION GATE CHECK
 [ ] CQ self-eval printed for each changed production file
 [ ] Q1-Q25 printed for each changed test file (if any)
 [ ] TIER 2-3: Behavior Auditor (if new prod files) + CQ Auditor + Confidence Re-Scorer DISPATCHED; TIER 3 additionally Structure Auditor as sub-agents — NOT done inline as "lead" (or explicit [DEGRADED: ...] line, forbidden on self-review)
+[ ] Every dispatched sub-agent RETURNED and its findings were read — count RETURNS, not dispatches. One still running bought no coverage: record `NO_RETURN(<elapsed>)`, which violates the tier exactly as `NOT_DISPATCHED` does. (2026-08-11: a TIER 3 self-review shipped a release on 2-of-3 auditors because nothing checked this; the third returned 12h later with a real finding.)
 [ ] TIER 2-3 Next.js: framework_audit called (nextjs_route_map alone does NOT satisfy it)
 [ ] Adversarial review ran — at least 2 sequential passes with findings printed; SELF-REVIEW used --multi (not --rotate)
 [ ] All findings confidence-scored
@@ -996,10 +997,19 @@ VALIDITY GATE
     # is a PASS value for every role below and satisfies the Completion Gate
     # "DISPATCHED as sub-agents" item — the env-mandated checkpoint pass IS the
     # required result, not VIOLATES_TIER2. Adversarial coverage still required as usual.
-    behavior_auditor: [DISPATCHED(<agent-return-marker>) | INLINE-SINGLE-AGENT-LOCK(<marker>) | not_required (no new prod files / tier<2) | NOT_DISPATCHED — VIOLATES_TIER2]
-    structure_auditor: [DISPATCHED(<agent-return-marker>) | INLINE-SINGLE-AGENT-LOCK(<marker>) | not_required (tier<3) | NOT_DISPATCHED — VIOLATES_TIER3]
-    cq_auditor: [DISPATCHED(<agent-return-marker>) | INLINE-SINGLE-AGENT-LOCK(<marker>) | NOT_DISPATCHED — VIOLATES_TIER2]
-    confidence_rescorer: [DISPATCHED(<agent-return-marker>) | INLINE-SINGLE-AGENT-LOCK(<marker>) | NOT_DISPATCHED — VIOLATES_TIER2]
+    behavior_auditor: [DISPATCHED(<agent-return-marker>) | INLINE-SINGLE-AGENT-LOCK(<marker>) | not_required (no new prod files / tier<2) | NO_RETURN(<elapsed>) — VIOLATES_TIER2 | NOT_DISPATCHED — VIOLATES_TIER2]
+    structure_auditor: [DISPATCHED(<agent-return-marker>) | INLINE-SINGLE-AGENT-LOCK(<marker>) | not_required (tier<3) | NO_RETURN(<elapsed>) — VIOLATES_TIER3 | NOT_DISPATCHED — VIOLATES_TIER3]
+    cq_auditor: [DISPATCHED(<agent-return-marker>) | INLINE-SINGLE-AGENT-LOCK(<marker>) | NO_RETURN(<elapsed>) — VIOLATES_TIER2 | NOT_DISPATCHED — VIOLATES_TIER2]
+    confidence_rescorer: [DISPATCHED(<agent-return-marker>) | INLINE-SINGLE-AGENT-LOCK(<marker>) | NO_RETURN(<elapsed>) — VIOLATES_TIER2 | NOT_DISPATCHED — VIOLATES_TIER2]
+    # `DISPATCHED(<marker>)` requires a RETURNED result you actually used. A dispatch that
+    # never came back is `NO_RETURN(<elapsed>)` and counts EXACTLY as NOT_DISPATCHED for every
+    # rule below — it contributed no findings, so it bought no coverage, and the reason it is
+    # missing does not change what the verdict may claim. This state existed in reality before
+    # it existed in this table: on 2026-08-11 a TIER 3 SELF-REVIEW shipped a release with the
+    # behavior auditor still running (it returned 12h later, with a real finding). Nothing
+    # flagged it — the gate only recognised "not dispatched", so a dispatched-and-silent agent
+    # fell through and the verdict read as full coverage. Before writing ANY value here, verify
+    # each agent actually returned; "I sent three" is not "three reported".
     # DEGRADED is allowed ONLY when self_review_flag=no AND you print a one-line
     # [DEGRADED: <agent> skipped because <concrete reason>] — a DELIBERATE,
     # logged decision, never a silent omission. On SELF-REVIEW the sub-agents are
@@ -1047,12 +1057,27 @@ Same handling if `self_review_flag = yes — DID_NOT_USE_--multi` (section 1.1 m
 
 The point: a clean `APPROVE` requires every mandatory gate to be either freshly run, proven by a same-commit artifact, or (only for a true capability limit) honestly degraded to CONDITIONAL. `timeout` (exit 124, ALL providers timed out) IS a legitimate recorded skip — it is a provider-side dead end, not a retryable rate-limit. Rate-limit is none of these — it is retried until the gate runs. `n/a` (no production logic to review) is the only no-coverage-needed path.
 
-**TIER 2 sub-agent skip handling (NEW — closes the silent-degradation / context-fatigue drift gap):** This is the dominant real-world failure: on a long session the lead does CQ/behavior/confidence scoring *inline as "lead"* instead of dispatching the sub-agents, then rationalizes it after the fact ("adversarial covers it", "scoped check instead"). That is **drift, not a decision**. If any `tier2_subagents.*` reads `NOT_DISPATCHED — VIOLATES_TIER2`:
+**TIER 2 sub-agent skip handling (NEW — closes the silent-degradation / context-fatigue drift gap):** This is the dominant real-world failure: on a long session the lead does CQ/behavior/confidence scoring *inline as "lead"* instead of dispatching the sub-agents, then rationalizes it after the fact ("adversarial covers it", "scoped check instead"). That is **drift, not a decision**. If any `tier2_subagents.*` reads `NOT_DISPATCHED — VIOLATES_TIER2` **or `NO_RETURN(<elapsed>)`**:
 1. Set `gate_status = FAIL — tier2 sub-agent(s) not dispatched (<which>)`.
 2. Override VERDICT to `INCOMPLETE` (the inline "lead" scoring does NOT substitute — sub-agents read plan+spec independently and are the second pair of eyes; on self-review they are the ONLY independent eyes).
 3. Append `[TIER2-SUBAGENT-SKIP:<which>]` to the Run line NOTES.
 4. Add backlog item `B-review-tier2-skip-<date>` with the verbatim rationalization quote.
 A DEGRADED line (`[DEGRADED: <agent> skipped because <reason>]`) is acceptable ONLY for non-self-review AND only as a printed, deliberate choice — never the default. On self-review there is NO degraded path.
+
+**`NO_RETURN` is the same failure wearing an innocent face, and it is the one that actually
+shipped.** The drift above is a lead who *chose* not to dispatch; `NO_RETURN` is a lead who
+dispatched correctly, never noticed the agent did not come back, and wrote the verdict from
+whoever happened to reply. Same outcome — a tier claiming coverage it does not have — but no
+rationalization to catch it by, because nothing was rationalized. Use `NO_RETURN(<elapsed>)`
+and route it through steps 1-4 above (note `[TIER2-SUBAGENT-NO-RETURN:<which>:<elapsed>]`
+instead, and backlog the elapsed time rather than a quote). Two practical rules:
+
+- **Before writing the Validity Gate, count RETURNS against dispatches.** If you dispatched 3
+  and can name findings from 2, the third is `NO_RETURN` — not "presumably fine".
+- **Do not wait indefinitely for it.** Ask the outstanding agent for whatever it has, then
+  finalize with the honest value. A 12-hour agent that returns one real finding after the
+  release is worth reading; it is not worth blocking on, and it is never worth assuming.
+  (Measured 2026-08-11: exactly that, and the release went out on the overstated version.)
 
 **Harness single-agent lock is NOT a skip — run the roles INLINE.** The rule above targets *drift*:
 a lead that COULD dispatch and chose not to, then rationalized it. It does not target a harness
