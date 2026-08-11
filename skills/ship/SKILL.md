@@ -477,7 +477,36 @@ If `--no-tag` was passed, do not create a tag and record `newTag: null` in the a
 authorization; the mandatory tests + review + `scan_secrets` upstream are what make it safe).
 
 - **Direct flow:** `git push origin <branch>`, then `git push origin v<version>` if a tag was created.
-- **PR flow:** `git push -u origin <branch>`, then `gh pr create --base <targetBranch>`.
+- **PR flow:** `git push -u origin <branch>`, then `gh pr create --base <targetBranch>`, then
+  **WAIT FOR CI AND MERGE IT.** Creating the PR is not shipping; the change is shipped when it is
+  on the target branch.
+
+  ```sh
+  gh pr checks <n> --watch --fail-fast     # blocks until every check concludes
+  gh pr merge <n> --squash                 # only if they all passed
+  ```
+
+  **Why merging is part of ship, not a separate human step.** On this fleet nobody reviews the
+  queue — an open PR buys ZERO additional safety and costs a compounding one. Measured on
+  2026-08-10, sixteen green PRs had accumulated and every one of the four failure modes below had
+  fired at least once:
+
+  - a branch cut before someone else's change **silently reverted it** on merge, with no conflict
+    (a manifest fix removed on Aug 3 was back on Aug 5, and the build started emitting dev bundles
+    again)
+  - PRs touching the same shared file **blocked each other**, so the queue could only shrink one
+    PR at a time
+  - after the target branch moved ~124 commits, **GitHub stopped computing mergeability at all**
+    and refused merges that were provably clean locally
+  - rebasing a branch that far behind puts the ENTIRE target branch in the push range, so the
+    review gate blocks it
+
+  Every one of those disappears when the branch is a handful of commits behind. The cost is not
+  linear in waiting time — it is the distance from the target branch at the moment you merge.
+
+  **If a check is RED: fix it or say so. Never leave the PR open and walk away** — that is the
+  state that produced all four. If it genuinely cannot be fixed here, print `SHIP INCOMPLETE` with
+  the failing check, exactly as for a blocked push.
 
 There is deliberately no non-interactive carve-out. It used to skip the push on Codex App and
 Cursor and print the commands for the user to run by hand — which is the single step they invoked
@@ -551,6 +580,9 @@ COMPLETION GATE CHECK
 [ ] Retrospective bash appends EXECUTED (retros.log + retros.md) — printing markdown is not enough
 [ ] append-runlog wrapper invoked and exited 0
 [ ] Logs evidence block printed with real `tail` output
+[ ] PR flow only: PR is MERGED, or SHIP INCOMPLETE printed with the failing check. An open PR
+    left behind is an unfinished ship — nobody on this fleet reviews the queue, so it buys no
+    safety and starts accruing the four failure modes documented in the push section.
 ```
 
 ### 1. Run retrospective (REQUIRED, before SHIP COMPLETE)
