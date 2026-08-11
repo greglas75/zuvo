@@ -428,7 +428,7 @@ EOF
 # an artifact that lists the file beats "no artifact"):
 #   proof-missing     artifact matches, but its adversarial: proof file is not
 #                     in THIS checkout → copy the artifact+proof PAIR
-#                     (scripts/review-artifact-sync.sh), don't re-review
+#                     (~/.zuvo/review-artifact-sync.sh), don't re-review
 #   proof-weak        proof file present but <2 'REVIEW BY:' lines and no
 #                     honest single-provider note → save the real adversarial
 #                     output with --artifact, or re-run it
@@ -437,7 +437,7 @@ EOF
 #                     review needed for the new content
 #   marker-missing    a memory/reviews file names this path but lacks the
 #                     '<!-- zuvo-review -->' marker → malformed header, fix
-#                     the header (scripts/review-artifact-sync.sh --check)
+#                     the header (~/.zuvo/review-artifact-sync.sh --check)
 #   no-artifact       nothing in memory/reviews/ lists the file → this content
 #                     was never reviewed; run the pipeline (zuvo:review/build)
 pg_explain_uncovered() {
@@ -477,7 +477,7 @@ pg_explain_uncovered() {
           *" "*) case " $_peu_files " in *" $_peu_f "*)
                    if [ 2 -lt "$_peu_best" ]; then
                      _peu_best=2
-                     _peu_why="$(basename "$_peu_art") lists it SPACE-separated — the gate splits files: on commas only; fix the header (scripts/review-artifact-sync.sh --check)"
+                     _peu_why="$(basename "$_peu_art") lists it SPACE-separated — the gate splits files: on commas only; fix the header (~/.zuvo/review-artifact-sync.sh --check)"
                    fi ;;
                  esac ;;
         esac
@@ -486,7 +486,7 @@ pg_explain_uncovered() {
       if ! grep -q '<!-- zuvo-review -->' "$_peu_art" 2>/dev/null; then
         if [ 2 -lt "$_peu_best" ]; then
           _peu_best=2
-          _peu_why="$(basename "$_peu_art") lists it but lacks the '<!-- zuvo-review -->' marker — malformed header, fix it (scripts/review-artifact-sync.sh --check)"
+          _peu_why="$(basename "$_peu_art") lists it but lacks the '<!-- zuvo-review -->' marker — malformed header, fix it (~/.zuvo/review-artifact-sync.sh --check)"
         fi
         continue
       fi
@@ -503,7 +503,7 @@ pg_explain_uncovered() {
         if [ -z "$_peu_ref" ]; then
           _peu_msg="$(basename "$_peu_art") covers this content but has NO adversarial: proof line — save the real adversarial output and reference it"
         elif [ ! -f "$_peu_root/$_peu_ref" ]; then
-          _peu_msg="$(basename "$_peu_art") covers this content but its proof '$_peu_ref' is NOT in this checkout — artifact+proof travel as a PAIR: scripts/review-artifact-sync.sh --from <checkout-that-ran-the-review> --to ."
+          _peu_msg="$(basename "$_peu_art") covers this content but its proof '$_peu_ref' is NOT in this checkout — artifact+proof travel as a PAIR: ~/.zuvo/review-artifact-sync.sh --from <checkout-that-ran-the-review> --to ."
         else
           _peu_msg="$(basename "$_peu_art") covers this content but its proof '$_peu_ref' has <2 'REVIEW BY:' lines and no single-provider note — save the genuine adversarial output"
         fi

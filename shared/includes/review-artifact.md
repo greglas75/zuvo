@@ -122,8 +122,13 @@ reviewed" because their pairs lived only in the worktrees):
   dies with it.
 - **Never copy the `.md` alone** between checkouts: without its proof the gate
   rejects the artifact whole, which looks identical to "review never happened".
-  Move pairs with `scripts/review-artifact-sync.sh --from <src> --to <dst>`.
-- **After writing an artifact, lint it:** `scripts/review-artifact-sync.sh
+  Move pairs with `~/.zuvo/review-artifact-sync.sh --from <src> --to <dst>`.
+  **Use the `~/.zuvo/` path, not `scripts/…`** — the repo-relative form resolves only inside
+  zuvo-plugin itself, so in the repo you are actually shipping the remediation command a blocked
+  push prints does not exist. `install.sh` puts the helper in `~/.zuvo/` alongside
+  `adversarial-review` for exactly that reason (Codex/Cursor/Antigravity builds get their own
+  absolute copies under `~/.codex/scripts/`, `~/.cursor/scripts/`, `~/.gemini/antigravity/scripts/`).
+- **After writing an artifact, lint it:** `~/.zuvo/review-artifact-sync.sh
   --check` catches the malformed headers the gate otherwise skips silently —
   missing `<!-- zuvo-review -->` marker, space-separated `files:` (the parser
   splits on commas ONLY), missing/weak proof.

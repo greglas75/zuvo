@@ -116,6 +116,7 @@ EXCLUDE_PROVIDER=""  # --exclude: space-separated SET of providers to skip. Repe
                      # review its own output.
 EXCLUDE_LAST=""      # --exclude-last: cross-call rotation handoff (D4)
 APPEND_ARTIFACT=false  # --append-artifact: append this pass to an existing artifact (rotations)
+APPEND_ARTIFACT_PATH="" # optional path given to --append-artifact (legacy doc form; see the arm)
 KNOWN_FINDINGS=""      # --known-finding FP (repeatable): fingerprints already dispositioned
 NO_CHUNK=false         # --no-chunk / ZUVO_ADV_NO_CHUNK=1: disable auto-chunking, fall back to truncation
 # Run-scoped provider-failure cache. A rotation is N separate invocations of this script, so a
@@ -224,7 +225,25 @@ while [[ $# -gt 0 ]]; do
       fi
       FILES="${FILES:+$FILES$'\n'}$2"; INPUT_MODE="files"; shift 2 ;;
     --artifact)  ARTIFACT_PATH="$2"; shift 2 ;;
-    --append-artifact) APPEND_ARTIFACT=true; shift ;;
+    --append-artifact)
+      # `--append-artifact "$PATH"` was the form documented in skills/review/SKILL.md §1.3 from
+      # the day the flag shipped, while the parser took no value — so every copied rotation pass
+      # fell through to `*) Unknown argument: <path>` and exited 2 having written NO proof file,
+      # which is the artifact the push gate reads. Six ship retros reported it between 2026-08-07
+      # and 2026-08-09 (uptime #74, i9-farma, rs_be #263, tgm-survey-tester #49, Helper #97,
+      # stages-actions) and the docs stayed wrong through all six.
+      # The docs are correct now (`--artifact P --append-artifact`), and the parser ALSO accepts
+      # the value form, because the wrong shape is baked into other checkouts' skill caches, into
+      # every already-written retro, and into agent habit. Accepting it means exactly
+      # `--artifact PATH --append-artifact`; a CONFLICTING --artifact is a hard error in either
+      # order (reconciled after the loop), never a silent pick of one path over the other.
+      APPEND_ARTIFACT=true
+      if [[ $# -ge 2 && -n "${2:-}" && "$2" != -* ]]; then
+        APPEND_ARTIFACT_PATH="$2"; shift 2
+      else
+        shift
+      fi
+      ;;
     --known-finding)
       if [[ $# -lt 2 || -z "${2:-}" || "$2" == -* ]]; then
         echo "ERROR: --known-finding requires a fingerprint value, got '${2:-<missing>}'." >&2; exit 2
@@ -286,8 +305,12 @@ Input:
   --file PATH      Review one file; REPEAT --file for multiple. Prefer this over --files —
                    no shell quoting ambiguity (a mis-quoted newline list reads as ONE filename)
   --artifact PATH  Save review output + metadata to PATH for downstream gates
-  --append-artifact  Append this pass to an existing --artifact instead of overwriting it
-                   (use for sequential --rotate passes so pass 1 is not lost)
+  --append-artifact [PATH]
+                   Append this pass to an existing artifact instead of overwriting it
+                   (use for sequential --rotate passes so pass 1 is not lost). Canonical
+                   form is `--artifact PATH --append-artifact`; the one-arg form
+                   `--append-artifact PATH` is accepted as an alias for exactly that.
+                   Giving both a --artifact and a DIFFERENT --append-artifact path is an error.
   --known-finding FP  Fingerprint already dispositioned in a previous pass (repeatable).
                    Repeats are reported separately and do not consume the finding budget.
   --no-chunk       Disable auto-chunking of oversized input (env: ZUVO_ADV_NO_CHUNK=1).
@@ -324,6 +347,18 @@ HELP
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+
+# Reconcile the legacy `--append-artifact PATH` form with `--artifact PATH`, in EITHER order.
+# Doing it here rather than inside the arm is what makes `--append-artifact P --artifact Q`
+# fail as loudly as `--artifact Q --append-artifact P`; inside the arm the later --artifact
+# would just overwrite and one of the two paths would vanish without a word.
+if [[ -n "$APPEND_ARTIFACT_PATH" ]]; then
+  if [[ -n "$ARTIFACT_PATH" && "$ARTIFACT_PATH" != "$APPEND_ARTIFACT_PATH" ]]; then
+    echo "ERROR: --append-artifact '$APPEND_ARTIFACT_PATH' conflicts with --artifact '$ARTIFACT_PATH' — pass one path." >&2
+    exit 2
+  fi
+  ARTIFACT_PATH="$APPEND_ARTIFACT_PATH"
+fi
 
 # Allow env var override
 PROVIDER="${PROVIDER:-${ZUVO_REVIEW_PROVIDER:-}}"

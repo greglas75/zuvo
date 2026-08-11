@@ -705,20 +705,32 @@ Each pass uses `--rotate` (script picks a random unused provider). Prepend prior
 RANGE_KEY=$(printf '%s' "${REVIEWED_FROM}..${REVIEWED_THROUGH}" | shasum | cut -c1-10)
 ADV_PROOF="zuvo/proofs/${SLUG:+${SLUG}-}${RANGE_KEY}-adversarial.txt"   # range hash ALWAYS present
 
-# Pass 1 (--artifact CREATES the proof):
+# The proof path is carried by --artifact on EVERY pass. --append-artifact is a boolean
+# modifier that says "add to that file instead of overwriting it" — it is NOT where the path
+# goes. Between 2026-08-07 and 2026-08-09 this block documented `--append-artifact "$ADV_PROOF"`;
+# the parser took no value there, so the path fell through to `Unknown argument` and every
+# copied pass exited 2 having written nothing. Six ship retros reported it before it was fixed.
+# The one-arg form is accepted now as an alias, but write the canonical pair.
+
+# Pass 1 (creates the proof — no --append-artifact, so an earlier run's file is replaced):
 git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}" | ~/.zuvo/adversarial-review --rotate --mode code --artifact "$ADV_PROOF"
 # → Read output, extract ADV-1, ADV-2
 
 # Pass 2:
 (echo "PRIOR FINDINGS: ADV-1 [desc], ADV-2 [desc] — find NEW issues only";
- git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}") | ~/.zuvo/adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
+ git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}") | ~/.zuvo/adversarial-review --rotate --mode code --artifact "$ADV_PROOF" --append-artifact
 # → Read output, extract ADV-3
 
 # Pass 3 (if provider available):
 (echo "PRIOR FINDINGS: ADV-1..3 — final pass, find what everyone missed";
- git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}") | ~/.zuvo/adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
+ git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}") | ~/.zuvo/adversarial-review --rotate --mode code --artifact "$ADV_PROOF" --append-artifact
 # → ADV-4 or clean → early exit
 ```
+
+**Check the exit code of every pass.** `0` = reviewed, `3` = single_provider_only (honest degraded),
+`1`/`2` = nothing was reviewed. A pass that exits non-zero writes no `REVIEW BY:` line, so an
+artifact citing this proof will fail `pg_artifact_proven` at push time — with the failure surfacing
+one phase later, in a place that says nothing about the pass that actually died.
 
 **Early exit:** 0 findings from a pass = stop (code is clean from that model's perspective).
 
@@ -727,18 +739,23 @@ git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}" | ~/.zuvo/adversarial-review --
 Same `--rotate` pattern but each pass sees the IMPROVED diff after prior fixes.
 
 ```bash
-# Pass 1: review post-primary-fix code
-git diff "${REVIEWED_FROM}..HEAD" | ~/.zuvo/adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
+# Pass 1: review post-primary-fix code (creates the proof — no --append-artifact)
+git diff "${REVIEWED_FROM}..HEAD" | ~/.zuvo/adversarial-review --rotate --mode code --artifact "$ADV_PROOF"
 # → ADV-1 → apply fix → commit
 
 # Pass 2: validate fix + find new
-git diff "${REVIEWED_FROM}..HEAD" | ~/.zuvo/adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
+git diff "${REVIEWED_FROM}..HEAD" | ~/.zuvo/adversarial-review --rotate --mode code --artifact "$ADV_PROOF" --append-artifact
 # → validates ADV-1 fix + finds ADV-2 → apply → commit
 
 # Pass 3: final validation
-git diff "${REVIEWED_FROM}..HEAD" | ~/.zuvo/adversarial-review --rotate --mode code --append-artifact "$ADV_PROOF"
+git diff "${REVIEWED_FROM}..HEAD" | ~/.zuvo/adversarial-review --rotate --mode code --artifact "$ADV_PROOF" --append-artifact
 # → clean or ADV-3
 ```
+
+In FIX mode the fixes land BETWEEN passes, so the last pass reviews content no earlier pass saw.
+The artifact you write in Phase 3 covers the FINAL blob of each file (the gate is content-keyed) —
+if you fix anything after the last adversarial pass, that pass no longer covers what you are
+pushing, and the honest move is one more append, not a re-labelled old one.
 
 Max 2 fix attempts per provider finding. Max 3 passes total.
 

@@ -92,6 +92,36 @@ else
   fi
 fi
 
+# ─── (e) every release commit must have its tag ──────────────────────────────
+# A ship that dies between `git commit` and `git tag` leaves a released version with no tag, and
+# the skill's half-done detector only looks at HEAD — so the moment one more commit lands, the gap
+# becomes invisible and permanent. It happened twice here before anyone diffed the two by hand:
+# v1.6.50 (2026-08-01) and v1.6.67 (2026-08-11) both shipped bumps that were never tagged, and
+# v1.6.67 sat undetected while v1.6.68 shipped straight past it. Ship now sweeps history for this
+# (Phase 0 step 3); this is the mechanical check that the sweep is not just documented prose.
+if ! git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  pass "(e) skipped — not a git work tree"
+elif [ "$(git -C "$ROOT" tag --list 'v*' | head -1)" = "" ]; then
+  pass "(e) skipped — no version tags fetched (shallow/tagless clone), nothing to compare"
+else
+  untagged=""
+  # -20 bounds the sweep to recent releases: an ancient pre-convention commit is not a regression
+  # anyone is going to act on, and failing on it forever would train people to ignore this check.
+  while read -r sha msg; do
+    ver=$(printf '%s' "$msg" | sed -n 's/^release: v\([0-9A-Za-z.+-]*\).*/\1/p')
+    [ -n "$ver" ] || continue
+    git -C "$ROOT" rev-parse -q --verify "refs/tags/v$ver" >/dev/null 2>&1 \
+      || untagged="$untagged v$ver@${sha}"
+  done <<EOF
+$(git -C "$ROOT" log --format='%h %s' -20 --grep='^release: v' 2>/dev/null)
+EOF
+  if [ -z "$untagged" ]; then
+    pass "(e) every one of the last 20 release commits has its tag"
+  else
+    bad "(e) released but never tagged:$untagged — create the tag AT ITS COMMIT (never at HEAD: a tag on later code misstates what shipped)"
+  fi
+fi
+
 echo "----"
 if [ "$fail" -eq 0 ]; then
   echo "ALL PASSED"

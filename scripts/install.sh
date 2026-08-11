@@ -417,7 +417,13 @@ install_zuvo_home() {
   #
   # ~/.zuvo/ is version-independent, which is exactly why append-runlog,
   # build-review-patch and verify-plan-dag already live here and never break this way.
-  for _src in "$ZUVO_DIR"/scripts/zuvo-home/* "$ZUVO_DIR"/scripts/adversarial-review.sh; do
+  # review-artifact-sync.sh joins them for the same reason, one level up: it is the documented
+  # remedy when the pre-push gate blocks because the review pair lives in another checkout, and
+  # every skill that names it used a REPO-RELATIVE path (`scripts/review-artifact-sync.sh`). That
+  # path exists only inside zuvo-plugin — in the repo the agent is actually shipping, the
+  # remediation command a blocked run prints did not exist. It keeps its `.sh` (callers use it).
+  for _src in "$ZUVO_DIR"/scripts/zuvo-home/* "$ZUVO_DIR"/scripts/adversarial-review.sh \
+              "$ZUVO_DIR"/scripts/review-artifact-sync.sh; do
     [[ -f "$_src" ]] || continue
     local _name; _name="$(basename "$_src")"
     case "$_name" in *.pyc|__pycache__|.*) continue ;; esac

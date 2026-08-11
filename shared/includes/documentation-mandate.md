@@ -20,6 +20,15 @@ Pick the target(s) that match what actually changed — proportional to the chan
 
 **Minimum floor:** even the smallest change updates the project's CHANGELOG (or its equivalent — release notes, a "Recent changes" doc section). There is no run that lands code and touches zero docs.
 
+**One exception, and it is a routing rule, not a waiver: a change on a FEATURE BRANCH does not edit
+`CHANGELOG.md`.** `zuvo:ship` Phase 3 forbids it there, because `CHANGELOG.md` is prepended-to and
+`VERSION` is one line, so two open PRs conflict by construction and the second to merge declares a
+version that is already taken. The entry is still mandatory — it is written where it cannot
+collide: a new `changelog.d/<branch-slug>.md` file, which the release step concatenates and
+deletes. On the default branch the floor applies literally. Read together with `zuvo:ship` Phase 3;
+a run that skips the note entirely satisfies neither document. (This paragraph exists because ship
+Phase 1 and this file read as a direct contradiction in a 2026-08-09 field run.)
+
 ---
 
 ## How to produce it (proportional to size)
