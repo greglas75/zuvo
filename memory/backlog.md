@@ -591,3 +591,34 @@ Recipe: apply host exclusion inside the `--list-providers` branch before printin
 close in the same pass: preflight re-validates each name with `command -v` (`scripts/reviewer-preflight.sh:150`),
 which discards the `/Applications/Codex.app` fallback the API exists to surface; and its fail-safe list
 (line 145) omits `cursor-agent`/`kimi`, which its own CANARY dispatcher already knows how to run.
+
+## B-PREFLIGHT-API-PROVIDERS — `command -v` gate structurally excludes every non-binary provider
+Surfaced 2026-08-11 by the behavior auditor of the d143e71..c2a7723 self-review (the third independent
+finding pointing at the SAME line, after CQ #9 and the Codex.app case).
+`scripts/reviewer-preflight.sh:150` gates every candidate on `command -v "$candidate"`. Three provider
+kinds fail that check while being genuinely usable, and `adversarial-review.sh --list-providers` — the
+API preflight was rewired to trust — already reports all three as available:
+  - `kimi-api`   — curl call gated on MOONSHOT_API_KEY (`scripts/adversarial-review.sh:1136,1586`), not a binary
+  - `codestral`  — curl call gated on CODESTRAL_API_KEY (`scripts/adversarial-review.sh:1469`), not a binary
+  - `codex`      — may live at /Applications/Codex.app/Contents/Resources/codex, off PATH
+So preflight under-reports available cross-model reviewers relative to what adversarial can actually
+reach — the exact failure `f5a8a10` set out to fix ("the blind audit could reach fewer reviewers than
+adversarial on the same machine"), for the providers that commit did not account for.
+
+**Do NOT fix by only relaxing the gate.** The canary `case` at `scripts/reviewer-preflight.sh:179-209`
+has NO default arm, so an unknown candidate falls through with an empty `$tmpout`, fails the marker grep,
+and is skipped. Making these candidates without canary arms means that when one of them is the ONLY
+candidate, preflight reports `canary-failed` and caps the run at `clean:degraded` — strictly worse than
+today's silent exclusion. Verified by reading; not fixed here because writing the two curl canary arms
+needs live MOONSHOT_API_KEY / CODESTRAL_API_KEY credentials to test, which this machine does not have.
+
+Recipe, in this order:
+1. Add canary arms for `kimi-api` and `codestral` mirroring `run_kimi_api` / `run_codestral` in
+   `scripts/adversarial-review.sh` (curl + jq extract), each returning the marker or empty.
+2. Add an explicit `*)` arm that records `canary: no probe for <provider>` instead of falling through
+   silently — an un-probeable candidate must be visible, not indistinguishable from a failed one.
+3. Only then, skip the `command -v` re-check for names that came from `--list-providers` (keep it for
+   the hardcoded fallback list at line 145, where nothing did detection). That list also omits
+   `cursor-agent`/`kimi`, which the canary already supports — widen it in the same pass.
+4. Dedupe `DETECTED`: `sed 's/-[0-9][0-9.]*$//'` maps `codex-5.3` AND `codex-5.4` to `codex`, so a spark
+   host probes the same client twice for an identical result.
