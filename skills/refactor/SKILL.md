@@ -254,7 +254,19 @@ Print: `STACK: [language] | RUNNER: [test runner]`
 
 ### CodeSift Setup
 
-Follow `codesift-setup.md`: check availability, `list_repos()` once (cache identifier), `index_folder(path=<root>)` if not indexed.
+Follow `codesift-setup.md`: check availability, then **resolve repo identity before the pre-scan** —
+not after the commit. Every pre-scan call below is scoped to a repo, and in a linked worktree an
+unresolved scope answers about the PARENT checkout's copy of the file.
+
+```bash
+TARGET_REPO=$(git -C "<scope>" rev-parse --show-toplevel)   # the tree this run refactors
+```
+
+If `index_status` reports a root other than `$TARGET_REPO` (or reports `indexed=true` with a file
+count matching the parent), run `index_folder(path=$TARGET_REPO)` **once** — per `codesift-setup.md`
+step 2 that is not a re-index, it is the first index of a tree that has none. Then `index_file` per
+changed file. Do **NOT** call `list_repos()`: the repo auto-resolves from CWD, `codesift-setup.md:19`
+says to skip it, and all three sub-agents are told the orchestrator already owns the identifier.
 
 ### Pre-Scan
 
@@ -355,7 +367,7 @@ Update it after each phase; `continue` resumes from the last recorded `stage`.
 
 Refer to `env-compat.md` for the correct dispatch pattern per environment.
 
-The orchestrator passes the following to each agent: **target file**, **CODESIFT_AVAILABLE** flag, and **repo identifier** (from the orchestrator's own `list_repos()` call in Phase 0). Agents must NOT call `list_repos()` themselves — the orchestrator owns that call.
+The orchestrator passes the following to each agent: **target file**, **CODESIFT_AVAILABLE** flag, and **repo identifier** (`$TARGET_REPO`, resolved in Phase 0 from `git rev-parse --show-toplevel` — never from `list_repos()`). Agents must NOT call `list_repos()` themselves — the orchestrator owns the identifier.
 
 Dispatch two agents in parallel (background) to inform the plan:
 
@@ -1089,13 +1101,36 @@ unevaluated gate wearing a passing badge, per the three-state rules in
 
 After committing: `index_file(path=<changed-file>)` for every changed file.
 
-**Do not index a secondary worktree.** Many repo instruction files (this one included) forbid it —
-worktree paths pollute the main repo's index with duplicate symbols that then answer later queries
-with the wrong file. If repository instructions forbid worktree indexing, or `index_file` is
-unavailable, **skip it and record the post-index verification as `degraded:<the exact restriction>`**
-rather than reindexing anyway or silently claiming a fresh index. The run still has real evidence
-without it — local complexity, cycle checks, and the test suite — so say which of those carried the
-verification.
+**A linked worktree gets indexed — it is not an exception.** This section used to say the opposite
+("do not index a secondary worktree"), and that instruction is retracted: auto-indexing *refuses*
+linked worktrees and silently defers to the parent checkout, so an unindexed worktree does not mean
+"no index" — it means every later query answers about the PARENT's copy of your files. Measured
+2026-08-10 on a run that fell back to `grep`/`cat` because of this: **21.8M tokens, 13.2% of the
+whole run**. A refactor in `rewards-api` got a CQ14 clone reported at `paypal-webhook.ts:564` in a
+facade that is 212 lines long — the wrong tree's answer reached the gate's output.
+`../../shared/includes/codesift-setup.md` is the source of truth here; if this file and step 2 of
+that include ever disagree again, **step 2 wins**.
+
+Procedure, in order:
+
+1. **Blob-identity short-circuit — check this first.** If every file in scope is blob-identical to
+   the indexed HEAD (`git rev-parse "HEAD:$f"` matches what the index was built from), the existing
+   index is already correct for your content. Skip `index_folder`, use `index_file` per changed file,
+   and say so. Indexing on top of an already-correct index is pure cost.
+2. Otherwise resolve identity and index the tree once:
+   `TARGET_REPO=$(git -C <scope> rev-parse --show-toplevel)` → if the index root differs,
+   `index_folder(path=$TARGET_REPO)` **once**, then `index_file(path=<changed-file>)` per changed file.
+3. **Cost escape.** `index_folder` on a large worktree is not free: measured 125 s on one run (both
+   mandated tools then hit their 90 s timeout, so ~5 minutes bought nothing) and a 300 s MCP wedge
+   that killed 4 follow-up calls on another. If it is slow, wedged, or times out, stop and record
+   `degraded:<the exact restriction>` — that string must cover **slow/wedged/timed-out**, not only
+   "index_folder failed".
+4. **The narrow, real exception stays.** If the TARGET REPO's own instruction files forbid indexing
+   worktrees, honour that and record `degraded:<the exact restriction>`. What is retracted is the
+   false claim that *our* files forbid it.
+
+When you skip indexing for any of these reasons, the run still has real evidence — local complexity,
+cycle checks, and the test suite — so say which of those carried the verification.
 
 ### Backlog Persistence (FULL mode)
 

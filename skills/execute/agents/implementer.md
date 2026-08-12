@@ -59,7 +59,7 @@ The orchestrator provides:
 
 Before any code analysis, discover available tools:
 1. Check whether CodeSift tools are available in the current environment. If so, use the CodeSift tools below.
-2. `list_repos()` — get the repo identifier (call once, cache result)
+2. Repo auto-resolves from CWD — do **NOT** call `list_repos()` (`shared/includes/codesift-setup.md:19`); the orchestrator already owns the identifier
 3. If CodeSift not available, fall back to Read/Grep/Glob
 
 ---
