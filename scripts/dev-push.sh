@@ -508,5 +508,16 @@ echo "  RELEASE COMPLETE"
 echo "══════════════════════════════════════"
 echo "  Version: v${NEW_VERSION}"
 echo "  SHA:     ${NEW_SHA:0:7}"
-echo "  Action:  restart Claude Code"
+echo "  Action:  restart Claude Code, THEN run the check below"
+echo ""
+# Step 7 enabled the plugin, and a Claude Code that was RUNNING during this release can
+# still persist its own older view of ~/.claude/settings.json afterwards and undo it — the
+# CLI writes the file, the app owns it. Nothing this script does can win that race, so make
+# it visible instead of silent. Measured 2026-08-12: a release reported "✓ Plugin enabled",
+# and after the restart `claude plugin list` showed DISABLED in both scopes, with every
+# skill invisible. Same class as the Codex "app indexes at LAUNCH" gotcha in CLAUDE.md.
+echo "  ── after the restart, verify (one command) ──"
+echo "     claude plugin list | grep -A3 zuvo"
+echo "     Expect: Status: ✔ enabled. If it says ✘ disabled, the running app clobbered"
+echo "     the enable — fix with:  claude plugin enable zuvo@zuvo-marketplace"
 echo ""
