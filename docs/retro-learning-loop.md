@@ -255,23 +255,34 @@ mentions, not problems — check before working the list.
 
 ### Checking them — `launchctl list` is NOT the check (2026-08-12)
 
-`launchctl list | grep zuvo` reported all five jobs present, with `last exit code = 0`, while three
-of them had been **dead for five days**. It lists what launchd has in memory, which outlives the
-file on disk: a plist that no longer parses keeps its stale in-memory record and simply stops
-running. Nothing anywhere said so.
+On 2026-08-12 three jobs — `zuvo-runlog-sync`, `zuvo-backlog-sync`, `zuvo-retro-rotate` — were
+found dead since **2026-08-07**: five days of telemetry unsent (one catch-up run pushed 1273
+entries; the backlog index had been frozen at 26,350 items and moved to 27,010). Throughout,
+`launchctl list | grep zuvo` showed all five jobs present with `last exit code = 0`, because it
+lists what launchd holds in memory, which outlives both the file on disk and the job's ability to
+do anything.
 
-The cause was one character. `2>&1` inside a `<string>` is invalid XML — a bare `&` must be
-`&amp;` — so `com.greglas.zuvo-runlog-sync`, `-backlog-sync` and `-retro-rotate` silently stopped
-on 2026-08-07. Five days of telemetry (1273 entries) sat unsent until the escape was fixed and the
-jobs reloaded; the backlog index was frozen at 26,350 items.
+**Two separate facts, and only the first is proven.**
+
+1. **A real defect, fixed:** `2>&1` inside a plist `<string>` is invalid XML — a bare `&` must be
+   `&amp;`. All three failed `plutil -lint`; `zuvo-popebot-sync` and `zuvo-retro-mine` passed and
+   kept running. An unparseable plist cannot be bootstrapped, so these three would not have
+   survived the next reboot regardless.
+2. **NOT the cause of the 2026-08-07 stop, despite looking like it.** The three plists were last
+   written on 2026-07-20/23/24 and ran fine for two weeks afterwards, and the machine was busy
+   every day of the outage (59-200 runs/day in `runs.log`). Whatever stopped them left them
+   resident and simply not firing. **That cause is still unknown.** It is written down as unknown
+   on purpose: the first version of this section asserted the XML bug caused it, which fits the
+   evidence only if you do not check the dates.
 
 Check all three layers, in this order — each catches what the previous one cannot:
 
 ```bash
-# 1. Does every plist still PARSE? (the failure above; `launchctl list` cannot see it)
+# 1. Does every plist still PARSE? (`launchctl list` structurally cannot see this)
 for f in ~/Library/LaunchAgents/com.greglas.zuvo-*.plist; do printf '%s ' "$(basename "$f")"; plutil -lint "$f"; done
 
-# 2. Is each job's log FRESH? A job that runs but does nothing looks identical to a healthy one.
+# 2. Is each job's log FRESH? This is the only check that catches an unknown cause — including
+#    the 2026-08-07 one, which no amount of plist linting would have surfaced.
 ls -lT ~/.zuvo/*.log
 
 # 3. Only then: is it loaded at all?
