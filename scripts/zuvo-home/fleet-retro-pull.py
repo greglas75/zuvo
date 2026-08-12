@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""fleet-retro-pull.py — bring OTHER INSTALLS' zuvo retros down into the mining loop.
+
+The uplink has worked for a while and nobody could see it. Zuvo retros ride the CodeSift
+telemetry payload (`/ingest/codesift`, open + anonymous — the only channel that reaches anyone;
+`/ingest/zuvo` is token-gated behind SSH to a tailnet host, so it holds exactly one install: this
+machine). Those payloads land on the collector and stop there: `retro-mine.py` reads
+`~/.zuvo/retros.md` plus `~/.zuvo/remote/*/`, and NOTHING ever wrote the fleet's rollups into
+either. Measured 2026-08-12: 30 installs reporting, 4 of them carrying zuvo retro blocks, of which
+3 are other people — and every digest ever generated saw zero of them.
+
+This is the missing half. It pulls the collector's `codesift` namespace, keeps the `retros`
+rollups, drops this machine's own anon id, and writes one canonical `retros.log` per foreign
+install under `~/.zuvo/remote/fleet/<anon8>/` — the exact path+format `retro-mine.py` already
+globs (`remote/*/` then `*/`), so no change is needed there.
+
+The rollup is anonymous by omission: day / skill / code_type / friction / context_gap / counts and
+medians. No project, no branch, no sha, no free text — those fields are never collected. The
+canonical retros.log line has 17 fields, so the ones that do not exist in a rollup are written as
+`N/A`; `count: N` becomes N identical lines, because the miner counts occurrences.
+
+Usage:
+  fleet-retro-pull.py            # pull, rewrite ~/.zuvo/remote/fleet/, print a summary
+  fleet-retro-pull.py --dry-run  # show what would be written, touch nothing
+  fleet-retro-pull.py --days 30  # only rollups whose day is within N days (default: all)
+
+Exit: 0 = pulled (or nothing configured, stated out loud); 1 = the collector could not be read.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+
+ZUVO = os.environ.get("ZUVO_HOME", os.path.expanduser("~/.zuvo"))
+FLEET = os.path.join(ZUVO, "remote", "fleet")
+REMOTE_DATA = "/home/gha/telemetry-collector/data/codesift"
+SSH_TIMEOUT = 25          # hard wall: an unreachable collector must fail, never hang a cron job
+
+
+def collector_ssh():
+    """Same resolution rule as zuvo-collector-host.sh: env, then collector.conf, no default."""
+    v = os.environ.get("ZUVO_COLLECTOR_SSH")
+    if v:
+        return v.strip()
+    conf = os.path.join(ZUVO, "collector.conf")
+    try:
+        with open(conf, encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                m = re.match(r"\s*ZUVO_COLLECTOR_SSH\s*=\s*(.+)", line)
+                if m:
+                    val = m.group(1).split("#", 1)[0].strip().strip("'\"").strip()
+                    if val:
+                        return val
+    except OSError:
+        pass
+    return ""
+
+
+def local_anon_id():
+    """This machine's own id — its rollups are already in ~/.zuvo/retros.log, not foreign data."""
+    for p in (os.path.join(os.path.expanduser("~/.codesift"), "telemetry-id"),
+              os.path.join(os.environ.get("CODESIFT_DATA_DIR", ""), "telemetry-id")):
+        if p and os.path.isfile(p):
+            try:
+                return open(p, encoding="utf-8", errors="ignore").read().strip()
+            except OSError:
+                pass
+    return ""
+
+
+def fetch(vps):
+    """One SSH, whole namespace. Bounded: a hung collector must not wedge the caller."""
+    cmd = ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={SSH_TIMEOUT}", vps,
+           f"cat {REMOTE_DATA}/*.jsonl 2>/dev/null"]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=SSH_TIMEOUT * 4)
+    except subprocess.TimeoutExpired:
+        print(f"fleet-retro-pull: collector {vps} did not answer in {SSH_TIMEOUT * 4}s", file=sys.stderr)
+        return None
+    if out.returncode != 0:
+        print(f"fleet-retro-pull: ssh to {vps} failed (rc={out.returncode}): "
+              f"{out.stderr.strip()[:200]}", file=sys.stderr)
+        return None
+    return out.stdout
+
+
+# Canonical retros.log layout (17 fields after `RETRO: `). Only the ones a rollup actually carries
+# are filled; the rest are N/A by construction, not by scrubbing — see the module docstring.
+def rollup_to_line(day, r):
+    ts = f"{day}T00:00:00Z"
+    return "RETRO: " + "\t".join([
+        ts,
+        str(r.get("skill") or "unknown"),          # 1 skill      — miner: skills[f[1]]
+        "fleet",                                    # 2 project    — never collected
+        str(r.get("code_type") or "N/A"),           # 3 code_type
+        str(r.get("friction") or "other"),          # 4 friction   — miner: frictions[f[4]]
+        "N/A",                                      # 5 note       — never collected
+        str(r.get("context_gap") or "N/A"),         # 6 context gap
+        str(r.get("median_turns") or "N/A"),        # 7 turns
+        str(r.get("median_tool_calls") or "N/A"),   # 8 tool calls
+        str(r.get("median_files_read") or "N/A"),   # 9 files read
+        str(r.get("median_files_modified") or "N/A"),  # 10 files modified
+        "N/A",                                      # 11 branch    — never collected
+        "N/A",                                      # 12 sha       — never collected
+        f"blind={r.get('blind_audit_ran', 'N/A')}",  # 13
+        f"adv={r.get('adversarial_ran', 'N/A')}",    # 14
+        str(r.get("codesift") or "N/A"),            # 15
+        str(r.get("routing") or "N/A"),             # 16
+    ])
+
+
+def main():
+    dry = "--dry-run" in sys.argv
+    days = None
+    if "--days" in sys.argv:
+        try:
+            days = int(sys.argv[sys.argv.index("--days") + 1])
+        except (IndexError, ValueError):
+            print("fleet-retro-pull: --days needs a number", file=sys.stderr)
+            return 1
+    cutoff = ""
+    if days:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    vps = collector_ssh()
+    if not vps:
+        # Loud, not silent: every other helper here soft-skips with no output, which is how five
+        # days of dead sync went unnoticed. Say why nothing happened.
+        print("fleet-retro-pull: no collector configured "
+              f"(set ZUVO_COLLECTOR_SSH in {ZUVO}/collector.conf) — nothing pulled")
+        return 0
+
+    raw = fetch(vps)
+    if raw is None:
+        return 1
+
+    mine = local_anon_id()
+    # (anon, day, skill, code_type, friction, context_gap, …) -> emitted line, with its count
+    per_install = defaultdict(list)
+    seen = set()
+    skipped_self = 0
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        payload = rec.get("payload") or rec
+        anon = rec.get("anon_id") or payload.get("anon_id") or ""
+        rollups = payload.get("retros")
+        if not anon or not rollups:
+            continue
+        if mine and anon == mine:
+            skipped_self += 1
+            continue
+        for r in rollups:
+            day = str(r.get("day") or "")[:10]
+            if not day or (cutoff and day < cutoff):
+                continue
+            key = (anon, day, r.get("skill"), r.get("code_type"), r.get("friction"),
+                   r.get("context_gap"), r.get("count"))
+            if key in seen:          # the same rollup is re-sent on every flush until the cursor moves
+                continue
+            seen.add(key)
+            line_out = rollup_to_line(day, r)
+            try:
+                n = max(1, int(r.get("count") or 1))
+            except (TypeError, ValueError):
+                n = 1
+            per_install[anon].extend([line_out] * n)
+
+    if not per_install:
+        print(f"fleet-retro-pull: 0 foreign retro rollups on {vps} "
+              f"(own uploads skipped: {skipped_self})")
+        return 0
+
+    total = 0
+    for anon, lines in sorted(per_install.items()):
+        short = anon.split("-")[0][:8] or "unknown"
+        d = os.path.join(FLEET, short)
+        total += len(lines)
+        if dry:
+            print(f"  would write {len(lines):>5} retros -> {d}/retros.log")
+            continue
+        os.makedirs(d, exist_ok=True)
+        # Atomic replace: retro-mine may read this file while we rewrite it.
+        fd, tmp = tempfile.mkstemp(dir=d, prefix=".retros.", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(sorted(lines)) + "\n")
+        os.replace(tmp, os.path.join(d, "retros.log"))
+        print(f"  {len(lines):>5} retros -> remote/fleet/{short}/retros.log")
+
+    print(f"fleet-retro-pull: {total} retros from {len(per_install)} foreign install(s)"
+          f"{' [dry-run]' if dry else ''}; own uploads skipped: {skipped_self}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
