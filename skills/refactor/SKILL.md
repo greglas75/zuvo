@@ -357,7 +357,7 @@ Showing only failures hides false positives in the 1s. All 28 scores must be vis
 
 ### CONTRACT State File
 
-The CONTRACT JSON schema (v3) and the v2->v3 migration rules live in
+The CONTRACT JSON schema (v4) and the migration rules live in
 `../../shared/includes/refactor-reference.md` -> "CONTRACT State File". Create
 `zuvo/contracts/refactor-{target-hash}.json` per that schema (`{target-hash}` = first 8 chars of
 SHA-1 of the relative target path). It now includes the `prove` block the commit-gate reads.
@@ -690,6 +690,11 @@ Apply the planned changes according to the extraction list, following these rule
 1. List the files to audit = the **scope-fence** files, INCLUDING the new modules this split created. A split EXTENDS its own scope-fence to the files it extracts — those new modules are in-fence by definition, so "audit every extracted module" and "stay inside the scope-fence" are the SAME set, not a contradiction. A file modified OUTSIDE the scope-fence is a fence VIOLATION to surface (backlog / ask), never an extra audit-and-ship target.
 2. Run CQ1-CQ40 self-eval on EACH of those scope-fence files (orchestrator + every extracted module — the bugs move with the code)
 3. Any CQ critical gate failure (CQ3/4/5/6/8/14 = 0) in ANY module blocks the commit — **when the failure is in code this refactor moved, touched, or created**. A PRE-EXISTING critical failure confined to UNTOUCHED units of an in-fence file (e.g. CQ8 in `persist()` while you extract `calculateTax`) is NOT a commit-blocker: it is identical before and after the diff, fixing it usually needs its own characterization tests + product decisions, and blocking on it would make incremental extraction of legacy god-files impossible. Disposition: verify it is byte-identical pre/post (no regression), disclose it loudly in the post-audit (`pre-existing, out-of-fence-unit`), and backlog it per Phase 3.5/Phase 4 — never silently, never as an excuse for a failure your diff introduced. (Both 2026-07-09 skill-eval executors independently hit this ambiguity and resolved it this way; this paragraph makes that the written rule.)
+
+4. **Record the list.** Write the new modules into the CONTRACT as `modules_created` (repo-relative
+   paths) the moment they land — not reconstructed at the end from memory or from `git status`,
+   which by then also carries the fix commits. This list is already in your hand at step 1; it is
+   the denominator the per-module coverage gate in Phase 3.6 divides by.
 
 ### CodeSift Post-Audit Verification (when CodeSift available)
 
@@ -1054,7 +1059,45 @@ happened twice in the field (2026-08-07, 2026-08-08), the second time invented a
 capability (Codex's single-agent lock), follow the ONE documented exception in
 `test-quality-gate.md`; otherwise dispatch.
 
-characterization proof — run the gate from `../../shared/includes/test-quality-gate.md` with:
+**Step 0 — Per-module coverage of what this refactor CREATED (run before the audit dispatch).**
+
+The characterization lock proves the split changed nothing. It does **not** give the new modules
+tests, and it structurally cannot: `Completion Gate Check` requires those tests to run green on the
+**PRE-refactor** code, so they can only target the original surface. Every characterization test a
+split writes therefore lands in the *facade's* spec. That is correct for safety and useless as
+coverage of the modules you just created — and until this step existed, nothing in this skill ever
+looked at them.
+
+The failure is on record. `rs_be` PR #291 (`refactor(result): split result export responsibilities`)
+created 7 `.operations.ts` modules holding 2 586 lines of moved logic, added 215 lines of
+characterization tests to `result-export.service.spec.ts`, and shipped with **zero** spec files for
+the 7 modules — no spec in the repo imports any of them to this day. Blind audit, adversarial,
+mutation-test Grade A, review APPROVE, ship PASS. Every gate was satisfied because no gate asked.
+
+For each path in `modules_created`:
+
+1. Does a test file exercise it **directly** (imports the module, not only the facade)? Search by
+   import, not by filename convention — a module covered from a differently-named spec is covered.
+2. **Uncovered modules get tests IN THIS RUN.** Dispatch `Skill(zuvo:write-tests <module>)` per
+   uncovered module, commit as `test(<scope>):`. This is the same in-run fix rule Phase 3.5 applies
+   to bugs: a gap you surfaced and parked is not dispositioned, it is deferred onto the user, who
+   finds it two weeks later on a "files without tests" list.
+3. Only these defer, and only **named** in the backlog: a module whose test needs files outside the
+   scope fence, or one the user explicitly declined. Size, lateness and "the facade covers it" are
+   not reasons.
+4. Record `prove.split_coverage = "<created>/<with_own_spec>:<disposition>"` — e.g. `"7/7:fixed-in-run"`,
+   `"7/5:2-backlogged-out-of-fence"`. Empty `modules_created` → `"N/A"`, and say why (no new files).
+
+**Both this field and `prove.test_quality` are read by the git hook at `git push`, not at commit** —
+they cannot exist earlier, since Phase 3.5 commits before this phase runs. Both are checked against
+artifacts rather than trusted: the `test_quality` report path must EXIST on disk, and the created
+count in `split_coverage` must equal the number of entries in `modules_created` recorded back in
+Phase 3. `"N/A"` after a split that created modules is therefore a block, not an escape.
+
+Gap remaining after the cap → `WARN` + per-module backlog entry, never silence. The specs written
+here are part of `TEST_SCOPE` below, so they get audited in the same run rather than next quarter.
+
+**Then** the characterization proof — run the gate from `../../shared/includes/test-quality-gate.md` with:
 
 - `TEST_SCOPE` = every test file this refactor **created or modified** (characterization/pin-down
   suites, updated specs) PLUS every **pre-existing** test file covering an in-fence production
@@ -1216,6 +1259,7 @@ COMPLETION GATE CHECK
 [ ] Adversarial review ran on final diff
 [ ] Bug remediation (Phase 3.5): every fix-now bug fixed + tested IN THIS RUN as a separate fix commit; nothing parked by size; only out-of-scope-fence items or user-declined decisions deferred. If bugs were fixed, the run has 2 commits (refactor, then fix)
 [ ] Regression red DEMONSTRATED (only when fix-now items were applied): the new regression assertions were actually RUN against the pre-fix code with the failing output captured — not inferred from the old assertion's flip — and `prove.regression_red` recorded in the CONTRACT (the gate blocks the fix commit without it)
+[ ] Per-module coverage (Phase 3.6 Step 0): every path in `modules_created` either has a test that imports it DIRECTLY, or was tested in-run via `zuvo:write-tests`, or is a NAMED backlog entry with an out-of-fence/user-declined reason; `prove.split_coverage = "<created>/<with_own_spec>:<disposition>"` recorded (`"N/A"` only when the refactor created no files). The characterization lock does NOT satisfy this item — it targets the pre-refactor surface by construction, so it can never cover a module that did not exist yet
 [ ] Test Quality Gate (Phase 3.6) ran: `[GATE: test-quality] PASS|WARN|N/A` printed with a REAL `zuvo/audits/` test-audit report path (inline Q-rescoring is a substituted gate = INVALID); below-A files fixed in-run as a `test:` commit or WARN + per-file backlog; `prove.test_quality` recorded
 [ ] Aggregate review hand-off evaluated: if 2+ sibling refactor commits this session, the `zuvo:review <range>` line is surfaced (per Aggregate Review Hand-off)
 [ ] Documentation updated if public surface changed, else explicit [DOC: N/A — internal-only] (per documentation-mandate.md)
@@ -1281,6 +1325,28 @@ if true; then  # CONTRACT resolved for this run's target — evaluate its prove 
   esac
   # findings parked? adversarial recorded N>0 findings (not ':preserved') but disposition unresolved
   case "$av" in *findings) case "$fd" in pending|unresolved|"") echo "BLOCK(unsafe): prove.adversarial='$av' but findings_disposition='$fd' — FIX the in-fence bugs in Phase 3.5 (or document each as out-of-fence/declined/false-positive/preserved). 'Moved verbatim' / 'infra was down' are NOT valid defers."; g=1 ;; esac ;; esac
+  # v4 fields. The hook checks these at PUSH (they cannot exist at commit time — Phase 3.6 runs
+  # after the Phase 3.5 commits), but this self-check runs at the END of the run, when both are
+  # filled. Omitting them here would let the run print GATE: PASS and then be rejected at push —
+  # exactly the disagreement the header above promises is impossible.
+  cv=$(grep -o '"version"[[:space:]]*:[[:space:]]*"\{0,1\}[0-9][0-9]*' "$C" | head -1 | tr -cd '0-9')
+  if [ -n "$cv" ] && [ "$cv" -ge 4 ] 2>/dev/null; then
+    tq=$(sed -n 's/.*"test_quality"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$C" | head -1)
+    case "$tq" in
+      N/A|N/A:*) ;;
+      PASS:*:*|WARN:*:*) rep=${tq#*:}; rep=${rep#*:}
+        [ -n "$rep" ] && [ -f "$rep" ] || { echo "BLOCK(unsafe): prove.test_quality='$tq' — the named test-audit report does not exist at '$rep'. The push gate is satisfied by the REPORT, not the claim."; g=1; } ;;
+      *) echo "BLOCK(unsafe): prove.test_quality='$tq' — run Phase 3.6 (REAL zuvo:test-audit dispatch) and record '<PASS|WARN|N/A>:<worst tier>:<report path>' in $C"; g=1 ;;
+    esac
+    mods=$(tr -d '\n' < "$C" | awk '{s=$0;k=index(s,"\"modules_created\"");if(k==0)exit;s=substr(s,k);b=index(s,"[");if(b==0)exit;s=substr(s,b+1);inq=0;esc=0;cur="";n=length(s);for(i=1;i<=n;i++){ch=substr(s,i,1);if(inq){if(esc){cur=cur ch;esc=0}else if(ch=="\\"){esc=1}else if(ch=="\""){inq=0;if(cur!="")print cur;cur=""}else{cur=cur ch}}else{if(ch=="\""){inq=1;cur=""}else if(ch=="]")exit}}}' | grep -c .)
+    sc=$(sed -n 's/.*"split_coverage"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$C" | head -1)
+    num=$(printf '%s' "$sc" | sed -n 's|^\([0-9][0-9]*\)/[0-9][0-9]*:..*$|\1|p')
+    if [ "${mods:-0}" -eq 0 ]; then
+      case "$sc" in N/A|N/A:*|0/0:*) ;; *) echo "BLOCK(unsafe): prove.split_coverage='$sc' — modules_created is empty, so record 'N/A' or '0/0:<why>' in $C"; g=1 ;; esac
+    elif [ -z "$num" ] || [ "$num" -ne "$mods" ] 2>/dev/null; then
+      echo "BLOCK(unsafe): prove.split_coverage='$sc' does not match modules_created ($mods entries) — give every created module a test that imports it DIRECTLY (Phase 3.6 Step 0), then record '<created>/<with_own_spec>:<disposition>' in $C"; g=1
+    fi
+  fi
   [ "$g" = 0 ] \
     && echo "GATE: PASS — CONTRACT prove complete (blind_audit=$ba adversarial=$av disposition=$fd); the refactor-safety hook will allow the commit." \
     || echo "GATE: BLOCKED(unsafe) — resolve the BLOCK lines above (RUN the gate / FIX the findings). The git hook will reject the commit until prove is complete; never relabel BLOCKED→PASS, never park a HARD GATE as 'awaiting user decision'."

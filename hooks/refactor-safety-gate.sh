@@ -10,6 +10,10 @@
 # never brick `git commit`/`git push`. The block path is the ONLY non-zero exit.
 
 MODE=${1:-pre-commit}
+# The lib needs the mode: the v4 prove fields (test_quality, split_coverage) are only KNOWABLE
+# after Phase 3.6, which runs after the Phase 3.5 commits. Enforcing them at pre-commit would
+# block the very commit that has to happen before they can be filled — a deadlock with no exit.
+export ZUVO_GATE_MODE="$MODE"
 LIB="$(dirname "$0")/lib/refactor-gate-lib.sh"
 [ -f "$LIB" ] || { echo "zuvo refactor-gate: lib not found ($LIB) -> fail-open" >&2; exit 0; }
 . "$LIB" || exit 0
@@ -53,6 +57,7 @@ esac
 # Run BOTH gate checks (each prints its own BLOCK: line + returns non-zero on block).
 blk=0
 refactor_gate_check "$files" || blk=1
+refactor_prove_v4_check "$files" || blk=1
 refactor_scope_gate_check "$files" || blk=1
 plan_execute_gate_check "$files" || blk=1
 spec_approval_gate_check "$files" || blk=1

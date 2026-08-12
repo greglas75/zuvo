@@ -47,7 +47,7 @@ resumable run, not an archive candidate — resume it per the rules below instea
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "file": "src/services/order.service.ts",
   "type": "EXTRACT_METHODS",
   "mode": "full",
@@ -60,15 +60,48 @@ resumable run, not an archive candidate — resume it per the rules below instea
   "plan": {},
   "test_mode": "",
   "test_audit_before": { "test_file": null, "q7": 0, "q11": 0, "q13": 0, "units_total": 0, "units_covered": 0, "uncovered_units": [] },
-  "prove": { "characterization": "not_run", "blind_audit": "not_run", "adversarial": "not_run", "regression_red": "not_run", "findings_disposition": "pending" },
+  "modules_created": [],
+  "prove": { "characterization": "not_run", "blind_audit": "not_run", "adversarial": "not_run", "regression_red": "not_run", "findings_disposition": "pending", "test_quality": "not_run", "split_coverage": "not_run" },
   "progress": []
 }
 ```
 
-**Contract migration (v2 → v3):** When `continue` loads a legacy contract:
+**`modules_created`** — the production files this refactor BROUGHT INTO EXISTENCE (empty for a
+refactor that creates none). Written in Phase 3 the moment the files land, not reconstructed at the
+end. It is the denominator of `prove.split_coverage`.
+
+**`prove.test_quality`** — `"<PASS|WARN|N/A>:<worst tier>:<report path>"` from Phase 3.6.
+
+**`prove.split_coverage`** — `"<created>/<with_own_spec>:<disposition>"` from the per-module coverage
+gate, or `"N/A"` when `modules_created` is empty. See "Per-module coverage" in `skills/refactor/SKILL.md`.
+
+**Contract migration (v3 → v4):** `continue` on a v3 contract bumps `version` to 4 and adds the two
+new `prove` keys as `"not_run"` plus an empty `modules_created`. Nothing else changes.
+
+**Where these two are enforced — `git push`, not `git commit`.** Both are only KNOWABLE after
+Phase 3.6, which runs *after* the Phase 3.5 commits. A commit-time check would block the very commit
+that has to happen before they can be filled — a deadlock on the default path of every refactor
+(the first draft of this gate did exactly that; a repro caught it before release). So
+`refactor_prove_v4_check` in `hooks/lib/refactor-gate-lib.sh` runs at **pre-push only**, and unlike
+the commit gate it does *not* skip `stage: COMPLETE` — COMPLETE is precisely the state a finished
+refactor is in when it reaches the push, so skipping it would mean the fields are enforced nowhere.
+
+**Why the version bump matters — do not skip it.** That gate applies **only at `version >= 4`**.
+That is what makes this a self-migrating rollout instead of a flag day: a run started by an older
+installed skill writes a v3 contract and is judged by the v3 rules, so an in-flight refactor cannot
+be blocked by a field its own skill version never knew about. Writing `"version": 4` is therefore a
+promise that the run records both fields. Do not bump the version in a contract without recording
+them.
+
+Both fields are cross-checked against artifacts, not taken at face value: `test_quality` must name
+an on-disk `zuvo/audits/` report that EXISTS (repo-relative, no `..`), and `split_coverage`'s created
+count must equal the number of entries in `modules_created`. A claim that disagrees with the list
+Phase 3 already wrote is a lie told twice, backwards in time.
+
+**Contract migration (v2 → v3, still supported):** When `continue` loads a legacy contract:
 - Mode migration: `quick`/`standard`/`auto` → `full` (silently, with log)
 - Stage migration: `ETAP-1A` → `PHASE-1`, `ETAP-1B` → `PHASE-2`, `ETAP-2` → `PHASE-3`, `COMPLETE` → `COMPLETE`
-- Version: bump to 3
+- Version: bump to 3, then apply the v3 → v4 step above
 
 In batch mode, `queue_file` and `queue_entry` are set so resume can map back to the queue:
 

@@ -91,6 +91,117 @@ refactor_gate_check() {
   return $blocked
 }
 
+# refactor_prove_v4_check — the two proofs that can only exist AFTER the commits.
+#
+# Separate from refactor_gate_check on purpose, and the separation is the whole design:
+#
+#   * PRE-PUSH ONLY. Phase 3.6 (test-quality) and its Step 0 (per-module coverage) run AFTER the
+#     Phase 3.5 commits — skills/refactor/SKILL.md:1022 commits, :1049 is Phase 3.6. Enforcing
+#     these at pre-commit blocks the very commit that must happen before they can be filled: a
+#     deadlock with no exit, on the DEFAULT path of every refactor. The first draft of this change
+#     did exactly that and a repro caught it. `git push` is the first boundary at which both are
+#     knowable, and it is still before the code reaches anyone else.
+#   * TERMINAL STAGES ARE NOT SKIPPED HERE. refactor_gate_check skips COMPLETE/BLOCKED because it
+#     protects an in-flight refactor. This check is the opposite: COMPLETE is exactly the state a
+#     finished refactor is in when it reaches `git push`, so skipping it would mean the field is
+#     enforced nowhere at all. The TTL below still ages out abandoned contracts, so a months-old
+#     COMPLETE contract cannot block pushes forever.
+#
+# Why these two fields, measured 2026-08-12 over 413 COMPLETE refactor contracts on this machine:
+# the fields a hook blocks on are recorded 96-97% of the time; prove.test_quality, which only
+# prose called HARD, was recorded in 3% (33% in August). Phase 3.6 was not being skipped by bad
+# agents — it was unenforced, and unenforced is indistinguishable from optional.
+# prove.split_coverage is new for the same reason: rs_be PR #291 split a service into 7 modules
+# holding 2586 lines and shipped with zero specs for them, past every gate, because no gate asked
+# about the files a refactor CREATES (characterization can only cover the pre-split surface).
+refactor_prove_v4_check() {
+  [ "${ZUVO_GATE_MODE:-pre-commit}" = "pre-push" ] || return 0
+  rpv_staged=$1
+  rpv_dir=${ZUVO_CONTRACTS_DIR:-zuvo/contracts}
+  [ -d "$rpv_dir" ] || return 0
+  rpv_ttl=$(printf '%s' "${ZUVO_GATE_TTL_SEC:-86400}" | tr -cd '0-9')
+  [ -n "$rpv_ttl" ] || rpv_ttl=86400
+  rpv_blocked=0
+  for rpv_c in "$rpv_dir"/refactor-*.json; do
+    [ -f "$rpv_c" ] || continue
+    _is_agent_env || continue
+    rpv_now=$(date +%s)
+    rpv_mt=$(_mtime "$rpv_c" "$rpv_now")
+    [ $((rpv_now - rpv_mt)) -gt "$rpv_ttl" ] && continue
+    # version >= 4 only. A run started by an older installed skill writes v3 and is judged by v3
+    # rules, so an in-flight refactor is never blocked by a field its own version never knew
+    # about — self-migrating rollout, no flag day. The quote-tolerant parse matters: contracts in
+    # the field carry "version": 4 AND "version": "4", and a digits-only sed read the string form
+    # as absent and let it straight through.
+    rpv_cv=$(grep -o '"version"[[:space:]]*:[[:space:]]*"\{0,1\}[0-9][0-9]*' "$rpv_c" 2>/dev/null | head -1 | tr -cd '0-9')
+    case "$rpv_cv" in ''|*[!0-9]*) continue ;; esac
+    [ "$rpv_cv" -ge 4 ] 2>/dev/null || continue
+    # only judge a contract whose fence this push actually touches
+    rpv_hit=0
+    rpv_oldifs=$IFS; IFS='
+'
+    set -f
+    for rpv_f in $rpv_staged; do
+      [ -n "$rpv_f" ] || continue
+      if grep -Fq -- "\"$rpv_f\"" "$rpv_c"; then rpv_hit=1; break; fi
+    done
+    set +f
+    IFS=$rpv_oldifs
+    [ "$rpv_hit" = 1 ] || continue
+
+    rpv_tq=$(sed -n 's/.*"test_quality"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$rpv_c" | head -1)
+    # PASS/WARN/N/A is the vocabulary Phase 3.6 prints — but shape alone still accepts a story.
+    # "WARN:substituted-inline" (a value a field run invented twice) matches WARN:* perfectly.
+    # So PASS/WARN must carry the third field, the on-disk zuvo/audits/ report, and that file
+    # must EXIST: the report is the expensive thing to fake, which is exactly why it is the
+    # proof-of-dispatch. N/A needs no report — nothing test-shaped happened.
+    case "$rpv_tq" in
+      N/A|N/A:*) ;;
+      PASS:*:*|WARN:*:*)
+        rpv_rep=${rpv_tq#*:}; rpv_rep=${rpv_rep#*:}
+        case "$rpv_rep" in
+          ''|/*|*..*) echo "BLOCK: refactor CONTRACT prove.test_quality='$rpv_tq' — the report path must be repo-relative and contain no '..' [$rpv_c]"; rpv_blocked=1 ;;
+          *) [ -f "$rpv_rep" ] || { echo "BLOCK: refactor CONTRACT prove.test_quality='$rpv_tq' — the named test-audit report does not exist at '$rpv_rep'. The gate is satisfied by the REPORT, not by the claim; inline Q-rescoring is a substituted gate [$rpv_c]"; rpv_blocked=1; } ;;
+        esac
+        ;;
+      *) echo "BLOCK: refactor CONTRACT prove.test_quality='$rpv_tq' not satisfied — Phase 3.6 must dispatch the REAL zuvo:test-audit and record '<PASS|WARN|N/A>:<worst tier>:<report path>' [$rpv_c]"; rpv_blocked=1 ;;
+    esac
+
+    # split_coverage must agree with modules_created, which Phase 3 wrote earlier — before the
+    # agent knew this check existed. Without the cross-check the field accepts any non-empty
+    # string ("N/A" after a 7-module split, "TODO", " "), i.e. it would police only an agent
+    # honest enough to write "not_run". Making the numerator match forces a lie to be told twice,
+    # backwards in time. Walker is the scope_fence one below, keyed on modules_created.
+    rpv_mods=$(tr -d '\n' < "$rpv_c" 2>/dev/null | awk '
+      { s = $0
+        k = index(s, "\"modules_created\""); if (k == 0) exit
+        s = substr(s, k); b = index(s, "["); if (b == 0) exit
+        s = substr(s, b + 1); inq = 0; esc = 0; cur = ""; n = length(s)
+        for (i = 1; i <= n; i++) { ch = substr(s, i, 1)
+          if (inq) { if (esc) { cur = cur ch; esc = 0 }
+                     else if (ch == "\\") { esc = 1 }
+                     else if (ch == "\"") { inq = 0; if (cur != "") print cur; cur = "" }
+                     else { cur = cur ch } }
+          else { if (ch == "\"") { inq = 1; cur = "" } else if (ch == "]") { exit } } } }' | grep -c . )
+    case "$rpv_mods" in ''|*[!0-9]*) rpv_mods=0 ;; esac
+    rpv_sc=$(sed -n 's/.*"split_coverage"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$rpv_c" | head -1)
+    rpv_num=$(printf '%s' "$rpv_sc" | sed -n 's|^\([0-9][0-9]*\)/[0-9][0-9]*:..*$|\1|p')
+    if [ "$rpv_mods" -eq 0 ]; then
+      case "$rpv_sc" in
+        N/A|N/A:*|0/0:*) ;;
+        *) echo "BLOCK: refactor CONTRACT prove.split_coverage='$rpv_sc' — modules_created is empty, so the only honest values are 'N/A' or '0/0:<why>' [$rpv_c]"; rpv_blocked=1 ;;
+      esac
+    elif [ -z "$rpv_num" ]; then
+      echo "BLOCK: refactor CONTRACT prove.split_coverage='$rpv_sc' not satisfied — this refactor created $rpv_mods module(s), so 'N/A' is false. Record '<created>/<with_own_spec>:<disposition>' after giving every path in modules_created a test that imports it DIRECTLY, or a NAMED out-of-fence/user-declined backlog entry [$rpv_c]"
+      rpv_blocked=1
+    elif [ "$rpv_num" -ne "$rpv_mods" ] 2>/dev/null; then
+      echo "BLOCK: refactor CONTRACT prove.split_coverage='$rpv_sc' disagrees with modules_created ($rpv_mods entries) — the created count must match the list Phase 3 recorded [$rpv_c]"
+      rpv_blocked=1
+    fi
+  done
+  return $rpv_blocked
+}
+
 # refactor_scope_gate_check — the OFF-CONTRACT bind, and the reason it exists.
 #
 # refactor_gate_check above only inspects a file that is INSIDE some contract's scope_fence.
@@ -209,6 +320,17 @@ $(tr -d '\n' < "$rsg_c" | awk '
     esac
     case "$rsg_f" in
       node_modules/*|*/node_modules/*|dist/*|*/dist/*|build/*|*/build/*|vendor/*|*/vendor/*|.git/*|*/.git/*) continue ;;
+    esac
+    # Test files are never "refactoring around the gate" — and blocking them made two of this
+    # skill's own mandates unsatisfiable at once. Phase 3.6 Step 0 orders a `test(<scope>):` commit
+    # for every module the split created, and Phase 3.5 orders regression tests for every fix; both
+    # produce NEW spec files that are in no fence by construction, because the fence lists
+    # PRODUCTION files (SKILL.md:855 keeps it that way so the adversarial payload stays
+    # production-only). Before this exemption the gate blocked the commit it had just demanded, and
+    # the only escapes were widening the fence with test paths — the scope stretch this gate exists
+    # to discourage — or ZUVO_ALLOW_ADHOC, an agent-typable bypass.
+    case "$rsg_f" in
+      *.spec.*|*.test.*|__tests__/*|*/__tests__/*|tests/*|*/tests/*|test/*|*/test/*|*_test.go|*_test.py|test_*.py|*Test.java|*Test.kt|*Spec.php|*Test.php) continue ;;
     esac
     rsg_hit=0
     for rsg_p in $rsg_fences; do
