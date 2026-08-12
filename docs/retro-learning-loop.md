@@ -253,4 +253,33 @@ mentions, not problems — check before working the list.
 | `com.greglas.zuvo-backlog-sync` | every 2 h | `backlog sync` |
 | `com.greglas.zuvo-popebot-sync` | every 30 min | `sync-popebot.sh` (pull fleet-bot retros) |
 
-Check one: `launchctl list | grep zuvo`. Logs land next to the scripts in `~/.zuvo/*.log`.
+### Checking them — `launchctl list` is NOT the check (2026-08-12)
+
+`launchctl list | grep zuvo` reported all five jobs present, with `last exit code = 0`, while three
+of them had been **dead for five days**. It lists what launchd has in memory, which outlives the
+file on disk: a plist that no longer parses keeps its stale in-memory record and simply stops
+running. Nothing anywhere said so.
+
+The cause was one character. `2>&1` inside a `<string>` is invalid XML — a bare `&` must be
+`&amp;` — so `com.greglas.zuvo-runlog-sync`, `-backlog-sync` and `-retro-rotate` silently stopped
+on 2026-08-07. Five days of telemetry (1273 entries) sat unsent until the escape was fixed and the
+jobs reloaded; the backlog index was frozen at 26,350 items.
+
+Check all three layers, in this order — each catches what the previous one cannot:
+
+```bash
+# 1. Does every plist still PARSE? (the failure above; `launchctl list` cannot see it)
+for f in ~/Library/LaunchAgents/com.greglas.zuvo-*.plist; do printf '%s ' "$(basename "$f")"; plutil -lint "$f"; done
+
+# 2. Is each job's log FRESH? A job that runs but does nothing looks identical to a healthy one.
+ls -lT ~/.zuvo/*.log
+
+# 3. Only then: is it loaded at all?
+launchctl list | grep zuvo
+```
+
+A log older than roughly twice its job's interval is the signal — the intervals are in the table
+above. After editing any plist: `plutil -lint` it, then
+`launchctl bootout gui/$UID/<label>; launchctl bootstrap gui/$UID <plist>` (a plain reload does not
+replace a stale in-memory job), and confirm with `launchctl kickstart -p gui/$UID/<label>` that the
+log actually advances. Logs land next to the scripts in `~/.zuvo/*.log`.
