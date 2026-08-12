@@ -667,6 +667,59 @@ PYEOF
     warn "hooks/skill-usage-logger.sh not found in repo — skill-usage logger not installed"
   fi
 
+  # ── Claude Code SessionStart hook: zuvo-plugin-enable-guard (added 2026-08-12)
+  # A release can leave the plugin DISABLED even after `claude plugin enable` reports
+  # success: the CLI writes ~/.claude/settings.json, and a Claude Code that was running
+  # through the release owns that file and can persist its own older view afterwards.
+  # Measured 2026-08-12 — release said "✓ Plugin enabled", next start had it disabled in
+  # both scopes and all 57 skills invisible. Must be GLOBAL: a plugin-scoped hook does not
+  # run while its own plugin is off, which is the state it would need to fix.
+  local peg_src="$ZUVO_DIR/hooks/zuvo-plugin-enable-guard.sh"
+  local peg_dst="$hooks_dir/zuvo-plugin-enable-guard.sh"
+  if [[ -f "$peg_src" ]]; then
+    mkdir -p "$hooks_dir"
+    cp "$peg_src" "$peg_dst"
+    chmod +x "$peg_dst"
+    # Stamp the assertion: running install IS the claim that zuvo should be active. The
+    # guard heals exactly this one stamp, once — so a deliberate `claude plugin disable`
+    # after an install still sticks on the second try.
+    mkdir -p "$HOME/.zuvo"
+    printf 'asserted_at=%s\nhealed_for=\n' "$(date +%s)" > "$HOME/.zuvo/plugin-enable-state"
+    ok "zuvo-plugin-enable-guard.sh installed (~/.claude/hooks/) + assertion stamped"
+    local claude_settings="$HOME/.claude/settings.json"
+    if [[ -f "$claude_settings" ]]; then
+      python3 - "$claude_settings" "$peg_dst" <<'PYEOF' || warn "enable-guard merge into ~/.claude/settings.json failed (manual edit may be needed)"
+import json, sys, os
+settings_path, hook_cmd = sys.argv[1], sys.argv[2]
+try:
+    with open(settings_path) as f:
+        s = json.load(f)
+except Exception as e:
+    print(f'  ! ~/.claude/settings.json is malformed ({e}) — skipping enable-guard merge')
+    sys.exit(1)
+hooks = s.setdefault('hooks', {})
+ss = hooks.setdefault('SessionStart', [])
+hook_cmd_norm = hook_cmd.replace(os.path.expanduser('~'), '$HOME')
+already = any(
+    any(h.get('command', '').endswith('zuvo-plugin-enable-guard.sh') for h in group.get('hooks', []))
+    for group in ss
+)
+if already:
+    print('  ✓ enable-guard already registered in ~/.claude/settings.json (no change)')
+    sys.exit(0)
+ss.append({'hooks': [{'type': 'command', 'command': hook_cmd_norm, 'timeout': 5}]})
+with open(settings_path, 'w') as f:
+    json.dump(s, f, indent=2)
+    f.write('\n')
+print('  ✓ enable-guard registered in ~/.claude/settings.json (SessionStart)')
+PYEOF
+    else
+      warn "~/.claude/settings.json not found — enable-guard not registered"
+    fi
+  else
+    warn "hooks/zuvo-plugin-enable-guard.sh not found in repo — plugin enable-guard not installed"
+  fi
+
   # ── Pipeline-entry hooks: full tree (incl. lib/) into ~/.claude/hooks/ (the
   # core.hooksPath target) + CI script + git shim + CI workflow template into
   # ~/.claude/scripts and ~/.claude/ci. The plugin hooks.json (in the cache)
