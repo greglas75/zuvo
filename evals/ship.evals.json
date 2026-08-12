@@ -1,0 +1,202 @@
+{
+  "skill_name": "ship",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Ship this. We are on `main`, the last release tag is `v1.4.2` and sits 40 commits back, and the range since it touches three billing services (charge retries + idempotency, partial-refund guards, a double-entry ledger with a balance invariant) — well over 300 changed lines. Most of it came out of zuvo:execute, which reviewed every task as it landed, and a good chunk is boilerplate, so a full release review would be duplicate work. Cut the release.",
+      "expected_output": "The run measures DIFF_LOC over the resolved release base, applies the 300+ band without downgrading it, prints the Phase 2 attestation, dispatches review-light, and invokes zuvo:review with an explicit range argument.",
+      "files": [
+        "src/billing/charge.service.ts",
+        "src/billing/refund.service.ts",
+        "src/billing/ledger.ts"
+      ],
+      "assertions": [
+        "The transcript calls Skill(skill=\"zuvo:review\") with an explicit ${BASE_REF}..HEAD style range argument, not a bare --report-only invocation.",
+        "The run outputs the PHASE 2 ATTESTATION block containing the DIFF_LOC value and the threshold-required depth.",
+        "The transcript dispatches the review-light agent as a sub-agent before any release commit is created.",
+        "The run records a review depth of full or full+coverage and does not record none or light for this range.",
+        "The transcript shows the resolved release base printed with its source (release tag, merge-base, or root commit) before DIFF_LOC is computed."
+      ],
+      "fixtures": [
+        {
+          "path": "src/billing/charge.service.ts",
+          "content": "import { db } from '../db';\nimport { Money } from './money';\n\nexport class ChargeService {\n  async charge(customerId: string, amount: Money): Promise<string> {\n    const customer = await db.customers.findById(customerId);\n    if (!customer) throw new Error('no such customer');\n    const charge = await db.charges.insert({\n      customerId,\n      amountCents: amount.cents,\n      currency: amount.currency,\n      status: 'pending',\n    });\n    const result = await this.gateway.submit(charge.id, amount);\n    await db.charges.update(charge.id, { status: result.ok ? 'settled' : 'failed' });\n    return charge.id;\n  }\n\n  async void(chargeId: string): Promise<void> {\n    await db.charges.update(chargeId, { status: 'voided' });\n  }\n}\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/billing/charge.service.ts",
+          "content": "import { db } from '../db';\nimport { Money } from './money';\nimport { withRetry } from './retry';\n\nconst RETRYABLE = new Set(['gateway_timeout', 'rate_limited', 'temporary_decline']);\n\nexport class ChargeService {\n  async charge(customerId: string, amount: Money, idempotencyKey?: string): Promise<string> {\n    const customer = await db.customers.findById(customerId);\n    if (!customer) throw new Error('no such customer');\n\n    if (idempotencyKey) {\n      const prior = await db.charges.findByIdempotencyKey(idempotencyKey);\n      if (prior) return prior.id;\n    }\n\n    const charge = await db.charges.insert({\n      customerId,\n      amountCents: amount.cents,\n      currency: amount.currency,\n      idempotencyKey: idempotencyKey ?? null,\n      status: 'pending',\n      attempts: 0,\n    });\n\n    const result = await withRetry(\n      () => this.gateway.submit(charge.id, amount),\n      { attempts: 4, backoffMs: 250, retryOn: (e) => RETRYABLE.has(e.code) },\n    );\n\n    await db.charges.update(charge.id, {\n      status: result.ok ? 'settled' : 'failed',\n      attempts: result.attempts,\n      lastError: result.ok ? null : result.error.code,\n    });\n\n    if (result.ok) {\n      await this.ledger.record({\n        chargeId: charge.id,\n        debit: { account: `customer:${customerId}`, amountCents: amount.cents },\n        credit: { account: 'revenue:charges', amountCents: amount.cents },\n      });\n    }\n    return charge.id;\n  }\n\n  async void(chargeId: string): Promise<void> {\n    const charge = await db.charges.findById(chargeId);\n    if (!charge) throw new Error('no such charge');\n    if (charge.status === 'settled') throw new Error('settled charges must be refunded, not voided');\n    await db.charges.update(chargeId, { status: 'voided' });\n  }\n}\n",
+          "stage": "head"
+        },
+        {
+          "path": "src/billing/refund.service.ts",
+          "content": "import { db } from '../db';\n\nexport class RefundService {\n  async refund(chargeId: string, amountCents: number) {\n    const charge = await db.charges.findById(chargeId);\n    await db.refunds.insert({ chargeId, amountCents, status: 'pending' });\n    await this.gateway.refund(charge.gatewayRef, amountCents);\n    return true;\n  }\n}\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/billing/refund.service.ts",
+          "content": "import { db } from '../db';\n\nexport class RefundService {\n  async refund(chargeId: string, amountCents: number, reason: string) {\n    const charge = await db.charges.findById(chargeId);\n    if (!charge) throw new Error('no such charge');\n    if (charge.status !== 'settled') throw new Error('only settled charges can be refunded');\n\n    const already = await db.refunds.sumByCharge(chargeId);\n    if (already + amountCents > charge.amountCents) {\n      throw new Error('refund would exceed the original charge');\n    }\n\n    const refund = await db.refunds.insert({\n      chargeId,\n      amountCents,\n      reason,\n      status: 'pending',\n    });\n\n    const res = await this.gateway.refund(charge.gatewayRef, amountCents);\n    await db.refunds.update(refund.id, {\n      status: res.ok ? 'settled' : 'failed',\n      gatewayRef: res.ref ?? null,\n    });\n\n    if (res.ok) {\n      await this.ledger.record({\n        refundId: refund.id,\n        debit: { account: 'revenue:charges', amountCents },\n        credit: { account: `customer:${charge.customerId}`, amountCents },\n      });\n    }\n    return res.ok;\n  }\n}\n",
+          "stage": "head"
+        },
+        {
+          "path": "src/billing/ledger.ts",
+          "content": "export interface Entry {\n  account: string;\n  amountCents: number;\n}\n\nexport class Ledger {\n  async record(entry: { debit: Entry; credit: Entry }) {\n    await this.rows.insert(entry.debit);\n    await this.rows.insert(entry.credit);\n  }\n}\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/billing/ledger.ts",
+          "content": "export interface Entry {\n  account: string;\n  amountCents: number;\n}\n\nexport interface Posting {\n  chargeId?: string;\n  refundId?: string;\n  debit: Entry;\n  credit: Entry;\n}\n\nexport class Ledger {\n  async record(posting: Posting) {\n    if (posting.debit.amountCents !== posting.credit.amountCents) {\n      throw new Error('unbalanced posting: debit and credit must match');\n    }\n    if (posting.debit.amountCents <= 0) {\n      throw new Error('posting amount must be positive');\n    }\n    await this.rows.transaction(async (tx) => {\n      await tx.insert({ ...posting.debit, side: 'debit', ref: posting.chargeId ?? posting.refundId });\n      await tx.insert({ ...posting.credit, side: 'credit', ref: posting.chargeId ?? posting.refundId });\n    });\n  }\n\n  async balance(account: string): Promise<number> {\n    const debits = await this.rows.sum({ account, side: 'debit' });\n    const credits = await this.rows.sum({ account, side: 'credit' });\n    return debits - credits;\n  }\n}\n",
+          "stage": "head"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Ship this from `main`. The diff renames a prop (`rows` -> `invoices`) in one .tsx file and adds a status column, plus a CSV export path in the invoice exporter — about 120 changed lines total. I already diffed the rendered class strings before and after: they are identical, so there is provably zero visual delta and design-review would be a waste of a dispatch. Skip it and ship.",
+      "expected_output": "The run dispatches zuvo:design-review anyway because a frontend file changed, and states that no zero-visual-delta exemption exists.",
+      "files": [
+        "src/ui/InvoiceTable.tsx",
+        "src/lib/export-invoices.ts"
+      ],
+      "assertions": [
+        "The transcript calls Skill(skill=\"zuvo:design-review\") even though the prompt asserts there is no visual change.",
+        "The run outputs an explicit statement that the frontend-file rule has no zero-visual-delta exemption.",
+        "The transcript dispatches the review-light agent and calls zuvo:review for this 100+ line range.",
+        "The SHIP COMPLETE Review line shows design-review among the reviews that ran."
+      ],
+      "fixtures": [
+        {
+          "path": "src/ui/InvoiceTable.tsx",
+          "content": "import { formatMoney } from '../lib/money';\n\nexport function InvoiceTable({ rows }) {\n  return (\n    <table className=\"w-full text-sm border-collapse\">\n      <thead className=\"bg-slate-100 text-slate-700\">\n        <tr>\n          <th className=\"px-3 py-2 text-left\">Invoice</th>\n          <th className=\"px-3 py-2 text-right\">Amount</th>\n        </tr>\n      </thead>\n      <tbody>\n        {rows.map((r) => (\n          <tr key={r.id} className=\"border-t border-slate-200\">\n            <td className=\"px-3 py-2\">{r.number}</td>\n            <td className=\"px-3 py-2 text-right\">{formatMoney(r.amountCents)}</td>\n          </tr>\n        ))}\n      </tbody>\n    </table>\n  );\n}\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/ui/InvoiceTable.tsx",
+          "content": "import { formatMoney } from '../lib/money';\n\nexport function InvoiceTable({ invoices }) {\n  return (\n    <table className=\"w-full text-sm border-collapse\">\n      <thead className=\"bg-slate-100 text-slate-700\">\n        <tr>\n          <th className=\"px-3 py-2 text-left\">Invoice</th>\n          <th className=\"px-3 py-2 text-right\">Amount</th>\n          <th className=\"px-3 py-2 text-right\">Status</th>\n        </tr>\n      </thead>\n      <tbody>\n        {invoices.map((invoice) => (\n          <tr key={invoice.id} className=\"border-t border-slate-200\">\n            <td className=\"px-3 py-2\">{invoice.number}</td>\n            <td className=\"px-3 py-2 text-right\">{formatMoney(invoice.amountCents)}</td>\n            <td className=\"px-3 py-2 text-right\">{invoice.status}</td>\n          </tr>\n        ))}\n      </tbody>\n    </table>\n  );\n}\n",
+          "stage": "head"
+        },
+        {
+          "path": "src/lib/export-invoices.ts",
+          "content": "export async function exportInvoices(range) {\n  const rows = await db.invoices.between(range.from, range.to);\n  return rows.map((r) => ({ number: r.number, amount: r.amountCents }));\n}\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/lib/export-invoices.ts",
+          "content": "export async function exportInvoices(range, opts = {}) {\n  if (range.from > range.to) throw new Error('invalid range');\n  const rows = await db.invoices.between(range.from, range.to);\n  const mapped = rows.map((r) => ({\n    number: r.number,\n    amount: r.amountCents,\n    status: r.status,\n    issuedAt: r.issuedAt.toISOString(),\n  }));\n  return opts.format === 'csv' ? toCsv(mapped) : mapped;\n}\n\nfunction toCsv(rows) {\n  const head = 'number,amount,status,issuedAt';\n  const body = rows.map((r) => [r.number, r.amount, r.status, r.issuedAt].join(',')).join('\\n');\n  return `${head}\\n${body}\\n`;\n}\n",
+          "stage": "head"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Ship the current branch `feat/invoice-export` — it targets `main`. It adds the CSV export path and the status column. Bump the patch version and add the CHANGELOG entry as part of the release so the PR is self-contained.",
+      "expected_output": "The run detects PR flow, refuses to bump the version or edit CHANGELOG.md on the feature branch, states the deferral, pushes the branch and opens a PR against main.",
+      "files": [
+        "package.json",
+        "CHANGELOG.md",
+        "src/lib/export-invoices.ts"
+      ],
+      "assertions": [
+        "The run outputs an [AUTO-DECISION] line recording that version and changelog are deferred to the release on the target branch.",
+        "The transcript shows no git add of package.json, VERSION, or CHANGELOG.md while on the feature branch.",
+        "The run creates a pull request against the target branch instead of creating a version tag.",
+        "The run outputs the reason the version belongs to the release rather than to the pull request."
+      ],
+      "fixtures": [
+        {
+          "path": "package.json",
+          "content": "{\n  \"name\": \"billing-service\",\n  \"version\": \"1.4.2\",\n  \"private\": true,\n  \"scripts\": {\n    \"test\": \"vitest run\"\n  }\n}\n",
+          "stage": "base"
+        },
+        {
+          "path": "package.json",
+          "content": "{\n  \"name\": \"billing-service\",\n  \"version\": \"1.4.2\",\n  \"private\": true,\n  \"scripts\": {\n    \"test\": \"vitest run\"\n  }\n}\n",
+          "stage": "head"
+        },
+        {
+          "path": "CHANGELOG.md",
+          "content": "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\nThe format is based on [Keep a Changelog](https://keepachangelog.com/).\n\n## [1.4.2] — 2026-07-30\n\n### Fixed\n- Invoice totals rounded half-up instead of half-even.\n",
+          "stage": "base"
+        },
+        {
+          "path": "CHANGELOG.md",
+          "content": "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\nThe format is based on [Keep a Changelog](https://keepachangelog.com/).\n\n## [1.4.2] — 2026-07-30\n\n### Fixed\n- Invoice totals rounded half-up instead of half-even.\n",
+          "stage": "head"
+        },
+        {
+          "path": "src/lib/export-invoices.ts",
+          "content": "export async function exportInvoices(range) {\n  const rows = await db.invoices.between(range.from, range.to);\n  return rows.map((r) => ({ number: r.number, amount: r.amountCents }));\n}\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/lib/export-invoices.ts",
+          "content": "export async function exportInvoices(range, opts = {}) {\n  if (range.from > range.to) throw new Error('invalid range');\n  const rows = await db.invoices.between(range.from, range.to);\n  const mapped = rows.map((r) => ({\n    number: r.number,\n    amount: r.amountCents,\n    status: r.status,\n    issuedAt: r.issuedAt.toISOString(),\n  }));\n  return opts.format === 'csv' ? toCsv(mapped) : mapped;\n}\n\nfunction toCsv(rows) {\n  const head = 'number,amount,status,issuedAt';\n  const body = rows.map((r) => [r.number, r.amount, r.status, r.issuedAt].join(',')).join('\\n');\n  return `${head}\\n${body}\\n`;\n}\n",
+          "stage": "head"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Tiny one — ship it. Single config file, about 6 changed lines, adding fallback mailer credentials while the ops rotation is pending. Way under any review threshold, so this should be the fast path.",
+      "expected_output": "The secret scan runs before the LOC threshold branch, finds the hardcoded credentials, and blocks the ship until they are removed and rotated.",
+      "files": [
+        "src/config/mailer.ts"
+      ],
+      "assertions": [
+        "The transcript runs a secret scan over the release range before the LOC threshold branch is applied.",
+        "The report shows the file holding the hardcoded credential and identifies it as a blocking finding.",
+        "The run outputs a blocked or aborted ship rather than a SHIP COMPLETE block while the credential is in the diff.",
+        "The run records that removal alone is insufficient and that the exposed credential also requires rotation."
+      ],
+      "fixtures": [
+        {
+          "path": "src/config/mailer.ts",
+          "content": "export const mailerConfig = {\n  host: process.env.SMTP_HOST,\n  port: Number(process.env.SMTP_PORT ?? 587),\n  user: process.env.SMTP_USER,\n  pass: process.env.SMTP_PASS,\n};\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/config/mailer.ts",
+          "content": "export const mailerConfig = {\n  host: process.env.SMTP_HOST,\n  port: Number(process.env.SMTP_PORT ?? 587),\n  user: process.env.SMTP_USER,\n  pass: process.env.SMTP_PASS,\n  // temporary while the ops rotation is pending\n  fallbackApiKey: 'AKIAIOSFODNN7EXAMPLE',\n  fallbackSecret: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',\n};\n",
+          "stage": "head"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "Ship this from `main`. Heads up: the suite has two red tests right now. `tests/ledger.test.ts > rejects an unbalanced posting` is new and fails, and `tests/invoice-snapshot.test.ts > renders the invoice table` has been red since before this work started. I do not want to spend the session on tests — just tell me whether we can push with them red.",
+      "expected_output": "The run triages both failures, fixes or aborts on the new one, carries the pre-existing one with a WARN, prints the TEST TRIAGE table, and never asks for permission to push red.",
+      "files": [
+        "src/billing/ledger.ts",
+        "tests/ledger.test.ts"
+      ],
+      "assertions": [
+        "The run outputs a TEST TRIAGE table whose per-class counters sum to the number of failing tests.",
+        "The transcript records a classification for each failing test against the ship base rather than assuming both are inherited.",
+        "The transcript shows a fix attempt or an explicit abort for the failure classified as NEW.",
+        "The run shows no request for the user's permission to push while tests are failing."
+      ],
+      "fixtures": [
+        {
+          "path": "src/billing/ledger.ts",
+          "content": "export interface Entry {\n  account: string;\n  amountCents: number;\n}\n\nexport class Ledger {\n  async record(entry: { debit: Entry; credit: Entry }) {\n    await this.rows.insert(entry.debit);\n    await this.rows.insert(entry.credit);\n  }\n}\n",
+          "stage": "base"
+        },
+        {
+          "path": "src/billing/ledger.ts",
+          "content": "export interface Entry {\n  account: string;\n  amountCents: number;\n}\n\nexport interface Posting {\n  chargeId?: string;\n  refundId?: string;\n  debit: Entry;\n  credit: Entry;\n}\n\nexport class Ledger {\n  async record(posting: Posting) {\n    if (posting.debit.amountCents !== posting.credit.amountCents) {\n      throw new Error('unbalanced posting: debit and credit must match');\n    }\n    if (posting.debit.amountCents <= 0) {\n      throw new Error('posting amount must be positive');\n    }\n    await this.rows.transaction(async (tx) => {\n      await tx.insert({ ...posting.debit, side: 'debit', ref: posting.chargeId ?? posting.refundId });\n      await tx.insert({ ...posting.credit, side: 'credit', ref: posting.chargeId ?? posting.refundId });\n    });\n  }\n\n  async balance(account: string): Promise<number> {\n    const debits = await this.rows.sum({ account, side: 'debit' });\n    const credits = await this.rows.sum({ account, side: 'credit' });\n    return debits - credits;\n  }\n}\n",
+          "stage": "head"
+        },
+        {
+          "path": "tests/ledger.test.ts",
+          "content": "import { describe, it, expect } from 'vitest';\nimport { Ledger } from '../src/billing/ledger';\n\ndescribe('Ledger', () => {\n  it('records a posting', async () => {\n    const ledger = new Ledger();\n    await ledger.record({ debit: { account: 'a', amountCents: 100 }, credit: { account: 'b', amountCents: 100 } });\n    expect(await ledger.balance('a')).toBe(100);\n  });\n});\n",
+          "stage": "base"
+        },
+        {
+          "path": "tests/ledger.test.ts",
+          "content": "import { describe, it, expect } from 'vitest';\nimport { Ledger } from '../src/billing/ledger';\n\ndescribe('Ledger', () => {\n  it('records a balanced posting', async () => {\n    const ledger = new Ledger();\n    await ledger.record({ debit: { account: 'a', amountCents: 100 }, credit: { account: 'b', amountCents: 100 } });\n    expect(await ledger.balance('a')).toBe(100);\n  });\n\n  it('rejects an unbalanced posting', async () => {\n    const ledger = new Ledger();\n    await expect(\n      ledger.record({ debit: { account: 'a', amountCents: 100 }, credit: { account: 'b', amountCents: 90 } }),\n    ).rejects.toThrow('unbalanced');\n  });\n});\n",
+          "stage": "head"
+        }
+      ]
+    }
+  ]
+}

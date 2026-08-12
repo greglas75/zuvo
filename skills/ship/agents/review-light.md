@@ -41,7 +41,57 @@ Quick code review focused ONLY on ship-blocking issues. NOT a full `zuvo:review`
 
 ## What You Receive
 
-Git diff of staged changes from the parent skill (output of `git diff --cached` or `git diff HEAD~1`).
+The diff of the RELEASE RANGE from the parent skill — `git diff "$DIFF_BASE" HEAD`, where
+`DIFF_BASE` is what ship's Phase 0 step 3 resolved (PR flow: merge-base with the target branch;
+release flow: the last release tag; first release: the empty tree, so the initial codebase is IN
+scope). The parent passes both the diff and the resolved base/head SHAs; do not re-derive them.
+
+**Sanity-check a NON-empty diff too.** You are told not to re-derive the diff, and that stands —
+but confirm the one thing that makes it trustworthy: that the file count in what you were handed
+matches `git diff --name-only <base> <head> | wc -l`. A truncated handoff, a shallow clone, or a
+stale capture produces a diff that looks fine and is a subset of the release. Mismatch → report it
+and BLOCK; the parent's range or capture is wrong, and a PASS over a subset is the same false
+verdict as a PASS over nothing.
+
+Do NOT reach for `git diff --cached` or `git diff HEAD~1` to find something to review. Ship runs
+AFTER the work is committed, so the staged diff is empty by construction and `HEAD~1` is one commit
+of a range that is usually many; either one lets this agent report "no ship-blockers found" about
+code it never saw, and that verdict then travels into SHIP COMPLETE as if a review had happened.
+
+**Empty input has two very different causes — do not collapse them.**
+
+- **No range stated** (the parent handed you a diff with no `${BASE_REF}..HEAD` range named): the
+  parent skipped range resolution, and a PASS here would be a verdict about nothing.
+  ```
+  REVIEW-LIGHT REPORT
+    Files reviewed: 0
+    Verdict: BLOCK — empty input and no range stated; the parent did not resolve ${BASE_REF}..HEAD
+  ```
+- **A range IS stated and it is genuinely empty** (a re-ship at the same commit, a tag already at
+  HEAD, a merge with no tree change): nothing to review is a legitimate answer, and blocking it
+  sends the operator to "fix" a range that is already correct. **VERIFY it yourself before saying
+  PASS** — you have Bash, and "the parent told me it was empty" is the same trust that produced the
+  bug this section exists for. An empty stdout is also what a FAILED `git diff` looks like
+  (unresolvable base, shallow clone missing the base object):
+  ```bash
+  # ONE invocation — split across two Bash calls, `$?` belongs to whatever ran last in the second.
+  # GIT_PAGER=cat: git pages `diff` under a pseudo-terminal and the call hangs with no output.
+  BASE=<resolved base sha from the parent>; HEAD_SHA=<resolved head sha from the parent>
+  GIT_PAGER=cat sh -c '
+    git rev-parse -q --verify "'"$BASE"'^{commit}" >/dev/null || { echo "BASE UNRESOLVABLE"; exit 9; }
+    git merge-base --is-ancestor "'"$BASE"'" "'"$HEAD_SHA"'" || { echo "BASE NOT AN ANCESTOR OF HEAD"; exit 9; }
+    git diff --stat "'"$BASE"'" "'"$HEAD_SHA"'"; echo "diff_rc=$?"'
+  ```
+  `diff_rc=0` with no output = genuinely empty. A non-zero rc, an unresolvable base, or a base that
+  is NOT an ancestor of head (an unrelated ref, a stale cached value) is the first case (BLOCK),
+  not this one — the range was wrong, and "no changes" was an artifact of that.
+  ```
+  REVIEW-LIGHT REPORT
+    Files reviewed: 0 (range <base>..<head> verified empty: diff_rc=0, no files)
+    Verdict: PASS — no changes in the stated range
+  ```
+  Never emit this PASS from an UNEXPANDED range: if what you were handed contains the literal text
+  `${BASE_REF}..HEAD`, the parent's variable never resolved — that is the BLOCK case above.
 
 ## Scope
 
@@ -83,5 +133,16 @@ REVIEW-LIGHT REPORT
 
 ## Verdict Logic
 
-- **BLOCK:** Any ship-blocker found. Ship pauses. The user is asked to fix the issue or explicitly override.
-- **PASS:** No ship-blockers. Warnings are shown but do not block.
+- **BLOCK — ship-blocker found.** The parent FIXES it in-run (a security hole, data-corruption path
+  or crash is the work, not a question to hand back), commits the fix, and re-runs this agent.
+  **Cap: 2 fix rounds.** If the third dispatch still returns BLOCK, the loop is not converging —
+  the parent prints `SHIP INCOMPLETE: review-light blocker unresolved after 2 fix attempts` with
+  the finding, and a human decides. An uncapped fix→re-run loop burns the session and ships
+  nothing, which is the failure the in-run rule exists to avoid, arrived at from the other side.
+- **BLOCK — no reviewable input.** Empty diff with no resolved range stated, an unexpanded
+  `${BASE_REF}` in what you were handed, or a base that does not resolve. Nothing was reviewed, and
+  the parent has a range-resolution bug to fix before any verdict means anything.
+- **PASS — reviewed, no ship-blockers.** Warnings are shown but do not block.
+- **PASS — verified-empty range.** Reviewed 0 files because the stated range is genuinely empty
+  (`diff_rc=0`, no output). Always state the range and the verification, so a reader can tell this
+  apart from a real review: the two produce the same word and very different evidence.

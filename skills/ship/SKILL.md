@@ -111,13 +111,14 @@ WORK_FILES = <files being touched>
 
 1. **Detect current branch, flow, and the remote everything else resolves against:**
    ```bash
-   git branch --show-current
+   BRANCH=$(git branch --show-current)
+   [ -n "$BRANCH" ] || { echo "[SHIP] detached HEAD — checkout a branch before shipping"; exit 1; }
 
    # Resolve the push remote ONCE — never hardcode `origin`. A repo with a dead `origin` mirror
    # and a real work remote is not exotic, and push, PR creation and every base comparison below
    # must all mean the same remote.
    PUSH_REMOTE=$(git config --get remote.pushdefault 2>/dev/null || true)
-   [ -n "$PUSH_REMOTE" ] || PUSH_REMOTE=$(git config --get "branch.$(git branch --show-current).remote" 2>/dev/null || true)
+   [ -n "$PUSH_REMOTE" ] || PUSH_REMOTE=$(git config --get "branch.$BRANCH.remote" 2>/dev/null || true)
    [ -n "$PUSH_REMOTE" ] || PUSH_REMOTE=origin
    ```
    - If on `main`, `master`, `trunk`, or `develop`: **direct flow** — set `FLOW=direct` and
@@ -138,13 +139,76 @@ WORK_FILES = <files being touched>
    ```bash
    gh auth status
    ```
-   - If the command fails or `gh` is not installed: set `GH_AVAILABLE=false`. Continue — PR creation will be skipped at Phase 4 (see E3 handling).
+   - If the command fails or `gh` is not installed: set `GH_AVAILABLE=false`. Continue — Phase 4
+     Step 4 pushes the branch and ends `SHIP INCOMPLETE: PR not created`, because an unmerged
+     branch is not a shipped release (see E3 handling).
+   - **`gh` present does not mean this remote is a GitHub it can talk to.** Ask `gh` which hosts it
+     is authenticated against and compare with the remote's host —
+     `gh auth status` lists them, `git remote get-url "$PUSH_REMOTE"` gives the host. A match
+     (including **GitHub Enterprise**, whose hostname is not github.com and which `gh` supports
+     natively) → PR flow works. A GitLab/Bitbucket/Gitea remote, or a host `gh` is not logged into
+     → the same `GH_AVAILABLE=false` path. Do not infer "not GitHub" from "not github.com": that
+     forces every Enterprise repo down the PR-not-created path with a working forge in front of it. On direct flow none of this matters; the plain `git push` is
+     forge-agnostic and the run completes normally.
 
-3. **Check for changes since last tag:**
+3. **Resolve `BASE_REF` — ONCE, here — and check the range is non-empty.**
+   Every later phase measures against this: the "nothing to ship" check, the Phase 1 baseline
+   worktree, the Phase 2 DIFF_LOC + review range, the Phase 2.5 reflection diff. They used to
+   resolve it independently (or reference a `<default>` placeholder), which is how the same run
+   could review one range and baseline against another.
    ```bash
-   git log $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD~10)..HEAD --oneline
+   # Fetch FIRST — step 4's base preflight runs after this, but `merge-base` against
+   # $PUSH_REMOTE/$TARGET_BRANCH is only as correct as the last fetch, and a stale remote ref makes
+   # the PR base older than reality: the review then covers commits that are already merged.
+   git fetch --quiet "$PUSH_REMOTE" || echo "[SHIP] fetch failed — BASE_REF resolves against stale refs"
+
+   if [ "$FLOW" = "pr" ]; then
+     # PR flow: what THIS branch adds. The last tag can be hundreds of already-merged commits back.
+     BASE_REF=$(git merge-base HEAD "$PUSH_REMOTE/$TARGET_BRANCH" 2>/dev/null \
+                || git merge-base HEAD "$TARGET_BRANCH" 2>/dev/null || true)
+     [ -n "$BASE_REF" ] || { echo "[SHIP] cannot resolve a PR base against $TARGET_BRANCH — fix the remote before shipping"; exit 1; }
+   else
+     # Release flow: since the last RELEASE tag. --match is not optional: bare `git describe --tags`
+     # returns the newest tag of ANY kind, and this skill family writes operational tags
+     # (`reviewed/<sha>`, `review-YYYY-MM-DD-*`) into the same namespace. A review marker as the
+     # base silently shrinks the release to "since the last review".
+     BASE_REF=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --match '[0-9]*.[0-9]*' 2>/dev/null || true)
+     # First release: BASE_REF stays a COMMIT (the root), because everything downstream treats it
+     # as one — `git log BASE..HEAD`, `git worktree add <tmp> "$BASE_REF"`, `git merge-base`. The
+     # empty-tree hash works in `git diff` and nowhere else; using it here fails Phase 0's own
+     # `git log` on the very release it exists for.
+     if [ -z "$BASE_REF" ]; then
+       BASE_REF=$(git rev-list --max-parents=0 HEAD | tail -1)
+       FIRST_RELEASE=true
+     fi
+   fi
+
+   # DIFF_BASE is what every DIFF uses (LOC, review input, cross-provider input). It equals
+   # BASE_REF everywhere except a first release, where `git diff <root>..HEAD` would omit
+   # everything the ROOT COMMIT itself introduced — usually the entire initial codebase.
+   # Assigned here, OUTSIDE the if/else: setting it only in the release branch left it EMPTY on
+   # every PR-flow run, and `git diff --stat "" HEAD` compares the working tree to HEAD — a
+   # near-zero DIFF_LOC that fast-paths past review entirely.
+   if [ "${FIRST_RELEASE:-false}" = true ]; then
+     DIFF_BASE=$(git hash-object -t tree /dev/null)     # 4b825dc642cb… — first release only
+   else
+     DIFF_BASE="$BASE_REF"
+   fi
+   [ -n "$DIFF_BASE" ] || { echo "[SHIP] DIFF_BASE empty — refusing to measure a diff against nothing"; exit 1; }
+
+   echo "[SHIP] BASE_REF=$(git rev-parse --short "$BASE_REF") DIFF_BASE=$DIFF_BASE ($FLOW flow)"
+   # On a first release the root commit IS part of the release, and `root..HEAD` excludes it —
+   # a single-commit repo would report "nothing to ship" about its entire contents.
+   if [ "${FIRST_RELEASE:-false}" = true ]; then git log --oneline HEAD
+   else git log --oneline "${BASE_REF}..HEAD"; fi
    ```
-   - If no commits in range: print "Nothing to ship. No commits since the last tag." and exit cleanly.
+   - If no commits in range: print "Nothing to ship. No commits in `${BASE_REF}..HEAD`." and exit
+     cleanly. Name the base in the message — "no commits since the last tag" was reported against a
+     base nobody could see, and on the wrong base it is a lie that reads like a fact.
+   - **Re-resolve `BASE_REF` AND `DIFF_BASE` after step 4(b)** if you merge the moved base in: the
+     merge changes what `merge-base` returns, and a stale value scopes the review to the pre-merge
+     range. Re-run this whole block — a `${DIFF_BASE:-...}` style default would keep the old value
+     precisely because it is already set, which is the failure it looks like it prevents.
 
    **Half-completed prior run (idempotency — this HAPPENED on 2026-08-01).** A previous ship can
    have committed the release and then died before tagging/pushing (e.g. the pre-push gate blocked
@@ -228,7 +292,49 @@ WORK_FILES = <files being touched>
    - `composer.json` → `scripts.test` (run with `composer test`)
    - If no test command found: print "No test runner detected. Skipping tests." and continue.
 
-2. **Run the test suite.** Capture exit code, pass count, and fail count.
+2. **Run the test suite — and prove it produced a verdict.** Capture exit code, pass count and
+   fail count. All three, from the RUNNER, not from whatever wrapped it:
+
+   ```bash
+   # NO PIPE around the runner. `runner | tail` makes `$?` tail's status (always 0), and the usual
+   # fix is not portable either: ${PIPESTATUS[0]} is bash-only — under zsh (the macOS default
+   # login shell) the array is $pipestatus and 1-indexed, so ${PIPESTATUS[0]} expands to EMPTY and
+   # TEST_RC silently becomes "". Redirect to a file, read $?, then look at the file.
+   TEST_LOG=$(mktemp -t ship-tests.XXXXXX)   # not a fixed /tmp name: two ship runs on one host
+   npm test > "$TEST_LOG" 2>&1               # would clobber each other's verdict, and a symlink
+   TEST_RC=$?                                # pre-created at a predictable path redirects the write
+   tail -40 "$TEST_LOG"
+   echo "[SHIP] TEST_RC=$TEST_RC log=$TEST_LOG"   # print it: the next block is a different shell
+
+   # A summary line proving tests EXECUTED — passed OR failed. "0 tests"/"0 passed, 0 failed" is
+   # what an evicted or never-scheduled runner prints, and it satisfies "0 failures" while proving
+   # nothing ran. Counting only PASSES would misread the opposite case: a suite where every test
+   # fails legitimately reports "0 passed, 12 failed" and must go to triage, not to ENV-RERUN.
+   if grep -Eiq '([1-9][0-9]* (passed|passing|failing|failed|tests?|examples?)|Tests:[[:space:]]*[1-9]|OK \([1-9][0-9]* tests?\)|RESULT: (PASS|FAIL)=[1-9]|^ok[[:space:]]+[^[:space:]]+|^(PASS|FAIL)$)' "$TEST_LOG"; then
+     RAN=true
+   else
+     RAN=false
+   fi
+   echo "[SHIP] TEST_RAN=$RAN"
+   ```
+
+   Two ways a green result is not one, both observed on this fleet:
+   - **The status came from a pipe or a wrapper.** Every agent pipes a noisy runner through
+     `| tail`, and `$?` then belongs to `tail`. A backgrounded or `timeout`-wrapped run reports the
+     wrapper's status the same way. Read `${PIPESTATUS[0]}`, or `set -o pipefail` first.
+   - **Exit 0 with no summary line.** A farm/remote runner that is evicted, truncated or never
+     scheduled exits 0 having run nothing. Pass count and fail count are both zero, which satisfies
+     "0 failures" and satisfies nothing else. An absent summary is NOT a pass — treat it as the
+     ENV-RERUN class in step 3 c2 and re-run before reading anything into it.
+
+   **`TEST_RAN=false` is a hard branch, not a warning.** It means the suite produced no evidence of
+   executing anything: go to step 3 class c2 (ENV-RERUN) and re-run — regardless of `TEST_RC`, and
+   *especially* when `TEST_RC=0`, which is exactly what an evicted runner returns. Do not proceed to
+   Phase 2 on `TEST_RAN=false`; a printed warning that nothing enforces is how "0 tests" shipped as
+   green.
+
+   Record the numbers you actually parsed. `tests: "pass"` in the artifact must trace to a summary
+   line you can quote, not to an exit code alone.
 
 3. **If tests fail: TRIAGE, never a bare abort.** A red suite has three different causes with
    three different fixes — collapsing them into "stop and ask" froze a shippable branch on two
@@ -236,8 +342,16 @@ WORK_FILES = <files being touched>
    Classify EVERY failing test first:
 
    a. **Baseline the failures against the ship base.** Preferred: run ONLY the failing test
-      files at the merge-base (`git worktree add <tmp> $(git merge-base HEAD <default>)`,
-      reusing installed deps when the lockfile is unchanged; remove the worktree after).
+      files at the ship base (`git worktree add --detach "$(mktemp -du -t ship-base.XXXXXX)" "$BASE_REF"`
+      — `-u` because `worktree add` refuses a directory that already exists, and `--detach` because
+      the default creates a BRANCH named after the directory, leaving `ship-base.XXXX` refs behind
+      in the repo forever; a literal `<tmp>` reused across runs fails outright once one run aborts;
+      reusing installed deps when
+      the lockfile is unchanged; remove the worktree after). Use `$BASE_REF` — the base Phase 0
+      resolved and Phase 2 measures — not a literal `<default>` placeholder: on direct flow
+      `git merge-base HEAD main` IS HEAD, so the "baseline" worktree is the code under test and
+      every failure baselines as pre-existing. That is the one classification error this whole
+      triage exists to prevent, produced by the procedure meant to prevent it.
       Fallback when that is impractical — **fail-CLOSED, and weaker than it looks**: direct
       file intersection is NOT sufficient evidence of innocence. A shipped change to a shared
       util, a type, a fixture, a config or a mock breaks tests whose own file and whose direct
@@ -279,6 +393,13 @@ WORK_FILES = <files being touched>
       environment failure into PRE-CARRIED — that ships a WARN describing a defect that does not
       exist, and hides one that might.
 
+      **Cap the re-runs at 2.** ENV-RERUN is a transient state, not a loop: if the third attempt
+      still produces no verdict, the environment — not this change — is what is broken. Stop with
+      `SHIP INCOMPLETE: suite produced no verdict in 3 attempts (<last symptom>)` and say what to
+      fix (host load, missing toolchain, an evicted runner). A run that keeps re-running a suite
+      that cannot finish burns the session and ships nothing, which is strictly worse than saying
+      so on attempt three.
+
    d. **Never end the turn asking "may I push despite red tests?"** for a fixable failure —
       fix it and re-run. The only question ship may ask is a genuine behavior/product decision
       surfaced by a class-(b) fix (interactive only; batch picks the safe default and logs it).
@@ -311,31 +432,19 @@ with no findings = the scan did not run — fall back to another scanner or `git
 high-signal patterns, and record which one produced the verdict. Never carry an errored scan as a
 pass.
 
-1. **Compute diff LOC over the range this flow is actually shipping.** The base differs by flow,
-   and getting it wrong silently reviews the wrong code in both directions:
+1. **Compute diff LOC over `${BASE_REF}..HEAD`** — the base Phase 0 step 3 already resolved for
+   this flow (and re-resolved if step 4(b) merged the moved base in). Do NOT resolve it again here:
+   a second resolution is a second chance to disagree with the range Phase 1 baselined against.
    ```bash
-   if [ "$FLOW" = "pr" ]; then
-     # PR flow: what THIS branch adds. The last tag can be hundreds of already-merged commits
-     # back, which drags other people's merged work into the review scope.
-     # Fall back to the LOCAL target branch when the remote ref is missing (fresh clone of a repo
-     # whose default branch was never fetched, offline run) — an empty BASE_REF would turn the
-     # diff command below into `..HEAD`, which silently means "since the beginning of time".
-     BASE_REF=$(git merge-base HEAD "$PUSH_REMOTE/$TARGET_BRANCH" 2>/dev/null \
-                || git merge-base HEAD "$TARGET_BRANCH" 2>/dev/null || true)
-     [ -n "$BASE_REF" ] || { echo "[SHIP] cannot resolve a PR base against $TARGET_BRANCH — fix the remote before shipping"; exit 1; }
-   else
-     # Direct/release flow: everything since the last RELEASE tag. --match is not optional:
-     # bare `git describe --tags` returns the most recent tag of ANY kind, and this skill family
-     # writes operational tags (`reviewed/<sha>`, `review-YYYY-MM-DD-*`) into the same namespace.
-     # A review marker as BASE_REF silently shrinks the release range to "since the last review".
-     BASE_REF=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --match '[0-9]*.[0-9]*' 2>/dev/null || true)
-     # No release tag yet (first release): the honest base is the root commit.
-     [ -n "$BASE_REF" ] || BASE_REF=$(git rev-list --max-parents=0 HEAD | tail -1)
-   fi
-   git diff --stat "${BASE_REF}..HEAD" | tail -1
+   [ -n "$BASE_REF" ] || { echo "[SHIP] BASE_REF unset — Phase 0 step 3 did not run"; exit 1; }
+   # No pipe around git: `git diff --stat ... | tail -1` makes `$?` tail's, so an unresolvable base
+   # reads as "0 changed lines" — the fast path, review skipped. Same rule as Phase 1 step 2.
+   DIFF_STAT=$(git diff --stat "$DIFF_BASE" HEAD) || { echo "[SHIP] git diff failed against $DIFF_BASE"; exit 1; }
+   printf '%s\n' "$DIFF_STAT" | tail -1          # two-arg form: works for a commit AND the empty tree
    ```
-   Extract the total insertions + deletions number as `DIFF_LOC`. Print the resolved base and why:
-   `[SHIP] BASE_REF=<sha7> (<pr: merge-base with $PUSH_REMOTE/$TARGET_BRANCH | release: tag <name> | first release: root>)`.
+   Extract the total insertions + deletions number as `DIFF_LOC`. Re-print the base with the
+   measurement so the threshold decision carries its own scope:
+   `[SHIP] DIFF_LOC=<N> over <sha7>..HEAD (<pr: merge-base with $PUSH_REMOTE/$TARGET_BRANCH | release: tag <name> | first release: root>)`.
    Never `HEAD~N` — it is fragile with merge commits and non-linear history.
 
    **Diff scope is the whole range, whichever base applies.** On release flow `DIFF_LOC` includes
@@ -359,6 +468,12 @@ pass.
    | 100+ | Dispatch `review-light` + invoke `zuvo:review` via the Skill tool (`Skill(skill="zuvo:review", args="${BASE_REF}..HEAD --report-only")`) — runs adversarial pass at TIER 2+ + invoke `Skill(skill="zuvo:design-review")` if frontend files changed (`.tsx`, `.jsx`, `.css`, `.scss`, `.html`) |
    | 300+ | All of the above + dispatch `coverage-check` agent (read `skills/ship/agents/coverage-check.md`). `Skill(skill="zuvo:review", args="${BASE_REF}..HEAD --report-only")` runs at TIER 3 with automatic adversarial pass. |
 
+   **First release only:** `${BASE_REF}..HEAD` excludes everything the root commit introduced, and
+   a range argument cannot express "the whole tree". Scope the review by FILES instead
+   (`zuvo:review <paths> --report-only`, or the full production file list), and say so in SHIP
+   COMPLETE. `DIFF_LOC` already measures the real size via `DIFF_BASE`, so the threshold band is
+   right; it is only the review's own scope argument that needs the different form.
+
    **ALWAYS pass the RANGE `${BASE_REF}..HEAD`, never bare `--report-only`.** Ship runs AFTER the work is committed, so an argument-less `zuvo:review` scopes to *uncommitted* changes — empty at this point — and the "mandatory" review passes on nothing. Use the same range Phase 2 measured `DIFF_LOC` over.
 
    **There is no zero-visual-delta exemption from `zuvo:design-review`.** A frontend file in the
@@ -375,7 +490,19 @@ pass.
    - `--full`: always use 300+ path (all reviews + coverage check) regardless of diff size.
    - There is NO downgrade flag. A review skip cannot be expressed as an argument to this skill.
 
-   **Invocation form is non-negotiable.** When the threshold says "invoke `zuvo:review`", you MUST issue an actual `Skill(skill="zuvo:review")` tool call. Reading the review skill, simulating it mentally, summarizing findings from prior commits, or asserting that `zuvo:execute` / per-task review "covered it" does NOT count as invocation. The tool call is the only acceptable evidence.
+   **Invocation form is non-negotiable.** When the threshold says "invoke `zuvo:review`", you MUST
+   actually run it. Reading the review skill, simulating it mentally, summarizing findings from
+   prior commits, or asserting that `zuvo:execute` / per-task review "covered it" does NOT count.
+
+   **What "actually run it" means per harness** — the mandate is the RUN, not one tool's name.
+   Claude Code has a `Skill` tool and MUST use it: `Skill(skill="zuvo:review", args="${BASE_REF}..HEAD --report-only")`.
+   Codex, Cursor and Antigravity have no such tool; there the equivalent is the dispatch pattern in
+   `../../shared/includes/env-compat.md` — load the review skill's own instructions and execute its
+   phases in a dedicated sub-agent/thread, with its gates intact. Record which transport ran:
+   `[SHIP] review transport: Skill tool | env-compat dispatch (<harness>)`. Stating a literal
+   `Skill()` call is the "only acceptable evidence" made the gate unsatisfiable on three of four
+   platforms, and an unsatisfiable gate gets skipped, not met — that is how it started reading as
+   optional. What remains forbidden is unchanged: no inline self-review standing in for the run.
 
    **MANDATORY: Phase 2 Anti-Rationalization Attestation.** Before proceeding to step 3, print this block verbatim with your honest answers. If ANY box is left unchecked because the statement is true (i.e., you HAD that thought), you MUST escalate review depth to `full+coverage` regardless of the LOC table — and record the escalation reason in the SHIP COMPLETE block.
 
@@ -399,23 +526,104 @@ pass.
 
 3. **Agent dispatch — review-light:**
    - Read `skills/ship/agents/review-light.md` for the agent's instructions.
-   - Provide the git diff as input.
-   - If the agent returns verdict `BLOCK`: pause. Show the blocker list. Ask the user to fix the issues or explicitly override. In non-interactive environments: stop and print `SHIP PAUSED: review blockers found`.
+   - Provide **`git diff "$DIFF_BASE" HEAD`** as input — byte-for-byte the diff step 1 measured.
+     Not `git diff --cached` (empty here: ship runs after the work is committed), not `HEAD~1` (one
+     commit of a range that is usually many), and not `${BASE_REF}..HEAD` (identical to `$DIFF_BASE`
+     except on a FIRST RELEASE, where it silently drops the root commit's entire contents — the
+     agent would then bless a codebase it never saw while the LOC table said 300+). Any of the
+     three hands the agent less than the release and gets back a confident "no ship-blockers",
+     which travels into SHIP COMPLETE as a review that happened.
+   - State the resolved base and head SHAs in the dispatch prompt. The agent verifies an empty
+     diff itself and BLOCKS on an unresolved range (see `agents/review-light.md`), which it can
+     only do if you tell it what the range was.
+   - If the agent returns verdict `BLOCK`: **FIX the blockers in this run**, then re-run it. A
+     ship-blocker is a security hole, a data-corruption path or a crash — the fix is the work, and
+     handing it back as a question is the deferral pattern this project has rejected repeatedly.
+     Commit the fixes as their own `fix(ship): ...` commit, ahead of the release commit. Only two
+     outcomes escalate: a genuine product/behavior decision (interactive: ask; batch: safe default
+     + `[AUTO-DECISION]`), and a blocker that genuinely cannot be fixed inside this scope — that
+     one prints `SHIP INCOMPLETE: <blocker>` and stops. "Pause and ask the user to override" is
+     neither, and it contradicts `no-pause-protocol.md`, which this skill loads as HARD.
 
 4. **Cross-provider review** (100+ LOC, after zuvo:review completes):
 
    After `zuvo:review` returns its verdict, run a cross-provider adversarial review. Read `../../shared/includes/cross-provider-review.md` for the protocol.
 
    ```bash
-   SCRIPT_PATH="${PLUGIN_ROOT}/scripts/adversarial-review.sh"
-   if [[ -x "$SCRIPT_PATH" ]]; then
-     "$SCRIPT_PATH" --diff "${BASE_REF}" > /tmp/ship-cross-review.md
+   # ~/.zuvo/ is the version-INDEPENDENT path install.sh writes. The previous form
+   # (`SCRIPT_PATH="${PLUGIN_ROOT}/scripts/adversarial-review.sh"` guarded by `[[ -x $SCRIPT_PATH ]]`)
+   # could never run: no harness sets a bare PLUGIN_ROOT (they set CLAUDE_PLUGIN_ROOT /
+   # CURSOR_PLUGIN_ROOT), so the path was "/scripts/adversarial-review.sh", the guard was false,
+   # and the step fell straight through to "No external provider available" — a mandatory gate
+   # that self-skipped on every platform, every run, with a line that reads like a provider fault.
+   AR="$HOME/.zuvo/adversarial-review"
+   # Key the proof on the RESOLVED SHAs, not on the literal string "${BASE_REF}..HEAD" — that text
+   # is identical across runs and across content, so a rerun that failed or was skipped would leave
+   # the PREVIOUS proof sitting at the same path, and the push gate would accept it for blobs it
+   # never saw. Resolved SHAs also need no `shasum` (absent on minimal Linux images, and its exit
+   # status is swallowed by the pipe — the exact failure class this file warns about elsewhere).
+   BASE7=$(git rev-parse --short "$BASE_REF"); HEAD7=$(git rev-parse --short HEAD)
+   ADV_PROOF="zuvo/proofs/ship-${BASE7}..${HEAD7}-adversarial.txt"
+   mkdir -p zuvo/proofs
+
+   # Never pipe `git diff` straight into the reviewer: a failed diff (bad base, corrupt index)
+   # exits non-zero while the PIPELINE's status is the reviewer's, so an empty input comes back as
+   # a clean review. Materialize it, check it, then feed it. mktemp, not a fixed /tmp name —
+   # concurrent ship runs on one host clobber each other, and a pre-created symlink at a
+   # predictable path redirects the write.
+   DIFF_FILE=$(mktemp -t ship-diff.XXXXXX); ADV_OUT=$(mktemp -t ship-cross-review.XXXXXX)
+   if ! git diff "$DIFF_BASE" HEAD > "$DIFF_FILE"; then
+     echo "[CROSS-REVIEW] git diff failed — cross-provider review NOT run"; AR_RC=1
+   elif [ ! -s "$DIFF_FILE" ]; then
+     # Empty diff = no review happened and NO proof file exists. Record it as such; rc=0 here means
+     # "correctly nothing to do", never "reviewed and clean". If the range is genuinely empty there
+     # is also nothing to push, so a run that continues on this branch is a run with a range bug.
+     echo "[CROSS-REVIEW] empty diff for $BASE7..$HEAD7 — NOT RUN (no proof written)"; AR_RC=0; CROSS_STATE=not_run:empty-diff
+   elif [ -x "$AR" ]; then
+     "$AR" --mode code --artifact "$ADV_PROOF" < "$DIFF_FILE" > "$ADV_OUT"
+     AR_RC=$?
+   else
+     AR_RC=127
    fi
+   echo "[CROSS-REVIEW] AR_RC=$AR_RC proof=$ADV_PROOF out=$ADV_OUT"   # print it — the branch below is a different shell
    ```
 
-   - If CRITICAL findings: pause. Show the findings alongside zuvo:review's report. Ask the user to fix or override.
-   - If WARNING/INFO only: include in the ship report as informational. Do not block.
-   - If script unavailable: print `[CROSS-REVIEW] No external provider available.` Continue.
+   **Write the proof with `--artifact`, not a stdout redirect.** The canonical `REVIEW BY:` markers
+   are emitted only into the artifact file; `> /tmp/ship-cross-review.md` captured the human-readable
+   summary and nothing the push gate can read, so the most expensive step in Phase 2 produced no
+   proof-of-work at all. `zuvo/proofs/` is also where `zuvo:review`'s artifact expects to find it.
+
+   **Branch on `AR_RC`, and never read an empty file as a clean result:**
+   - `0` — findings parsed normally (see severities below).
+   - `3` — `single_provider_only`: honest degraded. Record it; do not treat it as clean.
+   - `1`/`2`/`124`/`127` — the pass did NOT happen (no provider, all failed, timeout, helper
+     missing). Print `[CROSS-REVIEW] pass did not run (rc=$AR_RC)` and record it as NOT RUN in the
+     SHIP COMPLETE block. An empty or 0-byte output is the same case: zero CRITICALs found by a
+     reviewer that never ran is not zero CRITICALs.
+   - CRITICAL findings → fix them in-run (same rule as step 3), then re-run this pass so the proof
+     covers the fixed blobs. WARNING/INFO → carry as informational; they do not block.
+
+4.5 **Disposition every finding — `--report-only` means "do not auto-rewrite", not "do not fix".**
+   The threshold table dispatches `zuvo:review --report-only` so the review surfaces blockers for
+   the release decision instead of silently rewriting the diff you are about to tag. What it never
+   said is what happens next, and a finding nobody dispositions is a finding nobody acted on:
+   - **MUST-FIX** → fix it in this run, as a separate commit ahead of the release commit, then
+     re-run the adversarial pass (step 4) so the proof covers the fixed blobs. Content-keyed
+     coverage is per-blob: a fix after the pass leaves the pushed content unreviewed.
+   - **RECOMMENDED** → fix if it is inside this release's fence; otherwise record it in
+     `memory/backlog.md` with the finding text, and say which you did.
+   - **NIT** → backlog or ignore, silently is fine.
+   - **Cross-chunk artifacts** (a finding about a symbol whose definition sat in another chunk of a
+     split diff) → discount by construction, and say so; do not "fix" a diff to satisfy a reviewer
+     that saw half of it.
+   Print `[SHIP] findings dispositioned: <n> MUST-FIX fixed, <n> RECOMMENDED fixed, <n> backlogged`.
+   Zero findings is a legitimate line — an ABSENT line is not.
+
+   **Re-measure `DIFF_LOC` after fixing.** The fixes are new commits in the same range, so a run
+   that entered at 280 LOC can leave at 340 — past the 300+ band, where `coverage-check` and TIER 3
+   are mandatory. Re-run the step-1 measurement; if the band moved UP, run the extra depth. (It can
+   only move up: fixes add commits. A band that moved down is a measurement error, not a licence to
+   review less.)
 
 5. **Agent dispatch — coverage-check** (300+ LOC or `--full` only):
    - Read `skills/ship/agents/coverage-check.md` for the agent's instructions.
@@ -465,7 +673,17 @@ This step runs regardless of flags and diff size (fast path included). It does N
    | `VERSION` | Generic | entire file content |
    | None found | — | Offer to create a `VERSION` file, or skip versioning with user consent (E5) |
 
-2. **Skip gate — TWO conditions, and the second is not optional:**
+   **A manifest with NO version field is the common case, not the "None found" row.** `package.json`
+   with `"private": true` (every app in this fleet), a Composer app, a `pyproject.toml` using
+   `dynamic = ["version"]`, and `go.mod` all ship without a version string in the file. Do not
+   invent one, and do not fall through to "None found" — that row is for a repo with no manifest at
+   all. Use **tag-only versioning**: the last release tag is the current version, the bump produces
+   the next tag, and no file is staged. Print
+   `[SHIP] tag-only versioning (<manifest> has no version field) — current v<X>, next v<Y>` and
+   record `versionFile: null` in the artifact. A repo that has neither a version field nor any
+   release tag is the genuine E5 case.
+
+2. **Skip gate — THREE conditions, and only the first is a flag:**
 
    a. `--no-bump` was passed.
 
@@ -473,6 +691,22 @@ This step runs regardless of flags and diff size (fast path included). It does N
       **do not bump the version and do not touch `CHANGELOG.md` at all.** Print
       `[AUTO-DECISION] PR flow → version + changelog deferred to the release on <TARGET_BRANCH>`
       and go straight to Phase 4 with the version unchanged.
+
+   c. **The repo's own release script owns the version — and then it owns the TAG and the PUSH
+      too.** If the project documents a release path (`scripts/release.sh`, `npm version`, a CI
+      release workflow, semantic-release) that produces the version itself, ship must not bump:
+      a second bump either collides with the script's or ships a version the script never recorded
+      in its own artifacts (marketplace SHA, lockfile, published package). Detect it from the
+      repo's `CLAUDE.md`/README/`package.json` scripts.
+
+      **Ownership is all-or-nothing.** Deferring only the bump leaves `NEW_VERSION` unset while
+      Phase 4 Step 3 still tries to tag it — `git tag -a "v"` on a version nobody computed. So when
+      this fires, set `VERSION_OWNER=<script>` and Phase 4 **skips Step 3 (tag) and the tag push**
+      exactly as PR flow does; the release script creates the tag when it runs. Print
+      `[SHIP] version+tag owned by <script> — ship stops at the commit; run <script> to release`,
+      record `newTag: null` and `versionOwner: "<script>"` in the artifact, and say so in SHIP
+      COMPLETE. Ship does not invoke the script itself: those wrappers bundle remote effects
+      (tags, marketplace/registry pushes) that are a separate, human-authorized decision.
 
    **Why this is a correctness rule, not a convenience.** The version belongs to the RELEASE, not
    to the pull request. `VERSION` is a single line and a `CHANGELOG.md` entry is always prepended
@@ -505,6 +739,11 @@ This step runs regardless of flags and diff size (fast path included). It does N
    - `feat:` → minor
    - `fix:` → patch
 
+   The result is `BUMP_TYPE`; applying it to the current version gives **`CANDIDATE_VERSION`** (what
+   step 4 preflights against the tag namespace) which, once the preflight clears it, becomes
+   **`NEW_VERSION`** (what Phase 4 commits and tags). Two names, because a candidate that collides
+   is recomputed and must never leak into the tag.
+
    Decision logic:
    - If the user provided an explicit `patch`, `minor`, or `major` argument: use that. Skip detection.
    - If >= 50% of commits follow conventional commit format: auto-compute bump type from the highest-impact prefix (BREAKING > feat > fix).
@@ -517,7 +756,60 @@ This step runs regardless of flags and diff size (fast path included). It does N
    either (a) generate the section from the FULL unreleased range rather than from this run's
    commits, or (b) `--no-bump` and leave the release to a deliberate one. Do not silently pick.
 
-4. **Apply the bump** to the detected version file. Read the current version, increment the appropriate segment, write back.
+4. **Apply the bump — after a tag-collision preflight.** The candidate version comes from a FILE;
+   whether it is free is a fact about the TAG NAMESPACE, local and remote. Nothing checked that,
+   and the two failure modes both land at the very last step of a run that has already paid for
+   tests, review and a release commit:
+   - a concurrent worktree/session already published `v<candidate>` → `git push --tags` is rejected,
+     or worse the local tag silently disagrees with the remote one of the same name;
+   - the version file drifted BEHIND the tags (a release whose file edit was reverted, or a
+     tag-only repo) → the "bump" produces a version that shipped weeks ago.
+
+   ```bash
+   # Both tag styles, matching Phase 0's base resolution: a repo on bare `1.2.3` tags would
+   # otherwise report NEWEST_TAG="" and never detect the file-behind-tags case.
+   NEWEST_TAG=$(git tag --list 'v[0-9]*' '[0-9]*.[0-9]*' --sort=-v:refname | head -1)
+   # Follow the repo's own convention instead of forcing `v`: on a bare-semver repo, checking and
+   # creating `v1.2.4` probes a namespace nobody uses — the collision check always passes and the
+   # tag lands in a second, parallel scheme.
+   case "$NEWEST_TAG" in v*) TAG_PREFIX=v ;; *) TAG_PREFIX="${NEWEST_TAG:+}" ;; esac
+   NEXT="${TAG_PREFIX}${CANDIDATE_VERSION}"
+
+   COLLIDES=false
+   git rev-parse -q --verify "refs/tags/$NEXT" >/dev/null 2>&1 && COLLIDES=true
+
+   if git fetch --quiet --tags "$PUSH_REMOTE"; then
+     if [ "$COLLIDES" != true ]; then            # a KNOWN local collision is never downgraded
+       git ls-remote --tags --exit-code "$PUSH_REMOTE" -- "$NEXT" >/dev/null 2>&1; _rc=$?
+       case $_rc in
+         0) COLLIDES=true ;;                     # exists remotely
+         2) : ;;                                 # --exit-code: genuinely absent
+         *) echo "[SHIP] ls-remote error (rc=$_rc) — cannot prove $NEXT is free"; COLLIDES=unknown ;;
+       esac                                      # 128 = network/auth: NOT "free"
+     fi
+   else
+     # A failed fetch means the remote half never ran. Leaving COLLIDES=false here would turn an
+     # infrastructure failure into "the version is available" — fail closed.
+     [ "$COLLIDES" = true ] || COLLIDES=unknown
+     echo "[SHIP] tag fetch FAILED — remote collision check did not run"
+   fi
+   echo "[SHIP] tag preflight: NEXT=$NEXT COLLIDES=$COLLIDES NEWEST_TAG=$NEWEST_TAG"
+   ```
+   **Act on the result — the echo is not the fix.** `COLLIDES=true` → recompute `CANDIDATE_VERSION`
+   from `max(version file, NEWEST_TAG)` and run this preflight again (loop until it is false).
+   `COLLIDES=unknown` (the remote could not be reached) → do not gamble the last step of the run on
+   it: stop with `SHIP INCOMPLETE: cannot verify tag $NEXT is free (<error>)`, or continue only with
+   `--no-tag`. Proceed to the bump only on `COLLIDES=false`.
+   - **Collision → recompute** the candidate from `max(version file, newest release tag)` and
+     preflight again. Never `git tag -f`, never delete a published tag: both rewrite what other
+     checkouts already fetched.
+   - **File behind the tags** (`NEWEST_TAG` > version file) → bump from the TAG and correct the
+     file to match in the same release commit. Say so:
+     `[SHIP] version file <X> is behind tag <Y> — bumping from the tag`.
+
+   Once `COLLIDES=false`: set `NEW_VERSION="$CANDIDATE_VERSION"`, then write it back to the
+   detected version file (tag-only repos skip the write — see step 1). Phase 4 tags `NEW_VERSION`,
+   so a version that never cleared the preflight is a version that can never be tagged.
 
 5. **Generate or update CHANGELOG.md:**
    - If `CHANGELOG.md` exists: prepend a new section at the top (below the header).
@@ -610,6 +902,48 @@ This step runs regardless of flags and diff size (fast path included). It does N
 > backend work still needs `npm ci` to pass a frontend type-check). Read the failing command before
 > assuming which gate spoke.
 
+### Step 0: Push-gate preflight (before the release commit, not after the rejection)
+
+Everything the pre-push gate checks is knowable NOW, while fixing it is cheap. Run it here and the
+gate becomes a confirmation; skip it and the first time you learn the artifact header is malformed
+is after tests, review, a bump, a commit and a tag have all been paid for — and each rejected push
+names only ONE reason at a time, so a run with two problems needs two more attempts.
+
+```bash
+~/.zuvo/review-artifact-sync.sh --check .        # marker, range:, comma-separated files:, proof >=2 REVIEW BY:
+```
+
+Then dry-run the gate itself against the range you are about to push. **Resolve the hook, do not
+assume its path** — it lives at `core.hooksPath` when one is configured (this fleet sets a GLOBAL
+one), otherwise `.git/hooks/`, and repos vary (`.githooks/pre-push`, `hooks/pre-push-gate.sh`):
+
+```bash
+# --git-common-dir, not --git-dir: in a LINKED WORKTREE (this skill creates them in Phase 1, and
+# agents routinely work from one) --git-dir returns the worktree's private dir, which has no hooks,
+# so the preflight would silently report "no hook installed" in exactly the setup that needs it.
+HOOK_DIR=$(git config --get core.hooksPath || echo "$(git rev-parse --git-common-dir)/hooks")
+PP_HOOK="$HOOK_DIR/pre-push"
+ZERO=0000000000000000000000000000000000000000
+# git supplies the REMOTE SIDE as 40 zeros when the branch does not exist there yet. Substituting
+# BASE_REF instead simulates an incremental push and hides everything a first push would carry.
+REMOTE_SHA=$(git rev-parse "$PUSH_REMOTE/$BRANCH" 2>/dev/null || echo "$ZERO")
+if [ -x "$PP_HOOK" ]; then
+  # $1 = remote name, $2 = remote URL — real hooks read them to pick policy or resolve refs.
+  printf 'refs/heads/%s %s refs/heads/%s %s\n' "$BRANCH" "$(git rev-parse HEAD)" "$BRANCH" "$REMOTE_SHA" \
+    | "$PP_HOOK" "$PUSH_REMOTE" "$(git remote get-url --push "$PUSH_REMOTE" 2>/dev/null || echo '')"
+  PREFLIGHT_RC=$?
+else
+  PREFLIGHT_RC=0; echo "[SHIP] no pre-push hook installed here — the CI gate is still authoritative"
+fi
+echo "[SHIP] PREFLIGHT_RC=$PREFLIGHT_RC"   # print it: the decision below happens in another shell
+```
+
+`PREFLIGHT_RC=0` = the push will pass this gate. Anything else: fix it NOW (the five causes are in
+the preamble above), re-run the preflight, and only then continue. **A missing hook is not a pass**
+— it means this preflight proved nothing, and the server-side CI gate still applies; say which of
+the two you got. Note the release commit you are about to create changes nothing about coverage:
+the gate is content-keyed on the production files, which already sit at their final blobs.
+
 ### Step 1: Stage files
 
 Stage **only** files that were actually generated or modified:
@@ -638,13 +972,33 @@ RELEASE_SHA=$(git rev-parse HEAD)
 
 Use `RELEASE_SHA` as the immutable release commit SHA for all downstream metadata.
 
-### Step 3: Tag (unless `--no-tag`)
+### Step 3: Tag (release flow only, unless `--no-tag`)
 
 ```bash
-git tag v<version>
+# PR flow produced NO version (Phase 3 skip gate b), so there is nothing to tag: `git tag v<version>`
+# there re-tags the ALREADY-RELEASED version at this branch's head — a published tag now pointing at
+# unmerged code. Tagging is the release's job, on the target branch, after the merge.
+if [ "$FLOW" = "pr" ]; then
+  echo "[SHIP] PR flow → no tag (the release on $TARGET_BRANCH tags the version)"
+elif [ -n "${VERSION_OWNER:-}" ]; then
+  echo "[SHIP] version+tag owned by $VERSION_OWNER → no tag here (NEW_VERSION was never computed)"
+elif [ -z "${NEW_VERSION:-}" ]; then
+  echo "[SHIP] no NEW_VERSION (--no-bump or tag-only repo with no bump) → no tag"
+else
+  # Re-verify at the last moment: Phase 3's preflight ran before tests, review and the release
+  # commit, and a concurrent worktree can publish the same version inside that window.
+  git rev-parse -q --verify "refs/tags/${TAG_PREFIX}${NEW_VERSION}" >/dev/null 2>&1 \
+    && { echo "[SHIP] ${TAG_PREFIX}${NEW_VERSION} appeared since the Phase 3 preflight — recompute the bump, do not overwrite"; exit 1; }
+  git tag -a "${TAG_PREFIX}${NEW_VERSION}" -m "release: ${TAG_PREFIX}${NEW_VERSION}"   # annotated: author + date
+fi
 ```
 
 If `--no-tag` was passed, do not create a tag and record `newTag: null` in the artifact.
+
+**Tag AFTER the commit it names, and never move it.** If the push in Step 4 is rejected as
+non-fast-forward and you resolve it by merging, the tag you already created points at the
+PRE-merge commit — delete the local (unpushed) tag and re-create it on the final commit before
+pushing tags. A tag that was already pushed is immutable: cut the next patch instead.
 
 ### Step 4: Push
 
@@ -654,14 +1008,48 @@ authorization; the mandatory tests + review + `scan_secrets` upstream are what m
 Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`.
 
 - **Direct flow:** `git push "$PUSH_REMOTE" <branch>`, then `git push "$PUSH_REMOTE" v<version>` if a tag was created.
-- **PR flow:** `git push -u "$PUSH_REMOTE" <branch>`, then `gh pr create --base <targetBranch>`, then
+- **PR flow:** push the branch, then ensure a PR EXISTS (create or reuse), then
   **WAIT FOR CI AND MERGE IT.** Creating the PR is not shipping; the change is shipped when it is
   on the target branch.
 
   ```sh
-  gh pr checks <n> --watch --fail-fast     # blocks until every check concludes
-  gh pr merge <n> --squash                 # only if they all passed
+  git push -u "$PUSH_REMOTE" "$BRANCH"
+
+  # Reuse an existing PR — `gh pr create` exits non-zero when one is already open for this head,
+  # which is the NORMAL shape of a second ship on the same branch (ship, review, fix, ship again).
+  # Treated as a failure, it ended the run at the last step with the work already pushed.
+  PR_NUMBER=$(gh pr view "$BRANCH" --json number -q .number 2>/dev/null || true)
+  if [ -n "$PR_NUMBER" ]; then
+    echo "[SHIP] reusing open PR #$PR_NUMBER (branch already has one)"
+  else
+    PR_NUMBER=$(gh pr create --base "$TARGET_BRANCH" --head "$BRANCH" --fill | sed -n 's#.*/pull/\([0-9]*\).*#\1#p')
+  fi
+
+  gh pr checks "$PR_NUMBER" --watch --fail-fast     # blocks until every check concludes
+  gh pr merge "$PR_NUMBER" --squash                 # only if they all passed
+  gh pr view "$PR_NUMBER" --json state,mergedAt -q '.state'   # VERIFY: MERGED, not the exit code
   ```
+
+  **Read PR state, not exit codes.** Three shapes that are not what they look like:
+  - `gh pr merge` can exit non-zero *after* the merge landed (it also deletes the branch and
+    updates the local ref; a failure in that tail is not a failed merge). Confirm with
+    `gh pr view --json state` — `MERGED` is the ground truth, and a false `SHIP INCOMPLETE` over a
+    merged PR sends the next run to re-ship work that is already on the target branch.
+  - `gh pr checks --watch` exits non-zero when there are NO checks configured, and returns
+    immediately when none have been dispatched yet. Distinguish: zero checks configured → proceed
+    (nothing to wait for, say so); checks pending/queued → keep waiting; a check FAILED → fix it or
+    print `SHIP INCOMPLETE` with the failing check name.
+  - The PR can be `CONFLICTING`/`DIRTY` (`gh pr view --json mergeable`). Merge
+    `$PUSH_REMOTE/$TARGET_BRANCH` into the branch, re-run the suite on the merged tree (Phase 0
+    step 4(b) rule — a textual merge accepts semantic conflicts), push, and wait again. Do not
+    leave an unmergeable PR behind as "shipped".
+
+  **No `gh`, or a forge that is not GitHub** (`GH_AVAILABLE=false` from Phase 0 step 2): the branch
+  push still happens — that part is forge-agnostic. What cannot happen is the PR and the merge, so
+  the run ends `SHIP INCOMPLETE: branch pushed, PR not created (<no gh | non-GitHub forge>)` with
+  the compare URL for the human to open it. `GH_AVAILABLE` existed as a variable that nothing read;
+  a "skipped (gh unavailable)" line under a SHIP COMPLETE banner claims a shipped release that is
+  sitting on a branch nobody has been asked to merge.
 
   **Why merging is part of ship, not a separate human step.** On this fleet nobody reviews the
   queue — an open PR buys ZERO additional safety and costs a compounding one. Measured on
@@ -722,7 +1110,13 @@ Write the artifact **after** commit/tag/push decisions are complete:
   "date": "<ISO-8601>",
   "tests": "<pass|warn-carried|skipped-no-runner>",   // from the Phase 1 triage outcome — NEVER hardcode "pass"
   "reviewDepth": "<none|light|full|full+coverage>",
+  "pushRemote": "<$PUSH_REMOTE>",                     // deploy MUST reuse this, not re-derive it
+  "reviewTransport": "<skill-tool|env-compat-dispatch|none>",   // which transport actually ran the review
+  "crossProvider": "<ok|single_provider_only|not_run:rc=<N>>",  // NEVER "ok" on a pass that did not run
+  "advProof": "<zuvo/proofs/... or null>",
+  "versionFile": "<path or null>",                    // null = tag-only versioning
   "diffLOC": <number>,
+  "prState": "<MERGED|OPEN|null>",                    // from gh pr view, not from an exit code
   "tagPushed": true or false,
   "pushed": true or false
 }
@@ -750,20 +1144,31 @@ Before printing the final output block, verify every item. Unfinished items = pi
 
 ```
 COMPLETION GATE CHECK
-[ ] DIFF_LOC computed from last tag and review threshold applied
+[ ] BASE_REF resolved ONCE in Phase 0 step 3, printed, and used by Phase 1's baseline, Phase 2's
+    DIFF_LOC and the review range — one base, not three
 [ ] Phase 2 attestation block printed (all boxes considered, escalation applied if any unchecked)
 [ ] Review depth recorded: none/light/full/full+coverage
-[ ] If invocation form was zuvo:review — actual Skill(skill="zuvo:review") tool call exists in the tool log (not simulated, not summarized)
-[ ] Tests ran; failures TRIAGED (new-fixed / new-abort / pre-existing-fixed / pre-existing-carried+WARN) with the TEST TRIAGE table printed — never a bare abort, never an "allow push despite red?" question
-[ ] Version bumped with CHANGELOG section added
+[ ] The review actually RAN on the mandated path: a Skill(skill="zuvo:review") tool call on Claude
+    Code, or the env-compat dispatch on a harness without that tool — transport recorded either way,
+    never simulated or summarized
+[ ] Cross-provider pass: exit code read, and recorded as ok / single_provider_only / not_run:rc=N —
+    an empty output is NOT zero findings, and a proof file exists at zuvo/proofs/ when it ran
+[ ] Tests ran and PRODUCED a verdict (runner summary line parsed, status read via PIPESTATUS not a
+    pipe's exit); failures TRIAGED with the TEST TRIAGE table printed — never a bare abort, never an
+    "allow push despite red?" question
+[ ] Version bumped with CHANGELOG section added — after the tag-collision preflight (no reuse of a
+    published version, no `git tag -f`)
+[ ] PR flow only: no version bump, no CHANGELOG edit, no tag created
 [ ] Only version files staged (never git add -A)
 [ ] memory/last-ship.json written
 [ ] Retrospective bash appends EXECUTED (retros.log + retros.md) — printing markdown is not enough
 [ ] append-runlog wrapper invoked and exited 0
 [ ] Logs evidence block printed with real `tail` output
-[ ] PR flow only: PR is MERGED, or SHIP INCOMPLETE printed with the failing check. An open PR
-    left behind is an unfinished ship — nobody on this fleet reviews the queue, so it buys no
-    safety and starts accruing the four failure modes documented in the push section.
+[ ] PR flow only: PR state read from `gh pr view --json state` is MERGED, or SHIP INCOMPLETE
+    printed with the failing check / conflict / missing-forge reason. An open PR left behind is an
+    unfinished ship — nobody on this fleet reviews the queue, so it buys no safety and starts
+    accruing the four failure modes documented in the push section. A non-zero `gh pr merge` exit
+    over a PR whose state is MERGED is NOT a failure.
 ```
 
 ### 1. Run retrospective (REQUIRED, before SHIP COMPLETE)
@@ -804,11 +1209,12 @@ SHIP COMPLETE
   Diff:        <N> LOC (<review-depth> path)
   Tests:       <PASS|WARN (pre-existing carried)|SKIPPED (no runner)> (<N> passed, <N> failed)
   DOC:         <changelog-only — feature docs current | updated: <paths> | N/A — <reason>>
-  Coverage:    <PASS|WARN|FAIL — from coverage-check, or 'not dispatched (<300 LOC)'>
-  Review:      <depth> (<details>) [escalated-from <table-depth> due to attestation: <reason>]
+  Coverage:    <PASS|WARN|FAIL — from coverage-check (% of changed files, not of code), or 'not dispatched (<300 LOC)'>
+  Cross-model: <providers (N findings) | single_provider_only | NOT RUN (rc=<N>)> proof: <zuvo/proofs/... | none>
+  Review:      <depth> (<details>) via <Skill tool|env-compat dispatch> [escalated-from <table-depth> due to attestation: <reason>]
   Changelog:   CHANGELOG.md updated / skipped
   Push:        pushed to <remote>/<branch> / BLOCKED (<gate + cause>)
-  PR:          #<N> created + merged / #<N> updated + merged / #<N> open (SHIP INCOMPLETE — <failing check>) / — (direct flow) / skipped (gh unavailable)
+  PR:          #<N> created + merged / #<N> updated + merged / #<N> open (SHIP INCOMPLETE — <failing check|CONFLICTING>) / — (direct flow) / not created (SHIP INCOMPLETE — <no gh|non-GitHub forge>)
   Artifact:    memory/last-ship.json written locally
   Logs:        retros.log=ok retros.md=ok(<count> entries) runs.log=ok  [paste tails from step 3]
 

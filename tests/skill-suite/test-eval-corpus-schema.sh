@@ -7,7 +7,7 @@
 # loudly (that is the intended RED evidence); once the corpus + schema doc are
 # implemented, all assertions must pass.
 #
-# Validates, for each of the 4 evals/<skill>.evals.json (via python3 — precedented
+# Validates, for each PINNED evals/<skill>.evals.json (via python3 — precedented
 # in scripts/, no new dependency):
 #   (a) file exists and parses as JSON;
 #   (b) top-level keys are EXACTLY {skill_name, evals}; skill_name == filename stem;
@@ -43,7 +43,15 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 EVALS_DIR="$ROOT/evals"
 SCHEMA_DOC="$ROOT/shared/includes/eval-schema.md"
-SKILLS="refactor write-tests review execute write-e2e"
+# $SKILLS is the REQUIRED-FLOOR list, not a discovery list — section (2) below already validates
+# EVERY evals/*.evals.json it finds, so a new corpus is never silently skipped by leaving this
+# alone. What this list does is fail when one of the named corpora DISAPPEARS. (A cross-model
+# review read the hardcoded list as the old silent-omission bug; it is not — that hole was closed
+# when (2) switched to globbing. Keep both: the glob catches additions, the list catches deletions.)
+# `ship` joined 2026-08-12 — the last pipeline skill with no behavioural corpus at all, so every
+# guarantee it makes (review threshold, secret scan, PR-flow version rule, test triage) had been
+# pinned by prose alone.
+SKILLS="refactor write-tests review execute write-e2e ship"
 
 fail=0
 pass() { printf 'PASS: %s\n' "$1"; }
