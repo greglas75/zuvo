@@ -89,6 +89,33 @@ grep -q 'not json{' "$H/.claude/settings.json" \
   && pass "malformed settings.json left untouched, not clobbered" \
   || bad  "overwrote a malformed settings.json"
 
+# 10. $HOME unset. A SessionStart hook runs in whatever environment the harness hands it
+#     (sandboxes, containers, service invocations) and $HOME is not guaranteed. With `set -u`
+#     the first real line was an "unbound variable" abort — exit 1 from the one script whose
+#     header promises every path exits 0. Found by the behaviour auditor an hour after this
+#     file was written, on the exact line its own contract was about.
+env -u HOME bash "$GUARD" >/dev/null 2>&1
+[ $? -eq 0 ] && pass "exits 0 with \$HOME unset (the contract holds in a bare environment)" \
+             || bad  "non-zero exit with \$HOME unset — a SessionStart hook that can fail the session"
+
+# 11. settings.json as a SYMLINK. Dotfile managers (chezmoi, stow, dotbot) commonly link it
+#     into their own tree. Replacing the link with a plain file leaves the managed target
+#     stale, so the next `chezmoi apply` re-links and the old disabled state returns — the fix
+#     looks like it "did not stick" and nothing points at the cause.
+sl="$H/dotfiles"; mkdir -p "$sl"
+python3 -c "import json;json.dump({'enabledPlugins':{'$KEY':False}},open('$sl/settings.json','w'))"
+python3 -c "import json;json.dump({'plugins':{'$KEY':[{'installPath':'/x','version':'1'}]}},open('$H/.claude/plugins/installed_plugins.json','w'))"
+rm -f "$H/.claude/settings.json"; ln -s "$sl/settings.json" "$H/.claude/settings.json"
+stamp 999; run
+if [ -L "$H/.claude/settings.json" ]; then
+  tv="$(python3 -c "import json;print(json.load(open('$sl/settings.json')).get('enabledPlugins',{}).get('$KEY'))")"
+  [ "$tv" = "True" ] && pass "writes THROUGH a symlinked settings.json (link intact, target updated)" \
+                     || bad  "symlink kept but the target was not updated (got $tv)"
+else
+  bad "replaced a symlinked settings.json with a plain file — a dotfile-managed target is now stale and orphaned"
+fi
+rm -f "$H/.claude/settings.json"
+
 # 9. Source guard: registration must stay SessionStart and GLOBAL.
 if grep -q "SessionStart" "$ROOT/scripts/install.sh" && grep -q "zuvo-plugin-enable-guard" "$ROOT/scripts/install.sh"; then
   pass "install.sh registers the guard on SessionStart"

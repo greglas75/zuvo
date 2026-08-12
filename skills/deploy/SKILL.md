@@ -103,6 +103,19 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
      [ -n "$PUSH_REMOTE" ] || PUSH_REMOTE=$(git config --get "branch.$SHIP_BRANCH.pushRemote" \
                    || git config --get remote.pushdefault \
                    || git config --get "branch.$SHIP_BRANCH.remote" || echo origin)
+
+     # VALIDATE IT. `last-ship.json` is a file on disk that anything can write, and this value
+     # reaches `git push "$PUSH_REMOTE" -- "$SHIP_BRANCH"`. Git parses OPTIONS BEFORE `--`, so a
+     # leading-dash value is an option, not a remote: `--receive-pack=<path>` (alias `--exec=`)
+     # names the program git runs for the push, which is arbitrary execution from a writable
+     # artifact. The `--` guards the REFSPEC and does nothing for the remote slot — which is why
+     # the careful `$SHIP_SHA` check three lines up gives a false sense the surface is closed.
+     # Two rules, both required: never a leading dash, and it must be a remote git actually knows.
+     case "$PUSH_REMOTE" in
+       -*) echo "deploy: pushRemote '$PUSH_REMOTE' starts with '-' — refusing (option injection)"; exit 1 ;;
+     esac
+     git remote | grep -qxF "$PUSH_REMOTE" || {
+       echo "deploy: pushRemote '$PUSH_REMOTE' is not a configured remote — refusing"; exit 1; }
      ```
      `newTag` is the tag name — never rebuild it as `v<version>`. Monorepo (`pkg@1.2.3`),
      bare-semver (`1.2.3`) and release-please formats all produce a `newTag` that is not

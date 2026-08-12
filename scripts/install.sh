@@ -683,9 +683,18 @@ PYEOF
     # Stamp the assertion: running install IS the claim that zuvo should be active. The
     # guard heals exactly this one stamp, once — so a deliberate `claude plugin disable`
     # after an install still sticks on the second try.
-    mkdir -p "$HOME/.zuvo"
-    printf 'asserted_at=%s\nhealed_for=\n' "$(date +%s)" > "$HOME/.zuvo/plugin-enable-state"
-    ok "zuvo-plugin-enable-guard.sh installed (~/.claude/hooks/) + assertion stamped"
+    # Guarded, unlike the naked `mkdir -p` this started as: the whole file runs under
+    # `set -euo pipefail`, so if ~/.zuvo is ever NOT a directory (a stray `touch ~/.zuvo`, a
+    # half-finished earlier install) the bare form aborts install.sh mid-run with a one-line
+    # `mkdir: File exists` and silently skips every remaining step — Codex, Cursor and
+    # Antigravity builds included. A stamp we could not write is worth a warning, never a
+    # dead installer; the guard already treats a missing stamp as "no assertion on record".
+    if mkdir -p "$HOME/.zuvo" 2>/dev/null \
+       && printf 'asserted_at=%s\nhealed_for=\n' "$(date +%s)" > "$HOME/.zuvo/plugin-enable-state" 2>/dev/null; then
+      ok "zuvo-plugin-enable-guard.sh installed (~/.claude/hooks/) + assertion stamped"
+    else
+      warn "zuvo-plugin-enable-guard.sh installed, but ~/.zuvo/plugin-enable-state could NOT be written — the guard will stand down instead of re-enabling after a release"
+    fi
     local claude_settings="$HOME/.claude/settings.json"
     if [[ -f "$claude_settings" ]]; then
       python3 - "$claude_settings" "$peg_dst" <<'PYEOF' || warn "enable-guard merge into ~/.claude/settings.json failed (manual edit may be needed)"
@@ -708,9 +717,17 @@ if already:
     print('  ✓ enable-guard already registered in ~/.claude/settings.json (no change)')
     sys.exit(0)
 ss.append({'hooks': [{'type': 'command', 'command': hook_cmd_norm, 'timeout': 5}]})
-with open(settings_path, 'w') as f:
+# Atomic, and THROUGH a symlink if settings.json is one (dotfile managers). A bare
+# open(path,'w') truncates first, so an interrupt mid-write leaves an invalid
+# settings.json and every future Claude Code session is broken until hand-repaired.
+# The hook being registered here documents exactly this reasoning; the installer that
+# registers it should not contradict it.
+real = os.path.realpath(settings_path)
+tmp = real + '.zuvo-tmp'
+with open(tmp, 'w') as f:
     json.dump(s, f, indent=2)
     f.write('\n')
+os.replace(tmp, real)
 print('  ✓ enable-guard registered in ~/.claude/settings.json (SessionStart)')
 PYEOF
     else
