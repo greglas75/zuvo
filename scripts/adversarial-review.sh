@@ -1068,11 +1068,14 @@ detect_host_platform() {
   fi
 
   # Antigravity (Google IDE): VS Code fork with Antigravity in app paths. The host's own model is
-  # Gemini, and this repo can reach that SAME model through TWO clients — `agy` (Antigravity CLI)
-  # and `gemini` (Google's CLI). Excluding only `agy` left `gemini` eligible, so an Antigravity
-  # host still reviewed its own output through the sibling lane; the exclusion looked applied and
-  # the header even announced it. This returns BOTH — a host is a set of clients, not one name.
-  # (blind-audit-codex.sh got the same fix as HOST_EXCLUDE="gemini agy"; the two must agree.)
+  # Gemini. A host is a SET of clients, not one name, so this returns every lane that could reach
+  # that model. Be precise about which are live HERE: `agy` is a real provider in this script;
+  # `gemini` is NOT (see the valid-provider case ~line 1210 — no `gemini`, no `run_gemini`, and the
+  # `gemini-api` curl lane was dropped 2026-08-04 with the free-tier CLI). It is named anyway as a
+  # defensive placeholder — filtered against a list that cannot contain it, and the hole stays shut
+  # if `gemini` is ever re-added. The live instance of this bug is in blind-audit-codex.sh, which
+  # DOES dispatch `gemini`: excluding only `gemini` there left `agy` free to audit its own host,
+  # exclusion applied and announced (fixed 2026-08-11 as HOST_EXCLUDE="gemini agy").
   if [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"Antigravity"* ]] \
      || [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"antigravity"* ]] \
      || [[ -n "${ANTIGRAVITY_SESSION_ID:-}" ]]; then

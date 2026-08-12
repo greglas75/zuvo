@@ -89,6 +89,36 @@ Codex app**; verify uptake by checking the marker mtime is newer than the instal
 zuvo run prints `[MODE] single-agent (codex hard rule)`. Note: zuvo is NOT a codex `[plugins.*]`
 entry — Codex loads it via `~/.codex/skills/` (the legacy path install.sh writes).
 
+### Claude Code gotcha: a release can leave the plugin DISABLED and still report success (2026-08-12)
+
+Same class as the Codex one above, different file. `dev-push.sh` Step 7 runs `claude plugin enable`
+and prints `✓ Plugin enabled` — but a Claude Code that was **running through the release** owns
+`~/.claude/settings.json` and can persist its own older view afterwards, undoing the CLI's write.
+Observed three times in one day: releases reported success, `claude plugin list` showed
+`Status: ✘ disabled` in BOTH scopes, and all 57 skills were invisible. Nothing detected it — the
+user did, by noticing the skills were gone.
+
+**First check on "skills are not visible" is `claude plugin list`, not the SHA/installPath dance
+above.** The two look identical from the outside and have opposite fixes:
+
+```bash
+claude plugin list | grep -A3 zuvo          # Status: ✘ disabled  → enable it
+claude plugin enable zuvo@zuvo-marketplace
+```
+
+A SessionStart hook now self-heals this: `hooks/zuvo-plugin-enable-guard.sh` (installed GLOBALLY to
+`~/.claude/hooks/`, **not** plugin-scoped — a plugin hook does not run while its own plugin is off,
+which is the state it must fix). `install.sh` stamps `~/.zuvo/plugin-enable-state`; the guard heals
+that one stamp **once**, so a clobber is repaired but a deliberate `claude plugin disable` sticks on
+the second try. Hard opt-out: `touch ~/.zuvo/no-auto-enable`. Decisions are logged with reasons to
+`~/.zuvo/plugin-enable-guard.log`.
+
+Two consequences worth knowing: the guard runs at session START, so it cannot undo a clobber inside
+an already-running session — it fixes it at the next start and asks for a restart. And a release
+whose push is BLOCKED by the pipeline-entry gate **dies before tagging and before `install.sh`**, so
+neither the tag nor the guard lands; the run still prints its earlier `✓` lines. Verify a release by
+its tag and `claude plugin list`, never by the absence of an error.
+
 ### What install.sh does
 
 | Platform | Action |
@@ -139,6 +169,11 @@ scripts/release.sh              — release to marketplace
 scripts/build-codex-skills.sh   — build Codex distribution (called by install.sh)
 scripts/build-cursor-skills.sh  — build Cursor v3 distribution (called by install.sh)
 scripts/build-antigravity-skills.sh — build Antigravity distribution (called by install.sh)
+hooks/*.sh                      — hooks install.sh copies into ~/.claude/hooks/ and registers in
+                                  ~/.claude/settings.json. These are GLOBAL, not plugin-scoped —
+                                  they keep running when the plugin is disabled, which is what makes
+                                  zuvo-plugin-enable-guard.sh (SessionStart) able to fix exactly that
+                                  state. Also: pipeline-entry gates, skill-usage-logger, retro sweep.
 docs/                           — documentation (skills.md, pipeline.md, competitive-analysis.md, etc.)
 docs/runbook/testing.md         — HOW TO VERIFY THIS REPO: the 5 commands, per-change checklist,
                                   the quarterly deep-audit procedure, failure triage

@@ -185,7 +185,7 @@ provider never reviews its own author:
 | Host | Excluded / adjusted |
 |------|---------------------|
 | Codex (spark `codex-5.3`) | flip to `codex-5.4` (and vice versa) so a codex still reviews cross-model |
-| Antigravity (`ANTIGRAVITY_SESSION_ID` / app path) | exclude the **entire Gemini family** (`agy`, `gemini-api`, `gemini`) — the host's model is Gemini, so no Gemini lane may review it |
+| Antigravity (`ANTIGRAVITY_SESSION_ID` / app path) | exclude **every Gemini lane the script can reach** — the host's model is Gemini, so no Gemini lane may review it. Which lanes those are differs per script, see below |
 | Cursor (app path) | exclude `cursor-agent` |
 | Claude | **KEPT** — `run_claude` flips Opus↔Sonnet, so it is genuinely cross-model, not self-review |
 
@@ -196,6 +196,20 @@ Antigravity host excluding the whole Gemini family still leaves `codex` + `claud
 external vendors) — better coverage than a Gemini-flips-Gemini check. So the rule is: keep a
 same-vendor flip only when it is the best remaining option, exclude the family when stronger
 cross-vendor lanes remain.
+
+**A host is a SET of clients, and the set is per-script.** This table said "the entire Gemini family
+(`agy`, `gemini-api`, `gemini`)" until 2026-08-12, when two of those three turned out not to exist:
+`adversarial-review.sh`'s valid-provider list is `codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|
+codestral|claude` — no `gemini`, no `run_gemini`, and `gemini-api` was dropped with the free-tier
+CLI on 2026-08-04. So there the Gemini family is `agy` alone, and `detect_host_platform` returning
+`"agy gemini"` names one live lane plus one defensive placeholder (harmless: it is filtered against a
+list that cannot contain it, and it keeps the hole shut if `gemini` is ever re-added).
+
+`blind-audit-codex.sh` is the opposite case and the reason this matters: it DOES dispatch `gemini`
+(`--provider codex|agy|gemini|claude`), so there `HOST_EXCLUDE="gemini agy"` excludes two REAL lanes.
+Until 2026-08-11 it excluded only `gemini`, leaving `agy` — the same underlying model through a second
+client — free to audit its own host's output, with the exclusion applied and announced. Check the
+script's own valid-provider list before assuming a name in this table is live in it.
 
 **Prompt delivery differs by CLI:** `agy` takes the prompt as a command **argument** (`agy -p "<prompt>"`);
 `cursor-agent`, `claude`, and `codex` read it from **stdin** (`printf … | cursor-agent -p …`). This is
