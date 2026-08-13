@@ -120,9 +120,13 @@ EOF
     return 1
   fi
 
+  # GNU first, BSD second, sanitized. `stat -f` on GNU means --file-system, so the BSD probe
+  # SUCCEEDS on Linux and this returned a filesystem value instead of an mtime — see the long
+  # note on _mtime in hooks/lib/refactor-gate-lib.sh for what that cost.
   file_mtime() {
-    local path="$1"
-    if stat -f %m "$path" >/dev/null 2>&1; then stat -f %m "$path"; else stat -c %Y "$path"; fi
+    local path="$1" v
+    v="$(stat -c %Y "$path" 2>/dev/null || stat -f %m "$path" 2>/dev/null || echo 0)"
+    printf '%s' "$(printf '%s' "$v" | tr -cd '0-9')"
   }
 
   artifact_mtime=$(file_mtime "$artifact_path")

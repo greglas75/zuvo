@@ -131,7 +131,7 @@ _lock_acquire() {
     fi
     if [ -d "$RUNLOG_LOCK" ]; then
       lpid=$(cat "$RUNLOG_LOCK/pid" 2>/dev/null || echo "")
-      mt=$(stat -f %m "$RUNLOG_LOCK" 2>/dev/null || stat -c %Y "$RUNLOG_LOCK" 2>/dev/null || echo "")
+      mt=$(stat -c %Y "$RUNLOG_LOCK" 2>/dev/null || stat -f %m "$RUNLOG_LOCK" 2>/dev/null || echo "")
       # Correct-by-construction: NEVER steal from a provably-live holder.
       #  - pid present & alive            -> never steal (wait)
       #  - pid present & dead             -> attempt reclaim

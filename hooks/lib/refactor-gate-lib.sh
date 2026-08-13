@@ -359,10 +359,25 @@ $(tr -d '\n' < "$rsg_c" | awk '
 # (scripts/zuvo-phase.sh) can never drift into reading state differently.
 # ---------------------------------------------------------------------------
 
-# _mtime <file> <default> — portable epoch mtime (BSD stat | GNU stat | default).
-# Factors the `stat -f %m || stat -c %Y || echo $now` chain used above.
+# _mtime <file> <default> — portable epoch mtime (GNU stat | BSD stat | default).
+#
+# ORDER IS LOAD-BEARING, and BSD-first was silently fatal on Linux. `stat -f` on GNU means
+# --file-system, not "format": `stat -f %m <file>` SUCCEEDS there and prints a filesystem value,
+# so the `||` fallback never fires and a non-mtime number (or a non-numeric one) flows into the
+# `$((now - mt))` arithmetic below. Under a caller's `set -e` that is an abort — i.e. the whole
+# gate died on Linux before reaching any prove check, which is the entire self-hosted runner
+# fleet. Measured on the farm: the same suite that is 20/20 on macOS reported `Illegal number:`
+# and 5 failures there, and the gate code was never reached at all.
+#
+# So: GNU first, BSD second, and sanitize to digits so a stray value can never break arithmetic.
+# Identical to the form pipeline-gate-lib.sh:278-283 already carries with the same reasoning —
+# that file got it right, these did not, and the divergence is what this comment now prevents.
 _mtime() {
-  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || printf '%s' "$2"
+  _mt_v="$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || printf '%s' "$2")"
+  _mt_v="$(printf '%s' "$_mt_v" | tr -cd '0-9')"
+  [ -n "$_mt_v" ] || _mt_v="$(printf '%s' "$2" | tr -cd '0-9')"
+  [ -n "$_mt_v" ] || _mt_v=0
+  printf '%s' "$_mt_v"
 }
 
 # _is_agent_env — 0 when ANY AI-harness marker is set, 1 for a human shell.

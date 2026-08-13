@@ -195,7 +195,7 @@ while :; do
   fi
   if [ -d "$LOCK" ]; then
     lpid=$(cat "$LOCK/pid" 2>/dev/null || echo "")
-    lmt=$(stat -f %m "$LOCK" 2>/dev/null || stat -c %Y "$LOCK" 2>/dev/null || echo "")
+    lmt=$(stat -c %Y "$LOCK" 2>/dev/null || stat -f %m "$LOCK" 2>/dev/null || echo "")
     if [ -n "$lpid" ]; then
       kill -0 "$lpid" 2>/dev/null || { rm -f "$LOCK/pid" 2>/dev/null || true; rmdir "$LOCK" 2>/dev/null || true; }
     elif [ -n "$lmt" ] && [ "$(( $(date +%s) - lmt ))" -gt 30 ]; then
