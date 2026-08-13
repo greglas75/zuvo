@@ -126,7 +126,8 @@ EOF
   file_mtime() {
     local path="$1" v
     v="$(stat -c %Y "$path" 2>/dev/null || stat -f %m "$path" 2>/dev/null || echo 0)"
-    printf '%s' "$(printf '%s' "$v" | tr -cd '0-9')"
+    v="$(printf '%s' "$v" | tr -cd '0-9')"; [ -n "$v" ] || v=0
+    printf '%s' "$v"
   }
 
   artifact_mtime=$(file_mtime "$artifact_path")

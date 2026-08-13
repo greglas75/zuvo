@@ -20,6 +20,71 @@
 #     ZUVO_HOME            run-marker root (default $HOME/.zuvo)
 #     AI-harness markers   see _is_agent_env() — ANY set => AI run; NONE => human => bypass
 
+# _prove_field <contract-json> <field> — the value of prove.<field>, and ONLY prove.<field>.
+#
+# Every prove check used to be `sed -n 's/.*"<field>"…/\1/p' "$c" | head -1`, which searches the
+# WHOLE FILE and takes the first hit. The agent writes this contract, so it could add a decoy
+# object anywhere above `prove` and walk through the gate:
+#
+#   { "previous_attempt": { "test_quality": "PASS:A:zuvo/audits/x.md" },
+#     "prove": { "test_quality": "not_run" } }        <-- gate read the decoy, returned 0
+#
+# Verified 2026-08-13 against this file: that contract passed with every real prove value at
+# `not_run`. It defeated the v4 fields AND the pre-existing blind_audit / adversarial /
+# characterization checks — i.e. the whole "only agent-independent bind" was one JSON key away
+# from being decorative, and the agent it polices is the one holding the pen. That is the
+# agent-typable bypass this repo removes on sight, so the fix belongs to the CLASS: both
+# functions below now read through here, and neither can be spoofed by a sibling key.
+#
+# jq-free by this file's contract, so the object is walked in awk: find "prove", take its `{`,
+# track depth while respecting quotes and backslash escapes, stop at the matching `}`.
+_prove_field() {
+  _pf_c=$1; _pf_k=$2
+  tr -d '\n' < "$_pf_c" 2>/dev/null | awk -v key="$_pf_k" '
+    {
+      s = $0
+      p = index(s, "\"prove\"")
+      if (p == 0) exit
+      s = substr(s, p)
+      b = index(s, "{")
+      if (b == 0) exit
+      s = substr(s, b)
+      depth = 0; inq = 0; esc = 0; n = length(s); obj = ""
+      for (i = 1; i <= n; i++) {
+        ch = substr(s, i, 1)
+        obj = obj ch
+        if (inq) {
+          if (esc)             { esc = 0 }
+          else if (ch == "\\") { esc = 1 }
+          else if (ch == "\"") { inq = 0 }
+        } else {
+          if (ch == "\"")      { inq = 1 }
+          else if (ch == "{")  { depth++ }
+          else if (ch == "}")  { depth--; if (depth == 0) break }
+        }
+      }
+      # obj is now the prove object text; pull the field out of THAT, not out of the file.
+      k = index(obj, "\"" key "\"")
+      if (k == 0) exit
+      rest = substr(obj, k + length(key) + 2)
+      c = index(rest, ":")
+      if (c == 0) exit
+      rest = substr(rest, c + 1)
+      q = index(rest, "\"")
+      if (q == 0) exit
+      rest = substr(rest, q + 1)
+      out = ""; esc = 0
+      for (i = 1; i <= length(rest); i++) {
+        ch = substr(rest, i, 1)
+        if (esc)             { out = out ch; esc = 0 }
+        else if (ch == "\\") { esc = 1 }
+        else if (ch == "\"") { break }
+        else                 { out = out ch }
+      }
+      print out
+    }' 2>/dev/null | head -1
+}
+
 refactor_gate_check() {
   staged=$1
   cdir=${ZUVO_CONTRACTS_DIR:-zuvo/contracts}
@@ -67,23 +132,23 @@ refactor_gate_check() {
       continue
     fi
     # PROVE checks — the CONTRACT is the artifact (commit is LAST, so no fix-commit exists yet)
-    ba=$(sed -n 's/.*"blind_audit"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$c" | head -1)
-    av=$(sed -n 's/.*"adversarial"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$c" | head -1)
+    ba=$(_prove_field "$c" blind_audit)
+    av=$(_prove_field "$c" adversarial)
     # characterization lock: the pin-down tests proven green on the PRE-refactor code,
     # recorded in the CONTRACT BEFORE any move edit. Prose alone was skipped in the field
     # (skill-eval 2026-07-09: CONTRACT written at PHASE-1, next touched only at prove-time)
     # — so the gate enforces the artifact, same as blind_audit/adversarial.
-    ch=$(sed -n 's/.*"characterization"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$c" | head -1)
+    ch=$(_prove_field "$c" characterization)
     case "$ba" in skipped|not_run|"") echo "BLOCK: refactor CONTRACT prove.blind_audit='$ba' not satisfied [$c]"; blocked=1 ;; esac
     case "$av" in skipped|not_run|"") echo "BLOCK: refactor CONTRACT prove.adversarial='$av' not satisfied [$c]"; blocked=1 ;; esac
     case "$ch" in skipped|not_run|"") echo "BLOCK: refactor CONTRACT prove.characterization='$ch' not satisfied — record the pin-down lock (tests green on PRE-refactor code) when the suite goes green, BEFORE the move [$c]"; blocked=1 ;; esac
     # regression-red proof: required ONLY when Phase 3.5 actually APPLIED a fix (the
     # disposition names a fix). Two consecutive skill-eval runs (2026-07-10) showed agents
     # substituting "the flip logically implies red" for an actual red run — gate the artifact.
-    fd=$(sed -n 's/.*"findings_disposition"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$c" | head -1)
+    fd=$(_prove_field "$c" findings_disposition)
     case "$fd" in
       *fix*)
-        rr=$(sed -n 's/.*"regression_red"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$c" | head -1)
+        rr=$(_prove_field "$c" regression_red)
         case "$rr" in skipped|not_run|"") echo "BLOCK: refactor CONTRACT prove.regression_red='$rr' not satisfied — findings_disposition='$fd' says a fix was applied, so the regression test's RED on the pre-fix code must be DEMONSTRATED (run it, capture the fail) and recorded [$c]"; blocked=1 ;; esac
         ;;
     esac
@@ -149,7 +214,7 @@ refactor_prove_v4_check() {
     IFS=$rpv_oldifs
     [ "$rpv_hit" = 1 ] || continue
 
-    rpv_tq=$(sed -n 's/.*"test_quality"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$rpv_c" | head -1)
+    rpv_tq=$(_prove_field "$rpv_c" test_quality)
     # PASS/WARN/N/A is the vocabulary Phase 3.6 prints — but shape alone still accepts a story.
     # "WARN:substituted-inline" (a value a field run invented twice) matches WARN:* perfectly.
     # So PASS/WARN must carry the third field, the on-disk zuvo/audits/ report, and that file
@@ -172,6 +237,16 @@ refactor_prove_v4_check() {
     # string ("N/A" after a 7-module split, "TODO", " "), i.e. it would police only an agent
     # honest enough to write "not_run". Making the numerator match forces a lie to be told twice,
     # backwards in time. Walker is the scope_fence one below, keyed on modules_created.
+    # ANCHOR THE ARRAY TO ITS KEY FIRST. The walker below takes the first `[` after
+    # "modules_created"; if the field is `null` (or any non-array scalar) it would sail past and
+    # parse the NEXT array in the file — `progress: [...]` — as if those were created modules.
+    # Verified: `"modules_created": null` + a 3-entry `progress` produced "created 3 module(s)"
+    # and BLOCKED a push that was entirely honest. In a file whose contract is fail-OPEN that is
+    # the worst possible direction to be wrong in. The sibling scope_fence walker already had
+    # this guard (see refactor_scope_gate_check); this one was adapted without it.
+    # No anchored array => nothing was recorded as created => count 0, which still requires
+    # split_coverage to be N/A or 0/0 and so keeps the honest-value check alive.
+    if grep -q '"modules_created"[[:space:]]*:[[:space:]]*\[' "$rpv_c" 2>/dev/null; then
     rpv_mods=$(tr -d '\n' < "$rpv_c" 2>/dev/null | awk '
       { s = $0
         k = index(s, "\"modules_created\""); if (k == 0) exit
@@ -183,8 +258,11 @@ refactor_prove_v4_check() {
                      else if (ch == "\"") { inq = 0; if (cur != "") print cur; cur = "" }
                      else { cur = cur ch } }
           else { if (ch == "\"") { inq = 1; cur = "" } else if (ch == "]") { exit } } } }' | grep -c . )
+    else
+      rpv_mods=0
+    fi
     case "$rpv_mods" in ''|*[!0-9]*) rpv_mods=0 ;; esac
-    rpv_sc=$(sed -n 's/.*"split_coverage"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$rpv_c" | head -1)
+    rpv_sc=$(_prove_field "$rpv_c" split_coverage)
     rpv_num=$(printf '%s' "$rpv_sc" | sed -n 's|^\([0-9][0-9]*\)/[0-9][0-9]*:..*$|\1|p')
     if [ "$rpv_mods" -eq 0 ]; then
       case "$rpv_sc" in

@@ -94,6 +94,17 @@ case "$(push)" in *"does not exist"*) ok "PASS naming a nonexistent report: BLOC
   *) bad "a fabricated report path was accepted" ;; esac
 contract 4 "PASS:A:/etc/passwd" "N/A" ""
 [ "$(pushrc)" -ne 0 ] && ok "absolute report path: BLOCK (containment)" || bad "absolute path accepted"
+#    …and the traversal half of the same containment check, which had no coverage at all until a
+#    CQ audit named it. Same bug class as the path traversal this range fixes in fleet-retro-pull.py.
+contract 4 "PASS:A:zuvo/audits/../../../etc/passwd" "N/A" ""
+[ "$(pushrc)" -ne 0 ] && ok "relative path containing '..': BLOCK (containment)" || bad "'..' traversal accepted"
+#    Bare N/A is a live accept-branch of the vocabulary and was never exercised.
+contract 4 "N/A" "N/A" ""
+[ "$(pushrc)" -eq 0 ] && ok "bare 'N/A' test_quality: PASS (no report needed)" || bad "bare N/A rejected"
+#    A push that touches no file in this contract's fence must be left alone entirely.
+contract 4 "not_run" "not_run" ""
+offrc=$(ZUVO_AI_RUN=1 ZUVO_GATE_MODE=pre-push sh -c '. "$1"; refactor_prove_v4_check "unrelated.ts"' _ "$LIB" >/dev/null 2>&1; echo $?)
+[ "$offrc" -eq 0 ] && ok "push touching no fenced file: not judged" || bad "gate judged a contract this push never touched"
 
 # 4. THE FALSIFIABILITY CROSS-CHECK — this is what makes split_coverage more than a wish.
 #    rs_be #291 is the fixture: 7 modules created, claim says none.
@@ -140,7 +151,59 @@ rc=$?; [ $rc -ne 0 ] && git reset -q >/dev/null 2>&1
 [ "$rc" -eq 0 ] && ok "the mandated test(<scope>): commit is not blocked by the scope gate" \
                 || bad "scope gate blocks the test commit Phase 3.6 Step 0 demands"
 
-# 8. FAIL-OPEN survives every parse problem — this file's standing contract.
+# 7b. FAIL-OPEN ON A NON-ARRAY modules_created. The walker takes the first `[` after the key; with
+#    `"modules_created": null` it used to fall through to the NEXT array in the file (progress[])
+#    and count THOSE as created modules — a false BLOCK on an honest push, in a file whose stated
+#    contract is fail-OPEN. Found by an independent behaviour audit, reproduced, then anchored.
+cat > zuvo/contracts/refactor-aaaa1111.json <<'J'
+{ "version":4, "file":"app.ts", "stage":"PHASE-3", "scope_fence":["app.ts"],
+  "modules_created": null,
+  "progress": ["phase1: done", "phase2: done", "phase3: done"],
+  "prove": { "characterization":"green:a:2u", "blind_audit":"clean:strict", "adversarial":"clean",
+             "findings_disposition":"none", "test_quality":"PASS:A:zuvo/audits/tq.md", "split_coverage":"N/A" } }
+J
+[ "$(pushrc)" -eq 0 ] && ok "modules_created=null does not borrow the next array (fail-open held)" \
+                      || bad "FALSE BLOCK: a sibling array was counted as created modules"
+
+# 8. DECOY-KEY SPOOF. The agent writes this contract, so field extraction must be scoped to the
+#    `prove` object. Reading the whole file and taking the first hit let a sibling object above
+#    `prove` answer for it — verified 2026-08-13: this exact contract passed with every real
+#    value at `not_run`, defeating the v4 fields AND the pre-existing v3 ones. An agent-typable
+#    bypass of the repo's only agent-independent bind.
+cat > zuvo/contracts/refactor-aaaa1111.json <<'J'
+{ "version":4, "file":"app.ts", "stage":"PHASE-3", "scope_fence":["app.ts"],
+  "previous_attempt": { "test_quality": "PASS:A:zuvo/audits/tq.md", "split_coverage": "7/7:fixed-in-run" },
+  "modules_created": ["a.ts","b.ts","c.ts","d.ts","e.ts","f.ts","g.ts"],
+  "prove": { "characterization":"green:a:2u", "blind_audit":"clean:strict", "adversarial":"clean",
+             "findings_disposition":"none", "test_quality":"not_run", "split_coverage":"not_run" } }
+J
+case "$(push)" in *"prove.test_quality='not_run'"*) ok "decoy object above prove does NOT answer for it (v4)" ;;
+  *) bad "DECOY SPOOF: a sibling key satisfied the gate while prove.* was not_run" ;; esac
+
+#    Same spoof against the v3 fields, which read through the same extractor. This case guards a
+#    gate this change did not add — it inherited it, and inherited its hole.
+cat > zuvo/contracts/refactor-aaaa1111.json <<'J'
+{ "version":3, "file":"app.ts", "stage":"PHASE-3", "scope_fence":["app.ts"],
+  "notes": { "blind_audit": "clean:strict", "adversarial": "clean", "characterization": "green:a:2u" },
+  "prove": { "characterization":"not_run", "blind_audit":"not_run", "adversarial":"not_run",
+             "findings_disposition":"none" } }
+J
+v3out=$(ZUVO_AI_RUN=1 sh -c '. "$1"; refactor_gate_check "app.ts"' _ "$LIB" 2>&1)
+case "$v3out" in *"prove.blind_audit='not_run'"*) ok "decoy object does NOT answer for the v3 prove fields either" ;;
+  *) bad "DECOY SPOOF (v3): sibling keys satisfied blind_audit/adversarial/characterization" ;; esac
+
+#    …and the extractor must still read a legitimately nested prove value correctly.
+cat > zuvo/contracts/refactor-aaaa1111.json <<'J'
+{ "version":4, "file":"app.ts", "stage":"PHASE-3", "scope_fence":["app.ts"],
+  "modules_created": ["a.ts","b.ts"],
+  "prove": { "characterization":"green:a:2u", "blind_audit":"clean:strict", "adversarial":"clean",
+             "findings_disposition":"none", "detail": { "note": "nested object inside prove" },
+             "test_quality":"PASS:A:zuvo/audits/tq.md", "split_coverage":"2/2:fixed-in-run" } }
+J
+[ "$(pushrc)" -eq 0 ] && ok "a nested object INSIDE prove does not break extraction" \
+                      || bad "the scoped extractor mis-parses a nested object inside prove"
+
+# 9. FAIL-OPEN survives every parse problem — this file's standing contract.
 cat > zuvo/contracts/refactor-aaaa1111.json <<'J'
 { "version":"four", "file":"app.ts", "stage":"PHASE-3", "scope_fence":["app.ts"],
   "prove": { "characterization":"green:a:1u", "blind_audit":"clean:strict", "adversarial":"clean" } }

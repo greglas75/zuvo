@@ -1,4 +1,11 @@
-#!/usr/bin/env python3
+#!/bin/sh
+# Polyglot sh/python header. `#!/usr/bin/env python3` fails on Windows: python.org installs
+# `python` and `py`, Git Bash ships neither, and the shebang dies with
+#     env: python3: No such file or directory
+# (reproduced). /bin/sh executes the next line, which re-execs this file with whatever Python 3
+# the machine actually has; Python parses that same line as a string literal and ignores it.
+# Keep it on ONE line and do not "tidy" the quoting — both interpreters depend on it exactly.
+''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
 """fleet-retro-pull.py — bring OTHER INSTALLS' zuvo retros down into the mining loop.
 
 The uplink has worked for a while and nobody could see it. Zuvo retros ride the CodeSift
@@ -92,7 +99,12 @@ def fetch(vps):
 # are filled; the rest are N/A by construction, not by scrubbing — see the module docstring.
 def rollup_to_line(day, r):
     ts = f"{day}T00:00:00Z"
-    return "RETRO: " + "\t".join([
+    # Every value below comes from the OPEN ingestion channel. A "\n" in any of them
+    # would close this row and open a forged one — retros.log is newline-delimited TSV and
+    # the miner would count the forgery as a real run. Neutralize separators at the join.
+    def _f(v):
+        return str(v).replace("\t", " ").replace("\r", " ").replace("\n", " ")
+    return "RETRO: " + "\t".join([_f(x) for x in [
         ts,
         str(r.get("skill") or "unknown"),          # 1 skill      — miner: skills[f[1]]
         "fleet",                                    # 2 project    — never collected
@@ -110,7 +122,7 @@ def rollup_to_line(day, r):
         f"adv={r.get('adversarial_ran', 'N/A')}",    # 14
         str(r.get("codesift") or "N/A"),            # 15
         str(r.get("routing") or "N/A"),             # 16
-    ])
+    ]])
 
 
 def main():
@@ -151,26 +163,38 @@ def main():
             rec = json.loads(line)
         except ValueError:
             continue
+        if not isinstance(rec, dict):        # a bare JSON array crashes .get()
+            continue
         payload = rec.get("payload") or rec
+        if not isinstance(payload, dict):
+            continue
         anon = rec.get("anon_id") or payload.get("anon_id") or ""
         rollups = payload.get("retros")
+        if not isinstance(rollups, list):    # a scalar/dict here would iterate wrongly
+            continue
         if not anon or not rollups:
             continue
         if mine and anon == mine:
             skipped_self += 1
             continue
         for r in rollups:
+            if not isinstance(r, dict):
+                continue
             day = str(r.get("day") or "")[:10]
             if not day or (cutoff and day < cutoff):
                 continue
-            key = (anon, day, r.get("skill"), r.get("code_type"), r.get("friction"),
-                   r.get("context_gap"), r.get("count"))
+            # str() every element: a list-valued field would make the tuple unhashable and
+            # kill the sync loop on seen.add().
+            key = (anon, day, str(r.get("skill")), str(r.get("code_type")),
+                   str(r.get("friction")), str(r.get("context_gap")), str(r.get("count")))
             if key in seen:          # the same rollup is re-sent on every flush until the cursor moves
                 continue
             seen.add(key)
             line_out = rollup_to_line(day, r)
             try:
-                n = max(1, int(r.get("count") or 1))
+                # count is untrusted: 1e9 would allocate the list until the process dies,
+                # and the poison payload stays on the collector, so every later run dies too.
+                n = min(10000, max(1, int(r.get("count") or 1)))
             except (TypeError, ValueError):
                 n = 1
             per_install[anon].extend([line_out] * n)
@@ -182,7 +206,11 @@ def main():
 
     total = 0
     for anon, lines in sorted(per_install.items()):
-        short = anon.split("-")[0][:8] or "unknown"
+        # anon_id arrives from the open/anonymous collector namespace, so it is untrusted
+        # input on a filesystem path: "../../.." survives split("-")[0][:8] intact and
+        # os.path.join then escapes FLEET, overwriting an arbitrary retros.log. Allowlist
+        # the characters instead of trying to detect traversal.
+        short = re.sub(r"[^A-Za-z0-9]", "", anon)[:8] or "unknown"
         d = os.path.join(FLEET, short)
         total += len(lines)
         if dry:

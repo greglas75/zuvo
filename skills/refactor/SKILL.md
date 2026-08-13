@@ -1335,10 +1335,22 @@ if true; then  # CONTRACT resolved for this run's target — evaluate its prove 
     case "$tq" in
       N/A|N/A:*) ;;
       PASS:*:*|WARN:*:*) rep=${tq#*:}; rep=${rep#*:}
-        [ -n "$rep" ] && [ -f "$rep" ] || { echo "BLOCK(unsafe): prove.test_quality='$tq' — the named test-audit report does not exist at '$rep'. The push gate is satisfied by the REPORT, not the claim."; g=1; } ;;
+        # Same three rejections as the hook, in the same order. Dropping the absolute-path and
+        # '..' cases made this print GATE: PASS on a contract the push gate BLOCKs — which
+        # falsifies the "they cannot disagree" claim four lines above this block.
+        case "$rep" in
+          ''|/*|*..*) echo "BLOCK(unsafe): prove.test_quality='$tq' — the report path must be repo-relative and contain no '..'"; g=1 ;;
+          *) [ -f "$rep" ] || { echo "BLOCK(unsafe): prove.test_quality='$tq' — the named test-audit report does not exist at '$rep'. The push gate is satisfied by the REPORT, not the claim."; g=1; } ;;
+        esac ;;
       *) echo "BLOCK(unsafe): prove.test_quality='$tq' — run Phase 3.6 (REAL zuvo:test-audit dispatch) and record '<PASS|WARN|N/A>:<worst tier>:<report path>' in $C"; g=1 ;;
     esac
+    # Anchor the array to its key, or a `null` modules_created makes the walker parse the NEXT
+    # array in the file (progress[]) and false-block. Same guard the hook carries.
+    if grep -q '"modules_created"[[:space:]]*:[[:space:]]*\[' "$C" 2>/dev/null; then
     mods=$(tr -d '\n' < "$C" | awk '{s=$0;k=index(s,"\"modules_created\"");if(k==0)exit;s=substr(s,k);b=index(s,"[");if(b==0)exit;s=substr(s,b+1);inq=0;esc=0;cur="";n=length(s);for(i=1;i<=n;i++){ch=substr(s,i,1);if(inq){if(esc){cur=cur ch;esc=0}else if(ch=="\\"){esc=1}else if(ch=="\""){inq=0;if(cur!="")print cur;cur=""}else{cur=cur ch}}else{if(ch=="\""){inq=1;cur=""}else if(ch=="]")exit}}}' | grep -c .)
+    else
+      mods=0
+    fi
     sc=$(sed -n 's/.*"split_coverage"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$C" | head -1)
     num=$(printf '%s' "$sc" | sed -n 's|^\([0-9][0-9]*\)/[0-9][0-9]*:..*$|\1|p')
     if [ "${mods:-0}" -eq 0 ]; then
