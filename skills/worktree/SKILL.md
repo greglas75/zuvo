@@ -143,21 +143,39 @@ all when `node_modules` already exists**, because that is the case that looks fi
 
 ```bash
 # Print a verdict. A worktree with the wrong deps must not reach Step 5.
-case "$(ls package-lock.json yarn.lock pnpm-lock.yaml requirements.txt Gemfile 2>/dev/null | head -1)" in
+# The loop is ORDERED and `ls` is deliberately not used: `ls a b c` sorts its output, it does not
+# preserve argument order, so `ls package-lock.json Gemfile | head -1` returns Gemfile. A JS repo
+# with a Gemfile for its docs would have run `bundle check` and declared the JS tree verified —
+# the exact miss this section exists to prevent.
+LOCK=""
+for f in package-lock.json pnpm-lock.yaml requirements.txt Gemfile yarn.lock; do
+  [ -f "$f" ] && { LOCK="$f"; break; }
+done
+case "$LOCK" in
   package-lock.json) npm ls --depth=0 >/dev/null 2>&1 && echo "[WORKTREE] deps: OK (npm ls clean)" \
                        || echo "[WORKTREE] deps: MISMATCH — $(npm ls --depth=0 2>&1 | grep -ciE 'invalid|missing|extraneous') problem(s)" ;;
-  pnpm-lock.yaml)    pnpm install --frozen-lockfile --prefer-offline >/dev/null 2>&1 && echo "[WORKTREE] deps: OK (frozen lockfile satisfied)" \
+  pnpm-lock.yaml)    pnpm install --frozen-lockfile --lockfile-only >/dev/null 2>&1 && echo "[WORKTREE] deps: OK (frozen lockfile satisfied)" \
                        || echo "[WORKTREE] deps: MISMATCH — frozen lockfile not satisfied" ;;
   requirements.txt)  pip check >/dev/null 2>&1 && echo "[WORKTREE] deps: OK (pip check clean)" \
                        || echo "[WORKTREE] deps: MISMATCH — $(pip check 2>&1 | head -1)" ;;
   Gemfile)           bundle check >/dev/null 2>&1 && echo "[WORKTREE] deps: OK (bundle satisfied)" \
                        || echo "[WORKTREE] deps: MISMATCH — bundle check failed" ;;
+  yarn.lock)         echo "[WORKTREE] deps: UNVERIFIED (yarn — no portable check across v1 and berry)" ;;
   *)                 echo "[WORKTREE] deps: UNVERIFIED (no checkable lockfile — say so, do not imply OK)" ;;
 esac
 ```
 
-`yarn` has no portable equivalent across v1 and berry, so it lands in `UNVERIFIED` rather than a
-check that quietly passes on one major version and errors on the other.
+**A monorepo can carry several of these.** The loop takes the first by the order above, which is a
+heuristic, not a truth — so when more than one lockfile exists, run the check for EACH ecosystem
+you actually installed in Step 4 and print a verdict line per ecosystem. One `OK` does not clear
+the others.
+
+Every branch is a READ. `pnpm` uses `--lockfile-only` rather than a plain `--frozen-lockfile`
+install: a step whose job is to prove the tree matches must not modify the tree while proving it,
+and an interrupted install would leave the worktree in a worse state than Step 4 produced while
+having printed a verdict about a tree that no longer exists. `yarn` has no portable equivalent
+across v1 and berry, so it is `UNVERIFIED` rather than a check that quietly passes on one major
+version and errors on the other.
 
 **On MISMATCH: re-run Step 4's install for this ecosystem, then re-run this check.** If it still
 mismatches, STOP and report it — do not run the baseline. A red baseline caused by the wrong

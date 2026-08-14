@@ -69,6 +69,22 @@ grep -q 'Do NOT use this for the fix loop' "$REV" \
   && ok "the fix loop is explicitly kept on the live checkout" \
   || bad "nothing stops Phase 4 committing inside a detached frozen tree"
 
+# THE TEARDOWN MUST NOT TOUCH THE LIVE TREE. On the fallback path REVIEW_TREE *is* the repo root,
+# and an unguarded `chmod -R u+w` there strips read-only bits off .git/objects, mounted secrets and
+# locked configs across the whole checkout. Executed, not grepped.
+TD=$(awk '/^if \[ -n "\$\{REVIEW_TREE:-\}" \]/,/^fi$/' "$REV")
+[ -n "$TD" ] && ok "teardown block extracted" || bad "could not extract the teardown block"
+cd "$TMP/r"
+mkdir -p locked && echo secret > locked/s && chmod -R a-w locked
+REVIEW_TREE="$(git rev-parse --show-toplevel)" sh -c "$TD" 2>/dev/null
+if [ -w "$TMP/r/locked/s" ]; then
+  bad "teardown made a read-only file WRITABLE in the live checkout — the fallback path is destructive"
+else
+  ok "teardown is a no-op when REVIEW_TREE is the live checkout"
+fi
+chmod -R u+w "$TMP/r/locked" 2>/dev/null
+cd "$ROOT"
+
 echo "=== mutation-test: anchors + checkpoint (contract assertions) ==="
 
 grep -q '^| `continue` |' "$MUT" && ok "'continue' is a documented argument" || bad "'continue' missing from the argument table"
@@ -92,6 +108,9 @@ grep -q 'applied_to' "$MUT" && ok "checkpoint records the in-flight mutation (cr
 grep -q 'After each mutation resolves' "$MUT" \
   && ok "the checkpoint is written per mutation, not batched at the end" \
   || bad "checkpoint timing unspecified — a killed run still loses everything"
+grep -qi 'including on a FRESH run' "$MUT" \
+  && ok "crash recovery runs before a new plan is written, on fresh runs too" \
+  || bad "a fresh run would overwrite the applied_to record and leak the mutated file"
 grep -q 'never silently treat `continue` as' "$MUT" \
   && ok "'continue' with no state file must not masquerade as a fresh full run" \
   || bad "resume-vs-fresh scores could be conflated"

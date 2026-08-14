@@ -406,9 +406,16 @@ the scope argument, so concurrent runs on different scopes do not collide).
 }
 ```
 
+**BEFORE anything else — including on a FRESH run — load any existing state file for this scope and
+honour its `applied_to`.** Writing a new plan first would overwrite the only record that a previous
+run died with a mutation on disk, and that mutated file then stays in the working tree, silently
+poisoning every later baseline in a way that looks like a real regression. `continue` is not the
+only path into a crashed run; the far more likely one is a user who re-runs the same command.
+
 Write it at three moments, and the middle one is the one that matters:
 
-1. **After the plan is generated** — the full list at `status: not_run`.
+1. **After the plan is generated** — the full list at `status: not_run`. Only after the recovery
+   above has run and `applied_to` is back to `null`.
 2. **`applied_to: "<file>"` BEFORE writing a mutation, back to `null` AFTER restoring it.** This is
    the crash-safety record: a non-null `applied_to` on startup means the previous run died with a
    mutation on disk. Restore that file from its temp copy (or `git checkout` it if the copy is gone

@@ -74,7 +74,7 @@ grep -q 're-release of an already-merged' "$SHIP" \
 
 echo "=== worktree Step 4.5: dependency verdict ==="
 
-DEPCHECK=$(awk '/^case "\$\(ls package-lock.json/,/^esac$/' "$WT")
+DEPCHECK=$(awk '/^LOCK=""$/,/^esac$/' "$WT")
 if [ -z "$DEPCHECK" ]; then
   bad "could not extract the Step 4.5 check from worktree/SKILL.md — re-anchor this test"
 else
@@ -97,6 +97,21 @@ if command -v npm >/dev/null 2>&1; then
 else
   ok "npm absent — skipped the npm case (verdict path still covered by the UNVERIFIED case)"
 fi
+
+# ORDER, not alphabet. `ls a b c` SORTS its output, so `ls package-lock.json Gemfile | head -1`
+# returns Gemfile — a JS repo with a Gemfile for docs would have run `bundle check` and declared
+# the JS tree verified. Verified by execution, because this shipped and the first test missed it.
+cd "$TMP"; rm -rf multi; mkdir -p multi && cd multi
+touch Gemfile package-lock.json
+printf '{"name":"t","version":"1.0.0","dependencies":{"left-pad":"^1.3.0"}}' > package.json
+case "$(sh -c "$DEPCHECK" 2>&1)" in
+  *"bundle"*) bad "polyglot repo picked Gemfile over package-lock.json — argument order not honoured" ;;
+  *npm*|*MISMATCH*|*"deps: OK"*) ok "polyglot repo: npm wins over an alphabetically-earlier Gemfile" ;;
+  *) bad "no verdict on a multi-lockfile repo" ;; esac
+grep -q 'run the check for EACH ecosystem' "$WT" \
+  && ok "a monorepo is told to verify every ecosystem, not just the first" \
+  || bad "one OK could silently stand for several ecosystems"
+cd "$ROOT"
 
 # the verdict must reach the user-facing output block, or it is a check nobody sees
 grep -q 'Deps:' "$WT" && ok "CREATE output carries a Deps: line" || bad "the verdict never reaches the output block"

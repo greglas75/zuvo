@@ -477,7 +477,14 @@ undeletable by the normal path, so a review that dies mid-flight leaves an unwri
 registered entry that `git worktree list` will keep showing:
 
 ```bash
-chmod -R u+w "$REVIEW_TREE" 2>/dev/null && git worktree remove --force "$REVIEW_TREE" 2>/dev/null
+# The guard is not defensive padding. On the fallback path $REVIEW_TREE IS the live checkout, and
+# an unguarded teardown would then `chmod -R u+w` the entire working repository — stripping the
+# read-only bits off .git/objects, mounted secrets and locked configs — and try to `worktree
+# remove` the main tree. A failed worktree creation must not damage the repo it failed to copy.
+if [ -n "${REVIEW_TREE:-}" ] && [ "$REVIEW_TREE" != "$(git rev-parse --show-toplevel)" ]; then
+  chmod -R u+w "$REVIEW_TREE" 2>/dev/null
+  git worktree remove --force "$REVIEW_TREE" 2>/dev/null
+fi
 ```
 
 Run it at the end of Phase 3 and on every abort path. Record the outcome in the Validity Gate as
