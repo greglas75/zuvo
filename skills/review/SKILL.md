@@ -446,6 +446,48 @@ When the REVIEWED scope path resolves to a repo or worktree that is NOT the CWD,
    a grep fallback that an `index_folder` call would have made unnecessary.)*
 4. **Keep `TARGET_REPO` consistent** with the Phase 3 destructive-persistence precondition (the repo `REVIEWED_FROM..REVIEWED_THROUGH` is resolved against MUST be the same `TARGET_REPO` analysis and tagging both reference).
 
+### Read-only audit checkout (TIER 2+, commit-range scopes)
+
+The auditors read; the lead writes. Until that was a boundary in the filesystem it was only a
+convention, and two things went wrong because of it. A review of a commit range runs while the tree
+keeps moving — this skill already carries a "Working-Tree Staleness Check" for exactly that, i.e. it
+knows findings can be reported against a file HEAD has since changed. And in FIX modes the lead
+starts editing while auditors may still be reading, so a finding can be produced from a tree that
+no longer matches the range it claims to describe.
+
+Give the audit agents a **frozen, unwritable checkout of `REVIEWED_THROUGH`** and keep the live tree
+for the fix loop:
+
+```bash
+REVIEW_TREE=$(mktemp -d)/audit-$(git rev-parse --short=7 "$REVIEWED_THROUGH")
+if git worktree add --detach -q "$REVIEW_TREE" "$REVIEWED_THROUGH" 2>/dev/null; then
+  chmod -R a-w "$REVIEW_TREE" 2>/dev/null          # enforcement, not etiquette
+  echo "[REVIEW] audit tree: $REVIEW_TREE (read-only @ $(git rev-parse --short=7 "$REVIEWED_THROUGH"))"
+else
+  REVIEW_TREE="$(git rev-parse --show-toplevel)"
+  echo "[REVIEW] audit tree: live checkout (read-only worktree unavailable) — findings may race the fix loop"
+fi
+```
+
+Pass `REVIEW_TREE` to every dispatched agent as the root they analyze. The lead keeps using the live
+checkout: CodeSift pre-compute, the fix loop, the artifact and the retro all belong there.
+
+**Teardown is mandatory and must survive a failed run** — `chmod -R a-w` makes the directory
+undeletable by the normal path, so a review that dies mid-flight leaves an unwritable worktree and a
+registered entry that `git worktree list` will keep showing:
+
+```bash
+chmod -R u+w "$REVIEW_TREE" 2>/dev/null && git worktree remove --force "$REVIEW_TREE" 2>/dev/null
+```
+
+Run it at the end of Phase 3 and on every abort path. Record the outcome in the Validity Gate as
+`audit_tree: readonly(<sha7>) | live(<reason>)`. `live` is honest and allowed; silently claiming
+`readonly` when the worktree was never created is not.
+
+**Do NOT use this for the fix loop.** Phase 4 edits real files, runs the real suite and commits — it
+belongs in the live checkout, and pointing it at a frozen detached tree would produce commits on no
+branch. The split is the point: frozen tree for the eyes, live tree for the hands.
+
 ### Stack Detection (TIER 2+)
 
 Detect tech stack and load matching rules:
@@ -1008,6 +1050,10 @@ VALIDITY GATE
       # For a Next.js diff, framework_audit is the single-call-first requirement.
       # nextjs_route_map is a SUBSET (routes only) and does NOT satisfy it —
       # framework_audit also covers client-boundary, data-flow, and server-actions.
+  audit_tree: [readonly(<sha7>) | live(<why the read-only worktree could not be created>)]
+    # The auditors' root. `live` is an honest degraded value — the findings then race the fix loop
+    # and the Working-Tree Staleness Check carries the weight alone. Claiming `readonly` without
+    # having created the worktree is the same class as claiming a dispatch that never happened.
   tier2_subagents:   # TIER 2-3 only; for TIER 0-1 print "not_required (tier<2)"
     # Single-agent environments (Codex/Cursor/Antigravity — env-compat.md forbids
     # pipeline-stage thread dispatch there): SEQUENTIAL_CHECKPOINT(<role>, <evidence>)

@@ -63,11 +63,12 @@ a surviving mutant exposes is IN scope — that is the point of finding it.
 
 ## Argument Parsing
 
-Parse `$ARGUMENTS` as: `[path | full] [--max N] [--category CATEGORY] [--dry-run] [--quick] [--report-only]`
+Parse `$ARGUMENTS` as: `[path | full | continue] [--max N] [--category CATEGORY] [--dry-run] [--quick] [--report-only]`
 
 | Flag | Effect |
 |------|--------|
 | `[path]` | Scope to a specific directory or file |
+| `continue` | Resume an interrupted run from its checkpoint (Phase 3.0). Re-runs nothing already resolved. |
 | `full` | All production files that have test coverage |
 | `--max N` | Max total mutations to execute (default: 50) |
 | `--category CATEGORY` | Only generate mutations of this category: `BOUNDARY`, `LOGIC`, `NULL`, `ERROR`, `STATE`, `ASYNC`, `SECURITY` |
@@ -335,6 +336,34 @@ Cap at `--max` total mutations (default 50). If more mutations are possible, pri
 3. BOUNDARY mutations (off-by-one errors are common and subtle)
 4. LOGIC, NULL, STATE, ASYNC (remaining categories)
 
+### 2.3b Anchor every mutation to CONTENT, not to a line number
+
+`line` is a hint that expires. It is recorded before Phase 3 runs, and by the time a mutation is
+applied — or re-applied on resume — the file may have moved underneath it: Phase 4.2b writes tests
+and can touch production code, a fix commit lands between passes, or a resumed run meets a file
+edited since the plan was made. Applying `mutated` at a stale line number does not fail loudly; it
+corrupts a DIFFERENT statement and the run then measures a mutation nobody designed.
+
+So each mutation carries an anchor that survives movement:
+
+- `symbol`: the enclosing function/method/class name (from CodeSift `get_file_outline`, or the
+  nearest preceding definition line when unavailable).
+- `original_norm`: `original` with leading/trailing whitespace stripped per line and internal runs
+  of whitespace collapsed to one space. This is what you MATCH on — never the raw text, because
+  a formatter run would otherwise invalidate every anchor in the plan.
+- `occurrence`: 1-based index of `original_norm` **within `symbol`**, for the case where the same
+  statement appears more than once in one function.
+- `file_sha`: `git hash-object <file>` at plan time.
+
+**Resolve before applying, every time:**
+
+1. If `git hash-object <file>` still equals `file_sha`, the plan is current — apply at `line`.
+2. Otherwise re-locate: find `symbol`, then the `occurrence`-th match of `original_norm` inside it.
+   Exactly one match → apply there and record `anchor: relocated(<old-line> → <new-line>)`.
+3. Zero matches, or more than one after the occurrence filter → **SKIP this mutation** and record
+   `anchor: lost (<reason>)`. A skipped mutation is `not_run`, and per Phase 3.3 a plan that did
+   not run in full is not a score — it must be reported as such, never averaged away.
+
 **If `--dry-run`:** Print the mutation plan and STOP. Do not execute.
 
 ```
@@ -351,6 +380,54 @@ MUTATION PLAN (--dry-run)
 ## Phase 3: Mutation Execution
 
 For each mutation in the plan, apply it, run tests, and record the result.
+
+### 3.0 Checkpoint — write it after EVERY mutation, not at the end
+
+A mutation run is a long loop of expensive, individually-meaningful results, and until now it kept
+all of them in context only. Anything that ended the run — an API error, a 137, a timeout, the user
+stopping it — threw away every mutation already executed and left the next attempt to redo the lot.
+Worse, Phase 3.1 restores the file from a temp copy after each mutation, so a run killed mid-apply
+can leave a MUTATED file on disk with nothing on record saying so.
+
+State file: `zuvo/context/mutation-<target-hash>.json` (`<target-hash>` = first 8 of the SHA-1 of
+the scope argument, so concurrent runs on different scopes do not collide).
+
+```json
+{
+  "version": 1,
+  "scope": "src/services/",
+  "baseline": { "passed": 412, "failed": 0, "sha7": "a1b2c3d" },
+  "applied_to": null,
+  "mutations": [
+    { "id": "MUT-001", "file": "src/x.ts", "symbol": "calcTax", "line": 88,
+      "original_norm": "if (n > 0) {", "occurrence": 1, "file_sha": "e4f5…",
+      "status": "killed|survived|fixed|not_run|lost", "anchor": "exact|relocated(88→91)|lost(<reason>)" }
+  ]
+}
+```
+
+Write it at three moments, and the middle one is the one that matters:
+
+1. **After the plan is generated** — the full list at `status: not_run`.
+2. **`applied_to: "<file>"` BEFORE writing a mutation, back to `null` AFTER restoring it.** This is
+   the crash-safety record: a non-null `applied_to` on startup means the previous run died with a
+   mutation on disk. Restore that file from its temp copy (or `git checkout` it if the copy is gone
+   and the file is tracked and otherwise clean) BEFORE doing anything else, and say so.
+3. **After each mutation resolves** — its `status`, immediately, not batched at the end.
+
+**`continue` mode:** load the state file, restore any `applied_to` leftover, then execute only
+mutations whose `status` is `not_run`, re-resolving each anchor per 2.3b (the tree has moved since
+the plan — that is why you are resuming). Print what you skipped and why:
+
+```
+[MUTATION] resumed from checkpoint: 31/50 already resolved (24 killed, 5 survived, 2 fixed)
+[MUTATION] restored a mutated file left by the interrupted run: src/x.ts
+[MUTATION] 19 remaining
+```
+
+If no state file exists for the scope, say so and start fresh — never silently treat `continue` as
+a new full run, because the score of a partial resume and the score of a fresh run are different
+numbers and only one of them answers the question that was asked.
 
 ### 3.1 Safety Protocol
 
