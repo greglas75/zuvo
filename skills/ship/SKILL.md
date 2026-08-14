@@ -267,11 +267,27 @@ WORK_FILES = <files being touched>
    # (b) the base moved: <remote>/<target> has commits this branch does not.
    git merge-base --is-ancestor "$PUSH_REMOTE/$TARGET_BRANCH" HEAD \
      || echo "[SHIP] base moved — $PUSH_REMOTE/$TARGET_BRANCH is ahead of this branch"
+
+   # (c) the INVERSE of (b), and the one nothing checked: HEAD is already fully contained in
+   #     <remote>/<target>. There is nothing to ship. Distinct from (b) — (b) says the base gained
+   #     commits, (c) says this branch contributes none. Both can be true at once after a merge.
+   git merge-base --is-ancestor HEAD "$PUSH_REMOTE/$TARGET_BRANCH" 2>/dev/null \
+     && echo "[SHIP] HEAD already merged into $PUSH_REMOTE/$TARGET_BRANCH — nothing to ship"
    ```
    - **(a) non-empty on PR flow → STOP** before Phase 1. Print the commits and ask whether to push
      the default branch first or cherry-pick this work onto a fresh branch off the remote base.
      Shipping N unreviewed inherited commits under one `ship` invocation is a blast radius the user
      did not ask for.
+   - **(c) fired → STOP before Phase 1.** Every commit on this branch is already on the remote
+     target, so there is no release here: the suite would pass, the review would find an empty
+     diff, a version bump and tag would be invented for work that shipped earlier, and the push
+     would be a no-op the run still reports as success. That is the shape of a ship that "worked"
+     and changed nothing. Say which commits are already merged (`git log --oneline
+     "$PUSH_REMOTE/$TARGET_BRANCH" --not HEAD | head -5` shows the target's extra work) and ask
+     what was actually meant: ship a DIFFERENT branch, re-cut work on top of the current base, or
+     nothing at all. The one case where continuing is legitimate is a re-tag/re-release of the same
+     tree — proceed only if the user says so, and print `[SHIP] re-release of an already-merged
+     tree, per user` so the run log does not read as a fresh release.
    - **(b) fired → merge `$PUSH_REMOTE/$TARGET_BRANCH` into the branch NOW, and re-run the suite on
      the merged tree** (Phase 1 runs after this, so this is free). A textual merge accepts semantic
      conflicts silently; the merged tree is the only tree the test result is about. Merging later —

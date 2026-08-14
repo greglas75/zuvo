@@ -128,6 +128,45 @@ If multiple apply (e.g., monorepo), run all relevant commands.
 
 If no recognized file is found, skip setup and note: "No dependency file detected. Skipping setup."
 
+### Step 4.5: Prove the installed tree matches THIS branch's lockfile
+
+Step 4 is an instruction, and an instruction that is skipped leaves no trace. The failure it lets
+through is specific and it has already happened: a worktree ran its tests against dependency
+versions from a **different branch** (TanStack v9 installed, v8 in the lockfile), so the suite
+reported failures that did not exist in the code. Hours went into debugging the code instead of the
+tree. Note where it did NOT happen: on the test farm, which does its own `npm ci` from the branch's
+lockfile on every run. This is a local-only failure, which is exactly why nothing upstream caught it.
+
+Two ways in, and the second is the one that bites: Step 4 never ran, or it ran while a
+`node_modules` from another branch was already sitting there. **So run this check ALWAYS — most of
+all when `node_modules` already exists**, because that is the case that looks fine.
+
+```bash
+# Print a verdict. A worktree with the wrong deps must not reach Step 5.
+case "$(ls package-lock.json yarn.lock pnpm-lock.yaml requirements.txt Gemfile 2>/dev/null | head -1)" in
+  package-lock.json) npm ls --depth=0 >/dev/null 2>&1 && echo "[WORKTREE] deps: OK (npm ls clean)" \
+                       || echo "[WORKTREE] deps: MISMATCH — $(npm ls --depth=0 2>&1 | grep -ciE 'invalid|missing|extraneous') problem(s)" ;;
+  pnpm-lock.yaml)    pnpm install --frozen-lockfile --prefer-offline >/dev/null 2>&1 && echo "[WORKTREE] deps: OK (frozen lockfile satisfied)" \
+                       || echo "[WORKTREE] deps: MISMATCH — frozen lockfile not satisfied" ;;
+  requirements.txt)  pip check >/dev/null 2>&1 && echo "[WORKTREE] deps: OK (pip check clean)" \
+                       || echo "[WORKTREE] deps: MISMATCH — $(pip check 2>&1 | head -1)" ;;
+  Gemfile)           bundle check >/dev/null 2>&1 && echo "[WORKTREE] deps: OK (bundle satisfied)" \
+                       || echo "[WORKTREE] deps: MISMATCH — bundle check failed" ;;
+  *)                 echo "[WORKTREE] deps: UNVERIFIED (no checkable lockfile — say so, do not imply OK)" ;;
+esac
+```
+
+`yarn` has no portable equivalent across v1 and berry, so it lands in `UNVERIFIED` rather than a
+check that quietly passes on one major version and errors on the other.
+
+**On MISMATCH: re-run Step 4's install for this ecosystem, then re-run this check.** If it still
+mismatches, STOP and report it — do not run the baseline. A red baseline caused by the wrong
+dependency tree is the most expensive kind of wrong, because it looks exactly like a real
+regression and sends the next hour into the code.
+
+Carry the verdict into the CREATE output (`Deps:` line below). `UNVERIFIED` is an honest value;
+printing `OK` for an ecosystem you did not check is not.
+
 ### Step 5: Verify Baseline
 
 Run the project's test command to establish a green baseline:
@@ -148,6 +187,7 @@ Worktree created.
   Branch: <branch-name>
   Base:   <base-branch> @ <short-hash>
   Setup:  <what was installed>
+  Deps:   <OK (<check that proved it>) | UNVERIFIED (<why)>   # Step 4.5 — never blank
   Tests:  <pass count> / <total count> passing
 ```
 
