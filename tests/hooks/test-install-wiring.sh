@@ -63,13 +63,19 @@ HOME_T2="$TMP/home2"; mkdir -p "$HOME_T2"
 [ ! -e "$HOME_T2/bin/git" ] && pass "(5) default → shim NOT installed (opt-in only)" || bad "(5) shim installed without opt-in"
 
 # (6) build allowlists: codex + antigravity dist include block-no-verify + lib
-codex_log=$(bash "$ROOT/scripts/build-codex-skills.sh" "$ROOT" 2>&1)
+#
+# Via tests/lib/dist-build.sh, not the builder directly: these same two platforms are
+# also built by scripts/tests/reviewer-model-builds.bats in the same suite run, and
+# rebuilding all 57 skills a second time to assert on two file paths cost ~50s per run.
+# The helper is a pass-through when ZUVO_DIST_CACHE is unset (running this file by
+# hand), so the assertions below are unchanged either way.
+codex_log=$(bash "$ROOT/tests/lib/dist-build.sh" codex 2>&1)
 if [ -f "$ROOT/dist/codex/hooks/block-no-verify.sh" ] && [ -f "$ROOT/dist/codex/hooks/lib/pipeline-gate-lib.sh" ]; then
   pass "(6) codex build ships block-no-verify + hooks/lib/"
 else
   bad "(6) codex build missing block-no-verify or lib (tail: $(printf '%s' "$codex_log" | tail -3))"
 fi
-antig_log=$(bash "$ROOT/scripts/build-antigravity-skills.sh" "$ROOT" 2>&1)
+antig_log=$(bash "$ROOT/tests/lib/dist-build.sh" antigravity 2>&1)
 if [ -f "$ROOT/dist/antigravity/hooks/block-no-verify.sh" ] && [ -f "$ROOT/dist/antigravity/hooks/lib/pipeline-gate-lib.sh" ]; then
   pass "(6) antigravity build ships block-no-verify + hooks/lib/"
 else

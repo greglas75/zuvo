@@ -20,8 +20,14 @@ bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
 
 [ -f "$ROOT/scripts/install.sh" ] || { bad "install.sh missing"; echo "SOME FAILED"; exit 1; }
 
-if [ ! -d "$ROOT/dist/antigravity/skills" ]; then
-  pass "dist/antigravity not built — behavioural cases unobservable (skipped); source guards still run"
+# Gate on what the test actually NEEDS — the builder — not on `$ROOT/dist/`. The behavioural
+# half runs install.sh from an isolated repo copy that builds its own dist (see below), so a
+# missing or stale `$ROOT/dist/` says nothing about whether these cases can run. Gating on it
+# was left over from the pre-isolation version and silently skipped the behavioural half in a
+# checkout that had never built — including this test's own positive control, which then
+# "passed" the interesting cases by never running them.
+if [ ! -f "$ROOT/scripts/build-antigravity-skills.sh" ]; then
+  pass "build-antigravity-skills.sh absent — behavioural cases unobservable (skipped); source guards still run"
   SKIP_BEHAVIOUR=1
 else
   SKIP_BEHAVIOUR=0
@@ -33,8 +39,44 @@ if [ "$SKIP_BEHAVIOUR" -eq 0 ]; then
   AGS="$H/.gemini/config/skills"
   mkdir -p "$H/.gemini/antigravity" "$AGS"
 
+  # ISOLATED REPO COPY — not a nicety, the fix for a real flake.
+  #
+  # `install_antigravity` rebuilds `$ZUVO_DIR/dist/antigravity` on every call, and ZUVO_DIR is
+  # derived from install.sh's own location (scripts/install.sh:19), so it cannot be redirected
+  # with an env var. Meanwhile other children of run-all.sh build into — and `rm -rf` — that same
+  # `dist/` tree. This test therefore asserted on a directory a sibling test could truncate
+  # underneath it: green standalone, red roughly 2 runs in 10, and red inside the suite. That is
+  # B-DIST-BUILD-RACE in a new place.
+  #
+  # A completeness guard was the first thing I tried and it was the wrong shape: tolerating the
+  # race rather than removing it, and it quietly turned the whole test into a no-op. Copying the
+  # repo gives the test its OWN dist/, so no sibling can reach it and every run is deterministic.
+  # Copy only the skills the assertions NAME. install_antigravity rebuilds the whole
+  # distribution on every call and this test calls it twice, so the copy size is the runtime:
+  # all 57 skills cost 259s (measured 2026-08-13) — for a test whose entire subject is two
+  # directory names. `review` must exist so run 1 has something to stamp; `debug` must exist so
+  # run 2 has a name that COLLIDES with the third-party dir it must refuse to overwrite. The
+  # rest contribute nothing but build time. A fourth is copied so the build is not a degenerate
+  # one-skill case.
+  REPO="$(mktemp -d)"
+  trap 'rm -rf "$H" "$REPO"' EXIT
+  for d in scripts shared rules; do
+    [ -d "$ROOT/$d" ] && cp -R "$ROOT/$d" "$REPO/$d"
+  done
+  # `write-tests` is not optional here even though no assertion mentions it: the Antigravity
+  # build VALIDATES its output and fails with "Missing Antigravity blind audit reviewer agents"
+  # unless skills/write-tests/agents/blind-coverage-auditor{,-alt}.md are present
+  # (scripts/build-antigravity-skills.sh:588-592). Dropping it made the build fail, install copy
+  # nothing, and three assertions go red for a reason that had nothing to do with ownership.
+  mkdir -p "$REPO/skills"
+  for s in review debug docs write-tests; do
+    [ -d "$ROOT/skills/$s" ] && cp -R "$ROOT/skills/$s" "$REPO/skills/$s"
+  done
+  mkdir -p "$REPO/.claude-plugin"
+  [ -f "$ROOT/.claude-plugin/plugin.json" ] && cp "$ROOT/.claude-plugin/plugin.json" "$REPO/.claude-plugin/"
+
   run_install() {
-    ( cd "$ROOT" && HOME="$H" bash -c 'source scripts/install.sh >/dev/null 2>&1 || true; install_antigravity' 2>&1 )
+    ( cd "$REPO" && HOME="$H" bash -c 'source scripts/install.sh >/dev/null 2>&1 || true; install_antigravity' 2>&1 )
   }
 
   # --- Run 1: no markers anywhere yet. Adopt by name ONCE (the previous behaviour, no

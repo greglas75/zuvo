@@ -221,6 +221,15 @@ smoke2() {
   ( cd "$ROOT" && ZUVO_TEST_SCOPE=full bash tests/run-all.sh ) > "$LOG" 2>&1
   RC=$?
 
+  # Exit 3 = run-all refused a NESTED invocation. This mattered more here than in the
+  # sibling smoke: this one asks for ZUVO_TEST_SCOPE=full from INSIDE a fast run, so a
+  # nested execution was not merely a second pass — it was a strictly LARGER one, pulling
+  # in the adversarial suite the outer run had deliberately scoped out.
+  if [ "$RC" -eq 3 ]; then
+    note "SKIPPED: nested run-all (the outer suite already ran these children; run this file directly to exercise full scope)"
+    return 0
+  fi
+
   [ "$RC" -eq 0 ] && ok "run-all.sh (full scope) exits 0" \
                   || no "run-all.sh (full scope) exits 0 — got $RC"
 

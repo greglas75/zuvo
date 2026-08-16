@@ -36,7 +36,7 @@ absent is a legitimate SKIP; `rg` absent is a broken run that LOOKS like a test 
 | 3 | `bash tests/gates/test-gate-consistency.sh` | ~5 s | Gate-family invariants: contiguous IDs, no hand-maintained copy outside the registry, no stale `AP1-APnn` range claims, percentage-not-count thresholds, criticality vocabulary, CAP9↔CQ11 paired limits |
 | 4 | `python3 scripts/audit-registry-integrity.py` | ~1 s | Cross-registry referential integrity: pentest probes ↔ finding types ↔ safe patterns, check↔fix pairing, severity-vocabulary rows |
 | 4b | `python3 scripts/verify-review-claims.py --claims <artifact> --anchor <range>` | ~1 s | Review's Validity Gate claims (sub-agent dispatches, adversarial passes, self-review `--multi`) against the HARNESS-written session transcript — the only check that can catch a typed-but-not-done gate |
-| 5 | `bash tests/run-all.sh` | ~6-10 min | The 60-child suite (hooks, seo/geo/pentest/infra/benchmark/skill suites). `RESULT: PASS=n FAIL=0` is the only acceptable outcome |
+| 5 | `bash tests/run-all.sh` | ~2-3 min | The whole child suite — hooks, seo/geo/pentest/benchmark/skill suites, bats corpus (`tests/run-all.sh --list` prints the current set). `RESULT: PASS=n FAIL=0` is the only acceptable outcome |
 
 Anything that edits a gate: run 1→2→3. Anything that edits a registry: add 4. Anything else: 1 then 5.
 
@@ -53,7 +53,23 @@ and orphans the containers, and the next run then fails on a port conflict that 
 If you must stop one, run the compose `down -v --remove-orphans` shown in §5 afterwards.
 
 **Scope switch:** `ZUVO_TEST_SCOPE=full bash tests/run-all.sh` adds `tests/adversarial/run.sh`
-(hits real provider CLIs — slow, needs auth). Default `fast` is what you run per change.
+(hits real provider CLIs — slow, needs auth) and `tests/infra-suite/test-suite-e2e.sh` (starts
+three Docker containers and drives real SSH). Default `fast` is what you run per change.
+
+**Reading a slow run.** `run-all.sh` prints each child's wall clock next to its PASS/SKIP line and
+a `slowest children` table before the summary. Start there rather than guessing — the two costs
+that made this suite take 13 minutes were both invisible until somebody hand-timed files one at a
+time: the Docker infra e2e (400s+, over half the run, since moved to `full`) and six redundant
+distribution builds. Nothing in the output had ever named a suspect, because the runner reported
+counts and no durations at all.
+
+**Why a markdown-only repo has minute-scale tests.** Four children run a real
+`build-<platform>-skills.sh` over all 57 skills — they test the *installer and the four platform
+builds*, not the skills; the markdown is their input, not their subject. `tests/lib/dist-build.sh`
+memoizes each platform once per suite run (`ZUVO_DIST_CACHE`, a temp dir run-all creates and
+deletes), so six builds became four and no child can truncate a `dist/` tree another is asserting
+against. Running one of those files by hand still performs a real build — the helper is a
+pass-through when the variable is unset.
 
 ---
 

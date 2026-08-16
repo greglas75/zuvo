@@ -48,7 +48,6 @@ for needle in \
   "tests/seo-suite/test-suite-e2e.sh" \
   "tests/geo-suite/test-suite-e2e.sh" \
   "tests/pentest-suite/test-suite-e2e.sh" \
-  "tests/infra-suite/test-suite-e2e.sh" \
   "tests/benchmark-suite" \
   "tests/skill-suite"; do
   if printf '%s\n' "$LIST_FAST" | grep -q -- "$needle"; then
@@ -57,6 +56,22 @@ for needle in \
     bad "(a) --list MISSING $needle"
   fi
 done
+
+# infra-suite is the one domain e2e that is FULL-SCOPE ONLY: it starts three Docker
+# containers and drives real SSH, costing 400s+ of what used to be a 792s default run,
+# and it cannot pass at all without a Docker daemon. Pinned in BOTH directions — an
+# "excluded from fast" assertion alone would still pass if the child were dropped from
+# every scope, which is the way a heavy test quietly stops running altogether.
+if printf '%s\n' "$LIST_FAST" | grep -q -- "tests/infra-suite/test-suite-e2e.sh"; then
+  bad "(a) fast scope lists infra-suite — Docker+SSH e2e is full-scope only"
+else
+  pass "(a) fast scope excludes infra-suite (Docker/SSH e2e)"
+fi
+if printf '%s\n' "$LIST_FULL" | grep -q -- "tests/infra-suite/test-suite-e2e.sh"; then
+  pass "(a) full scope includes infra-suite"
+else
+  bad "(a) full scope MISSING infra-suite — the heavy e2e now runs in NO scope"
+fi
 
 if printf '%s\n' "$LIST_FAST" | grep -q 'test-run-all-wiring.sh'; then
   bad "(a) --list must NOT include its own wiring test (recursion risk)"

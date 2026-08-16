@@ -55,7 +55,16 @@ run_and_report() {
     hdr 1 "run-all.sh (fast scope)" "ZUVO_TEST_SCOPE=fast bash tests/run-all.sh"
     s1_out="$(ZUVO_TEST_SCOPE=fast bash tests/run-all.sh 2>&1)"; s1_rc=$?
     printf '%s\n' "$s1_out"
-    if [ "$s1_rc" -eq 0 ]; then
+    if [ "$s1_rc" -eq 3 ]; then
+      # Exit 3 = run-all refused a NESTED invocation. This file is itself a child of
+      # run-all, so when the smoke runs as part of the suite this step would otherwise
+      # execute the entire suite a second time inside the first — the amplification that
+      # made "one" run take 10-15 minutes. The outer run already covers every child, so
+      # there is nothing here to verify and nothing to report as passed.
+      # Run this file DIRECTLY (bash tests/skill-suite/smoke-skill-testing.sh) to exercise
+      # the runner for real; then no outer run exists and the guard does not fire.
+      record 1 "run-all.sh (fast scope)" 0 "[SKIPPED: nested — the outer run-all already ran these children]"
+    elif [ "$s1_rc" -eq 0 ]; then
       record 1 "run-all.sh (fast scope)" 0
     else
       # Extract failed test FILES from run-all's 'FAIL: <path> (exit N)' lines. sed (not a

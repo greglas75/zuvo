@@ -2,12 +2,15 @@
 
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
 
+# Wipe before each case so every assertion below runs against files this test's own
+# build (or its cache replay) materialized — never against a tree left by a sibling.
+# The three `run bash .../dist-build.sh <p>` calls repopulate what this removes.
 setup() {
   rm -rf "$REPO_ROOT/dist/codex" "$REPO_ROOT/dist/cursor" "$REPO_ROOT/dist/antigravity"
 }
 
 @test "Codex build materializes reviewer lanes to concrete models" {
-  run bash "$REPO_ROOT/scripts/build-codex-skills.sh" "$REPO_ROOT"
+  run bash "$REPO_ROOT/tests/lib/dist-build.sh" codex
   [ "$status" -eq 0 ]
 
   local primary="$REPO_ROOT/dist/codex/agents/write-tests-blind-coverage-auditor.toml"
@@ -71,7 +74,7 @@ setup() {
 }
 
 @test "Cursor build degrades both reviewer lanes to inherit" {
-  run bash "$REPO_ROOT/scripts/build-cursor-skills.sh" "$REPO_ROOT"
+  run bash "$REPO_ROOT/tests/lib/dist-build.sh" cursor
   [ "$status" -eq 0 ]
 
   local primary="$REPO_ROOT/dist/cursor/agents/write-tests-blind-coverage-auditor.md"
@@ -90,7 +93,7 @@ setup() {
 }
 
 @test "Antigravity build materializes reviewer lanes to Gemini tiers" {
-  run bash "$REPO_ROOT/scripts/build-antigravity-skills.sh" "$REPO_ROOT"
+  run bash "$REPO_ROOT/tests/lib/dist-build.sh" antigravity
   [ "$status" -eq 0 ]
 
   local primary="$REPO_ROOT/dist/antigravity/skills/write-tests/agents/blind-coverage-auditor.md"
