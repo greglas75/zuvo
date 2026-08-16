@@ -629,6 +629,76 @@ uc "$UCB.."
   || bad "uncovered_files: no-repo should be rc 2"
 rm -rf "$UCT"
 
+# ---------- pg_default_branch / pg_mergebase_range ----------
+# These two were the suite's only untested functions (test-audit 2026-08-16, Q11=0 across all
+# three files covering this lib). They are not decoration: pg_mergebase_range supplies the range
+# the commit- and Stop-nudges gate on, and it asks pg_default_branch which branch to measure
+# against — so a wrong answer here mis-scopes every best-effort nudge in the repo.
+DBT="$(mktemp -d)"; DBR="$(mktemp -d)"
+(
+  cd "$DBR" && git init -q --bare
+  cd "$DBT" && git init -q -b trunk 2>/dev/null || { git init -q; git symbolic-ref HEAD refs/heads/trunk; }
+  git config user.email t@t; git config user.name t; git config commit.gpgsign false
+  git remote add origin "$DBR"
+  echo base > b.txt; git add -A; git commit -qm base; git push -q -u origin trunk
+  git remote set-head origin trunk           # creates refs/remotes/origin/HEAD -> origin/trunk
+  git checkout -q -b feature
+  # THREE commits, and trunk advances too. Both details are load-bearing: with a single feature
+  # commit the fork point IS HEAD~1, so an implementation that returned `HEAD~1..HEAD` would pass
+  # a merge-base assertion by coincidence (verified — that mutant survived until this fixture grew).
+  echo f1 > f1.sh; git add -A; git commit -qm f1
+  echo f2 > f2.sh; git add -A; git commit -qm f2
+  echo f3 > f3.sh; git add -A; git commit -qm f3
+  git checkout -q trunk; echo t2 > t2.sh; git add -A; git commit -qm t2; git push -q origin trunk
+  git checkout -q feature
+) >/dev/null 2>&1
+
+# Reads the REAL origin/HEAD, not the hardcoded "main". A repo whose trunk is not called main is
+# the whole reason this function exists rather than a literal.
+db="$(cd "$DBT" && PG_REPO_ROOT="$DBT" bash -c '. "'"$LIB"'"; pg_default_branch')"
+[ "$db" = "trunk" ] && pass "default_branch: reads origin/HEAD (trunk), not a hardcoded 'main'" \
+  || bad "default_branch should be trunk, got [$db]"
+
+# No origin/HEAD → documented fallback chain: $ZUVO_DEFAULT_BRANCH, else literal main.
+( cd "$DBT" && git remote set-head origin -d ) >/dev/null 2>&1
+db="$(cd "$DBT" && PG_REPO_ROOT="$DBT" bash -c '. "'"$LIB"'"; pg_default_branch')"
+[ "$db" = "main" ] && pass "default_branch: no origin/HEAD → falls back to 'main'" \
+  || bad "default_branch fallback should be main, got [$db]"
+db="$(cd "$DBT" && PG_REPO_ROOT="$DBT" ZUVO_DEFAULT_BRANCH=develop bash -c '. "'"$LIB"'"; pg_default_branch')"
+[ "$db" = "develop" ] && pass "default_branch: ZUVO_DEFAULT_BRANCH overrides the fallback" \
+  || bad "default_branch should honor ZUVO_DEFAULT_BRANCH, got [$db]"
+
+# No repo at all: must still ANSWER (rc 0 + a branch name), never abort — this runs inside a
+# sourced hook, where a non-zero exit would take the host process with it.
+db="$(cd "$NOREPO" && unset PG_REPO_ROOT; bash -c '. "'"$LIB"'"; pg_default_branch')"; rc=$?
+{ [ "$rc" -eq 0 ] && [ "$db" = "main" ]; } \
+  && pass "default_branch: no repo → still answers 'main' rc 0 (fail-open, no abort)" \
+  || bad "default_branch no-repo should be main/rc0 (rc=$rc out=[$db])"
+
+# pg_mergebase_range emits <merge-base>..HEAD, and the base must be the fork point with the
+# default branch — NOT HEAD~1 and NOT the branch tip.
+( cd "$DBT" && git remote set-head origin trunk ) >/dev/null 2>&1
+mb="$(cd "$DBT" && PG_REPO_ROOT="$DBT" bash -c '. "'"$LIB"'"; pg_mergebase_range')"; rc=$?
+expect_base=$(git -C "$DBT" merge-base feature trunk)
+{ [ "$rc" -eq 0 ] && [ "$mb" = "${expect_base}..HEAD" ]; } \
+  && pass "mergebase_range: emits <fork-point-with-default-branch>..HEAD" \
+  || bad "mergebase_range wrong (rc=$rc got=[$mb] want=[${expect_base}..HEAD])"
+
+# Unrelated histories → no merge-base exists → rc 1, and NO half-formed range on stdout. A
+# caller that read "..HEAD" as a range would gate on the entire repo.
+( cd "$DBT" && git checkout -q --orphan orphanb && git rm -rqf . 2>/dev/null; echo o > o.txt
+  git add -A; git commit -qm orphan ) >/dev/null 2>&1
+mb="$(cd "$DBT" && PG_REPO_ROOT="$DBT" bash -c '. "'"$LIB"'"; pg_mergebase_range' 2>/dev/null)"; rc=$?
+{ [ "$rc" -eq 1 ] && [ -z "$mb" ]; } \
+  && pass "mergebase_range: unrelated histories → rc 1, empty stdout (no partial range)" \
+  || bad "mergebase_range orphan should be rc1/empty (rc=$rc got=[$mb])"
+
+mb="$(cd "$NOREPO" && unset PG_REPO_ROOT; bash -c '. "'"$LIB"'"; pg_mergebase_range' 2>/dev/null)"; rc=$?
+{ [ "$rc" -eq 1 ] && [ -z "$mb" ]; } \
+  && pass "mergebase_range: no repo → rc 1, empty stdout (fail-open, no abort)" \
+  || bad "mergebase_range no-repo should be rc1/empty (rc=$rc got=[$mb])"
+rm -rf "$DBT" "$DBR"
+
 # ---------- fail-open ----------
 pg_is_substantial "zzz..yyy" && bad "bad range should NOT be substantial" || pass "fail-open: bad range not substantial"
 pg_range_reviewed "zzz..yyy"; rc=$?

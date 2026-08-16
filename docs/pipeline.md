@@ -257,10 +257,19 @@ gate that fail-opens does so **silently** — the parser and the documented temp
 apart (`<!-- status: -->` vs a plain `status:` line) and the gate was dead in 8 of 19 real repos
 with nothing reporting it. The doctor shares the gate's own parser, so the two cannot disagree.
 
-The **signal** is content-keyed review coverage: `zuvo:review`/`zuvo:build`/`zuvo:execute`
-write `memory/reviews/<base7>..<head7>-<slug>.md` (with a machine-readable `range:`/`files:`
-header) on success only. The gates ask "is THIS range/file-set reviewed?" — a review of
-files X never whitelists unrelated files Y, and a crashed run writes nothing.
+The **signal** is content-keyed review coverage: `zuvo:review`/`zuvo:build`/`zuvo:execute`/
+`zuvo:refactor` write `memory/reviews/<base7>..<head7>-<slug>.md` (with a machine-readable
+`range:`/`files:` header) on success only. The gates ask "is THIS range/file-set reviewed?" — a
+review of files X never whitelists unrelated files Y, and a crashed run writes nothing.
+
+**The same signal now also scopes `zuvo:ship`'s review** (`pg_uncovered_files`, the enumerating
+sibling of the gates' `pg_range_reviewed`). The gates ask a yes/no question at push time; ship asks
+*which files* still need review, and reviews only those — so a release made right after a refactor
+stops re-running `review-light` + `zuvo:review` + a `--multi` adversarial pass over content that
+already carries all three plus its own proof. It is a scoping decision, not an escape hatch: there
+is no ship flag that expresses it, empty output is disambiguated by the return code (a library that
+cannot compute yields a FULL review, never a skipped one), and any file ship itself edits loses its
+coverage and comes back into scope. Details in `shared/includes/review-artifact.md`.
 
 ### What counts as "substantial"
 
