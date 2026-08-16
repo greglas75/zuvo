@@ -1,6 +1,6 @@
 # Zuvo
 
-Auto-activating, multi-agent skill ecosystem for Claude Code, Codex, Cursor, and Antigravity.
+Auto-activating, multi-agent skill ecosystem for Claude Code, Codex, Cursor, Antigravity, and Kimi Code.
 
 57 skills, 50 sub-agent definitions (48 distinct roles), quality gates, knowledge store, session recovery, and structured workflows — all in one plugin.
 
@@ -12,7 +12,7 @@ Auto-activating, multi-agent skill ecosystem for Claude Code, Codex, Cursor, and
 curl -fsSL https://raw.githubusercontent.com/greglas75/zuvo/main/scripts/quick-install.sh | bash
 ```
 
-Installs to Claude Code + Codex + Cursor + Antigravity in one command. Restart your IDE after install.
+Installs to Claude Code + Codex + Cursor + Antigravity + Kimi Code in one command. Restart your IDE after install.
 
 ### Claude Code (recommended)
 
@@ -77,17 +77,17 @@ claude plugin install zuvo
 ```
 Then start a new session.
 
-### Codex / Cursor / Antigravity
+### Codex / Cursor / Antigravity / Kimi Code
 
 ```bash
 cd /path/to/zuvo
 git pull
-./scripts/install.sh codex   # or: cursor, antigravity, all
+./scripts/install.sh codex   # or: cursor, antigravity, kimi, all
 ```
 
 ## What `install.sh` does
 
-One script, four platforms:
+One script, five platforms:
 
 | Platform | What it does |
 |----------|-------------|
@@ -95,6 +95,7 @@ One script, four platforms:
 | Codex | Builds adapted distribution (path replacement, unicode normalization, TOML agent generation) then copies to `~/.codex/skills/` + `~/.codex/agents/` |
 | Cursor | Builds adapted distribution (Cursor v3 agent frontmatter, flat agents with skill prefixes) then copies to `~/.cursor/skills/` + `~/.cursor/agents/` |
 | Antigravity | Builds adapted distribution (`build-antigravity-skills.sh`) then copies to `~/.gemini/antigravity/skills/` + `~/.gemini/antigravity/shared/` |
+| Kimi Code | Builds adapted distribution (`build-kimi-skills.sh`) then copies to `~/.kimi-code/skills/` + `~/.kimi-code/agents/`, and merges `[[hooks]]` into `~/.kimi-code/config.toml`. Keeps parallel sub-agents — Kimi has them |
 
 ```bash
 ./scripts/install.sh          # all platforms (default)
@@ -102,6 +103,7 @@ One script, four platforms:
 ./scripts/install.sh codex    # Codex only
 ./scripts/install.sh cursor   # Cursor only
 ./scripts/install.sh antigravity   # Antigravity only
+./scripts/install.sh kimi     # Kimi Code only
 ```
 
 ## Local development

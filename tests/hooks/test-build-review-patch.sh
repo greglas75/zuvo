@@ -285,9 +285,10 @@ has "build-review-patch installed" "$_LOG" && pass "(12) install log names build
 BCX="$ROOT/scripts/build-codex-skills.sh"
 BCU="$ROOT/scripts/build-cursor-skills.sh"
 BAG="$ROOT/scripts/build-antigravity-skills.sh"
-if [ ! -f "$BCX" ] || [ ! -f "$BCU" ] || [ ! -f "$BAG" ]; then
-  bad "(12) expected all three build scripts present (codex=$([ -f "$BCX" ] && echo yes || echo NO) cursor=$([ -f "$BCU" ] && echo yes || echo NO) antigravity=$([ -f "$BAG" ] && echo yes || echo NO))"
-elif grep -q 'build-review-patch' "$BCX" "$BCU" "$BAG"; then
+BKI="$ROOT/scripts/build-kimi-skills.sh"
+if [ ! -f "$BCX" ] || [ ! -f "$BCU" ] || [ ! -f "$BAG" ] || [ ! -f "$BKI" ]; then
+  bad "(12) expected all four build scripts present (codex=$([ -f "$BCX" ] && echo yes || echo NO) cursor=$([ -f "$BCU" ] && echo yes || echo NO) antigravity=$([ -f "$BAG" ] && echo yes || echo NO) kimi=$([ -f "$BKI" ] && echo yes || echo NO))"
+elif grep -q 'build-review-patch' "$BCX" "$BCU" "$BAG" "$BKI"; then
   bad "(12) a per-platform build script references build-review-patch — distribution model violated"
 else
   pass "(12) build scripts do NOT reference build-review-patch (shared ~/.zuvo invariant holds)"

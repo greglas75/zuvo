@@ -4,14 +4,15 @@
 
 ## Execution Models
 
-| Capability | Claude Code | Codex | Antigravity | Cursor |
-|-----------|-------------|-------|-------------|--------|
-| Sub-agent dispatch | `Agent` tool — parallel, model-routed | **Single-agent sequential** (thread dispatch FORBIDDEN for pipeline stages — no event wake; see Codex section) | Sequential (no spawning) | Sequential (no spawning) |
-| Concurrency | Unrestricted background tasks | Limited | Sequential | Sequential |
-| User interaction | Native interactive prompts | `[AUTO-DECISION]` | `[AUTO-DECISION]` | `[AUTO-DECISION]` |
-| Install root | `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/` | `~/.codex/` | `~/.gemini/antigravity/` | `~/.cursor/` |
-| Scripts path | `<install-root>/scripts/` | `~/.codex/scripts/` | `~/.gemini/antigravity/scripts/` | `~/.cursor/scripts/` |
-| Adversarial self-exclude | `claude` | `codex-5.3` | `gemini` | `cursor-agent` |
+| Capability | Claude Code | Kimi Code | Codex | Antigravity | Cursor |
+|-----------|-------------|-----------|-------|-------------|--------|
+| Sub-agent dispatch | `Agent` tool — parallel, model-routed | `Agent` tool — parallel, flat skill-prefixed profile names | **Single-agent sequential** (thread dispatch FORBIDDEN for pipeline stages — no event wake; see Codex section) | Sequential (no spawning) | Sequential (no spawning) |
+| Concurrency | Unrestricted background tasks | Background tasks (`run_in_background`) | Limited | Sequential | Sequential |
+| User interaction | Native interactive prompts | Native interactive prompts (`AskUserQuestion`) | `[AUTO-DECISION]` | `[AUTO-DECISION]` | `[AUTO-DECISION]` |
+| Install root | `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/` | `~/.kimi-code/` | `~/.codex/` | `~/.gemini/antigravity/` | `~/.cursor/` |
+| Scripts path | `<install-root>/scripts/` | `~/.kimi-code/scripts/` | `~/.codex/scripts/` | `~/.gemini/antigravity/scripts/` | `~/.cursor/scripts/` |
+| Project config file | `CLAUDE.md` | `AGENTS.md` | `AGENTS.md` | `GEMINI.md` | (build does not rewrite it) |
+| Adversarial self-exclude | `claude` | `kimi` | `codex-5.3` | `gemini` | `cursor-agent` |
 
 ## Resolving plugin scripts & resources in bash
 
@@ -248,6 +249,48 @@ When a skill references an agent:
 2. Perform that analysis yourself in the current context
 3. Maintain identical output format and quality standards
 <!-- /PLATFORM:ANTIGRAVITY -->
+
+<!-- PLATFORM:KIMI -->
+### Kimi Code
+
+**Dispatch sub-agents — do NOT fall back to inline.** Kimi Code is the one non-Claude harness with
+a real subagent tool, so the Codex/Cursor/Antigravity inline fallback above does **not** apply here.
+Running roles inline on Kimi is a substituted gate, not a platform limitation.
+
+```
+Agent(
+  description: "Analyze code structure for blast radius",
+  subagent_type: "refactor-dependency-mapper",
+  prompt: [agent instructions here]
+)
+```
+
+- **Agent names are FLAT and skill-prefixed:** `<skill>-<agent>` (e.g. `review-cq-auditor`,
+  `write-tests-blind-coverage-auditor`). Kimi resolves profiles by name from one directory, so
+  `agents/cq-auditor.md` alone is ambiguous — zuvo ships two different `cq-auditor` files.
+- **Builtin types:** `coder` (the only builtin that can edit files), `explore` (read-only),
+  `plan`, `agent`. A skill asking for `general-purpose` means `coder`; `Explore` means `explore`.
+- **Parallelism:** supported, including `run_in_background`.
+- **Model routing** is per-profile via `model_preference` (`primary` | `secondary`), not a
+  per-call model id. Do not pass a `model:` argument to `Agent`.
+
+**Install paths:** skills `~/.kimi-code/skills/`, agents `~/.kimi-code/agents/` (flat),
+shared/rules/scripts under `~/.kimi-code/`.
+
+**Project instructions file:** `AGENTS.md` (not `CLAUDE.md`).
+
+**Interaction:** `AskUserQuestion` and plan mode exist — use them normally, no `[AUTO-DECISION]`
+downgrade.
+
+**Hooks:** full event set (`PreToolUse`, `PostToolUse`, `SessionStart`, `Stop`, `StopFailure`,
+`SubagentStop`, `PreCompact`), configured as `[[hooks]]` tables in `~/.kimi-code/config.toml`.
+
+**Env detection:** `KIMI_CODE_HOME` is set, or `~/.kimi-code/` exists with the running binary at
+`~/.kimi-code/bin/kimi`.
+
+**Adversarial review:** host auto-excluded — cross-review with `claude`, `codex`, `agy`, or
+`cursor-agent`. Script at `~/.kimi-code/scripts/adversarial-review.sh`.
+<!-- /PLATFORM:KIMI -->
 
 ## Progress Tracking
 

@@ -7,7 +7,7 @@
 # What it does:
 #   1. Clones/updates zuvo to ~/.zuvo-plugin
 #   2. Removes old claude-code-toolkit leftovers
-#   3. Installs to Claude Code (via marketplace) + Codex + Cursor + Antigravity
+#   3. Installs to Claude Code (via marketplace) + Codex + Cursor + Antigravity + Kimi Code
 #
 # Uninstall:
 #   rm -rf ~/.zuvo-plugin && claude plugin uninstall zuvo@zuvo-marketplace 2>/dev/null
@@ -108,7 +108,7 @@ else
   echo "    claude plugin install zuvo"
 fi
 
-# ─── Install to Claude Code cache / Codex / Cursor / Antigravity ────────
+# ─── Install to Claude Code cache / Codex / Cursor / Antigravity / Kimi ────────
 #
 # Runs AFTER `claude plugin update` so the final cache-cleanup pass in
 # install_claude_code() has the last word. Any cache dirs the plugin-update
@@ -121,7 +121,7 @@ echo "╔═══════════════════════�
 echo "║           Install complete           ║"
 echo "╠══════════════════════════════════════╣"
 echo "║  Restart Claude / Codex / Cursor /   ║"
-echo "║  Antigravity to pick up changes.     ║"
+echo "║  Antigravity/Kimi to pick up changes.║"
 echo "║                                      ║"
 echo "║  Update anytime:                     ║"
 echo "║  curl -fsSL <same-url> | bash        ║"

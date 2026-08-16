@@ -1088,6 +1088,22 @@ detect_host_platform() {
     echo "cursor-agent" && return
   fi
 
+  # Kimi Code: unlike every other host, it exports NO identifying variable into the tool
+  # subprocess — verified empirically 2026-08-12 by dumping `env` from inside its own Bash
+  # tool (v0.35.0): the ONLY difference is that it prepends its bin dir to PATH. So that is
+  # the signal, checked last because it is the weakest one.
+  #
+  # BOTH kimi lanes are excluded, not just `kimi`. Naming one and leaving the other is the
+  # exact bug the Antigravity comment above records (excluding `gemini` left `agy` auditing
+  # its own host); `kimi-api` reaches the same model by a different route.
+  #
+  # Known false-positive, accepted deliberately: a user with ~/.kimi-code/bin in their login
+  # PATH is detected as Kimi anywhere. That costs one reviewer and can NEVER cause
+  # self-review — the failure this whole function exists to prevent — so it errs safe.
+  case ":${PATH}:" in
+    *":$HOME/.kimi-code/bin:"*) echo "kimi kimi-api" && return ;;
+  esac
+
   echo ""
 }
 

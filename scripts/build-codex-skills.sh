@@ -36,6 +36,7 @@ strip_platform_blocks_codex() {
   sed \
     -e '/<!-- PLATFORM:CURSOR -->/,/<!-- \/PLATFORM:CURSOR -->/d' \
     -e '/<!-- PLATFORM:ANTIGRAVITY -->/,/<!-- \/PLATFORM:ANTIGRAVITY -->/d' \
+    -e '/<!-- PLATFORM:KIMI -->/,/<!-- \/PLATFORM:KIMI -->/d' \
     -e '/<!-- PLATFORM:CODEX -->/d' \
     -e '/<!-- \/PLATFORM:CODEX -->/d'
 }
@@ -816,6 +817,7 @@ while IFS= read -r -d '' md; do
     sed_i \
       -e '/<!-- PLATFORM:CURSOR -->/,/<!-- \/PLATFORM:CURSOR -->/d' \
       -e '/<!-- PLATFORM:ANTIGRAVITY -->/,/<!-- \/PLATFORM:ANTIGRAVITY -->/d' \
+    -e '/<!-- PLATFORM:KIMI -->/,/<!-- \/PLATFORM:KIMI -->/d' \
       -e '/<!-- PLATFORM:CODEX -->/d' \
       -e '/<!-- \/PLATFORM:CODEX -->/d' \
       "$md"

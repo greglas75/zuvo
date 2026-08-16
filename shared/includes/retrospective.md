@@ -39,7 +39,7 @@ Fill these sections. Fields 1-4: at least 1 must be non-empty and artifact-groun
 
 Telemetry block template (key=value, one per line):
 ```
-platform: <claude|codex|antigravity|cursor> | writer: <model> | reviewer: <model> | routing: <ok|same-model-fallback|unknown-writer-model|routing-failed>
+platform: <claude|codex|antigravity|cursor|kimi> | writer: <model> | reviewer: <model> | routing: <ok|same-model-fallback|unknown-writer-model|routing-failed>
 codesift: <indexed(Nsymbols)|not_indexed|transport_closed_after_N|unavailable|N/A>
 paths: shared=<ok|missing:file> scripts=<ok|missing:file> rules=<ok|missing:file>
 extension_check: <ok|.test.ts->.spec.ts(renamed)|N/A>

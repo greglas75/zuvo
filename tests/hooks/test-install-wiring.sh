@@ -164,7 +164,7 @@ rm -rf "$_t"
 # into 4 FAILs that blocked a release of unrelated work. Error severity still
 # upgrades on bash -n (catches real defects, not just parse errors); the style
 # warning cleanup is tracked as its own task, not a silent gate downgrade.
-for s in scripts/install.sh scripts/build-codex-skills.sh scripts/build-antigravity-skills.sh scripts/build-cursor-skills.sh; do
+for s in scripts/install.sh scripts/build-codex-skills.sh scripts/build-antigravity-skills.sh scripts/build-cursor-skills.sh scripts/build-kimi-skills.sh; do
   if command -v shellcheck >/dev/null 2>&1; then
     shellcheck --severity=error "$ROOT/$s" >/dev/null 2>&1 && pass "(7) shellcheck -Serror $s" || bad "(7) shellcheck (error severity) failed: $s"
   else

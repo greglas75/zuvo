@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **One supported IDE/CLI:** Claude Code, Codex, Google Antigravity, or Cursor
+- **One supported IDE/CLI:** Claude Code, Codex, Google Antigravity, Cursor, or Kimi Code
 - **Node.js** 18+ (for package.json resolution and hook execution)
 - **GNU coreutils** — required for adversarial review (`brew install coreutils` on macOS)
 - **Bash** available (macOS/Linux native; Windows requires Git Bash or WSL — see below)
@@ -127,6 +127,7 @@ Zuvo auto-detects your host platform and **excludes its own provider** to ensure
 | **Codex** | `codex` | `claude`, `gemini`, or `cursor-agent` |
 | **Antigravity** | `gemini` | `codex`, `claude`, or `cursor-agent` |
 | **Cursor** | `cursor-agent` | `codex`, `gemini`, or `claude` |
+| **Kimi Code** | `kimi` | `claude`, `codex`, `agy`, or `cursor-agent` |
 
 Without at least one cross-provider, adversarial review and blind audit will be skipped with `no provider available`.
 
@@ -173,6 +174,29 @@ cd ~/zuvo-plugin && ./scripts/install.sh
 
 Restart Antigravity. Skills appear in `~/.gemini/antigravity/skills/` (global scope). No workspace-level `.agent/skills/` symlinks needed.
 
+### Kimi Code
+
+```bash
+# Clone the zuvo source
+git clone https://github.com/greglas75/zuvo.git ~/zuvo-plugin
+
+# Install (builds the Kimi distribution + copies to ~/.kimi-code/)
+cd ~/zuvo-plugin && ./scripts/install.sh
+```
+
+Restart Kimi Code. Skills appear in `~/.kimi-code/skills/`, agent profiles in `~/.kimi-code/agents/`
+(flat, skill-prefixed — `review-cq-auditor`, not `review/cq-auditor`), and hooks are merged into a
+marked block in `~/.kimi-code/config.toml`.
+
+Verify with Kimi's own config validator, which fails loudly on a malformed hook block:
+
+```bash
+kimi doctor           # expect: All checked config files are valid.
+```
+
+Unlike Codex, Cursor and Antigravity, Kimi has a real sub-agent tool — zuvo's audit skills run
+multi-agent here, the same as on Claude Code.
+
 ### Cursor
 
 ```bash
@@ -211,7 +235,7 @@ claude plugin install zuvo
 
 Restart Claude Code. This is a known Claude Code cache bug (stale SHA in `installed_plugins.json`), not a zuvo issue.
 
-### Codex / Antigravity / Cursor
+### Codex / Antigravity / Cursor / Kimi Code
 
 ```bash
 cd ~/zuvo-plugin && git pull && ./scripts/install.sh

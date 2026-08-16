@@ -12,7 +12,9 @@
 #   3. Push to origin + tag
 #   4. Update marketplace SHA + push marketplace
 #   5. Update local installed_plugins.json SHA
-#   6. Install to Claude Code + Codex + Cursor + Antigravity
+#   6. Install to Claude Code + Codex + Cursor + Antigravity + Kimi Code
+#      (all five via scripts/install.sh's `all` target — this script never enumerates
+#      them itself, so a new build target is picked up without editing this file)
 #
 # After running: just restart Claude Code.
 

@@ -152,3 +152,65 @@ assert_line() {
   assert_line "reviewer_model=unknown"
   assert_line "routing_status=unknown-writer-model"
 }
+
+# ─── Kimi Code ────────────────────────────────────────────────────────────────
+# Kimi exports no identifying variable into its tool subprocess, so detection reads a
+# PATH component. These cases therefore set PATH explicitly instead of inheriting it:
+# whether the machine running the suite happens to have Kimi installed must not decide
+# the result — the same independence the run_route helper above buys with `env -u`, which
+# cannot strip a PATH entry.
+KIMI_PATH() { printf '%s/.kimi-code/bin:/usr/bin:/bin' "$HOME"; }
+
+@test "detects Kimi Code from its bin dir on PATH" {
+  run_route "PATH=$(KIMI_PATH)"
+  [ "$status" -eq 0 ]
+  assert_line "platform=kimi"
+  assert_line "writer_model=kimi-code"
+  assert_line "writer_lane=strong_primary"
+}
+
+@test "Kimi detection is checked LAST so an explicit host marker still wins" {
+  # The ordering is the whole reason the PATH probe is safe to have here. If it were
+  # checked earlier, every marker-driven case in this file would flip to kimi on any
+  # developer machine with Kimi installed, and the suite's verdict would depend on who
+  # ran it — the 2026-08-10 failure this file's header records, reintroduced by a
+  # signal `env -u` cannot remove.
+  run_route "PATH=$(KIMI_PATH)" CLAUDE_MODEL=opus
+  [ "$status" -eq 0 ]
+  assert_line "platform=claude"
+  assert_line "reviewer_model=sonnet"
+}
+
+@test "Kimi with a reachable API lane routes to the opposite in-family model" {
+  run_route "PATH=$(KIMI_PATH)" MOONSHOT_API_KEY=stub
+  [ "$status" -eq 0 ]
+  assert_line "platform=kimi"
+  assert_line "reviewer_lane=review-alt"
+  assert_line "reviewer_model=kimi-k2.6"
+  assert_line "routing_status=ok"
+  [[ "$output" != *"same-model-fallback"* ]]
+}
+
+@test "Kimi K2.6 writer routes back to the CLI lane, not to itself" {
+  run_route "PATH=$(KIMI_PATH)" MOONSHOT_API_KEY=stub ZUVO_KIMI_CLI_MODEL=kimi-k2.6
+  [ "$status" -eq 0 ]
+  assert_line "writer_model=kimi-k2.6"
+  assert_line "writer_lane=strong_alt"
+  assert_line "reviewer_model=kimi-code"
+  [[ "$output" != *"reviewer_model=kimi-k2.6"* ]]
+}
+
+@test "Kimi with no API key and no cross-host client degrades EXPLICITLY, never silently" {
+  # PATH deliberately holds only the Kimi bin dir plus system paths, so agy/codex/claude
+  # are all absent and the in-family lane is unreachable without a key. The contract is
+  # that this reports same-model-fallback rather than naming a reviewer that cannot run:
+  # preflight escalates a non-ok status to `degraded-routing`, and an audit that believes
+  # it had a cross-model reviewer when it did not is worse than one that admits it.
+  run env -u CLAUDECODE -u CODEX_SANDBOX -u ANTIGRAVITY_SESSION_ID \
+      -u VSCODE_GIT_ASKPASS_MAIN -u CLAUDE_CODE_ENTRYPOINT -u MOONSHOT_API_KEY \
+      "PATH=$(KIMI_PATH)" "$SCRIPT"
+  [ "$status" -eq 0 ]
+  assert_line "platform=kimi"
+  assert_line "reviewer_lane=same-model-fallback"
+  assert_line "routing_status=same-model-fallback"
+}

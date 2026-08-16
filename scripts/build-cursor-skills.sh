@@ -493,6 +493,7 @@ while IFS= read -r -d '' md; do
     sed_i \
       -e '/<!-- PLATFORM:CODEX -->/,/<!-- \/PLATFORM:CODEX -->/d' \
       -e '/<!-- PLATFORM:ANTIGRAVITY -->/,/<!-- \/PLATFORM:ANTIGRAVITY -->/d' \
+      -e '/<!-- PLATFORM:KIMI -->/,/<!-- \/PLATFORM:KIMI -->/d' \
       -e '/<!-- PLATFORM:CURSOR -->/d' \
       -e '/<!-- \/PLATFORM:CURSOR -->/d' \
       "$md"

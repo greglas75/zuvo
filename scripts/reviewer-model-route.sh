@@ -65,6 +65,21 @@ detect_platform() {
     printf 'cursor\n'
   elif [[ "${VSCODE_GIT_ASKPASS_MAIN:-}" == *"Antigravity"* || -n "${ANTIGRAVITY_SESSION_ID:-}" || -n "${GEMINI_MODEL:-}" || -n "${ANTIGRAVITY_MODEL:-}" ]]; then
     printf 'antigravity\n'
+  # Kimi Code exports NO identifying variable into its tool subprocess — established
+  # empirically on v0.35.0 and documented at adversarial-review.sh:1092. The only signal
+  # is that it prepends its bin dir to PATH, so this is the same probe that script uses.
+  #
+  # Checked LAST, and that placement is load-bearing rather than stylistic: the signal is
+  # a PATH component, which `env -u` cannot strip, so any developer with ~/.kimi-code/bin
+  # in their login PATH would otherwise have this branch answer for every marker-driven
+  # case in reviewer-model-route.bats. Those cases set CLAUDE_MODEL / ZUVO_CODEX_MODEL /
+  # GEMINI_MODEL, so an earlier branch always claims them first and the ordering keeps the
+  # suite's result independent of who runs it — the exact failure mode that file's own
+  # header records from 2026-08-10.
+  elif [[ -n "${ZUVO_KIMI_CLI_MODEL:-}" || -n "${ZUVO_KIMI_MODEL:-}" ]]; then
+    printf 'kimi\n'
+  elif [[ ":${PATH}:" == *":$HOME/.kimi-code/bin:"* ]]; then
+    printf 'kimi\n'
   else
     printf 'unknown\n'
   fi
@@ -82,6 +97,10 @@ detect_writer_model() {
     codex) printf '%s\n' "${ZUVO_CODEX_MODEL:-gpt-5.5}" ;;
     cursor) printf '%s\n' "${CURSOR_AGENT_MODEL:-${CURSOR_MODEL:-unknown}}" ;;
     antigravity) printf '%s\n' "${GEMINI_MODEL:-${ANTIGRAVITY_MODEL:-gemini-3.1-pro-low}}" ;;
+    # `kimi-code` is the OAuth CLI's own default (k3) that a session inside Kimi Code
+    # writes with; model-registry.sh keeps ZUVO_MODEL_KIMI_CLI EMPTY to mean exactly that,
+    # so the literal belongs here rather than in the registry.
+    kimi) printf '%s\n' "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_KIMI_MODEL:-kimi-code}}" ;;
     *) printf 'unknown\n' ;;
   esac
 }
@@ -189,6 +208,50 @@ case "$platform" in
     for _c in agy codex claude; do
       if command -v "$_c" >/dev/null 2>&1; then reviewer_model="$_c"; break; fi
     done
+    if [ -n "$reviewer_model" ]; then
+      reviewer_lane="review-alt"
+      routing_status="ok"
+    else
+      routing_status="same-model-fallback"
+      reviewer_lane="same-model-fallback"
+      reviewer_model="$writer_model"
+    fi
+    unset _c
+    ;;
+  kimi)
+    # Kimi Code is the only non-Claude target zuvo does not degrade, yet this table did
+    # not know it: platform resolved to `unknown`, which lands in the explicit
+    # `same-model-fallback` arm at the top of this file. Preflight turns a non-ok
+    # routing_status into `degraded-routing`, so every write-tests blind audit run from
+    # inside Kimi Code was capped at `clean:degraded` — the same permanent, invisible hit
+    # the cursor comment above records, and the same shape as the gpt-5.6-sol arm further
+    # up: a model the registry names (ZUVO_MODEL_KIMI / ZUVO_MODEL_KIMI_CLI) that the
+    # ROUTING table never learned.
+    case "$writer_model" in
+      kimi-k2.6|kimi-k2.[0-9]*)   writer_lane="strong_alt" ;;
+      kimi-code|k3*|kimi-k3*|kimi-k2.7-code) writer_lane="strong_primary" ;;
+    esac
+    # Prefer the opposite IN-FAMILY lane, matching what claude (opus<->sonnet) and codex
+    # (5.5<->5.4) do — K3 and K2.6 are different generations, not the same model twice.
+    # It is offered only when it can actually be reached: the second lane is the curl
+    # fallback, which is inert without MOONSHOT_API_KEY, and naming an unreachable
+    # reviewer here would report `ok` for a review that cannot run.
+    reviewer_model=""
+    if [ -n "${MOONSHOT_API_KEY:-}" ]; then
+      case "$writer_model" in
+        kimi-k2.6|kimi-k2.[0-9]*) reviewer_model="kimi-code" ;;
+        *)                        reviewer_model="kimi-k2.6" ;;
+      esac
+    fi
+    # No key: fall back to a cross-host client exactly as the cursor arm does. kimi is the
+    # host, so agy / codex / claude are all cross-model from here. The preflight canary
+    # still has to prove the named client answers, so a listed-but-dead one degrades there
+    # rather than being asserted working here.
+    if [ -z "$reviewer_model" ]; then
+      for _c in agy codex claude; do
+        if command -v "$_c" >/dev/null 2>&1; then reviewer_model="$_c"; break; fi
+      done
+    fi
     if [ -n "$reviewer_model" ]; then
       reviewer_lane="review-alt"
       routing_status="ok"

@@ -1,0 +1,84 @@
+# zuvo hooks for Kimi Code — merge template for ~/.kimi-code/config.toml
+#
+# Kimi's hook config is a FLAT array of tables, not Claude Code's nested
+# {event: [{matcher, hooks: [...]}]} JSON. The schema is .strict():
+# exactly event / matcher / command / timeout, nothing else.
+#
+# install.sh merges these into ~/.kimi-code/config.toml inside a marker-delimited
+# region so the merge is idempotent and the user's own hooks are never touched.
+#
+# Event coverage vs the Claude Code manifest (hooks/hooks.json): 1:1. Kimi has every
+# event zuvo uses, INCLUDING StopFailure — so the API-error rewake path survives here,
+# unlike the Cursor/Antigravity targets which have to drop it.
+#
+# Matcher note: an omitted matcher means "every tool", which is how the Claude
+# manifest's "*" entries are expressed here.
+
+# --- SessionStart: prime project profile + zuvo context -----------------------
+[[hooks]]
+event = "SessionStart"
+command = 'bash "$HOME/.kimi-code/hooks/session-start"'
+timeout = 30
+
+# --- PreToolUse / Bash: the deterministic gates ------------------------------
+# These are the enforcement layer, not nudges. Order matches hooks/hooks.json.
+[[hooks]]
+event = "PreToolUse"
+matcher = "Bash"
+command = 'bash "$HOME/.kimi-code/hooks/block-no-verify.sh"'
+timeout = 30
+
+[[hooks]]
+event = "PreToolUse"
+matcher = "Bash"
+command = 'bash "$HOME/.kimi-code/hooks/pre-push-gate.sh"'
+timeout = 60
+
+[[hooks]]
+event = "PreToolUse"
+matcher = "Bash"
+command = 'bash "$HOME/.kimi-code/hooks/pre-commit-adversarial-gate.sh"'
+timeout = 60
+
+# --- PostToolUse: telemetry + adversarial follow-through ---------------------
+[[hooks]]
+event = "PostToolUse"
+matcher = "Skill"
+command = 'bash "$HOME/.kimi-code/hooks/post-skill-adversarial-check.sh"'
+timeout = 30
+
+[[hooks]]
+event = "PostToolUse"
+matcher = "Read"
+command = 'bash "$HOME/.kimi-code/hooks/track-includes.sh"'
+timeout = 15
+
+[[hooks]]
+event = "PostToolUse"
+command = 'bash "$HOME/.kimi-code/hooks/zuvo-heartbeat.sh"'
+timeout = 15
+
+# Claude Code fires this on TodoWrite; Kimi's todo tool is TodoList.
+[[hooks]]
+event = "PostToolUse"
+matcher = "TodoList"
+command = 'bash "$HOME/.kimi-code/hooks/zuvo-todo-watchdog.sh"'
+timeout = 15
+
+# --- StopFailure: self-arming rewake after API/rate-limit kills ---------------
+[[hooks]]
+event = "StopFailure"
+matcher = "rate_limit|server_error|unknown"
+command = 'bash "$HOME/.kimi-code/hooks/zuvo-rewake-on-failure.sh"'
+timeout = 30
+
+# --- Stop: pipeline-entry nudge + rewake reset -------------------------------
+[[hooks]]
+event = "Stop"
+command = 'bash "$HOME/.kimi-code/hooks/zuvo-stop-pipeline-gate.sh"'
+timeout = 30
+
+[[hooks]]
+event = "Stop"
+command = 'bash "$HOME/.kimi-code/hooks/zuvo-rewake-reset.sh"'
+timeout = 15

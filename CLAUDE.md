@@ -2,7 +2,7 @@
 
 ## What this repo is
 
-A Claude Code / Codex / Cursor / Antigravity plugin. All skills are markdown files (SKILL.md). No TypeScript, no Python, no npm dependencies. `package.json` is metadata only (version field) — never run `npm install`.
+A Claude Code / Codex / Cursor / Antigravity / Kimi Code plugin. All skills are markdown files (SKILL.md). No TypeScript, no Python, no npm dependencies. `package.json` is metadata only (version field) — never run `npm install`.
 
 ## Tech stack
 
@@ -13,7 +13,7 @@ Markdown. Shell scripts in `scripts/`. That's it.
 ### For yourself (dev testing, no marketplace push)
 
 ```bash
-./scripts/install.sh          # copies to Claude Code cache + Codex + Cursor + Antigravity
+./scripts/install.sh          # copies to Claude Code cache + Codex + Cursor + Antigravity + Kimi Code
 ```
 
 Then restart Claude Code / Codex.
@@ -57,7 +57,7 @@ This does everything: version bump, commit, push, tag, marketplace SHA update. U
 | What you want | Command |
 |---------------|---------|
 | Push + sync everything (dev) | `./scripts/dev-push.sh "description"` then restart Claude/Codex |
-| Test changes locally (dev) | `./scripts/install.sh` then restart Claude/Codex/Cursor |
+| Test changes locally (dev) | `./scripts/install.sh` then restart Claude/Codex/Cursor/Kimi |
 | Release to users | `./scripts/release.sh patch "msg"` |
 | Verify release works | `claude plugin uninstall zuvo@zuvo-marketplace && claude plugin install zuvo` then new session |
 | User first install | `claude plugin marketplace add greglas75/zuvo-marketplace && claude plugin install zuvo` |
@@ -127,10 +127,42 @@ its tag and `claude plugin list`, never by the absence of an error.
 | Codex | Runs `build-codex-skills.sh` (path replacement, unicode normalization, TOML agent generation) → copies to `~/.codex/skills/` + `~/.codex/agents/` + `~/.codex/shared/` |
 | Cursor | Runs `build-cursor-skills.sh` (Cursor v3 agent frontmatter, flat agents with skill prefixes, max 4 parallel) → copies to `~/.cursor/skills/` + `~/.cursor/agents/` + `~/.cursor/shared/` |
 | Antigravity | Runs `build-antigravity-skills.sh` → copies to `~/.gemini/antigravity/skills/` + `~/.gemini/antigravity/shared/` |
+| Kimi Code | Runs `build-kimi-skills.sh` (flat agents, `model_preference` lanes, hooks in TOML) → copies to `~/.kimi-code/skills/` + `~/.kimi-code/agents/` + `~/.kimi-code/shared/`, and merges `[[hooks]]` into `~/.kimi-code/config.toml` |
 
 **Claude Code cache gotcha:** Claude Code creates TWO cache directories — one named by version (`1.0.0/`) and one named by git SHA (`564a269.../`). It may load from EITHER. `install.sh` syncs to ALL directories. Never copy manually to just one.
 
 Codex requires a BUILD step because it uses different paths (`~/.codex/` not `../../shared/`) and needs TOML agent registration files.
+
+### Kimi Code: the one non-Claude target that is NOT degraded
+
+Kimi Code (verified against v0.34.0) is effectively a Claude Code superset for zuvo's purposes,
+so `build-kimi-skills.sh` deliberately does **not** apply the degradations the Cursor and
+Antigravity builds must:
+
+- **Sub-agents survive.** Kimi's `Agent` tool takes `prompt`/`description`/`subagent_type`/
+  `run_in_background`; builtin types are `agent`, `coder`, `explore`, `plan`. zuvo's 48 agents
+  install as custom profiles. Cursor/Antigravity rewrite spawn blocks to "Execute inline: …";
+  doing that here would silently turn every multi-agent audit into a single-agent one while
+  still reporting success — `tests/hooks/test-kimi-build.sh` (2) exists to catch exactly that.
+- **`AskUserQuestion` and plan mode survive** — Kimi has both.
+- **Agents are FLAT** in `~/.kimi-code/agents/`: Kimi resolves profiles by a `byName` map, so
+  subdirectories load nothing and the two duplicate-name pairs (`cq-auditor`, `spec-reviewer`)
+  would silently collide. Names are skill-prefixed, as in the Cursor build.
+- **`model:` becomes `model_preference:`**, a closed enum — exactly `primary` or `secondary`,
+  anything else is a hard parse error. opus/sonnet → primary, haiku → secondary.
+- **Hooks are TOML**, a flat `[[hooks]]` array of `event`/`matcher`/`command`/`timeout` in
+  `config.toml` — not the nested JSON shape. Kimi has every event zuvo uses **including
+  `StopFailure`**, so the API-error rewake path works here (Cursor/Antigravity must drop it).
+  `install.sh` rewrites a marker-delimited block and refuses to write a `config.toml` that
+  would not parse — a corrupt one would break the CLI itself.
+- **`AGENTS.md`**, not `CLAUDE.md`, is the project instruction file.
+- Kimi's native plugin registry (`$KIMI_CODE_HOME/plugins/installed.json`) is deliberately
+  **not** used — it is the same central-registry staleness trap as the `installed_plugins.json`
+  gotcha above. Auto-discovery dirs have no registry to go stale.
+
+Both `~/.kimi-code/skills/` and `~/.kimi-code/agents/` are SHARED user roots, so installs are
+provenance-keyed: skill dirs carry a `.zuvo-owned` marker and flat agents are tracked in a
+`.zuvo-agents` manifest. zuvo never deletes or overwrites what it did not install.
 
 Cursor requires a BUILD step because it uses flat agent files in `~/.cursor/agents/` with Cursor v3 frontmatter (`model: inherit`, `readonly: true/false`) instead of Claude Code's `tools:` list.
 
@@ -164,11 +196,12 @@ shared/includes/*.md            — shared procedural includes (81 files):
                                     quality-gates.md, env-compat.md, codesift-setup.md, run-logger.md
                                     + registries, schemas, protocols
 rules/*.md                      — code quality rules (20 files: cq-patterns, testing, security, file-limits, etc.)
-scripts/install.sh              — local install to Claude + Codex + Cursor + Antigravity
+scripts/install.sh              — local install to Claude + Codex + Cursor + Antigravity + Kimi
 scripts/release.sh              — release to marketplace
 scripts/build-codex-skills.sh   — build Codex distribution (called by install.sh)
 scripts/build-cursor-skills.sh  — build Cursor v3 distribution (called by install.sh)
 scripts/build-antigravity-skills.sh — build Antigravity distribution (called by install.sh)
+scripts/build-kimi-skills.sh    — build Kimi Code distribution (called by install.sh)
 hooks/*.sh                      — hooks install.sh copies into ~/.claude/hooks/ and registers in
                                   ~/.claude/settings.json. These are GLOBAL, not plugin-scoped —
                                   they keep running when the plugin is disabled, which is what makes

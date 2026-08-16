@@ -70,7 +70,18 @@ mentions the account, tier, or client support, stop and move to the next client.
 
 Writer-hint env precedence: `CLAUDE_MODEL` → `ZUVO_CODEX_MODEL` →
 `CURSOR_AGENT_MODEL` → `CURSOR_MODEL` → `GEMINI_MODEL` → `ANTIGRAVITY_MODEL` →
-`unknown`.
+`ZUVO_KIMI_CLI_MODEL` → `ZUVO_KIMI_MODEL` → `unknown`.
+
+**Kimi Code has no writer-hint variable of its own.** It is the one host that exports
+nothing identifying into its tool subprocess, so the resolver falls back to a PATH probe
+for `~/.kimi-code/bin` — checked *after* every other host, because a PATH component is a
+signal `env -u` cannot strip and an earlier check would make the answer depend on whether
+the machine happens to have Kimi installed. Two consequences worth knowing here: a Kimi
+session resolves to `platform=kimi writer_model=kimi-code` with no env set at all, and its
+reviewer is the opposite in-family lane (`kimi-k2.6`) only when `MOONSHOT_API_KEY` makes
+that lane reachable — otherwise the resolver falls through to a cross-host client exactly
+as Cursor does, and reports `same-model-fallback` when none is installed rather than
+naming a reviewer that cannot run.
 
 Run `$ZUVO_BASE/scripts/reviewer-model-route.sh` with **no override flags** and
 a **5s timeout**. Never `eval` resolver output. Output is valid only when

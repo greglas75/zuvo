@@ -230,7 +230,7 @@ fi
 # false-FAILS a correct script that merely spells the command across more lines,
 # and the block bound keeps this strictly stronger than a whole-file grep: the
 # glob must appear inside the token-scan command, not just somewhere in the file.
-for script in build-codex-skills.sh build-cursor-skills.sh build-antigravity-skills.sh; do
+for script in build-codex-skills.sh build-cursor-skills.sh build-antigravity-skills.sh build-kimi-skills.sh; do
   section="$(awk '
     /tool_refs=\$\(grep -rln/ { inblock = 1 }
     inblock                   { print }
