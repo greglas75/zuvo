@@ -381,7 +381,13 @@ isolated_path() {
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --provider mock-gemini"
   [ "$status" -eq 0 ]
   [[ "$output" == *"CROSS-PROVIDER ADVERSARIAL REVIEW"* ]]
-  [[ "$output" == *"Providers: gemini"* ]]
+  # The banner names the provider ACTUALLY dispatched, so the expectation has to carry
+  # the `mock-` prefix. It did not, and had been red since the harness guard landed:
+  # `--provider mock-*` is now refused unless ZUVO_ADVERSARIAL_TEST_HARNESS is set, so
+  # every mock in this file was renamed `gemini` -> `mock-gemini` while these two
+  # assertions kept the bare name. `*"Providers: gemini"*` cannot match
+  # "Providers: mock-gemini" — the prefix sits between the two halves of the glob.
+  [[ "$output" == *"Providers: mock-gemini"* ]]
   [[ "$output" == *"Mode: code"* ]]
   [[ "$output" == *"Input size:"* ]]
   [[ "$output" == *"END OF CROSS-PROVIDER REVIEW"* ]]
@@ -405,7 +411,9 @@ isolated_path() {
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --json --provider mock-gemini"
   [ "$status" -eq 0 ]
   [[ "$output" == *'"mode": "code"'* ]]
-  [[ "$output" == *'"providers_used": "gemini"'* ]]
+  # Same stale-name cause as the banner test above: the mock is `mock-gemini`, and the
+  # JSON reports the provider that actually ran.
+  [[ "$output" == *'"providers_used": "mock-gemini"'* ]]
   [[ "$output" == *'"provider_count": 1'* ]]
   [[ "$output" == *'"results"'* ]]
   [[ "$output" == *'"date"'* ]]

@@ -37,9 +37,26 @@ DOCS=$(git rev-parse HEAD)
 
 ci() { PG_REPO_ROOT="$TMP" bash "$CI"; }
 
+# Every "should BLOCK" case must assert the gate's own refusal text, not just exit 1.
+# A fail-closed gate exits 1 when it blocks AND when it dies before it can evaluate
+# anything, and those two are opposite defects wearing the same exit code. This is not
+# hypothetical: `label_adhoc` expanded $ZUVO_CI_LABELS unguarded under `set -u`, so under
+# the real workflow — which sets no such variable — the script exited inside its own
+# escape-hatch check, before resolving a range. The three "should pass" cases went red
+# and were correctly read as failures, but (a) and (e1) stayed GREEN off that crash and
+# reported a working guarantee for a gate that never ran once.
+blocked() { # <output> — true only if the gate refused for the reason it exists for
+  case "$1" in *"substantial change with no confirmed review coverage"*) return 0 ;; esac
+  return 1
+}
+
 # (a) PR range substantial + unreviewed + no label → exit 1 (FAIL CLOSED)
-ZUVO_CI_RANGE="$MAIN..$FHEAD" ci >/dev/null 2>&1
-[ "$?" -eq 1 ] && pass "(a) substantial unreviewed → CI FAIL (exit 1)" || bad "(a) should fail closed"
+out="$(ZUVO_CI_RANGE="$MAIN..$FHEAD" ci 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && blocked "$out"; then
+  pass "(a) substantial unreviewed → CI FAIL (exit 1) with the coverage refusal"
+else
+  bad "(a) should fail closed WITH its refusal message (rc=$rc, first line: $(printf '%s' "$out" | head -1))"
+fi
 
 # (c) zuvo:adhoc-approved label env → 0
 ZUVO_CI_RANGE="$MAIN..$FHEAD" ZUVO_CI_LABELS="other,zuvo:adhoc-approved" ci >/dev/null 2>&1
@@ -66,8 +83,12 @@ ZUVO_CI_RANGE="$MAIN..$FHEAD" ci >/dev/null 2>&1
 rm -rf memory/reviews
 
 # PR-event range resolution (no ZUVO_CI_RANGE): merge-base(main,HEAD)..HEAD
-GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=main PG_REPO_ROOT="$TMP" bash "$CI" >/dev/null 2>&1
-[ "$?" -eq 1 ] && pass "(e1) PR-event resolves range, unreviewed → FAIL (exit 1)" || bad "(e1) PR-event range resolution"
+out="$(GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=main PG_REPO_ROOT="$TMP" bash "$CI" 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && blocked "$out"; then
+  pass "(e1) PR-event resolves range, unreviewed → FAIL (exit 1) with the coverage refusal"
+else
+  bad "(e1) PR-event range resolution (rc=$rc, first line: $(printf '%s' "$out" | head -1))"
+fi
 
 # fail-closed when lib missing is covered by code; here assert label parse via GITHUB_EVENT_PATH
 if command -v jq >/dev/null 2>&1; then

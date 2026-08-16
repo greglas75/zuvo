@@ -42,8 +42,21 @@ fi
 ADHOC_LABEL="${ZUVO_ADHOC_LABEL:-zuvo:adhoc-approved}"
 
 label_adhoc() {
-  case " ${ZUVO_CI_LABELS:-} " in *" $ADHOC_LABEL "*) return 0 ;; esac
-  case " ${ZUVO_CI_LABELS//,/ } " in *" $ADHOC_LABEL "*) return 0 ;; esac
+  # Bind ONCE with a default, then substitute. `${ZUVO_CI_LABELS//,/ }` cannot carry a
+  # `:-` fallback in the same expansion, so the comma-splitting form below used to read
+  # the variable unguarded — and this script runs under `set -u` (line 21), where an
+  # unbound expansion exits the shell on the spot.
+  #
+  # The workflow (ci/zuvo-pipeline-entry.yml:33) invokes this script with no
+  # ZUVO_CI_LABELS, so that was EVERY real GitHub Actions run: the gate died inside its
+  # own escape-hatch check, before resolving a range or measuring anything. Fail-closed
+  # turned that crash into exit 1, i.e. a block — so small, docs-only and properly
+  # reviewed PRs were all rejected, and the two suite cases that expect exit 1 went green
+  # off the crash rather than off the gate logic. Nothing distinguishes "the gate ran and
+  # blocked you" from "the gate could not start" when both exit 1.
+  local labels="${ZUVO_CI_LABELS:-}"
+  case " $labels " in *" $ADHOC_LABEL "*) return 0 ;; esac
+  case " ${labels//,/ } " in *" $ADHOC_LABEL "*) return 0 ;; esac
   if [ -n "${GITHUB_EVENT_PATH:-}" ] && [ -r "${GITHUB_EVENT_PATH:-}" ] && command -v jq >/dev/null 2>&1; then
     jq -e --arg L "$ADHOC_LABEL" \
       '((.pull_request.labels // [])[]?.name) == $L' "$GITHUB_EVENT_PATH" >/dev/null 2>&1 && return 0
