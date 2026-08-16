@@ -227,9 +227,15 @@ case "$platform" in
     # the cursor comment above records, and the same shape as the gpt-5.6-sol arm further
     # up: a model the registry names (ZUVO_MODEL_KIMI / ZUVO_MODEL_KIMI_CLI) that the
     # ROUTING table never learned.
+    # ORDER IS LOAD-BEARING: `case` takes the FIRST matching arm, and `kimi-k2.[0-9]*` matches
+    # `kimi-k2.` + `7` + `-code`, i.e. the whole of `kimi-k2.7-code`. With the generic arm first,
+    # the explicit `kimi-k2.7-code` literal below was unreachable and that model was classified
+    # strong_alt — the opposite of what naming it in the strong_primary arm was meant to say.
+    # Specific arms first; the glob is the fallback. (Found by two independent auditors; no bats
+    # case covered this input, which is why it shipped.)
     case "$writer_model" in
-      kimi-k2.6|kimi-k2.[0-9]*)   writer_lane="strong_alt" ;;
       kimi-code|k3*|kimi-k3*|kimi-k2.7-code) writer_lane="strong_primary" ;;
+      kimi-k2.6|kimi-k2.[0-9]*)              writer_lane="strong_alt" ;;
     esac
     # Prefer the opposite IN-FAMILY lane, matching what claude (opus<->sonnet) and codex
     # (5.5<->5.4) do — K3 and K2.6 are different generations, not the same model twice.

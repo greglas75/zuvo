@@ -776,10 +776,17 @@ if [ -f "$DIST/hooks.kimi.toml" ]; then
   # zuvo_python PRINTS an interpreter path, it does not run one — calling it directly
   # would swallow the heredoc and silently pass.
   KIMI_PY="$(zuvo_python 2>/dev/null || true)"
-  if [ -z "$KIMI_PY" ]; then
+  # UNQUOTED on purpose, and split into an array: scripts/lib/portable.sh documents that
+  # zuvo_python can return the TWO-WORD string "py -3" on Windows, where no bare python3/python
+  # exists. Quoted as one token, bash would exec a file literally named `py -3`, fail, and report
+  # "hooks.kimi.toml failed schema validation" on perfectly valid TOML — blocking the whole Kimi
+  # target on the one platform zuvo_python exists to support. runlog-sync.sh:14 leaves $PY_BIN
+  # unquoted for exactly this reason.
+  read -r -a KIMI_PY_ARGV <<< "$KIMI_PY"
+  if [ "${#KIMI_PY_ARGV[@]}" -eq 0 ]; then
     echo "  WARN: no python3 — hooks.kimi.toml schema not validated"
     warnings=$((warnings + 1))
-  elif ! "$KIMI_PY" - "$DIST/hooks.kimi.toml" <<'PYEOF'
+  elif ! "${KIMI_PY_ARGV[@]}" - "$DIST/hooks.kimi.toml" <<'PYEOF'
 import sys
 try:
     import tomllib

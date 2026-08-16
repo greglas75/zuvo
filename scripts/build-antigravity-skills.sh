@@ -48,6 +48,24 @@ normalize_unicode() {
     -e 's/❓/[?]/g'
 }
 
+# --- Platform-block stripping (Antigravity) ---
+# Drop every OTHER platform's block and unwrap our own. This build had no such stage at all
+# until 2026-08-16, so every Antigravity install shipped shared/includes/env-compat.md with
+# Codex's "single-agent hard rule", Cursor's sequential-execution note and (once Kimi landed)
+# Kimi's dispatch prose all present verbatim — and an agent that reads Codex's hard rule
+# degrades ITSELF to single-agent although Antigravity has full dispatch. Silent by
+# construction: every skill still runs, just weaker. The three sibling builders each carried
+# their own copy of this, which is exactly why the fourth could be forgotten (see B-19).
+strip_platform_blocks() {
+  sed \
+    -e '/<!-- PLATFORM:CODEX -->/,/<!-- \/PLATFORM:CODEX -->/d' \
+    -e '/<!-- PLATFORM:CURSOR -->/,/<!-- \/PLATFORM:CURSOR -->/d' \
+    -e '/<!-- PLATFORM:KIMI -->/,/<!-- \/PLATFORM:KIMI -->/d' \
+    -e '/<!-- PLATFORM:ANTIGRAVITY -->/d' \
+    -e '/<!-- \/PLATFORM:ANTIGRAVITY -->/d'
+}
+
+
 # --- Path Replacement (Antigravity) ---
 # CRITICAL: Replace ALL relative paths (../../) with absolute ~/.gemini/antigravity/ paths.
 # Relative paths work in Claude Code (plugin resolves from SKILL.md location) but NOT in
@@ -253,6 +271,7 @@ transform_skill_for_antigravity() {
     { print }
   ' "$src" \
     | replace_paths \
+    | strip_platform_blocks \
     | strip_tool_names \
     | replace_model_refs \
     | replace_reviewer_lane_refs_antigravity \
@@ -334,6 +353,7 @@ adapt_agent_for_antigravity() {
     { print }
   ' "$src" \
     | replace_paths \
+    | strip_platform_blocks \
     | strip_tool_names \
     | replace_model_refs \
     | replace_reviewer_lane_refs_antigravity \
@@ -353,6 +373,7 @@ for f in "$PLUGIN_DIR"/rules/*.md; do
   [ -f "$f" ] || continue
   cat "$f" \
     | replace_paths \
+    | strip_platform_blocks \
     | strip_tool_names \
     | replace_model_refs \
     | replace_reviewer_lane_refs_antigravity \
@@ -369,6 +390,7 @@ if [ -d "$PLUGIN_DIR/shared/includes" ]; then
     [ -f "$f" ] || continue
     cat "$f" \
       | replace_paths \
+      | strip_platform_blocks \
       | strip_tool_names \
       | replace_model_refs \
       | replace_reviewer_lane_refs_antigravity \
@@ -464,6 +486,7 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
     if [ -f "$skill_dir/$f" ]; then
       cat "$skill_dir/$f" \
         | replace_paths \
+        | strip_platform_blocks \
         | strip_tool_names \
         | replace_model_refs \
         | replace_reviewer_lane_refs_antigravity \
@@ -505,7 +528,7 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
     mkdir -p "$DIST/skills/$skill/references"
     for ref in "$skill_dir/references/"*.md; do
       [ -f "$ref" ] || continue
-      cat "$ref" | replace_paths | replace_model_refs | replace_reviewer_lane_refs_antigravity | normalize_unicode > "$DIST/skills/$skill/references/$(basename "$ref")"
+      cat "$ref" | replace_paths | strip_platform_blocks | replace_model_refs | replace_reviewer_lane_refs_antigravity | normalize_unicode > "$DIST/skills/$skill/references/$(basename "$ref")"
       replace_config_refs "$DIST/skills/$skill/references/$(basename "$ref")"
     done
   fi

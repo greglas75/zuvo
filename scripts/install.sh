@@ -1321,6 +1321,21 @@ install_kimi() {
     return 0
   fi
 
+  # KIMI_CODE_HOME is user-settable, and two steps below we `rm -rf "$KIMI_HOME/shared"` and
+  # "$KIMI_HOME/rules" -- two of the most common directory names there are. "It is a directory"
+  # is not evidence that it is KIMI'S directory. Everywhere else in this function the install is
+  # provenance-keyed (.zuvo-owned markers, the .zuvo-agents manifest) precisely so zuvo never
+  # deletes what it did not install; shared/ and rules/ were the one part with no such guard.
+  # Antigravity has the same wipe-then-recreate shape but no home-directory override, so Kimi is
+  # the first place the pattern meets a path a typo can redirect.
+  if [[ -n "${KIMI_CODE_HOME:-}" ]] \
+     && [[ ! -f "$KIMI_HOME/config.toml" && ! -d "$KIMI_HOME/skills" && ! -d "$KIMI_HOME/agents" ]]; then
+    fail "KIMI_CODE_HOME=$KIMI_HOME does not look like a Kimi Code home"
+    echo "       (no config.toml, no skills/, no agents/). Refusing to run destructive" >&2
+    echo "       install steps against it. Unset KIMI_CODE_HOME to use ~/.kimi-code." >&2
+    return 1
+  fi
+
   # Step 1: Build
   echo "  Building Kimi distribution..."
   local build_log
@@ -1392,7 +1407,12 @@ install_kimi() {
   local KIMI_AGENT_MANIFEST="$KIMI_AGENTS/.zuvo-agents"
   local kimi_agents_installed=0 kimi_agents_skipped=0 kimi_agents_pruned=0
 
-  if [[ -f "$KIMI_AGENT_MANIFEST" ]]; then
+  # `ls "$DIST"/agents/*.md` guard: the prune below deletes every manifest entry ABSENT from the
+  # dist, so an empty/missing dist/agents would delete every agent zuvo owns. The manifest write
+  # 30 lines down already defends against exactly that case ("no agents in dist -- kept the
+  # previous agent manifest"), which means a build exiting 0 with nothing emitted was considered
+  # reachable -- the manifest was protected and the FILES were not.
+  if [[ -f "$KIMI_AGENT_MANIFEST" ]] && ls "$DIST"/agents/*.md >/dev/null 2>&1; then
     while IFS= read -r _prev; do
       [[ -n "$_prev" ]] || continue
       if [[ ! -f "$DIST/agents/$_prev" && -f "$KIMI_AGENTS/$_prev" ]]; then
@@ -1403,7 +1423,12 @@ install_kimi() {
   fi
 
   local kimi_manifest_tmp
-  kimi_manifest_tmp=$(mktemp)
+  # mktemp INSIDE $KIMI_AGENTS, not $TMPDIR: the `mv -f` below is only atomic within one
+  # filesystem, and $TMPDIR is commonly a separate one. A cross-device mv degrades to
+  # copy+unlink, so an interruption leaves .zuvo-agents -- the file deciding which agents zuvo
+  # may prune or overwrite -- torn. This file already gets it right twice (install.sh:440-444
+  # and the cursor helper copy), both co-located, both commented for this reason.
+  kimi_manifest_tmp=$(mktemp "$KIMI_AGENTS/.zuvo-agents.XXXXXX")
   if ls "$DIST"/agents/*.md >/dev/null 2>&1; then
     local _agent _aname
     for _agent in "$DIST"/agents/*.md; do
@@ -1511,7 +1536,15 @@ try:
     import tomllib
     tomllib.loads(merged)
 except ModuleNotFoundError:
-    pass  # python < 3.11: no parser available; the block is generated, not hand-edited
+    # python < 3.11: no TOML parser. The justification that used to sit here -- 'the block is
+    # generated, not hand-edited' -- only covers the TEMPLATE half of `merged`. The other half is
+    # the user's EXISTING config, parsed by hand-rolled BEGIN/END line matching, which can be
+    # malformed independently of anything zuvo wrote. Writing unvalidated therefore contradicts
+    # the guarantee stated 40 lines above, and CLAUDE.md states it absolutely: a corrupt
+    # config.toml breaks the Kimi CLI itself. Un-provable is not the same as safe -- abort.
+    print('  ! python < 3.11: cannot validate merged config.toml (no tomllib) -- hook merge aborted')
+    print('    upgrade python3, or merge the hooks block by hand from dist/kimi/hooks.kimi.toml')
+    sys.exit(0)
 except Exception as exc:
     print(f'  ! merged config.toml would not parse ({exc}) -- hook merge aborted')
     sys.exit(0)
