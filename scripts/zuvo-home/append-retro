@@ -249,6 +249,77 @@ if [ -n "$MD_FILE" ] && [ -f "$MD_FILE" ]; then
   # Append-only, same reasoning as retros.log above: `rotate-retros` archives by age.
 fi
 
+# ── SHRINK GUARD + rolling snapshot ──────────────────────────────────────────
+#
+# On 2026-08-15 11:17 retros.log and retros.md were rewritten in the same second: the log went
+# 143486 -> 70167 bytes and lost 02-11.08, retros.md went 2828907 -> 944395. Nothing in ~/.zuvo
+# archived any of it, and nothing noticed for four days. `rotate-retros` was NOT the writer — its
+# own log ends 08-13 and its job runs weekly — so a guard living inside the archiving scripts would
+# not have caught this. The writer is unknown, which is exactly why the guard has to be indifferent
+# to WHO wrote: it only compares the file against what it was last seen to be.
+#
+# This runs here because append-retro executes 54-199 times a day, so detection latency is minutes.
+# Two rules, and the second is the one that makes recovery possible without the collector:
+#   1. Fewer RETRO rows than the recorded high-water => SHRINK. Shout, leave a dated marker, and do
+#      NOT advance the high-water.
+#   2. A snapshot is taken ONLY when the file is at or above the high-water, so a truncated file can
+#      never overwrite the last good copy. That inversion is the whole point: the naive version of
+#      this feature would have faithfully backed up the damage.
+# Never fatal: a guard that can block a retro write would cost more than the data it protects.
+_shrink_guard() {
+  _sg_hw="$ZUVO_HOME/.retros-highwater"
+  _sg_dir="$ZUVO_HOME/retros-snapshots"
+  _sg_every="${ZUVO_RETRO_SNAPSHOT_SEC:-21600}"     # 6h
+  _sg_keep="${ZUVO_RETRO_SNAPSHOT_KEEP:-8}"
+  _sg_rows=$(grep -c '^RETRO:' "$RETRO_LOG" 2>/dev/null || echo 0)
+  case "$_sg_rows" in ''|*[!0-9]*) return 0 ;; esac
+  _sg_prev=$(sed -n 's/^rows=//p' "$_sg_hw" 2>/dev/null | head -1)
+  case "$_sg_prev" in ''|*[!0-9]*) _sg_prev=0 ;; esac
+
+  if [ "$_sg_rows" -lt "$_sg_prev" ]; then
+    _sg_when=$(date -u +%Y%m%dT%H%M%SZ)
+    {
+      echo "retros.log SHRANK: $_sg_prev -> $_sg_rows RETRO rows at $_sg_when"
+      echo "high-water recorded: $(cat "$_sg_hw" 2>/dev/null | tr '\n' ' ')"
+      echo "newest snapshot:     $(ls -t "$_sg_dir"/retros.log.*.gz 2>/dev/null | head -1)"
+      echo "recover locally:     gunzip -c <snapshot> > $RETRO_LOG"
+      echo "recover from fleet:  fleet-retro-pull.py --restore-self"
+    } > "$ZUVO_HOME/retros-SHRANK-$_sg_when.txt" 2>/dev/null
+    echo "append-retro: WARNING — retros.log lost $((_sg_prev - _sg_rows)) rows since the last append." >&2
+    echo "append-retro: see $ZUVO_HOME/retros-SHRANK-$_sg_when.txt (high-water NOT advanced, snapshots preserved)" >&2
+    return 0
+  fi
+
+  # at or above high-water: safe to record, and safe to snapshot
+  printf 'rows=%s\nbytes=%s\nat=%s\n' "$_sg_rows" \
+    "$(wc -c < "$RETRO_LOG" 2>/dev/null | tr -d ' ')" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    > "$_sg_hw" 2>/dev/null || return 0
+
+  mkdir -p "$_sg_dir" 2>/dev/null || return 0
+  _sg_newest=$(ls -t "$_sg_dir"/retros.log.*.gz 2>/dev/null | head -1)
+  if [ -n "$_sg_newest" ]; then
+    _sg_age=$(( $(date +%s) - $(_mtime_epoch "$_sg_newest") ))
+    [ "$_sg_age" -lt "$_sg_every" ] && return 0
+  fi
+  _sg_stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  gzip -c "$RETRO_LOG" > "$_sg_dir/retros.log.$_sg_stamp.gz" 2>/dev/null
+  [ -f "$RETRO_MD" ] && gzip -c "$RETRO_MD" > "$_sg_dir/retros.md.$_sg_stamp.gz" 2>/dev/null
+  for _sg_kind in retros.log retros.md; do
+    ls -t "$_sg_dir/$_sg_kind".*.gz 2>/dev/null | tail -n +$((_sg_keep + 1)) | while read -r _sg_old; do
+      rm -f "$_sg_old" 2>/dev/null
+    done
+  done
+  return 0
+}
+# GNU first, BSD second, digits only — same trap as hooks/lib/refactor-gate-lib.sh::_mtime, where
+# BSD-first silently returned a filesystem value on Linux and poisoned the arithmetic below.
+_mtime_epoch() {
+  _me_v="$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0)"
+  _me_v="$(printf '%s' "$_me_v" | tr -cd '0-9')"; [ -n "$_me_v" ] || _me_v=0
+  printf '%s' "$_me_v"
+}
+_shrink_guard || true
+
 _release; trap - INT TERM EXIT
 echo "OK: appended full retro to retros.log ($SKILL on $PROJECT @ $SHA7, $DATE)"
 exit 0
