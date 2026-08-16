@@ -55,6 +55,19 @@ sleep 1; run
 SNAP_BEFORE=$(ls -t "$Z/retros-snapshots"/retros.log.*.gz | head -1)
 GOOD_ROWS=$(gunzip -c "$SNAP_BEFORE" | grep -c '^RETRO:')
 
+# ZERO ROWS — the worst case, and the one the first version of this guard silently ignored.
+# `grep -c ... || echo 0` yields "0\n0" on an empty file (grep prints 0 AND exits 1), the newline
+# matches the non-digit escape, and the guard returned early: it switched itself off at exactly the
+# moment it exists for. Found by adversarial review, reproduced, fixed.
+cp "$Z/retros.log" "$Z/.keep8"
+: > "$Z/retros.log"
+sleep 1; : > "$TMP/err"; run
+grep -q 'lost 8 rows' "$TMP/err" \
+  && ok "a retros.log emptied to ZERO rows still trips the guard" \
+  || bad "zero rows did not trip the guard; stderr was: $(head -1 "$TMP/err")"
+[ "$(hw)" = "8" ] && ok "high-water survives a zero-row file" || bad "high-water regressed to '$(hw)' on an empty file"
+cp "$Z/.keep8" "$Z/retros.log"; sleep 1; run
+
 # THE INCIDENT, reproduced: something outside this script truncates the file.
 head -2 "$Z/retros.log" > "$Z/.t" && mv "$Z/.t" "$Z/retros.log"
 sleep 1; run

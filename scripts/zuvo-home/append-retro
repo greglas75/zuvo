@@ -271,8 +271,13 @@ _shrink_guard() {
   _sg_dir="$ZUVO_HOME/retros-snapshots"
   _sg_every="${ZUVO_RETRO_SNAPSHOT_SEC:-21600}"     # 6h
   _sg_keep="${ZUVO_RETRO_SNAPSHOT_KEEP:-8}"
-  _sg_rows=$(grep -c '^RETRO:' "$RETRO_LOG" 2>/dev/null || echo 0)
-  case "$_sg_rows" in ''|*[!0-9]*) return 0 ;; esac
+  # NOT `grep -c ... || echo 0`: grep prints "0" AND exits 1 on no-match, so the fallback appends a
+  # SECOND zero and _sg_rows becomes "0\n0" — which contains a newline, matches the non-digit escape
+  # below, and returns early. The guard would have switched itself off at exactly the moment it
+  # exists for: a retros.log truncated to zero rows. Found by adversarial review, reproduced.
+  _sg_rows=$(grep -c '^RETRO:' "$RETRO_LOG" 2>/dev/null) || _sg_rows=0
+  _sg_rows=$(printf '%s' "${_sg_rows:-0}" | tr -cd '0-9')
+  [ -n "$_sg_rows" ] || _sg_rows=0
   _sg_prev=$(sed -n 's/^rows=//p' "$_sg_hw" 2>/dev/null | head -1)
   case "$_sg_prev" in ''|*[!0-9]*) _sg_prev=0 ;; esac
 
