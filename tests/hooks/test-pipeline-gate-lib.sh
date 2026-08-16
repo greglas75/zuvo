@@ -721,6 +721,41 @@ pg_is_substantial "" && bad "empty range should NOT be substantial" || pass "fai
 
 # ---------- agent-env detection ----------
 ( ZUVO_AGENT=1 pg_is_agent_env ) && pass "agent_env: ZUVO_AGENT=1 → agent" || bad "ZUVO_AGENT=1 should be agent"
+
+# ZUVO_AI_RUN is the repo's OWN agent marker (skills/refactor/SKILL.md, refactor-gate-lib.sh).
+# It was missing from pg_is_agent_env while _is_agent_env had it, and pre-push-gate.sh exempts
+# whatever this says is human — so a marked agent run skipped the pipeline gate outright.
+# env -i is MANDATORY here, not decoration. This suite runs inside an agent harness, so
+# CLAUDECODE/CLAUDE_PLUGIN_ROOT are already set in the ambient environment and pg_is_agent_env
+# returns 0 through THOSE — a bare `( ZUVO_AI_RUN=1 pg_is_agent_env )` passes whether or not
+# ZUVO_AI_RUN is in the list, i.e. it asserts nothing. (Caught by probing the mutant: removing
+# ZUVO_AI_RUN from the loop left this assertion green.) Same isolation the clean-env case below
+# already uses.
+env -i PATH="$PATH" ZUVO_AI_RUN=1 bash -c ". '$LIB'; pg_is_agent_env" \
+  && pass "agent_env: ZUVO_AI_RUN=1 → agent (was the pre-push fail-open)" \
+  || bad "ZUVO_AI_RUN=1 must be agent — pre-push-gate exempts humans, so this is a gate bypass"
+env -i PATH="$PATH" ANTIGRAVITY_SESSION_ID=x bash -c ". '$LIB'; pg_is_agent_env" \
+  && pass "agent_env: ANTIGRAVITY_SESSION_ID → agent" \
+  || bad "ANTIGRAVITY_SESSION_ID must be agent"
+
+# DRIFT GUARD — the two detectors cannot share code (bash ${!var} vs POSIX), so nothing but this
+# comparison keeps them together. They HAD drifted by two variables before it existed. Compare
+# the extracted var lists rather than a hardcoded count: a count guard passes the moment someone
+# swaps one name for another.
+_pg_vars="$(sed -n '/^pg_is_agent_env()/,/^}/p' "$LIB" | grep -oE '\b[A-Z][A-Z0-9_]{3,}\b' | sort -u)"
+_rg_lib="$ROOT/hooks/lib/refactor-gate-lib.sh"
+if [ -f "$_rg_lib" ]; then
+  _rg_vars="$(sed -n '/^_is_agent_env()/,/^}/p' "$_rg_lib" | grep -oE '\b[A-Z][A-Z0-9_]{3,}\b' | sort -u)"
+  _only_rg="$(comm -13 <(printf '%s\n' "$_pg_vars") <(printf '%s\n' "$_rg_vars") | tr '\n' ' ')"
+  _only_pg="$(comm -23 <(printf '%s\n' "$_pg_vars") <(printf '%s\n' "$_rg_vars") | tr '\n' ' ')"
+  if [ -z "$_only_rg" ] && [ -z "$_only_pg" ]; then
+    pass "agent_env DRIFT GUARD: pg_is_agent_env and _is_agent_env cover the same variables"
+  else
+    bad "agent_env DRIFT: only-in-refactor-gate=[$_only_rg] only-in-pipeline-gate=[$_only_pg] — add to BOTH"
+  fi
+else
+  pass "agent_env DRIFT GUARD: skipped (refactor-gate-lib.sh absent)"
+fi
 env -i PATH="$PATH" bash -c ". '$LIB'; pg_is_agent_env" \
   && bad "clean env should be human" \
   || pass "agent_env: clean env → human (pass-through)"

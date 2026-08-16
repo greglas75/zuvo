@@ -603,13 +603,25 @@ pg_allow_adhoc() {
   return 1
 }
 
+# KEEP THIS LIST IN SYNC WITH refactor-gate-lib.sh :: _is_agent_env.
+# They cannot share code (this one uses bash ${!var}, the other is POSIX), so the ONLY thing
+# keeping them together is the drift guard in tests/hooks/test-pipeline-gate-lib.sh. That guard
+# exists because the lists HAD already drifted: this function was missing ZUVO_AI_RUN and
+# ANTIGRAVITY_SESSION_ID, and ZUVO_AI_RUN is the repo's OWN canonical agent marker — set by
+# skills/refactor/SKILL.md and refactor-gate-lib.sh. The consequence was not cosmetic:
+# hooks/pre-push-gate.sh reads `pg_is_agent_env || return 0  # human push exempt`, so a run
+# marked ZUVO_AI_RUN=1 was classified HUMAN and skipped the pipeline-entry gate entirely, while
+# the refactor gate correctly saw it as an agent. A fail-open in the layer whose whole job is to
+# fail closed. Measured 2026-08-16 before the fix; adding a variable to one list and not the
+# other is how it happened, so add to BOTH or the guard will tell you.
 pg_is_agent_env() {
   [ "${ZUVO_AGENT:-0}" = "1" ] && return 0
   local v
   for v in CLAUDECODE CLAUDE_PLUGIN_ROOT CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SESSION \
            CODEX_WORKSPACE CODEX_SANDBOX CODEX_HOME \
            CURSOR_AGENT CURSOR_TRACE_ID \
-           GEMINI_CLI ANTIGRAVITY GEMINI_ANTIGRAVITY; do
+           GEMINI_CLI ANTIGRAVITY GEMINI_ANTIGRAVITY ANTIGRAVITY_SESSION_ID \
+           ZUVO_AI_RUN; do
     [ -n "${!v:-}" ] && return 0
   done
   return 1
