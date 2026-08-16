@@ -173,7 +173,12 @@ skip_log_append() {
   trap '_lock_release' EXIT INT TERM
   [ -f "$SKIP_LOG" ] || printf '# v1 SKIP\tDATE\tSKILL\tPROJECT\tNOTE\n' > "$SKIP_LOG"
   printf 'SKIP:\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SKILL" "$PROJECT" "runs.log gate bypassed" >> "$SKIP_LOG"
-  if [ "$(grep -c '^SKIP:' "$SKIP_LOG" 2>/dev/null || echo 0)" -gt 100 ]; then
+  # NOT `|| echo 0`: grep -c PRINTS 0 and EXITS 1 on no-match, so the fallback appends a second
+  # zero and the test sees "0\n0" -> "integer expression expected". Latent here (a SKIP line was
+  # just appended, so the count is never 0) but it is the same defect that switched append-retro's
+  # shrink guard off, and rotate-retros:143 has carried a note about it for longer than either.
+  _skip_n=$(grep -c '^SKIP:' "$SKIP_LOG" 2>/dev/null) || _skip_n=0
+  if [ "$(printf '%s' "${_skip_n:-0}" | tr -cd '0-9')" -gt 100 ] 2>/dev/null; then
     T="$SKIP_LOG.tmp.$$.$(date +%s)"
     head -1 "$SKIP_LOG" > "$T"; grep '^SKIP:' "$SKIP_LOG" | tail -n 100 >> "$T"; mv "$T" "$SKIP_LOG"
   fi

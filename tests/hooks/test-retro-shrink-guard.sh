@@ -102,5 +102,19 @@ cp "$Z/recovered.log" "$Z/retros.log"; sleep 1; : > "$TMP/err"; run
 grep -q 'lost' "$TMP/err" && bad "still warns after the file was restored — the alarm never clears" \
                           || ok "the warning clears once the log is back at high-water"
 
+# CLASS GUARD. `grep -c ... || echo 0` is a three-instance bug in this directory: it disabled the
+# shrink guard above, and sat latent in append-runlog and retro-stub (where it would have reached
+# awk as a syntax error). rotate-retros:143 has carried a warning note about it longer than any of
+# them, which is precisely why a note is not enough.
+echo "=== class guard: no \`grep -c ... || echo\` anywhere in zuvo-home ==="
+offenders=""
+for f in "$ROOT"/scripts/zuvo-home/*; do
+  [ -f "$f" ] || continue
+  hits=$(awk '/grep -c[^|]*\|\|[[:space:]]*echo/ && !/^[[:space:]]*#/{print FILENAME ":" FNR}' "$f" 2>/dev/null)
+  [ -n "$hits" ] && offenders="$offenders $hits"
+done
+if [ -z "$offenders" ]; then ok "no helper counts with a \`|| echo\` fallback"
+else bad "the grep -c || echo trap is back at:$offenders"; fi
+
 echo ""
 if [ "$fails" -eq 0 ]; then echo "ALL PASS"; else echo "FAILED: $fails"; exit 1; fi

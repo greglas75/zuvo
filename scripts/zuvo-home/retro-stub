@@ -129,7 +129,10 @@ _emit_one() {
     printf 'Run did not reach its terminal retrospective. A later full retro for\n'
     printf 'the same retro-session-id supersedes this stub.\n\n'
   } >> "$RETRO_MD"
-  EC=$(grep -c '^<!-- RETRO -->' "$RETRO_MD" 2>/dev/null || echo 0)
+  # Same trap as append-runlog/append-retro: `|| echo 0` yields "0\n0" when grep finds nothing.
+  # Here it would reach awk as c>=('0\n0'-99) — a syntax error, not a wrong number.
+  EC=$(grep -c '^<!-- RETRO -->' "$RETRO_MD" 2>/dev/null) || EC=0
+  EC=$(printf '%s' "${EC:-0}" | tr -cd '0-9'); [ -n "$EC" ] || EC=0
   if [ "$EC" -gt 100 ]; then
     T="$RETRO_MD.tmp.$$.$(date +%s)"
     awk '/^<!-- RETRO -->/{c++} c>=('"$EC"'-99){print}' "$RETRO_MD" > "$T" && mv "$T" "$RETRO_MD"
