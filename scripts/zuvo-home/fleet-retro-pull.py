@@ -44,6 +44,7 @@ from datetime import datetime, timedelta, timezone
 
 ZUVO = os.environ.get("ZUVO_HOME", os.path.expanduser("~/.zuvo"))
 FLEET = os.path.join(ZUVO, "remote", "fleet")
+SELF = os.path.join(ZUVO, "remote", "self")   # --restore-self target; retro-mine reads remote/*/*/
 REMOTE_DATA = "/home/gha/telemetry-collector/data/codesift"
 SSH_TIMEOUT = 25          # hard wall: an unreachable collector must fail, never hang a cron job
 
@@ -125,8 +126,30 @@ def rollup_to_line(day, r):
     ]])
 
 
+def local_earliest_day():
+    """Oldest RETRO day still in ~/.zuvo/retros.log, or "" if unreadable/empty.
+
+    This is the overlap fence for --restore-self. Rollups are AGGREGATES: re-importing a day the
+    local log still covers would count those runs twice in the miner, and the second count would be
+    indistinguishable from real activity. Restoring strictly BELOW this day makes double-counting
+    impossible by construction rather than by care.
+    """
+    try:
+        days = []
+        with open(os.path.join(ZUVO, "retros.log"), encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                if line.startswith("RETRO:"):
+                    d = line[6:].strip().split("\t")[0][:10]
+                    if len(d) == 10 and d[4] == "-":
+                        days.append(d)
+        return min(days) if days else ""
+    except OSError:
+        return ""
+
+
 def main():
     dry = "--dry-run" in sys.argv
+    restore_self = "--restore-self" in sys.argv
     days = None
     if "--days" in sys.argv:
         try:
@@ -137,6 +160,31 @@ def main():
     cutoff = ""
     if days:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    # --restore-self: pull THIS install's own rollups back down, for days the local retros.log no
+    # longer covers. The collector is the only surviving copy after a local truncation (measured
+    # 2026-08-15: retros.log went 143486 -> 70167 bytes and lost 02-11.08 with no archive).
+    # Restored rows land in remote/self/<anon8>/, NOT in retros.log: they are lossy reconstructions
+    # (no project, note, branch or sha7 — the rollup never carried them), so writing them into the
+    # canonical log would make reconstructions indistinguishable from real rows. remote/ is where
+    # retro-mine already looks for exactly this kind of second-hand data.
+    before = ""
+    if restore_self:
+        if "--before" in sys.argv:
+            try:
+                before = sys.argv[sys.argv.index("--before") + 1]
+            except IndexError:
+                print("fleet-retro-pull: --before needs YYYY-MM-DD", file=sys.stderr)
+                return 1
+        else:
+            before = local_earliest_day()
+        if not before:
+            print("fleet-retro-pull: --restore-self needs --before YYYY-MM-DD "
+                  "(could not read the oldest day from retros.log, so the overlap fence is unknown)",
+                  file=sys.stderr)
+            return 1
+        print(f"fleet-retro-pull: restore-self — importing own rollups STRICTLY BEFORE {before} "
+              f"(the oldest day retros.log still holds)")
 
     vps = collector_ssh()
     if not vps:
@@ -174,15 +222,20 @@ def main():
             continue
         if not anon or not rollups:
             continue
-        if mine and anon == mine:
+        is_self = bool(mine) and anon == mine
+        if is_self and not restore_self:
             skipped_self += 1
             continue
+        if restore_self and not is_self:
+            continue          # restore mode is about THIS install only
         for r in rollups:
             if not isinstance(r, dict):
                 continue
             day = str(r.get("day") or "")[:10]
             if not day or (cutoff and day < cutoff):
                 continue
+            if before and day >= before:
+                continue      # the local log still covers this day — importing it would double-count
             # str() every element: a list-valued field would make the tuple unhashable and
             # kill the sync loop on seen.add().
             key = (anon, day, str(r.get("skill")), str(r.get("code_type")),
@@ -211,7 +264,7 @@ def main():
         # os.path.join then escapes FLEET, overwriting an arbitrary retros.log. Allowlist
         # the characters instead of trying to detect traversal.
         short = re.sub(r"[^A-Za-z0-9]", "", anon)[:8] or "unknown"
-        d = os.path.join(FLEET, short)
+        d = os.path.join(SELF if restore_self else FLEET, short)
         total += len(lines)
         if dry:
             print(f"  would write {len(lines):>5} retros -> {d}/retros.log")
@@ -222,9 +275,10 @@ def main():
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write("\n".join(sorted(lines)) + "\n")
         os.replace(tmp, os.path.join(d, "retros.log"))
-        print(f"  {len(lines):>5} retros -> remote/fleet/{short}/retros.log")
+        print(f"  {len(lines):>5} retros -> remote/{'self' if restore_self else 'fleet'}/{short}/retros.log")
 
-    print(f"fleet-retro-pull: {total} retros from {len(per_install)} foreign install(s)"
+    kind = "own (restored)" if restore_self else "foreign"
+    print(f"fleet-retro-pull: {total} retros from {len(per_install)} {kind} install(s)"
           f"{' [dry-run]' if dry else ''}; own uploads skipped: {skipped_self}")
     return 0
 
