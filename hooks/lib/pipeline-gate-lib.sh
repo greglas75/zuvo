@@ -20,6 +20,8 @@
 # Return-code conventions:
 #   pg_is_substantial   : 0 = substantial (block-eligible), 1 = not
 #   pg_range_reviewed    : 0 = covered, 1 = definitively NOT covered, 2 = unknown/error
+#   pg_uncovered_files   : 0 = computed (stdout = uncovered files, may be empty),
+#                          2 = unknown/error, 3 = no production files in range
 #   pg_allow_adhoc       : 0 = escape active, 1 = not
 #   pg_is_agent_env      : 0 = agent invocation, 1 = human
 #   pg_is_production      : 0 = production path, 1 = non-production
@@ -346,8 +348,70 @@ pg_artifact_proven() {
 #   - NO permanent whitelist: re-editing a reviewed file changes its blob → the old
 #     artifact (different blob) no longer covers it → a fresh review is required.
 #   - genuine freelance (raw Edit, no pipeline) → file's content unreviewed → blocked.
+#
+# pg_file_covered_by_any <root> <reviews_dir> <head> <range> <file> -> 0 = covered, 1 = not.
+#
+# The PER-FILE half of the rule above, factored out so the two callers that need it —
+# pg_range_reviewed (a verdict: is the whole range covered?) and pg_uncovered_files (an
+# enumeration: which files are not?) — can never drift apart. Two copies of the blob /
+# deletion matching would eventually disagree, and the callers act on the answer in
+# OPPOSITE safety directions (block a push vs. skip a review), so a disagreement is
+# precisely the bug that would go unnoticed until it shipped something unreviewed.
+#
+# Internal helper: arguments are supplied by callers that already validated the repo and
+# the range. Every git failure inside resolves toward NOT covered, i.e. toward more review.
+pg_file_covered_by_any() {
+  local root="$1" reviews="$2" head="$3" range="$4" f="$5"
+  local bcur delc art art_files art_range art_head art_base bart
+  # bcur empty ⇒ F is DELETED at head (no shippable content). A deletion is COVERED when
+  # an artifact reviewed the SAME deletion — F in its files-set AND F also absent at its
+  # reviewed head (so both blobs empty). --verify guarantees absent⇒empty, so a "" == ""
+  # match is a genuine reviewed-deletion, never a stray literal string. Do NOT hard-block
+  # on bcur empty (that made every reviewed deletion look "uncovered").
+  bcur="$(pg_file_blob "$root" "$head" "$f")"
+  # For a DELETION (bcur empty), resolve the exact commit that removed F within THIS checked
+  # range, so coverage can require the artifact's range to CONTAIN that specific commit —
+  # content-keying alone cannot tell two deletions of the same path apart.
+  delc=""
+  if [ -z "$bcur" ]; then
+    # Resolve the deleting commit over the SAME commit set the range denotes. For the @unpushed
+    # sentinel, `git log "@unpushed..HEAD"` is a bad revision — use the un-pushed walk
+    # (HEAD --not --remotes); any real A..B range uses the two-dot form directly.
+    if [ "${range%%..*}" = "@unpushed" ]; then
+      delc="$(git -C "$root" log --diff-filter=D --no-renames --format=%H -c "${range##*..}" --not --remotes -- "$f" 2>/dev/null | head -1)"
+    else
+      delc="$(git -C "$root" log --diff-filter=D --no-renames --format=%H "$range" -- "$f" 2>/dev/null | head -1)"
+    fi
+  fi
+  for art in "$reviews"/*.md; do
+    [ -e "$art" ] || continue
+    grep -q '<!-- zuvo-review -->' "$art" 2>/dev/null || continue
+    pg_artifact_proven "$root" "$art" || continue           # post-cutoff artifact must cite a real adversarial run
+    art_files="$(sed -n 's/^files:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
+    pg_files_covered "$f" "$art_files" || continue          # F in artifact's files-set (or *)
+    art_range="$(sed -n 's/^range:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
+    art_head="${art_range##*..}"; [ -n "$art_head" ] || continue
+    if [ -n "$bcur" ]; then
+      bart="$(pg_file_blob "$root" "$art_head" "$f")"
+      [ "$bart" = "$bcur" ] && return 0                     # existing file: SAME content (incl. files:*)
+    else
+      # DELETED file: covered iff the artifact EXPLICITLY lists F (not '*') AND its reviewed
+      # range CONTAINS the exact commit that deleted F — delc reachable from art_head but NOT
+      # from art_base. That ties coverage to THIS deletion; a same-path deletion reviewed in
+      # an unrelated range/branch (or a files:'*' artifact) does not silently cover it.
+      art_base="${art_range%%..*}"
+      if [ "$art_files" != "*" ] && [ -n "$delc" ] && [ -n "$art_base" ] \
+         && git -C "$root" merge-base --is-ancestor "$delc" "$art_head" 2>/dev/null \
+         && ! git -C "$root" merge-base --is-ancestor "$delc" "$art_base" 2>/dev/null; then
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
 pg_range_reviewed() {
-  local range="$1" root reviews head change_files f bcur art art_range art_files art_head bart this any=0
+  local range="$1" root reviews head change_files f any=0
   [ -n "$range" ] || return 2
   root="$(pg_repo_root)" || return 2
   head="${range##*..}"; [ -n "$head" ] || return 2
@@ -358,61 +422,66 @@ pg_range_reviewed() {
   change_files="$(pg_changed_production "$range" 2>/dev/null)"
   [ -n "$change_files" ] || return 1       # no production files → nothing grants coverage
 
+  # A here-doc-fed `while` is NOT a subshell (a pipe would be), so `return 1` below returns
+  # from the FUNCTION on the first uncovered file — that early exit is the verdict.
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     any=1
-    # bcur empty ⇒ F is DELETED at head (no shippable content). A deletion is COVERED when
-    # an artifact reviewed the SAME deletion — F in its files-set AND F also absent at its
-    # reviewed head (so both blobs empty). --verify guarantees absent⇒empty, so a "" == ""
-    # match is a genuine reviewed-deletion, never a stray literal string. Do NOT hard-block
-    # on bcur empty (that made every reviewed deletion look "uncovered").
-    bcur="$(pg_file_blob "$root" "$head" "$f")"
-    this=0
-    # For a DELETION (bcur empty), resolve the exact commit that removed F within THIS checked
-    # range, so coverage can require the artifact's range to CONTAIN that specific commit —
-    # content-keying alone cannot tell two deletions of the same path apart.
-    delc=""
-    if [ -z "$bcur" ]; then
-      # Resolve the deleting commit over the SAME commit set the range denotes. For the @unpushed
-      # sentinel, `git log "@unpushed..HEAD"` is a bad revision — use the un-pushed walk
-      # (HEAD --not --remotes); any real A..B range uses the two-dot form directly.
-      if [ "${range%%..*}" = "@unpushed" ]; then
-        delc="$(git -C "$root" log --diff-filter=D --no-renames --format=%H -c "${range##*..}" --not --remotes -- "$f" 2>/dev/null | head -1)"
-      else
-        delc="$(git -C "$root" log --diff-filter=D --no-renames --format=%H "$range" -- "$f" 2>/dev/null | head -1)"
-      fi
-    fi
-    for art in "$reviews"/*.md; do
-      [ -e "$art" ] || continue
-      grep -q '<!-- zuvo-review -->' "$art" 2>/dev/null || continue
-      pg_artifact_proven "$root" "$art" || continue           # post-cutoff artifact must cite a real adversarial run
-      art_files="$(sed -n 's/^files:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
-      pg_files_covered "$f" "$art_files" || continue          # F in artifact's files-set (or *)
-      art_range="$(sed -n 's/^range:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
-      art_head="${art_range##*..}"; [ -n "$art_head" ] || continue
-      if [ -n "$bcur" ]; then
-        bart="$(pg_file_blob "$root" "$art_head" "$f")"
-        [ "$bart" = "$bcur" ] && { this=1; break; }          # existing file: SAME content (incl. files:*)
-      else
-        # DELETED file: covered iff the artifact EXPLICITLY lists F (not '*') AND its reviewed
-        # range CONTAINS the exact commit that deleted F — delc reachable from art_head but NOT
-        # from art_base. That ties coverage to THIS deletion; a same-path deletion reviewed in
-        # an unrelated range/branch (or a files:'*' artifact) does not silently cover it.
-        art_base="${art_range%%..*}"
-        if [ "$art_files" != "*" ] && [ -n "$delc" ] && [ -n "$art_base" ] \
-           && git -C "$root" merge-base --is-ancestor "$delc" "$art_head" 2>/dev/null \
-           && ! git -C "$root" merge-base --is-ancestor "$delc" "$art_base" 2>/dev/null; then
-          this=1; break
-        fi
-      fi
-    done
-    [ "$this" -eq 1 ] || return 1          # this file's current content is not reviewed → NOT covered
+    pg_file_covered_by_any "$root" "$reviews" "$head" "$range" "$f" \
+      || return 1                          # this file's current content is not reviewed → NOT covered
   done <<EOF
 $change_files
 EOF
 
   [ "$any" -eq 1 ] && return 0             # every changed production file covered by content
   return 1
+}
+
+# pg_uncovered_files <range> — print, one path per line, the PRODUCTION files in <range>
+# whose CURRENT content is NOT covered by any proven artifact. Same per-file rule as
+# pg_range_reviewed, but it does not stop at the first miss: a caller can then SCOPE work
+# to what is genuinely unreviewed instead of redoing the whole range. `zuvo:ship` Phase 2
+# uses it to reuse the evidence a preceding zuvo:refactor / build / execute already
+# produced, rather than re-reviewing content that was reviewed hours ago.
+#
+# Return codes carry the distinction stdout cannot:
+#   0 — computed. stdout = uncovered files; EMPTY stdout means every production file in
+#       the range is covered.
+#   2 — could NOT compute (no repo, empty or unresolvable range). stdout empty.
+#   3 — the range changed NO production files. stdout empty.
+#
+# EMPTY STDOUT IS AMBIGUOUS ON ITS OWN and must never be read as "all covered" without
+# checking the code. Collapsing 2 into 0 would turn a git failure into a skipped review —
+# the inversion of fail-open, since here the safe direction is MORE review, not less.
+# (This is why the function does not simply "print nothing and return 0 on error": the
+# caller cannot distinguish the two states through one channel.)
+pg_uncovered_files() {
+  local range="$1" root reviews head change_files f any=0
+  [ -n "$range" ] || return 2
+  root="$(pg_repo_root)" || return 2
+  head="${range##*..}"; [ -n "$head" ] || return 2
+  git -C "$root" rev-parse --verify "${head}^{commit}" >/dev/null 2>&1 || return 2   # unresolvable → unknown
+
+  change_files="$(pg_changed_production "$range" 2>/dev/null)"
+  [ -n "$change_files" ] || return 3       # nothing production changed → nothing to review
+
+  # No reviews dir is NOT an error here: it means nothing is covered, so every production
+  # file is emitted. (pg_range_reviewed returns 1 for the same state — same meaning, its
+  # channel is a verdict rather than a list.)
+  reviews="$root/memory/reviews"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    any=1
+    if [ -d "$reviews" ]; then
+      pg_file_covered_by_any "$root" "$reviews" "$head" "$range" "$f" && continue
+    fi
+    printf '%s\n' "$f"
+  done <<EOF
+$change_files
+EOF
+
+  [ "$any" -eq 1 ] || return 3
+  return 0
 }
 
 # --- per-file block diagnostics ---------------------------------------------

@@ -459,7 +459,12 @@ rm -rf "$MMT" "$MMR"
 
 # R-CONFLICT: a merge with a hand-resolved conflict → the resolved file IS in scope (no under-scope
 # hole — the reviewer must see conflict-resolution changes). Uses the -c combined-diff retention.
-CFT="$(mktemp -d)"; CFR="$(mktemp -d)"
+# CF_MERGE_OUT is mktemp'd, NOT the fixed /tmp/cf-merge.out it used to be: two concurrent runs of
+# this file (two sessions, or a farm running the suite in parallel) raced on that shared path, and
+# one process's merge output could be overwritten between the `git merge` and the `grep` below —
+# producing a spurious "merge did NOT conflict" failure in the one suite that verifies the coverage
+# functions. Reproduced under 4 concurrent invocations; serial runs never showed it.
+CFT="$(mktemp -d)"; CFR="$(mktemp -d)"; CF_MERGE_OUT="$(mktemp -t cf-merge.XXXXXX)"
 (
   cd "$CFR" && git init -q --bare
   cd "$CFT" && git init -q -b main; git config user.email t@t; git config user.name t; git config commit.gpgsign false
@@ -467,11 +472,11 @@ CFT="$(mktemp -d)"; CFR="$(mktemp -d)"
   echo base > base.js; printf 'line-A\n' > shared.js; git add -A; git commit -qm base; git push -q origin main
   git checkout -q -b feat; printf 'feat-version\n' > shared.js; git add -A; git commit -qm "feat edits shared"
   git checkout -q main; printf 'main-version\n' > shared.js; git add -A; git commit -qm "main edits shared"; git push -q origin main
-  git checkout -q feat; git merge origin/main >/tmp/cf-merge.out 2>&1   # WILL conflict; capture, do not mask
+  git checkout -q feat; git merge origin/main >"$CF_MERGE_OUT" 2>&1   # WILL conflict; capture, do not mask
   printf 'resolved-both\n' > shared.js; git add shared.js; git commit -qm "resolve conflict"
 ) >/dev/null 2>&1
 # prove the merge actually CONFLICTed (else the -c conflict-retention path is not exercised)
-grep -qi 'conflict' /tmp/cf-merge.out 2>/dev/null \
+grep -qi 'conflict' "$CF_MERGE_OUT" 2>/dev/null \
   && pass "R-CONFLICT fixture: merge genuinely conflicted on shared.js (exercises -c retention)" \
   || bad "R-CONFLICT fixture: merge did NOT conflict — test would not exercise conflict retention"
 cff="$(cd "$CFT" && PG_REPO_ROOT="$CFT" bash -c '. "'"$LIB"'"; pg_changed_production "@unpushed..HEAD"' 2>/dev/null | tr '\n' ' ')"
@@ -480,7 +485,149 @@ case " $cff " in *" shared.js "*) pass "R-CONFLICT/G3: conflict-resolved file IS
 ( cd "$CFT" && PG_REPO_ROOT="$CFT" ZUVO_GATE_MIN_FILES=1 bash -c '. "'"$LIB"'"; pg_is_substantial "@unpushed..HEAD"' ) \
   && pass "R-CONFLICT: sentinel flows through pg_is_substantial (min-files=1 → substantial)" \
   || bad "R-CONFLICT: pg_is_substantial did not see the sentinel scope"
-rm -rf "$CFT" "$CFR"
+rm -rf "$CFT" "$CFR" "$CF_MERGE_OUT"
+
+# ---------- pg_uncovered_files: the ENUMERATION half of content-keyed coverage ----------
+# pg_range_reviewed answers "is this range covered?"; pg_uncovered_files answers "which files
+# are NOT?" so zuvo:ship can scope review to them instead of re-reviewing the whole range.
+# The failure directions are INVERTED relative to the gates: there, a wrong answer blocks a
+# push; here, a wrongly-EMPTY answer SKIPS a review. So every assertion below pins one of
+# (a) an uncovered file is printed, or (b) an error is distinguishable from "all covered".
+UCT="$(mktemp -d)"
+(
+  cd "$UCT" || exit 1
+  git init -q -b main 2>/dev/null || { git init -q; git symbolic-ref HEAD refs/heads/main; }
+  git config user.email t@t.t; git config user.name t; git config commit.gpgsign false
+  echo base > base.txt; git add base.txt; git commit -qm base
+  mkdir -p src
+  echo one > src/one.sh; echo two > src/two.sh; git add src; git commit -qm "two prod files"
+) >/dev/null 2>&1
+UCB=$(git -C "$UCT" rev-parse HEAD~1); UCH=$(git -C "$UCT" rev-parse HEAD)
+uc() { UC_OUT="$(PG_REPO_ROOT="$UCT" pg_uncovered_files "$1" 2>/dev/null)"; UC_RC=$?; UC_N="$(printf '%s' "$UC_OUT" | grep -c . )"; }
+
+# No memory/reviews/ dir at all → nothing is covered, so BOTH files must be printed (rc 0).
+# An empty answer here would tell ship "already reviewed" about a repo with no reviews at all.
+uc "$UCB..$UCH"
+{ [ "$UC_RC" -eq 0 ] && [ "$(printf '%s' "$UC_OUT" | sort | tr '\n' ' ')" = "src/one.sh src/two.sh " ]; } \
+  && pass "uncovered_files: no reviews dir → every production file listed by name (rc 0)" \
+  || bad "uncovered_files: no-reviews-dir should list exactly one.sh+two.sh (rc=$UC_RC out=[$UC_OUT])"
+
+# reviews/ EXISTS but holds no artifacts — the `[ -d "$reviews" ]` true-branch must still degrade
+# to "nothing is covered". Every other coverage test below has an artifact present, so without
+# this one the empty-glob path is never exercised.
+mkdir -p "$UCT/memory/reviews"
+uc "$UCB..$UCH"
+{ [ "$UC_RC" -eq 0 ] && [ "$UC_N" -eq 2 ]; } \
+  && pass "uncovered_files: reviews/ present but EMPTY → still lists both (empty-glob path)" \
+  || bad "uncovered_files: empty reviews dir should list both (rc=$UC_RC out=[$UC_OUT])"
+cat > "$UCT/memory/reviews/all-cov.md" <<ART
+<!-- zuvo-review -->
+range: $UCB..$UCH
+files: src/one.sh, src/two.sh
+verdict: PASS
+-->
+ART
+uc "$UCB..$UCH"
+{ [ "$UC_RC" -eq 0 ] && [ -z "$UC_OUT" ]; } \
+  && pass "uncovered_files: all covered → empty stdout, rc 0 (ship's 'reused' row)" \
+  || bad "uncovered_files: fully covered should be empty rc0 (rc=$UC_RC out=[$UC_OUT])"
+
+# Partial: an artifact listing only ONE of the two files must leave the other listed. This is
+# the assertion that keeps ship's scoped review honest — a "covered" verdict that swallowed
+# src/two.sh would ship it unreviewed.
+cat > "$UCT/memory/reviews/all-cov.md" <<ART
+<!-- zuvo-review -->
+range: $UCB..$UCH
+files: src/one.sh
+verdict: PASS
+-->
+ART
+uc "$UCB..$UCH"
+{ [ "$UC_RC" -eq 0 ] && [ "$UC_OUT" = "src/two.sh" ]; } \
+  && pass "uncovered_files: partial coverage → ONLY the uncovered file (src/two.sh)" \
+  || bad "uncovered_files: partial should print src/two.sh alone (rc=$UC_RC out=[$UC_OUT])"
+
+# STALE CONTENT: the artifact still lists src/one.sh, but the file was edited after the review,
+# so its current blob is not the reviewed one. Content-keying must re-open it.
+cat > "$UCT/memory/reviews/all-cov.md" <<ART
+<!-- zuvo-review -->
+range: $UCB..$UCH
+files: src/one.sh, src/two.sh
+verdict: PASS
+-->
+ART
+( cd "$UCT" && echo "edited after review" >> src/one.sh && git add src/one.sh && git commit -qm "edit one" ) >/dev/null 2>&1
+UCH2=$(git -C "$UCT" rev-parse HEAD)
+uc "$UCB..$UCH2"
+# EXACT equality, not a substring match: this must also prove src/two.sh did NOT leak into the
+# output. A `case *src/one.sh*` would pass just as happily if the function listed everything.
+{ [ "$UC_RC" -eq 0 ] && [ "$UC_OUT" = "src/one.sh" ]; } \
+  && pass "uncovered_files: file edited after its review → ONLY it is uncovered (stale blob)" \
+  || bad "uncovered_files: stale content must be exactly src/one.sh (rc=$UC_RC out=[$UC_OUT])"
+
+# WILDCARD + stale: `files: *` grants coverage to any path, but coverage is still keyed per-file
+# on the BLOB. A wildcard artifact whose reviewed head predates the edit must NOT cover the
+# edited file — otherwise one `files: *` artifact would be a permanent blanket ship-skips-review.
+cat > "$UCT/memory/reviews/all-cov.md" <<ART
+<!-- zuvo-review -->
+range: $UCB..$UCH
+files: *
+verdict: PASS
+-->
+ART
+uc "$UCB..$UCH2"
+{ [ "$UC_RC" -eq 0 ] && [ "$UC_OUT" = "src/one.sh" ]; } \
+  && pass "uncovered_files: files:'*' does NOT cover a file edited after its review (blob still wins)" \
+  || bad "uncovered_files: wildcard must not blanket-cover stale content (rc=$UC_RC out=[$UC_OUT])"
+cat > "$UCT/memory/reviews/all-cov.md" <<ART
+<!-- zuvo-review -->
+range: $UCB..$UCH
+files: src/one.sh, src/two.sh
+verdict: PASS
+-->
+ART
+
+# PROOF-OF-WORK: this suite grandfathers proofs off globally (PG_REVIEW_PROOF_CUTOFF at the top),
+# so lower the cutoff for THIS assertion only. An artifact with no `adversarial:` line grants no
+# coverage — otherwise ship would reuse a review that was never proven to have run.
+UC_OUT="$(PG_REPO_ROOT="$UCT" PG_REVIEW_PROOF_CUTOFF=0 pg_uncovered_files "$UCB..$UCH" 2>/dev/null)"; UC_RC=$?
+{ [ "$UC_RC" -eq 0 ] && [ "$(printf '%s' "$UC_OUT" | grep -c .)" -eq 2 ]; } \
+  && pass "uncovered_files: proofless artifact (post-cutoff) grants NO coverage — both files listed" \
+  || bad "uncovered_files: proofless artifact must not cover (rc=$UC_RC out=[$UC_OUT])"
+
+# rc 3 — the range changed no PRODUCTION files. Distinct from "all covered": ship keeps its
+# normal LOC-band review here, so collapsing 3 into 0 would silently drop review from every
+# docs-only release.
+( cd "$UCT" && mkdir -p docs && echo hi > docs/x.md && git add docs/x.md && git commit -qm docs ) >/dev/null 2>&1
+uc "$UCH2..$(git -C "$UCT" rev-parse HEAD)"
+{ [ "$UC_RC" -eq 3 ] && [ -z "$UC_OUT" ]; } \
+  && pass "uncovered_files: docs-only range → rc 3 (no production files), NOT rc 0" \
+  || bad "uncovered_files: docs-only should be rc 3 (rc=$UC_RC out=[$UC_OUT])"
+
+# rc 2 — could not compute. All three shapes print nothing, exactly like "all covered", which is
+# why the CODE is the signal. A caller that read emptiness alone would skip review on a git error.
+uc ""
+{ [ "$UC_RC" -eq 2 ] && [ -z "$UC_OUT" ]; } \
+  && pass "uncovered_files: empty range → rc 2 (unknown), not rc 0" \
+  || bad "uncovered_files: empty range should be rc 2 (rc=$UC_RC)"
+uc "zzz..yyy"
+{ [ "$UC_RC" -eq 2 ] && [ -z "$UC_OUT" ]; } \
+  && pass "uncovered_files: unresolvable range → rc 2 (unknown), not rc 0" \
+  || bad "uncovered_files: bad range should be rc 2 (rc=$UC_RC out=[$UC_OUT])"
+# EMPTY HEAD ("<base>..") is its own short-circuit — `head` is empty before git is ever asked,
+# so it is NOT the same branch as the unresolvable-range case above.
+uc "$UCB.."
+{ [ "$UC_RC" -eq 2 ] && [ -z "$UC_OUT" ]; } \
+  && pass "uncovered_files: range with EMPTY head → rc 2 (own short-circuit, not the git path)" \
+  || bad "uncovered_files: empty head should be rc 2 (rc=$UC_RC out=[$UC_OUT])"
+(
+  cd "$NOREPO" || exit 3
+  unset PG_REPO_ROOT
+  out="$(pg_uncovered_files "a..b" 2>/dev/null)"; rc=$?
+  [ "$rc" -eq 2 ] && [ -z "$out" ]
+) && pass "uncovered_files: no repo → rc 2 (unknown), no abort" \
+  || bad "uncovered_files: no-repo should be rc 2"
+rm -rf "$UCT"
 
 # ---------- fail-open ----------
 pg_is_substantial "zzz..yyy" && bad "bad range should NOT be substantial" || pass "fail-open: bad range not substantial"

@@ -109,6 +109,54 @@ AND `F`'s blob at `A`'s reviewed head (the `<head>` of its `range:`) equals `B`.
 
 After the header, the normal human-readable report body follows.
 
+## Who READS it — the gates, and `zuvo:ship`'s review scoping
+
+For a long time the artifact had exactly one reader: the pipeline-entry gates, asking a yes/no
+question at push time (`pg_range_reviewed`). `zuvo:ship` Phase 2 is the second reader, and it asks a
+different question — *which* files still need review — via `pg_uncovered_files` in the same library.
+
+This matters because ship was the largest duplicated cost in the pipeline. Ship *wrote* an artifact
+and *diagnosed* artifacts when the push gate blocked, but never *consulted* one when deciding review
+depth: it scaled purely on `DIFF_LOC` over the whole range, so a release made minutes after a
+`zuvo:refactor` re-ran `review-light` + `zuvo:review` (TIER 2/3) + a `--multi` adversarial pass over
+content that already had all three, plus its own proof. Measured on a 2026-08-16 session: four full
+pipelines over one set of changes.
+
+The rule ship applies:
+
+| `pg_uncovered_files` result | Ship's review |
+|-----------------------------|---------------|
+| rc 0, empty | `reused` — no reviewer runs; the covering artifacts are printed per file as evidence |
+| rc 0, non-empty | scoped to those files only (`partial:<n>-files`) |
+| rc 2 (could not compute) | full depth over the whole range |
+| rc 3 (no production files) | full depth over the whole range |
+
+Three properties make this a scoping decision rather than an escape hatch, and all three are
+load-bearing:
+
+- **It is derived, not declared.** There is no `zuvo:ship` flag that expresses reuse. The only way
+  to reach the `reused` row is to genuinely hold the reviewed content, because the answer comes
+  from comparing blobs on disk.
+- **Empty output is ambiguous, so ship reads the CODE.** rc 2 (a missing library, an unresolvable
+  range) prints nothing, exactly like "all covered". Collapsing them would turn an infrastructure
+  failure into a skipped review — which is why `pg_uncovered_files` signals through the exit status
+  and never through emptiness alone.
+- **The reader can invalidate its own coverage.** Any fix ship applies after measuring changes that
+  file's blob and drops its coverage. Ship re-computes after its fix steps; a file the run edited
+  can never be reported `reused`.
+
+What ship does NOT reuse, and never will: the secret scan (unconditional on every path), the full
+test suite and build on the final HEAD, base freshness against the target branch, the push-gate
+preflight, CI, and the merge. Those are integration checks about *this* release, not statements
+about file content, so no artifact can stand in for them.
+
+**Worktrees make this the failure case to get right.** The artifact and its proof are a per-checkout
+PAIR (see below), and the canonical shape of the problem is a refactor run in a worktree followed by
+a ship — precisely the case the reuse path exists for. If ship treated an absent pair as "never
+reviewed", it would fall back to a full review in exactly the scenario that motivated the feature.
+So ship attempts `~/.zuvo/review-artifact-sync.sh --from <other checkout> --to <here>` across the
+repo's other worktrees and re-computes once before accepting any file as uncovered.
+
 ## The artifact and its proof are a PAIR (worktrees / multiple checkouts)
 
 Coverage is TWO files: the `memory/reviews/*.md` artifact AND the proof file its

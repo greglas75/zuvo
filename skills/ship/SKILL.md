@@ -475,10 +475,134 @@ pass.
    input at file boundaries automatically, and `zuvo:review` runs at TIER 3. Shrinking the range to
    fit is never the answer.
 
+1b. **Coverage reuse — resolve WHAT still needs review, before deciding HOW DEEP.**
+
+   The content-keyed artifacts a preceding `zuvo:refactor` / `zuvo:build` / `zuvo:execute` /
+   `zuvo:review` wrote are evidence about **file CONTENT**, not about "a pipeline ran recently"
+   (`../../shared/includes/review-artifact.md`). When a file's CURRENT blob is the exact blob some
+   proven artifact reviewed, reviewing it again runs the same reviewers over the same bytes and
+   returns the same findings. That duplication is the entire cost of the ship-straight-after-refactor
+   path, and it is not small: one 2026-08-16 session ran refactor (blind audit + 3 adversarial
+   passes), a nested `test-audit`, then ship's own TIER 2 `zuvo:review` + `--multi` adversarial over
+   the same files — four full pipelines, one set of changes.
+
+   ```bash
+   # install.sh installs the lib GLOBALLY, so this resolves in the repo you are shipping — not
+   # only inside zuvo-plugin. The repo-relative path is the dev fallback, never the only one.
+   PG_LIB="$HOME/.claude/hooks/lib/pipeline-gate-lib.sh"
+   [ -f "$PG_LIB" ] || PG_LIB="$(git rev-parse --show-toplevel)/hooks/lib/pipeline-gate-lib.sh"
+   UNCOVERED=""; UNC_RC=2
+   if [ -f "$PG_LIB" ]; then
+     # shellcheck source=/dev/null
+     . "$PG_LIB"
+     UNCOVERED=$(pg_uncovered_files "$DIFF_BASE..HEAD"); UNC_RC=$?
+   fi
+   echo "[SHIP] coverage: rc=$UNC_RC uncovered=$(printf '%s' "$UNCOVERED" | grep -c .)"
+   ```
+
+   **Read the CODE, never the emptiness.** `pg_uncovered_files` prints nothing in three different
+   states and exactly one of them means "already reviewed":
+
+   | `UNC_RC` | Meaning | Ship does |
+   |----------|---------|-----------|
+   | `0`, empty stdout | every production file's current blob is already reviewed | **reuse** — depth `reused` (step 2) |
+   | `0`, non-empty | those files are unreviewed | review **scoped to them** — depth `partial:<n>-files` |
+   | `2` | could NOT compute (lib absent, unresolvable range, no repo) | **full depth over the whole range** |
+   | `3` | the range changed no production files | **full depth over the whole range** — unchanged behaviour, so a docs-only release still gets its LOC-band review |
+
+   Reading `rc=2` as "nothing uncovered" converts a missing library into a skipped review. The
+   emptiness looks identical; only the code separates them. If those two states ever merge in your
+   reasoning, that is the bug this table exists to prevent.
+
+   **A worktree's missing artifact is not yet a missing review.** The artifact and its proof are a
+   PAIR — both per-checkout, both gitignored — so a refactor run in a worktree may have left its
+   pair *there* rather than here. That is precisely the ship-after-refactor case this step serves,
+   so falling straight through to a full review would defeat it. Try to pull the pairs in, then
+   re-compute ONCE:
+
+   ```bash
+   if [ "$UNC_RC" -eq 0 ] && [ -n "$UNCOVERED" ]; then
+     SELF=$(git rev-parse --show-toplevel)
+     # Every OTHER checkout of this repo: the main checkout plus every linked worktree.
+     git worktree list --porcelain | sed -n 's/^worktree //p' | while IFS= read -r wt; do
+       [ "$wt" = "$SELF" ] && continue
+       ~/.zuvo/review-artifact-sync.sh --from "$wt" --to "$SELF" 2>/dev/null || true
+     done
+     UNCOVERED=$(pg_uncovered_files "$DIFF_BASE..HEAD"); UNC_RC=$?
+     echo "[SHIP] coverage after pair-sync: rc=$UNC_RC uncovered=$(printf '%s' "$UNCOVERED" | grep -c .)"
+   fi
+   ```
+
+   Re-compute exactly **once**. A sync that moved nothing moves nothing on a second pass either;
+   looping here iterates over the filesystem, not over new evidence.
+
+   **Print the evidence, or you did not reuse anything.** For every file you are about to NOT
+   review, name the artifact that covers it — one line each,
+   `[SHIP] review reused: <file> ← memory/reviews/<base7>..<head7>-<slug>.md`. If that list cannot
+   be produced, the reuse is unauditable and you fall back to full depth. An unprintable
+   justification is the same thing as no justification.
+
+   **Pin the HEAD you measured, and re-derive if it moves.** The list is a statement about the
+   blobs at one commit; the reviewers run later. On a branch another agent is also committing to
+   (this project's normal case), a commit landing in between makes the scoped list describe content
+   that is no longer what will be pushed — and the file it silently drops is, by construction, the
+   one that just changed.
+
+   ```bash
+   COV_HEAD=$(git rev-parse HEAD)      # record it here; compare before every dispatch below
+   ```
+
+   Before dispatching reviewers (step 3) and again before the push-gate preflight, check
+   `git rev-parse HEAD` against `$COV_HEAD`. Different → re-run step 1b and rebuild the scope from
+   the new HEAD. Same → proceed. This is the concurrent-commit twin of the ship-edits-its-own-files
+   rule in step 4.5: both are the same defect, one caused by another agent and one by this run.
+
 2. **Apply review threshold (MANDATORY).** These thresholds are non-negotiable (see Safety Rule 5). The only override is `--full` — escalation UP:
 
-   | Diff LOC | Review actions |
+   **The band is measured over the UNCOVERED subset, not over the whole range.** `DIFF_LOC` stays
+   printed as the integration scope — it is what the release actually carries — but the review's
+   size is the size of the work that has no review yet. The two are different numbers and both
+   belong in the output:
+
+   ```bash
+   # EACH BASH CALL IS A FRESH SHELL — the same rule Phase 1 step 2 calls out. `$PG_LIB`,
+   # `$UNCOVERED` and `$UNC_RC` do NOT survive from step 1b unless this runs in the SAME
+   # invocation. Re-derive them if they are gone: an UNSET UNC_RC must never be read as 0,
+   # which is `[ "${UNC_RC:-}" -eq 0 ]` silently succeeding on an empty string in some shells
+   # and, worse, the reuse row being taken because a variable evaporated.
+   if [ -z "${UNC_RC:-}" ]; then
+     PG_LIB="$HOME/.claude/hooks/lib/pipeline-gate-lib.sh"
+     [ -f "$PG_LIB" ] || PG_LIB="$(git rev-parse --show-toplevel)/hooks/lib/pipeline-gate-lib.sh"
+     UNCOVERED=""; UNC_RC=2
+     # shellcheck source=/dev/null
+     [ -f "$PG_LIB" ] && { . "$PG_LIB"; UNCOVERED=$(pg_uncovered_files "$DIFF_BASE..HEAD"); UNC_RC=$?; }
+   fi
+
+   if [ "$UNC_RC" -eq 0 ] && [ -n "$UNCOVERED" ]; then
+     # `git diff` has NO --pathspec-from-file — that flag belongs to add/commit/checkout/rm;
+     # git diff answers with its usage block and exit 129, which a pipe would then swallow.
+     # Re-expand the newline-separated list into POSITIONAL PARAMETERS inside a subshell:
+     # portable to bash and zsh alike, and space-safe, which an unquoted `$(cat …)` is not.
+     REVIEW_LOC=$(
+       set --
+       while IFS= read -r p; do [ -n "$p" ] && set -- "$@" "$p"; done <<LIST
+$UNCOVERED
+LIST
+       [ "$#" -eq 0 ] && { echo 0; exit 0; }
+       git diff --numstat "$DIFF_BASE" HEAD -- "$@" | awk '{a+=$1; d+=$2} END {print a+d+0}'
+     )
+     REVIEW_SCOPE="$UNCOVERED"       # newline-separated; re-expand the same way wherever used
+   elif [ "$UNC_RC" -eq 0 ]; then
+     REVIEW_LOC=0; REVIEW_SCOPE=""   # fully covered → the `reused` row below
+   else
+     REVIEW_LOC="$DIFF_LOC"; REVIEW_SCOPE=""   # rc 2/3 → whole range, unchanged behaviour
+   fi
+   echo "[SHIP] REVIEW_LOC=$REVIEW_LOC (band input) DIFF_LOC=$DIFF_LOC (integration scope) UNC_RC=$UNC_RC"
+   ```
+
+   | Review LOC | Review actions |
    |----------|----------------|
+   | **`reused`** (`UNC_RC=0`, nothing uncovered) | **Skip** `review-light`, `zuvo:review`, the cross-provider adversarial pass (step 4) and `coverage-check` — the per-file artifact evidence from step 1b is printed instead. Everything else in Phase 2 still runs: the step-0 secret scan is unconditional and NEVER reused. |
    | < 20 | **Fast path** — skip review entirely |
    | 20 - 100 | Dispatch `review-light` agent (read `skills/ship/agents/review-light.md`) |
    | 100+ | Dispatch `review-light` + invoke `zuvo:review` via the Skill tool (`Skill(skill="zuvo:review", args="${BASE_REF}..HEAD --report-only")`) — runs adversarial pass at TIER 2+ + invoke `Skill(skill="zuvo:design-review")` if frontend files changed (`.tsx`, `.jsx`, `.css`, `.scss`, `.html`) |
@@ -491,6 +615,21 @@ pass.
    right; it is only the review's own scope argument that needs the different form.
 
    **ALWAYS pass the RANGE `${BASE_REF}..HEAD`, never bare `--report-only`.** Ship runs AFTER the work is committed, so an argument-less `zuvo:review` scopes to *uncommitted* changes — empty at this point — and the "mandatory" review passes on nothing. Use the same range Phase 2 measured `DIFF_LOC` over.
+
+   **When `REVIEW_SCOPE` is set (partial coverage), scope the review to those FILES.** Every
+   dispatch in this phase — `review-light`, `zuvo:review`, the adversarial diff, `coverage-check` —
+   takes the uncovered file list instead of the whole range: `Skill(skill="zuvo:review",
+   args="<uncovered files, space-separated> --report-only")`, and `git diff "$DIFF_BASE" HEAD --
+   <those paths>` wherever the range diff was fed in. The range is still
+   what `DIFF_LOC` reports and what the release carries; it is only the reviewers' input that
+   narrows, and it narrows to exactly the content no artifact has seen. Record it:
+   `[SHIP] review scoped to <n> uncovered file(s) of <m> production files in range`.
+
+   **Scoping is derived, never chosen.** The file list comes from `pg_uncovered_files` reading
+   blobs on disk — it is not a judgement about which files "probably need" review, and it may not
+   be narrowed further by any reasoning about the diff. If you find yourself removing a file from
+   `$UNCOVERED` because it looks trivial, that is the downgrade the attestation below forbids,
+   wearing a new hat.
 
    **There is no zero-visual-delta exemption from `zuvo:design-review`.** A frontend file in the
    diff dispatches it, full stop — even when you can show the rendered class strings are identical
@@ -533,6 +672,9 @@ pass.
    [ ] "I can mentally substitute review by re-reading the diff myself"
    DIFF_LOC scope confirmation:
    [ ] DIFF_LOC counts ALL commits since the last tag (integration scope), not just "my feature"
+   Coverage-reuse confirmation (step 1b):
+   [ ] Every file I am NOT reviewing was reported covered by `pg_uncovered_files` reading blobs on
+       disk — not because I remember, believe, or was told that refactor/build/execute covered it
    Decision:
    - All boxes checked → proceed at threshold-required depth.
    - ANY unchecked → escalate to full+coverage; reason: <which thought you had>.
@@ -540,9 +682,24 @@ pass.
 
    The forbidden thoughts above are the EXACT rationalizations that have caused past ship runs to skip review on integrated multi-tier diffs. They are listed so you can recognize them, not so you can pattern-match around them. If your reasoning resembles ANY of these — even with different wording — treat the corresponding box as unchecked.
 
-3. **Agent dispatch — review-light:**
+   **The second and third boxes are not in tension — one is about memory, the other about
+   measurement.** "zuvo:execute already covered this" stays forbidden as an *assertion*: it is the
+   agent vouching for its own prior work, which is what the attestation exists to distrust. Step 1b
+   is the same claim made *checkable* — a blob comparison the run did not perform and cannot argue
+   with. So the rule is about the evidence, never the conclusion: a covered file is one
+   `pg_uncovered_files` did not print, and nothing else qualifies.
+
+   **This is deliberately not a flag.** There is no argument to `zuvo:ship` that expresses reuse,
+   and none may be added: an escape an agent can type is an escape an agent will type. The decision
+   is derived from files on disk, so the only way to obtain it is to actually have the reviewed
+   content — which is the point.
+
+3. **Agent dispatch — review-light:** (skipped on the `reused` row; scoped by `$REVIEW_SCOPE` on `partial`)
    - Read `skills/ship/agents/review-light.md` for the agent's instructions.
    - Provide **`git diff "$DIFF_BASE" HEAD`** as input — byte-for-byte the diff step 1 measured.
+     On `partial`, add `--pathspec-from-file="$REVIEW_SCOPE"` so the agent sees exactly the
+     unreviewed files; state in the prompt which files were carried on prior artifacts and why,
+     so it does not report the covered ones as "missing from the diff".
      Not `git diff --cached` (empty here: ship runs after the work is committed), not `HEAD~1` (one
      commit of a range that is usually many), and not `${BASE_REF}..HEAD` (identical to `$DIFF_BASE`
      except on a FIRST RELEASE, where it silently drops the root commit's entire contents — the
@@ -562,6 +719,11 @@ pass.
      neither, and it contradicts `no-pause-protocol.md`, which this skill loads as HARD.
 
 4. **Cross-provider review** (100+ LOC, after zuvo:review completes):
+
+   **Skipped entirely on the `reused` row** — the artifacts that granted coverage each cite their
+   own adversarial proof (`pg_artifact_proven` requires it), so the cross-model pass already ran
+   over these exact blobs. On `partial`, it runs over the uncovered files only. On `UNC_RC` 2 or 3
+   it runs over the whole range as before.
 
    After `zuvo:review` returns its verdict, run a cross-provider adversarial review. Read `../../shared/includes/cross-provider-review.md` for the protocol.
 
@@ -588,7 +750,17 @@ pass.
    # concurrent ship runs on one host clobber each other, and a pre-created symlink at a
    # predictable path redirects the write.
    DIFF_FILE=$(mktemp -t ship-diff.XXXXXX); ADV_OUT=$(mktemp -t ship-cross-review.XXXXXX)
-   if ! git diff "$DIFF_BASE" HEAD > "$DIFF_FILE"; then
+   # On `partial`, review the uncovered files only — the rest already carry their own proof.
+   # Same positional-parameter expansion as step 2 (git diff has no --pathspec-from-file), in a
+   # subshell so the subshell's status IS git's and the `if !` below still sees a failed diff.
+   if ! (
+        set --
+        while IFS= read -r p; do [ -n "$p" ] && set -- "$@" "$p"; done <<LIST
+${REVIEW_SCOPE:-}
+LIST
+        if [ "$#" -eq 0 ]; then git diff "$DIFF_BASE" HEAD
+        else git diff "$DIFF_BASE" HEAD -- "$@"; fi
+      ) > "$DIFF_FILE"; then
      echo "[CROSS-REVIEW] git diff failed — cross-provider review NOT run"; AR_RC=1
    elif [ ! -s "$DIFF_FILE" ]; then
      # Empty diff = no review happened and NO proof file exists. Record it as such; rc=0 here means
@@ -641,13 +813,40 @@ pass.
    only move up: fixes add commits. A band that moved down is a measurement error, not a licence to
    review less.)
 
-5. **Agent dispatch — coverage-check** (300+ LOC or `--full` only):
+   **Re-compute `UNCOVERED` too — ship invalidates its OWN coverage.** Coverage is keyed on file
+   CONTENT, so every fix applied in step 3 or 4.5 changed that file's blob and dropped whatever
+   artifact used to cover it. This is the same mechanism as cause #2 in the push-gate diagnosis
+   below, arriving one phase earlier. (Phase 1 triage fixes need no special handling — they land
+   before step 1b measures, so the first computation already sees them. It is only the fixes made
+   *after* 1b that go stale.) Re-run `pg_uncovered_files` before concluding anything about depth:
+
+   ```bash
+   # Fresh shell again — re-source before calling, exactly as step 2 does.
+   PG_LIB="$HOME/.claude/hooks/lib/pipeline-gate-lib.sh"
+   [ -f "$PG_LIB" ] || PG_LIB="$(git rev-parse --show-toplevel)/hooks/lib/pipeline-gate-lib.sh"
+   UNCOVERED=""; UNC_RC=2
+   # shellcheck source=/dev/null
+   [ -f "$PG_LIB" ] && { . "$PG_LIB"; UNCOVERED=$(pg_uncovered_files "$DIFF_BASE..HEAD"); UNC_RC=$?; }
+   echo "[SHIP] coverage after fixes: rc=$UNC_RC uncovered=$(printf '%s' "$UNCOVERED" | grep -c .)"
+   ```
+
+   **A file ship itself edited can never be reported as `reused`.** If a run applied fixes and
+   still lands on `reused`, the re-computation did not happen — go back and run it. Skipping the
+   re-check is how a run reviews the code it received and ships the code it wrote.
+
+5. **Agent dispatch — coverage-check** (300+ LOC or `--full` only; skipped on the `reused` row):
    - Read `skills/ship/agents/coverage-check.md` for the agent's instructions.
-   - Provide the list of changed production files (exclude test files).
+   - Provide the list of changed production files (exclude test files) — on `partial`, the
+     uncovered subset only.
    - The coverage-check verdict is **informational only** — it never blocks ship.
 
 6. **Record review depth** for the artifact:
    - `"none"` — fast path, no review performed
+   - `"reused"` — every production file already covered by a proven artifact; no reviewer ran in
+     this phase. MUST be accompanied by the per-file `[SHIP] review reused:` evidence lines from
+     step 1b, and is invalid for any file this run edited (step 4.5).
+   - `"partial:<n>-files"` — review ran, scoped to the `<n>` uncovered files. Append the depth the
+     band actually selected, e.g. `partial:2-files/light`, `partial:6-files/full`.
    - `"light"` — review-light agent only
    - `"full"` — review-light + zuvo:review with adversarial pass (+ design-review if applicable)
    - `"full+coverage"` — full + coverage-check agent
@@ -1125,7 +1324,12 @@ Write the artifact **after** commit/tag/push decisions are complete:
   "pr": <number-or-null>,
   "date": "<ISO-8601>",
   "tests": "<pass|warn-carried|skipped-no-runner>",   // from the Phase 1 triage outcome — NEVER hardcode "pass"
-  "reviewDepth": "<none|light|full|full+coverage>",
+  "reviewDepth": "<none|reused|partial:<n>-files/<depth>|light|full|full+coverage>",
+  "coverageReuse": {                                  // from Phase 2 step 1b — omit only when UNC_RC was 2/3
+    "uncoveredRc": <0|2|3>,
+    "reusedFiles": ["<path>", "..."],                 // files no reviewer saw in THIS run
+    "artifacts": ["memory/reviews/<base7>..<head7>-<slug>.md", "..."]
+  },
   "pushRemote": "<$PUSH_REMOTE>",                     // deploy MUST reuse this, not re-derive it
   "reviewTransport": "<skill-tool|env-compat-dispatch|none>",   // which transport actually ran the review
   "crossProvider": "<ok|single_provider_only|not_run:rc=<N>>",  // NEVER "ok" on a pass that did not run
@@ -1163,7 +1367,10 @@ COMPLETION GATE CHECK
 [ ] BASE_REF resolved ONCE in Phase 0 step 3, printed, and used by Phase 1's baseline, Phase 2's
     DIFF_LOC and the review range — one base, not three
 [ ] Phase 2 attestation block printed (all boxes considered, escalation applied if any unchecked)
-[ ] Review depth recorded: none/light/full/full+coverage
+[ ] Review depth recorded: none/reused/partial:<n>-files/light/full/full+coverage
+[ ] Coverage reuse (Phase 2 step 1b): UNC_RC printed; `reused`/`partial` backed by the per-file
+    `[SHIP] review reused: <file> ← <artifact>` lines; UNCOVERED re-computed after any fix this run
+    applied (step 4.5), so no file ship edited is reported as reused
 [ ] The review actually RAN on the mandated path: a Skill(skill="zuvo:review") tool call on Claude
     Code, or the env-compat dispatch on a harness without that tool — transport recorded either way,
     never simulated or summarized
