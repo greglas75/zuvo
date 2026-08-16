@@ -174,8 +174,9 @@ If a reviewer finds a critical gate violation introduced by this task's diff, th
 | Spec Reviewer | Verifies code matches spec requirements | Sonnet | Explore (read-only) |
 | Quality Reviewer | Runs CQ1-CQ40 and Q1-Q25 gates with evidence | Sonnet | Explore (read-only) |
 
-**Platform note:** the multi-agent table applies to Claude Code only (event-driven Task wake). On
-**Codex/Cursor/Antigravity** every role executes inline as a sequential checkpoint pass — same
+**Platform note:** the multi-agent table applies to Claude Code and **Kimi Code** (whose `Agent`
+tool takes `subagent_type` + `run_in_background`, so zuvo's 48 agents install as real dispatchable
+profiles). On **Codex/Cursor/Antigravity** every role executes inline as a sequential checkpoint pass — same
 gates, no threads (`[MODE] single-agent (codex hard rule)`); thread dispatch on Codex measured 2026-07
 at ~88h of wait_agent polling and 19.5h orchestrator dead-air across a 3-day window.
 
@@ -306,7 +307,9 @@ with `ZUVO_GATE_MIN_FILES` (default 3) and `ZUVO_GATE_MIN_LINES` (default 150).
 - Human (non-agent) commits and pushes are **exempt** (agent-env detection) — these gates
   constrain agents, not you.
 - Codex and Antigravity have **no Stop hook**; their coverage is the commit-gate nudge +
-  pre-push + CI. Cursor inherits the Claude cache wiring.
+  pre-push + CI. Cursor inherits the Claude cache wiring. Kimi Code has the full event set
+  (`PreToolUse`/`PostToolUse`/`Stop`/`StopFailure`/`SessionStart`), so it gets the same hook
+  coverage as Claude Code — including the `StopFailure` rewake path.
 
 #### Known bypasses of the `--no-verify` defense layer (block-no-verify + git-shim)
 
