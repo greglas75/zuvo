@@ -526,6 +526,15 @@ _expand_plan_files() {
     function emit(t,  k, e, pre, inner, suf, parts, n, i, p) {
       gsub(/^[ \t]+|[ \t]+$/, "", t)
       if (t == "") return
+      # Strip a TRAILING parenthetical annotation (B-gate-5, second half). Keeping the commas
+      # inside it was only half the job: `svc.ts (modify — line 559, extract helper)` is still
+      # not a path, so it matches no changed file and the declared entry stays invisible to the
+      # gate. Trailing only, and only when something precedes it, so a path that legitimately
+      # contains parentheses is untouched. This makes MORE declared files resolvable, i.e. it
+      # moves the gate toward blocking, which is the direction it is supposed to fail in.
+      if (match(t, /[ \t]+\([^()]*\)$/)) t = substr(t, 1, RSTART - 1)
+      gsub(/^[ \t]+|[ \t]+$/, "", t)
+      if (t == "") return
       k = index(t, "{"); e = index(t, "}")
       if (k == 0 || e < k) { print t; return }                   # no group -> verbatim
       pre = substr(t, 1, k - 1)
@@ -543,12 +552,22 @@ _expand_plan_files() {
       }
     }
     {
-      depth = 0; tok = ""
+      # depth tracks BOTH brace groups and parenthetical annotations (B-gate-5). Plans in the
+      # wild annotate entries inline — `svc.ts (modify — line 559, extract helper)` — and 136
+      # such commas were counted in real plan files. Tracking only {} split that entry into
+      # `svc.ts (modify — line 559` and `extract helper)`, neither of which is a path, so the
+      # declared file silently vanished from what the gate can see. Fail-open only (it can never
+      # cause a false BLOCK) but it is exactly a silent under-scope, which is the failure this
+      # gate exists to prevent. NB: no apostrophes in this block — the whole awk program is
+      # single-quoted, so one would terminate it.
+      depth = 0; paren = 0; tok = ""
       for (i = 1; i <= length($0); i++) {
         c = substr($0, i, 1)
         if (c == "{") depth++
         else if (c == "}") depth--
-        else if (c == "," && depth <= 0) { emit(tok); tok = ""; continue }
+        else if (c == "(") paren++
+        else if (c == ")") { if (paren > 0) paren-- }
+        else if (c == "," && depth <= 0 && paren <= 0) { emit(tok); tok = ""; continue }
         tok = tok c
       }
       emit(tok)

@@ -138,6 +138,25 @@ echo z > unrelated.ts; git add unrelated.ts; ZUVO_AI_RUN=1 git commit -q --no-ve
 ZUVO_AI_RUN=1 git push origin "$br" >/dev/null 2>&1
 [ $? -ne 0 ] && ok "non-tip violation caught (full-range pre-push)" || bad "non-tip commit slipped (range bug regressed)"
 
+echo "=== _expand_plan_files: parenthetical annotations (B-gate-5) ==="
+# Plans annotate entries inline — `svc.ts (modify — line 559, extract helper)` — and 136 such
+# commas were counted across real plan files. The tokenizer tracked only {} depth, so that entry
+# split into two non-paths and the declared file vanished from what the gate can see. Fail-open
+# only, but a silent under-scope is precisely what this gate exists to prevent.
+( . "$LIB"
+  _p="$TMP/plan-annot.md"
+  printf '%s\n' '**Files:** src/svc.ts (modify — line 559, extract helper), src/other.ts' \
+                '**Files:** apps/{web,api}/main.ts, lib/util.ts' \
+                '**Files:** weird/name(v2).ts, plain.ts' > "$_p"
+  _got="$(_expand_plan_files "$_p" | tr '\n' '|')"
+  _want='src/svc.ts|src/other.ts|apps/web/main.ts|apps/api/main.ts|lib/util.ts|weird/name(v2).ts|plain.ts|'
+  if [ "$_got" = "$_want" ]; then
+    echo "  ✓ annotations stripped, braces expanded, glued parens in a real path preserved"
+  else
+    echo "  ✗ _expand_plan_files: got [$_got] want [$_want]"; exit 1
+  fi
+) || fails=$((fails+1))
+
 echo "=== execution-state.md dialects (B-gate-1, B-gate-7) ==="
 # Three forms of the same field exist in live repos. Two were already parsed; the INDENTED one
 # matched neither branch of _ap_field and fail-opened — the gate simply saw no status and let the
