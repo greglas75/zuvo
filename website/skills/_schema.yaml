@@ -32,7 +32,7 @@ seo:
 stats: []                            # 3-6 hero stat cards displayed in the page header
   # - label: string                  # e.g., "Quality Gates"
   #   value: string                  # e.g., "22" — use "N+" for approximate counts
-  #   detail: string                 # optional clarification, e.g., "CQ1-CQ22"
+  #   detail: string                 # optional clarification, e.g., "CQ1-CQ40"
 
 problem: string                      # 2-4 sentence problem statement (markdown)
                                      # Answers: why does this skill exist?
@@ -89,7 +89,7 @@ arguments: []                        # all CLI flags/arguments
 checks: null                         # object for audit/design-review skills, null otherwise
   # sections: []
   #   - name: string                 # e.g., "Quality Gates"
-  #     id_range: string             # e.g., "CQ1-CQ22"
+  #     id_range: string             # e.g., "CQ1-CQ40"
   #     count: number
   #     items: []                    # representative 5-8 items (not exhaustive)
   #       - id: string

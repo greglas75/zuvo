@@ -3,7 +3,7 @@ last_synced: "2026-03-29"
 
 meta:
   slug: write-tests
-  title: "Write Tests — 11-type classifier with Q1-Q17 quality gates"
+  title: "Write Tests — 11-type classifier with Q1-Q25 quality gates"
   description: "Write tests for uncovered production code. Classifies 11 code types, selects patterns per type, and verifies every test against 17 quality gates."
   category: task
   og_image: /og/skills/write-tests.png
@@ -23,7 +23,7 @@ stats:
     detail: "SERVICE, CONTROLLER, HOOK, PURE, COMPONENT, GUARD, API-CALL, ORCHESTRATOR, STATE-MACHINE, ORM/DB, VALIDATOR"
   - label: "Quality Gates"
     value: "17"
-    detail: "Q1-Q17 evaluated after every test file"
+    detail: "Q1-Q25 evaluated after every test file"
   - label: "Modes"
     value: "3"
     detail: "[path], auto (batch of 15), --dry-run"
@@ -35,7 +35,7 @@ stats:
     detail: "e.g., SERVICE: methods × 3; CONTROLLER: endpoints × 4"
 
 problem: |
-  Untested production files accumulate silently. When you finally add tests, generic patterns produce type-check stubs, skipped placeholders, and assertions that only verify a value exists — not what it equals. `zuvo:write-tests` reads the actual production code first, classifies each file into one of 11 code types, selects the correct test patterns for that type, enforces a minimum test count, and runs Q1-Q17 gates before calling it done. The result is tests that actually exercise production behavior, not ones that inflate coverage metrics.
+  Untested production files accumulate silently. When you finally add tests, generic patterns produce type-check stubs, skipped placeholders, and assertions that only verify a value exists — not what it equals. `zuvo:write-tests` reads the actual production code first, classifies each file into one of 11 code types, selects the correct test patterns for that type, enforces a minimum test count, and runs Q1-Q25 gates before calling it done. The result is tests that actually exercise production behavior, not ones that inflate coverage metrics.
 
 how_it_works:
   - step: "Context gathering and baseline"
@@ -46,8 +46,8 @@ how_it_works:
     description: "Produces a per-file plan including code type, testability decision, minimum test count with math, patterns to follow (G-* IDs), patterns to avoid (P-* IDs), describe block outline, and mock hazards. In explicit mode, waits for approval before writing."
   - step: "Test writing with pre-write blocklist"
     description: "Writes tests following the plan. Blocks stub patterns before writing: assertIsBool-only assertions, markTestSkipped placeholders, assertTrue(true) vacuous passes, and tests that target a different class than the file name."
-  - step: "Q1-Q17 self-evaluation and verification"
-    description: "Runs the full test suite against written tests. Evaluates every written file against Q1-Q17 gates, prints the scorecard with critical gate status, and fixes any critical-gate failures before completion."
+  - step: "Q1-Q25 self-evaluation and verification"
+    description: "Runs the full test suite against written tests. Evaluates every written file against Q1-Q25 gates, prints the scorecard with critical gate status, and fixes any critical-gate failures before completion."
 
 output:
   artifact: "memory/coverage.md"
@@ -55,7 +55,7 @@ output:
   sections:
     - "WRITE-TESTS COMPLETE summary (files tested, tests written, Q-gate avg)"
     - "Per-file coverage status (UNCOVERED/PARTIAL/COVERED)"
-    - "Q1-Q17 scorecards per written file"
+    - "Q1-Q25 scorecards per written file"
     - "Backlog items for production code concerns"
 
 examples:
@@ -96,7 +96,7 @@ examples:
   - title: "Auto-discover and batch-write uncovered files"
     type: invocation
     command: "zuvo:write-tests auto"
-    result: "Discovers all UNCOVERED and PARTIAL files, processes them in batches of 15 ordered by risk tier (SERVICE/CONTROLLER first), writes tests, runs Q1-Q17 per file, and loops until coverage.md shows zero gaps."
+    result: "Discovers all UNCOVERED and PARTIAL files, processes them in batches of 15 ordered by risk tier (SERVICE/CONTROLLER first), writes tests, runs Q1-Q25 per file, and loops until coverage.md shows zero gaps."
 
 when_to_use: "Use `zuvo:write-tests` when production files lack test coverage — either after completing a feature without tests, after inheriting a legacy codebase, or after a refactor that invalidated the old test files. Use `auto` mode to clear an entire backlog of untested files in one session."
 
@@ -114,11 +114,11 @@ related_skills:
 
 faq:
   - q: "What does zuvo:write-tests check that a code generator doesn't?"
-    a: "After generating tests, the skill runs Q1-Q17 gates on every written file. Critical gates Q7 (error paths), Q11 (branches covered), Q13 (imports real production code), Q15 (content assertions), and Q17 (computed output vs. input echo) must all pass before the skill completes. A generator that produces code without evaluating it will silently ship tests that always pass regardless of production behavior."
+    a: "After generating tests, the skill runs Q1-Q25 gates on every written file. Critical gates Q7 (error paths), Q11 (branches covered), Q13 (imports real production code), Q15 (content assertions), and Q17 (computed output vs. input echo) must all pass before the skill completes. A generator that produces code without evaluating it will silently ship tests that always pass regardless of production behavior."
   - q: "How is zuvo:write-tests different from zuvo:write-e2e?"
     a: "zuvo:write-tests produces unit and integration tests for individual functions, services, controllers, and hooks — it exercises logic in isolation with mocks. zuvo:write-e2e produces Playwright browser tests that drive a real UI through full user flows. Use write-tests for unit/integration coverage and write-e2e for end-to-end browser coverage."
   - q: "How long does zuvo:write-tests take?"
-    a: "A single file typically takes 1-3 minutes including analysis, writing, and Q1-Q17 evaluation. Auto mode processes 15 files per batch; a project with 60 uncovered files takes 4 batches. The skill loops automatically in Claude Code — you start it and return when coverage.md shows zero gaps."
+    a: "A single file typically takes 1-3 minutes including analysis, writing, and Q1-Q25 evaluation. Auto mode processes 15 files per batch; a project with 60 uncovered files takes 4 batches. The skill loops automatically in Claude Code — you start it and return when coverage.md shows zero gaps."
   - q: "Can zuvo:write-tests write integration tests with a real database?"
     a: "Yes. When Phase 1.5b classifies a file as NEEDS_INTEGRATION (static ORM calls, framework singletons), the skill looks up the project's existing DB test pattern (transaction rollback, fixture helpers) and uses it. It never writes markTestSkipped stubs for code that requires a database — it either writes real integration tests or adds a backlog item."
   - q: "What frameworks does zuvo:write-tests support?"
@@ -163,7 +163,7 @@ agents:
   - name: "Pattern Selector"
     role: "Reads each target file, classifies its code type from the 11-type system, determines testability strategy, and selects the correct G-*/P-* patterns."
   - name: "Test Quality Auditor"
-    role: "Independently runs Q1-Q17 on written test files and produces an evidence-backed score for comparison with the self-evaluation."
+    role: "Independently runs Q1-Q25 on written test files and produces an evidence-backed score for comparison with the self-evaluation."
 
 benchmarks:
   - claim: "11 code type categories with distinct minimum test count formulas (e.g., SERVICE: methods × 3, CONTROLLER: endpoints × 4)."
@@ -189,6 +189,6 @@ comparison_table:
     - ["Code-type classification", "Reviewer-dependent", "None", "11-type gate with min test count"]
     - ["Testability decision (unit vs. integration)", "Reviewer-dependent", "None", "UNIT_MOCKABLE / NEEDS_INTEGRATION classifier"]
     - ["Stub pattern prevention", "None", "None", "7-item pre-write blocklist"]
-    - ["Q1-Q17 gate evaluation", "None", "None", "Self-eval + optional agent re-score"]
+    - ["Q1-Q25 gate evaluation", "None", "None", "Self-eval + optional agent re-score"]
     - ["Auto batch discovery", "None", "None", "auto mode loops until zero gaps"]
     - ["Coverage tracking", "Manual", "None", "memory/coverage.md updated per run"]

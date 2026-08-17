@@ -118,7 +118,7 @@ related_skills:
   - slug: fix-tests
     relation: "Fixes flaky or incorrect tests — the quality counterpart to this speed audit"
   - slug: test-audit
-    relation: "Test quality audit (Q1-Q17) — correctness and coverage, not speed"
+    relation: "Test quality audit (Q1-Q25) — correctness and coverage, not speed"
   - slug: backlog
     relation: "Track unresolved slow-test patterns as backlog items"
 

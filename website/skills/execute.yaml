@@ -4,7 +4,7 @@ last_synced: "2026-03-29"
 meta:
   slug: execute
   title: "Execute — TDD Pipeline Orchestration with Dual-Review Quality Gates"
-  description: "Drives a plan to completion task-by-task with 2 review gates per task. CQ1-CQ22 + Q1-Q17 quality checks. Deferred findings persisted to backlog."
+  description: "Drives a plan to completion task-by-task with 2 review gates per task. CQ1-CQ40 + Q1-Q25 quality checks. Deferred findings persisted to backlog."
   category: pipeline
   og_image: /og/skills/execute.png
 
@@ -26,7 +26,7 @@ stats:
     detail: Spec Reviewer (compliance) + Quality Reviewer (CQ/Q gates)
   - label: Quality Checks
     value: "39"
-    detail: CQ1-CQ22 on production code, Q1-Q17 on test code
+    detail: CQ1-CQ40 on production code, Q1-Q25 on test code
   - label: Critical Gates
     value: "11"
     detail: CQ3/4/5/6/8/14 + Q7/11/13/15/17 — any failure blocks commit
@@ -45,7 +45,7 @@ how_it_works:
   - step: "Task Execution Loop (9 steps per task)"
     description: "For each task in dependency order: (1) mark in-progress, (2) dispatch implementer (Sonnet for standard tasks, Opus for complex), (3) handle DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED status, (4) dispatch Spec Reviewer, (5) handle COMPLIANT / ISSUES FOUND verdict, (6) dispatch Quality Reviewer, (7) handle PASS / FAIL verdict, (8) mark completed with scores, (9) update CodeSift index."
   - step: "Dual Review Gates"
-    description: "The Spec Reviewer reads actual code independently (not the implementer's report) and verifies compliance with the plan. The Quality Reviewer runs CQ1-CQ22 on production files and Q1-Q17 on test files. Both reviewers operate at up to 3 re-dispatch iterations per task before escalating to you."
+    description: "The Spec Reviewer reads actual code independently (not the implementer's report) and verifies compliance with the plan. The Quality Reviewer runs CQ1-CQ40 on production files and Q1-Q25 on test files. Both reviewers operate at up to 3 re-dispatch iterations per task before escalating to you."
   - step: "Backlog Persistence and Final Summary"
     description: "Findings accepted as-is, implementer scope concerns, and deferred quality issues are all persisted to memory/backlog.md with fingerprints and deduplication. The final report shows task-by-task CQ and Q scores, all files changed, and backlog items added."
 
@@ -125,9 +125,9 @@ faq:
   - q: "What happens when a quality review fails?"
     a: "The implementer is re-dispatched with the reviewer's findings (file:line references for each failing gate). This loop repeats up to 3 times. After 3 iterations with unresolved failures, both positions are presented to you — the failing gates, what the implementer has done, and whether the issues are fixable or represent a design disagreement. You decide: accept as-is (with backlog entry), require a fix, or provide guidance."
   - q: "What quality gates does zuvo:execute enforce?"
-    a: "The Quality Reviewer runs CQ1-CQ22 on production code and Q1-Q17 on test code. Critical gates are CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 (production) and Q7, Q11, Q13, Q15, Q17 (tests). Any critical gate failure blocks the task from completing — not just from committing — until either fixed or explicitly accepted by you with a backlog entry."
+    a: "The Quality Reviewer runs CQ1-CQ40 on production code and Q1-Q25 on test code. Critical gates are CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 (production) and Q7, Q11, Q13, Q15, Q17 (tests). Any critical gate failure blocks the task from completing — not just from committing — until either fixed or explicitly accepted by you with a backlog entry."
   - q: "What frameworks and languages does zuvo:execute support?"
-    a: "zuvo:execute detects the project stack from config files and passes the correct rules file (TypeScript, React/Next.js, NestJS, Python) to each implementer agent. The implementer agents produce stack-appropriate code, tests, and verification commands. All 39 quality gates (CQ1-CQ22 + Q1-Q17) apply regardless of stack."
+    a: "zuvo:execute detects the project stack from config files and passes the correct rules file (TypeScript, React/Next.js, NestJS, Python) to each implementer agent. The implementer agents produce stack-appropriate code, tests, and verification commands. All 39 quality gates (CQ1-CQ40 + Q1-Q25) apply regardless of stack."
 
 arguments:
   - flag: "<plan-path>"
@@ -136,7 +136,7 @@ arguments:
 checks:
   sections:
     - name: "Production Code Quality"
-      id_range: "CQ1-CQ22"
+      id_range: "CQ1-CQ40"
       count: 22
       items:
         - id: CQ3
@@ -158,7 +158,7 @@ checks:
           name: "No duplicated logic blocks"
           critical: true
     - name: "Test Code Quality"
-      id_range: "Q1-Q17"
+      id_range: "Q1-Q25"
       count: 17
       items:
         - id: Q7
@@ -193,7 +193,7 @@ agents:
   - name: Spec Reviewer
     role: "Read-only agent that independently verifies implemented code against the plan and spec. Does not receive the implementer's self-report."
   - name: Quality Reviewer
-    role: "Read-only agent that runs CQ1-CQ22 on production files and Q1-Q17 on test files, producing FIX-NOW, CRITICAL-BLOCKED, and DEFER classifications."
+    role: "Read-only agent that runs CQ1-CQ40 on production files and Q1-Q25 on test files, producing FIX-NOW, CRITICAL-BLOCKED, and DEFER classifications."
 
 benchmarks:
   - claim: "2 independent review agents run on every task — spec compliance and quality gates are separate concerns"

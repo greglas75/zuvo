@@ -193,7 +193,7 @@ agent and self-scoring the result is a substituted gate, not a degraded run.
 
 ## Environment Compatibility
 
-Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
+Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across all supported platforms.
 
 ## MANDATORY TOOL CALLS — Audit Validity Gate
 

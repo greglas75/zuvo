@@ -4,7 +4,7 @@ last_synced: "2026-03-29"
 meta:
   slug: build
   title: "Build — Scoped Feature Development with Parallel Blast Radius Analysis"
-  description: "1-5 file features with parallel blast radius + duplication scanning, CQ1-CQ22 and Q1-Q17 quality gates, and backlog persistence."
+  description: "1-5 file features with parallel blast radius + duplication scanning, CQ1-CQ40 and Q1-Q25 quality gates, and backlog persistence."
   category: task
   og_image: /og/skills/build.png
 
@@ -23,7 +23,7 @@ stats:
     detail: Blast Radius Mapper + Existing Code Scanner
   - label: Quality Gates
     value: "39"
-    detail: CQ1-CQ22 production + Q1-Q17 test code
+    detail: CQ1-CQ40 production + Q1-Q25 test code
   - label: Critical Gates
     value: "11"
     detail: CQ3/4/5/6/8/14 + Q7/11/13/15/17 — any failure blocks commit
@@ -45,7 +45,7 @@ how_it_works:
   - step: "Phase 2: Implementation Plan"
     description: "A plan is written incorporating agent results: Feature Summary, Scope Fence (exact allowed/forbidden files), Blast Radius from Agent 1, Duplication Check from Agent 2, Implementation Steps, Test Strategy, File Size Check, and Open Questions. You review and approve before Phase 3 starts (unless --auto flag is passed)."
   - step: "Phase 3: Implement + Self-Evaluate"
-    description: "Code is written following the scope fence. After each production file, CQ1-CQ22 self-evaluation runs with evidence for every critical gate. Tests are written per the test strategy, followed by Q1-Q17 self-evaluation. Critical gate violations are fixed before writing tests."
+    description: "Code is written following the scope fence. After each production file, CQ1-CQ40 self-evaluation runs with evidence for every critical gate. Tests are written per the test strategy, followed by Q1-Q25 self-evaluation. Critical gate violations are fixed before writing tests."
   - step: "Phase 4: Independent Audit + Verify"
     description: "A CQ Auditor agent and Test Quality Auditor agent run in parallel, independently reviewing the full files (not just diffs). All test, type, and lint commands are run. FIX-NOW items are applied immediately; CRITICAL-BLOCKED items block commit; DEFER items go to the backlog."
   - step: "Phase 5: Backlog Persistence + Commit"
@@ -135,7 +135,7 @@ related_skills:
 
 faq:
   - q: "What does zuvo:build check during implementation?"
-    a: "After writing each production file, build runs CQ1-CQ22 self-evaluation with evidence for every critical gate. After writing tests, it runs Q1-Q17 self-evaluation. Then two independent agents run in parallel: a CQ Auditor reads the full production files and a Test Quality Auditor reads the full test files. FIX-NOW items are applied before commit; DEFER items go to the backlog."
+    a: "After writing each production file, build runs CQ1-CQ40 self-evaluation with evidence for every critical gate. After writing tests, it runs Q1-Q25 self-evaluation. Then two independent agents run in parallel: a CQ Auditor reads the full production files and a Test Quality Auditor reads the full test files. FIX-NOW items are applied before commit; DEFER items go to the backlog."
   - q: "How is zuvo:build different from the brainstorm/plan/execute pipeline?"
     a: "zuvo:build is a self-contained 5-phase workflow for features affecting 1-5 files where the approach is already clear. The full pipeline (brainstorm → plan → execute) is for larger features requiring upfront design exploration, architecture analysis, and a formal spec document. Build skips spec production and operates directly from your feature description."
   - q: "How long does a zuvo:build session take?"
@@ -143,7 +143,7 @@ faq:
   - q: "Can zuvo:build auto-approve the plan and commit?"
     a: "Yes — pass --auto to skip Phase 2 plan approval and --auto-commit to skip Phase 5 commit confirmation. Both can be combined. All analysis agents and quality gates run regardless of these flags — they only skip the interactive confirmation steps, not the quality enforcement."
   - q: "What frameworks does zuvo:build support?"
-    a: "zuvo:build detects the stack from config files and loads the matching rules. Supported: TypeScript, JavaScript, Python, React/Next.js, NestJS, PHP. The quality gate criteria (CQ1-CQ22, Q1-Q17) are language-independent; the generated code, verification commands, and test patterns are stack-specific."
+    a: "zuvo:build detects the stack from config files and loads the matching rules. Supported: TypeScript, JavaScript, Python, React/Next.js, NestJS, PHP. The quality gate criteria (CQ1-CQ40, Q1-Q25) are language-independent; the generated code, verification commands, and test patterns are stack-specific."
 
 arguments:
   - flag: "<feature description>"
@@ -156,7 +156,7 @@ arguments:
 checks:
   sections:
     - name: "Production Code Quality"
-      id_range: "CQ1-CQ22"
+      id_range: "CQ1-CQ40"
       count: 22
       items:
         - id: CQ3
@@ -184,7 +184,7 @@ checks:
           name: "API responses do not leak internal fields"
           critical: false
     - name: "Test Code Quality"
-      id_range: "Q1-Q17"
+      id_range: "Q1-Q25"
       count: 17
       items:
         - id: Q7
@@ -223,9 +223,9 @@ agents:
   - name: Existing Code Scanner
     role: "Searches for overlapping services, helpers, and patterns that would be duplicated by the planned feature. Runs on Haiku in Phase 1 (parallel)."
   - name: Test Quality Auditor
-    role: "Read-only agent that independently verifies test files against Q1-Q17 gates in Phase 4 (parallel with CQ Auditor)."
+    role: "Read-only agent that independently verifies test files against Q1-Q25 gates in Phase 4 (parallel with CQ Auditor)."
   - name: CQ Auditor
-    role: "Read-only agent that independently verifies full production files against CQ1-CQ22 gates in Phase 4 (parallel with Test Quality Auditor)."
+    role: "Read-only agent that independently verifies full production files against CQ1-CQ40 gates in Phase 4 (parallel with Test Quality Auditor)."
 
 benchmarks:
   - claim: "2 analysis agents run in parallel in the background while the plan is being written"
@@ -247,8 +247,8 @@ comparison_table:
     - ["Pre-implementation blast radius", "None", "Blast Radius Mapper agent"]
     - ["Duplication check", "None", "Existing Code Scanner agent"]
     - ["Scope fence enforcement", "None", "ALLOWED / FORBIDDEN file list"]
-    - ["CQ1-CQ22 self-eval", "Optional", "Mandatory with critical gate blocking"]
-    - ["Q1-Q17 self-eval", "Optional", "Mandatory with critical gate blocking"]
+    - ["CQ1-CQ40 self-eval", "Optional", "Mandatory with critical gate blocking"]
+    - ["Q1-Q25 self-eval", "Optional", "Mandatory with critical gate blocking"]
     - ["Independent post-implementation audit", "None", "CQ Auditor + Test Quality Auditor"]
     - ["Deferred findings", "Forgotten", "Persisted to memory/backlog.md"]
     - ["File size enforcement", "None", "Checked against file-limits.md per file"]

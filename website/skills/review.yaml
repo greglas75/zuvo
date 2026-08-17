@@ -4,7 +4,7 @@ last_synced: "2026-03-29"
 meta:
   slug: review
   title: "Review — 4-tier diff review with confidence-scored findings"
-  description: "Structured code review with 3 audit agents, a 0-100 confidence gate, and 4 severity tiers. Evaluates diffs of any size with CQ1-CQ22 and Q1-Q17 gates."
+  description: "Structured code review with 3 audit agents, a 0-100 confidence gate, and 4 severity tiers. Evaluates diffs of any size with CQ1-CQ40 and Q1-Q25 gates."
   category: task
   og_image: /og/skills/review.png
 
@@ -29,7 +29,7 @@ stats:
     detail: "Findings below 26 discarded; 26-50 sent to backlog only"
   - label: "Quality Gates"
     value: "22 + 17"
-    detail: "CQ1-CQ22 for production code, Q1-Q17 for test files"
+    detail: "CQ1-CQ40 for production code, Q1-Q25 for test files"
   - label: "Modes"
     value: "8"
     detail: "REPORT, FIX-ALL, FIX-BLOCKING, --thorough, batch, tag, mark-reviewed, status"
@@ -43,7 +43,7 @@ how_it_works:
   - step: "Pre-audit setup"
     description: "Initializes CodeSift to get the repo identifier. For TIER 2+, runs hotspot detection (analyze_hotspots) to flag high-churn files in the diff, and blast radius analysis (impact_analysis) to find callers of changed symbols up to 2 levels deep."
   - step: "Audit (parallel agents for TIER 2-3)"
-    description: "TIER 3 dispatches all 3 agents in parallel: Behavior Auditor (logic, error handling, race conditions), Structure Auditor (naming, imports, SRP, file limits), and CQ Auditor (independent CQ1-CQ22 evaluation). TIER 2 adds a Behavior Auditor for new production files. TIER 0-1 runs the lead inline."
+    description: "TIER 3 dispatches all 3 agents in parallel: Behavior Auditor (logic, error handling, race conditions), Structure Auditor (naming, imports, SRP, file limits), and CQ Auditor (independent CQ1-CQ40 evaluation). TIER 2 adds a Behavior Auditor for new production files. TIER 0-1 runs the lead inline."
   - step: "Confidence gate"
     description: "Every candidate finding is scored 0-100. Scores 0-25 are discarded. Scores 26-50 are dropped from the report and persisted to the backlog for later tracking. Only scores 51-100 appear in the final report."
   - step: "Report, fix, and tag"
@@ -57,8 +57,8 @@ output:
     - "Triage result (risk signals, tier selection)"
     - "VERDICT — PASS / WARN / BLOCK with score"
     - "MUST-FIX / RECOMMENDED / NIT findings with evidence"
-    - "CQ1-CQ22 evaluation per production file"
-    - "Q1-Q17 evaluation per test file"
+    - "CQ1-CQ40 evaluation per production file"
+    - "Q1-Q25 evaluation per test file"
     - "QUESTIONS FOR AUTHOR"
     - "QUALITY WINS"
     - "NEXT STEPS block"
@@ -111,7 +111,7 @@ related_skills:
 
 faq:
   - q: "What does zuvo:review check that a linter or static analysis tool doesn't?"
-    a: "Linters check syntax and style. zuvo:review evaluates 22 behavioral quality gates (CQ1-CQ22) including multi-tenant data isolation (CQ4), timing-safe secret comparison (CQ5), user-input cap enforcement (CQ6), and error strategy match (CQ8). It also traces blast radius for changed symbols, detects tautological mocks in test files, and confidence-scores every finding to filter out false positives."
+    a: "Linters check syntax and style. zuvo:review evaluates 22 behavioral quality gates (CQ1-CQ40) including multi-tenant data isolation (CQ4), timing-safe secret comparison (CQ5), user-input cap enforcement (CQ6), and error strategy match (CQ8). It also traces blast radius for changed symbols, detects tautological mocks in test files, and confidence-scores every finding to filter out false positives."
   - q: "How is zuvo:review different from zuvo:code-audit?"
     a: "zuvo:review is scoped to a diff — it examines what changed in a PR or commit range. zuvo:code-audit is a mass audit of every production file in the codebase. For pre-merge review, use zuvo:review. For a periodic quality sweep of the entire repo, use zuvo:code-audit."
   - q: "What is the confidence gate and why does it matter?"
@@ -150,7 +150,7 @@ arguments:
 checks:
   sections:
     - name: "Production Code Quality Gates"
-      id_range: "CQ1-CQ22"
+      id_range: "CQ1-CQ40"
       count: 22
       items:
         - id: "CQ3"
@@ -172,7 +172,7 @@ checks:
           name: "Guard/decorator logic extracted — no copy-paste across controllers"
           critical: true
     - name: "Test File Quality Gates"
-      id_range: "Q1-Q17"
+      id_range: "Q1-Q25"
       count: 17
       items:
         - id: "Q7"
@@ -221,7 +221,7 @@ agents:
   - name: "Structure Auditor"
     role: "Checks naming, imports, circular dependencies, file and function size limits, SRP violations, and coupling. Reports STRUCT-N findings."
   - name: "CQ Auditor"
-    role: "Independently evaluates CQ1-CQ22 from scratch on the full source of each changed production file — does not inherit the lead's scores. Flags N/A abuse (>60% N/A)."
+    role: "Independently evaluates CQ1-CQ40 from scratch on the full source of each changed production file — does not inherit the lead's scores. Flags N/A abuse (>60% N/A)."
 
 benchmarks:
   - claim: "Confidence gate filters findings into 3 buckets: discard (0-25), backlog-only (26-50), report (51-100)."

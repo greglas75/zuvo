@@ -42,7 +42,7 @@ Located in `shared/includes/`. These are protocol files loaded by skills at runt
 
 | File | Purpose |
 |------|---------|
-| `env-compat.md` | Environment compatibility: how skills adapt to Claude Code, Codex, and Cursor. Covers agent dispatch patterns, path resolution, progress tracking, and user interaction per platform. |
+| `env-compat.md` | Environment compatibility: how skills adapt to each supported platform (Claude Code, Codex, Cursor, Antigravity, Kimi Code). Covers agent dispatch patterns, path resolution, progress tracking, and user interaction per platform. |
 | `codesift-setup.md` | CodeSift discovery, initialization, and tool selection guide. Includes the full tool mapping table and degraded mode fallbacks. See [codesift-integration.md](codesift-integration.md). |
 | `compressed-response-protocol.md` | Global v1 response-style contract for hook-enabled main assistant turns. Defines `STANDARD`, `TERSE`, `STRUCTURED_TERSE`, protected literals, override order, and the `[...truncated...]` escape hatch. |
 | `quality-gates.md` | Quick reference for CQ1-CQ40 and Q1-Q25 gates. Condensed version for agent use. Full details in the rules directory. See [quality-gates.md](quality-gates.md). |

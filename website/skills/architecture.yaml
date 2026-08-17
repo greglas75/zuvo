@@ -93,7 +93,7 @@ examples:
 
 when_to_use: "Use `zuvo:architecture` before a major refactor, when onboarding to an unfamiliar service, when something feels structurally wrong but you cannot point to it, or when making a significant technical decision that should be documented. Run review mode on the whole codebase or a specific path."
 
-when_not_to_use: "For per-file code quality issues (CQ1-CQ22), use `zuvo:code-audit`. For quantitative structural metrics without design-pattern context (dead code, naming, file sizes), use `zuvo:structure-audit`. For individual file refactoring, use `zuvo:refactor`. For security vulnerabilities, use `zuvo:security-audit`."
+when_not_to_use: "For per-file code quality issues (CQ1-CQ40), use `zuvo:code-audit`. For quantitative structural metrics without design-pattern context (dead code, naming, file sizes), use `zuvo:structure-audit`. For individual file refactoring, use `zuvo:refactor`. For security vulnerabilities, use `zuvo:security-audit`."
 
 related_skills:
   - slug: structure-audit

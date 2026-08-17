@@ -74,8 +74,10 @@ Both are parsed here because Phase 0.5 refuses to execute without them (semantic
 A flag the parser does not recognize is a flag the user cannot grant.
 
 Volume is a safety property: scoped or named requests generate 1 flow, bare `--auto` generates 3, and a large batch
-happens only when a human asks by name (`--max-flows 20`) — 20 is never assumed. Codex and Cursor always behave as
-`--auto`, so a 20-flow default let a non-interactive host emit twenty unreviewed specs with nobody deciding to.
+happens only when a human asks by name (`--max-flows 20`) — 20 is never assumed. Codex, Cursor and Antigravity
+always behave as `--auto` (all three take `[AUTO-DECISION]` in env-compat's interaction row; Kimi does not — it has
+`AskUserQuestion`), so a 20-flow default let a non-interactive host emit twenty unreviewed specs with nobody
+deciding to.
 
 ## Mandatory File Loading
 

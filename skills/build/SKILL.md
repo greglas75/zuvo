@@ -66,7 +66,7 @@ Flags can be combined: `zuvo:build add CSV export --auto --auto-commit --tag`
 
 ## Environment Compatibility
 
-Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across Claude Code, Codex, and Cursor.
+Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across all supported platforms.
 
 **Interaction behavior is governed entirely by env-compat.md.** This skill does not override env-compat defaults. Specifically:
 - Plan approval and commit confirmation follow env-compat rules for the detected environment.

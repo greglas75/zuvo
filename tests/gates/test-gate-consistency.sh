@@ -59,8 +59,12 @@ AP_MAX=$(echo "$counts"  | sed -n 's/^AP=\([0-9]*\):.*/\1/p')
 # CQ/Q — CAP drifted to CAP1-CAP14 (15 behind) precisely because nothing checked it.
 # README.md and CLAUDE.md are included deliberately: the repo root was NOT scanned before, which
 # is exactly how README kept advertising "CQ1-CQ29 + Q1-Q19" after the set had grown to 40/25.
-drift=$(grep -rIn --include='*.md' -oE 'CQ1-CQ[0-9]+|Q1-Q[0-9]+|CAP1-CAP[0-9]+|AP1-AP[0-9]+' \
-          "$ROOT/rules" "$ROOT/shared/includes" "$ROOT/docs" "$ROOT/skills" \
+# website/ and *.yaml are scanned for the same reason README.md was added: nothing looked there,
+# so it drifted the furthest. Found 2026-08-17 — ELEVEN YAMLs still advertised CQ1-CQ22 / Q1-Q17 /
+# AP1-AP26 / CAP1-CAP19 while the registry stood at 40/25/29/32, and the backlog entry that
+# reported it (B-website-gate-counts) named only the two files a human happened to notice.
+drift=$(grep -rIn --include='*.md' --include='*.yaml' -oE 'CQ1-CQ[0-9]+|Q1-Q[0-9]+|CAP1-CAP[0-9]+|AP1-AP[0-9]+' \
+          "$ROOT/rules" "$ROOT/shared/includes" "$ROOT/docs" "$ROOT/skills" "$ROOT/website" \
           "$ROOT/README.md" "$ROOT/CLAUDE.md" 2>/dev/null \
         | grep -vE ":CQ1-CQ${CQ_MAX}$|:Q1-Q${Q_MAX}$|:CAP1-CAP${CAP_MAX}$|:AP1-AP${AP_MAX}$" \
         | grep -vE 'gate-registry\.md|/docs/specs/|/docs/[a-z-]*20[0-9]{2}-[0-9]{2}' || true)

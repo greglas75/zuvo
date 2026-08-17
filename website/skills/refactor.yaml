@@ -32,7 +32,7 @@ stats:
     detail: "lines + 5 responsibilities triggers extended splitting protocol"
   - label: Quality Gates
     value: "22"
-    detail: "CQ1-CQ22 printed all 22 gates before and after for every file"
+    detail: "CQ1-CQ40 printed all 22 gates before and after for every file"
 
 problem: |
   Unstructured refactoring is how regressions happen: developers extract methods without updating tests, split files without auditing each new module, or stop halfway through a god class and leave it worse than before. zuvo:refactor prevents this with the ETAP workflow (Evaluate, Test, Act, Prove), per-target contract state files that survive session crashes (including batch mode with multiple targets), and a GOD_CLASS protocol that extracts one responsibility at a time with test verification after each extraction. CQ scores are printed for all 22 gates before and after — the post-audit score must never be lower than the pre-audit score.
@@ -41,13 +41,13 @@ how_it_works:
   - step: "Phase 0: Stack Detection + Pre-Scan"
     description: "The skill detects the tech stack, runs CodeSift complexity analysis, hotspot detection, clone detection, and dead code scanning on the target file. Pre-scan results feed the plan: clone blocks become extraction candidates, dead exports get deleted before refactoring, and hotspot confirmation validates the refactor is high-value."
   - step: "Phase 1: Type Detection + CQ Pre-Audit"
-    description: "The refactor type is auto-detected from keywords (extract, split, circular, rename, etc.) or from file characteristics. GOD_CLASS is always checked afterward — files over 600 lines with 5+ responsibilities are escalated automatically. CQ1-CQ22 pre-audit is printed with all 22 gates. Critical failures become fix targets."
+    description: "The refactor type is auto-detected from keywords (extract, split, circular, rename, etc.) or from file characteristics. GOD_CLASS is always checked afterward — files over 600 lines with 5+ responsibilities are escalated automatically. CQ1-CQ40 pre-audit is printed with all 22 gates. Critical failures become fix targets."
   - step: "Phase 2: Contract State + Sub-Agent Planning (ETAP-1A)"
     description: "A per-target contract state file is created at .zuvo/contracts/ with the target file, type, mode, CQ before score, scope fence, and backup branch. Two agents run in parallel: Dependency Mapper traces all importers and callers; Existing Code Scanner checks for utilities that could replace planned extractions. The plan is produced from these inputs and you approve it before execution."
   - step: "Phase 3: Test Handling (ETAP-1B)"
     description: "Test mode is selected based on existing test quality: RUN_EXISTING (comprehensive tests present), WRITE_NEW (no tests), IMPROVE_TESTS (weak tests), or VERIFY_COMPILATION (type/config files). New tests establish a behavioral baseline before any code is moved."
   - step: "Phase 4: Execution (ETAP-2) + CQ Post-Audit"
-    description: "Changes are applied one extraction at a time, with test verification after each step. Every created and modified file gets a full CQ1-CQ22 post-audit — not just the orchestrator. The post-audit score must not regress below the pre-audit score. An independent CQ Auditor agent verifies the results."
+    description: "Changes are applied one extraction at a time, with test verification after each step. Every created and modified file gets a full CQ1-CQ40 post-audit — not just the orchestrator. The post-audit score must not regress below the pre-audit score. An independent CQ Auditor agent verifies the results."
   - step: "Phase 5: Commit + Backlog + Contract Completion"
     description: "Specific files from the scope fence are staged and committed. Deferred findings go to memory/backlog.md. The contract state file is updated to COMPLETE with the post-audit scores and commit hash. If the session was interrupted, zuvo:refactor continue resumes from the last recorded stage."
 
@@ -204,10 +204,10 @@ agents:
   - name: Existing Code Scanner
     role: "Searches the codebase for existing utilities and patterns similar to planned extractions, preventing accidental duplication of helpers."
   - name: CQ Auditor
-    role: "Read-only agent that independently verifies all modified and created files against CQ1-CQ22. Catches N/A abuse and rubber-stamped gates in the lead's self-evaluation."
+    role: "Read-only agent that independently verifies all modified and created files against CQ1-CQ40. Catches N/A abuse and rubber-stamped gates in the lead's self-evaluation."
 
 benchmarks:
-  - claim: "CQ1-CQ22 printed with all 22 gates (not just failures) before and after every refactoring"
+  - claim: "CQ1-CQ40 printed with all 22 gates (not just failures) before and after every refactoring"
     type: accuracy
     verifiable: true
     source: "SKILL.md Phase 1 CQ Pre-Audit and Phase 4 CQ Post-Audit — 'print ALL 22 gates'"
