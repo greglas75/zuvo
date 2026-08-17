@@ -1580,11 +1580,19 @@ echo "Validating banned-vocabulary fixtures..."
 "$ZUVO_DIR/scripts/validate-banned-vocabulary-fixtures.sh"
 
 case "$TARGET" in
-  claude) install_claude; install_claude_home ;;
-  codex)  install_codex ;;
-  cursor) install_cursor ;;
-  antigravity) install_antigravity ;;
-  kimi)   install_kimi ;;
+  # install_zuvo_home on EVERY branch, not just both|all (B-9, open since v1.3.109).
+  # ~/.zuvo/ holds append-runlog, append-retro, adversarial-review, compute-preload,
+  # build-review-patch and review-artifact-sync.sh — helpers that EVERY skill calls by absolute
+  # path, on every platform. A platform-only invocation used to install a full skill set that
+  # then failed at its first mandatory gate with "command not found", and the failure surfaces
+  # inside a skill run rather than at install time, which is where the four days of confusion
+  # came from. The function is standalone (no DIST/SKILL_COUNT/CACHE_DIR from a sibling
+  # installer) and idempotent, so calling it per-branch is a no-op when it already ran.
+  claude) install_claude; install_zuvo_home; install_claude_home ;;
+  codex)  install_codex; install_zuvo_home ;;
+  cursor) install_cursor; install_zuvo_home ;;
+  antigravity) install_antigravity; install_zuvo_home ;;
+  kimi)   install_kimi; install_zuvo_home ;;
   both|all) install_claude; install_codex; install_cursor; install_antigravity; install_kimi; install_zuvo_home; install_claude_home ;;
   *)      echo "Usage: $0 [claude|codex|cursor|antigravity|kimi|all]"; exit 1 ;;
 esac

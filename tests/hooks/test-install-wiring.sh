@@ -259,4 +259,31 @@ else
   bad "(10c) build still rewrites ../../skills/ to the unread ~/.gemini/antigravity/skills path"
 fi
 
+# (11) EVERY dispatch branch installs ~/.zuvo (B-9, open since v1.3.109).
+# Those helpers — append-runlog, append-retro, adversarial-review, compute-preload — are called
+# by absolute path from every skill on every platform. `install.sh codex` used to install a full
+# skill set and zero helpers, so the first mandatory gate died with "command not found" inside a
+# skill run rather than at install time. Asserted structurally per branch, because the failure it
+# guards is precisely "a new platform branch was added and this call was forgotten".
+_disp="$(sed -n '/^case "\$TARGET" in/,/^esac/p' "$ROOT/scripts/install.sh")"
+_missing=""
+while IFS= read -r _line; do
+  case "$_line" in
+    *'install_claude'*|*'install_codex'*|*'install_cursor'*|*'install_antigravity'*|*'install_kimi'*) ;;
+    *) continue ;;
+  esac
+  case "$_line" in *'Usage:'*|*'#'*) continue ;; esac
+  case "$_line" in
+    *install_zuvo_home*) ;;
+    *) _missing="$_missing $(printf '%s' "$_line" | sed 's/^[[:space:]]*//; s/).*//')" ;;
+  esac
+done <<EOF
+$_disp
+EOF
+if [ -z "$_missing" ]; then
+  pass "(11) every install.sh dispatch branch calls install_zuvo_home (B-9)"
+else
+  bad "(11) dispatch branch(es) without install_zuvo_home:$_missing — those installs ship zero ~/.zuvo helpers"
+fi
+
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "SOME FAILED"; exit 1; fi
