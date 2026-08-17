@@ -47,6 +47,13 @@ MONO_START="$(mono_now)"
 # repeat" (reproduced with python3 off PATH — i.e. exactly the Windows/Git-Bash environment
 # this release also targets). A false `suspended` is not cosmetic: the calling skills are
 # documented to retry it once, so it buys a wasted full retry cycle.
+# Word-count of the dispatched-provider list. Extracted (B-dispatched-count-dup) because the
+# same expression sat byte-identically in the all-failed branch and the success-path status
+# derivation. The two are mutually exclusive at runtime so it was never a correctness bug — it
+# was inconsistent with the rest of the change that introduced it, which extracted
+# adversarial_log_row, preserve_failure_evidence and suspended_seconds for exactly this reason.
+dispatched_count() { printf '%s\n' "$1" | wc -w | tr -d ' '; }
+
 suspended_seconds() {
   local wall="$1" budget="$2" mono_end drift
   if [[ -n "$MONO_START" ]]; then
@@ -2385,7 +2392,7 @@ if [[ -z "$ALL_RESULTS" ]]; then
   # Log failed run (per-provider format)
   END_TIME=$(date +%s)
   DURATION=$((END_TIME - START_TIME))
-  DISPATCHED_COUNT=$(echo "$DISPATCHED_LIST" | wc -w | tr -d ' ')
+  DISPATCHED_COUNT=$(dispatched_count "$DISPATCHED_LIST")
   SUSPENDED_S=$(suspended_seconds "$DURATION" "$SUSPEND_BUDGET")
 
   # ── Classify the failure. "Every provider returned nothing" has at least three causes and
@@ -2507,7 +2514,7 @@ FINAL_OUTPUT=""
 # Measured against providers actually DISPATCHED, not candidates. --single stops at the first
 # success by design, so comparing against the candidate list reported every healthy single run
 # as "partial" (302 of 536 runs on 2026-07-30 alone) and taught readers to ignore the field.
-DISPATCHED_COUNT=$(echo "$DISPATCHED_LIST" | wc -w | tr -d ' ')
+DISPATCHED_COUNT=$(dispatched_count "$DISPATCHED_LIST")
 [[ "$DISPATCHED_COUNT" -gt 0 ]] || DISPATCHED_COUNT="$ATTEMPTED_COUNT"
 if [[ "$PROVIDER_COUNT" -eq "$DISPATCHED_COUNT" ]]; then
   DERIVED_STATUS="ok"

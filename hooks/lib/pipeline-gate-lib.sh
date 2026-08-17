@@ -291,6 +291,13 @@ PG_REVIEW_PROOF_CUTOFF="${PG_REVIEW_PROOF_CUTOFF:-1784764800}"   # 2026-07-23T00
 # OR an explicit honest single-provider marker (`single_provider_only` / `SINGLE PROVIDER`) —
 # the same degraded value the review skill is allowed to record when only one model exists.
 pg_artifact_proven() {
+  # `local` on the _pap_* set (B-13). The prefix is POSIX-style namespacing, which is why the
+  # leak was harmless in practice — every one is reassigned before use on each call. But this
+  # library is SOURCED into a live hook shell, so the names persisted in the caller after the
+  # function returned, and the sibling omission one function away (delc/art_base in
+  # pg_range_reviewed) was worth fixing during the coverage-reuse extraction. Same class, so
+  # same treatment; the file already assumes bash elsewhere (${!var} in pg_is_agent_env).
+  local _pap_root _pap_art _pap_mt _pap_ref _pap_n
   _pap_root="$1"; _pap_art="$2"
   # mtime, GNU-first then BSD, sanitized to digits. `stat -f %m` on GNU/Linux means
   # `--file-system` and prints a mount identifier, NOT the mtime — so BSD-first would put a
