@@ -299,6 +299,71 @@ _shrink_guard() {
       return 0
     fi
     printf '%s' "$_sg_prev" > "$_sg_sent" 2>/dev/null
+
+    # AUTO-RECOVER. Detecting the loss twice and hand-merging it twice is not a fix; the truncation
+    # RECURS (2026-08-17: 422->100, then 464->112 within hours, both times retros.md as well) and
+    # the culprit is still unidentified. Since every recovery so far was the same mechanical union —
+    # newest snapshot ∪ live file, deduplicated — the guard does it itself.
+    #
+    # UNION, never replace. The live file always holds rows written after the last snapshot; a plain
+    # restore would trade one loss for another. Rows are deduplicated whole-line, so re-running is
+    # idempotent, and the header is preserved. Atomic mv, under the retro lock this function already
+    # runs inside, so no reader can see a half-merged file.
+    _sg_best=$(ls -t "$_sg_dir"/retros.log.*.gz 2>/dev/null | head -1)
+    if [ -n "$_sg_best" ]; then
+      _sg_snap_rows=$(gzip -cd "$_sg_best" 2>/dev/null | grep -c '^RETRO:') || _sg_snap_rows=0
+      _sg_snap_rows=$(printf '%s' "${_sg_snap_rows:-0}" | tr -cd '0-9'); [ -n "$_sg_snap_rows" ] || _sg_snap_rows=0
+      if [ "$_sg_snap_rows" -gt "$_sg_rows" ]; then
+        _sg_tmp="$RETRO_LOG.recover.$$"
+        {
+          head -1 "$RETRO_LOG" 2>/dev/null | grep '^#' || true
+          { gzip -cd "$_sg_best" 2>/dev/null | grep '^RETRO:'; grep '^RETRO:' "$RETRO_LOG" 2>/dev/null; } | sort -u
+        } > "$_sg_tmp" 2>/dev/null
+        _sg_new=$(grep -c '^RETRO:' "$_sg_tmp" 2>/dev/null) || _sg_new=0
+        _sg_new=$(printf '%s' "${_sg_new:-0}" | tr -cd '0-9'); [ -n "$_sg_new" ] || _sg_new=0
+        # Only adopt a STRICT improvement — a merge that did not gain rows means the snapshot added
+        # nothing, and replacing the live file on no evidence is how a guard becomes the incident.
+        if [ "$_sg_new" -gt "$_sg_rows" ]; then
+          mv "$_sg_tmp" "$RETRO_LOG" 2>/dev/null && {
+            echo "append-retro: AUTO-RECOVERED retros.log $_sg_rows -> $_sg_new rows (union with $(basename "$_sg_best"))" >&2
+            _sg_rows=$_sg_new
+          }
+        fi
+        rm -f "$_sg_tmp" 2>/dev/null
+      fi
+      # retros.md is section-structured, so the union needs a parser rather than sort -u.
+      _sg_bmd=$(ls -t "$_sg_dir"/retros.md.*.gz 2>/dev/null | head -1)
+      _sg_py=$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)
+      if [ -n "$_sg_bmd" ] && [ -n "$_sg_py" ] && [ -f "$RETRO_MD" ]; then
+        "$_sg_py" - "$_sg_bmd" "$RETRO_MD" <<'PYMD' >&2 2>/dev/null || true
+import re, gzip, hashlib, os, sys
+snap_path, md_path = sys.argv[1], sys.argv[2]
+def split(t):
+    parts = re.split(r'(?m)^(?=## )', t)
+    head = parts[0] if parts and not parts[0].startswith('## ') else ''
+    return head, [p for p in parts if p.startswith('## ')]
+cur = open(md_path, encoding='utf-8', errors='replace').read()
+snap = gzip.open(snap_path, 'rt', encoding='utf-8', errors='replace').read()
+h1, s1 = split(snap); h2, s2 = split(cur)
+seen, out = set(), []
+for sec in s1 + s2:
+    k = hashlib.sha1(sec.strip().encode('utf-8', 'ignore')).hexdigest()
+    if k in seen: continue
+    seen.add(k); out.append(sec.rstrip() + '\n\n')
+if len(out) <= len(s2):
+    raise SystemExit(0)                      # nothing gained -> leave the live file alone
+def day(sec):
+    m = re.match(r'## \[?(\d{4}-\d{2}-\d{2})', sec)
+    return m.group(1) if m else '9999-99-99'
+out.sort(key=day)
+tmp = md_path + '.recover.%d' % os.getpid()
+open(tmp, 'w', encoding='utf-8').write((h2 or h1) + ''.join(out))
+os.replace(tmp, md_path)
+print("append-retro: AUTO-RECOVERED retros.md %d -> %d sections" % (len(s2), len(out)))
+PYMD
+      fi
+    fi
+
     {
       echo "retros.log SHRANK: $_sg_prev -> $_sg_rows RETRO rows at $_sg_when"
       echo "high-water recorded: $(cat "$_sg_hw" 2>/dev/null | tr '\n' ' ')"

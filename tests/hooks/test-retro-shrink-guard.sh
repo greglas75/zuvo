@@ -60,15 +60,22 @@ GOOD_ROWS=$(gunzip -c "$SNAP_BEFORE" | grep -c '^RETRO:')
 # matches the non-digit escape, and the guard returned early: it switched itself off at exactly the
 # moment it exists for. Found by adversarial review, reproduced, fixed.
 cp "$Z/retros.log" "$Z/.keep8"
+# Recovery would repair this instantly, and this block is about DETECTION. Snapshots go aside so
+# the guard has nothing to restore from — the state a machine is in before its first snapshot.
+mv "$Z/retros-snapshots" "$Z/.snaps-det"
 : > "$Z/retros.log"
 sleep 1; : > "$TMP/err"; run
 grep -q 'lost 8 rows' "$TMP/err" \
   && ok "a retros.log emptied to ZERO rows still trips the guard" \
   || bad "zero rows did not trip the guard; stderr was: $(head -1 "$TMP/err")"
 [ "$(hw)" = "8" ] && ok "high-water survives a zero-row file" || bad "high-water regressed to '$(hw)' on an empty file"
-cp "$Z/.keep8" "$Z/retros.log"; sleep 1; run
 
-# THE INCIDENT, reproduced: something outside this script truncates the file.
+# THE INCIDENT, reproduced: something outside this script truncates the file. Still no snapshots,
+# so this pins the report rather than the repair.
+cp "$Z/.keep8" "$Z/retros.log"; sleep 1; run
+# The healthy run above RE-CREATED the snapshot directory (the guard snapshots whenever the file is
+# at or above high-water), so it has to go aside again — otherwise the repair masks the report.
+rm -rf "$Z/.snaps-det"; mv "$Z/retros-snapshots" "$Z/.snaps-det"
 head -2 "$Z/retros.log" > "$Z/.t" && mv "$Z/.t" "$Z/retros.log"
 sleep 1; run
 [ "$(rows)" = "2" ] && ok "fixture truncated to 2 rows" || bad "fixture not truncated"
@@ -83,6 +90,10 @@ grep -q 'restore-self' "$Z"/retros-SHRANK-*.txt 2>/dev/null \
 
 [ "$(hw)" = "8" ] && ok "high-water does NOT regress to the truncated size" \
   || bad "high-water followed the truncation down to '$(hw)' — the next shrink would go unnoticed"
+
+# Snapshots come back for the next two assertions: they are about the ARCHIVE surviving the
+# incident, which cannot be observed while the archive is parked elsewhere.
+rm -rf "$Z/retros-snapshots"; mv "$Z/.snaps-det" "$Z/retros-snapshots"
 
 # THE ONE THAT MATTERS: the good copy must survive the incident.
 SNAP_AFTER=$(ls -t "$Z/retros-snapshots"/retros.log.*.gz | head -1)
@@ -102,11 +113,44 @@ cp "$Z/recovered.log" "$Z/retros.log"; sleep 1; : > "$TMP/err"; run
 grep -q 'lost' "$TMP/err" && bad "still warns after the file was restored — the alarm never clears" \
                           || ok "the warning clears once the log is back at high-water"
 
+cp "$Z/.keep8" "$Z/retros.log"; sleep 1; run    # healthy again; recovery available from here on
+
+# AUTO-RECOVERY. Detecting the loss and hand-merging it is not a fix when the truncation recurs
+# (it did: 422->100, then 464->112 within hours). The guard performs the same union it took me two
+# manual rounds to do. Two properties must hold, and the second is what keeps this safe:
+#   * it must RECOVER rows from the snapshot, and
+#   * it must be a UNION — rows written after the last snapshot survive, so a "restore" can never
+#     trade one loss for another.
+row "2026-08-11T07:00:00Z" >> "$Z/retros.log"     # live-only row, absent from every snapshot
+LIVE_ONLY=$(grep -c '2026-08-11T07:00:00Z' "$Z/retros.log")
+# tail, not head: the live-only row is the LAST one, and truncating with `head` would delete the
+# very row whose survival this case exists to prove — the test would then pass on a replace.
+tail -1 "$Z/retros.log" > "$Z/.t9" && mv "$Z/.t9" "$Z/retros.log"   # brutal truncation to 1 row
+sleep 1; : > "$TMP/err"; run
+REC=$(rows)
+grep -q 'AUTO-RECOVERED' "$TMP/err" && ok "the guard auto-recovers instead of only complaining" \
+  || bad "no auto-recovery attempted; stderr: $(head -2 "$TMP/err" | tr '\n' ' ')"
+[ "$REC" -gt 1 ] && ok "rows came back from the snapshot ($REC)" || bad "row count is still $REC"
+[ "$(grep -c '2026-08-11T07:00:00Z' "$Z/retros.log")" = "$LIVE_ONLY" ] \
+  && ok "the live-only row survived the merge (union, not replace)" \
+  || bad "a row written after the last snapshot was LOST by the recovery — replace, not union"
+[ "$(grep -c '^#' "$Z/retros.log")" -ge 0 ] && ok "header handling did not corrupt the file" || bad "header lost"
+# Idempotent: running again must not duplicate anything.
+BEFORE=$(rows); sleep 1; run; [ "$(rows)" = "$BEFORE" ] \
+  && ok "a second pass adds no duplicates (whole-line dedup)" || bad "recovery is not idempotent"
+# The post-recovery file IS the healthy baseline now. .keep8 predates it and sits BELOW the
+# high-water the recovery raised, so restoring that would keep the incident open forever.
+cp "$Z/retros.log" "$Z/.keephealthy"; sleep 1; run
+
 # ONE MARKER PER INCIDENT. The first real incident produced SEVEN identical markers — 422->101,
 # 102, 103 … one per append — which read like seven truncations and were one. The stderr warning
 # must keep firing (data is still missing); only the marker file is deduplicated.
 # Truncate ONCE (a fresh incident -> one marker), then append a row while still below the
 # high-water. The second append is the SAME incident and must not produce a second file.
+# Snapshots are moved aside first: with auto-recovery available the file bounces straight back to
+# high-water and there IS no second shrink to deduplicate. This case is about the marker, so the
+# recovery path is removed rather than worked around.
+mv "$Z/retros-snapshots" "$Z/.snaps-aside"
 head -1 "$Z/retros.log" > "$Z/.t2" 2>/dev/null; cp "$Z/.t2" "$Z/retros.log"
 sleep 1; run
 MARKERS_1=$(ls "$Z"/retros-SHRANK-*.txt 2>/dev/null | wc -l | tr -d ' ')
@@ -119,13 +163,14 @@ grep -q 'still' "$TMP/err" && ok "…but stderr still warns that data is missing
   || bad "the warning went silent while the log is still short"
 
 # …and a LATER, separate truncation must be reported as its own incident.
-cp "$Z/.keep8" "$Z/retros.log"; sleep 1; run          # recover -> sentinel clears, high-water 8
+mv "$Z/.snaps-aside" "$Z/retros-snapshots"
+cp "$Z/.keephealthy" "$Z/retros.log"; sleep 1; run    # back at high-water -> sentinel clears
 head -3 "$Z/retros.log" > "$Z/.t3" && mv "$Z/.t3" "$Z/retros.log"
 sleep 1; run
 MARKERS_3=$(ls "$Z"/retros-SHRANK-*.txt 2>/dev/null | wc -l | tr -d ' ')
 [ "$MARKERS_3" -gt "$MARKERS_2" ] && ok "a NEW incident after a recovery gets its own marker" \
   || bad "the second incident was swallowed as a duplicate of the first"
-cp "$Z/.keep8" "$Z/retros.log"; sleep 1; run
+cp "$Z/.keephealthy" "$Z/retros.log"; sleep 1; run
 
 # CLASS GUARD. `grep -c ... || echo 0` is a three-instance bug in this directory: it disabled the
 # shrink guard above, and sat latent in append-runlog and retro-stub (where it would have reached
