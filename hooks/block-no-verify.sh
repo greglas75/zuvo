@@ -159,12 +159,63 @@ violates_segment() {
   return 1
 }
 
+# --- strip HEREDOC BODIES before tokenizing (B-gate-9) -----------------------
+# A heredoc body is DATA on stdin, never argv. `git commit -F - <<EOF … EOF` with a message
+# mentioning `tail -n 100` used to flatten, via xargs below, into a standalone `-n` token sitting
+# after `git commit` — and got BLOCKED as `commit -n`. A legitimate commit, refused, twice in one
+# day. (Quoted `-m "… -n …"` messages were never affected: xargs keeps those as one token. Only
+# the heredoc path was broken, which is why the original report over-attributed it.)
+#
+# Conservative by construction: a body is dropped ONLY when its closing delimiter is actually
+# found. An unterminated heredoc is left completely untouched, so this can never make the hook
+# blinder than before — the failure mode of a bad guess here would be fail-OPEN, and that is the
+# one direction a bypass-defense hook must not move in.
+_strip_heredocs() {
+  awk '
+    function delim_of(line,   m) {
+      # <<EOF | <<-EOF | <<"EOF" | <<\x27EOF\x27  (skip << that is really a <<< herestring)
+      if (line !~ /<<-?[[:space:]]*("[^"]+"|\x27[^\x27]+\x27|[A-Za-z_][A-Za-z0-9_]*)/) return ""
+      if (line ~ /<<</) return ""
+      m = line
+      sub(/^.*<<-?[[:space:]]*/, "", m)
+      sub(/[[:space:]].*$/, "", m)
+      gsub(/^["\x27]|["\x27]$/, "", m)
+      return m
+    }
+    BEGIN { pend = "" }
+    {
+      lines[NR] = $0
+      if (pend == "") { d = delim_of($0); if (d != "") { pend = d; start[NR] = d } }
+      else {
+        t = $0; sub(/^\t+/, "", t)
+        if (t == pend || $0 == pend) { close_at[NR] = pend; pend = "" }
+      }
+    }
+    END {
+      # Only suppress bodies whose delimiter was CLOSED. Walk once, tracking state.
+      cur = ""
+      for (i = 1; i <= NR; i++) {
+        if (cur == "") {
+          print lines[i]
+          if (i in start) {
+            # look ahead for a matching close; only then enter suppression
+            for (j = i + 1; j <= NR; j++) if ((j in close_at) && close_at[j] == start[i]) { cur = start[i]; break }
+          }
+        } else {
+          if ((i in close_at) && close_at[i] == cur) cur = ""
+          # body and terminator both suppressed
+        }
+      }
+    }
+  '
+}
+
 # QUOTE-AWARE tokenization via xargs (respects quotes; newlines → whitespace).
 # Connectors space-padded first so glued `a&&git …` and `a ; git …` both expose
 # the git tokens; violates_segment then scans EVERY git in the flat list.
 TOKS=()
 while IFS= read -r _tk; do TOKS+=("$_tk"); done < <(
-  printf '%s' "$CMD" | sed -E 's/[&|;]/ & /g' | xargs -n1 printf '%s\n' 2>/dev/null
+  printf '%s' "$CMD" | _strip_heredocs | sed -E 's/[&|;]/ & /g' | xargs -n1 printf '%s\n' 2>/dev/null
 )
 
 block=0

@@ -84,4 +84,35 @@ rc=$?
 [ "$rc" -eq 2 ] && pass "echo-with-git-tokens blocks (safe over-block, pinned)" \
   || pass "echo-with-git-tokens allowed (rc=$rc)"
 
+# --- HEREDOC BODIES are stdin DATA, never argv (B-gate-9) --------------------
+# `git commit -F - <<EOF … EOF` used to flatten through xargs into a token list where a `-n`
+# occurring in the MESSAGE TEXT sat after `git commit` and read as the `--no-dry-run` flag, so a
+# perfectly legitimate commit was refused. Reported from the field twice in one day.
+# Quoted `-m "… -n …"` messages were NEVER affected (xargs keeps them one token) — the original
+# report blamed those too, which is why the first two cases below pin the distinction.
+check 'git commit -m "checked via tail -n 100"'   0 'B-gate-9: -n inside a QUOTED -m message allowed (always was)'
+check 'git commit -F - <<EOF
+fix: x
+
+checked via tail -n 100
+EOF'                                              0 'B-gate-9: -n inside a HEREDOC body allowed (the actual defect)'
+check 'git commit -F - <<EOF
+discussing --no-verify in prose
+EOF'                                              0 'B-gate-9: --no-verify inside a heredoc body is data, not a flag'
+
+# The stripping must NEVER make the hook blinder. Both of these still block.
+check 'git commit -F - <<EOF
+body text
+git commit -n -m y'                               2 'B-gate-9: UNTERMINATED heredoc → nothing stripped, real -n still blocks'
+check 'git commit -F - <<EOF
+body text
+EOF
+git push --no-verify'                             2 'B-gate-9: real bypass AFTER a closed heredoc still blocks'
+# A `<<<` herestring must NOT be treated as a heredoc opener. Asserted with an UNQUOTED
+# herestring and a REAL flag on the git command itself: a quoted `cat <<<"git commit
+# --no-verify"` is useless as a probe here, because xargs consumes the quotes and the whole
+# string collapses into ONE token with no standalone `git` to scan — it returns 0 both before
+# and after this change, so it would pin nothing. (Verified against HEAD before writing this.)
+check 'git commit -n -F - <<<body'                2 'B-gate-9: <<< is not a heredoc opener — a real -n beside it still blocks'
+
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "SOME FAILED"; exit 1; fi
