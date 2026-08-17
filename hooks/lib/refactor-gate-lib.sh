@@ -483,7 +483,11 @@ _is_agent_env() {
 # <name> is always an internal constant (status|plan|plan_file) — never file content — so it
 # cannot inject sed syntax.
 _ap_field() {
-  _apf=$(sed -n "s/^$2:[[:space:]]*//p" "$1" 2>/dev/null | head -1 | tr -d '\r')
+  # `^[[:space:]]*` on the PLAIN dialect too (B-gate-7). The comment dialect below already
+  # tolerated leading whitespace; the plain one was anchored hard to column 0, so an indented
+  # `  status: pending` matched NEITHER branch and fail-opened — the third real-world dialect
+  # variant found in the wild after `<!-- status: -->` and bare `status:`.
+  _apf=$(sed -n "s/^[[:space:]]*$2:[[:space:]]*//p" "$1" 2>/dev/null | head -1 | tr -d '\r')
   if [ -z "$_apf" ]; then
     # Cut at the FIRST `-->` before capturing. The obvious `\(.*\)-->` is greedy, so a line
     # carrying two comments (`<!-- plan: p.md --> <!-- note: x -->`) captured everything up to

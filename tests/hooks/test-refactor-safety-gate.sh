@@ -136,5 +136,31 @@ echo z > unrelated.ts; git add unrelated.ts; ZUVO_AI_RUN=1 git commit -q --no-ve
 ZUVO_AI_RUN=1 git push origin "$br" >/dev/null 2>&1
 [ $? -ne 0 ] && ok "non-tip violation caught (full-range pre-push)" || bad "non-tip commit slipped (range bug regressed)"
 
+echo "=== execution-state.md dialects (B-gate-1, B-gate-7) ==="
+# Three forms of the same field exist in live repos. Two were already parsed; the INDENTED one
+# matched neither branch of _ap_field and fail-opened — the gate simply saw no status and let the
+# commit through. A gate that silently sees nothing is worse than one that blocks, because the
+# transcript looks identical to a pass.
+( . "$LIB"
+  _d="$TMP/dialects"; mkdir -p "$_d"
+  _chk(){ printf '%s\n' "$2" > "$_d/s.md"
+          _got="$(_ap_status "$_d/s.md")"
+          if [ "$_got" = "$3" ]; then echo "  ✓ dialect $1 → [$_got]"; else echo "  ✗ dialect $1 → [$_got], expected [$3]"; exit 1; fi; }
+  _chk "plain"    'status: in-progress'          'in-progress'
+  _chk "comment"  '<!-- status: in-progress -->' 'in-progress'
+  _chk "indented" '  status: in-progress'        'in-progress'
+  _chk "tabbed"   "$(printf '\tstatus: in-progress')" 'in-progress'
+  _chk "negative" 'status: done'                 'done'
+) || fails=$((fails+1))
+
+# B-gate-1: the pre-commit gate must ask the LIBRARY, not grep one dialect literally. Asserted on
+# the source because the alternative is staging a full execute-run fixture for a one-line contract.
+if grep -q "_ap_status" "$ROOT/hooks/pre-commit-adversarial-gate.sh" \
+   && ! grep -qE "^\s*if ! grep -q '<!-- status: in-progress -->'" "$ROOT/hooks/pre-commit-adversarial-gate.sh"; then
+  ok "pre-commit gate reads status via _ap_status, not a literal single-dialect grep (B-gate-1)"
+else
+  bad "pre-commit gate still greps one dialect literally — misses ~half of live execution-state.md files"
+fi
+
 echo "=== RESULT ==="
 [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

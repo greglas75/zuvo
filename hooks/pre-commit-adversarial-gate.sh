@@ -28,6 +28,14 @@ if [ -r "$_self_dir/lib/pipeline-gate-lib.sh" ]; then
   # shellcheck source=/dev/null
   . "$_self_dir/lib/pipeline-gate-lib.sh"
 fi
+# refactor-gate-lib for _ap_status (B-gate-1): execution-state.md exists in TWO dialects in the
+# wild — plain `status: in-progress` and `<!-- status: in-progress -->` — roughly half and half
+# across live repos. This gate used to grep the HTML-comment form literally and therefore missed
+# every plain-dialect run. _ap_status parses both (and, since B-gate-7, an indented third form).
+if [ -r "$_self_dir/lib/refactor-gate-lib.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$_self_dir/lib/refactor-gate-lib.sh"
+fi
 
 # ===========================================================================
 # 1. adversarial_gate — preserved execute-run blocking logic. Returns 0|1.
@@ -73,7 +81,15 @@ adversarial_gate() {
     return 0
   fi
 
-  if ! grep -q '<!-- status: in-progress -->' "$STATE_FILE" 2>/dev/null; then
+  # Dialect-agnostic (B-gate-1). Falls back to the old literal grep only if the lib is absent,
+  # so a missing lib degrades to the previous behaviour instead of to "no check at all".
+  if command -v _ap_status >/dev/null 2>&1; then
+    _pcag_status="$(_ap_status "$STATE_FILE" 2>/dev/null)"
+  else
+    _pcag_status=""
+    grep -q '<!-- status: in-progress -->' "$STATE_FILE" 2>/dev/null && _pcag_status="in-progress"
+  fi
+  if [ "$_pcag_status" != "in-progress" ]; then
     if [ -n "$active_exec_marker" ] && ! ls "$CTX_DIR"/adversarial-task-*.txt >/dev/null 2>&1; then
       echo "BLOCKED: young zuvo:execute run-marker for this repo, but execution-state.md is" >&2
       echo "not in-progress and no adversarial artifact exists — execute state-drift." >&2
