@@ -201,14 +201,27 @@ KIMI_PATH() { printf '%s/.kimi-code/bin:/usr/bin:/bin' "$HOME"; }
 }
 
 @test "Kimi with no API key and no cross-host client degrades EXPLICITLY, never silently" {
-  # PATH deliberately holds only the Kimi bin dir plus system paths, so agy/codex/claude
-  # are all absent and the in-family lane is unreachable without a key. The contract is
-  # that this reports same-model-fallback rather than naming a reviewer that cannot run:
-  # preflight escalates a non-ok status to `degraded-routing`, and an audit that believes
+  # The contract: report same-model-fallback rather than name a reviewer that cannot run.
+  # Preflight escalates a non-ok status to `degraded-routing`, and an audit that believes
   # it had a cross-model reviewer when it did not is worse than one that admits it.
+  #
+  # HOME and PATH are both redirected into a scratch dir holding ONLY the Kimi bin marker.
+  # The first version of this case kept `/usr/bin:/bin` on PATH and asserted in a comment
+  # that "agy/codex/claude are all absent" — true on the machine I wrote it on, false on
+  # the i9 farm, which ships /usr/bin/codex and /usr/bin/claude. It passed locally and
+  # failed there: precisely the who-ran-it dependence this file's header exists to prevent,
+  # reintroduced by me while adding a guard against it. Asserting client ABSENCE means
+  # controlling the search path outright, not assuming a clean system.
+  # `$BASH` (absolute path of the running shell), not the script directly: with PATH cut
+  # down to the scratch dir, the `#!/usr/bin/env bash` shebang has nowhere to find `bash`
+  # and the run dies with 127 before the router is ever reached. The router itself needs
+  # no external command — it is builtins and parameter expansion all the way down — so an
+  # explicit interpreter is all it takes to run under a PATH this narrow.
+  local scratch="$BATS_TEST_TMPDIR/kimi-only"
+  mkdir -p "$scratch/.kimi-code/bin"
   run env -u CLAUDECODE -u CODEX_SANDBOX -u ANTIGRAVITY_SESSION_ID \
       -u VSCODE_GIT_ASKPASS_MAIN -u CLAUDE_CODE_ENTRYPOINT -u MOONSHOT_API_KEY \
-      "PATH=$(KIMI_PATH)" "$SCRIPT"
+      "HOME=$scratch" "PATH=$scratch/.kimi-code/bin" "$BASH" "$SCRIPT"
   [ "$status" -eq 0 ]
   assert_line "platform=kimi"
   assert_line "reviewer_lane=same-model-fallback"
