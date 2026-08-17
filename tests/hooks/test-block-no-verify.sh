@@ -124,4 +124,21 @@ check 'git commit -n -F - <<<body'                2 'B-gate-9: <<< is not a here
 check "$(printf '# <<EOF\ngit push --no-verify\nEOF')"  2 'B-gate-10: a commented `# <<EOF` does not open a heredoc — the bypass inside it still blocks'
 check 'echo "<<EOF"; git push --no-verify; echo EOF'      2 'B-gate-11: a quoted <<EOF in an echo does not hide a following bypass'
 
+
+# A `<<` inside a QUOTED string is not an opener — and this one was a live BYPASS, not a false
+# positive. `echo "hi <<X"` + a bare `X` terminator made the stripper swallow the line between
+# them, so the gate never saw the --no-verify and returned 0. Found by the adversarial pass over
+# the commit that introduced the stripper. An earlier check of the sibling form `echo "<<EOF"` +
+# `echo EOF` correctly found it SAFE — but only because `echo EOF` never closes the heredoc, so
+# nothing was stripped. The bare terminator is what makes it real.
+check 'echo "hi <<X"
+git push --no-verify
+X'                                                2 'B-gate-9b: quoted << + bare terminator does NOT hide a bypass'
+check "echo 'hi <<X'
+git push --no-verify
+X"                                                2 'B-gate-9b: single-quoted << likewise'
+check '# <<EOF
+git push --no-verify
+EOF'                                              2 'B-gate-9b: a commented <<EOF is not an opener either'
+
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "SOME FAILED"; exit 1; fi

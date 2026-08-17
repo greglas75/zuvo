@@ -172,6 +172,24 @@ violates_segment() {
 # one direction a bypass-defense hook must not move in.
 _strip_heredocs() {
   awk '
+    # Is the first `<<` on this line inside a quoted string? Walks the prefix once, tracking
+    # single/double quote state and honouring backslash escapes. Deliberately conservative: on
+    # ANY doubt the caller treats the line as NOT an opener, which means nothing is stripped and
+    # the tokenizer sees the raw command — the safe direction for a bypass-defense hook.
+    function quotes_open_before(line,   p, i, c, sq, dq, prev) {
+      p = index(line, "<<")
+      if (p == 0) return 0
+      sq = 0; dq = 0; prev = ""
+      for (i = 1; i < p; i++) {
+        c = substr(line, i, 1)
+        if (prev == "\\") { prev = ""; continue }
+        if (c == "\\") { prev = "\\"; continue }
+        if (c == "\x27" && dq == 0) sq = 1 - sq
+        else if (c == "\x22" && sq == 0) dq = 1 - dq
+        prev = ""
+      }
+      return (sq || dq)
+    }
     function delim_of(line,   m) {
       # <<EOF | <<-EOF | <<"EOF" | <<\x27EOF\x27  (skip << that is really a <<< herestring)
       # A COMMENT is not a heredoc opener. `# <<EOF` followed by `git push --no-verify` and a
@@ -182,6 +200,14 @@ _strip_heredocs() {
       if (line ~ /^[[:space:]]*#/) return ""
       if (line !~ /<<-?[[:space:]]*("[^"]+"|\x27[^\x27]+\x27|[A-Za-z_][A-Za-z0-9_]*)/) return ""
       if (line ~ /<<</) return ""
+      # A `<<` INSIDE a quoted string is not an opener either, and this one is a live BYPASS,
+      # not a false positive: `echo "hi <<X"` / `git push --no-verify` / `X` made the stripper
+      # swallow the bypass line and the gate returned 0. Found by the adversarial pass over the
+      # commit that added this stripper. An earlier fix checked the sibling case
+      # `echo "<<EOF"` + `echo EOF` and correctly found it safe — but only because `echo EOF`
+      # never CLOSES the heredoc, so nothing was stripped. With a bare terminator line it does.
+      # Test: is the quote count before the `<<` odd? Then we are inside a string.
+      if (quotes_open_before(line)) return ""
       m = line
       sub(/^.*<<-?[[:space:]]*/, "", m)
       sub(/[[:space:]].*$/, "", m)
