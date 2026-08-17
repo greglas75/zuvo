@@ -220,17 +220,32 @@ pg_is_substantial() {
 
 # --- content-keyed review coverage ------------------------------------------
 # Is the set of change files ⊆ the artifact's files: list (or files: == '*')?
+# B-12: compare ENTRY BY ENTRY, never by substring-matching a re-joined string.
+# The old form normalized the artifact's files: list into `,a,b,c,` and asked whether `,$cf,`
+# occurred in it. That is lossy the moment a real path contains a comma: an artifact listing
+# `src/a` and `b.js` normalizes to `,src/a,b.js,`, in which a query for the NEVER-REVIEWED file
+# literally named `src/a,b.js` matches as a substring — so an unreviewed file read as COVERED,
+# and coverage is what decides whether a push is gated. Demonstrated by probe, not theorised.
+#
+# Residual, and deliberate: the `files:` header is comma-separated, so a path containing a comma
+# still cannot be EXPRESSED in it. What changes is the direction of the failure — such a path is
+# now simply never covered (a fresh review is demanded) instead of being silently covered by two
+# unrelated neighbours. Uncovered is the safe half of that pair.
 pg_files_covered() {
-  local change_files="$1" art_files="$2" cf norm
+  local change_files="$1" art_files="$2" cf ent found
   [ -n "$art_files" ] || return 1
   [ "$art_files" = "*" ] && return 0
   [ -n "$change_files" ] || return 1
-  # normalize art_files into ,a,b,c, — split on COMMA only (NOT spaces, so a
-  # reviewed filename containing spaces stays intact), trimming surrounding ws.
-  norm=",$(printf '%s' "$art_files" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' | paste -sd, -),"
   while IFS= read -r cf; do
     [ -n "$cf" ] || continue
-    case "$norm" in *",$cf,"*) ;; *) return 1 ;; esac
+    found=0
+    while IFS= read -r ent; do
+      [ -n "$ent" ] || continue
+      if [ "$ent" = "$cf" ]; then found=1; break; fi
+    done <<ENTRIES
+$(printf '%s' "$art_files" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+ENTRIES
+    [ "$found" -eq 1 ] || return 1
   done <<EOF
 $change_files
 EOF

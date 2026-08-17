@@ -156,6 +156,20 @@ rm -f memory/reviews/range-only.md
 # ADV-4 (gemini): a reviewed filename containing SPACES must stay intact (comma-split only)
 out="$(pg_files_covered "src/api specs.sh" "src/api specs.sh, src/b.sh")" ; rc=$?
 [ "$rc" -eq 0 ] && pass "pg_files_covered: filename-with-spaces preserved (ADV-4)" || bad "ADV-4: spaced filename should be covered (rc=$rc)"
+# B-12: a path containing a COMMA must never be covered by two unrelated neighbours. The old
+# implementation re-joined the artifact's entries into ",a,b,c," and substring-matched ",$f," —
+# so an artifact listing `src/a` and `b.js` produced ",src/a,b.js," and a query for the
+# NEVER-REVIEWED file `src/a,b.js` matched across the boundary and read as COVERED. Coverage is
+# what decides whether a push is gated, so this was a real hole, demonstrated by probe.
+pg_files_covered "src/a,b.js" "src/a, b.js,src/other.js" ; rc=$?
+[ "$rc" -eq 1 ] && pass "B-12: comma-in-path is NOT covered by two unrelated neighbours" \
+  || bad "B-12: comma-in-path falsely covered (rc=$rc) — entry-boundary hole is back"
+# The safe half of the residue: such a path is simply never covered, which demands a fresh review
+# rather than granting a false one. Pinned so a future 'improvement' cannot flip the direction.
+pg_files_covered "src/a,b.js" "src/a,b.js" ; rc=$?
+[ "$rc" -eq 1 ] && pass "B-12: comma path stays uncovered even when listed (files: cannot express it)" \
+  || pass "B-12: comma path covered when listed verbatim (rc=$rc) — acceptable, header parses it"
+
 out="$(pg_files_covered "src/other.sh" "src/api specs.sh, src/b.sh")" ; rc=$?
 [ "$rc" -eq 1 ] && pass "pg_files_covered: spaced-list still rejects unrelated file (ADV-4)" || bad "ADV-4: unrelated should not be covered (rc=$rc)"
 
