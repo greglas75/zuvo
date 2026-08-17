@@ -67,9 +67,18 @@ ZUVO_CI_RANGE="$MAIN..$FHEAD" PG_REPO_ROOT="$TMP" bash "$CI" >/dev/null 2>&1
 out=$( printf 'git commit -m x' | env ZUVO_AGENT=1 ZUVO_HOME="$ZUVO_HOME" PG_REPO_ROOT="$TMP" bash "$COMMIT" 2>&1 ); rc=$?
 { [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'not review-covered'; } \
   && ok "G3 commit-gate nudges (exit 0, non-blocking)" || no "G3 commit nudge"
+# The Stop gate's DEFAULT became warn-only (exit 0 + message) on 2026-07-10, after a 3-line icon
+# swap dragged an agent into a ~20-minute adversarial review of the whole un-pushed pile. This
+# assertion still demanded exit 2 and had been failing ever since — that is B-gate-3, filed as
+# "needs its own diagnosis". Both halves are pinned now: the documented default, and the
+# ZUVO_STOP_NUDGE_EXIT=2 override that restores blocking. Asserting only the override would let
+# a silent revert of the default go unnoticed, which is what happened here in reverse.
 out=$( printf '{"stop_hook_active": false}' | env ZUVO_AGENT=1 PG_REPO_ROOT="$TMP" bash "$STOP" 2>&1 ); rc=$?
+{ [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'unreviewed work'; } \
+  && ok "G3 Stop-gate nudges, warn-only by default (exit 0 + message)" || no "G3 Stop nudge"
+out=$( printf '{"stop_hook_active": false}' | env ZUVO_AGENT=1 ZUVO_STOP_NUDGE_EXIT=2 PG_REPO_ROOT="$TMP" bash "$STOP" 2>&1 ); rc=$?
 { [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q 'unreviewed work'; } \
-  && ok "G3 Stop-gate nudges + blocks finish (exit 2)" || no "G3 Stop nudge"
+  && ok "G3 ZUVO_STOP_NUDGE_EXIT=2 restores blocking (exit 2)" || no "G3 Stop nudge override"
 
 # === (6) docs-only → pre-push + CI pass (G7) ===
 prepush_native "$DOCS" "$SMALL" | env ZUVO_AGENT=1 PG_REPO_ROOT="$TMP" bash "$PREPUSH" >/dev/null 2>&1
@@ -123,10 +132,25 @@ prepush_native "$FHEAD" "$MAIN" | env ZUVO_AGENT=1 PG_REPO_ROOT="$TMP" bash "$PR
 [ "$?" -eq 1 ] && ok "G4 range-match but files-mismatch ≠ coverage (still blocked)" || no "G4 no-whitelist (files)"
 
 # === (3) covering artifact (real range AND files) → pre-push + CI both pass (G4) ===
+# The `adversarial:` proof is NOT decoration. Since the proof-of-work layer landed (2026-07-23,
+# pg_artifact_proven), an artifact created after the cutoff grants NO coverage unless it cites a
+# proof file holding >=2 `REVIEW BY:` provider lines. This fixture predates that layer and was
+# never updated, so it wrote a proofless artifact, the gate correctly refused to count it, and
+# G4 had been failing ever since — recorded as B-gate-3 and misattributed to G3, which is a
+# different case that has since started passing. Writing a REAL proof here keeps the smoke test
+# covering the proof layer too, rather than grandfathering it off with PG_REVIEW_PROOF_CUTOFF.
+mkdir -p zuvo/proofs
+cat > zuvo/proofs/cov-adversarial.txt <<'PROOF'
+###   REVIEW BY: CODEX-5.3
+no blocking findings
+###   REVIEW BY: CURSOR-AGENT
+no blocking findings
+PROOF
 cat > memory/reviews/cov.md <<ART
 <!-- zuvo-review -->
 range: $MAIN..$FHEAD
 files: src/a.sh, src/b.sh, src/c.sh
+adversarial: zuvo/proofs/cov-adversarial.txt
 verdict: PASS
 -->
 ART
