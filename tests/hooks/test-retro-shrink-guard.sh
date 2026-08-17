@@ -102,6 +102,31 @@ cp "$Z/recovered.log" "$Z/retros.log"; sleep 1; : > "$TMP/err"; run
 grep -q 'lost' "$TMP/err" && bad "still warns after the file was restored — the alarm never clears" \
                           || ok "the warning clears once the log is back at high-water"
 
+# ONE MARKER PER INCIDENT. The first real incident produced SEVEN identical markers — 422->101,
+# 102, 103 … one per append — which read like seven truncations and were one. The stderr warning
+# must keep firing (data is still missing); only the marker file is deduplicated.
+# Truncate ONCE (a fresh incident -> one marker), then append a row while still below the
+# high-water. The second append is the SAME incident and must not produce a second file.
+head -1 "$Z/retros.log" > "$Z/.t2" 2>/dev/null; cp "$Z/.t2" "$Z/retros.log"
+sleep 1; run
+MARKERS_1=$(ls "$Z"/retros-SHRANK-*.txt 2>/dev/null | wc -l | tr -d ' ')
+row "2026-08-09T09:00:00Z" >> "$Z/retros.log"      # 2 rows, still far below high-water 8
+sleep 1; : > "$TMP/err"; run
+MARKERS_2=$(ls "$Z"/retros-SHRANK-*.txt 2>/dev/null | wc -l | tr -d ' ')
+[ "$MARKERS_2" = "$MARKERS_1" ] && ok "a second append during the SAME incident adds no new marker" \
+  || bad "marker count went $MARKERS_1 -> $MARKERS_2 — one incident is producing a file per append"
+grep -q 'still' "$TMP/err" && ok "…but stderr still warns that data is missing" \
+  || bad "the warning went silent while the log is still short"
+
+# …and a LATER, separate truncation must be reported as its own incident.
+cp "$Z/.keep8" "$Z/retros.log"; sleep 1; run          # recover -> sentinel clears, high-water 8
+head -3 "$Z/retros.log" > "$Z/.t3" && mv "$Z/.t3" "$Z/retros.log"
+sleep 1; run
+MARKERS_3=$(ls "$Z"/retros-SHRANK-*.txt 2>/dev/null | wc -l | tr -d ' ')
+[ "$MARKERS_3" -gt "$MARKERS_2" ] && ok "a NEW incident after a recovery gets its own marker" \
+  || bad "the second incident was swallowed as a duplicate of the first"
+cp "$Z/.keep8" "$Z/retros.log"; sleep 1; run
+
 # CLASS GUARD. `grep -c ... || echo 0` is a three-instance bug in this directory: it disabled the
 # shrink guard above, and sat latent in append-runlog and retro-stub (where it would have reached
 # awk as a syntax error). rotate-retros:143 has carried a warning note about it longer than any of

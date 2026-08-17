@@ -269,8 +269,13 @@ fi
 _shrink_guard() {
   _sg_hw="$ZUVO_HOME/.retros-highwater"
   _sg_dir="$ZUVO_HOME/retros-snapshots"
-  _sg_every="${ZUVO_RETRO_SNAPSHOT_SEC:-21600}"     # 6h
-  _sg_keep="${ZUVO_RETRO_SNAPSHOT_KEEP:-8}"
+  # 1h, not 6h. Measured on the second real incident (2026-08-17): the guard caught the truncation
+  # and recovery worked, but the newest snapshot was 7 hours old and 323 rows were lost anyway.
+  # The interval IS the maximum possible loss, so it belongs near the append rate, not near cron.
+  # 24 gzipped pairs of a ~90 KB log and a ~1 MB markdown is roughly 8 MB — cheaper than one
+  # afternoon of retros.
+  _sg_every="${ZUVO_RETRO_SNAPSHOT_SEC:-3600}"
+  _sg_keep="${ZUVO_RETRO_SNAPSHOT_KEEP:-24}"
   # NOT `grep -c ... || echo 0`: grep prints "0" AND exits 1 on no-match, so the fallback appends a
   # SECOND zero and _sg_rows becomes "0\n0" — which contains a newline, matches the non-digit escape
   # below, and returns early. The guard would have switched itself off at exactly the moment it
@@ -282,7 +287,18 @@ _shrink_guard() {
   case "$_sg_prev" in ''|*[!0-9]*) _sg_prev=0 ;; esac
 
   if [ "$_sg_rows" -lt "$_sg_prev" ]; then
+    # One marker per INCIDENT. The warning below fires on EVERY append while the log is short —
+    # that is correct, it means data is still missing — but the marker file must not. The first
+    # real incident produced seven identical markers (422->101, 102, 103 … one per append) which
+    # read like seven truncations and were one. The sentinel holds the high-water the marker was
+    # written for, so a new marker appears only when the high-water itself changes.
+    _sg_sent="$ZUVO_HOME/.retros-shrink-marker"
     _sg_when=$(date -u +%Y%m%dT%H%M%SZ)
+    if [ "$(cat "$_sg_sent" 2>/dev/null)" = "$_sg_prev" ]; then
+      echo "append-retro: WARNING — retros.log still $((_sg_prev - _sg_rows)) rows below the high-water of $_sg_prev (incident already recorded)." >&2
+      return 0
+    fi
+    printf '%s' "$_sg_prev" > "$_sg_sent" 2>/dev/null
     {
       echo "retros.log SHRANK: $_sg_prev -> $_sg_rows RETRO rows at $_sg_when"
       echo "high-water recorded: $(cat "$_sg_hw" 2>/dev/null | tr '\n' ' ')"
@@ -295,7 +311,9 @@ _shrink_guard() {
     return 0
   fi
 
-  # at or above high-water: safe to record, and safe to snapshot
+  # at or above high-water: the incident (if any) is over — clear the sentinel so a LATER
+  # truncation is reported as its own incident instead of being swallowed as a duplicate.
+  rm -f "$ZUVO_HOME/.retros-shrink-marker" 2>/dev/null
   printf 'rows=%s\nbytes=%s\nat=%s\n' "$_sg_rows" \
     "$(wc -c < "$RETRO_LOG" 2>/dev/null | tr -d ' ')" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     > "$_sg_hw" 2>/dev/null || return 0
