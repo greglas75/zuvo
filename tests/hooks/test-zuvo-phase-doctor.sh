@@ -146,4 +146,10 @@ _o=$(bash "$PHASE" doctor 2>&1)
 printf '%s' "$_o" | grep -q 'BLIND' && printf '%s' "$_o" | grep -q 'none path-shaped' \
   && ok "prose only -> BLIND, not a falsely confident ARMED" || bad "prose-only should be BLIND (got: $(printf '%s' "$_o" | grep -m1 -E 'ARMED|BLIND'))"
 
+printf '# plan\n\n### Task 1\n**Files:** the reporting module, all of its helpers\n' > docs/specs/p-plan.md
+_o=$(bash "$PHASE" doctor 2>&1)
+printf '%s' "$_o" | grep -q 'prose' && ! printf '%s' "$_o" | grep -q 'normalize --write' \
+  && ok "prose BLIND advises rewriting **Files:**, NOT the pointer fix that cannot help it" \
+  || bad "prose BLIND still advises normalize --write — that rewrites the pointer, not the plan; reader loops"
+
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

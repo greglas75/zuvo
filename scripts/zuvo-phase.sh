@@ -142,8 +142,20 @@ cmd_doctor_one() {
     ARMED) echo "  gate is ARMED"; return 0 ;;
     ARMED-PARTIAL) echo "  gate is ARMED but only for the path-shaped entries — the prose ones are invisible to it"; return 0 ;;
     IDLE)  echo "  nothing to gate (no pending/in-progress plan) — not a fault"; return 0 ;;
-    *)     echo "  gate is BLIND — it will fail-open on every commit until the pointer is readable."
-           echo "  fix: zuvo-phase.sh normalize --write   (rewrites the pointer in the dialect the gate reads)"
+    *)     echo "  gate is BLIND — it will fail-open on every commit."
+           # BLIND has two causes with DIFFERENT fixes, and giving the pointer fix for a prose
+           # plan sends the reader in a circle: normalize rewrites the POINTER dialect, it does
+           # not touch the plan's **Files:** lines, so they run it, nothing changes, and the same
+           # message comes back. That loop is what B-gate-1 cost three cycles in the field.
+           case "$(printf '%s' "$_row" | cut -f6)" in
+             *path-shaped*)
+               echo "  cause: the plan declares **Files:** in prose, so the gate can match nothing."
+               echo "  fix: rewrite the plan's **Files:** lines as comma-separated paths"
+               echo "       (annotations in parentheses are fine — they are stripped)" ;;
+             *)
+               echo "  cause: the pointer is not readable in a dialect the gate parses."
+               echo "  fix: zuvo-phase.sh normalize --write   (rewrites the pointer in the dialect the gate reads)" ;;
+           esac
            return 1 ;;
   esac
 }
