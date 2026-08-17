@@ -123,4 +123,27 @@ printf '%s' "$out" | grep -q 'armed: 1' && ok "repo path containing a space is s
 echo "=== usage ==="
 [ "$(rc bogus-command)" -eq 2 ] && ok "unknown command -> exit 2" || bad "unknown command exit code"
 
+
+echo "=== prose **Files:** must not read as ARMED (B-gate-4) ==="
+# Six repos share a spec whose **Files:** lines are prose. Every fragment counted as a declared
+# path, so the doctor said ARMED with a file count the gate could never match. False confidence
+# is worse than BLIND: BLIND tells you to fix the pointer, an inflated ARMED says all is well.
+newrepo
+printf 'status: pending\nplan: docs/specs/p-plan.md\n' > zuvo/plans/active-plan.md
+
+printf '# plan\n\n### Task 1\n**Files:** src/a.ts, src/b.ts\n' > docs/specs/p-plan.md
+_o=$(bash "$PHASE" doctor 2>&1)
+printf '%s' "$_o" | grep -q 'ARMED (' && printf '%s' "$_o" | grep -q 'files=2' \
+  && ok "pure paths -> ARMED with the real count" || bad "pure paths should be ARMED files=2 (got: $(printf '%s' "$_o" | grep -m1 ARMED))"
+
+printf '# plan\n\n### Task 1\n**Files:** src/a.ts, the reporting module and its helpers, src/b.ts\n' > docs/specs/p-plan.md
+_o=$(bash "$PHASE" doctor 2>&1)
+printf '%s' "$_o" | grep -q 'ARMED-PARTIAL' && printf '%s' "$_o" | grep -q 'files=2 of 3' \
+  && ok "mixed paths+prose -> ARMED-PARTIAL, both counts shown" || bad "mixed should be ARMED-PARTIAL 2 of 3 (got: $(printf '%s' "$_o" | grep -m1 -E 'ARMED|BLIND'))"
+
+printf '# plan\n\n### Task 1\n**Files:** the reporting module, all of its helpers\n' > docs/specs/p-plan.md
+_o=$(bash "$PHASE" doctor 2>&1)
+printf '%s' "$_o" | grep -q 'BLIND' && printf '%s' "$_o" | grep -q 'none path-shaped' \
+  && ok "prose only -> BLIND, not a falsely confident ARMED" || bad "prose-only should be BLIND (got: $(printf '%s' "$_o" | grep -m1 -E 'ARMED|BLIND'))"
+
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

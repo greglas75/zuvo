@@ -87,12 +87,28 @@ inspect() {
   _n=$(_expand_plan_files "$_pd" | grep -c . 2>/dev/null || echo 0)
   [ "$_n" -gt 0 ] 2>/dev/null || {
     printf 'BLIND\t%s\t%s\t%s\t0\tplan declares no **Files:** — gate fail-opens\n' "$_st" "$_dia" "$_plan"; return; }
+  # B-gate-4: count how many of those tokens can actually MATCH a changed file. Six repos share
+  # a spec whose **Files:** lines are prose, and every prose fragment used to be counted as a
+  # declared path — so the doctor reported ARMED with a file count the gate could never match.
+  # False confidence is worse than BLIND here: BLIND tells you to fix the pointer, an inflated
+  # ARMED tells you everything is fine. A token containing whitespace is prose: annotations like
+  # `svc.ts (modify — line 559)` are already stripped upstream, so whitespace is what is left.
+  _np=$(_expand_plan_files "$_pd" | grep -c '^[^[:space:]]\{1,\}$' 2>/dev/null || echo 0)
+  [ "$_np" -gt 0 ] 2>/dev/null || {
+    printf 'BLIND\t%s\t%s\t%s\t0\t%s **Files:** token(s), none path-shaped — gate matches nothing\n' \
+      "$_st" "$_dia" "$_plan" "$_n"; return; }
 
   _ev="-"
   if [ "$_st" = "in-progress" ]; then
     # Same arguments the gate uses, so the doctor cannot report "live" where the gate would not.
     if _execute_run_live "$_root" "$_plan"; then _ev="live execute run"
     else _ev="STALE: in-progress with no execute evidence (will gate as pending)"; fi
+  fi
+  if [ "$_np" -lt "$_n" ] 2>/dev/null; then
+    [ "$_ev" = "-" ] && _ev=""
+    printf 'ARMED-PARTIAL\t%s\t%s\t%s\t%s of %s\t%s\n' "$_st" "$_dia" "$_plan" "$_np" "$_n" \
+      "${_ev:+$_ev; }$(( _n - _np )) **Files:** token(s) are prose, not paths — the gate cannot match them"
+    return
   fi
   printf 'ARMED\t%s\t%s\t%s\t%s\t%s\n' "$_st" "$_dia" "$_plan" "$_n" "$_ev"
 }
@@ -124,6 +140,7 @@ cmd_doctor_one() {
   echo "  ---"
   case "$_v" in
     ARMED) echo "  gate is ARMED"; return 0 ;;
+    ARMED-PARTIAL) echo "  gate is ARMED but only for the path-shaped entries — the prose ones are invisible to it"; return 0 ;;
     IDLE)  echo "  nothing to gate (no pending/in-progress plan) — not a fault"; return 0 ;;
     *)     echo "  gate is BLIND — it will fail-open on every commit until the pointer is readable."
            echo "  fix: zuvo-phase.sh normalize --write   (rewrites the pointer in the dialect the gate reads)"
@@ -155,12 +172,12 @@ cmd_doctor_all() {
       # No `continue` here: it would skip the IFS=':' reset below and break the split for
       # every remaining pattern. IDLE repos are counted but not printed (noise in a sweep).
       case "$_v" in
-        ARMED) _armed=$((_armed+1)) ;;
+        ARMED|ARMED-PARTIAL) _armed=$((_armed+1)) ;;
         BLIND) _blind=$((_blind+1)) ;;
         *)     _idle=$((_idle+1)) ;;
       esac
       case "$_v" in
-        ARMED|BLIND)
+        ARMED|ARMED-PARTIAL|BLIND)
           printf '  %-8s %-34s status=%-12s dialect=%-16s %s\n' \
             "$_v" "$(basename "$_d")" "$(printf '%s' "$_row" | cut -f2)" \
             "$(printf '%s' "$_row" | cut -f3)" "$(printf '%s' "$_row" | cut -f6)" ;;
