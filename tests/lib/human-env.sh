@@ -23,13 +23,24 @@
 
 _he_root="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)}"
 
+
+# Names that must NEVER reach `env -u`, however they got extracted. The extraction is deliberately
+# derived from the detector source rather than an allowlist — that is what keeps it from drifting
+# when a new harness is added — but derivation means any uppercase token in those functions becomes
+# an unset. A comment like `# must not modify PATH`, or a `$HOME` reference added later, would put
+# PATH or HOME on the list and every subsequent test would fail cryptically, far from the cause.
+# So the guard is a denylist of things whose absence breaks the shell itself, not an allowlist of
+# vendors. Flagged as CRITICAL by adversarial review; verified LATENT today (the two detectors
+# currently yield 15 clean vendor names and nothing else) and fixed before it becomes live.
+_HE_NEVER_UNSET='PATH|HOME|USER|SHELL|TMPDIR|TMP|TEMP|LANG|LC_ALL|PWD|OLDPWD|TERM|SHLVL|IFS'
+
 _he_names() {
   # Uppercase tokens inside the two detector functions. Both are scanned: they are deliberately
   # separate implementations (bash ${!var} vs POSIX), so the union is what "an agent env" means.
   {
     sed -n '/^pg_is_agent_env()/,/^}/p'  "$_he_root/hooks/lib/pipeline-gate-lib.sh" 2>/dev/null
     sed -n '/^_is_agent_env()/,/^}/p'    "$_he_root/hooks/lib/refactor-gate-lib.sh" 2>/dev/null
-  } | grep -oE '\b[A-Z][A-Z0-9_]{3,}\b' | sort -u
+  } | grep -oE '\b[A-Z][A-Z0-9_]{3,}\b' | sort -u | grep -vxE "$_HE_NEVER_UNSET"
 }
 
 HUMAN=(env)
