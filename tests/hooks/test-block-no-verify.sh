@@ -115,4 +115,13 @@ git push --no-verify'                             2 'B-gate-9: real bypass AFTER
 # and after this change, so it would pin nothing. (Verified against HEAD before writing this.)
 check 'git commit -n -F - <<<body'                2 'B-gate-9: <<< is not a heredoc opener — a real -n beside it still blocks'
 
+# A COMMENT is not a heredoc opener. `# <<EOF` + a bypass + a lone `EOF` made the stripper
+# suppress the bypass before tokenization and the gate returned 0 — an agent-typable bypass of the
+# gate whose entire job is stopping those. Found by adversarial review OF THE COMMIT THAT ADDED
+# the stripper, reproduced, fixed. The same review also alleged a quoted-string bypass
+# (`echo "<<EOF"; git push --no-verify; echo EOF`); that one does NOT work and is pinned below so
+# nobody "fixes" a bug that never existed.
+check "$(printf '# <<EOF\ngit push --no-verify\nEOF')"  2 'B-gate-10: a commented `# <<EOF` does not open a heredoc — the bypass inside it still blocks'
+check 'echo "<<EOF"; git push --no-verify; echo EOF'      2 'B-gate-11: a quoted <<EOF in an echo does not hide a following bypass'
+
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "SOME FAILED"; exit 1; fi

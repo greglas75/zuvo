@@ -174,6 +174,12 @@ _strip_heredocs() {
   awk '
     function delim_of(line,   m) {
       # <<EOF | <<-EOF | <<"EOF" | <<\x27EOF\x27  (skip << that is really a <<< herestring)
+      # A COMMENT is not a heredoc opener. `# <<EOF` followed by `git push --no-verify` and a
+      # lone `EOF` made this filter suppress the bypass before tokenization — rc=0, gate silent.
+      # Reproduced 2026-08-17 by adversarial review of this very commit. The quoted variant it
+      # also alleged (`echo "<<EOF"; git push --no-verify; echo EOF`) does NOT bypass: verified
+      # rc=2. Only the comment form was real, so only the comment form is fixed here.
+      if (line ~ /^[[:space:]]*#/) return ""
       if (line !~ /<<-?[[:space:]]*("[^"]+"|\x27[^\x27]+\x27|[A-Za-z_][A-Za-z0-9_]*)/) return ""
       if (line ~ /<<</) return ""
       m = line
