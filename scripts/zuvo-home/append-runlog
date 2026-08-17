@@ -308,7 +308,19 @@ case "$SKILL" in
             exit 2
           fi
         fi
+      else
+        # B-1: no report found for a skill whose name says it audits. Deliberately NOT a block —
+        # `review` legitimately writes to memory/reviews/, which this lookup does not scan — but
+        # it must not stay INVISIBLE either. A silent skip here is indistinguishable from a
+        # passing verification in every log and every transcript, which is exactly how a gate
+        # stops being a gate.
+        echo "WARN: no $SKILL audit report found under $ZUVO_DIR/audits, audits/ or audit-results/ — finding-content verification SKIPPED (not passed)." >&2
       fi
+    else
+      # B-1: the helper itself is absent or not executable. Same reasoning: skipping is
+      # acceptable, skipping SILENTLY is not. Since v1.3.109 this could happen on any
+      # platform-only install, which shipped zero ~/.zuvo helpers — see the B-9 fix.
+      echo "WARN: $ZUVO_BIN/verify-audit not executable — finding-content verification SKIPPED (not passed). Run ./scripts/install.sh." >&2
     fi
     ;;
 esac
