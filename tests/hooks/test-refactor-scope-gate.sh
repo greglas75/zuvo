@@ -16,11 +16,12 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 fails=0; ok(){ echo "  ✓ $1"; }; bad(){ echo "  ✗ $1"; fails=$((fails+1)); }
 export ZUVO_HOME="$TMP/zuvohome"; mkdir -p "$ZUVO_HOME/run-markers"
 
-HUMAN=(env -u ZUVO_AGENT -u ZUVO_AI_RUN -u CLAUDECODE -u CLAUDE_PLUGIN_ROOT \
-       -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_SESSION -u CODEX_SANDBOX -u CODEX_WORKSPACE \
-       -u CODEX_HOME -u CURSOR_TRACE_ID -u CURSOR_AGENT -u GEMINI_CLI -u ANTIGRAVITY \
-       -u GEMINI_ANTIGRAVITY -u ANTIGRAVITY_SESSION_ID)
-
+# HUMAN env fixture — DERIVED from the two agent-detector libraries, not copied (B-gate-8).
+# This literal array used to live in four test files. See tests/lib/human-env.sh for why a
+# hardcoded copy is worse than useless here: the libraries it mirrors drifted (B-gate-2) and a
+# frozen fixture cannot notice, it just keeps unsetting the old set while every test passes.
+# shellcheck source=/dev/null
+. "$ROOT/tests/lib/human-env.sh"
 newrepo(){ rm -rf "$TMP/r"; mkdir -p "$TMP/r/zuvo/contracts" "$TMP/r/src"; cd "$TMP/r"
   git init -q; git config user.email t@t; git config user.name t
   printf '#!/bin/sh\nexec "%s" pre-commit\n' "$GATE" > .git/hooks/pre-commit; chmod +x .git/hooks/pre-commit; }
