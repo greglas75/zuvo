@@ -294,3 +294,42 @@ above. After editing any plist: `plutil -lint` it, then
 `launchctl bootout gui/$UID/<label>; launchctl bootstrap gui/$UID <plist>` (a plain reload does not
 replace a stale in-memory job), and confirm with `launchctl kickstart -p gui/$UID/<label>` that the
 log actually advances. Logs land next to the scripts in `~/.zuvo/*.log`.
+
+## Retro truncation — detection, recovery, diagnosis (2026-08-17)
+
+`~/.zuvo/retros.log` and `retros.md` have been truncated at least three times in two days
+(422→100, 464→112, 519→104 rows; retros.md 377→128, 431→138, 496→127 sections). The writer is
+**still unidentified**. `rotate-retros` is excluded twice over: its own log ends 2026-08-13 and its
+launchd job runs weekly, and no other `~/.zuvo` writer appears in any of the windows.
+
+Three layers now stand between that and data loss. They are deliberately separate — the first two
+stop the bleeding, the third is the only one that can end it:
+
+| layer | where | what it does |
+|---|---|---|
+| detect + auto-recover | `append-retro`'s `_shrink_guard` (runs 54-199×/day) | high-water tracking; on a shrink, UNION of the newest snapshot with the live file, adopted only on a strict row gain |
+| preserve | same guard | gzipped hourly snapshots of BOTH files, keep 24 — taken **only at or above the high-water**, so a truncation can never overwrite the last good copy |
+| diagnose | `retro-shrink-forensics.sh` via launchd `WatchPaths` | fires within moments of the write and dumps `lsof` on the file AND the directory, the filtered process table, and launchd job state |
+
+Two design points worth not re-deriving:
+
+- **The snapshot interval IS the maximum possible loss.** It was 6h, chosen against cron cadence,
+  and the first real incident lost 323 rows because the newest snapshot was 7 hours old. It tracks
+  the append rate now, not cron.
+- **Recovery is a UNION, never a restore.** The live file always holds rows written after the last
+  snapshot; replacing it would trade one loss for another. Rows are deduplicated whole-line, so
+  re-running is idempotent.
+
+The forensics job is NOT installed by `scripts/install.sh` (which manages no launchd jobs — every
+`com.greglas.zuvo-*` plist is operator-installed). To arm it:
+
+```bash
+cp scripts/zuvo-home/retro-shrink-forensics.sh ~/.zuvo/ && chmod +x ~/.zuvo/retro-shrink-forensics.sh
+# plist: Label com.greglas.zuvo-retro-shrink-forensics, WatchPaths [$HOME/.zuvo/retros.log],
+#        ThrottleInterval 10, logs to ~/.zuvo/retro-shrink-forensics.launchd.log
+launchctl load ~/Library/LaunchAgents/com.greglas.zuvo-retro-shrink-forensics.plist
+```
+
+Dumps land in `~/.zuvo/retro-shrink-forensics.log`, one per incident. **A dump whose only open
+handle is `UserEvent` is launchd's own trigger, not the culprit** — that is what a
+self-inflicted test truncation looks like, and it was the first entry written here.
