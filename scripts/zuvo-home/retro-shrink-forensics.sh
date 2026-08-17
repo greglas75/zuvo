@@ -43,11 +43,18 @@ SENT="$ZH/.retros-forensics-seen"
 [ "$(cat "$SENT" 2>/dev/null)" = "$prev" ] && exit 0
 printf '%s' "$prev" > "$SENT" 2>/dev/null
 
+# `grep -c` PRINTS the count and EXITS 1 when the count is zero, so `$(grep -c … || echo '?')`
+# emits BOTH — "0" then "?" — and the forensics line reads `0\n? sections`. This is the exact
+# trap e4c11ab fixed in three helpers and added a class guard for; the guard caught this fifth
+# occurrence in tests/hooks/test-retro-shrink-guard.sh. Capture first, default only on EMPTY.
+_md_sections=$(grep -c '^## ' "$ZH/retros.md" 2>/dev/null | head -1 | tr -cd '0-9')
+[ -n "$_md_sections" ] || _md_sections='?'
+
 {
   echo "════════════════════════════════════════════════════════════════════"
   echo "SHRINK DETECTED  $(date -u +%Y-%m-%dT%H:%M:%SZ)  ($(date '+%Y-%m-%d %H:%M:%S %Z'))"
   echo "  rows: $prev -> $rows   bytes: $(wc -c < "$LOG" 2>/dev/null | tr -d ' ')"
-  echo "  retros.md: $(grep -c '^## ' "$ZH/retros.md" 2>/dev/null || echo '?') sections, $(wc -c < "$ZH/retros.md" 2>/dev/null | tr -d ' ') bytes"
+  echo "  retros.md: $_md_sections sections, $(wc -c < "$ZH/retros.md" 2>/dev/null | tr -d ' ') bytes"
   echo
   echo "── open file handles (the writer, if it is still alive) ──"
   # lsof on the file AND on the directory: a writer using the temp-file + rename pattern holds the
