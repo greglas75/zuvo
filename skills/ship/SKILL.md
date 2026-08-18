@@ -61,6 +61,7 @@ CORE FILES LOADED:
   6. ../../shared/includes/knowledge-prime.md  — READ/MISSING
   7. ../../shared/includes/no-pause-protocol.md — READ/MISSING (HARD: no mid-pipeline pauses)
   8. ../../shared/includes/documentation-mandate.md — READ/MISSING (Phase 3 cites it as a completion-gate item)
+  9. ../../shared/includes/terminal-state.md    — READ/MISSING (HARD: no SHIP COMPLETE over a pending check)
 ```
 
 If any file is missing: proceed in degraded mode. Note which files are unavailable in the Phase 5 output.
@@ -307,6 +308,35 @@ WORK_FILES = <files being touched>
    - `Cargo.toml` → `cargo test`
    - `composer.json` → `scripts.test` (run with `composer test`)
    - If no test command found: print "No test runner detected. Skipping tests." and continue.
+
+1b. **Run the CHEAP checks CI runs, not only the test suite.** A green `npm test` is not a green
+   pipeline. Detect and run, in this order, every one the project defines — they are seconds each
+   and they gate the same push:
+
+   | Check | Where to look |
+   |---|---|
+   | format | `scripts.format:check` / `format:ci` / `fmt:check`; `biome ci`, `prettier --check`, `cargo fmt --check`, `ruff format --check`, `gofmt -l` |
+   | lint | `scripts.lint:ci` / `lint`; `eslint`, `biome check`, `ruff check`, `clippy`, `golangci-lint` |
+   | typecheck | `scripts.typecheck` / `type-check`; `tsc --noEmit`, `mypy`, `pyright` |
+   | build | `scripts.build`; `cargo build`, `go build ./...` |
+
+   Prefer the `:ci` variant when both exist — it is the one the pipeline runs, and the plain
+   variant often auto-fixes instead of failing. Run them BEFORE the suite: they are the fastest and
+   they fail on the largest class of trivially-avoidable CI reds.
+
+   **Why this is not optional.** Measured 2026-08-17 on `rs_be`: the first CI run of a PR died on
+   **one Biome formatting difference** in a spec file. That cost a 291 s CI job, a full retry cycle,
+   a second 568 s Semgrep pass, and the polling around all of it. The check that would have caught
+   it — `npm run lint:ci` — measured **under 1 second across 1217 files**. Ship ran only `npm test`,
+   so it pushed a diff it already had everything needed to reject.
+
+   A failure here is a normal, fixable finding: fix it (a formatter difference is a formatter run,
+   not a judgement call), re-run the check, and continue. It is NOT grounds to skip the check — a
+   project whose formatter cannot be satisfied locally will fail the same way in CI, just slower and
+   after a push. Apply the same `TEST_RAN` discipline as step 2: a checker that exits 0 having
+   inspected zero files has proved nothing. Record each as
+   `format: pass (1217 files)` / `typecheck: pass` in the artifact, and `n/a` where the project
+   defines no such script — never silently omit one that ran.
 
 2. **Run the test suite — and prove it produced a verdict.** Capture exit code, pass count and
    fail count. All three, from the RUNNER, not from whatever wrapped it:
@@ -1245,6 +1275,41 @@ Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`
   gh pr view "$PR_NUMBER" --json state,mergedAt -q '.state'   # VERIFY: MERGED, not the exit code
   ```
 
+  **MERGED is not the terminal state — a green target branch is.** Post-merge workflows (CI on the
+  target branch, deploy gates, scheduled scans) are dispatched BY the merge, so by construction none
+  of them has concluded when `gh pr merge` returns. Watch them:
+
+  ```sh
+  git fetch "$PUSH_REMOTE" "$TARGET_BRANCH"
+  MERGE_SHA=$(git rev-parse "$PUSH_REMOTE/$TARGET_BRANCH")
+
+  # Runs appear a few seconds after the merge. An EMPTY list means "not dispatched yet", not
+  # "none configured" — re-read once after a short wait before concluding there is nothing.
+  gh run list --commit "$MERGE_SHA" --json databaseId,name,status,conclusion
+
+  # One blocking call per run — never a model-loop poll (see terminal-state.md: 399 polling calls
+  # were measured on one profiled run, for information --watch delivers in a single call).
+  gh run watch "$RUN_ID" --exit-status
+  ```
+
+  Then read `conclusion`, not the exit code:
+
+  - every run `success` → the release is shipped; proceed to Step 5.
+  - any run `failure` / `timed_out` → `SHIP INCOMPLETE` with the run URL and the failing job. Fix it
+    if it is fixable here (a transient `setup-node` 503/429 is a re-run: `gh run rerun <id> --failed`,
+    then watch again — twice, then stop and report it as infrastructure).
+  - any run `cancelled` → **not a pass.** A job cancelled by a timeout ignores `continue-on-error`
+    and reds the check anyway; reading cancellation as "inconclusive, proceed" converts a real block
+    into a green banner.
+  - no runs after the second read → say `no post-merge checks configured` and proceed. Absence
+    stated is fine; absence assumed is not.
+
+  **Why this is a phase and not a nicety.** Measured 2026-08-17 on `rs_be`: ship merged the PR and
+  printed its completion block. The post-merge CI on `main` then failed (`setup-node` 503 → 502 →
+  429) and the production gate was `CANCELED`. The release was reported shipped over a broken target
+  branch — and the failure became visible ~3.6 minutes *after* the banner, so nothing in the run
+  could have caught it. Shipping means the target branch works, not that the merge button worked.
+
   **Read PR state, not exit codes.** Three shapes that are not what they look like:
   - `gh pr merge` can exit non-zero *after* the merge landed (it also deletes the branch and
     updates the local ref; a failure in that tail is not a failed merge). Confirm with
@@ -1379,6 +1444,9 @@ COMPLETION GATE CHECK
 [ ] Tests ran and PRODUCED a verdict (runner summary line parsed, status read via PIPESTATUS not a
     pipe's exit); failures TRIAGED with the TEST TRIAGE table printed — never a bare abort, never an
     "allow push despite red?" question
+[ ] Phase 1b cheap checks recorded one line each — format / lint / typecheck / build — as pass with
+    the count, fail-then-fixed, or `n/a (no such script)`. A check the project defines and the run
+    did not execute is an unfinished item, not an omission
 [ ] Version bumped with CHANGELOG section added — after the tag-collision preflight (no reuse of a
     published version, no `git tag -f`)
 [ ] PR flow only: no version bump, no CHANGELOG edit, no tag created
@@ -1392,6 +1460,12 @@ COMPLETION GATE CHECK
     unfinished ship — nobody on this fleet reviews the queue, so it buys no safety and starts
     accruing the four failure modes documented in the push section. A non-zero `gh pr merge` exit
     over a PR whose state is MERGED is NOT a failure.
+[ ] Terminal state (terminal-state.md): post-merge runs on the target branch enumerated by
+    `gh run list --commit <merge sha>` and each watched to a conclusion — listed by id with its
+    conclusion, or `no post-merge checks configured` after a second read. `cancelled` is not a pass.
+    A SHIP COMPLETE printed while a post-merge run is still in flight is the failure this line
+    exists to prevent
+[ ] Terminal state (terminal-state.md): processes launched by this run = N, still alive = 0
 ```
 
 ### 1. Run retrospective (REQUIRED, before SHIP COMPLETE)

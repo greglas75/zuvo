@@ -92,6 +92,7 @@ CORE FILES LOADED:
   4. ../../shared/includes/run-logger.md   -- READ/MISSING
   5. ../../shared/includes/retrospective.md   -- READ/MISSING
   6. ../../shared/includes/report-output-location.md -- READ/MISSING (canonical $ZUVO_DIR for 4.3b)
+  7. ../../shared/includes/terminal-state.md -- READ/MISSING (HARD: no completion over a live runner)
 ```
 
 **If any file is missing:** Proceed in degraded mode. Note "DEGRADED -- [file] unavailable" in the final report.
@@ -223,12 +224,12 @@ BASELINE FAILED
   Suggestion: run zuvo:fix-tests to repair failing tests first.
 ```
 
-### 1.3 Run the tests LOCALLY — never through a remote-runner wrapper
+### 1.3 Run the TIER 1 loop locally — the offload wrapper is per-invocation poison there
 
-**Do not prefix any command in this skill with `rt` (or any other offload wrapper.)**
+**Never prefix a Tier 1 (mapped-test) invocation with `rt` or any other offload wrapper.**
 A global rule of the form "prefix test commands with `rt`" is correct for one long
 suite run and inverts here: the wrapper's cost is a fixed per-invocation charge
-(mirror sync + queue), and this skill makes N short invocations in a tight loop.
+(mirror sync + queue), and Tier 1 makes N short invocations in a tight loop.
 
 Measured 2026-08-10 on the same single test file:
 
@@ -239,9 +240,51 @@ Measured 2026-08-10 on the same single test file:
 
 ~50-75x, and a single wrapped call alone exceeds the whole run budget below. A
 10-mutant plan that would finish in ~20 s locally cannot complete a single mutant
-through the wrapper. If a project genuinely cannot run its tests locally, this skill
-is not usable there — say so and stop; do not run it wrapped and report the timeout
-as a test-quality result.
+through the wrapper. If a project genuinely cannot run its mapped tests locally,
+this skill is not usable there — say so and stop; do not run them wrapped and
+report the timeout as a test-quality result.
+
+**Tier 2 is the opposite case, and the ban used to swallow it.** A Tier 2 pass is ONE
+long full-suite run — exactly the shape the global `rt` rule was written for — and the
+budget formula in 1.3b already accounts for it separately (`TIER2_RUNS * BASELINE_TIME`,
+never `PER_RUN`). The routing rule simply did not follow its own split. Measured
+2026-08-17 on `rs_be`, same suite, same commit:
+
+| Tier 2 full suite | Wall clock |
+|---|---|
+| local, 4 passes in one run | 673 s + 270 s + 323 s + 312 s = **1578 s** |
+| farm, warm mirror + cache hit | **142–264 s** per pass (deps 2–4 s, setup < 0.8 s) |
+
+**Route Tier 2 by `BASELINE_TIME`, measured in 1.2, not by habit:**
+
+- `BASELINE_TIME >= 120s` → run Tier 2 through `rt` (`rt --light` when the suite needs no
+  services). The one-time mirror/queue charge is amortised across a run that long, and it
+  takes the heaviest load off the workstation that is also running the Tier 1 loop.
+- `BASELINE_TIME < 120s` → keep Tier 2 local. Below that the wrapper's fixed cost is a
+  large fraction of the run and the farm wins nothing.
+
+Record which side the run took and why: `tier2_runner: "rt (baseline 187s)"` or
+`tier2_runner: "local (baseline 41s)"`. A Tier 2 result whose runner is unstated cannot be
+compared against the next run's.
+
+**Three rules that do not relax when Tier 2 goes to the farm:**
+
+1. **Restoration stays local and unconditional.** The farm run is read-only with respect to
+   the working tree: `rt` ships the tree as it stands (mutation applied) and the verdict comes
+   back, but the `cp` restore in 3.2 step 4 and the hash verify in step 5 happen here, on this
+   machine, exactly as before. Never let a remote step own the restore.
+2. **A wrapper failure is not a mutation result.** `rt` exiting non-zero for a queue timeout,
+   an evicted run, or an unreachable host means the mutation was **not measured** — it is
+   neither killed nor survived. Re-run it locally once; if that also fails, the mutant is
+   `NOT_EXECUTED` and the plan is incomplete under 3.3, not scored around.
+3. **`TEST_RAN` discipline applies to the farm too.** A farm run that is evicted or never
+   scheduled exits 0 having run nothing, and "0 failures" from a suite that did not execute
+   reads as a SURVIVED mutation — the single most expensive misread this skill can make. Require
+   a summary line proving the suite executed before recording any Tier 2 verdict.
+
+**Off-tailnet, `rt` refuses with exit 21** rather than running locally. That is a routing
+failure, not a test result: fall back to a local Tier 2 pass for the rest of the run and note
+`tier2_runner: "local (rt unreachable)"`.
 
 ### 1.3b Calculate Timeouts — budget per-invocation cost, not suite time
 
@@ -506,6 +549,13 @@ that: 7 of 10 dropped on the budget, a score printed anyway.
 
 On early termination:
 
+0. **Reap the runner BEFORE writing anything.** The abort path is where the 679-minute Jest
+   process came from (safety rule 5): the loop stopped issuing mutations while a Tier 2 pass it
+   had already launched was still running, and nothing went back for it. For every PID recorded
+   this run, `kill -0` it; if alive, terminate it and record how. Then restore the mutated file,
+   then write the partial report. A `PARTIAL` report published over a still-running suite is
+   describing a tree that is still changing underneath it.
+
 1. **`result` is `PARTIAL`, never PASS/WARN/FAIL.** A grade over an unfinished plan is
    not a grade. The JSON sets `"result": "PARTIAL"` and `"plan_completed": false`.
 2. **Lead with what is missing**, before any number:
@@ -709,6 +759,9 @@ input nobody produces is not a gate.
   "commit": "<HEAD sha7 — the code these numbers describe>",
   "scope": "<path or 'full'>",
   "tier2_ran": true,
+  "tier2_runner": "local",
+  "baseline_time_s": 41.2,
+  "runners": { "launched": 4, "reaped": 4, "terminated_at_abort": 0 },
   "fix_loop_ran": true,
   "result": "COMPLETE",
   "plan_completed": true,
@@ -777,8 +830,14 @@ Field notes, each earning its place:
   3-of-10 run is indistinguishable from a 10-of-10 run in the JSON.
 - **`per_run_cost_s`** — the measured cost of one targeted run. It is in the artifact because
   it is the single number that explains a truncated plan: a value ~50x the local baseline
-  means the tests were routed through a remote/offload wrapper, which this skill forbids
-  (1.3). Diagnosing that from a bare "timeout" took a user a whole run.
+  means the Tier 1 loop was routed through a remote/offload wrapper, which 1.3 forbids.
+  Diagnosing that from a bare "timeout" took a user a whole run.
+- **`tier2_runner`** — `local` or `rt`, with the `BASELINE_TIME` that decided it (1.3). Two
+  Tier 2 results measured on different runners are not comparable wall-clock, and a survivor
+  confirmed by an evicted farm run is not a survivor at all.
+- **`runners`** — `launched` must equal `reaped` (safety rule 5). This field exists because the
+  count was invisible: a run that left a full suite alive for 679 minutes produced a report
+  indistinguishable from a clean one. `reaped < launched` makes the artifact self-invalidating.
 
 ### Retrospective (REQUIRED)
 
@@ -848,5 +907,14 @@ These are non-negotiable:
    forbid the step that closes the gaps this skill exists to find.
 3. **Always verify restoration.** After each mutation, confirm the original file is intact.
 4. **Timeout protection.** No single mutation test can run longer than 3x baseline per file.
-5. **Clean state on exit.** If the skill is interrupted, restore through the Phase 3.1 temp-copy path — `cp /tmp/zuvo-mutation-[hash]-[filename] [file]` for every file still mutated, then delete the temp copies. Do **not** reach for `git stash pop` or `git checkout -- [file]`: §3.1 forbids both (pop consumes the stash on the first iteration; a bare `checkout --` discards uncommitted work that is not this skill's to destroy). `git checkout HEAD -- [file]` is the last resort named in §3.2 error recovery, valid only because Phase 3.1 verified the tree was clean at start — and it needs the user's go-ahead, since it is a destructive git operation.
+5. **Clean state on exit — files AND processes.** If the skill is interrupted, restore through the Phase 3.1 temp-copy path — `cp /tmp/zuvo-mutation-[hash]-[filename] [file]` for every file still mutated, then delete the temp copies. Do **not** reach for `git stash pop` or `git checkout -- [file]`: §3.1 forbids both (pop consumes the stash on the first iteration; a bare `checkout --` discards uncommitted work that is not this skill's to destroy). `git checkout HEAD -- [file]` is the last resort named in §3.2 error recovery, valid only because Phase 3.1 verified the tree was clean at start — and it needs the user's go-ahead, since it is a destructive git operation.
+
+   **And reap every runner you started** — see `../../shared/includes/terminal-state.md`. This rule
+   used to cover files only, and a Tier 2 full suite launched by an aborted run stayed alive for
+   **679 minutes** after the skill reported done (measured 2026-08-17): the loop stopped issuing
+   mutations on the budget and never went back for the process it had already started. Record each
+   runner's PID at launch, and on EVERY exit path — completion, budget abort, restore-failure abort,
+   user interrupt — either `wait` for it or terminate it (`kill -TERM`, then `-KILL` after a grace
+   period) and say so in the report. Never `pkill -f jest`/`vitest`: this is a workstation running
+   ~40 repos and a name match kills other people's runs.
 6. **No side effects.** Mutations that would affect databases, external APIs, or file system state outside the project are not generated.

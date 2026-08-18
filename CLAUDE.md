@@ -183,7 +183,7 @@ skills/<name>/agents/<name>.md  — sub-agent instructions (50 agent files, 48 u
                                     cq-auditor and spec-reviewer each exist TWICE with DIFFERENT
                                     content — refactor/ vs review/, brainstorm/ vs execute/.
                                     Same name ≠ same file; never "sync" one onto the other)
-shared/includes/*.md            — shared procedural includes (81 files):
+shared/includes/*.md            — shared procedural includes (82 files):
                                     gate-registry.md (SSOT for all 124 CQ/Q/CAP/AP gates; E2E-Q by reference)
                                       E2E-Q is registered there, not defined: the authoritative table
                                       is skills/write-e2e/references/quality-gates.md, and the
@@ -192,6 +192,7 @@ shared/includes/*.md            — shared procedural includes (81 files):
                                     session-state.md (session recovery)
                                     report-output-location.md (canonical zuvo/ output dir)
                                     severity-vocabulary.md (unified severity mapping)
+                                    terminal-state.md (no completion over a live process / pending check)
                                     adversarial-loop.md, adversarial-loop-docs.md (evidence enforcement)
                                     quality-gates.md, env-compat.md, codesift-setup.md, run-logger.md
                                     + registries, schemas, protocols

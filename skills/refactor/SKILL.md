@@ -84,6 +84,7 @@ and parking its findings, = the run is `BLOCKED(unsafe)`. Full stop. Everything 
   3. ../../shared/includes/regression-fence.md    -- [READ | MISSING -> WARN] (proves MOVED_VERBATIM instead of asserting it)
   4. ../../shared/includes/test-mutation-probes.md -- [READ | MISSING -> WARN] (proves the characterization lock has teeth — CHARACTERIZE_GAP step 2.5)
   5. ../../shared/includes/test-quality-gate.md   -- [READ | MISSING -> WARN] (Phase 3.6; carries the dispatch-authorization rule)
+  6. ../../shared/includes/terminal-state.md      -- [READ | MISSING -> WARN] (no completion over a live runner or a pending check)
 ```
 
 These files are loaded before reading the refactor target.
