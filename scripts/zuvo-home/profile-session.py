@@ -42,6 +42,22 @@ def pts(s):
     except Exception:
         return None
 events=[]
+# Labels are truncated for display (150/200/320 chars). Classification used to run on the TRUNCATED
+# string, so a reviewer invoked through the shell as
+#   cd /Users/…/very/long/worktree/path && bash ~/.zuvo/adversarial-review --rotate …
+# lost the word "adversarial" past the cut and was silently filed under `other-tools` — which is
+# how a profile can report `adversarial_calls: 0` for a session that ran several. The tag is
+# therefore computed from the FULL text and prepended, so the truncated label still carries it.
+_TAGS = (
+    ('adversarial', re.compile(r'adversarial|reviewer-preflight|blind-audit', re.I)),
+    ('subagent',    re.compile(r'\bsubagent_type\b|\bTask\b|agent-dispatch', re.I)),
+)
+def _tag(full, label):
+    hits = [n for n, rx in _TAGS if rx.search(full) and n not in label.lower()]
+    return ('[' + ']['.join(hits) + ']' + label) if hits else label
+
+toks=[]
+subtoks=[]
 with open(path, errors='ignore') as f:
     for line in f:
         line=line.strip()
@@ -65,22 +81,70 @@ with open(path, errors='ignore') as f:
                     if isinstance(x,dict) and x.get('type')=='tool_use':
                         inp=x.get('input') or {}
                         cmd=inp.get('command') or inp.get('prompt') or inp.get('description') or inp.get('skill') or ''
-                        names.append(f"{x.get('name','?')}:{str(cmd)[:150]}")
-            if names: kind='tool_use'; label=' | '.join(names)[:320]
+                        names.append(f"{x.get('name','?')}:{str(cmd)[:400]}")
+            if names:
+                kind='tool_use'; _full=' | '.join(names); label=_tag(_full, _full[:320])
             else: kind='assistant_text'
         elif typ=='system':
             kind='system'; label=str(d.get('content','') or d.get('subtype',''))[:150]
         elif typ in ('response_item','event_msg','turn_context','compacted'):
             pt=p.get('type','')
             if pt in ('function_call','local_shell_call','custom_tool_call','web_search_call'):
-                arg=p.get('arguments') or p.get('action') or ''
-                kind='tool_use'; label=(str(p.get('name','sh'))+':'+str(arg)[:200])[:320]
+                # Codex has moved the payload key more than once: `arguments` (function_call),
+                # `action` (local_shell_call), and `input` on the newer `custom_tool_call`. Reading
+                # only the first two left every custom_tool_call labelled as a bare `exec:` with no
+                # command text — so tests/build, adversarial review and everything else classified
+                # as `other-tools`, and a session that ran reviewers reported adversarial_calls: 0.
+                arg = (p.get('arguments') or p.get('action') or p.get('input')
+                       or p.get('command') or '')
+                _full=str(p.get('name','sh'))+':'+str(arg)
+                kind='tool_use'; label=_tag(_full, _full[:320])
             elif pt in ('function_call_output','local_shell_call_output','custom_tool_call_output'): kind='tool_result'
             elif pt=='message': kind='user_msg' if p.get('role')=='user' else 'assistant_text'
             elif pt=='reasoning': kind='assistant_text'; label='reasoning'
             else: kind='codex_'+str(pt)[:24]
         events.append((t,kind,label))
+        # --- TOKEN ACCOUNTING (deterministic) ------------------------------------------------
+        # Five hand-written profiles of ONE Codex session reported gross 202,362,002 vs
+        # 203,519,738, model calls 1395 vs 1406, and a "strict lower bound" for polling of
+        # 45 / 55 / 83 / 396 / 400 calls -- a 9x spread, every figure labelled MEASURED. They
+        # disagreed because the skill declared token cost out of scope, so each run re-derived
+        # the numbers by hand. The trap that makes hand-derivation unreliable is right here:
+        # THE TWO TRANSCRIPT FORMATS DEFINE input_tokens WITH OPPOSITE CACHE SEMANTICS.
+        #   Codex  payload.info.last_token_usage : input_tokens INCLUDES cached_input_tokens
+        #   Claude message.usage                 : input_tokens EXCLUDES cache_read/cache_creation
+        # Aliasing the key names together (as a generic reader is tempted to) silently under-counts
+        # every Claude session by the whole cache-read volume, which is most of it. So each format
+        # is read explicitly, and `gross` means the same thing in both: everything billed on the
+        # way in, plus everything generated.
+        _u = None
+        if isinstance(p.get('info'), dict) and isinstance(p['info'].get('last_token_usage'), dict):
+            _u = p['info']['last_token_usage']                     # codex
+            _in = int(_u.get('input_tokens') or 0)                 # already includes cache
+            _cached = int(_u.get('cached_input_tokens') or 0)
+            _out = int(_u.get('output_tokens') or 0)
+            _reas = int(_u.get('reasoning_output_tokens') or 0)
+        elif isinstance(d.get('message'), dict) and isinstance(d['message'].get('usage'), dict):
+            _u = d['message']['usage']                             # claude main loop
+            _cached = int(_u.get('cache_read_input_tokens') or 0)
+            _in = (int(_u.get('input_tokens') or 0)
+                   + int(_u.get('cache_creation_input_tokens') or 0) + _cached)
+            _out = int(_u.get('output_tokens') or 0)
+            _reas = 0
+        if _u is not None:
+            toks.append((t, _in, _cached, _out, _reas))
+        # Sub-agent spend arrives inside a tool_result (`toolUseResult.usage`) and is NOT part of
+        # the main loop's own usage. It is counted, but SEPARATELY -- folding it into `gross`
+        # would make a session with sub-agents look like one enormous context window.
+        _sub = d.get('toolUseResult')
+        if isinstance(_sub, dict) and isinstance(_sub.get('usage'), dict):
+            _su = _sub['usage']
+            subtoks.append((int(_su.get('input_tokens') or 0)
+                            + int(_su.get('cache_creation_input_tokens') or 0)
+                            + int(_su.get('cache_read_input_tokens') or 0),
+                            int(_su.get('output_tokens') or 0)))
 events.sort(key=lambda e:e[0])
+toks.sort(key=lambda e:e[0])
 for _bound, _val, _keep in (("window_start", ws, True), ("window_end", we, False)):
     if not _val:
         continue
@@ -92,6 +156,7 @@ for _bound, _val, _keep in (("window_start", ws, True), ("window_end", we, False
         sys.stderr.write(f"profile-session: {_bound} is not an ISO timestamp: {_val!r}\n")
         sys.exit(2)
     events = [e for e in events if (e[0] >= _w if _keep else e[0] <= _w)]
+    toks   = [e for e in toks   if (e[0] >= _w if _keep else e[0] <= _w)]
 if len(events)<3: print(json.dumps({'file':path,'error':'too few events in window','events':len(events)})); sys.exit()
 def cat(kind,label):
     l=label.lower()
@@ -147,4 +212,40 @@ out={'file':(_parent + '/' if _parent else '') + os.path.basename(path)[:18],'ev
    'adversarial_calls':sum(1 for _,k,l in events if k=='tool_use' and 'adversarial' in l.lower()),
    'task_dispatches':sum(1 for _,k,l in events if k=='tool_use' and l.lower().startswith('task:')),
    'user_msgs':sum(1 for _,k,_ in events if k=='user_msg')}}
+
+# --- tokens: ONE definition, applied the same way every run ---------------------------------
+# `polling` is deliberately a NARROW, FIXED tool-label pattern, not a judgement about which calls
+# "felt like waiting". A judgement re-made per run is what produced a 9x spread across five
+# profiles of one transcript. If this list is wrong it is wrong reproducibly, which can be argued
+# about; a per-run classifier cannot be.
+POLL_RE = re.compile(r'(rt\s+--?(attach|queue|log|stats|summary|wait)'
+                     r'|gh\s+(pr\s+checks|run\s+(view|watch|list))'
+                     r'|\bwait\b|write_stdin'
+                     r'|gh\s+api\s+.*(check-runs|actions/runs))', re.I)
+if toks:
+    _tot = lambda idx: sum(r[idx] for r in toks)
+    _inp, _cached, _outp, _reas = _tot(1), _tot(2), _tot(3), _tot(4)
+    # A token row is attributed to polling when the NEAREST PRECEDING tool_use matches POLL_RE.
+    _tool_events = [(t,l) for t,k,l in events if k=='tool_use']
+    _p_calls=_p_in=_p_cached=_p_out=0
+    for _t,_i,_c,_o,_r in toks:
+        _prev = None
+        for _tt,_ll in _tool_events:
+            if _tt <= _t: _prev = _ll
+            else: break
+        if _prev and POLL_RE.search(_prev):
+            _p_calls += 1; _p_in += _i; _p_cached += _c; _p_out += _o
+    out['tokens'] = {
+        'model_calls': len(toks),
+        'input': _inp, 'cached_input': _cached, 'output': _outp, 'reasoning_output': _reas,
+        'gross': _inp + _outp,
+        'fresh': _inp - _cached + _outp,
+        'polling': {'calls': _p_calls, 'gross': _p_in + _p_out, 'fresh': _p_in - _p_cached + _p_out,
+                    'pct_gross': round(100.0*(_p_in+_p_out)/max(1,_inp+_outp), 2)},
+        'subagents': {'calls': len(subtoks), 'gross': sum(a+b for a,b in subtoks)},
+        'classifier': POLL_RE.pattern,
+        'note': 'gross = all billed input (incl. cache) + output; fresh excludes cache reads; reasoning_output is a SUBSET of output; subagent spend is NOT in gross'}
+else:
+    out['tokens'] = {'model_calls': 0,
+        'note': 'no last_token_usage/usage records in this transcript — report tokens as UNKNOWN, never hand-derive them'}
 print(json.dumps(out,ensure_ascii=False,indent=1))

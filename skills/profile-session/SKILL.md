@@ -15,9 +15,37 @@ review, 38 minutes total across all 28).
 This skill measures instead of guessing. It reads the transcript's timestamps, charges each gap to
 the activity that preceded it, and reports the ranked truth.
 
-**Scope:** wall-clock attribution for a single session, or a comparison of two.
-**Out of scope:** token cost (see `zuvo:context-audit`), skill quality (`zuvo:skill-eval`),
-fleet-wide trends (`~/.zuvo/runs.log` + `zuvo:retro`).
+**Scope:** wall-clock attribution for a single session, or a comparison of two, plus the token
+totals the profiler computes (`tokens` block).
+**Out of scope:** per-file / per-include context budgeting (`zuvo:context-audit`), skill quality
+(`zuvo:skill-eval`), fleet-wide trends (`~/.zuvo/runs.log` + `zuvo:retro`).
+
+### Tokens come from the script or they do not get reported
+
+This line used to read *"Out of scope: token cost"*, and the profiler computed none — so every run
+asked for a token breakdown produced one **by hand**. Five profiles of the SAME Codex session then
+reported gross 202,362,002 vs 203,519,738, model calls 1,395 vs 1,406, and a "strict lower bound"
+for polling of **45 / 55 / 83 / 396 / 400** calls — a 9x spread, each figure labelled `[M] MEASURED`.
+
+The trap is not carelessness, it is the data: **the two transcript formats define `input_tokens`
+with opposite cache semantics.** Codex's `last_token_usage.input_tokens` already includes
+`cached_input_tokens`; Claude's `message.usage.input_tokens` excludes both cache fields. A reader
+who aliases the key names together under-counts every Claude session by nearly its entire volume.
+
+So:
+
+- **Report only the `tokens` block the profiler emits.** It handles each format explicitly and is
+  reproducible — same file in, same numbers out.
+- **If `tokens.model_calls` is 0, the answer is UNKNOWN.** The transcript carries no usage records.
+  Say that. Do not estimate from message sizes, character counts, or gap durations.
+- **Never label a hand-derived figure `MEASURED`.** If you computed it yourself rather than reading
+  it out of the profiler JSON, it is `[E] ESTIMATE` and the method belongs next to it.
+- **`polling` is a fixed regex** (`tokens.classifier`), not a per-run judgement about which calls
+  felt like waiting. Quote the classifier when you quote the number. Widening it is a code change
+  to `profile-session.py`, reviewed once — not a decision re-made each run.
+- **`gross` vs `fresh`:** `gross` is everything billed on the way in (cache reads included) plus
+  output — the quota-shaped number. `fresh` excludes cache reads. Sub-agent spend is reported
+  separately under `tokens.subagents` and is deliberately NOT folded into `gross`.
 
 ## Argument Parsing
 
