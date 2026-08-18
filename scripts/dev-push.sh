@@ -54,6 +54,32 @@ else
 fi
 # <<< zuvo:test-gate
 
+# CRASH SAFETY (B-devpush-marketplace-dirty-tree). This rewrites a SIBLING repo, and the commit
+# that carries it only happens at Step 4 — after the tag push. Any failure or Ctrl-C in between
+# used to leave the marketplace tree dirty, and Step 0b's `git pull --rebase` above is now
+# deliberately fail-CLOSED, so the NEXT run dead-ends on that dirt and needs hand recovery. In a
+# repo this script advertises as self-healing, that is the worst possible resting state.
+#
+# Only the files WE rewrote are restored, and only when the tree was clean before we touched it.
+# If the user already had local marketplace edits, restoring would destroy them — so in that case
+# the trap deliberately does nothing and says so. `git checkout --` is irreversible; it is only
+# safe here because both conditions above bound it to changes this script itself just made.
+MKT_WAS_CLEAN=0
+[ -z "$(git -C "$MARKETPLACE_DIR" status --porcelain 2>/dev/null)" ] && MKT_WAS_CLEAN=1
+MKT_REWROTE=0
+_mkt_restore() {
+  _rc=$?
+  [ "$MKT_REWROTE" -eq 1 ] || return 0
+  if [ "$MKT_WAS_CLEAN" -ne 1 ]; then
+    warn "marketplace tree had pre-existing local changes — leaving it untouched (restore by hand if needed)"
+    return 0
+  fi
+  git -C "$MARKETPLACE_DIR" checkout -- .claude-plugin/marketplace.json README.md 2>/dev/null \
+    && warn "run ended rc=$_rc before Step 4 — reverted the marketplace count rewrite so the next run starts clean" \
+    || warn "run ended rc=$_rc before Step 4 — could NOT revert $MARKETPLACE_DIR; check it by hand"
+}
+trap _mkt_restore EXIT INT TERM
+
 # >>> zuvo:marketplace-count  (Step 0b: rewrite + verify the sibling marketplace's skill count)
 # The marketplace is a SEPARATE repo, so scripts/validate-skills.sh — which knows
 # only this repo's count locations — structurally cannot see its "<N> skills"
@@ -295,37 +321,15 @@ if survivors:
     print('; '.join(sorted(set(survivors))))
     sys.exit(1)
 PY
-# CRASH SAFETY (B-devpush-marketplace-dirty-tree). This rewrites a SIBLING repo, and the commit
-# that carries it only happens at Step 4 — after the tag push. Any failure or Ctrl-C in between
-# used to leave the marketplace tree dirty, and Step 0b's `git pull --rebase` above is now
-# deliberately fail-CLOSED, so the NEXT run dead-ends on that dirt and needs hand recovery. In a
-# repo this script advertises as self-healing, that is the worst possible resting state.
-#
-# Only the files WE rewrote are restored, and only when the tree was clean before we touched it.
-# If the user already had local marketplace edits, restoring would destroy them — so in that case
-# the trap deliberately does nothing and says so. `git checkout --` is irreversible; it is only
-# safe here because both conditions above bound it to changes this script itself just made.
-MKT_WAS_CLEAN=0
-[ -z "$(git -C "$MARKETPLACE_DIR" status --porcelain 2>/dev/null)" ] && MKT_WAS_CLEAN=1
-MKT_REWROTE=0
-_mkt_restore() {
-  _rc=$?
-  [ "$MKT_REWROTE" -eq 1 ] || return 0
-  if [ "$MKT_WAS_CLEAN" -ne 1 ]; then
-    warn "marketplace tree had pre-existing local changes — leaving it untouched (restore by hand if needed)"
-    return 0
-  fi
-  git -C "$MARKETPLACE_DIR" checkout -- .claude-plugin/marketplace.json README.md 2>/dev/null \
-    && warn "run ended rc=$_rc before Step 4 — reverted the marketplace count rewrite so the next run starts clean" \
-    || warn "run ended rc=$_rc before Step 4 — could NOT revert $MARKETPLACE_DIR; check it by hand"
-}
-trap _mkt_restore EXIT INT TERM
-
 MKT_DIAG="$(python3 -c "$MKT_COUNT_PY" "$MARKETPLACE_DIR" "$MKT_SKILL_COUNT")" \
   || fail "Marketplace skill count sync FAILED: ${MKT_DIAG:-<no detail>} — fix by hand in $MARKETPLACE_DIR (Step 4 commits it), then re-run"
-MKT_REWROTE=1
 ok "Step 0b: marketplace skill count synced (${MKT_SKILL_COUNT} skills)"
 # <<< zuvo:marketplace-count
+# Outside the fence on purpose: the fence delimits the count-rewrite LOGIC, which the gate
+# suite extracts and runs standalone. A trap armed inside it would fire when that extracted
+# block ends — reverting the rewrite the suite then asserts on. Crash-safety of the whole
+# script is not part of that unit, so it brackets the fence rather than living in it.
+MKT_REWROTE=1
 
 # ═══════════════════════════════════════
 # Step 1: Version bump
