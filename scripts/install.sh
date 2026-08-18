@@ -34,6 +34,43 @@ ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
 warn() { echo -e "  ${YELLOW}!${NC} $1"; }
 fail() { echo -e "  ${RED}✗${NC} $1"; }
 
+# --- copy verification (B-install-sh-copy-verification) -----------------------------------------
+# Every named-script copy in this installer is `cp … 2>/dev/null || true`. The `|| true` is
+# deliberate — a partial install must not abort the rest — but paired with an unconditional
+# `ok "Scripts installed"` it means a copy that FAILED is reported as a success, and the first
+# symptom is a skill failing at runtime with a missing helper. (This is the same class as the
+# stale-installPath and plugin-disabled gotchas in CLAUDE.md: the install said ✓ and the thing was
+# not there.)
+#
+# So the `|| true` stays and the CLAIM gets checked instead. The rule is deliberately narrow:
+# assert the destination only when the SOURCE exists. A file absent from the repo was never
+# supposed to be copied, so it cannot produce a false alarm; a file present in the repo and absent
+# at the destination is a real copy failure and nothing else.
+INSTALL_VERIFY_MISSING=0
+INSTALL_VERIFY_DETAIL=""
+
+# verify_copied <label> <src_dir> <dst_dir> <name> [<name>…]
+verify_copied() {
+  local label="$1" src="$2" dst="$3"; shift 3
+  local n miss=0
+  for n in "$@"; do
+    [ -f "$src/$n" ] || continue          # never attempted — not a failure
+    if [ ! -s "$dst/$n" ]; then           # -s, not -e: a 0-byte file is a failed copy too
+      miss=$((miss + 1))
+      INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL}
+      $label: $dst/$n"
+    fi
+  done
+  if [ "$miss" -gt 0 ]; then
+    INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + miss))
+    fail "$label: $miss file(s) did NOT install — see the summary below"
+    return 1
+  fi
+  return 0
+}
+
+
+
 # =======================================
 # PIPELINE-ENTRY HOOK INSTALL HELPERS (source-able + reused by every target)
 # =======================================
@@ -870,7 +907,12 @@ install_codex() {
     # created conditionally) so PHASE 0 resolves both halves from one predictable location.
     cp "$ZUVO_DIR"/hooks/refactor-safety-gate.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     chmod +x "$HOME/.codex"/scripts/*.sh 2>/dev/null || true
-    ok "Scripts installed"
+    # The copies above all end in `|| true`; verify the claim before making it.
+    if verify_copied "codex scripts" "$ZUVO_DIR/scripts" "$HOME/.codex/scripts" \
+         benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh \
+       && verify_copied "codex scripts (gate)" "$ZUVO_DIR/hooks" "$HOME/.codex/scripts" refactor-safety-gate.sh; then
+      ok "Scripts installed"
+    fi
   fi
 
   # Step 8: Install hooks to Codex plugin cache
@@ -1056,7 +1098,12 @@ install_cursor() {
     # created conditionally) so PHASE 0 resolves both halves from one predictable location.
     cp "$ZUVO_DIR"/hooks/refactor-safety-gate.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     chmod +x "$HOME/.cursor"/scripts/*.sh 2>/dev/null || true
-    ok "Scripts installed"
+    # The copies above all end in `|| true`; verify the claim before making it.
+    if verify_copied "cursor scripts" "$ZUVO_DIR/scripts" "$HOME/.cursor/scripts" \
+         benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh \
+       && verify_copied "cursor scripts (gate)" "$ZUVO_DIR/hooks" "$HOME/.cursor/scripts" refactor-safety-gate.sh; then
+      ok "Scripts installed"
+    fi
   fi
 
   # Step 8: Clean duplicates when Claude Code cache exists
@@ -1219,7 +1266,10 @@ install_antigravity() {
     cp "$DIST"/scripts/*.sh "$HOME/.gemini/antigravity/scripts/" 2>/dev/null || true
     cp "$DIST"/scripts/*.py "$HOME/.gemini/antigravity/scripts/" 2>/dev/null || true
     chmod +x "$HOME/.gemini/antigravity"/scripts/*.sh "$HOME/.gemini/antigravity"/scripts/*.py 2>/dev/null || true
-    ok "Scripts installed"
+    if verify_copied "antigravity scripts" "$DIST/scripts" "$HOME/.gemini/antigravity/scripts" \
+         benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh; then
+      ok "Scripts installed"
+    fi
   fi
 
   # Step 7: Copy hooks (+ hooks/lib/ recursively — gates source the lib) + merge settings.json
@@ -1481,7 +1531,10 @@ install_kimi() {
     cp "$DIST"/scripts/*.sh "$KIMI_HOME/scripts/" 2>/dev/null || true
     cp "$DIST"/scripts/*.py "$KIMI_HOME/scripts/" 2>/dev/null || true
     chmod +x "$KIMI_HOME"/scripts/*.sh "$KIMI_HOME"/scripts/*.py 2>/dev/null || true
-    ok "Scripts installed"
+    if verify_copied "kimi scripts" "$DIST/scripts" "$KIMI_HOME/scripts" \
+         benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh; then
+      ok "Scripts installed"
+    fi
   fi
 
   # Step 5: hook scripts
@@ -1678,5 +1731,21 @@ check_cross_providers() {
 }
 
 check_cross_providers
+
+# --- copy-verification summary (B-install-sh-copy-verification) ---------------------------------
+# Runs LAST so the whole install still happens — a failed copy in one host must not stop the other
+# four. But the exit code changes, because "install.sh printed ✓ and exited 0" is precisely how a
+# missing helper stays invisible until a skill fails hours later in another repo.
+if [ "${INSTALL_VERIFY_MISSING:-0}" -gt 0 ]; then
+  echo ""
+  fail "INSTALL INCOMPLETE — $INSTALL_VERIFY_MISSING file(s) present in the repo did not reach their destination:"
+  echo "$INSTALL_VERIFY_DETAIL"
+  echo ""
+  echo "  These are named scripts the skills resolve at runtime; a skill will fail with a missing"
+  echo "  helper rather than degrade. Usual causes: destination not writable, disk full, or a stale"
+  echo "  root-owned file at the destination. Fix the cause and re-run — do not ignore this."
+  echo ""
+  exit 1
+fi
 
 fi  # end main run guard (skipped when sourced)

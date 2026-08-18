@@ -163,7 +163,24 @@ type: project
 - **v2 fix:** enumerate `docker ps -q` and run trivy per image; aggregate per-container findings.
 - **Confidence:** 55 (coverage limitation, results correct for the scanned image)
 
-## B-install-sh-copy-verification
+## B-install-sh-copy-verification — DONE
+- **Closed:** 2026-08-18. The `|| true` STAYS (a partial install must not abort the other four
+  hosts) — the CLAIM is what gets checked. New `verify_copied <label> <src> <dst> <name…>` runs
+  after each host's copy block; `ok "Scripts installed"` is now conditional on it, and a final
+  summary exits 1 naming every path that did not arrive.
+- **The rule is narrow on purpose: assert the destination only when the SOURCE exists.** A file
+  absent from the repo was never meant to be copied, so it cannot raise a false alarm — and a
+  verifier that cries wolf on optional files is one that gets ignored, then deleted. Uses `-s`
+  rather than `-e`: `cp` can create the target and then fail, and a 0-byte file is a failed copy.
+- **Live proof, not just unit:** truncated + chmod a-w on ~/.codex/scripts/benchmark.sh → install
+  exits 1, prints `codex scripts: /Users/greglas/.codex/scripts/benchmark.sh`, drops that block's
+  ✓ (3 "Scripts installed" lines instead of 4) and still completes the other three hosts.
+- **Test:** tests/hooks/test-install-copy-verification.sh, 18 assertions. Mutation-probed: 2 fail
+  on `-s`→`-e`, 2 on removing the source-exists guard, 1 on making the summary exit 0.
+- **Note on the test itself:** it SOURCES install.sh, which defines its own `ok()`. The first cut
+  named its helper `ok()` too and the source silently replaced it — every assertion printed a green
+  tick and incremented nothing, so a fully passing run summarised as PASS=1. Helpers are `t_ok`/
+  `t_no` now. A test whose counter the subject can overwrite cannot report on the subject.
 - **Source:** zuvo:execute Task 10 adversarial (pre-existing convention, repo-wide)
 - **File:** scripts/install.sh Codex/Cursor Step 7 script-copy blocks
 - **Issue:** ALL named-script cp lines (benchmark.sh, adversarial-review.sh, reviewer-model-route.sh, blind-audit-codex.sh, infra-collect.sh) use `cp ... 2>/dev/null || true`, so a missing/failed copy still prints "Scripts installed". Task 10 conformed to this convention for infra-collect.sh; the gap is pre-existing and repo-wide.
