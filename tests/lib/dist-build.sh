@@ -24,7 +24,7 @@
 # CONTRACT (identical to calling the builder directly)
 #   stdout      the build log, byte-for-byte
 #   exit code   the build's exit code
-#   side effect $ROOT/dist/<platform> holds that build's output
+#   side effect $ZUVO_DIST_ROOT/<platform> (default $ROOT/dist/<platform>) holds the output
 #
 # With ZUVO_DIST_CACHE unset — running a test file by hand — this is a pure
 # pass-through and behaves exactly as before. tests/run-all.sh sets the variable to a
@@ -39,6 +39,12 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# Where the build lands. Unset → $ROOT/dist, the historical path. Set → a per-run directory, which
+# is what makes concurrent test files stop colliding (B-DIST-BUILD-RACE): the cache layer below
+# made builds fast, but every one of them still wrote to the SAME dist/ tree, and one file
+# `rm -rf`ing it while another asserted against it is the race itself, not a slow build.
+OUT_ROOT="${ZUVO_DIST_ROOT:-$ROOT/dist}"
 
 PLATFORM="${1:-}"
 case "$PLATFORM" in
@@ -70,11 +76,11 @@ TREE="$CACHE/$PLATFORM.tree"
 # The .rc file is the sentinel and is written LAST, so a half-populated cache entry
 # (interrupted run, killed build) is never mistaken for a complete one.
 if [ -f "$RC" ]; then
-  rm -rf "$ROOT/dist/$PLATFORM"
-  mkdir -p "$ROOT/dist"
+  rm -rf "$OUT_ROOT/$PLATFORM"
+  mkdir -p "$OUT_ROOT"
   # A failed build may have produced no tree; that is faithfully replayed as no tree.
   if [ -d "$TREE" ]; then
-    cp -R "$TREE" "$ROOT/dist/$PLATFORM"
+    cp -R "$TREE" "$OUT_ROOT/$PLATFORM"
   fi
   cat "$LOG"
   exit "$(cat "$RC")"
@@ -87,11 +93,11 @@ fi
 bash "$BUILDER" "$ROOT" > "$LOG" 2>&1
 rc=$?
 
-if [ -d "$ROOT/dist/$PLATFORM" ]; then
+if [ -d "$OUT_ROOT/$PLATFORM" ]; then
   rm -rf "$TREE.tmp.$$"
   # Snapshot under a PID-unique name and rename into place, so a concurrent reader
   # sees either no entry or a complete one — never a tree mid-copy.
-  if cp -R "$ROOT/dist/$PLATFORM" "$TREE.tmp.$$" 2>/dev/null; then
+  if cp -R "$OUT_ROOT/$PLATFORM" "$TREE.tmp.$$" 2>/dev/null; then
     mv "$TREE.tmp.$$" "$TREE" 2>/dev/null || rm -rf "$TREE.tmp.$$"
   else
     rm -rf "$TREE.tmp.$$"

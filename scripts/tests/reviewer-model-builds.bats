@@ -2,21 +2,52 @@
 
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
 
-# Wipe before each case so every assertion below runs against files this test's own
-# build (or its cache replay) materialized — never against a tree left by a sibling.
-# The three `run bash .../dist-build.sh <p>` calls repopulate what this removes.
+# PER-FILE dist root (B-DIST-BUILD-RACE). The wipe below is necessary — every assertion must run
+# against files THIS test's build materialized, never a tree left by a sibling — but wiping the
+# SHARED $REPO_ROOT/dist is what made it a race: test-install-wiring.sh and test-kimi-build.sh
+# build into the same tree, so this setup() could truncate a directory another file was asserting
+# against. Red about twice in ten suite runs, and it produced two wrong conclusions in one session
+# (a bisect that blamed an innocent registry change, and a "regression" that was not one) — both
+# only caught by re-running in a git worktree with its own dist/.
+#
+# The builders now honour ZUVO_DIST_ROOT, so this file gets its own directory and the wipe touches
+# nothing anyone else can see. Unset elsewhere, the default is the historical $REPO_ROOT/dist.
+setup_file() {
+  # TWO variables on purpose. ZUVO_DIST_SANDBOX is the directory this file created and is the ONLY
+  # thing teardown removes; ZUVO_DIST_ROOT is where the builders write, INSIDE it.
+  #
+  # The first cut kept only ZUVO_DIST_ROOT and cleaned up with `rm -rf "$(dirname "$ZUVO_DIST_ROOT")"`.
+  # That is a delete target computed by walking UP from a variable, and on 2026-08-18 a probe set
+  # ZUVO_DIST_ROOT="$REPO_ROOT/dist" — so dirname was the repository, and teardown_file DELETED THE
+  # WHOLE CHECKOUT, .git included. Recovered from an APFS local snapshot. Never derive an `rm -rf`
+  # target with dirname; delete the exact path you created, and verify it is the one you created.
+  ZUVO_DIST_SANDBOX="$(mktemp -d)"
+  ZUVO_DIST_ROOT="$ZUVO_DIST_SANDBOX/dist"
+  export ZUVO_DIST_SANDBOX ZUVO_DIST_ROOT
+  mkdir -p "$ZUVO_DIST_ROOT"
+}
+
+teardown_file() {
+  # Belt and braces on the guard above: remove it only if it still looks like the mktemp directory
+  # this file made. A cleanup that cannot prove what it is deleting does not run.
+  case "${ZUVO_DIST_SANDBOX:-}" in
+    /tmp/*|/var/folders/*|"${TMPDIR%/}"/*) [ -d "$ZUVO_DIST_SANDBOX" ] && rm -rf "$ZUVO_DIST_SANDBOX" ;;
+    *) echo "teardown_file: refusing to remove unexpected sandbox '${ZUVO_DIST_SANDBOX:-}'" >&2 ;;
+  esac
+}
+
 setup() {
-  rm -rf "$REPO_ROOT/dist/codex" "$REPO_ROOT/dist/cursor" "$REPO_ROOT/dist/antigravity"
+  rm -rf "$ZUVO_DIST_ROOT/codex" "$ZUVO_DIST_ROOT/cursor" "$ZUVO_DIST_ROOT/antigravity"
 }
 
 @test "Codex build materializes reviewer lanes to concrete models" {
   run bash "$REPO_ROOT/tests/lib/dist-build.sh" codex
   [ "$status" -eq 0 ]
 
-  local primary="$REPO_ROOT/dist/codex/agents/write-tests-blind-coverage-auditor.toml"
-  local alt="$REPO_ROOT/dist/codex/agents/write-tests-blind-coverage-auditor-alt.toml"
-  local fallback_primary="$REPO_ROOT/dist/codex/agents/write-tests-adversarial-test-reviewer.toml"
-  local fallback_alt="$REPO_ROOT/dist/codex/agents/write-tests-adversarial-test-reviewer-alt.toml"
+  local primary="$ZUVO_DIST_ROOT/codex/agents/write-tests-blind-coverage-auditor.toml"
+  local alt="$ZUVO_DIST_ROOT/codex/agents/write-tests-blind-coverage-auditor-alt.toml"
+  local fallback_primary="$ZUVO_DIST_ROOT/codex/agents/write-tests-adversarial-test-reviewer.toml"
+  local fallback_alt="$ZUVO_DIST_ROOT/codex/agents/write-tests-adversarial-test-reviewer-alt.toml"
 
   [ -f "$primary" ]
   [ -f "$alt" ]
@@ -77,10 +108,10 @@ setup() {
   run bash "$REPO_ROOT/tests/lib/dist-build.sh" cursor
   [ "$status" -eq 0 ]
 
-  local primary="$REPO_ROOT/dist/cursor/agents/write-tests-blind-coverage-auditor.md"
-  local alt="$REPO_ROOT/dist/cursor/agents/write-tests-blind-coverage-auditor-alt.md"
-  local fallback_primary="$REPO_ROOT/dist/cursor/agents/write-tests-adversarial-test-reviewer.md"
-  local fallback_alt="$REPO_ROOT/dist/cursor/agents/write-tests-adversarial-test-reviewer-alt.md"
+  local primary="$ZUVO_DIST_ROOT/cursor/agents/write-tests-blind-coverage-auditor.md"
+  local alt="$ZUVO_DIST_ROOT/cursor/agents/write-tests-blind-coverage-auditor-alt.md"
+  local fallback_primary="$ZUVO_DIST_ROOT/cursor/agents/write-tests-adversarial-test-reviewer.md"
+  local fallback_alt="$ZUVO_DIST_ROOT/cursor/agents/write-tests-adversarial-test-reviewer-alt.md"
 
   [ -f "$primary" ]
   [ -f "$alt" ]
@@ -96,10 +127,10 @@ setup() {
   run bash "$REPO_ROOT/tests/lib/dist-build.sh" antigravity
   [ "$status" -eq 0 ]
 
-  local primary="$REPO_ROOT/dist/antigravity/skills/write-tests/agents/blind-coverage-auditor.md"
-  local alt="$REPO_ROOT/dist/antigravity/skills/write-tests/agents/blind-coverage-auditor-alt.md"
-  local fallback_primary="$REPO_ROOT/dist/antigravity/skills/write-tests/agents/adversarial-test-reviewer.md"
-  local fallback_alt="$REPO_ROOT/dist/antigravity/skills/write-tests/agents/adversarial-test-reviewer-alt.md"
+  local primary="$ZUVO_DIST_ROOT/antigravity/skills/write-tests/agents/blind-coverage-auditor.md"
+  local alt="$ZUVO_DIST_ROOT/antigravity/skills/write-tests/agents/blind-coverage-auditor-alt.md"
+  local fallback_primary="$ZUVO_DIST_ROOT/antigravity/skills/write-tests/agents/adversarial-test-reviewer.md"
+  local fallback_alt="$ZUVO_DIST_ROOT/antigravity/skills/write-tests/agents/adversarial-test-reviewer-alt.md"
 
   [ -f "$primary" ]
   [ -f "$alt" ]

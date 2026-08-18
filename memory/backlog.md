@@ -776,7 +776,26 @@ What DID run and hold: all mandatory CodeSift calls; the Structure Auditor (5 fi
 `--multi` across 4 providers x 3 chunks (kimi empty), which found and got fixed 2 CRITICALs.
 Re-run after 06:00: `/zuvo:review origin/main..HEAD`.
 
-## B-DIST-BUILD-RACE — concurrent agents building into the same dist/ corrupt each other's test runs
+## B-DIST-BUILD-RACE — DONE
+**Closed:** 2026-08-18. The four builders now read `DIST="${ZUVO_DIST_ROOT:-$PLUGIN_DIR/dist}/<p>"`,
+`tests/lib/dist-build.sh` honours the same variable, and `reviewer-model-builds.bats` gives itself a
+per-file `mktemp -d` root. Unset, the path is exactly what it was, so install.sh is untouched.
+**The cache layer added earlier did NOT fix this**, though its header claimed the ground: it made
+builds fast, but every one still wrote to the SAME `$ROOT/dist`, and the `rm -rf` in the bats
+setup() is the collision itself. Verified by hammering the shared tree (8 build+delete cycles) in
+parallel with the bats file: all 3 tests pass, where before the rm would fail with "Directory not
+empty" and every test in the file went red for a reason unrelated to the code under test.
+**⚠ THIS FIX DESTROYED THE REPOSITORY ONCE — read before touching the teardown.** The first cut kept
+one variable and cleaned up with `rm -rf "$(dirname "$ZUVO_DIST_ROOT")"`. A mutation probe then set
+`ZUVO_DIST_ROOT="$REPO_ROOT/dist"` to show the race returning — so `dirname` was the repository, and
+`teardown_file` deleted the entire checkout including `.git`. Recovered from the APFS local snapshot
+`com.apple.TimeMachine.2026-08-18-202058.local` (mounted read-only with `mount_apfs -s <snap>
+/System/Volumes/Data`), losing nothing but a few minutes of uncommitted work.
+Two rules came out of it, both now encoded in the file:
+  1. **Never compute an `rm -rf` target with `dirname`** (or any walk UP from a variable). Delete
+     the exact path you created, held in its own variable.
+  2. **A cleanup must be able to prove what it is deleting.** `teardown_file` refuses anything not
+     under `/tmp`, `/var/folders` or `$TMPDIR` and says so instead of removing it.
 Surfaced 2026-08-11. `scripts/tests/reviewer-model-builds.bats` setup does `rm -rf $REPO_ROOT/dist/*`
 while another agent's build writes into the same tree; the rm fails with "Directory not empty" and every
 test in the file then fails for a reason unrelated to the code under test. This produced TWO wrong

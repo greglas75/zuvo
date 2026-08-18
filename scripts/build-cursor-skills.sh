@@ -11,7 +11,13 @@
 set -euo pipefail
 
 PLUGIN_DIR="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
-DIST="$PLUGIN_DIR/dist/cursor"
+# DIST root is env-overridable (B-DIST-BUILD-RACE). Every builder wrote to $PLUGIN_DIR/dist/<p>,
+# and reviewer-model-builds.bats `rm -rf`s that tree in its per-test setup() — so one test file
+# could truncate a directory another was asserting against. It went red about twice in ten suite
+# runs and produced TWO wrong conclusions in one session: a bisect that blamed an innocent registry
+# change, and a "regression" that was not one. Both were only caught by re-running in a git
+# worktree with its own dist/. Unset, this is exactly the previous path, so install.sh is unchanged.
+DIST="${ZUVO_DIST_ROOT:-$PLUGIN_DIR/dist}/cursor"
 
 # Portable primitives (sed_i, zuvo_python) — Windows/Git-Bash is a supported target and
 # the BSD-only `sed -i ''` it replaces breaks there. See scripts/lib/portable.sh.
