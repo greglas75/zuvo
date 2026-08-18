@@ -337,6 +337,29 @@ gate (which re-checks review coverage on the pushed content regardless of how it
 - **commit-gate mtime** — the commit-gate is a non-blocking *nudge* anyway; pre-push + CI
   re-evaluate the real content. (Deleted-staged-file mtime is now handled.)
 
+#### Accepted invariants (recorded here so they stop occupying the backlog)
+
+Two properties of these gates are **known, bounded, and deliberately not fixed**. They sat in
+`memory/backlog.md` for weeks carrying confidence 20-30 and no action, which is worse than
+useless: a queue of things nobody intends to do is where a real item goes to hide. B-gate-2 — a
+live pre-push bypass — was buried under exactly this kind of entry until 2026-08-17.
+
+- **Corroboration artifacts are unauthenticated.** `execution-state.md` and the run-markers that
+  let a gate distinguish a live `zuvo:execute` run from a flipped `status:` field are ordinary
+  files any agent can write. They are bounded by freshness, plan-identity and repo-scoping
+  (`hooks/lib/refactor-gate-lib.sh` narrates the reasoning in full at `_execute_run_live`), but
+  they are not forgery-proof and were never meant to be. These gates are guardrails against
+  drift, not a security boundary — `ZUVO_ALLOW_ADHOC=1` is a sanctioned, logged escape, and CI
+  is the guarantee. A non-forgeable marker would need a session nonce threaded through five
+  skills; that is a protocol change, not a fix. (was B-gate-6)
+- **The retro dir-lock has a TOCTOU window.** `acquire_lock`/`release_lock` in the zuvo-home
+  helpers use `mkdir` as the lock primitive, with a theoretical race between the stale-check and
+  the break, and between the ownership-check and the `rmdir`. Mitigated by pid-liveness, atomic
+  `mkdir`, and a critical section measured in milliseconds. Not fixable with `flock` without
+  breaking mutual exclusion against `append-retro`, which must share the SAME dir-lock. Shared
+  fleet-wide by `append-retro`, `rotate-retros`, `sanitize-retros` and `backlog`. (was
+  B-lock-toctou)
+
 The git **PATH-shim** is more robust than the string parser (it receives the real shell-tokenized
 argv, so quoting/metachar bypasses don't apply to it). Backlog `B-noverify-hardening` tracks an
 optional deeper pass (alias resolution, index blob-hash tracking). **None of this weakens the
