@@ -109,14 +109,32 @@ type: project
 - [B-secaudit-6] v2-class warning-only grace: adversarial flags the grace itself (HIGH v2 findings excluded from gate). This is the PLAN-MANDATED trade-off (plan WARNING #5: CI-safety) — [POST-CAP: DEFERRED] accepted per plan Review Trail. Mitigations: findings still reported+backlogged, --strict-v2 enforces now, time-boxed to 1.4.x→1.5.0. Residual --quick/score-cap wording aligned. conf: 20
 - [x] - [B-review-1] validate-pentest-output.sh — PENTEST_REGISTRY/PENTEST_MANIFEST env-overridable (test affordance) is also a prod-path override; low risk (local CI script, attacker would need env control) but consider a test-only guard. Source: zuvo:review self-review F4. conf: 35
 
-## B-infra-collect-nohup-quote-transport
+## B-infra-collect-nohup-quote-transport — DONE (already implemented; entry was stale)
+- **Closed:** 2026-08-18. `_ssh_exec_long()` has carried the quote-safe transport since Task 5:
+  the battery command is shipped to a remote `.cmd` file over a `base64 -d > cmd_f` pipe with no
+  backgrounding, and a SECOND, CONSTANT launcher (`nohup sh -c 'timeout … sh ${cmd_f} …'`) embeds
+  only filenames and the timeout. No battery text ever enters a `sh -c '…'` string, so its quotes
+  are inert. Verified at scripts/infra-collect.sh:583-606.
 - **Source:** zuvo:execute Task 4 adversarial round 2 (deferred to Task 5 live-wiring)
 - **File:** scripts/infra-collect.sh — run_remote() long-mode nohup wrapper
 - **Issue:** `sh -c '...'` string-embeds the inner battery command; a single quote (awk/sed are full of them) would terminate the wrapper. NOT exploitable at skeleton stage (live long-path stubbed; dry-run only prints).
 - **Fix owner:** Task 5 MUST replace string-embedding with quote-safe transport (base64-decode inner cmd on target, or remote temp script) BEFORE activating live execution.
 - **Confidence:** 60 (real latent, gated by §2 static rule, no current exploit path)
 
-## B-infra-collect-value-heuristic-redaction
+## B-infra-collect-value-heuristic-redaction — DONE
+- **Closed:** 2026-08-18. SED_REDACT gained a value-shape pass, so a generically-named secret
+  (`FOO=ghp_…`) no longer leaves the host verbatim. Two rules: vendor token PREFIXES (ghp_/AKIA/
+  xoxb-/JWT/…), matched by issuer rather than entropy; and long opaque values after `=`/`:`.
+- **The constraint was not adding a rule, it was not DESTROYING EVIDENCE.** A plain ">=32 chars of
+  base64 alphabet" rule eats every lowercase-hex sha256 digest, image ref and checksum in trivy/
+  docker/nmap output — gutting the bundle the collector exists to produce. sed -E has no lookahead,
+  so it is three passes: mark candidates with a sentinel, UNMARK pure lowercase hex, redact what
+  remains. The unmark must require the hex run to reach a non-alphabet char or end-of-line;
+  without that boundary it unmarks on a leading `a` and every secret beginning with a hex
+  character walks straight back out (caught by mutation probe, now assertion 19/20).
+- **Test:** tests/infra-suite/test-infra-redaction.sh, 20 assertions — 8 redaction, 9 EVIDENCE
+  PRESERVATION, sentinel non-leakage, and the two boundary cases. Registered in the infra
+  aggregator. Mutation-probed: 7 fail on the pre-fix constant, 3 on removing the anchor.
 - **Source:** zuvo:execute Task 5 adversarial security round 4 (deferred — IC-5 design trade-off)
 - **File:** scripts/infra-collect.sh SED_REDACT
 - **Issue:** Keyword-based redaction (IC-5 spec design) only fires when the KEY NAME contains a sensitive substring; a generically-named secret (`FOO=abc123`) in an arbitrary config would leak verbatim.

@@ -111,7 +111,39 @@ unset _tvar _tval
 # private key spanning many lines) only has its FIRST line redacted; subsequent
 # lines are not matched. Single-line `KEY=value` secrets (the common .env / conf
 # shape) ARE fully redacted. Do not rely on this for multi-line key material.
-SED_REDACT='s/(([A-Za-z0-9_.-]*(password|passwd|secret|token|api[_-]?key|private[_-]?key|credential|DATABASE_URL|REDIS_URL|connection[_-]?string)[A-Za-z0-9_.-]*)[[:space:]]*[:=][[:space:]]*).*/\1[REDACTED]/Ig;s/^([[:space:]]*(requirepass|masterauth)[[:space:]]+).*/\1[REDACTED]/Ig'
+#
+# VALUE-SHAPE PASS (B-infra-collect-value-heuristic-redaction). Everything above keys off the
+# KEY NAME, which is the IC-5 spec model and covers the shapes we actually collect — but it is
+# blind by construction to a generically-named secret: `FOO=ghp_xxxxxxxx` in an arbitrary config
+# passes through verbatim because "FOO" is not on the keyword list. The dominant leak path is
+# already structurally closed (IS12, the .env reader, emits key NAMES and never values), so this
+# is a residual; it is closed here rather than left as a v2 note.
+#
+# Rule A — VENDOR-PREFIXED TOKENS, matched by issuer prefix rather than entropy. A `ghp_` / `AKIA`
+# / `xoxb-` / JWT-shaped string is a secret whatever the key beside it is called, and none of these
+# prefixes occur in benign config text.
+#
+# Rule B — LONG OPAQUE VALUES after `=` or `:`: >=32 chars from the base64/urlsafe alphabet. On its
+# own that rule is too greedy for THIS corpus, because trivy/docker/nmap output is full of
+# lowercase-hex sha256 digests, image refs and checksums of exactly that shape — redacting those
+# would destroy the evidence the collector exists to gather, which is a data-loss bug, not a
+# conservative default. sed -E has no lookahead, so "contains a non-hex character" cannot be a
+# single pattern. It is done in three passes instead:
+#
+#   B1  mark every candidate run with a sentinel
+#   B2  UNMARK any candidate that is pure lowercase hex (sha256/sha1/git SHA/checksum) — these are
+#       the false positives, and they are identified positively rather than guessed at. The hex run
+#       must reach a NON-alphabet character or end-of-line: without that boundary the rule unmarks
+#       on a leading `a`, so `KEY=aB3dEfGh…` (a real secret) walks straight out again.
+#   B3  redact whatever is still marked
+#
+# The sentinel is `@@ZVSEC@@`: it cannot appear in the alphabet B1 matches, so B3 cannot leave one
+# behind in output, and a literal occurrence in a config file is not a value B1 would have marked.
+#
+# The line-oriented limitation noted above still applies: a PEM body spanning many lines is not
+# reconstructed as one secret. Rule B does redact each individual base64 line of such a key, which
+# is a strict improvement, but the BEGIN/END framing remains a separate problem.
+SED_REDACT='s/(([A-Za-z0-9_.-]*(password|passwd|secret|token|api[_-]?key|private[_-]?key|credential|DATABASE_URL|REDIS_URL|connection[_-]?string)[A-Za-z0-9_.-]*)[[:space:]]*[:=][[:space:]]*).*/\1[REDACTED]/Ig;s/^([[:space:]]*(requirepass|masterauth)[[:space:]]+).*/\1[REDACTED]/Ig;s/(gh[pousr]_|github_pat_|glpat-|xox[baprs]-|sk_live_|rk_live_|npm_|dop_v1_|hf_|AIza|AKIA|ASIA|SG\.|shpat_|eyJ[A-Za-z0-9_-]*\.eyJ)[A-Za-z0-9_.\/+=-]{8,}/\1[REDACTED]/g;s/([:=][[:space:]]*"?)([A-Za-z0-9+\/_=-]{32,})/\1@@ZVSEC@@\2/g;s/@@ZVSEC@@([0-9a-f]+)([^A-Za-z0-9+\/_=-]|$)/\1\2/g;s/@@ZVSEC@@[A-Za-z0-9+\/_=-]+/[REDACTED]/g'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
