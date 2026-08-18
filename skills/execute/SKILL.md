@@ -120,13 +120,14 @@ CORE FILES LOADED:
    8. ../../shared/includes/acceptance-proof-protocol.md   -- READ/MISSING (HARD: per-task + smoke proof gates)
    9. ../../shared/includes/stall-recovery.md              -- READ/MISSING (self-arming watchdog: resume on API-error/rate-limit stall)
   10. ../../shared/includes/test-quality-gate.md           -- READ/MISSING (carries the dispatch-authorization rule)
-  11. ../../shared/includes/code-contract.md               -- DEFERRED (task dispatch)
-  12. ../../shared/includes/test-contract.md               -- DEFERRED (task dispatch)
-  13. ../../shared/includes/knowledge-prime.md             -- DEFERRED (task dispatch)
-  14. ../../shared/includes/knowledge-curate.md            -- DEFERRED (completion)
-  15. ../../shared/includes/run-logger.md                  -- DEFERRED (completion)
-  16. ../../shared/includes/retrospective.md               -- DEFERRED (completion)
-  17. ../../shared/includes/documentation-mandate.md       -- DEFERRED (completion)
+  11. ../../shared/includes/terminal-state.md              -- READ/MISSING (HARD: no completion over a live process, a pending check, or an unlanded PR)
+  12. ../../shared/includes/code-contract.md               -- DEFERRED (task dispatch)
+  13. ../../shared/includes/test-contract.md               -- DEFERRED (task dispatch)
+  14. ../../shared/includes/knowledge-prime.md             -- DEFERRED (task dispatch)
+  15. ../../shared/includes/knowledge-curate.md            -- DEFERRED (completion)
+  16. ../../shared/includes/run-logger.md                  -- DEFERRED (completion)
+  17. ../../shared/includes/retrospective.md               -- DEFERRED (completion)
+  18. ../../shared/includes/documentation-mandate.md       -- DEFERRED (completion)
 ```
 
 
@@ -1427,6 +1428,9 @@ COMPLETION GATE CHECK (final):
 [ ] Backlog persistence ran for deferred findings
 [ ] Knowledge curation ran
 [ ] Documentation created/updated for the landed change (per documentation-mandate.md) — or explicit [DOC: N/A — <reason>]; a bare skip is INCOMPLETE
+[ ] Terminal state A (terminal-state.md): processes launched = N, still alive = 0   (PIDs + how each ended)
+[ ] Terminal state B: external checks triggered = N, unconcluded = 0   (run IDs + conclusions)
+[ ] Terminal state C: artifacts created = N, not landed = 0   (PR/branch/tag + its state)
 [ ] Retrospective bash appends EXECUTED (retros.log + retros.md) — no "trivial session" opt-out, printing markdown is not enough
 [ ] append-runlog wrapper invoked and exited 0
 [ ] Logs evidence block printed with real `tail` output

@@ -678,6 +678,21 @@ Re-run the score after this step. The report and JSON below carry the POST-fix n
 with `score_triaged_before` kept alongside so the run's own effect is visible rather
 than hidden by improving the thing being measured.
 
+### 4.3a Terminal-state gate (before ANY completion banner)
+
+Print this with the evidence filled in. It is not a checkbox that is always ticked:
+
+```
+[ ] Terminal state A (terminal-state.md): runners launched = N, still alive = 0   (PIDs + how each ended)
+[ ] Terminal state B: external checks triggered = N, unconcluded = 0   (run IDs + conclusions)
+[ ] Terminal state C: artifacts created = N, not landed = 0   (PR/branch/tag + its state)
+```
+
+Any non-zero count means `MUTATION TEST INCOMPLETE` naming what is outstanding, never the banner
+below. Shape A is the one this skill produces most: a Tier 2 full suite launched for a surviving
+mutant and left running. Measured 2026-08-16/17 — a Jest process stayed alive **679 minutes**
+after the task reported done, burning cores against the global worker cap for eleven hours.
+
 ### 4.3 Report Output
 
 ```

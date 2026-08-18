@@ -1460,6 +1460,9 @@ COMPLETION GATE CHECK
     unfinished ship — nobody on this fleet reviews the queue, so it buys no safety and starts
     accruing the four failure modes documented in the push section. A non-zero `gh pr merge` exit
     over a PR whose state is MERGED is NOT a failure.
+[ ] Terminal state A: processes launched = N, still alive = 0   (PIDs + how each ended)
+[ ] Terminal state B: external checks triggered = N, unconcluded = 0   (run IDs + conclusions)
+[ ] Terminal state C: artifacts created = N, not landed = 0   (PR/branch/tag + its state)
 [ ] Terminal state (terminal-state.md): post-merge runs on the target branch enumerated by
     `gh run list --commit <merge sha>` and each watched to a conclusion — listed by id with its
     conclusion, or `no post-merge checks configured` after a second read. `cancelled` is not a pass.

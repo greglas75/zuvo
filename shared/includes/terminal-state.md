@@ -102,6 +102,34 @@ A `cancelled` conclusion is **not** a pass. A job cancelled by a timeout ignores
 `continue-on-error` and reds the check anyway, so treating cancellation as "inconclusive, proceed"
 converts a real block into a green banner.
 
+## Shape C — an artifact you created never reached its destination
+
+Applies to a PR opened, a branch pushed, a tag created, a queue entry submitted: anything the run
+brought into existence that is only *useful* once it lands somewhere.
+
+This is the shape A and B both miss, and in the profiled run it was the single largest cost. The
+task created PR #404, its checks went green, and the run ended. Processes alive: zero. Unconcluded
+checks: zero. Both gates above are satisfied by a PR sitting open forever — the work is finished
+and delivered nowhere. It stayed that way for **500 minutes**, until a human typed "finish the
+task". That one gap outweighed every queue, mirror and CI-setup problem in the same run combined.
+
+**Read the destination state from the system, never from the fact that you ran the command:**
+
+```bash
+gh pr view "$PR" --json state,mergeStateStatus -q '.state'   # MERGED is the terminal state
+```
+
+| State | Meaning | Terminal? |
+|---|---|---|
+| `MERGED` | landed | yes |
+| `OPEN`, checks green | delivered nowhere — merge it | **no** |
+| `OPEN`, checks red or pending | Shape B still applies first | **no** |
+| `CLOSED` unmerged | abandoned — say so explicitly, do not report success | no (but terminal) |
+
+A green PR is not a shipped PR. If the run cannot merge it — a required human review, a protected
+branch, a policy the agent may not satisfy — that is a legitimate stop, but it is `<SKILL>
+INCOMPLETE` naming the blocker, not a completion banner with a link attached.
+
 ## Completion Gate
 
 Every skill that loads this file adds these two lines to its completion gate, with the evidence
@@ -110,9 +138,10 @@ filled in — not as a checkbox that is always ticked:
 ```
 - [ ] Terminal state A: processes launched = N, still alive = 0   (list PIDs and how each ended)
 - [ ] Terminal state B: external checks triggered = N, unconcluded = 0   (list run IDs + conclusions)
+- [ ] Terminal state C: artifacts created = N, not landed = 0   (list PR/branch/tag + its state)
 ```
 
-If either count is non-zero, the run prints `<SKILL> INCOMPLETE` naming what is outstanding. A
+If ANY of the three counts is non-zero, the run prints `<SKILL> INCOMPLETE` naming what is outstanding. A
 completion banner over a live process or a pending check is the failure this include exists to
 prevent, and "it will probably pass" is not evidence.
 

@@ -1264,6 +1264,9 @@ COMPLETION GATE CHECK
 [ ] Test Quality Gate (Phase 3.6) ran: `[GATE: test-quality] PASS|WARN|N/A` printed with a REAL `zuvo/audits/` test-audit report path (inline Q-rescoring is a substituted gate = INVALID); below-A files fixed in-run as a `test:` commit or WARN + per-file backlog; `prove.test_quality` recorded
 [ ] Aggregate review hand-off evaluated: if 2+ sibling refactor commits this session, the `zuvo:review <range>` line is surfaced (per Aggregate Review Hand-off)
 [ ] Documentation updated if public surface changed, else explicit [DOC: N/A — internal-only] (per documentation-mandate.md)
+[ ] Terminal state A (terminal-state.md): processes launched = N, still alive = 0   (PIDs + how each ended)
+[ ] Terminal state B: external checks triggered = N, unconcluded = 0   (run IDs + conclusions)
+[ ] Terminal state C: artifacts created = N, not landed = 0   (PR/branch/tag + its state)
 [ ] Run: line printed and appended to log
 ```
 
