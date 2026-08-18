@@ -355,6 +355,20 @@ check_include_integrity() {
           fail_err "$skill: non-canonical include depth (must be $canon): $tok in ${f#"$ROOT"/}" ;;
       esac
     done < <(grep -oE -- "$INCLUDE_TOKEN_RE" "$f" | sort -u)
+
+    # B-validator-placeholder-prefix: a PLACEHOLDER include (…/languages/<resolved-lang>.md,
+    # …/{stack}.md) is deliberately excluded from the check above — the filename is only known at
+    # runtime, so it cannot be stat-ed. But the STATIC part in front of the placeholder is a real
+    # directory, and a typo there is exactly as fatal as a dangling include and exactly as silent:
+    # the skill resolves nothing at runtime and degrades without saying so. Verify the directory.
+    while IFS= read -r ptok; do
+      [ -n "$ptok" ] || continue
+      pdir="${ptok%/*}"                       # strip the <placeholder>.md leaf
+      prel="${pdir#"${pdir%%shared/*}"}"      # keep from shared/… onward
+      case "$prel" in shared/*|rules/*) ;; *) prel="${pdir#*rules/}"; prel="rules/$prel" ;; esac
+      [ -d "$ROOT/$prel" ] \
+        || fail_err "$skill: placeholder include $ptok in ${f#"$ROOT"/} — static prefix $prel is not a directory under root"
+    done < <(grep -oE -- '(\.\./)+(shared/includes|rules)(/[A-Za-z0-9._-]+)*/[<{][^>}]*[>}][A-Za-z0-9._-]*\.md' "$f" | sort -u)
   done < <(find "$SKILLS_DIR" -type f -name '*.md' -print0)
   [ "$ERRORS" -eq "$before" ] && INCLUDE_INTEGRITY_OK=1
 }
