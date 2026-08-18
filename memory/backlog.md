@@ -661,3 +661,31 @@ Recipe, in this order:
 
 - B-24 [tooling] repo-wide *.sh | rule:CQ40-no-shellcheck | sig:no-shellcheck-config
   DEFER, systemic. No .shellcheckrc anywhere and no CI workflow invoking shellcheck, so CQ40 scores 0 for every bash file in a repo that is majority bash. Both real defects found in the ship coverage-reuse build (a nonexistent git flag, cross-shell variable assumptions) and several here (quoted multi-word interpreter, shadowed case arm) are exactly what shellcheck reports. confidence:60 source:review-kimi-build-target
+
+## B-PROFILE-DEDUP — profile-session re-analyses the same rollout because the dedup key carries `project`
+**Found:** 2026-08-18, after eight separate reports of the SAME rollout
+(`rollout-2026-08-16T22-26-56-01a00b2e-….jsonl`, RShieldBE PR #404/#413 `watchLoop`) were handed in
+for triage. Every one reached the same numbers (25:40:49 wall / 6:34:55 active / mutation 10-10).
+**Evidence:** `~/.zuvo/runs.log` records **12 `profile-session` runs on 2026-08-18** — 03:54, 03:56,
+07:20, 07:30, 08:48, 09:21, 09:45, 10:19, 10:21, 10:54, 11:13 — with at least eight naming the same
+transcript. At 25–45 min of agent work and millions of (mostly cached) tokens each, that is hours of
+duplicated analysis in a single day, still running while this was written.
+**Root cause:** the idempotency key is `skill/project/SHA`, and `project` is derived from the
+directory the skill was invoked in — not from the data being analysed. The one rollout was logged as
+`mutation-data-flush-final`, `rs_be`, `tgm-survey-platform`, `ResearchShieldNew` and
+`mutation-data-flush-profile-detailed`: five different "projects" for one input file, so the key never
+matches and every run looks new. This also explains the contradictory self-reports — some runs print
+"append-retro correctly performed an idempotent no-op", others do the full analysis, purely depending
+on which worktree the invocation came from.
+**Second defect, independent of the key:** even on a key hit the guard fires at the retro WRITE, i.e.
+after the whole analysis has run. It saves a line in a file, not the work.
+**Recipe:**
+1. Key on the analysed artifact, not the caller: `hash(rollout path) + cutoff start/end`. A transcript
+   is the same transcript regardless of which worktree the agent happened to sit in. Keep `project` as
+   a display field; it is a property of the invocation site, never of the artifact's identity.
+2. Check BEFORE the analysis, not at write time: early-exit with a pointer to the existing report and
+   an explicit `--force` to override, so a deliberate re-profile is still possible.
+3. While at it, treat a report as an artifact with a path so the early exit can name it, rather than
+   telling the caller a matching retro "exists" somewhere.
+defer-reason: none — this is a live cost leak, not deferred debt; filed here because it was found while
+triaging farm reports in another repo | seen:8 | confidence:98 | source:field-report | 2026-08-18
