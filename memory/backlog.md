@@ -651,7 +651,20 @@ skills directories and carry no plugin manifest, so there is nothing to sync the
 only Claude (was missing, now fixed) and Codex (already had it) have one. Measured
 after the fix: both cache dirs report 1.6.55 / 57 skills, matching package.json.
 
-## B-INSTALL-COPY-IDIOM — install_claude()'s 8 copy sites all swallow their failures
+## B-INSTALL-COPY-IDIOM — DONE
+**Closed:** 2026-08-18. `cp_warn <label> <cp-args…>` replaces all TEN swallowing copies in
+install_claude()'s cache loop (the entry counted 8; there were 10).
+**The swallow was the point, not the duplication.** `cp … 2>/dev/null || true` is the mechanism
+that let the Claude plugin manifest go stale for ~40 releases with no signal.
+**`|| true` semantics are PRESERVED:** cp_warn always returns 0, so a failed copy does not abort
+the remaining cache dirs or the other four hosts. What changed is that it stops being invisible.
+**An unmatched glob is not a failure** — same rule as verify_copied.
+**Proven live:** deleting the cache's rules/*.md and chmod a-w on the directory produced
+`WARN: rules — copy FAILED` plus the summary line; a clean install stays silent at exit 0. The
+first probe attempt was wrong — chmod alone does not stop `cp` overwriting EXISTING files.
+**Test:** assertions 22-28 of tests/hooks/test-install-copy-verification.sh. One subtlety pinned in
+both helper and test: `x=$(cp_warn …)` runs it in a SUBSHELL, so the counter increments there and
+the summary reports 0 — every call site must be a plain statement.
 Surfaced by: zuvo:review of 17fa746..1313b59 (2026-08-04), CQ-4 + confirmed by 2 adversarial providers.
 `install_claude()` repeats the same shape eight times inside its `for CACHE_DIR` loop
 (scripts/install.sh:253, 264, 272, 283, 303, 309, 317, 323): `cp ... 2>/dev/null || true`.

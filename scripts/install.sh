@@ -49,6 +49,44 @@ fail() { echo -e "  ${RED}✗${NC} $1"; }
 INSTALL_VERIFY_MISSING=0
 INSTALL_VERIFY_DETAIL=""
 
+# cp_warn <label> <cp-args…> — copy, and SAY SO when it fails (B-INSTALL-COPY-IDIOM).
+#
+# install_claude()'s cache loop repeated `cp … 2>/dev/null || true` eight times. The duplication is
+# the small half. The swallow is the big half: it is the mechanism that let the Claude plugin
+# manifest go stale for ~40 releases with no signal — install.sh printed OK whether or not any
+# given copy happened. One of the eight was fixed to WARN when that was found; the other seven kept
+# the convention, which is a fix to an instance of a shape that keeps producing the same bug.
+#
+# The `|| true` semantics are PRESERVED on purpose — a failed copy must not abort the remaining
+# cache dirs or the other four hosts. What changes is that it stops being invisible.
+#
+# A glob that matched nothing is NOT a failure: `cp src/*.py dst/` with no .py files passes the
+# literal pattern to cp, which fails. Same rule as verify_copied — assert only what was actually
+# attempted, because a check that cries wolf is one that gets ignored.
+# The counter only accumulates when cp_warn runs in the CURRENT shell. `x=$(cp_warn …)` puts it in
+# a subshell and the increment dies there — the WARN still prints, but the final summary reports 0.
+# Every call site below is a plain statement; keep it that way.
+INSTALL_COPY_WARNINGS=0
+cp_warn() {
+  local _label="$1"; shift
+  [ "$#" -ge 2 ] || return 0
+  # First non-flag argument is the source; if it does not exist the glob did not match.
+  local _first=""
+  local _a
+  for _a in "$@"; do
+    case "$_a" in -*) continue ;; esac
+    _first="$_a"; break
+  done
+  [ -n "$_first" ] && [ ! -e "$_first" ] && return 0
+  if cp "$@" 2>/dev/null; then
+    return 0
+  fi
+  INSTALL_COPY_WARNINGS=$((INSTALL_COPY_WARNINGS + 1))
+  echo "  WARN: $_label — copy FAILED; this install is incomplete in that respect" >&2
+  return 0
+}
+
+
 # --- refuse to carry test debris out of the repo (B-REFGUARD) -----------------------------------
 # `tests/skill-suite/test-references-guards.sh` used to create its fixture inside the real skills/
 # tree. install.sh copies skills/* into FIVE destinations, so an install that overlapped a running
@@ -285,7 +323,7 @@ install_claude() {
       # hand. Skipping `tmp-*` makes the leak impossible regardless of timing.
       case "$skill_name" in tmp-*) continue ;; esac
       mkdir -p "$CACHE_DIR/skills/$skill_name"
-      cp -r "$skill_dir"* "$CACHE_DIR/skills/$skill_name/" 2>/dev/null || true
+      cp_warn "skills/$skill_name" -r "$skill_dir"* "$CACHE_DIR/skills/$skill_name/"
     done
     # Replace {plugin_root} placeholder with actual resolved path in all skill files
     local resolved_root="${CACHE_DIR%/}"
@@ -310,7 +348,7 @@ install_claude() {
 
     # Copy shared includes
     if [[ -d "$ZUVO_DIR/shared/includes" ]] && [[ -d "$CACHE_DIR/shared/includes" ]]; then
-      cp -R "$ZUVO_DIR"/shared/includes/. "$CACHE_DIR/shared/includes/" 2>/dev/null || true
+      cp_warn "shared/includes" -R "$ZUVO_DIR"/shared/includes/. "$CACHE_DIR/shared/includes/"
       # Strip non-Claude-Code platform blocks from shared includes too
       find "$CACHE_DIR/shared/includes" -name "*.md" -exec \
         sed_i -e '/<!-- PLATFORM:CODEX -->/,/<!-- \/PLATFORM:CODEX -->/d' \
@@ -322,7 +360,7 @@ install_claude() {
 
     # Copy rules
     if [[ -d "$ZUVO_DIR/rules" ]] && [[ -d "$CACHE_DIR/rules" ]]; then
-      cp "$ZUVO_DIR"/rules/*.md "$CACHE_DIR/rules/" 2>/dev/null || true
+      cp_warn "rules" "$ZUVO_DIR"/rules/*.md "$CACHE_DIR/rules/"
     fi
 
     # Copy scripts (adversarial-review.sh, etc.). *.py too — test-coverage-gate.py
@@ -331,9 +369,9 @@ install_claude() {
     # along for anything that sources it.
     if [[ -d "$ZUVO_DIR/scripts" ]]; then
       mkdir -p "$CACHE_DIR/scripts"
-      cp "$ZUVO_DIR"/scripts/*.sh "$CACHE_DIR/scripts/" 2>/dev/null || true
-      cp "$ZUVO_DIR"/scripts/*.py "$CACHE_DIR/scripts/" 2>/dev/null || true
-      [[ -d "$ZUVO_DIR/scripts/lib" ]] && cp -R "$ZUVO_DIR"/scripts/lib "$CACHE_DIR/scripts/" 2>/dev/null || true
+      cp_warn "scripts/*.sh" "$ZUVO_DIR"/scripts/*.sh "$CACHE_DIR/scripts/"
+      cp_warn "scripts/*.py" "$ZUVO_DIR"/scripts/*.py "$CACHE_DIR/scripts/"
+      [[ -d "$ZUVO_DIR/scripts/lib" ]] && cp_warn "scripts/lib" -R "$ZUVO_DIR"/scripts/lib "$CACHE_DIR/scripts/"
       chmod +x "$CACHE_DIR"/scripts/*.sh "$CACHE_DIR"/scripts/*.py 2>/dev/null || true
     fi
 
@@ -341,9 +379,9 @@ install_claude() {
     # including a bare skills-only fleet deploy with no manifest, is version-
     # identifiable (`cat <root>/VERSION` or `cat <root>/skills/VERSION`).
     if [[ -f "$ZUVO_DIR/VERSION" ]]; then
-      cp "$ZUVO_DIR/VERSION" "$CACHE_DIR/VERSION" 2>/dev/null || true
+      cp_warn "VERSION" "$ZUVO_DIR/VERSION" "$CACHE_DIR/VERSION"
       mkdir -p "$CACHE_DIR/skills"
-      cp "$ZUVO_DIR/VERSION" "$CACHE_DIR/skills/VERSION" 2>/dev/null || true
+      cp_warn "skills/VERSION" "$ZUVO_DIR/VERSION" "$CACHE_DIR/skills/VERSION"
     fi
 
     # Copy the Claude Code plugin manifest. The Codex targets have had this since
@@ -375,7 +413,7 @@ install_claude() {
     # Copy bin/ (CLI wrappers — Claude Code adds {plugin_root}/bin to PATH)
     if [[ -d "$ZUVO_DIR/bin" ]]; then
       mkdir -p "$CACHE_DIR/bin"
-      cp "$ZUVO_DIR"/bin/* "$CACHE_DIR/bin/" 2>/dev/null || true
+      cp_warn "bin" "$ZUVO_DIR"/bin/* "$CACHE_DIR/bin/"
       chmod +x "$CACHE_DIR"/bin/* 2>/dev/null || true
     fi
 
@@ -388,7 +426,7 @@ install_claude() {
 
     # Copy docs (if dir exists in cache)
     if [[ -d "$CACHE_DIR/docs" ]]; then
-      cp -r "$ZUVO_DIR"/docs/*.md "$CACHE_DIR/docs/" 2>/dev/null || true
+      cp_warn "docs" -r "$ZUVO_DIR"/docs/*.md "$CACHE_DIR/docs/"
     fi
 
     materialize_claude_reviewer_lanes "$CACHE_DIR"
@@ -1767,6 +1805,14 @@ check_cross_providers
 # Runs LAST so the whole install still happens — a failed copy in one host must not stop the other
 # four. But the exit code changes, because "install.sh printed ✓ and exited 0" is precisely how a
 # missing helper stays invisible until a skill fails hours later in another repo.
+if [ "${INSTALL_COPY_WARNINGS:-0}" -gt 0 ]; then
+  echo ""
+  warn "$INSTALL_COPY_WARNINGS copy operation(s) failed during this install (WARN lines above)."
+  echo "  Non-fatal by design — a failure in one cache dir must not abort the others — but the"
+  echo "  install is incomplete in those respects. This used to be entirely silent, which is how"
+  echo "  the Claude plugin manifest went stale for ~40 releases with nothing reporting it."
+fi
+
 if [ "${INSTALL_VERIFY_MISSING:-0}" -gt 0 ]; then
   echo ""
   fail "INSTALL INCOMPLETE — $INSTALL_VERIFY_MISSING file(s) present in the repo did not reach their destination:"

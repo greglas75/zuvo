@@ -124,5 +124,58 @@ else
   t_ok "the repo's skills/ is free of tmp-* debris"
 fi
 
+# --- 8. the cache-loop copies must not swallow their failures (B-INSTALL-COPY-IDIOM) -----------
+# install_claude()'s `for CACHE_DIR` loop repeated `cp … 2>/dev/null || true` ten times. The
+# duplication is the small half; the swallow is the big half — it is the mechanism that let the
+# Claude plugin manifest go stale for ~40 releases with no signal, because install.sh printed OK
+# whether or not any given copy happened.
+command -v cp_warn >/dev/null 2>&1 && t_ok "cp_warn is defined" || t_no "cp_warn missing"
+
+CS="$TMP/cw_src"; CD="$TMP/cw_dst"; mkdir -p "$CS" "$CD"
+echo real > "$CS/present.txt"
+
+# NOT `out="$(cp_warn …)"`: command substitution runs the function in a SUBSHELL, so the counter it
+# increments dies with that subshell and every count assertion below reads 0. Stderr goes to a file
+# and the call stays in THIS shell.
+INSTALL_COPY_WARNINGS=0
+cp_warn "label" "$CS/present.txt" "$CD/present.txt" 2>"$TMP/cw.err"
+{ [ ! -s "$TMP/cw.err" ] && [ "$INSTALL_COPY_WARNINGS" -eq 0 ] && [ -s "$CD/present.txt" ]; } \
+  && t_ok "a successful copy is silent and copies" || t_no "clean copy misbehaved: '$(cat "$TMP/cw.err")'"
+
+# A glob that matched nothing is NOT a failure — `cp src/*.py dst/` with no .py files hands cp the
+# literal pattern. Same rule as verify_copied: a check that cries wolf gets ignored.
+INSTALL_COPY_WARNINGS=0
+cp_warn "label" "$CS"/*.nomatch "$CD/" 2>"$TMP/cw.err"
+[ "$INSTALL_COPY_WARNINGS" -eq 0 ] && [ ! -s "$TMP/cw.err" ] \
+  && t_ok "an unmatched glob is not reported as a failure" || t_no "unmatched glob produced a false alarm"
+
+# THE DEFECT: a real failure must be visible and counted.
+INSTALL_COPY_WARNINGS=0
+mkdir -p "$CD/ro"; chmod a-w "$CD/ro"
+cp_warn "ro-label" "$CS/present.txt" "$CD/ro/x.txt" 2>"$TMP/cw.err"
+chmod u+w "$CD/ro"
+out="$(cat "$TMP/cw.err")"
+case "$out" in
+  *"WARN"*"ro-label"*) [ "$INSTALL_COPY_WARNINGS" -eq 1 ] && t_ok "a failed copy WARNs and is counted" \
+      || t_no "warned but did not count (counter=$INSTALL_COPY_WARNINGS)" ;;
+  *) t_no "a failed copy was swallowed: '$out'" ;;
+esac
+
+# …and it must stay NON-FATAL: one cache dir failing must not abort the other four hosts.
+INSTALL_COPY_WARNINGS=0
+mkdir -p "$CD/ro2"; chmod a-w "$CD/ro2"
+cp_warn "l" "$CS/present.txt" "$CD/ro2/x.txt" >/dev/null 2>&1
+rc=$?; chmod u+w "$CD/ro2"
+[ "$rc" -eq 0 ] && t_ok "cp_warn returns 0 so a partial install still finishes" || t_no "cp_warn returned $rc"
+
+# No `cp … || true` may remain in the cache loop, or the shape is back.
+loop="$(printf '%s\n' "$src" | awk '/for CACHE_DIR in/,/^  done$/')"
+n_swallow="$(printf '%s\n' "$loop" | grep -c 'cp .*|| true' || true)"
+[ "${n_swallow:-0}" -eq 0 ] && t_ok "no swallowing cp left in the cache loop" \
+  || t_no "$n_swallow swallowing cp call(s) remain in the cache loop"
+n_cpwarn="$(printf '%s\n' "$loop" | grep -c 'cp_warn ' || true)"
+[ "${n_cpwarn:-0}" -ge 8 ] && t_ok "cache loop routes $n_cpwarn copies through cp_warn" \
+  || t_no "only $n_cpwarn cp_warn call sites in the cache loop"
+
 echo "  --- install copy-verify: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
