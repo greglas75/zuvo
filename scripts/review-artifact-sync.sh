@@ -26,6 +26,24 @@
 #       or only those whose filename contains <substr>). Preserves mtimes.
 #       Never overwrites a file with DIFFERENT content at the destination
 #       (identical content = silent skip). Lints each copied artifact at dst.
+
+# Shared path-containment rule (B-PATH-CONTAIN-SHARED-FN). The same rule used to be written out
+# twice in THIS file and once in hooks/lib/pipeline-gate-lib.sh; d568825 fixed two of the three and
+# the miss reopened a real traversal (9df7c06). install.sh copies path-contain.sh next to this
+# script in every host tree, so `dirname` finds it after install; the second candidate is the repo
+# layout, for running from a checkout.
+_ras_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+for _ras_c in "$_ras_dir/path-contain.sh" "$_ras_dir/../hooks/lib/path-contain.sh"; do
+  if [ -r "$_ras_c" ]; then
+    # shellcheck source=/dev/null
+    . "$_ras_c"; break
+  fi
+done
+if ! command -v path_contained >/dev/null 2>&1; then
+  echo "review-artifact-sync: path-contain.sh not found — refusing to sync (containment cannot be checked)" >&2
+  exit 2
+fi
+
 set -uo pipefail
 
 MODE=""
@@ -106,15 +124,13 @@ lint_artifact() {
     echo "WARN $name: no adversarial: proof line — post-cutoff artifacts without it grant no coverage locally"
     return 0
   fi
-  case "$ref" in
-    /*) echo "FAIL $name: proof path '$ref' is absolute — the gate rejects it"; return 1 ;;
-  esac
-  # Real traversal only: a path SEGMENT equal to `..`. A range-named proof
-  # (`fd57e11..fc0c83e-adversarial.txt`) is one segment containing dots — matching the bare
-  # substring `..` rejected every artifact following the skill's own naming convention.
-  case "/$ref" in
-    */../*|*/..) echo "FAIL $name: proof path '$ref' escapes the repo (.. traversal) — the gate rejects it"; return 1 ;;
-  esac
+  # Shared rule: absolute, a `..` SEGMENT (not the substring — a range-named proof like
+  # `fd57e11..fc0c83e-adversarial.txt` is one segment containing dots), and canonical containment
+  # so a symlink cannot walk out with no `..` in the path at all.
+  if ! path_contained "$root" "$ref"; then
+    echo "FAIL $name: proof path '$ref' escapes the repo (absolute, .. segment, or a symlink out) — the gate rejects it"
+    return 1
+  fi
   if [ ! -f "$root/$ref" ]; then
     echo "WARN $name: proof '$ref' not present in THIS checkout — pair incomplete here; sync it or pushes from here won't count this artifact"
     return 0
@@ -192,25 +208,15 @@ do_sync() {
     ref="$(sed -n 's/^[[:space:]]*adversarial:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
     [ -n "$ref" ] || ref="$(sed -n 's/^[[:space:]]*adv-proof:[[:space:]]*//p' "$art" 2>/dev/null | head -1)"
     if [ -n "$ref" ]; then
-      # Segment-based containment, same rule as lint_artifact() above and
-      # pg_artifact_proven(). The leading "/" on the second case is load-bearing:
-      # without it, `../x` and a bare `..` match NEITHER `*/../*` (needs a slash
-      # before the dots) NOR `*/..`, fall through to the default branch, and get
-      # copied to a path outside both checkouts. `../../x` happens to still match,
-      # which is why a two-segment test case hides the bug. Verified by
-      # tests/hooks/test-proof-path-containment.sh (do_sync cases).
-      case "$ref" in
-        /*) echo "WARN $name: proof path '$ref' is absolute — artifact copied, proof NOT"; copied=$((copied + 1)); lint_artifact "$droot" "$droot/memory/reviews/$name" || fail=1; continue ;;
-      esac
-      case "/$ref" in
-        */../*|*/..) echo "WARN $name: proof path '$ref' escapes the repo — artifact copied, proof NOT" ;;
-        *)
-          if [ -f "$sroot/$ref" ]; then
-            copy_preserving "$sroot/$ref" "$droot/$ref" || fail=1
-          else
-            echo "WARN $name: proof '$ref' missing in SOURCE too — copied the artifact, but coverage will need the proof"
-          fi ;;
-      esac
+      # Same shared rule as lint_artifact() and pg_artifact_proven(). It is checked against the
+      # SOURCE root, because that is the tree the proof would be read out of.
+      if ! path_contained "$sroot" "$ref"; then
+        echo "WARN $name: proof path '$ref' escapes the repo (absolute, .. segment, or a symlink out) — artifact copied, proof NOT"
+      elif [ -f "$sroot/$ref" ]; then
+        copy_preserving "$sroot/$ref" "$droot/$ref" || fail=1
+      else
+        echo "WARN $name: proof '$ref' missing in SOURCE too — copied the artifact, but coverage will need the proof"
+      fi
     fi
     copied=$((copied + 1))
     lint_artifact "$droot" "$droot/memory/reviews/$name" || fail=1

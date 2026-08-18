@@ -921,6 +921,10 @@ install_codex() {
     cp "$ZUVO_DIR"/scripts/test-coverage-gate.py "$HOME/.codex/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/reviewer-preflight.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/review-artifact-sync.sh "$HOME/.codex/scripts/" 2>/dev/null || true
+    # review-artifact-sync.sh sources path-contain.sh from its OWN directory, so the shared
+    # containment rule has to travel with it (B-PATH-CONTAIN-SHARED-FN). Without this the
+    # script refuses to sync rather than falling back to a private copy of the rule.
+    cp "$ZUVO_DIR"/hooks/lib/path-contain.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     chmod +x "$HOME/.codex"/scripts/*.py 2>/dev/null || true
     # install-refactor-gate.sh is invoked by zuvo:refactor PHASE 0 to wire the repo git hook.
     cp "$ZUVO_DIR"/scripts/install-refactor-gate.sh "$HOME/.codex/scripts/" 2>/dev/null || true
@@ -931,7 +935,8 @@ install_codex() {
     # The copies above all end in `|| true`; verify the claim before making it.
     if verify_copied "codex scripts" "$ZUVO_DIR/scripts" "$HOME/.codex/scripts" \
          benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh \
-       && verify_copied "codex scripts (gate)" "$ZUVO_DIR/hooks" "$HOME/.codex/scripts" refactor-safety-gate.sh; then
+       && verify_copied "codex scripts (gate)" "$ZUVO_DIR/hooks" "$HOME/.codex/scripts" refactor-safety-gate.sh \
+       && verify_copied "codex scripts (lib)" "$ZUVO_DIR/hooks/lib" "$HOME/.codex/scripts" path-contain.sh; then
       ok "Scripts installed"
     fi
   fi
@@ -1112,6 +1117,10 @@ install_cursor() {
     cp "$ZUVO_DIR"/scripts/test-coverage-gate.py "$HOME/.cursor/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/reviewer-preflight.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/review-artifact-sync.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
+    # review-artifact-sync.sh sources path-contain.sh from its OWN directory, so the shared
+    # containment rule has to travel with it (B-PATH-CONTAIN-SHARED-FN). Without this the
+    # script refuses to sync rather than falling back to a private copy of the rule.
+    cp "$ZUVO_DIR"/hooks/lib/path-contain.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     chmod +x "$HOME/.cursor"/scripts/*.py 2>/dev/null || true
     # install-refactor-gate.sh is invoked by zuvo:refactor PHASE 0 to wire the repo git hook.
     cp "$ZUVO_DIR"/scripts/install-refactor-gate.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
@@ -1122,7 +1131,8 @@ install_cursor() {
     # The copies above all end in `|| true`; verify the claim before making it.
     if verify_copied "cursor scripts" "$ZUVO_DIR/scripts" "$HOME/.cursor/scripts" \
          benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh \
-       && verify_copied "cursor scripts (gate)" "$ZUVO_DIR/hooks" "$HOME/.cursor/scripts" refactor-safety-gate.sh; then
+       && verify_copied "cursor scripts (gate)" "$ZUVO_DIR/hooks" "$HOME/.cursor/scripts" refactor-safety-gate.sh \
+       && verify_copied "cursor scripts (lib)" "$ZUVO_DIR/hooks/lib" "$HOME/.cursor/scripts" path-contain.sh; then
       ok "Scripts installed"
     fi
   fi

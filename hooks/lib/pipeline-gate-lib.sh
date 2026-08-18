@@ -27,6 +27,15 @@
 #   pg_is_production      : 0 = production path, 1 = non-production
 
 # --- thresholds (env-overridable) -------------------------------------------
+
+# Shared path-containment rule (B-PATH-CONTAIN-SHARED-FN). Installed alongside this file, so
+# `dirname` resolves it in the repo AND in ~/.claude/hooks/lib/.
+_pgl_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+if [ -r "$_pgl_dir/path-contain.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$_pgl_dir/path-contain.sh"
+fi
+
 PG_MIN_FILES_DEFAULT=3
 PG_MIN_LINES_DEFAULT=150
 
@@ -326,12 +335,15 @@ pg_artifact_proven() {
   # is one filename segment containing dots, not a traversal, yet it failed containment and the
   # honest review that produced it granted no proof coverage. Fail-closed in the wrong place is
   # still wrong: it blocks real reviews while stopping nothing a segment check does not.
-  case "$_pap_ref" in
-    /*) return 1 ;;
-  esac
-  case "/$_pap_ref" in
-    */../*|*/..) return 1 ;;
-  esac
+  # ONE implementation, shared (B-PATH-CONTAIN-SHARED-FN). This rule used to be written out here,
+  # in review-artifact-sync.sh::lint_artifact and in ::do_sync — d568825 fixed two of the three and
+  # the miss reopened a real traversal. A missing helper REJECTS rather than falls through: this
+  # library is fail-open by design, but not about containment, where failing open means accepting
+  # the traversal.
+  if ! command -v path_contained >/dev/null 2>&1; then
+    return 1
+  fi
+  path_contained "$_pap_root" "$_pap_ref" || return 1
   _pap_ref="$_pap_root/$_pap_ref"
   if [ ! -f "$_pap_ref" ]; then
     # Proof referenced but not in this checkout. This is the SERVER-SIDE / CI case: proof files

@@ -583,7 +583,28 @@ Recipe:
   3. Wire both into scripts/validate-skills.sh as an optional-tool check (SKIP-if-absent,
      like the existing bats group) so a missing binary is a SKIP, not a false failure.
 
-## B-PATH-CONTAIN-SHARED-FN — the containment rule lives in 3 copies
+## B-PATH-CONTAIN-SHARED-FN — DONE (all four recipe steps)
+**Closed:** 2026-08-18. `hooks/lib/path-contain.sh` exports `path_contained <root> <ref>` and all
+three call sites use it — pg_artifact_proven, lint_artifact, do_sync. The inline `case` blocks are
+gone (asserted, not assumed: the test counts them and fails if one returns).
+- Lives in `hooks/lib/` rather than `scripts/lib/` because pipeline-gate-lib.sh is installed to
+  `~/.claude/hooks/lib/` and resolves siblings by `dirname`. install.sh copies it next to
+  review-artifact-sync.sh in the codex and cursor trees too, and `verify_copied` now checks it —
+  so a failed copy is loud instead of turning up later as a refused sync.
+- **A missing helper REJECTS.** pipeline-gate-lib.sh is fail-open by design, but not about
+  containment, where failing open means accepting the traversal. review-artifact-sync.sh exits 2.
+  Both probed: unset `path_contained` → rejected; delete the installed file → sync refuses (rc=2).
+- **Step 4 done: the check is CANONICAL, not just lexical.** A symlinked directory walks out of the
+  repo with no `..` anywhere in the path, so the two `case` blocks could not see it. Only applied
+  when the target EXISTS — which is the only time it is read or copied, so a not-yet-synced proof
+  still falls back to the lexical verdict instead of being rejected for absence. Canonicalization
+  is realpath → python3 → `cd`+`pwd -P`, because `realpath` is not universal and `readlink -f` is
+  GNU-only.
+- **Step 3 done, and it mattered:** the test carried its own `contained()` "extracted verbatim in
+  shape from the lib" — a FOURTH copy. A copy cannot catch the rule drifting, which is precisely
+  how d568825's miss stayed green. It now sources the real function, keeps the end-to-end do_sync
+  case (sourcing proves the FUNCTION, only the script proves the CALL SITE), and adds an assertion
+  that both production files call `path_contained`.
 Surfaced by: zuvo:review v1.6.53..HEAD (CQ-1 root cause, 2026-08-03).
 The absolute + `..`-segment proof-path check is implemented three times:
 hooks/lib/pipeline-gate-lib.sh::pg_artifact_proven, scripts/review-artifact-sync.sh::lint_artifact,

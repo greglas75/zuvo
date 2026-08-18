@@ -17,12 +17,28 @@ bad()  { echo "FAIL: $1"; fail=1; }
 
 [ -f "$LIB" ] || { bad "pipeline-gate-lib.sh missing"; echo "=== RESULT ==="; echo "SOME FAILED"; exit 1; }
 
-# The containment rule, extracted verbatim in shape from the lib.
-contained() {
-  case "$1" in /*) return 1 ;; esac
-  case "/$1" in */../*|*/..) return 1 ;; esac
-  return 0
+# THE REAL FUNCTION, sourced — not a re-implementation (B-PATH-CONTAIN-SHARED-FN).
+#
+# This block used to be a local `contained()` "extracted verbatim in shape from the lib". A copy of
+# the rule cannot catch the rule drifting: d568825 fixed two of the three production copies and
+# missed the third, and this test stayed green through it, because it was asserting against its own
+# fourth copy. The rule now lives in hooks/lib/path-contain.sh and is sourced here; the end-to-end
+# do_sync case at the bottom stays, because sourcing proves the FUNCTION and only the real script
+# proves the CALL SITE.
+# shellcheck source=/dev/null
+. "$ROOT/hooks/lib/path-contain.sh" 2>/dev/null || {
+  bad "hooks/lib/path-contain.sh missing or unreadable"; echo "=== RESULT ==="; echo "SOME FAILED"; exit 1
 }
+command -v path_contained >/dev/null 2>&1 || {
+  bad "path_contained not defined after sourcing path-contain.sh"; echo "=== RESULT ==="; echo "SOME FAILED"; exit 1
+}
+# Fixture root for the canonical (symlink) cases below; the lexical cases do not need it to exist.
+CROOT="$(mktemp -d)"
+mkdir -p "$CROOT/zuvo/proofs"
+printf 'p\n' > "$CROOT/zuvo/proofs/inside.txt"
+ln -s /etc "$CROOT/sneaky"
+trap 'rm -rf "$CROOT"' EXIT
+contained() { path_contained "$CROOT" "$1"; }
 
 # MUST be accepted — legitimate proof paths, incl. the range-naming convention
 for ok in "zuvo/proofs/fd57e11..fc0c83e-adversarial.txt" \
@@ -36,6 +52,40 @@ for bad_path in "/etc/passwd" "/tmp/x.txt" "../../../etc/passwd" "zuvo/../../etc
                 ".." "zuvo/proofs/.." "../zuvo/proofs/p.txt"; do
   contained "$bad_path" && bad "ACCEPTED an escaping path: $bad_path" || pass "rejected: $bad_path"
 done
+
+# CANONICAL containment: a symlinked directory walks out of the repo with no `..` anywhere in the
+# path, so the two lexical checks above cannot see it. This is what step 4 of the recipe was about.
+if path_contained "$CROOT" "sneaky/passwd"; then
+  bad "ACCEPTED a path that resolves outside the root through a SYMLINK (sneaky/passwd)"
+else
+  pass "rejected a symlink escape with no .. in the path"
+fi
+# …and it must not reject a real file that merely lives under the root.
+if path_contained "$CROOT" "zuvo/proofs/inside.txt"; then
+  pass "accepted an existing proof under the root (canonical check does not over-reject)"
+else
+  bad "canonical check rejected a legitimate existing proof"
+fi
+# A path that does not exist yet legitimately falls back to the lexical verdict — it cannot be read
+# or copied, and rejecting it for absence would deny coverage to every not-yet-synced proof.
+if path_contained "$CROOT" "zuvo/proofs/not-created-yet.txt"; then
+  pass "a missing target falls back to the lexical verdict"
+else
+  bad "a missing (but lexically safe) target was rejected"
+fi
+
+# ALL THREE production call sites must use the shared function, not their own copy. This is the
+# assertion that would have caught d568825's miss.
+for site in hooks/lib/pipeline-gate-lib.sh scripts/review-artifact-sync.sh; do
+  if grep -q 'path_contained' "$ROOT/$site"; then
+    pass "$site calls the shared path_contained"
+  else
+    bad "$site does not call path_contained — the rule has been re-implemented"
+  fi
+done
+n_inline="$(grep -c '\*/\.\./\*|\*/\.\.' "$ROOT/scripts/review-artifact-sync.sh" 2>/dev/null || true)"
+[ "${n_inline:-0}" -eq 0 ] && pass "review-artifact-sync.sh has no inline containment case block left" \
+  || bad "review-artifact-sync.sh still carries $n_inline inline containment case block(s)"
 
 # The lib must not regress to substring matching.
 if grep -qE '/\*\|\*\.\.\*\)' "$LIB"; then
