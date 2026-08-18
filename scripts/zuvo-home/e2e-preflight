@@ -543,6 +543,15 @@ _upsert_locked() {
 
 # upsert_awk <file> <flow> <state> <spec> <score> <conf> <today> → new content on stdout
 #
+# LENGTH (B-UPSERT-AWK-LEN, reviewed and accepted 2026-08-31): this is a one-line bash wrapper
+# around a ~150-line embedded AWK program, well past the 50-line function guideline. Accepted
+# because an embedded AWK program is a DSL block, not sprawling bash control flow, and a CQ audit
+# found no correctness issue. If this file grows further, the fix direction is: lift the AWK into a
+# heredoc constant and collapse `_upsert_locked`'s two near-symmetric create-vs-update branches
+# into one parameterised write path (their overlap currently falls ~15 lines short of the CQ14
+# repeated-block threshold). Recorded here rather than in the backlog, so it stays true next to
+# the code instead of ageing in a queue.
+#
 # Values are handed to awk through the ENVIRONMENT, never `awk -v`: -v runs the
 # value through escape-sequence processing, so a Windows spec path such as
 # e2e\flows\login.spec.ts silently becomes formfeed + "lows..." in the registry.

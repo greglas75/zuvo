@@ -447,7 +447,16 @@ the real output → add `.shellcheckrc` pinning the severity floor and any delib
 defer-reason: SCOPE — repo-wide tooling addition across 9+ bash files, blocked on a tool that is
 not installed | seen:1 | confidence:90 | source:review | 2026-07-31
 
-## B-UPSERT-AWK-LEN — e2e-preflight upsert helpers exceed the 50-line function guideline
+## B-UPSERT-AWK-LEN — CLOSED as ACCEPTED (not fixed, deliberately)
+**Disposition:** 2026-08-18. This entry documents its own verdict: an embedded AWK program is a DSL
+block rather than sprawling bash control flow, both branches are individually commented, the
+overlap falls ~15 lines short of the CQ14 repeated-block threshold, and **no correctness issue was
+found**. It has sat at confidence 70 with defer-reason NIT and seen:1 since 2026-07-31.
+**Closing it rather than leaving it open is the point.** A queue of things nobody intends to do is
+where a real item goes to hide — B-gate-2, a LIVE pre-push bypass, was buried under exactly this
+kind of entry for weeks. The fix direction (lift the AWK into a heredoc constant, collapse the two
+branches into one parameterised write path) is recorded in the file itself as a comment for whoever
+next grows it; it does not need a backlog slot to stay true.
 **Found:** 2026-07-31, TIER 3 CQ audit (CQ11), confidence 70.
 **Issue:** `scripts/zuvo-home/e2e-preflight:534` `upsert_awk()` is a one-line bash wrapper around a
 151-line embedded AWK program, and `_upsert_locked()` at :466 runs 61 lines across two near-symmetric
@@ -459,7 +468,22 @@ falls ~15 lines short of the CQ14 repeated-block threshold. No correctness issue
 collapse the two branches into one parameterised write path.
 defer-reason: NIT | seen:1 | confidence:70 | source:review | 2026-07-31
 
-## B-ORIGIN-TOCTOU — the origin gate classifies once, but requests resolve DNS again later
+## B-ORIGIN-TOCTOU — DONE
+**Closed:** 2026-08-18, and mostly by work that had already landed. The wording the entry attacks
+("LOCAL means it actually resolves to a local destination", a check-time answer stated as a durable
+property) is gone: `live-validation.md` now opens with "LOCAL is a destination, not a name",
+carries an explicit **"Resolution is a pre-flight heuristic, not a guarantee (TOCTOU)"** paragraph,
+names DNS rebinding, requires re-classification on EVERY navigation and per redirect hop, and
+forbids reusing a cached verdict (commits b67766e, 327cff3). The enforcing layer is request-level:
+E2E-Q4's allowed-host list, a critical gate, inspects every real request including redirects and
+background calls.
+**What this session added — the one thing still overstated.** Request-level enforcement matches
+`url.hostname`, i.e. NAMES, not addresses. It closes "the run walked off to a host nobody
+authorized" (the case that happens) and not "an authorized name resolved somewhere new". Claiming
+otherwise would repeat, one layer down, exactly the error the section is about. Documented, along
+with the pinning tool that DOES exist — Chromium's `--host-resolver-rules="MAP <host> <ip>"` — and
+why it is not the default: it defeats load-balanced/multi-A-record hosts, diverges from how the app
+is really reached, and a wrong pin looks like an outage.
 **Found:** 2026-07-31, adversarial review of the write-e2e V2 website page (kimi, low confidence —
 but the mechanism is sound and the wording it attacks is ours).
 **Issue:** `zuvo:write-e2e`'s Phase 0.5 origin gate classifies the resolved base URL as

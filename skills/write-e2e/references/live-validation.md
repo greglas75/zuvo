@@ -147,6 +147,21 @@ included, and fails the run the moment an unexpected host is contacted. Resoluti
 the run is willing to attempt; request-level enforcement decides what it is allowed to complete.
 Neither replaces the other, and a run that has only one of them is not gated.
 
+**And be precise about what request-level enforcement covers: NAMES, not addresses.** The
+allowed-host list matches `url.hostname`, so a name that is on the list stays on the list however
+it resolves. That closes "the run walked off to a host nobody authorized" — the case that actually
+happens — and it does not close "an authorized name resolved somewhere new". Saying otherwise
+would repeat, one layer down, the mistake this whole section is about: stating a check-time answer
+as a durable property.
+
+Pinning the address is possible and is NOT the default, deliberately. Chromium accepts
+`--host-resolver-rules="MAP <host> <ip>"` as a launch argument, which forces every lookup for that
+name to one address the run chose. It is the right tool when a STAGING target's DNS is managed by
+somebody else, and the wrong default everywhere: it defeats load-balanced and multi-A-record hosts,
+it silently diverges from how the application is actually reached, and a wrong pin fails in a way
+that looks like the app is down. Reach for it when a specific target warrants it, name the pin in
+the spec header, and do not make it a blanket policy.
+
 STAGING keeps name matching on purpose: there a HUMAN named the exact host, so the name IS the
 authorization. LOCAL's wildcard suffixes are claimed by the environment, and an environment
 cannot consent on the operator's behalf.
