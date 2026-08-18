@@ -185,6 +185,20 @@ The script may return a non-clean `status` when not all requested providers ran.
 | `suspended` | 125 | The HOST slept mid-run (lid close / system sleep). `suspended_seconds` says for how long. The providers were never given a chance, so this is NOT reduced coverage — it is a run that did not happen | **retry once**, then treat a second `suspended` as `timeout`. Never report this as a provider or infrastructure outage |
 | `single_provider_only` | 3 | `--multi` or `--rotate` requested but post-exclusion provider count < 2 — exit code 3 is unique to this case | install a second provider, retry with `--single`, or pass `--provider <name>` explicitly |
 | `error` | 2 | Every provider was reached and returned no review | record `Adversarial review: skipped (provider error)` and continue. Each provider's stderr is preserved under `evidence_dir` (`~/.zuvo/adversarial-failures/<run_id>/`) — read it before claiming a cause |
+| `ok` / any | **4** | **Review COMPLETED but the input was TRUNCATED** — part of the change was never sent to any provider (`input_truncated=true`, and the artifact lists the omitted files) | **Do NOT report the review complete.** Findings that came back are real; the ABSENCE of findings says nothing about the omitted files. Re-run over the omitted set (`build-review-patch <those paths>`) or split the input, then merge the verdicts |
+
+**Exit 4 is the one that looks like success and is not.** 0 and 4 both mean "providers ran and
+produced a verdict"; only 4 also means "over part of the change". A call-site written as
+`if [ "$rc" -ne 0 ]` treats 4 as failure (safe but noisy); one written as `if [ "$rc" -eq 0 ]` —
+or one that ignores the code, which is how this went unnoticed — reports a green review over code
+no model ever saw. That is the exact failure the loop exists to prevent, with the loop supplying
+the green: a 50583-char patch on 2026-07-31 dropped its single largest file and exited 0 with a
+normal verdict. Chunking now handles most oversized inputs without dropping anything, so 4 fires
+only where there is nothing to split on (`--mode tests`, a single file over the cap, chunking
+disabled) — rarer, not safer.
+
+Defence in depth: `pg_artifact_proven` REFUSES an artifact carrying `input_truncated=true`
+outright, so the gates do not depend on any individual call-site having checked the code.
 
 **Never collapse 124 / 125 / 2 into one "all providers blocked" message.** They have different causes and different correct responses: a slept host is free to retry, a timeout is not, and a refusal has evidence on disk naming the reason. Reporting all three as blocked infrastructure is what produced the 2026-07-30 misdiagnosis — a closed laptop lid reported as five dead providers.
 

@@ -345,6 +345,16 @@ pg_artifact_proven() {
     [ "${PG_PROOF_OPTIONAL:-}" = "1" ] && return 0
     return 1
   fi
+  # A TRUNCATED review is not proof of anything about the part that was never sent (B-ADV-TRUNC).
+  # adversarial-review.sh records `input_truncated=true` when it drops files past its char cap, and
+  # the REVIEW BY: markers are still there — they attest that providers ran, not that they saw the
+  # whole change. Counting markers alone therefore grants full coverage to a review that omitted,
+  # in the observed 2026-07-31 case, the single largest file in the patch. The exit code now says
+  # so too (4), but a gate must not depend on a caller having checked it: this is the one place
+  # every consumer passes through.
+  if grep -qx 'input_truncated=true' "$_pap_ref" 2>/dev/null; then
+    return 1
+  fi
   _pap_n="$(grep -c 'REVIEW BY:' "$_pap_ref" 2>/dev/null | head -1)"; _pap_n="${_pap_n:-0}"
   [ "$_pap_n" -ge 2 ] && return 0
   # A single provider genuinely producing output is honest too (only one model configured).

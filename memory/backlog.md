@@ -310,7 +310,24 @@ against 57 in source) and would be read by anything that enumerates the cache. R
 coverage, and closes the escape path above at the same time. Until then, `install.sh` could refuse to
 copy a `skills/tmp-*` directory — a one-line guard that makes the leak impossible regardless of timing.
 
-## B-ADV-TRUNC — a truncated adversarial review is reported as a complete one
+## B-ADV-TRUNC — DONE
+**Closed:** 2026-08-18. Recipe part 2 (chunk instead of drop) had already landed and removes most
+of the exposure — truncation now only happens where there is nothing to split on (`--mode tests`,
+a single file over the cap, chunking disabled). Part 1 is now done too, twice over:
+- **exit 4** — review completed but does NOT cover the whole change. Documented in the script
+  header and in `adversarial-loop.md`'s exit table, with an explicit warning that 4 is the code
+  that *looks* like success. Verified it propagates through chunk aggregation as well.
+- **`pg_artifact_proven` refuses `input_truncated=true`** — the defence that does not depend on any
+  call-site having checked the code. `REVIEW BY:` markers attest that providers RAN, not that they
+  saw the whole change; counting markers alone granted full coverage to the 2026-07-31 review that
+  omitted the patch's largest file.
+**The bats suite was pinning the bug.** `truncates code-mode input exceeding 30000 chars` asserted
+`status -eq 0` — a green test guaranteeing the exact behaviour that made a partial review look
+complete. Changed to 4 with the reason written next to it, so it reads as a contract change rather
+than a broken test.
+**Test:** tests/hooks/test-adversarial-truncation.sh, 11 assertions — including that a normal-sized
+review still exits 0 (otherwise the whole fleet would start returning 4) and that the partial
+review's findings are still delivered (4 means incomplete, not failed).
 **Found:** 2026-07-31, reviewing the Task 8 patch (50583 chars) during the write-e2e V2 execute run.
 **Issue:** `scripts/adversarial-review.sh:394` caps input at `MAX_CHARS=30000`, trims back to a
 whole-file boundary and drops the remaining files with only a stderr `WARN: input truncated ... (omitted: …)`.

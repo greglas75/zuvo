@@ -193,7 +193,7 @@ isolated_path() {
 
 # ─── Input truncation ────────────────────────────────────────
 
-@test "truncates code-mode input exceeding 30000 chars and adds notice" {
+@test "truncates code-mode input exceeding 30000 chars, adds notice, and exits 4" {
   create_inspecting_mock "mock-gemini" "TRUNCATED" "WAS_TRUNCATED" "NOT_TRUNCATED"
   isolated_path
 
@@ -202,7 +202,12 @@ isolated_path() {
   big_input=$(printf '%0.sx' $(seq 1 35000))
 
   run bash -c "printf '%s' '$big_input' | '$SCRIPT' --provider mock-gemini"
-  [ "$status" -eq 0 ]
+  # DELIBERATE CONTRACT CHANGE (B-ADV-TRUNC), not a broken test. This assertion used to require
+  # exit 0 — and that expectation is what made the bug survive: every call-site in
+  # adversarial-loop.md gates on the exit code, so "truncated the input, dropped files, exited 0"
+  # meant a partially-reviewed patch reported as fully reviewed, with a green test pinning it.
+  # 4 = review completed but does NOT cover the whole change.
+  [ "$status" -eq 4 ]
   [[ "$output" == *"WAS_TRUNCATED"* ]]
 }
 

@@ -19,6 +19,10 @@
 #   1   — no review provider available
 #   2   — every provider was reached and produced no review (stderr kept under
 #         ~/.zuvo/adversarial-failures/<run_id>/)
+#   4   — review COMPLETED but the input was TRUNCATED: part of the change was never sent to any
+#         provider. Findings are real; ABSENCE of findings proves nothing about the omitted files.
+#         A caller must re-run over the omitted set (the artifact lists it) or split the input —
+#         treating 4 as success reports a green review over code no model ever saw.
 #   124 — everything timed out, or the whole-run deadline fired
 #   125 — the HOST was suspended mid-run (lid close / sleep). Not a provider fault; retry.
 
@@ -2677,4 +2681,20 @@ printf 'SUMMARY\t%s\t%s\t%s\t%d\t%d\t%d\t%s\t%d\n' \
 
 # Explicit success exit. Set -e + the logging loop's last assignment can otherwise
 # leak a non-zero status into the script's implicit exit code on some bash versions.
+#
+# …unless the input was TRUNCATED (B-ADV-TRUNC). The metadata has said `input_truncated=true` for a
+# while and stderr has carried a WARN, but every call-site in adversarial-loop.md gates on the EXIT
+# CODE, so a partially-reviewed patch reported as fully reviewed — the same shape of failure the
+# gates exist to prevent, with the gate itself supplying the green. Observed 2026-07-31: a 50583-
+# char patch silently dropped its single largest file and exited 0 with a normal verdict.
+#
+# Chunking (added since) removes most of this: it only truncates now when there is nothing to split
+# on — `--mode tests`, fewer than two boundaries in the input (one huge file), or chunking
+# explicitly disabled. Those cases are rarer, not safer, so they get their own code rather than
+# sharing success's.
+if [[ "${INPUT_TRUNCATED:-false}" == "true" ]]; then
+  echo "  EXIT 4: input was truncated — this review does NOT cover the whole change." >&2
+  echo "         Re-run over the omitted files, or split the input. Do not report it complete." >&2
+  exit 4
+fi
 exit 0
