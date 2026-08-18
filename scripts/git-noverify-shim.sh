@@ -91,6 +91,63 @@ env_hookspath() {
   env | grep -iqE '^GIT_CONFIG_KEY_[0-9]+=core\.hookspath$'
 }
 
+# --- ALIAS USAGE (B-noverify-hardening #1) ------------------------------------
+# The shim sees real argv, so quoting and metacharacters cannot hide a flag from
+# it — but an ALIAS hides the flag from argv entirely. With
+# `git config alias.yolo "commit --no-verify"` already in ~/.gitconfig, argv is
+# literally `git yolo -m x`: there is no `--no-verify` anywhere to find, and the
+# subcommand is not in the gated set. Measured before this fix: passed through.
+#
+# Resolution asks the REAL git, so precedence (repo > global > system) and config
+# includes are git's problem, not a parser's. Recursion is guarded twice: a depth
+# limit and a seen-set, because aliases chain legitimately and can be defined
+# circularly — and a hang in the shim would wedge every git call on the machine,
+# which is worse than the bypass it is closing.
+#
+# `!shell` aliases are not git argv and are scanned as TEXT. Weaker on purpose:
+# the CI gate is the server-side guarantee (see docs/pipeline.md).
+_ZSHIM_ALIAS_SEEN=""
+alias_is_bad() {
+  local name="${1:-}" depth="${2:-0}" exp first
+  [ -n "$name" ] || return 1
+  [ "$depth" -lt 5 ] || return 1
+  case "$name" in -*) return 1 ;; esac
+  case " $_ZSHIM_ALIAS_SEEN " in *" $name "*) return 1 ;; esac
+  _ZSHIM_ALIAS_SEEN="$_ZSHIM_ALIAS_SEEN $name"
+
+  # git refuses to let an alias shadow a builtin, so a builtin name can never be
+  # one. Skipping them keeps `git status` from paying for a config read on every
+  # invocation — a latency guard, not a security decision.
+  case "$name" in
+    add|status|log|diff|show|fetch|pull|checkout|switch|restore|branch|tag|stash|\
+    rev-parse|ls-files|for-each-ref|cat-file|describe|blame|worktree|remote|clone|init|\
+    reset|revert|clean|apply|bisect|grep|mv|rm|shortlog|reflog|gc|fsck|notes|submodule) return 1 ;;
+  esac
+
+  exp="$("$REAL_GIT" config --get "alias.$name" 2>/dev/null)" || return 1
+  [ -n "$exp" ] || return 1
+
+  case "$exp" in
+    '!'*)
+      case "$(printf '%s' "$exp" | tr '[:upper:]' '[:lower:]')" in
+        *--no-verify*|*core.hookspath*) return 0 ;;
+      esac
+      return 1 ;;
+  esac
+
+  # Re-evaluate the expansion as if it had been typed. Word-splitting is correct
+  # here: a git-argv alias is exactly a whitespace-separated argument list.
+  local etoks
+  # shellcheck disable=SC2206
+  etoks=($exp)
+  if [ "${#etoks[@]}" -gt 0 ]; then
+    violates_args "${etoks[@]}" && return 0
+  fi
+  first="${exp%% *}"
+  [ "$first" = "$name" ] && return 1
+  alias_is_bad "$first" $((depth + 1))
+}
+
 # --- does this git invocation skip hooks? -----------------------------------
 # (args come from the real shell argv, so they are already quote-resolved — no
 #  metacharacter-split bypass here; only the -c hooksPath and short-cluster
@@ -135,6 +192,11 @@ violates_args() {
       [ "$config_hookspath" -eq 1 ] && return 0 ;;
   esac
   [ "$sub" = "commit" ] && [ "$has_cn" -eq 1 ] && return 0
+  # A non-gated subcommand may be an ALIAS for a gated one — resolve and re-scan.
+  case "$sub" in
+    commit|push|merge|cherry-pick|rebase|am|config) ;;
+    *) alias_is_bad "$sub" && return 0 ;;
+  esac
   # hooksPath on a non-gated subcommand (log/status) is harmless → not blocked.
   return 1
 }

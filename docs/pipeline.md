@@ -323,19 +323,39 @@ clustering, `-c core.hooksPath` (key=value / attached / boolean) + `git config c
 JSON, and unmatched-quote tokenize-failure (fail-closed). The lib's coverage bug (`files:*`
 permanent whitelist) is closed too — coverage now requires range-containment AND files.
 
-Irreducible residue (a command-STRING parser cannot fully decide shell semantics) —
-**documented, not chased**; each defeats only the best-effort layer and is caught by the CI
-gate (which re-checks review coverage on the pushed content regardless of how it was committed):
+Residue (a command-STRING parser cannot fully decide shell semantics). Each defeats only the
+best-effort layer and is caught by the CI gate, which re-checks review coverage on the pushed
+content regardless of how it was committed. Two of the three below turned out to be closable and
+were closed on 2026-08-18; they are kept struck-through rather than deleted, because "we looked at
+this and decided not to" and "we fixed this" are different facts and the next reader needs both.
 
-- **git alias USAGE** — `git c` where `c` is a pre-existing alias for `commit --no-verify`.
-  (Alias *creation* of a hook-skip IS blocked; resolving an alias at *use* time needs a
-  `git config --get alias.*` subprocess — recursion/latency risk.)
+A third item once listed here — `git commit "--no-verify"` evading the string parser — was
+**never a bypass**: `xargs` tokenizes quote-aware, so the quotes are gone before the scanner runs.
+Measured rc=2 for the double- and single-quoted forms alike, and both are now pinned by tests so
+nobody spends a day fixing a bug that does not exist:
+
+- ~~**git alias USAGE**~~ — **CLOSED 2026-08-18.** Both layers now resolve `git config --get
+  alias.<sub>` for any non-gated subcommand and re-scan the expansion, so `git yolo -m x` with
+  `alias.yolo = commit --no-verify` blocks (measured: rc=0 before, rc=2/1 after). The two risks
+  that kept it deferred are handled rather than accepted: recursion is bounded by a depth limit
+  AND a seen-set (aliases chain legitimately and can be defined circularly, and a hang in these
+  layers is worse than the bypass, since every Bash tool call and every git command goes through
+  them); latency is bounded by skipping builtin names, which git will never let an alias shadow.
+  `!shell` aliases are scanned as text — weaker, and stated as such.
 - **`include.path` indirection** — `git -c include.path=evil.conf` where the included file sets
   hooksPath. Not blocked, because `include.path` is a legitimate, common config feature and its
   value doesn't reveal hooksPath without reading the file; over-blocking it would break real
   workflows.
-- **commit-gate mtime** — the commit-gate is a non-blocking *nudge* anyway; pre-push + CI
-  re-evaluate the real content. (Deleted-staged-file mtime is now handled.)
+- ~~**commit-gate mtime**~~ — **CLOSED 2026-08-18.** The execute-run half of the commit gate is
+  BLOCKING (only `pipeline_nudge` is advisory), and it decided artifact freshness by comparing the
+  artifact's mtime against the newest staged PATH in the working tree. A commit stages BLOBS FROM
+  THE INDEX, and a path's mtime says nothing about what its index entry holds — so unreviewed
+  content staged under an old-mtime path passed (verified against the pre-fix gate: rc=0).
+  `adversarial-review.sh` now records `reviewed_blob=<oid>` for every file it reviewed, and the
+  gate requires every staged blob to be one of them. Artifacts without those lines keep the mtime
+  behaviour, so pre-existing ones are not blocked on day one. Same content-keyed move the pipeline
+  gate already made. Matching is on the OID SET, so filenames with spaces or newlines cannot break
+  it; residue: content reviewed at path A and staged at path B passes — the bytes were reviewed.
 
 #### Accepted invariants (recorded here so they stop occupying the backlog)
 

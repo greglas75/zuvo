@@ -1983,6 +1983,33 @@ write_artifact() {
       done
     fi
     [[ -n "$single_note" ]] && printf 'single_provider_note=%s\n' "$single_note"
+    # CONTENT BINDING (B-noverify-hardening #3). The pre-commit gate used to decide whether this
+    # artifact was fresh by comparing FILE MTIMES: artifact vs the newest staged path in the
+    # working tree. Those are two different things. A commit stages BLOBS from the index, and a
+    # path's working-tree mtime says nothing about what its index entry contains — stage an older
+    # file's content, or restore a mtime, and a review of entirely different bytes passes the gate.
+    # So record what was actually reviewed, by content. `build-review-patch` feeds this a
+    # `git diff HEAD` snapshot (worktree vs HEAD, plus untracked), so the reviewed bytes are the
+    # WORKING TREE — hash exactly those.
+    #
+    # Matching is on the blob-OID SET, not on path->oid pairs: a set needs no filename encoding, so
+    # paths with spaces or newlines cannot break it. Residue: content reviewed at path A and staged
+    # at path B passes. The bytes were still reviewed, and this is the best-effort layer — CI is
+    # the server-side guarantee.
+    if _zar_top="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+      _zar_paths=()
+      while IFS= read -r -d '' _zar_p; do
+        [[ -n "$_zar_p" && -f "$_zar_top/$_zar_p" ]] && _zar_paths+=("$_zar_top/$_zar_p")
+      done < <( { git -C "$_zar_top" -c core.quotePath=false diff HEAD --name-only -z --diff-filter=ACMR 2>/dev/null
+                  git -C "$_zar_top" -c core.quotePath=false ls-files --others --exclude-standard -z 2>/dev/null; } )
+      if [[ "${#_zar_paths[@]}" -gt 0 ]]; then
+        # One call for all paths — N forks on a large changeset would show up as review latency.
+        git hash-object -- "${_zar_paths[@]}" 2>/dev/null \
+          | while IFS= read -r _zar_oid; do
+              [[ -n "$_zar_oid" ]] && printf 'reviewed_blob=%s\n' "$_zar_oid"
+            done
+      fi
+    fi
     printf 'input_chars=%s\n' "${#INPUT}"
     printf 'input_chars_original=%s\n' "${ORIG_CHARS:-${#INPUT}}"
     printf 'input_truncated=%s\n' "${INPUT_TRUNCATED:-false}"

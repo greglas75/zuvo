@@ -187,7 +187,32 @@ type: project
 - **v2 fix:** add a post-copy verification loop asserting each expected script exists at its dest; warn/exit on any missing. Repo-wide (not infra-audit-specific).
 - **Confidence:** 50 (pre-existing convention; `|| true` is intentional install robustness, but silent-fail masks real breakage)
 
-## B-noverify-hardening (RECOMMENDED, deferred — best-effort layer)
+## B-noverify-hardening — DONE (2 of 3 closed; the third was never a bug)
+- **Closed:** 2026-08-18.
+  1. **git alias USAGE — CLOSED.** Both `hooks/block-no-verify.sh` and `scripts/git-noverify-shim.sh`
+     resolve `git config --get alias.<sub>` for a non-gated subcommand and re-scan the expansion.
+     Measured: `git yolo -m x` (alias.yolo = commit --no-verify) was rc=0, now blocks in both.
+     The two deferral reasons are handled, not accepted: recursion is bounded by a depth limit AND
+     a seen-set (aliases chain legitimately and can be circular; a hang here wedges every Bash tool
+     call and every git command, which is worse than the bypass), latency by skipping builtin names
+     — git never lets an alias shadow a builtin, so that skip is free and not a security decision.
+     `!shell` aliases are scanned as text; stated as weaker.
+  2. **quoted flag — NOT A BUG.** `git commit "--no-verify"` does not evade the parser: xargs
+     tokenizes quote-aware and the quotes are gone before the scan. Measured rc=2 for both quote
+     styles at HEAD, i.e. the backlog entry was wrong. Both forms are now pinned by tests so the
+     claim cannot be re-filed, and so a future tokenizer change that DOES break it gets caught.
+  3. **commit-gate mtime TOCTOU — CLOSED.** Note the entry's own framing was wrong too: the
+     execute-run half of that gate BLOCKS (only `pipeline_nudge` is advisory). It compared the
+     artifact mtime against the newest staged PATH in the working tree, while a commit stages BLOBS
+     FROM THE INDEX — different things. `adversarial-review.sh` now records `reviewed_blob=<oid>`
+     per reviewed file and the gate requires every staged blob to be one of them; artifacts without
+     those lines keep the mtime path so pre-existing ones do not break on day one.
+     `--abbrev=40` on the raw diff is load-bearing: git abbreviates OIDs to 7 chars by default
+     while `git hash-object` prints 40, and without it the gate blocks EVERY commit.
+- **Tests:** tests/hooks/test-noverify-alias.sh (24 assertions, both layers on one fixture repo so
+  they cannot diverge; probes: 12 fail without the fix, 2 without the cycle guard) and
+  tests/hooks/test-noverify-content-binding.sh (8 assertions incl. a live proof the pre-fix gate
+  accepted the same fixture; probes: 1 fail on dropping --abbrev=40, 2 on removing the recorder).
 - **Date:** 2026-06-28
 - **Source:** zuvo:review aggregate (Phase Final-2) of pipeline-entry enforcement; adversarial=gemini.
 - **Scope:** `hooks/block-no-verify.sh`, `scripts/git-noverify-shim.sh`, `hooks/pre-commit-adversarial-gate.sh`.

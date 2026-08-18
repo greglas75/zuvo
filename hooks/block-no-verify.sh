@@ -78,6 +78,60 @@ is_hookspath_kv() {
   return 1
 }
 
+# --- ALIAS USAGE (B-noverify-hardening #1) --------------------------------------------------
+# Alias CREATION was already blocked (`git config alias.x "commit --no-verify"`). Alias USAGE was
+# not: an alias defined earlier — by a human, in ~/.gitconfig, or before this hook existed — turns
+# `git yolo -m x` into `git commit --no-verify -m x` with nothing on the command line for a string
+# parser to see. Measured before the fix: rc=0.
+#
+# Resolution asks git itself rather than parsing config files, so it sees the same precedence git
+# will use (repo over global over system) and needs no knowledge of includes.
+#
+# Two guards make it safe to recurse: a depth limit, and a seen-set, because aliases legitimately
+# chain (`alias.a = b`, `alias.b = commit --no-verify`) and can be defined circularly (`a = b`,
+# `b = a`), which would otherwise hang the hook — a hang being worse than the bypass, since every
+# Bash tool call goes through here.
+#
+# `!shell` aliases cannot be parsed as git argv at all, so their TEXT is scanned instead. That is
+# weaker and deliberately so: this is the best-effort layer, the PATH-shim sees real argv and CI is
+# server-side. Anything that errors resolves to "not an alias" — fail-open, matching the rest of
+# this hook, EXCEPT that a failure here cannot re-open a bypass the direct-flag scan already caught.
+_ZBNV_ALIAS_SEEN=""
+alias_is_bad() {
+  local name="${1:-}" depth="${2:-0}" exp first
+  [ -n "$name" ] || return 1
+  [ "$depth" -lt 5 ] || return 1
+  case "$name" in -*) return 1 ;; esac
+  case " $_ZBNV_ALIAS_SEEN " in *" $name "*) return 1 ;; esac
+  _ZBNV_ALIAS_SEEN="$_ZBNV_ALIAS_SEEN $name"
+
+  # Aliases cannot shadow builtins (git refuses to run them), so a builtin name is never worth a
+  # config read. This is a latency guard on the hot path, not a security decision.
+  case "$name" in
+    add|status|log|diff|show|fetch|pull|checkout|switch|restore|branch|tag|stash|    rev-parse|ls-files|for-each-ref|cat-file|describe|blame|worktree|remote|clone|init|    reset|revert|clean|apply|bisect|grep|mv|rm|shortlog|reflog|gc|fsck|notes|submodule) return 1 ;;
+  esac
+
+  exp="$(git config --get "alias.$name" 2>/dev/null)" || return 1
+  [ -n "$exp" ] || return 1
+
+  case "$exp" in
+    '!'*)
+      case "$(printf '%s' "$exp" | tr '[:upper:]' '[:lower:]')" in
+        *--no-verify*|*core.hookspath*) return 0 ;;
+      esac
+      return 1 ;;
+  esac
+
+  local etoks=() _t
+  while IFS= read -r _t; do etoks+=("$_t"); done < <(printf 'git %s' "$exp" | xargs -n1 printf '%s\n' 2>/dev/null)
+  if [ "${#etoks[@]}" -gt 0 ]; then
+    violates_segment "${etoks[@]}" && return 0
+  fi
+  first="${exp%% *}"
+  [ "$first" = "$name" ] && return 1
+  alias_is_bad "$first" $((depth + 1))
+}
+
 # Scan the WHOLE token list — every git invocation (handles chained/newline-joined
 # commands that xargs flattens into one list) + pre-git env injections.
 violates_segment() {
@@ -153,6 +207,11 @@ violates_segment() {
         { [ "$config_hookspath" -eq 1 ] || [ "$alias_bad" -eq 1 ]; } && return 0 ;;
     esac
     [ "$sub" = "commit" ] && [ "$has_commit_n" -eq 1 ] && return 0
+    # A non-gated subcommand may be an ALIAS for a gated one — resolve and re-scan.
+    case "$sub" in
+      commit|push|merge|cherry-pick|rebase|am|config) ;;
+      *) alias_is_bad "$sub" && return 0 ;;
+    esac
     # NOTE: hooksPath on a NON-gated subcommand (log/status/…) is harmless (no
     # hooks run) and is intentionally NOT blocked — avoids over-blocking.
   done

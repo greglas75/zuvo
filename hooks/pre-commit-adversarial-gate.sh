@@ -168,6 +168,38 @@ EOF
     return 1
   fi
 
+  # --- CONTENT BINDING (B-noverify-hardening #3) ------------------------------------------------
+  # The mtime comparison above is a proxy, and a weak one: it asks "is the artifact newer than the
+  # newest staged PATH in the working tree?", while the commit takes BLOBS FROM THE INDEX. A path's
+  # working-tree mtime says nothing about what its index entry holds — `git add` an older file, or
+  # restore an mtime, and a review of entirely different bytes satisfies the check. Same class as
+  # the pipeline gate's own move to content keying.
+  #
+  # So when the artifact records what it reviewed (`reviewed_blob=<oid>`, written by
+  # adversarial-review.sh), every blob this commit is about to stage must be one of them.
+  # Artifacts without those lines predate the field and keep the mtime behaviour — the fallback is
+  # explicit rather than implicit, so "no lines" cannot silently mean "everything approved".
+  local reviewed_blobs unstaged_ok=1 staged_oid unreviewed=0
+  reviewed_blobs="$(sed -n 's/^reviewed_blob=//p' "$artifact_path" 2>/dev/null)"
+  if [[ -n "$reviewed_blobs" ]]; then
+    while IFS= read -r staged_oid; do
+      [[ -n "$staged_oid" ]] || continue
+      case "$staged_oid" in *[!0-9a-f]*|"") continue ;; esac
+      printf '%s\n' "$reviewed_blobs" | grep -qxF "$staged_oid" || unreviewed=$((unreviewed + 1))
+      # --abbrev=40 is load-bearing: `git diff --raw` abbreviates OIDs to 7 chars by default,
+      # while `git hash-object` prints 40. Without it EVERY comparison mismatches and the gate
+      # blocks every commit — a false-positive gate, which gets disabled and takes the real
+      # protection with it.
+    done < <(git diff --cached --raw --abbrev=40 --diff-filter=ACMR 2>/dev/null | awk '{print $4}')
+    if [[ "$unreviewed" -gt 0 ]]; then
+      echo "BLOCKED: $unreviewed staged blob(s) for task ${task_id} were never adversarially reviewed." >&2
+      echo "  The artifact is newer than the files on disk, but the CONTENT being committed is not" >&2
+      echo "  content it reviewed — mtimes and index blobs are different things." >&2
+      echo "Re-run adversarial review against what is actually staged, then overwrite $artifact_rel." >&2
+      return 1
+    fi
+  fi
+
   return 0
 }
 
