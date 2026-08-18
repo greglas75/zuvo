@@ -39,6 +39,17 @@ Two things about it worth knowing before you touch it:
 - **When you fix warnings, LOWER `MAX_WARNINGS`.** The test prints the new number when the count
   drops. Raising it to make a run green is the one edit that defeats the whole mechanism.
 
+**`ruff` and `mypy` are the Python half** (`tests/hooks/test-python-lint.sh`, same entry). mypy is a
+HARD ZERO — it found a real defect on its first run and is clean now, so a ratchet would be weaker.
+ruff is ratcheted at `MAX_RUFF`, same rule as above.
+
+- **The corpus includes the extensionless POLYGLOT sh/python helpers** in `scripts/zuvo-home/`.
+  A `*.py` glob misses nearly all of this repo's Python.
+- **mypy is scoped to `*.py`** because it resolves module names from paths and cannot handle the
+  polyglots. That is a tooling limit, not a reason to skip the files it can check.
+- Both gates read `git ls-files`, so an UNTRACKED file is invisible to them. Intentional (untracked
+  files do not ship), and worth knowing when a probe seems not to fire.
+
 ---
 
 ## 1. The five commands (in this order, always)

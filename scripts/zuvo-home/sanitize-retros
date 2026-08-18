@@ -22,7 +22,10 @@ Usage:
   ~/.zuvo/sanitize-retros --apply      # rewrite retros.log in place (backup kept)
   ~/.zuvo/sanitize-retros --apply --target <file>
 """
-import os, sys, re, time
+import os
+import sys
+import re
+import time
 
 ZUVO = os.environ.get("ZUVO_DIR", os.path.expanduser("~/.zuvo"))
 LOCK = os.path.join(ZUVO, ".retro.lock.d")          # SAME lock append-retro / rotate-retros use

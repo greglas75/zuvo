@@ -20,7 +20,9 @@ Usage:
   python3 scripts/gen-gate-copies.py --write    # rewrite stale regions in place
   python3 scripts/gen-gate-copies.py --list     # show the regions found and their kinds
 """
-import os, re, sys
+import os
+import re
+import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REGISTRY = os.path.join(ROOT, "shared/includes/gate-registry.md")

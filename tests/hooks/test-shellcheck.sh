@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-# shellcheck gate (B-SHELLCHECK).
+# Shell lint gate (B-SHELLCHECK).
+#
+# (The first word of this line is not the linter's name on purpose: a comment starting with it is
+# parsed as a DIRECTIVE, and an unparseable one is a hard SC1073 that stops analysis of the file.
+# The first draft of THIS file tripped exactly that, and the gate caught its own source — but only
+# after the commit, because the corpus reads `git ls-files` and an untracked file is invisible to
+# it. Run this gate again after committing anything it lints.)
 #
 # This repo is almost entirely shell and nothing linted it: no .shellcheckrc, no CI job, and by
 # CQ40's own wording ("No config present = 0 — that is the point of the gate") every bash file

@@ -31,8 +31,6 @@ Skills are read from the Claude Code plugin cache (latest version dir).
 """
 
 import json
-import os
-import re
 import sys
 from pathlib import Path
 
@@ -276,9 +274,9 @@ def match_groups(by_stack: dict, sig: dict) -> list[tuple[str, str, list[str]]]:
             driver = next(d for d in deps if d in POSTGRES_DRIVERS)
             evidence = f"rule #5 driver:{driver}"
         elif key == "mysql" and any(d in MYSQL_DRIVERS for d in deps):
-            evidence = f"rule #5 driver:mysql"
+            evidence = "rule #5 driver:mysql"
         elif key == "sqlite" and any(d in SQLITE_DRIVERS for d in deps):
-            evidence = f"rule #5 driver:sqlite"
+            evidence = "rule #5 driver:sqlite"
         # rule 6: manifest-implies-language
         elif key == "php" and sig["files"]["composer_json"]:
             evidence = "rule #6 composer.json present"
@@ -320,17 +318,17 @@ def emit(skill: str, project: Path, ct: dict, sig: dict, matched: list):
           f"prisma/schema.prisma={'yes' if sig['files']['prisma_schema'] else 'no'}")
     print(f"    .sql files={sig['files']['sql_files_count']} "
           f"migrations/ dir={'yes' if sig['files']['migrations_dir'] else 'no'}")
-    print(f"  matched by_stack groups (FULL tool list):")
+    print("  matched by_stack groups (FULL tool list):")
     sum_m = 0
     for key, evidence, tools in matched:
         print(f"    {key} ({evidence}) → {tools}")
         sum_m += len(tools)
-    print(f"  skipped by_stack groups (no signal):")
+    print("  skipped by_stack groups (no signal):")
     print(f"    {', '.join(skipped_keys) if skipped_keys else '(none)'}")
     print("  union math:")
     print(f"    always.length = {len(always)}")
     parts = " + ".join(f"{key}={len(tools)}" for key, _, tools in matched)
-    print(f"    matched: {parts} = {sum_m}" if matched else f"    matched: 0")
+    print(f"    matched: {parts} = {sum_m}" if matched else "    matched: 0")
     expected = len(always) + sum_m
     print(f"    expected_tools = {len(always)} + {sum_m} = {expected}")
     print()

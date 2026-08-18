@@ -8,7 +8,12 @@
 ''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
 # Rozbiera transkrypt agenta (Claude Code JSONL lub Codex rollout JSONL) na kategorie czasu.
 # Uzycie: python3 profile_session.py <plik.jsonl> [window_start_iso] [window_end_iso]
-import sys, json, re, datetime, os, hashlib
+import sys
+import json
+import re
+import datetime
+import os
+import hashlib
 
 USAGE = """profile-session — attribute a session's wall-clock time to categories.
 

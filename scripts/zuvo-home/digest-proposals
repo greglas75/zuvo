@@ -33,7 +33,12 @@ Disposition ledger (mining/proposals-ledger.tsv) — so a run shows only what is
   ~/.zuvo/digest-proposals --mark rejected --file X --section Y --note "contradicts never-reindex rule"
   dispositions: applied | rejected | covered | not-ours | deferred
 """
-import os, sys, re, glob, json, time
+import os
+import sys
+import re
+import glob
+import json
+import time
 
 ZUVO = os.environ.get("ZUVO_DIR", os.path.expanduser("~/.zuvo"))
 MINING = os.path.join(ZUVO, "mining")

@@ -19,7 +19,10 @@ their own copies. This script:
 Separate clones sharing a remote are NOT merged (no clear canonical) — only true
 linked worktrees of one repository. Idempotent; safe to re-run.
 """
-import subprocess, sys, hashlib, json, datetime, os
+import subprocess
+import sys
+import hashlib
+import json
 from pathlib import Path
 
 DEV = Path.home() / "DEV"

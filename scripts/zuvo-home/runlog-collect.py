@@ -30,7 +30,14 @@ Flags:
   --reset    ignore the cursor and (with --push) re-send everything (use sparingly)
   --no-retros  skip retros.log, send runs.log only
 """
-import os, sys, json, time, socket, gzip, hashlib, urllib.request
+import os
+import sys
+import json
+import time
+import socket
+import gzip
+import hashlib
+import urllib.request
 
 HOME = os.path.expanduser("~")
 ZUVO = os.environ.get("ZUVO_DIR", os.path.join(HOME, ".zuvo"))

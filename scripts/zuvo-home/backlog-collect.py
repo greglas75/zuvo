@@ -30,7 +30,17 @@ Env:
   CODESIFT_COLLECTOR_TOKEN / ZUVO_COLLECTOR_TOKEN  secret for /ingest/backlog
   ZUVO_BACKLOG_OUT    local snapshot path (default ~/.zuvo/backlog-local.jsonl)
 """
-import os, re, sys, json, glob, time, socket, subprocess, hashlib, gzip, urllib.request
+import os
+import re
+import sys
+import json
+import glob
+import time
+import socket
+import subprocess
+import hashlib
+import gzip
+import urllib.request
 
 HOME = os.path.expanduser("~")
 ZUVO = os.environ.get("ZUVO_DIR", os.path.join(HOME, ".zuvo"))

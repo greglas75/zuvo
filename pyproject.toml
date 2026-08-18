@@ -1,0 +1,61 @@
+# Python lint config for zuvo-plugin (B-CQ40-METALINTER).
+#
+# This repo is markdown + shell + a small amount of Python, and until now NOTHING linted the Python:
+# no pyproject.toml, no ruff.toml, no .flake8, no workflow calling any of them. CQ40 scores that 0
+# by design ("No config present = 0 — that is the point of the gate"), and the surface roughly
+# doubled when check-skill-structure.py and verify-review-claims.py landed.
+#
+# The shell half of that entry is `.shellcheckrc` + tests/hooks/test-shellcheck.sh. This is the
+# Python half, and it follows the same principle: gate on what is real, ratchet what is legacy,
+# and do not disable a rule without saying why.
+#
+# There is no packaging here — no build backend, no dependencies, no install. This file exists to
+# configure tools, which is the one thing it can do without pretending the repo is a package.
+
+[tool.ruff]
+# 110, chosen from the code rather than from habit: p50 is 40 chars, p90 is 91, p99 is 108. The
+# default 88 flags 565 lines — almost all of them prose-width comments, which this codebase uses
+# heavily and deliberately. 110 leaves 38, which are worth looking at. Picking 88 here would mean
+# 536 findings nobody will ever action, and a rule nobody actions is a rule that trains people to
+# ignore the linter.
+line-length = 110
+target-version = "py311"
+extend-exclude = [
+  "tests/security-corpus",   # deliberately vulnerable fixtures — linting them is meaningless
+  "validation",              # generated/one-off comparison scripts
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "SIM"]
+ignore = [
+  # E701/E702 — multiple statements on one line / with a semicolon. Used on purpose in the compact
+  # data-munging helpers (`if not x: continue`, `a=1; b=2` in tight parse loops). ~79 hits, none of
+  # them a defect, and rewriting them would make those loops longer without making them clearer.
+  "E701", "E702",
+  # E402 — module import not at top. Forced by the POLYGLOT sh/python helpers in scripts/zuvo-home/:
+  # they open with `#!/bin/sh` and a re-exec line that MUST precede every import. Not stylistic.
+  "E402",
+  # SIM115 — "use a context manager for open()". The hits are line-at-a-time readers over large
+  # JSONL transcripts inside generator expressions, where a `with` block changes the control flow.
+  "SIM115",
+  # E741 — ambiguous variable name `l`. Used for "line" throughout the parse loops; renaming it
+  # repo-wide is churn with no reader benefit.
+  "E741",
+]
+
+[tool.mypy]
+# Deliberately NOT strict. These are scripts, not a library: they parse JSONL and print reports, and
+# most take `dict[str, Any]` from json.load by nature. Strict mode would demand annotations that
+# encode nothing real. What is worth catching is what mypy finds without them — genuine type errors
+# reachable from the code as written.
+python_version = "3.11"
+# var-annotated OFF. It fires on `out = []` / `groups = {}` in scripts that immediately append to
+# them, and demands `out: list[tuple[str, int]] = []` — an annotation that restates the next three
+# lines and encodes nothing a reader did not already know. 7 of the 9 errors on first run were this
+# rule; keeping it on would have meant a ratchet, and with it off mypy is at ZERO, which is a
+# stronger gate. The two remaining errors were real and are fixed (retro-mine reused one name for
+# two tuple shapes).
+disable_error_code = ["var-annotated"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+exclude = "(tests/security-corpus|validation)/"

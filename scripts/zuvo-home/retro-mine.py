@@ -10,7 +10,12 @@
 Sources: ~/.zuvo/retros.md, ~/.zuvo/remote/*/retros.md (popebot bots), runs.log, ~/DEV/*/memory/ideas.md.
 Window: entries since --days N (default 7). Output: ~/.zuvo/mining/digest-<date>.md + stdout summary.
 Consumed by the weekly retro-miner agent (cron), which fleet-triages proposals -> fixes."""
-import os, re, glob, sys, collections, datetime
+import os
+import re
+import glob
+import sys
+import collections
+import datetime
 DAYS = int(sys.argv[sys.argv.index('--days')+1]) if '--days' in sys.argv else 7
 CUT = (datetime.datetime.utcnow() - datetime.timedelta(days=DAYS)).strftime('%Y-%m-%d')
 H = os.path.expanduser
@@ -51,7 +56,6 @@ for d in glob.glob(H('~/.zuvo/remote/*/')):
 
 backlogs = []
 strays = []  # worktree-local copies: canonical backlog lives ONLY in the main checkout (zuvo backlog-protocol)
-import datetime as _dt
 import subprocess as _sp
 def _main_root(d):
     try:
@@ -90,7 +94,11 @@ for url, bs in groups.items():
     name = top[0] + (f'  [{len(bs)} copies, open {min(x[1] for x in bs)}-{max(x[1] for x in bs)}' +
                      (' DIVERGED]' if len({x[5] for x in bs}) > 1 else ']') if len(bs) > 1 else '')
     merged.append((name, max(x[1] for x in bs), max(x[2] for x in bs), max(x[3] for x in bs), min(x[4] for x in bs)))
-backlogs = sorted(merged, key=lambda x: -x[1])
+# NOT reassigned to `backlogs`: that name holds 6-tuples (…, hash(t)) and these are 5-tuples with
+# the hash dropped after grouping. Rebinding one name to two shapes ran correctly but read as a
+# bug at the unpack 20 lines down, which is where mypy flagged it — "Too many values to unpack
+# (5 expected, 6 provided)". The runtime was fine; the name was not.
+backlog_rows = sorted(merged, key=lambda x: -x[1])
 
 ideas = []
 for f in glob.glob(H('~/DEV/*/memory/ideas.md')) + glob.glob(H('~/DEV/*/*/memory/ideas.md')) + glob.glob(H('~/.zuvo/remote/popebot/*/repos/*/memory/ideas.md')):
@@ -109,9 +117,9 @@ with open(dst, 'w') as w:
     w.write(f'\n## Change proposals ({len(proposals)})\n')
     for i, (o, h, t) in enumerate(proposals):
         w.write(f'\n### P{i} [{o}] {h}\n{t}\n')
-    w.write(f'\n## Backlog health ({len(backlogs)} projects, {sum(b[1] for b in backlogs)} open total)\n')
+    w.write(f'\n## Backlog health ({len(backlog_rows)} projects, {sum(b[1] for b in backlog_rows)} open total)\n')
     w.write('| project | open | done | added-this-week | oldest-date |\n|---|---|---|---|---|\n')
-    for proj, op, dn, wk, old_ in backlogs[:20]:
+    for proj, op, dn, wk, old_ in backlog_rows[:20]:
         w.write(f'| {proj} | {op} | {dn} | {wk} | {old_} |\n')
     if strays:
         w.write(f'\n**PROTOCOL VIOLATION — {len(strays)} worktree-local backlog copies** (canonical backlog lives ONLY in the main checkout; these forked after consolidation and need re-merge):\n')
@@ -119,6 +127,7 @@ with open(dst, 'w') as w:
     w.write(f'\n## New ideas ({len(ideas)})\n')
     for f, l in ideas: w.write(f'- ({f}) {l}\n')
 print(f'DIGEST: {dst}')
-print(f'  entries={entries} proposals={len(proposals)} ideas={len(ideas)} backlog-projects={len(backlogs)} open-total={sum(b[1] for b in backlogs)}')
+print(f'  entries={entries} proposals={len(proposals)} ideas={len(ideas)} '
+      f'backlog-projects={len(backlog_rows)} open-total={sum(b[1] for b in backlog_rows)}')
 print(f'  top-frictions: {dict(frictions.most_common(5))}')
 print(f'  top-skills: {dict(skills.most_common(5))}')

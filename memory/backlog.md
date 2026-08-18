@@ -546,7 +546,30 @@ are the only items that genuinely left the fence — each with the concrete reas
 - B-retro-stub-t64-flaky [TRIAGE 2026-08-16: CANNOT-VERIFY, and the recorded ROOT CAUSE does not match the code — the test already parameterizes ZUVO_HOME to a fresh mktemp -d and retro-stub derives every stateful path from it, so 'leftover markers under ~/.zuvo/run-markers' cannot be the mechanism. 5 consecutive clean runs. Treat a future look as re-diagnosis, NOT apply-the-recipe-as-written.] | tests/adversarial/test-session-retro-carry.sh :: T6.4 | flaky-test | "no new stub added (full retro supersedes — idempotent)" fails intermittently: observed RED mid-review, and RED at the BASE commit 50eeeaf when run against an extracted base tree, then GREEN on a later run of the same unchanged file. So it is state-dependent (leftover markers under ~/.zuvo/run-markers), not a regression from this range — this range touched only the BASE line-budget constant in that file, and `scripts/zuvo-home/retro-stub` (the code under test) is not in 50eeeaf..23a207a at all. Recipe: make the case hermetic w.r.t. $ZUVO_HOME rather than reading the real one. defer-reason: pre-existing debt, out of fence — belongs to whatever last touched retro-stub | seen:1 | confidence:80 | source:review-cq | 2026-08-03
 - [DONE 2026-08-17] devpush-marketplace-dirty-tree [CLOSED 2026-08-17 — EXIT/INT/TERM trap added around the Step-0b rewrite, disarmed the moment Step 4 commits (before the push, so a failed push cannot roll a committed count back out of the tree). Bounded twice so an irreversible `git checkout --` is safe: it fires only if THIS run rewrote, and only if the marketplace tree was clean beforehand — a user with pre-existing local marketplace edits gets a warning and no restore, because destroying their work to tidy ours would be a worse bug than the one being fixed. Simulated both paths: clean tree -> 2 dirty files -> 0 after the trap; dirty tree -> untouched, user edit intact. The sub-issues this entry also listed (orphaned mkstemp, no rollback on the second file) were already mitigated by 07df2a2's stage-then-commit design, so only the primary CRITICAL remained.] [TRIAGE 2026-08-16: core defect UNCHANGED (Step 0b still rewrites the sibling marketplace tree without committing; no trap anywhere in the script; the failure message at :299 still says 'Step 4 commits it'). The sub-issues it lists (orphaned mkstemp, no rollback on the second file) WERE mitigated by 07df2a2's stage-then-commit design. So: still MUST-FIX, but narrower than filed.] | scripts/dev-push.sh Step 0b (~55-97) vs Step 4 | crash-safety | FOUR providers independently (codex, cursor, kimi, claude — kimi and claude rated it CRITICAL). Step 0b rewrites the SIBLING marketplace working tree but does not commit it; the commit lands only at Step 4. Any failure or interrupt in Steps 1-3 leaves the marketplace repo dirty, and the next run's mandatory `git pull --rebase` then fails on a dirty tree — a trap that needs manual recovery in a repo the user was told is self-healing. Related, same area: an orphaned `.zuvo-count-*` mkstemp file after a kill, and no rollback if `os.replace` fails on the second of two staged files. Recipe: either commit the count fix immediately in Step 0b as its own commit, or register a trap that restores the marketplace tree on any non-zero exit before Step 4. defer-reason: NOT localized — changing where the marketplace commit happens reorders dev-push's push/rollback contract and needs its own RED test against the 32-assertion gate suite; that is a scoped change, not a review-loop edit | seen:1 | confidence:90 | source:review-adversarial | 2026-08-03
 
-## B-CQ40-METALINTER — no meta-linter configured repo-wide (CQ40=0)
+## B-CQ40-METALINTER — DONE (all three recipe steps)
+**Closed:** 2026-08-18. ruff, mypy and shellcheck are all installed now, so the rules land with
+gates that run locally rather than speaking only through CI.
+1. **`pyproject.toml`** with `[tool.ruff]` + `[tool.mypy]`. `line-length = 110` was chosen FROM THE
+   CODE (p50 40 chars, p90 91, p99 108): the default 88 flags 565 lines, almost all prose-width
+   comments this repo uses deliberately — and a rule nobody will ever action trains people to
+   ignore the linter. Ignores are per-rule with reasons: E701/E702 (compact parse loops), E402
+   (FORCED by the polyglot sh/python re-exec line preceding every import), SIM115, E741,
+   and mypy's `var-annotated` (7 of 9 first-run errors were "annotate this empty list", which
+   restates the next three lines).
+2. **`.shellcheckrc`** + the shell gate — done in the same session, see B-SHELLCHECK.
+3. **Wired as optional-tool checks** — `tests/hooks/test-python-lint.sh` and
+   `tests/hooks/test-shellcheck.sh`, both SKIP-if-absent, both auto-discovered by run-all.
+**ruff: 713 → 46** (config + 20 safe autofixes: unused imports, one-line import groups, f-strings
+without placeholders). Ratcheted at 46. **mypy: HARD ZERO** — it earned that by finding a real one
+on its first run: `retro-mine.py` bound the name `backlogs` to 6-tuples and then rebound it to
+5-tuples, which ran correctly and read as a bug at the unpack 20 lines later. Renamed to
+`backlog_rows`; that rename then exposed a SECOND thing — the final summary `print` still counted
+the unmerged list and would have contradicted the table right above it. Both fixed, and the run's
+output diffed byte-identical against HEAD.
+**Corpus selection matters here too:** the extensionless POLYGLOT helpers in scripts/zuvo-home/ are
+most of this repo's Python and a `*.py` glob misses them. mypy is scoped to `*.py` (it resolves
+module names from paths and cannot handle the polyglots) — a tooling limit, not a reason to skip
+what it can check.
 Surfaced by: zuvo:review v1.6.53..HEAD (CQ auditor, 2026-08-03). Pre-existing, repo-wide.
 `find` for pyproject.toml / ruff.toml / .flake8 / .shellcheckrc returns nothing, and no
 workflow invokes ruff/mypy/shellcheck. gate-registry.md CQ40 says "No config present = 0 —

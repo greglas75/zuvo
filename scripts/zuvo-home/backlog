@@ -23,7 +23,11 @@ the collector so the Mac sees VPS/bot debt without SSH-ing to each box.
 Merge rule: per host, only the LATEST run_id counts (a re-run replaces, never
 duplicates). Requires SSH to the collector host for `pull`.
 """
-import os, sys, json, subprocess, collections
+import os
+import sys
+import json
+import subprocess
+import collections
 
 HOME = os.path.expanduser("~")
 ZUVO = os.environ.get("ZUVO_DIR", os.path.join(HOME, ".zuvo"))
