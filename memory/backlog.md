@@ -405,7 +405,27 @@ defer-reason: SCOPE — four defects in another component (validator + two geo p
 decision in defect 4; discovered during, but unrelated to, the write-e2e V2 plan | seen:1 |
 confidence:95 | source:execute-run | 2026-07-31
 
-## B-SHELLCHECK — CQ40 scores 0 on every bash file in the repo; no linter is configured
+## B-SHELLCHECK — DONE
+**Closed:** 2026-08-18. The blocker in this entry ("shellcheck is not installed on this machine")
+no longer holds — 0.11.0 is on PATH — so the rules land with a gate that actually runs locally.
+- `.shellcheckrc` added, with a written reason per disable. The disables are IDIOMS THIS REPO USES
+  DELIBERATELY (SC2015 `a && b || c` in test harnesses ~983 hits, SC2016 single-quoted `$` in awk
+  programs, SC2181 `rc=$?` after capturing output / branching on specific codes, SC2012, SC1090/1091
+  runtime-resolved sources, SC2088 literal `~/` in user-facing messages). 1702 findings → 226.
+- **3 real errors fixed** — two comment lines whose first word was the linter's name, which
+  shellcheck parses as a DIRECTIVE and hard-fails on (SC1073, stopping analysis of the rest of the
+  file), and `"$pat[[:space:]]"` read as an array subscript (SC1087). I wrote the same
+  first-word-directive bug into my own fix comment and the gate caught it immediately.
+- `tests/hooks/test-shellcheck.sh`: errors gated at HARD ZERO; warnings RATCHETED at 102, the number
+  written in the open at the top of the file rather than hidden in a baseline. A ratchet is the only
+  honest way to adopt a linter on 273 existing files — fixing 102 warnings in one untested diff is
+  worse than stopping the debt growing while it is paid down. Loud SKIP when shellcheck is absent.
+- **Corpus selection was the subtle part:** keying on the shebang alone pulls in the POLYGLOT
+  sh/python helpers in scripts/zuvo-home/ (`#!/bin/sh`, re-exec python3 on line 8). shellcheck then
+  lints Python as shell and reports 52 "errors", every one false — and enough noise to make the 3
+  real ones invisible. Documented in the test and in docs/runbook/testing.md.
+- Mutation-probed: reintroducing the SC1087 fails the error gate; adding one unquoted-expansion
+  script fails the ratchet.
 **Found:** 2026-07-31, TIER 3 CQ audit of the write-e2e V2 range (b79dad2..17ba54b), confidence 90.
 **Issue:** nothing lints the repo's shell. There is no `.shellcheckrc`, no CI job runs shellcheck
 (`ci/` holds only the opt-in `zuvo-pipeline-entry.yml`, which is not even copied into

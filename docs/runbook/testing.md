@@ -25,6 +25,20 @@ adversarial-review --help | head -3     # cross-model review CLI
 A missing optional tool must be reported in the run summary, never silently absorbed. `bats`
 absent is a legitimate SKIP; `rg` absent is a broken run that LOOKS like a test failure.
 
+**`shellcheck` is now one of those tools** (B-SHELLCHECK, 2026-08-18). `tests/hooks/test-shellcheck.sh`
+gates the repo's 273 shell files at **zero errors** and ratchets warnings against a number written in
+plain sight at the top of that file. Absent shellcheck it prints a loud SKIP rather than passing
+quietly — the repo spent months with no shell linting at all, and a gate that disappears silently is
+how that state persists.
+
+Two things about it worth knowing before you touch it:
+
+- **The corpus selector excludes the polyglot `sh`/`python` helpers** in `scripts/zuvo-home/` (they
+  open `#!/bin/sh` and re-exec python3 on line 8). A selector that keys on the shebang alone lints
+  Python as shell and reports **52 errors, all false** — enough noise to hide the 3 real ones.
+- **When you fix warnings, LOWER `MAX_WARNINGS`.** The test prints the new number when the count
+  drops. Raising it to make a run green is the one edit that defeats the whole mechanism.
+
 ---
 
 ## 1. The five commands (in this order, always)

@@ -1,0 +1,44 @@
+# shellcheck configuration for zuvo-plugin (B-SHELLCHECK).
+#
+# CQ40 scores a repo 0 when no linter is configured, and this repo scored 0 on every bash file
+# despite being almost entirely shell. It was not fixed when first filed because shellcheck was not
+# installed on the dev machine, and committing rules nobody could run locally would have been a
+# config that only ever spoke through CI. It is installed now (0.11.0), so the rules land with a
+# local gate that actually runs.
+#
+# The disables below are IDIOMS THIS CODEBASE USES DELIBERATELY, not findings being swept up. Each
+# one says why. Everything else stays on.
+
+# SC2015 — `a && b || c` is not if-then-else. True, and it is the dominant idiom here: ~983 hits,
+# nearly all of the form `cond && ok "..." || bad "..."` in test harnesses and `[ -f x ] && . x`
+# in hooks, where the "c runs when b fails" subtlety is irrelevant because b is an echo or a
+# counter bump. Leaving it on would bury every real finding under a thousand of these.
+disable=SC2015
+
+# SC2016 — "expressions don't expand in single quotes". The single-quoted `$` here is almost always
+# an awk or sed program, where `$1`/`$0` MUST reach the tool unexpanded. Several comments in this
+# repo exist specifically because someone once let the shell expand one.
+disable=SC2016
+
+# SC2181 — "check exit code directly with `if cmd`". The `rc=$?` form is required at most of these
+# sites: the command's output is captured first (`out=$(cmd)`; `rc=$?`), which `if cmd` cannot do,
+# and several hooks deliberately branch on SPECIFIC codes (3 = no changes, 4 = truncated review).
+disable=SC2181
+
+# SC2012 — "use find instead of ls". The `ls | wc -l` sites here count entries in directories this
+# repo creates itself (plugin caches, marker dirs, fixture trees); none can contain newlines, and
+# find would make the checks harder to read for no gain.
+disable=SC2012
+
+# SC1091 / SC1090 — "not following" / "can't follow non-constant source". Every `.` in this repo
+# targets a path resolved at runtime ($ROOT, $_self_dir, $HOME/.zuvo). Following them statically is
+# not possible and not wanted.
+disable=SC1091
+disable=SC1090
+
+# SC2088 — "tilde does not expand in quotes". These are literal `~/.zuvo/...` strings inside
+# user-facing MESSAGES and heredoc instructions, where the tilde is meant to be shown, not expanded.
+disable=SC2088
+
+# Shell dialect for files without a shebang shellcheck can classify.
+shell=bash

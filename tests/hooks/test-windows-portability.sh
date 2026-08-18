@@ -15,7 +15,11 @@ echo "=== 1. line endings: a CRLF checkout makes every script a syntax error ===
 grep -qE '^\* text=auto eol=lf' "$ROOT/.gitattributes" 2>/dev/null \
   && ok "repo-wide LF normalisation declared" || bad "no repo-wide eol=lf rule"
 for pat in '\*\.sh' '\*\.py' 'hooks/\*' 'scripts/zuvo-home/\*'; do
-  grep -qE "^$pat[[:space:]]+text eol=lf" "$ROOT/.gitattributes" 2>/dev/null \
+  # ${pat} braces are load-bearing: `$pat[` reads as an array subscript (SC1087) — a lint error and
+  # a genuine ambiguity for a human. (Note: a comment line whose FIRST word is the linter's name is
+  # parsed as a directive and errors as SC1073 — which is exactly what the first draft of this
+  # comment did, and what the sibling fix in test-install-wiring.sh was about.)
+  grep -qE "^${pat}[[:space:]]+text eol=lf" "$ROOT/.gitattributes" 2>/dev/null \
     && ok "explicit LF rule for $pat" || bad "no explicit LF rule for $pat"
 done
 # Plain batch keeps CRLF, but the POLYGLOT must stay LF: bash reads it on every hook invocation

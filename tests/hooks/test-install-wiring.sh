@@ -160,7 +160,7 @@ rm -rf "$_t"
 # --severity=error, matching this check's stated contract ("syntax check"): the
 # default severity includes style/info findings the four scripts have carried for
 # months. That stricter path was LATENT — it activates the moment anyone installs
-# shellcheck, which happened 2026-08-02 11:55 and turned an unchanged installer
+# the linter, which happened 2026-08-02 11:55 and turned an unchanged installer
 # into 4 FAILs that blocked a release of unrelated work. Error severity still
 # upgrades on bash -n (catches real defects, not just parse errors); the style
 # warning cleanup is tracked as its own task, not a silent gate downgrade.
