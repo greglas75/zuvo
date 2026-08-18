@@ -69,7 +69,12 @@ MKT_WAS_CLEAN=0
 MKT_REWROTE=0
 _mkt_restore() {
   _rc=$?
+  # rc=0 means the script finished; Step 4 disarms on the success path, so reaching here with 0
+  # and the flag still set means an early clean exit that never committed. Reverting then would
+  # be right, but reverting on a SUCCESSFUL full run would silently undo a published count — so
+  # the status is checked explicitly rather than inferred from the flag alone.
   [ "$MKT_REWROTE" -eq 1 ] || return 0
+  [ "$_rc" -ne 0 ] || { warn "clean exit before Step 4 with the rewrite uncommitted — reverting $MARKETPLACE_DIR"; }
   if [ "$MKT_WAS_CLEAN" -ne 1 ]; then
     warn "marketplace tree had pre-existing local changes — leaving it untouched (restore by hand if needed)"
     return 0
@@ -321,15 +326,19 @@ if survivors:
     print('; '.join(sorted(set(survivors))))
     sys.exit(1)
 PY
+# Armed BEFORE the rewrite, not after. The python below writes TWO files; if it wrote the first
+# and failed on the second, a flag set afterwards would still read 0 and the trap would skip the
+# exact case it exists for. Arming early is free: if nothing was written, `git checkout --` on
+# unmodified files is a no-op.
+MKT_REWROTE=1
 MKT_DIAG="$(python3 -c "$MKT_COUNT_PY" "$MARKETPLACE_DIR" "$MKT_SKILL_COUNT")" \
   || fail "Marketplace skill count sync FAILED: ${MKT_DIAG:-<no detail>} — fix by hand in $MARKETPLACE_DIR (Step 4 commits it), then re-run"
 ok "Step 0b: marketplace skill count synced (${MKT_SKILL_COUNT} skills)"
 # <<< zuvo:marketplace-count
-# Outside the fence on purpose: the fence delimits the count-rewrite LOGIC, which the gate
-# suite extracts and runs standalone. A trap armed inside it would fire when that extracted
-# block ends — reverting the rewrite the suite then asserts on. Crash-safety of the whole
-# script is not part of that unit, so it brackets the fence rather than living in it.
-MKT_REWROTE=1
+# The trap brackets the fence rather than living inside it: the gate suite EXTRACTS this fenced
+# block and runs it standalone, so a trap armed within would fire when the extracted block ends
+# and revert the rewrite the suite then asserts on. Crash-safety of the whole script is not part
+# of the count-rewrite unit. (MKT_REWROTE is armed inside, before the write — see there.)
 
 # ═══════════════════════════════════════
 # Step 1: Version bump
