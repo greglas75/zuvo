@@ -37,6 +37,30 @@ if [ -r "$_self_dir/lib/refactor-gate-lib.sh" ]; then
   . "$_self_dir/lib/refactor-gate-lib.sh"
 fi
 
+# A RECENT adversarial artifact for this repo (B-driftguard-bounded-age).
+#
+# The two state-drift guards below used to ask `ls "$CTX_DIR"/adversarial-task-*.txt` — does ANY
+# artifact exist. That is a fail-safe with no expiry: one artifact from a run that finished weeks
+# ago disables the guard permanently, and the longer a repo is used the more certain it is that
+# such a file exists. The guard's whole purpose is to notice that a live execute marker has no
+# matching review, so "some file from some past run" is exactly the evidence it must not accept.
+#
+# Bounded by the SAME $GATE_GRACE window that decides whether the marker itself is live, so the two
+# halves of the comparison age together instead of one of them being immortal.
+_recent_artifact_exists() {
+  local dir="$1" grace="$2" f now mt
+  [ -d "$dir" ] || return 1
+  now=$(date +%s)
+  for f in "$dir"/adversarial-task-*.txt; do
+    [ -e "$f" ] || continue
+    mt="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)"
+    mt="$(printf '%s' "$mt" | tr -cd '0-9')"; [ -n "$mt" ] || mt=0
+    [ "$mt" -gt 0 ] || continue
+    [ "$(( now - mt ))" -le "$grace" ] && return 0
+  done
+  return 1
+}
+
 # ===========================================================================
 # 1. adversarial_gate — preserved execute-run blocking logic. Returns 0|1.
 # ===========================================================================
@@ -69,7 +93,7 @@ adversarial_gate() {
   fi
 
   if [ ! -f "$STATE_FILE" ]; then
-    if [ -n "$active_exec_marker" ] && ! ls "$CTX_DIR"/adversarial-task-*.txt >/dev/null 2>&1; then
+    if [ -n "$active_exec_marker" ] && ! _recent_artifact_exists "$CTX_DIR" "$GATE_GRACE"; then
       echo "BLOCKED: active zuvo:execute run-marker for this repo, but no execution-state.md" >&2
       echo "and no adversarial artifact in $CTX_DIR — execute state-drift (gate would be bypassed)." >&2
       echo "  Marker: $active_exec_marker" >&2
@@ -90,7 +114,7 @@ adversarial_gate() {
     grep -q '<!-- status: in-progress -->' "$STATE_FILE" 2>/dev/null && _pcag_status="in-progress"
   fi
   if [ "$_pcag_status" != "in-progress" ]; then
-    if [ -n "$active_exec_marker" ] && ! ls "$CTX_DIR"/adversarial-task-*.txt >/dev/null 2>&1; then
+    if [ -n "$active_exec_marker" ] && ! _recent_artifact_exists "$CTX_DIR" "$GATE_GRACE"; then
       echo "BLOCKED: young zuvo:execute run-marker for this repo, but execution-state.md is" >&2
       echo "not in-progress and no adversarial artifact exists — execute state-drift." >&2
       echo "  Marker: $active_exec_marker" >&2

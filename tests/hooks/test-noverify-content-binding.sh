@@ -50,14 +50,25 @@ R="$(mkrepo toctou)"
 [ "$(gate_rc "$R")" = "1" ] && t_ok "an unreviewed staged blob is blocked despite a passing mtime check" \
   || t_no "TOCTOU bypass still open"
 
-# --- 3. the same fixture passed BEFORE the fix — proof the bypass was real, not hypothetical -----
-if git -C "$ROOT" show HEAD:hooks/pre-commit-adversarial-gate.sh > "$TMP/gate-old.sh" 2>/dev/null; then
-  rc="$( cd "$R" && printf '%s' "$JSON" | CLAUDECODE=1 timeout 30 bash "$TMP/gate-old.sh" >/dev/null 2>&1; echo $? )"
-  [ "$rc" = "0" ] && t_ok "the pre-fix gate accepted the same fixture (bypass confirmed real)" \
-    || t_no "pre-fix gate returned $rc — the fixture may not reproduce the bypass"
-else
-  t_ok "pre-fix gate not retrievable from HEAD (skipped)"
-fi
+# --- 3. the same fixture must PASS a gate without the fix — proof the bypass was real ------------
+# The "before" gate is DERIVED BY MUTATION of the current file, not fetched from git history. The
+# first cut read `HEAD:hooks/pre-commit-adversarial-gate.sh`, which is correct exactly until the fix
+# is committed — after that HEAD carries the fix, the assertion compares the gate against itself and
+# reports the bypass as unreproducible. An assertion that expires the moment the work lands is worse
+# than none: it goes red for a reason that has nothing to do with the behaviour it names.
+mutate_out(){ # <marker-line> <until-line> -> a gate with that block removed
+  python3 - "$ROOT/hooks/pre-commit-adversarial-gate.sh" "$1" "$2" <<'PYEOF' > "$TMP/gate-old.sh"
+import sys
+src, start_mark, end_mark = open(sys.argv[1]).read(), sys.argv[2], sys.argv[3]
+i = src.index(start_mark); j = src.index(end_mark, i)
+sys.stdout.write(src[:i] + src[j:])
+PYEOF
+}
+mutate_out '  # --- CONTENT BINDING (B-noverify-hardening #3)' '  return 0
+}'
+rc="$( cd "$R" && printf '%s' "$JSON" | CLAUDECODE=1 timeout 30 bash "$TMP/gate-old.sh" >/dev/null 2>&1; echo $? )"
+[ "$rc" = "0" ] && t_ok "a gate without content binding accepts the same fixture (bypass confirmed real)" \
+  || t_no "the un-fixed gate returned $rc — the fixture may not reproduce the bypass"
 
 # --- 4. BACKWARD COMPATIBILITY: an artifact with no reviewed_blob lines keeps the old behaviour --
 # Silence must not mean "everything approved" — but it also must not block every pre-existing
@@ -108,6 +119,41 @@ if [ -s "$ART" ]; then
 else
   t_no "adversarial-review produced no artifact under the mock harness"
 fi
+
+# --- 7. STATE-DRIFT GUARD must not be neutered by an ANCIENT artifact (B-driftguard-bounded-age) -
+# When execution-state.md is missing but a live execute marker exists, the guard asks whether any
+# adversarial artifact is present. Unbounded, that is a fail-safe with no expiry: one file from a
+# run that finished weeks ago disables it permanently, and the longer a repo is used the likelier
+# such a file is to exist. The guard's job is to notice a live marker with no matching review, so
+# "some artifact from some past run" is precisely the evidence it must refuse.
+MARKERS="${ZUVO_HOME:-$HOME/.zuvo}/run-markers"
+mkdir -p "$MARKERS"
+R="$TMP/drift"; mkdir -p "$R"
+( cd "$R" && git init -q && git config user.email t@t && git config user.name t \
+  && echo a > f.txt && git add f.txt && git commit -qm init && mkdir -p zuvo/context )
+MK="$MARKERS/execute-zuvo-selftest-$$.marker"
+printf 'repo_root=%s\nstart_ts=%s\n' "$( cd "$R" && git rev-parse --show-toplevel )" \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$MK"
+# Removed on every exit path — a stray marker in the shared ~/.zuvo would block the NEXT commit in
+# whichever repo its path happens to match.
+trap 'rm -f "$MK"; rm -rf "$TMP"' EXIT
+
+[ "$(gate_rc "$R")" = "1" ] && t_ok "live marker + no artifact blocks" || t_no "drift guard did not fire with no artifact"
+
+( cd "$R" && : > zuvo/context/adversarial-task-1.txt && touch -t 202001010000 zuvo/context/adversarial-task-1.txt )
+[ "$(gate_rc "$R")" = "1" ] && t_ok "an ANCIENT artifact no longer neuters the drift guard" \
+  || t_no "a stale artifact still disables the guard indefinitely"
+# Same technique: swap the bounded check back for the unbounded `ls` it replaced.
+sed 's/_recent_artifact_exists "$CTX_DIR" "$GATE_GRACE"/ls "$CTX_DIR"\/adversarial-task-*.txt >\/dev\/null 2>\&1/g' \
+  "$ROOT/hooks/pre-commit-adversarial-gate.sh" > "$TMP/gate-unbounded.sh"
+rc="$( cd "$R" && printf '%s' "$JSON" | CLAUDECODE=1 timeout 30 bash "$TMP/gate-unbounded.sh" >/dev/null 2>&1; echo $? )"
+[ "$rc" = "0" ] && t_ok "an unbounded artifact check accepts the ancient artifact (bypass confirmed real)" \
+  || t_no "the unbounded variant returned $rc on the ancient-artifact fixture"
+
+# …and it must still pass on a genuinely recent one, or it is just a gate that always blocks.
+( cd "$R" && touch zuvo/context/adversarial-task-1.txt )
+[ "$(gate_rc "$R")" = "0" ] && t_ok "a RECENT artifact still satisfies the drift guard" \
+  || t_no "the drift guard now blocks even with a fresh artifact"
 
 echo "  --- noverify content binding: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

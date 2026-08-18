@@ -222,7 +222,21 @@ type: project
   3. commit-gate mtime TOCTOU — switch the freshness check from working-tree mtime to staged blob-hash comparison (`git ls-files -s`) recorded at review time.
 - **Why deferred:** structural hardening of a layer the architecture defines as best-effort; not a guarantee gap. Real complexity (subprocess alias resolution, blob-hash tracking) for marginal local gain. Route via `zuvo:refactor`/`zuvo:build` when prioritized.
 
-## B-driftguard-bounded-age (RECOMMENDED, deferred — pre-existing best-effort)
+## B-driftguard-bounded-age — DONE
+- **Closed:** 2026-08-18. Both state-drift guards in `hooks/pre-commit-adversarial-gate.sh` asked
+  `ls "$CTX_DIR"/adversarial-task-*.txt` — does ANY artifact exist. That is a fail-safe with no
+  expiry: one file from a run that finished weeks ago disables it permanently, and the longer a
+  repo is used the likelier such a file is to exist. New `_recent_artifact_exists` bounds the match
+  by the SAME `$GATE_GRACE` window that decides whether the marker is live, so both halves of the
+  comparison age together instead of one being immortal.
+- Measured: live marker + a 2020-dated artifact → the unbounded variant returns 0, the bounded one
+  blocks; a freshly touched artifact still passes (so it is not just a gate that always blocks).
+- **Test:** assertions 9-12 of tests/hooks/test-noverify-content-binding.sh.
+- **Note on how the "before" case is proven:** the pre-fix gate is DERIVED BY MUTATION of the
+  current file, not fetched from `HEAD:`. The first cut read HEAD, which is right exactly until the
+  fix is committed — after that HEAD carries the fix, the assertion compares the gate with itself
+  and reports the bypass as unreproducible. An assertion that expires the moment the work lands is
+  worse than none. Both "was it real" assertions in that file now mutate instead.
 - **Date:** 2026-06-28  **Source:** fresh aggregate review (gemini R3-6).
 - **File:** `hooks/pre-commit-adversarial-gate.sh` adversarial_gate state-drift guard.
 - **Issue:** when execution-state.md is missing, the guard checks `ls adversarial-task-*.txt` (any artifact) — an ancient unrelated artifact neuters the fail-safe indefinitely.
