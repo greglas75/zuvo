@@ -132,6 +132,21 @@ jq '.checks[] | select(.id=="IS9-image-critical-cve") | {status, evidence, sourc
 If `tool_availability.trivy` is `null` and `IS9-image-critical-cve` status is `skipped`:
 note that image CVE scanning requires trivy and coverage is degraded.
 
+**The evidence covers EVERY running image, and carries its own coverage markers.** The check used
+to scan whichever image `docker ps` listed first; it now scans every distinct running image, so the
+evidence is a sequence of blocks and each CVE belongs to the image named above it. Four markers,
+all of which you must read and none of which you may invent:
+
+| Marker | Meaning | What to write |
+|--------|---------|---------------|
+| `IS9-IMAGE: <ref>` | the scan block for that image begins | attribute the CVEs BELOW it to `<ref>`; never report a CVE without naming the image it came from |
+| `IS9-IMAGE-SCAN-CAPPED: stopped after N of M distinct images` | more images are running than were scanned | report the residual as an explicit coverage gap — `M-N` images unscanned — and recommend a re-run with `IS9_MAX_IMAGES` raised. **Do NOT report the host as clean of image CVEs**; you only know about N of M |
+| `IS9-IMAGE-SCAN-FAILED: <ref>` | trivy failed on that one image | a gap for THAT image, not a finding, and not a reason to discount the others |
+| `IS9-NO-RUNNING-CONTAINERS` | docker is present but nothing is running | not a finding; say the surface was empty at collection time |
+
+A scan that produced no CVE lines AND no `CAPPED`/`FAILED` marker is the only shape that supports
+"no CRITICAL image CVEs on this host".
+
 **IS9-privileged-container**
 
 Privileged containers (`--privileged` flag or `privileged: true` in compose) effectively

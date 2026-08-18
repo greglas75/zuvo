@@ -69,6 +69,7 @@ run_test test-infra-protocol.sh
 run_test test-infra-registry.sh
 run_test test-infra-collector-cli.sh
 run_test test-infra-redaction.sh
+run_test test-infra-is9-multi-image.sh
 run_test test-infra-agents.sh
 run_test test-infra-skill-contract.sh
 run_test test-infra-wiring.sh

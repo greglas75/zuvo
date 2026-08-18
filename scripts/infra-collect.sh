@@ -63,6 +63,13 @@ _ssh_mux_teardown() {
 : "${EXTERNAL_PORTSCAN_TIMEOUT_S:=300}"  # IC-4 external nmap -sT wall clock (per scan)
 : "${EXTERNAL_TLS_TIMEOUT_S:=180}"       # IC-4 external testssl.sh wall clock (per port)
 : "${EXTERNAL_NUCLEI_TIMEOUT_S:=300}"    # IC-4 external nuclei wall clock
+# IS9 fleet-wide CVE scan bound (B-infra-collect-multi-container-cve). The check used to scan the
+# FIRST running image only (`docker ps | head -1`) — correct for what it scanned, blind to every
+# other container on the box. Scanning all of them is right, but unbounded it is a wall-clock bomb:
+# a host with 20 containers at TRIVY_TIMEOUT_S each blows past CHECK_TIMEOUT_S and the whole check
+# comes back truncated with no indication of what was missed. So the count is capped, and when the
+# cap bites the evidence SAYS SO (`IS9-IMAGE-SCAN-CAPPED`) rather than reading as full coverage.
+: "${IS9_MAX_IMAGES:=8}"           # distinct running images scanned per host
 
 # SECURITY (timeout-injection guard): every timeout constant above is env-
 # overridable AND interpolated verbatim into remote/local command strings
@@ -71,7 +78,7 @@ _ssh_mux_teardown() {
 # command and execute arbitrary code. Assert each is a bare positive integer
 # (1+ digits, no sign/space/metachars) right here, before any use. Fail loud.
 for _tvar in CHECK_TIMEOUT_S TRIVY_TIMEOUT_S CONNECT_TIMEOUT_S PREFLIGHT_TIMEOUT_S WALL_CLOCK_LIMIT_S POLL_SLACK_S \
-             EXTERNAL_PORTSCAN_TIMEOUT_S EXTERNAL_TLS_TIMEOUT_S EXTERNAL_NUCLEI_TIMEOUT_S; do
+             EXTERNAL_PORTSCAN_TIMEOUT_S EXTERNAL_TLS_TIMEOUT_S EXTERNAL_NUCLEI_TIMEOUT_S IS9_MAX_IMAGES; do
   # Indirect expansion (bash 3.2 `${!var}`), NOT eval — eval would EXECUTE any
   # metacharacters in a hostile env value BEFORE the integer check could reject it,
   # turning the injection guard into an injection vector.
@@ -720,7 +727,7 @@ IS6-security-updates-pending|IS6|true|long|debsecan|CVE-[0-9]{4}-[0-9]+|debsecan
 IS7-fail2ban-missing|IS7|false|short|-|inactive~~failed~~not-found|systemctl is-active fail2ban 2>/dev/null || echo inactive
 IS8-exposed-admin-panel|IS8|false|short|-|:(8080~~8443~~9000~~3000)([^0-9]~~\$)|ss -tlnp 2>/dev/null | grep -iE ':(80|443|8080|8443|9000|3000)\b' || echo 'no-web-listener'
 IS9-socket-world-readable|IS9|true|short|-|^.{7}rw|ls -l /var/run/docker.sock 2>/dev/null || echo 'no-docker-socket'
-IS9-image-critical-cve|IS9|true|long|trivy|CVE-[0-9]{4}-[0-9]+|img=\$(docker ps --format '{{.Image}}' 2>/dev/null | head -1); [ -n "\$img" ] && trivy image --timeout ${TRIVY_TIMEOUT_S}s --skip-update --severity CRITICAL --quiet -- "\$img" 2>/dev/null
+IS9-image-critical-cve|IS9|true|long|trivy|CVE-[0-9]{4}-[0-9]+|imgs=\$(docker ps --format '{{.Image}}' 2>/dev/null | sort -u); [ -z "\$imgs" ] && echo 'IS9-NO-RUNNING-CONTAINERS'; n=0; for img in \$imgs; do n=\$((n+1)); if [ "\$n" -gt ${IS9_MAX_IMAGES} ]; then echo "IS9-IMAGE-SCAN-CAPPED: stopped after ${IS9_MAX_IMAGES} of \$(echo "\$imgs" | wc -l | tr -d ' ') distinct images"; break; fi; echo "IS9-IMAGE: \$img"; trivy image --timeout ${TRIVY_TIMEOUT_S}s --skip-update --severity CRITICAL --quiet -- "\$img" 2>/dev/null || echo "IS9-IMAGE-SCAN-FAILED: \$img"; done
 IS10-redis-no-auth|IS10|true|short|-|bind[[:space:]]+0\.0\.0\.0~~protected-mode[[:space:]]+no~~no-requirepass|if [ -f /etc/redis/redis.conf ]; then grep -iE '^[[:space:]]*(requirepass|bind|protected-mode)' /etc/redis/redis.conf 2>/dev/null; grep -qiE '^[[:space:]]*requirepass[[:space:]]' /etc/redis/redis.conf 2>/dev/null || echo 'no-requirepass'; else echo 'no-redis-conf'; fi
 IS11-suid-unexpected|IS11|true|long|-|/usr/local/~~^/tmp/~~/home/~~/opt/|find / -xdev -path /proc -prune -o -path /sys -prune -o -path /run -prune -o -perm -4000 -type f -print 2>/dev/null
 IS12-world-readable-env|IS12|true|long|-|world-readable secret file|find / -xdev -path /proc -prune -o -path /sys -prune -o -path /run -prune -o -name '.env' -perm /044 -type f -print 2>/dev/null | while read -r f; do perms=\$(stat -c '%a %n' "\$f" 2>/dev/null || stat -f '%Lp %N' "\$f" 2>/dev/null); n=\$(grep -cE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=' "\$f" 2>/dev/null); echo "== world-readable secret file: \$perms (keys: \${n:-0}) =="; grep -oE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*' "\$f" 2>/dev/null | sed 's/^[[:space:]]*//'; done

@@ -143,7 +143,20 @@ type: project
 - **Confidence:** 50 (real residual, structurally mitigated where it matters; spec-sanctioned keyword model)
 
 
-## B-infra-collect-multi-container-cve
+## B-infra-collect-multi-container-cve — DONE
+- **Closed:** 2026-08-18. IS9-image-critical-cve now enumerates `docker ps --format '{{.Image}}'
+  | sort -u` and scans every distinct running image, not `head -1`.
+- **The bound is the interesting part.** Unbounded, N images x TRIVY_TIMEOUT_S overruns
+  CHECK_TIMEOUT_S and the check returns truncated — which in the bundle is indistinguishable from
+  full coverage, i.e. the same blindness one layer up. So `IS9_MAX_IMAGES` (default 8, integer-
+  guarded with the other timeout constants) caps it, and when the cap bites the evidence emits
+  `IS9-IMAGE-SCAN-CAPPED: stopped after N of M distinct images` with the REAL total.
+- Evidence markers: `IS9-IMAGE: <ref>` per block (so CVEs are attributable per image),
+  `IS9-IMAGE-SCAN-FAILED: <ref>` (per-image gap, loop continues), `IS9-NO-RUNNING-CONTAINERS`.
+  container-analyst.md gained a marker table and the rule that only a scan with no CVE lines AND
+  no CAPPED/FAILED marker supports "no CRITICAL image CVEs on this host".
+- **Test:** tests/infra-suite/test-infra-is9-multi-image.sh, 10 assertions, stub docker/trivy on
+  PATH. Mutation-probed: 9 fail on the old `head -1` row, 2 on silencing the cap line.
 - **Source:** zuvo:execute Task 9 adversarial (deferred — v1 scope boundary, not a bug)
 - **File:** scripts/infra-collect.sh IS9-image-critical-cve
 - **Issue:** The IS9 docker CVE check audits a single container image, not all running containers — partial coverage (correct for what it scans, incomplete fleet-wide).
