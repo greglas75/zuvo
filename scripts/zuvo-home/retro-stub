@@ -71,7 +71,7 @@ trap '_release' INT TERM EXIT
 # FREAD FMOD DATE BRANCH SHA7. Returns 0 (emitted, OR idempotent no-op when a
 # full retro for skill+project+SHA7 exists) | 3 (lock busy — nothing written).
 _emit_one() {
-  local WAIT="${ZUVO_LOCK_WAIT:-5}" acquired=0 waited=0 lpid mt LC EC T
+  local WAIT="${ZUVO_LOCK_WAIT:-5}" acquired=0 waited=0 lpid mt
   while :; do
     if mkdir "$LOCK" 2>/dev/null; then
       # A lock we cannot stamp ownership of is NOT held: pid-write failure
@@ -117,11 +117,16 @@ _emit_one() {
   [ -f "$RETRO_LOG" ] || echo "# v2 DATE SKILL PROJECT CODE_TYPE FRICTION_CATEGORY MISSING_TEMPLATE CONTEXT_GAP TURNS_WASTED TOOL_CALLS FILES_READ FILES_MODIFIED BRANCH SHA7 BLIND_AUDIT ADVERSARIAL CODESIFT ROUTING_STATUS" > "$RETRO_LOG"
   printf 'RETRO: %s\t%s\t%s\tOTHER\t%s\t%s\tnone\t%s\t%s\t%s\t%s\t%s\t%s\tnot_run\tnot_run\tN/A\tN/A\n' \
     "$DATE" "$SKILL" "$PROJECT" "$FRICTION" "$MT" "$TURNS" "$TOOLS" "$FREAD" "$FMOD" "$BRANCH" "$SHA7" >> "$RETRO_LOG"
-  LC=$(wc -l < "$RETRO_LOG")
-  if [ "$LC" -gt 101 ]; then
-    T="$RETRO_LOG.tmp.$$.$(date +%s)"
-    head -1 "$RETRO_LOG" > "$T"; tail -n 100 "$RETRO_LOG" >> "$T"; mv "$T" "$RETRO_LOG"
-  fi
+  # NO rotation here — this file is APPEND-ONLY. Retention is age-based archival and belongs to
+  # `rotate-retros`, which MOVES old entries into retros-archive-YYYY-QN.log instead of destroying
+  # them. `append-retro` dropped its own `tail -n 100` for that reason; this copy was left behind
+  # and became the truncation that append-retro's shrink guard kept catching without naming.
+  #
+  # It ran on EVERY stub write, i.e. from session-start, the Stop retro sweep and the pre-commit
+  # gate, so roughly once a day a full log was cut to exactly 100 rows: 626 -> 100 (2026-08-18
+  # 14:45:07Z), 543 -> 100 (2026-08-18 03:36:40Z), 519 -> 19 (2026-08-17). Each event lines up to
+  # the second with the CHECKPOINT-STUB section written next to it. `retro-mine.py --days 7` could
+  # never see its own window, and the 90-day archival next to it was silently overridden.
   {
     printf '<!-- RETRO -->\n\n'
     printf '## [CHECKPOINT-STUB] %s %s %s\n\n' "$DATE" "$SKILL" "$PROJECT"
@@ -129,14 +134,10 @@ _emit_one() {
     printf 'Run did not reach its terminal retrospective. A later full retro for\n'
     printf 'the same retro-session-id supersedes this stub.\n\n'
   } >> "$RETRO_MD"
-  # Same trap as append-runlog/append-retro: `|| echo 0` yields "0\n0" when grep finds nothing.
-  # Here it would reach awk as c>=('0\n0'-99) — a syntax error, not a wrong number.
-  EC=$(grep -c '^<!-- RETRO -->' "$RETRO_MD" 2>/dev/null) || EC=0
-  EC=$(printf '%s' "${EC:-0}" | tr -cd '0-9'); [ -n "$EC" ] || EC=0
-  if [ "$EC" -gt 100 ]; then
-    T="$RETRO_MD.tmp.$$.$(date +%s)"
-    awk '/^<!-- RETRO -->/{c++} c>=('"$EC"'-99){print}' "$RETRO_MD" > "$T" && mv "$T" "$RETRO_MD"
-  fi
+  # retros.md is APPEND-ONLY for the same reason as retros.log above. The 100-section cap that
+  # used to live here is what took retros.md from 585 sections to 127 and then to 122 during the
+  # 2026-08-17/18 incidents; `rotate-retros` archives markdown by age with the marker-boundary
+  # parser, which is the only path allowed to remove a section.
   _release; return 0
 }
 

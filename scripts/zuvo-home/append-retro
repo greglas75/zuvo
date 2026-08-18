@@ -287,6 +287,12 @@ _shrink_guard() {
   case "$_sg_prev" in ''|*[!0-9]*) _sg_prev=0 ;; esac
 
   if [ "$_sg_rows" -lt "$_sg_prev" ]; then
+    # Freeze the OBSERVED count before auto-recovery touches it. The marker below used to print
+    # the post-recovery `$_sg_rows`, so the 2026-08-18 21:45 truncation — 626 rows cut to 100 —
+    # was filed as "retros.log SHRANK: 626 -> 628 RETRO rows", i.e. an incident that reads like
+    # growth. The real depth only survived in retro-shrink-forensics.log, which is why the
+    # markers looked harmless while a truncation was recurring daily.
+    _sg_observed=$_sg_rows
     # One marker per INCIDENT. The warning below fires on EVERY append while the log is short —
     # that is correct, it means data is still missing — but the marker file must not. The first
     # real incident produced seven identical markers (422->101, 102, 103 … one per append) which
@@ -365,13 +371,15 @@ PYMD
     fi
 
     {
-      echo "retros.log SHRANK: $_sg_prev -> $_sg_rows RETRO rows at $_sg_when"
+      echo "retros.log SHRANK: $_sg_prev -> $_sg_observed RETRO rows at $_sg_when"
+      [ "$_sg_rows" -gt "$_sg_observed" ] && \
+        echo "auto-recovered to:   $_sg_rows rows (union with the newest snapshot)"
       echo "high-water recorded: $(cat "$_sg_hw" 2>/dev/null | tr '\n' ' ')"
       echo "newest snapshot:     $(ls -t "$_sg_dir"/retros.log.*.gz 2>/dev/null | head -1)"
       echo "recover locally:     gunzip -c <snapshot> > $RETRO_LOG"
       echo "recover from fleet:  fleet-retro-pull.py --restore-self"
     } > "$ZUVO_HOME/retros-SHRANK-$_sg_when.txt" 2>/dev/null
-    echo "append-retro: WARNING — retros.log lost $((_sg_prev - _sg_rows)) rows since the last append." >&2
+    echo "append-retro: WARNING — retros.log lost $((_sg_prev - _sg_observed)) rows since the last append." >&2
     echo "append-retro: see $ZUVO_HOME/retros-SHRANK-$_sg_when.txt (high-water NOT advanced, snapshots preserved)" >&2
     return 0
   fi
