@@ -16,6 +16,11 @@
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
 PS="$ROOT/scripts/zuvo-home/profile-session.py"
 PASS=0; FAIL=0
+# `set -u` does not catch a MISSPELLED FUNCTION: bash prints "command not found", returns 127, and
+# the counters never move — so a file full of broken assertions summarises as FAIL=0. That happened
+# here (11 assertions calling a helper this file does not define). command_not_found_handle turns it
+# into a real failure instead of a silent pass.
+command_not_found_handle(){ echo "  FAIL harness: unknown command '$1'"; FAIL=$((FAIL+1)); return 127; }
 ok(){ echo "  PASS $1"; PASS=$((PASS+1)); }
 no(){ echo "  FAIL $1"; FAIL=$((FAIL+1)); }
 
@@ -87,6 +92,41 @@ case "$out" in *"never hand-derive"*) ok "no usage records -> refuses to estimat
 SK="$ROOT/skills/profile-session/SKILL.md"
 case "$(cat "$SK")" in *'Out of scope:** token cost'*) no "SKILL.md still declares token cost out of scope";; *) ok "SKILL.md no longer declares token cost out of scope";; esac
 case "$(cat "$SK")" in *'tokens.model_calls'*) ok "SKILL.md points at the profiler's tokens block";; *) no "SKILL.md does not reference the tokens block";; esac
+
+# --- 8. dedup identity is the TRANSCRIPT, not the caller (B-PROFILE-DEDUP) ----------------------
+# The retro layer keys on skill+project+sha7 and `project` is the directory the skill was invoked
+# in. For a transcript analysis that is the wrong identity: ONE Codex rollout was profiled at least
+# eight times in a day under five different "projects", so the key never matched and every run
+# looked new — 12 runs, 25-45 min each. The key must depend on the artifact and nothing else.
+K1="$(python3 "$PS" --run-key "$CX")"
+K2="$( cd / && python3 "$PS" --run-key "$CX" )"
+[ -n "$K1" ] && [ "$K1" = "$K2" ] && ok "run-key is identical from a different cwd (the actual bug)" \
+  || no "run-key changed with the caller's directory: '$K1' vs '$K2'"
+ln -sf "$CX" "$TMP/alias.jsonl"
+[ "$(python3 "$PS" --run-key "$TMP/alias.jsonl")" = "$K1" ] \
+  && ok "run-key follows realpath, so a symlink alias is the same analysis" \
+  || no "a symlink to the same transcript produces a different key"
+[ "$(python3 "$PS" --run-key "$CL")" != "$K1" ] && ok "a different transcript gets a different key" \
+  || no "two different transcripts collide"
+[ "$(python3 "$PS" --run-key "$CX" 2026-08-17T10:03:00.000Z)" != "$K1" ] \
+  && ok "a window bound changes the key (different question, different answer)" \
+  || no "the window is not part of the identity"
+# It must not read the transcript — that is what makes it cheap enough to run BEFORE the analysis
+# rather than at the retro write, where a guard saves a line in a file and not the 25 minutes.
+[ "$(python3 "$PS" --run-key "$TMP/does-not-exist.jsonl" 2>/dev/null)" != "" ] \
+  && ok "run-key needs no readable transcript (so the guard can run first)" \
+  || no "run-key requires reading the file"
+# And the skill has to actually USE it, before the analysis.
+SK_TXT="$(cat "$SK")"
+case "$SK_TXT" in *'--run-key'*) ok "SKILL.md computes the run key" ;; *) no "SKILL.md never calls --run-key" ;; esac
+case "$SK_TXT" in *'ALREADY PROFILED'*) ok "SKILL.md early-exits on a repeat with the report path" ;; *) no "no early exit for a repeat" ;; esac
+_k="$(printf '%s\n' "$SK_TXT" | grep -n 'run-key' | head -1 | cut -d: -f1)"
+_p1="$(printf '%s\n' "$SK_TXT" | grep -n '^## Phase 1: Run the profiler' | head -1 | cut -d: -f1)"
+if [ -n "$_k" ] && [ -n "$_p1" ] && [ "$_k" -lt "$_p1" ]; then
+  ok "the guard precedes Phase 1 (saves the work, not just a log line)"
+else
+  no "the dedup guard does not precede the analysis phase"
+fi
 
 echo "  --- profile-session tokens: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

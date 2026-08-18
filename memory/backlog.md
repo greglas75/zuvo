@@ -827,7 +827,26 @@ Recipe, in this order:
 - B-24 [tooling] repo-wide *.sh | rule:CQ40-no-shellcheck | sig:no-shellcheck-config
   DEFER, systemic. No .shellcheckrc anywhere and no CI workflow invoking shellcheck, so CQ40 scores 0 for every bash file in a repo that is majority bash. Both real defects found in the ship coverage-reuse build (a nonexistent git flag, cross-shell variable assumptions) and several here (quoted multi-word interpreter, shadowed case arm) are exactly what shellcheck reports. confidence:60 source:review-kimi-build-target
 
-## B-PROFILE-DEDUP — profile-session re-analyses the same rollout because the dedup key carries `project`
+## B-PROFILE-DEDUP — DONE
+**Closed:** 2026-08-18, both defects.
+1. **Identity is now the ARTIFACT.** `profile-session.py --run-key <transcript> [start] [end]`
+   hashes the transcript's REALPATH plus the window bounds — the inputs that determine the answer —
+   and nothing about the caller. The shared retro key (`skill+project+sha7`) is left alone: for
+   almost every other skill `project` IS part of identity, and changing it globally would break
+   them. This is a profile-session problem and it is fixed there.
+2. **The guard runs BEFORE the analysis.** Phase 0.5 checks
+   `$ZUVO_DIR/reports/profile-session-<key>.md` and early-exits naming the file, with `--force` to
+   override. The old write-time check saved a line in a log, not the 25-45 minutes. A report is now
+   an artifact with a path, so the exit hands back the actual file rather than saying a matching
+   retro "exists" somewhere.
+**Verified:** the key is stable across cwd (the actual bug), follows realpath through a symlink
+alias, differs per transcript, changes with a window bound, and needs no readable file — which is
+what makes it cheap enough to run first.
+**Test:** assertions 14-21 of tests/hooks/test-profile-session-tokens.sh.
+**Harness bug found while writing it:** the new block called `t_ok`/`t_no`, which that file does not
+define. bash printed "command not found", returned 127, and the counters never moved — 11 broken
+assertions summarised as **FAIL=0**. The file now defines `command_not_found_handle` so a misspelled
+helper is a hard failure. `set -u` does not catch this class.
 **Found:** 2026-08-18, after eight separate reports of the SAME rollout
 (`rollout-2026-08-16T22-26-56-01a00b2e-….jsonl`, RShieldBE PR #404/#413 `watchLoop`) were handed in
 for triage. Every one reached the same numbers (25:40:49 wall / 6:34:55 active / mutation 10-10).

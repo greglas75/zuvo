@@ -59,6 +59,7 @@ So:
 | `--since <iso>` / `--until <iso>` | Bound the analysis window |
 | `--compare <a> <b>` | Two transcripts side by side — the before/after form for "did the fix help?" |
 | `--json` | Emit the raw profiler JSON, no narrative |
+| `--force` | Re-profile a transcript that already has a report. Without it a repeat is refused — see Phase 0.5 |
 
 Non-interactive environments: no arguments defaults to `--last`.
 
@@ -101,6 +102,45 @@ not by mtime, and say which file you picked and why. `ls -tS` gives you the larg
 
 If the transcript cannot be found, say so plainly and ask for the path — do not profile an
 arbitrary file and present it as theirs.
+
+## Phase 0.5: Refuse to profile the same transcript twice
+
+**Do this BEFORE the analysis, not after it.** The check is one hash of a path; the analysis is
+25-45 minutes of agent work.
+
+```bash
+ZUVO_DIR="${ZUVO_OUTPUT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)/zuvo}"
+KEY="$(python3 "$PS" --run-key "$TRANSCRIPT" ${SINCE:+"$SINCE"} ${UNTIL:+"$UNTIL"})"
+REPORT="$ZUVO_DIR/reports/profile-session-$KEY.md"
+
+if [ -s "$REPORT" ] && [ "${FORCE:-0}" != "1" ]; then
+  echo "ALREADY PROFILED — $REPORT"
+  echo "  transcript: $TRANSCRIPT"
+  echo "  Re-run with --force to profile it again."
+  exit 0
+fi
+```
+
+Write the report to `$REPORT`. A report is an artifact with a path, so the early exit can hand the
+caller the actual file instead of telling them a matching retro "exists" somewhere.
+
+**Why the key is the transcript and not the caller.** The retro layer deduplicates on
+`skill + project + sha7`, and `project` is the directory the skill was INVOKED in. For most skills
+that is correct — a review of repo A is not a review of repo B. Here it is wrong: the artifact
+being analysed is a TRANSCRIPT, and a transcript is the same transcript whichever worktree the
+agent happened to sit in.
+
+Measured 2026-08-18: ONE Codex rollout was profiled at least **eight** times in a day, logged under
+five different "projects" (`mutation-data-flush-final`, `rs_be`, `tgm-survey-platform`,
+`ResearchShieldNew`, `mutation-data-flush-profile-detailed`), so the key never matched and every run
+looked new — 12 `profile-session` runs that day, hours of duplicated analysis. It also explains the
+contradictory self-reports: some runs printed "append-retro correctly performed an idempotent
+no-op", others did the full analysis, purely by invocation site.
+
+`--run-key` hashes the transcript's REALPATH plus the window bounds — the inputs that determine the
+answer — and nothing about the caller. It reads none of the transcript, which is what makes it
+cheap enough to run here. Keep `project` as a display field; it is a property of the invocation
+site, never of the artifact's identity.
 
 ## Phase 1: Run the profiler
 

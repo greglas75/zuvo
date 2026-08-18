@@ -8,7 +8,7 @@
 ''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
 # Rozbiera transkrypt agenta (Claude Code JSONL lub Codex rollout JSONL) na kategorie czasu.
 # Uzycie: python3 profile_session.py <plik.jsonl> [window_start_iso] [window_end_iso]
-import sys, json, re, datetime, os
+import sys, json, re, datetime, os, hashlib
 
 USAGE = """profile-session — attribute a session's wall-clock time to categories.
 
@@ -21,6 +21,33 @@ Find a transcript:
   ls -t ~/.claude/projects/*/*.jsonl | head        # Claude Code
   ls -t ~/.codex/sessions/**/rollout-*.jsonl | head  # Codex
 """
+
+# --run-key <transcript> [start] [end] — print the IDENTITY of this analysis and exit (B-PROFILE-DEDUP).
+#
+# The retro layer deduplicates on skill+project+sha7, and `project` is the directory the skill was
+# INVOKED in. For most skills that is right — a review of repo A is not a review of repo B. For this
+# one it is wrong, because the artifact being analysed is a TRANSCRIPT, and a transcript is the same
+# transcript whichever worktree the agent happened to sit in.
+#
+# Measured 2026-08-18: ONE Codex rollout was profiled at least eight times in a day, logged under
+# five different "projects" (mutation-data-flush-final, rs_be, tgm-survey-platform,
+# ResearchShieldNew, mutation-data-flush-profile-detailed), so the key never matched and every run
+# looked new. 12 profile-session runs that day, 25-45 min of agent work each. It also explains the
+# contradictory self-reports: some runs printed "idempotent no-op", others did the full analysis,
+# purely by invocation site.
+#
+# The key is the realpath of the transcript plus the window bounds — the inputs that determine the
+# ANSWER — and nothing about the caller. It reads no bytes of the transcript, so the guard is cheap
+# enough to run BEFORE the analysis rather than at the retro write, which is the second half of the
+# defect: a write-time guard saves a line in a file, not the 25 minutes of work.
+if len(sys.argv) > 1 and sys.argv[1] == "--run-key":
+    if len(sys.argv) < 3:
+        sys.stderr.write("profile-session: --run-key needs a transcript path\n")
+        sys.exit(2)
+    _rk_path = os.path.realpath(sys.argv[2])
+    _rk_win = "|".join(sys.argv[3:5]) if len(sys.argv) > 3 else ""
+    print(hashlib.sha1((_rk_path + "|" + _rk_win).encode("utf-8", "ignore")).hexdigest()[:12])
+    sys.exit(0)
 
 if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
     sys.stderr.write(USAGE)
