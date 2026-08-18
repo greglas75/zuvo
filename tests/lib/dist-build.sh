@@ -76,7 +76,10 @@ TREE="$CACHE/$PLATFORM.tree"
 # The .rc file is the sentinel and is written LAST, so a half-populated cache entry
 # (interrupted run, killed build) is never mistaken for a complete one.
 if [ -f "$RC" ]; then
-  rm -rf "$OUT_ROOT/$PLATFORM"
+  # `${VAR:?}` rather than `$VAR`: an empty OUT_ROOT would make this `rm -rf /<platform>`. That is
+  # not theoretical here — on 2026-08-18 a delete target derived from a variable in this suite's
+  # teardown removed the whole checkout. An unset value must abort, not expand to something.
+  rm -rf "${OUT_ROOT:?}/${PLATFORM:?}"
   mkdir -p "$OUT_ROOT"
   # A failed build may have produced no tree; that is faithfully replayed as no tree.
   if [ -d "$TREE" ]; then
