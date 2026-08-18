@@ -290,7 +290,24 @@ during install/build would remove the manual step entirely. Enhancement, not a d
 - B-polyglot-docstring [TRIAGE 2026-08-16: STILL-REAL — ast.get_docstring() empirically returns the exec shim for all 8 files; no __doc__ consumer exists anywhere, so still inert.] | scripts/zuvo-home/{backlog-collect,runlog-collect,backlog-consolidate,profile-session,retro-mine}.py + compute-preload, digest-proposals, sanitize-retros, verify-audit | latent-trap | The polyglot `''''exec ...'''` header becomes the module's FIRST statement, so it silently becomes `__doc__` and detaches the real docstring one line below. Inert today — a repo-wide grep found no `__doc__` / `argparse(description=__doc__)` consumer — but `scripts/zuvo-home/backlog` DID get the compensating fix and these 8 did not. Recipe: apply the `USAGE = """..."""` + `sys.exit(USAGE)` pattern from scripts/zuvo-home/backlog:195, or add a one-line comment noting the trade-off, so a future `--help` does not print the exec shim. defer-reason: NIT | seen:1 | confidence:80 | source:review | 2026-07-30
 - [DONE 2026-08-17] dispatched-count-dup [CLOSED 2026-08-17 — extracted `dispatched_count()` beside suspended_seconds(); both call sites (now :2395 and :2517, drifted from the recorded 2057/2179) use it. Never a correctness bug — the two branches are mutually exclusive — but it was the one leftover from the change that extracted adversarial_log_row / preserve_failure_evidence / suspended_seconds for exactly this reason. bats suite green.] [TRIAGE 2026-08-16: STILL-REAL, lines drifted 2057/2179 -> 2388/2510.] | scripts/adversarial-review.sh:2057,2179 | duplication | `DISPATCHED_COUNT=$(echo "$DISPATCHED_LIST" | wc -w | tr -d ' ')` appears byte-identically in the all-failed branch and the success-path status derivation. Mutually exclusive at runtime, so not a correctness issue — but inconsistent with the rest of the same change, which extracted `adversarial_log_row` / `preserve_failure_evidence` / `suspended_seconds` specifically to kill duplication. Recipe: extract `dispatched_count()` next to `suspended_seconds()`. defer-reason: NIT | seen:1 | confidence:30 | source:review | 2026-07-30
 
-## B-REFGUARD — test-references-guards fixtures live inside the real skills/ tree
+## B-REFGUARD — DONE
+**Closed:** 2026-08-18. The suite now builds its fixture in a SANDBOX: a copy of the repo in
+`mktemp -d` (excluding .git/dist/zuvo, ~14 MB, ~1 s), validated via `validate-skills.sh --root`,
+which already existed. The fixture never touches the real tree.
+**The earlier "accepted, do not re-raise" disposition was wrong on both of its claims.** It said the
+failure mode is "a false FAIL, never a deletion" — but the fixture ESCAPED THE REPO through
+install.sh into the plugin cache under two versions at once. And it said a copied tree "would
+forfeit exactly the real-repo coverage (D) exists to provide" — it does not: the sandbox IS this
+repo's content, so (D) still validates every real skill and include. What is given up is only that
+the validator runs at the literal repo path, which no assertion depends on.
+**Proven:** 40 polls across a full run found the fixture in `skills/` zero times, dir count stayed
+57, and two CONCURRENT runs both PASS (the ~4-min stall case).
+**Backstop for debris from any other source:** `install.sh` refuses to run when `skills/tmp-*`
+exists. Deliberately ONE check before any build rather than a filter in each of the five copy
+loops — a guard repeated five times is five places to forget the sixth path. Verified: exits 1
+naming the directory, and installs normally once removed. Asserted in
+tests/hooks/test-install-copy-verification.sh (backstop exists, precedes the first copy, and does
+not fire on a clean tree).
 **Found:** 2026-07-31, during the write-e2e V2 execute run (surfaced by a concurrent-agent stall).
 **Issue:** `tests/skill-suite/test-references-guards.sh` creates `skills/tmp-refguard-$$-test/` inside the
 real repo. Two concurrent runs collide (~4 min stall observed), and while a fixture exists a concurrent

@@ -49,6 +49,27 @@ fail() { echo -e "  ${RED}✗${NC} $1"; }
 INSTALL_VERIFY_MISSING=0
 INSTALL_VERIFY_DETAIL=""
 
+# --- refuse to carry test debris out of the repo (B-REFGUARD) -----------------------------------
+# `tests/skill-suite/test-references-guards.sh` used to create its fixture inside the real skills/
+# tree. install.sh copies skills/* into FIVE destinations, so an install that overlapped a running
+# guard test — or followed a killed one — carried the fixture out and left it there permanently:
+# `tmp-refguard-56836-test` and `tmp-refguard-82399-test` were found in the Claude Code plugin
+# cache under both zuvo/1.6.52/skills/ and zuvo/1.6.53/skills/, inflating the installed skill count
+# to 59 against 57 in source.
+#
+# That test is sandboxed now, so the source is gone. This is the backstop, and it is deliberately
+# ONE check before any build rather than a filter in each of the five copy loops — a guard repeated
+# five times is five places for the sixth copy path to be forgotten. No real skill is named `tmp-*`,
+# so it cannot false-positive; failing loudly beats installing debris quietly.
+if compgen -G "$ZUVO_DIR/skills/tmp-*" >/dev/null 2>&1; then
+  fail "refusing to install: test debris in skills/"
+  for _d in "$ZUVO_DIR"/skills/tmp-*; do echo "      $_d"; done
+  echo "  A test fixture is sitting in the source tree. Installing would copy it into every"
+  echo "  target and leave it there. Remove it, then re-run:"
+  echo "      rm -rf $ZUVO_DIR/skills/tmp-*"
+  exit 1
+fi
+
 # verify_copied <label> <src_dir> <dst_dir> <name> [<name>…]
 verify_copied() {
   local label="$1" src="$2" dst="$3"; shift 3

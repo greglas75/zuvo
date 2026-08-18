@@ -29,26 +29,56 @@
 # Cleanup is load-bearing: a leftover fixture dir would break a later real
 # build, hence the trap on EXIT INT TERM.
 #
-# DISPOSITIONED (adversarial review, do not re-raise): this suite mutates the
-# REAL skills/ tree and runs the whole-repo validator, so two SIMULTANEOUS runs
-# can see each other's fixture and assertions (C)/(D) would false-FAIL. That is
-# inherent to contract-testing a whole-repo validator against the real tree —
-# the failure mode is a false FAIL, never a deletion (fixture paths are
-# PID-unique + existence-guarded) and never a false PASS. Validating a copied
-# tree via --root instead would forfeit exactly the real-repo coverage (D) exists
-# to provide.
+# SANDBOXED (B-REFGUARD, 2026-08-18). This suite used to create its fixture inside the REAL
+# skills/ tree and run the whole-repo validator there. Two problems, and the second is why the
+# earlier "accepted, do not re-raise" disposition was wrong:
+#
+#   1. two SIMULTANEOUS runs saw each other's fixture and (C)/(D) false-FAILED (~4 min stall
+#      observed 2026-07-31), and a concurrent validate-skills.sh could mis-count count-consistency;
+#   2. THE FIXTURE ESCAPED THE REPO. install.sh copies skills/* into every install target, so an
+#      install overlapping a running guard test — or following a killed one — carried the fixture
+#      out and left it there. `tmp-refguard-56836-test` and `tmp-refguard-82399-test` were found in
+#      the Claude Code plugin cache under BOTH zuvo/1.6.52/skills/ and zuvo/1.6.53/skills/ (four
+#      directories), long after the tests that made them had finished, inflating the installed
+#      skill count to 59 against 57 in source. That is not "a false FAIL, never a deletion".
+#
+# The disposition also argued a copied tree "would forfeit exactly the real-repo coverage (D)
+# exists to provide". It does not: the sandbox is a COPY OF THIS REPO — every real skill, include
+# and relative path — so (D) still validates the real content. What is given up is only that the
+# validator runs at the literal repo path, which no assertion here depends on.
+#
+# validate-skills.sh already had `--root`, so this needed no new validator capability.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 VALIDATE="$ROOT/scripts/validate-skills.sh"
+
+# SANDBOX: a copy of the repo that the fixture lives in, so nothing this test creates can be seen
+# by a concurrent run, by validate-skills.sh, or — the one that actually bit — by install.sh.
+# Excludes .git (46 MB, unread by the validator), dist/ and zuvo/ (build + report output). ~14 MB,
+# about a second.
+SANDBOX="$(mktemp -d)"
+[ -n "$SANDBOX" ] && [ -d "$SANDBOX" ] || { echo "FAIL: mktemp -d failed"; exit 1; }
+if ! tar -cf - -C "$ROOT" --exclude='./.git' --exclude='./dist' --exclude='./zuvo' \
+       --exclude='./node_modules' . 2>/dev/null | ( cd "$SANDBOX" && tar -xf - ); then
+  echo "FAIL: could not populate the sandbox copy at $SANDBOX"
+  rm -rf "$SANDBOX"; exit 1
+fi
+# Assertions (C)/(D) require the untouched tree to validate clean. If the COPY does not, every
+# later assertion is measuring the copy rather than the guard — fail here, where it is legible.
+if ! bash "$VALIDATE" --root "$SANDBOX" >/dev/null 2>&1; then
+  echo "FAIL: the sandbox copy does not validate clean before any fixture is added"
+  echo "      (the repo itself may be dirty — run: bash scripts/validate-skills.sh)"
+  rm -rf "$SANDBOX"; exit 1
+fi
 # PID-unique so two concurrent runs cannot collide, and so cleanup can never
 # delete a directory this run did not create. Keeps the tmp-refguard prefix
 # (human-recognizable as debris) and no leading dot (a dotdir is invisible to
 # the skills/*/references/*.md glob, which would make assertion (A) vacuous).
 FIXTURE_SKILL="tmp-refguard-$$-test"
-FIXTURE_DIR="$ROOT/skills/$FIXTURE_SKILL"
+FIXTURE_DIR="$SANDBOX/skills/$FIXTURE_SKILL"
 FIXTURE_REL="skills/$FIXTURE_SKILL/references/bad.md"
-FIXTURE_MD="$ROOT/$FIXTURE_REL"
+FIXTURE_MD="$SANDBOX/$FIXTURE_REL"
 fail=0
 
 pass() { printf 'PASS: %s\n' "$1"; }
@@ -57,10 +87,12 @@ bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
 # Refuse to touch a pre-existing path — never rm -rf something we did not
 # create. Checked BEFORE the cleanup trap is armed, so an abort here cannot
 # delete it either.
+# Inside a fresh mktemp sandbox this can only fire if the repo itself ships such a directory —
+# i.e. debris that escaped a previous run and got committed. Worth knowing about, so it stays.
 if [ -e "$FIXTURE_DIR" ]; then
-  echo "FAIL: fixture path already exists, refusing to overwrite or delete it: $FIXTURE_DIR"
-  echo "      (remove it by hand if it is stale debris, then re-run)"
-  exit 1
+  echo "FAIL: fixture path already exists in the copied tree: $FIXTURE_DIR"
+  echo "      (that means the REPO contains it — stale debris; remove it from skills/ and re-run)"
+  rm -rf "$SANDBOX"; exit 1
 fi
 
 TMP="$(mktemp -d)"
@@ -68,7 +100,9 @@ TMP="$(mktemp -d)"
 # absolute /... path — created, asserted on, and then rm -rf'd. Fail fast.
 [ -n "$TMP" ] && [ -d "$TMP" ] || { echo "FAIL: mktemp -d failed"; exit 1; }
 # removes ONLY the two exact paths this run created
-cleanup() { rm -rf "$FIXTURE_DIR" "$TMP"; }
+# The sandbox is a mktemp dir this run created, so removing it wholesale is safe —
+# and it is the ONLY place the fixture ever existed.
+cleanup() { rm -rf "$SANDBOX" "$TMP"; }
 # EXIT cleans up on normal end; a signal must clean up AND STOP — without the
 # explicit exit the handler returns and the script would carry on running its
 # assertions with the fixture already deleted.
@@ -79,7 +113,7 @@ trap 'cleanup; exit 130' INT TERM HUP
 # mirrors the build, it does not define it.
 TOKENS='TaskCreate|TaskUpdate|TaskList|EnterPlanMode|ExitPlanMode|AskUserQuestion|run_in_background|TeamCreate|SendMessage'
 
-cd "$ROOT" || { echo "FAIL: cannot cd to $ROOT"; exit 1; }
+cd "$SANDBOX" || { echo "FAIL: cannot cd to $SANDBOX"; exit 1; }
 
 # write_md <path> — content on stdin. Fixture setup is checked: a silently
 # failed mkdir/write would turn every later assertion into a confusing,
@@ -105,7 +139,7 @@ fi
 # ── (B) wrong-depth include inside references/ must ERROR ────────────────────
 # The include target EXISTS at the root — the only defect is the depth, so the
 # message must say so and suggest ../../../, not claim the file is missing.
-out="$(bash "$VALIDATE" 2>&1)"
+out="$(bash "$VALIDATE" --root "$SANDBOX" 2>&1)"
 rc=$?
 if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "^ERROR:.*wrong-depth.*$FIXTURE_REL"; then
   pass "wrong-depth ../../ include in references/ is an ERROR"
@@ -120,7 +154,7 @@ write_md "$FIXTURE_MD" <<'EOF'
 Load ../../shared/includes/no-such-include-refguard.md before scoring.
 EOF
 
-out="$(bash "$VALIDATE" 2>&1)"
+out="$(bash "$VALIDATE" --root "$SANDBOX" 2>&1)"
 rc=$?
 if [ "$rc" -ne 0 ] \
    && printf '%s' "$out" | grep -q "^ERROR:.*dangling include.*$FIXTURE_REL" \
@@ -140,7 +174,7 @@ write_md "$FIXTURE_MD" <<'EOF'
 Load ../shared/includes/gate-registry.md before scoring.
 EOF
 
-out="$(bash "$VALIDATE" 2>&1)"
+out="$(bash "$VALIDATE" --root "$SANDBOX" 2>&1)"
 rc=$?
 if [ "$rc" -ne 0 ] \
    && printf '%s' "$out" | grep -q "non-canonical include depth (must be \.\./\.\./\.\./).*$FIXTURE_REL"; then
@@ -156,7 +190,7 @@ write_md "$FIXTURE_MD" <<'EOF'
 Load ../../../shared/includes/gate-registry.md before scoring.
 EOF
 
-out="$(bash "$VALIDATE" 2>&1)"
+out="$(bash "$VALIDATE" --root "$SANDBOX" 2>&1)"
 rc=$?
 if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'ERRORS: 0'; then
   pass "correct-depth ../../../ include in references/ validates clean"
@@ -171,13 +205,13 @@ fi
 # given a bogus ../../../ depth suggestion (its include below resolves fine
 # root-anchored and must therefore raise no depth complaint of its own).
 NESTED_REL="skills/$FIXTURE_SKILL/references/sub/deep.md"
-write_md "$ROOT/$NESTED_REL" <<'EOF'
+write_md "$SANDBOX/$NESTED_REL" <<'EOF'
 # Nested refguard fixture
 
 Load ../../shared/includes/gate-registry.md before scoring.
 EOF
 
-out="$(bash "$VALIDATE" 2>&1)"
+out="$(bash "$VALIDATE" --root "$SANDBOX" 2>&1)"
 rc=$?
 if [ "$rc" -ne 0 ] \
    && printf '%s' "$out" | grep -q "^ERROR:.*unsupported references/ layout.*$NESTED_REL" \
@@ -190,7 +224,7 @@ fi
 # flat sibling must still behave exactly as in (C) — the nested file is the only
 # defect, so removing it restores a clean bill
 rm -rf "$FIXTURE_DIR/references/sub"
-out="$(bash "$VALIDATE" 2>&1)"
+out="$(bash "$VALIDATE" --root "$SANDBOX" 2>&1)"
 rc=$?
 if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'ERRORS: 0'; then
   pass "flat references/ file unaffected by the nested-layout check"
@@ -203,7 +237,7 @@ fi
 # write-tests/agents/test-quality-reviewer.md, execute/agents/quality-reviewer.md)
 # live under agents/, NOT references/ — they must remain unaffected.
 rm -rf "$FIXTURE_DIR"
-out="$(bash "$VALIDATE" 2>&1)"
+out="$(bash "$VALIDATE" --root "$SANDBOX" 2>&1)"
 rc=$?
 if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'ERRORS: 0'; then
   pass "untouched repo still validates clean (ERRORS: 0)"

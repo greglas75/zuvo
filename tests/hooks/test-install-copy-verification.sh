@@ -99,5 +99,30 @@ case "$src" in *'INSTALL INCOMPLETE'*) t_ok "final summary exists";; *) t_no "no
 printf '%s\n' "$src" | awk '/INSTALL INCOMPLETE/,/^fi$/' | grep -q 'exit 1' \
   && t_ok "install exits non-zero when a copy is missing" || t_no "summary does not exit non-zero"
 
+# --- 7. install must refuse to carry test debris out of the repo (B-REFGUARD) -------------------
+# skills/* is copied into FIVE destinations. When the references-guard test still built its fixture
+# in the real tree, an overlapping install carried it out and left it in the Claude Code plugin
+# cache under two versions at once (59 installed skill dirs against 57 in source). The test is
+# sandboxed now; this is the backstop, and it is ONE check before any build rather than a filter in
+# each copy loop — a guard repeated five times is five places to forget the sixth path.
+case "$src" in
+  *'refusing to install: test debris'*) t_ok "install has a debris backstop" ;;
+  *) t_no "no debris backstop in install.sh" ;;
+esac
+# It must run BEFORE the first copy, or it is a report rather than a guard.
+_dbg_line="$(printf '%s\n' "$src" | grep -n 'refusing to install: test debris' | head -1 | cut -d: -f1)"
+_cp_line="$(printf '%s\n' "$src" | grep -n 'cp -r "\$skill_dir"' | head -1 | cut -d: -f1)"
+if [ -n "$_dbg_line" ] && [ -n "$_cp_line" ] && [ "$_dbg_line" -lt "$_cp_line" ]; then
+  t_ok "the debris check precedes the first skills copy"
+else
+  t_no "debris check at line ${_dbg_line:-?} does not precede the first copy at ${_cp_line:-?}"
+fi
+# And it must not fire on a clean tree, or every install breaks.
+if compgen -G "$ROOT/skills/tmp-*" >/dev/null 2>&1; then
+  t_no "the repo currently HAS debris in skills/ — $(echo "$ROOT"/skills/tmp-*)"
+else
+  t_ok "the repo's skills/ is free of tmp-* debris"
+fi
+
 echo "  --- install copy-verify: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
