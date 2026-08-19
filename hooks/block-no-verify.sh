@@ -116,8 +116,27 @@ alias_is_bad() {
 
   case "$exp" in
     '!'*)
-      case "$(printf '%s' "$exp" | tr '[:upper:]' '[:lower:]')" in
+      # Pad with spaces so a flag at either end of the string still has a delimiter on both
+      # sides — the abbreviation patterns below need one and would otherwise miss a trailing
+      # `--no-verif`.
+      _zbnv_low=" $(printf '%s' "$exp" | tr '[:upper:]' '[:lower:]') "
+      case "$_zbnv_low" in
         *--no-verify*|*core.hookspath*) return 0 ;;
+      esac
+      # git accepts any UNAMBIGUOUS abbreviation, so `--no-verif` is `--no-verify`. The direct-flag
+      # scan (violates_segment) and the config-creation scan both already carry the full set; this
+      # branch carried only the full word, which made `!git commit --no-verif` a live hook-skip
+      # bypass through the one layer that reads a shell string instead of argv. Verified by
+      # execution, not by reading: the alias returned rc=0 (allow) where the same flag typed
+      # directly returns rc=2.
+      #
+      # The delimiter class is what keeps this from over-blocking: matching a bare `*--no-v*`
+      # would also swallow `--no-verbose`, a real and harmless git flag. Requiring the token to
+      # END means `--no-ve` in `--no-verbose` is followed by `r` and does not match, while
+      # `--no-ve ` (a genuine abbreviation) does.
+      case "$_zbnv_low" in
+        *--no-v[\ \;\&\|\'\"\`]*|*--no-ve[\ \;\&\|\'\"\`]*|*--no-ver[\ \;\&\|\'\"\`]*|\
+        *--no-veri[\ \;\&\|\'\"\`]*|*--no-verif[\ \;\&\|\'\"\`]*) return 0 ;;
       esac
       return 1 ;;
   esac

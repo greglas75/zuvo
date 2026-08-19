@@ -203,7 +203,7 @@ EOF
   # adversarial-review.sh), every blob this commit is about to stage must be one of them.
   # Artifacts without those lines predate the field and keep the mtime behaviour — the fallback is
   # explicit rather than implicit, so "no lines" cannot silently mean "everything approved".
-  local reviewed_blobs unstaged_ok=1 staged_oid unreviewed=0
+  local reviewed_blobs staged_oid unreviewed=0
   reviewed_blobs="$(sed -n 's/^reviewed_blob=//p' "$artifact_path" 2>/dev/null)"
   if [[ -n "$reviewed_blobs" ]]; then
     while IFS= read -r staged_oid; do

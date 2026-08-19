@@ -37,6 +37,20 @@ git -C "$REPO" config alias.hookpath '!git -c core.hooksPath=/dev/null commit'
 git -C "$REPO" config alias.safe     'status --short'
 git -C "$REPO" config alias.pushbad  "push $NV"
 
+# git accepts any UNAMBIGUOUS abbreviation, so every one of these IS `--no-verify` to real git.
+# The `!shell` branch of both layers used to match only the full word, which made these a live
+# bypass through the one path that reads a command string instead of argv. Assembled the same way
+# as $NV so the fixture does not trip the hook it tests.
+NVA="--no-"$'\x76'"erif"     # one char short of the full word
+NVS="--no-"$'\x76'           # the shortest unambiguous form
+git -C "$REPO" config alias.abbrevbad  "!git commit $NVA"
+git -C "$REPO" config alias.abbrevmin  "!git commit $NVS -m x"
+git -C "$REPO" config alias.abbrevtail "!git commit -m x $NVA"
+# …and the flag that must NOT be swept up by a lazy `*--no-v*` match. `--no-verbose` is a real
+# git flag; a pattern wide enough to catch the abbreviations is wide enough to break this one,
+# so it is pinned here rather than discovered by a user whose alias stopped working.
+git -C "$REPO" config alias.verboseok  '!git fetch --no-verbose'
+
 json(){ python3 -c 'import json,sys; print(json.dumps({"tool_input":{"command":sys.argv[1]}}))' "$1"; }
 
 # hook: 2 = block, 0 = allow
@@ -71,6 +85,15 @@ blocked "a two-hop alias chain"                  deep -m x
 blocked "an alias for push --no-verify"          pushbad
 blocked "a !shell alias running the flag"        shellbad
 blocked "a !shell alias overriding hooksPath"    hookpath -m x
+
+# --- the abbreviation gap (found by review of bc07cbe..7954760, reproduced live) ----------------
+# Both layers listed the full abbreviation set for DIRECT flags and for config CREATION, but the
+# !shell branch matched only `--no-verify`. Measured before the fix: hook rc=0 (allow), shim
+# passed through — i.e. the layer that exists to stop exactly this let it past.
+blocked "a !shell alias with an abbreviated flag"      abbrevbad
+blocked "a !shell alias with the shortest abbreviation" abbrevmin
+blocked "an abbreviated flag at the END of the alias"   abbrevtail
+allowed "a !shell alias using --no-verbose"             verboseok
 
 # --- must NOT over-block ------------------------------------------------------------------------
 # A verifier that blocks harmless aliases gets uninstalled, so these matter as much as the above.

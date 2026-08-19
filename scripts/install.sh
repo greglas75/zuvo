@@ -971,10 +971,17 @@ install_codex() {
     cp "$ZUVO_DIR"/hooks/refactor-safety-gate.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     chmod +x "$HOME/.codex"/scripts/*.sh 2>/dev/null || true
     # The copies above all end in `|| true`; verify the claim before making it.
-    if verify_copied "codex scripts" "$ZUVO_DIR/scripts" "$HOME/.codex/scripts" \
-         benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh \
-       && verify_copied "codex scripts (gate)" "$ZUVO_DIR/hooks" "$HOME/.codex/scripts" refactor-safety-gate.sh \
-       && verify_copied "codex scripts (lib)" "$ZUVO_DIR/hooks/lib" "$HOME/.codex/scripts" path-contain.sh; then
+    # NOT `&&`-chained: verify_copied returns 1 on a miss, so a short-circuit would skip the
+    # remaining groups and their misses would never reach INSTALL_VERIFY_DETAIL. The run still
+    # exited 1 either way — but the printed list named only the first group's files, so someone
+    # fixing "the one missing file" could still be left with a broken install. Run all three,
+    # accumulate, then decide.
+    _vc_rc=0
+    verify_copied "codex scripts" "$ZUVO_DIR/scripts" "$HOME/.codex/scripts" \
+      benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh || _vc_rc=1
+    verify_copied "codex scripts (gate)" "$ZUVO_DIR/hooks" "$HOME/.codex/scripts" refactor-safety-gate.sh || _vc_rc=1
+    verify_copied "codex scripts (lib)" "$ZUVO_DIR/hooks/lib" "$HOME/.codex/scripts" path-contain.sh || _vc_rc=1
+    if [ "$_vc_rc" -eq 0 ]; then
       ok "Scripts installed"
     fi
   fi
@@ -1167,10 +1174,13 @@ install_cursor() {
     cp "$ZUVO_DIR"/hooks/refactor-safety-gate.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
     chmod +x "$HOME/.cursor"/scripts/*.sh 2>/dev/null || true
     # The copies above all end in `|| true`; verify the claim before making it.
-    if verify_copied "cursor scripts" "$ZUVO_DIR/scripts" "$HOME/.cursor/scripts" \
-         benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh \
-       && verify_copied "cursor scripts (gate)" "$ZUVO_DIR/hooks" "$HOME/.cursor/scripts" refactor-safety-gate.sh \
-       && verify_copied "cursor scripts (lib)" "$ZUVO_DIR/hooks/lib" "$HOME/.cursor/scripts" path-contain.sh; then
+    # Not `&&`-chained — see the codex block above for why a short-circuit under-reports.
+    _vc_rc=0
+    verify_copied "cursor scripts" "$ZUVO_DIR/scripts" "$HOME/.cursor/scripts" \
+      benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh || _vc_rc=1
+    verify_copied "cursor scripts (gate)" "$ZUVO_DIR/hooks" "$HOME/.cursor/scripts" refactor-safety-gate.sh || _vc_rc=1
+    verify_copied "cursor scripts (lib)" "$ZUVO_DIR/hooks/lib" "$HOME/.cursor/scripts" path-contain.sh || _vc_rc=1
+    if [ "$_vc_rc" -eq 0 ]; then
       ok "Scripts installed"
     fi
   fi

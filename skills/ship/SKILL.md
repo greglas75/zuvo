@@ -1462,13 +1462,22 @@ COMPLETION GATE CHECK
     over a PR whose state is MERGED is NOT a failure.
 [ ] Terminal state A: processes launched = N, still alive = 0   (PIDs + how each ended)
 [ ] Terminal state B: external checks triggered = N, unconcluded = 0   (run IDs + conclusions)
+    For ship this means the POST-MERGE runs specifically: enumerate them with
+    `gh run list --commit <merge sha> --limit 100` and watch each to a conclusion — listed by id
+    with its conclusion, or `no post-merge checks configured` only after the discovery window
+    below has expired. That window is load-bearing: immediately after a merge the API returns
+    zero rows until GitHub registers the run, so an empty read means "not dispatched yet", not
+    "none exist" — and two back-to-back empty reads with no delay certify nothing, because both
+    can land inside the same registration lag. Re-read with backoff for at least ~60s, and keep
+    re-reading for the WHOLE window even once runs appear, deduplicating by run id: a workflow
+    dispatched a few seconds after the first one is otherwise never discovered, and watching the
+    run you happened to see first is not watching the post-merge surface. `--limit` is explicit
+    because the default page can hide in-flight runs on a repo that dispatches many workflows —
+    and a result set that comes back at exactly the limit is a truncation signal, not a complete
+    answer: raise it or paginate rather than letting a visible passing subset stand for the
+    whole. `cancelled` is not a pass. A SHIP COMPLETE printed while a post-merge run is
+    still in flight is the exact failure this line exists to prevent
 [ ] Terminal state C: artifacts created = N, not landed = 0   (PR/branch/tag + its state)
-[ ] Terminal state (terminal-state.md): post-merge runs on the target branch enumerated by
-    `gh run list --commit <merge sha>` and each watched to a conclusion — listed by id with its
-    conclusion, or `no post-merge checks configured` after a second read. `cancelled` is not a pass.
-    A SHIP COMPLETE printed while a post-merge run is still in flight is the failure this line
-    exists to prevent
-[ ] Terminal state (terminal-state.md): processes launched by this run = N, still alive = 0
 ```
 
 ### 1. Run retrospective (REQUIRED, before SHIP COMPLETE)

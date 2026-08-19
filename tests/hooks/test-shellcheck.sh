@@ -24,7 +24,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
-MAX_WARNINGS=102
+MAX_WARNINGS=101
 
 PASS=0; FAIL=0
 t_ok(){ echo "  PASS $1"; PASS=$((PASS+1)); }

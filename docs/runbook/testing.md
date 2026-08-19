@@ -17,7 +17,10 @@ python3 --version        # required — validators, generator, coverage gate
 rg --version             # required by tests/seo-suite (its absence FAILED the suite silently once)
 jq --version             # adversarial JSON mode
 bats --version           # OPTIONAL — scripts/tests/*.bats group SKIPs without it (not a failure)
-shellcheck --version     # OPTIONAL — not wired into CI (see CQ40 gap in the backlog)
+shellcheck --version     # OPTIONAL — gates all shell files at 0 errors + a ratcheted
+                         #            warning count (B-SHELLCHECK); loud SKIP if absent
+ruff --version           # OPTIONAL — Python lint gate, ratcheted; loud SKIP if absent
+mypy --version           # OPTIONAL — Python type gate at hard zero; loud SKIP if absent
 ls ~/.zuvo/{append-runlog,append-retro,verify-audit,compute-preload}   # telemetry + gates
 adversarial-review --help | head -3     # cross-model review CLI
 ```

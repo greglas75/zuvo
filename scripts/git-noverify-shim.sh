@@ -129,8 +129,20 @@ alias_is_bad() {
 
   case "$exp" in
     '!'*)
-      case "$(printf '%s' "$exp" | tr '[:upper:]' '[:lower:]')" in
+      # Padded so a flag at either end of the string still has a delimiter on both sides.
+      _zgns_low=" $(printf '%s' "$exp" | tr '[:upper:]' '[:lower:]') "
+      case "$_zgns_low" in
         *--no-verify*|*core.hookspath*) return 0 ;;
+      esac
+      # Same gap, same fix as hooks/block-no-verify.sh: git accepts any unambiguous abbreviation,
+      # so `!git commit --no-verif` skipped every hook through this layer while line 179's direct
+      # scan already knew the full set. The two implementations are deliberately independent
+      # (string vs argv) — which is exactly why a pattern fixed in one must be fixed in both, and
+      # why tests/hooks/test-noverify-alias.sh runs every case against BOTH.
+      # The delimiter class prevents over-blocking `--no-verbose`.
+      case "$_zgns_low" in
+        *--no-v[\ \;\&\|\'\"\`]*|*--no-ve[\ \;\&\|\'\"\`]*|*--no-ver[\ \;\&\|\'\"\`]*|\
+        *--no-veri[\ \;\&\|\'\"\`]*|*--no-verif[\ \;\&\|\'\"\`]*) return 0 ;;
       esac
       return 1 ;;
   esac

@@ -32,6 +32,16 @@
 # the miss reopened a real traversal (9df7c06). install.sh copies path-contain.sh next to this
 # script in every host tree, so `dirname` finds it after install; the second candidate is the repo
 # layout, for running from a checkout.
+#
+# `--help` is answered BEFORE the guard below. The guard is a hard `exit 2`, and argument parsing
+# lives 25 lines further down, so on an install that is missing path-contain.sh even `--help` died
+# with a containment error — in the very script the push gate prints as its remediation command,
+# i.e. exactly when someone is already lost and reaching for usage text. Help needs no containment
+# check because it touches no paths; --check and --from/--to still do, and still hard-fail.
+case "${1:-}" in
+  -h|--help) sed -n '3,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
+
 _ras_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
 for _ras_c in "$_ras_dir/path-contain.sh" "$_ras_dir/../hooks/lib/path-contain.sh"; do
   if [ -r "$_ras_c" ]; then
