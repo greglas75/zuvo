@@ -37,6 +37,7 @@ CROOT="$(mktemp -d)"
 mkdir -p "$CROOT/zuvo/proofs"
 printf 'p\n' > "$CROOT/zuvo/proofs/inside.txt"
 ln -s /etc "$CROOT/sneaky"
+ln -s /etc "$CROOT/sneaky-parent"
 trap 'rm -rf "$CROOT"' EXIT
 contained() { path_contained "$CROOT" "$1"; }
 
@@ -55,6 +56,16 @@ done
 
 # CANONICAL containment: a symlinked directory walks out of the repo with no `..` anywhere in the
 # path, so the two lexical checks above cannot see it. This is what step 4 of the recipe was about.
+#
+# The NONEXISTENT-target case is the one that shipped broken: the first cut skipped the canonical
+# check whenever the target did not exist, reasoning that a file you cannot read cannot leak. But
+# `do_sync` WRITES to that path — "does not exist yet" IS the write case — so a symlinked parent
+# carried the copy outside the repo with a completely clean ref. Verified escaping before the fix.
+if path_contained "$CROOT" "sneaky-parent/newfile.txt"; then
+  bad "ACCEPTED a NONEXISTENT target under a symlinked parent (do_sync would copy outside the repo)"
+else
+  pass "rejected a nonexistent target whose parent symlinks out"
+fi
 if path_contained "$CROOT" "sneaky/passwd"; then
   bad "ACCEPTED a path that resolves outside the root through a SYMLINK (sneaky/passwd)"
 else

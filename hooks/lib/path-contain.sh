@@ -44,12 +44,31 @@ path_contained() {
   # /etc — passes both and still resolves outside the repo. Only meaningful when the target
   # EXISTS, which is also the only time it gets read or copied, so a missing target legitimately
   # falls back to the lexical verdict rather than being rejected for not being there.
-  if [ -n "$_pc_root" ] && [ -e "$_pc_root/$_pc_ref" ]; then
+  if [ -n "$_pc_root" ]; then
     _pc_real_root="$(_pc_canon "$_pc_root")" || return 1
-    _pc_real_target="$(_pc_canon "$_pc_root/$_pc_ref")" || return 1
-    [ -n "$_pc_real_root" ] && [ -n "$_pc_real_target" ] || return 1
+    [ -n "$_pc_real_root" ] || return 1
+    if [ -e "$_pc_root/$_pc_ref" ]; then
+      _pc_real_target="$(_pc_canon "$_pc_root/$_pc_ref")" || return 1
+    else
+      # The target does not exist YET — and "not yet" is precisely the write case. `do_sync` COPIES
+      # to this path, so skipping the canonical check here (the first cut did) let a symlinked
+      # PARENT carry the write outside the repo with no `..` anywhere in the ref: make
+      # `zuvo/proofs` a symlink to /etc, ask for `zuvo/proofs/newfile.txt`, and both lexical checks
+      # pass because the ref is clean and the target is absent. Verified: SAFE verdict, copy lands
+      # outside. Found by the cross-model pass on the commit that introduced this function.
+      #
+      # So canonicalize the deepest EXISTING ancestor instead. That is the directory the write
+      # actually resolves into, which is the thing containment is about.
+      _pc_target="$_pc_root/$_pc_ref"
+      while [ -n "$_pc_target" ] && [ "$_pc_target" != "/" ] && [ ! -e "$_pc_target" ]; do
+        case "$_pc_target" in */*) _pc_target="${_pc_target%/*}" ;; *) _pc_target="" ;; esac
+      done
+      [ -n "$_pc_target" ] || return 1
+      _pc_real_target="$(_pc_canon "$_pc_target")" || return 1
+    fi
+    [ -n "$_pc_real_target" ] || return 1
     case "$_pc_real_target" in
-      "$_pc_real_root"/*) ;;
+      "$_pc_real_root"|"$_pc_real_root"/*) ;;
       *) return 1 ;;
     esac
   fi

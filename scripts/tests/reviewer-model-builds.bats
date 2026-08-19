@@ -22,6 +22,13 @@ setup_file() {
   # WHOLE CHECKOUT, .git included. Recovered from an APFS local snapshot. Never derive an `rm -rf`
   # target with dirname; delete the exact path you created, and verify it is the one you created.
   ZUVO_DIST_SANDBOX="$(mktemp -d)"
+  # A failed mktemp leaves this empty, which makes ZUVO_DIST_ROOT="/dist" — an absolute path the
+  # builders would create and the setup() wipe would target. In a file whose teardown has already
+  # destroyed this repository once, an unchecked mktemp is not a style point.
+  [ -n "$ZUVO_DIST_SANDBOX" ] && [ -d "$ZUVO_DIST_SANDBOX" ] || {
+    echo "setup_file: mktemp -d failed — refusing to run with an unset sandbox" >&2
+    return 1
+  }
   ZUVO_DIST_ROOT="$ZUVO_DIST_SANDBOX/dist"
   export ZUVO_DIST_SANDBOX ZUVO_DIST_ROOT
   mkdir -p "$ZUVO_DIST_ROOT"

@@ -645,6 +645,14 @@ EXECUTION VERIFICATION
 > suspended-host or all-timeout run produces NO findings — which is indistinguishable from a clean
 > pass unless you read the status. Treat 124/125 as NOT RUN (re-invoke once for 125 per
 > `adversarial-loop.md`), and never let "no findings" from an unrun pass satisfy this gate.
+>
+> **Exit 4 needs its own handling, and it is the one this warning does not cover.** 124/125 are
+> easy because they produce nothing; 4 produces REAL FINDINGS over PART of the patch, so "I read
+> the status and there were findings" is exactly the wrong test. Treat 4 as **PARTIAL COVERAGE**:
+> the findings stand, the silence does not. Re-run over the files the artifact lists as omitted,
+> merge the verdicts, and only then let this gate pass. Listing 4 in the enumeration above without
+> saying that is what an adversarial pass on this very change flagged as CRITICAL — naming a status
+> is not gating it.
 
 ```bash
 # Scoped review patch on stdout — the git index is NEVER touched (no staging).

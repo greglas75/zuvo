@@ -220,7 +220,11 @@ do_sync() {
     if [ -n "$ref" ]; then
       # Same shared rule as lint_artifact() and pg_artifact_proven(). It is checked against the
       # SOURCE root, because that is the tree the proof would be read out of.
-      if ! path_contained "$sroot" "$ref"; then
+      # BOTH roots. The proof is READ from $sroot and WRITTEN to $droot, and containment is a
+      # property of each. Checking only the source let a symlink in the DESTINATION carry the write
+      # out of the destination checkout — the same escape the source check exists to stop, one
+      # direction over. Flagged by the cross-model pass.
+      if ! path_contained "$sroot" "$ref" || ! path_contained "$droot" "$ref"; then
         echo "WARN $name: proof path '$ref' escapes the repo (absolute, .. segment, or a symlink out) — artifact copied, proof NOT"
       elif [ -f "$sroot/$ref" ]; then
         copy_preserving "$sroot/$ref" "$droot/$ref" || fail=1
