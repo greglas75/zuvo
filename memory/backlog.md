@@ -985,3 +985,55 @@ triaging farm reports in another repo | seen:8 | confidence:98 | source:field-re
   `headBranch`/`event`/`createdAt` against the merge before counting it. Surfaced by adversarial
   pass 3 of the bc07cbe..7954760 review (WARNING, confidence medium); deferred at the
   `adversarial-loop.md` 3-pass cap with no CRITICAL outstanding. [defer-reason: NIT]
+
+## B-adv-artifact-missing — 8 skills run adversarial with no `--artifact`, so truncation has no backstop
+**Found:** 2026-08-19, TIER 3 self-review of bc07cbe..f84e5f5 (behavior auditor, confidence 85).
+`skills/{debug,content-fix,geo-fix,seo-fix,content-migration,write-e2e,fix-tests,receive-review}/SKILL.md`
+pipe their patch into `adversarial-review` with no `--artifact` flag and no exit-code capture
+(`skills/write-tests/SKILL.md` redirects to a plain `zuvo/review.txt`). Because they write no proof
+file, `pg_artifact_proven` has nothing to inspect — so a review truncated by the char cap is
+end-to-end indistinguishable from a clean one. The build/execute/review skills are NOT affected:
+they pass `--artifact`, so the content-keyed gate catches it at push time.
+**Why deferred:** 9 SKILL.md files, and the right fix is one shared snippet in
+`shared/includes/adversarial-loop.md` that every call site inlines — a template change, not nine
+edits. defer-reason: structural-refactor (multi-file). Pre-existing (predates exit code 4; the new
+code makes it *detectable*, it did not create it).
+**Recipe:** (1) add the canonical `--artifact "zuvo/proofs/<skill>-<slug>-adversarial.txt"` form to
+the loop include's pasteable block; (2) update the 9 skills to the new block; (3) assert in
+`tests/hooks/` that every SKILL.md invoking adversarial-review passes `--artifact`.
+
+## B-reviewed-blob-legacy-window — content binding is skipped forever for artifacts without `reviewed_blob=`
+**Found:** 2026-08-19, adversarial (cursor-agent, CRITICAL, confidence high).
+`hooks/pre-commit-adversarial-gate.sh` requires every staged blob to be a recorded `reviewed_blob=`
+— but only when the artifact HAS such lines. Artifacts in the old format skip the check entirely
+and fall back to the mtime comparison. That backward-compatibility was deliberate (day-one
+blocking of every pre-existing artifact would have been worse) and it has no expiry, so an
+old-format artifact is a permanent bypass of the content binding.
+**Why deferred:** the fix is a migration POLICY, not a patch — bound it by artifact mtime against a
+cutoff date, or require `reviewed_blob` once the staged paths changed after the artifact was
+written. Picking a cutoff unilaterally while a parallel session works in this checkout is the drift
+these gates exist to prevent. defer-reason: structural-refactor (multi-file).
+
+## B-infra-hex-secret-residue — lowercase-hex secrets survive SED_REDACT by construction
+**Found:** 2026-08-19, adversarial (cursor-agent, WARNING, confidence high).
+Rule B2 unmarks pure lowercase-hex runs so sha256 digests, git SHAs and checksums are preserved in
+trivy/docker evidence. A secret that happens to be lowercase hex (`BACKUP_KEY=deadbeef…`) is
+therefore never redacted by the value-shape rule. It IS still caught when its key name matches the
+keyword rule; only generically-named hex secrets slip.
+**Disposition:** documented trade-off, not a defect — the alternative destroys the evidence the
+collector exists to gather. defer-reason: NIT. Revisit only if a real corpus shows hex-form secrets
+under generic key names.
+
+## B-profile-session-extract — token accounting sits inline at module scope
+**Found:** 2026-08-19, structure auditor (confidence 48 — below the 51 report threshold).
+`scripts/zuvo-home/profile-session.py:139-172` and `:262-289` add ~70 lines of accounting logic at
+module scope with single-letter temporaries; `extract_token_usage()` and `attribute_polling()`
+would also make them unit-testable rather than only reachable through a subprocess.
+defer-reason: NIT.
+
+## B-blocknoverify-fmt — one-line case arm with embedded runs of spaces
+**Found:** 2026-08-19, structure auditor (confidence 55).
+`hooks/block-no-verify.sh:111` is a 268-char single line with literal 4-space runs around `|`,
+where the sibling `scripts/git-noverify-shim.sh:121-124` uses a backslash-continued 3-line wrap.
+Verified NOT a behavioural difference (case-pattern whitespace is insignificant to the shell).
+defer-reason: NIT.
