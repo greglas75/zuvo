@@ -1038,7 +1038,34 @@ where the sibling `scripts/git-noverify-shim.sh:121-124` uses a backslash-contin
 Verified NOT a behavioural difference (case-pattern whitespace is insignificant to the shell).
 defer-reason: NIT.
 
-## B-review-tier2-skip-2026-08-19 — TIER 3 self-review completed without 2 of its 4 mandated agents
+## B-review-tier2-skip-2026-08-19 — CLEARED 2026-08-19
+**Resolution:** the independent CQ/Q pass WAS run (4 agents, batched ~10 files each after the
+full-scope prompts kept dying on API 403). It found things the lead's inline pass had missed, which
+is the honest measure of what the 403s cost:
+  - `adversarial-review.sh` recorded `reviewed_blob=` for EVERY dirty file, not the reviewed ones —
+    so under `--files <subset>` an unrelated dirty file was whitelisted through the content-binding
+    gate. Reproduced; fixed.
+  - the `!shell` alias branch never checked `-n`, git commit's exact equivalent of `--no-verify` —
+    `!git commit -n -m sneaky` passed BOTH layers. Reproduced (commit created); fixed.
+  - `install.sh`'s debris check used a bare `exit 1` above the main-run guard, so `source
+    scripts/install.sh` with debris present killed the SOURCING shell — and the test that sources
+    it would have died rather than failed one assertion. Reproduced; fixed.
+  - `_recent_artifact_exists` accepted a FUTURE mtime as recent (negative age is always <= grace),
+    so one `touch -d @9999999999` decoy satisfied the guard forever. Reproduced; fixed.
+  - `retro-mine.py --days` and `backlog open --repo` crashed with IndexError on a missing value
+    (both cron/CLI paths); `backlog-consolidate.py` had `TODAY = "2026-07-19"` hardcoded, which
+    silently disabled its own backup-before-rewrite step on every later run. All fixed.
+  - a bats test asserting model sanitization set `ZUVO_CODEX_MODEL`, which the script reads ZERO
+    times, and had no positive control — it passed whether the code worked, was deleted, or never
+    ran. Repointed at the real variable and given a control; mutation-probed red.
+**Dropped after repro:** the alias seen-set reset, the `case`-pattern whitespace claim (twice), the
+sentinel-injection claim (the repro used pure hex — the documented residue, not injection), and
+dist-build's "does not pass ZUVO_DIST_ROOT".
+**Regression caught by the suite:** the `-n` fix initially REPLACED the whole `!shell` branch and
+dropped the abbreviation handling a parallel session had added. Extended instead of rewritten; both
+properties now hold together, with `--no-verbose` still not over-blocked.
+
+## (closed) B-review-tier2-skip-2026-08-19 — TIER 3 self-review completed without 2 of its 4 mandated agents
 **Found:** 2026-08-19, Validity Gate of the bc07cbe..3170213 review.
 `cq_auditor` was dispatched TWICE and both runs died with `API Error: 403 Request not allowed —
 Please run /login`; `confidence_rescorer` was never dispatched and the lead scored confidence

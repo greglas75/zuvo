@@ -22,11 +22,17 @@ linked worktrees of one repository. Idempotent; safe to re-run.
 import subprocess
 import sys
 import hashlib
+import datetime
 import json
 from pathlib import Path
 
 DEV = Path.home() / "DEV"
-TODAY = "2026-07-19"
+# NOT a literal. As `TODAY = "2026-07-19"` this quietly disabled the one safety step the file
+# promises: backup() writes `<name>.bak-<TODAY>` only `if not bak.exists()`, and with a frozen date
+# that filename never changes — so the SECOND real run, on any later day, skipped the backup and
+# went straight to rewriting the file. Every "Merged from worktree … (TODAY)" header and every STUB
+# notice was stamped 2026-07-19 forever, too.
+TODAY = datetime.date.today().isoformat()
 DRY = "--dry-run" in sys.argv
 
 def sh(args, cwd=None):

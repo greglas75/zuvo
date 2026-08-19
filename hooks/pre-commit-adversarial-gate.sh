@@ -56,7 +56,16 @@ _recent_artifact_exists() {
     mt="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)"
     mt="$(printf '%s' "$mt" | tr -cd '0-9')"; [ -n "$mt" ] || mt=0
     [ "$mt" -gt 0 ] || continue
-    [ "$(( now - mt ))" -le "$grace" ] && return 0
+    # BOTH directions. `now - mt <= grace` alone bounds only staleness: a FUTURE mtime makes the
+    # difference negative, which is always <= grace, so one `touch -d "@9999999999"` decoy satisfies
+    # the guard forever. Verified: a year-2100 zero-byte file was accepted as "recent".
+    #
+    # That is this entry's own bug restored by the fix for it. The guard exists because "some file
+    # from some past run" must not count as evidence; a file from a future run is the same claim
+    # with the sign flipped, and it is cheaper to forge. A small forward tolerance absorbs clock
+    # skew between the writer and this check without admitting a hand-set date.
+    _age=$(( now - mt ))
+    [ "$_age" -le "$grace" ] && [ "$_age" -ge -300 ] && return 0
   done
   return 1
 }

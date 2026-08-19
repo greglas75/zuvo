@@ -148,7 +148,11 @@ def cmd_open(args):
     items, _ = load()
     repo = None
     if "--repo" in args:
-        repo = args[args.index("--repo") + 1]
+        _ri = args.index("--repo") + 1
+        if _ri >= len(args):
+            print("backlog open: --repo needs a value", file=sys.stderr)
+            return 2
+        repo = args[_ri]
     sel = [i for i in items if i.get("status") == "open" and (not repo or repo in i.get("repo", ""))]
     sel.sort(key=lambda i: i.get("added") or "", reverse=True)
     for i in sel[:60]:

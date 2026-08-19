@@ -40,6 +40,10 @@ git -C "$REPO" config alias.shellbad "!git commit $NV"
 git -C "$REPO" config alias.hookpath '!git -c core.hooksPath=/dev/null commit'
 git -C "$REPO" config alias.safe     'status --short'
 git -C "$REPO" config alias.pushbad  "push $NV"
+git -C "$REPO" config alias.shortn   '!git commit -n -m x'
+git -C "$REPO" config alias.clustern '!git commit -nm x'
+git -C "$REPO" config alias.verbose  '!git commit --no-verbose -m x'
+git -C "$REPO" config alias.pushdry  '!git push -n'
 
 # git accepts any UNAMBIGUOUS abbreviation, so every one of these IS `--no-verify` to real git.
 # The `!shell` branch of both layers used to match only the full word, which made these a live
@@ -88,6 +92,16 @@ blocked "a one-hop alias chain"                  chain -m x
 blocked "a two-hop alias chain"                  deep -m x
 blocked "an alias for push --no-verify"          pushbad
 blocked "a !shell alias running the flag"        shellbad
+
+# `-n` is git commit's exact equivalent of --no-verify, and the !shell TEXT scan did not look for
+# it while the argv scanner in the same file always had. `alias.x = "!git commit -n -m sneaky"`
+# passed BOTH layers — verified by an independent CQ pass, which reproduced it by letting the shim
+# create the commit. The abbreviation cases below and this one are different code paths; keep both.
+blocked "a !shell alias using the short -n flag"  shortn
+blocked "a !shell alias with -n in a cluster"     clustern
+# …and the guard must not swallow flags that merely start the same way.
+allowed "a !shell alias using --no-verbose"       verbose
+allowed "a !shell alias running push -n (dry-run, not no-verify)" pushdry
 blocked "a !shell alias overriding hooksPath"    hookpath -m x
 
 # --- the abbreviation gap (found by review of bc07cbe..7954760, reproduced live) ----------------

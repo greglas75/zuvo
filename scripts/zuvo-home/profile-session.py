@@ -95,7 +95,7 @@ with open(path, errors='ignore') as f:
         line=line.strip()
         if not line: continue
         try: d=json.loads(line)
-        except: continue
+        except (ValueError, TypeError): continue   # malformed JSONL line; NOT bare — a bare except here also swallowed KeyboardInterrupt on a multi-million-line transcript
         ts=d.get('timestamp')
         p=d.get('payload') or {}
         if not isinstance(ts,str): ts=p.get('timestamp') if isinstance(p.get('timestamp'),str) else None

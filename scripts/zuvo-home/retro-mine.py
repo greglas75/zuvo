@@ -16,7 +16,23 @@ import glob
 import sys
 import collections
 import datetime
-DAYS = int(sys.argv[sys.argv.index('--days')+1]) if '--days' in sys.argv else 7
+def _arg_int(flag, default):
+    """`--days` with no value, or a non-numeric one, used to kill this script with a traceback.
+    It runs from cron ("Consumed by the weekly retro-miner agent"), so a malformed invocation took
+    the whole weekly digest with it instead of falling back."""
+    if flag not in sys.argv:
+        return default
+    i = sys.argv.index(flag) + 1
+    if i >= len(sys.argv):
+        sys.stderr.write(f"retro-mine: {flag} needs a value — using {default}\n")
+        return default
+    try:
+        return int(sys.argv[i])
+    except ValueError:
+        sys.stderr.write(f"retro-mine: {flag} expects an integer, got {sys.argv[i]!r} — using {default}\n")
+        return default
+
+DAYS = _arg_int('--days', 7)
 CUT = (datetime.datetime.utcnow() - datetime.timedelta(days=DAYS)).strftime('%Y-%m-%d')
 H = os.path.expanduser
 out = []

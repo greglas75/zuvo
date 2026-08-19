@@ -149,6 +149,25 @@ alias_is_bad() {
         *--no-v[\ \;\&\|\'\"\`]*|*--no-ve[\ \;\&\|\'\"\`]*|*--no-ver[\ \;\&\|\'\"\`]*|\
         *--no-veri[\ \;\&\|\'\"\`]*|*--no-verif[\ \;\&\|\'\"\`]*) return 0 ;;
       esac
+      # `-n` is git commit's exact equivalent of --no-verify, and this branch never looked for it:
+      # `alias.yolo = "!git commit -n -m sneaky"` passed BOTH layers (verified: shim exit 0, commit
+      # created; hook rc 0). The argv scanner in this same file has always handled `-n` via
+      # short_has_n — only the !shell TEXT scan was missing it.
+      #
+      # A bare `*-n*` substring match is not usable: `echo -n`, `[ -n "$x" ]` and `--dry-run` all
+      # contain it. So tokenize the expansion, find `commit`, and apply the SAME short-cluster rule
+      # the argv path uses to the tokens after it.
+      _zsa_seen_commit=0
+      for _zsa_t in $exp; do
+        case "$_zsa_t" in
+          commit) _zsa_seen_commit=1; continue ;;
+        esac
+        [ "$_zsa_seen_commit" -eq 1 ] || continue
+        case "$_zsa_t" in
+          -n) return 0 ;;
+          -[!-]*) short_has_n "$_zsa_t" && return 0 ;;
+        esac
+      done
       return 1 ;;
   esac
 
