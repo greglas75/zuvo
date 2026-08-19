@@ -641,7 +641,7 @@ EXECUTION VERIFICATION
 ### 4.4 Adversarial Review (MANDATORY — do NOT skip)
 
 > **Capture the script's OWN status, not just the patch helper's exit code.** `adversarial-review`
-> distinguishes ok / partial / timeout(124) / suspended(125) / single_provider_only(3) / error. A
+> distinguishes ok / partial / **truncated(4)** / timeout(124) / suspended(125) / single_provider_only(3) / error. A
 > suspended-host or all-timeout run produces NO findings — which is indistinguishable from a clean
 > pass unless you read the status. Treat 124/125 as NOT RUN (re-invoke once for 125 per
 > `adversarial-loop.md`), and never let "no findings" from an unrun pass satisfy this gate.

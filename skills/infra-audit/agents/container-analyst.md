@@ -143,6 +143,7 @@ all of which you must read and none of which you may invent:
 | `IS9-IMAGE-SCAN-CAPPED: stopped after N of M distinct images` | more images are running than were scanned | report the residual as an explicit coverage gap — `M-N` images unscanned — and recommend a re-run with `IS9_MAX_IMAGES` raised. **Do NOT report the host as clean of image CVEs**; you only know about N of M |
 | `IS9-IMAGE-SCAN-FAILED: <ref>` | trivy failed on that one image | a gap for THAT image, not a finding, and not a reason to discount the others |
 | `IS9-NO-RUNNING-CONTAINERS` | docker is present but nothing is running | not a finding; say the surface was empty at collection time |
+| `IS9-IMAGE-ENUMERATION-FAILED: docker ps exited N` | the container list could not be read at all (daemon down, permission denied) | coverage for image CVEs is **UNKNOWN**, not empty. Report it as a collection gap and say what would fix it (daemon access for the collector user). Never write "no containers running" off this marker — that is a gap reported as a clean result |
 
 A scan that produced no CVE lines AND no `CAPPED`/`FAILED` marker is the only shape that supports
 "no CRITICAL image CVEs on this host".

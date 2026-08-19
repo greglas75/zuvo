@@ -22,6 +22,15 @@ command_not_found_handle(){ echo "  FAIL harness: unknown command '$1'"; FAIL=$(
 ok(){ echo "  PASS $1"; PASS=$((PASS+1)); }
 no(){ echo "  FAIL $1"; FAIL=$((FAIL+1)); }
 
+# Tool check BEFORE any assertion. tests/run-all.sh classifies a child as SKIP only when `SKIP:`
+# is the FIRST non-empty line at column 0; emitted later (or indented) the run exits 0 and counts as
+# PASS, so a box without ruff/mypy reported a green Python gate that never ran.
+if ! command -v ruff >/dev/null 2>&1 && ! command -v mypy >/dev/null 2>&1; then
+  echo "SKIP: neither ruff nor mypy installed — the Python lint gate did NOT run."
+  echo "      Install them (brew install ruff mypy) so this check is real on this machine."
+  exit 0
+fi
+
 [ -f "$ROOT/pyproject.toml" ] && ok "pyproject.toml present (CQ40 wants a config, not just a tool)" \
   || no "no pyproject.toml — CQ40 scores 0 for every Python file"
 

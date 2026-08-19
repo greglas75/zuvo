@@ -21,6 +21,10 @@ PASS=0; FAIL=0
 # First cut used ok() and the source silently replaced it — 17 assertions printed install.sh's
 # green tick and incremented nothing, so the summary read PASS=1 for a fully passing run. A test
 # whose own counter can be overwritten by the thing under test cannot report on it.
+# A misspelled helper is not caught by `set -u`: bash prints "command not found", returns 127, and
+# the counters never move — so a file full of broken assertions summarises as FAIL=0. That happened
+# in this repo (11 assertions calling a helper the file did not define). This makes it a real failure.
+command_not_found_handle(){ echo "  FAIL harness: unknown command '$1'"; FAIL=$((FAIL+1)); return 127; }
 t_ok(){ echo "  PASS $1"; PASS=$((PASS+1)); }
 t_no(){ echo "  FAIL $1"; FAIL=$((FAIL+1)); }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT

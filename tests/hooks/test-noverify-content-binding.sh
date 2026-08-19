@@ -16,6 +16,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
 GATE="$ROOT/hooks/pre-commit-adversarial-gate.sh"
 REVIEW="$ROOT/scripts/adversarial-review.sh"
 PASS=0; FAIL=0
+# A misspelled helper is not caught by `set -u`: bash prints "command not found", returns 127, and
+# the counters never move — so a file full of broken assertions summarises as FAIL=0. That happened
+# in this repo (11 assertions calling a helper the file did not define). This makes it a real failure.
+command_not_found_handle(){ echo "  FAIL harness: unknown command '$1'"; FAIL=$((FAIL+1)); return 127; }
 t_ok(){ echo "  PASS $1"; PASS=$((PASS+1)); }
 t_no(){ echo "  FAIL $1"; FAIL=$((FAIL+1)); }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
@@ -24,7 +28,7 @@ JSON='{"tool_input":{"command":"git commit -m x"}}'
 gate_rc(){ ( cd "$1" && printf '%s' "$JSON" | CLAUDECODE=1 timeout 30 bash "$GATE" >/dev/null 2>&1; echo $? ); }
 
 mkrepo(){ # -> repo path with an in-progress execute session on task 3
-  local r="$TMP/$1"; mkdir -p "$r"; ( cd "$r"
+  local r="$TMP/$1"; mkdir -p "$r"; ( cd "$r" || exit 1
     git init -q; git config user.email t@t; git config user.name t
     echo base > f.txt; echo base > g.txt; git add .; git commit -qm init
     mkdir -p zuvo/context

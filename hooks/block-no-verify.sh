@@ -100,7 +100,17 @@ _ZBNV_ALIAS_SEEN=""
 alias_is_bad() {
   local name="${1:-}" depth="${2:-0}" exp first
   [ -n "$name" ] || return 1
-  [ "$depth" -lt 5 ] || return 1
+  # Depth exceeded means UNRESOLVED, and unresolved must not read as safe. Written as
+  # `[ "$depth" -lt 5 ] || return 1` this returned "not an alias-of-a-hook-skip" at depth 5 WITHOUT
+  # expanding — so a six-hop chain (a->b->c->d->e->f, f = "commit --no-verify") walked straight
+  # through a layer whose entire job is refusing that. Fail-OPEN in a bypass defense.
+  # Found by the adversarial pass on the commit that added this resolution.
+  #
+  # Deeper than 5 now BLOCKS. A legitimate alias chain that long does not exist in practice, and if
+  # one ever does, the cost is a refused command with a message — not a silent hook skip.
+  if [ "$depth" -ge 5 ]; then
+    return 0
+  fi
   case "$name" in -*) return 1 ;; esac
   case " $_ZBNV_ALIAS_SEEN " in *" $name "*) return 1 ;; esac
   _ZBNV_ALIAS_SEEN="$_ZBNV_ALIAS_SEEN $name"

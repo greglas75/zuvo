@@ -110,7 +110,12 @@ _ZSHIM_ALIAS_SEEN=""
 alias_is_bad() {
   local name="${1:-}" depth="${2:-0}" exp first
   [ -n "$name" ] || return 1
-  [ "$depth" -lt 5 ] || return 1
+  # Depth exceeded means UNRESOLVED, and unresolved must not read as safe: at depth 5 this used to
+  # return "not bad" WITHOUT expanding, so a six-hop alias chain ending in `push --no-verify`
+  # bypassed the shim entirely. Fail-open in a bypass defense; now it blocks.
+  if [ "$depth" -ge 5 ]; then
+    return 0
+  fi
   case "$name" in -*) return 1 ;; esac
   case " $_ZSHIM_ALIAS_SEEN " in *" $name "*) return 1 ;; esac
   _ZSHIM_ALIAS_SEEN="$_ZSHIM_ALIAS_SEEN $name"

@@ -27,15 +27,21 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
 MAX_WARNINGS=101
 
 PASS=0; FAIL=0
+# A misspelled helper is not caught by `set -u`: bash prints "command not found", returns 127, and
+# the counters never move — so a file full of broken assertions summarises as FAIL=0. That happened
+# in this repo (11 assertions calling a helper the file did not define). This makes it a real failure.
+command_not_found_handle(){ echo "  FAIL harness: unknown command '$1'"; FAIL=$((FAIL+1)); return 127; }
 t_ok(){ echo "  PASS $1"; PASS=$((PASS+1)); }
 t_no(){ echo "  FAIL $1"; FAIL=$((FAIL+1)); }
 
 if ! command -v shellcheck >/dev/null 2>&1; then
-  # Loud, not silent. A gate that vanishes without saying so is how this repo went months
-  # believing its shell was linted-adjacent when nothing ran at all.
-  echo "  SKIP: shellcheck is not installed — the shell lint gate did NOT run."
-  echo "        Install it (brew install shellcheck) so this check is real on this machine."
-  echo "  --- shellcheck: SKIPPED"
+  # `SKIP:` at column 0 on the FIRST non-empty line — that exact shape is what tests/run-all.sh
+  # sniffs to classify a child as SKIP. Indented (`  SKIP:`) or printed after any other line, the
+  # harness classifies exit 0 as PASS, so a machine with no shellcheck reported a GREEN lint gate
+  # that never ran. Flagged by the adversarial pass; the message was already loud, the CLASSIFICATION
+  # was the bug.
+  echo "SKIP: shellcheck is not installed — the shell lint gate did NOT run."
+  echo "      Install it (brew install shellcheck) so this check is real on this machine."
   exit 0
 fi
 

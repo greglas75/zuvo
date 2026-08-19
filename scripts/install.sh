@@ -66,6 +66,19 @@ INSTALL_VERIFY_DETAIL=""
 # The counter only accumulates when cp_warn runs in the CURRENT shell. `x=$(cp_warn …)` puts it in
 # a subshell and the increment dies there — the WARN still prints, but the final summary reports 0.
 # Every call site below is a plain statement; keep it that way.
+# dist_root — ONE place that answers "where did the build write?" (review R-4).
+#
+# The four build scripts were changed to `DIST="${ZUVO_DIST_ROOT:-$PLUGIN_DIR/dist}/<platform>"` so a
+# test run can get its own tree. install.sh, which INVOKES them, kept computing
+# `DIST="$ZUVO_DIR/dist/<platform>"` in four separate places and ignored the override — so with the
+# variable set the builder writes one path and the installer checks another, and
+# `if [[ ! -d "$DIST/skills" ]]; then fail "Build failed"` fires on a build that succeeded (or
+# worse, finds a stale tree from an earlier default-path build and installs it). Reproduced.
+#
+# Latent while the variable is unset, which is exactly how it would have survived: the fix landed in
+# the source and not in every place that recomputes the same answer.
+dist_root() { printf '%s' "${ZUVO_DIST_ROOT:-$ZUVO_DIR/dist}"; }
+
 INSTALL_COPY_WARNINGS=0
 cp_warn() {
   local _label="$1"; shift
@@ -870,7 +883,7 @@ install_codex() {
     return 1
   fi
   rm -f "$build_log"
-  DIST="$ZUVO_DIR/dist/codex"
+  DIST="$(dist_root)/codex"
 
   if [[ ! -d "$DIST/skills" ]]; then
     fail "Build failed -- no dist/codex/skills/ produced"
@@ -1086,7 +1099,7 @@ install_cursor() {
     return 1
   fi
   rm -f "$build_log"
-  DIST="$ZUVO_DIR/dist/cursor"
+  DIST="$(dist_root)/cursor"
 
   if [[ ! -d "$DIST/skills" ]]; then
     fail "Build failed -- no dist/cursor/skills/ produced"
@@ -1232,7 +1245,7 @@ install_antigravity() {
     return 1
   fi
   rm -f "$build_log"
-  DIST="$ZUVO_DIR/dist/antigravity"
+  DIST="$(dist_root)/antigravity"
 
   if [[ ! -d "$DIST/skills" ]]; then
     fail "Build failed -- no dist/antigravity/skills/ produced"
@@ -1476,7 +1489,7 @@ install_kimi() {
     return 1
   fi
   rm -f "$build_log"
-  DIST="$ZUVO_DIR/dist/kimi"
+  DIST="$(dist_root)/kimi"
 
   if [[ ! -d "$DIST/skills" ]]; then
     fail "Build failed -- no dist/kimi/skills/ produced"

@@ -15,15 +15,31 @@ set -uo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COLLECTOR="$ROOT_DIR/scripts/infra-collect.sh"
 PASS=0; FAIL=0
+# A misspelled helper is not caught by `set -u`: bash prints "command not found", returns 127, and
+# the counters never move — so a file full of broken assertions summarises as FAIL=0. That happened
+# in this repo (11 assertions calling a helper the file did not define). This makes it a real failure.
+command_not_found_handle(){ echo "  FAIL harness: unknown command '$1'"; FAIL=$((FAIL+1)); return 127; }
 ok(){ echo "  PASS $1"; PASS=$((PASS+1)); }
 no(){ echo "  FAIL $1"; FAIL=$((FAIL+1)); }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 BIN="$TMP/bin"; mkdir -p "$BIN"
 
-# Extract the row's cmd column and expand the two constants the heredoc would have expanded.
-CMD="$(sed -n '/^IS9-image-critical-cve/p' "$COLLECTOR" | cut -d'|' -f7- \
-       | sed 's/\\\$/$/g; s/${TRIVY_TIMEOUT_S}/120/g; s/${IS9_MAX_IMAGES}/8/g')"
+# Take the command the way PRODUCTION does — by running the collector's own `battery()` heredoc —
+# instead of re-implementing its unescaping with sed. The sed form worked until the row grew a
+# `printf '%s\\n'`, which it left as a literal backslash-n; the emitted command was correct and the
+# TEST was measuring a mangled copy of it. A test that decodes its subject by hand drifts from the
+# subject; sourcing the emitter cannot.
+CMD="$(
+  set -a
+  # shellcheck disable=SC1090
+  . <(sed -n '/^: "${TRIVY_TIMEOUT_S/p;/^: "${IS9_MAX_IMAGES/p' "$COLLECTOR")
+  set +a
+  sed -n '/^battery() {/,/^EOF/p' "$COLLECTOR" > "$TMP/battery.sh"; echo '}' >> "$TMP/battery.sh"
+  # shellcheck disable=SC1090
+  . "$TMP/battery.sh"
+  battery | sed -n '/^IS9-image-critical-cve/p' | cut -d'|' -f7-
+)"
 [ -n "$CMD" ] || { echo "  FAIL could not extract the IS9 cmd column"; exit 1; }
 
 run(){ PATH="$BIN:$PATH" sh -c "$CMD" 2>&1; }
@@ -58,6 +74,18 @@ case "$out" in *"8 of 10 distinct images"*) ok "cap line names the REAL total, s
 stub_docker ''
 out="$(run)"
 case "$out" in *IS9-NO-RUNNING-CONTAINERS*) ok "empty host reports NO-RUNNING-CONTAINERS";; *) no "empty host produced no marker: '$out'";; esac
+
+# --- 4b. an enumeration FAILURE must not read as an empty host -----------------------------------
+# `docker ps` failing (daemon down, permission denied) left `imgs` empty, and the check then emitted
+# IS9-NO-RUNNING-CONTAINERS — which tells the analyst the attack surface WAS empty. It was unknown.
+# Same class as the silent cap this file already guards: a gap reported as a clean result.
+printf '#!/bin/sh\nexit 1\n' > "$BIN/docker"; chmod +x "$BIN/docker"
+out="$(run)"
+case "$out" in
+  *IS9-IMAGE-ENUMERATION-FAILED*) ok "a failed docker ps reports UNKNOWN coverage, not an empty host" ;;
+  *IS9-NO-RUNNING-CONTAINERS*) no "docker ps failure reported as NO-RUNNING-CONTAINERS (gap read as a clean result)" ;;
+  *) no "docker ps failure produced no marker at all: '$out'" ;;
+esac
 
 # --- 5. a failing scanner is attributed per image, and does not abort the remaining images -------
 stub_docker 'x:1\ny:1\n'; stub_trivy_fail

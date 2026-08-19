@@ -15,6 +15,10 @@ set -uo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COLLECTOR="$ROOT_DIR/scripts/infra-collect.sh"
 PASS=0; FAIL=0
+# A misspelled helper is not caught by `set -u`: bash prints "command not found", returns 127, and
+# the counters never move — so a file full of broken assertions summarises as FAIL=0. That happened
+# in this repo (11 assertions calling a helper the file did not define). This makes it a real failure.
+command_not_found_handle(){ echo "  FAIL harness: unknown command '$1'"; FAIL=$((FAIL+1)); return 127; }
 ok(){ echo "  PASS $1"; PASS=$((PASS+1)); }
 no(){ echo "  FAIL $1"; FAIL=$((FAIL+1)); }
 

@@ -392,6 +392,7 @@ Copy the printed `[CodeSift matching trace]` block verbatim and issue the printe
 | `Adversarial: skipped (small diff)` / `(<N lines so not worth)` | EVER (Tier table line 284 mandates adversarial at TIER 0) | Run it. Even <15 line diffs get the pass per the Tier table — a single-line semantic bug (e.g. inverted comparison, off-by-one, swapped args) is exactly the class adversarial catches that scanners cannot. |
 | `Adversarial: skipped (documented honestly)` / `(noting the skip transparently)` | EVER | Honesty about a violation is still a violation. The Validity Gate evaluates whether the gate ran, not whether the skip was politely worded. Run it or exit BLOCKED. |
 | Any `Adversarial: skipped (<reason>)` where `<reason>` is not on the whitelist | EVER | Whitelist (from section 1.6): `single_provider_only` (exit 3), `timeout` (exit 124), `BLOCKED_CONTEXT_BUDGET` (after chunking attempt failed). Nothing else. |
+| `ok` / any | **4** | **Review COMPLETED but the input was TRUNCATED** — part of the change reached no provider (`input_truncated=true` in the artifact, which also lists the omitted files) | **Do NOT report the review complete.** Findings returned are real; the ABSENCE of findings says nothing about the omitted files. Re-run over the omitted set or split the input, then merge verdicts |
 
 ### Required POSTAMBLE — retrospective + verify-audit gates
 

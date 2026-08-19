@@ -64,6 +64,17 @@ Run the script in a **single Bash call with a long timeout**. The script auto-de
 
 **If the script exits non-zero with empty output:** no provider was available. Note `adversarial review: skipped (no provider available)` and proceed normally.
 
+**If the script exits 4:** the review COMPLETED but its input was **TRUNCATED** — part of the
+document never reached a provider. Non-zero WITH output, so the rule above does not cover it, and
+reading only that rule makes a partial review look like a finished one. Note
+`adversarial review: incomplete (truncated — omitted: <files from the artifact>)`, re-run over the
+omitted portion, and merge the verdicts before Step 3.
+
+This matters more here than on the code path. A code review writes an `--artifact` proof, and
+`pg_artifact_proven` refuses any proof carrying `input_truncated=true` regardless of what the agent
+concluded. **Document artifacts have no such backstop** — spec/plan approval rests on this
+protocol alone, so a missed truncation here is not caught later by anything.
+
 ### Step 3: Evidence validation
 
 Before applying any fix policy, validate each CRITICAL or WARNING finding for mandatory evidence.

@@ -30,8 +30,19 @@ setup_file() {
 teardown_file() {
   # Belt and braces on the guard above: remove it only if it still looks like the mktemp directory
   # this file made. A cleanup that cannot prove what it is deleting does not run.
+  # The `$TMPDIR` arm is GONE, and its absence is the whole point. Written as
+  #     /tmp/*|/var/folders/*|"${TMPDIR%/}"/*
+  # an UNSET TMPDIR makes the third pattern `/*`, which matches every absolute path — so the guard
+  # written specifically to stop this teardown deleting the repository would have permitted exactly
+  # that. Verified: with `env -u TMPDIR`, ZUVO_DIST_SANDBOX=<repo root> MATCHED. Found by the
+  # adversarial pass over the commit that added the guard, hours after the unguarded version had
+  # already destroyed this checkout once.
+  #
+  # A guard whose safety depends on an environment variable being set is not a guard. These two
+  # literal prefixes are where `mktemp -d` puts things on macOS and Linux; anything else is refused
+  # out loud rather than removed.
   case "${ZUVO_DIST_SANDBOX:-}" in
-    /tmp/*|/var/folders/*|"${TMPDIR%/}"/*) [ -d "$ZUVO_DIST_SANDBOX" ] && rm -rf "$ZUVO_DIST_SANDBOX" ;;
+    /tmp/*|/var/folders/*) [ -d "$ZUVO_DIST_SANDBOX" ] && rm -rf "$ZUVO_DIST_SANDBOX" ;;
     *) echo "teardown_file: refusing to remove unexpected sandbox '${ZUVO_DIST_SANDBOX:-}'" >&2 ;;
   esac
 }
