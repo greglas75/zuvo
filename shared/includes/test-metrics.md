@@ -13,7 +13,7 @@
 | KILL_RATE | killed / executed from the MUTATION PROBES table (native runner present → `score_triaged`, never `score_raw`). A wrapper/infra failure is `NOT_EXECUTED` and is EXCLUDED from the denominator — it is not killed and not survived. |
 | NEG_COVERAGE | discriminant axes with ≥1 ASSERTED negative ÷ total axes (TYPE_CONTRACT unions + matched family axes). Token negatives (one per file) do not count an axis covered. |
 | UNCLASSIFIED_RATE | files recording `unmatched_shape` ÷ files processed. This number falling via TABLE GROWTH is progress; falling via silent defaults is regression. |
-| ECHO_COUNT | AP33 instances in delivered specs. Target: 0. |
+| ECHO_COUNT | AP29 instances (mock return value echoed in the assertion — proves the mock setup, not production logic) in delivered specs. Target: 0. |
 | TIER_DIST | test-audit A/B/C/D percentages, suite-aware. |
 
 ## Axis 2 — COST (per delivered test file; aggregate per task)
@@ -35,5 +35,6 @@
 | QUEUE_MIN | reported separately; never folded into any verdict about compute performance. |
 | PER_FILE_WALL | write-tests: `[CLASSIFIED]` print → that file's completion block. |
 
-Consumers: `profile-session`, write-tests completion block, test-audit report. Reference this
-file; never restate formulas.
+Consumers (each loads this file explicitly — a consumer that does not load it cannot honour the
+formulas): `write-tests` (DEFERRED D4, completion block), `test-audit` (report), `profile-session`
+(cost/speed axes). Reference this file; never restate formulas.

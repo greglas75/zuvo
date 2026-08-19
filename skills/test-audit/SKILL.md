@@ -107,6 +107,7 @@ CORE FILES LOADED:
    5. ../../shared/includes/retrospective.md -- READ/MISSING
    6. ../../shared/includes/no-pause-protocol.md -- READ/MISSING (HARD: no mid-batch pauses)
    7. ../../shared/includes/test-quality-gate.md -- READ/MISSING (carries the dispatch-authorization rule)
+   8. ../../shared/includes/test-metrics.md -- READ/MISSING (frozen quality/cost/speed formulas — cite TIER_DIST/ECHO_COUNT, never restate)
 ```
 
 

@@ -69,6 +69,7 @@ Non-interactive environments: no arguments defaults to `--last`.
 CORE FILES LOADED:
   1. ../../shared/includes/run-logger.md       -- READ
   2. ../../shared/includes/retrospective.md    -- READ
+  3. ../../shared/includes/test-metrics.md     -- READ (frozen COST/SPEED formulas: FRESH_TOKENS, POLLING_CALL, TASK_WINDOW, ACTIVE_MIN — cite, never re-derive)
 ```
 
 ## Prerequisite

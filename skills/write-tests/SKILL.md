@@ -87,6 +87,7 @@ program, not the writer's own claim.
   4. ../../shared/includes/test-inventory-protocol.md   -- [READ | MISSING -> BLOCKED] (inventory-before-writing spine)
   5. ../../shared/includes/coverage-manifest-schema.md  -- [READ | MISSING -> BLOCKED] (manifest + validator contract)
   6. ../../shared/includes/test-quality-gate.md         -- [READ | MISSING -> WARN] (carries the dispatch-authorization rule)
+  7. ../../shared/includes/env-compat.md               -- [READ | MISSING -> DEGRADED] (agent-dispatch lanes + Remote/Queued Execution — the Per-File Loop and Phase 0 step 8 both cite its sections; missing it means the context-boundary lane and the remote-result evidence rule are UNAVAILABLE, so say so and stay single-session rather than guessing a lane)
 ```
 
 If `codesift-setup.md` is missing, print `[CONTEXT] codesift-setup missing — assuming CodeSift unavailable and continuing in degraded mode.` If `test-inventory-protocol.md` or `coverage-manifest-schema.md` is missing, the executable gate cannot be honored — stop the run with a loud include-integrity error rather than degrading to prose-only gating.
@@ -171,6 +172,7 @@ fake-timer table) — skipping them left that pointer dangling for the one tier 
   D1. ../../shared/includes/run-logger.md           -- [READ at completion]
   D2. ../../shared/includes/retrospective.md        -- [READ at completion]
   D3. ../../shared/includes/knowledge-curate.md     -- [READ at completion]
+  D4. ../../shared/includes/test-metrics.md         -- [READ at completion] (frozen quality/cost/speed formulas — cite, never restate)
 **Dispatch is already authorized — do not ask, and do not substitute.** Invoking this skill IS the
 request for the gates it mandates. A session-level instruction like "do not use the Agent tool unless
 the user asked" does NOT apply here: the user asked, by invoking this skill. Reading it as a
@@ -187,6 +189,29 @@ capability (Codex's single-agent lock), follow the ONE documented exception in
 
 ## Phase 0: Bootstrap + Preflight (once per run), Classify (per file)
 
+0. **Resume branch (FIRST, before step 1 — only when `--resume`/`--resume-run` was passed).** A flag
+   no step reads is a dead flag; this skill already carries that scar for `--no-cache`.
+   - `--resume <basename>`: read `$ZUVO_DIR/contracts/<basename>.coverage.json` and
+     `<basename>.contract.md`. Missing either → print `[RESUME] no checkpoint for <basename> — running
+     the full pipeline` and fall through to step 1. Recompute the production file's sha256 and compare
+     with `production_sha256`. **MISMATCH** → refuse, print `[RESUME] production file changed since
+     freeze — re-inventory required`, DISCARD the contract's classification (it describes the old
+     bytes) and run the FULL pipeline from step 4 (classify) — never jump to Step 1.6, which cannot
+     run without a stack and code type. **MATCH** → take stack/code_type/tier from the contract's
+     classification line (skip steps 4-6 and Step 1), and enter the Per-File Loop at: manifest
+     `inventory` → Step 2 · `final` → Step 3 · `final` with Q-scores synced → Step 3.3.
+   - `--resume-run <ledger>`: read the ledger, restore its five fields, and SKIP steps 7-8 (queue
+     build and baseline run) — the baseline is recorded there, and re-running the whole suite per file
+     is the cost the ledger exists to remove. Steps 4-6 (classify + runner refinement) still run for
+     every file — the ledger carries run-level facts, never a per-file classification.
+     **Two callers, two behaviours, and collapsing them breaks the one a human uses:**
+     · *sub-agent resume* (a file argument is present) — process THAT file only and return; do not
+       touch the queue, do not dispatch onward.
+     · *user resume* (no file argument, e.g. after `/clear`) — walk the ledger's `queue:` from its
+       first entry and keep going to the end, exactly as a normal auto-mode run would. This is the
+       whole point of the `/clear` + `--resume-run` line printed at the context boundary; a version
+       that stops after one file makes the user re-type it per file.
+   - Both flags are inert outside these two paths: no other step branches on them.
 1. **CodeSift setup** per `codesift-setup.md`. Note repo identifier.
 2. **Resolve `$ZUVO_BASE`** per `test-reviewer-routing.md` (absolute paths for every script call).
 3. **Reviewer preflight (REQUIRED, before any test is written):** run `bash "$ZUVO_BASE/scripts/reviewer-preflight.sh"` and act on `preflight_status` per the table in `test-reviewer-routing.md`. On `no-provider`/`canary-failed`: print `review infrastructure unavailable` NOW — the whole run is `DRAFT/BLOCKED_INFRA` from the start; tests may still be written for their standalone value, but no file may be reported `PASS` and the completion block must carry the BLOCKED_INFRA list. This replaces discovering a dead reviewer after the pipeline already spent its budget.
@@ -211,11 +236,23 @@ capability (Codex's single-agent lock), follow the ONE documented exception in
 Execute Steps 1 → 1.5 → 1.6 → 1.7 → 2 → 2.5 → 3 → 3.2 → 3.3 → 3.5 → 4 → (4.5) → 5 in order. Do NOT skip a step unless a later step explicitly defines a degraded terminal state. Do NOT proceed to the next file until every checkpoint completes or is explicitly downgraded.
 
 **Auto-mode context boundary (file boundary = context boundary).** After each file's completion
-block, write/refresh the run ledger `$ZUVO_DIR/checkpoints/run-<ISO-date>.md`: remaining queue,
-runner command, baseline pre-existing failures, exemplar conventions (≤10 lines), stack decision —
-the run-level facts that until now lived only in the session. Then, per the env-compat lanes:
-- **Claude Code:** dispatch the NEXT file to a FRESH implementer sub-agent whose input is ONLY
-  {skill invocation + ledger path + target file}. The coordinator keeps the queue and per-file
+block, write/refresh the run ledger — the run-level facts that until now lived only in the session.
+Its path is stamped ONCE at Phase 0 and reused unchanged for the whole run:
+`$ZUVO_DIR/checkpoints/run-<ISO-date>-<first-target-slug>.md`. A bare `run-<ISO-date>.md` is wrong on
+both ends — two runs on one day overwrite each other, and a run crossing midnight would split into
+two half-ledgers.
+Fixed keys, in this order, so step 0 can read it back without guessing (a freeform ledger is the same
+unparseable state it replaces): `queue:` · `runner:` · `baseline_failures:` · `exemplars:` · `stack:`.
+Every value is a block: the key alone on its line, then each value line indented two spaces, ending at
+the next unindented key. That is what makes the multi-line ones (`queue:`, `baseline_failures:`,
+`exemplars:`) parseable rather than merely readable. Then, per the env-compat lanes:
+- **Claude Code:** dispatch the NEXT file to a FRESH implementer sub-agent — `general-purpose`, whose
+  entire prompt is `Skill(zuvo:write-tests <target-file>)` plus `--resume-run <ledger path>` and
+  nothing else. **Only the coordinator dispatches.** A run entered via `--resume-run` handles exactly
+  the ONE file it was given and RETURNS its completion block — it must not reach this boundary and
+  dispatch onward. Without that rule each sub-agent re-enters this block when it finishes and spawns
+  the next one, so the queue drains through a chain of nested agents that each keep every ancestor's
+  context alive instead of returning it. The coordinator keeps the queue and per-file
   syntheses and never accumulates production sources, specs, or tool outputs. MANDATORY after any
   HEAVY/COMPLEX file or when context exceeds ~60%; a run of consecutive LIGHT files may stay in one
   session (trade-off named, not hidden: ~40k tokens of skill reload vs measurable late-context
@@ -403,7 +440,7 @@ Enter only when Step 3.5 returned `Audit mode: strict` + `Coverage verdict: CLEA
 | Unresolved CRITICAL after final pass | `FAILED` + backlog |
 | No provider on all passes + no fallback-local | `SKIPPED_REVIEW` |
 
-High-confidence production bugs found here: verify against source, then route to Step 4.5 — fix in-run, never `FAILED`-and-hand-off for an in-scope fix. **Context discipline:** carry forward only the verdict + findings list; the audit transcript is spent once findings are extracted (same rule for the adversarial review below).
+High-confidence production bugs found here: verify against source, then route to Step 4.5 — fix in-run, never `FAILED`-and-hand-off for an in-scope fix. **Context discipline:** carry forward only the verdict + findings list; the audit transcript is spent once findings are extracted (the adversarial review in this same step follows the rule too).
 
 ### Step 4.5: Fix surfaced production bugs (in-run)
 
