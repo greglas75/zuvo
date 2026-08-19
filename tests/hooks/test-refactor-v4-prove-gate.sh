@@ -27,7 +27,7 @@ fails=0
 ok(){ echo "  ✓ $1"; }
 bad(){ echo "  ✗ $1"; fails=$((fails+1)); }
 
-mkdir -p "$TMP/r/zuvo/contracts" "$TMP/r/zuvo/audits"; cd "$TMP/r"
+mkdir -p "$TMP/r/zuvo/contracts" "$TMP/r/zuvo/audits"; cd "$TMP/r" || exit 1
 : > zuvo/audits/tq.md          # the real test-audit report the honest cases point at
 git init -q; git config user.email t@t; git config user.name t
 cat > .git/hooks/pre-commit <<H

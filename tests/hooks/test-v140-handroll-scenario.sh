@@ -8,7 +8,7 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYST
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 GATE="$ROOT/hooks/refactor-safety-gate.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-cd "$TMP"; mkdir -p zuvo/plans docs/specs hooks/lib
+cd "$TMP" || exit 1; mkdir -p zuvo/plans docs/specs hooks/lib
 git init -q; git config user.email t@t; git config user.name t
 printf '#!/bin/sh\nexec "%s" pre-commit\n' "$GATE" > .git/hooks/pre-commit; chmod +x .git/hooks/pre-commit
 # An Approved plan whose Task 2 touches hooks/lib/refactor-gate-lib.sh (the real v1.4.0 file)

@@ -194,7 +194,7 @@ smoke1() {
                  || no "exit-3 run emits an EMPTY patch on stdout"
 
   # ── (4) exit 2 — a path git knows nothing about is a BAD REQUEST ───────────
-  OUT4="$( cd "$REPO" && bash "$HELPER" src/no-such-file.ts 2>"$LOGDIR/s1-bad.err" )"; RC4=$?
+  ( cd "$REPO" && bash "$HELPER" src/no-such-file.ts ) >/dev/null 2>"$LOGDIR/s1-bad.err"; RC4=$?
   if [ "$RC4" -eq 2 ]; then
     ok "unknown path exits 2 (bad request, never silently 'clean')"
   else

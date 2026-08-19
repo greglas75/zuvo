@@ -29,7 +29,7 @@ BLOCK=$(awk '/^REVIEW_TREE=\$\(mktemp -d\)/,/^fi$/' "$REV")
 [ -n "$BLOCK" ] && ok "audit-checkout block extracted from the skill" \
                 || bad "could not extract the audit-checkout block — re-anchor this test"
 
-mkdir -p "$TMP/r"; cd "$TMP/r"
+mkdir -p "$TMP/r"; cd "$TMP/r" || exit 1
 git init -q; git config user.email t@t; git config user.name t
 echo a > f; git add f; git commit -qm base
 REVIEWED_THROUGH=$(git rev-parse HEAD); export REVIEWED_THROUGH
@@ -62,7 +62,7 @@ else
   bad "no audit worktree was created"
 fi
 
-cd "$ROOT"
+cd "$ROOT" || exit 1
 grep -q 'audit_tree:' "$REV" && ok "Validity Gate carries an audit_tree field" \
                              || bad "the verdict never records which tree the auditors read"
 grep -q 'Do NOT use this for the fix loop' "$REV" \
@@ -74,7 +74,7 @@ grep -q 'Do NOT use this for the fix loop' "$REV" \
 # locked configs across the whole checkout. Executed, not grepped.
 TD=$(awk '/^if \[ -n "\$\{REVIEW_TREE:-\}" \]/,/^fi$/' "$REV")
 [ -n "$TD" ] && ok "teardown block extracted" || bad "could not extract the teardown block"
-cd "$TMP/r"
+cd "$TMP/r" || exit 1
 mkdir -p locked && echo secret > locked/s && chmod -R a-w locked
 REVIEW_TREE="$(git rev-parse --show-toplevel)" sh -c "$TD" 2>/dev/null
 if [ -w "$TMP/r/locked/s" ]; then
@@ -83,7 +83,7 @@ else
   ok "teardown is a no-op when REVIEW_TREE is the live checkout"
 fi
 chmod -R u+w "$TMP/r/locked" 2>/dev/null
-cd "$ROOT"
+cd "$ROOT" || exit 1
 
 echo "=== mutation-test: anchors + checkpoint (contract assertions) ==="
 

@@ -671,5 +671,8 @@ pg_is_agent_env() {
   return 1
 }
 
-# Marker so callers can verify the lib loaded.
+# Marker so callers can verify the lib loaded. Read by pre-push-gate.sh,
+# zuvo-stop-pipeline-gate.sh, pre-commit-adversarial-gate.sh and
+# scripts/zuvo-pipeline-entry-ci.sh — never inside this file, hence the disable.
+# shellcheck disable=SC2034
 PG_LIB_LOADED=1

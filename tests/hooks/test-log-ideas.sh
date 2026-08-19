@@ -32,7 +32,7 @@ bash "$LI" >/dev/null 2>&1 && ok "no args -> exit 0 (best-effort, never fails a 
 grep -q $'\tunknown\t' "$ZUVO_HOME/ideas.log" && ok "missing --skill defaults to 'unknown'" || bad "missing skill not defaulted"
 
 echo "=== worktree-safe project resolution ==="
-mkdir -p "$TMP/r"; ( cd "$TMP/r"; git init -q; bash "$LI" --skill review >/dev/null 2>&1 )
+mkdir -p "$TMP/r"; ( cd "$TMP/r" || exit 1; git init -q; bash "$LI" --skill review >/dev/null 2>&1 )
 tail -1 "$ZUVO_HOME/ideas.log" | grep -q $'\tr\t' && ok "project resolves to repo basename" || ok "project resolved (non-empty)"
 
 echo "=== RESULT ==="; [ "$fails" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$fails FAILED"; exit 1; }

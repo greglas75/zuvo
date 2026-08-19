@@ -227,7 +227,7 @@ generate_agent_toml() {
   if [ "$agent_name" = "team-lead" ]; then return 0; fi
 
   # Extract frontmatter fields
-  local desc model tools_line has_write
+  local desc model has_write
   desc=$(head -20 "$agent_md" | grep -m1 "^description:" | sed 's/^description: *//; s/^"//; s/"$//')
   model=$(head -20 "$agent_md" | grep -m1 "^model:" | sed 's/^model: *//; s/ *#.*//')
   has_write=$(head -30 "$agent_md" | grep -cE "^\s+- (Write|Edit)" || true)

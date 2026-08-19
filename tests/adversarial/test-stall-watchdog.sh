@@ -21,7 +21,7 @@ _v(){ "$WD" "$@" 2>/dev/null | sed -n '1p'; }
 _r(){ "$WD" "$@" 2>/dev/null | sed -n '2p'; }
 
 start_test "script exists and is executable"
-assert_exit_code 0 "$([ -x "$WD" ]; echo $?)" "zuvo-watchdog-check is executable"
+assert_exit_code 0 "$(rc_of test -x "$WD")" "zuvo-watchdog-check is executable"
 
 start_test "missing heartbeat file -> DONE (nothing to resume)"
 D=$(_z)
@@ -80,7 +80,7 @@ assert_eq "ALIVE" "$(_v "$HB" 600)" "120s<600s threshold => ALIVE"
 # ---- wiring assertions: the include + skill + installer must reference it ----
 
 start_test "shared include stall-recovery.md exists"
-assert_exit_code 0 "$([ -f "$ROOT/shared/includes/stall-recovery.md" ]; echo $?)" "include present"
+assert_exit_code 0 "$(rc_of test -f "$ROOT/shared/includes/stall-recovery.md")" "include present"
 
 start_test "include defines arm/heartbeat/disarm + fallback; execute wires them"
 INC="$ROOT/shared/includes/stall-recovery.md"

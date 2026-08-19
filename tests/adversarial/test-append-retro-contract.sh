@@ -20,7 +20,7 @@ ZUVO_HOME="$Z" "$ARET" --skill=execute --project=TestProj --code-type=DATA_SERVI
   --sha7=testsha --date="$T" >/dev/null 2>&1
 assert_exit_code 0 "$?" "append-retro emits a full retro"
 RL=$(printf '%s\texecute\tTestProj\t-\t-\tPASS\t1\t1-tasks\tredo\tmain\ttestsha\t-\t-' "$T")
-out=$(printf '%b\n' "$RL" | ZUVO_HOME="$Z" "$ARUN" 2>&1); rc=$?
+printf '%b\n' "$RL" | ZUVO_HOME="$Z" "$ARUN" >/dev/null 2>&1; rc=$?
 assert_exit_code 0 "$rc" "append-runlog accepts the run line (retro matched the gate)"
 n=$(grep -c . "$Z/runs.log" 2>/dev/null || echo 0)
 assert_eq 1 "$n" "exactly one runs.log row written"

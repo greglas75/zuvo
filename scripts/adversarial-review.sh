@@ -189,10 +189,14 @@ _ar_cache_key="${ZUVO_RUN_ID:-$_ar_digest}"
 # or is owned by someone else, so a hostile pre-create makes us fall back to a private mktemp dir
 # rather than writing through it.
 _ar_cache_dir="${TMPDIR:-/tmp}/zuvo-adv-$(id -u)"
+# shellcheck disable=SC2174  # tightened unconditionally by the chmod below the fi
 if ! mkdir -m 700 -p "$_ar_cache_dir" 2>/dev/null \
    || [ -L "$_ar_cache_dir" ] || [ ! -d "$_ar_cache_dir" ] || [ ! -O "$_ar_cache_dir" ]; then
   _ar_cache_dir="$(mktemp -d 2>/dev/null)" || _ar_cache_dir=""
 fi
+# `mkdir -m` only sets the mode on what it creates, so a directory surviving from a pre-0700
+# release keeps its looser mode and passes every check above. Tighten unconditionally.
+[ -n "$_ar_cache_dir" ] && chmod 700 "$_ar_cache_dir" 2>/dev/null
 PROVIDER_FAIL_CACHE="${_ar_cache_dir:+$_ar_cache_dir/}failed-providers.${_ar_cache_key//[^A-Za-z0-9._-]/_}"
 # Empty dir (mktemp also failed) => disable the cache rather than write to a guessable path.
 [ -n "$_ar_cache_dir" ] || PROVIDER_FAIL_CACHE="/dev/null"
@@ -2000,12 +2004,27 @@ write_artifact() {
     # paths with spaces or newlines cannot break it. Residue: content reviewed at path A and staged
     # at path B passes. The bytes were still reviewed, and this is the best-effort layer — CI is
     # the server-side guarantee.
+    # WHAT WAS REVIEWED, not what happens to be dirty. The first cut always enumerated the whole
+    # working tree — so under `--files <subset>` any OTHER file that was dirty at review time got
+    # its blob written into reviewed_blob=, and pre-commit-adversarial-gate.sh treats that list as
+    # a WHITELIST. Content no reviewer ever saw could then be staged and pass the content-binding
+    # gate: the exact bypass this feature exists to close, reintroduced by the recorder's scope.
+    # Reproduced with a mock provider (`--files A.txt`, B.txt dirty → both blobs recorded).
+    #
+    # So when the caller named the files, record those. Only the stdin/whole-diff path — where the
+    # input genuinely IS the working-tree diff — falls back to enumerating the tree.
     if _zar_top="$(git rev-parse --show-toplevel 2>/dev/null)"; then
       _zar_paths=()
+      if [[ "${INPUT_MODE:-}" == "files" && -n "${FILES:-}" ]]; then
+        for _zar_p in $FILES; do
+          [[ -n "$_zar_p" && -f "$_zar_p" ]] && _zar_paths+=("$_zar_p")
+        done
+      else
       while IFS= read -r -d '' _zar_p; do
         [[ -n "$_zar_p" && -f "$_zar_top/$_zar_p" ]] && _zar_paths+=("$_zar_top/$_zar_p")
       done < <( { git -C "$_zar_top" -c core.quotePath=false diff HEAD --name-only -z --diff-filter=ACMR 2>/dev/null
                   git -C "$_zar_top" -c core.quotePath=false ls-files --others --exclude-standard -z 2>/dev/null; } )
+      fi
       if [[ "${#_zar_paths[@]}" -gt 0 ]]; then
         # One call for all paths — N forks on a large changeset would show up as review latency.
         git hash-object -- "${_zar_paths[@]}" 2>/dev/null \
@@ -2177,8 +2196,10 @@ preserve_failure_evidence() {
   # tmpdir. Persisting it at the ambient umask would be a new, durable exposure.
   # `mkdir -m` sets the mode only on directories it CREATES — an evidence root left over from a
   # pre-0700 run would keep its looser mode forever, so tighten explicitly as well.
+  # shellcheck disable=SC2174  # the chmod on the next line is exactly the -p fix SC2174 asks for
   mkdir -m 700 -p "$evidence_root" 2>/dev/null || return 0
   chmod 700 "$evidence_root" 2>/dev/null || true
+  # shellcheck disable=SC2174
   mkdir -m 700 -p "$dest" 2>/dev/null || return 0
   chmod 700 "$dest" 2>/dev/null || true
   # `|| true` on both: only one of the two patterns matches in most runs, and an unmatched
@@ -2236,6 +2257,7 @@ trap cleanup EXIT
 # The deadline watchdog below also delivers TERM, so the marker is read BEFORE cleanup
 # removes the tmpdir — a self-inflicted deadline is a timeout (124), not an outside kill.
 trap 'cleanup; exit 130' INT
+_dl=0   # set by the TERM trap below; declared here so it is a known global
 trap '_dl=0; [[ -f "$DEADLINE_MARKER" ]] && _dl=1; cleanup; [[ "$_dl" -eq 1 ]] && exit 124; exit 143' TERM
 
 # ─── Whole-run deadline ─────────────────────────────────────────

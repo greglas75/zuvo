@@ -35,7 +35,7 @@ else fail "T3.1" "no <!-- RETRO --> block in retros.md"; fi
 
 start_test "T3.2 invalid --status exits non-zero and writes nothing"
 Z=$(_mkz)
-out=$(ZUVO_HOME="$Z" "$STUB" --status=BOGUS --skill=plan --project=demo 2>&1); rc=$?
+ZUVO_HOME="$Z" "$STUB" --status=BOGUS --skill=plan --project=demo >/dev/null 2>&1; rc=$?
 assert_ne 0 "$rc" "invalid status exits non-zero"
 if [ ! -s "$Z/retros.log" ]; then pass "no retros.log written on invalid status"
 else fail "T3.2" "retros.log written despite invalid status"; fi

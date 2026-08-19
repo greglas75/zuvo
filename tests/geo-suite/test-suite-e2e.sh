@@ -7,9 +7,10 @@ run_test() {
   echo "--- Running: $1 ---"
   if bash "$DIR/$1"; then
     echo "PASS: $1"
+    TOTAL_PASS=$((TOTAL_PASS + 1))
   else
     echo "FAIL: $1"
-    ((TOTAL_FAIL++))
+    TOTAL_FAIL=$((TOTAL_FAIL + 1))
   fi
 }
 
@@ -19,5 +20,6 @@ run_test test-geo-skills-contract.sh
 
 echo ""
 echo "=== GEO Suite Results ==="
+echo "Passed test files: $TOTAL_PASS"
 echo "Failed test files: $TOTAL_FAIL"
 if [ "$TOTAL_FAIL" -eq 0 ]; then echo "ALL PASSED"; else echo "SOME FAILED"; exit 1; fi

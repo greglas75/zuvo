@@ -640,7 +640,7 @@ STANDALONE_PLAN="$(mk m-standalone <<'EOF'
 EOF
 )"
 run "$INLINE_PLAN";     RC_INLINE=$RC;     OUT_INLINE="$OUT"
-run "$STANDALONE_PLAN"; RC_STANDALONE=$RC; OUT_STANDALONE="$OUT"
+run "$STANDALONE_PLAN"; RC_STANDALONE=$RC
 if [ "$RC_INLINE" -eq 1 ] && printf '%s' "$OUT_INLINE" | grep -q 'failure-strategy: Task 1 declares skip-and-continue'; then
   pass "(m) inline '· **Failure:**' sharing a line with **Dependencies:** is still read — depended-on skip-and-continue is caught"
 else

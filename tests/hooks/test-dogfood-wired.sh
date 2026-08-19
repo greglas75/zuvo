@@ -15,7 +15,7 @@ grep -q 'hooks/refactor-safety-gate.sh' "$ROOT/.githooks/pre-push" && ok "wires 
 echo "=== clone-simulation: a substantial unreviewed push is rejected ==="
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-mkdir -p "$TMP/c/.githooks" "$TMP/c/hooks"; cd "$TMP/c"
+mkdir -p "$TMP/c/.githooks" "$TMP/c/hooks"; cd "$TMP/c" || exit 1
 git init -q; git config user.email t@t; git config user.name t
 cp "$ROOT/.githooks/pre-push" .githooks/; chmod +x .githooks/*
 # stand-in pipeline-entry gate: a real one would block a substantial unreviewed range; assert the

@@ -45,11 +45,11 @@ gate_native() {
     return 0
   fi
 
-  local root db blocked=0 lref lsha rref rsha range rr base
+  local root db blocked=0 lref lsha rsha range rr base
   root="$(pg_repo_root 2>/dev/null)" || return 0       # no repo → fail-open
   db="$(pg_default_branch)"
 
-  while read -r lref lsha rref rsha; do
+  while read -r lref lsha _ rsha; do
     [ -n "${lref:-}" ] || continue
     case "$lsha" in *[!0-9a-f]*) continue ;; esac      # non-hex local sha → skip
     [ -z "${lsha//0/}" ] && continue                   # all-zero local sha = deleted ref → skip

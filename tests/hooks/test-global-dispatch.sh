@@ -30,7 +30,7 @@ newenv() {
     none) ;;   # no gate scripts at all (fail-open case)
   esac
   chmod +x "$HD"/*.sh 2>/dev/null
-  rm -rf "$TMP/r"; mkdir -p "$TMP/r"; cd "$TMP/r"
+  rm -rf "$TMP/r"; mkdir -p "$TMP/r"; cd "$TMP/r" || exit 1
   git init -q; git config user.email t@t; git config user.name t
   echo x > f; git add f; git commit -q -m base
 }
@@ -84,10 +84,10 @@ rc=$(printf '%s\n' "$REFLINE" | ZUVO_AI_RUN=1 ZUVO_ALLOW_ADHOC=1 "$HD/pre-push" 
 newenv recorder
 printf '#!/bin/sh\necho WT-LOCAL-FAIL >&2\nexit 7\n' > .git/hooks/pre-push; chmod +x .git/hooks/pre-push
 git branch -q wt-branch; git worktree add -q "$TMP/wt" wt-branch 2>/dev/null
-cd "$TMP/wt"
+cd "$TMP/wt" || exit 1
 err=$(printf '%s\n' "$REFLINE" | ZUVO_AI_RUN=1 "$HD/pre-push" 2>&1); rc=$?
 { [ $rc -ne 0 ] && printf '%s' "$err" | grep -q 'WT-LOCAL-FAIL'; } && ok "9 worktree: common-gitdir local hook found + propagates (exit $rc)" || bad "9 (rc=$rc err=$err)"
-cd "$TMP/r"; git worktree remove -f "$TMP/wt" 2>/dev/null
+cd "$TMP/r" || exit 1; git worktree remove -f "$TMP/wt" 2>/dev/null
 
 echo "=== pre-commit dispatcher (7 cases) ==="
 # helper: real refactor-safety-gate + lib into HD (pre-commit cases use the REAL work-gate)
@@ -170,7 +170,8 @@ if [ -s "$FD" ]; then
   printf '#!/bin/sh\nexit 0\n' > "$FH/post-commit"
   ln -s "$FH/hook-chain.sh" "$FH/pre-push"; ln -s "$FH/hook-chain.sh" "$FH/commit-msg"
   chainsum=$(cksum < "$FH/hook-chain.sh"); postsum=$(cksum < "$FH/post-commit")
-  ( ok(){ :; }; warn(){ :; }; ZUVO_DIR="$ROOT"; . "$FD"; install_git_dispatchers "$FH" ) >/dev/null 2>&1
+  # ZUVO_DIR is read by install_git_dispatchers, sourced from install.sh on the same line.
+  ( ok(){ :; }; warn(){ :; }; export ZUVO_DIR="$ROOT"; . "$FD"; install_git_dispatchers "$FH" ) >/dev/null 2>&1
   a_ok=1
   [ "$(cksum < "$FH/hook-chain.sh")" = "$chainsum" ] || a_ok=0        # chain uncorrupted
   [ "$(cksum < "$FH/post-commit")" = "$postsum" ] || a_ok=0           # post-commit untouched
@@ -181,7 +182,7 @@ if [ -s "$FD" ]; then
   { [ ! -L "$FH/pre-push" ] && [ ! -L "$FH/pre-commit" ] && cmp -s "$FH/pre-push" "$ROOT/hooks/git-dispatch/pre-push" && cmp -s "$FH/pre-commit" "$ROOT/hooks/git-dispatch/pre-commit" && [ -x "$FH/pre-push" ]; } \
     && ok "i2 dispatchers = regular files == tracked sources" || bad "i2"
   # (i3) C2: no repo .git/hooks touched by install
-  rm -rf "$TMP/c2"; mkdir -p "$TMP/c2"; cd "$TMP/c2"; git init -q
+  rm -rf "$TMP/c2"; mkdir -p "$TMP/c2"; cd "$TMP/c2" || exit 1; git init -q
   before=$(ls .git/hooks | cksum)
   ( ok(){ :; }; warn(){ :; }; ZUVO_DIR="$ROOT"; . "$FD"; install_git_dispatchers "$FH" ) >/dev/null 2>&1
   [ "$(ls .git/hooks | cksum)" = "$before" ] && ok "i3 repo .git/hooks untouched (C2)" || bad "i3"

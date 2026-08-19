@@ -40,7 +40,6 @@ INCLUDE="shared/includes/test-quality-gate.md"
 LOAD_RE='shared/includes/test-quality-gate\.md`?[[:space:]]*(--|\(|:)'
 # A lazy entry whose line also names the phase means the include is read AT the
 # point of use, so the local repetition in (c) is redundant there.
-LAZY_RE='Phase[[:space:]]*[0-9.]+[^\n]*shared/includes/test-quality-gate\.md'
 RULE='Dispatch is already authorized'
 
 fail=0
@@ -71,8 +70,9 @@ done
 # (a) the premise — if the tree scan finds almost nothing, every per-skill
 #     assertion below passes vacuously and this file becomes a decoration.
 n=$(printf '%s\n' $mandating | tr ' ' '\n' | grep -c . || true)
-[ "${n:-0}" -ge 30 ]
-check "(a) at least 30 skills mandate delegation (found ${n:-0}) — premise not stale" $?
+# rc is set without reading $?, which the label below is one `$(…)` away from clobbering.
+rc=0; [ "${n:-0}" -ge 30 ] || rc=1
+check "(a) at least 30 skills mandate delegation (found ${n:-0}) — premise not stale" "$rc"
 
 # (b) THE CLASS: every delegating skill carries the rule in its own text. Counted
 #     rather than printed per-skill so the output stays readable at ~47 skills;
@@ -81,8 +81,8 @@ missing=""
 for s in $mandating; do
   grep -q "$RULE" "$ROOT/skills/$s/SKILL.md" || missing="$missing $s"
 done
-[ -z "$missing" ]
-check "(b) all $n delegating skills carry the dispatch-authorization rule —${missing:- none missing}" $?
+rc=0; [ -z "$missing" ] || rc=1
+check "(b) all $n delegating skills carry the dispatch-authorization rule —${missing:- none missing}" "$rc"
 
 # (c) the test-quality gate keeps its stricter, older contract: the include must
 #     be a LOAD DECLARATION, not a prose mention, in every skill that mandates it.

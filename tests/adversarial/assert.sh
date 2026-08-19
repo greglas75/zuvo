@@ -40,6 +40,11 @@ assert_contains() {
   fi
 }
 
+# Status of a plain condition as a value. `[ … ]` is a command, so `$?` after it is correct —
+# but reading it inline (`"$(cond; echo $?)"`) is one message interpolation away from silently
+# reporting a subshell's status instead. Capturing here keeps the call sites honest (SC2319).
+rc_of() { "$@" >/dev/null 2>&1; echo $?; }
+
 assert_exit_code() {
   local expected="$1" actual="$2" label="${3:-exit code}"
   if [[ "$expected" == "$actual" ]]; then

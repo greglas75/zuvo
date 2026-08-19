@@ -10,7 +10,7 @@ AR="$ROOT/scripts/adversarial-review.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 fails=0; ok(){ echo "  ✓ $1"; }; bad(){ echo "  ✗ $1"; fails=$((fails+1)); }
 export ZUVO_HOME="$TMP/zh"; mkdir -p "$ZUVO_HOME"
-repo(){ rm -rf "$TMP/r"; mkdir -p "$TMP/r"; cd "$TMP/r"; git init -q; }
+repo(){ rm -rf "$TMP/r"; mkdir -p "$TMP/r"; cd "$TMP/r" || exit 1; git init -q; }
 # run one --mode plan pass; --single keeps it cheap; empty stdin returns fast; echo exit code
 pass(){ echo "plan" | ZUVO_PLAN_ROUND_BUDGET="${1:-8}" ZUVO_PLAN_BUDGET_WINDOW="${2:-1800}" \
         timeout 8 bash "$AR" --mode plan --single >/dev/null 2>&1; echo $?; }
@@ -38,9 +38,9 @@ printf '2 100\n' > "$ZUVO_HOME/plan-budget/$key"        # last=epoch 100 (long a
 echo "=== per-repo isolation ==="
 repo; pass 1 >/dev/null                                # repo A: at budget 1
 A="$TMP/r"
-rm -rf "$TMP/r2"; mkdir -p "$TMP/r2"; cd "$TMP/r2"; git init -q
+rm -rf "$TMP/r2"; mkdir -p "$TMP/r2"; cd "$TMP/r2" || exit 1; git init -q
 [ "$(pass 1)" -ne 7 ] && ok "a different repo has its own budget" || bad "budget bled across repos"
-cd "$A"; [ "$(pass 1)" -eq 7 ] && ok "original repo still at its budget" || bad "repo A budget lost"
+cd "$A" || exit 1; [ "$(pass 1)" -eq 7 ] && ok "original repo still at its budget" || bad "repo A budget lost"
 
 echo "=== escape + scope ==="
 repo; pass 1 >/dev/null
@@ -58,7 +58,7 @@ echo "=== race safety: parallel passes never UNDER-count (the CRITICAL) ==="
 # the safe direction for a circuit-breaker.)
 repo
 rc="$TMP/race-rc"; : > "$rc"
-for i in 1 2 3 4 5 6 7 8; do
+for _ in 1 2 3 4 5 6 7 8; do
   ( r="$(pass 4)"; echo "$r" >> "$rc" ) &
 done
 wait

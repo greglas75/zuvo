@@ -16,23 +16,23 @@ _o=""; _oc(){ for d in $_o; do rm -rf "$d" 2>/dev/null; done; }; trap _oc EXIT I
 _z(){ local d; d=$(mktemp -d); _o="$_o $d"; printf '%s' "$d"; }
 
 start_test "both hook scripts exist and are executable"
-assert_exit_code 0 "$([ -x "$HB" ]; echo $?)" "zuvo-heartbeat.sh executable"
-assert_exit_code 0 "$([ -x "$TW" ]; echo $?)" "zuvo-todo-watchdog.sh executable"
+assert_exit_code 0 "$(rc_of test -x "$HB")" "zuvo-heartbeat.sh executable"
+assert_exit_code 0 "$(rc_of test -x "$TW")" "zuvo-todo-watchdog.sh executable"
 
 start_test "heartbeat touches the per-session beat on a normal tool call"
 Z=$(_z)
 printf '{"session_id":"S1","tool_name":"Bash","tool_input":{"command":"ls"}}' | ZUVO_HOME="$Z" bash "$HB"
-assert_exit_code 0 "$([ -f "$Z/heartbeats/S1.beat" ]; echo $?)" "beat file created"
+assert_exit_code 0 "$(rc_of test -f "$Z/heartbeats/S1.beat")" "beat file created"
 
 start_test "heartbeat does NOT touch the beat for the watchdog's own poll"
 Z=$(_z)
 printf '{"session_id":"S1","tool_name":"Bash","tool_input":{"command":"/x/zuvo-watchdog-check b 150"}}' | ZUVO_HOME="$Z" bash "$HB"
-assert_exit_code 1 "$([ -f "$Z/heartbeats/S1.beat" ]; echo $?)" "beat NOT created for poll command"
+assert_exit_code 1 "$(rc_of test -f "$Z/heartbeats/S1.beat")" "beat NOT created for poll command"
 
 start_test "heartbeat is a no-op without a session id"
 Z=$(_z)
 printf '{"tool_name":"Bash","tool_input":{"command":"ls"}}' | ZUVO_HOME="$Z" bash "$HB"
-assert_exit_code 1 "$([ -d "$Z/heartbeats" ] && [ -n "$(ls -A "$Z/heartbeats" 2>/dev/null)" ]; echo $?)" "no beat without session_id"
+assert_exit_code 1 "$(rc_of test -n "$(ls -A "$Z/heartbeats" 2>/dev/null)")" "no beat without session_id"
 
 start_test "todo hook counts only OPEN todos (completed excluded)"
 Z=$(_z)
@@ -64,9 +64,9 @@ assert_eq "" "$OUT3" "no arm injection when nothing is open"
 start_test "armed flag clears on completion → a NEW batch in the same session re-arms"
 Z=$(_z)
 printf '{"session_id":"S7","tool_name":"TodoWrite","tool_input":{"todos":[{"status":"pending"}]}}' | ZUVO_HOME="$Z" bash "$TW" >/dev/null
-assert_exit_code 0 "$([ -f "$Z/watchdogs/S7.armed" ]; echo $?)" "batch A armed"
+assert_exit_code 0 "$(rc_of test -f "$Z/watchdogs/S7.armed")" "batch A armed"
 printf '{"session_id":"S7","tool_name":"TodoWrite","tool_input":{"todos":[{"status":"completed"}]}}' | ZUVO_HOME="$Z" bash "$TW" >/dev/null
-assert_exit_code 1 "$([ -f "$Z/watchdogs/S7.armed" ]; echo $?)" "armed flag cleared when all completed"
+assert_exit_code 1 "$(rc_of test -f "$Z/watchdogs/S7.armed")" "armed flag cleared when all completed"
 OUTB=$(printf '{"session_id":"S7","tool_name":"TodoWrite","tool_input":{"todos":[{"status":"in_progress"}]}}' | ZUVO_HOME="$Z" bash "$TW")
 assert_exit_code 0 "$(printf '%s' "$OUTB" | jq -e '.hookSpecificOutput.additionalContext' >/dev/null 2>&1; echo $?)" "batch B re-injects the arm instruction"
 

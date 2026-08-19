@@ -19,8 +19,8 @@ _z(){ local d; d=$(mktemp -d); _o="$_o $d"; printf '%s' "$d"; }
 export ZUVO_REWAKE_BACKOFF_RL=0 ZUVO_REWAKE_BACKOFF_SE=0 ZUVO_REWAKE_BACKOFF_OTHER=0
 
 start_test "both rewake hook scripts exist and are executable"
-assert_exit_code 0 "$([ -x "$RWF" ]; echo $?)" "zuvo-rewake-on-failure.sh executable"
-assert_exit_code 0 "$([ -x "$RST" ]; echo $?)" "zuvo-rewake-reset.sh executable"
+assert_exit_code 0 "$(rc_of test -x "$RWF")" "zuvo-rewake-on-failure.sh executable"
+assert_exit_code 0 "$(rc_of test -x "$RST")" "zuvo-rewake-reset.sh executable"
 
 start_test "rate_limit death → exit 2 (wake) + count=1 + RESUME on stderr"
 Z=$(_z)
@@ -39,7 +39,7 @@ start_test "Stop hook clears the counter on a clean turn end"
 Z=$(_z)
 printf '{"session_id":"X1","error_type":"rate_limit"}' | ZUVO_HOME="$Z" bash "$RWF" >/dev/null 2>&1
 printf '{"session_id":"X1"}' | ZUVO_HOME="$Z" bash "$RST"
-assert_exit_code 1 "$([ -f "$Z/rewake/X1.count" ]; echo $?)" "counter file removed after clean Stop"
+assert_exit_code 1 "$(rc_of test -f "$Z/rewake/X1.count")" "counter file removed after clean Stop"
 
 start_test "at the cap → stop auto-retrying (final wake telling the user)"
 Z=$(_z); mkdir -p "$Z/rewake"; printf '20' > "$Z/rewake/X2.count"

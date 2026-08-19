@@ -9,7 +9,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 fails=0; ok(){ echo "  ✓ $1"; }; bad(){ echo "  ✗ $1"; fails=$((fails+1)); }
 export ZUVO_HOME="$TMP/zuvohome"; mkdir -p "$ZUVO_HOME/run-markers"
 
-newrepo(){ rm -rf "$TMP/r"; mkdir -p "$TMP/r/zuvo/plans" "$TMP/r/docs/specs"; cd "$TMP/r"
+newrepo(){ rm -rf "$TMP/r"; mkdir -p "$TMP/r/zuvo/plans" "$TMP/r/docs/specs"; cd "$TMP/r" || exit 1
   git init -q; git config user.email t@t; git config user.name t
   printf '# plan\n\n### Task 1\n**Files:** app.ts\n' > docs/specs/p-plan.md; }
 run(){ sh "$PHASE" "$@" 2>&1; }
@@ -93,7 +93,7 @@ mkdir -p "$TMP/fleet/a" "$TMP/fleet/b"
   && printf '# plan\n\n### T\n**Files:** x.ts\n' > docs/specs/p.md \
   && printf -- '---\nplan: docs/specs/p.md\nstatus: pending\n---\n' > zuvo/plans/active-plan.md )
 ( cd "$TMP/fleet/b" && git init -q && mkdir -p zuvo/plans && printf 'junk\n' > zuvo/plans/active-plan.md )
-cd "$TMP/r"
+cd "$TMP/r" || exit 1
 out=$(ZUVO_PHASE_ROOTS="$TMP/fleet/*" run doctor --all)
 printf '%s' "$out" | grep -q 'armed: 1' && ok "sweep counts the armed repo" || bad "sweep armed count"
 printf '%s' "$out" | grep -q 'blind: 1' && ok "sweep counts the blind repo" || bad "sweep blind count"

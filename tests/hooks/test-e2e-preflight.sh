@@ -779,6 +779,8 @@ sig_src=$(awk '/^_upsert_on_signal\(\) \{/,/^\}/' "$HELPER")
 if [ -n "$sig_src" ]; then
   ( eval "$sig_src"; _lock_release() { :; }; UPSERT_DONE=1; _upsert_on_signal ) >/dev/null 2>&1
   rc_done=$?
+  # UPSERT_DONE is read by _upsert_on_signal, which arrives via the eval above.
+  # shellcheck disable=SC2034
   ( eval "$sig_src"; _lock_release() { :; }; UPSERT_DONE=0; _upsert_on_signal ) >/dev/null 2>&1
   rc_pending=$?
   if [ "$rc_done" -eq 0 ] && [ "$rc_pending" -eq 2 ]; then
@@ -797,7 +799,7 @@ fi
 #       so the original fixed 1-25ms grid never reached the window at all).
 R_CAL="$REGDIR/calibrate.md"
 cal_t0=$(date +%s)
-for i in 1 2 3 4 5 6; do
+for _ in 1 2 3 4 5 6; do
   bash "$HELPER" coverage-upsert --file "$R_CAL" --flow cal --state GENERATED >/dev/null 2>&1
 done
 cal_t1=$(date +%s)

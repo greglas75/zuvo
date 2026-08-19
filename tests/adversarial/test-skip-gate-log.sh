@@ -43,7 +43,7 @@ fi
 
 start_test "T4.h skip-retro-gate.log rotates (header + last 100)"
 Z=$(_z)
-for i in $(seq 1 105); do
+for _ in $(seq 1 105); do
   ZUVO_HOME="$Z" ZUVO_SKIP_RETRO_GATE=1 bash -c 'printf "%b\n" "'"$RUN"'" | "'"$ADV"'"' >/dev/null 2>&1
 done
 total=$(grep -c '^SKIP:' "$Z/skip-retro-gate.log")

@@ -14,17 +14,22 @@
 #
 # TWO gates, because they are different promises:
 #   ERRORS   — hard zero. These are parse failures and real bugs; there were 3 and they are fixed.
-#   WARNINGS — a RATCHET against the count below. 102 exist today (SC2086 unquoted expansion,
-#              SC2164 unchecked cd, SC2034 unused). Fixing them all at once would be a huge
-#              untested diff across 273 files; a ratchet stops the debt GROWING while it is paid
-#              down, which is the only honest way to adopt a linter on an existing codebase.
+#   WARNINGS — a RATCHET against the count below. It started at 102 and the debt is now PAID: the
+#              ratchet reads 0, so this gate has become a hard zero on warnings too. Getting there
+#              turned up four real defects that lint had been carrying as noise — a `((TOTAL_FAIL++))`
+#              whose 0 -> 1 step exits 1 under `set -e` and aborted the geo suite before it could
+#              report a failure; 34 unchecked `cd`s in fixture setup, several followed by `git init`
+#              and file writes that would have landed in the caller's directory; a `mkdir -m 700`
+#              whose mode never reached a cache dir surviving from a pre-0700 release; and three
+#              tests that computed a result and never asserted on it.
 #
-# The count is stated here, in the open, rather than hidden in a baseline file nobody reads. When
-# you fix warnings, LOWER it — the test tells you the new number.
+# The count is stated here, in the open, rather than hidden in a baseline file nobody reads. It is
+# 0 now, so the rule is simply: do not add a warning. If a construct is deliberate, annotate it
+# with `# shellcheck disable=SCxxxx` AND the reason — never raise this number.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
-MAX_WARNINGS=101
+MAX_WARNINGS=0
 
 PASS=0; FAIL=0
 # A misspelled helper is not caught by `set -u`: bash prints "command not found", returns 127, and

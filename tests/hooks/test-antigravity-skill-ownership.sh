@@ -82,7 +82,7 @@ if [ "$SKIP_BEHAVIOUR" -eq 0 ]; then
   # --- Run 1: no markers anywhere yet. Adopt by name ONCE (the previous behaviour, no
   #     worse), and stamp markers so every later run is provenance-checked.
   mkdir -p "$AGS/mine-only"; echo "MINE" > "$AGS/mine-only/SKILL.md"
-  out1="$(run_install)"
+  run_install >/dev/null 2>&1
   [ -d "$AGS/mine-only" ] \
     && pass "run 1: a non-colliding third-party skill is untouched" \
     || bad  "run 1: deleted a third-party skill it never installed (mine-only)"

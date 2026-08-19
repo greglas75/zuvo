@@ -164,7 +164,7 @@ runs_append() {
   fi
   trap '_lock_release' EXIT INT TERM
   printf '%s\n' "$RUN_LINE" >> "$RUNS_LOG"
-  rm -f "$ZUVO_HOME"/run-markers/"$SKILL-$PROJECT"-*.marker 2>/dev/null || true
+  rm -f "$ZUVO_HOME/run-markers/$SKILL-$PROJECT"-*.marker 2>/dev/null || true
   _lock_release; trap - EXIT INT TERM
 }
 # Record a parseable, rotated SKIP: line (consumed by zuvo:context-audit).

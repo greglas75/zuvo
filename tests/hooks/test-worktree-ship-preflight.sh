@@ -36,7 +36,7 @@ else
   ok "preflight (c) extracted from the skill"
 fi
 
-mkrepo(){ rm -rf "$TMP/r" "$TMP/rem"; mkdir -p "$TMP/r"; cd "$TMP/r"
+mkrepo(){ rm -rf "$TMP/r" "$TMP/rem"; mkdir -p "$TMP/r"; cd "$TMP/r" || exit 1
   git init -q; git config user.email t@t; git config user.name t
   echo a > f; git add f; git commit -qm base
   git init -q --bare "$TMP/rem"; git remote add origin "$TMP/rem"
@@ -81,7 +81,7 @@ else
   ok "Step 4.5 check extracted from the skill"
 fi
 
-cd "$TMP"; mkdir -p dep && cd dep
+cd "$TMP" || exit 1; mkdir -p dep && cd dep || exit 1
 # no lockfile at all -> UNVERIFIED, and it must SAY so rather than implying OK
 case "$(sh -c "$DEPCHECK" 2>&1)" in *UNVERIFIED*) ok "no lockfile: UNVERIFIED (not a silent OK)" ;;
   *) bad "no lockfile did not report UNVERIFIED" ;; esac
@@ -101,7 +101,7 @@ fi
 # ORDER, not alphabet. `ls a b c` SORTS its output, so `ls package-lock.json Gemfile | head -1`
 # returns Gemfile — a JS repo with a Gemfile for docs would have run `bundle check` and declared
 # the JS tree verified. Verified by execution, because this shipped and the first test missed it.
-cd "$TMP"; rm -rf multi; mkdir -p multi && cd multi
+cd "$TMP" || exit 1; rm -rf multi; mkdir -p multi && cd multi || exit 1
 touch Gemfile package-lock.json
 printf '{"name":"t","version":"1.0.0","dependencies":{"left-pad":"^1.3.0"}}' > package.json
 case "$(sh -c "$DEPCHECK" 2>&1)" in
@@ -111,7 +111,7 @@ case "$(sh -c "$DEPCHECK" 2>&1)" in
 grep -q 'run the check for EACH ecosystem' "$WT" \
   && ok "a monorepo is told to verify every ecosystem, not just the first" \
   || bad "one OK could silently stand for several ecosystems"
-cd "$ROOT"
+cd "$ROOT" || exit 1
 
 # the verdict must reach the user-facing output block, or it is a check nobody sees
 grep -q 'Deps:' "$WT" && ok "CREATE output carries a Deps: line" || bad "the verdict never reaches the output block"

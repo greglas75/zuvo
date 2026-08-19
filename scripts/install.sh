@@ -112,13 +112,20 @@ cp_warn() {
 # ONE check before any build rather than a filter in each of the five copy loops — a guard repeated
 # five times is five places for the sixth copy path to be forgotten. No real skill is named `tmp-*`,
 # so it cannot false-positive; failing loudly beats installing debris quietly.
+# `return` when SOURCED, `exit` when RUN. This block sits above the main-run guard (it must, so no
+# build path can start before it), and a bare `exit 1` therefore killed the SOURCING shell —
+# verified: `source scripts/install.sh` with debris present terminated the caller, and
+# tests/hooks/test-install-copy-verification.sh is itself a sourcing caller, so the guard would
+# have taken down the very suite that checks it. The file's own header promises it is source-able.
+_zi_die() { if [ "${BASH_SOURCE[0]}" != "${0}" ]; then return 1; else exit 1; fi; }
 if compgen -G "$ZUVO_DIR/skills/tmp-*" >/dev/null 2>&1; then
   fail "refusing to install: test debris in skills/"
   for _d in "$ZUVO_DIR"/skills/tmp-*; do echo "      $_d"; done
   echo "  A test fixture is sitting in the source tree. Installing would copy it into every"
   echo "  target and leave it there. Remove it, then re-run:"
   echo "      rm -rf $ZUVO_DIR/skills/tmp-*"
-  exit 1
+  _zi_die
+  return 1 2>/dev/null || exit 1
 fi
 
 # verify_copied <label> <src_dir> <dst_dir> <name> [<name>…]
@@ -187,7 +194,7 @@ install_git_dispatchers() {
     # hook is absent mid-install (TOCTOU fail-open) and a symlink target is never written
     # through (mv replaces the link itself). rm -rf first only for the stray-DIRECTORY edge
     # (mv cannot replace a dir). cp rc checked so a failed copy never half-installs.
-    [ -d "$hooks_dir/$d" ] && rm -rf "$hooks_dir/$d"
+    [ -d "$hooks_dir/$d" ] && rm -rf "${hooks_dir:?}/$d"
     cp "$ZUVO_DIR/hooks/git-dispatch/$d" "$hooks_dir/.$d.tmp" || { fail "dispatcher copy failed: $d"; return 1; }
     chmod +x "$hooks_dir/.$d.tmp"
     mv -f "$hooks_dir/.$d.tmp" "$hooks_dir/$d" || { fail "dispatcher install failed: $d"; rm -f "$hooks_dir/.$d.tmp"; return 1; }
@@ -481,7 +488,12 @@ if changed:
   # lets that session run until the user restarts it onto the current one. Truly-stale
   # dirs (2+ behind) still get cleaned to avoid version PATH confusion.
   local keep_versions
-  keep_versions=$(ls -d "$CACHE_BASE"/*/ 2>/dev/null | xargs -n1 basename 2>/dev/null | sort -V | tail -2)
+  local _v_names=""
+  for _v in "$CACHE_BASE"/*/; do
+    [ -d "$_v" ] || continue
+    _v_names="$_v_names$(basename "$_v")\n"
+  done
+  keep_versions=$(printf '%b' "$_v_names" | grep -v '^$' | sort -V | tail -2)
   for old_dir in "$CACHE_BASE"/*/; do
     local dir_name
     dir_name=$(basename "$old_dir")
@@ -1435,7 +1447,7 @@ with os.fdopen(fd, 'w') as f:
     f.write('\n')
 os.rename(tmp, settings_path)
 print(f'  \u2713 Hooks merged into settings.json (removed {removed} stale zuvo entries, added {added} canonical)')
-" "$DIST/hooks.json" "$HOME/.gemini/settings.json" 2>/dev/null || warn "settings.json merge failed"
+" "$DIST/hooks.json" "$gemini_settings" 2>/dev/null || warn "settings.json merge failed"
   fi
 
   ok "Antigravity updated"

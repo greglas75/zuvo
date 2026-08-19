@@ -161,7 +161,7 @@ lint_artifact() {
 }
 
 do_check() {
-  local root arts found=0
+  local root found=0
   root="$(resolve_root "${SRC:-.}")" || { echo "Not a git checkout: ${SRC:-.}" >&2; exit 2; }
   for art in "$root"/memory/reviews/*.md; do
     [ -e "$art" ] || continue

@@ -21,6 +21,7 @@ out_excluded=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail" \
 ec_excluded=$?
 providers_excluded=$(echo "$out_excluded" | jq -r '.providers_used // .providers_attempted // .providers_available' 2>/dev/null)
 assert_contains "$providers_baseline" "mock-success"  "baseline used mock-success"
+assert_exit_code 2 "$ec_excluded" "only mock-fail left → all-failed exit 2"
 # After excluding mock-success, only mock-fail remains — it fails → status=error
 [[ "$providers_excluded" != *"mock-success"* ]] && pass "exclusion removed mock-success" || fail "exclusion" "providers_excluded=$providers_excluded"
 

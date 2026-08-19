@@ -48,8 +48,8 @@ i=0; while [ "$i" -lt 10 ]; do
   printf '%s' "$P" | HOME="$H" bash "$LOGGER"; i=$((i+1))
 done
 assert_eq 10 "$(wc -l < "$LOG" | tr -d ' ')" "10 lines for 10 invocations"
-valid=$(jq -e . "$LOG" >/dev/null 2>&1 && echo ok || echo bad)
-# jq -e over the whole file: with -c one-object-per-line, slurp-less read parses each.
-allvalid=$(awk 'END{print NR}' "$LOG"); bad=0
+# NOT `jq -e` over the whole file: with -c one-object-per-line that parses nothing but the
+# first record. Each line has to be read on its own.
+bad=0
 while IFS= read -r ln; do printf '%s' "$ln" | jq -e . >/dev/null 2>&1 || bad=$((bad+1)); done < "$LOG"
 assert_eq 0 "$bad" "every one of the 10 lines parses (no shattered records)"

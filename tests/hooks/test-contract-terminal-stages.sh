@@ -21,7 +21,7 @@ fails=0; ok(){ echo "  ✓ $1"; }; bad(){ echo "  ✗ $1"; fails=$((fails+1)); }
 
 probe() { # probe <stage> -> rc of the scope guard on an UNRELATED file
   local stage="$1" t; t=$(mktemp -d)
-  ( cd "$t"; git init -q .; git config user.email t@t; git config user.name t
+  ( cd "$t" || exit 1; git init -q .; git config user.email t@t; git config user.name t
     mkdir -p zuvo/contracts src; : > src/a.ts; : > src/unrelated.ts
     printf '{"stage":"%s","scope_fence":["src/a.ts"],"blind_audit":"clean:strict","adversarial":"clean","characterization":"green"}\n' \
       "$stage" > zuvo/contracts/refactor-x.json

@@ -12,7 +12,12 @@ echo "=== Zuvo Skill SEO Page Validator ==="
 echo ""
 
 # 1. Count files (excluding _schema.yaml)
-ACTUAL=$(ls "$SKILLS_DIR"/*.yaml 2>/dev/null | grep -v _schema | wc -l | tr -d ' ')
+ACTUAL=0
+for y in "$SKILLS_DIR"/*.yaml; do
+  [ -e "$y" ] || continue
+  case "$(basename "$y")" in _schema*) continue ;; esac
+  ACTUAL=$((ACTUAL + 1))
+done
 if [ "$ACTUAL" != "$EXPECTED_COUNT" ]; then
   echo "FAIL: Expected $EXPECTED_COUNT YAML files, found $ACTUAL"
   ERRORS=$((ERRORS + 1))

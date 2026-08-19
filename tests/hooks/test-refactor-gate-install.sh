@@ -12,7 +12,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 fails=0
 ok(){ echo "  ✓ $1"; }
 bad(){ echo "  ✗ $1"; fails=$((fails+1)); }
-newrepo(){ rm -rf "$TMP/r"; mkdir -p "$TMP/r"; cd "$TMP/r"; git init -q; git config user.email t@t; git config user.name t; }
+newrepo(){ rm -rf "$TMP/r"; mkdir -p "$TMP/r"; cd "$TMP/r" || exit 1; git init -q; git config user.email t@t; git config user.name t; }
 
 echo "=== refactor-gate self-install (hermetic) ==="
 

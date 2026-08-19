@@ -21,12 +21,14 @@ while [ -L "$SELF" ] && [ $n -lt 8 ]; do
 done
 # depth cap hit with SELF still a link -> gates may not resolve; fail-open BY DESIGN but never silently
 [ -L "$SELF" ] && echo "zuvo dispatch: symlink chain >8 for $0 — gate dir may not resolve (fail-open)" >&2
+# shellcheck disable=SC1007  # `CDPATH= cd` is a one-command env override, not an empty assignment
 D=$(CDPATH= cd -- "$(dirname "$SELF")" && pwd) || exit 0   # CDPATH= : poisoning must not redirect the gate dir (fail-open would bypass)
 HOOK_NAME=$(basename "$0")
 R=$(git rev-parse --show-toplevel 2>/dev/null) || R=""
 input=$(cat)                                   # consumed once; replayed to local hook + gates
 feed() { [ -n "$input" ] && printf '%s\n' "$input"; }   # empty input -> emit NOTHING (no synthetic ref)
 # portable physical-path resolver (readlink -f is not universal); empty on error (fail-open)
+# shellcheck disable=SC1007
 pp() { CDPATH= cd -- "$(dirname "$1")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$1")"; }
 rc=0
 

@@ -24,9 +24,7 @@ BACKLOG="$MEMORY_DIR/review-backlog.md"
 HASH=$(git rev-parse --short HEAD 2>/dev/null) || exit 0
 FULL_HASH=$(git rev-parse HEAD 2>/dev/null) || exit 0
 MESSAGE=$(git log -1 --format='%s' HEAD 2>/dev/null) || exit 0
-AUTHOR=$(git log -1 --format='%an' HEAD 2>/dev/null) || exit 0
 DATE=$(git log -1 --format='%ci' HEAD 2>/dev/null | cut -d' ' -f1) || exit 0
-STAT=$(git diff --stat HEAD~1..HEAD 2>/dev/null | tail -1 | sed 's/^ *//' ) || STAT=""
 
 # Create backlog file if it doesn't exist
 if [ ! -f "$BACKLOG" ]; then

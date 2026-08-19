@@ -11,7 +11,7 @@ fails=0
 ok(){ echo "  ✓ $1"; }
 bad(){ echo "  ✗ $1"; fails=$((fails+1)); }
 
-newrepo(){ rm -rf "$TMP/r"; mkdir -p "$TMP/r/zuvo/contracts"; cd "$TMP/r"
+newrepo(){ rm -rf "$TMP/r"; mkdir -p "$TMP/r/zuvo/contracts"; cd "$TMP/r" || exit 1
   git init -q; git config user.email t@t; git config user.name t; }
 install_hook(){ # $1 = gate path to bake
   cat > .git/hooks/pre-commit <<H
@@ -112,7 +112,7 @@ br=$(git branch --show-current)
 contract app.ts skipped clean
 echo y >> app.ts; git add app.ts
 ZUVO_AI_RUN=1 git commit -q --no-verify -m bypass >/dev/null 2>&1   # skips pre-commit
-out=$(ZUVO_AI_RUN=1 git push origin "$br" 2>&1); rc=$?
+ZUVO_AI_RUN=1 git push origin "$br" >/dev/null 2>&1; rc=$?
 [ "$rc" -ne 0 ] && ok "pre-push blocks --no-verify-bypassed refactor commit" || bad "pre-push backstop (push succeeded)"
 
 echo "=== regression: regex-metachar path gated (grep -F, not BRE) ==="

@@ -30,15 +30,15 @@ assert_contains "$err" "single_provider_only" "stderr contains single_provider_o
 # ─── Case 3: 1 provider + --single → exit 0 (unchanged) ─────────────────────
 
 start_test "D3.3 1 provider + --single → exit 0 (no refusal)"
-out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-success" \
-  bash "$ADV" --single --json --files "$EMPTY" 2>/dev/null)
+ZUVO_REVIEW_TEST_PROVIDERS="mock-success" \
+  bash "$ADV" --single --json --files "$EMPTY" >/dev/null 2>&1
 ec=$?
 assert_exit_code "0" "$ec" "exit code (--single unaffected)"
 
 # ─── Case 4: 1 provider + --provider mock-success → exit 0 ──────────────────
 
 start_test "D3.4 1 provider + --provider mock-success → exit 0 (explicit)"
-out=$(bash "$ADV" --provider mock-success --json --files "$EMPTY" 2>/dev/null)
+bash "$ADV" --provider mock-success --json --files "$EMPTY" >/dev/null 2>&1
 ec=$?
 assert_exit_code "0" "$ec" "exit code (explicit --provider unaffected)"
 

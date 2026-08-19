@@ -17,7 +17,8 @@ SCHEMA="$REPO_ROOT/shared/includes/lead-output-schema.md"
 
 fail() { echo "FAIL: $1"; exit 1; }
 
-# 1. Fixture presence
+# 1. Contract + fixture presence
+[ -f "$SCHEMA" ] || fail "missing lead output schema at $SCHEMA"
 for f in acme-saas.html beta-fintech.html gamma-hr.html delta-privacy.html epsilon-role.html serp-fixtures.json expected-output.json; do
   [ -f "$FIX/$f" ] || fail "missing fixture $f"
 done
@@ -56,7 +57,7 @@ grep -Eq '@' "$FIX/delta-privacy.html" && fail "delta-privacy.html should have n
 
 # 10. No leftover .tmp/.lock from previous failed runs
 [ -e "$FIX/.lock" ] && fail "stale .lock/ in fixture dir"
-ls "$FIX"/*.tmp 2>/dev/null | grep -q . && fail ".tmp files leftover in fixture dir"
+for t in "$FIX"/*.tmp; do [ -e "$t" ] && fail ".tmp files leftover in fixture dir"; done
 
 echo "PASS"
 exit 0

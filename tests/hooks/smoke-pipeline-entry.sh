@@ -52,7 +52,6 @@ mkdir -p docs; for i in $(seq 1 200); do echo "l$i" >> docs/big.md; done
 git add -A; git commit -qm docs; DOCS=$(git rev-parse HEAD)
 git checkout -q "$FHEAD" 2>/dev/null; git checkout -q -B feature "$FHEAD"
 
-ZEROS=0000000000000000000000000000000000000000
 prepush_native() { printf 'refs/heads/feature %s refs/heads/feature %s\n' "$1" "$2"; }
 
 echo "── SMOKE: pipeline-entry end-to-end (HOME=$SMOKE_HOME) ──"

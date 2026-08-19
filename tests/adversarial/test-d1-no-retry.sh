@@ -12,7 +12,6 @@ export PATH="$MOCKS:$PATH"
 # ─── Case 1 (AC1): single-provider timeout → exit 124 within budget ────────
 
 start_test "D1.1 AC1 single-timeout → exit 124 within PROVIDER_TIMEOUT+5s"
-ZUVO_REVIEW_TIMEOUT=2
 start=$(date +%s)
 ZUVO_REVIEW_TEST_PROVIDERS="mock-timeout" ZUVO_REVIEW_TIMEOUT=2 \
   bash "$ADV" --json --files "$EMPTY" >/dev/null 2>&1

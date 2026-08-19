@@ -8,7 +8,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 fails=0; ok(){ echo "  ✓ $1"; }; bad(){ echo "  ✗ $1"; fails=$((fails+1)); }
 export ZUVO_DIR="$TMP" ZUVO_RUNLOG_CURSOR="$TMP/cur"
 # module-load helper: run collect + selection logic in-process (no network)
-sel(){ python3 - "$@" <<'PY'
+sel(){ python3 - <<'PY'
 import os, importlib.util, sys, json
 spec=importlib.util.spec_from_file_location('rc', os.environ['RC_PATH'])
 rc=importlib.util.module_from_spec(spec); spec.loader.exec_module(rc)

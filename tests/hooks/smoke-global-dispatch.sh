@@ -18,7 +18,7 @@ for d in pre-push pre-commit; do
 done
 
 # QuotasMobi-like repo: substantial (>=3 prod files, >=150 lines) UNREVIEWED range, no local hooks
-mkdir -p "$TMP/r"; cd "$TMP/r"
+mkdir -p "$TMP/r"; cd "$TMP/r" || exit 1
 git init -q; git config user.email t@t; git config user.name t
 echo base > seed.txt; git add seed.txt; git commit -q -m base
 BASE=$(git rev-parse HEAD)

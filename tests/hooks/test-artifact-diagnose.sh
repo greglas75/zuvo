@@ -16,7 +16,7 @@ SYNC="$ROOT/scripts/review-artifact-sync.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 fails=0; ok(){ echo "  ✓ $1"; }; bad(){ echo "  ✗ $1"; fails=$((fails+1)); }
 
-newrepo(){ rm -rf "$TMP/r"; mkdir -p "$TMP/r/src" "$TMP/r/memory/reviews" "$TMP/r/zuvo/proofs"; cd "$TMP/r"
+newrepo(){ rm -rf "$TMP/r"; mkdir -p "$TMP/r/src" "$TMP/r/memory/reviews" "$TMP/r/zuvo/proofs"; cd "$TMP/r" || exit 1
   git init -q; git config user.email t@t; git config user.name t
   echo "export const a=1" > src/mod.ts; git add -A; git -c commit.gpgsign=false commit -qm base >/dev/null
   echo "export const b=2" >> src/mod.ts; git add -A; git -c commit.gpgsign=false commit -qm work >/dev/null

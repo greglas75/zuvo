@@ -144,15 +144,19 @@ unset _tvar _tval
 #       on a leading `a`, so `KEY=aB3dEfGh…` (a real secret) walks straight out again.
 #   B3  redact whatever is still marked
 #
-# The sentinel is `@@ZVSEC@@`: it cannot appear in the alphabet B1 matches, so B3 cannot leave one
-# behind in output, and a literal occurrence in a config file is not a value B1 would have marked.
+# The sentinel is `@@ZVSEC@@`, and the FIRST expression strips any occurrence already present in the
+# input, so the only markers B2/B3 ever see are the ones B1 inserted. This is defence in depth, not
+# a fix for a reproduced bypass: an adversarial pass reported that a planted `FOO=@@ZVSEC@@<value>`
+# escapes redaction, but the repro used a value of 46 `a` characters — pure lowercase hex, which is
+# the DOCUMENTED hex residue below, and the pre-fix program redacts a non-hex payload identically.
+# The claim did not reproduce. The strip stays because "the marker is ours alone" is a cheap
+# invariant to hold in a redaction path that reads hostile remote output, and because reasoning
+# about a sed program whose sentinel can also arrive from outside it is needlessly hard.
 #
 # The line-oriented limitation noted above still applies: a PEM body spanning many lines is not
 # reconstructed as one secret. Rule B does redact each individual base64 line of such a key, which
 # is a strict improvement, but the BEGIN/END framing remains a separate problem.
-SED_REDACT='s/(([A-Za-z0-9_.-]*(password|passwd|secret|token|api[_-]?key|private[_-]?key|credential|DATABASE_URL|REDIS_URL|connection[_-]?string)[A-Za-z0-9_.-]*)[[:space:]]*[:=][[:space:]]*).*/\1[REDACTED]/Ig;s/^([[:space:]]*(requirepass|masterauth)[[:space:]]+).*/\1[REDACTED]/Ig;s/(gh[pousr]_|github_pat_|glpat-|xox[baprs]-|sk_live_|rk_live_|npm_|dop_v1_|hf_|AIza|AKIA|ASIA|SG\.|shpat_|eyJ[A-Za-z0-9_-]*\.eyJ)[A-Za-z0-9_.\/+=-]{8,}/\1[REDACTED]/g;s/([:=][[:space:]]*"?)([A-Za-z0-9+\/_=-]{32,})/\1@@ZVSEC@@\2/g;s/@@ZVSEC@@([0-9a-f]+)([^A-Za-z0-9+\/_=-]|$)/\1\2/g;s/@@ZVSEC@@[A-Za-z0-9+\/_=-]+/[REDACTED]/g'
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SED_REDACT='s/@@ZVSEC@@//g;s/(([A-Za-z0-9_.-]*(password|passwd|secret|token|api[_-]?key|private[_-]?key|credential|DATABASE_URL|REDIS_URL|connection[_-]?string)[A-Za-z0-9_.-]*)[[:space:]]*[:=][[:space:]]*).*/\1[REDACTED]/Ig;s/^([[:space:]]*(requirepass|masterauth)[[:space:]]+).*/\1[REDACTED]/Ig;s/(gh[pousr]_|github_pat_|glpat-|xox[baprs]-|sk_live_|rk_live_|npm_|dop_v1_|hf_|AIza|AKIA|ASIA|SG\.|shpat_|eyJ[A-Za-z0-9_-]*\.eyJ)[A-Za-z0-9_.\/+=-]{8,}/\1[REDACTED]/g;s/([:=][[:space:]]*"?)([A-Za-z0-9+\/_=-]{32,})/\1@@ZVSEC@@\2/g;s/@@ZVSEC@@([0-9a-f]+)([^A-Za-z0-9+\/_=-]|$)/\1\2/g;s/@@ZVSEC@@[A-Za-z0-9+\/_=-]+/[REDACTED]/g'
 
 # CQ14: single-source tool_availability default object. Both write_bundle (dry-run
 # skeleton) and _write_live_bundle (live incremental) merge against this constant so
@@ -1519,7 +1523,6 @@ TOOL_AVAIL_JSON='{}'
 # its manual fallback (config reads) still runs (E12). LYNIS_DEGRADED is the
 # precomputed boolean; LYNIS_DEGRADE_NOTE the verbatim notation appended to
 # affected check evidence.
-LYNIS_VERSION=""
 LYNIS_DEGRADED=false
 LYNIS_DEGRADE_NOTE=""
 
@@ -1717,7 +1720,6 @@ _probe_lynis_version() {
   # Extract the FIRST dotted numeric token (e.g. `lynis 2.6.8` → 2.6.8).
   ver="$(printf '%s\n' "$raw" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
   [ -z "$ver" ] && return 0
-  LYNIS_VERSION="$ver"
   major="${ver%%.*}"
   minor="${ver#*.}"; minor="${minor%%.*}"
   # Force base-10 (10#) so a leading-zero minor is not read as octal.

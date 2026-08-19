@@ -373,7 +373,7 @@ OUT18="$(cd "$R1" && "$HELPER" "$EMPTY_SCOPE" 2>"$TMP/e18")"; RC18=$?
 [ -z "$OUT18" ] && pass "(18) empty PATH arg emits no stdout (scope not widened)" \
   || bad "(18) empty PATH arg emitted a patch — scope silently widened"
 
-OUT18B="$(cd "$R1" && "$HELPER" -- "$EMPTY_SCOPE" 2>/dev/null)"; RC18B=$?
+( cd "$R1" && "$HELPER" -- "$EMPTY_SCOPE" ) >/dev/null 2>&1; RC18B=$?
 [ "$RC18B" -eq 2 ] && pass "(18) empty PATH arg after -- also exits 2" \
   || bad "(18) expected exit 2 for an empty PATH after --, got $RC18B"
 
@@ -752,7 +752,7 @@ OUT33C="$(cd "$R18" && "$HELPER" a.txt 2>"$TMP/e33c")"; RC33C=$?
 
 # (33d) one real + one nonexistent → fail LOUD rather than silently reviewing
 #       the subset the caller did not ask for
-OUT33D="$(cd "$R18" && "$HELPER" a.txt nosuch.txt 2>"$TMP/e33d")"; RC33D=$?
+( cd "$R18" && "$HELPER" a.txt nosuch.txt ) >/dev/null 2>"$TMP/e33d"; RC33D=$?
 E33D="$(cat "$TMP/e33d")"
 [ "$RC33D" -eq 2 ] && pass "(33d) mixed real + nonexistent PATHs exit 2" \
   || bad "(33d) expected exit 2 for a partially-unmatched path list, got $RC33D — the bad path was silently dropped"
@@ -760,7 +760,7 @@ has nosuch.txt "$E33D" && pass "(33d) stderr names only the offending path" \
   || bad "(33d) stderr does not name the offending path in a mixed list"
 
 # (33e) no-PATH mode is unaffected: a clean tree is legitimately exit 3
-OUT33E="$(cd "$R2" && "$HELPER" 2>"$TMP/e33e")"; RC33E=$?
+( cd "$R2" && "$HELPER" ) >/dev/null 2>"$TMP/e33e"; RC33E=$?
 [ "$RC33E" -eq 3 ] && pass "(33e) no-PATH mode on a clean tree still exits 3" \
   || bad "(33e) expected exit 3 for no-PATH mode on a clean tree, got $RC33E"
 

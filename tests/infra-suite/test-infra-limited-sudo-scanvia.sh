@@ -21,9 +21,15 @@ bad()  { FAIL=$((FAIL+1)); printf '  FAIL %s\n' "$1"; }
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq not available"; exit 0; }
 [ -f "$COLLECTOR" ] || { echo "FAIL: collector not found at $COLLECTOR"; exit 1; }
 
-# Shared stubs the extracted functions reference.
+# Shared stubs the extracted functions reference. They are read only inside the two functions
+# eval'd out of the collector below, which shellcheck cannot follow — hence the disables.
+# shellcheck disable=SC2034
 SED_REDACT='s/(password|secret|token|api[_-]?key)[[:space:]]*[=:][[:space:]]*[^[:space:]]+/\1=<REDACTED>/gI'
-EXTERNAL_OPEN_PORTS_JSON='[]'; EXTERNAL_TLS_JSON='{}'; EXTERNAL_NUCLEI_JSON='[]'; EXTERNAL_NOTES_JSON='[]'; SCAN_VIA='scanhost'
+# shellcheck disable=SC2034
+EXTERNAL_OPEN_PORTS_JSON='[]'; EXTERNAL_TLS_JSON='{}'; EXTERNAL_NUCLEI_JSON='[]'; EXTERNAL_NOTES_JSON='[]'
+# shellcheck disable=SC2034
+SCAN_VIA='scanhost'
+# shellcheck disable=SC2034
 SUDO_ALLOWLIST=''
 _external_note() { EXTERNAL_NOTES_JSON="$(printf '%s' "$EXTERNAL_NOTES_JSON" | jq --arg n "$1" '. + [$n]')"; }
 
@@ -36,6 +42,7 @@ SUDO_ALLOWLIST='User claude may run the following commands on h:
     (ALL) NOPASSWD: /usr/bin/docker, /bin/systemctl status *, /usr/sbin/ufw status*, /usr/bin/ss, /usr/sbin/ss'
 for b in ufw docker ss; do _allowlist_has_binary "$b" && ok "granted: $b" || bad "should grant: $b"; done
 for b in iptables redis nmap trivy apt; do _allowlist_has_binary "$b" && bad "should NOT grant: $b" || ok "denied: $b"; done
+# shellcheck disable=SC2034
 SUDO_ALLOWLIST=''
 _allowlist_has_binary ufw && bad "empty allowlist must deny" || ok "empty allowlist denies all"
 

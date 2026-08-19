@@ -4,8 +4,6 @@
 ADV="$ROOT/scripts/adversarial-review.sh"
 MOCKS="$HERE/mocks"
 EMPTY="$ADV_TEST_EMPTY"
-HOOK="$ROOT/hooks/pre-commit-adversarial-gate.sh"
-
 export ZUVO_ADVERSARIAL_TEST_HARNESS=1
 export PATH="$MOCKS:$PATH"
 
@@ -61,7 +59,6 @@ out=$(ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail" \
   bash "$ADV" --multi --exclude "mock.fail" --json --files "$EMPTY" 2>/dev/null)
 # Without -F, `mock.fail` (regex) would match `mock-fail` (any single char between).
 # With -Fx, `mock.fail` (literal) does not match `mock-fail` — so mock-fail remains in PROVIDERS.
-providers=$(echo "$out" | jq -r '.providers_used' 2>/dev/null)
 # Test passes if mock-fail wasn't accidentally excluded by regex over-match
 # (i.e., we see both providers were attempted).
 attempted=$(echo "$out" | jq -r '.attempted_count' 2>/dev/null)

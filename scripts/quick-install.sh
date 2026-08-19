@@ -59,10 +59,10 @@ cleaned=0
 for base_dir in "$HOME/.cursor" "$HOME/.codex"; do
   [[ -d "$base_dir" ]] || continue
   for f in "${OLD_FILES[@]}"; do
-    [[ -e "$base_dir/$f" || -L "$base_dir/$f" ]] && rm -f "$base_dir/$f" && cleaned=$((cleaned + 1))
+    [[ -e "$base_dir/$f" || -L "$base_dir/$f" ]] && rm -f "${base_dir:?}/$f" && cleaned=$((cleaned + 1))
   done
   for d in "${OLD_DIRS[@]}"; do
-    [[ -e "$base_dir/$d" || -L "$base_dir/$d" ]] && rm -rf "$base_dir/$d" && cleaned=$((cleaned + 1))
+    [[ -e "$base_dir/$d" || -L "$base_dir/$d" ]] && rm -rf "${base_dir:?}/$d" && cleaned=$((cleaned + 1))
   done
 done
 

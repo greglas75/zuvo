@@ -169,6 +169,7 @@ for DIM in IS1 IS2 IS5 IS6 IS7 IS9 IS10 IS11 IS12; do
 done
 
 # 4c. container-analyst: must mention IS9; must NOT mention IS1/IS2/IS3/IS4/IS5/IS6/IS7/IS8/IS10/IS11/IS12
+# shellcheck disable=SC2043  # container-analyst owns exactly one dimension; shape kept parallel
 for DIM in IS9; do
   assert_body_grep "$CONTAINER_ANALYST" "\b${DIM}\b"
   pass "container-analyst: declares dimension $DIM"

@@ -22,7 +22,7 @@ export ZUVO_HOME="$TMP/zuvohome"; mkdir -p "$ZUVO_HOME/run-markers"
 # frozen fixture cannot notice, it just keeps unsetting the old set while every test passes.
 # shellcheck source=/dev/null
 . "$ROOT/tests/lib/human-env.sh"
-newrepo(){ rm -rf "$TMP/r"; mkdir -p "$TMP/r/zuvo/contracts" "$TMP/r/src"; cd "$TMP/r"
+newrepo(){ rm -rf "$TMP/r"; mkdir -p "$TMP/r/zuvo/contracts" "$TMP/r/src"; cd "$TMP/r" || exit 1
   git init -q; git config user.email t@t; git config user.name t
   printf '#!/bin/sh\nexec "%s" pre-commit\n' "$GATE" > .git/hooks/pre-commit; chmod +x .git/hooks/pre-commit; }
 
