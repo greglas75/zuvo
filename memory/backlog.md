@@ -1037,3 +1037,24 @@ defer-reason: NIT.
 where the sibling `scripts/git-noverify-shim.sh:121-124` uses a backslash-continued 3-line wrap.
 Verified NOT a behavioural difference (case-pattern whitespace is insignificant to the shell).
 defer-reason: NIT.
+
+## B-review-tier2-skip-2026-08-19 — TIER 3 self-review completed without 2 of its 4 mandated agents
+**Found:** 2026-08-19, Validity Gate of the bc07cbe..3170213 review.
+`cq_auditor` was dispatched TWICE and both runs died with `API Error: 403 Request not allowed —
+Please run /login`; `confidence_rescorer` was never dispatched and the lead scored confidence
+inline. `structure_auditor` returned in full and a narrowed `behavior_auditor` returned the
+exit-code-4 blast-radius analysis, so coverage was partial, not absent — and adversarial ran to
+completion (3 passes, 5 providers, 31 REVIEW BY lines, no truncation), which is the cross-model
+independence the sub-agents also exist to provide.
+**Per the skill's own rule this is `gate_status = FAIL` and VERDICT `INCOMPLETE`**, with no degraded
+path on a self-review. Recording it rather than rounding it up: the CQ1-CQ40 sweep over all 28
+production files was NOT performed by an independent agent — the lead ran the CRITICAL gates
+(CQ3/4/5/6/8/14, Q7/11/13/15/17) inline and mechanically, and found two real things that way
+(CQ8: two new swallows added; CQ14: 4 occurrences, correctly under the 5+ threshold).
+**To clear:** re-run `zuvo:review origin/main..HEAD --report-only` when dispatch is healthy and
+diff the finding sets. If the independent CQ pass surfaces nothing new, downgrade this entry to a
+telemetry note; if it does, that is the measure of what the 403s cost.
+**Related gap this exposed:** the Validity Gate has values for NOT_DISPATCHED (a choice) and
+NO_RETURN (silence) but none for "dispatched, harness returned a terminal API error", so harness
+flakiness is indistinguishable from a lead that skipped its agents. Proposal filed in the retro.
+
