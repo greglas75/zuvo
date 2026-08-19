@@ -291,7 +291,19 @@ Record the four numbers. Below threshold → find the uncovered lines, close the
 
 ### Step 3.3: Mutation Probes
 
-Per `test-mutation-probes.md`: 3 probes (STANDARD) / 5 (HEAVY-COMPLEX, ≥1 per behavior group), byte-restore protocol, scoped runs. Every probe must be killed; a surviving probe is a coverage gap — close it and re-probe. Print the `MUTATION PROBES: [N]/[N] killed` table. Post-restore sha256 must equal the manifest hash.
+Per `test-mutation-probes.md`: 3 probes (STANDARD) / 5 (HEAVY-COMPLEX, ≥1 per behavior group), byte-restore protocol, scoped runs. Every probe must be killed; a surviving probe is a coverage gap — close it and re-probe. Print the `MUTATION PROBES` line and table. Post-restore sha256 must equal the manifest hash — for the probes AND for any native run.
+
+`native:` has three states, and collapsing the last two hides an infra failure as normal absence: `<score>% (<runner>)` when a run produced a number, `none` when the project has no runner configured, `error: <reason>` when a detected runner could not be scoped, timed out, or exited non-zero.
+
+**Native runner when the project already has one** (StrykerJS / Infection / cargo-mutants — detection table in `skills/mutation-test/SKILL.md` § 0.1b; mutmut 3.x cannot scope per file and is excluded here). Five rules, and the first two are the ones that bite:
+
+1. **Mutate the PRODUCTION file under test, never the test file just written.** `--mutate` takes the source file the inventory covers (`src/auth.ts`), not `src/auth.test.ts`. Pointing a mutator at its own test file corrupts the tests and produces a meaningless number.
+2. **Same byte-restore + sha256 gate as the probes.** A native runner mutates production in place and can die mid-run. After it exits — success, failure, or interrupt — restore and verify the production file's sha256 against `production_sha256` in the manifest, exactly as step 5 of the probe protocol requires. Then remove the runner's own debris (`.stryker-tmp/`, `mutants.out/`, `.mutmut-cache/`, HTML reports) and confirm `git status` shows nothing but the intended test file. "Probes restored cleanly" is not evidence about the native run.
+3. **Cap the in-run fix loop at 3 native survivors**, highest-risk first. A native runner can emit 50+ mutants on one file; probes are capped at 3-5 for the same reason. Remaining survivors are recorded in the table with their IDs — not silently dropped, and not chased until the context window dies.
+4. **Triage before fixing.** Native runners generate equivalent mutants routinely (`x * 2` → `x << 1`). An equivalent mutant is recorded `equivalent` with the reason, and does NOT block completion — the same triage `zuvo:mutation-test` § 4.2 applies. Only a survivor triaged `gap` is a gap.
+5. **write-tests never INSTALLS a runner** — that is `zuvo:mutation-test` § 0.1c's consented step; absent runner → probes only, unchanged.
+
+The probes remain the floor either way: native mutators do not generate probe classes 2-4, which are the classes new suites fail.
 
 ### Step 3.5: Blind Coverage Audit
 
@@ -427,7 +439,7 @@ COMPLETION GATE CHECK
 [ ] Step 2.5: executable validator ran; its output pasted; every public entry point FULL; Uncovered owned rows: 0
 [ ] Step 3: Q-score with per-gate evidence (Q7,Q11,Q13,Q15,Q17); manifest Q values synced
 [ ] Step 3.2: scoped coverage measured (or runner-lacks-support printed)
-[ ] Step 3.3: mutation probes all killed; production restored (hash verified)
+[ ] Step 3.3: mutation probes all killed; native runner used if the project has one (or `native: none`); production restored (hash verified)
 [ ] Step 3.5: blind audit ran (clean:strict|clean:degraded|skipped|blocked_infra)
 [ ] Step 4: adversarial ran (clean|Nfindings|skipped|blocked|not_run)
 [ ] Step 4.5: every confirmed in-scope production bug FIXED in-run; escalations loud
@@ -446,7 +458,7 @@ Files tested:  [N] ([M] new, [K] extended, [J] fixed)
 Surface:       methods [N]/[N] FULL, owned rows [N]/[N], error paths [N]/[N]
 Coverage gate: [N] pass, [M] degraded, [K] fail
 Target cov:    st [%] / br [%] / fn [%] / ln [%] (scoped to production files)
-Mutation:      [N]/[N] probes killed
+Mutation:      [N]/[N] probes killed | native: <score>% (<runner>) | none | error: <reason>
 Test audit:    [GATE: test-quality] [PASS|WARN|N/A] tier=[worst] files=[N] ([M] fixed up in-run) report=[zuvo/audits/...]
 Below tier A:  [list with blocking findings, or "none"]
 Q gates:       [N]/[applicable] avg (critical gates: all pass)
@@ -472,7 +484,7 @@ Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <proje
 
 Run one final full-suite validation, or explicitly scope the failure count to touched test files before printing `new in scope: 0`.
 
-**Do NOT print WRITE-TESTS COMPLETE if any file is missing Status/Coverage Gate/Blind Audit/Adversarial, has uncovered owned rows, a failing or unrun validator, Q7=0 or Q11=0, a surviving mutation probe, an undispatched final test audit (Step A1), or status `BLOCKED_INCOMPLETE`/`BLOCKED_INFRA`.** A file legitimately below Tier A after 2 fix cycles does not block the report — it blocks only its own silent inclusion in the tier-A count. (A run that is DRAFT/BLOCKED_INFRA from preflight reports its terminal block instead — with Q7=1 and Q11=1 still required of every written file, so the tests are sound even though review could not run.)
+**Do NOT print WRITE-TESTS COMPLETE if any file is missing Status/Coverage Gate/Blind Audit/Adversarial, has uncovered owned rows, a failing or unrun validator, Q7=0 or Q11=0, a surviving mutation probe, an untriaged native-runner survivor (triaged `equivalent` or capped-and-recorded per Step 3.3 does NOT block), an undispatched final test audit (Step A1), or status `BLOCKED_INCOMPLETE`/`BLOCKED_INFRA`.** A file legitimately below Tier A after 2 fix cycles does not block the report — it blocks only its own silent inclusion in the tier-A count. (A run that is DRAFT/BLOCKED_INFRA from preflight reports its terminal block instead — with Q7=1 and Q11=1 still required of every written file, so the tests are sound even though review could not run.)
 
 ---
 

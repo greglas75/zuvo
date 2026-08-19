@@ -949,3 +949,39 @@ after the whole analysis has run. It saves a line in a file, not the work.
    telling the caller a matching retro "exists" somewhere.
 defer-reason: none — this is a live cost leak, not deferred debt; filed here because it was found while
 triaging farm reports in another repo | seen:8 | confidence:98 | source:field-report | 2026-08-18
+
+- B-25 | shared/includes/ | duplicate-procedure | Consent-gated tool install is written out THREE times now
+  and shared nowhere: `skills/infra-audit/SKILL.md` (DD-3, per-host consent + `apt remove` logging),
+  `skills/write-e2e/SKILL.md` (`--no-install` / `ZUVO_E2E_NO_BOOTSTRAP=1`), and now
+  `skills/mutation-test/SKILL.md` § 0.1c. All three follow the identical shape — offer, print the
+  uninstall command, consent, log what was written, degrade loudly on decline — and the third was
+  deliberately worded to parallel the first so extraction is mechanical. Extract to
+  `shared/includes/tool-install-consent.md` and have all three load it. Not done in this change
+  because it would drag two unrelated skills into the fence.
+  defer-reason: out-of-fence — needs edits to infra-audit + write-e2e, which this build did not touch
+  | seen:1 | confidence:85 | source:build | 2026-08-18
+
+- B-26 | shared/includes/severity-vocabulary.md | missing-definition | `DEGRADED` appears 40+ times
+  across skills as the canonical "tool absent, run continues on fallbacks" marker, but no shared
+  include defines it — it is a de-facto convention, not a registered vocabulary, so nothing catches
+  drift between `DEGRADED (reason)`, `[DEGRADED: reason]` and `coverage_mode: DEGRADED`. Add a
+  "Degradation states" section to severity-vocabulary.md, explicitly distinct from S1-S4 severity
+  (a DEGRADED run can still report S1 findings).
+  defer-reason: out-of-fence — registry edit unrelated to mutation runners | seen:1 | confidence:80 | source:build | 2026-08-18
+
+- B-27 | skills/*/SKILL.md | missing-check | Nothing verifies that an intra-file section cross-reference
+  ("see 0.1d", "(4.2c)") resolves to a real heading in the same SKILL.md. This build shipped exactly
+  that defect — `--break` cited a non-existent 4.1b — and it was caught by an audit agent, not a test.
+  A ~15-line checker in validate-skills.sh (collect `^#{2,4} (Phase )?N.Nx` headings, flag references
+  that miss) would make it mechanical. Note the false-positive classes to exclude: version numbers,
+  timings, and JSON values.
+  defer-reason: out-of-fence — new check belongs in validate-skills.sh, not in a skill | seen:1 | confidence:90 | source:build | 2026-08-18
+
+- [ ] B-SHIP-POSTMERGE-REF-FILTER — `zuvo:ship` post-merge enumeration filters runs by commit SHA
+  alone, which does not prove a returned run is a post-merge run on the TARGET BRANCH. A run
+  created for another ref or event that shares the SHA satisfies the enumeration, and once any
+  rows exist the empty-read safeguard no longer applies — so the target-branch workflow can still
+  be un-dispatched while ship counts the surface as covered. Fix: validate each run's
+  `headBranch`/`event`/`createdAt` against the merge before counting it. Surfaced by adversarial
+  pass 3 of the bc07cbe..7954760 review (WARNING, confidence medium); deferred at the
+  `adversarial-loop.md` 3-pass cap with no CRITICAL outstanding. [defer-reason: NIT]

@@ -1,13 +1,17 @@
 ---
 name: mutation-test
 description: >
-  LLM-guided mutation testing. Instead of random mutations, the LLM intelligently
-  selects mutations that test meaningful behavior: boundary conditions, logic
-  inversions, null returns, error path removals, state mutations, async hazards,
-  and security guard removals. Generates mutations, executes them against the
-  relevant tests, and FIXES the tests whose gaps let a mutation survive — surviving
-  mutants are closed in-run, not handed to another skill.
-  Flags: [path] (scope), full, --max N, --category, --dry-run, --quick, --report-only.
+  Mutation testing with two engines. Uses the project's NATIVE mutation runner
+  (StrykerJS / Infection / mutmut / PIT / cargo-mutants) when one is configured —
+  installing it on explicit consent when it is not — for a reproducible, comparable
+  score; and an LLM-guided engine for the mutation classes native mutators cannot
+  express: error-path removal, state mutation, async hazards, and security guard
+  removal. Generates mutations, executes them against the relevant tests, and FIXES
+  the tests whose gaps let a mutation survive — surviving mutants are closed in-run,
+  not handed to another skill. Emits the cross-tool
+  stryker-mutator.io/report.schema.json report alongside its own artifact.
+  Flags: [path] (scope), full, --max N, --category, --runner auto|native|llm|hybrid,
+  --break N, --no-install, --dry-run, --quick, --report-only.
 category: Testing
 codesift_tools:
   always:
@@ -63,22 +67,25 @@ a surviving mutant exposes is IN scope — that is the point of finding it.
 
 ## Argument Parsing
 
-Parse `$ARGUMENTS` as: `[path | full | continue] [--max N] [--category CATEGORY] [--dry-run] [--quick] [--report-only]`
+Parse `$ARGUMENTS` as: `[path | full | continue] [--max N] [--category CATEGORY] [--runner MODE] [--break N] [--no-install] [--dry-run] [--quick] [--report-only]`
 
-| Flag | Effect |
-|------|--------|
-| `[path]` | Scope to a specific directory or file |
-| `continue` | Resume an interrupted run from its checkpoint (Phase 3.0). Re-runs nothing already resolved. |
-| `full` | All production files that have test coverage |
-| `--max N` | Max total mutations to execute (default: 50) |
-| `--category CATEGORY` | Only generate mutations of this category: `BOUNDARY`, `LOGIC`, `NULL`, `ERROR`, `STATE`, `ASYNC`, `SECURITY` |
-| `--dry-run` | Generate mutations and show the plan, but do not execute any |
-| `--quick` | Max 3 mutations per file, max 20 total |
-| `--report-only` | Report the score; do NOT fix surviving gaps (skips 4.2b). The only way to skip the fix loop. |
+| Flag | Env equivalent | Effect |
+|------|----------------|--------|
+| `[path]` | — | Scope to a specific directory or file |
+| `continue` | — | Resume an interrupted run from its checkpoint (Phase 3.0). Re-runs nothing already resolved. |
+| `full` | — | All production files that have test coverage |
+| `--max N` | — | Max total LLM mutations to execute (default: 50). Does not bound the native runner, which mutates exhaustively by design. |
+| `--category CATEGORY` | — | Only generate LLM mutations of this category: `BOUNDARY`, `LOGIC`, `NULL`, `ERROR`, `STATE`, `ASYNC`, `SECURITY` |
+| `--runner MODE` | `ZUVO_MUTATION_RUNNER` | `auto` (default) / `native` / `llm` / `hybrid` — see 0.1d |
+| `--break N` | `ZUVO_MUTATION_BREAK` | Fail the run when the final `score_triaged` is below N% (4.2c — evaluated after the 4.2b fix loop, not at 4.1). The flag overrides the env value; both are recorded with their source. |
+| `--no-install` | `ZUVO_MUTATION_NO_INSTALL=1` or `ZUVO_NO_INSTALL=1` | Never offer to install a mutation runner (disables the 0.1c consent gate). Detection still runs. |
+| `--dry-run` | — | Generate mutations and show the plan, but do not execute any. Also suppresses 0.1c entirely. |
+| `--quick` | — | Max 3 LLM mutations per file, max 20 total |
+| `--report-only` | — | Report the score; do NOT fix surviving gaps (skips 4.2b). The only way to skip the fix loop. |
 
 Flags can be combined: `zuvo:mutation-test src/services/ --max 30 --category SECURITY`
 
-Default (no arguments): equivalent to `full --max 50`.
+Default (no arguments): equivalent to `full --max 50 --runner auto`.
 
 ## Mandatory File Loading
 
@@ -145,6 +152,132 @@ Detect the test framework and runner from config files:
 
 If framework cannot be detected: ask the user for the test runner command.
 
+### 0.1b Native mutation runner — DETECTION (read-only)
+
+Every stack this skill supports has a maintained mutation runner. A project that already
+configured one has a reproducible score this skill must READ rather than re-derive; the
+LLM engine measuring a repo that ships `stryker.conf.json` with its own hand-rolled
+mutants was the gap this step closes.
+
+**Detection touches nothing.** It reads config files and manifests. No install, no write,
+no command execution beyond a `--version` probe.
+
+| Stack | Runner | Config signals (any one) | Scoped run | Machine-readable report |
+|-------|--------|--------------------------|------------|--------------------------|
+| TS / JS | StrykerJS ≥ 10 | `stryker.conf.{json,js,mjs,cjs}`, `stryker` key in `package.json`, `@stryker-mutator/core` in devDependencies | `npx stryker run --incremental --mutate <files>` | `--reporters json` |
+| PHP | Infection ≥ 0.35 | `infection.json`, `infection.json5`, `infection.json.dist`, `infection/infection` in `composer.json` require-dev | `vendor/bin/infection --threads=max -- <paths>` (POSITIONAL — `--filter` is deprecated since 0.34) | `logs.json` key in `infection.json` (there is no `--logger-json` CLI flag) |
+| Python | mutmut ≥ 3.7 | `[tool.mutmut]` in `pyproject.toml`, `[mutmut]` in `setup.cfg` | `mutmut run` — **whole project only**, see the mutmut note below | `mutmut results` |
+| JVM (Java, Kotlin) | PIT ≥ 1.25 | pitest plugin in `pom.xml` / `build.gradle{,.kts}` | `mvn test-compile org.pitest:pitest-maven:mutationCoverage` (the `test-compile` phase is required — a bare goal has no compiled classes to mutate) or `./gradlew pitest` | `outputFormats=XML` |
+| Rust | cargo-mutants ≥ 27 | `.cargo/mutants.toml`, or `cargo mutants --version` succeeds | `cargo mutants -f <file>` | `--json` (`mutants.out/`) |
+| .NET / Scala | Stryker.NET / Stryker4s | `stryker-config.{json,yaml}` | per tool docs | Stryker JSON |
+
+**mutmut 3.x cannot scope a run from the CLI.** `--paths-to-mutate` was a mutmut 2.x flag and was
+REMOVED in 3.x — the error message still suggests it, which is how it survives in documentation
+that was never re-tested. In 3.x the mutated paths come only from `[tool.mutmut] paths_to_mutate`
+in `pyproject.toml` / `setup.cfg`. Consequences, and they are not cosmetic:
+
+- A scoped native run on Python means **editing the project's mutmut config**, which is a write
+  outside test files and therefore belongs to the 0.1c consent gate — not to a per-file loop.
+  Until that is wired, treat Python native runs as **whole-project only**: run `mutmut run` as the
+  project configures it, and take the score for the whole project rather than claiming a per-file
+  number the tool cannot produce.
+- `test-mutation-probes.md`'s per-file native path is therefore **unavailable for mutmut**. That
+  include says so explicitly; a Python project falls back to the hand-picked probes there.
+
+**Shell-quote every interpolated path.** These run commands are templates with `<file>`
+placeholders, and a repository controls its own filenames — a path holding a space, a quote or a
+`;` becomes argument injection the moment a template is pasted into a shell. Quote the
+substitution (`--mutate '<file>'`) or pass the file list as separate argv entries; never build
+the command by string concatenation and hand it to `bash -c`.
+
+Versions are MINIMUMS, not pins — an older configured runner is still used, with its
+version recorded. A runner present but BELOW the minimum is used and flagged
+`native_runner.state: detected (below-minimum <ver>)`; do not silently upgrade a project's
+tooling to satisfy a floor written here.
+
+Record on the run and in the 4.3b artifact:
+
+```
+native_runner: { name, version, config_path, state }
+state ∈ detected | installed | absent | declined | unsupported_stack | failed
+```
+
+### 0.1c Consent-gated install (skipped by `--no-install`, either no-install env var, and `--dry-run`)
+
+> Mirrors the DD-3 consent gate in `skills/infra-audit/SKILL.md` — offer, consent, log with
+> the uninstall command, degrade loudly on decline. The wording is deliberately parallel so
+> the two can later be extracted into one shared include; they are not shared today, and
+> unifying them is a separate change to a separate skill.
+>
+> `ZUVO_MUTATION_NO_INSTALL=1` is this skill's own switch. `ZUVO_NO_INSTALL=1` is honoured
+> as a broader user policy, but **only this skill reads it today** — do not describe it to a
+> user as a machine-wide guarantee.
+
+Fires only when ALL hold: no runner detected, the stack HAS one, none of the suppressors above
+is set, **and the engine is not `llm`**. `--runner llm` says the run will not touch a native
+runner at all — prompting to install one it has already declined to use is a prompt for nothing,
+and a consent prompt that appears when it cannot matter is how consent stops being read.
+**One prompt per run — never per file.**
+
+This is the only step in this skill that writes outside test files, so it is fenced
+harder than anything else here:
+
+1. **Print both commands before asking.** The exact install command AND the exact
+   uninstall command, verbatim, so the consent is informed and reversible in one line.
+2. **Dev scope only, and use the project's OWN package manager.** Never a runtime dependency,
+   never `-g`/global for a project-scoped manager. Detect the manager from its lockfile
+   (`pnpm-lock.yaml` → pnpm, `yarn.lock` → yarn, `package-lock.json` → npm) and use the matching
+   row — running `npm i` in a pnpm or yarn workspace writes a competing `package-lock.json` and a
+   nested `node_modules`, which is a lasting mess left behind by a tool that was only measuring:
+
+   | Manager | Install | Uninstall |
+   |---------|---------|-----------|
+   | npm | `npm i -D @stryker-mutator/core @stryker-mutator/<jest\|vitest\|mocha>-runner` (pick the plugin matching the framework detected in 0.1) | `npm rm @stryker-mutator/core @stryker-mutator/<…>-runner` |
+   | pnpm | `pnpm add -D @stryker-mutator/core @stryker-mutator/<…>-runner` | `pnpm remove @stryker-mutator/core @stryker-mutator/<…>-runner` |
+   | yarn | `yarn add --dev @stryker-mutator/core @stryker-mutator/<…>-runner` | `yarn remove @stryker-mutator/core @stryker-mutator/<…>-runner` |
+   | composer | `composer require --dev infection/infection` | `composer remove --dev infection/infection` |
+   | uv | `uv add --dev mutmut` | `uv remove --dev mutmut` |
+   | pip | `pip install mutmut` | `pip uninstall -y mutmut` |
+   | cargo | `cargo install cargo-mutants` — **user-global toolchain, NOT the project's `Cargo.toml`.** Say that in the prompt. | `cargo uninstall cargo-mutants` |
+
+3. **JVM is MANUAL and is never installed.** PIT is a build-plugin edit to `pom.xml` /
+   `build.gradle.kts` — a change to how the project builds, not a dev dependency. Print
+   the exact snippet, do NOT edit the build file, and record
+   `state: absent (manual wiring required)`. A skill that edits a build file to measure
+   test quality has exceeded its mandate.
+4. **Config:** generate a MINIMAL config only when none exists, only for the consented
+   tool, and only enough to run — no opinionated thresholds, no ignore-lists.
+5. **Everything written is reported.** `installed_this_run[]` in the 4.3b artifact carries
+   `{tool, version, command, uninstall, files_touched[]}`, and the completion block prints
+   the uninstall line. A manifest or lockfile modified without appearing there is a bug.
+6. **Failure and decline are loud, never silent.** Declined → `state: declined`. Install
+   command exits non-zero → `state: failed` with its stderr. Both fall back to the LLM
+   engine and label the run `native: skipped (<reason>)`. A run that wanted native and got
+   LLM must never report as if it had a native score.
+
+**Consent is a human decision and must stay one.** `--no-install` only ever makes a run
+*more* conservative, so an agent may set it freely; there is deliberately no flag that
+grants consent, because a flag an agent can type is not consent
+(`no-agent-typable-bypass`). Non-interactive hosts therefore take the `declined` path.
+
+### 0.1d Engine selection (`--runner`)
+
+| Mode | Behaviour |
+|------|-----------|
+| `auto` (default) | Native if detected or installed; otherwise LLM. |
+| `native` | Native only. Unavailable → **ABORT** with `BLOCKED_NO_NATIVE_RUNNER` naming why. Never silently falls back — that is the whole point of asking for it. |
+| `llm` | The LLM engine only. This is the guaranteed floor and is unchanged from previous versions. |
+| `hybrid` | Native for the score, PLUS LLM mutations restricted to `ERROR`, `STATE`, `ASYNC`, `SECURITY` — the classes syntactic mutators do not generate. Report both numbers separately; **never average them**, they measure different mutant populations over the same code. |
+
+Two invariants hold in every mode:
+
+- **Phase 4.2b still runs.** A native survivor is triaged and closed in-run exactly like an
+  LLM survivor. A native runner's HTML report is a hand-off, and handing off is the drift
+  this skill exists to stop.
+- **The LLM engine is never removed.** It is the fallback for `absent`, `declined`,
+  `failed`, and `unsupported_stack`, and it is the only engine for the four categories
+  above.
+
 ### 0.2 File Mapping
 
 Build a map of production files to their test files. **Discovery patterns are language-aware** — use the detected framework from 0.1:
@@ -184,6 +317,8 @@ Output:
 ```
 DISCOVERY
   Framework: [name] | Runner: [command]
+  Native runner: [name vX.Y | none] ([detected <path> | installed | absent | declined | failed | unsupported_stack])
+  Engine: [auto->native | auto->llm | native | llm | hybrid]
   Production files with tests: [N]
   Files excluded (no tests): [N]
   Priority order: [top 5 files listed]
@@ -534,6 +669,64 @@ For each mutation `MUT-NNN`:
 PROGRESS: [N]/[total] mutations executed | [killed] killed | [survived] survived
 ```
 
+### 3.2b Native runner execution (`--runner native` / `hybrid` / `auto` when one is available)
+
+The native runner replaces the 3.2 loop for the mutants it generates; it does not replace
+any rule around that loop. Run it scoped to the SAME file set built in 0.2, and inherit
+every constraint below without exception:
+
+1. **Local, always — this is a STRICTER rule than 1.3, not an inheritance of it.** Say it
+   plainly rather than gesturing at 1.3: a native run defaults to local unconditionally, and
+   1.3's measured `BASELINE_TIME >= 120s → rt` threshold does **not** apply to it. The two
+   look similar and are not: 1.3 routes ONE long full-suite pass to the farm, where the fixed
+   mirror/queue charge amortises. A native runner is a long-lived process that re-runs the
+   suite per mutant against a working tree it is actively mutating — and rule 4 below requires
+   verifying that tree on THIS machine afterwards, which a remote run cannot give us. The only
+   escape hatch is a project whose own docs state the runner cannot execute locally; take it,
+   and record `tier2_runner: "rt (native — project requires it)"` so the exception is visible.
+   An earlier draft called this "1.3's `BASELINE_TIME` rule", which it is not.
+2. **Budget it in 1.3b terms.** A native run is one long invocation, so it is budgeted like
+   a Tier 2 pass (`BASELINE_TIME`-scaled), never like `MUTATION_COUNT * PER_RUN`. If the
+   budget cannot hold one full native pass, shrink the SCOPE (fewer files) — never the
+   budget, and never report a killed native run as a score.
+3. **Reap it.** `terminal-state.md` governs: record the PID at launch, and on EVERY exit
+   path — completion, budget abort, user interrupt — `wait` for it or terminate it and say
+   how. `runners.launched` must equal `runners.reaped`. This is the shape that once left a
+   Jest process alive for 679 minutes, and a native runner is strictly more likely to
+   produce it.
+4. **Take a full backup BEFORE it starts, and NEVER auto-restore afterwards.**
+   - **Before:** the 3.1 per-file temp copies are not enough — a whole-project runner can mutate
+     files outside the 0.2 scope, and those have no temp copy at all. Snapshot the **whole tree**
+     instead: `git stash create` (a commit object, not a stash entry — nothing to pop, nothing to
+     consume) and record the SHA, or `cp -a` the working tree to a temp dir when the project is
+     not a git repo. Record the pre-run sha256 of every scoped file too.
+   - **After (every path, including abort):** re-hash. Clean the runner's own debris first —
+     `.stryker-tmp/`, `mutants.out/`, `.mutmut-cache/`, generated HTML reports — then compare.
+   - **On mismatch: STOP. Do not restore anything automatically.** A native run is long-lived, and
+     a hash mismatch cannot distinguish a leftover mutant from the user saving a file in their
+     editor, a formatter, or a `git pull` that landed mid-run. Overwriting from an hours-old
+     snapshot would destroy real work to tidy up after a measurement. Emit `BLOCKED_DIRTY_TREE`
+     naming each differing file and the exact recovery command
+     (`git restore --source=<stash-sha> -- <file>`), and let the human choose. Do not score, do
+     not `git checkout --`, do not `git stash pop`.
+5. **A crashed runner is not a result — and neither is a partial one.** Require ALL of: exit code
+   0, a report file that exists and parses, a non-zero mutant count, AND coverage of every scoped
+   file from 0.2. A runner killed by OOM/SIGKILL/disk-full can leave a well-formed report over a
+   fraction of the scope; scoring that yields a reproducible-looking number computed on whichever
+   subset happened to finish, which `--break` and the grade would then treat as the whole. Any
+   condition unmet → `native_runner.state: failed`, fall back per 0.1d, and label it.
+
+**Read the report in the runner's OWN format — not all of them emit JSON.** 0.1b's last column
+names the format per runner: Stryker and cargo-mutants produce JSON, PIT produces XML, Infection
+writes JSON only when `logs.json` is configured, mutmut reports as text. Parse the format that
+runner actually produces and map it inward; expecting JSON universally would mark healthy Java and
+Python runs `failed` and fall back to the LLM engine for no reason.
+
+Map its mutants into this skill's records: each becomes a survivor or a kill with its own
+`mutatorName` preserved (do not re-label them into the seven LLM categories — they are a different
+taxonomy and flattening them destroys the distinction `hybrid` exists to make). Survivors then
+enter 4.2 triage and 4.2b gap-closing unchanged.
+
 ### 3.3 Early Termination — a truncated plan is NOT a score
 
 Stop execution early if:
@@ -587,6 +780,31 @@ score = killed / (killed + survived) * 100
 Note: TIMEOUT and ERROR count as killed (the mutation was detected).
 
 **Overall mutation score:** Sum of all killed / sum of all (killed + survived).
+
+**Under `--runner hybrid` this formula is WRONG and must not be used.** Native and LLM mutants
+are two different populations over the same code — the native runner enumerates its mutators
+exhaustively, the LLM engine samples up to `--max` deliberately-chosen ones — so pooling them
+produces a number whose value depends on the ratio between two sample sizes, not on the tests.
+0.1d says "never average them"; this is where that is enforced rather than merely asserted.
+
+In `hybrid`, compute and report TWO scores, each over its own population:
+
+```
+score_native = killed_native / (killed_native + survived_native) * 100
+score_llm    = killed_llm    / (killed_llm    + survived_llm)    * 100
+```
+
+- Grade, verdict, and `--break` (4.2c) require **BOTH halves to clear the bar** — the hybrid
+  verdict is the WORSE of the two, never the native one alone. Gating on `score_native` by itself
+  would be the failure hybrid exists to prevent: the LLM half is the only engine generating the
+  error-path, state, async and security-guard mutants, so a suite that ignores exactly those
+  would pass on an inflated native number while the mutants that matter survived unexamined.
+- Both numbers are reported, separately labelled. They are never combined into a third figure —
+  "worse of the two" is a selection, not an average.
+- A `hybrid` run whose native half failed (`native_runner.state: failed`) is not a hybrid run: it
+  degrades to `engine: llm`, `score_llm` becomes the graded score, and the report says so.
+
+In `native` and `llm` modes there is one population and the single formula above is correct.
 
 **Grade:**
 | Score | Grade |
@@ -678,6 +896,49 @@ Re-run the score after this step. The report and JSON below carry the POST-fix n
 with `score_triaged_before` kept alongside so the run's own effect is visible rather
 than hidden by improving the thing being measured.
 
+### 4.2c Break threshold (`--break N` / `ZUVO_MUTATION_BREAK`)
+
+Evaluated HERE and nowhere earlier. `score_triaged` is not final until 4.2b has run, so a
+break checked at 4.1 would fail runs on a number the run was about to improve — the
+phase-boundary rule: enforce a field after the phase that fills it, not before.
+
+No threshold set → this step is a no-op; say nothing.
+
+**Skip this step entirely when `result == PARTIAL` (3.3).** A break check is a grade, and 3.3 is
+explicit that a truncated plan gets `PARTIAL`, never PASS/WARN/FAIL. Without this guard a run can
+emit `"result": "PARTIAL"` and `VERDICT: FAIL` in the same artifact — failing a suite on a score
+computed over the three mutants that happened to fit in the budget. Print instead:
+
+```
+MUTATION BREAK: not evaluated — plan incomplete (<executed>/<planned>, stopped by <reason>)
+  a threshold cannot grade a sample. Re-run with a larger budget or a smaller --max.
+```
+
+and leave the verdict as `PARTIAL`. The threshold was not met and was not missed; it was not asked.
+
+```
+if result == PARTIAL:  skip (see above)
+elif score_triaged < N:
+    1. write the 4.3 report AND both 4.3b artifacts FIRST   # never lose the evidence
+    2. run 4.3a terminal-state gate                          # never leave a runner alive
+    3. print MUTATION BREAK instead of MUTATION TEST COMPLETE
+    4. run-log VERDICT = FAIL
+```
+
+```
+MUTATION BREAK — score_triaged <N>% is below the configured threshold <N>%
+  threshold source: <env ZUVO_MUTATION_BREAK | flag --break | default>
+  gap-unfixed survivors: <N>   equivalent: <N>
+  report: <path>
+```
+
+**Record where the threshold came from.** `break_threshold: {value, source}` in the
+artifact. A threshold is a bar someone set; an agent that picks its own N and then clears
+it has measured nothing, and the `source` field is what makes that visible rather than
+invisible (`no-agent-typable-bypass`). An agent MAY lower N or omit it — that only makes
+the run report more — but a run whose `source` is `flag` when a stricter env value existed
+must say so.
+
 ### 4.3a Terminal-state gate (before ANY completion banner)
 
 Print this with the evidence filled in. It is not a checkbox that is always ticked:
@@ -700,6 +961,9 @@ MUTATION TEST COMPLETE
 ===============================================
 Project: [name]
 Date: [ISO-8601 date]
+Engine: [native <name> v<ver> | llm | hybrid]  ([detected <path> | installed | absent | declined | failed | unsupported_stack])
+Score:  [N]%  [under hybrid ONLY: native [N]% (graded) | llm [N]% (reported, not graded)]
+Installed this run: [none | <tool> — remove with: <uninstall command>]
 Files tested: [N]
 Mutations generated: [N]
 Mutations killed: [N] ([X]%)
@@ -752,10 +1016,11 @@ Run: <ISO-8601-Z>	mutation-test	<project>	<score>%	<killed>/<total>	<VERDICT>	-	
 
 ### 4.3b Machine-readable artifact (REQUIRED — not optional, and not for humans)
 
-Write both files to the canonical output dir per `report-output-location.md`:
+Write all three files to the canonical output dir per `report-output-location.md`:
 
 - `$ZUVO_DIR/audits/mutation-test-YYYY-MM-DD.md` — the block above
-- `$ZUVO_DIR/audits/mutation-test-YYYY-MM-DD.json` — the contract below
+- `$ZUVO_DIR/audits/mutation-test-YYYY-MM-DD.json` — the zuvo contract below
+- `$ZUVO_DIR/audits/mutation-test-YYYY-MM-DD.report.json` — the CROSS-TOOL report (4.3c)
 
 Auto-increment `-2`, `-3` for same-day runs, like every other audit.
 
@@ -764,6 +1029,11 @@ production files reach a mutation score >= 70%, and `test-audit` scores it — b
 2026-08-09 this skill wrote nothing to disk at all. The report went to chat and vanished,
 so the only honest answers an auditor could give were a guess or `N/A`. A gate whose
 input nobody produces is not a gate.
+
+Q21's registry row now names this artifact as its input, so the two are no longer
+independent sentences free to drift apart: move this file, or rename `score_triaged` /
+`plan_completed` / `commit`, and the Q21 row must change with it. Nothing mechanical
+enforces that pairing — this paragraph is the reminder that it exists.
 
 ```json
 {
@@ -775,6 +1045,15 @@ input nobody produces is not a gate.
   "scope": "<path or 'full'>",
   "tier2_ran": true,
   "tier2_runner": "local",
+  "engine": "hybrid",
+  "native_runner": {
+    "name": "stryker",
+    "version": "10.0.0",
+    "config_path": "stryker.conf.json",
+    "state": "detected"
+  },
+  "installed_this_run": [],
+  "break_threshold": { "value": 70, "source": "env" },
   "baseline_time_s": 41.2,
   "runners": { "launched": 4, "reaped": 4, "terminated_at_abort": 0 },
   "fix_loop_ran": true,
@@ -786,6 +1065,10 @@ input nobody produces is not a gate.
   "score_raw": 75,
   "score_triaged_before": 86,
   "score_triaged": 100,
+  "scores_by_engine": {
+    "native": { "score_triaged": 100, "killed": 41, "survived_gap": 0, "survived_equivalent": 2 },
+    "llm":    { "score_triaged": 92,  "killed": 11, "survived_gap": 1, "survived_equivalent": 0 }
+  },
   "tests_strengthened": ["__tests__/.../resync-units.test.ts"],
   "totals": { "generated": 8, "killed": 6, "survived_gap": 0, "survived_equivalent": 1, "gap_unfixed": 0 },
   "files": [
@@ -853,6 +1136,85 @@ Field notes, each earning its place:
 - **`runners`** — `launched` must equal `reaped` (safety rule 5). This field exists because the
   count was invisible: a run that left a full suite alive for 679 minutes produced a report
   indistinguishable from a clean one. `reaped < launched` makes the artifact self-invalidating.
+- **`engine` + `native_runner`** — WHICH engine produced these mutants, and whether the number
+  is reproducible by anyone else. A score from a configured StrykerJS can be re-derived by a
+  colleague running `npx stryker run`; a score from the LLM engine cannot, because the mutant
+  population is regenerated each time. Two scores are comparable only when their `engine` and
+  `native_runner.name` match. `state` also records the honest reason for an LLM fallback —
+  `declined` and `failed` are different facts and neither may be reported as `absent`.
+- **`installed_this_run`** — every tool this run added to the project, with the command that
+  removes it again. This is the ONLY field in the artifact that describes a write outside test
+  files, which is exactly why it is mandatory and why the completion block repeats it: a
+  manifest or lockfile changed by a measurement skill must never be something the user
+  discovers from `git status`.
+- **`scores_by_engine`** — present ONLY under `engine: hybrid`, `null` otherwise. It exists because
+  `score_triaged` is a single field and hybrid has two populations that must not be pooled (4.1):
+  without somewhere else to put the second number, the schema itself would force the averaging
+  0.1d forbids. Under hybrid, `score_triaged` at the top level MIRRORS `scores_by_engine.native`
+  — the graded, reproducible half — and never a blend of the two.
+- **`break_threshold`** — `{value, source}` where source is `env` / `flag` / `default`. The value
+  alone is not enough: an agent that sets its own bar and then clears it has proved nothing, and
+  only the source makes that legible. `null` when no threshold was configured.
+
+### 4.3c Cross-tool report (`*.report.json`) — the comparability artifact
+
+The zuvo JSON above is zuvo's own shape and nothing else reads it. The mutation-testing
+ecosystem has ONE shared format, `http://stryker-mutator.io/report.schema.json` (JSON Schema
+draft-07), and its `framework.name` examples name Stryker, Stryker4s, Stryker.NET, Infection
+PHP and Pitest — five tools across five stacks. Emitting it is what makes a zuvo score
+comparable with a score produced by any of them, and what lets an existing mutation-report
+viewer open our output.
+
+Required roots: `schemaVersion`, `thresholds{high,low}`, `files{}`. Also emit `framework`
+(`{name: "zuvo:mutation-test", version: <zuvo version>}`) and `performance`.
+
+```json
+{
+  "schemaVersion": "1",
+  "thresholds": { "high": 80, "low": 60 },
+  "projectRoot": "<abs path to git root>",
+  "framework": { "name": "zuvo:mutation-test", "version": "<zuvo version>" },
+  "files": {
+    "lib/services/proofreading/grouping/resync-units.ts": {
+      "language": "typescript",
+      "source": "<full file source>",
+      "mutants": [
+        { "id": "MUT-004", "mutatorName": "zuvo:BOUNDARY", "replacement": "count >= bestCount",
+          "location": { "start": { "line": 208, "column": 9 }, "end": { "line": 208, "column": 28 } },
+          "status": "Killed" }
+      ]
+    }
+  }
+}
+```
+
+Three rules that make it honest rather than decorative:
+
+1. **Map, do not invent.** `status` is a closed enum of EIGHT values — `Killed`, `Survived`,
+   `NoCoverage`, `CompileError`, `RuntimeError`, `Timeout`, `Ignored`, `Pending`. Map this
+   skill's outcomes onto it exactly:
+
+   | This skill | Schema status | Why |
+   |------------|---------------|-----|
+   | killed / killed-indirect | `Killed` | — |
+   | survived (`gap`) | `Survived` | — |
+   | survived (`equivalent`) | `Ignored` | `Ignored` means excluded from scoring with a reason — which is what an equivalent-mutant triage IS. Never `Killed`. |
+   | TIMEOUT | `Timeout` | counted as killed in 4.1, but the schema keeps it distinct |
+   | mutation did not compile | `CompileError` | — |
+   | mutation crashed the runner at test time | `RuntimeError` | distinct from `CompileError`; without this row an agent mis-files a crash as one of the other two |
+   | `not_run` from a truncated plan (3.3) | `Pending` | the honest status for a mutant the budget never reached — do NOT omit it, or the report silently shrinks the denominator |
+2. **`mutatorName` is namespaced by origin.** LLM mutants carry `zuvo:<CATEGORY>`; native
+   mutants keep the runner's own name verbatim (`BooleanLiteral`, `ArithmeticOperator`, …). A
+   reader must be able to tell which engine produced a mutant, and a flattened taxonomy destroys
+   exactly the distinction `hybrid` exists to make.
+3. **A native run's report is MERGED, not re-derived.** When the native runner already wrote a
+   conforming report, read it and merge this run's LLM mutants into its `files` map — do not
+   regenerate its entries from our own records. Re-deriving would silently replace the runner's
+   ground truth with our transcription of it.
+
+`thresholds.low`/`high` come from the 4.1 grade bands (60 / 80), NOT from `--break` — the break
+threshold is a run verdict, the schema thresholds are report colouring, and conflating them makes
+the report lie about the project's standard.
 
 ### Retrospective (REQUIRED)
 
@@ -868,7 +1230,9 @@ printf '%b\n' "$RUN_LINE" | ~/.zuvo/append-runlog
 
 Expected stdout: `OK: appended to runs.log (retro verified for <skill> on <project>)`. If exit 2 with `RETRO_REQUIRED` — go execute the retro bash from `retrospective.md` first; never bypass with `ZUVO_SKIP_RETRO_GATE=1`. After the wrapper succeeds, print a `Logs:` evidence line (`tail -1 ~/.zuvo/retros.log`, `grep -c "^<!-- RETRO -->" ~/.zuvo/retros.md`, `tail -1 ~/.zuvo/runs.log`) before claiming completion. Printing the markdown retro section without executing the bash leaves all three log files empty.
 
-VERDICT: PASS (>= 80%), WARN (>= 60% and < 80%), FAIL (< 60%).
+VERDICT: PASS (>= 80%), WARN (>= 60% and < 80%), FAIL (< 60%). A configured `--break N` that
+the run misses forces FAIL regardless of band (4.2c) — the threshold is a stricter bar someone
+chose, so it may only lower the verdict, never raise it.
 CQ_SCORE field: `<score>%` (the overall mutation score).
 Q_SCORE field: `<killed>/<total>` (killed count / total mutations).
 TASKS: `<N>` — the count of test files strengthened by the 4.2b fix loop; `-` under
@@ -914,7 +1278,10 @@ To execute: zuvo:mutation-test [same args without --dry-run]
 These are non-negotiable:
 
 1. **Never commit mutations.** All mutations are temporary. Original code is always restored.
-2. **A MUTATION never modifies a test file.** Mutations apply only to production code —
+2. **A MUTATION never modifies a test file** — and this skill never edits production code
+   *(one carve-out: the 0.1c consent-gated write to a dependency manifest / lockfile / runner
+   config, spelled out in Guarantee 7. Stated here because 4.2b sends readers to this
+   guarantee in isolation, where an unqualified absolute would be a lie)*. Mutations apply only to production code —
    mutating a test to make it pass would invert the entire measurement. The 4.2b fix loop
    DOES edit test files, deliberately and separately: it runs only after Phase 3 has
    reverted every mutation and verified production byte-identical, and it never touches
@@ -933,3 +1300,15 @@ These are non-negotiable:
    period) and say so in the report. Never `pkill -f jest`/`vitest`: this is a workstation running
    ~40 repos and a name match kills other people's runs.
 6. **No side effects.** Mutations that would affect databases, external APIs, or file system state outside the project are not generated.
+7. **The consent gate is the ONLY write outside test files, and it is never implicit.** 0.1c is
+   the single step that may add a dev dependency, a lockfile entry, or a runner config. It
+   requires an explicit human yes for that run, prints the uninstall command before asking, and
+   records everything in `installed_this_run[]`. There is deliberately **no flag that grants
+   consent** — a flag an agent can type is not consent, so a non-interactive host declines and
+   runs the LLM engine. `--no-install` and either no-install env var suppress the offer
+   entirely. Build files (`pom.xml`, `build.gradle*`) are never edited under any consent: the
+   JVM path prints its snippet and stops.
+8. **A native runner mutates the tree itself, so the tree is verified after it.** The 3.1
+   temp-copy protocol only covers mutations this skill wrote. Every scoped production file is
+   sha256-compared against its pre-run hash after the native runner exits, on every path
+   including abort. A mismatch is `BLOCKED_DIRTY_TREE` — restore, report, do not score.

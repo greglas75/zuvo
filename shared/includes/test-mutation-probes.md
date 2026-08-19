@@ -5,6 +5,41 @@
 > inverted main condition or a deleted error fallback is asserting shape, not
 > behavior — no Q-score catches that; a probe does.
 
+## First: is a real mutation runner already configured here?
+
+If the project already ships one, USE IT for the file just written — a reproducible score
+beats five hand-picked probes, and re-deriving what the project can already measure was a
+gap this file used to have. Detection is read-only; the table of signals and scoped commands
+is `skills/mutation-test/SKILL.md` § 0.1b.
+
+| Runner | Scoped to ONE file |
+|--------|--------------------|
+| StrykerJS | `npx stryker run --mutate <file>` |
+| Infection | `vendor/bin/infection -- <file>` (positional; `--filter` is deprecated since 0.34) |
+| mutmut | **no per-file path** — `--paths-to-mutate` was removed in mutmut 3.x and scoping is config-only; Python falls back to the probes below |
+| cargo-mutants | `cargo mutants -f <file>` |
+| PIT | `./gradlew pitest -Dpitest.targetClasses=<class>` / the maven equivalent |
+
+Three limits, and they are what keep this from becoming a second mutation-test:
+
+1. **NO consumer of this include ever installs anything** — not write-tests, not refactor, not
+   any future loader. No consent prompt, no dev dependency, no config generation, no build-file
+   edit. Detect-and-use only. The authority to add tooling to someone's project lives in exactly
+   one place, `zuvo:mutation-test` § 0.1c, behind a human consent gate; a per-file writing or
+   refactoring loop is the wrong place to ask and the wrong place to decide. Runner absent → the
+   probe path below, unchanged. (Written as a universal rule because scoping it to one consumer
+   by name left the include's other loaders with no statement at all.)
+2. **The probes remain the floor, not an alternative.** A native score does NOT license
+   skipping them: syntactic mutators do not generate probe classes 2-4 (deleted error
+   catch, skipped side effect, changed delegation argument), which are precisely the
+   classes a freshly-written suite fails. Run both; record both.
+3. **The `rt` ban below applies doubly.** A native runner is a long multi-process job that
+   re-runs the suite per mutant — wrapping it multiplies the per-invocation charge across
+   every mutant, not once.
+
+Record `native: <score>% (<runner>)` alongside the probe table, or `native: none` when no
+runner is configured. A run that had a runner available and did not use it must say why.
+
 ## When
 
 - STANDARD tier: 3 probes. COMPONENT tier: 3 probes (5 when complexity == COMPLEX). HEAVY/COMPLEX: 5 probes, at least one per major
@@ -46,10 +81,13 @@ For each probe:
 ## Recording
 
 ```
-MUTATION PROBES: [N]/[N] killed
+MUTATION PROBES: [N]/[N] killed | native: [<score>% (<runner>) | none]
 | # | class | production line | mutation | killed by |
 | 1 | invert-condition | 148 | `if (!r)` → `if (r)` | respondent.controller.spec.ts:142 |
 ```
+
+- A native survivor is closed the same way a probe survivor is: add the missing behavioral
+  assertion, rerun, re-probe. It is not a report to hand onward.
 
 - A probe that SURVIVES is a coverage gap: add the missing behavioral assertion,
   re-run, and re-probe. Do not close the file with a surviving probe.
