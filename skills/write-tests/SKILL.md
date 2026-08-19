@@ -69,6 +69,8 @@ program, not the writer's own claim.
 | `auto` | Discover uncovered files, process one at a time until done |
 | `--dry-run` | Run Phase 0 + Step 1 for all files, print plan, stop |
 | `--no-cache` | Re-run discovery/classification from scratch: ignore any cached CodeSift index answer and any previously built queue for this run |
+| `--resume <basename>` | Resume ONE file from its persisted checkpoint: load `contracts/<basename>.coverage.json` + `contracts/<basename>.contract.md`, verify `production_sha256` against the file on disk (mismatch → refuse and demand re-inventory — the existing hash rule), take classification from the contract (skip Phase 0.5/Step 1 re-derivation), then jump by state: manifest `inventory` + contract present → Step 2; `final` → Step 3; `final` with Q-scores synced → Step 3.3 |
+| `--resume-run <ledger>` | Resume an auto-mode queue from its run ledger (see **Auto-mode context boundary**): reload run-level facts + remaining queue, continue with the next file in a clean window |
 
 `--no-cache` forces Step 7's queue build to re-derive from a fresh scan rather than reusing a queue computed earlier in the session. (It used to promise clearing a "project-profile cache" that no step in this skill ever reads or writes — a dead flag until 2026-08-02.)
 
@@ -197,7 +199,7 @@ capability (Codex's single-agent lock), follow the ONE documented exception in
    - On repo/index errors run the `codesift-setup.md` recovery loop once; on `Transport closed` abandon CodeSift for the rest of the run. Without CodeSift: skip all dimensions, print `[CONTEXT] CodeSift unavailable — using legacy detection.`
 6. **Test runner refinement:** read the nearest manifest/config; detect runner (vitest/jest/phpunit/pytest) and existing test conventions. No manifest → infer from extension; still unknown → mark file `FAILED`, backlog the environment issue. For JS/TS COMPONENT/HOOK targets check DOM-matcher registration and cleanup globality; reuse the exemplar's local pattern when global setup is absent.
 7. **Build queue:** explicit mode = user's targets. Auto mode with CodeSift: gather dead/leaf candidates, 90-day hotspots, test-reference counts, role signals; 0 test refs = UNCOVERED; priority hub > high-churn > leaf; degraded discovery falls back to the manifest-root glob. Auto mode without CodeSift: glob production files under the source root; files without matching tests = UNCOVERED.
-8. **Baseline test run** (once per run, after queue, before loop): record pre-existing failures — they are ignored in verification. **Skip in `--dry-run`.** Runner/config unavailable → backlog one run-level environment issue, mark every queued file `FAILED` (`Blind Audit=skipped`, `Adversarial=not_run`), stop.
+8. **Baseline test run** (once per run, after queue, before loop): record pre-existing failures — they are ignored in verification. Remote execution (rt farm) follows env-compat **Remote / Queued Execution**: blocking attach with an upfront deadline, and a result without the runner's own summary + `executed=true` evidence is a failure routed to local fallback — never a PASS. **Skip in `--dry-run`.** Runner/config unavailable → backlog one run-level environment issue, mark every queued file `FAILED` (`Blind Audit=skipped`, `Adversarial=not_run`), stop.
    - **Schema-drift pre-probe** (only when queue has an ORM-DB target or DB test helper): run one seed/schema probe; `column/relation/table does not exist` = run-level ENV blocker — backlog, mark every DB-backed file `FAILED`, stop. Skip in `--dry-run`.
 
 **`--dry-run`:** after the queue is built, run Step 1 (Analyze) per file, print the classification table, STOP. Never run suite-mutating commands.
@@ -207,6 +209,22 @@ capability (Codex's single-agent lock), follow the ONE documented exception in
 ## Per-File Loop
 
 Execute Steps 1 → 1.5 → 1.6 → 1.7 → 2 → 2.5 → 3 → 3.2 → 3.3 → 3.5 → 4 → (4.5) → 5 in order. Do NOT skip a step unless a later step explicitly defines a degraded terminal state. Do NOT proceed to the next file until every checkpoint completes or is explicitly downgraded.
+
+**Auto-mode context boundary (file boundary = context boundary).** After each file's completion
+block, write/refresh the run ledger `$ZUVO_DIR/checkpoints/run-<ISO-date>.md`: remaining queue,
+runner command, baseline pre-existing failures, exemplar conventions (≤10 lines), stack decision —
+the run-level facts that until now lived only in the session. Then, per the env-compat lanes:
+- **Claude Code:** dispatch the NEXT file to a FRESH implementer sub-agent whose input is ONLY
+  {skill invocation + ledger path + target file}. The coordinator keeps the queue and per-file
+  syntheses and never accumulates production sources, specs, or tool outputs. MANDATORY after any
+  HEAVY/COMPLEX file or when context exceeds ~60%; a run of consecutive LIGHT files may stay in one
+  session (trade-off named, not hidden: ~40k tokens of skill reload vs measurable late-context
+  degradation — choose the reload).
+- **Single-agent harnesses (Codex/Cursor):** print
+  `[CONTEXT] {file} complete — safe point. Clean continue: /clear, then zuvo:write-tests --resume-run <ledger>`.
+  The skill cannot execute /clear for the user; it makes clearing safe and cheap instead.
+The executable gates (2.5 validator, 3.2 coverage, 3.3 probes) read DISK, not context — every
+step boundary except mid-Step-2 (atomic Write) is a safe cut point.
 
 ### Step 1: Analyze
 
@@ -253,12 +271,12 @@ exit 0 → frozen, proceed. exit 1 → extractor found symbols the inventory mis
 
 ### Step 2: Write
 
-1. **Fill the test contract** per `test-contract.md` (BRANCHES, ERROR PATHS, EXPECTED VALUES, MOCK INVENTORY, MUTATION TARGETS, TEST OUTLINE) — derived from the frozen inventory, not re-derived from scratch. 3+ methods sharing a control-flow pattern → per-pattern mode. Do not print the full contract; show only branch table + outline + planned metrics.
+1. **Fill the test contract** per `test-contract.md` (BRANCHES, ERROR PATHS, EXPECTED VALUES, MOCK INVENTORY, MUTATION TARGETS, TEST OUTLINE) — derived from the frozen inventory, not re-derived from scratch. 3+ methods sharing a control-flow pattern → per-pattern mode. **Write the FULL contract to `$ZUVO_DIR/contracts/<basename>.contract.md`** — all six sections, PLUS the classification line (stack / code_type / families / tier / runtime), the exemplar excerpts to mirror, the exact runner command, and the run's baseline pre-existing failures. Manifest + contract.md together are the resumable checkpoint of everything before Step 2; until now the contract lived only in the conversation, which is why an interrupted run could never resume. Do not print the full contract; show only branch table + outline + planned metrics.
 2. **Check `test-blocklist.md`** — including the typed mock gate (no `Record<string, Mock>` service mocks, no `as never`, no broad `as any`, no unused mocks, no `expect.anything()` on domain arguments; typed `Pick<Service, ...>`/`MockedMethods<T, K>` instead).
 3. **Apply mock rules** per loaded `test-mock-safety-*` includes.
 4. **Write the test file with `Write`** (full file, atomic — NEVER sequential `Edit` for creation/rewrite; linters can rewrite between edits). `Edit` only for targeted single-hunk changes after all tests pass. Prepend the stack-native marker comment `Generated by zuvo:write-tests`. When splitting, write and green one sibling spec at a time.
 5. **Extension pre-flight (JS/TS):** verify the test extension matches the runner's `include` pattern (`.spec` vs `.test`); rename BEFORE the first run — wrong extensions compile but never run in CI.
-6. **Run the target tests.** All new tests must pass; pre-existing failures ignored. On truncated/unclear output or 5+ failures switch to structured diagnostics (isolate one failing test; JSON/verbose reporter; fix the first concrete root cause before mass-editing). Testing-library specifics: missing DOM matcher → local import only when global setup lacks it; repeated `Found multiple elements` → local `afterEach(cleanup)` only when cleanup is not global.
+6. **Run the target tests.** All new tests must pass; pre-existing failures ignored. On truncated/unclear output or 5+ failures switch to structured diagnostics (isolate one failing test; JSON/verbose reporter; fix the first concrete root cause before mass-editing). Testing-library specifics: missing DOM matcher → local import only when global setup lacks it; repeated `Found multiple elements` → local `afterEach(cleanup)` only when cleanup is not global. **Context discipline:** once the scoped run is GREEN, only its one-line summary (pass count + duration) stays load-bearing — do not re-quote or re-read the full runner output afterwards; a green run's raw output had value only while it was red. **Three failed fix rounds on the SAME failing test = the context is now part of the problem:** hand the file to a FRESH context (sub-agent on Claude Code; on single-agent harnesses print the `/clear` + `--resume` line) carrying the checkpoint plus a ≤5-line distillation of what was tried and rejected — never the transcript. Round 4 in the same session repeats round 3 (field data 2026-08-19).
 
 Red truthful tests for production bugs are not a terminal state: characterization-now + fix-in-4.5, or out-of-scope escalation per `test-bugfix-protocol.md`. Backlogging a fixable bug is not a valid exit.
 
@@ -314,7 +332,7 @@ Record the four numbers. Below threshold → find the uncovered lines, close the
 
 ### Step 3.3: Mutation Probes
 
-Per `test-mutation-probes.md`: 3 probes (STANDARD) / 5 (HEAVY-COMPLEX, ≥1 per behavior group), byte-restore protocol, scoped runs. Every probe must be killed; a surviving probe is a coverage gap — close it and re-probe. Print the `MUTATION PROBES` line and table. Post-restore sha256 must equal the manifest hash — for the probes AND for any native run.
+Per `test-mutation-probes.md`: 3 probes (STANDARD) / 5 (HEAVY-COMPLEX, ≥1 per behavior group), byte-restore protocol, scoped runs. Every probe must be killed; a surviving probe is a coverage gap — close it and re-probe. Print the `MUTATION PROBES` line and table. Post-restore sha256 must equal the manifest hash — for the probes AND for any native run. **Context discipline:** after the table is printed, the per-probe diffs and runner outputs are spent — carry only the table forward.
 
 `native:` has three states, and collapsing the last two hides an infra failure as normal absence: `<score>% (<runner>)` when a run produced a number, `none` when the project has no runner configured, `error: <reason>` when a detected runner could not be scoped, timed out, or exited non-zero.
 
@@ -366,6 +384,7 @@ Enter only when Step 3.5 returned `Audit mode: strict` + `Coverage verdict: CLEA
   --files "<abs-production> <abs-test>" > zuvo/review.txt 2>&1
 ```
 
+- **Pass 4+ on the same rejected finding** → fresh context with checkpoint + ≤5-line failure distillation (same rule as Step 2's three-rounds trigger).
 - **STACK is mandatory** (prevents JS-assumption false positives on PHP/Python).
 - **Absolute paths only.** Read the FULL captured output — never `tail`/`head` as the triage source (a pass-2 CRITICAL was lost to `tail -60`).
 - Pass 2+: `--exclude <prior-provider>` when known; context carries FIXED (never re-raised), REJECTED (severity-capped: `max re-raise: INFO`; escalation above cap auto-ignored), KNOWN.
@@ -384,7 +403,7 @@ Enter only when Step 3.5 returned `Audit mode: strict` + `Coverage verdict: CLEA
 | Unresolved CRITICAL after final pass | `FAILED` + backlog |
 | No provider on all passes + no fallback-local | `SKIPPED_REVIEW` |
 
-High-confidence production bugs found here: verify against source, then route to Step 4.5 — fix in-run, never `FAILED`-and-hand-off for an in-scope fix.
+High-confidence production bugs found here: verify against source, then route to Step 4.5 — fix in-run, never `FAILED`-and-hand-off for an in-scope fix. **Context discipline:** carry forward only the verdict + findings list; the audit transcript is spent once findings are extracted (same rule for the adversarial review below).
 
 ### Step 4.5: Fix surfaced production bugs (in-run)
 

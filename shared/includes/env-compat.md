@@ -451,3 +451,45 @@ Failure mode contract:
   - `reviewer_model=unknown`
   - `routing_status=routing-failed`
 - callers must never silently invent their own reviewer mapping after resolver failure
+
+
+## Compact Instructions (standing policy — auto or manual compaction)
+
+When the harness compacts a zuvo pipeline session, ALWAYS preserve verbatim: (1) the paths —
+coverage manifest, `<basename>.contract.md`, run ledger; (2) the most recent COVERAGE GATE
+validator block; (3) the current step number and target file; (4) the remaining queue;
+(5) baseline pre-existing failures. Raw outputs of GREEN runs, superseded drafts and exploration
+may be summarized or dropped. Rationale: an unguided auto-compact can eat the frozen contract
+mid-Step-2 — the exact loss this policy prevents. Users can mirror this as a
+`# Compact instructions` section in the project CLAUDE.md so the harness enforces it too.
+
+
+## Remote / Queued Execution (rt farm) — Anti-Polling + Result Semantics
+
+Field data 2026-08-13/17: 13 farm jobs → 6 executed, 37m10s queue vs 9m09s useful compute,
+54 polling turns (7.86M gross tokens re-processed; a BLOCKED tool call costs zero — tokens burn
+only when a queue report returns and starts a new turn). Rules:
+
+**1. One deadline, one wake.** Dispatch long-running/queued commands as a single BLOCKING call
+that returns only on a terminal event (started→finished / queue-timeout / infra-failure). If the
+tool can only poll, choose the deadline UPFRONT and decide ONCE on wake — consume result,
+fallback-local, or abort. Never a second "check again" turn for the same job without new
+information; "~5s to next free" repeated for 10 minutes is what this rule exists to ignore.
+Thresholds: local command <30s → do not use the farm at all; 30–120s → max 15–30s queue;
+2–10min → max 60s queue; >10min → detached with high queue tolerance.
+
+**2. A result without execution evidence is a FAILURE, not a PASS.** Consume a remote result
+ONLY when it carries: commit SHA, exact command, runtime version, the runner's OWN summary
+(suite/test counts), and the real process exit code. `exit 0` with `executed=false` (job never
+started, wrapper exited clean) = `QUEUE_TIMEOUT_NOT_EXECUTED` / `INFRA_FAILURE` — route to local
+fallback. This is the same evidence rule the pipeline already applies locally ("paste the runner
+summary, never paraphrase"); remote does not get a lower bar.
+
+**3. Verdict durability.** Copy the remote verdict + runner summary into the task's own
+artifact/transcript IMMEDIATELY on receipt — farm logs are reaped after ~24h and `--log` can hang
+past its timeout; the copied summary is the only durable evidence. **Mutation via any remote
+wrapper:** wrapper/infra failure = `NOT_EXECUTED`, never killed/survived — an infra error must not
+move the mutation score in either direction.
+
+**4. Version guard.** Runtime major version differs from the repo's pinned version (e.g. farm
+Node 22/24 vs local 26) → mark the result DEGRADED; it may gate iteration, never ship/CI-equivalence.

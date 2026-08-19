@@ -13,7 +13,10 @@ $ZUVO_DIR/contracts/<production-basename>.coverage.json
 
 `$ZUVO_DIR` per `report-output-location.md` (git root `zuvo/`, overridable via
 `$ZUVO_OUTPUT_DIR`). One manifest per production file — sibling test files
-(split specs) all aggregate into this single manifest.
+(split specs) all aggregate into this single manifest. A sibling
+`<basename>.contract.md` (written at Step 2.1) carries the full test contract +
+classification + runner facts; manifest + contract together are the resumable
+checkpoint (`--resume`). The gate validates the manifest only.
 
 ## Schema
 

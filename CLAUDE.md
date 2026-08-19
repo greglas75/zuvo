@@ -183,7 +183,7 @@ skills/<name>/agents/<name>.md  — sub-agent instructions (50 agent files, 48 u
                                     cq-auditor and spec-reviewer each exist TWICE with DIFFERENT
                                     content — refactor/ vs review/, brainstorm/ vs execute/.
                                     Same name ≠ same file; never "sync" one onto the other)
-shared/includes/*.md            — shared procedural includes (82 files):
+shared/includes/*.md            — shared procedural includes (83 files):
                                     gate-registry.md (SSOT for all 124 CQ/Q/CAP/AP gates; E2E-Q by reference)
                                       E2E-Q is registered there, not defined: the authoritative table
                                       is skills/write-e2e/references/quality-gates.md, and the

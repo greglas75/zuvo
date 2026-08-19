@@ -31,7 +31,8 @@ All paths are under `$ZUVO_DIR` (default `<project-root>/zuvo/`):
 | `audits/` | Audit reports (`.md` + `.json`), tier reports, per-finding artifacts | code-audit, security-audit, api-audit, performance-audit, db-audit, ci-audit, env-audit, dependency-audit, structure-audit, test-audit, seo-audit, geo-audit, content-audit, a11y-audit, design-review, architecture (review mode), pentest (bundle under `audits/pentest/`), infra-audit |
 | `reports/` | Non-audit generated reports | canary, content-migration, benchmark, agent-benchmark, retro, release-docs, skill-eval |
 | `plans/` | Implementation plans, task DAGs | plan, build, execute, brainstorm |
-| `contracts/` | Refactor CONTRACT files | refactor |
+| `contracts/` | Refactor CONTRACT files; write-tests coverage manifests (`<basename>.coverage.json`) and test contracts (`<basename>.contract.md`) | refactor, write-tests |
+| `checkpoints/` | Auto-mode run ledgers (`run-<ISO-date>.md`) — remaining queue + run-level facts, resumable via `--resume-run` | write-tests |
 | `context/` | Session state, execution state, adversarial-review artifacts, acceptance proofs | execute, review, build, write-tests, session-state, adversarial gate |
 | (root of `$ZUVO_DIR`) | `project-profile.json`, `profile-overrides/`, `knowledge/` | CodeSift `analyze_project()` (profile), knowledge store |
 
