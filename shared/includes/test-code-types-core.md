@@ -28,6 +28,116 @@ Before writing exhaustive tests, ask:
 | ORCHESTRATOR | Coordinates multiple services, saga/workflow logic | Steps × 2 + full-flow integration |
 | STATE-MACHINE | Finite states with transitions, event-driven reducers | Transitions × 2 + States × 1 + lifecycle flow |
 | ORM/DB | Repository pattern, query builders, migrations | Queries × 3 (success + empty + constraint violation) |
+| TYPE_CONTRACT | File emits NO runtime value: only `type` / `interface` / `declare` / `.d.ts` / `*.types.ts` | Per exported type: 1 minimal + 1 maximal construction, + 1 `@ts-expect-error` per illegal discriminant combination |
+
+## TYPE_CONTRACT Test Strategy
+
+A file that emits no runtime value has nothing to execute, so a runtime spec written against it can
+only assert that a literal equals itself. Until 2026-08-19 there was no row for it in the table
+above, so it fell through `ELSE → STANDARD` and got the runtime-spec template — producing suites
+whose every assertion was a tautology and whose Q7/Q11 correctly scored 0.
+
+**The output is `<name>.test-d.ts`, not `<name>.spec.ts`, and it contains ZERO runtime `expect`.**
+
+### Validity precondition — state it or the suite means nothing
+
+`expectTypeOf` and `@ts-expect-error` are erased by esbuild. They fail ONLY under
+`vitest --typecheck` (or when the spec files are inside `tsc --noEmit`'s `include`). Without that,
+a wrongly-typed literal transpiles happily and the suite is green **independently of the state of
+the types**.
+
+So before writing a single assertion:
+
+```bash
+# 1. Is a typecheck lane configured at all?
+grep -r "typecheck" package.json vitest.config.* tsconfig*.json 2>/dev/null
+# 2. Do the spec files actually enter it?
+npx tsc --noEmit --listFiles 2>/dev/null | grep 'test-d'
+```
+
+Record the answer in the manifest as a blocking field, never as a footnote:
+
+- `type_tests: ENFORCED (vitest --typecheck)` / `ENFORCED (tsc --noEmit includes *.test-d.ts)`
+- `type_tests: NOT_ENFORCED` — then the suite is **decorative**, say so in the completion block and
+  either wire the lane in this run or record it as the top backlog item. Do not report a green
+  type suite that nothing runs.
+
+### The six patterns, ordered by what actually occurs
+
+Measured across 292 hand-written type files in two production repos (tgm-survey-platform, rs_be).
+Cover them in this order — the frequency is the priority.
+
+| # | Construct | Sites | Required assertions |
+|---|---|---:|---|
+| 1 | optional property (`x?: T`) | 2366 | **minimal + maximal construction per type.** Maximal alone is the single biggest blind spot: an object with every field set still compiles after `x?: T` becomes `x: T`, so optional→required drift is invisible. The minimal object — required fields only — is the assertion that catches it. |
+| 2 | nullable (`\| null`) | 1209 | three distinct cases: `null`, `undefined`, and **absent**. They are different types and a `?: T \| null` accepts all three while `: T \| null` rejects two. Pin which. |
+| 3 | `Record<K, V>` / index signature | 360 | one in-domain key, and `@ts-expect-error` on an out-of-domain key when `K` is a finite union. A `Record<string, …>` accepting anything is worth one line saying so, not four. |
+| 4 | `readonly` property | 296 | `@ts-expect-error` on assignment. A readonly field with no rejection test is an unpinned promise. |
+| 5 | function/method signature in a type | 259 | one call with correct args pinning the return via `expectTypeOf(...).returns`, plus `@ts-expect-error` on a wrong-arity or wrong-arg-type call. Parameter **contravariance** is where these break. |
+| 6 | union of literals / discriminated union | 379 | see below — this is the one pattern that carries real weight. |
+
+### The long tail — 11 of 299 sites, but each fails silently
+
+Measured on the four heaviest hand-written type files (100 exported types): the six patterns above
+cover 288 sites, these four cover the remaining 11. They are rare and each one is invisible when it
+breaks, so they get an assertion whenever they appear — never a sampling rule.
+
+| Construct | Sites | Required assertion |
+|---|---:|---|
+| `interface Child extends Parent` | 7 | `expectTypeOf<Child>().toMatchTypeOf<Parent>()` — plus an explicit pin on every field the child RE-DECLARES. A child that widens an inherited field still extends cleanly, so the relation holds while the contract has already drifted. |
+| mapped type (`[K in Keys]`) | 2 | pin the produced key set: `expectTypeOf<keyof Mapped>().toEqualTypeOf<'a' \| 'b'>()`. A mapped type is a key transform; asserting a value's shape says nothing about which keys were produced. |
+| `Omit` / `Pick` / `Partial` / `Required` | 1 | `@ts-expect-error` on the key that was supposed to be removed, and a positive construction proving a kept key survived. An `Omit<T, 'secret'>` that quietly stops omitting compiles everywhere. |
+| generic with `extends` constraint | 1 | one instantiation INSIDE the bound, one `@ts-expect-error` outside it. A constraint with only in-bound instantiations is an unproven claim. |
+
+Anything outside these ten patterns: name it in the manifest with the file and line rather than
+covering it silently. An unlisted construct is a gap in this template, and the next run should widen
+the table — not quietly skip the type.
+
+### Discriminated unions — the pattern the rest should imitate
+
+For every discriminated union, pin **the correlations, not the members**:
+
+```ts
+// Pin each variant's full shape by its discriminant. This forces a deliberate update when
+// the contract changes, which is the entire point — a member list does not.
+expectTypeOf<Extract<Presentation, { source: 'hb' }>['shareMethod']>().toEqualTypeOf<'hb_softmax'>()
+expectTypeOf<Extract<Presentation, { status: 'unavailable' }>['metricKind']>().toEqualTypeOf<null>()
+
+// Pin the FULL union of every constrained field, on EVERY variant that has one. A pin on
+// Suppressed['suppressionReason'] while Unavailable['suppressionReason'] carries a different
+// union and stays unpinned is the half-applied version of this pattern.
+expectTypeOf<Suppressed['suppressionReason']>().toEqualTypeOf<'low_base' | 'quality_flag'>()
+
+// …and prove the union REJECTS. Without these the suite proves the types are at least as
+// permissive as the examples, never that they forbid an illegal state.
+// @ts-expect-error status 'reportable' cannot carry a suppressionReason
+const bad1: Presentation = { status: 'reportable', suppressionReason: 'low_base', … }
+// @ts-expect-error 'hb' correlates with 'hb_softmax', never 'chrzan_orme'
+const bad2: Presentation = { source: 'hb', shareMethod: 'chrzan_orme', … }
+```
+
+### Banned — assertions that cannot fail
+
+- `expectTypeOf(x).toEqualTypeOf<typeof x>()` and `expectTypeOf(v.field).toEqualTypeOf<T['field']>()`
+  where `v: T` — circular. A value declared as `T` has type `T`; the assertion restates its own
+  premise.
+- `expect(obj).toEqual({ …the same literal… })` in a type spec — a runtime tautology padding the
+  assertion count.
+- Any runtime `expect` at all in a `TYPE_CONTRACT` file. If a runtime assertion is genuinely
+  needed, the file is not TYPE_CONTRACT — reclassify it.
+
+### When to write NO type tests
+
+If the file is a plain data shape with no union, no conditional, no generic constraint and no
+public-API status, consumer compilation already enforces compatibility and a `.test-d.ts` adds
+ceremony without coverage. Record `TYPE_CONTRACT: no-test (structural only, enforced by consumers)`
+with that reason. This is a legitimate outcome, not a skipped one — the honest cases are the ones
+above, not "every exported interface gets a file".
+
+### One file per type module
+
+Three spec files against one type module with duplicated fixtures is fragmentation, not coverage.
+One `.test-d.ts` per type module; share fixtures within it.
 
 ## Per-Code-Type Test Strategy
 

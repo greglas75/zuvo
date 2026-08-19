@@ -93,7 +93,7 @@ If `codesift-setup.md` is missing, print `[CONTEXT] codesift-setup missing — a
 
 Read the production file fully, then read `../../shared/includes/test-code-types-core.md` and classify from that file's canonical table. Do NOT classify from memory. (Phase 1 lists the same file — this Phase 0.5 read IS that load; do not read it twice.)
 
-- **Code type:** VALIDATOR / SERVICE / CONTROLLER / HOOK / PURE / COMPONENT / GUARD / API-CALL / ORCHESTRATOR / STATE-MACHINE / ORM-DB
+- **Code type:** VALIDATOR / SERVICE / CONTROLLER / HOOK / PURE / COMPONENT / GUARD / API-CALL / ORCHESTRATOR / STATE-MACHINE / ORM-DB / TYPE_CONTRACT
 - **Complexity:** THIN / STANDARD / COMPLEX
 - **Testability:** UNIT_MOCKABLE / UNIT_REFLECTION / NEEDS_INTEGRATION / MIXED
 
@@ -101,6 +101,10 @@ Read the production file fully, then read `../../shared/includes/test-code-types
 COMPONENT was assignable to two different tiers depending on reading order):
 
 ```
+IF code_type == TYPE_CONTRACT                                  → TYPE (first: a file that emits no
+                                                                 runtime value has nothing the other
+                                                                 branches can test, and COMPLEX would
+                                                                 otherwise capture a large type module)
 IF complexity == COMPLEX                                       → HEAVY
 IF code_type IN (PURE, VALIDATOR) AND complexity == THIN       → LIGHT
 IF code_type IN (PURE, VALIDATOR) AND complexity == STANDARD   → STANDARD
@@ -113,26 +117,45 @@ ELSE                                                           → STANDARD
 
 Ambiguous → STANDARD. Print: `[CLASSIFIED] {file}: {code_type} {complexity} → tier {TIER}`
 
+**Classify TYPE_CONTRACT before reaching for `ELSE`.** A file that exports only `type` / `interface` /
+`declare` (`*.types.ts`, `types.ts`, `*.d.ts`, anything under a `types/` directory) matched no row in
+the table until 2026-08-19 and therefore fell through `ELSE → STANDARD` — which handed a file with no
+runtime surface to the runtime-spec template. The result was suites where every assertion compared a
+literal to itself and Q7/Q11 scored 0 truthfully. The quick check is the file's emit, not its name:
+if `tsc` would produce an empty `.js`, it is TYPE_CONTRACT.
+
+**TIER TYPE** loads `test-code-types-core.md` (the TYPE_CONTRACT section) and nothing else — no mock
+safety, no edge-case checklist, no fixture rules; none of them have a subject here. Output is one
+`<name>.test-d.ts` per type module with zero runtime `expect`, and the run MUST first record whether
+a typecheck lane actually executes those files (`type_tests: ENFORCED | NOT_ENFORCED`). A
+`NOT_ENFORCED` suite is decorative and must be reported as such, never as coverage.
+
 ### PHASE 1 — Conditional Load (based on tier + detected stack)
 
 Load ONLY the includes matching tier AND stack. Print READ/SKIP per file. If an include is missing: print `[PHASE1] MISSING: <file> — continuing with degraded rules`, keep loading, then print `loaded=<N>/<M>`; if under half loaded, print `[WARN] Low include availability — coverage planning and Q-score confidence are reduced. Do not overclaim clean states.`
 
-| Include | LIGHT | STANDARD | HEAVY | COMPONENT |
-|---------|-------|----------|-------|-----------|
-| `../../shared/includes/test-contract.md` | Full | Full | Full | Full |
-| `../../shared/includes/test-blocklist.md` (incl. typed mock gate) | Full | Full | Full | Full |
-| `../../shared/includes/quality-gates.md` | Q1-Q25 only* | Q1-Q25 only* | Q1-Q25 only* | Q1-Q25 only* |
-| `../../rules/testing.md` | Full | Full | Full | Full |
-| `../../shared/includes/test-mock-safety-core.md` | Full | Full | Full | Full |
-| `../../shared/includes/test-code-types-core.md` | Full | Full | Full | Full |
-| `../../shared/includes/test-bugfix-protocol.md` | Full | Full | Full | Full |
-| `test-mock-safety-{stack}.md` (js/php) | **SKIP** | Full | Full | Full‡ |
-| `test-code-types-{stack}.md` (js/php) | **SKIP** | Full | Full | Full‡ |
-| `../../shared/includes/test-edge-cases.md` | **SKIP** | Full | Full | Full |
-| `../../shared/includes/test-mutation-probes.md` | **SKIP**† | Full | Full | Full |
+| Include | LIGHT | STANDARD | HEAVY | COMPONENT | TYPE |
+|---------|-------|----------|-------|-----------|------|
+| `../../shared/includes/test-contract.md` | Full | Full | Full | Full | Full |
+| `../../shared/includes/test-blocklist.md` (incl. typed mock gate) | Full | Full | Full | Full | Full |
+| `../../shared/includes/quality-gates.md` | Q1-Q25 only* | Q1-Q25 only* | Q1-Q25 only* | Q1-Q25 only* | Q1-Q25 only* |
+| `../../rules/testing.md` | Full | Full | Full | Full | **SKIP**§ |
+| `../../shared/includes/test-mock-safety-core.md` | Full | Full | Full | Full | **SKIP**§ |
+| `../../shared/includes/test-code-types-core.md` | Full | Full | Full | Full | Full |
+| `../../shared/includes/test-bugfix-protocol.md` | Full | Full | Full | Full | **SKIP**§ |
+| `test-mock-safety-{stack}.md` (js/php) | **SKIP** | Full | Full | Full‡ | **SKIP**§ |
+| `test-code-types-{stack}.md` (js/php) | **SKIP** | Full | Full | Full‡ | Full |
+| `../../shared/includes/test-edge-cases.md` | **SKIP** | Full | Full | Full | **SKIP**§ |
+| `../../shared/includes/test-mutation-probes.md` | **SKIP**† | Full | Full | Full | **SKIP**§ |
 
 \* **quality-gates.md:** Read ONLY `## Q1-Q25: Test Quality Gates` to end of file. Skip CQ1-CQ40.
 † LIGHT loads it only when the file has an error fallback (probe class 2).
+§ **TIER TYPE skips these because they have no subject, not to save tokens.** There is nothing to
+mock (no runtime), nothing to mutate (a mutation probe needs executable code — this is why a
+TYPE_CONTRACT file scores Q7/Q11=0 honestly rather than failing), no edge-case inputs (no inputs),
+and no bug to reproduce. Loading them produced the exact ceremony this tier exists to remove.
+What TIER TYPE does load is the TYPE_CONTRACT section of `test-code-types-core.md`, which carries
+the validity precondition, the six construct patterns and the ban on circular assertions.
 ‡ COMPONENT loads the stack files too (fixed 2026-08-01): `test-code-types-core.md`'s
 COMPONENT Callback Routing Guard explicitly defers its framework example to
 `test-code-types-js.md` (Dispatch/Router template, Lazy/Suspense caveat, Time-Dependent
@@ -331,6 +354,8 @@ Enter only when Step 3.5 returned `Audit mode: strict` + `Coverage verdict: CLEA
 
 | Complexity | Max passes |
 |-----------|-----------|
+| TYPE_CONTRACT | 1, `--mode code` not `--mode test` (the reviewer is judging a type contract, |
+|               | not test behavior; ask it for illegal states the union still accepts) |
 | THIN | 1 |
 | STANDARD | 2 |
 | COMPLEX | 2 + 3rd ONLY if pass 2 found high-confidence CRITICAL |

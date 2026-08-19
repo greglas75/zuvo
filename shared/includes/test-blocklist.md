@@ -31,3 +31,19 @@ the real service signature changes, which is exactly when tests should fail.
 test when used.
 
 **If reaching for a blocked pattern:** wrong testability decision. Go back to testability classification (in `test-code-types-core.md`) and choose NEEDS_INTEGRATION.
+
+## Type-test tautologies (TYPE_CONTRACT files)
+
+Banned outright — these cannot fail, so they inflate the assertion count while proving nothing:
+
+| Pattern | Why it is empty |
+|---|---|
+| `expectTypeOf(x).toEqualTypeOf<typeof x>()` | A value declared as `T` has type `T`. The assertion restates its own premise. |
+| `expectTypeOf(v.field).toEqualTypeOf<T['field']>()` where `v: T` | Same circularity, one level down. |
+| `expect(obj).toEqual({ …the identical literal… })` | A runtime tautology in a file with no runtime behavior. |
+| any runtime `expect` in a `.test-d.ts` | If a runtime assertion is needed, the file was misclassified — it is not TYPE_CONTRACT. |
+| a suite of only MAXIMAL constructions | Every field set means optional→required drift still compiles. The minimal construction is the assertion that catches it. |
+
+A type suite with zero `@ts-expect-error` proves the types are at least as permissive as the
+examples. It never proves they reject an illegal state — which, for a discriminated union, is the
+only property worth testing.
