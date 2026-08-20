@@ -47,7 +47,7 @@ resumable run, not an archive candidate — resume it per the rules below instea
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "file": "src/services/order.service.ts",
   "type": "EXTRACT_METHODS",
   "mode": "full",
@@ -61,7 +61,7 @@ resumable run, not an archive candidate — resume it per the rules below instea
   "test_mode": "",
   "test_audit_before": { "test_file": null, "q7": 0, "q11": 0, "q13": 0, "units_total": 0, "units_covered": 0, "uncovered_units": [] },
   "modules_created": [],
-  "prove": { "characterization": "not_run", "blind_audit": "not_run", "adversarial": "not_run", "regression_red": "not_run", "findings_disposition": "pending", "test_quality": "not_run", "split_coverage": "not_run" },
+  "prove": { "characterization": "not_run", "blind_audit": "not_run", "adversarial": "not_run", "regression_red": "not_run", "findings_disposition": "pending", "test_quality": "not_run", "split_coverage": "not_run", "complexity_before": "not_run", "complexity_reduced": "not_run" },
   "progress": []
 }
 ```
@@ -75,8 +75,105 @@ end. It is the denominator of `prove.split_coverage`.
 **`prove.split_coverage`** — `"<created>/<with_own_spec>:<disposition>"` from the per-module coverage
 gate, or `"N/A"` when `modules_created` is empty. See "Per-module coverage" in `skills/refactor/SKILL.md`.
 
+## Effectiveness fields (v5): `complexity_before` / `complexity_reduced`
+
+**Why they exist — measured 2026-08-20, 101 split-ish refactors across 4 repos in 14 days.** 87%
+reduced the worst function. 13% halved the FILE while the worst function stayed intact or grew:
+`exerciseDesignMapper.ts` lost 614 lines with maxfn 103→103; `kano-advanced.helpers.ts` maxfn
+63→**87**; `income-timing-integrity.scorer.ts` was split TWICE, 43→45 both times. Every safety gate
+passed on all of them — the prove fields all asked "did it break?" and none asked "did it help?".
+These two make effectiveness a recorded fact instead of an implied one. Enforced (pre-push, contract
+`version >= 5`) only for the intents that PROMISE reduction: `SPLIT_FILE`, `GOD_CLASS`, `SIMPLIFY`.
+
+**`prove.complexity_before`** — `"maxfn:<loc>,branches:<n>,loc:<n>"`, written in **Phase 1, before
+any edit**. The pre-work baseline is the cross-check for the after-measurement: faking "reduced"
+would require lying twice, backwards in time (the same principle `split_coverage` borrows from
+`modules_created`). A `SPLIT_FILE`/`GOD_CLASS`/`SIMPLIFY` contract without it is blocked at push.
+
+**`prove.complexity_reduced`** — written in Phase 3.7, after the last extraction:
+
+| value | meaning | gate check |
+|---|---|---|
+| `reduced:maxfn:<b>-><a>,branches:<b>-><a>` | the worst function shrank | `a*10 <= b*9` (≥10% smaller) AND `<b>` equals the baseline |
+| `already-small:maxfn:<b>-><a>` | nothing meaningful to reduce — the split was organizational | `b <= 50` |
+| `essential:maxfn:<b>-><a>:reason=<one line>` | entangled core; splitting would relocate, not reduce | reason non-empty; completion block MUST say the file remains complex |
+
+**The criterion is the worst FUNCTION, never file LOC.** File LOC is exactly the number the 13%
+failures optimized: extract every trivial helper, leave the core, watch the file halve. `maxfn`
+cannot be gamed that way — it only moves when the hard part is actually decomposed.
+
+**Canonical measurement** (used for both fields; CodeSift `analyze_complexity` preferred when
+available — record whichever tool you used consistently for before AND after):
+
+```bash
+python3 - "$TARGET_FILE" <<'PY'
+import sys, re
+src = open(sys.argv[1], encoding='utf-8', errors='replace').read()
+lines = src.split('
+')
+BR = re.compile(r'\b(if|elif|else if|switch|case|for|while|catch|except)\b|&&|\|\||\?\?')
+def m(txt):
+    ls = [l for l in txt.split('
+') if l.strip() and not l.strip().startswith(('//','#','*','/*'))]
+    return len(ls), sum(len(BR.findall(l)) for l in ls)
+best = (0, 0)
+if sys.argv[1].endswith('.py'):
+    starts = [i for i, l in enumerate(lines) if re.match(r'\s*(async\s+)?def\s', l)]
+    for k, i in enumerate(starts):
+        ind = len(lines[i]) - len(lines[i].lstrip()); j = i + 1
+        while j < len(lines) and (not lines[j].strip() or len(lines[j]) - len(lines[j].lstrip()) > ind):
+            j += 1
+        cand = m('
+'.join(lines[i:j]))
+        if cand[0] > best[0]: best = cand
+else:
+    i = 0
+    while i < len(lines):
+        if re.search(r'(function\s+\w+|=>\s*\{|^\s{0,2}(export\s+)?(async\s+)?(function|const\s+\w+\s*=)|^\s{0,4}\w+\s*\([^)]*\)\s*[:{])', lines[i]):
+            d = lines[i].count('{') - lines[i].count('}'); j = i + 1; body = [lines[i]]
+            while j < len(lines) and d > 0:
+                body.append(lines[j]); d += lines[j].count('{') - lines[j].count('}'); j += 1
+            if len(body) > 4:
+                cand = m('
+'.join(body))
+                if cand[0] > best[0]: best = cand
+            i = j
+        else: i += 1
+floc, fbr = m(src)
+print(f"maxfn:{best[0]},branches:{fbr},loc:{floc}")
+PY
+```
+
+## Complexity shape: ADDITIVE vs ESSENTIAL (decide BEFORE routing to SPLIT)
+
+The 13% failures share one property: the target's complexity was **essential** — one algorithm with
+interacting branches — and splitting relocated it instead of reducing it. Classify before choosing
+the strategy; the signals are structural:
+
+| signal | shape | consequence |
+|---|---|---|
+| responsibilities are independent method groups; the worst function is <40% of the file's branches | **ADDITIVE** | SPLIT works: each piece leaves and genuinely disappears from the original |
+| one function holds >40% of the file's branches | **ESSENTIAL** | splitting the *file* leaves that function intact — target the FUNCTION |
+| ordered first-match cascade (`if/else if` chain, `.find()` over rule arrays) where ORDER decides the outcome | **ESSENTIAL** | scattering 12 branches into 12 files hides the precedence question instead of answering it |
+| a normalizer/mapper whose size is fields × defaults, all called from one entry | **ESSENTIAL** | per-field extraction drops LOC-per-function, total complexity unchanged |
+| incremental parser / state machine threading mutable state through branches | **ESSENTIAL** | state crosses every new module boundary as parameters — complexity moves into signatures |
+| shared mutable locals referenced by most branches | **ESSENTIAL** | same: the coupling IS the complexity |
+
+For ESSENTIAL targets the honest strategies are **within-function**: table-drive the cascade,
+extract pure predicates the core *calls* (shrinking its body), flatten nesting via early returns,
+collapse duplicate branches — and when none applies, record
+`complexity_reduced = "essential:...:reason=<the shape above>"` and say in the completion block that
+the file remains complex. What is NOT honest: extracting every helper *around* the core, watching
+the file halve, and reporting the god class fixed.
+
 **Contract migration (v3 → v4):** `continue` on a v3 contract bumps `version` to 4 and adds the two
 new `prove` keys as `"not_run"` plus an empty `modules_created`. Nothing else changes.
+
+**Contract migration (v4 → v5):** `continue` on a v4 contract bumps `version` to 5 and adds
+`prove.complexity_before` / `prove.complexity_reduced` as `"not_run"`. For a resumed SPLIT_FILE /
+GOD_CLASS / SIMPLIFY run whose target was already edited, the honest baseline is gone — record
+`complexity_before` as `maxfn:<n>,branches:<n>,loc:<n>,resumed-mid-run` from the current tree and
+say so; never reconstruct a flattering "before" from git history you did not measure at the time.
 
 **Where these two are enforced — `git push`, not `git commit`.** Both are only KNOWABLE after
 Phase 3.6, which runs *after* the Phase 3.5 commits. A commit-time check would block the very commit

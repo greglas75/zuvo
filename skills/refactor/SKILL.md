@@ -325,6 +325,28 @@ If the target is a test file (`.test.*`, `.spec.*`, `__tests__/*`), auto-set typ
 
 Default when no keywords match: EXTRACT_METHODS.
 
+### Complexity-shape gate (SPLIT_FILE / GOD_CLASS / SIMPLIFY only)
+
+These three intents PROMISE complexity reduction, and 13% of measured split runs broke that promise
+invisibly — the file halved while the worst function stayed intact or grew (101 runs, 4 repos,
+2026-08-20; the pathology cases: maxfn 103→103 after −614 lines, 63→**87**, 43→45 twice). Two
+obligations before any edit, both enforced by the pre-push gate on contract `version >= 5`:
+
+1. **Record the baseline NOW.** Measure the target with the canonical snippet (or CodeSift
+   `analyze_complexity` — same tool for before and after) and write
+   `prove.complexity_before = "maxfn:<loc>,branches:<n>,loc:<n>"` into the CONTRACT. See
+   "Effectiveness fields (v5)" in `refactor-reference.md`. A baseline recorded after the work is
+   not a baseline.
+2. **Classify the complexity shape — ADDITIVE vs ESSENTIAL** — per the signals table in
+   `refactor-reference.md`. ADDITIVE (independent responsibility groups): proceed with the split.
+   ESSENTIAL (one function holds >40% of the file's branches; ordered first-match cascade; a
+   normalizer whose size is fields × defaults; a state machine threading mutable state): a file
+   split will RELOCATE the complexity, not reduce it. Route the plan at the worst FUNCTION —
+   table-drive the cascade, extract pure predicates the core calls, flatten nesting — and only if
+   none applies, plan to record `complexity_reduced = "essential:...:reason=<shape>"` and say in
+   the completion block that the file remains complex. Print the classification:
+   `[COMPLEXITY-SHAPE] {ADDITIVE|ESSENTIAL}: <one-line evidence, e.g. "maxfn holds 298/512 branches">`
+
 ### GOD_CLASS Auto-Escalation
 
 After keyword detection, ALWAYS check the target file for GOD_CLASS thresholds:
@@ -1014,6 +1036,16 @@ exists, or you cannot prove none does, the demonstrated red is required as norma
 
 **Procedure:**
 
+0a. **Phase 3.7 — Effectiveness re-measure (SPLIT_FILE / GOD_CLASS / SIMPLIFY only, after the
+   LAST extraction).** Re-run the same measurement used for the baseline and write
+   `prove.complexity_reduced` per the vocabulary in `refactor-reference.md` →
+   "Effectiveness fields (v5)": `reduced:` needs maxfn ≥10% smaller; `already-small:` needs the
+   baseline ≤50; `essential:` needs a `reason=` naming the entangled shape. **If the number says
+   not-reduced and the Phase 1 classification was ADDITIVE, the job is not done — go back and
+   decompose the worst function itself** (that residual core is what the user asked about), then
+   re-measure. Recording `essential:` after an ADDITIVE classification is a contradiction the
+   review will catch: you claimed the split would work, then claimed it could not.
+
 0. **Record the Prove step in the CONTRACT — BEFORE you commit (the external gate reads it).** After the blind audit + adversarial passes (Phase 3), write their outcomes into the contract's `prove`: `prove.blind_audit` = the blind-audit telemetry (`clean:strict` / `clean:degraded` / `fix:N`, never `skipped`/`not_run`); `prove.adversarial` = `clean` / `Nfindings` / `Nfindings:preserved`. **Both record what the pass
 FOUND, not how the run ended.** An audit that surfaced four bugs you then fixed stays `fix:4` — do
 not rewrite it to `clean:strict` because the tree is clean now. The completion state lives in
@@ -1260,6 +1292,11 @@ COMPLETION GATE CHECK
 [ ] Adversarial review ran on final diff
 [ ] Bug remediation (Phase 3.5): every fix-now bug fixed + tested IN THIS RUN as a separate fix commit; nothing parked by size; only out-of-scope-fence items or user-declined decisions deferred. If bugs were fixed, the run has 2 commits (refactor, then fix)
 [ ] Regression red DEMONSTRATED (only when fix-now items were applied): the new regression assertions were actually RUN against the pre-fix code with the failing output captured — not inferred from the old assertion's flip — and `prove.regression_red` recorded in the CONTRACT (the gate blocks the fix commit without it)
+[ ] Effectiveness (v5, SPLIT_FILE/GOD_CLASS/SIMPLIFY only): `prove.complexity_before` recorded in
+    Phase 1 (before any edit) and `prove.complexity_reduced` recorded in Phase 3.7 with the
+    matching baseline number — verdict `reduced` (maxfn ≥10% smaller), `already-small` (baseline
+    ≤50), or `essential:reason=<shape>` with the completion block saying the file REMAINS complex.
+    A halved file with an intact worst function is a relocation, not a refactor
 [ ] Per-module coverage (Phase 3.6 Step 0): every path in `modules_created` either has a test that imports it DIRECTLY, or was tested in-run via `zuvo:write-tests`, or is a NAMED backlog entry with an out-of-fence/user-declined reason; `prove.split_coverage = "<created>/<with_own_spec>:<disposition>"` recorded (`"N/A"` only when the refactor created no files). The characterization lock does NOT satisfy this item — it targets the pre-refactor surface by construction, so it can never cover a module that did not exist yet
 [ ] Test Quality Gate (Phase 3.6) ran: `[GATE: test-quality] PASS|WARN|N/A` printed with a REAL `zuvo/audits/` test-audit report path (inline Q-rescoring is a substituted gate = INVALID); below-A files fixed in-run as a `test:` commit or WARN + per-file backlog; `prove.test_quality` recorded
 [ ] Aggregate review hand-off evaluated: if 2+ sibling refactor commits this session, the `zuvo:review <range>` line is surfaced (per Aggregate Review Hand-off)
@@ -1362,6 +1399,31 @@ if true; then  # CONTRACT resolved for this run's target — evaluate its prove 
     elif [ -z "$num" ] || [ "$num" -ne "$mods" ] 2>/dev/null; then
       echo "BLOCK(unsafe): prove.split_coverage='$sc' does not match modules_created ($mods entries) — give every created module a test that imports it DIRECTLY (Phase 3.6 Step 0), then record '<created>/<with_own_spec>:<disposition>' in $C"; g=1
     fi
+    # v5 effectiveness — same checks the pre-push gate runs, same order, for split-ish intents only.
+    if [ "$cv" -ge 5 ] 2>/dev/null; then
+      ty=$(grep -o '"type"[[:space:]]*:[[:space:]]*"[A-Z_]*"' "$C" | head -1 | sed 's/.*"\([A-Z_]*\)"$/\1/')
+      case "$ty" in
+        SPLIT_FILE|GOD_CLASS|SIMPLIFY)
+          cb=$(sed -n 's/.*"complexity_before"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$C" | head -1)
+          b0=$(printf '%s' "$cb" | sed -n 's/.*maxfn:\([0-9][0-9]*\).*/\1/p')
+          [ -n "$b0" ] || { echo "BLOCK(unsafe): prove.complexity_before='$cb' — record the baseline (maxfn:<loc>,branches:<n>,loc:<n>) in Phase 1, BEFORE any edit"; g=1; }
+          cr=$(sed -n 's/.*"complexity_reduced"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$C" | head -1)
+          b1=$(printf '%s' "$cr" | sed -n 's/.*maxfn:\([0-9][0-9]*\)->\([0-9][0-9]*\).*/\1/p')
+          a1=$(printf '%s' "$cr" | sed -n 's/.*maxfn:\([0-9][0-9]*\)->\([0-9][0-9]*\).*/\2/p')
+          if [ -z "$b1" ] || [ -z "$a1" ]; then
+            echo "BLOCK(unsafe): prove.complexity_reduced='$cr' — re-measure after the work (Phase 3.7) and record '<reduced|already-small|essential>:maxfn:<b>-><a>...'"; g=1
+          elif [ -n "$b0" ] && [ "$b1" -ne "$b0" ] 2>/dev/null; then
+            echo "BLOCK(unsafe): prove.complexity_reduced before-value maxfn:$b1 disagrees with the Phase 1 baseline maxfn:$b0"; g=1
+          else
+            case "${cr%%:*}" in
+              reduced) [ $((a1 * 10)) -le $((b1 * 9)) ] 2>/dev/null || { echo "BLOCK(unsafe): prove.complexity_reduced='$cr' claims reduced but maxfn $b1->$a1 is not >=10% smaller — decompose the worst function, or record essential:...:reason= honestly"; g=1; } ;;
+              already-small) [ "$b1" -le 50 ] 2>/dev/null || { echo "BLOCK(unsafe): 'already-small' requires baseline maxfn <=50, got $b1"; g=1; } ;;
+              essential) case "$cr" in *:reason=?*) ;; *) echo "BLOCK(unsafe): 'essential' requires ':reason=<the entangled shape>'"; g=1 ;; esac ;;
+              *) echo "BLOCK(unsafe): prove.complexity_reduced verdict must be reduced | already-small | essential (got '${cr%%:*}')"; g=1 ;;
+            esac
+          fi ;;
+      esac
+    fi
   fi
   [ "$g" = 0 ] \
     && echo "GATE: PASS — CONTRACT prove complete (blind_audit=$ba adversarial=$av disposition=$fd); the refactor-safety hook will allow the commit." \
@@ -1379,6 +1441,7 @@ REFACTORING COMPLETE
 Type: [TYPE] | Target: [filename]
 Files modified: [N] | Files created: [N]
 CQ: [before] -> [after] | Tests: [status] | Commits: refactor [sha7][ + fix [sha7] (N bugs fixed in-run)]
+Complexity: maxfn [before]→[after] ([-N%| ESSENTIAL — file remains complex: <reason>]) | file LOC [before]→[after]   (SPLIT/GOD_CLASS/SIMPLIFY only)
 
 Run: <ISO-8601-Z>\trefactor\t<project>\t<CQ>\t<Q>\t<VERDICT>\t<TASKS>\t<DURATION>\t<NOTES>\t<BRANCH>\t<SHA7>\t<INCLUDES>\t<TIER>
 ------------------------------------
@@ -1411,5 +1474,11 @@ When GOD_CLASS is detected (>600L, 5+ responsibilities):
 1. **Identify:** List public methods grouped by responsibility. Map internal dependencies. Extract the group with the FEWEST internal dependencies first.
 2. **Decompose iteratively:** For each responsibility: create new module, delegate from original, update imports, run tests, verify equivalence, commit. Repeat until original is under size limit with single responsibility.
 3. **Size gate:** After each extraction check original file, new module, and all modules (CQ self-eval via Split-File Audit Rule). Continue if any exceeds limit.
+4. **Residual-core gate:** when every responsibility is extracted and the survivor's worst function
+   is still ≥90% of the Phase 1 baseline, the extraction removed the easy parts and left the reason
+   the file was a GOD_CLASS. Decompose that function itself (within-function strategies in
+   `refactor-reference.md` → "ADDITIVE vs ESSENTIAL") before recording `prove.complexity_reduced` —
+   or record `essential:...:reason=` and say the file remains complex. Measured: this exact
+   file-halved-core-intact outcome shipped 13 times in 14 days with every safety gate green.
 
 ---

@@ -276,6 +276,69 @@ refactor_prove_v4_check() {
       echo "BLOCK: refactor CONTRACT prove.split_coverage='$rpv_sc' disagrees with modules_created ($rpv_mods entries) — the created count must match the list Phase 3 recorded [$rpv_c]"
       rpv_blocked=1
     fi
+
+    # v5: prove.complexity_before + prove.complexity_reduced — the EFFECTIVENESS gate.
+    # Measured 2026-08-20 over 101 split-ish refactors across 4 repos (14 days): 87% reduced the
+    # worst function; 13% halved the FILE while the worst function stayed intact or GREW
+    # (exerciseDesignMapper.ts -614 lines, maxfn 103->103; kano-advanced.helpers.ts maxfn 63->87;
+    # income-timing-integrity.scorer.ts attempted TWICE, 43->45 both times). Every safety gate
+    # passed on all of them, because every prove field asks "did it break?" and none asked
+    # "did it help?". Enforced only for intents that PROMISE reduction — a MOVE or RENAME makes
+    # no such promise and is not judged here. version >= 5 only: same self-migrating rollout as
+    # the v4 fields above, so an in-flight run started by an older skill is never blocked by a
+    # field its version never knew about.
+    [ "$rpv_cv" -ge 5 ] 2>/dev/null || continue
+    # First "type" occurrence is the contract's own (schema order: version, file, type) — the
+    # only other "type" keys live inside progress[] entries, which come later in the file.
+    rpv_ty=$(grep -o '"type"[[:space:]]*:[[:space:]]*"[A-Z_]*"' "$rpv_c" 2>/dev/null | head -1 | sed 's/.*"\([A-Z_]*\)"$/\1/')
+    case "$rpv_ty" in SPLIT_FILE|GOD_CLASS|SIMPLIFY) ;; *) continue ;; esac
+    # Baseline must have been recorded BEFORE the work (Phase 1 pre-scan). Its maxfn number is
+    # the cross-check for the after-measurement: to fake "reduced" the lie has to be told twice,
+    # backwards in time — the same principle split_coverage borrows from modules_created.
+    rpv_cb=$(_prove_field "$rpv_c" complexity_before)
+    rpv_b0=$(printf '%s' "$rpv_cb" | sed -n 's/.*maxfn:\([0-9][0-9]*\).*/\1/p')
+    if [ -z "$rpv_b0" ]; then
+      echo "BLOCK: refactor CONTRACT prove.complexity_before='$rpv_cb' — a $rpv_ty run must record the baseline (format 'maxfn:<loc>,branches:<n>,loc:<n>') in Phase 1, BEFORE any edit. Without a pre-work baseline the after-measurement proves nothing [$rpv_c]"
+      rpv_blocked=1; continue
+    fi
+    rpv_cr=$(_prove_field "$rpv_c" complexity_reduced)
+    rpv_verdict=${rpv_cr%%:*}
+    rpv_b1=$(printf '%s' "$rpv_cr" | sed -n 's/.*maxfn:\([0-9][0-9]*\)->\([0-9][0-9]*\).*/\1/p')
+    rpv_a1=$(printf '%s' "$rpv_cr" | sed -n 's/.*maxfn:\([0-9][0-9]*\)->\([0-9][0-9]*\).*/\2/p')
+    if [ -z "$rpv_b1" ] || [ -z "$rpv_a1" ]; then
+      echo "BLOCK: refactor CONTRACT prove.complexity_reduced='$rpv_cr' not satisfied — a $rpv_ty run must re-measure the target after the work and record '<reduced|already-small|essential>:maxfn:<before>-><after>[...]' (Phase 3.7). A split that leaves the worst function untouched is a relocation, not a refactor [$rpv_c]"
+      rpv_blocked=1; continue
+    fi
+    if [ "$rpv_b1" -ne "$rpv_b0" ] 2>/dev/null; then
+      echo "BLOCK: refactor CONTRACT prove.complexity_reduced before-value maxfn:$rpv_b1 disagrees with prove.complexity_before maxfn:$rpv_b0 — the after-measurement must start from the baseline Phase 1 recorded, not a re-derived one [$rpv_c]"
+      rpv_blocked=1; continue
+    fi
+    case "$rpv_verdict" in
+      reduced)
+        # >=10% smaller, integer math: a*10 <= b*9. File LOC is deliberately NOT the criterion —
+        # the 13% failures all shrank the file dramatically while the worst function survived.
+        if [ $((rpv_a1 * 10)) -gt $((rpv_b1 * 9)) ] 2>/dev/null; then
+          echo "BLOCK: refactor CONTRACT prove.complexity_reduced='$rpv_cr' claims reduced but maxfn $rpv_b1->$rpv_a1 is not >=10% smaller. Decompose the worst function itself, or record 'essential:...:reason=<why it cannot decompose>' honestly [$rpv_c]"
+          rpv_blocked=1
+        fi ;;
+      already-small)
+        # Only honest when there was nothing meaningful to reduce.
+        if [ "$rpv_b1" -gt 50 ] 2>/dev/null; then
+          echo "BLOCK: refactor CONTRACT prove.complexity_reduced='$rpv_cr' — 'already-small' requires the pre-work worst function to be <=50 lines; at $rpv_b1 it was the thing to reduce [$rpv_c]"
+          rpv_blocked=1
+        fi ;;
+      essential)
+        # Honest disclosure path for entangled/algorithmic cores (RULE-CASCADE, one algorithm
+        # with interacting branches) where splitting relocates complexity instead of reducing it.
+        # Requires a named reason — the completion block must then say the file REMAINS complex.
+        case "$rpv_cr" in
+          *:reason=?*) ;;
+          *) echo "BLOCK: refactor CONTRACT prove.complexity_reduced='$rpv_cr' — 'essential' requires ':reason=<one line naming the entangled shape>'. An unexplained essential is a skipped gate wearing a label [$rpv_c]"; rpv_blocked=1 ;;
+        esac ;;
+      *)
+        echo "BLOCK: refactor CONTRACT prove.complexity_reduced='$rpv_cr' — verdict must be reduced | already-small | essential (got '$rpv_verdict') [$rpv_c]"
+        rpv_blocked=1 ;;
+    esac
   done
   return $rpv_blocked
 }
