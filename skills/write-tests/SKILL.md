@@ -200,10 +200,21 @@ capability (Codex's single-agent lock), follow the ONE documented exception in
      run without a stack and code type. **MATCH** → take stack/code_type/tier from the contract's
      classification line (skip steps 4-6 and Step 1), and enter the Per-File Loop at: manifest
      `inventory` → Step 2 · `final` → Step 3 · `final` with Q-scores synced → Step 3.3.
+     **Steps 1-3 of this phase ALWAYS run, on every resume path.** CodeSift setup, `$ZUVO_BASE`
+     resolution and the reviewer preflight are run-level preconditions, not per-file work a
+     checkpoint can vouch for — a resume that skipped the preflight would write tests no reviewer
+     can audit, which is the one thing this skill's spine exists to make impossible.
+     The hash covers the PRODUCTION bytes only. The test file and the suite may both have moved
+     while the run was interrupted, so a resumed run re-reads the existing test file at Step 1 and
+     re-runs the scoped suite at its next gate rather than trusting the manifest's recorded result.
    - `--resume-run <ledger>`: read the ledger, restore its five fields, and SKIP steps 7-8 (queue
      build and baseline run) — the baseline is recorded there, and re-running the whole suite per file
      is the cost the ledger exists to remove. Steps 4-6 (classify + runner refinement) still run for
      every file — the ledger carries run-level facts, never a per-file classification.
+     **A baseline has a shelf life.** The ledger records when it was taken; if the resume happens
+     more than a few hours later, or `git rev-parse HEAD` differs from the SHA the ledger recorded,
+     re-run step 8 instead of trusting it — an aged baseline silently reclassifies somebody else's
+     new failure as pre-existing, i.e. as something this run may ignore.
      **Two callers, two behaviours, and collapsing them breaks the one a human uses:**
      · *sub-agent resume* (a file argument is present) — process THAT file only and return; do not
        touch the queue, do not dispatch onward.

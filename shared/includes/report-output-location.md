@@ -32,7 +32,7 @@ All paths are under `$ZUVO_DIR` (default `<project-root>/zuvo/`):
 | `reports/` | Non-audit generated reports | canary, content-migration, benchmark, agent-benchmark, retro, release-docs, skill-eval |
 | `plans/` | Implementation plans, task DAGs | plan, build, execute, brainstorm |
 | `contracts/` | Refactor CONTRACT files; write-tests coverage manifests (`<basename>.coverage.json`) and test contracts (`<basename>.contract.md`) | refactor, write-tests |
-| `checkpoints/` | Auto-mode run ledgers (`run-<ISO-date>.md`) — remaining queue + run-level facts, resumable via `--resume-run` | write-tests |
+| `checkpoints/` | Auto-mode run ledgers (`run-<ISO-date>-<first-target-slug>.md`; the slug is what keeps two runs on one day from overwriting each other, so never shorten it to the bare date) — remaining queue + run-level facts, resumable via `--resume-run` | write-tests |
 | `context/` | Session state, execution state, adversarial-review artifacts, acceptance proofs | execute, review, build, write-tests, session-state, adversarial gate |
 | (root of `$ZUVO_DIR`) | `project-profile.json`, `profile-overrides/`, `knowledge/` | CodeSift `analyze_project()` (profile), knowledge store |
 

@@ -1085,3 +1085,57 @@ telemetry note; if it does, that is the measure of what the 403s cost.
 NO_RETURN (silence) but none for "dispatched, harness returned a terminal API error", so harness
 flakiness is indistinguishable from a lead that skipped its agents. Proposal filed in the retro.
 
+
+---
+
+## B-wt-ledger-escaping — run-ledger value lines have no escaping rule
+**From:** zuvo:review 346c00f..0306ae4 (write-tests resume patch), adversarial pass 3, WARNING.
+**Where:** `skills/write-tests/SKILL.md`, Auto-mode context boundary — the ledger's indent-block
+value format ("key alone on its line, each value line indented two spaces, ending at the next
+unindented key").
+**Problem:** a value line that itself begins with two spaces is indistinguishable from a
+continuation line. Affects `queue:`, `baseline_failures:`, `exemplars:` — the three multi-line keys.
+An exemplar excerpt copied from an indented block is the realistic trigger.
+**Defer reason:** structural-refactor (the honest fix is a real serialization decision — fenced
+blocks, or a JSON sidecar like the coverage manifest — not a one-line patch).
+**Recipe:** give the ledger the same treatment `coverage-manifest-schema.md` got: a fenced schema
+block with explicit field types, or make it `run-<date>-<slug>.json` and drop the ad-hoc format.
+
+## B-wt-basename-collision — coverage manifests and contracts are keyed on basename
+**From:** same review, adversarial pass 2, WARNING. **PRE-EXISTING** — predates this diff.
+**Where:** `shared/includes/coverage-manifest-schema.md` — `$ZUVO_DIR/contracts/<production-basename>.coverage.json`
+(and now the sibling `<basename>.contract.md`).
+**Problem:** two production files sharing a basename in different directories (`user/index.ts` and
+`order/index.ts`, or two `service.ts`) write to the SAME manifest path. The second overwrites the
+first, and `--resume` would then verify a sha256 belonging to a different file — which the hash
+check catches, but only by refusing, never by resolving.
+**Defer reason:** structural-refactor (multi-file: schema, write-tests, test-coverage-gate.py all
+resolve this path).
+**Recipe:** key on the repo-relative path with separators flattened (`src-user-index.ts.coverage.json`)
+or on a short path hash; migrate readers in `scripts/test-coverage-gate.py` and
+`shared/includes/test-inventory-protocol.md` in the same change.
+
+## B-wt-metrics-ambiguity — test-metrics.md formulas are themselves under-specified
+**From:** zuvo:review 346c00f..HEAD, adversarial pass 4 (covering pass), WARNING+INFO.
+**Where:** `shared/includes/test-metrics.md` — KILL_RATE row, FRESH_TOKENS row, preamble.
+**Problem:** the file exists to end definitional drift and carries two of its own.
+(a) KILL_RATE says "killed / executed from the MUTATION PROBES table" AND "native runner present ->
+score_triaged" — two different sources with no precedence rule when both exist.
+(b) FRESH_TOKENS excludes cached input, which is right for cost but makes the number
+non-comparable across sessions with different cache-hit rates; that caveat is not stated.
+**Defer reason:** NIT-adjacent but genuinely needs a decision, not a wording tweak.
+**Recipe:** state precedence explicitly (native score_triaged WINS when a native run produced a
+number; the probe table is the fallback), and add one line on FRESH_TOKENS comparability.
+
+## B-wt-contract-unvalidated — resume trusts contract.md, which no validator checks
+**From:** same review, adversarial pass 4, WARNING.
+**Where:** `shared/includes/coverage-manifest-schema.md` ("The gate validates the manifest only")
+vs `skills/write-tests/SKILL.md` Phase 0 step 0, which reads classification out of the contract.
+**Problem:** `production_sha256` proves the production file is unchanged; nothing proves the
+contract is well-formed or self-consistent, yet a MATCH resume takes its classification as
+authoritative and skips re-deriving it. A truncated contract (the exact artifact an interrupted
+run leaves behind) resumes as if valid.
+**Defer reason:** structural-refactor — the fix belongs in `scripts/test-coverage-gate.py`
+(a `validate --phase contract` mode), not in prose.
+**Recipe:** add a contract validator phase asserting the six sections plus the classification line
+are present, and make step 0's MATCH path require it to exit 0 before trusting the contract.
