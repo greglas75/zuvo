@@ -80,16 +80,6 @@ program, not the writer's own claim.
 
 ### PHASE 0 — Bootstrap (always, before reading production file)
 
-**Read all seven in ONE message** — issue the seven `Read` calls together, or one
-`cat file1 file2 ... file7`. Not one per turn.
-
-Measured 2026-08-20 on the benchmark rig: a run that read them one at a time spent
-**76 of its 159 shell calls on `cat`/`ls`/`grep` against the skill's own includes** —
-about 3.3M billed tokens, 16% of that file's entire cost, before touching production
-code. Every turn re-bills the accumulated context, so the cost of reading N files
-sequentially is N × the whole context, not N × the file. The material is identical
-either way; only the turn count differs.
-
 ```
   1. ../../shared/includes/codesift-setup.md            -- [READ | MISSING -> DEGRADED]
   2. ../../shared/includes/no-pause-protocol.md         -- [READ | MISSING -> WARN] (HARD: no mid-file pauses in batch/auto mode)
@@ -159,10 +149,7 @@ a typecheck lane actually executes those files (`type_tests: ENFORCED | NOT_ENFO
 
 ### PHASE 1 — Conditional Load (based on tier + detected stack)
 
-Load ONLY the includes matching tier AND stack — and load them **in ONE message**
-(batched `Read` calls, or a single `cat` of the resolved list). Resolve the full list
-from the table first, then read once; reading row by row multiplies the turn count by
-the number of rows for no extra information. Print READ/SKIP per file. If an include is missing: print `[PHASE1] MISSING: <file> — continuing with degraded rules`, keep loading, then print `loaded=<N>/<M>`; if under half loaded, print `[WARN] Low include availability — coverage planning and Q-score confidence are reduced. Do not overclaim clean states.`
+Load ONLY the includes matching tier AND stack. Print READ/SKIP per file. If an include is missing: print `[PHASE1] MISSING: <file> — continuing with degraded rules`, keep loading, then print `loaded=<N>/<M>`; if under half loaded, print `[WARN] Low include availability — coverage planning and Q-score confidence are reduced. Do not overclaim clean states.`
 
 | Include | LIGHT | STANDARD | HEAVY | COMPONENT | TYPE |
 |---------|-------|----------|-------|-----------|------|

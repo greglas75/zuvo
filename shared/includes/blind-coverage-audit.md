@@ -21,16 +21,7 @@ Strict **contract-blind** execution requires an isolated context such as a read-
 
 The auditor may read:
 - production file
-- the test file — or, when the suite is SPLIT, all of its sibling specs
-
-**Split suites.** `write-tests` mandates splitting past >15 entry points / >40 owned rows /
->800 LOC, so a large module legitimately arrives as several sibling specs and `test file`
-singular does not describe it. Pass the sibling paths as a LIST and audit them as one suite:
-an inventory row is covered if ANY sibling proves it. Do NOT concatenate them into a scratch
-file first — that is what a run does when this protocol offers no wording for the case
-(observed 2026-08-20: an agent hand-built a `COMBINED FOR BLIND AUDIT ONLY` file twice,
-~6 turns of pure ceremony), and it also destroys the line numbers the evidence column needs.
-Cite evidence as `<sibling-file>:<line>` so a finding points at the file a human would open.
+- test file
 
 The auditor must NOT read before issuing a verdict:
 - the writer's test contract
@@ -79,7 +70,7 @@ Apply Owned-vs-delegated rules before judging coverage:
 
 ### Step C: Map tests to inventory
 
-Read the test file second — all siblings when the suite is split. For every inventory row, map the strongest matching test evidence.
+Read the test file second. For every inventory row, map the strongest matching test evidence.
 
 Use this coverage scale only:
 
