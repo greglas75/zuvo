@@ -536,6 +536,11 @@ In BATCH mode: skip questions, proceed with the safest default.
 
 ### Plan Display (full mode only; skipped in batch) — NO approval pause
 
+**Persist the plan first:** before displaying, WRITE the approved extraction list (order,
+targets, leaves-first sequencing, per-step verify command) into the CONTRACT state file as its
+plan block. The executor's payload is the contract — a plan that lives only in this transcript
+cannot be executed in isolation.
+
 Display the plan:
 
 ```
@@ -669,6 +674,23 @@ git checkout -  # return to original branch
 ```
 
 ### Execute Refactoring
+
+**UNIVERSAL EXECUTOR ISOLATION (every refactor, every type and mode — no exceptions).** The
+execution phase runs in a FRESH context whose entire payload is: the CONTRACT state file (with
+the persisted plan), the Dependency Mapper output, the target file list, the scoped test +
+typecheck commands, and `cq-patterns.md`. NOT this skill, NOT the Phase 0–2 transcript. On
+Claude Code: dispatch an executor sub-agent with exactly that payload. On single-agent
+harnesses: print `[HANDOFF] plan frozen — clean-window execute: /clear, then zuvo:refactor continue`
+(the existing `continue` path resumes from the CONTRACT `stage` and must load ONLY the payload
+above). The executor follows the extraction list mechanically; ANY conflict with reality — a
+hidden coupling, an importer the map missed, a unit without an exercising test — is a STOP and
+report back (CHARACTERIZE_GAP), the coordinator amends the plan/contract, never the executor
+improvising silently. Rationale: execution is the longest, most turn-heavy phase, and each turn
+re-bills the full prefix; the skill's context is needed to PRODUCE the plan, not to apply
+extractions from it. Isolation is unconditional so no classification or mode can route a
+refactor around it — cost falls by architecture, never by waived rigor. All existing gates run
+unchanged for every refactor: tests green after each extraction, Phase 2 coverage gate,
+post-audit, adversarial review.
 
 Record `PRE_REFACTOR_SHA = $(git rev-parse HEAD)` at the start of Phase 3, before any changes.
 
