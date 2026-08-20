@@ -347,38 +347,17 @@ exit 0 → frozen, proceed. exit 1 → extractor found symbols the inventory mis
 ### Step 2: Write
 
 **UNIVERSAL WRITER ISOLATION (every file, every tier — no exceptions).** Writing executes in a
-FRESH context whose entire payload is exactly these five items:
-
-1. `contract.md` (the frozen contract, including the classification line)
-2. the production source
-3. the runner command + the run's baseline pre-existing failures
-4. the exemplar excerpts named in the contract
-5. **the stack + tier technique includes** — `test-code-types-{stack}.md` and
-   `test-mock-safety-{stack}.md` for the detected stack, plus the code-type section of
-   `test-code-types-core.md` matching this file's classification
-
-NOT the skill, NOT this session's transcript, nothing else. On Claude Code: dispatch a writer
-sub-agent with exactly that payload. On single-agent harnesses: print
+FRESH context whose entire payload is: `contract.md` + the production source + the runner command
++ baseline pre-existing failures. NOT the skill, NOT this session's transcript. On Claude Code:
+dispatch a writer sub-agent with exactly that payload. On single-agent harnesses: print
 `[HANDOFF] contract frozen — clean-window write: /clear, then zuvo:write-tests --resume <basename>`
 and, on resume, load ONLY the payload above (the `--resume` path already skips Phase 0/1).
 The writer follows the contract; a gap in the contract is reported back and the contract is
-amended — the writer never improvises around it silently.
-
-**Why item 5 is in the payload and the other ~225KB is not.** A contract is a behavioural
-specification: branches, error paths, expected values, mocks, outline. It states WHAT must be
-proven. It cannot state HOW to prove it in a given framework — that a hook needs a manual
-scheduler rather than `vi.useFakeTimers()` when production injects a clock, that jsdom computes
-no layout so geometry needs a per-element `rect()` stub, that a library-hook wrapper needs the
-two-file real/mocked split. That knowledge is technique, it lives in the stack files, and no
-contract can carry it. Measured: a writer given contract-only matched the full pipeline on a
-pure-logic contract module (87.9% vs 88.9% mutation kill) but fell BELOW a no-skill baseline on
-a React component (73.3% vs 75.2%) and a hook (61.0% vs 66.1%) — the two file types whose
-correctness depends almost entirely on framework technique. The stack pair costs ~16KB for JS,
-~11KB for PHP, ~7KB for Python; the skill prefix it replaces is ~240KB. Isolation is preserved,
-the technique gap is not.
-
-Isolation stays unconditional precisely so that no classification decision can ever route a file
-around it — cost falls by architecture, never by waived rigor.
+amended — the writer never improvises around it silently. Rationale: the skill's ~240KB prefix
+is needed to PRODUCE the contract, not to type tests from it; re-billing it across every writing
+turn is the single largest cost in the pipeline (CASE-01: 96% of billed tokens were context
+re-reads, not output). Isolation is unconditional precisely so that no classification decision
+can ever route a file around it — cost falls by architecture, never by waived rigor.
 
 
 1. **Fill the test contract** per `test-contract.md` (BRANCHES, ERROR PATHS, EXPECTED VALUES, MOCK INVENTORY, MUTATION TARGETS, TEST OUTLINE) — derived from the frozen inventory, not re-derived from scratch. 3+ methods sharing a control-flow pattern → per-pattern mode. **Write the FULL contract to `$ZUVO_DIR/contracts/<basename>.contract.md`** — all six sections, PLUS the classification line (stack / code_type / families / tier / runtime), the exemplar excerpts to mirror, the exact runner command, and the run's baseline pre-existing failures. Manifest + contract.md together are the resumable checkpoint of everything before Step 2; until now the contract lived only in the conversation, which is why an interrupted run could never resume. Do not print the full contract; show only branch table + outline + planned metrics.
