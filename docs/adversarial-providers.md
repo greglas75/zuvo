@@ -88,17 +88,67 @@ export GEMINI_API_KEY=<key from aistudio.google.com>
 
 ## Detection & selection order
 
-`detect_providers` builds the candidate list, in priority order, from installed CLIs:
+`detect_providers` builds the candidate list from installed CLIs, in **measured** priority order:
 
-1. `codex-5.3` (if `codex` present; adds `codex-5.4` when the host itself is spark `codex-5.3`)
-2. Google Gemini — strict priority: **`agy`** → **`gemini-api`** (if `GEMINI_API_KEY` set) → the free
-   `gemini` CLI (last resort, dead for individuals). So a working key is never shadowed by the dead CLI.
-3. `cursor-agent` if installed
-4. Moonshot Kimi — strict priority: **`kimi`** CLI (OAuth, K3) → **`kimi-api`** (if `MOONSHOT_API_KEY`
+1. `cursor-agent` if installed
+2. `agy` (Antigravity) — the only Gemini lane; `gemini`/`gemini-api` were removed 2026-08-04
+3. `codex-5.3` (if `codex` present; adds `codex-5.4` when the host itself is spark `codex-5.3`)
+4. `claude` if installed
+5. Moonshot Kimi — strict priority: **`kimi`** CLI (OAuth, K3) → **`kimi-api`** (if `MOONSHOT_API_KEY`
    set). Distinct vendor from every host we run under — never subject to self-review exclusion.
-5. `claude` if installed
 
 `codestral` is manual-only (`--provider codestral`, needs `CODESTRAL_API_KEY`).
+
+The order is not a preference — it is the ranking measured over ~43,000 provider invocations in
+`~/.zuvo/adversarial.log` (30 days to 2026-08-19; mock and test-fixture rows excluded, and
+`not-attempted` rows excluded from the denominator so each provider is judged only on calls it
+actually received):
+
+| provider | attempted | ok% | timeout% | empty% | find/ok | crit/ok | **crit per attempt** | p50 | p90 |
+|---|---|---|---|---|---|---|---|---|---|
+| `cursor-agent` | 5,648 | 87% | 2% | 11% | 6.85 | 1.02 | **0.89** | 53s | 93s |
+| `agy` | 5,489 | 53% | 9% | 38% | 4.89 | 1.42 | **0.75** | 69s | 200s |
+| `claude` | 5,286 | 97% | 3% | 0% | 2.05 | 0.39 | 0.38 | 145s | 240s |
+| `kimi` | 5,299 | 48% | 11% | 41% | 5.12 | 0.65 | 0.31 | 133s | 208s |
+| `codex-5.3` | 5,946 | 87% | 1% | 12% | 2.44 | 0.33 | 0.29 | 38s | 61s |
+
+`codex-5.3` holds the third slot over the nominally higher-yield `claude` because subset coverage,
+not per-provider yield, is what a 3-provider fan-out buys: over the same window `agy+codex+cursor`
+covers **91.9%** of runs that produced any CRITICAL and **90.6%** of runs that produced any finding,
+versus 91.4% / 83.1% for `agy+claude+cursor`. `claude` is also the wall-clock setter in 30-36% of
+runs, and `kimi` returns nothing 41% of the time.
+
+**Caveat on what this measures.** The log records finding COUNTS, not whether a finding was
+accepted. So this ranks reviewers on yield, reliability and latency — a volume proxy, not precision.
+Per-finding dispositions (which would make it a precision ranking) are the subject of the unmerged
+`feat/adversarial-effectiveness` branch.
+
+## Fan-out cap (`ZUVO_REVIEW_MAX_PROVIDERS`, default 3)
+
+Every detected provider used to run. With five installed, one review meant five CLI calls — measured
+over 30 days: 9,613 adversarial invocations → **43,228 provider calls**, 890M characters shipped to
+external providers, **387 hours** of summed wall-clock, against 891 skill runs in the last week alone
+(~2.5 adversarial passes per skill run).
+
+The cap keeps the top N of the list above and drops the rest, announcing both sets on stderr:
+
+```
+  Fan-out cap: keeping top 3 by measured yield (cursor-agent agy codex-5.3); not running: claude kimi
+```
+
+At the default 3 that is **39% fewer provider calls and 35% less wall-clock** for ~92% of the
+CRITICAL coverage. It is applied **last** — after host self-exclusion, `--exclude`, `--exclude-last`
+and the auth-failure cache — so it always keeps the best N *still standing*, not three chosen before
+the host reviewer was removed. `--provider <name>` bypasses it. Raise it with
+`ZUVO_REVIEW_MAX_PROVIDERS=5`; a non-numeric or zero value warns and falls back to 3 rather than
+filtering the list to nothing.
+
+**The cap freezes the data that justifies it.** Capped-out providers stop appearing in
+`~/.zuvo/adversarial.log` entirely, so the ranking above cannot refresh itself and a provider that
+improves (or one that quietly rots) will never show it. Before re-ranking, run a sampling window
+with `ZUVO_REVIEW_MAX_PROVIDERS=5` for a day or two, then recompute from the log — do not compare a
+capped period against an uncapped one, since the capped period has no rows for the dropped
+providers at all.
 
 ## Doctor — verify providers actually WORK (not just exist)
 

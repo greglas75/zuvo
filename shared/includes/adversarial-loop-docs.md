@@ -55,7 +55,11 @@ Run the script in a **single Bash call with a long timeout**. The script auto-de
 > **The Bash-tool timeout — NOT the script — is the #1 cause of spurious "adversarial timed out/skipped".** The Bash tool defaults to **120s**; the script runs each provider up to `PROVIDER_TIMEOUT` (**240s** default; **360s** for article/spec/plan/audit/tests/migrate). A foreground call at the 120s default is KILLED before findings arrive. Either run with `run_in_background: true` and WAIT for the completion notification, or set the Bash tool's `timeout` to **≥ 420000**.
 
 ```bash
-~/.zuvo/adversarial-review --json --mode {MODE} --files "{ARTIFACT_PATH}"
+# Set the mode from the table above FIRST — a real assignment, so the call below cannot
+# ship an unsubstituted literal. The script rejects an unknown mode with exit 2 (it used
+# to fall back to a generic code review silently, which hid the wrong rubric).
+_ADV_MODE=article   # article | spec | plan | audit
+~/.zuvo/adversarial-review --json --mode "$_ADV_MODE" --files "{ARTIFACT_PATH}"
 ```
 
 **IMPORTANT — always WAIT for the complete artifact before Step 3.** Whether background (wait for the completion notification) or foreground-with-`timeout: 420000`, never read results early or triage a partial artifact. (The former "do NOT use background" rule is REMOVED — with the Bash tool's 120s default it guaranteed the pre-findings cutoff.)
@@ -187,9 +191,9 @@ the latter belongs in a coverage claim.
 Docs-mode skills (brainstorm, plan, write-article) that invoke `adversarial-review` more than once in a flow can rotate providers between passes:
 
 ```bash
-out1=$(~/.zuvo/adversarial-review --json --mode {MODE} --rotate --files "$ARTIFACT")
+out1=$(~/.zuvo/adversarial-review --json --mode "$_ADV_MODE" --rotate --files "$ARTIFACT")
 last=$(jq -r '.providers_used_list[0] // .providers_used' <<<"$out1")
-out2=$(~/.zuvo/adversarial-review --json --mode {MODE} --rotate --exclude-last "$last" --files "$ARTIFACT")
+out2=$(~/.zuvo/adversarial-review --json --mode "$_ADV_MODE" --rotate --exclude-last "$last" --files "$ARTIFACT")
 ```
 
 If only 1 provider remains after the host exclusion + `--exclude-last`, pass 2 will exit 3 (`single_provider_only`). The skill chooses whether to fall back (e.g., `--single`) or report reduced-consensus to the user.

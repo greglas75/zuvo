@@ -287,7 +287,19 @@ blk="$(awk '/^if \[ -x "\$HOME\/\.zuvo\/build-review-patch" \]; then$/{f=1} f{pr
 if [ -z "$blk" ]; then
   bad "adversarial-loop.md: could not extract the Step 2 block"
 else
-  prelude='adversarial-review() { cat >/dev/null; }'
+  # The block invokes `~/.zuvo/adversarial-review` by PATH, so a shell function named
+  # `adversarial-review` never intercepts it — until 2026-08-20 this case executed the REAL
+  # reviewer on every run of this test, three times, hitting live provider CLIs (231s, the
+  # slowest child in the suite) to assert a branch's exit status. Point HOME at a throwaway
+  # tree holding a stub reviewer instead: same contract under test, no external calls.
+  # `_ADV_MODE` is set in adversarial-loop.md ABOVE the extracted `if`, so the block alone
+  # does not carry it; supply it here rather than widening the extraction, which would drag
+  # in the mktemp artifact setup this case does not exercise.
+  _rpc_home="$(mktemp -d)"
+  mkdir -p "$_rpc_home/.zuvo"
+  printf '#!/usr/bin/env bash\ncat >/dev/null 2>&1 || true\nexit 0\n' > "$_rpc_home/.zuvo/adversarial-review"
+  chmod +x "$_rpc_home/.zuvo/adversarial-review"
+  prelude="HOME='$_rpc_home'; _ADV_MODE=code; _ADV_ART=\"\$(mktemp)\"; adversarial-review() { cat >/dev/null; }"
   for rc in 0 2 3; do
     stub="$(printf '%s\n' "$blk" \
       | sed 's|\[ -x "\$HOME/\.zuvo/build-review-patch" \]|true|' \
@@ -314,6 +326,7 @@ $stub2" >/dev/null 2>&1
   [ "$?" -ne 0 ] \
     && pass "under set -e the block still exits non-zero on helper rc=2" \
     || bad  "under set -e the block returns 0 on helper rc=2"
+  rm -rf "$_rpc_home"
 fi
 
 # ── (11) scope derivation must not parse patch text (breaks on diff.noprefix) ──

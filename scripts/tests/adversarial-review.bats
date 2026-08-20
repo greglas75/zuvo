@@ -334,8 +334,14 @@ isolated_path() {
 # ─── Provider execution ──────────────────────────────────────
 
 @test "single mode stops after first successful provider" {
-  create_mock "codex" "FIRST_ONLY"
-  create_mock "agy" "SHOULD_NOT_APPEAR"
+  # The mock assignment encodes detect_providers()' order, which is the MEASURED ranking
+  # (cursor-agent > agy > codex-5.3 > claude > kimi — see docs/adversarial-providers.md).
+  # With cursor-agent absent from the isolated PATH, `agy` is the first candidate, so it is
+  # the one that must answer and `codex` the one that must never be reached. This assertion
+  # therefore pins two contracts at once: single mode stops at the first success, AND the
+  # first candidate is the highest-ranked installed provider rather than the first-listed.
+  create_mock "agy" "FIRST_ONLY"
+  create_mock "codex" "SHOULD_NOT_APPEAR"
   isolated_path
 
   run bash -c "echo '$SAMPLE_DIFF' | '$SCRIPT' --single"

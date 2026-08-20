@@ -301,6 +301,8 @@ Review modes:
   --mode audit     Audit report: score inflation, gate inconsistency, N/A abuse
   --mode tests     Test audit report: Q-score inflation, coverage theater
   --mode migrate   Migration/schema: irreversible DDL, missing backfill, index locks
+  --mode article   Long-form article: slop vocabulary, unsupported claims, structure
+  (An unrecognized mode is a hard error, exit 2 — it used to fall back to `code` silently.)
 
 Diagnostics:
   --doctor         Live auth+dispatch probe of every detected provider (tiny prompt,
@@ -335,6 +337,11 @@ Input:
 
 Environment variables:
   ZUVO_REVIEW_PROVIDER     Force provider
+  ZUVO_REVIEW_MAX_PROVIDERS  Fan-out cap: how many of the detected providers actually run
+                           (default: 3). Applied AFTER host auto-exclusion and --exclude, so it
+                           keeps the best N still standing. The order is the measured ranking in
+                           detect_providers(); the default 3 retains ~92% of CRITICAL-producing
+                           runs for 39% fewer provider calls. Ignored with --provider.
   ZUVO_REVIEW_TIMEOUT      Per-provider timeout in seconds (default: 240, 360 for article/spec/plan/audit)
   ZUVO_TIMEOUT_GRACE       Seconds between SIGTERM and SIGKILL for a provider (default: 15).
                            Without the hard kill a TERM-ignoring CLI runs unbounded.
@@ -377,6 +384,32 @@ fi
 
 # Allow env var override
 PROVIDER="${PROVIDER:-${ZUVO_REVIEW_PROVIDER:-}}"
+
+# ─── Mode validation ────────────────────────────────────────────────────────
+# WHY: the FOCUS dispatch below (`case "$REVIEW_MODE"`) ends in `*) FOCUS="$FOCUS_CODE"`, so
+# ANY unrecognized mode silently degraded to a generic code review while the caller believed
+# it had asked for a security/tests/migrate rubric — and the observability log recorded the
+# bogus mode string, so the substitution never showed up as a failure. Measured in
+# ~/.zuvo/adversarial.log: 45 runs in one week were dispatched with the LITERAL string
+# `{MODE}` (the unsubstituted placeholder from shared/includes/adversarial-loop.md), plus
+# stray `refactor` from a skill passing its own name. Silent wrong-rubric review is the
+# no-gate-substitution failure mode; fail loudly instead, matching the unknown-provider guard.
+case "$REVIEW_MODE" in
+  code|test|tests|security|spec|plan|audit|migrate|article) ;;
+  \{*\}|\[*\])
+    echo "ERROR: --mode received the literal placeholder '$REVIEW_MODE' — it was never substituted." >&2
+    echo "  The template in shared/includes/adversarial-loop.md expects you to SET the mode first:" >&2
+    echo "    _ADV_MODE=code   # or test|security|spec|plan|audit|tests|migrate|article" >&2
+    echo "    ... | ~/.zuvo/adversarial-review --json --mode \"\$_ADV_MODE\"" >&2
+    echo "  Pick the mode from that file's Step 1 mode table, then re-run." >&2
+    exit 2 ;;
+  *)
+    echo "ERROR: unknown --mode '$REVIEW_MODE'." >&2
+    echo "  Valid: code, test, tests, security, spec, plan, audit, migrate, article" >&2
+    echo "  (An unknown mode used to fall back to 'code' silently — that hid the wrong rubric" >&2
+    echo "   behind a passing review, so it is now a hard error.)" >&2
+    exit 2 ;;
+esac
 
 # ─── Plan-review round budget (deterministic circuit-breaker) ────────────────
 # WHY: zuvo:plan splits a large scope into up to 3 sequential plan documents, and each one runs
@@ -1167,46 +1200,71 @@ detect_providers() {
     return 0
   fi
 
-  # Returns space-separated list of available providers in priority order
+  # Returns space-separated list of available providers in MEASURED priority order.
+  #
+  # The order is not taste — it is the ranking measured over ~43k provider invocations in
+  # ~/.zuvo/adversarial.log (30 days to 2026-08-19, mock + fixture rows excluded, and
+  # `not-attempted` rows excluded from the denominator so a provider is judged only on the
+  # calls it actually received):
+  #
+  #   provider  attempted  ok%  timeout%  empty%  find/ok  crit/ok  CRIT PER ATTEMPT  p50   p90
+  #   cursor         5648  87%       2%     11%     6.85     1.02        0.89          53s   93s
+  #   agy            5489  53%       9%     38%     4.89     1.42        0.75          69s  200s
+  #   claude         5286  97%       3%      0%     2.05     0.39        0.38         145s  240s
+  #   kimi           5299  48%      11%     41%     5.12     0.65        0.31         133s  208s
+  #   codex          5946  87%       1%     12%     2.44     0.33        0.29          38s   61s
+  #
+  # cursor-agent leads on every axis that matters (yield, reliability, latency). agy finds the
+  # densest CRITICALs but is the flakiest and owns the slow tail. codex finds little but costs
+  # 38s and almost never fails — cheap breadth, which is why it holds the third slot over the
+  # nominally higher-yield claude: subset simulation over the same window shows
+  # agy+codex+cursor covering 91.9% of runs that produced ANY critical and 90.6% of runs that
+  # produced any finding, versus 91.4%/83.1% for agy+claude+cursor. claude and kimi rank last:
+  # claude is the lowest-yield reviewer AND sets the wall-clock in 30-36% of runs, kimi returns
+  # nothing 41% of the time.
+  #
+  # This order also drives --single (first success wins) and --rotate (pool to shuffle), so a
+  # 1-provider host now gets the best reviewer rather than merely the first-installed one.
   local providers=""
 
-  # 1. codex-5.3 — fast (30s low effort), different vendor (OpenAI)
-  local codex_bin=""
-  if command -v codex &>/dev/null; then
-    codex_bin="codex"
-  elif [[ -x "/Applications/Codex.app/Contents/Resources/codex" ]]; then
-    codex_bin="/Applications/Codex.app/Contents/Resources/codex"
-  fi
-  [[ -n "$codex_bin" ]] && providers="codex-5.3"
-  # If the host IS the spark codex (HOST_PROVIDER=codex-5.3 → excluded below), add codex-5.4 so a
-  # CROSS-MODEL codex reviewer still runs (mirrors keeping claude with the opposite model).
-  [[ -n "$codex_bin" && "${HOST_PROVIDER:-}" == "codex-5.3" ]] && providers="$providers codex-5.4"
+  # 1. cursor-agent — highest yield AND highest reliability AND fast (p50 53s)
+  command -v cursor-agent &>/dev/null && providers="cursor-agent"
 
   # 2. Google Gemini — agy (Antigravity CLI, paid) only. The free `gemini` CLI is dead for
   #    individuals (IneligibleTierError: UNSUPPORTED_CLIENT -> "migrate to Antigravity") and the
   #    gemini-api curl fallback needs a billing-enabled GEMINI_API_KEY that nothing in this fleet
   #    provisions — both lanes were pure dead weight, removed 2026-08-04. agy is now the ONLY
   #    Gemini path, so the self-review guard collapses to excluding just that one provider: on an
-  #    Antigravity host (HOST_PROVIDER=agy) skip it, exactly like the codex/cursor self-exclusions
-  #    above and below.
+  #    Antigravity host (HOST_PROVIDER=agy) skip it, exactly like the cursor/codex self-exclusions
+  #    around it. Densest CRITICALs of any provider (1.42/ok) — worth its 38% empty rate.
   if [[ "${HOST_PROVIDER:-}" != "agy" ]] && command -v agy &>/dev/null; then
-    providers="$providers agy"
+    providers="${providers:+$providers }agy"
   fi
 
-  # 3. cursor-agent — fast fallback (~11s), redundancy for codex
-  command -v cursor-agent &>/dev/null && providers="$providers cursor-agent"
+  # 3. codex-5.3 — low yield but 87% ok at p50 38s, and a third vendor (OpenAI). Cheap breadth.
+  local codex_bin=""
+  if command -v codex &>/dev/null; then
+    codex_bin="codex"
+  elif [[ -x "/Applications/Codex.app/Contents/Resources/codex" ]]; then
+    codex_bin="/Applications/Codex.app/Contents/Resources/codex"
+  fi
+  [[ -n "$codex_bin" ]] && providers="${providers:+$providers }codex-5.3"
+  # If the host IS the spark codex (HOST_PROVIDER=codex-5.3 → excluded below), add codex-5.4 so a
+  # CROSS-MODEL codex reviewer still runs (mirrors keeping claude with the opposite model).
+  [[ -n "$codex_bin" && "${HOST_PROVIDER:-}" == "codex-5.3" ]] && providers="$providers codex-5.4"
 
-  # 3b. Moonshot Kimi — strict priority: kimi CLI (OAuth subscription, K3, verified E2E
-  #     2026-07-19 ~7s) > kimi-api (curl, needs MOONSHOT_API_KEY). Distinct vendor/model
-  #     family from every host we run under (claude/codex/cursor/agy) — no self-review guard.
+  # 4. claude — opposite-model reviewer (Anthropic; run_claude flips Opus<->Sonnet). Most
+  #    reliable client on the box, but the lowest-yield reviewer and the usual wall-clock setter.
+  command -v claude &>/dev/null && providers="${providers:+$providers }claude"
+
+  # 5. Moonshot Kimi — strict priority: kimi CLI (OAuth subscription, K3) > kimi-api (curl,
+  #    needs MOONSHOT_API_KEY). Distinct vendor/model family from every host we run under
+  #    (claude/codex/cursor/agy) — no self-review guard. Last: returns nothing 41% of the time.
   if command -v kimi &>/dev/null; then
-    providers="$providers kimi"
+    providers="${providers:+$providers }kimi"
   elif [[ -n "${MOONSHOT_API_KEY:-}" ]]; then
-    providers="$providers kimi-api"
+    providers="${providers:+$providers }kimi-api"
   fi
-
-  # 4. claude — opposite-model reviewer (Anthropic; run_claude flips Opus<->Sonnet, 10-40s)
-  command -v claude &>/dev/null && providers="$providers claude"
 
   # Manual-only providers (use --provider <name>):
   # codex-5.4 — slower, overlaps with 5.3
@@ -1300,6 +1358,37 @@ if [[ -s "$PROVIDER_FAIL_CACHE" && -n "$PROVIDERS" ]]; then
   else
     echo "  WARN: every provider is in the run's auth-failure cache — ignoring it and retrying all." >&2
     : > "$PROVIDER_FAIL_CACHE"
+  fi
+fi
+
+# ─── Fan-out cap ────────────────────────────────────────────────────────────
+# WHY: every available provider used to run, and five are installed here, so a single review
+# fanned out to 5 CLIs. Measured over 30 days (~/.zuvo/adversarial.log): 9,613 adversarial
+# invocations = 43,228 provider calls = 890M chars shipped to external providers and 387 hours
+# of summed wall-clock, for 891 skill runs in the last week alone (~2.5 adversarial passes per
+# skill run, ~12.6 provider calls). Cutting to the top 3 of the measured ranking in
+# detect_providers() drops 39% of the provider calls and 35% of the wall-clock while retaining
+# 91.9% of the runs that produced any CRITICAL — the two providers this removes are the two
+# that earn their slot least (see the table above).
+#
+# Applied LAST, after host auto-exclusion / --exclude / --exclude-last / the auth-fail cache,
+# so the cap always keeps the best THREE still standing rather than three chosen before the
+# host reviewer was removed. Skipped only for an explicit --provider (already one provider).
+# It DOES apply to the test harness's injected list — that list stands in for what
+# detect_providers() would return, so exempting it would leave the cap untestable; every
+# existing suite injects <= 3 mocks and is unaffected.
+_AR_MAX_PROVIDERS="${ZUVO_REVIEW_MAX_PROVIDERS:-3}"
+if [[ -z "$PROVIDER" && -n "$PROVIDERS" ]]; then
+  if ! [[ "$_AR_MAX_PROVIDERS" =~ ^[0-9]+$ ]] || [[ "$_AR_MAX_PROVIDERS" -lt 1 ]]; then
+    echo "  WARN: ZUVO_REVIEW_MAX_PROVIDERS='$_AR_MAX_PROVIDERS' is not a positive integer — using 3." >&2
+    _AR_MAX_PROVIDERS=3
+  fi
+  _ar_avail=$(echo "$PROVIDERS" | wc -w | tr -d ' ')
+  if [[ "$_ar_avail" -gt "$_AR_MAX_PROVIDERS" ]]; then
+    _ar_dropped=$(echo "$PROVIDERS" | tr ' ' '\n' | sed '/^$/d' | tail -n +$((_AR_MAX_PROVIDERS + 1)) | tr '\n' ' ' | sed 's/ *$//')
+    PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | sed '/^$/d' | head -n "$_AR_MAX_PROVIDERS" | tr '\n' ' ' | sed 's/ *$//')
+    echo "  Fan-out cap: keeping top $_AR_MAX_PROVIDERS by measured yield ($PROVIDERS); not running: $_ar_dropped" >&2
+    echo "  (raise with ZUVO_REVIEW_MAX_PROVIDERS=N — see detect_providers() for the ranking data)" >&2
   fi
 fi
 

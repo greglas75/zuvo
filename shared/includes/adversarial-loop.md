@@ -117,13 +117,21 @@ FILES=("src/a.ts" "src/b.ts")                                 # bash array …
 # hardcoded name it was meant to replace. Verified on macOS bash 3.2.
 _ADV_ART="$(mktemp "${TMPDIR:-/tmp}/zuvo-adv-XXXXXX")"
 
+# SET THIS FIRST, from the Step 1 mode table above. It is a real shell assignment,
+# not a placeholder to hand-edit: `--mode "$_ADV_MODE"` below then cannot ship an
+# unsubstituted literal. The call used to carry a brace placeholder instead, and 45 runs
+# in one week reached the providers with that literal string — which the script treated
+# as a generic code review, so a run that believed it had asked for `security` got
+# `code` and nothing said so. The script now rejects an unknown mode with exit 2.
+_ADV_MODE=code   # code | test | tests | security | spec | plan | audit | migrate | article
+
 if [ -x "$HOME/.zuvo/build-review-patch" ]; then
   _prc=0; _patch=$("$HOME/.zuvo/build-review-patch" "<written-file-1>" "<written-file-2>") || _prc=$?
   if [ "$_prc" -eq 3 ]; then echo "adversarial review: skipped (no changes)"
   elif [ "$_prc" -ne 0 ]; then echo "BLOCKED: build-review-patch failed (rc=$_prc). Adversarial review did NOT run; do NOT proceed to commit and do NOT report this skill complete" >&2; false
-  else printf '%s\n' "$_patch" | ~/.zuvo/adversarial-review --json --artifact "$_ADV_ART" --mode {MODE}; fi
+  else printf '%s\n' "$_patch" | ~/.zuvo/adversarial-review --json --artifact "$_ADV_ART" --mode "$_ADV_MODE"; fi
 else
-  ~/.zuvo/adversarial-review --json --artifact "$_ADV_ART" --mode {MODE} --files "<changed files>"
+  ~/.zuvo/adversarial-review --json --artifact "$_ADV_ART" --mode "$_ADV_MODE" --files "<changed files>"
 fi
 ```
 
@@ -133,8 +141,10 @@ Default is multi-provider (all available run in parallel). The script handles pr
 
 **If the helper is not installed** (`~/.zuvo/build-review-patch` missing — a Codex/Cursor-only install where `install_zuvo_home` never ran), take the `else` branch above and name the files explicitly:
 ```bash
-~/.zuvo/adversarial-review --json --mode {MODE} --files "path/to/changed/file.ts"
+~/.zuvo/adversarial-review --json --mode "$_ADV_MODE" --files "path/to/changed/file.ts"
 ```
+(`$_ADV_MODE` is the assignment from the block above — set it in the same shell call, or
+inline the literal mode. Passing an unknown or unsubstituted mode is exit 2, not a fallback.)
 
 **IMPORTANT — always WAIT for the complete artifact before triage.** Whether you ran background (wait for the completion notification) or foreground-with-`timeout: 420000`, never triage before the full output/artifact is on disk — a truncated read drops the first providers' CRITICALs. (The former "run foreground, do NOT background" rule is REMOVED — with the Bash tool's 120s default it guaranteed the cutoff this whole section now prevents.)
 
@@ -291,7 +301,7 @@ If Step 4 fixed any CRITICAL or WARNING:
    _prc=0; _patch=$("$HOME/.zuvo/build-review-patch" "<same PATH args as Step 2>") || _prc=$?
    if [ "$_prc" -eq 3 ]; then echo "BLOCKED: validation re-run produced an empty patch. Exit 3 means the paths resolved and nothing in them changed — so the Step 4 fixes are NOT on disk. Do NOT report this skill complete" >&2; false
    elif [ "$_prc" -ne 0 ]; then echo "BLOCKED: build-review-patch failed (rc=$_prc). Adversarial review did NOT run; do NOT proceed to commit and do NOT report this skill complete" >&2; false
-   else printf '%s\n\n%s\n' "$_ctx" "$_patch" | ~/.zuvo/adversarial-review --json --mode {MODE}; fi
+   else printf '%s\n\n%s\n' "$_ctx" "$_patch" | ~/.zuvo/adversarial-review --json --mode "$_ADV_MODE"; fi
    ```
 
    The re-run sees the diff, not the system around it — so it re-derives the same false positives

@@ -55,7 +55,9 @@ else
     2>/dev/null | grep -E '/[0-9]+\.[0-9]+\.[0-9]+/$' | sort -V | tail -1 | sed 's:/$::')
   AR_CMD="$ZUVO_BASE/scripts/adversarial-review.sh"   # Codex/Cursor/Antigravity: built absolute
 fi
-# Then call: "$AR_CMD" --json --mode {MODE} ...
+# Then call: "$AR_CMD" --json --mode "$_ADV_MODE" ...   # _ADV_MODE=code|test|tests|security|
+#   spec|plan|audit|migrate|article — set it as a real assignment; an unknown or unsubstituted
+#   mode is exit 2, not a silent fallback to a generic code review.
 ```
 
 ### Step 2: Run the review

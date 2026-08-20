@@ -88,8 +88,14 @@ start_test "HT.4b sequential dispatch of N slow providers is NOT 'suspended' wit
 # retry, in exactly the no-python3 environment this release's Windows work targets.
 STUB_PATH="$ADV_TEST_HOME/nopy-bin"
 mkdir -p "$STUB_PATH"
+# Every external binary the script may reach BEFORE dispatch has to be here, or the run dies
+# with 127 and empty output and the assertions below report the wrong cause. `chmod` was missing
+# from this list once the run-scoped cache dir started hardening its own permissions — the test
+# then failed permanently on a 127 that looks nothing like the timeout/suspend behaviour it is
+# actually asserting. Add to this list when the script gains a new pre-dispatch dependency.
 for b in bash sh env timeout cat date grep sed awk wc tr head tail mkdir rm cp ls find jq \
-         printf sleep pgrep pkill kill git dirname basename id mktemp shasum sort uniq cut; do
+         printf sleep pgrep pkill kill git dirname basename id mktemp shasum sort uniq cut \
+         chmod; do
   p=$(command -v "$b" 2>/dev/null) && ln -sf "$p" "$STUB_PATH/$b" 2>/dev/null
 done
 ln -sf "$MOCKS/mock-hang" "$STUB_PATH/mock-hang" 2>/dev/null
