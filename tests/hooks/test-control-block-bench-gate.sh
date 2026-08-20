@@ -162,6 +162,48 @@ rc=$(run_hook)
 [ "$rc" = "0" ] && ok "prose naming a control block is not a control edit" \
                 || bad "false positive on prose mentioning a control block (rc=$rc)"
 
+# 11b. A table with the RIGHT HEADINGS but no measurements is not evidence.
+#      The post-fix adversarial pass produced exactly this: the header row
+#      `| arm | kill | billed | turns |` satisfied a grep for all three words, so
+#      "validating the schema" still accepted a record with nothing measured in it.
+setup_repo
+sed -i.bak 's/contract + source + runner command/contract + source + runner + emptytable/' \
+  skills/write-tests/SKILL.md && rm -f skills/write-tests/SKILL.md.bak
+git commit -qam "control edit"
+blob=$(git rev-parse "HEAD:skills/write-tests/SKILL.md" | cut -c1-12)
+cat > memory/bench/empty-table.md <<REC
+# bench
+blob $blob
+
+| arm | kill | billed | turns |
+|---|---|---|---|
+| before | TBD | TBD | TBD |
+| after | TBD | TBD | TBD |
+REC
+git add -A; git commit -qm "table with headings but no numbers"
+rc=$(run_hook)
+[ "$rc" = "1" ] && ok "a table with headings but no measurements is not evidence" \
+                || bad "an unmeasured table satisfied the gate (rc=$rc)"
+
+# 11c. one arm is not a comparison
+setup_repo
+sed -i.bak 's/contract + source + runner command/contract + source + runner + onearm/' \
+  skills/write-tests/SKILL.md && rm -f skills/write-tests/SKILL.md.bak
+git commit -qam "control edit"
+blob=$(git rev-parse "HEAD:skills/write-tests/SKILL.md" | cut -c1-12)
+cat > memory/bench/one-arm.md <<REC
+# bench
+blob $blob
+
+| arm | kill | billed | turns |
+|---|---|---|---|
+| after | 88.9% | 3440k | 128 |
+REC
+git add -A; git commit -qm "single-arm record"
+rc=$(run_hook)
+[ "$rc" = "1" ] && ok "a single-arm record is not a comparison" \
+                || bad "one arm satisfied the comparative gate (rc=$rc)"
+
 # 12. MULTI-REF push: a clean first ref must not escort a dirty second one through.
 #     git gives no ordering guarantee, so `head -1` was a coin flip on which ref got checked.
 setup_repo

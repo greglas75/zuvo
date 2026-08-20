@@ -187,11 +187,25 @@ record_valid() {                     # record_valid <tree-ish> <blob>
   for file in $(git ls-tree -r --name-only "$tree" -- memory/bench/ 2>/dev/null); do
     rec=$(git show "$tree:$file" 2>/dev/null) || continue
     printf '%s' "$rec" | grep -qF -- "$blob" || continue
-    # both arms, and all three columns the README requires
-    printf '%s' "$rec" | grep -qiE 'kill[ _-]?rate|kill' || continue
-    printf '%s' "$rec" | grep -qiE 'billed|token'         || continue
-    printf '%s' "$rec" | grep -qiE 'turn'                 || continue
-    [ "$(printf '%s' "$rec" | grep -cE '^\|[^|]+\|')" -ge 3 ] || continue   # header + 2 arms
+    # Parse the table STRUCTURALLY. Grepping for the words "kill", "billed" and "turns"
+    # is satisfied by the header row itself — the adversarial pass on the previous fix
+    # produced a passing record consisting of nothing but a blob id and an empty table.
+    # A record counts only if at least two DATA rows carry three numbers each.
+    printf '%s' "$rec" | awk '
+      /^[[:space:]]*\|/ {
+        line = $0
+        gsub(/^[[:space:]]*\|/, "", line); gsub(/\|[[:space:]]*$/, "", line)
+        if (line ~ /^[[:space:]:|-]+$/) next            # separator row
+        n = split(line, C, "|")
+        nums = 0
+        for (i = 1; i <= n; i++) {
+          cell = C[i]; gsub(/[[:space:]*`]/, "", cell)
+          # a measurement: 87.9% | 941k | 3,440k | 46 | 0.879
+          if (cell ~ /^[0-9][0-9,.]*(%|[kKmM])?$/) nums++
+        }
+        if (nums >= 3) rows++
+      }
+      END { exit(rows >= 2 ? 0 : 1) }' || continue
     printf '%s' "$file"; return 0
   done
   return 1
