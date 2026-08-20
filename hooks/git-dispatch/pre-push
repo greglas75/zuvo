@@ -55,4 +55,7 @@ fi
 # 2) zuvo gates — ALWAYS, from this dispatcher's own dir; each fail-open when absent.
 [ -x "$D/pre-push-gate.sh" ]        && { feed | "$D/pre-push-gate.sh" || rc=1; }
 [ -x "$D/refactor-safety-gate.sh" ] && { feed | "$D/refactor-safety-gate.sh" pre-push || rc=1; }
+# control-block gate: a skill edit that steers the pipeline needs one measured
+# comparative run behind it, same regime as production code (2026-08-20).
+[ -x "$D/control-block-bench-gate.sh" ] && { feed | "$D/control-block-bench-gate.sh" || rc=1; }
 exit $rc
