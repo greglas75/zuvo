@@ -25,21 +25,35 @@ it was for `tsconfig.base.json`. The agent switched to the `Read` tool as intend
 Total turns went 46 -> 281. The waste it removed was replaced several times over
 somewhere else.
 
-## The generalisation, which is the reason this record exists
+## CORRECTION (same day) — this comparison does not measure what it claimed
 
-This is the SECOND edit to a control block that reduced nothing and multiplied turns:
+The turn counts above are real. The conclusion drawn from them was not.
 
-| edit | intent | turns before -> after |
-|---|---|---|
-| 64a8bdd — payload as a 5-item list | give the writer technique | 46 -> 290 |
-| b58afe7 — read the set in one message | cut redundant reads | 46 -> 281 |
+Checking which of the pipeline's gates each run ACTUALLY executed — counting markers the
+agent itself emitted, not markers found anywhere in the transcript, which also contains the
+skill text the agent read:
 
-Two different authors' intents, two different sections, near-identical outcome. The
-common factor is not what the text SAID — one added material, one removed work. It is
-that both ELABORATED a block that governs how the agent proceeds. Adding structure and
-rationale where the agent is deciding how to work appears to make it work more
-exhaustively, and turn count is what that costs.
+| arm | turns | Agent dispatches | markers the agent EMITTED |
+|---|---|---|---|
+| v2 | 135 | 1 | Adversarial x1 |
+| v3 | 46 | 0 | **none** |
+| v5 | 281 | 0 | Blind x3, Adversarial x4 |
 
-Provisional rule for the next attempt: to cut turns, change what the agent must DO
-(fewer mandated steps, batched by a script it executes), not how the doing is DESCRIBED.
-Prose about efficiency is still prose the agent must weigh, and weighing costs turns.
+**v3 emitted nothing.** It classified, wrote tests, and stopped — no blind audit, no
+adversarial, no writer dispatch, though its own text mandates the dispatch. Its 46 turns are
+the cost of a run that skipped verification, not the cost of an efficient one. v5's 281 turns
+bought work v3 never did.
+
+So "the edit multiplied turns 46 -> 281" is comparing a compliant run against a
+non-compliant one and attributing the difference to the edit. The same objection applies to
+the 46 -> 290 figure recorded for 64a8bdd.
+
+**What actually varies run to run is how much of the pipeline the agent executes.** That was
+already visible elsewhere in this benchmark — the skill did not fire at all in 3 of 8 runs on
+a neutral prompt — and it was not connected to the turn counter until now.
+
+Turn count alone is therefore not an interpretable metric across single runs. Any future
+comparison must report emitted-marker counts alongside turns and compare only runs at equal
+compliance, or use N>=3 per arm.
+
+The revert stands, on the narrower ground that the edit is unmeasured rather than harmful.
