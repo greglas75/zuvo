@@ -190,12 +190,31 @@ Poll on the process's timescale, not on impatience:
 <!-- PLATFORM:CODEX -->
 ### Codex
 
-**SINGLE-AGENT SEQUENTIAL — do NOT spawn agent threads for pipeline stages. (HARD RULE, measured.)**
+**REVIEW CHAIN: SINGLE-AGENT SEQUENTIAL — never thread-dispatch review stages. MECHANICAL WORKERS:
+dispatch permitted on MultiAgentV2 (codex >= 0.128) with a bounded `collab Wait` + HANDOFF fallback.**
 
-Codex CAN spawn native agent threads (TOML configs in `~/.codex/agents/`), but its harness has NO
-event-driven wake: the parent learns a sub-agent finished only by `wait_agent` POLLING, and a parent
-turn that ends after a dispatch stays DEAD until a human resumes the session. A 28-session timing
-forensics run (2026-07-15..17, timestamp-level) measured what that does to zuvo pipelines:
+Two different rationales used to be fused into one hard rule; they aged differently, so they are now
+separate:
+
+- **Same-model independence (UNCHANGED, permanent):** a codex thread reviewing a codex author is the
+  same model. Review/spec/quality/acceptance stages NEVER go to a thread — cross-model independence
+  comes from the `adversarial-review` script, full stop. No wake mechanism can fix this one.
+- **The dead-parent mechanism (SUPERSEDED by measurement):** the numbers below were measured on the
+  pre-v2 `wait_agent` polling architecture. OpenAI reworked orchestration in MultiAgentV2
+  (v0.128.01: thread caps, wait-time controls, structured messaging; the exact dead-parent bug was
+  issue #9607, closed 2026-01-22). Re-measured here 2026-08-20 on codex-cli 0.144.6: a canary
+  dispatch (`collab: Wait`, 15 s subagent, exec mode) returned `PARENT-WOKE` unaided in one
+  non-interactive run, 11.3k tokens, no polling loop, no manual resume.
+  **Calibration limits — why this is NOT a green light for everything:** one canary, exec mode
+  only; the historical failure was interactive-session turn boundaries, which this canary does not
+  exercise; and open issues (#23292 parent stuck while subagent active, #26822 subagents exiting
+  without delivering results) say the class is not extinct. Hence: dispatch a MECHANICAL worker
+  (e.g. the refactor executor applying a frozen CONTRACT plan) with an **explicit bounded wait**,
+  and on wait-timeout fall back to the `[HANDOFF]` clean-window path — never sit in an unbounded
+  wait, never re-poll in a loop.
+
+The pre-v2 measurement, kept as the reason the bounded wait is mandatory rather than polite — a
+28-session timing forensics run (2026-07-15..17, timestamp-level) on the old mechanism:
 
 - `wait_agent` 30s busy-poll loops: **1,583 timed-out calls (~13 h) in one execute session**, ~88 h
   of pure polling across the fleet window;
@@ -211,13 +230,16 @@ thread-dispatch buys zero parallelism here — and a codex thread reviewing a co
 model anyway (real model-independence comes from the cross-model `adversarial-review` script, which
 measured only ~38 min total in the same window). Therefore on Codex:
 
-1. Read the agent's instruction file (e.g., `agents/blast-radius.md`)
-2. Perform that analysis yourself in the current context as a SEQUENTIAL CHECKPOINT PASS
-   (single-agent mode with all gates — same checkpoints, same output format, same quality bar)
-3. NEVER use `wait_agent`/agent-thread dispatch for spec-review / quality-review / plan-review /
-   acceptance stages. Cross-model independence = the `adversarial-review` script, not a same-model thread.
-4. Genuinely PARALLEL, independent work (e.g. two plan tasks touching disjoint files) may still use
-   threads — but only with an explicit bounded wait and never as the review chain.
+1. REVIEW STAGES (spec-review / quality-review / plan-review / acceptance): read the agent's
+   instruction file (e.g., `agents/blast-radius.md`) and perform that analysis yourself in the
+   current context as a SEQUENTIAL CHECKPOINT PASS (all gates, same output format, same bar).
+   NEVER a thread — same-model review is not independence regardless of the wake mechanism.
+2. MECHANICAL WORKERS (a frozen plan applied by an executor; genuinely parallel disjoint tasks):
+   thread dispatch is permitted on codex >= 0.128 — with an explicit BOUNDED wait sized to the
+   task, exactly one wait (no re-poll loops), and the `[HANDOFF]` clean-window fallback when the
+   wait expires. Record which path ran: `codex-dispatch:bounded-wait` or `codex-handoff:fallback`.
+3. If the bounded wait times out TWICE in one run, stop dispatching for the rest of the run and
+   record `codex-dispatch:degraded` — two timeouts is the old failure mode announcing itself.
 <!-- /PLATFORM:CODEX -->
 
 <!-- PLATFORM:CURSOR -->
