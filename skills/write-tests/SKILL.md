@@ -294,10 +294,7 @@ the next unindented key. That is what makes the multi-line ones (`queue:`, `base
   dispatch onward. Without that rule each sub-agent re-enters this block when it finishes and spawns
   the next one, so the queue drains through a chain of nested agents that each keep every ancestor's
   context alive instead of returning it. The coordinator keeps the queue and per-file
-  syntheses and never accumulates production sources, specs, or tool outputs. MANDATORY after any
-  HEAVY/COMPLEX file or when context exceeds ~60%; a run of consecutive LIGHT files may stay in one
-  session (trade-off named, not hidden: ~40k tokens of skill reload vs measurable late-context
-  degradation — choose the reload).
+  syntheses and never accumulates production sources, specs, or tool outputs. UNCONDITIONAL for every file — the writer phase is isolated per the UNIVERSAL WRITER ISOLATION rule in Step 2, so no file ever inherits another file's transcript; the coordinator alone persists, holding only the ledger and per-file syntheses.
 - **Single-agent harnesses (Codex/Cursor):** print
   `[CONTEXT] {file} complete — safe point. Clean continue: /clear, then zuvo:write-tests --resume-run <ledger>`.
   The skill cannot execute /clear for the user; it makes clearing safe and cheap instead.
@@ -349,6 +346,20 @@ exit 0 → frozen, proceed. exit 1 → extractor found symbols the inventory mis
 
 ### Step 2: Write
 
+**UNIVERSAL WRITER ISOLATION (every file, every tier — no exceptions).** Writing executes in a
+FRESH context whose entire payload is: `contract.md` + the production source + the runner command
++ baseline pre-existing failures. NOT the skill, NOT this session's transcript. On Claude Code:
+dispatch a writer sub-agent with exactly that payload. On single-agent harnesses: print
+`[HANDOFF] contract frozen — clean-window write: /clear, then zuvo:write-tests --resume <basename>`
+and, on resume, load ONLY the payload above (the `--resume` path already skips Phase 0/1).
+The writer follows the contract; a gap in the contract is reported back and the contract is
+amended — the writer never improvises around it silently. Rationale: the skill's ~240KB prefix
+is needed to PRODUCE the contract, not to type tests from it; re-billing it across every writing
+turn is the single largest cost in the pipeline (CASE-01: 96% of billed tokens were context
+re-reads, not output). Isolation is unconditional precisely so that no classification decision
+can ever route a file around it — cost falls by architecture, never by waived rigor.
+
+
 1. **Fill the test contract** per `test-contract.md` (BRANCHES, ERROR PATHS, EXPECTED VALUES, MOCK INVENTORY, MUTATION TARGETS, TEST OUTLINE) — derived from the frozen inventory, not re-derived from scratch. 3+ methods sharing a control-flow pattern → per-pattern mode. **Write the FULL contract to `$ZUVO_DIR/contracts/<basename>.contract.md`** — all six sections, PLUS the classification line (stack / code_type / families / tier / runtime), the exemplar excerpts to mirror, the exact runner command, and the run's baseline pre-existing failures. Manifest + contract.md together are the resumable checkpoint of everything before Step 2; until now the contract lived only in the conversation, which is why an interrupted run could never resume. Do not print the full contract; show only branch table + outline + planned metrics.
 2. **Check `test-blocklist.md`** — including the typed mock gate (no `Record<string, Mock>` service mocks, no `as never`, no broad `as any`, no unused mocks, no `expect.anything()` on domain arguments; typed `Pick<Service, ...>`/`MockedMethods<T, K>` instead).
 3. **Apply mock rules** per loaded `test-mock-safety-*` includes.
@@ -396,7 +407,10 @@ If a row cannot be closed because required infrastructure or a cross-module cont
    Self-eval: Q1=1 Q2=1 ... → [N]/[applicable] [PASS|FIX|REWRITE]
    Critical gates: Q7=[0|1] Q11=[0|1] Q13=[0|1] Q15=[0|1] Q17=[0|1]
    ```
-   `Q7` error-path proof (or evidence-backed `N/A`), `Q11` per-branch tests, `Q13` real-module import line, `Q15` content-not-shape assertion, `Q17` non-echoed oracle. No citable line = score 0. Step 3 passes only with Q7=1, Q11=1, Q13=1, Q15=1, Q17=1 — a zero critical gate is `BLOCKED_INCOMPLETE`, never a publishable partial result. Sync the final Q7/Q11 values back into the manifest and rerun the Step 2.5 validator if they changed.
+   `Q7` error-path proof (or evidence-backed `N/A`), `Q11` per-branch tests, `Q13` real-module import line, `Q15` content-not-shape assertion, `Q17` non-echoed oracle. No citable line = score 0. **No tier-based waivers anywhere in this pipeline:** every file passes the same gates —
+validator, coverage, probes, blind audit, adversarial. Savings come from isolation, batching and
+provider caps, never from skipping verification for "simple" files (a conditional skip is a
+loophole the classifier will be pushed through). Step 3 passes only with Q7=1, Q11=1, Q13=1, Q15=1, Q17=1 — a zero critical gate is `BLOCKED_INCOMPLETE`, never a publishable partial result. Sync the final Q7/Q11 values back into the manifest and rerun the Step 2.5 validator if they changed.
 
 ### Step 3.2: Target Coverage (when the runner supports it)
 
@@ -410,7 +424,7 @@ Record the four numbers. Below threshold → find the uncovered lines, close the
 
 ### Step 3.3: Mutation Probes
 
-Per `test-mutation-probes.md`: 3 probes (STANDARD) / 5 (HEAVY-COMPLEX, ≥1 per behavior group), byte-restore protocol, scoped runs. Every probe must be killed; a surviving probe is a coverage gap — close it and re-probe. Print the `MUTATION PROBES` line and table. Post-restore sha256 must equal the manifest hash — for the probes AND for any native run. **Context discipline:** after the table is printed, the per-probe diffs and runner outputs are spent — carry only the table forward.
+Per `test-mutation-probes.md`: 3 probes (STANDARD) / 5 (HEAVY-COMPLEX, ≥1 per behavior group), byte-restore protocol, scoped runs. Every probe must be killed; a surviving probe is a coverage gap — close it and re-probe. Execute ALL probes as ONE script in ONE tool call (mutate→run→restore in a loop, emitting only the final table) — per-probe conversational turns re-bill the whole prefix for zero information. Print the `MUTATION PROBES` line and table. Post-restore sha256 must equal the manifest hash — for the probes AND for any native run. **Context discipline:** after the table is printed, the per-probe diffs and runner outputs are spent — carry only the table forward.
 
 `native:` has three states, and collapsing the last two hides an infra failure as normal absence: `<score>% (<runner>)` when a run produced a number, `none` when the project has no runner configured, `error: <reason>` when a detected runner could not be scoped, timed out, or exited non-zero.
 
