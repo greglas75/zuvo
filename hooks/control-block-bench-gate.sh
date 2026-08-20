@@ -44,13 +44,27 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 if command -v pg_is_agent_env >/dev/null 2>&1; then
   pg_is_agent_env || exit 0
 else
-  [ -n "${CLAUDE_CODE_ENTRYPOINT:-}${CODEX_SANDBOX:-}${CURSOR_AGENT:-}" ] || exit 0
+  # Mirror pipeline-gate-lib.sh::pg_is_agent_env exactly. A shorter list here is not a
+  # smaller version of the same check — it is a documented way for an agent to be read
+  # as human by unsetting three variables.
+  _cb_agent=0
+  for _v in ZUVO_AGENT CLAUDECODE CLAUDE_PLUGIN_ROOT CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_SESSION \
+            CODEX_WORKSPACE CODEX_SANDBOX CODEX_HOME CURSOR_AGENT CURSOR_TRACE_ID \
+            GEMINI_CLI ANTIGRAVITY GEMINI_ANTIGRAVITY ANTIGRAVITY_SESSION_ID ZUVO_AI_RUN; do
+    [ -n "${!_v:-}" ] && { _cb_agent=1; break; }
+  done
+  [ "$_cb_agent" = "1" ] || exit 0
 fi
 
 if [ "${ZUVO_ALLOW_UNMEASURED_CONTROL_EDIT:-}" = "1" ]; then
   echo "zuvo control-block gate: ZUVO_ALLOW_UNMEASURED_CONTROL_EDIT=1 — bypassed (logged)." >&2
+  # `$HOME` unset (minimal containers, some CI) would abort under `set -u` during the
+  # redirect's expansion — before `|| true` can catch it — so the override would CRASH
+  # and block the push it exists to permit.
+  _cb_log="${ZUVO_HOME:-${HOME:-/tmp}/.zuvo}"
+  mkdir -p "$_cb_log" 2>/dev/null || true
   printf '%s control-block-gate bypass %s\n' "$(date -u +%FT%TZ)" "$(git rev-parse --short HEAD 2>/dev/null)" \
-    >> "${ZUVO_HOME:-$HOME/.zuvo}/gate-bypass.log" 2>/dev/null || true
+    >> "$_cb_log/gate-bypass.log" 2>/dev/null || true
   exit 0
 fi
 
@@ -58,71 +72,138 @@ fi
 # Headings whose text decides agent behaviour rather than describing it.
 CONTROL_PATTERNS='UNIVERSAL WRITER ISOLATION|UNIVERSAL EXECUTOR ISOLATION|Mandatory File Loading|PHASE 0|PHASE 1|Conditional Load|Evaluate TOP-DOWN|Cross-Cutting Families|Critical gates|MANDATORY TOOL CALLS|Stack detection'
 
-# ---- range ------------------------------------------------------------------
-range_of_push() {
-  # git pre-push stdin: "<local_ref> <local_sha> <remote_ref> <remote_sha>"
+# ---- ranges -----------------------------------------------------------------
+# EVERY pushed ref, not the first. git does not order refs by sensitivity, so a
+# harmless first ref would otherwise escort an unmeasured control edit through.
+#
+# A new branch (remote sha all-zeros) needs a real BASE. A lone SHA is not a range:
+# `git diff --name-only <sha>` compares that commit to the WORKING TREE, so on a clean
+# tree it prints nothing and the gate passes a branch it never inspected. Both providers
+# of the 2026-08-20 adversarial pass found this independently.
+EMPTY_TREE=$(git hash-object -t tree /dev/null 2>/dev/null)
+
+ranges_of_push() {
   printf '%s\n' "$INPUT" | while read -r _lref lsha _rref rsha; do
     case "$lsha" in ''|*[!0-9a-f]*) continue;; esac
+    case "$lsha" in 0000000*) continue;; esac        # ref deletion: nothing pushed
     case "$rsha" in
-      0000000*) printf '%s\n' "$lsha";;          # new branch: whole ref
-      *)        printf '%s..%s\n' "$rsha" "$lsha";;
+      0000000*)
+        base=""
+        for cand in origin/HEAD origin/main origin/master main master; do
+          if git rev-parse --verify -q "$cand" >/dev/null 2>&1; then
+            b=$(git merge-base "$cand" "$lsha" 2>/dev/null) && [ -n "$b" ] && { base="$b"; break; }
+          fi
+        done
+        [ -n "$base" ] || base="$EMPTY_TREE"          # root commit: diff against nothing
+        printf '%s..%s\n' "$base" "$lsha"
+        ;;
+      *)
+        # A force push can name a remote sha this clone does not have; falling back to
+        # the empty tree over-reports rather than under-reports, which is the safe side.
+        if git cat-file -e "$rsha^{commit}" 2>/dev/null; then
+          printf '%s..%s\n' "$rsha" "$lsha"
+        else
+          printf '%s..%s\n' "$EMPTY_TREE" "$lsha"
+        fi
+        ;;
     esac
-  done | head -1
+  done
 }
 
-RANGE=$(range_of_push)
-[ -n "$RANGE" ] || RANGE=$(git rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1 && echo '@{upstream}..HEAD' || echo '')
-[ -n "$RANGE" ] || exit 0
-
-CHANGED=$(git diff --name-only "$RANGE" -- 'skills/*/SKILL.md' 'shared/includes/*.md' 2>/dev/null) || exit 0
-[ -n "$CHANGED" ] || exit 0
+RANGES=$(ranges_of_push)
+if [ -z "$RANGES" ]; then
+  git rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1 && RANGES='@{upstream}..HEAD'
+fi
+[ -n "$RANGES" ] || exit 0
 
 # ---- does the diff touch a control block? ----------------------------------
-# git has no notion of markdown structure, so a hunk header carries no section
-# name and cannot be trusted for this. Map each changed line back to the nearest
-# preceding heading in the POST-EDIT file and test that instead.
-HEAD_SHA=$(printf '%s' "$RANGE" | sed 's/.*\.\.//')
-[ -n "$HEAD_SHA" ] || HEAD_SHA=HEAD
-
-section_of_changed_lines() {
-  local file="$1"
-  local lines
-  lines=$(git diff -U0 "$RANGE" -- "$file" 2>/dev/null \
-          | awk '/^@@/ { if (match($0, /\+[0-9]+/)) print substr($0, RSTART+1, RLENGTH-1) }')
+# git has no notion of markdown structure, so a hunk header carries no section name.
+# Map changed lines back to the nearest preceding heading instead — on BOTH sides:
+# an addition is judged by the post-edit file, a deletion by the pre-edit one. Judging
+# only the post-edit side lets a pure deletion inside a control block map to whatever
+# section now occupies those line numbers, which is usually the next one along.
+section_hit() {                      # section_hit <blob-ref> <lines...>
+  local ref="$1"; shift
+  local lines="$*"
   [ -n "$lines" ] || return 1
-  git show "$HEAD_SHA:$file" 2>/dev/null | awk -v want="$lines" -v pat="$CONTROL_PATTERNS" '
-    BEGIN { n = split(want, W, "\n"); for (i = 1; i <= n; i++) if (W[i] != "") T[W[i] + 0] = 1 }
-    /^#{1,6} / || /^\*\*[A-Z]/ { sec = $0 }
-    { if (NR in T && sec ~ pat) { found = 1 } }
+  git show "$ref" 2>/dev/null | awk -v want="$lines" -v pat="$CONTROL_PATTERNS" '
+    BEGIN { n = split(want, W, " "); for (i = 1; i <= n; i++) if (W[i] != "") T[W[i] + 0] = 1 }
+    /^```/ { fence = !fence; next }                       # a heading inside a fence is text
+    !fence && (/^#{1,6} / || /^\*\*[A-Z]/) { sec = $0 }
+    { if ((NR in T) && sec ~ pat) found = 1 }
     END { exit(found ? 0 : 1) }'
 }
 
+# Expand `@@ -a,b +c,d @@` into every touched line on the requested side. Taking only
+# the hunk's first line tests one line out of d, so a hunk that starts in prose and
+# continues into a control block reads as clean.
+hunk_lines() {                       # hunk_lines <side:+|-> <range> <file>
+  local side="$1" rng="$2" file="$3"
+  git diff -U0 "$rng" -- "$file" 2>/dev/null | awk -v side="$side" '
+    /^@@/ {
+      if (match($0, side "[0-9]+(,[0-9]+)?")) {
+        spec = substr($0, RSTART + 1, RLENGTH - 1)
+        split(spec, P, ",")
+        start = P[1] + 0; count = (2 in P) ? P[2] + 0 : 1
+        for (i = 0; i < count; i++) print start + i
+      }
+    }'
+}
+
 TOUCHED=""
-while IFS= read -r f; do
-  [ -n "$f" ] || continue
-  # a control edit either lands inside a control section, or moves the heading
-  # line itself (rename/removal of the block)
-  if section_of_changed_lines "$f" \
-     || git diff -U0 "$RANGE" -- "$f" 2>/dev/null | grep -qE "^[+-].*($CONTROL_PATTERNS)"; then
-    TOUCHED="$TOUCHED$f"$'\n'
-  fi
-done <<< "$CHANGED"
+for RANGE in $RANGES; do
+  CHANGED=$(git diff --name-only "$RANGE" -- 'skills/*/SKILL.md' 'shared/includes/*.md' 2>/dev/null) || continue
+  [ -n "$CHANGED" ] || continue
+  BASE_SHA=${RANGE%%..*}; HEAD_SHA=${RANGE##*..}
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    case "$TOUCHED" in *"|$HEAD_SHA:$f|"*) continue;; esac
+    added=$(hunk_lines '+' "$RANGE" "$f")
+    removed=$(hunk_lines '-' "$RANGE" "$f")
+    # shellcheck disable=SC2086  # deliberate: the line lists are passed as separate args
+    if section_hit "$HEAD_SHA:$f" $added \
+       || section_hit "$BASE_SHA:$f" $removed \
+       || git diff -U0 "$RANGE" -- "$f" 2>/dev/null \
+            | grep -qE "^[+-](#{1,6} |\*\*)[^\n]*($CONTROL_PATTERNS)"; then
+      # the fallback is heading-shaped ONLY: prose that merely mentions "Stack detection"
+      # is not a control edit, and a gate that cries wolf teaches people to override it
+      TOUCHED="$TOUCHED|$HEAD_SHA:$f|"
+    fi
+  done <<< "$CHANGED"
+done
 
 [ -n "$TOUCHED" ] || exit 0
 
 # ---- evidence ---------------------------------------------------------------
-# One record per control edit, keyed on the post-edit blob of the changed file,
-# so evidence for yesterday's payload cannot be reused for today's classifier.
-BENCH_DIR="$REPO_ROOT/memory/bench"
+# Read the record from the PUSHED TREE, never the working tree: a record that exists
+# only on the author's disk is not evidence anyone else can check, and pushing the skill
+# commit while leaving the record uncommitted was a one-line bypass.
+#
+# And validate the record's CONTENT. Requiring only that the blob id appears somewhere
+# under memory/bench/ makes a one-line placeholder sufficient — the exact ceremony this
+# gate exists to prevent, reproduced inside the gate itself.
+record_valid() {                     # record_valid <tree-ish> <blob>
+  local tree="$1" blob="$2" file rec
+  for file in $(git ls-tree -r --name-only "$tree" -- memory/bench/ 2>/dev/null); do
+    rec=$(git show "$tree:$file" 2>/dev/null) || continue
+    printf '%s' "$rec" | grep -qF -- "$blob" || continue
+    # both arms, and all three columns the README requires
+    printf '%s' "$rec" | grep -qiE 'kill[ _-]?rate|kill' || continue
+    printf '%s' "$rec" | grep -qiE 'billed|token'         || continue
+    printf '%s' "$rec" | grep -qiE 'turn'                 || continue
+    [ "$(printf '%s' "$rec" | grep -cE '^\|[^|]+\|')" -ge 3 ] || continue   # header + 2 arms
+    printf '%s' "$file"; return 0
+  done
+  return 1
+}
+
 MISSING=""
-while IFS= read -r f; do
-  [ -n "$f" ] || continue
-  blob=$(git rev-parse "$(printf '%s' "$RANGE" | sed 's/.*\.\.//'):$f" 2>/dev/null | cut -c1-12)
+for entry in $(printf '%s' "$TOUCHED" | tr '|' '\n' | grep -v '^$' | sort -u); do
+  tree=${entry%%:*}; f=${entry#*:}
+  blob=$(git rev-parse "$tree:$f" 2>/dev/null | cut -c1-12)
   [ -n "$blob" ] || continue
-  if ! grep -rqs -- "$blob" "$BENCH_DIR" 2>/dev/null; then
-    MISSING="$MISSING  $f  (blob $blob)"$'\n'
-  fi
-done <<< "$TOUCHED"
+  record_valid "$tree" "$blob" >/dev/null || MISSING="$MISSING  $f  (blob $blob)"$'\n'
+done
 
 [ -n "$MISSING" ] || exit 0
 
