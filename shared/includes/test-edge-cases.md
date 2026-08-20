@@ -19,3 +19,7 @@
 | **enum × enum (matrix)** | When two enum/union params interact, test the cross-product (or at minimum all diagonal + boundary transitions) with `it.each` — not just the happy pair. Hardcoded production lists (allowlists, level maps): every member; 4 of 5 = incomplete. |
 | **events (listener/handler)** | Concurrent dispatch (2+ events same tick), out-of-order delivery, duplicate event, event during teardown, rapid-fire same event. |
 | **time-dependent** (`Date.now`, `setTimeout`, debounce, throttle) | `vi.useFakeTimers()` mandatory; test exact threshold, threshold-1 (must NOT trigger), threshold+1 (must trigger). Never the real clock. |
+| Derived ratio / delta | Denominator legitimately 0 (new tenant, first period) — the zero-baseline path is a branch, not an error |
+| First-match ordered array | See ORDERED-CONFIG family: 2+ matching entries → first wins; reversed order must change the result; past-last-entry default |
+| Recurring-job liveness | 'ran' observable independently of 'no-op because nothing to do'; one missed tick does not prevent future ticks (cadence values belong to SCHEDULED-EXECUTION family) |
+| Stale async completion (ABA) | Identity A→B→A across an await: comparing only the CURRENT id accepts a stale completion — test older-success, older-failure and concurrent-loading orderings with controlled promises |

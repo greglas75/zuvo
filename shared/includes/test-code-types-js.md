@@ -194,3 +194,32 @@ passes locally, flakes in CI. Grep the production file for `Date.now|performance
 Single home: `test-mock-safety-js.md` rule 5 (spy on `Logger.prototype.error` BEFORE constructing
 the service). Duplicated verbatim here until 2026-08-01; both files load together at STANDARD/HEAVY,
 so the copy was double context for zero information.
+
+
+## Framework Lifecycle Shapes (NestJS) — fleet audit 2026-08-19
+
+| Shape | Detection | Template |
+|-------|-----------|----------|
+| INTERCEPTOR | `implements NestInterceptor`, `intercept(ctx, next)` returning an Observable | Hand-roll `asExecutionContext`/`asCallHandler`; SUBSCRIBE to `next.handle().pipe(...)` and assert the EMITTED value — the response-side transform is a separate describe from the request side (crypt.interceptor had only the request half) |
+| EXCEPTION-FILTER | `implements ExceptionFilter`, `catch(exception, host)` | Hand-built `ArgumentsHost` (`switchToHttp()` stub); assert status + body shape + LEAK PREVENTION (internal message never reaches the response) |
+| EVENT-LISTENER | `@OnEvent(...)` handlers | The swallow-vs-rethrow contract is EXPLICIT: a throwing listener can kill the emitter for every other subscriber — one test asserting which of the two this listener chose |
+| PARAM-DECORATOR | `createParamDecorator(factory)` | Call the INNER factory directly with a hand-built `ExecutionContext`; controller specs never reach it (17 controllers imported `UserInfo`; zero tests touched the factory) |
+| DI-CONSTRUCTION | any real `@Injectable()` wired into a `@Module` | `Test.createTestingModule({...}).compile()` — MANDATORY. `new Service(mock as unknown as Dep)` bypasses DI and can never fail on a missing `@Injectable`, wrong provider registration, or token mismatch; reserve `new` for POJOs outside the container |
+
+## Queue / Step-Function Shapes
+
+| Shape | Detection | Template |
+|-------|-----------|----------|
+| BULLMQ-PROCESSOR | `@Processor(...)` / worker handler | Drive the handler with a HAND-BUILT `Job` object (never real Redis): success; throw → retry contract; duplicate delivery → idempotent no-op |
+| INNGEST-FUNCTION | `inngest.createFunction(config, trigger, handler)` | Mock `createFunction` to CAPTURE `(config, trigger, handler)`; invoke `handler` with a step stub; assert `config.retries` / `concurrency.key` DIRECTLY; `onFailure` tested as its own unit; one test proving `NonRetriableError` is not retried while other throws are |
+
+## Environment & Wrapper Shapes
+
+| Shape | Detection | Template |
+|-------|-----------|----------|
+| INJECTED-CLOCK | constructor/param takes `clock`/`scheduler` (`Clock`, `FrameScheduler`, `ManualScheduler`) | CHECK THE SIGNATURE FIRST: inject the manual scheduler and step it. `vi.useFakeTimers()` is for code with NO seam — reaching for the global when production deliberately injected a clock tests the wrong mechanism |
+| EXTRACTED-GLOBAL | method read off `window`/`globalThis` and stored (`const raf = window.requestAnimationFrame`) | Bind-to-receiver hazard: assert the exact scheduled-ID round-trip (request returns id → cancel called WITH that id), not merely "cancel was called" |
+| DOM-GEOMETRY | logic consuming `getBoundingClientRect`/layout | jsdom computes NO layout — per-element `rect()` stub helper; test the own-text / overlay-text / non-overlapping-foreign-text matrix; anything needing REAL computed layout → NEEDS_E2E, not a green stub |
+| JSDOM-GLOBALS | `'matchMedia' in window`, `typeof ResizeObserver === 'undefined'` guards | READ THE RUNNER'S GLOBAL SETUP FIRST (jest.setup/vitest.setup polyfills); test both branches of the guard only when the setup does not already pin one |
+| LIBRARY-HOOK-WRAPPER | component wrapping a heavyweight library hook (TanStack table, form libs) | TWO-FILE sub-strategy: (1) real-library render for integration truth; (2) mocked-hook CONTRACT file capturing the options object and asserting the wrapper's own glue (functional-updater resolution, changed-only emissions) — the contract file is what catches a v8→v9 API drift |
+| BUILD-CONFIG | `vite.config`/webpack invariants over `node_modules` | Assert on the RESOLVED config object (optimizeDeps include-list, chunking rules) computed from the real dependency graph — never a snapshot |

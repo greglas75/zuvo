@@ -159,3 +159,14 @@ Test each method with exactly 3 tests:
 For a service with 7 identical-pattern methods = 21 tests minimum. Use **per-pattern contract mode** (see test-contract.md).
 
 **Watch for inconsistencies between methods** — e.g., one catches `Throwable` while others catch `S3Exception`. These are bugs, not style choices. Flag them in bug scan.
+
+
+## Laravel Wiring & CLI Shapes — fleet audit 2026-08-19 (tgm-collect)
+
+| Shape | Detection | Template |
+|-------|-----------|----------|
+| DI-WIRING | ServiceProvider with `$this->app->bind(...)` | One `$this->app->make(Interface::class)` assertion PER BINDING (instance-of the concrete adapter). 576 green tests coexisted with "Target [TransactionManager] is not instantiable" because nothing resolved through the container; the repo's own canary (`theContainerResolvesThePortToThePostgresAdapter`) is the template. Extractor caveat: this exact file class returned 0 symbols (non-ASCII docblock bug) — 0 symbols on a 200+ LOC provider means READ IT RAW, never "nothing to test" |
+| CONSOLE-COMMAND | `$signature`, artisan commands | Not a CONTROLLER: drive via `artisan(Command::class, args)`; assert exit code per outcome + output contract; side effects with CalledWith as usual |
+| FINAL-CLASS | `final` domain classes/exceptions/providers | Cannot be mocked — that is the design speaking: use the interface seam or bind a real instance; never reach for uopz/runkit. A test needing to mock a `final` is testing at the wrong boundary |
+| POPO-DOMAIN-MODEL | `Models/*.php` WITHOUT `extends Model` (constructor-promoted props, `fromPayload`/`toPayload`) | These are PURE value objects, not ActiveRecord — round-trip + invariant tests, ZERO database; the DB boundary lives in `Infrastructure/Repositories/*` taking `ConnectionInterface` |
+| FOR-UPDATE / RACE | repository methods using `SELECT ... FOR UPDATE` / row locks | `RefreshDatabase` wraps the suite in a never-committed transaction, so a SECOND real connection cannot see the rows — race tests must use a non-transactional base case (the repo's `SessionRaceTest` docblocks are the reference) and clean up explicitly; near-miss on record: `RefreshDatabase`+`DatabaseTruncation` on a shared DB almost wiped local data (backlog C-7) |

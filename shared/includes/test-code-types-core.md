@@ -17,17 +17,17 @@ Before writing exhaustive tests, ask:
 
 | Code Type | Detection Signals | Min Tests Formula |
 |-----------|------------------|-------------------|
-| VALIDATOR | Zod schemas, `validate*`, class-validator decorators | Fields × 3 (valid + invalid + boundary) |
-| SERVICE | Injectable class with DB/HTTP calls, business logic methods | Methods × 3 |
-| CONTROLLER | Route decorators, request/response handlers | Endpoints × 4 (happy + auth + validation + error) |
-| HOOK | `use*` functions, React hooks with side effects | States × 3 + lifecycle tests |
+| VALIDATOR | Declarative per-field constraints attached to a data shape — schema objects, decorator/annotation validators, typed DTOs with field rules (e.g. Zod, class-validator, Pydantic `BaseModel`+`@field_validator`, Python dataclass DTO) | Fields × 3 (valid + invalid + boundary) |
+| SERVICE | Business-logic unit calling I/O collaborators (DB/HTTP/queue) through injected or imported deps — any framework or none (e.g. `@Injectable`, plain class, module of functions) | Methods × 3 |
+| CONTROLLER | HTTP entrypoint mapping request→response — decorators OR file-convention handlers (e.g. Nest `@Get`, Next.js App Router `export function GET/POST` / `export const POST = wrap(...)`, FastAPI path functions, invokable PHP controllers) | Endpoints × 4 (happy + auth + validation + error) |
+| HOOK | Reusable stateful frontend logic unit with lifecycle/effects (e.g. React `use*`, Vue composables) | States × 3 + lifecycle tests |
 | PURE | No I/O, no side effects — transforms, formatters, calculators | Functions × 4 + property-based |
-| COMPONENT | React/Vue component with props and render logic | Render states × 2 + interaction tests |
-| GUARD | Auth guards, permission checks, middleware | Rules × 3 (allow + deny + edge) |
-| API-CALL | HTTP client wrappers, SDK calls | Methods × 3 (success + error + timeout) |
-| ORCHESTRATOR | Coordinates multiple services, saga/workflow logic | Steps × 2 + full-flow integration |
+| COMPONENT | UI unit rendering from props/state with interaction handlers (e.g. React/Vue/Svelte component, Astro island) | Render states × 2 + interaction tests |
+| GUARD | Allow/deny decision unit gating an operation — middleware guards, policy/permission functions; a precedence matrix or tenant filter also triggers the AUTH-BOUNDARY family below | Rules × 3 (allow + deny + edge) |
+| API-CALL | Thin client wrapping an external service — HTTP/SDK/`fetch` wrapper owning timeout, retry and error mapping (incl. Web `fetch`+`AbortSignal`, circuit breakers) | Methods × 3 (success + error + timeout) |
+| ORCHESTRATOR | Unit coordinating ordered steps/handlers — middleware mounting, saga/workflow, step-function definitions (e.g. Hono `app.use`, Inngest `createFunction`, BullMQ flows; framework templates live in the stack file) | Steps × 2 + full-flow integration |
 | STATE-MACHINE | Finite states with transitions, event-driven reducers | Transitions × 2 + States × 1 + lifecycle flow |
-| ORM/DB | Repository pattern, query builders, migrations | Queries × 3 (success + empty + constraint violation) |
+| ORM/DB | Unit whose primary job is constructing/executing datastore queries — detected by query construction, not base class (repository classes, query builders, raw-SQL modules; Prisma/Mongo/AR/DBAL alike) | Queries × 3 (success + empty + constraint violation) |
 | TYPE_CONTRACT | File emits NO runtime value: only `type` / `interface` / `declare` / `.d.ts` / `*.types.ts` | Per exported type: 1 minimal + 1 maximal construction, + 1 `@ts-expect-error` per illegal discriminant combination |
 
 ## TYPE_CONTRACT Test Strategy
@@ -138,6 +138,23 @@ above, not "every exported interface gets a file".
 
 Three spec files against one type module with duplicated fixtures is fragmentation, not coverage.
 One `.test-d.ts` per type module; share fixtures within it.
+
+## Cross-Cutting Families — check AFTER the code-type match
+
+A file carries ONE code type and ZERO OR MORE families. A family match APPENDS mandatory
+contract rows; it never changes the tier. Print `[FAMILY] {file}: +{NAMES}` and record
+`"families": [...]` in the manifest. These six families cover the failure modes that generic
+type templates provably miss (fleet audit 2026-08-19: a 1344-line suite passing every generic
+gate coexisted with a live double-payment path).
+
+| Family | Detection shape | Mandatory contract rows |
+|--------|-----------------|-------------------------|
+| SIDE-EFFECT-BOUNDARY | External effect (payment, email, queue publish, outbound webhook) followed by a local state write; OR consumption from queue/webhook/outbox | (1) idempotency key is a pure function of the domain id — call twice, assert same key; (2) effect SUCCEEDS then the subsequent write THROWS → state must NOT become retry-eligible or 'failed' (distinct `*_unconfirmed` state or equivalent); (3) concurrent pickup: exactly one executes — promise-race or two-connection test, mirroring whichever pattern the repo already uses; (4) duplicate delivery is a no-op |
+| SCHEDULED-EXECUTION | Cadence predicate (`getUTCMinutes() === 5`, cron gate) or tick/backoff loop | cadence boundary at N-1 / N / N+1 under fake time; a skipped or failed tick does NOT wedge the next; 'ran' is observable independently of 'no-op because nothing to do'; backoff state machine gets a transition matrix |
+| AUTH-BOUNDARY | Tenant/org filter injected into queries; role×resource precedence matrix; delegation checks | cross-tenant read returns EMPTY (not error, not data); read-path filter and write-path authorization enforce the SAME boundary (one test proving agreement); precedence ORDER itself (incl. admin vs explicit deny — an intentional test either way); default-deny for an unknown principal/resource; tenant id parameter that is OPTIONAL on a tenant-scoped method = Step 1.5 Bug Scan finding, not a test to write around |
+| UNTRUSTED-DATA | File export, file upload, inbound webhook/email ingestion | export: spreadsheet formula-injection neutralization (`=cmd\|...`) + row-limit rejection; upload: size/type boundary + requester binding; ingestion: dedup by message id + fire-and-forget dispatch ASSERTED on args, not completion |
+| ORDERED-CONFIG | First-match arrays (`config.find(...)`), module-level config tables/exported constants | value matched by 2+ entries → FIRST wins; REVERSED array must change the result; past-last-entry returns the documented default; config tables: independent expected-oracle, `Object.isFrozen`, lockstep of derived exports, uniqueness |
+| PROBABILISTIC-CONSUMER | Consumes model/scorer output (LLM client, ML endpoint, vector search) | parser/threshold/routing tested against CANNED responses — exact-value asserts on a mocked model ARE correct here (explicit P-70 exception #2 in test-contract.md); with a real model only shape/range/length (`0<=score<=1`, `len(out)==len(in)`), never exact floats; golden fixture + env-gated live probe; NEVER load a real checkpoint in unit tests; vector search: below-threshold dropped, descending order, topK, filters — never assert embedding semantics |
 
 ## Per-Code-Type Test Strategy
 

@@ -73,6 +73,14 @@ TEST CONTRACT: [production-file-path]
    ✗ "The code does X * Y so I expect X * Y" — that's mirroring the formula
    ✗ "The mock returns X so I check for X" — that's echo testing
 
+   EXCEPTION 2 — PROBABILISTIC-CONSUMER (NOT a P-70 violation):
+   For a consumer of a model/scorer (LLM client parser, ML endpoint adapter), asserting exact
+   values against a CANNED model response is CORRECT — the subject is the parser, threshold and
+   routing, not the model's judgment. `expect(result.confidence).toBe(0.85)` against a mocked
+   `messages.create` is the right test. The model's real behavior is covered separately by a
+   golden fixture + an env-gated live probe (family row in test-code-types-core.md), never by
+   exact-float asserts against a live model.
+
    EXCEPTION — pass-through delegation (NOT a P-70 violation):
    For methods whose contract IS "return exactly what the delegate gives" (service facades,
    thin wrappers, DB query pass-through), `expect(result).toBe(mockReturnValue)` is correct.

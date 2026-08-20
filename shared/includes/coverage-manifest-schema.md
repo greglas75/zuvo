@@ -29,6 +29,8 @@ checkpoint (`--resume`). The gate validates the manifest only.
   "test_files": ["src/respondent/__tests__/respondent.controller.spec.ts"],
   "quality_gates": {"Q7": 1, "Q11": 1},
   "status": "inventory|final",
+  "families": ["SIDE-EFFECT-BOUNDARY"],          // optional — matched cross-cutting families (core table)
+  "unmatched_shape": "<one-line structural description>",  // REQUIRED when classification fell through ELSE → STANDARD
   "symbols": [
     {
       "symbol": "RespondentController.findOne",

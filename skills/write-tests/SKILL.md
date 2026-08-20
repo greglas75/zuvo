@@ -99,6 +99,7 @@ Read the production file fully, then read `../../shared/includes/test-code-types
 - **Code type:** VALIDATOR / SERVICE / CONTROLLER / HOOK / PURE / COMPONENT / GUARD / API-CALL / ORCHESTRATOR / STATE-MACHINE / ORM-DB / TYPE_CONTRACT
 - **Complexity:** THIN / STANDARD / COMPLEX
 - **Testability:** UNIT_MOCKABLE / UNIT_REFLECTION / NEEDS_INTEGRATION / MIXED
+- **Runtime:** NO-DOM (real Node, `node:test`/vitest node env) / JSDOM / REAL-BROWSER (route to write-e2e). Decide BEFORE writing: if the repo has an ADR or CLAUDE.md runner-by-extension table (e.g. `*.test.tsx` → vitest/jsdom, `*.spec.mjs` → node:test/no DOM — rs_fe ADR-0001 exists because three files once ran under the wrong runner), that table is BINDING — mirror it and declare the chosen runtime in the spec header.
 
 **Evaluate TOP-DOWN, FIRST MATCH WINS** (the list was unordered until 2026-08-02, so a COMPLEX
 COMPONENT was assignable to two different tiers depending on reading order):
@@ -118,7 +119,20 @@ IF module mixes code types                                     → STANDARD (HEA
 ELSE                                                           → STANDARD
 ```
 
-Ambiguous → STANDARD. Print: `[CLASSIFIED] {file}: {code_type} {complexity} → tier {TIER}`
+Print: `[CLASSIFIED] {file}: {code_type} {complexity} → tier {TIER}`. Then check the
+**Cross-Cutting Families** table in `test-code-types-core.md`; on any match print
+`[FAMILY] {file}: +{NAMES}`, record `"families": [...]` in the manifest, and append that
+family's mandatory rows to the test contract.
+
+**No silent default.** `ELSE → STANDARD` is a fallback tier, never a classification. When no
+code-type row matched, print `[UNCLASSIFIED] {file}: no code-type row matched — shape:
+{one-line structural description of what the file actually is}`, record
+`"unmatched_shape": "<that description>"` in the manifest, and derive the test contract from
+READING the production file — the generic template alone is not a valid contract source for an
+unclassified shape. The completion report MUST list every UNCLASSIFIED file with its shape.
+Rationale: the silent `ELSE → STANDARD` is the exact mechanism that handed a type-only file a
+runtime-spec template (2026-08-19) and would do the same for the next unknown shape; the manifest
+record is the frequency data that decides which shapes earn a table row.
 
 **Classify TYPE_CONTRACT before reaching for `ELSE`.** A file that exports only `type` / `interface` /
 `declare` (`*.types.ts`, `types.ts`, `*.d.ts`, anything under a `types/` directory) matched no row in
@@ -146,8 +160,8 @@ Load ONLY the includes matching tier AND stack. Print READ/SKIP per file. If an 
 | `../../shared/includes/test-mock-safety-core.md` | Full | Full | Full | Full | **SKIP**§ |
 | `../../shared/includes/test-code-types-core.md` | Full | Full | Full | Full | Full |
 | `../../shared/includes/test-bugfix-protocol.md` | Full | Full | Full | Full | **SKIP**§ |
-| `test-mock-safety-{stack}.md` (js/php) | **SKIP** | Full | Full | Full‡ | **SKIP**§ |
-| `test-code-types-{stack}.md` (js/php) | **SKIP** | Full | Full | Full‡ | Full |
+| `test-mock-safety-{stack}.md` (js/php/python) | **SKIP** | Full | Full | Full‡ | **SKIP**§ |
+| `test-code-types-{stack}.md` (js/php/python) | **SKIP** | Full | Full | Full‡ | Full |
 | `../../shared/includes/test-edge-cases.md` | **SKIP** | Full | Full | Full | **SKIP**§ |
 | `../../shared/includes/test-mutation-probes.md` | **SKIP**† | Full | Full | Full | **SKIP**§ |
 
@@ -164,7 +178,17 @@ COMPONENT Callback Routing Guard explicitly defers its framework example to
 `test-code-types-js.md` (Dispatch/Router template, Lazy/Suspense caveat, Time-Dependent
 fake-timer table) — skipping them left that pointer dangling for the one tier that needs it.
 
-**Stack detection:** nearest manifest — `package.json` => JS/TS, `composer.json` => PHP, `pyproject.toml` => Python (core-only mode). Ties: `package.json` > `composer.json` > `pyproject.toml`; print the conflict decision. Target-file extension beats the manifest winner. Load at most one stack-specific include family.
+**Stack detection:** walk UP from the target file and STOP at the first directory containing ANY
+stack manifest — recognized or not. Signals: `package.json` => JS/TS; `composer.json` => PHP;
+`pyproject.toml`, `requirements.txt`, `requirements-dev.txt`, `pytest.ini`, `setup.cfg`,
+`Pipfile`, `manage.py` => Python. Ties inside ONE directory: `package.json` > `composer.json` >
+any Python signal; print the conflict decision. **Target-file extension is a WRITTEN override**
+(`.py` => Python, `.php` => PHP) that beats the manifest winner — print
+`[STACK] {file}: {stack} (override: extension)` when it fires. Load at most one stack-specific
+include family. (Until 2026-08-19 the only Python signal was `pyproject.toml` and the walk-up
+skipped unrecognized manifests: data-lab — 1,549 `.py` files, `requirements.txt` + `pytest.ini`,
+no `pyproject.toml` — classified as JS/TS, and a FastAPI file under `python-service/` climbed past
+its own `requirements.txt` to the root `package.json`.)
 
 ### DEFERRED — Load after queue empty (Completion only, once per run)
 
@@ -233,8 +257,14 @@ capability (Codex's single-agent lock), follow the ONE documented exception in
    - **D3 test setup (STANDARD+; skip if CLAUDE.md or exemplar covers it):** `search_text` for `setupFiles`/`_bootstrap`/`conftest` config; read setup outlines.
    - **D4 hub signatures (STANDARD+/COMPONENT):** `search_symbols` (bare names, `detail_level: "compact"`, `include_source: true`, `token_budget: 800`) for the target's imported utilities. Never `get_symbols()` on bare names.
    - On repo/index errors run the `codesift-setup.md` recovery loop once; on `Transport closed` abandon CodeSift for the rest of the run. Without CodeSift: skip all dimensions, print `[CONTEXT] CodeSift unavailable — using legacy detection.`
-6. **Test runner refinement:** read the nearest manifest/config; detect runner (vitest/jest/phpunit/pytest) and existing test conventions. No manifest → infer from extension; still unknown → mark file `FAILED`, backlog the environment issue. For JS/TS COMPONENT/HOOK targets check DOM-matcher registration and cleanup globality; reuse the exemplar's local pattern when global setup is absent.
-7. **Build queue:** explicit mode = user's targets. Auto mode with CodeSift: gather dead/leaf candidates, 90-day hotspots, test-reference counts, role signals; 0 test refs = UNCOVERED; priority hub > high-churn > leaf; degraded discovery falls back to the manifest-root glob. Auto mode without CodeSift: glob production files under the source root; files without matching tests = UNCOVERED.
+6. **Test runner refinement:** read the nearest manifest/config; detect runner (vitest/jest/phpunit/pytest) and existing test conventions. If the repo carries a runner-by-extension table (ADR/CLAUDE.md), it is BINDING per the Runtime axis above — the extension selects the runner, and the written file's extension must match the intended runtime. No manifest → infer from extension; still unknown → mark file `FAILED`, backlog the environment issue. For JS/TS COMPONENT/HOOK targets check DOM-matcher registration and cleanup globality; reuse the exemplar's local pattern when global setup is absent.
+7. **Build queue:** explicit mode = user's targets. ALWAYS exclude from auto-discovery:
+`**/migrations/**`, `*.sql`, `prisma/migrations/**`, `supabase/migrations/**` (route: `zuvo:db-audit`
+— print the excluded count), and build artifacts `storage/**`, `bootstrap/cache/**`, `**/.next/**`,
+`**/dist/**` (indexed compiled output corrupts symbol counts — tgm-collect indexed PHPStan cache as
+source). **0-symbol guard:** extraction returning 0 symbols for a file over ~30 LOC means the
+EXTRACTOR failed (non-ASCII docblocks are a known cause), never "nothing to test" — mark the file
+MUST-VERIFY-MANUALLY and read it raw. Auto mode with CodeSift: gather dead/leaf candidates, 90-day hotspots, test-reference counts, role signals; 0 test refs = UNCOVERED; priority hub > high-churn > leaf; degraded discovery falls back to the manifest-root glob. Auto mode without CodeSift: glob production files under the source root; files without matching tests = UNCOVERED.
 8. **Baseline test run** (once per run, after queue, before loop): record pre-existing failures — they are ignored in verification. Remote execution (rt farm) follows env-compat **Remote / Queued Execution**: blocking attach with an upfront deadline, and a result without the runner's own summary + `executed=true` evidence is a failure routed to local fallback — never a PASS. **Skip in `--dry-run`.** Runner/config unavailable → backlog one run-level environment issue, mark every queued file `FAILED` (`Blind Audit=skipped`, `Adversarial=not_run`), stop.
    - **Schema-drift pre-probe** (only when queue has an ORM-DB target or DB test helper): run one seed/schema probe; `column/relation/table does not exist` = run-level ENV blocker — backlog, mark every DB-backed file `FAILED`, stop. Skip in `--dry-run`.
 
