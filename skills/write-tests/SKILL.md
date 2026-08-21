@@ -546,18 +546,20 @@ removal, state mutation, async hazards (`test-mutation-probes.md` classes 2-4). 
 helper reported `mutation SKIP` (no runner exists here) or `error`, or when the classification
 names a behaviour group the runner cannot reach.
 
-**`mutation DEFER` is not `SKIP`.** DEFER means the helper is holding the run back until the
-suite is final and will do it on a later pass; there is nothing to substitute for. Reaching for
-hand probes on a DEFER duplicates work that is about to happen for free — measured at 677s over
-24 turns in one run, 29% of its wall. 3 probes (STANDARD) / 5 (HEAVY-COMPLEX, >=1 per behavior group), byte-restore
-protocol, scoped runs. Execute ALL probes as ONE script in ONE tool call (mutate → run → restore
-in a loop, emitting only the final table) — per-probe conversational turns re-bill the whole
-prefix for zero information. Post-restore sha256 must equal the manifest hash.
+How to run them, when you do: 3 probes (STANDARD) / 5 (HEAVY-COMPLEX, ≥1 per behavior group),
+byte-restore protocol, scoped runs. Execute ALL probes as ONE script in ONE tool call (mutate →
+run → restore in a loop, emitting only the final table) — per-probe conversational turns re-bill
+the whole prefix for zero information. Post-restore sha256 must equal the manifest hash.
 
-`native:` has three states, and collapsing the last two hides an infra failure as normal absence:
-`<score>% (<runner>)` when a run produced a number, `none` when no runner exists and none could be
-installed, `error: <reason>` when a detected runner could not be scoped, timed out, or exited
-non-zero.
+**`mutation DEFER` is not `SKIP`, and it is not a reason to run probes.** DEFER means the helper
+is holding the measurement back until the suite is final and will run it on a later pass; there is
+nothing to substitute for. Reaching for hand probes on a DEFER duplicates work that is about to
+happen for free — measured at 677s over 24 turns in one run, 29% of its wall.
+
+`native:` has four states, and collapsing them hides an infra failure as normal absence:
+`<score>% (<runner>)` when a run produced a number, `deferred` when the helper is waiting for the
+suite to be final, `none` when no runner exists and none could be installed, `error: <reason>`
+when a detected runner could not be scoped, timed out, or exited non-zero.
 
 **Triage before fixing.** Native runners generate equivalent mutants routinely (`x * 2` →
 `x << 1`). An equivalent mutant is recorded `equivalent` with the reason and does NOT block
