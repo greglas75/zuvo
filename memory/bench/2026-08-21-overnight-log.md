@@ -13,6 +13,51 @@ not argued. Where a number is a single run rather than a median, it says so.
 
 ---
 
+## CORRECTION — every RED suite in this benchmark was an instrument error
+
+Found at 22:30 while diagnosing three shield runs that all scored 0.0.
+
+**Seven of the eight RED suites came from runs that also wrote
+`production-file-modified.diff`.** That is not a coincidence: Step 4.5 of `write-tests` mandates
+fixing production bugs surfaced while writing tests, in-run. The suite and the fix ship together.
+
+The scorer threw the fix away. It copies the pristine corpus repo, installs only the arm's test
+file, and runs it against unfixed production — so a test asserting the corrected behaviour fails,
+the clean-pass gate trips, and the run scores 0. **Doing the mandated thing scored worse than
+never finding the bug.**
+
+Re-scored with the run's own production file restored:
+
+| shield / CASE-05 | before | after |
+|---|---|---|
+| zuvo-v10-r1 | **0.0% (RED)** | **85.7%**, suite PASS |
+| naked (control) | 84.3% | 84.3% |
+
+So the skill does beat the control on that file, and the instrument was reporting it as total
+failure. Everything below that says "RED" needs reading against this: **`v2 2/4 RED`, `v6 1/3 RED`,
+`v11 1/5 RED` and all three shield runs are affected.** Only `zuvo-v3-r6` wrote no production diff
+and remains a genuine broken suite.
+
+### What changed
+
+- `stryker_score2.sh` restores the run's own production file (a saved copy, else the diff applied
+  by named target — the diff carries absolute paths into a workspace since reclaimed, so no `-p`
+  level resolves it) before scoring. Tests and fix are scored together, which is the state the run
+  produced.
+- The frozen-mutant engine **cannot** do that: its mutants are byte offsets into one source text,
+  and any production edit invalidates every offset after it. Such runs now score
+  `PRODUCTION_MODIFIED` with a null kill-rate — excluded from medians, reported separately —
+  rather than a zero that describes the instrument.
+- `run_arm.sh` now saves the modified production file itself, not only a diff of it.
+
+### The lesson, which is the same one twice
+
+A pipeline step that CHANGES the system under test needs a measurement that reproduces the state
+it left. This rig froze production to keep mutants stable, and that freeze silently contradicted
+a mandated pipeline step. The tell was available all night — a `production-file-modified.diff` in
+every RED run — and I read "RED" as a property of the suite for six hours before checking what
+those runs had in common.
+
 ## Bottom line
 
 **Quality moved for the first time in this benchmark.** Two independent five-run batches agree:
