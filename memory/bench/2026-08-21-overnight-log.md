@@ -263,6 +263,25 @@ L18/L26: exactly the mutants 27 and 34 of 39 suites failed to kill.
 This is the first lever found tonight that aims at **quality** rather than cost, and its value
 should show on CASE-02/03/04/05 rather than on CASE-01, which is already at its ceiling.
 
+## A one-word regression I introduced, and how the rig found it
+
+v10's phase attribution showed one run spending **677 seconds across 24 turns** in the mutation
+bucket — 29% of its wall — running StrykerJS and hand probes itself, while the helper was
+deferring mutation to a later pass.
+
+The deferral reported status `SKIP`. `SKIP` already meant "this check cannot run here", and
+Step 3.3 keys on exactly that to fall back to hand-written probes. So every deferred pass read as
+*the runner is unavailable, do it manually*, and the agent went off to do the expensive thing the
+helper was about to do for free on the next pass.
+
+Deferral is now `DEFER`, a state of its own, and the skill says plainly that DEFER is not SKIP:
+one means "later, by me", the other "never, here".
+
+The general shape is worth keeping: **a helper that shares a status word with a fallback rule
+inherits that rule's behaviour whether or not it meant to.** No amount of reading the helper would
+have found this — the helper is correct in isolation. It took attributing wall-clock to what the
+agent actually ran.
+
 ## State of the night plan
 
 Seven batches, sequenced (five containers is what this box absorbs while staying responsive;
