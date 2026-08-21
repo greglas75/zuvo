@@ -379,6 +379,34 @@ after it runs v11, because the boundary work aims at files that are not already 
 | CASE-04 | `survey-logic-auditor.replay.ts` | naked 67.2% |
 | CASE-05 | `dom-translation-detector.ts` (jest/NestJS) | **human-written incumbent 34.6%** — 35 of its 50 tests are skipped |
 
+## v11 on CASE-01 — one run at the ceiling, one run dead, no median gain
+
+| run | wall | kill |
+|---|---|---|
+| r4 | 1870s | 90.9% |
+| r5 | 2419s | **91.9% — the ceiling, the only run in 44 arms to reach it** |
+| r1 | 2900s | **0.0% — RED** |
+| r3 | 3069s | 90.9% |
+| r2 | 4208s | 89.9% |
+
+Median 90.9%: identical to v9 and v10, at **2.4x v9's wall** and 10.4M tokens. On CASE-01 the
+boundary obligations buy nothing, which is what a file one mutant from its ceiling should show.
+They do change behaviour — 61 tests written against v10's 38, from a 61-row inventory — but the
+extra tests land on mutants that were already dead.
+
+The RED is worth reading closely, because it is not a bad test. The obligations pushed the run to
+try `optionId: undefined`, and that surfaced a **real production defect**: the module throws a raw
+`TypeError` where its own contract promises `MaxDiffScoreContractError`. The test asserts the
+contract. Production does not honour it. The run then finished there.
+
+That is the worst available outcome — a red suite scores zero, so finding a genuine bug and
+leaving the suite red is a net loss against never having written the test. Step 4.5 already
+requires fixing surfaced production bugs in-run; the resolution is now named in the suite-FAIL gap
+list itself, where a run actually stops, rather than as more prose in the skill.
+
+**Second-order effect worth carrying:** obligations derived from source surface more production
+bugs than tests written from intent. That makes the in-run fix rule matter more, not less.
+
 ## CASE-05 (shield / jest / NestJS) — the control beats the committed spec by 50 points
 
 First numbers from a stack this benchmark had never run:
