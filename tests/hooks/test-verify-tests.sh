@@ -102,7 +102,12 @@ if tool == "jest":
                       open(os.path.join(covdir, "coverage-summary.json"), "w"))
         print("coverage run")
         sys.exit(0)
-    print("Tests:       7 passed, 7 total")
+    if os.environ.get("STUB_JEST_SKIP") == "1":
+        print("Test Suites: 1 passed, 1 total")
+        print("Tests:       35 skipped, 15 passed, 50 total")
+    else:
+        print("Test Suites: 1 passed, 1 total")
+        print("Tests:       7 passed, 7 total")
     sys.exit(0)
 
 if tool == "stryker":
@@ -422,6 +427,17 @@ STUB_GATE=pass STUB_JEST_COV=multifile jt "$R" --no-install
 grep -q "coverage not attributable" "$TMP/out" \
   && pass "multi-file summary without this file is SKIP, not 'total' passed off as the file" \
   || bad "total was reported as the file's coverage: $(grep -E '^  coverage' "$TMP/out")"
+
+# ── (21) jest's "N skipped, M passed" is read correctly and the skips are surfaced ───────
+R="$TMP/j21"; mkjest "$R"
+STUB_GATE=pass STUB_JEST_SKIP=1 jt "$R" --no-install; rc=$?
+grep -qE "suite +PASS +15 tests passed" "$TMP/out" \
+  && pass "jest 'Tests: 35 skipped, 15 passed' reads as 15, not as Test Suites' 1" \
+  || bad "jest test count misparsed: $(grep -E '^  suite' "$TMP/out")"
+grep -q "35 SKIPPED" "$TMP/out" \
+  && pass "skipped tests are surfaced, not silently counted as a green suite" \
+  || bad "35 skipped tests were not reported"
+[ "$rc" -ne 0 ] && pass "a heavily-skipped suite cannot exit 0" || bad "skipped suite exited 0"
 
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }

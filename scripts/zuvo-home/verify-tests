@@ -246,13 +246,24 @@ def check_suite(runner, test_files, root):
     r.seconds = time.time() - t0
     r.evidence = tail(out, 30)
     if rc == 0:
-        # "Test Files  1 passed" and "Tests  47 passed" both end in "N passed"; anchoring on
-        # the Tests/collected line keeps the report from claiming a 47-test suite has 1 test.
+        # Every runner prints several "N passed" lines and the FIRST one is the file count, so
+        # a loose match reports a 50-test suite as 1 test. Anchor on the Tests line, and read
+        # jest's "Tests: 35 skipped, 15 passed, 50 total" shape where `passed` is not the first
+        # field. Skips are surfaced too: a suite that is 70% skipped is not the suite the rest
+        # of this block is measuring, and silently calling it green hides that.
         m = (re.search(r"^\s*Tests\s+(\d+)\s+passed", out, re.M)
-             or re.search(r"^Tests:\s+(\d+)\s+passed", out, re.M)
+             or re.search(r"^Tests:.*?(\d+)\s+passed", out, re.M)
              or re.search(r"(\d+)\s+passed", out))
+        skipped = re.search(r"^Tests:.*?(\d+)\s+(?:skipped|todo)", out, re.M) \
+            or re.search(r"^\s*Tests\s+.*?(\d+)\s+skipped", out, re.M)
         r.status = "PASS"
         r.detail = "%s tests passed" % (m.group(1) if m else "all")
+        if skipped and int(skipped.group(1)) > 0:
+            r.detail += " (%s SKIPPED — those behaviours are unverified)" % skipped.group(1)
+            r.gaps.append(
+                "%s of the declared tests are skipped; coverage and mutation below describe "
+                "only the ones that ran" % skipped.group(1)
+            )
     else:
         r.status = "FAIL"
         r.detail = "runner exit %d" % rc
