@@ -379,6 +379,20 @@ after it runs v11, because the boundary work aims at files that are not already 
 | CASE-04 | `survey-logic-auditor.replay.ts` | naked 67.2% |
 | CASE-05 | `dom-translation-detector.ts` (jest/NestJS) | **human-written incumbent 34.6%** — 35 of its 50 tests are skipped |
 
+## Worth considering, not done
+
+`test-coverage-gate.py boundaries` is useful to more than `write-tests`, and two sibling skills
+would take it almost unchanged:
+
+- **`zuvo:test-audit`** audits suites that already exist. Today it can say a suite is thin; with
+  the obligations it could say *which* boundary it never sits on — "L25 `finiteValue < 0` has no
+  test where the value is exactly 0" — which is the difference between a score and a work list.
+- **`zuvo:mutation-test`** already reports survivors; annotating each with the obligation it
+  failed is the same three lines `verify-tests` now carries.
+
+Neither is done, because neither was asked for and both change skills outside the one under
+measurement. Flagging rather than doing.
+
 ## Reading the results in the morning
 
 On `coding-vps`, everything lives in `/root/bench`:
