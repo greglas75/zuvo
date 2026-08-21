@@ -57,3 +57,26 @@ comparison must report emitted-marker counts alongside turns and compare only ru
 compliance, or use N>=3 per arm.
 
 The revert stands, on the narrower ground that the edit is unmeasured rather than harmful.
+
+## 2026-08-21 — why `load-includes` should NOT be wired in, on mechanism rather than measurement
+
+`scripts/zuvo-home/load-includes` exists and works: one call returns the resolved tier+stack set
+with a manifest of what it contains. Wiring it into PHASE 0/1 looks like the obvious next
+optimisation, since `read` was 278-378s over 20-34 turns in the expensive runs of v9 and v10.
+
+It is not, and the reason is a harness limit rather than a measurement:
+
+- The STANDARD/js set is **242,532 bytes**. A bash tool result that size is not delivered to the
+  model — this harness persists anything past ~20KB to a file and hands back a pointer. The agent
+  would receive a path, not the rules, and would then have to read the file anyway.
+- Splitting the output back into readable chunks recreates the per-file reads it was meant to
+  replace, with an extra indirection.
+
+So the turn saving is illusory at this size. What made `compute-preload` and `verify-tests` work
+is that their output is *small and decisive* — a preload line, a verdict block. `load-includes`
+returns bulk content, which is the one shape a single tool call cannot help with.
+
+The helper stays in the tree: it is useful for a caller that wants the resolved SET (the manifest
+alone is a few hundred bytes, via `--manifest-only`) rather than the bodies, and the tier x
+include matrix in it is a machine-readable copy of the table in SKILL.md. But it should not be
+put in the loading path, and this note exists so that is not rediscovered a third time.
