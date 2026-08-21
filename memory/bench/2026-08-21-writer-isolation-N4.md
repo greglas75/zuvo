@@ -11,7 +11,12 @@ what they DID, not merely on which version they carried.
 | v2 (no isolation) | 4 | 265 [86-486] | 8.6M [1.8-22.5] | — | **2/4** | 4.5 |
 | **v3 (isolation)** | 4 | **79 [53-196]** | **1.8M [1.3-5.1]** | 87.9% | **5/5** | 4.5 |
 | v4 (+ stack includes) | 4 | 190 [90-298] | 5.9M [2.0-11.4] | 88.9% | 4/4 | 4.8 |
-| v6 (+ load-includes helper) | 3 | 209 [202-360] | 6.0M [5.5-13.4] | — | 0/1 | 5.0 |
+| v6 (+ load-includes helper) | 3 | 209 [202-360] | 6.0M [5.5-13.4] | 87.9% | 2/3 | 5.0 |
+
+Scoring completed after the first draft of this record: v6's quality is EQUAL to v3's
+(87.9% median), so it is not a quality regression — it is the same result at 4.3x the
+cost. That is the cleaner reason to keep it reverted, and a better one: a change that
+buys nothing is easier to reject than one that trades quality for price.
 
 verdict: **ship v3, keep v4 and v6 reverted** — 4.8x cheaper, 3.4x fewer turns, twice the
 reliability, quality unchanged, at equal gate coverage.
