@@ -295,6 +295,26 @@ grep -q "BLOCKED_INCOMPLETE" "$TMP/out" \
 grep -q "pass 3 of 3" "$TMP/out" \
   && pass "pass counter is visible on every run" || bad "pass counter missing"
 
+# ── (10b) the clock is a SECOND stop condition, independent of the pass count ────────────
+R="$TMP/r10b"; mkrepo "$R"
+STUB_GATE=fail vt "$R" --no-install --budget 99 --time-budget 0 >/dev/null 2>&1
+# Backdate the recorded start so the clock reads as expired without sleeping in a test.
+python3 - "$R/zuvo/contracts/thing.coverage.json.verify-state.json" <<'PY'
+import json, sys, time
+p = sys.argv[1]
+d = json.load(open(p))
+d["started_epoch"] = int(time.time()) - 20 * 60
+json.dump(d, open(p, "w"))
+PY
+STUB_GATE=fail vt "$R" --no-install --budget 99 --time-budget 15; rc=$?
+[ "$rc" -eq 4 ]   && pass "the clock stops the loop even with 97 passes of budget left"   || bad "time budget ignored (rc=$rc)"
+grep -q "minutes elapsed of a 15-minute budget" "$TMP/out"   && pass "exhaustion says it was the clock, not the pass count"   || bad "time exhaustion not attributed: $(grep VERDICT "$TMP/out")"
+grep -qE "of 15 min" "$TMP/out"   && pass "every pass prints the clock, so the budget is visible before it runs out"   || bad "elapsed not shown in the header"
+
+R="$TMP/r10c"; mkrepo "$R"
+STUB_GATE=fail vt "$R" --no-install --budget 99 --time-budget 0; rc=$?
+[ "$rc" -eq 1 ] && pass "--time-budget 0 disables the clock" || bad "time-budget 0 exit $rc (want 1)"
+
 # ── (11) --reset-budget clears the counter ───────────────────────────────────────────────
 STUB_GATE=fail vt "$R" --no-install --budget 3 --reset-budget; rc=$?
 [ "$rc" -eq 1 ] && pass "--reset-budget restarts the count" || bad "--reset-budget exit $rc (want 1)"

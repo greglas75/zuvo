@@ -420,8 +420,20 @@ first pass, not a missing measurement; it runs on the pass where the suite is wo
 |---|---|---|
 | 0 | every applicable check green | proceed to Step 3. **Do not run it again.** |
 | 1 | gaps open, budget left | ONE fix round closing EVERY listed gap, then call again |
-| 4 | budget exhausted | record the OPEN items in the manifest, finish the file `BLOCKED_INCOMPLETE` |
+| 4 | budget exhausted (passes **or** clock) | record the OPEN items in the manifest, finish the file `BLOCKED_INCOMPLETE` |
 | 2 | infrastructure | fix the tooling. An unavailable runner is `BLOCKED_DEGRADED`, never a pass |
+
+**Two budgets, both owned by the program.** Three passes bound how many times the same suite is
+re-measured; a **15-minute clock from the first pass** bounds the whole loop, because a run can
+burn an hour between two passes and a pass counter will not notice. Every pass prints
+`pass N of 3   X.X of 15 min`, so the budget is visible before it runs out.
+
+Why a clock exists at all: across **33 scored runs** on one file, *within a single arm*, working
+3-5x longer moves mutation kill by about **half a point** — 60 turns and 288 turns of the same arm
+both scored 88.9% — and **three of the four suites that came out RED were among the most expensive
+runs**. Past the plateau, more effort buys variance, not coverage. When the clock expires, the
+remaining gaps get recorded with their IDs and the file finishes; that is the correct outcome, not
+a failure to try hard enough.
 
 **One fix round per pass.** The gaps are printed as one list precisely so they can be closed
 together. Fixing the first one and calling again spends a pass to be told what the block already

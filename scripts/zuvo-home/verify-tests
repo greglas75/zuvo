@@ -58,6 +58,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 SCHEMA = "zuvo-verify/v1"
 DEFAULT_BUDGET = 3
+DEFAULT_TIME_BUDGET_MIN = 15
 
 COVERAGE_THRESHOLDS = {"statements": 85.0, "branches": 75.0, "functions": 90.0, "lines": 85.0}
 
@@ -788,11 +789,16 @@ def state_path(manifest_path):
     return manifest_path + ".verify-state.json"
 
 
-def bump_state(manifest_path, budget):
+def bump_state(manifest_path, budget, time_budget_min):
     p = state_path(manifest_path)
     st = read_json(p) or {"schema": SCHEMA, "passes": 0, "history": []}
     st["passes"] = int(st.get("passes", 0)) + 1
     st["budget"] = budget
+    st["time_budget_min"] = time_budget_min
+    # The clock starts on the FIRST pass, not on this one, so a run cannot reset it by taking
+    # a long detour between passes.
+    st.setdefault("started_epoch", int(time.time()))
+    st["elapsed_min"] = round((time.time() - st["started_epoch"]) / 60.0, 1)
     return st
 
 
@@ -819,7 +825,11 @@ def main():
                     help="comma list of checks to skip: coverage,typecheck,mutation")
     ap.add_argument("--force-mutation", action="store_true",
                     help="run mutation even while cheaper checks still report gaps")
-    ap.add_argument("--budget", type=int, default=DEFAULT_BUDGET)
+    ap.add_argument("--budget", type=int, default=DEFAULT_BUDGET,
+                    help="max verification passes over one file")
+    ap.add_argument("--time-budget", type=int, default=DEFAULT_TIME_BUDGET_MIN,
+                    help="minutes from the FIRST pass before gaps are recorded rather than "
+                         "chased; 0 disables the clock")
     ap.add_argument("--survivor-cap", type=int, default=5)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--no-install", action="store_true",
@@ -861,7 +871,7 @@ def main():
 
     before = sha256(prod)
     frozen = man.get("production_sha256")
-    st = bump_state(manifest_path, a.budget)
+    st = bump_state(manifest_path, a.budget, a.time_budget)
 
     results = []
     suite = check_suite(runner, tests, root)
@@ -955,9 +965,17 @@ def main():
 
     open_gaps = [g for r in results for g in r.gaps]
     passes, budget = st["passes"], a.budget
+    elapsed = st["elapsed_min"]
+    # Two stop conditions, both owned by this program rather than by the agent's judgement.
+    # The pass count bounds how many times the same suite gets re-measured; the clock bounds
+    # the whole loop, because a run can burn an hour between two passes and the pass counter
+    # will not notice. Measured across 33 scored runs on one file: within a single arm, working
+    # 3-5x longer moves mutation kill by about half a point — and three of the four suites that
+    # came out RED were among the most expensive runs. Effort past the plateau buys risk.
+    out_of_time = bool(a.time_budget) and elapsed >= a.time_budget
     if not open_gaps:
         rc = 0
-    elif passes >= budget:
+    elif passes >= budget or out_of_time:
         rc = 4
     else:
         rc = 1
@@ -970,6 +988,8 @@ def main():
                 "schema": SCHEMA,
                 "pass": passes,
                 "budget": budget,
+                "elapsed_min": elapsed,
+                "time_budget_min": a.time_budget,
                 "exit": rc,
                 "production_file": rel_to(prod, root),
                 "runner": runner["kind"],
@@ -981,7 +1001,9 @@ def main():
 
     w = 78
     print("=" * w)
-    print("VERIFY  %s   pass %d of %d   runner: %s" % (rel_to(prod, root), passes, budget, runner["kind"]))
+    clock = ("   %.1f of %d min" % (elapsed, a.time_budget)) if a.time_budget else ""
+    print("VERIFY  %s   pass %d of %d%s   runner: %s"
+          % (rel_to(prod, root), passes, budget, clock, runner["kind"]))
     print("=" * w)
     for r in results:
         print("  %-15s %-9s %s" % (r.name, r.status, r.detail))
@@ -1001,9 +1023,13 @@ def main():
     if rc == 0:
         print("VERDICT: GREEN — every applicable check passed. Do NOT re-run this command.")
     elif rc == 4:
-        print("VERDICT: BUDGET EXHAUSTED after %d passes. Record the OPEN items in the manifest" % passes)
+        why = ("%.1f minutes elapsed of a %d-minute budget" % (elapsed, a.time_budget)
+               if out_of_time else "%d passes" % passes)
+        print("VERDICT: BUDGET EXHAUSTED — %s. Record the OPEN items in the manifest" % why)
         print("         (survivors with IDs, uncovered rows with notes) and finish the file as")
-        print("         BLOCKED_INCOMPLETE. Do NOT run another pass — %d passes did not close them." % passes)
+        print("         BLOCKED_INCOMPLETE. Do NOT run another pass. Measured across 33 scored")
+        print("         runs: within one arm, 3-5x the effort moves mutation kill by ~0.5 points,")
+        print("         and the most expensive runs are where RED suites come from.")
     elif rc == 2:
         print("VERDICT: INFRASTRUCTURE ERROR — fix the tooling, not the tests.")
     else:
