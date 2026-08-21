@@ -879,13 +879,13 @@ def main():
     # The gate and coverage measure a suite that is assumed green. Running them against a red
     # suite produces numbers that describe nothing and cost a full runner invocation each.
     if suite.status == "PASS":
-        # The gate, the coverage run and the typecheck are three independent processes reading
-        # the same green suite -- nothing any of them does changes what the others see. Running
-        # them in sequence made a cold invocation 59-78s, and inside a container under load that
-        # crosses the harness's 120-second Bash timeout: the call gets backgrounded and the agent
-        # turns one tool call into a polling loop (`sleep 90; kill -0 <pid>`, `sleep 60; echo
-        # tick`), which is exactly the shape this helper exists to remove. Overlapping them keeps
-        # the invocation inside the window.
+        # The gate and the coverage run are independent processes reading the same green suite --
+        # nothing either does changes what the other sees -- so they overlap. Every second saved
+        # here matters for one specific reason: a call that runs past the Bash tool's 120-second
+        # default gets backgrounded by the harness, and the agent then turns one tool call into a
+        # polling loop (`sleep 90; kill -0 <pid>`, `sleep 60; echo tick`), which is the exact
+        # shape this helper exists to remove. The two expensive checks are deferred below rather
+        # than parallelised, which is what actually keeps an early pass inside the window.
         jobs = [("gate", lambda: check_gate(manifest_path, root, base))]
         if "coverage" not in skip:
             jobs.append(("coverage", lambda: check_coverage(runner, prod, tests, root)))
