@@ -73,7 +73,13 @@ python3 "$ZUVO_BASE/scripts/test-coverage-gate.py" validate \
   --manifest "$ZUVO_DIR/contracts/<basename>.coverage.json" \
   --phase inventory --repo-root "$(git rev-parse --show-toplevel)"
 
-# Step 2.5 — after tests are written and evidence is mapped:
+# Step 2.5 — after tests are written and evidence is mapped.
+# DO NOT call this directly: `~/.zuvo/verify-tests --manifest <m>` runs the final-phase
+# validate as one of its checks and prints its block verbatim, alongside the suite, scoped
+# coverage, a scoped typecheck and the mutation run. Calling it here as well is how a run
+# ends up issuing the same verification command eight times -- measured on the rig, that is
+# the strongest single predictor of a run's turn count. The command below is the FALLBACK,
+# for a harness where the helper is genuinely not executable.
 python3 "$ZUVO_BASE/scripts/test-coverage-gate.py" validate \
   --manifest "$ZUVO_DIR/contracts/<basename>.coverage.json" \
   --phase final --repo-root "$(git rev-parse --show-toplevel)"

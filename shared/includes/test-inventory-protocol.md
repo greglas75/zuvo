@@ -53,6 +53,12 @@ python3 "$ZUVO_BASE/scripts/test-coverage-gate.py" validate \
 - exit 3 → degraded extraction (see schema doc); record it, continue, and
   carry `BLOCKED_DEGRADED` evidence quality to the end of the file.
 
+**Step 2.5 is NOT this command.** The inventory-phase validate above is a direct call because
+it runs before any test exists, so there is nothing else to verify alongside it. The FINAL-phase
+validate belongs to `~/.zuvo/verify-tests`, which runs it together with the suite, scoped
+coverage, a scoped typecheck and the mutation run, and prints one verdict. Issuing it separately
+at Step 2.5 duplicates a check the helper already ran.
+
 **Freeze semantics:** after Step 1.7 passes, the symbol list is immutable for
 this run. Editing the production file (including Step 4.5 bug fixes) changes
 its hash and invalidates the manifest — rebuild rows for the changed lines,
