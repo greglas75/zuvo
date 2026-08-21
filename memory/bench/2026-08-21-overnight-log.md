@@ -222,6 +222,47 @@ failure it did not check for produced five green-looking runs. `run_arm.sh` now 
 an agent when the workspace is under 1 MB or the file under test is absent, and every path is
 passed to Python as **argv** rather than interpolated into its source.
 
+## What the missing points are actually made of
+
+Kill rate is a scalar; it cannot say WHAT the extra points consist of. Comparing per-mutant
+survivor sets across all **39 scored suites** for CASE-01 answers it, and the answer changes what
+is worth optimising.
+
+**Eight mutants survive every single arm** — including the best. Equivalent-mutant candidates
+(or a gap the whole approach shares). That puts the practical ceiling on this file at **~91.9%,
+not 100%**, which means v9's 90.9% sits **one non-equivalent mutant from the ceiling**. There is
+essentially nothing left to win on CASE-01, and further quality work belongs on the other cases,
+where kill rates are 61-78%.
+
+**The mutants that separate an 88% suite from a 91% one are all boundaries the tests never sat
+exactly on:**
+
+| mutant | survived in |
+|---|---|
+| `throw` deleted outright (L187) | **34 of 39 suites** |
+| `finiteValue < 0` → `<=` (L60) | 27 of 39 |
+| literal `0` → `1` (L60) | 27 of 39 |
+| `normalized[0]` → `normalized[1]` (L185) | 15 of 39 |
+| `\|\|` → `&&` (L17) | 12 of 39 |
+
+Not exotic. Not deep semantics. Off-by-one and error-path removal.
+
+And zuvo already tells writers to do this — `test-edge-cases.md` says *"exact threshold N, N-1
+(should NOT trigger), N+1 (should trigger)"*. The rule lives in a table row keyed on **code
+type**, so a bare `value < 0` inside a pure function never triggers it. Classification decides
+whether the rule applies, and classification happens *before* the comparisons are known. That
+ordering is the bug, not the wording.
+
+`test-coverage-gate.py boundaries --production <file>` removes the ordering problem by reading
+the source: every relational operator, boolean operator, `throw`/`raise` and literal index becomes
+an inventory obligation, each with the specific case that kills its mutant — the input where both
+sides are EQUAL, the operand that alone decides a boolean, a test that FAILS when the throw is
+deleted. Run against the real CASE-01 file it names `finiteValue < 0` at L25 and the throws at
+L18/L26: exactly the mutants 27 and 34 of 39 suites failed to kill.
+
+This is the first lever found tonight that aims at **quality** rather than cost, and its value
+should show on CASE-02/03/04/05 rather than on CASE-01, which is already at its ceiling.
+
 ## Open at the time of writing
 
 - **v9** (escape hatch closed + typecheck folded + mutation deferred), CASE-01, n=5. Three
