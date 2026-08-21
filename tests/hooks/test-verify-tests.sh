@@ -46,6 +46,8 @@ PY
 # ── stub runners ─────────────────────────────────────────────────────────────────────────
 STUB="$TMP/stubbin"; mkdir -p "$STUB"
 NPM_CANARY="$TMP/npm-canary"
+export JEST_ARGS_CANARY="$TMP/jest-args"
+export JEST_CFG_CANARY="$TMP/jest-cfg"
 
 cat > "$STUB/npx" <<PYEOF
 #!/usr/bin/env python3
@@ -77,8 +79,39 @@ if tool == "vitest":
     print("\x1b[2m      Tests \x1b[22m \x1b[32m35 passed\x1b[39m\x1b[90m (35)\x1b[39m")
     sys.exit(0)
 
+if tool == "jest":
+    open(os.environ["JEST_ARGS_CANARY"], "a").write(" ".join(argv) + "\n")
+    covdir = None
+    for i, a in enumerate(argv):
+        if a.startswith("--coverageDirectory="):
+            covdir = a.split("=", 1)[1]
+    if covdir:
+        os.makedirs(covdir, exist_ok=True)
+        mode = os.environ.get("STUB_JEST_COV", "ok")
+        if mode == "unknown":
+            entry = {k: {"pct": "Unknown"} for k in ("statements", "branches", "functions", "lines")}
+            json.dump({"total": entry}, open(os.path.join(covdir, "coverage-summary.json"), "w"))
+        elif mode == "multifile":
+            e = {k: {"pct": 91.0} for k in ("statements", "branches", "functions", "lines")}
+            json.dump({"total": e, "/elsewhere/a.ts": e, "/elsewhere/b.ts": e},
+                      open(os.path.join(covdir, "coverage-summary.json"), "w"))
+        else:
+            pct = float(os.environ.get("STUB_COV_PCT", "95"))
+            e = {k: {"pct": pct} for k in ("statements", "branches", "functions", "lines")}
+            json.dump({"total": e, os.path.abspath(os.environ["FX_PROD"]): e},
+                      open(os.path.join(covdir, "coverage-summary.json"), "w"))
+        print("coverage run")
+        sys.exit(0)
+    print("Tests:       7 passed, 7 total")
+    sys.exit(0)
+
 if tool == "stryker":
     cfg = json.load(open(argv[2]))
+    # Record what the generated runner config actually asked for: the sandbox bug this
+    # helper hit is invisible unless the testMatch entries are inspected.
+    jr = cfg.get("jest") or {}
+    if jr.get("configFile"):
+        open(os.environ["JEST_CFG_CANARY"], "w").write(open(jr["configFile"]).read())
     if os.environ.get("STUB_STRYKER", "ok") == "crash":
         print("TypeError: ts.parseConfigFileTextToJson is not a function")
         sys.exit(1)
@@ -300,6 +333,95 @@ grep -qE "coverage-gate +DEGRADED" "$TMP/out" \
   && pass "textual extraction is reported DEGRADED" || bad "exit-3 gate not surfaced as DEGRADED"
 grep -q "BLOCKED_DEGRADED" "$TMP/out" \
   && pass "DEGRADED names the evidence-quality state" || bad "DEGRADED lacks the state name"
+
+# ── jest projects (rs_be / NestJS shape: config under package.json#jest, rootDir "src") ──
+mkjest() { # mkjest <dir> [with-stryker]
+  local d="$1"
+  mkdir -p "$d/src" "$d/zuvo/contracts"
+  cat > "$d/package.json" <<'JSON'
+{"name":"jx","devDependencies":{"jest":"^29.7.0"},
+ "jest":{"rootDir":"src","testRegex":".*\\.spec\\.ts$","transform":{"^.+\\.ts$":"ts-jest"}}}
+JSON
+  printf 'export const band = (n) => n > 0 ? "hi" : "lo";
+' > "$d/src/scoring.ts"
+  printf 'it("works", () => {});
+' > "$d/src/scoring.spec.ts"
+  if [ "${2:-}" = with-stryker ]; then
+    mkdir -p "$d/node_modules/@stryker-mutator/core" "$d/node_modules/@stryker-mutator/jest-runner"
+  fi
+  python3 - "$d" <<'PY'
+import hashlib, json, os, sys
+d = sys.argv[1]
+h = hashlib.sha256(open(os.path.join(d, "src/scoring.ts"), "rb").read()).hexdigest()
+json.dump({"schema": "zuvo-coverage-manifest/v1", "production_file": "src/scoring.ts",
+           "production_sha256": h, "stack": "ts",
+           "test_files": ["src/scoring.spec.ts"], "quality_gates": {"Q7": 1, "Q11": 1},
+           "status": "final", "symbols": []},
+          open(os.path.join(d, "zuvo/contracts/scoring.coverage.json"), "w"), indent=1)
+PY
+}
+
+jt() { # jt <repo> [extra args...]
+  local d="$1"; shift
+  PATH="$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" FX_PROD="$d/src/scoring.ts" \
+    "$HELPER" --manifest "$d/zuvo/contracts/scoring.coverage.json" --repo-root "$d" "$@" \
+    > "$TMP/out" 2>&1
+  return $?
+}
+
+# ── (16) jest is detected and its mutation plugin is the one required ────────────────────
+R="$TMP/j16"; mkjest "$R"
+rm -f "$NPM_CANARY"
+STUB_GATE=pass jt "$R"
+grep -q "jest-runner" "$NPM_CANARY" 2>/dev/null \
+  && pass "jest project installs @stryker-mutator/jest-runner, not the vitest one" \
+  || bad "wrong stryker plugin for jest: $(cat "$NPM_CANARY" 2>/dev/null)"
+
+# ── (17) generated jest config anchors testMatch on <rootDir>, never an absolute path ────
+R="$TMP/j17"; mkjest "$R" with-stryker
+rm -f "$JEST_CFG_CANARY"
+STUB_GATE=pass jt "$R"
+if [ -f "$JEST_CFG_CANARY" ]; then
+  grep -q "<rootDir>" "$JEST_CFG_CANARY" \
+    && pass "generated jest config anchors testMatch on <rootDir> (survives Stryker's sandbox)" \
+    || bad "testMatch not <rootDir>-anchored: $(grep -i testmatch "$JEST_CFG_CANARY")"
+  grep -q "testRegex, testMatch, ...rest" "$JEST_CFG_CANARY" \
+    && pass "inherited testRegex is dropped (jest rejects both at once)" \
+    || bad "testRegex not stripped from the generated config"
+  grep -q "$TMP" "$JEST_CFG_CANARY" \
+    && bad "generated jest config embeds an absolute host path" \
+    || pass "generated jest config embeds no absolute host path"
+else
+  bad "stryker was never invoked for the jest project"
+fi
+
+# ── (18) jest coverage glob is rootDir-independent ───────────────────────────────────────
+R="$TMP/j18"; mkjest "$R"
+rm -f "$JEST_ARGS_CANARY"
+STUB_GATE=pass STUB_COV_PCT=95 jt "$R" --no-install
+grep -q -- "--collectCoverageFrom=\*\*/scoring.ts" "$JEST_ARGS_CANARY" 2>/dev/null \
+  && pass "collectCoverageFrom uses a rootDir-independent glob" \
+  || bad "collectCoverageFrom would miss under rootDir=src: $(grep -o -- '--collectCoverageFrom=[^ ]*' "$JEST_ARGS_CANARY" 2>/dev/null)"
+grep -qE "coverage +PASS +statements 95" "$TMP/out" \
+  && pass "jest coverage numbers are read for the file under test" \
+  || bad "jest coverage not attributed: $(grep -E '^  coverage' "$TMP/out")"
+
+# ── (19) jest "Unknown" pct is not scored as 0% ──────────────────────────────────────────
+R="$TMP/j19"; mkjest "$R"
+STUB_GATE=pass STUB_JEST_COV=unknown jt "$R" --no-install; rc=$?
+grep -qE "coverage +SKIP +not measured" "$TMP/out" \
+  && pass "'Unknown' coverage is reported unmeasured, not as a 0% shortfall" \
+  || bad "Unknown pct mishandled: $(grep -E '^  coverage' "$TMP/out")"
+grep -q "statements 0.0% < 85%" "$TMP/out" \
+  && bad "Unknown pct produced a fabricated 0% failure" \
+  || pass "no fabricated shortfall from unmeasured coverage"
+
+# ── (20) a summary covering other files is not reported as this file's coverage ──────────
+R="$TMP/j20"; mkjest "$R"
+STUB_GATE=pass STUB_JEST_COV=multifile jt "$R" --no-install
+grep -q "coverage not attributable" "$TMP/out" \
+  && pass "multi-file summary without this file is SKIP, not 'total' passed off as the file" \
+  || bad "total was reported as the file's coverage: $(grep -E '^  coverage' "$TMP/out")"
 
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }

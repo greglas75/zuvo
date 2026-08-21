@@ -343,6 +343,11 @@ def check_coverage(runner, prod_file, test_files, root):
                 ]
             )
         else:
+            # jest resolves collectCoverageFrom against rootDir (commonly `src` in Nest
+            # projects), not against cwd — a cwd-relative path silently matches nothing and
+            # every metric comes back as the literal string "Unknown". A `**/`-prefixed glob
+            # is rootDir-independent; the exact file is then picked out of the summary by
+            # absolute path below, so the wider glob cannot smuggle another file's numbers in.
             cmd = [
                 "npx",
                 "jest",
@@ -351,7 +356,7 @@ def check_coverage(runner, prod_file, test_files, root):
                 "--coverage",
                 "--coverageReporters=json-summary",
                 "--coverageDirectory=" + outdir,
-                "--collectCoverageFrom=" + prod_rel,
+                "--collectCoverageFrom=**/" + os.path.basename(prod_rel),
             ]
         rc, out = run(cmd, cwd=cwd)
         summary = read_json(os.path.join(outdir, "coverage-summary.json"))
@@ -369,17 +374,42 @@ def check_coverage(runner, prod_file, test_files, root):
             if os.path.abspath(k) == os.path.abspath(prod_file):
                 entry = v
                 break
-        entry = entry or summary.get("total")
+        if entry is None:
+            files = [k for k in summary if k != "total"]
+            if len(files) == 1:
+                entry = summary[files[0]]
+            elif files:
+                # `total` aggregates every file the reporter saw. Reporting it as this file's
+                # coverage would be a number about the wrong thing, so say so instead.
+                r.status = "SKIP"
+                r.detail = ("no entry for %s; summary covers %d files — coverage not attributable"
+                            % (prod_rel, len(files)))
+                return r
+            else:
+                entry = summary.get("total")
         if not entry:
             r.status = "SKIP"
             r.detail = "no coverage entry for %s" % prod_rel
             return r
-        nums, failed = [], []
+        nums, failed, unknown = [], [], []
         for key, floor in COVERAGE_THRESHOLDS.items():
-            pct = float((entry.get(key) or {}).get("pct") or 0.0)
+            raw = (entry.get(key) or {}).get("pct")
+            try:
+                pct = float(raw)
+            except (TypeError, ValueError):
+                # jest writes the literal string "Unknown" when it collected no data for a
+                # metric. Scoring that as 0% would report a false shortfall and send the agent
+                # chasing coverage that was never measured; the honest result is "not measured".
+                unknown.append("%s=%r" % (key, raw))
+                nums.append("%s ?" % key)
+                continue
             nums.append("%s %.1f%%" % (key, pct))
             if pct < floor:
                 failed.append("%s %.1f%% < %.0f%%" % (key, pct, floor))
+        if unknown and not failed:
+            r.status = "SKIP"
+            r.detail = "not measured (%s) — %s" % (", ".join(unknown), "  ".join(nums))
+            return r
         r.detail = "  ".join(nums)
         if failed:
             r.status = "FAIL"
@@ -406,12 +436,13 @@ def node_root_with(pkg, runner, root):
 def ensure_stryker(runner, root, allow_install):
     """Return (node_root, note) or (None, reason).
 
-    Stryker is TWO packages: the core and the test-runner plugin. A project with only the core
-    (a leftover from a one-off run, a hoisted transitive) cannot execute anything, so both are
-    required before this reports a runner as available.
+    Stryker is TWO packages: the core and the test-runner plugin for THIS runner. A project with
+    only the core (a leftover from a one-off run, a hoisted transitive) cannot execute anything,
+    so both are required before this reports a runner as available.
     """
+    plugin = "@stryker-mutator/%s-runner" % runner["kind"]
     core = node_root_with("@stryker-mutator/core", runner, root)
-    plug = node_root_with("@stryker-mutator/vitest-runner", runner, root)
+    plug = node_root_with(plugin, runner, root)
     if core and plug:
         return core, "project"
     if not allow_install:
@@ -419,19 +450,41 @@ def ensure_stryker(runner, root, allow_install):
     # --no-save writes no file the project keeps: package.json and the lockfile stay untouched,
     # so nothing is committed and nothing is imposed on the repo. Measured install cost ~19s.
     target = core or root
-    rc, _out = run(
-        [
-            "npm", "install", "--no-save", "--no-audit", "--no-fund",
-            "@stryker-mutator/core@10", "@stryker-mutator/vitest-runner@10",
-        ],
-        cwd=target,
-        timeout=900,
-    )
+    pkgs = ["@stryker-mutator/core@10", plugin + "@10"]
+    base = ["npm", "install", "--no-save", "--no-audit", "--no-fund"]
+    rc, out = run(base + pkgs, cwd=target, timeout=900)
+    if rc != 0 and "ERESOLVE" in out.upper():
+        # jest projects routinely have a peer graph npm refuses to resolve strictly. This is a
+        # throwaway install into a workspace nothing commits, so a loose resolution is the right
+        # trade — but only as a SECOND attempt, so a genuine failure is not papered over.
+        rc, out = run(base + ["--legacy-peer-deps"] + pkgs, cwd=target, timeout=900)
     if rc != 0:
         return None, "error: --no-save install failed (exit %d)" % rc
-    if node_root_with("@stryker-mutator/vitest-runner", runner, root):
+    if node_root_with(plugin, runner, root):
         return target, "workspace-local"
-    return None, "error: install succeeded but the plugin is not resolvable"
+    return None, "error: install succeeded but %s is not resolvable" % plugin
+
+
+# jest config shapes this helper can inherit from. A .ts/.mjs config cannot be `require`d from
+# the generated CommonJS wrapper, and guessing at its contents would silently change what the
+# mutation run measures — so those are reported, not worked around.
+JEST_CONFIG_NAMES = ("jest.config.js", "jest.config.cjs", "jest.config.json", ".jestrc.json")
+JEST_CONFIG_UNSUPPORTED = ("jest.config.ts", "jest.config.mjs")
+
+
+def jest_base_config(cwd):
+    """Return (js_expression_for_the_base_config, description) or (None, reason)."""
+    for name in JEST_CONFIG_NAMES:
+        if os.path.isfile(os.path.join(cwd, name)):
+            return "require('./%s')" % name, name
+    for name in JEST_CONFIG_UNSUPPORTED:
+        if os.path.isfile(os.path.join(cwd, name)):
+            return None, ("none — %s cannot be inherited by a generated CommonJS config; "
+                          "scoped mutation needs a .js/.cjs/.json jest config" % name)
+    pkg = read_json(os.path.join(cwd, "package.json")) or {}
+    if isinstance(pkg.get("jest"), dict):
+        return "(require('./package.json').jest || {})", "package.json#jest"
+    return "{}", "defaults"
 
 
 def check_mutation(runner, prod_file, test_files, root, cap, allow_install):
@@ -445,9 +498,9 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install):
     """
     r = Result("mutation")
     t0 = time.time()
-    if runner["kind"] != "vitest":
+    if runner["kind"] not in ("vitest", "jest"):
         r.status = "SKIP"
-        r.detail = "none — this helper scopes StrykerJS via a vitest config; %s is unsupported" % runner["kind"]
+        r.detail = "none — no per-file mutation runner wired for %s" % runner["kind"]
         return r
     nroot, note = ensure_stryker(runner, root, allow_install)
     if nroot is None:
@@ -458,48 +511,82 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install):
     prod_rel = rel_to(prod_file, nroot)
     specs = [rel_to(f, nroot) for f in test_files]
     stamp = str(os.getpid())
-    vcfg = os.path.join(nroot, "vitest.zuvo-verify-%s.config.ts" % stamp)
+    ext = "config.ts" if runner["kind"] == "vitest" else "config.js"
+    vcfg = os.path.join(nroot, "%s.zuvo-verify-%s.%s" % (runner["kind"], stamp, ext))
     scfg = os.path.join(nroot, "stryker.zuvo-verify-%s.json" % stamp)
     rep = os.path.join(nroot, ".zuvo-verify-mutation-%s" % stamp)
     try:
-        with open(vcfg, "w", encoding="utf-8") as fh:
-            fh.write(
-                "import { defineConfig } from 'vitest/config';\n"
-                "export default defineConfig({\n"
-                "  test: { include: %s, environment: 'node', pool: 'forks',\n"
-                "          poolOptions: { forks: { singleFork: true } } },\n"
-                "});\n" % json.dumps(specs)
-            )
+        if runner["kind"] == "vitest":
+            with open(vcfg, "w", encoding="utf-8") as fh:
+                fh.write(
+                    "import { defineConfig } from 'vitest/config';\n"
+                    "export default defineConfig({\n"
+                    "  test: { include: %s, environment: 'node', pool: 'forks',\n"
+                    "          poolOptions: { forks: { singleFork: true } } },\n"
+                    "});\n" % json.dumps(specs)
+                )
+            runner_block = {"testRunner": "vitest", "vitest": {"configFile": os.path.basename(vcfg)}}
+        else:
+            expr, desc = jest_base_config(nroot)
+            if expr is None:
+                r.status = "SKIP"
+                r.detail = desc
+                return r
+            note = "%s, config %s" % (note, desc)
+            with open(vcfg, "w", encoding="utf-8") as fh:
+                fh.write(
+                    "const path = require('path');\n"
+                    "const base = %s;\n"
+                    "// testRegex and testMatch are mutually exclusive in jest: a generated config\n"
+                    "// that sets testMatch while inheriting testRegex is a hard validation error,\n"
+                    "// not a narrower run. Both are dropped before testMatch is set.\n"
+                    "const { testRegex, testMatch, ...rest } = base;\n"
+                    "const baseRoot = base.rootDir || '.';\n"
+                    "// Stryker executes in a SANDBOX COPY of the project, so an absolute path\n"
+                    "// computed here points outside the tree jest is given and matches nothing\n"
+                    "// (\"No tests were found\", which reads as a broken mutation setup). Anchor\n"
+                    "// on <rootDir> instead, and derive the offset from the inherited rootDir so\n"
+                    "// a Nest-style rootDir of 'src' and a bare '.' both resolve correctly.\n"
+                    "const specs = %s;\n"
+                    "module.exports = {\n"
+                    "  ...rest,\n"
+                    "  rootDir: path.resolve(__dirname, baseRoot),\n"
+                    "  testMatch: specs.map(function (sp) {\n"
+                    "    return '<rootDir>/' + path.relative(baseRoot, sp).split(path.sep).join('/');\n"
+                    "  }),\n"
+                    "};\n" % (expr, json.dumps(specs))
+                )
+            runner_block = {
+                "testRunner": "jest",
+                "jest": {"projectType": "custom", "configFile": os.path.basename(vcfg)},
+            }
+        cfg = {
+            "packageManager": "npm",
+            "reporters": ["json"],
+            "jsonReporter": {"fileName": os.path.join(rep, "mutation.json")},
+            "coverageAnalysis": "perTest",
+            "mutate": [prod_rel],
+            # Stryker rewrites the project tsconfig when it finds one, and that preprocessor
+            # calls TypeScript APIs that not every installed TS version still exports
+            # (`ts.parseConfigFileTextToJson is not a function` kills the run before a single
+            # mutant is tested). Pointing at a file that does not exist skips the preprocessor;
+            # nothing in a scoped run needs it.
+            "tsconfigFile": "tsconfig.zuvo-verify-absent.json",
+            "ignorePatterns": [
+                ".git", ".cursor", ".claude", ".vscode", ".idea",
+                "docs/**", "audits/**", "audit-results/**", "artifacts/**",
+                "zuvo/**", "memory/**", "e2e/**", "playwright-report/**",
+                "coverage/**", "**/.next/**", "**/dist/**", "**/build/**",
+                "**/*.png", "**/*.jpg", "**/*.mp4", "**/*.zip",
+            ],
+            "concurrency": 2,
+            "timeoutMS": 30000,
+            "tempDirName": ".stryker-tmp",
+            "cleanTempDir": True,
+        }
+        cfg.update(runner_block)
         with open(scfg, "w", encoding="utf-8") as fh:
-            json.dump(
-                {
-                    "packageManager": "npm",
-                    "reporters": ["json"],
-                    "jsonReporter": {"fileName": os.path.join(rep, "mutation.json")},
-                    "testRunner": "vitest",
-                    "vitest": {"configFile": os.path.basename(vcfg)},
-                    "coverageAnalysis": "perTest",
-                    "mutate": [prod_rel],
-                    # Stryker rewrites the project tsconfig when it finds one, and that
-                    # preprocessor calls TypeScript APIs that not every installed TS version
-                    # still exports (`ts.parseConfigFileTextToJson is not a function` kills the
-                    # run before a single mutant). Pointing at a file that does not exist skips
-                    # the preprocessor; nothing else in a scoped vitest run needs it.
-                    "tsconfigFile": "tsconfig.zuvo-verify-absent.json",
-                    "ignorePatterns": [
-                        ".git", ".cursor", ".claude", ".vscode", ".idea",
-                        "docs/**", "audits/**", "audit-results/**", "artifacts/**",
-                        "zuvo/**", "memory/**", "e2e/**", "playwright-report/**",
-                        "coverage/**", "**/.next/**", "**/dist/**", "**/build/**",
-                        "**/*.png", "**/*.jpg", "**/*.mp4", "**/*.zip",
-                    ],
-                    "concurrency": 2,
-                    "timeoutMS": 30000,
-                    "tempDirName": ".stryker-tmp",
-                    "cleanTempDir": True,
-                },
-                fh,
-            )
+            json.dump(cfg, fh)
         rc, out = run(
             ["npx", "stryker", "run", os.path.basename(scfg)], cwd=nroot, timeout=2400
         )

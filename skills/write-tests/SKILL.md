@@ -466,9 +466,17 @@ primary measurement: on a 200-line file a scoped StrykerJS run produced 235 muta
 and zero conversational turns, against 3-6 hand probes that each cost a turn and cover less.
 
 The helper scopes BOTH sides — `--mutate` to the production file, and the TEST RUN to the spec
-just written, via a generated vitest config. Scoping only `--mutate` is why a native run dies on
-any repo with pre-existing red tests: the dry run executes whatever the project config includes,
-and that failure reads like a broken mutation setup rather than an unrelated failing suite.
+just written, via a generated runner config (vitest and jest both supported; the jest one inherits
+the project's `package.json#jest` / `jest.config.js` and anchors `testMatch` on `<rootDir>`, since
+Stryker executes in a sandbox copy where an absolute path matches nothing). Scoping only `--mutate`
+is why a native run dies on any repo with pre-existing red tests: the dry run executes whatever the
+project config includes, and that failure reads like a broken mutation setup rather than an
+unrelated failing suite.
+
+Measured 2026-08-21 on both stacks: vitest (tgm-survey-platform, 200-line file) 235 mutants in
+~71s; jest (NestJS shape, `rootDir: "src"`, config in `package.json`) 31 mutants in ~22s. A
+`jest.config.ts` or `.mjs` cannot be inherited by the generated CommonJS wrapper — the helper says
+so and skips rather than guessing at its contents.
 
 When no runner is available, the helper installs one workspace-locally with `npm install
 --no-save` (writes no file the project keeps — `package.json` and the lockfile are untouched) and
