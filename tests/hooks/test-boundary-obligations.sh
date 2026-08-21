@@ -118,6 +118,44 @@ else
   echo "SKIP: no classic typescript module reachable — TS path not exercised on this machine"
 fi
 
+# ── (15) string concatenation is not an arithmetic obligation ────────────────────────────
+cat > "$TMP/concat.py" <<'PY'
+def greet(name):
+    return "hello " + name
+
+
+def total(a, b):
+    return a + b
+PY
+out5=$(python3 "$GATE" boundaries --production "$TMP/concat.py" 2>&1)
+grep -q "L6 *ARITHMETIC" <<<"$out5" \
+  && pass "a numeric + is an obligation" || bad "numeric arithmetic missing: $out5"
+grep -q "hello" <<<"$out5" \
+  && bad "string concatenation reported — swapping its operator throws on ANY input, so the mutant dies for free" \
+  || pass "string concatenation is excluded: its mutant dies on the first test regardless"
+
+# ── (16) a long list is prioritised by measured risk and never silently truncated ────────
+python3 - "$TMP/big.py" <<'PY'
+import sys
+with open(sys.argv[1], "w") as fh:
+    fh.write("def f(a, b):\n")
+    for i in range(80):
+        fh.write("    if a == %d:\n        b = b + %d\n" % (i, i + 1))
+    fh.write("    if a < 5:\n        raise ValueError('low')\n    return b\n")
+PY
+out6=$(python3 "$GATE" boundaries --production "$TMP/big.py" 2>&1)
+first=$(grep -A1 "^OBLIGATIONS" <<<"$out6" | tail -1)
+grep -q "THROW" <<<"$first" \
+  && pass "the highest-risk kind (a deleted throw, 34 of 39 suites) is listed first" \
+  || bad "obligations not risk-ordered, first row was: $first"
+grep -q "more, all lower-risk kinds" <<<"$out6" \
+  && pass "truncation is announced with what was dropped, not silent" \
+  || bad "long list truncated without saying so"
+n_all=$(python3 "$GATE" boundaries --production "$TMP/big.py" --all 2>&1 | grep -c "^  L[0-9]")
+n_cap=$(grep -c "^  L[0-9]" <<<"$out6")
+[ "$n_all" -gt "$n_cap" ] && pass "--all lists everything the capped view hides" \
+  || bad "--all showed $n_all rows, capped showed $n_cap"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1

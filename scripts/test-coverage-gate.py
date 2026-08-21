@@ -218,6 +218,14 @@ const EQ = {
 const LOGIC = {
   [ts.SyntaxKind.BarBarToken]: '||',
   [ts.SyntaxKind.AmpersandAmpersandToken]: '&&',
+  [ts.SyntaxKind.QuestionQuestionToken]: '??',
+};
+const ARITH = {
+  [ts.SyntaxKind.PlusToken]: '+',
+  [ts.SyntaxKind.MinusToken]: '-',
+  [ts.SyntaxKind.AsteriskToken]: '*',
+  [ts.SyntaxKind.SlashToken]: '/',
+  [ts.SyntaxKind.PercentToken]: '%',
 };
 
 function walk(node) {
@@ -234,9 +242,21 @@ function walk(node) {
     } else if (LOGIC[op]) {
       out.push({ kind: 'logic', op: LOGIC[op], line: lineOf(node.getStart(sf)),
                  expr: text(node) });
+    } else if (ARITH[op]) {
+      // String concatenation is not a boundary -- see the babel walker for why.
+      const strSide = (x) => x && (ts.isStringLiteral(x) ||
+        ts.isTemplateExpression(x) || ts.isNoSubstitutionTemplateLiteral(x));
+      if (!strSide(node.left) && !strSide(node.right)) {
+        out.push({ kind: 'arithmetic', op: ARITH[op], line: lineOf(node.getStart(sf)),
+                   expr: text(node) });
+      }
     }
   } else if (ts.isThrowStatement(node)) {
     out.push({ kind: 'throw', line: lineOf(node.getStart(sf)), expr: text(node.expression) });
+  } else if (node.questionDotToken) {
+    // `a?.b` -- a mutation runner deletes the `?.`, and only a case where the left side is
+    // actually null/undefined can tell the difference.
+    out.push({ kind: 'optional', line: lineOf(node.getStart(sf)), expr: text(node) });
   } else if (ts.isElementAccessExpression(node) &&
              ts.isNumericLiteral(node.argumentExpression)) {
     out.push({ kind: 'index', line: lineOf(node.getStart(sf)),
@@ -248,6 +268,69 @@ walk(sf);
 process.stdout.write(JSON.stringify(out));
 """
 
+
+
+BABEL_BOUNDARIES = r"""
+const fs = require('fs');
+const parser = require(process.argv[3]);
+const fileName = process.argv[2];
+const source = fs.readFileSync(fileName, 'utf8');
+const isJsx = fileName.endsWith('.tsx') || fileName.endsWith('.jsx');
+const ast = parser.parse(source, {
+  sourceType: 'module',
+  plugins: ['typescript', 'decorators-legacy'].concat(isJsx ? ['jsx'] : []),
+  errorRecovery: true,
+});
+
+const out = [];
+const REL = new Set(['<', '<=', '>', '>=']);
+const EQ  = new Set(['===', '!==', '==', '!=']);
+const ARITH = new Set(['+', '-', '*', '/', '%']);
+const LOGIC = new Set(['||', '&&', '??']);
+
+function txt(n) {
+  if (!n || n.start == null) return '';
+  return source.slice(n.start, n.end).replace(/\s+/g, ' ').slice(0, 90);
+}
+
+function walk(n) {
+  if (!n || typeof n.type !== 'string') return;
+  const line = n.loc ? n.loc.start.line : 0;
+  if (n.type === 'BinaryExpression') {
+    if (REL.has(n.operator)) {
+      out.push({ kind: 'comparison', op: n.operator, line, expr: txt(n),
+                 left: txt(n.left), right: txt(n.right) });
+    } else if (EQ.has(n.operator)) {
+      out.push({ kind: 'equality', op: n.operator, line, expr: txt(n),
+                 left: txt(n.left), right: txt(n.right) });
+    } else if (ARITH.has(n.operator)) {
+      // String concatenation is not a boundary: swap the operator and the program throws on any
+      // input, so the mutant dies on the first test that runs and the row is pure noise.
+      const strSide = (x) => x && (x.type === 'StringLiteral' || x.type === 'TemplateLiteral');
+      if (!strSide(n.left) && !strSide(n.right)) {
+        out.push({ kind: 'arithmetic', op: n.operator, line, expr: txt(n) });
+      }
+    }
+  } else if (n.type === 'LogicalExpression' && LOGIC.has(n.operator)) {
+    out.push({ kind: 'logic', op: n.operator, line, expr: txt(n) });
+  } else if (n.type === 'ThrowStatement') {
+    out.push({ kind: 'throw', line, expr: txt(n.argument) });
+  } else if (n.type === 'OptionalMemberExpression' || n.type === 'OptionalCallExpression') {
+    out.push({ kind: 'optional', line, expr: txt(n) });
+  } else if (n.type === 'MemberExpression' && n.computed &&
+             n.property && n.property.type === 'NumericLiteral') {
+    out.push({ kind: 'index', line, expr: txt(n), idx: String(n.property.value) });
+  }
+  for (const k of Object.keys(n)) {
+    if (k === 'loc' || k === 'leadingComments' || k === 'trailingComments') continue;
+    const v = n[k];
+    if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === 'object' && typeof v.type === 'string') walk(v);
+  }
+}
+walk(ast.program);
+process.stdout.write(JSON.stringify(out));
+"""
 
 def find_typescript_module(start_dir):
     """Locate a CLASSIC TypeScript compiler API (lib/typescript.js, TS <= 5.x).
@@ -1040,6 +1123,14 @@ def boundaries_python(path):
                             "expr": ast_mod.unparse(node)[:90],
                             "left": ast_mod.unparse(node.left)[:40],
                             "right": ast_mod.unparse(node.comparators[0])[:40]})
+        elif (isinstance(node, ast_mod.BinOp)
+              and type(node.op).__name__ in ("Add", "Sub", "Mult", "Div", "Mod", "FloorDiv")
+              and not any(isinstance(side, ast_mod.Constant) and isinstance(side.value, str)
+                          for side in (node.left, node.right))):
+            sym = {"Add": "+", "Sub": "-", "Mult": "*", "Div": "/",
+                   "Mod": "%", "FloorDiv": "//"}[type(node.op).__name__]
+            out.append({"kind": "arithmetic", "op": sym, "line": node.lineno,
+                        "expr": ast_mod.unparse(node)[:90]})
         elif isinstance(node, ast_mod.BoolOp):
             # Parity with the TS walker: `a or b` and `a and b` are the operators a mutation
             # runner swaps, and a test where both operands agree passes under either one.
@@ -1058,13 +1149,25 @@ def boundaries_python(path):
 
 
 def boundaries_ts(path):
+    """TypeScript compiler API first, @babel/parser second — the same chain `extract` uses.
+
+    The fallback is not theoretical: TypeScript 7 ships a Go compiler with no classic
+    `lib/typescript.js`, so on a repo that has upgraded, the first bridge finds nothing and the
+    only thing standing between this command and a DEGRADED verdict is babel.
+    """
     node_bin = shutil.which("node")
     if not node_bin:
         return None
-    module_path = find_typescript_module(os.path.dirname(os.path.abspath(path)))
-    if not module_path:
-        return None
-    return _run_node_extractor(node_bin, NODE_BOUNDARIES, path, module_path)
+    start_dir = os.path.dirname(os.path.abspath(path))
+    ts_module = find_typescript_module(start_dir)
+    if ts_module:
+        found = _run_node_extractor(node_bin, NODE_BOUNDARIES, path, ts_module)
+        if found is not None:
+            return found
+    babel = find_babel_parser(start_dir)
+    if babel:
+        return _run_node_extractor(node_bin, BABEL_BOUNDARIES, path, babel)
+    return None
 
 
 def boundaries(path):
@@ -1076,7 +1179,7 @@ def boundaries(path):
     return None
 
 
-def report_boundaries(path):
+def report_boundaries(path, show_all=False):
     items = boundaries(path)
     # relpath against CWD can produce a longer, uglier string than the input; show
     # whichever is shorter so the header stays readable from any directory.
@@ -1122,13 +1225,36 @@ def report_boundaries(path):
     if "throw" in counts:
         print("  THROW       a test that FAILS when this throw is DELETED: assert the message or")
         print("              type, not merely that something threw, and reach THIS throw's path.")
+    if "arithmetic" in counts:
+        print("  ARITHMETIC  operands where swapping the operator CHANGES the result. `x + 0`,")
+        print("              `x * 1` and equal operands pass under the mutated operator too, so")
+        print("              they prove nothing about which one is written.")
+    if "optional" in counts:
+        print("  OPTIONAL    a case where the left side really IS null/undefined. Delete the `?.`")
+        print("              and nothing changes unless a test actually takes that path.")
     if "index" in counts:
         print("  INDEX       a case where that position differs from its neighbour, so reading the")
         print("              wrong element changes the result.")
     print()
-    print("OBLIGATIONS")
-    for r in rows:
+    # Ordered by MEASURED survival frequency, not alphabetically: across 39 suites on CASE-01 a
+    # deleted throw survived 34 times, a flipped comparison 27, a shifted literal index 15, a
+    # swapped boolean 12. Listing 55 equality rows before the throws buries the ones that
+    # actually cost points.
+    PRIORITY = {"throw": 0, "comparison": 1, "optional": 2, "index": 3,
+                "logic": 4, "arithmetic": 5, "equality": 6}
+    rows.sort(key=lambda r: (PRIORITY.get(r["kind"], 9), r["line"]))
+    cap = 10 ** 6 if show_all else 60
+    print("OBLIGATIONS (highest-risk kinds first)")
+    for r in rows[:cap]:
         print("  L%-4d %-11s %s" % (r["line"], r["kind"].upper(), r["expr"]))
+    if len(rows) > cap:
+        # Never silently truncate: a list that stops without saying so reads as complete.
+        rest = {}
+        for r in rows[cap:]:
+            rest[r["kind"]] = rest.get(r["kind"], 0) + 1
+        print("  ... %d more, all lower-risk kinds (%s). Re-run with --all to see them; a file"
+              % (len(rows) - cap, ", ".join("%s %d" % (k, v) for k, v in sorted(rest.items()))))
+        print("      needing this many rows is also a split candidate — see the Step 1.6 rule.")
     print()
     print("Each obligation is an inventory row. A row whose evidence does not distinguish the")
     print("boundary is not covered, however green the suite is.")
@@ -1148,6 +1274,8 @@ def main(argv):
         help="list the boundary obligations a suite must sit exactly on "
              "(comparisons, throws, literal indexes)")
     p_bounds.add_argument("--production", required=True)
+    p_bounds.add_argument("--all", action="store_true",
+                          help="list every obligation instead of the highest-risk 60")
 
     p_validate = sub.add_parser("validate", help="validate a coverage manifest")
     p_validate.add_argument("--manifest", required=True)
@@ -1174,7 +1302,7 @@ def main(argv):
 
     try:
         if args.command == "boundaries":
-            return report_boundaries(args.production)
+            return report_boundaries(args.production, args.all)
         if args.command == "extract":
             if not os.path.isfile(args.production):
                 raise SystemExit2("production file not found: %s" % args.production)
