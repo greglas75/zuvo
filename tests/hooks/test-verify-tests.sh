@@ -25,7 +25,13 @@ trap 'rm -rf "$TMP"' EXIT
 # ── fake zuvo install: the helper locates test-coverage-gate.py through ZUVO_BASE ─────────
 FAKE_BASE="$TMP/zuvo-base"; mkdir -p "$FAKE_BASE/scripts"
 cat > "$FAKE_BASE/scripts/test-coverage-gate.py" <<'PY'
-import os, sys
+import json, os, sys
+if "boundaries" in sys.argv:
+    # verify-tests asks for this to name the obligation a surviving mutant failed.
+    print(json.dumps({"schema": "zuvo-boundaries/v1", "available": True,
+                      "obligations": [{"kind": "comparison", "op": "<", "line": 70,
+                                       "expr": "n < 0", "left": "n", "right": "0"}]}))
+    sys.exit(0)
 mode = os.environ.get("STUB_GATE", "pass")
 print("COVERAGE GATE (executable) - phase: final")
 if mode == "pass":
@@ -278,6 +284,9 @@ grep -qE "mutation +FAIL +52\.9%" "$TMP/out" \
   || bad "survivor cap ignored ($(grep -c '^  - NoCoverage\|^  - Survived' "$TMP/out") listed)"
 grep -q "^  - NoCoverage" "$TMP/out" && [ "$(grep -n 'NoCoverage\|Survived' "$TMP/out" | head -1 | grep -c NoCoverage)" -eq 1 ] \
   && pass "no-coverage mutants lead the fix list" || bad "survivor ordering does not prioritise NoCoverage"
+grep -q "comparison obligation on this line: n < 0" "$TMP/out" \
+  && pass "a survivor names the boundary obligation it failed, not just a mutant id" \
+  || bad "survivor not annotated with its obligation: $(grep -m1 'NoCoverage\|Survived' "$TMP/out")"
 grep -q "5 more survivors" "$TMP/out" \
   && pass "survivors past the cap are counted, not dropped" || bad "remaining survivors not reported"
 [ ! -d "$R/.stryker-tmp" ] && pass "runner debris is cleared" || bad ".stryker-tmp left behind"

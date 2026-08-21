@@ -1179,8 +1179,19 @@ def boundaries(path):
     return None
 
 
-def report_boundaries(path, show_all=False):
+def report_boundaries(path, show_all=False, as_json=False):
     items = boundaries(path)
+    if as_json:
+        # Machine-readable form for verify-tests, which maps a surviving mutant's LINE back to
+        # the obligation it failed. A raw mutant id says a test is missing; the obligation says
+        # which case to write.
+        json.dump({"schema": "zuvo-boundaries/v1",
+                   "production_file": path,
+                   "available": items is not None,
+                   "obligations": items or []},
+                  sys.stdout, indent=1)
+        sys.stdout.write("\n")
+        return 0 if items is not None else 3
     # relpath against CWD can produce a longer, uglier string than the input; show
     # whichever is shorter so the header stays readable from any directory.
     shown = min(path, os.path.relpath(path), key=len)
@@ -1276,6 +1287,9 @@ def main(argv):
     p_bounds.add_argument("--production", required=True)
     p_bounds.add_argument("--all", action="store_true",
                           help="list every obligation instead of the highest-risk 60")
+    p_bounds.add_argument("--json", action="store_true",
+                          help="machine-readable form (used by ~/.zuvo/verify-tests to name the "
+                               "obligation a surviving mutant failed)")
 
     p_validate = sub.add_parser("validate", help="validate a coverage manifest")
     p_validate.add_argument("--manifest", required=True)
@@ -1302,7 +1316,7 @@ def main(argv):
 
     try:
         if args.command == "boundaries":
-            return report_boundaries(args.production, args.all)
+            return report_boundaries(args.production, args.all, args.json)
         if args.command == "extract":
             if not os.path.isfile(args.production):
                 raise SystemExit2("production file not found: %s" % args.production)
