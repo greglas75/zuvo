@@ -110,6 +110,34 @@ the code-type classification that was gating the existing rule.
 
 ---
 
+## All five cases, corrected
+
+| case | file | control | zuvo | Δ | ceiling |
+|---|---|---|---|---|---|
+| CASE-01 | `runner-maxdiff-score-contract.ts` (vitest) | 84.8% | 90.9% *(v11)* | +6.1 | 91.9% |
+| CASE-02 | `QuestionResponseAnswer.tsx` (React) | 75.2% | 81.4% *(v12)* | +6.2 | 81.9% |
+| CASE-03 | `useFeedbackForm.ts` (React hook) | 66.1% | 72.9% *(v12)* | +6.8 | 79.7% |
+| CASE-04 | `survey-logic-auditor.replay.ts` | 67.2% | **85.8%** *(v12)* | **+18.6** | 88.9% |
+| CASE-05 | `dom-translation-detector.ts` (jest) | 84.3% | 84.3% *(v12)* | +0.0 | ≥90.7% |
+
+Four of five sit within one to seven points of the ceiling, and the gain over a no-skill control is
+between six and nineteen points. CASE-05 is the one the deferral bug starved, and CASE-04 — the
+largest file, the one the split rule fires on — is where the skill is worth the most by a wide
+margin.
+
+Across roughly ninety runs the corpus now holds **two** genuinely broken suites: `zuvo-v3-r6`
+(CASE-01) and `zuvo-v4` (CASE-04). Every other zero was one of two instrument faults, both of the
+same shape — the scorer not reproducing what the run produced:
+
+| fault | runs affected | fix |
+|---|---|---|
+| a run fixed production in-run (Step 4.5) and the scorer discarded the fix | 9 | restore the run's own source (Stryker) or mark `PRODUCTION_MODIFIED` (frozen mutants) |
+| a run SPLIT its suite and the harvest collected specs but not the fixtures module they import | 1 | harvest sibling modules too; stop reclaiming the workspace of a zero-scoring run |
+
+The second is worth stating plainly: the split rule is a documented, mandatory part of
+`write-tests` (>40 owned rows), so the harvest was always going to lose a case the moment one got
+large enough. Both faults punished the pipeline for following its own rules.
+
 ## Where the time actually goes
 
 Every turn of 23 runs was attributed to **what the agent did** — the tool call, and for a bash
