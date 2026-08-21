@@ -75,6 +75,78 @@ it is real.
 
 ---
 
+## The finding the wall-clock buckets could not show
+
+Reading the v9 transcripts rather than their timings turned up the reason several runs were
+expensive, and it is not a phase at all:
+
+> **The helper's cold invocation crossed the Bash tool's default 120-second limit.**
+
+Inside a loaded container the harness backgrounds a call that long and hands back a task id
+instead of the output. Every run that hit it then built a polling loop — `sleep 90; kill -0
+<pid>`, `sleep 60; echo tick`, `tail /tmp/verify-out.txt` — four to six turns spent waiting for
+output that one turn returns. A shell `timeout 590` prefix does not help: it bounds the program,
+not the harness.
+
+Two fixes, and the second is the one that matters:
+
+- the gate and the coverage run execute concurrently (independent processes over the same green
+  suite);
+- **the typecheck joined mutation behind the cheap checks.** Both describe the *finished* suite,
+  and a pass still reporting uncovered rows is looking at one about to be rewritten — so 57s of
+  `tsc` and 270s of Stryker no longer run on a pass whose result they cannot inform.
+
+Measured, same file, same manifest: **a first pass with gaps open went 78s → 5s.** The expensive
+measurements still run, on the pass where the suite is worth measuring. The skill also now tells
+the agent to give the call `timeout: 600000`, so the final pass — which does run both — cannot hit
+the same wall.
+
+There is a second-order lesson here worth keeping. Wall-clock attribution found *typecheck* and
+*mutation* as the big blocks, and both were real. But the reason those blocks were expensive in
+turns rather than merely in seconds was a harness limit that no bucket could name. Timings say
+where the time went; transcripts say why.
+
+## What the missing points are actually made of
+
+Kill rate is a scalar; it cannot say WHAT the extra points consist of. Comparing per-mutant
+survivor sets across all **39 scored suites** for CASE-01 answers it, and the answer changes what
+is worth optimising.
+
+**Eight mutants survive every single arm** — including the best. Equivalent-mutant candidates
+(or a gap the whole approach shares). That puts the practical ceiling on this file at **~91.9%,
+not 100%**, which means v9's 90.9% sits **one non-equivalent mutant from the ceiling**. There is
+essentially nothing left to win on CASE-01, and further quality work belongs on the other cases,
+where kill rates are 61-78%.
+
+**The mutants that separate an 88% suite from a 91% one are all boundaries the tests never sat
+exactly on:**
+
+| mutant | survived in |
+|---|---|
+| `throw` deleted outright (L187) | **34 of 39 suites** |
+| `finiteValue < 0` → `<=` (L60) | 27 of 39 |
+| literal `0` → `1` (L60) | 27 of 39 |
+| `normalized[0]` → `normalized[1]` (L185) | 15 of 39 |
+| `\|\|` → `&&` (L17) | 12 of 39 |
+
+Not exotic. Not deep semantics. Off-by-one and error-path removal.
+
+And zuvo already tells writers to do this — `test-edge-cases.md` says *"exact threshold N, N-1
+(should NOT trigger), N+1 (should trigger)"*. The rule lives in a table row keyed on **code
+type**, so a bare `value < 0` inside a pure function never triggers it. Classification decides
+whether the rule applies, and classification happens *before* the comparisons are known. That
+ordering is the bug, not the wording.
+
+`test-coverage-gate.py boundaries --production <file>` removes the ordering problem by reading
+the source: every relational operator, boolean operator, `throw`/`raise` and literal index becomes
+an inventory obligation, each with the specific case that kills its mutant — the input where both
+sides are EQUAL, the operand that alone decides a boolean, a test that FAILS when the throw is
+deleted. Run against the real CASE-01 file it names `finiteValue < 0` at L25 and the throws at
+L18/L26: exactly the mutants 27 and 34 of 39 suites failed to kill.
+
+This is the first lever found tonight that aims at **quality** rather than cost, and its value
+should show on CASE-02/03/04/05 rather than on CASE-01, which is already at its ceiling.
+
 ## What shipped
 
 ### v7 — verify once, let the native runner measure (`7e1c88e`)
@@ -136,37 +208,6 @@ Two causes, both now fixed and being re-measured as v9:
 - **Mutation ran on every pass, including the useless ones.** Now deferred.
 
 ---
-
-## The finding the wall-clock buckets could not show
-
-Reading the v9 transcripts rather than their timings turned up the reason several runs were
-expensive, and it is not a phase at all:
-
-> **The helper's cold invocation crossed the Bash tool's default 120-second limit.**
-
-Inside a loaded container the harness backgrounds a call that long and hands back a task id
-instead of the output. Every run that hit it then built a polling loop — `sleep 90; kill -0
-<pid>`, `sleep 60; echo tick`, `tail /tmp/verify-out.txt` — four to six turns spent waiting for
-output that one turn returns. A shell `timeout 590` prefix does not help: it bounds the program,
-not the harness.
-
-Two fixes, and the second is the one that matters:
-
-- the gate and the coverage run execute concurrently (independent processes over the same green
-  suite);
-- **the typecheck joined mutation behind the cheap checks.** Both describe the *finished* suite,
-  and a pass still reporting uncovered rows is looking at one about to be rewritten — so 57s of
-  `tsc` and 270s of Stryker no longer run on a pass whose result they cannot inform.
-
-Measured, same file, same manifest: **a first pass with gaps open went 78s → 5s.** The expensive
-measurements still run, on the pass where the suite is worth measuring. The skill also now tells
-the agent to give the call `timeout: 600000`, so the final pass — which does run both — cannot hit
-the same wall.
-
-There is a second-order lesson here worth keeping. Wall-clock attribution found *typecheck* and
-*mutation* as the big blocks, and both were real. But the reason those blocks were expensive in
-turns rather than merely in seconds was a harness limit that no bucket could name. Timings say
-where the time went; transcripts say why.
 
 ## The result that decides the 20-minute question
 
@@ -233,70 +274,6 @@ If the clock costs ~3 points, the plateau reading is wrong for this arm and the 
 the user's to make. If quality holds at 90.9% with the tail cut, the clock is free. Running now,
 n=5, same case.
 
-## Rig repair, and the failure mode worth remembering
-
-Making the rig multi-repo (so a case can name its own checkout) broke it twice, and the two
-breakages fail in opposite ways:
-
-1. **The patch went through an ssh heredoc**, which stripped the quotes around a path and
-   expanded `$BENCH`/`$CASE` at *write* time, leaving
-   `print(json.load(open(/corpus//meta.json)).get(repo_dir, /repo))` in the script. Python
-   raised, `REPO` came back empty, `cp -a "" "$WS"` copied nothing — and five agents were handed
-   an empty directory tree. One of them said so plainly ("there's nothing to write tests for")
-   **and the run still exited 0 after 34 seconds.** A completed run with no suite is
-   indistinguishable, downstream, from a skill that refused to work.
-2. **Switching the node_modules source to `$REPO/node_modules` reintroduced instrument rule 1.**
-   In the tgm corpus that path is a *symlink* to a shared store, `cp -al` on a symlink copies the
-   link, and the container then follows a host path it cannot see. The green/red selfcheck caught
-   this one immediately — npx downloaded its own vitest and the green case failed — which is the
-   selfcheck doing exactly the job it was built for.
-
-The lesson is the asymmetry. The failure the instrument checked for was caught in seconds; the
-failure it did not check for produced five green-looking runs. `run_arm.sh` now refuses to start
-an agent when the workspace is under 1 MB or the file under test is absent, and every path is
-passed to Python as **argv** rather than interpolated into its source.
-
-## What the missing points are actually made of
-
-Kill rate is a scalar; it cannot say WHAT the extra points consist of. Comparing per-mutant
-survivor sets across all **39 scored suites** for CASE-01 answers it, and the answer changes what
-is worth optimising.
-
-**Eight mutants survive every single arm** — including the best. Equivalent-mutant candidates
-(or a gap the whole approach shares). That puts the practical ceiling on this file at **~91.9%,
-not 100%**, which means v9's 90.9% sits **one non-equivalent mutant from the ceiling**. There is
-essentially nothing left to win on CASE-01, and further quality work belongs on the other cases,
-where kill rates are 61-78%.
-
-**The mutants that separate an 88% suite from a 91% one are all boundaries the tests never sat
-exactly on:**
-
-| mutant | survived in |
-|---|---|
-| `throw` deleted outright (L187) | **34 of 39 suites** |
-| `finiteValue < 0` → `<=` (L60) | 27 of 39 |
-| literal `0` → `1` (L60) | 27 of 39 |
-| `normalized[0]` → `normalized[1]` (L185) | 15 of 39 |
-| `\|\|` → `&&` (L17) | 12 of 39 |
-
-Not exotic. Not deep semantics. Off-by-one and error-path removal.
-
-And zuvo already tells writers to do this — `test-edge-cases.md` says *"exact threshold N, N-1
-(should NOT trigger), N+1 (should trigger)"*. The rule lives in a table row keyed on **code
-type**, so a bare `value < 0` inside a pure function never triggers it. Classification decides
-whether the rule applies, and classification happens *before* the comparisons are known. That
-ordering is the bug, not the wording.
-
-`test-coverage-gate.py boundaries --production <file>` removes the ordering problem by reading
-the source: every relational operator, boolean operator, `throw`/`raise` and literal index becomes
-an inventory obligation, each with the specific case that kills its mutant — the input where both
-sides are EQUAL, the operand that alone decides a boolean, a test that FAILS when the throw is
-deleted. Run against the real CASE-01 file it names `finiteValue < 0` at L25 and the throws at
-L18/L26: exactly the mutants 27 and 34 of 39 suites failed to kill.
-
-This is the first lever found tonight that aims at **quality** rather than cost, and its value
-should show on CASE-02/03/04/05 rather than on CASE-01, which is already at its ceiling.
-
 ## v10 — same quality as v9, twice the wall, and the reason is a single word
 
 | arm | n | kill (med) | RED | wall (med) | tokens (med) |
@@ -329,6 +306,52 @@ The general shape is worth keeping: **a helper that shares a status word with a 
 inherits that rule's behaviour whether or not it meant to.** No amount of reading the helper would
 have found this — the helper is correct in isolation. It took attributing wall-clock to what the
 agent actually ran.
+
+## Rig repair, and the failure mode worth remembering
+
+Making the rig multi-repo (so a case can name its own checkout) broke it twice, and the two
+breakages fail in opposite ways:
+
+1. **The patch went through an ssh heredoc**, which stripped the quotes around a path and
+   expanded `$BENCH`/`$CASE` at *write* time, leaving
+   `print(json.load(open(/corpus//meta.json)).get(repo_dir, /repo))` in the script. Python
+   raised, `REPO` came back empty, `cp -a "" "$WS"` copied nothing — and five agents were handed
+   an empty directory tree. One of them said so plainly ("there's nothing to write tests for")
+   **and the run still exited 0 after 34 seconds.** A completed run with no suite is
+   indistinguishable, downstream, from a skill that refused to work.
+2. **Switching the node_modules source to `$REPO/node_modules` reintroduced instrument rule 1.**
+   In the tgm corpus that path is a *symlink* to a shared store, `cp -al` on a symlink copies the
+   link, and the container then follows a host path it cannot see. The green/red selfcheck caught
+   this one immediately — npx downloaded its own vitest and the green case failed — which is the
+   selfcheck doing exactly the job it was built for.
+
+The lesson is the asymmetry. The failure the instrument checked for was caught in seconds; the
+failure it did not check for produced five green-looking runs. `run_arm.sh` now refuses to start
+an agent when the workspace is under 1 MB or the file under test is absent, and every path is
+passed to Python as **argv** rather than interpolated into its source.
+
+## Instrument changes made tonight
+
+- The rig is multi-repo: a case names its own checkout, and the green/red selfcheck picks the
+  runner and the directory from the case rather than assuming `apps/api` + vitest.
+- `run_arm.sh` refuses to start an agent on a workspace under 1 MB or without the file under
+  test, and bounds the docker CLIENT as well as the agent (a client outliving its container
+  stalled the whole sweep).
+- Every `pgrep` wait is anchored on the start of the command line. Unanchored, they matched the
+  monitoring shells watching them — an instrument that blocked the experiment it was observing,
+  and the reason the driver sat idle for half an hour. The correction then produced its own
+  variant: a driver waiting on `^bash /root/bench/night2.sh` never matched, because that process
+  was started as `bash night2.sh` from inside the directory, so the absolute path is not in its
+  command line at all. **Anchoring is only correct against the form the process actually has**,
+  and two drivers ran in parallel for a few minutes as a result. They serialised on the
+  idle-box check, but they shared one `supervisor.state`; one driver from there on.
+- A repetition of the control arm is still the control arm. `arm_needs_skill` tested the run
+  directory against the literal `'naked'`, so `naked-r1` was expected to invoke a skill it
+  deliberately does not have and came out `SKILL_NOT_INVOKED` — a verdict the supervisor reads as
+  "not complete", which would have relaunched every control run three times and then given up.
+  Caught before the CASE-05 control batch, not during it.
+- Scoring is serialised behind a lock, and dispatches per case: frozen mutants where a frozen set
+  exists, StrykerJS otherwise (which is how a jest case can be scored at all).
 
 ## State of the night plan
 
@@ -372,26 +395,3 @@ ssh coding-vps 'cd /root/bench && python3 aggwall.py naked zuvo-v9 zuvo-v10 zuvo
 `table.py` is the one to start from. A `-` in the kill column means the run finished but scoring
 has not caught up; a `0.0` means the suite fails on unmutated source and is worthless, which is a
 result, not a gap.
-
-## Instrument changes made tonight
-
-- The rig is multi-repo: a case names its own checkout, and the green/red selfcheck picks the
-  runner and the directory from the case rather than assuming `apps/api` + vitest.
-- `run_arm.sh` refuses to start an agent on a workspace under 1 MB or without the file under
-  test, and bounds the docker CLIENT as well as the agent (a client outliving its container
-  stalled the whole sweep).
-- Every `pgrep` wait is anchored on the start of the command line. Unanchored, they matched the
-  monitoring shells watching them — an instrument that blocked the experiment it was observing,
-  and the reason the driver sat idle for half an hour. The correction then produced its own
-  variant: a driver waiting on `^bash /root/bench/night2.sh` never matched, because that process
-  was started as `bash night2.sh` from inside the directory, so the absolute path is not in its
-  command line at all. **Anchoring is only correct against the form the process actually has**,
-  and two drivers ran in parallel for a few minutes as a result. They serialised on the
-  idle-box check, but they shared one `supervisor.state`; one driver from there on.
-- A repetition of the control arm is still the control arm. `arm_needs_skill` tested the run
-  directory against the literal `'naked'`, so `naked-r1` was expected to invoke a skill it
-  deliberately does not have and came out `SKILL_NOT_INVOKED` — a verdict the supervisor reads as
-  "not complete", which would have relaunched every control run three times and then given up.
-  Caught before the CASE-05 control batch, not during it.
-- Scoring is serialised behind a lock, and dispatches per case: frozen mutants where a frozen set
-  exists, StrykerJS otherwise (which is how a jest case can be scored at all).
