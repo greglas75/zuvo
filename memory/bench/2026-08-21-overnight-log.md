@@ -525,13 +525,38 @@ I cannot say which change caused it: v10 and v12 differ in **four** things at on
 obligations, the DEFER fix, the Step 3.3 repair, the survivor annotation. Attributing a 6.4-point
 drop or a 5x speedup to any one of them would be a guess.
 
-So **v13** is queued: v12 with the boundary obligations removed from the mandatory path and
-nothing else changed, three runs on the same file.
+### Found it, before the ablation ran
 
-- ~84% and fast → boundaries are not the cause, and the speedup itself is what costs the quality.
-- ~90% and fast → boundaries are the cause, and removing them is the whole fix.
+The harvested verify-state for `zuvo-v12-r3` says the whole story in six characters per pass:
 
-Either answer is actionable. Guessing between them is not.
+```
+p1  P/F/P/D/D/P     p2  P/F/P/D/D/P
+    suite PASS · gate FAIL · coverage PASS · typecheck DEFER · mutation DEFER · hash PASS
+```
+
+The coverage **gate** failed on every pass, and the deferral I had built waited on that gate — so
+typecheck and mutation never ran at all, on any pass, in any of the three runs. The suite finished
+having never been mutated, which is why it scored the control's number: nothing ever told it which
+mutants survived.
+
+The mistake is in what the deferral waited for. The gate checks whether inventory rows carry
+evidence — bookkeeping. It says nothing about whether the tests detect anything. A run with
+imperfect bookkeeping and a good suite still deserves its most valuable signal.
+
+Fixed: the expensive checks now wait on the **suite being green and scoped coverage being
+adequate** — the two conditions that make a mutation number mean something. The gate's own result
+no longer blocks them.
+
+### Two ablations queued, in this order
+
+1. **v13** — v12 with the boundary obligations removed, on the OLD gating. Isolates the
+   obligations with everything else held constant.
+2. **v14** — v12 with the NEW gating. Predicted before the run so it can be wrong: **~90% at
+   v12's cost (833s), not v10's 4203s.** If it lands at 84% again, the gating was not the cause
+   and the six points come from something v10 did that neither arm does.
+
+The shared helper is swapped between them, because `~/.zuvo` is one mounted directory for every
+container rather than per-arm — swapping at the wrong moment would confound both.
 
 ## Worth considering, not done
 
