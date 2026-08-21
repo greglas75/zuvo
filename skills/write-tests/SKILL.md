@@ -377,6 +377,8 @@ Every program that runs against this suite — the coverage gate, scoped coverag
 mutation runner — runs in ONE call, and its printed block is the only acceptable evidence:
 
 ```bash
+# $ZUVO_DIR is often unset; this is the same default report-output-location.md documents.
+ZUVO_DIR="${ZUVO_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)/zuvo}"
 ~/.zuvo/verify-tests --manifest "$ZUVO_DIR/contracts/<basename>.coverage.json"
 ```
 
@@ -411,10 +413,19 @@ verification command it had already issued — 0 repeats → 30-111 turns, 9-14 
 28-30 repeats → 395-485 — with no gain in mutation kill at the top end. Two of the three most
 iteration-heavy runs ended with a suite that fails on unmutated source.
 
-**Helper absent** (older install, foreign harness): run the four commands ONCE each, in this
-order, stopping at the first failure — target suite → `test-coverage-gate.py validate --phase
-final` → scoped coverage → mutation. Record `verify: degraded (helper absent)`. Running them once
-each is the contract; the helper exists to make that the default rather than a discipline.
+**"Helper absent" has exactly one test: `[ -x ~/.zuvo/verify-tests ]`.** Nothing else counts.
+An empty `$ZUVO_BASE`, an unfamiliar install path, `cat`-ing the file and not recognising it, or
+a guess about the harness are NOT evidence — the helper resolves its own install root
+(`$ZUVO_BASE`, then `~/.zuvo-plugin`, then `~/.claude`) and says so if it cannot. Measured on the
+rig 2026-08-21: three of five runs read `ZUVO_BASE=` as "the helper will not work", took the
+fallback, and re-issued the separate commands 5-11 times each — in containers where the helper
+ran correctly on the first try.
+
+So: run it. Only if the file is genuinely not executable, or it exits 2 with a tooling error you
+cannot fix, fall back to the four commands — ONCE each, in order, stopping at the first failure:
+target suite → `test-coverage-gate.py validate --phase final` → scoped coverage → mutation. Record
+`verify: degraded (<the exact error text>)`. A fallback without that error in hand is gate
+substitution; the four separate commands are precisely the shape this step exists to remove.
 
 A row that cannot be closed because required infrastructure or a cross-module contract is
 unavailable: persist `Status=BLOCKED_INCOMPLETE` with the uncovered rows + reason; do not continue
