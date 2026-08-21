@@ -134,6 +134,36 @@ There is a second-order lesson here worth keeping. Wall-clock attribution found 
 turns rather than merely in seconds was a harness limit that no bucket could name. Timings say
 where the time went; transcripts say why.
 
+## The result that decides the 20-minute question
+
+Across **33 scored runs** on CASE-01, turns and mutation kill correlate at **Spearman +0.73**.
+Read alone, that says working longer buys coverage and the 20-minute target is a trade.
+
+Split by arm, it mostly disappears:
+
+| arm | cheap half → dear half (median kill) |
+|---|---|
+| naked | 85.4% → **83.8%** |
+| zuvo-v4 | 89.4% → **88.9%** |
+| zuvo-v7 | 88.4% → 88.9% — *60 turns scored 88.9; 288 turns scored 88.9* |
+| zuvo-v3 | 87.4% → 88.9% |
+| zuvo-v8 | 87.9% → 89.9% |
+
+Median effect: **about half a point for 3.2× the turns**, and negative in two arms. The +0.73 is
+a *between-arm* effect — better skills cost more turns and score more — not a dose-response
+within a skill.
+
+The other half of the picture is worse than neutral: **three of the four suites that came out RED**
+(fail on unmutated source, scored 0, worthless) were among the most expensive runs in the corpus —
+358, 395 and 485 turns. Past the plateau, effort buys variance.
+
+So capping the run is close to free, and the cap has to be owned by a program rather than by the
+agent's sense of when it is done. `verify-tests` now carries two: three passes, and a **15-minute
+clock from the first pass**, recorded in the state file so a long detour between passes cannot
+reset it. Every pass prints `pass N of 3   X.X of 15 min`. On expiry the remaining survivors are
+recorded with their IDs and the file finishes — which is the correct outcome, not a failure to
+try hard enough.
+
 ## Open at the time of writing
 
 - **v9** (escape hatch closed + typecheck folded + mutation deferred), CASE-01, n=5. Three
