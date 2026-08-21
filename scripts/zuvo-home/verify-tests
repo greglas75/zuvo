@@ -277,6 +277,15 @@ def check_suite(runner, test_files, root):
                 r.gaps.append(s[:200])
         if not r.gaps:
             r.gaps.append("suite exited %d — see evidence block" % rc)
+        # Named at the point of failure, because a red suite is where a run is most likely to
+        # stop. It scores ZERO on any mutation measurement — worse than never having written the
+        # test — so finding a real production bug and leaving the suite red is a net loss. There
+        # are exactly two legal exits.
+        r.gaps.append(
+            "a red suite scores 0 and is a terminal state: either FIX the production defect "
+            "in-run (Step 4.5) or assert the ACTUAL behaviour and backlog the defect with "
+            "file:line. Finishing the file red is neither."
+        )
     return r
 
 

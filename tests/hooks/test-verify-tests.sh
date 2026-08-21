@@ -253,6 +253,9 @@ grep -qE "mutation .*not run — suite is red" "$TMP/out" \
   && pass "mutation is not run against a red suite" || bad "mutation ran on a red suite"
 grep -q "rejects empty input" "$TMP/out" \
   && pass "failing test names surface as gaps" || bad "no failing test named in the gap list"
+grep -q "a red suite scores 0 and is a terminal state" "$TMP/out" \
+  && pass "a red suite names its two legal exits, at the point a run is most likely to stop" \
+  || bad "red suite does not say how to resolve"
 
 # ── (7) gate failure: only the validator's own FAIL lines become gaps ────────────────────
 R="$TMP/r7"; mkrepo "$R"
