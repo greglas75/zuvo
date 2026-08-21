@@ -44,6 +44,7 @@ Exit codes:
   4  budget exhausted with gaps open — record them, do not iterate further
 """
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -270,9 +271,8 @@ def check_suite(runner, test_files, root):
         # A failing assertion names the test; hand the agent the names, not the whole log.
         for line in out.splitlines():
             s = line.strip()
-            if re.match(r"^(FAIL|×|✕|●|E\s)", s) or "AssertionError" in s:
-                if s not in r.gaps:
-                    r.gaps.append(s[:200])
+            if (re.match(r"^(FAIL|×|✕|●|E\s)", s) or "AssertionError" in s) and s not in r.gaps:
+                r.gaps.append(s[:200])
         if not r.gaps:
             r.gaps.append("suite exited %d — see evidence block" % rc)
     return r
@@ -763,10 +763,8 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install):
         return r
     finally:
         for f in (vcfg, scfg):
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(f)
-            except OSError:
-                pass
         shutil.rmtree(rep, ignore_errors=True)
         r.seconds = time.time() - t0
 
@@ -834,10 +832,8 @@ def main():
         print("[verify-tests] cannot read manifest: %s" % manifest_path, file=sys.stderr)
         return 2
     if a.reset_budget:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(state_path(manifest_path))
-        except OSError:
-            pass
 
     root = os.path.abspath(a.repo_root or git_root(os.path.dirname(manifest_path)))
     prod_rel = man.get("production_file")
@@ -910,7 +906,8 @@ def main():
         r = Result("production-hash")
         r.status = "FAIL"
         r.detail = "production file changed during verification"
-        r.gaps.append("expected %s, found %s — restore the file before continuing" % (frozen or before, after))
+        r.gaps.append("expected %s, found %s — restore the file before continuing"
+                      % (frozen or before, after))
         results.append(r)
     else:
         r = Result("production-hash")
@@ -974,8 +971,9 @@ def main():
     elif rc == 2:
         print("VERDICT: INFRASTRUCTURE ERROR — fix the tooling, not the tests.")
     else:
-        print("VERDICT: %d gap(s) open. Make ONE fix round addressing ALL of them, then run this" % len(open_gaps))
-        print("         command again. You have %d pass(es) left." % (budget - passes))
+        print("VERDICT: %d gap(s) open. Make ONE fix round addressing ALL of them, then run"
+              % len(open_gaps))
+        print("         this command again. You have %d pass(es) left." % (budget - passes))
     print("=" * w)
     return rc
 

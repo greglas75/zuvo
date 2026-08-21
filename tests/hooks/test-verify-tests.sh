@@ -284,7 +284,7 @@ grep -q "5 more survivors" "$TMP/out" \
 
 # ── (10) budget: the helper stops on its own ─────────────────────────────────────────────
 R="$TMP/r10"; mkrepo "$R"
-for i in 1 2; do STUB_GATE=fail vt "$R" --no-install --budget 3 >/dev/null 2>&1; done
+for _ in 1 2; do STUB_GATE=fail vt "$R" --no-install --budget 3 >/dev/null 2>&1; done
 STUB_GATE=fail vt "$R" --no-install --budget 3; rc=$?
 [ "$rc" -eq 4 ] && pass "third pass with gaps exits 4" || bad "budget exhaustion exit $rc (want 4)"
 grep -q "BUDGET EXHAUSTED" "$TMP/out" \

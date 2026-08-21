@@ -28,7 +28,12 @@ require_text() {
 }
 
 # ── prose contract (strings the pipeline and other suites key on) ─────────────
-require_text "LOCAL COVERAGE GATE" "skill defines the local coverage gate"
+# The step used to be headed "LOCAL COVERAGE GATE" and to spell out four separate
+# fix-and-rerun loops. It is now one command with one verdict, so the contract is the
+# command and its terminal states -- a heading is a name, and naming it here again would
+# just re-break this test the next time the step is renamed.
+require_text "~/.zuvo/verify-tests" "skill runs verification through the single-verdict helper"
+require_text "BUDGET EXHAUSTED" "the helper owns the stop condition, not the agent's judgement"
 require_text "every public entry point" "gate inventories every public entry point"
 require_text "test-file:line" "gate requires line-level test evidence"
 require_text "Uncovered owned rows: 0" "gate has a deterministic zero-gap condition"
@@ -44,6 +49,7 @@ require_text "Production Surface Inventory" "skill has an inventory step"
 require_text "INVENTORY FROZEN" "inventory is frozen with printed metrics"
 require_text "zuvo:test-audit" "final quality audit dispatches the real test-audit skill"
 require_text "Tier A" "final audit targets tier A with fix-in-run"
+require_text "Do not run \`tsc\` yourself" "skill forbids the ad-hoc project-wide typecheck"
 
 if [ -f "$ROOT/scripts/test-coverage-gate.py" ] && [ -x "$ROOT/scripts/test-coverage-gate.py" ]; then
   pass "scripts/test-coverage-gate.py exists and is executable"

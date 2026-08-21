@@ -98,10 +98,7 @@ def resolve(home, here):
     env = os.environ.get("ZUVO_BASE")
     if valid(env):
         return env, "ZUVO_BASE override"
-    if env:
-        note = "ZUVO_BASE=%r set but has no scripts/ — ignored" % env
-    else:
-        note = None
+    note = ("ZUVO_BASE=%r set but has no scripts/ — ignored" % env) if env else None
 
     p = from_installed_plugins(home)
     if p:

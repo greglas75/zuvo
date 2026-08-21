@@ -1,0 +1,161 @@
+#!/bin/sh
+# Polyglot sh/python header — see compute-preload for why this exact line matters on Windows.
+''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
+"""
+~/.zuvo/load-includes — deliver a skill's tier+stack include set in ONE tool call.
+
+Usage:
+  ~/.zuvo/load-includes write-tests --tier STANDARD --stack js
+  ~/.zuvo/load-includes write-tests --tier TYPE --stack js --manifest-only
+  ~/.zuvo/load-includes write-tests --phase 0
+
+Why it exists, and why it is a COMMAND rather than an instruction. Twice this repo tried to
+cut the cost of loading by rewording the block that describes it — "read these seven",
+then "read them in ONE message" — and both times the run got longer, not shorter. The
+mechanism is not that the wording was wrong. It is that a skill telling an agent HOW to
+read still leaves the agent deciding how to read, and deciding costs turns; every turn
+re-bills the whole accumulated context, so one `cat` of one markdown file measured 30-44k
+tokens on the benchmark rig.
+
+This removes the decision. There is no list to walk, no ordering to choose, no batching to
+remember: one command returns the resolved set, already concatenated, with a manifest of
+what it contains and what was missing. The precedent is `compute-preload`, which exists for
+the same reason — agents kept improvising a CodeSift preload that a deterministic helper
+could just compute.
+
+Output shape (stable, parseable):
+
+    === LOAD MANIFEST ===
+    skill: write-tests   tier: STANDARD   stack: js
+    loaded: 9   missing: 0   bytes: 114549
+    <one path per line, with READ/MISSING>
+    === BEGIN <path> ===
+    <file contents>
+    === END <path> ===
+    ... repeated ...
+
+A MISSING file is reported, never silently dropped — a caller that degrades needs to know
+which rule it lost. Exit 0 when every required file resolved, 3 when any did, so a caller
+can branch without parsing prose.
+"""
+import argparse
+import os
+import sys
+
+# The tier x include matrix, mirroring skills/write-tests/SKILL.md PHASE 1. Kept here rather
+# than parsed out of the markdown on purpose: a parser that silently mis-reads the table
+# would degrade loading invisibly, which is the failure this helper exists to remove. The
+# consistency test (tests/hooks/test-load-includes.sh) asserts the two agree, so drift is
+# caught at test time instead of at runtime.
+PHASE0 = [
+    "codesift-setup.md",
+    "no-pause-protocol.md",
+    "test-reviewer-routing.md",
+    "test-inventory-protocol.md",
+    "coverage-manifest-schema.md",
+    "test-quality-gate.md",
+    "env-compat.md",
+]
+
+# name -> tiers that load it in full ("*" = every tier)
+PHASE1 = [
+    ("test-contract.md",            "*"),
+    ("test-blocklist.md",           "*"),
+    ("quality-gates.md",            "*"),
+    ("test-code-types-core.md",     "*"),
+    ("../../rules/testing.md",      "LIGHT STANDARD HEAVY COMPONENT"),
+    ("test-mock-safety-core.md",    "LIGHT STANDARD HEAVY COMPONENT"),
+    ("test-bugfix-protocol.md",     "LIGHT STANDARD HEAVY COMPONENT"),
+    ("test-mock-safety-{stack}.md", "STANDARD HEAVY COMPONENT"),
+    ("test-code-types-{stack}.md",  "STANDARD HEAVY COMPONENT TYPE"),
+    ("test-edge-cases.md",          "STANDARD HEAVY COMPONENT"),
+    ("test-mutation-probes.md",     "STANDARD HEAVY COMPONENT"),
+]
+
+TIERS = ("LIGHT", "STANDARD", "HEAVY", "COMPONENT", "TYPE")
+STACKS = ("js", "php", "python")
+
+
+def base_dir():
+    """Where the includes live, whichever install this is running from."""
+    env = os.environ.get("ZUVO_BASE")
+    if env and os.path.isdir(os.path.join(env, "shared", "includes")):
+        return env
+    here = os.path.dirname(os.path.realpath(__file__))
+    for cand in (
+        os.path.join(here, ".."),                       # repo: scripts/ -> root
+        os.path.expanduser("~/.zuvo-plugin"),           # container mount
+        os.path.expanduser("~/.claude"),                # user-skills install
+    ):
+        if os.path.isdir(os.path.join(cand, "shared", "includes")):
+            return os.path.abspath(cand)
+    return None
+
+
+def resolve(root, name, stack):
+    name = name.replace("{stack}", stack)
+    if name.startswith("../../rules/"):
+        return os.path.join(root, "rules", os.path.basename(name))
+    return os.path.join(root, "shared", "includes", name)
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("skill")
+    ap.add_argument("--tier", default="STANDARD")
+    ap.add_argument("--stack", default="js")
+    ap.add_argument("--phase", type=int, default=1,
+                    help="0 = bootstrap set only, 1 = bootstrap + tier/stack set (default)")
+    ap.add_argument("--manifest-only", action="store_true",
+                    help="print the manifest without the file bodies")
+    a = ap.parse_args()
+
+    tier = a.tier.upper()
+    if tier not in TIERS:
+        print("unknown tier %r (expected one of %s)" % (a.tier, ", ".join(TIERS)), file=sys.stderr)
+        return 2
+    if a.stack not in STACKS:
+        print("unknown stack %r (expected one of %s)" % (a.stack, ", ".join(STACKS)), file=sys.stderr)
+        return 2
+
+    root = base_dir()
+    if root is None:
+        print("load-includes: cannot locate shared/includes — set ZUVO_BASE", file=sys.stderr)
+        return 2
+
+    wanted = list(PHASE0)
+    if a.phase >= 1:
+        for name, tiers in PHASE1:
+            if tiers == "*" or tier in tiers.split():
+                wanted.append(name)
+
+    rows, bodies, total, missing = [], [], 0, 0
+    seen = set()
+    for name in wanted:
+        path = resolve(root, name, a.stack)
+        if path in seen:
+            continue
+        seen.add(path)
+        rel = os.path.relpath(path, root)
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                body = fh.read()
+            total += len(body.encode("utf-8"))
+            rows.append("  READ     %s" % rel)
+            bodies.append("=== BEGIN %s ===\n%s\n=== END %s ===" % (rel, body.rstrip(), rel))
+        else:
+            missing += 1
+            rows.append("  MISSING  %s" % rel)
+
+    print("=== LOAD MANIFEST ===")
+    print("skill: %s   tier: %s   stack: %s   phase: %d" % (a.skill, tier, a.stack, a.phase))
+    print("loaded: %d   missing: %d   bytes: %d" % (len(bodies), missing, total))
+    print("\n".join(rows))
+    if not a.manifest_only:
+        print()
+        print("\n\n".join(bodies))
+    return 3 if missing else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
