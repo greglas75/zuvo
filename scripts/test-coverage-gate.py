@@ -189,6 +189,65 @@ ts.forEachChild(sf, node => {
 process.stdout.write(JSON.stringify(out));
 """
 
+NODE_BOUNDARIES = r"""
+const fs = require('fs');
+const tsPath = process.argv[3];
+const ts = require(tsPath);
+const fileName = process.argv[2];
+const source = fs.readFileSync(fileName, 'utf8');
+const kind = fileName.endsWith('.tsx') || fileName.endsWith('.jsx')
+  ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, kind);
+
+const out = [];
+function lineOf(pos) { return sf.getLineAndCharacterOfPosition(pos).line + 1; }
+function text(n) { return n.getText(sf).replace(/\s+/g, ' ').slice(0, 90); }
+
+const REL = {
+  [ts.SyntaxKind.LessThanToken]: '<',
+  [ts.SyntaxKind.LessThanEqualsToken]: '<=',
+  [ts.SyntaxKind.GreaterThanToken]: '>',
+  [ts.SyntaxKind.GreaterThanEqualsToken]: '>=',
+};
+const EQ = {
+  [ts.SyntaxKind.EqualsEqualsEqualsToken]: '===',
+  [ts.SyntaxKind.ExclamationEqualsEqualsToken]: '!==',
+  [ts.SyntaxKind.EqualsEqualsToken]: '==',
+  [ts.SyntaxKind.ExclamationEqualsToken]: '!=',
+};
+const LOGIC = {
+  [ts.SyntaxKind.BarBarToken]: '||',
+  [ts.SyntaxKind.AmpersandAmpersandToken]: '&&',
+};
+
+function walk(node) {
+  if (ts.isBinaryExpression(node)) {
+    const op = node.operatorToken.kind;
+    if (REL[op]) {
+      out.push({ kind: 'comparison', op: REL[op], line: lineOf(node.getStart(sf)),
+                 expr: text(node),
+                 left: text(node.left), right: text(node.right) });
+    } else if (EQ[op]) {
+      out.push({ kind: 'equality', op: EQ[op], line: lineOf(node.getStart(sf)),
+                 expr: text(node),
+                 left: text(node.left), right: text(node.right) });
+    } else if (LOGIC[op]) {
+      out.push({ kind: 'logic', op: LOGIC[op], line: lineOf(node.getStart(sf)),
+                 expr: text(node) });
+    }
+  } else if (ts.isThrowStatement(node)) {
+    out.push({ kind: 'throw', line: lineOf(node.getStart(sf)), expr: text(node.expression) });
+  } else if (ts.isElementAccessExpression(node) &&
+             ts.isNumericLiteral(node.argumentExpression)) {
+    out.push({ kind: 'index', line: lineOf(node.getStart(sf)),
+               expr: text(node), idx: node.argumentExpression.text });
+  }
+  ts.forEachChild(node, walk);
+}
+walk(sf);
+process.stdout.write(JSON.stringify(out));
+"""
+
 
 def find_typescript_module(start_dir):
     """Locate a CLASSIC TypeScript compiler API (lib/typescript.js, TS <= 5.x).
@@ -939,6 +998,142 @@ def refresh(manifest_path, repo_root):
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
+
+# ── Boundary obligations ──────────────────────────────────────────────────────
+#
+# Measured on the benchmark rig 2026-08-21 across 39 suites for one file: the mutants that
+# separate an 88% suite from a 91% one are not exotic. They are `value < 0` surviving a change
+# to `value <= 0` (27 of 39 suites), a literal 0 bumped to 1 (27 of 39), a `throw` deleted
+# outright (34 of 39), and `normalized[0]` shifted to `normalized[1]` (15 of 39). Every one is
+# a boundary the tests never sat exactly on.
+#
+# The guidance already existed -- `test-edge-cases.md` says "exact threshold N, N-1, N+1" -- but
+# it lives in a row keyed on code TYPE, so a bare `value < 0` inside a pure function never
+# triggers it. Classification decides whether the rule applies, and classification is a
+# judgement made before the comparisons are known.
+#
+# This derives the obligations from the source instead. Every relational operator implies two
+# adjacent inputs; every throw implies a test that fails when the throw is deleted; every
+# literal index implies a case where that position differs from its neighbour.
+
+PY_CMP = {
+    "Lt": "<", "LtE": "<=", "Gt": ">", "GtE": ">=",
+    "Eq": "==", "NotEq": "!=", "Is": "is", "IsNot": "is not",
+}
+
+
+def boundaries_python(path):
+    import ast as ast_mod
+    with open(path, encoding="utf-8") as fh:
+        src = fh.read()
+    try:
+        tree = ast_mod.parse(src)
+    except SyntaxError:
+        return None
+    out = []
+    for node in ast_mod.walk(tree):
+        if isinstance(node, ast_mod.Compare) and node.ops:
+            op = PY_CMP.get(type(node.ops[0]).__name__)
+            if op:
+                out.append({"kind": "comparison" if op in ("<", "<=", ">", ">=") else "equality",
+                            "op": op, "line": node.lineno,
+                            "expr": ast_mod.unparse(node)[:90],
+                            "left": ast_mod.unparse(node.left)[:40],
+                            "right": ast_mod.unparse(node.comparators[0])[:40]})
+        elif isinstance(node, ast_mod.BoolOp):
+            # Parity with the TS walker: `a or b` and `a and b` are the operators a mutation
+            # runner swaps, and a test where both operands agree passes under either one.
+            out.append({"kind": "logic",
+                        "op": "or" if isinstance(node.op, ast_mod.Or) else "and",
+                        "line": node.lineno, "expr": ast_mod.unparse(node)[:90]})
+        elif isinstance(node, ast_mod.Raise):
+            out.append({"kind": "throw", "line": node.lineno,
+                        "expr": ast_mod.unparse(node.exc)[:90] if node.exc else "re-raise"})
+        elif (isinstance(node, ast_mod.Subscript)
+              and isinstance(node.slice, ast_mod.Constant)
+              and isinstance(node.slice.value, int)):
+            out.append({"kind": "index", "line": node.lineno,
+                        "expr": ast_mod.unparse(node)[:90], "idx": str(node.slice.value)})
+    return out
+
+
+def boundaries_ts(path):
+    node_bin = shutil.which("node")
+    if not node_bin:
+        return None
+    module_path = find_typescript_module(os.path.dirname(os.path.abspath(path)))
+    if not module_path:
+        return None
+    return _run_node_extractor(node_bin, NODE_BOUNDARIES, path, module_path)
+
+
+def boundaries(path):
+    lang = detect_language(path)
+    if lang == "python":
+        return boundaries_python(path)
+    if lang in ("ts", "js"):
+        return boundaries_ts(path)
+    return None
+
+
+def report_boundaries(path):
+    items = boundaries(path)
+    # relpath against CWD can produce a longer, uglier string than the input; show
+    # whichever is shorter so the header stays readable from any directory.
+    shown = min(path, os.path.relpath(path), key=len)
+    print("BOUNDARY OBLIGATIONS - %s" % shown)
+    if items is None:
+        print("  unavailable: no parser for this language "
+              "(TS/JS needs node + a classic typescript module; Python is built in)")
+        print("  Treat as BLOCKED_DEGRADED for boundary evidence -- not as 'no boundaries'.")
+        return 3
+    if not items:
+        print("  none found - no comparisons, throws or literal indexes in this file")
+        return 0
+
+    # One row per distinct (kind, line, expr): the same comparison reported twice is noise.
+    seen, rows = set(), []
+    for it in items:
+        key = (it["kind"], it["line"], it.get("expr"))
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(it)
+    rows.sort(key=lambda r: (r["line"], r["kind"]))
+
+    counts = {}
+    for r in rows:
+        counts[r["kind"]] = counts.get(r["kind"], 0) + 1
+    print("  %s" % "  ".join("%s: %d" % (k, counts[k]) for k in sorted(counts)))
+    print()
+    # The advice is per KIND, so it is stated once. Repeating it under each of 25 throws turns
+    # a work list into a wall of text, and a wall of text is skimmed.
+    print("WHAT EACH KIND REQUIRES")
+    if "comparison" in counts:
+        print("  COMPARISON  an input where the two sides are EQUAL - that case alone separates")
+        print("              < from <=, > from >= - plus one clearly on each side.")
+    if "equality" in counts:
+        print("  EQUALITY    one case that satisfies it and one that misses by the smallest")
+        print("              possible margin: adjacent value, off-by-one length, null vs undefined.")
+    if "logic" in counts:
+        print("  LOGIC       one case where the LEFT side alone decides the result and one where")
+        print("              the RIGHT side alone does. Only those separate || from &&; a test")
+        print("              where both operands agree passes under either operator.")
+    if "throw" in counts:
+        print("  THROW       a test that FAILS when this throw is DELETED: assert the message or")
+        print("              type, not merely that something threw, and reach THIS throw's path.")
+    if "index" in counts:
+        print("  INDEX       a case where that position differs from its neighbour, so reading the")
+        print("              wrong element changes the result.")
+    print()
+    print("OBLIGATIONS")
+    for r in rows:
+        print("  L%-4d %-11s %s" % (r["line"], r["kind"].upper(), r["expr"]))
+    print()
+    print("Each obligation is an inventory row. A row whose evidence does not distinguish the")
+    print("boundary is not covered, however green the suite is.")
+    return 0
+
 def main(argv):
     parser = argparse.ArgumentParser(
         prog="test-coverage-gate.py",
@@ -947,6 +1142,12 @@ def main(argv):
 
     p_extract = sub.add_parser("extract", help="enumerate public entry points")
     p_extract.add_argument("--production", required=True)
+
+    p_bounds = sub.add_parser(
+        "boundaries",
+        help="list the boundary obligations a suite must sit exactly on "
+             "(comparisons, throws, literal indexes)")
+    p_bounds.add_argument("--production", required=True)
 
     p_validate = sub.add_parser("validate", help="validate a coverage manifest")
     p_validate.add_argument("--manifest", required=True)
@@ -972,6 +1173,8 @@ def main(argv):
         return 2
 
     try:
+        if args.command == "boundaries":
+            return report_boundaries(args.production)
         if args.command == "extract":
             if not os.path.isfile(args.production):
                 raise SystemExit2("production file not found: %s" % args.production)

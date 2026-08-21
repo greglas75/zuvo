@@ -328,7 +328,29 @@ Print: `[BUG-SCAN] Found {N} potential issues.` or `[BUG-SCAN] Clean.`
 Follow `test-inventory-protocol.md` Step 1.6 exactly:
 
 1. Run the independent extractor: `python3 "$ZUVO_BASE/scripts/test-coverage-gate.py" extract --production <file>` — its symbol list is the floor; add rows for surface it cannot see (routes, indirect callers), never remove one it found.
-2. Add rows per symbol: entry + every owned branch + every explicit error path + owned side effects. Honest `owned`/`delegated` classification.
+1b. **Run the boundary extractor in the same breath** — it reads the source, not the classification:
+
+```bash
+python3 "$ZUVO_BASE/scripts/test-coverage-gate.py" boundaries --production <file>
+```
+
+Every relational operator, boolean operator, `throw`/`raise` and literal index it prints is an
+inventory row of type `branch` or `error_path`, and its evidence must be a test that sits on
+the boundary — not merely one that exercises the line.
+
+Why this is mechanical rather than a judgement call: measured across **39 suites for one file**,
+the mutants that separate an 88% suite from a 91% one are all boundaries the tests never sat
+exactly on — `value < 0` surviving a change to `value <= 0` (27 of 39 suites), a literal `0`
+bumped to `1` (27 of 39), a `throw` deleted outright (**34 of 39**), `normalized[0]` shifted to
+`normalized[1]` (15 of 39). `test-edge-cases.md` already says "exact threshold N, N-1, N+1" — but
+in a row keyed on code TYPE, so a bare comparison inside a pure function never triggers it.
+Classification decides whether the rule applies, and classification happens before the
+comparisons are known. Deriving the obligations from the source removes that ordering problem.
+
+Exit 3 means no parser for this language: record `BLOCKED_DEGRADED` for boundary evidence — that
+is not the same as "this file has no boundaries".
+
+2. Add rows per symbol: entry + every owned branch + every explicit error path + owned side effects, **including every boundary obligation from 1b**. Honest `owned`/`delegated` classification.
 3. Write the manifest to `$ZUVO_DIR/contracts/<basename>.coverage.json` (`status: "inventory"`, current sha256, NO coverage claims).
 4. Print `INVENTORY FROZEN` with the N/N projected metrics. **For COMPLEX files these N/N metrics — public methods, owned rows, error paths — are the ONLY progress numbers; never present a test count as progress.**
 
