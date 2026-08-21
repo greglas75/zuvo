@@ -308,6 +308,23 @@ after it runs v11, because the boundary work aims at files that are not already 
 | CASE-04 | `survey-logic-auditor.replay.ts` | naked 67.2% |
 | CASE-05 | `dom-translation-detector.ts` (jest/NestJS) | **human-written incumbent 34.6%** — 35 of its 50 tests are skipped |
 
+## Reading the results in the morning
+
+On `coding-vps`, everything lives in `/root/bench`:
+
+```bash
+ssh coding-vps 'cd /root/bench && python3 table.py'          # every case x arm: kill%, wall, tokens
+ssh coding-vps 'tail -30 /root/bench/night.log'              # which batches ran and when
+ssh coding-vps 'ls /root/bench/mon-*.log'                    # one live trace per batch
+ssh coding-vps 'cd /root/bench && python3 turns_vs_kill.py'  # the plateau analysis, refreshed
+ssh coding-vps 'cd /root/bench && python3 survivors.py CASE-03'   # what the misses are made of
+ssh coding-vps 'cd /root/bench && python3 aggwall.py naked zuvo-v9 zuvo-v10 zuvo-v11'  # where wall went
+```
+
+`table.py` is the one to start from. A `-` in the kill column means the run finished but scoring
+has not caught up; a `0.0` means the suite fails on unmutated source and is worthless, which is a
+result, not a gap.
+
 ## Instrument changes made tonight
 
 - The rig is multi-repo: a case names its own checkout, and the green/red selfcheck picks the
