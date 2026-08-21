@@ -8,6 +8,40 @@ not argued. Where a number is a single run rather than a median, it says so.
 
 ---
 
+## Bottom line
+
+**Quality moved for the first time in this benchmark.** Two independent five-run batches agree:
+
+| arm | kill (med) | RED | wall (med) | vs control |
+|---|---|---|---|---|
+| naked (no skill) | 84.8% | 0/4 | 231s | — |
+| **v7** — on `main` now | 88.9% | 0/5 | 492s | +4.1 |
+| **v9 / v10** | **90.9%** | 0/5 | 1214s / 2353s | **+6.1** |
+
+Against a per-file ceiling of ~91.9% (eight mutants survive every arm ever run on this file),
+90.9% is one non-equivalent mutant from the top.
+
+**The 20-minute target is a tail problem, not a median problem.** v7's median is 8 minutes and
+v9's is 20; what breaks the target is a minority of runs at 60+ minutes. Every fix tonight
+attacks a specific, measured cause of that tail rather than trimming work:
+
+| cause | measured | fix |
+|---|---|---|
+| four separate fix-and-rerun loops | 0 repeats → 30-111 turns; 28-30 repeats → 395-485 | one command, one verdict |
+| a call over the Bash tool's **120s** limit gets backgrounded | runs then poll for their own output, 4-6 turns each | early pass **78s → 5s** |
+| project-wide `tsc` on a repo with **6050** pre-existing errors | largest bucket in EVERY arm, incl. the control | scoped, incremental, deferred |
+| `ZUVO_BASE` resolved by a 4-line sed recipe | most-repeated command in the whole corpus (30×) | `~/.zuvo/zuvo-base` |
+| the coverage gate run twice, once per document | 15 direct calls in one run | includes defer to the helper |
+| a deferral reported `SKIP`, which means "do it by hand" | **677s over 24 turns**, 29% of one run's wall | `DEFER` is its own state |
+
+**And the misses have a shape.** Comparing per-mutant survivors across 39 suites: what separates
+an 88% suite from a 91% one is boundaries the tests never sat exactly on — a deleted `throw`
+survived 34 of 39 suites, `< ` changed to `<=` survived 27, `[0]` shifted to `[1]` survived 15.
+`test-coverage-gate.py boundaries` now derives those obligations from the source instead of from
+the code-type classification that was gating the existing rule.
+
+---
+
 ## Where the time actually goes
 
 Every turn of 23 runs was attributed to **what the agent did** — the tool call, and for a bash
