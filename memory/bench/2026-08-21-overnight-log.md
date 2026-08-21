@@ -263,6 +263,20 @@ L18/L26: exactly the mutants 27 and 34 of 39 suites failed to kill.
 This is the first lever found tonight that aims at **quality** rather than cost, and its value
 should show on CASE-02/03/04/05 rather than on CASE-01, which is already at its ceiling.
 
+## v10 — same quality as v9, twice the wall, and the reason is a single word
+
+| arm | n | kill (med) | RED | wall (med) | tokens (med) |
+|---|---|---|---|---|---|
+| naked | 4 | 84.8% | 0/4 | 231s | 0.30M |
+| zuvo-v7 (main) | 5 | 88.9% | 0/5 | **492s** | 1.82M |
+| zuvo-v9 | 5 | **90.9%** | 0/5 | 1214s | 4.43M |
+| zuvo-v10 | 5 | **90.9%** | 0/5 | 2353s | 7.26M |
+
+v10 holds v9's 90.9% — the quality gain is stable across two independent five-run batches, which
+is worth more than either batch alone. What it does not hold is the cost, and the clock it was
+built to test never even fired: the verification loop now finishes in **1.9 minutes**, so a
+15-minute budget is nowhere near binding. The extra wall is the SKIP/DEFER collision below.
+
 ## A one-word regression I introduced, and how the rig found it
 
 v10's phase attribution showed one run spending **677 seconds across 24 turns** in the mutation
