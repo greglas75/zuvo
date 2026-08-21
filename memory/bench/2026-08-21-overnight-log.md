@@ -263,15 +263,41 @@ L18/L26: exactly the mutants 27 and 34 of 39 suites failed to kill.
 This is the first lever found tonight that aims at **quality** rather than cost, and its value
 should show on CASE-02/03/04/05 rather than on CASE-01, which is already at its ceiling.
 
-## Open at the time of writing
+## State of the night plan
 
-- **v9** (escape hatch closed + typecheck folded + mutation deferred), CASE-01, n=5. Three
-  finished at **648s, 1148s, 1214s** — two of three under the 20-minute target, against v8's
-  1684s median. The two slow runs are the ones that hit the 120-second backgrounding above.
-- **v10** carries everything: the closed escape hatch, the folded+deferred typecheck, deferred
-  mutation, the include de-duplication, `zuvo-base`, and the 5-second early pass. Queued.
-- **CASE-05 = shield** (`rs_be`, jest, NestJS): corpus entry created, repo + deps + Stryker
-  installed on the rig, incumbent baseline scored. The human-written spec kills **34.6%**
-  (66/191 mutants, 99 no-coverage) — 35 of its 50 tests are `skip`ped. Large headroom.
-- The rig is now multi-repo: a case names its own checkout, and the green/red selfcheck picks the
-  runner and directory from the case rather than assuming `apps/api` + vitest.
+Seven batches, sequenced (five containers is what this box absorbs while staying responsive;
+two batches at once would make every wall-clock number a measurement of contention):
+
+| # | case | arm | what it answers |
+|---|---|---|---|
+| 1 | CASE-01 | v10 ×5 | **does the 15-minute clock cost quality?** v10 is v9 plus the clock and nothing else |
+| 2 | CASE-05 | naked ×3 | a floor on jest/NestJS, a stack this benchmark has never run |
+| 3 | CASE-05 | v10 ×3 | the skill on that stack |
+| 4 | CASE-05 | v11 ×3 | v10 + boundary obligations, same stack, same night |
+| 5-7 | CASE-02/03/04 | v11 ×3 each | the boundary change where there is room: these sit at 61-78% kill |
+
+CASE-01 deliberately stays on v10 so its comparison against v9 isolates the clock. Everything
+after it runs v11, because the boundary work aims at files that are not already at their ceiling.
+
+### Reference points already on record
+
+| case | file | incumbent / control |
+|---|---|---|
+| CASE-01 | `runner-maxdiff-score-contract.ts` (vitest) | naked 84.8%, ceiling ~91.9% |
+| CASE-02 | `QuestionResponseAnswer.tsx` (React) | naked 75.2% |
+| CASE-03 | `useFeedbackForm.ts` (React hook) | naked 66.1% |
+| CASE-04 | `survey-logic-auditor.replay.ts` | naked 67.2% |
+| CASE-05 | `dom-translation-detector.ts` (jest/NestJS) | **human-written incumbent 34.6%** — 35 of its 50 tests are skipped |
+
+## Instrument changes made tonight
+
+- The rig is multi-repo: a case names its own checkout, and the green/red selfcheck picks the
+  runner and the directory from the case rather than assuming `apps/api` + vitest.
+- `run_arm.sh` refuses to start an agent on a workspace under 1 MB or without the file under
+  test, and bounds the docker CLIENT as well as the agent (a client outliving its container
+  stalled the whole sweep).
+- Every `pgrep` wait is anchored on the start of the command line. Unanchored, they matched the
+  monitoring shells watching them — an instrument that blocked the experiment it was observing,
+  and the reason the driver sat idle for half an hour.
+- Scoring is serialised behind a lock, and dispatches per case: frozen mutants where a frozen set
+  exists, StrykerJS otherwise (which is how a jest case can be scored at all).
