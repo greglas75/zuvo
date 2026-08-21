@@ -54,6 +54,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 SCHEMA = "zuvo-verify/v1"
 DEFAULT_BUDGET = 3
@@ -868,14 +869,52 @@ def main():
     # The gate and coverage measure a suite that is assumed green. Running them against a red
     # suite produces numbers that describe nothing and cost a full runner invocation each.
     if suite.status == "PASS":
-        gate = check_gate(manifest_path, root, base)
-        results.append(gate)
-        cov = None
+        # The gate, the coverage run and the typecheck are three independent processes reading
+        # the same green suite -- nothing any of them does changes what the others see. Running
+        # them in sequence made a cold invocation 59-78s, and inside a container under load that
+        # crosses the harness's 120-second Bash timeout: the call gets backgrounded and the agent
+        # turns one tool call into a polling loop (`sleep 90; kill -0 <pid>`, `sleep 60; echo
+        # tick`), which is exactly the shape this helper exists to remove. Overlapping them keeps
+        # the invocation inside the window.
+        jobs = [("gate", lambda: check_gate(manifest_path, root, base))]
         if "coverage" not in skip:
-            cov = check_coverage(runner, prod, tests, root)
+            jobs.append(("coverage", lambda: check_coverage(runner, prod, tests, root)))
+        done = {}
+        with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+            futures = {pool.submit(fn): name for name, fn in jobs}
+            for fut in futures:
+                name = futures[fut]
+                try:
+                    done[name] = fut.result()
+                except Exception as exc:  # a check must not take the whole run down
+                    r = Result(name)
+                    r.status = "ERROR"
+                    r.detail = "error: %s" % exc
+                    done[name] = r
+        gate = done["gate"]
+        cov = done.get("coverage")
+        results.append(gate)
+        if cov is not None:
             results.append(cov)
-        if "typecheck" not in skip:
+
+        # The typecheck and the mutation run are the two expensive measurements (57s cold and
+        # 270s median on the rig, against single-digit seconds for the gate). Both describe the
+        # FINISHED suite, and a pass that still reports uncovered rows is looking at a suite
+        # about to be rewritten — so both wait for the cheap checks to come back clean. This is
+        # what keeps an early pass inside the harness's 120-second Bash window; a pass that
+        # crosses it gets backgrounded, and the run spends four to six turns polling for output
+        # one turn would have returned.
+        cheap_clean = gate.status in ("PASS", "DEGRADED") and (cov is None or cov.status in ("PASS", "SKIP"))
+        deferred = ("deferred — close the gaps above first; this measures a finished suite "
+                    "(--force-mutation to run both anyway)")
+        if "typecheck" in skip:
+            pass
+        elif a.force_mutation or cheap_clean:
             results.append(check_typecheck(runner, prod, tests, root, manifest_path))
+        else:
+            r = Result("typecheck")
+            r.detail = deferred
+            results.append(r)
         # Mutation is by far the most expensive measurement here: median 270s on the rig and
         # 1089s at the worst, against 16-57s for the typecheck and single-digit seconds for the
         # gate. Running it while the cheap checks already say the suite is incomplete measures a
@@ -883,14 +922,11 @@ def main():
         # single largest wasted block in the run. It waits until the suite is worth measuring.
         if "mutation" in skip:
             pass
-        elif a.force_mutation or (
-            gate.status in ("PASS", "DEGRADED") and (cov is None or cov.status in ("PASS", "SKIP"))
-        ):
+        elif a.force_mutation or cheap_clean:
             results.append(check_mutation(runner, prod, tests, root, a.survivor_cap, not a.no_install))
         else:
             r = Result("mutation")
-            r.detail = ("deferred — close the gaps above first; mutation measures a finished "
-                        "suite (--force-mutation to override)")
+            r.detail = deferred
             results.append(r)
     else:
         for name in ("coverage-gate", "coverage", "typecheck", "mutation"):

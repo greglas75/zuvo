@@ -382,6 +382,14 @@ ZUVO_DIR="${ZUVO_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)/zuvo}"
 ~/.zuvo/verify-tests --manifest "$ZUVO_DIR/contracts/<basename>.coverage.json"
 ```
 
+**Give the tool call a `timeout` of `600000` (10 min).** A cold pass runs a suite, a validator,
+a coverage run, a typecheck and a mutation run; on a loaded machine that can pass the Bash tool's
+**default 120-second limit**, and when it does the harness backgrounds the call and hands back a
+task id instead of the block. Measured on the rig: every run that hit this then built a polling
+loop — `sleep 90; kill -0 <pid>`, `sleep 60; echo tick`, `tail /tmp/verify-out.txt` — spending
+four to six turns waiting for output that one turn would have returned. A shell `timeout 590`
+prefix does NOT help: it bounds the program, not the harness. Set the tool parameter.
+
 **Before the first call**, fill the FROZEN manifest per `test-inventory-protocol.md` Step 2.5:
 each row's `coverage` + `test-file:line` evidence, `status: "final"`, and `quality_gates` — run
 Step 3's critical-gate scoring for Q7/Q11 NOW so the manifest is complete on the first pass. A

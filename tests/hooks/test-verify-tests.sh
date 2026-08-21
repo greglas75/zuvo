@@ -481,10 +481,17 @@ grep -q "legacy.ts" "$TMP/out" \
 
 # ── (24) mutation waits until the cheap checks stop reporting gaps ───────────────────────
 R="$TMP/m24"; mkrepo "$R" with-stryker
+rm -f "$TSC_ARGS_CANARY"
 STUB_GATE=fail STUB_TSC=clean vt "$R"; rc=$?
 grep -qE "mutation .*deferred" "$TMP/out" \
   && pass "mutation is deferred while the gate still fails (saves the 270s median block)" \
   || bad "mutation ran against an incomplete suite: $(grep -E '^  mutation' "$TMP/out")"
+
+grep -qE "typecheck .*deferred" "$TMP/out" \
+  && pass "typecheck is deferred too (57s cold — the block that crosses the 120s Bash window)" \
+  || bad "typecheck ran against an incomplete suite: $(grep -E '^  typecheck' "$TMP/out")"
+grep -q -- "-p tsconfig.json" "$TMP/tsc-args" 2>/dev/null && [ -s "$TMP/tsc-args" ] \
+  && bad "tsc was invoked despite the deferral" || pass "no tsc process is started on a deferred pass"
 
 R="$TMP/m24b"; mkrepo "$R" with-stryker
 STUB_GATE=fail STUB_SURVIVORS=2 vt "$R" --force-mutation
