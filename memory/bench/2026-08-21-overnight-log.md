@@ -103,10 +103,44 @@ Two causes, both now fixed and being re-measured as v9:
 
 ---
 
+## The finding the wall-clock buckets could not show
+
+Reading the v9 transcripts rather than their timings turned up the reason several runs were
+expensive, and it is not a phase at all:
+
+> **The helper's cold invocation crossed the Bash tool's default 120-second limit.**
+
+Inside a loaded container the harness backgrounds a call that long and hands back a task id
+instead of the output. Every run that hit it then built a polling loop — `sleep 90; kill -0
+<pid>`, `sleep 60; echo tick`, `tail /tmp/verify-out.txt` — four to six turns spent waiting for
+output that one turn returns. A shell `timeout 590` prefix does not help: it bounds the program,
+not the harness.
+
+Two fixes, and the second is the one that matters:
+
+- the gate and the coverage run execute concurrently (independent processes over the same green
+  suite);
+- **the typecheck joined mutation behind the cheap checks.** Both describe the *finished* suite,
+  and a pass still reporting uncovered rows is looking at one about to be rewritten — so 57s of
+  `tsc` and 270s of Stryker no longer run on a pass whose result they cannot inform.
+
+Measured, same file, same manifest: **a first pass with gaps open went 78s → 5s.** The expensive
+measurements still run, on the pass where the suite is worth measuring. The skill also now tells
+the agent to give the call `timeout: 600000`, so the final pass — which does run both — cannot hit
+the same wall.
+
+There is a second-order lesson here worth keeping. Wall-clock attribution found *typecheck* and
+*mutation* as the big blocks, and both were real. But the reason those blocks were expensive in
+turns rather than merely in seconds was a harness limit that no bucket could name. Timings say
+where the time went; transcripts say why.
+
 ## Open at the time of writing
 
-- **v9** (escape hatch closed + typecheck folded + mutation deferred), CASE-01, n=5 — in flight.
-  Three finished: **648s, 1148s, 1214s**. Two of three under the 20-minute target.
+- **v9** (escape hatch closed + typecheck folded + mutation deferred), CASE-01, n=5. Three
+  finished at **648s, 1148s, 1214s** — two of three under the 20-minute target, against v8's
+  1684s median. The two slow runs are the ones that hit the 120-second backgrounding above.
+- **v10** carries everything: the closed escape hatch, the folded+deferred typecheck, deferred
+  mutation, the include de-duplication, `zuvo-base`, and the 5-second early pass. Queued.
 - **CASE-05 = shield** (`rs_be`, jest, NestJS): corpus entry created, repo + deps + Stryker
   installed on the rig, incumbent baseline scored. The human-written spec kills **34.6%**
   (66/191 mutants, 99 no-coverage) — 35 of its 50 tests are `skip`ped. Large headroom.
