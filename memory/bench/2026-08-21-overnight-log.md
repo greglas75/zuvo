@@ -334,6 +334,16 @@ result, not a gap.
   stalled the whole sweep).
 - Every `pgrep` wait is anchored on the start of the command line. Unanchored, they matched the
   monitoring shells watching them — an instrument that blocked the experiment it was observing,
-  and the reason the driver sat idle for half an hour.
+  and the reason the driver sat idle for half an hour. The correction then produced its own
+  variant: a driver waiting on `^bash /root/bench/night2.sh` never matched, because that process
+  was started as `bash night2.sh` from inside the directory, so the absolute path is not in its
+  command line at all. **Anchoring is only correct against the form the process actually has**,
+  and two drivers ran in parallel for a few minutes as a result. They serialised on the
+  idle-box check, but they shared one `supervisor.state`; one driver from there on.
+- A repetition of the control arm is still the control arm. `arm_needs_skill` tested the run
+  directory against the literal `'naked'`, so `naked-r1` was expected to invoke a skill it
+  deliberately does not have and came out `SKILL_NOT_INVOKED` — a verdict the supervisor reads as
+  "not complete", which would have relaunched every control run three times and then given up.
+  Caught before the CASE-05 control batch, not during it.
 - Scoring is serialised behind a lock, and dispatches per case: frozen mutants where a frozen set
   exists, StrykerJS otherwise (which is how a jest case can be scored at all).
