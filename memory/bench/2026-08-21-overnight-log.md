@@ -1,7 +1,12 @@
 # Overnight run — 2026-08-21 → 08-22
 
-Goal set at 17:15: **a full `write-tests` run under 20 minutes, quality held.** Then move down
-the file list and optimise as far as it goes.
+Goal set at 17:15: **a full run under 20 minutes, quality held.** Then move down the file list and
+optimise as far as it goes.
+
+Read as `write-tests`, since that is the skill this whole session has been benchmarking and the
+"file list" is its corpus. If it meant `zuvo:refactor` the skill instead, none of this measures
+that — `~/.zuvo/runs.log` holds one entry and no refactor timings, so there is no fleet data to
+answer it from, and it would need its own rig.
 
 Everything below is measured on the rig (coding-vps, containers, frozen mutant sets / StrykerJS),
 not argued. Where a number is a single run rather than a median, it says so.
