@@ -26,6 +26,12 @@ file, and runs it against unfixed production — so a test asserting the correct
 the clean-pass gate trips, and the run scores 0. **Doing the mandated thing scored worse than
 never finding the bug.**
 
+Audited across all five cases, not just the one where it surfaced. Nine runs modified production;
+each is now either re-scored with its own source restored (StrykerJS cases) or marked
+`PRODUCTION_MODIFIED` (frozen-mutant cases). **The corpus contains exactly two genuinely broken
+suites — `zuvo-v3-r6` on CASE-01 and `zuvo-v4` on CASE-04 — the only two that wrote no production
+diff at all.**
+
 Re-scored with the run's own production file restored:
 
 | shield / CASE-05 | before | after |
@@ -35,8 +41,8 @@ Re-scored with the run's own production file restored:
 
 So the skill does beat the control on that file, and the instrument was reporting it as total
 failure. Everything below that says "RED" needs reading against this: **`v2 2/4 RED`, `v6 1/3 RED`,
-`v11 1/5 RED` and all three shield runs are affected.** Only `zuvo-v3-r6` wrote no production diff
-and remains a genuine broken suite.
+`v11 1/5 RED` and all three shield runs are affected.** Only `zuvo-v3-r6` (CASE-01) and `zuvo-v4`
+(CASE-04) wrote no production diff and remain genuinely broken suites.
 
 ### What changed
 
