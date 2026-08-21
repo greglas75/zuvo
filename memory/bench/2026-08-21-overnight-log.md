@@ -278,9 +278,15 @@ Median effect: **about half a point for 3.2× the turns**, and negative in two a
 a *between-arm* effect — better skills cost more turns and score more — not a dose-response
 within a skill.
 
-The other half of the picture is worse than neutral: **three of the four suites that came out RED**
-(fail on unmutated source, scored 0, worthless) were among the most expensive runs in the corpus —
-358, 395 and 485 turns. Past the plateau, effort buys variance.
+The other half of the picture is **withdrawn.** It read: *three of the four RED suites were among
+the most expensive runs, so past the plateau effort buys variance.* Those three runs did not write
+broken suites — they fixed production bugs in-run, exactly as Step 4.5 requires, and the scorer
+discarded the fix (see the correction at the top). Re-scored, they are `PRODUCTION_MODIFIED`, not
+zeros. Expensive runs are not more likely to produce a worthless suite; they are more likely to
+find a production bug, which is the opposite conclusion.
+
+What survives is the part that never depended on RED counts: within one arm, working 3-5x longer
+moves the median by about half a point.
 
 So capping the run is close to free, and the cap has to be owned by a program rather than by the
 agent's sense of when it is done. `verify-tests` now carries two: three passes, and a **15-minute
@@ -429,30 +435,29 @@ after it runs v11, because the boundary work aims at files that are not already 
 | CASE-04 | `survey-logic-auditor.replay.ts` | naked 67.2% |
 | CASE-05 | `dom-translation-detector.ts` (jest/NestJS) | **human-written incumbent 34.6%** — 35 of its 50 tests are skipped |
 
-## v11 on CASE-01 — one run at the ceiling, one run dead, no median gain
+## v11 on CASE-01 — one run at the ceiling, no median gain
 
 | run | wall | kill |
 |---|---|---|
 | r4 | 1870s | 90.9% |
 | r5 | 2419s | **91.9% — the ceiling, the only run in 44 arms to reach it** |
-| r1 | 2900s | **0.0% — RED** |
+| r1 | 2900s | `PRODUCTION_MODIFIED` — fixed a real defect in-run, not comparable on frozen mutants |
 | r3 | 3069s | 90.9% |
 | r2 | 4208s | 89.9% |
 
-Median 90.9%: identical to v9 and v10, at **2.4x v9's wall** and 10.4M tokens. On CASE-01 the
+Median 90.9% over the four comparable runs, 0 RED: identical to v9 and v10, at **2.4x v9's wall**
+and 10.4M tokens. On CASE-01 the
 boundary obligations buy nothing, which is what a file one mutant from its ceiling should show.
 They do change behaviour — 61 tests written against v10's 38, from a 61-row inventory — but the
 extra tests land on mutants that were already dead.
 
-The RED is worth reading closely, because it is not a bad test. The obligations pushed the run to
-try `optionId: undefined`, and that surfaced a **real production defect**: the module throws a raw
-`TypeError` where its own contract promises `MaxDiffScoreContractError`. The test asserts the
-contract. Production does not honour it. The run then finished there.
+r1 is worth reading closely, because it is where the instrument bug surfaced. The obligations
+pushed the run to try `optionId: undefined`, which found a **real production defect**: the module
+throws a raw `TypeError` where its own contract promises `MaxDiffScoreContractError`. The run fixed
+it, per Step 4.5. The scorer then measured the suite against unfixed production and reported 0.
 
-That is the worst available outcome — a red suite scores zero, so finding a genuine bug and
-leaving the suite red is a net loss against never having written the test. Step 4.5 already
-requires fixing surfaced production bugs in-run; the resolution is now named in the suite-FAIL gap
-list itself, where a run actually stops, rather than as more prose in the skill.
+The helper now names the two legal exits from a red suite in the suite-FAIL gap list itself —
+still worth having, since a run genuinely CAN finish red — but r1 was not one of those runs.
 
 **Second-order effect worth carrying:** obligations derived from source surface more production
 bugs than tests written from intent. That makes the in-run fix rule matter more, not less.
