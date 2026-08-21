@@ -388,10 +388,25 @@ Step 3's critical-gate scoring for Q7/Q11 NOW so the manifest is complete on the
 manifest that is missing its Q values is a bookkeeping reason to run the gate twice, and this
 pipeline has exactly one budget for that.
 
-The command runs the suite, the validator, scoped coverage and StrykerJS in one process; restores
-the production file; verifies its sha256 against `production_sha256`; clears the runner's debris
-(`.stryker-tmp/`, `mutants.out/`, report dirs); and prints one block listing every gap still open.
-Paste that block verbatim — never paraphrase it, never claim a check it did not print.
+The command runs the suite, the validator, scoped coverage, a scoped typecheck and StrykerJS in
+one process; restores the production file; verifies its sha256 against `production_sha256`; clears
+the runner's debris (`.stryker-tmp/`, `mutants.out/`, report dirs); and prints one block listing
+every gap still open. Paste that block verbatim — never paraphrase it, never claim a check it did
+not print.
+
+**Do not run `tsc` yourself.** Typechecking was the largest wall-clock block in every arm measured
+on the rig — 122s median even with NO skill loaded, 247s in the heaviest arm, 722s at the worst —
+because a project-wide `tsc --noEmit` is the reflex. On the file under test that spend bought
+nothing: the project carries **6050 pre-existing type errors**, so the run drowned its own two
+diagnostics in somebody else's debt. The helper runs it once per pass against the tsconfig that
+OWNS the file, incrementally (57s cold, 16s warm), and reports only errors in the spec you wrote.
+Errors in the production file are printed as context and backlogged — they are not this run's gaps.
+
+**Mutation waits for the cheap checks.** The helper defers StrykerJS until the gate and coverage
+stop reporting gaps, because mutation is the most expensive measurement in the pipeline by an
+order of magnitude (270s median, 1089s worst, against 16-57s for the typecheck) and a suite with
+open rows is about to be rewritten anyway. `mutation SKIP — deferred` is the expected state on a
+first pass, not a missing measurement; it runs on the pass where the suite is worth measuring.
 
 | exit | meaning | what to do |
 |---|---|---|

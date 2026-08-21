@@ -436,6 +436,114 @@ def check_coverage(runner, prod_file, test_files, root):
         r.seconds = time.time() - t0
 
 
+def nearest_tsconfig(start_file, root):
+    """The tsconfig that OWNS this file — the workspace project, not the monorepo root.
+
+    A root-level typecheck on a monorepo compiles every package to say something about one
+    file, and on this rig that measured 74-250 seconds per invocation. The project tsconfig
+    beside the file is the smallest unit that still carries the paths, decorators and lib
+    settings the file actually compiles under.
+    """
+    d = os.path.dirname(os.path.abspath(start_file))
+    root = os.path.abspath(root)
+    while True:
+        for name in ("tsconfig.json", "tsconfig.app.json", "tsconfig.build.json"):
+            p = os.path.join(d, name)
+            if os.path.isfile(p):
+                return p
+        if d == root or os.path.dirname(d) == d:
+            return None
+        d = os.path.dirname(d)
+
+
+TS_DIAG = re.compile(r"^(?P<file>[^(]+)\((?P<line>\d+),\d+\):\s+error\s+(?P<code>TS\d+):\s*(?P<msg>.*)$")
+
+
+def check_typecheck(runner, prod_file, test_files, root, manifest_path):
+    """Type errors IN THE FILES UNDER TEST. Everything else is somebody else's debt.
+
+    Two measurements drove this. First, `typecheck` was the largest wall-clock bucket in every
+    arm on the rig including the no-skill control — 122s median there, 247s in the heaviest arm,
+    722s at the worst — because agents reach for a project-wide `tsc --noEmit` on their own.
+    Second, the project under test carries 6050 pre-existing type errors, so that spend buys a
+    wall of diagnostics the run did not cause and cannot act on.
+
+    So: one incremental run per invocation against the OWNING project, with the build-info file
+    kept beside the manifest so the second pass is warm (measured 57s cold, 16s warm), and only
+    diagnostics whose file is the production file or one of its specs become gaps. The
+    pre-existing count is reported as context so nobody mistakes silence for a clean project.
+    """
+    r = Result("typecheck")
+    t0 = time.time()
+    if runner["kind"] not in ("vitest", "jest"):
+        r.status = "SKIP"
+        r.detail = "not wired for %s" % runner["kind"]
+        return r
+    tscfg = nearest_tsconfig(prod_file, root)
+    if tscfg is None:
+        r.status = "SKIP"
+        r.detail = "no tsconfig owning %s" % rel_to(prod_file, root)
+        return r
+    cwd = os.path.dirname(tscfg)
+    if not os.path.exists(os.path.join(cwd, "node_modules", ".bin", "tsc")) and not os.path.exists(
+        os.path.join(root, "node_modules", ".bin", "tsc")
+    ):
+        r.status = "SKIP"
+        r.detail = "no typescript installed"
+        return r
+    buildinfo = manifest_path + ".tsbuildinfo"
+    rc, out = run(
+        ["npx", "tsc", "--noEmit", "-p", os.path.basename(tscfg),
+         "--incremental", "--tsBuildInfoFile", buildinfo],
+        cwd=cwd,
+        timeout=1200,
+    )
+    r.seconds = time.time() - t0
+    if rc == 124:
+        r.status = "ERROR"
+        r.detail = "error: tsc timed out"
+        return r
+    specs = {os.path.abspath(f) for f in test_files}
+    prod_abs = os.path.abspath(prod_file)
+    mine, in_prod, total = [], [], 0
+    for line in out.splitlines():
+        m = TS_DIAG.match(line.strip())
+        if not m:
+            continue
+        total += 1
+        path = os.path.abspath(os.path.join(cwd, m.group("file")))
+        entry = "%s:%s %s: %s" % (rel_to(path, root), m.group("line"), m.group("code"),
+                                  m.group("msg")[:120])
+        if path in specs:
+            mine.append(entry)
+        elif path == prod_abs:
+            in_prod.append(entry)
+    # Only the SPEC files are this run's output. An error in the production file is debt the run
+    # inherited, and blocking on it would make write-tests refuse to finish for a defect outside
+    # its fence — while dropping it silently would hide a file the new tests may not compile
+    # against. So it is reported, and backlogged, but it is not a gap.
+    pre = total - len(mine) - len(in_prod)
+    ctx = []
+    if in_prod:
+        ctx.append("%d pre-existing in the production file" % len(in_prod))
+    if pre:
+        ctx.append("%d elsewhere" % pre)
+    suffix = " (%s — not this run's)" % ", ".join(ctx) if ctx else ""
+    if mine:
+        r.status = "FAIL"
+        r.detail = "%d error(s) in the written spec%s" % (len(mine), suffix)
+        r.gaps.extend(mine[:10])
+        if len(mine) > 10:
+            r.gaps.append("... %d more type errors in the written spec" % (len(mine) - 10))
+    else:
+        r.status = "PASS"
+        r.detail = "0 errors in the written spec" + suffix
+    if in_prod:
+        r.evidence = ("Pre-existing type errors in the production file — backlog these, they do "
+                      "not block this run:\n" + "\n".join(in_prod[:8]))
+    return r
+
+
 def node_root_with(pkg, runner, root):
     """Directory whose node_modules holds `pkg`, preferring the workspace package."""
     for d in (runner["cwd"], root):
@@ -708,7 +816,10 @@ def main():
     ap = argparse.ArgumentParser(add_help=True)
     ap.add_argument("--manifest", required=True)
     ap.add_argument("--repo-root", default=None)
-    ap.add_argument("--skip", default="", help="comma list of checks to skip: coverage,mutation")
+    ap.add_argument("--skip", default="",
+                    help="comma list of checks to skip: coverage,typecheck,mutation")
+    ap.add_argument("--force-mutation", action="store_true",
+                    help="run mutation even while cheaper checks still report gaps")
     ap.add_argument("--budget", type=int, default=DEFAULT_BUDGET)
     ap.add_argument("--survivor-cap", type=int, default=5)
     ap.add_argument("--json", action="store_true")
@@ -761,13 +872,32 @@ def main():
     # The gate and coverage measure a suite that is assumed green. Running them against a red
     # suite produces numbers that describe nothing and cost a full runner invocation each.
     if suite.status == "PASS":
-        results.append(check_gate(manifest_path, root, base))
+        gate = check_gate(manifest_path, root, base)
+        results.append(gate)
+        cov = None
         if "coverage" not in skip:
-            results.append(check_coverage(runner, prod, tests, root))
-        if "mutation" not in skip:
+            cov = check_coverage(runner, prod, tests, root)
+            results.append(cov)
+        if "typecheck" not in skip:
+            results.append(check_typecheck(runner, prod, tests, root, manifest_path))
+        # Mutation is by far the most expensive measurement here: median 270s on the rig and
+        # 1089s at the worst, against 16-57s for the typecheck and single-digit seconds for the
+        # gate. Running it while the cheap checks already say the suite is incomplete measures a
+        # suite that is about to be rewritten, and on a first pass with 43 open rows that is the
+        # single largest wasted block in the run. It waits until the suite is worth measuring.
+        if "mutation" in skip:
+            pass
+        elif a.force_mutation or (
+            gate.status in ("PASS", "DEGRADED") and (cov is None or cov.status in ("PASS", "SKIP"))
+        ):
             results.append(check_mutation(runner, prod, tests, root, a.survivor_cap, not a.no_install))
+        else:
+            r = Result("mutation")
+            r.detail = ("deferred — close the gaps above first; mutation measures a finished "
+                        "suite (--force-mutation to override)")
+            results.append(r)
     else:
-        for name in ("coverage-gate", "coverage", "mutation"):
+        for name in ("coverage-gate", "coverage", "typecheck", "mutation"):
             r = Result(name)
             r.detail = "not run — suite is red on unmutated source"
             results.append(r)

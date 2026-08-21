@@ -48,6 +48,7 @@ STUB="$TMP/stubbin"; mkdir -p "$STUB"
 NPM_CANARY="$TMP/npm-canary"
 export JEST_ARGS_CANARY="$TMP/jest-args"
 export JEST_CFG_CANARY="$TMP/jest-cfg"
+export TSC_ARGS_CANARY="$TMP/tsc-args"
 
 cat > "$STUB/npx" <<PYEOF
 #!/usr/bin/env python3
@@ -110,6 +111,16 @@ if tool == "jest":
         print("Tests:       7 passed, 7 total")
     sys.exit(0)
 
+if tool == "tsc":
+    open(os.environ["TSC_ARGS_CANARY"], "a").write(" ".join(argv) + "\n")
+    mode = os.environ.get("STUB_TSC", "clean")
+    # A monorepo with pre-existing debt: errors in OTHER files must not become this run's gaps.
+    print("src/other/legacy.ts(11,3): error TS2322: Type 'string' is not assignable to 'number'.")
+    print("src/other/legacy.ts(19,7): error TS7006: Parameter 'x' implicitly has an 'any' type.")
+    if mode == "own":
+        print("src/thing.spec.ts(42,9): error TS2554: Expected 1 arguments, but got 2.")
+    sys.exit(1 if mode in ("own", "clean") else 0)
+
 if tool == "stryker":
     cfg = json.load(open(argv[2]))
     # Record what the generated runner config actually asked for: the sandbox bug this
@@ -154,6 +165,8 @@ mkrepo() { # mkrepo <dir> [with-stryker]
   local d="$1"
   mkdir -p "$d/src" "$d/zuvo/contracts" "$d/node_modules/.bin"
   printf '{"name":"fx","devDependencies":{"vitest":"^3.0.0"}}\n' > "$d/package.json"
+  printf '{"compilerOptions":{"strict":true}}\n' > "$d/tsconfig.json"
+  mkdir -p "$d/node_modules/.bin"; : > "$d/node_modules/.bin/tsc"; chmod +x "$d/node_modules/.bin/tsc"
   printf 'export const alpha = (n) => n + 1;\n' > "$d/src/thing.ts"
   printf 'it("works", () => {});\n' > "$d/src/thing.spec.ts"
   if [ "${2:-}" = with-stryker ]; then
@@ -438,6 +451,46 @@ grep -q "35 SKIPPED" "$TMP/out" \
   && pass "skipped tests are surfaced, not silently counted as a green suite" \
   || bad "35 skipped tests were not reported"
 [ "$rc" -ne 0 ] && pass "a heavily-skipped suite cannot exit 0" || bad "skipped suite exited 0"
+
+# ── (22) typecheck: only errors in the files under test become gaps ──────────────────────
+R="$TMP/t22"; mkrepo "$R"
+rm -f "$TSC_ARGS_CANARY"
+STUB_GATE=pass STUB_TSC=clean vt "$R" --no-install; rc=$?
+grep -qE "typecheck +PASS +0 errors in the written spec" "$TMP/out" \
+  && pass "pre-existing errors in other files do not fail this run" \
+  || bad "typecheck attribution wrong: $(grep -E '^  typecheck' "$TMP/out")"
+grep -q "2 elsewhere" "$TMP/out" \
+  && pass "pre-existing count is reported, so silence is not read as a clean project" \
+  || bad "pre-existing errors not surfaced"
+grep -q -- "--incremental" "$TSC_ARGS_CANARY" 2>/dev/null \
+  && pass "typecheck runs incrementally (57s cold vs 16s warm on the rig)" \
+  || bad "typecheck not incremental: $(cat "$TSC_ARGS_CANARY" 2>/dev/null)"
+grep -q -- "-p tsconfig.json" "$TSC_ARGS_CANARY" 2>/dev/null \
+  && pass "typecheck targets the OWNING project, not the monorepo root" \
+  || bad "typecheck project scope wrong"
+
+# ── (23) a type error in the spec IS this run's problem ──────────────────────────────────
+R="$TMP/t23"; mkrepo "$R"
+STUB_GATE=pass STUB_TSC=own vt "$R" --no-install; rc=$?
+grep -q "thing.spec.ts:42 TS2554" "$TMP/out" \
+  && pass "a type error in the written spec becomes a gap" || bad "own-file type error not raised"
+grep -q "legacy.ts" "$TMP/out" \
+  && bad "another file's type error leaked into the gap list" \
+  || pass "other files' type errors stay out of the gap list"
+[ "$rc" -eq 1 ] && pass "own type error exits 1" || bad "own type error exit $rc (want 1)"
+
+# ── (24) mutation waits until the cheap checks stop reporting gaps ───────────────────────
+R="$TMP/m24"; mkrepo "$R" with-stryker
+STUB_GATE=fail STUB_TSC=clean vt "$R"; rc=$?
+grep -qE "mutation .*deferred" "$TMP/out" \
+  && pass "mutation is deferred while the gate still fails (saves the 270s median block)" \
+  || bad "mutation ran against an incomplete suite: $(grep -E '^  mutation' "$TMP/out")"
+
+R="$TMP/m24b"; mkrepo "$R" with-stryker
+STUB_GATE=fail STUB_SURVIVORS=2 vt "$R" --force-mutation
+grep -qE "mutation +(FAIL|PASS)" "$TMP/out" \
+  && pass "--force-mutation overrides the deferral" \
+  || bad "--force-mutation did not run mutation: $(grep -E '^  mutation' "$TMP/out")"
 
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
