@@ -1,0 +1,756 @@
+#!/bin/sh
+# Polyglot sh/python header — see compute-preload for why this exact line matters on Windows.
+''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
+"""
+~/.zuvo/verify-tests — run EVERY write-tests verification in one process, print ONE verdict.
+
+Usage:
+  ~/.zuvo/verify-tests --manifest zuvo/contracts/<basename>.coverage.json
+  ~/.zuvo/verify-tests --manifest <m> --skip mutation
+  ~/.zuvo/verify-tests --manifest <m> --budget 3 --json
+
+Why it exists. Measured 2026-08-21 across 28 runs writing tests for ONE file: the number of
+conversational turns tracks one variable almost perfectly — how many times the run re-issued a
+verification command it had already issued. Runs with zero repeats finished in 30-111 turns.
+Runs with 9-14 repeats took 193-321. Runs with 28-30 repeats took 395-485. The commands being
+repeated were always the same four: the coverage gate (up to 9x), the scoped test run (up to
+8x), the production-file restore (up to 5x), the sha256 check (up to 3x).
+
+That is not the agent being careless. write-tests asks for four SEPARATE verification passes —
+Step 2.5 gate, Step 3 quality, Step 3.2 coverage, Step 3.3 mutation — and each one says "fix
+and rerun". Four independent fix-and-rerun loops over the same suite is four chances to re-issue
+the same command, and every re-issue re-bills the whole accumulated context.
+
+Prose cannot close that. v7 added an explicit "run it ONCE, do not iterate" to Step 2.5 and a run
+still called the gate five times. A skill that tells an agent HOW MANY TIMES to verify still
+leaves the agent deciding when it is done, and deciding costs turns. The precedent is
+`load-includes`: two rewordings of the loading block made runs longer, and replacing the block
+with a command made them shorter.
+
+So this is a command. One invocation runs the suite, the coverage gate, scoped coverage and the
+native mutation runner, restores production, verifies the hash, clears the runner's debris, and
+prints a single block listing every gap that is still open. The agent reads it, makes ONE fix
+round, and calls this again. Subprocesses are free; turns are not.
+
+It also carries its own budget. Each invocation increments a counter beside the manifest, and
+the block prints `pass N of B`. On the last pass with gaps still open, exit is 4 and the block
+says to record what remains rather than keep going — a stop condition the program owns, so
+"am I done yet" stops being a judgement call made under a growing context.
+
+Exit codes:
+  0  every applicable check green
+  1  gaps remain and budget is left — fix them and call again
+  2  infrastructure error (manifest unreadable, no runner, production hash drift)
+  4  budget exhausted with gaps open — record them, do not iterate further
+"""
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+SCHEMA = "zuvo-verify/v1"
+DEFAULT_BUDGET = 3
+
+COVERAGE_THRESHOLDS = {"statements": 85.0, "branches": 75.0, "functions": 90.0, "lines": 85.0}
+
+# Runner debris that a native mutation run leaves behind. Cleared after every invocation:
+# a leftover .stryker-tmp is both a multi-GB disk leak and a git-status false positive that
+# the next check would report as an unexpected working-tree change.
+DEBRIS = (".stryker-tmp", "mutants.out", ".mutmut-cache", "reports/mutation", ".pytest_cache")
+
+
+# --------------------------------------------------------------------------- helpers
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def run(cmd, cwd=None, timeout=900, env=None):
+    """Run a command, never raise. Returns (rc, combined_output)."""
+    e = dict(os.environ)
+    if env:
+        e.update(env)
+    try:
+        p = subprocess.run(
+            cmd,
+            cwd=cwd,
+            env=e,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout,
+        )
+        return p.returncode, strip_ansi(p.stdout.decode("utf-8", "replace"))
+    except subprocess.TimeoutExpired as exc:
+        out = strip_ansi((exc.stdout or b"").decode("utf-8", "replace"))
+        return 124, out + "\n[verify-tests] TIMEOUT after %ds\n" % timeout
+    except FileNotFoundError as exc:
+        return 127, "[verify-tests] not found: %s\n" % exc
+    except Exception as exc:  # pragma: no cover - defensive
+        return 126, "[verify-tests] %s\n" % exc
+
+
+# Runner output is coloured even when not a TTY (vitest, stryker). Left in, the escapes break
+# every anchored regex below — "^\\s*Tests" never matches a line that really starts with an SGR
+# sequence, and the looser fallback then reads "Test Files 1 passed" as a one-test suite.
+ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def strip_ansi(text):
+    return ANSI.sub("", text)
+
+
+def tail(text, n=25):
+    lines = [l for l in text.splitlines() if l.strip()]
+    return "\n".join(lines[-n:])
+
+
+def git_root(start):
+    rc, out = run(["git", "rev-parse", "--show-toplevel"], cwd=start)
+    if rc == 0 and out.strip():
+        return out.strip().splitlines()[-1]
+    return os.path.abspath(start)
+
+
+def zuvo_base():
+    env = os.environ.get("ZUVO_BASE")
+    if env and os.path.isfile(os.path.join(env, "scripts", "test-coverage-gate.py")):
+        return env
+    here = os.path.dirname(os.path.realpath(__file__))
+    for cand in (
+        os.path.join(here, ".."),  # repo: scripts/zuvo-home -> scripts/.. is repo root
+        os.path.join(here, "..", ".."),
+        os.path.expanduser("~/.zuvo-plugin"),
+        os.path.expanduser("~/.claude"),
+    ):
+        if os.path.isfile(os.path.join(cand, "scripts", "test-coverage-gate.py")):
+            return os.path.abspath(cand)
+    return None
+
+
+# --------------------------------------------------------------------------- runner detection
+
+
+def read_json(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        return None
+
+
+def nearest_package(start_file, root):
+    """Walk up from a file to the nearest package.json, stopping at the repo root.
+
+    Monorepos are the normal case, not the exception: the vitest/jest install that can run a
+    spec usually lives in the workspace package (apps/api), not at the root. Running from the
+    root instead produces a config-not-found failure that looks like a broken suite.
+    """
+    d = os.path.dirname(os.path.abspath(start_file))
+    root = os.path.abspath(root)
+    while True:
+        pj = os.path.join(d, "package.json")
+        if os.path.isfile(pj):
+            data = read_json(pj) or {}
+            deps = {}
+            deps.update(data.get("dependencies") or {})
+            deps.update(data.get("devDependencies") or {})
+            scripts = data.get("scripts") or {}
+            if "vitest" in deps or "jest" in deps or "test" in scripts:
+                return d, data
+        if d == root or os.path.dirname(d) == d:
+            return None, None
+        d = os.path.dirname(d)
+
+
+def detect_runner(stack, test_files, root):
+    """Return a dict describing how to run this suite, or an error string."""
+    if stack in ("ts", "js", "tsx", "jsx", None, ""):
+        pkgdir, pkg = nearest_package(test_files[0], root)
+        if pkgdir is None:
+            # Root package.json without a test script still beats nothing.
+            pkg = read_json(os.path.join(root, "package.json"))
+            if pkg is None:
+                return {"error": "no package.json above %s" % test_files[0]}
+            pkgdir = root
+        deps = {}
+        deps.update(pkg.get("dependencies") or {})
+        deps.update(pkg.get("devDependencies") or {})
+        if "vitest" in deps:
+            return {"kind": "vitest", "cwd": pkgdir}
+        if "jest" in deps:
+            return {"kind": "jest", "cwd": pkgdir}
+        # A workspace package can rely on a hoisted runner; look for the binary.
+        for cand in ("vitest", "jest"):
+            if os.path.exists(os.path.join(root, "node_modules", ".bin", cand)):
+                return {"kind": cand, "cwd": pkgdir}
+        return {"error": "no vitest/jest in %s" % os.path.relpath(pkgdir, root)}
+    if stack == "python":
+        return {"kind": "pytest", "cwd": root}
+    if stack == "php":
+        return {"kind": "phpunit", "cwd": root}
+    return {"error": "unsupported stack %r" % stack}
+
+
+def rel_to(path, base):
+    return os.path.relpath(os.path.abspath(path), os.path.abspath(base))
+
+
+# --------------------------------------------------------------------------- checks
+
+
+class Result(object):
+    def __init__(self, name):
+        self.name = name
+        self.status = "SKIP"
+        self.detail = ""
+        self.gaps = []
+        self.evidence = ""
+        self.seconds = 0.0
+
+    def to_dict(self):
+        return {
+            "check": self.name,
+            "status": self.status,
+            "detail": self.detail,
+            "gaps": self.gaps,
+            "seconds": round(self.seconds, 1),
+        }
+
+
+def check_suite(runner, test_files, root):
+    """The suite must be green on UNMUTATED source. Everything downstream assumes it."""
+    r = Result("suite")
+    t0 = time.time()
+    cwd = runner["cwd"]
+    specs = [rel_to(f, cwd) for f in test_files]
+    if runner["kind"] == "vitest":
+        cmd = ["npx", "vitest", "run"] + specs
+    elif runner["kind"] == "jest":
+        cmd = ["npx", "jest", "--runTestsByPath"] + specs
+    elif runner["kind"] == "pytest":
+        cmd = [sys.executable, "-m", "pytest", "-q"] + specs
+    else:
+        cmd = ["./vendor/bin/phpunit"] + specs
+    rc, out = run(cmd, cwd=cwd)
+    r.seconds = time.time() - t0
+    r.evidence = tail(out, 30)
+    if rc == 0:
+        # "Test Files  1 passed" and "Tests  47 passed" both end in "N passed"; anchoring on
+        # the Tests/collected line keeps the report from claiming a 47-test suite has 1 test.
+        m = (re.search(r"^\s*Tests\s+(\d+)\s+passed", out, re.M)
+             or re.search(r"^Tests:\s+(\d+)\s+passed", out, re.M)
+             or re.search(r"(\d+)\s+passed", out))
+        r.status = "PASS"
+        r.detail = "%s tests passed" % (m.group(1) if m else "all")
+    else:
+        r.status = "FAIL"
+        r.detail = "runner exit %d" % rc
+        # A failing assertion names the test; hand the agent the names, not the whole log.
+        for line in out.splitlines():
+            s = line.strip()
+            if re.match(r"^(FAIL|×|✕|●|E\s)", s) or "AssertionError" in s:
+                if s not in r.gaps:
+                    r.gaps.append(s[:200])
+        if not r.gaps:
+            r.gaps.append("suite exited %d — see evidence block" % rc)
+    return r
+
+
+def check_gate(manifest_path, root, base):
+    r = Result("coverage-gate")
+    t0 = time.time()
+    if base is None:
+        r.status = "ERROR"
+        r.detail = ("cannot locate scripts/test-coverage-gate.py (ZUVO_BASE=%r) — "
+                    "set ZUVO_BASE to the zuvo install root"
+                    % os.environ.get("ZUVO_BASE", ""))
+        return r
+    cmd = [
+        sys.executable,
+        os.path.join(base, "scripts", "test-coverage-gate.py"),
+        "validate",
+        "--manifest",
+        manifest_path,
+        "--phase",
+        "final",
+        "--repo-root",
+        root,
+    ]
+    rc, out = run(cmd, cwd=root, timeout=300)
+    r.seconds = time.time() - t0
+    r.evidence = out.strip()
+    if rc == 0:
+        r.status = "PASS"
+        m = re.search(r"Public entry points:\s*(\S+)", out)
+        r.detail = m.group(1) if m else "validated"
+    elif rc == 3:
+        r.status = "DEGRADED"
+        r.detail = "textual extraction — evidence quality BLOCKED_DEGRADED"
+    else:
+        r.status = "FAIL"
+        r.detail = "validator exit %d" % rc
+        # The validator already names each violation on its own FAIL:/ERROR: line. Scraping
+        # anything looser (a tail, a prefix guess) folds its summary counters into the gap
+        # list, and a gap list with "Uncovered owned rows: 0" in it reads as a contradiction.
+        for line in out.splitlines():
+            t = line.strip()
+            if re.match(r"^(FAIL|ERROR|VIOLATION)\b", t):
+                r.gaps.append(t[:200])
+        if not r.gaps:
+            for line in out.splitlines():
+                t = line.strip()
+                if t.lower().startswith("missing symbols:"):
+                    r.gaps.append(t[:200])
+        if not r.gaps:
+            r.gaps.append("validator exit %d — see EVIDENCE block" % rc)
+    return r
+
+
+def check_coverage(runner, prod_file, test_files, root):
+    r = Result("coverage")
+    t0 = time.time()
+    cwd = runner["cwd"]
+    if runner["kind"] not in ("vitest", "jest"):
+        r.status = "SKIP"
+        r.detail = "%s coverage not wired in this helper — run it by hand if needed" % runner["kind"]
+        return r
+    outdir = tempfile.mkdtemp(prefix="zuvo-cov-")
+    specs = [rel_to(f, cwd) for f in test_files]
+    prod_rel = rel_to(prod_file, cwd)
+    try:
+        if runner["kind"] == "vitest":
+            cmd = (
+                ["npx", "vitest", "run"]
+                + specs
+                + [
+                    "--coverage",
+                    "--coverage.provider=v8",
+                    "--coverage.reporter=json-summary",
+                    "--coverage.reportsDirectory=" + outdir,
+                    "--coverage.include=" + prod_rel,
+                    "--coverage.all=false",
+                ]
+            )
+        else:
+            cmd = [
+                "npx",
+                "jest",
+                "--runTestsByPath",
+            ] + specs + [
+                "--coverage",
+                "--coverageReporters=json-summary",
+                "--coverageDirectory=" + outdir,
+                "--collectCoverageFrom=" + prod_rel,
+            ]
+        rc, out = run(cmd, cwd=cwd)
+        summary = read_json(os.path.join(outdir, "coverage-summary.json"))
+        if summary is None:
+            r.status = "SKIP"
+            r.detail = "runner produced no coverage-summary.json (exit %d)" % rc
+            r.evidence = tail(out, 12)
+            return r
+        # The per-file entry is keyed by absolute path; total is the safe aggregate when the
+        # include filter has already narrowed to one file.
+        entry = None
+        for k, v in summary.items():
+            if k == "total":
+                continue
+            if os.path.abspath(k) == os.path.abspath(prod_file):
+                entry = v
+                break
+        entry = entry or summary.get("total")
+        if not entry:
+            r.status = "SKIP"
+            r.detail = "no coverage entry for %s" % prod_rel
+            return r
+        nums, failed = [], []
+        for key, floor in COVERAGE_THRESHOLDS.items():
+            pct = float((entry.get(key) or {}).get("pct") or 0.0)
+            nums.append("%s %.1f%%" % (key, pct))
+            if pct < floor:
+                failed.append("%s %.1f%% < %.0f%%" % (key, pct, floor))
+        r.detail = "  ".join(nums)
+        if failed:
+            r.status = "FAIL"
+            r.gaps = failed
+            unc = (entry.get("lines") or {}).get("uncoveredLines")
+            if unc:
+                r.gaps.append("uncovered lines: %s" % unc)
+        else:
+            r.status = "PASS"
+        return r
+    finally:
+        shutil.rmtree(outdir, ignore_errors=True)
+        r.seconds = time.time() - t0
+
+
+def node_root_with(pkg, runner, root):
+    """Directory whose node_modules holds `pkg`, preferring the workspace package."""
+    for d in (runner["cwd"], root):
+        if os.path.isdir(os.path.join(d, "node_modules", *pkg.split("/"))):
+            return d
+    return None
+
+
+def ensure_stryker(runner, root, allow_install):
+    """Return (node_root, note) or (None, reason).
+
+    Stryker is TWO packages: the core and the test-runner plugin. A project with only the core
+    (a leftover from a one-off run, a hoisted transitive) cannot execute anything, so both are
+    required before this reports a runner as available.
+    """
+    core = node_root_with("@stryker-mutator/core", runner, root)
+    plug = node_root_with("@stryker-mutator/vitest-runner", runner, root)
+    if core and plug:
+        return core, "project"
+    if not allow_install:
+        return None, "none — StrykerJS not installed"
+    # --no-save writes no file the project keeps: package.json and the lockfile stay untouched,
+    # so nothing is committed and nothing is imposed on the repo. Measured install cost ~19s.
+    target = core or root
+    rc, _out = run(
+        [
+            "npm", "install", "--no-save", "--no-audit", "--no-fund",
+            "@stryker-mutator/core@10", "@stryker-mutator/vitest-runner@10",
+        ],
+        cwd=target,
+        timeout=900,
+    )
+    if rc != 0:
+        return None, "error: --no-save install failed (exit %d)" % rc
+    if node_root_with("@stryker-mutator/vitest-runner", runner, root):
+        return target, "workspace-local"
+    return None, "error: install succeeded but the plugin is not resolvable"
+
+
+def check_mutation(runner, prod_file, test_files, root, cap, allow_install):
+    """Native mutation score, scoped to this file AND this suite.
+
+    Scoping the TEST RUN matters as much as scoping --mutate. Stryker's dry run executes
+    whatever the project's vitest config includes; on any repo with pre-existing red tests that
+    kills the run before a single mutant is tested, and the failure reads like a broken mutation
+    setup rather than an unrelated failing suite. A generated config that includes only the spec
+    under test removes both problems.
+    """
+    r = Result("mutation")
+    t0 = time.time()
+    if runner["kind"] != "vitest":
+        r.status = "SKIP"
+        r.detail = "none — this helper scopes StrykerJS via a vitest config; %s is unsupported" % runner["kind"]
+        return r
+    nroot, note = ensure_stryker(runner, root, allow_install)
+    if nroot is None:
+        r.status = "ERROR" if note.startswith("error") else "SKIP"
+        r.detail = note
+        return r
+
+    prod_rel = rel_to(prod_file, nroot)
+    specs = [rel_to(f, nroot) for f in test_files]
+    stamp = str(os.getpid())
+    vcfg = os.path.join(nroot, "vitest.zuvo-verify-%s.config.ts" % stamp)
+    scfg = os.path.join(nroot, "stryker.zuvo-verify-%s.json" % stamp)
+    rep = os.path.join(nroot, ".zuvo-verify-mutation-%s" % stamp)
+    try:
+        with open(vcfg, "w", encoding="utf-8") as fh:
+            fh.write(
+                "import { defineConfig } from 'vitest/config';\n"
+                "export default defineConfig({\n"
+                "  test: { include: %s, environment: 'node', pool: 'forks',\n"
+                "          poolOptions: { forks: { singleFork: true } } },\n"
+                "});\n" % json.dumps(specs)
+            )
+        with open(scfg, "w", encoding="utf-8") as fh:
+            json.dump(
+                {
+                    "packageManager": "npm",
+                    "reporters": ["json"],
+                    "jsonReporter": {"fileName": os.path.join(rep, "mutation.json")},
+                    "testRunner": "vitest",
+                    "vitest": {"configFile": os.path.basename(vcfg)},
+                    "coverageAnalysis": "perTest",
+                    "mutate": [prod_rel],
+                    # Stryker rewrites the project tsconfig when it finds one, and that
+                    # preprocessor calls TypeScript APIs that not every installed TS version
+                    # still exports (`ts.parseConfigFileTextToJson is not a function` kills the
+                    # run before a single mutant). Pointing at a file that does not exist skips
+                    # the preprocessor; nothing else in a scoped vitest run needs it.
+                    "tsconfigFile": "tsconfig.zuvo-verify-absent.json",
+                    "ignorePatterns": [
+                        ".git", ".cursor", ".claude", ".vscode", ".idea",
+                        "docs/**", "audits/**", "audit-results/**", "artifacts/**",
+                        "zuvo/**", "memory/**", "e2e/**", "playwright-report/**",
+                        "coverage/**", "**/.next/**", "**/dist/**", "**/build/**",
+                        "**/*.png", "**/*.jpg", "**/*.mp4", "**/*.zip",
+                    ],
+                    "concurrency": 2,
+                    "timeoutMS": 30000,
+                    "tempDirName": ".stryker-tmp",
+                    "cleanTempDir": True,
+                },
+                fh,
+            )
+        rc, out = run(
+            ["npx", "stryker", "run", os.path.basename(scfg)], cwd=nroot, timeout=2400
+        )
+        data = read_json(os.path.join(rep, "mutation.json"))
+        if data is None:
+            r.status = "ERROR"
+            r.detail = "error: stryker exit %d, no report" % rc
+            r.evidence = tail(out, 20)
+            return r
+        killed = survived = timeout_n = noc = 0
+        survivors = []
+        for _f, fdata in (data.get("files") or {}).items():
+            for m in fdata.get("mutants") or []:
+                st = m.get("status")
+                if st == "Killed":
+                    killed += 1
+                elif st == "Survived":
+                    survived += 1
+                    survivors.append(m)
+                elif st == "Timeout":
+                    timeout_n += 1
+                elif st == "NoCoverage":
+                    noc += 1
+                    survivors.append(m)
+        tested = killed + survived + timeout_n + noc
+        score = (100.0 * (killed + timeout_n) / tested) if tested else 0.0
+        r.detail = "%.1f%% (stryker %s, %d mutants: %d killed, %d survived, %d no-coverage)" % (
+            score, note, tested, killed + timeout_n, survived, noc,
+        )
+        r.status = "PASS" if not survivors else "FAIL"
+        # A NoCoverage mutant is strictly worse evidence than a survivor that at least ran
+        # under a test, so those lead the fix list.
+        survivors.sort(
+            key=lambda m: (
+                m.get("status") != "NoCoverage",
+                (m.get("location") or {}).get("start", {}).get("line", 0),
+            )
+        )
+        for m in survivors[:cap]:
+            loc = (m.get("location") or {}).get("start") or {}
+            r.gaps.append(
+                "%s L%s %s -> `%s`"
+                % (
+                    m.get("status"),
+                    loc.get("line"),
+                    m.get("mutatorName"),
+                    " ".join((m.get("replacement") or m.get("description") or "").split())[:60],
+                )
+            )
+        if len(survivors) > cap:
+            r.gaps.append(
+                "... %d more survivors — record their IDs and triage equivalents; do NOT chase all"
+                % (len(survivors) - cap)
+            )
+        return r
+    finally:
+        for f in (vcfg, scfg):
+            try:
+                os.unlink(f)
+            except OSError:
+                pass
+        shutil.rmtree(rep, ignore_errors=True)
+        r.seconds = time.time() - t0
+
+
+def clear_debris(root, extra_dirs):
+    removed = []
+    for d in set([root] + list(extra_dirs)):
+        for name in DEBRIS:
+            p = os.path.join(d, name)
+            if os.path.exists(p):
+                shutil.rmtree(p, ignore_errors=True)
+                removed.append(rel_to(p, root))
+    return removed
+
+
+# --------------------------------------------------------------------------- budget state
+
+
+def state_path(manifest_path):
+    return manifest_path + ".verify-state.json"
+
+
+def bump_state(manifest_path, budget):
+    p = state_path(manifest_path)
+    st = read_json(p) or {"schema": SCHEMA, "passes": 0, "history": []}
+    st["passes"] = int(st.get("passes", 0)) + 1
+    st["budget"] = budget
+    return st
+
+
+def save_state(manifest_path, st, results):
+    st.setdefault("history", []).append(
+        {"pass": st["passes"], "results": [r.to_dict() for r in results]}
+    )
+    st["history"] = st["history"][-10:]
+    try:
+        with open(state_path(manifest_path), "w", encoding="utf-8") as fh:
+            json.dump(st, fh, indent=2)
+    except Exception:
+        pass
+
+
+# --------------------------------------------------------------------------- main
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("--manifest", required=True)
+    ap.add_argument("--repo-root", default=None)
+    ap.add_argument("--skip", default="", help="comma list of checks to skip: coverage,mutation")
+    ap.add_argument("--budget", type=int, default=DEFAULT_BUDGET)
+    ap.add_argument("--survivor-cap", type=int, default=5)
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--no-install", action="store_true",
+                    help="never npm install --no-save a missing mutation runner")
+    ap.add_argument("--reset-budget", action="store_true")
+    a = ap.parse_args()
+
+    manifest_path = os.path.abspath(a.manifest)
+    man = read_json(manifest_path)
+    if man is None:
+        print("[verify-tests] cannot read manifest: %s" % manifest_path, file=sys.stderr)
+        return 2
+    if a.reset_budget:
+        try:
+            os.unlink(state_path(manifest_path))
+        except OSError:
+            pass
+
+    root = os.path.abspath(a.repo_root or git_root(os.path.dirname(manifest_path)))
+    prod_rel = man.get("production_file")
+    if not prod_rel:
+        print("[verify-tests] manifest has no production_file", file=sys.stderr)
+        return 2
+    prod = prod_rel if os.path.isabs(prod_rel) else os.path.join(root, prod_rel)
+    tests = [t if os.path.isabs(t) else os.path.join(root, t) for t in (man.get("test_files") or [])]
+    if not tests:
+        print("[verify-tests] manifest has no test_files", file=sys.stderr)
+        return 2
+    missing = [t for t in tests + [prod] if not os.path.isfile(t)]
+    if missing:
+        print("[verify-tests] missing file(s): %s" % ", ".join(rel_to(m, root) for m in missing),
+              file=sys.stderr)
+        return 2
+
+    skip = {s.strip() for s in a.skip.split(",") if s.strip()}
+    base = zuvo_base()
+    runner = detect_runner(man.get("stack"), tests, root)
+    if "error" in runner:
+        print("[verify-tests] runner detection failed: %s" % runner["error"], file=sys.stderr)
+        return 2
+
+    before = sha256(prod)
+    frozen = man.get("production_sha256")
+    st = bump_state(manifest_path, a.budget)
+
+    results = []
+    suite = check_suite(runner, tests, root)
+    results.append(suite)
+    # The gate and coverage measure a suite that is assumed green. Running them against a red
+    # suite produces numbers that describe nothing and cost a full runner invocation each.
+    if suite.status == "PASS":
+        results.append(check_gate(manifest_path, root, base))
+        if "coverage" not in skip:
+            results.append(check_coverage(runner, prod, tests, root))
+        if "mutation" not in skip:
+            results.append(check_mutation(runner, prod, tests, root, a.survivor_cap, not a.no_install))
+    else:
+        for name in ("coverage-gate", "coverage", "mutation"):
+            r = Result(name)
+            r.detail = "not run — suite is red on unmutated source"
+            results.append(r)
+
+    after = sha256(prod)
+    debris = clear_debris(root, [runner["cwd"]])
+
+    hash_ok = after == before and (frozen is None or after == frozen)
+    if not hash_ok:
+        r = Result("production-hash")
+        r.status = "FAIL"
+        r.detail = "production file changed during verification"
+        r.gaps.append("expected %s, found %s — restore the file before continuing" % (frozen or before, after))
+        results.append(r)
+    else:
+        r = Result("production-hash")
+        r.status = "PASS"
+        r.detail = after[:16] + " unchanged"
+        results.append(r)
+
+    save_state(manifest_path, st, results)
+
+    open_gaps = [g for r in results for g in r.gaps]
+    passes, budget = st["passes"], a.budget
+    if not open_gaps:
+        rc = 0
+    elif passes >= budget:
+        rc = 4
+    else:
+        rc = 1
+    if any(r.status == "ERROR" for r in results):
+        rc = max(rc, 2) if rc in (0,) else rc
+
+    if a.json:
+        print(json.dumps(
+            {
+                "schema": SCHEMA,
+                "pass": passes,
+                "budget": budget,
+                "exit": rc,
+                "production_file": rel_to(prod, root),
+                "runner": runner["kind"],
+                "results": [r.to_dict() for r in results],
+            },
+            indent=2,
+        ))
+        return rc
+
+    w = 78
+    print("=" * w)
+    print("VERIFY  %s   pass %d of %d   runner: %s" % (rel_to(prod, root), passes, budget, runner["kind"]))
+    print("=" * w)
+    for r in results:
+        print("  %-15s %-9s %s" % (r.name, r.status, r.detail))
+    if debris:
+        print("  %-15s %-9s %s" % ("debris", "CLEARED", ", ".join(debris[:4])))
+    if open_gaps:
+        print("-" * w)
+        print("OPEN (%d):" % len(open_gaps))
+        for g in open_gaps:
+            print("  - %s" % g)
+    for r in results:
+        if r.status in ("FAIL", "ERROR") and r.evidence:
+            print("-" * w)
+            print("EVIDENCE [%s]" % r.name)
+            print(r.evidence)
+    print("=" * w)
+    if rc == 0:
+        print("VERDICT: GREEN — every applicable check passed. Do NOT re-run this command.")
+    elif rc == 4:
+        print("VERDICT: BUDGET EXHAUSTED after %d passes. Record the OPEN items in the manifest" % passes)
+        print("         (survivors with IDs, uncovered rows with notes) and finish the file as")
+        print("         BLOCKED_INCOMPLETE. Do NOT run another pass — %d passes did not close them." % passes)
+    elif rc == 2:
+        print("VERDICT: INFRASTRUCTURE ERROR — fix the tooling, not the tests.")
+    else:
+        print("VERDICT: %d gap(s) open. Make ONE fix round addressing ALL of them, then run this" % len(open_gaps))
+        print("         command again. You have %d pass(es) left." % (budget - passes))
+    print("=" * w)
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main())

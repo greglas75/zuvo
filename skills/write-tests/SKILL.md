@@ -371,40 +371,57 @@ Red truthful tests for production bugs are not a terminal state: characterizatio
 
 **PURE optimization (LIGHT):** contract may skip MOCK INVENTORY if only Logger; keep BRANCHES, ERROR PATHS, EXPECTED VALUES. **COMPONENT:** follow exemplar cleanup/matcher/async patterns. Neither skips adversarial.
 
-### Step 2.5: LOCAL COVERAGE GATE (executable)
+### Step 2.5: VERIFY (one command, one verdict)
 
-**Run it ONCE. Do not iterate it.** Measured 2026-08-21 across 22 runs on one file: runs that
-re-ran this gate 3+ times reached 88.9% mutation kill against 85.9% for runs that ran it once —
-three points, for three to five times the turns, and the three runs with the MOST iterations
-(31, 26, 18) all ended with a suite that fails on unmutated source. This gate proves inventory
-rows have evidence attached; it cannot prove the evidence detects anything. Iterating it
-optimises the proxy. Step 3.3 measures the real thing for a fraction of the cost, so close gaps
-THERE, on evidence of what actually survives.
-
-The gate is a program, not a checklist. Map the written tests into the FROZEN manifest per `test-inventory-protocol.md` Step 2.5: fill each row's `coverage` + `test-file:line` evidence, set `status: "final"`, record `quality_gates` (Q7/Q11 from the upcoming self-eval — run Step 3's critical-gate scoring for these two now), then run:
+Every program that runs against this suite — the coverage gate, scoped coverage, and the native
+mutation runner — runs in ONE call, and its printed block is the only acceptable evidence:
 
 ```bash
-python3 "$ZUVO_BASE/scripts/test-coverage-gate.py" validate \
-  --manifest "$ZUVO_DIR/contracts/<basename>.coverage.json" \
-  --phase final --repo-root "$(git rev-parse --show-toplevel)"
+~/.zuvo/verify-tests --manifest "$ZUVO_DIR/contracts/<basename>.coverage.json"
 ```
 
-The validator independently re-extracts every public entry point from the production AST and checks: no missing symbols, every owned row `FULL` or excused with a note, every evidence entry an existing test-file:line inside a real test — or the durable form `test-file::exact test name`, which survives formatters and is PREFERRED (convert a line-based manifest once with `test-coverage-gate.py refresh --manifest <m>`) — no duplicate/empty evidence, production hash unchanged, `Q7=1 and Q11=1`. Its printed block — including `Uncovered owned rows: 0` — is the ONLY acceptable pass evidence; paste it, never paraphrase it.
+**Before the first call**, fill the FROZEN manifest per `test-inventory-protocol.md` Step 2.5:
+each row's `coverage` + `test-file:line` evidence, `status: "final"`, and `quality_gates` — run
+Step 3's critical-gate scoring for Q7/Q11 NOW so the manifest is complete on the first pass. A
+manifest that is missing its Q values is a bookkeeping reason to run the gate twice, and this
+pipeline has exactly one budget for that.
 
-```
-LOCAL COVERAGE GATE
-<validator output block verbatim>
-Public entry points: [N]/[N] FULL
-Uncovered owned rows: 0
-```
+The command runs the suite, the validator, scoped coverage and StrykerJS in one process; restores
+the production file; verifies its sha256 against `production_sha256`; clears the runner's debris
+(`.stryker-tmp/`, `mutants.out/`, report dirs); and prints one block listing every gap still open.
+Paste that block verbatim — never paraphrase it, never claim a check it did not print.
 
-- exit 0 → proceed to Step 3.
-- exit 1 → add/strengthen tests for every printed violation, rerun the target tests, rerun the validator. A validator FAIL is never closed by editing manifest rows into excused states.
-- exit 3 → all checks green but extraction was textual: record `BLOCKED_DEGRADED` evidence quality; continue only with a strict blind audit.
+| exit | meaning | what to do |
+|---|---|---|
+| 0 | every applicable check green | proceed to Step 3. **Do not run it again.** |
+| 1 | gaps open, budget left | ONE fix round closing EVERY listed gap, then call again |
+| 4 | budget exhausted | record the OPEN items in the manifest, finish the file `BLOCKED_INCOMPLETE` |
+| 2 | infrastructure | fix the tooling. An unavailable runner is `BLOCKED_DEGRADED`, never a pass |
 
-If a row cannot be closed because required infrastructure or a cross-module contract is unavailable: persist `Status=BLOCKED_INCOMPLETE` with the uncovered rows + reason; do not continue to Step 3.5, do not mark `PASS`, do not print `WRITE-TESTS COMPLETE`. Lack of time, a large method count, or an already-high test count are not valid waivers.
+**One fix round per pass.** The gaps are printed as one list precisely so they can be closed
+together. Fixing the first one and calling again spends a pass to be told what the block already
+said. The command counts its own passes (budget 3, `--budget N` to change) and says so on every
+line of output; when it prints BUDGET EXHAUSTED the remaining gaps get recorded with their IDs,
+not chased.
 
-### Step 3: Verify (quality, not coverage — coverage was Step 2.5)
+**Do not substitute the individual commands for the helper.** A separate `vitest run`, validator
+call, coverage run and `stryker run` is the exact shape this replaces. Measured 2026-08-21 across
+28 runs writing tests for one file: turn count tracks how many times a run re-issued a
+verification command it had already issued — 0 repeats → 30-111 turns, 9-14 repeats → 193-321,
+28-30 repeats → 395-485 — with no gain in mutation kill at the top end. Two of the three most
+iteration-heavy runs ended with a suite that fails on unmutated source.
+
+**Helper absent** (older install, foreign harness): run the four commands ONCE each, in this
+order, stopping at the first failure — target suite → `test-coverage-gate.py validate --phase
+final` → scoped coverage → mutation. Record `verify: degraded (helper absent)`. Running them once
+each is the contract; the helper exists to make that the default rather than a discipline.
+
+A row that cannot be closed because required infrastructure or a cross-module contract is
+unavailable: persist `Status=BLOCKED_INCOMPLETE` with the uncovered rows + reason; do not continue
+to Step 3.5, do not mark `PASS`, do not print `WRITE-TESTS COMPLETE`. Lack of time, a large method
+count, or an already-high test count are not valid waivers.
+
+### Step 3: Verify (quality only — every executable check ran in Step 2.5)
 
 **Context resume guard:** after a compaction resume, prior-session claims ("clean blind audit") are UNVERIFIABLE — only tool output in the current window counts; re-run Steps 3.5/4 for the current file pair.
 
@@ -418,46 +435,56 @@ If a row cannot be closed because required infrastructure or a cross-module cont
    `Q7` error-path proof (or evidence-backed `N/A`), `Q11` per-branch tests, `Q13` real-module import line, `Q15` content-not-shape assertion, `Q17` non-echoed oracle. No citable line = score 0. **No tier-based waivers anywhere in this pipeline:** every file passes the same gates —
 validator, coverage, probes, blind audit, adversarial. Savings come from isolation, batching and
 provider caps, never from skipping verification for "simple" files (a conditional skip is a
-loophole the classifier will be pushed through). Step 3 passes only with Q7=1, Q11=1, Q13=1, Q15=1, Q17=1 — a zero critical gate is `BLOCKED_INCOMPLETE`, never a publishable partial result. Sync the final Q7/Q11 values back into the manifest and rerun the Step 2.5 validator if they changed.
+loophole the classifier will be pushed through). Step 3 passes only with Q7=1, Q11=1, Q13=1, Q15=1, Q17=1 — a zero critical gate is `BLOCKED_INCOMPLETE`, never a publishable partial result. Q7/Q11 were already scored and written into the manifest before Step 2.5 ran, so there is nothing to sync back and no reason to run the verifier a second time for bookkeeping. If this step genuinely CHANGES a critical gate's value, that is a test change — fix the tests and spend one verify pass on the result, not a pass on the manifest edit alone.
 
-### Step 3.2: Target Coverage (when the runner supports it)
+### Step 3.2: Target Coverage — already measured
 
-Run coverage scoped to the production file only (e.g. `vitest run <spec> --coverage.include=<production-file>`, `pytest --cov=<module> <test-file>`, phpunit `--coverage-filter`). Thresholds:
+`verify-tests` runs coverage scoped to the production file and prints the four numbers against
+`statements >= 85%  branches >= 75%  functions >= 90%  lines >= 85%`, listing any shortfall (and
+the uncovered lines) as gaps in the same block. There is no separate coverage invocation.
 
-```
-statements >= 85%   branches >= 75%   functions >= 90%   lines >= 85%
-```
+For COMPLEX files the binding rule remains zero uncovered public functions — the percentages
+supplement, never replace, the gate. A runner with no coverage support is reported as a SKIP with
+its reason, which is not a failure.
 
-Record the four numbers. Below threshold → find the uncovered lines, close them (or add excused manifest rows with notes), rerun. For COMPLEX files the binding rule remains zero uncovered public functions — the percentages supplement, never replace, the Step 2.5 gate. Runner has no coverage support → print `[COVERAGE] runner lacks coverage support — skipped` (not a failure).
+### Step 3.3: Mutation — native first, probes for what it cannot express
 
-### Step 3.3: Mutation Probes
+**`verify-tests` already ran the native mutation runner** and printed the score, the mutant
+counts and the highest-risk survivors (no-coverage mutants first, capped at 5). That number is the
+primary measurement: on a 200-line file a scoped StrykerJS run produced 235 mutants in ~71s of CPU
+and zero conversational turns, against 3-6 hand probes that each cost a turn and cover less.
 
-Per `test-mutation-probes.md`: 3 probes (STANDARD) / 5 (HEAVY-COMPLEX, ≥1 per behavior group), byte-restore protocol, scoped runs. Every probe must be killed; a surviving probe is a coverage gap — close it and re-probe. Execute ALL probes as ONE script in ONE tool call (mutate→run→restore in a loop, emitting only the final table) — per-probe conversational turns re-bill the whole prefix for zero information. Print the `MUTATION PROBES` line and table. Post-restore sha256 must equal the manifest hash — for the probes AND for any native run. **Context discipline:** after the table is printed, the per-probe diffs and runner outputs are spent — carry only the table forward.
+The helper scopes BOTH sides — `--mutate` to the production file, and the TEST RUN to the spec
+just written, via a generated vitest config. Scoping only `--mutate` is why a native run dies on
+any repo with pre-existing red tests: the dry run executes whatever the project config includes,
+and that failure reads like a broken mutation setup rather than an unrelated failing suite.
 
-`native:` has three states, and collapsing the last two hides an infra failure as normal absence: `<score>% (<runner>)` when a run produced a number, `none` when the project has no runner configured, `error: <reason>` when a detected runner could not be scoped, timed out, or exited non-zero.
+When no runner is available, the helper installs one workspace-locally with `npm install
+--no-save` (writes no file the project keeps — `package.json` and the lockfile are untouched) and
+reports `stryker workspace-local`. `--no-install` suppresses that; the install failing is reported
+as `error: ...`, never silently skipped.
 
-**The native runner is the PRIMARY measurement — reach for it before hand-rolled probes.**
-It is the cheapest accurate thing in this pipeline: a scoped StrykerJS run on a 200-line file
-generated 235 mutants in ~71s of CPU and zero conversational turns, against 3-6 hand probes that
-each cost a turn. If a runner is configured, run it FIRST and let the probes fill only the
-classes it cannot express (error-path removal, state mutation, async hazards).
+**Hand probes remain the floor for the classes a native mutator does not generate** — error-path
+removal, state mutation, async hazards (`test-mutation-probes.md` classes 2-4). Run them when the
+helper reported `mutation SKIP` or `none`, or when the classification names a behaviour group the
+runner cannot reach. 3 probes (STANDARD) / 5 (HEAVY-COMPLEX, >=1 per behavior group), byte-restore
+protocol, scoped runs. Execute ALL probes as ONE script in ONE tool call (mutate → run → restore
+in a loop, emitting only the final table) — per-probe conversational turns re-bill the whole
+prefix for zero information. Post-restore sha256 must equal the manifest hash.
 
-**Absent runner: install it into the workspace, never into the project.** `npm install --no-save`
-(or the stack's equivalent no-write flag) leaves `package.json` and the lockfile untouched, so
-nothing is committed and nothing is imposed on the repo — measured install cost 19s. This is the
-one exception to "write-tests never installs a runner": a --no-save install writes no file the
-project keeps. Record `native: <score>% (<runner>, workspace-local)`. If the install fails, say
-so and fall back to probes; do not silently skip the measurement.
+`native:` has three states, and collapsing the last two hides an infra failure as normal absence:
+`<score>% (<runner>)` when a run produced a number, `none` when no runner exists and none could be
+installed, `error: <reason>` when a detected runner could not be scoped, timed out, or exited
+non-zero.
 
-**Native runner when the project already has one** (StrykerJS / Infection / cargo-mutants — detection table in `skills/mutation-test/SKILL.md` § 0.1b; mutmut 3.x cannot scope per file and is excluded here). Five rules, and the first two are the ones that bite:
+**Triage before fixing.** Native runners generate equivalent mutants routinely (`x * 2` →
+`x << 1`). An equivalent mutant is recorded `equivalent` with the reason and does NOT block
+completion — the same triage as `zuvo:mutation-test` § 4.2. Only a survivor triaged `gap` is a gap.
+Survivors past the printed cap are recorded with their IDs — not silently dropped, and not chased
+until the context window dies.
 
-1. **Mutate the PRODUCTION file under test, never the test file just written.** `--mutate` takes the source file the inventory covers (`src/auth.ts`), not `src/auth.test.ts`. Pointing a mutator at its own test file corrupts the tests and produces a meaningless number.
-2. **Same byte-restore + sha256 gate as the probes.** A native runner mutates production in place and can die mid-run. After it exits — success, failure, or interrupt — restore and verify the production file's sha256 against `production_sha256` in the manifest, exactly as step 5 of the probe protocol requires. Then remove the runner's own debris (`.stryker-tmp/`, `mutants.out/`, `.mutmut-cache/`, HTML reports) and confirm `git status` shows nothing but the intended test file. "Probes restored cleanly" is not evidence about the native run.
-3. **Cap the in-run fix loop at 5 native survivors**, highest-risk first (raised from 3: a real runner surfaces 200+ mutants, so the cap should reflect what a fix round can close, not what a hand-probe set could produce). A native runner can emit 50+ mutants on one file; probes are capped at 3-5 for the same reason. Remaining survivors are recorded in the table with their IDs — not silently dropped, and not chased until the context window dies.
-4. **Triage before fixing.** Native runners generate equivalent mutants routinely (`x * 2` → `x << 1`). An equivalent mutant is recorded `equivalent` with the reason, and does NOT block completion — the same triage `zuvo:mutation-test` § 4.2 applies. Only a survivor triaged `gap` is a gap.
-5. **write-tests never INSTALLS a runner** — that is `zuvo:mutation-test` § 0.1c's consented step; absent runner → probes only, unchanged.
-
-The probes remain the floor either way: native mutators do not generate probe classes 2-4, which are the classes new suites fail.
+**Context discipline:** once the block is printed, the per-mutant diffs and runner output are
+spent — carry only the table forward.
 
 ### Step 3.5: Blind Coverage Audit
 

@@ -1,0 +1,306 @@
+#!/usr/bin/env bash
+# scripts/zuvo-home/verify-tests — the single-verdict verification helper.
+#
+# The helper exists to collapse four separate fix-and-rerun loops into one command, so the
+# properties worth testing are the ones an agent would otherwise have to judge: does it stop
+# (budget), does it refuse to measure a red suite, does it report a hash drift, does it read
+# a runner's real numbers rather than the first number that looks like one.
+#
+# Every scenario runs against STUB `npx` / `npm` on PATH. A real vitest or stryker invocation
+# here would be both slow and a lie: what is under test is the helper's parsing and control
+# flow, not StrykerJS.
+set -u
+
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+HELPER="$ROOT/scripts/zuvo-home/verify-tests"
+fail=0
+pass() { printf 'PASS: %s\n' "$1"; }
+bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+[ -x "$HELPER" ] || { bad "helper missing or not executable: $HELPER"; exit 1; }
+
+# ── fake zuvo install: the helper locates test-coverage-gate.py through ZUVO_BASE ─────────
+FAKE_BASE="$TMP/zuvo-base"; mkdir -p "$FAKE_BASE/scripts"
+cat > "$FAKE_BASE/scripts/test-coverage-gate.py" <<'PY'
+import os, sys
+mode = os.environ.get("STUB_GATE", "pass")
+print("COVERAGE GATE (executable) - phase: final")
+if mode == "pass":
+    print("Public entry points: 4/4 FULL")
+    print("Uncovered owned rows: 0")
+    sys.exit(0)
+if mode == "degraded":
+    print("extraction: textual")
+    sys.exit(3)
+print("Uncovered owned rows: 0")
+print("missing symbols: alpha, beta")
+print("FAIL: MISSING SYMBOL: alpha is a public entry point in production but has no manifest row")
+print("FAIL: MISSING SYMBOL: beta is a public entry point in production but has no manifest row")
+print("RESULT: FAIL (2 violations)")
+sys.exit(1)
+PY
+
+# ── stub runners ─────────────────────────────────────────────────────────────────────────
+STUB="$TMP/stubbin"; mkdir -p "$STUB"
+NPM_CANARY="$TMP/npm-canary"
+
+cat > "$STUB/npx" <<PYEOF
+#!/usr/bin/env python3
+import json, os, sys
+argv = sys.argv[1:]
+tool = argv[0] if argv else ""
+
+if tool == "vitest":
+    covdir = None
+    for a in argv:
+        if a.startswith("--coverage.reportsDirectory="):
+            covdir = a.split("=", 1)[1]
+    if covdir:
+        os.makedirs(covdir, exist_ok=True)
+        pct = float(os.environ.get("STUB_COV_PCT", "95"))
+        entry = {k: {"pct": pct} for k in ("statements", "branches", "functions", "lines")}
+        entry["lines"]["uncoveredLines"] = [41, 42]
+        json.dump({"total": entry}, open(os.path.join(covdir, "coverage-summary.json"), "w"))
+        print("coverage run")
+        sys.exit(0)
+    # ANSI on purpose: real vitest colours this even when stdout is not a TTY, and the
+    # helper must strip it before anchoring on the Tests line.
+    if os.environ.get("STUB_SUITE", "green") == "red":
+        print("\x1b[31m FAIL \x1b[39m src/thing.spec.ts > rejects empty input")
+        print("\x1b[2m Test Files \x1b[22m \x1b[31m1 failed\x1b[39m (1)")
+        print("\x1b[2m      Tests \x1b[22m \x1b[31m2 failed\x1b[39m | \x1b[32m33 passed\x1b[39m (35)")
+        sys.exit(1)
+    print("\x1b[2m Test Files \x1b[22m \x1b[32m1 passed\x1b[39m\x1b[90m (1)\x1b[39m")
+    print("\x1b[2m      Tests \x1b[22m \x1b[32m35 passed\x1b[39m\x1b[90m (35)\x1b[39m")
+    sys.exit(0)
+
+if tool == "stryker":
+    cfg = json.load(open(argv[2]))
+    if os.environ.get("STUB_STRYKER", "ok") == "crash":
+        print("TypeError: ts.parseConfigFileTextToJson is not a function")
+        sys.exit(1)
+    n_surv = int(os.environ.get("STUB_SURVIVORS", "0"))
+    mutants = [{"status": "Killed", "mutatorName": "Arithmetic",
+                "location": {"start": {"line": 10}}} for _ in range(9)]
+    for i in range(n_surv):
+        mutants.append({
+            "status": "NoCoverage" if i == 0 else "Survived",
+            "mutatorName": "ConditionalExpression",
+            "replacement": "true",
+            "location": {"start": {"line": 70 + i}},
+        })
+    out = cfg["jsonReporter"]["fileName"]
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    json.dump({"files": {"src/thing.ts": {"mutants": mutants}}}, open(out, "w"))
+    # A real run leaves this behind; the helper must clear it.
+    os.makedirs(os.path.join(os.getcwd(), ".stryker-tmp"), exist_ok=True)
+    print("stryker done")
+    sys.exit(0)
+
+sys.exit(0)
+PYEOF
+chmod +x "$STUB/npx"
+
+cat > "$STUB/npm" <<EOF
+#!/bin/sh
+echo "npm invoked: \$*" >> "$NPM_CANARY"
+exit 1
+EOF
+chmod +x "$STUB/npm"
+
+# ── fixture repo ─────────────────────────────────────────────────────────────────────────
+mkrepo() { # mkrepo <dir> [with-stryker]
+  local d="$1"
+  mkdir -p "$d/src" "$d/zuvo/contracts" "$d/node_modules/.bin"
+  printf '{"name":"fx","devDependencies":{"vitest":"^3.0.0"}}\n' > "$d/package.json"
+  printf 'export const alpha = (n) => n + 1;\n' > "$d/src/thing.ts"
+  printf 'it("works", () => {});\n' > "$d/src/thing.spec.ts"
+  if [ "${2:-}" = with-stryker ]; then
+    mkdir -p "$d/node_modules/@stryker-mutator/core" "$d/node_modules/@stryker-mutator/vitest-runner"
+  fi
+  python3 - "$d" <<'PY'
+import hashlib, json, os, sys
+d = sys.argv[1]
+h = hashlib.sha256(open(os.path.join(d, "src/thing.ts"), "rb").read()).hexdigest()
+json.dump({"schema": "zuvo-coverage-manifest/v1",
+           "production_file": "src/thing.ts",
+           "production_sha256": h,
+           "stack": "ts",
+           "test_files": ["src/thing.spec.ts"],
+           "quality_gates": {"Q7": 1, "Q11": 1},
+           "status": "final", "symbols": []},
+          open(os.path.join(d, "zuvo/contracts/thing.coverage.json"), "w"), indent=1)
+PY
+}
+
+vt() { # vt <repo> [extra args...] ; stdout+stderr captured to $TMP/out
+  local d="$1"; shift
+  PATH="$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" \
+    "$HELPER" --manifest "$d/zuvo/contracts/thing.coverage.json" --repo-root "$d" "$@" \
+    > "$TMP/out" 2>&1
+  return $?
+}
+
+# ── (1) unreadable manifest → exit 2, and nothing is claimed ─────────────────────────────
+R="$TMP/r1"; mkrepo "$R"
+PATH="$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" "$HELPER" --manifest "$R/nope.json" --repo-root "$R" \
+  > "$TMP/out" 2>&1; rc=$?
+[ "$rc" -eq 2 ] && pass "missing manifest exits 2" || bad "missing manifest exit $rc (want 2)"
+grep -q "cannot read manifest" "$TMP/out" \
+  && pass "missing manifest names the file" || bad "missing manifest message: $(cat "$TMP/out")"
+
+# ── (2) manifest points at a production file that is not there → exit 2 ──────────────────
+R="$TMP/r2"; mkrepo "$R"; rm "$R/src/thing.ts"
+vt "$R"; rc=$?
+[ "$rc" -eq 2 ] && pass "absent production file exits 2" || bad "absent production exit $rc (want 2)"
+grep -q "missing file" "$TMP/out" || bad "absent production file not reported: $(cat "$TMP/out")"
+
+# ── (3) green suite, everything passes, no stryker installed → exit 0 ────────────────────
+R="$TMP/r3"; mkrepo "$R"
+STUB_GATE=pass STUB_COV_PCT=95 vt "$R" --no-install; rc=$?
+[ "$rc" -eq 0 ] && pass "all-green exits 0" || bad "all-green exit $rc (want 0); $(cat "$TMP/out")"
+grep -q "Do NOT re-run this command" "$TMP/out" \
+  && pass "green verdict says not to re-run" || bad "green verdict lacks the stop instruction"
+grep -qE "suite +PASS +35 tests passed" "$TMP/out" \
+  && pass "ANSI-coloured 'Tests 35 passed' is read as 35, not as Test Files' 1" \
+  || bad "test count misparsed: $(grep -E '^  suite' "$TMP/out")"
+grep -qE "mutation +SKIP" "$TMP/out" \
+  && pass "no stryker → mutation SKIP (not silently green)" || bad "mutation state wrong"
+
+# ── (4) --no-install really suppresses the npm install ───────────────────────────────────
+[ ! -f "$NPM_CANARY" ] && pass "--no-install never shells out to npm" \
+  || bad "npm was invoked despite --no-install: $(cat "$NPM_CANARY")"
+
+# ── (5) without --no-install, a missing runner triggers ONE --no-save install ────────────
+R="$TMP/r5"; mkrepo "$R"
+rm -f "$NPM_CANARY"
+STUB_GATE=pass vt "$R"; rc=$?
+grep -q -- "--no-save" "$NPM_CANARY" 2>/dev/null \
+  && pass "absent runner is installed with --no-save (no lockfile write)" \
+  || bad "install not attempted or not --no-save: $(cat "$NPM_CANARY" 2>/dev/null)"
+grep -qE "mutation +ERROR .*install failed" "$TMP/out" \
+  && pass "failed install is reported as an error, not skipped silently" \
+  || bad "failed install misreported: $(grep -E '^  mutation' "$TMP/out")"
+
+# ── (6) red suite: downstream checks do NOT run ──────────────────────────────────────────
+R="$TMP/r6"; mkrepo "$R" with-stryker
+STUB_SUITE=red STUB_GATE=pass vt "$R"; rc=$?
+[ "$rc" -eq 1 ] && pass "red suite exits 1" || bad "red suite exit $rc (want 1)"
+grep -qE "coverage-gate .*not run — suite is red" "$TMP/out" \
+  && pass "gate is not run against a red suite" \
+  || bad "gate ran on a red suite: $(grep -E 'coverage-gate' "$TMP/out")"
+grep -qE "mutation .*not run — suite is red" "$TMP/out" \
+  && pass "mutation is not run against a red suite" || bad "mutation ran on a red suite"
+grep -q "rejects empty input" "$TMP/out" \
+  && pass "failing test names surface as gaps" || bad "no failing test named in the gap list"
+
+# ── (7) gate failure: only the validator's own FAIL lines become gaps ────────────────────
+R="$TMP/r7"; mkrepo "$R"
+STUB_GATE=fail vt "$R" --no-install; rc=$?
+[ "$rc" -eq 1 ] && pass "gate failure exits 1" || bad "gate failure exit $rc (want 1)"
+grep -q "MISSING SYMBOL: alpha" "$TMP/out" \
+  && pass "validator violations are listed individually" || bad "validator violations not listed"
+grep -qE '^  - Uncovered owned rows: 0' "$TMP/out" \
+  && bad "summary counter leaked into the gap list (reads as a contradiction)" \
+  || pass "summary counters stay out of the gap list"
+
+# ── (8) coverage below threshold → the shortfall is named with its number ────────────────
+R="$TMP/r8"; mkrepo "$R"
+STUB_GATE=pass STUB_COV_PCT=60 vt "$R" --no-install; rc=$?
+[ "$rc" -eq 1 ] && pass "low coverage exits 1" || bad "low coverage exit $rc (want 1)"
+grep -q "statements 60.0% < 85%" "$TMP/out" \
+  && pass "coverage shortfall names measured vs required" || bad "coverage shortfall not itemised"
+grep -q "uncovered lines: \[41, 42\]" "$TMP/out" \
+  && pass "uncovered lines are handed over, not just the percentage" || bad "uncovered lines missing"
+
+# ── (9) mutation survivors: capped, NoCoverage first, remainder counted ──────────────────
+R="$TMP/r9"; mkrepo "$R" with-stryker
+STUB_GATE=pass STUB_SURVIVORS=8 vt "$R" --survivor-cap 3; rc=$?
+grep -qE "mutation +FAIL +52\.9%" "$TMP/out" \
+  && pass "mutation score computed from the report (9 killed / 17 tested)" \
+  || bad "mutation score wrong: $(grep -E '^  mutation' "$TMP/out")"
+[ "$(grep -c '^  - NoCoverage\|^  - Survived' "$TMP/out")" -eq 3 ] \
+  && pass "survivor list respects --survivor-cap" \
+  || bad "survivor cap ignored ($(grep -c '^  - NoCoverage\|^  - Survived' "$TMP/out") listed)"
+grep -q "^  - NoCoverage" "$TMP/out" && [ "$(grep -n 'NoCoverage\|Survived' "$TMP/out" | head -1 | grep -c NoCoverage)" -eq 1 ] \
+  && pass "no-coverage mutants lead the fix list" || bad "survivor ordering does not prioritise NoCoverage"
+grep -q "5 more survivors" "$TMP/out" \
+  && pass "survivors past the cap are counted, not dropped" || bad "remaining survivors not reported"
+[ ! -d "$R/.stryker-tmp" ] && pass "runner debris is cleared" || bad ".stryker-tmp left behind"
+
+# ── (10) budget: the helper stops on its own ─────────────────────────────────────────────
+R="$TMP/r10"; mkrepo "$R"
+for i in 1 2; do STUB_GATE=fail vt "$R" --no-install --budget 3 >/dev/null 2>&1; done
+STUB_GATE=fail vt "$R" --no-install --budget 3; rc=$?
+[ "$rc" -eq 4 ] && pass "third pass with gaps exits 4" || bad "budget exhaustion exit $rc (want 4)"
+grep -q "BUDGET EXHAUSTED" "$TMP/out" \
+  && pass "budget exhaustion is stated, not implied" || bad "no BUDGET EXHAUSTED line"
+grep -q "BLOCKED_INCOMPLETE" "$TMP/out" \
+  && pass "exhaustion routes to BLOCKED_INCOMPLETE, not to another pass" \
+  || bad "exhaustion does not name the terminal state"
+grep -q "pass 3 of 3" "$TMP/out" \
+  && pass "pass counter is visible on every run" || bad "pass counter missing"
+
+# ── (11) --reset-budget clears the counter ───────────────────────────────────────────────
+STUB_GATE=fail vt "$R" --no-install --budget 3 --reset-budget; rc=$?
+[ "$rc" -eq 1 ] && pass "--reset-budget restarts the count" || bad "--reset-budget exit $rc (want 1)"
+
+# ── (12) production hash drift is caught ─────────────────────────────────────────────────
+R="$TMP/r12"; mkrepo "$R"
+python3 - "$R" <<'PY'
+import json, sys, os
+p = os.path.join(sys.argv[1], "zuvo/contracts/thing.coverage.json")
+m = json.load(open(p)); m["production_sha256"] = "0" * 64
+json.dump(m, open(p, "w"))
+PY
+STUB_GATE=pass vt "$R" --no-install; rc=$?
+grep -qE "production-hash +FAIL" "$TMP/out" \
+  && pass "hash drift against the frozen manifest is a FAIL" || bad "hash drift not detected"
+[ "$rc" -ne 0 ] && pass "hash drift cannot exit 0" || bad "hash drift exited 0"
+
+# ── (13) --json is machine-readable and carries the same exit ────────────────────────────
+R="$TMP/r13"; mkrepo "$R"
+STUB_GATE=pass STUB_COV_PCT=95 vt "$R" --no-install --json; rc=$?
+python3 - "$TMP/out" "$rc" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["schema"] == "zuvo-verify/v1", d.get("schema")
+assert d["exit"] == int(sys.argv[2]), (d["exit"], sys.argv[2])
+assert d["runner"] == "vitest"
+assert {r["check"] for r in d["results"]} >= {"suite", "coverage-gate", "coverage", "production-hash"}
+PY
+[ $? -eq 0 ] && pass "--json parses and its exit field matches the process exit" \
+  || bad "--json output malformed: $(head -3 "$TMP/out")"
+
+# ── (14) monorepo: the runner is found in the workspace package, not the root ────────────
+R="$TMP/r14"; mkdir -p "$R/apps/api"
+printf '{"name":"root","private":true}\n' > "$R/package.json"
+mkrepo "$R/apps/api"
+python3 - "$R" <<'PY'
+import json, os, sys
+p = os.path.join(sys.argv[1], "apps/api/zuvo/contracts/thing.coverage.json")
+m = json.load(open(p))
+m["production_file"] = "apps/api/src/thing.ts"
+m["test_files"] = ["apps/api/src/thing.spec.ts"]
+json.dump(m, open(p, "w"))
+PY
+PATH="$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" STUB_GATE=pass \
+  "$HELPER" --manifest "$R/apps/api/zuvo/contracts/thing.coverage.json" --repo-root "$R" \
+  --no-install > "$TMP/out" 2>&1; rc=$?
+[ "$rc" -eq 0 ] && pass "monorepo spec resolves against the workspace package" \
+  || bad "monorepo run exit $rc: $(cat "$TMP/out")"
+
+# ── (15) degraded gate (exit 3) is neither a pass nor a hard fail ────────────────────────
+R="$TMP/r15"; mkrepo "$R"
+STUB_GATE=degraded vt "$R" --no-install; rc=$?
+grep -qE "coverage-gate +DEGRADED" "$TMP/out" \
+  && pass "textual extraction is reported DEGRADED" || bad "exit-3 gate not surfaced as DEGRADED"
+grep -q "BLOCKED_DEGRADED" "$TMP/out" \
+  && pass "DEGRADED names the evidence-quality state" || bad "DEGRADED lacks the state name"
+
+echo
+[ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
+echo "FAILURES PRESENT"; exit 1
