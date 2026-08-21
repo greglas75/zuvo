@@ -499,6 +499,40 @@ Worth carrying forward as a benchmark-design point: **a case only discriminates 
 leaves room.** Files a competent agent covers in three minutes cannot show a six-point difference,
 whatever the skill does.
 
+## Shield, complete — and the result is uncomfortable
+
+| arm | kill (med) | RED | wall (med) | tokens (med) |
+|---|---|---|---|---|
+| the repo's committed spec | 34.6% | — | — | — |
+| naked (no skill) | 84.3% | 0/3 | 162s | 0.24M |
+| **zuvo-v10** | **90.7%** | 0/3 | 4203s | 10.20M |
+| **zuvo-v12** | **84.3%** | 0/3 | 833s | 3.06M |
+
+v10 is the largest quality gain anywhere in this benchmark: **+6.4 points over the control**, and
+it takes seventy minutes to get there (two of its three runs were cut off by the container cap and
+still scored it). v12 is **five times cheaper and scores exactly the control's number.**
+
+Two things follow, and they pull against each other:
+
+1. **This file has real headroom and effort buys it.** The ceiling here is at least 90.7%, not the
+   ~86.4% I estimated earlier from the control and the incumbent — that estimate counted mutants
+   as equivalent that v10 went on to kill. Where CASE-01 was one mutant from its ceiling and extra
+   work bought nothing, shield had six points on the table.
+2. **v12 stops before collecting them.** Whatever the DEFER fix and the rest removed, some of it
+   was work that mattered here.
+
+I cannot say which change caused it: v10 and v12 differ in **four** things at once — the boundary
+obligations, the DEFER fix, the Step 3.3 repair, the survivor annotation. Attributing a 6.4-point
+drop or a 5x speedup to any one of them would be a guess.
+
+So **v13** is queued: v12 with the boundary obligations removed from the mandatory path and
+nothing else changed, three runs on the same file.
+
+- ~84% and fast → boundaries are not the cause, and the speedup itself is what costs the quality.
+- ~90% and fast → boundaries are the cause, and removing them is the whole fix.
+
+Either answer is actionable. Guessing between them is not.
+
 ## Worth considering, not done
 
 `test-coverage-gate.py boundaries` is useful to more than `write-tests`, and two sibling skills
