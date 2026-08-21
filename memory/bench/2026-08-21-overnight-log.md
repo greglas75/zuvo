@@ -199,6 +199,29 @@ If the clock costs ~3 points, the plateau reading is wrong for this arm and the 
 the user's to make. If quality holds at 90.9% with the tail cut, the clock is free. Running now,
 n=5, same case.
 
+## Rig repair, and the failure mode worth remembering
+
+Making the rig multi-repo (so a case can name its own checkout) broke it twice, and the two
+breakages fail in opposite ways:
+
+1. **The patch went through an ssh heredoc**, which stripped the quotes around a path and
+   expanded `$BENCH`/`$CASE` at *write* time, leaving
+   `print(json.load(open(/corpus//meta.json)).get(repo_dir, /repo))` in the script. Python
+   raised, `REPO` came back empty, `cp -a "" "$WS"` copied nothing — and five agents were handed
+   an empty directory tree. One of them said so plainly ("there's nothing to write tests for")
+   **and the run still exited 0 after 34 seconds.** A completed run with no suite is
+   indistinguishable, downstream, from a skill that refused to work.
+2. **Switching the node_modules source to `$REPO/node_modules` reintroduced instrument rule 1.**
+   In the tgm corpus that path is a *symlink* to a shared store, `cp -al` on a symlink copies the
+   link, and the container then follows a host path it cannot see. The green/red selfcheck caught
+   this one immediately — npx downloaded its own vitest and the green case failed — which is the
+   selfcheck doing exactly the job it was built for.
+
+The lesson is the asymmetry. The failure the instrument checked for was caught in seconds; the
+failure it did not check for produced five green-looking runs. `run_arm.sh` now refuses to start
+an agent when the workspace is under 1 MB or the file under test is absent, and every path is
+passed to Python as **argv** rather than interpolated into its source.
+
 ## Open at the time of writing
 
 - **v9** (escape hatch closed + typecheck folded + mutation deferred), CASE-01, n=5. Three
