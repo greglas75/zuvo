@@ -1,0 +1,148 @@
+#!/bin/sh
+# Polyglot sh/python header — see compute-preload for why this exact line matters on Windows.
+''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
+"""
+~/.zuvo/zuvo-base — print the zuvo install root. One command, every harness.
+
+Usage:
+  ZUVO_BASE="$(~/.zuvo/zuvo-base)"          # the normal use
+  ~/.zuvo/zuvo-base --why                   # print how it decided, to stderr
+
+Why this exists. `env-compat.md` carries a four-line canonical resolver: sed `installPath` out
+of `installed_plugins.json`, then a semver-filtered glob over the cache directory. It is correct
+on a Claude Code desktop install and nowhere else, and every skill that shells out pays it.
+Measured across the benchmark rig 2026-08-21, that snippet was the single most-repeated bash
+command in the whole corpus — 30 invocations across the runs of two arms — and in the containers
+it resolves to nothing at all, because there is no `installed_plugins.json` there. What follows
+is an agent improvising: `find / -iname zuvo`, `ls ~/.claude/skills`, reading the helper with
+`cat` to see whether it is real. Those turns are pure environment friction.
+
+A resolver is exactly the kind of thing that should be a program: the answer is deterministic,
+the failure modes are known, and there is nothing for a model to decide. The ordering below is
+the one thing that matters, and each entry is there because of a specific way the naive version
+guessed wrong:
+
+  1. $ZUVO_BASE, if it actually contains scripts/ — an override must win, but a stale export
+     pointing at a deleted release must not.
+  2. installPath from installed_plugins.json — authoritative on Claude Code: it is literally the
+     directory the client loads, so it stays right mid-session after a version bump.
+  3. The version-named cache directory, semver-filtered. Claude Code also creates a SHA-named
+     sibling, and a plain `sort -V | tail -1` picks `17ea…` over `1.4.0` because 17 sorts above
+     1 — a silent mis-resolution to a directory that may hold a different version.
+  4. ~/.zuvo-plugin — the mount used by containers and CI images.
+  5. The per-harness build roots: Codex, Cursor, Antigravity, Kimi.
+  6. The source checkout, when a helper is being run straight out of the repo.
+
+Exit 0 with the path on stdout, or exit 3 with an explanation on stderr and nothing on stdout —
+so `ZUVO_BASE="$(zuvo-base)"` yields an empty string rather than a diagnostic masquerading as a
+path.
+"""
+import json
+import os
+import re
+import sys
+
+SEMVER_DIR = re.compile(r"^\d+\.\d+\.\d+$")
+
+
+def valid(path):
+    """A root is only a root if the thing callers reach for is actually in it."""
+    return bool(path) and os.path.isdir(os.path.join(path, "scripts"))
+
+
+def from_installed_plugins(home):
+    p = os.path.join(home, ".claude", "plugins", "installed_plugins.json")
+    try:
+        with open(p, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return None
+    entries = data.get("plugins")
+    if not isinstance(entries, dict):
+        return None
+    for name, records in entries.items():
+        if "zuvo" not in name.lower():
+            continue
+        if not isinstance(records, list):
+            records = [records]
+        for rec in records:
+            if isinstance(rec, dict) and valid(rec.get("installPath")):
+                return rec["installPath"]
+    return None
+
+
+def from_cache(home):
+    base = os.path.join(home, ".claude", "plugins", "cache", "zuvo-marketplace", "zuvo")
+    if not os.path.isdir(base):
+        return None
+    versions = []
+    for name in os.listdir(base):
+        if SEMVER_DIR.match(name) and valid(os.path.join(base, name)):
+            versions.append((tuple(int(x) for x in name.split(".")), name))
+    if not versions:
+        return None
+    versions.sort()
+    return os.path.join(base, versions[-1][1])
+
+
+def from_source(here):
+    d = here
+    for _ in range(4):
+        if valid(d) and os.path.isdir(os.path.join(d, "skills")):
+            return os.path.abspath(d)
+        d = os.path.dirname(d)
+    return None
+
+
+def resolve(home, here):
+    env = os.environ.get("ZUVO_BASE")
+    if valid(env):
+        return env, "ZUVO_BASE override"
+    if env:
+        note = "ZUVO_BASE=%r set but has no scripts/ — ignored" % env
+    else:
+        note = None
+
+    p = from_installed_plugins(home)
+    if p:
+        return p, "installPath in installed_plugins.json"
+    p = from_cache(home)
+    if p:
+        return p, "newest semver cache directory"
+    for cand, why in (
+        (os.path.join(home, ".zuvo-plugin"), "~/.zuvo-plugin (container/CI mount)"),
+        (os.path.join(home, ".codex"), "Codex build root"),
+        (os.path.join(home, ".cursor"), "Cursor build root"),
+        (os.path.join(home, ".gemini", "antigravity"), "Antigravity build root"),
+        (os.path.join(home, ".kimi-code"), "Kimi Code build root"),
+        (os.path.join(home, ".claude"), "user-skills install"),
+    ):
+        if valid(cand):
+            return cand, why
+    p = from_source(here)
+    if p:
+        return p, "source checkout"
+    return None, note or "no candidate contained a scripts/ directory"
+
+
+def main():
+    why = "--why" in sys.argv[1:]
+    home = os.path.expanduser("~")
+    here = os.path.dirname(os.path.realpath(__file__))
+    path, reason = resolve(home, here)
+    if path is None:
+        sys.stderr.write(
+            "zuvo-base: cannot locate the zuvo install root (%s).\n"
+            "Looked at: $ZUVO_BASE, installed_plugins.json, the semver cache dir,\n"
+            "~/.zuvo-plugin, ~/.codex, ~/.cursor, ~/.gemini/antigravity, ~/.kimi-code,\n"
+            "~/.claude, and the source checkout above this script.\n" % reason
+        )
+        return 3
+    if why:
+        sys.stderr.write("zuvo-base: %s -> %s\n" % (reason, path))
+    print(path)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

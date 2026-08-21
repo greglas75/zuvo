@@ -20,7 +20,25 @@ A bash command resolves relative paths against the **current working directory**
 
 **Rule:** never place a `../../` path inside a Bash command, and never pass one as a script argument. Resolve the install root once, then use absolute `$ZUVO_BASE/...`. (A `../../shared/includes/…` reference that a skill tells you to **Read** is fine — that is loader-resolved, not bash-resolved. The rule is only about paths a shell touches.)
 
-**Canonical resolver — Claude Code (copy verbatim; honors a `$ZUVO_BASE` override for tests):**
+**Canonical resolver — one command, every harness:**
+
+```bash
+ZUVO_BASE="$(~/.zuvo/zuvo-base)"   # empty + exit 3 if nothing resolves; add --why to see the rule
+```
+
+It checks, in order: a `$ZUVO_BASE` that actually contains `scripts/`, `installPath` from
+`installed_plugins.json`, the semver-filtered cache directory, `~/.zuvo-plugin` (containers and
+CI images), the Codex / Cursor / Antigravity / Kimi build roots, `~/.claude`, and finally the
+source checkout. On total failure it writes the explanation to **stderr** and nothing to stdout,
+so `ZUVO_BASE="$(...)"` yields an empty string rather than a diagnostic used as a path.
+
+Prefer it over hand-rolling the search. Measured on the benchmark rig 2026-08-21, the sed recipe
+below was the single most-repeated bash command across the whole run corpus — 30 invocations
+across two arms — and in a container it resolves to nothing, after which the agent starts
+improvising (`find / -iname zuvo`, `ls ~/.claude/skills`, `cat` the helper to see if it is real).
+Those turns are pure environment friction and they are why this is a program.
+
+**Fallback, if `~/.zuvo/zuvo-base` is not installed (pre-1.6.72):**
 
 ```bash
 ZUVO_BASE="${ZUVO_BASE:-$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*zuvo[^"]*\)".*/\1/p' \
