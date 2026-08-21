@@ -435,8 +435,9 @@ Errors in the production file are printed as context and backlogged — they are
 **Mutation waits for the cheap checks.** The helper defers StrykerJS until the gate and coverage
 stop reporting gaps, because mutation is the most expensive measurement in the pipeline by an
 order of magnitude (270s median, 1089s worst, against 16-57s for the typecheck) and a suite with
-open rows is about to be rewritten anyway. `mutation SKIP — deferred` is the expected state on a
-first pass, not a missing measurement; it runs on the pass where the suite is worth measuring.
+open rows is about to be rewritten anyway. `mutation DEFER` is the expected state on a first
+pass, not a missing measurement; it runs on the pass where the suite is worth measuring, and it
+is a different state from `SKIP`, which means no runner exists here at all.
 
 | exit | meaning | what to do |
 |---|---|---|
@@ -542,8 +543,13 @@ as `error: ...`, never silently skipped.
 
 **Hand probes remain the floor for the classes a native mutator does not generate** — error-path
 removal, state mutation, async hazards (`test-mutation-probes.md` classes 2-4). Run them when the
-helper reported `mutation SKIP` or `none`, or when the classification names a behaviour group the
-runner cannot reach. 3 probes (STANDARD) / 5 (HEAVY-COMPLEX, >=1 per behavior group), byte-restore
+helper reported `mutation SKIP` (no runner exists here) or `error`, or when the classification
+names a behaviour group the runner cannot reach.
+
+**`mutation DEFER` is not `SKIP`.** DEFER means the helper is holding the run back until the
+suite is final and will do it on a later pass; there is nothing to substitute for. Reaching for
+hand probes on a DEFER duplicates work that is about to happen for free — measured at 677s over
+24 turns in one run, 29% of its wall. 3 probes (STANDARD) / 5 (HEAVY-COMPLEX, >=1 per behavior group), byte-restore
 protocol, scoped runs. Execute ALL probes as ONE script in ONE tool call (mutate → run → restore
 in a loop, emitting only the final table) — per-probe conversational turns re-bill the whole
 prefix for zero information. Post-restore sha256 must equal the manifest hash.

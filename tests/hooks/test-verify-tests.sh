@@ -503,15 +503,18 @@ grep -q "legacy.ts" "$TMP/out" \
 R="$TMP/m24"; mkrepo "$R" with-stryker
 rm -f "$TSC_ARGS_CANARY"
 STUB_GATE=fail STUB_TSC=clean vt "$R"; rc=$?
-grep -qE "mutation .*deferred" "$TMP/out" \
-  && pass "mutation is deferred while the gate still fails (saves the 270s median block)" \
+grep -qE "mutation +DEFER" "$TMP/out" \
+  && pass "mutation is DEFERred while the gate still fails (saves the 270s median block)" \
   || bad "mutation ran against an incomplete suite: $(grep -E '^  mutation' "$TMP/out")"
 
-grep -qE "typecheck .*deferred" "$TMP/out" \
-  && pass "typecheck is deferred too (57s cold — the block that crosses the 120s Bash window)" \
+grep -qE "typecheck +DEFER" "$TMP/out" \
+  && pass "typecheck is DEFERred too (57s cold — the block that crosses the 120s Bash window)" \
   || bad "typecheck ran against an incomplete suite: $(grep -E '^  typecheck' "$TMP/out")"
 grep -q -- "-p tsconfig.json" "$TMP/tsc-args" 2>/dev/null && [ -s "$TMP/tsc-args" ] \
   && bad "tsc was invoked despite the deferral" || pass "no tsc process is started on a deferred pass"
+grep -qE "(mutation|typecheck) +SKIP" "$TMP/out" \
+  && bad "a deferral reported SKIP — Step 3.3 keys on SKIP to run hand probes, so this sends the agent to do the expensive thing manually" \
+  || pass "deferral never reports SKIP, which means 'cannot run here' and triggers hand probes"
 
 R="$TMP/m24b"; mkrepo "$R" with-stryker
 STUB_GATE=fail STUB_SURVIVORS=2 vt "$R" --force-mutation

@@ -915,14 +915,20 @@ def main():
         # crosses it gets backgrounded, and the run spends four to six turns polling for output
         # one turn would have returned.
         cheap_clean = gate.status in ("PASS", "DEGRADED") and (cov is None or cov.status in ("PASS", "SKIP"))
-        deferred = ("deferred — close the gaps above first; this measures a finished suite "
-                    "(--force-mutation to run both anyway)")
+        deferred = ("deferred to the pass where the suite is final — nothing to do about it now "
+                    "(--force-mutation runs both anyway)")
         if "typecheck" in skip:
             pass
         elif a.force_mutation or cheap_clean:
             results.append(check_typecheck(runner, prod, tests, root, manifest_path))
         else:
             r = Result("typecheck")
+            # DEFER, not SKIP. SKIP means "this check cannot run here" and write-tests Step 3.3
+            # keys on it to fall back to hand-written mutation probes. A deferral that says SKIP
+            # therefore sends the agent off to run the expensive thing by hand -- measured at
+            # 677s over 24 turns in one run, 29% of its wall, doing what the helper was about to
+            # do for free on the next pass.
+            r.status = "DEFER"
             r.detail = deferred
             results.append(r)
         # Mutation is by far the most expensive measurement here: median 270s on the rig and
@@ -936,11 +942,13 @@ def main():
             results.append(check_mutation(runner, prod, tests, root, a.survivor_cap, not a.no_install))
         else:
             r = Result("mutation")
+            r.status = "DEFER"
             r.detail = deferred
             results.append(r)
     else:
         for name in ("coverage-gate", "coverage", "typecheck", "mutation"):
             r = Result(name)
+            r.status = "DEFER"
             r.detail = "not run — suite is red on unmutated source"
             results.append(r)
 
