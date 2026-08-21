@@ -373,6 +373,14 @@ Red truthful tests for production bugs are not a terminal state: characterizatio
 
 ### Step 2.5: LOCAL COVERAGE GATE (executable)
 
+**Run it ONCE. Do not iterate it.** Measured 2026-08-21 across 22 runs on one file: runs that
+re-ran this gate 3+ times reached 88.9% mutation kill against 85.9% for runs that ran it once —
+three points, for three to five times the turns, and the three runs with the MOST iterations
+(31, 26, 18) all ended with a suite that fails on unmutated source. This gate proves inventory
+rows have evidence attached; it cannot prove the evidence detects anything. Iterating it
+optimises the proxy. Step 3.3 measures the real thing for a fraction of the cost, so close gaps
+THERE, on evidence of what actually survives.
+
 The gate is a program, not a checklist. Map the written tests into the FROZEN manifest per `test-inventory-protocol.md` Step 2.5: fill each row's `coverage` + `test-file:line` evidence, set `status: "final"`, record `quality_gates` (Q7/Q11 from the upcoming self-eval — run Step 3's critical-gate scoring for these two now), then run:
 
 ```bash
@@ -428,11 +436,24 @@ Per `test-mutation-probes.md`: 3 probes (STANDARD) / 5 (HEAVY-COMPLEX, ≥1 per 
 
 `native:` has three states, and collapsing the last two hides an infra failure as normal absence: `<score>% (<runner>)` when a run produced a number, `none` when the project has no runner configured, `error: <reason>` when a detected runner could not be scoped, timed out, or exited non-zero.
 
+**The native runner is the PRIMARY measurement — reach for it before hand-rolled probes.**
+It is the cheapest accurate thing in this pipeline: a scoped StrykerJS run on a 200-line file
+generated 235 mutants in ~71s of CPU and zero conversational turns, against 3-6 hand probes that
+each cost a turn. If a runner is configured, run it FIRST and let the probes fill only the
+classes it cannot express (error-path removal, state mutation, async hazards).
+
+**Absent runner: install it into the workspace, never into the project.** `npm install --no-save`
+(or the stack's equivalent no-write flag) leaves `package.json` and the lockfile untouched, so
+nothing is committed and nothing is imposed on the repo — measured install cost 19s. This is the
+one exception to "write-tests never installs a runner": a --no-save install writes no file the
+project keeps. Record `native: <score>% (<runner>, workspace-local)`. If the install fails, say
+so and fall back to probes; do not silently skip the measurement.
+
 **Native runner when the project already has one** (StrykerJS / Infection / cargo-mutants — detection table in `skills/mutation-test/SKILL.md` § 0.1b; mutmut 3.x cannot scope per file and is excluded here). Five rules, and the first two are the ones that bite:
 
 1. **Mutate the PRODUCTION file under test, never the test file just written.** `--mutate` takes the source file the inventory covers (`src/auth.ts`), not `src/auth.test.ts`. Pointing a mutator at its own test file corrupts the tests and produces a meaningless number.
 2. **Same byte-restore + sha256 gate as the probes.** A native runner mutates production in place and can die mid-run. After it exits — success, failure, or interrupt — restore and verify the production file's sha256 against `production_sha256` in the manifest, exactly as step 5 of the probe protocol requires. Then remove the runner's own debris (`.stryker-tmp/`, `mutants.out/`, `.mutmut-cache/`, HTML reports) and confirm `git status` shows nothing but the intended test file. "Probes restored cleanly" is not evidence about the native run.
-3. **Cap the in-run fix loop at 3 native survivors**, highest-risk first. A native runner can emit 50+ mutants on one file; probes are capped at 3-5 for the same reason. Remaining survivors are recorded in the table with their IDs — not silently dropped, and not chased until the context window dies.
+3. **Cap the in-run fix loop at 5 native survivors**, highest-risk first (raised from 3: a real runner surfaces 200+ mutants, so the cap should reflect what a fix round can close, not what a hand-probe set could produce). A native runner can emit 50+ mutants on one file; probes are capped at 3-5 for the same reason. Remaining survivors are recorded in the table with their IDs — not silently dropped, and not chased until the context window dies.
 4. **Triage before fixing.** Native runners generate equivalent mutants routinely (`x * 2` → `x << 1`). An equivalent mutant is recorded `equivalent` with the reason, and does NOT block completion — the same triage `zuvo:mutation-test` § 4.2 applies. Only a survivor triaged `gap` is a gap.
 5. **write-tests never INSTALLS a runner** — that is `zuvo:mutation-test` § 0.1c's consented step; absent runner → probes only, unchanged.
 
