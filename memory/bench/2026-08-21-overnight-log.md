@@ -164,6 +164,41 @@ reset it. Every pass prints `pass N of 3   X.X of 15 min`. On expiry the remaini
 recorded with their IDs and the file finishes — which is the correct outcome, not a failure to
 try hard enough.
 
+## v9 — the first real quality gain in this benchmark, and the tension it creates
+
+| arm | n | kill (med) | RED | wall (med) | tokens (med) |
+|---|---|---|---|---|---|
+| naked | 4 | 84.8% | 0/4 | 231s | 0.30M |
+| zuvo-v3 (main, was) | 9 | 88.4% | 1/9 | 698s | 2.70M |
+| zuvo-v7 (main, now) | 5 | 88.9% | 0/5 | 492s | 1.82M |
+| zuvo-v8 | 5 | 88.9% | 0/5 | 1684s | 4.39M |
+| **zuvo-v9** | 5 | **90.9%** | 0/5 | 1214s | 4.43M |
+
+v9 is the first arm to move the median at all: **+2.0 points over v7, +6.1 over the control**, with
+no RED suites. Every earlier "improvement" held quality flat and moved only cost.
+
+It also complicates the plateau result above, and the honest thing is to say so rather than pick
+the reading that suits the conclusion. Within v9's five runs:
+
+| wall | kill |
+|---|---|
+| 648s | 87.9% |
+| 1148s | 87.9% |
+| 1214s | 90.9% |
+| 3770s | 90.9% |
+| 4033s | 90.9% |
+
+That is +3.0 points for the more expensive runs — a within-arm dose-response, at n=5, in an arm
+where the corpus-wide analysis predicted roughly half a point. Both cannot be the whole story.
+The plateau analysis has 33 runs behind it and v9 has five, so v9 is the weaker evidence; but it is
+also the only arm measured *after* the verification loop was made cheap, so it may simply be
+describing a different regime.
+
+**That is exactly what v10 measures.** v10 is v9 plus a 15-minute clock on the verification loop.
+If the clock costs ~3 points, the plateau reading is wrong for this arm and the trade is real and
+the user's to make. If quality holds at 90.9% with the tail cut, the clock is free. Running now,
+n=5, same case.
+
 ## Open at the time of writing
 
 - **v9** (escape hatch closed + typecheck folded + mutation deferred), CASE-01, n=5. Three
