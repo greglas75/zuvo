@@ -334,15 +334,18 @@ Follow `test-inventory-protocol.md` Step 1.6 exactly:
 python3 "$ZUVO_BASE/scripts/test-coverage-gate.py" boundaries --production <file>
 ```
 
-Every relational operator, boolean operator, `throw`/`raise` and literal index it prints is an
-inventory row of type `branch` or `error_path`, and its evidence must be a test that sits on
-the boundary — not merely one that exercises the line.
+Every relational operator, boolean operator, `throw`/`raise`, optional chain (`a?.b`), arithmetic
+operator and literal index it prints is an inventory row of type `branch` or `error_path`, and
+its evidence must be a test that sits ON the boundary — not merely one that exercises the line.
+The printed list is ordered by measured survival frequency and capped at 60; `--all` shows the
+rest, and a file needing more than that is a split candidate under the rule below.
 
 Why this is mechanical rather than a judgement call: measured across **39 suites for one file**,
 the mutants that separate an 88% suite from a 91% one are all boundaries the tests never sat
 exactly on — `value < 0` surviving a change to `value <= 0` (27 of 39 suites), a literal `0`
 bumped to `1` (27 of 39), a `throw` deleted outright (**34 of 39**), `normalized[0]` shifted to
-`normalized[1]` (15 of 39). `test-edge-cases.md` already says "exact threshold N, N-1, N+1" — but
+`normalized[1]` (15 of 39). On the React cases the top survivors are removed optional chains and
+swapped booleans instead: same shape, different operator mix. `test-edge-cases.md` already says "exact threshold N, N-1, N+1" — but
 in a row keyed on code TYPE, so a bare comparison inside a pure function never triggers it.
 Classification decides whether the rule applies, and classification happens before the
 comparisons are known. Deriving the obligations from the source removes that ordering problem.
