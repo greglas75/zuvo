@@ -19,10 +19,41 @@
    the extractor cannot see (dynamic dispatch, route tables, indirectly-called
    public methods) — never remove one it found.
 
+1b. Run the boundary extractor in the same breath — it reads the SOURCE, not the
+   classification:
+
+   ```bash
+   python3 "$ZUVO_BASE/scripts/test-coverage-gate.py" boundaries \
+     --production "<absolute-path-to-production-file>"
+   ```
+
+   Every relational operator, boolean operator, `throw`/`raise`, optional chain
+   (`a?.b`), arithmetic operator and literal index it prints is an inventory row,
+   and its evidence must be a test that sits ON the boundary — not one that
+   merely executes the line.
+
+   This is mechanical rather than a judgement call for a measured reason. Across
+   **39 suites written for one file**, the mutants separating an 88% suite from a
+   91% one were all boundaries the tests never sat exactly on: a `throw` deleted
+   outright survived **34 of 39** suites, `value < 0` changed to `<=` survived 27,
+   a literal `0` bumped to `1` survived 27, `normalized[0]` shifted to `[1]`
+   survived 15. On the React cases the top survivors are removed optional chains
+   and swapped booleans instead — same shape, different operator mix.
+
+   `test-edge-cases.md` already asks for "exact threshold N, N-1, N+1", but from a
+   row keyed on code TYPE, so a bare comparison inside a pure function never
+   triggers it: classification decides whether the rule applies, and
+   classification happens before the comparisons are known. Reading the source
+   removes that ordering problem.
+
+   Exit 3 means no parser for this language — record `BLOCKED_DEGRADED` for
+   boundary evidence. That is not the same as "this file has no boundaries".
+
 2. For EVERY symbol add inventory rows: one `entry` row, plus one row per owned
    conditional branch, per explicit error path (`throw`, rejected dependency,
-   catch/fallback), per owned side effect. Mark `ownership` honestly —
-   `delegated` is for thin forwarding only, not for "hard to test".
+   catch/fallback), per owned side effect, **plus every boundary obligation from
+   1b**. Mark `ownership` honestly — `delegated` is for thin forwarding only, not
+   for "hard to test".
 
 3. Write the manifest to `$ZUVO_DIR/contracts/<basename>.coverage.json` with
    `status: "inventory"`, the current production `sha256`, and NO coverage
