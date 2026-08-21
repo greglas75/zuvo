@@ -379,6 +379,31 @@ after it runs v11, because the boundary work aims at files that are not already 
 | CASE-04 | `survey-logic-auditor.replay.ts` | naked 67.2% |
 | CASE-05 | `dom-translation-detector.ts` (jest/NestJS) | **human-written incumbent 34.6%** — 35 of its 50 tests are skipped |
 
+## CASE-05 (shield / jest / NestJS) — the control beats the committed spec by 50 points
+
+First numbers from a stack this benchmark had never run:
+
+| suite | kill | killed | survived | **no-coverage** | wall |
+|---|---|---|---|---|---|
+| the repo's own hand-written spec | **34.6%** | 66 | 26 | **99** | — |
+| naked r1 / r2 / r3 (no skill) | 83.2 / 84.3 / 84.3% | ~160 | 26 | 4-6 | 162s |
+
+The 26 survivors are **identical in all four suites**, which is what an equivalent-mutant set looks
+like. The entire difference is `no-coverage`: the committed spec does not execute most of the
+file, because **35 of its 50 tests are `skip`ped**. A three-minute run with no skill loaded covers
+what a checked-in test file does not.
+
+That also sets the headroom, and it is much tighter than CASE-01's:
+
+| case | control | ceiling | headroom | captured by the skill |
+|---|---|---|---|---|
+| CASE-01 | 84.8% | 91.9% | 7.1 pts | **6.1** |
+| CASE-05 | 84.3% | ~86.4% (if all 26 are equivalent) | ~2.1 pts | measuring now |
+
+Worth carrying forward as a benchmark-design point: **a case only discriminates where the control
+leaves room.** Files a competent agent covers in three minutes cannot show a six-point difference,
+whatever the skill does.
+
 ## Worth considering, not done
 
 `test-coverage-gate.py boundaries` is useful to more than `write-tests`, and two sibling skills
