@@ -955,8 +955,20 @@ def main():
         # what keeps an early pass inside the harness's 120-second Bash window; a pass that
         # crosses it gets backgrounded, and the run spends four to six turns polling for output
         # one turn would have returned.
-        cheap_clean = gate.status in ("PASS", "DEGRADED") and (cov is None or cov.status in ("PASS", "SKIP"))
-        deferred = ("deferred to the pass where the suite is final — nothing to do about it now "
+        # Gate the expensive checks on the TESTS, not on the manifest bookkeeping.
+        #
+        # The first version waited for the coverage GATE to pass. On the shield case that gate
+        # never went green, so typecheck and mutation stayed deferred for the whole run and the
+        # suite finished having never been mutated at all — scoring exactly the no-skill control
+        # while a slower arm on the same file reached 90.7%. The gate checks whether inventory
+        # rows carry evidence; it says nothing about whether the tests detect anything. A run
+        # with imperfect bookkeeping and a good suite still deserves to learn which mutants
+        # survive, and that is the most valuable signal in the pipeline.
+        #
+        # The suite being green and coverage being adequate is what makes a mutation number
+        # meaningful. Those are the conditions.
+        cheap_clean = cov is None or cov.status in ("PASS", "SKIP", "DEFER")
+        deferred = ("deferred until coverage is adequate — nothing to do about it now "
                     "(--force-mutation runs both anyway)")
         if "typecheck" in skip:
             pass

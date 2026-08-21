@@ -511,25 +511,34 @@ grep -q "legacy.ts" "$TMP/out" \
   || pass "other files' type errors stay out of the gap list"
 [ "$rc" -eq 1 ] && pass "own type error exits 1" || bad "own type error exit $rc (want 1)"
 
-# ── (24) mutation waits until the cheap checks stop reporting gaps ───────────────────────
+# ── (24) the expensive checks wait on COVERAGE, not on the manifest gate ─────────────────
+# Gating them on the gate starved a whole benchmark case: the gate never went green, mutation
+# never ran, and the suite finished unmeasured at exactly the no-skill control's score. The
+# gate is bookkeeping; coverage and the suite are what make a mutation number mean anything.
 R="$TMP/m24"; mkrepo "$R" with-stryker
 rm -f "$TSC_ARGS_CANARY"
-STUB_GATE=fail STUB_TSC=clean vt "$R"; rc=$?
+STUB_GATE=pass STUB_COV_PCT=60 STUB_TSC=clean vt "$R"; rc=$?
 grep -qE "mutation +DEFER" "$TMP/out" \
-  && pass "mutation is DEFERred while the gate still fails (saves the 270s median block)" \
-  || bad "mutation ran against an incomplete suite: $(grep -E '^  mutation' "$TMP/out")"
+  && pass "mutation is DEFERred while coverage is below threshold" \
+  || bad "mutation ran under inadequate coverage: $(grep -E '^  mutation' "$TMP/out")"
 
 grep -qE "typecheck +DEFER" "$TMP/out" \
   && pass "typecheck is DEFERred too (57s cold — the block that crosses the 120s Bash window)" \
-  || bad "typecheck ran against an incomplete suite: $(grep -E '^  typecheck' "$TMP/out")"
+  || bad "typecheck ran under inadequate coverage: $(grep -E '^  typecheck' "$TMP/out")"
 grep -q -- "-p tsconfig.json" "$TMP/tsc-args" 2>/dev/null && [ -s "$TMP/tsc-args" ] \
   && bad "tsc was invoked despite the deferral" || pass "no tsc process is started on a deferred pass"
 grep -qE "(mutation|typecheck) +SKIP" "$TMP/out" \
   && bad "a deferral reported SKIP — Step 3.3 keys on SKIP to run hand probes, so this sends the agent to do the expensive thing manually" \
   || pass "deferral never reports SKIP, which means 'cannot run here' and triggers hand probes"
 
+R="$TMP/m24c"; mkrepo "$R" with-stryker
+STUB_GATE=fail STUB_COV_PCT=95 STUB_SURVIVORS=2 vt "$R"
+grep -qE "mutation +(FAIL|PASS)" "$TMP/out" \
+  && pass "a FAILING manifest gate no longer blocks mutation — bookkeeping is not test quality" \
+  || bad "gate failure still starves the run of its mutation signal"
+
 R="$TMP/m24b"; mkrepo "$R" with-stryker
-STUB_GATE=fail STUB_SURVIVORS=2 vt "$R" --force-mutation
+STUB_GATE=pass STUB_COV_PCT=60 STUB_SURVIVORS=2 vt "$R" --force-mutation
 grep -qE "mutation +(FAIL|PASS)" "$TMP/out" \
   && pass "--force-mutation overrides the deferral" \
   || bad "--force-mutation did not run mutation: $(grep -E '^  mutation' "$TMP/out")"

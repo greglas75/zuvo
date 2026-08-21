@@ -435,12 +435,20 @@ diagnostics in somebody else's debt. The helper runs it once per pass against th
 OWNS the file, incrementally (57s cold, 16s warm), and reports only errors in the spec you wrote.
 Errors in the production file are printed as context and backlogged — they are not this run's gaps.
 
-**Mutation waits for the cheap checks.** The helper defers StrykerJS until the gate and coverage
-stop reporting gaps, because mutation is the most expensive measurement in the pipeline by an
-order of magnitude (270s median, 1089s worst, against 16-57s for the typecheck) and a suite with
-open rows is about to be rewritten anyway. `mutation DEFER` is the expected state on a first
-pass, not a missing measurement; it runs on the pass where the suite is worth measuring, and it
-is a different state from `SKIP`, which means no runner exists here at all.
+**Mutation waits for COVERAGE, not for the manifest gate.** The helper defers StrykerJS until
+the suite is green and scoped coverage is adequate, because mutation is the most expensive
+measurement in the pipeline by an order of magnitude (270s median, 1089s worst, against 16-57s
+for the typecheck) and a number taken over an under-covered suite describes very little.
+
+It deliberately does NOT wait for the coverage GATE. That gate checks whether inventory rows
+carry evidence — bookkeeping — and an earlier version keyed the deferral on it. On one benchmark
+case the gate never went green, so mutation never ran at all, and the run finished having never
+learned which mutants survived: it scored **exactly the no-skill control's number** while a
+slower arm on the same file reached 90.7%. A run with imperfect bookkeeping and a good suite
+still deserves its most valuable signal.
+
+`mutation DEFER` is the expected state on a first pass, not a missing measurement; it is also a
+different state from `SKIP`, which means no runner exists here at all.
 
 | exit | meaning | what to do |
 |---|---|---|
