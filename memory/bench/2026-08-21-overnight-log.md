@@ -66,7 +66,15 @@ those runs had in common.
 |---|---|---|---|---|
 | naked (no skill) | 84.8% | 0/4 | 231s | — |
 | **v7** — on `main` now | 88.9% | 0/5 | 492s | +4.1 |
-| **v9 / v10** | **90.9%** | 0/5 | 1214s / 2353s | **+6.1** |
+| **v9 / v10 / v11** | **90.9%** | 0/5, 0/5, 0/4 | 1214s / 2353s / 2900s | **+6.1** |
+
+And on **shield** (`rs_be`, jest/NestJS), a stack this benchmark had never run:
+
+| arm | kill (med) | wall (med) |
+|---|---|---|
+| the repo's own committed spec | 34.6% | — |
+| naked (no skill) | 84.3% | 162s |
+| **zuvo-v10** | **88.2%** | 4203s |
 
 Against a per-file ceiling of ~91.9% (eight mutants survive every arm ever run on this file),
 90.9% is one non-equivalent mutant from the top.
@@ -83,6 +91,10 @@ attacks a specific, measured cause of that tail rather than trimming work:
 | `ZUVO_BASE` resolved by a 4-line sed recipe | most-repeated command in the whole corpus (30×) | `~/.zuvo/zuvo-base` |
 | the coverage gate run twice, once per document | 15 direct calls in one run | includes defer to the helper |
 | a deferral reported `SKIP`, which means "do it by hand" | **677s over 24 turns**, 29% of one run's wall | `DEFER` is its own state |
+
+**One RED suite in the whole corpus, not eight.** Seven of the eight were the scorer discarding a
+production fix the pipeline mandates — see the correction at the top, which is the most important
+thing on this page.
 
 **And the misses have a shape.** Comparing per-mutant survivors across 39 suites: what separates
 an 88% suite from a 91% one is boundaries the tests never sat exactly on — a deleted `throw`
