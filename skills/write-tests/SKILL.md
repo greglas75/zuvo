@@ -440,6 +440,13 @@ the suite is green and scoped coverage is adequate, because mutation is the most
 measurement in the pipeline by an order of magnitude (270s median, 1089s worst, against 16-57s
 for the typecheck) and a number taken over an under-covered suite describes very little.
 
+**The FIRST pass always measures mutation**, whatever coverage says. Deferring it means writing a
+whole suite blind and learning what it missed at the end, when changing course is expensive.
+Measured on the shield case: a run that sees its survivors once leaves 24 of them at 85.3%; runs
+that iterate on the list close six more and reach 90%. The list handed over on pass one is a
+**specification**, not a verdict. Later passes do wait for coverage — by then the list exists, and
+re-measuring an under-covered suite says nothing new.
+
 It deliberately does NOT wait for the coverage GATE. That gate checks whether inventory rows
 carry evidence — bookkeeping — and an earlier version keyed the deferral on it. On one benchmark
 case the gate never went green, so mutation never ran at all, and the run finished having never

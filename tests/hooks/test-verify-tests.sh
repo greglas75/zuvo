@@ -562,6 +562,8 @@ grep -q "legacy.ts" "$TMP/out" \
 # never ran, and the suite finished unmeasured at exactly the no-skill control's score. The
 # gate is bookkeeping; coverage and the suite are what make a mutation number mean anything.
 R="$TMP/m24"; mkrepo "$R" with-stryker
+# The first pass always measures, so the deferral is only observable from the second on.
+STUB_GATE=pass STUB_COV_PCT=60 STUB_TSC=clean vt "$R" >/dev/null 2>&1
 rm -f "$TSC_ARGS_CANARY"
 STUB_GATE=pass STUB_COV_PCT=60 STUB_TSC=clean vt "$R"; rc=$?
 grep -qE "mutation +DEFER" "$TMP/out" \
@@ -577,6 +579,12 @@ grep -qE "(mutation|typecheck) +SKIP" "$TMP/out" \
   && bad "a deferral reported SKIP — Step 3.3 keys on SKIP to run hand probes, so this sends the agent to do the expensive thing manually" \
   || pass "deferral never reports SKIP, which means 'cannot run here' and triggers hand probes"
 
+R="$TMP/m24d"; mkrepo "$R" with-stryker
+STUB_GATE=pass STUB_COV_PCT=40 STUB_SURVIVORS=2 vt "$R"
+grep -qE "mutation +(FAIL|PASS)" "$TMP/out" \
+  && pass "the FIRST pass measures mutation even under thin coverage — the list is the spec" \
+  || bad "first pass deferred mutation, so the run writes blind: $(grep -E '^  mutation' "$TMP/out")"
+
 R="$TMP/m24c"; mkrepo "$R" with-stryker
 STUB_GATE=fail STUB_COV_PCT=95 STUB_SURVIVORS=2 vt "$R"
 grep -qE "mutation +(FAIL|PASS)" "$TMP/out" \
@@ -584,6 +592,7 @@ grep -qE "mutation +(FAIL|PASS)" "$TMP/out" \
   || bad "gate failure still starves the run of its mutation signal"
 
 R="$TMP/m24b"; mkrepo "$R" with-stryker
+STUB_GATE=pass STUB_COV_PCT=60 STUB_SURVIVORS=2 vt "$R" >/dev/null 2>&1
 STUB_GATE=pass STUB_COV_PCT=60 STUB_SURVIVORS=2 vt "$R" --force-mutation
 grep -qE "mutation +(FAIL|PASS)" "$TMP/out" \
   && pass "--force-mutation overrides the deferral" \

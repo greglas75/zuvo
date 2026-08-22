@@ -1054,7 +1054,19 @@ def main():
         #
         # The suite being green and coverage being adequate is what makes a mutation number
         # meaningful. Those are the conditions.
-        cheap_clean = cov is None or cov.status in ("PASS", "SKIP", "DEFER")
+        # The FIRST pass always measures mutation, whatever coverage says.
+        #
+        # Deferring it means the run writes a whole suite blind and only learns what it missed at
+        # the end, when changing course is expensive. Measured on shield: a run that sees its
+        # survivors once leaves 24 of them and scores 85.3%; runs that iterate on the list close
+        # six more and reach 90%. Handing over the list on pass one makes it the specification
+        # rather than the verdict — the same information, several rounds earlier, at the price of
+        # one mutation run that was going to happen anyway.
+        #
+        # Later passes still wait for coverage: by then the list exists and re-measuring an
+        # under-covered suite tells nobody anything new.
+        first_pass = st["passes"] == 1
+        cheap_clean = first_pass or cov is None or cov.status in ("PASS", "SKIP", "DEFER")
         deferred = ("deferred until coverage is adequate — nothing to do about it now "
                     "(--force-mutation runs both anyway)")
         if "typecheck" in skip:
