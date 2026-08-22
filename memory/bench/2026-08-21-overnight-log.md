@@ -121,7 +121,14 @@ the code-type classification that was gating the existing rule.
 | CASE-05 | `dom-translation-detector.ts` (jest) | 84.3% | 84.3% *(v12)* | +0.0 | ≥90.7% |
 
 Four of five sit within one to seven points of the ceiling, and the gain over a no-skill control is
-between six and nineteen points. CASE-05 is the one the deferral bug starved, and CASE-04 — the
+between six and nineteen points.
+
+**What that table does NOT show is which change earned it.** CASE-02/03/04 have one v12 arm each,
+compared against arms from earlier in the session (v3, v4, v5) that lack roughly ten changes, not
+one. Attributing those gains to the boundary obligations — the newest change — would be exactly
+the between-arm mistake the plateau analysis already caught once. The only clean same-generation
+comparisons of the obligations are CASE-01 (v11 with them, 90.9%; v10 without, 90.9% — no
+difference) and shield (below). CASE-05 is the one the deferral bug starved, and CASE-04 — the
 largest file, the one the split rule fires on — is where the skill is worth the most by a wide
 margin.
 
