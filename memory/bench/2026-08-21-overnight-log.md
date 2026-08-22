@@ -649,6 +649,31 @@ If v15 lands near 90%, the obligations are neutral for quality on this file and 
 difference is mutation feedback — which would mean **neither of my two hypotheses was right**,
 since both blamed the obligations.
 
+### v15: 89.7%, 4203s. Both hypotheses were wrong.
+
+| arm | kill (med) | wall (med) |
+|---|---|---|
+| naked | 84.3% | 162s |
+| **v12** (obligations, broken gating) | **84.3%** | **833s** |
+| v13 (no obligations) | 90.1% | 4196s |
+| v14 | 89.7% | 4066s |
+| **v15** (obligations + fixed gating) | **89.7%** | 4203s |
+| v10 (before any of tonight's changes) | 90.7% | 4203s |
+
+The boundary obligations are **neutral for quality and neutral for cost**. Every arm that
+actually measures mutation lands at ~90% and ~4100-4200s; v12 was the outlier only because it
+never measured any. One v15 run reached **93.4%**, the highest score on this file by anything.
+
+Two things follow that matter more than the obligations question:
+
+1. **The seventy minutes are not caused by anything changed tonight.** v10 predates all of it and
+   costs the same 4203s. Every one of these arms hit the container's 70-minute cap, so they were
+   *cut off* — the true cost is unknown and ≥70 minutes.
+2. **The one change that should cut it has not been measured yet.** `--reset-budget` was used
+   **212 times** across the corpus to unwind the stop condition; one run made nine verification
+   passes against a budget of three, at ~180s each, spending 38.6% of its wall inside the helper.
+   The enforcement landed after these runs. `v16` tests it.
+
 ## Worth considering, not done
 
 `test-coverage-gate.py boundaries` is useful to more than `write-tests`, and two sibling skills
