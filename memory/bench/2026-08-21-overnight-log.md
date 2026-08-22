@@ -699,6 +699,39 @@ Fixed by writing what was already computed: every survivor goes to
 `<manifest>.survivors.json`, each row carrying the boundary obligation on its line, with the path
 named in the block. `v17` measures it.
 
+## Shield, the whole ladder — and what "fast and good" actually costs
+
+| arm | kill (med) | wall (med) | tokens (med) | what changed |
+|---|---|---|---|---|
+| naked | 84.3% | **162s** | 0.24M | no skill |
+| v12 | 84.3% | 833s | 3.06M | mutation never ran (gate starved it) |
+| v10 | 90.7% | 4203s | 10.20M | before any of tonight's changes |
+| v13 / v14 / v15 | 90.1 / 89.7 / 89.7% | ~4200s | ~11M | obligations in/out — no effect either way |
+| v16 | 89.3% | 4204s | 14.31M | budget enforced — no effect on cost |
+| **v17** | **89.1%** | **3120s** | **7.51M** | full survivor list written to disk |
+
+v17 is the first change that moved cost without moving quality: **−26% wall, −27% tokens**. It
+works by removing a specific behaviour — an agent rebuilding its own Stryker config to see
+survivors past the printed five — which was 998s across 14 turns in one v16 run.
+
+The per-run numbers say what is left, and they are not noise:
+
+| wall | kill | survivors left |
+|---|---|---|
+| 599s | 85.3% | 24 |
+| 3120s | 90.1% | 18 |
+| 4204s | 89.1% | 19 |
+
+**Quality on this file is a count of closed survivors, and each closure costs a measurement
+round.** Ten minutes closes none past the first pass; fifty closes six. Nothing measured tonight
+gets ~90% in twenty minutes here, and the reason is structural rather than wasteful.
+
+The one lever left that does not trade quality for time is to make a single round close more:
+give the run the full survivor list **with the boundary obligation naming the exact case that
+kills each one**, so ten survivors close in one round instead of ten. That annotation has existed
+since 458e3c3 and has never once run on the rig (stale copy, below). `v18` is the first arm that
+actually carries it.
+
 ## The rig lost a feature by copying a stale file
 
 `boundaries --json` — the machine-readable form the survivor annotation depends on — was added
