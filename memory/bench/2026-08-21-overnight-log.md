@@ -732,6 +732,36 @@ kills each one**, so ten survivors close in one round instead of ten. That annot
 since 458e3c3 and has never once run on the rig (stale copy, below). `v18` is the first arm that
 actually carries it.
 
+## v19 — measuring mutation FIRST halves the cost at the same quality
+
+| arm | kill (med) | wall (med) | tokens (med) | what changed |
+|---|---|---|---|---|
+| naked | 84.3% | 162s | 0.24M | no skill |
+| v10 | 90.7% | 4203s | 10.20M | best quality before tonight |
+| v17 | 89.1% | 3120s | 7.51M | full survivor list on disk |
+| v18 | 89.6% | 3890s | 8.13M | + the boundary obligation on each survivor |
+| **v19** | **90.1%** | **2147s** | **5.76M** | **mutation measured on pass one** |
+
+v19 matches v10's quality at **half the wall and 56% of the tokens**. v18's annotation, measured
+on its own, did not help — 89.6% at 3890s is worse on cost than v17. What helped is *when* the
+survivor list arrives, not how well it is labelled.
+
+**The median hides a ten-fold spread, and the spread is the actual result:**
+
+| run | kill | wall | tokens |
+|---|---|---|---|
+| r2 | 86.9% | **451s** | 1.30M |
+| r3 | 90.1% | 2147s | 5.76M |
+| r1 | 90.3% | 4205s *(hit the container cap)* | 13.85M |
+
+No earlier arm could buy 86.9% in seven and a half minutes. v12 spent 833s to reach the control's
+84.3%. So v19 is not one point on the cost axis — it is a **choice** that did not exist before:
++2.6 points for 7.5 minutes, or +5.8 for 36.
+
+**It did not transfer.** Carried to CASE-03, the same arm scores 72.9% — identical to v12, and
+slower (1579s against 1112s). One case is not a stack, and this is shield-specific until something
+else shows it too.
+
 ## The rig lost a feature by copying a stale file
 
 `boundaries --json` — the machine-readable form the survivor annotation depends on — was added
