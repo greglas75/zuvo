@@ -290,6 +290,20 @@ grep -q "^  - NoCoverage" "$TMP/out" && [ "$(grep -n 'NoCoverage\|Survived' "$TM
 grep -q "comparison obligation on this line: n < 0" "$TMP/out" \
   && pass "a survivor names the boundary obligation it failed, not just a mutant id" \
   || bad "survivor not annotated with its obligation: $(grep -m1 'NoCoverage\|Survived' "$TMP/out")"
+[ -s "$R/zuvo/contracts/thing.coverage.json.survivors.json" ] \
+  && pass "every survivor is written to disk, not just the printed five" \
+  || bad "no survivor report written — an agent wanting the full list re-runs the whole mutation pass"
+python3 -c "
+import json,sys
+d=json.load(open('$R/zuvo/contracts/thing.coverage.json.survivors.json'))
+assert d['count'] == 8, d['count']
+assert d['survivors'][0]['obligation'], 'survivor rows carry no obligation'
+" 2>/dev/null \
+  && pass "the report holds all 8 survivors, each with the obligation on its line" \
+  || bad "survivor report incomplete or missing its obligations"
+grep -q "FULL list (all 8" "$TMP/out" \
+  && pass "the block NAMES the report file, so there is nothing to recompute" \
+  || bad "report written but not named — the agent cannot know it exists"
 grep -q "5 more survivors" "$TMP/out" \
   && pass "survivors past the cap are counted, not dropped" || bad "remaining survivors not reported"
 [ ! -d "$R/.stryker-tmp" ] && pass "runner debris is cleared" || bad ".stryker-tmp left behind"

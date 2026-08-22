@@ -649,7 +649,39 @@ def boundary_map(prod_file, base):
     return m
 
 
-def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base=None):
+def write_survivor_report(manifest_path, survivors, bmap, root):
+    """Persist EVERY survivor beside the manifest, and return the path.
+
+    The printed block caps survivors at five so a verdict stays readable. Measured on the rig,
+    that cap cost more than it saved: an agent that needs the full list to triage equivalents
+    builds its OWN Stryker config and runs the whole mutation pass again -- 998 seconds across
+    14 turns in one run, 24% of its wall, recomputing a report this helper already had in hand
+    and threw away. Writing it costs milliseconds.
+    """
+    p = manifest_path + ".survivors.json"
+    rows = []
+    for m in survivors:
+        loc = (m.get("location") or {}).get("start") or {}
+        line = loc.get("line")
+        ob = bmap.get(line) or {}
+        rows.append({
+            "status": m.get("status"),
+            "line": line,
+            "mutator": m.get("mutatorName"),
+            "replacement": (m.get("replacement") or m.get("description") or "")[:160],
+            "obligation": {"kind": ob.get("kind"), "expr": ob.get("expr")} if ob else None,
+        })
+    try:
+        with open(p, "w", encoding="utf-8") as fh:
+            json.dump({"schema": "zuvo-survivors/v1", "count": len(rows), "survivors": rows},
+                      fh, indent=1)
+    except Exception:
+        return None
+    return p
+
+
+def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base=None,
+                   manifest_path=None):
     """Native mutation score, scoped to this file AND this suite.
 
     Scoping the TEST RUN matters as much as scoping --mutate. Stryker's dry run executes
@@ -799,10 +831,17 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
                 entry += "  [%s obligation on this line: %s]" % (ob.get("kind"), ob.get("expr"))
             r.gaps.append(entry)
         if len(survivors) > cap:
-            r.gaps.append(
-                "... %d more survivors — record their IDs and triage equivalents; do NOT chase all"
-                % (len(survivors) - cap)
-            )
+            report = write_survivor_report(manifest_path, survivors, bmap, root) if manifest_path else None
+            msg = ("... %d more survivors — record their IDs and triage equivalents; do NOT chase all"
+                   % (len(survivors) - cap))
+            if report:
+                # Name the file. Without it an agent that wants the full list re-runs the whole
+                # mutation pass to rebuild a report that is already on disk.
+                msg += ". FULL list (all %d, with the boundary obligation on each line): %s" % (
+                    len(survivors), rel_to(report, root))
+            r.gaps.append(msg)
+        elif manifest_path and survivors:
+            write_survivor_report(manifest_path, survivors, bmap, root)
         return r
     finally:
         for f in (vcfg, scfg):
@@ -1032,7 +1071,7 @@ def main():
             pass
         elif a.force_mutation or cheap_clean:
             results.append(check_mutation(runner, prod, tests, root, a.survivor_cap,
-                                          not a.no_install, base))
+                                          not a.no_install, base, manifest_path))
         else:
             r = Result("mutation")
             r.status = "DEFER"

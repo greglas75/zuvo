@@ -575,8 +575,13 @@ when a detected runner could not be scoped, timed out, or exited non-zero.
 **Triage before fixing.** Native runners generate equivalent mutants routinely (`x * 2` →
 `x << 1`). An equivalent mutant is recorded `equivalent` with the reason and does NOT block
 completion — the same triage as `zuvo:mutation-test` § 4.2. Only a survivor triaged `gap` is a gap.
-Survivors past the printed cap are recorded with their IDs — not silently dropped, and not chased
-until the context window dies.
+
+**The full survivor list is already on disk — never re-run the mutator to get it.** The block
+prints the five highest-risk survivors; every one of them, with the boundary obligation on its
+line, is written to `<manifest>.survivors.json` and the path is named in the block. Measured on
+the rig: one run rebuilt its own Stryker config and re-ran the entire mutation pass to recover
+that list — **998 seconds across 14 turns, 24% of its wall**, recomputing a report the helper had
+already produced.
 
 **Context discipline:** once the block is printed, the per-mutant diffs and runner output are
 spent — carry only the table forward.
