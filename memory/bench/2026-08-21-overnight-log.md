@@ -592,6 +592,36 @@ no longer blocks them.
 The shared helper is swapped between them, because `~/.zuvo` is one mounted directory for every
 container rather than per-arm — swapping at the wrong moment would confound both.
 
+## The shield ablations — my diagnosis was right about the mechanism, and the ablation could not see it
+
+| arm | kill (med) | wall (med) | verification passes |
+|---|---|---|---|
+| naked | 84.3% | 162s | — |
+| zuvo-v10 | 90.7% | 4203s | — |
+| **zuvo-v12** (boundary obligations) | **84.3%** | **833s** | `p1: P/F/P/D/D/P` |
+| **zuvo-v13** (v12 − obligations) | **90.1%** | 4196s | `p1: P/P/P/P/F/P` |
+| zuvo-v14 (v12 + new gating) | 89.7% | 4066s | `p1: P/P/P/P/F/P` |
+
+Read the pass columns rather than the scores. In v12 the coverage **gate FAILED** and mutation
+was deferred — on every pass, in all three runs, so the suite finished having never been mutated.
+In v13 and v14 the gate PASSED and mutation ran.
+
+So the causal chain is:
+
+1. the boundary obligations add ~60 rows to the inventory;
+2. more rows means more chances the validator finds one whose evidence does not hold, so the
+   **gate fails**;
+3. under the old deferral, a failing gate blocked mutation permanently;
+4. no mutation means no survivor feedback, and the suite stops at the control's score.
+
+**v14 could not test the fix**, because its gate passed and the deferral therefore never fired —
+and separately, its runs all started before the shared helper was swapped, so they carried the old
+binary anyway. It is uninformative rather than confirming.
+
+The untested combination is the one that matters: **obligations AND the new gating**, where a
+failing gate no longer starves the run. That is `v15`, running now on the same file. If the
+mechanism above is right it should land near 90% at v12's cost rather than v13's.
+
 ## Worth considering, not done
 
 `test-coverage-gate.py boundaries` is useful to more than `write-tests`, and two sibling skills
