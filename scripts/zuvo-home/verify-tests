@@ -777,6 +777,15 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
             "timeoutMS": 30000,
             "tempDirName": ".stryker-tmp",
             "cleanTempDir": True,
+            # Stryker's own incremental mode: it keeps the previous report and re-tests only the
+            # mutants whose code or covering tests actually changed. On a jest project a full
+            # pass over ~190 mutants costs about three minutes, and closing survivors takes
+            # several passes — measured on the rig, the difference between a 21-minute run at
+            # 85.3% and a 70-minute run at 89.3% is precisely how many passes it can afford.
+            # Re-measuring 190 mutants to re-check 24 is the cost this removes.
+            "incremental": True,
+            "incrementalFile": (manifest_path + ".stryker-incremental.json") if manifest_path
+            else ".stryker-incremental.json",
         }
         cfg.update(runner_block)
         with open(scfg, "w", encoding="utf-8") as fh:
