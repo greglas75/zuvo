@@ -617,7 +617,9 @@ So the causal chain is:
 
 1. the boundary obligations add ~60 rows to the inventory;
 2. more rows means more chances the validator finds one whose evidence does not hold, so the
-   **gate fails**;
+   **gate is more likely to fail** — not certain to. v15's first run had the obligations AND a
+   passing gate, so this is a probability shift, not a deterministic consequence, and the earlier
+   phrasing ("the obligations cause the gate to fail") was too strong;
 3. under the old deferral, a failing gate blocked mutation permanently;
 4. no mutation means no survivor feedback, and the suite stops at the control's score.
 
