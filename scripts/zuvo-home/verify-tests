@@ -884,8 +884,19 @@ def main():
         print("[verify-tests] cannot read manifest: %s" % manifest_path, file=sys.stderr)
         return 2
     if a.reset_budget:
-        with contextlib.suppress(OSError):
-            os.unlink(state_path(manifest_path))
+        # An escape an agent can type is not a budget. Measured across the benchmark corpus:
+        # `--reset-budget` was used 212 times, systematically, to unwind the stop condition the
+        # moment it fired -- one run made seven full verification passes against a budget of
+        # three, at ~180s each on a jest project. The flag stays for tests and for a human who
+        # genuinely wants to restart, but it now requires an environment variable, which is
+        # attributable to whoever set it rather than to the agent that guessed it.
+        if os.environ.get("ZUVO_VERIFY_RESET") == "1":
+            with contextlib.suppress(OSError):
+                os.unlink(state_path(manifest_path))
+        else:
+            print("[verify-tests] --reset-budget requires ZUVO_VERIFY_RESET=1. The budget is the "
+                  "stop condition; restarting it is a human decision, not a pass.",
+                  file=sys.stderr)
 
     root = os.path.abspath(a.repo_root or git_root(os.path.dirname(manifest_path)))
     prod_rel = man.get("production_file")
@@ -913,6 +924,34 @@ def main():
     before = sha256(prod)
     frozen = man.get("production_sha256")
     st = bump_state(manifest_path, a.budget, a.time_budget)
+
+    # Past the budget, an extra call must be CHEAP as well as refused. Reporting exit 4 while
+    # still running the suite, the gate, coverage, a typecheck and a mutation pass means every
+    # ignored refusal costs the same ~180s as a real pass -- which is how one run spent 38% of
+    # its wall inside this helper. Answer from the record instead.
+    if (a.budget and st["passes"] > a.budget) or (
+            a.time_budget and st["elapsed_min"] >= a.time_budget and st["passes"] > 1):
+        # The last entry that actually MEASURED something. Each refusal appends an empty entry,
+        # so taking history[-1] blindly makes the second refusal report nothing at all — which
+        # is worse than the first refusal, for a run that is being told to finish from it.
+        prev = next((h for h in reversed(st.get("history") or []) if h.get("results")), {})
+        print("=" * 78)
+        print("VERIFY  %s   pass %d of %d   %.1f of %d min"
+              % (rel_to(prod, root), st["passes"], a.budget, st["elapsed_min"], a.time_budget))
+        print("=" * 78)
+        print("REFUSED — the budget was already exhausted on pass %d. Nothing was re-run."
+              % a.budget)
+        for r in prev.get("results", []):
+            print("  %-15s %-9s %s" % (r.get("check"), r.get("status"), r.get("detail", "")[:90]))
+        gaps = [g for r in prev.get("results", []) for g in (r.get("gaps") or [])]
+        if gaps:
+            print("-" * 78)
+            print("STILL OPEN (%d) — record these in the manifest and finish the file:" % len(gaps))
+            for g in gaps:
+                print("  - %s" % g)
+        print("=" * 78)
+        save_state(manifest_path, st, [])
+        return 4
 
     results = []
     suite = check_suite(runner, tests, root)

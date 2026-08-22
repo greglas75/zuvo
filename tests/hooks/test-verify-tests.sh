@@ -320,15 +320,47 @@ json.dump(d, open(p, "w"))
 PY
 STUB_GATE=fail vt "$R" --no-install --budget 99 --time-budget 15; rc=$?
 [ "$rc" -eq 4 ]   && pass "the clock stops the loop even with 97 passes of budget left"   || bad "time budget ignored (rc=$rc)"
-grep -q "minutes elapsed of a 15-minute budget" "$TMP/out"   && pass "exhaustion says it was the clock, not the pass count"   || bad "time exhaustion not attributed: $(grep VERDICT "$TMP/out")"
+grep -qE "minutes elapsed of a 15-minute budget|REFUSED — the budget was already exhausted" "$TMP/out"   && pass "exhaustion is stated, and a later call is refused rather than re-run"   || bad "time exhaustion not attributed: $(sed -n '1,10p' "$TMP/out")"
 grep -qE "of 15 min" "$TMP/out"   && pass "every pass prints the clock, so the budget is visible before it runs out"   || bad "elapsed not shown in the header"
 
 R="$TMP/r10c"; mkrepo "$R"
 STUB_GATE=fail vt "$R" --no-install --budget 99 --time-budget 0; rc=$?
 [ "$rc" -eq 1 ] && pass "--time-budget 0 disables the clock" || bad "time-budget 0 exit $rc (want 1)"
 
+# ── (10d) an exhausted budget refuses CHEAPLY — no suite, no gate, no mutation ───────────
+R="$TMP/r10d"; mkrepo "$R" with-stryker
+for _ in 1 2 3; do STUB_GATE=fail vt "$R" --no-install --budget 2 >/dev/null 2>&1; done
+rm -f "$TSC_ARGS_CANARY"
+STUB_GATE=fail vt "$R" --no-install --budget 2; rc=$?
+[ "$rc" -eq 4 ] && pass "a call past the budget still exits 4" || bad "post-budget exit $rc (want 4)"
+grep -q "REFUSED" "$TMP/out" \
+  && pass "a call past the budget is refused, not re-run" || bad "post-budget call was re-run"
+[ ! -s "$TSC_ARGS_CANARY" ] \
+  && pass "nothing expensive starts past the budget (that is ~180s a pass on a jest project)" \
+  || bad "tsc ran on a refused call"
+grep -q "STILL OPEN" "$TMP/out" \
+  && pass "the refusal repeats what is still open, so the run can finish from it" \
+  || bad "refusal gives the agent nothing to act on"
+
+# ── (10e) --reset-budget is not an agent-typable escape ──────────────────────────────────
+STUB_GATE=fail vt "$R" --no-install --budget 2 --reset-budget; rc=$?
+[ "$rc" -eq 4 ] \
+  && pass "--reset-budget alone does NOT restart the budget (212 uses in the corpus did)" \
+  || bad "--reset-budget unwound the stop condition without the env gate (rc=$rc)"
+
+R="$TMP/r10e"; mkrepo "$R"
+STUB_GATE=fail vt "$R" --no-install --budget 1 >/dev/null 2>&1
+PATH="$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" ZUVO_VERIFY_RESET=1 STUB_GATE=fail \
+  "$HELPER" --manifest "$R/zuvo/contracts/thing.coverage.json" --repo-root "$R" \
+  --no-install --budget 1 --reset-budget > "$TMP/out" 2>&1
+grep -q "pass 1 of 1" "$TMP/out" \
+  && pass "ZUVO_VERIFY_RESET=1 does restart it — the escape still exists, attributable to a human" \
+  || bad "env-gated reset did not work: $(grep -m1 VERIFY "$TMP/out")"
+
 # ── (11) --reset-budget clears the counter ───────────────────────────────────────────────
-STUB_GATE=fail vt "$R" --no-install --budget 3 --reset-budget; rc=$?
+PATH="$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" ZUVO_VERIFY_RESET=1 STUB_GATE=fail \
+  "$HELPER" --manifest "$R/zuvo/contracts/thing.coverage.json" --repo-root "$R" \
+  --no-install --budget 3 --reset-budget > "$TMP/out" 2>&1; rc=$?
 [ "$rc" -eq 1 ] && pass "--reset-budget restarts the count" || bad "--reset-budget exit $rc (want 1)"
 
 # ── (12) production hash drift is caught ─────────────────────────────────────────────────
