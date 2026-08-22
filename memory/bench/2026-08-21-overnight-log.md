@@ -628,8 +628,26 @@ and separately, its runs all started before the shared helper was swapped, so th
 binary anyway. It is uninformative rather than confirming.
 
 The untested combination is the one that matters: **obligations AND the new gating**, where a
-failing gate no longer starves the run. That is `v15`, running now on the same file. If the
-mechanism above is right it should land near 90% at v12's cost rather than v13's.
+failing gate no longer starves the run. That is `v15`.
+
+### What v15's wall-clock already settles, before it is scored
+
+v15 passed thirty-eight minutes still running. It carries the obligations and it is nowhere near
+v12's 833 seconds — it is in v13/v14 territory (~4100s).
+
+So **v12 was not made fast by the obligations. It was fast because it gave up.** With mutation
+never running it had no survivors to chase, nothing to fix, and it finished. The trade visible on
+shield is not "obligations vs no obligations"; it is **"measuring mutation vs not measuring it"**:
+
+| arm | did mutation run? | kill | wall |
+|---|---|---|---|
+| v12 | **no** — the gate blocked it | 84.3% | 833s |
+| v13 / v14 | yes | 90.1% / 89.7% | ~4100s |
+| v15 | yes | pending | >2300s |
+
+If v15 lands near 90%, the obligations are neutral for quality on this file and the whole shield
+difference is mutation feedback — which would mean **neither of my two hypotheses was right**,
+since both blamed the obligations.
 
 ## Worth considering, not done
 
