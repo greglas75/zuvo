@@ -699,6 +699,23 @@ Fixed by writing what was already computed: every survivor goes to
 `<manifest>.survivors.json`, each row carrying the boundary obligation on its line, with the path
 named in the block. `v17` measures it.
 
+## The rig lost a feature by copying a stale file
+
+`boundaries --json` — the machine-readable form the survivor annotation depends on — was added
+locally and **never reached the rig**. Every arm from v12 to v17 was built by copying
+`/root/bench/test-coverage-gate.py`, which had been scp'd once, before that flag existed. So the
+annotation feature ran zero times in the benchmark and every survivor row in every report has
+`obligation: null`.
+
+Nothing detected it, because the helper treats a failed `boundaries` call as "no obligations
+available" and carries on — a degradation that is correct behaviour for a missing parser and
+indistinguishable from a stale copy.
+
+The generalisable part: **a distribution assembled by copying files needs the copy to be part of
+the build, not a step someone remembers.** The arms carry a patch for `SKILL.md` and
+`shared/includes/` applied from git, which is why those never drifted; `scripts/` was copied by
+hand, which is why it did.
+
 ## Worth considering, not done
 
 `test-coverage-gate.py boundaries` is useful to more than `write-tests`, and two sibling skills
