@@ -669,10 +669,35 @@ Two things follow that matter more than the obligations question:
 1. **The seventy minutes are not caused by anything changed tonight.** v10 predates all of it and
    costs the same 4203s. Every one of these arms hit the container's 70-minute cap, so they were
    *cut off* — the true cost is unknown and ≥70 minutes.
-2. **The one change that should cut it has not been measured yet.** `--reset-budget` was used
-   **212 times** across the corpus to unwind the stop condition; one run made nine verification
-   passes against a budget of three, at ~180s each, spending 38.6% of its wall inside the helper.
-   The enforcement landed after these runs. `v16` tests it.
+2. **The budget was an escape an agent could type, and it did — 212 times.** One run made nine
+   verification passes against a budget of three, at ~180s each, spending 38.6% of its wall
+   inside the helper; its final state file says `passes 1`. `--reset-budget` now requires
+   `ZUVO_VERIFY_RESET=1`, and a call past the budget is refused *cheaply* — no suite, no gate,
+   no mutation, just the last real measurement reprinted.
+
+### v16: the budget enforcement did NOT cut the time, and the reason is elsewhere
+
+89.3% at 4204s — unchanged. Attribution says why, and it is not the budget:
+
+| | v16-r1 (4140s, 396 turns) | v16-r3 (1265s, 161 turns) |
+|---|---|---|
+| kill | 89.3% | 83.8% |
+| **mutation** | **998s / 14 turns** | *no mutation bucket at all* |
+| verify-helper | 574s / 7 calls | — |
+| think | 526s / 196 turns | 174s / 83 turns |
+
+The 998 seconds are **not** the helper. The agent wrote its own `stryker.zuvo-inspect.json` and
+`jest.zuvo-inspect.config.js`, ran StrykerJS twice by hand, and spent four more turns parsing the
+report — because the printed block caps survivors at five and triaging equivalents needs all of
+them. It recomputed a report the helper already had in memory and threw away.
+
+So the difference between a 21-minute run and a 70-minute one, on this file, is **whether the
+agent re-runs the mutator to see the full survivor list.** And the quality tracks it: 83.8%
+without, 89.3% with.
+
+Fixed by writing what was already computed: every survivor goes to
+`<manifest>.survivors.json`, each row carrying the boundary obligation on its line, with the path
+named in the block. `v17` measures it.
 
 ## Worth considering, not done
 
