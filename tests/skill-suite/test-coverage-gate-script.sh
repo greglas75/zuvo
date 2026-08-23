@@ -451,6 +451,21 @@ else
   bad "scaffold pre-claimed coverage it cannot have"
 fi
 
+# Rows must come out in the MEASURED survival order the boundaries report uses, not source order.
+# An agent working top-down through an alphabetical or line-ordered list spends its budget on
+# equality rows while the throws — which survived 34 times in 39 suites — sit at the bottom.
+if python3 -c "
+import json,sys
+m=json.load(open('$TMP/zuvo/contracts/user_service.coverage.json'))
+create=[s for s in m['symbols'] if s['symbol']=='UserService.create'][0]
+b=[r for r in create['rows'] if r['id'].startswith('B')]
+sys.exit(0 if b and 'throw' in b[0]['description'] else 1)
+"; then
+  pass "boundary rows lead with the highest-risk kind, not with source order"
+else
+  bad "generated rows are not in measured survival order"
+fi
+
 # ── summary ───────────────────────────────────────────────────────────────────
 echo "----"
 if [ "$fail" -eq 0 ]; then

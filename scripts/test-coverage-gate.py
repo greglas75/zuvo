@@ -1085,6 +1085,18 @@ def _line_span(sym):
     return None
 
 
+# The same measured survival order `boundaries` reports in: across 39 suites on one file a deleted
+# throw survived 34 times, a flipped comparison 27, a shifted literal index 15, a swapped boolean
+# 12. A generated inventory that lists 55 equality rows before the throws buries the rows that
+# actually cost points, and an agent working top-down then spends its budget on the cheap ones.
+BOUNDARY_PRIORITY = {"throw": 0, "comparison": 1, "optional": 2, "index": 3,
+                     "logic": 4, "arithmetic": 5, "equality": 6}
+
+# Past this many rows on one file, the skill's own doctrine says split rather than grind. The
+# generator does not enforce that — it has no way to know whether a split is possible — but it
+# must not silently manufacture an inventory the skill would tell you not to work through.
+SPLIT_ADVISORY_ROWS = 60
+
 ROW_TYPE_BY_KIND = {
     "throw": "error_path",
     "comparison": "branch",
@@ -1155,7 +1167,9 @@ def scaffold(production, test_files, repo_root, out_path):
         rows = [{"id": "E1", "type": "entry",
                  "description": "TODO: what %s does on its ordinary input" % name,
                  "coverage": "NONE", "evidence": ""}]
-        for i, ob in enumerate(sorted(by_symbol.get(name, []), key=lambda o: o.get("line") or 0), 1):
+        owned = sorted(by_symbol.get(name, []),
+                       key=lambda o: (BOUNDARY_PRIORITY.get(o.get("kind"), 9), o.get("line") or 0))
+        for i, ob in enumerate(owned, 1):
             rows.append({
                 "id": "B%d" % i,
                 "type": ROW_TYPE_BY_KIND.get(ob.get("kind"), "branch"),
@@ -1192,8 +1206,15 @@ def scaffold(production, test_files, repo_root, out_path):
     print("  extraction: %s (%d public symbol%s)" % (mode, len(symbols), "" if len(symbols) == 1 else "s"))
     print("  rows:       %d (%d entry + %d boundary), all coverage=NONE" % (
         total_rows, len(symbols), total_rows - len(symbols)))
+    print("  order:      highest-risk kinds first (throw, comparison, optional, index, ...), "
+          "so top-down work spends the budget where mutants actually survive")
     if not obligations:
         print("  NOTE: no boundary obligations available — branch rows must be added by hand")
+    if total_rows > SPLIT_ADVISORY_ROWS:
+        print("  NOTE: %d rows on one file is past the %d-row point where this skill's own rule "
+              "says SPLIT rather than grind. Generating them is cheap; covering them is not. "
+              "Check the split rule before working straight down this list."
+              % (total_rows, SPLIT_ADVISORY_ROWS))
     print("  Fill `coverage` and `evidence` per row as tests land, set Q7/Q11, then flip status "
           "to final and run ~/.zuvo/verify-tests.")
     return 0
