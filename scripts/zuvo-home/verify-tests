@@ -45,6 +45,7 @@ Exit codes:
 """
 import argparse
 import contextlib
+import glob
 import hashlib
 import json
 import os
@@ -1086,6 +1087,29 @@ def main():
     if missing:
         print("[verify-tests] missing file(s): %s" % ", ".join(rel_to(m, root) for m in missing),
               file=sys.stderr)
+        # The usual cause is not a typo: the inventory is frozen BEFORE the tests exist, and a
+        # suite that later gets split writes `<base>.<aspect>.spec.ts` rather than the single
+        # `<base>.spec.ts` the manifest predicted. Refusing is right -- the manifest is wrong --
+        # but refusing WITHOUT saying what is on disk turns a one-line correction into a guess.
+        # Measured on the rig: two of three runs on the most-instrumented case died here, and the
+        # failure predates the tooling changes around it (v17 and v19 show it too).
+        if prod not in missing:
+            stem = re.split(r"\.(?:spec|test)\.", os.path.basename(prod))[0]
+            stem = os.path.splitext(stem)[0]
+            found = sorted(
+                rel_to(p, root)
+                for p in glob.glob(os.path.join(os.path.dirname(prod), "**", "*"), recursive=True)
+                if os.path.isfile(p) and stem in os.path.basename(p)
+                and re.search(r"\.(spec|test)\.[cm]?[jt]sx?$|_test\.py$|^test_", os.path.basename(p))
+            )
+            if found:
+                print("[verify-tests] specs that DO exist beside the production file: %s"
+                      % ", ".join(found[:8]), file=sys.stderr)
+                print("[verify-tests] if the suite was split, update the manifest's test_files to "
+                      "list every part, then run this again.", file=sys.stderr)
+            else:
+                print("[verify-tests] no spec file exists beside the production file yet — write "
+                      "the suite before verifying it.", file=sys.stderr)
         return 2
 
     skip = {s.strip() for s in a.skip.split(",") if s.strip()}

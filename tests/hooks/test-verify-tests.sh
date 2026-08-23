@@ -652,6 +652,29 @@ grep -q "stryMutAct" "$R/src/thing.ts" \
   && bad "the instrumented file was left in place despite a clean copy being available" \
   || pass "an interrupted run self-heals from its on-disk copy"
 
+# ── (26) a missing declared spec names what IS on disk ───────────────────────
+# The inventory is frozen before the tests exist, so a suite that later gets SPLIT writes
+# `<base>.<aspect>.spec.ts` while the manifest still predicts a single `<base>.spec.ts`. Refusing
+# is correct — the manifest is wrong — but a refusal that does not say what is actually there
+# turns a one-line correction into a guessing game. Measured on the rig: two of three runs on the
+# most-instrumented case died here, and it predates the tooling changes around it.
+R="$TMP/m26"; mkrepo "$R" with-stryker
+mv "$R/src/thing.spec.ts" "$R/src/thing.parsing.spec.ts"
+printf 'it("more", () => {});\n' > "$R/src/thing.errors.spec.ts"
+STUB_GATE=pass STUB_COV_PCT=95 vt "$R"; rc=$?
+[ "$rc" -eq 2 ] && pass "a manifest naming a spec that does not exist is refused" \
+  || bad "missing spec did not refuse (exit=$rc)"
+grep -q "thing.parsing.spec.ts" "$TMP/out" && grep -q "thing.errors.spec.ts" "$TMP/out" \
+  && pass "the refusal lists the split parts that DO exist" \
+  || bad "refusal named nothing on disk: $(grep verify-tests "$TMP/out" | head -2)"
+
+R="$TMP/m26b"; mkrepo "$R" with-stryker
+rm -f "$R/src/thing.spec.ts"
+STUB_GATE=pass STUB_COV_PCT=95 vt "$R"
+grep -q "write the suite before verifying it" "$TMP/out" \
+  && pass "with no spec at all, it says to write one rather than listing nothing" \
+  || bad "no-spec case gave no guidance"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1
