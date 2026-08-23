@@ -861,9 +861,8 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
         return r
     finally:
         # Unconditional: a timeout or a crash mid-run leaves the real file mutated otherwise.
-        with contextlib.suppress(OSError):
-            with open(prod_file, "wb") as fh:
-                fh.write(pristine)
+        with contextlib.suppress(OSError), open(prod_file, "wb") as fh:
+            fh.write(pristine)
         with contextlib.suppress(OSError):
             os.unlink(scfg)
         shutil.rmtree(rep, ignore_errors=True)
