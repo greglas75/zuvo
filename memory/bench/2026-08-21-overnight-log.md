@@ -885,3 +885,57 @@ compares two different measuring instruments as well as two skills.
 The one comparison that stays clean is **v21 against `naked`**, because the control never invokes
 the helper at all. Arm-versus-arm claims from earlier in this log should be treated as describing
 the runs, not the skill versions, until re-measured.
+
+---
+
+## The dominant failure mode is not the tooling — it is that the tooling is declined (2026-08-23)
+
+Once mutation worked everywhere, the next question was why CASE-04's runs still produced no
+mutation number. The answer was not a bug.
+
+**On CASE-04 no manifest has ever been written.** Nine runs across three skill versions (v12, v19,
+v21 — 3/3 each): no `zuvo/` directory, no inventory, no gate, nothing downstream of it. The
+transcripts show the skill loaded and the protocol read — 12 mentions of the coverage gate, 6 of
+the manifest. The runs understood it and chose not to do it. One says why in as many words:
+
+> "verify-tests, adversarial review providers, CodeSift, blind-audit reviewers, etc.) that isn't
+> practical to run in full here. I'll follow its core spine pragmatically"
+
+That run wrote four spec files, called them "green and validated", and scored 86.0% — **+18.8 over
+the no-skill control, achieved entirely outside the mechanism the skill is built around.**
+
+### Measuring the skip correctly took three attempts
+
+| definition | what it actually counts |
+|---|---|
+| transcript mentions `verify-tests` | every run — the skill names it dozens of times in its own prose |
+| a `tool_use` whose input mentions it | includes `ls -la ~/.zuvo/verify-tests` and `head -5` of it: runs that checked whether the helper exists and then did not use it. Two CASE-02 runs scored as compliant this way while measuring nothing |
+| a `tool_result` containing `production-hash` | correct — a line only the helper prints, absent from the skill text |
+
+The middle definition is the one I published first, and it understated the problem. Under the
+correct one: CASE-04 0/3 in every arm, CASE-02 v21 0/2, CASE-03 2/3, CASE-05 mostly clean (which is
+where the helper was developed and tested).
+
+### Two different holes, two different fixes
+
+1. **A manifest exists but nothing measured it.** Closed by a receipt: `verify-tests` stamps the
+   manifest with the sha256 of each spec at the moment it measured them, and the gate refuses a
+   `final` manifest without one, or with one whose hashes have gone stale. Hashes rather than a
+   flag, so a receipt cannot be inherited from an earlier, different suite.
+2. **No manifest at all.** A receipt cannot refuse what does not exist. This one is an entry-cost
+   problem: 88 branches meant ~90 hand-authored rows, and the runs were right that it was not
+   practical. `test-coverage-gate.py scaffold` now generates the inventory from the same extractor
+   the validator checks it against — 22 symbols / 197 rows in one command on this repo's own gate
+   script, validating clean at inventory phase.
+
+**Rejected: a Stop hook.** Measured directly rather than assumed — Stop hooks do not fire under
+`claude -p`, so it would protect interactive sessions and silently skip every headless one, which
+is where both the benchmark and CI live.
+
+### What this means for the benchmark's headline numbers
+
+`+18.8` on CASE-04 was never a measurement of the executable machinery; it measures what the
+skill's *prose* buys (split by responsibility, sit on boundaries) when an agent skips the rest. That
+is a real and useful result — it just is not the result it was being read as.
+
+The monitor now renders `measured N/3` per arm so this cannot go unnoticed again.
