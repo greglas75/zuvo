@@ -29,6 +29,13 @@ checkpoint (`--resume`). The gate validates the manifest only.
   "test_files": ["src/respondent/__tests__/respondent.controller.spec.ts"],
   "quality_gates": {"Q7": 1, "Q11": 1},
   "status": "inventory|final",
+  "verification": {                              // WRITTEN BY ~/.zuvo/verify-tests — never by hand
+    "schema": "zuvo-verify/v1",
+    "epoch": 1755900000,
+    "spec_sha256": {"<test file>": "<sha256 at the moment it was measured>"},
+    "suite": "PASS 41 tests passed",
+    "mutation": "FAIL 84.7% (…)"
+  },
   "families": ["SIDE-EFFECT-BOUNDARY"],          // optional — matched cross-cutting families (core table)
   "unmatched_shape": "<one-line structural description>",  // REQUIRED when classification fell through ELSE → STANDARD
   "symbols": [
@@ -64,6 +71,28 @@ Rules the validator enforces (do not restate them from memory — run it):
   test declarations, must match exactly one; survives formatters) or an
   existing `test-file:line` that lands inside a real test; no duplicate and
   no empty evidence; `Q7`/`Q11` are `1`; declared test files exist
+
+
+### `verification` — the receipt (required at `status: final`)
+
+The executable gate rejects a manifest that claims `final` without one, and rejects one whose
+`spec_sha256` no longer matches the specs on disk.
+
+It exists because of a measurement, not a preference. Across the whole benchmark corpus roughly one
+run in three never executed the verification command at all — not failing it, *declining* it. One
+transcript states the reasoning outright: *"isn't practical to run in full here, I'll follow its
+core spine pragmatically."* The suite then ships unmeasured while the run reports success, and
+nothing downstream can tell that apart from a suite that passed.
+
+Two rewordings of the instruction had already failed to change the behaviour, which is the same
+lesson `verify-tests` itself was built on: a rule that leaves the agent deciding when it is done
+gets decided against. So the proof lives in the artifact instead, and the hashes are the part that
+does the work — a bare flag could be inherited from an earlier, different suite; a hash goes stale
+the moment the suite is edited.
+
+Do not write this block by hand. A hand-written receipt is a forgery of a measurement, and the only
+thing it buys is a green gate over an unmeasured suite.
+
 
 ## Validator invocation
 

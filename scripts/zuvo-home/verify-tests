@@ -955,6 +955,51 @@ def clear_debris(root, extra_dirs):
 # --------------------------------------------------------------------------- budget state
 
 
+def stamp_receipt(manifest_path, results, test_files, repo_root):
+    """Record IN THE MANIFEST that this suite was actually measured, and against which bytes.
+
+    Measured across the benchmark corpus: roughly one run in three skips the verification command
+    outright — not by failing it, by deciding it. One transcript says so in as many words: "isn't
+    practical to run in full here, I'll follow its core spine pragmatically". The suite then ships
+    unmeasured and the run reports success, and nothing downstream can tell the difference.
+
+    Prose does not fix that; the helper's own docstring records two attempts. What does is making
+    the ARTIFACT carry the proof, so the existing executable gate can refuse a manifest that claims
+    to be final without one. The spec hashes are what make it a receipt rather than a flag: they go
+    stale the moment the suite is edited afterwards, so a receipt cannot be inherited from an
+    earlier, different suite.
+    """
+    man = read_json(manifest_path)
+    if man is None:
+        return
+    specs = {}
+    for f in test_files:
+        with contextlib.suppress(OSError):
+            specs[rel_to(f, repo_root)] = sha256(f)
+    by_name = {r.name: r for r in results}
+
+    def detail(name):
+        r = by_name.get(name)
+        return None if r is None else "%s %s" % (r.status, r.detail)
+
+    man["verification"] = {
+        "schema": SCHEMA,
+        "epoch": int(time.time()),
+        "spec_sha256": specs,
+        "suite": detail("suite"),
+        "mutation": detail("mutation"),
+        "coverage": detail("coverage"),
+    }
+    tmp = manifest_path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(man, fh, indent=1)
+        os.replace(tmp, manifest_path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+
+
 def state_path(manifest_path):
     return manifest_path + ".verify-state.json"
 
@@ -1204,6 +1249,9 @@ def main():
         results.append(r)
 
     save_state(manifest_path, st, results)
+    # The manifest is the artifact this skill is judged on, so the proof of measurement belongs in
+    # it — not only in a sidecar the next reader has no reason to look for.
+    stamp_receipt(manifest_path, results, tests, root)
 
     open_gaps = [g for r in results for g in r.gaps]
     passes, budget = st["passes"], a.budget

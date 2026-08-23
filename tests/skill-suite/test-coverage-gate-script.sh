@@ -65,8 +65,11 @@ SHA="$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb'
 # expression so each negative fixture isolates exactly one violation.
 write_manifest() {
   python3 - "$1" "$2" "$3" <<'PY'
-import json, sys
+import hashlib, json, os, sys
 path, sha, mutation = sys.argv[1], sys.argv[2], sys.argv[3]
+_spec = "tests/test_user_service.py"
+_spec_sha = hashlib.sha256(
+    open(os.path.join(os.path.dirname(os.path.abspath(path)), _spec), "rb").read()).hexdigest()
 m = {
   "schema": "zuvo-coverage-manifest/v1",
   "production_file": "src/user_service.py",
@@ -75,6 +78,9 @@ m = {
   "test_files": ["tests/test_user_service.py"],
   "quality_gates": {"Q7": 1, "Q11": 1},
   "status": "final",
+  "verification": {"schema": "zuvo-verify/v1", "epoch": 1,
+                   "spec_sha256": {_spec: _spec_sha},
+                   "suite": "PASS 4 tests passed", "mutation": "PASS 100.0%"},
   "symbols": [
     {"symbol": "UserService.create", "kind": "method", "visibility": "public",
      "production_lines": "2-5", "ownership": "owned", "rows": [
@@ -244,7 +250,10 @@ it('renders the number as string', () => {
 EOF
 TSSHA="$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$TMP/src/widget.ts")"
 python3 - "$TMP/ts.json" "$TSSHA" <<'PY'
-import json, sys
+import hashlib, json, os, sys
+_spec = "tests/widget.test.ts"
+_spec_sha = hashlib.sha256(
+    open(os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])), _spec), "rb").read()).hexdigest()
 m = {
   "schema": "zuvo-coverage-manifest/v1",
   "production_file": "src/widget.ts",
@@ -253,6 +262,9 @@ m = {
   "test_files": ["tests/widget.test.ts"],
   "quality_gates": {"Q7": 1, "Q11": 1},
   "status": "final",
+  "verification": {"schema": "zuvo-verify/v1", "epoch": 1,
+                   "spec_sha256": {_spec: _spec_sha},
+                   "suite": "PASS 1 test passed", "mutation": "SKIP"},
   "symbols": [
     {"symbol": "renderWidget", "kind": "function", "visibility": "public",
      "production_lines": "1-3", "ownership": "owned", "rows": [
@@ -345,6 +357,38 @@ if [ "$rc" -eq 2 ]; then
 else
   bad "unreadable manifest exits 2 (got $rc)"
 fi
+
+# ── 19. the receipt: a final manifest must prove it was measured ─────────────
+# Measured on the benchmark rig across the whole corpus: roughly one run in three never executes
+# the verification command at all. Not failing it — declining it, in as many words ("isn't
+# practical to run in full here, I'll follow its core spine pragmatically"). The suite then ships
+# unmeasured while the run reports success. Two rewordings of the instruction failed to move that,
+# so the artifact carries the proof and this gate is what refuses it.
+write_manifest "$TMP/noreceipt.json" "$SHA" "m.pop('verification', None)"
+out="$(run_gate noreceipt.json final)"; rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'UNVERIFIED'; then
+  pass "final manifest without a verification receipt is REJECTED"
+else
+  bad "unmeasured suite accepted as final (exit=$rc): $out"
+fi
+
+# The hash is the load-bearing part: without it the receipt is a checkbox an earlier, different
+# suite could have ticked.
+write_manifest "$TMP/stale.json" "$SHA" "m['verification']['spec_sha256'][_spec] = '0'*64"
+out="$(run_gate stale.json final)"; rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'STALE RECEIPT'; then
+  pass "a receipt that predates the current suite is REJECTED"
+else
+  bad "stale receipt accepted (exit=$rc): $out"
+fi
+
+# Inventory is frozen BEFORE any test exists, so demanding proof of measurement there would be
+# demanding proof of something that has not happened yet.
+write_manifest "$TMP/inv.json" "$SHA" "m.pop('verification', None); m['status'] = 'inventory'; [r.update(coverage='NONE') for sym in m['symbols'] for r in sym['rows']]"
+out="$(run_gate inv.json inventory)"
+printf '%s' "$out" | grep -q 'UNVERIFIED' \
+  && bad "inventory phase demanded a receipt for tests that do not exist yet" \
+  || pass "inventory phase does not demand a receipt"
 
 # ── summary ───────────────────────────────────────────────────────────────────
 echo "----"

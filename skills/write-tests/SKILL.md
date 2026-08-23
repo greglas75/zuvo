@@ -415,6 +415,15 @@ loop — `sleep 90; kill -0 <pid>`, `sleep 60; echo tick`, `tail /tmp/verify-out
 four to six turns waiting for output that one turn would have returned. A shell `timeout 590`
 prefix does NOT help: it bounds the program, not the harness. Set the tool parameter.
 
+**There is no version of this step you can do by hand.** The command writes a `verification`
+receipt into the manifest — the suite's hashes at the moment it was measured — and the coverage
+gate rejects a manifest marked `final` without one, or with one whose hashes no longer match the
+specs on disk. This is not ceremony: measured across the benchmark corpus, roughly one run in three
+skipped this command entirely, reasoning that the full apparatus was not practical to run here and
+that following the spine pragmatically would do. Those suites shipped unmeasured and reported
+success. Writing the receipt yourself is forging a measurement, and the only thing it buys is a
+green gate over a suite nothing ran.
+
 **Before the first call**, fill the FROZEN manifest per `test-inventory-protocol.md` Step 2.5:
 each row's `coverage` + `test-file:line` evidence, `status: "final"`, and `quality_gates` — run
 Step 3's critical-gate scoring for Q7/Q11 NOW so the manifest is complete on the first pass. A

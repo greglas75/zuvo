@@ -1008,6 +1008,42 @@ def validate(manifest_path, phase, repo_root):
             if not os.path.isfile(resolve_path(tf_rel, repo_root, manifest_dir)):
                 errors.append("declared test file does not exist: %s" % tf_rel)
 
+        # 4b. Proof that the suite was actually MEASURED, not just declared finished.
+        #
+        # Measured across the benchmark corpus: about one run in three never executes the
+        # verification command at all. Not failing it — declining it. One transcript puts it
+        # plainly: "isn't practical to run in full here, I'll follow its core spine pragmatically."
+        # The suite then ships unmeasured while the run reports success, and every number computed
+        # from it describes nothing.
+        #
+        # Two rewordings of the instruction have already failed to change this, so the check is
+        # here instead: `verify-tests` writes a receipt into the manifest, and the receipt carries
+        # the sha256 of each spec it measured. Hashes are what make it evidence rather than a
+        # checkbox — edit a spec afterwards and the receipt goes stale, so it cannot be inherited
+        # from an earlier, different suite.
+        receipt = manifest.get("verification")
+        if not isinstance(receipt, dict) or not receipt.get("spec_sha256"):
+            errors.append(
+                "UNVERIFIED: manifest is marked final but carries no verification receipt. "
+                "Run `~/.zuvo/verify-tests --manifest %s` — a suite nothing measured is not a "
+                "finished suite." % os.path.basename(manifest_path))
+        else:
+            measured = receipt.get("spec_sha256") or {}
+            for tf_rel in test_files:
+                tf_abs = resolve_path(tf_rel, repo_root, manifest_dir)
+                if not os.path.isfile(tf_abs):
+                    continue
+                recorded = measured.get(tf_rel)
+                if recorded is None:
+                    errors.append(
+                        "UNVERIFIED SPEC: %s is declared but was never measured — the receipt "
+                        "covers %s" % (tf_rel, ", ".join(sorted(measured)) or "nothing"))
+                elif recorded != sha256_file(tf_abs):
+                    errors.append(
+                        "STALE RECEIPT: %s changed after it was measured; re-run "
+                        "`~/.zuvo/verify-tests` so the verdict describes the current suite"
+                        % tf_rel)
+
     # ── Report ────────────────────────────────────────────────────────────────
     print("COVERAGE GATE (executable) — phase: %s" % phase)
     print("manifest:   %s" % manifest_path)
