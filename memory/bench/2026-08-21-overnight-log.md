@@ -813,3 +813,75 @@ per-case ceiling from the mutants that survive every arm — with the arm count 
 ceiling drawn from 3 suites is a much looser claim than one drawn from 44. A `-` in the kill column means the run finished but scoring
 has not caught up; a `0.0` means the suite fails on unmutated source and is worthless, which is a
 result, not a gap.
+
+---
+
+## CORRECTION 2 — mutation never ran on three of the five files (2026-08-23)
+
+The count nobody had taken, over every run in the corpus:
+
+| case | runs that produced a mutation number |
+|---|---|
+| CASE-01 (root vitest) | 18 of 55 |
+| **CASE-02 (React component)** | **1 of 14** |
+| **CASE-03 (React hook)** | **0 of 12** |
+| **CASE-04 (jest fixture)** | **0 of 11** |
+| CASE-05 (jest/NestJS) | 25 of 35 |
+
+On CASE-02, CASE-03 and CASE-04 the mutation step failed for the entire benchmark. It failed
+quietly: Stryker reports "No tests were found" or a type error, the helper recorded an ERROR line
+inside a long verify block, and the run carried on. So every number on those three files describes
+`write-tests` working **blind**, and the headline conclusion of this whole benchmark — that
+mutation feedback is the lever — rests on the two files where it happened to work.
+
+The visible tell was there and was misread: CASE-02's arms landed on 75.2%, *exactly* the no-skill
+control, and that was written down as "the skill does not help on React".
+
+### Three faults, each hiding the next
+
+1. **`disableTypeChecks` was never scoped.** Stryker's instrumentation assigns to its own helper
+   functions, which ts-jest rejects with `TS2630`. Stryker prevents this by inserting `@ts-nocheck`
+   — but only into files matching `disableTypeChecks`, whose default glob (`{test,src,lib}/**`)
+   matches no monorepo layout (`apps/*/src/**`). The dry run then dies citing a type error in code
+   the project does not contain, which reads as a broken project rather than a broken option.
+2. **Nothing bounded jest's crawl.** `testFiles` limits which tests kill mutants; it does not limit
+   what the dry run collects. Measured: **390 spec files, 36+ minutes** against **83 seconds** once
+   `roots` is narrowed. `roots` is the only narrowing knob that needs no knowledge of the project's
+   config — overriding `testMatch` on a config that sets `testRegex` is a hard jest validation
+   error, and a `.js` config cannot be read from the helper to find out which it uses. Absolute
+   paths, because `inPlace` means there is no sandbox to be hostile to them.
+3. **`concurrency: 2`** was a good-neighbour guess made before anything was measured.
+
+Measured after, all three stacks, production hash unchanged on each:
+
+| stack | before | after | mutants |
+|---|---|---|---|
+| jest / NestJS | never completed | **80 s** | 191 |
+| vitest / workspace (React) | never ran | **26 s** | 152 |
+| vitest / repo root | ~intermittent | **70 s** | 235 |
+
+### The trap found while measuring it
+
+`inPlace` edits the real file, so the original survives only an exit this process controls. A
+SIGKILL — harness timeout, OOM, an operator's `kill -9` — skips every `finally` and leaves the file
+instrumented. The next run then snapshots *that* as its original, restores it faithfully, and
+reports `production-hash PASS`. The corruption is permanent and invisible from then on.
+
+It cost an afternoon here: four consecutive probes all measured an instrumented file, and the dry
+run died on `Maximum call stack size exceeded` because instrumenting instrumented code recurses
+forever. The stack trace naming `stryMutAct_9fa48` calling itself was the only honest signal, and
+it only appears if you stop filtering the output.
+
+Now: the pristine copy is written to disk before anything runs, and a run that finds instrumentation
+already present either heals from that copy or refuses. A score measured against an instrumented
+file is not a low score — it is not a score.
+
+### What this invalidates
+
+The helper is a **single shared mount**, not per-arm. So every arm scored before 2026-08-23 was
+measured with the broken mutation step, and comparing a v21 number against an older arm's number
+compares two different measuring instruments as well as two skills.
+
+The one comparison that stays clean is **v21 against `naked`**, because the control never invokes
+the helper at all. Arm-versus-arm claims from earlier in this log should be treated as describing
+the runs, not the skill versions, until re-measured.
