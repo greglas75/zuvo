@@ -1006,3 +1006,35 @@ Verification (helper + mutation) is therefore ~31% of wall-clock, and today's fi
 component from 36 minutes / never to 26–80 s. Whether that shows up as shorter runs or just as more
 loop iterations inside the same budget is exactly what the CASE-05 v21 batch measures — same file,
 same arm family, before and after.
+
+### v21 baseline — the "before" arm, all five files (2026-08-23 evening)
+
+v21 carries the working mutation step but neither the receipt nor the generator. It is the control
+both later arms are read against.
+
+| file | kill | wall | measured | control |
+|---|---|---|---|---|
+| CASE-01 | 88.9% | 673 s | **0/3** | 84.8% |
+| CASE-02 | 75.2% | 561 s | **1/3** | 75.2% |
+| CASE-03 | 73.7% | 2242 s | **3/3** | 66.1% |
+| CASE-04 | 86.0% | 2080 s | **0/3** | 67.2% |
+| CASE-05 | 85.3% | 1428 s | **1/3** | 84.3% |
+
+**5 of 15 runs measured anything.** The two files where it measured least are the two where the
+score sits at or nearest the no-skill control. CASE-03, the only 3/3 batch, is the best result
+anything has produced on that file.
+
+Two mechanisms account for the misses, and they are different:
+
+- **Never invoked** (CASE-01 r1/r3, CASE-04 all three): no helper diagnostics in the transcript at
+  all. The run simply did not call it.
+- **Refused and not recovered** (CASE-01 r2, CASE-05 r1/r2): `missing file(s)` — the manifest
+  predicted `<base>.spec.ts` and the run split the suite into `<base>.<aspect>.spec.ts`. Fixed the
+  same evening (082f11d): the refusal now lists the parts that exist. It predates the tooling
+  changes around it, so it has been costing measurements quietly for a while.
+
+An open question the next batches answer rather than settle by argument: v21 measures far less than
+v9 (4/5 on CASE-01) despite naming the helper the same number of times. v21's file is 73 lines
+longer — the mandate now sits below a long paragraph about tool timeouts. That is a hypothesis
+about placement, not a finding, and v23 carries the same prose plus the receipt: if it measures,
+placement was not the cause.
