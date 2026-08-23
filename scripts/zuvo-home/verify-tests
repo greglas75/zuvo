@@ -701,6 +701,23 @@ def write_survivor_report(manifest_path, survivors, bmap, root):
     return p
 
 
+# Stryker's instrumentation wraps every mutated expression in these helpers. Finding them in a file
+# that is supposed to be production source means an earlier inPlace run never got to restore it --
+# and instrumenting an already-instrumented file recurses until the stack dies, which surfaces as an
+# unexplained "Maximum call stack size exceeded" in the dry run rather than as corruption.
+STRYKER_MARKERS = ("stryMutAct_", "stryCov_", "stryNS_")
+
+
+def instrumentation_markers(path):
+    """Count Stryker instrumentation helpers in a file (0 for clean production source)."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            body = fh.read()
+    except OSError:
+        return 0
+    return sum(body.count(m) for m in STRYKER_MARKERS)
+
+
 def project_test_config(runner_kind, start_file, root):
     """(config_dir, config_filename) for the project's own test config, walking up from the spec.
 
@@ -760,13 +777,53 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
     scfg = os.path.join(cfg_dir, "stryker.zuvo-verify-%s.json" % stamp)
     rep = os.path.join(cfg_dir, ".zuvo-verify-mutation-%s" % stamp)
 
-    # inPlace edits the real file. Hold the original bytes and put them back no matter how this
-    # exits -- the sha256 gate downstream verifies it rather than trusting it.
+    # inPlace edits the real file, so the original has to survive an exit this process does not
+    # control. An in-memory copy does not: SIGKILL -- a harness timeout, an OOM kill, an operator
+    # ^C -- skips every `finally` and leaves the file instrumented. The next run then snapshots THAT
+    # as its original, restores it faithfully afterwards, and reports a clean production-hash. The
+    # corruption is now permanent AND invisible, and every score measured after it is garbage.
+    #
+    # So the copy goes to disk before anything runs, and a run that finds instrumentation already
+    # present either heals from that copy or refuses. Refusing is the point: a mutation score
+    # measured against an instrumented file is not a low score, it is not a score at all.
+    sidecar = prod_file + ".zuvo-mutation-pristine"
+    if instrumentation_markers(prod_file):
+        if os.path.isfile(sidecar) and not instrumentation_markers(sidecar):
+            shutil.copyfile(sidecar, prod_file)
+            note += ", production restored from an interrupted run"
+        else:
+            r.status = "ERROR"
+            r.detail = (
+                "error: %s carries Stryker instrumentation left by an interrupted run, and no "
+                "clean copy is available. Restore it (`git checkout -- %s`) before measuring."
+                % (rel_to(prod_file, root), rel_to(prod_file, root))
+            )
+            return r
     with open(prod_file, "rb") as fh:
         pristine = fh.read()
+    with contextlib.suppress(OSError), open(sidecar, "wb") as fh:
+        fh.write(pristine)
 
     runner_block = {"testRunner": runner["kind"]}
-    if runner["kind"] == "vitest":
+    if runner["kind"] == "jest":
+        # Scoping the DRY RUN is what decides whether this takes a minute or an hour. `testFiles`
+        # limits which tests are used to kill mutants, but jest still crawls everything its own
+        # config collects first -- measured here: 390 spec files, 36+ minutes, against 83 seconds
+        # once the crawl is bounded.
+        #
+        # `roots` is the one narrowing knob that needs no knowledge of the project's config:
+        # overriding testMatch on a config that sets testRegex (or the reverse) is a hard jest
+        # validation error, and a .js config cannot be read from here to find out which it uses.
+        #
+        # Absolute paths, deliberately. Relative ones would have to be re-expressed against the
+        # project's own `rootDir` (Nest sets 'src', others '.'), which is exactly the guesswork
+        # that kept failing. `inPlace` means there is no sandbox to be absolute-path-hostile.
+        spec_dirs = sorted({os.path.dirname(os.path.abspath(f)) or cfg_dir for f in test_files})
+        runner_block["jest"] = {"config": {"roots": spec_dirs}}
+        if cfg_name:
+            runner_block["jest"]["projectType"] = "custom"
+            runner_block["jest"]["configFile"] = cfg_name
+    elif runner["kind"] == "vitest":
         runner_block["vitest"] = {
             # `related` asks vitest which tests import the mutated file; in a workspace that
             # resolution fails and the run dies reporting no tests. testFiles already scopes it.
@@ -774,8 +831,6 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
         }
         if cfg_name:
             runner_block["vitest"]["configFile"] = cfg_name
-    elif cfg_name:
-        runner_block["jest"] = {"projectType": "custom", "configFile": cfg_name}
 
     cfg = {
         "packageManager": "npm",
@@ -788,11 +843,23 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
         # resolves React through `../../node_modules/react` therefore cannot load inside it --
         # which is how a React case produced zero mutants for weeks without erroring visibly.
         "inPlace": True,
+        # Stryker's instrumentation assigns to its own helper functions, which a type-checking
+        # transform (ts-jest) rejects with TS2630 -- the dry run then fails with a type error about
+        # code the project does not contain. Stryker guards against this by inserting @ts-nocheck,
+        # but only for files matching `disableTypeChecks`, whose default glob ({test,src,lib}/**)
+        # misses every monorepo layout (apps/*/src/**). Naming the mutated file matches any layout,
+        # and skips preprocessing the rest of the tree -- which on this repo hit a parse error in an
+        # unrelated 7000-line vendor file.
+        "disableTypeChecks": prod_rel,
         # Stryker rewrites a project tsconfig when it finds one, through TypeScript APIs that
         # not every installed version still exports. Pointing at a file that does not exist
         # skips that preprocessor; nothing in a scoped run needs it.
         "tsconfigFile": "tsconfig.zuvo-verify-absent.json",
-        "concurrency": 2,
+        # 2 was a good-neighbour guess made before anything was measured. Mutation is the longest
+        # step in the whole verification and it is embarrassingly parallel, so the cap should track
+        # the machine: a third of the cores leaves room for the suite, the editor and whatever else
+        # shares the box, and still cuts the wall-clock several-fold on anything modern.
+        "concurrency": max(2, min(8, (os.cpu_count() or 4) // 3)),
         "timeoutMS": 30000,
         "incremental": True,
         "incrementalFile": (manifest_path + ".stryker-incremental.json") if manifest_path
@@ -863,6 +930,10 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
         # Unconditional: a timeout or a crash mid-run leaves the real file mutated otherwise.
         with contextlib.suppress(OSError), open(prod_file, "wb") as fh:
             fh.write(pristine)
+        # Only now is the on-disk copy redundant. Removing it any earlier would reopen the window
+        # it exists to cover.
+        with contextlib.suppress(OSError):
+            os.unlink(sidecar)
         with contextlib.suppress(OSError):
             os.unlink(scfg)
         shutil.rmtree(rep, ignore_errors=True)

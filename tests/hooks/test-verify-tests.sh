@@ -194,6 +194,17 @@ json.dump({"schema": "zuvo-coverage-manifest/v1",
 PY
 }
 
+refreeze() { # refreeze <repo> — re-stamp the manifest hash so a test can isolate ONE check
+  python3 - "$1" <<'PY2'
+import hashlib, json, os, sys
+d = sys.argv[1]
+m = os.path.join(d, "zuvo/contracts/thing.coverage.json")
+data = json.load(open(m))
+data["production_sha256"] = hashlib.sha256(open(os.path.join(d, "src/thing.ts"), "rb").read()).hexdigest()
+json.dump(data, open(m, "w"), indent=1)
+PY2
+}
+
 vt() { # vt <repo> [extra args...] ; stdout+stderr captured to $TMP/out
   local d="$1"; shift
   PATH="$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" \
@@ -609,6 +620,37 @@ STUB_GATE=pass STUB_COV_PCT=60 STUB_SURVIVORS=2 vt "$R" --force-mutation
 grep -qE "mutation +(FAIL|PASS)" "$TMP/out" \
   && pass "--force-mutation overrides the deferral" \
   || bad "--force-mutation did not run mutation: $(grep -E '^  mutation' "$TMP/out")"
+
+# ── (25) a production file left instrumented by a killed run is refused, not measured ────
+# Mutation runs in-place, so the original only survives an exit this process controls. A SIGKILL
+# (harness timeout, OOM, ^C) skips every `finally` and leaves Stryker's instrumentation in the
+# file. Without a guard the next run snapshots THAT as the original, restores it faithfully, and
+# reports production-hash PASS — the corruption becomes permanent and invisible, and every score
+# after it is garbage. Cost of learning this the other way: a whole afternoon of probes that were
+# all measuring an instrumented file, plus a dry run that died on "Maximum call stack size
+# exceeded" because instrumenting instrumented code recurses forever.
+R="$TMP/m25"; mkrepo "$R" with-stryker
+printf 'function stryMutAct_9fa48(){}\nexport const alpha = (n) => n + 1;\n' > "$R/src/thing.ts"
+# Re-stamp so the frozen-hash check passes: this test is about the instrumentation guard, and a
+# drift failure would mask it.
+refreeze "$R"
+STUB_GATE=pass STUB_COV_PCT=95 STUB_SURVIVORS=2 vt "$R" --force-mutation
+grep -qE "mutation +ERROR" "$TMP/out" \
+  && pass "an already-instrumented production file is refused, not scored" \
+  || bad "measured against an instrumented file: $(grep -E '^  mutation' "$TMP/out")"
+grep -q "git checkout --" "$TMP/out" \
+  && pass "the refusal says how to restore the file" \
+  || bad "refusal gives the agent no way forward"
+
+R="$TMP/m25b"; mkrepo "$R" with-stryker
+# A clean sidecar is exactly the state a killed run leaves behind, and it is recoverable.
+cp "$R/src/thing.ts" "$R/src/thing.ts.zuvo-mutation-pristine"
+printf 'function stryMutAct_9fa48(){}\nexport const alpha = (n) => n + 1;\n' > "$R/src/thing.ts"
+refreeze "$R"
+STUB_GATE=pass STUB_COV_PCT=95 STUB_SURVIVORS=2 vt "$R" --force-mutation
+grep -q "stryMutAct" "$R/src/thing.ts" \
+  && bad "the instrumented file was left in place despite a clean copy being available" \
+  || pass "an interrupted run self-heals from its on-disk copy"
 
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
