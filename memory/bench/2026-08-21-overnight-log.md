@@ -969,3 +969,40 @@ Three things it does establish:
   boundaries — is worth +18.3 with no machinery involved at all. Whatever the machinery is for, it
   is not the only thing producing the number, and a story that says otherwise is contradicted by
   the largest single delta in the corpus.
+
+### The cost of measuring, and where the wall-clock actually goes
+
+Splitting every zuvo run by whether it produced a helper verdict:
+
+| | MEASURED | SKIPPED |
+|---|---|---|
+| kill (median) | 89.7% | 86.9% |
+| wall (median) | **2506 s (42 min)** | 1028 s (17 min) |
+| finished inside 20 min | **4 of 57** | 38 of 65 |
+
+So the stated goal — under twenty minutes *and* good — has essentially never happened: four runs
+in fifty-seven. Same confound as the table above (arm version uncontrolled), and a second one worth
+naming: a run that skips the loop is fast partly because it does less, not only because it skipped.
+
+Where the time goes, across the same 57 measured runs, attributed by tool call rather than by
+narrative text:
+
+| bucket | median share | largest bucket in N runs |
+|---|---|---|
+| verify-helper | 21.7% | **27 of 57** |
+| adversarial | 13.4% | 12 |
+| think | 12.4% | 3 |
+| bash-other | 10.2% | 6 |
+| mutation | 9.2% | 7 |
+| suite-run | 9.1% | 2 |
+
+**This needed the fleet, not a sample.** The first run inspected showed adversarial at 61% and
+verify-helper at 1.2%, which reads as an obvious answer and is an outlier: across all 57 the helper
+is the single largest bucket in 27 runs and adversarial in 12. Reporting the sample would have
+pointed the next day's work at the wrong lever — the `one-run-is-not-the-fleet` rule earning its
+keep for the second time in this project.
+
+Verification (helper + mutation) is therefore ~31% of wall-clock, and today's fix cut its slowest
+component from 36 minutes / never to 26–80 s. Whether that shows up as shorter runs or just as more
+loop iterations inside the same budget is exactly what the CASE-05 v21 batch measures — same file,
+same arm family, before and after.
