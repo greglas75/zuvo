@@ -1038,3 +1038,36 @@ v9 (4/5 on CASE-01) despite naming the helper the same number of times. v21's fi
 longer — the mandate now sits below a long paragraph about tool timeouts. That is a hypothesis
 about placement, not a finding, and v23 carries the same prose plus the receipt: if it measures,
 placement was not the cause.
+
+### v23 on CASE-04 — the falsification test (2026-08-23, 22:37)
+
+The claim under test: generating the inventory makes the protocol actually run on the file where
+nine consecutive runs across three versions never wrote a manifest at all.
+
+| run | kill | wall | measured |
+|---|---|---|---|
+| v23-r1 | 82.1% | 1411 s | no |
+| v23-r2 | **88.4%** | **4160 s** | **yes** |
+| v23-r3 | 84.1% | 1679 s | **yes** |
+| v21-r1 | 86.0% | 2080 s | no |
+| v21-r2 | 88.9% | 2285 s | no |
+| v21-r3 | 85.0% | 1725 s | no |
+
+**Confirmed, and only that.** `measured` went 0/3 → 2/3 and manifests appeared on disk for the first
+time on this file. That is categorical: either the artifact exists or it does not, and for nine runs
+it did not.
+
+**Not confirmed: any effect on quality.** Medians are 84.1% (v23) against 86.0% (v21), but the
+ranges are 82.1–88.4 and 85.0–88.9 — overlapping, n=3. A 1.9-point median gap inside that spread is
+noise, and reporting it as a regression caused by the generator would be reading a result that is
+not there. What can be said is narrower: on this file, engaging the protocol has not yet been shown
+to beat not engaging it.
+
+**The cost is visible though.** v23's best run is also its longest by a factor of three — 88.4% at
+4160 s (69 min). The pattern across both arms is that the highest scores come from the longest runs
+regardless of whether the protocol ran, which is the same plateau this log recorded earlier: within
+an arm, 3-5x the effort moves kill by about half a point.
+
+So the generator fixed what it was built to fix — the protocol is no longer skipped for being
+impractical — and left the more uncomfortable question intact: on CASE-04, whatever produces the
++17 to +19 over control is not the executable machinery, because ten earlier runs got it without.
