@@ -1120,3 +1120,38 @@ runs removed.
 Fixed both ends — the reader now prefers whichever scorecard carries a number, and a backfill runs
 StrykerJS for the twelve that only ever had the empty verdict. The engine choice happens per case,
 before any run's verdict is known, which is why these were never scored the second way.
+
+### inPlace made an interrupted run corrupting, and the rig credited it as a virtue
+
+Switching mutation to inPlace fixed three broken stacks and introduced a failure mode: the
+production file is genuinely rewritten on disk for the duration, so a process that dies without
+running its `finally` leaves the source instrumented.
+
+**Nine runs harvested an instrumented production file tonight, and five of them exited 0** —
+reporting success over mutated source. Worse, the rig recorded them as `PRODUCTION_MODIFIED`, the
+verdict reserved for a run that fixed a real bug mid-flight. A tooling fault was being counted as
+the most valuable thing the skill does.
+
+I nearly missed it twice. First by checking two diffs, finding no Stryker markers in either, and
+concluding the guard was holding — a sample of two, in a log that has already recorded this exact
+mistake. Second because the failing runs looked like ordinary agent behaviour from the outside.
+
+Fixes, in order of what they cover:
+
+- **SIGTERM / SIGINT / SIGHUP handlers** restore the pristine bytes and re-raise with the default
+  handler. That covers `timeout(1)`, harness cancellation, Ctrl-C and a closed terminal — nearly
+  every real interruption. The test kills the helper mid-mutation with the stub rewriting the file
+  the way inPlace does, and was checked against a build with the handlers stripped: both assertions
+  fail there, so it is not vacuous.
+- **SIGKILL cannot be caught.** The on-disk pristine copy plus the startup guard (refuse to measure
+  an instrumented file) remain the recovery path.
+- **Reverting to the sandbox was tried and rejected on evidence**, not preference: with inPlace off,
+  CASE-02 still dies with "stryker exit 1, no report" — Stryker's sandbox cannot resolve a workspace
+  package's dependencies. inPlace is load-bearing.
+- **The rig now distinguishes the two.** `INSTRUMENT_LOSS` for an instrumented harvest,
+  `PRODUCTION_MODIFIED` for a real edit; 11 existing scorecards reclassified. Both are excluded from
+  medians, but only one of them says the run did something good.
+
+Also fixed alongside: 6 of the 12 shadowed runs recovered real scores — 94.2, 94.2, 92.9, 92.1,
+90.2, 71.2. Five of six are ABOVE their arm's median, which is what the earlier note predicted:
+the runs the reader was dropping were disproportionately the good ones.
