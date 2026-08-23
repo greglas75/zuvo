@@ -1071,3 +1071,28 @@ an arm, 3-5x the effort moves kill by about half a point.
 So the generator fixed what it was built to fix — the protocol is no longer skipped for being
 impractical — and left the more uncomfortable question intact: on CASE-04, whatever produces the
 +17 to +19 over control is not the executable machinery, because ten earlier runs got it without.
+
+### An entire batch lost to disk, and the wrong diagnosis it invited (2026-08-23, 23:10)
+
+The CASE-05 twenty-minute batch came back `ENGINE_FAILED` on all three runs — no kill rate, no
+scoring workspace on disk at all.
+
+The obvious reading was a regression: the scorer calls `$BENCH/verify-tests`, the same helper that
+had been rewritten hours earlier, so "my change broke the scorer" fit the evidence and was wrong.
+`df` was the answer: **97% full, 12 GB free.** The scorer could not build a workspace, and a
+failure to create one looks identical to a failure to run one.
+
+Reclaimed 48 finished-run workspaces (14 GB — harvest has already copied every spec into
+`runs/<case>/<arm>/tests`, so they are disposable), and armed a reaper on a 10-minute loop that
+skips any workspace whose container is still up. The rig had no disk hygiene at all; three runs'
+wall-clock paid for finding that out.
+
+The batch is a hole rather than a result, so it is queued to re-run once the current sweep drains —
+the question it was meant to answer is the one this whole effort was set.
+
+Two rules worth keeping:
+
+- **Check `df` before diagnosing any rig-wide failure.** It is one command, and every layer above
+  it — scorer, helper, runner — fails in a way that looks like its own bug when the disk is full.
+- **A batch that produces no data is not a data point.** Recording ENGINE_FAILED runs as low scores
+  would have dragged the arm's median down with three runs that measured nothing.
