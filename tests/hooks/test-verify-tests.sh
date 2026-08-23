@@ -138,6 +138,18 @@ if tool == "stryker":
     if os.environ.get("STUB_STRYKER", "ok") == "crash":
         print("TypeError: ts.parseConfigFileTextToJson is not a function")
         sys.exit(1)
+    # inPlace is real: Stryker rewrites the production file for the duration of the run. The stub
+    # has to do the same, or an interruption test proves nothing about the file it claims to guard.
+    slp = os.environ.get("STUB_STRYKER_SLEEP")
+    if slp:
+        import time as _t
+        target = cfg["mutate"][0]
+        target = target if os.path.isabs(target) else os.path.join(os.getcwd(), target)
+        with open(target, "r+", encoding="utf-8") as fh:
+            body = fh.read()
+            fh.seek(0)
+            fh.write("function stryMutAct_9fa48(){}\n" + body)
+        _t.sleep(float(slp))
     n_surv = int(os.environ.get("STUB_SURVIVORS", "0"))
     mutants = [{"status": "Killed", "mutatorName": "Arithmetic",
                 "location": {"start": {"line": 10}}} for _ in range(9)]
@@ -674,6 +686,33 @@ STUB_GATE=pass STUB_COV_PCT=95 vt "$R"
 grep -q "write the suite before verifying it" "$TMP/out" \
   && pass "with no spec at all, it says to write one rather than listing nothing" \
   || bad "no-spec case gave no guidance"
+
+# ── (27) SIGTERM mid-mutation restores the production file ───────────────────
+# Mutation runs inPlace — the sandbox cannot resolve a workspace package's dependencies, so there
+# is no version of this that leaves the source untouched while measuring. That makes an interrupted
+# process a correctness problem: measured on the rig, nine runs harvested an instrumented
+# production file and five of them exited 0, reporting success over mutated source.
+#
+# `timeout(1)` sends SIGTERM, and so does a harness cancellation, so this is the common case and
+# not an exotic one.
+R="$TMP/m27"; mkrepo "$R" with-stryker
+before=$(cat "$R/src/thing.ts")
+STUB_STRYKER_SLEEP=30 STUB_GATE=pass STUB_COV_PCT=95 \
+  env PATH="$STUB:$PATH" ZUVO_BASE="$FAKE_BASE" "$HELPER" \
+  --manifest "$R/zuvo/contracts/thing.coverage.json" --repo-root "$R" --force-mutation \
+  > "$TMP/out27" 2>&1 &
+helper_pid=$!
+# Long enough for the stub to have "instrumented" the file, short enough to stay inside its sleep.
+sleep 3
+kill -TERM "$helper_pid" 2>/dev/null
+wait "$helper_pid" 2>/dev/null
+after=$(cat "$R/src/thing.ts")
+[ "$before" = "$after" ] \
+  && pass "SIGTERM mid-mutation leaves the production file byte-identical" \
+  || bad "production file survived SIGTERM in a modified state"
+grep -q "stryMutAct" "$R/src/thing.ts" 2>/dev/null \
+  && bad "instrumentation was left in the production file after SIGTERM" \
+  || pass "no instrumentation remains after an interrupted run"
 
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }

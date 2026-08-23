@@ -51,6 +51,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -868,6 +869,29 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
     }
     cfg.update(runner_block)
 
+    # `inPlace` is not optional here -- Stryker's sandbox cannot resolve a workspace package's
+    # dependencies and the run dies with no report -- so the production file really is edited on
+    # disk for the duration. That makes an interrupted process a correctness problem, not an
+    # inconvenience: measured on the rig, nine runs harvested an instrumented file, and five of
+    # them exited 0, i.e. reported success while leaving the source mutated.
+    #
+    # `timeout(1)` sends SIGTERM, harness cancellations send SIGTERM, Ctrl-C sends SIGINT, a closed
+    # terminal sends SIGHUP — all catchable, and together they cover nearly every real
+    # interruption. Restore, then re-raise with the default handler so the exit status still says
+    # what killed us. SIGKILL cannot be caught; the on-disk copy above is the recovery path for it.
+    previous = {}
+
+    def _restore_and_die(signum, _frame):
+        with contextlib.suppress(OSError), open(prod_file, "wb") as fh:
+            fh.write(pristine)
+        signal.signal(signum, previous.get(signum, signal.SIG_DFL))
+        os.kill(os.getpid(), signum)
+
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        with contextlib.suppress(ValueError, OSError, AttributeError):
+            # ValueError: not the main thread. Nothing to install, and nothing to lose.
+            previous[sig] = signal.signal(sig, _restore_and_die)
+
     try:
         with open(scfg, "w", encoding="utf-8") as fh:
             json.dump(cfg, fh, indent=1)
@@ -929,6 +953,9 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
         return r
     finally:
         # Unconditional: a timeout or a crash mid-run leaves the real file mutated otherwise.
+        for sig, handler in previous.items():
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(sig, handler)
         with contextlib.suppress(OSError), open(prod_file, "wb") as fh:
             fh.write(pristine)
         # Only now is the on-disk copy redundant. Removing it any earlier would reopen the window
