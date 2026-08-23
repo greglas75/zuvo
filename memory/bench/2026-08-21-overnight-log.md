@@ -1096,3 +1096,27 @@ Two rules worth keeping:
   it — scorer, helper, runner — fails in a way that looks like its own bug when the disk is full.
 - **A batch that produces no data is not a data point.** Recording ENGINE_FAILED runs as low scores
   would have dragged the arm's median down with three runs that measured nothing.
+
+### Twelve runs were invisible because of a file-order bug in the reader
+
+A run that fixes a production bug in-run — Step 4.5, the most valuable thing this skill asks for —
+cannot be scored by the frozen-mutant engine: mutants are byte offsets into one source text, and any
+edit invalidates every offset after it. So it writes `PRODUCTION_MODIFIED` with `kill_rate: null`.
+That refusal is correct.
+
+What was not correct: the reader took the FIRST scorecard it found, and `.json` sorts before
+`.stryker.json`. StrykerJS has no offset constraint — it re-derives mutants from whatever source it
+is given, and the scorer already restores the run's own production file before measuring — so a
+real number could be sitting right beside the empty verdict and never be read.
+
+Twelve runs across three files were outside every median this way: CASE-01 v2 ×2, v6, v11, v19,
+v21; CASE-02 v12, v21 ×2; CASE-03 v20, v21, v23. Four of them are v21's, which is the arm the
+current experiments are read against.
+
+The bias has a direction, and it is the worst possible one: it silently discards exactly the runs
+that did the extra work. Every "does the skill help" number in this log was computed with those
+runs removed.
+
+Fixed both ends — the reader now prefers whichever scorecard carries a number, and a backfill runs
+StrykerJS for the twelve that only ever had the empty verdict. The engine choice happens per case,
+before any run's verdict is known, which is why these were never scored the second way.
