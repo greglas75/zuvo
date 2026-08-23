@@ -939,3 +939,33 @@ skill's *prose* buys (split by responsibility, sit on boundaries) when an agent 
 is a real and useful result — it just is not the result it was being read as.
 
 The monitor now renders `measured N/3` per arm so this cannot go unnoticed again.
+
+### What the verification loop is actually worth
+
+Pooling runs within each file by whether they ever produced a helper verdict:
+
+| file | MEASURED (used the loop) | SKIPPED (prose only) | naked |
+|---|---|---|---|
+| CASE-01 | 90.9% (n=16, 87.9–91.9) | 88.9% (n=28, 81.8–90.9) | 84.8% |
+| CASE-02 | **81.4%** (n=4, 75.2–81.9) | **75.2%** (n=8, 73.3–81.9) | **75.2%** |
+| CASE-03 | 72.9% (n=3, 72.9–78.0) | 72.9% (n=5, **61.0**–74.6) | 66.1% |
+| CASE-04 | — (n=0) | 85.5% (n=10, 77.8–88.9) | 67.2% |
+| CASE-05 | 89.7% (n=26, 83.2–93.4) | 86.1% (n=6, 83.8–90.1) | 84.3% |
+
+Read with its confound stated: arm version is not controlled here — measured runs skew to later
+arms, which also have better prose. This says "runs that used the loop landed here, runs that
+skipped it landed there", not a clean effect size. Pooling was necessary because no single arm has
+enough runs on both sides.
+
+Three things it does establish:
+
+- **The loop is worth roughly +2 to +6 points where it runs**, and on CASE-02 it is the whole
+  difference between helping and not: the skipped runs sit at 75.2%, which is the no-skill control
+  to the decimal. That is the case for the receipt.
+- **CASE-03's medians tie but the spreads do not.** Skipped runs there reach down to 61.0% — below
+  the control. The loop's contribution on that file is a floor, not a ceiling.
+- **CASE-04 is the honest counterexample.** Ten runs, none measured, median 85.5% against a 67.2%
+  control. On that file the skill's prose alone — split by responsibility, sit exactly on
+  boundaries — is worth +18.3 with no machinery involved at all. Whatever the machinery is for, it
+  is not the only thing producing the number, and a story that says otherwise is contradicted by
+  the largest single delta in the corpus.
