@@ -325,9 +325,30 @@ Print: `[BUG-SCAN] Found {N} potential issues.` or `[BUG-SCAN] Clean.`
 
 ### Step 1.6: Production Surface Inventory (FROZEN before writing)
 
-Follow `test-inventory-protocol.md` Step 1.6 exactly:
+**Generate the manifest — do not transcribe it.** One command writes every public symbol and
+every boundary as a row at `coverage: NONE`:
 
-1. Run the independent extractor: `python3 "$ZUVO_BASE/scripts/test-coverage-gate.py" extract --production <file>` — its symbol list is the floor; add rows for surface it cannot see (routes, indirect callers), never remove one it found.
+```bash
+ZUVO_DIR="${ZUVO_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)/zuvo}"
+python3 "$ZUVO_BASE/scripts/test-coverage-gate.py" scaffold \
+  --production <file> --out "$ZUVO_DIR/contracts/<basename>.coverage.json" \
+  --test-files <planned spec paths> --repo-root "$(git rev-parse --show-toplevel)"
+```
+
+Your job is then the half that needs judgement: each row's `description`, its `coverage`, and the
+`test-file:line` evidence that proves it. The rows themselves come from the same extractor the
+validator checks them against, so the two agree by construction — hand-authoring them is
+transcription whose only possible outcome is a disagreement the gate reports back to you.
+
+This exists because the entry cost was killing the protocol outright, not because typing is
+tedious. Measured on the benchmark corpus: a 304-line file with 88 branches was abandoned in
+**nine consecutive runs across three skill versions** — no manifest was ever written, so the gate
+never ran and neither did anything downstream. The runs said why, and at ~90 hand-authored rows
+they were not wrong: *"isn't practical to run in full here."* One command is practical.
+
+Then follow `test-inventory-protocol.md` Step 1.6 for the parts the generator cannot know:
+
+1. Cross-check the extractor's symbol list: `python3 "$ZUVO_BASE/scripts/test-coverage-gate.py" extract --production <file>` — its symbol list is the floor; add rows for surface it cannot see (routes, indirect callers), never remove one it found.
 1b. **Run the boundary extractor in the same breath** — it reads the source, not the classification:
 
 ```bash

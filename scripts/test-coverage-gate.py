@@ -1073,6 +1073,132 @@ def validate(manifest_path, phase, repo_root):
 
 # ── Refresh: rewrite line-based evidence to durable test-name evidence ────────
 
+def _line_span(sym):
+    """(first, last) production lines for an extracted symbol, or None if unparseable."""
+    raw = sym.get("lines") or sym.get("production_lines") or ""
+    m = re.match(r"^\s*(\d+)\s*-\s*(\d+)\s*$", str(raw))
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    if str(raw).strip().isdigit():
+        n = int(str(raw).strip())
+        return n, n
+    return None
+
+
+ROW_TYPE_BY_KIND = {
+    "throw": "error_path",
+    "comparison": "branch",
+    "equality": "branch",
+    "logic": "branch",
+    "optional": "branch",
+    "index": "branch",
+    "arithmetic": "branch",
+}
+
+
+def scaffold(production, test_files, repo_root, out_path):
+    """Emit a complete inventory manifest: every public symbol, every boundary, coverage NONE.
+
+    Why this exists. The inventory is the entry cost of the whole protocol, and on a large file it
+    is prohibitive by hand: measured on the benchmark corpus, one 304-line file with 88 branches
+    was abandoned in NINE consecutive runs across three skill versions — no manifest was ever
+    written, so the gate never ran and neither did anything downstream of it. The agents said why:
+    running the full apparatus "isn't practical here". At ~90 hand-authored rows they were right.
+
+    Hand-authoring was never the point, either. The rows have to agree with what the validator
+    extracts, and the validator extracts them itself — so writing them by hand is transcription
+    with a chance of error, and the error is what the gate then reports. Generating them from the
+    same extractor makes the two agree by construction and leaves the agent the part that actually
+    needs judgement: which test proves which row.
+
+    Boundaries are attached to the symbol whose line span contains them. One that falls outside
+    every span (module-level code, a nested closure the extractor does not surface as public) is
+    kept on the nearest enclosing symbol rather than dropped -- an obligation nobody owns is an
+    obligation nobody covers.
+    """
+    # realpath on BOTH sides before relpath: on macOS /var is a symlink to /private/var, so
+    # mixing a resolved path with an unresolved one produces a `../../../..` climb out of the tree
+    # that only fails later, inside the validator, as "production file not found".
+    prod_abs = os.path.realpath(production)
+    if not os.path.isfile(prod_abs):
+        raise SystemExit2("production file not found: %s" % production)
+    symbols, mode = extract(prod_abs)
+    if not symbols:
+        raise SystemExit2("no public symbols extracted from %s — nothing to inventory" % production)
+
+    spans = []
+    for sym in symbols:
+        span = _line_span(sym)
+        spans.append((span[0], span[1], sym["symbol"]) if span else (0, 0, sym["symbol"]))
+
+    def owner(line):
+        best, best_size = None, None
+        for lo, hi, name in spans:
+            if lo <= line <= hi:
+                size = hi - lo
+                if best_size is None or size < best_size:   # innermost wins
+                    best, best_size = name, size
+        if best:
+            return best
+        # Nearest enclosing by start line, so module-level work still lands somewhere owned.
+        prior = [(lo, name) for lo, _hi, name in spans if lo <= line]
+        return max(prior)[1] if prior else spans[0][2]
+
+    obligations = boundaries(prod_abs) or []
+    by_symbol = {}
+    for ob in obligations:
+        by_symbol.setdefault(owner(ob.get("line") or 0), []).append(ob)
+
+    rows_out = []
+    for sym in symbols:
+        name = sym["symbol"]
+        rows = [{"id": "E1", "type": "entry",
+                 "description": "TODO: what %s does on its ordinary input" % name,
+                 "coverage": "NONE", "evidence": ""}]
+        for i, ob in enumerate(sorted(by_symbol.get(name, []), key=lambda o: o.get("line") or 0), 1):
+            rows.append({
+                "id": "B%d" % i,
+                "type": ROW_TYPE_BY_KIND.get(ob.get("kind"), "branch"),
+                "description": "L%s %s: %s" % (ob.get("line"), ob.get("kind"), ob.get("expr", "")),
+                "coverage": "NONE",
+                "evidence": "",
+            })
+        rows_out.append({
+            "symbol": name,
+            "kind": sym.get("kind") or "function",
+            "visibility": "public",
+            "production_lines": sym.get("lines") or sym.get("production_lines") or "",
+            "ownership": "owned",
+            "rows": rows,
+        })
+
+    manifest_dir = os.path.dirname(os.path.abspath(out_path)) or "."
+    manifest = {
+        "schema": SCHEMA_ID,
+        "production_file": os.path.relpath(prod_abs, os.path.realpath(repo_root)),
+        "production_sha256": sha256_file(prod_abs),
+        "stack": detect_language(prod_abs) or "ts",
+        "test_files": list(test_files or []),
+        "quality_gates": {"Q7": 0, "Q11": 0},
+        "status": "inventory",
+        "symbols": rows_out,
+    }
+    os.makedirs(manifest_dir, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh, indent=1)
+
+    total_rows = sum(len(s["rows"]) for s in rows_out)
+    print("SCAFFOLD: %s" % out_path)
+    print("  extraction: %s (%d public symbol%s)" % (mode, len(symbols), "" if len(symbols) == 1 else "s"))
+    print("  rows:       %d (%d entry + %d boundary), all coverage=NONE" % (
+        total_rows, len(symbols), total_rows - len(symbols)))
+    if not obligations:
+        print("  NOTE: no boundary obligations available — branch rows must be added by hand")
+    print("  Fill `coverage` and `evidence` per row as tests land, set Q7/Q11, then flip status "
+          "to final and run ~/.zuvo/verify-tests.")
+    return 0
+
+
 def refresh(manifest_path, repo_root):
     manifest = load_manifest(manifest_path)
     manifest_dir = os.path.dirname(os.path.abspath(manifest_path))
@@ -1338,6 +1464,15 @@ def main(argv):
              "non-semantic edit; used by the blind-audit freshness guard)")
     p_norm.add_argument("--file", required=True)
 
+    p_scaffold = sub.add_parser(
+        "scaffold",
+        help="generate the inventory manifest (every public symbol, every boundary, coverage NONE)")
+    p_scaffold.add_argument("--production", required=True)
+    p_scaffold.add_argument("--out", required=True, help="path to write the manifest to")
+    p_scaffold.add_argument("--test-files", nargs="*", default=[],
+                            help="planned spec paths, repo-relative")
+    p_scaffold.add_argument("--repo-root", default=".")
+
     p_refresh = sub.add_parser(
         "refresh",
         help="rewrite line-based evidence to durable test-name form "
@@ -1370,6 +1505,8 @@ def main(argv):
             return 0
         if args.command == "refresh":
             return refresh(args.manifest, args.repo_root)
+        if args.command == "scaffold":
+            return scaffold(args.production, args.test_files, args.repo_root, args.out)
         return validate(args.manifest, args.phase, args.repo_root)
     except SystemExit2 as e:
         sys.stderr.write("ERROR: %s\n" % e)

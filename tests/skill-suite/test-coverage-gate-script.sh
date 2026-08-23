@@ -390,6 +390,67 @@ printf '%s' "$out" | grep -q 'UNVERIFIED' \
   && bad "inventory phase demanded a receipt for tests that do not exist yet" \
   || pass "inventory phase does not demand a receipt"
 
+# ── 20. scaffold: the inventory is generated, not transcribed ────────────────
+# A 304-line file with 88 branches was abandoned in nine consecutive benchmark runs across three
+# skill versions — no manifest was ever written, so the gate never ran. At ~90 hand-authored rows
+# the runs were right that it was impractical. The generator has to produce something the
+# validator then accepts, or it has moved the cliff instead of removing it.
+out="$(cd "$TMP" && python3 "$GATE" scaffold --production src/user_service.py \
+        --out zuvo/contracts/user_service.coverage.json \
+        --test-files tests/test_user_service.py --repo-root "$TMP" 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'SCAFFOLD:'; then
+  pass "scaffold generates an inventory manifest in one command"
+else
+  bad "scaffold failed (exit=$rc): $out"
+fi
+
+# Round trip: what it writes must satisfy the validator it was generated for.
+out="$(run_gate zuvo/contracts/user_service.coverage.json inventory)"; rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'RESULT: PASS'; then
+  pass "a generated inventory validates clean at inventory phase"
+else
+  bad "generated inventory rejected by the validator (exit=$rc): $out"
+fi
+
+# Every public symbol must be present — a generator that silently drops surface reopens exactly the
+# hole the inventory exists to close.
+if python3 -c "
+import json,sys
+m=json.load(open('$TMP/zuvo/contracts/user_service.coverage.json'))
+names={s['symbol'] for s in m['symbols']}
+sys.exit(0 if {'UserService.create','UserService.find','normalize'} <= names else 1)
+"; then
+  pass "scaffold covers every public symbol the extractor finds"
+else
+  bad "scaffold dropped public surface"
+fi
+
+# Boundary rows must land on the symbol that CONTAINS them, or the coverage question is asked of
+# the wrong function.
+if python3 -c "
+import json,sys
+m=json.load(open('$TMP/zuvo/contracts/user_service.coverage.json'))
+create=[s for s in m['symbols'] if s['symbol']=='UserService.create'][0]
+sys.exit(0 if any(r['type'] in ('branch','error_path') for r in create['rows']) else 1)
+"; then
+  pass "boundary rows attach to the symbol whose lines contain them"
+else
+  bad "boundaries were not attributed to their owning symbol"
+fi
+
+# It is an INVENTORY, frozen before tests exist: pre-claimed coverage would be the freeze violation
+# case 12 already rejects.
+if python3 -c "
+import json,sys
+m=json.load(open('$TMP/zuvo/contracts/user_service.coverage.json'))
+sys.exit(0 if m['status']=='inventory' and all(r['coverage']=='NONE'
+         for s in m['symbols'] for r in s['rows']) else 1)
+"; then
+  pass "scaffold freezes at coverage=NONE, claiming nothing"
+else
+  bad "scaffold pre-claimed coverage it cannot have"
+fi
+
 # ── summary ───────────────────────────────────────────────────────────────────
 echo "----"
 if [ "$fail" -eq 0 ]; then
