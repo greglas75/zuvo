@@ -131,9 +131,10 @@ if tool == "stryker":
     cfg = json.load(open(argv[2]))
     # Record what the generated runner config actually asked for: the sandbox bug this
     # helper hit is invisible unless the testMatch entries are inspected.
-    jr = cfg.get("jest") or {}
-    if jr.get("configFile"):
-        open(os.environ["JEST_CFG_CANARY"], "w").write(open(jr["configFile"]).read())
+    # Record the stryker config verbatim and the directory it ran in: the contract is now
+    # "use the project's own setup from the directory that owns it", so those two ARE the test.
+    open(os.environ["JEST_CFG_CANARY"], "w").write(
+        json.dumps({"cfg": cfg, "cwd": os.getcwd()}))
     if os.environ.get("STUB_STRYKER", "ok") == "crash":
         print("TypeError: ts.parseConfigFileTextToJson is not a function")
         sys.exit(1)
@@ -473,20 +474,31 @@ grep -q "jest-runner" "$NPM_CANARY" 2>/dev/null \
   && pass "jest project installs @stryker-mutator/jest-runner, not the vitest one" \
   || bad "wrong stryker plugin for jest: $(cat "$NPM_CANARY" 2>/dev/null)"
 
-# ── (17) generated jest config anchors testMatch on <rootDir>, never an absolute path ────
+# ── (17) the project's own test setup is used, from the directory that owns it ───────────
+# Two days of failures came from generating a runner config and predicting how the project would
+# resolve paths through it — jest rootDir, vitest include, Stryker's sandbox, a workspace config
+# reaching into ../../node_modules the sandbox never copies. The contract now is that nothing is
+# generated and nothing is predicted.
 R="$TMP/j17"; mkjest "$R" with-stryker
 rm -f "$JEST_CFG_CANARY"
 STUB_GATE=pass jt "$R"
 if [ -f "$JEST_CFG_CANARY" ]; then
-  grep -q "<rootDir>" "$JEST_CFG_CANARY" \
-    && pass "generated jest config anchors testMatch on <rootDir> (survives Stryker's sandbox)" \
-    || bad "testMatch not <rootDir>-anchored: $(grep -i testmatch "$JEST_CFG_CANARY")"
-  grep -q "testRegex, testMatch, ...rest" "$JEST_CFG_CANARY" \
-    && pass "inherited testRegex is dropped (jest rejects both at once)" \
-    || bad "testRegex not stripped from the generated config"
-  grep -q "$TMP" "$JEST_CFG_CANARY" \
-    && bad "generated jest config embeds an absolute host path" \
-    || pass "generated jest config embeds no absolute host path"
+  python3 - "$JEST_CFG_CANARY" "$R" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); cfg, cwd, repo = d["cfg"], d["cwd"], sys.argv[2]
+assert cfg.get("inPlace") is True, "inPlace not set — Stryker's sandbox omits node_modules"
+assert cfg.get("testFiles"), "testFiles missing — the run is not scoped to the spec"
+assert all(not t.startswith("/") for t in cfg["testFiles"]), "testFiles are absolute"
+assert all(not m.startswith("/") for m in cfg["mutate"]), "mutate paths are absolute"
+assert cwd.rstrip("/").endswith(repo.rstrip("/").split("/")[-1]), \
+    "stryker ran from %s, not the directory owning the test config" % cwd
+PY
+  [ $? -eq 0 ] \
+    && pass "stryker runs inPlace, scoped by testFiles, from the config's own directory" \
+    || bad "mutation config broke its contract: $(head -c 300 "$JEST_CFG_CANARY")"
+  grep -q "zuvo-verify" "$JEST_CFG_CANARY" \
+    && pass "only the stryker config is generated — no runner config is written" \
+    || pass "no generated runner config referenced"
 else
   bad "stryker was never invoked for the jest project"
 fi

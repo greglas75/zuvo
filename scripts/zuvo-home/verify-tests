@@ -595,6 +595,27 @@ def ensure_stryker(runner, root, allow_install):
     return None, "error: install succeeded but %s is not resolvable" % plugin
 
 
+# vitest config shapes the generated config can inherit from. Same reasoning as the jest side:
+# a generated config that REPLACES the project's own loses setupFiles, environment and aliases,
+# and on a React component that means the jest-dom matchers are never registered.
+VITEST_CONFIG_NAMES = ("vitest.config.ts", "vitest.config.mts", "vitest.config.js",
+                       "vitest.config.mjs", "vite.config.ts", "vite.config.js")
+
+
+def vitest_base_config(start_file, root):
+    """Path (relative to the config we generate) of the project's own vitest config, or None."""
+    d = os.path.dirname(os.path.abspath(start_file))
+    root = os.path.abspath(root)
+    while True:
+        for name in VITEST_CONFIG_NAMES:
+            p = os.path.join(d, name)
+            if os.path.isfile(p):
+                return p
+        if d == root or os.path.dirname(d) == d:
+            return None
+        d = os.path.dirname(d)
+
+
 # jest config shapes this helper can inherit from. A .ts/.mjs config cannot be `require`d from
 # the generated CommonJS wrapper, and guessing at its contents would silently change what the
 # mutation run measures — so those are reported, not worked around.
@@ -680,15 +701,43 @@ def write_survivor_report(manifest_path, survivors, bmap, root):
     return p
 
 
+def project_test_config(runner_kind, start_file, root):
+    """(config_dir, config_filename) for the project's own test config, walking up from the spec.
+
+    The directory matters as much as the file: vitest resolves `include` against the working
+    directory and jest resolves `rootDir` against its config's location, so running from anywhere
+    else silently collects nothing.
+    """
+    names = {
+        "vitest": ("vitest.config.ts", "vitest.config.mts", "vitest.config.js", "vitest.config.mjs",
+                   "vite.config.ts", "vite.config.js"),
+        "jest": ("jest.config.js", "jest.config.cjs", "jest.config.ts", "jest.config.mjs",
+                 "jest.config.json"),
+    }.get(runner_kind, ())
+    d = os.path.dirname(os.path.abspath(start_file))
+    root = os.path.abspath(root)
+    while True:
+        for name in names:
+            if os.path.isfile(os.path.join(d, name)):
+                return d, name
+        # jest also lives inside package.json
+        if runner_kind == "jest":
+            pkg = read_json(os.path.join(d, "package.json")) or {}
+            if isinstance(pkg.get("jest"), dict):
+                return d, None
+        if d == root or os.path.dirname(d) == d:
+            return (root, None)
+        d = os.path.dirname(d)
+
+
 def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base=None,
                    manifest_path=None):
-    """Native mutation score, scoped to this file AND this suite.
+    """Native mutation score for one production file, using the project's own test setup.
 
-    Scoping the TEST RUN matters as much as scoping --mutate. Stryker's dry run executes
-    whatever the project's vitest config includes; on any repo with pre-existing red tests that
-    kills the run before a single mutant is tested, and the failure reads like a broken mutation
-    setup rather than an unrelated failing suite. A generated config that includes only the spec
-    under test removes both problems.
+    Nothing about the project's configuration is regenerated, merged or guessed. See the module
+    note on why: every generated-config variant failed differently, and the failures were silent
+    -- Stryker reports "No tests were found", which reads like a broken setup rather than a path
+    that means something different from where it was run.
     """
     r = Result("mutation")
     t0 = time.time()
@@ -702,97 +751,59 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
         r.detail = note
         return r
 
-    prod_rel = rel_to(prod_file, nroot)
-    specs = [rel_to(f, nroot) for f in test_files]
+    cfg_dir, cfg_name = project_test_config(runner["kind"], test_files[0], root)
+    prod_rel = rel_to(prod_file, cfg_dir)
+    specs = [rel_to(f, cfg_dir) for f in test_files]
+    note = "%s, from %s" % (note, rel_to(cfg_dir, root) or ".")
+
     stamp = str(os.getpid())
-    ext = "config.ts" if runner["kind"] == "vitest" else "config.js"
-    vcfg = os.path.join(nroot, "%s.zuvo-verify-%s.%s" % (runner["kind"], stamp, ext))
-    scfg = os.path.join(nroot, "stryker.zuvo-verify-%s.json" % stamp)
-    rep = os.path.join(nroot, ".zuvo-verify-mutation-%s" % stamp)
-    try:
-        if runner["kind"] == "vitest":
-            with open(vcfg, "w", encoding="utf-8") as fh:
-                fh.write(
-                    "import { defineConfig } from 'vitest/config';\n"
-                    "export default defineConfig({\n"
-                    "  test: { include: %s, environment: 'node', pool: 'forks',\n"
-                    "          poolOptions: { forks: { singleFork: true } } },\n"
-                    "});\n" % json.dumps(specs)
-                )
-            runner_block = {"testRunner": "vitest", "vitest": {"configFile": os.path.basename(vcfg)}}
-        else:
-            expr, desc = jest_base_config(nroot)
-            if expr is None:
-                r.status = "SKIP"
-                r.detail = desc
-                return r
-            note = "%s, config %s" % (note, desc)
-            with open(vcfg, "w", encoding="utf-8") as fh:
-                fh.write(
-                    "const path = require('path');\n"
-                    "const base = %s;\n"
-                    "// testRegex and testMatch are mutually exclusive in jest: a generated config\n"
-                    "// that sets testMatch while inheriting testRegex is a hard validation error,\n"
-                    "// not a narrower run. Both are dropped before testMatch is set.\n"
-                    "const { testRegex, testMatch, ...rest } = base;\n"
-                    "const baseRoot = base.rootDir || '.';\n"
-                    "// Stryker executes in a SANDBOX COPY of the project, so an absolute path\n"
-                    "// computed here points outside the tree jest is given and matches nothing\n"
-                    "// (\"No tests were found\", which reads as a broken mutation setup). Anchor\n"
-                    "// on <rootDir> instead, and derive the offset from the inherited rootDir so\n"
-                    "// a Nest-style rootDir of 'src' and a bare '.' both resolve correctly.\n"
-                    "const specs = %s;\n"
-                    "module.exports = {\n"
-                    "  ...rest,\n"
-                    "  rootDir: path.resolve(__dirname, baseRoot),\n"
-                    "  testMatch: specs.map(function (sp) {\n"
-                    "    return '<rootDir>/' + path.relative(baseRoot, sp).split(path.sep).join('/');\n"
-                    "  }),\n"
-                    "};\n" % (expr, json.dumps(specs))
-                )
-            runner_block = {
-                "testRunner": "jest",
-                "jest": {"projectType": "custom", "configFile": os.path.basename(vcfg)},
-            }
-        cfg = {
-            "packageManager": "npm",
-            "reporters": ["json"],
-            "jsonReporter": {"fileName": os.path.join(rep, "mutation.json")},
-            "coverageAnalysis": "perTest",
-            "mutate": [prod_rel],
-            # Stryker rewrites the project tsconfig when it finds one, and that preprocessor
-            # calls TypeScript APIs that not every installed TS version still exports
-            # (`ts.parseConfigFileTextToJson is not a function` kills the run before a single
-            # mutant is tested). Pointing at a file that does not exist skips the preprocessor;
-            # nothing in a scoped run needs it.
-            "tsconfigFile": "tsconfig.zuvo-verify-absent.json",
-            "ignorePatterns": [
-                ".git", ".cursor", ".claude", ".vscode", ".idea",
-                "docs/**", "audits/**", "audit-results/**", "artifacts/**",
-                "zuvo/**", "memory/**", "e2e/**", "playwright-report/**",
-                "coverage/**", "**/.next/**", "**/dist/**", "**/build/**",
-                "**/*.png", "**/*.jpg", "**/*.mp4", "**/*.zip",
-            ],
-            "concurrency": 2,
-            "timeoutMS": 30000,
-            "tempDirName": ".stryker-tmp",
-            "cleanTempDir": True,
-            # Stryker's own incremental mode: it keeps the previous report and re-tests only the
-            # mutants whose code or covering tests actually changed. On a jest project a full
-            # pass over ~190 mutants costs about three minutes, and closing survivors takes
-            # several passes — measured on the rig, the difference between a 21-minute run at
-            # 85.3% and a 70-minute run at 89.3% is precisely how many passes it can afford.
-            # Re-measuring 190 mutants to re-check 24 is the cost this removes.
-            "incremental": True,
-            "incrementalFile": (manifest_path + ".stryker-incremental.json") if manifest_path
-            else ".stryker-incremental.json",
+    scfg = os.path.join(cfg_dir, "stryker.zuvo-verify-%s.json" % stamp)
+    rep = os.path.join(cfg_dir, ".zuvo-verify-mutation-%s" % stamp)
+
+    # inPlace edits the real file. Hold the original bytes and put them back no matter how this
+    # exits -- the sha256 gate downstream verifies it rather than trusting it.
+    with open(prod_file, "rb") as fh:
+        pristine = fh.read()
+
+    runner_block = {"testRunner": runner["kind"]}
+    if runner["kind"] == "vitest":
+        runner_block["vitest"] = {
+            # `related` asks vitest which tests import the mutated file; in a workspace that
+            # resolution fails and the run dies reporting no tests. testFiles already scopes it.
+            "related": False,
         }
-        cfg.update(runner_block)
+        if cfg_name:
+            runner_block["vitest"]["configFile"] = cfg_name
+    elif cfg_name:
+        runner_block["jest"] = {"projectType": "custom", "configFile": cfg_name}
+
+    cfg = {
+        "packageManager": "npm",
+        "reporters": ["json"],
+        "jsonReporter": {"fileName": os.path.join(rep, "mutation.json")},
+        "coverageAnalysis": "perTest",
+        "mutate": [prod_rel],
+        "testFiles": specs,
+        # No sandbox. Stryker's sandbox never copies node_modules, and a workspace config that
+        # resolves React through `../../node_modules/react` therefore cannot load inside it --
+        # which is how a React case produced zero mutants for weeks without erroring visibly.
+        "inPlace": True,
+        # Stryker rewrites a project tsconfig when it finds one, through TypeScript APIs that
+        # not every installed version still exports. Pointing at a file that does not exist
+        # skips that preprocessor; nothing in a scoped run needs it.
+        "tsconfigFile": "tsconfig.zuvo-verify-absent.json",
+        "concurrency": 2,
+        "timeoutMS": 30000,
+        "incremental": True,
+        "incrementalFile": (manifest_path + ".stryker-incremental.json") if manifest_path
+        else ".stryker-incremental.json",
+    }
+    cfg.update(runner_block)
+
+    try:
         with open(scfg, "w", encoding="utf-8") as fh:
-            json.dump(cfg, fh)
-        rc, out = run(
-            ["npx", "stryker", "run", os.path.basename(scfg)], cwd=nroot, timeout=2400
-        )
+            json.dump(cfg, fh, indent=1)
+        rc, out = run(["npx", "stryker", "run", os.path.basename(scfg)], cwd=cfg_dir, timeout=2400)
         data = read_json(os.path.join(rep, "mutation.json"))
         if data is None:
             r.status = "ERROR"
@@ -820,15 +831,13 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
             score, note, tested, killed + timeout_n, survived, noc,
         )
         r.status = "PASS" if not survivors else "FAIL"
-        # A NoCoverage mutant is strictly worse evidence than a survivor that at least ran
-        # under a test, so those lead the fix list.
-        survivors.sort(
-            key=lambda m: (
-                m.get("status") != "NoCoverage",
-                (m.get("location") or {}).get("start", {}).get("line", 0),
-            )
-        )
         bmap = boundary_map(prod_file, base) if survivors else {}
+        # A NoCoverage mutant is strictly worse evidence than a survivor that at least ran under
+        # a test, so those lead the fix list.
+        survivors.sort(
+            key=lambda m: (m.get("status") != "NoCoverage",
+                           (m.get("location") or {}).get("start", {}).get("line", 0))
+        )
         for m in survivors[:cap]:
             loc = (m.get("location") or {}).get("start") or {}
             line = loc.get("line")
@@ -844,8 +853,6 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
             msg = ("... %d more survivors — record their IDs and triage equivalents; do NOT chase all"
                    % (len(survivors) - cap))
             if report:
-                # Name the file. Without it an agent that wants the full list re-runs the whole
-                # mutation pass to rebuild a report that is already on disk.
                 msg += ". FULL list (all %d, with the boundary obligation on each line): %s" % (
                     len(survivors), rel_to(report, root))
             r.gaps.append(msg)
@@ -853,11 +860,15 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
             write_survivor_report(manifest_path, survivors, bmap, root)
         return r
     finally:
-        for f in (vcfg, scfg):
-            with contextlib.suppress(OSError):
-                os.unlink(f)
+        # Unconditional: a timeout or a crash mid-run leaves the real file mutated otherwise.
+        with contextlib.suppress(OSError):
+            with open(prod_file, "wb") as fh:
+                fh.write(pristine)
+        with contextlib.suppress(OSError):
+            os.unlink(scfg)
         shutil.rmtree(rep, ignore_errors=True)
         r.seconds = time.time() - t0
+
 
 
 def clear_debris(root, extra_dirs):
