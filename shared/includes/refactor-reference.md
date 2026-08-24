@@ -5,6 +5,41 @@
 
 ## CONTRACT State File (schema + migration)
 
+**Read and advance it with the command, not with a heredoc.**
+
+```bash
+~/.zuvo/refactor-contract list                       # what is resumable HERE (stale ones withheld)
+~/.zuvo/refactor-contract show --file <src>
+~/.zuvo/refactor-contract prove regression_red "RED at a1b2c3, GREEN at d4e5f6 — 41 tests"
+~/.zuvo/refactor-contract stage PHASE-3.5
+```
+
+Why a command. Measured across 25 real refactor sessions and 1,010 contracts on disk:
+
+- The contract was being edited by hand-written python heredocs — 22 of them re-issued within a
+  single session, in a skill where **13% of all shell calls repeat a command already issued**.
+  Composing a heredoc costs turns, and a typo in one corrupts the state file the whole run depends
+  on.
+- `stage` was free text, so runs invented their own: `READY_FOR_COMMIT` (28), `EXECUTION_COMPLETE`
+  (8), `EXECUTION_COMPLETE_UNCOMMITTED` (7), `READY_TO_COMMIT` (3) — the first and last being one
+  state spelled two ways, so any code matching one misses the other. 92 contracts have no `stage`
+  at all. The command takes a closed vocabulary and maps every one of those spellings onto it.
+- Nothing aged a contract out, so `continue` offered all of them. In `tgm-survey-platform` that
+  list was 34 entries: 31 abandoned for over two weeks, 3 not contracts at all (the
+  `-adversarial` / `-findings` sidecars match the same glob), and **zero** genuinely resumable.
+  `list` withholds those and says how many it withheld.
+
+**The stage gate.** A phase cannot be entered while the evidence it rests on is still `not_run`:
+`PHASE-3.5` needs `characterization` + `regression_red`, `PHASE-4` and `COMPLETE` also need
+`findings_disposition` + `test_quality`. This is checked on the boundary AFTER the phase that
+fills each field, never inside it. `--force` records it anyway and prints that it did — that is a
+human's call, and it is visible in the contract afterwards rather than indistinguishable from a
+proven advance.
+
+`not_run`, `-`, `pending` and friends are rejected as evidence. Recording one is the same as
+recording nothing, and it is how a field ends up looking answered when nothing happened.
+
+
 
 Create a resumable state file per target. The path is scoped so batch mode can track multiple targets without overwriting:
 
@@ -43,7 +78,10 @@ resumable run, not an archive candidate — resume it per the rules below instea
 
 **Resume contract:**
 - `continue <path>`: compute hash from relative path, load `zuvo/contracts/refactor-{hash}.json`.
-- `continue` (no argument): scan `zuvo/contracts/refactor-*.json` for `stage != "COMPLETE"`. 0 active: stop. 1 active: resume. 2+: list candidates, ask user to pick (do NOT auto-pick "most recent").
+- `continue` (no argument): `~/.zuvo/refactor-contract list`. 0 resumable: stop. 1: resume it. 2+:
+  show the list, ask the user to pick (do NOT auto-pick "most recent"). Do not scan the glob by
+  hand — it matches the `-adversarial` and `-findings` sidecars too, and it has no notion of a
+  contract that was abandoned a month ago.
 
 ```json
 {

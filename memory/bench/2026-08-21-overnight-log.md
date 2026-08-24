@@ -1247,3 +1247,69 @@ actually tests it.
 
 Falsification condition, set before the result: if `measured N/3` does not move with the corrected
 pattern, the hypothesis is wrong regardless of what the kill rates do.
+
+---
+
+# refactor — where the second-most-used skill actually bleeds (2026-08-24)
+
+`refactor` has **845 fleet runs** against write-tests' 245. Nothing here needed a rig: the fleet has
+already run it, and the run log, the retro store, the session transcripts and 1,010 contracts on
+disk are all sitting there.
+
+## What the fleet says
+
+**260 refactor retros.** Turns wasted: median 8, p90 18, max 95 — **2,611 turns in total**. Two
+friction categories account for 70% of them:
+
+| category | share of runs | turns wasted |
+|---|---|---|
+| pipeline-heavy | 31% | 915 |
+| infra-failure | 27% | 909 |
+| false-positive-rule | 8% | 156 |
+| the other seven | 34% | 631 |
+
+**843 run-log rows.** 637 PASS, 198 WARN. WARN runs are not bad work — median CQ 95%, Q 89%. Of the
+198, **55 (28%) name something outside the refactor in their note** (`unrelated`, `backlog`,
+`blocked by`, `farm`, `degraded`), and **47 of those had CQ ≥ 85%**: the work was clean, the verdict
+was not. Read carefully — the remaining 143 are simply not classifiable by keyword, so "most WARNs
+are external" is NOT supported. 28% is.
+
+**25 session transcripts, attributed by tool call.** Median session 279 minutes. `think` is the
+largest bucket in 17 of 25 sessions at 35% of wall-clock and a median of 500 turns; ad-hoc shell is
+178 turns. **13% of all bash calls repeat a command already issued in the same session.**
+
+A caveat on that attribution, stated because it changes how the numbers should be read: the gap
+between two turns contains the tool's own runtime AND the model's generation time for the next turn,
+so a fast command like `echo` gets credited with thinking that follows it. Turn counts are the
+sounder signal for anything that is not genuinely slow.
+
+## The three defects that follow from it
+
+**1. The CONTRACT is edited by hand-written heredocs.** 22 re-issued within a session. Composing one
+costs turns; a typo corrupts the state file the entire run depends on. Same shape as the four
+fix-and-rerun loops that `verify-tests` replaced.
+
+**2. `stage` is unvalidated free text.** In the wild: `READY_FOR_COMMIT` (28), `EXECUTION_COMPLETE`
+(8), `EXECUTION_COMPLETE_UNCOMMITTED` (7), `READY_TO_COMMIT` (3) — the first and last are one state
+spelled two ways, so code matching one misses the other. 92 contracts carry no `stage` at all, and
+9 are a bare LIST at the top level (they load, then fail on the first `.get`).
+
+**3. `continue` is unusable in the repos that use refactor most.** 268 contracts across the fleet
+are "active" by the resume rule, **134 untouched for over two weeks**. In `tgm-survey-platform` the
+list is 34 entries — 31 abandoned, 3 not contracts at all (the `-adversarial` / `-findings` sidecars
+match the same glob), and **zero** genuinely resumable.
+
+## The fix
+
+`~/.zuvo/refactor-contract` — one command, closed vocabulary, atomic writes, and a proof gate on the
+phase boundary that fills it: `PHASE-3.5` requires `characterization` + `regression_red`; `PHASE-4`
+and `COMPLETE` also require `findings_disposition` + `test_quality`. `not_run` / `-` / `pending` are
+rejected AS evidence — recording one is the same as recording nothing, and it is how a field ends up
+looking answered when nothing happened. `--force` exists, prints that it forced, and leaves that
+visible in the contract.
+
+After it, `list` reports `resumable: 0` in all four of the worst repos — because everything there is
+either complete or abandoned, which was true before and unsayable.
+
+Not yet measured: whether this reduces turns on a live run. The fleet evidence says where the turns
+go; it does not prove the command recovers them. That needs the same treatment write-tests got.

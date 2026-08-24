@@ -1,0 +1,406 @@
+#!/bin/sh
+# Polyglot sh/python header — see compute-preload for why this exact line matters on Windows.
+''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
+"""
+~/.zuvo/refactor-contract — read and advance a refactor CONTRACT with one command.
+
+WHY THIS EXISTS
+
+Measured across 25 real refactor sessions and 1,010 contracts on disk:
+
+  * The contract is edited by hand-written python heredocs. `c["stage"]="PHASE_3_5"`,
+    `c["prove"]["regression_red"]=...`, composed fresh each time. 22 of those heredocs were
+    literally re-issued within a session, and 13% of ALL bash calls in a refactor session repeat a
+    command already issued. Composing a heredoc is several turns; a typo corrupts the state file
+    that the whole run depends on.
+
+  * `stage` is unvalidated free text, so agents invented their own. In the wild: READY_FOR_COMMIT
+    (28), EXECUTION_COMPLETE (8), EXECUTION_COMPLETE_UNCOMMITTED (7), READY_TO_COMMIT (3) — two of
+    those are the same state spelled two ways, and any code matching one misses the other. 92
+    contracts have no `stage` field at all.
+
+  * Nothing ages a contract out. 268 contracts across the fleet are "active" by the resume rule
+    (`stage != COMPLETE`), and 134 of them have not been touched in over two weeks. `continue` is
+    specified to list candidates and let the user pick; in tgm-survey-platform that list is 34
+    entries, 32 of them abandoned. A resume command nobody can use is a resume command nobody uses.
+
+So: one command, a closed vocabulary, atomic writes, and a proof gate on the phase boundary that
+fills it — you cannot enter a phase whose prerequisites are still `not_run`. That last part is the
+point. A contract that records `prove.regression_red: not_run` and a stage of PHASE-4 is not a
+resumable state, it is a claim with no evidence behind it.
+
+Usage:
+  ~/.zuvo/refactor-contract show [--file <src>] [--contract <path>]
+  ~/.zuvo/refactor-contract list [--stale-days N] [--json]
+  ~/.zuvo/refactor-contract stage <STAGE> [--force]
+  ~/.zuvo/refactor-contract prove <field> <evidence>
+  ~/.zuvo/refactor-contract set <dotted.key> <json-value>
+  ~/.zuvo/refactor-contract append progress <text>
+
+Exit codes:
+  0  done
+  1  refused — a gate is unmet (the message says which, and what would satisfy it)
+  2  usage / not found
+"""
+import argparse
+import contextlib
+import glob
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+# The closed vocabulary. Everything agents actually invented is mapped onto it rather than
+# rejected outright: refusing a run's own history helps nobody, and the four invented spellings all
+# mean something this list can express.
+STAGES = ["PHASE-1", "PHASE-2", "PHASE-3", "PHASE-3.5", "PHASE-3.6", "PHASE-3.7",
+          "PHASE-4", "BLOCKED", "COMPLETE"]
+
+ALIASES = {
+    "READY_FOR_COMMIT": "PHASE-3.5",
+    "READY_TO_COMMIT": "PHASE-3.5",
+    "EXECUTION_COMPLETE": "PHASE-3.5",
+    "EXECUTION_COMPLETE_UNCOMMITTED": "PHASE-3.5",
+    "PHASE_1": "PHASE-1", "PHASE_2": "PHASE-2", "PHASE_3": "PHASE-3",
+    "PHASE_3_5": "PHASE-3.5", "PHASE_3_6": "PHASE-3.6", "PHASE_3_7": "PHASE-3.7",
+    "PHASE_4": "PHASE-4",
+}
+
+PROVE_FIELDS = ["characterization", "blind_audit", "adversarial", "regression_red",
+                "findings_disposition", "test_quality", "split_coverage",
+                "complexity_before", "complexity_reduced"]
+
+# What each phase REQUIRES to have been proven before it can be entered. Gate on the boundary AFTER
+# the phase that fills a field, never inside it — a gate that fires while its own evidence is still
+# being produced only teaches people to bypass it.
+REQUIRES = {
+    "PHASE-3": ["characterization", "complexity_before"],
+    "PHASE-3.5": ["characterization", "regression_red"],
+    "PHASE-3.6": ["characterization", "regression_red", "findings_disposition"],
+    "PHASE-4": ["characterization", "regression_red", "findings_disposition", "test_quality"],
+    "COMPLETE": ["characterization", "regression_red", "findings_disposition", "test_quality"],
+}
+
+UNPROVEN = ("not_run", "pending", "", "-", "todo", "tbd", "n/a-pending")
+
+
+def repo_root(start=None):
+    try:
+        out = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=start or os.getcwd(),
+                             capture_output=True, text=True, timeout=15)
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except Exception:
+        pass
+    return os.getcwd()
+
+
+def contracts_dir(root):
+    base = os.environ.get("ZUVO_OUTPUT_DIR") or os.path.join(root, "zuvo")
+    return os.path.join(base, "contracts")
+
+
+def target_hash(path):
+    """The skill keys a contract by a hash of the target path — mirror it exactly."""
+    return hashlib.sha256(path.encode("utf-8")).hexdigest()[:8]
+
+
+# A contract is named for its target hash and nothing else. The sidecars the skill writes beside it
+# carry a suffix, and they are the files a shape check cannot rule out when they are ALSO malformed
+# — which is exactly the case in the wild: three unparseable `-adversarial` / `-findings` files were
+# still being offered as resume candidates after the shape guard went in.
+CONTRACT_NAME = re.compile(r"^refactor-[0-9a-f]{6,40}\.json$")
+
+
+def is_contract(obj):
+    """A contract, as opposed to a sidecar that happens to match the same glob.
+
+    `zuvo/contracts/refactor-*.json` also matches `refactor-<hash>-adversarial.json` and
+    `refactor-<hash>-findings.json`, which the skill writes beside the real thing. The resume scan
+    uses that glob, so in tgm-survey-platform `continue` offers three files that are not contracts
+    at all — on top of the 31 abandoned ones. Identify by SHAPE rather than by filename: a contract
+    carries a stage, a target file, or the prove block.
+    """
+    return isinstance(obj, dict) and any(k in obj for k in ("stage", "prove", "file", "cq_before"))
+
+
+def read_json(path):
+    """Return the contract object, or None.
+
+    Real contracts on disk are not all objects: some are a bare LIST at the top level, written by a
+    run that appended where it meant to assign. Nothing validated the shape, so those files load
+    fine and then fail on the first `.get`. Treat a non-object as unreadable rather than crashing on
+    it — a malformed contract is a fact to report, not an exception to propagate.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def write_atomic(path, data):
+    """Never leave a half-written contract. A truncated state file loses the whole run's evidence."""
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=1)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        return True
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        return False
+
+
+def canonical_stage(raw):
+    s = (raw or "").strip()
+    if s in STAGES:
+        return s, None
+    up = s.upper().replace(" ", "_")
+    if up in ALIASES:
+        return ALIASES[up], "'%s' is not a stage — recorded as %s" % (s, ALIASES[up])
+    if up in STAGES:
+        return up, None
+    return None, ("'%s' is not a stage. Use one of: %s" % (s, ", ".join(STAGES)))
+
+
+def find_contract(a, root):
+    d = contracts_dir(root)
+    if a.contract:
+        return a.contract if os.path.isfile(a.contract) else None
+    if a.file:
+        p = os.path.join(d, "refactor-%s.json" % target_hash(a.file))
+        if os.path.isfile(p):
+            return p
+        # The path may have been given relative to the repo; try the other spelling before failing.
+        alt = os.path.relpath(os.path.abspath(a.file), root)
+        p2 = os.path.join(d, "refactor-%s.json" % target_hash(alt))
+        return p2 if os.path.isfile(p2) else None
+    active = []
+    for p in sorted(glob.glob(os.path.join(d, "refactor-*.json"))):
+        if not CONTRACT_NAME.match(os.path.basename(p)):
+            continue
+        c = read_json(p)
+        if not is_contract(c) or c.get("stage") == "COMPLETE":
+            continue
+        # Auto-selection considers only what a person would plausibly still be working on. An
+        # abandoned contract is not a candidate just because nobody marked it COMPLETE.
+        if (time.time() - os.path.getmtime(p)) / 86400.0 > 14:
+            continue
+        active.append(p)
+    return active[0] if len(active) == 1 else None
+
+
+def cmd_list(a, root):
+    d = contracts_dir(root)
+    rows = []
+    for p in sorted(glob.glob(os.path.join(d, "refactor-*.json"))):
+        if not CONTRACT_NAME.match(os.path.basename(p)):
+            continue                     # a sidecar by name — never a resume candidate
+        c = read_json(p)
+        if c is not None and not is_contract(c):
+            continue                     # a sidecar by shape
+        if c is None:
+            rows.append((p, "UNREADABLE", None, 0))
+            continue
+        raw = c.get("stage", "")
+        st, _ = canonical_stage(raw)
+        age = (time.time() - os.path.getmtime(p)) / 86400.0
+        rows.append((p, st or ("(no stage)" if not raw else raw), c.get("file"), age))
+
+    live = [r for r in rows if r[1] not in ("COMPLETE",)]
+    fresh = [r for r in live if r[3] <= a.stale_days]
+    stale = [r for r in live if r[3] > a.stale_days]
+
+    if a.json:
+        print(json.dumps({"resumable": [{"contract": r[0], "stage": r[1], "file": r[2],
+                                         "age_days": round(r[3], 1)} for r in fresh],
+                          "stale": len(stale), "complete": len(rows) - len(live)}, indent=1))
+        return 0
+
+    print("contracts in %s" % os.path.relpath(d, root))
+    print("  complete: %d   resumable: %d   stale (>%dd, not offered): %d"
+          % (len(rows) - len(live), len(fresh), a.stale_days, len(stale)))
+    if fresh:
+        print("\n  RESUMABLE")
+        for p, st, f, age in sorted(fresh, key=lambda r: r[3]):
+            print("    %-12s %5.1fd  %s" % (st, age, f or os.path.basename(p)))
+    if stale:
+        # Say what was hidden and why. A list that silently drops entries reads as complete.
+        print("\n  %d stale contract(s) not listed — untouched for over %d days. They are what makes"
+              % (len(stale), a.stale_days))
+        print("  `continue` unusable when it offers every one of them; `--stale-days 3650` shows them.")
+    return 0
+
+
+def render(c, path, root, note=None):
+    print("=" * 78)
+    print("CONTRACT  %s" % (c.get("file") or os.path.basename(path)))
+    print("  stage: %-12s  type: %-18s mode: %s"
+          % (c.get("stage", "?"), c.get("type", "?"), c.get("mode", "?")))
+    if note:
+        print("  note:  %s" % note)
+    prove = c.get("prove") or {}
+    unproven = [k for k in PROVE_FIELDS if str(prove.get(k, "not_run")).strip().lower() in UNPROVEN]
+    print("  prove: %d of %d recorded" % (len(PROVE_FIELDS) - len(unproven), len(PROVE_FIELDS)))
+    for k in PROVE_FIELDS:
+        v = str(prove.get(k, "not_run"))
+        mark = " " if v.strip().lower() not in UNPROVEN else "!"
+        print("   %s %-22s %s" % (mark, k, v[:46]))
+    mods = c.get("modules_created") or []
+    if mods:
+        print("  modules_created: %d" % len(mods))
+    print("=" * 78)
+
+
+def cmd_show(a, root, path):
+    c = read_json(path)
+    if c is None:
+        print("refactor-contract: unreadable contract: %s" % path, file=sys.stderr)
+        return 2
+    render(c, path, root)
+    return 0
+
+
+def cmd_stage(a, root, path):
+    c = read_json(path)
+    if c is None:
+        print("refactor-contract: unreadable contract: %s" % path, file=sys.stderr)
+        return 2
+    target, note = canonical_stage(a.value)
+    if target is None:
+        print("refactor-contract: %s" % note, file=sys.stderr)
+        return 2
+
+    prove = c.get("prove") or {}
+    missing = [k for k in REQUIRES.get(target, [])
+               if str(prove.get(k, "not_run")).strip().lower() in UNPROVEN]
+    if missing and not a.force:
+        print("REFUSED — %s requires evidence this contract does not carry:" % target,
+              file=sys.stderr)
+        for k in missing:
+            print("    prove.%-22s is %r" % (k, str(prove.get(k, "not_run"))), file=sys.stderr)
+        print("\n  Record each with:  ~/.zuvo/refactor-contract prove <field> '<evidence>'",
+              file=sys.stderr)
+        print("  A stage recorded without its proof is a claim, not a state — and this contract is"
+              "\n  what a resumed run, the commit gate and the retro all read as fact.", file=sys.stderr)
+        print("  --force records it anyway and is a human's call to make, not the skill's.",
+              file=sys.stderr)
+        return 1
+
+    c["stage"] = target
+    if not write_atomic(path, c):
+        print("refactor-contract: could not write %s" % path, file=sys.stderr)
+        return 2
+    render(c, path, root, note=note or ("forced past %d unmet gate(s)" % len(missing) if missing else None))
+    return 0
+
+
+def cmd_prove(a, root, path):
+    c = read_json(path)
+    if c is None:
+        print("refactor-contract: unreadable contract: %s" % path, file=sys.stderr)
+        return 2
+    if a.field not in PROVE_FIELDS:
+        print("refactor-contract: '%s' is not a prove field. One of: %s"
+              % (a.field, ", ".join(PROVE_FIELDS)), file=sys.stderr)
+        return 2
+    ev = (a.value or "").strip()
+    if ev.lower() in UNPROVEN or len(ev) < 3:
+        # "Recording" not_run is the same as not recording, and it is how a field ends up looking
+        # answered when nothing happened.
+        print("refactor-contract: %r is not evidence. Give the result: a verdict, a count, a path."
+              % ev, file=sys.stderr)
+        return 2
+    c.setdefault("prove", {})[a.field] = ev
+    if not write_atomic(path, c):
+        print("refactor-contract: could not write %s" % path, file=sys.stderr)
+        return 2
+    render(c, path, root)
+    return 0
+
+
+def cmd_set(a, root, path):
+    c = read_json(path)
+    if c is None:
+        return 2
+    try:
+        value = json.loads(a.value)
+    except ValueError:
+        value = a.value
+    node = c
+    parts = a.key.split(".")
+    for p in parts[:-1]:
+        node = node.setdefault(p, {})
+        if not isinstance(node, dict):
+            print("refactor-contract: %s is not an object" % p, file=sys.stderr)
+            return 2
+    node[parts[-1]] = value
+    if not write_atomic(path, c):
+        return 2
+    render(c, path, root)
+    return 0
+
+
+def cmd_append(a, root, path):
+    c = read_json(path)
+    if c is None:
+        return 2
+    c.setdefault(a.key, []).append(a.value)
+    if not write_atomic(path, c):
+        return 2
+    print("appended to %s (now %d entries)" % (a.key, len(c[a.key])))
+    return 0
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("--file", help="target source file the contract is keyed on")
+    ap.add_argument("--contract", help="explicit path to the contract json")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("show")
+    p_list = sub.add_parser("list")
+    p_list.add_argument("--stale-days", type=int, default=14)
+    p_list.add_argument("--json", action="store_true")
+    p_stage = sub.add_parser("stage")
+    p_stage.add_argument("value")
+    p_stage.add_argument("--force", action="store_true")
+    p_prove = sub.add_parser("prove")
+    p_prove.add_argument("field")
+    p_prove.add_argument("value")
+    p_set = sub.add_parser("set")
+    p_set.add_argument("key")
+    p_set.add_argument("value")
+    p_app = sub.add_parser("append")
+    p_app.add_argument("key")
+    p_app.add_argument("value")
+
+    a = ap.parse_args(argv)
+    root = repo_root()
+
+    if a.cmd == "list":
+        return cmd_list(a, root)
+
+    path = find_contract(a, root)
+    if path is None:
+        d = contracts_dir(root)
+        n = len(glob.glob(os.path.join(d, "refactor-*.json")))
+        print("refactor-contract: no single contract selected (%d in %s).\n"
+              "  Pass --file <source> or --contract <path>, or run `list` to see what is resumable."
+              % (n, os.path.relpath(d, root)), file=sys.stderr)
+        return 2
+
+    return {"show": cmd_show, "stage": cmd_stage, "prove": cmd_prove,
+            "set": cmd_set, "append": cmd_append}[a.cmd](a, root, path)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
