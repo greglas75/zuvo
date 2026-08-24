@@ -192,6 +192,55 @@ run --contract "$R/zuvo/contracts/refactor-33333333.json" recheck; rc=$?
   && pass "recheck without a baseline refuses and says why" \
   || bad "recheck invented a comparison with nothing to compare to (exit=$rc)"
 
+# ── 12. an older contract is held to what it was ASKED to prove ──────────────
+# The prove block is a v5 concept and the fleet is mostly on v3: of 761 contracts at COMPLETE, 693
+# are version 3, and test_quality is absent from the prove block entirely in 717 — not `not_run`,
+# simply not a field. Gating on the full v5 set refused 97% of real completed refactors, including
+# 94% of the last fortnight's. A gate nobody can pass is not strict, it is broken: everyone reaches
+# for --force and it stops meaning anything. After scoping, 92% pass and the 58 that do not are
+# contracts that CARRY the field and left it not_run.
+python3 - "$R/zuvo/contracts/refactor-44444444.json" <<'PY2'
+import json, sys
+# A v3 contract: no test_quality, no regression_red — the run was never asked for them.
+json.dump({"version": 3, "file": "src/legacy.ts", "type": "SPLIT_FILE", "mode": "full",
+           "stage": "PHASE-3.5",
+           "prove": {"characterization": "existing:tests/legacy.spec.ts:green:abc1234",
+                     "findings_disposition": "2 fixed"}},
+          open(sys.argv[1], "w"), indent=1)
+PY2
+run --contract "$R/zuvo/contracts/refactor-44444444.json" stage COMPLETE; rc=$?
+[ "$rc" -eq 0 ] \
+  && pass "a v3 contract is not refused for fields its schema never had" \
+  || bad "the gate demanded v5 fields from a v3 contract (exit=$rc): $(head -3 "$TMP/err")"
+
+# But a field the contract DOES carry, left unproven, still blocks.
+python3 - "$R/zuvo/contracts/refactor-55555555.json" <<'PY2'
+import json, sys
+json.dump({"version": 3, "file": "src/legacy2.ts", "type": "SPLIT_FILE", "mode": "full",
+           "stage": "PHASE-3.5",
+           "prove": {"characterization": "existing:tests/x.spec.ts:green:abc1234",
+                     "findings_disposition": "2 fixed",
+                     "test_quality": "not_run"}},
+          open(sys.argv[1], "w"), indent=1)
+PY2
+run --contract "$R/zuvo/contracts/refactor-55555555.json" stage COMPLETE; rc=$?
+[ "$rc" -eq 1 ] && grep -q 'test_quality' "$TMP/err" \
+  && pass "a field the contract DOES carry, left not_run, still blocks" \
+  || bad "an unproven field the contract tracks was let through (exit=$rc)"
+
+# A v5 contract is held to the full set even when a field is missing outright.
+python3 - "$R/zuvo/contracts/refactor-66666666.json" <<'PY2'
+import json, sys
+json.dump({"version": 5, "file": "src/new.ts", "type": "SPLIT_FILE", "mode": "full",
+           "stage": "PHASE-3.5",
+           "prove": {"characterization": "existing:tests/y.spec.ts:green:abc1234"}},
+          open(sys.argv[1], "w"), indent=1)
+PY2
+run --contract "$R/zuvo/contracts/refactor-66666666.json" stage COMPLETE; rc=$?
+[ "$rc" -eq 1 ] \
+  && pass "a v5 contract is held to the full set even for absent fields" \
+  || bad "v5 contract skipped the gate on a missing field (exit=$rc)"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1

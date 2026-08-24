@@ -280,7 +280,25 @@ def cmd_stage(a, root, path):
         return 2
 
     prove = c.get("prove") or {}
-    missing = [k for k in REQUIRES.get(target, [])
+    # Require only what THIS contract's schema actually tracks.
+    #
+    # The prove block is a v5 concept and the fleet is mostly on v3: of 761 contracts at COMPLETE,
+    # 693 are version 3, and `test_quality` is absent from the prove block entirely in 717 of them —
+    # not `not_run`, simply not a field. Gating on the v5 set refused 97% of real completed
+    # refactors, including 94% of the last fortnight's. A gate nobody can pass is not strict, it is
+    # broken: every caller reaches for --force and the gate stops meaning anything.
+    #
+    # So: a field is required if the contract carries it (the run was asked for it) or if the
+    # contract declares schema v5 or later (it should have carried it). An older contract is held to
+    # what it was actually asked to prove.
+    version = c.get("version") or 0
+    try:
+        version = int(version)
+    except (TypeError, ValueError):
+        version = 0
+    required = [k for k in REQUIRES.get(target, [])
+                if k in prove or version >= 5]
+    missing = [k for k in required
                if str(prove.get(k, "not_run")).strip().lower() in UNPROVEN]
     if missing and not a.force:
         print("REFUSED — %s requires evidence this contract does not carry:" % target,
