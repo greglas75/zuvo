@@ -1313,3 +1313,41 @@ either complete or abandoned, which was true before and unsayable.
 
 Not yet measured: whether this reduces turns on a live run. The fleet evidence says where the turns
 go; it does not prove the command recovers them. That needs the same treatment write-tests got.
+
+## One status token was hiding two opposite problems
+
+`infra-failure` is the second friction category in refactor — 27% of runs, 909 wasted turns. Two
+columns on those 69 retros say what it is:
+
+| column | value | share |
+|---|---|---|
+| BLIND_AUDIT | `clean:degraded` | 38 of 69 (55%) |
+| ROUTING_STATUS | `same-model-fallback` | 24 of 69 (35%) |
+
+And fleet-wide it is getting worse, not better:
+
+| month | refactor runs | same-model-fallback | blind degraded |
+|---|---|---|---|
+| 2026-07 | 39 | 6 (15%) | 18 (46%) |
+| 2026-08 | 221 | **80 (36%)** | 89 (40%) |
+
+`same-model-fallback` means the reviewer was the same model as the writer. What that costs is not
+theoretical: today, on this repo's own code, `agy/gemini-3.1-pro-high` found 8 defects and
+`kimi/Moonshot` found 5 more **in a different class entirely**, all in code its author had already
+reviewed. A same-model reviewer shares the writer's blind spots by construction.
+
+**But the number cannot be acted on, because two different faults share the token.**
+`env-compat.md` instructs a run whose sub-agent dispatch is rate-limited twice to fall back and
+record `same-model-fallback` — while the retro enum offers no `rate-limited` value, so a capacity
+problem is filed as a routing problem. They need opposite responses: one is "wait", the other is
+"reconfigure". Anyone reading "36%" would go and fix routing, and an unknown share of that 36% is
+transient throttling.
+
+Fixed by adding `rate-limited` to the enum and pointing `env-compat.md` at it. This does not repair
+the 80 rows already written — those stay ambiguous, and should be read as "one of two things" until
+a month of clean data exists.
+
+Worth noting what did NOT turn out to be the cause. The obvious suspect was that the routing does
+not know about the clients that work on this machine; `scripts/adversarial-review.sh` mentions `agy`
+and `kimi` 104 times, so it does. A memory note claiming otherwise is stale, and checking took one
+command.

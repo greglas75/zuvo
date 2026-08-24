@@ -175,7 +175,7 @@ Agent(
 
 - `subagent_type: "Explore"` — read-only analysis (agent cannot modify files)
 - Multiple agents can run in parallel when their work is independent
-- **Consecutive dispatch rate-limits = agent failure.** If sub-agent dispatch returns a rate-limit / overloaded / quota error **twice in a row** for the same stage, treat it as a dispatch failure (not a thing to keep retrying): print `[MODE SWITCH] dispatch rate-limited ×2 → single-agent`, record reason `same-model-fallback`/`rate-limited`, and execute that stage's role inline per the single-agent checkpoint protocol. Do NOT silently spin retrying a rate-limited dispatch — it stalls the pipeline; fall back and keep moving.
+- **Consecutive dispatch rate-limits = agent failure.** If sub-agent dispatch returns a rate-limit / overloaded / quota error **twice in a row** for the same stage, treat it as a dispatch failure (not a thing to keep retrying): print `[MODE SWITCH] dispatch rate-limited ×2 → single-agent`, record ROUTING_STATUS `rate-limited` (NOT `same-model-fallback` — that value means the environment cannot route to a different reviewer model, which is a configuration fault with a different fix; conflating the two took the token from 15% of refactor runs in July to 36% in August and made the number unactionable), and execute that stage's role inline per the single-agent checkpoint protocol. Do NOT silently spin retrying a rate-limited dispatch — it stalls the pipeline; fall back and keep moving.
 
 ### Waiting on a long-running process (ALL platforms)
 
@@ -467,6 +467,7 @@ Decision table:
 | can honor alternate reviewer | `strong_alt` | `review-primary` | `ok` |
 | can honor alternate reviewer | `strong_primary` | `review-alt` | `ok` |
 | cannot honor alternate reviewer | any known lane | `same-model-fallback` | `same-model-fallback` |
+| dispatch rate-limited ×2 | any known lane | `same-model-fallback` | `rate-limited` |
 | platform unknown | any classification | `same-model-fallback` | `unknown-writer-model` |
 | writer classification unknown | `unknown` | `same-model-fallback` | `unknown-writer-model` |
 
@@ -474,6 +475,9 @@ Allowed routing statuses:
 
 - `ok` -- reviewer differs from writer and the platform can honor the route
 - `same-model-fallback` -- environment is known but cannot honor a different reviewer
+- `rate-limited` -- a different reviewer WAS available; dispatch was throttled twice and the
+  run fell back to keep moving. Transient capacity, not a routing fault — the distinction is
+  the difference between waiting and reconfiguring
 - `unknown-writer-model` -- writer model or platform is unknown, so routing cannot safely pick an alternate
 - `routing-failed` -- resolver execution failed, timed out, or emitted malformed output
 
