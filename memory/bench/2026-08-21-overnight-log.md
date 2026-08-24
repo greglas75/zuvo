@@ -1155,3 +1155,49 @@ Fixes, in order of what they cover:
 Also fixed alongside: 6 of the 12 shadowed runs recovered real scores — 94.2, 94.2, 92.9, 92.1,
 90.2, 71.2. Five of six are ABOVE their arm's median, which is what the earlier note predicted:
 the runs the reader was dropping were disproportionately the good ones.
+
+---
+
+## The answer: twenty minutes costs almost nothing (2026-08-24, night complete)
+
+The question this whole effort was set — fast AND good, with a stated ceiling of twenty minutes.
+Best arm whose median wall-clock fits the budget, against the best arm at any duration:
+
+| file | best ≤21 min | best at any cost | cost of the budget | no skill |
+|---|---|---|---|---|
+| CASE-01 | **90.9% @ 1202 s** | 90.9% @ 2353 s | **0.0** | 84.8% |
+| CASE-02 | 78.1% @ 885 s | 81.9% @ 1887 s | −3.8 | 75.2% |
+| CASE-03 | **74.6% @ 494 s** | 74.6% @ 494 s | **0.0** | 66.1% |
+| CASE-04 | 85.5% @ 981 s | 86.0% @ 2080 s | −0.5 | 67.2% |
+| CASE-05 | 88.2% @ 892 s | 90.7% @ 4203 s | −2.5 | 84.3% |
+
+**The budget costs 0 to 3.8 points, median 0.5, against a skill benefit of +4 to +18 over no
+skill.** On two files the fastest arm IS the best arm. Read the cells for what they are: three of
+them are single runs, not medians, and the cap is 21 minutes because the capped arms are launched
+with `AGENT_TIMEOUT=1200` and carry a few seconds of rig overhead — a 1200 s cut excludes the very
+arms the experiment was built to test.
+
+The earlier "42 minutes against 17" table is not contradicted by this. That compared runs that
+measured against runs that skipped, and long runs are long partly because they iterate. This
+compares budgets. Both are true: measuring costs time, and capping the time costs little quality —
+because the time past twenty minutes was mostly buying the plateau this log has recorded three
+times (3-5x the effort, about half a point).
+
+### What the two interventions actually did
+
+| | measured rate | kill |
+|---|---|---|
+| CASE-02: v21 → v22 (receipt) | 1/3 → **2/3** | 73.2% → **78.6%** |
+| CASE-05: v21 → v22 (receipt) | 1/3 → 1/3 | 85.3% → **88.2%** |
+| CASE-04: v21 → v23 (+ generator) | 0/3 → **2/3** | 86.0% → 84.1% |
+| CASE-03: v21 → v23 (+ generator) | 3/3 → 3/3 | 73.7% → 72.9% |
+
+Both close the hole they were built for — a manifest that was never written, and a manifest that
+claimed to be final without proof. Neither forces the loop to run: the best measured rate any new
+arm reached is 2 of 3, and v23cap on CASE-05 measured 0/3 while still scoring 85.3%.
+
+**That is the honest state.** The dominant failure is not tooling any more — mutation works on all
+five files, the inventory generates in one command, and an unmeasured manifest is refused. It is
+that an agent can still decide the whole apparatus is not worth running, and nothing in the skill
+or the artifact can stop it from simply not starting. Every layer built today acts on work that
+reached it.
