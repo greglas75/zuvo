@@ -29,9 +29,30 @@
 # that misses a case: unparseable JSON, no python3, no manifest directory, an unreadable manifest,
 # any error at all — exit 0 and get out of the way.
 #
-# Escape: ZUVO_ALLOW_BARE_TESTS=1. An environment variable a human sets, not a flag an agent can
-# type into the command it was already trying to run — that distinction is why `--reset-budget`
-# had to be closed and why `--budget 999` had to be closed after it.
+# THE ESCAPE, AND HOW FAR IT REACHES
+#
+# ZUVO_ALLOW_BARE_TESTS=1 in the HOOK's own process environment. A hook inherits the environment
+# of the harness that spawns it, not of the command it is inspecting, so an inline
+# `ZUVO_ALLOW_BARE_TESTS=1 npx vitest run <spec>` does NOT reach this check — the assignment
+# applies to the command the hook is about to block, and the hook never runs inside it. That is
+# the whole distinction: an env var a human exports before starting the session, not a flag an
+# agent can type into the command it was already trying to run. It is why `--reset-budget` had to
+# be closed and why `--budget 999` had to be closed after it.
+#
+# Measured, because an agent tried exactly that: it read this file (it is in the agent's own
+# readable home) and typed the variable inline. The attempt was still blocked, but only because
+# the runner pattern happens to tolerate a leading assignment. That was luck, not design, so the
+# prefix is now stripped explicitly below — a future tightening of the pattern cannot silently
+# reopen it. The block notice also no longer names the variable; a human who installed the hook
+# can read it here, and an agent being blocked has no use for it.
+#
+# What this canNOT prevent, stated plainly rather than implied:
+#   * an agent with WRITE access to this file, or to the settings that register it, can disable it;
+#   * an agent that runs the suite through a wrapper this pattern does not recognise (a package
+#     script, a Makefile target, a python subprocess) is not intercepted;
+#   * a bare `vitest` naming no spec runs the whole suite and passes through by design.
+# A PreToolUse hook is a speed bump on the natural path, not a sandbox. Treating it as a sandbox
+# is how you end up trusting a measurement it cannot actually guarantee.
 
 set -uo pipefail
 
@@ -91,7 +112,20 @@ RUNNER = re.compile(
     r"(?:\S*/)?"                                          # ./node_modules/.bin/, /usr/local/bin/
     r"(vitest|jest|pytest)(?:\.m?[cj]s)?\b"                # vitest, vitest.mjs, jest.js
     r"|(?:^|[;&|\n]\s*)(?:\S+\s+)*?node\s+--test\b")
-if not RUNNER.search(cmd):
+# An agent that read this file learned the escape's name and typed it inline:
+#
+#   ZUVO_ALLOW_BARE_TESTS=1 npx vitest run <spec>
+#
+# That assignment applies to the command being inspected, never to this process, so it is not an
+# escape and the check at the top of the script cannot see it. But it must not be allowed to HIDE
+# the runner either, and until now it only failed to because the pattern's leading wildcard
+# happened to absorb it — luck, not design. A leading `VAR=value` word (and a leading `env
+# VAR=value`) is shell prefix syntax rather than part of the invocation, so strip it from every
+# segment before matching. The property is then deliberate, and tightening the pattern later
+# cannot silently reopen the hole.
+ENV_PREFIX = re.compile(r"(^|[;&|\n]\s*)((?:env\s+)?(?:[A-Za-z_]\w*=[^\s;&|]*\s+)+)")
+probe = ENV_PREFIX.sub(lambda m: m.group(1), cmd)
+if not RUNNER.search(probe):
     bail()
 
 cwd = payload.get("cwd") or os.getcwd()
@@ -208,7 +242,6 @@ for entry in sorted(os.listdir(contracts)):
         "zuvo policy: %s is a tracked spec; a bare test run is not accepted as its verification.\n"
         "Required command (tool timeout 600000):\n"
         "  ~/.zuvo/verify-tests --manifest %s\n"
-        "Human override: ZUVO_ALLOW_BARE_TESTS=1\n"
         % (declared[sorted(hit)[0]], rel_man))
     sys.exit(BLOCK)
 

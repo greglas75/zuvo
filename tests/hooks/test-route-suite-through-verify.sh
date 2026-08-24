@@ -125,6 +125,42 @@ run_hook "cd $R/pkg && npx vitest run src/inner.spec.ts"; rc=$?
   || bad "the cd was ignored, so the path resolved to nothing (exit=$rc)"
 rm -f "$R/zuvo/contracts/inner.coverage.json"
 
+# ── 3c. the escape is not typable by the thing being blocked ─────────────────
+# Measured on the rig: an agent read this hook in its own home directory, learned the name of the
+# escape variable from it, and typed it inline into the command it was already trying to run:
+#
+#   cd <repo> && ZUVO_ALLOW_BARE_TESTS=1 npx vitest run <spec>
+#
+# An inline assignment applies to the command the hook is inspecting; the hook itself runs in the
+# harness's environment and never sees it. So this must still block — and it must block because
+# the prefix is stripped before matching, not because a wildcard happens to absorb it. Same class
+# as `--reset-budget` and `--budget 999`: an escape an agent can type is not an escape, it is a
+# feature request from the thing being measured.
+write_manifest ""
+run_hook "cd $R && ZUVO_ALLOW_BARE_TESTS=1 npx vitest run src/thing.spec.ts"; rc=$?
+[ "$rc" -eq 2 ] && pass "an inline ZUVO_ALLOW_BARE_TESTS=1 does not buy a bare run" \
+  || bad "an agent-typed inline escape got through (exit=$rc)"
+
+run_hook "ZUVO_ALLOW_BARE_TESTS=1 npx vitest run src/thing.spec.ts"; rc=$?
+[ "$rc" -eq 2 ] && pass "the same prefix with no cd is stripped too" \
+  || bad "a leading assignment hid the runner (exit=$rc)"
+
+run_hook "env ZUVO_ALLOW_BARE_TESTS=1 npx vitest run src/thing.spec.ts"; rc=$?
+[ "$rc" -eq 2 ] && pass "an 'env VAR=1' prefix is stripped too" \
+  || bad "env-prefixed escape got through (exit=$rc)"
+
+# Stripping the prefix must not turn a NON-invocation into one.
+run_hook "FOO=vitest echo not a run of src/thing.spec.ts"; rc=$?
+[ "$rc" -eq 0 ] && pass "an assignment whose VALUE is a runner name is not an invocation" \
+  || bad "blocked on an assignment value rather than a call (exit=$rc)"
+
+# And the notice must not teach the variable to the agent it just blocked. The escape belongs to
+# whoever installed the hook; they can read it in the file.
+run_hook "npx vitest run src/thing.spec.ts" >/dev/null 2>&1
+grep -q 'ZUVO_ALLOW_BARE_TESTS' "$TMP/err" \
+  && bad "the block notice names its own escape hatch — that is where the agent learned it" \
+  || pass "the notice does not name the escape variable"
+
 # ── 4. negative space — every one of these must pass through ──────────────────
 write_manifest ""
 
