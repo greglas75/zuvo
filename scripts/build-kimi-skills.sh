@@ -444,7 +444,7 @@ fi
 # refactor-safety-gate.sh is not an event hook — it is the git pre-commit/pre-push gate
 # that zuvo:refactor PHASE 0 installs into the repo. Ship it or that phase has nothing
 # to install.
-for hook_script in block-no-verify.sh pre-push-gate.sh pre-commit-adversarial-gate.sh \
+for hook_script in block-no-verify.sh route-suite-through-verify.sh pre-push-gate.sh pre-commit-adversarial-gate.sh \
                    post-skill-adversarial-check.sh track-includes.sh zuvo-heartbeat.sh \
                    zuvo-todo-watchdog.sh zuvo-rewake-on-failure.sh zuvo-rewake-reset.sh \
                    zuvo-stop-pipeline-gate.sh zuvo-stop-retro-sweep.sh \

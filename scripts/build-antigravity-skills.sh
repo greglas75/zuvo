@@ -441,7 +441,7 @@ fi
 # nudge is NOT shipped — Antigravity has no Stop hook; pre-push + CI cover it.
 # refactor-safety-gate.sh is not an event hook — it is the git pre-commit/pre-push gate that
 # zuvo:refactor PHASE 0 installs into the repo. Ship it or that phase has nothing to install.
-for hook_script in block-no-verify.sh pre-push-gate.sh pre-commit-adversarial-gate.sh refactor-safety-gate.sh session-start; do
+for hook_script in block-no-verify.sh route-suite-through-verify.sh pre-push-gate.sh pre-commit-adversarial-gate.sh refactor-safety-gate.sh session-start; do
   if [ -f "$PLUGIN_DIR/hooks/$hook_script" ]; then
     cat "$PLUGIN_DIR/hooks/$hook_script" \
       | replace_paths \
