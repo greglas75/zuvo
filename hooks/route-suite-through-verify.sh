@@ -75,9 +75,22 @@ if not cmd:
 # the instrument for being the thing it instruments would be a loop with no exit.
 if "verify-tests" in cmd:
     bail()
+# Measured against a real run rather than guessed: the first version of this pattern missed the
+# very command it was written for. The agent did not type `npx vitest` — it typed
+#
+#   cd apps/designer
+#   timeout 100 node --max-old-space-size=8192 ./node_modules/vitest/vitest.mjs run <spec>
+#
+# which breaks the pattern twice over: the separator before it is a NEWLINE, not one of `;&|`, and
+# the runner is reached through a path rather than through npx. Both are the normal shape of a
+# real invocation, not an edge case — a memory flag and a `cd` are what you write when the suite
+# is big enough to need tests in the first place.
 RUNNER = re.compile(
-    r"(?:^|[;&|]\s*)(?:\S*/)?(?:npx\s+|pnpm\s+(?:exec\s+|dlx\s+)?|yarn\s+|bunx\s+)?"
-    r"(vitest|jest|pytest|node\s+--test)\b")
+    r"(?:^|[;&|\n]\s*)"                                   # start, a separator, OR a new line
+    r"(?:\S+\s+)*?"                                       # timeout 100 / env VAR=1 / node <flags>
+    r"(?:\S*/)?"                                          # ./node_modules/.bin/, /usr/local/bin/
+    r"(vitest|jest|pytest)(?:\.m?[cj]s)?\b"                # vitest, vitest.mjs, jest.js
+    r"|(?:^|[;&|\n]\s*)(?:\S+\s+)*?node\s+--test\b")
 if not RUNNER.search(cmd):
     bail()
 

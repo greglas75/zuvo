@@ -83,6 +83,27 @@ run_hook "npx vitest run src/thing.spec.ts"; rc=$?
 [ "$rc" -eq 2 ] && pass "a receipt that no longer matches the spec routes again" \
   || bad "a stale receipt was treated as coverage (exit=$rc)"
 
+# ── 3b. the shapes agents ACTUALLY use ───────────────────────────────────────
+# The first version of the pattern missed the exact command the benchmark caught it on:
+#
+#   cd apps/designer
+#   timeout 100 node --max-old-space-size=8192 ./node_modules/vitest/vitest.mjs run <spec>
+#
+# — separated by a NEWLINE rather than `;&|`, and reaching the runner through a path rather than
+# through npx. A memory flag and a `cd` are what you write when the suite is big enough to need
+# tests at all, so this is the normal shape, not an edge case.
+write_manifest ""
+run_hook "cd $R/src
+timeout 100 node --max-old-space-size=8192 ./node_modules/vitest/vitest.mjs run $R/src/thing.spec.ts"; rc=$?
+[ "$rc" -eq 2 ] && pass "a newline-separated, path-reached runner is caught" \
+  || bad "the shape measured on the rig still slips through (exit=$rc)"
+
+run_hook "./node_modules/.bin/vitest run src/thing.spec.ts"; rc=$?
+[ "$rc" -eq 2 ] && pass "a .bin/ shim is caught" || bad "missed ./node_modules/.bin/ (exit=$rc)"
+
+run_hook "pnpm exec vitest run src/thing.spec.ts"; rc=$?
+[ "$rc" -eq 2 ] && pass "pnpm exec is caught" || bad "missed pnpm exec (exit=$rc)"
+
 # ── 4. negative space — every one of these must pass through ──────────────────
 write_manifest ""
 
