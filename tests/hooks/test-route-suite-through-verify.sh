@@ -104,6 +104,27 @@ run_hook "./node_modules/.bin/vitest run src/thing.spec.ts"; rc=$?
 run_hook "pnpm exec vitest run src/thing.spec.ts"; rc=$?
 [ "$rc" -eq 2 ] && pass "pnpm exec is caught" || bad "missed pnpm exec (exit=$rc)"
 
+# A `cd` inside the command decides what the spec path means. Measured on the rig, third variant of
+# the same root mistake — resolving a path against the wrong base:
+#
+#   cd <repo>/apps/api && npx vitest run src/modules/runner/x.spec.ts
+#
+# In a monorepo the cd is not optional; it is how you reach the package that owns the config.
+mkdir -p "$R/pkg/src"
+printf 'it("pkg", () => {});\n' > "$R/pkg/src/inner.spec.ts"
+python3 - "$R" <<'PY2'
+import json, os, sys
+root = sys.argv[1]
+p = os.path.join(root, "zuvo/contracts/inner.coverage.json")
+json.dump({"schema": "zuvo-coverage-manifest/v1", "production_file": "src/thing.ts", "stack": "ts",
+           "test_files": ["pkg/src/inner.spec.ts"], "status": "final", "symbols": []},
+          open(p, "w"), indent=1)
+PY2
+run_hook "cd $R/pkg && npx vitest run src/inner.spec.ts"; rc=$?
+[ "$rc" -eq 2 ] && pass "a spec path relative to a cd inside the command is resolved" \
+  || bad "the cd was ignored, so the path resolved to nothing (exit=$rc)"
+rm -f "$R/zuvo/contracts/inner.coverage.json"
+
 # ── 4. negative space — every one of these must pass through ──────────────────
 write_manifest ""
 

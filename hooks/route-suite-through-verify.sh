@@ -116,12 +116,25 @@ if not os.path.isdir(contracts):
 
 # Which spec files does the command name? Only paths that actually exist matter; a bare `vitest`
 # with no arguments runs the whole suite and is not the hand-verification this is about.
+# A `cd` INSIDE the command changes what the spec path is relative to, and the tool's own cwd is
+# not it. Measured, again, on a real run:
+#
+#   cd /home/coding-agent/workspace/apps/api && npx vitest run src/modules/runner/x.spec.ts
+#
+# `src/modules/...` exists under apps/api and does not exist under the workspace root, so resolving
+# against cwd alone finds nothing and the hook passes a command it was written to catch. In a
+# monorepo the `cd` is not optional — it is how you reach the package that owns the config.
+bases = [cwd, root]
+for target in re.findall(r"(?:^|[;&|\n]\s*)cd\s+([^\s;&|]+)", cmd):
+    target = os.path.expanduser(target)
+    bases.append(target if os.path.isabs(target) else os.path.join(cwd, target))
+
 tokens = re.findall(r"[\w./@~-]+", cmd)
 named = set()
 for t in tokens:
     if not re.search(r"\.(spec|test)\.[cm]?[jt]sx?$|_test\.py$|test_[\w-]+\.py$", t):
         continue
-    for cand in (os.path.join(cwd, t), os.path.join(root, t), t):
+    for cand in [os.path.join(b, t) for b in bases] + [t]:
         if os.path.isfile(cand):
             named.add(os.path.realpath(cand))
             break
