@@ -1351,3 +1351,31 @@ Worth noting what did NOT turn out to be the cause. The obvious suspect was that
 not know about the clients that work on this machine; `scripts/adversarial-review.sh` mentions `agy`
 and `kimi` 104 times, so it does. A memory note claiming otherwise is stale, and checking took one
 command.
+
+## The optimisation I did not make
+
+"pipeline-heavy" is the largest friction category in refactor (31% of runs, 915 wasted turns), and
+the obvious reading is that the pipeline loads too much: median 207 KB of includes per run, p90
+390 KB, max 907 KB. Slimming that is the intuitive fix.
+
+Tested it instead. Joining `runs.log` (include bytes) to `retros.log` (turns wasted) on same-day +
+same-project, 53 pairs:
+
+| include load | turns wasted |
+|---|---|
+| lighter half — median 83 KB | 7.8 |
+| heavier half — median 321 KB | 6.8 |
+
+**r = −0.18.** Loading more does not cost turns; if anything it costs slightly fewer. At n=53 and
+that strength the reverse claim is not supported either, so the honest statement is: **no evidence
+that include weight drives wasted turns.**
+
+Which is what this repo already learned once and wrote down — slimming `testing` for tokens
+regressed its quality from 9/10 to 5/10, and prompt caching makes input cheap. "pipeline-heavy"
+describes the number of STEPS a run takes, not the number of bytes it reads, and the two are easy
+to confuse because only one of them is easy to measure.
+
+The lever is the repeated work: 13% of shell calls re-issue a command already given, and the
+most-repeated shape after environment re-exports is a hand-written heredoc editing the CONTRACT.
+That is what `~/.zuvo/refactor-contract` addresses. Include weight is a red herring, and it is
+recorded here so the next person tempted by it can skip the detour.
