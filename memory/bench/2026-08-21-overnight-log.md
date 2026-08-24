@@ -1465,3 +1465,42 @@ each. That is real and it is a minority of the total.
 What would touch the `think` bucket is a different kind of change — fewer decision points, not
 cheaper ones — and nothing here has evidence for what that should look like. Recorded so the next
 session starts from the size of the problem rather than from the part that was easy to fix.
+
+---
+
+# VERDICT — the routing hook, three clean cases (2026-08-25)
+
+One frozen instrument, md5-checked at every case boundary, verified firing in a container before
+the sweep started. Three cases, three reps each.
+
+| case | measured v21 → v24 | kill v21 → v24 | naked | hook fired |
+|---|---|---|---|---|
+| CASE-02 | 1/3 → **3/3** | 73.2% → 75.2% | 75.2% | 0×, 2×, 6× |
+| CASE-01 | 0/3 → **3/3** | 88.9% → **90.9%** | 84.8% | 0×, 2×, 4× |
+| CASE-04 | 0/3 → **2/3** | 86.0% → **86.5%** | 67.2% | 2×, 0×, 4× |
+
+**Aggregate: v21 measured 1 of 9 runs. v24 measured 8 of 9.** 11% → 89%.
+
+**The falsification condition was stated before any result and it is satisfied.** It read: if
+`measured N/3` does not improve with the finished hook, the hypothesis is wrong regardless of what
+the kill rates do. It improved on every case, and the firings are attributable — unlike the four
+burned batches, this instrument was frozen and verified first.
+
+**The hypothesis I raised after CASE-02 did not survive.** It read: the hook may convert *skipping*
+the loop into *satisfying it minimally*, because CASE-02 came back at exactly the naked control.
+CASE-01 then landed on the file's ceiling and CASE-04 produced its best score ever, both at full or
+near-full measurement. Two of three are best-on-file. It stays in the log above, wrong.
+
+**What this does NOT establish.** The kill gains are small — +2.0, +2.0, +0.5 against v21 — and
+n=3 per case. CASE-02 sits on the no-skill control and below v22's 78.6%, so on that file measuring
+more still has not meant killing more. The claim supported here is narrow and exact: **the loop now
+runs.** Whether running it is worth what it costs is a separate question this sweep does not
+answer.
+
+**What it took to get one clean measurement.** Four batches burned on three different versions of
+the hook, each one revealing a gap the previous version did not cover: a newline separator, a
+runner reached by path, a spec path resolved against the wrong base, and a message the agent refused
+as a prompt-injection attempt — correctly, because it argued its case with a statistic and offered
+a bypass. Every one of those was found by the rig and none by reasoning about it. The instrument was
+only frozen on the fifth attempt, and that is the process lesson worth more than the result:
+**freeze the instrument, verify it end-to-end in the real environment, THEN spend runs.**
