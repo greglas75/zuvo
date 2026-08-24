@@ -145,6 +145,53 @@ grep -q 'forced past' "$TMP/out" \
   && pass "a forced advance says so in the output" \
   || bad "a forced advance is indistinguishable from a proven one"
 
+# ── 9. the characterization command is typed once, and its result is MEASURED ─
+# The single most-repeated shell shape in a refactor session is this command: `cd <worktree>` then a
+# ~400-character line carrying a database URL, a spec list, a log path and an exit capture,
+# recomposed for every round. 66 re-issues of the environment prefix alone across 25 sessions.
+# Recording it also turns prove.characterization from a sentence the run typed into a measurement.
+mkcontract "refactor-11111111.json" ""
+run --contract "$R/zuvo/contracts/refactor-11111111.json" baseline \
+  "printf 'Tests  7 passed (7)\n'"; rc=$?
+[ "$rc" -eq 0 ] && pass "a passing baseline is recorded and exits 0" \
+  || bad "baseline failed on a passing command (exit=$rc): $(head -3 "$TMP/err")"
+python3 - "$R/zuvo/contracts/refactor-11111111.json" <<'PY2'
+import json, sys
+c = json.load(open(sys.argv[1]))
+ok = c.get("characterization_cmd") and "7 passed" in c["prove"]["characterization"]
+sys.exit(0 if ok else 1)
+PY2
+[ $? -eq 0 ] && pass "the command AND the parsed count land in the contract" \
+  || bad "baseline did not record the command or the count"
+
+# recheck must re-run the STORED command — a fresh one would compare two different things.
+run --contract "$R/zuvo/contracts/refactor-11111111.json" recheck; rc=$?
+[ "$rc" -eq 0 ] && pass "an unchanged suite rechecks clean" || bad "recheck reported drift (exit=$rc)"
+grep -q 'unchanged against the baseline' "$TMP/out"   && pass "the verdict says it compared against the baseline"   || bad "recheck gave no comparison verdict"
+
+# ── 10. a suite that stops doing what it did is DRIFT, and exits non-zero ─────
+mkcontract "refactor-22222222.json" ""
+run --contract "$R/zuvo/contracts/refactor-22222222.json" baseline "printf 'Tests  7 passed (7)\n'"
+python3 - "$R/zuvo/contracts/refactor-22222222.json" <<'PY2'
+import json, sys
+p = sys.argv[1]
+c = json.load(open(p))
+c["characterization_cmd"] = "printf 'Tests  2 failed, 5 passed (7)\n'; exit 1"
+json.dump(c, open(p, "w"), indent=1)
+PY2
+run --contract "$R/zuvo/contracts/refactor-22222222.json" recheck; rc=$?
+[ "$rc" -eq 1 ] && pass "a suite that now fails is reported as DRIFT (exit 1)" \
+  || bad "drift went unreported (exit=$rc)"
+grep -q 'DRIFT' "$TMP/out" && pass "the drift verdict is visible in the block" \
+  || bad "no DRIFT marker in the output"
+
+# ── 11. recheck without a baseline refuses rather than inventing one ──────────
+mkcontract "refactor-33333333.json" ""
+run --contract "$R/zuvo/contracts/refactor-33333333.json" recheck; rc=$?
+[ "$rc" -eq 2 ] && grep -q 'no baseline recorded' "$TMP/err" \
+  && pass "recheck without a baseline refuses and says why" \
+  || bad "recheck invented a comparison with nothing to compare to (exit=$rc)"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1

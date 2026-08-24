@@ -327,6 +327,112 @@ def cmd_prove(a, root, path):
     return 0
 
 
+def parse_counts(out):
+    """(passed, failed) from a runner's output, or (None, None).
+
+    Deliberately narrow: vitest and jest both print a `Tests` / `Tests:` summary line, and that line
+    is the only thing here worth trusting. Runner output is coloured even when not a TTY, so the
+    escapes are stripped first — a previous version of this parse in `verify-tests` read
+    "Tests 35 passed" as one test because an SGR sequence sat before the anchor.
+    """
+    clean = re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", out)
+    passed = failed = None
+    for line in clean.splitlines():
+        if not re.match(r"^\s*Tests[:\s]", line):
+            continue
+        mp = re.search(r"(\d+)\s+passed", line)
+        mf = re.search(r"(\d+)\s+failed", line)
+        if mp:
+            passed = int(mp.group(1))
+        failed = int(mf.group(1)) if mf else 0
+    return passed, failed
+
+
+def run_suite(cmd, cwd, timeout=1800):
+    try:
+        p = subprocess.run(cmd, cwd=cwd, shell=True, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, timeout=timeout)
+        return p.returncode, p.stdout.decode("utf-8", "replace")
+    except subprocess.TimeoutExpired as exc:
+        return 124, (exc.stdout or b"").decode("utf-8", "replace") + "\n[timeout after %ds]" % timeout
+    except Exception as exc:                                       # pragma: no cover - defensive
+        return 126, str(exc)
+
+
+def cmd_baseline(a, root, path):
+    """Record the characterization command AND its result, so neither is retyped or asserted.
+
+    Measured across 25 refactor sessions: the single most-repeated shell shape is this command —
+    `cd <worktree>` then a ~400-character line carrying the database URL, the spec list, a log path
+    and an exit capture, recomposed for every round (baseline, char1, char2). 66 re-issues of the
+    environment prefix alone.
+
+    It also makes `prove.characterization` a MEASUREMENT rather than a sentence. Until now that
+    field held whatever text the run typed into it, which is the same shape of unverifiable claim
+    that had to be closed in verify-tests twice.
+    """
+    c = read_json(path)
+    if c is None:
+        return 2
+    rc, out = run_suite(a.command, root)
+    passed, failed = parse_counts(out)
+    verdict = "PASS" if rc == 0 else "FAIL"
+    detail = "%s rc=%d" % (verdict, rc)
+    if passed is not None:
+        detail += " %d passed" % passed
+        if failed:
+            detail += ", %d failed" % failed
+    c["characterization_cmd"] = a.command
+    c.setdefault("prove", {})["characterization"] = detail
+    if not write_atomic(path, c):
+        return 2
+    render(c, path, root, note="baseline recorded; re-run it with `recheck`")
+    if rc != 0:
+        print(tail_of(out), file=sys.stderr)
+    return 0 if rc == 0 else 1
+
+
+def cmd_recheck(a, root, path):
+    """Re-run the recorded command and say whether the suite still does what it did.
+
+    This is what `prove.regression_red` is supposed to attest. Re-running the SAME stored command is
+    the part that makes the comparison mean anything: a fresh command with a different spec list
+    would compare two different things and call it a regression check.
+    """
+    c = read_json(path)
+    if c is None:
+        return 2
+    cmd = c.get("characterization_cmd")
+    if not cmd:
+        print("refactor-contract: no baseline recorded. Run `baseline '<command>'` first — the\n"
+              "  comparison is only meaningful against the same command.", file=sys.stderr)
+        return 2
+    before = str((c.get("prove") or {}).get("characterization", ""))
+    rc, out = run_suite(cmd, root)
+    passed, failed = parse_counts(out)
+    now = "PASS rc=0" if rc == 0 else "FAIL rc=%d" % rc
+    if passed is not None:
+        now += " %d passed" % passed
+        if failed:
+            now += ", %d failed" % failed
+
+    drifted = (rc != 0) or (passed is not None and ("%d passed" % passed) not in before)
+    c.setdefault("prove", {})["regression_red"] = "%s -> %s" % (before or "no baseline", now)
+    if not write_atomic(path, c):
+        return 2
+    render(c, path, root, note=("DRIFT — the suite does not do what the baseline recorded"
+                                if drifted else "unchanged against the baseline"))
+    if drifted:
+        print(tail_of(out), file=sys.stderr)
+        return 1
+    return 0
+
+
+def tail_of(text, n=20):
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    return "\n".join(lines[-n:])
+
+
 def cmd_set(a, root, path):
     c = read_json(path)
     if c is None:
@@ -382,6 +488,9 @@ def main(argv):
     p_app = sub.add_parser("append")
     p_app.add_argument("key")
     p_app.add_argument("value")
+    p_base = sub.add_parser("baseline")
+    p_base.add_argument("command", help="the characterization command, typed ONCE")
+    sub.add_parser("recheck")
 
     a = ap.parse_args(argv)
     root = repo_root()
@@ -399,7 +508,8 @@ def main(argv):
         return 2
 
     return {"show": cmd_show, "stage": cmd_stage, "prove": cmd_prove,
-            "set": cmd_set, "append": cmd_append}[a.cmd](a, root, path)
+            "set": cmd_set, "append": cmd_append,
+            "baseline": cmd_baseline, "recheck": cmd_recheck}[a.cmd](a, root, path)
 
 
 if __name__ == "__main__":

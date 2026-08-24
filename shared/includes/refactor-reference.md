@@ -29,6 +29,25 @@ Why a command. Measured across 25 real refactor sessions and 1,010 contracts on 
   `-adversarial` / `-findings` sidecars match the same glob), and **zero** genuinely resumable.
   `list` withholds those and says how many it withheld.
 
+**The characterization suite is typed once.**
+
+```bash
+~/.zuvo/refactor-contract baseline "TEST_DATABASE_URL=... npx vitest run tests/foo"
+~/.zuvo/refactor-contract recheck        # re-runs the SAME command and compares
+```
+
+The most-repeated shell shape in a refactor session is that command — `cd` to the worktree, then a
+~400-character line carrying a database URL, a spec list, a log path and an exit capture,
+recomposed for every round (baseline, char1, char2). 66 re-issues of the environment prefix alone
+across 25 sessions.
+
+Recording it also changes what `prove.characterization` and `prove.regression_red` MEAN. They used
+to hold whatever sentence the run typed; now `baseline` records the parsed result and `recheck`
+re-runs the stored command and writes the before → after comparison itself. `recheck` exits 1 on
+drift, so a suite that stopped doing what it did cannot be narrated past. Re-running the STORED
+command is the load-bearing part: a fresh command with a different spec list compares two different
+things and calls it a regression check.
+
 **The stage gate.** A phase cannot be entered while the evidence it rests on is still `not_run`:
 `PHASE-3.5` needs `characterization` + `regression_red`, `PHASE-4` and `COMPLETE` also need
 `findings_disposition` + `test_quality`. This is checked on the boundary AFTER the phase that
