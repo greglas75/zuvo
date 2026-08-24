@@ -213,7 +213,7 @@ def cmd_list(a, root):
         raw = c.get("stage", "")
         st, _ = canonical_stage(raw)
         age = (time.time() - os.path.getmtime(p)) / 86400.0
-        rows.append((p, st or ("(no stage)" if not raw else raw), c.get("file"), age))
+        rows.append((p, st or (raw or "(no stage)"), c.get("file"), age))
 
     live = [r for r in rows if r[1] not in ("COMPLETE",)]
     fresh = [r for r in live if r[3] <= a.stale_days]
