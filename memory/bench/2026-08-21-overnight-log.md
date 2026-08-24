@@ -1407,3 +1407,32 @@ hook, so the file's own spread covers most of this gap. CASE-01 and CASE-04 are 
 frozen instrument; three cases will separate "the hook hurts" from "three runs landed low".
 
 Recorded now, before those results, because the temptation is to report the half that worked.
+
+### Second clean case contradicts the hypothesis the first one suggested
+
+| CASE-01 arm | kill | wall | measured | hook fired |
+|---|---|---|---|---|
+| naked | 84.8% | 231 s | — | — |
+| v21 | 88.9% | 673 s | **0/3** | — |
+| **v24** | **90.9%** | 2201 s | **3/3** | 0×, 2×, 4× |
+
+90.9% is this file's ceiling — v9, v10, v11 and v23cap all stop there. So on CASE-01 the hook took a
+batch that measured NOTHING to one that measured everything, and the score went to the best the file
+has produced.
+
+That does not fit "the hook converts skipping the loop into satisfying it minimally", which is what
+CASE-02 suggested one batch earlier. What the two cases share is the only thing the falsification
+condition was ever about: **`measured` goes to 3/3, on a file that managed 1/3 and on one that
+managed 0/3.**
+
+| | measured before → after | kill before → after |
+|---|---|---|
+| CASE-02 | 1/3 → 3/3 | 73.2% → 75.2% (control level) |
+| CASE-01 | 0/3 → 3/3 | 88.9% → **90.9%** (file ceiling) |
+
+Quality moves in opposite directions. Two cases cannot separate "the hook hurts on React components"
+from "three runs landed low", and CASE-04 — the file where no manifest existed at all until the
+generator — is running on the same frozen instrument.
+
+The hypothesis stays on the record either way. It was written before this batch, and half of it is
+now wrong.
