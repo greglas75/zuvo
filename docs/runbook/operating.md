@@ -137,6 +137,38 @@ measured with the old instrument is not a data point about the new one.
 
 ---
 
+## 8. `cp -a SRC DST` nests instead of replacing when DST already exists
+
+**Cost: one rep of a benchmark case given up after burning all three of its attempts, and twenty
+minutes of forensics aimed at the wrong layer.**
+
+```bash
+rm -rf "$WS"
+cp -a "$REPO" "$WS"        # if anything recreated $WS in between, you now have $WS/repo/...
+```
+
+The copy succeeds and prints nothing. What you get is a tree the right SIZE (so a `du`-based guard
+passes) with every path one level deeper than expected (so a `[ -f "$WS/$SRC" ]` guard fires). On
+the rig it surfaced as an agent politely reporting that the workspace was empty and asking where
+the repository was — which reads as a model failure, not a copy failure.
+
+**Correct: make the target on purpose and copy CONTENTS.** The trailing `/.` makes the result
+independent of whether the target already existed.
+
+```bash
+rm -rf "$WS"; mkdir -p "$WS"
+cp -a "$REPO/." "$WS/"
+```
+
+Two corollaries, both of which turned one bad copy into three dead attempts:
+
+- **A failure path must delete what it half-built.** The guard above exited without removing `$WS`,
+  so every retry inherited the poisoned tree and failed identically.
+- **A relaunch must clear the workspace, not just the run directory.** A supervisor that resets
+  `runs/<case>/<arm>` and leaves `ws/<case>-<arm>` is not retrying from scratch.
+
+---
+
 ## The two rules that would have prevented most of this
 
 **Read the runbook before typing the command.** `tests/gates/test-gate-consistency.sh` and
