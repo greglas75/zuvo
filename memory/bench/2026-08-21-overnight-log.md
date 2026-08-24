@@ -1201,3 +1201,49 @@ five files, the inventory generates in one command, and an unmeasured manifest i
 that an agent can still decide the whole apparatus is not worth running, and nothing in the skill
 or the artifact can stop it from simply not starting. Every layer built today acts on work that
 reached it.
+
+---
+
+## v24 — routing the hand-run test command through the instrument (2026-08-24)
+
+The one number that had not moved: how many runs ever produce a verification verdict. v21 managed
+5 of 15. The receipt and the generator each closed their hole and neither changed it, because both
+act on work that has already REACHED them — and the runs were finishing without reaching anything:
+write the suite, run it by hand, green, done.
+
+v24 adds one `PreToolUse` hook that intercepts that command when the spec is one a manifest
+declares and no current receipt covers, and points at the instrument instead. `Stop` was tried
+first and cannot work: **Stop hooks do not fire under `claude -p`** — measured directly in a
+container — so a Stop-based fix would protect interactive sessions and silently skip every headless
+one, which is where the benchmark and CI both live. `PreToolUse` does fire there.
+
+### The first batch found a hole in the hook, not in the hypothesis
+
+CASE-02's three v24 runs: **the hook fired 0 times**. The command it should have caught was
+
+```
+cd apps/designer
+timeout 100 node --max-old-space-size=8192 ./node_modules/vitest/vitest.mjs run <spec>
+```
+
+which breaks the original pattern twice: the separator is a NEWLINE rather than one of `;&|`, and
+the runner is reached through a path rather than through npx. Neither is exotic — a `cd` and a
+memory flag are what you write when the suite is big enough to need tests at all. The pattern was
+written for the command I imagined, not the one that gets typed.
+
+That batch therefore does not test the hypothesis, and is re-queued. It does leave a useful
+accident behind: a clean **hook-present-but-inert** control.
+
+| CASE-02 arm | kill | wall | measured | hook fired |
+|---|---|---|---|---|
+| naked | 75.2% | 195 s | — | — |
+| v21 (neither) | 73.2% | 561 s | 1/3 | — |
+| v22 (receipt) | 78.6% | 2833 s | 2/3 | — |
+| **v24 (hook inert)** | **78.1%** | 2418 s | **2/3** | **0×** |
+
+v24-with-an-inert-hook lands on v22, which is what it should do if the hook is the only difference
+and the hook did nothing. The corrected pattern is now in, and CASE-01 is the first batch that
+actually tests it.
+
+Falsification condition, set before the result: if `measured N/3` does not move with the corrected
+pattern, the hypothesis is wrong regardless of what the kill rates do.
