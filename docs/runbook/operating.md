@@ -169,6 +169,31 @@ Two corollaries, both of which turned one bad copy into three dead attempts:
 
 ---
 
+## 9. Backticks in a `git commit -m` message are executed by the shell
+
+```bash
+git commit -m "slimming `testing` for tokens regressed it"   # the shell runs `testing`
+```
+
+You get `command not found: testing` on stderr — and the commit still succeeds, with the backticked
+words **silently removed** from the message. So the failure looks like noise from an unrelated step
+while the artifact it damaged is already written. Prose in commit messages is full of backticked
+identifiers, which is exactly why this one is easy to hit and easy to miss.
+
+**Correct: pass the message on stdin or from a file**, which is what every long message here should
+use anyway.
+
+```bash
+git commit -F - <<'EOF'
+... backticks, dollars, quotes, all literal ...
+EOF
+```
+
+An unpushed commit can be amended to repair it — but check `git log -1 --format=%B` first, because
+the damage is invisible from the command's exit code.
+
+---
+
 ## The two rules that would have prevented most of this
 
 **Read the runbook before typing the command.** `tests/gates/test-gate-consistency.sh` and
