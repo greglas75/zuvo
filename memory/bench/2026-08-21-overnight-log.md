@@ -1379,3 +1379,31 @@ The lever is the repeated work: 13% of shell calls re-issue a command already gi
 most-repeated shape after environment re-exports is a hand-written heredoc editing the CONTRACT.
 That is what `~/.zuvo/refactor-contract` addresses. Include weight is a red herring, and it is
 recorded here so the next person tempted by it can skip the detour.
+
+## v24 first clean batch — the number moved, and the score did not follow
+
+CASE-02, three reps, hook frozen and verified firing in a container beforehand:
+
+| arm | kill | wall | measured | hook fired |
+|---|---|---|---|---|
+| naked (no skill) | 75.2% | 195 s | — | — |
+| v21 (neither receipt nor generator) | 73.2% | 561 s | 1/3 | — |
+| v22 (receipt) | 78.6% | 2833 s | 2/3 | — |
+| **v24 (+ routing hook)** | **75.2%** | **870 s** | **3/3** | 0×, 2×, 6× |
+
+**The falsification condition was about `measured N/3`, and it moved: 1/3 → 3/3**, the best this
+file has ever recorded. The hook fires, and runs that would have finished unmeasured now produce a
+verdict. That part of the hypothesis holds.
+
+**The implied hope does not.** Kill lands on 75.2% — the no-skill control to the decimal — and below
+v22's 78.6%, at a third of v22's wall-clock. Fast, measured, and no better than nothing.
+
+The reading that fits: the hook may convert *skipping* the loop into *satisfying* it — blocked once,
+run the helper once, move on. That is a different failure from the one it was built to fix, and a
+worse one to have, because the telemetry now says the loop ran.
+
+Held as a hypothesis, not a finding. n=3, and one earlier CASE-02 batch scored 78.1% with an inert
+hook, so the file's own spread covers most of this gap. CASE-01 and CASE-04 are running on the same
+frozen instrument; three cases will separate "the hook hurts" from "three runs landed low".
+
+Recorded now, before those results, because the temptation is to report the half that worked.
