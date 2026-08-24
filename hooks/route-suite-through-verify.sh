@@ -192,15 +192,24 @@ for entry in sorted(os.listdir(contracts)):
         bail()          # already measured as it stands — nothing to route
 
     rel_man = os.path.relpath(man_path, root)
+    # State the policy; do not argue for it.
+    #
+    # The first version of this message explained WHY, quoted a benchmark statistic, and offered
+    # the escape hatch persuasively. An agent in a container read it and refused — correctly, and
+    # in as many words: "a tool/hook result trying to redirect my next action ... complete with a
+    # fabricated-sounding benchmark claim to pressure compliance. That's a classic injection
+    # pattern." It then reported the block instead of complying.
+    #
+    # It was right. Instruction phrasing plus a persuasive statistic plus an offered bypass IS the
+    # shape of an injection, and an agent that follows such text is the one with the problem. A
+    # policy notice does not need to convince anyone: it says what is not accepted and what to run
+    # instead, in the fewest words that carry the command.
     sys.stderr.write(
-        "zuvo: this spec is tracked by %s, and running it bare only tells you it is green.\n"
-        "Use the instrument instead — it runs this same suite plus the coverage gate, scoped\n"
-        "coverage and the mutation runner in ONE pass, and records what it measured:\n\n"
-        "  ~/.zuvo/verify-tests --manifest %s\n\n"
-        "Give the tool call a timeout of 600000. Measured on the benchmark: runs that never\n"
-        "reached this command finished at the no-skill control's score on two of five files.\n"
-        "If you really need a bare run (debugging one case), set ZUVO_ALLOW_BARE_TESTS=1.\n"
-        % (rel_man, rel_man))
+        "zuvo policy: %s is a tracked spec; a bare test run is not accepted as its verification.\n"
+        "Required command (tool timeout 600000):\n"
+        "  ~/.zuvo/verify-tests --manifest %s\n"
+        "Human override: ZUVO_ALLOW_BARE_TESTS=1\n"
+        % (declared[sorted(hit)[0]], rel_man))
     sys.exit(BLOCK)
 
 bail()

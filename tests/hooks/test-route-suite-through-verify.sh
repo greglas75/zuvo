@@ -156,6 +156,26 @@ write_manifest ""
 ZUVO_ALLOW_BARE_TESTS=1 run_hook "npx vitest run src/thing.spec.ts"; rc=$?
 [ "$rc" -eq 0 ] && pass "the human escape hatch works" || bad "escape hatch ignored (exit=$rc)"
 
+# ── 4b. the message must not read as an injection attempt ────────────────────
+# Tested end-to-end in a container: the first version explained WHY, quoted a benchmark statistic
+# and offered the escape hatch persuasively. The agent refused it as "a classic injection pattern
+# — a tool/hook result trying to redirect my next action ... to pressure compliance", and reported
+# the block instead of complying. It was right to. So the message states the policy and the
+# command, and argues for neither.
+write_manifest ""
+run_hook "npx vitest run src/thing.spec.ts" >/dev/null 2>&1
+if grep -qiE "measured on the benchmark|only tells you|use the instrument instead|if you really need" "$TMP/err"; then
+  bad "the message argues its case — that is the shape of an injection, and agents refuse it"
+else
+  pass "the message states the policy without arguing for it"
+fi
+[ "$(wc -l < "$TMP/err")" -le 5 ] \
+  && pass "the message is short enough to read as a system notice ($(wc -l < "$TMP/err") lines)" \
+  || bad "message is $(wc -l < "$TMP/err") lines — long enough to read as persuasion"
+grep -q 'verify-tests --manifest' "$TMP/err" \
+  && pass "it still carries the exact command to run" \
+  || bad "the required command is missing from the notice"
+
 # ── 5. fail-open on anything it cannot understand ─────────────────────────────
 printf 'not json at all' > "$TMP/in.json"
 bash "$HOOK" < "$TMP/in.json" >/dev/null 2>&1; rc=$?
