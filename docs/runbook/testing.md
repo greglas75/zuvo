@@ -204,6 +204,11 @@ range with `/zuvo:review` and fix what the providers find.
 
 ---
 
+> **Before typing any command below, see `operating.md`** — the companion runbook of commands that
+> look right and are not (`pkill -f` matching your own shell, nested heredocs through ssh, `grep -c`
+> printing 0 *and* exiting 1, editing a script while it runs). Every entry there is a mistake that
+> was actually made, most of them more than once in a single session.
+
 ## 5. Failure triage
 
 | Symptom | Almost always means |

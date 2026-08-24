@@ -211,6 +211,10 @@ hooks/*.sh                      — hooks install.sh copies into ~/.claude/hooks
 docs/                           — documentation (skills.md, pipeline.md, competitive-analysis.md, etc.)
 docs/runbook/testing.md         — HOW TO VERIFY THIS REPO: the 5 commands, per-change checklist,
                                   the quarterly deep-audit procedure, failure triage
+docs/runbook/operating.md       — commands that look right and are not. Read BEFORE typing a
+                                  pkill/pgrep, a heredoc through ssh, or a `grep -c` guard; also
+                                  why `install.sh` can leave the plugin disabled for the NEXT
+                                  session and why editing a running driver corrupts it
 .claude-plugin/plugin.json      — Claude Code plugin manifest
 .codex-plugin/plugin.json       — Codex plugin manifest
 package.json                    — version metadata only (no npm)
