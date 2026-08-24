@@ -85,6 +85,18 @@ count=$(grep -c "^ATTEMPT" state 2>/dev/null) || count=0
 count=${count:-0}
 ```
 
+`pgrep -c` behaves identically, and the consequence is worse than a malformed log line. A watchdog
+written *hours after this entry was added* used `drivers=$(pgrep -c -f ... || echo 0)`; `[ "$drivers"
+-eq 0 ]` then errored on the two-line value instead of being true, which silently disabled the
+idle detection that was the whole reason the watchdog existed. It logged a heartbeat every minute
+and never once reported the condition it was there to report.
+
+Two things worth taking from that. **A guard built on a malformed comparison fails OPEN and looks
+healthy** — the log filled up, the process was alive, and the check was dead. And **writing the
+entry does not inoculate you against the mistake**: this one was documented and then committed
+anyway, in the same session, by the person who documented it. The habit that catches it is not
+memory, it is reading back what the variable actually contains.
+
 ---
 
 ## 4. A long `find` / `du` / `grep -r` over ssh hits the 120 s tool window
