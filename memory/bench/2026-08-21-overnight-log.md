@@ -1436,3 +1436,32 @@ generator — is running on the same frozen instrument.
 
 The hypothesis stays on the record either way. It was written before this batch, and half of it is
 now wrong.
+
+## The biggest bucket in refactor is one nothing I built touches
+
+Restricted to August sessions (n=8), attributed by tool call:
+
+| bucket | median share | median turns |
+|---|---|---|
+| **think** (a turn with no tool call) | **48.2%** | **1929** |
+| bash-other | 24.6% | 618 |
+| test-run | 5.6% | 104 |
+| read-file | 3.2% | 142 |
+| git | 2.8% | 126 |
+
+Median session: 1058 minutes.
+
+The wall-clock column over-reads — the gap between two turns holds the tool's runtime AND the
+model's generation for the next one, so a fast command is credited with the thinking that follows
+it. That caveat now prints above the table rather than sitting in a docstring where the person
+running the tool will not see it. But **turn counts do not have that problem**, and 1929
+deliberation turns against 618 shell turns is not an artefact of attribution.
+
+So the honest top line: the dominant cost of a refactor run is the model deciding what to do next,
+and none of today's work touches it. `refactor-contract` removes repeated composition — 13% of
+shell calls re-issued a command already given, and the two most-repeated shapes are now one command
+each. That is real and it is a minority of the total.
+
+What would touch the `think` bucket is a different kind of change — fewer decision points, not
+cheaper ones — and nothing here has evidence for what that should look like. Recorded so the next
+session starts from the size of the problem rather than from the part that was easy to fix.

@@ -199,6 +199,12 @@ def main(argv):
     print("refactor sessions analysed: %d" % len(sessions))
     print("wall-clock per session: median %.0f min, p90 %.0f min"
           % (S.median(wall) / 60, sorted(wall)[int(len(wall) * 0.9) - 1] / 60))
+    # Print the caveat with the numbers, not only in the docstring. The gap between two turns holds
+    # the tool's own runtime AND the model's generation time for the NEXT turn, so a fast command is
+    # credited with the thinking that follows it. Anyone reading a "% of wall-clock" column without
+    # that in front of them will over-read it — including the person who wrote this.
+    print("\nwall-clock shares credit a command with the thinking that FOLLOWS it, so for anything")
+    print("that is not genuinely slow the turn count is the sounder column.")
     print("\n%-16s %10s %8s %10s %s" % ("bucket", "median %", "max %", "turns", "largest in N"))
     biggest = Counter()
     for _sid, _n, _t, secs in sessions:
