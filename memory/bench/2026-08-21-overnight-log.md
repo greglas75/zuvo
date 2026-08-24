@@ -1504,3 +1504,23 @@ as a prompt-injection attempt — correctly, because it argued its case with a s
 a bypass. Every one of those was found by the rig and none by reasoning about it. The instrument was
 only frozen on the fifth attempt, and that is the process lesson worth more than the result:
 **freeze the instrument, verify it end-to-end in the real environment, THEN spend runs.**
+
+## The one run that escaped, and why it is not a matching bug
+
+CASE-04 r2: the hook never fired and the run never measured. It hand-ran the suite **15 times**,
+then wrote its manifest at 19:01:39 — **2.7 minutes before finishing** — still at
+`status: inventory` with no receipt.
+
+The hook's scope is "no manifest, no interference", by design and deliberately: a test command
+naming nothing zuvo tracks is none of its business, and widening that is how a routing hook turns
+into something that blocks unrelated work. So while all fifteen bare runs were happening there was
+nothing to match against.
+
+**A run that defers freezing its inventory until after it has finished hand-verifying never meets
+the hook at all.** That is an ordering hole, not a pattern gap, and no amount of tightening the
+runner regex reaches it. It is the next lever and it wants a different instrument — something at the
+point where the inventory is *supposed* to be frozen, not at the point where tests are run.
+
+Attribution from the same sweep, which is what makes this readable rather than speculative: of the
+6 runs where the hook fired, **all 6 went on to measure**. Of the 3 where it never fired, 2 measured
+on their own and 1 — this one — did not.
