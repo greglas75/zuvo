@@ -28,6 +28,7 @@ Manifest schema: shared/includes/coverage-manifest-schema.md (zuvo-coverage-mani
 """
 
 import argparse
+import contextlib
 import hashlib
 import io
 import json
@@ -1028,12 +1029,47 @@ def validate(manifest_path, phase, repo_root):
                 "Run `~/.zuvo/verify-tests --manifest %s` — a suite nothing measured is not a "
                 "finished suite." % os.path.basename(manifest_path))
         else:
+            # Presence is not proof. The receipt records what each check actually returned, so the
+            # two ways to hold one without measuring anything are checkable here:
+            #   * `--skip mutation` leaves the field null — an argument an agent can type, which is
+            #     exactly the shape of bypass this project has already had to close once;
+            #   * DEFER means the helper deliberately held the measurement back, so a final-phase
+            #     receipt carrying it describes a suite that was never mutated.
+            # SKIP is different and legitimate: it is what a stack with no per-file mutation runner
+            # returns, and refusing that would gate on the environment rather than on the work.
+            mut = receipt.get("mutation")
+            if mut is not None and str(mut).startswith("ERROR"):
+                # A crashed mutation run is not a measurement, and it is reachable on purpose:
+                # break the Stryker config and the helper records ERROR rather than a score. Left
+                # unchecked, that is a cheaper bypass than skipping the step outright, because it
+                # still produces a receipt.
+                errors.append(
+                    "FAILED MUTATION: the receipt records %r — the run errored rather than "
+                    "measuring. Fix the mutation setup and re-run." % str(mut)[:70])
+            elif mut is None:
+                errors.append(
+                    "UNVERIFIED MUTATION: the receipt has no mutation result — it was skipped. "
+                    "Re-run `~/.zuvo/verify-tests` without `--skip mutation`.")
+            elif str(mut).startswith("DEFER"):
+                errors.append(
+                    "DEFERRED MUTATION: the receipt records %r, so the suite was never mutated. "
+                    "Re-run once coverage is adequate, or with --force-mutation." % str(mut)[:60])
+            # The helper keys these by its own normalised relative path, so a manifest that spells
+            # a spec `./x.spec.ts` records it as `x.spec.ts` and a literal lookup misses. That
+            # rejects a receipt that is perfectly valid, which trains the reader to distrust the
+            # check. Compare on the resolved path instead of on the spelling.
             measured = receipt.get("spec_sha256") or {}
+            measured_abs = {}
+            for k, v in measured.items():
+                with contextlib.suppress(Exception):
+                    measured_abs[os.path.realpath(resolve_path(k, repo_root, manifest_dir))] = v
             for tf_rel in test_files:
                 tf_abs = resolve_path(tf_rel, repo_root, manifest_dir)
                 if not os.path.isfile(tf_abs):
                     continue
                 recorded = measured.get(tf_rel)
+                if recorded is None:
+                    recorded = measured_abs.get(os.path.realpath(tf_abs))
                 if recorded is None:
                     errors.append(
                         "UNVERIFIED SPEC: %s is declared but was never measured — the receipt "

@@ -714,6 +714,66 @@ grep -q "stryMutAct" "$R/src/thing.ts" 2>/dev/null \
   && bad "instrumentation was left in the production file after SIGTERM" \
   || pass "no instrumentation remains after an interrupted run"
 
+# ── (28) a red suite cannot buy a receipt ────────────────────────────────────
+# The receipt exists to prove the suite was MEASURED. Found reviewing this file: a pass whose suite
+# FAILED and whose mutation and coverage both DEFERred still stamped one — so the artifact was
+# attesting "this program ran", which is a different and much weaker claim than the one the
+# coverage gate then enforces on the strength of it.
+R="$TMP/m28"; mkrepo "$R" with-stryker
+STUB_SUITE=red STUB_GATE=pass STUB_COV_PCT=95 vt "$R"
+python3 - "$R/zuvo/contracts/thing.coverage.json" <<'PY2'
+import json, sys
+m = json.load(open(sys.argv[1]))
+sys.exit(1 if m.get("verification") else 0)
+PY2
+[ $? -eq 0 ] && pass "a failing suite leaves no receipt behind" \
+  || bad "a red suite stamped a receipt — the artifact now attests a measurement that never happened"
+
+R="$TMP/m28b"; mkrepo "$R" with-stryker
+STUB_GATE=pass STUB_COV_PCT=95 vt "$R" --force-mutation
+python3 - "$R/zuvo/contracts/thing.coverage.json" <<'PY2'
+import json, sys
+m = json.load(open(sys.argv[1]))
+v = m.get("verification") or {}
+sys.exit(0 if v.get("spec_sha256") and v.get("suite", "").startswith("PASS") else 1)
+PY2
+[ $? -eq 0 ] && pass "a green measured pass DOES stamp one (the positive control)" \
+  || bad "no receipt written on a healthy pass"
+
+# ── (29) the budget cannot be loosened by a later call ───────────────────────
+# `--reset-budget` was closed behind an env var after 212 uses. The same escape then existed one
+# argument over: an exhausted run could pass `--budget 999 --time-budget 0` and bump_state would
+# adopt it, because it took whatever the current invocation said. (Cross-model review finding.)
+R="$TMP/m29"; mkrepo "$R" with-stryker
+STUB_GATE=pass STUB_COV_PCT=95 STUB_SURVIVORS=2 vt "$R" --budget 1 >/dev/null 2>&1
+STUB_GATE=pass STUB_COV_PCT=95 STUB_SURVIVORS=2 vt "$R" --budget 999; rc=$?
+[ "$rc" -eq 4 ] \
+  && pass "a later --budget cannot loosen the stop condition" \
+  || bad "the budget was widened by a later call (exit=$rc, expected 4)"
+
+# Tightening is a stricter promise and stays allowed.
+R="$TMP/m29b"; mkrepo "$R" with-stryker
+STUB_GATE=pass STUB_COV_PCT=95 STUB_SURVIVORS=2 vt "$R" --budget 5 >/dev/null 2>&1
+STUB_GATE=pass STUB_COV_PCT=95 STUB_SURVIVORS=2 vt "$R" --budget 2
+grep -qE "pass 2 of 2" "$TMP/out" \
+  && pass "a later --budget may still TIGHTEN it" \
+  || bad "tightening was ignored: $(grep -o 'pass [0-9]* of [0-9]*' "$TMP/out" | head -1)"
+
+# ── (30) an empty production file is not mistaken for a clean one ────────────
+# Zero bytes carries zero instrumentation markers, so a truncated file reads as healthy — and the
+# run would then take those zero bytes as the pristine state and overwrite the last good copy with
+# them, destroying source and backup together. (Cross-model review finding.)
+R="$TMP/m30"; mkrepo "$R" with-stryker
+cp "$R/src/thing.ts" "$R/src/thing.ts.zuvo-mutation-pristine"
+: > "$R/src/thing.ts"
+STUB_GATE=pass STUB_COV_PCT=95 vt "$R" --force-mutation >/dev/null 2>&1
+[ -s "$R/src/thing.ts" ] \
+  && pass "an empty production file is restored from the on-disk copy, not adopted as pristine" \
+  || bad "the empty file was taken as the source of truth"
+grep -q "alpha" "$R/src/thing.ts" 2>/dev/null \
+  && pass "the restored content is the real source" \
+  || bad "restored file does not contain the original code"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1

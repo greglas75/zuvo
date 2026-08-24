@@ -710,6 +710,28 @@ def write_survivor_report(manifest_path, survivors, bmap, root):
 STRYKER_MARKERS = ("stryMutAct_", "stryCov_", "stryNS_")
 
 
+def restore_file(path, data):
+    """Put `data` back at `path` without ever leaving the path truncated. Returns True on success.
+
+    `open(path, "wb")` truncates before it writes, so every instant between those two operations is
+    one where a signal, an OOM kill or a full disk leaves the production file at zero bytes. Writing
+    a sibling and renaming makes the replacement atomic: the path holds either the old bytes or the
+    new ones, never nothing.
+    """
+    tmp = path + ".zuvo-restore-tmp"
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        return True
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        return False
+
+
 def instrumentation_markers(path):
     """Count Stryker instrumentation helpers in a file (0 for clean production source)."""
     try:
@@ -789,16 +811,28 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
     # present either heals from that copy or refuses. Refusing is the point: a mutation score
     # measured against an instrumented file is not a low score, it is not a score at all.
     sidecar = prod_file + ".zuvo-mutation-pristine"
-    if instrumentation_markers(prod_file):
-        if os.path.isfile(sidecar) and not instrumentation_markers(sidecar):
+    # An EMPTY production file also has zero instrumentation markers, so "no markers" is not proof
+    # of health -- and treating it as such would read the empty file as the new pristine state and
+    # then overwrite the only good copy with it, destroying both. Size is the cheap discriminator:
+    # production source is never zero bytes.
+    try:
+        prod_empty = os.path.getsize(prod_file) == 0
+    except OSError:
+        prod_empty = False
+    if instrumentation_markers(prod_file) or prod_empty:
+        if (os.path.isfile(sidecar) and os.path.getsize(sidecar) > 0
+                and not instrumentation_markers(sidecar)):
             shutil.copyfile(sidecar, prod_file)
             note += ", production restored from an interrupted run"
         else:
             r.status = "ERROR"
             r.detail = (
-                "error: %s carries Stryker instrumentation left by an interrupted run, and no "
-                "clean copy is available. Restore it (`git checkout -- %s`) before measuring."
-                % (rel_to(prod_file, root), rel_to(prod_file, root))
+                "error: %s is %s and no clean copy is available. Restore it "
+                "(`git checkout -- %s`) before measuring."
+                % (rel_to(prod_file, root),
+                   "empty" if prod_empty
+                   else "carrying Stryker instrumentation left by an interrupted run",
+                   rel_to(prod_file, root))
             )
             return r
     with open(prod_file, "rb") as fh:
@@ -881,9 +915,16 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
     # what killed us. SIGKILL cannot be caught; the on-disk copy above is the recovery path for it.
     previous = {}
 
+    dying = []
+
     def _restore_and_die(signum, _frame):
-        with contextlib.suppress(OSError), open(prod_file, "wb") as fh:
-            fh.write(pristine)
+        # A process-group kill delivers SIGHUP and SIGTERM in quick succession, so this handler can
+        # interrupt ITSELF. Without the guard the second entry would begin replacing the file while
+        # the first was still writing it. The flag is set before any I/O; a second signal then only
+        # re-raises.
+        if not dying:
+            dying.append(signum)
+            restore_file(prod_file, pristine)
         signal.signal(signum, previous.get(signum, signal.SIG_DFL))
         os.kill(os.getpid(), signum)
 
@@ -953,15 +994,19 @@ def check_mutation(runner, prod_file, test_files, root, cap, allow_install, base
         return r
     finally:
         # Unconditional: a timeout or a crash mid-run leaves the real file mutated otherwise.
+        # Restore FIRST, then hand the signals back. Unregistering first would open a window in
+        # which an arriving SIGINT takes the default action mid-write, and the default action for
+        # a half-written file is to leave it half-written.
+        restored = restore_file(prod_file, pristine)
         for sig, handler in previous.items():
             with contextlib.suppress(ValueError, OSError):
                 signal.signal(sig, handler)
-        with contextlib.suppress(OSError), open(prod_file, "wb") as fh:
-            fh.write(pristine)
-        # Only now is the on-disk copy redundant. Removing it any earlier would reopen the window
-        # it exists to cover.
-        with contextlib.suppress(OSError):
-            os.unlink(sidecar)
+        # The on-disk copy is redundant only once the file it protects is actually back. Deleting
+        # it after a FAILED restore (a full disk, a read-only mount) throws away the last copy of
+        # the source at the exact moment it is the only one left.
+        if restored:
+            with contextlib.suppress(OSError):
+                os.unlink(sidecar)
         with contextlib.suppress(OSError):
             os.unlink(scfg)
         shutil.rmtree(rep, ignore_errors=True)
@@ -1000,14 +1045,21 @@ def stamp_receipt(manifest_path, results, test_files, repo_root):
     man = read_json(manifest_path)
     if man is None:
         return
+    by_check = {r.name: r for r in results}
+    suite = by_check.get("suite")
+    # A receipt is meant to prove the suite was MEASURED. Stamping one from a pass where the suite
+    # was red -- or was skipped -- proves only that this program ran, which is a different and much
+    # weaker claim, and it is the claim the gate would then be enforcing. Caught reviewing this
+    # file: a run whose suite FAILED and whose mutation and coverage both DEFERred still came away
+    # with a receipt in the manifest.
+    if suite is None or suite.status != "PASS":
+        return
     specs = {}
     for f in test_files:
         with contextlib.suppress(OSError):
             specs[rel_to(f, repo_root)] = sha256(f)
-    by_name = {r.name: r for r in results}
-
     def detail(name):
-        r = by_name.get(name)
+        r = by_check.get(name)
         return None if r is None else "%s %s" % (r.status, r.detail)
 
     man["verification"] = {
@@ -1036,8 +1088,20 @@ def bump_state(manifest_path, budget, time_budget_min):
     p = state_path(manifest_path)
     st = read_json(p) or {"schema": SCHEMA, "passes": 0, "history": []}
     st["passes"] = int(st.get("passes", 0)) + 1
-    st["budget"] = budget
-    st["time_budget_min"] = time_budget_min
+    # The budget is the stop condition, so it belongs to the FIRST call and to nobody after.
+    # Taking whatever the current invocation passes would let an exhausted run unwind the whole
+    # thing with `--budget 999 --time-budget 0` — the same agent-typable escape that `--reset-budget`
+    # already had to be closed against, arriving through a different argument. Later calls may
+    # TIGHTEN it (a smaller number is a stricter promise) but never loosen it.
+    prior_b, prior_t = st.get("budget"), st.get("time_budget_min")
+    st["budget"] = budget if prior_b is None else min(int(prior_b), int(budget))
+    if prior_t is None:
+        st["time_budget_min"] = time_budget_min
+    elif time_budget_min and prior_t:
+        st["time_budget_min"] = min(prior_t, time_budget_min)
+    else:
+        # A zero/None on either side means "no clock"; honour the one that actually bounds.
+        st["time_budget_min"] = prior_t or time_budget_min
     # The clock starts on the FIRST pass, not on this one, so a run cannot reset it by taking
     # a long detour between passes.
     st.setdefault("started_epoch", int(time.time()))
@@ -1149,23 +1213,28 @@ def main():
     before = sha256(prod)
     frozen = man.get("production_sha256")
     st = bump_state(manifest_path, a.budget, a.time_budget)
+    # Read the STORED budget from here on, never the argument. bump_state clamps the argument
+    # against what the first call established precisely so a later `--budget 999` cannot widen it;
+    # every consumer that keeps reading `a.budget` hands that escape straight back.
+    budget_n = st.get("budget") or a.budget
+    time_budget_n = st.get("time_budget_min") if st.get("time_budget_min") is not None else a.time_budget
 
     # Past the budget, an extra call must be CHEAP as well as refused. Reporting exit 4 while
     # still running the suite, the gate, coverage, a typecheck and a mutation pass means every
     # ignored refusal costs the same ~180s as a real pass -- which is how one run spent 38% of
     # its wall inside this helper. Answer from the record instead.
-    if (a.budget and st["passes"] > a.budget) or (
-            a.time_budget and st["elapsed_min"] >= a.time_budget and st["passes"] > 1):
+    if (budget_n and st["passes"] > budget_n) or (
+            time_budget_n and st["elapsed_min"] >= time_budget_n and st["passes"] > 1):
         # The last entry that actually MEASURED something. Each refusal appends an empty entry,
         # so taking history[-1] blindly makes the second refusal report nothing at all — which
         # is worse than the first refusal, for a run that is being told to finish from it.
         prev = next((h for h in reversed(st.get("history") or []) if h.get("results")), {})
         print("=" * 78)
         print("VERIFY  %s   pass %d of %d   %.1f of %d min"
-              % (rel_to(prod, root), st["passes"], a.budget, st["elapsed_min"], a.time_budget))
+              % (rel_to(prod, root), st["passes"], budget_n, st["elapsed_min"], time_budget_n))
         print("=" * 78)
         print("REFUSED — the budget was already exhausted on pass %d. Nothing was re-run."
-              % a.budget)
+              % budget_n)
         for r in prev.get("results", []):
             print("  %-15s %-9s %s" % (r.get("check"), r.get("status"), r.get("detail", "")[:90]))
         gaps = [g for r in prev.get("results", []) for g in (r.get("gaps") or [])]
@@ -1305,7 +1374,7 @@ def main():
     stamp_receipt(manifest_path, results, tests, root)
 
     open_gaps = [g for r in results for g in r.gaps]
-    passes, budget = st["passes"], a.budget
+    passes, budget = st["passes"], budget_n
     elapsed = st["elapsed_min"]
     # Two stop conditions, both owned by this program rather than by the agent's judgement.
     # The pass count bounds how many times the same suite gets re-measured; the clock bounds
@@ -1313,7 +1382,7 @@ def main():
     # will not notice. Measured across 33 scored runs on one file: within a single arm, working
     # 3-5x longer moves mutation kill by about half a point — and three of the four suites that
     # came out RED were among the most expensive runs. Effort past the plateau buys risk.
-    out_of_time = bool(a.time_budget) and elapsed >= a.time_budget
+    out_of_time = bool(time_budget_n) and elapsed >= time_budget_n
     if not open_gaps:
         rc = 0
     elif passes >= budget or out_of_time:

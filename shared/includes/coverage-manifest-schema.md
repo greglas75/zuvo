@@ -93,6 +93,19 @@ the moment the suite is edited.
 Do not write this block by hand. A hand-written receipt is a forgery of a measurement, and the only
 thing it buys is a green gate over an unmeasured suite.
 
+**What the receipt does and does not prove.** It is not signed, and it cannot usefully be: any key
+the helper can read to sign with, an agent with shell access can read to sign with too, so an HMAC
+here would be ceremony rather than security. What it does is change the shape of the failure. Before
+it, skipping the measurement was a *judgement call* — the thing measured runs actually made, in
+their own words, dozens of times. After it, skipping requires deliberately writing a false record
+of a measurement that did not happen. Those are different acts, and only the first one happens by
+accident.
+
+The checkable parts are checked. The gate refuses a receipt whose mutation entry is absent
+(`--skip mutation`), deferred, or errored — all three reachable without forgery, and the errored
+one deliberately so: break the Stryker config and a crash produces a receipt more cheaply than
+skipping does. The helper refuses to stamp one at all unless the suite was green.
+
 
 ## Validator invocation
 

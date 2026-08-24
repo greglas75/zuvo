@@ -466,6 +466,59 @@ else
   bad "generated rows are not in measured survival order"
 fi
 
+# ── 21. the receipt's CONTENTS matter, not just its presence ─────────────────
+# Two ways to hold a receipt without having measured anything, both found by reviewing the code
+# that introduced it:
+#   * `--skip mutation` leaves the field null — an argument an agent can type, which is exactly the
+#     bypass shape this project has had to close before;
+#   * DEFER means the helper deliberately held the measurement back.
+# SKIP is deliberately still accepted: that is what a stack with no per-file mutation runner
+# returns, and refusing it would gate on the environment rather than on the work.
+write_manifest "$TMP/noskipmut.json" "$SHA" "m['verification'].pop('mutation', None)"
+out="$(run_gate noskipmut.json final)"; rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'UNVERIFIED MUTATION'; then
+  pass "a receipt with mutation skipped is REJECTED"
+else
+  bad "receipt with no mutation result accepted (exit=$rc)"
+fi
+
+write_manifest "$TMP/defermut.json" "$SHA" "m['verification']['mutation'] = 'DEFER not run — coverage below threshold'"
+out="$(run_gate defermut.json final)"; rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'DEFERRED MUTATION'; then
+  pass "a receipt recording a DEFERred mutation is REJECTED"
+else
+  bad "deferred mutation accepted as measured (exit=$rc)"
+fi
+
+write_manifest "$TMP/skipmut.json" "$SHA" "m['verification']['mutation'] = 'SKIP none — no per-file mutation runner wired for python'"
+out="$(run_gate skipmut.json final)"; rc=$?
+if [ "$rc" -eq 0 ]; then
+  pass "a stack with no mutation runner still passes — the gate judges work, not environment"
+else
+  bad "environmental SKIP was treated as a dodge (exit=$rc): $out"
+fi
+
+# A crashed mutation run is not a measurement, and it is reachable ON PURPOSE: break the Stryker
+# config and the helper records ERROR instead of a score. Unchecked, that is a CHEAPER bypass than
+# skipping the step, because it still produces a receipt. (Found by a cross-model review of the
+# code that introduced the receipt.)
+write_manifest "$TMP/errmut.json" "$SHA" "m['verification']['mutation'] = 'ERROR error: stryker exit 1, no report'"
+out="$(run_gate errmut.json final)"; rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'FAILED MUTATION'; then
+  pass "a receipt recording an ERRORed mutation run is REJECTED"
+else
+  bad "a crashed mutation run was accepted as measured (exit=$rc)"
+fi
+
+# The helper normalises the paths it records; the manifest may spell the same file differently.
+# Rejecting on spelling fails a receipt that is perfectly valid, which teaches the reader to
+# distrust the check.
+write_manifest "$TMP/dotslash.json" "$SHA" "m['test_files'] = ['./tests/test_user_service.py']; [s['rows'][0].update(evidence='./tests/test_user_service.py:4') for s in m['symbols'][:1]]"
+out="$(run_gate dotslash.json final)"
+printf '%s' "$out" | grep -q 'UNVERIFIED SPEC' \
+  && bad "a receipt was rejected over path spelling alone: $(printf '%s' "$out" | grep UNVERIFIED)" \
+  || pass "the receipt matches on the resolved path, not on how the manifest spells it"
+
 # ── summary ───────────────────────────────────────────────────────────────────
 echo "----"
 if [ "$fail" -eq 0 ]; then
