@@ -774,6 +774,43 @@ grep -q "alpha" "$R/src/thing.ts" 2>/dev/null \
   && pass "the restored content is the real source" \
   || bad "restored file does not contain the original code"
 
+# ── (31) restoring the file must restore the FILE, not just its bytes ────────
+# `os.replace` from a fresh temp file hands the destination the TEMP file's mode, so a 0755 script
+# comes back 0644 — no longer executable, and a spurious 100755→100644 in git. Content restored,
+# permissions silently changed, which is not a restore. (Second cross-model reviewer's finding;
+# the first reviewer missed this class entirely.)
+R="$TMP/m31"; mkrepo "$R" with-stryker
+chmod 0755 "$R/src/thing.ts"
+before_mode=$(ls -l "$R/src/thing.ts" | cut -c1-10)
+STUB_STRYKER_SLEEP=0 STUB_GATE=pass STUB_COV_PCT=95 vt "$R" --force-mutation >/dev/null 2>&1
+after_mode=$(ls -l "$R/src/thing.ts" | cut -c1-10)
+[ "$before_mode" = "$after_mode" ] \
+  && pass "file mode survives a mutation run ($before_mode)" \
+  || bad "mode changed across the run: $before_mode -> $after_mode"
+
+# ── (32) a receipt that cannot cover every spec is not written at all ────────
+# A partial receipt is indistinguishable from a complete one, and the gate can only compare keys
+# that exist — so a dropped spec could be edited forever without ever staling it.
+R="$TMP/m32"; mkrepo "$R" with-stryker
+python3 - "$R/zuvo/contracts/thing.coverage.json" <<'PY2'
+import json, sys
+m = json.load(open(sys.argv[1]))
+m["test_files"] = ["src/thing.spec.ts", "src/thing.missing.spec.ts"]
+json.dump(m, open(sys.argv[1], "w"), indent=1)
+PY2
+printf 'it("b",()=>{});
+' > "$R/src/thing.missing.spec.ts"
+STUB_GATE=pass STUB_COV_PCT=95 vt "$R" --force-mutation >/dev/null 2>&1
+rm -f "$R/src/thing.missing.spec.ts"
+python3 - "$R/zuvo/contracts/thing.coverage.json" <<'PY2'
+import json, sys
+v = (json.load(open(sys.argv[1])).get("verification") or {}).get("spec_sha256") or {}
+# Whatever was written must cover every spec it claims, or nothing at all.
+sys.exit(0 if not v or len(v) == 2 else 1)
+PY2
+[ $? -eq 0 ] && pass "the receipt covers every declared spec or is not written" \
+  || bad "a partial receipt was stamped"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1

@@ -718,12 +718,36 @@ def restore_file(path, data):
     a sibling and renaming makes the replacement atomic: the path holds either the old bytes or the
     new ones, never nothing.
     """
+    # A symlink is a special case and the dangerous one: Stryker follows it and mutates the TARGET,
+    # so replacing the link itself would leave the real file mutated AND destroy the link. Write
+    # through it instead, accepting the truncation window, because the alternative is worse.
+    if os.path.islink(path):
+        try:
+            with open(os.path.realpath(path), "wb") as fh:
+                fh.write(data)
+            return True
+        except OSError:
+            return False
+
     tmp = path + ".zuvo-restore-tmp"
     try:
+        # Bytes are not the whole file. `os.replace` from a fresh temp file hands the destination
+        # the TEMP file's mode, so a 0755 script comes back 0644 -- no longer executable, and a
+        # spurious 100755 -> 100644 in git. Ownership goes the same way where the process can set
+        # it. Restoring content while silently changing permissions is not restoring.
+        mode = uid = gid = None
+        with contextlib.suppress(OSError):
+            st = os.stat(path)
+            mode, uid, gid = st.st_mode, st.st_uid, st.st_gid
         with open(tmp, "wb") as fh:
             fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
+        if mode is not None:
+            with contextlib.suppress(OSError):
+                os.chmod(tmp, mode)
+            with contextlib.suppress(OSError, AttributeError):
+                os.chown(tmp, uid, gid)
         os.replace(tmp, path)
         return True
     except OSError:
@@ -1054,10 +1078,15 @@ def stamp_receipt(manifest_path, results, test_files, repo_root):
     # with a receipt in the manifest.
     if suite is None or suite.status != "PASS":
         return
+    # A receipt that silently omits a spec is indistinguishable from one that covers everything,
+    # and the gate can only compare keys that exist -- so a file dropped here could be edited
+    # afterwards forever without ever staling the receipt. Refuse to stamp a partial one.
     specs = {}
     for f in test_files:
-        with contextlib.suppress(OSError):
+        try:
             specs[rel_to(f, repo_root)] = sha256(f)
+        except OSError:
+            return
     def detail(name):
         r = by_check.get(name)
         return None if r is None else "%s %s" % (r.status, r.detail)
@@ -1094,7 +1123,12 @@ def bump_state(manifest_path, budget, time_budget_min):
     # already had to be closed against, arriving through a different argument. Later calls may
     # TIGHTEN it (a smaller number is a stricter promise) but never loosen it.
     prior_b, prior_t = st.get("budget"), st.get("time_budget_min")
-    st["budget"] = budget if prior_b is None else min(int(prior_b), int(budget))
+    if prior_b is None or budget is None:
+        # `int(None)` would raise here, turning "this run passes no budget" into a crash inside
+        # the state update -- the same escape arriving as a fault instead of an exploit.
+        st["budget"] = budget if prior_b is None else prior_b
+    else:
+        st["budget"] = min(int(prior_b), int(budget))
     if prior_t is None:
         st["time_budget_min"] = time_budget_min
     elif time_budget_min and prior_t:
