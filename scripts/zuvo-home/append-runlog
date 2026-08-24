@@ -291,6 +291,33 @@ case "$SKILL" in
           fi
         done
       done
+      # `review` does not use the <skill>-<date>.md shape at all: per its own skill spec it
+      # writes memory/reviews/<date>-<scope>.md, plus a content-keyed <base7>..<head7>-<slug>.md.
+      # That directory was never scanned, so EVERY review ever run in this repo took the
+      # skipped-not-passed branch below while printing exit 0 — indistinguishable from a pass.
+      # Match on the date prefix, and on the `<!-- zuvo-review -->` marker for the content-keyed
+      # name, which carries no date at all.
+      if [ -z "$AUDIT_REPORT" ] && [ "$SKILL" = "review" ]; then
+        REVIEW_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)/memory/reviews"
+        AUDIT_REPORT=$(ls -t "$REVIEW_DIR"/$AUDIT_DATE-*.md 2>/dev/null | head -1)
+        # Ownership matters more than recency here. memory/reviews/ accumulates every review
+        # this repo has ever run (73 of them at the time of writing, most months old), so
+        # "newest file carrying the marker" will happily hand a STRANGER's stale artifact to
+        # the verifier — and its long-dead file:line citations would then fail, blocking a run
+        # that has nothing to do with it. Only accept a content-keyed report whose <head7>
+        # is the SHA being logged; otherwise leave AUDIT_REPORT empty and take the honest WARN.
+        if [ -z "$AUDIT_REPORT" ] && [ -d "$REVIEW_DIR" ]; then
+          _ar_head=$(git rev-parse --short=7 HEAD 2>/dev/null || echo "")
+          if [ -n "$_ar_head" ]; then
+            for candidate in $(ls -t "$REVIEW_DIR"/*..$_ar_head-*.md 2>/dev/null | head -5); do
+              if [ -f "$candidate" ] && head -3 "$candidate" 2>/dev/null | grep -q '<!-- zuvo-review -->'; then
+                AUDIT_REPORT="$candidate"
+                break
+              fi
+            done
+          fi
+        fi
+      fi
       if [ -z "$AUDIT_REPORT" ]; then
         # No today's report found — try most recent across all locations
         AUDIT_REPORT=$(ls -t "$ZUVO_DIR"/audits/$SKILL-*.md audits/$SKILL-*.md audit-results/$SKILL-*.md 2>/dev/null | head -1)
@@ -314,7 +341,11 @@ case "$SKILL" in
         # it must not stay INVISIBLE either. A silent skip here is indistinguishable from a
         # passing verification in every log and every transcript, which is exactly how a gate
         # stops being a gate.
-        echo "WARN: no $SKILL audit report found under $ZUVO_DIR/audits, audits/ or audit-results/ — finding-content verification SKIPPED (not passed)." >&2
+        if [ "$SKILL" = "review" ]; then
+          echo "WARN: no $SKILL report found under $ZUVO_DIR/audits, audits/, audit-results/ or memory/reviews/ — finding-content verification SKIPPED (not passed)." >&2
+        else
+          echo "WARN: no $SKILL audit report found under $ZUVO_DIR/audits, audits/ or audit-results/ — finding-content verification SKIPPED (not passed)." >&2
+        fi
       fi
     else
       # B-1: the helper itself is absent or not executable. Same reasoning: skipping is

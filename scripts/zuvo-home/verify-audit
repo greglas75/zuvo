@@ -90,9 +90,15 @@ def find_project_root(audit_path: Path) -> Path:
 # either (a) severity-letter+digits, (b) severity-word + dash + digits, or
 # (c) dimension-prefix (1-3 capital letters) + digits, optionally with dotted
 # sub-numbers and dash-separated variants.
+# Measured 2026-08-24 over the 73 artifacts in this repo's memory/reviews/: the dominant
+# finding id is `R-1` (109 occurrences) — letters, a DASH, then digits — and it appears under
+# three openers: `### R-1`, `**R-1 —**` and the bullet `- R-1`. The original pattern required
+# `[A-Z]{1,3}\d+` with no dash and accepted only `#`/`**` openers, so it matched NONE of them:
+# 64 of 73 reports parsed to zero findings and exited 0 having verified nothing. Widening the
+# opener set and making the dash optional is what turns those vacuous passes into real checks.
 FINDING_HEADER_RE = re.compile(
-    r"^(?:#{2,4}\s+|[*_]{2}\s*)"
-    r"(?:[HMLC]\d+\b|(?:HIGH|MEDIUM|LOW|CRITICAL)-\d+\b|[A-Z]{1,3}\d+(?:\.\d+)?(?:[-:][A-Z0-9-]+)*\b)",
+    r"^(?:#{2,4}\s+|[*_]{2}\s*|[-*]\s+|\d+\.\s+)"
+    r"(?:[HMLC]\d+\b|(?:HIGH|MEDIUM|LOW|CRITICAL)-\d+\b|[A-Z]{1,4}-?\d+(?:\.\d+)?(?:[-:][A-Z0-9-]+)*\b)",
     re.IGNORECASE,
 )
 
@@ -139,14 +145,23 @@ def looks_like_finding(header: str) -> bool:
     # pattern below (`[A-Z]{1,3}\d+`) matches `CQ3`/`Q7`, classified them as findings, and
     # REJECTED otherwise-valid reports for "no file:line citation". Exclude the BARE token
     # only: a variant-suffixed `CQ8-001` is a real finding id and still counts.
+    # A list marker is an opener, not part of the id — strip it before matching, or every
+    # `- R-1 ...` finding reads as starting with a dash and falls through to False.
+    h = re.sub(r"^(?:[-*]\s+|\d+\.\s+)", "", h).strip()
+
     first = h.split()[0].rstrip(":—–-.").strip("*_") if h.split() else ""
     if re.fullmatch(r"(?:CQ|Q)\d+", first, re.IGNORECASE):
+        return False
+    # Same exclusion for the dashed spelling: `CQ-8` is still a score, not a finding id.
+    if re.fullmatch(r"(?:CQ|Q)-\d+", first, re.IGNORECASE):
         return False
 
     return bool(
         re.match(r"^[HMLC]\d+\b", h, re.IGNORECASE)
         or re.match(r"^(?:HIGH|MEDIUM|LOW|CRITICAL)-\d+\b", h, re.IGNORECASE)
-        or re.match(r"^[A-Z]{1,3}\d+(?:\.\d+)?(?:[-:][A-Z0-9-]+)*\b", h, re.IGNORECASE)
+        # The dash is OPTIONAL here: `R-1`/`ADV-1`/`P-1` is the shape 109 of this repo's
+        # findings actually use, and requiring `R1` made the parser blind to all of them.
+        or re.match(r"^[A-Z]{1,4}-?\d+(?:\.\d+)?(?:[-:][A-Z0-9-]+)*\b", h, re.IGNORECASE)
     )
 
 
@@ -198,8 +213,46 @@ def main() -> None:
     findings = [(h, b) for h, b in split_findings(text) if looks_like_finding(h)]
 
     if not findings:
-        # If the report has no finding sections, audit is informational —
-        # nothing to verify. Pass through.
+        # A report with no finding sections is genuinely informational — nothing to verify.
+        # But "I parsed it and it holds nothing" and "I could not parse it" are different
+        # states that used to print the same OK line, which is a vacuous pass: exit 0 with
+        # zero citations checked, indistinguishable in every log from a real verification.
+        # Observed 2026-08-19 on a zuvo:review report whose 11 findings were bullets
+        # (`- R-1 ...`) rather than the `## ID` / `**ID — ...**` headers FINDING_HEADER_RE
+        # matches. So: if the file ANNOUNCES itself as a findings report, refuse instead.
+        # Only after the WIDENED parser above still finds nothing. The first version of this
+        # check ran against the narrow regex and would have rejected 64 of this repo's 73
+        # review artifacts — turning a silent skip into a hard block for almost every run,
+        # which is worse than the hole it closed. Reject means "announces findings AND no
+        # recognised shape at all", not "does not match one house style".
+        # `<!-- zuvo-review -->` is deliberately NOT a trigger. It is the pipeline-entry
+        # COVERAGE marker, not a claim that the file lists findings — 36 of this repo's 73
+        # review artifacts carry it on a purely narrative summary, and treating the marker as
+        # a findings declaration would reject every one of them. The honest trigger is a
+        # section that names a severity TIER and therefore promises itemised findings under it.
+        claims_findings = re.search(
+            r"^\s*(?:#{1,4}\s*|[*_]{2}\s*)(MUST-FIX|BLOCKER|CRITICAL FINDINGS?)\b",
+            text,
+            re.M | re.IGNORECASE,
+        ) is not None
+        if claims_findings:
+            print(
+                f"REJECTED: {audit_path.name} — the report has a MUST-FIX/BLOCKER/CRITICAL "
+                f"heading but NOT ONE finding section under it could be parsed, so nothing "
+                f"was verified.",
+                file=sys.stderr,
+            )
+            print(
+                "  Findings must open with a recognised header: `## R1 — title` or "
+                "`**R1 — title**` (letter-prefixed ID, no dash before the digits), each "
+                "carrying at least one path/to/file.ext:LINE citation.",
+                file=sys.stderr,
+            )
+            print(
+                "  A bullet list (`- R-1 ...`) parses to zero sections and used to exit 0.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
         print(f"OK: {audit_path.name} — no finding sections detected (informational report)")
         sys.exit(0)
 
