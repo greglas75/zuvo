@@ -327,6 +327,17 @@ def cmd_prove(a, root, path):
     return 0
 
 
+def git_head(root):
+    try:
+        out = subprocess.run(["git", "rev-parse", "--short=7", "HEAD"], cwd=root,
+                             capture_output=True, text=True, timeout=15)
+        if out.returncode == 0:
+            return out.stdout.strip() or "unknown"
+    except Exception:
+        pass
+    return "unknown"
+
+
 def parse_counts(out):
     """(passed, failed) from a runner's output, or (None, None).
 
@@ -382,8 +393,14 @@ def cmd_baseline(a, root, path):
         detail += " %d passed" % passed
         if failed:
             detail += ", %d failed" % failed
+    # The MODE is the agent's classification and stays the agent's to make — `existing`, `dead`,
+    # `verify-move` encode which characterization strategy the refactor type calls for, and no
+    # command can decide that. What follows it is measured. Keeping both in one field preserves the
+    # vocabulary the commit gate and the retro already read.
+    sha = git_head(root)
+    prefix = "%s:%s:" % (a.mode, sha) if a.mode else ""
     c["characterization_cmd"] = a.command
-    c.setdefault("prove", {})["characterization"] = detail
+    c.setdefault("prove", {})["characterization"] = prefix + detail
     if not write_atomic(path, c):
         return 2
     render(c, path, root, note="baseline recorded; re-run it with `recheck`")
@@ -490,6 +507,8 @@ def main(argv):
     p_app.add_argument("value")
     p_base = sub.add_parser("baseline")
     p_base.add_argument("command", help="the characterization command, typed ONCE")
+    p_base.add_argument("--mode", choices=["existing", "written", "dead", "verify-move"],
+                        help="which characterization strategy this is — your call, not the tool's")
     sub.add_parser("recheck")
 
     a = ap.parse_args(argv)

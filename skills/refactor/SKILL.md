@@ -490,7 +490,10 @@ Produce the refactoring plan incorporating sub-agent results (when available):
 
 Note: priority 1 (VERIFY_COMPILATION) is checked **before** test discovery runs. If the target is a type/config file, skip test discovery entirely.
 
-**DELETE_DEAD exception (overrides priorities 2-5 for the deleted units):** when the refactor DELETES a unit and zero production consumers are proven (symbol references + repo-wide import/re-export/dynamic/string-literal search per the Dependency Mapper), do NOT write or improve tests for the code being removed — the green pre-edit package baseline is the characterization lock. Record `prove.characterization = "dead:<pre-refactor sha7>:<N>u:<evidence>"` before editing. Tests whose sole subject is the deleted unit are deleted with it; tests-only consumers do not make dead code live.
+**DELETE_DEAD exception (overrides priorities 2-5 for the deleted units):** when the refactor DELETES a unit and zero production consumers are proven (symbol references + repo-wide import/re-export/dynamic/string-literal search per the Dependency Mapper), do NOT write or improve tests for the code being removed — the green pre-edit package baseline is the characterization lock. Record it before editing — `~/.zuvo/refactor-contract baseline --mode dead "<the green pre-edit
+package command>"`, then append the unit count and evidence with
+`~/.zuvo/refactor-contract set prove.characterization "<value>:<N>u:<evidence>"` if the deletion
+needs more than the measured result. Tests whose sole subject is the deleted unit are deleted with it; tests-only consumers do not make dead code live.
 
 **Why priority 3 outranks RUN_EXISTING (the failure this prevents):** a single test that passes Q7/Q11/Q13 can still exercise only one of N units being relocated. `RUN_EXISTING` would then go green while proving nothing about the other N−1 units — the refactor "verifies" against a test that never touches most of the moved code. Whenever `coverage_gap > 0`, you MUST write characterization tests for the uncovered units **before** touching production code. Build success, type-check, and static import resolution are NOT substitutes — they prove the code links, not that behavior is preserved. This gate is non-negotiable for SPLIT_FILE / GOD_CLASS / EXTRACT_CLASS, where moving unexercised units is the whole job.
 
@@ -593,7 +596,23 @@ Phase 2: test-edge-cases.md -- READ (WRITE_NEW, IMPROVE_TESTS, or CHARACTERIZE_G
 
 ### Test Mode Execution
 
-**RUN_EXISTING:** Run the existing test suite. Verify all tests pass. This establishes the behavioral baseline. If any test fails, investigate before proceeding -- the refactoring must not start from a broken state. Then record the lock: `prove.characterization = "existing:<test path>:green:<pre-refactor sha7>"` in the CONTRACT — the commit gate blocks on a missing/`not_run` value in every test mode.
+**RUN_EXISTING:** Run the existing suite through the contract, so the command is typed once and the
+lock is measured rather than asserted:
+
+```bash
+~/.zuvo/refactor-contract baseline --mode existing "<the command that runs the suite>"
+```
+
+It records the command, the parsed pass/fail counts and the pre-refactor SHA into
+`prove.characterization`, and exits non-zero if the suite is not green — the refactoring must not
+start from a broken state, and this is what makes that a fact rather than a claim. Later,
+`~/.zuvo/refactor-contract recheck` re-runs the SAME stored command and writes the before → after
+comparison into `prove.regression_red` itself, exiting 1 on drift.
+
+Why the command and not a hand-written value: the field used to hold whatever sentence the run typed
+into it, and the commit gate only checks that it is non-empty. Measured across 25 refactor sessions,
+this command is also the single most-repeated shell shape in the skill — 66 re-issues of its
+environment prefix alone. The MODE stays yours to choose; the result stops being yours to write.
 
 **CHARACTERIZE_GAP:** The existing test does not exercise every unit being moved (`coverage_gap > 0`). Close the gap BEFORE any production edit:
 1. For **each** uncovered unit in `uncovered_units`, write a characterization (pin-down) test that executes it with a representative input and asserts on real output — mount/render the component, or call the function, with a payload that reaches actual logic (not an empty-state/early-return path). Source representative inputs from existing fixtures, sample data, or recover them from git history (e.g. `git show <sha>:<path>`) when they were deleted; never invent shapes the code never sees.
