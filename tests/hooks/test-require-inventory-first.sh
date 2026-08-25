@@ -47,6 +47,16 @@ grep -q 'BEFORE the first' "$TMP/err" \
   && pass "the message says why the order matters, in one line" \
   || bad "message does not explain the ordering"
 
+# The printed command must RUN as printed. The first version assumed $ZUVO_BASE was exported; in a
+# container where it was not, the agent correctly refused to fake a manifest or disable the hook —
+# and then had nowhere to go. A block with an unusable instruction is a dead end, not a gate.
+grep -q 'zuvo-base' "$TMP/err" \
+  && pass "the command resolves the install root instead of assuming it is exported" \
+  || bad "the message hands over a command that only works if ZUVO_BASE is already set"
+grep -q 'not installed here' "$TMP/err" \
+  && pass "it says what to do when zuvo is not installed at all" \
+  || bad "no guidance for the case where the resolver itself is missing"
+
 # ── 2. negative space — each of these must pass through untouched ────────────
 # Extending a suite that already exists is not the moment the inventory is frozen. Blocking it is
 # what would make this a hook people disable.

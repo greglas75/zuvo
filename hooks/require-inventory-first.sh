@@ -122,12 +122,19 @@ for entry in os.listdir(contracts):
     if prod and stem and stem in os.path.basename(prod):
         bail()                  # the file under test is inventoried; the spec is part of that work
 
+# The command has to RUN as printed. The first version assumed $ZUVO_BASE was exported; in a
+# container where it was not, the agent correctly refused to fake a manifest or disable the hook,
+# and then had nowhere to go — a block with an unusable instruction is a dead end, not a gate.
+# `~/.zuvo/zuvo-base` exists precisely to resolve the install root deterministically.
 sys.stderr.write(
-    "zuvo policy: no frozen inventory covers %s, and the inventory is frozen BEFORE the first\n"
-    "test is written — an inventory written afterwards can only describe the tests that exist.\n"
-    "Generate it (one command), then write the suite:\n"
-    "  python3 \"$ZUVO_BASE/scripts/test-coverage-gate.py\" scaffold --production <file> \\\n"
+    "zuvo policy: no frozen inventory covers %s. The inventory is frozen BEFORE the first test is\n"
+    "written — one written afterwards can only describe the tests that already exist.\n"
+    "Generate it, then write the suite:\n"
+    "  ZUVO_BASE=\"${ZUVO_BASE:-$(~/.zuvo/zuvo-base)}\"\n"
+    "  python3 \"$ZUVO_BASE/scripts/test-coverage-gate.py\" scaffold --production <production file> \\\n"
     "    --out zuvo/contracts/<basename>.coverage.json --test-files %s --repo-root %s\n"
+    "If ~/.zuvo/zuvo-base is missing, zuvo is not installed here and this hook is stale — say so\n"
+    "rather than writing a manifest by hand.\n"
     % (spec_rel, spec_rel, root))
 sys.exit(BLOCK)
 PY
