@@ -106,12 +106,22 @@ if "verify-tests" in cmd:
 # the runner is reached through a path rather than through npx. Both are the normal shape of a
 # real invocation, not an edge case — a memory flag and a `cd` are what you write when the suite
 # is big enough to need tests in the first place.
+# The wildcard that used to sit here — `(?:\S+\s+)*?` — consumed ANY words before the runner name,
+# so `git commit -m "fix vitest run foo.spec.ts"` matched and, if that spec were tracked, the COMMIT
+# was blocked. A false block on an unrelated command is the most expensive thing this hook can do,
+# and prose mentioning a test runner is not rare in a repo whose subject is test runners.
+#
+# Only genuine wrappers may precede the runner, and each is named. Anything else means the runner
+# name is an argument or a quoted string, not the program being executed.
+WRAPPER = r"(?:timeout\s+[\d.]+[smh]?|nice(?:\s+-n\s*-?\d+)?|nohup|command|exec|" \
+          r"npx(?:\s+--yes)?|pnpm(?:\s+(?:exec|dlx|run))?|yarn(?:\s+run)?|bunx|bun\s+x|" \
+          r"npm(?:\s+(?:exec|run))?|node(?:\s+--[\w-]+(?:=\S+)?)*|python3?(?:\s+-m)?|uv\s+run|poetry\s+run)"
 RUNNER = re.compile(
     r"(?:^|[;&|\n]\s*)"                                   # start, a separator, OR a new line
-    r"(?:\S+\s+)*?"                                       # timeout 100 / env VAR=1 / node <flags>
+    r"(?:" + WRAPPER + r"\s+)*"                            # only NAMED wrappers, never arbitrary words
     r"(?:\S*/)?"                                          # ./node_modules/.bin/, /usr/local/bin/
-    r"(vitest|jest|pytest)(?:\.m?[cj]s)?\b"                # vitest, vitest.mjs, jest.js
-    r"|(?:^|[;&|\n]\s*)(?:\S+\s+)*?node\s+--test\b")
+    r"(vitest|jest|pytest)(?:\.m?[cj]s)?\b"
+    r"|(?:^|[;&|\n]\s*)(?:" + WRAPPER + r"\s+)*node\s+--test\b")
 # An agent that read this file learned the escape's name and typed it inline:
 #
 #   ZUVO_ALLOW_BARE_TESTS=1 npx vitest run <spec>
@@ -158,12 +168,22 @@ if not os.path.isdir(contracts):
 # `src/modules/...` exists under apps/api and does not exist under the workspace root, so resolving
 # against cwd alone finds nothing and the hook passes a command it was written to catch. In a
 # monorepo the `cd` is not optional — it is how you reach the package that owns the config.
+# `cd a && cd b` lands in a/b, so the targets ACCUMULATE. Resolving each against the original cwd
+# independently misses the directory the command actually runs in, and the spec then looks absent —
+# which passes a command this hook exists to catch.
 bases = [cwd, root]
+here = cwd
 for target in re.findall(r"(?:^|[;&|\n]\s*)cd\s+([^\s;&|]+)", cmd):
-    target = os.path.expanduser(target)
-    bases.append(target if os.path.isabs(target) else os.path.join(cwd, target))
+    target = os.path.expanduser(target.strip("'\""))
+    here = target if os.path.isabs(target) else os.path.normpath(os.path.join(here, target))
+    bases.append(here)
 
-tokens = re.findall(r"[\w./@~-]+", cmd)
+# Quoted arguments first, so a path with spaces survives; then bare words. Splitting on
+# whitespace alone turns `"src/My Tests/foo.spec.ts"` into two fragments that match nothing on
+# disk, and the command passes as naming no tracked spec.
+tokens = re.findall(r"'([^']*)'|\"([^\"]*)\"", cmd)
+tokens = [t for pair in tokens for t in pair if t]
+tokens += re.findall(r"[\w./@~-]+", cmd)
 named = set()
 for t in tokens:
     if not re.search(r"\.(spec|test)\.[cm]?[jt]sx?$|_test\.py$|test_[\w-]+\.py$", t):

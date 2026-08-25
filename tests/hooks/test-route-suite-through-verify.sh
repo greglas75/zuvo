@@ -212,6 +212,52 @@ grep -q 'verify-tests --manifest' "$TMP/err" \
   && pass "it still carries the exact command to run" \
   || bad "the required command is missing from the notice"
 
+# ── 4c. the runner name in PROSE is not an invocation ────────────────────────
+# Found by a cross-model review: the old pattern let any words precede the runner, so a commit
+# message mentioning a spec matched and the COMMIT was blocked. A false block on an unrelated
+# command is the most expensive thing this hook can do, and in a repo whose subject is test runners
+# such prose is not rare.
+write_manifest ""
+run_hook "git commit -m 'fix vitest run src/thing.spec.ts flakiness'"; rc=$?
+[ "$rc" -eq 0 ] && pass "a commit message naming a runner and a tracked spec is not blocked" \
+  || bad "blocked a git commit because its MESSAGE mentioned vitest (exit=$rc)"
+
+run_hook "echo 'to reproduce: npx vitest run src/thing.spec.ts'"; rc=$?
+[ "$rc" -eq 0 ] && pass "an echo describing the command is not the command" \
+  || bad "blocked an echo (exit=$rc)"
+
+# ── 4d. chained cd accumulates ───────────────────────────────────────────────
+# `cd a && cd b` lands in a/b. Resolving each target against the original cwd misses the directory
+# the command actually runs in, and the spec then looks absent — passing a command this exists for.
+mkdir -p "$R/deep/inner"
+printf 'it("deep", () => {});\n' > "$R/deep/inner/nested.spec.ts"
+python3 - "$R" <<'PY2'
+import json, os, sys
+root = sys.argv[1]
+json.dump({"schema": "zuvo-coverage-manifest/v1", "production_file": "src/thing.ts", "stack": "ts",
+           "test_files": ["deep/inner/nested.spec.ts"], "status": "final", "symbols": []},
+          open(os.path.join(root, "zuvo/contracts/nested.coverage.json"), "w"), indent=1)
+PY2
+run_hook "cd $R/deep && cd inner && npx vitest run nested.spec.ts"; rc=$?
+[ "$rc" -eq 2 ] && pass "chained cd targets accumulate" \
+  || bad "each cd was resolved against the original cwd, so the spec looked absent (exit=$rc)"
+rm -f "$R/zuvo/contracts/nested.coverage.json"
+
+# ── 4e. a quoted path with spaces survives tokenisation ──────────────────────
+mkdir -p "$R/My Tests"
+printf 'it("spaced", () => {});\n' > "$R/My Tests/spaced.spec.ts"
+python3 - "$R" <<'PY2'
+import json, os, sys
+root = sys.argv[1]
+json.dump({"schema": "zuvo-coverage-manifest/v1", "production_file": "src/thing.ts", "stack": "ts",
+           "test_files": ["My Tests/spaced.spec.ts"], "status": "final", "symbols": []},
+          open(os.path.join(root, "zuvo/contracts/spaced.coverage.json"), "w"), indent=1)
+PY2
+run_hook "npx vitest run \"My Tests/spaced.spec.ts\""; rc=$?
+[ "$rc" -eq 2 ] && pass "a quoted path containing a space is still matched" \
+  || bad "splitting on whitespace lost the path, so the run passed (exit=$rc)"
+rm -f "$R/zuvo/contracts/spaced.coverage.json"
+
 # ── 5. fail-open on anything it cannot understand ─────────────────────────────
 printf 'not json at all' > "$TMP/in.json"
 bash "$HOOK" < "$TMP/in.json" >/dev/null 2>&1; rc=$?

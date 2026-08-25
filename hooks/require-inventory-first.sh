@@ -71,6 +71,13 @@ SPEC = re.compile(r"\.(spec|test)\.[cm]?[jt]sx?$|_test\.py$|(^|/)test_[\w-]+\.py
 if not SPEC.search(path):
     bail()
 
+# Resolve a relative file_path against the AGENT's cwd BEFORE anything asks the filesystem about it.
+# The existence check below is what depends on this, and getting it wrong is the expensive
+# direction: os.path.exists() would look in the HOOK's own process directory, find nothing, conclude
+# the spec is new, and refuse an ordinary edit to a file that has existed for months.
+if not os.path.isabs(path):
+    path = os.path.join(payload.get("cwd") or os.getcwd(), path)
+
 # An EXISTING spec is being extended, not started. Adding a case to a suite you already have is not
 # the moment the inventory is supposed to be frozen, and blocking it would make this a hook people
 # turn off.
@@ -131,7 +138,12 @@ for entry in manifests:
            for t in declared):
         bail()                  # this spec is already inventoried
     prod = str(man.get("production_file") or "")
-    if prod and stem and stem in os.path.basename(prod):
+    # Match the production file's STEM, not a substring of its name. `"a" in "main.py"` is true, so
+    # a new `a_test.py` would be waved through by any manifest for any file containing an "a" —
+    # which is most of them.
+    prod_stem = os.path.splitext(os.path.basename(prod))[0] if prod else ""
+    if prod_stem and stem and (stem == prod_stem or stem.startswith(prod_stem + ".")
+                               or prod_stem.startswith(stem + ".")):
         bail()                  # the file under test is inventoried; the spec is part of that work
 
 # The command has to RUN as printed. The first version assumed $ZUVO_BASE was exported; in a

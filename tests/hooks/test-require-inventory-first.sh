@@ -133,6 +133,37 @@ run_hook Write "$R/src/unrelated-module.spec.ts"; rc=$?
 [ "$rc" -eq 2 ] && pass "a spec for an uninventoried file still blocks" \
   || bad "an uninventoried spec slipped through (exit=$rc)"
 
+# ── 3d. a RELATIVE file_path resolves against the AGENT's cwd ────────────────
+# Cross-model review finding, and the expensive kind: os.path.exists() on a relative path checks
+# the HOOK's process directory, not the agent's. An existing spec then looks new, no manifest covers
+# it, and an ordinary edit to a file that has existed for months is refused.
+python3 - Edit "src/existing.spec.ts" "$R" > "$TMP/in.json" <<'PY2'
+import json, sys
+json.dump({"tool_name": sys.argv[1], "tool_input": {"file_path": sys.argv[2]}, "cwd": sys.argv[3]},
+          sys.stdout)
+PY2
+bash "$HOOK" < "$TMP/in.json" >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] \
+  && pass "a relative path to an EXISTING spec is recognised as existing" \
+  || bad "a relative path was resolved against the hook's own directory (exit=$rc)"
+
+# ── 3e. the production stem is matched, not a substring of it ────────────────
+# `"a" in "main.py"` is true, so a new `a_test.py` was waved through by a manifest for ANY file
+# whose name contains an "a" — which is most of them.
+python3 - "$R" <<'PY2'
+import json, os, sys
+root = sys.argv[1]
+json.dump({"schema": "zuvo-coverage-manifest/v1", "production_file": "src/main.py",
+           "stack": "python", "test_files": ["tests/test_main.py"], "status": "final",
+           "symbols": []},
+          open(os.path.join(root, "zuvo/contracts/main.coverage.json"), "w"), indent=1)
+PY2
+run_hook Write "$R/src/a_test.py"; rc=$?
+[ "$rc" -eq 2 ] \
+  && pass "a one-letter stem does not match every manifest by substring" \
+  || bad "substring matching let an unrelated spec through (exit=$rc)"
+rm -f "$R/zuvo/contracts/main.coverage.json"
+
 # ── 4. escape and fail-open ──────────────────────────────────────────────────
 ZUVO_ALLOW_UNTRACKED_TESTS=1 run_hook Write "$R/src/escape.spec.ts"; rc=$?
 [ "$rc" -eq 0 ] && pass "the human escape hatch works" || bad "escape ignored (exit=$rc)"
