@@ -36,6 +36,12 @@ timeout = 60
 
 [[hooks]]
 event = "PreToolUse"
+matcher = "Write|Edit|MultiEdit"
+command = 'bash "$HOME/.kimi-code/hooks/require-inventory-first.sh"'
+timeout = 10
+
+[[hooks]]
+event = "PreToolUse"
 matcher = "Bash"
 command = 'bash "$HOME/.kimi-code/hooks/route-suite-through-verify.sh"'
 timeout = 10

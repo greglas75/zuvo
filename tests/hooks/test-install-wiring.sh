@@ -33,7 +33,7 @@ done
 # (2) install_hook_tree → full tree incl. lib/
 HK="$TMP/hooks"
 install_hook_tree "$HK" >/dev/null 2>&1
-for f in block-no-verify.sh route-suite-through-verify.sh zuvo-stop-pipeline-gate.sh pre-push-gate.sh pre-commit-adversarial-gate.sh lib/pipeline-gate-lib.sh; do
+for f in block-no-verify.sh route-suite-through-verify.sh require-inventory-first.sh zuvo-stop-pipeline-gate.sh pre-push-gate.sh pre-commit-adversarial-gate.sh lib/pipeline-gate-lib.sh; do
   [ -f "$HK/$f" ] && pass "(2) hook tree has $f" || bad "(2) hook tree missing $f"
 done
 [ -x "$HK/lib/pipeline-gate-lib.sh" ] && pass "(2) lib is executable" || bad "(2) lib not executable"

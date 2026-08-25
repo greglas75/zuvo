@@ -260,12 +260,61 @@ def render(c, path, root, note=None):
     print("=" * 78)
 
 
+def git_lines(root, *args, limit=None):
+    try:
+        out = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, timeout=20)
+        if out.returncode != 0:
+            return []
+        lines = [ln for ln in out.stdout.splitlines() if ln.strip()]
+        return lines[:limit] if limit else lines
+    except Exception:
+        return []
+
+
+def render_where(root):
+    """Answer "where am I and what changed" in ONE call.
+
+    Measured across 20 refactor sessions: over half of all git calls are read-only orientation —
+    388 `diff`, 364 `log`, 250 `status`, 246 `rev-parse`, against 180 commits. That is roughly 62
+    look-at-state calls per session, and each one carries 1-2 deliberation turns in front of it,
+    because the model decides what to ask before asking it.
+
+    The turns are the cost, not the git. Deliberation runs 1-2 turns before EVERY tool call — of
+    3,325 think-runs in those sessions, 3,250 are one or two turns long and only 75 are longer. So
+    there is no long pause to shorten; there are only calls to remove, and four calls answering one
+    question is the cheapest kind to remove.
+    """
+    branch = (git_lines(root, "rev-parse", "--abbrev-ref", "HEAD") or ["?"])[0]
+    head = (git_lines(root, "rev-parse", "--short=7", "HEAD") or ["?"])[0]
+    subject = (git_lines(root, "log", "-1", "--format=%s") or [""])[0]
+    dirty = git_lines(root, "status", "--porcelain")
+    stat = git_lines(root, "diff", "--shortstat", "HEAD")
+    ahead = git_lines(root, "log", "--oneline", "@{upstream}..HEAD") if git_lines(
+        root, "rev-parse", "--abbrev-ref", "@{upstream}") else []
+
+    print("  where: %s @ %s  %s" % (branch, head, subject[:44]))
+    if stat:
+        print("  uncommitted: %s" % stat[0].strip())
+    elif dirty:
+        print("  uncommitted: %d file(s), none tracked-modified" % len(dirty))
+    else:
+        print("  uncommitted: clean")
+    if ahead:
+        print("  unpushed: %d commit(s)" % len(ahead))
+    for ln in dirty[:8]:
+        print("     %s" % ln)
+    if len(dirty) > 8:
+        print("     ... %d more" % (len(dirty) - 8))
+
+
 def cmd_show(a, root, path):
     c = read_json(path)
     if c is None:
         print("refactor-contract: unreadable contract: %s" % path, file=sys.stderr)
         return 2
     render(c, path, root)
+    render_where(root)
+    print("=" * 78)
     return 0
 
 

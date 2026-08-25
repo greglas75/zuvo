@@ -784,7 +784,7 @@ fi
 # gate that zuvo:refactor Phase 0 self-installs into the repo. It must still ship, or that phase
 # reports "gate/install script not found" on every Codex run (false installer-missing telemetry,
 # and the Definition-of-Done bind silently absent).
-for hook_script in block-no-verify.sh route-suite-through-verify.sh pre-push-gate.sh pre-commit-adversarial-gate.sh refactor-safety-gate.sh session-start; do
+for hook_script in block-no-verify.sh route-suite-through-verify.sh require-inventory-first.sh pre-push-gate.sh pre-commit-adversarial-gate.sh refactor-safety-gate.sh session-start; do
   if [ -f "$PLUGIN_DIR/hooks/$hook_script" ]; then
     cat "$PLUGIN_DIR/hooks/$hook_script" \
       | replace_paths \
