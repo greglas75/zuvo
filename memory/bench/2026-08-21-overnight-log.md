@@ -1524,3 +1524,34 @@ point where the inventory is *supposed* to be frozen, not at the point where tes
 Attribution from the same sweep, which is what makes this readable rather than speculative: of the
 6 runs where the hook fired, **all 6 went on to measure**. Of the 3 where it never fired, 2 measured
 on their own and 1 — this one — did not.
+
+## Inventory ordering — the alarming reading did not survive its own follow-up
+
+The hook only sees a test command once a manifest declares the spec, so a run that freezes its
+inventory late never meets it. One run showed that (CASE-04 r2). Asking how common it is, across
+169 runs with either artefact:
+
+| ordering | runs |
+|---|---|
+| spec written first, manifest after | 99 (59%) |
+| spec written, manifest **never** | 51 (30%) |
+| manifest first — the protocol's order | 19 (11%) |
+
+Written down at that point, this reads as "89% of runs violate the skill's central rule", and the
+rule is load-bearing: the inventory is frozen BEFORE the first test so that it cannot be shaped by
+the tests that got written. A manifest describing tests that already exist proves nothing.
+
+**Then the follow-up measurement weakened it.** Of the 99, the manifest arrives a median of **3
+minutes** after the first spec — p75 four minutes, 84% inside five, **none beyond thirty**, in
+sessions whose median length is 279 minutes.
+
+That is not "write the suite, get it green, then describe it". It is near-simultaneous setup with
+the first spec file landing a few minutes early. The ordering IS violated, and at the margin rather
+than wholesale — worth fixing, not worth the alarm.
+
+**The number that survives is the other one: 30% of runs write tests and never produce an inventory
+at all.** No manifest means no gate, no receipt, no hook, and nothing downstream that reads the
+manifest. That is the population CASE-04 r2 belongs to, and it is the real ordering hole.
+
+Recorded with the retraction attached because the first framing was already written and sent before
+the second measurement existed.
