@@ -97,6 +97,20 @@ contracts = os.path.join(os.environ.get("ZUVO_OUTPUT_DIR") or os.path.join(root,
 if not os.path.isdir(contracts):
     bail()                      # zuvo is not in use in this repo — none of its business
 
+# A contracts DIRECTORY is not evidence that write-tests is in use here. It also holds
+# `refactor-<hash>.json`, and those are far more common: measured across the fleet, 1,033 refactor
+# contracts against 26 coverage manifests, with only 5 of 57 repos carrying a single manifest.
+# Keying on the directory alone would block every new test file in 52 repos that never adopted this
+# protocol — a wall, not a speed bump, and the same mistake as a gate that refuses 97% of real work.
+#
+# So the hook applies where the protocol is already in use, and stays silent where it is not. The
+# first manifest in a repo is written by `scaffold` before any spec exists, so adopting write-tests
+# still starts cleanly; what changes is that nobody is conscripted into it by a neighbouring skill's
+# artefacts.
+manifests = [e for e in os.listdir(contracts) if e.endswith(".coverage.json")]
+if not manifests:
+    bail()
+
 spec_rel = os.path.relpath(os.path.abspath(path), root)
 base = os.path.basename(path)
 # `foo.service.spec.ts` -> `foo.service`; `test_foo.py` -> `foo`
@@ -104,9 +118,7 @@ stem = re.split(r"\.(spec|test)\.", base)[0]
 stem = re.sub(r"_test$", "", os.path.splitext(stem)[0])
 stem = re.sub(r"^test_", "", stem)
 
-for entry in os.listdir(contracts):
-    if not entry.endswith(".coverage.json"):
-        continue
+for entry in manifests:
     try:
         with open(os.path.join(contracts, entry), encoding="utf-8") as fh:
             man = json.load(fh)

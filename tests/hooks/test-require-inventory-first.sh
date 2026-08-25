@@ -36,7 +36,19 @@ PY
   bash "$HOOK" < "$TMP/in.json" 2> "$TMP/err"
 }
 
-# ── 1. the measured case: a NEW spec, nothing inventoried ────────────────────
+# ── 1. the measured case: a NEW spec for a file nothing has inventoried ──────
+# The repo must already be USING write-tests for this to apply — a manifest for some other file is
+# what makes that true. See case 2b for why the directory alone is not enough, and note the honest
+# limit that follows: the very first spec in a repo that has never produced a manifest cannot be
+# distinguished from a repo that never adopted the protocol, so it passes.
+python3 - "$R" <<'PY2'
+import json, os, sys
+root = sys.argv[1]
+json.dump({"schema": "zuvo-coverage-manifest/v1", "production_file": "src/somewhere-else.ts",
+           "stack": "ts", "test_files": ["src/somewhere-else.spec.ts"], "status": "final",
+           "symbols": []},
+          open(os.path.join(root, "zuvo/contracts/somewhere-else.coverage.json"), "w"), indent=1)
+PY2
 run_hook Write "$R/src/thing.spec.ts"; rc=$?
 if [ "$rc" -eq 2 ] && grep -q 'scaffold' "$TMP/err"; then
   pass "a new spec with no inventory is blocked, and the message names the generator"
@@ -78,6 +90,24 @@ PY
 bash "$HOOK" < "$TMP/in.json" >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 0 ] && pass "a repo with no zuvo/contracts is never touched" \
   || bad "blocked in a repo that does not use zuvo (exit=$rc)"
+
+# ── 2b. a directory of refactor contracts is not adoption of THIS protocol ───
+# A contracts directory holding ONLY refactor contracts is not evidence that write-tests is in use.
+# Measured across the fleet: 1,033 refactor contracts against 26 coverage manifests, and only 5 of
+# 57 repos carry a single manifest. Keying on the directory alone would block every new test file in
+# 52 repos that never adopted this protocol — a wall, not a speed bump.
+mkdir -p "$TMP/refonly/.git" "$TMP/refonly/src" "$TMP/refonly/zuvo/contracts"
+printf '{"version":5,"stage":"COMPLETE","file":"src/x.ts"}\n' \
+  > "$TMP/refonly/zuvo/contracts/refactor-abc12345.json"
+python3 - Write "$TMP/refonly/src/new.spec.ts" "$TMP/refonly" > "$TMP/in.json" <<'PY2'
+import json, sys
+json.dump({"tool_name": sys.argv[1], "tool_input": {"file_path": sys.argv[2]}, "cwd": sys.argv[3]},
+          sys.stdout)
+PY2
+bash "$HOOK" < "$TMP/in.json" >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] \
+  && pass "a repo with only REFACTOR contracts is not conscripted into this protocol" \
+  || bad "blocked in a repo that never adopted write-tests (exit=$rc)"
 
 # ── 3. an inventoried spec passes, by either route ───────────────────────────
 python3 - "$R" <<'PY'
