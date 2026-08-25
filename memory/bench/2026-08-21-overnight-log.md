@@ -1555,3 +1555,35 @@ manifest. That is the population CASE-04 r2 belongs to, and it is the real order
 
 Recorded with the retraction attached because the first framing was already written and sent before
 the second measurement existed.
+
+---
+
+## v25 stopped: the weekly API limit, not a result (2026-08-25)
+
+CASE-04's v25 batch came back **81.2%, 2 RED suites, measured 0/3** against v24's 86.5% / 2-of-3 —
+three times faster and far worse, which reads as a regression the new hook caused.
+
+It is not a measurement. All three runs exited 1 at 911-951 seconds, and the agent log says why:
+
+```
+You've hit your weekly limit · resets 1am (UTC)
+```
+
+Four runs are affected — all three CASE-04 v25 reps and CASE-02 v25 r1. Their scorecards and run
+directories are deleted rather than kept with a caveat, because a number on the board gets read as
+a number. Nothing else in the corpus touched the limit; every earlier arm stands.
+
+Two things this cost, both avoidable:
+
+- **The uniformity was the tell and I nearly missed it.** 951 / 923 / 911 seconds with identical
+  exit codes is not three agents independently doing worse work; it is one external condition
+  stopping all three at the same point. The first thing I checked was whether I had broken the arm
+  — the arms were byte-identical to v24's. `tail agent.log` would have answered it in one command,
+  and it is the same lesson already written into `operating.md`: a failure that looks like your code
+  is an environment failure until the environment has been ruled out.
+- **The rig cannot distinguish a quota stop from a bad run.** A run killed by a limit harvests
+  whatever half-written suite exists and scores it, which is how "2 RED" appeared. Worth a guard:
+  a run whose agent log carries a quota or auth refusal should be verdicted `BLOCKED_QUOTA` and
+  excluded, the same way `PRODUCTION_MODIFIED` and `INSTRUMENT_LOSS` already are.
+
+The v25 hypothesis — that closing the 30% who write no manifest moves anything — remains untested.
