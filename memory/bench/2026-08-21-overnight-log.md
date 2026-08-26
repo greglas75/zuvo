@@ -1786,3 +1786,43 @@ already deleted the only way back for four runs. Their verdicts were rebuilt fro
 calls in the transcripts and labelled `reconstructed`, never from the agents' own summaries — one of
 those summaries described the split in accurate detail while the rig scored it as having done
 nothing, which is exactly why prose is not evidence in either direction.
+
+## Why refactor is not optimisable the way write-tests was
+
+The assignment was "optimise refactor the same way you did write-tests". The answer, measured, is
+that the same method does not apply, and the reason is worth more than another hook.
+
+**write-tests had a broken mechanism.** 30% of runs never produced the artefact every later layer
+keys on, and only 1 run in 9 reached the instrument at all. The routing hook took that to 8 in 9 —
+a fourfold change, far above any noise floor. That is what made it measurable, and measurable is
+what made it worth building.
+
+**Refactor has no equivalent hole.** Across 56 local sessions that actually edited production:
+
+| non-negotiable | held |
+|---|---|
+| ran the suite at all | **100%** (56/56) |
+| ran it BEFORE editing production | 98% |
+| recorded a contract | 98% |
+| committed | 100% |
+
+Its gates hold. Its cost is diffuse instead: `think` at 34% of wall-clock, and a shell bucket at 26%
+whose largest addressable piece — python heredocs doing single-file edits the Edit tool does in one
+call, 4,494 of 8,552 text-munging heredocs (53%) — works out to a few percent of total calls.
+
+**And a few percent is below the floor.** The rig measured the run-to-run spread inside a single arm
+at 3.9× on tool calls and 20× on git orientation. Every specific lever nameable in refactor is
+smaller than that, which means it cannot be validated, only asserted. Two things I built today were
+asserted that way; one of them (the inventory hook) was then falsified by its own benchmark.
+
+So the honest recommendation is to stop, and the rule generalises past this skill:
+
+> **Build against a mechanism that is measurably broken, not against a cost that is merely large.**
+> A 30%-of-runs failure is visible at n=3. A 5% saving is not visible at any n a person will pay for.
+
+What survives from the refactor work is real and stays: the contract helper (unmeasurable benefit,
+but it removes a class of hand-written state edits and a closed vocabulary is worth having on its
+own terms), the rig itself (which proved the skill genuinely performs the refactor — six-file split,
+public import path preserved, every moved body byte-identical, reviewer-confirmed, suite green
+before and after), and the cost breakdown, which is the thing that says where NOT to spend the next
+day.
