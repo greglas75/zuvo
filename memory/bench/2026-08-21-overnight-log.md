@@ -1587,3 +1587,47 @@ Two things this cost, both avoidable:
   excluded, the same way `PRODUCTION_MODIFIED` and `INSTRUMENT_LOSS` already are.
 
 The v25 hypothesis — that closing the 30% who write no manifest moves anything — remains untested.
+
+---
+
+## The inventory hook targets a population the previous fix had already removed
+
+v25 = v24 + `require-inventory-first`. On CASE-04, the case it was built for, it fired **zero times
+in all three runs** and `measured` stayed exactly where v24 put it:
+
+| CASE-04 | kill | measured | inventory hook |
+|---|---|---|---|
+| v21 | 86.0% | 0/3 | — |
+| v24 | 86.5% | 2/3 | — |
+| v25 | 83.6% | 2/3 | **0 firings** |
+
+The reason is not a defect in the hook. Grouping every run by arm and asking whether it ever created
+a coverage manifest:
+
+| arm | runs | made a manifest |
+|---|---|---|
+| v3 / v7 / v8 | 22 | 33-40% |
+| v19 / v21 | 29 | 64-73% |
+| **v23 / v24 / v25** | **18** | **100%** |
+
+**`scaffold` — added in v23 — closed the gap.** Since then every single run produces a manifest. The
+30% that motivated the hook was measured across ALL arms including every one that predates the
+generator, so the hook is aimed at a population that no longer exists, and its silence is correct
+behaviour rather than a bug.
+
+This is a negative result about my own work and it cost a full arm to get: **I built a hook for a
+problem the previous fix had already solved.** The mistake was in the measurement, not the code —
+`30% of runs write no manifest` was true of the corpus and false of the current skill, and nothing
+in how I computed it distinguished the two. A per-arm breakdown before building would have cost one
+command.
+
+What that leaves, stated for a decision rather than buried:
+
+- The hook has **no measured benefit**. Three runs on the case it was designed for, zero firings.
+- It carries real cost: it was the riskiest thing built in this session — two reviewers found eight
+  defects in it, six of them false blocks — and it is live in the user's repos that use write-tests.
+- Its remaining value is as a backstop for a run that skips the scaffold instruction. The benchmark
+  cannot show that, because the benchmark uses the skill correctly every time.
+
+Recommending warn-only or removal is a decision about someone else's repositories, so it is put to
+them rather than taken.
