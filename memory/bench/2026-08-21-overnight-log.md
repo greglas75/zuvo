@@ -1631,3 +1631,61 @@ What that leaves, stated for a decision rather than buried:
 
 Recommending warn-only or removal is a decision about someone else's repositories, so it is put to
 them rather than taken.
+
+## v25 across all three cases: never better, so the hook goes off by default
+
+The sweep finished. v25 is v24 plus `require-inventory-first` and nothing else:
+
+| case | v24 kill | v24 measured | v25 kill | v25 measured |
+|---|---|---|---|---|
+| CASE-01 | 90.9% | 3/3 | 90.9% | 2/3 |
+| CASE-02 | 75.2% | 3/3 | 74.8% | 2/3 |
+| CASE-04 | 86.5% | 2/3 | 83.6% | 2/3 |
+
+Never ahead on either axis, and on CASE-04 — the case it was designed for — it fired zero times in
+three runs. Together with the per-arm manifest breakdown (every arm since `scaffold` produces one
+100% of the time), that is a falsification of the thing I built, on the terms I set for it before
+running it.
+
+So it is now **off unless asked for**: `ZUVO_REQUIRE_INVENTORY=1`. Kept rather than deleted, because
+the mechanism is sound and the population it guards returns the moment `scaffold` stops being
+reached — but nothing measured says it earns sitting in front of every Write an agent makes,
+against a review record of eight defects, six of them false blocks.
+
+The test suite needed a change of its own to stay honest: with the hook disabled, every fail-open
+case asserts exit 0, which is exactly what a disabled hook returns for everything — the suite would
+have gone green while asserting nothing. It now exports the flag explicitly, and a new case 0 holds
+the default in place so a later edit flipping it back on is visible here rather than in somebody's
+blocked file write.
+
+## A refactor rig, because the contract helper was still unmeasured
+
+`refactor-contract` shipped calibrated against 761 real contracts but never measured on a live run.
+The rig is deliberately small: two cases, two arms, three repetitions.
+
+- **ref-base** = the plugin at `feb9b63`, the commit before the helper existed, when the skill told
+  the run to hand-edit the contract with a heredoc. **ref-ctr** = the plugin at HEAD. Each arm gets
+  the `~/.zuvo` its own commit shipped, so the baseline cannot be quietly handed a helper it never
+  had; the only difference between the two homes is the one file.
+- Two cases (`gabor-granger-segment.helpers.ts`, 695L; `survey-logic-audit.adapter.ts`, 576L),
+  different shapes, both with a suite that is green in the sandbox — verified by running it, not by
+  reading imports. Guessing that from imports is what wasted the first attempt: two of three picks
+  needed a prisma client the corpus does not carry, and it only shows at run time.
+- **Falsification, fixed before any result:** the helper claims to cut orientation calls and
+  repeated shell commands. If median `git_orientation` and `bash_repeats` are not lower for ref-ctr
+  on BOTH cases, the claim is unsupported.
+
+Three things the write-tests rig does that this one must not: `.git` stays (a refactor without a
+repository cannot record a baseline SHA, stack commits, or diff its own work), the existing spec
+stays (it is the characterization lock, and deleting it turns every run into a write-tests run), and
+the ceiling is generous (this counts CALLS, so a ceiling that truncates hands the comparison to
+whichever arm was cut off later).
+
+Two instrument bugs found by smoke-testing the plumbing before trusting a result:
+
+- `cp -a` preserves the corpus's uid, so git refused the tree it had just initialised with *dubious
+  ownership* — and `git init -q` meant the first visible error came two commands later as "not in a
+  git directory". The workspace is taken by root, committed, then handed to the agent.
+- The box sits at 95% disk and a workspace is a whole checkout, so each one is removed after its
+  results are harvested. Filling the disk mid-sweep would fail the REMAINING arms, not the one that
+  filled it.

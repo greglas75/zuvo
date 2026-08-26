@@ -31,9 +31,30 @@
 # What it cannot do, stated rather than implied: an agent that writes the spec through a shell
 # heredoc rather than the Write tool is not intercepted, and neither is one that creates the file
 # first and fills it later. This is a speed bump on the natural path, not a sandbox.
+#
+# OFF BY DEFAULT — and the reason is a measurement of this hook, not a hedge
+#
+# The 30% above was measured across every benchmark arm, including every one that predates the
+# `scaffold` generator. Broken down by arm, the picture reverses: the arms before `scaffold`
+# produced a manifest 33-73% of the time, and every arm since — 18 runs — produced one **100%** of
+# the time. The generator closed the gap, so this hook guards a case that no longer occurs.
+#
+# It was then measured directly. A benchmark arm carrying it (v25) ran three cases against the
+# identical arm without it (v24): 90.9 vs 90.9, 74.8 vs 75.2, 83.6 vs 86.5 — never better, and on
+# the case it was designed for it fired **zero times in three runs**. Against that, its cost is not
+# hypothetical: two reviewers found eight defects in it, six of which were false blocks on ordinary
+# edits, and it sits in front of every Write an agent makes.
+#
+# So it stays in the tree, tested and ready, and stays OFF unless someone asks for it:
+#
+#   export ZUVO_REQUIRE_INVENTORY=1
+#
+# Not deleted, because the mechanism is sound and the population it targets could come back the
+# moment `scaffold` stops being reached. Not on, because nothing measured says it earns the risk.
 
 set -uo pipefail
 
+[ "${ZUVO_REQUIRE_INVENTORY:-}" = "1" ] || exit 0
 [ "${ZUVO_ALLOW_UNTRACKED_TESTS:-}" = "1" ] && exit 0
 
 INPUT=$(cat 2>/dev/null || true)

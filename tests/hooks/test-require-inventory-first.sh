@@ -8,8 +8,15 @@
 # tested harder than the positive — an existing spec, a repo not using zuvo, a production file, an
 # already-inventoried spec, malformed input.
 #
+# The hook is OFF BY DEFAULT (measured inert — see its header), so every case below turns it ON
+# explicitly. Without that export the suite would still go green while asserting nothing: the
+# fail-open cases all expect exit 0, which is exactly what a disabled hook returns for everything.
+# Case 0 is the one that holds the default itself in place.
+#
 # bash 3.2-compatible (macOS default). Accumulate-and-report.
 set -uo pipefail
+
+export ZUVO_REQUIRE_INVENTORY=1
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 HOOK="$ROOT/hooks/require-inventory-first.sh"
@@ -35,6 +42,22 @@ json.dump({"tool_name": sys.argv[1], "tool_input": {"file_path": sys.argv[2]}, "
 PY
   bash "$HOOK" < "$TMP/in.json" 2> "$TMP/err"
 }
+
+# ── 0. OFF unless asked for ──────────────────────────────────────────────────
+# The default is the whole disposition of this hook: measured against an identical arm without it,
+# it never scored better on any of three cases and fired zero times on the case it was built for.
+# If a later edit flips the default back on, this is the assertion that says so — otherwise the
+# change is invisible until it blocks somebody's file write.
+python3 - "$R" > "$TMP/in0.json" <<'PY0'
+import json, os, sys
+r = sys.argv[1]
+json.dump({"tool_name": "Write",
+           "tool_input": {"file_path": os.path.join(r, "src", "brand-new.spec.ts")},
+           "cwd": r}, sys.stdout)
+PY0
+( unset ZUVO_REQUIRE_INVENTORY; bash "$HOOK" < "$TMP/in0.json" 2>/dev/null )
+[ "$?" = 0 ] && pass "with ZUVO_REQUIRE_INVENTORY unset the hook does not block" \
+  || bad "the hook blocked a write while nominally disabled"
 
 # ── 1. the measured case: a NEW spec for a file nothing has inventoried ──────
 # The repo must already be USING write-tests for this to apply — a manifest for some other file is
