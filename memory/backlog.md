@@ -1139,3 +1139,34 @@ run leaves behind) resumes as if valid.
 (a `validate --phase contract` mode), not in prose.
 **Recipe:** add a contract validator phase asserting the six sections plus the classification line
 are present, and make step 0's MATCH path require it to exit 0 before trusting the contract.
+
+## tooling debt surfaced by the poll-cost review (2026-08-26)
+
+### CQ40 — no lint job in CI, only a ratchet in the test suite
+
+**What:** `ruff` runs through `tests/hooks/test-python-lint.sh` against a hardcoded ratchet (46
+findings). There is no `.github/workflows` lint job; `ci/` holds only the pipeline-entry gate.
+
+**Why it is not urgent:** the ratchet works — it caught a `B904` that the poll-cost review had just
+introduced, at 47 vs 46, and the fix went in before the commit landed. What it cannot do is fail
+before the whole suite runs, and it cannot report which change raised the number without a diff.
+
+**Scope:** one workflow calling the same ruff invocation the test uses, so the two cannot drift.
+Repo-wide and pre-existing; scored CQ40=0 on all three files in that review for this one reason.
+
+**Defer-reason:** out-of-fence (CI configuration, not the reviewed diff).
+
+### 34 unused module-level symbols in scripts/zuvo-home/backlog-collect.py
+
+**What:** `audit_scan` CQ13 reports 34 exported-but-unreferenced symbols in that one file — `ROOTS`,
+`DATE_RE`, `ID_RE`, `SEV_RE`, `DONE_SECTION`, `OPEN_SECTION`, `TEMPLATE_RE`, `RESOLVED_MARKERS`,
+`is_resolved_inline`, `valid_date`, and 24 more.
+
+**Why it is here rather than in that review:** the file is outside the reviewed file set and the diff
+did not cause any of it. Scoring it against that change would have made the CQ number describe the
+repository instead of the change — the fence exists for exactly this.
+
+**Scope:** confirm each is genuinely unused (a module-level constant read only inside its own file is
+a false positive for "exported"), then delete or make private.
+
+**Defer-reason:** out-of-fence (pre-existing debt in an untouched file).

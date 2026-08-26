@@ -102,9 +102,28 @@ FINDING_HEADER_RE = re.compile(
     re.IGNORECASE,
 )
 
-# file:line citation. Accept .ts/.tsx/.js/.py/.php/.kt/.sql/.prisma/.json/.md/.yml etc.
+# file:line citation. Two shapes:
+#
+#   1. a path with a known source extension — the original list;
+#   2. a path with a directory separator and NO extension at all.
+#
+# The second exists because this repo deliberately ships EXTENSIONLESS helpers: every Python tool in
+# `scripts/zuvo-home/` carries a polyglot sh/python header instead of a `.py` name, because
+# `#!/usr/bin/env python3` does not resolve on Windows. The extension whitelist therefore made this
+# verifier unable to cite `scripts/zuvo-home/poll-cost:125` or `scripts/zuvo-home/append-runlog:82`
+# — a finding about one of those files could not be verified no matter how correct it was, and the
+# only ways past it were a fake citation to a neighbouring file or the audited override. Both are
+# worse than widening the pattern.
+#
+# This does not loosen the check: `verify_citation` still requires the path to EXIST, to be a file,
+# to sit inside the project root, and the line to be in range. A bare word cannot match (a `/` is
+# required) and a URL cannot (`://` is excluded), so the added shape either resolves to a real file
+# or is rejected exactly as before.
 FILE_LINE_RE = re.compile(
-    r"\b([\w./-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|php|kt|sql|prisma|json|md|yml|yaml|toml|sh|rb|go|rs|java|cs|swift|dart|scala))"
+    r"\b(?!\w+://)("
+    r"[\w./-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|php|kt|sql|prisma|json|md|yml|yaml|toml|sh|rb|go|rs|java|cs|swift|dart|scala)"
+    r"|[\w.-]+(?:/[\w.-]+)+"
+    r")"
     r":(\d+)(?:[-–](\d+))?\b"
 )
 
