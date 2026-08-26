@@ -71,12 +71,34 @@ SPEC = re.compile(r"\.(spec|test)\.[cm]?[jt]sx?$|_test\.py$|(^|/)test_[\w-]+\.py
 if not SPEC.search(path):
     bail()
 
-# Resolve a relative file_path against the AGENT's cwd BEFORE anything asks the filesystem about it.
-# The existence check below is what depends on this, and getting it wrong is the expensive
-# direction: os.path.exists() would look in the HOOK's own process directory, find nothing, conclude
-# the spec is new, and refuse an ordinary edit to a file that has existed for months.
+# Resolve a relative file_path BEFORE anything asks the filesystem about it, and try every base it
+# could plausibly be relative to. Getting this wrong is the expensive direction: the existence check
+# below would find nothing, conclude the spec is new, and refuse an ordinary edit to a file that has
+# existed for months.
+#
+# Three bases, because a second reviewer produced a false-block repro for each of the first two:
+# the payload's cwd (the usual case), the hook's own cwd as a last resort (and NOT as the silent
+# default — that is what made a missing `cwd` field block an edit), and the repo root, because a
+# path is often written relative to the repository rather than to the package the command runs in.
 if not os.path.isabs(path):
-    path = os.path.join(payload.get("cwd") or os.getcwd(), path)
+    _rel = path
+    _bases = [payload.get("cwd"), os.getcwd()]
+    _probe = os.path.abspath(os.path.join(payload.get("cwd") or os.getcwd(), _rel))
+    _d = os.path.dirname(_probe)
+    while True:                                   # add the enclosing repo root, if there is one
+        if os.path.isdir(os.path.join(_d, ".git")) or os.path.isfile(os.path.join(_d, ".git")):
+            _bases.append(_d)
+            break
+        _parent = os.path.dirname(_d)
+        if _parent == _d:
+            break
+        _d = _parent
+    for _b in _bases:
+        if _b and os.path.exists(os.path.join(_b, _rel)):
+            path = os.path.join(_b, _rel)
+            break
+    else:
+        path = os.path.join(payload.get("cwd") or os.getcwd(), _rel)
 
 # An EXISTING spec is being extended, not started. Adding a case to a suite you already have is not
 # the moment the inventory is supposed to be frozen, and blocking it would make this a hook people
@@ -156,10 +178,14 @@ sys.stderr.write(
     "Generate it, then write the suite:\n"
     "  ZUVO_BASE=\"${ZUVO_BASE:-$(~/.zuvo/zuvo-base)}\"\n"
     "  python3 \"$ZUVO_BASE/scripts/test-coverage-gate.py\" scaffold --production <production file> \\\n"
-    "    --out zuvo/contracts/<basename>.coverage.json --test-files %s --repo-root %s\n"
+    "    --out %s/<basename>.coverage.json --test-files %s --repo-root %s\n"
     "If ~/.zuvo/zuvo-base is missing, zuvo is not installed here and this hook is stale — say so\n"
     "rather than writing a manifest by hand.\n"
-    % (spec_rel, spec_rel, root))
+    # Print the directory this hook actually READ. With ZUVO_OUTPUT_DIR set, telling the agent to
+    # scaffold into the default `zuvo/contracts/` sends it somewhere the check never looks — it
+    # follows the instruction, the manifest lands elsewhere, and the write is refused again. An
+    # instruction that cannot satisfy the gate it came from is an infinite loop with a helpful tone.
+    % (spec_rel, os.path.relpath(contracts, root), spec_rel, root))
 sys.exit(BLOCK)
 PY
 rc=$?

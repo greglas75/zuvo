@@ -164,6 +164,52 @@ run_hook Write "$R/src/a_test.py"; rc=$?
   || bad "substring matching let an unrelated spec through (exit=$rc)"
 rm -f "$R/zuvo/contracts/main.coverage.json"
 
+# ── 3f. a MISSING cwd must not silently become the hook's own directory ──────
+# Second-reviewer finding. Falling back to os.getcwd() means a payload without `cwd` is resolved
+# against wherever the hook happens to run, so an existing spec looks absent and an ordinary edit is
+# refused.
+python3 - Edit "src/existing.spec.ts" > "$TMP/in.json" <<'PY2'
+import json, sys
+json.dump({"tool_name": sys.argv[1], "tool_input": {"file_path": sys.argv[2]}}, sys.stdout)
+PY2
+( cd "$R" && bash "$HOOK" < "$TMP/in.json" >/dev/null 2>&1 ); rc=$?
+[ "$rc" -eq 0 ] && pass "a payload with no cwd still finds an existing spec" \
+  || bad "a missing cwd was resolved against the hook's directory (exit=$rc)"
+
+# ── 3g. a repo-root-relative path from a package cwd ─────────────────────────
+# The command may run inside a package while the path is written relative to the repository. Only
+# trying the payload's cwd blocks an edit to a file that is plainly there.
+mkdir -p "$R/pkg2"
+python3 - Edit "src/existing.spec.ts" "$R/pkg2" > "$TMP/in.json" <<'PY2'
+import json, sys
+json.dump({"tool_name": sys.argv[1], "tool_input": {"file_path": sys.argv[2]}, "cwd": sys.argv[3]},
+          sys.stdout)
+PY2
+bash "$HOOK" < "$TMP/in.json" >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 0 ] && pass "a repo-root-relative path resolves from a package cwd" \
+  || bad "only the payload cwd was tried, so an existing spec looked absent (exit=$rc)"
+
+# ── 3h. the message names the directory the hook actually READ ───────────────
+# With ZUVO_OUTPUT_DIR set, telling the agent to scaffold into the default zuvo/contracts/ sends it
+# somewhere this check never looks: it follows the instruction, the manifest lands elsewhere, and
+# the write is refused again. An instruction that cannot satisfy the gate it came from is an
+# infinite loop with a helpful tone.
+mkdir -p "$R/custom-out/contracts"
+cp "$R/zuvo/contracts/somewhere-else.coverage.json" "$R/custom-out/contracts/" 2>/dev/null
+python3 - Write "$R/src/fresh-one.spec.ts" "$R" > "$TMP/in.json" <<'PY2'
+import json, sys
+json.dump({"tool_name": sys.argv[1], "tool_input": {"file_path": sys.argv[2]}, "cwd": sys.argv[3]},
+          sys.stdout)
+PY2
+ZUVO_OUTPUT_DIR="$R/custom-out" bash "$HOOK" < "$TMP/in.json" 2> "$TMP/err"; rc=$?
+if [ "$rc" -eq 2 ]; then
+  grep -q 'custom-out/contracts' "$TMP/err" \
+    && pass "the message points at the directory the hook read, not the default" \
+    || bad "the message sends the agent to a path the check never looks at: $(grep -o -- '--out [^ ]*' "$TMP/err")"
+else
+  bad "the custom output dir was not honoured at all (exit=$rc)"
+fi
+
 # ── 4. escape and fail-open ──────────────────────────────────────────────────
 ZUVO_ALLOW_UNTRACKED_TESTS=1 run_hook Write "$R/src/escape.spec.ts"; rc=$?
 [ "$rc" -eq 0 ] && pass "the human escape hatch works" || bad "escape ignored (exit=$rc)"
