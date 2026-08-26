@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""poll-cost — what waiting costs, per skill, in Claude Code and Codex.
+
+WHY THIS EXISTS
+
+A poll is a full model round-trip: it re-sends the whole conversation to learn one bit. Measured
+across the 20 largest local Codex sessions, 99% of all `wait` calls happened inside a zuvo skill,
+and `zuvo:refactor` alone accounted for 68% of them. Each carried ~108K tokens of context to
+receive a median of 18 tokens back.
+
+`shared/includes/env-compat.md` now tells runs not to enter the poll loop at all — block, or size
+the first call's window to the job. That guidance is only worth having if its effect is visible, so
+this counts the thing it is supposed to move.
+
+USAGE
+
+    poll-cost                    # everything on this machine
+    poll-cost --since 2026-08-26 # only sessions started on/after a date
+    poll-cost --by-skill         # attribute to the skill that was running
+
+Run it once before changing anything and record the output. Comparing an all-time figure against a
+post-change one makes a no-op look like a win, which is why --since exists.
+
+WHAT COUNTS AS A POLL
+
+Only tool calls. A run that SAYS it is waiting has not made a request; a run that calls `wait`,
+`BashOutput`, or `sleep N; check` has. Blocking waits and event-driven mechanisms are counted
+separately because they are the desired outcome, not a lesser evil:
+
+    poll     — wait / wait_agent / BashOutput / TaskOutput / `sleep N; <check>`
+    blocking — `until`/`while` + sleep, rt --wait, gh run watch, docker wait
+    event    — Monitor, Bash(run_in_background) — the harness re-invokes on exit
+"""
+import argparse
+import glob
+import json
+import os
+import re
+import statistics
+import sys
+from collections import Counter, defaultdict
+
+SLEEP_THEN = re.compile(r"\bsleep\s+\d+\s*(?:;|&&|\n)")
+BLOCKLOOP = re.compile(r"\b(?:until|while)\b[^\n]{0,80}\bdo\b[^\n]{0,120}sleep"
+                       r"|\brt\b[^\n]{0,40}--wait|gh run watch|docker wait")
+CODEX_ENTER = re.compile(r"\.codex/skills/([a-z0-9-]+)/SKILL\.md")
+STAMP = re.compile(r"(\d{4}-\d{2}-\d{2})T\d{2}-\d{2}-\d{2}")
+
+
+def after(path, since):
+    if not since:
+        return True
+    m = STAMP.search(os.path.basename(path))
+    if m:
+        return m.group(1) >= since
+    try:
+        import datetime
+        return datetime.date.fromtimestamp(os.path.getmtime(path)).isoformat() >= since
+    except Exception:
+        return True
+
+
+def scan_claude(since):
+    """Claude Code: skills are entered through the Skill tool, so attribution is exact."""
+    stats = defaultdict(Counter)
+    root = os.path.expanduser("~/.claude/projects")
+    for dirpath, _dirs, files in os.walk(root):
+        for fn in files:
+            if not fn.endswith(".jsonl"):
+                continue
+            path = os.path.join(dirpath, fn)
+            if not after(path, since):
+                continue
+            try:
+                blob = open(path, errors="replace").read()
+            except Exception:
+                continue
+            if '"tool_use"' not in blob:
+                continue
+            cur = "(no skill)"
+            for line in blob.splitlines():
+                if '"tool_use"' not in line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                for it in ((rec.get("message") or {}).get("content") or []):
+                    if not (isinstance(it, dict) and it.get("type") == "tool_use"):
+                        continue
+                    name = str(it.get("name") or "")
+                    inp = it.get("input") or {}
+                    if name == "Skill":
+                        cur = str(inp.get("skill") or cur)
+                    elif name in ("BashOutput", "TaskOutput"):
+                        stats[cur]["poll"] += 1
+                    elif name == "Monitor":
+                        stats[cur]["event"] += 1
+                    elif name == "Bash":
+                        cmd = str(inp.get("command") or "")
+                        if inp.get("run_in_background"):
+                            stats[cur]["event"] += 1
+                        elif BLOCKLOOP.search(cmd):
+                            stats[cur]["blocking"] += 1
+                        elif SLEEP_THEN.search(cmd):
+                            stats[cur]["poll"] += 1
+    return stats
+
+
+def scan_codex(since):
+    """Codex has no Skill tool: a skill is entered by READING its SKILL.md, so that is the event.
+
+    Matching `zuvo[:/]<word>` anywhere in a call does NOT work — it matches the helper path
+    `~/.zuvo/append-retro` and the output directory `zuvo/contracts`, inventing skills that do not
+    exist. A path is not an invocation.
+    """
+    stats = defaultdict(Counter)
+    ctx = []
+    for path in glob.glob(os.path.expanduser("~/.codex/sessions/*/*/*/*.jsonl")):
+        if not after(path, since):
+            continue
+        cur = "(no skill)"
+        reqs = 0
+        total_in = 0
+        try:
+            fh = open(path, errors="replace")
+        except Exception:
+            continue
+        with fh:
+            for line in fh:
+                if "SKILL.md" not in line and '"wait' not in line and "token" not in line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                p = rec.get("payload") or {}
+                kind = str(p.get("type") or "")
+                if kind in ("function_call", "custom_tool_call", "local_shell_call",
+                            "custom_tool_call_output"):
+                    m = CODEX_ENTER.search(json.dumps(p))
+                    if m:
+                        cur = "zuvo:" + m.group(1)
+                    if str(p.get("name") or "").startswith("wait"):
+                        stats[cur]["poll"] += 1
+                info = p.get("info") if isinstance(p.get("info"), dict) else p
+                usage = info.get("total_token_usage") if isinstance(info, dict) else None
+                if isinstance(usage, dict) and usage.get("input_tokens"):
+                    reqs += 1
+                    total_in = max(total_in, usage["input_tokens"])
+        if reqs >= 20 and total_in:
+            ctx.append(total_in / reqs)
+    return stats, (statistics.median(ctx) if ctx else 0)
+
+
+def report(title, stats, ctx=0):
+    total = Counter()
+    for c in stats.values():
+        total.update(c)
+    if not total:
+        print(f"\n=== {title}: nothing recorded")
+        return
+    print(f"\n=== {title}")
+    print("%-30s %8s %9s %7s" % ("skill", "polls", "blocking", "event"))
+    for skill, c in sorted(stats.items(), key=lambda kv: -kv[1]["poll"])[:15]:
+        if sum(c.values()) == 0:
+            continue
+        print("%-30s %8d %9d %7d" % (skill[:30], c["poll"], c["blocking"], c["event"]))
+    print("%-30s %8d %9d %7d" % ("TOTAL", total["poll"], total["blocking"], total["event"]))
+    if ctx and total["poll"]:
+        print("  median context per request: %s tokens" % f"{ctx:,.0f}")
+        print("  carried by polls:           %s tokens" % f"{total['poll'] * ctx:,.0f}")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--since", help="YYYY-MM-DD; only sessions started on/after this date")
+    ap.add_argument("--by-skill", action="store_true",
+                    help="kept for symmetry; attribution is always by skill")
+    args = ap.parse_args()
+
+    if os.path.isdir(os.path.expanduser("~/.claude/projects")):
+        report("Claude Code", scan_claude(args.since))
+    if os.path.isdir(os.path.expanduser("~/.codex/sessions")):
+        st, ctx = scan_codex(args.since)
+        report("Codex", st, ctx)
+    print("\nblocking and event columns are the GOAL, not a lesser evil: a blocking wait costs one")
+    print("round-trip however long the job runs. See shared/includes/env-compat.md.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

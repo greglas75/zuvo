@@ -187,6 +187,34 @@ rule lives here rather than in a platform block. Measured again 2026-08-11 on a 
 `zuvo:write-tests` run: **131 of 280 tool calls were polls** of a reviewer/test process at a
 ~10 s cadence — roughly half the run's tool budget spent asking "is it done yet?".
 
+**First, do not enter the poll loop at all.** The cadence table below is the second-best answer;
+it only applies once you are already polling, and measurement says that is where the cost actually
+comes from. Across the 20 largest local Codex sessions, refactor alone opened **3,949 poll chains**
+whose median length is **one** poll — these are not long vigils, they are a first call that handed
+back control before the command finished, once per command. And `exec_command` was given an explicit
+`timeout_ms` in **0 of 443 calls**, so every one of them fell back to a 10-second default.
+
+Two moves, in this order, before any cadence question arises:
+
+1. **Let the command block, and pay one round-trip.** The shell waits for free; you are billed per
+   request, not per second. A blocking call costs ONE round-trip whether the job takes 20 seconds or
+   nine hours: `rt --wait <runid>`, `gh run watch --exit-status`, `docker wait`,
+   `until [ -f done.flag ]; do sleep 30; done && cat result`. Prefer this whenever the command has a
+   blocking form — measured usage across those same sessions: one `gh run watch`, zero `rt --wait`.
+2. **Size the FIRST call's window to the job**, so it returns a result instead of a handle:
+
+   | Harness | Parameter | Default | Set it to |
+   |---------|-----------|---------|-----------|
+   | Codex `exec` | first-line pragma `// @exec: {"yield_time_ms": N}` | 10,000 ms | the expected duration, up to 300,000 |
+   | Codex `exec_command` | `timeout_ms` | 10,000 ms | the expected duration |
+   | Codex `wait` (empty poll) | `yield_time_ms` | — | 300,000 — the documented ceiling for an empty poll; **30,000 is the cap for a *different* case named in the same sentence, and anchoring on it costs a 10× multiple** |
+   | Codex `wait_agent` | `timeout_ms` | — | **60,000 minimum**, typically 120,000. Never 1,000-10,000: at ~108K context per request, polling a 20-minute agent every second spends ~130M tokens to hear "not yet" 1,199 times; the same wait at 120,000 costs ~1.1M. Being on the critical path justifies a shorter interval, not one three orders of magnitude below the useful range |
+   | Claude Code `Bash` | `timeout` | 120,000 ms | up to 600,000 for a known-slow suite |
+   | Claude Code | `run_in_background: true` | — | re-invokes you on exit — no poll at all |
+   | Claude Code | `Monitor` | — | one call, events pushed as they happen |
+
+Only when neither applies does the cadence below govern.
+
 Poll on the process's timescale, not on impatience:
 
 | Process class | First check after | Then every |
