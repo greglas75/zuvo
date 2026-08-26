@@ -614,6 +614,16 @@ into it, and the commit gate only checks that it is non-empty. Measured across 2
 this command is also the single most-repeated shell shape in the skill — 66 re-issues of its
 environment prefix alone. The MODE stays yours to choose; the result stops being yours to write.
 
+**It is also how you avoid the poll loop, which is the larger cost.** `baseline` and `recheck` run
+the suite inside the helper (`run_suite(..., timeout=1800)`), so they block until it finishes and
+hand back a parsed result: **one tool call**. Running the same suite yourself hands control back
+after the harness's default window — 10 seconds on Codex `exec` — and every command that outlives it
+costs an extra round-trip carrying your whole context. Measured across all local Codex sessions,
+this skill opened **5,669 poll calls, 49% of every poll zuvo makes**, with zero blocking waits
+anywhere; the median chain is one poll per command, which is exactly the shape a first call that
+returned too early leaves behind. `~/.zuvo/poll-cost` counts it, and `env-compat.md` carries the
+general rule for suites this helper does not run.
+
 **CHARACTERIZE_GAP:** The existing test does not exercise every unit being moved (`coverage_gap > 0`). Close the gap BEFORE any production edit:
 1. For **each** uncovered unit in `uncovered_units`, write a characterization (pin-down) test that executes it with a representative input and asserts on real output — mount/render the component, or call the function, with a payload that reaches actual logic (not an empty-state/early-return path). Source representative inputs from existing fixtures, sample data, or recover them from git history (e.g. `git show <sha>:<path>`) when they were deleted; never invent shapes the code never sees.
    - The bar is "fails loudly if behavior changes," not full Q1-Q25. A smoke test that mounts the unit and asserts `does not throw` + a stable output snapshot is the minimum; prefer a value assertion where the unit returns something checkable.
