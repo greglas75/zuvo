@@ -1826,3 +1826,49 @@ own terms), the rig itself (which proved the skill genuinely performs the refact
 public import path preserved, every moved body byte-identical, reviewer-confirmed, suite green
 before and after), and the cost breakdown, which is the thing that says where NOT to spend the next
 day.
+
+## The token gap between zuvo and a bare model was mostly my own harness
+
+Chasing "can the session be trimmed", the bill itemises cleanly: fresh input is under 3% everywhere,
+sub-agents are 0-23%, and the whole cost is `cache_read` — the cached context re-read on every
+request. So cost ≈ context size × requests, and nothing else is a lever.
+
+Measured preamble (context at the FIRST request, before the run does anything): 38,014 tokens for a
+bare model, **133,291 for every zuvo arm** — constant to within 5 tokens across 25 arms. Paid on all
+~170 requests of a run, that is over a quarter of the bill, and unlike every refactor lever it has
+essentially zero variance.
+
+Then subtraction, one piece removed at a time, same trivial prompt:
+
+| config | preamble |
+|---|---|
+| bare | 32,186 |
+| full | 127,527 |
+| minus agent .md files | 127,527 — **no change** |
+| minus `shared/` | 127,527 — **no change** |
+| **minus `rules/`** | **41,097 — −86,430** |
+| skills only | 41,097 |
+
+**And that 86,430 is my rig's, not zuvo's.** `install.sh` copies rules into the plugin CACHE dir;
+the benchmark harness copies them into `~/.claude/rules/`, which Claude Code auto-loads into the
+system prompt of every request. No real install does this. Verified on this machine: `~/.claude/rules`
+holds five files, all the user's own, none from zuvo.
+
+Two consequences, and the first is a retraction:
+
+- **Every token figure in this log's arm tables is inflated.** zuvo arms carried ~86K per request
+  that a real user never pays. The real zuvo preamble overhead is the skill listing (8,911 tokens
+  for 57 skills) plus the router hook (~6,200) — call it **15K, not 95K**. Any claim that zuvo costs
+  ~17× a bare model is an artefact of the harness; the comparison needs re-running with the rules
+  copy removed before it means anything. Kill-score comparisons are unaffected — they never used
+  tokens.
+- **The mechanism is real even though the number was not.** Anything in `~/.claude/rules/` costs its
+  full size on every request of every session. On this machine that is `CLAUDE.md` plus five rule
+  files: **17,164 tokens, always, everywhere** — about 2.9M cache-read tokens per long run. That is
+  the user's own configuration and their call, but it was invisible until measured.
+
+The one duplication that IS zuvo's: Claude Code builds a 57-skill routing listing from SKILL.md
+frontmatter (8,911 tokens) and the SessionStart hook injects zuvo's own router naming the same 57
+skills (~6,200). Both are routing tables, both are paid on every request, and 56 of 57 names appear
+in both. Shortening frontmatter descriptions is not the same as the rule-slimming that regressed
+quality 9→5/10 — a description is read only to choose a skill, never to execute one.
