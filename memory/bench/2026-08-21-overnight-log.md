@@ -1872,3 +1872,52 @@ frontmatter (8,911 tokens) and the SessionStart hook injects zuvo's own router n
 skills (~6,200). Both are routing tables, both are paid on every request, and 56 of 57 names appear
 in both. Shortening frontmatter descriptions is not the same as the rule-slimming that regressed
 quality 9→5/10 — a description is read only to choose a skill, never to execute one.
+
+## Codex: the bill is polling, not the preamble
+
+Asked whether trimming what a session loads would move the token counter, the Claude Code answer was
+"the big number was my own harness". Codex is where the number is real, and it is not the preamble.
+
+Across the 64 most recent local Codex sessions:
+
+| | |
+|---|---|
+| total input tokens | **7,141,546,871** |
+| served from cache | 6,985,609,685 (98%) |
+| median context per request | 107,679 |
+| **attributable to `wait` polling** | **960,337,493 (13%)** |
+| largest single session | 796,360,645 input over 5,764 requests |
+
+`wait` / `wait_agent` is a full request carrying the whole ~108K context and contributing nothing to
+the conversation — it asks whether something finished. One session issued **1,073** of them. That is
+the one cost here that is both large and unambiguously removable: the same answer is available for
+fewer requests at a longer interval.
+
+Two corrections I had to make to my own arithmetic getting here, both worth keeping:
+
+- `total_token_usage` in a Codex rollout is **cumulative**, not per-request. Reading the final record
+  as one request's context produced a "median context" of 391 million, which is absurd on its face —
+  it is the whole session's input. Per-request context is that total divided by the request count.
+- The markers for zuvo's rule files appear throughout a rollout, which is NOT evidence they are in
+  the preamble; a session that READ those files leaves the same trace. Checked the wiring instead:
+  `install.sh` does copy them to `~/.codex/rules/`, but the Codex build rewrites skill references to
+  that absolute path, so they are loaded on demand. `~/.codex/AGENTS.md` does not import them. Same
+  class of mistake as trusting `DEPENDENCIES_VALIDATED` over `ldd`, which is already in the rules.
+
+Contrast with Claude Code, where `~/.claude/rules/*.md` IS auto-loaded into every request: this
+machine carries 17,164 tokens of the user's own CLAUDE.md and rules on every request of every
+session. zuvo contributes none of it — the plugin's rules live in the cache dir.
+
+So the ranked answer to "can trimming reduce the counter":
+
+1. **Poll less.** 960M tokens across 64 sessions, no information lost. Large, measurable, safe.
+2. **The user's own always-on context** — 17,164 tokens × every request, in Claude Code. Their call,
+   but it was invisible until measured.
+3. **The duplicated routing table** — Claude Code builds a 57-skill listing from frontmatter (8,911
+   tokens) while zuvo's SessionStart hook injects a router naming the same 57 skills (~6,200). Worth
+   ~6K per request. Shortening frontmatter descriptions is safe in a way that slimming rules was not:
+   a description is read to CHOOSE a skill, never to execute one.
+4. **Dropping the listing mid-session is not available**, and not only for cache reasons: measured
+   across 240 local sessions that invoked a skill, only 38% used exactly one, and **62% chose a
+   second skill after work had already begun** (`worktree → refactor → test-audit`, 24 sessions;
+   `worktree → refactor → review`, 20). The routing table is what those later decisions read.
