@@ -1689,3 +1689,47 @@ Two instrument bugs found by smoke-testing the plumbing before trusting a result
 - The box sits at 95% disk and a workspace is a whole checkout, so each one is removed after its
   results are harvested. Filling the disk mid-sweep would fail the REMAINING arms, not the one that
   filled it.
+
+## What the rig can possibly show — computed before it reports, not after
+
+`bash-other` is the second-largest bucket in a refactor session (26% of wall-clock median) and it is
+named for what it is not, so nothing aimed at it could be aimed accurately. Naming it, across every
+local session that invoked the skill:
+
+| shape | calls | share of bash-other |
+|---|---|---|
+| `python3` heredoc | 7,158 | 14% |
+| `echo "=== …"` labels | 6,843 | 13% |
+| scratchpad writes | 2,348 | 5% |
+| `python3 -c` | 1,031 | 2% |
+
+Then, inside the largest shape — 9,787 python heredocs — what they actually touch:
+
+| touches | calls | % |
+|---|---|---|
+| **contract state** (all `refactor-contract` can replace) | **366** | **4%** |
+| coverage manifest | 20 | 0% |
+| other zuvo artifact | 661 | 7% |
+| json read/patch | 1,253 | 13% |
+| **text munging — python used as sed** | **5,797** | **59%** |
+| uncategorised | 1,690 | 17% |
+
+**So the honest ceiling on the helper is small.** Contract edits are 4% of the biggest shape, which
+is 14% of a bucket that is 26% of wall-clock — about 0.15% on that path. Its other claim, folding
+the git orientation dance from four calls into one, works on a 5.8% bucket of which somewhat over
+half is read-only. Low single-digit percent is the best case, and saying so now is the whole point:
+the inventory hook was built against a number I had not broken down, and the breakdown was what
+killed it.
+
+**The finding that is NOT about the helper is the bigger one.** 59% of those heredocs are text
+munging — agents writing throwaway python to edit files rather than editing them. 5,797 calls. That
+is the actual cost centre inside the largest shape, and nothing built today touches it. It is also
+not obviously waste: a mechanical multi-site move is genuinely easier to express as a script than as
+a series of edits. Whether it is waste is the next thing worth measuring, and it is a question about
+the shape of the work rather than about the contract.
+
+Attribution caveat, inherited from the parent script and worth repeating because it cuts against the
+numbers above: these are Bash calls in SESSIONS that invoked refactor, not calls made while refactor
+was running. 37% carry no `/Users/greglas/DEV/...` path at all and 9% are this repo — my own
+benchmark work in sessions that also touched the skill. The shape ranking survives that; the
+absolute counts do not.
