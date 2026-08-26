@@ -58,12 +58,40 @@ fi
 # Substituted in awk with the value passed as a variable, never through sed: the value IS a
 # pipe-separated list, so `sed "s|marker|$value|"` breaks on the first `|` inside it. Caught by
 # the test rather than in the wild, which is the only reason this note is short.
+#
+# ONE tracker or nothing. `hooks/track-includes.sh` writes `/tmp/zuvo-includes-<session_id>.txt`,
+# nothing ever removes them, and this helper does not know its own session id — so a bare glob
+# matches every session that ever ran on this machine. Two reviewers found the same thing
+# independently, and it was reproducible on the spot: two stale trackers from two different
+# sessions sitting in /tmp right now, either of which a finishing skill would have silently folded
+# into its own runs.log row. runs.log is append-only telemetry: a wrong row cannot be corrected
+# later and cannot be told apart from a right one.
+#
+# So ambiguity resolves to `-` (no data) rather than to a guess. `-` is honest and already the
+# value for "no includes recorded"; a merged row is neither. `ZUVO_INCLUDES_FILE` lets a caller
+# that DOES know its session name the file exactly.
 if printf '%s' "$RUN_LINE" | grep -q '	AUTO	'; then
-  _inc=$(sort -t: -k1,1 -u /tmp/zuvo-includes-*.txt 2>/dev/null | paste -sd'|' -)
+  if [ -n "${ZUVO_INCLUDES_FILE:-}" ] && [ -f "${ZUVO_INCLUDES_FILE}" ]; then
+    _inc=$(sort -t: -k1,1 -u "$ZUVO_INCLUDES_FILE" 2>/dev/null | paste -sd'|' -)
+  else
+    # The counting happens in a SUBSHELL. `set --` rewrites the script's own positional
+    # parameters, and `$1` is this helper's Run line (read at the top). It happens to be safe
+    # today because that read is already done — which is exactly the kind of ordering assumption
+    # that breaks silently the first time someone adds a `$2`.
+    _inc=$(
+      set -- /tmp/zuvo-includes-*.txt
+      if [ "$#" -eq 1 ] && [ -f "$1" ]; then
+        sort -t: -k1,1 -u "$1" 2>/dev/null | paste -sd'|' -
+      elif [ "$#" -gt 1 ]; then
+        printf 'append-runlog: %s include trackers in /tmp — cannot tell which belongs to this run; INCLUDES left as `-`. Set ZUVO_INCLUDES_FILE to disambiguate.\n' "$#" >&2
+      fi
+    )
+  fi
   [ -n "$_inc" ] || _inc="-"
   RUN_LINE=$(printf '%s' "$RUN_LINE" | awk -F'	' -v inc="$_inc" 'BEGIN{OFS="	"}
       { if (NF >= 12 && $12 == "AUTO") $12 = inc; print }')
 fi
+# END AUTO-EXPANSION
 
 RUN_LINE="${RUN_LINE#Run: }"
 RUN_LINE="${RUN_LINE#-e }"

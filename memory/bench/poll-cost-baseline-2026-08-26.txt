@@ -2,19 +2,28 @@
 #
 # Re-run with:  ~/.zuvo/poll-cost --since 2026-08-27
 # Comparing a post-change figure against this all-time one would flatter a no-op, which is
-# why --since exists. The number to move is the Codex 'polls' column: every wait there is a
-# poll — blocking and event are literally zero — and they carry 1.63 billion tokens.
-
+# why --since exists. The number to move is the Codex 'polls' column.
+#
+# CORRECTED 2026-08-27, after review. The first capture of this file reported Codex as
+# '0 blocking, 0 event' — which described the SCANNER, not Codex: scan_codex classified
+# only `wait` and had no path that could ever produce those columns. Two reviewers caught
+# it independently. With the classifier fixed the number is 1 blocking in 11,690 calls, so
+# the conclusion survives — but it is now a measurement rather than a blind spot, and the
+# earlier figure should not be quoted.
+#
+# Attribution caveat: a call is credited to the last skill ENTERED before it. Neither
+# harness emits a skill-completion event, so per-skill counts read as 'since that skill
+# started' and overstate a skill that ran early in a long session.
 
 === Claude Code
 skill                             polls  blocking   event
-zuvo:review                        2614       311    2657
-(no skill)                         2276       223    2294
-artifact-design                     443        68     320
-zuvo:execute                        222       111     613
+zuvo:review                        2631       318    2668
+(no skill)                         2318       231    2301
+artifact-design                     445        68     320
+zuvo:execute                        226       111     613
 zuvo:plan                           175        27     224
 zuvo:ship                           104        83     211
-zuvo:build                           88        21      60
+zuvo:build                           88        22      60
 zuvo:mutation-test                   40         1      79
 zuvo:refactor                        39        17      83
 claude-in-chrome                     36        16      17
@@ -23,71 +32,31 @@ zuvo:infra-audit                     32         3       4
 audit-tests                          30         1      23
 zuvo:worktree                        21         1      63
 zuvo:brainstorm                      21        14      45
-TOTAL                              6273       908    6949
+TOTAL                              6340       926    6967
 
 === Codex
 skill                             polls  blocking   event
-zuvo:refactor                      5669         0       0
+zuvo:refactor                      5706         1       0
 zuvo:execute                       1448         0       0
-zuvo:review                         979         0       0
+zuvo:review                         985         0       0
+zuvo:worktree                       490         0       0
 zuvo:backlog                        485         0       0
-zuvo:worktree                       482         0       0
-(no skill)                          437         0       0
-zuvo:mutation-test                  361         0       0
-zuvo:ship                           304         0       0
+(no skill)                          438         0       0
+zuvo:mutation-test                  396         0       0
+zuvo:ship                           305         0       0
 zuvo:plan                           285         0       0
 zuvo:debug                          225         0       0
 zuvo:fix-tests                      182         0       0
-zuvo:test-audit                     154         0       0
+zuvo:test-audit                     166         0       0
 zuvo:build                          153         0       0
+zuvo:using-zuvo                      85         0       0
 zuvo:code-audit                      85         0       0
-zuvo:using-zuvo                      83         0       0
-TOTAL                             11580         0       0
-  median context per request: 140,964 tokens
-  carried by polls:           1,632,357,819 tokens
-
-blocking and event columns are the GOAL, not a lesser evil: a blocking wait costs one
-round-trip however long the job runs. See shared/includes/env-compat.md.
-
-=== Claude Code
-skill                             polls  blocking   event
-zuvo:review                        2615       311    2658
-(no skill)                         2276       223    2294
-artifact-design                     443        68     320
-zuvo:execute                        222       111     613
-zuvo:plan                           175        27     224
-zuvo:ship                           104        83     211
-zuvo:build                           88        21      60
-zuvo:mutation-test                   40         1      79
-zuvo:refactor                        39        17      83
-claude-in-chrome                     36        16      17
-zuvo:test-audit                      35         5      39
-zuvo:infra-audit                     32         3       4
-audit-tests                          30         1      23
-zuvo:worktree                        21         1      63
-zuvo:brainstorm                      21        14      45
-TOTAL                              6274       908    6950
-
-=== Codex
-skill                             polls  blocking   event
-zuvo:refactor                      5670         0       0
-zuvo:execute                       1448         0       0
-zuvo:review                         979         0       0
-zuvo:backlog                        485         0       0
-zuvo:worktree                       482         0       0
-(no skill)                          437         0       0
-zuvo:mutation-test                  362         0       0
-zuvo:ship                           304         0       0
-zuvo:plan                           285         0       0
-zuvo:debug                          225         0       0
-zuvo:fix-tests                      182         0       0
-zuvo:test-audit                     154         0       0
-zuvo:build                          153         0       0
-zuvo:code-audit                      85         0       0
-zuvo:using-zuvo                      83         0       0
-TOTAL                             11583         0       0
+TOTAL                             11690         1       0
   median context per request: 140,755 tokens
-  carried by polls:           1,630,362,439 tokens
+  carried by polls:           1,645,423,199 tokens
 
 blocking and event columns are the GOAL, not a lesser evil: a blocking wait costs one
 round-trip however long the job runs. See shared/includes/env-compat.md.
+Attribution: a call is credited to the last skill ENTERED before it. Neither harness
+emits a skill-completion event, so per-skill counts read as "since that skill started",
+not as a bounded run — they overstate a skill that ran early in a long session.

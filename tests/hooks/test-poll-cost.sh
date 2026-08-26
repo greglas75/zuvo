@@ -69,11 +69,45 @@ echo "$out2" | grep -qE "zuvo:(append-retro|contracts)" \
   && bad "a helper path was reported as a skill — the invented-skill bug is back" \
   || pass "a helper path is not mistaken for a skill invocation"
 
+# ── Codex: a blocking command must be COUNTED, not invisible ─────────────────
+# The first version classified only `wait`, so the blocking and event columns were structurally
+# zero for Codex — and a baseline was published saying "in Codex every wait is a poll", which
+# described the scanner, not Codex. Zero has to be a measurement before it can be a finding.
+cx2="$TMP/.codex/sessions/2026/08/26/rollout-2026-08-26T11-00-00-y.jsonl"
+{
+  printf '%s\n' '{"payload":{"type":"custom_tool_call","name":"exec","arguments":"{\"cmd\":\"until [ -f done ]; do sleep 30; done\"}"}}'
+  printf '%s\n' '{"payload":{"type":"custom_tool_call","name":"exec","arguments":"{\"cmd\":\"rt --wait 12345\"}"}}'
+} > "$cx2"
+out4="$(python3 "$BIN" 2>&1)"
+cxline=$(echo "$out4" | awk '/^=== Codex/{f=1} f&&/^TOTAL/{print; exit}')
+set -- $cxline
+[ "${3:-0}" -ge 2 ] 2>/dev/null \
+  && pass "Codex blocking commands are counted as blocking, not silently dropped" \
+  || bad "Codex blocking column was '${3:-}' with 2 blocking commands present: $cxline"
+
 # ── --since must actually exclude ────────────────────────────────────────────
 out3="$(python3 "$BIN" --since 2299-01-01 2>&1)"
 echo "$out3" | grep -q "nothing recorded" \
   && pass "--since excludes sessions older than the cutoff" \
   || bad "--since did not filter: $(echo "$out3" | head -4)"
+
+# ── --since dates a session by ITS OWN timestamp, not the file's mtime ───────
+# A session left open across the cutoff has an mtime weeks after it began; dating it that way
+# files its whole pre-change history into the "after" bucket — corrupting the one comparison this
+# tool exists to produce. Verified on real data: a transcript starting 2026-07-28 with an mtime of
+# 2026-08-24, 27 days out.
+old_sess="$TMP/.claude/projects/probe/old.jsonl"
+printf '%s\n' '{"type":"user","timestamp":"2020-01-01T00:00:00.000Z","message":{"role":"user","content":"x"}}' > "$old_sess"
+printf '%s\n' '{"message":{"content":[{"type":"tool_use","name":"BashOutput","input":{}}]}}' >> "$old_sess"
+touch "$old_sess"                       # mtime = now, session start = 2020
+out5="$(python3 "$BIN" --since 2026-01-01 2>&1)"
+echo "$out5" | grep -q "probe\|BashOutput" && true
+before=$(echo "$out5" | awk '/^=== Claude Code/{f=1} f&&/^TOTAL/{print $2; exit}')
+rm -f "$old_sess"
+after_removed=$(python3 "$BIN" --since 2026-01-01 2>&1 | awk '/^=== Claude Code/{f=1} f&&/^TOTAL/{print $2; exit}')
+[ "${before:-0}" = "${after_removed:-0}" ] \
+  && pass "a freshly-touched session that STARTED before the cutoff is excluded" \
+  || bad "mtime leaked a pre-cutoff session into the filtered run ($before vs $after_removed)"
 
 export HOME="$HOME_ORIG"
 echo

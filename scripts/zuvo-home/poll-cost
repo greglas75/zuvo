@@ -47,24 +47,58 @@ import statistics
 import sys
 from collections import Counter, defaultdict
 
-SLEEP_THEN = re.compile(r"\bsleep\s+\d+\s*(?:;|&&|\n)")
-BLOCKLOOP = re.compile(r"\b(?:until|while)\b[^\n]{0,80}\bdo\b[^\n]{0,120}sleep"
-                       r"|\brt\b[^\n]{0,40}--wait|gh run watch|docker wait")
+# `sleep 30` is not the only spelling. Real commands use decimals (`sleep 0.5`), unit suffixes
+# (`sleep 2m`) and variables (`sleep $i`), and counting only bare integers understates the very
+# habit this tool exists to measure.
+_SLEEP_ARG = r"(?:\d+(?:\.\d+)?[smhd]?|\$\{?\w+\}?)"
+SLEEP_THEN = re.compile(r"\bsleep\s+" + _SLEEP_ARG + r"\s*(?:;|&&|\n)")
+BLOCKLOOP = re.compile(r"\b(?:until|while)\b[^\n]{0,80}\bdo\b[^\n]{0,160}sleep"
+                       r"|\brt\b[^\n]{0,40}--wait|gh run watch|docker wait|docker logs -f"
+                       r"|\bwait\s+\$?\w*\s*$")
 CODEX_ENTER = re.compile(r"\.codex/skills/([a-z0-9-]+)/SKILL\.md")
 STAMP = re.compile(r"(\d{4}-\d{2}-\d{2})T\d{2}-\d{2}-\d{2}")
+ISO_TS = re.compile(r'"timestamp"\s*:\s*"(\d{4}-\d{2}-\d{2})T')
+
+
+def session_start(path):
+    """When the session STARTED, as an ISO date, or "" if it cannot be determined.
+
+    `mtime` is the file's LAST WRITE, and these are append-only logs that stay open: a session
+    resumed across the cutoff date has an mtime weeks after it began. Filtering on that files its
+    ENTIRE history — potentially weeks of pre-change activity — into the "after" bucket, which
+    corrupts exactly the before/after comparison this tool exists to produce. Verified on this
+    machine: a transcript whose first record is 2026-07-28 has an mtime of 2026-08-24, 27 days out.
+
+    So the order is: the timestamp the session itself recorded, then the one in its filename, and
+    `mtime` only as a last resort — reported, not silently assumed.
+    """
+    try:
+        with open(path, errors="replace") as fh:
+            for line in fh:                       # first few records; not the whole file
+                m = ISO_TS.search(line)
+                if m:
+                    return m.group(1)
+                if fh.tell() > 65536:
+                    break
+    except Exception:
+        pass
+    m = STAMP.search(os.path.basename(path))
+    if m:
+        return m.group(1)
+    try:
+        import datetime
+        return datetime.date.fromtimestamp(os.path.getmtime(path)).isoformat()
+    except Exception:
+        return ""
 
 
 def after(path, since):
     if not since:
         return True
-    m = STAMP.search(os.path.basename(path))
-    if m:
-        return m.group(1) >= since
-    try:
-        import datetime
-        return datetime.date.fromtimestamp(os.path.getmtime(path)).isoformat() >= since
-    except Exception:
-        return True
+    start = session_start(path)
+    # A session whose start cannot be read is EXCLUDED from a filtered run, not included. The
+    # filter exists to answer "what happened after the change"; an unknown answer is not a yes.
+    return bool(start) and start >= since
 
 
 def scan_claude(since):
@@ -78,39 +112,50 @@ def scan_claude(since):
             path = os.path.join(dirpath, fn)
             if not after(path, since):
                 continue
+            cur = "(no skill)"
+            # STREAM. `open(path).read()` on a session transcript builds the whole file as one
+            # string and then a list of every line: these reach 120 MB here, and the peak is
+            # several times that. Flagged CRITICAL, and the fix costs nothing — the per-line
+            # `"tool_use"` test below was already doing the real filtering.
             try:
-                blob = open(path, errors="replace").read()
+                fh = open(path, errors="replace")
             except Exception:
                 continue
-            if '"tool_use"' not in blob:
-                continue
-            cur = "(no skill)"
-            for line in blob.splitlines():
-                if '"tool_use"' not in line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except Exception:
-                    continue
-                for it in ((rec.get("message") or {}).get("content") or []):
-                    if not (isinstance(it, dict) and it.get("type") == "tool_use"):
+            with fh:
+                for line in fh:
+                    if '"tool_use"' not in line:
                         continue
-                    name = str(it.get("name") or "")
-                    inp = it.get("input") or {}
-                    if name == "Skill":
-                        cur = str(inp.get("skill") or cur)
-                    elif name in ("BashOutput", "TaskOutput"):
-                        stats[cur]["poll"] += 1
-                    elif name == "Monitor":
-                        stats[cur]["event"] += 1
-                    elif name == "Bash":
-                        cmd = str(inp.get("command") or "")
-                        if inp.get("run_in_background"):
-                            stats[cur]["event"] += 1
-                        elif BLOCKLOOP.search(cmd):
-                            stats[cur]["blocking"] += 1
-                        elif SLEEP_THEN.search(cmd):
+                    try:
+                        rec = json.loads(line)
+                    except Exception:
+                        continue
+                    msg = rec.get("message")
+                    if not isinstance(msg, dict):
+                        continue
+                    content = msg.get("content")
+                    for it in (content if isinstance(content, list) else []):
+                        if not (isinstance(it, dict) and it.get("type") == "tool_use"):
+                            continue
+                        name = str(it.get("name") or "")
+                        inp = it.get("input")
+                        # A malformed record must not crash a scan of thousands of files: an
+                        # `input` that is a string or null would raise AttributeError on .get().
+                        if not isinstance(inp, dict):
+                            inp = {}
+                        if name == "Skill":
+                            cur = str(inp.get("skill") or cur)
+                        elif name in ("BashOutput", "TaskOutput"):
                             stats[cur]["poll"] += 1
+                        elif name == "Monitor":
+                            stats[cur]["event"] += 1
+                        elif name == "Bash":
+                            cmd = str(inp.get("command") or "")
+                            if inp.get("run_in_background"):
+                                stats[cur]["event"] += 1
+                            elif BLOCKLOOP.search(cmd):
+                                stats[cur]["blocking"] += 1
+                            elif SLEEP_THEN.search(cmd):
+                                stats[cur]["poll"] += 1
     return stats
 
 
@@ -120,6 +165,16 @@ def scan_codex(since):
     Matching `zuvo[:/]<word>` anywhere in a call does NOT work — it matches the helper path
     `~/.zuvo/append-retro` and the output directory `zuvo/contracts`, inventing skills that do not
     exist. A path is not an invocation.
+
+    Blocking commands are classified here too, by the SAME regex the Claude side uses. The first
+    version counted only `wait`, so its blocking and event columns were structurally zero — and a
+    baseline was then published reading "in Codex every wait is a poll", which was a statement about
+    the scanner rather than about Codex. Zero has to be a measurement before it can be a finding.
+
+    Attribution caveat, stated in the output as well: a skill is credited from the moment its
+    SKILL.md is read until the next one is read. Codex emits no skill-completion event, so calls
+    made after a skill finished still carry its name. Treat per-skill counts as "since the last
+    skill was entered", not as a bounded run.
     """
     stats = defaultdict(Counter)
     ctx = []
@@ -135,7 +190,14 @@ def scan_codex(since):
             continue
         with fh:
             for line in fh:
-                if "SKILL.md" not in line and '"wait' not in line and "token" not in line:
+                # The prefilter must admit every line the classifier can act on. The first
+                # version let through only SKILL.md / wait / token lines, so a blocking command
+                # could never reach the code that recognises it — the counter and the filter
+                # disagreed, and the filter won silently.
+                if ("SKILL.md" not in line and '"wait' not in line and "token" not in line
+                        and "sleep" not in line and "until" not in line and "while" not in line
+                        and "--wait" not in line and "run watch" not in line
+                        and "docker wait" not in line):
                     continue
                 try:
                     rec = json.loads(line)
@@ -145,11 +207,23 @@ def scan_codex(since):
                 kind = str(p.get("type") or "")
                 if kind in ("function_call", "custom_tool_call", "local_shell_call",
                             "custom_tool_call_output"):
-                    m = CODEX_ENTER.search(json.dumps(p))
+                    blob = json.dumps(p)
+                    m = CODEX_ENTER.search(blob)
                     if m:
                         cur = "zuvo:" + m.group(1)
-                    if str(p.get("name") or "").startswith("wait"):
+                    name = str(p.get("name") or "")
+                    if name.startswith("wait"):
                         stats[cur]["poll"] += 1
+                    elif kind != "custom_tool_call_output":
+                        # The command text, so a shell that does its own waiting is credited as
+                        # blocking instead of vanishing from the table.
+                        args = p.get("arguments")
+                        if not isinstance(args, str):
+                            args = json.dumps(args) if args is not None else ""
+                        if BLOCKLOOP.search(args):
+                            stats[cur]["blocking"] += 1
+                        elif SLEEP_THEN.search(args):
+                            stats[cur]["poll"] += 1
                 info = p.get("info") if isinstance(p.get("info"), dict) else p
                 usage = info.get("total_token_usage") if isinstance(info, dict) else None
                 if isinstance(usage, dict) and usage.get("input_tokens"):
@@ -193,6 +267,9 @@ def main():
         report("Codex", st, ctx)
     print("\nblocking and event columns are the GOAL, not a lesser evil: a blocking wait costs one")
     print("round-trip however long the job runs. See shared/includes/env-compat.md.")
+    print("Attribution: a call is credited to the last skill ENTERED before it. Neither harness")
+    print("emits a skill-completion event, so per-skill counts read as \"since that skill started\",")
+    print("not as a bounded run — they overstate a skill that ran early in a long session.")
     return 0
 
 
