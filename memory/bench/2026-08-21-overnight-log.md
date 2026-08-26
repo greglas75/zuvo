@@ -1733,3 +1733,56 @@ numbers above: these are Bash calls in SESSIONS that invoked refactor, not calls
 was running. 37% carry no `/Users/greglas/DEV/...` path at all and 9% are this repo — my own
 benchmark work in sessions that also touched the skill. The shape ranking survives that; the
 absolute counts do not.
+
+## The refactor rig answers a different question than the one it was built for
+
+Eight completed runs in, the falsification condition I fixed beforehand is met — in the wrong
+direction. `git_orientation`, the metric `render_where` exists to reduce, is HIGHER for the arm with
+the helper on both cases so far (RCASE-01 median 14 vs 9; RCASE-02 19 vs 8), and `bash_repeats` is
+at or near zero in both arms, so there was nothing there to save.
+
+But reading that as a result would be the same error in a new suit, because the spread INSIDE one
+arm swamps it:
+
+| RCASE-01 / ref-base | median | min | max | spread |
+|---|---|---|---|---|
+| git_orientation | 9 | 1 | 20 | **20×** |
+| tool_calls | 152 | 40 | 155 | 3.9× |
+| turns | 38 | 12 | 43 | 3.6× |
+| wall_seconds | 1639 | 911 | 1763 | 1.9× |
+
+One baseline run split the file in 12 turns and 40 tool calls; another took 43 turns and 152. The
+helper's computed ceiling is low single-digit percent. **A few percent cannot be resolved against a
+20× spread at n=3, and no affordable number of repetitions closes that gap** — the noise is a
+property of how agents work, not of the instrument. So the honest statement about `refactor-contract`
+is that its benefit is *unmeasurable at this scale*: not absent, not demonstrated.
+
+Two things follow, and the second is the useful one.
+
+**The rig is not wasted, but it is re-scoped.** It can rule out a large regression, and it did
+something more valuable by accident: it proved the runs are real. Every arm actually performed the
+refactor — one split a 695-line module into six files, kept the public import path, verified each
+moved body byte-identical against `git show`, and had an independent reviewer confirm equivalence,
+with the suite green before and after. That is the skill working, measured rather than claimed.
+
+**The target was wrong, and the earlier breakdown said so before the sweep did.** Contract edits are
+4% of the largest cost shape. Text munging — python written as a throwaway sed — is 59%, and it is
+the one bucket where an effect could exceed the noise floor. Anything built next should be aimed
+there, and should be sized against the 20× spread before a rig is built for it, not after.
+
+### The harvest bug, because it is the same bug twice in one script
+
+Every run reported `NO_CHANGE`, including the six-file split described above. `git` ran as root
+against a workspace owned by the agent, was refused for dubious ownership, answered "Not a git
+repository" into a `2>/dev/null`, and left an empty diff that the accounting read as "changed
+nothing". The identical trap had broken `git init` at the other end of the same script two hours
+earlier and I fixed it there without looking for the second instance.
+
+Three changes, in order of how much they were worth: every harvest git call now carries
+`-c safe.directory`; stderr goes to `harvest.err` and a non-empty one records a `harvest_failed`
+phase, because an empty diff is *both* a real outcome and a failed read and the file cannot tell
+them apart; and the workspace is kept whenever the harvest could not read it, since the cleanup had
+already deleted the only way back for four runs. Their verdicts were rebuilt from Write/Edit tool
+calls in the transcripts and labelled `reconstructed`, never from the agents' own summaries — one of
+those summaries described the split in accurate detail while the rig scored it as having done
+nothing, which is exactly why prose is not evidence in either direction.
