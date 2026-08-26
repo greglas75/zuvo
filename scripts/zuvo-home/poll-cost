@@ -253,17 +253,44 @@ def report(title, stats, ctx=0):
         print("  carried by polls:           %s tokens" % f"{total['poll'] * ctx:,.0f}")
 
 
+DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def parse_since(value):
+    """Validate --since, or refuse. A typo must not be able to look like a result.
+
+    Every comparison here is a lexicographic compare against an ISO date, so `--since banana` does
+    not raise: `"2026-08-26" >= "banana"` is simply False and the tool prints an empty report as
+    though nothing had happened since the cutoff. On a tool whose entire job is to show whether a
+    change helped, silently returning "nothing" is the failure mode most likely to be believed.
+    """
+    if value is None:
+        return None
+    v = value.strip()[:10]
+    if not DATE_ONLY.match(v):
+        raise SystemExit("poll-cost: --since must be YYYY-MM-DD (got %r)" % value)
+    try:
+        import datetime
+        datetime.date.fromisoformat(v)          # rejects 2026-13-45
+    except Exception:
+        # `from None`: the ValueError from fromisoformat is noise here — the user typed a bad date
+        # and the message above already says so; chaining it buries that under a traceback.
+        raise SystemExit("poll-cost: --since is not a real date (got %r)" % value) from None
+    return v
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--since", help="YYYY-MM-DD; only sessions started on/after this date")
     ap.add_argument("--by-skill", action="store_true",
                     help="kept for symmetry; attribution is always by skill")
     args = ap.parse_args()
+    since = parse_since(args.since)
 
     if os.path.isdir(os.path.expanduser("~/.claude/projects")):
-        report("Claude Code", scan_claude(args.since))
+        report("Claude Code", scan_claude(since))
     if os.path.isdir(os.path.expanduser("~/.codex/sessions")):
-        st, ctx = scan_codex(args.since)
+        st, ctx = scan_codex(since)
         report("Codex", st, ctx)
     print("\nblocking and event columns are the GOAL, not a lesser evil: a blocking wait costs one")
     print("round-trip however long the job runs. See shared/includes/env-compat.md.")

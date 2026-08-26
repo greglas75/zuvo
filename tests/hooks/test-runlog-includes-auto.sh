@@ -55,17 +55,20 @@ run_block() {   # run_block  → echoes field 12; stderr captured in $TMP/err
   } > "$TMP/probe.sh"
   # Guard the substitution itself: if the glob in append-runlog is ever renamed, the sed above
   # silently no-ops and every case below would run against the REAL /tmp, quietly reading other
-  # sessions' files and reporting a pass. Assert the rewrite landed before trusting any result.
-  if ! grep -q "$TRACKDIR" "$TMP/probe.sh"; then
-    bad "the tracker path was not substituted — the block's glob must have been renamed"
-    return 1
-  fi
+  # sessions' files and reporting a pass.
+  #
+  # The guard RETURNS non-zero; it does not call `bad` itself. Every caller runs this function
+  # inside `$( )`, which is a subshell — a `fail=1` set in there dies with it, so the guard would
+  # have been unable to fail the suite. That is the same shape as the defects this suite exists to
+  # catch, which is why it is spelled out rather than quietly fixed.
+  grep -q "$TRACKDIR" "$TMP/probe.sh" || return 3
   bash "$TMP/probe.sh" 2> "$TMP/err"     # stderr kept, not discarded
 }
 
 # ── 1. one tracker: AUTO expands, duplicates collapse BY NAME ────────────────
 printf 'cq-patterns:27396\nenv-compat:1538\ncq-patterns:27400\n' > "$TRACKDIR/zuvo-includes-one.txt"
-got=$(run_block)
+got=$(run_block); rc=$?
+[ "$rc" = 3 ] && bad "the tracker path was not substituted — append-runlog's glob must have been renamed"
 case "$got" in
   *cq-patterns*env-compat*|*env-compat*cq-patterns*)
     n=$(printf '%s' "$got" | tr '|' '\n' | grep -c '^cq-patterns:')
@@ -91,7 +94,8 @@ fields=$( { printf 'RUN_LINE=$(printf "%%s" %s)\n' "'$LINE'"
 # ── 4. TWO trackers: refuse to guess ─────────────────────────────────────────
 # The whole point. Before this, a second session's file was silently merged into this row.
 printf 'other-session:999\n' > "$TRACKDIR/zuvo-includes-two.txt"
-got=$(run_block)
+got=$(run_block); rc=$?
+[ "$rc" = 3 ] && bad "substitution guard tripped in the two-tracker case"
 [ "$got" = "-" ] \
   && pass "two trackers → '-' rather than a silent merge of another session's includes" \
   || bad "field 12 became '$got' with two trackers present — the merge bug is back"
@@ -103,16 +107,33 @@ grep -q "cannot tell which belongs to this run" "$TMP/err" \
 # The escape for a caller that DOES know its session — and it must work while the glob is ambiguous,
 # which is the only situation where it matters.
 printf 'explicit:42\n' > "$TMP/explicit.txt"
-got=$(ZUVO_INCLUDES_FILE="$TMP/explicit.txt" run_block)
+got=$(ZUVO_INCLUDES_FILE="$TMP/explicit.txt" run_block); rc=$?
+[ "$rc" = 3 ] && bad "substitution guard tripped in the explicit-file case"
 [ "$got" = "explicit:42" ] \
   && pass "ZUVO_INCLUDES_FILE is used verbatim even when the glob is ambiguous" \
   || bad "explicit tracker ignored — got '$got'"
+
+# ── 5b. a field 12 that is NOT `AUTO` must survive untouched ─────────────────
+# The safety property the whole feature rests on: expansion is opt-in per row, so a caller that
+# composed its own INCLUDES value must get that value back. Only the `AUTO` branch was ever
+# exercised, so a block that clobbered a real value would have passed this suite — the same shape
+# as the merge bug in case 4, just from the other direction.
+MANUAL=$(printf '2026-08-26T10:00:00Z\tbuild\tp\t34/37\t16/19\tPASS\t4\tstandard\tprobe\tmain\tabc1234\thand:1|written:2\tSTANDARD')
+printf 'should-not-appear:1\n' > "$TRACKDIR/zuvo-includes-one.txt"
+got=$( { printf 'RUN_LINE=$(printf "%%s" %s)\n' "'$MANUAL'"
+         extract_block
+         printf 'printf "%%s" "$RUN_LINE" | awk -F"\\t" "{print \\$12}"\n'; } > "$TMP/p4.sh"
+       bash "$TMP/p4.sh" 2>/dev/null )
+[ "$got" = "hand:1|written:2" ] \
+  && pass "a field 12 that is not AUTO is left exactly as the caller wrote it" \
+  || bad "a hand-written INCLUDES value was rewritten to '$got'"
 
 # ── 6. no tracker at all → '-', never empty ──────────────────────────────────
 # An empty field 12 would still be 13 columns and would read as "no includes recorded" rather than
 # "the tracker was not there".
 rm -f "$TRACKDIR"/zuvo-includes-*.txt
-got=$(run_block)
+got=$(run_block); rc=$?
+[ "$rc" = 3 ] && bad "substitution guard tripped in the no-tracker case"
 [ "$got" = "-" ] && pass "with no tracker the field is '-', not empty" \
   || bad "field 12 became '$got' with no tracker present"
 

@@ -55,6 +55,9 @@ json.dump({"tool_name": "Write",
            "tool_input": {"file_path": os.path.join(r, "src", "brand-new.spec.ts")},
            "cwd": r}, sys.stdout)
 PY0
+# A setup step that fails silently makes the case below assert against an empty/absent payload,
+# which the hook fails OPEN on — so the case would pass without ever exercising the default.
+[ -s "$TMP/in0.json" ] || bad "case 0 setup produced no payload — the assertion below is vacuous"
 ( unset ZUVO_REQUIRE_INVENTORY; bash "$HOOK" < "$TMP/in0.json" 2>/dev/null )
 [ "$?" = 0 ] && pass "with ZUVO_REQUIRE_INVENTORY unset the hook does not block" \
   || bad "the hook blocked a write while nominally disabled"

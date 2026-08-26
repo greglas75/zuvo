@@ -80,10 +80,13 @@ cx2="$TMP/.codex/sessions/2026/08/26/rollout-2026-08-26T11-00-00-y.jsonl"
 } > "$cx2"
 out4="$(python3 "$BIN" 2>&1)"
 cxline=$(echo "$out4" | awk '/^=== Codex/{f=1} f&&/^TOTAL/{print; exit}')
-set -- $cxline
-[ "${3:-0}" -ge 2 ] 2>/dev/null \
+# `set --` splits on IFS and would glob-expand a `*` in the output, so disable pathname expansion
+# for the split. Assert the EXACT count: `>= 2` would also accept a classifier that counted the
+# same command twice, or counted a poll as blocking.
+set -f; set -- $cxline; set +f
+[ "${3:-}" = "2" ] \
   && pass "Codex blocking commands are counted as blocking, not silently dropped" \
-  || bad "Codex blocking column was '${3:-}' with 2 blocking commands present: $cxline"
+  || bad "Codex blocking column was '${3:-}', expected exactly 2: $cxline"
 
 # ── --since must actually exclude ────────────────────────────────────────────
 out3="$(python3 "$BIN" --since 2299-01-01 2>&1)"
@@ -105,9 +108,47 @@ echo "$out5" | grep -q "probe\|BashOutput" && true
 before=$(echo "$out5" | awk '/^=== Claude Code/{f=1} f&&/^TOTAL/{print $2; exit}')
 rm -f "$old_sess"
 after_removed=$(python3 "$BIN" --since 2026-01-01 2>&1 | awk '/^=== Claude Code/{f=1} f&&/^TOTAL/{print $2; exit}')
-[ "${before:-0}" = "${after_removed:-0}" ] \
-  && pass "a freshly-touched session that STARTED before the cutoff is excluded" \
-  || bad "mtime leaked a pre-cutoff session into the filtered run ($before vs $after_removed)"
+# Both sides must be real numbers before comparing them: if the Claude section is absent entirely
+# (no TOTAL line), `before` and `after_removed` are both empty, they compare equal, and the case
+# reports a pass while having tested nothing.
+case "${before:-}${after_removed:-}" in
+  *[!0-9]*|"") bad "no Claude TOTAL to compare — the case tested nothing (got '$before' / '$after_removed')" ;;
+  *) [ "$before" = "$after_removed" ] \
+       && pass "a freshly-touched session that STARTED before the cutoff is excluded" \
+       || bad "mtime leaked a pre-cutoff session into the filtered run ($before vs $after_removed)" ;;
+esac
+
+# ── the median-context branch must actually run ──────────────────────────────
+# `report()` prints "median context per request" only when a session cleared `reqs >= 20`. The
+# Codex fixture above has two lines, so that threshold — and the whole cost calculation built on
+# it — was never exercised. An untested reporting branch is how a wrong number gets published.
+cx3="$TMP/.codex/sessions/2026/08/26/rollout-2026-08-26T12-00-00-z.jsonl"
+: > "$cx3"
+i=0
+while [ "$i" -lt 25 ]; do
+  printf '%s\n' '{"payload":{"type":"custom_tool_call","name":"wait","arguments":"{\"yield_time_ms\":30000}","info":{"total_token_usage":{"input_tokens":100000}}}}' >> "$cx3"
+  i=$((i + 1))
+done
+out6="$(python3 "$BIN" 2>&1)"
+echo "$out6" | grep -q "median context per request" \
+  && pass "the median-context branch runs once a session clears the reqs threshold" \
+  || bad "median context never printed with 25 usage records present"
+echo "$out6" | grep -q "carried by polls" \
+  && pass "the poll cost derived from that median is printed too" \
+  || bad "poll cost line missing"
+
+# ── --since must refuse a value it cannot compare ────────────────────────────
+# Every comparison is a lexicographic string compare, so `--since banana` does not raise: it
+# quietly matches nothing and prints an empty report. On a before/after tool that is the failure
+# most likely to be mistaken for a result.
+python3 "$BIN" --since banana >/dev/null 2>"$TMP/since.err"
+[ "$?" != 0 ] && grep -q "YYYY-MM-DD" "$TMP/since.err" \
+  && pass "--since rejects an unparseable value instead of reporting nothing" \
+  || bad "--since banana was accepted: $(cat "$TMP/since.err")"
+python3 "$BIN" --since 2026-13-45 >/dev/null 2>"$TMP/since2.err"
+[ "$?" != 0 ] \
+  && pass "--since rejects a well-formed but impossible date" \
+  || bad "--since 2026-13-45 was accepted"
 
 export HOME="$HOME_ORIG"
 echo
