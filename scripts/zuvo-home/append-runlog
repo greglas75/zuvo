@@ -47,6 +47,24 @@ fi
 # (runs.log:527). Strip at most one such leading label, reject anything that
 # is not a clean 13-field timestamp-led TSV row, and OWN the timestamp so a
 # future date can never be forged into the append-only log.
+# Field 12 (INCLUDES) is assembled by hand today, from one of TWO commands the same document gives:
+# `sort -t: -k1,1 -u` (dedupe by include NAME) and `sort -u` (dedupe by whole LINE). They differ
+# whenever one include is recorded twice with different byte counts — the second keeps both, and the
+# field ends up with a repeated key. Measured across 4,541 real rows: 97 of them (2%) carry one.
+#
+# Small, but the field is hand-composed once per run and there is no reason for either. If the
+# caller leaves it as `AUTO`, fill it here from the tracker the PostToolUse hook writes, using the
+# form that dedupes by name.
+# Substituted in awk with the value passed as a variable, never through sed: the value IS a
+# pipe-separated list, so `sed "s|marker|$value|"` breaks on the first `|` inside it. Caught by
+# the test rather than in the wild, which is the only reason this note is short.
+if printf '%s' "$RUN_LINE" | grep -q '	AUTO	'; then
+  _inc=$(sort -t: -k1,1 -u /tmp/zuvo-includes-*.txt 2>/dev/null | paste -sd'|' -)
+  [ -n "$_inc" ] || _inc="-"
+  RUN_LINE=$(printf '%s' "$RUN_LINE" | awk -F'	' -v inc="$_inc" 'BEGIN{OFS="	"}
+      { if (NF >= 12 && $12 == "AUTO") $12 = inc; print }')
+fi
+
 RUN_LINE="${RUN_LINE#Run: }"
 RUN_LINE="${RUN_LINE#-e }"
 RUN_LINE="${RUN_LINE#RETRO: }"

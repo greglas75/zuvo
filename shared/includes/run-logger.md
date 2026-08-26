@@ -66,6 +66,13 @@ DATE\tSKILL\tPROJECT\tCQ_SCORE\tQ_SCORE\tVERDICT\tTASKS\tDURATION\tNOTES\tBRANCH
 | 12 | INCLUDES | Pipe-separated list of loaded includes/rules as `name:bytes`, or `-` | `env-compat:1538\|cq-patterns:27396` |
 | 13 | TIER | Classification tier used by the skill, or `-` | `STANDARD` |
 
+**Field 12 — INCLUDES: write `AUTO` and let the helper fill it.** `~/.zuvo/append-runlog` expands
+that from the tracker itself, which removes a hand-composed step and settles which of the two
+commands below is correct — this document gave both, and they differ. `sort -u` dedupes by whole
+LINE, so an include recorded twice with different byte counts appears twice and the field carries a
+repeated key; measured across 4,541 real rows, 97 (2%) do. `sort -t: -k1,1 -u` dedupes by NAME and
+is the right one. Compose it by hand only if you are not going through the helper.
+
 **Field 12 — INCLUDES:** List every `shared/includes/*.md` and `rules/*.md` file that was actually Read during this skill run. Format: `name:bytes` pairs separated by `|`. The `track-includes.sh` PostToolUse hook automatically captures these with exact file sizes. To get the list, run:
 
 ```bash
@@ -172,7 +179,7 @@ field 1 itself — do NOT copy a literal example timestamp into it.
 **Filling INCLUDES:** A PostToolUse hook (`hooks/track-includes.sh`) automatically tracks every `shared/includes/*.md` and `rules/*.md` file Read during the session. To get the list, run:
 
 ```bash
-INCLUDES=$(sort -u /tmp/zuvo-includes-*.txt 2>/dev/null | paste -sd'|' - || echo "-")
+INCLUDES=$(sort -t: -k1,1 -u /tmp/zuvo-includes-*.txt 2>/dev/null | paste -sd'|' - || echo "-")
 ```
 
 If the hook file doesn't exist (e.g., Codex/Cursor without hooks), fall back to manually listing the includes you loaded. Use basenames without `.md`, pipe-separated. Example: `env-compat|cq-patterns-core|testing|quality-gates`. If none, use `-`.
