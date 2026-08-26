@@ -1921,3 +1921,56 @@ So the ranked answer to "can trimming reduce the counter":
    across 240 local sessions that invoked a skill, only 38% used exactly one, and **62% chose a
    second skill after work had already begun** (`worktree → refactor → test-audit`, 24 sessions;
    `worktree → refactor → review`, 20). The routing table is what those later decisions read.
+
+## The broken mechanism in refactor was there — I looked in the wrong place
+
+Earlier today this log concluded that refactor has no measurably broken mechanism, because its gates
+hold: 100% ran the suite, 98% ran it before editing, 98% recorded a contract, 100% committed. That
+was true, and it was the wrong question. It asked whether the skill does the right things. It never
+asked **how it waits**.
+
+Attributed by the skill actually entered (a read of `~/.codex/skills/<name>/SKILL.md`, since Codex
+has no `Skill` tool), across the 20 largest local Codex sessions:
+
+| skill running | `wait` | `wait_agent` | total |
+|---|---|---|---|
+| **zuvo:refactor** | 4,598 | 665 | **5,263 (68%)** |
+| zuvo:execute | 677 | 111 | 788 |
+| zuvo:review | 656 | 113 | 769 |
+| zuvo:mutation-test | 264 | 0 | 264 |
+| zuvo:ship | 226 | 0 | 226 |
+
+**99% of all polling happens inside a zuvo skill**, so this is ours, not the harness's. In Claude
+Code the same shape appears under a different name — `zuvo:review` at 3,289 hand-rolled `sleep`-then-
+check calls, then execute (251), plan (210), ship (149). Both lists are dominated by the skills that
+run test suites.
+
+Each of those polls carries the whole ~108K context to receive a median of **18 tokens**. A ratio of
+6000:1, repeated thousands of times.
+
+### The fix is not the poll interval
+
+Three layers, cheapest first, and the sessions use only the third:
+
+1. **Let the command block.** The shell waits for free; tokens are charged per request, not per
+   second. `rt --wait <runid>`, `gh run watch --exit-status`, `until [ -f done ]; do sleep 30; done`.
+   **One request**, whether the job takes a minute or nine hours. Measured usage across 10 large
+   Codex sessions: **one** `gh run watch`, and zero `rt --wait` — despite the user's own CLAUDE.md
+   already prescribing `rt --notify` → `rt --wait` for long runs.
+2. **Make the FIRST call wait long**, rather than the polls that follow it. `exec_command` was given
+   an explicit `timeout_ms` in **0 of 443 calls**, so it fell back to a 10-second default and yielded
+   into a poll loop every time. The `exec` pragma takes `yield_time_ms`, and the tool's own text says
+   empty polls may wait **5,000-300,000 ms** — yet 71% of calls asked for 30,000, which is the cap
+   for a *different* case named in the same sentence.
+3. **Only then, the interval.** This is the weakest lever and the only one in use.
+
+`wait_agent` deserves its own line: the tool's description says to use it "very sparingly … only
+when you need the result immediately for the next critical-path step". 665 calls in refactor alone,
+22 of them with `timeout_ms: 1000`. At 108K per request, polling a 20-minute agent every second is
+~130M tokens spent to hear "not yet" 1,199 times; at 120,000 ms the same wait is ~1.1M. Being on the
+critical path justifies a shorter interval, not one three orders of magnitude below the useful range
+— and the description constrains *when* to call it while saying nothing about *how long to wait*,
+which is the gap the 1,000 goes through.
+
+This is the shape the whole day was looking for: large, attributable, with zero variance in the
+mechanism, and falsifiable by counting `wait` calls per skill before and after a change.
