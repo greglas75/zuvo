@@ -1009,6 +1009,47 @@ install_codex() {
     if [ "$_vc_rc" -eq 0 ]; then
       ok "Scripts installed"
     fi
+
+    # ---- Codex event hooks: ~/.codex/hooks.json, NOT the plugin cache ------------------
+    # zuvo is not a `[plugins.*]` entry in Codex (see CLAUDE.md), so everything written to
+    # ~/.codex/plugins/cache/... is inert — Codex never reads it. The path it DOES read is
+    # ~/.codex/hooks.json, which config.toml proves by carrying a trusted_hash for
+    # `<...>/hooks.json:pre_tool_use`. Writing the manifest to the cache and reporting
+    # "Hooks installed" was true about the copy and false about the effect.
+    mkdir -p "$HOME/.codex/hooks"
+    cp "$ZUVO_DIR"/hooks/codex-poll-guard.sh "$HOME/.codex/hooks/" 2>/dev/null || true
+    chmod +x "$HOME/.codex"/hooks/*.sh 2>/dev/null || true
+    if python3 - "$HOME/.codex/hooks.json" "$HOME/.codex/hooks/codex-poll-guard.sh" <<'PYHOOK'
+import json, os, sys
+path, script = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as fh:
+        cfg = json.load(fh)
+except Exception:
+    cfg = {}
+if not isinstance(cfg, dict):
+    cfg = {}
+hooks = cfg.setdefault("hooks", {})
+# snake_case: this is Codex's own event name, evidenced by the `:pre_tool_use:` key in
+# config.toml's hooks.state. The CamelCase spelling in hooks.codex.json is the Claude Code
+# manifest's; using it here would register a hook on an event Codex does not fire.
+group = hooks.setdefault("pre_tool_use", [])
+group[:] = [g for g in group if "codex-poll-guard" not in json.dumps(g)]
+group.append({
+    "matcher": "exec|write_stdin|wait_agent|shell|local_shell",
+    "hooks": [{"type": "command", "command": "bash %s" % script, "timeout": 10}],
+})
+tmp = path + ".tmp"
+with open(tmp, "w") as fh:
+    json.dump(cfg, fh, indent=2)
+os.replace(tmp, path)          # atomic: a half-written hooks.json would break the CLI itself
+print("ok")
+PYHOOK
+    then
+      ok "poll guard registered in ~/.codex/hooks.json (pre_tool_use)"
+    else
+      warn "could not register the poll guard in ~/.codex/hooks.json"
+    fi
   fi
 
   # Step 8: Install hooks to Codex plugin cache

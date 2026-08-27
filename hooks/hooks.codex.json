@@ -32,6 +32,16 @@
             "async": false
           }
         ]
+      },
+      {
+        "matcher": "exec|write_stdin|wait_agent|shell|local_shell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ./hooks/codex-poll-guard.sh",
+            "async": false
+          }
+        ]
       }
     ],
     "PostToolUse": [

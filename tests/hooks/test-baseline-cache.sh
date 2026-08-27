@@ -94,8 +94,21 @@ run check "$R" --max-age-hours 0 >/dev/null
 # `age = now - recorded_at` goes NEGATIVE when the entry is stamped ahead, and negative is never
 # greater than any threshold — so such an entry survived every expiry, including --max-age-hours 0.
 # ~/.zuvo is written by more than one machine here; clock drift and resumed snapshots produce this.
+# Same reason as above: pick the entry that belongs to $R, not whatever `ls` returns first.
 run record "$R" --result "5 passed (5)" --green >/dev/null
-ENTRY=$(ls "$ZUVO_HOME/baselines/"*.json 2>/dev/null | head -1)
+ENTRY=$(ls "$ZUVO_HOME/baselines/"*.json 2>/dev/null | while read -r f; do
+  python3 - "$f" "$(run key "$R")" <<'PYF'
+import json, sys
+f, key = sys.argv[1], sys.argv[2]
+try:
+    d = json.load(open(f))
+except Exception:
+    raise SystemExit
+_, sha, dep = key.split(":", 2)
+if d.get("commit") == sha and d.get("deps") == dep:
+    print(f)
+PYF
+done | head -1)
 if [ -n "$ENTRY" ]; then
   python3 - "$ENTRY" <<'PYF'
 import json, sys, time
@@ -115,13 +128,35 @@ fi
 # ── 7. a DIFFERENT repository never collides ─────────────────────────────────
 # Keyed on the common git dir, so linked worktrees of ONE repo share a key and a separate clone
 # does not. A path-keyed cache would fail the first half; a URL-keyed one the second.
-R2="$TMP/other"; mkdir -p "$R2"
-( cd "$R2" && git init -q -b main && git config user.email t@t && git config user.name t \
-  && printf '{"lockfileVersion":3}\n' > package-lock.json \
-  && printf 'x\n' > a.txt && git add -A && git commit -qm one ) >/dev/null 2>&1
-run check "$R2" >/dev/null
-[ "$?" != 0 ] && pass "a different repository does not read this one's baseline" \
-  || bad "cache collided across repositories"
+# ── 7. a DIFFERENT repository never collides — at an IDENTICAL commit ────────
+# The commit hash must MATCH, or the case passes for the wrong reason: a differing SHA keeps the
+# two apart even if repo identity were ignored entirely, so the thing under test — identity taken
+# from the COMMON git dir — would never be exercised. $R already carries history from the cases
+# above and cannot be made to match a fresh repo's first commit, so this builds its own pair:
+# two independent repos whose single commit is byte-identical (same tree, same message, same fixed
+# author/committer dates => same hash).
+mk_twin() {  # mk_twin <dir>
+  mkdir -p "$1"
+  ( cd "$1" && git init -q -b main \
+    && git config user.email t@t && git config user.name t \
+    && printf '{"lockfileVersion":3}\n' > package-lock.json \
+    && printf 'twin\n' > a.txt && git add -A \
+    && GIT_AUTHOR_DATE="2020-01-01T00:00:00Z" GIT_COMMITTER_DATE="2020-01-01T00:00:00Z" \
+       git commit -qm twin ) >/dev/null 2>&1
+}
+TA="$TMP/twinA"; TB="$TMP/twinB"
+mk_twin "$TA"; mk_twin "$TB"
+SA=$(git -C "$TA" rev-parse HEAD 2>/dev/null); SB=$(git -C "$TB" rev-parse HEAD 2>/dev/null)
+if [ -n "$SA" ] && [ "$SA" = "$SB" ]; then
+  run record "$TA" --result "77 passed (77)" --green >/dev/null
+  run check "$TA" >/dev/null || bad "setup: the twin's own baseline should hit"
+  run check "$TB" >/dev/null
+  [ "$?" != 0 ] \
+    && pass "an IDENTICAL commit in a different repository still does not share the baseline" \
+    || bad "cache collided across repositories at the same commit — repo identity is not in the key"
+else
+  bad "could not build two repos with an identical commit ($SA vs $SB) — case not exercised"
+fi
 
 # ── 8. a linked WORKTREE of the same repo DOES share it ──────────────────────
 # The whole purpose: ten worktrees off one commit, one verification.
@@ -153,8 +188,24 @@ run record "$NG" --result "x" --green >/dev/null
   || bad "record wrote an entry for a non-repository"
 
 # 9b. a corrupted entry must read as a miss, never as a hit
+# Address the entry BY KEY, not by `ls | head -1`. Other cases now populate the store too, so
+# "the first file" is whichever the filesystem lists first — this case corrupted one entry and
+# checked another, and passed or failed depending on ordering. A test that depends on `ls` order
+# is a coin flip wearing an assertion.
 run record "$R" --result "13 passed (13)" --green >/dev/null
-BAD_ENTRY=$(ls "$ZUVO_HOME/baselines/"*.json 2>/dev/null | head -1)
+BAD_ENTRY=$(ls "$ZUVO_HOME/baselines/"*.json 2>/dev/null | while read -r f; do
+  python3 - "$f" "$(run key "$R")" <<'PYF'
+import json, sys
+f, key = sys.argv[1], sys.argv[2]
+try:
+    d = json.load(open(f))
+except Exception:
+    raise SystemExit
+_, sha, dep = key.split(":", 2)
+if d.get("commit") == sha and d.get("deps") == dep:
+    print(f)
+PYF
+done | head -1)
 if [ -n "$BAD_ENTRY" ]; then
   printf '{ this is not json' > "$BAD_ENTRY"
   run check "$R" >/dev/null

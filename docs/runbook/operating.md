@@ -206,7 +206,55 @@ the damage is invisible from the command's exit code.
 
 ---
 
-## The two rules that would have prevented most of this
+## 10. Counting a thing before looking at how it is stored (10x in one session)
+
+This is not a shell trap; it is the failure mode that produced every wrong number in the
+poll-cost work, and it recurred **ten times in a single day** in ten different costumes. Each time
+the result was a confident figure that read like knowledge.
+
+| claimed | what was actually read |
+|---|---|
+| "8 red suites" in ten live refactors | the word `FAIL` in the **skills' own prose** being read — the run-logger's verdict vocabulary, `worktree`'s "FAIL on an aborted merge" |
+| "3 production writes" | `apply_patch` is a registered **tool name**, so it appears in every call's metadata; `arguments` was empty |
+| "no change since the install" | filtered on the file's **mtime** instead of each record's timestamp, so sessions that began earlier contributed their whole history |
+| "0 tests, 0 blocking, 0 edits" | read `arguments`; Codex puts the command in **`input`**, as JS wrapping `tools.exec_command({cmd: …})` |
+| "1 blocking call in 11,690" | the same empty field, this time in the shipped tool |
+| "1,327 blocking" | `rt` credited as blocking while **3,338 polls followed those calls** — it was the START of a poll loop |
+| "1,099 polls" | `write_stdin` with empty `chars` **is** a poll (the tool's own description says so) and was never counted — the real figure was 4.6x higher |
+| "two platforms did not get the change" | checked the paths I expected; the installer had **printed** the real ones (Cursor reads the Claude cache; Antigravity moved to `~/.gemini/config/skills`) |
+| "the fix is absent" (from a reviewer) | I sent them `git diff …HEAD` while the fix sat **uncommitted** in the working tree |
+| a guard in `codex-poll-guard.sh` that matched nothing | built the search text with `json.dumps` over a dict whose value **already held escaped JSON**, so `"chars":""` became `\"chars\":\"\"` |
+
+Three of these were caught before being reported. Seven were not, and one of those nearly told the
+user that seven of their ten refactors were violating the protocol when every one had a green,
+SHA-stamped baseline recorded — in the contract, which is where the protocol says the proof lives.
+
+**The rule is an action, not an attitude.** Before reporting any count:
+
+```bash
+# 1. print a few of the matches and READ them
+<your detector> | head -5
+# 2. print the record you are parsing, and find the field with your own eyes
+python3 -c 'import json;d=json.loads(open("<one record>").read());print(sorted(d))'
+```
+
+Two corollaries that each cost a separate hour:
+
+- **A zero from an instrument that cannot see the thing is not a finding.** It reads exactly like
+  one. `scan_codex` reported "0 blocking" three times running — first with no code path that could
+  set the column, then with the path reading an empty field, then with the line prefilter dropping
+  the row before the classifier saw it. Every fix looked complete and still returned the flattering
+  answer.
+- **When you add a classifier, widen the filter in front of it in the SAME edit.** That specific
+  pairing failed three times in one file. The counter and the prefilter disagreed, and the prefilter
+  won silently.
+
+And one about wording, from the finding that nearly went out wrong: **a detector should name the
+state of its own knowledge, not the state of the world.** "No baseline visible to this watcher" is a
+statement it can support; "PROTOCOL VIOLATION" is a statement about someone else's work, and the
+difference is the whole distance between a tool and an accusation.
+
+## The three rules that would have prevented most of this
 
 **Read the runbook before typing the command.** `tests/gates/test-gate-consistency.sh` and
 `scripts/audit-registry-integrity.py` are both named in `testing.md` §1. They were typed from
@@ -218,3 +266,9 @@ directory" — a lookup that would have cost five seconds.
 the thing you were testing. Every one of them in this session turned out to be the harness: a
 killed shell, a full disk, a container that never started. Check `df`, check the exit code's
 source, and re-run the probe correctly BEFORE concluding anything about the code.
+
+**Look at the data before you count it.** Every wrong number in §10 came from a detector written
+against the shape its author expected rather than the shape on disk, and each one returned a clean,
+quotable figure — usually a zero. Print five matches and read them; open one record and list its
+keys. It costs one command, and it is the only one of these three rules that was broken ten times
+in a single day.

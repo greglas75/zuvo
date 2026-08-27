@@ -1,0 +1,34 @@
+# poll-guard baseline — frozen 2026-08-27T14:37:41Z, BEFORE the hook was installed
+#
+# FALSIFICATION, fixed before the hook exists: the guard refuses an empty write_stdin poll
+# below 120000 ms and a wait_agent below 60000 ms. If, after it is installed, the
+# yield_time_ms distribution below has NOT shifted and the poll count has NOT fallen, the
+# hook does not work and I say so — the same terms the inventory hook was killed on.
+#
+# Re-run:  ~/.zuvo/poll-cost --since 2026-08-27
+#
+total polls (empty write_stdin + wait): 18493   (stdin=14248, wait=4245)
+
+ window_ms    count   share  (the guard refuses < 120000)
+      1000      845    5.9%  REFUSED after the hook
+      2000        3    0.0%  REFUSED after the hook
+      3000        4    0.0%  REFUSED after the hook
+      5000       36    0.3%  REFUSED after the hook
+     10000       52    0.4%  REFUSED after the hook
+     15000        6    0.0%  REFUSED after the hook
+     20000       28    0.2%  REFUSED after the hook
+     25000        9    0.1%  REFUSED after the hook
+     30000    10354   72.7%  REFUSED after the hook
+     40000        5    0.0%  REFUSED after the hook
+     45000       84    0.6%  REFUSED after the hook
+     50000      205    1.4%  REFUSED after the hook
+     55000      271    1.9%  REFUSED after the hook
+     60000     1877   13.2%  REFUSED after the hook
+     65000       24    0.2%  REFUSED after the hook
+     90000       13    0.1%  REFUSED after the hook
+    120000       32    0.2%
+    180000        9    0.1%
+    240000        1    0.0%
+    300000      390    2.7%
+
+below the 120000 floor: 13816 of 14248 (97.0%)  <- THIS is the number the hook must move
