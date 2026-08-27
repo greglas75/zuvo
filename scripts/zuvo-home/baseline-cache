@@ -1,0 +1,237 @@
+#!/bin/sh
+# Polyglot sh/python header. `#!/usr/bin/env python3` fails on Windows: python.org installs
+# `python` and `py`, Git Bash ships neither, and the shebang dies with
+#     env: python3: No such file or directory
+# /bin/sh executes the next line, which re-execs this file with whatever Python 3 the machine
+# actually has; Python parses that same line as a string literal and ignores it.
+# Keep it on ONE line and do not "tidy" the quoting — both interpreters depend on it exactly.
+''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
+"""baseline-cache — one green baseline per (repo, commit, dependency set), shared by every worktree.
+
+WHY
+
+`zuvo:worktree` Step 5 runs the project's full test command on every worktree it creates. Measured
+across the contracts written in one 12-hour window: **12 worktrees branched from `55d2b46`, 7 from
+`f8de6d9`, 4 from `2d99475`** — each running the same full suite over byte-identical code.
+
+A green baseline is a property of the COMMIT, not of the directory it was checked out into. Two
+worktrees at the same SHA with the same installed dependencies cannot disagree about whether that
+code's tests pass. So reusing the result is not a shortcut past the gate; it is the same fact,
+recorded once.
+
+WHAT MAKES IT SAFE
+
+The key is (repo identity, commit SHA, dependency fingerprint), and all three are required:
+
+  * repo identity comes from the COMMON git dir, not the worktree path — every linked worktree of
+    one repository shares it, which is exactly the set that may share a baseline, and a different
+    clone gets a different key.
+  * the commit SHA is the code.
+  * the dependency fingerprint is every lockfile in the tree, hashed. Identical source with a
+    different `node_modules` is NOT the same baseline — `zuvo:worktree` Step 4.5 exists because
+    that difference is real, and this key respects it.
+
+Only a GREEN result is ever reused. A red one is recorded (so the next run can say "this base was
+already failing" instead of rediscovering it) but never satisfies a check. Entries expire, because
+the code is unchanged while the machine around it is not.
+
+USAGE
+
+    baseline-cache check  <repo-root> [--max-age-hours N]   # exit 0 = reusable green, 1 = run it
+    baseline-cache record <repo-root> --result "<text>" [--green|--red]
+    baseline-cache list   [--repo <root>]
+    baseline-cache purge  [--older-than-hours N]
+
+`check` prints the stored result on success so the caller can quote it verbatim in its own report.
+"""
+import argparse
+import glob
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+
+STORE = os.path.join(os.environ.get("ZUVO_HOME") or os.path.expanduser("~/.zuvo"), "baselines")
+DEFAULT_MAX_AGE_H = 24
+LOCKFILES = ("package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb",
+             "requirements.txt", "poetry.lock", "Cargo.lock", "go.sum", "Gemfile.lock",
+             "composer.lock")
+
+
+def git(root, *args):
+    try:
+        out = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True, timeout=20)
+        return out.stdout.strip() if out.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+def repo_identity(root):
+    """The COMMON git dir — shared by every linked worktree of one repository.
+
+    Using the worktree path would defeat the whole point (each worktree would get its own key) and
+    using the origin URL would wrongly merge two clones that can hold different commits under the
+    same name.
+    """
+    common = git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if not common:
+        common = git(root, "rev-parse", "--git-common-dir") or os.path.abspath(root)
+    return hashlib.sha256(os.path.realpath(common).encode()).hexdigest()[:16]
+
+
+def dep_fingerprint(root):
+    """Hash of every lockfile in the tree, by path and content.
+
+    Same source + different dependencies is a different baseline. This is the same property Step 4.5
+    checks; keying on it means a cache hit cannot smuggle a mismatched `node_modules` past that gate.
+    """
+    h = hashlib.sha256()
+    found = 0
+    for name in LOCKFILES:
+        for path in sorted(glob.glob(os.path.join(root, "**", name), recursive=True)):
+            if os.sep + "node_modules" + os.sep in path:
+                continue
+            try:
+                with open(path, "rb") as fh:
+                    h.update(os.path.relpath(path, root).encode())
+                    h.update(hashlib.sha256(fh.read()).digest())
+                found += 1
+            except Exception:
+                continue
+    return (h.hexdigest()[:16] if found else "no-lockfile"), found
+
+
+def key_for(root):
+    sha = git(root, "rev-parse", "HEAD")
+    if not sha:
+        return None, None, None, None
+    dep, n = dep_fingerprint(root)
+    return repo_identity(root), sha[:12], dep, n
+
+
+def path_for(rid, sha, dep):
+    return os.path.join(STORE, "%s-%s-%s.json" % (rid, sha, dep))
+
+
+def cmd_check(args):
+    root = os.path.abspath(args.repo_root)
+    rid, sha, dep, _ = key_for(root)
+    if not rid:
+        print("baseline-cache: not a git repository: %s" % root, file=sys.stderr)
+        return 1                                   # fail-open: caller runs the suite
+    p = path_for(rid, sha, dep)
+    if not os.path.exists(p):
+        return 1
+    try:
+        with open(p) as fh:
+            d = json.load(fh)
+    except Exception:
+        return 1
+    if not d.get("green"):
+        # Recorded, and recorded as RED. Say so — the caller can report "this base was already
+        # failing" instead of spending a full suite rediscovering it — but this is not a pass.
+        print("baseline-cache: base %s is recorded RED: %s" % (sha[:7], d.get("result", "")[:120]),
+              file=sys.stderr)
+        return 1
+    age_h = (time.time() - d.get("recorded_at", 0)) / 3600.0
+    if age_h > args.max_age_hours:
+        return 1
+    print("%s" % d.get("result", ""))
+    print("[baseline reused] commit %s, deps %s, verified %.1f h ago in %s"
+          % (sha[:7], dep[:7], age_h, d.get("recorded_in", "?")), file=sys.stderr)
+    return 0
+
+
+def cmd_record(args):
+    root = os.path.abspath(args.repo_root)
+    rid, sha, dep, nlocks = key_for(root)
+    if not rid:
+        print("baseline-cache: not a git repository: %s" % root, file=sys.stderr)
+        return 1
+    os.makedirs(STORE, exist_ok=True)
+    p = path_for(rid, sha, dep)
+    payload = {
+        "commit": sha, "deps": dep, "lockfiles": nlocks,
+        "green": bool(args.green) and not args.red,
+        "result": args.result, "recorded_at": time.time(),
+        "recorded_in": os.path.basename(root),
+    }
+    tmp = p + ".tmp-%d" % os.getpid()
+    with open(tmp, "w") as fh:
+        json.dump(payload, fh, indent=1)
+    os.replace(tmp, p)                             # atomic: a half-written entry must never be read
+    print("baseline-cache: recorded %s for %s (deps %s)"
+          % ("GREEN" if payload["green"] else "RED", sha[:7], dep[:7]), file=sys.stderr)
+    return 0
+
+
+def cmd_list(args):
+    if not os.path.isdir(STORE):
+        print("no baselines recorded")
+        return 0
+    rows = []
+    for f in sorted(glob.glob(os.path.join(STORE, "*.json"))):
+        try:
+            with open(f) as fh:
+                d = json.load(fh)
+        except Exception:
+            continue
+        rows.append(d)
+    if not rows:
+        print("no baselines recorded")
+        return 0
+    print("%-14s %-10s %-7s %8s  %s" % ("commit", "deps", "state", "age_h", "recorded in"))
+    for d in sorted(rows, key=lambda r: -r.get("recorded_at", 0)):
+        print("%-14s %-10s %-7s %8.1f  %s"
+              % (d.get("commit", "?")[:12], d.get("deps", "?")[:10],
+                 "GREEN" if d.get("green") else "RED",
+                 (time.time() - d.get("recorded_at", 0)) / 3600.0, d.get("recorded_in", "?")))
+    return 0
+
+
+def cmd_purge(args):
+    n = 0
+    for f in glob.glob(os.path.join(STORE, "*.json")):
+        try:
+            with open(f) as fh:
+                d = json.load(fh)
+            if (time.time() - d.get("recorded_at", 0)) / 3600.0 > args.older_than_hours:
+                os.remove(f)
+                n += 1
+        except Exception:
+            continue
+    print("purged %d entries older than %g h" % (n, args.older_than_hours))
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    c = sub.add_parser("check", help="exit 0 if a reusable GREEN baseline exists for this tree")
+    c.add_argument("repo_root")
+    c.add_argument("--max-age-hours", type=float, default=DEFAULT_MAX_AGE_H)
+    c.set_defaults(fn=cmd_check)
+
+    r = sub.add_parser("record", help="store the result of a baseline run")
+    r.add_argument("repo_root")
+    r.add_argument("--result", required=True)
+    r.add_argument("--green", action="store_true", default=True)
+    r.add_argument("--red", action="store_true")
+    r.set_defaults(fn=cmd_record)
+
+    l = sub.add_parser("list")
+    l.set_defaults(fn=cmd_list)
+
+    p = sub.add_parser("purge")
+    p.add_argument("--older-than-hours", type=float, default=168)
+    p.set_defaults(fn=cmd_purge)
+
+    args = ap.parse_args()
+    return args.fn(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -187,14 +187,49 @@ printing `OK` for an ecosystem you did not check is not.
 
 ### Step 5: Verify Baseline
 
-Run the project's test command to establish a green baseline:
+A green baseline is a property of the **commit**, not of the directory it was checked out into. Two
+worktrees at the same SHA with the same installed dependencies cannot disagree about whether that
+code's tests pass — so the suite is run once per (repo, commit, dependency set) and every worktree
+sharing those three reuses the result. Measured across one 12-hour window of real runs: **12
+worktrees branched from `55d2b46`, 7 from `f8de6d9`, 4 from `2d99475`**, each re-running the same
+full suite over byte-identical code.
+
+**1. Ask the cache first.**
+
+```bash
+if RESULT=$(~/.zuvo/baseline-cache check "$(git rev-parse --show-toplevel)"); then
+  echo "Baseline green (reused): $RESULT"
+else
+  # 2. Detect the runner and RUN it — see the detection list below.
+  #    Then record what happened, green or red.
+  ~/.zuvo/baseline-cache record "$(git rev-parse --show-toplevel)" --result "$RESULT_TEXT"   # or --red
+fi
+```
+
+`check` exits non-zero — meaning *run the suite* — whenever anything differs or is unknown: a
+different commit, a changed lockfile, a different repository, an entry older than 24 h, or a base
+recorded RED. It fails **open**, so a cache problem costs a test run and never a false green. Only a
+GREEN entry is ever reused; a RED one is kept so the next worktree can say "this base was already
+failing" instead of rediscovering it, but it does not satisfy the check.
+
+The dependency fingerprint is deliberate, not caution: identical source with a different
+`node_modules` is a different baseline, which is the same fact Step 4.5 exists to prove. Keying on
+every lockfile in the tree means a cache hit cannot smuggle a mismatched install past that gate.
+
+**2. Run it, when the cache says to.**
 
 1. Detect test runner from config files (`vitest.config.*`, `jest.config.*`, `pytest.ini`, `phpunit.xml`, `Cargo.toml`, etc.) or `package.json` scripts.
-2. Run the test command.
-3. Report result:
-   - **All pass** -- "Baseline green. N tests passed. Ready to work."
+2. Run the test command. Let it BLOCK (`rt`, `rt --wait`) rather than polling it — see G5 and
+   `../../shared/includes/env-compat.md`.
+3. Record the outcome with `baseline-cache record`, so the next worktree off this commit does not
+   repeat it.
+
+**3. Report result:**
+   - **All pass** -- "Baseline green. N tests passed. Ready to work." (say *(reused)* when it was)
    - **Failures detected** -- "Baseline has N failing tests. These failures exist on the base branch, not caused by this worktree." Then ask: "Proceed anyway, or investigate first?"
    - **No test command found** -- "No test runner detected. Skipping baseline verification."
+
+`~/.zuvo/baseline-cache list` shows what is cached; `purge --older-than-hours N` clears it.
 
 ### CREATE Output
 
