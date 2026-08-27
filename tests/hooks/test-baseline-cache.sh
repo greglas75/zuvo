@@ -104,7 +104,10 @@ try:
     d = json.load(open(f))
 except Exception:
     raise SystemExit
-_, sha, dep = key.split(":", 2)
+try:
+    _, sha, dep = key.split(":", 2)
+except ValueError:      # `key` printed an error instead of a key — say so, don't traceback
+    raise SystemExit
 if d.get("commit") == sha and d.get("deps") == dep:
     print(f)
 PYF
@@ -228,6 +231,21 @@ run record "$NL" --result "1 passed" --green >/dev/null
 run check "$NL" >/dev/null
 [ "$?" != 0 ] && pass "check refuses an unfingerprintable tree" \
   || bad "an unfingerprintable tree was allowed to share a baseline"
+
+# --max-age-hours 0 alone cannot distinguish "expiry works" from "any max-age means miss", and an
+# implementation with the second behaviour would silently disable cache reuse while staying green.
+# So: a fresh entry must HIT inside a positive window.
+# On its OWN tree: earlier cases deliberately corrupt and age-tamper $R's entry, so reusing it
+# here would test the damage rather than the window.
+PW="$TMP/poswin"; mkdir -p "$PW"
+( cd "$PW" && git init -q -b main && git config user.email t@t && git config user.name t \
+  && printf '{"a":1}\n' > package-lock.json && git add -A && git commit -qm one ) >/dev/null 2>&1
+run record "$PW" --result "5 passed (5)" --green >/dev/null 2>&1
+if run check "$PW" --max-age-hours 1 >/dev/null 2>&1; then
+  pass "a fresh entry hits inside a POSITIVE window (expiry is a window, not a switch)"
+else
+  bad "a just-recorded green entry missed with --max-age-hours 1"
+fi
 
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }

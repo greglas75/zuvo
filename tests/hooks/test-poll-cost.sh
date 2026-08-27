@@ -122,7 +122,66 @@ set -f; set -- $cx5l; set +f
 [ "${3:-}" = "3" ] \
   && pass "a command with an embedded escaped quote is still classified as blocking" \
   || bad "escaped-quote command not counted — blocking column '${3:-}', expected 3: $cx5l"
+
+# The count above ALSO comes out right when extraction is broken, because the marker is still a
+# substring of the whole wrapper it falls back to — which is precisely how the original bug
+# survived its own test. So plant a blocking marker OUTSIDE the cmd and assert it is NOT counted:
+# that only holds if the command was really extracted.
 rm -f "$cx5"
+cx6="$TMP/.codex/sessions/2026/08/26/rollout-2026-08-26T14-30-00-w.jsonl"
+printf '%s\n' '{"payload":{"type":"custom_tool_call","name":"exec","input":"// rt --wait npx vitest run decoy.spec.ts\nconst r = await tools.exec_command({\n  cmd: \"echo plain\",\n  yield_time_ms: 300000\n});"}}' > "$cx6"
+out9="$(python3 "$BIN" 2>&1)"
+cx6l=$(echo "$out9" | awk '/^=== Codex/{f=1} f&&/^TOTAL/{print; exit}')
+set -f; set -- $cx6l; set +f
+[ "${3:-}" = "2" ] \
+  && pass "a blocking marker OUTSIDE cmd is not counted — proving the command was extracted" \
+  || bad "wrapper text leaked into classification — blocking column '${3:-}', expected 2: $cx6l"
+
+# Classification alone is NOT enough here, and that is the whole lesson of this bug: when the regex
+# failed, the code fell back to the raw wrapper text, whose substrings still tripped BLOCKLOOP — so
+# the count came out right while the extractor was broken. Assert on the EXTRACTION itself.
+python3 - "$ROOT/scripts/zuvo-home/poll-cost" > "$TMP/extract.out" 2>&1 <<'PYF'
+import re, sys
+src = open(sys.argv[1]).read()
+line = [l for l in src.splitlines() if l.startswith("CODEX_CMD")][0]
+ns = {}
+exec(line, {"re": re}, ns)
+probe = r'tools.exec_command({cmd: "echo \"hi\" && rt --light npx vitest run b.spec.ts", y: 1})'
+m = ns["CODEX_CMD"].search(probe)
+print(m.group(1) if m else "NO_MATCH")
+PYF
+got=$(cat "$TMP/extract.out")
+case "$got" in
+  *'rt --light npx vitest run b.spec.ts'*)
+    pass "CODEX_CMD extracts a command containing an escaped quote" ;;
+  NO_MATCH*)
+    bad "CODEX_CMD failed to match an escaped-quote command — the fallback would hide this" ;;
+  *)  bad "CODEX_CMD extracted the wrong text: $got" ;;
+esac
+rm -f "$cx5"
+
+# ── an EMPTY write_stdin is a poll, and a polled `rt` is not blocking ────────
+# The dominant shape, and it was invisible: `write_stdin` with empty chars polls without writing
+# (the tool's own description), and the counter only looked at `wait`. Measured across ten live
+# refactors: 1,099 `wait` calls against 3,917 empty write_stdin polls — 4.6x undercount. Worse, an
+# `rt` followed by those polls was being credited as a BLOCKING wait, i.e. scored as the good
+# behaviour while doing the bad one.
+cx6="$TMP/.codex/sessions/2026/08/26/rollout-2026-08-26T15-00-00-u.jsonl"
+{
+  printf '%s\n' '{"payload":{"type":"custom_tool_call","name":"exec","input":"const r = await tools.exec_command({ cmd: \"rt --light npx vitest run c.spec.ts\", yield_time_ms: 30000 });"}}'
+  printf '%s\n' '{"payload":{"type":"custom_tool_call","name":"exec","input":"const r = await tools.write_stdin({\"session_id\":1,\"chars\":\"\",\"yield_time_ms\":30000});"}}'
+  printf '%s\n' '{"payload":{"type":"custom_tool_call","name":"exec","input":"const r = await tools.write_stdin({\"session_id\":1,\"chars\":\"\",\"yield_time_ms\":30000});"}}'
+} > "$cx6"
+out9="$(python3 "$BIN" 2>&1)"
+cx6l=$(echo "$out9" | awk '/^=== Codex/{f=1} f&&/^TOTAL/{print; exit}')
+set -f; set -- $cx6l; set +f
+[ "${2:-0}" -ge 2 ] 2>/dev/null \
+  && pass "empty write_stdin calls are counted as polls" \
+  || bad "empty write_stdin polls were not counted — polls column '${2:-}': $cx6l"
+[ "${3:-}" = "3" ] \
+  && pass "an rt that is then polled does not keep its blocking credit" \
+  || bad "polled rt still counted as blocking — column '${3:-}', expected 3: $cx6l"
+rm -f "$cx6"
 
 # ── --since must actually exclude ────────────────────────────────────────────
 out3="$(python3 "$BIN" --since 2299-01-01 2>&1)"
