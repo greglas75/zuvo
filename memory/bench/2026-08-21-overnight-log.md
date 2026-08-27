@@ -2086,6 +2086,27 @@ The operational rule that falls out is a specific action, not an attitude: **bef
 count, print a few of the matches and read them.** `analyze-refactor-sessions.py` states the
 principle in its own header, and I wrote that header, so knowing it is demonstrably not enough.
 
+Two more followed, and they are different failures wearing the same result, so they are worth
+separating rather than adding to the tally:
+
+- **An aggregate cannot answer a question about an instance.** The claim was "this call used a short
+  window and then had to be polled". The code compared the session's RUNNING TOTAL of waits against
+  the previous tick's — so any short window sitting in a batch that contained any wait was flagged.
+  Three reported cases; none was followed by a poll at all. The fix is to pair the call with its
+  successor, and the general form is: if the sentence says "this one", the code must look at this
+  one and the next one, never at a counter.
+- **A detector has to know what the phase MEANS, not just what the data looks like.** Two "assertion
+  failed — behaviour changed" alerts turned out to be **killed mutants**: the session had entered
+  `zuvo:mutation-test`, which deliberately mutates production so a red suite is the desired result.
+  Reporting it as a defect inverted the meaning of the phase. The tell was eight consecutive edits
+  to one production file with no test run between them — probing, not fixing. Every other error in
+  this list came from not reading the data; this one came from reading it correctly and not knowing
+  what it was for.
+
+And one caused by the fix itself: **deleting a differential detector's state file turns history into
+an alarm.** Re-basing by `rm` made the watcher re-report every past event as new, which cost a round
+of "is this real?" on findings that had already been resolved. Re-base by running it silently.
+
 ### What the ten refactors actually show
 
 Measured on the live runs, once read from the right field:
