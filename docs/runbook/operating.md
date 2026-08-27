@@ -272,3 +272,45 @@ against the shape its author expected rather than the shape on disk, and each on
 quotable figure — usually a zero. Print five matches and read them; open one record and list its
 keys. It costs one command, and it is the only one of these three rules that was broken ten times
 in a single day.
+
+## 11. Codex hooks: read, parsed, trusted — and not executed (2026-08-27)
+
+**Before building anything that depends on a Codex hook, prove one fires.** A `touch` is enough,
+and it takes one minute. Everything below was built on the assumption that a registered hook runs,
+and that assumption was never tested until the guard had been through two reviews and four fixes.
+
+What is true, each verified separately:
+
+- The event vocabulary is exactly these eight, from the modules compiled into the binary
+  (`hooks/src/events/*.rs`): `compact`, `permission_request`, `post_tool_use`, `pre_tool_use`,
+  `session_end`, `session_start`, `stop`, `user_prompt_submit`. **None of them sees the model's own
+  text**, so no hook can suppress narration directly.
+- `~/.codex/hooks.json` IS read: give it a wrong root key and Codex says so —
+  `failed to parse hooks config …: unknown field \`pre_tool_use\`, expected \`description\` or \`hooks\``.
+  The root is `{"hooks": {"<event>": [{"matcher": …, "hooks": [{"type":"command", …}]}]}}`.
+- The `CodexHooks` feature is enabled (it appears in the `features=[…]` line of the session log).
+- Hook trust is real — `--dangerously-bypass-hook-trust` exists and `config.toml` carries
+  `[hooks.state."<path>:<event>:0:0"] trusted_hash`. A stale entry from an older file will not match
+  a new one.
+
+And what is also true: **with a valid config, matcher `.*`, trust bypassed, and a hook whose entire
+body is `touch /tmp/marker`, no marker appears.** Reproduced on BOTH builds present on this machine
+— the Homebrew CLI (0.144.6) and the app's own binary (0.150.0-alpha.8) — for `session_start` and
+`pre_tool_use`, at user level (`~/.codex/hooks.json`) and project level (`.codex/hooks.json`), in
+JSON and via a `-c hooks.pre_tool_use=[…]` TOML override. Nothing runs, and nothing is logged about
+why.
+
+The one path not reachable from a shell is the **desktop GUI**, which is a different execution mode
+— the dispatcher carries strings like `command execution approval is not supported in exec mode`,
+so exec mode demonstrably disables some hook-driven behaviour. So the open question is narrow: does
+the GUI run them? To answer it, `touch ~/.zuvo/guard-trace`, restart the Codex app (registration is
+read at launch), and check whether the file grows. Until it does, treat every Codex-side hook in
+this repo as **built but unproven**, and do not describe one as enforcement.
+
+Two habits this cost:
+
+- **A hook that registers is not a hook that runs.** `install.sh` printing `✓ registered` describes
+  a file write, nothing more — the same gap as `✓ Plugin enabled` in the Claude Code section above.
+- **Check which binary you are testing.** `codex` on PATH was a Homebrew build from six weeks
+  earlier than the app's. Every experiment ran against the wrong one before anybody noticed, and a
+  negative result from an old binary means nothing at all.

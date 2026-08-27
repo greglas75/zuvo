@@ -1046,7 +1046,7 @@ os.replace(tmp, path)          # atomic: a half-written hooks.json would break t
 print("ok")
 PYHOOK
     then
-      ok "poll guard registered in ~/.codex/hooks.json (pre_tool_use)"
+      ok "poll guard REGISTERED in ~/.codex/hooks.json (pre_tool_use) — registration only, not proof it runs (docs/runbook/operating.md §11)"
     else
       warn "could not register the poll guard in ~/.codex/hooks.json"
     fi
