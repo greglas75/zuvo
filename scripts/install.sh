@@ -1036,7 +1036,7 @@ hooks = cfg.setdefault("hooks", {})
 group = hooks.setdefault("pre_tool_use", [])
 group[:] = [g for g in group if "codex-poll-guard" not in json.dumps(g)]
 group.append({
-    "matcher": "exec|write_stdin|wait_agent|shell|local_shell",
+    "matcher": "exec|wait|shell|local_shell|write_stdin|wait_agent",
     "hooks": [{"type": "command", "command": "bash %s" % script, "timeout": 10}],
 })
 tmp = path + ".tmp"

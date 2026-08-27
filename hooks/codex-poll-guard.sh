@@ -66,6 +66,18 @@ def allow():
     sys.exit(0)
 
 
+# Every shape assumption in this file has been wrong at least once, and each time it was found
+# by reading a real captured call rather than by reasoning. `touch ~/.zuvo/guard-trace` records
+# the next few real payloads (capped, then it stops) so the next disagreement is settled by
+# evidence in one step.
+try:
+    _tr = os.path.expanduser("~/.zuvo/guard-trace")
+    if os.path.exists(_tr) and os.path.getsize(_tr) < 400000:
+        with open(_tr, "a") as _fh:
+            _fh.write(sys.argv[1][:4000] + "\n")
+except Exception:
+    pass
+
 try:
     payload = json.loads(sys.argv[1])
     poll_min = int(sys.argv[2])
