@@ -188,6 +188,33 @@ d=$(decision 'tools.wait_agent({"timeout_ms":300000}); tools.exec({cmd: "sleep 2
 [ "$d" = "deny" ] && pass "an acceptable wait_agent does not short-circuit the later checks" \
   || bad "one passing check waved the rest of the call through ($d)"
 
+# --- the four encodings a command actually arrives in (2026-08-27, from live sessions) --------
+# The guard knew two. The polling command captured in the wild used a THIRD, so it walked past a
+# hook written precisely for it — and the separator was a newline, not the `;` the pattern wanted.
+raw_decision() {  # feeds a full payload, not just an `input` string
+  printf '%s' "$1" > "$TMP/raw.json"
+  out=$(bash "$HOOK" < "$TMP/raw.json" 2>/dev/null)
+  [ -z "$out" ] && { echo allow; return; }
+  printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["permissionDecision"])'
+}
+
+d=$(decision 'const cmd=`sleep 30
+curl -fsS $URL`')
+[ "$d" = "deny" ] && pass "a template literal carrying `sleep N` newline check is refused" \
+  || bad "the exact shape captured in the wild was allowed ($d)"
+
+d=$(raw_decision '{"hook_event_name":"pre_tool_use","tool_input":{"command":["/bin/zsh","-lc","sleep 30\ncurl -fsS $URL"]}}')
+[ "$d" = "deny" ] && pass "the zsh -lc argv array is read (separate string leaves, no comma to match)" \
+  || bad "a shell-invocation array slipped past ($d)"
+
+d=$(raw_decision '{"hook_event_name":"pre_tool_use","tool_input":{"command":["/bin/zsh","-lc","while true; do\ncurl -fsS $URL\nsleep 30\ndone"]}}')
+[ "$d" = "allow" ] && pass "the same array holding a LOOP is allowed — that is the shape asked for" \
+  || bad "the blocking loop the refusal recommends was refused ($d)"
+
+d=$(raw_decision '{"hook_event_name":"pre_tool_use","tool_input":{"command":["/bin/zsh","-lc","npm run build && npm test"]}}')
+[ "$d" = "allow" ] && pass "an ordinary command in the same encoding is untouched" \
+  || bad "a plain build command was refused ($d)"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1

@@ -224,12 +224,32 @@ if m_rd:
 # (`"cmd":"..."`). Reading only the first left a quarter of the corpus with no command text during
 # analysis, and a guard with the same blind spot would simply never fire on half the calls.
 #
+# A NEWLINE separates commands exactly like `;` does. Requiring the semicolon meant the shape
+# actually observed in the wild — `sleep 30` on its own line, then the check — walked straight
+# through a guard written for it. Caught by reading real captured calls, not by any test.
 # The threshold spares the settling pause: `kill -TERM $pid; sleep 1; ps -p $pid` waits for a signal
 # to land, it does not poll. A command that already loops is never touched — it is the shape being
 # asked for.
-m_cmd = (re.search(r'cmd:\s*"((?:[^"\\]|\\.)*)"', blob)
-         or re.search(r'"cmd"\s*:\s*"((?:[^"\\]|\\.)*)"', blob))
-cmd_text = m_cmd.group(1) if m_cmd else ""
+# FOUR encodings carry a command here, not two. The two this originally knew are the object
+# forms; the wild also uses a TEMPLATE LITERAL (const cmd=`...`) and the shell-invocation array
+# (["/bin/zsh","-lc","..."]). The real polling command captured on 2026-08-27 was a template
+# literal, so a guard written for exactly that behaviour watched it go past.
+cmd_text = ""
+for pat in (r'cmd:\s*"((?:[^"\\]|\\.)*)"',
+            r'"cmd"\s*:\s*"((?:[^"\\]|\\.)*)"',
+            r'cmd\s*=\s*`([^`]*)`',
+            r'"-l?c"\s*,\s*"((?:[^"\\]|\\.)*)"'):
+    m_cmd = re.search(pat, blob)
+    if m_cmd and m_cmd.group(1).strip():
+        cmd_text = m_cmd.group(1)
+        break
+if not cmd_text:
+    # ["/bin/zsh","-lc","<command>"] arrives as separate string LEAVES, so no pattern carrying a
+    # comma can ever match it. The command is simply the leaf after the flag.
+    for i, leaf in enumerate(leaves[:-1]):
+        if leaf in ("-lc", "-c", "-lic"):
+            cmd_text = leaves[i + 1]
+            break
 if cmd_text:
     # A sleep INSIDE any loop body is the shape being asked for — `for`, `select` and a bare
     # `do ... done` block as much as `until`/`while`. Keying off the keyword next to the sleep
@@ -239,7 +259,7 @@ if cmd_text:
     dos = [m.end() for m in re.finditer(r"\bdo\b", cmd_text)]
     dones = [m.start() for m in re.finditer(r"\bdone\b", cmd_text)]
     m_sleep = None
-    for cand in re.finditer(r"(?:^|[;&|]\s*|&&\s*)sleep\s+(\d+(?:\.\d+)?)\s*(?:;|&&)", cmd_text):
+    for cand in re.finditer(r"(?:^|[;&|\n]\s*|&&\s*)sleep\s+(\d+(?:\.\d+)?)\s*(?:;|&&|\\n|\n)", cmd_text):
         # In a loop iff SOME `do` opens before it and SOME `done` closes after it. Pairing them
         # positionally instead broke on `grep -q done` inside the body: the word closed the span
         # early and the loop read as no loop. When in doubt this errs toward allowing, which is the
