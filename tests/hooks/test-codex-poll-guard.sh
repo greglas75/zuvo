@@ -215,6 +215,45 @@ d=$(raw_decision '{"hook_event_name":"pre_tool_use","tool_input":{"command":["/b
 [ "$d" = "allow" ] && pass "an ordinary command in the same encoding is untouched" \
   || bad "a plain build command was refused ($d)"
 
+# --- the same read-only check, over and over (the shape `sleep` cannot see) --------------------
+# Falsification first, as with the poll floor: identical tool OUTPUT is 0% of the corpus (a poll
+# response always differs by a counter or a clock), so a guard keyed on that would never fire.
+# Identical COMMANDS are 2.6%, in streaks reaching 32. That is the signal this uses.
+sess() { printf '{"hook_event_name":"pre_tool_use","session_id":"%s","tool_input":{"input":"tools.exec({cmd: \\"%s\\"})"}}' "$1" "$2" > "$TMP/s.json"
+  out=$(bash "$HOOK" < "$TMP/s.json" 2>/dev/null)
+  [ -z "$out" ] && { echo allow; return; }
+  printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["permissionDecision"])'; }
+
+export TMPDIR="$TMP"       # keep the state file inside the fixture
+a=$(sess r1 'gh run view 42 --json status'); b=$(sess r1 'gh run view 42 --json status'); c=$(sess r1 'gh run view 42 --json status')
+[ "$a" = "allow" ] && [ "$b" = "allow" ] && [ "$c" = "deny" ] \
+  && pass "the third identical read-only check is refused, the first two are not" \
+  || bad "repeat detection wrong: $a/$b/$c (expected allow/allow/deny)"
+
+d=$(sess r1 'gh run view 42 --json status')
+[ "$d" = "allow" ] && pass "the refusal is a nudge per streak, not a lockout" \
+  || bad "the command stayed locked out after the nudge ($d) — a final read must still be possible"
+
+# Identical text, different meaning each time: code changed between runs. Refusing this is the
+# false positive that gets a guard switched off, so only read-only shapes are ever counted.
+x=$(sess r2 'npm test'); y=$(sess r2 'npm test'); z=$(sess r2 'npm test'); w=$(sess r2 'npm test')
+[ "$x$y$z$w" = "allowallowallowallow" ] \
+  && pass "a test command repeated four times is never counted (code changes between runs)" \
+  || bad "a mutating/build command was treated as a poll: $x/$y/$z/$w"
+
+l=$(sess r3 'while true; do gh run view 42; sleep 30; done')
+l2=$(sess r3 'while true; do gh run view 42; sleep 30; done')
+l3=$(sess r3 'while true; do gh run view 42; sleep 30; done')
+[ "$l$l2$l3" = "allowallowallow" ] \
+  && pass "a loop is never counted as a repeat — it is the shape being asked for" \
+  || bad "the blocking loop was refused as a repeat: $l/$l2/$l3"
+
+sess r4 'gh run view 42 --json status' >/dev/null
+sess r4 'git status --porcelain' >/dev/null
+g=$(sess r4 'gh run view 42 --json status')
+[ "$g" = "allow" ] && pass "a different command in between resets the streak" \
+  || bad "unrelated commands did not reset the counter ($g)"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1

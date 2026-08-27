@@ -59,6 +59,7 @@ import os
 import re
 import stat
 import sys
+import time
 
 
 def allow():
@@ -71,6 +72,8 @@ try:
     agent_min = int(sys.argv[3])
     suggest = int(sys.argv[4])
     sleep_min = float(sys.argv[5])
+    repeat_max = int(os.environ.get("ZUVO_REPEAT_MAX", "3"))
+    repeat_window = int(os.environ.get("ZUVO_REPEAT_WINDOW", "900"))
 except Exception:
     allow()
 
@@ -280,6 +283,67 @@ if cmd_text:
             "nothing between checks: a poll returning no new information must produce no output "
             "either." % secs,
         )
+
+# ---- the SAME read-only check, over and over ------------------------------
+# The fourth costume, and the one the sleep rule cannot see: `gh run view <id>` sixteen times in
+# a row, `git status --porcelain` sixteen times, with no sleep anywhere. Measured on 260 local
+# sessions: 400 calls (2.6%) were the third-or-later identical repeat, in streaks reaching 32.
+#
+# Only READ-ONLY status checks are counted. `npm test` run three times while fixing code between
+# runs is identical text with different meaning every time, and refusing it would be the exact
+# false positive that gets a guard switched off. A loop is never counted — it is the answer.
+if cmd_text and not re.search(r"\b(?:until|while|for)\b[^\n]{0,160}\bdo\b", cmd_text):
+    readonly = re.match(
+        r"\s*(?:[A-Z_]+=\S*\s+)*"
+        r"(?:gh\s+(?:run\s+view|api|pr\s+(?:view|checks))|curl\s|git\s+(?:status|log|diff\s+--stat)"
+        r"|ps\s|pgrep\s|systemctl\s+status|docker\s+ps|kubectl\s+get|jq\s)",
+        cmd_text)
+    if readonly:
+        try:
+            import hashlib
+            sid = str(payload.get("session_id") or payload.get("sessionId") or "default")[:64]
+            sid = re.sub(r"[^A-Za-z0-9_.-]", "_", sid)
+            d = os.path.join(os.environ.get("TMPDIR", "/tmp"), "zuvo-poll-guard")
+            os.makedirs(d, exist_ok=True)
+            f = os.path.join(d, sid + ".state")
+            h = hashlib.sha256(re.sub(r"\s+", " ", cmd_text).encode()).hexdigest()[:16]
+            now = int(time.time())
+            prev_h, cnt, then = "", 0, 0
+            try:
+                prev_h, cnt, then = open(f).read().split(":")
+                cnt, then = int(cnt), int(then)
+            except Exception:
+                pass
+            # A gap longer than the window is a new situation, not a continued poll.
+            cnt = cnt + 1 if (h == prev_h and now - then < repeat_window) else 1
+            tmp = f + ".tmp"
+            with open(tmp, "w") as fh:
+                fh.write("%s:%d:%d" % (h, cnt, now))
+            os.replace(tmp, f)
+            if cnt >= repeat_max:
+                # Reset BEFORE refusing: the point is to deliver the instruction once per streak,
+                # not to lock the command out. A model that has switched to a blocking wait still
+                # needs one final read to get the result, and refusing that would be the false
+                # positive that gets the whole guard turned off.
+                try:
+                    with open(tmp, "w") as fh:
+                        fh.write("%s:0:%d" % (h, now))
+                    os.replace(tmp, f)
+                except Exception:
+                    pass
+                deny(
+                    "zuvo policy: this exact read-only check has now run %d times in a row." % cnt,
+                    "Nothing about it forces a new turn on you — the state changes on its own "
+                    "schedule, and each repeat re-sends the whole conversation to sample it.\n"
+                    "Block on the change instead, and pay ONE round-trip however long it takes:\n"
+                    "    gh run watch <id> --exit-status        # a GitHub run\n"
+                    "    until <condition>; do sleep 30; done   # anything else\n"
+                    "Measured across 260 local sessions: streaks of this shape reached 32 identical "
+                    "calls. And say nothing between checks — 49%% of assistant messages in those "
+                    "sessions restated that the wait was continuing.",
+                )
+        except Exception:
+            pass    # state is a convenience; never let it decide anything by failing
 
 # ---- write_stdin: EMPTY chars is a poll, not a write ----------------------
 if "write_stdin" in blob:
