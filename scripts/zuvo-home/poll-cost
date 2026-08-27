@@ -53,9 +53,11 @@ from collections import Counter, defaultdict
 _SLEEP_ARG = r"(?:\d+(?:\.\d+)?[smhd]?|\$\{?\w+\}?)"
 SLEEP_THEN = re.compile(r"\bsleep\s+" + _SLEEP_ARG + r"\s*(?:;|&&|\n)")
 BLOCKLOOP = re.compile(r"\b(?:until|while)\b[^\n]{0,80}\bdo\b[^\n]{0,160}sleep"
-                       r"|\brt\b[^\n]{0,40}--wait|gh run watch|docker wait|docker logs -f"
+                       r"|\brt\b|--wait|gh run watch|docker wait|docker logs -f"
                        r"|\bwait\s+\$?\w*\s*$")
 CODEX_ENTER = re.compile(r"\.codex/skills/([a-z0-9-]+)/SKILL\.md")
+# The shell command inside Codex's JS exec wrapper.
+CODEX_CMD = re.compile(r'cmd:\s*"((?:[^"\\\\]|\\\\.)*)"')
 STAMP = re.compile(r"(\d{4}-\d{2}-\d{2})T\d{2}-\d{2}-\d{2}")
 ISO_TS = re.compile(r'"timestamp"\s*:\s*"(\d{4}-\d{2}-\d{2})T')
 
@@ -190,14 +192,17 @@ def scan_codex(since):
             continue
         with fh:
             for line in fh:
-                # The prefilter must admit every line the classifier can act on. The first
+                # The prefilter must admit every line the classifier can act on — including
+                # `rt`, the test-farm wrapper, which is the blocking form actually in use here and
+                # contains none of the other markers. Adding the classifier without widening this
+                # was the second half of the same defect. The first
                 # version let through only SKILL.md / wait / token lines, so a blocking command
                 # could never reach the code that recognises it — the counter and the filter
                 # disagreed, and the filter won silently.
                 if ("SKILL.md" not in line and '"wait' not in line and "token" not in line
                         and "sleep" not in line and "until" not in line and "while" not in line
                         and "--wait" not in line and "run watch" not in line
-                        and "docker wait" not in line):
+                        and "docker wait" not in line and "rt " not in line):
                     continue
                 try:
                     rec = json.loads(line)
@@ -215,11 +220,19 @@ def scan_codex(since):
                     if name.startswith("wait"):
                         stats[cur]["poll"] += 1
                     elif kind != "custom_tool_call_output":
-                        # The command text, so a shell that does its own waiting is credited as
-                        # blocking instead of vanishing from the table.
-                        args = p.get("arguments")
+                        # The command text lives in `input`, not `arguments`. A Codex
+                        # `custom_tool_call` carries JavaScript wrapping
+                        # `tools.exec_command({cmd: "...", yield_time_ms: N})`, and `arguments` is
+                        # empty — so the blocking classifier added earlier today was pointed at a
+                        # field that is always "" and could never match. It reported 1 blocking call
+                        # in 11,690; reading the right field on ten live refactors found 31 in
+                        # 1,157. Same defect as the column that could not be set, one layer deeper:
+                        # fixing the classification without checking the input.
+                        args = p.get("input") or p.get("arguments") or ""
                         if not isinstance(args, str):
-                            args = json.dumps(args) if args is not None else ""
+                            args = json.dumps(args)
+                        m_cmd = CODEX_CMD.search(args)
+                        args = m_cmd.group(1) if m_cmd else args
                         if BLOCKLOOP.search(args):
                             stats[cur]["blocking"] += 1
                         elif SLEEP_THEN.search(args):

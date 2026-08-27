@@ -49,9 +49,16 @@ NEVER create or write a `memory/backlog.md` inside a linked worktree — one bac
 
 ### PHASE 0 — Bootstrap (before reading the backlog)
 
+`env-compat.md` is here for one measured reason: this skill scans repositories and waits on the
+commands that do it, and it accounted for **485 of 11,690 Codex poll calls** while referencing that
+include nowhere — so the "do not enter the poll loop" rule could not reach it however well written.
+Each poll re-sends the whole context (~108K tokens median) to learn one bit.
+
+
 ```
   1. ../../shared/includes/codesift-setup.md      -- [READ | MISSING -> WARN]
   2. ../../shared/includes/backlog-protocol.md    -- [READ | MISSING -> STOP] (the file format is the contract)
+  3. ../../shared/includes/env-compat.md          -- [READ | MISSING -> WARN] (waiting rule; see below)
 ```
 
 `retrospective.md` and `run-logger.md` are END-of-run includes — they are loaded at completion, not here.

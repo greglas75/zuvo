@@ -88,6 +88,22 @@ set -f; set -- $cxline; set +f
   && pass "Codex blocking commands are counted as blocking, not silently dropped" \
   || bad "Codex blocking column was '${3:-}', expected exactly 2: $cxline"
 
+# ── the REAL Codex shape: the command is in `input`, as JS, not in `arguments` ─
+# The fixture above uses `arguments`, which is the shape the scanner was written against and NOT
+# the shape Codex emits: a `custom_tool_call` carries JavaScript wrapping
+# `tools.exec_command({cmd: "...", yield_time_ms: N})` and leaves `arguments` empty. Because of
+# that, a classifier added to count blocking commands reported 1 in 11,690 while ten live sessions
+# were using 31. A test that only exercises the unused shape certifies a path nothing takes.
+cx4="$TMP/.codex/sessions/2026/08/26/rollout-2026-08-26T13-00-00-w.jsonl"
+printf '%s\n' '{"payload":{"type":"custom_tool_call","name":"exec","input":"const r = await tools.exec_command({\n  cmd: \"rt --light npx vitest run apps/api/x.spec.ts\",\n  yield_time_ms: 300000\n});"}}' > "$cx4"
+out7="$(python3 "$BIN" 2>&1)"
+cxl=$(echo "$out7" | awk '/^=== Codex/{f=1} f&&/^TOTAL/{print; exit}')
+set -f; set -- $cxl; set +f
+[ "${3:-0}" -ge 3 ] 2>/dev/null \
+  && pass "a blocking command in the real \`input\` shape is counted" \
+  || bad "the real Codex shape was not counted — blocking column '${3:-}': $cxl"
+rm -f "$cx4"
+
 # ── --since must actually exclude ────────────────────────────────────────────
 out3="$(python3 "$BIN" --since 2299-01-01 2>&1)"
 echo "$out3" | grep -q "nothing recorded" \

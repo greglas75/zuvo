@@ -1974,3 +1974,127 @@ which is the gap the 1,000 goes through.
 
 This is the shape the whole day was looking for: large, attributable, with zero variance in the
 mechanism, and falsifiable by counting `wait` calls per skill before and after a change.
+
+## A rule the run has READ still loses to the tool's own description
+
+Ten refactors were started in Codex minutes after the `env-compat` waiting rule shipped, which made
+this measurable directly rather than in aggregate. Correlating, per session, the call at which
+`env-compat.md` was read against every `yield_time_ms` requested afterwards:
+
+| session | rule read at call | yields requested AFTER reading it |
+|---|---|---|
+| 11-38-36 | 66 | 30000, 30000, **1000** |
+| 11-39-42 | 3 | 60000 |
+| 11-39-46 | 48 | 30000, 30000 |
+| 11-39-53 | 3 | 30000, 30000 |
+| 11-40-33 | 45 | 30000, 30000, 30000 |
+
+Every polling session had loaded the rule **before** it polled. Across 14 waits: twelve at 30000,
+one at 60000, one at 1000, and **zero at the 120000+ the rule asks for**. An earlier aggregate had
+suggested 32% above 120s; that was a mixture of many sessions at small n, and this cleaner test
+contradicts it.
+
+**The explanation is the same one this session kept running into from other directions.** The `wait`
+tool's own description contains "cap at 30000 ms" — in the same sentence as the 5000-300000 range
+that applies to empty polls. The model sees that description on **every** call; the include was read
+once, sixty calls earlier. A number in the tool contract beats a number in a document that the run
+has genuinely read, which is a stronger statement than "agents skip instructions" — they did not
+skip it.
+
+Two other things measured on the same ten, both worth keeping:
+
+- **Three of the four skills that never reference `env-compat.md` are among the biggest pollers**:
+  `worktree` (490 calls), `backlog` (485) and the `using-zuvo` router (85) — 1,060 of 11,690, 9%,
+  which the rule could not reach at all. Fixed by putting a compact G5 in the always-injected
+  router (~280 tokens per request, against 1,060 polls carrying ~108K each) and by giving `backlog`
+  the include outright. But G5 is prose too, so it should be expected to fare the same way.
+- **The mechanism that DID work today was mechanical, every time.** The harness refused a
+  `sleep 200; tail` outright — the exact shape measured 7,895 times and written a rule against. The
+  push gate refused twice and was right twice. `verify-audit` refused a report whose stamps had
+  drifted. None of those were persuasion.
+
+So the honest next step is a `pre_tool_use` hook (Codex 0.144.6 supports the event) that refuses a
+`wait` below the threshold and names the value to retry with. That is not a new hypothesis; it is
+the conclusion the evidence already reached. It is NOT being built on the strength of that alone —
+the inventory hook earlier today was built against a number I had not broken down, and it was
+falsified by its own benchmark. This one has its falsification condition available in advance: the
+`yield_time_ms` distribution above is the number it must move, and `~/.zuvo/poll-cost` already
+reads it.
+
+### Three false alarms of one kind, in one hour, in my own probes
+
+Watching the ten, my ad-hoc detectors produced three findings that were not real, all the same shape:
+
+- **eight "red suites"** — the pattern matched the bare word `FAIL`, which appears in the skills'
+  OWN PROSE being read: the run-logger's verdict vocabulary, `worktree`'s "FAIL on an aborted
+  merge", a sample `CQ EVAL` line.
+- **three "production writes"** — matched `apply_patch` anywhere in the record, and it is a
+  registered tool NAME, so it appears in every call's metadata. The `arguments` were empty.
+- **"no change since install"** — filtered on the file's mtime instead of each record's timestamp,
+  so sessions that began before the install contributed their whole history. That is the same
+  mtime-versus-start defect fixed in `poll-cost` an hour earlier, reproduced immediately in a probe.
+
+Each was caught before being reported, by checking what the pattern actually matched. The rule that
+falls out is narrower and more useful than "be careful": **a detector built on text will score a
+skill that was merely LOADED.** `analyze-refactor-sessions.py` says exactly that in its own header,
+and I wrote it. Knowing the rule is not the same as applying it, so the check has to be mechanical:
+before reporting any count, print the matches and read them.
+
+## The same number, wrong three times, always toward a flattering zero
+
+`poll-cost`'s Codex blocking count has now been corrected twice more, and the pattern in the errors
+is more useful than the number:
+
+| capture | blocking reported | what was actually wrong |
+|---|---|---|
+| 1st | **0** | no code path existed that could set the column |
+| 2nd | **1** | the new path read `arguments`, which is EMPTY for Codex |
+| 3rd | **1,327** | — (reads `input`; counts `rt`) |
+
+Claude Code moved the same way once `rt` was counted: **926 → 9,442**, which on this machine is more
+blocking than polling (9,442 vs 6,154 polls).
+
+**The conclusion changes, not just the figure.** "In Codex every wait is a poll; blocking is
+essentially zero" was false. Blocking is ~10% of waits there and was in use the whole time — through
+`rt`, the test farm, which the user's own CLAUDE.md already prescribes. The real opportunity is the
+12,113 polls that remain, not an absent habit that needed teaching.
+
+Three failures, one root: **a detector was written before anyone looked at the data it had to
+match.** Each produced a zero, and a zero reads like a finding rather than like a broken instrument.
+The two layers past the first are the instructive part — fixing the missing classifier without
+checking its input field, then fixing the field without checking that the line prefilter admitted
+the line, each looked like a complete fix and each still returned the flattering answer.
+
+### Six false alarms in one hour of watching ten live refactors
+
+Same root, different costumes. Three were caught before reporting, three were not:
+
+| claimed | actually |
+|---|---|
+| 8 red suites | the word `FAIL` in the skills' OWN prose being read |
+| 3 production writes | `apply_patch` is a registered tool NAME, present in every call's metadata |
+| "no change since install" | filtered on file mtime, not per-record timestamp |
+| "0 tests, 0 blocking, 0 edits" | read `arguments`; the command is in `input` |
+| "1 blocking in 11,690" | same empty field, in the shipped tool |
+| "pathologically short 1000 ms poll" | correct behaviour — a 1 s window on `rg --files`, which finishes in milliseconds |
+
+The last one is worth keeping separately: a short window is the rule applied CORRECTLY when the
+command is fast. Only a short window on a command that then had to be polled is waste, and the tell
+is a `wait` following it. Flagging every short value punished the right behaviour.
+
+The operational rule that falls out is a specific action, not an attitude: **before reporting any
+count, print a few of the matches and read them.** `analyze-refactor-sessions.py` states the
+principle in its own header, and I wrote that header, so knowing it is demonstrably not enough.
+
+### What the ten refactors actually show
+
+Measured on the live runs, once read from the right field:
+
+- **Baseline before the first production write: held in every session that reached one** (5 of 5 at
+  time of writing). The protocol's central ordering rule is being followed.
+- **The blocking lever is in use** — `rt --light npx vitest run …`, the farm.
+- **The long-window rule DOES land where it matters**: a slow `rt` test run starts with a 30,000 ms
+  window, does not finish, and its continuations use **300,000** rather than re-polling at 30 s.
+- **A real red suite appeared and was handled correctly**: `13 passed` → edit → `1 failed` → two
+  further edits. The tight edit-test-fix loop working, not a defect.
+- Duplicate commands: 8 of 1,157. No looping.

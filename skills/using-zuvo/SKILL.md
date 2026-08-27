@@ -206,6 +206,13 @@ Before writing ANY code, verify:
 | G2 | **3+ files → /build** | Feature touches 3+ files | Use `zuvo:build`, NOT direct coding. |
 | G3 | **CQ self-eval** | Any production code written | Read `../../rules/cq-checklist.md`. Run CQ1-CQ40. Print score. |
 | G4 | **Test self-eval** | Any test code written | Read `../../rules/testing.md`. Run Q1-Q25. Print score. |
+| G5 | **Never poll a long command** | About to run something slower than the harness's default window | Let it BLOCK — `rt --wait`, `rt --light <cmd>`, `gh run watch --exit-status`, `until [ -f done ]; do sleep 30; done` — one round-trip whatever the duration. If it cannot block, size the FIRST call's window to the job rather than the follow-up polls; every harness has a knob for it and the per-harness table is in `../../shared/includes/env-compat.md`. Only then poll, never under 30 s. |
+
+G5 lives here rather than only in `env-compat.md` because the skills that poll most are the ones
+that never load it: measured across 11,690 Codex poll calls, `worktree` (490), `backlog` (485) and
+this router itself (85) account for 9% — and none of the three references that include, so the rule
+could not reach them however well it was written. A poll re-sends the whole context (~108K tokens
+median) to learn one bit; the full parameter table and the measurements are in `env-compat.md`.
 
 Tests are part of implementation, not a follow-up. NEVER ask "should I write tests?" — the answer is always yes. NEVER say "implementation complete" when test files = 0.
 
