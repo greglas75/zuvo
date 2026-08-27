@@ -81,11 +81,26 @@ def repo_identity(root):
     return hashlib.sha256(os.path.realpath(common).encode()).hexdigest()[:16]
 
 
-def dep_fingerprint(root):
-    """Hash of every lockfile in the tree, by path and content.
+# What an ecosystem writes AFTER a successful install, describing what actually landed on disk.
+# A lockfile says what SHOULD be installed; these say what IS. The distinction is the difference
+# between a valid cache and a false green.
+INSTALLED_MARKERS = (
+    os.path.join("node_modules", ".package-lock.json"),   # npm: written on a completed install
+    os.path.join("node_modules", ".yarn-integrity"),      # yarn classic
+    os.path.join("node_modules", ".modules.yaml"),        # pnpm
+)
 
-    Same source + different dependencies is a different baseline. This is the same property Step 4.5
-    checks; keying on it means a cache hit cannot smuggle a mismatched `node_modules` past that gate.
+
+def dep_fingerprint(root):
+    """Hash of the declared lockfiles AND of what is actually installed.
+
+    Hashing lockfiles alone identifies the DECLARED dependency set, and two trees can agree on that
+    while disagreeing on disk — a half-finished `npm ci`, omitted dev dependencies, a
+    platform-specific optional package, a hand-edited `node_modules`. A green baseline from one
+    would then be handed to the other, which is precisely the false green this cache must not
+    produce. So the installed-state markers each ecosystem writes on a COMPLETED install are hashed
+    too, and their ABSENCE is recorded rather than ignored: a tree with a lockfile and no completed
+    install fingerprints differently from one with both.
     """
     h = hashlib.sha256()
     found = 0
@@ -95,12 +110,31 @@ def dep_fingerprint(root):
                 continue
             try:
                 with open(path, "rb") as fh:
-                    h.update(os.path.relpath(path, root).encode())
+                    h.update(b"lock:" + os.path.relpath(path, root).encode())
                     h.update(hashlib.sha256(fh.read()).digest())
                 found += 1
             except Exception:
                 continue
-    return (h.hexdigest()[:16] if found else "no-lockfile"), found
+    installed = 0
+    for marker in INSTALLED_MARKERS:
+        for path in sorted(glob.glob(os.path.join(root, "**", marker), recursive=True)):
+            try:
+                st = os.stat(path)
+                # Size and mtime, not content: npm's `.package-lock.json` is large and re-reading it
+                # for every worktree would cost more than the run being saved. A changed install
+                # changes at least one of the two.
+                h.update(b"inst:" + os.path.relpath(path, root).encode())
+                h.update(("%d:%d" % (st.st_size, int(st.st_mtime))).encode())
+                installed += 1
+            except Exception:
+                continue
+    h.update(("installed=%d" % installed).encode())
+    if not found and not installed:
+        # No lockfile AND no install marker: nothing identifies the dependency state, so nothing
+        # may be shared on the strength of it. A sentinel that two unrelated trees both match is
+        # exactly the collision this key exists to prevent.
+        return "unfingerprintable", 0
+    return h.hexdigest()[:16], found
 
 
 def key_for(root):
@@ -121,6 +155,13 @@ def cmd_check(args):
     if not rid:
         print("baseline-cache: not a git repository: %s" % root, file=sys.stderr)
         return 1                                   # fail-open: caller runs the suite
+    if dep == "unfingerprintable":
+        # Nothing on disk identifies the dependency state, so no two trees may be assumed equal on
+        # the strength of it. Treating the sentinel as an ordinary key would let any two such trees
+        # share a baseline — the collision this key exists to prevent.
+        print("baseline-cache: dependency state cannot be fingerprinted here (no lockfile, no "
+              "completed install) — not shareable", file=sys.stderr)
+        return 1
     p = path_for(rid, sha, dep)
     if not os.path.exists(p):
         return 1
@@ -136,11 +177,30 @@ def cmd_check(args):
               file=sys.stderr)
         return 1
     age_h = (time.time() - d.get("recorded_at", 0)) / 3600.0
+    if age_h < -0.017:                              # ~1 minute of tolerable clock jitter
+        # A `recorded_at` in the future makes age NEGATIVE, and negative is never greater than any
+        # threshold — so the entry would outlive every expiry, including `--max-age-hours 0`.
+        # ~/.zuvo is written by more than one machine here, and clock drift, an unsynced NTP at
+        # boot or a resumed VM snapshot all produce exactly this. Treat it as corrupt, which is how
+        # every other unreadable entry is already treated.
+        print("baseline-cache: entry has a future timestamp (%.1f h ahead) — treating as corrupt"
+              % -age_h, file=sys.stderr)
+        return 1
     if age_h > args.max_age_hours:
         return 1
     print("%s" % d.get("result", ""))
     print("[baseline reused] commit %s, deps %s, verified %.1f h ago in %s"
           % (sha[:7], dep[:7], age_h, d.get("recorded_in", "?")), file=sys.stderr)
+    return 0
+
+
+def cmd_key(args):
+    """Print the key of the tree AS IT IS NOW, for the caller to capture before running the suite."""
+    rid, sha, dep, _ = key_for(os.path.abspath(args.repo_root))
+    if not rid:
+        print("baseline-cache: not a git repository", file=sys.stderr)
+        return 1
+    print("%s:%s:%s" % (rid, sha, dep))
     return 0
 
 
@@ -150,11 +210,33 @@ def cmd_record(args):
     if not rid:
         print("baseline-cache: not a git repository: %s" % root, file=sys.stderr)
         return 1
+    if dep == "unfingerprintable":
+        print("baseline-cache: refusing to record — dependency state cannot be fingerprinted",
+              file=sys.stderr)
+        return 1
+    # The key is computed at RECORD time, but the suite ran earlier. If HEAD moved, a lockfile
+    # changed, or an install finished while the tests were running, the result belongs to the OLD
+    # tree and storing it under the NEW key is a false green — the exact failure this cache must
+    # not produce. `--key` is the caller's snapshot from BEFORE the run; when it disagrees with the
+    # tree now, the result is discarded rather than misfiled.
+    if args.key:
+        now = "%s:%s:%s" % (rid, sha, dep)
+        if args.key != now:
+            print("baseline-cache: REFUSED — the tree changed while the suite ran\n"
+                  "  at start: %s\n  now:      %s\n"
+                  "  The result describes the tree at start, not this one. Re-run the suite."
+                  % (args.key, now), file=sys.stderr)
+            return 2
+    if bool(args.green) == bool(args.red):
+        print("baseline-cache: pass exactly one of --green / --red.\n"
+              "  Neither is the default on purpose: a missing flag used to record GREEN, which is "
+              "the one outcome that must never happen by omission.", file=sys.stderr)
+        return 2
     os.makedirs(STORE, exist_ok=True)
     p = path_for(rid, sha, dep)
     payload = {
         "commit": sha, "deps": dep, "lockfiles": nlocks,
-        "green": bool(args.green) and not args.red,
+        "green": bool(args.green),
         "result": args.result, "recorded_at": time.time(),
         "recorded_in": os.path.basename(root),
     }
@@ -218,9 +300,19 @@ def main():
     r = sub.add_parser("record", help="store the result of a baseline run")
     r.add_argument("repo_root")
     r.add_argument("--result", required=True)
-    r.add_argument("--green", action="store_true", default=True)
-    r.add_argument("--red", action="store_true")
+    # NEITHER defaults. `--green` used to default to True, so `record --result "3 failed"` with no
+    # flag stored a GREEN entry that every other worktree then reused — the whole "only a green
+    # result is reused" guarantee resting on a caller remembering to type `--red`, i.e. on an LLM
+    # reading prose. The safety-critical path must fail CLOSED: no flag, no record.
+    r.add_argument("--green", action="store_true", help="the suite passed")
+    r.add_argument("--red", action="store_true", help="the suite failed")
+    r.add_argument("--key", help="the key captured with `baseline-cache key` BEFORE the suite ran; "
+                                 "recording is refused if the tree has changed since")
     r.set_defaults(fn=cmd_record)
+
+    k = sub.add_parser("key", help="print this tree's key, to capture before running the suite")
+    k.add_argument("repo_root")
+    k.set_defaults(fn=cmd_key)
 
     l = sub.add_parser("list")
     l.set_defaults(fn=cmd_list)

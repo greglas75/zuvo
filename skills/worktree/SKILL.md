@@ -217,14 +217,25 @@ full suite over byte-identical code.
 **1. Ask the cache first.**
 
 ```bash
-if RESULT=$(~/.zuvo/baseline-cache check "$(git rev-parse --show-toplevel)"); then
+ROOT=$(git rev-parse --show-toplevel)
+if RESULT=$(~/.zuvo/baseline-cache check "$ROOT"); then
   echo "Baseline green (reused): $RESULT"
 else
-  # 2. Detect the runner and RUN it — see the detection list below.
-  #    Then record what happened, green or red.
-  ~/.zuvo/baseline-cache record "$(git rev-parse --show-toplevel)" --result "$RESULT_TEXT"   # or --red
+  # Capture the key BEFORE the suite runs. If HEAD moves, a lockfile changes, or an install
+  # finishes while the tests are running, the result describes the OLD tree — recording it under
+  # the new key would be a false green, so `record --key` refuses instead.
+  KEY=$(~/.zuvo/baseline-cache key "$ROOT")
+
+  # Detect the runner and RUN it — see the detection list below. Let it BLOCK.
+  # Then record what happened, with an EXPLICIT verdict:
+  ~/.zuvo/baseline-cache record "$ROOT" --key "$KEY" --result "$RESULT_TEXT" --green   # or --red
 fi
 ```
+
+`--green` / `--red` is mandatory and neither is the default: a missing flag used to record GREEN,
+which is the one outcome that must never happen by omission. `record` exits non-zero if the flag is
+absent, if both are given, or if the tree changed since `--key` was captured — in every case the
+next worktree runs the suite rather than trusting an entry nobody can vouch for.
 
 `check` exits non-zero — meaning *run the suite* — whenever anything differs or is unknown: a
 different commit, a changed lockfile, a different repository, an entry older than 24 h, or a base
@@ -241,8 +252,9 @@ every lockfile in the tree means a cache hit cannot smuggle a mismatched install
 1. Detect test runner from config files (`vitest.config.*`, `jest.config.*`, `pytest.ini`, `phpunit.xml`, `Cargo.toml`, etc.) or `package.json` scripts.
 2. Run the test command. Let it BLOCK (`rt`, `rt --wait`) rather than polling it — see G5 and
    `../../shared/includes/env-compat.md`.
-3. Record the outcome with `baseline-cache record`, so the next worktree off this commit does not
-   repeat it.
+3. Record the outcome with `baseline-cache record ... --green` or `--red`, so the next worktree off
+   this commit does not repeat it. Passing `--key` (captured before the run) is what makes the
+   record trustworthy: without it, a tree that moved mid-suite is silently misfiled as verified.
 
 **3. Report result:**
    - **All pass** -- "Baseline green. N tests passed. Ready to work." (say *(reused)* when it was)

@@ -99,10 +99,30 @@ printf '%s\n' '{"payload":{"type":"custom_tool_call","name":"exec","input":"cons
 out7="$(python3 "$BIN" 2>&1)"
 cxl=$(echo "$out7" | awk '/^=== Codex/{f=1} f&&/^TOTAL/{print; exit}')
 set -f; set -- $cxl; set +f
-[ "${3:-0}" -ge 3 ] 2>/dev/null \
-  && pass "a blocking command in the real \`input\` shape is counted" \
-  || bad "the real Codex shape was not counted — blocking column '${3:-}': $cxl"
+# EXACT, not `>=`. A lower bound also passes when the classifier double-counts, which is the
+# regression this case would otherwise be blind to.
+[ "${3:-}" = "3" ] \
+  && pass "a blocking command in the real \`input\` shape is counted exactly once" \
+  || bad "blocking column was '${3:-}', expected exactly 3: $cxl"
 rm -f "$cx4"
+
+# ── a command containing an ESCAPED QUOTE must still be extracted ────────────
+# The shape that hid a real bug: CODEX_CMD demanded TWO literal backslashes where an escape has
+# one, so any command with an embedded `\"` failed to match and fell back to the whole wrapper
+# blob. Classification came out right by accident — the markers were still substrings of the
+# fallback — so the fix's own test passed while the fix was broken. This fixture is that shape.
+cx5="$TMP/.codex/sessions/2026/08/26/rollout-2026-08-26T14-00-00-v.jsonl"
+printf '%s\n' '{"payload":{"type":"custom_tool_call","name":"exec","input":"const r = await tools.exec_command({\n  cmd: \"echo \\\"hello\\\" && rt --light npx vitest run b.spec.ts\",\n  yield_time_ms: 300000\n});"}}' > "$cx5"
+out8="$(python3 "$BIN" 2>&1)"
+cx5l=$(echo "$out8" | awk '/^=== Codex/{f=1} f&&/^TOTAL/{print; exit}')
+set -f; set -- $cx5l; set +f
+# 3, not 4: the previous case removes its own fixture, so what remains is cx2's two plus this one.
+# The first version expected 4 and failed — the code was right and the expectation was wrong, which
+# is worth a comment because the next person will do the same arithmetic.
+[ "${3:-}" = "3" ] \
+  && pass "a command with an embedded escaped quote is still classified as blocking" \
+  || bad "escaped-quote command not counted — blocking column '${3:-}', expected 3: $cx5l"
+rm -f "$cx5"
 
 # ── --since must actually exclude ────────────────────────────────────────────
 out3="$(python3 "$BIN" --since 2299-01-01 2>&1)"

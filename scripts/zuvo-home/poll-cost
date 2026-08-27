@@ -53,11 +53,12 @@ from collections import Counter, defaultdict
 _SLEEP_ARG = r"(?:\d+(?:\.\d+)?[smhd]?|\$\{?\w+\}?)"
 SLEEP_THEN = re.compile(r"\bsleep\s+" + _SLEEP_ARG + r"\s*(?:;|&&|\n)")
 BLOCKLOOP = re.compile(r"\b(?:until|while)\b[^\n]{0,80}\bdo\b[^\n]{0,160}sleep"
-                       r"|\brt\b|--wait|gh run watch|docker wait|docker logs -f"
+                       r"|(?:^|[;&|]\s*|&&\s*|\|\|\s*)rt\s"        # rt as a COMMAND, not the word "rt"
+                   r"|--wait|gh run watch|docker wait|docker logs -f"
                        r"|\bwait\s+\$?\w*\s*$")
 CODEX_ENTER = re.compile(r"\.codex/skills/([a-z0-9-]+)/SKILL\.md")
 # The shell command inside Codex's JS exec wrapper.
-CODEX_CMD = re.compile(r'cmd:\s*"((?:[^"\\\\]|\\\\.)*)"')
+CODEX_CMD = re.compile(r'cmd:\s*"((?:[^"\\]|\\.)*)"')
 STAMP = re.compile(r"(\d{4}-\d{2}-\d{2})T\d{2}-\d{2}-\d{2}")
 ISO_TS = re.compile(r'"timestamp"\s*:\s*"(\d{4}-\d{2}-\d{2})T')
 
