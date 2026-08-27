@@ -314,3 +314,30 @@ Two habits this cost:
 - **Check which binary you are testing.** `codex` on PATH was a Homebrew build from six weeks
   earlier than the app's. Every experiment ran against the wrong one before anybody noticed, and a
   negative result from an old binary means nothing at all.
+
+### What to do instead: put the rule in the shell
+
+Codex runs every command as `/bin/zsh -lc '<command>'`, and a zsh **always** reads `~/.zshenv`.
+So the rule the hook could not deliver can live in the shell, where it demonstrably fires:
+
+```
+$ codex exec  →  /bin/zsh -lc 'sleep 25; echo AFTERSLEEP'
+ succeeded in 0ms:                      ← was 25 s
+zuvo: declining `sleep 25` outside a loop — it costs one whole turn per interval.
+AFTERSLEEP                              ← the rest of the command still ran
+```
+
+`hooks/zuvo-sleep-guard.zsh`, installed to `~/.zuvo/` and sourced from `~/.zshenv` by
+`install.sh`. It is narrow on purpose, because it sits in front of every `sleep` on the machine:
+
+- only a **non-interactive** zsh with a `-c` string (an interactive `sleep 5` is untouched, and so
+  is a script file — a script has no `ZSH_EXECUTION_STRING`, only an inline `-c` command does);
+- only when an **ancestor process is codex** — verified against the real chain,
+  `/Applications/ChatGPT.app/Contents/Resources/codex exec …`. Do not simulate this with a stub
+  that `exec`s: exec replaces argv, the stub's name disappears, and the test then proves nothing;
+- only `sleep >= 5` **outside** a `do … done`, so a settling pause and a blocking loop both pass;
+- it **declines the delay, it does not kill the command** — everything after the `;` still runs;
+- off in one line: `touch ~/.zuvo/no-sleep-guard`.
+
+The general point is worth more than the guard: when a harness's own extension point cannot be
+shown to work, look for the layer underneath it that everything must pass through anyway.

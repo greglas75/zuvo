@@ -1048,6 +1048,7 @@ PYHOOK
     then
       ok "poll guard REGISTERED in ~/.codex/hooks.json (pre_tool_use) — registration only, not proof it runs (docs/runbook/operating.md §11)"
     else
+
       warn "could not register the poll guard in ~/.codex/hooks.json"
     fi
   fi
@@ -1902,3 +1903,30 @@ if [ "${INSTALL_VERIFY_MISSING:-0}" -gt 0 ]; then
 fi
 
 fi  # end main run guard (skipped when sourced)
+
+# --- shell-level sleep guard -------------------------------------------------------------
+# Enforcement that does not depend on a Codex hook running — and no Codex hook has ever been
+# observed to run here (docs/runbook/operating.md §11). Codex shells out through `/bin/zsh -lc`,
+# and a zsh ALWAYS reads ~/.zshenv, so the rule can live in the shell instead.
+#
+# ~/.zshenv is read by every zsh on this machine, so the block written into it is a guarded
+# one-liner: if the guard file is ever deleted, nothing breaks and no shell errors.
+if [ -d "$HOME/.zuvo" ] || mkdir -p "$HOME/.zuvo" 2>/dev/null; then
+  cp -f "$ZUVO_DIR/hooks/zuvo-sleep-guard.zsh" "$HOME/.zuvo/zuvo-sleep-guard.zsh" 2>/dev/null || true
+  if command -v zsh >/dev/null 2>&1 && ! zsh -n "$HOME/.zuvo/zuvo-sleep-guard.zsh" 2>/dev/null; then
+    warn "sleep guard NOT wired: $HOME/.zuvo/zuvo-sleep-guard.zsh does not parse"
+  else
+    ZSHENV="$HOME/.zshenv"
+    if ! grep -q 'zuvo sleep guard' "$ZSHENV" 2>/dev/null; then
+      [ -f "$ZSHENV" ] && cp -f "$ZSHENV" "$ZSHENV.zuvo-bak.$(date +%Y%m%d-%H%M%S)"
+      {
+        printf '\n# >>> zuvo sleep guard >>>\n'
+        printf '[ -f "$HOME/.zuvo/zuvo-sleep-guard.zsh" ] && source "$HOME/.zuvo/zuvo-sleep-guard.zsh"\n'
+        printf '# <<< zuvo sleep guard <<<\n'
+      } >> "$ZSHENV"
+      ok "sleep guard wired into ~/.zshenv (inert unless the parent process is codex; off: touch ~/.zuvo/no-sleep-guard)"
+    else
+      ok "sleep guard already wired in ~/.zshenv (file refreshed)"
+    fi
+  fi
+fi
