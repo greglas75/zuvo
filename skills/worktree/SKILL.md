@@ -95,10 +95,30 @@ Determine branch name:
 
 Safety check -- NEVER create a worktree on `main` or `master` without explicit user consent. If the user requests it, confirm: "You are about to branch from and work directly on the main branch. Confirm by typing the branch name."
 
-Run:
+**Pin the base explicitly.** `git worktree add -b <name> <path>` with no start-point branches from
+whatever the main checkout's HEAD happens to be at that moment, so a batch of worktrees created a
+few minutes apart silently lands on different bases whenever the parent moves — a commit, a pull, a
+branch switch between two creations is enough. Measured on one repo: **34 worktrees split across 4
+different bases** (26 on `91d2c64`, 6 on `f8de6d9`, and two singletons), which is four separate
+green baselines to establish instead of one, and four different sets of code to reason about when
+comparing their results.
+
+Resolve the base once, name it in the command, and report it:
+
 ```bash
-git worktree add "$WTDIR/<branch-name>" -b "<branch-name>"
+# The base a batch should share. Default: the current HEAD, resolved to a SHA so it cannot move
+# under a later worktree in the same batch. Override with $ZUVO_WORKTREE_BASE to pin a whole batch
+# to one commit deliberately (e.g. `origin/main` fetched once at the start).
+BASE_REF="${ZUVO_WORKTREE_BASE:-HEAD}"
+BASE_SHA=$(git rev-parse "$BASE_REF") || { echo "cannot resolve base '$BASE_REF'"; exit 1; }
+
+git worktree add "$WTDIR/<branch-name>" -b "<branch-name>" "$BASE_SHA"
+echo "worktree <branch-name> based on $(git rev-parse --short=7 "$BASE_SHA") ($BASE_REF)"
 ```
+
+Report the base in the CREATE output. Two worktrees on the same base share a baseline (Step 5) and
+their results are comparable; two on different bases share neither, and saying which is which costs
+one line.
 
 If the branch already exists (exit code non-zero), report and ask user whether to:
 - Use the existing branch: `git worktree add "$WTDIR/<branch-name>" "<branch-name>"`
