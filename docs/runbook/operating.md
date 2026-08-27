@@ -341,3 +341,24 @@ AFTERSLEEP                              ← the rest of the command still ran
 
 The general point is worth more than the guard: when a harness's own extension point cannot be
 shown to work, look for the layer underneath it that everything must pass through anyway.
+
+### How much of the problem the shell layer can actually reach: 9.4%
+
+Measured over 32,869 tool calls in the 300 most recent local sessions, split by which layer could
+possibly see each waiting call:
+
+| Costume | Calls | Share of waiting | Reachable by |
+|---|---|---|---|
+| `wait` / `wait_agent` — a TOOL call inside code mode | 4,363 | **88.5%** | a Codex hook only, and none fires |
+| bare `sleep N` in a shell command | 465 | 9.4% | the shell guard (works) |
+| `sleep` inside a loop — already correct | 102 | 2.1% | — |
+
+So the mechanism that provably works addresses **under a tenth** of the waste, and the remaining
+88.5% has no working lever on this machine at all: it is a tool call made inside the model's own
+JavaScript, no shell is involved, and the hook that would see it does not run. `codex` also carries
+a server-side `default_exec_yield_time_ms`, which would fix the whole class at a stroke — but it is
+not present in any local config and cannot be set from here.
+
+Say this number out loud whenever the guards come up. A guard that covers 9.4% and is described as
+"the fix" is the same failure as a gate that reports PASS without running: the work is real, and
+the claim is still false.
