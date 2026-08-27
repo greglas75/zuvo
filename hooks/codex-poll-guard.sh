@@ -53,9 +53,11 @@ POLL_SUGGEST_MS="${ZUVO_POLL_SUGGEST_MS:-300000}"
 SLEEP_MIN_S="${ZUVO_SLEEP_POLL_MIN_S:-5}"
 
 python3 - "$INPUT" "$POLL_MIN_MS" "$AGENT_MIN_MS" "$POLL_SUGGEST_MS" "$SLEEP_MIN_S" <<'PY'
+import itertools
 import json
 import os
 import re
+import stat
 import sys
 
 
@@ -100,9 +102,18 @@ if not blob:
     allow()
 
 
+# The string leaves carry JS-encoded calls; a STRUCTURED payload keeps its numbers as JSON numbers
+# and its keys as dict keys, so neither ever reaches `blob`. Search the re-encoded payload too, or
+# every structured tool call reads as "no timeout given" and is waved through.
+raw = json.dumps(payload)
+
+
 def num(field):
-    m = re.search(r'"?%s"?\s*:\s*(\d+)' % field, blob)
-    return int(m.group(1)) if m else None
+    for hay in (blob, raw):
+        m = re.search(r'"?%s"?\s*:\s*"?(\d+)' % field, hay)
+        if m:
+            return int(m.group(1))
+    return None
 
 
 def deny(reason, fix):
@@ -119,9 +130,23 @@ def deny(reason, fix):
 
 
 # ---- wait_agent -----------------------------------------------------------
-if '"wait_agent"' in blob or "wait_agent(" in blob or "tools.wait_agent" in blob:
+# The name must be matched where the call IS, not wherever the characters appear. A bare substring
+# test over the flattened payload denies any command whose TEXT contains `wait_agent(` — writing
+# this very file, or its test, or a doc example. And an unscoped `timeout_ms` then picks up a
+# number from an unrelated field in the same call. Both halves are scoped now: the structured tool
+# name decides, and when the build does not send one, the timeout must sit inside the call's own
+# parentheses.
+tool_name = payload.get("tool_name") or payload.get("toolName") or ""
+if tool_name in ("wait_agent", "waitAgent"):
     t = num("timeout_ms")
-    if t is not None and t < agent_min:
+else:
+    m_wa = re.search(r"wait_agent\s*\(\s*\{?[^)]{0,400}?timeout_ms\\?\"?\s*:\s*\\?\"?(\d+)", blob)
+    t = int(m_wa.group(1)) if m_wa else None
+# Only a call that HAS a wait_agent timeout is decided here; anything else falls through to the
+# checks below. (Guarding this with `if True:` left the block's own `allow()` unconditional and
+# short-circuited every later check — caught by the probe, not by the test file.)
+if t is not None:
+    if t < agent_min:
         deny(
             "zuvo policy: wait_agent timeout_ms=%d is below the %d ms floor." % (t, agent_min),
             "Each poll re-sends the whole conversation (~108K tokens median here) to learn one bit. "
@@ -130,7 +155,8 @@ if '"wait_agent"' in blob or "wait_agent(" in blob or "tools.wait_agent" in blob
             "Being on the critical path justifies a shorter interval, not one three orders of "
             "magnitude below the useful range.",
         )
-    allow()
+    # and then FALL THROUGH. One check passing is not a verdict on the call; ending here let a
+    # call carrying an acceptable wait_agent skip every later check.
 
 # ---- paging a file that fits in one read ----------------------------------
 # Same shape as polling, different verb: one operation split across turns, each carrying the whole
@@ -156,22 +182,37 @@ if m_rd:
     if lo == 1 and m_budget:
         budget = int(m_budget.group(1))
         try:
-            size = os.path.getsize(os.path.expanduser(path))
+            real = os.path.expanduser(path)
+            st = os.stat(real)
+            # Regular files ONLY. A FIFO with no writer makes `open()` block forever — in front of
+            # EVERY tool call — and a directory raised IsADirectoryError straight through the
+            # try/except below it, crashing the hook with rc=1 and no JSON. Both break this file's
+            # own fail-open contract, which is worse than any case it might miss.
+            size = st.st_size if stat.S_ISREG(st.st_mode) else None
         except Exception:
             size = None
         if size is not None:
             approx = size / 3.6
-            with open(os.path.expanduser(path), errors="replace") as _fh:
-                nlines = sum(1 for _ in _fh)
-            if approx <= budget * 0.85 and hi < nlines:
+            nlines = None
+            # Count lines ONLY when the size test already passed — the old order paid for a full
+            # pass over files it had already disqualified (measured: 1.4 s on a 4.2 GB file, on
+            # every matching call). And stop at hi+1: whether the file is longer is all that is
+            # being asked.
+            if approx <= budget * 0.85:
+                try:
+                    with open(real, errors="replace") as _fh:
+                        nlines = sum(1 for _ in itertools.islice(_fh, hi + 1))
+                except Exception:
+                    nlines = None
+            if nlines is not None and hi < nlines:
                 deny(
                     "zuvo policy: %s is ~%d tokens and this call allows %d — reading it in slices "
                     "costs a turn per slice for nothing." % (path, approx, budget),
-                    "Read it once:  sed -n '1,%dp' %s   (or `cat %s`).\n"
+                    "Read it once:  cat %s   (it is %d lines).\n"
                     "Measured across 1,002 sessions: 4,191 extra turns went to splitting reads that "
                     "fit in one; exactly 18 were genuinely forced by the output limit. Each extra "
                     "turn re-sends the whole conversation (~133K tokens here) to deliver text the "
-                    "first call could have carried." % (nlines, path, path),
+                    "first call could have carried." % (path, nlines),
                 )
 
 # ---- `sleep N; <check>` outside a loop: a poll loop the model drives --------
@@ -189,8 +230,24 @@ if m_rd:
 m_cmd = (re.search(r'cmd:\s*"((?:[^"\\]|\\.)*)"', blob)
          or re.search(r'"cmd"\s*:\s*"((?:[^"\\]|\\.)*)"', blob))
 cmd_text = m_cmd.group(1) if m_cmd else ""
-if cmd_text and not re.search(r"\b(?:until|while)\b[^\n]{0,120}\bdo\b", cmd_text):
-    m_sleep = re.search(r"(?:^|[;&|]\s*|&&\s*)sleep\s+(\d+(?:\.\d+)?)\s*(?:;|&&)", cmd_text)
+if cmd_text:
+    # A sleep INSIDE any loop body is the shape being asked for — `for`, `select` and a bare
+    # `do ... done` block as much as `until`/`while`. Keying off the keyword next to the sleep
+    # denied `for i in $(seq 1 60); do ...; sleep 5; done`, which blocks in the shell exactly like
+    # the example the refusal itself recommends. So: find the do..done spans, and ask whether the
+    # sleep falls in one.
+    dos = [m.end() for m in re.finditer(r"\bdo\b", cmd_text)]
+    dones = [m.start() for m in re.finditer(r"\bdone\b", cmd_text)]
+    m_sleep = None
+    for cand in re.finditer(r"(?:^|[;&|]\s*|&&\s*)sleep\s+(\d+(?:\.\d+)?)\s*(?:;|&&)", cmd_text):
+        # In a loop iff SOME `do` opens before it and SOME `done` closes after it. Pairing them
+        # positionally instead broke on `grep -q done` inside the body: the word closed the span
+        # early and the loop read as no loop. When in doubt this errs toward allowing, which is the
+        # only safe direction for something sitting in front of every tool call.
+        if any(d <= cand.start() for d in dos) and any(e >= cand.end() for e in dones):
+            continue
+        m_sleep = cand
+        break
     if m_sleep and float(m_sleep.group(1)) >= sleep_min:
         secs = float(m_sleep.group(1))
         deny(
@@ -206,9 +263,14 @@ if cmd_text and not re.search(r"\b(?:until|while)\b[^\n]{0,120}\bdo\b", cmd_text
 
 # ---- write_stdin: EMPTY chars is a poll, not a write ----------------------
 if "write_stdin" in blob:
-    m = re.search(r'"chars"\s*:\s*"((?:[^"\\]|\\.)*)"', blob)
+    # `chars:` unquoted in the JS encoding, `"chars":` in the JSON one. Matching only the second
+    # meant every JS-shaped empty poll — the majority — read as "no chars field" and passed.
+    m = re.search(r'"?chars"?\s*:\s*"((?:[^"\\]|\\.)*)"', blob)
     chars = m.group(1) if m else None
-    if chars is not None and chars.strip() == "":
+    # ONLY a truly empty `chars` is a poll. A space advances a pager and Enter accepts a prompt —
+    # real keystrokes, with a naturally short yield, and judging them against the poll floor
+    # refuses the interactive work the tool exists for.
+    if chars == "":
         y = num("yield_time_ms")
         if y is not None and y < poll_min:
             deny(

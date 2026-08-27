@@ -145,6 +145,49 @@ case "$reason" in
   *)        bad "the refusal does not name a replacement value: ${reason:0:80}" ;;
 esac
 
+# --- regressions from the behaviour audit of 2026-08-27 ----------------------
+# Every one of these was a FALSE REFUSAL or a crash, in a hook that sits in front of every tool
+# call. That direction is the one that matters: a missed poll costs tokens, a wrong refusal costs
+# the user work that was already correct.
+
+d=$(decision 'tools.exec({cmd: "for i in $(seq 1 60); do curl -s http://x | grep -q done && break; sleep 5; done"})')
+[ "$d" = "allow" ] && pass "a for-loop is a loop (BEHAV-1)" \
+  || bad "the exact blocking shape the refusal recommends was itself refused ($d)"
+
+d=$(decision 'tools.write_stdin({"session_id":7,"chars":" ","yield_time_ms":1000});')
+[ "$d" = "allow" ] && pass "a space is a keystroke, not an empty poll (BEHAV-2)" \
+  || bad "pressing space to advance a pager was refused ($d)"
+
+d=$(decision 'echo "tools.wait_agent(x)" >> doc.md   # timeout_ms: 200')
+[ "$d" = "allow" ] && pass "a command CONTAINING the name is not a call of it (BEHAV-3)" \
+  || bad "writing the literal text refused the write ($d)"
+
+d=$(decision "sed -n '1,240p' $TMP")
+[ "$d" = "allow" ] && pass "a directory path fails OPEN, per this file's own contract (BEHAV-4)" \
+  || bad "a directory did not fail open ($d)"
+
+mkfifo "$TMP/fifo" 2>/dev/null
+python3 - "sed -n '1,240p' $TMP/fifo" > "$TMP/fifo.json" <<'PY'
+import json, sys
+json.dump({"hook_event_name": "pre_tool_use",
+           "tool_input": {"input": '{"cmd":"%s","max_output_tokens":30000}' % sys.argv[1]}},
+          sys.stdout)
+PY
+timeout 5 bash "$HOOK" < "$TMP/fifo.json" >/dev/null 2>&1; rc=$?
+[ "$rc" != "124" ] && pass "a FIFO with no writer does not hang the next tool call (BEHAV-5)" \
+  || bad "the hook blocked forever on a FIFO — every later tool call waits behind it"
+
+# The JS encoding writes `chars:` BARE. Requiring the quoted form meant the hook was live and
+# INERT for the majority shape: it registered, reported success, and refused nothing.
+d=$(decision 'tools.write_stdin({session_id:7, chars: "", yield_time_ms: 30000});')
+[ "$d" = "deny" ] && pass "an empty poll in the JS (unquoted-key) encoding is refused" \
+  || bad "the dominant real-world encoding was not matched ($d)"
+
+# A wait_agent call that is fine must not end the hook early and skip every later check.
+d=$(decision 'tools.wait_agent({"timeout_ms":300000}); tools.exec({cmd: "sleep 25; curl -s http://x"})')
+[ "$d" = "deny" ] && pass "an acceptable wait_agent does not short-circuit the later checks" \
+  || bad "one passing check waved the rest of the call through ($d)"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1
