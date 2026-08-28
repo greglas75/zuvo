@@ -498,12 +498,16 @@ Measured, with the baseline frozen first in `memory/bench/yield-before-2026-08-2
 
 | | before | after |
 |---|---|---|
-| mean poll window | 33.6 s | **205.1 s** |
-| polls per hour of waiting | 107.3 | **17.5** |
-| tokens per hour of waiting | 11.6M | **1.9M** |
-| share below the 300000 ms maximum | 96.8% | **0%** in sessions that carry the rule |
+| polls measured | 5,678 | 622 |
+| mean poll window | 32 s | **128 s** |
+| share below the 300000 ms maximum | 97.6% | **61.4%** |
+| share AT the maximum | 3.2% | **38.6%** |
 
-**6.1× cheaper per hour of waiting**, ≈500M tokens on the measured volume.
+**4.1× cheaper per hour of waiting.**
+
+**The 6.1× first reported here was a 76-poll sample and is withdrawn.** On 622 polls the figure is
+4.1×, and the rule is followed by roughly four polls in ten — 31.7% still use 30000 ms and 29.3%
+use 10000 ms. Real, large, and not yet finished.
 
 Two things worth keeping from this:
 
@@ -512,7 +516,8 @@ Two things worth keeping from this:
   machine-level instruction file, and generalising from it closed off the only lever that existed.
   What made this one work is what the failed ones lacked: a specific number, the measured reason
   for it, and a place the model reads on every session.
-- **Split by whether the session could have SEEN the rule.** `AGENTS.md` is read at thread start, so
-  a mixed sample dilutes as older threads keep working and looks like a fading effect: 32.8% → 45.3%
-  → 50.5% below max, while sessions carrying the rule sat at 0% throughout. The instrument was
-  averaging two populations.
+- **Split by each POLL's own timestamp, not by the session's.** Grouping by session start was
+  wrong twice over: it read as "almost nothing has the rule" when in fact all 26 live sessions
+  contained it — Codex re-reads `AGENTS.md` when a thread RESUMES, so an app restart does propagate
+  it — and it produced a 0%/96.6% split that described nothing real. The poll-level split is the
+  honest one, and it is also the one that survives a restart mid-measurement.
