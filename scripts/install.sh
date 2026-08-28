@@ -1030,15 +1030,21 @@ except Exception:
 if not isinstance(cfg, dict):
     cfg = {}
 hooks = cfg.setdefault("hooks", {})
-# snake_case: this is Codex's own event name, evidenced by the `:pre_tool_use:` key in
-# config.toml's hooks.state. The CamelCase spelling in hooks.codex.json is the Claude Code
-# manifest's; using it here would register a hook on an event Codex does not fire.
-group = hooks.setdefault("pre_tool_use", [])
-group[:] = [g for g in group if "codex-poll-guard" not in json.dumps(g)]
-group.append({
+# BOTH spellings, because the earlier reasoning here was wrong and the evidence points the
+# other way. The only hooks Codex has ever registered and trusted on this machine are the ones
+# IT wrote itself, importing from Claude Code, and those files spell the event `"Stop"` —
+# PascalCase. The `:stop:` in config.toml's hooks.state trust key is a NORMALISED form, not the
+# file's spelling, and reading it as the file's spelling is what produced the snake_case-only
+# registration that never fired. The parser accepts unknown event keys silently (verified:
+# `NotARealEvent` draws no complaint), so writing both costs nothing and cannot mis-fire.
+entry = {
     "matcher": "exec|wait|shell|local_shell|write_stdin|wait_agent",
     "hooks": [{"type": "command", "command": "bash %s" % script, "timeout": 10}],
-})
+}
+for event in ("pre_tool_use", "PreToolUse"):
+    group = hooks.setdefault(event, [])
+    group[:] = [g for g in group if "codex-poll-guard" not in json.dumps(g)]
+    group.append(dict(entry))
 tmp = path + ".tmp"
 with open(tmp, "w") as fh:
     json.dump(cfg, fh, indent=2)
@@ -1046,7 +1052,7 @@ os.replace(tmp, path)          # atomic: a half-written hooks.json would break t
 print("ok")
 PYHOOK
     then
-      ok "poll guard REGISTERED in ~/.codex/hooks.json (pre_tool_use) — registration only, not proof it runs (docs/runbook/operating.md §11)"
+      ok "poll guard REGISTERED in ~/.codex/hooks.json (pre_tool_use + PreToolUse) — registration only, not proof it runs (docs/runbook/operating.md §11)"
     else
 
       warn "could not register the poll guard in ~/.codex/hooks.json"

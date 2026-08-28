@@ -71,7 +71,11 @@ def allow():
 # the next few real payloads (capped, then it stops) so the next disagreement is settled by
 # evidence in one step.
 try:
-    _tr = os.path.expanduser("~/.zuvo/guard-trace")
+    # The test suite exercises this hook, so with a single fixed path the trace fills with
+    # FIXTURES and then reads as evidence that real payloads arrived. That mistake was made three
+    # times before the path was made overridable. Tests point it at their own temp dir; real Codex
+    # sets nothing and uses the default.
+    _tr = os.environ.get("ZUVO_GUARD_TRACE") or os.path.expanduser("~/.zuvo/guard-trace")
     if os.path.exists(_tr) and os.path.getsize(_tr) < 400000:
         with open(_tr, "a") as _fh:
             _fh.write(sys.argv[1][:4000] + "\n")

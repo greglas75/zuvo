@@ -342,26 +342,35 @@ AFTERSLEEP                              ← the rest of the command still ran
 The general point is worth more than the guard: when a harness's own extension point cannot be
 shown to work, look for the layer underneath it that everything must pass through anyway.
 
-### How much of the problem the shell layer can actually reach: 9.4%
+### How much of the problem the shell layer can actually reach: 0.5%
 
-Measured over 32,869 tool calls in the 300 most recent local sessions, split by which layer could
-possibly see each waiting call:
+**This section replaces an earlier one that said 9.4% / 88.5%. Those numbers were wrong** — they
+came from matching `wait`/`sleep` anywhere in a log LINE, which caught nested names and text in
+results. Re-measured by classifying each `custom_tool_call` payload's own `input`, over 5,632 calls:
 
 | Costume | Calls | Share of waiting | Reachable by |
 |---|---|---|---|
-| `wait` / `wait_agent` — a TOOL call inside code mode | 4,363 | **88.5%** | a Codex hook only, and none fires |
-| bare `sleep N` in a shell command | 465 | 9.4% | the shell guard (works) |
-| `sleep` inside a loop — already correct | 102 | 2.1% | — |
+| `tools.write_stdin({chars:"", yield_time_ms:N})` | 1,846 | **97.9%** | a pre_tool_use hook only — and none runs |
+| `sleep` inside a loop — already correct | 30 | 1.6% | — |
+| bare `sleep N` in a shell command | 9 | 0.5% | the shell guard (works) |
 
-So the mechanism that provably works addresses **under a tenth** of the waste, and the remaining
-88.5% has no working lever on this machine at all: it is a tool call made inside the model's own
-JavaScript, no shell is involved, and the hook that would see it does not run. `codex` also carries
-a server-side `default_exec_yield_time_ms`, which would fix the whole class at a stroke — but it is
-not present in any local config and cannot be set from here.
+One third of ALL tool calls in these sessions (32.8%) is an empty `write_stdin` poll.
 
-Say this number out loud whenever the guards come up. A guard that covers 9.4% and is described as
-"the fix" is the same failure as a gate that reports PASS without running: the work is real, and
-the claim is still false.
+Four interception points exist for it. All four were tested and all four are dead:
+
+1. **`pre_tool_use` hook** — it WOULD see it: the JS is the body of the enclosing `exec` call and
+   the guard parses it correctly. But hooks do not run: 65 real tool calls after a fresh restart,
+   zero payloads reached the hook.
+2. **The shell** — `write_stdin` never reaches zsh. There is nothing to intercept.
+3. **`default_exec_yield_time_ms`** — exists inside the binary, but is NOT one of `ConfigToml`'s 98
+   fields, so no local file can set it.
+4. **`experimental_use_unified_exec_tool = false`** — this one IS a ConfigToml field, and was the
+   most promising. Asked the model directly which tools it had, with and without: `exec_command`
+   and `write_stdin` both times. The switch does not remove them.
+
+What remains untested is the machine-level instruction file (`~/.codex/AGENTS.md`). Earlier notes
+dismissed "rules" on the strength of a measurement about a zuvo include loaded inside a skill —
+which is a different thing, and that dismissal was not earned.
 
 ### Refinement: hooks are validated at startup, but not dispatched in `exec` mode
 
@@ -385,3 +394,35 @@ So every negative result above is a result about **exec mode**, which is the onl
 from a shell. The interactive/GUI path remains untested and is where hooks most likely do run.
 Settling it needs a human: `touch ~/.zuvo/guard-trace`, restart the Codex app (registration is read
 at launch), use it normally, then check whether the file grew.
+
+### Three restarts later: the GUI does not run them either
+
+Tested on 2026-08-28 with the user restarting the Codex app three times, checking real tool calls
+against captured hook payloads each time (`touch ~/.zuvo/guard-trace` records every payload the
+guard actually receives):
+
+| after restart | real `exec` tool calls | hook payloads |
+|---|---|---|
+| #1 (09:13) | 40 | 0 |
+| #2 (09:46, stale trust entry removed) | 22 | 0 |
+| #3 (10:00, both event spellings registered) | 4 | 0 |
+
+Three explanations were tested and eliminated:
+
+- **Trust.** `config.toml` carried `[hooks.state."…/hooks.json:pre_tool_use:0:0"]` with a hash from
+  Aug 17, predating the hook. Removing it changed nothing: Codex wrote **no** replacement entry and
+  showed **no** prompt. It is not withholding trust; it is not considering the hook.
+- **Event spelling.** The only hooks Codex ever registered and trusted here are ones it wrote
+  itself while importing from Claude Code, and those spell the event `"Stop"` — PascalCase. The
+  `:stop:` in the trust key is a NORMALISED form, not the file's spelling, and reading it as the
+  file's spelling is how `pre_tool_use` came to be used. Both spellings are now registered. No
+  change.
+- **Schema.** The file parses (a wrong root key is reported). But nothing downstream complains
+  either: a nonsense `type`, an empty `command`, even an event named `NotARealEvent` all draw
+  silence, though the binary carries `skipping empty hook command in …` for exactly that case.
+
+**Every control in this investigation came back uninformative in the same way** — Codex accepts
+whatever it is given and says nothing. That is the most useful thing learned here: on this build,
+"it was accepted" is never evidence. Only a payload arriving at the hook is.
+
+Treat Codex hooks as unavailable. The shell guard is the mechanism that works.

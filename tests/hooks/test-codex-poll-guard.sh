@@ -22,6 +22,9 @@ command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 not available"; exit
 [ -f "$HOOK" ] || { bad "hooks/codex-poll-guard.sh does not exist"; exit 1; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+# Never let the suite write into the real trace: that file is the ONLY evidence of whether a live
+# Codex payload ever reached the hook, and fixtures in it have already been misread as proof.
+export ZUVO_GUARD_TRACE="$TMP/trace"
 
 # decision <js-source>  → prints "deny" or "allow"
 decision() {
