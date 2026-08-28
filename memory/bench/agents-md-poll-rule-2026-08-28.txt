@@ -1,0 +1,70 @@
+# Global rules (all repos)
+
+## Git
+
+- When I ask for a change and you finish it: commit immediately with an
+  explanatory message (why, not what). Stage only files you touched — list
+  paths explicitly, never `git add -A` / `git add .`.
+- Hard invariants (never, regardless of task): `git push --force` to
+  main/master, `--amend` or history rewrites on pushed commits, `--no-verify`,
+  `git reset --hard`, `git clean -f`, branch deletion. For a plain `git push`
+  or deploy/release scripts, state your intent and wait for my confirmation
+  once per session.
+
+## Databases
+
+- Before any Prisma/SQL command that can destroy data (`db push
+  --force-reset`, `--accept-data-loss`, `migrate reset`, raw `DROP`/`TRUNCATE`),
+  print the target from `DATABASE_URL` and stop if it is not a local Docker
+  instance. Several repos point at shared cloud DBs (Neon) by default.
+
+## This machine
+
+- Vitest is capped globally (`VITEST_MAX_WORKERS=4` via launchd) — do not raise
+  it and do not run more than one full test suite concurrently; local machine
+  load, not tokens, is the constraint here.
+- CI runs on self-hosted runners; the cross-repo host/port registry lives in
+  `~/.claude/rules/self-hosted-ci-runner.md` — read it before touching CI
+  configs or claiming ports.
+
+## Done means
+
+- Type-check and targeted tests pass locally; run the repo's full battery
+  before any push. Show the actual command output, don't assert success.
+
+## Test farm — prefer `rt` (i9 test-farm) for running tests
+
+`rt` (on PATH at /opt/homebrew/bin/rt) offloads test runs to burst-i9 (24 cores, tailnet-only) so the Mac stays responsive. **It wraps whatever command you were already going to run** — it does not replace the repo's documented workflow, it composes with it:
+
+- **Whatever a repo's CLAUDE.md / runbook tells you to run to test, run that THROUGH `rt`.** If the repo says `bash tests/run-all.sh`, use `rt bash tests/run-all.sh`. If it says `npm test`, use `rt npm test`. A repo's docs naming a bare command is NOT a reason to skip the farm — most repo docs predate it.
+- **This is not a JS-only rule.** Any test command qualifies: `vitest`, `jest`, `playwright`, `node --test`, a **bash harness**, a Makefile target, `pytest`. If it is "running the tests", it goes through `rt`.
+- **A missing `.tf.json` is NOT a reason to skip `rt`.** `rt <command>` works in any repo with no manifest and no lockfile at all. The manifest only matters for bare `rt` (full suite with services/build/migrate/seed).
+- Bare `rt` runs the repo's `.tf.json` suite; `rt --attach <runid>` reconnects; `rt --log <runid>` gets the full log afterwards; `rt --queue` / `rt --stats` show farm state; `rt --help` lists everything.
+
+Off-tailnet `rt` runs the same command locally, so it is always safe to try. First run of a worktree seeds a one-time mirror; later runs are fast.
+
+**Decision rule:** about to run a test/lint/build/typecheck command that takes more than a couple of seconds, or running one while something else is already running? Prefix it with `rt`. Source of truth for the farm itself: `~/DEV/i9-farma`.
+
+<!-- zuvo:poll-economy -->
+## Waiting on something long-running
+
+**An empty `write_stdin` poll is a full model round-trip.** It re-sends the entire conversation to
+learn one bit, so it costs about what a reasoning turn costs and buys nothing. Measured on this
+machine across 92 sessions: 9,895 poll windows, of which **54% used 30000 ms and 96.8% were below
+the documented maximum**. The maximum for an empty poll is **300000 ms**, and using it makes the
+same wait cost ten times less.
+
+So:
+
+- **Empty poll → `yield_time_ms: 300000`.** Not 30000, not 10000. A shorter window does not make
+  the job finish sooner; it only samples more often. Being on the critical path justifies checking,
+  not checking sixty times.
+- **Prefer a command that blocks over any polling at all**: `rt --wait <id>`, `gh run watch <id>
+  --exit-status`, `bb-merge-pr.sh --wait`, or `until <condition>; do sleep 30; done`. One
+  round-trip however long it runs.
+- **Never `sleep N; <check>` outside a loop.** It is one whole turn per interval, and a pre-tool
+  hook now refuses it.
+- **Say nothing between checks.** Announce the wait ONCE, then stay silent until the result
+  arrives. A poll that returns no new information must produce no output either — 24% of assistant
+  messages here were restatements that the wait was continuing.
+<!-- /zuvo:poll-economy -->

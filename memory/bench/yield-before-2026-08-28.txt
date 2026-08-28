@@ -1,0 +1,11 @@
+FROZEN BASELINE — empty write_stdin poll windows, before any AGENTS.md rule
+sessions scanned: 92   yield values seen: 9895
+below the documented 300000 ms maximum: 9576 (96.8%)
+     30000 ms  x5376    54.3%
+     10000 ms  x2664    26.9%
+      1000 ms  x626      6.3%
+     60000 ms  x501      5.1%
+    300000 ms  x319      3.2%
+     50000 ms  x245      2.5%
+
+FALSIFICATION: if the share below 300000 does not fall, the rule did nothing — and I will say so.

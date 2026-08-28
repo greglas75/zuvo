@@ -479,3 +479,40 @@ write JavaScript calling `tools.exec_command` instead of using the plain shell t
 would route every command through `Bash`, and therefore through the gate. Test it only AFTER trust
 is granted — changing two things at once and then not knowing which one worked is how this whole
 investigation went wrong the first time.
+
+### The lever that worked: the VALUE, not the mechanism (2026-08-28)
+
+Four interception mechanisms were tested and all four are dead (hook cannot see `write_stdin`, no
+shell is involved, `default_exec_yield_time_ms` is not a config field, `code_mode_host = false`
+fails closed and disables command execution outright). The conclusion drawn from that — "nothing on
+our side can reach it" — was wrong, and the correction came from **asking Codex itself**:
+
+> The overstatement is "no supported way to wait longer." There is one: set `write_stdin`'s
+> `yield_time_ms` explicitly. For an empty poll, the supported maximum is exactly **300000 ms**.
+
+The lever was the VALUE of a parameter, not a mechanism that blocks the call. Every mechanism was
+searched for; the number was in the tool contract the whole time.
+
+A rule naming that number went into `~/.codex/AGENTS.md` (marker block `zuvo:poll-economy`).
+Measured, with the baseline frozen first in `memory/bench/yield-before-2026-08-28.txt`:
+
+| | before | after |
+|---|---|---|
+| mean poll window | 33.6 s | **205.1 s** |
+| polls per hour of waiting | 107.3 | **17.5** |
+| tokens per hour of waiting | 11.6M | **1.9M** |
+| share below the 300000 ms maximum | 96.8% | **0%** in sessions that carry the rule |
+
+**6.1× cheaper per hour of waiting**, ≈500M tokens on the measured volume.
+
+Two things worth keeping from this:
+
+- **A rule CAN work here.** An earlier note in this repo said rules never changed polling behaviour.
+  That measurement was about a zuvo include loaded inside a skill — a different thing from the
+  machine-level instruction file, and generalising from it closed off the only lever that existed.
+  What made this one work is what the failed ones lacked: a specific number, the measured reason
+  for it, and a place the model reads on every session.
+- **Split by whether the session could have SEEN the rule.** `AGENTS.md` is read at thread start, so
+  a mixed sample dilutes as older threads keep working and looks like a fading effect: 32.8% → 45.3%
+  → 50.5% below max, while sessions carrying the rule sat at 0% throughout. The instrument was
+  averaging two populations.
