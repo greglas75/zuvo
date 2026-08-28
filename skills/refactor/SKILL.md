@@ -707,11 +707,22 @@ git checkout -  # return to original branch
 **UNIVERSAL EXECUTOR ISOLATION (every refactor, every type and mode — no exceptions).** The
 execution phase runs in a FRESH context whose entire payload is: the CONTRACT state file (with
 the persisted plan), the Dependency Mapper output, the target file list, the scoped test +
-typecheck commands, and `cq-patterns.md`. NOT this skill, NOT the Phase 0–2 transcript. On
-Claude Code: dispatch an executor sub-agent with exactly that payload. On single-agent
-harnesses: print `[HANDOFF] plan frozen — clean-window execute: /clear, then zuvo:refactor continue`
-(the existing `continue` path resumes from the CONTRACT `stage` and must load ONLY the payload
-above). The executor follows the extraction list mechanically; ANY conflict with reality — a
+typecheck commands, and `cq-patterns.md`. NOT this skill, NOT the Phase 0–2 transcript. The executor is a MECHANICAL worker —
+it applies a frozen CONTRACT plan — so it is dispatchable wherever dispatch exists, and a HANDOFF
+is the LAST resort, never the default for "not Claude Code":
+
+1. **Claude Code** — dispatch an executor sub-agent with exactly that payload.
+2. **Codex (>= 0.128)** — dispatch it too. This is the exact case `env-compat.md` permits: Codex has
+   native sub-agents (`~/.codex/agents/`, `multi_agent` feature) and this build generates their
+   TOMLs. Use ONE explicitly bounded wait sized to the task, no re-poll loop, and record
+   `codex-dispatch:bounded-wait`. **Do NOT print a HANDOFF just because the harness is not Claude
+   Code.**
+3. **Only where dispatch genuinely does not exist** (Cursor, Antigravity), or when that bounded wait
+   expires, print `[HANDOFF] plan frozen — clean-window execute: fresh context (`/clear` in Claude
+   Code, a NEW CONVERSATION in Codex), then zuvo:refactor continue` and record
+   `codex-handoff:fallback`.
+
+The `continue` path resumes from the CONTRACT `stage` and must load ONLY the payload above. The executor follows the extraction list mechanically; ANY conflict with reality — a
 hidden coupling, an importer the map missed, a unit without an exercising test — is a STOP and
 report back (CHARACTERIZE_GAP), the coordinator amends the plan/contract, never the executor
 improvising silently. Rationale: execution is the longest, most turn-heavy phase, and each turn

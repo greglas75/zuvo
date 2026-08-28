@@ -85,7 +85,24 @@ Parse `$ARGUMENTS` as: `[path | full | continue] [--max N] [--category CATEGORY]
 
 Flags can be combined: `zuvo:mutation-test src/services/ --max 30 --category SECURITY`
 
-Default (no arguments): equivalent to `full --max 50 --runner auto`.
+Default (no arguments): **the CHANGED production files**, not the whole project —
+`git diff --name-only $(git merge-base HEAD <default-branch>)..HEAD` plus uncommitted production
+files, filtered to those that have tests. Then `--max 50 --runner auto`. If that set is empty, say
+so and stop; do NOT silently widen to everything.
+
+`full` still exists and still means every covered production file — it just has to be asked for.
+
+**Why the default moved.** Measured 2026-08-28 across the local fleet: the median mutation run is
+**1 minute** and normal scoped runs top out around **31 minutes**, but 32 runs exceeded an hour and
+the longest reached **258 minutes** — all from a main checkout, all unscoped, mutating a 2,784-file
+test suite to answer a question about one module. Nothing was learned in those four hours that the
+scoped one-minute run would not have said, and each one occupied a farm slot. A default that costs
+four hours when the user meant "check what I just changed" is a defect in the default, not in the
+farm that ran it.
+
+**Callers must pass a scope.** `zuvo:refactor` and `zuvo:write-tests` probe mutation per file
+(`--mutate <file>`) and are unaffected. Any skill invoking this one must name its file set; an
+unscoped invocation from another skill is a bug in that skill.
 
 ## Mandatory File Loading
 
@@ -618,8 +635,18 @@ numbers and only one of them answers the question that was asked.
 
 Before starting execution:
 
-1. Verify the working directory is clean (`git status` shows no uncommitted changes)
-   - If uncommitted changes exist: STOP and ask user to commit or stash first
+1. **Require cleanliness only where it actually matters: the files that will be MUTATED.**
+   `git status --porcelain -- <each production file in scope>` must be empty. Those are the only
+   files where the post-run hash check cannot tell a leftover mutant from an edit of yours, which
+   is the entire hazard this step exists for.
+   - Dirty scoped file → `BLOCKED_DIRTY_TREE`, naming it. Do not mutate it.
+   - **Uncommitted changes ANYWHERE ELSE are not a blocker.** Record their sha256 with the rest of
+     the pre-run snapshot and proceed. Demanding a globally clean tree blocked runs on the
+     pipeline's OWN output — the test file `zuvo:write-tests` had just written and
+     `memory/coverage.md` — which is a gate firing on the work it was invoked to measure.
+   - **Never stop to ask permission to commit.** If this run authored those files, the auto-commit
+     policy already covers them; if they are the user's, they are none of this skill's business.
+     A question here costs a whole turn and the answer is always the same.
 2. **Restoration strategy (temp copy — NOT stash):**
    - For each production file being mutated, copy the original to a temp location: `cp [file] /tmp/zuvo-mutation-[hash]-[filename]`
    - After each mutation: restore from the temp copy: `cp /tmp/zuvo-mutation-[hash]-[filename] [file]`

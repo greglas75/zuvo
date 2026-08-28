@@ -296,8 +296,10 @@ the next unindented key. That is what makes the multi-line ones (`queue:`, `base
   context alive instead of returning it. The coordinator keeps the queue and per-file
   syntheses and never accumulates production sources, specs, or tool outputs. UNCONDITIONAL for every file — the writer phase is isolated per the UNIVERSAL WRITER ISOLATION rule in Step 2, so no file ever inherits another file's transcript; the coordinator alone persists, holding only the ledger and per-file syntheses.
 - **Single-agent harnesses (Codex/Cursor):** print
-  `[CONTEXT] {file} complete — safe point. Clean continue: /clear, then zuvo:write-tests --resume-run <ledger>`.
-  The skill cannot execute /clear for the user; it makes clearing safe and cheap instead.
+  `[CONTEXT] {file} complete — safe point. Clean continue: start a fresh context (`/clear` in Claude
+   Code, a NEW CONVERSATION in Codex — it has no `/clear`), then zuvo:write-tests --resume-run <ledger>`.
+  The skill cannot clear the context for the user; it makes clearing safe and cheap instead. Name the
+   platform's own gesture — printing `/clear` to a Codex user names a command that does not exist there.
 The executable gates (2.5 validator, 3.2 coverage, 3.3 probes) read DISK, not context — every
 step boundary except mid-Step-2 (atomic Write) is a safe cut point.
 
@@ -394,10 +396,23 @@ exit 0 → frozen, proceed. exit 1 → extractor found symbols the inventory mis
 
 **UNIVERSAL WRITER ISOLATION (every file, every tier — no exceptions).** Writing executes in a
 FRESH context whose entire payload is: `contract.md` + the production source + the runner command
-+ baseline pre-existing failures. NOT the skill, NOT this session's transcript. On Claude Code:
-dispatch a writer sub-agent with exactly that payload. On single-agent harnesses: print
-`[HANDOFF] contract frozen — clean-window write: /clear, then zuvo:write-tests --resume <basename>`
-and, on resume, load ONLY the payload above (the `--resume` path already skips Phase 0/1).
++ baseline pre-existing failures. NOT the skill, NOT this session's transcript. The writer is a MECHANICAL
+worker — it applies a frozen contract — so it is dispatchable wherever dispatch exists, and a
+HANDOFF is the LAST resort, never the default for "not Claude Code":
+
+1. **Claude Code** — dispatch a writer sub-agent with exactly that payload.
+2. **Codex (>= 0.128)** — dispatch it too. `env-compat.md` permits mechanical-worker dispatch here;
+   Codex has native sub-agents (`~/.codex/agents/`, `multi_agent` feature) and this build generates
+   their TOMLs. Use ONE explicitly bounded wait sized to the task, no re-poll loop, and record
+   `codex-dispatch:bounded-wait`. **Do NOT print a HANDOFF just because the harness is not Claude
+   Code** — that reads as a capability check and is not one.
+3. **Only where dispatch genuinely does not exist** (Cursor, Antigravity), or when the bounded wait
+   above expires, print
+   `[HANDOFF] contract frozen — clean-window write: fresh context (`/clear` in Claude Code, a NEW
+   CONVERSATION in Codex), then zuvo:write-tests --resume <basename>`
+   and record `codex-handoff:fallback`.
+
+On resume, load ONLY the payload above (the `--resume` path already skips Phase 0/1).
 The writer follows the contract; a gap in the contract is reported back and the contract is
 amended — the writer never improvises around it silently. Rationale: the skill's ~240KB prefix
 is needed to PRODUCE the contract, not to type tests from it; re-billing it across every writing
