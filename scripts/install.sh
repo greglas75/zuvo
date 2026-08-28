@@ -1019,6 +1019,42 @@ install_codex() {
     mkdir -p "$HOME/.codex/hooks"
     cp "$ZUVO_DIR"/hooks/codex-poll-guard.sh "$HOME/.codex/hooks/" 2>/dev/null || true
     chmod +x "$HOME/.codex"/hooks/*.sh 2>/dev/null || true
+    # Codex hooks are OFF BY DEFAULT. Without `[features].hooks = true` the config is read,
+    # parsed, trusted and then silently ignored — which cost three app restarts and most of a
+    # night to discover, because nothing anywhere says so. (`codex_hooks` is the deprecated
+    # spelling; Codex itself prints the rename.) config.toml is the user's, so: back it up, and
+    # never leave one that does not parse.
+    python3 - "$HOME/.codex/config.toml" <<'PYFLAG' || true
+import os, re, shutil, sys
+p = sys.argv[1]
+try:
+    s = open(p).read()
+except Exception:
+    s = ""
+# BOTH spellings. This build fires hooks on `codex_hooks` (printing a deprecation notice) and
+# does NOT fire on `hooks`, which is the name the notice tells you to use — so following the
+# advice silently turns the feature off. Newer builds are the other way round. Writing both is
+# the only version-proof choice.
+have = lambda k: re.search(r"^\s*%s\s*=\s*true" % k, s, re.M)
+missing = [k for k in ("codex_hooks", "hooks") if not have(k)]
+if not missing:
+    print("hooks already enabled"); raise SystemExit
+add = "".join("%s = true\n" % k for k in missing)
+if "[features]" in s:
+    s2 = re.sub(r"(\[features\]\n)", lambda m: m.group(1) + add, s, count=1)
+else:
+    s2 = s.rstrip() + "\n\n[features]\n" + add
+tmp = p + ".zuvo.tmp"
+open(tmp, "w").write(s2)
+try:
+    import tomllib; tomllib.load(open(tmp, "rb"))
+except Exception as e:
+    os.remove(tmp); print("REFUSED (would not parse): %s" % e); raise SystemExit
+if s:
+    shutil.copyfile(p, p + ".zuvo-bak")
+os.replace(tmp, p)
+print("enabled [features]: %s" % ", ".join(missing))
+PYFLAG
     if python3 - "$HOME/.codex/hooks.json" "$HOME/.codex/hooks/codex-poll-guard.sh" <<'PYHOOK'
 import json, os, sys
 path, script = sys.argv[1], sys.argv[2]
@@ -1030,18 +1066,19 @@ except Exception:
 if not isinstance(cfg, dict):
     cfg = {}
 hooks = cfg.setdefault("hooks", {})
-# BOTH spellings, because the earlier reasoning here was wrong and the evidence points the
-# other way. The only hooks Codex has ever registered and trusted on this machine are the ones
-# IT wrote itself, importing from Claude Code, and those files spell the event `"Stop"` —
-# PascalCase. The `:stop:` in config.toml's hooks.state trust key is a NORMALISED form, not the
-# file's spelling, and reading it as the file's spelling is what produced the snake_case-only
-# registration that never fired. The parser accepts unknown event keys silently (verified:
-# `NotARealEvent` draws no complaint), so writing both costs nothing and cannot mis-fire.
+# `PreToolUse` — PascalCase, confirmed by a real payload once hooks were switched on:
+# {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "..."}, …}.
+# The `:pre_tool_use:` in config.toml's hooks.state trust key is a NORMALISED form, and reading it
+# as the file's spelling is what produced a registration that could never fire.
 entry = {
-    "matcher": "exec|wait|shell|local_shell|write_stdin|wait_agent",
+    # `Bash` is the real tool name in the payload — verified, not guessed:
+    # {"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"…"}}.
+    # The names guessed from session logs (exec/wait/write_stdin) match nothing; the first two
+    # are kept only so a future rename does not silently un-hook everything.
+    "matcher": "Bash|exec|shell|local_shell",
     "hooks": [{"type": "command", "command": "bash %s" % script, "timeout": 10}],
 }
-for event in ("pre_tool_use", "PreToolUse"):
+for event in ("PreToolUse",):
     group = hooks.setdefault(event, [])
     group[:] = [g for g in group if "codex-poll-guard" not in json.dumps(g)]
     group.append(dict(entry))
@@ -1052,7 +1089,7 @@ os.replace(tmp, path)          # atomic: a half-written hooks.json would break t
 print("ok")
 PYHOOK
     then
-      ok "poll guard REGISTERED in ~/.codex/hooks.json (pre_tool_use + PreToolUse) — registration only, not proof it runs (docs/runbook/operating.md §11)"
+      ok "poll guard registered in ~/.codex/hooks.json (PreToolUse) and [features].hooks enabled"
     else
 
       warn "could not register the poll guard in ~/.codex/hooks.json"

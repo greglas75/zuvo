@@ -140,7 +140,11 @@ def deny(reason, fix):
     # that does not say what to do instead just gets retried identically.
     print(json.dumps({
         "hookSpecificOutput": {
-            "hookEventName": "pre_tool_use",
+            # ECHO the event name back exactly as it arrived. Hardcoding `pre_tool_use` while the
+            # payload said `PreToolUse` produced a well-formed `deny` that Codex ignored — the
+            # command ran its full 25 s anyway. A refusal that is not honoured is worse than none:
+            # it reports success and changes nothing.
+            "hookEventName": payload.get("hook_event_name") or "PreToolUse",
             "permissionDecision": "deny",
             "permissionDecisionReason": "%s\n%s" % (reason, fix),
         }
@@ -254,10 +258,26 @@ if m_rd:
 # (["/bin/zsh","-lc","..."]). The real polling command captured on 2026-08-27 was a template
 # literal, so a guard written for exactly that behaviour watched it go past.
 cmd_text = ""
-for pat in (r'cmd:\s*"((?:[^"\\]|\\.)*)"',
+# The REAL shape, captured 2026-08-28 once hooks were finally switched on: the payload is
+# {session_id, turn_id, transcript_path, cwd, hook_event_name:"PreToolUse", model, permission_mode,
+# tool_name:"Bash", tool_input:{"command": "<the command>"}, tool_use_id}. The command is a plain
+# string in `tool_input.command` — none of the four encodings guessed from session logs. Read the
+# structured field first and fall back to the others.
+ti = payload.get("tool_input")
+if isinstance(ti, dict):
+    # `command`/`script` only. NOT `input`: that key carries JS SOURCE (`const cmd=\`…\``),
+    # and taking it whole skips the patterns that unwrap it, so a `sleep` sitting just inside a
+    # backtick stops matching. Let `input` fall through to the JS-aware extraction below.
+    for key in ("command", "cmd", "script"):
+        v = ti.get(key)
+        if isinstance(v, str) and v.strip():
+            cmd_text = v
+            break
+
+for pat in ([] if cmd_text else [r'cmd:\s*"((?:[^"\\]|\\.)*)"',
             r'"cmd"\s*:\s*"((?:[^"\\]|\\.)*)"',
             r'cmd\s*=\s*`([^`]*)`',
-            r'"-l?c"\s*,\s*"((?:[^"\\]|\\.)*)"'):
+            r'"-l?c"\s*,\s*"((?:[^"\\]|\\.)*)"']):
     m_cmd = re.search(pat, blob)
     if m_cmd and m_cmd.group(1).strip():
         cmd_text = m_cmd.group(1)

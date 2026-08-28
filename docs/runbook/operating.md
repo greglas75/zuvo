@@ -395,34 +395,87 @@ from a shell. The interactive/GUI path remains untested and is where hooks most 
 Settling it needs a human: `touch ~/.zuvo/guard-trace`, restart the Codex app (registration is read
 at launch), use it normally, then check whether the file grew.
 
-### Three restarts later: the GUI does not run them either
+### They do run. The feature is OFF BY DEFAULT and nothing says so.
 
-Tested on 2026-08-28 with the user restarting the Codex app three times, checking real tool calls
-against captured hook payloads each time (`touch ~/.zuvo/guard-trace` records every payload the
-guard actually receives):
+**Everything above about hooks "not running" was measuring one missing line.** Found in OpenAI's
+own docs after hours of instrumenting the wrong things:
 
-| after restart | real `exec` tool calls | hook payloads |
-|---|---|---|
-| #1 (09:13) | 40 | 0 |
-| #2 (09:46, stale trust entry removed) | 22 | 0 |
-| #3 (10:00, both event spellings registered) | 4 | 0 |
+```toml
+# ~/.codex/config.toml
+[features]
+codex_hooks = true
+hooks = true        # write BOTH — see the version trap below
+```
 
-Three explanations were tested and eliminated:
+Without it Codex reads the hooks file, parses it, checks trust, and silently ignores it. No error,
+no warning, no log line. Every negative result in this section came from that.
 
-- **Trust.** `config.toml` carried `[hooks.state."…/hooks.json:pre_tool_use:0:0"]` with a hash from
-  Aug 17, predating the hook. Removing it changed nothing: Codex wrote **no** replacement entry and
-  showed **no** prompt. It is not withholding trust; it is not considering the hook.
-- **Event spelling.** The only hooks Codex ever registered and trusted here are ones it wrote
-  itself while importing from Claude Code, and those spell the event `"Stop"` — PascalCase. The
-  `:stop:` in the trust key is a NORMALISED form, not the file's spelling, and reading it as the
-  file's spelling is how `pre_tool_use` came to be used. Both spellings are now registered. No
-  change.
-- **Schema.** The file parses (a wrong root key is reported). But nothing downstream complains
-  either: a nonsense `type`, an empty `command`, even an event named `NotARealEvent` all draw
-  silence, though the binary carries `skipping empty hook command in …` for exactly that case.
+Then four shape mismatches, each cutting the chain at a different point. All were fixed from a REAL
+captured payload rather than from reading session logs, which is what produced the wrong guesses:
 
-**Every control in this investigation came back uninformative in the same way** — Codex accepts
-whatever it is given and says nothing. That is the most useful thing learned here: on this build,
-"it was accepted" is never evidence. Only a payload arriving at the hook is.
+| assumed | actual |
+|---|---|
+| event `pre_tool_use` | **`PreToolUse`** |
+| matcher `exec\|wait\|write_stdin` | the tool is named **`Bash`** |
+| command in `cmd:` or a JS template literal | **`tool_input.command`**, a plain string |
+| reply with `hookEventName: "pre_tool_use"` | must **echo** the event name from the payload |
 
-Treat Codex hooks as unavailable. The shell guard is the mechanism that works.
+The last one is the nastiest failure in the whole exercise: the hook returned a well-formed `deny`,
+Codex accepted it without complaint, **and ran the command anyway**. A refusal that is not honoured
+is worse than none — it reports success and changes nothing.
+
+The real payload, for anyone who needs it again:
+
+```json
+{"session_id":"…","turn_id":"…","transcript_path":"…","cwd":"/private/tmp",
+ "hook_event_name":"PreToolUse","model":"gpt-5.6-sol","permission_mode":"bypassPermissions",
+ "tool_name":"Bash","tool_input":{"command":"sleep 25; echo AFTER"},"tool_use_id":"exec-…"}
+```
+
+Proof it works end to end:
+
+```
+error=Command blocked by PreToolUse hook: zuvo policy: `sleep 25; ...` outside a loop…
+hook: PreToolUse Blocked
+Command was blocked by the environment's pre-execution policy, so `AFTER` was not printed.
+```
+
+**The version trap:** this build fires hooks on `codex_hooks` and does NOT fire on `hooks` — while
+printing `` `[features].codex_hooks` is deprecated. Use `[features].hooks` instead. `` Following
+that advice silently turns the feature off. Write both.
+
+**The habit worth keeping:** prove a hook fires with `touch /tmp/marker` BEFORE building anything
+on it. One minute, and it would have saved this entire section.
+
+### Two more gates behind the feature flag: trust, and what PreToolUse can never see
+
+**Trust.** `[features].hooks = true` is necessary and not sufficient. Codex records trust against a
+hook's current hash and **skips untrusted hooks silently** — no prompt, no log line, nothing in
+`codex doctor`. Verified: the same hook fires with `--dangerously-bypass-hook-trust` and does not
+fire without it. Trust is granted with the **`/hooks`** slash command, which exists only in the
+TERMINAL Codex, not the desktop app:
+
+```
+/Applications/ChatGPT.app/Contents/Resources/codex     # the app's own binary, NOT `codex` on PATH
+/hooks                                                  # review → trust
+```
+
+`~/.codex/config.toml` is shared, so trusting once there applies to the desktop app too. Note the
+PATH trap: `codex` on PATH was a Homebrew build six weeks older than the app's and predates hooks.
+`codex doctor --all` prints the enabled feature list and the `codex_hooks -> hooks` legacy alias,
+which is the fastest way to confirm the flag half of this.
+
+**And a ceiling that no setting lifts.** From OpenAI's own hooks documentation: `write_stdin` is
+transport for an existing unified-exec session and **does not run PreToolUse again** when it sends
+input or polls a command that already passed PreToolUse. So the 97.9% of waiting that is empty
+`write_stdin` polling is outside this gate BY DESIGN, not by misconfiguration.
+
+What the gate does reach is the `exec_command`/Bash call that STARTS the long-running command —
+one intervention at the moment the waiting begins, instead of fifty during it — plus every bare
+`sleep N; check`, which it blocks outright.
+
+The remaining untested lever is `[features].code_mode_host`, which is what makes the desktop model
+write JavaScript calling `tools.exec_command` instead of using the plain shell tool. Turning it off
+would route every command through `Bash`, and therefore through the gate. Test it only AFTER trust
+is granted — changing two things at once and then not knowing which one worked is how this whole
+investigation went wrong the first time.
