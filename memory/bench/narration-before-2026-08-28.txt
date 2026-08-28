@@ -1,0 +1,4 @@
+FROZEN BASELINE — narration, measured AFTER the yield rule but BEFORE the silence rewrite
+assistant messages: 653   restating an unchanged wait: 107 (16.4%)
+
+FALSIFICATION: if this share does not fall, the rewrite did nothing — and I will say so.

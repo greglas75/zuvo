@@ -532,3 +532,31 @@ Two things worth keeping from this:
   contained it — Codex re-reads `AGENTS.md` when a thread RESUMES, so an app restart does propagate
   it — and it produced a 0%/96.6% split that described nothing real. The poll-level split is the
   honest one, and it is also the one that survives a restart mid-measurement.
+
+### Why one line of the same rule stuck and the other did not
+
+The `yield_time_ms` line changed behaviour immediately. The "say nothing between checks" line, in
+the same file, did not — 16.4% of messages stayed restatements of an unchanged wait. Asked directly,
+Codex explained it better than any amount of further measurement would have:
+
+> `yield_time_ms` is a concrete tool-call parameter: one decision, explicit value, mechanically
+> checkable. Silence is an absence of action across later turns. **It competes with my developer
+> instruction to provide frequent progress updates during tool work**, so I am biased to narrate
+> each returned poll — even when nothing meaningful changed. AGENTS.md wording alone cannot
+> reliably override a conflicting higher-priority instruction.
+
+Two transferable rules:
+
+- **A rule that asks for an ABSENCE is weaker than one that sets a VALUE.** The first is one
+  checkable decision at the moment of a call; the second is a discipline sustained across turns
+  against whatever else is pulling the other way.
+- **When a rule loses to a higher-priority instruction, say so IN the rule.** The rewrite works
+  because it carries "this rule explicitly overrides general progress-update cadence requirements
+  during waits" and then defines what does NOT count as new information (time passing, still
+  running, empty output, no errors, a percentage moving, shards still active) rather than trusting
+  the model to infer it.
+
+And the structural point underneath both: none of this is needed when the wait is ONE blocking call
+(`rt --wait`, `gh run watch --exit-status`, `until <cond>; do sleep 30; done`). There is no poll
+return to narrate, so there is no turn in which narration can happen. The wording is damage control
+for the shape that should not exist.

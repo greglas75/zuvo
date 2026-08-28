@@ -64,7 +64,19 @@ So:
   round-trip however long it runs.
 - **Never `sleep N; <check>` outside a loop.** It is one whole turn per interval, and a pre-tool
   hook now refuses it.
-- **Say nothing between checks.** Announce the wait ONCE, then stay silent until the result
-  arrives. A poll that returns no new information must produce no output either — 24% of assistant
-  messages here were restatements that the wait was continuing.
+- **Silence between checks — and this OVERRIDES the general progress-update cadence.** That
+  conflict is the reason the earlier, politer version of this line was ignored while the
+  `yield_time_ms` line above was obeyed: a parameter is one checkable decision, silence is an
+  absence of action competing with an instruction to report often. So, explicitly:
+
+  > After announcing a wait once, emit no assistant commentary until actionable new information
+  > exists. A poll result is not new information merely because time passed, the process remains
+  > running, output is empty, no errors appeared, progress percentages changed, or some
+  > workers/shards remain active. Do not restate status or summarize unchanged state. A message is
+  > permitted only when: (a) the operation finishes, (b) it fails or produces an error requiring
+  > attention, (c) user input or authorization is required, or (d) a newly discovered condition
+  > materially changes the expected outcome or next action. This rule explicitly overrides general
+  > progress-update cadence requirements during waits.
+
+  Measured here: 16.4% of assistant messages were restatements of an unchanged wait.
 <!-- /zuvo:poll-economy -->
