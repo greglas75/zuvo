@@ -185,6 +185,7 @@ def scan_codex(since):
         if not after(path, since):
             continue
         cur = "(no skill)"
+        pending_block = None
         reqs = 0
         total_in = 0
         try:
@@ -193,7 +194,11 @@ def scan_codex(since):
             continue
         with fh:
             for line in fh:
-                # The prefilter must admit every line the classifier can act on — including
+                # The prefilter must admit every line the classifier can act on. This has now been
+                # the same defect three times — a classifier added, and the filter in front of it
+                # left unchanged, so the counter and the filter disagreed and the filter won
+                # silently. `rt` was the second; `write_stdin`, the DOMINANT poll shape, is the
+                # third. When adding a class here, widen this list in the same edit. Including
                 # `rt`, the test-farm wrapper, which is the blocking form actually in use here and
                 # contains none of the other markers. Adding the classifier without widening this
                 # was the second half of the same defect. The first
@@ -203,7 +208,8 @@ def scan_codex(since):
                 if ("SKILL.md" not in line and '"wait' not in line and "token" not in line
                         and "sleep" not in line and "until" not in line and "while" not in line
                         and "--wait" not in line and "run watch" not in line
-                        and "docker wait" not in line and "rt " not in line):
+                        and "docker wait" not in line and "rt " not in line
+                        and "write_stdin" not in line):
                     continue
                 try:
                     rec = json.loads(line)
@@ -218,8 +224,25 @@ def scan_codex(since):
                     if m:
                         cur = "zuvo:" + m.group(1)
                     name = str(p.get("name") or "")
+                    # `write_stdin` with EMPTY chars is a poll, not a write — the tool's own
+                    # description says so ("Defaults to empty, which polls without writing"). It
+                    # was invisible here, and it is the dominant shape: measured across ten live
+                    # refactors, 1,099 `wait` calls against 3,917 empty `write_stdin` polls, so the
+                    # reported figure was 4.6x too low. A tool that undercounts the thing it exists
+                    # to measure is worse than no tool, because the number still gets quoted.
+                    if "write_stdin" in blob:
+                        m_chars = re.search(r'"chars"\s*:\s*"((?:[^"\\]|\\.)*)"', blob)
+                        if not m_chars or m_chars.group(1).strip() == "":
+                            stats[cur]["poll"] += 1
+                            pending_block = None
+                            continue
                     if name.startswith("wait"):
                         stats[cur]["poll"] += 1
+                        # A command credited as BLOCKING and then polled was not blocking. Take the
+                        # credit back rather than reporting both.
+                        if pending_block:
+                            stats[pending_block]["blocking"] -= 1
+                            pending_block = None
                     elif kind != "custom_tool_call_output":
                         # The command text lives in `input`, not `arguments`. A Codex
                         # `custom_tool_call` carries JavaScript wrapping
@@ -235,7 +258,11 @@ def scan_codex(since):
                         m_cmd = CODEX_CMD.search(args)
                         args = m_cmd.group(1) if m_cmd else args
                         if BLOCKLOOP.search(args):
+                            # Provisional: `rt` is only a blocking wait if nothing polls it
+                            # afterwards. Measured: 208 `rt` calls, 3,338 polls following them —
+                            # here it is the START of a poll loop, not an alternative to one.
                             stats[cur]["blocking"] += 1
+                            pending_block = cur
                         elif SLEEP_THEN.search(args):
                             stats[cur]["poll"] += 1
                 info = p.get("info") if isinstance(p.get("info"), dict) else p
