@@ -560,3 +560,34 @@ And the structural point underneath both: none of this is needed when the wait i
 (`rt --wait`, `gh run watch --exit-status`, `until <cond>; do sleep 30; done`). There is no poll
 return to narrate, so there is no turn in which narration can happen. The wording is damage control
 for the shape that should not exist.
+
+### The silence rewrite: 24.6% → 12.0%, and how it was nearly reported as a failure
+
+Measured WITHIN the same 22 threads, before and after the rewritten rule was injected into each —
+which is the only cut that controls for who was working on what:
+
+| | assistant messages | restating an unchanged wait |
+|---|---|---|
+| before injection | 187 | 24.6% |
+| after injection | 267 | **12.0%** |
+
+Polls in the same window: 105, **100% at the 300000 ms maximum**.
+
+**It was one minute from being written up as "the rewrite did nothing."** The figure in hand was
+17.5%, computed over WHOLE threads — mixing messages from before and after the rule into one
+average. That is the third instance today of the same defect: correct arithmetic on the wrong
+population. The first said almost no session carried the rule when every one did; the second mixed
+`exec_command` launches into a poll measurement and turned 6.1× into 4.1×.
+
+The detector was broken too, in a way already fixed elsewhere today: it searched for a phrase that
+WRAPS across lines in the source file, so it reported that no thread carried the rule while 22 did.
+A test written this morning for exactly that failure mode did not stop me repeating it in an ad-hoc
+measurement an hour later.
+
+Rules for reading any before/after in this repo:
+
+- **Define the population first, out loud, and check it can see the change.** Whole-thread averages
+  are almost never it.
+- **Cut at the moment the change entered THAT thread**, not at a wall-clock timestamp and not at the
+  thread's start.
+- **Normalise whitespace before matching any multi-word marker**, or pick one that cannot wrap.
