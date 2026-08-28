@@ -496,18 +496,29 @@ searched for; the number was in the tool contract the whole time.
 A rule naming that number went into `~/.codex/AGENTS.md` (marker block `zuvo:poll-economy`).
 Measured, with the baseline frozen first in `memory/bench/yield-before-2026-08-28.txt`:
 
+Measured on `write_stdin` polls ONLY — which is the whole point, and getting that population
+wrong produced two wrong numbers before this one:
+
 | | before | after |
 |---|---|---|
-| polls measured | 5,678 | 622 |
-| mean poll window | 32 s | **128 s** |
-| share below the 300000 ms maximum | 97.6% | **61.4%** |
-| share AT the maximum | 3.2% | **38.6%** |
+| polls measured | 4,033 | 270 |
+| mean poll window | 47.9 s | **289.7 s** |
+| polls per hour of waiting | 75.2 | **12.4** |
+| tokens per hour of waiting | 8.1M | **1.3M** |
+| share at the 300000 ms maximum | 3.2% | **96.1%** |
 
-**4.1× cheaper per hour of waiting.**
+**6.1× cheaper per hour of waiting**, ≈499M tokens on the measured volume.
 
-**The 6.1× first reported here was a 76-poll sample and is withdrawn.** On 622 polls the figure is
-4.1×, and the rule is followed by roughly four polls in ten — 31.7% still use 30000 ms and 29.3%
-use 10000 ms. Real, large, and not yet finished.
+**Two corrections were needed to land on that, and both were population errors, not arithmetic:**
+
+- Splitting by SESSION start read as "almost nothing carries the rule" while all 26 live sessions
+  contained it — Codex re-reads `AGENTS.md` when a thread RESUMES, so an app restart does propagate
+  it. Split by each POLL's own timestamp instead.
+- A "corrected" 4.1× was then published that mixed `write_stdin` polls with `exec_command`
+  LAUNCHES. A launch is supposed to yield fast — you want control back, not a five-minute block on
+  `echo hi` — so 99.2% of launches sit below the maximum and always will. Including them dragged a
+  6.1× result down to 4.1× and made a solved problem look half-solved. The rule targets polls;
+  measure polls.
 
 Two things worth keeping from this:
 
