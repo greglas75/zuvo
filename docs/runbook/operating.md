@@ -362,3 +362,26 @@ not present in any local config and cannot be set from here.
 Say this number out loud whenever the guards come up. A guard that covers 9.4% and is described as
 "the fix" is the same failure as a gate that reports PASS without running: the work is real, and
 the claim is still false.
+
+### Refinement: hooks are validated at startup, but not dispatched in `exec` mode
+
+Worth knowing before anyone repeats the experiment, because the first result looks like "hooks are
+broken" and the truth is narrower.
+
+The binary contains `Command blocked by PreToolUse hook:` and `Tool call blocked by PreToolUse
+hook:` in `core/src/unified_exec/mod.rs` — the mechanism is wired into exactly the path that runs
+commands. And `~/.codex/hooks.json` is definitely read: a wrong root key produces
+`failed to parse hooks config …`.
+
+But that parse happens at config-load. Nothing downstream does. Given a hook whose `type` is a
+nonsense variant, or whose `command` is the empty string, `codex exec` prints **no warning at all**
+— even though the binary carries `skipping empty hook command in …` for exactly that case. A config
+that never reaches the stage that would complain about it is a config that was never dispatched.
+
+That fits the dispatcher's own strings: `command execution approval is not supported in exec mode`,
+`permissions approval is not supported in exec mode`. Exec mode drops hook-driven behaviour.
+
+So every negative result above is a result about **exec mode**, which is the only mode reachable
+from a shell. The interactive/GUI path remains untested and is where hooks most likely do run.
+Settling it needs a human: `touch ~/.zuvo/guard-trace`, restart the Codex app (registration is read
+at launch), use it normally, then check whether the file grew.

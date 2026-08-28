@@ -265,6 +265,14 @@ if not cmd_text:
         if leaf in ("-lc", "-c", "-lic"):
             cmd_text = leaves[i + 1]
             break
+
+# A payload carries `\n` as the two characters backslash-n. Left as-is, `\bfor\b` finds no word
+# boundary in `\nfor` — 'n' and 'f' are both word characters — so a loop opening on a fresh line
+# reads as no loop at all, and a correct `for i in $(seq 1 12); do ... sleep 5; done` gets REFUSED.
+# Observed in a real session on 2026-08-28, where the agent had just switched to exactly that shape
+# because an earlier refusal told it to. Normalise the escapes before anything is matched.
+cmd_text = cmd_text.replace("\\n", "\n").replace("\\t", "\t")
+
 if cmd_text:
     # A sleep INSIDE any loop body is the shape being asked for — `for`, `select` and a bare
     # `do ... done` block as much as `until`/`while`. Keying off the keyword next to the sleep

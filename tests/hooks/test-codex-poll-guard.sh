@@ -254,6 +254,24 @@ g=$(sess r4 'gh run view 42 --json status')
 [ "$g" = "allow" ] && pass "a different command in between resets the streak" \
   || bad "unrelated commands did not reset the counter ($g)"
 
+# --- a loop opening after an ESCAPED newline (2026-08-28, from a live session) -----------------
+# `\n` in a payload is TWO characters. `\bfor\b` therefore finds no word boundary in `\nfor` —
+# 'n' and 'f' are both word characters — so the loop was invisible and the sleep inside it read as
+# bare. The session where this was found is the worst possible case: the agent had just adopted
+# `for i in $(seq 1 12); do … done` BECAUSE an earlier refusal told it to, and the guard was about
+# to refuse it for doing so.
+d=$(raw_decision '{"hook_event_name":"pre_tool_use","tool_input":{"input":"const cmd=`TOK=x\nfor i in $(seq 1 12); do\n curl -sS $URL\n sleep 5\ndone`"}}')
+[ "$d" = "allow" ] && pass "a for-loop opening after an escaped newline is recognised (template)" \
+  || bad "the shape the refusal itself recommends was refused ($d)"
+
+d=$(raw_decision '{"hook_event_name":"pre_tool_use","tool_input":{"command":["/bin/zsh","-lc","TOK=x\nfor i in $(seq 1 12); do\n curl -sS $URL\n sleep 5\ndone"]}}')
+[ "$d" = "allow" ] && pass "…and in the argv-array encoding too" \
+  || bad "escaped-newline loop refused in the array encoding ($d)"
+
+d=$(raw_decision '{"hook_event_name":"pre_tool_use","tool_input":{"command":["/bin/zsh","-lc","sleep 30\ncurl -sS $URL"]}}')
+[ "$d" = "deny" ] && pass "normalising escapes does not blind it to a genuinely bare sleep" \
+  || bad "the bare shape stopped being refused after normalisation ($d)"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1
