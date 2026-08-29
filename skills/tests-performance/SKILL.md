@@ -139,8 +139,8 @@ Run the full test suite 3 times. The first run warms caches; use the median of a
 
 | Runner | Command | Per-file timing |
 |--------|---------|----------------|
-| Vitest | `npx vitest run --reporter=json` | JSON includes per-file duration |
-| Jest | `npx jest --json` | JSON includes testResults[].perfStats |
+| Vitest | `rt --light npx vitest run --reporter=json` | JSON includes per-file duration |
+| Jest | `rt --light npx jest --json` | JSON includes testResults[].perfStats |
 | pytest | `python -m pytest --durations=0 -q` | --durations=0 lists all test times |
 
 Redirect stderr to `memory/tests-performance.stderr.log` for diagnostic review. Create `memory/` first if needed.

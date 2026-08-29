@@ -58,14 +58,26 @@ runner is configured. A run that had a runner available and did not use it must 
 
 ## Protocol (byte-restore, no git commands)
 
-**Run the tests LOCALLY. Never prefix a probe run with `rt` or any other remote/offload
-wrapper.** Probing is N short scoped runs in a loop, and such a wrapper charges a fixed
-per-invocation cost (mirror sync + queue) that dwarfs the run itself. Measured 2026-08-10
-on one test file: `npx vitest run <file>` = **1.4 s**, `rt npx vitest run <file>` =
-**103.4 s** — ~50-75x, per probe. A global "prefix test commands with `rt`" rule is right
-for one long suite run and inverts here; this line is the override. If a project can only
-run its tests through such a wrapper, skip probing and say so — do not run it wrapped and
-report the resulting timeout as a coverage result.
+**Send the WHOLE probe loop to the farm as ONE invocation. Never run it on the workstation,
+and never wrap each probe individually.** Both halves matter, and an earlier version of this
+line got the first one wrong.
+
+The measurement behind the earlier version of this rule is real: 2026-08-10, one test file, `npx vitest
+run <file>` = **1.4 s** against `rt npx vitest run <file>` = **103.4 s**, ~50-75x. But that is
+the cost of wrapping EACH probe — a fixed mirror/queue charge paid N times. The conclusion
+drawn from it was wrong: the fix is to pay it ONCE.
+
+    rt --light bash -c 'for f in <probes>; do <apply>; npx vitest run "$f"; <restore>; done'
+
+Ten probes then cost one charge, not ten. What running them locally costs was measured on
+2026-08-29: 109 local test processes at 421% CPU, load 34, macOS suspending the machine with
+`Dark Wake Thermal Emergency`, and a mutation run that died ten minutes in because a
+concurrent worktree pulled shared `node_modules` out from under it. The farm was idle at the
+same moment.
+
+If the farm is genuinely unreachable, `rt` exits 21 and says so — then skip probing and report
+it. Do not fall back to the workstation, and never report a wrapper timeout as a coverage
+result.
 
 For each probe:
 

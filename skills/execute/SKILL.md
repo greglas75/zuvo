@@ -354,7 +354,7 @@ implementer-status=DONE
 spec-review=COMPLIANT
 quality-review=PASS cq=34/37@tenant.ts,35/37@guards.ts q=22/24@tenant.test.ts
 adversarial=PASS mode=security
-verify="pnpm vitest run src/foo.spec.ts" exit=0
+verify="rt --light pnpm vitest run src/foo.spec.ts" exit=0
 acceptance-verified=AC2@zuvo/proofs/task-4-report.md,AC5@zuvo/proofs/task-4-report.md
 codesift=available
 backlog-adds=1

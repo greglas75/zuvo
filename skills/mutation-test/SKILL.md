@@ -376,12 +376,20 @@ BASELINE FAILED
   Suggestion: run zuvo:fix-tests to repair failing tests first.
 ```
 
-### 1.3 Run the TIER 1 loop locally — the offload wrapper is per-invocation poison there
+### 1.3 Send the TIER 1 loop to the farm as ONE invocation — never per-mutant, never local
 
-**Never prefix a Tier 1 (mapped-test) invocation with `rt` or any other offload wrapper.**
-A global rule of the form "prefix test commands with `rt`" is correct for one long
-suite run and inverts here: the wrapper's cost is a fixed per-invocation charge
-(mirror sync + queue), and Tier 1 makes N short invocations in a tight loop.
+**Wrap the LOOP, not each mutant.** The wrapper's cost is a fixed per-invocation charge
+(mirror sync + queue), and Tier 1 makes N short invocations — so wrapping each one multiplies
+the charge by N, while wrapping the loop pays it once:
+
+    rt --light bash -c '<the whole mutant loop>'
+
+An earlier version of this section concluded "therefore run Tier 1 locally". That was the
+wrong lesson from a correct measurement, and 2026-08-29 measured what it costs: 109 local test
+processes at 421% CPU, load 34, macOS suspending the workstation with `Dark Wake Thermal
+Emergency`, and a native mutation run dying ten minutes in when a concurrent worktree pulled
+shared `node_modules` out from under it — while the farm sat idle with ~18 free slots. Nothing
+runs on the workstation.
 
 Measured 2026-08-10 on the same single test file:
 
@@ -392,9 +400,10 @@ Measured 2026-08-10 on the same single test file:
 
 ~50-75x, and a single wrapped call alone exceeds the whole run budget below. A
 10-mutant plan that would finish in ~20 s locally cannot complete a single mutant
-through the wrapper. If a project genuinely cannot run its mapped tests locally,
-this skill is not usable there — say so and stop; do not run them wrapped and
-report the timeout as a test-quality result.
+through the wrapper. Wrap the LOOP once instead and the same ten mutants pay one charge.
+If the farm is unreachable (`rt` exits 21), this skill is not usable for that run — say so
+and stop; never move the loop to the workstation, and never report a wrapper timeout as a
+test-quality result.
 
 **Tier 2 is the opposite case, and the ban used to swallow it.** A Tier 2 pass is ONE
 long full-suite run — exactly the shape the global `rt` rule was written for — and the
@@ -427,7 +436,7 @@ compared against the next run's.
    machine, exactly as before. Never let a remote step own the restore.
 2. **A wrapper failure is not a mutation result.** `rt` exiting non-zero for a queue timeout,
    an evicted run, or an unreachable host means the mutation was **not measured** — it is
-   neither killed nor survived. Re-run it locally once; if that also fails, the mutant is
+   neither killed nor survived. Re-run it on the farm once; if that also fails, the mutant is
    `NOT_EXECUTED` and the plan is incomplete under 3.3, not scored around.
 3. **`TEST_RAN` discipline applies to the farm too.** A farm run that is evicted or never
    scheduled exits 0 having run nothing, and "0 failures" from a suite that did not execute
@@ -469,7 +478,7 @@ BASELINE
   Tests: [N] passing | [N] suites
   Baseline time: [N]s        (full suite, once)
   Per-run cost:  [N]s        (one targeted run — what each mutation actually costs)
-  Runner:        local       (never rt/remote — see 1.3)
+  Runner:        rt (farm)   (the whole loop in ONE invocation — see 1.3)
   Plan:          [N] mutations -> budget [N]s
 ```
 
@@ -702,16 +711,35 @@ The native runner replaces the 3.2 loop for the mutants it generates; it does no
 any rule around that loop. Run it scoped to the SAME file set built in 0.2, and inherit
 every constraint below without exception:
 
-1. **Local, always — this is a STRICTER rule than 1.3, not an inheritance of it.** Say it
-   plainly rather than gesturing at 1.3: a native run defaults to local unconditionally, and
-   1.3's measured `BASELINE_TIME >= 120s → rt` threshold does **not** apply to it. The two
-   look similar and are not: 1.3 routes ONE long full-suite pass to the farm, where the fixed
-   mirror/queue charge amortises. A native runner is a long-lived process that re-runs the
-   suite per mutant against a working tree it is actively mutating — and rule 4 below requires
-   verifying that tree on THIS machine afterwards, which a remote run cannot give us. The only
-   escape hatch is a project whose own docs state the runner cannot execute locally; take it,
-   and record `tier2_runner: "rt (native — project requires it)"` so the exception is visible.
-   An earlier draft called this "1.3's `BASELINE_TIME` rule", which it is not.
+1. **ON THE FARM, in an isolated checkout — reversed 2026-08-29 by measurement.** This rule
+   used to say "local, always", and following it is what produced the incident below. A native
+   run is the single heaviest thing this repo starts: one long-lived process re-running the
+   suite once per mutant, 730 mutants and ~24 minutes in the case that broke.
+
+   What actually happened when it ran locally: the worktree's `node_modules` was shared with
+   another worktree, the other run moved underneath it, and Stryker died ten minutes in on
+   vanished dependencies (`mutation-testing-report-schema`, `balanced-match`) — a crash that
+   looks like a test failure and is not. At the same moment the laptop carried 109 local test
+   processes at 421% CPU and load 34, macOS was putting it to sleep with `Dark Wake Thermal
+   Emergency`, and the farm sat idle with ~18 free slots.
+
+   The old justification was 1.3's per-invocation wrapper overhead — real, and it does not
+   apply here. 1.3 measures a wrapper charge paid PER SHORT CALL; a native run pays it ONCE
+   across twenty-plus minutes, where it rounds to nothing. Send it to the farm:
+
+       rt npx stryker run <config>          # or the project's own native runner
+
+   Two consequences that are not optional:
+   - **The farm gives it the isolation the laptop cannot.** A farm run ships the tree as it
+     stands into its own checkout, so a concurrent worktree cannot pull dependencies out from
+     under it. That is not a nicety here — it is the failure that was observed.
+   - **Rule 4's tree verification still happens on THIS machine**, against the pre-run hash,
+     exactly as before. A farm run is read-only with respect to your working tree, which makes
+     that check simpler, not harder.
+
+   Record `tier2_runner: "rt (native)"`. The only local escape is `TF_ALLOW_LOCAL=1` with a
+   stated reason — the farm unreachable, or debugging the farm itself — and it must appear in
+   the report, because a local native run is what this rule exists to prevent.
 2. **Budget it in 1.3b terms.** A native run is one long invocation, so it is budgeted like
    a Tier 2 pass (`BASELINE_TIME`-scaled), never like `MUTATION_COUNT * PER_RUN`. If the
    budget cannot hold one full native pass, shrink the SCOPE (fewer files) — never the

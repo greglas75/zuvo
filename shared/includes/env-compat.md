@@ -177,6 +177,43 @@ Agent(
 - Multiple agents can run in parallel when their work is independent
 - **Consecutive dispatch rate-limits = agent failure.** If sub-agent dispatch returns a rate-limit / overloaded / quota error **twice in a row** for the same stage, treat it as a dispatch failure (not a thing to keep retrying): print `[MODE SWITCH] dispatch rate-limited ×2 → single-agent`, record ROUTING_STATUS `rate-limited` (NOT `same-model-fallback` — that value means the environment cannot route to a different reviewer model, which is a configuration fault with a different fix; conflating the two took the token from 15% of refactor runs in July to 36% in August and made the number unactionable), and execute that stage's role inline per the single-agent checkpoint protocol. Do NOT silently spin retrying a rate-limited dispatch — it stalls the pipeline; fall back and keep moving.
 
+### Where work runs: the farm, not the workstation (ALL platforms)
+
+**Any command that runs a suite, a build, a type-check, a lint or a mutation pass is prefixed
+with `rt`.** Not "should be" — is. This applies to every skill that takes "the command that runs
+the suite" as an input (`refactor`, `write-tests`, `execute`, `fix-tests`, `tests-performance`,
+`write-e2e`): the command you accept or construct carries the prefix, and one that does not is
+incomplete regardless of who supplied it.
+
+```
+rt --light <cmd>     # unit tests, type-check, lint, build — no services needed
+rt <cmd>             # anything needing postgres/redis/migrations
+```
+
+**A LOOP is wrapped ONCE, not per iteration.** The wrapper's charge is per invocation (measured:
+1.4 s bare against 103.4 s wrapped, for one short run), so wrapping each of N calls multiplies it
+by N while wrapping the loop pays it once:
+
+```
+rt --light bash -c '<the whole loop>'
+```
+
+That distinction is the entire reason an earlier version of the mutation skill said "run it
+locally" — a correct measurement with the wrong conclusion drawn from it.
+
+**What running it here costs**, measured 2026-08-29 while three skill sections still instructed
+otherwise: 109 local test processes at 421% CPU, load average 34, macOS suspending the machine
+with `Dark Wake Thermal Emergency` for 3h22m, and a 730-mutant Stryker run dying ten minutes in
+because a concurrent worktree pulled shared `node_modules` out from under it. The farm sat idle
+with ~18 free slots throughout. And the damage is not confined to that run: a saturated
+workstation makes the farm's own placement probes time out, so work piles onto one host while
+others idle — which is what a person then experiences as "the farm is broken".
+
+**`rt` failing is a reason to WAIT or STOP, never to run it here.** Off-tailnet it exits 21; a
+queue timeout is not a test result and must not be recorded as pass, fail, or "inconclusive,
+proceeding". The one escape is `TF_ALLOW_LOCAL=1` with a stated reason (farm unreachable, or
+debugging the farm itself), and it belongs in the report.
+
 ### Waiting on a long-running process (ALL platforms)
 
 **A poll is a full model round-trip.** It re-feeds the entire context and returns one line of
