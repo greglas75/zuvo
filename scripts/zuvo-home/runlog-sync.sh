@@ -7,7 +7,7 @@ ZH="${ZUVO_HOME:-$HOME/.zuvo}"
 zuvo_collector_host || exit 0
 VPS="$ZUVO_COLLECTOR_SSH"
 TOK="${CODESIFT_COLLECTOR_TOKEN:-}"
-[ -n "$TOK" ] || TOK=$(ssh -o ConnectTimeout=10 "$VPS" '. /home/gha/telemetry-collector/collector.env; echo $CODESIFT_COLLECTOR_TOKEN' 2>/dev/null)
+[ -n "$TOK" ] || TOK=$(ssh -o ConnectTimeout=10 "$VPS" '. /opt/telemetry-collector/collector.env; echo $CODESIFT_COLLECTOR_TOKEN' 2>/dev/null)
 [ -n "$TOK" ] || { echo "$(date -u +%FT%TZ) no token — skip"; exit 0; }
 # /usr/bin/python3 is an absolute path that does not exist on Windows (and not on every Linux).
 PY_BIN="$(zuvo_python)" || exit 0

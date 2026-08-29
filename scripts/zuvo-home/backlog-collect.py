@@ -26,7 +26,7 @@ Design notes:
 
 Env:
   ZUVO_BACKLOG_ROOTS  colon-separated globs (default: ~/DEV/*)
-  ZUVO_COLLECTOR_URL  default https://coding.tgmedit.com
+  ZUVO_COLLECTOR_URL  default http://100.103.91.24:5599
   CODESIFT_COLLECTOR_TOKEN / ZUVO_COLLECTOR_TOKEN  secret for /ingest/backlog
   ZUVO_BACKLOG_OUT    local snapshot path (default ~/.zuvo/backlog-local.jsonl)
 """
@@ -46,7 +46,7 @@ HOME = os.path.expanduser("~")
 ZUVO = os.environ.get("ZUVO_DIR", os.path.join(HOME, ".zuvo"))
 ROOTS = os.environ.get("ZUVO_BACKLOG_ROOTS", os.path.join(HOME, "DEV", "*"))
 OUT = os.environ.get("ZUVO_BACKLOG_OUT", os.path.join(ZUVO, "backlog-local.jsonl"))
-URL = os.environ.get("ZUVO_COLLECTOR_URL", "https://coding.tgmedit.com").rstrip("/")
+URL = os.environ.get("ZUVO_COLLECTOR_URL", "http://100.103.91.24:5599").rstrip("/")
 TOKEN = os.environ.get("CODESIFT_COLLECTOR_TOKEN") or os.environ.get("ZUVO_COLLECTOR_TOKEN") or ""
 HOST = socket.gethostname()
 

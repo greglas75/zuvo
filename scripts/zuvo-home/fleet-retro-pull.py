@@ -45,7 +45,7 @@ from datetime import datetime, timedelta, timezone
 ZUVO = os.environ.get("ZUVO_HOME", os.path.expanduser("~/.zuvo"))
 FLEET = os.path.join(ZUVO, "remote", "fleet")
 SELF = os.path.join(ZUVO, "remote", "self")   # --restore-self target; retro-mine reads remote/*/*/
-REMOTE_DATA = "/home/gha/telemetry-collector/data/codesift"
+REMOTE_DATA = "/opt/telemetry-collector/data/codesift"
 SSH_TIMEOUT = 25          # hard wall: an unreachable collector must fail, never hang a cron job
 
 
