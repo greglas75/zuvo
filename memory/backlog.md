@@ -969,6 +969,27 @@ triaging farm reports in another repo | seen:8 | confidence:98 | source:field-re
   (a DEGRADED run can still report S1 findings).
   defer-reason: out-of-fence — registry edit unrelated to mutation runners | seen:1 | confidence:80 | source:build | 2026-08-18
 
+- B-28 | scripts/zuvo-home/{backlog-collect,runlog-collect}.py:24,44,29,49 | hardcoded-host |
+  `tests/hooks/test-retro-loop-docs.sh` FAILs on these two files (`hardcoded IP in ...`): both carry
+  `http://100.103.91.24:5599` as the `ZUVO_COLLECTOR_URL` default, while `runlog-sync.sh` was already
+  migrated to the shared host resolver and PASSes the same two assertions. The gate is therefore red
+  on every run and has been normalised as background noise, which is how a real regression would hide.
+  Fix: route both through the same resolver `runlog-sync.sh` uses, keeping the env override.
+  Verified pre-existing: identical FAIL on a clean `git worktree add --detach HEAD` checkout.
+  defer-reason: out-of-fence — this build touched retro-mine/fleet-retro-pull/append-retro, not the
+  collector clients | seen:1 | confidence:95 | source:build | 2026-08-29
+
+- B-29 | scripts/zuvo-home/log-ideas | hang-on-trailing-flag |
+  `tests/hooks/test-log-ideas.sh` FAILs: `log-ideas --skill build --count` (trailing flag, no value)
+  HANGS instead of exiting. The suite's own sibling cases (`--count`, `--project`, `--count 3 --skill`)
+  all pass, so the argument loop handles a bare trailing flag correctly everywhere except this pairing.
+  log-ideas is called at the end of build/execute/refactor runs as a best-effort receipt, so a hang
+  there stalls a finished pipeline for no benefit — it is documented as "never fails a skill", and a
+  hang is worse than a failure.
+  Verified pre-existing: identical FAIL on a clean `git worktree add --detach HEAD` checkout.
+  defer-reason: out-of-fence — this build touched retro-mine/fleet-retro-pull/append-retro, not
+  log-ideas | seen:1 | confidence:95 | source:build | 2026-08-29
+
 - B-27 | skills/*/SKILL.md | missing-check | Nothing verifies that an intra-file section cross-reference
   ("see 0.1d", "(4.2c)") resolves to a real heading in the same SKILL.md. This build shipped exactly
   that defect — `--break` cited a non-existent 4.1b — and it was caught by an audit agent, not a test.

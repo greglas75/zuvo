@@ -150,15 +150,23 @@ esac
 # fleet-wide as `blind_audit_ran`. CODESIFT and ROUTING already allow N/A, which
 # is exactly why those two columns read sanely.
 case "$BLIND" in
-  clean:strict|clean:degraded|rewrite|skipped|blocked_infra|not_run|N/A|fix:*) : ;;
+  clean:strict|clean:degraded|rewrite|skipped|blocked_infra|not_run|ran:unknown|N/A|fix:*) : ;;
   *) echo "append-retro: --blind-audit='$BLIND' invalid" >&2; exit 2 ;;
 esac
+# `ran:unknown` (both columns) is the THIRD fact neither `not_run` nor `N/A` can
+# state: the step ran and the verdict was never collected. No skill may use it —
+# a skill that ran the step knows the verdict. It exists for the lossy import
+# channel: the anonymous `/ingest/codesift` rollup reports only how many runs in a
+# bucket ran the step, so fleet-retro-pull.py had nowhere truthful to put it and
+# wrote `blind=N`/`adv=N` — outside this enum, on all 759 fleet-origin rows, which
+# made "ran and was clean" and "never ran" the same value to every reader.
+#
 # Same reasoning as BLIND above. Adversarial applies to nearly every skill, so
 # the fabrication pressure is lower — but "nearly" is not "always", and a column
 # with no way to say "does not apply" only ever collects a plausible-looking value.
 case "$ADV" in
-  clean|skipped|blocked|not_run|N/A|blocked:prod-bug|*findings) : ;;
-  *) echo "append-retro: --adversarial='$ADV' invalid (clean|Nfindings|skipped|blocked|not_run|blocked:prod-bug)" >&2; exit 2 ;;
+  clean|skipped|blocked|not_run|ran:unknown|N/A|blocked:prod-bug|*findings) : ;;
+  *) echo "append-retro: --adversarial='$ADV' invalid (clean|Nfindings|skipped|blocked|not_run|ran:unknown|blocked:prod-bug)" >&2; exit 2 ;;
 esac
 case "$CODESIFT" in
   indexed|transport_closed|not_indexed|unavailable|N/A) : ;;

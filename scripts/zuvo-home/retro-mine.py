@@ -15,6 +15,7 @@ import re
 import glob
 import sys
 import collections
+import dataclasses
 import datetime
 def _arg_int(flag, default):
     """`--days` with no value, or a non-numeric one, used to kill this script with a traceback.
@@ -38,6 +39,54 @@ H = os.path.expanduser
 out = []
 frictions = collections.Counter(); skills = collections.Counter(); proposals = []; entries = 0
 
+# Per-origin attribution. `mine_retros_log` took an `origin` argument from the day it was written
+# and threw it away, so every row — this Mac's, a popebot's, an anonymous fleet install's — landed
+# in the same two anonymous Counters. That is the whole value of pulling foreign retros: knowing
+# that a friction pattern is OURS and not a stranger's, or the reverse. The global Counters above
+# are still fed unchanged, so the digest's existing sections stay byte-identical for their parsers.
+@dataclasses.dataclass
+class OriginStat:
+    """One install's contribution. A dict with mixed int/Counter values types as `object` under
+    mypy (which this repo gates at zero), and every arithmetic use site then fails."""
+    rows: int = 0
+    malformed: int = 0
+    proposals: int = 0
+    unreadable: int = 0
+    skills: collections.Counter = dataclasses.field(default_factory=collections.Counter)
+    frictions: collections.Counter = dataclasses.field(default_factory=collections.Counter)
+
+
+by_origin: dict = collections.defaultdict(OriginStat)
+
+
+def origin_host(origin):
+    """Coarse source of an origin id: 'mac', or the remote family ('fleet', 'popebot', 'self')."""
+    if not origin.startswith("fleet:"):
+        return origin
+    return origin[len("fleet:"):].split("/")[0] or "fleet"
+
+def valid_day(field1):
+    """True if field 1 is a real calendar day. A shape-only `\\d{4}-\\d{2}-\\d{2}` regex is not
+    enough: `2026-99-99` and `2026-08-29junk` both match it, and CUT compares lexicographically, so
+    an impossible or far-future date would sail into the window and sit in the histograms forever.
+    fromisoformat rejects both, and the failure is COUNTED as malformed rather than mined."""
+    try:
+        datetime.date.fromisoformat(field1[:10])
+    except (ValueError, TypeError):
+        return False
+    return len(field1) == 10 or field1[10:11] == 'T'
+
+
+def md_cell(v):
+    """One markdown table cell from an untrusted string.
+
+    Origin ids, skills and frictions on fleet rows come from the OPEN ingestion channel.
+    append-retro neutralises TAB/CR/LF at the TSV boundary — nothing neutralises `|`, which ends a
+    cell, so a friction of `x | y` silently shifts every later column and misattributes the counts
+    to the wrong origin. Escape the delimiter and drop anything that could still break the row."""
+    return re.sub(r'[\x00-\x1f]', ' ', str(v)).replace('\\', '\\\\').replace('|', '\\|')
+
+
 def mine_retros_md(path, origin):
     global entries
     try: s = open(path, errors='ignore').read()
@@ -51,16 +100,48 @@ def mine_retros_md(path, origin):
         if pm:
             for b in re.finditer(r'\*\*\d+\.\*\*\s*(.*?)(?=\n\*\*\d+\.\*\*|\Z)', pm.group(1), re.S):
                 t = b.group(1).strip()
-                if len(t) > 40: proposals.append((origin, head, t[:1200]))
+                if len(t) > 40:
+                    proposals.append((origin, head, t[:1200]))
+                    by_origin[origin].proposals += 1
 
 def mine_retros_log(path, origin):
+    """Mine one retros.log, attributing every row to `origin`.
+
+    Two shape rules, both learned from the live corpus:
+
+    `len(f) == 17`, not the old `> 4`. The canonical line has exactly 17 fields; `> 4` also
+    accepted any longer or shorter mutant and mined f[1]/f[4] out of whatever happened to sit
+    there. Three real files (this Mac's, one popebot's) each hold one hand-assembled 4-field
+    line where the SKILL and DATE are transposed — under `> 4` it was silently dropped, and a
+    5-field variant of the same drift would have been silently MIS-counted.
+
+    Malformed rows are counted, not discarded in silence. A parser that quietly ignores what it
+    cannot read reports the same "all clear" whether the input was clean or was garbage, and the
+    fleet channel is the one input nobody here can inspect by hand.
+    """
+    stat = by_origin[origin]
     try:
-        for l in open(path, errors='ignore'):
+        fh = open(path, errors='ignore')
+    except FileNotFoundError:
+        return                      # the ordinary case: this origin has no retros.log
+    except OSError as e:
+        # A permission or I/O error is NOT an empty source. Swallowing it produced a digest that
+        # reported zero rows for an origin and looked exactly like a quiet week.
+        stat.unreadable += 1
+        sys.stderr.write(f'retro-mine: cannot read {path} ({e.__class__.__name__}) — '
+                         f'origin {origin} is UNDER-COUNTED in this digest\n')
+        return
+    with fh:
+        for l in fh:
             if not l.startswith('RETRO:'): continue
             f = l[6:].strip().split('\t')
-            if len(f) > 4 and f[0][:10] >= CUT:
-                skills[f[1]] += 1; frictions[f[4]] += 1
-    except Exception: pass
+            if len(f) != 17 or not valid_day(f[0]):
+                stat.malformed += 1
+                continue
+            if f[0][:10] < CUT: continue
+            skills[f[1]] += 1; frictions[f[4]] += 1
+            stat.rows += 1
+            stat.skills[f[1]] += 1; stat.frictions[f[4]] += 1
 
 mine_retros_md(H('~/.zuvo/retros.md'), 'mac')
 mine_retros_log(H('~/.zuvo/retros.log'), 'mac')
@@ -130,6 +211,46 @@ with open(dst, 'w') as w:
     for k, v in frictions.most_common(15): w.write(f'- {v}x {k}\n')
     w.write('\n## Skills\n')
     for k, v in skills.most_common(12): w.write(f'- {v}x {k}\n')
+    # Placed BETWEEN `## Skills` and `## Change proposals` on purpose. digest-proposals parses
+    # `###\s*P(\\d+)\\b(.*?)(?=\\n###\\s*P\\d|\\Z)`, so the LAST proposal block already swallows every
+    # section that follows it; adding one more at the end would grow that swallow. Here it changes
+    # nothing about what any parser sees.
+    w.write('\n## Origin breakdown\n')
+    w.write('| origin | rows | malformed | proposals | top friction | top skill |\n')
+    w.write('|---|---|---|---|---|---|\n')
+    for o in sorted(by_origin, key=lambda k: (-by_origin[k].rows, k)):
+        st = by_origin[o]
+        if not (st.rows or st.malformed or st.proposals or st.unreadable): continue
+        tf = st.frictions.most_common(1); ts = st.skills.most_common(1)
+        w.write(f"| {md_cell(o)} | {st.rows} | {st.malformed} | {st.proposals} | "
+                f"{(md_cell(tf[0][0]) + ' x' + str(tf[0][1])) if tf else '-'} | "
+                f"{(md_cell(ts[0][0]) + ' x' + str(ts[0][1])) if ts else '-'} |\n")
+    hosts = collections.Counter()
+    for o, st in by_origin.items(): hosts[origin_host(o)] += st.rows
+    if hosts:
+        w.write('\nBy source: ' + ', '.join(f'{h} {n}' for h, n in hosts.most_common()) + '\n')
+    unread = sum(st.unreadable for st in by_origin.values())
+    if unread:
+        w.write(f'\n**{unread} retro log(s) could not be READ** (permission or I/O error, not '
+                f'absence). Those origins are under-counted above — an unreadable source and a '
+                f'quiet week produce the same zero, so it is stated rather than implied.\n')
+    mal = sum(st.malformed for st in by_origin.values())
+    if mal:
+        w.write(f'\n**{mal} malformed retro line(s) skipped** — not 17 fields, or field 1 is not a '
+                f'date. They are counted here rather than dropped in silence; see the per-origin '
+                f'table for which install they came from.\n')
+    # A structural limit, not an empty week. Anonymous fleet rollups ride the telemetry channel and
+    # carry day/skill/code_type/friction/context_gap/counts only — no free text, so no retros.md and
+    # therefore no `### Change Proposals` block can ever exist for them. Their rows can move a
+    # histogram; they can never produce a proposal. Saying so beats a silent zero that reads like
+    # "the fleet had nothing to say this week".
+    fleet_rows = sum(st.rows for o, st in by_origin.items() if origin_host(o) == 'fleet')
+    if fleet_rows:
+        w.write(f'\n**Fleet rollups contribute histograms only ({fleet_rows} rows, 0 proposals '
+                f'possible).** They are anonymous by omission — no project, branch, sha or free '
+                f'text — so no retros.md exists to mine proposals from. Read them as signal about '
+                f'WHERE friction happens, never as a source of change proposals.\n')
+
     w.write(f'\n## Change proposals ({len(proposals)})\n')
     for i, (o, h, t) in enumerate(proposals):
         w.write(f'\n### P{i} [{o}] {h}\n{t}\n')
@@ -147,3 +268,8 @@ print(f'  entries={entries} proposals={len(proposals)} ideas={len(ideas)} '
       f'backlog-projects={len(backlog_rows)} open-total={sum(b[1] for b in backlog_rows)}')
 print(f'  top-frictions: {dict(frictions.most_common(5))}')
 print(f'  top-skills: {dict(skills.most_common(5))}')
+_hosts = collections.Counter()
+for _o, _st in by_origin.items(): _hosts[origin_host(_o)] += _st.rows
+_mal = sum(_st.malformed for _st in by_origin.values())
+_unread = sum(_st.unreadable for _st in by_origin.values())
+print(f'  rows-by-source: {dict(_hosts.most_common())} malformed={_mal} unreadable={_unread}')

@@ -81,8 +81,27 @@ deleted when their proposal is implemented — the ledger records that, the retr
 `com.greglas.zuvo-retro-mine` LaunchAgent, **Mondays 08:17**, runs `retro-mine-weekly.sh`:
 
 1. `retro-mine.py --days 7` → deterministic digest (`~/.zuvo/mining/digest-<date>.md`): window
-   stats, friction histogram, and **every** change proposal from the Mac plus the fleet bots
-   (`~/.zuvo/remote/*/retros.md`, synced by `sync-popebot.sh`).
+   stats, friction histogram, an **origin breakdown**, and **every** change proposal from the Mac
+   plus the fleet bots (`~/.zuvo/remote/*/retros.md`, synced by `sync-popebot.sh`).
+
+   **`## Origin breakdown` (v1.6.72)** answers the question the pooled histograms cannot: whose
+   friction is this? Per origin it reports rows, malformed lines, proposals, and that origin's own
+   top friction and skill; then a `By source:` roll-up (mac / fleet / popebot / self). It sits
+   between `## Skills` and `## Change proposals` deliberately — `digest-proposals` parses
+   `### P<n>` blocks whose last capture runs to end-of-file, so a section placed after the
+   proposals grows that trailing swallow, and one placed here changes nothing any parser sees.
+
+   Two limits the section states out loud rather than implying:
+
+   - **Fleet rollups can never produce a proposal.** They ride the anonymous
+     `/ingest/codesift` telemetry channel and carry day / skill / code_type / friction /
+     context_gap / counts — no free text, so there is no `retros.md` to mine proposals from.
+     Their rows move histograms; they are not a source of change proposals. A silent zero there
+     reads like "the fleet had nothing to say this week", which is a different and false claim.
+   - **Malformed and unreadable inputs are counted, not dropped.** A line that is not 17 fields,
+     or whose field 1 is not a real calendar day, increments `malformed` for its origin; a log
+     that exists but cannot be READ increments `unreadable` and warns on stderr. A parser that
+     silently ignores what it cannot read reports the same all-clear for clean input and garbage.
 2. A headless `claude -p` agent triages that digest and writes `zuvo/reports/retro-mine-<date>.md`
    with a TOP-5. **Report-only by contract** — it never edits skills, commits, or releases.
 
@@ -200,6 +219,8 @@ output that nothing consumed, and nothing in the system said so.
 | Retro drift (`key=value` rows) | learning present but uncounted by the miner | `sanitize-retros` in the rotate job |
 | Mining engine unversioned | `retro-mine.py` existed only in `~/.zuvo` — one disk failure from losing the loop | versioned in `scripts/zuvo-home/` (v1.6.38) |
 | Overlapping mining windows inflated recurrence | clearing the apply bar to 0, then one mining run put **111** items straight back on it — while only **9** new retros existed | count distinct SOURCE RETROS, not digest occurrences (v1.6.47) |
+| Fleet retros pulled, then pooled anonymously | `mine_retros_log(path, origin)` took `origin` and never used it, so 160 foreign rows and 2132 local ones landed in the same two Counters — the digest could not say whose friction it was, which is the only reason to pull them | per-origin attribution + `## Origin breakdown` (v1.6.72) |
+| A ran-COUNT written into a verdict column | `fleet-retro-pull.py` wrote `blind=N`/`adv=N` into fields 14/15 on all 759 fleet rows — values outside those enums, so "the review ran and came back clean" and "it never ran" were the same value to every reader | `ran:unknown` in the schema + a per-bucket split in the puller (v1.6.72) |
 
 **The lesson, stated once:** when you add a stage, name its consumer in the same change. If you
 cannot name one, you are building the next dead end.

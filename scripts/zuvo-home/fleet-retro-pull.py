@@ -24,7 +24,10 @@ globs (`remote/*/` then `*/`), so no change is needed there.
 The rollup is anonymous by omission: day / skill / code_type / friction / context_gap / counts and
 medians. No project, no branch, no sha, no free text — those fields are never collected. The
 canonical retros.log line has 17 fields, so the ones that do not exist in a rollup are written as
-`N/A`; `count: N` becomes N identical lines, because the miner counts occurrences.
+`N/A`; `count: N` becomes N lines, because the miner counts occurrences. Those N lines are NOT
+always identical: a rollup also reports how many of its runs ran the blind audit / adversarial
+review, so the expansion splits accordingly (see `_step_verdict`) — the rollup carries a ran-count
+and no verdict, and a count is not a value of those columns' enums.
 
 Usage:
   fleet-retro-pull.py            # pull, rewrite ~/.zuvo/remote/fleet/, print a summary
@@ -98,7 +101,60 @@ def fetch(vps):
 
 # Canonical retros.log layout (17 fields after `RETRO: `). Only the ones a rollup actually carries
 # are filled; the rest are N/A by construction, not by scrubbing — see the module docstring.
-def rollup_to_line(day, r):
+def _step_verdict(override, ran_this_one):
+    """Canonical column value for a step whose rollup carries only a RAN-COUNT.
+
+    The rollup reports `blind_audit_ran` / `adversarial_ran` = how many of the bucket's `count`
+    runs executed the step, and NO verdict — those are never collected. Writing that count into
+    the column (`blind=2`) is what every fleet row did until 2026-08-29: a value outside the
+    column's enum, so "ran and came back clean" and "never ran at all" read identically. There is
+    no verdict to recover, so do not invent one; state the fact that IS known, per run:
+
+      key absent   -> N/A          this rollup does not carry the field at all
+      ran_this_one -> ran:unknown  the step ran, the verdict was never collected
+      otherwise    -> not_run      the step did not run
+
+    One limit worth stating rather than papering over: `not_run` is defined as "applies, did not
+    happen", and a rollup cannot tell us whether the step APPLIES to the skill that produced the
+    bucket — it carries a ran-count and nothing else. So a fleet-origin `not_run` asserts only the
+    observable half ("it did not run"); do not read fleet rows as evidence about which skills have
+    a blind-audit step. The alternative — calling it `N/A` — would throw away the half we DO know.
+
+    `ran:unknown` is a real value of both enums (see retrospective.md fields 14-15) and is
+    accepted by append-retro's validator — the emitted rows stay canonical.
+    """
+    if override is not None:
+        return override
+    return "ran:unknown" if ran_this_one else "not_run"
+
+
+def _ran_count(r, key, n):
+    """(rows_where_the_step_ran, verdict_override) for this bucket. Count clamped to [0, n].
+
+    The value arrives on the OPEN, anonymous ingestion channel, so it is untrusted: a string, a
+    float, a negative, or 1e9 must not decide how many rows claim the step ran. Out-of-range
+    clamps rather than raising — one poisoned rollup must not kill the pull for every other
+    install.
+
+    A garbage value is NOT silently read as zero. `"yes"`, `2.9` and `null` would all have become
+    `0`, i.e. `not_run` on every row — indistinguishable from a legitimate "the step applies and
+    nobody ran it", which is the exact class of collapse this whole change exists to remove. An
+    unusable value means the field is unusable, so the rows get `N/A` (the "we cannot say" value)
+    and the caller counts the rollup so the summary can say it happened. `2.9` is rejected rather
+    than floored: a fractional run-count means the producer is broken or the payload was tampered
+    with, and truncating it would quietly understate how many rows claim the step ran.
+    """
+    v = r.get(key)
+    if v is None:
+        return 0, "N/A"
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return 0, "N/A"                       # bool is an int subclass — never a run count
+    if isinstance(v, float) and v != int(v):
+        return 0, "N/A"
+    return max(0, min(n, int(v))), None
+
+
+def rollup_to_line(day, r, blind_ran=False, adv_ran=False, blind_na=None, adv_na=None):
     ts = f"{day}T00:00:00Z"
     # Every value below comes from the OPEN ingestion channel. A "\n" in any of them
     # would close this row and open a forged one — retros.log is newline-delimited TSV and
@@ -119,8 +175,8 @@ def rollup_to_line(day, r):
         str(r.get("median_files_modified") or "N/A"),  # 10 files modified
         "N/A",                                      # 11 branch    — never collected
         "N/A",                                      # 12 sha       — never collected
-        f"blind={r.get('blind_audit_ran', 'N/A')}",  # 13
-        f"adv={r.get('adversarial_ran', 'N/A')}",    # 14
+        _step_verdict(blind_na, blind_ran),               # 13 BLIND_AUDIT  (enum, never a count)
+        _step_verdict(adv_na, adv_ran),                   # 14 ADVERSARIAL   (enum, never a count)
         str(r.get("codesift") or "N/A"),            # 15
         str(r.get("routing") or "N/A"),             # 16
     ]])
@@ -203,6 +259,7 @@ def main():
     per_install = defaultdict(list)
     seen = set()
     skipped_self = 0
+    unusable = 0        # ran-count fields present but not a usable integer — reported, not hidden
     for line in raw.splitlines():
         line = line.strip()
         if not line:
@@ -243,14 +300,38 @@ def main():
             if key in seen:          # the same rollup is re-sent on every flush until the cursor moves
                 continue
             seen.add(key)
-            line_out = rollup_to_line(day, r)
             try:
                 # count is untrusted: 1e9 would allocate the list until the process dies,
                 # and the poison payload stays on the collector, so every later run dies too.
                 n = min(10000, max(1, int(r.get("count") or 1)))
             except (TypeError, ValueError):
                 n = 1
-            per_install[anon].extend([line_out] * n)
+            # A bucket is not uniform: `count: 4, adversarial_ran: 2` means two of those four runs
+            # ran the review and two did not. Emitting one line repeated n times can only tell one
+            # of those two stories, so split the expansion instead — the first `ran` rows carry
+            # ran:unknown, the remainder not_run. Lossless at bucket level, and no row claims a
+            # step ran when the rollup says it did not.
+            #
+            # THE MARGINALS ARE EXACT; THE JOINT IS NOT IDENTIFIABLE. Assigning both prefixes from
+            # index 0 makes rows 0..1 carry ran:unknown in BOTH columns, which reads as "these two
+            # runs ran both steps" — the rollup never said that, it reported two independent
+            # totals. Any per-row cross-tab of columns 14x15 over fleet rows therefore measures
+            # this loop, not the fleet. Every consumer in this repo (retro-mine's per-column
+            # histograms) reads the marginals only, which the split reproduces exactly. Documented
+            # rather than "fixed": no assignment can recover a joint distribution the channel does
+            # not carry, and one aggregate row per bucket would break the miner's count-occurrences
+            # contract and the overlap fence built on it.
+            blind_ran, blind_na = _ran_count(r, "blind_audit_ran", n)
+            adv_ran, adv_na = _ran_count(r, "adversarial_ran", n)
+            if blind_na and r.get("blind_audit_ran") is not None:
+                unusable += 1
+            if adv_na and r.get("adversarial_ran") is not None:
+                unusable += 1
+            per_install[anon].extend(
+                rollup_to_line(day, r, blind_ran=i < blind_ran, adv_ran=i < adv_ran,
+                               blind_na=blind_na, adv_na=adv_na)
+                for i in range(n)
+            )
 
     if not per_install:
         print(f"fleet-retro-pull: 0 foreign retro rollups on {vps} "
