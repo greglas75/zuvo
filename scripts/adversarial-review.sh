@@ -342,7 +342,7 @@ Environment variables:
                            keeps the best N still standing. The order is the measured ranking in
                            detect_providers(); the default 3 retains ~92% of CRITICAL-producing
                            runs for 39% fewer provider calls. Ignored with --provider.
-  ZUVO_REVIEW_TIMEOUT      Per-provider timeout in seconds (default: 240, 360 for article/spec/plan/audit)
+  ZUVO_REVIEW_TIMEOUT      Per-provider timeout in seconds (default: 400, flat across modes)
   ZUVO_TIMEOUT_GRACE       Seconds between SIGTERM and SIGKILL for a provider (default: 15).
                            Without the hard kill a TERM-ignoring CLI runs unbounded.
   ZUVO_RUN_DEADLINE        Whole-run wall-clock ceiling in seconds (default: derived from the
@@ -2155,9 +2155,20 @@ write_artifact() {
 command -v timeout &>/dev/null || { echo "ERROR: GNU timeout required. Install: brew install coreutils" >&2; exit 1; }
 command -v jq &>/dev/null || { echo "ERROR: jq required. Install: brew install jq" >&2; exit 1; }
 
-DEFAULT_TIMEOUT=240
-# Heavy modes (large payloads, more complex analysis) get 50% more time
-[[ "$REVIEW_MODE" =~ ^(article|spec|plan|audit|tests|migrate)$ ]] && DEFAULT_TIMEOUT=360
+# 400, not 240. Measured 2026-08-29 on a size ladder (one real diff cut to 5/12/20/28 kB, both
+# Gemini lanes, 2 reps): Gemini 3.1 Pro's wall clock scales 4.6x with input size — 52s at 5 kB,
+# 169s at 12 kB, 238s at 20 kB, 239s at 28 kB — while 3.7 Flash stays flat at 60-90s. At 240s the
+# Pro lane was therefore dying ON THE CLOCK, not on the work: the runs that DID finish came back
+# at 212s and 229s, just under the ceiling, and half the 20 kB+ cells timed out. The fleet log
+# agrees — in the 15-30 kB band, which is 54% of all runs, agy failed to answer 52% of the time.
+# A timeout is supposed to catch a wedged provider, not to cut off a working one mid-answer.
+DEFAULT_TIMEOUT=400
+# Flat, with no heavy-mode bump on top. The bump used to take those modes to 360 — below the new
+# base — and raising it proportionally (600) would put the inner timeout ABOVE the outer `timeout`
+# wrappers those very modes are invoked with: `timeout 480` in skills/plan/SKILL.md and
+# cross-provider-review.md, `timeout 590` in skills/write-tests. The outer kill would then fire
+# first and the run would die with NO artifact, which is strictly worse than the timeout it was
+# meant to replace. 400 + 15s grace = 415 sits under every existing wrapper.
 PROVIDER_TIMEOUT="${ZUVO_REVIEW_TIMEOUT:-$DEFAULT_TIMEOUT}"
 
 # ─── Dry run ───────────────────────────────────────────────────
