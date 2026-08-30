@@ -331,6 +331,16 @@ Input:
   --known-finding FP  Fingerprint already dispositioned in a previous pass (repeatable).
                    Repeats are reported separately and do not consume the finding budget.
   --no-chunk       Disable auto-chunking of oversized input (env: ZUVO_ADV_NO_CHUNK=1).
+
+Env:
+  ZUVO_ADV_MAX_CHARS=<n>   Per-chunk character cap (default 30000 code / 50000 docs).
+                           LOWER it when the artifact reports input_truncated=true: that
+                           means a PROVIDER's own limit is below ours, and smaller chunks
+                           are the only lever. Ignored unless an integer >= 2000.
+  ZUVO_ADV_CHUNK           INTERNAL recursion guard ('i/n'), set by the parent on each
+                           self-invocation. Not a size setting — setting it by hand used
+                           to disable chunking for the whole run; it is now ignored with
+                           a warning unless it has the parent's shape.
                    Default: input over the char cap with 2+ file boundaries is split at
                    file boundaries and reviewed chunk-by-chunk — no silent truncation.
   (stdin)          Pipe a diff
@@ -544,6 +554,24 @@ fi
 # Document modes get 50K, code/test modes get 30K (must fit 2+ files from corpus benchmarks)
 MAX_CHARS=30000
 [[ "$REVIEW_MODE" =~ ^(spec|plan|audit|migrate)$ ]] && MAX_CHARS=50000
+# ZUVO_ADV_MAX_CHARS — lower the per-chunk cap when a PROVIDER truncates below ours.
+#
+# The caps above are ours; individual providers have their own, lower, and they do not
+# announce them — they silently return a review of the part they read, and the artifact
+# records `input_truncated=true` for that section. Measured 2026-08-30 on a 1.1 MB diff:
+# 9 of 36 chunks came back truncated at the 30000 default, and neither a plain re-run nor
+# ZUVO_REVIEW_MAX_PROVIDERS=5 changed the count — the only lever that could help was the
+# chunk size, and there was no way to reach it.
+#
+# Validated: a non-numeric or absurd value is IGNORED with a warning rather than silently
+# producing one-line chunks (or, worse, `-gt` comparing against a string and never firing).
+if [[ -n "${ZUVO_ADV_MAX_CHARS:-}" ]]; then
+  if [[ "$ZUVO_ADV_MAX_CHARS" =~ ^[0-9]+$ && "$ZUVO_ADV_MAX_CHARS" -ge 2000 ]]; then
+    MAX_CHARS="$ZUVO_ADV_MAX_CHARS"
+  else
+    echo "WARN: ZUVO_ADV_MAX_CHARS='${ZUVO_ADV_MAX_CHARS}' is not an integer >= 2000 — ignoring, using ${MAX_CHARS}" >&2
+  fi
+fi
 
 # ─── Auto-chunk oversized input at FILE boundaries (2026-08-01) ───────────────
 # 32% of all runs on record hit MAX_CHARS (2,214 of 6,920 in ~/.zuvo/adversarial.log;
@@ -585,6 +613,21 @@ if [[ ${#INPUT} -gt $MAX_CHARS && "$REVIEW_MODE" != "tests" ]]; then
         fence && /^[[:space:]]*(```|~~~)/ { infence = !infence; next }
         !(fence && infence) && $0 ~ re    { n++ }
         END { print n + 0 }')
+fi
+# ZUVO_ADV_CHUNK is the RECURSION GUARD, never a caller-facing knob: the parent sets it to
+# `i/n` on each self-invocation so a child never chunks again. A caller who sets it — and it
+# reads exactly like a size knob, which is how it gets set — silently disables chunking for
+# the WHOLE run, so a 1.1 MB input goes to every provider as one blob and comes back
+# truncated. That failure is invisible: no error, just fewer providers and a quietly
+# truncated artifact. Measured 2026-08-30, and the size knob people actually want is
+# ZUVO_ADV_MAX_CHARS above.
+#
+# So: honour it only in the shape the parent writes. Anything else is a caller mistake —
+# say so and ignore it, rather than turning it into a silent no-chunk run.
+if [[ -n "${ZUVO_ADV_CHUNK:-}" && ! "$ZUVO_ADV_CHUNK" =~ ^[0-9]+/[0-9]+$ ]]; then
+  echo "WARN: ZUVO_ADV_CHUNK='${ZUVO_ADV_CHUNK}' is the internal recursion guard (expects 'i/n'), not a size setting." >&2
+  echo "      Ignoring it. To make chunks smaller use: ZUVO_ADV_MAX_CHARS=<n>. To disable chunking: --no-chunk." >&2
+  unset ZUVO_ADV_CHUNK
 fi
 if [[ ${#INPUT} -gt $MAX_CHARS && -z "${ZUVO_ADV_CHUNK:-}" && "$NO_CHUNK" != "true" \
       && "${ZUVO_ADV_NO_CHUNK:-0}" != "1" && "${_chunk_headers:-0}" -ge 2 ]]; then
