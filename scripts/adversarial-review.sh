@@ -352,8 +352,9 @@ Environment variables:
   ZUVO_AGY_MODEL           agy (Antigravity CLI) model — the sanctioned paid Gemini channel, and the
                            only Gemini lane this script supports (Google killed the free `gemini` CLI
                            for individuals — IneligibleTierError — and there is no other fallback).
-                           Display name from 'agy models' (default: "Gemini 3.1 Pro (High)";
-                           e.g. "Gemini 3.1 Pro (High)" for max depth).
+                           Display name from 'agy models' (default: "Gemini 3.7 Flash (High)").
+                           3.1 Pro is NOT a deeper alternative here: measured 7/20 answered
+                           vs 20/20 for Flash, at 3.5x the latency. See model-registry.sh.
   ZUVO_CURSOR_MODEL        cursor-agent model (default: composer-2.5-fast; id from 'cursor-agent models')
   ZUVO_CLAUDE_REVIEWER_MODEL  claude reviewer's Sonnet model when the author is Opus (default: claude-sonnet-5)
   CODESTRAL_API_KEY        Required for codestral provider (manual: --provider codestral)
@@ -362,6 +363,12 @@ Environment variables:
   MOONSHOT_API_KEY         Enables kimi-api fallback when the kimi CLI is absent (Moonshot Kimi K2)
   ZUVO_KIMI_MODEL          Kimi model (default: kimi-k2.6; kimi-k2.7-code = coding variant)
   ZUVO_KIMI_BASE_URL       Kimi endpoint (default: https://api.moonshot.ai/v1; .cn for China accounts)
+  ZUVO_ADV_OPENROUTER=1    Opt IN to the PAID OpenRouter lane (default off). Requires a key in
+                           OPENROUTER_API_KEY or ~/.zuvo/openrouter.key (must be mode 600/400).
+                           Adds providers `openrouter` and `openrouter-alt`. Key presence alone
+                           does NOT enable it — spending is an explicit decision.
+  ZUVO_OPENROUTER_MODEL    Primary OpenRouter model (default: z-ai/glm-5.3)
+  ZUVO_MODEL_OPENROUTER_ALT  Second model, run as provider `openrouter-alt` (default: qwen/qwen3.8-flash)
   CLAUDE_MODEL             Used for opposite-model detection (claude provider)
 HELP
       exit 0
@@ -1249,9 +1256,29 @@ detect_providers() {
     codex_bin="/Applications/Codex.app/Contents/Resources/codex"
   fi
   [[ -n "$codex_bin" ]] && providers="${providers:+$providers }codex-5.3"
-  # If the host IS the spark codex (HOST_PROVIDER=codex-5.3 → excluded below), add codex-5.4 so a
-  # CROSS-MODEL codex reviewer still runs (mirrors keeping claude with the opposite model).
-  [[ -n "$codex_bin" && "${HOST_PROVIDER:-}" == "codex-5.3" ]] && providers="$providers codex-5.4"
+  # codex-5.4 (gpt-5.4) is now ALWAYS offered when a codex binary exists, not only as the
+  # host-flip substitute it used to be. Measured 2026-09-01 on 20 real review diffs, same
+  # prompt, both lanes: 5.4 answered 20/20 at 56s with 56 REAL findings and 90% precision;
+  # 5.3 (gpt-5.6-sol) answered 18/20 with 42 REAL. Same subscription, no extra cost — there
+  # was no reason beyond inertia for the better lane to be reachable only by hand.
+  # The host-flip line below still fires: when the host IS one codex lane, that lane is
+  # excluded and the OTHER one carries the cross-model review. Adding 5.4 to the auto-list
+  # does not weaken that — exclusion happens after detection, on HOST_PROVIDER.
+  [[ -n "$codex_bin" ]] && providers="$providers codex-5.4"
+
+  # 4. openrouter — PAID, and therefore opt-in by an explicit env flag, never by key presence.
+  # A key file on disk is not consent to spend on every review: this one exists because of a
+  # benchmark, and auto-detecting on it would silently turn a free pipeline into a metered one.
+  # ZUVO_ADV_OPENROUTER=1 is a deliberate act a human performs once; the key alone is not.
+  # Measured value when enabled (20 diffs, Opus-judged): glm-5.3 adds 32 distinct defects that
+  # nothing in the free set finds, qwen3.8-flash adds 22, at $2.92 and $0.26 per 20 runs.
+  if [[ "${ZUVO_ADV_OPENROUTER:-0}" == "1" ]]; then
+    if [[ -n "${OPENROUTER_API_KEY:-}" || -f "$HOME/.zuvo/openrouter.key" ]]; then
+      providers="${providers:+$providers }openrouter openrouter-alt"
+    else
+      echo "  NOTE: ZUVO_ADV_OPENROUTER=1 but no key (env OPENROUTER_API_KEY or ~/.zuvo/openrouter.key) — lane skipped" >&2
+    fi
+  fi
 
   # 4. claude — opposite-model reviewer (Anthropic; run_claude flips Opus<->Sonnet). Most
   #    reliable client on the box, but the lowest-yield reviewer and the usual wall-clock setter.
@@ -1299,7 +1326,7 @@ if [[ -n "$PROVIDER" ]]; then
       echo "  Google discontinued the free gemini CLI for individuals; use 'agy'" >&2
       echo "  (Antigravity), which is the sanctioned Gemini channel." >&2
       exit 2 ;;
-    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude) ;;
+    codex-5.3|codex-5.4|agy|cursor-agent|kimi|kimi-api|codestral|claude|openrouter|openrouter-alt) ;;
     # `mock-*` is the test harness's provider namespace (tests/adversarial/mocks/,
     # reachable only under ZUVO_ADVERSARIAL_TEST_HARNESS). The first cut of this
     # allowlist omitted it and broke D3.4, which drives `--provider mock-success`
@@ -1589,9 +1616,10 @@ run_agy() {
   #     agy answer an empty/default prompt (it hallucinated instead of echoing the test string).
   #   * --model takes the DISPLAY name from `agy models` (e.g. "Gemini 3.1 Pro (High)").
   # --dangerously-skip-permissions is required so a headless run never blocks on a tool-permission
-  # prompt. Override the model with ZUVO_AGY_MODEL (e.g. "Gemini 3.1 Pro (High)" for max depth);
+  # prompt. Override the model with ZUVO_AGY_MODEL. Do NOT reach for "Gemini 3.1 Pro (High)"
+# expecting more depth: measured 7/20 answered vs 20/20 for 3.7 Flash, at 3.5x the latency;
   # default comes from the central model registry (ZUVO_MODEL_AGY).
-  local model="${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.1 Pro (High)}}"
+  local model="${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.7 Flash (High)}}"
   local err_file="$JSON_TMPDIR/err_agy.txt"
   local out_file="$JSON_TMPDIR/raw_agy.txt"
   local result status=0
@@ -1732,6 +1760,134 @@ run_kimi() {
     case "$text_lc" in
       error:*)
         echo "  WARN: kimi returned error-prefixed output: $(printf '%s' "$text" | head -c 120)" >&2
+        return 1 ;;
+    esac
+  fi
+  printf '%s\n' "$text"
+}
+
+run_openrouter() {
+  # OpenRouter — OpenAI-compatible chat completions over HTTP. The ONLY paid lane in this
+  # script that is not a vendor CLI, so it is the only way to reach models no CLI fronts.
+  # Added 2026-09-01 on measurement: 20 real review diffs through every candidate, every
+  # finding judged REAL / FALSE_POSITIVE by an independent Opus judge against the diff.
+  # Model defaults and the rejected-candidate list live in model-registry.sh.
+  #
+  # Key resolution, in order: env, then the on-disk file. The file is the normal case here
+  # (an interactive `op read` cannot run inside a headless review), and it is read ONLY if
+  # it is not group/world readable — a benchmark key that lands in a shared checkout must
+  # not be picked up silently.
+  local key="${OPENROUTER_API_KEY:-}"
+  if [[ -z "$key" ]]; then
+    local kf="$HOME/.zuvo/openrouter.key"
+    if [[ -f "$kf" ]]; then
+      local mode
+      mode=$(stat -f '%OLp' "$kf" 2>/dev/null || stat -c '%a' "$kf" 2>/dev/null)
+      if [[ "$mode" == "600" || "$mode" == "400" ]]; then
+        key=$(<"$kf")
+      else
+        echo "  WARN: $kf is mode ${mode:-?} — refusing to read a non-private key file" >&2
+      fi
+    fi
+  fi
+  # No key is a SKIP, not a failure: this lane is opt-in and every other provider must keep
+  # running without it. Returning 1 here lets detect_providers/report count it as unattempted.
+  [[ -z "$key" ]] && return 1
+  case "$key" in
+    *['"\\'$'\n\r']*)
+      echo "  WARN: OpenRouter key contains quote/backslash/newline — refusing to build curl config" >&2
+      return 1 ;;
+  esac
+
+  # Model id is attacker-adjacent only via env, but sanitize anyway: ids are vendor/name[:tag].
+  # REJECT a malformed id, never silently repair it. `tr -cd` would delete the offending
+  # characters and send a DIFFERENT model than provider_model() reports in the artifact — a label
+  # that is not the model. That is the defect this session spent hours untangling elsewhere (a
+  # lane named codex-5.3 that actually ran gpt-5.6-sol) and it corrupts every measurement built
+  # on the artifact afterwards.
+  local model="${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-z-ai/glm-5.3}}"
+  case "$model" in
+    ""|*[!a-zA-Z0-9._/@:-]*)
+      echo "  WARN: openrouter model id '$model' is empty or has characters outside [a-zA-Z0-9._/@:-] — refusing" >&2
+      return 1 ;;
+  esac
+
+  # Temp names carry the MODEL, not just the lane. `openrouter` and `openrouter-alt` are two
+  # providers in the SAME parallel dispatch, so one fixed name means each overwrites the other's
+  # payload and curl config mid-flight — the request goes out with the wrong model while the
+  # artifact still labels it correctly. Silent mislabeling is the exact failure this change set
+  # exists to remove.
+  local slug
+  slug=$(printf '%s' "$model" | tr -c 'a-zA-Z0-9' '_')
+  local payload_file="$JSON_TMPDIR/openrouter_${slug}_payload.json"
+  printf '%s' "$REVIEW_PROMPT" | jq -Rs --arg m "$model" \
+    '{model:$m, messages:[{role:"user", content:.}], temperature:0.2}' > "$payload_file"
+
+  # Header via curl config file, not argv — same reason as run_kimi_api: `-H "Bearer …"` is
+  # visible in `ps` to every process on the host for the life of the request.
+  local curl_cfg="$JSON_TMPDIR/openrouter_${slug}_curl.cfg"
+  # umask BEFORE the redirect, not chmod after it: `> file` creates with the ambient umask and the
+  # key is written immediately, so a trailing `chmod 600` leaves a window in which any local
+  # process can read a paid credential out of a shared tmpdir. Subshell keeps the umask local.
+  ( umask 077; printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\nheader = "X-Title: zuvo-adversarial-review"\n' \
+      "$key" > "$curl_cfg" )
+
+  local err_file="$JSON_TMPDIR/err_openrouter_${slug}.txt"
+  local response status=0
+  # No -f: it would discard HTTP>=400 bodies, which is exactly where the {"error":...}
+  # diagnostics live (401 bad key, 402 out of credit, 429 throttled).
+  response=$(curl -s --max-time "$PROVIDER_TIMEOUT" \
+    "${ZUVO_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}/chat/completions" \
+    -K "$curl_cfg" -d @"$payload_file" 2>"$err_file") || status=$?
+  if [[ $status -ne 0 ]]; then
+    if [[ $status -eq 28 ]]; then
+      echo "  WARN: openrouter timed out after ${PROVIDER_TIMEOUT}s" >&2
+      return 124
+    fi
+    echo "  WARN: openrouter failed (exit $status): $(head -1 "$err_file" 2>/dev/null)" >&2
+    return "$status"
+  fi
+
+  local api_err
+  api_err=$(printf '%s' "$response" | jq -r '.error.message // empty' 2>/dev/null)
+  if [[ -n "$api_err" ]]; then
+    echo "  WARN: openrouter returned error: $api_err" >&2
+    return 1
+  fi
+
+  local input_tokens output_tokens reasoning_tokens
+  input_tokens=$(printf '%s' "$response" | jq -r '.usage.prompt_tokens // "?"' 2>/dev/null)
+  output_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens // "?"' 2>/dev/null)
+  # Reasoning tokens are the cost driver on this lane and are invisible in completion_tokens
+  # on some models: glm-5.3 spends ~30k of them per review, which is 90% of its bill.
+  reasoning_tokens=$(printf '%s' "$response" | jq -r '.usage.completion_tokens_details.reasoning_tokens // 0' 2>/dev/null)
+  echo "  OpenRouter [$model] tokens: ${input_tokens} in / ${output_tokens} out (${reasoning_tokens} reasoning)" >&2
+
+  local text
+  # content is a string for every model measured here, but the OpenAI-compatible schema also
+  # allows an array of typed blocks and a router upgrade can flip a model to it. `jq -r` on an
+  # array yields a serialized blob whose LENGTH then drives the <1000 heuristic below, so a parse
+  # failure would read as either a skip or a review depending on size. Handle both shapes.
+  text=$(printf '%s' "$response" | jq -r '
+    .choices[0].message.content
+    | if type == "array" then (map(select(.type == "text") | .text) | join(""))
+      elif type == "string" then .
+      else "" end' 2>/dev/null)
+  # Same length-gated error-as-output guard as the other lanes: a short body that IS an error
+  # must never be consumed as a clean review, while a long real review may legitimately quote
+  # "rate limit" inside a finding.
+  local text_lc
+  text_lc=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
+  if [[ ${#text} -lt 1000 ]]; then
+    case "$text_lc" in
+      ""|error:*|*"quota"*|*"rate limit"*|*"insufficient credits"*|*"not authenticated"*)
+        echo "  WARN: openrouter returned empty/error content: $(printf '%s' "$response" | head -c 160)" >&2
+        return 1 ;;
+    esac
+  else
+    case "$text_lc" in
+      error:*)
+        echo "  WARN: openrouter returned error-prefixed content: $(printf '%s' "$text" | head -c 120)" >&2
         return 1 ;;
     esac
   fi
@@ -1891,7 +2047,9 @@ provider_model() {
   case "$1" in
     codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}" ;;
     codex-5.3)    echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}" ;;
-    agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.1 Pro (High)}}" ;;
+    agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.7 Flash (High)}}" ;;
+    openrouter)   echo "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-z-ai/glm-5.3}}" ;;
+    openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-qwen/qwen3.8-flash}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
     kimi-api)     echo "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" ;;
     kimi)         echo "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3}}" ;;
@@ -1955,6 +2113,12 @@ _dispatch_provider_inner() {
     codex-5.3)     run_codex_53 ;;
     cursor-agent)  run_cursor_agent ;;
     agy)           run_agy ;;
+    openrouter)    run_openrouter ;;
+    # Second OpenRouter model as its own provider id, not a flag: the run log, the artifact
+    # and the exclusion logic all key on the provider NAME, so two models sharing one id
+    # would be indistinguishable afterwards — which is exactly the mistake this whole
+    # measurement exercise had to unpick (a provider label that was not the model).
+    openrouter-alt) ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_OPENROUTER_ALT:-qwen/qwen3.8-flash}" run_openrouter ;;
     claude)        run_claude ;;
     kimi)          run_kimi ;;        # auto when kimi CLI on PATH (OAuth, K3)
     kimi-api)      run_kimi_api ;;    # fallback when MOONSHOT_API_KEY set, no CLI
