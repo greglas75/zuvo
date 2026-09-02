@@ -16,7 +16,10 @@ fail=0
 pass() { printf 'PASS: %s\n' "$1"; }
 bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
 
-out=$(ROOT="$ROOT" python3 "$ROOT/tests/hooks/lib/find-local-run-instructions.py" 2>/dev/null)
+# `env`, not a bare prefix assignment: `ROOT=… cmd "$ROOT/…"` makes shellcheck flag SC2097/2098
+# because the prefix is scoped to the forked process while the expansion is done by the parent.
+# It happened to work (the parent already has ROOT) but read as a bug and held the ratchet at 2.
+out=$(env ROOT="$ROOT" python3 "$ROOT/tests/hooks/lib/find-local-run-instructions.py" 2>/dev/null)
 if [ -z "$out" ]; then
   pass "no skill instructs an agent to run a suite on the workstation"
 else

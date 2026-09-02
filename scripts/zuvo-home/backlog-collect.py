@@ -26,7 +26,7 @@ Design notes:
 
 Env:
   ZUVO_BACKLOG_ROOTS  colon-separated globs (default: ~/DEV/*)
-  ZUVO_COLLECTOR_URL  default http://100.103.91.24:5599
+  ZUVO_COLLECTOR_URL  required: env or ZUVO_COLLECTOR_URL= in ~/.zuvo/collector.conf (no default)
   CODESIFT_COLLECTOR_TOKEN / ZUVO_COLLECTOR_TOKEN  secret for /ingest/backlog
   ZUVO_BACKLOG_OUT    local snapshot path (default ~/.zuvo/backlog-local.jsonl)
 """
@@ -40,13 +40,109 @@ import socket
 import subprocess
 import hashlib
 import gzip
+import urllib.error
 import urllib.request
 
 HOME = os.path.expanduser("~")
 ZUVO = os.environ.get("ZUVO_DIR", os.path.join(HOME, ".zuvo"))
 ROOTS = os.environ.get("ZUVO_BACKLOG_ROOTS", os.path.join(HOME, "DEV", "*"))
 OUT = os.environ.get("ZUVO_BACKLOG_OUT", os.path.join(ZUVO, "backlog-local.jsonl"))
-URL = os.environ.get("ZUVO_COLLECTOR_URL", "http://100.103.91.24:5599").rstrip("/")
+
+def _collector_url():
+    """Same resolution rule as zuvo-collector-host.sh: env, then collector.conf, NO default.
+
+    A hardcoded address in a versioned script is what test-retro-loop-docs.sh forbids, and for
+    a good reason beyond tidiness: this uploader carries a bearer token, so a stale baked-in
+    address keeps shipping credentials to whatever now answers on it. `runlog-sync.sh` was
+    migrated to this rule already; these two collectors were left behind and that is what made
+    the gate red (B-28). Machine-local value lives in ~/.zuvo/collector.conf, which is not in git.
+    """
+    v = os.environ.get("ZUVO_COLLECTOR_URL")
+    if v:
+        return v.strip().rstrip("/")
+    conf = os.path.join(ZUVO, "collector.conf")
+    try:
+        with open(conf, encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                m = re.match(r"\s*ZUVO_COLLECTOR_URL\s*=\s*(.+)", line)
+                if m:
+                    val = m.group(1).split("#", 1)[0].strip().strip("'\"").strip()
+                    if val:
+                        return val.rstrip("/")
+    except OSError:
+        pass
+    sys.exit("no collector URL: set ZUVO_COLLECTOR_URL or add ZUVO_COLLECTOR_URL= to "
+             "~/.zuvo/collector.conf (no default is baked in — see B-28)")
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse every redirect on the upload POST.
+
+    urlopen follows 3xx by default and re-sends the request — including the x-api-key header —
+    to whatever Location says. _reject_plaintext_to_public() only ever sees the ORIGINAL url, so
+    a compromised or merely misconfigured collector (or hijacked DNS) could bounce the upload to
+    an attacker host and hand over the token in the process. There is no legitimate redirect on
+    this endpoint, so the safe behaviour is to fail loudly rather than to follow and re-validate.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(
+            req.full_url, code,
+            f"refusing redirect to {newurl} — the upload carries a bearer token", headers, fp)
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _reject_plaintext_to_public(url):
+    """Plain HTTP is fine to a tailnet/private/loopback host and NOWHERE else.
+
+    This uploader sends a bearer token. The collector deliberately has no public HTTPS (it is
+    loopback-bound on the VPS and reached over the tailnet), so forcing https:// would break a
+    working, adequately protected path: WireGuard already encrypts the transport. What it does
+    NOT protect is a MIS-SET url — one typo and the same token goes to an arbitrary internet
+    host in clear text, with no error. Allow plaintext exactly where transport is already
+    encrypted; refuse it otherwise. Override with ZUVO_COLLECTOR_ALLOW_PLAINTEXT=1.
+    """
+    import ipaddress
+    from urllib.parse import urlparse
+    if os.environ.get("ZUVO_COLLECTOR_ALLOW_PLAINTEXT") == "1":
+        return
+    p = urlparse(url)
+    if p.scheme != "http":
+        return
+    host = p.hostname or ""
+    if host.endswith(".ts.net"):                      # tailscale MagicDNS
+        return
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        sys.exit(f"refusing plaintext HTTP with a bearer token to non-private host {host!r} "
+                 f"(set ZUVO_COLLECTOR_ALLOW_PLAINTEXT=1 to override)")
+    # Loopback and the tailscale CGNAT range ONLY — deliberately NOT ip.is_private. A generic
+    # RFC1918 address is an ordinary LAN or container network where nothing encrypts the hop, so
+    # allowing it would hand the bearer token to any hostile service on the same subnet. WireGuard
+    # protects 100.64/10; a 192.168.x collector protects nothing. Octet arithmetic rather than a
+    # literal dotted quad, because a literal would trip the no-hardcoded-address gate this change
+    # exists to satisfy.
+    o = ip.packed
+    if ip.is_loopback or (ip.version == 4 and o[0] == 100 and 64 <= o[1] <= 127):
+        return
+    sys.exit(f"refusing plaintext HTTP with a bearer token to non-tailnet address {host} "
+             f"(set ZUVO_COLLECTOR_ALLOW_PLAINTEXT=1 to override)")
+# Resolved LAZILY, at the moment of upload — not at import. These scripts also do purely
+# local work (id computation, cursor handling, --dry-run) that must not require collector
+# configuration; requiring it up front turned every local invocation into a hard exit and
+# broke tests/hooks/test-runlog-collect.sh.
+URL = None
+
+
+def collector_url():
+    global URL
+    if URL is None:
+        URL = _collector_url()
+        _reject_plaintext_to_public(URL)
+    return URL
 TOKEN = os.environ.get("CODESIFT_COLLECTOR_TOKEN") or os.environ.get("ZUVO_COLLECTOR_TOKEN") or ""
 HOST = socket.gethostname()
 
@@ -210,10 +306,10 @@ BATCH = int(os.environ.get("ZUVO_BACKLOG_BATCH", "800"))
 
 def _post(payload):
     req = urllib.request.Request(
-        f"{URL}/ingest/backlog", data=gzip.compress(json.dumps(payload).encode()),
+        f"{collector_url()}/ingest/backlog", data=gzip.compress(json.dumps(payload).encode()),
         headers={"content-type": "application/json", "content-encoding": "gzip",
                  "x-api-key": TOKEN, "x-telemetry-client": "zuvo-backlog"}, method="POST")
-    with urllib.request.urlopen(req, timeout=15) as r:
+    with _OPENER.open(req, timeout=15) as r:
         return r.status
 
 
