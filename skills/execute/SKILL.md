@@ -55,19 +55,37 @@ Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path res
 ## Execution Modes
 
 <!-- PLATFORM:CODEX -->
-**🔒 CODEX HARD OVERRIDE — SINGLE-AGENT ONLY (read this FIRST, it wins over everything below).**
-You are running on Codex. This harness has NO event-driven sub-agent wake — only `wait_agent`
-polling — and a 28-session forensics run (2026-07-15..17) measured what thread dispatch does here:
-~88h of 30s busy-polls, 19.5h/10h/8h orchestrator dead-air ended only by a human typing "kontynuuj",
-sub-agents idle 78-92% of their lifetime, 747M-token context re-feeds. Therefore, on Codex:
+**🔒 CODEX: REVIEW STAGES SEQUENTIAL, MECHANICAL WORKERS DISPATCH (read this FIRST).**
 
-- **Every** `DISPATCH <role> agent` / "dispatch per environment" / "re-dispatch the implementer"
-  instruction in this document means: **perform that role YOURSELF, inline, as a sequential
-  checkpoint pass** (same gates, same output format, same iteration caps).
-- Spawning agent threads or calling `wait_agent` for ANY pipeline stage is **FORBIDDEN**.
-- The "Parallel dispatch" batch rule does NOT apply — tasks run sequentially.
-- If any sentence below appears to permit multi-agent on Codex, it is a build-transform artifact —
-  THIS block wins. Print `[MODE] single-agent (codex hard rule)` once at run start.
+This block used to say SINGLE-AGENT ONLY and forbid every dispatch. That was right when it was
+written and is wrong now, and the difference matters because agents quote it verbatim as the reason
+they will not dispatch anything at all.
+
+**Codex HAS sub-agents.** They live in `~/.codex/agents/` as TOML profiles that this repo's own
+Codex build generates, and `[features].multi_agent` is on. So:
+
+- **REVIEW stages — spec-review, quality-review, plan-review, acceptance — stay SEQUENTIAL, and no
+  wake mechanism will ever change that.** A codex thread reviewing a codex author is the SAME
+  MODEL. Independence comes from the cross-model `adversarial-review` script, full stop. Read the
+  role's instruction file and perform it yourself as a checkpoint pass: same gates, same output
+  format, same iteration caps.
+- **MECHANICAL WORKERS — an implementer applying a frozen task, an executor applying a frozen plan,
+  genuinely parallel disjoint tasks — DO dispatch** on codex >= 0.128. One explicitly BOUNDED wait
+  sized to the task, no re-poll loop, and the `[HANDOFF]` clean-window path only when that wait
+  expires. Record which ran: `codex-dispatch:bounded-wait` or `codex-handoff:fallback`.
+- Two bounded waits timing out in one run → stop dispatching for the rest of it and record
+  `codex-dispatch:degraded`.
+
+**Why the old blanket ban existed, and why it no longer applies as a ban.** A 28-session forensics
+run (2026-07-15..17) measured the pre-v2 `wait_agent` polling architecture: ~88 h of 30 s
+busy-polls, 19.5 h / 10 h / 8 h of orchestrator dead-air each ended only by a human typing
+"kontynuuj", sub-agents idle 78-92% of their lifetime, 747M-token context re-feeds. Every one of
+those numbers is real. They describe an orchestration OpenAI reworked in MultiAgentV2 (v0.128.01);
+the specific dead-parent bug was issue #9607, closed 2026-01-22. The bounded wait above is what
+keeps the old failure mode from returning — it is the reason the ban could be lifted, not a
+formality.
+
+Print `[MODE] codex: reviews inline, mechanical workers dispatched` once at run start.
 <!-- /PLATFORM:CODEX -->
 
 
@@ -632,7 +650,7 @@ outright and NOTHING in branch B applies:
 Dispatch per environment:
 - **Claude Code:** use the Task tool.
 <!-- PLATFORM:CODEX -->
-- **Codex:** perform this review yourself as a sequential checkpoint pass (thread dispatch forbidden — see `env-compat.md`).
+- **Codex:** perform this review yourself as a sequential checkpoint pass — a codex thread reviewing a codex author is the same model, so a thread buys no independence here (mechanical workers DO dispatch; see `env-compat.md`).
 <!-- /PLATFORM:CODEX -->
 
 ```
@@ -670,7 +688,7 @@ The agent decides and continues — it does not wake the user. Every `[POST-CAP:
 Dispatch per environment:
 - **Claude Code:** use the Task tool.
 <!-- PLATFORM:CODEX -->
-- **Codex:** perform this review yourself as a sequential checkpoint pass (thread dispatch forbidden — see `env-compat.md`).
+- **Codex:** perform this review yourself as a sequential checkpoint pass — a codex thread reviewing a codex author is the same model, so a thread buys no independence here (mechanical workers DO dispatch; see `env-compat.md`).
 <!-- /PLATFORM:CODEX -->
 
 ```
@@ -1133,7 +1151,7 @@ the user asked" does NOT apply here: the user asked, by invoking this skill. Rea
 prohibition and recording a self-scored result is the substituted gate this step forbids — it
 happened twice in the field (2026-08-07, 2026-08-08), the second time invented as
 `WARN:substituted-inline`, a value no vocabulary defines. If the harness genuinely has no dispatch
-capability (Codex's single-agent lock), follow the ONE documented exception in
+capability (Cursor, Antigravity — NOT Codex, which dispatches mechanical workers), follow the ONE documented exception in
 `test-quality-gate.md`; otherwise dispatch.
 
 `../../shared/includes/test-quality-gate.md` with:

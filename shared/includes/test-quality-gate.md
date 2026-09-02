@@ -84,8 +84,9 @@ can see that" into "the gate ran weakly, and nobody is told". `N/A` at least sur
 A self-scored audit does not — the whole point of the gate is that the tests are judged by someone
 who did not write them.
 
-**The single exception — a harness that STRUCTURALLY cannot dispatch** (Codex's single-agent lock;
-see `env-compat.md`), meaning the dispatch call itself is unavailable or errors, not that an
+**The single exception — a harness that STRUCTURALLY cannot dispatch** (Cursor, Antigravity; see
+`env-compat.md` — Codex is NOT one of them: it dispatches mechanical workers, and runs review roles
+inline only because they are same-model), meaning the dispatch call itself is unavailable or errors, not that an
 instruction made you hesitate. Only there: read `skills/test-audit/SKILL.md`, run it inline against
 `TEST_SCOPE` without consulting your own earlier scoring, write the report to `zuvo/audits/`, and
 record

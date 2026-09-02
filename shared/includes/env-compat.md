@@ -6,7 +6,7 @@
 
 | Capability | Claude Code | Kimi Code | Codex | Antigravity | Cursor |
 |-----------|-------------|-----------|-------|-------------|--------|
-| Sub-agent dispatch | `Agent` tool — parallel, model-routed | `Agent` tool — parallel, flat skill-prefixed profile names | **Single-agent sequential** (thread dispatch FORBIDDEN for pipeline stages — no event wake; see Codex section) | Sequential (no spawning) | Sequential (no spawning) |
+| Sub-agent dispatch | `Agent` tool — parallel, model-routed | `Agent` tool — parallel, flat skill-prefixed profile names | **Mixed — read the Codex section, do not stop at this cell.** Mechanical workers (a frozen plan applied by an executor, a writer applying a frozen contract, genuinely parallel disjoint tasks) DO dispatch, on codex >= 0.128, with one bounded wait. Only REVIEW stages stay sequential, and for a reason no wake mechanism fixes: a codex thread reviewing a codex author is the same model. | Sequential (no spawning) | Sequential (no spawning) |
 | Concurrency | Unrestricted background tasks | Background tasks (`run_in_background`) | Limited | Sequential | Sequential |
 | User interaction | Native interactive prompts | Native interactive prompts (`AskUserQuestion`) | `[AUTO-DECISION]` | `[AUTO-DECISION]` | `[AUTO-DECISION]` |
 | Install root | `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/` | `~/.kimi-code/` | `~/.codex/` | `~/.gemini/antigravity/` | `~/.cursor/` |

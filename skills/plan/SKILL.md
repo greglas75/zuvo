@@ -209,9 +209,15 @@ env (`CLAUDE_MODEL`, `CODEX_MODEL`, the codex `config.toml` `model=`, `ANTIGRAVI
 warn generically that planning should be on the strongest available agent.
 
 <!-- PLATFORM:CODEX -->
-**🔒 CODEX: SINGLE-AGENT ONLY.** No event wake on this harness (measured: threads = hours of
-poll/dead-air). Perform every agent role below YOURSELF, inline and sequentially — read the agent's
-instruction file and do that analysis in this context. Thread spawning / `wait_agent` FORBIDDEN.
+**🔒 CODEX: ANALYSIS ROLES INLINE — because they are same-model, not because dispatch is absent.**
+Codex HAS sub-agents (`~/.codex/agents/`, `[features].multi_agent`), and this repo's Codex build
+generates their profiles. What it does not have is a second MODEL: a codex thread reviewing or
+analysing a codex author shares its blind spots, so the roles below are performed HERE — read the
+agent's instruction file and do that analysis in this context.
+
+Mechanical workers are the other case and DO dispatch (see `env-compat.md`), with one bounded wait.
+The old wording said SINGLE-AGENT ONLY and forbade every dispatch; agents quoted it as the reason
+they would not dispatch anything at all, which is not what it was measuring.
 <!-- /PLATFORM:CODEX -->
 
 ### Agent 1: Architect

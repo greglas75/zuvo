@@ -1152,7 +1152,8 @@ instead, and backlog the elapsed time rather than a quote). Two practical rules:
 
 **Harness single-agent lock is NOT a skip — run the roles INLINE.** The rule above targets *drift*:
 a lead that COULD dispatch and chose not to, then rationalized it. It does not target a harness
-that forbids dispatch outright (Codex's single-agent lock — see `env-compat.md`). Treating those as
+that forbids dispatch outright (Cursor, Antigravity — see `env-compat.md`; Codex is NOT one of them,
+it runs review roles inline because they are same-model, and dispatches mechanical workers). Treating those as
 the same thing made TIER 2+ unpassable on that harness: the skill mandated the one action the
 environment prohibits, so every run was `INCOMPLETE` no matter how well it was done. Three retros
 this week reported exactly that conflict.

@@ -127,7 +127,7 @@ the user asked" does NOT apply here: the user asked, by invoking this skill. Rea
 prohibition and recording a self-scored result is the substituted gate this step forbids — it
 happened twice in the field (2026-08-07, 2026-08-08), the second time invented as
 `WARN:substituted-inline`, a value no vocabulary defines. If the harness genuinely has no dispatch
-capability (Codex's single-agent lock), follow the ONE documented exception in
+capability (Cursor, Antigravity — NOT Codex, which dispatches mechanical workers), follow the ONE documented exception in
 `test-quality-gate.md`; otherwise dispatch.
 
   ../../shared/includes/test-quality-gate.md -- [READ at Phase 4.6b, STANDARD+] (zuvo:test-audit gate → tier A)

@@ -203,7 +203,7 @@ the user asked" does NOT apply here: the user asked, by invoking this skill. Rea
 prohibition and recording a self-scored result is the substituted gate this step forbids — it
 happened twice in the field (2026-08-07, 2026-08-08), the second time invented as
 `WARN:substituted-inline`, a value no vocabulary defines. If the harness genuinely has no dispatch
-capability (Codex's single-agent lock), follow the ONE documented exception in
+capability (Cursor, Antigravity — NOT Codex, which dispatches mechanical workers), follow the ONE documented exception in
 `test-quality-gate.md`; otherwise dispatch.
 
   D4. ../../shared/includes/test-quality-gate.md    -- [READ at completion] (final zuvo:test-audit gate → tier A)
@@ -295,7 +295,8 @@ the next unindented key. That is what makes the multi-line ones (`queue:`, `base
   the next one, so the queue drains through a chain of nested agents that each keep every ancestor's
   context alive instead of returning it. The coordinator keeps the queue and per-file
   syntheses and never accumulates production sources, specs, or tool outputs. UNCONDITIONAL for every file — the writer phase is isolated per the UNIVERSAL WRITER ISOLATION rule in Step 2, so no file ever inherits another file's transcript; the coordinator alone persists, holding only the ledger and per-file syntheses.
-- **Single-agent harnesses (Codex/Cursor):** print
+- **Harnesses with NO dispatch at all (Cursor, Antigravity) — NOT Codex, which dispatches
+  mechanical workers; see env-compat.md:** print
   `[CONTEXT] {file} complete — safe point. Clean continue: start a fresh context (`/clear` in Claude
    Code, a NEW CONVERSATION in Codex — it has no `/clear`), then zuvo:write-tests --resume-run <ledger>`.
   The skill cannot clear the context for the user; it makes clearing safe and cheap instead. Name the
