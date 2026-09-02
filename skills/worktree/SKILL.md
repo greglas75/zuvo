@@ -128,7 +128,55 @@ After creation, `cd` into the new worktree directory.
 
 ### Step 4: Project Setup
 
-Auto-detect the project's dependency system and run setup:
+**FIRST: reuse an identical dependency tree instead of installing one.** Skip this and every
+worktree pays a full install it did not need.
+
+Measured 2026-09-02 on `tgm-survey-platform`: worktrees were deliberately branched from ONE base
+so their dependencies would be identical, and this step made each of them run `npm ci` anyway —
+**three concurrent installs, 22 minutes each and still going**, on a laptop, for a tree a sibling
+worktree already had on disk. On APFS (macOS) and on any filesystem with reflinks, copying that
+tree is a copy-on-write clone: near-instant and costing no extra disk.
+
+So, in order, before consulting the table below:
+
+1. **Find a donor.** A sibling worktree — or the main checkout — whose lockfile is byte-identical
+   to this one:
+
+   ```bash
+   want=$(shasum -a256 package-lock.json | cut -d' ' -f1)
+   for cand in "$MAIN_ROOT" "$WTDIR"/*/; do
+     [ -d "$cand/node_modules" ] || continue
+     [ "$(shasum -a256 "$cand/package-lock.json" 2>/dev/null | cut -d' ' -f1)" = "$want" ] || continue
+     DONOR="$cand"; break
+   done
+   ```
+
+   Identical lockfile is the whole condition, and it is the same fact Step 4.5 verifies. A donor
+   with a different lockfile is not a donor — that is the cross-branch contamination Step 4.5
+   exists to catch.
+
+2. **Clone it, do not copy it.**
+
+   ```bash
+   cp -Rc "$DONOR/node_modules" node_modules 2>/dev/null   # macOS/APFS: reflink
+   cp -R --reflink=auto "$DONOR/node_modules" node_modules # GNU coreutils
+   ```
+
+   If neither reflink form is available, fall through to the install rather than a plain `cp -R`:
+   a real byte copy of ~1 GB per worktree buys little over the install and costs the disk.
+
+   **Never symlink `node_modules` to another worktree.** Measured the same week: a symlinked tree
+   pointed at a worktree that was later removed, and a 730-mutant Stryker run died ten minutes in
+   on vanished dependencies — a crash that reads as a test failure. A clone is independent; a
+   symlink is a shared fate.
+
+3. **Record which path ran** in the completion block: `deps: cloned from <donor>` or
+   `deps: installed (no donor with a matching lockfile)`.
+
+4. **Then run Step 4.5 exactly as written** — the clone is *not* exempt. It is the case that
+   "looks fine", which is precisely when that check earns its keep.
+
+**Only if no donor matched**, auto-detect and install:
 
 | File detected | Command |
 |---------------|---------|
