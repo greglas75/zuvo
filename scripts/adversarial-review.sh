@@ -109,13 +109,22 @@ fi
 # Try every layout, first hit wins:
 #   repo / plugin cache : <dir>/../shared/includes/model-registry.sh
 #   flat ~/.zuvo install: <dir>/model-registry.sh
-_zuvo_dir="$(dirname "${BASH_SOURCE[0]:-$0}")"
-for _zuvo_reg in "$_zuvo_dir/../shared/includes/model-registry.sh" \
-                 "$_zuvo_dir/model-registry.sh" \
-                 "$HOME/.zuvo/model-registry.sh"; do
-  if [ -f "$_zuvo_reg" ]; then . "$_zuvo_reg"; break; fi
+_zuvo_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd -P || echo .)"
+# Order matters, and the `..` candidate is guarded rather than merely last. From ~/.zuvo the
+# expression `<dir>/../shared/includes/model-registry.sh` resolves to $HOME/shared/includes/... —
+# OUTSIDE the install root, in a directory any process can create. This file is SOURCED, so a
+# planted file there would execute as us on every review. The path is only meaningful in the
+# repo/cache layout, so it is used ONLY when it stays inside the install tree (i.e. the parent
+# also holds the scripts/ directory this file ships in).
+for _zuvo_reg in "$HOME/.zuvo/model-registry.sh" "$_zuvo_dir/model-registry.sh"; do
+  if [ -f "$_zuvo_reg" ]; then . "$_zuvo_reg"; _zuvo_reg_loaded=1; break; fi
 done
-unset _zuvo_dir
+if [ -z "${_zuvo_reg_loaded:-}" ] && [ -d "$_zuvo_dir/../shared/includes" ] \
+   && [ -d "$_zuvo_dir/../skills" ]; then
+  _zuvo_reg="$_zuvo_dir/../shared/includes/model-registry.sh"
+  [ -f "$_zuvo_reg" ] && . "$_zuvo_reg"
+fi
+unset _zuvo_dir _zuvo_reg_loaded
 
 # ─── Argument parsing ───────────────────────────────────────────
 

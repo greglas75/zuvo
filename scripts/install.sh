@@ -38,14 +38,29 @@ _zuvo_install_stamp="$HOME/.zuvo/.installed-from"
 _zuvo_src_sha="$(git -C "$ZUVO_DIR" rev-parse HEAD 2>/dev/null || true)"
 if [ -n "$_zuvo_src_sha" ] && [ -f "$_zuvo_install_stamp" ] && [ "${ZUVO_INSTALL_FORCE:-0}" != "1" ]; then
   _zuvo_prev_sha="$(head -1 "$_zuvo_install_stamp" 2>/dev/null | tr -d '[:space:]')"
-  if [ -n "$_zuvo_prev_sha" ] && [ "$_zuvo_prev_sha" != "$_zuvo_src_sha" ] \
-     && git -C "$ZUVO_DIR" cat-file -e "$_zuvo_prev_sha^{commit}" 2>/dev/null \
-     && git -C "$ZUVO_DIR" merge-base --is-ancestor "$_zuvo_src_sha" "$_zuvo_prev_sha" 2>/dev/null; then
-    echo "REFUSING: this checkout ($(git -C "$ZUVO_DIR" rev-parse --short HEAD), branch $(git -C "$ZUVO_DIR" rev-parse --abbrev-ref HEAD)) is BEHIND what is already installed ($(git -C "$ZUVO_DIR" rev-parse --short "$_zuvo_prev_sha"))." >&2
-    echo "  Installing would silently revert live helpers in ~/.zuvo/ and report success." >&2
-    echo "  Fix: merge or rebase onto the installed commit, or install from a checkout that has it." >&2
-    echo "  Override (you are certain you want the older code live): ZUVO_INSTALL_FORCE=1 $0" >&2
-    exit 1
+  if [ -n "$_zuvo_prev_sha" ] && [ "$_zuvo_prev_sha" != "$_zuvo_src_sha" ]; then
+    if ! git -C "$ZUVO_DIR" cat-file -e "${_zuvo_prev_sha}^{commit}" 2>/dev/null; then
+      # FAIL CLOSED. The first version treated an unresolvable recorded sha as "carry on", so a
+      # shallow clone, a separate clone, or a pruned repo disabled the guard exactly where it was
+      # needed most — the checkouts least likely to contain the installed work.
+      echo "REFUSING: the installed commit ${_zuvo_prev_sha:0:7} is not in this repository." >&2
+      echo "  Cannot prove this checkout is not a downgrade. Fetch it, or override:" >&2
+      echo "  ZUVO_INSTALL_FORCE=1 $0" >&2
+      exit 1
+    fi
+    # Proceed ONLY when the source CONTAINS the installed commit. The first version merely
+    # rejected strict ancestors, which let a DIVERGENT branch through — forked before the
+    # installed revision but carrying one unrelated commit, so not an ancestor, and still
+    # reverting everything unique to what is live. Containment is the property that actually
+    # matters: if the source does not have the installed commit in its history, installing it
+    # removes work from ~/.zuvo.
+    if ! git -C "$ZUVO_DIR" merge-base --is-ancestor "$_zuvo_prev_sha" "$_zuvo_src_sha" 2>/dev/null; then
+      echo "REFUSING: this checkout ($(git -C "$ZUVO_DIR" rev-parse --short HEAD), branch $(git -C "$ZUVO_DIR" rev-parse --abbrev-ref HEAD)) does NOT contain the installed commit ($(git -C "$ZUVO_DIR" rev-parse --short "$_zuvo_prev_sha"))." >&2
+      echo "  Installing would silently revert live helpers in ~/.zuvo/ and still report success." >&2
+      echo "  Fix: merge or rebase onto the installed commit, or install from a checkout that has it." >&2
+      echo "  Override (you are certain the older code should go live): ZUVO_INSTALL_FORCE=1 $0" >&2
+      exit 1
+    fi
   fi
 fi
 
