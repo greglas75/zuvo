@@ -22,6 +22,34 @@ ZUVO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 # the BSD-only `sed -i ''` it replaces breaks there. See scripts/lib/portable.sh.
 . "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/lib/portable.sh"
 
+# ─── Downgrade guard ────────────────────────────────────────────────────────────
+# An install from a checkout that is BEHIND the installed state silently reverts every live
+# helper in ~/.zuvo — and reports success while doing it. This is not hypothetical: on
+# 2026-09-02 a parallel session ran install.sh from a feature branch forked before three
+# merged commits, overwrote ~/.zuvo/adversarial-review with the older file, and the fleet kept
+# running the previous model and timeout for hours. Nothing detected it; the install printed
+# its usual ✓ lines. The only reason it surfaced was somebody asking why nothing had changed.
+#
+# So: record what was installed, and refuse to go backwards. A source commit that is a strict
+# ANCESTOR of the recorded one is a downgrade — that is exactly the shape of "installing from a
+# stale branch". Anything else (newer, unrelated, or no git at all) proceeds untouched, because
+# this must never block ordinary work.
+_zuvo_install_stamp="$HOME/.zuvo/.installed-from"
+_zuvo_src_sha="$(git -C "$ZUVO_DIR" rev-parse HEAD 2>/dev/null || true)"
+if [ -n "$_zuvo_src_sha" ] && [ -f "$_zuvo_install_stamp" ] && [ "${ZUVO_INSTALL_FORCE:-0}" != "1" ]; then
+  _zuvo_prev_sha="$(head -1 "$_zuvo_install_stamp" 2>/dev/null | tr -d '[:space:]')"
+  if [ -n "$_zuvo_prev_sha" ] && [ "$_zuvo_prev_sha" != "$_zuvo_src_sha" ] \
+     && git -C "$ZUVO_DIR" cat-file -e "$_zuvo_prev_sha^{commit}" 2>/dev/null \
+     && git -C "$ZUVO_DIR" merge-base --is-ancestor "$_zuvo_src_sha" "$_zuvo_prev_sha" 2>/dev/null; then
+    echo "REFUSING: this checkout ($(git -C "$ZUVO_DIR" rev-parse --short HEAD), branch $(git -C "$ZUVO_DIR" rev-parse --abbrev-ref HEAD)) is BEHIND what is already installed ($(git -C "$ZUVO_DIR" rev-parse --short "$_zuvo_prev_sha"))." >&2
+    echo "  Installing would silently revert live helpers in ~/.zuvo/ and report success." >&2
+    echo "  Fix: merge or rebase onto the installed commit, or install from a checkout that has it." >&2
+    echo "  Override (you are certain you want the older code live): ZUVO_INSTALL_FORCE=1 $0" >&2
+    exit 1
+  fi
+fi
+
+
 TARGET="${1:-all}"
 
 # --- Colors ---
@@ -545,8 +573,15 @@ install_zuvo_home() {
   # every skill that names it used a REPO-RELATIVE path (`scripts/review-artifact-sync.sh`). That
   # path exists only inside zuvo-plugin — in the repo the agent is actually shipping, the
   # remediation command a blocked run prints did not exist. It keeps its `.sh` (callers use it).
+  # shared/includes/model-registry.sh joins the list for the same reason adversarial-review.sh
+  # did: ~/.zuvo/adversarial-review resolves the registry relative to ITSELF, so on that layout
+  # `../shared/includes/` is ~/shared/includes/ — a path that has never existed. The registry was
+  # therefore never loaded on the path that actually runs, and every model id came from the
+  # in-script fallbacks. Editing model-registry.sh alone changed nothing at runtime, silently,
+  # because a missing include is skipped rather than reported.
   for _src in "$ZUVO_DIR"/scripts/zuvo-home/* "$ZUVO_DIR"/scripts/adversarial-review.sh \
-              "$ZUVO_DIR"/scripts/review-artifact-sync.sh; do
+              "$ZUVO_DIR"/scripts/review-artifact-sync.sh \
+              "$ZUVO_DIR"/shared/includes/model-registry.sh; do
     [[ -f "$_src" ]] || continue
     local _name; _name="$(basename "$_src")"
     case "$_name" in *.pyc|__pycache__|.*) continue ;; esac
@@ -1844,6 +1879,12 @@ install_git_shim
 
 echo ""
 echo "======================================"
+# Record what was installed, for the downgrade guard at the top of the next run. Written only
+# here, after everything succeeded — a stamp from a half-finished install would let the next
+# one refuse for the wrong reason.
+{ git -C "$ZUVO_DIR" rev-parse HEAD 2>/dev/null
+  git -C "$ZUVO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null
+  date -u +%Y-%m-%dT%H:%M:%SZ; } > "$HOME/.zuvo/.installed-from" 2>/dev/null || true
 echo "  DONE"
 echo "======================================"
 echo ""

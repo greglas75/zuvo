@@ -101,8 +101,21 @@ fi
 
 # Central model registry — single source of truth for concrete model ids (agy/codex/claude/cursor).
 # Sourced fail-safe: if it is missing, every usage below keeps an inline `:-<id>` fallback.
-_zuvo_reg="$(dirname "${BASH_SOURCE[0]:-$0}")/../shared/includes/model-registry.sh"
-[ -f "$_zuvo_reg" ] && . "$_zuvo_reg"
+# The registry lives in DIFFERENT places depending on how this script was installed, and for a
+# long time only one of them was tried — so on the path that actually runs (~/.zuvo/adversarial-
+# review) `../shared/includes/` resolves to ~/shared/includes/, which does not exist. The registry
+# was therefore never loaded there: every value came from the in-script fallbacks, and editing
+# model-registry.sh alone changed NOTHING at runtime. Silent, because a missing file is skipped.
+# Try every layout, first hit wins:
+#   repo / plugin cache : <dir>/../shared/includes/model-registry.sh
+#   flat ~/.zuvo install: <dir>/model-registry.sh
+_zuvo_dir="$(dirname "${BASH_SOURCE[0]:-$0}")"
+for _zuvo_reg in "$_zuvo_dir/../shared/includes/model-registry.sh" \
+                 "$_zuvo_dir/model-registry.sh" \
+                 "$HOME/.zuvo/model-registry.sh"; do
+  if [ -f "$_zuvo_reg" ]; then . "$_zuvo_reg"; break; fi
+done
+unset _zuvo_dir
 
 # ─── Argument parsing ───────────────────────────────────────────
 
