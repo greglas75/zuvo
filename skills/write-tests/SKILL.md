@@ -661,7 +661,7 @@ Strict contract-blind isolation is required for a passing audit. The audit is pr
 
 ### Step 4: Adversarial Review (iterative, complexity-tiered)
 
-Enter only when Step 3.5 returned `Audit mode: strict` + `Coverage verdict: CLEAN`. Sequential passes, one RANDOM provider per pass (`--rotate`), early exit on 0 findings.
+Enter only when Step 3.5 returned `Audit mode: strict` + `Coverage verdict: CLEAN`. Sequential passes, EVERY available provider per pass (`--multi`)
 
 | Complexity | Max passes |
 |-----------|-----------|
@@ -672,7 +672,7 @@ Enter only when Step 3.5 returned `Audit mode: strict` + `Coverage verdict: CLEA
 | COMPLEX | 2 + 3rd ONLY if pass 2 found high-confidence CRITICAL |
 
 ```bash
-~/.zuvo/adversarial-review --rotate --mode test \
+~/.zuvo/adversarial-review --multi --mode test \
   --context "STACK: [language+version / test-framework+version]. Code type: [type] [complexity] [testability]. Q-GATES: Q7..Q17. [pass 2+: FIXED/REJECTED/KNOWN lists]" \
   --files "<abs-production> <abs-test>" > zuvo/review.txt 2>&1
 ```

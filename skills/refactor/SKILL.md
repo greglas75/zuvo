@@ -886,7 +886,7 @@ The **orchestrator** applies FIX-NOW items in Phase 3.5 (as the separate fix com
 git add [specific files from scope fence]
 ```
 
-**Iterative review with `--rotate`:** Run adversarial passes sequentially, one random provider per pass. Each pass sees the FIXED code from previous passes — so fixes themselves get reviewed. A pass that returns 0 new findings ends the loop **only when the ledger completion scan (below) is also clean** — an empty pass alone never ends it if an open CRITICAL identity remains.
+**Iterative review with `--multi`:** Run adversarial passes sequentially, every available provider per pass. Each pass sees the FIXED code from previous passes — so fixes themselves get reviewed. A pass that returns 0 new findings ends the loop **only when the ledger completion scan (below) is also clean** — an empty pass alone never ends it if an open CRITICAL identity remains.
 
 **Finding-disposition ledger (`zuvo/contracts/<id>-findings.json`) — carry dispositions across rotated passes.** Each pass runs a *different* random provider that never saw what earlier passes already resolved, so without a ledger a preserved-verbatim, out-of-fence, or decision-deferred item is re-reported every pass: the loop never reaches the 0-findings early exit and burns its pass budget re-litigating settled dispositions.
 
@@ -945,7 +945,7 @@ is what makes a later audit able to catch a fabrication.
  echo "---ORIGINAL SOURCE (excerpt-capped)---";
  head -c 40000 [target file before refactoring];
  echo "---DIFF---";
- git diff --staged) | ~/.zuvo/adversarial-review --rotate --mode [code|security]
+ git diff --staged) | ~/.zuvo/adversarial-review --multi --mode [code|security]
 ```
 
 **Measure the payload BEFORE dispatch, do not discover the cap by being truncated.** Pipe the
@@ -1011,11 +1011,22 @@ next provider costs one dispatch, not another full timeout.
 | 50-200 lines | 3 | Standard refactor — most issues found in 2-3 passes |
 | > 200 lines or GOD_CLASS | 4 | Large split — fixes on fixes need full depth |
 
-**Remediation review MUST pass `--rotate`.** The wrapper's default `MULTI_MODE` is empty, which
-means *auto: multi if 2+ providers are available* — so omitting `--rotate` on a fix-verification
-pass silently fans out to EVERY configured provider in parallel, producing duplicate findings for
-one small diff and burning the budget the cap exists to protect. Bounded verification is one
-provider per pass, by construction.
+**Remediation review passes `--multi` (changed 2026-09-02).** It used to pass `--rotate` — one
+random provider per pass — on the reasoning that diversity accumulates ACROSS the capped passes
+and the ledger carries dispositions between them. That reasoning is coherent and it is why the
+flag stood for so long. It was overruled by measurement.
+
+Measured on 20 real review diffs, every finding judged REAL / FALSE_POSITIVE by an independent
+Opus judge against the diff, with a shared defect-id vocabulary so overlapping findings collapse:
+**57% of each model's true findings are unique to that model, and no single model sees more than
+28% of the 347 distinct defects.** Diversity-over-time only works if a later pass re-examines the
+SAME code — but each pass here reviews the FIX diff, not the original, so a defect that provider A
+missed in pass 1 is never shown to provider B at all. Rotation across passes diversifies the
+reviewer, not the coverage of any given change.
+
+The cost is real and is the price of that coverage: 4 passes now fan out to every configured
+provider instead of one, so provider calls per refactor rise roughly 5x. Bound the spend with the
+PASS CAP (the table above) and `--exclude`, not by narrowing each pass to a single opinion.
 
 **Convergence at the pass cap (the last pass is never the finish line for a CRITICAL).** The cap bounds *review* effort, not *remediation*. If the LAST permitted pass surfaces a CRITICAL, apply the fix and run ONE verification-only pass beyond the cap. That pass may ONLY confirm the CRITICAL is gone and (via the ledger) that the fix introduced nothing new — it may **not** open a new remediation loop for fresh WARNINGs. **Non-CRITICAL findings on the last pass do NOT earn an extra pass.** When the final permitted pass
 returns only WARNING/INFO: apply every in-fence mechanical fix, run the focused tests, record each

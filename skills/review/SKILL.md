@@ -685,15 +685,15 @@ If the file changed after the reviewed range:
 
 ### 1.6 Adversarial (ALL tiers — sequential)
 
-Cross-model adversarial review using external providers. Runs **sequentially** via `--rotate` — each pass uses a different random provider. Text mode (no `--json`).
+Cross-model adversarial review using external providers. Runs **sequentially** via `--multi` — each pass fans out to every available provider, and different random provider. Text mode (no `--json`).
 
 **PROPORTIONALITY (HARD — a tiny diff gets a FAST pass, not a 20-minute grind).** Adversarial still runs at every tier (a 3-line change CAN hide an inverted comparison), but the COST must match the diff. The 2026-07-10 pathology: a 3-line icon swap ran the full multi-pass rotate with each hung provider eating the 240s `PROVIDER_TIMEOUT` × several passes ≈ **20 minutes**. That is a defect, not diligence. Scale the pass by tier:
 
 | Tier | Diff | Adversarial shape |
 |------|------|-------------------|
 | **TIER 0 (NANO)** | <15 prod-logic lines, 1 file, no risk signal | **ONE `--single` pass, `ZUVO_REVIEW_TIMEOUT=60`.** No rotate, no second pass. `git diff … \| ZUVO_REVIEW_TIMEOUT=60 ~/.zuvo/adversarial-review --single --mode code`. ~60s ceiling. |
-| **TIER 1 (LIGHT)** | 15–100 lines | Up to **2** `--rotate` passes, default timeout; stop early on a clean pass. |
-| **TIER 2–3** | larger / risk signals | Full sequential `--rotate` (2–3 passes) as below. |
+| **TIER 1 (LIGHT)** | 15–100 lines | Up to **2** `--multi` passes, default timeout; stop early on a clean pass. |
+| **TIER 2–3** | larger / risk signals | Full sequential `--multi` (2–3 passes) as below. |
 
 - **Self-review overrides tier-down for correctness, but keep the timeout tight on tiny diffs:** SELF-REVIEW still forces `--multi` (section 1.1) — but on a TIER 0 diff run it as ONE `--multi` pass with `ZUVO_REVIEW_TIMEOUT=60`, not multi-pass. One cross-model look, bounded to ~60s.
 - **A hung/timed-out provider is NEVER retried in a manual loop on a tiny diff.** If a provider times out at TIER 0/1, record `Adversarial: partial (<provider> only, others timed out)` and finalize — do NOT hand-retry the remaining providers (that hand-retry loop is exactly what turned 3 lines into 20 minutes). Chunking/retry is a TIER 2–3 concern for genuinely large diffs.
@@ -716,7 +716,7 @@ If it is NOT an ancestor: either merge/rebase first, or review `$(git merge-base
 
 **Status handling (D2+D3+D4, 2026-05-17):** When the script exits non-zero or returns non-`ok` JSON status, branch:
 
-- **exit 3 / `single_provider_only`** — `--rotate` was requested but post-host-exclusion only 1 provider remains. Two options: re-invoke with `--single` (accept reduced consensus and note it in the review header) OR skip this pass and note `Adversarial: skipped (single_provider_only — install second provider for diversity)` in the review output.
+- **exit 3 / `single_provider_only`** — `--multi` was requested but post-host-exclusion only 1 provider remains. Two options: re-invoke with `--single` (accept reduced consensus and note it in the review header) OR skip this pass and note `Adversarial: skipped (single_provider_only — install second provider for diversity)` in the review output.
 - **exit 124 / `status: "timeout"`** — ALL providers timed out. Record `Adversarial: skipped (timeout)` and continue to next pass (or finalize if last pass).
 - **exit 125 / `status: "suspended"`** — the HOST slept mid-run (`suspended_seconds` says how long); the providers were never given a chance. This is not reduced coverage and not a provider fault, so it is NOT a skip reason: **re-invoke the same pass once.** If the retry also returns 125, record it as `timeout` (same practical effect — no review — and the whitelist stays closed). Never report a suspended run as blocked provider infrastructure.
 - **`status: "partial"` with exit 0** — some providers returned, others did not. Surface `timeout_count` in the review header (e.g. `Adversarial pass 1: cursor-agent (1 of 2 providers; gemini timed out)`) so the user sees coverage was reduced.
@@ -725,7 +725,13 @@ If it is NOT an ancestor: either merge/rebase first, or review `$(git merge-base
 
 **Unhealthy-provider short-circuit.** Within one review run, after a provider returns two empty/error-only blocks, mark it unhealthy and stop dispatching to it for the remaining passes (including fix-delta passes) — repeated 5–8 minute waits buy nothing. Keep dispatching to the rest, and preserve the floor of **two** independent providers; if dropping the unhealthy one would take you below two, the run is reduced-coverage and must say so rather than silently continuing.
 
-**Cross-call rotation:** between passes, capture `providers_used_list[0]` (array field) from each pass's JSON output and thread it into the next `--rotate` call via `--exclude-last <name>`. Forces a different provider on each successive pass even when host exclusion limits the pool. (The string field `providers_used` cannot be indexed with `[0]` in jq.)
+**Cross-pass provider tracking:** `--multi` already runs every available provider on each pass, so
+there is nothing left to rotate and `--exclude-last` is no longer threaded between calls — it
+existed to force variety when each pass got exactly one provider. Still capture
+`providers_used_list` (array field) from each pass's JSON: it is the record of who actually
+answered, which is what tells a later reader whether a pass was genuinely cross-model or quietly
+degraded to one provider because the others timed out. (The string field `providers_used` cannot
+be indexed in jq; use the array.)
 
 **CONTEXT BUDGET handling (the constructive escape valve — read this before invoking the "tight budget" rationalization):**
 
@@ -740,7 +746,7 @@ What "context budget tight" is NOT a license to do: skip the pass, mark `Adversa
 
 #### REPORT mode — sequential finding (no fixes)
 
-Each pass uses `--rotate` (script picks a random unused provider). Prepend prior findings summary so each provider targets NEW issues.
+Each pass uses `--multi` (every available provider runs in parallel). Prepend prior findings summary so each provider targets NEW issues.
 
 ```bash
 # Proof file FIRST — the artifact you write in Phase 3 must cite it, and
@@ -763,17 +769,17 @@ ADV_PROOF="zuvo/proofs/${SLUG:+${SLUG}-}${RANGE_KEY}-adversarial.txt"   # range 
 # The one-arg form is accepted now as an alias, but write the canonical pair.
 
 # Pass 1 (creates the proof — no --append-artifact, so an earlier run's file is replaced):
-git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}" | ~/.zuvo/adversarial-review --rotate --mode code --artifact "$ADV_PROOF"
+git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}" | ~/.zuvo/adversarial-review --multi --mode code --artifact "$ADV_PROOF"
 # → Read output, extract ADV-1, ADV-2
 
 # Pass 2:
 (echo "PRIOR FINDINGS: ADV-1 [desc], ADV-2 [desc] — find NEW issues only";
- git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}") | ~/.zuvo/adversarial-review --rotate --mode code --artifact "$ADV_PROOF" --append-artifact
+ git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}") | ~/.zuvo/adversarial-review --multi --mode code --artifact "$ADV_PROOF" --append-artifact
 # → Read output, extract ADV-3
 
 # Pass 3 (if provider available):
 (echo "PRIOR FINDINGS: ADV-1..3 — final pass, find what everyone missed";
- git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}") | ~/.zuvo/adversarial-review --rotate --mode code --artifact "$ADV_PROOF" --append-artifact
+ git diff "${REVIEWED_FROM}..${REVIEWED_THROUGH}") | ~/.zuvo/adversarial-review --multi --mode code --artifact "$ADV_PROOF" --append-artifact
 # → ADV-4 or clean → early exit
 ```
 
@@ -786,19 +792,19 @@ one phase later, in a place that says nothing about the pass that actually died.
 
 #### FIX mode — sequential fix + validation
 
-Same `--rotate` pattern but each pass sees the IMPROVED diff after prior fixes.
+Same `--multi` pattern but each pass sees the IMPROVED diff after prior fixes.
 
 ```bash
 # Pass 1: review post-primary-fix code (creates the proof — no --append-artifact)
-git diff "${REVIEWED_FROM}..HEAD" | ~/.zuvo/adversarial-review --rotate --mode code --artifact "$ADV_PROOF"
+git diff "${REVIEWED_FROM}..HEAD" | ~/.zuvo/adversarial-review --multi --mode code --artifact "$ADV_PROOF"
 # → ADV-1 → apply fix → commit
 
 # Pass 2: validate fix + find new
-git diff "${REVIEWED_FROM}..HEAD" | ~/.zuvo/adversarial-review --rotate --mode code --artifact "$ADV_PROOF" --append-artifact
+git diff "${REVIEWED_FROM}..HEAD" | ~/.zuvo/adversarial-review --multi --mode code --artifact "$ADV_PROOF" --append-artifact
 # → validates ADV-1 fix + finds ADV-2 → apply → commit
 
 # Pass 3: final validation
-git diff "${REVIEWED_FROM}..HEAD" | ~/.zuvo/adversarial-review --rotate --mode code --artifact "$ADV_PROOF" --append-artifact
+git diff "${REVIEWED_FROM}..HEAD" | ~/.zuvo/adversarial-review --multi --mode code --artifact "$ADV_PROOF" --append-artifact
 # → clean or ADV-3
 ```
 
@@ -811,7 +817,12 @@ Max 2 fix attempts per provider finding. Max 3 passes total.
 
 #### Common rules
 
-- **Use `--rotate`** — script picks a random provider each call. Do NOT use bare `--mode code` (that runs all providers in parallel, defeating sequential).
+- **Use `--multi`** — every available provider reviews the same diff in parallel. This used to say the
+  opposite (`--rotate`, one random provider, explicitly warning off the all-provider run) as a cost
+  measure. Measured 2026-09-02 on 20 real diffs with Opus-judged findings: 57% of each model's TRUE
+  findings are unique to it and no model sees more than 28% of the 347 distinct defects — so one
+  provider per review loses roughly two thirds of what was there. For the skill whose entire job is
+  finding defects, that is not a cost saving, it is the product.
 - Strip lockfiles, snapshots, dist output, and other known noise files from the diff before piping it to `adversarial-review`.
 - When deterministic facts are already known (for example: lockfile present in diff, package ships bundled types, file already patched at HEAD), prepend a short `FACTS:` block before the diff so the adversarial provider does not rediscover settled facts.
 - If `PROD_LOGIC_LINES = 0` and SELF-REVIEW is not set, skip adversarial and log: `[CROSS-REVIEW] Skipped — no production logic changed.`
