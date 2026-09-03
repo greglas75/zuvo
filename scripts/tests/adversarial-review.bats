@@ -109,6 +109,19 @@ isolated_path() {
     fi
   done
   export PATH="$MOCK_BIN:/usr/bin:/bin:/usr/sbin:/sbin"
+  # A PATH IS NO LONGER THE WHOLE PROVIDER SET. The openrouter lane needs no binary:
+  # it is an HTTP call gated on `ZUVO_ADV_OPENROUTER=1` plus a key in the environment
+  # or ~/.zuvo/openrouter.key. Both are set on the author's machine, so "no providers
+  # available" quietly became unreachable here — the script found openrouter +
+  # openrouter-alt through an isolated PATH, exited 0, and the test read as a product
+  # failure. Same lesson as the /opt/homebrew/bin note above, one layer up: isolation
+  # has to cover every channel a provider can arrive through, not just the one that
+  # existed when the helper was written.
+  unset ZUVO_ADV_OPENROUTER OPENROUTER_API_KEY ZUVO_OPENROUTER_BASE_URL
+  # ...and the key FILE would re-enable it on a machine that has one, so point HOME at
+  # the sandbox: ~/.zuvo/openrouter.key then cannot exist for the duration of the test.
+  export HOME="$MOCK_BIN/.home"
+  mkdir -p "$HOME"
   # mock-* providers are refused unless the harness flag is set — a deliberate
   # guard so a stray `--provider mock-x` can never dispatch in a real run.
   export ZUVO_ADVERSARIAL_TEST_HARNESS=1

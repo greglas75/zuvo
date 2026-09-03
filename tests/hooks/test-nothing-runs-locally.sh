@@ -47,6 +47,37 @@ for f in "shared/includes/test-mutation-probes.md" "skills/mutation-test/SKILL.m
   fi
 done
 
+# A QUEUE TIMEOUT MUST NOT NAME THE WORKSTATION AS ITS DESTINATION.
+#
+# The detector above looked for imperatives ("run it locally"), and for weeks that missed the way
+# the rule was actually breached: env-compat's queue semantics offered "consume result,
+# fallback-local, or abort" and sent `QUEUE_TIMEOUT_NOT_EXECUTED` / `INFRA_FAILURE` to "local
+# fallback", and write-tests routed a farm result lacking `executed=true` the same way. None of
+# those lines contains the word "test", so the TESTY gate dropped them. This fixture pins the
+# prose form so the gap cannot reopen.
+_tmp=$(mktemp -d)
+mkdir -p "$_tmp/shared"
+printf 'On queue timeout the result is routed to local fallback.\n' > "$_tmp/shared/queue.md"
+if [ -n "$(env ROOT="$_tmp" python3 "$ROOT/tests/hooks/lib/find-local-run-instructions.py" 2>/dev/null)" ]; then
+  pass "detector catches a queue timeout routed to local fallback"
+else
+  bad "detector misses 'routed to local fallback' — the exact wording that breached the rule"
+fi
+rm -rf "$_tmp"
+
+# ...and the reviewer vocabulary must NOT trip it. `fallback-local` is also the name of a
+# same-environment REVIEWER standing in for a cross-model CLI (test-reviewer-routing.md); flagging
+# that sense would put 12 correct lines on the failure list and train the next reader to ignore it.
+_tmp=$(mktemp -d)
+mkdir -p "$_tmp/shared"
+printf 'Persist as `clean:fallback-local` when the review provider is unreachable.\n' > "$_tmp/shared/rev.md"
+if [ -z "$(env ROOT="$_tmp" python3 "$ROOT/tests/hooks/lib/find-local-run-instructions.py" 2>/dev/null)" ]; then
+  pass "detector leaves the reviewer-mode 'fallback-local' alone"
+else
+  bad "detector flags the reviewer-mode token — it will cry wolf and be ignored"
+fi
+rm -rf "$_tmp"
+
 echo
 [ "$fail" -eq 0 ] && { echo "ALL PASS"; exit 0; }
 echo "FAILURES PRESENT"; exit 1

@@ -581,17 +581,28 @@ only when a queue report returns and starts a new turn). Rules:
 
 **1. One deadline, one wake.** Dispatch long-running/queued commands as a single BLOCKING call
 that returns only on a terminal event (started→finished / queue-timeout / infra-failure). If the
-tool can only poll, choose the deadline UPFRONT and decide ONCE on wake — consume result,
-fallback-local, or abort. Never a second "check again" turn for the same job without new
-information; "~5s to next free" repeated for 10 minutes is what this rule exists to ignore.
-Thresholds: local command <30s → do not use the farm at all; 30–120s → max 15–30s queue;
-2–10min → max 60s queue; >10min → detached with high queue tolerance.
+tool can only poll, choose the deadline UPFRONT and decide ONCE on wake — consume the result,
+KEEP WAITING (`rt --attach <runid>`), or abort the task. **`fallback-local` is not on that list**
+and the thresholds below are not a licence to run it here: they decide whether a command is worth
+sending to the farm AT ALL, not how long you are allowed to stay in a queue you already joined.
+Never a second "check again" turn for the same job without new information; "~5s to next free"
+repeated for 10 minutes is what this rule exists to ignore.
+Thresholds for CHOOSING the farm: local command <30s → do not use the farm at all (run it inline,
+it is not a suite); anything longer → the farm, and a queue is simply part of its cost. >10min →
+detached, then `rt --wait <runid>`.
+
+**A full fleet is a WAIT, not a refusal.** `rt` re-places a run up to `TF_REPLACE_MAX` (3) times
+and then QUEUES it — it does not hand back "no". A host printing `busy/allowed` at capacity is a
+placement diagnostic, not a rejection, and `BLOCKED_FARM_BUSY` is a status no part of this fleet
+emits. An agent that invents it abandons finished work over a machine that was merely busy: that
+happened on 2026-09-03, costing a completed branch its push, PR and merge.
 
 **2. A result without execution evidence is a FAILURE, not a PASS.** Consume a remote result
 ONLY when it carries: commit SHA, exact command, runtime version, the runner's OWN summary
 (suite/test counts), and the real process exit code. `exit 0` with `executed=false` (job never
-started, wrapper exited clean) = `QUEUE_TIMEOUT_NOT_EXECUTED` / `INFRA_FAILURE` — route to local
-fallback. This is the same evidence rule the pipeline already applies locally ("paste the runner
+started, wrapper exited clean) = `QUEUE_TIMEOUT_NOT_EXECUTED` / `INFRA_FAILURE` — re-dispatch or
+re-attach on the farm. NOT a local fallback: the tests did not run, and running them on the
+workstation is what turns a busy farm into an 11-hour refactor (measured 2026-08-29). This is the same evidence rule the pipeline already applies locally ("paste the runner
 summary, never paraphrase"); remote does not get a lower bar.
 
 **3. Verdict durability.** Copy the remote verdict + runner summary into the task's own

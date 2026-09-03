@@ -20,7 +20,7 @@ fail=0
 pass() { printf 'PASS: %s\n' "$1"; }
 bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
 
-out=$(ROOT="$ROOT" python3 "$ROOT/tests/hooks/lib/find-codex-dispatch-bans.py" 2>/dev/null)
+out=$(env ROOT="$ROOT" python3 "$ROOT/tests/hooks/lib/find-codex-dispatch-bans.py" 2>/dev/null)
 if [ -z "$out" ]; then
   pass "no skill tells Codex it cannot dispatch"
 else

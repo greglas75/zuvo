@@ -1022,6 +1022,20 @@ install_codex() {
     ok "Rules installed"
   fi
 
+  # Step 6.5: zuvo's marker blocks in ~/.codex/AGENTS.md
+  #
+  # Codex reads AGENTS.md, not CLAUDE.md, and the two rules that keep this workstation usable live
+  # there: the poll ceiling and "when the farm is busy, WAIT". They were hand-written into the
+  # user's file and nothing in this repo knew about them — so they were one machine rebuild away
+  # from disappearing, and a drafting mistake in one could not be caught by any test. One such
+  # mistake ("re-queue once, or report BLOCKED_FARM_BUSY and stop") cost a finished branch its
+  # push, PR and merge on 2026-09-03. Only the marked regions are rewritten; the user's own text
+  # is copied through untouched.
+  if [[ -d "$ZUVO_DIR/shared/codex/agents-md" ]]; then
+    bash "$ZUVO_DIR/scripts/install-agents-md-blocks.sh" \
+      "$ZUVO_DIR/shared/codex/agents-md" "$HOME/.codex/AGENTS.md" || true
+  fi
+
   # Step 7: Copy scripts (benchmark.sh, adversarial-review.sh, reviewer-model-route.sh, blind-audit-codex.sh, infra-collect.sh)
   if [[ -d "$ZUVO_DIR/scripts" ]]; then
     mkdir -p "$HOME/.codex/scripts"
