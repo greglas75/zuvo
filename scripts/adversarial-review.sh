@@ -360,10 +360,22 @@ Input:
 Environment variables:
   ZUVO_REVIEW_PROVIDER     Force provider
   ZUVO_REVIEW_MAX_PROVIDERS  Fan-out cap: how many of the detected providers actually run
-                           (default: 3). Applied AFTER host auto-exclusion and --exclude, so it
-                           keeps the best N still standing. The order is the measured ranking in
-                           detect_providers(); the default 3 retains ~92% of CRITICAL-producing
-                           runs for 39% fewer provider calls. Ignored with --provider.
+                           (default: 5, raised from 3 on 2026-09-04). Applied AFTER host
+                           auto-exclusion and --exclude, so it keeps the best N still standing.
+                           The order is the measured ranking in detect_providers().
+                           The old default of 3 was justified by "retains ~92% of
+                           CRITICAL-producing runs for 39% fewer provider calls" — a true
+                           statement about a DIFFERENT question. It measures how often a run
+                           produced ANY critical. A second measurement (2026-09-02, 20 real
+                           diffs, every finding judged REAL/FALSE_POSITIVE by an independent
+                           Opus judge, shared defect-id vocabulary so duplicates collapse)
+                           asked how many DISTINCT defects a set of models covers: 57% of each
+                           model's true findings are unique to it, no single model exceeds 28%
+                           of the 347 defects, and coverage runs 3 models -> ~54%,
+                           4 -> ~62%, 5 -> ~66%. Both numbers are correct; they answer
+                           "does review catch something" vs "does review catch everything".
+                           5 is the point where the marginal model still adds ~20 defects.
+                           Ignored with --provider.
   ZUVO_REVIEW_TIMEOUT      Per-provider timeout in seconds (default: 400, flat across modes)
   ZUVO_TIMEOUT_GRACE       Seconds between SIGTERM and SIGKILL for a provider (default: 15).
                            Without the hard kill a TERM-ignoring CLI runs unbounded.
@@ -1426,11 +1438,11 @@ fi
 # It DOES apply to the test harness's injected list — that list stands in for what
 # detect_providers() would return, so exempting it would leave the cap untestable; every
 # existing suite injects <= 3 mocks and is unaffected.
-_AR_MAX_PROVIDERS="${ZUVO_REVIEW_MAX_PROVIDERS:-3}"
+_AR_MAX_PROVIDERS="${ZUVO_REVIEW_MAX_PROVIDERS:-5}"
 if [[ -z "$PROVIDER" && -n "$PROVIDERS" ]]; then
   if ! [[ "$_AR_MAX_PROVIDERS" =~ ^[0-9]+$ ]] || [[ "$_AR_MAX_PROVIDERS" -lt 1 ]]; then
-    echo "  WARN: ZUVO_REVIEW_MAX_PROVIDERS='$_AR_MAX_PROVIDERS' is not a positive integer — using 3." >&2
-    _AR_MAX_PROVIDERS=3
+    echo "  WARN: ZUVO_REVIEW_MAX_PROVIDERS='$_AR_MAX_PROVIDERS' is not a positive integer — using 5." >&2
+    _AR_MAX_PROVIDERS=5
   fi
   _ar_avail=$(echo "$PROVIDERS" | wc -w | tr -d ' ')
   if [[ "$_ar_avail" -gt "$_AR_MAX_PROVIDERS" ]]; then
