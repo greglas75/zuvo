@@ -58,7 +58,46 @@ CodeSift indexes a repo's **main checkout**. When the scope you are about to ana
 worktree** or a branch whose commits are not in the index, semantic tools silently scan the STALE
 main checkout and miss the actual code — and every dispatched sub-agent re-discovers this
 independently (the recurring, expensive failure across review/execute/refactor/plan). Resolve it
-once, before dispatching agents, and pass the decision to them:
+once, before dispatching agents, and pass the decision to them.
+
+#### MANDATORY — resolve the scope with the helper, do not hand-derive it
+
+```bash
+# $ZUVO_BASE (canonical recipe in env-compat.md) — bash resolves `../../` against the user's
+# PROJECT during a run, so a relative script path does not exist when a skill shells out.
+ZUVO_BASE="${ZUVO_BASE:-$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*zuvo[^"]*\)".*/\1/p' \
+  "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null | head -1)}"
+[ -d "$ZUVO_BASE/scripts" ] || ZUVO_BASE=$(ls -d "$HOME/.claude/plugins/cache/zuvo-marketplace/zuvo"/*/ \
+  2>/dev/null | grep -E '/[0-9]+\.[0-9]+\.[0-9]+/$' | sort -V | tail -1 | sed 's:/$::')
+
+bash "$ZUVO_BASE/scripts/codesift-worktree-scope.sh" "<scope-path>"
+```
+
+One call, no index/MCP/network touched (only `git rev-parse`), and it prints a stable KEY=VALUE
+contract: `target_repo`, `git_common_dir`, `is_linked_worktree`, `codesift_scope_arg`, `action`,
+`reason`. **`action` is the instruction, not a diagnosis** — `index_folder` means call
+`index_folder(path=<target_repo>)` before any symbol/pattern query, `scope_only` means pass
+`path=`/`repo=` explicitly anyway, `not_a_repo` means fall through to the multi-git-root rules at
+the end of this section.
+
+Hand-deriving this is what the helper replaces. The rules below were already written down and
+correct, and the retro log still showed them being re-invented per session under ~10 different
+names (`worktree-safe CodeSift indexing`, `worktree-aware CodeSift scan`, `codesift-current-worktree`,
+`worktree index fallback`, `worktree CodeSift alias`, …). A rule nothing executes is a rule that
+gets re-derived, and each re-derivation is a chance to get it backwards — the expensive direction
+being *"`index_status` says indexed, so I'll skip it"*, which in a linked worktree reports the
+PARENT checkout as healthy while describing files nobody is editing.
+
+Two details the helper gets right that hand-derivation reliably gets wrong, so do not
+reimplement them inline:
+
+- **A linked worktree is `git-dir != git-common-dir`** — definitional. Comparing paths, branch
+  names, or the presence of a `.git` *file* all have false negatives.
+- **`--path-format=absolute` is load-bearing.** Bare `--git-common-dir` returns a RELATIVE `.git`
+  from a main checkout and an absolute path from a linked worktree, so the two never compare equal
+  and the identity key silently splits the repo it was meant to unify.
+
+The rules the helper encodes, for when you need to reason about a case it reports:
 
 ```bash
 # <scope-path> = a file you are ACTUALLY about to analyze, never a remembered or

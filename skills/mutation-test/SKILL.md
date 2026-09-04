@@ -729,6 +729,34 @@ every constraint below without exception:
 
        rt npx stryker run <config>          # or the project's own native runner
 
+   **Generate `<config>` with the helper — do NOT hand-roll it and do NOT rely on `--mutate`.**
+
+       bash "$ZUVO_BASE/scripts/stryker-scoped-config.sh" \
+         --file <f1> --file <f2> ...        # or --files-from <list>, from the 0.2 scope set
+
+   It prints `config_path`, `report_path`, `temp_dir`, `test_runner`, `coverage_analysis`,
+   `mutate_count` and a ready `run_command`. `mutate_count` is a check, not decoration: Stryker
+   reports an empty mutate set as a **successful run with a 100% score**, so a typo in the scope
+   set is indistinguishable from a perfect suite unless the count is read.
+
+   "Scoped Stryker config" is the most re-invented artifact in this fleet's retro log (~30 names
+   for one thing), because it is five decisions that each fail SILENTLY:
+
+   - **`--mutate` alone does not scope the run.** Stryker still loads the project config, which
+     routinely carries a repo-wide `mutate` array, its own reporters, its own `tempDirName`. The
+     CLI flag merges over one key; the rest still applies.
+   - **`.stryker-tmp` is shared by every run in the repo.** Two scoped runs on one box corrupt
+     each other's sandbox, and it surfaces as dependencies vanishing mid-run
+     (`Cannot find module 'balanced-match'`) — which reads as a test failure and is not. This is
+     the same incident rule 1 above was reversed for; the config is the other half of the fix.
+   - **`coverageAnalysis: perTest` mismarks module-level ("static") mutants as SURVIVED**, because
+     per-test coverage cannot attribute code that ran at import time. The helper defaults to
+     `off` for that reason. If you override it, 4.2's re-probe stops being optional.
+   - **The report must land outside the sandbox**, or a farm run discards the only copy of the
+     measurement along with its checkout.
+   - **next/jest and vitest need different wiring**, and the wrong one fails at startup with an
+     error naming the test framework rather than the config.
+
    Two consequences that are not optional:
    - **The farm gives it the isolation the laptop cannot.** A farm run ships the tree as it
      stands into its own checkout, so a concurrent worktree cannot pull dependencies out from
@@ -886,6 +914,32 @@ For each SURVIVED mutation, analyze:
 2. **Why it matters:** What behavioral gap this reveals
 3. **Which test file:** The test file(s) that should have caught it
 4. **Suggested test:** A 1-3 line description of the test to add (not full code)
+
+**A NATIVE runner's survivor is a candidate, not a finding — re-probe it physically first.**
+A survivor from the LLM engine was already produced by executing the mutation, so it needs no
+re-probe. A survivor from Stryker/PIT/Infection may be an artifact of the run's own settings:
+under `coverageAnalysis: perTest` a module-level ("static") mutant is reported SURVIVED because
+per-test coverage cannot attribute code that executed at import time — the tests may kill it
+perfectly well. Settle it by running it, not by reasoning about the report:
+
+```bash
+bash "$ZUVO_BASE/scripts/mutation-survivor-reprobe.sh" \
+  --label MUT-007 --file <production file> \
+  --original '<exact current text>' --mutated '<mutated text>' \
+  --test-cmd '<the mapped tests for that file>'
+# exit 0 = KILLED (run artifact, drop it) · 1 = SURVIVED (real gap) · 3 = ERROR (no verdict)
+```
+
+It is content-anchored (2.3b), refuses an ambiguous or missing anchor, refuses a dirty target
+file, restores on every exit path including signals, and verifies the restore by hash before
+reporting. A timeout returns ERROR, never KILLED — a suite that never finished says nothing
+about whether it would have caught the mutant, and reading its non-zero exit as a kill
+manufactures coverage out of an infrastructure failure.
+
+Record `reprobe: killed|survived|error|n/a (llm engine)` per native survivor. A native survivor
+that has not been re-probed may not enter triage below, may not be counted as a `gap`, and may
+not appear in 4.2b's fix loop. This step is what the retro log's largest single burn
+(140 turns in one session) was spent inventing from scratch.
 
 **Triage each survivor as `gap` or `equivalent` — this is not optional.** An
 *equivalent mutant* changes the source without changing any observable behavior, so no

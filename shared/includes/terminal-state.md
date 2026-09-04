@@ -122,13 +122,50 @@ gh pr view "$PR" --json state,mergeStateStatus -q '.state'   # MERGED is the ter
 | State | Meaning | Terminal? |
 |---|---|---|
 | `MERGED` | landed | yes |
-| `OPEN`, checks green | delivered nowhere — merge it | **no** |
+| `OPEN`, checks green, **merge blocked by policy** | delivered as far as the agent is permitted — see below | **yes**, as `PR_OPEN_BY_POLICY` |
+| `OPEN`, checks green, nothing blocking | delivered nowhere — merge it | **no** |
 | `OPEN`, checks red or pending | Shape B still applies first | **no** |
 | `CLOSED` unmerged | abandoned — say so explicitly, do not report success | no (but terminal) |
 
-A green PR is not a shipped PR. If the run cannot merge it — a required human review, a protected
-branch, a policy the agent may not satisfy — that is a legitimate stop, but it is `<SKILL>
-INCOMPLETE` naming the blocker, not a completion banner with a link attached.
+A green PR is not a shipped PR.
+
+### `PR_OPEN_BY_POLICY` — the fourth outcome, and it must be DETECTED
+
+An open PR is the correct end state whenever the repository, not the agent, owns the merge:
+a required human approval, a protected branch, CODEOWNERS, or a forge this skill cannot merge on.
+Before this state existed there were only "merged" and "incomplete", and the retro log shows what
+that produced — the same missing outcome requested under ~25 invented names
+(`Bitbucket open-PR terminal state`, `PR-only terminal state`, `open-pr-no-merge-mode`,
+`explicit leave-open terminal state`, `no-merge PR terminal`, …), plus runs that asked the user
+what to do or re-attempted a merge that policy will never allow.
+
+**It is read from the forge, never declared.** There is deliberately no `--no-merge` flag and no
+prose escape: a bypass that exists as text an agent can type is a bypass that will eventually be
+typed, and "merge is blocked" is a fact the system already publishes.
+
+```bash
+gh pr view "$PR" --json state,mergeStateStatus,reviewDecision,statusCheckRollup \
+  -q '{state:.state, merge:.mergeStateStatus, review:.reviewDecision}'
+```
+
+Qualifies as `PR_OPEN_BY_POLICY` when **every** condition holds:
+
+1. `state` is `OPEN`,
+2. every check has concluded and none failed (Shape B satisfied — a pending or red check is
+   Shape B, not policy),
+3. the block is a POLICY, evidenced by one of:
+   - `reviewDecision` = `REVIEW_REQUIRED` or `CHANGES_REQUESTED` (a human owes an approval),
+   - `mergeStateStatus` = `BLOCKED` while all checks are green (branch protection),
+   - the forge is one this skill cannot merge on (no `gh`, or a non-GitHub remote),
+4. and the blocker is **named in the output**, quoted from the field that carried it.
+
+Anything else that leaves a PR open is still `<SKILL> INCOMPLETE`. In particular
+`mergeStateStatus` = `DIRTY` (conflicts) or `BEHIND` is work the agent CAN do, not a policy —
+resolve or update the branch. `UNKNOWN` is the forge still computing mergeability: re-read it,
+do not classify it.
+
+A run ending in `PR_OPEN_BY_POLICY` prints its completion banner with the PR link and the
+blocker, does not ask the user what to do, and does not retry the merge.
 
 ## Completion Gate
 
@@ -139,6 +176,9 @@ filled in — not as a checkbox that is always ticked:
 - [ ] Terminal state A: processes launched = N, still alive = 0   (list PIDs and how each ended)
 - [ ] Terminal state B: external checks triggered = N, unconcluded = 0   (list run IDs + conclusions)
 - [ ] Terminal state C: artifacts created = N, not landed = 0   (list PR/branch/tag + its state)
+      An artifact in `PR_OPEN_BY_POLICY` counts as LANDED, and the line must carry the quoted
+      blocker field that put it there — the classification without its evidence is the
+      "merged or incomplete" gap re-opened under a nicer name.
 ```
 
 If ANY of the three counts is non-zero, the run prints `<SKILL> INCOMPLETE` naming what is outstanding. A
