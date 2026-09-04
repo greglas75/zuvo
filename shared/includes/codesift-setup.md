@@ -63,12 +63,11 @@ once, before dispatching agents, and pass the decision to them.
 #### MANDATORY — resolve the scope with the helper, do not hand-derive it
 
 ```bash
-# $ZUVO_BASE (canonical recipe in env-compat.md) — bash resolves `../../` against the user's
-# PROJECT during a run, so a relative script path does not exist when a skill shells out.
-ZUVO_BASE="${ZUVO_BASE:-$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*zuvo[^"]*\)".*/\1/p' \
-  "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null | head -1)}"
-[ -d "$ZUVO_BASE/scripts" ] || ZUVO_BASE=$(ls -d "$HOME/.claude/plugins/cache/zuvo-marketplace/zuvo"/*/ \
-  2>/dev/null | grep -E '/[0-9]+\.[0-9]+\.[0-9]+/$' | sort -V | tail -1 | sed 's:/$::')
+# Canonical resolver (env-compat.md). Do NOT inline the sed/ls search here: env-compat.md marks
+# that form as the pre-1.6.72 FALLBACK, and it fails SILENTLY — an empty $ZUVO_BASE turns the
+# next line into `bash "/scripts/..."` with no diagnostic. `zuvo-base` writes its reason to
+# stderr and nothing to stdout, so a failure stays a failure instead of becoming a bad path.
+ZUVO_BASE="$(~/.zuvo/zuvo-base)"   # add --why to see which rule matched
 
 bash "$ZUVO_BASE/scripts/codesift-worktree-scope.sh" "<scope-path>"
 ```

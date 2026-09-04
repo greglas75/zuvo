@@ -1353,11 +1353,16 @@ Push to `$PUSH_REMOTE` (resolved in Phase 0 step 1), not to a hardcoded `origin`
   state that produced all four. If it genuinely cannot be fixed here, print `SHIP INCOMPLETE` with
   the failing check, exactly as for a blocked push.
 
-  **The one exception is a repository that OWNS the merge** — a required human approval, branch
-  protection, CODEOWNERS, or a forge this skill cannot merge on. There the merge is not the
-  agent's to perform, and re-attempting it produces the same rejection forever. Classify that as
-  `PR_OPEN_BY_POLICY` (`terminal-state.md` Shape C), name the blocker quoted from the forge field
-  that carried it, and stop — do not ask the user what to do, do not retry.
+  **The one exception is a repository that OWNS the merge** — a required human approval or branch
+  protection — and only once every check has CONCLUDED GREEN (a red or pending check is still the
+  RED-check case above, not this exception). There the merge is not the agent's to perform, and
+  re-attempting it produces the same rejection forever. Classify that as `PR_OPEN_BY_POLICY`
+  (`terminal-state.md` Shape C), name the blocker quoted from the forge field that carried it, and
+  stop — do not ask the user what to do, do not retry.
+
+  Two near-misses that are NOT this exception: a reviewer who requested changes has given this run
+  work to do, and a forge this skill cannot merge on keeps its own `SHIP INCOMPLETE` outcome from
+  the paragraph above. Neither becomes a completion banner.
 
   This is not a softening of the argument above: every one of those four failure modes still
   fires while such a PR waits. It changes WHO is accountable for the wait, not whether the wait is
@@ -1472,13 +1477,20 @@ COMPLETION GATE CHECK
     PR left behind for any OTHER reason is an unfinished ship — nobody on this fleet reviews the
     queue, so it buys no safety and starts accruing the four failure modes documented in the push
     section. A non-zero `gh pr merge` exit over a PR whose state is MERGED is NOT a failure.
-    `PR_OPEN_BY_POLICY` requires ALL of: state OPEN, every check concluded and green, and a
-    POLICY block evidenced by `reviewDecision` ∈ {REVIEW_REQUIRED, CHANGES_REQUESTED} or
-    `mergeStateStatus` = BLOCKED over green checks or a forge this skill cannot merge on — with
-    the blocker QUOTED in the output. It is read from the forge and never declared: there is no
-    `--no-merge` flag, for the same reason there is no review-skip flag. `mergeStateStatus`
-    DIRTY/BEHIND does NOT qualify — that is work this run can do. Do not re-attempt a merge that
-    policy will never allow, and do not ask the user what to do: classify, name the blocker, stop.
+    `PR_OPEN_BY_POLICY` requires ALL of: state OPEN; every check read from `statusCheckRollup`
+    COMPLETED with conclusion SUCCESS/NEUTRAL/SKIPPED (or no checks at all) — read, never
+    assumed; and a POLICY block evidenced by `reviewDecision` = REVIEW_REQUIRED or
+    `mergeStateStatus` = BLOCKED over green checks WITH `reviewDecision` != CHANGES_REQUESTED
+    (GitHub reports BLOCKED for a changes-requested PR too, so without that clause the exclusion
+    below is defeated by this one) — with the blocker QUOTED in the output. It is
+    read from the forge and never declared: there is no `--no-merge` flag, for the same reason
+    there is no review-skip flag. THREE things do NOT qualify, each of them work or an honest
+    failure rather than a policy: `mergeStateStatus` DIRTY/BEHIND (resolve or update the branch);
+    `reviewDecision` CHANGES_REQUESTED (a reviewer handed this run concrete work — address it,
+    by the same logic that excludes DIRTY); and a missing/non-GitHub forge, which keeps its own
+    `SHIP INCOMPLETE: branch pushed, PR not created` outcome from the push section and must never
+    be collapsed into a completion banner. Do not re-attempt a merge that policy will never
+    allow, and do not ask the user what to do: classify, name the blocker, stop.
 [ ] Terminal state A: processes launched = N, still alive = 0   (PIDs + how each ended)
 [ ] Terminal state B: external checks triggered = N, unconcluded = 0   (run IDs + conclusions)
     For ship this means the POST-MERGE runs specifically: enumerate them with
@@ -1542,7 +1554,7 @@ SHIP COMPLETE
   Review:      <depth> (<details>) via <Skill tool|env-compat dispatch> [escalated-from <table-depth> due to attestation: <reason>]
   Changelog:   CHANGELOG.md updated / skipped
   Push:        pushed to <remote>/<branch> / BLOCKED (<gate + cause>)
-  PR:          #<N> created + merged / #<N> updated + merged / #<N> open — PR_OPEN_BY_POLICY (<quoted blocker: reviewDecision=REVIEW_REQUIRED | mergeStateStatus=BLOCKED | forge not mergeable by this skill>) / #<N> open (SHIP INCOMPLETE — <failing check|CONFLICTING>) / — (direct flow) / not created (SHIP INCOMPLETE — <no gh|non-GitHub forge>)
+  PR:          #<N> created + merged / #<N> updated + merged / #<N> open — PR_OPEN_BY_POLICY (<quoted blocker: reviewDecision=REVIEW_REQUIRED | mergeStateStatus=BLOCKED over green checks>) / #<N> open (SHIP INCOMPLETE — <failing check|CONFLICTING|CHANGES_REQUESTED>) / — (direct flow) / not created (SHIP INCOMPLETE — <no gh|non-GitHub forge>)
   Artifact:    memory/last-ship.json written locally
   Logs:        retros.log=ok retros.md=ok(<count> entries) runs.log=ok  [paste tails from step 3]
 

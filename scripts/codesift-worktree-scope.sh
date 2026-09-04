@@ -70,13 +70,21 @@ fi
 
 # A file is a legitimate scope argument ("the file I am about to analyze"), and it is the
 # form the include tells callers to pass. Resolve to its directory for the git queries.
+# An unchecked `cd` is the difference between an error and a confident wrong answer. On an
+# unreadable directory the substitution yields an empty string, `git -C ""` then answers about the
+# CALLER's current repo, and the script prints action=scope_only with exit 0 — a machine-consumed
+# verdict about a completely different tree. The sibling script in this same release does
+# `|| die` at its equivalent boundary; this one did not.
 if [ -f "$SCOPE" ]; then
-  SCOPE_DIR="$(cd "$(dirname "$SCOPE")" && pwd)"
+  SCOPE_DIR="$(cd "$(dirname "$SCOPE")" && pwd)" \
+    || { echo "cannot enter the scope's directory: $(dirname "$SCOPE")" >&2; exit 2; }
   SCOPE_ABS="$SCOPE_DIR/$(basename "$SCOPE")"
 else
-  SCOPE_DIR="$(cd "$SCOPE" && pwd)"
+  SCOPE_DIR="$(cd "$SCOPE" && pwd)" \
+    || { echo "cannot enter scope: $SCOPE" >&2; exit 2; }
   SCOPE_ABS="$SCOPE_DIR"
 fi
+[ -n "$SCOPE_DIR" ] || { echo "scope resolved to an empty path: $SCOPE" >&2; exit 2; }
 
 TOPLEVEL="$(git -C "$SCOPE_DIR" rev-parse --show-toplevel 2>/dev/null)"
 if [ -z "$TOPLEVEL" ]; then
@@ -90,8 +98,29 @@ fi
 # compare equal and the key silently splits the repo it was meant to unify.
 COMMON_DIR="$(git -C "$SCOPE_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
 GIT_DIR="$(git -C "$SCOPE_DIR" rev-parse --path-format=absolute --git-dir 2>/dev/null)"
-[ -z "$COMMON_DIR" ] && COMMON_DIR="-"
-[ -z "$GIT_DIR" ] && GIT_DIR="-"
+
+# `--path-format` landed in git 2.31. On anything older both queries above fail and return empty,
+# and the linked-worktree test below (which requires both to be non-empty) would quietly answer
+# "main checkout" for EVERY worktree — handing the caller a confident `scope_only` and reproducing
+# the exact failure this helper exists to remove. Fall back to resolving the plain forms to
+# absolute paths; if even that fails, say so rather than guessing.
+if [ -z "$COMMON_DIR" ] || [ -z "$GIT_DIR" ]; then
+  _cd_raw="$(git -C "$SCOPE_DIR" rev-parse --git-common-dir 2>/dev/null)"
+  _gd_raw="$(git -C "$SCOPE_DIR" rev-parse --git-dir 2>/dev/null)"
+  if [ -n "$_cd_raw" ] && [ -n "$_gd_raw" ]; then
+    # `pwd -P` on BOTH: the default logical `pwd` reports the path you traversed, so on a symlinked
+    # checkout the two sides can differ as strings while naming one directory — and the
+    # "git-dir != git-common-dir" test would then call an ordinary subdirectory a linked worktree.
+    COMMON_DIR="$(cd "$SCOPE_DIR" && cd "$_cd_raw" 2>/dev/null && pwd -P)"
+    GIT_DIR="$(cd "$SCOPE_DIR" && cd "$_gd_raw" 2>/dev/null && pwd -P)"
+  fi
+fi
+
+if [ -z "$COMMON_DIR" ] || [ -z "$GIT_DIR" ]; then
+  emit "$TOPLEVEL" "${COMMON_DIR:--}" "unknown" "index_folder" \
+    "cannot resolve git-dir/git-common-dir (git too old or repo unreadable) — worktree state UNKNOWN, so index explicitly rather than assuming the main checkout"
+  exit 0
+fi
 
 # A linked worktree is exactly "git-dir differs from git-common-dir". Comparing paths, branch
 # names or the presence of a `.git` FILE all have false negatives; this one is definitional.
@@ -102,5 +131,5 @@ if [ "$GIT_DIR" != "$COMMON_DIR" ] && [ "$GIT_DIR" != "-" ] && [ "$COMMON_DIR" !
 fi
 
 emit "$TOPLEVEL" "$COMMON_DIR" "no" "scope_only" \
-  "main checkout: pass path=/repo= explicitly rather than relying on CWD resolution"
+  "main checkout: pass codesift_scope_arg (above) to every CodeSift call rather than relying on CWD resolution"
 exit 0

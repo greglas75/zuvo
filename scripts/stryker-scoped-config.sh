@@ -63,22 +63,32 @@ FILES=()
 
 die() { echo "$1" >&2; exit "${2:-2}"; }
 
+# Every value-taking flag proves its value exists BEFORE `shift 2`. With a trailing valueless flag,
+# `shift 2` on one remaining arg fails WITHOUT consuming it, so `while [ $# -gt 0 ]` re-enters on
+# the same token forever — a silent infinite loop instead of the documented exit 2. Reproduced on
+# bash 3.2 in review; it spins with no output until something kills it.
+need_val() { [ "$1" -ge 2 ] || die "missing value for $2"; }
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --file)        FILES+=("${2:-}"); shift 2 ;;
+    --file)        need_val $# "$1"; FILES+=("$2"); shift 2 ;;
     --files-from)
-      [ -f "${2:-}" ] || die "--files-from: no such file: ${2:-}"
-      while IFS= read -r _l; do
+      need_val $# "$1"
+      [ -f "$2" ] || die "--files-from: no such file: $2"
+      # `|| [ -n "$_l" ]` catches a final line with no trailing newline: `read` returns non-zero
+      # there and the loop body would never run for it, silently scoping the run to N-1 files.
+      # Stryker reports the resulting smaller mutate set as a perfectly successful run.
+      while IFS= read -r _l || [ -n "$_l" ]; do
         [ -n "$_l" ] && FILES+=("$_l")
       done < "$2"
       shift 2 ;;
-    --repo)        REPO="${2:-}"; shift 2 ;;
-    --out)         OUT="${2:-}"; shift 2 ;;
-    --report)      REPORT="${2:-}"; shift 2 ;;
-    --runner)      RUNNER="${2:-}"; shift 2 ;;
-    --concurrency) CONCURRENCY="${2:-}"; shift 2 ;;
-    --coverage)    COVERAGE="${2:-}"; shift 2 ;;
-    --timeout-ms)  TIMEOUT_MS="${2:-}"; shift 2 ;;
+    --repo)        need_val $# "$1"; REPO="$2"; shift 2 ;;
+    --out)         need_val $# "$1"; OUT="$2"; shift 2 ;;
+    --report)      need_val $# "$1"; REPORT="$2"; shift 2 ;;
+    --runner)      need_val $# "$1"; RUNNER="$2"; shift 2 ;;
+    --concurrency) need_val $# "$1"; CONCURRENCY="$2"; shift 2 ;;
+    --coverage)    need_val $# "$1"; COVERAGE="$2"; shift 2 ;;
+    --timeout-ms)  need_val $# "$1"; TIMEOUT_MS="$2"; shift 2 ;;
     --print-config) PRINT_CONFIG=1; shift ;;
     -h|--help)     sed -n '2,50p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)             die "unknown argument: $1" ;;
@@ -99,19 +109,26 @@ REPO="$(cd "$REPO" && pwd)" || die "--repo: no such directory"
 # Normalize the scope set to repo-relative POSIX paths and verify each one exists. A typo here
 # is the difference between "0 mutants, score 100%" and a real measurement, and Stryker reports
 # an empty mutate set as a successful run.
+# Containment is checked on the RESOLVED absolute path, for EVERY input, with no fast path.
+# The first version trusted `[ -f "$REPO/$f" ]` alone for repo-relative input — but
+# `$REPO/../../etc/hosts` is a file that exists, so `--file ../../../../etc/hosts` passed the
+# check and landed verbatim in the generated `mutate` array. On this workstation the sibling
+# directories under the parent are other production repos, so a single crafted or mistaken entry
+# scoped a mutation run at code outside the repo entirely.
 REL_FILES=()
 for f in "${FILES[@]}"; do
   if [ -f "$REPO/$f" ]; then
-    REL_FILES+=("$f")
+    cand="$REPO/$f"
   elif [ -f "$f" ]; then
-    abs="$(cd "$(dirname "$f")" && pwd)/$(basename "$f")"
-    case "$abs" in
-      "$REPO"/*) REL_FILES+=("${abs#"$REPO"/}") ;;
-      *) die "file is outside --repo ($REPO): $f" 3 ;;
-    esac
+    cand="$f"
   else
     die "no such file: $f" 3
   fi
+  abs="$(cd "$(dirname "$cand")" && pwd)/$(basename "$cand")"
+  case "$abs" in
+    "$REPO"/*) REL_FILES+=("${abs#"$REPO"/}") ;;
+    *) die "file resolves outside --repo ($REPO): $f -> $abs" 3 ;;
+  esac
 done
 
 # A tag that is unique per invocation AND per scope, so two scoped runs on one box never share a
@@ -211,7 +228,11 @@ printf 'temp_dir=%s\n' "$TEMP_DIR"
 printf 'test_runner=%s\n' "$TEST_RUNNER"
 printf 'coverage_analysis=%s\n' "$COVERAGE"
 printf 'mutate_count=%s\n' "${#REL_FILES[@]}"
-printf 'run_command=npx stryker run %s\n' "$OUT"
+# The CWD is pinned on purpose: `mutate` entries are repo-relative and Stryker resolves them
+# against the RUN's working directory. This script is routinely invoked from elsewhere, and a
+# command run from the wrong directory matches zero files — which Stryker reports as a successful
+# 100% run, the exact silent failure the scope validation above exists to prevent.
+printf 'run_command=(cd %s && npx stryker run %s)\n' "$REPO" "$OUT"
 
 if [ "$PRINT_CONFIG" = "1" ]; then
   echo "--- config ---"

@@ -751,7 +751,10 @@ every constraint below without exception:
      the same incident rule 1 above was reversed for; the config is the other half of the fix.
    - **`coverageAnalysis: perTest` mismarks module-level ("static") mutants as SURVIVED**, because
      per-test coverage cannot attribute code that ran at import time. The helper defaults to
-     `off` for that reason. If you override it, 4.2's re-probe stops being optional.
+     `off` for that reason. That default REDUCES the number of false survivors; it does not make
+     4.2's re-probe optional, which is unconditional for every native survivor regardless of this
+     setting — a project's own config, an incremental run, or a test filter can each produce a
+     survivor the tests would in fact kill.
    - **The report must land outside the sandbox**, or a farm run discards the only copy of the
      measurement along with its checkout.
    - **next/jest and vitest need different wiring**, and the wrong one fails at startup with an
@@ -940,6 +943,20 @@ Record `reprobe: killed|survived|error|n/a (llm engine)` per native survivor. A 
 that has not been re-probed may not enter triage below, may not be counted as a `gap`, and may
 not appear in 4.2b's fix loop. This step is what the retro log's largest single burn
 (140 turns in one session) was spent inventing from scratch.
+
+**How each outcome folds into the score** (state it, or two runs of the same code report
+different numbers):
+
+| `reprobe` | Effect on `score_triaged` | Rationale |
+|---|---|---|
+| `killed` | counts as **KILLED** (numerator and denominator) | the physical re-run proved the suite kills it; the report's SURVIVED was the artifact |
+| `survived` | stays a survivor, enters triage as `gap` or `equivalent` | confirmed by execution |
+| `error` | **excluded from both** — and named in the report | no verdict exists; counting it either way invents one |
+| `n/a (llm engine)` | unchanged — the LLM engine already executed it | no native report to correct |
+
+Carry the counts in the 4.3b artifact as `reprobe: { killed, survived, error }` alongside
+`score_raw`, so a reader can see how much of the triaged score came from correcting the native
+report rather than from the tests changing.
 
 **Triage each survivor as `gap` or `equivalent` — this is not optional.** An
 *equivalent mutant* changes the source without changing any observable behavior, so no

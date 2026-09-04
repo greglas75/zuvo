@@ -132,7 +132,7 @@ A green PR is not a shipped PR.
 ### `PR_OPEN_BY_POLICY` — the fourth outcome, and it must be DETECTED
 
 An open PR is the correct end state whenever the repository, not the agent, owns the merge:
-a required human approval, a protected branch, CODEOWNERS, or a forge this skill cannot merge on.
+a required human approval, a protected branch, CODEOWNERS.
 Before this state existed there were only "merged" and "incomplete", and the retro log shows what
 that produced — the same missing outcome requested under ~25 invented names
 (`Bitbucket open-PR terminal state`, `PR-only terminal state`, `open-pr-no-merge-mode`,
@@ -144,25 +144,54 @@ prose escape: a bypass that exists as text an agent can type is a bypass that wi
 typed, and "merge is blocked" is a fact the system already publishes.
 
 ```bash
+# The projection MUST carry the check rollup: condition 2 below is a claim about checks, and a
+# `-q` that drops statusCheckRollup leaves the classifier with no data to satisfy it — it would
+# then have to assume "green", which is how a red or pending PR gets filed as policy-blocked.
+# `statusCheckRollup` mixes TWO node types and they do not share a schema: a CheckRun carries
+# .status + .conclusion, a legacy StatusContext carries only .state + .context. Mapping
+# `status:.status` alone yields null for every StatusContext, so on a repo using legacy commit
+# statuses condition 2 could never be satisfied and this state became unreachable. Normalize both.
 gh pr view "$PR" --json state,mergeStateStatus,reviewDecision,statusCheckRollup \
-  -q '{state:.state, merge:.mergeStateStatus, review:.reviewDecision}'
+  -q '{state:.state, merge:.mergeStateStatus, review:.reviewDecision,
+       checks:[.statusCheckRollup[]? |
+               {name:(.name // .context),
+                status:(.status // (if .state then "COMPLETED" else null end)),
+                concl:(.conclusion // .state)}]}'
 ```
 
 Qualifies as `PR_OPEN_BY_POLICY` when **every** condition holds:
 
 1. `state` is `OPEN`,
-2. every check has concluded and none failed (Shape B satisfied — a pending or red check is
-   Shape B, not policy),
+2. `checks` is empty, or every entry has `status == "COMPLETED"` and a `concl` in
+   {`SUCCESS`, `NEUTRAL`, `SKIPPED`} — read from the rollup above, never assumed. A pending or
+   failed check is Shape B, not policy,
+2b. `mergeStateStatus` is not `UNSTABLE` or `BEHIND`. The rollup is necessary but not sufficient:
+   it can lag or omit a run, and `UNSTABLE` is GitHub's own statement that a required check is not
+   green. When the two disagree, the more pessimistic one wins — that is Shape B, and re-reading
+   costs a second,
 3. the block is a POLICY, evidenced by one of:
-   - `reviewDecision` = `REVIEW_REQUIRED` or `CHANGES_REQUESTED` (a human owes an approval),
-   - `mergeStateStatus` = `BLOCKED` while all checks are green (branch protection),
-   - the forge is one this skill cannot merge on (no `gh`, or a non-GitHub remote),
+   - `reviewDecision` = `REVIEW_REQUIRED` (a human owes an approval that the agent cannot give),
+   - `mergeStateStatus` = `BLOCKED` while all checks are green **and** `reviewDecision` is not
+     `CHANGES_REQUESTED`. That second clause is load-bearing: GitHub reports `BLOCKED` for a PR
+     with requested changes too, so without it the `CHANGES_REQUESTED` exclusion below is
+     defeated by the branch-protection branch and the whole distinction collapses,
 4. and the blocker is **named in the output**, quoted from the field that carried it.
 
-Anything else that leaves a PR open is still `<SKILL> INCOMPLETE`. In particular
-`mergeStateStatus` = `DIRTY` (conflicts) or `BEHIND` is work the agent CAN do, not a policy —
-resolve or update the branch. `UNKNOWN` is the forge still computing mergeability: re-read it,
-do not classify it.
+Anything else that leaves a PR open is still `<SKILL> INCOMPLETE`. Three exclusions are easy to
+get wrong, and each one was an error in this state's first draft:
+
+- **`mergeStateStatus` = `DIRTY` (conflicts) or `BEHIND`** is work the agent CAN do, not a policy —
+  resolve or update the branch. `UNKNOWN` is the forge still computing mergeability: re-read it,
+  do not classify it.
+- **`reviewDecision` = `CHANGES_REQUESTED` is NOT policy.** A reviewer who requested concrete
+  changes has handed the agent *work*, by exactly the same logic that excludes `DIRTY`. Address
+  the comments; only once they are addressed and the PR is back to awaiting an approval does the
+  state become genuinely policy-owned. Filing a rejected PR as a landed artifact is the worst
+  reading this state permits, and four independent reviewers flagged the first draft for it.
+- **A forge this skill cannot merge on is NOT this state.** "No `gh`, or a non-GitHub remote" is a
+  *missing capability*, and a skill that cannot create or merge a PR has its own honest outcome
+  (`<SKILL> INCOMPLETE: branch pushed, PR not created`). Collapsing a tooling gap into a success
+  banner is precisely the laundering this include exists to prevent.
 
 A run ending in `PR_OPEN_BY_POLICY` prints its completion banner with the PR link and the
 blocker, does not ask the user what to do, and does not retry the merge.
