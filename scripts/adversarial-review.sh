@@ -386,7 +386,7 @@ Environment variables:
   ZUVO_AGY_MODEL           agy (Antigravity CLI) model — the sanctioned paid Gemini channel, and the
                            only Gemini lane this script supports (Google killed the free `gemini` CLI
                            for individuals — IneligibleTierError — and there is no other fallback).
-                           Display name from 'agy models' (default: "Gemini 3.7 Flash (High)").
+                           Display name from 'agy models' (default: "Gemini 3.8 Flash (High)").
                            3.1 Pro is NOT a deeper alternative here: measured 7/20 answered
                            vs 20/20 for Flash, at 3.5x the latency. See model-registry.sh.
   ZUVO_CURSOR_MODEL        cursor-agent model (default: composer-2.5-fast; id from 'cursor-agent models')
@@ -1653,7 +1653,7 @@ run_agy() {
   # prompt. Override the model with ZUVO_AGY_MODEL. Do NOT reach for "Gemini 3.1 Pro (High)"
 # expecting more depth: measured 7/20 answered vs 20/20 for 3.7 Flash, at 3.5x the latency;
   # default comes from the central model registry (ZUVO_MODEL_AGY).
-  local model="${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.7 Flash (High)}}"
+  local model="${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (High)}}"
   local err_file="$JSON_TMPDIR/err_agy.txt"
   local out_file="$JSON_TMPDIR/raw_agy.txt"
   local result status=0
@@ -2081,7 +2081,7 @@ provider_model() {
   case "$1" in
     codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}" ;;
     codex-5.3)    echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}" ;;
-    agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.7 Flash (High)}}" ;;
+    agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (High)}}" ;;
     openrouter)   echo "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-z-ai/glm-5.3}}" ;;
     openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-qwen/qwen3.8-flash}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;

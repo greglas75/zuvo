@@ -63,11 +63,26 @@ ZUVO_MODEL_CODEX_REVIEW_ALT="${ZUVO_MODEL_CODEX_REVIEW_ALT:-gpt-5.5}" # alternat
 #
 # A reviewer that does not answer has precision 0, whatever it scores when it does.
 # Display name, exactly as `agy models` prints it: a wrong string fails silently.
-ZUVO_MODEL_AGY="${ZUVO_MODEL_AGY:-Gemini 3.7 Flash (High)}"
-# Same value as the default: 3.7 Flash (High) is the deepest lane that reliably answers.
-# Pointing this at 3.1 Pro would reintroduce the 65% non-answer rate exactly where a
-# caller asked for MORE depth, which is the worst place to put it.
-ZUVO_MODEL_AGY_DEEP="${ZUVO_MODEL_AGY_DEEP:-Gemini 3.7 Flash (High)}"
+#
+# 3.8 Flash (High) since 2026-09-05, on measurement: the same 20 review diffs through both,
+# every finding judged REAL/FALSE_POSITIVE by an independent Opus judge against the diff,
+# with a shared defect vocabulary so neither model scores twice for one defect.
+# The decisive number is MARGINAL coverage over the other six providers, not the head-to-head:
+#   others alone 215 defects · +3.7 Flash 232 (17 unique) · +3.8 Flash 247 (32 unique)
+# 3.8 nearly doubles what this lane contributes that nobody else finds. It is bought with
+# three real regressions, all measured, none disqualifying for an ADVERSARIAL reviewer where
+# a false positive dies in triage and a missed defect ships:
+#   precision 82% -> 73%   (30 false positives vs 15)
+#   median 66s -> 172s, p90 273s, max 308s against the 400s PROVIDER_TIMEOUT
+#   1/20 empty answer, plus 2/20 returning zero findings — one of them a diff in which the
+#   other providers found 37 real defects and 3.7 found 6. 3.8 is streakier, not just slower.
+# Running BOTH was measured and rejected: +9 defects over 3.8 alone for two of the five
+# provider slots spent on one vendor, and cross-VENDOR spread is where the coverage comes from.
+ZUVO_MODEL_AGY="${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (High)}"
+# Same value as the default. This is the deepest lane that reliably answers; pointing it at
+# 3.1 Pro would reintroduce the 65% non-answer rate exactly where a caller asked for MORE
+# depth, which is the worst place to put it.
+ZUVO_MODEL_AGY_DEEP="${ZUVO_MODEL_AGY_DEEP:-Gemini 3.8 Flash (High)}"
 ZUVO_MODEL_GEMINI_API="${ZUVO_MODEL_GEMINI_API:-gemini-3.1-pro-preview}"  # gemini-api curl fallback (needs GEMINI_API_KEY)
 
 # ── OpenRouter (paid, opt-in) ───────────────────────────────────────
