@@ -840,6 +840,52 @@ PYEOF
     warn "hooks/skill-usage-logger.sh not found in repo — skill-usage logger not installed"
   fi
 
+  # ── Claude Code PreToolUse hook: farm-no-local-tests (vendored 2026-09-06)
+  # Kept every test suite off this workstation, and lived ONLY at ~/.claude/hooks/ with no
+  # source here — one machine rebuild from vanishing, and unreviewable while it existed. Its
+  # own defect proved the cost: it segmented commands without joining backslash-newlines, so
+  # the continuation line of a multi-line `git add a.md \\ <newline> tests/hooks/x.sh` became a
+  # segment whose first word IS a test path, and it blocked a `git add`. A guard that cries
+  # wolf on staging is a guard people learn to route around. The file copy rides along on
+  # install_hook_tree above; only the registration is here. PreToolUse matcher=Bash.
+  local fnlt_dst="$hooks_dir/farm-no-local-tests.sh"
+  if [[ -f "$ZUVO_DIR/hooks/farm-no-local-tests.sh" ]]; then
+    chmod +x "$fnlt_dst" 2>/dev/null || true
+    ok "farm-no-local-tests.sh installed (~/.claude/hooks/)"
+    local claude_settings="$HOME/.claude/settings.json"
+    if [[ -f "$claude_settings" ]]; then
+      python3 - "$claude_settings" "$fnlt_dst" <<'PYEOF' || warn "farm-no-local-tests merge into ~/.claude/settings.json failed (manual edit may be needed)"
+import json, sys, os
+settings_path, hook_cmd = sys.argv[1], sys.argv[2]
+try:
+    with open(settings_path) as f:
+        s = json.load(f)
+except Exception as e:
+    print(f'  ! ~/.claude/settings.json is malformed ({e}) — skipping farm-no-local-tests merge')
+    sys.exit(1)
+hooks = s.setdefault('hooks', {})
+ptu = hooks.setdefault('PreToolUse', [])
+hook_cmd_norm = hook_cmd.replace(os.path.expanduser('~'), '$HOME')
+already = any(
+    any(h.get('command', '').endswith('farm-no-local-tests.sh') for h in group.get('hooks', []))
+    for group in ptu
+)
+if already:
+    print('  ✓ farm-no-local-tests already registered in ~/.claude/settings.json (no change)')
+    sys.exit(0)
+ptu.append({'matcher': 'Bash', 'hooks': [{'type': 'command', 'command': hook_cmd_norm, 'timeout': 10}]})
+with open(settings_path, 'w') as f:
+    json.dump(s, f, indent=2)
+    f.write('\n')
+print('  ✓ farm-no-local-tests registered in ~/.claude/settings.json (PreToolUse matcher=Bash)')
+PYEOF
+    else
+      warn "~/.claude/settings.json not found — farm-no-local-tests not registered"
+    fi
+  else
+    warn "hooks/farm-no-local-tests.sh not found in repo — farm guard not installed"
+  fi
+
   # ── Claude Code SessionStart hook: zuvo-plugin-enable-guard (added 2026-08-12)
   # A release can leave the plugin DISABLED even after `claude plugin enable` reports
   # success: the CLI writes ~/.claude/settings.json, and a Claude Code that was running
