@@ -1304,8 +1304,14 @@ detect_providers() {
   # A key file on disk is not consent to spend on every review: this one exists because of a
   # benchmark, and auto-detecting on it would silently turn a free pipeline into a metered one.
   # ZUVO_ADV_OPENROUTER=1 is a deliberate act a human performs once; the key alone is not.
-  # Measured value when enabled (20 diffs, Opus-judged): glm-5.3 adds 32 distinct defects that
-  # nothing in the free set finds, qwen3.8-flash adds 22, at $2.92 and $0.26 per 20 runs.
+  # Cost, measured in PRODUCTION rather than in the benchmark (2026-09-05, one day):
+  #   glm-5.3   143 calls, 72% returned findings, $12.10 billed
+  #   qwen3.8   91 calls,  35% returned findings (46 empty, 13 timeouts)
+  # glm earns its findings and costs too much to leave always on; qwen is cheap and mostly
+  # does not answer, because it averages 336s against this script's 400s PROVIDER_TIMEOUT.
+  # Hence: the flag stays OFF by default fleet-wide and is set per run when a review earns it.
+  # The benchmark rated qwen a bargain because it ran under a 900s ceiling — a benchmark
+  # ceiling looser than production turns a latency problem into an invisible one.
   if [[ "${ZUVO_ADV_OPENROUTER:-0}" == "1" ]]; then
     if [[ -n "${OPENROUTER_API_KEY:-}" || -f "$HOME/.zuvo/openrouter.key" ]]; then
       providers="${providers:+$providers }openrouter openrouter-alt"
@@ -1427,14 +1433,15 @@ fi
 # fanned out to 5 CLIs. Measured over 30 days (~/.zuvo/adversarial.log): 9,613 adversarial
 # invocations = 43,228 provider calls = 890M chars shipped to external providers and 387 hours
 # of summed wall-clock, for 891 skill runs in the last week alone (~2.5 adversarial passes per
-# skill run, ~12.6 provider calls). Cutting to the top 3 of the measured ranking in
-# detect_providers() drops 39% of the provider calls and 35% of the wall-clock while retaining
-# 91.9% of the runs that produced any CRITICAL — the two providers this removes are the two
-# that earn their slot least (see the table above).
+# skill run, ~12.6 provider calls). Capping at 5 bounds that per run. The cap SAMPLES the
+# survivors at random rather than keeping the top N: bounding cost per run is its job, and
+# permanently retiring the tail of the ranking is not. Truncation did the latter for free and
+# nobody noticed until a billing graph showed one paid lane on every review — see the sampling
+# block below for the numbers.
 #
 # Applied LAST, after host auto-exclusion / --exclude / --exclude-last / the auth-fail cache,
-# so the cap always keeps the best THREE still standing rather than three chosen before the
-# host reviewer was removed. Skipped only for an explicit --provider (already one provider).
+# so the sample is drawn from the providers still standing rather than from a set chosen
+# before the host reviewer was removed. Skipped only for an explicit --provider (already one).
 # It DOES apply to the test harness's injected list — that list stands in for what
 # detect_providers() would return, so exempting it would leave the cap untestable; every
 # existing suite injects <= 3 mocks and is unaffected.
@@ -1446,10 +1453,35 @@ if [[ -z "$PROVIDER" && -n "$PROVIDERS" ]]; then
   fi
   _ar_avail=$(echo "$PROVIDERS" | wc -w | tr -d ' ')
   if [[ "$_ar_avail" -gt "$_AR_MAX_PROVIDERS" ]]; then
-    _ar_dropped=$(echo "$PROVIDERS" | tr ' ' '\n' | sed '/^$/d' | tail -n +$((_AR_MAX_PROVIDERS + 1)) | tr '\n' ' ' | sed 's/ *$//')
-    PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | sed '/^$/d' | head -n "$_AR_MAX_PROVIDERS" | tr '\n' ' ' | sed 's/ *$//')
-    echo "  Fan-out cap: keeping top $_AR_MAX_PROVIDERS by measured yield ($PROVIDERS); not running: $_ar_dropped" >&2
-    echo "  (raise with ZUVO_REVIEW_MAX_PROVIDERS=N — see detect_providers() for the ranking data)" >&2
+    # SAMPLED at random, not truncated to the top N. Truncation made the cap pick the SAME
+    # providers on every single run: with 8 available and a cap of 5, ranks 6-8 (claude, kimi,
+    # openrouter-alt) never executed once, so three configured reviewers were dead weight and
+    # the paid openrouter lane at rank 5 billed on 100% of reviews ($12.10 of GLM 5.3 on
+    # 2026-09-05 alone). A cap is meant to bound COST PER RUN, not to permanently retire the
+    # tail of the ranking — over many runs every provider should get its turn, which is also
+    # what keeps cross-model coverage from collapsing onto one fixed set of blind spots.
+    # Sample first, then re-emit in ranking order so logs and --single stay readable.
+    # Sample by INDEX, never by name. Filtering the list against a set of kept NAMES keeps
+    # every duplicate of a kept name, so a list like "a a a b b" with cap 3 came back with all
+    # five and the cap silently stopped existing. Production names are unique and the test
+    # harness's are not, which is precisely the sort of gap that ships.
+    _ar_idx=$(echo "$PROVIDERS" | tr ' ' '\n' | sed '/^$/d' | nl -ba -w1 -s'	')
+    if [[ "${ZUVO_REVIEW_PROVIDER_PICK:-random}" == "ranked" ]]; then
+      _ar_keep_idx=$(printf '%s\n' "$_ar_idx" | head -n "$_AR_MAX_PROVIDERS" | cut -f1)
+    else
+      # sort -R exists on BSD sort; --random-source does NOT, so the reproducible path for
+      # tests is ZUVO_REVIEW_PROVIDER_PICK=ranked, never a seed.
+      _ar_keep_idx=$(printf '%s\n' "$_ar_idx" | sort -R | head -n "$_AR_MAX_PROVIDERS" | cut -f1)
+    fi
+    # Re-emit in ranking order: --single takes the head of this list, so a randomly ordered
+    # sample would quietly turn --single into --rotate.
+    _ar_sel=$(printf '%s\n' "$_ar_keep_idx" | tr '\n' ',' | sed 's/,$//')
+    PROVIDERS=$(printf '%s\n' "$_ar_idx" | awk -F'\t' -v k="$_ar_sel" \
+      'BEGIN{n=split(k,a,",");for(i=1;i<=n;i++)K[a[i]]=1} K[$1]{print $2}' | tr '\n' ' ' | sed 's/ *$//')
+    _ar_dropped=$(printf '%s\n' "$_ar_idx" | awk -F'\t' -v k="$_ar_sel" \
+      'BEGIN{n=split(k,a,",");for(i=1;i<=n;i++)K[a[i]]=1} !K[$1]{print $2}' | tr '\n' ' ' | sed 's/ *$//')
+    echo "  Fan-out cap: $_AR_MAX_PROVIDERS of $_ar_avail sampled at random ($PROVIDERS); not running this time: $_ar_dropped" >&2
+    echo "  (size with ZUVO_REVIEW_MAX_PROVIDERS=N; ZUVO_REVIEW_PROVIDER_PICK=ranked for the old top-N behaviour)" >&2
   fi
 fi
 
