@@ -46,9 +46,46 @@ if [[ ! -d "$MARKETPLACE_DIR/.claude-plugin" ]]; then
 fi
 
 # >>> zuvo:test-gate  (Step 0: run the aggregate suite before ANY mutation)
+#
+# A GREEN EXIT IS NOT A GREEN GATE. `run-all.sh` counts SKIP as a first-class non-failure — which
+# is right for scope-based skips (the infra suite outside FULL scope) and dangerous for skips
+# caused by a MISSING TOOL. A box without shellcheck runs the whole suite, exits 0, and releases
+# with the shell-lint gate silently off; the same holds for ruff/mypy and the bats corpus. Nothing
+# in this script noticed, because it only read `$?`.
+#
+# Measured 2026-09-06 while evaluating whether to route this step to the test farm: on the farm
+# image FIVE gates go dark at once — shellcheck (309 files, hard zero errors AND a zero-warning
+# ratchet), the Python lint gate, the bats corpus, zsh and the classic-TS path — and the suite
+# still finishes `RESULT: PASS=110 FAIL=8 SKIP=4`. That measurement is also why this step is NOT
+# routed to the farm: a release gate that cannot go red is not a gate, and moving it there would
+# have traded four minutes of laptop CPU for the strongest checks in the repo.
 if [[ "${ZUVO_SKIP_TESTS:-}" != "1" ]]; then
-  bash "$ZUVO_DIR/tests/run-all.sh" || fail "Tests failed — fix or ZUVO_SKIP_TESTS=1 to bypass (logged)"
-  ok "Step 0: test suite green"
+  _suite_log="$(mktemp "${TMPDIR:-/tmp}/zuvo-suite.XXXXXX")"
+  if ! bash "$ZUVO_DIR/tests/run-all.sh" 2>&1 | tee "$_suite_log"; then
+    rm -f "$_suite_log"
+    fail "Tests failed — fix or ZUVO_SKIP_TESTS=1 to bypass (logged)"
+  fi
+
+  # A gate that went dark because its TOOL is absent, as opposed to one skipped by scope. Each of
+  # these strings is printed by the gate itself at the moment it stands down.
+  _dark=$(grep -E '^SKIP:.*(did NOT run|not installed|not available|not exercised on this machine)' \
+            "$_suite_log" | sed 's/^SKIP: */    - /' || true)
+  rm -f "$_suite_log"
+
+  if [[ -n "$_dark" ]]; then
+    if [[ "${ZUVO_ALLOW_DARK_GATES:-}" == "1" ]]; then
+      warn "Step 0: suite green, but these gates did NOT run (ZUVO_ALLOW_DARK_GATES=1):"
+      printf '%s\n' "$_dark"
+    else
+      echo "$_dark" >&2
+      fail "Step 0: the suite exited 0 but the gates above never ran — their tools are missing on this machine.
+       A release gated by a check that cannot fail is not gated. Install the missing tool
+       (macOS: brew install shellcheck bats-core ruff), or accept the weaker gate explicitly
+       with ZUVO_ALLOW_DARK_GATES=1."
+    fi
+  else
+    ok "Step 0: test suite green (no gate stood down for a missing tool)"
+  fi
 else
   warn "Step 0 SKIPPED (ZUVO_SKIP_TESTS=1)"
 fi

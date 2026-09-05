@@ -43,10 +43,21 @@ pass "all three helpers present and parse"
 kv() { sed -n "s/^$2=//p" <<<"$1" | head -1; }
 
 # ── 1. codesift-worktree-scope.sh ────────────────────────────────────────────
+# IS_GIT gates every assertion that assumes git metadata. The test farm ships a job directory
+# WITHOUT it, where `not_a_repo` is the correct answer — asserting `scope_only` there fails the
+# helper for being right. Both branches assert something real; neither is a free pass.
+if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then IS_GIT=1; else IS_GIT=0; fi
+
 out="$(bash "$WT_SCOPE" "$ROOT" 2>&1)"
-[ "$(kv "$out" action)" = "scope_only" ] \
-  && pass "worktree-scope: main checkout → scope_only" \
-  || bad "worktree-scope: main checkout gave action=$(kv "$out" action), want scope_only"
+if [ "$IS_GIT" = 1 ]; then
+  [ "$(kv "$out" action)" = "scope_only" ] \
+    && pass "worktree-scope: main checkout → scope_only" \
+    || bad "worktree-scope: main checkout gave action=$(kv "$out" action), want scope_only"
+else
+  [ "$(kv "$out" action)" = "not_a_repo" ] \
+    && pass "worktree-scope: non-git checkout → not_a_repo" \
+    || bad "worktree-scope: non-git checkout gave action=$(kv "$out" action), want not_a_repo"
+fi
 
 out="$(bash "$WT_SCOPE" "$TMP" 2>&1)"
 [ "$(kv "$out" action)" = "not_a_repo" ] \
@@ -54,10 +65,21 @@ out="$(bash "$WT_SCOPE" "$TMP" 2>&1)"
   || bad "worktree-scope: non-repo gave action=$(kv "$out" action), want not_a_repo"
 
 # The header calls a FILE the form callers are told to pass, so it must be exercised as one.
-out="$(bash "$WT_SCOPE" "$WT_SCOPE" 2>&1)"
-[ "$(kv "$out" target_repo)" = "$ROOT" ] \
-  && pass "worktree-scope: a file argument resolves to its repo" \
-  || bad "worktree-scope: file argument gave target_repo=$(kv "$out" target_repo), want $ROOT"
+# Guarded on the tree actually being a git repo: the test farm ships a job directory WITHOUT git
+# metadata, where `not_a_repo` is the CORRECT answer — asserting `$ROOT` there fails the helper
+# for being right. (Found by running this suite on the farm; it passes locally either way, which
+# is exactly why an environment assumption survives until something runs it somewhere else.)
+if [ "$IS_GIT" = 1 ]; then
+  out="$(bash "$WT_SCOPE" "$WT_SCOPE" 2>&1)"
+  [ "$(kv "$out" target_repo)" = "$ROOT" ] \
+    && pass "worktree-scope: a file argument resolves to its repo" \
+    || bad "worktree-scope: file argument gave target_repo=$(kv "$out" target_repo), want $ROOT"
+else
+  out="$(bash "$WT_SCOPE" "$WT_SCOPE" 2>&1)"
+  [ "$(kv "$out" action)" = "not_a_repo" ] \
+    && pass "worktree-scope: file argument outside a git repo → not_a_repo (non-git checkout)" \
+    || bad "worktree-scope: non-git checkout gave action=$(kv "$out" action), want not_a_repo"
+fi
 
 # An unreadable scope must ERROR, not answer about the CALLER's repo with exit 0.
 NOPERM="$TMP/noperm"
