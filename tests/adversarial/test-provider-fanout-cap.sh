@@ -85,6 +85,43 @@ out=$(env -u ZUVO_REVIEW_MAX_PROVIDERS ZUVO_REVIEW_TEST_PROVIDERS="mock-success 
 attempted=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("attempted_count","?"))' 2>/dev/null || echo "?")
 assert_eq "5" "$attempted" "6 providers, no override -> 5 dispatched"
 
+# ─── Case 1d: pinned providers bypass the draw ───────────────────────────────
+# agy (Gemini 3.8 Flash) is pinned by default because it is the highest measured MARGINAL
+# contributor: 32 defects no other provider finds. A coin flip on the biggest unique
+# contributor loses coverage nothing else can recover. The rest of the slots stay random,
+# so this must NOT collapse back into "rank order always wins" — CAP.1c still has to pass.
+
+start_test "CAP.1d pinned provider is in every sample; the rest still vary"
+: > "$HERE/.tmp/cap1d.sets"
+for _i in $(seq 1 20); do
+  ZUVO_REVIEW_MAX_PROVIDERS=2 ZUVO_REVIEW_PIN_PROVIDERS="mock-empty" \
+    ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail mock-empty" \
+    bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1d.err" >/dev/null
+  sed -n 's/.*of 3 (\([^)]*\)).*/\1/p' "$HERE/.tmp/cap1d.err" | head -1 >> "$HERE/.tmp/cap1d.sets"
+done
+_runs=$(grep -c . "$HERE/.tmp/cap1d.sets" | tr -d ' ')
+_with_pin=$(grep -c 'mock-empty' "$HERE/.tmp/cap1d.sets" | tr -d ' ')
+_variants=$(sort -u "$HERE/.tmp/cap1d.sets" | grep -c . | tr -d ' ')
+assert_eq "$_runs" "$_with_pin" "the pinned provider appears in every single sample"
+if [ "$_variants" -ge 2 ]; then
+  pass "the non-pinned slot still varies ($_variants distinct sets)"
+else
+  fail "the non-pinned slot still varies" "pinning froze the whole sample: $(sort -u "$HERE/.tmp/cap1d.sets" | tr '\n' '|')"
+fi
+
+start_test "CAP.1e ZUVO_REVIEW_PIN_PROVIDERS= (empty) pins nothing"
+# The default is a value, not a hardcoded name, so it must be possible to switch off.
+# Uses ${VAR-default}, not ${VAR:-default}: an explicitly EMPTY value has to mean "none",
+# which :- would silently override back to the default.
+ZUVO_REVIEW_MAX_PROVIDERS=2 ZUVO_REVIEW_PIN_PROVIDERS="" \
+  ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail mock-empty" \
+  bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1e.err" >/dev/null
+_err=$(cat "$HERE/.tmp/cap1e.err")
+case "$_err" in
+  *"pinned:"*) fail "no pin announced when the pin list is empty" "stderr claimed a pin: $_err" ;;
+  *)           pass "no pin announced when the pin list is empty" ;;
+esac
+
 # ─── Case 2: the cap is a ceiling, not a floor ───────────────────────────────
 # Fewer providers than the cap must pass through untouched and stay silent.
 

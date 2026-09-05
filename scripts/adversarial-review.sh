@@ -1466,12 +1466,36 @@ if [[ -z "$PROVIDER" && -n "$PROVIDERS" ]]; then
     # five and the cap silently stopped existing. Production names are unique and the test
     # harness's are not, which is precisely the sort of gap that ships.
     _ar_idx=$(echo "$PROVIDERS" | tr ' ' '\n' | sed '/^$/d' | nl -ba -w1 -s'	')
+    #
+    # PINNED providers bypass the draw and always take a slot when they are present.
+    # agy (Gemini 3.8 Flash) is pinned because it is the highest measured MARGINAL
+    # contributor in the set: 32 defects that no other provider finds, against 17 for the
+    # model it replaced (20 diffs, Opus-judged, shared defect vocabulary, 2026-09-05).
+    # Leaving the biggest unique contributor to a coin flip loses coverage that nothing
+    # else in the set can recover. Pinning is deliberately NOT "rank 1 always wins": it is
+    # a per-provider decision backed by a marginal-coverage number, and the rest of the
+    # slots stay random so the tail keeps getting its turn.
+    # Override with ZUVO_REVIEW_PIN_PROVIDERS="a b" or "" to pin nothing.
+    _ar_pin="${ZUVO_REVIEW_PIN_PROVIDERS-agy}"
     if [[ "${ZUVO_REVIEW_PROVIDER_PICK:-random}" == "ranked" ]]; then
       _ar_keep_idx=$(printf '%s\n' "$_ar_idx" | head -n "$_AR_MAX_PROVIDERS" | cut -f1)
     else
-      # sort -R exists on BSD sort; --random-source does NOT, so the reproducible path for
-      # tests is ZUVO_REVIEW_PROVIDER_PICK=ranked, never a seed.
-      _ar_keep_idx=$(printf '%s\n' "$_ar_idx" | sort -R | head -n "$_AR_MAX_PROVIDERS" | cut -f1)
+      # Pinned first (capped, in ranking order), then fill the remaining slots at random
+      # from everything else. sort -R exists on BSD sort; --random-source does NOT, so the
+      # reproducible path for tests is ZUVO_REVIEW_PROVIDER_PICK=ranked, never a seed.
+      _ar_pin_idx=$(printf '%s\n' "$_ar_idx" | awk -F'	' -v p="$_ar_pin" \
+        'BEGIN{n=split(p,a," ");for(i=1;i<=n;i++)P[a[i]]=1} P[$2]{print $1}' \
+        | head -n "$_AR_MAX_PROVIDERS")
+      _ar_pin_n=$(printf '%s' "$_ar_pin_idx" | grep -c . || true)
+      _ar_fill=$(( _AR_MAX_PROVIDERS - _ar_pin_n ))
+      if [[ "$_ar_fill" -gt 0 ]]; then
+        _ar_rest_idx=$(printf '%s\n' "$_ar_idx" | awk -F'	' -v p="$_ar_pin" \
+          'BEGIN{n=split(p,a," ");for(i=1;i<=n;i++)P[a[i]]=1} !P[$2]{print $1}' \
+          | sort -R | head -n "$_ar_fill")
+      else
+        _ar_rest_idx=""
+      fi
+      _ar_keep_idx=$(printf '%s\n%s\n' "$_ar_pin_idx" "$_ar_rest_idx" | sed '/^$/d' | sort -n)
     fi
     # Re-emit in ranking order: --single takes the head of this list, so a randomly ordered
     # sample would quietly turn --single into --rotate.
@@ -1480,7 +1504,13 @@ if [[ -z "$PROVIDER" && -n "$PROVIDERS" ]]; then
       'BEGIN{n=split(k,a,",");for(i=1;i<=n;i++)K[a[i]]=1} K[$1]{print $2}' | tr '\n' ' ' | sed 's/ *$//')
     _ar_dropped=$(printf '%s\n' "$_ar_idx" | awk -F'\t' -v k="$_ar_sel" \
       'BEGIN{n=split(k,a,",");for(i=1;i<=n;i++)K[a[i]]=1} !K[$1]{print $2}' | tr '\n' ' ' | sed 's/ *$//')
-    echo "  Fan-out cap: $_AR_MAX_PROVIDERS of $_ar_avail sampled at random ($PROVIDERS); not running this time: $_ar_dropped" >&2
+    _ar_pinned_names=$(printf '%s\n' "$_ar_idx" | awk -F'	' -v p="${_ar_pin:-}" \
+      'BEGIN{n=split(p,a," ");for(i=1;i<=n;i++)P[a[i]]=1} P[$2]{print $2}' | tr '\n' ' ' | sed 's/ *$//')
+    if [[ -n "$_ar_pinned_names" ]]; then
+      echo "  Fan-out cap: $_AR_MAX_PROVIDERS of $_ar_avail ($PROVIDERS) — pinned: $_ar_pinned_names, rest sampled at random; not running this time: $_ar_dropped" >&2
+    else
+      echo "  Fan-out cap: $_AR_MAX_PROVIDERS of $_ar_avail sampled at random ($PROVIDERS); not running this time: $_ar_dropped" >&2
+    fi
     echo "  (size with ZUVO_REVIEW_MAX_PROVIDERS=N; ZUVO_REVIEW_PROVIDER_PICK=ranked for the old top-N behaviour)" >&2
   fi
 fi
