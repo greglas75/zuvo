@@ -246,14 +246,14 @@ specifier types (`^`, `~`, exact), overrides, resolutions.
 
 **With dependency-cruiser:**
 ```bash
-npx depcruise --no-config --output-type json --metrics TARGET_ROOT
+npx --yes depcruise --no-config --output-type json --metrics TARGET_ROOT
 ```
 
 **With madge (fallback):**
 ```bash
-npx madge --json TARGET_ROOT
-npx madge --circular --json --ts-config tsconfig.json TARGET_ROOT
-npx madge --orphans --json TARGET_ROOT
+npx --yes madge --json TARGET_ROOT
+npx --yes madge --circular --json --ts-config tsconfig.json TARGET_ROOT
+npx --yes madge --orphans --json TARGET_ROOT
 ```
 
 **Grep fallback (always available):**

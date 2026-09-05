@@ -36,6 +36,33 @@ Do not abandon CodeSift after the first repo/index failure when initialization h
 
 If CodeSift succeeds at indexing/init but later queries fail with `Transport closed` (or equivalent transport/session teardown), stop retrying CodeSift for the rest of the current skill run. Print one degraded-mode note and switch to native tools immediately.
 
+**Stale ON ARRIVAL (the index predates the working tree, before you changed anything).** Check this
+once, right after Step 2, and REFRESH — do not carry it as a caveat. `index_status()` prints
+`last_indexed`; compare it against the tree:
+
+```bash
+git log -1 --format=%cI          # newest commit
+git status --porcelain | head -1 # any uncommitted work at all
+```
+
+If either is newer than `last_indexed`, the index describes a tree that no longer exists. Refresh
+before the first symbol/pattern query: `index_file(path=…)` per file when `git diff --name-only`
+lists a handful, `index_folder(path=<root>)` once when the gap is broad or the count is unknown.
+Then record `OK (N files / N symbols, reindexed)` in the availability block.
+
+**This is NOT the after-an-edit case below, and the cost argument there does not transfer.** That
+rule refuses `index_folder` because a full re-index is minutes of cost for ONE file you just
+touched, and it is right. Here the whole discovery surface is stale before the audit begins, so
+the same minutes buy the entire run its evidence — and "verify natively for this file only" has no
+file to point at. Conflating the two is what produced an architecture review of tgm-survey-platform
+on 2026-09-05 whose header read `OK (16984 files / 264275 symbols) | Discovery only; last indexed
+September 3, older than working tree`: the agent applied the one-file remedy to a repo-wide
+staleness, silently demoted CodeSift to discovery, and scored the dimensions off an older tree.
+
+**Never present a finding from a knowingly stale index as a fact about the current tree.** Refresh,
+or verify that specific finding on disk and say which. A caveat in the header does not license
+scored conclusions underneath it — the reader takes the scores at face value.
+
 **Stale index after an edit (the query SUCCEEDS but the answer is old).** This failure is silent — no error to react to. If `index_file` returns `skipped=true`, or `get_file_outline` / `analyze_complexity` / `search_symbols` still describe the **pre-edit** structure after an edit you confirmed on disk, the index is stale. Do **NOT** keep re-calling `index_file` and do **NOT** escalate to `index_folder(force=true)` — a re-index that was already skipped will be skipped again, and a full re-index is minutes of cost for a one-file staleness. Instead:
 
 1. Confirm on disk, not through the index: `wc -l <file>` (size) + a bounded `Read` (offset/limit) of the changed region.
@@ -507,6 +534,44 @@ Audit skills MUST emit this block at the top of their report (after the audit ti
 - `EMPTY-RESULT (<fallback>)` — tool returned empty on a non-empty repo (anomaly); used `<fallback>`
 - `UNAVAILABLE` — CodeSift MCP not present in tool list at all
 - `HOOKS-BLOCKED (<fallback>)` — CodeSift unreachable AND its precheck hooks refused the native fallback (Grep/Read/find); used `<fallback>` per "When the fallback itself is blocked"
+
+### External CLI tools (madge, jscpd, radon, depcruise…) — availability is MEASURED, never assumed
+
+The vocabulary above describes **CodeSift MCP tools only**: `UNAVAILABLE` means the MCP server is
+absent from the tool list. It says nothing about a command-line tool, and borrowing it for one
+produces a confident false statement.
+
+That happened on 2026-09-05 in an architecture review of tgm-survey-platform, which reported
+`madge / jscpd | UNAVAILABLE | Not installed in this checkout; native substitutes used`. Both were
+one command away — the skill's own step names `npx madge` — and `npx madge --version` answers
+`8.0.0`, `npx jscpd --version` answers `cpd 5.0.11`, in that very checkout. Two of the review's
+dimensions fell back to a "lexical approximation, not AST analysis" for no reason at all.
+
+**Rules:**
+
+- **A tool is UNAVAILABLE only after you ran it and it failed.** Absence from `PATH`, from
+  `package.json`, or from `node_modules` is NOT evidence — `npx` fetches on demand. Record the
+  status from the invocation's exit code and error text, never from a lookup.
+- **Use `npx --yes <tool>`.** Without `--yes`, npx asks for confirmation before fetching a package
+  it has not cached; in a non-interactive agent shell that prompt is either a stall or an error,
+  and it reads exactly like "the tool is missing".
+- **This needs no install consent.** `npx` runs the package from its own cache and writes nothing
+  into the project — no `package.json` entry, no lockfile change. The DD-3 consent gate exists for
+  installs that MUTATE the project (`skills/mutation-test/SKILL.md` §0.1c); it does not apply here,
+  so do not invent one and skip the tool for lack of permission.
+- **Honour an explicit policy, and name it as the reason.** With `--no-install` or
+  `ZUVO_NO_INSTALL=1`, skip the fetch and report `SKIPPED-NO-INSTALL (policy)` — which is a
+  decision, not a capability claim.
+
+Statuses for CLI tools, in addition to `OK`:
+
+- `FETCH-FAILED (<first line of the error>)` — `npx --yes` was run and could not obtain the tool
+  (offline, blocked registry, resolution error). Quote the error; "not installed" is not one.
+- `RAN-FAILED (<exit code>)` — the tool was obtained and crashed on this repo.
+- `SKIPPED-NO-INSTALL (policy)` — a `--no-install` / `ZUVO_NO_INSTALL` run.
+
+A native substitute may stand in for any of those three, and the row must say so — but a substitute
+chosen without an invocation is a downgrade of the audit reported as a property of the machine.
 
 **One status per row.** Do NOT concatenate values with `|` inside a cell — that breaks downstream grep parsing of acceptance gates. If a tool was unavailable for one dimension and `OK` for another, emit two separate rows scoped by dimension:
 

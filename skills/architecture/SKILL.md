@@ -199,11 +199,24 @@ Gather quantitative metrics before qualitative scoring. They provide evidence an
 
 4. **Instability index:** Per module: `I = fan-out / (fan-in + fan-out)`. Stable (I<0.3) modules should be abstract; unstable (I>0.7) should be concrete. Flag violations.
 
-5. **Tool-assisted metrics (JS/TS projects):**
-   - `npx madge --circular --extensions ts,tsx [source-dir]` for cycle detection
-   - `npx jscpd [source-dir] --min-lines 10 --reporters json` for duplication
+5. **Tool-assisted metrics (JS/TS projects). RUN THEM — do not check whether they are installed.**
+   - `npx --yes madge --circular --extensions ts,tsx [source-dir]` for cycle detection
+   - `npx --yes jscpd [source-dir] --min-lines 10 --reporters json` for duplication
    - ESLint complexity rules (if project config available)
-   For Python: `radon cc [source-dir] -a -nc`
+   For Python: `uvx radon cc [source-dir] -a -nc` (or `pipx run radon`, or `radon` if present)
+
+   These are fetched on demand. **Their absence from `package.json`, `node_modules` or `PATH` is
+   not a reason to skip them and is not evidence that they are unavailable** — `npx` pulls them
+   into its own cache and writes nothing into the project, so no install consent applies (that
+   gate exists for installs that mutate the project, not for this). `--yes` matters: without it
+   npx prompts before fetching an uncached package, and in a non-interactive shell that prompt is
+   indistinguishable from the tool being missing.
+
+   A 2026-09-05 review of tgm-survey-platform recorded `madge / jscpd | UNAVAILABLE | Not installed
+   in this checkout` and dropped A1/A3/A4 to a lexical approximation. In that same checkout
+   `npx madge --version` returns `8.0.0` and `npx jscpd --version` returns `cpd 5.0.11`. Neither
+   had been run. Report a tool unavailable only with the failing command's own error text — see
+   the CLI-tool rules in `../../shared/includes/codesift-setup.md`.
 
 6. **Temporal coupling (git history):** Identify files that frequently change together despite no direct import relationship.
 

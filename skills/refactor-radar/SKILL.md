@@ -205,7 +205,7 @@ Run on the top `--validate` rows (default `min(3 × top, 60)`), in one pass, no 
 
 | Signal | How | Effect |
 |--------|-----|--------|
-| **Cycles through the family** | `find_circular_deps(file_pattern=<family dir>)`; fallback `npx madge --circular --extensions ts,tsx <dir>`. Discard type-only cycles (`import type`). | Real cycle → class `BREAK_CIRCULAR`; note count for the DoD ("cycles do not increase") |
+| **Cycles through the family** | `find_circular_deps(file_pattern=<family dir>)`; fallback `npx --yes madge --circular --extensions ts,tsx <dir>`. Discard type-only cycles (`import type`). | Real cycle → class `BREAK_CIRCULAR`; note count for the DoD ("cycles do not increase") |
 | **Clone family** | `find_clones(file_pattern=<family dir>, min_similarity=0.7)`; if ≥ 3 files share a shape (same algorithm, renamed fields), read two of them to confirm — hash similarity alone is not evidence | Class `DEDUPE` (one mechanism, N call sites); the order lists every member |
 | **Runtime errors** | Sentry MCP `search_issues` for the last 30 days, map stack frames to paths | ×1.5 on score; the report says "runtime-backed" |
 | **Intent** | `grep -rl 'data-testid' e2e/ tests/e2e/` for ids the family renders; `git log -1 --format=%cs -- <file>`; comments like "unrouted", "extracted from" | An unreachable component that e2e asks for is a PRODUCT backlog item, not dead code — never class `DELETE_DEAD` |
