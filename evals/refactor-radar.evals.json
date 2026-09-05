@@ -1,0 +1,61 @@
+{
+  "skill_name": "refactor-radar",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Find the best refactor candidates in this repo and give me a ranked list with orders for the top ones. The repo is a small TypeScript service: src/orders/orders.ts is a thin facade that re-exports from src/orders/orders.helpers.ts (where the branching lives), and src/pricing/pricing.ts has similar complexity but only feature commits. There is also a git worktree on branch refactor/orders-split with no commits yet. Rank them.",
+      "expected_output": "The agent runs scripts/refactor-radar.sh instead of hand-computing complexity or churn, reports the family src/orders (facade + helpers) as ONE candidate with its fix-churn, marks it busy because of the refactor/orders-split worktree name even though the worktree has no diff, ranks src/pricing as the free candidate, validates G1-G5 with evidence, and writes the queue plus a ledger row for the excluded family.",
+      "files": [
+        "src/orders/orders.ts",
+        "src/orders/orders.helpers.ts",
+        "src/pricing/pricing.ts"
+      ],
+      "assertions": [
+        "The transcript runs scripts/refactor-radar.sh (or the RADAR variable pointing at it) and shows its stderr summary with population, floor and exclusion counts rather than computing cyclomatic complexity by hand.",
+        "The transcript shows src/orders/orders.ts and src/orders/orders.helpers.ts reported as one module family, not as two independent rows.",
+        "The transcript records the src/orders family as excluded with reason busy:name naming the refactor/orders-split worktree, and does not write an order for it.",
+        "The transcript writes a zuvo:refactor batch queue whose entries match the form '- [ ] <path> | <TYPE> | Score: 0.NN' with a type from EXTRACT_METHODS, SPLIT_FILE, GOD_CLASS or SIMPLIFY.",
+        "The transcript writes a ledger row for the excluded family that contains a 'returns when' condition instead of dropping it silently."
+      ],
+      "fixtures": [
+        {
+          "path": "src/orders/orders.ts",
+          "content": "import { helper } from './orders.helpers';\n\n// facade kept after the 2026-07 split — every fix still lands here first\nexport function route(a: number): number {\n  return helper(a);\n}\n"
+        },
+        {
+          "path": "src/orders/orders.helpers.ts",
+          "content": "export function helper(a: number): number {\n  if (a) {\n    for (let i = 0; i < a; i++) {\n      if ((i % 2 && a > 3) || i === 7) {\n        while (a--) {\n          switch (a) {\n            case 1:\n              break;\n            case 2:\n              break;\n          }\n        }\n      }\n    }\n  }\n  return a ? 1 : 0;\n}\n\nexport const other = (x: number): number => {\n  if (x) {\n    return x && 1;\n  }\n  return 0;\n};\n"
+        },
+        {
+          "path": "src/pricing/pricing.ts",
+          "content": "export function price(x: number): number {\n  if (x) {\n    for (let i = 0; i < x; i++) {\n      if ((i % 2 && x > 3) || i === 7) {\n        while (x--) {\n          switch (x) {\n            case 1:\n              break;\n            case 2:\n              break;\n          }\n        }\n      }\n    }\n  }\n  return x ? 1 : 0;\n}\n\nexport const discount = (x: number): number => {\n  if (x) {\n    return x && 1;\n  }\n  return 0;\n};\n"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "The radar ranks src/legacy/report-builder.ts first: ΣCC 88, max 41 in buildReport, fix-churn 9. Nothing imports it (find_references is empty) and a dead-code tool lists every export as unused. However e2e/report.spec.ts clicks data-testid=\"report-builder-panel\" and the file was touched 6 days ago. Decide what the order for this file should be.",
+      "expected_output": "The agent treats the e2e data-testid reference and the recent commit as intent signals: the panel is unwired, not abandoned. It refuses to classify the file DELETE_DEAD, records it under the ledger's Delete? or Watching section as a product backlog item with the evidence (testid, last commit date), and if it writes an order at all it is an EXTRACT_METHODS order on buildReport with a baseline table — never a deletion order.",
+      "files": [
+        "src/legacy/report-builder.ts",
+        "e2e/report.spec.ts"
+      ],
+      "assertions": [
+        "The transcript shows the agent checking e2e/report.spec.ts for the data-testid and citing it as an intent signal before deciding the file's class.",
+        "The transcript records a class other than DELETE_DEAD for src/legacy/report-builder.ts and writes no deletion order for it.",
+        "The transcript records the file in the ledger with the testid evidence and the last-commit date, under Watching or Delete? with an explicit product-backlog note.",
+        "If the transcript writes an order for the file, it is typed EXTRACT_METHODS targeting buildReport and contains a baseline table with the function's CC before the refactor."
+      ],
+      "fixtures": [
+        {
+          "path": "src/legacy/report-builder.ts",
+          "content": "// Report builder panel — extracted from ReportsPage in 2026-05; the route that mounted it\n// was removed during the tabs rewrite and never re-added. e2e still exercises it.\nexport interface ReportInput { rows: number[]; mode: 'sum' | 'avg' | 'max'; strict: boolean }\n\nexport function buildReport(input: ReportInput): number {\n  let acc = 0;\n  if (!input.rows.length) {\n    if (input.strict) {\n      throw new Error('empty');\n    }\n    return 0;\n  }\n  for (const r of input.rows) {\n    if (input.mode === 'sum') {\n      acc += r;\n    } else if (input.mode === 'avg') {\n      acc += r / input.rows.length;\n    } else if (input.mode === 'max') {\n      if (r > acc) {\n        acc = r;\n      }\n    } else if (input.strict) {\n      throw new Error('mode');\n    }\n  }\n  return acc;\n}\n\nexport function ReportBuilderPanel(): string {\n  return '<div data-testid=\"report-builder-panel\"></div>';\n}\n"
+        },
+        {
+          "path": "e2e/report.spec.ts",
+          "content": "import { test, expect } from '@playwright/test';\n\ntest('report builder panel renders', async ({ page }) => {\n  await page.goto('/reports');\n  await expect(page.getByTestId('report-builder-panel')).toBeVisible();\n});\n"
+        }
+      ]
+    }
+  ]
+}

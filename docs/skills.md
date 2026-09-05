@@ -1,6 +1,6 @@
 # Skills Reference
 
-Zuvo includes 57 skills organized into 13 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
+Zuvo includes 58 skills organized into 13 categories. Each skill is invoked via the Skill tool with the `zuvo:` namespace prefix (e.g., `zuvo:review`). The skill router auto-matches your intent, so explicit invocation is optional.
 
 ---
 
@@ -27,6 +27,7 @@ Scoped task execution for common development work.
 | `zuvo:build` | Scoped feature development (1-5 files). Runs blast radius and duplication analysis in parallel, then TDD implementation with CQ/Q quality gates. | Small feature with clear scope | `--auto` (skip plan approval), `--auto-commit` |
 | `zuvo:review` | Structured code review with parallel audit agents, deployment risk scoring (LOW/MED/HIGH/CRIT), confidence-scored triage, and auto-fix. Closed-loop mode dispatches zuvo:build for MUST-FIX findings. | After coding, before push | Scope: `staged`, `HEAD~N`, `[path]`, `[commit range]`. Modes: `fix`, `blocking`, `auto-fix`, `tag`, `batch` |
 | `zuvo:refactor` | ETAP workflow (Evaluate, Test, Act, Prove) with resumable CONTRACT and batch processing. | Extracting, splitting, moving, renaming, simplifying code | Modes: `full`, `batch <file>`. Flags: `plan-only`, `no-commit`, `continue` |
+| `zuvo:refactor-radar` | Deterministic ranking of refactor candidates (`scripts/refactor-radar.sh`: ΣCC × fix-churn × criticality × persistence per module family, busy/fresh exclusions), agent validation G1-G5, type classification, orders with a measured baseline, `zuvo:refactor` batch queue and a per-repo ledger. | Deciding WHAT to refactor before `zuvo:refactor` decides HOW; weekly debt triage; building a batch queue | `[path]`, `--top N`, `--mode refactor\|tests`, `--queue <file>`, `--history <dir>`, `--engine builtin\|codesift`, `--no-remote`, `--dry-run` |
 | `zuvo:debug` | Five-phase bug investigation: reproduce, narrow, diagnose, fix, verify. Produces structured report with root cause analysis and regression test. | Any bug, error, or unexpected behavior | `--regression` (git bisect) |
 
 ---
@@ -138,7 +139,7 @@ Scoped task execution for common development work.
 | Category | Count | Skills |
 |----------|-------|--------|
 | Pipeline | 5 | brainstorm, plan, execute, worktree, receive-review |
-| Core | 4 | build, review, refactor, debug |
+| Core | 5 | build, review, refactor, refactor-radar, debug |
 | Code/Test audits | 5 | code-audit, test-audit, api-audit, security-audit, pentest |
 | Infra audits | 7 | performance-audit, db-audit, dependency-audit, ci-audit, env-audit, infra-audit, container-audit |
 | Structure/SEO/GEO | 6 | structure-audit, seo-audit, seo-fix, geo-audit, geo-fix, architecture |
@@ -149,7 +150,7 @@ Scoped task execution for common development work.
 | Release | 5 | ship, deploy, canary, release-docs, retro |
 | Utility | 10 | docs, presentation, backlog, incident, benchmark, agent-benchmark, using-zuvo, context-audit, skill-eval, profile-session |
 | Lead Generation | 1 | leads |
-| **Total** | **57** | |
+| **Total** | **58** | |
 
 ## Shared Infrastructure
 
