@@ -1225,3 +1225,35 @@ or the subshell changes what `$?` reads, and the assertion then measures the wro
 risk for a cosmetic gain. Do it as its own change, with the suite green before and after.
 
 **Defer-reason:** NIT (test-file readability, no behavioural gap).
+
+## B-radar-test-cli-inventory — complete the radar branch/error evidence
+
+**File:** tests/gates/test_refactor_radar.py:604 (codex/refactor-radar-hardening).
+**Fingerprint:** test_refactor_radar.py|Q7-Q11|radar-exhaustive-evidence
+**Source:** build/test-audit, 2026-09-06; seen:1; confidence:90; severity:medium; tier:C.
+**What:** 67 tests pass as a paired suite, but Q7/Q11 exhaustiveness is not proven. Finish
+the production-first branch/error inventory for prunable worktrees, source census/blob limits
+and malformed git records. Separate small provider cases from medium CLI fixtures (Q20),
+add missing mock argument assertions (Q3) and versioned sanitized API contracts (Q23).
+**Defer-reason:** bounded follow-up test campaign; no strict tier-A claim in the current repair.
+
+## B-radar-test-contract-inventory — complete contract and history negative paths
+
+**File:** tests/gates/test_radar_contract.py:19 (codex/refactor-radar-hardening).
+**Fingerprint:** test_radar_contract.py|Q7-Q11|radar-contract-evidence
+**Source:** build/test-audit, 2026-09-06; seen:1; confidence:90; severity:medium; tier:C.
+**What:** Current exact tests cover registration, CodeSift envelopes, fork promotions and
+bounded/atomic I/O. Finish all compatible-history/error branches, provider contract artifacts
+(Q23) and transport argument assertions (Q3); retain current positive/negative assertions.
+**Defer-reason:** bounded follow-up test campaign; no native/full mutation score is claimed.
+
+## B-radar-bundle-retention — distinguish failed bundles from retained releases
+
+**File:** scripts/install.sh:570 (codex/refactor-radar-hardening).
+**Fingerprint:** install.sh|resource-hygiene|radar-bundle-retention
+**Source:** build/adversarial-review, 2026-09-06; seen:1; confidence:90; severity:low.
+**What:** Installation atomically publishes a complete bundle and preserves old versions,
+but failed staging directories and superseded releases can accumulate. Add failure-only
+cleanup of installer-owned temporary entries; design retention with running-session/rollback
+constraints before deleting successful bundles. Do not reuse whole-cache cleanup.
+**Defer-reason:** non-local cleanup/retention change; current failure preserves the active bundle.
