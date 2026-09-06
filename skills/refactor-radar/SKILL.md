@@ -120,6 +120,9 @@ production candidates; tests remain evidence for verification.
 
 Read old decisions as hypotheses with scope, reason and `returns_when`, not eternal bans.
 A recent refactor can resolve one smell while leaving another. Inspect its family diff.
+When continuing from a saved radar list, first reuse its candidate-specific evidence using
+[handoff.md](references/handoff.md). Reformatting a report needs no rescan. A changed HEAD
+alone does not invalidate unchanged scoped findings; refresh affected evidence and availability.
 Prefer CodeSift when its scope/revision/completeness can be verified. `indexed=true` alone
 does not prove freshness, and a timestamp alone does not attest a frozen SHA. A top-N MCP
 result is not a complete census. Follow the contract's CodeSift decision procedure; use the
@@ -173,8 +176,8 @@ the raw JSON link and known limitations, then update it as validation progresses
 fails, save a FAILED diagnostic report with the actual error; do not invent a discovery JSON.
 
 Copy the real stderr population/floor/exclusion summary. Zero exclusions is possible.
-Report schema, repo ID, SHA, cutoff, engine/version, config hash, missing evidence and
-availability capture time. `--dry-run` ends here.
+Keep schema, population, config hash and scanner diagnostics in the saved JSON; the human
+list needs only repo/SHA, timestamp, counts and material limitations. `--dry-run` ends here.
 
 The script ranks the **complexity lane only**:
 ΣCC × sqrt(fix-commits + 1) × declared K, normalized within this run. It is a discovery
@@ -246,7 +249,7 @@ First separate execution lanes: READY, then TEST_FIRST/OBSERVE for evidence work
 EXCLUDED outside execution. Within READY order by confirmed pain × product criticality ×
 confidence, then lower blast radius/effort, then stable path tie-break. Record the reason and
 effort/risk bands; do not disguise subjective estimates as precise numeric ROI.
-Keep raw discovery order visible beside the final order. Never compare normalized scores
+Keep raw discovery order in JSON, separate from the final order. Never compare normalized scores
 across repos/engines or allocate all fleet work to the largest repo.
 
 Choose an intent, not a filename operation: SIMPLIFY, EXTRACT_METHODS, SPLIT_FILE, GOD_CLASS,
@@ -256,26 +259,16 @@ operations; “one type per PR” is not an evidence-based universal rule.
 
 ## Phase 5: Report; REGISTER only if requested
 
-Write the findings to `report.md` in this run's directory before answering, including when
-zero candidates are READY, availability is UNKNOWN, or only part of the list was validated.
-Save the requested raw top N (or all if fewer exist) as an explicitly **unvalidated** appendix,
-separate from the validated recommendations; the JSON retains the full census. Record
-requested, scanned, investigated, returned and READY counts and remaining validation work.
-Never replace a full saved list with only the recommendations summarized briefly in chat.
-
-Report the requested top N with: family/files, status, type hypothesis, raw/final rank,
-CC/D/N/max/nest with engine label, fix/feat/ref, K, verification evidence, risk/effort,
-why now, proposed change and gate evidence. Give a denominator and exclusion/unknown reasons.
-Do not pad to N when insufficient candidates survive validation.
-
-For top validated candidates provide a self-contained order: frozen source SHA, three scopes,
-behavior contract, function/family baseline, proposed seam, dependencies and goal-specific DoD:
-
-- SIMPLIFY: agreed decision/nesting reduction across the whole affected family.
-- SPLIT_FILE/GOD_CLASS: clearer ownership/cohesion and bounded coupling; no invented CC −40%.
-- DEDUPE: fewer implementations of one invariant without divergent semantics.
-- BREAK_CIRCULAR/HUB_SPLIT: remove specified runtime edges without new cycles/API breakage.
-- DELETE_DEAD: verified non-use and owner intent, with regression/build checks.
+Write `report.md` as a **compact ranked handoff list**, using
+[handoff.md](references/handoff.md), not a scan diary or a raw metrics table followed by essays.
+Every recommended item must name an actual file/symbol, a bounded change, its specific
+pitfalls and a test/evidence pointer. These are reusable findings, not just discovery scores.
+Keep full metrics, raw rows and exclusions in `discovery.json`; do not duplicate them as a
+top-N appendix in the human list unless the user explicitly asks for raw scanner output.
+Keep all selected candidates in the saved list, not only the few summarized in chat.
+Missing validation stays in a separate short pending section with the exact missing check;
+do not dress up unreviewed family IDs as actionable refactor recommendations or pad to N.
+Save partial/UNKNOWN results too, with requested/handed-off/pending counts in a short header.
 
 For every intent: characterize behavior before edits, compare N/ΣCC/D/max/nesting including
 new helpers with the SAME measurement engine; extraction adds baseline CC per function, so
@@ -292,7 +285,9 @@ A missing old worktree path never invalidates the ledger; current availability i
 ## REFACTOR-RADAR COMPLETE
 
 Reopen the saved `report.md` and raw JSON: verify they are nonempty, parse the JSON, and
-check source identity and counts against the report. Link **both actual local files** in the
+check source identity and counts against the report. Check that every handoff card actually
+contains a concrete warning and verification pointer, not generic "preserve behavior" advice.
+Link **both actual local files** in the
 final answer. Missing/failed artifact writes prevent COMPLETE/PASS; report the save failure
 and retained paths, not “done”. An analysis shortfall is PARTIAL even if persistence succeeded;
 do not withhold partial results from disk. With explicit `--no-save`/`--dry-run`, state the

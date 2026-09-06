@@ -85,11 +85,12 @@
     {
       "id": 4,
       "prompt": "Find the top 50 refactor candidates in this repo. Keep the chat answer brief. Do not change product code or the existing approved refactor queue.",
-      "expected_output": "Default DISCOVER saves complete discovery JSON before semantic validation and a durable Markdown report, even if fewer than 50 candidates survive or none are READY. The Markdown separates the raw shortlist from semantic judgments, records the shortfall, and does not claim a complete 50. Reopen the files, verify identity/counts, link both locally, and leave the approved queue untouched. No separate save approval is needed.",
+      "expected_output": "Default DISCOVER saves complete discovery JSON before semantic validation and a compact Markdown handoff list, even if fewer than 50 candidates survive or none are READY. Every recommended card names a real target, bounded change, specific invariant and exact verification pointer or explicit new-test plan. Raw tables stay in JSON; unknown items are short pending entries. Record the shortfall, verify saved identity/counts, link both files and leave the approved queue untouched. No separate save approval is needed.",
       "files": [".radar.json", "src/orders.ts", "src/index.ts", "zuvo/refactor-queue.md"],
       "assertions": [
         "The transcript shows a successful raw JSON write before semantic validation, without asking the user for separate permission to save results.",
-        "The transcript shows a Markdown report written to the project-root zuvo/reports run directory, including the raw shortlist and an honest partial-validation or insufficient-population status.",
+        "The transcript shows a compact numbered Markdown handoff list saved under the project-root zuvo/reports run directory, without duplicating the raw ranking as a large table or claiming a complete 50.",
+        "Each recommended item contains an exact source target, bounded change, source-specific warning and exact assertion pointer or explicitly planned new test; generic preserve-behavior advice alone does not qualify.",
         "The transcript shows the agent reopening the saved JSON and Markdown and checking the frozen source identity and actual row counts before its final answer.",
         "The final answer contains links to both saved local report files instead of treating stdout, a farm-only artifact or the chat summary as the saved deliverable.",
         "The transcript shows no change to product source or the existing approved queue, and does not fabricate 50 validated candidates."
@@ -99,6 +100,24 @@
         {"path": "src/orders.ts", "content": "export function total(amount: number, rush: boolean) { if (amount < 0) throw new Error('amount'); if (rush) return amount + 10; return amount; }\n"},
         {"path": "src/index.ts", "content": "export { total } from './orders';\n"},
         {"path": "zuvo/refactor-queue.md", "content": "# Approved queue — preserve this file\n- [ ] src/unrelated.ts | SIMPLIFY | Score: 0.5\n"}
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "Improve only the presentation of zuvo/reports/old-radar.md: I need a short ranked list with concrete refactor warnings so the next agent does not repeat the analysis. Do not run a new scan, verify code or alter the approved queue. Preserve limitations and do not invent missing facts.",
+      "expected_output": "Save a new compact handoff list from the supplied findings, preserving the old report. Keep the exact cache key/no-cache/flush warnings, the existing assertion, the missing fatal case and bounded write scope. Keep the uninvestigated family separate as pending, not an executable order. Disclose the missing source SHA and stale availability; explain targeted evidence refresh before execution, not a full-repo rescan or a safety-gate bypass.",
+      "files": ["zuvo/reports/old-radar.md", "zuvo/refactor-queue.md"],
+      "assertions": [
+        "The transcript shows no fresh scanner, CodeSift, code-validation or test run when only presentation was requested.",
+        "The saved handoff contains the key version and field-order invariant, the no-cache-on-fatal rule, and pending-write flush behavior, not only a generic cache warning.",
+        "The saved handoff contains the exact existing cache_hit assertion pointer, a separately marked missing fatal-result test, and the bounded source/test write scope.",
+        "The saved handoff records the missing source SHA and unverified availability, and keeps the uninvestigated designer family out of the actionable list.",
+        "The transcript shows the prior report and approved queue unchanged, and the final answer links the new saved list.",
+        "The handoff contains instructions to reuse unchanged findings after scoped verification while retaining current collision, characterization and execution safety checks."
+      ],
+      "fixtures": [
+        {"path": "zuvo/reports/old-radar.md", "content": "# Older radar analysis\nRepo: fixture/cache. Analysis: 2026-09-01. Source SHA was not recorded. PR availability UNKNOWN. Tests inspected, not run.\n\n## Raw ranking\n1. src/designer family: 70 files, high aggregate CC, no source/test review.\n2. src/cache.ts: reviewed candidate below.\n\n## Cache findings\nsrc/cache.ts :: resolve mixes key construction, lookup and conditional write. Extract private key and lookup helpers because divergent key handling caused misses. Preserve key version v2 and field order compiler/source/globals. Fatal results must never enter cache. Preserve flush of pending writes. tests/cache.spec.ts :: cache_hit checks the expected persisted key independently and asserts zero script executions. Missing test: a fatal result must cause zero writes. Write scope: src/cache.ts and tests/cache.spec.ts only. Consumer proving use: src/runner.ts :: run. Scope should not expand into the designer family. Risk medium; TEST_FIRST.\n"},
+        {"path": "zuvo/refactor-queue.md", "content": "# Already approved\n- [ ] src/other.ts | SIMPLIFY | Score: 0.3\n"}
       ]
     }
   ]

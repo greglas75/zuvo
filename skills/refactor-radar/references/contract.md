@@ -66,7 +66,8 @@ other lanes separately, including unmeasured candidates, instead of forcing them
 The skill saves DISCOVER results by default; the low-level CLI remains explicit-output and
 the skill passes `--json` for it. Use the canonical output root plus a unique
 `reports/refactor-radar-<UTC>-<unique>/` directory. Save `discovery.json` immediately after
-measurement and `report.md` for the agent's evidence, decisions and raw top-N appendix.
+measurement and `report.md` for the compact candidate handoffs defined in [handoff.md](handoff.md).
+The human list does not repeat the raw top-N table; full scanner rows stay in the JSON.
 An explicit `--json` overrides only the raw JSON destination; link it from the Markdown.
 Neither file is an executable queue, an approved decision contract or a history snapshot.
 No REGISTER approval is required for these deliverables. Do not silently overwrite earlier
