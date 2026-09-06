@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Negative fixtures for structural gates, proof semantics and instruction/evidence reuse."""
+
 import json
 import os
 from pathlib import Path
@@ -29,13 +30,26 @@ class Workflow(unittest.TestCase):
         (self.root / "tests").mkdir()
         (self.root / "src/value").write_text("0")
         (self.root / "tests/check.sh").write_text(
-            'if [ "$(cat src/value)" = 0 ]; then echo "Tests 1 failed"; exit 1; fi\necho "Tests 1 passed"\n')
+            'if [ "$(cat src/value)" = 0 ]; then echo "Tests 1 failed"; exit 1; fi\necho "Tests 1 passed"\n'
+        )
         self.contract = self.root / "refactor-abcdef12.json"
-        self.data = {"kind": "refactor-contract", "version": 6, "file": "src/value",
-                     "stage": "PHASE-3", "fix_findings": [], "findings_outcome": "none", "scope_fence": ["src/value"], "modules_created": [],
-                     "prove": {"blind_audit": "clean", "adversarial": "clean",
-                               "test_quality": "N/A", "split_coverage": "N/A",
-                               "findings_disposition": "none"}}
+        self.data = {
+            "kind": "refactor-contract",
+            "version": 6,
+            "file": "src/value",
+            "stage": "PHASE-3",
+            "fix_findings": [],
+            "findings_outcome": "none",
+            "scope_fence": ["src/value"],
+            "modules_created": [],
+            "prove": {
+                "blind_audit": "clean",
+                "adversarial": "clean",
+                "test_quality": "N/A",
+                "split_coverage": "N/A",
+                "findings_disposition": "none",
+            },
+        }
         # State is output, not an input whose writes invalidate every test snapshot.
         (self.root / "zuvo/contracts").mkdir(parents=True)
         self.contract = self.root / "zuvo/contracts/refactor-abcdef12.json"
@@ -59,8 +73,9 @@ class Workflow(unittest.TestCase):
 
     def errors(self):
         # Evidence logs resolve relative to the checkout, as they do in the real CLI and hook.
-        result = self.run_cmd([sys.executable, str(ROOT / "hooks/lib/refactor-state.py"),
-                               str(self.contract), "evidence"])
+        result = self.run_cmd(
+            [sys.executable, str(ROOT / "hooks/lib/refactor-state.py"), str(self.contract), "evidence"]
+        )
         return result
 
     def test_legacy_target_names_resolve_without_migrating_the_contract(self):
@@ -73,23 +88,43 @@ class Workflow(unittest.TestCase):
         self.data["previous"] = {"prove": {"adversarial": "clean"}, "stage": "COMPLETE"}
         self.data["prove"]["adversarial"] = "not_run"
         self.save()
-        result = self.run_cmd([sys.executable, str(ROOT / "hooks/lib/refactor-state.py"),
-                               str(self.contract), "field", "prove.adversarial"])
+        result = self.run_cmd(
+            [
+                sys.executable,
+                str(ROOT / "hooks/lib/refactor-state.py"),
+                str(self.contract),
+                "field",
+                "prove.adversarial",
+            ]
+        )
         self.assertEqual(result.stdout.strip(), "not_run")
         self.assertEqual(self.cli("check").returncode, 1)
 
     def test_prose_path_is_not_scope(self):
         self.data["note"] = "src/elsewhere"
         self.save()
-        result = self.run_cmd([sys.executable, str(ROOT / "hooks/lib/refactor-state.py"),
-                               str(self.contract), "contains", "scope_fence", "src/elsewhere"])
+        result = self.run_cmd(
+            [
+                sys.executable,
+                str(ROOT / "hooks/lib/refactor-state.py"),
+                str(self.contract),
+                "contains",
+                "scope_fence",
+                "src/elsewhere",
+            ]
+        )
         self.assertEqual(result.returncode, 1)
 
     def test_bom_legacy_and_arrays_duplicate_keys_wrong_kind(self):
         self.contract.write_text('\ufeff{"file":"src/value","stage":"PHASE-2"}')
         self.assertIsNotNone(STATE["read_contract"](self.contract))
-        for text in ('[]', '{"stage":"COMPLETE","stage":"PHASE-1"}',
-                     '{"kind":"findings","stage":"COMPLETE"}', '{"prove":[]}', '{'):
+        for text in (
+            "[]",
+            '{"stage":"COMPLETE","stage":"PHASE-1"}',
+            '{"kind":"findings","stage":"COMPLETE"}',
+            '{"prove":[]}',
+            "{",
+        ):
             self.contract.write_text(text)
             self.assertIsNone(STATE["read_contract"](self.contract), text)
             self.assertNotEqual(self.cli("check").returncode, 0)
@@ -114,8 +149,12 @@ class Workflow(unittest.TestCase):
         self.save()
         self.assertEqual(self.cli("baseline", "--mode", "compilation", "true").returncode, 0)
         self.assertEqual(self.cli("recheck").returncode, 0)
-        result = subprocess.run([sys.executable, str(CLI), "--contract", str(self.contract), "check"],
-                                cwd=self.root / "src", env=self.env, capture_output=True)
+        result = subprocess.run(
+            [sys.executable, str(CLI), "--contract", str(self.contract), "check"],
+            cwd=self.root / "src",
+            env=self.env,
+            capture_output=True,
+        )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_fix_proof_is_not_optional_via_different_wording(self):
@@ -137,7 +176,9 @@ class Workflow(unittest.TestCase):
         self.assertEqual(self.cli("stage", "COMPLETE").returncode, 1)
 
     def test_green_without_executed_tests_is_refused(self):
-        (self.root / "tests/check.sh").write_text('if [ "$(cat src/value)" = 0 ]; then echo "Tests 1 failed"; exit 1; fi\nexit 0\n')
+        (self.root / "tests/check.sh").write_text(
+            'if [ "$(cat src/value)" = 0 ]; then echo "Tests 1 failed"; exit 1; fi\nexit 0\n'
+        )
         self.assertEqual(self.cli("regression", "F1", "red", "sh tests/check.sh").returncode, 0)
         (self.root / "src/value").write_text("1")
         self.assertEqual(self.cli("regression", "F1", "green", "sh tests/check.sh").returncode, 1)
@@ -230,14 +271,24 @@ class Workflow(unittest.TestCase):
         self.assertNotEqual(self.errors().returncode, 0)
 
     def key(self, **changes):
-        args = dict(command="test", scope=["tests/check.sh"], toolchain="python-3/cache-a", environment="runner-a/services-v1")
+        args = dict(
+            command="test",
+            scope=["tests/check.sh"],
+            toolchain="python-3/cache-a",
+            environment="runner-a/services-v1",
+        )
         args.update(changes)
         return evidence_key(self.root, **args)
 
     def test_every_reuse_input_invalidates_key(self):
         base = self.key()
         self.assertEqual(base, self.key())
-        for change in ({"command": "test --flag"}, {"scope": ["other"]}, {"toolchain": "new"}, {"environment": "new"}):
+        for change in (
+            {"command": "test --flag"},
+            {"scope": ["other"]},
+            {"toolchain": "new"},
+            {"environment": "new"},
+        ):
             self.assertNotEqual(base, self.key(**change))
         for name in ("src/value", "tests/check.sh", "package-lock.json", "test.config.json"):
             path = self.root / name
@@ -255,7 +306,9 @@ class Workflow(unittest.TestCase):
         self.assertEqual(before, self.key())
 
     def test_recheck_refuses_a_run_that_changes_inputs(self):
-        (self.root / "tests/stable.sh").write_text('if [ "$(cat src/value)" = change ]; then echo changed > src/value; fi\necho "Tests 2 passed"\n')
+        (self.root / "tests/stable.sh").write_text(
+            'if [ "$(cat src/value)" = change ]; then echo changed > src/value; fi\necho "Tests 2 passed"\n'
+        )
         self.assertEqual(self.cli("baseline", "sh tests/stable.sh").returncode, 0)
         (self.root / "src/value").write_text("change")
         self.assertEqual(self.cli("recheck").returncode, 1)
@@ -270,15 +323,17 @@ class Workflow(unittest.TestCase):
 
     def test_native_summary_parsers_and_unknown_output(self):
         parser = runpy.run_path(str(CLI))["parse_counts"]
-        cases = [("=== 2 failed, 3 passed in 0.1s ===", (3, 2)),
-                 ("test result: ok. 4 passed; 0 failed; 0 ignored;", (4, 0)),
-                 ("# pass 3\n# fail 1", (3, 1)),
-                 ("Ran 4 tests in 0.3s\n\nFAILED (failures=1, errors=1)", (2, 2)),
-                 ("Ran 1 test in 0.1s\nOK", (1, 0)),
-                 ("OK (3 tests, 7 assertions)", (3, 0)),
-                 ("RESULT: PASS=4 FAIL=1 SKIP=2", (4, 1)),
-                 ("Tests 7 passed\nTests 1 failed", (0, 1)),
-                 ("the build passed; no test summary", (None, None))]
+        cases = [
+            ("=== 2 failed, 3 passed in 0.1s ===", (3, 2)),
+            ("test result: ok. 4 passed; 0 failed; 0 ignored;", (4, 0)),
+            ("# pass 3\n# fail 1", (3, 1)),
+            ("Ran 4 tests in 0.3s\n\nFAILED (failures=1, errors=1)", (2, 2)),
+            ("Ran 1 test in 0.1s\nOK", (1, 0)),
+            ("OK (3 tests, 7 assertions)", (3, 0)),
+            ("RESULT: PASS=4 FAIL=1 SKIP=2", (4, 1)),
+            ("Tests 7 passed\nTests 1 failed", (0, 1)),
+            ("the build passed; no test summary", (None, None)),
+        ]
         for output, expected in cases:
             self.assertEqual(parser(output), expected, output)
 
@@ -289,7 +344,9 @@ class Workflow(unittest.TestCase):
 
     def load(self, *args):
         self.env["ZUVO_BASE"] = str(ROOT)
-        return self.run_cmd([sys.executable, str(LOADER), "refactor", "--files", str(self.root / "rule.md"), *args])
+        return self.run_cmd(
+            [sys.executable, str(LOADER), "refactor", "--files", str(self.root / "rule.md"), *args]
+        )
 
     def test_read_once_needs_matching_generation_and_hash(self):
         rule = self.root / "rule.md"
@@ -313,7 +370,15 @@ class Workflow(unittest.TestCase):
     def test_all_refactor_phases_exist_and_preserve_final_gates(self):
         skill = ROOT / "skills/refactor"
         router = (skill / "SKILL.md").read_text()
-        names = ("bootstrap", "planning", "characterization", "transformation", "review", "remediation", "completion")
+        names = (
+            "bootstrap",
+            "planning",
+            "characterization",
+            "transformation",
+            "review",
+            "remediation",
+            "completion",
+        )
         for name in names:
             self.assertIn("references/" + name + ".md", router)
             self.assertGreater(len((skill / "references" / (name + ".md")).read_text()), 500)

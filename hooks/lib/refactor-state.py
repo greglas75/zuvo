@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Structural contract access shared by hooks and refactor-contract. No prose search."""
+
 import argparse
 import json
 import hashlib
@@ -54,13 +55,17 @@ def field(contract, key):
 
 
 def repository_root():
-    result = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True)
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True
+    )
     return Path(result.stdout.strip()).resolve()
 
 
 def current_snapshot():
-    for candidate in (Path(__file__).resolve().parents[2] / "scripts/zuvo-home/workflow_evidence.py",
-                      Path.home() / ".zuvo/workflow_evidence.py"):
+    for candidate in (
+        Path(__file__).resolve().parents[2] / "scripts/zuvo-home/workflow_evidence.py",
+        Path.home() / ".zuvo/workflow_evidence.py",
+    ):
         if candidate.is_file():
             spec = importlib.util.spec_from_file_location("workflow_evidence", candidate)
             if spec is None or spec.loader is None:
@@ -82,18 +87,33 @@ def evidence_errors(contract, include_fixes=True):
     except (OSError, subprocess.CalledProcessError):
         return ["evidence: repository root unavailable"]
     before, after = (evidence.get(k) for k in ("characterization_before", "characterization_after"))
+
     def valid(run):
-        if not isinstance(run, dict) or run.get("stable") is not True or not run.get("snapshot") or not run.get("run_id"):
+        if (
+            not isinstance(run, dict)
+            or run.get("stable") is not True
+            or not run.get("snapshot")
+            or not run.get("run_id")
+        ):
             return False
         if run.get("repo_root") != str(root):
             return False
         if type(run.get("exit_code")) is not int:
             return False
-        if run.get("kind") != "compilation" and not (type(run.get("passed")) is int
-                and type(run.get("failed")) is int and run["passed"] >= 0 and run["failed"] >= 0):
+        if run.get("kind") != "compilation" and not (
+            type(run.get("passed")) is int
+            and type(run.get("failed")) is int
+            and run["passed"] >= 0
+            and run["failed"] >= 0
+        ):
             return False
         log = run.get("log", "")
-        if not isinstance(log, str) or os.path.isabs(log) or ntpath.isabs(log) or ".." in log.replace("\\", "/").split("/"):
+        if (
+            not isinstance(log, str)
+            or os.path.isabs(log)
+            or ntpath.isabs(log)
+            or ".." in log.replace("\\", "/").split("/")
+        ):
             return False
         try:
             path = (root / log).resolve()
@@ -102,12 +122,23 @@ def evidence_errors(contract, include_fixes=True):
                 return hashlib.sha256(stream.read()).hexdigest() == run.get("log_sha256")
         except (OSError, ValueError):
             return False
-    if not (valid(before) and valid(after) and before.get("exit_code") == after.get("exit_code") == 0
-            and before.get("command") == after.get("command") and before.get("passed") == after.get("passed")
-            and before.get("run_id") != after.get("run_id")
-            and not before.get("failed") and not after.get("failed")
-            and (before.get("kind") == after.get("kind") == "compilation" and contract.get("test_mode") == "VERIFY_COMPILATION" or
-                 type(before.get("passed")) is int and before["passed"] > 0)) :
+
+    if not (
+        valid(before)
+        and valid(after)
+        and before.get("exit_code") == after.get("exit_code") == 0
+        and before.get("command") == after.get("command")
+        and before.get("passed") == after.get("passed")
+        and before.get("run_id") != after.get("run_id")
+        and not before.get("failed")
+        and not after.get("failed")
+        and (
+            before.get("kind") == after.get("kind") == "compilation"
+            and contract.get("test_mode") == "VERIFY_COMPILATION"
+            or type(before.get("passed")) is int
+            and before["passed"] > 0
+        )
+    ):
         errors.append("evidence.characterization_before/after")
     try:
         if not isinstance(after, dict) or after.get("snapshot") != current_snapshot():
@@ -130,12 +161,21 @@ def evidence_errors(contract, include_fixes=True):
         matches = [p for p in pairs if isinstance(p, dict) and p.get("finding_id") == finding]
         pair = matches[0] if len(matches) == 1 else {}
         red, green = pair.get("red"), pair.get("green")
-        if not (valid(red) and valid(green) and red.get("exit_code") not in (0, 124, 126, 127, None)
-                and type(red.get("failed")) is int and red["failed"] > 0
-                and green.get("exit_code") == 0 and type(green.get("passed")) is int and green["passed"] > 0
-                and not green.get("failed") and red.get("command") == green.get("command")
-                and red.get("run_id") != green.get("run_id")
-                and red.get("test_snapshot") and red.get("test_snapshot") == green.get("test_snapshot")):
+        if not (
+            valid(red)
+            and valid(green)
+            and red.get("exit_code") not in (0, 124, 126, 127, None)
+            and type(red.get("failed")) is int
+            and red["failed"] > 0
+            and green.get("exit_code") == 0
+            and type(green.get("passed")) is int
+            and green["passed"] > 0
+            and not green.get("failed")
+            and red.get("command") == green.get("command")
+            and red.get("run_id") != green.get("run_id")
+            and red.get("test_snapshot")
+            and red.get("test_snapshot") == green.get("test_snapshot")
+        ):
             errors.append("evidence.fix_regressions:" + str(finding))
     return errors
 
@@ -143,7 +183,9 @@ def evidence_errors(contract, include_fixes=True):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("path")
-    parser.add_argument("action", choices=["valid", "field", "contains", "array", "count", "evidence", "intersects"])
+    parser.add_argument(
+        "action", choices=["valid", "field", "contains", "array", "count", "evidence", "intersects"]
+    )
     parser.add_argument("key", nargs="?")
     parser.add_argument("value", nargs="?")
     args = parser.parse_args()

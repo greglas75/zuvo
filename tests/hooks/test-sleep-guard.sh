@@ -23,7 +23,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 # NO `exec`: exec replaces argv, so the stub's name vanishes from the process tree and the
 # simulation stops resembling the real parent, which is
 # `/Applications/ChatGPT.app/Contents/Resources/codex exec …` and stays alive.
-printf '#!/bin/zsh\n/bin/zsh "$@"\n' > "$TMP/codex-stub"; chmod +x "$TMP/codex-stub"
+printf '#!/usr/bin/env zsh\nzsh "$@"\n' > "$TMP/codex-stub"; chmod +x "$TMP/codex-stub"
 run()  { "$TMP/codex-stub" -lc "source '$G'; $1" 2>&1; }   # with a codex ancestor
 bare() { zsh -lc "source '$G'; $1" 2>&1; }                  # without one
 

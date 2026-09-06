@@ -164,9 +164,9 @@ def write_atomic(path, data):
             else:
                 import fcntl
                 fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except (OSError, ImportError):
+        except (OSError, ImportError) as exc:
             os.close(lock_fd)
-            raise OSError("could not acquire " + lock)
+            raise OSError("could not acquire " + lock) from exc
     except OSError as exc:
         print("refactor-contract: lock unavailable: " + str(exc), file=sys.stderr)
         return False
@@ -542,11 +542,13 @@ def measured_run(command, root):
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / (run_id + ".log")
     log_path.write_bytes(out.encode("utf-8"))
-    return {"run_id": run_id, "kind": "tests", "repo_root": str(Path(root).resolve()), "command": command, "exit_code": rc,
+    return {"run_id": run_id, "kind": "tests", "repo_root": str(Path(root).resolve()),
+            "command": command, "exit_code": rc,
             "passed": passed, "failed": failed, "snapshot": before,
             "stable": before is not None and before == after,
             "test_snapshot": test_snapshot,
-            "log": str(log_path.relative_to(root)), "log_sha256": hashlib.sha256(out.encode()).hexdigest()}, out
+            "log": str(log_path.relative_to(root)),
+            "log_sha256": hashlib.sha256(out.encode()).hexdigest()}, out
 
 
 def cmd_baseline(a, root, path):
@@ -565,7 +567,8 @@ def cmd_baseline(a, root, path):
     if c is None:
         return 2
     if a.mode == "compilation" and c.get("test_mode") != "VERIFY_COMPILATION":
-        print("baseline: compilation mode requires the plan's VERIFY_COMPILATION classification", file=sys.stderr)
+        print("baseline: compilation mode requires the plan's VERIFY_COMPILATION classification",
+              file=sys.stderr)
         return 2
     run, out = measured_run(a.command, root)
     rc, passed, failed = run["exit_code"], run["passed"], run["failed"]
@@ -583,10 +586,15 @@ def cmd_baseline(a, root, path):
     prefix = "%s:%s:" % (a.mode, sha) if a.mode else ""
     run["kind"] = "compilation" if a.mode == "compilation" else "tests"
     if c.get("evidence", {}).get("characterization_before"):
-        c.setdefault("characterization_history", []).append({k: c["evidence"].get(k) for k in
-                                                            ("characterization_before", "characterization_after")})
-    valid = rc == 0 and (int(c.get("version", 0)) < 6 or
-                         run["stable"] and (run["kind"] == "compilation" or isinstance(passed, int) and passed > 0 and not failed))
+        c.setdefault("characterization_history", []).append({
+            k: c["evidence"].get(k) for k in
+            ("characterization_before", "characterization_after")
+        })
+    valid = rc == 0 and (
+        int(c.get("version", 0)) < 6 or run["stable"] and (
+            run["kind"] == "compilation" or isinstance(passed, int) and passed > 0 and not failed
+        )
+    )
     c["characterization_cmd"] = a.command
     c.setdefault("evidence", {})["characterization_before"] = run
     c["evidence"].pop("characterization_after", None)
@@ -599,14 +607,16 @@ def cmd_baseline(a, root, path):
         print(tail_of(out), file=sys.stderr)
 
     if not valid and rc == 0:
-        print("baseline: no stable executed test summary; compilation requires --mode compilation", file=sys.stderr)
+        print("baseline: no stable executed test summary; compilation requires --mode compilation",
+              file=sys.stderr)
     return 0 if valid else 1
 
 
 def cmd_recheck(a, root, path):
     """Re-run the recorded command and say whether the suite still does what it did.
 
-    This records characterization_after; it is never evidence of a red regression test. Re-running the SAME stored command is
+    This records characterization_after; it is never evidence of a red regression test.
+    Re-running the SAME stored command is
     the part that makes the comparison mean anything: a fresh command with a different spec list
     would compare two different things and call it a regression check.
     """
@@ -635,9 +645,14 @@ def cmd_recheck(a, root, path):
     if int(c.get("version", 0)) >= 6:
         drifted = drifted or not run["stable"] or not baseline or not baseline.get("stable")
         if run["kind"] != "compilation":
-            drifted = drifted or not isinstance(passed, int) or passed <= 0 or bool(failed) or bool((baseline or {}).get("failed"))
+            drifted = (
+                drifted or not isinstance(passed, int) or passed <= 0 or bool(failed)
+                or bool((baseline or {}).get("failed"))
+            )
     c.setdefault("evidence", {})["characterization_after"] = run
-    c.setdefault("prove", {})["characterization_after"] = "not_run" if drifted else "%s -> %s" % (before or "no baseline", now)
+    c.setdefault("prove", {})["characterization_after"] = (
+        "not_run" if drifted else "%s -> %s" % (before or "no baseline", now)
+    )
     if not write_atomic(path, c):
         return 2
     render(c, path, root, note=("DRIFT — the suite does not do what the baseline recorded"
@@ -665,7 +680,9 @@ def cmd_check(a, root, path):
         shutil.copyfile(path, os.path.join(directory, "refactor-check.json"))
         env = dict(os.environ, ZUVO_CONTRACTS_DIR=directory, ZUVO_AI_RUN="1", ZUVO_GATE_MODE="pre-push")
         # The hook implementation is the verifier; do not duplicate its predicates in skill prose.
-        result = subprocess.run(["sh", "-c", 'LIB="$1"; . "$LIB"; r=0; refactor_gate_check "$2" || r=1; refactor_prove_v4_check "$2" || r=1; exit "$r"',
+        result = subprocess.run(["sh", "-c", 'LIB="$1"; . "$LIB"; r=0; '
+                                 'refactor_gate_check "$2" || r=1; '
+                                 'refactor_prove_v4_check "$2" || r=1; exit "$r"',
                                  "refactor-check", str(lib), "\n".join(scope)], cwd=root, env=env)
     if result.returncode == 0:
         print("GATE: PASS — current contract checks satisfied")
@@ -681,19 +698,28 @@ def cmd_regression(a, root, path):
         print("regression: invalid evidence object", file=sys.stderr)
         return 2
     pairs = evidence.setdefault("fix_regressions", [])
-    if not isinstance(pairs, list) or any(not isinstance(p, dict) or not isinstance(p.get("finding_id"), str) or not p["finding_id"] for p in pairs):
+    if not isinstance(pairs, list) or any(
+        not isinstance(p, dict) or not isinstance(p.get("finding_id"), str)
+        or not p["finding_id"] for p in pairs
+    ):
         print("regression: invalid fix_regressions entries", file=sys.stderr)
         return 2
     if len({p["finding_id"] for p in pairs}) != len(pairs):
         print("regression: duplicate finding IDs; repair the contract first", file=sys.stderr)
         return 2
     pair = next((p for p in pairs if p.get("finding_id") == a.finding), None)
-    if a.color == "green" and (not pair or not isinstance(pair.get("red"), dict) or pair["red"].get("command") != a.command):
+    if a.color == "green" and (
+        not pair or not isinstance(pair.get("red"), dict)
+        or pair["red"].get("command") != a.command
+    ):
         print("regression: green requires a recorded red with the same command", file=sys.stderr)
         return 2
     run, out = measured_run(a.command, root)
-    valid = (run["exit_code"] not in (0, 124, 126, 127) and (run["failed"] or 0) > 0
-             if a.color == "red" else run["exit_code"] == 0 and (run["passed"] or 0) > 0 and not run["failed"])
+    valid = (
+        run["exit_code"] not in (0, 124, 126, 127) and (run["failed"] or 0) > 0
+        if a.color == "red"
+        else run["exit_code"] == 0 and (run["passed"] or 0) > 0 and not run["failed"]
+    )
     if not valid or not run["stable"]:
         print("regression: no stable, demonstrated " + a.color + " result\n" + tail_of(out), file=sys.stderr)
         return 1
@@ -707,7 +733,9 @@ def cmd_regression(a, root, path):
         if a.finding not in ids:
             ids.append(a.finding)
         c["findings_outcome"] = "fixed"
-        c.setdefault("prove", {})["regression_red"] = "linked:" + ",".join(p["finding_id"] for p in pairs if "green" in p)
+        c.setdefault("prove", {})["regression_red"] = "linked:" + ",".join(
+            p["finding_id"] for p in pairs if "green" in p
+        )
     if not write_atomic(path, c):
         return 2
     print("regression: " + a.finding + " " + a.color + " run=" + run["run_id"])
@@ -802,7 +830,8 @@ def main(argv):
 
     return {"show": cmd_show, "stage": cmd_stage, "prove": cmd_prove,
             "set": cmd_set, "append": cmd_append,
-            "baseline": cmd_baseline, "recheck": cmd_recheck, "regression": cmd_regression, "check": cmd_check}[a.cmd](a, root, path)
+            "baseline": cmd_baseline, "recheck": cmd_recheck,
+            "regression": cmd_regression, "check": cmd_check}[a.cmd](a, root, path)
 
 
 if __name__ == "__main__":

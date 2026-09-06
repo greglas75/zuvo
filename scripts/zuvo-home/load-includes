@@ -108,7 +108,8 @@ def main():
     ap.add_argument("--stack", default="js")
     ap.add_argument("--phase", type=int, default=1,
                     help="0 = bootstrap set only, 1 = bootstrap + tier/stack set (default)")
-    ap.add_argument("--files", nargs="+", help="explicit phase/include paths; replaces the write-tests matrix")
+    ap.add_argument("--files", nargs="+",
+                    help="explicit phase/include paths; replaces the write-tests matrix")
     ap.add_argument("--generation", help="current context generation; renew after compaction")
     ap.add_argument("--retained", help="receipt for complete bodies STILL retained in this context")
     ap.add_argument("--receipt-out", help="write receipt; caller verifies tool output was not truncated")
@@ -134,8 +135,11 @@ def main():
             with open(a.retained, encoding="utf-8") as fh:
                 receipt = json.load(fh)
             if receipt.get("context_generation") == a.generation:
-                retained = {tuple(row) for row in receipt.get("loaded", [])
-                            if isinstance(row, list) and len(row) == 2 and all(isinstance(x, str) for x in row)}
+                retained = {
+                    tuple(row) for row in receipt.get("loaded", [])
+                    if isinstance(row, list) and len(row) == 2
+                    and all(isinstance(x, str) for x in row)
+                }
         except (OSError, ValueError, AttributeError, TypeError):
             print("load-includes: invalid retained receipt; reloading", file=sys.stderr)
     root = os.getcwd() if a.files else base_dir()

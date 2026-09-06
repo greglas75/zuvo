@@ -41,7 +41,7 @@ fi
 pyfiles(){
   ( cd "$ROOT" && { git ls-files '*.py'
                     git ls-files | while IFS= read -r f; do
-                      head -8 "$f" 2>/dev/null | grep -q 'exec .*python' && printf '%s\n' "$f"
+                      head -8 "$f" 2>/dev/null | grep -q "^''''exec .*python" && printf '%s\n' "$f"
                     done; } ) | sort -u | grep -vE '^(tests/security-corpus|validation)/'
 }
 FILES="$(pyfiles)"
@@ -52,6 +52,11 @@ printf '%s\n' "$FILES" | grep -q 'scripts/zuvo-home/retro-mine.py' \
 printf '%s\n' "$FILES" | grep -qx 'scripts/zuvo-home/backlog' \
   && ok "corpus includes the EXTENSIONLESS polyglot helpers" \
   || no "corpus misses the polyglot helpers — most of this repo's Python would go unlinted"
+if printf '%s\n' "$FILES" | grep -qx 'scripts/refactor-radar.sh'; then
+  no "corpus includes a shell launcher as Python"
+else
+  ok "shell launcher is not misclassified as a polyglot Python helper"
+fi
 
 # --- ruff: ratchet -------------------------------------------------------------------------------
 if command -v ruff >/dev/null 2>&1; then

@@ -60,7 +60,7 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYST
 unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 unset GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT
 mkdir "$MOCK_BIN/repo"
-cd "$MOCK_BIN/repo"
+cd "$MOCK_BIN/repo" || exit 1
 git init -q
 git config user.name Test
 git config user.email test@example.invalid
