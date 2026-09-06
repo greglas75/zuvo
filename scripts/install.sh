@@ -555,6 +555,30 @@ if changed:
 # Independent of plugin host (Claude Code / Codex / Cursor) — installed once
 # per machine, called from every skill that loads run-logger.md.
 # =======================================
+install_refactor_radar_bundle() {
+  # Publish a complete bundle, not five independently overwritten live files. Old bundles
+  # remain usable by running sessions; no whole-cache or other-agent files are replaced here.
+  local target="${1:-$HOME/.zuvo/refactor-radar}" bundle entry relative
+  if [[ -L "$target" ]]; then
+    fail "refactor-radar target must not be a symlink"; return 1
+  fi
+  if [[ -e "$target/current" && ! -L "$target/current" ]]; then
+    fail "refactor-radar current is not a managed symlink"; return 1
+  fi
+  mkdir -p "$target" || return 1
+  bundle="$(mktemp -d "$target/bundle.XXXXXX")" || return 1
+  mkdir "$bundle/lib" || return 1
+  for entry in "$ZUVO_DIR/scripts/refactor-radar.sh" "$ZUVO_DIR/scripts/lib"/radar_*.py; do
+    relative="${entry#"$ZUVO_DIR/scripts/"}"
+    cp "$entry" "$bundle/$relative" || return 1
+    cmp -s "$entry" "$bundle/$relative" || return 1
+  done
+  ln -s "${bundle##*/}" "$target/.current.$$" || return 1
+  python3 -c 'import os,sys; os.replace(sys.argv[1], sys.argv[2])' \
+    "$target/.current.$$" "$target/current" || return 1
+  ok "refactor-radar bundle installed ($target/current)"
+}
+
 install_zuvo_home() {
   echo ""
   echo "======================================"
@@ -562,6 +586,11 @@ install_zuvo_home() {
   echo "======================================"
 
   mkdir -p "$HOME/.zuvo"
+
+  if ! install_refactor_radar_bundle; then
+    INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
+    INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL} refactor-radar bundle"
+  fi
 
   # Install EVERY helper in scripts/zuvo-home/ — a loop, not a per-file block. The explicit list
   # this replaces had silently drifted: retro-mine.py, retro-mine-weekly.sh and rotate-retros-cron.sh
