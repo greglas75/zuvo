@@ -1269,3 +1269,27 @@ not memory-only, although no report/stderr serialization occurs and the file is 
 Add a dedicated bounded-memory secret reader with timeout/size/error/redaction tests; keep
 large git/provider output spooled. Existing RADAR_BB_TOKEN input avoids this subprocess path.
 **Defer-reason:** separate secret-reader contract; limitation disclosed, no fleet install performed.
+
+## B-radar-perf-followup — typed boundaries and measured test debt
+
+**File:** scripts/lib/radar_cli.py:72, scripts/lib/radar_snapshot.py:34, tests/gates/test_radar_performance.py:1 (d3cb784).
+**Fingerprint:** radar_cli.py|quality-followup|typed-dicts-and-patch-gate
+**Source:** debug/2026-09-06; confidence:90; severity:low.
+**What:** The farm/performance fix passes 97 tests and gives index/runtime/snapshot 100% line/branch coverage, but CLI is 88% and metrics 90%. Consolidates B-radar-test-cli-inventory and B-radar-test-contract-inventory: add full typed input models, split the long snapshot validator/CLI by responsibility, separate pure/integration test levels, assert transport mock arguments and add an actual server-side patch coverage gate. No native mutation score is available for d3cb784; run that as a scoped test-strength campaign before asserting Q21.
+**Defer-reason:** broader type/test/CI campaign, not necessary to move CPU work off the laptop; detailed evidence in ~/.codex/outputs/refactor-radar-performance-20260906/review.md.
+
+## B-install-source-side-effect — sourcing installer refreshes sleep guard
+
+**File:** scripts/install.sh:2106 (fa7a654).
+**Fingerprint:** install.sh|scope-isolation|top-level-sleep-guard
+**Source:** debug/2026-09-06; confidence:95; severity:medium.
+**What:** The sleep-guard install block lives after the main BASH_SOURCE guard. Sourcing this supposedly sourceable installer to call only install_refactor_radar_bundle also copies ~/.zuvo/zuvo-sleep-guard.zsh and can edit ~/.zshenv. In this run the existing .zshenv marker prevented an edit and the copied guard matches current main. Move the block under the main guard, cover side-effect-free source, and expose an explicit scoped skill installer with per-skill provenance.
+**Defer-reason:** installer/hook lifecycle is outside the radar measurement fix; no unrelated hook implementation changed.
+
+## B-radar-debug-baseline-gates — three earlier full-suite failures
+
+**Files:** tests/hooks/test-dogfood-wired.sh; tests/hooks/test-verify-audit-citations.sh; tests/benchmark-suite/test-benchmark-smoke.sh.
+**Fingerprint:** tests/run-all.sh|baseline-failures|radar-debug-20260906
+**Source:** debug/2026-09-06; confidence:95; severity:medium.
+**What:** Both clean c8aff96 baseline (rt 1788680872-48816-7402) and radar fix full run (1788688666-3903-8251) end PASS=119 FAIL=3 SKIP=4. Dogfood live-repo activation is absent (hp=''); citation gate fails extensionless/current-SHA cases; benchmark smoke exits 129. Diagnose these separately; a matching baseline proves no new failure, not a green repository.
+**Defer-reason:** unchanged failures outside files touched by the performance fix. Use rt; no local full-suite fallback.
