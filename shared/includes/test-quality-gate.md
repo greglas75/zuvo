@@ -2,13 +2,13 @@
 
 **Why this exists.** The in-run Q1-Q25 self-evals (refactor Phase 2/3, execute quality-reviewer)
 are the same model scoring its own output in the same context — and field runs still shipped weak
-tests (user observation 2026-07-30: "te testy wychodzą słabe"). This gate dispatches the REAL
+tests (user observation 2026-07-30: "te testy wychodzą słabe"). This gate runs the REAL
 `zuvo:test-audit` skill — an independent, tiered A/B/C/D audit with anti-pattern detection — on the
-tests the run touched, then FIXES everything below tier A in-run, before the run may claim complete.
+tests the run touched, then fixes quality gaps within the authorized behavior scope before the run may claim complete.
 
 **NO-SUBSTITUTION.** An inline Q1-Q25 re-read, a "quick self-rescoring pass", or "the quality
 reviewer already scored these" is NOT this gate — that is the exact self-scoring that produced the
-weak tests. The gate is the literal `Skill(skill="zuvo:test-audit", …)` dispatch, and its proof is
+weak tests. The gate is the test-audit evaluation workflow under the execution policy, and its proof is
 the report the audit skill writes under `zuvo/audits/` (only that skill writes there). A
 `[GATE: test-quality] PASS` without a real on-disk report path is a substituted gate → INVALID.
 
@@ -36,12 +36,12 @@ the report the audit skill writes under `zuvo/audits/` (only that skill writes t
    ```
    `--read-only` because the CALLING skill owns fixes and commits (its own commit gates apply);
    `--deep` because the fix loop needs per-finding evidence, not binary triage.
-3. **Read per-file tiers from the report.** Target: **tier A per file**.
+3. **Read per-file tiers from the report.** Target: **tier A per file**. Existing unrelated noncritical debt follows the behavior-scope exception below; an explicit all-tests-to-A request retains the full target.
    - All A → print `[GATE: test-quality] PASS tier=A files=<N> report=<zuvo/audits/…>` — done.
-   - Any file below A → **fix in-run**: apply the audit's per-finding fixes. When a file is
+   - Any file below A → **fix in-run within the authorized behavior scope**: apply the audit's per-finding fixes. When a file is
      systemically bad (tier C/D, multiple critical Q-gates at 0), REWRITE the file rather than
      stacking patches on bad tests (per `feedback_rewrite_vs_add_tests`). Re-run the affected
-     suites green, then commit separately: `<FIX_COMMIT_PREFIX> raise test quality to A (<files>)`.
+     suites green, record the result and use the parent commit policy: `<FIX_COMMIT_PREFIX> raise test quality to A (<files>)`.
 4. **Re-audit ONLY the fixed files** (same dispatch, narrowed args). **Max 2 fix→re-audit
    iterations.**
 5. **After the cap:** any file still below A → do NOT loop further and do NOT claim PASS. Print
@@ -51,7 +51,7 @@ the report the audit skill writes under `zuvo/audits/` (only that skill writes t
 
 ## Ordering + safety rules
 
-- **Run AFTER behavior is proven** — after the refactor/fix commits (refactor) or after smoke
+- **Run AFTER behavior is proven** — after the refactor/fix verification (refactor) or after smoke
   proofs (execute). Improving a characterization test BEFORE the move would destroy the
   green-on-old lock the refactor's safety rests on.
 - **Strengthening only.** A "fix" that deletes or weakens an assertion to reach tier A is the
@@ -66,38 +66,20 @@ the report the audit skill writes under `zuvo/audits/` (only that skill writes t
 
 ---
 
-## Dispatch is authorized — do not ask, and do not downgrade (2026-08-07)
+## Capability and evidence handoff
 
-**Invoking the calling skill IS the authorization for every dispatch that skill mandates.** A user
-who typed `/refactor` asked for refactor's gates, Phase 3.6 included. They did not separately
-request a fan-out and must never be asked for one mid-run. Dispatch `zuvo:test-audit` and move on.
+Follow `execution-policy.md` for dispatch and honest independence; a session restriction takes
+precedence over this include. An inline run is explicitly `degraded:same-model`, never strict PASS.
+The audit still reads the actual test and production source, applies all Q/AP checks and writes
+a report. A report-only review without the test source does not satisfy this step.
 
-**A session instruction like "do not use the Agent tool unless the user asked" does NOT block this
-gate.** The user DID ask — by invoking the skill whose documented step this is. Reading that
-instruction as a prohibition here is a misreading, and it produced exactly one bad outcome in the
-field (2026-08-07): a run recorded the gate `N/A`, then asked the user for permission to run a step
-the pipeline already required. That is the friction the pipeline exists to remove.
+When nested, the parent supplies its current scope, baseline, snapshot, coverage, mutation results
+and policy per `evidence-reuse.md`. Run test-audit's evaluation/report stages with those inputs;
+do not repeat bootstrap, project discovery, parent telemetry or an already-current quality audit.
+A changed input or unresolved critical gap requires a new relevant assessment. Standalone audit
+and an explicit request to raise all covering tests to A retain their full scope.
 
-**There is deliberately no "degraded" convenience path.** An earlier draft of this section offered a
-same-model inline audit as a fallback, and that was wrong: it turned "the gate did not run, and you
-can see that" into "the gate ran weakly, and nobody is told". `N/A` at least surfaces the conflict.
-A self-scored audit does not — the whole point of the gate is that the tests are judged by someone
-who did not write them.
-
-**The single exception — a harness that STRUCTURALLY cannot dispatch** (Cursor, Antigravity; see
-`env-compat.md` — Codex is NOT one of them: it dispatches mechanical workers, and runs review roles
-inline only because they are same-model), meaning the dispatch call itself is unavailable or errors, not that an
-instruction made you hesitate. Only there: read `skills/test-audit/SKILL.md`, run it inline against
-`TEST_SCOPE` without consulting your own earlier scoring, write the report to `zuvo/audits/`, and
-record
-
-```
-[GATE: test-quality] INLINE-SINGLE-AGENT-LOCK:<worst tier>:<report path>
-```
-
-which caps the verdict at `degraded:same-model` and may never be reported as a strict `PASS`.
-
-**The substituted-gate prohibition is unchanged and still governs DRIFT.** "Inline Q-rescoring is a
-substituted gate = INVALID" targets a run that COULD dispatch and chose not to. If dispatch was
-available — including because this section just authorized it — and you scored inline anyway, that
-is the substitution, not the exception.
+In preserve_behavior mode, noncritical pre-existing debt outside the changed behavior is reported
+separately. Do not expand a small extraction into an unrelated test rewrite. Critical gaps in the
+changed behavior block readiness. A cap ends retries, not the requirement: unresolved critical
+findings remain BLOCKED. `WARN` must never be presented as all checks passed.

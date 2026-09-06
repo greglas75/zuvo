@@ -30,7 +30,7 @@ point. A contract that records `prove.regression_red: not_run` and a stage of PH
 resumable state, it is a claim with no evidence behind it.
 
 Usage:
-  ~/.zuvo/refactor-contract show [--file <src>] [--contract <path>]
+  ~/.zuvo/refactor-contract [--file <src>] [--contract <path>] show
   ~/.zuvo/refactor-contract list [--stale-days N] [--json]
   ~/.zuvo/refactor-contract stage <STAGE> [--force]
   ~/.zuvo/refactor-contract prove <field> <evidence>
@@ -52,12 +52,25 @@ import re
 import subprocess
 import sys
 import time
+import runpy
+import uuid
+import tempfile
+import shutil
+from pathlib import Path
+from workflow_evidence import snapshot
+
+_READER = next((p for p in (Path(__file__).resolve().parents[2] / "hooks/lib/refactor-state.py",
+                           Path.home() / ".claude/hooks/lib/refactor-state.py") if p.is_file()), None)
+if _READER is None:
+    sys.exit("refactor-contract: structural reader unavailable; reinstall Zuvo")
+_STATE = runpy.run_path(str(_READER))
+_READ_VERSIONS = {}
 
 # The closed vocabulary. Everything agents actually invented is mapped onto it rather than
 # rejected outright: refusing a run's own history helps nobody, and the four invented spellings all
 # mean something this list can express.
 STAGES = ["PHASE-1", "PHASE-2", "PHASE-3", "PHASE-3.5", "PHASE-3.6", "PHASE-3.7",
-          "PHASE-4", "BLOCKED", "COMPLETE"]
+          "PHASE-4", "BLOCKED", "ABORTED", "COMPLETE"]
 
 ALIASES = {
     "READY_FOR_COMMIT": "PHASE-3.5",
@@ -71,7 +84,7 @@ ALIASES = {
 
 PROVE_FIELDS = ["characterization", "blind_audit", "adversarial", "regression_red",
                 "findings_disposition", "test_quality", "split_coverage",
-                "complexity_before", "complexity_reduced"]
+                "complexity_before", "complexity_reduced", "characterization_after"]
 
 # What each phase REQUIRES to have been proven before it can be entered. Gate on the boundary AFTER
 # the phase that fills a field, never inside it — a gate that fires while its own evidence is still
@@ -128,35 +141,56 @@ def is_contract(obj):
 
 
 def read_json(path):
-    """Return the contract object, or None.
-
-    Real contracts on disk are not all objects: some are a bare LIST at the top level, written by a
-    run that appended where it meant to assign. Nothing validated the shape, so those files load
-    fine and then fail on the first `.get`. Treat a non-object as unreadable rather than crashing on
-    it — a malformed contract is a fact to report, not an exception to propagate.
-    """
     try:
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except Exception:
+        _READ_VERSIONS[os.path.realpath(path)] = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
         return None
-    return data if isinstance(data, dict) else None
+    return _STATE["read_contract"](path)
 
 
 def write_atomic(path, data):
     """Never leave a half-written contract. A truncated state file loses the whole run's evidence."""
-    tmp = path + ".tmp"
+    path = os.path.realpath(path)
+    lock = path + ".lock"
     try:
-        with open(tmp, "w", encoding="utf-8") as fh:
+        lock_fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            if os.name == "nt":
+                import msvcrt
+                if os.fstat(lock_fd).st_size == 0:
+                    os.write(lock_fd, b"0")
+                os.lseek(lock_fd, 0, os.SEEK_SET)
+                msvcrt.locking(lock_fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (OSError, ImportError):
+            os.close(lock_fd)
+            raise OSError("could not acquire " + lock)
+    except OSError as exc:
+        print("refactor-contract: lock unavailable: " + str(exc), file=sys.stderr)
+        return False
+    tmp = None
+    try:
+        current = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        if current != _READ_VERSIONS.get(path):
+            print("refactor-contract: concurrent update detected; reload and retry", file=sys.stderr)
+            return False
+        fd, tmp = tempfile.mkstemp(prefix=".refactor-", dir=os.path.dirname(os.path.abspath(path)))
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
             json.dump(data, fh, indent=1)
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
+        _READ_VERSIONS[os.path.realpath(path)] = hashlib.sha256(Path(path).read_bytes()).hexdigest()
         return True
     except OSError:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
         return False
+    finally:
+        if tmp:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+        os.close(lock_fd)  # OS releases the lock on close/crash; keep the inode stable.
 
 
 def canonical_stage(raw):
@@ -182,13 +216,23 @@ def find_contract(a, root):
         # The path may have been given relative to the repo; try the other spelling before failing.
         alt = os.path.relpath(os.path.abspath(a.file), root)
         p2 = os.path.join(d, "refactor-%s.json" % target_hash(alt))
-        return p2 if os.path.isfile(p2) else None
+        if os.path.isfile(p2):
+            return p2
+        # Old skill templates used SHA-1 names. Resolve their structural target without renaming.
+        matches = []
+        target = os.path.normpath(os.path.abspath(a.file))
+        for candidate in sorted(glob.glob(os.path.join(d, "refactor-*.json"))):
+            c = read_json(candidate)
+            source = c.get("file") if c else None
+            if isinstance(source, str) and os.path.normpath(os.path.join(root, source)) == target:
+                matches.append(candidate)
+        return matches[0] if len(matches) == 1 else None
     active = []
     for p in sorted(glob.glob(os.path.join(d, "refactor-*.json"))):
         if not CONTRACT_NAME.match(os.path.basename(p)):
             continue
         c = read_json(p)
-        if not is_contract(c) or c.get("stage") == "COMPLETE":
+        if not is_contract(c) or canonical_stage(c.get("stage"))[0] in _STATE["TERMINAL"]:
             continue
         # Auto-selection considers only what a person would plausibly still be working on. An
         # abandoned contract is not a candidate just because nobody marked it COMPLETE.
@@ -215,7 +259,7 @@ def cmd_list(a, root):
         age = (time.time() - os.path.getmtime(p)) / 86400.0
         rows.append((p, st or (raw or "(no stage)"), c.get("file"), age))
 
-    live = [r for r in rows if r[1] not in ("COMPLETE",)]
+    live = [r for r in rows if r[1] not in _STATE["TERMINAL"]]
     fresh = [r for r in live if r[3] <= a.stale_days]
     stale = [r for r in live if r[3] > a.stale_days]
 
@@ -346,9 +390,19 @@ def cmd_stage(a, root, path):
     except (TypeError, ValueError):
         version = 0
     required = [k for k in REQUIRES.get(target, [])
-                if k in prove or version >= 5]
+                if (k in prove or version >= 5)
+                and (k != "regression_red" or "fix" in str(prove.get("findings_disposition", "")))]
+    if version >= 6 and target in ("PHASE-3.5", "PHASE-3.6", "PHASE-4", "COMPLETE"):
+        required.append("characterization_after")
     missing = [k for k in required
                if str(prove.get(k, "not_run")).strip().lower() in UNPROVEN]
+    if version >= 6 and target in ("PHASE-3.5", "PHASE-3.6", "PHASE-4", "COMPLETE"):
+        previous_cwd = os.getcwd()
+        try:
+            os.chdir(root)
+            missing.extend(_STATE["evidence_errors"](c, include_fixes=target != "PHASE-3.5"))
+        finally:
+            os.chdir(previous_cwd)
     if missing and not a.force:
         print("REFUSED — %s requires evidence this contract does not carry:" % target,
               file=sys.stderr)
@@ -418,11 +472,45 @@ def parse_counts(out):
     for line in clean.splitlines():
         if not re.match(r"^\s*Tests[:\s]", line):
             continue
+        passed = failed = None
         mp = re.search(r"(\d+)\s+passed", line)
         mf = re.search(r"(\d+)\s+failed", line)
         if mp:
             passed = int(mp.group(1))
-        failed = int(mf.group(1)) if mf else 0
+        elif mf:
+            passed = 0
+        failed = int(mf.group(1)) if mf else (0 if mp else None)
+    if passed is not None or failed is not None:
+        return passed, failed
+    # Native runner summaries only; never count individual test names or prose mentions.
+    match = re.search(r"(?m)^=+ (.+(?:passed|failed).+) =+$", clean)
+    if match:
+        counts = match.group(1)
+        p = re.search(r"(\d+) passed", counts)
+        f = re.search(r"(\d+) failed", counts)
+        return int(p.group(1)) if p else 0, int(f.group(1)) if f else 0
+    match = re.search(r"test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed;", clean)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    p = re.search(r"(?m)^# pass (\d+)\s*$", clean)
+    f = re.search(r"(?m)^# fail (\d+)\s*$", clean)
+    if p and f:
+        return int(p.group(1)), int(f.group(1))
+    match = re.search(r"(?m)^Ran (\d+) tests? in .+$", clean)
+    if match:
+        total = int(match.group(1))
+        if re.search(r"(?m)^OK(?: \(.*\))?$", clean):
+            return total, 0
+        failure = re.search(r"(?m)^FAILED \((.+)\)$", clean)
+        if failure:
+            count = sum(int(x) for x in re.findall(r"(?:failures|errors)=(\d+)", failure.group(1)))
+            return max(0, total - count), count
+    match = re.search(r"(?m)^OK \((\d+) tests?, \d+ assertions?\)", clean)
+    if match:
+        return int(match.group(1)), 0
+    match = re.search(r"(?m)^RESULT: PASS=(\d+) FAIL=(\d+)(?: SKIP=\d+)?$", clean)
+    if match:
+        return int(match.group(1)), int(match.group(2))
     return passed, failed
 
 
@@ -435,6 +523,30 @@ def run_suite(cmd, cwd, timeout=1800):
         return 124, (exc.stdout or b"").decode("utf-8", "replace") + "\n[timeout after %ds]" % timeout
     except Exception as exc:                                       # pragma: no cover - defensive
         return 126, str(exc)
+
+
+def measured_run(command, root):
+    try:
+        before = snapshot(root)
+    except (OSError, subprocess.CalledProcessError):
+        before = None
+    rc, out = run_suite(command, root)
+    passed, failed = parse_counts(out)
+    try:
+        after = snapshot(root)
+        test_snapshot = snapshot(root, tests_only=True)
+    except (OSError, subprocess.CalledProcessError):
+        after = test_snapshot = None
+    run_id = uuid.uuid4().hex
+    log_dir = Path(root) / "zuvo/reports/refactor/runs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / (run_id + ".log")
+    log_path.write_bytes(out.encode("utf-8"))
+    return {"run_id": run_id, "kind": "tests", "repo_root": str(Path(root).resolve()), "command": command, "exit_code": rc,
+            "passed": passed, "failed": failed, "snapshot": before,
+            "stable": before is not None and before == after,
+            "test_snapshot": test_snapshot,
+            "log": str(log_path.relative_to(root)), "log_sha256": hashlib.sha256(out.encode()).hexdigest()}, out
 
 
 def cmd_baseline(a, root, path):
@@ -452,8 +564,11 @@ def cmd_baseline(a, root, path):
     c = read_json(path)
     if c is None:
         return 2
-    rc, out = run_suite(a.command, root)
-    passed, failed = parse_counts(out)
+    if a.mode == "compilation" and c.get("test_mode") != "VERIFY_COMPILATION":
+        print("baseline: compilation mode requires the plan's VERIFY_COMPILATION classification", file=sys.stderr)
+        return 2
+    run, out = measured_run(a.command, root)
+    rc, passed, failed = run["exit_code"], run["passed"], run["failed"]
     verdict = "PASS" if rc == 0 else "FAIL"
     detail = "%s rc=%d" % (verdict, rc)
     if passed is not None:
@@ -466,20 +581,32 @@ def cmd_baseline(a, root, path):
     # vocabulary the commit gate and the retro already read.
     sha = git_head(root)
     prefix = "%s:%s:" % (a.mode, sha) if a.mode else ""
+    run["kind"] = "compilation" if a.mode == "compilation" else "tests"
+    if c.get("evidence", {}).get("characterization_before"):
+        c.setdefault("characterization_history", []).append({k: c["evidence"].get(k) for k in
+                                                            ("characterization_before", "characterization_after")})
+    valid = rc == 0 and (int(c.get("version", 0)) < 6 or
+                         run["stable"] and (run["kind"] == "compilation" or isinstance(passed, int) and passed > 0 and not failed))
     c["characterization_cmd"] = a.command
-    c.setdefault("prove", {})["characterization"] = prefix + detail
+    c.setdefault("evidence", {})["characterization_before"] = run
+    c["evidence"].pop("characterization_after", None)
+    c.setdefault("prove", {}).pop("characterization_after", None)
+    c.setdefault("prove", {})["characterization"] = prefix + detail if valid else "not_run"
     if not write_atomic(path, c):
         return 2
     render(c, path, root, note="baseline recorded; re-run it with `recheck`")
     if rc != 0:
         print(tail_of(out), file=sys.stderr)
-    return 0 if rc == 0 else 1
+
+    if not valid and rc == 0:
+        print("baseline: no stable executed test summary; compilation requires --mode compilation", file=sys.stderr)
+    return 0 if valid else 1
 
 
 def cmd_recheck(a, root, path):
     """Re-run the recorded command and say whether the suite still does what it did.
 
-    This is what `prove.regression_red` is supposed to attest. Re-running the SAME stored command is
+    This records characterization_after; it is never evidence of a red regression test. Re-running the SAME stored command is
     the part that makes the comparison mean anything: a fresh command with a different spec list
     would compare two different things and call it a regression check.
     """
@@ -492,16 +619,25 @@ def cmd_recheck(a, root, path):
               "  comparison is only meaningful against the same command.", file=sys.stderr)
         return 2
     before = str((c.get("prove") or {}).get("characterization", ""))
-    rc, out = run_suite(cmd, root)
-    passed, failed = parse_counts(out)
+    run, out = measured_run(cmd, root)
+    rc, passed, failed = run["exit_code"], run["passed"], run["failed"]
     now = "PASS rc=0" if rc == 0 else "FAIL rc=%d" % rc
     if passed is not None:
         now += " %d passed" % passed
         if failed:
             now += ", %d failed" % failed
 
-    drifted = (rc != 0) or (passed is not None and ("%d passed" % passed) not in before)
-    c.setdefault("prove", {})["regression_red"] = "%s -> %s" % (before or "no baseline", now)
+    baseline = (c.get("evidence") or {}).get("characterization_before")
+    run["kind"] = baseline.get("kind", "tests") if baseline else "tests"
+    old_counts = parse_counts("Tests " + before)[0]
+    drifted = rc != 0 or (passed != old_counts if not baseline else
+                         baseline["exit_code"] != 0 or passed != baseline["passed"])
+    if int(c.get("version", 0)) >= 6:
+        drifted = drifted or not run["stable"] or not baseline or not baseline.get("stable")
+        if run["kind"] != "compilation":
+            drifted = drifted or not isinstance(passed, int) or passed <= 0 or bool(failed) or bool((baseline or {}).get("failed"))
+    c.setdefault("evidence", {})["characterization_after"] = run
+    c.setdefault("prove", {})["characterization_after"] = "not_run" if drifted else "%s -> %s" % (before or "no baseline", now)
     if not write_atomic(path, c):
         return 2
     render(c, path, root, note=("DRIFT — the suite does not do what the baseline recorded"
@@ -509,6 +645,72 @@ def cmd_recheck(a, root, path):
     if drifted:
         print(tail_of(out), file=sys.stderr)
         return 1
+    return 0
+
+
+def cmd_check(a, root, path):
+    c = read_json(path)
+    if c is None:
+        print("BLOCK: unreadable contract", file=sys.stderr)
+        return 2
+    lib = _READER.with_name("refactor-gate-lib.sh")
+    if not lib.is_file():
+        print("BLOCK: gate library unavailable", file=sys.stderr)
+        return 2
+    scope = c.get("scope_fence")
+    if not isinstance(scope, list) or not scope or not all(isinstance(p, str) for p in scope):
+        print("BLOCK: no explicit scope_fence", file=sys.stderr)
+        return 2
+    with tempfile.TemporaryDirectory() as directory:
+        shutil.copyfile(path, os.path.join(directory, "refactor-check.json"))
+        env = dict(os.environ, ZUVO_CONTRACTS_DIR=directory, ZUVO_AI_RUN="1", ZUVO_GATE_MODE="pre-push")
+        # The hook implementation is the verifier; do not duplicate its predicates in skill prose.
+        result = subprocess.run(["sh", "-c", 'LIB="$1"; . "$LIB"; r=0; refactor_gate_check "$2" || r=1; refactor_prove_v4_check "$2" || r=1; exit "$r"',
+                                 "refactor-check", str(lib), "\n".join(scope)], cwd=root, env=env)
+    if result.returncode == 0:
+        print("GATE: PASS — current contract checks satisfied")
+    return result.returncode
+
+
+def cmd_regression(a, root, path):
+    c = read_json(path)
+    if c is None:
+        return 2
+    evidence = c.setdefault("evidence", {})
+    if not isinstance(evidence, dict):
+        print("regression: invalid evidence object", file=sys.stderr)
+        return 2
+    pairs = evidence.setdefault("fix_regressions", [])
+    if not isinstance(pairs, list) or any(not isinstance(p, dict) or not isinstance(p.get("finding_id"), str) or not p["finding_id"] for p in pairs):
+        print("regression: invalid fix_regressions entries", file=sys.stderr)
+        return 2
+    if len({p["finding_id"] for p in pairs}) != len(pairs):
+        print("regression: duplicate finding IDs; repair the contract first", file=sys.stderr)
+        return 2
+    pair = next((p for p in pairs if p.get("finding_id") == a.finding), None)
+    if a.color == "green" and (not pair or not isinstance(pair.get("red"), dict) or pair["red"].get("command") != a.command):
+        print("regression: green requires a recorded red with the same command", file=sys.stderr)
+        return 2
+    run, out = measured_run(a.command, root)
+    valid = (run["exit_code"] not in (0, 124, 126, 127) and (run["failed"] or 0) > 0
+             if a.color == "red" else run["exit_code"] == 0 and (run["passed"] or 0) > 0 and not run["failed"])
+    if not valid or not run["stable"]:
+        print("regression: no stable, demonstrated " + a.color + " result\n" + tail_of(out), file=sys.stderr)
+        return 1
+    if a.color == "red":
+        if pair:
+            pairs.remove(pair)
+        pairs.append({"finding_id": a.finding, "red": run})
+    else:
+        pair["green"] = run
+        ids = c.setdefault("fix_findings", [])
+        if a.finding not in ids:
+            ids.append(a.finding)
+        c["findings_outcome"] = "fixed"
+        c.setdefault("prove", {})["regression_red"] = "linked:" + ",".join(p["finding_id"] for p in pairs if "green" in p)
+    if not write_atomic(path, c):
+        return 2
+    print("regression: " + a.finding + " " + a.color + " run=" + run["run_id"])
     return 0
 
 
@@ -574,9 +776,14 @@ def main(argv):
     p_app.add_argument("value")
     p_base = sub.add_parser("baseline")
     p_base.add_argument("command", help="the characterization command, typed ONCE")
-    p_base.add_argument("--mode", choices=["existing", "written", "dead", "verify-move"],
+    p_base.add_argument("--mode", choices=["existing", "written", "dead", "verify-move", "compilation"],
                         help="which characterization strategy this is — your call, not the tool's")
     sub.add_parser("recheck")
+    sub.add_parser("check")
+    p_reg = sub.add_parser("regression")
+    p_reg.add_argument("finding")
+    p_reg.add_argument("color", choices=["red", "green"])
+    p_reg.add_argument("command")
 
     a = ap.parse_args(argv)
     root = repo_root()
@@ -595,7 +802,7 @@ def main(argv):
 
     return {"show": cmd_show, "stage": cmd_stage, "prove": cmd_prove,
             "set": cmd_set, "append": cmd_append,
-            "baseline": cmd_baseline, "recheck": cmd_recheck}[a.cmd](a, root, path)
+            "baseline": cmd_baseline, "recheck": cmd_recheck, "regression": cmd_regression, "check": cmd_check}[a.cmd](a, root, path)
 
 
 if __name__ == "__main__":

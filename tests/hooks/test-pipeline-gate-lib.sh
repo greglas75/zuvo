@@ -752,24 +752,17 @@ env -i PATH="$PATH" ANTIGRAVITY_SESSION_ID=x bash -c ". '$LIB'; pg_is_agent_env"
   && pass "agent_env: ANTIGRAVITY_SESSION_ID → agent" \
   || bad "ANTIGRAVITY_SESSION_ID must be agent"
 
-# DRIFT GUARD — the two detectors cannot share code (bash ${!var} vs POSIX), so nothing but this
-# comparison keeps them together. They HAD drifted by two variables before it existed. Compare
-# the extracted var lists rather than a hardcoded count: a count guard passes the moment someone
-# swaps one name for another.
-_pg_vars="$(sed -n '/^pg_is_agent_env()/,/^}/p' "$LIB" | grep -oE '\b[A-Z][A-Z0-9_]{3,}\b' | sort -u)"
+# Exercise both consumers for every marker in the single source, in an otherwise empty env.
 _rg_lib="$ROOT/hooks/lib/refactor-gate-lib.sh"
-if [ -f "$_rg_lib" ]; then
-  _rg_vars="$(sed -n '/^_is_agent_env()/,/^}/p' "$_rg_lib" | grep -oE '\b[A-Z][A-Z0-9_]{3,}\b' | sort -u)"
-  _only_rg="$(comm -13 <(printf '%s\n' "$_pg_vars") <(printf '%s\n' "$_rg_vars") | tr '\n' ' ')"
-  _only_pg="$(comm -23 <(printf '%s\n' "$_pg_vars") <(printf '%s\n' "$_rg_vars") | tr '\n' ' ')"
-  if [ -z "$_only_rg" ] && [ -z "$_only_pg" ]; then
-    pass "agent_env DRIFT GUARD: pg_is_agent_env and _is_agent_env cover the same variables"
+_markers=$(sed -n '/^zuvo_is_agent_env()/,/^}/p' "$ROOT/hooks/lib/agent-env.sh" | grep -oE '\$\{[A-Z][A-Z0-9_]*' | sed 's/^\${//' | sort -u)
+for marker in $_markers; do
+  if env -i PATH="$PATH" "$marker=1" bash -c '. "$1"; pg_is_agent_env' _ "$LIB" &&
+     env -i PATH="$PATH" "$marker=1" sh -c '. "$1"; _is_agent_env' _ "$_rg_lib"; then
+    pass "shared detector: $marker arms both gates"
   else
-    bad "agent_env DRIFT: only-in-refactor-gate=[$_only_rg] only-in-pipeline-gate=[$_only_pg] — add to BOTH"
+    bad "shared detector: $marker failed in a consumer"
   fi
-else
-  pass "agent_env DRIFT GUARD: skipped (refactor-gate-lib.sh absent)"
-fi
+done
 env -i PATH="$PATH" bash -c ". '$LIB'; pg_is_agent_env" \
   && bad "clean env should be human" \
   || pass "agent_env: clean env → human (pass-through)"

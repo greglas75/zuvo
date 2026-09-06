@@ -17,7 +17,7 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 HE="$ROOT/tests/lib/human-env.sh"
-RGL="$ROOT/hooks/lib/refactor-gate-lib.sh"
+RGL="$ROOT/hooks/lib/agent-env.sh"
 TMP="$(mktemp -d)"; trap 'cp -f "$TMP/rgl.bak" "$RGL" 2>/dev/null; rm -rf "$TMP"' EXIT
 fails=0
 ok(){ echo "  ✓ $1"; }
@@ -43,7 +43,7 @@ STRAY=$(names | grep -vx '\-u' | grep -vx 'env' | grep -cvE '^(ZUVO|CLAUDE|CLAUD
 python3 - "$RGL" <<'PY'
 import sys
 p = sys.argv[1]; s = open(p, encoding='utf-8').read()
-old = '_is_agent_env() {'
+old = 'zuvo_is_agent_env() {'
 assert old in s, 'anchor missing — re-anchor this test'
 open(p, 'w', encoding='utf-8').write(
     s.replace(old, old + '\n  # must not modify PATH or HOME or TMPDIR or SHELL here', 1))
@@ -60,7 +60,7 @@ cp -f "$TMP/rgl.bak" "$RGL"
 python3 - "$RGL" <<'PY'
 import sys
 p = sys.argv[1]; s = open(p, encoding='utf-8').read()
-old = '_is_agent_env() {'
+old = 'zuvo_is_agent_env() {'
 open(p, 'w', encoding='utf-8').write(s.replace(old, old + '\n  [ -n "${NEWHARNESS_SESSION:-}" ] && return 0', 1))
 PY
 names | grep -qx 'NEWHARNESS_SESSION' \

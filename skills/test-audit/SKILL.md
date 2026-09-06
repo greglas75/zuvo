@@ -96,7 +96,11 @@ capability (Cursor, Antigravity — NOT Codex, which dispatches mechanical worke
 
 ## Mandatory File Loading
 
-Read these files from disk before starting. Print the checklist. Do not proceed from memory.
+First resolve `../../shared/includes/execution-policy.md` and
+`../../shared/includes/evidence-reuse.md`. Reuse the parent policy and verified evidence for
+a nested stage. Load only the rules needed now, with the read-once receipt protocol.
+
+Load the applicable definitions using the read-once protocol. Defer logging/retro includes until completion.
 
 ```
 CORE FILES LOADED:

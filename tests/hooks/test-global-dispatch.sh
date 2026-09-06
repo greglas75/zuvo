@@ -91,7 +91,7 @@ cd "$TMP/r" || exit 1; git worktree remove -f "$TMP/wt" 2>/dev/null
 
 echo "=== pre-commit dispatcher (7 cases) ==="
 # helper: real refactor-safety-gate + lib into HD (pre-commit cases use the REAL work-gate)
-realgate() { cp "$ROOT/hooks/refactor-safety-gate.sh" "$HD/"; mkdir -p "$HD/lib"; cp "$ROOT/hooks/lib/refactor-gate-lib.sh" "$HD/lib/"; chmod +x "$HD"/*.sh "$HD"/lib/*.sh; }
+realgate() { cp "$ROOT/hooks/refactor-safety-gate.sh" "$HD/"; mkdir -p "$HD/lib"; cp "$ROOT/hooks/lib/refactor-gate-lib.sh" "$ROOT/hooks/lib/agent-env.sh" "$ROOT/hooks/lib/refactor-state.py" "$HD/lib/"; chmod +x "$HD"/*.sh "$HD"/lib/*.sh; }
 
 # (1) no local hook + agent env + prove-skipped refactor CONTRACT -> work-gate BLOCKs
 newenv none; realgate

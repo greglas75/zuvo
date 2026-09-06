@@ -111,7 +111,7 @@ done
 # and the skill must actually probe those paths (a shipped file nobody looks for is still missing)
 for probe in '.codex/scripts/refactor-safety-gate.sh' '.cursor/scripts/refactor-safety-gate.sh' \
              '.gemini/antigravity/hooks/refactor-safety-gate.sh'; do
-  grep -q "$probe" "$ROOT/skills/refactor/SKILL.md" \
+  grep -q "$probe" "$ROOT/skills/refactor/references/bootstrap.md" \
     && pass "(6c) refactor PHASE 0 probes ~/$probe" \
     || bad "(6c) refactor PHASE 0 does not probe ~/$probe"
 done

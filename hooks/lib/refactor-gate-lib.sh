@@ -20,78 +20,26 @@
 #     ZUVO_HOME            run-marker root (default $HOME/.zuvo)
 #     AI-harness markers   see _is_agent_env() — ANY set => AI run; NONE => human => bypass
 
-# _prove_field <contract-json> <field> — the value of prove.<field>, and ONLY prove.<field>.
-#
-# Every prove check used to be `sed -n 's/.*"<field>"…/\1/p' "$c" | head -1`, which searches the
-# WHOLE FILE and takes the first hit. The agent writes this contract, so it could add a decoy
-# object anywhere above `prove` and walk through the gate:
-#
-#   { "previous_attempt": { "test_quality": "PASS:A:zuvo/audits/x.md" },
-#     "prove": { "test_quality": "not_run" } }        <-- gate read the decoy, returned 0
-#
-# Verified 2026-08-13 against this file: that contract passed with every real prove value at
-# `not_run`. It defeated the v4 fields AND the pre-existing blind_audit / adversarial /
-# characterization checks — i.e. the whole "only agent-independent bind" was one JSON key away
-# from being decorative, and the agent it polices is the one holding the pen. That is the
-# agent-typable bypass this repo removes on sight, so the fix belongs to the CLASS: both
-# functions below now read through here, and neither can be spoofed by a sibling key.
-#
-# jq-free by this file's contract, so the object is walked in awk: find "prove", take its `{`,
-# track depth while respecting quotes and backslash escapes, stop at the matching `}`.
-_prove_field() {
-  _pf_c=$1; _pf_k=$2
-  tr -d '\n' < "$_pf_c" 2>/dev/null | awk -v key="$_pf_k" '
-    {
-      s = $0
-      p = index(s, "\"prove\"")
-      if (p == 0) exit
-      s = substr(s, p)
-      b = index(s, "{")
-      if (b == 0) exit
-      s = substr(s, b)
-      depth = 0; inq = 0; esc = 0; n = length(s); obj = ""
-      for (i = 1; i <= n; i++) {
-        ch = substr(s, i, 1)
-        obj = obj ch
-        if (inq) {
-          if (esc)             { esc = 0 }
-          else if (ch == "\\") { esc = 1 }
-          else if (ch == "\"") { inq = 0 }
-        } else {
-          if (ch == "\"")      { inq = 1 }
-          else if (ch == "{")  { depth++ }
-          else if (ch == "}")  { depth--; if (depth == 0) break }
-        }
-      }
-      # obj is now the prove object text; pull the field out of THAT, not out of the file.
-      k = index(obj, "\"" key "\"")
-      if (k == 0) exit
-      rest = substr(obj, k + length(key) + 2)
-      c = index(rest, ":")
-      if (c == 0) exit
-      rest = substr(rest, c + 1)
-      q = index(rest, "\"")
-      if (q == 0) exit
-      rest = substr(rest, q + 1)
-      out = ""; esc = 0
-      for (i = 1; i <= length(rest); i++) {
-        ch = substr(rest, i, 1)
-        if (esc)             { out = out ch; esc = 0 }
-        else if (ch == "\\") { esc = 1 }
-        else if (ch == "\"") { break }
-        else                 { out = out ch }
-      }
-      print out
-    }' 2>/dev/null | head -1
-}
+# Capture the source directory before functions replace positional parameters. POSIX sh
+# callers pass the library as $1 (or LIB); bash exposes BASH_SOURCE for direct sourcing.
+_rgl_dir=$(cd "$(dirname "${LIB:-${BASH_SOURCE:-${1:-$0}}}")" 2>/dev/null && pwd)
 
-# Preserve legacy contract ids, but exclude known review sidecars and array ledgers.
-_refactor_contract_file() {
-  [ -f "$1" ] || return 1
-  case "${1##*/}" in *-findings.json|*-adversarial.json) return 1 ;; esac
-  awk 'NF { sub(/^\357\273\277/, ""); sub(/^[[:space:]]*/, ""); if (!length($0)) next; array=(substr($0,1,1)=="["); exit }
-       END { exit array }' "$1"
+# Python's JSON parser is the same one the contract CLI uses. On a missing runtime or
+# invalid document retain the hook's fail-open policy, with an explicit diagnostic.
+_refactor_state() {
+  for _rs_path in "$_rgl_dir/refactor-state.py" "$(dirname "${LIB:-/nonexistent/lib}")/refactor-state.py" \
+    "$(dirname "${BASH_SOURCE:-$0}")/refactor-state.py" \
+    "$(dirname "$0")/lib/refactor-state.py" \
+    "$HOME/.claude/hooks/lib/refactor-state.py"; do
+    if [ -f "$_rs_path" ]; then python3 "$_rs_path" "$@"; return $?; fi
+  done
+  echo "zuvo contract: structural reader unavailable -> fail-open" >&2
+  return 2
 }
+_prove_field() { _refactor_state "$1" field "prove.$2"; }
+_refactor_contract_file() { _refactor_state "$1" valid; }
+_state_field() { _refactor_state "$1" field "$2"; }
+_scope_contains() { _refactor_state "$1" contains scope_fence "$2"; }
 
 refactor_gate_check() {
   staged=$1
@@ -111,7 +59,7 @@ refactor_gate_check() {
     # the gate should never have made attractive.
     # `EXECUTION_COMPLETE` is deliberately NOT here: skills/refactor/SKILL.md:220 uses
     # it for `no-commit` runs precisely so `continue` can resume, i.e. still in flight.
-    grep -qE '"stage"[[:space:]]*:[[:space:]]*"(COMPLETE|BLOCKED|ABORTED)"' "$c" && continue
+    case "$(_state_field "$c" stage)" in COMPLETE|BLOCKED|ABORTED) continue ;; esac
     # intersect scope_fence with the file list.
     #  set -f: a '*'/'?' in a path must NOT glob-expand against the filesystem.
     #  grep -Fq --: fixed-string match — a '.'/'['/']' in a path is a literal, not a regex
@@ -122,7 +70,7 @@ refactor_gate_check() {
     set -f
     for f in $staged; do
       [ -n "$f" ] || continue
-      if grep -Fq -- "\"$f\"" "$c"; then hit=1; break; fi
+      if _scope_contains "$c" "$f"; then hit=1; break; fi
     done
     set +f
     IFS=$oldifs
@@ -138,6 +86,10 @@ refactor_gate_check() {
     if [ $((now - mt)) -gt "$ttl" ]; then
       echo "zuvo refactor-gate: stale contract (> ${ttl}s) -> bypass [$c]" >&2
       continue
+    fi
+    _cv=$(_state_field "$c" version)
+    if [ "${_cv:-0}" -ge 6 ] 2>/dev/null; then
+      _refactor_state "$c" evidence || blocked=1
     fi
     # PROVE checks — the CONTRACT is the artifact (commit is LAST, so no fix-commit exists yet)
     ba=$(_prove_field "$c" blind_audit)
@@ -206,7 +158,7 @@ refactor_prove_v4_check() {
     # about — self-migrating rollout, no flag day. The quote-tolerant parse matters: contracts in
     # the field carry "version": 4 AND "version": "4", and a digits-only sed read the string form
     # as absent and let it straight through.
-    rpv_cv=$(grep -o '"version"[[:space:]]*:[[:space:]]*"\{0,1\}[0-9][0-9]*' "$rpv_c" 2>/dev/null | head -1 | tr -cd '0-9')
+    rpv_cv=$(_state_field "$rpv_c" version)
     case "$rpv_cv" in ''|*[!0-9]*) continue ;; esac
     [ "$rpv_cv" -ge 4 ] 2>/dev/null || continue
     # only judge a contract whose fence this push actually touches
@@ -216,12 +168,15 @@ refactor_prove_v4_check() {
     set -f
     for rpv_f in $rpv_staged; do
       [ -n "$rpv_f" ] || continue
-      if grep -Fq -- "\"$rpv_f\"" "$rpv_c"; then rpv_hit=1; break; fi
+      if _scope_contains "$rpv_c" "$rpv_f"; then rpv_hit=1; break; fi
     done
     set +f
     IFS=$rpv_oldifs
     [ "$rpv_hit" = 1 ] || continue
 
+    if [ "$rpv_cv" -ge 6 ] 2>/dev/null; then
+      _refactor_state "$rpv_c" evidence || rpv_blocked=1
+    fi
     rpv_tq=$(_prove_field "$rpv_c" test_quality)
     # PASS/WARN/N/A is the vocabulary Phase 3.6 prints — but shape alone still accepts a story.
     # "WARN:substituted-inline" (a value a field run invented twice) matches WARN:* perfectly.
@@ -254,22 +209,8 @@ refactor_prove_v4_check() {
     # this guard (see refactor_scope_gate_check); this one was adapted without it.
     # No anchored array => nothing was recorded as created => count 0, which still requires
     # split_coverage to be N/A or 0/0 and so keeps the honest-value check alive.
-    if grep -q '"modules_created"[[:space:]]*:[[:space:]]*\[' "$rpv_c" 2>/dev/null; then
-    rpv_mods=$(tr -d '\n' < "$rpv_c" 2>/dev/null | awk '
-      { s = $0
-        k = index(s, "\"modules_created\""); if (k == 0) exit
-        s = substr(s, k); b = index(s, "["); if (b == 0) exit
-        s = substr(s, b + 1); inq = 0; esc = 0; cur = ""; n = length(s)
-        for (i = 1; i <= n; i++) { ch = substr(s, i, 1)
-          if (inq) { if (esc) { cur = cur ch; esc = 0 }
-                     else if (ch == "\\") { esc = 1 }
-                     else if (ch == "\"") { inq = 0; if (cur != "") print cur; cur = "" }
-                     else { cur = cur ch } }
-          else { if (ch == "\"") { inq = 1; cur = "" } else if (ch == "]") { exit } } } }' | grep -c . )
-    else
-      rpv_mods=0
-    fi
-    case "$rpv_mods" in ''|*[!0-9]*) rpv_mods=0 ;; esac
+    rpv_mods=$(_refactor_state "$rpv_c" count modules_created) || rpv_mods=0
+
     rpv_sc=$(_prove_field "$rpv_c" split_coverage)
     rpv_num=$(printf '%s' "$rpv_sc" | sed -n 's|^\([0-9][0-9]*\)/[0-9][0-9]*:..*$|\1|p')
     if [ "$rpv_mods" -eq 0 ]; then
@@ -298,7 +239,7 @@ refactor_prove_v4_check() {
     [ "$rpv_cv" -ge 5 ] 2>/dev/null || continue
     # First "type" occurrence is the contract's own (schema order: version, file, type) — the
     # only other "type" keys live inside progress[] entries, which come later in the file.
-    rpv_ty=$(grep -o '"type"[[:space:]]*:[[:space:]]*"[A-Z_]*"' "$rpv_c" 2>/dev/null | head -1 | sed 's/.*"\([A-Z_]*\)"$/\1/')
+    rpv_ty=$(_state_field "$rpv_c" type)
     case "$rpv_ty" in SPLIT_FILE|GOD_CLASS|SIMPLIFY) ;; *) continue ;; esac
     # Baseline must have been recorded BEFORE the work (Phase 1 pre-scan). Its maxfn number is
     # the cross-check for the after-measurement: to fake "reduced" the lie has to be told twice,
@@ -395,54 +336,18 @@ refactor_scope_gate_check() {
     # scope guard ("every staged file must sit in some fence"), which is the one that
     # actually blocked unrelated work: a halted refactor made every later commit prove
     # membership in a fence nobody was working inside.
-    grep -qE '"stage"[[:space:]]*:[[:space:]]*"(COMPLETE|BLOCKED|ABORTED)"' "$rsg_c" && continue
+    case "$(_state_field "$rsg_c" stage)" in COMPLETE|BLOCKED|ABORTED) continue ;; esac
     [ $(( rsg_now - $(_mtime "$rsg_c" "$rsg_now") )) -gt "$rsg_ttl" ] && continue  # abandoned run
     rsg_active=1
     # An active contract whose scope_fence cannot be read (malformed JSON, field absent) makes
     # the in-scope set UNKNOWN — and this gate's whole judgement is "file is outside every
     # fence". Unknown scope must therefore fail OPEN, not block every source file in the repo.
-    grep -q '"scope_fence"[[:space:]]*:[[:space:]]*\[' "$rsg_c" || {
+    rsg_scope=$(_refactor_state "$rsg_c" array scope_fence) || {
       echo "zuvo refactor-scope: contract has no readable scope_fence -> fail-open [$rsg_c]" >&2
       return 0
     }
-    # Extract the scope_fence array's quoted entries, QUOTE-AWARE.
-    #
-    # The obvious sed (`\[\([^]]*\)\]`) is wrong: `[^]]*` cannot cross a `]`, so it stops at the
-    # first one ANYWHERE after the array opens — including a `]` inside a filename. Next.js /
-    # Nuxt / SvelteKit dynamic routes (`app/[id]/page.tsx`, `[...slug].ts`) are exactly that,
-    # and they are common across this fleet. Measured on `["app/[id]/page.tsx","src/normal.ts"]`
-    # the sed returned NOTHING: every fence entry vanished, so either the gate went silently
-    # dead (empty set -> fail-open) or, with a different entry order, real in-scope files read
-    # as off-fence and got FALSE-BLOCKED — a block on the very refactor in flight.
-    #
-    # So walk the text instead: after "scope_fence", take the first `[`, then collect quoted
-    # strings until a `]` seen OUTSIDE quotes. A `]` inside a filename is just a character.
-    # Backslash escapes are honoured so `\"` cannot end a path early.
     rsg_fences="$rsg_fences
-$(tr -d '\n' < "$rsg_c" | awk '
-  {
-    s = $0
-    k = index(s, "\"scope_fence\"")
-    if (k == 0) exit
-    s = substr(s, k)
-    b = index(s, "[")
-    if (b == 0) exit
-    s = substr(s, b + 1)
-    inq = 0; esc = 0; cur = ""
-    n = length(s)
-    for (i = 1; i <= n; i++) {
-      ch = substr(s, i, 1)
-      if (inq) {
-        if (esc)            { cur = cur ch; esc = 0 }
-        else if (ch == "\\") { esc = 1 }
-        else if (ch == "\"") { inq = 0; if (cur != "") print cur; cur = "" }
-        else                 { cur = cur ch }
-      } else {
-        if (ch == "\"")      { inq = 1; cur = "" }
-        else if (ch == "]")  { exit }
-      }
-    }
-  }')"
+$rsg_scope"
   done
   [ "$rsg_active" = 1 ] || return 0                      # no refactor in flight -> nothing to bind
   # Same reasoning as the per-contract guard above, applied to the collected set: no fence
@@ -536,12 +441,12 @@ _mtime() {
 # both gates entirely. A narrower list means an agent slips through, so this list may only ever
 # be widened. POSIX sh: no ${!var} indirection (that is why the bash helper cannot be reused).
 _is_agent_env() {
-  [ "${ZUVO_AGENT:-0}" = "1" ] && return 0
-  [ -n "${ZUVO_AI_RUN:-}" ] && return 0
-  [ -n "${CLAUDECODE:-}${CLAUDE_PLUGIN_ROOT:-}${CLAUDE_CODE_ENTRYPOINT:-}${CLAUDE_CODE_SESSION:-}" ] && return 0
-  [ -n "${CODEX_SANDBOX:-}${CODEX_WORKSPACE:-}${CODEX_HOME:-}${CODEX_THREAD_ID:-}${CODEX_SESSION_ID:-}" ] && return 0
-  [ -n "${CURSOR_TRACE_ID:-}${CURSOR_AGENT:-}" ] && return 0
-  [ -n "${GEMINI_CLI:-}${ANTIGRAVITY:-}${GEMINI_ANTIGRAVITY:-}${ANTIGRAVITY_SESSION_ID:-}" ] && return 0
+  for _ae_path in "$_rgl_dir/agent-env.sh" "$(dirname "${LIB:-/nonexistent/lib}")/agent-env.sh" \
+    "$(dirname "${BASH_SOURCE:-$0}")/agent-env.sh" \
+    "$(dirname "$0")/lib/agent-env.sh" "$HOME/.claude/hooks/lib/agent-env.sh"; do
+    if [ -r "$_ae_path" ]; then . "$_ae_path"; zuvo_is_agent_env; return $?; fi
+  done
+  echo "zuvo: agent detector unavailable -> fail-open" >&2
   return 1
 }
 

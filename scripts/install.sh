@@ -209,7 +209,7 @@ install_hook_tree() {
   [ -f "$ZUVO_DIR/hooks/run-hook.cmd" ] && cp "$ZUVO_DIR/hooks/run-hook.cmd" "$dst/" 2>/dev/null || true
   [ -f "$ZUVO_DIR/hooks/session-start" ] && cp "$ZUVO_DIR/hooks/session-start" "$dst/" 2>/dev/null || true
   if [ -d "$ZUVO_DIR/hooks/lib" ]; then
-    cp "$ZUVO_DIR"/hooks/lib/*.sh "$dst/lib/" 2>/dev/null || true
+    cp "$ZUVO_DIR"/hooks/lib/*.sh "$ZUVO_DIR"/hooks/lib/*.py "$dst/lib/" 2>/dev/null || true
   fi
   # refactor commit-gate self-installer (lives in scripts/, needed in the hooks dir so
   # zuvo:refactor Phase 0 can find it at ~/.claude/hooks/install-refactor-gate.sh)
@@ -1104,6 +1104,8 @@ install_codex() {
     # …and the gate itself. Kept next to the installer (not only in the plugin cache, which is
     # created conditionally) so PHASE 0 resolves both halves from one predictable location.
     cp "$ZUVO_DIR"/hooks/refactor-safety-gate.sh "$HOME/.codex/scripts/" 2>/dev/null || true
+    mkdir -p "$HOME/.codex/scripts/lib"
+    cp "$ZUVO_DIR"/hooks/lib/*.sh "$ZUVO_DIR"/hooks/lib/*.py "$HOME/.codex/scripts/lib/"
     chmod +x "$HOME/.codex"/scripts/*.sh 2>/dev/null || true
     # The copies above all end in `|| true`; verify the claim before making it.
     # NOT `&&`-chained: verify_copied returns 1 on a miss, so a short-circuit would skip the
@@ -1392,6 +1394,8 @@ install_cursor() {
     # …and the gate itself. Kept next to the installer (not only in the plugin cache, which is
     # created conditionally) so PHASE 0 resolves both halves from one predictable location.
     cp "$ZUVO_DIR"/hooks/refactor-safety-gate.sh "$HOME/.cursor/scripts/" 2>/dev/null || true
+    mkdir -p "$HOME/.cursor/scripts/lib"
+    cp "$ZUVO_DIR"/hooks/lib/*.sh "$ZUVO_DIR"/hooks/lib/*.py "$HOME/.cursor/scripts/lib/"
     chmod +x "$HOME/.cursor"/scripts/*.sh 2>/dev/null || true
     # The copies above all end in `|| true`; verify the claim before making it.
     # Not `&&`-chained — see the codex block above for why a short-circuit under-reports.

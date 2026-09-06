@@ -454,7 +454,7 @@ done
 # Copy hooks/lib/ recursively (pre-push + commit gates source pipeline-gate-lib.sh)
 if [ -d "$PLUGIN_DIR/hooks/lib" ]; then
   mkdir -p "$DIST/hooks/lib"
-  for lib_file in "$PLUGIN_DIR"/hooks/lib/*.sh; do
+  for lib_file in "$PLUGIN_DIR"/hooks/lib/*.sh "$PLUGIN_DIR"/hooks/lib/*.py; do
     [ -f "$lib_file" ] || continue
     cat "$lib_file" | replace_paths > "$DIST/hooks/lib/$(basename "$lib_file")"
     chmod +x "$DIST/hooks/lib/$(basename "$lib_file")"

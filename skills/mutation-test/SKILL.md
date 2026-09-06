@@ -106,7 +106,11 @@ unscoped invocation from another skill is a bug in that skill.
 
 ## Mandatory File Loading
 
-Read these files from disk before starting. Print the checklist. Do not proceed from memory.
+First resolve `../../shared/includes/execution-policy.md` and
+`../../shared/includes/evidence-reuse.md`. Reuse the parent policy and verified evidence for
+a nested stage. Load only the rules needed now, with the read-once receipt protocol.
+
+Load the applicable definitions using the read-once protocol. Defer logging/retro includes until completion.
 
 ```
 CORE FILES LOADED:
@@ -123,11 +127,7 @@ CORE FILES LOADED:
 
 ## Environment Compatibility
 
-**Dispatch is already authorized — do not ask, do not downgrade.** Invoking this skill IS the
-request for every agent and gate it mandates, so a session rule about unprompted Agent use does not
-apply here. Only a harness with NO dispatch capability takes the documented single-agent fallback,
-and it still runs every gate inline — see `../../shared/includes/env-compat.md`. Skipping a mandated
-agent and self-scoring the result is a substituted gate, not a degraded run.
+Dispatch follows the resolved execution policy. Record actual independence and any unavailable gate; session restrictions take precedence.
 
 Read `../../shared/includes/env-compat.md` for agent dispatch patterns, path resolution, and progress tracking across all supported platforms.
 
@@ -436,16 +436,16 @@ compared against the next run's.
    machine, exactly as before. Never let a remote step own the restore.
 2. **A wrapper failure is not a mutation result.** `rt` exiting non-zero for a queue timeout,
    an evicted run, or an unreachable host means the mutation was **not measured** — it is
-   neither killed nor survived. Re-run it on the farm once; if that also fails, the mutant is
-   `NOT_EXECUTED` and the plan is incomplete under 3.3, not scored around.
+   neither killed nor survived. Follow the execution policy: keep queued work attached on the required runner. A pending run is
+   `NOT_EXECUTED`, not a terminal refusal or a result to score around.
 3. **`TEST_RAN` discipline applies to the farm too.** A farm run that is evicted or never
    scheduled exits 0 having run nothing, and "0 failures" from a suite that did not execute
    reads as a SURVIVED mutation — the single most expensive misread this skill can make. Require
    a summary line proving the suite executed before recording any Tier 2 verdict.
 
 **Off-tailnet, `rt` refuses with exit 21** rather than running locally. That is a routing
-failure, not a test result: fall back to a local Tier 2 pass for the rest of the run and note
-`tier2_runner: "local (rt unreachable)"`.
+failure, not a test result. Follow `execution-policy.md`; a project restriction on workstation execution requires
+waiting/reconnecting to the authorized runner. Never infer permission from a timeout.
 
 ### 1.3b Calculate Timeouts — budget per-invocation cost, not suite time
 

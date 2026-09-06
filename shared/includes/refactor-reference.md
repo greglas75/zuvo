@@ -1,3 +1,35 @@
+# Contract evidence semantics (v6)
+
+Read existing v3–v5 contracts without automatic upgrading or inventing proof. New contracts use
+v6 and `kind: refactor-contract`. `baseline` records `evidence.characterization_before`;
+`recheck` records `evidence.characterization_after` and never writes `regression_red`.
+Type/config-only verification uses `baseline --mode compilation`; a test run needs a positive parsed test count.
+Both carry run ID, exact command, snapshot, actual exit code/counts and log digest.
+
+Set the closed `findings_outcome` to `none|preserved|fixed|mixed`; applied IDs always require proof, regardless of descriptive wording.
+For each applied fix, list its ID in `fix_findings`, then execute:
+
+```bash
+~/.zuvo/refactor-contract --contract <path> regression <finding-id> red '<test command>'
+~/.zuvo/refactor-contract --contract <path> regression <finding-id> green '<same command>'
+```
+
+The first runs against pre-fix code with the new assertions; the second after the fix. Keep test
+inputs identical. The helper requires a parsed failing test summary for red (Tests/Jest/Vitest, pytest, unittest, TAP, cargo, PHPUnit success and Zuvo harness summaries); infrastructure exits and unknown failure counts do not count. Other runner
+formats require adding a tested parser, not a hand-written green→green claim. Logs are persisted.
+Each pair lives in `evidence.fix_regressions[]`. Pure extraction requires no red regression pair.
+For an authorized behavior fix, refresh characterization against the explicitly approved new
+behavior after capturing its red→green proof; keep the original characterization record in history.
+
+Run `~/.zuvo/refactor-contract --contract <path> check` before completion. It invokes the same
+hook predicates, not a second prose implementation. Use legacy paths on resume; new target names
+use SHA-256(relative target path)[:8], the CLI's `target_hash`. `BLOCKED` and `ABORTED` are terminal.
+Review artifact paths and successful command receipts remain required; nonempty text is not an
+independent proof. A malformed contract is diagnosed; hooks retain their documented fail-open
+behavior, while an explicit CLI check refuses unreadable state.
+
+---
+
 # zuvo:refactor — Reference
 
 > Detail moved out of the core SKILL.md happy-path. Load on demand: the CONTRACT
@@ -9,8 +41,8 @@
 
 ```bash
 ~/.zuvo/refactor-contract list                       # what is resumable HERE (stale ones withheld)
-~/.zuvo/refactor-contract show --file <src>
-~/.zuvo/refactor-contract prove regression_red "RED at a1b2c3, GREEN at d4e5f6 — 41 tests"
+~/.zuvo/refactor-contract --file <src> show
+~/.zuvo/refactor-contract --contract <path> regression <finding-id> red "<test command>"
 ~/.zuvo/refactor-contract stage PHASE-3.5
 ```
 
@@ -41,7 +73,7 @@ The most-repeated shell shape in a refactor session is that command — `cd` to 
 recomposed for every round (baseline, char1, char2). 66 re-issues of the environment prefix alone
 across 25 sessions.
 
-Recording it also changes what `prove.characterization` and `prove.regression_red` MEAN. They used
+Recording it also changes what `prove.characterization` and `prove.characterization_after` MEAN. They used
 to hold whatever sentence the run typed; now `baseline` records the parsed result and `recheck`
 re-runs the stored command and writes the before → after comparison itself. `recheck` exits 1 on
 drift, so a suite that stopped doing what it did cannot be narrated past. Re-running the STORED
@@ -49,7 +81,7 @@ command is the load-bearing part: a fresh command with a different spec list com
 things and calls it a regression check.
 
 **The stage gate.** A phase cannot be entered while the evidence it rests on is still `not_run`:
-`PHASE-3.5` needs `characterization` + `regression_red`, `PHASE-4` and `COMPLETE` also need
+`PHASE-3.5` needs characterization before/after; applied fixes additionally require `regression_red`, `PHASE-4` and `COMPLETE` also need
 `findings_disposition` + `test_quality`. This is checked on the boundary AFTER the phase that
 fills each field, never inside it. `--force` records it anyway and prints that it did — that is a
 human's call, and it is visible in the contract afterwards rather than indistinguishable from a
@@ -104,7 +136,13 @@ resumable run, not an archive candidate — resume it per the rules below instea
 
 ```json
 {
-  "version": 5,
+  "version": 6,
+  "kind": "refactor-contract",
+  "behavior_mode": "preserve_behavior",
+  "behavior_scope": [],
+  "fix_findings": [],
+  "findings_outcome": "none",
+  "evidence": {},
   "file": "src/services/order.service.ts",
   "type": "EXTRACT_METHODS",
   "mode": "full",
@@ -118,7 +156,7 @@ resumable run, not an archive candidate — resume it per the rules below instea
   "test_mode": "",
   "test_audit_before": { "test_file": null, "q7": 0, "q11": 0, "q13": 0, "units_total": 0, "units_covered": 0, "uncovered_units": [] },
   "modules_created": [],
-  "prove": { "characterization": "not_run", "blind_audit": "not_run", "adversarial": "not_run", "regression_red": "not_run", "findings_disposition": "pending", "test_quality": "not_run", "split_coverage": "not_run", "complexity_before": "not_run", "complexity_reduced": "not_run" },
+  "prove": { "characterization": "not_run", "blind_audit": "not_run", "adversarial": "not_run", "regression_red": "not_run", "characterization_after": "not_run", "findings_disposition": "pending", "test_quality": "not_run", "split_coverage": "not_run", "complexity_before": "not_run", "complexity_reduced": "not_run" },
   "progress": []
 }
 ```
@@ -223,17 +261,12 @@ collapse duplicate branches — and when none applies, record
 the file remains complex. What is NOT honest: extracting every helper *around* the core, watching
 the file halve, and reporting the god class fixed.
 
-**Contract migration (v3 → v4):** `continue` on a v3 contract bumps `version` to 4 and adds the two
-new `prove` keys as `"not_run"` plus an empty `modules_created`. Nothing else changes.
+**Legacy contracts:** resume v3–v5 at their recorded version. Do not raise the schema version
+or invent missing before-measurements. An explicitly requested migration creates a linked new
+contract; every newly required proof stays `not_run` until measured. Keep the original record.
 
-**Contract migration (v4 → v5):** `continue` on a v4 contract bumps `version` to 5 and adds
-`prove.complexity_before` / `prove.complexity_reduced` as `"not_run"`. For a resumed SPLIT_FILE /
-GOD_CLASS / SIMPLIFY run whose target was already edited, the honest baseline is gone — record
-`complexity_before` as `maxfn:<n>,branches:<n>,loc:<n>,resumed-mid-run` from the current tree and
-say so; never reconstruct a flattering "before" from git history you did not measure at the time.
-
-**Where these two are enforced — `git push`, not `git commit`.** Both are only KNOWABLE after
-Phase 3.6, which runs *after* the Phase 3.5 commits. A commit-time check would block the very commit
+**Where these two are enforced — `git push`, not `git commit`.** The legacy flow records these after
+Phase 3.6, following Phase 3.5 checkpoint commits; new runs follow execution-policy.md. A commit-time check would block the very commit
 that has to happen before they can be filled — a deadlock on the default path of every refactor
 (the first draft of this gate did exactly that; a repro caught it before release). So
 `refactor_prove_v4_check` in `hooks/lib/refactor-gate-lib.sh` runs at **pre-push only**, and unlike
@@ -252,10 +285,8 @@ an on-disk `zuvo/audits/` report that EXISTS (repo-relative, no `..`), and `spli
 count must equal the number of entries in `modules_created`. A claim that disagrees with the list
 Phase 3 already wrote is a lie told twice, backwards in time.
 
-**Contract migration (v2 → v3, still supported):** When `continue` loads a legacy contract:
-- Mode migration: `quick`/`standard`/`auto` → `full` (silently, with log)
-- Stage migration: `ETAP-1A` → `PHASE-1`, `ETAP-1B` → `PHASE-2`, `ETAP-2` → `PHASE-3`, `COMPLETE` → `COMPLETE`
-- Version: bump to 3, then apply the v3 → v4 step above
+**v2 compatibility:** read legacy mode/stage names through aliases where supported; diagnose
+unknown values explicitly. Do not silently turn an old completion claim into a v6 proof.
 
 In batch mode, `queue_file` and `queue_entry` are set so resume can map back to the queue:
 

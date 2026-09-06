@@ -74,7 +74,7 @@ else
 fi
 
 # ── 3. refactor resolves repo identity BEFORE the pre-scan, not after commit ─
-REF="$ROOT/skills/refactor/SKILL.md"
+REF="$ROOT/skills/refactor/references/bootstrap.md"
 if [ -f "$REF" ]; then
   setup_ln=$(grep -n '^### CodeSift Setup' "$REF" | head -1 | cut -d: -f1)
   prescan_ln=$(grep -n '^### Pre-Scan' "$REF" | head -1 | cut -d: -f1)
@@ -88,11 +88,11 @@ if [ -f "$REF" ]; then
     bad "refactor SKILL.md lost its '### CodeSift Setup' / '### Pre-Scan' headings — anchor this test again"
   fi
   # the one enforcement artifact in the rewritten block must survive
-  grep -q 'degraded:<the exact restriction>' "$REF" \
+  grep -q 'degraded:<the exact restriction>' "$ROOT/skills/refactor/references/completion.md" \
     && pass "refactor keeps the degraded:<restriction> telemetry string" \
     || bad "refactor lost 'degraded:<the exact restriction>' — the only machine-readable artifact in that block"
   # and it must cover the measured failure modes, not just a failed call
-  grep -qiE 'slow/wedged/timed-out|slow, wedged, or times out' "$REF" \
+  grep -qiE 'slow/wedged/timed-out|slow, wedged, or times out' "$ROOT/skills/refactor/references/completion.md" \
     && pass "refactor's degraded string covers slow/wedged/timeout, not only failure" \
     || bad "refactor's degraded:<restriction> still covers only 'index_folder failed' (125s and 300s-wedge runs are on record)"
 else

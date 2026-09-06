@@ -40,7 +40,7 @@ INCLUDE="shared/includes/test-quality-gate.md"
 LOAD_RE='shared/includes/test-quality-gate\.md`?[[:space:]]*(--|\(|:)'
 # A lazy entry whose line also names the phase means the include is read AT the
 # point of use, so the local repetition in (c) is redundant there.
-RULE='Dispatch is already authorized'
+RULE='execution-policy.md'
 
 fail=0
 pass=0
@@ -96,7 +96,7 @@ done
 # (d) the include remains the single source of truth the local copies point at —
 #     if it ever loses the rule, the local repetitions become unbacked claims.
 # The include's own heading uses its own wording; pin THAT, not the skills' phrasing.
-grep -q 'Dispatch is authorized' "$ROOT/$INCLUDE"
+grep -q 'execution-policy.md' "$ROOT/$INCLUDE"
 check "(d) $INCLUDE itself still carries the rule" $?
 
 # (e) the fabricated verdict stays fabricated. Every mention of it in a skill is
@@ -115,9 +115,9 @@ check "(e) every 'substituted-inline' mention is a prohibition, not a permitted 
 #     version that states the rule without bounding the exception is how
 #     "rate limits" becomes a reason to skip a fan-out.
 ENVC="shared/includes/env-compat.md"
-grep -q 'ALREADY AUTHORIZED' "$ROOT/$ENVC"
+grep -q '### Dispatch policy' "$ROOT/$ENVC"
 check "(f) $ENVC carries the authoritative dispatch-authorization section" $?
-grep -q 'NO dispatch capability' "$ROOT/$ENVC"
+grep -q 'Session restrictions' "$ROOT/$ENVC"
 check "(f2) $ENVC bounds the exception to a harness with no dispatch capability" $?
 
 echo "  ---- $pass passed, $fail failed"

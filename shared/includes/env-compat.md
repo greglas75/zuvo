@@ -128,37 +128,18 @@ config). If one resolves only inside an npx/pnpm store, prepend that directory t
 commit and **keep the normal hook flow** — do not reach for `--no-verify`, and do not "fix" it by
 deleting the hook entry. The hook is the gate; making it runnable is the job.
 
-**Scope verification to the changed surface.** In a secondary worktree, run type-check/tests for the **touched package(s)** (`turbo run type-check --filter=<pkg>`, or the package's own test script) — **not** the whole monorepo. A pre-existing failure in an unrelated package is **out-of-scope** for a behavior-preserving refactor: record it as `pre-existing-out-of-scope`, do not treat it as a blocker, and do not burn the run "rediscovering" errors that were already red before you started. (CodeSift availability is orthogonal — a worktree is a `path=` argument, never a reason to drop to degraded mode.)
+**Scope iterative verification to the changed surface; run any full battery required by project/session policy before publishing.** In a secondary worktree, run type-check/tests for the **touched package(s)** (`turbo run type-check --filter=<pkg>`, or the package's own test script) — **not** the whole monorepo. A pre-existing failure in an unrelated package is **out-of-scope** for a behavior-preserving refactor: record it as `pre-existing-out-of-scope`, do not treat it as a blocker, and do not burn the run "rediscovering" errors that were already red before you started. (CodeSift availability is orthogonal — a worktree is a `path=` argument, never a reason to drop to degraded mode.)
 
 ## Agent Dispatch
 
-### Dispatch mandated by a skill is ALREADY AUTHORIZED — do not ask, do not downgrade
+### Dispatch policy
 
-**Invoking a skill IS the request for every agent that skill mandates.** A session-level instruction
-like "do not call the Agent tool unless the user requested it" is about *unprompted* dispatch — it
-does not apply to a fan-out the skill you were asked to run requires. The user asked, by invoking
-the skill. Reading that instruction as a prohibition and running the roles inline instead is a
-substituted gate, not a degraded-but-valid run.
-
-Measured field failures, three skills, three days:
-
-| date | skill | what was skipped | how it was reported |
-|------|-------|------------------|---------------------|
-| 2026-08-07 | refactor | `zuvo:test-audit` (Phase 3.6) | `degraded:same-model` |
-| 2026-08-08 | refactor | `zuvo:test-audit` (Phase 3.6) | `WARN:substituted-inline` (a value no vocabulary defines) |
-| 2026-08-09 | plan | Architect / Tech-Lead / QA fan-out **and** the plan-reviewer | "two cross-review rounds instead", noted in Review Trail |
-
-The 08-09 one is the clearest: a plan is the artifact every downstream execute task inherits, and it
-shipped without the three analyses and the dedicated reviewer that `plan` mandates — because the
-skill pointed at this file but never repeated the rule where the dispatch happens.
-
-**The only genuine exception is a harness with NO dispatch capability** (Codex's single-agent hard
-rule — see the `PLATFORM:CODEX` blocks). There, run the roles inline as sequential passes with the
-same gates, and record the fallback reason. Rate limits, cost, "it would be slow", and a session
-policy about unprompted agents are NOT that exception.
-
-If you genuinely cannot dispatch, the run is `BLOCKED_MISSING_GATE` or an explicitly-recorded
-single-agent fallback — never a gate reported as satisfied by the substitution it forbids.
+Resolve `execution-policy.md` once and carry it into nested stages. Session restrictions and
+explicit user authorization take precedence over skill defaults. Available tools identify what
+can run, not what is authorized. When a required role must run inline, record its actual
+`degraded:same-model` independence and keep the same source-based assessment. Never silently
+substitute an unrun gate. A required independent check remains unmet if no independent reviewer
+ran. Host-specific mechanics below apply only when the resolved policy allows them.
 
 ### Claude Code (primary)
 

@@ -631,7 +631,7 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
     for ref in "$skill_dir/references/"*.md; do
       [ -f "$ref" ] || continue
       name=$(basename "$ref")
-      cat "$ref" | replace_paths | normalize_unicode > "$DIST/skills/$skill/references/$name"
+      transform_skill_for_codex "$ref" "$DIST/skills/$skill/references/$name" "$skill"
       echo "    ref: $(basename "$ref" .md)"
     done
   fi
@@ -797,7 +797,7 @@ done
 # Copy hooks/lib/ recursively (pre-push + commit gates source pipeline-gate-lib.sh)
 if [ -d "$PLUGIN_DIR/hooks/lib" ]; then
   mkdir -p "$DIST/hooks/lib"
-  for lib_file in "$PLUGIN_DIR"/hooks/lib/*.sh; do
+  for lib_file in "$PLUGIN_DIR"/hooks/lib/*.sh "$PLUGIN_DIR"/hooks/lib/*.py; do
     [ -f "$lib_file" ] || continue
     cat "$lib_file" | replace_paths > "$DIST/hooks/lib/$(basename "$lib_file")"
     chmod +x "$DIST/hooks/lib/$(basename "$lib_file")"

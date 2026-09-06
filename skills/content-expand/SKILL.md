@@ -96,11 +96,9 @@ If `--site-dir` has 3+ blog articles: extract voice profile per `humanization-ru
 
 ### 0.4 Score
 
-**Dispatch is already authorized — do not ask, do not downgrade.** Invoking this skill IS the
-request for every agent and gate it mandates, so a session rule about unprompted Agent use does not
-apply here. Only a harness with NO dispatch capability takes the documented single-agent fallback,
-and it still runs every gate inline — see `../../shared/includes/env-compat.md`. Skipping a mandated
-agent and self-scoring the result is a substituted gate, not a degraded run.
+Dispatch follows `../../shared/includes/execution-policy.md` through env-compat. Reuse existing
+authorization within that policy; session restrictions take precedence. Run each required gate
+and report its actual independence or an unmet requirement.
 
 Dispatch prose-quality-scorer + structure-analyst agents in parallel per `env-compat.md`. Score across 6 dimensions (PQ1-PQ17 from `prose-quality-registry.md`). Short articles get the same scrutiny as long ones — every sentence matters more when there are fewer of them.
 

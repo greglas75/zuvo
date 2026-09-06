@@ -186,7 +186,7 @@ echo "=== drift guard: the HUMAN fixture must track _is_agent_env's var list ===
 # Structural, not hand-maintained: extract the var names from the production function and diff
 # them against the fixture. Catches BOTH directions — a var added to the lib but not the fixture
 # (human cases would silently stop being human) and one removed from the lib but still unset here.
-LIB_VARS=$(sed -n '/^_is_agent_env()/,/^}/p' "$ROOT/hooks/lib/refactor-gate-lib.sh" \
+LIB_VARS=$(sed -n '/^zuvo_is_agent_env()/,/^}/p' "$ROOT/hooks/lib/agent-env.sh" \
   | grep -oE '\$\{[A-Z][A-Z0-9_]*' | sed 's/^\${//' | sort -u)
 FIX_VARS=$(printf '%s\n' "${HUMAN[@]}" | grep -xE '[A-Z][A-Z0-9_]*' | sort -u)
 if [ "$LIB_VARS" = "$FIX_VARS" ]; then

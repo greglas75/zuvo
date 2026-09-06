@@ -49,7 +49,11 @@ this skill (the logged `ZUVO_ALLOW_ADHOC=1` escape at the push gate), never as a
 
 ## Mandatory File Loading
 
-Read each file below using the Read tool. Print the checklist with status before proceeding. Do not proceed from memory.
+First resolve `../../shared/includes/execution-policy.md` and
+`../../shared/includes/evidence-reuse.md`. Reuse the parent policy and verified evidence for
+a nested stage. Load only the rules needed now, with the read-once receipt protocol.
+
+Load applicable files using the read-once protocol. Defer logging/curation/documentation includes until their phase.
 
 ```
 CORE FILES LOADED:
@@ -68,11 +72,7 @@ If any file is missing: proceed in degraded mode. Note which files are unavailab
 
 ---
 
-**Dispatch is already authorized — do not ask, do not downgrade.** Invoking this skill IS the
-request for every agent and gate it mandates, so a session rule about unprompted Agent use does not
-apply here. Only a harness with NO dispatch capability takes the documented single-agent fallback,
-and it still runs every gate inline — see `../../shared/includes/env-compat.md`. Skipping a mandated
-agent and self-scoring the result is a substituted gate, not a degraded run.
+Dispatch follows the resolved execution policy. Record actual independence and any unavailable gate; session restrictions take precedence.
 
 ## SAFETY RULES
 

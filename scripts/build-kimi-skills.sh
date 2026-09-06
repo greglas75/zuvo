@@ -462,7 +462,7 @@ done
 # hooks/lib/ (pre-push + commit gates source pipeline-gate-lib.sh)
 if [ -d "$PLUGIN_DIR/hooks/lib" ]; then
   mkdir -p "$DIST/hooks/lib"
-  for lib_file in "$PLUGIN_DIR"/hooks/lib/*.sh; do
+  for lib_file in "$PLUGIN_DIR"/hooks/lib/*.sh "$PLUGIN_DIR"/hooks/lib/*.py; do
     [ -f "$lib_file" ] || continue
     cat "$lib_file" | replace_paths > "$DIST/hooks/lib/$(basename "$lib_file")"
     chmod +x "$DIST/hooks/lib/$(basename "$lib_file")"
@@ -732,13 +732,20 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
   # An agents/ directory is not proof of agents: using-zuvo's holds only openai.yaml.
   ls "$skill_dir"/agents/*.md >/dev/null 2>&1 || continue
 
+  # Modular skills dispatch in the phase references selected by their entrypoint.
+  src_workflow=("$skill_dir/SKILL.md")
+  dst_workflow=("$DIST/skills/$skill/SKILL.md")
+  if grep -q '^## Phase routing' "$skill_dir/SKILL.md"; then
+    src_workflow+=("$skill_dir"/references/*.md)
+    dst_workflow+=("$DIST/skills/$skill"/references/*.md)
+  fi
   # Each grep is brace-wrapped with `|| true` — under `set -o pipefail` a no-match grep
   # (status 1) would fail the pipeline and set -e would kill the build mid-validation.
-  src_refs=$({ grep -oE 'agents/[a-z][-a-z]*\.md' "$skill_dir/SKILL.md" 2>/dev/null || true; } | sort -u | wc -l | tr -d ' ')
+  src_refs=$({ grep -hoE 'agents/[a-z][-a-z]*\.md' "${src_workflow[@]}" 2>/dev/null || true; } | sort -u | wc -l | tr -d ' ')
   # Counts BOTH destinations: the flat agent namespace and the skill-local team-lead
   # procedure doc, which is deliberately not an agent profile (see the build step above).
-  dst_refs=$({ grep -oE "~/\.kimi-code/agents/[a-z][-a-z]*\.md|~/\.kimi-code/skills/$skill/team-lead\.md" \
-    "$DIST/skills/$skill/SKILL.md" 2>/dev/null || true; } | sort -u | wc -l | tr -d ' ')
+  dst_refs=$({ grep -hoE "~/\.kimi-code/agents/[a-z][-a-z]*\.md|~/\.kimi-code/skills/$skill/team-lead\.md" \
+    "${dst_workflow[@]}" 2>/dev/null || true; } | sort -u | wc -l | tr -d ' ')
 
   if [ "$src_refs" -gt 0 ]; then
     if [ "$dst_refs" -lt "$src_refs" ]; then
@@ -750,10 +757,10 @@ for skill_dir in "$PLUGIN_DIR"/skills/*/; do
       [ -n "$ref" ] || continue
       target="$DIST/agents/$(basename "$ref")"
       [ -f "$target" ] || fail "$skill: references missing agent file $(basename "$ref")"
-    done < <({ grep -oE '~/\.kimi-code/agents/[a-z][-a-z]*\.md' "$DIST/skills/$skill/SKILL.md" 2>/dev/null || true; } | sort -u)
+    done < <({ grep -hoE '~/\.kimi-code/agents/[a-z][-a-z]*\.md' "${dst_workflow[@]}" 2>/dev/null || true; } | sort -u)
   else
     # No file references — fall back to the prose marker every such skill uses.
-    dst_disp=$(grep -c 'dispatch\|Agent tool' "$DIST/skills/$skill/SKILL.md" 2>/dev/null || true)
+    dst_disp=$({ grep -h 'dispatch\|Agent tool' "${dst_workflow[@]}" 2>/dev/null || true; } | wc -l | tr -d ' ')
     if [ "$dst_disp" -eq 0 ]; then
       fail "$skill: ships agents/ but dist SKILL.md has no dispatch language left"
     fi

@@ -19,7 +19,7 @@ You have access to the Zuvo skill ecosystem. Before acting on any user request, 
 3. If a skill matches, invoke it: `Skill(skill="zuvo:<name>")`
 4. If no skill matches, proceed normally
 
-Do this on every message. Not just the first one.
+Re-evaluate intent on each message. A continuation resumes the active skill at its recorded phase; it does not reload the router or restart completed stages. Apply `../../shared/includes/execution-policy.md` and the read-once protocol in `../../shared/includes/evidence-reuse.md`.
 
 ## Response Surface Policy
 
@@ -27,7 +27,7 @@ If the session context includes the compressed response protocol, apply it by su
 
 - Working chatter such as progress updates, clarifying questions, design summaries, and audit summaries defaults to `TERSE`.
 - Findings and operational checklists default to `STRUCTURED_TERSE`.
-- Final output blocks named like `## ... COMPLETE`, repo-written artifacts under `docs/`, `memory/`, `.interface-design/`, and explicit user requests for depth stay `STANDARD`.
+- Complete formal output blocks belong in artifacts under `zuvo/`, `docs/` or `memory/`. Human finals state the outcome, checks, limitations and artifact links; explicit requests for depth stay `STANDARD`.
 - Keep code, commands, paths, URLs, symbols, dates, versions, quoted errors, and structured literals exact.
 - When evidence is partial, preserve calibration with `conf: confirmed`, `conf: likely`, or `conf: unclear`.
 - V1 scope is hook-enabled main assistant behavior. Direct skill invocation or sub-agent output may remain on legacy verbosity in degraded mode.

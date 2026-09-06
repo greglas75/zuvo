@@ -37,10 +37,7 @@ _HE_NEVER_UNSET='PATH|HOME|USER|SHELL|TMPDIR|TMP|TEMP|LANG|LC_ALL|PWD|OLDPWD|TER
 _he_names() {
   # Uppercase tokens inside the two detector functions. Both are scanned: they are deliberately
   # separate implementations (bash ${!var} vs POSIX), so the union is what "an agent env" means.
-  {
-    sed -n '/^pg_is_agent_env()/,/^}/p'  "$_he_root/hooks/lib/pipeline-gate-lib.sh" 2>/dev/null
-    sed -n '/^_is_agent_env()/,/^}/p'    "$_he_root/hooks/lib/refactor-gate-lib.sh" 2>/dev/null
-  } | grep -oE '\b[A-Z][A-Z0-9_]{3,}\b' | sort -u | grep -vxE "$_HE_NEVER_UNSET"
+  sed -n '/^zuvo_is_agent_env()/,/^}/p' "$_he_root/hooks/lib/agent-env.sh" 2>/dev/null | grep -oE '\b[A-Z][A-Z0-9_]{3,}\b' | sort -u | grep -vxE "$_HE_NEVER_UNSET"
 }
 
 HUMAN=(env)

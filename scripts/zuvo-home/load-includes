@@ -41,6 +41,8 @@ can branch without parsing prose.
 import argparse
 import os
 import sys
+import hashlib
+import json
 
 # The tier x include matrix, mirroring skills/write-tests/SKILL.md PHASE 1. Kept here rather
 # than parsed out of the markdown on purpose: a parser that silently mis-reads the table
@@ -83,7 +85,7 @@ def base_dir():
         return env
     here = os.path.dirname(os.path.realpath(__file__))
     for cand in (
-        os.path.join(here, ".."),                       # repo: scripts/ -> root
+        os.path.join(here, "..", ".."),                       # repo: scripts/ -> root
         os.path.expanduser("~/.zuvo-plugin"),           # container mount
         os.path.expanduser("~/.claude"),                # user-skills install
     ):
@@ -106,6 +108,10 @@ def main():
     ap.add_argument("--stack", default="js")
     ap.add_argument("--phase", type=int, default=1,
                     help="0 = bootstrap set only, 1 = bootstrap + tier/stack set (default)")
+    ap.add_argument("--files", nargs="+", help="explicit phase/include paths; replaces the write-tests matrix")
+    ap.add_argument("--generation", help="current context generation; renew after compaction")
+    ap.add_argument("--retained", help="receipt for complete bodies STILL retained in this context")
+    ap.add_argument("--receipt-out", help="write receipt; caller verifies tool output was not truncated")
     ap.add_argument("--manifest-only", action="store_true",
                     help="print the manifest without the file bodies")
     a = ap.parse_args()
@@ -118,7 +124,21 @@ def main():
         print("unknown stack %r (expected one of %s)" % (a.stack, ", ".join(STACKS)), file=sys.stderr)
         return 2
 
-    root = base_dir()
+    if a.skill != "write-tests" and not a.files:
+        ap.error("this skill needs an explicit --files phase set")
+    if (a.retained or a.receipt_out) and not a.generation:
+        ap.error("receipts require --generation")
+    retained = set()
+    if a.retained:
+        try:
+            with open(a.retained, encoding="utf-8") as fh:
+                receipt = json.load(fh)
+            if receipt.get("context_generation") == a.generation:
+                retained = {tuple(row) for row in receipt.get("loaded", [])
+                            if isinstance(row, list) and len(row) == 2 and all(isinstance(x, str) for x in row)}
+        except (OSError, ValueError, AttributeError, TypeError):
+            print("load-includes: invalid retained receipt; reloading", file=sys.stderr)
+    root = os.getcwd() if a.files else base_dir()
     if root is None:
         print("load-includes: cannot locate shared/includes — set ZUVO_BASE", file=sys.stderr)
         return 2
@@ -129,19 +149,31 @@ def main():
             if tiers == "*" or tier in tiers.split():
                 wanted.append(name)
 
+    if a.files:
+        wanted = a.files
     rows, bodies, total, missing = [], [], 0, 0
+    loaded = []
+    reused = 0
     seen = set()
     for name in wanted:
-        path = resolve(root, name, a.stack)
+        path = os.path.realpath(name if a.files else resolve(root, name, a.stack))
         if path in seen:
             continue
         seen.add(path)
         rel = os.path.relpath(path, root)
         if os.path.isfile(path):
-            with open(path, encoding="utf-8", errors="replace") as fh:
-                body = fh.read()
+            with open(path, "rb") as fh:
+                raw = fh.read()
+            body = raw.decode("utf-8", "replace")
+            identity = (path, hashlib.sha256(raw).hexdigest())
+            if not a.manifest_only:
+                loaded.append(identity)
+            if identity in retained and not a.manifest_only:
+                rows.append("  RETAINED %s" % rel)
+                reused += 1
+                continue
             total += len(body.encode("utf-8"))
-            rows.append("  READ     %s" % rel)
+            rows.append(("  AVAILABLE " if a.manifest_only else "  READ     ") + rel)
             bodies.append("=== BEGIN %s ===\n%s\n=== END %s ===" % (rel, body.rstrip(), rel))
         else:
             missing += 1
@@ -154,6 +186,10 @@ def main():
     if not a.manifest_only:
         print()
         print("\n\n".join(bodies))
+    print("retained: %d   context_generation: %s" % (reused, a.generation or "none (no reuse)"))
+    if a.receipt_out:
+        with open(a.receipt_out, "w", encoding="utf-8") as fh:
+            json.dump({"context_generation": a.generation, "loaded": loaded}, fh)
     return 3 if missing else 0
 
 
