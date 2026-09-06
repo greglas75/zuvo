@@ -263,14 +263,13 @@ else
 fi
 
 _T="$TMP/fakehome"; mkdir -p "$_T"
-_FN="$(awk '/^install_zuvo_home\(\) *\{/{f=1} f{print} f&&/^\}/{exit}' "$I")"
-_LOG="$(HOME="$_T" ZUVO_DIR="$ROOT" bash -c "
-  set -euo pipefail
-  ok()   { echo \"  + \$1\"; }
-  warn() { echo \"  ! \$1\"; }
-  $_FN
+_LOG="$(HOME="$_T" bash -c '
+  set -eo pipefail
+  # Use the sourceable installer with its real helper dependencies and counters.
+  # Extracting one function silently omitted newly composed helpers.
+  source "$1"
   install_zuvo_home
-" 2>&1)"; _RC=$?
+' fixture "$I" 2>&1)"; _RC=$?
 if [ "$_RC" -eq 0 ] && [ -f "$_T/.zuvo/build-review-patch" ] && [ -x "$_T/.zuvo/build-review-patch" ]; then
   pass "(12) install_zuvo_home lands build-review-patch +x in \$HOME/.zuvo"
 else

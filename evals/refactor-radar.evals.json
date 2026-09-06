@@ -4,18 +4,18 @@
     {
       "id": 1,
       "prompt": "Find the best refactor candidates in this repo and give me a ranked list with orders for the top ones. The repo is a small TypeScript service: src/orders/orders.ts is a thin facade that re-exports from src/orders/orders.helpers.ts (where the branching lives), and src/pricing/pricing.ts has similar complexity but only feature commits. There is also a git worktree on branch refactor/orders-split with no commits yet. Rank them.",
-      "expected_output": "The agent runs scripts/refactor-radar.sh instead of hand-computing complexity or churn, reports the family src/orders (facade + helpers) as ONE candidate with its fix-churn, marks it busy because of the refactor/orders-split worktree name even though the worktree has no diff, ranks src/pricing as the free candidate, validates G1-G5 with evidence, and writes the queue plus a ledger row for the excluded family.",
+      "expected_output": "Run the real radar with immutable source and report its population and estimator limits. Validate the import-backed orders family. The empty worktree's name is only a reservation hint (UNKNOWN), never busy:name or a permanent exclusion. Pricing may remain a candidate but FREE requires complete PR/contract evidence. Default DISCOVER returns a report and does not write queue, ledger or history; missing fixtures/git history are disclosed, not inferred from this prompt.",
       "files": [
         "src/orders/orders.ts",
         "src/orders/orders.helpers.ts",
         "src/pricing/pricing.ts"
       ],
       "assertions": [
-        "The transcript runs scripts/refactor-radar.sh (or the RADAR variable pointing at it) and shows its stderr summary with population, floor and exclusion counts rather than computing cyclomatic complexity by hand.",
-        "The transcript shows src/orders/orders.ts and src/orders/orders.helpers.ts reported as one module family, not as two independent rows.",
-        "The transcript records the src/orders family as excluded with reason busy:name naming the refactor/orders-split worktree, and does not write an order for it.",
-        "The transcript writes a zuvo:refactor batch queue whose entries match the form '- [ ] <path> | <TYPE> | Score: 0.NN' with a type from EXTRACT_METHODS, SPLIT_FILE, GOD_CLASS or SIMPLIFY.",
-        "The transcript writes a ledger row for the excluded family that contains a 'returns when' condition instead of dropping it silently."
+        "The transcript shows that it runs scripts/refactor-radar.sh or the verified installed bundle and reports actual population/floor/exclusions; it does not invent measured CC or commit history.",
+        "The transcript shows that it groups the facade and helpers only after inspecting their relative import and cohesion.",
+        "The transcript shows that it treats the zero-diff refactor/orders-split worktree name as an UNKNOWN hint requiring corroboration, not a proven busy:name exclusion.",
+        "The transcript shows that it does not create a queue, ledger, history snapshot or reservation during default DISCOVER.",
+        "The transcript shows that it separates raw discovery score from validation and states any unknown availability instead of declaring FREE from a missing provider."
       ],
       "fixtures": [
         {
@@ -35,16 +35,16 @@
     {
       "id": 2,
       "prompt": "The radar ranks src/legacy/report-builder.ts first: ΣCC 88, max 41 in buildReport, fix-churn 9. Nothing imports it (find_references is empty) and a dead-code tool lists every export as unused. However e2e/report.spec.ts clicks data-testid=\"report-builder-panel\" and the file was touched 6 days ago. Decide what the order for this file should be.",
-      "expected_output": "The agent treats the e2e data-testid reference and the recent commit as intent signals: the panel is unwired, not abandoned. It refuses to classify the file DELETE_DEAD, records it under the ledger's Delete? or Watching section as a product backlog item with the evidence (testid, last commit date), and if it writes an order at all it is an EXTRACT_METHODS order on buildReport with a baseline table — never a deletion order.",
+      "expected_output": "Inspect the file, selectors, entrypoints, registrations and actual tests. Empty references do not prove dead code, while a selector or recent edit does not prove current product intent. Treat unresolved intent as OBSERVE/DELETE_CANDIDATE investigation, not READY or DELETE_DEAD. Give explicit evidence needed to revisit; do not write a queue/ledger unless asked.",
       "files": [
         "src/legacy/report-builder.ts",
         "e2e/report.spec.ts"
       ],
       "assertions": [
-        "The transcript shows the agent checking e2e/report.spec.ts for the data-testid and citing it as an intent signal before deciding the file's class.",
-        "The transcript records a class other than DELETE_DEAD for src/legacy/report-builder.ts and writes no deletion order for it.",
-        "The transcript records the file in the ledger with the testid evidence and the last-commit date, under Watching or Delete? with an explicit product-backlog note.",
-        "If the transcript writes an order for the file, it is typed EXTRACT_METHODS targeting buildReport and contains a baseline table with the function's CC before the refactor."
+        "The transcript shows that it checks the E2E selector and source/entrypoint context as evidence rather than accepting the supplied CC/usage claims as verified.",
+        "The transcript shows that it distinguishes absent references from proven non-use and distinguishes a selector/recent edit from confirmed current product intent.",
+        "The transcript shows that it does not issue an executable deletion or refactor order while usage or intent remains unresolved.",
+        "The transcript shows that it reports OBSERVE or an equivalent investigation state with concrete evidence needed before reconsideration, without silently appending a ledger."
       ],
       "fixtures": [
         {
@@ -54,6 +54,31 @@
         {
           "path": "e2e/report.spec.ts",
           "content": "import { test, expect } from '@playwright/test';\n\ntest('report builder panel renders', async ({ page }) => {\n  await page.goto('/reports');\n  await expect(page.getByTestId('report-builder-panel')).toBeVisible();\n});\n"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Give me a read-only top 5 for this tooling repo. scripts/calc.py is production. There are 200 comment lines in its test. CodeSift returned only its top 10 functions without a source SHA. Do not install tools, reindex or modify files.",
+      "expected_output": "Use tooling scope, immutable git and disclose the unavailable CodeSift census. Test LOC is descriptive, never coverage. No installation, index mutation or artifacts. Return fewer than 5 if fewer are validated.",
+      "files": [
+        "scripts/calc.py",
+        "tests/test_calc.py"
+      ],
+      "assertions": [
+        "The transcript shows that it includes the production script through a tooling profile or explicit verified scope.",
+        "The transcript shows that it rejects the unattested/truncated CodeSift result as a complete measurement and labels a fallback estimate.",
+        "The transcript shows that it does not infer coverage from test length or pad the result to five.",
+        "The transcript shows that it does not install tools, mutate the index or write artifacts."
+      ],
+      "fixtures": [
+        {
+          "path": "scripts/calc.py",
+          "content": "def calc(x):\n    if x < 0:\n        return 0\n    return x\n"
+        },
+        {
+          "path": "tests/test_calc.py",
+          "content": "# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n# TODO: behavior tests\n"
         }
       ]
     }
