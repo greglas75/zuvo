@@ -2,6 +2,11 @@
 source "$(dirname "$0")/../seo-suite/assert.sh"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT="$ROOT/scripts/benchmark.sh"
+# Dry-run coverage must work on a test host without authenticated provider CLIs.
+MOCK_BIN="$(mktemp -d)"; trap 'rm -rf "$MOCK_BIN"' EXIT
+printf '#!/bin/sh\nexit 99\n' > "$MOCK_BIN/claude"
+chmod +x "$MOCK_BIN/claude"
+export PATH="$MOCK_BIN:$PATH"
 
 # NOTE: assert.sh sets `pipefail`. `echo "$out" | grep -q X` is UNSAFE here:
 # grep -q exits the moment it matches, closing the pipe, so echo dies on SIGPIPE

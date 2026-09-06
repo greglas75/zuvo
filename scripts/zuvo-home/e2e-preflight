@@ -421,7 +421,7 @@ _lock_acquire() {
     trap '_upsert_on_signal' INT TERM HUP
     if [ -d "$UPSERT_LOCK" ]; then
       _lk_pid=$(cat "$UPSERT_LOCK/pid" 2>/dev/null || echo "")
-      _lk_mt=$(stat -f %m "$UPSERT_LOCK" 2>/dev/null || stat -c %Y "$UPSERT_LOCK" 2>/dev/null || echo "")
+      _lk_mt=$(stat -c %Y "$UPSERT_LOCK" 2>/dev/null || stat -f %m "$UPSERT_LOCK" 2>/dev/null || echo "")
       # Never steal from a provably-live holder; reclaim is best-effort and
       # falls THROUGH to the bounded wait below (a failing rmdir must not spin).
       if [ -n "$_lk_pid" ]; then
@@ -472,9 +472,9 @@ _work_file() {
   mktemp "$1/.e2e-cov.XXXXXX" 2>/dev/null
 }
 
-# _mode_of <path> → octal permission bits, portable (BSD stat, then GNU stat).
+# _mode_of <path> → octal permission bits, portable (GNU stat first; BSD -f is a filesystem query on GNU).
 _mode_of() {
-  stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1" 2>/dev/null || echo ""
+  stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1" 2>/dev/null || echo ""
 }
 
 # _upsert_locked <file> <flow> <state> <spec> <score> <conf> <today>

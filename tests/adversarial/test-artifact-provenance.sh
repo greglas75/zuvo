@@ -15,6 +15,7 @@ TD="$HERE/.tmp/prov"
 rm -rf "$TD"; mkdir -p "$TD"
 
 export ZUVO_ADVERSARIAL_TEST_HARNESS=1
+export ZUVO_REVIEW_TEST_PROVIDERS=mock-success
 export PATH="$MOCKS:$PATH"
 # Isolate the failure cache per case so cases cannot leak into one another.
 export TMPDIR="$TD"
@@ -34,7 +35,7 @@ if printf '%s' "$h" | grep -q '^single_provider_note='; then
 else
   pass "no single_provider_note on a real multi-provider run"
 fi
-assert_contains "$h" "count_method=keyword-lines" "counts are labelled as a heuristic, not parsed findings"
+assert_contains "$h" "count_method=severity-records" "counts identify parsed severity records"
 
 # ─── Case 2: a collapsed multi-run is distinguishable from a deliberate single ──
 

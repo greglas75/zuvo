@@ -84,7 +84,7 @@ newrepo
 printf '# Active Plan\n<!-- status: pending -->\n\nplan: docs/specs/p-plan.md\n' > zuvo/plans/active-plan.md
 chmod 600 zuvo/plans/active-plan.md
 run normalize --write >/dev/null 2>&1
-mode=$(stat -f %Lp zuvo/plans/active-plan.md 2>/dev/null || stat -c %a zuvo/plans/active-plan.md 2>/dev/null)
+mode=$(stat -c %a zuvo/plans/active-plan.md 2>/dev/null || stat -f %Lp zuvo/plans/active-plan.md 2>/dev/null)
 [ "$mode" = "600" ] && ok "normalize --write preserved file mode ($mode)" || bad "mode changed 600 -> $mode"
 
 echo "=== fleet sweep ==="

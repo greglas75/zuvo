@@ -2389,9 +2389,9 @@ write_artifact() {
     printf 'critical=%s\n' "$CRITICAL_COUNT"
     printf 'warning=%s\n' "$WARNING_COUNT"
     printf 'info=%s\n' "$INFO_COUNT"
-    # These counts are keyword-line tallies over provider output, NOT parsed finding records.
-    # Labelled so a downstream reader never mistakes "3 lines mention CRITICAL" for "3 findings".
-    printf 'count_method=keyword-lines\n'
+    # Counts cover recognized severity records; the full provider output remains below.
+    printf 'count_method=severity-records\n'
+    printf 'count_status=%s\n' "${COUNT_STATUS:-unavailable}"
     printf 'known_findings_supplied=%s\n' "$(printf '%s' "$KNOWN_FINDINGS" | grep -c . || true)"
     printf -- '---\n'
     printf '%s\n' "$final_output"
@@ -2873,6 +2873,63 @@ if [[ -z "$ALL_RESULTS" ]]; then
   exit "$FAIL_EXIT"
 fi
 
+# Count finding records, never severity words in descriptions or clean summaries.
+# JSON is authoritative when present; text accepts the prompted SEVERITY field and
+# the legacy "CRITICAL: description" form, with Markdown list/emphasis decoration.
+count_findings() {
+  local result_file="$1" counts
+  if counts=$(awk '
+    /^[[:space:]]*```[Jj][Ss][Oo][Nn][[:space:]]*$/ { fenced=1; inside=1; next }
+    inside && /^[[:space:]]*```[[:space:]]*$/ { inside=0; next }
+    { raw=raw $0 ORS; if (inside) json=json $0 ORS }
+    END { printf "%s", fenced ? json : raw }
+  ' "$result_file" | jq -ers '
+    if length == 1 and (.[0] | type) == "object" and (.[0].findings | type) == "array" then
+      .[0].findings as $f |
+      [$f[] | objects | .severity | strings | ascii_upcase |
+       select(. == "CRITICAL" or . == "WARNING" or . == "INFO")] as $s |
+      [([ $s[] | select(. == "CRITICAL") ] | length),
+       ([ $s[] | select(. == "WARNING") ] | length),
+       ([ $s[] | select(. == "INFO") ] | length),
+       (if ($s | length) == ($f | length) then "complete" else "partial" end)] | @tsv
+    else empty end' 2>/dev/null); then
+    printf '%s\n' "$counts"
+  else
+    awk '
+      {
+        line=toupper($0)
+        gsub(/[*_`]/, "", line)
+        sub(/^[[:space:]]*/, "", line)
+        while (sub(/^(#+|[-+]|[0-9]+[.)])[[:space:]]+/, "", line)) {}
+        if (line ~ /^SEVERITY:[[:space:]]*(CRITICAL|WARNING|INFO)([[:space:]]|$)/) {
+          sub(/^SEVERITY:[[:space:]]*/, "", line)
+          sub(/[[:space:]].*/, "", line)
+          count[line]++
+        } else if (line ~ /^(CRITICAL|WARNING|INFO):[[:space:]]*(NONE|0|NO ISSUES)[.!]?[[:space:]]*$/) {
+          clean=1
+        } else if (line ~ /^(CRITICAL|WARNING|INFO):[[:space:]]+[^[:space:]]/) {
+          sub(/:.*/, "", line)
+          legacy[line]++
+          uncertain=1
+        } else if (line ~ /(^|[[:space:]"])SEVERITY/ || line ~ /^(CRITICAL|WARNING|INFO)[[:space:]]*[-:]/) {
+          uncertain=1
+        }
+        if (line ~ /^NO ISSUES FOUND[.!]?[[:space:]]*$/) clean=1
+      }
+      END {
+        c=count["CRITICAL"]+0; w=count["WARNING"]+0; i=count["INFO"]+0
+        # Explicit fields win over legacy titles/body prose, avoiding double counts.
+        # Legacy-only text is ambiguous: retain its counts but require inspection.
+        if (c+w+i == 0 && legacy["CRITICAL"]+legacy["WARNING"]+legacy["INFO"] > 0) {
+          c=legacy["CRITICAL"]+0; w=legacy["WARNING"]+0; i=legacy["INFO"]+0; uncertain=1
+        }
+        status=(uncertain || (c+w+i == 0 && !clean)) ? "partial" : "complete"
+        print c,w,i,status
+      }
+    ' "$result_file"
+  fi
+}
+
 # ─── Count findings (before output, while temp files still exist) ──
 
 TOTAL_FINDINGS=0
@@ -2880,13 +2937,17 @@ CRITICAL_COUNT=0
 WARNING_COUNT=0
 INFO_COUNT=0
 OUTPUT_SIZE=0
+COUNT_STATUS=complete
 for p in $PROVIDERS; do
   result_file="$JSON_TMPDIR/result_${p}.txt"
   if [[ -s "$result_file" ]]; then
     OUTPUT_SIZE=$((OUTPUT_SIZE + $(wc -c < "$result_file" | tr -d ' ')))
-    c=$(grep -ciE 'CRITICAL' "$result_file" 2>/dev/null) || c=0
-    w=$(grep -ciE 'WARNING' "$result_file" 2>/dev/null) || w=0
-    i=$(grep -ciE '\bINFO\b' "$result_file" 2>/dev/null) || i=0
+    read -r c w i count_status < <(count_findings "$result_file")
+    if [[ "$count_status" != "complete" ]]; then
+      COUNT_STATUS=partial
+      echo "WARN: $p finding counts are incomplete; inspect the full review before treating it as clean." >&2
+    fi
+    printf '%s %s %s\n' "$c" "$w" "$i" > "$JSON_TMPDIR/counts_${p}.txt"
     CRITICAL_COUNT=$((CRITICAL_COUNT + c))
     WARNING_COUNT=$((WARNING_COUNT + w))
     INFO_COUNT=$((INFO_COUNT + i))
@@ -3024,9 +3085,7 @@ for p in $PROVIDERS; do
   p_exit=1
   if [[ -s "$result_file" ]]; then
     p_output=$(wc -c < "$result_file" | tr -d ' ')
-    p_c=$(grep -ciE 'CRITICAL' "$result_file" 2>/dev/null) || p_c=0
-    p_w=$(grep -ciE 'WARNING' "$result_file" 2>/dev/null) || p_w=0
-    p_i=$(grep -ciE '\bINFO\b' "$result_file" 2>/dev/null) || p_i=0
+    read -r p_c p_w p_i < "$JSON_TMPDIR/counts_${p}.txt"
     p_exit=0
   fi
 
