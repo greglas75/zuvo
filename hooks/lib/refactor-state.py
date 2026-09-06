@@ -143,7 +143,7 @@ def evidence_errors(contract, include_fixes=True):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("path")
-    parser.add_argument("action", choices=["valid", "field", "contains", "array", "count", "evidence"])
+    parser.add_argument("action", choices=["valid", "field", "contains", "array", "count", "evidence", "intersects"])
     parser.add_argument("key", nargs="?")
     parser.add_argument("value", nargs="?")
     args = parser.parse_args()
@@ -165,6 +165,8 @@ def main():
         return 0
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
         return 2
+    if args.action == "intersects":
+        return 0 if set(value).intersection(sys.stdin.read().splitlines()) else 1
     if args.action == "contains":
         return 0 if args.value in value else 1
     if args.action == "count":

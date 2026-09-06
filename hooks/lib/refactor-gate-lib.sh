@@ -40,6 +40,7 @@ _prove_field() { _refactor_state "$1" field "prove.$2"; }
 _refactor_contract_file() { _refactor_state "$1" valid; }
 _state_field() { _refactor_state "$1" field "$2"; }
 _scope_contains() { _refactor_state "$1" contains scope_fence "$2"; }
+_scope_intersects() { printf '%s\n' "$2" | _refactor_state "$1" intersects scope_fence; }
 
 refactor_gate_check() {
   staged=$1
@@ -60,21 +61,8 @@ refactor_gate_check() {
     # `EXECUTION_COMPLETE` is deliberately NOT here: skills/refactor/SKILL.md:220 uses
     # it for `no-commit` runs precisely so `continue` can resume, i.e. still in flight.
     case "$(_state_field "$c" stage)" in COMPLETE|BLOCKED|ABORTED) continue ;; esac
-    # intersect scope_fence with the file list.
-    #  set -f: a '*'/'?' in a path must NOT glob-expand against the filesystem.
-    #  grep -Fq --: fixed-string match — a '.'/'['/']' in a path is a literal, not a regex
-    #  (BRE would let 'src/[i].ts' match the wrong fence entry, or fail to match its own).
-    hit=0
-    oldifs=$IFS; IFS='
-'
-    set -f
-    for f in $staged; do
-      [ -n "$f" ] || continue
-      if _scope_contains "$c" "$f"; then hit=1; break; fi
-    done
-    set +f
-    IFS=$oldifs
-    [ "$hit" = 1 ] || continue
+    # One parse per contract, not one Python process per staged file.
+    _scope_intersects "$c" "$staged" || continue
     # HUMAN BYPASS — the gate is for AI runs; never lock a human out
     if ! _is_agent_env; then
       echo "zuvo refactor-gate: human committer (no AI-harness env) -> bypass [$c]" >&2
@@ -162,17 +150,7 @@ refactor_prove_v4_check() {
     case "$rpv_cv" in ''|*[!0-9]*) continue ;; esac
     [ "$rpv_cv" -ge 4 ] 2>/dev/null || continue
     # only judge a contract whose fence this push actually touches
-    rpv_hit=0
-    rpv_oldifs=$IFS; IFS='
-'
-    set -f
-    for rpv_f in $rpv_staged; do
-      [ -n "$rpv_f" ] || continue
-      if _scope_contains "$rpv_c" "$rpv_f"; then rpv_hit=1; break; fi
-    done
-    set +f
-    IFS=$rpv_oldifs
-    [ "$rpv_hit" = 1 ] || continue
+    _scope_intersects "$rpv_c" "$rpv_staged" || continue
 
     if [ "$rpv_cv" -ge 6 ] 2>/dev/null; then
       _refactor_state "$rpv_c" evidence || rpv_blocked=1
