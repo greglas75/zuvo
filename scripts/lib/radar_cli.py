@@ -15,10 +15,13 @@ from typing import Any
 import radar_git as git
 import radar_metrics as metrics
 import radar_io
+import radar_runtime
+import radar_snapshot
 from radar_remote import safe_path
 
 SCHEMA = 2
 BUSY_TTL = 300
+LOCAL_FILE_LIMIT = 1000
 TYPES = {
     "EXTRACT_METHODS",
     "SPLIT_FILE",
@@ -62,6 +65,11 @@ def config(root: Path, explicit: str | None) -> tuple[dict, str | None]:
         else next((p for p in [root / ".radar.json", root / "zuvo/radar.json"] if p.is_file()), None)
     )
     cfg = load_json(selected, "config") if selected else {}
+    validate_config(cfg)
+    return cfg, str(selected) if selected else None
+
+
+def validate_config(cfg: dict) -> None:
     for key in ("noise", "ext", "source_roots", "exclude_paths"):
         if key in cfg and (
             not isinstance(cfg[key], list) or not all(isinstance(v, str) and v for v in cfg[key])
@@ -113,7 +121,6 @@ def config(root: Path, explicit: str | None) -> tuple[dict, str | None]:
         isinstance(p, list) and len(p) == 2 and all(isinstance(s, str) and s for s in p) for p in promotions
     ):
         raise ValueError("config.promotion_branches: expected [head, base] pairs")
-    return cfg, str(selected) if selected else None
 
 
 def arguments(argv: list[str] | None) -> argparse.Namespace:
@@ -137,10 +144,14 @@ def arguments(argv: list[str] | None) -> argparse.Namespace:
         "capture-busy",
         "busy-snapshot",
         "decisions",
+        "prepare-farm",
+        "snapshot",
+        "timeout",
     ):
         parser.add_argument("--" + option)
     parser.add_argument("--mode", choices=["refactor", "tests"], default="refactor")
-    for flag in ("quiet", "dry-run", "no-remote", "register", "record-snapshot"):
+    parser.add_argument("--execution", choices=["local", "farm"], default="local")
+    for flag in ("quiet", "dry-run", "no-remote", "register", "record-snapshot", "timings"):
         parser.add_argument("--" + flag, action="store_true")
     return parser.parse_args(argv)
 
@@ -160,6 +171,10 @@ def busy_inputs(root: Path, sha: str, cfg: dict, args: argparse.Namespace) -> di
         if args.busy_snapshot
         else git.collect_busy(root, sha, cfg, args.no_remote)
     )
+    return validate_busy(busy, sha, git.repo_identity(root, cfg)[0], args.busy_file)
+
+
+def validate_busy(busy: dict, sha: str, repo_id: str, busy_file: str | None = None) -> dict:
     if (
         busy.get("schema") != 1
         or busy.get("sha") != sha
@@ -171,7 +186,7 @@ def busy_inputs(root: Path, sha: str, cfg: dict, args: argparse.Namespace) -> di
         or not all(isinstance(h, str) for h in busy["hints"])
     ):
         raise ValueError("busy snapshot: invalid or source SHA mismatch")
-    if busy["repo_id"] != git.repo_identity(root, cfg)[0]:
+    if busy["repo_id"] != repo_id:
         raise ValueError("busy snapshot: repo identity mismatch; declare stable repo_id in the profile")
     busy["paths"] = sorted({safe_path(p) for p in busy["paths"]})
     for provider in ("local", "remote"):
@@ -189,10 +204,10 @@ def busy_inputs(root: Path, sha: str, cfg: dict, args: argparse.Namespace) -> di
         busy.update(complete=False, stale=True, expired_paths=busy["paths"], paths=[])
         for provider in ("local", "remote"):
             busy[provider].update(complete=False, paths=[])
-    if args.busy_file:
+    if busy_file:
         busy["paths"] = sorted(
             set(busy["paths"])
-            | {safe_path(p.rstrip("\r")) for p in read_text(Path(args.busy_file)).split("\n") if p}
+            | {safe_path(p.rstrip("\r")) for p in read_text(Path(busy_file)).split("\n") if p}
         )
     return busy
 
@@ -370,29 +385,37 @@ def source_inputs(root: Path, sha: str, cfg: dict, opts: dict, args: argparse.Na
     sources, tests = metrics.classify(list(entries), cfg)
     if opts["scope"] != "." and not any(metrics.in_scope(p, opts["scope"]) for p in sources):
         raise ValueError("--scope does not select a production file")
+    if not args.prepare_farm and args.execution == "local" and len(sources) + len(tests) > LOCAL_FILE_LIMIT:
+        raise ValueError("large census requires --prepare-farm <directory> then rt; no local scan started")
     contents, issues = git.blobs(root, entries, sources + tests)
-    measured, parse_issues = metrics.measure({p: contents[p] for p in sources if p in contents})
-    parser_version = metrics.ENGINE_VERSION
-    if opts["engine"] == "codesift":
-        measured, parser_version = codesift(args.codesift_json, sha, busy["repo_id"], sources)
-        parse_issues = []
-    graph, unresolved = metrics.import_graph(contents, sources)
     commits = git.history(root, sha, opts["cutoff"], max(opts["since_days"], opts["fresh_days"]))
-    return dict(
+    data = dict(
         opts,
         contents=contents,
-        metrics=measured,
-        graph=graph,
         sources=sources,
         tests=tests,
         commits=commits,
         busy=busy,
         cfg=cfg,
         mode=args.mode,
-        issues=issues + parse_issues,
-        parser_version=parser_version,
-        unresolved=unresolved,
+        issues=issues,
     )
+    if opts["engine"] == "codesift":
+        data["metrics"], data["parser_version"] = codesift(args.codesift_json, sha, busy["repo_id"], sources)
+    return data
+
+
+def measure_inputs(data: dict, timings: bool = False) -> dict:
+    with radar_runtime.phase("measure", timings):
+        if data["engine"] == "builtin":
+            data["metrics"], issues = metrics.measure(
+                {p: data["contents"][p] for p in data["sources"] if p in data["contents"]}
+            )
+            data["issues"].extend(issues)
+            data["parser_version"] = metrics.ENGINE_VERSION
+    with radar_runtime.phase("graph", timings):
+        data["graph"], data["unresolved"] = metrics.import_graph(data["contents"], data["sources"])
+    return data
 
 
 def report_for(data: dict, sha: str, config_path: str | None) -> dict:
@@ -505,33 +528,79 @@ def display(report: dict, top: int) -> None:
 
 
 def run(args: argparse.Namespace, root: Path) -> dict:
+    if args.execution == "farm":
+        radar_runtime.require_farm()
     cfg, config_path = config(root, args.config)
     opts = options(args, cfg)
+    if args.prepare_farm and (
+        args.capture_busy or args.register or args.json or args.queue or args.history or args.record_snapshot
+    ):
+        raise ValueError("--prepare-farm is DISCOVER-only and separate from reports/history/registration")
+    if args.prepare_farm and opts["history"]:
+        print("farm preparation: profile history omitted (host-local); trend unavailable", file=sys.stderr)
+        opts["history"] = None
     sha = git.text(
         root, "rev-parse", "--verify", "--end-of-options", (args.ref or cfg.get("ref", "HEAD")) + "^{commit}"
     )
-    busy = busy_inputs(root, sha, cfg, args)
+    with radar_runtime.phase("availability", args.timings):
+        busy = busy_inputs(root, sha, cfg, args)
     if args.capture_busy:
         if not args.dry_run:
             write_artifact(Path(args.capture_busy), json.dumps(busy, indent=2, sort_keys=True) + "\n")
         return {"busy": busy}
-    report = report_for(source_inputs(root, sha, cfg, opts, args, busy), sha, config_path)
-    artifacts(args, opts, report)
+    with radar_runtime.phase("git-input", args.timings):
+        data = source_inputs(root, sha, cfg, opts, args, busy)
+    if args.prepare_farm:
+        if not args.dry_run:
+            radar_snapshot.prepare(Path(args.prepare_farm), data, sha, config_path)
+        print(f"farm input: {sha} | {len(data['sources'])} sources | measurement NOT RUN", file=sys.stderr)
+        return {"sha": sha, "prepared": not args.dry_run}
+    return finish(args, measure_inputs(data, args.timings), sha, config_path)
+
+
+def finish(args: argparse.Namespace, data: dict, sha: str, config_path: str | None) -> dict:
+    with radar_runtime.phase("rank", args.timings):
+        report = report_for(data, sha, config_path)
+    artifacts(args, data, report)
     if not args.quiet:
-        display(report, opts["top"])
+        display(report, data["top"])
     return report
+
+
+def from_snapshot(args: argparse.Namespace) -> dict:
+    allowed = {"snapshot", "json", "quiet", "dry_run", "timeout", "timings", "execution", "mode"}
+    if any(value for key, value in vars(args).items() if key not in allowed) or args.mode != "refactor":
+        raise ValueError(
+            "--snapshot replays frozen options; only --json/--quiet/--dry-run/--timeout/--timings allowed"
+        )
+    data, sha, config_path = radar_snapshot.load(Path(args.snapshot))
+    validate_config(data["cfg"])
+    if args.execution == "farm":
+        radar_runtime.require_farm()
+    if args.execution != "farm" and len(data["sources"]) + len(data["tests"]) > LOCAL_FILE_LIMIT:
+        raise ValueError("large snapshot requires --execution farm through rt; no local scan started")
+    # The operator chooses this private snapshot; this is consistency, not remote attestation.
+    expected_repo = data["cfg"].get("repo_id", data["busy"]["repo_id"])
+    data["busy"] = validate_busy(data["busy"], sha, expected_repo)
+    return finish(args, measure_inputs(data, args.timings), sha, config_path)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = arguments(argv)
     try:
-        root = Path(git.text(Path(args.repo or "."), "rev-parse", "--show-toplevel")).resolve()
-    except (ValueError, OSError):
-        print("refactor-radar: not a git repo", file=sys.stderr)
-        return 3
-    try:
-        run(args, root)
-    except (ValueError, TypeError, KeyError, OSError, re.error) as err:
+        with radar_runtime.deadline(
+            integer(args.timeout or ("300" if args.snapshot else "60"), "--timeout", 1)
+        ):
+            if args.snapshot:
+                from_snapshot(args)
+                return 0
+            try:
+                root = Path(git.text(Path(args.repo or "."), "rev-parse", "--show-toplevel")).resolve()
+            except (ValueError, OSError):
+                print("refactor-radar: not a git repo", file=sys.stderr)
+                return 3
+            run(args, root)
+    except (ValueError, TypeError, KeyError, OSError, re.error, radar_runtime.ScanDeadline) as err:
         print(f"refactor-radar: {err}", file=sys.stderr)
         return 2
     return 0

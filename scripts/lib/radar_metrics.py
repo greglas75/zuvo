@@ -8,6 +8,8 @@ import math
 import posixpath
 import re
 
+import radar_index
+
 ENGINE_VERSION = "python-ast-v1/clike-regex-v2"
 POLICY_VERSION = "discovery-v2"
 EXTENSIONS = ["ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "php", "kt"]
@@ -226,10 +228,10 @@ def families(sources: list[str], graph: dict[str, set[str]], cfg: dict) -> list[
     groups: dict[str, list[str]] = defaultdict(list)
     for path in sources:
         groups[owner(path)].append(path)
-    return [
-        {"files": sorted(members), "evidence": [e for e in evidence if e[0] in members]}
-        for members in groups.values()
-    ]
+    group_evidence: dict[str, list] = defaultdict(list)
+    for edge in evidence:
+        group_evidence[owner(edge[0])].append(edge)
+    return [{"files": sorted(members), "evidence": group_evidence[key]} for key, members in groups.items()]
 
 
 def criticality(members: list[str], cfg: dict) -> float:
@@ -239,9 +241,10 @@ def criticality(members: list[str], cfg: dict) -> float:
     return float(cfg.get("k_default", 3))
 
 
-def candidate(group: dict, inputs: dict) -> dict:
+def candidate(group: dict, inputs: dict, index: dict | None = None) -> dict:
     members = group["files"]
-    contents, metrics, graph = inputs["contents"], inputs["metrics"], inputs["graph"]
+    metrics = inputs["metrics"]
+    index = radar_index.build(inputs) if index is None else index
     functions = [dict(fn, file=path) for path in members for fn in metrics.get(path, [])]
     worst = max(
         functions,
@@ -249,25 +252,12 @@ def candidate(group: dict, inputs: dict) -> dict:
         default={"cc": 0, "name": "unmeasured", "file": members[0], "lines": 0},
     )
     sigma = sum(fn["cc"] for fn in functions)
-    all_commits = [c for c in inputs["commits"] if set(c["files"]).intersection(members)]
+    all_commits, test_paths, importers = radar_index.related(members, inputs, index)
     commits = [c for c in all_commits if c["epoch"] >= inputs["cutoff"] - inputs["since_days"] * 86400]
     fix = sum(c["kind"] == "fix" for c in commits)
     fresh = max((c["epoch"] for c in all_commits if c["kind"] == "refactor"), default=0)
-    test_paths = sorted(
-        {
-            t
-            for t in inputs["tests"]
-            if set(graph.get(t, set())).intersection(members)
-            or any(re.sub(r"\.(test|spec)\.", ".", t) == p for p in members)
-        }
-    )
-    loc = sum(sum(bool(line.strip()) for line in contents.get(p, "").splitlines()) for p in members)
-    test_loc = sum(sum(bool(line.strip()) for line in contents.get(t, "").splitlines()) for t in test_paths)
-    importers = sorted(
-        p
-        for p, targets in graph.items()
-        if p in inputs["sources"] and p not in members and set(targets).intersection(members)
-    )
+    loc = sum(index["loc"].get(p, 0) for p in members)
+    test_loc = sum(index["loc"].get(t, 0) for t in test_paths)
     hints = [
         h
         for h in inputs["busy"]["hints"]
@@ -327,7 +317,10 @@ def candidate(group: dict, inputs: dict) -> dict:
 
 
 def rank(groups: list[dict], inputs: dict) -> tuple[list[dict], list[dict], int]:
-    rows = [candidate(g, inputs) for g in groups if any(in_scope(p, inputs["scope"]) for p in g["files"])]
+    index = radar_index.build(inputs)
+    rows = [
+        candidate(g, inputs, index) for g in groups if any(in_scope(p, inputs["scope"]) for p in g["files"])
+    ]
     identities = Counter(row["family"] for row in rows)
     for row in rows:
         if identities[row["family"]] > 1:

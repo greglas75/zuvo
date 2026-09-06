@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Medium integration test: real CLI and deterministic git history, no provider dispatch.
 source "$(dirname "$0")/../seo-suite/assert.sh"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT="$ROOT/scripts/benchmark.sh"
@@ -52,9 +53,29 @@ out=$(bash "$SCRIPT" --mode corpus --dry-run 2>&1)
 grep -q "corpus" <<< "$out" || fail "corpus mode not reflected in dry-run"
 
 # ── default no-input uses diff HEAD~1 ──
-out=$(bash "$SCRIPT" --dry-run 2>&1)
-[ $? -eq 0 ] || fail "default diff mode --dry-run exited non-zero"
+(
+# Source-only farm mirrors and shallow clones do not supply HEAD~1. Give the real
+# benchmark CLI a two-commit fixture, scoped to the case that consumes history.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
+unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+unset GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT
+mkdir "$MOCK_BIN/repo"
+cd "$MOCK_BIN/repo"
+git init -q
+git config user.name Test
+git config user.email test@example.invalid
+git config core.hooksPath /dev/null
+printf 'baseline\n' > sample.txt
+git add sample.txt
+git commit -qm baseline
+printf 'latest-change\n' > sample.txt
+git add sample.txt
+git commit -qm change
+out=$(bash "$SCRIPT" --dry-run 2>&1) || fail "default diff mode --dry-run exited non-zero: $out"
 grep -q "DRY RUN" <<< "$out" || fail "default diff missing DRY RUN header"
+grep -Fq -- '-baseline' <<< "$out" || fail "default diff omitted the previous committed content"
+grep -Fq -- '+latest-change' <<< "$out" || fail "default diff omitted the latest committed content"
+)
 
 # ── exit 3 in help/contract ──
 grep -q "exit 3" "$SCRIPT" || fail "exit 3 (all providers failed) missing from runner"
