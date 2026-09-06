@@ -12,7 +12,7 @@ The script accepts `--repo`, `--scope`, `--ref`, `--cutoff`, `--top`, `--since`,
 `--min-cc`, `--mode`, `--engine`, `--config`, `--json`, `--history`, `--record-snapshot`,
 `--no-remote`, `--busy-file`, `--capture-busy`, `--busy-snapshot`, `--codesift-json`,
 `--register`, `--decisions`, `--queue`, `--dry-run`, `--quiet`, `--prepare-farm`, `--snapshot`,
-`--execution local|farm`, `--timeout`, `--timings`. `--validate` is agent-side only.
+`--execution local|farm`, `--timeout`, `--timings`. `--validate` and `--no-save` are agent-side only.
 Exit 0: completed; 2: invalid input/output or failed census; 3: not a git repository.
 
 Profiles load from explicit `--config`, otherwise `.radar.json`, then `zuvo/radar.json`.
@@ -60,6 +60,23 @@ by the agent. The tests mode deliberately does not call that ratio coverage.
 The full JSON contains all in-scope ranked/excluded rows; `--top` limits the display and
 maximum registration size. The default P80 floor screens only the complexity lane. Show
 other lanes separately, including unmeasured candidates, instead of forcing them through it.
+
+## Report persistence vs registration
+
+The skill saves DISCOVER results by default; the low-level CLI remains explicit-output and
+the skill passes `--json` for it. Use the canonical output root plus a unique
+`reports/refactor-radar-<UTC>-<unique>/` directory. Save `discovery.json` immediately after
+measurement and `report.md` for the agent's evidence, decisions and raw top-N appendix.
+An explicit `--json` overrides only the raw JSON destination; link it from the Markdown.
+Neither file is an executable queue, an approved decision contract or a history snapshot.
+No REGISTER approval is required for these deliverables. Do not silently overwrite earlier
+reports, update a `latest` alias, or change an active queue.
+
+UNKNOWN availability, zero READY and partial validation still produce saved reports. Keep
+the unmodified scanner JSON separate from semantic judgments; a shortened chat summary
+does not replace either artifact. Read back both files before claiming completion. On scanner
+failure retain a diagnostic Markdown report, not a fabricated or partial census presented as
+complete. An explicit no-file-write/chat-only request or `--dry-run` suppresses these writes.
 
 ## Stable code vs temporary availability
 

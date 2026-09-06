@@ -7,6 +7,10 @@ setup. A queue is a wait; failure never authorizes a local measurement retry.
 
 ## Prepare a private job
 
+First allocate the durable local report directory using the output-root/unique-directory
+setup in SKILL.md, without executing its small-repo scanner command. Keep this destination
+separate from JOB_DIR; deleting a completed staging job must not delete the deliverables.
+
 Use the verified absolute RADAR/REPO_ROOT from SKILL.md. The directory is inside the selected
 repo so `rt` can mirror it. It must be new or empty. Keep it out of commits. `--prepare-farm`
 is an explicit staging operation, not part of a strictly artifact-free discovery request.
@@ -42,9 +46,14 @@ a visible private staging location or the farm's documented explicit transfer me
 Do not disable `rt`'s ignore check or rely on files that exist only on the laptop.
 
 Consume the runner's command, SHA in the radar output, phase times and real exit code. Retrieve
-the report with `rt --artifacts <runid> <private-destination>` if needed. `--keep-artifacts`
-preserves successful outputs; the report is not automatically copied back into your checkout.
-Keep an artifact link for the exact report and do not paste the complete function/path census
+the report with `rt --artifacts <runid> <new-retrieval-directory>` **before starting semantic
+validation**. `--keep-artifacts` preserves successful outputs on the worker; it does not copy
+them back to the user's project. Locate the returned `test-results/radar/report.json`, check
+its repo ID/SHA, and publish its unchanged bytes as `discovery.json` in the durable local
+run directory from SKILL.md (or the user's explicit `--json` destination), refusing overwrite.
+Write `report.md` there too; partial/UNKNOWN results are saved, not discarded.
+Do not claim completion while the only copy is on the farm or in a disposable staging job.
+Keep local artifact links for the exact report and do not paste the complete function/path census
 into the chat. The table is a shortlist, not a replacement for evidence in the JSON.
 
 For a detached run use the installed `rt` help's `--notify`/`--wait` interface. Do not repeatedly

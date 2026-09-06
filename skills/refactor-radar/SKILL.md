@@ -3,9 +3,9 @@ name: refactor-radar
 description: >
   Select refactor candidates with immutable git measurements, evidence-backed module
   families and temporary collision checks. Use for ranked refactor/test-debt triage,
-  not implementation. DISCOVER is read-only by default; REGISTER requires validated
-  decisions. Worktree names are hints, test LOC is not coverage, and discovery scores
-  are not execution priorities.
+  not implementation. DISCOVER saves reports without changing product code; REGISTER
+  requires validated decisions. Worktree names are hints, test LOC is not coverage,
+  and discovery scores are not execution priorities.
 category: Core
 codesift_tools:
   always:
@@ -52,10 +52,12 @@ an authorized refactor automatically.
 
 ## Modes and boundaries
 
-- **DISCOVER (default):** read code, metadata and existing decisions; return a ranked report.
-  No queue, ledger, history, reservation, dependency install, commit or PR.
-  Explicit `--json` permits that report file. An authorized farm run may stage a private,
-  disposable `--prepare-farm` job; disclose its location. `--dry-run` writes nothing.
+- **DISCOVER (default):** read code, metadata and existing decisions; **save the raw results
+  and the ranked report**, then link them in the answer. Saving these requested deliverables
+  needs no extra approval and is not REGISTER. No product edits, queue, ledger, history,
+  reservation, dependency install, commit or PR. An authorized farm run may stage a private,
+  disposable `--prepare-farm` job; disclose its location. Explicit chat-only/no-file-write
+  requests (`--no-save`) and `--dry-run` suppress report files; do not ask users to opt in.
 - **REGISTER:** only when asked to save approved work; validate G1–G5, write a new queue
   and, if requested, append decisions/history. This does not reserve files or start work.
 - **EXECUTE:** a separate request routed to `zuvo:refactor` or `zuvo:write-tests`.
@@ -79,7 +81,8 @@ as a permanent exclusion, or infer FREE just because it vanished: check PRs/cont
 | `--prepare-farm <new directory>` | Export immutable inputs and worker code locally; NO measurement |
 | `--snapshot <input.json>` | Replay a prepared DISCOVER job on the farm, without Git or credentials |
 | `--timings`, `--timeout <seconds>` | Phase timings on stderr and a whole-process deadline |
-| `--json <new file>` | Explicit report artifact; refuses overwriting different bytes |
+| `--json <new file>` | Override the raw JSON destination; otherwise save in the run directory |
+| `--no-save` | Agent-side chat-only opt-out; do not pass this flag to the CLI |
 | `--queue <new file>` | Requires explicit REGISTER and a validated `--decisions` file |
 | `--history <dir>` | Read compatible history; write only with `--record-snapshot` |
 | `--no-remote` | Skip PR queries; availability UNKNOWN, not FREE |
@@ -96,7 +99,8 @@ and degrade that gate, not the truth standard. No local fallback from a queued/f
 
 ## Mandatory File Loading
 
-Before Phase 0 read the repository rules and this skill's [data contract](references/contract.md).
+Before Phase 0 read the repository rules, this skill's [data contract](references/contract.md),
+and `../../shared/includes/report-output-location.md` for the project-root destination.
 Read [farm execution](references/farm.md) when offloading. Do not load generic execution,
 test, mutation or multi-agent bootstraps for a read-only selector. At completion load
 `../../shared/includes/run-logger.md` and `../../shared/includes/retrospective.md` for telemetry.
@@ -131,13 +135,28 @@ from an agent shell to locate a skill, or guess a cache version.
 ```bash
 # >>> zuvo:refactor-radar-generate
 # RADAR and REPO_ROOT are verified absolute paths; SCOPE is repo-relative.
+# Map --dry-run/--no-save to RADAR_DRY_RUN/RADAR_NO_SAVE=1, --json to RADAR_JSON.
 RADAR_ARGS=(--repo "$REPO_ROOT" --scope "${SCOPE:-.}" --top "${TOP:-50}" --mode "${MODE:-refactor}")
+if [[ "${RADAR_DRY_RUN:-0}" == 1 ]]; then
+  RADAR_ARGS+=(--dry-run)
+elif [[ "${RADAR_NO_SAVE:-0}" != 1 ]]; then
+  RADAR_OUTPUT_ROOT="${ZUVO_OUTPUT_DIR:-$REPO_ROOT/zuvo}"
+  mkdir -p "$RADAR_OUTPUT_ROOT/reports"
+  RADAR_RUN_DIR="$(mktemp -d "$RADAR_OUTPUT_ROOT/reports/refactor-radar-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")"
+  RADAR_JSON="${RADAR_JSON:-$RADAR_RUN_DIR/discovery.json}"
+  RADAR_ARGS+=(--json "$RADAR_JSON")
+fi
 # Only a small census where local execution is permitted. For repo/fleet scans use farm.md.
 bash "$RADAR" "${RADAR_ARGS[@]}" --timings
 # <<< zuvo:refactor-radar-generate
 ```
 
-Add only requested flags with shell arrays. Never pre-create a history/queue directory.
+The default run directory is under `<project-root>/zuvo/reports/`, not the scoped source
+directory or a disposable worktree selected for analysis. Use the invocation project's root
+and retain SHA/repo identity in the report. Never overwrite another run or an approved queue.
+Add requested flags with shell arrays; report persistence is already the default above.
+Never pre-create a history/queue directory. For `--no-save` do not stage artifacts without
+separate authority; use available read-only evidence or disclose the execution limitation.
 For repo-wide/fleet scans use `--prepare-farm` and the documented `rt` workflow BEFORE
 starting CPU work. Above 1,000 source+test files the CLI refuses local analysis; a narrow
 `--scope` still needs the repo-wide graph. Do not bypass this with Python monkey-patches,
@@ -145,6 +164,13 @@ in-memory reimplementations, or `--execution farm` on the laptop. That flag chec
 worker context; it does not offload work. All snapshot workers go through `rt`.
 Use stage timings to distinguish slow Git/provider I/O from parsing, graph construction
 and ranking. A deadline aborts the report; do not silently omit files or call them clean.
+
+Save the **complete scanner JSON before semantic validation**, not only the displayed top N.
+On the farm retrieve it to the durable local run directory (farm.md); stdout, temporary job
+files and a run-log entry are not a saved deliverable. Read the saved JSON back and check its
+repo ID/SHA and row counts. Start `report.md` in that run directory with state IN_PROGRESS,
+the raw JSON link and known limitations, then update it as validation progresses. If scanning
+fails, save a FAILED diagnostic report with the actual error; do not invent a discovery JSON.
 
 Copy the real stderr population/floor/exclusion summary. Zero exclusions is possible.
 Report schema, repo ID, SHA, cutoff, engine/version, config hash, missing evidence and
@@ -230,7 +256,14 @@ operations; “one type per PR” is not an evidence-based universal rule.
 
 ## Phase 5: Report; REGISTER only if requested
 
-Return the requested top N with: family/files, status, type hypothesis, raw/final rank,
+Write the findings to `report.md` in this run's directory before answering, including when
+zero candidates are READY, availability is UNKNOWN, or only part of the list was validated.
+Save the requested raw top N (or all if fewer exist) as an explicitly **unvalidated** appendix,
+separate from the validated recommendations; the JSON retains the full census. Record
+requested, scanned, investigated, returned and READY counts and remaining validation work.
+Never replace a full saved list with only the recommendations summarized briefly in chat.
+
+Report the requested top N with: family/files, status, type hypothesis, raw/final rank,
 CC/D/N/max/nest with engine label, fix/feat/ref, K, verification evidence, risk/effort,
 why now, proposed change and gate evidence. Give a denominator and exclusion/unknown reasons.
 Do not pad to N when insufficient candidates survive validation.
@@ -258,10 +291,16 @@ A missing old worktree path never invalidates the ledger; current availability i
 
 ## REFACTOR-RADAR COMPLETE
 
-Report requested/returned/validated counts, data and availability limitations, the changed
-artifacts (or “none”), and next action. PASS means the requested analysis/registration was
-completed truthfully, not “a queue was always written”. UNKNOWN evidence stays visible.
+Reopen the saved `report.md` and raw JSON: verify they are nonempty, parse the JSON, and
+check source identity and counts against the report. Link **both actual local files** in the
+final answer. Missing/failed artifact writes prevent COMPLETE/PASS; report the save failure
+and retained paths, not “done”. An analysis shortfall is PARTIAL even if persistence succeeded;
+do not withhold partial results from disk. With explicit `--no-save`/`--dry-run`, state the
+opt-out instead and do not create report directories or operational telemetry.
+Report requested/returned/validated counts, limitations and next action. Saving a report is
+not authorization to create an executable queue. UNKNOWN evidence stays visible.
 Population zero may mean “no applicable production scope”; explain before calling it a failure.
 
-Perform the retrospective and append the Run line via the loaded protocols. Operational run
+Unless writes were explicitly suppressed, perform the retrospective and append the Run line
+via the loaded protocols. Operational run
 telemetry is separate from product queue/ledger/history; `--dry-run` itself writes none.
