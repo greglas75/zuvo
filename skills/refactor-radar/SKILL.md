@@ -53,8 +53,9 @@ an authorized refactor automatically.
 ## Modes and boundaries
 
 - **DISCOVER (default):** read code, metadata and existing decisions; return a ranked report.
-  No queue, ledger, history, reservation, index mutation, dependency install, commit or PR.
-  Explicit `--json` permits that report file only. `--dry-run` writes nothing.
+  No queue, ledger, history, reservation, dependency install, commit or PR.
+  Explicit `--json` permits that report file. An authorized farm run may stage a private,
+  disposable `--prepare-farm` job; disclose its location. `--dry-run` writes nothing.
 - **REGISTER:** only when asked to save approved work; validate G1–G5, write a new queue
   and, if requested, append decisions/history. This does not reserve files or start work.
 - **EXECUTE:** a separate request routed to `zuvo:refactor` or `zuvo:write-tests`.
@@ -75,6 +76,9 @@ as a permanent exclusion, or infer FREE just because it vanished: check PRs/cont
 | `--mode refactor\|tests` | Same discovery signals; tests mode suggests COVER, never infers coverage from LOC |
 | `--ref <ref>`, `--cutoff <ISO timezone>` | Freeze code SHA and history window, including for HEAD |
 | `--engine builtin\|codesift` | Stdlib estimate or verified CodeSift envelope; never compare their raw CC |
+| `--prepare-farm <new directory>` | Export immutable inputs and worker code locally; NO measurement |
+| `--snapshot <input.json>` | Replay a prepared DISCOVER job on the farm, without Git or credentials |
+| `--timings`, `--timeout <seconds>` | Phase timings on stderr and a whole-process deadline |
 | `--json <new file>` | Explicit report artifact; refuses overwriting different bytes |
 | `--queue <new file>` | Requires explicit REGISTER and a validated `--decisions` file |
 | `--history <dir>` | Read compatible history; write only with `--record-snapshot` |
@@ -86,31 +90,23 @@ a profile, importing CodeSift data, using a farm, REGISTER, or interpreting sche
 
 ## Environment Compatibility
 
-Read `../../shared/includes/env-compat.md`; follow the current platform's dispatch limits.
-This selector does not require agents. Tools unavailable or outside authority → name the
-missing evidence and degrade that gate, not the truth standard.
-Dispatch is already authorized when a requested downstream skill mandates it; follow the
-current platform rules in env-compat.md. This does not authorize external writes.
+This selector does not require agents. Follow the current session's execution policy and
+project runner rules. Tools unavailable or outside authority → name the missing evidence
+and degrade that gate, not the truth standard. No local fallback from a queued/failed farm.
 
 ## Mandatory File Loading
 
-Before Phase 0 read:
-
-1. `../../shared/includes/env-compat.md`
-2. `../../shared/includes/run-logger.md`
-3. `../../shared/includes/codesift-setup.md`
-4. `../../shared/includes/no-pause-protocol.md`
-5. `../../shared/includes/retrospective.md`
-
-Print the loaded/missing checklist. Apply no-pause within the declared validation budget,
-not as authorization to edit, install, or fabricate enough READY rows. Repo rules govern
-indexing; never call `index_folder` or invalidate a shared index implicitly.
+Before Phase 0 read the repository rules and this skill's [data contract](references/contract.md).
+Read [farm execution](references/farm.md) when offloading. Do not load generic execution,
+test, mutation or multi-agent bootstraps for a read-only selector. At completion load
+`../../shared/includes/run-logger.md` and `../../shared/includes/retrospective.md` for telemetry.
+Keep work within the validation budget; never fabricate enough READY rows.
 
 ## Phase 0: Establish the input boundary
 
 Read repo rules and the existing ledger/CONTRACTs, if present. Inspect canonical root, HEAD,
 dirty paths, all live worktrees (including detached ones), and the authoritative remote.
-Do not delete, prune, reset, fetch, install or reindex to make the census look clean.
+Do not delete, prune, reset, fetch or install to make the census look clean.
 Resolve explicit user exclusions to **exact paths**; ambiguous basenames require inspection.
 
 Use an existing `.radar.json` / `zuvo/radar.json` profile or disclose defaults: K=3 for all
@@ -120,8 +116,10 @@ production candidates; tests remain evidence for verification.
 
 Read old decisions as hypotheses with scope, reason and `returns_when`, not eternal bans.
 A recent refactor can resolve one smell while leaving another. Inspect its family diff.
-If CodeSift scope/SHA/completeness cannot be verified, use the builtin estimate and source
-reads; no private CLI syntax or assumed tool arguments. Respect a repo's no-reindex rule.
+Prefer CodeSift when its scope/revision/completeness can be verified. `indexed=true` alone
+does not prove freshness, and a timestamp alone does not attest a frozen SHA. A top-N MCP
+result is not a complete census. Follow the contract's CodeSift decision procedure; use the
+farm builtin estimate if the envelope cannot be obtained. Do not invent CLI/MCP arguments.
 
 ## Phase 1: Generate cheap discovery evidence
 
@@ -134,14 +132,19 @@ from an agent shell to locate a skill, or guess a cache version.
 # >>> zuvo:refactor-radar-generate
 # RADAR and REPO_ROOT are verified absolute paths; SCOPE is repo-relative.
 RADAR_ARGS=(--repo "$REPO_ROOT" --scope "${SCOPE:-.}" --top "${TOP:-50}" --mode "${MODE:-refactor}")
-bash "$RADAR" "${RADAR_ARGS[@]}"
+# Only a small census where local execution is permitted. For repo/fleet scans use farm.md.
+bash "$RADAR" "${RADAR_ARGS[@]}" --timings
 # <<< zuvo:refactor-radar-generate
 ```
 
 Add only requested flags with shell arrays. Never pre-create a history/queue directory.
-For a fresh report, add `--json <unused-path>`; for a long scan obey the repo's farm rules
-and the local-control snapshot protocol in the reference. A farm mirror does not know all
-worktrees/PRs on the user's machine.
+For repo-wide/fleet scans use `--prepare-farm` and the documented `rt` workflow BEFORE
+starting CPU work. Above 1,000 source+test files the CLI refuses local analysis; a narrow
+`--scope` still needs the repo-wide graph. Do not bypass this with Python monkey-patches,
+in-memory reimplementations, or `--execution farm` on the laptop. That flag checks the
+worker context; it does not offload work. All snapshot workers go through `rt`.
+Use stage timings to distinguish slow Git/provider I/O from parsing, graph construction
+and ranking. A deadline aborts the report; do not silently omit files or call them clean.
 
 Copy the real stderr population/floor/exclusion summary. Zero exclusions is possible.
 Report schema, repo ID, SHA, cutoff, engine/version, config hash, missing evidence and

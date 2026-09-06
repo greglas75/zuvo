@@ -1,0 +1,13 @@
+[run]
+branch = True
+patch = subprocess
+include = */radar_*.py
+data_file = ${RADAR_COVERAGE_DIR?}/.coverage
+
+[paths]
+radar =
+    ${RADAR_SOURCE_ROOT?}/scripts/lib
+    */lib
+
+[report]
+show_missing = True

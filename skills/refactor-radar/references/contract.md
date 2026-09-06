@@ -11,7 +11,8 @@ invoking it. A checkout wrapper and its `lib/radar_*.py` modules must travel tog
 The script accepts `--repo`, `--scope`, `--ref`, `--cutoff`, `--top`, `--since`, `--fresh-days`,
 `--min-cc`, `--mode`, `--engine`, `--config`, `--json`, `--history`, `--record-snapshot`,
 `--no-remote`, `--busy-file`, `--capture-busy`, `--busy-snapshot`, `--codesift-json`,
-`--register`, `--decisions`, `--queue`, `--dry-run`, `--quiet`. `--validate` is agent-side only.
+`--register`, `--decisions`, `--queue`, `--dry-run`, `--quiet`, `--prepare-farm`, `--snapshot`,
+`--execution local|farm`, `--timeout`, `--timings`. `--validate` is agent-side only.
 Exit 0: completed; 2: invalid input/output or failed census; 3: not a git repository.
 
 Profiles load from explicit `--config`, otherwise `.radar.json`, then `zuvo/radar.json`.
@@ -91,7 +92,19 @@ Bitbucket auth uses existing `RADAR_BB_TOKEN` + `bb_user`, or the existing macOS
 `--no-remote` means UNKNOWN. `remote: none` explicitly declares PRs not applicable and can
 be complete. It must not be set merely to get FREE rows. Active CONTRACTs remain agent-side.
 
-For farm analysis: run `--capture-busy <new-json>` locally against the same SHA/profile, then
+Preferred farm workflow: [farm.md](farm.md), using a portable `--prepare-farm` input. It needs
+no Git metadata on the worker. Preparation copies committed source/test blobs, bounded history,
+profile and availability; no metrics or import graph are computed locally. It does not copy
+`.git`, untracked files, `.env`, provider tokens or node_modules. Treat staged source as private.
+The snapshot is operator-owned input with a checksum for accidental corruption, NOT an
+authenticated attestation against malicious rewriting. Only run worker code prepared from the
+verified Zuvo installation. Replay is DISCOVER-only and does not load host history paths.
+Profile `history_dir` is omitted with a warning (`history=unavailable`); explicit `--history`
+is incompatible with preparation. Large replay also requires `--execution farm`, used through
+`rt`; the CLI checks Linux plus the runner's pinned-release context (an accidental-bypass
+guard, not host authentication). This flag is not an offloading mechanism.
+
+Legacy alternative for a farm with an actual Git checkout: run `--capture-busy <new-json>` locally, then
 transfer that authorized metadata with the source to the farm and pass `--busy-snapshot`.
 Do not upload it elsewhere; it includes private paths and PR identities. The farm also needs
 an actual git object database/history for the chosen SHA; a file-only rt mirror is insufficient.
@@ -105,8 +118,22 @@ shortlist even when fixed-SHA complexity/churn metrics replay identically.
 
 ## CodeSift adapter
 
-Use observed MCP schemas with the repo required by local rules. Do not invent a CLI, mutate
-an index, or import a truncated top-results list as a full census. For `--engine codesift`,
+Use observed MCP schemas with the repo required by local rules. Do not invent a CLI or
+import a truncated top-results list as a full census. The selection procedure is:
+
+1. Inspect index identity, scope and freshness once. Prefer verified CodeSift measurements.
+2. Refresh a stale index when the current user/project policy permits it, targeting only the
+   intended checkout. A blanket historical "already indexed, never refresh" rule may be stale;
+   surface it for correction, do not silently override a still-explicit prohibition.
+3. A shared main-checkout refresh still cannot attest another branch or a frozen historical SHA.
+   Require matching source/revision and complete pagination/census before exporting metrics.
+4. If that evidence is unavailable, explain why and use the builtin engine ON THE FARM.
+   CodeSift may still help validate individual findings after checking their source at the frozen SHA.
+
+Indexing is real work wherever the server runs. Verify its host before starting a large refresh;
+`rt` does not automatically move an MCP server to the farm. An unknown hosting location is not
+permission to launch a laptop-wide reindex. There is no built-in MCP collector in the Python CLI.
+For `--engine codesift`,
 provide `--codesift-json` with an attested envelope:
 
 ```json
@@ -120,7 +147,8 @@ provide `--codesift-json` with an attested envelope:
 
 The collector must actually verify source SHA, pagination, filters, total and scope before
 attesting `complete`. The script validates shape/identity/duplicate rows, not the truth of
-an external index. Missing metadata → fallback estimate with disclosure, never fabricate it.
+an external index. Missing metadata → agent chooses an explicit farm fallback, never fabricate it.
+The CodeSift path does not run builtin complexity measurement first.
 Max nesting is measured independently of the maximum-CC function. History cannot mix engines,
 versions, schema, policy, profile or scope. A new candidate gets no persistence penalty.
 
@@ -170,8 +198,13 @@ Configuration and explicit output directories are trusted operator input; this i
 for hostile repositories or concurrent same-user tampering. Regular-file reads enforce the byte
 limit on the descriptor, not a prior size check; devices/FIFOs and leaf symlinks are refused.
 Git/CLI stdout is spooled to temporary disk before a capped read (128 MB git, 8 MB provider),
-with 90s/30s process timeouts and discarded stderr. Temporary disk itself has no quota; arbitrary
-regex execution has no CPU deadline. Use a disposable constrained host for untrusted corpora.
+with 90s/30s subprocess timeouts and discarded stderr. CLI work is additionally bounded by a
+whole-run wall deadline: 60s for local control/small scans, 300s for snapshot workers, configurable
+with `--timeout`. Expiry aborts without a completed analysis; retry on the farm, not by dropping files.
+`--timings` reports availability/git-input/measure/graph/rank durations on stderr, outside the
+deterministic report fingerprint. Temporary disk itself has no quota. Use a disposable
+constrained host for untrusted corpora. Run-local reverse indexes are discarded after each scan;
+they never cache collision evidence across runs.
 The optional macOS Keychain subprocess uses that same private temporary spool, so its token
 is not memory-only. Existing `RADAR_BB_TOKEN` input avoids this subprocess path; never put
 credentials in repository URLs or output artifacts. A dedicated secret reader remains follow-up.
