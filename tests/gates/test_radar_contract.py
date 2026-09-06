@@ -80,6 +80,46 @@ class RadarContract(RadarRepo):
         self.assertEqual((row["sum"], row["n"], row["decisions"], row["max"], row["nest"]), (13, 2, 11, 8, 4))
         self.assertEqual(report["meta"]["parser_version"], "fixture-v1")
 
+    def test_empty_failed_codesift_receipt_cannot_publish_a_clean_report(self) -> None:
+        receipt = self.envelope()
+        receipt["meta"].update(complete=False, total_functions=0)
+        receipt["functions"] = []
+        receipt["note"] = "git log timed out; cached empty result"
+        source = self.home / "failed-scan.json"
+        source.write_text(json.dumps(receipt))
+        output = self.home / "must-not-look-clean.json"
+        result = self.invoke(
+            "--no-remote", "--engine", "codesift", "--codesift-json", str(source),
+            "--json", str(output), expected=2,
+        )
+        self.assertIn("complete", result.stderr)
+        self.assertFalse(output.exists())
+
+    def test_zero_fix_churn_does_not_exclude_inherited_complexity(self) -> None:
+        self.write("src/order-service.ts", """
+export function inherited(x) {
+  if (x) { if (x.a) { if (x.b) { return 1; } } }
+  if (x && x.c) { return 2; }
+  return 0;
+}
+""")
+        self.commit("feat: import an existing service")
+        row = self.row(self.scan(), "src/order-service.ts")
+        self.assertEqual(row["fix"], 0)
+        self.assertGreater(row["decisions"], 0)
+        self.assertIsNone(row["excluded"])
+
+    def test_name_hint_does_not_erase_an_unrelated_dirty_overlap(self) -> None:
+        wt = self.home / "survey-logic"
+        self.git("worktree", "add", "-q", "-b", "refactor/order-service-split", str(wt), "HEAD")
+        self.write("src/unrelated.ts", "export function dirty() { return 2; }\n", repo=wt)
+        report = self.scan()
+        named = self.row(report, "src/order-service.ts")
+        self.assertEqual(named["availability"], "UNKNOWN")
+        self.assertIsNone(named["excluded"])
+        self.assertIn("refactor/order-service-split", named["reservation_hints"])
+        self.assertEqual(self.row(report, "src/unrelated.ts")["availability"], "BUSY")
+
     def test_codesift_duplicate_outside_scope_and_invalid_count_fail_without_output(self) -> None:
         clean = self.envelope()
         variants = []

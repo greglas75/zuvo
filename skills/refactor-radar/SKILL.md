@@ -120,6 +120,9 @@ production candidates; tests remain evidence for verification.
 
 Read old decisions as hypotheses with scope, reason and `returns_when`, not eternal bans.
 A recent refactor can resolve one smell while leaving another. Inspect its family diff.
+When supplied history contains corrections, reconcile them before reusing a finding; follow
+the provenance rules in [handoff.md](references/handoff.md). Earlier confident prose is not
+stronger evidence than a later substantiated correction.
 When continuing from a saved radar list, first reuse its candidate-specific evidence using
 [handoff.md](references/handoff.md). Reformatting a report needs no rescan. A changed HEAD
 alone does not invalidate unchanged scoped findings; refresh affected evidence and availability.
@@ -127,6 +130,11 @@ Prefer CodeSift when its scope/revision/completeness can be verified. `indexed=t
 does not prove freshness, and a timestamp alone does not attest a frozen SHA. A top-N MCP
 result is not a complete census. Follow the contract's CodeSift decision procedure; use the
 farm builtin estimate if the envelope cannot be obtained. Do not invent CLI/MCP arguments.
+For imported/extracted snapshots, compare the expected Git path inventory at that SHA with
+the received inventory and explicit omissions; an archive exit code or last filename is not
+proof of completeness. Preserve per-tool FAILED/PARTIAL diagnostics: an empty timed-out
+response is not a successful empty measurement. Unresolved-import spikes are a warning,
+not a substitute for inventory verification. Do not derive non-use from an incomplete graph.
 
 ## Phase 1: Generate cheap discovery evidence
 
@@ -191,6 +199,8 @@ Do not make “top CC” masquerade as comprehensive selection. In addition to t
 shortlist, reserve up to one third of the investigation budget for independent lanes:
 verified deletion hypotheses, clone mechanisms, runtime cycles/hubs, boundary type debt,
 and confirmed runtime/defect hotspots. Report lane quotas and scanned/unavailable dimensions.
+The complexity floor and fix-churn must not exclude a verified low-CC clone mechanism or
+inherited code with no recent fixes. Their final priority still requires a concrete benefit.
 
 Use existing tools, only with observed schemas and project configuration:
 
@@ -224,6 +234,9 @@ For every investigated family give gate status and concrete source/command evide
 - **G2 Availability:** exact current PR/dirty/committed-diff scope and active CONTRACTs.
   Failed/skipped/partial/stale provider → UNKNOWN; exact overlap → BUSY. A name-only hint
   needs corroboration, not automatic exclusion. Do not repair authentication in DISCOVER.
+  If a broad diff includes merged base/promotion history, corroborate actual ownership with
+  PR files, branch-specific patches and current contracts. Mark disputed paths UNKNOWN;
+  do not discard known dirty overlaps or declare FREE merely from age/squash ancestry.
 - **G3 Cohesion and kept scope:** validate the proposed family edges and retained behavior.
   Matching names, the same feature label, or a common directory is insufficient to merge work.
   Respect sunset decisions and user exclusions, with revisit conditions.
@@ -244,6 +257,9 @@ Keep **analysis_scope** (family + relevant consumers), **write_scope** (owned fi
 **verification_scope** (tests/build/routes/contracts) distinct. Group overlapping edits or
 one proven shared mechanism; separate disjoint responsibilities. Shared “pricing” vocabulary
 does not justify a batch. Split broad work into dependency-ordered steps with explicit fences.
+One shared mechanism may need several deliveries: prove it with a few representative
+consumers, then migrate the rest behind the same contract. Name prerequisites and independently
+verifiable scopes; do not commission competing helper designs or impose a universal file cap.
 
 First separate execution lanes: READY, then TEST_FIRST/OBSERVE for evidence work; BUSY and
 EXCLUDED outside execution. Within READY order by confirmed pain × product criticality ×

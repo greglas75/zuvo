@@ -119,6 +119,105 @@
         {"path": "zuvo/reports/old-radar.md", "content": "# Older radar analysis\nRepo: fixture/cache. Analysis: 2026-09-01. Source SHA was not recorded. PR availability UNKNOWN. Tests inspected, not run.\n\n## Raw ranking\n1. src/designer family: 70 files, high aggregate CC, no source/test review.\n2. src/cache.ts: reviewed candidate below.\n\n## Cache findings\nsrc/cache.ts :: resolve mixes key construction, lookup and conditional write. Extract private key and lookup helpers because divergent key handling caused misses. Preserve key version v2 and field order compiler/source/globals. Fatal results must never enter cache. Preserve flush of pending writes. tests/cache.spec.ts :: cache_hit checks the expected persisted key independently and asserts zero script executions. Missing test: a fatal result must cause zero writes. Write scope: src/cache.ts and tests/cache.spec.ts only. Consumer proving use: src/runner.ts :: run. Scope should not expand into the designer family. Risk medium; TEST_FIRST.\n"},
         {"path": "zuvo/refactor-queue.md", "content": "# Already approved\n- [ ] src/other.ts | SIMPLIFY | Score: 0.3\n"}
       ]
+    },
+    {
+      "id": 6,
+      "prompt": "Use the supplied scan receipts to decide whether the store family belongs on the refactor/deletion list. Save a short decision under zuvo/reports. The archive command exited 0. Do not fetch, rescan, install tools or change source; use only the supplied evidence.",
+      "expected_output": "Compare expected and received inventories, discover the missing store and test paths, and reject the clean/dead conclusion despite archive exit 0. Save a pending decision with the exact missing evidence. Do not fabricate source or run an unauthorized full scan.",
+      "files": ["receipts/git-tree.json", "receipts/snapshot.json", "receipts/scan.json"],
+      "assertions": [
+        "The transcript shows it reading and comparing both Git and snapshot inventories, identifying the missing store and test paths.",
+        "The saved decision records incomplete source/graph evidence and does not issue a deletion order or claim zero live stores.",
+        "The transcript shows no fetch, scanner, install, source edit or queue write; it saves and reads back a diagnostic report with the missing evidence."
+      ],
+      "fixtures": [
+        {"path": "receipts/git-tree.json", "content": "{\"repo\":\"fixture/stores\",\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"paths\":[\"src/index.ts\",\"src/store/session.ts\",\"tests/session.spec.mjs\"]}\n"},
+        {"path": "receipts/snapshot.json", "content": "{\"repo\":\"fixture/stores\",\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"archive_exit\":0,\"paths\":[\"src/index.ts\"]}\n"},
+        {"path": "receipts/scan.json", "content": "{\"summary\":\"no live stores\",\"references\":[],\"unresolved_imports_before\":0.04,\"unresolved_imports_now\":0.25}\n"}
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "Assess these two saved measurement receipts for the refactor radar. Both display an empty result. Save a concise assessment stating what each result establishes. Do not run new commands against a repository or provider, and do not install or reindex anything.",
+      "expected_output": "Read both receipts. Distinguish the failed cached hotspot scan from a successful empty clone scan whose completeness is attested only by the supplied receipt. Preserve tool/dimension/scope limits. Do not claim the repository is debt-free, or rerun the failed scan without authority.",
+      "files": ["receipts/hotspots.json", "receipts/clones.json"],
+      "assertions": [
+        "The transcript shows it reading both measurement receipts, including the timeout diagnostic rather than just the empty arrays.",
+        "The saved assessment records hotspots as failed or unmeasured, not as zero hotspots, and retains the cached timeout reason.",
+        "The saved assessment records the supplied successful empty clone result separately from a whole-repository clean verdict and does not call both receipts failures.",
+        "The transcript shows no new scanner/provider invocation, reindex or install and reads back the saved assessment."
+      ],
+      "fixtures": [
+        {"path": "receipts/hotspots.json", "content": "{\"tool\":\"hotspots\",\"scope\":\"src\",\"complete\":false,\"cached\":true,\"status\":\"FAILED\",\"note\":\"git log timed out after 30 seconds\",\"rows\":[],\"display\":\"no hotspots found\"}\n"},
+        {"path": "receipts/clones.json", "content": "{\"tool\":\"clones\",\"scope\":\"src/store\",\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"complete\":true,\"status\":\"COMPLETE\",\"expected_files\":3,\"measured_files\":3,\"rows\":[]}\n"}
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "Update availability for the existing survey and billing candidates using only these supplied receipts. Save a compact report; do not run Git or provider queries, rescan code, or edit the approved queue. Worktree refactor/survey-logic exists and the broad diff lists both candidates.",
+      "expected_output": "Read the actual ownership and dirty-scope receipts. Preserve the definite billing overlap. Do not mark survey busy from a branch-name substring or inherited merge paths, but do not declare it free when contracts are unknown. Leave unresolved availability explicit and the approved queue unchanged.",
+      "files": ["receipts/availability.json", "zuvo/refactor-queue.md"],
+      "assertions": [
+        "The transcript shows it reading the branch, PR, dirty-path and contract evidence in the receipt.",
+        "The saved report records src/billing.ts as BUSY because of its current dirty overlap.",
+        "The saved report records src/survey.service.ts as UNKNOWN rather than BUSY from its name or inherited diff, and does not infer FREE from absent own commits.",
+        "The transcript shows the approved queue unchanged and no new Git/provider query or scanner run."
+      ],
+      "fixtures": [
+        {"path": "receipts/availability.json", "content": "{\"branch\":\"refactor/survey-logic\",\"broad_diff_paths\":[\"src/survey.service.ts\",\"src/billing.ts\"],\"base_merge\":{\"paths\":[\"src/survey.service.ts\"],\"origin\":\"main merged into branch\"},\"own_patch_paths\":[],\"dirty_paths\":[\"src/billing.ts\"],\"prs\":{\"complete\":true,\"open\":[]},\"contracts\":{\"complete\":false},\"observed_at\":\"2026-09-06T12:00:00Z\"}\n"},
+        {"path": "zuvo/refactor-queue.md", "content": "# Approved queue\n- [ ] src/other.ts | SIMPLIFY | Score: 0.3\n"}
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "Review these saved radar findings against the supplied source and suggest the next refactor. The complexity floor is 40; the ranking table is empty. Save a short handoff. No new full scan, test run, source edits or registration.",
+      "expected_output": "Inspect the two low-CC implementations, their consumer and contract test. Recognize one duplicated invariant despite zero fix churn and the complexity floor. Propose a bounded deduplication with exact field-order/literal warnings and real assertion pointer; do not assert measured coverage or executed tests.",
+      "files": ["receipts/radar.json", "src/email.ts", "src/sms.ts", "src/send.ts", "tests/notifications.spec.mjs"],
+      "assertions": [
+        "The transcript shows it reading both implementations, their production caller and the actual test assertions.",
+        "The saved handoff contains a deduplication candidate despite its below-floor complexity and zero fix churn, with a concrete shared-invariant reason.",
+        "The handoff contains an exact existing assertion pointer and preserves tenant,id,channel serialization order and the missing tenant literal.",
+        "The transcript shows no source edits, queue registration or test execution and does not claim tests passed."
+      ],
+      "fixtures": [
+        {"path": "receipts/radar.json", "content": "{\"repo\":\"fixture/notifications\",\"source_sha\":null,\"min_cc\":40,\"rows\":[],\"excluded\":[{\"file\":\"src/email.ts\",\"sum_cc\":2,\"fix\":0,\"reason\":\"below-floor\"},{\"file\":\"src/sms.ts\",\"sum_cc\":2,\"fix\":0,\"reason\":\"below-floor\"}],\"availability\":\"UNKNOWN\"}\n"},
+        {"path": "src/email.ts", "content": "export function emailKey(tenant: string, id: string) { if (!tenant) throw new Error('missing tenant'); return JSON.stringify({ tenant, id, channel: 'email' }); }\n"},
+        {"path": "src/sms.ts", "content": "export function smsKey(tenant: string, id: string) { if (!tenant) throw new Error('missing tenant'); return JSON.stringify({ tenant, id, channel: 'sms' }); }\n"},
+        {"path": "src/send.ts", "content": "import { emailKey } from './email';\nimport { smsKey } from './sms';\nexport function send(tenant: string, id: string, put: (key: string) => void) { put(emailKey(tenant, id)); put(smsKey(tenant, id)); }\n"},
+        {"path": "tests/notifications.spec.mjs", "content": "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\nimport { send } from '../src/send.ts';\ntest('persisted keys preserve field order', () => { const keys = []; send('t', 'i', k => keys.push(k)); assert.deepEqual(keys, ['{\"tenant\":\"t\",\"id\":\"i\",\"channel\":\"email\"}', '{\"tenant\":\"t\",\"id\":\"i\",\"channel\":\"sms\"}']); });\n"}
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "Merge these two historical radar notes into a short current handoff document using only their evidence. Preserve the originals. Do not scan code, run tests, recover branches or start any refactor. The notes disagree; state what is established and what remains to verify.",
+      "expected_output": "Read both notes and retain substantiated corrections with source pointers. Retire lost-payload and zero-tests claims without claiming current compatibility or actual coverage. Preserve the prior literal regression warning and identify the reusable artifact for inspection. Do not interpret lower rank scores as proven campaign benefit.",
+      "files": ["history/first.md", "history/correction.md"],
+      "assertions": [
+        "The transcript shows it reading both historical notes rather than relying only on the earlier summary.",
+        "The new document records the lost-payload and zero-tests claims as superseded and links the correction's scope and evidence.",
+        "The new document contains the exact public-message regression warning and the existing assertion gap, not generic preserve-behavior advice.",
+        "The new document records current compatibility, behavior coverage and availability as unverified; it does not claim campaign benefit from normalized score decline.",
+        "The transcript shows the original notes unchanged, no branch recovery or source edit, and the new document saved and read back."
+      ],
+      "fixtures": [
+        {"path": "history/first.md", "content": "# First assessment, 2026-08-29\nCandidate AUDIT-MESSAGES: src/audit.ts. Previous implementation is lost: no matching remote branch. No tests: no audit.spec.ts found. Rewrite from scratch. Campaign top normalized score declined 0.9 to 0.4, proving success.\n"},
+        {"path": "history/correction.md", "content": "# Correction, 2026-09-02\nSupersedes the lost-payload claim for AUDIT-MESSAGES: inspection found local tmp-audit at commit bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb with the helper and spec. Its compatibility with current HEAD is NOT checked. Missing remote branch was not proof of loss.\nSupersedes zero-tests: tests/audit.spec.mjs :: reports invalid columns calls the public facade. It asserts issue.evidence only, not issue.message; no coverage run was performed. A previous deduplication changed public issue.message from 'must contain a columns array' to 'must contain an columns array' unnoticed. Preserve the original exact text and characterize it before editing.\nThe rank scores were normalized separately with changed populations and cannot establish campaign benefit. Source SHA and current reservations were not recorded.\n"}
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "Turn the supplied family review into a compact refactor handoff with a sensible delivery sequence. Keep one shared design, preserve the existing report and do not start implementation or create an executable queue. Do not rescan: these are supplied findings, not current validation.",
+      "expected_output": "Keep the family as analysis scope, propose a small first delivery proving the shared mechanism, and later migrations with dependencies and distinct scopes. Preserve literal/precedence warnings and the exact test pointer. Keep unrelated billing work separate and source/availability limitations visible. Do not turn the entire family into one implicitly authorized edit set.",
+      "files": ["history/family-review.md"],
+      "assertions": [
+        "The saved handoff records separate analysis, write and verification scopes and a dependency-ordered delivery sequence for the shared mechanism.",
+        "The first delivery contains the shared helper and a representative subset, not all twelve mapper files, and later stages depend on that same design.",
+        "The handoff contains the first-error and exact bad answer literal invariants plus the test pointer; unrelated billing work is not bundled by directory alone.",
+        "The transcript shows no new scan, source edit or executable queue, preserves the old report, and saves and reads back the new handoff with its historical limitations."
+      ],
+      "fixtures": [
+        {"path": "history/family-review.md", "content": "# Supplied family review\nRepo fixture/mappers; source SHA not recorded; availability UNKNOWN; tests inspected, not run.\nMAP-FIELDS: src/map-{a,b,c,d,e,f,g,h,i,j,k,l}.ts repeat the same field reading invariant, confirmed by the earlier source review. They feed src/submit.ts. Proposed common src/field-table.ts should preserve the public facades. a/b are representative simple cases, c/d include fallback precedence, e through l add per-type transforms. Preserve first-error ordering and exact error 'bad answer'. tests/mappers.spec.mjs :: public mapping errors asserts the public error text; add equivalence cases for each migrated mapper. The previous 12-file delivery exceeded the reviewer's input budget.\nSeparate candidate BILLING: src/billing.ts uses the same directory but handles invoice retries, not field reading; no shared edit or invariant. Its test details have not been inspected.\n"}
+      ]
     }
   ]
 }

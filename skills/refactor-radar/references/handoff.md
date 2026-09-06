@@ -29,6 +29,8 @@ The example is illustrative, not a finding. For each real card:
 - **Watch:** one to three source-specific invariants, ordering/error/concurrency traps, or
   explicit non-goals. "No behavior changes", "run tests", "watch cycles" alone are not hints.
   Name the actual invariant or edge. A fix that tightens validation is not a silent refactor.
+  Public error strings, validation precedence and serialization details are behavior too:
+  when affected, name their exact expected value/order and the assertion that protects it.
 - **Tests:** exact spec and test name/assertion (or source-SHA line locator), plus the concrete
   missing case to add first. A filename alone or test/source LOC ratio is not verification.
   With no existing tests, label the planned spec as NEW and name the cases to characterize;
@@ -37,6 +39,26 @@ The example is illustrative, not a finding. For each real card:
   name relevant shared dependencies, boundary configs or another card's ID when needed.
   These references define what must be rechecked on reuse. Keep a decisive metric only if it
   changes the action; retain the complete function/family baseline in the linked JSON row.
+
+## History that changes the next action
+
+Add one optional **History/watch** line only when it saves rediscovery: previous attempt or
+revert, reusable unmerged tests/helper, deliberate workaround, or a repo-specific CI blind
+spot. Link the exact PR/commit/document and state what it establishes and what needs checking.
+Do not copy an entire chat or launch a machine-wide history search on every radar run; use
+provided history and targeted repo records within the investigation budget.
+
+Keep a stable candidate ID separate from display rank (repo + family/smell; resolve renames
+with evidence). References between cards use that ID, not a rank that changes on refresh.
+When evidence contradicts an old decision, mark it superseded in the NEW report with the
+correction's source and scope; do not rewrite old reports/ledgers without authorization.
+Newer prose alone does not settle a conflict. Unresolved claims remain unverified. A vanished
+path or merged PR is not proof the smell disappeared; locate its successor and inspect the
+relevant patch. Conversely, an old branch is a recovery lead, not proof its code is current.
+
+Campaign success requires comparable scope, lineage, engine and observation windows. PR
+counts, lower normalized scores, test LOC or raw before/after fix counts cannot establish
+benefit. Keep historical observations distinct from causal claims and current source facts.
 
 All handed-off items receive these hints, not only the first five. If evidence for a field is
 missing, investigate it within the agreed budget or move the item to **Pending validation**:
