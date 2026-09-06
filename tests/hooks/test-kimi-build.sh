@@ -159,6 +159,70 @@ else
   bad "(9b) no agent manifest — stale agents cannot be pruned and user agents can be clobbered"
 fi
 
+# (10) Execute the real shell/Python boundary, not only the TOML template. Backticks
+# inside a Python comment in a double-quoted shell argument still execute shell code.
+if python3 - "$INSTALL" "$DIST/hooks.kimi.toml" <<'PY'
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
+
+source = Path(sys.argv[1]).read_text()
+try:
+    start = source.index('  if [[ -f "$DIST/hooks.kimi.toml" ]]; then')
+    end = source.index('\n  fi', start) + len('\n  fi')
+except ValueError as exc:
+    raise SystemExit('test (10) extraction marker is stale; inspect the installer block') from exc
+snippet = source[start:end]
+# Shell interpolation must stay off for arbitrary Python comments, not just `merged`.
+snippet = snippet.replace('import os, sys, tempfile',
+                          'import os, sys, tempfile\n# `merged` $(merged) $ZUVO_COMMENT_PROBE')
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    (root / 'hooks.kimi.toml').write_bytes(Path(sys.argv[2]).read_bytes())
+    config = root / 'config.toml'
+    config.write_text('provider = "keep-me"\n')
+    env = dict(os.environ, DIST=directory, KIMI_HOME=directory)
+    command = ('merged() { printf "UNEXPECTED_COMMAND_SUBSTITUTION\\n" >&2; }; '
+               'warn() { printf "%s\\n" "$*" >&2; }; ' + snippet)
+    previous = None
+    for _ in range(2):
+        run = subprocess.run(['bash', '-c', command], env=env, capture_output=True, text=True)
+        assert run.returncode == 0, run.stderr
+        assert not run.stderr, run.stderr
+        actual = config.read_text()
+        if tomllib is None:
+            assert actual == 'provider = "keep-me"\n'
+            assert 'cannot validate merged config.toml' in run.stdout
+            continue
+        parsed = tomllib.loads(actual)
+        assert parsed['provider'] == 'keep-me'
+        assert len(parsed['hooks']) == Path(sys.argv[2]).read_text().count('[[hooks]]')
+        if previous is not None:
+            assert actual == previous, 'hook installation is not idempotent'
+        previous = actual
+    # Exercise missing-parser safety even when the host has Python 3.11+.
+    shim = root / 'no-parser'
+    shim.mkdir()
+    (shim / 'tomllib.py').write_text('raise ModuleNotFoundError("test: no tomllib")\n')
+    before = config.read_bytes()
+    run = subprocess.run(['bash', '-c', command], env=dict(env, PYTHONPATH=str(shim)),
+                         capture_output=True, text=True)
+    assert run.returncode == 0 and not run.stderr, run.stderr
+    assert 'cannot validate merged config.toml' in run.stdout
+    assert config.read_bytes() == before, 'missing parser changed user configuration'
+PY
+then
+  pass '(10) hook merge preserves user config, is idempotent, and executes no comment text'
+else
+  bad '(10) real hook merge failed or executed Python comment text as a shell command'
+fi
+
 echo ""
 echo "  $pass_count passed, $fail_count failed"
 [ "$fail_count" -eq 0 ] || exit 1
