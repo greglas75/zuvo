@@ -177,6 +177,9 @@ Use existing tools, only with observed schemas and project configuration:
 Do not assign invented runtime multipliers, call a clean/unscanned dimension debt-free, or
 install all tools across all repos. Use internet research for an actual evidence/tool gap,
 prefer primary sources, record versions and limitations. Suggestions belong in Follow-ups.
+For an authorized Madge fallback, use `npx --yes madge --circular --extensions ts,tsx <dir>`
+so a package-download prompt cannot hang a non-interactive run. Preserve project resolver
+configuration and inspect type-only edges before calling a reported cycle a runtime defect.
 
 ## Phase 3: Validate G1–G5 and classify the decision
 

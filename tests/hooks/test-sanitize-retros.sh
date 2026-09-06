@@ -21,7 +21,7 @@ canon=$(awk -F'\t' '/^RETRO:/ && NF==17' "$F" | wc -l | tr -d ' ')
 [ "$canon" -eq 3 ] && ok "key=value lines rewritten to 17-field (3 canonical now)" || bad "expected 3 canonical, got $canon"
 grep -q $'RETRO: 2026-05-29T11:13:06Z\tplan\tQuotasMobi' "$F" && ok "pure key=value: date/skill/project mapped positionally" || bad "pure key=value not mapped"
 grep -q $'RETRO: 2026-07-24T10:00:00Z\texecute\tprojX' "$F" && ok "canonical line untouched" || bad "canonical line altered"
-grep -q 'review\tQ/viz\t13_commits' "$F" && ok "near-canonical (positional) kept as-is, not mangled" || bad "near-canonical corrupted"
+grep -q $'review\tQ/viz\t13_commits' "$F" && ok "near-canonical (positional) kept as-is, not mangled" || bad "near-canonical corrupted"
 
 echo "=== idempotent + no data loss ==="
 before=$(grep -c '^RETRO:' "$F")

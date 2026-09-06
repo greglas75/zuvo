@@ -102,6 +102,17 @@ ZUVO_MODEL_GEMINI_API="${ZUVO_MODEL_GEMINI_API:-gemini-3.1-pro-preview}"  # gemi
 #                          artifact; it reads convincingly and is wrong.
 # The lesson those three encode: findings COUNT is a gadfly metric. A model that emits five
 # plausible paragraphs per diff outranks a careful one until somebody checks the claims.
+# The OpenRouter lane is OFF by default fleet-wide (ZUVO_ADV_OPENROUTER unset) since
+# 2026-09-05: glm-5.3 billed $12.10 in one day. It is the best paid reviewer measured here
+# (+30 distinct defects over the free set) and it WORKS — 72% of 143 production calls
+# returned findings — it is simply not worth that daily rate as an always-on lane.
+# Enable per-run when a review earns it:  ZUVO_ADV_OPENROUTER=1 zuvo adversarial …
+#
+# qwen3.8-flash is NOT the cheap substitute it looked like on paper. The benchmark rated it
+# +26 defects at a quarter of glm's price, but that ran under a 900s ceiling; production
+# allows 400s and qwen averages 336s, so it lands: 91 calls, 32 with output — 35%, against
+# glm's 72% (46 empty, 13 timeouts). A benchmark ceiling looser than production's turns a
+# latency problem into an invisible one — measure candidates at the PRODUCTION timeout.
 ZUVO_MODEL_OPENROUTER="${ZUVO_MODEL_OPENROUTER:-z-ai/glm-5.3}"
 ZUVO_MODEL_OPENROUTER_ALT="${ZUVO_MODEL_OPENROUTER_ALT:-qwen/qwen3.8-flash}"
 

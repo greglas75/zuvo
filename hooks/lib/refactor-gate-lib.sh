@@ -85,6 +85,14 @@ _prove_field() {
     }' 2>/dev/null | head -1
 }
 
+# Preserve legacy contract ids, but exclude known review sidecars and array ledgers.
+_refactor_contract_file() {
+  [ -f "$1" ] || return 1
+  case "${1##*/}" in *-findings.json|*-adversarial.json) return 1 ;; esac
+  awk 'NF { sub(/^\357\273\277/, ""); sub(/^[[:space:]]*/, ""); if (!length($0)) next; array=(substr($0,1,1)=="["); exit }
+       END { exit array }' "$1"
+}
+
 refactor_gate_check() {
   staged=$1
   cdir=${ZUVO_CONTRACTS_DIR:-zuvo/contracts}
@@ -92,7 +100,7 @@ refactor_gate_check() {
   ttl=${ZUVO_GATE_TTL_SEC:-86400}
   blocked=0
   for c in "$cdir"/refactor-*.json; do
-    [ -f "$c" ] || continue
+    _refactor_contract_file "$c" || continue
     # TERMINAL stages — the gate exists to protect an IN-FLIGHT refactor from being
     # committed around. A refactor that stopped is not in flight. `BLOCKED` is a
     # terminal outcome (the run hit a hard blocker and halted), but only `COMPLETE`
@@ -188,7 +196,7 @@ refactor_prove_v4_check() {
   [ -n "$rpv_ttl" ] || rpv_ttl=86400
   rpv_blocked=0
   for rpv_c in "$rpv_dir"/refactor-*.json; do
-    [ -f "$rpv_c" ] || continue
+    _refactor_contract_file "$rpv_c" || continue
     _is_agent_env || continue
     rpv_now=$(date +%s)
     rpv_mt=$(_mtime "$rpv_c" "$rpv_now")
@@ -382,7 +390,7 @@ refactor_scope_gate_check() {
   rsg_active=0
   rsg_fences=""
   for rsg_c in "$rsg_cdir"/refactor-*.json; do
-    [ -f "$rsg_c" ] || continue
+    _refactor_contract_file "$rsg_c" || continue
     # Same terminal set as the prove gate above — see the comment there. This is the
     # scope guard ("every staged file must sit in some fence"), which is the one that
     # actually blocked unrelated work: a halted refactor made every later commit prove
@@ -531,7 +539,7 @@ _is_agent_env() {
   [ "${ZUVO_AGENT:-0}" = "1" ] && return 0
   [ -n "${ZUVO_AI_RUN:-}" ] && return 0
   [ -n "${CLAUDECODE:-}${CLAUDE_PLUGIN_ROOT:-}${CLAUDE_CODE_ENTRYPOINT:-}${CLAUDE_CODE_SESSION:-}" ] && return 0
-  [ -n "${CODEX_SANDBOX:-}${CODEX_WORKSPACE:-}${CODEX_HOME:-}" ] && return 0
+  [ -n "${CODEX_SANDBOX:-}${CODEX_WORKSPACE:-}${CODEX_HOME:-}${CODEX_THREAD_ID:-}${CODEX_SESSION_ID:-}" ] && return 0
   [ -n "${CURSOR_TRACE_ID:-}${CURSOR_AGENT:-}" ] && return 0
   [ -n "${GEMINI_CLI:-}${ANTIGRAVITY:-}${GEMINI_ANTIGRAVITY:-}${ANTIGRAVITY_SESSION_ID:-}" ] && return 0
   return 1

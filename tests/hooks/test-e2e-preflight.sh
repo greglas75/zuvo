@@ -487,10 +487,10 @@ fi
 # (10e5) the registry's mode survives the atomic replace (mktemp gives 0600)
 R_MODE="$REGDIR/mode.md"
 bash "$HELPER" coverage-upsert --file "$R_MODE" --flow one --state GENERATED >/dev/null 2>&1
-mode_fresh=$(stat -f %Lp "$R_MODE" 2>/dev/null || stat -c %a "$R_MODE" 2>/dev/null)
+mode_fresh=$(stat -c %a "$R_MODE" 2>/dev/null || stat -f %Lp "$R_MODE" 2>/dev/null)
 chmod 640 "$R_MODE"
 bash "$HELPER" coverage-upsert --file "$R_MODE" --flow two --state GENERATED >/dev/null 2>&1
-mode_after=$(stat -f %Lp "$R_MODE" 2>/dev/null || stat -c %a "$R_MODE" 2>/dev/null)
+mode_after=$(stat -c %a "$R_MODE" 2>/dev/null || stat -f %Lp "$R_MODE" 2>/dev/null)
 if [ "$mode_after" = "640" ] && [ "$mode_fresh" != "600" ]; then
   pass "(10e5) registry mode preserved across the replace (fresh=$mode_fresh, kept=$mode_after)"
 else

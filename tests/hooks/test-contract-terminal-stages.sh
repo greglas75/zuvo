@@ -25,7 +25,7 @@ probe() { # probe <stage> -> rc of the scope guard on an UNRELATED file
     mkdir -p zuvo/contracts src; : > src/a.ts; : > src/unrelated.ts
     printf '{"stage":"%s","scope_fence":["src/a.ts"],"blind_audit":"clean:strict","adversarial":"clean","characterization":"green"}\n' \
       "$stage" > zuvo/contracts/refactor-x.json
-    export CLAUDE_CODE=1   # agent env: the human bypass must not mask the result
+    export ZUVO_AI_RUN=1   # agent env: the human bypass must not mask the result
     # shellcheck source=/dev/null
     . "$LIB" 2>/dev/null
     refactor_scope_gate_check "src/unrelated.ts" >/dev/null 2>&1; echo $? )

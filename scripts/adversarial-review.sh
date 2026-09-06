@@ -1304,8 +1304,14 @@ detect_providers() {
   # A key file on disk is not consent to spend on every review: this one exists because of a
   # benchmark, and auto-detecting on it would silently turn a free pipeline into a metered one.
   # ZUVO_ADV_OPENROUTER=1 is a deliberate act a human performs once; the key alone is not.
-  # Measured value when enabled (20 diffs, Opus-judged): glm-5.3 adds 32 distinct defects that
-  # nothing in the free set finds, qwen3.8-flash adds 22, at $2.92 and $0.26 per 20 runs.
+  # Cost, measured in PRODUCTION rather than in the benchmark (2026-09-05, one day):
+  #   glm-5.3   143 calls, 72% returned findings, $12.10 billed
+  #   qwen3.8   91 calls,  35% returned findings (46 empty, 13 timeouts)
+  # glm earns its findings and costs too much to leave always on; qwen is cheap and mostly
+  # does not answer, because it averages 336s against this script's 400s PROVIDER_TIMEOUT.
+  # Hence: the flag stays OFF by default fleet-wide and is set per run when a review earns it.
+  # The benchmark rated qwen a bargain because it ran under a 900s ceiling — a benchmark
+  # ceiling looser than production turns a latency problem into an invisible one.
   if [[ "${ZUVO_ADV_OPENROUTER:-0}" == "1" ]]; then
     if [[ -n "${OPENROUTER_API_KEY:-}" || -f "$HOME/.zuvo/openrouter.key" ]]; then
       providers="${providers:+$providers }openrouter openrouter-alt"
@@ -1427,14 +1433,15 @@ fi
 # fanned out to 5 CLIs. Measured over 30 days (~/.zuvo/adversarial.log): 9,613 adversarial
 # invocations = 43,228 provider calls = 890M chars shipped to external providers and 387 hours
 # of summed wall-clock, for 891 skill runs in the last week alone (~2.5 adversarial passes per
-# skill run, ~12.6 provider calls). Cutting to the top 3 of the measured ranking in
-# detect_providers() drops 39% of the provider calls and 35% of the wall-clock while retaining
-# 91.9% of the runs that produced any CRITICAL — the two providers this removes are the two
-# that earn their slot least (see the table above).
+# skill run, ~12.6 provider calls). Capping at 5 bounds that per run. The cap SAMPLES the
+# survivors at random rather than keeping the top N: bounding cost per run is its job, and
+# permanently retiring the tail of the ranking is not. Truncation did the latter for free and
+# nobody noticed until a billing graph showed one paid lane on every review — see the sampling
+# block below for the numbers.
 #
 # Applied LAST, after host auto-exclusion / --exclude / --exclude-last / the auth-fail cache,
-# so the cap always keeps the best THREE still standing rather than three chosen before the
-# host reviewer was removed. Skipped only for an explicit --provider (already one provider).
+# so the sample is drawn from the providers still standing rather than from a set chosen
+# before the host reviewer was removed. Skipped only for an explicit --provider (already one).
 # It DOES apply to the test harness's injected list — that list stands in for what
 # detect_providers() would return, so exempting it would leave the cap untestable; every
 # existing suite injects <= 3 mocks and is unaffected.
@@ -1446,10 +1453,65 @@ if [[ -z "$PROVIDER" && -n "$PROVIDERS" ]]; then
   fi
   _ar_avail=$(echo "$PROVIDERS" | wc -w | tr -d ' ')
   if [[ "$_ar_avail" -gt "$_AR_MAX_PROVIDERS" ]]; then
-    _ar_dropped=$(echo "$PROVIDERS" | tr ' ' '\n' | sed '/^$/d' | tail -n +$((_AR_MAX_PROVIDERS + 1)) | tr '\n' ' ' | sed 's/ *$//')
-    PROVIDERS=$(echo "$PROVIDERS" | tr ' ' '\n' | sed '/^$/d' | head -n "$_AR_MAX_PROVIDERS" | tr '\n' ' ' | sed 's/ *$//')
-    echo "  Fan-out cap: keeping top $_AR_MAX_PROVIDERS by measured yield ($PROVIDERS); not running: $_ar_dropped" >&2
-    echo "  (raise with ZUVO_REVIEW_MAX_PROVIDERS=N — see detect_providers() for the ranking data)" >&2
+    # SAMPLED at random, not truncated to the top N. Truncation made the cap pick the SAME
+    # providers on every single run: with 8 available and a cap of 5, ranks 6-8 (claude, kimi,
+    # openrouter-alt) never executed once, so three configured reviewers were dead weight and
+    # the paid openrouter lane at rank 5 billed on 100% of reviews ($12.10 of GLM 5.3 on
+    # 2026-09-05 alone). A cap is meant to bound COST PER RUN, not to permanently retire the
+    # tail of the ranking — over many runs every provider should get its turn, which is also
+    # what keeps cross-model coverage from collapsing onto one fixed set of blind spots.
+    # Sample first, then re-emit in ranking order so logs and --single stay readable.
+    # Sample by INDEX, never by name. Filtering the list against a set of kept NAMES keeps
+    # every duplicate of a kept name, so a list like "a a a b b" with cap 3 came back with all
+    # five and the cap silently stopped existing. Production names are unique and the test
+    # harness's are not, which is precisely the sort of gap that ships.
+    _ar_idx=$(echo "$PROVIDERS" | tr ' ' '\n' | sed '/^$/d' | nl -ba -w1 -s'	')
+    #
+    # PINNED providers bypass the draw and always take a slot when they are present.
+    # agy (Gemini 3.8 Flash) is pinned because it is the highest measured MARGINAL
+    # contributor in the set: 32 defects that no other provider finds, against 17 for the
+    # model it replaced (20 diffs, Opus-judged, shared defect vocabulary, 2026-09-05).
+    # Leaving the biggest unique contributor to a coin flip loses coverage that nothing
+    # else in the set can recover. Pinning is deliberately NOT "rank 1 always wins": it is
+    # a per-provider decision backed by a marginal-coverage number, and the rest of the
+    # slots stay random so the tail keeps getting its turn.
+    # Override with ZUVO_REVIEW_PIN_PROVIDERS="a b" or "" to pin nothing.
+    _ar_pin="${ZUVO_REVIEW_PIN_PROVIDERS-agy}"
+    if [[ "${ZUVO_REVIEW_PROVIDER_PICK:-random}" == "ranked" ]]; then
+      _ar_keep_idx=$(printf '%s\n' "$_ar_idx" | head -n "$_AR_MAX_PROVIDERS" | cut -f1)
+    else
+      # Pinned first (capped, in ranking order), then fill the remaining slots at random
+      # from everything else. sort -R exists on BSD sort; --random-source does NOT, so the
+      # reproducible path for tests is ZUVO_REVIEW_PROVIDER_PICK=ranked, never a seed.
+      _ar_pin_idx=$(printf '%s\n' "$_ar_idx" | awk -F'	' -v p="$_ar_pin" \
+        'BEGIN{n=split(p,a," ");for(i=1;i<=n;i++)P[a[i]]=1} P[$2]{print $1}' \
+        | head -n "$_AR_MAX_PROVIDERS")
+      _ar_pin_n=$(printf '%s' "$_ar_pin_idx" | grep -c . || true)
+      _ar_fill=$(( _AR_MAX_PROVIDERS - _ar_pin_n ))
+      if [[ "$_ar_fill" -gt 0 ]]; then
+        _ar_rest_idx=$(printf '%s\n' "$_ar_idx" | awk -F'	' -v p="$_ar_pin" \
+          'BEGIN{n=split(p,a," ");for(i=1;i<=n;i++)P[a[i]]=1} !P[$2]{print $1}' \
+          | sort -R | head -n "$_ar_fill")
+      else
+        _ar_rest_idx=""
+      fi
+      _ar_keep_idx=$(printf '%s\n%s\n' "$_ar_pin_idx" "$_ar_rest_idx" | sed '/^$/d' | sort -n)
+    fi
+    # Re-emit in ranking order: --single takes the head of this list, so a randomly ordered
+    # sample would quietly turn --single into --rotate.
+    _ar_sel=$(printf '%s\n' "$_ar_keep_idx" | tr '\n' ',' | sed 's/,$//')
+    PROVIDERS=$(printf '%s\n' "$_ar_idx" | awk -F'\t' -v k="$_ar_sel" \
+      'BEGIN{n=split(k,a,",");for(i=1;i<=n;i++)K[a[i]]=1} K[$1]{print $2}' | tr '\n' ' ' | sed 's/ *$//')
+    _ar_dropped=$(printf '%s\n' "$_ar_idx" | awk -F'\t' -v k="$_ar_sel" \
+      'BEGIN{n=split(k,a,",");for(i=1;i<=n;i++)K[a[i]]=1} !K[$1]{print $2}' | tr '\n' ' ' | sed 's/ *$//')
+    _ar_pinned_names=$(printf '%s\n' "$_ar_idx" | awk -F'	' -v p="${_ar_pin:-}" \
+      'BEGIN{n=split(p,a," ");for(i=1;i<=n;i++)P[a[i]]=1} P[$2]{print $2}' | tr '\n' ' ' | sed 's/ *$//')
+    if [[ -n "$_ar_pinned_names" ]]; then
+      echo "  Fan-out cap: $_AR_MAX_PROVIDERS of $_ar_avail ($PROVIDERS) — pinned: $_ar_pinned_names, rest sampled at random; not running this time: $_ar_dropped" >&2
+    else
+      echo "  Fan-out cap: $_AR_MAX_PROVIDERS of $_ar_avail sampled at random ($PROVIDERS); not running this time: $_ar_dropped" >&2
+    fi
+    echo "  (size with ZUVO_REVIEW_MAX_PROVIDERS=N; ZUVO_REVIEW_PROVIDER_PICK=ranked for the old top-N behaviour)" >&2
   fi
 fi
 
@@ -2327,9 +2389,9 @@ write_artifact() {
     printf 'critical=%s\n' "$CRITICAL_COUNT"
     printf 'warning=%s\n' "$WARNING_COUNT"
     printf 'info=%s\n' "$INFO_COUNT"
-    # These counts are keyword-line tallies over provider output, NOT parsed finding records.
-    # Labelled so a downstream reader never mistakes "3 lines mention CRITICAL" for "3 findings".
-    printf 'count_method=keyword-lines\n'
+    # Counts cover recognized severity records; the full provider output remains below.
+    printf 'count_method=severity-records\n'
+    printf 'count_status=%s\n' "${COUNT_STATUS:-unavailable}"
     printf 'known_findings_supplied=%s\n' "$(printf '%s' "$KNOWN_FINDINGS" | grep -c . || true)"
     printf -- '---\n'
     printf '%s\n' "$final_output"
@@ -2811,6 +2873,63 @@ if [[ -z "$ALL_RESULTS" ]]; then
   exit "$FAIL_EXIT"
 fi
 
+# Count finding records, never severity words in descriptions or clean summaries.
+# JSON is authoritative when present; text accepts the prompted SEVERITY field and
+# the legacy "CRITICAL: description" form, with Markdown list/emphasis decoration.
+count_findings() {
+  local result_file="$1" counts
+  if counts=$(awk '
+    /^[[:space:]]*```[Jj][Ss][Oo][Nn][[:space:]]*$/ { fenced=1; inside=1; next }
+    inside && /^[[:space:]]*```[[:space:]]*$/ { inside=0; next }
+    { raw=raw $0 ORS; if (inside) json=json $0 ORS }
+    END { printf "%s", fenced ? json : raw }
+  ' "$result_file" | jq -ers '
+    if length == 1 and (.[0] | type) == "object" and (.[0].findings | type) == "array" then
+      .[0].findings as $f |
+      [$f[] | objects | .severity | strings | ascii_upcase |
+       select(. == "CRITICAL" or . == "WARNING" or . == "INFO")] as $s |
+      [([ $s[] | select(. == "CRITICAL") ] | length),
+       ([ $s[] | select(. == "WARNING") ] | length),
+       ([ $s[] | select(. == "INFO") ] | length),
+       (if ($s | length) == ($f | length) then "complete" else "partial" end)] | @tsv
+    else empty end' 2>/dev/null); then
+    printf '%s\n' "$counts"
+  else
+    awk '
+      {
+        line=toupper($0)
+        gsub(/[*_`]/, "", line)
+        sub(/^[[:space:]]*/, "", line)
+        while (sub(/^(#+|[-+]|[0-9]+[.)])[[:space:]]+/, "", line)) {}
+        if (line ~ /^SEVERITY:[[:space:]]*(CRITICAL|WARNING|INFO)([[:space:]]|$)/) {
+          sub(/^SEVERITY:[[:space:]]*/, "", line)
+          sub(/[[:space:]].*/, "", line)
+          count[line]++
+        } else if (line ~ /^(CRITICAL|WARNING|INFO):[[:space:]]*(NONE|0|NO ISSUES)[.!]?[[:space:]]*$/) {
+          clean=1
+        } else if (line ~ /^(CRITICAL|WARNING|INFO):[[:space:]]+[^[:space:]]/) {
+          sub(/:.*/, "", line)
+          legacy[line]++
+          uncertain=1
+        } else if (line ~ /(^|[[:space:]"])SEVERITY/ || line ~ /^(CRITICAL|WARNING|INFO)[[:space:]]*[-:]/) {
+          uncertain=1
+        }
+        if (line ~ /^NO ISSUES FOUND[.!]?[[:space:]]*$/) clean=1
+      }
+      END {
+        c=count["CRITICAL"]+0; w=count["WARNING"]+0; i=count["INFO"]+0
+        # Explicit fields win over legacy titles/body prose, avoiding double counts.
+        # Legacy-only text is ambiguous: retain its counts but require inspection.
+        if (c+w+i == 0 && legacy["CRITICAL"]+legacy["WARNING"]+legacy["INFO"] > 0) {
+          c=legacy["CRITICAL"]+0; w=legacy["WARNING"]+0; i=legacy["INFO"]+0; uncertain=1
+        }
+        status=(uncertain || (c+w+i == 0 && !clean)) ? "partial" : "complete"
+        print c,w,i,status
+      }
+    ' "$result_file"
+  fi
+}
+
 # ─── Count findings (before output, while temp files still exist) ──
 
 TOTAL_FINDINGS=0
@@ -2818,13 +2937,17 @@ CRITICAL_COUNT=0
 WARNING_COUNT=0
 INFO_COUNT=0
 OUTPUT_SIZE=0
+COUNT_STATUS=complete
 for p in $PROVIDERS; do
   result_file="$JSON_TMPDIR/result_${p}.txt"
   if [[ -s "$result_file" ]]; then
     OUTPUT_SIZE=$((OUTPUT_SIZE + $(wc -c < "$result_file" | tr -d ' ')))
-    c=$(grep -ciE 'CRITICAL' "$result_file" 2>/dev/null) || c=0
-    w=$(grep -ciE 'WARNING' "$result_file" 2>/dev/null) || w=0
-    i=$(grep -ciE '\bINFO\b' "$result_file" 2>/dev/null) || i=0
+    read -r c w i count_status < <(count_findings "$result_file")
+    if [[ "$count_status" != "complete" ]]; then
+      COUNT_STATUS=partial
+      echo "WARN: $p finding counts are incomplete; inspect the full review before treating it as clean." >&2
+    fi
+    printf '%s %s %s\n' "$c" "$w" "$i" > "$JSON_TMPDIR/counts_${p}.txt"
     CRITICAL_COUNT=$((CRITICAL_COUNT + c))
     WARNING_COUNT=$((WARNING_COUNT + w))
     INFO_COUNT=$((INFO_COUNT + i))
@@ -2962,9 +3085,7 @@ for p in $PROVIDERS; do
   p_exit=1
   if [[ -s "$result_file" ]]; then
     p_output=$(wc -c < "$result_file" | tr -d ' ')
-    p_c=$(grep -ciE 'CRITICAL' "$result_file" 2>/dev/null) || p_c=0
-    p_w=$(grep -ciE 'WARNING' "$result_file" 2>/dev/null) || p_w=0
-    p_i=$(grep -ciE '\bINFO\b' "$result_file" 2>/dev/null) || p_i=0
+    read -r p_c p_w p_i < "$JSON_TMPDIR/counts_${p}.txt"
     p_exit=0
   fi
 

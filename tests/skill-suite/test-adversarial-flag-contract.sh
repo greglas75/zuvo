@@ -28,6 +28,8 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT="$ROOT/scripts/adversarial-review.sh"
+# Parser smoke cases use --dry-run; they need a candidate, not an installed AI client.
+export ZUVO_ADVERSARIAL_TEST_HARNESS=1 ZUVO_REVIEW_TEST_PROVIDERS=mock-success
 
 fail=0
 pass() { printf 'PASS: %s\n' "$1"; }

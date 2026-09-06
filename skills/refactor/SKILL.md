@@ -1,11 +1,9 @@
 ---
 name: refactor
 description: >
-  Structured refactoring runner with ETAP workflow, resumable CONTRACT, and
-  batch processing. Use when restructuring code, extracting methods, splitting
-  files, breaking circular dependencies, or cleaning up god classes. NOT for
-  new features (use zuvo:build). Execution modes: full (default), batch <file>
-  (queue processing). Control flags: plan-only, no-commit, continue.
+  Refactor existing code by extracting helpers, splitting files, removing
+  duplication, or untangling dependencies. Supports resumable and batch runs.
+  Use for structural changes that preserve behavior; use zuvo:build for new features.
 category: Core
 codesift_tools:
   always:
@@ -114,7 +112,7 @@ _INST=$(ls ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/install-refac
 # these is set the gate no-ops on the human's commits by design — say so instead of implying
 # the repo is protected.
 _HARNESS=""
-for v in CLAUDECODE CODEX_SANDBOX CURSOR_TRACE_ID ANTIGRAVITY_SESSION_ID; do
+for v in CLAUDECODE CODEX_SANDBOX CODEX_THREAD_ID CODEX_SESSION_ID CURSOR_TRACE_ID ANTIGRAVITY_SESSION_ID; do
   eval "[ -n \"\${$v:-}\" ]" && _HARNESS="$_HARNESS $v"
 done
 if [ -n "$_GATE" ] && [ -n "$_INST" ]; then
@@ -888,7 +886,9 @@ git add [specific files from scope fence]
 
 **Iterative review with `--multi`:** Run adversarial passes sequentially, every available provider per pass. Each pass sees the FIXED code from previous passes — so fixes themselves get reviewed. A pass that returns 0 new findings ends the loop **only when the ledger completion scan (below) is also clean** — an empty pass alone never ends it if an open CRITICAL identity remains.
 
-**Finding-disposition ledger (`zuvo/contracts/<id>-findings.json`) — carry dispositions across rotated passes.** Each pass runs a *different* random provider that never saw what earlier passes already resolved, so without a ledger a preserved-verbatim, out-of-fence, or decision-deferred item is re-reported every pass: the loop never reaches the 0-findings early exit and burns its pass budget re-litigating settled dispositions.
+Artifact counters describe recognized records. If `count_status=partial`, inspect the full provider output and reconcile the ledger before deciding that a pass has no new findings.
+
+**Finding-disposition ledger (`zuvo/reports/refactor/<id>-findings.json`) — carry dispositions across passes.** Create the parent directory before writing. Choose the existing legacy `zuvo/contracts/<id>-findings.json` ledger if present; otherwise use the reports path. Use that one selected path for every read, write and completion scan. Feed resolved dispositions into later reviews so preserved-verbatim, out-of-fence and decision-deferred items do not consume another review pass.
 
 **The orchestrator owns this ledger — providers never write it.** A provider only reports findings in its own words; the orchestrator normalizes each into one ledger row. That single rule dissolves the identity/duplicate problems: providers never mint fingerprints, so there is exactly ONE identity per finding. The file is a JSON **array** of rows like the one below; an *identity* is all rows sharing a `fingerprint`, and its state is that group's latest row.
 

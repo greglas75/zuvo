@@ -15,21 +15,63 @@ EMPTY="$ADV_TEST_EMPTY"
 export ZUVO_ADVERSARIAL_TEST_HARNESS=1
 export PATH="$MOCKS:$PATH"
 
-# ─── Case 1: more providers than the cap → only the first N run ──────────────
-# The order detect_providers() emits IS the measured ranking, so "keeps the first N"
-# is the whole contract — a cap that kept an arbitrary N would defeat the ranking.
-# The cap is set EXPLICITLY here rather than relying on the default: this case tests the
+# ─── Case 1: more providers than the cap → exactly N run, SAMPLED at random ──
+# The cap samples rather than truncating (2026-09-05). Truncation retired the tail of the
+# ranking permanently — ranks 6+ never executed once — and pinned whichever paid lane sat
+# just inside the cap to 100% of reviews. So "which N" is deliberately NOT asserted here;
+# the contract is the COUNT and the fact that kept + dropped partitions the input exactly.
+# The cap is set EXPLICITLY rather than relying on the default: this case tests the
 # MECHANISM, and coupling it to whatever the default happens to be made it fail for the
 # wrong reason when the default moved 3 -> 5 (2026-09-04). CAP.0 below owns the default.
+#
+# The duplicate names in this list are load-bearing. Sampling by NAME kept every duplicate
+# of a kept name, so this exact list came back with 5 of 5 under a cap of 3 — the cap
+# silently ceased to exist. Real provider names are unique, which is why only a test with
+# duplicates catches it. Sampling is index-based for that reason; do not "simplify" it.
 
-start_test "CAP.1 5 providers, cap 3 → 3 dispatched, first 3 of the list kept"
+start_test "CAP.1 5 providers, cap 3 → exactly 3 dispatched, kept+dropped partition the input"
 out=$(ZUVO_REVIEW_MAX_PROVIDERS=3 ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-success mock-success mock-fail mock-fail" \
   bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1.err")
 err=$(cat "$HERE/.tmp/cap1.err")
 attempted=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("attempted_count","?"))' 2>/dev/null || echo "?")
-assert_eq "3" "$attempted" "attempted_count capped at 3"
+assert_eq "3" "$attempted" "attempted_count capped at 3 even with duplicate names"
 assert_contains "$err" "Fan-out cap" "stderr announces the cap"
-assert_contains "$err" "not running: mock-fail mock-fail" "stderr names the dropped providers"
+_kept=$(printf '%s' "$err" | sed -n 's/.*sampled at random (\([^)]*\)).*/\1/p' | head -1 | wc -w | tr -d ' ')
+_drop=$(printf '%s' "$err" | sed -n 's/.*not running this time: \(.*\)/\1/p' | head -1 | wc -w | tr -d ' ')
+assert_eq "3" "$_kept" "stderr lists exactly 3 kept"
+assert_eq "2" "$_drop" "stderr lists exactly 2 dropped (kept+dropped = the 5 supplied)"
+
+# ─── Case 1b: ranked mode is the reproducible escape hatch ───────────────────
+# BSD sort has -R but not --random-source, so a seed cannot pin the sample. Anything that
+# needs determinism (a test, a bisect) asks for the ranking explicitly instead.
+
+start_test "CAP.1b ZUVO_REVIEW_PROVIDER_PICK=ranked → the first N, deterministically"
+for _i in 1 2 3; do
+  ZUVO_REVIEW_PROVIDER_PICK=ranked ZUVO_REVIEW_MAX_PROVIDERS=2 \
+    ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail mock-empty" \
+    bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1b.err" >/dev/null
+  printf '%s\n' "$(sed -n 's/.*sampled at random (\([^)]*\)).*/\1/p' "$HERE/.tmp/cap1b.err" | head -1)"
+done | sort -u > "$HERE/.tmp/cap1b.sets"
+assert_eq "1" "$(wc -l < "$HERE/.tmp/cap1b.sets" | tr -d ' ')" "ranked mode returns one stable set"
+assert_contains "$(cat "$HERE/.tmp/cap1b.sets")" "mock-success mock-fail" "ranked mode keeps the first 2"
+
+# ─── Case 1c: random mode actually varies ────────────────────────────────────
+# Without this, a sampler that silently degraded back to head -n N would pass every other
+# case in this file — the count assertions cannot tell truncation from sampling.
+
+start_test "CAP.1c random mode produces more than one distinct set over 25 runs"
+for _i in $(seq 1 25); do
+  ZUVO_REVIEW_MAX_PROVIDERS=2 ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail mock-empty" \
+    bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1c.err" >/dev/null
+  printf '%s\n' "$(sed -n 's/.*sampled at random (\([^)]*\)).*/\1/p' "$HERE/.tmp/cap1c.err" | head -1)"
+done | sort -u > "$HERE/.tmp/cap1c.sets"
+_variants=$(wc -l < "$HERE/.tmp/cap1c.sets" | tr -d ' ')
+# 3 sets are possible; P(all 25 draws identical) = 2 * (1/3)^24, i.e. not a flake risk.
+if [ "$_variants" -ge 2 ]; then
+  pass "sampling varies ($_variants distinct sets in 25 runs)"
+else
+  fail "sampling varies" "every one of 25 runs returned the same set — sampler degraded to truncation"
+fi
 
 # ─── Case 0: the DEFAULT cap is 5 ────────────────────────────────────────────
 # Raised from 3 on 2026-09-04. The old value was justified by "retains ~92% of
@@ -42,6 +84,43 @@ out=$(env -u ZUVO_REVIEW_MAX_PROVIDERS ZUVO_REVIEW_TEST_PROVIDERS="mock-success 
   bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap0.err")
 attempted=$(printf '%s' "$out" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("attempted_count","?"))' 2>/dev/null || echo "?")
 assert_eq "5" "$attempted" "6 providers, no override -> 5 dispatched"
+
+# ─── Case 1d: pinned providers bypass the draw ───────────────────────────────
+# agy (Gemini 3.8 Flash) is pinned by default because it is the highest measured MARGINAL
+# contributor: 32 defects no other provider finds. A coin flip on the biggest unique
+# contributor loses coverage nothing else can recover. The rest of the slots stay random,
+# so this must NOT collapse back into "rank order always wins" — CAP.1c still has to pass.
+
+start_test "CAP.1d pinned provider is in every sample; the rest still vary"
+: > "$HERE/.tmp/cap1d.sets"
+for _i in $(seq 1 20); do
+  ZUVO_REVIEW_MAX_PROVIDERS=2 ZUVO_REVIEW_PIN_PROVIDERS="mock-empty" \
+    ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail mock-empty" \
+    bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1d.err" >/dev/null
+  sed -n 's/.*of 3 (\([^)]*\)).*/\1/p' "$HERE/.tmp/cap1d.err" | head -1 >> "$HERE/.tmp/cap1d.sets"
+done
+_runs=$(grep -c . "$HERE/.tmp/cap1d.sets" | tr -d ' ')
+_with_pin=$(grep -c 'mock-empty' "$HERE/.tmp/cap1d.sets" | tr -d ' ')
+_variants=$(sort -u "$HERE/.tmp/cap1d.sets" | grep -c . | tr -d ' ')
+assert_eq "$_runs" "$_with_pin" "the pinned provider appears in every single sample"
+if [ "$_variants" -ge 2 ]; then
+  pass "the non-pinned slot still varies ($_variants distinct sets)"
+else
+  fail "the non-pinned slot still varies" "pinning froze the whole sample: $(sort -u "$HERE/.tmp/cap1d.sets" | tr '\n' '|')"
+fi
+
+start_test "CAP.1e ZUVO_REVIEW_PIN_PROVIDERS= (empty) pins nothing"
+# The default is a value, not a hardcoded name, so it must be possible to switch off.
+# Uses ${VAR-default}, not ${VAR:-default}: an explicitly EMPTY value has to mean "none",
+# which :- would silently override back to the default.
+ZUVO_REVIEW_MAX_PROVIDERS=2 ZUVO_REVIEW_PIN_PROVIDERS="" \
+  ZUVO_REVIEW_TEST_PROVIDERS="mock-success mock-fail mock-empty" \
+  bash "$ADV" --multi --json --files "$EMPTY" 2>"$HERE/.tmp/cap1e.err" >/dev/null
+_err=$(cat "$HERE/.tmp/cap1e.err")
+case "$_err" in
+  *"pinned:"*) fail "no pin announced when the pin list is empty" "stderr claimed a pin: $_err" ;;
+  *)           pass "no pin announced when the pin list is empty" ;;
+esac
 
 # ─── Case 2: the cap is a ceiling, not a floor ───────────────────────────────
 # Fewer providers than the cap must pass through untouched and stay silent.
