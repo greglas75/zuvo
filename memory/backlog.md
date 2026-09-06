@@ -1231,7 +1231,7 @@ risk for a cosmetic gain. Do it as its own change, with the suite green before a
 **File:** tests/gates/test_refactor_radar.py:604 (codex/refactor-radar-hardening).
 **Fingerprint:** test_refactor_radar.py|Q7-Q11|radar-exhaustive-evidence
 **Source:** build/test-audit, 2026-09-06; seen:1; confidence:90; severity:medium; tier:C.
-**What:** 67 tests pass as a paired suite, but Q7/Q11 exhaustiveness is not proven. Finish
+**What:** 68 tests pass as a paired suite, but Q7/Q11 exhaustiveness is not proven. Finish
 the production-first branch/error inventory for prunable worktrees, source census/blob limits
 and malformed git records. Separate small provider cases from medium CLI fixtures (Q20),
 add missing mock argument assertions (Q3) and versioned sanitized API contracts (Q23).
@@ -1257,3 +1257,15 @@ but failed staging directories and superseded releases can accumulate. Add failu
 cleanup of installer-owned temporary entries; design retention with running-session/rollback
 constraints before deleting successful bundles. Do not reuse whole-cache cleanup.
 **Defer-reason:** non-local cleanup/retention change; current failure preserves the active bundle.
+
+## B-radar-secret-io — keep the optional Keychain token out of the stdout spool
+
+**File:** scripts/lib/radar_remote.py:164 and scripts/lib/radar_io.py:22 (codex/refactor-radar-hardening).
+**Fingerprint:** radar_remote.py|secret-io|keychain-temporary-spool
+**Source:** build/adversarial-review, 2026-09-06; seen:1; confidence:95; severity:low.
+**What:** The shared command reader caps memory by spooling stdout to a private anonymous
+temporary file. That also applies to the optional macOS Keychain fallback, so the token is
+not memory-only, although no report/stderr serialization occurs and the file is closed.
+Add a dedicated bounded-memory secret reader with timeout/size/error/redaction tests; keep
+large git/provider output spooled. Existing RADAR_BB_TOKEN input avoids this subprocess path.
+**Defer-reason:** separate secret-reader contract; limitation disclosed, no fleet install performed.
