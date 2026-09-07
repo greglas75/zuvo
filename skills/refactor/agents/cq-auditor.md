@@ -77,6 +77,10 @@ For each file in the modified files list:
 
 ## Scoring Protocol
 
+Read `../references/change-assessment.md`. Keep the absolute CQ scores below, then independently
+classify each failure against the pinned base and caller evidence. Report full-code quality and
+refactor-delta verdict separately. Missing baseline evidence is INCOMPLETE, not baseline debt.
+
 For EACH file in the modified files list:
 
 1. **Read the full file** using the Read tool (or CodeSift outline + targeted symbol reads)
@@ -175,14 +179,17 @@ Classify each discrepancy:
 
 | Category | Meaning | Action |
 |----------|---------|--------|
-| FIX-NOW | Critical gate failure the orchestrator missed | Must be fixed before committing |
+| FIX-NOW | Introduced/worsened failure or explicitly required remediation | Must be addressed before completion |
+| BASELINE-DEBT | Independently proven existing, non-worsened failure outside remediation targets | Preserve severity/evidence; delta WARN, absolute score unchanged |
 | DEFER | Non-critical issue, safe to commit | Goes into BACKLOG ITEMS section |
 | FALSE-POSITIVE | Auditor was wrong after review | Document why |
 
-**VERDICT rules:**
-- `PASS` — zero FIX-NOW items, all critical gates satisfied across all files
-- `CONDITIONAL PASS` — zero FIX-NOW items, but 1+ DEFER items worth noting
-- `FAIL` — 1+ FIX-NOW items that must be addressed before commit
+**Two verdicts:**
+- Absolute CQ uses the canonical percentage and critical-gate rules on all applicable scores.
+  An active critical score of 0 remains FAIL even when independently classified as baseline debt.
+- Refactor delta uses `change-assessment.md`: baseline debt yields WARN; introduced/worsened
+  failures or explicitly required unresolved remediation block; missing evidence is INCOMPLETE.
+  Do not derive absolute CQ from the number of FIX-NOW items.
 
 ---
 

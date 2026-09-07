@@ -10,6 +10,10 @@ In no-commit mode: Phase 3.5 showed both diffs + proposed messages instead of co
 
 ### Update Contract State
 
+Apply `change-assessment.md` first. `cq_after` is the refactor-delta assessment; retain the full
+post-audit unchanged in its linked artifact. Verified baseline debt requires WARN and explicit
+disclosure, never an overall code-quality PASS. New/unproven failures still block.
+
 Mark contract: `"stage": "COMPLETE"`, `"cq_after": { "score": "18/18", "critical_failures": [] }`, `"commits": ["abc1234"]`.
 
 **Record applicability separately from compliance.** N/A is excluded from both numerator and
@@ -169,7 +173,7 @@ COMPLETION GATE CHECK
 ```
 
 **Do not conflate three different things** — the verifier separates them, and so must you:
-- **SAFETY gates** — blind-audit (Independent CQ Auditor), adversarial review, characterization coverage. These prove the refactor did not break behavior. **Never skippable, never reducible by user scope, never "looks small so I skipped it."** Skipping one = the code is *unsafe* = `BLOCKED`. **Running a gate and then parking its findings is the same failure** — an adversarial pass that surfaces 8 bugs and backlogs them (instead of fixing introduced regressions and authorized existing bugs in Phase 3.5) is `BLOCKED(unsafe)`, not done. The gate's value is the remediation, not the ceremony of having run it.
+- **SAFETY gates** — blind-audit (Independent CQ Auditor), adversarial review, characterization coverage. These prove the refactor did not break behavior. **Never skippable, never reducible by user scope, never "looks small so I skipped it."** Skipping one = the code is *unsafe* = `BLOCKED`. **Running a gate and then parking introduced/worsened or unproven findings is the same failure** — an adversarial pass that surfaces 8 bugs and backlogs them (instead of fixing introduced regressions and authorized existing bugs in Phase 3.5) is `BLOCKED(unsafe)`, not done. The gate's value is the remediation, not the ceremony of having run it.
 - **BUILD SCOPE** — targeted package type-check/tests vs full `turbo build/test --force`. The user *may* legitimately narrow this ("just type-check + targeted tests"), but only if you **declare it**: `[SCOPE: user-reduced — targeted type-check+tests; full build skipped per user]`. Silent narrowing is not allowed; declared narrowing is fine.
 - **TELEMETRY** — retro, run-log, CONTRACT, review artifact. These don't make the code safer, but they are the durable PROOF the gates ran and the history the skill improves from (losing them is exactly how months of retros vanished). Cheap; always do them. Missing telemetry ⇒ the run is *unrecorded* (`INCOMPLETE`), not necessarily unsafe — but it is **not done** either.
 

@@ -6,7 +6,9 @@ For v6, use `refactor-contract regression <id> red|green '<command>'` and `fix_f
 applied fix. The older textual proof examples below describe legacy v3–v5 records only.
 
 
-The point of a refactor is that the file ends up **better AND correct**, in one sitting — not tidier-but-still-buggy, forcing you back into the same code later. So real bugs surfaced by the CQ auditor and adversarial passes are fixed HERE, in this run. The behavior-preserving guarantee is kept via **stacked commits inside the one run**, not by deferring the fix: commit 1 proves the move changed nothing; commit 2 is the fix. One process for the user; clean, bisectable history underneath.
+Classify findings with `change-assessment.md` before selecting fixes. In preserve-behavior mode,
+fix regressions and authorized remediation targets. Verified baseline debt is reported rather
+than changing established behavior to satisfy an absolute audit score.
 
 This phase OWNS all committing (Phase 4 no longer commits — it records).
 
@@ -14,7 +16,7 @@ This phase OWNS all committing (Phase 4 no longer commits — it records).
 
 | Finding | Disposition |
 |---------|-------------|
-| Real bug, one clearly-correct fix (any size) | **Fix now** (commit 2). Mechanical correctness has one answer — don't park it. |
+| Introduced/worsened bug or authorized remediation target, one clearly-correct fix (any size) | **Fix now** (commit 2). Mechanical correctness has one answer — don't park it. |
 | Real bug, fix needs files OUTSIDE the scope fence | Backlog with file:line — genuinely out of this contract's reach. |
 | Behavior/product DECISION (partial vs hard error on failure; swallow vs surface a cost; etc.) | **Not a bug — a choice.** Interactive: ask the user (≤1 question), apply the chosen fix into commit 2. Batch/`--auto`/`no-pause`: pick the safe, conservative default, log `[DECISION-DEFAULT: …]`, surface in the report; backlog only if the user later declines. |
 

@@ -1,5 +1,8 @@
 ### Adversarial Review (MANDATORY — do NOT skip)
 
+Apply `change-assessment.md` before fix/disposition decisions. Its baseline comparison governs
+`preserve_behavior`; retain original severities and raw reports.
+
 **Risk-sensitive mode selection:**
 - Default: `--mode code`
 - If diff touches auth, payment, crypto, PII, or migration files: `--mode security`
@@ -20,19 +23,25 @@ Artifact counters describe recognized records. If `count_status=partial`, inspec
 ```json
 { "fingerprint": "file|rule-id|signature", "provider": "codex-5.3", "severity": "CRITICAL|WARNING|INFO",
   "evidence": "one line",
-  "disposition": "reported|fixed|false-positive|preserved-verbatim|out-of-fence|decision-deferred|reopened|reaffirmed",
+  "disposition": "reported|fixed|false-positive|preserved-verbatim|out-of-fence|decision-deferred|baseline-debt|reopened|reaffirmed",
   "reaffirms": "<the terminal disposition this row re-asserts; only for disposition=reaffirmed, else dash>",
   "fix_commit": "<sha7-or-dash>", "regression_test": "<path; REQUIRED when disposition=fixed, else dash>" }
 ```
 
 - **Identity (assigned at ingest, by the orchestrator).** For each finding a provider reports, match it to an existing identity by `file|rule-id|signature`, else by `file|rule-id` + evidence. `signature` = a short normalized excerpt of the issue site (the offending symbol name or expression, whitespace-collapsed and lowercased) — it drifts when the code changes, so it is a matching hint, and `file|rule-id` + the orchestrator's evidence judgment is the fallback key. (This is guidance for an LLM orchestrator, not a byte-exact hash; the fallback path is expected to carry most matches.) Matched → append a row under that identity's **original fingerprint**. Unmatched → a new identity keyed by this fingerprint. A finding keeps ONE fingerprint for its whole life; there is never a second fingerprint to reconcile and no `supersedes` chain to walk.
-- **Severity belongs to the IDENTITY, not the row — monotonic MAX, ratchets UP only.** An identity's severity is the highest severity any pass has assigned it: a later pass rating it higher ratchets it UP; **rating it lower NEVER lowers it** (re-rating a CRITICAL identity down to WARNING/INFO on a later row is forbidden). At ingest the orchestrator must preserve the provider's stated severity — it may not record a provider's CRITICAL as a lower severity on the first row. The gate (below) reads the *identity's* severity, never just the latest row's — so no downgraded row can flip a CRITICAL out of the blocking rule. When a severity ratchet lifts a WARNING/INFO identity UP to CRITICAL, any prior non-`fixed` terminal it held (a scope disposition `preserved-verbatim`/`out-of-fence`/`decision-deferred`, OR `false-positive`, which was judged at the lower severity) is no longer legal for it: the identity reverts to open (`reopened`) and must reach `fixed`/`false-positive` — re-judged at CRITICAL severity — before completion.
-- **State = the latest row for an identity.** Passes run sequentially (one provider per pass), so append order is a total order and "latest" is unambiguous. `disposition` alone encodes the state: the OPEN states are `reported` (seen, not yet dispositioned) and `reopened` (was resolved, a later pass produced new evidence it persists); every other value is RESOLVED.
-- **Resolving reuses the identity's original fingerprint** with `disposition: fixed` (or `false-positive` / a WARNING-only scope disposition) — it is never re-signed from the now-fixed code.
-- **Regression vs. spurious re-report — both are LOGGED, never dropped.** When a later pass reports a finding whose identity is already resolved, the orchestrator appends a row (it never silently drops): if the evidence shows the issue STILL PRESENT (the fix did not hold), the row is `reopened` → it becomes the latest → for a CRITICAL it blocks. If there is no new evidence (the provider simply had not been told it was already resolved), the row is `reaffirmed` — it RE-ASSERTS the identity's prior terminal disposition (named in `reaffirms`, whatever it was: `fixed`/`false-positive`, or a WARNING/INFO scope disposition) and inherits that terminal status, with the evidence comparison that justified the call recorded in the row's `evidence` field. So the state stays settled *and* the re-report is auditable. A CRITICAL identity's prior terminal can only ever be `fixed`/`false-positive` (scope dispositions are forbidden for CRITICAL), so a `reaffirmed` CRITICAL necessarily inherits `fixed`/`false-positive` and does NOT block the gate. `reaffirmed` re-asserts a prior resolution; it is valid only on an already-resolved identity and never as a first row.
-- **CRITICAL has only two terminal dispositions: `fixed` or `false-positive`.** A CRITICAL may NEVER be `preserved-verbatim` / `out-of-fence` / `decision-deferred` (those are WARNING/INFO-only scope decisions). **Any identity of CRITICAL severity whose latest disposition is other than `fixed`/`false-positive` blocks completion — regardless of pass count or an early 0-findings exit** (a `reaffirmed` latest row counts as the `fixed`/`false-positive` state it inherits, so it does not block). The severity checked is the identity's (its monotonic max, per the rule above), not the latest row's, so a downgraded later row cannot dodge it. `reported` and `reopened` are open states, so an un-remediated or regressed CRITICAL always blocks. This is what keeps the early exit safe: the carry-forward suppresses *re-reporting*, never remediation.
-- **The completion scan (run at EVERY terminal path — 0-findings early exit, cap exhaustion, and final verdict).** The loop ends, and the run may claim done, ONLY IF a scan of the ledger shows no CRITICAL-severity identity whose *effective* terminal is outside `{fixed, false-positive}` (for a `reaffirmed` latest row, the effective terminal is the `fixed`/`false-positive` row it inherits). An identity failing that check BLOCKS the run (unsafe) — an empty pass never launders an open CRITICAL, and this scan runs at every terminal path, not just the early-exit one. The `fixed` rows' correctness is NOT re-litigated here: it rides on the machinery the skill already has — Phase 3.5's demonstrated `regression_red` (red→green) proof and the tests-still-pass gate — so the ledger references that proof rather than re-inventing a grade. Whether the run is `strict` or `degraded` is the existing PROVE telemetry's job (below), not a second grading rule in this scan.
-- **Over-rated CRITICAL — resolved, never silently downgraded.** If a later assessment judges a CRITICAL was over-rated, it is still resolved the same two ways: `fixed`, or `false-positive` (with the rationale) when the CRITICAL claim itself was unfounded. There is deliberately NO severity-downgrade disposition — a silent downgrade is exactly the laundering vector this gate blocks, so a disputed CRITICAL is dispositioned, not re-rated away.
+- **Severity is monotonic MAX per identity.** Never downgrade a provider's finding to avoid a gate.
+  A severity increase reopens prior scope/false-positive decisions until reviewed at that severity.
+- **State follows the latest row.** `reported`/`reopened` are open. A `reaffirmed` row may inherit
+  only an existing terminal disposition, with evidence; it cannot resolve an identity's first row.
+  Resolving always reuses the original fingerprint. Log regressions and spurious re-reports alike.
+- **CRITICAL completion scan, on every terminal path:** every critical identity must be fixed,
+  disproven, or independently verified `baseline-debt` under `change-assessment.md`. The last
+  disposition is available only for preserve-behavior runs with complete before/after evidence;
+  absent proof, changed exposure or a worsened metric keeps the finding open. Ordinary scope
+  labels (`out-of-fence`, `preserved-verbatim`, `decision-deferred`) never settle a CRITICAL.
+  Reaffirmed rows inherit a valid prior terminal; new contradictory evidence reopens it.
+  A zero-findings pass or exhausted review cap never clears an open critical finding.
+
 - **Open WARNING/INFO do NOT block after the pass cap** — they take the normal Phase 4 disposition (fixed within authorized behavior scope, with unrelated debt reported separately). This is why the post-cap verification pass may leave fresh WARNINGs unresolved without spinning a new loop.
 - **Trust boundary (what the ledger does NOT do).** The ledger is orchestrator-owned bookkeeping; it cannot police the orchestrator's own honesty or blind spots. Its integrity rests on the mechanisms already in this skill, not on self-report: (1) the **Independent CQ Auditor** and the **cross-model multi-provider review** are the check on disposition calls — a mis-judged "spurious" or a fix-introduced defect the orchestrator failed to log is caught when the NEXT independent, different-model pass re-raises it; the ledger feeds those passes, it does not replace them. (2) **The orchestrator MUST NOT silently drop a re-report** — every re-report becomes a row (`reopened` for a regression, `reaffirmed` for a spurious one), per the rule above, so the decision is auditable, never invisible. (3) **A `fixed` disposition REQUIRES a `regression_test`** (mandatory for `fixed`, per the schema; `-` is allowed only for non-`fixed` rows): "fixed" is then backed by a test that goes red on regression at the tests-still-pass gate — mechanical proof independent of the ledger, not the orchestrator's say-so. Where none of these can run (no independent pass, no test possible), the run's PROVE telemetry records the weaker `blind_audit`/`adversarial` `degraded` value and the run cannot claim `strict` — the ledger `disposition` enum is unchanged.
 - **The dispositions must ADD UP to the reported count.** `prove.adversarial` records a number
@@ -171,7 +180,7 @@ If a CRITICAL is still unresolved after that verification pass, **or the verific
 
 | Finding | Action |
 |---------|--------|
-| **CRITICAL** | Fix immediately. Re-run tests. |
+| **CRITICAL** | Introduced/worsened: fix and re-test. Verified baseline debt: disclose under `change-assessment.md`; unproven comparison blocks. |
 | **WARNING — real bug, one clearly-correct fix** | Fix it in Phase 3.5 (the fix commit). **Size is irrelevant** — a 40-line mechanical bug is still fix-now. Never park a bug just because the fix is large. |
 | **WARNING — needs a behavior/product DECISION** (e.g. on total failure: partial result vs hard error) | Not a bug, a choice. Interactive → ask the user (Phase 3.5 decision gate, ≤1 question). Batch/`--auto`/`no-pause` → pick the safe default, log `[DECISION-DEFAULT: …]`, surface in report. |
 | **WARNING — fix needs files OUTSIDE the scope fence** | Backlog with file:line — genuinely out of this contract's reach. |
@@ -182,7 +191,8 @@ The old "WARNING > 10 lines → backlog" rule is gone: line count is not a proxy
 
 **Meta-review:** If pass 1 returns 0 findings AND diff_lines > 150: add false-negative warning — large diffs with zero findings suggest insufficient review depth. Run pass 2 regardless. (`diff_lines` = the sum from `git diff --staged --numstat`, computed BEFORE prompt enrichment — never derived from reviewer input or prompt line count.)
 
-Do NOT discard findings based on confidence alone. "Pre-existing" is NOT a reason to skip — if the issue is in a file you are editing, fix it now.
+Do not discard findings based on confidence or file membership. Use the baseline comparison in
+`change-assessment.md`; keep every debt finding visible, with its severity and evidence.
 
 **Boundary/security findings: trace one layer OUT and one layer IN before classifying.** A provider
 reviewing a service file in isolation cannot see the guards around it, so it reliably reports
@@ -200,7 +210,7 @@ routes (plus a queue consumer and a CLI entry point) mounting the same service, 
 `grep` the call sites before concluding "the router handles it". When that holds, the finding is a
 false positive — record it as such **with the citation** (`router.ts:42 validates`, `schema.sql:17
 UNIQUE`), not as a bare dismissal. Partial enforcement is a REAL finding, narrowed to the unguarded
-paths. If neither layer enforces it, it is real and in scope. This check is what separates "the reviewer lacked context" from "the
+paths. If neither layer enforces it, it is real. Baseline comparison determines whether the refactor introduced or worsened it. This check is what separates "the reviewer lacked context" from "the
 guard is genuinely absent" — and citing the enforcing line is what stops the next pass re-raising it.
 
 ---

@@ -86,6 +86,8 @@ missing mandatory safety definitions blocks the dependent assessment.
 
 ## Definition of Done
 
+For preserve-behavior CQ and finding disposition, read `references/change-assessment.md`.
+
 Characterization, CQ audit, adversarial review and remediation remain mandatory. Keep
 provider requirements unchanged; size alone does not waive a safety gate. An audit that ran
 inline is labeled with its actual independence. Under `preserve_behavior`, fix introduced
