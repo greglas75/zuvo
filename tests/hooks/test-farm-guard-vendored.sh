@@ -61,6 +61,13 @@ print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.stdin.read()}})
 
 probe "a local bash harness"            block "bash tests/run-all.sh"
 probe "a bare runner"                   block "npx vitest run"
+probe "quoted runner"                   block '"vitest" run'
+probe "shell -c runner"                 block 'bash -c "pytest"'
+probe "backgrounded runner"             block "sleep 1 & vitest"
+probe "package-manager filter"          block "pnpm --filter app test"
+probe "task runner run"                 block "turbo run test"
+probe "runner after fake opt-out"        block "echo TF_ALLOW_LOCAL=1; pytest"
+probe "explicit leading opt-out"         allow "TF_ALLOW_LOCAL=1 pytest"
 probe "the same harness through rt"     allow "rt --light bash tests/run-all.sh"
 probe "a syntax check"                  allow "bash -n tests/run-all.sh"
 probe "merely naming a test file"       allow "git add tests/hooks/test-x.sh"

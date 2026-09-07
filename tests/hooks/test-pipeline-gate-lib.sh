@@ -755,6 +755,9 @@ env -i PATH="$PATH" ANTIGRAVITY_SESSION_ID=x bash -c ". '$LIB'; pg_is_agent_env"
 # Exercise both consumers for every marker in the single source, in an otherwise empty env.
 _rg_lib="$ROOT/hooks/lib/refactor-gate-lib.sh"
 _markers=$(sed -n '/^zuvo_is_agent_env()/,/^}/p' "$ROOT/hooks/lib/agent-env.sh" | grep -oE '\$\{[A-Z][A-Z0-9_]*' | sed 's/^\${//' | sort -u)
+if [ -z "$_markers" ]; then
+  bad "shared detector marker extraction returned no markers"
+fi
 for marker in $_markers; do
   if env -i PATH="$PATH" "$marker=1" bash -c '. "$1"; pg_is_agent_env' _ "$LIB" &&
      env -i PATH="$PATH" "$marker=1" sh -c '. "$1"; _is_agent_env' _ "$_rg_lib"; then
@@ -766,5 +769,17 @@ done
 env -i PATH="$PATH" bash -c ". '$LIB'; pg_is_agent_env" \
   && bad "clean env should be human" \
   || pass "agent_env: clean env → human (pass-through)"
+
+# A partial install must not turn a missing shared detector into a human
+# classification: that would silently skip the pre-push pipeline gate.
+_missing_dir="$(mktemp -d)"
+_missing_lib="$_missing_dir/pipeline-gate-lib.sh"
+cp "$LIB" "$_missing_lib"
+env -i PATH="$PATH" bash -c '. "$1"; pg_is_agent_env' _ "$_missing_lib" >/dev/null 2>&1
+_missing_rc=$?
+rm -rf "$_missing_dir"
+[ "$_missing_rc" -eq 0 ] \
+  && pass "agent_env: missing detector → fail-closed agent classification" \
+  || bad "missing detector must fail-closed as agent"
 
 if [ "$fail" -eq 0 ]; then echo "ALL PASS"; else echo "SOME FAILED"; exit 1; fi

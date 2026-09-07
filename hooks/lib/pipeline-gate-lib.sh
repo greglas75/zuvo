@@ -31,6 +31,7 @@
 # Shared path-containment rule (B-PATH-CONTAIN-SHARED-FN). Installed alongside this file, so
 # `dirname` resolves it in the repo AND in ~/.claude/hooks/lib/.
 _pgl_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+_pgl_agent_dir="$_pgl_dir"
 if [ -r "$_pgl_dir/path-contain.sh" ]; then
   # shellcheck source=/dev/null
   . "$_pgl_dir/path-contain.sh"
@@ -648,13 +649,20 @@ pg_allow_adhoc() {
 }
 
 pg_is_agent_env() {
-  if [ -r "$_pgl_dir/agent-env.sh" ]; then
-    . "$_pgl_dir/agent-env.sh"
-    zuvo_is_agent_env
-    return $?
+  if [ -r "$_pgl_agent_dir/agent-env.sh" ]; then
+    if . "$_pgl_agent_dir/agent-env.sh" 2>/dev/null && command -v zuvo_is_agent_env >/dev/null 2>&1; then
+      zuvo_is_agent_env
+      return $?
+    fi
+    echo "zuvo: agent detector failed to load -> fail-closed" >&2
+    return 0
   fi
-  echo "zuvo: agent detector unavailable -> fail-open" >&2
-  return 1
+  # This helper is sourced by the pre-push gate.  Treating a missing detector as
+  # "human" lets an agent skip the entire pipeline gate after a partial install
+  # or a stale worktree copy.  The safe fallback is to classify the invocation
+  # as agent-owned and make the normal gate explain what is missing.
+  echo "zuvo: agent detector unavailable -> fail-closed" >&2
+  return 0
 }
 
 # Marker so callers can verify the lib loaded. Read by pre-push-gate.sh,
