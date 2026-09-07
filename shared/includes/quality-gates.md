@@ -53,7 +53,7 @@ This is a condensed reference. Full details, evidence examples, and N/A rules ar
 
 ### Critical Gates (Static)
 
-These are always critical. If any scores 0, the evaluation is FAIL regardless of total:
+These are critical whenever applicable. Verify inactive feature preconditions under the CQ applicability protocol below; any active gate scored 0 is FAIL regardless of total:
 
 **CQ3, CQ4, CQ5, CQ6, CQ8, CQ14**
 
@@ -84,7 +84,7 @@ pointer now and not a longer table.)
 `applicable = 40 - count(out-of-scope) - count(N/A)` — a PERCENTAGE, never a fixed denominator.
 These thresholds were absolute counts over 29 gates until 2026-08-02; the set has been 40 since
 CQ30-CQ40 landed, so `>= 25/29` silently became "62% of the real set" and passed files that
-should have failed. Full formula and the N/A cap: `../../rules/cq-checklist.md`.
+should have failed. Full formula and applicability review: `../../rules/cq-checklist.md`.
 
 ### CQ Evidence Format
 
@@ -101,31 +101,27 @@ No evidence = score is 0. Vague claims ("errors handled") are not evidence.
 
 ### N/A Abuse Rule
 
-`count(N/A)` may not exceed **one third of the in-scope gates** — `floor(in_scope / 3)`, where
-`in_scope = 40 - count(out-of-scope)`. Exceeding it ⇒ verdict **`INCOMPLETE`**, never PASS: too
-little of the file was actually evaluated to certify it.
+For CQ, `count(N/A) > floor(in_scope / 3)` requires documented independent review of every
+inactive feature precondition. Pending review means `INCOMPLETE`; a verified high count can
+pass under the normal thresholds. Use the existing CQ auditor only when distinct from the
+original scoring author; record both identities/models and the review artifact/run under the
+resolved execution policy (a fresh same-model context is not independent). Self-certification
+is not independent review. If no distinct reviewer is available, remain INCOMPLETE; do not
+start an extra provider loop solely for this threshold.
+The full evidence rules live in `../../rules/cq-checklist.md` → "Evidence decides applicability".
 
 **N/A does NOT count as a pass.** It leaves both sides of the ratio:
 
 ```
 in_scope    = 40 - count(out-of-scope)
 denominator = in_scope - count(N/A)
-pass_count  = count(score == 1)        # 1s only
+pass_count  = count(score == 1)
 ```
 
-Because N/A shrinks the denominator, re-labelling failures as N/A would otherwise convert a FAIL
-into a PASS with zero code change: a file sitting at 69% (FAIL) reaches 87% (PASS) purely by
-re-marking six of its failing gates N/A — same code, smaller denominator.
-What closes that path is not the formula but the four HARD rules in `../../rules/cq-checklist.md`
-→ "N/A cannot raise the score": an N/A needs the SAME negative-evidence rigour as a 0, the
-proportional cap above, code-type gates can never be N/A, and `pass_count` / `count(N/A)` /
-denominator are always printed next to the percentage. Apply them together; the ratio alone is
-not a guard.
-
-This section said "60% of gates … N/A counts as 1 for scoring" until 2026-08-02 — a cap roughly
-double the canonical one, paired with treating N/A as a free pass. Both errors pushed the same
-way, and this file is the one skills LOAD at audit time, so the runtime rule was the lenient one
-while `rules/cq-checklist.md` carried the strict one.
+Zero denominator is `INCOMPLETE`. Missing or unknown evidence is 0/unproven and remains in the
+denominator. Code-type labels are review hints; actual features decide applicability. A missing
+required protection is a failure, not an inactive feature. Every active critical gate must be 1.
+Print all counts, the denominator and applicability review status with the score.
 
 ---
 
@@ -140,7 +136,7 @@ while `rules/cq-checklist.md` carried the strict one.
 | Q4 | Known-data assertions use exact values (`toEqual`/`toBe`, not `toBeTruthy`)? |
 | Q5 | Mocks are typed (not `as any`/`as never`)? Note: `as unknown as ServiceType` is acceptable when no mock factory exists — it avoids `as any` while preserving the target type. Score Q5=1 for `as unknown as X`, Q5=0 only for `as any` or `as never`. |
 | Q6 | Mock state is fresh per test (proper `beforeEach`, no shared mutable)? |
-| Q7 | **CRITICAL** — Every error-throwing path tested with specific error type AND message? (not just "at least one") |
+| Q7 | **CRITICAL** — Every specified negative behavior in the accepted input domain tested? Enumerate invalid/rejection cases from the contract and implementation: throws/rejections assert specific error type AND message; filtering, sentinel returns, or safe fallbacks assert their exact observable result. The accepted domain comes from runtime entry points, types, documented contract, and callers; an internal typed helper does not owe invented throws for out-of-domain null solely to pass Q7. Untrusted boundaries include HTTP handlers, CLI arguments, file/message deserialization, and their callees before proven runtime validation; cite the call sites and validation when claiming an internal-only domain. Test malformed inputs those boundaries can receive. If there are no feasible negative cases in the full accepted domain, Q7=1 requires an exhaustive contract/branch/caller inventory proving that absence; missing investigation is 0/unproven, never a vacuous pass. |
 | Q8 | Null/undefined/empty inputs tested where applicable? |
 | Q9 | Repeated setup (3+ tests) extracted to helper/factory? |
 | Q10 | No magic values — test data is self-documenting? |

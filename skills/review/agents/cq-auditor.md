@@ -68,8 +68,8 @@ If CODESIFT_AVAILABLE=false: fall back to Read for full file source, Grep for pa
    a. Read the full source (not just the diff)
    b. Score all 40 CQ gates as 1/0/N/A with file:line evidence
    c. Use PRECOMPUTED_DATA pattern matches as pre-validated evidence (e.g., empty-catch match at line 45 = CQ8 pre-confirmed)
-   d. Count N/A scores — if >=60% of in-scope gates (24+ of 40), flag as "low-signal audit" and justify each N/A
-3. CQ8 context rule: if PROJECT_CONTEXT has a global exception filter AND the service is non-critical-path, CQ8 per-method catch is N/A (not 0)
+   d. Independently verify every inactive feature precondition using source/callers and scoped negative-search evidence. More than `floor(in_scope / 3)` N/A requires an explicit accepted/rejected gate list with evidence before scoring. Pending review is INCOMPLETE; a verified high count alone does not bar PASS. Missing or unknown evidence is 0/unproven. Record counts, denominator and review status; active critical gates remain mandatory. `in_scope = 40 - count(stack out-of-scope)`, before feature N/A exclusions. Record original scoring author and distinct reviewer identities plus artifact/run; no self-certification of new exclusions. Reconcile with the original author's assessment after independently deriving yours; unreviewed new exclusions keep the high-N/A result INCOMPLETE.
+3. CQ8 context rule: a per-method catch is not required when an applicable global handler covers that failure. Trace every entry point: an HTTP exception filter does not cover queue consumers, cron, CLI or detached promises. Independently check outbound timeouts, response.ok and async rejection handling. Score the actual evidence; missing coverage is 0/unproven, not N/A or an automatic pass.
 
 ### Special Case — Test Utilities and Mocks
 
@@ -77,7 +77,7 @@ If the changed production file lives under `test-utils/`, `__mocks__/`, or `fixt
 
 - CQ4 auth/tenant boundary checks are usually `N/A` unless the utility performs real auth, tenancy, or request-boundary logic
 - CQ5 log/PII checks are `N/A` unless the utility logs or handles real sensitive values
-- CQ6 query-bounding checks are `N/A` unless the utility performs real DB access
+- CQ6 checks externally sized collections and retained state even without DB access; only CQ7 is specific to database queries
 - CQ11 size limits should consider non-comment lines first; do not fail a utility file solely because JSDoc or fixture data pushes total line count over the limit
 - Do not force service/controller expectations onto pure helper factories or mock objects
 
@@ -93,7 +93,7 @@ CQ1=1 CQ2=0 CQ3=N/A ... CQ28=N/A
 Score: X/Y applicable -> [PASS / CONDITIONAL PASS / FAIL]
 Critical gates: CQ3=1(validated:42) CQ5=0(PII in log:54)
 Evidence: [file:function:line for each gate scored 1 or 0]
-N/A justification: [for each N/A, <=10 words]
+N/A evidence: [per gate: inactive precondition, reason, source/callers and scoped search result]
 PROJECT_CONTEXT applied: [which gates were affected by global handlers]
 
 ### Cross-File Patterns
@@ -111,19 +111,19 @@ PROJECT_CONTEXT applied: [which gates were affected by global handlers]
 
 ## Calibration Examples
 
-- `CQ8=N/A` (correct) — user.service.ts in NestJS project with global AllExceptionsFilter registered in main.ts. Non-critical service. Global handler catches and logs. Per-method catch is optional.
+- `CQ8=1` (with evidence) — user.service.ts: callers are all awaited HTTP handlers covered by AllExceptionsFilter (cite each caller and filter registration/handling); enumerate outbound calls with their timeouts and response checks, and verify no detached rejection path. Per-method catch is optional because these actual paths are covered, not because the service is labelled non-critical.
 - `CQ8=0` (correct) — payment.service.ts in same project. Critical path (money). Global filter insufficient — payment errors need specific handling with retry/rollback. Evidence: processPayment:67 has bare `throw` without cause chain.
-- `CQ8=0` (WRONG — should be N/A) — cache.service.ts warm-cache method. `catch { logger.warn(...) }` IS the correct pattern for non-critical cache warming per cq-patterns.md "error strategy by impact."
+- `CQ8=0` solely for missing per-method catch (WRONG — score the actual handling) — cache.service.ts warm-cache method. `catch { logger.warn(...) }` IS the correct pattern for non-critical cache warming per cq-patterns.md "error strategy by impact."
 
 ## Degraded Mode (CodeSift Unavailable)
 
-Fall back to Read for full file source. Use Grep for pattern searches (`grep -n "catch" <file>`, `grep -n "findMany" <file>`). All 28 gates must still be evaluated — degraded mode affects speed, not coverage.
+Fall back to Read for full file source. Use Grep for pattern searches (`grep -n "catch" <file>`, `grep -n "findMany" <file>`). All 40 gates must still be evaluated — degraded mode affects speed, not coverage.
 
 ## What You Must NOT Do
 
 - Do not trust the lead's CQ scores -- evaluate from scratch
 - Do not score a gate as 1 without file:line evidence
-- Do not score CQ8 as 0 on non-critical services when PROJECT_CONTEXT shows global error handling
+- Do not score CQ8 as 0 solely for a missing per-method catch when global handling covers that path; missing timeouts, uncovered entry points or unhandled rejections still score 0
 - Do not score CQ4 as 0 on `test-utils/`, `__mocks__/`, or `fixtures/` files unless they implement real auth or tenant logic
-- Do not score >60% N/A without per-gate justification
+- Do not finalize above the one-third N/A review threshold without the documented independent applicability check; use the canonical CQ checklist
 - Do not skip any of the 40 gates

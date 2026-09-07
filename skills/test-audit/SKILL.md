@@ -274,7 +274,7 @@ Q3:  Every mock has CalledWith + not.toHaveBeenCalled?
 Q4:  Assertions use exact matchers (toEqual/toBe, not toBeTruthy)?
 Q5:  Mocks are typed (no `as any`)?
 Q6:  Mock state fresh per test (beforeEach, no shared mutable)?
-Q7:  CRITICAL -- Every error-throwing path tested with specific type+message?
+Q7:  CRITICAL -- Every contract negative case tested: throws/rejections type+message; filter/sentinel/fallback exact result? Derive accepted input domain from callers/validation; no invented out-of-domain throw requirements. No negative cases: pass only with exhaustive contract/branch/caller evidence.
 Q8:  Null/empty/edge inputs tested?
 Q9:  Repeated setup (3+ tests) extracted to helper/factory?
 Q10: No magic values -- test data is self-documenting?
@@ -338,11 +338,13 @@ Q17 PASS-THROUGH: For thin controllers that are pure delegation, `expect(result)
 CRITICAL GATE: Q7, Q11, Q13, Q15, Q17 -- any = 0 -> Tier C floor (see TIER CLASSIFICATION).
 
 SCORING MATH:
-  Applicable = 25 - N/A-count - out-of-scope-count          # 19 gates, Q1-Q25. Was hardcoded 17 while the checklist
-                                       # claimed Q1-Q25 — Q18 (flaky) and Q19 (isolation) were
-                                       # advertised and never scored.
-  Score = yes-count / applicable (percentage)
-  AP deduction: each unique AP = -1 from yes-count (max -5)
+  Applicable = 25 - N/A-count - out-of-scope-count
+  Passed = count(Q score == 1)
+  Deduction = min(5, count(unique AP IDs))
+  Adjusted = max(0, Passed - Deduction)
+  Score = Adjusted / Applicable (percentage); Applicable == 0 => INCOMPLETE
+  If Applicable == 0, status=INCOMPLETE and tier=none; skip numeric classification.
+  Report Passed, Deduction, Adjusted, N/A, out-of-scope and Applicable separately.
   ONE SCALE ONLY: the percentage below is the verdict. Do not also compare raw counts —
   that produced two answers for one file (14/17 was simultaneously "PASS" and "Tier B")
   and left score 9 belonging to no tier at all.
@@ -360,6 +362,15 @@ here. Source of truth: the newest `$ZUVO_DIR/audits/mutation-test-*.json` writte
 | JSON present, `commit` != HEAD | `N/A (mutation data STALE — <json sha7>, HEAD is <sha7>)` |
 | JSON present, `tier2_ran: false` | score it, and append `(--quick: survivors never checked against the full suite)` |
 | No JSON at all | `N/A (no mutation run)` — legitimate; Q21 is CONDITIONAL on a runner existing |
+
+**Per-file evidence is mandatory.** Verify that the artifact's changed-tree identity, production
+file path, executed mutation rows and symbol scope match this audit. A current HEAD alone is
+insufficient when the working tree differs from the recorded run. Prefer the matching per-file
+score; an aggregate score is valid for a file only if that artifact's entire measured scope is
+that file. Mutations of a parser helper do not certify a ranking or graph algorithm that imports
+it. If the requested file/symbol has no attributable completed mutation evidence, use
+`N/A (no matching mutation evidence for <file:symbol>)`, never borrow another file's score.
+Native/hybrid and LLM results retain their measured scope and engine labels.
 
 Use `score_triaged`, never `score_raw`. An *equivalent mutant* cannot be killed by any
 test, so counting it against the suite fails work nobody can fix — and a gate people
@@ -385,14 +396,16 @@ Top 3 gaps: [brief]
 
 FOR ALL OTHERS, use FULL format:
 ### [filename]
-Production file: [path or ORPHAN]
+Production file: [absolute branch/worktree path or ORPHAN]
+Evidence scope: [production symbols; matching test paths; commit and dirty-tree identity]
+Verification: [command, cwd, run ID/artifact, exit/result summary, skips/unrun checks]
 Complexity: [THIN/STANDARD/COMPLEX] ([LOC] LOC, [N] branches)
 Red flags: ["none"]
 Phantom mocks: [list or "none"]
 Untested methods: [list of public methods with no test coverage, or "all covered"]
 Score: Q1=[0/1] Q2=[0/1] ... Q25=[0/1]
 Anti-patterns: [AP IDs found, or "none"]
-Total: [yes]/[applicable] ([%]) - [AP count] = [adjusted%]
+Total: passed=[N], N/A=[N], out-of-scope=[N], applicable=[N], AP deduction=[N], adjusted=[N]/[applicable] ([%])
 Critical gate: Q7=[0/1] Q11=[0/1] Q13=[0/1] Q15=[0/1] Q17=[0/1] -> [PASS/FAIL]
 Tier: [A/B/C/D]
 Top 3 gaps: [brief]
@@ -402,6 +415,8 @@ TIER CLASSIFICATION (derived from the percentage above — no separate count sca
   B (>= 53% and < 82%, all critical gates = 1): Fix gaps -- 2-5 targeted fixes
   C (< 53%, OR any critical gate = 0): Major rewrite needed
   D (AUTO TIER-D red flag: AP13, AP16, or AP31 (committed `.only`/focus marker — it disables the REST of the suite while CI stays green, so it is the most destructive of the three)): Delete and rewrite from scratch
+
+  A very low score without an auto red flag remains Tier C; D is the specified red-flag classification, not a second raw-count threshold.
 
   A critical gate at 0 is a FLOOR (Tier C), not a ceiling. Previously it "capped at Tier B",
   so a tautological suite scoring 16/17 landed in the same bucket as an honest 10/17 — and
@@ -413,7 +428,8 @@ IMPORTANT:
 - Red flag pre-scan first
 - COVERAGE COMPLETENESS: List all public methods in production file. For each, check if test exercises it. Flag untested methods. Exclude control flow keywords, built-ins, SQL keywords. API endpoint exception: test calling client.get("/path") IS testing the handler. Page component exception: render(<Component />) IS testing the export. Re-export exception: only test functions DEFINED in the file, not re-exports.
 - PHANTOM MOCK DETECTION: List all mocked modules in test. For each: does production code actually call it? Unused mock = phantom mock.
-- SUITE-AWARE MODE: Sibling test files for same production file -- evaluate Q7/Q11 at suite level.
+- SUITE-AWARE MODE: Sibling test files for the same production file may supply Q7/Q11 evidence; name each contributing test and actual production branch. A helper test is not evidence for its caller unless it executes and asserts that caller behavior. Coverage/mutation claims require matching file/symbol and tree identity.
+- Q7 DOMAIN: List accepted inputs and every specified reject/filter/sentinel/fallback path, with production branch locations and exact test assertions. Do not invent throws for out-of-domain typed null; malformed inputs at real untrusted boundaries still require testing.
 - Q17 ECHO vs COMPUTED: mock returns X, test asserts X = echo (Q17=0). Mock returns raw data, test asserts transformation = computed (Q17=1).
 - Q15 API ROUTE CALIBRATION: Status code checks, error body checks, response field checks, auth guard verification all count as Q15=1 for API routes.
 - AP21 CALIBRATION: `.mock.calls[N]` = fragile (AP21). `.toHaveBeenNthCalledWith(N, ...)` = Jest API, not AP21.
@@ -434,6 +450,7 @@ Read all batch files from `zuvo/audits/.test-audit-batch/`:
 2. Parse summary tables for tier counts
 3. Parse per-file blocks for detailed analysis
 4. If any batch file is missing (agent failure), log the gap
+5. Count INCOMPLETE files separately; exclude them from numeric tier averages and passing totals, and keep the overall audit INCOMPLETE until their evaluation is resolved
 
 Build the summary report:
 
@@ -444,6 +461,10 @@ Date: [date]
 Project: [name]
 Files audited: [N]
 Total tests: [count from test runner]
+Checkout: [absolute branch/worktree path]
+Tree: [branch, commit, dirty-tree identity if applicable]
+Verification: [commands + cwd + run IDs/artifacts + exit/result summaries; skips and unrun checks]
+Evidence map: [per production file/symbol → test branch citations → matching coverage/mutation artifact scope]
 
 ## Summary by Tier
 
@@ -451,8 +472,9 @@ Total tests: [count from test runner]
 |------|-------|---|--------|
 | A (>=82% of applicable) | [N] | [%] | No action |
 | B (>= 53% and < 82% of applicable) | [N] | [%] | Fix gaps |
-| C (<53% of applicable) | [N] | [%] | Major rewrite |
-| D (<5 or red flag) | [N] | [%] | Delete + rewrite |
+| C (<53% of applicable OR any critical gate = 0) | [N] | [%] | Major rewrite |
+| D (auto Tier-D red flag) | [N] | [%] | Delete + rewrite |
+| INCOMPLETE (no tier) | [N] | [%] | Finish missing evaluation |
 | ORPHAN | [N] | [%] | Verify or delete |
 
 ## Critical Gate Failures
@@ -505,10 +527,18 @@ After the audit report is generated, run cross-model validation to catch Q-score
 
 If `adversarial-review` is not in PATH: `~/.zuvo/adversarial-review` (stable; the versioned cache path breaks after any release)
 
-Wait for complete output. Then:
+Wait for complete output. Verify each actionable finding against the actual source/test branches
+and artifact scope before changing scores. Record rejected false positives with source evidence;
+severity alone does not establish validity. Then, for confirmed findings:
 - **CRITICAL** (passing Q-score contradicted by evidence) → fix in report before delivery
-- **WARNING** (coverage theater not flagged) → append to Known Gaps section
+- **WARNING** (coverage theater not flagged) → correct affected evidence, scores and tier; record unresolved gaps explicitly
 - **INFO** → ignore
+
+Apply validated corrections to the audit report, including per-file scores, aggregate counts and
+evidence attribution, before delivery. Do not start a recursive review loop of report corrections
+unless the user requested one. The existing mandatory review is one bounded review of the report;
+record its findings and dispositions. Link the actual branch/worktree files so reviewers can open
+the source that was audited.
 
 ## Phase 4: Coverage Registry Update
 
@@ -520,10 +550,11 @@ For each audited test file, find its production file row in coverage.md:
 
 | Audit Tier | Coverage Status | Rationale |
 |-----------|----------------|-----------|
-| A (>=16, gate PASS) | COVERED | Tests are solid |
-| B (10-15 or gate FAIL >=10) | PARTIAL-QUALITY | Has tests but quality issues |
-| C (<53% of applicable) | PARTIAL-QUALITY | Major quality gaps |
-| D (<5 or red flag) | PARTIAL | Effectively untested |
+| A (>=82% of applicable, critical gates PASS) | COVERED | Tests are solid |
+| B (>=53% and <82% of applicable, critical gates PASS) | PARTIAL-QUALITY | Has tests but quality issues |
+| C (<53% of applicable OR any critical gate = 0) | PARTIAL-QUALITY | Major quality gaps |
+| D (auto Tier-D red flag) | PARTIAL | Effectively untested |
+| INCOMPLETE (no tier) | Leave existing row unchanged | Evaluation unavailable; never register as COVERED |
 
 Only downgrade coverage status, never upgrade. If production file is not yet in coverage.md, add it.
 

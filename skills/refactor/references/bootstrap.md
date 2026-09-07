@@ -17,45 +17,50 @@ a nested stage. Load only the rules needed now, with the read-once receipt proto
 
 Load bootstrap requirements now; load each deferred protocol at its named phase.
 
-### PHASE 0 — Commit-gate self-install (run this bash; ungated, fail-open)
+### PHASE 0 — Commit-gate activation (record the actual exit status)
 
-Export the AI-run marker and ensure the external refactor commit-gate is active for this repo. The
-gate is the bind that makes the Definition of Done real — an agent cannot skip a git hook. It no-ops
-when the repo has no active refactor CONTRACT, fail-opens if anything is missing (never blocks setup).
+Ensure the refactor commit-gate is active for this checkout. The installer preserves existing
+hooks and reports nonzero when it cannot activate both hooks. Record that as unavailable, never
+installed/PASS. Continue analysis and explicit verification, but do not claim automatic commit
+enforcement; resolve activation before claiming the complete workflow. Do not modify a shared
+or version-controlled hook merely to turn the status green.
+
+Resolve the installed root for the **current harness** from the execution policy first
+(Codex: `~/.codex`, Claude Code: its active plugin root). Do not choose another harness's cache
+just because `ls | head` finds it first. Substitute the two actual paths below, and preserve the
+command's exit status and diagnostic in the stage receipt.
 
 ```bash
-# (No ZUVO_AI_RUN export — it would not survive into the agent's later, separate commit shell.
-#  The gate detects an AI run from the ambient harness env: CLAUDECODE / CODEX_SANDBOX /
-#  CURSOR_TRACE_ID / ANTIGRAVITY_SESSION_ID — always set at session level, so the gate fires
-#  on real commits without any export. Verified end-to-end in a temp repo.)
-# Probe EVERY host's install root, not just the Claude marketplace cache: on Codex/Cursor the
-# plugin lives under ~/.codex or ~/.cursor, so a Claude-only probe printed "not found" on every
-# run there — false installer-missing telemetry that hid a genuinely absent gate.
-_GATE=$(ls ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/hooks/refactor-safety-gate.sh \
-           ~/.codex/scripts/refactor-safety-gate.sh ~/.cursor/scripts/refactor-safety-gate.sh \
-           ~/.gemini/antigravity/hooks/refactor-safety-gate.sh \
-           ~/.codex/.tmp/plugins/plugins/zuvo/hooks/refactor-safety-gate.sh 2>/dev/null | head -1)
-_INST=$(ls ~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/scripts/install-refactor-gate.sh \
-           ~/.codex/scripts/install-refactor-gate.sh ~/.cursor/scripts/install-refactor-gate.sh \
-           ~/.gemini/antigravity/scripts/install-refactor-gate.sh 2>/dev/null | head -1)
-# Is the gate even able to fire? It detects an AI run from the ambient harness env; if none of
-# these is set the gate no-ops on the human's commits by design — say so instead of implying
-# the repo is protected.
+(
+set -e
+_TARGET_PATH="<actual target file or directory>"
+_INSTALL_ROOT="<installed root for the current harness>"
+if [ -f "$_TARGET_PATH" ]; then _TARGET_PATH=$(dirname "$_TARGET_PATH"); fi
+TARGET_REPO=$(git -C "$_TARGET_PATH" rev-parse --show-toplevel)
+_GATE="$_INSTALL_ROOT/hooks/refactor-safety-gate.sh"
+[ -f "$_GATE" ] || _GATE="$_INSTALL_ROOT/scripts/refactor-safety-gate.sh"
+_INST="$_INSTALL_ROOT/scripts/install-refactor-gate.sh"
 _HARNESS="unavailable (detector missing)"
 _DETECTOR="$(dirname "$_GATE")/lib/agent-env.sh"
 if [ -r "$_DETECTOR" ]; then
   . "$_DETECTOR"
   if zuvo_is_agent_env; then _HARNESS=active; else _HARNESS="human (gate bypass)"; fi
 fi
-if [ -n "$_GATE" ] && [ -n "$_INST" ]; then
-  sh "$_INST" "$_GATE" "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-  echo "[refactor-gate] gate=$_GATE"
-  echo "[refactor-gate] ai-harness-detected:$_HARNESS"
+_ACTIVATION_RC=2
+if [ -f "$_GATE" ] && [ -f "$_INST" ]; then
+  if sh "$_INST" "$_GATE" "$TARGET_REPO"; then
+    _ACTIVATION_RC=0
+    echo "[refactor-gate] activation=verified"
+  else
+    _ACTIVATION_RC=$?
+    echo "[refactor-gate] activation=unavailable; preserve installer diagnostic"
+  fi
 else
-  echo "[refactor-gate] NOT INSTALLED — gate='${_GATE:-missing}' installer='${_INST:-missing}';"
-  echo "[refactor-gate] searched ~/.claude/plugins/cache, ~/.codex, ~/.cursor. Re-run scripts/install.sh."
-  echo "[refactor-gate] in-skill self-check still applies, but the commit bind is ABSENT this run."
+  echo "[refactor-gate] activation=unavailable; missing gate or installer under $_INSTALL_ROOT"
 fi
+echo "[refactor-gate] exit=$_ACTIVATION_RC repo=$TARGET_REPO gate=$_GATE harness=$_HARNESS"
+exit "$_ACTIVATION_RC"
+)
 ```
 
 ### PHASE 0.5 — Classify (read target, determine refactor type)
@@ -193,42 +198,36 @@ unresolved scope answers about the PARENT checkout's copy of the file.
 TARGET_REPO=$(git -C "<scope>" rev-parse --show-toplevel)   # the tree this run refactors
 ```
 
-If `index_status` reports a root other than `$TARGET_REPO` (or reports `indexed=true` with a file
-count matching the parent), run `index_folder(path=$TARGET_REPO)` **once** — per `codesift-setup.md`
-step 2 that is not a re-index, it is the first index of a tree that has none. Then `index_file` per
-changed file. Do **NOT** call `list_repos()`: the repo auto-resolves from CWD, `codesift-setup.md:19`
-says to skip it, and all three sub-agents are told the orchestrator already owns the identifier.
+Use the execution policy's exact repository identifier and indexing permission. A parent checkout
+index is stale evidence for a linked worktree. If indexing this checkout is forbidden, use current
+file reads and native analysis once and pass that decision to nested stages. Do not repeatedly
+ask a known-stale index to audit the new code.
 
 ### Pre-Scan
 
-Run 6 analysis calls to understand WHAT to refactor before planning HOW:
-
-1. `analyze_complexity(repo, top_n=10, file_pattern=SCOPE)` -- Is the target among the most complex files? Which functions are worst?
-2. `analyze_hotspots(repo, since_days=90)` -- Is the target a churn hotspot? Changed often + complex = high-value refactor.
-3. `find_clones(repo, min_similarity=0.7, file_pattern=SCOPE)` -- Copy-paste blocks with other files? DRY extraction candidates.
-4. `find_dead_code(repo, file_pattern=SCOPE)` -- Unused exports in scope. Delete BEFORE refactoring (less code to move).
-5. `classify_roles(repo, file_pattern=SCOPE)` -- Symbol role classification: dead/leaf/core/entry
-6. `find_circular_deps(repo, file_pattern=SCOPE)` -- Cycle detection for BREAK_CIRCULAR type
+Collect caller/re-export references, duplicate candidates and cycle risk for the requested scope.
+Use current-index semantic tools when available and permitted; otherwise search the actual files.
+For a user-selected identical-helper extraction, verify those bodies and their callers directly.
+Do not run repository-wide hotspot rankings or dead-code inventories to rediscover an already
+selected target. Broader restructures additionally need scoped complexity and role analysis;
+cycle-breaking work needs the actual cycle graph. Out-of-scope dead code is a finding, not an
+instruction to delete it before the requested refactor.
 
 Print:
 
 ```
 REFACTOR PRE-SCAN
 ------------------------------------
-Complexity: target ranks #N/10 (cyclomatic X, function: Y)
-Hotspot:    changed N times in 90 days (rank in repo)
-Clones:     N blocks (X% similar) with [file:lines]
-Dead code:  N unused exports ([names])
-Roles:      N dead symbols (delete first), N leaf (safe to move), N core (careful)
-Cycles:     [N cycles detected | no cycles]
+Complexity: [scoped metric + analyzer | skipped(reason) | unavailable]
+Hotspot:    [scoped result | skipped(reason) | unavailable]
+Clones:     [verified duplicate bodies + file:lines | none found | unavailable]
+Dead code:  [scoped findings | skipped(reason) | unavailable]
+Roles:      [scoped role findings | skipped(reason) | unavailable]
+Cycles:     [scoped cycle evidence | unavailable]
 ------------------------------------
 ```
 
-Feed pre-scan data into the extraction plan:
-- Clone blocks -> extract to shared module. Dead exports -> delete before refactoring.
-- Highest-complexity functions -> prioritize splitting these first. Hotspot confirmation -> validates high-value.
-- `classify_roles`: dead = delete before refactoring, leaf = safe extraction, core = careful handling, entry = do not move without re-export.
-
-When CodeSift unavailable: skip pre-scan. Log `[DEGRADED: classify_roles/find_circular_deps unavailable]`.
+Use the results in the plan and record unavailable analyses honestly. Preserve the user's behavior
+scope; unrelated clone, hotspot or dead-code findings do not expand the change.
 
 ---

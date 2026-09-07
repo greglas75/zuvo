@@ -52,6 +52,14 @@ results. An independent reviewer still checks that commands/assertions test the 
 
 **ACCEPTED_FINDINGS carry-forward.** Before each pass after the first, prepend the latest RESOLVED row of each identity to the adversarial input as an `ACCEPTED_FINDINGS` block (fingerprint + disposition + the one-line reason) and instruct the provider: **a settled disposition is not a finding — do not re-report it.** If the provider believes a listed item is wrong, it must say so **with new evidence** — and a **higher-severity assessment counts as new evidence** (a later pass arguing a settled WARNING is really CRITICAL reopens it for re-rating; this is the only way the severity ratchet fires on an already-dispositioned identity, so ACCEPTED_FINDINGS suppression can never freeze a mis-rated CRITICAL as a settled WARNING). The orchestrator treats such a re-report as the regression path above and appends a `reopened` row for that one identity, at the escalated severity. This makes the 0-findings early exit reachable and ends the unbounded clean-check loop **without weakening remediation** — a real, un-dispositioned bug is still a finding, a regressed CRITICAL re-opens and blocks, and every CRITICAL must still reach `fixed`/`false-positive`.
 
+**Applicability evidence:** if CQ has more inactive gates than the review trigger, include the
+compact N/A matrix (gate, precondition, source/caller evidence) with the actual current files in
+the existing independent review payload. Ask the reviewer to accept/reject those classifications.
+Record the response and actual provider. This lets the existing review satisfy applicability
+review; it is not a separate provider round. A same-model inline matrix alone is not independent
+confirmation. Include actual command summaries for coverage/mutation/order claims; paths to
+unseen receipts are not evidence the remote reviewer has read.
+
 **Context-enriched input:** Prepend refactoring context + full source files so the provider can verify behavioral equivalence, not just diff syntax:
 
 ```bash

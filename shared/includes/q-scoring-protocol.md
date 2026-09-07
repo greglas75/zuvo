@@ -9,7 +9,7 @@
 For each gate, score as:
 - **1** — gate satisfied, with evidence (file:function:line or specific quote)
 - **0** — gate violated, with evidence of the violation
-- **N/A** — gate does not apply (with one-sentence justification)
+- **N/A** — gate precondition verified inactive (with reason and source evidence; unavailable measurements use only the explicit exception in that gate, such as Q21)
 
 **No evidence = score 0.** "Tests are thorough" is not evidence. "slug.test.ts:describe('edge cases'):42 — tests empty string, unicode, and max-length inputs" is evidence.
 
@@ -18,7 +18,7 @@ For each gate, score as:
 These gates are absolute pass/fail. Any critical gate at 0 = FAIL regardless of total score.
 
 ```
-Q7  — Every error-throwing path tested with a specific error TYPE and MESSAGE
+Q7  — Every contract negative case tested: throws/rejections assert type+message; filter/sentinel/fallback cases assert exact results within the accepted input domain
 Q11 — All code branches exercised (if/else, switch, early return)
 Q13 — Tests import the ACTUAL production function (not a local copy of it)
 Q15 — Assertions verify content/values, not just counts or shape
@@ -30,6 +30,21 @@ Q17 — No tautological oracles (mock returns X, assert X) — expected values f
 > reading this file scored a different gate than `review`/`test-audit` scored under the same ID.
 > If a label here ever disagrees with `rules/testing.md`, that file wins — re-read it rather than
 > trusting this summary.
+
+## Q7 Accepted Input Domain
+
+Read the production signature, runtime entry points, documented contract and callers first.
+Record negative cases the function promises to handle, including malformed inputs reaching
+untrusted boundaries. Internal helpers may rely on a caller's proven validation; TypeScript types
+alone do not validate an HTTP payload. Do not demand a new throw on typed out-of-domain `null`
+to satisfy a test score. Filtering unsupported records or returning a documented sentinel is
+negative behavior too: assert the exact retained records or sentinel, not merely "did not throw".
+For real throwing/rejecting paths, type AND message assertions remain mandatory. List every
+feasible negative path and its test. If the full accepted domain has no negative cases, Q7=1
+requires an exhaustive contract, branch and caller inventory proving their absence. A total
+getter is not required to invent a throw. Missing investigation remains 0/unproven, not a pass.
+Untrusted inputs include HTTP handlers, CLI arguments, files, messages and deserialization;
+trace callees up to the actual runtime validator before claiming an internal-only domain.
 
 ## Scoring Thresholds
 
@@ -48,13 +63,13 @@ above are the ones `test-audit` already applies, so the two now agree.
 
 ## N/A Abuse Check
 
-Count N/A scores. If more than 50% (10+ gates) are N/A:
+Count N/A scores. If more than 50% of in-scope Q gates are N/A:
 
 1. Flag as "low-signal audit"
 2. Justify each N/A individually
-3. Consider whether the test file is too small for meaningful evaluation
+3. Until every exclusion is supported by the required evidence or a gate-specific unavailable-measurement exception, mark the audit INCOMPLETE. Once resolved, score normally; a high count alone does not reject a small unit. This Q review trigger is separate from the CQ independent-review threshold.
 
-N/A is valid when the gate genuinely does not apply (e.g., Q11 for pure synchronous tests). N/A is abuse when used to avoid evaluation (e.g., Q13 scored N/A for code that throws exceptions).
+N/A is valid when the precondition is verified inactive (e.g., Q5 with no mocks). Synchronous code still requires Q11 branch coverage, and Q13 still requires importing the actual production unit. Unknown applicability is 0/unproven, never N/A. An unavailable measurement may be N/A only when its canonical gate explicitly permits it (Q21); it is not a passing measurement. A zero denominator is INCOMPLETE, never PASS.
 
 ## Output Format
 

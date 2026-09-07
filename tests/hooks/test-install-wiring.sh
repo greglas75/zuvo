@@ -108,13 +108,13 @@ for h in .codex .cursor; do
     && pass "(6c) install.sh ships refactor-safety-gate.sh to $h" \
     || bad "(6c) install.sh does not ship refactor-safety-gate.sh to $h"
 done
-# and the skill must actually probe those paths (a shipped file nobody looks for is still missing)
-for probe in '.codex/scripts/refactor-safety-gate.sh' '.cursor/scripts/refactor-safety-gate.sh' \
-             '.gemini/antigravity/hooks/refactor-safety-gate.sh'; do
-  grep -q "$probe" "$ROOT/skills/refactor/references/bootstrap.md" \
-    && pass "(6c) refactor PHASE 0 probes ~/$probe" \
-    || bad "(6c) refactor PHASE 0 does not probe ~/$probe"
-done
+# Execute the actual documentation block: selected harness root and target checkout
+# must survive quoting, a different caller CWD, and installer failures.
+if python3 "$ROOT/tests/hooks/bootstrap-activation-cases.py"; then
+  pass "(6c) refactor PHASE 0 activation snippet behaves correctly"
+else
+  bad "(6c) refactor PHASE 0 activation snippet failed"
+fi
 
 # (8) EVERY zuvo-home helper must be installed, and none may carry a host or secret.
 # Two failures this locks. (a) install.sh used explicit per-file cp blocks and had silently

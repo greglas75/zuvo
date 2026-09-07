@@ -6,7 +6,7 @@ Run after writing production code, before writing tests. Companion patterns are 
 
 ## 40 Evaluation Gates
 
-Each gate is scored 1 (pass with evidence), 0 (fail or unproven), or N/A (precondition inactive, justify in one sentence).
+Each gate is scored 1 (pass with evidence), 0 (fail or unproven), or N/A (feature precondition verified inactive, with evidence).
 
 <!-- GATES:BEGIN kind=cq-table -->
 | Gate | Domain | Check |
@@ -57,7 +57,7 @@ Each gate is scored 1 (pass with evidence), 0 (fail or unproven), or N/A (precon
 
 ## Scoring
 
-**Always-on critical gates:** CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 — any scored 0 triggers an immediate FAIL.
+**Critical gates:** CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 — critical whenever their feature precondition is active; any active gate scored 0 triggers an immediate FAIL. Applicability is assessed before criticality. An inactive feature may be N/A only with the evidence below; criticality never excuses an active failure.
 
 **Conditional critical gates** (active only when the code context applies):
 - **CQ16** — critical when code manipulates prices, costs, discounts, invoices, payouts
@@ -74,7 +74,7 @@ Each gate is scored 1 (pass with evidence), 0 (fail or unproven), or N/A (precon
   reading only this file treated CQ30-CQ40 failures as ordinary deductions. Re-derive, don't extend:
   `grep -E '^\| CQ(3[0-9]|40) ' shared/includes/gate-registry.md`.
 
-**Always-on non-critical gates (new):** CQ25, CQ26, CQ27, CQ29 — scored normally. Failure is a deduction, not an auto-FAIL.
+**Non-critical gates:** CQ25, CQ26, CQ27, CQ29 — scored normally. Failure is a deduction, not an auto-FAIL.
 
 When a conditional gate is active and scored 0: FAIL.
 
@@ -92,14 +92,14 @@ FAIL              iff any active critical gate = 0  OR  pass_count / denominator
 Reference table at zero N/A, zero out-of-scope (denominator = 40): PASS ≥ 35, CONDITIONAL PASS = 32-34, FAIL < 32.
 On a pure-TS repo the three stack-scoped gates (CQ36-CQ38) are out-of-scope → denominator 37: PASS ≥ 32, CONDITIONAL 30-31, FAIL < 30.
 At higher N/A counts the absolute pass count drops proportionally — always recompute against
-the actual `denominator`. Critical gates can never be N/A; they are either 1 or 0.
+the actual `denominator`. Active critical gates can never be N/A; they are either 1 or 0. A zero denominator is `INCOMPLETE` (no evaluated gates), never 100%.
 
 **Three states, not two — `out-of-scope` is not `N/A`.**
 A gate whose STACK does not match the project (a Go gate on a TypeScript repo) is `out-of-scope`:
-excluded from the denominator AND from the N/A budget, because stack mismatch is mechanical
+excluded from the denominator AND from the applicability review count, because stack mismatch is mechanical
 (`go.mod` is absent), not a judgement an auditor makes. `N/A` stays reserved for "this gate applies
 to my stack, but its precondition does not hold in this file" — a judgement, and therefore
-budgeted. Print `out-of-scope: N gates (stack=<detected>)` as one summary line; do not list them
+reviewed. Print `out-of-scope: N gates (stack=<detected>)` as one summary line; do not list them
 individually. See `../shared/includes/gate-registry.md` for each gate's `Scope`.
 
 ```
@@ -107,32 +107,41 @@ in_scope    = 40 - count(out-of-scope)
 denominator = in_scope - count(N/A)
 ```
 
-**N/A cannot raise the score (anti-gaming — this is a HARD rule, not advice).**
-Because N/A shrinks the denominator, re-labelling failures as N/A converts a FAIL into a PASS
-with zero code change: 20 pass / 9 fail = 20/29 = 69% → FAIL; re-mark six of those failures N/A
-and it is 20/23 = 87% → PASS. The gate is only meaningful if that path is closed:
+**Evidence decides applicability; the count triggers review.**
+Re-labelling failures as N/A can inflate a score without changing code. Prevent that by auditing
+preconditions before calculating scores, with the following requirements:
 
-1. **N/A requires the same evidence rigour as a 0.** An N/A must cite the exhaustive negative
-   search under "Negative Evidence" below (`rg "redis|cache" file.ts → 0 matches`). A one-sentence
-   assertion is **not** an N/A — score the gate. This is the rule that closes the attack: it
-   removes the evidence asymmetry that made N/A the cheapest route from FAIL to PASS.
-2. **N/A cap is proportional, not a fixed number.** `count(N/A)` may not exceed **one third of the
-   in-scope gates** (`floor(in_scope / 3)`). At 37 in-scope (pure-TS repo, CQ36-38 out-of-scope)
-   that is 12; it stays proportional as the gate set grows instead of silently tightening. Exceeding it ⇒
-   verdict `INCOMPLETE`, never PASS — too little of the file was actually evaluated to certify it.
-3. **Gates listed for the file's code type (see "High-Risk Gates by Code Type") cannot be N/A.**
-   A SERVICE cannot mark CQ18 or CQ23 N/A; a CONTROLLER cannot mark CQ19 N/A. If the gate truly
-   does not apply, the classification is wrong — fix the classification, not the gate.
-4. **Always print `pass_count`, `count(N/A)` and the denominator** next to the percentage, so a
-   reader can see how much of the file was actually evaluated. A 87% over 23 gates and an 87%
-   over 29 are not the same claim.
+1. **Every N/A records the gate's feature precondition, why it is inactive, and source evidence.**
+   Cite inspected file:symbol:line locations, relevant imports/callers and a scoped negative search
+   with command and result. A token search alone cannot establish absence of aliased or delegated
+   I/O. Missing evidence, an unknown precondition, or an unperformed check is **0 (unproven)**,
+   never N/A. If a mandatory review/check has not completed, the overall run is `INCOMPLETE`.
+2. **`count(N/A) > floor(in_scope / 3)` requires documented independent applicability review.**
+   The existing independent CQ auditor rechecks each inactive precondition against source and
+   relevant callers, and records accepted/rejected gate IDs with evidence. Until that check
+   completes, verdict is `INCOMPLETE`. Once verified, a high count alone does not prohibit PASS:
+   a pure parser may legitimately have no DB, network, cache, auth, timers, or concurrency.
+   The reviewer must be distinct from the original scoring author; record both agent/provider
+   identities/models and the review artifact/run. Follow the resolved execution policy for
+   independence; a fresh context with the same model is not independent. An auditor cannot
+   certify its own N/A assignments.
+   Reuse the already-required independent review to compare its source-derived applicability
+   set with the original assessment. Newly proposed exclusions require distinct review too;
+   without it they remain unverified and the high-N/A verdict stays INCOMPLETE.
+   Use the existing reviewer, not a new provider loop solely because the count is high.
+3. **Code type is a review focus, not proof that a feature exists.** A SERVICE with no cache can
+   mark CQ23 N/A after verifying the absence; a PURE module that calls a DB must score CQ8.
+   A missing required protection does not make its precondition inactive: user-scoped queries
+   activate CQ4 even without auth code, and a supported language activates CQ40 without lint config.
+   All active critical gates remain mandatory; a failed one cannot be relabelled N/A.
+4. **Print `pass_count`, `count(N/A)`, `in_scope`, denominator, and applicability review status.**
+   Exclude N/A from both numerator and denominator; keep 0/unproven in the denominator. The
+   independent review records the final applicability set before the percentage is computed.
+   Report any changed classification with the source evidence that changed the decision.
 
-N/A stays excluded from the denominator — a gate that genuinely does not apply (no cache in a pure
-function) must not be scored as a failure, or clean modular code is punished for being small.
-**Honest limit:** rules 1 and 3 are agent-followed, not mechanically enforced. An auditor willing
-to fabricate a negative-evidence citation still defeats them; that residual is exactly what the
-Independent CQ Auditor (which re-derives scores from the source without seeing the lead's) exists
-to catch, and why its telemetry can never be `skipped`.
+**Honest limit:** these are evidence requirements, not mechanical proof of source semantics.
+Independent review must inspect the cited code; a fabricated or irrelevant citation does not
+satisfy the requirement. A completed review can still leave a gate 0/unproven.
 
 ---
 
@@ -144,7 +153,7 @@ to catch, and why its telemetry can never be `skipped`.
 |-------|---------|----------|
 | **1** | Proven compliant | You can cite file:function:line proving it |
 | **0** | Failed or unproven | Code violates the gate, OR evidence is insufficient |
-| **N/A** | Precondition does not apply | Justify with one sentence |
+| **N/A** | Feature precondition verified inactive | Record precondition, reason, source and negative-search evidence |
 
 Note the distinction: `CQ4=0 (violation)` means a WHERE clause is missing orgId. `CQ4=0 (unproven)` means the model is complex and you cannot confirm all paths. Both score 0 for gating, but the fix action differs.
 
@@ -202,7 +211,7 @@ Vague claims like "no duplication" or "errors handled" score 0.
 
 ### Before Submitting CQ=1
 
-Can I point to file:function:line? Did I check ALL instances, not just one? Am I scoring what I actually wrote, or what I intended to write? Is every N/A inside the hard cap (`floor(in_scope/3)` — the ONLY threshold; see the HARD rule above) and individually justified?
+Can I point to file:function:line? Did I check ALL instances, not just one? Am I scoring what I actually wrote, or what I intended to write? Does every N/A have inactive-precondition evidence, and has the required independent applicability review completed when the count exceeds `floor(in_scope / 3)`?
 
 ---
 
@@ -215,12 +224,12 @@ N/A scores are excluded from both numerator and denominator (see canonical formu
 | CQ3 | Pure internal helper with no external input | "It's simple" — if it accepts user input, it applies |
 | CQ4 | Pure utility with zero auth. Internal services consumed only by authenticated callers IF: (a) JSDoc documents "Internal — caller must verify session ownership", (b) target entity lacks organizationId column (check schema). Without documentation → CQ4=0. | "Internal service" — if it touches user-scoped data, it applies |
 | CQ5 | Pure computation, zero I/O, zero logging | "We don't log PII" — if it has logger/throws, it applies |
-| CQ6/7 | No collections processed | "Small dataset" — external data size is never guaranteed |
+| CQ6 / CQ7 | CQ6: no externally sized collections or growing retained state (trace input provenance). CQ7: no database queries, including delegated queries | "Pure function" does not exempt external lists from CQ6; "small dataset" does not bound queries for CQ7 |
 | CQ8 | Pure synchronous code, zero I/O | "Errors are rare" — any external call means it applies |
 | CQ9 | Read-only or single-table mutations | "Don't use transactions" — multi-table writes need transactions |
 | CQ15 | No async code present | "Simple async" — if async exists, it applies |
 | CQ16 | No monetary calculations. Stats/ratios = N/A. | "Display field" — if the value enters arithmetic, it applies |
-| CQ17 | No async loops | "Small loop" — N+1 at any N is a problem |
+| CQ17 | No repeated queries, sequential async loops, or nested collection lookups | "Synchronous" — `.find()` inside a loop still applies |
 | CQ18 | Single data store | "Cache is just cache" — if inconsistency breaks UX, it applies |
 | CQ19 | Internal code, caller already validated | "Types are enough" — TS types vanish at runtime |
 | CQ20 | No domain entities | "Legacy" — not a valid excuse |
@@ -235,7 +244,7 @@ not a definition table):
 |----|-------------------|------------------|
 | CQ23 | No caching in this code path | "Small data" — if cache exists, TTL applies |
 | CQ24 | New endpoint only, no existing clients | "Internal API" — if any client calls it, backward compat applies |
-| CQ25 | Single file change, no pattern to compare | "It's better this way" — consistency > preference |
+| CQ25 | No comparable project structure or naming pattern after repository search | "It's better this way" — consistency > preference |
 | CQ26 | Pure computation, zero I/O, zero logging | "We log elsewhere" — if file has logger calls, it applies |
 | CQ27 | No log statements in changed code | "It's just a warning" — if logger.error exists, check its usage |
 | CQ28 | Single-layer timeout, no hierarchy to check | "Defaults are fine" — if multiple layers define timeouts, check order |
@@ -251,7 +260,7 @@ not a definition table):
 | CQ39 | No queue/channel/buffer sized by external input | "The producer is slow today" — bound it anyway |
 | CQ40 | Practically never — the trigger is the LANGUAGE having a linter | "We lint locally" — score the config + CI invocation |
 
-**Abuse check:** the ONLY N/A threshold is the hard cap above (`floor(in_scope/3)`) — exceeding it makes the verdict `INCOMPLETE`, never PASS. Justify each N/A individually and do not count an over-cap audit toward aggregate metrics.
+**Abuse check:** exceeding `floor(in_scope / 3)` triggers the independent applicability review above. An unreviewed high-N/A audit is `INCOMPLETE` and excluded from passing aggregate metrics. A verified high count may pass only under the normal percentage and active-critical-gate rules.
 
 > **Reminder:** apply the canonical formula at the top of this file. Do not re-derive thresholds — `denominator = (gates in scope) - count(N/A)`, `PASS ≥ 86%`, `CONDITIONAL ≥ 79%`.
 

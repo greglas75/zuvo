@@ -149,12 +149,12 @@ else
   bad "cell splitter mis-parses pipes: $roundtrip"
 fi
 
-# ---------- 6. scoring model: three states, proportional N/A cap ----------
+# ---------- 6. scoring model: three states, proportional applicability review ----------
 CQ="$ROOT/rules/cq-checklist.md"
 grep -q 'out-of-scope' "$CQ" && pass "scoring documents the third state (out-of-scope != N/A)" \
   || bad "out-of-scope state missing — stack-specific gates would blow the N/A budget"
-grep -q 'floor(in_scope / 3)' "$CQ" && pass "N/A cap is proportional to the in-scope gate count" \
-  || bad "N/A cap is a fixed number — it silently tightens as the gate set grows"
+grep -q 'floor(in_scope / 3)' "$CQ" && pass "applicability review threshold is proportional to the in-scope gate count" \
+  || bad "applicability review threshold missing or fixed"
 
 # Adding gates must NOT move an existing verdict. A file that passed at 25/29 must still pass
 # when 5 gates are added that its stack/preconditions do not trigger.
@@ -168,6 +168,33 @@ print('OK' if abs(d0-d1)<1e-9 and d0>=0.86 else 'BAD:%.3f vs %.3f'%(d0,d1))")
 # Every CQ row must declare a scope, or the three-state model has a hole.
 noscope=$(grep -cE '^\| CQ[0-9]+ \|[^|]*\|[^|]*\| *\|' "$REG" || true)
 [ "$noscope" = "0" ] && pass "every CQ row declares a Scope" || bad "$noscope CQ row(s) have an empty Scope"
+
+# Exercise generation, not only the current wording: stale throw-only consumer text must be
+# replaced from a changed registry and retain criticality in table AND prompt consumers.
+if python3 - "$GEN" "$REG" "$tmp" <<'PYQ'
+import importlib.util, pathlib, sys
+spec = importlib.util.spec_from_file_location("g", sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+gates = m.parse_registry(sys.argv[2])
+q7 = next(g for g in gates["Q"] if g["id"] == "Q7")
+assert q7["crit"] == "critical", "negative cases must remain a critical gate"
+for kind, expected in (("q-table", q7["text"]), ("q-prompt", q7["short"])):
+    target = pathlib.Path(sys.argv[3]) / (kind + ".md")
+    target.write_text(f"before\n<!-- GATES:BEGIN kind={kind} -->\nQ7 throw only\n<!-- GATES:END kind={kind} -->\nafter\n")
+    assert m.process(str(target), gates) == (1, 1)
+    assert "Q7 throw only" in target.read_text(), "check mode must not mutate"
+    assert m.process(str(target), gates, write=True) == (1, 1)
+    emitted = target.read_text()
+    assert expected in emitted and "CRITICAL" in emitted
+    assert "Q7 throw only" not in emitted
+    assert emitted.startswith("before\n") and emitted.endswith("after\n")
+    assert m.process(str(target), gates) == (1, 0)
+PYQ
+then
+  pass "Q7 generation replaces stale throw-only text and preserves criticality in both consumers"
+else
+  bad "Q7 propagation or criticality regression"
+fi
 
 # ---------- 7. verdict thresholds must be PERCENTAGES, not raw counts ----------
 # An absolute threshold silently changes meaning when the gate set grows: "16+" was 84% of 19 and

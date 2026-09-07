@@ -42,11 +42,24 @@ else
   printf '        %s\n' $out
 fi
 
-# And the capability table must not still call Codex single-agent for everything.
-if grep -q 'MECHANICAL WORKERS' "$ROOT/shared/includes/env-compat.md" 2>/dev/null; then
-  pass "env-compat still distinguishes review stages from mechanical workers on Codex"
+# The supported route must retain both mechanical dispatch and its authorization boundary.
+if python3 - "$ROOT/shared/includes/env-compat.md" <<'PY'
+from pathlib import Path
+import re, sys
+text = Path(sys.argv[1]).read_text().split('### Codex\n', 1)[1].split('<!-- /PLATFORM:', 1)[0]
+text = re.sub(r'\s+', ' ', text)
+required = ('actual capabilities and authorization', 'execution-policy.md',
+            'Mechanical execution of a frozen plan may use a fresh worker when supported',
+            'same model is not model independence')
+missing = [phrase for phrase in required if phrase not in text]
+if missing:
+    print('Missing capability/independence contract: ' + ', '.join(missing))
+sys.exit(bool(missing))
+PY
+then
+  pass "Codex permits supported mechanical workers while preserving authorization and independence"
 else
-  bad "env-compat lost the mechanical-worker carve-out — Codex would go back to handing off"
+  bad "Codex mechanical dispatch lost its capability, authorization, or independence boundary"
 fi
 
 echo

@@ -469,9 +469,9 @@ CAP28: Module-import-time side effect — DB engine, HTTP client, network call, 
 CAP29: `__del__` used for resource release, or `.close()` without `with`/`try-finally` — GC timing is unguaranteed and `__del__` exceptions are swallowed -- MEDIUM  [stack: python]
 <!-- GATES:END kind=cap-list -->
 
-N/A HANDLING: N/A items are excluded from both numerator and denominator. **HARD CAP:** `count(N/A)` may not exceed `floor(in_scope/3)`; exceeding it makes the verdict `INCOMPLETE`, never a tier — without this the documented attack works (re-label six failures N/A and 69% FAIL becomes a PASS with zero code change, `cq-checklist.md`). Score = passed / applicable. N/A requires justification.
+N/A HANDLING: Exclude verified inactive features from numerator and denominator. `count(N/A) > floor(in_scope / 3)` triggers documented independent applicability review by the existing CQ auditor, distinct from the original scoring author (record both identities and the review artifact/run; no self-certification); pending review is INCOMPLETE, but the verified count alone does not bar a tier. Record each precondition, reason and source/search evidence. Unknown or missing evidence is 0/unproven, not N/A. Code type alone does not activate a feature. All active critical gates remain mandatory. Score = passed / applicable; zero applicable = INCOMPLETE. Print counts and review status. Follow `cq-checklist.md` for the full protocol.
 
-STATIC CRITICAL GATE: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 -- any = 0 -> capped at Tier C.
+STATIC CRITICAL GATE: CQ3, CQ4, CQ5, CQ6, CQ8, CQ14 -- any active gate = 0 -> quality verdict FAIL, regardless of score. Tier C is the minimum remediation priority, not a passing verdict.
 CONDITIONAL CRITICAL GATE:
 - CQ16 -> critical if file handles money (prices, costs, discounts, invoices)
 - CQ19 -> critical if CONTROLLER or API-CALL type. Thin controller exception: if only returns typed service data, gate does not activate.
@@ -494,7 +494,7 @@ CONDITIONAL CRITICAL GATE:
   CQ30=0 or CQ34=0 file still reached Tier A/B. Canonical source is gate-registry.md's
   Criticality column — re-derive rather than extending this copy by hand.)
 
-CQ8 NOTE: Check PROJECT_CONTEXT. If global error handler exists, services that let errors propagate = CQ8 PASS. Only CQ8=0 when errors are swallowed.
+CQ8 NOTE: Check PROJECT_CONTEXT and trace every entry point to its actual error handler. An HTTP exception filter does not cover queue/cron/CLI or detached promises. Verify outbound timeouts, response.ok and async rejection handling independently. Missing or unproven protection scores CQ8=0; a global handler alone is not a pass. A missing per-method catch is acceptable only when the cited handler covers that failure path.
 CQ15 NOTE: `return somePromise` inside async function is NOT a missing await -- async auto-flattens. Only flag when promise is neither returned nor awaited.
 CQ19 NOTE: Thin controllers that only return typed service data get gate cap = B, not C.
 
@@ -520,7 +520,7 @@ because the gate set grows and ">=25/29" silently becomes a different bar at 40 
   C (< 79%, OR any critical gate = 0):             Significant rework
   D (AUTO TIER-D red flag: CAP5/6/7/8/25/26):      Critical -- immediate fix
 
-  A critical gate at 0 is a FLOOR (Tier C), not a ceiling — same rule as the Q family.
+  A critical gate at 0 sets quality verdict FAIL. Tier C is a remediation-priority floor, not a passing or warning quality verdict.
   86% / 79% are the same bars as 25/29 and 23/29 under the old fixed denominator.
 
 IMPORTANT:
@@ -561,10 +561,10 @@ Mode: [quick/deep]
 
 | Tier | Count | % | Action |
 |------|-------|---|--------|
-| A (ratio >= 0.86) | [N] | [%] | Production-ready |
-| B (>= 0.79 and < 0.86) | [N] | [%] | Targeted fixes before merge |
-| C (>= 0.53 and < 0.79) | [N] | [%] | Significant rework |
-| D (< 0.53, or any red flag) | [N] | [%] | Critical -- immediate fix |
+| A (ratio >= 0.86, active critical gates PASS) | [N] | [%] | Production-ready |
+| B (>= 0.79 and < 0.86, active critical gates PASS) | [N] | [%] | Targeted fixes before merge |
+| C (< 0.79 OR any active critical gate = 0) | [N] | [%] | Significant rework |
+| D (auto Tier-D red flag) | [N] | [%] | Critical -- immediate fix |
 
 Compare the raw ratio, never a rounded integer percentage: written as `79-85` / `86+`, a score of
 85.5% belonged to no tier at all.
@@ -739,7 +739,7 @@ The wrapper:
 
 If the wrapper exits non-zero: do NOT manually append to runs.log. Fix the cause (add retro, add file:line citations to findings, etc.) and re-run.
 
-VERDICT: PASS (0 critical findings), WARN (1-3 critical), FAIL (4+ critical), INCOMPLETE (Validity Gate FAIL).
+VERDICT: INCOMPLETE when required validation/applicability review is unfinished; otherwise FAIL for any active critical gate = 0 or 4+ critical findings, WARN for 1-3 other critical findings, PASS for 0 critical findings with all active critical gates = 1. Remediation tiers never override these failure rules.
 
 ## Phase 5: Backlog Persistence
 
@@ -756,10 +756,10 @@ Tier boundaries are the ONES DEFINED IN "Summary by Tier" above — percentages 
 raw counts. (These four lines read `<16` / `16-20` / `21-23` until 2026-08-02: absolute counts over
 the old 29-gate set, sitting one section below the percentage table they contradict.)
 
-- **Tier D** (ratio < 0.53, or any red flag): ALL findings -- CRITICAL severity
-- **Tier C** (critical gate FAIL, or ratio >= 0.53 and < 0.79): ALL critical gate failures -- HIGH severity
-- **Tier B** (ratio >= 0.79 and < 0.86): only critical gate near-misses -- MEDIUM severity
-- **Tier A** (ratio >= 0.86): do NOT persist. Delete any open backlog items for Tier A files.
+- **Tier D** (auto Tier-D red flag): ALL findings -- CRITICAL severity
+- **Tier C** (critical gate FAIL, or ratio < 0.79): ALL critical gate failures -- HIGH severity
+- **Tier B** (ratio >= 0.79 and < 0.86, active critical gates PASS): only critical gate near-misses -- MEDIUM severity
+- **Tier A** (ratio >= 0.86, active critical gates PASS): do NOT persist. Delete any open backlog items for Tier A files.
 
 ## Phase 6: Next-Action Routing
 

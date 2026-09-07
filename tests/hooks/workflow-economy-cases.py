@@ -84,6 +84,61 @@ class Workflow(unittest.TestCase):
         self.assertEqual(self.read()["version"], 6)
         self.assertTrue(self.contract.exists())
 
+    def test_installed_helpers_use_bundled_reader_and_gate_over_stale_claude(self):
+        with tempfile.TemporaryDirectory() as home:
+            self.env["HOME"] = home
+            stale = Path(home) / ".claude/hooks/lib"
+            stale.mkdir(parents=True)
+            stale_reader = "raise RuntimeError('stale Claude reader was loaded')\n"
+            (stale / "refactor-state.py").write_text(stale_reader)
+            (stale / "refactor-gate-lib.sh").write_text(
+                "refactor_gate_check() { return 0; }\nrefactor_prove_v4_check() { return 0; }\n"
+            )
+            result = self.run_cmd([
+                "bash", "-c", '. "$1"; install_zuvo_home; test "$INSTALL_VERIFY_MISSING" -eq 0',
+                "install-helpers", str(ROOT / "scripts/install.sh"),
+            ])
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            bundle = Path(home) / ".zuvo"
+            for name in ("refactor-state.py", "refactor-gate-lib.sh", "agent-env.sh"):
+                self.assertEqual((bundle / name).read_bytes(), (ROOT / "hooks/lib" / name).read_bytes())
+            self.assertEqual((stale / "refactor-state.py").read_text(), stale_reader)
+
+            def installed(*args):
+                return self.run_cmd([
+                    sys.executable, str(bundle / "refactor-contract"),
+                    "--contract", str(self.contract), *args,
+                ])
+
+            for args in (("baseline", "printf 'Tests 2 passed\\n'"), ("recheck",),
+                         ("stage", "PHASE-3"), ("check",)):
+                result = installed(*args)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            report = self.quality_report()
+            result = installed("prove", "test_quality", "PASS:B:" + report + "; commentary")
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("supply only the report path", result.stderr)
+            self.data = self.read()
+            self.data["cq_after"] = {"status": "INCOMPLETE"}
+            self.save()
+            result = installed("check")
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("cq_after.status=INCOMPLETE", result.stdout)
+            self.assertEqual(installed("stage", "COMPLETE").returncode, 1)
+
+    def test_helper_install_verification_detects_corrupt_reader_copy(self):
+        with tempfile.TemporaryDirectory() as home:
+            self.env["HOME"] = home
+            result = self.run_cmd([
+                "bash", "-c",
+                '. "$1"; cp() { case "$1" in */hooks/lib/refactor-state.py) '
+                'printf "stale reader\\n" > "$2" ;; *) command cp "$@" ;; esac; }; '
+                'install_zuvo_home; test "$INSTALL_VERIFY_MISSING" -gt 0',
+                "install-corrupt-reader", str(ROOT / "scripts/install.sh"),
+            ])
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("refactor-contract dependency refactor-state.py did not match", result.stdout)
+
     def test_nested_prove_cannot_supply_missing_real_proof(self):
         self.data["previous"] = {"prove": {"adversarial": "clean"}, "stage": "COMPLETE"}
         self.data["prove"]["adversarial"] = "not_run"
@@ -135,6 +190,240 @@ class Workflow(unittest.TestCase):
         self.assertNotIn("regression_red", c["prove"])
         self.assertEqual(self.errors().returncode, 0)
         self.assertEqual(self.cli("check").returncode, 0)
+
+    def test_v6_phase_three_requires_complexity_only_for_reduction_intents(self):
+        self.assertEqual(self.cli("baseline", "printf 'Tests 2 passed\\n'").returncode, 0)
+        original = self.read()
+        for kind in ("EXTRACT_METHODS", "MOVE", "RENAME", "SPLIT_FILE", "GOD_CLASS", "SIMPLIFY"):
+            self.data = json.loads(json.dumps(original))
+            self.data.update(type=kind, stage="PHASE-2")
+            self.save()
+            result = self.cli("stage", "PHASE-3")
+            expected = 1 if kind in ("SPLIT_FILE", "GOD_CLASS", "SIMPLIFY") else 0
+            self.assertEqual(result.returncode, expected, result.stderr)
+            if expected:
+                self.assertIn("complexity_before", result.stderr)
+                self.assertEqual(self.read()["stage"], "PHASE-2")
+                self.assertEqual(
+                    self.cli("prove", "complexity_before", "maxfn:80,branches:10,loc:200").returncode, 0
+                )
+                self.assertEqual(self.cli("stage", "PHASE-3").returncode, 0)
+        self.data = original
+        self.data.update(version=5, type="EXTRACT_METHODS", stage="PHASE-2")
+        self.save()
+        self.assertEqual(self.cli("stage", "PHASE-3").returncode, 1)
+
+    def test_v6_no_fix_narrative_needs_no_red_in_cli_or_gate(self):
+        self.characterize()
+        self.data = self.read()
+        self.data["prove"]["findings_disposition"] = "none; no production fix-now finding"
+        self.save()
+        for stage in ("PHASE-3.5", "PHASE-3.6", "PHASE-4", "COMPLETE"):
+            result = self.cli("stage", stage)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.cli("check").returncode, 0)
+        self.data = self.read()
+        self.data["stage"] = "PHASE-3.6"
+        self.save()
+        self.assertEqual(self.cli("check").returncode, 0)
+        self.data["findings_outcome"] = "fixed"
+        self.save()
+        result = self.cli("check")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("fix_findings", result.stdout)
+        self.assertIn("regression_red", result.stdout)
+
+    def quality_report(self, content="Tier/status: B; complete assessment\n", name="test quality.md"):
+        path = self.root / "zuvo/audits" / name
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(content)
+        return "zuvo/audits/" + name
+
+    def test_v6_test_quality_writer_rejects_bad_paths_without_mutation(self):
+        report = self.quality_report()
+        for value in ("PASS tests", "WARN:B:missing.md", "PASS:B:/etc/passwd",
+                      "WARN:B:../outside.md", "PASS:B:" + report + "; review completed"):
+            previous = self.contract.read_bytes()
+            result = self.cli("prove", "test_quality", value)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("prove.test_quality", result.stderr)
+            self.assertEqual(self.contract.read_bytes(), previous)
+        for value in ("PASS:B:" + report, "WARN:B:" + report, "N/A", "N/A:no tests changed"):
+            result = self.cli("prove", "test_quality", value)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(self.read()["prove"]["test_quality"], value)
+
+    def test_v6_quality_warn_is_complete_but_incomplete_report_is_not(self):
+        self.characterize()
+        report = self.quality_report()
+        self.assertEqual(self.cli("prove", "test_quality", "WARN:B:" + report).returncode, 0)
+        result = self.cli("check")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("QUALITY: WARN", result.stdout)
+        self.assertEqual(self.cli("stage", "COMPLETE").returncode, 0)
+        self.quality_report("Tier/status: C: Q7 formal INCOMPLETE\n")
+        self.data = self.read()
+        self.data["stage"] = "PHASE-4"
+        self.save()
+        result = self.cli("check")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("INCOMPLETE", result.stdout)
+        self.assertEqual(self.cli("prove", "test_quality", "PASS:B:" + report).returncode, 2)
+        self.assertEqual(self.cli("stage", "COMPLETE", "--force").returncode, 1)
+
+    def test_v6_current_cq_assessment_blocks_completion_and_quality_pass(self):
+        self.characterize()
+        report = self.quality_report()
+        original = self.read()
+        for assessment in ({"status": "INCOMPLETE"},
+                           {"status": "WARN", "files": [{"status": "INCOMPLETE: N/A cap exceeded"}]},
+                           {"status": "WARN", "critical_failures": ["CQ14"]},
+                           {"status": "WARN", "files": [{"status": "FAIL"}]}):
+            self.data = json.loads(json.dumps(original))
+            self.data["cq_after"] = assessment
+            self.data["prove"]["test_quality"] = "WARN:B:" + report
+            self.save()
+            self.assertEqual(self.cli("stage", "COMPLETE").returncode, 1)
+            self.assertEqual(self.cli("stage", "COMPLETE", "--force").returncode, 1)
+            result = self.cli("check")
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("cq_after", result.stdout)
+            self.assertEqual(self.cli("prove", "test_quality", "PASS:B:" + report).returncode, 2)
+        self.data = original
+        self.data["cq_before"] = {"status": "INCOMPLETE", "critical_failures": ["CQ14"]}
+        self.data["cq_after"] = {
+            "status": "CONDITIONAL PASS", "critical_failures": [], "note": "Fixed prior INCOMPLETE"
+        }
+        self.save()
+        self.quality_report(
+            "Historical finding: INCOMPLETE before remediation.\nTier/status: B; complete assessment\n"
+        )
+        self.assertEqual(self.cli("prove", "test_quality", "PASS:B:" + report).returncode, 0)
+        self.assertEqual(self.cli("stage", "COMPLETE").returncode, 0)
+        self.assertEqual(self.cli("check").returncode, 0)
+
+    def test_v6_report_current_status_does_not_reopen_resolved_history(self):
+        self.characterize()
+        for content in (
+            "Status: PASS (previous FAIL fixed)\n",
+            "Status: PASS; FAIL on the pre-fix baseline run\n",
+            "Tier/status: A: PASS; BLOCKED items resolved\n",
+            "## History\nStatus: INCOMPLETE\n### First audit\nVerdict: FAIL\n"
+            "## Current\n[GATE: test-quality] PASS (previous INCOMPLETE resolved)\n",
+            "## Test Quality — Historical Baseline\nVerdict: FAIL\n"
+            "## Current\n[GATE: test-quality] PASS\n",
+            "## Version History\nStatus: INCOMPLETE\n## Current\nStatus: PASS\n",
+            "## Appendix A — Historical Runs\nStatus: FAIL\n## Current\nStatus: PASS\n",
+            "[GATE: test-quality] INCOMPLETE\n[GATE: test-quality] WARN (previous FAIL fixed)\n",
+            "Status: INCOMPLETE\nStatus: PASS (prior incomplete resolved)\n",
+            "## Current\n```text\nStatus: FAIL\n```\nStatus: PASS\n",
+        ):
+            report = self.quality_report(content)
+            claim = "WARN:B:" if "[GATE: test-quality] WARN" in content else "PASS:B:"
+            result = self.cli("prove", "test_quality", claim + report)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            result = self.cli("check")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for content in (
+            "## History\nStatus: PASS\n## Current\nStatus: INCOMPLETE\n",
+            "[GATE: test-quality] PASS\n[GATE: test-quality] FAIL\n",
+            "## File one\nStatus: INCOMPLETE\n## File two\nStatus: PASS\n"
+            "[GATE: test-quality] WARN\n",
+            "Tier/status: C: unverified whole-file coverage; Q7 formal INCOMPLETE also retained.\n",
+            "[GATE: test-quality] WARN worst=C; formal Q7 INCOMPLETE\n",
+            "Status: \n",
+            "## Current results compared with baseline\nStatus: INCOMPLETE\n",
+            "## Results vs baseline\n[GATE: test-quality] FAIL\n",
+            "## No previous issues\nStatus: FAIL\n",
+            "## Q7 baseline verification\nStatus: INCOMPLETE\n",
+        ):
+            report = self.quality_report(content)
+            self.data = self.read()
+            self.data["prove"]["test_quality"] = "WARN:B:" + report
+            self.save()
+            result = self.cli("check")
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("prove.test_quality: assessment", result.stdout)
+
+    def test_v6_assessment_maps_and_malformed_metadata_cannot_hide_failures(self):
+        self.characterize()
+        original = self.read()
+        for assessment in (
+            {"files": {"src/a.py": {"status": "INCOMPLETE"}}},
+            {"files": {"src/a.py": {"status": "WARN", "critical_failures": ["CQ14"]}}},
+            {"gates": {"CQ14": {"status": "FAIL"}}},
+            {"assessments": {"current": [{"status": "INCOMPLETE"}]}},
+            {"status": {"unexpected": "PASS"}},
+            {"status": "pending"},
+            {"score": {"unexpected": "PASS"}},
+            {"files": None},
+            {"files": {"src/a.py": None}},
+            {"critical_failures": False},
+            {"CQ3": {"status": "FAILED"}},
+            {"results": {"status": "FAIL"}},
+            {"modules": {"reader": {"status": "INCOMPLETE"}}},
+            {},
+            {"files": {}},
+            {"assessments": {"security": "FAIL"}},
+        ):
+            self.data = json.loads(json.dumps(original))
+            self.data["cq_after"] = assessment
+            self.save()
+            result = self.cli("check")
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("cq_after", result.stdout)
+            self.assertEqual(self.cli("stage", "COMPLETE", "--force").returncode, 1)
+        self.data = original
+        self.data["cq_after"] = {"status": "PASS", "files": {
+            "src/a.py": {"status": "PASS", "critical_failures": [], "note": "previous FAIL fixed"},
+            "src/b.py": {"status": "CONDITIONAL PASS", "gates": {"CQ14": {"status": "PASS"}}},
+        }}
+        self.data["cq_after"].update(config={}, scope={}, prove={})
+        self.save()
+        self.assertEqual(self.cli("check").returncode, 0)
+        self.assertEqual(self.cli("stage", "COMPLETE").returncode, 0)
+
+    def test_v6_pass_claim_cannot_promote_current_warn_report(self):
+        self.characterize()
+        for content in ("Status: WARN\n", "[GATE: test-quality] WARN worst=B\n",
+                        "Tier/status: A: PASS; Q7 formal WARN\n",
+                        "[GATE: test-quality] PASS; formal Q7 WARN\n"):
+            report = self.quality_report(content)
+            result = self.cli("prove", "test_quality", "PASS:B:" + report)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("PASS contradicts current report WARN", result.stderr)
+            self.data = self.read()
+            self.data["prove"]["test_quality"] = "PASS:B:" + report
+            self.save()
+            self.assertEqual(self.cli("check").returncode, 1)
+            self.assertEqual(self.cli("stage", "COMPLETE").returncode, 1)
+            self.assertEqual(self.cli("prove", "test_quality", "WARN:B:" + report).returncode, 0)
+            result = self.cli("check")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("QUALITY: WARN", result.stdout)
+
+    def test_v6_version_normalization_applies_to_cli_and_hook(self):
+        self.characterize()
+        original = self.read()
+        for version in (6, "6", " 6 ", "+6"):
+            self.data = json.loads(json.dumps(original))
+            self.data["version"] = version
+            self.data["cq_after"] = {"status": "INCOMPLETE"}
+            self.save()
+            report = self.quality_report()
+            self.assertEqual(self.cli("prove", "test_quality", "PASS:B:" + report).returncode, 2)
+            self.assertEqual(self.cli("stage", "COMPLETE").returncode, 1)
+            result = self.cli("check")
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("cq_after.status=INCOMPLETE", result.stdout)
+
+    def test_null_prove_is_rejected_before_candidate_construction(self):
+        self.data["prove"] = None
+        self.save()
+        result = self.cli("prove", "test_quality", "N/A")
+        self.assertEqual(result.returncode, 2)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIn("unreadable contract", result.stderr)
 
     def test_no_tests_and_reused_run_cannot_supply_characterization(self):
         self.assertEqual(self.cli("baseline", "true").returncode, 1)

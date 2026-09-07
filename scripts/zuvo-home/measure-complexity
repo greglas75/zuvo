@@ -1,0 +1,61 @@
+#!/bin/sh
+# Python entrypoint, also on hosts naming it python rather than python3.
+''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
+"""Non-comment LOC and approximate branch tokens; JS function extents are heuristic."""
+import ast
+from pathlib import Path
+import re
+import sys
+
+if len(sys.argv) != 2:
+    sys.exit("usage: measure-complexity <source-file>")
+try:
+    src = Path(sys.argv[1]).read_text(encoding="utf-8")
+except (OSError, UnicodeError) as exc:
+    sys.exit(f"Cannot measure source: {exc}")
+lines = src.splitlines()
+BR = re.compile(r'\b(if|elif|else if|switch|case|for|while|catch|except)\b|&&|\|\||\?\?')
+
+
+def metrics(text):
+    code = [line for line in text.splitlines()
+            if line.strip() and not line.strip().startswith(('//', '#', '*', '/*'))]
+    return len(code), sum(len(BR.findall(line)) for line in code)
+
+
+maxfn = 0
+if sys.argv[1].endswith('.py'):
+    try:
+        tree = ast.parse(src)
+    except SyntaxError as exc:
+        sys.exit(f"Cannot measure Python syntax: {exc}")
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            maxfn = max(maxfn, metrics('\n'.join(lines[node.lineno - 1:node.end_lineno]))[0])
+else:
+    # This is a discovery fallback, never AST evidence for a complexity gate.
+    signature = re.compile(
+        r'\bfunction\s+\w+|=>\s*\{|^\s{0,4}\w+\s*\([^)]*\)\s*[:{]'
+    )
+    i = 0
+    while i < len(lines):
+        if not signature.search(lines[i]):
+            i += 1
+            continue
+        depth = lines[i].count('{') - lines[i].count('}')
+        if '{' not in lines[i]:
+            sys.exit("Cannot measure multiline JS/TS signatures reliably; use the project's AST analyzer")
+        j = i + 1
+        body = [lines[i]]
+        while j < len(lines) and depth > 0:
+            body.append(lines[j])
+            depth += lines[j].count('{') - lines[j].count('}')
+            j += 1
+        if depth != 0:
+            sys.exit("Cannot determine JS/TS body extent; use the project's AST analyzer")
+        maxfn = max(maxfn, metrics('\n'.join(body))[0])
+        i = j
+    print("JS/TS function extents and branch tokens are heuristic, not complexity-gate evidence",
+          file=sys.stderr)
+floc, fbr = metrics(src)
+print(f"maxfn:{maxfn},branches:{fbr},loc:{floc}")

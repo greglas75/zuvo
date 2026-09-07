@@ -172,6 +172,11 @@ Produce the refactoring plan incorporating sub-agent results (when available):
    d. Record `test_audit_before` in contract state: `{ "test_file": "...", "q7": 0|1, "q11": 0|1, "q13": 0|1, "units_total": N, "units_covered": M, "uncovered_units": [...] }`
    e. If no test file found: record `{ "test_file": null, "units_total": N, "units_covered": 0, "uncovered_units": [...] }`
 
+Record the accepted input domain and negative behavior (throw, rejection, filtering or fallback)
+for Q7; follow the canonical Q7 definition. Tests of a private helper are evidence for that
+helper's scope, not for every branch of its caller. Freeze the characterization package before
+baseline and reserve a separate test path for any new exported helper's direct tests.
+
 6. **Test mode routing** -- Route based on test discovery results. Evaluate top-to-bottom, first match wins:
 
 | Priority | Condition | Test mode |

@@ -33,25 +33,26 @@ environment prefix alone. The MODE stays yours to choose; the result stops being
 before completion; use its supported long wait/notification mechanism. One CLI invocation does
 not guarantee one model/tool round-trip. Do not repeatedly request unchanged status.
 
+### Freeze the characterization package
+
+Before `baseline`, record the explicit test paths and command, including coverage scope for any
+planned new helper. `recheck` compares the recorded pass count as well as failures. Keep these
+characterization files unchanged after the baseline; add new direct helper tests in a separate
+file and run them with a separate command. Include that future file in the scope fence now.
+Never overwrite the old-code baseline after extraction to hide an increased test count or drift.
+Use content-keyed evidence to avoid repeating an unchanged recheck after report-only edits.
+
 **CHARACTERIZE_GAP:** The existing test does not exercise every unit being moved (`coverage_gap > 0`). Close the gap BEFORE any production edit:
 1. For **each** uncovered unit in `uncovered_units`, write a characterization (pin-down) test that executes it with a representative input and asserts on real output — mount/render the component, or call the function, with a payload that reaches actual logic (not an empty-state/early-return path). Source representative inputs from existing fixtures, sample data, or recover them from git history (e.g. `git show <sha>:<path>`) when they were deleted; never invent shapes the code never sees.
    - The bar is "fails loudly if behavior changes," not full Q1-Q25. A smoke test that mounts the unit and asserts `does not throw` + a stable output snapshot is the minimum; prefer a value assertion where the unit returns something checkable.
    - A parameterized table over the units (one case per unit) is the canonical shape for SPLIT_FILE / GOD_CLASS.
 2. Run the new tests against the **pre-refactor** code and confirm they pass. This is the lock — they must be green on the OLD code, or they are not characterizing current behavior. If a unit genuinely cannot be exercised (truly dead), record it in the contract as `dead:<unit>` with evidence and exclude it from the move; do not silently skip it.
-   - **When the unit does not exist yet (SPLIT / EXTRACT that CREATES it), the lock as written is
-     unsatisfiable** — the test cannot import a symbol that has no pre-refactor definition, and
-     that ambiguity has stalled real runs. It is not a licence to skip the lock. Satisfy it the
-     equivalent way: write the characterization test against the **extracted** unit, and assert
-     outputs that match the inline pre-refactor behaviour verbatim — which is checkable, because
-     the extracted body must be byte-identical to the moved lines (prove that with
-     `../../../shared/includes/regression-fence.md`, do not assert it). Record
-     `prove.characterization = "extracted-identical:<pre-refactor sha7>:<N>u:<test path>"` so the
-     variant is visible in telemetry rather than hidden behind the same string as a true
-     green-on-old lock.
-   - This variant is ONLY for units the refactor creates by moving existing lines. A unit whose
-     body is rewritten, merged, or newly authored is not byte-identical to anything, so it has no
-     pre-refactor behaviour to characterize — that is `WRITE_NEW` plus a behaviour decision, and
-     claiming `extracted-identical` for it is a false lock.
+   - For a private unit that will become a new export, characterize its existing consumers on
+     old code and measure that the moved lines execute. After extraction, test the new export
+     directly in the separate planned test file. A test that only runs after extraction cannot
+     substitute for an old-code baseline. Byte identity complements this evidence; it does not
+     make an unrun pre-change test green. If no consumer can exercise a moved unit, resolve that
+     gap before editing rather than inventing an `extracted-identical` baseline.
 2.5. **Probe the lock before trusting it** — per `../../../shared/includes/test-mutation-probes.md`,
    run 2-3 mutation probes against the **pre-refactor** unit and confirm the new
    characterization tests KILL them. Every probe must be reverted byte-exact; the
