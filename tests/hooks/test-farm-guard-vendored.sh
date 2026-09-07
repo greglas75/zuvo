@@ -48,7 +48,7 @@ trap 'rm -rf "$STUB"' EXIT
 # Execute the installer's exact settings merge against a symlinked fixture. This checks the
 # behavior that matters: preserve the dotfile symlink, retain unrelated settings, and remain
 # idempotent when the second run sees the normalized $HOME path written by the first.
-awk '/^import json, sys, os, stat, tempfile$/ {copy=1} copy && /^PYEOF$/ {exit} copy {print}' \
+awk '/^# merge-claude-farm-hook-settings-v1$/ {copy=1} copy && /^PYEOF$/ {exit} copy {print}' \
   "$ROOT/scripts/install.sh" > "$STUB/merge-settings.py"
 printf '%s\n' '{"theme":"dark"}' > "$STUB/settings-target.json"
 ln -s settings-target.json "$STUB/settings.json"
