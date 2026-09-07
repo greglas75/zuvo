@@ -888,7 +888,7 @@ PYEOF
     if [[ -f "$claude_settings" ]]; then
       python3 - "$claude_settings" "$fnlt_dst" <<'PYEOF' || warn "farm-no-local-tests merge into ~/.claude/settings.json failed (manual edit may be needed)"
 # merge-claude-farm-hook-settings-v1
-import json, sys, os, stat, tempfile
+import json, sys, os, shlex, stat, tempfile
 settings_path, hook_cmd = sys.argv[1], sys.argv[2]
 real_path = os.path.realpath(settings_path)
 try:
@@ -915,8 +915,15 @@ hook_cmd_norm = hook_cmd.replace(os.path.expanduser('~'), '$HOME')
 def same_hook(command):
     if not isinstance(command, str):
         return False
-    expanded = os.path.expanduser(command.replace('$HOME', os.path.expanduser('~')))
-    return os.path.normpath(expanded) == os.path.normpath(hook_cmd)
+    expanded = command.replace('$HOME', os.path.expanduser('~'))
+    try:
+        tokens = shlex.split(expanded)
+    except ValueError:
+        return False
+    return any(
+        os.path.normpath(os.path.expanduser(token)) == os.path.normpath(hook_cmd)
+        for token in tokens
+    )
 already = False
 for group in ptu:
     entries = group.get('hooks', [])

@@ -2912,14 +2912,14 @@ count_findings() {
         line=toupper($0)
         gsub(/[*_`]/, "", line)
         sub(/^[[:space:]]*/, "", line)
-        while (sub(/^(#+|[-+]|[0-9]+[.)])[[:space:]]+/, "", line)) {}
+        while (sub(/^(#+|[-+>]|[0-9]+[.)])[[:space:]]+/, "", line)) {}
         severity_words=0
         if (line ~ /CRITICAL/) severity_words++
         if (line ~ /WARNING/) severity_words++
         if (line ~ /INFO/) severity_words++
         if (line ~ /^SEVERITY:[[:space:]]*CRITICAL[[:space:]]*\|[[:space:]]*WARNING[[:space:]]*\|[[:space:]]*INFO[[:space:]]*$/) {
           next
-        } else if (line ~ /^SEVERITY:[[:space:]]*(CRITICAL|WARNING|INFO)([[:space:]]|$)/ && severity_words == 1) {
+        } else if (line ~ /^SEVERITY:[[:space:]]*(CRITICAL|WARNING|INFO)([[:space:]]|$)/) {
           sub(/^SEVERITY:[[:space:]]*/, "", line)
           sub(/[[:space:]].*/, "", line)
           count[line]++
@@ -2929,7 +2929,7 @@ count_findings() {
           sub(/:.*/, "", line)
           legacy[line]++
           uncertain=1
-        } else if (line ~ /(^|[[:space:]"])SEVERITY/ || line ~ /^(CRITICAL|WARNING|INFO)[[:space:]]*[-:]/) {
+        } else if (line ~ /^SEVERITY([[:space:]:-]|$)/ || line ~ /^(CRITICAL|WARNING|INFO)[[:space:]]*[-:]/) {
           uncertain=1
         }
         if (line ~ /^NO ISSUES FOUND[.!]?[[:space:]]*$/) clean=1

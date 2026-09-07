@@ -69,7 +69,7 @@ else
 fi
 
 mkdir -p "$STUB/home/.claude/hooks"
-printf '%s\n' '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"~/.claude/hooks/farm-no-local-tests.sh"}]}]}}' \
+printf '%s\n' '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"bash ~/.claude/hooks/farm-no-local-tests.sh"}]}]}}' \
   > "$STUB/tilde-settings.json"
 if HOME="$STUB/home" python3 "$STUB/merge-settings.py" "$STUB/tilde-settings.json" \
      "$STUB/home/.claude/hooks/farm-no-local-tests.sh" >/dev/null \
