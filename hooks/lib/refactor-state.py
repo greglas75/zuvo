@@ -92,16 +92,40 @@ def assessment_errors(contract, root, include_test_quality=True):
     bad_status = re.compile(r"^(?:INCOMPLETE|FAIL(?:ED)?|BLOCKED)(?:\b|:)", re.I)
     known_status = re.compile(r"^(?:PASS(?:ED)?|CONDITIONAL PASS|WARN(?:ING)?|COMPLETE|N/A)(?:\b|:)", re.I)
 
-    metadata = {"history", "previous", "baseline", "notes", "evidence", "artifacts", "progress",
-                "config", "scope", "prove"}
+    historical = {"history", "previous", "baseline"}
+    metadata = historical | {"notes", "evidence", "artifacts", "progress", "config", "scope", "prove"}
 
-    def visit(node, location, members=False):
+    max_depth = 64
+
+    def has_assessment_marker(node, depth=0):
+        if depth > max_depth:
+            return True
+        if isinstance(node, dict):
+            return any(
+                key not in historical
+                and (
+                    key in ("status", "verdict", "critical_failures")
+                    or re.fullmatch(r"CQ\d+|Q\d+", key)
+                    or has_assessment_marker(value, depth + 1)
+                )
+                for key, value in node.items()
+            )
+        if isinstance(node, list):
+            return any(has_assessment_marker(value, depth + 1) for value in node)
+        return False
+
+    def visit(node, location, members=False, depth=0):
+        verdict_seen = False
+        if depth > max_depth:
+            errors.append(location + ": assessment nesting exceeds 64 levels")
+            return False
         if isinstance(node, (dict, list)) and not node:
             errors.append(location + ": empty assessment")
-            return
+            return False
         if isinstance(node, dict):
             for key, value in node.items():
                 if key in ("status", "verdict", "score"):
+                    verdict_seen = verdict_seen or key != "score"
                     if key != "score" and (not isinstance(value, str) or not value.strip()):
                         errors.append(location + "." + key + ": invalid assessment status")
                     elif isinstance(value, str) and bad_status.match(value.strip()):
@@ -116,28 +140,45 @@ def assessment_errors(contract, root, include_test_quality=True):
                     elif value:
                         errors.append(location + ".critical_failures: unresolved critical failures")
                 elif key in ("files", "gates", "assessments", "results", "modules"):
-                    visit(value, location + "." + key, members=True)
+                    verdict_seen = visit(value, location + "." + key, members=True,
+                                         depth=depth + 1) or verdict_seen
                 elif re.fullmatch(r"CQ\d+|Q\d+", key) or "/" in key or "." in key:
-                    visit(value, location + "." + key)
+                    verdict_seen = visit(value, location + "." + key,
+                                         depth=depth + 1) or verdict_seen
+                elif (key in metadata and key not in historical
+                      and has_assessment_marker(value, depth + 1)):
+                    # Metadata is not itself an assessment, but it cannot be used as an
+                    # escape hatch around a current failure verdict or supply a PASS.
+                    visit(value, location + "." + key, depth=depth + 1)
                 elif key not in metadata and (members or isinstance(value, (dict, list))):
                     # Current assessment maps need not name files via one particular key.
                     # Historical/evidence containers do not represent the current verdict.
-                    visit(value, location + "." + key)
+                    verdict_seen = visit(value, location + "." + key,
+                                         depth=depth + 1) or verdict_seen
         elif isinstance(node, list):
             for index, value in enumerate(node):
-                visit(value, "%s[%d]" % (location, index))
+                verdict_seen = visit(value, "%s[%d]" % (location, index),
+                                     depth=depth + 1) or verdict_seen
         else:
             errors.append(location + ": expected an assessment object or collection")
+        return verdict_seen
 
     for key in ("cq_after", "q_after", "test_quality_assessment"):
         if key in contract:
-            visit(contract[key], key)
+            if not visit(contract[key], key):
+                errors.append(key + ": no current status or verdict")
     if not include_test_quality:
         return errors
     try:
         report = test_quality_report(field(contract, "prove.test_quality"), root)
         if report is not None:
-            for number, value in report_assessments(report.read_text(encoding="utf-8")):
+            assessments = report_assessments(report.read_text(encoding="utf-8"))
+            if not assessments:
+                errors.append(
+                    "prove.test_quality: report %s has no current status, verdict, or Tier/status row"
+                    % report.relative_to(Path(root).resolve())
+                )
+            for number, value in assessments:
                 # A leading verdict owns the value; 'PASS (previous FAIL fixed)' is PASS.
                 # Tier rows can carry the established explicit 'Q7 formal INCOMPLETE'
                 # clause, but arbitrary prose mentioning failure is not a status token.

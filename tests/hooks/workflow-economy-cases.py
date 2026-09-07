@@ -125,6 +125,41 @@ class Workflow(unittest.TestCase):
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn("cq_after.status=INCOMPLETE", result.stdout)
             self.assertEqual(installed("stage", "COMPLETE").returncode, 1)
+            (bundle / "refactor-state.py").write_text("TERMINAL = set()\n")
+            result = installed("check")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("bundled structural reader is incompatible", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            (bundle / "refactor-state.py").write_text("def truncated(:\n")
+            result = installed("check")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("bundled structural reader is corrupt", result.stderr)
+            self.assertIn("reinstall Zuvo", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            (bundle / "refactor-state.py").write_text(
+                "TERMINAL = set()\nREDUCTION_TYPES = set()\n"
+                "assessment_errors = 'broken'\ncontract_version = 'broken'\n"
+                "evidence_errors = 'broken'\nfixes_claimed = 'broken'\n"
+                "read_contract = 'broken'\ntest_quality_report = 'broken'\n"
+            )
+            result = installed("check")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("bundled structural reader is incompatible", result.stderr)
+            self.assertIn("invalid assessment_errors", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            (bundle / "refactor-state.py").write_text(
+                "import json\nTERMINAL = set()\nREDUCTION_TYPES = set()\n"
+                "def read_contract(path):\n    return json.load(open(path))\n"
+                "def broken(*args, **kwargs):\n    raise RuntimeError('damaged reader')\n"
+                "assessment_errors = broken\ncontract_version = broken\n"
+                "evidence_errors = broken\nfixes_claimed = broken\n"
+                "test_quality_report = broken\n"
+            )
+            result = installed("check")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("bundled structural reader failed (contract_version)", result.stderr)
+            self.assertIn("reinstall Zuvo", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
 
     def test_helper_install_verification_detects_corrupt_reader_copy(self):
         with tempfile.TemporaryDirectory() as home:
@@ -365,6 +400,9 @@ class Workflow(unittest.TestCase):
             {},
             {"files": {}},
             {"assessments": {"security": "FAIL"}},
+            {"comment": "assessment completed"},
+            {"results": {"module": {"evidence": {"status": "FAIL"}}}},
+            {"notes": {"status": "PASS"}},
         ):
             self.data = json.loads(json.dumps(original))
             self.data["cq_after"] = assessment
@@ -382,6 +420,41 @@ class Workflow(unittest.TestCase):
         self.save()
         self.assertEqual(self.cli("check").returncode, 0)
         self.assertEqual(self.cli("stage", "COMPLETE").returncode, 0)
+
+    def test_v6_deep_assessment_fails_cleanly(self):
+        self.characterize()
+        nested = {"status": "PASS"}
+        for _ in range(80):
+            nested = {"modules": nested}
+        self.data = self.read()
+        self.data["cq_after"] = nested
+        self.save()
+        result = self.cli("check")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("nesting exceeds 64 levels", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_v6_quality_report_requires_a_current_verdict(self):
+        self.characterize()
+        report = self.quality_report("Review completed with detailed notes, but no verdict.\n")
+        self.data = self.read()
+        self.data["prove"]["test_quality"] = "PASS:B:" + report
+        self.save()
+        result = self.cli("check")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("no current status", result.stdout)
+        self.assertEqual(self.cli("stage", "COMPLETE", "--force").returncode, 1)
+
+    def test_v6_check_rejects_an_invalid_quality_claim(self):
+        self.characterize()
+        report = self.quality_report()
+        self.data = self.read()
+        self.data["prove"]["test_quality"] = "FAIL:B:" + report
+        self.save()
+        result = self.cli("check")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("use 'PASS:<tier>", result.stdout)
+        self.assertNotIn("GATE: PASS", result.stdout)
 
     def test_v6_pass_claim_cannot_promote_current_warn_report(self):
         self.characterize()

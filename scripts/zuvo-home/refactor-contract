@@ -64,7 +64,49 @@ _READER = next((p for p in (Path(__file__).resolve().with_name("refactor-state.p
                            Path.home() / ".claude/hooks/lib/refactor-state.py") if p.is_file()), None)
 if _READER is None:
     sys.exit("refactor-contract: structural reader unavailable; reinstall Zuvo")
-_STATE = runpy.run_path(str(_READER))
+try:
+    _STATE = runpy.run_path(str(_READER))
+except Exception:
+    sys.exit("refactor-contract: bundled structural reader is corrupt; reinstall Zuvo")
+_REQUIRED_STATE_FUNCTIONS = {
+    "assessment_errors", "contract_version", "evidence_errors", "fixes_claimed", "read_contract",
+    "test_quality_report",
+}
+_REQUIRED_STATE_COLLECTIONS = {"TERMINAL", "REDUCTION_TYPES"}
+_REQUIRED_STATE_API = _REQUIRED_STATE_FUNCTIONS | _REQUIRED_STATE_COLLECTIONS
+_missing_state_api = sorted(_REQUIRED_STATE_API.difference(_STATE))
+if _missing_state_api:
+    sys.exit(
+        "refactor-contract: bundled structural reader is incompatible (missing %s); reinstall Zuvo"
+        % ", ".join(_missing_state_api)
+    )
+_invalid_state_api = sorted(
+    [name for name in _REQUIRED_STATE_FUNCTIONS if not callable(_STATE[name])]
+    + [name for name in _REQUIRED_STATE_COLLECTIONS
+       if not isinstance(_STATE[name], (set, frozenset))]
+)
+if _invalid_state_api:
+    sys.exit(
+        "refactor-contract: bundled structural reader is incompatible (invalid %s); reinstall Zuvo"
+        % ", ".join(_invalid_state_api)
+    )
+
+
+class StateReaderError(RuntimeError):
+    pass
+
+
+def state_call(name, *args, **kwargs):
+    try:
+        return _STATE[name](*args, **kwargs)
+    except (OSError, UnicodeError, RecursionError, TypeError, ValueError):
+        if name in {"assessment_errors", "test_quality_report"}:
+            raise
+        raise StateReaderError(name) from None
+    except Exception as exc:
+        raise StateReaderError(name) from exc
+
+
 _READ_VERSIONS = {}
 
 # The closed vocabulary. Everything agents actually invented is mapped onto it rather than
@@ -146,7 +188,7 @@ def read_json(path):
         _READ_VERSIONS[os.path.realpath(path)] = hashlib.sha256(Path(path).read_bytes()).hexdigest()
     except OSError:
         return None
-    return _STATE["read_contract"](path)
+    return state_call("read_contract", path)
 
 
 def write_atomic(path, data):
@@ -385,8 +427,8 @@ def cmd_stage(a, root, path):
     # So: a field is required if the contract carries it (the run was asked for it) or if the
     # contract declares schema v5 or later (it should have carried it). An older contract is held to
     # what it was actually asked to prove.
-    version = _STATE["contract_version"](c)
-    needs_red = (_STATE["fixes_claimed"](c) if version >= 6
+    version = state_call("contract_version", c)
+    needs_red = (state_call("fixes_claimed", c) if version >= 6
                  else "fix" in str(prove.get("findings_disposition", "")))
     required = [k for k in REQUIRES.get(target, [])
                 if (k in prove or version >= 5)
@@ -399,13 +441,17 @@ def cmd_stage(a, root, path):
                if str(prove.get(k, "not_run")).strip().lower() in UNPROVEN]
     quality_errors = []
     if version >= 6 and target in ("PHASE-4", "COMPLETE"):
-        quality_errors = _STATE["assessment_errors"](c, root)
+        try:
+            quality_errors = state_call("assessment_errors", c, root)
+        except (OSError, UnicodeError, RecursionError, TypeError, ValueError) as exc:
+            print("REFUSED — quality assessment is unreadable: %s" % exc, file=sys.stderr)
+            return 2
         missing.extend(quality_errors)
     if version >= 6 and target in ("PHASE-3.5", "PHASE-3.6", "PHASE-4", "COMPLETE"):
         previous_cwd = os.getcwd()
         try:
             os.chdir(root)
-            missing.extend(_STATE["evidence_errors"](c, include_fixes=target != "PHASE-3.5"))
+            missing.extend(state_call("evidence_errors", c, include_fixes=target != "PHASE-3.5"))
         finally:
             os.chdir(previous_cwd)
     if missing and (not a.force or quality_errors):
@@ -452,15 +498,19 @@ def cmd_prove(a, root, path):
         print("refactor-contract: %r is not evidence. Give the result: a verdict, a count, a path."
               % ev, file=sys.stderr)
         return 2
-    if a.field == "test_quality" and _STATE["contract_version"](c) >= 6:
+    if a.field == "test_quality" and state_call("contract_version", c) >= 6:
         try:
-            _STATE["test_quality_report"](ev, root)
+            state_call("test_quality_report", ev, root)
         except (OSError, ValueError) as exc:
             print("refactor-contract: " + str(exc), file=sys.stderr)
             return 2
         candidate = dict(c, prove=dict(c.get("prove", {}), test_quality=ev))
         if ev.startswith("PASS:"):
-            errors = _STATE["assessment_errors"](candidate, root)
+            try:
+                errors = state_call("assessment_errors", candidate, root)
+            except (OSError, UnicodeError, RecursionError, TypeError, ValueError) as exc:
+                print("refactor-contract: cannot record quality PASS: %s" % exc, file=sys.stderr)
+                return 2
             if errors:
                 print("refactor-contract: cannot record quality PASS: " + "; ".join(errors), file=sys.stderr)
                 return 2
@@ -692,6 +742,18 @@ def cmd_check(a, root, path):
     if c is None:
         print("BLOCK: unreadable contract", file=sys.stderr)
         return 2
+    version = state_call("contract_version", c)
+    if version >= 6:
+        try:
+            quality_errors = state_call("assessment_errors", c, root)
+        except (OSError, UnicodeError, RecursionError, TypeError, ValueError) as exc:
+            print("BLOCK: refactor CONTRACT quality assessment is unreadable: %s" % exc,
+                  file=sys.stderr)
+            return 2
+        if quality_errors:
+            for error in quality_errors:
+                print("BLOCK: refactor CONTRACT quality: " + error)
+            return 1
     lib = _READER.with_name("refactor-gate-lib.sh")
     if not lib.is_file():
         print("BLOCK: gate library unavailable", file=sys.stderr)
@@ -710,8 +772,8 @@ def cmd_check(a, root, path):
                                  "refactor-check", str(lib), "\n".join(scope)], cwd=root, env=env)
     if result.returncode == 0:
         print("GATE: PASS — current contract checks satisfied")
-        if _STATE["contract_version"](c) >= 6:
-            print("QUALITY: " + str(c.get("prove", {}).get("test_quality", "N/A")).split(":", 1)[0])
+        if version >= 6:
+            print("QUALITY: " + str((c.get("prove") or {}).get("test_quality", "N/A")).split(":", 1)[0])
     return result.returncode
 
 
@@ -861,4 +923,9 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except StateReaderError as exc:
+        sys.exit(
+            "refactor-contract: bundled structural reader failed (%s); reinstall Zuvo" % exc
+        )

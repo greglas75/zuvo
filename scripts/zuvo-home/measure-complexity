@@ -1,7 +1,7 @@
 #!/bin/sh
 # Python entrypoint, also on hosts naming it python rather than python3.
 ''''exec "$(command -v python3 || command -v python || echo python3)" "$0" "$@" # '''
-"""Non-comment LOC and approximate branch tokens; JS function extents are heuristic."""
+# Non-comment LOC and approximate branch tokens; JS function extents are heuristic.
 import ast
 from pathlib import Path
 import re
@@ -17,10 +17,146 @@ lines = src.splitlines()
 BR = re.compile(r'\b(if|elif|else if|switch|case|for|while|catch|except)\b|&&|\|\||\?\?')
 
 
-def metrics(text):
+def metrics(text, python_comments=False):
+    comment_prefixes = ('//', '*', '/*') + (('#',) if python_comments else ())
     code = [line for line in text.splitlines()
-            if line.strip() and not line.strip().startswith(('//', '#', '*', '/*'))]
+            if line.strip() and not line.strip().startswith(comment_prefixes)]
     return len(code), sum(len(BR.findall(line)) for line in code)
+
+
+def mask_js(text):
+    """Replace comments and literals with spaces while preserving offsets and newlines."""
+    chars = list(text)
+    masked = list(text)
+    state = "code"
+    escaped = False
+    regex_class = False
+    last_kind = None
+    last_token = ""
+    word = ""
+    paren_context = []
+    regex_prefix = set("=(:,![{};?&|+*-%^~")
+    regex_words = {"return", "case", "throw", "delete", "void", "typeof", "instanceof",
+                   "in", "of", "yield", "await", "else", "do"}
+
+    def blank(index):
+        if chars[index] != "\n":
+            masked[index] = " "
+
+    def finish_word():
+        nonlocal word, last_kind, last_token
+        if word:
+            last_kind, last_token, word = "word", word, ""
+
+    i = 0
+    while i < len(chars):
+        char = chars[i]
+        following = chars[i + 1] if i + 1 < len(chars) else ""
+        if state == "line_comment":
+            if char == "\n":
+                state = "code"
+            else:
+                blank(i)
+            i += 1
+            continue
+        if state == "block_comment":
+            blank(i)
+            if char == "*" and following == "/":
+                blank(i + 1)
+                state = "code"
+                i += 2
+            else:
+                i += 1
+            continue
+        if state in ("single", "double", "template"):
+            blank(i)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif state == "template" and char == "$" and following == "{":
+                sys.exit(
+                    "Cannot measure interpolated JS/TS templates reliably; "
+                    "use the project's AST analyzer"
+                )
+            elif char == {"single": "'", "double": '"', "template": "`"}[state]:
+                state = "code"
+                last_kind, last_token = "value", ""
+            i += 1
+            continue
+        if state == "regex":
+            blank(i)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == "[":
+                regex_class = True
+            elif char == "]":
+                regex_class = False
+            elif char == "/" and not regex_class:
+                state = "code"
+                last_kind, last_token = "value", ""
+            i += 1
+            continue
+
+        if char.isalnum() or char in "_$":
+            word += char
+            i += 1
+            continue
+        finish_word()
+        if char == "/" and following == "/":
+            blank(i)
+            blank(i + 1)
+            state = "line_comment"
+            i += 2
+            continue
+        if char == "/" and following == "*":
+            blank(i)
+            blank(i + 1)
+            state = "block_comment"
+            i += 2
+            continue
+        if char in "'\"`":
+            blank(i)
+            state = {"'": "single", '"': "double", "`": "template"}[char]
+            i += 1
+            continue
+        if char == "/" and (
+            last_kind is None
+            or (last_kind == "punct" and last_token in regex_prefix)
+            or (last_kind == "punct" and last_token == "=>")
+            or (last_kind == "punct" and last_token == "control_close")
+            or (last_kind == "word" and last_token in regex_words)
+        ):
+            blank(i)
+            state = "regex"
+            regex_class = False
+            i += 1
+            continue
+        if not char.isspace():
+            if char == "(":
+                paren_context.append(last_token if last_kind == "word" else "")
+                last_token = char
+            elif char == ")":
+                context = paren_context.pop() if paren_context else ""
+                last_token = "control_close" if context in {"if", "while", "for", "with"} else char
+            elif char == ">" and last_token == "=":
+                last_token = "=>"
+            elif char == "+" and last_token == "+":
+                last_token = "++"
+            elif char == "-" and last_token == "-":
+                last_token = "--"
+            else:
+                last_token = char
+            last_kind = "punct"
+        i += 1
+    finish_word()
+    if state not in ("code", "line_comment"):
+        sys.exit(
+            "Cannot measure unterminated JS/TS %s reliably; use the project's AST analyzer" % state
+        )
+    return "".join(masked)
 
 
 maxfn = 0
@@ -31,25 +167,49 @@ if sys.argv[1].endswith('.py'):
         sys.exit(f"Cannot measure Python syntax: {exc}")
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            maxfn = max(maxfn, metrics('\n'.join(lines[node.lineno - 1:node.end_lineno]))[0])
+            maxfn = max(
+                maxfn,
+                metrics('\n'.join(lines[node.lineno - 1:node.end_lineno]), python_comments=True)[0],
+            )
 else:
     # This is a discovery fallback, never AST evidence for a complexity gate.
+    structural = mask_js(src)
+    structural_lines = structural.splitlines()
+    params = r'\((?:[^()]|\([^()]*\))*\)'
+    method_name = r'(?:#?[A-Za-z_$][\w$]*|constructor)'
     signature = re.compile(
-        r'\bfunction\s+\w+|=>\s*\{|^\s{0,4}\w+\s*\([^)]*\)\s*[:{]'
+        r'\bfunction(?:\s+[A-Za-z_$][\w$]*)?\s*' + params + r'\s*\{'
+        r'|=>\s*\{'
+        r'|=>\s*(?![({])\S.*$'
+        r'|^\s*(?!(?:if|for|while|switch|catch|with)\b)'
+        r'(?:async\s+)?(?:get\s+|set\s+)?' + method_name +
+        r'(?:\s*<[^>{};]+>)?\s*' + params + r'\s*(?::[^;{=]+)?\s*\{'
     )
+    function_start = re.compile(r'\bfunction(?:\s+[A-Za-z_$][\w$]*)?\s*\(')
+    ambiguous_arrow = re.compile(r'=>\s*(?:$|[({])')
+    method_body = re.compile(
+        r'^\s*(?!(?:if|for|while|switch|catch|with)\b)'
+        r'(?:async\s+)?(?:get\s+|set\s+)?' + method_name +
+        r'(?:\s*<[^>{};]+>)?\s*\(.*\)\s*(?::[^;{=]+)?\s*\{'
+    )
+    computed_method = re.compile(r'^\s*(?:async\s+)?\[[^]]+\]\s*\(.*\)\s*\{')
     i = 0
-    while i < len(lines):
-        if not signature.search(lines[i]):
+    while i < len(structural_lines):
+        if ((function_start.search(structural_lines[i])
+             or ambiguous_arrow.search(structural_lines[i])
+             or method_body.search(structural_lines[i])
+             or computed_method.search(structural_lines[i]))
+                and not signature.search(structural_lines[i])):
+            sys.exit("Cannot measure multiline JS/TS signatures reliably; use the project's AST analyzer")
+        if not signature.search(structural_lines[i]):
             i += 1
             continue
-        depth = lines[i].count('{') - lines[i].count('}')
-        if '{' not in lines[i]:
-            sys.exit("Cannot measure multiline JS/TS signatures reliably; use the project's AST analyzer")
+        depth = structural_lines[i].count('{') - structural_lines[i].count('}')
         j = i + 1
-        body = [lines[i]]
-        while j < len(lines) and depth > 0:
-            body.append(lines[j])
-            depth += lines[j].count('{') - lines[j].count('}')
+        body = [structural_lines[i]]
+        while j < len(structural_lines) and depth > 0:
+            body.append(structural_lines[j])
+            depth += structural_lines[j].count('{') - structural_lines[j].count('}')
             j += 1
         if depth != 0:
             sys.exit("Cannot determine JS/TS body extent; use the project's AST analyzer")
@@ -57,5 +217,7 @@ else:
         i = j
     print("JS/TS function extents and branch tokens are heuristic, not complexity-gate evidence",
           file=sys.stderr)
-floc, fbr = metrics(src)
+is_python = sys.argv[1].endswith('.py')
+floc = metrics(src, python_comments=is_python)[0]
+fbr = metrics(src if is_python else structural, python_comments=is_python)[1]
 print(f"maxfn:{maxfn},branches:{fbr},loc:{floc}")
