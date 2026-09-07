@@ -2897,7 +2897,7 @@ count_findings() {
   ' "$result_file" | jq -ers '
     [ .[] | select(type == "object" and (.findings | type) == "array") ] as $reviews |
     if ($reviews | length) >= 1 then
-      $reviews[0].findings as $f |
+      [ $reviews[].findings[] ] as $f |
       [$f[] | objects | .severity | strings | ascii_upcase |
        select(. == "CRITICAL" or . == "WARNING" or . == "INFO")] as $s |
       [([ $s[] | select(. == "CRITICAL") ] | length),
@@ -2913,7 +2913,11 @@ count_findings() {
         gsub(/[*_`]/, "", line)
         sub(/^[[:space:]]*/, "", line)
         while (sub(/^(#+|[-+]|[0-9]+[.)])[[:space:]]+/, "", line)) {}
-        if (line ~ /^SEVERITY:[[:space:]]*(CRITICAL|WARNING|INFO)([[:space:]]|$)/ && line !~ /\|/) {
+        severity_words=0
+        if (line ~ /CRITICAL/) severity_words++
+        if (line ~ /WARNING/) severity_words++
+        if (line ~ /INFO/) severity_words++
+        if (line ~ /^SEVERITY:[[:space:]]*(CRITICAL|WARNING|INFO)([[:space:]]|$)/ && severity_words == 1) {
           sub(/^SEVERITY:[[:space:]]*/, "", line)
           sub(/[[:space:]].*/, "", line)
           count[line]++
@@ -2923,7 +2927,7 @@ count_findings() {
           sub(/:.*/, "", line)
           legacy[line]++
           uncertain=1
-        } else if ((line ~ /(^|[[:space:]"])SEVERITY/ && line !~ /\|/) || line ~ /^(CRITICAL|WARNING|INFO)[[:space:]]*[-:]/) {
+        } else if ((line ~ /(^|[[:space:]"])SEVERITY/ && severity_words <= 1) || line ~ /^(CRITICAL|WARNING|INFO)[[:space:]]*[-:]/) {
           uncertain=1
         }
         if (line ~ /^NO ISSUES FOUND[.!]?[[:space:]]*$/) clean=1

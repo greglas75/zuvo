@@ -881,33 +881,57 @@ PYEOF
   if [[ -f "$ZUVO_DIR/hooks/farm-no-local-tests.sh" ]]; then
     if [[ ! -f "$fnlt_dst" ]]; then
       warn "farm-no-local-tests.sh was not copied to ~/.claude/hooks — registration skipped"
+    elif ! chmod +x "$fnlt_dst"; then
+      warn "farm-no-local-tests.sh is not executable — registration skipped"
     else
-    chmod +x "$fnlt_dst"
     local claude_settings="$HOME/.claude/settings.json"
     if [[ -f "$claude_settings" ]]; then
       python3 - "$claude_settings" "$fnlt_dst" <<'PYEOF' || warn "farm-no-local-tests merge into ~/.claude/settings.json failed (manual edit may be needed)"
 import json, sys, os, stat, tempfile
 settings_path, hook_cmd = sys.argv[1], sys.argv[2]
+real_path = os.path.realpath(settings_path)
 try:
-    with open(settings_path, 'rb') as f:
+    with open(real_path, 'rb') as f:
         original = f.read()
-    original_mode = stat.S_IMODE(os.stat(settings_path).st_mode)
+    original_mode = stat.S_IMODE(os.stat(real_path).st_mode)
     s = json.loads(original)
+    if not isinstance(s, dict):
+        raise ValueError('root must be an object')
+    hooks = s.get('hooks')
+    if hooks is None:
+        hooks = s['hooks'] = {}
+    if not isinstance(hooks, dict):
+        raise ValueError('hooks must be an object')
+    ptu = hooks.get('PreToolUse')
+    if ptu is None:
+        ptu = hooks['PreToolUse'] = []
+    if not isinstance(ptu, list) or not all(isinstance(group, dict) for group in ptu):
+        raise ValueError('PreToolUse must be an array of objects')
 except Exception as e:
     print(f'  ! ~/.claude/settings.json is malformed ({e}) — skipping farm-no-local-tests merge')
     sys.exit(1)
-hooks = s.setdefault('hooks', {})
-ptu = hooks.setdefault('PreToolUse', [])
 hook_cmd_norm = hook_cmd.replace(os.path.expanduser('~'), '$HOME')
-already = any(group.get('matcher') == 'Bash' and any(
-    h.get('type') == 'command' and h.get('command') == hook_cmd_norm
-    for h in group.get('hooks', [])
-) for group in ptu)
+def same_hook(command):
+    if not isinstance(command, str):
+        return False
+    expanded = command.replace('$HOME', os.path.expanduser('~'))
+    return os.path.normpath(expanded) == os.path.normpath(hook_cmd)
+already = False
+for group in ptu:
+    entries = group.get('hooks', [])
+    if not isinstance(entries, list) or not all(isinstance(h, dict) for h in entries):
+        print('  ! ~/.claude/settings.json is malformed (hook entries must be objects) — skipping farm-no-local-tests merge')
+        sys.exit(1)
+    if group.get('matcher') == 'Bash' and any(
+        h.get('type') in (None, 'command') and same_hook(h.get('command')) for h in entries
+    ):
+        already = True
+        break
 if already:
     print('  ✓ farm-no-local-tests already registered in ~/.claude/settings.json (no change)')
     sys.exit(0)
 ptu.append({'matcher': 'Bash', 'hooks': [{'type': 'command', 'command': hook_cmd_norm, 'timeout': 10}]})
-fd, temporary = tempfile.mkstemp(prefix='.settings.', suffix='.tmp', dir=os.path.dirname(os.path.abspath(settings_path)))
+fd, temporary = tempfile.mkstemp(prefix='.settings.', suffix='.tmp', dir=os.path.dirname(real_path))
 try:
     with os.fdopen(fd, 'w') as f:
         json.dump(s, f, indent=2)
@@ -915,10 +939,10 @@ try:
         f.flush()
         os.fsync(f.fileno())
     os.chmod(temporary, original_mode)
-    with open(settings_path, 'rb') as f:
+    with open(real_path, 'rb') as f:
         if f.read() != original:
-            raise RuntimeError('settings changed concurrently; refusing to overwrite newer content')
-    os.replace(temporary, settings_path)
+            raise RuntimeError('settings changed during merge; retry the installation')
+    os.replace(temporary, real_path)
 finally:
     if os.path.exists(temporary):
         os.unlink(temporary)

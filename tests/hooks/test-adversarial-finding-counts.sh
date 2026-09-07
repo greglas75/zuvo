@@ -77,6 +77,10 @@ printf 'SEVERITY: CRITICAL | WARNING | INFO\nNO ISSUES FOUND.\n' > "$TMP/fixture
 run_case format_echo '0 0 0'
 printf '```json\n{"example":true}\n```\n```json\n{"findings":[{"severity":"WARNING"}]}\n```\n' > "$TMP/fixture"
 run_case multiple_json_fences '0 1 0'
+printf '```json\n{"findings":[]}\n```\n```json\n{"findings":[{"severity":"CRITICAL"}]}\n```\n' > "$TMP/fixture"
+run_case multiple_findings_envelopes '1 0 0'
+printf 'SEVERITY: CRITICAL | CONFIDENCE: high\n' > "$TMP/fixture"
+run_case inline_pipe_fields '1 0 0'
 printf '### 1. SEVERITY: CRITICAL\nSEVERITY: WARNING\n' > "$TMP/fixture"
 run_case compound_heading '1 1 0'
 printf 'SEVERITY: CRITICAL\nSeverity - WARNING\n' > "$TMP/fixture"

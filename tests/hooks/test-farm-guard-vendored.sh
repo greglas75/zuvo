@@ -33,14 +33,6 @@ else
   bad "install.sh does not register the guard — it would ship as an inert file again"
 fi
 
-if grep -q "if \[\[ ! -f \"\$fnlt_dst\" \]\]" "$ROOT/scripts/install.sh" \
-   && grep -q "os.replace(temporary, settings_path)" "$ROOT/scripts/install.sh" \
-   && grep -q "settings changed concurrently; refusing to overwrite" "$ROOT/scripts/install.sh"; then
-  pass "installer verifies the copied hook and publishes settings atomically"
-else
-  bad "installer can register a missing hook or rewrite settings non-atomically"
-fi
-
 # Behaviour. Exit 0 = allowed through; non-zero = refused.
 #
 # Hermetic on purpose, so the same assertions hold on the farm as on the workstation:
@@ -52,6 +44,38 @@ fi
 STUB="$(mktemp -d)"
 printf '#!/bin/sh\nexit 0\n' > "$STUB/rt"; chmod +x "$STUB/rt"
 trap 'rm -rf "$STUB"' EXIT
+
+# Execute the installer's exact settings merge against a symlinked fixture. This checks the
+# behavior that matters: preserve the dotfile symlink, retain unrelated settings, and remain
+# idempotent when the second run sees the normalized $HOME path written by the first.
+awk '/^import json, sys, os, stat, tempfile$/ {copy=1} copy && /^PYEOF$/ {exit} copy {print}' \
+  "$ROOT/scripts/install.sh" > "$STUB/merge-settings.py"
+printf '%s\n' '{"theme":"dark"}' > "$STUB/settings-target.json"
+ln -s settings-target.json "$STUB/settings.json"
+if python3 "$STUB/merge-settings.py" "$STUB/settings.json" "$STUB/farm-no-local-tests.sh" >/dev/null \
+   && python3 "$STUB/merge-settings.py" "$STUB/settings.json" "$STUB/farm-no-local-tests.sh" >/dev/null \
+   && [ -L "$STUB/settings.json" ] \
+   && python3 - "$STUB/settings-target.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+entries = [hook for group in data['hooks']['PreToolUse'] for hook in group['hooks']]
+assert data['theme'] == 'dark'
+assert sum(hook.get('command', '').endswith('farm-no-local-tests.sh') for hook in entries) == 1
+PY
+then
+  pass "settings merge preserves symlinks, unrelated fields, and idempotency"
+else
+  bad "settings merge breaks symlinks, unrelated fields, or idempotency"
+fi
+
+printf 'null\n' > "$STUB/malformed.json"
+if python3 "$STUB/merge-settings.py" "$STUB/malformed.json" "$STUB/farm-no-local-tests.sh" >/dev/null 2>&1; then
+  bad "settings merge accepts a non-object root"
+elif [ "$(cat "$STUB/malformed.json")" = null ]; then
+  pass "settings merge rejects malformed schema without rewriting it"
+else
+  bad "settings merge changed malformed input before rejecting it"
+fi
 
 probe() {  # <label> <expect: allow|block> <command text>
   local label="$1" expect="$2" cmd="$3" rc
