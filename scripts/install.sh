@@ -920,10 +920,13 @@ def same_hook(command):
         tokens = shlex.split(expanded)
     except ValueError:
         return False
-    return any(
-        os.path.normpath(os.path.expanduser(token)) == os.path.normpath(hook_cmd)
-        for token in tokens
-    )
+    if len(tokens) == 1:
+        candidate = tokens[0]
+    elif len(tokens) == 2 and os.path.basename(tokens[0]) in ('bash', 'sh'):
+        candidate = tokens[1]
+    else:
+        return False
+    return os.path.normpath(os.path.expanduser(candidate)) == os.path.normpath(hook_cmd)
 already = False
 for group in ptu:
     entries = group.get('hooks', [])

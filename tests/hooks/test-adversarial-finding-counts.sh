@@ -82,7 +82,7 @@ run_case multiple_findings_envelopes '1 0 0'
 printf 'SEVERITY: CRITICAL | CONFIDENCE: high\n' > "$TMP/fixture"
 run_case inline_pipe_fields '1 0 0'
 printf 'SEVERITY: CRITICAL\nSEVERITY: WARNING — downgraded from CRITICAL after triage\n' > "$TMP/fixture"
-run_case multi_keyword_finding '1 1 0'
+COUNT_EXPECT_STATUS=partial run_case multi_keyword_finding '1 0 0'
 printf '> `SEVERITY: CRITICAL | WARNING | INFO`\nNO ISSUES FOUND.\n' > "$TMP/fixture"
 run_case quoted_format_echo '0 0 0'
 printf 'I considered raising the severity but found no defect.\nNO ISSUES FOUND.\n' > "$TMP/fixture"

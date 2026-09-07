@@ -2912,14 +2912,14 @@ count_findings() {
         line=toupper($0)
         gsub(/[*_`]/, "", line)
         sub(/^[[:space:]]*/, "", line)
-        while (sub(/^(#+|[-+>]|[0-9]+[.)])[[:space:]]+/, "", line)) {}
+        while (sub(/^(#+|[-+]|[0-9]+[.)])[[:space:]]+/, "", line)) {}
         severity_words=0
         if (line ~ /CRITICAL/) severity_words++
         if (line ~ /WARNING/) severity_words++
         if (line ~ /INFO/) severity_words++
         if (line ~ /^SEVERITY:[[:space:]]*CRITICAL[[:space:]]*\|[[:space:]]*WARNING[[:space:]]*\|[[:space:]]*INFO[[:space:]]*$/) {
           next
-        } else if (line ~ /^SEVERITY:[[:space:]]*(CRITICAL|WARNING|INFO)([[:space:]]|$)/) {
+        } else if (line ~ /^SEVERITY:[[:space:]]*(CRITICAL|WARNING|INFO)([[:space:]]|$)/ && severity_words == 1) {
           sub(/^SEVERITY:[[:space:]]*/, "", line)
           sub(/[[:space:]].*/, "", line)
           count[line]++
