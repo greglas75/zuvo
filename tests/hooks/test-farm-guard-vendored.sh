@@ -33,6 +33,14 @@ else
   bad "install.sh does not register the guard — it would ship as an inert file again"
 fi
 
+if grep -q "if \[\[ ! -f \"\$fnlt_dst\" \]\]" "$ROOT/scripts/install.sh" \
+   && grep -q "os.replace(temporary, settings_path)" "$ROOT/scripts/install.sh" \
+   && grep -q "settings changed concurrently; refusing to overwrite" "$ROOT/scripts/install.sh"; then
+  pass "installer verifies the copied hook and publishes settings atomically"
+else
+  bad "installer can register a missing hook or rewrite settings non-atomically"
+fi
+
 # Behaviour. Exit 0 = allowed through; non-zero = refused.
 #
 # Hermetic on purpose, so the same assertions hold on the farm as on the workstation:

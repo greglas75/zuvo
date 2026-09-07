@@ -71,6 +71,12 @@ printf 'Here is the review:\n```json\n{"findings":[{"severity":"CRITICAL"}]}\n``
 run_case wrapped_json '1 0 0' --json
 printf 'CRITICAL: None\nWARNING: 0\nINFO: No issues\n' > "$TMP/fixture"
 run_case negative_summary '0 0 0'
+printf 'SEVERITY: NONE\n' > "$TMP/fixture"
+run_case severity_none '0 0 0'
+printf 'SEVERITY: CRITICAL | WARNING | INFO\nNO ISSUES FOUND.\n' > "$TMP/fixture"
+run_case format_echo '0 0 0'
+printf '```json\n{"example":true}\n```\n```json\n{"findings":[{"severity":"WARNING"}]}\n```\n' > "$TMP/fixture"
+run_case multiple_json_fences '0 1 0'
 printf '### 1. SEVERITY: CRITICAL\nSEVERITY: WARNING\n' > "$TMP/fixture"
 run_case compound_heading '1 1 0'
 printf 'SEVERITY: CRITICAL\nSeverity - WARNING\n' > "$TMP/fixture"

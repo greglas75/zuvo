@@ -879,37 +879,54 @@ PYEOF
   # install_hook_tree above; only the registration is here. PreToolUse matcher=Bash.
   local fnlt_dst="$hooks_dir/farm-no-local-tests.sh"
   if [[ -f "$ZUVO_DIR/hooks/farm-no-local-tests.sh" ]]; then
-    chmod +x "$fnlt_dst" 2>/dev/null || true
-    ok "farm-no-local-tests.sh installed (~/.claude/hooks/)"
+    if [[ ! -f "$fnlt_dst" ]]; then
+      warn "farm-no-local-tests.sh was not copied to ~/.claude/hooks — registration skipped"
+    else
+    chmod +x "$fnlt_dst"
     local claude_settings="$HOME/.claude/settings.json"
     if [[ -f "$claude_settings" ]]; then
       python3 - "$claude_settings" "$fnlt_dst" <<'PYEOF' || warn "farm-no-local-tests merge into ~/.claude/settings.json failed (manual edit may be needed)"
-import json, sys, os
+import json, sys, os, stat, tempfile
 settings_path, hook_cmd = sys.argv[1], sys.argv[2]
 try:
-    with open(settings_path) as f:
-        s = json.load(f)
+    with open(settings_path, 'rb') as f:
+        original = f.read()
+    original_mode = stat.S_IMODE(os.stat(settings_path).st_mode)
+    s = json.loads(original)
 except Exception as e:
     print(f'  ! ~/.claude/settings.json is malformed ({e}) — skipping farm-no-local-tests merge')
     sys.exit(1)
 hooks = s.setdefault('hooks', {})
 ptu = hooks.setdefault('PreToolUse', [])
 hook_cmd_norm = hook_cmd.replace(os.path.expanduser('~'), '$HOME')
-already = any(
-    any(h.get('command', '').endswith('farm-no-local-tests.sh') for h in group.get('hooks', []))
-    for group in ptu
-)
+already = any(group.get('matcher') == 'Bash' and any(
+    h.get('type') == 'command' and h.get('command') == hook_cmd_norm
+    for h in group.get('hooks', [])
+) for group in ptu)
 if already:
     print('  ✓ farm-no-local-tests already registered in ~/.claude/settings.json (no change)')
     sys.exit(0)
 ptu.append({'matcher': 'Bash', 'hooks': [{'type': 'command', 'command': hook_cmd_norm, 'timeout': 10}]})
-with open(settings_path, 'w') as f:
-    json.dump(s, f, indent=2)
-    f.write('\n')
+fd, temporary = tempfile.mkstemp(prefix='.settings.', suffix='.tmp', dir=os.path.dirname(os.path.abspath(settings_path)))
+try:
+    with os.fdopen(fd, 'w') as f:
+        json.dump(s, f, indent=2)
+        f.write('\n')
+        f.flush()
+        os.fsync(f.fileno())
+    os.chmod(temporary, original_mode)
+    with open(settings_path, 'rb') as f:
+        if f.read() != original:
+            raise RuntimeError('settings changed concurrently; refusing to overwrite newer content')
+    os.replace(temporary, settings_path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
 print('  ✓ farm-no-local-tests registered in ~/.claude/settings.json (PreToolUse matcher=Bash)')
 PYEOF
     else
       warn "~/.claude/settings.json not found — farm-no-local-tests not registered"
+    fi
     fi
   else
     warn "hooks/farm-no-local-tests.sh not found in repo — farm guard not installed"

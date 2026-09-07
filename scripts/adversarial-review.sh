@@ -2895,8 +2895,9 @@ count_findings() {
     { raw=raw $0 ORS; if (inside) json=json $0 ORS }
     END { printf "%s", fenced ? json : raw }
   ' "$result_file" | jq -ers '
-    if length == 1 and (.[0] | type) == "object" and (.[0].findings | type) == "array" then
-      .[0].findings as $f |
+    [ .[] | select(type == "object" and (.findings | type) == "array") ] as $reviews |
+    if ($reviews | length) >= 1 then
+      $reviews[0].findings as $f |
       [$f[] | objects | .severity | strings | ascii_upcase |
        select(. == "CRITICAL" or . == "WARNING" or . == "INFO")] as $s |
       [([ $s[] | select(. == "CRITICAL") ] | length),
@@ -2912,17 +2913,17 @@ count_findings() {
         gsub(/[*_`]/, "", line)
         sub(/^[[:space:]]*/, "", line)
         while (sub(/^(#+|[-+]|[0-9]+[.)])[[:space:]]+/, "", line)) {}
-        if (line ~ /^SEVERITY:[[:space:]]*(CRITICAL|WARNING|INFO)([[:space:]]|$)/) {
+        if (line ~ /^SEVERITY:[[:space:]]*(CRITICAL|WARNING|INFO)([[:space:]]|$)/ && line !~ /\|/) {
           sub(/^SEVERITY:[[:space:]]*/, "", line)
           sub(/[[:space:]].*/, "", line)
           count[line]++
-        } else if (line ~ /^(CRITICAL|WARNING|INFO):[[:space:]]*(NONE|0|NO ISSUES)[.!]?[[:space:]]*$/) {
+        } else if (line ~ /^(SEVERITY|CRITICAL|WARNING|INFO):[[:space:]]*(NONE|0|NO ISSUES)[.!]?[[:space:]]*$/) {
           clean=1
         } else if (line ~ /^(CRITICAL|WARNING|INFO):[[:space:]]+[^[:space:]]/) {
           sub(/:.*/, "", line)
           legacy[line]++
           uncertain=1
-        } else if (line ~ /(^|[[:space:]"])SEVERITY/ || line ~ /^(CRITICAL|WARNING|INFO)[[:space:]]*[-:]/) {
+        } else if ((line ~ /(^|[[:space:]"])SEVERITY/ && line !~ /\|/) || line ~ /^(CRITICAL|WARNING|INFO)[[:space:]]*[-:]/) {
           uncertain=1
         }
         if (line ~ /^NO ISSUES FOUND[.!]?[[:space:]]*$/) clean=1
