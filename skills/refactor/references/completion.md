@@ -10,20 +10,26 @@ In no-commit mode: Phase 3.5 showed both diffs + proposed messages instead of co
 
 ### Update Contract State
 
+Apply `change-assessment.md` first. `cq_after` is the refactor-delta assessment; retain the full
+post-audit unchanged in its linked artifact. Verified baseline debt requires WARN and explicit
+disclosure, never an overall code-quality PASS. New/unproven failures still block.
+
 Mark contract: `"stage": "COMPLETE"`, `"cq_after": { "score": "18/18", "critical_failures": [] }`, `"commits": ["abc1234"]`.
 
-**When any CQ gate is N/A, record BOTH denominators** — a bare `18/18` is ambiguous about whether
-eighteen gates were evaluated or eighteen of thirty applied:
+**Record applicability separately from compliance.** N/A is excluded from both numerator and
+denominator; never count an unevaluated gate as passing:
 
 ```json
-"cq_after": { "score": "29/29", "applicable_score": "17/17", "na": 12, "critical_failures": [] }
+"cq_after": { "status": "PASS", "score": "17/17", "in_scope": 29, "na": 12,
+  "critical_failures": [], "applicability_review": { "status": "PASS",
+  "scorer": "<original scorer identity and model>",
+  "reviewer": "<independent reviewer identity and model>", "artifact": "<existing review path>" } }
 ```
 
-`score` counts every gate in the set (N/A gates score as passing, since a gate that does not apply
-cannot fail); `applicable_score` counts only the evaluated ones. The gate is passing when **every
-applicable check passes AND every N/A carries its evidence** — an N/A without a stated reason is an
-unevaluated gate wearing a passing badge, per the three-state rules in
-`../../../shared/includes/gate-registry.md`.
+Every N/A needs precondition/source/search evidence. When its count exceeds `floor(in_scope / 3)`,
+record the independent applicability review's actual identity, result and artifact before PASS.
+Unknown evidence remains 0/unproven. Use the normal percentage and active-critical-gate rules in
+`../../../shared/includes/gate-registry.md`; completed WARN differs from INCOMPLETE.
 
 ### CodeSift Index Update
 
@@ -121,6 +127,13 @@ receipt `~/.zuvo/log-ideas --skill refactor --count <N>` (N=0 is the normal, hon
 not invent ideas to inflate it). The receipt makes the un-gated step's silence auditable in
 `~/.zuvo/ideas.log` without forcing ideation.
 
+### Verification and quality status
+
+Keep actual command success separate from assessment completeness. Persist current CQ and
+per-file statuses in `cq_after`; do not hide INCOMPLETE behind a descriptive `clean` string.
+Use `refactor-contract check` and its real exit code. Completed WARN assessments retain their
+warnings; an unmet mandatory assessment blocks COMPLETE even if all tests and build passed.
+
 ### Retrospective (REQUIRED)
 
 Follow the retrospective protocol from `retrospective.md`.
@@ -160,7 +173,7 @@ COMPLETION GATE CHECK
 ```
 
 **Do not conflate three different things** — the verifier separates them, and so must you:
-- **SAFETY gates** — blind-audit (Independent CQ Auditor), adversarial review, characterization coverage. These prove the refactor did not break behavior. **Never skippable, never reducible by user scope, never "looks small so I skipped it."** Skipping one = the code is *unsafe* = `BLOCKED`. **Running a gate and then parking its findings is the same failure** — an adversarial pass that surfaces 8 bugs and backlogs them (instead of fixing introduced regressions and authorized existing bugs in Phase 3.5) is `BLOCKED(unsafe)`, not done. The gate's value is the remediation, not the ceremony of having run it.
+- **SAFETY gates** — blind-audit (Independent CQ Auditor), adversarial review, characterization coverage. These prove the refactor did not break behavior. **Never skippable, never reducible by user scope, never "looks small so I skipped it."** Skipping one = the code is *unsafe* = `BLOCKED`. **Running a gate and then parking introduced/worsened or unproven findings is the same failure** — an adversarial pass that surfaces 8 bugs and backlogs them (instead of fixing introduced regressions and authorized existing bugs in Phase 3.5) is `BLOCKED(unsafe)`, not done. The gate's value is the remediation, not the ceremony of having run it.
 - **BUILD SCOPE** — targeted package type-check/tests vs full `turbo build/test --force`. The user *may* legitimately narrow this ("just type-check + targeted tests"), but only if you **declare it**: `[SCOPE: user-reduced — targeted type-check+tests; full build skipped per user]`. Silent narrowing is not allowed; declared narrowing is fine.
 - **TELEMETRY** — retro, run-log, CONTRACT, review artifact. These don't make the code safer, but they are the durable PROOF the gates ran and the history the skill improves from (losing them is exactly how months of retros vanished). Cheap; always do them. Missing telemetry ⇒ the run is *unrecorded* (`INCOMPLETE`), not necessarily unsafe — but it is **not done** either.
 

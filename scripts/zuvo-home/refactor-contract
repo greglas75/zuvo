@@ -59,7 +59,8 @@ import shutil
 from pathlib import Path
 from workflow_evidence import snapshot
 
-_READER = next((p for p in (Path(__file__).resolve().parents[2] / "hooks/lib/refactor-state.py",
+_READER = next((p for p in (Path(__file__).resolve().with_name("refactor-state.py"),
+                           Path(__file__).resolve().parents[2] / "hooks/lib/refactor-state.py",
                            Path.home() / ".claude/hooks/lib/refactor-state.py") if p.is_file()), None)
 if _READER is None:
     sys.exit("refactor-contract: structural reader unavailable; reinstall Zuvo")
@@ -384,18 +385,22 @@ def cmd_stage(a, root, path):
     # So: a field is required if the contract carries it (the run was asked for it) or if the
     # contract declares schema v5 or later (it should have carried it). An older contract is held to
     # what it was actually asked to prove.
-    version = c.get("version") or 0
-    try:
-        version = int(version)
-    except (TypeError, ValueError):
-        version = 0
+    version = _STATE["contract_version"](c)
+    needs_red = (_STATE["fixes_claimed"](c) if version >= 6
+                 else "fix" in str(prove.get("findings_disposition", "")))
     required = [k for k in REQUIRES.get(target, [])
                 if (k in prove or version >= 5)
-                and (k != "regression_red" or "fix" in str(prove.get("findings_disposition", "")))]
+                and (k != "regression_red" or needs_red)
+                and (k != "complexity_before" or version < 6
+                     or c.get("type") in _STATE["REDUCTION_TYPES"])]
     if version >= 6 and target in ("PHASE-3.5", "PHASE-3.6", "PHASE-4", "COMPLETE"):
         required.append("characterization_after")
     missing = [k for k in required
                if str(prove.get(k, "not_run")).strip().lower() in UNPROVEN]
+    quality_errors = []
+    if version >= 6 and target in ("PHASE-4", "COMPLETE"):
+        quality_errors = _STATE["assessment_errors"](c, root)
+        missing.extend(quality_errors)
     if version >= 6 and target in ("PHASE-3.5", "PHASE-3.6", "PHASE-4", "COMPLETE"):
         previous_cwd = os.getcwd()
         try:
@@ -403,7 +408,7 @@ def cmd_stage(a, root, path):
             missing.extend(_STATE["evidence_errors"](c, include_fixes=target != "PHASE-3.5"))
         finally:
             os.chdir(previous_cwd)
-    if missing and not a.force:
+    if missing and (not a.force or quality_errors):
         print("REFUSED — %s requires evidence this contract does not carry:" % target,
               file=sys.stderr)
         for k in missing:
@@ -412,8 +417,15 @@ def cmd_stage(a, root, path):
               file=sys.stderr)
         print("  A stage recorded without its proof is a claim, not a state — and this contract is"
               "\n  what a resumed run, the commit gate and the retro all read as fact.", file=sys.stderr)
-        print("  --force records it anyway and is a human's call to make, not the skill's.",
-              file=sys.stderr)
+        if quality_errors:
+            print(
+                "  Finish or correct the current assessment; "
+                "--force cannot certify incomplete or failed quality.",
+                file=sys.stderr,
+            )
+        else:
+            print("  --force records it anyway and is a human's call to make, not the skill's.",
+                  file=sys.stderr)
         return 1
 
     c["stage"] = target
@@ -440,6 +452,18 @@ def cmd_prove(a, root, path):
         print("refactor-contract: %r is not evidence. Give the result: a verdict, a count, a path."
               % ev, file=sys.stderr)
         return 2
+    if a.field == "test_quality" and _STATE["contract_version"](c) >= 6:
+        try:
+            _STATE["test_quality_report"](ev, root)
+        except (OSError, ValueError) as exc:
+            print("refactor-contract: " + str(exc), file=sys.stderr)
+            return 2
+        candidate = dict(c, prove=dict(c.get("prove", {}), test_quality=ev))
+        if ev.startswith("PASS:"):
+            errors = _STATE["assessment_errors"](candidate, root)
+            if errors:
+                print("refactor-contract: cannot record quality PASS: " + "; ".join(errors), file=sys.stderr)
+                return 2
     c.setdefault("prove", {})[a.field] = ev
     if not write_atomic(path, c):
         print("refactor-contract: could not write %s" % path, file=sys.stderr)
@@ -686,6 +710,8 @@ def cmd_check(a, root, path):
                                  "refactor-check", str(lib), "\n".join(scope)], cwd=root, env=env)
     if result.returncode == 0:
         print("GATE: PASS — current contract checks satisfied")
+        if _STATE["contract_version"](c) >= 6:
+            print("QUALITY: " + str(c.get("prove", {}).get("test_quality", "N/A")).split(":", 1)[0])
     return result.returncode
 
 

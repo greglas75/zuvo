@@ -16,6 +16,8 @@
 set -u
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# Exercise the exact documented measurement entrypoint, not a copy of its Python body.
+python3 "$ROOT/tests/hooks/refactor-measurement-cases.py" || exit 1
 LIB="$ROOT/hooks/lib/refactor-gate-lib.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 fails=0

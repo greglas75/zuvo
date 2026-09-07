@@ -625,6 +625,8 @@ install_zuvo_home() {
   # because a missing include is skipped rather than reported.
   for _src in "$ZUVO_DIR"/scripts/zuvo-home/* "$ZUVO_DIR"/scripts/adversarial-review.sh \
               "$ZUVO_DIR"/scripts/review-artifact-sync.sh \
+              "$ZUVO_DIR"/hooks/lib/refactor-state.py \
+              "$ZUVO_DIR"/hooks/lib/refactor-gate-lib.sh "$ZUVO_DIR"/hooks/lib/agent-env.sh \
               "$ZUVO_DIR"/shared/includes/model-registry.sh; do
     [[ -f "$_src" ]] || continue
     local _name; _name="$(basename "$_src")"
@@ -654,6 +656,16 @@ install_zuvo_home() {
     else
       warn "$_name not installed (~/.zuvo/$_name) — copy failed"
       _skipped=$((_skipped + 1))
+    fi
+  done
+  # refactor-contract resolves its reader and check gate beside itself. These canonical
+  # dependencies must travel with every helper install, including Codex-only installs;
+  # falling back to another platform's older hooks silently revives obsolete checks.
+  for _name in refactor-state.py refactor-gate-lib.sh agent-env.sh; do
+    if ! cmp -s "$ZUVO_DIR/hooks/lib/$_name" "$HOME/.zuvo/$_name"; then
+      INSTALL_VERIFY_MISSING=$((INSTALL_VERIFY_MISSING + 1))
+      INSTALL_VERIFY_DETAIL="${INSTALL_VERIFY_DETAIL} refactor-contract dependency: $HOME/.zuvo/$_name"
+      fail "refactor-contract dependency $_name did not match the canonical source"
     fi
   done
   if [[ "$_skipped" -gt 0 ]]; then
@@ -1175,6 +1187,9 @@ install_codex() {
     cp "$ZUVO_DIR"/scripts/test-coverage-gate.py "$HOME/.codex/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/reviewer-preflight.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     cp "$ZUVO_DIR"/scripts/review-artifact-sync.sh "$HOME/.codex/scripts/" 2>/dev/null || true
+    # mutation-test resolves these helpers from the active Codex root.
+    cp "$ZUVO_DIR"/scripts/stryker-scoped-config.sh "$HOME/.codex/scripts/" 2>/dev/null || true
+    cp "$ZUVO_DIR"/scripts/mutation-survivor-reprobe.sh "$HOME/.codex/scripts/" 2>/dev/null || true
     # review-artifact-sync.sh sources path-contain.sh from its OWN directory, so the shared
     # containment rule has to travel with it (B-PATH-CONTAIN-SHARED-FN). Without this the
     # script refuses to sync rather than falling back to a private copy of the rule.
@@ -1196,7 +1211,7 @@ install_codex() {
     # accumulate, then decide.
     _vc_rc=0
     verify_copied "codex scripts" "$ZUVO_DIR/scripts" "$HOME/.codex/scripts" \
-      benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh || _vc_rc=1
+      benchmark.sh adversarial-review.sh reviewer-model-route.sh blind-audit-codex.sh infra-collect.sh test-coverage-gate.py reviewer-preflight.sh review-artifact-sync.sh install-refactor-gate.sh stryker-scoped-config.sh mutation-survivor-reprobe.sh || _vc_rc=1
     verify_copied "codex scripts (gate)" "$ZUVO_DIR/hooks" "$HOME/.codex/scripts" refactor-safety-gate.sh || _vc_rc=1
     verify_copied "codex scripts (lib)" "$ZUVO_DIR/hooks/lib" "$HOME/.codex/scripts" path-contain.sh || _vc_rc=1
     if [ "$_vc_rc" -eq 0 ]; then

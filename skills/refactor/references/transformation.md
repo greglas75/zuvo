@@ -11,33 +11,19 @@ git checkout -  # return to original branch
 
 ### Execute Refactoring
 
-**UNIVERSAL EXECUTOR ISOLATION (every refactor, every type and mode — no exceptions).** The
-execution phase runs in a FRESH context whose entire payload is: the CONTRACT state file (with
-the persisted plan), the Dependency Mapper output, the target file list, the scoped test +
-typecheck commands, and `cq-patterns.md`. NOT this skill, NOT the Phase 0–2 transcript. The executor is a MECHANICAL worker —
-it applies a frozen CONTRACT plan — so it is dispatchable wherever dispatch exists, and a HANDOFF
-is the LAST resort, never the default for "not Claude Code":
+Apply the frozen plan in a fresh mechanical executor when delegation is permitted by the
+resolved execution policy. Supply only the contract, caller/reuse findings, target paths,
+verification commands and applicable CQ requirements. The coordinator retains ownership of
+review and completion. Record the actual executor and its context isolation; a new thread with
+the same model is not an independent review.
 
-1. **Claude Code** — dispatch an executor sub-agent with exactly that payload.
-2. **Codex (>= 0.128)** — dispatch it too. This is the exact case `env-compat.md` permits: Codex has
-   native sub-agents (`~/.codex/agents/`, `multi_agent` feature) and this build generates their
-   TOMLs. Use ONE explicitly bounded wait sized to the task, no re-poll loop, and record
-   `codex-dispatch:bounded-wait`. **Do NOT print a HANDOFF just because the harness is not Claude
-   Code.**
-3. **Only where dispatch genuinely does not exist** (Cursor, Antigravity), or when that bounded wait
-   expires, print `[HANDOFF] plan frozen — clean-window execute: fresh context (`/clear` in Claude
-   Code, a NEW CONVERSATION in Codex), then zuvo:refactor continue` and record
-   `codex-handoff:fallback`.
-
-The `continue` path resumes from the CONTRACT `stage` and must load ONLY the payload above. The executor follows the extraction list mechanically; ANY conflict with reality — a
-hidden coupling, an importer the map missed, a unit without an exercising test — is a STOP and
-report back (CHARACTERIZE_GAP), the coordinator amends the plan/contract, never the executor
-improvising silently. Rationale: execution is the longest, most turn-heavy phase, and each turn
-re-bills the full prefix; the skill's context is needed to PRODUCE the plan, not to apply
-extractions from it. Isolation is unconditional so no classification or mode can route a
-refactor around it — cost falls by architecture, never by waived rigor. All existing gates run
-unchanged for every refactor: tests green after each extraction, Phase 2 coverage gate,
-post-audit, adversarial review.
+When delegation is forbidden or unavailable, apply the plan inline and record that isolation
+was unavailable, citing the governing instruction or actual unavailable-tool result from the
+resolved policy. The executor cannot invent a restriction to certify its own isolation. Do not claim a fresh context, request an unnecessary new conversation or
+invent a capability restriction. A wait timeout is an observation, not cancellation: check the
+existing worker before starting another. Missing callers or uncovered moved units return to
+planning/characterization; they do not authorize new behavior. All verification and review
+requirements still apply.
 
 Record `PRE_REFACTOR_SHA = $(git rev-parse HEAD)` at the start of Phase 3, before any changes.
 
@@ -81,7 +67,7 @@ Apply the planned changes according to the extraction list, following these rule
 
 1. List the files to audit = the **scope-fence** files, INCLUDING the new modules this split created. A split EXTENDS its own scope-fence to the files it extracts — those new modules are in-fence by definition, so "audit every extracted module" and "stay inside the scope-fence" are the SAME set, not a contradiction. A file modified OUTSIDE the scope-fence is a fence VIOLATION to surface (backlog / ask), never an extra audit-and-ship target.
 2. Run CQ1-CQ40 self-eval on EACH of those scope-fence files (orchestrator + every extracted module — the bugs move with the code)
-3. Any CQ critical gate failure (CQ3/4/5/6/8/14 = 0) in ANY module blocks the commit — **when the failure is in code this refactor moved, touched, or created**. A PRE-EXISTING critical failure confined to UNTOUCHED units of an in-fence file (e.g. CQ8 in `persist()` while you extract `calculateTax`) is NOT a commit-blocker: it is identical before and after the diff, fixing it usually needs its own characterization tests + product decisions, and blocking on it would make incremental extraction of legacy god-files impossible. Disposition: verify it is byte-identical pre/post (no regression), disclose it loudly in the post-audit (`pre-existing, out-of-fence-unit`), and backlog it per Phase 3.5/Phase 4 — never silently, never as an excuse for a failure your diff introduced. (Both 2026-07-09 skill-eval executors independently hit this ambiguity and resolved it this way; this paragraph makes that the written rule.)
+3. Assess current failures against the pinned baseline using `change-assessment.md`. Introduced/worsened critical failures block; independently verified baseline debt remains visible at its original severity and caps the refactor verdict at WARN. Moving code does not by itself prove or disprove this classification.
 
 4. **Record the list.** Write the new modules into the CONTRACT as `modules_created` (repo-relative
    paths) the moment they land — not reconstructed at the end from memory or from `git status`,

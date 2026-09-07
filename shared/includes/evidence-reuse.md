@@ -8,10 +8,14 @@ Standalone skills still perform their normal discovery and completion logging.
 For test, mutation and quality evidence, compute a key before and after the run:
 
 ```bash
-~/.zuvo/workflow_evidence.py --command '<exact command>' --scope <files> \
+python3 ~/.zuvo/workflow_evidence.py --command '<exact command>' --scope <files> \
   --toolchain '<actual versions + dependency cache identity>' \
   --environment '<runner image/config/service revision>'
 ```
+
+The command prints a bare SHA-256 string, not JSON. Capture stdout only after exit 0 and
+validate the entire value against `^[0-9a-f]{64}$`. Failed commands, empty output or diagnostics
+are unavailable evidence, never reusable keys.
 
 The helper hashes tracked and nonignored source inputs (including tests, config and lockfiles),
 command, scope, checkout, toolchain and environment identity. Zuvo outputs and review receipts are
@@ -53,3 +57,21 @@ inputs before extraction, keep caller-specific mappings separate, characterize b
 before/after, exercise the helper's boundaries, check side effects/cycles and review the final diff.
 If any proof fails, use the ordinary characterization path. Keep the current independent reviewer
 and provider requirements; do not reduce them from LOC or a single cheap example.
+
+## Bounded discovery and reporting
+
+Search tool metadata by name first and return only matching names. Read a tool description only
+when invoking that tool; never dump the complete tool catalog. Keep a batched response within
+its total output budget, not merely each child's budget. Save verbose command output to a log
+and return exit status, summary counts, and its path. On failure return the relevant diagnostic.
+Do not re-emit a whole truncated batch: fetch only the missing section.
+
+Use the parent checkout/index decision in nested stages. A stale index cannot certify current
+files; use current file/symbol reads rather than repeating known-stale queries. Do not reload
+an entire project guide in every nested stage when its governing instructions remain in context.
+After compaction reload only requirements of the active stage and unresolved decisions.
+
+A receipt is small structured data: command, source scope, run ID, status, hashes and log path.
+Keep inline harness source in a separate artifact, not repeated inside every status response.
+Use the repo's existing runner/commands before writing orchestration wrappers. For farm runs,
+prepare dependencies once; verify a donor before copying and record preparation time.

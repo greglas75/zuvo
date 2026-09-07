@@ -121,7 +121,7 @@ Canonical: `shared/includes/quality-gates.md` → CQ Scoring.
 | Q4 | Known-data assertions use exact values (`toEqual`/`toBe`, not `toBeTruthy`)? |
 | Q5 | Mocks are typed (not `as any`/`as never`)? Note: `as unknown as ServiceType` is acceptable when no mock factory exists — it avoids `as any` while preserving the target type. Score Q5=1 for `as unknown as X`, Q5=0 only for `as any` or `as never`. |
 | Q6 | Mock state is fresh per test (proper `beforeEach`, no shared mutable)? |
-| Q7 | **CRITICAL** — Every error-throwing path tested with specific error type AND message? (not just "at least one") |
+| Q7 | **CRITICAL** — Every specified negative behavior in the accepted input domain tested? Enumerate invalid/rejection cases from the contract and implementation: throws/rejections assert specific error type AND message; filtering, sentinel returns, or safe fallbacks assert their exact observable result. The accepted domain comes from runtime entry points, types, documented contract, and callers; an internal typed helper does not owe invented throws for out-of-domain null solely to pass Q7. Untrusted boundaries include HTTP handlers, CLI arguments, file/message deserialization, and their callees before proven runtime validation; cite the call sites and validation when claiming an internal-only domain. Test malformed inputs those boundaries can receive. If there are no feasible negative cases in the full accepted domain, Q7=1 requires an exhaustive contract/branch/caller inventory proving that absence; missing investigation is 0/unproven, never a vacuous pass. |
 | Q8 | Null/undefined/empty inputs tested where applicable? |
 | Q9 | Repeated setup (3+ tests) extracted to helper/factory? |
 | Q10 | No magic values — test data is self-documenting? |
@@ -187,33 +187,30 @@ Self-eval: Q1=1 Q2=1 Q3=0 Q4=1 Q5=1 Q6=1 Q7=1 Q8=0 Q9=1 Q10=1 Q11=1 Q12=0 Q13=1 
 
 ## N/A abuse prevention
 
-`count(N/A)` may not exceed **one third of the in-scope gates** — the proportional cap in
-`rules/cq-checklist.md`, which is the canonical rule. Over that, the evaluation is a **low-signal
-audit**. Every N/A requires a one-sentence justification, held to the same evidence rigour as a 0
-(an exhaustive negative assertion, not "probably not applicable").
+For CQ, `count(N/A) > floor(in_scope / 3)` requires documented independent applicability
+review under `rules/cq-checklist.md` → "Evidence decides applicability". Pending review is
+INCOMPLETE; a verified high count alone does not prohibit PASS. Record the original scorer and
+independent reviewer identities/models, the artifact/run and each accepted/rejected exclusion.
+The resolved execution policy governs independence; no self-certification or extra provider loop
+solely for this threshold. Q uses its separate `shared/includes/q-scoring-protocol.md` rules.
+
+Every CQ N/A needs the inactive feature precondition, reason, source/caller evidence and scoped
+negative-search command/result. Missing or unknown evidence is 0/unproven, never N/A. Code type
+is a review focus, not proof that a feature exists. All active critical gates remain mandatory;
+a failed one cannot be relabelled N/A.
 
 **N/A does NOT count as a pass.** It leaves both the numerator and the denominator:
 
 ```
 in_scope    = 40 - count(out-of-scope)
 denominator = in_scope - count(N/A)
-pass_count  = count(score == 1)        # 1s only
+pass_count  = count(score == 1)
 ```
 
-The ratio alone is **not** an anti-gaming guard — read plainly it rewards abuse, because dropping
-a `0` out of the denominator raises the percentage — three passes against two failures scores 60%,
-and re-marking both failures N/A scores 100% on identical code. What actually closes that path is
-the four HARD rules in `rules/cq-checklist.md`
-→ "N/A cannot raise the score": an N/A needs the SAME exhaustive negative evidence as a 0, the
-one-third cap above, gates listed for the file's code type can never be N/A, and `pass_count` /
-`count(N/A)` / denominator are printed next to every percentage. Quote the formula only together
-with those rules.
-
-This page said "N/A counts as 1 for scoring" with a 60% cap until 2026-08-02 — both errors pushed
-the same way, and they compounded: counting N/A as a pass *while* shrinking the denominator made
-re-labelling a failure a double upgrade, and a 60% cap left room to do it to most of the set.
-
-This prevents agents from marking everything N/A to avoid doing the evaluation work.
+Print these counts and applicability review status beside the percentage. A zero denominator
+is INCOMPLETE. The ratio alone cannot prevent gaming; source evidence and independent review
+establish whether an exclusion is valid. These are audit obligations, not mechanical proof of
+source semantics. Apply the canonical checklist's full protocol.
 
 ---
 

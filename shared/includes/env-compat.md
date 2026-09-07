@@ -6,7 +6,7 @@
 
 | Capability | Claude Code | Kimi Code | Codex | Antigravity | Cursor |
 |-----------|-------------|-----------|-------|-------------|--------|
-| Sub-agent dispatch | `Agent` tool — parallel, model-routed | `Agent` tool — parallel, flat skill-prefixed profile names | **Mixed — read the Codex section, do not stop at this cell.** Mechanical workers (a frozen plan applied by an executor, a writer applying a frozen contract, genuinely parallel disjoint tasks) DO dispatch, on codex >= 0.128, with one bounded wait. Only REVIEW stages stay sequential, and for a reason no wake mechanism fixes: a codex thread reviewing a codex author is the same model. | Sequential (no spawning) | Sequential (no spawning) |
+| Sub-agent dispatch | `Agent` tool — parallel, model-routed | `Agent` tool — parallel, flat skill-prefixed profile names | Native dispatch when available and authorized by execution-policy; fresh context is not proof of model independence. | Sequential (no spawning) | Sequential (no spawning) |
 | Concurrency | Unrestricted background tasks | Background tasks (`run_in_background`) | Limited | Sequential | Sequential |
 | User interaction | Native interactive prompts | Native interactive prompts (`AskUserQuestion`) | `[AUTO-DECISION]` | `[AUTO-DECISION]` | `[AUTO-DECISION]` |
 | Install root | `~/.claude/plugins/cache/zuvo-marketplace/zuvo/*/` | `~/.kimi-code/` | `~/.codex/` | `~/.gemini/antigravity/` | `~/.cursor/` |
@@ -60,8 +60,8 @@ Refactor/build runs frequently execute inside a **secondary git worktree** (`zuv
 **Before running any verification (tsc / type-check / tests) in a worktree, bootstrap dependencies once:**
 
 1. **Match the toolchain to the main checkout** — same Node major (`node -v` vs the repo's `.nvmrc` / `engines`), same package manager. A version skew alone produces phantom type errors.
-2. **Prefer the root install over a fresh per-worktree install.** For a monorepo, reuse the primary checkout's hoisted modules (`ln -s <main-checkout>/node_modules <worktree>/node_modules`) rather than running a full `install` in the worktree.
-3. **Reject a partial package-local `node_modules`.** One that exists but is missing workspace deps is worse than none — it makes the resolver fail mid-build. Remove a partial/ignored install and re-link or re-install cleanly before verifying.
+2. **Clone a verified matching donor before installing afresh.** Follow `zuvo:worktree`: require byte-identical lockfiles, validate the donor, then reflink its root and required workspace dependency trees. Never symlink dependencies to another checkout; record clone/setup time separately from verification.
+3. **Reject a partial package-local `node_modules`.** One that exists but is missing workspace deps is worse than none — it makes the resolver fail mid-build. Repair the incomplete clone or use the project's pinned install command before verifying.
 4. **Clean ignored partial installs first**, then record the bootstrap state so a later failure is attributable to *code*, not setup.
 
 ### Python worktrees (the venv does not come with the checkout)
@@ -254,56 +254,22 @@ Poll on the process's timescale, not on impatience:
 <!-- PLATFORM:CODEX -->
 ### Codex
 
-**REVIEW CHAIN: SINGLE-AGENT SEQUENTIAL — never thread-dispatch review stages. MECHANICAL WORKERS:
-dispatch permitted on MultiAgentV2 (codex >= 0.128) with a bounded `collab Wait` + HANDOFF fallback.**
+Resolve actual capabilities and authorization through `execution-policy.md`; a product name or
+version assumption is not permission to dispatch. Mechanical execution of a frozen plan may use
+a fresh worker when supported. Supply the contract, scoped source paths, caller findings and
+verification commands rather than the discovery transcript.
 
-Two different rationales used to be fused into one hard rule; they aged differently, so they are now
-separate:
+A separate context using the same model is not model independence. Report reviewer model,
+provider and source access honestly. A same-model or inline review is `degraded:same-model`;
+it cannot satisfy a mandatory cross-model gate. Use the authorized external review route when
+required. A reviewer with a verified different model may run in a supported subagent; do not
+infer independence merely from a new task ID.
 
-- **Same-model independence (UNCHANGED, permanent):** a codex thread reviewing a codex author is the
-  same model. Review/spec/quality/acceptance stages NEVER go to a thread — cross-model independence
-  comes from the `adversarial-review` script, full stop. No wake mechanism can fix this one.
-- **The dead-parent mechanism (SUPERSEDED by measurement):** the numbers below were measured on the
-  pre-v2 `wait_agent` polling architecture. OpenAI reworked orchestration in MultiAgentV2
-  (v0.128.01: thread caps, wait-time controls, structured messaging; the exact dead-parent bug was
-  issue #9607, closed 2026-01-22). Re-measured here 2026-08-20 on codex-cli 0.144.6: a canary
-  dispatch (`collab: Wait`, 15 s subagent, exec mode) returned `PARENT-WOKE` unaided in one
-  non-interactive run, 11.3k tokens, no polling loop, no manual resume.
-  **Calibration limits — why this is NOT a green light for everything:** one canary, exec mode
-  only; the historical failure was interactive-session turn boundaries, which this canary does not
-  exercise; and open issues (#23292 parent stuck while subagent active, #26822 subagents exiting
-  without delivering results) say the class is not extinct. Hence: dispatch a MECHANICAL worker
-  (e.g. the refactor executor applying a frozen CONTRACT plan) with an **explicit bounded wait**,
-  and on wait-timeout fall back to the `[HANDOFF]` clean-window path — never sit in an unbounded
-  wait, never re-poll in a loop.
-
-The pre-v2 measurement, kept as the reason the bounded wait is mandatory rather than polite — a
-28-session timing forensics run (2026-07-15..17, timestamp-level) on the old mechanism:
-
-- `wait_agent` 30s busy-poll loops: **1,583 timed-out calls (~13 h) in one execute session**, ~88 h
-  of pure polling across the fleet window;
-- orchestrator dead-air after dispatch: **19.5 h, 10 h, 8 h silent blocks**, each ended only by the
-  user manually typing "kontynuuj";
-- sub-agents idle **78-92% of their lifetime** waiting to be re-dispatched (a plan session: 380 of
-  413 min idle — the plan itself computed in ~3-12 min per turn);
-- every poll re-feeds the whole context (one session accumulated **747M input tokens**), causing
-  35-60 min model stalls.
-
-The per-task review cycle (implementer → spec → quality → acceptance) is SEQUENTIAL by design, so
-thread-dispatch buys zero parallelism here — and a codex thread reviewing a codex author is the same
-model anyway (real model-independence comes from the cross-model `adversarial-review` script, which
-measured only ~38 min total in the same window). Therefore on Codex:
-
-1. REVIEW STAGES (spec-review / quality-review / plan-review / acceptance): read the agent's
-   instruction file (e.g., `agents/blast-radius.md`) and perform that analysis yourself in the
-   current context as a SEQUENTIAL CHECKPOINT PASS (all gates, same output format, same bar).
-   NEVER a thread — same-model review is not independence regardless of the wake mechanism.
-2. MECHANICAL WORKERS (a frozen plan applied by an executor; genuinely parallel disjoint tasks):
-   thread dispatch is permitted on codex >= 0.128 — with an explicit BOUNDED wait sized to the
-   task, exactly one wait (no re-poll loops), and the `[HANDOFF]` clean-window fallback when the
-   wait expires. Record which path ran: `codex-dispatch:bounded-wait` or `codex-handoff:fallback`.
-3. If the bounded wait times out TWICE in one run, stop dispatching for the rest of the run and
-   record `codex-dispatch:degraded` — two timeouts is the old failure mode announcing itself.
+Prefer event-driven completion or a blocking wait. If a wait expires, keep the existing worker
+identity and await its result; a timeout does not terminate it and must not create a duplicate
+worker or an unnecessary request for a new conversation. Consult a compact snapshot only when
+needed to act on a failure or user steering. Record unavailable dispatch as a degradation and
+continue allowed work inline without claiming context isolation.
 <!-- /PLATFORM:CODEX -->
 
 <!-- PLATFORM:CURSOR -->

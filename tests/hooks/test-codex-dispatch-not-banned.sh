@@ -13,27 +13,59 @@
 # Codex build had generated for it.
 #
 # The line that survives is not "Codex cannot dispatch" but "a codex thread reviewing a codex
-# author is the same model" — which is why REVIEW roles run inline and MECHANICAL workers do not.
+# author is the same model" — a new context alone cannot supply model independence.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 fail=0
 pass() { printf 'PASS: %s\n' "$1"; }
 bad()  { printf 'FAIL: %s\n' "$1"; fail=1; }
 
-out=$(env ROOT="$ROOT" python3 "$ROOT/tests/hooks/lib/find-codex-dispatch-bans.py" 2>/dev/null)
-if [ -z "$out" ]; then
-  pass "no skill tells Codex it cannot dispatch"
+fixture=$(mktemp -d) || exit 1
+trap 'rm -rf "$fixture"' EXIT
+scan_clean() {
+  local output
+  if output=$(env ROOT="$1" python3 "$ROOT/tests/hooks/lib/find-codex-dispatch-bans.py"); then
+    if [ -z "$output" ]; then pass "$2"; else bad "dispatch bans detected: $output"; fi
+  else
+    bad "instruction detector failed for $1"
+  fi
+}
+scan_clean "$ROOT" "no skill tells Codex it cannot dispatch"
+
+# Include the actual built package; an empty/missing package is a detector error.
+if bash "$ROOT/tests/lib/dist-build.sh" codex >"$fixture/build.log" 2>&1; then
+  scan_clean "${ZUVO_DIST_ROOT:-$ROOT/dist}/codex" "built Codex package has no blanket dispatch ban"
 else
-  bad "blanket single-agent bans still present:"
-  printf '        %s\n' $out
+  bad "Codex build failed"
+  tail -20 "$fixture/build.log"
 fi
 
-# The carve-out that must SURVIVE: review stages are same-model and stay inline. Deleting the ban
-# without keeping this turns a correct rule into an absent one.
-if grep -q 'same model' "$ROOT/shared/includes/env-compat.md"; then
-  pass "env-compat still says why review stages stay sequential on Codex"
+# Independent negative controls: no rule can hide a broken sibling rule.
+mkdir -p "$fixture/skills/example"
+for phrase in \
+  'Spawning agent threads / wait_agent is FORBIDDEN for pipeline stages.' \
+  'CODEX SINGLE-AGENT RULE' \
+  'An inline fresh-eyes pass SATISFIES an independent audit.' \
+  $'An Inline fresh-eyes pass\nSATISFIES an independent audit.'; do
+  printf '%s\n' "$phrase" > "$fixture/skills/example/SKILL.md"
+  if out=$(env ROOT="$fixture" python3 "$ROOT/tests/hooks/lib/find-codex-dispatch-bans.py"); then
+    [ -n "$out" ] && pass "isolated forbidden-policy fixture detected" || bad "detector missed $phrase"
+  else
+    bad "detector failed instead of identifying the fixture"
+  fi
+done
+rm "$fixture/skills/example/SKILL.md"
+if env ROOT="$fixture" python3 "$ROOT/tests/hooks/lib/find-codex-dispatch-bans.py" >/dev/null 2>&1; then
+  bad "empty instruction tree falsely passed"
 else
-  bad "env-compat lost the same-model reason — review independence would silently become a thread"
+  pass "empty instruction tree cannot certify a built package"
+fi
+
+# Preserve the distinction between context isolation and model independence.
+if grep -q 'same model' "$ROOT/shared/includes/env-compat.md"; then
+  pass "env-compat preserves the limit of same-model independence"
+else
+  bad "env-compat lost the distinction between a new context and model independence"
 fi
 
 # And the capability table must not contradict the section below it. That contradiction is what an

@@ -293,7 +293,7 @@ Score inflation is the top quality problem — 19/19 claimed when the real score
 
 | Q | Proof required |
 |---|---------------|
-| **Q7** | Name the `it()` block testing an error/rejection path. Quote the assertion. |
+| **Q7** | Enumerate contract negative cases in the accepted input domain; name each test and quote the assertion for type+message (throw/reject) or exact result (filter/sentinel/fallback). Cite the contract and production branch. |
 | **Q11** | Enumerate ALL conditional branches in the production code. For each branch, name the test exercising it. Any branch without a test → Q11=0. |
 | **Q15** | Count assertions by type: value vs weak (`toBeDefined`, `toBeTruthy`, `typeof`, argless `toHaveBeenCalled`). Weak > 50% of total → Q15=0. Apply the Assertion Strength Classifier: 60%+ level ≥3 required. |
 | **Q17** | For each key assertion: "Does this verify something the CODE COMPUTED, or something I SET UP?" Expected value sourced from mock/fixture setup = echo; echo > 50% → Q17=0. Apply Oracle Independence. |
@@ -460,7 +460,7 @@ Score every question individually. Never group or estimate.
 | Q4 | Known-data assertions use exact values (`toEqual`/`toBe`, not `toBeTruthy`)? |
 | Q5 | Mocks are typed (not `as any`/`as never`)? Note: `as unknown as ServiceType` is acceptable when no mock factory exists — it avoids `as any` while preserving the target type. Score Q5=1 for `as unknown as X`, Q5=0 only for `as any` or `as never`. |
 | Q6 | Mock state is fresh per test (proper `beforeEach`, no shared mutable)? |
-| Q7 | **CRITICAL** — Every error-throwing path tested with specific error type AND message? (not just "at least one") |
+| Q7 | **CRITICAL** — Every specified negative behavior in the accepted input domain tested? Enumerate invalid/rejection cases from the contract and implementation: throws/rejections assert specific error type AND message; filtering, sentinel returns, or safe fallbacks assert their exact observable result. The accepted domain comes from runtime entry points, types, documented contract, and callers; an internal typed helper does not owe invented throws for out-of-domain null solely to pass Q7. Untrusted boundaries include HTTP handlers, CLI arguments, file/message deserialization, and their callees before proven runtime validation; cite the call sites and validation when claiming an internal-only domain. Test malformed inputs those boundaries can receive. If there are no feasible negative cases in the full accepted domain, Q7=1 requires an exhaustive contract/branch/caller inventory proving that absence; missing investigation is 0/unproven, never a vacuous pass. |
 | Q8 | Null/undefined/empty inputs tested where applicable? |
 | Q9 | Repeated setup (3+ tests) extracted to helper/factory? |
 | Q10 | No magic values — test data is self-documenting? |
@@ -484,10 +484,11 @@ Score every question individually. Never group or estimate.
 **N/A handling:** Q3/Q5/Q6 are N/A for pure functions with zero mocks. Q16 is N/A for
 simple single-responsibility units. Q18 is N/A for pure synchronous tests with no timing
 or randomness. Q19 is N/A for single-test files. An N/A gate leaves the **denominator**,
-it does not enter the numerator — marking it N/A is not the same as passing it, and the
-one-third N/A cap in `../shared/includes/quality-gates.md` applies here too.
+it does not enter the numerator — marking it N/A is not the same as passing it. Follow
+`../shared/includes/q-scoring-protocol.md` for Q applicability and review rules; the CQ review
+threshold is not a separate Q score cap.
 
-**Critical gate:** Q7, Q11, Q13, Q15, Q17 — any scored 0 caps the result at FIX regardless of total.
+**Critical gate:** Q7, Q11, Q13, Q15, Q17 — any scored 0 is a critical failure regardless of total (REWRITE / Tier C floor).
 
 **Scoring — canonical rule lives in `../shared/includes/quality-gates.md` → Q Scoring.**
 Score as a **percentage of applicable gates**, never an absolute count against a fixed

@@ -77,6 +77,10 @@ For each file in the modified files list:
 
 ## Scoring Protocol
 
+Read `../references/change-assessment.md`. Keep the absolute CQ scores below, then independently
+classify each failure against the pinned base and caller evidence. Report full-code quality and
+refactor-delta verdict separately. Missing baseline evidence is INCOMPLETE, not baseline debt.
+
 For EACH file in the modified files list:
 
 1. **Read the full file** using the Read tool (or CodeSift outline + targeted symbol reads)
@@ -111,7 +115,7 @@ For EACH file in the modified files list:
 4. **Do not look at the orchestrator's scores** until you have your own
 5. **Print all 40 gates** — not just failures
 6. **Provide evidence** for every critical gate scored as 1 (file:function:line format)
-7. **Flag N/A decisions** — each N/A needs a one-sentence justification. If >60% are N/A, flag as low-signal audit.
+7. **Verify applicability independently** — each N/A must name the inactive feature precondition and cite source/caller inspection plus negative-search evidence. When `count(N/A) > floor(in_scope / 3)`, explicitly record accepted/rejected gate IDs and evidence before scoring; pending review is INCOMPLETE. A verified high count alone does not bar PASS. Missing/unknown evidence is 0/unproven. Follow `rules/cq-checklist.md`; active critical gates remain mandatory. After independently deriving your scores, compare with the original scoring author's exclusions. Record both identities and review artifact/run; you may adjudicate another author's exclusions, never certify your own new ones. New exclusions without distinct review keep the high-N/A result INCOMPLETE.
 
 ---
 
@@ -175,14 +179,17 @@ Classify each discrepancy:
 
 | Category | Meaning | Action |
 |----------|---------|--------|
-| FIX-NOW | Critical gate failure the orchestrator missed | Must be fixed before committing |
+| FIX-NOW | Introduced/worsened failure or explicitly required remediation | Must be addressed before completion |
+| BASELINE-DEBT | Independently proven existing, non-worsened failure outside remediation targets | Preserve severity/evidence; delta WARN, absolute score unchanged |
 | DEFER | Non-critical issue, safe to commit | Goes into BACKLOG ITEMS section |
 | FALSE-POSITIVE | Auditor was wrong after review | Document why |
 
-**VERDICT rules:**
-- `PASS` — zero FIX-NOW items, all critical gates satisfied across all files
-- `CONDITIONAL PASS` — zero FIX-NOW items, but 1+ DEFER items worth noting
-- `FAIL` — 1+ FIX-NOW items that must be addressed before commit
+**Two verdicts:**
+- Absolute CQ uses the canonical percentage and critical-gate rules on all applicable scores.
+  An active critical score of 0 remains FAIL even when independently classified as baseline debt.
+- Refactor delta uses `change-assessment.md`: baseline debt yields WARN; introduced/worsened
+  failures or explicitly required unresolved remediation block; missing evidence is INCOMPLETE.
+  Do not derive absolute CQ from the number of FIX-NOW items.
 
 ---
 
@@ -190,7 +197,7 @@ Classify each discrepancy:
 
 - **Empty modified files list:** STOP. Report: "No modified files provided. Cannot proceed."
 - **File unreadable:** Report the error for that file, skip it, continue with remaining files. Note in Summary.
-- **All gates N/A (>60%):** Flag as low-signal audit. Justify each N/A. If the file is a type definition or config file, this is expected — not abuse.
+- **High N/A count:** Perform the applicability review above; a code-type label alone cannot justify exclusions. A zero denominator is INCOMPLETE. Record in-scope, N/A, passed, denominator and review status.
 
 ---
 

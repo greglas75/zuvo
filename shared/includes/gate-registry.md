@@ -26,18 +26,19 @@
 
 A gate has three possible outcomes, not two:
 
-| State | Meaning | In denominator? | Counts toward the N/A cap? |
+| State | Meaning | In denominator? | Counts toward applicability review? |
 |-------|---------|-----------------|----------------------------|
 | `1` / `0` | evaluated, with evidence | yes | — |
-| `N/A` | the gate applies to this stack, but its precondition does not hold in this file (a judgement call) | no | **yes** |
+| `N/A` | a verified inactive feature precondition; Q gates may also define an explicit unavailable-measurement exception (e.g. Q21) | no | **yes** |
 | `out-of-scope` | the gate's STACK does not match the project at all (mechanical, not a judgement) | no | **no** |
 
-Why the third state exists: adding stack-specific gates to a flat list breaks every existing
-score: a file scoring twenty-five of twenty-nine is a PASS at 86%, and the same file measured
-against forty-three gates is 58% — a FAIL, with nothing about
-the code changed. And forcing a TypeScript project to N/A ten Go gates would blow the N/A cap and
-turn a clean audit into `INCOMPLETE`. Stack mismatch is not a judgement an auditor makes — it is
-`go.mod` being absent — so it must not be spent from the N/A budget.
+Stack mismatch and inactive features both leave the denominator. For CQ, more than one third
+of in-scope gates marked N/A triggers independent applicability review, not automatic rejection.
+Every CQ N/A needs a named inactive feature precondition, reason, and source/search evidence;
+unknown or missing evidence is 0/unproven. The review must complete before a high-N/A file can
+pass. See `../../rules/cq-checklist.md` for the canonical CQ formula and evidence requirements.
+Q uses `q-scoring-protocol.md`'s own review threshold and gate-specific measurement exceptions;
+an unavailable measurement never counts as a passed measurement.
 
 **Scope column values:** `universal` (any stack) or `stack:<a>,<b>` (only when that stack is
 detected by the skill's stack-detection step). An `out-of-scope` gate is not printed in the score
@@ -45,7 +46,7 @@ line; print one summary line instead: `out-of-scope: N gates (stack=<detected>)`
 
 ## Criticality vocabulary
 
-- `critical` — always active; scored 0 ⇒ immediate FAIL, no tier absorbs it.
+- `critical` — mandatory when the gate applies; scored 0 ⇒ immediate FAIL, no tier absorbs it. For CQ, a verified inactive feature can be N/A under the applicability protocol; absence of a required protection is a failure, not inactivity.
 - `conditional:<trigger>` — critical **only** when the trigger holds; otherwise a normal gate.
   When the trigger holds and the gate scores 0 ⇒ FAIL.
 - `—` — normal gate; contributes to the score, never blocks on its own.
@@ -105,7 +106,7 @@ line; print one summary line instead: `out-of-scope: N gates (stack=<detected>)`
 | Q4 | — | universal | Known-data assertions use exact values (`toEqual`/`toBe`, not `toBeTruthy`)? | Assertions use exact matchers (toEqual/toBe, not toBeTruthy)? |
 | Q5 | — | universal | Mocks are typed (not `as any`/`as never`)? Note: `as unknown as ServiceType` is acceptable when no mock factory exists — it avoids `as any` while preserving the target type. Score Q5=1 for `as unknown as X`, Q5=0 only for `as any` or `as never`. | Mocks are typed (no `as any`)? |
 | Q6 | — | universal | Mock state is fresh per test (proper `beforeEach`, no shared mutable)? | Mock state fresh per test (beforeEach, no shared mutable)? |
-| Q7 | critical | universal | Every error-throwing path tested with specific error type AND message? (not just "at least one") | Every error-throwing path tested with specific type+message? |
+| Q7 | critical | universal | Every specified negative behavior in the accepted input domain tested? Enumerate invalid/rejection cases from the contract and implementation: throws/rejections assert specific error type AND message; filtering, sentinel returns, or safe fallbacks assert their exact observable result. The accepted domain comes from runtime entry points, types, documented contract, and callers; an internal typed helper does not owe invented throws for out-of-domain null solely to pass Q7. Untrusted boundaries include HTTP handlers, CLI arguments, file/message deserialization, and their callees before proven runtime validation; cite the call sites and validation when claiming an internal-only domain. Test malformed inputs those boundaries can receive. If there are no feasible negative cases in the full accepted domain, Q7=1 requires an exhaustive contract/branch/caller inventory proving that absence; missing investigation is 0/unproven, never a vacuous pass. | Every contract negative case tested: throws/rejections type+message; filter/sentinel/fallback exact result? Derive accepted input domain from callers/validation; no invented out-of-domain throw requirements. No negative cases: pass only with exhaustive contract/branch/caller evidence. |
 | Q8 | — | universal | Null/undefined/empty inputs tested where applicable? | Null/empty/edge inputs tested? |
 | Q9 | — | universal | Repeated setup (3+ tests) extracted to helper/factory? | Repeated setup (3+ tests) extracted to helper/factory? |
 | Q10 | — | universal | No magic values — test data is self-documenting? | No magic values -- test data is self-documenting? |

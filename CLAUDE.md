@@ -86,7 +86,8 @@ The 2026-07-17 failure: the app indexed at 20:58, the v1.6.10 install finished 2
 that evening (64 of them, 575 thread-spawns) ran on the pre-fix snapshot even though the user had
 "restarted Codex" (before the install completed). Rule: **finish install.sh first, THEN restart the
 Codex app**; verify uptake by checking the marker mtime is newer than the install, and that a fresh
-zuvo run prints `[MODE] single-agent (codex hard rule)`. Note: zuvo is NOT a codex `[plugins.*]`
+zuvo run explicitly reads the installed files and records their hashes against the built package.
+The removed single-agent banner is not an uptake check. Note: zuvo is NOT a codex `[plugins.*]`
 entry — Codex loads it via `~/.codex/skills/` (the legacy path install.sh writes).
 
 ### Claude Code gotcha: a release can leave the plugin DISABLED and still report success (2026-08-12)

@@ -165,7 +165,17 @@ resumable run, not an archive candidate — resume it per the rules below instea
 refactor that creates none). Written in Phase 3 the moment the files land, not reconstructed at the
 end. It is the denominator of `prove.split_coverage`.
 
-**`prove.test_quality`** — `"<PASS|WARN|N/A>:<worst tier>:<report path>"` from Phase 3.6.
+**`prove.test_quality`** — `"PASS:<tier>:<existing report path>"` or
+`"WARN:<tier>:<existing report path>"` from Phase 3.6; `N/A` only when no test assessment applies.
+Keep the value exact: place explanations in the report, not after its path. In v6 the CLI rejects
+malformed/nonexistent report paths when written. Use `findings_outcome` for the closed result
+`none|preserved|fixed|mixed`; descriptive text does not decide whether a fix requires red proof.
+
+Record the actual current `cq_after.status` and per-file assessment statuses. An explicit
+INCOMPLETE or failed critical assessment blocks completion even when test commands pass.
+A completed assessment with accepted warnings is WARN, not an incomplete assessment disguised
+as PASS. The canonical check reports verification and quality separately. Baseline CQ failures
+are not current failures merely because they remain in the historical record.
 
 **`prove.split_coverage`** — `"<created>/<with_own_spec>:<disposition>"` from the per-module coverage
 gate, or `"N/A"` when `modules_created` is empty. See "Per-module coverage" in `skills/refactor/SKILL.md`.
@@ -201,43 +211,17 @@ cannot be gamed that way — it only moves when the hard part is actually decomp
 available — record whichever tool you used consistently for before AND after):
 
 ```bash
-python3 - "$TARGET_FILE" <<'PY'
-import sys, re
-src = open(sys.argv[1], encoding='utf-8', errors='replace').read()
-lines = src.split('
-')
-BR = re.compile(r'\b(if|elif|else if|switch|case|for|while|catch|except)\b|&&|\|\||\?\?')
-def m(txt):
-    ls = [l for l in txt.split('
-') if l.strip() and not l.strip().startswith(('//','#','*','/*'))]
-    return len(ls), sum(len(BR.findall(l)) for l in ls)
-best = (0, 0)
-if sys.argv[1].endswith('.py'):
-    starts = [i for i, l in enumerate(lines) if re.match(r'\s*(async\s+)?def\s', l)]
-    for k, i in enumerate(starts):
-        ind = len(lines[i]) - len(lines[i].lstrip()); j = i + 1
-        while j < len(lines) and (not lines[j].strip() or len(lines[j]) - len(lines[j].lstrip()) > ind):
-            j += 1
-        cand = m('
-'.join(lines[i:j]))
-        if cand[0] > best[0]: best = cand
-else:
-    i = 0
-    while i < len(lines):
-        if re.search(r'(function\s+\w+|=>\s*\{|^\s{0,2}(export\s+)?(async\s+)?(function|const\s+\w+\s*=)|^\s{0,4}\w+\s*\([^)]*\)\s*[:{])', lines[i]):
-            d = lines[i].count('{') - lines[i].count('}'); j = i + 1; body = [lines[i]]
-            while j < len(lines) and d > 0:
-                body.append(lines[j]); d += lines[j].count('{') - lines[j].count('}'); j += 1
-            if len(body) > 4:
-                cand = m('
-'.join(body))
-                if cand[0] > best[0]: best = cand
-            i = j
-        else: i += 1
-floc, fbr = m(src)
-print(f"maxfn:{best[0]},branches:{fbr},loc:{floc}")
-PY
+~/.zuvo/measure-complexity "$TARGET_FILE"
 ```
+
+The executable helper is the single maintained implementation. It reports approximate
+non-comment LOC and branch-token counts, not cyclomatic complexity. Python function spans use the standard-library AST. The JS/TS fallback is for discovery only;
+return-type braces, strings and comments can confuse its function boundaries. It refuses known
+ambiguous multiline signatures, but cannot detect every ambiguity. Never use its JS/TS maxfn
+as complexity-gate proof; use a language-aware analyzer and record that choice consistently.
+Do not copy or repair a Python snippet in a run artifact. Record failed/incomplete assessments in
+`cq_after` or `test_quality_assessment`; they are not successful `prove.test_quality` evidence.
+
 
 ## Complexity shape: ADDITIVE vs ESSENTIAL (decide BEFORE routing to SPLIT)
 

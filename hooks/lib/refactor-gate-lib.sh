@@ -94,12 +94,16 @@ refactor_gate_check() {
     # disposition names a fix). Two consecutive skill-eval runs (2026-07-10) showed agents
     # substituting "the flip logically implies red" for an actual red run — gate the artifact.
     fd=$(_prove_field "$c" findings_disposition)
-    case "$fd" in
-      *fix*)
+    _needs_red=0
+    if [ "${_cv:-0}" -ge 6 ] 2>/dev/null; then
+      _refactor_state "$c" fixes && _needs_red=1
+    else
+      case "$fd" in *fix*) _needs_red=1 ;; esac
+    fi
+    if [ "$_needs_red" -eq 1 ]; then
         rr=$(_prove_field "$c" regression_red)
         case "$rr" in skipped|not_run|"") echo "BLOCK: refactor CONTRACT prove.regression_red='$rr' not satisfied — findings_disposition='$fd' says a fix was applied, so the regression test's RED on the pre-fix code must be DEMONSTRATED (run it, capture the fail) and recorded [$c]"; blocked=1 ;; esac
-        ;;
-    esac
+    fi
   done
   return $blocked
 }
@@ -154,6 +158,7 @@ refactor_prove_v4_check() {
 
     if [ "$rpv_cv" -ge 6 ] 2>/dev/null; then
       _refactor_state "$rpv_c" evidence || rpv_blocked=1
+      _refactor_state "$rpv_c" quality || rpv_blocked=1
     fi
     rpv_tq=$(_prove_field "$rpv_c" test_quality)
     # PASS/WARN/N/A is the vocabulary Phase 3.6 prints — but shape alone still accepts a story.
@@ -161,6 +166,7 @@ refactor_prove_v4_check() {
     # So PASS/WARN must carry the third field, the on-disk zuvo/audits/ report, and that file
     # must EXIST: the report is the expensive thing to fake, which is exactly why it is the
     # proof-of-dispatch. N/A needs no report — nothing test-shaped happened.
+    if [ "$rpv_cv" -lt 6 ] 2>/dev/null; then
     case "$rpv_tq" in
       N/A|N/A:*) ;;
       PASS:*:*|WARN:*:*)
@@ -172,6 +178,7 @@ refactor_prove_v4_check() {
         ;;
       *) echo "BLOCK: refactor CONTRACT prove.test_quality='$rpv_tq' not satisfied — Phase 3.6 must dispatch the REAL zuvo:test-audit and record '<PASS|WARN|N/A>:<worst tier>:<report path>' [$rpv_c]"; rpv_blocked=1 ;;
     esac
+    fi
 
     # split_coverage must agree with modules_created, which Phase 3 wrote earlier — before the
     # agent knew this check existed. Without the cross-check the field accepts any non-empty
