@@ -147,13 +147,19 @@ def evidence_errors(contract, include_fixes=True):
         errors.append("evidence.characterization_after: snapshot unavailable")
     if not include_fixes:
         return errors
-    pairs = evidence.get("fix_regressions", [])
-    applied = contract.get("fix_findings")
-    if not isinstance(pairs, list) or not isinstance(applied, list):
-        return errors + ["evidence.fix_regressions"]
     outcome = contract.get("findings_outcome")
     if outcome not in ("none", "preserved", "fixed", "mixed"):
         errors.append("findings_outcome (none|preserved|fixed|mixed required)")
+    pairs = evidence.get("fix_regressions", [])
+    applied = contract.get("fix_findings")
+    # Contracts with no applied fixes legitimately omit fix_findings.  Treat an
+    # omitted field as an empty list only for the no-change outcomes; malformed
+    # data remains an evidence error, and fixed/mixed outcomes still require the
+    # explicit applied finding IDs and red/green regression pairs.
+    if applied is None and outcome in ("none", "preserved"):
+        applied = []
+    if not isinstance(pairs, list) or not isinstance(applied, list):
+        return errors + ["evidence.fix_regressions"]
     fixes_claimed = outcome in ("fixed", "mixed")
     if fixes_claimed and not applied:
         errors.append("fix_findings (explicit applied finding IDs required)")
