@@ -20,7 +20,11 @@ Load bootstrap requirements now; load each deferred protocol at its named phase.
 ### PHASE 0 — Commit-gate activation (record the actual exit status)
 
 Ensure the refactor commit-gate is active for this checkout. The installer preserves existing
-hooks and reports nonzero when it cannot activate both hooks. Record that as unavailable, never
+hooks. In a linked worktree with `extensions.worktreeConfig` already enabled and a recognized
+Zuvo dispatcher, it selects private hooks using `git config --worktree core.hooksPath`. These
+run the current guard and retain the original hook chain; shared hooks and configuration stay
+unchanged. It does not enable the shared worktree-config extension automatically.
+The installer reports nonzero when it cannot activate both hooks. Record that as unavailable, never
 installed/PASS. Continue analysis and explicit verification, but do not claim automatic commit
 enforcement; resolve activation before claiming the complete workflow. Do not modify a shared
 or version-controlled hook merely to turn the status green.

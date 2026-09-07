@@ -1,5 +1,5 @@
 #!/bin/sh
-# Activate both refactor hooks without replacing user hooks or changing Git config.
+# Activate refactor hooks without replacing user hooks or shared Git configuration.
 # Exit 0 means both are wired; exit 2 means installation is unavailable/incomplete.
 # Python is also a prerequisite of the refactor gate itself.
 exec python3 - "$@" <<'PY'
@@ -9,6 +9,7 @@ from pathlib import Path
 import shlex
 import subprocess
 import sys
+import tempfile
 
 # Exact identities, not a marker that an unrelated/broken script can contain.
 # Refresh these when changing hooks/git-dispatch/{pre-commit,pre-push}; the install
@@ -18,6 +19,74 @@ DISPATCHERS = {
     "pre-commit": "8f25f773333a7260941ed570c563fd84ebf4d766e92fc8d59bdd8dcd14270128",
     "pre-push": "b6c1d00a0f9f16e300e9d9750a09df109ec42977cd00b669f59264b2d2be5416",
 }
+
+# Forward standard hooks even if installed in the original directory later.
+OTHER_HOOKS = """applypatch-msg pre-applypatch post-applypatch pre-merge-commit
+prepare-commit-msg commit-msg post-commit pre-rebase post-checkout post-merge
+pre-receive update proc-receive post-receive post-update reference-transaction
+push-to-checkout pre-auto-gc post-rewrite sendemail-validate fsmonitor-watchman
+p4-changelist p4-prepare-changelist p4-post-changelist p4-pre-submit post-index-change""".split()
+
+
+def forwarding_body(origin, mode):
+    original = shlex.quote(str(origin / mode))
+    return f'#!/bin/sh\nif [ -x {original} ]; then exec {original} "$@"; fi\n'
+
+
+def chained_body(gate, origin, mode):
+    original = shlex.quote(str(origin / mode))
+    check = f"{shlex.quote(str(gate))} {mode} \"$@\""
+    prefix = "#!/bin/sh\n# zuvo:private-refactor-gate\n"
+    if mode == "pre-push":
+        return (prefix + 'refs=$(mktemp) || exit 2\n'
+                'trap \'rm -f "$refs"\' EXIT\n'
+                'trap \'exit 2\' HUP INT TERM\n'
+                'cat > "$refs" || exit 2\n'
+                f'{check} < "$refs" || exit $?\n'
+                f'if [ -x {original} ]; then {original} "$@" < "$refs"; else exit 0; fi\n')
+    return (prefix + f"{check} </dev/null || exit $?\n"
+            f'if [ -x {original} ]; then exec {original} "$@"; fi\n')
+
+
+def private_install(gate, gitdir, effective):
+    """Layer the gate before the known dispatcher, only for this linked worktree."""
+    private = gitdir / "zuvo-refactor-hooks"
+    if private.is_symlink():
+        return unavailable(f"private hooks path is a symlink: {private}; preserved")
+    if private.exists():
+        record = private / "origin"
+        if record.is_symlink() or not record.is_file():
+            return unavailable(f"unmanaged private hooks directory: {private}; preserved")
+        origin = Path(record.read_text().rstrip("\n"))
+        if not origin.is_absolute() or origin == private or effective not in (private, origin):
+            return unavailable("private hook origin no longer matches effective configuration")
+    else:
+        origin = effective
+    if not all(dispatcher(origin / mode, mode) for mode in DISPATCHERS):
+        return unavailable("private activation requires the recognized original dispatchers")
+    bodies = {mode: chained_body(gate, origin, mode) for mode in DISPATCHERS}
+    forward = set(OTHER_HOOKS) | {p.name for p in origin.iterdir() if not p.is_dir()}
+    forward -= set(DISPATCHERS) | {"origin"}
+    bodies.update({name: forwarding_body(origin, name) for name in forward})
+    if not private.exists():
+        # Publish a complete directory before switching Git's worktree-local setting.
+        with tempfile.TemporaryDirectory(prefix="zuvo-hook-install-", dir=gitdir) as temp:
+            prepared = Path(temp) / "hooks"
+            prepared.mkdir()
+            (prepared / "origin").write_text(str(origin) + "\n")
+            for mode, body in bodies.items():
+                (prepared / mode).write_text(body)
+                (prepared / mode).chmod(0o755)
+            prepared.rename(private)
+    for mode, body in bodies.items():
+        hook = private / mode
+        if hook.is_symlink() or not usable(hook) or hook.read_text() != body:
+            return unavailable(f"private hook {hook} differs; preserved")
+    git("config", "--worktree", "core.hooksPath", str(private))
+    if Path(git("rev-parse", "--path-format=absolute", "--git-path", "hooks")).resolve() != private:
+        return unavailable("another configuration overrides worktree core.hooksPath")
+    print(f"[refactor-gate] active private hooks -> {private}; original chain -> {origin}")
+    return True
 
 
 def unavailable(message):
@@ -88,6 +157,14 @@ def main():
     local = (common / "hooks").resolve()
     effective_path = Path(git("rev-parse", "--path-format=absolute", "--git-path", "hooks"))
     effective = effective_path.resolve()
+    gitdir = Path(git("rev-parse", "--absolute-git-dir")).resolve()
+    worktree_config = subprocess.run(
+        ["git", "config", "--bool", "--get", "extensions.worktreeConfig"],
+        capture_output=True, text=True, check=False)
+    if (gitdir != common and worktree_config.stdout.strip() == "true"
+            and (effective == gitdir / "zuvo-refactor-hooks"
+                 or all(dispatcher(effective / mode, mode) for mode in DISPATCHERS))):
+        return private_install(gate, gitdir, effective)
     # --git-path canonicalizes symlinks. Retain the configured spelling to protect
     # tracked links on the path Git selected, without statting every tracked file.
     configured = subprocess.run(["git", "config", "--path", "--get", "core.hooksPath"],

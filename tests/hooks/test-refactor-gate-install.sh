@@ -213,5 +213,55 @@ if git commit -qm vanished --allow-empty > "$TMP/commit.out" 2>&1; then bad 'rem
 else ok 'removed gate does not silently allow commit'; fi
 unavailable 'existing marker cannot hide a removed gate'
 
+# Shared hooks must survive a linked checkout's private activation.
+gate="$TMP/private gate.sh"; make_gate "$gate"
+newrepo; managed; main="$repo"; linked="$TMP/private linked"
+git config extensions.worktreeConfig true
+git worktree add -q -b private-linked "$linked"
+mkdir -p "$main/.git/hooks"
+printf '#!/bin/sh\nprintf "shared\\n" >> "$GATE_LOG"\nexit 0\n' > "$main/.git/hooks/pre-commit"
+chmod +x "$main/.git/hooks/pre-commit"
+cp "$main/.git/hooks/pre-commit" "$TMP/shared-before"
+cp "$main/.git/config" "$TMP/config-before"
+cd "$linked"; repo="$linked"
+installed 'private activation coexists with shared project and dispatcher hooks'
+blocked 'private guard blocks an actual commit in linked checkout'
+cmp -s "$main/.git/config" "$TMP/config-before" && ok 'shared Git config unchanged' || bad 'shared config mutated'
+cmp -s "$main/.git/hooks/pre-commit" "$TMP/shared-before" && ok 'shared project hook unchanged' || bad 'shared hook mutated'
+private_hooks=$(git config --worktree --get core.hooksPath || true)
+if [ -n "$private_hooks" ]; then
+  cp "$private_hooks/pre-commit" "$TMP/private-before"
+  installed 'private activation is idempotent'
+  cmp -s "$private_hooks/pre-commit" "$TMP/private-before" && ok 'private reinstall preserves hook bytes' || bad 'private reinstall'
+else
+  bad 'private worktree hooksPath missing'
+fi
+cd "$main"; : > "$GATE_LOG"
+git commit -q --allow-empty -m unaffected-main
+grep -Fxq shared "$GATE_LOG" && ! grep -q '^pre-commit|' "$GATE_LOG" && ok 'main retains its original hook chain' || bad 'main changed'
+cd "$linked"
+# Passing guard must still execute the old hooks, including hook types we do not gate.
+printf '#!/bin/sh\nprintf "guard:%%s\\n" "$1" >> "$GATE_LOG"\n[ "$1" != pre-push ] || cat > "$GATE_LOG.guard-stdin"\n' > "$gate"
+printf '#!/bin/sh\ncat > "$GATE_LOG.original-stdin"\nprintf "%%s\\n" "$@" > "$GATE_LOG.args"\nexit 19\n' > "$main/.git/hooks/pre-push"
+chmod +x "$main/.git/hooks/pre-push"
+mkdir "$dispatch/lib"
+printf '#!/bin/sh\nprintf "message-hook\\n" >> "$GATE_LOG"\nexit 0\n' > "$dispatch/lib/check.sh"
+printf '#!/bin/sh\nexec sh "$(dirname "$0")/lib/check.sh" "$@"\n' > "$dispatch/commit-msg"
+chmod +x "$dispatch/commit-msg"
+: > "$GATE_LOG"
+git commit --allow-empty -qm chained
+grep -Fxq shared "$GATE_LOG" && grep -Fxq message-hook "$GATE_LOG" && ok 'guard preserves old commit chain and later-added commit-msg hook' || bad 'hook chain lost'
+printf 'refs/heads/a a refs/heads/b b\nrefs/heads/c c refs/heads/d d\n' > "$TMP/refs"
+code=0
+git hook run --to-stdin="$TMP/refs" pre-push -- origin 'space remote' || code=$?
+if [ "$code" -ne 0 ] && cmp -s "$TMP/refs" "$GATE_LOG.guard-stdin" && cmp -s "$TMP/refs" "$GATE_LOG.original-stdin" && grep -Fxq 'space remote' "$GATE_LOG.args"; then
+  ok 'push preserves stdin/arguments for both checks and propagates original failure'
+else bad 'push forwarding'; fi
+# Gate removal must not silently disable the private guard.
+rm "$gate"
+before=$(git rev-parse HEAD)
+if git commit --allow-empty -qm missing-private-gate > "$TMP/commit.out" 2>&1; then bad 'removed private gate allowed commit';
+elif [ "$before" = "$(git rev-parse HEAD)" ]; then ok 'removed private gate blocks commit'; else bad 'removed private gate changed HEAD'; fi
+
 echo '=== RESULT ==='
 if [ "$fails" -eq 0 ]; then echo 'ALL PASS'; else echo "$fails FAILED"; exit 1; fi
