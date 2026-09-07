@@ -118,8 +118,13 @@ def evidence_errors(contract, include_fixes=True):
         try:
             path = (root / log).resolve()
             path.relative_to(root)
+            if not path.is_file():
+                return False
+            digest = hashlib.sha256()
             with open(path, "rb") as stream:
-                return hashlib.sha256(stream.read()).hexdigest() == run.get("log_sha256")
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            return digest.hexdigest() == run.get("log_sha256")
         except (OSError, ValueError):
             return False
 
@@ -160,6 +165,8 @@ def evidence_errors(contract, include_fixes=True):
         applied = []
     if not isinstance(pairs, list) or not isinstance(applied, list):
         return errors + ["evidence.fix_regressions"]
+    if outcome in ("none", "preserved") and (applied or pairs):
+        errors.append("evidence.fix_regressions: no-fix outcome cannot carry applied findings or pairs")
     fixes_claimed = outcome in ("fixed", "mixed")
     if fixes_claimed and not applied:
         errors.append("fix_findings (explicit applied finding IDs required)")
