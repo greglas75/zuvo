@@ -164,9 +164,8 @@ def assessment_errors(contract, root, include_test_quality=True):
         return verdict_seen
 
     for key in ("cq_after", "q_after", "test_quality_assessment"):
-        if key in contract:
-            if not visit(contract[key], key):
-                errors.append(key + ": no current status or verdict")
+        if key in contract and not visit(contract[key], key):
+            errors.append(key + ": no current status or verdict")
     if not include_test_quality:
         return errors
     try:
