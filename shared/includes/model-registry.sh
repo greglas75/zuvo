@@ -103,18 +103,35 @@ ZUVO_MODEL_GEMINI_API="${ZUVO_MODEL_GEMINI_API:-gemini-3.1-pro-preview}"  # gemi
 # The lesson those three encode: findings COUNT is a gadfly metric. A model that emits five
 # plausible paragraphs per diff outranks a careful one until somebody checks the claims.
 # The OpenRouter lane is OFF by default fleet-wide (ZUVO_ADV_OPENROUTER unset) since
-# 2026-09-05: glm-5.3 billed $12.10 in one day. It is the best paid reviewer measured here
-# (+30 distinct defects over the free set) and it WORKS — 72% of 143 production calls
-# returned findings — it is simply not worth that daily rate as an always-on lane.
-# Enable per-run when a review earns it:  ZUVO_ADV_OPENROUTER=1 zuvo adversarial …
+# 2026-09-05, on cost. Enable per run when a review earns it:
+#   ZUVO_ADV_OPENROUTER=1 <command>
 #
-# qwen3.8-flash is NOT the cheap substitute it looked like on paper. The benchmark rated it
-# +26 defects at a quarter of glm's price, but that ran under a 900s ceiling; production
-# allows 400s and qwen averages 336s, so it lands: 91 calls, 32 with output — 35%, against
-# glm's 72% (46 empty, 13 timeouts). A benchmark ceiling looser than production's turns a
-# latency problem into an invisible one — measure candidates at the PRODUCTION timeout.
-ZUVO_MODEL_OPENROUTER="${ZUVO_MODEL_OPENROUTER:-z-ai/glm-5.3}"
-ZUVO_MODEL_OPENROUTER_ALT="${ZUVO_MODEL_OPENROUTER_ALT:-qwen/qwen3.8-flash}"
+# The lane model is muse-spark-1.3 since 2026-09-06, chosen on DELIVERED coverage rather than
+# on benchmark scores. Ranked purely by findings, glm-5.3 wins the whole field: +38 defects the
+# free set never sees, at 99% precision. It is also 363s average against a 400s ceiling, and
+# production settled the argument — of 398 glm calls, 31% died AT the ceiling and 36% were
+# metered and returned nothing; $32.50 in a single day, of which better than a third bought
+# silence. qwen3.8-flash is the same shape (260 calls, 30% lost at the ceiling, 48% paid for
+# nothing), which is why it is not the fallback it looked like.
+#
+#   glm-5.3     38 unique x ~64% delivered ~= 24 effective, $0.121/call, $0.203 per DELIVERED
+#   muse-1.3    23 unique x ~100% delivered ~= 23 effective, ~$0.058/call
+#
+# Equal effective coverage for roughly a third of the cost per delivered review, because at 95s
+# average it has four times the headroom it needs and essentially never pays for a timeout.
+# The cost is precision: 73% against glm's 99%, i.e. materially more noise to triage. Nothing
+# measured here is both cheap and as precise as glm — grok-4.6 comes closest at 96% and costs
+# $4.44/20 for 12 unique defects.
+#
+# Provisional (the user's call, 2026-09-06): revisit if the false-positive load proves annoying
+# in practice. glm stays one flag away: --provider openrouter-alt.
+#
+# The general lesson, which cost two wrong recommendations in one session: a benchmark ceiling
+# looser than production's turns a latency problem into an invisible one. These candidates ran
+# under 900s; production allows 450s. Measure at the PRODUCTION timeout, and rank on delivered
+# coverage, never on the score a model earns when given time it will not get.
+ZUVO_MODEL_OPENROUTER="${ZUVO_MODEL_OPENROUTER:-meta/muse-spark-1.3}"
+ZUVO_MODEL_OPENROUTER_ALT="${ZUVO_MODEL_OPENROUTER_ALT:-z-ai/glm-5.3}"
 
 # ── Cursor ──────────────────────────────────────────────────────────
 ZUVO_MODEL_CURSOR="${ZUVO_MODEL_CURSOR:-composer-2.5-fast}"          # "Composer 2.5 Fast (current)" from `cursor-agent models`

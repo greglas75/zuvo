@@ -84,7 +84,7 @@ exceed 240s. Two consequences:
   `Done: <provider>` on each completion. `2>/dev/null` turns a working run into a blank terminal
   and is the reason these get killed as "stalled". Redirect stdout only.
 - **Give it a real deadline, or background it.** A 120s default shell timeout kills the pass
-  mid-run and leaves no artifact. Either `timeout 480 "$AR_CMD" …`, or run it in the background
+  mid-run and leaves no artifact. Either `timeout 540 "$AR_CMD" …`, or run it in the background
   and use `--artifact PATH` as the completion signal — the artifact is written atomically at the
   end, so *the file existing means the pass finished*, and its `provider_outcomes=` header says
   which providers actually contributed. That is the poll mechanism; no separate status file is

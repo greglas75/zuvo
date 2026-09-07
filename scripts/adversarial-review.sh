@@ -401,8 +401,8 @@ Environment variables:
                            OPENROUTER_API_KEY or ~/.zuvo/openrouter.key (must be mode 600/400).
                            Adds providers `openrouter` and `openrouter-alt`. Key presence alone
                            does NOT enable it — spending is an explicit decision.
-  ZUVO_OPENROUTER_MODEL    Primary OpenRouter model (default: z-ai/glm-5.3)
-  ZUVO_MODEL_OPENROUTER_ALT  Second model, run as provider `openrouter-alt` (default: qwen/qwen3.8-flash)
+  ZUVO_OPENROUTER_MODEL    Primary OpenRouter model (default: meta/muse-spark-1.3)
+  ZUVO_MODEL_OPENROUTER_ALT  Second model, run as provider `openrouter-alt` (default: z-ai/glm-5.3)
   CLAUDE_MODEL             Used for opposite-model detection (claude provider)
 HELP
       exit 0
@@ -1901,7 +1901,7 @@ run_openrouter() {
   # that is not the model. That is the defect this session spent hours untangling elsewhere (a
   # lane named codex-5.3 that actually ran gpt-5.6-sol) and it corrupts every measurement built
   # on the artifact afterwards.
-  local model="${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-z-ai/glm-5.3}}"
+  local model="${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-meta/muse-spark-1.3}}"
   case "$model" in
     ""|*[!a-zA-Z0-9._/@:-]*)
       echo "  WARN: openrouter model id '$model' is empty or has characters outside [a-zA-Z0-9._/@:-] — refusing" >&2
@@ -2144,8 +2144,8 @@ provider_model() {
     codex-5.4)    echo "${ZUVO_MODEL_CODEX_ALT:-gpt-5.4}" ;;
     codex-5.3)    echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}" ;;
     agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (High)}}" ;;
-    openrouter)   echo "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-z-ai/glm-5.3}}" ;;
-    openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-qwen/qwen3.8-flash}" ;;
+    openrouter)   echo "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-meta/muse-spark-1.3}}" ;;
+    openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-z-ai/glm-5.3}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
     kimi-api)     echo "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" ;;
     kimi)         echo "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3}}" ;;
@@ -2214,7 +2214,7 @@ _dispatch_provider_inner() {
     # and the exclusion logic all key on the provider NAME, so two models sharing one id
     # would be indistinguishable afterwards — which is exactly the mistake this whole
     # measurement exercise had to unpick (a provider label that was not the model).
-    openrouter-alt) ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_OPENROUTER_ALT:-qwen/qwen3.8-flash}" run_openrouter ;;
+    openrouter-alt) ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_OPENROUTER_ALT:-z-ai/glm-5.3}" run_openrouter ;;
     claude)        run_claude ;;
     kimi)          run_kimi ;;        # auto when kimi CLI on PATH (OAuth, K3)
     kimi-api)      run_kimi_api ;;    # fallback when MOONSHOT_API_KEY set, no CLI
@@ -2422,13 +2422,24 @@ command -v jq &>/dev/null || { echo "ERROR: jq required. Install: brew install j
 # at 212s and 229s, just under the ceiling, and half the 20 kB+ cells timed out. The fleet log
 # agrees — in the 15-30 kB band, which is 54% of all runs, agy failed to answer 52% of the time.
 # A timeout is supposed to catch a wedged provider, not to cut off a working one mid-answer.
-DEFAULT_TIMEOUT=400
-# Flat, with no heavy-mode bump on top. The bump used to take those modes to 360 — below the new
-# base — and raising it proportionally (600) would put the inner timeout ABOVE the outer `timeout`
-# wrappers those very modes are invoked with: `timeout 480` in skills/plan/SKILL.md and
-# cross-provider-review.md, `timeout 590` in skills/write-tests. The outer kill would then fire
-# first and the run would die with NO artifact, which is strictly worse than the timeout it was
-# meant to replace. 400 + 15s grace = 415 sits under every existing wrapper.
+DEFAULT_TIMEOUT=450
+# Flat, with no heavy-mode bump on top. The bump used to take those modes to 360 — below the
+# base — and raising it proportionally would put the inner timeout ABOVE the outer `timeout`
+# wrappers those very modes are invoked with, so the outer kill would fire first and the run
+# would die with NO artifact: strictly worse than the timeout it was meant to replace.
+#
+# THE INVARIANT: PROVIDER_TIMEOUT + ZUVO_TIMEOUT_GRACE must stay under EVERY outer wrapper,
+# with enough margin left for aggregation and writing the artifact. Raising this number alone
+# silently eats that margin — at 450 against the old `timeout 480` there were 15s left, versus
+# 65s at 400. So the wrappers moved with it: 480 -> 540 in skills/plan/SKILL.md and
+# shared/includes/cross-provider-review.md (450 + 15 + 75 margin); skills/write-tests keeps
+# 590, which already clears 465 by a wide margin. If you change this, change those.
+#
+# Why 450 at all (2026-09-06): production measurement, not a hunch. Of 260 qwen3.8-flash calls
+# 30% died AT the ceiling, and of the ones that SUCCEEDED, p75 was 400s and p90 401s — a quarter
+# of the successes were finishing in the last second. glm-5.3 sat the same way: 398 calls, 31%
+# lost at the ceiling, 36% of a metered lane paid for and returning nothing. That is a clock
+# problem, not a capability problem.
 PROVIDER_TIMEOUT="${ZUVO_REVIEW_TIMEOUT:-$DEFAULT_TIMEOUT}"
 
 # ─── Dry run ───────────────────────────────────────────────────
