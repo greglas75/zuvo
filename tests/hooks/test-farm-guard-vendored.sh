@@ -68,6 +68,23 @@ else
   bad "settings merge breaks symlinks, unrelated fields, or idempotency"
 fi
 
+mkdir -p "$STUB/home/.claude/hooks"
+printf '%s\n' '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"~/.claude/hooks/farm-no-local-tests.sh"}]}]}}' \
+  > "$STUB/tilde-settings.json"
+if HOME="$STUB/home" python3 "$STUB/merge-settings.py" "$STUB/tilde-settings.json" \
+     "$STUB/home/.claude/hooks/farm-no-local-tests.sh" >/dev/null \
+   && python3 - "$STUB/tilde-settings.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+entries = [hook for group in data['hooks']['PreToolUse'] for hook in group['hooks']]
+assert sum(hook.get('command', '').endswith('farm-no-local-tests.sh') for hook in entries) == 1
+PY
+then
+  pass "settings merge recognizes legacy tilde-form hook paths"
+else
+  bad "settings merge duplicates legacy tilde-form hook paths"
+fi
+
 printf 'null\n' > "$STUB/malformed.json"
 if python3 "$STUB/merge-settings.py" "$STUB/malformed.json" "$STUB/farm-no-local-tests.sh" >/dev/null 2>&1; then
   bad "settings merge accepts a non-object root"

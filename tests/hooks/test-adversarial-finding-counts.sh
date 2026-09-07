@@ -81,8 +81,8 @@ printf '```json\n{"findings":[]}\n```\n```json\n{"findings":[{"severity":"CRITIC
 run_case multiple_findings_envelopes '1 0 0'
 printf 'SEVERITY: CRITICAL | CONFIDENCE: high\n' > "$TMP/fixture"
 run_case inline_pipe_fields '1 0 0'
-printf 'SEVERITY: WARNING — downgraded from CRITICAL after triage\n' > "$TMP/fixture"
-COUNT_EXPECT_STATUS=partial run_case multi_keyword_finding '0 0 0'
+printf 'SEVERITY: CRITICAL\nSEVERITY: WARNING — downgraded from CRITICAL after triage\n' > "$TMP/fixture"
+COUNT_EXPECT_STATUS=partial run_case multi_keyword_finding '1 0 0'
 printf '### 1. SEVERITY: CRITICAL\nSEVERITY: WARNING\n' > "$TMP/fixture"
 run_case compound_heading '1 1 0'
 printf 'SEVERITY: CRITICAL\nSeverity - WARNING\n' > "$TMP/fixture"
