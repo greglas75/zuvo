@@ -376,13 +376,34 @@ BASELINE FAILED
   Suggestion: run zuvo:fix-tests to repair failing tests first.
 ```
 
-### 1.3 Send the TIER 1 loop to the farm as ONE invocation — never per-mutant, never local
+### 1.3 The mutant loop is `tf-ablate` on the farm — never hand-rolled, never per-mutant, never local
+
+**Do not write the loop. The farm ships it.** `tf-ablate` is on the PATH of every farm job:
+it takes the plan from 2.3 (a JSON list of `{file, line, col, length, original, replacement}`
+— the content-anchored shape 2.3b already produces — or a Stryker report), builds N sandboxes
+(one per farm worker; the working tree is never mutated), applies one mutant per sandbox at a
+time, runs ONLY the tests related to the mutated file (`jest --findRelatedTests` /
+`vitest related`), restores, and writes a Stryker-vocabulary report with a score:
+
+    rt --light tf-ablate <plan.json> --out reports/mutation/tier1.json                 # tier 1
+    rt --light tf-ablate reports/mutation/tier1.json --only-survived --full \
+       --out reports/mutation/tier2.json                                               # tier 2
+
+Tier 2 is the same tool with `--full`: every tier-1 survivor gets the WHOLE suite, still in
+parallel sandboxes under one reservation. The plan file must sit in a tracked or unignored
+path — the farm mirror is git's project set, so a plan under `zuvo/` never arrives (the
+client refuses it by name). Runbook: `~/DEV/i9-farma/docs/mutation-on-the-farm.md`.
+
+**Why this replaced "wrap the loop in `rt --light bash -c`" (2026-09-07).** The wrapped loop
+was still `for m in plan: apply; jest --runInBand <full suite>; restore` — one node process,
+220 mutants x 150 s = 9 hours, heap dying at 4 GB on module registries while 9 GB of the
+job's budget sat unused; seven mutants recorded as errors, and the farm saw a green run
+because the loop wrote its verdicts to files. A wrapper around the wrong loop is still the
+wrong loop. The old costing paragraph below is kept for the numbers it measured:
 
 **Wrap the LOOP, not each mutant.** The wrapper's cost is a fixed per-invocation charge
 (mirror sync + queue), and Tier 1 makes N short invocations — so wrapping each one multiplies
-the charge by N, while wrapping the loop pays it once:
-
-    rt --light bash -c '<the whole mutant loop>'
+the charge by N, while wrapping the loop pays it once. `tf-ablate` IS that single wrapped loop.
 
 An earlier version of this section concluded "therefore run Tier 1 locally". That was the
 wrong lesson from a correct measurement, and 2026-08-29 measured what it costs: 109 local test
@@ -665,6 +686,16 @@ Before starting execution:
 3. NEVER commit a mutated file. NEVER leave a mutation in place after execution.
 
 ### 3.2 Execution Loop
+
+**On the farm this loop is executed by `tf-ablate`, not by you** (1.3). Your job is the plan
+in (2.3 → a JSON list, content-anchored) and reading the two reports back:
+`verdict` ∈ `KILLED | SURVIVED | TIMEOUT | NO_COVERAGE | ERROR` maps onto the RECORD table
+below (`TIMEOUT` counts as killed; `ERROR` is *not measured* — a crash is never a survivor;
+`NO_COVERAGE` means the mapped tests from 0.2 do not import the file — fix the map, do not
+score it). The steps are spelled out so the report can be audited, and for the one case
+where the farm is unreachable and the run is therefore NOT possible (exit 21 — stop, per
+`execution-policy.md`). Never reimplement them as a shell loop: that is the 9-hour,
+4-GB-heap failure 1.3 describes.
 
 For each mutation `MUT-NNN`:
 
