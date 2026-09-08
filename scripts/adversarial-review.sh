@@ -402,7 +402,7 @@ Environment variables:
                            Adds providers `openrouter` and `openrouter-alt`. Key presence alone
                            does NOT enable it — spending is an explicit decision.
   ZUVO_OPENROUTER_MODEL    Primary OpenRouter model (default: meta/muse-spark-1.3)
-  ZUVO_MODEL_OPENROUTER_ALT  Second model, run as provider `openrouter-alt` (default: z-ai/glm-5.3)
+  ZUVO_MODEL_OPENROUTER_ALT  Second model, run as provider `openrouter-alt` (default: qwen/qwen3.8-flash)
   CLAUDE_MODEL             Used for opposite-model detection (claude provider)
 HELP
       exit 0
@@ -1304,11 +1304,12 @@ detect_providers() {
   # A key file on disk is not consent to spend on every review: this one exists because of a
   # benchmark, and auto-detecting on it would silently turn a free pipeline into a metered one.
   # ZUVO_ADV_OPENROUTER=1 is a deliberate act a human performs once; the key alone is not.
-  # ONE auto lane. openrouter-alt (glm-5.3) is reachable ONLY by an explicit
-  # --provider openrouter-alt, never by auto-detection: it was left in the auto list when the
-  # primary lane moved to muse on 2026-09-06 and quietly kept billing — 269 calls in two days,
-  # 117 of them timeouts, i.e. metered and returning nothing. Removing a model from the
-  # PRIMARY slot does not remove it from the run; both lists have to be checked.
+  # Two auto lanes: openrouter (muse-spark-1.3) and openrouter-alt (qwen3.8-flash).
+  # glm-5.3 is in NEITHER — it is reachable only by ZUVO_MODEL_OPENROUTER_ALT=z-ai/glm-5.3
+  # with an explicit --provider. It cost $0.134 per call against muse's $0.035 and, at 363s
+  # against the ceiling, 36% of those calls were metered and returned nothing.
+  # Removing a model from the PRIMARY slot does not remove it from the run — the alt slot is
+  # a second list and has to be checked too. That mistake kept glm billing for two extra days.
   #
   # Cost, measured in PRODUCTION rather than in the benchmark (2026-09-05, one day):
   #   glm-5.3   143 calls, 72% returned findings, $12.10 billed
@@ -1320,7 +1321,7 @@ detect_providers() {
   # ceiling looser than production turns a latency problem into an invisible one.
   if [[ "${ZUVO_ADV_OPENROUTER:-0}" == "1" ]]; then
     if [[ -n "${OPENROUTER_API_KEY:-}" || -f "$HOME/.zuvo/openrouter.key" ]]; then
-      providers="${providers:+$providers }openrouter"
+      providers="${providers:+$providers }openrouter openrouter-alt"
     else
       echo "  NOTE: ZUVO_ADV_OPENROUTER=1 but no key (env OPENROUTER_API_KEY or ~/.zuvo/openrouter.key) — lane skipped" >&2
     fi
@@ -2151,7 +2152,7 @@ provider_model() {
     codex-5.3)    echo "${ZUVO_MODEL_CODEX_PRIMARY:-gpt-5.6-sol}" ;;
     agy)          echo "${ZUVO_AGY_MODEL:-${ZUVO_MODEL_AGY:-Gemini 3.8 Flash (High)}}" ;;
     openrouter)   echo "${ZUVO_OPENROUTER_MODEL:-${ZUVO_MODEL_OPENROUTER:-meta/muse-spark-1.3}}" ;;
-    openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-z-ai/glm-5.3}" ;;
+    openrouter-alt) echo "${ZUVO_MODEL_OPENROUTER_ALT:-qwen/qwen3.8-flash}" ;;
     codestral)    echo "${ZUVO_CODESTRAL_MODEL:-codestral-latest}" ;;
     kimi-api)     echo "${ZUVO_KIMI_MODEL:-${ZUVO_MODEL_KIMI:-kimi-k2.6}}" ;;
     kimi)         echo "${ZUVO_KIMI_CLI_MODEL:-${ZUVO_MODEL_KIMI_CLI:-kimi-code/k3}}" ;;
@@ -2220,7 +2221,7 @@ _dispatch_provider_inner() {
     # and the exclusion logic all key on the provider NAME, so two models sharing one id
     # would be indistinguishable afterwards — which is exactly the mistake this whole
     # measurement exercise had to unpick (a provider label that was not the model).
-    openrouter-alt) ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_OPENROUTER_ALT:-z-ai/glm-5.3}" run_openrouter ;;
+    openrouter-alt) ZUVO_OPENROUTER_MODEL="${ZUVO_MODEL_OPENROUTER_ALT:-qwen/qwen3.8-flash}" run_openrouter ;;
     claude)        run_claude ;;
     kimi)          run_kimi ;;        # auto when kimi CLI on PATH (OAuth, K3)
     kimi-api)      run_kimi_api ;;    # fallback when MOONSHOT_API_KEY set, no CLI

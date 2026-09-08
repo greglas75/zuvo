@@ -131,10 +131,15 @@ ZUVO_MODEL_GEMINI_API="${ZUVO_MODEL_GEMINI_API:-gemini-3.1-pro-preview}"  # gemi
 # under 900s; production allows 450s. Measure at the PRODUCTION timeout, and rank on delivered
 # coverage, never on the score a model earns when given time it will not get.
 ZUVO_MODEL_OPENROUTER="${ZUVO_MODEL_OPENROUTER:-meta/muse-spark-1.3}"
-ZUVO_MODEL_OPENROUTER_ALT="${ZUVO_MODEL_OPENROUTER_ALT:-z-ai/glm-5.3}"
+ZUVO_MODEL_OPENROUTER_ALT="${ZUVO_MODEL_OPENROUTER_ALT:-qwen/qwen3.8-flash}"
 
 # ── Cursor ──────────────────────────────────────────────────────────
-ZUVO_MODEL_CURSOR="${ZUVO_MODEL_CURSOR:-composer-2.5-fast}"          # "Composer 2.5 Fast (current)" from `cursor-agent models`
+# auto, nie composer: `composer-2.5-fast` ZNIKNAL z `cursor-agent models` (jest tylko
+# `composer-2.5`), a konto ma wyczerpany limit — "You're out of usage. Switch to Auto".
+# Lane zwracal PUSTO w 281 przebiegach od 2026-09-06 i nadal zajmowal slot, bo pusta
+# odpowiedz nie zasila bufora wykluczen (ten lapie tylko bledy logowania).
+# `auto` odpowiada normalnie przy tym samym koncie — zweryfikowane 2026-09-09.
+ZUVO_MODEL_CURSOR="${ZUVO_MODEL_CURSOR:-auto}"
 
 # ── Moonshot (Kimi) ─────────────────────────────────────────────────
 ZUVO_MODEL_KIMI_CLI="${ZUVO_MODEL_KIMI_CLI:-}"                       # kimi CLI -m alias; EMPTY = use the CLI's own default (kimi-code/k3, OAuth) — verified E2E 2026-07-19
