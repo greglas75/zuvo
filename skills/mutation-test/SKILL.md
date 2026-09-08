@@ -200,6 +200,19 @@ in `pyproject.toml` / `setup.cfg`. Consequences, and they are not cosmetic:
   number the tool cannot produce.
 - `test-mutation-probes.md`'s per-file native path is therefore **unavailable for mutmut**. That
   include says so explicitly; a Python project falls back to the hand-picked probes there.
+- **On the farm, Python does not use mutmut at all.** The hand-picked probes (2.3, the
+  content-anchored `{file,line,col,length,original,replacement}` plan) go straight to
+  `tf-ablate`, which detects pytest (or `--runner pytest`), runs each mutant in its own
+  process against only the `test_*.py` files that mention the module, and does a control
+  run first — so a per-file number IS available there, and it is a measured one. Repos wired
+  this way keep the plan as a tracked file (`tests/mutation/*.json`) and a profile that
+  hands it over (`rt --keep-artifacts --env ABLATE_PLAN=… mutation` in Helper, `mutation-py`
+  in data-lab; proven 2026-09-08: Helper 3/3 killed in 32 s). mutmut's in-process harness
+  is exactly what data-lab's `scripts/run_tests_isolated.py` exists to avoid.
+- **PHP on the farm runs Infection on the `php-8.4.23-pcov` runtime** (tgm-collect profile
+  `mutation`, `--only-covering-test-cases`, `INFECTION_FILTER` for scope); the static farm PHP
+  has no coverage driver, and the profile already selects the right one — do not switch PHP
+  binaries by hand. Its `logs.json` comes back through `--keep-artifacts` + `rt --artifacts`.
 
 **Shell-quote every interpolated path.** These run commands are templates with `<file>`
 placeholders, and a repository controls its own filenames — a path holding a space, a quote or a
