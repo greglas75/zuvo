@@ -1304,6 +1304,12 @@ detect_providers() {
   # A key file on disk is not consent to spend on every review: this one exists because of a
   # benchmark, and auto-detecting on it would silently turn a free pipeline into a metered one.
   # ZUVO_ADV_OPENROUTER=1 is a deliberate act a human performs once; the key alone is not.
+  # ONE auto lane. openrouter-alt (glm-5.3) is reachable ONLY by an explicit
+  # --provider openrouter-alt, never by auto-detection: it was left in the auto list when the
+  # primary lane moved to muse on 2026-09-06 and quietly kept billing — 269 calls in two days,
+  # 117 of them timeouts, i.e. metered and returning nothing. Removing a model from the
+  # PRIMARY slot does not remove it from the run; both lists have to be checked.
+  #
   # Cost, measured in PRODUCTION rather than in the benchmark (2026-09-05, one day):
   #   glm-5.3   143 calls, 72% returned findings, $12.10 billed
   #   qwen3.8   91 calls,  35% returned findings (46 empty, 13 timeouts)
@@ -1314,7 +1320,7 @@ detect_providers() {
   # ceiling looser than production turns a latency problem into an invisible one.
   if [[ "${ZUVO_ADV_OPENROUTER:-0}" == "1" ]]; then
     if [[ -n "${OPENROUTER_API_KEY:-}" || -f "$HOME/.zuvo/openrouter.key" ]]; then
-      providers="${providers:+$providers }openrouter openrouter-alt"
+      providers="${providers:+$providers }openrouter"
     else
       echo "  NOTE: ZUVO_ADV_OPENROUTER=1 but no key (env OPENROUTER_API_KEY or ~/.zuvo/openrouter.key) — lane skipped" >&2
     fi
